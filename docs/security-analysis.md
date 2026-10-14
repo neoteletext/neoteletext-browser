@@ -37,8 +37,8 @@ The design meets that standard by:
 
 - **Reading untrusted bytes only in processes with no rights.** These are the fetcher (network only), the decoder (no network, no files, inside the WebAssembly interpreter `wasmi`) and the font helper (no rights).
 - **Keeping a trusted core that contains no web engine,** reads no network format, and owns every secret and every decision.
-- **Treating the interface drawn with web technology as untrusted.** It runs in its own process with no rights and no secrets. It receives only images our own encoder made and cleaned plain text. It can make no security decision.
-- **Placing every security indicator and decision in a native trusted strip** that the interface cannot draw over or read.
+- **Treating the interface drawn with web technology as untrusted.** Its page code runs in the system webview's own sandboxed content process, which on macOS has no window server and no network sockets. The window host that holds the webview has no secrets and makes no decision (decision 27). The interface receives only images our own encoder made and cleaned plain text.
+- **Placing every security indicator and decision in a native trusted strip,** in the same window as the webview but outside page code's reach (`docs/proofs.md` section 3).
 - **Making updates verifiable and recoverable:** The Update Framework metadata, side-by-side installation, atomic switching and automatic rollback.
 
 **The main remaining risks,** detailed in section 16:
@@ -85,9 +85,9 @@ Out of scope: an attacker who already controls the user's account or has adminis
 network ──[1]──► fetcher ──[2]──► trusted core ──[3]──► decoder (one per channel)
 files ─────────────────────────► trusted core ──[3]──► decoder
 network ──[1]──► fetcher ──[2]──► trusted core ──[4]──► font helper
-trusted core ──[5]──► user interface process (images, plain text, view state)
-user interface process ──[6]──► trusted core (intents)
-trusted core ◄──[7]──► trusted strip (native, part of the trusted core)
+trusted core ──[5]──► window host (images, plain text, view state)
+window host ──[6]──► trusted core (intents)
+trusted core ◄──[7]──► trusted strip (native, drawn by the window host; strip state out, strip input in)
 update subdomain ──[8]──► updater ──► versions directory ──► launcher
 ```
 
@@ -97,9 +97,9 @@ update subdomain ──[8]──► updater ──► versions directory ──�
 | 2. Fetcher to trusted core | Teletext bytes (forwarded unread), typed descriptor, contents and discovery results, `Set-Cookie` headers, status | Untrusted, checked as data |
 | 3. Trusted core and decoder | Bytes and commands in; frames, links, wants, forms and status out | Decoder output untrusted |
 | 4. Trusted core and font helper | Font bytes in; a glyph table and hash out | Untrusted, checked twice |
-| 5. Trusted core to user interface process | Images our encoder made, cleaned plain text, view state | The user interface process's input; contains nothing secret |
-| 6. User interface process to trusted core | Intents | Untrusted |
-| 7. Trusted strip | Typed addresses, confirmations, security settings | Trusted user input |
+| 5. Trusted core to window host | Images our encoder made, cleaned plain text, view state | The window host's input; contains nothing secret |
+| 6. Window host to trusted core | Intents | Untrusted |
+| 7. Trusted strip | Strip state to the window host; typed addresses, confirmations and security settings back as strip input | Trusted user input, provided the window host is not compromised (section 5.6) |
 | 8. Update subdomain to updater | Metadata and release files | Untrusted until verified by The Update Framework and the platform signature |
 
 ---
@@ -179,7 +179,7 @@ update subdomain ──[8]──► updater ──► versions directory ──�
 
 **Remaining risk:** low.
 
-### 5.5 Boundary 5: the trusted core into the user interface process
+### 5.5 Boundary 5: the trusted core into the window host
 
 **Threats.**
 - Teletext data reaching the webview's parsers.
@@ -196,7 +196,7 @@ update subdomain ──[8]──► updater ──► versions directory ──�
 
 **Remaining risk:** low.
 
-### 5.6 Boundary 6: intents from the user interface process
+### 5.6 Boundary 6: intents from the interface
 
 **Threats.** A compromised interface sends intents to:
 - navigate to another channel;
@@ -211,14 +211,17 @@ update subdomain ──[8]──► updater ──► versions directory ──�
 - A cell click means only "this cell"; the trusted core and decoder decide whether it is a link, and a link to another channel goes through the site-change screen (requirement 12.3).
 - Every intent is bounded and checked (requirements 4.2 and 4.4).
 
-**If the user interface process is compromised.**
-- **What the attacker can do:** show wrong pixels in the interface area, and use the channels already open: switch tabs, show other pages of the same channels, close tabs.
-- **What the attacker cannot do:**
-  - read a secret;
-  - reach the network or files;
-  - change channel;
-  - change a security setting;
-  - forge the trusted strip.
+**Three levels of compromise.** Measured on macOS in `docs/proofs.md`.
+
+1. **Page code compromised** (a malicious or vulnerable JavaScript package, or any other way to run script in the page). The most likely case.
+   - **Can:** show wrong pixels inside the webview's area; use the channels already open, switching tabs, showing other pages of the same channels and closing tabs; see every page on screen.
+   - **Cannot:** draw over or read the trusted strip (Proof B2); produce strip input (requirement 11.1); reach the network, which is stopped by the Content Security Policy and WebRTC removal, with nothing reaching a test server in Proof A; read a secret; change channel; change a security setting.
+2. **The web content process compromised** by a memory-corruption fault in the web engine.
+   - **Can:** everything in level 1, and ask the webview's networking process to load any address, bypassing the Content Security Policy, which is enforced inside the content process. That could send what is on screen to a server the attacker chooses.
+   - **Cannot:** open a window, so it cannot cover or imitate the trusted strip; open network sockets of its own; read files. On macOS its sandbox denies all three by default (`com.apple.WebProcess.sb`, `docs/proofs.md` section 3.2).
+3. **The window host compromised**, which requires a second fault: an escape from the web content process's sandbox.
+   - **Can:** draw anything in its windows, including a false trusted strip; forge strip input, and so confirm navigations and change security settings; use the network entitlement the webview requires.
+   - **Cannot:** read cookies, credentials, history or bookmarks, which stay in the trusted core (requirement 3.6); read the fetcher's connections or the decoders' memory.
 
 **The covert channel between channels (found 15 October 2026).**
 - **What a hostile interface can see:** every page on screen, including pages of every open channel.
@@ -230,7 +233,7 @@ update subdomain ──[8]──► updater ──► versions directory ──�
 - **Accepted exception (decision 23):** channels that publish only separate page files, with no bundle and no contents file, cannot be fetched in advance, because nothing says which pages exist. Their pages are fetched when selected, as any browser does. For those channels alone, a compromised interface could forge key presses whose page requests carry information to that channel's server, and the server can see which pages are read. The owner chose this over walking the channel's links in advance, which would load small servers and need `neoteletext`'s rule against crawling changed.
 - **Side benefit:** a channel's server cannot see which of its pages a viewer reads.
 
-**Remaining risk:** low for bundled channels and channels with a contents file, provided requirements 4.5, 4.7 and 5.15 to 5.17 are enforced by the hostile interface harness. **Accepted** for channels with only separate page files: the leak exists only if the interface process is compromised and the user also has a channel run by the attacker open as one of those channels.
+**Remaining risk:** low for bundled channels and channels with a contents file, provided requirements 4.5, 4.7 and 5.15 to 5.17 are enforced by the hostile interface harness. **Accepted** for channels with only separate page files: the leak exists only if page code is compromised and the user also has a channel run by the attacker open as one of those channels. **Level 2 and level 3 compromises** can reach the network directly and so can leak what is on screen; they need a fault in the web engine itself, and level 3 a second fault escaping its sandbox (section 16).
 
 ### 5.7 Boundary 7: the trusted strip
 
@@ -257,19 +260,19 @@ Analysed in section 8.
 The system webview is many millions of lines of C++, Objective-C or Java with a steady flow of security fixes. The engine's own design rejected Tauri for exactly this reason: it put the webview inside the trusted process.
 
 **What changes in this design.**
-- **The webview is not in the trusted process.** It runs in the user interface process, which has no network, no files and no secrets (requirement 3.6).
+- **The webview is not in the trusted process.** It is hosted by the window host, which holds no secrets and makes no decision (requirement 3.6), and its page code runs in the platform's sandboxed web content process.
 - **The webview sees no attacker-chosen bytes:** only our own React interface and its approved packages, images from our own encoder and cleaned text (requirement 10.1).
 - **Its most exposed parts have nothing to attack:** the markup parser, the JavaScript engine and the image and font decoders.
-- **Even if it were compromised,** section 5.6 applies: it gains nothing of value.
+- **If it were compromised,** section 5.6 sets out what each level of compromise gains.
 - **Its configuration closes the remaining doors:**
   - a Content Security Policy with no inline script, no evaluation and no remote sources (requirement 10.5);
   - navigation and new windows refused (requirement 10.6);
   - capabilities naming webview labels only, with no plugins that touch files, processes or the network (requirement 10.7);
   - no inspector, remote debugging or global Tauri object in release builds (requirement 10.8);
   - dropped files routed to the trusted core (requirement 10.9);
-  - no network at all: the Content Security Policy, the webview's own feature switches, and the operating-system sandbox of the user interface process without network permission. The Content Security Policy does not govern WebRTC or name-lookup prefetching, so the sandbox is the guarantee (requirement 10.11).
+  - no network for page code: the Content Security Policy, WebRTC removed in every frame, the webview's own feature switches, and the web content process's lack of sockets (requirement 10.11). On macOS the operating system cannot also deny the window host the network, because the webview then renders nothing (`docs/proofs.md` section 2).
 
-**Remaining risk.** For an attacker to use a webview fault they must first get content into the webview, which requires a fault in the trusted core's markup generation or in our script module. Then they must escape both the webview's own content process sandbox and the user interface process's operating-system sandbox. Even then they hold a process with nothing of value. **Low.**
+**Remaining risk.** A fault in the web engine (level 2 in section 5.6) could send what is on screen to an attacker's server, because the networking process serves the content process's requests and the operating system cannot remove the window host's network entitlement on macOS. It could not imitate the strip or read a secret. An escape into the window host (level 3) could also imitate the strip and forge confirmations, but still read no secret. Both need faults in the web engine itself. **Low likelihood; medium impact for level 2 (confidentiality of what is on screen), high for level 3 (navigation and settings, without secrets).**
 
 ---
 
@@ -334,7 +337,7 @@ The updater can replace the application's code, so it is the most powerful compo
 
 **Mitigations.**
 - **Run-time JavaScript is a fixed, approved list:** React, React DOM and the Tauri interface package, bundled at build time from the committed lockfile, with installation scripts blocked and `npm audit` in the check script (requirement 10.3). Keeping React was the owner's decision (decision 19).
-- **That code runs only in the user interface process,** which has no network, no files and no secrets. A compromised package there gains what a compromised interface gains (section 5.6): wrong pixels in the interface area and the use of channels already open. It cannot change channel, change a security setting or read a secret.
+- **That code runs only as page code in the web content process** (level 1 of section 5.6). A compromised package there gains what compromised page code gains: wrong pixels in the interface area and the use of channels already open. It cannot change channel, change a security setting or read a secret.
 - **Rust dependencies:** lockfiles committed and reviewed, `cargo-deny` and `cargo audit` in the check script, package installation scripts blocked, and every new library approved by the owner (requirement 14.3).
 - **Where a dependency sits limits what it can do.** Most dependencies sit in processes with no rights. The trusted core's dependency tree is kept small and contains no web engine (requirement 3.2).
 
@@ -388,9 +391,9 @@ The updater can replace the application's code, so it is the most powerful compo
 
 | Platform | Notes |
 |---|---|
-| macOS | Full separation with services and the App Sandbox. The fetcher and decoder sandboxing gap in `neoteletext` must be closed (requirement 3.8). |
+| macOS | Trusted core, fetcher and decoder as sandboxed services. The window host must hold the outgoing-network entitlement, because WKWebView renders nothing without it; page code is kept off the network by the Content Security Policy, WebRTC removal and the web content process's sandbox instead (decision 27, `docs/proofs.md`). The fetcher and decoder sandboxing gap in `neoteletext` must be closed (requirement 3.8). |
 | Windows | Full separation with AppContainers. WebView2 is updated independently by Microsoft. |
-| Linux | Full separation with Landlock and seccomp filters. WebKitGTK may lag upstream security fixes; it is confined to the user interface process, and the application warns about old versions (requirement 10.10). |
+| Linux | Full separation with Landlock and seccomp filters. WebKitGTK may lag upstream security fixes; it is confined to the window host, and the application warns about old versions (requirement 10.10). |
 | Android | The decoder runs in an isolated service process inside `wasmi`. The webview runs within the application's process space, so the separation of section 5.6 is weaker; the webview still receives no teletext data and holds no secrets. |
 | iOS | One process. The decoder's only wall is `wasmi`. WebKit's own content process still separates script from the application. This is the weakest platform, as in the engine design. |
 
@@ -401,7 +404,7 @@ The updater can replace the application's code, so it is the most powerful compo
 | Design | Web engine in the trusted process | Third-party script at run time | What compromising the interface gains | Interface richness |
 |---|---|---|---|---|
 | First proposal (webview as trusted shell, React) | Yes | Yes | Everything the user can do | Full |
-| **This design, adopted** (untrusted React interface in its own process, native trusted strip) | **No** | Yes, confined to the sandboxed user interface process | Wrong pixels inside a sandbox, and use of channels already open | Full |
+| **This design, adopted** (React interface as sandboxed page code, a window host with no secrets, native trusted strip in the webview's window) | **No** | Yes, as page code in the web content process | Wrong pixels inside the webview's area, and use of channels already open | Full |
 | Blitz (Rust markup and style renderer, no JavaScript engine) | No | None exists | Nothing script-related exists | Rejected by decision 19: it cannot run the React interface |
 | egui (the engine's own design) | No | None | Not applicable | Lowest |
 
@@ -430,14 +433,16 @@ These were observed on this codebase, not reasoned:
 |---|---|---|---|---|
 | 1 | The covert channel between channels through the pattern of requests: closed for bundled channels and channels with a contents file once requirements 4.7 and 5.15 to 5.17 are implemented; **accepted** for channels with only separate page files (decision 23) | Low; needs both a compromised interface and an attacker's per-page channel open | One channel's pages leak to another channel's server | Fetching never depends on viewing (decision 22); per-page channels' requests confined to their own channel and bounded (requirement 4.7) |
 | 2 | Spoofing of the trusted strip by page images or the interface, especially in animated or full-screen layouts | Medium | The user is misled into confirming a navigation | Native trusted strip; confirmations only there; recorded layout reviews (requirements 8.5, 11.1 to 11.4, 14.5) |
-| 3 | A fault in the trusted core, the one process holding everything | Low | Full compromise | Small, no web engine, no network format readers, fuzzed message readers, `unsafe` forbidden (requirements 3.2, 4.6, 14.2) |
-| 4 | Theft of the update root keys at threshold | Low | Malicious update | Threshold, offline hardware keys, separate holders (requirements 13.8, 13.9) |
-| 5 | A supply chain compromise of a Rust dependency in the trusted core | Low | Full compromise | Small dependency tree, review, auditing (requirements 3.2, 14.3) |
-| 6 | A supply chain compromise of React or another run-time JavaScript package in the user interface process | Medium | Compromise of a process with nothing of value; it can switch tabs and show other pages of channels already open | Fixed approved list, lockfile review, `npm audit`, process isolation, intent restrictions (requirements 3.6, 4.5, 10.3) |
-| 7 | A Linux webview fault reached through our own content | Low | Compromise of a process with nothing of value | No teletext data reaches it, sandbox, version warning (requirements 3.6, 10.1, 10.10) |
-| 8 | A decoder or fetcher fault | Low | Contained | No rights, `wasmi`, sandboxes (requirements 3.3, 3.4, 3.7) |
-| 9 | Exhaustion of resources | Low | Unresponsive tab or application | Visibility culling, limits, fuel (section 11) |
-| 10 | Runtime caller misattribution, as found with the Chromium Embedded Framework | Low on Tauri 2 | Permission bypass | One webview per window; attribution test on every runtime change (requirement 14.4) |
+| 3 | A web engine fault taking over the web content process (level 2 of section 5.6) | Low | What is on screen can be sent to an attacker's server through the webview's networking process; no strip imitation, no secrets | Platform updates of the web engine; no teletext bytes reach it; on macOS its sandbox denies windows and sockets (`docs/proofs.md` section 3.2) |
+| 4 | An escape from the web content process into the window host (level 3 of section 5.6) | Very low; needs a second fault | A false trusted strip and forged confirmations and settings; no secrets | Secrets kept in the trusted core (requirement 3.6); the window host makes no decision |
+| 5 | A fault in the trusted core, the one process holding everything | Low | Full compromise | Small, no web engine, no network format readers, fuzzed message readers, `unsafe` forbidden (requirements 3.2, 4.6, 14.2) |
+| 6 | Theft of the update root keys at threshold | Low | Malicious update | Threshold, offline hardware keys, separate holders (requirements 13.8, 13.9) |
+| 7 | A supply chain compromise of a Rust dependency in the trusted core | Low | Full compromise | Small dependency tree, review, auditing (requirements 3.2, 14.3) |
+| 8 | A supply chain compromise of React or another run-time JavaScript package, running as page code | Medium | Compromise of a process with nothing of value; it can switch tabs and show other pages of channels already open | Fixed approved list, lockfile review, `npm audit`, process isolation, intent restrictions (requirements 3.6, 4.5, 10.3) |
+| 9 | A Linux webview fault reached through our own content | Low | As the web engine faults above, for longer, because WebKitGTK updates may lag | No teletext data reaches it, sandbox, version warning (requirements 3.6, 10.1, 10.10) |
+| 10 | A decoder or fetcher fault | Low | Contained | No rights, `wasmi`, sandboxes (requirements 3.3, 3.4, 3.7) |
+| 11 | Exhaustion of resources | Low | Unresponsive tab or application | Visibility culling, limits, fuel (section 11) |
+| 12 | Runtime caller misattribution, as found with the Chromium Embedded Framework | Low on Tauri 2 | Permission bypass | One webview per window; attribution test on every runtime change (requirement 14.4) |
 
 ---
 
@@ -447,7 +452,7 @@ Every check below is in the project's check script, run by git hooks (requiremen
 
 1. **Engine dependencies:** no interface toolkit in any `neoteletext` crate used (requirement 2.2).
 2. **Trusted core dependencies:** no web engine, JavaScript engine or network format reader (requirement 3.2).
-3. **Process rights:** network and file access attempts fail in the fetcher, decoder, font helper and user interface process, on each platform (requirements 3.3 to 3.7).
+3. **Process rights:** network and file access attempts fail in the fetcher, decoder and font helper, and file access outside the bundle fails in the window host, on each platform; page code reaches no network (requirements 3.3 to 3.7 and 10.11).
 4. **Message bounds and fuzzing:** every message kind, and fuzzing of every reader in the trusted core (requirements 4.2 and 4.6).
 5. **Intent restrictions:** every intent kind fails to change channel, confirm the site-change screen or change a setting (requirement 4.5).
 6. **Role crossing:** responses are refused in any role but their own (requirement 5.2).

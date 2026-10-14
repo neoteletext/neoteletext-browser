@@ -70,15 +70,16 @@ Each decision below was made by the owner on the date given. Requirements in `re
 | Decision 15 | 15 October 2026 | The application must have an update mechanism with no scope for failure or for leaving the application unusable. |
 | Decision 16 | 15 October 2026 | Update metadata uses the most secure option: The Update Framework, with threshold signatures and expiring metadata. |
 | Decision 17 | 15 October 2026 | Updates are hosted on a dedicated subdomain (named by decision 25). |
-| Decision 18 | 15 October 2026 | The hardened process model of section 6 is adopted: a trusted core with no web engine; the interface drawn with web technology runs in its own user interface process with no rights and no secrets; every security indicator and decision is in a native trusted strip. As first adopted it also required markup generated in Rust and a single hand-written script module; decision 19 replaced that with React. |
-| Decision 19 | 15 October 2026 | The interface is a HyperText Markup Language, Cascading Style Sheets and TypeScript application running in the webview, inside the untrusted user interface process, with React as its framework. Blitz is rejected, because it has no JavaScript engine and cannot run such an application. Decision 18 is amended accordingly: React and its run-time dependencies are allowed in the user interface process; process isolation, the native trusted strip and every other part of decision 18 stand. |
-| Decision 20 | 15 October 2026 | Whether the interface is written with React or with plain HyperText Markup Language, Cascading Style Sheets and JavaScript must make no difference to security. Every security property must hold even if the user interface process runs code written by an attacker. |
+| Decision 18 | 15 October 2026 | The hardened process model of section 6 is adopted: a trusted core with no web engine; the interface drawn with web technology runs in its own window host with no rights and no secrets; every security indicator and decision is in a native trusted strip. As first adopted it also required markup generated in Rust and a single hand-written script module; decision 19 replaced that with React. |
+| Decision 19 | 15 October 2026 | The interface is a HyperText Markup Language, Cascading Style Sheets and TypeScript application running in the webview, inside the untrusted window host, with React as its framework. Blitz is rejected, because it has no JavaScript engine and cannot run such an application. Decision 18 is amended accordingly: React and its run-time dependencies are allowed in the window host; process isolation, the native trusted strip and every other part of decision 18 stand. |
+| Decision 20 | 15 October 2026 | Whether the interface is written with React or with plain HyperText Markup Language, Cascading Style Sheets and JavaScript must make no difference to security. Every security property must hold even if the window host runs code written by an attacker. |
 | Decision 21 | 15 October 2026 | Superseded the same day by decision 22. It had closed the covert channel between channels by accepting page requests only from trusted input, which would have stopped page-number and Fastext keys from working in the tab. |
 | Decision 22 | 15 October 2026 | Fetching never depends on viewing. A channel's pages are fetched in an order fixed by the channel's own data, and refreshed on a fixed schedule or by the channel's push feed, never according to which page is shown, selected or requested. Page-number and Fastext keys work in the tab and only select among pages already held, so no key and no interface request ever causes, delays, reorders or prioritises a network request. Navigations to other channels still go through the trusted strip. This replaces `neoteletext`'s fetching of a page's own file when it is viewed and its prefetching of Fastext targets and neighbouring pages (its requirement REQ-NAV-004) in T42 Browser. |
-| Decision 23 | 15 October 2026 | Channels that publish only separate page files, with no bundle (`index.t42`) and no contents file (`contents.txt`), have each page fetched when it is selected, as any browser fetches what is asked for. This is a knowingly accepted exception to decision 20 for those channels only: if the user interface process were compromised, its forged key presses could cause page requests whose pattern carries information to another channel's server, and those channels' servers can see which pages are read. Bundled channels and channels with a contents file keep decision 22 in full. |
+| Decision 23 | 15 October 2026 | Channels that publish only separate page files, with no bundle (`index.t42`) and no contents file (`contents.txt`), have each page fetched when it is selected, as any browser fetches what is asked for. This is a knowingly accepted exception to decision 20 for those channels only: if the window host were compromised, its forged key presses could cause page requests whose pattern carries information to another channel's server, and those channels' servers can see which pages are read. Bundled channels and channels with a contents file keep decision 22 in full. |
 | Decision 24 | 15 October 2026 | Every recommendation for open decisions 1 and 3 to 13 is accepted: (1) `neoteletext-browser` is reused for navigation, history, site-change and address rules; (3) the site-change screen is native, in the trusted strip only; (4) the address field is always visible; (5) both conventional tabs and a zoomable overview of tabs, magazines and pages; (6) a certificate that fails its checks is a hard stop with no way to proceed; (7) private windows come after the first version; (8) no per-tab containers; (9) page images, with a palette-index canvas only if measurement shows images limit very large walls; (10) `tough` implements The Update Framework; (11) one launcher scheme on every desktop; (12) desktop first, phones later; (13) three hardware security keys for the update root, held by three separate people, one kept in a safe. |
 | Decision 25 | 15 October 2026 | Updates are hosted at `update.neoteletext.com`, a subdomain used for nothing else. |
 | Decision 26 | 15 October 2026 | Every limit on fetching, refreshing and input is defined once, in neoteletext, and T42 Browser uses neoteletext's constants. The fetching policy of decisions 22 and 23 is implemented in neoteletext as well, not in T42 Browser. What T42 Browser needs from neoteletext is listed in section 5.1 and in `neoteletext/docs/t42-browser-open-questions.md`. |
+| Decision 27 | 15 October 2026 | Proofs A and B (`docs/proofs.md`) showed that on macOS a webview cannot be denied the network by the operating system without rendering nothing, and that a strip in a separate process's window can be covered by any other window. The interface process of decision 18 is therefore replaced by a **window host**: a process that owns the window, hosts the system webview and draws the native trusted strip in that same window. It holds the network entitlement only because the webview requires it, never uses it, and holds no secrets. The trusted core stays a separate process, holding every secret and making every decision. Page code is confined by the webview's own content process sandbox, the Content Security Policy and the removal of WebRTC in every frame. |
 
 ---
 
@@ -92,8 +93,9 @@ Each decision below was made by the owner on the date given. Requirements in `re
 | **Origin** | The combination of scheme, host and port of an address, as in traditional browsers. |
 | **Tab** | One view onto one channel at a time, with its own history. |
 | **Trusted core** | The process that holds everything the user trusts: which channel each tab shows, history, bookmarks, cookies, settings. It contains no web engine. |
-| **User interface process** | The process that contains Tauri and the system webview and draws the decorative interface. It is treated as untrusted and holds no secrets. |
-| **Trusted strip** | A small native area, drawn by the trusted core, that shows the address and security state of the current tab and carries every security decision. The user interface process cannot draw over it or read it. |
+| **Window host** | The process that owns each window, hosts Tauri and the system webview, and draws the native trusted strip in the same window (decision 27). It holds no secrets and makes no decision; it renders the state the trusted core sends and passes on what the user did. The webview's page code runs in the webview's own content process, outside the window host. |
+| **Web content process** | The system webview's own process in which page code runs, sandboxed by the platform. On macOS its sandbox denies everything by default, including the window server and network sockets (`docs/proofs.md` section 3.2). |
+| **Trusted strip** | A small native area at the top of each window, drawn natively by the window host from state the trusted core sends, in the same window as the webview. It shows the address and security state of the current tab and carries every security decision. Page code cannot draw over it or read it (`docs/proofs.md` section 3.2). |
 | **Fetcher** | The process that holds network connections and Transport Layer Security sessions, and runs the strict web protocol readers. |
 | **Decoder** | The process that recognises, decodes and renders one channel's teletext. It has no network access, no file access and no secrets, and runs inside the WebAssembly interpreter `wasmi`. |
 | **Frame** | One rendered page: palette indices plus its palette, produced by the decoder. |
@@ -106,7 +108,7 @@ Each decision below was made by the owner on the date given. Requirements in `re
 
 1. **Assume every part can be compromised, and make each compromise worthless.** No architecture can promise never to be hacked. This one is arranged so that compromising any single component gains an attacker nothing of value: no secrets, no navigation without the user, no network, no files.
 2. **Untrusted bytes are read only in processes that have no rights.** Everything a server sends is read by strict, bounded readers in the fetcher, the decoder or a confined font helper. The trusted core routes bytes and re-checks results as typed data; it never parses network formats itself.
-3. **The interface drawn with web technology is untrusted, and its code is irrelevant to security** (decision 20). Every security property holds even if the user interface process runs an attacker's code. React or plain markup and script is an engineering choice, not a security one. The system webview is a very large engine. It is placed in its own process with no rights, it is given no secrets, and it cannot make any security decision. Security decisions and security indicators live in the trusted strip.
+3. **The interface drawn with web technology is untrusted, and its code is irrelevant to security** (decision 20). Every security property holds even if the window host runs an attacker's code. React or plain markup and script is an engineering choice, not a security one. The system webview is a very large engine. Its page code runs in the webview's own sandboxed content process; the window host that holds the webview has no secrets and makes no decision (decision 27). Security decisions and security indicators live in the trusted strip, which page code cannot reach.
 4. **The webview never receives teletext data.** Pages reach it only as Portable Network Graphics images that the trusted core encoded itself from palette indices, and as plain text that the trusted core extracted, cleaned and bounded.
 5. **Every rule lives in Rust, once.** Navigation rules, address display rules, cookie rules and site-change rules are written once in Rust and tested once, for every platform.
 6. **Nothing is downloaded and executed.** No page, channel or server ever supplies code. The only code that runs is the code signed and shipped in the application.
@@ -163,29 +165,31 @@ This model was adopted by the owner on 15 October 2026 (decision 18).
 ┌──────────────────────────── trusted core (Rust, no web engine) ────────────────────────────┐
 │ owns: tabs, history, bookmarks, settings, sessions, the cookie store, address parsing and   │
 │ display, site-change rules, routing of bytes between fetcher and decoders, frame checking,  │
-│ Portable Network Graphics encoding, the trusted strip (native drawing)                     │
+│ Portable Network Graphics encoding, the state of the trusted strip                        │
 └──────┬───────────────────────────────┬───────────────────────────────┬─────────────────────┘
        │ framed pipe                    │ framed pipe                    │ framed pipe
        │ requests out, bytes in         │ bytes and commands in,         │ frames and view state out,
        │                                │ frames and events out          │ intents in
 ┌──────▼──────────────────┐   ┌─────────▼──────────────────┐   ┌─────────▼────────────────────────┐
-│ fetcher                  │   │ decoder, one per channel    │   │ user interface process            │
+│ fetcher                  │   │ decoder, one per channel    │   │ window host (decision 27)         │
 │ network connections,     │   │ content detection, readers, │   │ Tauri and the system webview      │
-│ Transport Layer Security,│   │ decoding, Presentation      │   │ draws page walls, tab strip,      │
-│ protocol readers         │   │ Levels 1.0 to 3.5, render   │   │ panels and transitions            │
-│ network only             │   │ inside wasmi; no network,   │   │ no network, no files, no secrets  │
-│                          │   │ no files, no secrets        │   │                                   │
+│ Transport Layer Security,│   │ decoding, Presentation      │   │ owns the window; draws the native │
+│ protocol readers         │   │ Levels 1.0 to 3.5, render   │   │ trusted strip; hosts the webview  │
+│ network only             │   │ inside wasmi; no network,   │   │ no secrets; network entitlement   │
+│                          │   │ no files, no secrets        │   │ held only because WebKit needs it │
 └──────────────────────────┘   └─────────────────────────────┘   └───────────────────────────────────┘
-       plus: font helper (confined), updater and launcher (section 12)
+       plus: the webview's own sandboxed content process, where page code runs;
+             font helper (confined), updater and launcher (section 12)
 ```
 
 | Process | Holds | May access | If compromised, the attacker gains |
 |---|---|---|---|
-| **Trusted core** | Everything the user trusts | Its data directory, the display (for the trusted strip), starting the other processes | Everything; this is why it reads no network format and contains no web engine |
+| **Trusted core** | Everything the user trusts | Its data directory, starting the other processes | Everything; this is why it reads no network format and contains no web engine |
 | **Fetcher** | Network connections, Transport Layer Security sessions, the cookies attached to the requests it is currently making | The network only | The ability to send and receive on the network, and the cookies of requests in flight; no files, no history, no other channels' cookies |
 | **Decoder** | One channel's pages | Nothing | Nothing outside its own memory, which holds one channel's public pages |
 | **Font helper** | One font being read | Nothing | Nothing; its output is checked by hash and by shape |
-| **User interface process** | What is on screen | Nothing beyond its window and the pipe to the trusted core | The ability to draw wrong pixels inside its own area and send intents, which the trusted core checks; no secrets, no network, no navigation without the trusted strip |
+| **Window host** | What is on screen, and the state of the trusted strip | Its windows, the pipe to the trusted core, and the network entitlement the webview requires, which it never uses | The ability to draw anything in its windows, including a false trusted strip, and to send intents and strip input, which the trusted core checks; no secrets. Reaching it requires escaping the web content process's sandbox. |
+| **Web content process** (the webview's own) | The page code | Nothing beyond what the platform's sandbox allows; on macOS no window server and no network sockets | The page's own area of the window, and requests through the webview's networking process, which the Content Security Policy and WebRTC removal stop for page code |
 | **Updater** | The update being downloaded | The update subdomain only, and the versions directory | Nothing that survives: every update is checked against The Update Framework metadata before use |
 
 ### 6.2 Why bytes pass through the trusted core
@@ -225,22 +229,24 @@ All processes communicate over the framed pipe protocol of `neoteletext-app/src/
 | Form | The page has a form: its fields and destination |
 | Status | Searching, found, stale, and the page title from row 0 |
 
-**Between the trusted core and the user interface process** (new in T42 Browser):
+**Between the trusted core and the window host** (new in T42 Browser):
 
 | Direction | Message | Meaning |
 |---|---|---|
 | Core to interface | View state | The decorative state of each tab and window: tab titles as cleaned text, layout, which pages are shown. Never cookies, never addresses for security display (the trusted strip shows those). |
 | Core to interface | Frame | One page image: tab, magazine and page, subcode, frame version, Portable Network Graphics bytes |
 | Core to interface | Page text | The cleaned, bounded text of a page, for accessibility labels |
-| Interface to core | Intent | What the user did: show a page, scroll, change layout, switch tab, close tab, a key, a click on a page cell, which pages are visible. Never a navigation to another channel. |
+| Interface to core | Intent | What the user did in the page area: show a page, scroll, change layout, switch tab, close tab, a key, a click on a page cell, which pages are visible. Never a navigation to another channel. |
+| Core to window host | Strip state | What the trusted strip shows: the address as formatted by the display rules, the channel's identity, the encryption state, the site-change screen when one is pending. |
+| Window host to core | Strip input | What the user did in the trusted strip: a typed address, Back, Forward, Reload, Home, a site-change confirmation or cancellation, a security setting. Strip input is a separate message kind from page intents, and only the native strip produces it. |
 
 ### 6.5 Isolation on each platform
 
-| Platform | Trusted core | Fetcher | Decoder | User interface process |
+| Platform | Trusted core | Fetcher | Decoder | Window host |
 |---|---|---|---|---|
-| macOS | Main application, App Sandbox | Service with the outgoing-network entitlement only | Service with no entitlements, and inside wasmi | Service with no network or file entitlements |
-| Windows | Main process | AppContainer with the internet-client capability only | AppContainer without it, low integrity, job object, and inside wasmi | AppContainer with no capabilities |
-| Linux | Main process | Own process, Landlock and seccomp filter | Own process, Landlock and seccomp filter, and inside wasmi | Own process, Landlock and seccomp filter |
+| macOS | Service, App Sandbox, no network | Service with the outgoing-network entitlement only | Service with no entitlements, and inside wasmi | The main application, holding the outgoing-network entitlement only because WKWebView renders nothing without it (`docs/proofs.md` section 2), and no file access beyond its bundle; the trusted core is a separate service |
+| Windows | Main process | AppContainer with the internet-client capability only | AppContainer without it, low integrity, job object, and inside wasmi | AppContainer; whether WebView2 can run without the internet-client capability is not yet proven |
+| Linux | Main process | Own process, Landlock and seccomp filter | Own process, Landlock and seccomp filter, and inside wasmi | Own process, Landlock; whether WebKitGTK can run without network is not yet proven |
 | Android | Main application process | Separate service process | Isolated service process with seccomp filter, and inside wasmi | The application's webview (see section 13) |
 | iOS | The application | Inside the application process | Inside the application process, inside wasmi only | The application's webview (see section 13) |
 
@@ -360,7 +366,7 @@ The cookie store is `neoteletext-web`'s, which follows the cookie specification 
 - The trusted core's frame cache and back-and-forward cache are keyed by tab and channel.
 - The network cache is keyed by channel. Because there are no third-party loads, one key level is enough; traditional browsers need two.
 - The webview stores nothing that belongs to a channel. It has no cookies, no site storage and no network cache of channel content.
-- The webview cannot use the network at all, at three levels: its Content Security Policy; its own feature switches (WebRTC, media capture, geolocation, service workers, prefetching); and above all the operating-system sandbox of the user interface process, which has no network permission. Only the last is a guarantee; the first two narrow what a fault could try (requirement 10.11).
+- Page code cannot use the network: the Content Security Policy stops every request it governs, WebRTC is removed in every frame before page scripts run, and the web content process has no network sockets of its own. Measured on macOS: nothing reached a test server (`docs/proofs.md` section 2). The operating system cannot deny the window host the network on macOS, because the webview then renders nothing (requirement 10.11).
 
 ### 9.5 Navigation and the site-change screen
 
@@ -369,7 +375,7 @@ As in `neoteletext/docs/desktop-browser.md` sections 6 to 8:
 - **Navigations the user starts:** the address field in the trusted strip, bookmarks, presets, Back, Forward, Home.
 - **Navigations a page starts:** Fastext keys, page catching, page numbers that follow a page link, redirects, discovery results, and a decoder's request for a page on another channel.
 - **The address shown is always the committed address** until a new page commits.
-- **Any navigation that leaves the channel goes through the site-change screen,** which shows the destination and needs the user's confirmation. It is drawn in the trusted strip (section 11.3). The user interface process cannot start, show, fake or confirm it.
+- **Any navigation that leaves the channel goes through the site-change screen,** which shows the destination and needs the user's confirmation. It is drawn in the trusted strip (section 11.3). The window host cannot start, show, fake or confirm it.
 
 ### 9.6 Forms
 
@@ -398,13 +404,13 @@ Private windows (a separate in-memory cookie store, no history, discarded on clo
 1. **The decoder renders a frame:** 8-bit palette indices, 480 by 500 (40 columns of 12 dots, 25 rows of 20 lines), wider with side panels, and a palette of at most 32 colours (decision 6). It sends a frame only when the page changes or flash changes phase.
 2. **The trusted core checks the frame:** known tab and page, dimensions within the raster limits, palette of at most 32 entries, every index within the palette.
 3. **The trusted core encodes an indexed Portable Network Graphics image** with `neoteletext-image`'s writer, using a palette sized to the colours present. Frames are compared by a hash of indices and palette, so an unchanged page is never sent again.
-4. **The trusted core sends the frame to the user interface process** on the frame pipe: a fixed binary header (tab, magazine and page, subcode, frame version, image length) followed by the image.
-5. **The user interface process shows it in that page's `<img>` element:** it makes a `blob:` address for the bytes, decodes the image away from the screen with `HTMLImageElement.decode()`, then swaps the visible image and releases the previous address. If a newer frame for the same page arrives while one is decoding, the older one is dropped.
+4. **The trusted core sends the frame to the window host** on the frame pipe: a fixed binary header (tab, magazine and page, subcode, frame version, image length) followed by the image.
+5. **The window host shows it in that page's `<img>` element:** it makes a `blob:` address for the bytes, decodes the image away from the screen with `HTMLImageElement.decode()`, then swaps the visible image and releases the previous address. If a newer frame for the same page arrives while one is decoding, the older one is dropped.
 6. **Flash** is a palette change in the engine. The trusted core keeps both phases of a flashing page and alternates them on the flash timer, without asking the decoder again.
 
 **Showing many pages at once (decision 7):**
 
-- The user interface process reports which pages are visible, using an intersection observer on each page image plus a margin for scrolling. The trusted core asks decoders for frames, and sends frames, only for those pages. A wall of 800 pages costs what is visible.
+- The window host reports which pages are visible, using an intersection observer on each page image plus a margin for scrolling. The trusted core asks decoders for frames, and sends frames, only for those pages. A wall of 800 pages costs what is visible.
 - Every page is rendered at its native raster. The interface scales images with Cascading Style Sheets: `image-rendering: pixelated` when enlarged, smooth when reduced to a thumbnail.
 - Teletext dots are not square on a 4:3 display. A horizontal scale in Cascading Style Sheets corrects the shape without rendering again.
 - A mostly flat page as an indexed Portable Network Graphics image is expected to be a few kilobytes. This is to be measured.
@@ -419,27 +425,27 @@ The shell is everything around the pages: tabs, the address field, the toolbar, 
 
 **How the shell is split:**
 
-- **The trusted strip,** drawn natively by the trusted core, holds the address field, the channel's identity, the security state and every security decision.
-- **The user interface process** draws everything decorative: page walls, transitions, the tab strip, panels, internal pages. It is a React application written in TypeScript (decision 19). It renders only from the state the trusted core sends, shows frames, forwards input and plays transitions. Page text is rendered only as React text nodes, which escape every value; nothing builds markup from strings. Its run-time JavaScript dependencies are a fixed, approved list: React, React DOM and the Tauri interface package.
-- **Rust owns all state.** The user interface process renders what it is told and reports what the user did. It decides nothing about navigation, channels, addresses or security.
+- **The trusted strip,** drawn natively by the window host in the same window as the webview, from state the trusted core sends, holds the address field, the channel's identity, the security state and every security decision. Page code cannot reach it (decision 27).
+- **The window host** draws everything decorative: page walls, transitions, the tab strip, panels, internal pages. It is a React application written in TypeScript (decision 19). It renders only from the state the trusted core sends, shows frames, forwards input and plays transitions. Page text is rendered only as React text nodes, which escape every value; nothing builds markup from strings. Its run-time JavaScript dependencies are a fixed, approved list: React, React DOM and the Tauri interface package.
+- **Rust owns all state.** The window host renders what it is told and reports what the user did. It decides nothing about navigation, channels, addresses or security.
 
 ### 11.1 State flow
 
 ```
-trusted core ──view state, frames, page text──► user interface process
-trusted core ◄─────────────── intents ───────── user interface process
+trusted core ──view state, frames, page text──► window host
+trusted core ◄─────────────── intents ───────── window host
 
-trusted core ──address, channel, security state──► trusted strip (native)
-trusted core ◄──typed address, confirmations────── trusted strip (native)
+trusted core ──strip state: address, channel, security──► trusted strip (native, in the window host)
+trusted core ◄──strip input: typed address, confirmations── trusted strip (native, in the window host)
 ```
 
-- The trusted core sends the user interface process a full snapshot of each tab's decorative state whenever it changes, so the interface never merges partial updates.
+- The trusted core sends the window host a full snapshot of each tab's decorative state whenever it changes, so the interface never merges partial updates.
 - An intent that is not allowed changes nothing. The interface keeps showing the last state.
-- The trusted strip talks only to the trusted core.
+- The trusted strip shows only what the trusted core sends, and its input is a separate message kind from page intents. Page code cannot produce strip input; only an escape from the web content process into the window host could forge it (`security-analysis.md`).
 
 ### 11.2 Tab strip
 
-| Drawn by the user interface process | Decided by the trusted core |
+| Drawn by the window host | Decided by the trusted core |
 |---|---|
 | Tabs, drag to reorder, close buttons, overflow scrolling, open and close animations, a live thumbnail of the tab's page on hover | The list and order of tabs, creating and closing tabs, which decoder serves each tab, restoring sessions |
 
@@ -447,7 +453,7 @@ A tab shows the channel's name as cleaned text from the trusted core, a loading 
 
 ### 11.3 The trusted strip: address field, identity and security decisions
 
-The trusted strip is a native area along the top of every window, outside the user interface process's drawing area.
+The trusted strip is a native area along the top of every window, drawn by the window host in the same window as the webview but outside the webview's area, so page code cannot draw over it or read it (`docs/proofs.md` section 3.2). It shows only what the trusted core sends and passes every input to the trusted core as strip input.
 
 - **Display mode:** the channel's address as formatted by the address display rules (scheme, host emphasised, internationalised names shown safely), whether the channel arrived encrypted, and the channel's name.
 - **Edit mode:** a native text field. On Enter the text goes to the trusted core, which parses it with `neoteletext-web`'s strict address parser and either navigates or shows an error inside the strip.
@@ -465,19 +471,19 @@ The trusted strip is a native area along the top of every window, outside the us
 ### 11.5 Page area and page input
 
 - **Page walls:** grids, lists and stacks of page images, with Cascading Style Sheets transforms and view transitions for zooming, subpage stacks and magazine overviews. This carries over from the prototype's size slider, list view and the Tilt and Fan transforms.
-- **Clicks on a page:** the user interface process converts the pointer position on the image (`offsetX` and `offsetY`, which are correct under any Cascading Style Sheets transform; verified in the prototype under three-dimensional tilt in WebKit and Chromium) into a cell, column and row, and sends a click intent. The trusted core asks the decoder what is in that cell and decides whether it is a link. A link to another channel goes through the site-change screen.
-- **Keys:** digits enter page numbers, colour keys follow Fastext links, and reveal, hold and mix work, with the page area focused, in the tab (decision 22). The user interface process forwards normalised key presses to the trusted core's input router (`neoteletext/docs/hmi.md`), which maps them to functions, so the keyboard map is in one place. On bundled channels and channels with a contents file, a key can only select among pages the channel's decoder already holds and never causes a network request; a page not yet received shows that it is being searched for, as a television does while waiting for the carousel. On channels with only separate page files, selecting a page not yet held fetches it (decision 23). A key that would leave the channel, such as a Fastext link to another channel, goes through the site-change screen in the trusted strip.
+- **Clicks on a page:** the window host converts the pointer position on the image (`offsetX` and `offsetY`, which are correct under any Cascading Style Sheets transform; verified in the prototype under three-dimensional tilt in WebKit and Chromium) into a cell, column and row, and sends a click intent. The trusted core asks the decoder what is in that cell and decides whether it is a link. A link to another channel goes through the site-change screen.
+- **Keys:** digits enter page numbers, colour keys follow Fastext links, and reveal, hold and mix work, with the page area focused, in the tab (decision 22). The window host forwards normalised key presses to the trusted core's input router (`neoteletext/docs/hmi.md`), which maps them to functions, so the keyboard map is in one place. On bundled channels and channels with a contents file, a key can only select among pages the channel's decoder already holds and never causes a network request; a page not yet received shows that it is being searched for, as a television does while waiting for the carousel. On channels with only separate page files, selecting a page not yet held fetches it (decision 23). A key that would leave the channel, such as a Fastext link to another channel, goes through the site-change screen in the trusted strip.
 
 ### 11.6 Menus and shortcuts
 
-- A native menu bar, drawn by the trusted core: File, Edit, View, History, Window. The Edit menu provides copy, paste and undo in text fields.
+- A native menu bar, drawn by the window host and acted on by the trusted core: File, Edit, View, History, Window. The Edit menu provides copy, paste and undo in text fields.
 - Shortcuts live on menu items, so they work whatever has focus: new tab, close tab, open location, reload, back, forward, next and previous tab, developer tools, and the rest of `neoteletext/docs/desktop-browser.md` section 10.
 - Menu items and toolbar buttons send the same intents to the same code.
 
 ### 11.7 Internal pages
 
-- Bookmarks, history, presets and settings are internal pages drawn by the user interface process from data the trusted core supplies.
-- **Settings that affect security are changed only in the trusted strip,** never in the user interface process.
+- Bookmarks, history, presets and settings are internal pages drawn by the window host from data the trusted core supplies.
+- **Settings that affect security are changed only in the trusted strip,** never in the window host.
 - Refusal and error pages ("this address does not serve teletext", "certificate rejected") are chosen by the trusted core.
 
 ### 11.8 Developer tools
@@ -495,7 +501,7 @@ A docked panel, toggled from the menu and the toolbar. All its data comes from t
 
 ### 11.9 Windows
 
-- Each window has one user interface process view and one trusted strip.
+- Each window has one window host view and one trusted strip.
 - Tab state lives in the trusted core, so moving a tab to another window is a change of state and a redraw.
 - Frames for a page go only to the window showing it.
 
@@ -582,7 +588,7 @@ The update mechanism is accepted only when these automated tests pass on every d
 
 ## 13. Platforms
 
-| Platform | Webview in the user interface process | Notes |
+| Platform | Webview in the window host | Notes |
 |---|---|---|
 | macOS | WKWebView (WebKit) | Updated with the operating system |
 | Windows | WebView2 (Chromium) | Updated by Microsoft independently of the application |
@@ -600,7 +606,7 @@ The update mechanism is accepted only when these automated tests pass on every d
 t42-browser/
   launcher/                 the small launcher and update stub (section 12)
   updater/                  the updater process
-  src-tauri/                the user interface process (Tauri)
+  src-tauri/                the window host (Tauri)
   core/                     the trusted core (Rust, no web engine)
     src/state/              tabs, history, bookmarks, settings, sessions
     src/strip/              the native trusted strip, per platform
@@ -608,7 +614,7 @@ t42-browser/
     src/frames/             frame checking, de-duplication, image encoding
     src/cookies/            the cookie store (from neoteletext-web)
     src/policy/             navigation, site-change and address display rules
-  ui/                       the React interface (TypeScript), run in the user interface process
+  ui/                       the React interface (TypeScript), run in the window host
   docs/                     this document, requirements, security analysis
 ```
 
@@ -622,7 +628,7 @@ The prototype on branch `main`, tag `tauri2`, is a Tauri 2 shell with one child 
 
 1. **Tauri grants a command when either the window label or the webview label matches a capability** (`tauri/src/ipc/authority.rs`, function `resolve_access`). A capability that names a window also covers every webview inside it. Capabilities must name webview labels, and every command must check its caller's label as well.
 2. **Key presses made while a native webview has focus never reach any other webview.** Shortcuts belong in the native menu.
-3. **Native child webviews sit above everything their parent webview draws.** This is why the trusted strip is native and outside the user interface process's area.
+3. **Native child webviews sit above everything their parent webview draws.** This is one reason the trusted strip is native and outside the webview's area.
 4. **Cookies set by pages served from the `tauri://` scheme are dropped.** In this design cookies are held in Rust and never in the webview.
 5. **A newly created webview can start at zero size.** Interface code must not fix its sizes from the first viewport it sees.
 6. **Resizing a canvas clears it, and resize observers run after a frame's animation callbacks.** A redraw deferred to the next animation frame paints a blank frame. Redraw inside the resize callback.

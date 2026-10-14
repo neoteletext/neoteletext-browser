@@ -152,7 +152,9 @@ Decision 18 places the interface in its own process, with its own window, no net
 
 **Option 1 keeps more of decision 18:** secrets stay out of the process that an escape from the web engine's sandbox would reach.
 
-### 5.4 Requirements affected, once decided
+**Decided:** option 1, by the owner on 15 October 2026 (decision 27 in `architecture.md`). The documents and requirements below were updated the same day.
+
+### 5.4 Requirements changed by decision 27
 
 - **Requirement 3.6** (the interface process has no rights): replaced for the window host.
 - **Requirement 10.11** (the webview cannot use the network): its third level is impossible on macOS; the first two levels and WebRTC removal become the protection there, with the content process sandbox behind them.

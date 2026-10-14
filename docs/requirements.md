@@ -28,7 +28,7 @@
 7. The security model of a tab
 8. Navigation and the site-change screen
 9. Rendering and showing pages
-10. The user interface process and its webview
+10. The window host and its webview
 11. The trusted strip
 12. Shell features
 13. The application update mechanism
@@ -92,7 +92,7 @@
 The process model is decided (decision 18).
 
 ### Requirement 3.1: Separate processes
-- **Statement:** The application must run as separate processes: a trusted core, a fetcher, one decoder per channel (one per tab is acceptable in the first version), a font helper, a user interface process, an updater and a launcher.
+- **Statement:** The application must run as separate processes: a trusted core, a fetcher, one decoder per channel (one per tab is acceptable in the first version), a font helper, a window host, an updater and a launcher.
 - **Reason:** Separation lets each part hold only what it needs, so that a compromise of one part gains little.
 - **Source:** Architecture.
 - **Verification:** Test: the running application's process list matches this set.
@@ -121,11 +121,11 @@ The process model is decided (decision 18).
 - **Source:** Decision 14; `neoteletext/docs/font-security.md`.
 - **Verification:** Test: a malformed font is rejected; a font table whose shape is wrong is rejected by both checks.
 
-### Requirement 3.6: The user interface process has no rights and no secrets
-- **Statement:** The user interface process must have no network access, no file access beyond its own bundled resources, and must never receive cookies, credentials, history beyond what is on screen, bookmarks beyond what is on screen, or any setting that affects security.
-- **Reason:** It contains a very large web engine; if that engine is compromised, the attacker must gain nothing of value.
-- **Source:** Decisions 4 and 18.
-- **Verification:** Test on each desktop platform: network and file access from the user interface process fail. Review of every message type sent to it.
+### Requirement 3.6: The window host holds no secrets and decides nothing
+- **Statement:** The window host must never receive cookies, credentials, history or bookmarks beyond what is on screen, or any setting value that affects security, and must have no file access beyond its own bundled resources. It may hold the outgoing-network entitlement only where the platform's webview cannot render without it (macOS: `docs/proofs.md` section 2), and must never open a network connection of its own. It must make no decision: it shows the state the trusted core sends and passes on what the user did.
+- **Reason:** The window host contains the system webview's interface to the web engine. An attacker who escaped the web content process into it must find nothing of value.
+- **Source:** Decisions 4, 18 and 27.
+- **Verification:** Test on each desktop platform: file access outside the bundle fails from the window host; the window host's own code makes no network connection (checked with the operating system's per-process network accounting); review of every message type sent to it.
 
 ### Requirement 3.7: Operating-system sandboxes
 - **Statement:** On each platform the processes must be sandboxed as in `architecture.md` section 6.5: App Sandbox and services on macOS; AppContainer, low integrity and job objects on Windows; Landlock and seccomp filters on Linux; isolated service processes on Android. On iOS, where one process is mandatory, the decoder must still run inside `wasmi`.
@@ -140,10 +140,10 @@ The process model is decided (decision 18).
 - **Verification:** Test, as in requirements 3.3 and 3.4, on macOS.
 
 ### Requirement 3.9: Security does not depend on the interface's code
-- **Statement:** Every security property in this document must hold even if the user interface process runs code written by an attacker. No security property may rely on the interface being written with React, with plain markup and script, or correctly at all.
+- **Statement:** Every security property in this document must hold even if the window host runs code written by an attacker. No security property may rely on the interface being written with React, with plain markup and script, or correctly at all.
 - **Reason:** The owner's principle that the choice of interface technology must make no difference to security. The interface contains a very large engine and third-party code; it is treated as hostile.
 - **Source:** Decision 20.
-- **Verification:** Test: a hostile interface harness replaces the user interface process with an adversarial client that sends every intent kind with arbitrary values, malformed messages, floods and replayed messages, and the test shows that no channel change, settings change, secret disclosure, network access, file access or trusted strip forgery results. The test must also show that no information from one channel reaches another through requests (requirement 4.7).
+- **Verification:** Test: a hostile interface harness replaces the window host with an adversarial client that sends every intent kind with arbitrary values, malformed messages, floods and replayed messages, and the test shows that no channel change, settings change, secret disclosure, network access, file access or trusted strip forgery results. The test must also show that no information from one channel reaches another through requests (requirement 4.7).
 - **Status note:** The covert channel between channels described in `security-analysis.md` section 5.6 is closed by design by decision 22 and requirements 4.7 and 5.15 to 5.17; this requirement is met once those are implemented and pass their tests, **with one accepted exception:** on channels that publish only separate page files, page requests follow viewing (decision 23), so a compromised interface could signal through them.
 
 ---
@@ -174,20 +174,20 @@ The process model is decided (decision 18).
 - **Source:** Architecture.
 - **Verification:** Test: messages naming an unknown tab, a wrong channel or out-of-range values are refused.
 
-### Requirement 4.5: Intents from the user interface process cannot change channel
-- **Statement:** No intent from the user interface process may cause a tab to navigate to another channel, change a security setting, read a cookie or confirm the site-change screen. Such actions must be possible only through the trusted strip.
-- **Reason:** The user interface process is untrusted.
+### Requirement 4.5: Intents from the window host cannot change channel
+- **Statement:** No page intent may cause a tab to navigate to another channel, change a security setting, read a cookie or confirm the site-change screen. Such actions must be possible only through strip input from the trusted strip (requirement 11.1).
+- **Reason:** The window host is untrusted.
 - **Source:** Decisions 4 and 18.
 - **Verification:** Test: every intent kind is sent with values that would leave the channel or change a setting, and none succeeds.
 
 ### Requirement 4.6: The parsers are fuzzed
-- **Statement:** The trusted core's readers of messages from the fetcher, the decoders, the font helper and the user interface process must be fuzzed continuously.
+- **Statement:** The trusted core's readers of messages from the fetcher, the decoders, the font helper and the window host must be fuzzed continuously.
 - **Reason:** These readers are the trusted core's only exposure to the other processes.
 - **Source:** Architecture.
 - **Verification:** Check: fuzzing targets exist for each reader and run in the full check.
 
 ### Requirement 4.7: No interface request or key affects fetching
-- **Statement:** No intent from the user interface process and no key press, however received, may cause, delay, reorder or prioritise a network request. Selecting a page, by key or by intent, may only show a page the channel's decoder already holds. **Exception (decision 23):** on a channel that publishes only separate page files, with no bundle and no contents file, selecting a page not yet held fetches that page's file; such a request must stay within the tab's own channel and within the limits of requirement 5.12.
+- **Statement:** No intent from the window host and no key press, however received, may cause, delay, reorder or prioritise a network request. Selecting a page, by key or by intent, may only show a page the channel's decoder already holds. **Exception (decision 23):** on a channel that publishes only separate page files, with no bundle and no contents file, selecting a page not yet held fetches that page's file; such a request must stay within the tab's own channel and within the limits of requirement 5.12.
 - **Reason:** A hostile interface sees pages of every open channel; if its requests or forged keys could influence fetching, it could encode one channel's pages in the pattern of requests made to another (`security-analysis.md` section 5.6). Keys must work in the tab, so the protection must not depend on where keys come from.
 - **Source:** Decisions 20 and 22.
 - **Verification:** Test with the hostile interface harness on bundled channels and channels with a contents file: across every intent kind and every key, with arbitrary values and timing, the sequence and timing of requests reaching a test server is identical to a run with no interface activity. On a channel with only separate page files, test that every request the harness causes is for a page file of that tab's own channel.
@@ -233,7 +233,7 @@ The process model is decided (decision 18).
 - **Verification:** Test.
 
 ### Requirement 5.7: Fonts are fetched only when named
-- **Statement:** A font must be fetched only when a page or channel names it, and must be used only after the checks of requirement 3.5. Teletext fonts must never be passed to the user interface process.
+- **Statement:** A font must be fetched only when a page or channel names it, and must be used only after the checks of requirement 3.5. Teletext fonts must never be passed to the window host.
 - **Reason:** Fonts are untrusted input; the webview must never read them.
 - **Source:** Decision 14.
 - **Verification:** Test.
@@ -437,8 +437,8 @@ The process model is decided (decision 18).
 - **Verification:** Test for each kind of page-started navigation.
 
 ### Requirement 8.5: The site-change screen cannot be faked
-- **Statement:** The site-change screen must be drawn only by the trusted strip. The user interface process must have no way to start, show, imitate or confirm it, and a confirmation must not be accepted from a click inside the page area or from pasted input.
-- **Reason:** A page image can draw anything, and the user interface process is untrusted.
+- **Statement:** The site-change screen must be drawn only by the trusted strip. The window host must have no way to start, show, imitate or confirm it, and a confirmation must not be accepted from a click inside the page area or from pasted input.
+- **Reason:** A page image can draw anything, and the window host is untrusted.
 - **Source:** Decisions 4 and 24.
 - **Verification:** Test; review.
 
@@ -477,13 +477,13 @@ The process model is decided (decision 18).
 - **Verification:** Test.
 
 ### Requirement 9.5: Only visible pages are rendered and sent
-- **Statement:** The user interface process must report which pages are visible, and the trusted core must request and send frames only for those pages and a bounded margin around them.
+- **Statement:** The window host must report which pages are visible, and the trusted core must request and send frames only for those pages and a bounded margin around them.
 - **Reason:** A wall of hundreds of pages must cost what is visible.
 - **Source:** Decision 7.
 - **Verification:** Test: a wall of 800 pages with 20 visible causes frames for those 20 and the margin only.
 
 ### Requirement 9.6: Whole-frame replacement
-- **Statement:** Each new frame must replace the page's whole image. The user interface process must decode the new image away from the screen before showing it, must drop an older frame for the same page if a newer one arrives during decoding, and must release the previous image's memory after the swap.
+- **Statement:** Each new frame must replace the page's whole image. The window host must decode the new image away from the screen before showing it, must drop an older frame for the same page if a newer one arrives during decoding, and must release the previous image's memory after the swap.
 - **Reason:** Simple, self-contained frames, with no blank frame and no memory growth.
 - **Source:** Decision 8.
 - **Verification:** Test: no blank frame during rapid updates; memory stays bounded over a long run.
@@ -495,7 +495,7 @@ The process model is decided (decision 18).
 - **Verification:** Test.
 
 ### Requirement 9.8: Scaling and pixel shape in the interface
-- **Statement:** Pages must be scaled and their pixel shape corrected by Cascading Style Sheets in the user interface process, never by rendering again at other sizes.
+- **Statement:** Pages must be scaled and their pixel shape corrected by Cascading Style Sheets in the window host, never by rendering again at other sizes.
 - **Reason:** One raster per page keeps rendering simple and exact.
 - **Source:** Architecture.
 - **Verification:** Review.
@@ -508,9 +508,9 @@ The process model is decided (decision 18).
 
 ---
 
-## 10. The user interface process and its webview
+## 10. The window host and its webview
 
-The process model is decided (decision 18, amended by decision 19). The interface is a React application running in the user interface process.
+The process model is decided (decision 18, amended by decision 19). The interface is a React application running in the window host.
 
 **These requirements are hygiene, not security boundaries.** Requirements 10.2, 10.3 and 10.4 reduce the chance that the interface is compromised. No security property relies on them: requirement 3.9 requires every property to hold with a hostile interface. Requirements 10.5 to 10.10 configure the webview so that even a compromised interface stays inside its process.
 
@@ -518,7 +518,7 @@ The process model is decided (decision 18, amended by decision 19). The interfac
 - **Statement:** The webview must receive pages only as Portable Network Graphics images produced by the trusted core, and page text only as plain, cleaned, bounded text. No byte received from the network may reach the webview.
 - **Reason:** This keeps the webview's parsers and decoders away from attacker-controlled input.
 - **Source:** Decision 4.
-- **Verification:** Review of every message type sent to the user interface process; test that the webview makes no network request.
+- **Verification:** Review of every message type sent to the window host; test that the webview makes no network request.
 
 ### Requirement 10.2: Page text is rendered only as text
 - **Statement:** Every piece of text that came from a page, a channel or a server (titles, row 0, link labels, accessible page text, developer tools data) must be rendered by React as text nodes, never as markup. No component may build markup from strings.
@@ -528,7 +528,7 @@ The process model is decided (decision 18, amended by decision 19). The interfac
 
 ### Requirement 10.3: Run-time JavaScript dependencies are a fixed, approved list
 - **Statement:** The JavaScript that runs in the webview must consist of the project's own TypeScript and these packages only: React, React DOM and the Tauri interface package (`react`, `react-dom`, `@tauri-apps/api`). Adding any other run-time package needs the owner's approval and a recorded security review. All packages must be bundled into the application at build time from the committed lockfile; nothing may be loaded from a network at run time. Package installation scripts must stay blocked. `npm audit` must pass. Build tools may be third-party but must contribute no code to what runs beyond these packages.
-- **Reason:** Third-party packages are the most likely route to compromising the interface. Decision 19 accepts React; keeping the list fixed and audited keeps that exposure small, and the user interface process's isolation keeps its consequences small.
+- **Reason:** Third-party packages are the most likely route to compromising the interface. Decision 19 accepts React; keeping the list fixed and audited keeps that exposure small, and the window host's isolation keeps its consequences small.
 - **Source:** Decisions 4 and 19.
 - **Verification:** Check: the run-time dependency list in `package.json` equals the approved list; the built bundle contains no package outside it; `npm audit` passes; review of every lockfile change.
 
@@ -574,21 +574,21 @@ The process model is decided (decision 18, amended by decision 19). The interfac
 - **Source:** Architecture.
 - **Verification:** Test with a mocked version.
 
-### Requirement 10.11: The webview cannot use the network
-- **Statement:** The user interface process must be unable to reach any network, enforced at three levels: (1) the Content Security Policy of requirement 10.5; (2) the webview's own switches, turning off WebRTC, media capture, geolocation, service workers, prefetching and name-lookup prefetching wherever the platform offers a switch; (3) the operating-system sandbox of the user interface process without network permission: on macOS the App Sandbox without the outgoing-network entitlement; on Windows an AppContainer without the internet-client capability; on Linux a seccomp filter refusing new network sockets and Landlock network rules where the kernel supports them. The third level is the guarantee; the first two narrow what a fault could try.
-- **Reason:** The Content Security Policy does not govern WebRTC or name-lookup prefetching, and a webview fault could ignore it; only the operating system's refusal holds against every bypass.
-- **Source:** Decisions 4 and 20.
-- **Verification:** Test on each platform, inside the real user interface process: fetch, XMLHttpRequest, WebSocket, Server-Sent Events, beacon, WebRTC, image and font loads, prefetch, name-lookup prefetch and navigation are all attempted, and none reaches a listening test server or its name server. On Android and iOS, where the webview shares the application's network permission, the test records which levels apply.
+### Requirement 10.11: Page code cannot use the network
+- **Statement:** Page code must be unable to reach any network, through: (1) the Content Security Policy of requirement 10.5; (2) WebRTC's interfaces (`RTCPeerConnection`, `webkitRTCPeerConnection`, `RTCDataChannel`, `RTCIceCandidate`, `RTCSessionDescription`, `RTCRtpSender`, `RTCRtpReceiver`, `RTCRtpTransceiver`) removed in every frame before any page script runs, because the Content Security Policy does not govern WebRTC; (3) the webview's own switches for media capture, geolocation, service workers and prefetching, wherever the platform offers them; (4) the platform's sandbox of the web content process, which on macOS allows it no network sockets. Where the operating system can also deny the window host the network without breaking the webview, it must (Windows and Linux, not yet proven); on macOS it cannot (`docs/proofs.md` section 2).
+- **Reason:** On macOS, WKWebView renders nothing without the network entitlement, and with it the App Sandbox does not restrict destinations; the protection must therefore come from the layers that do work, measured in Proof A.
+- **Source:** Decisions 4, 20 and 27.
+- **Verification:** Test on each platform, inside the real webview: fetch, XMLHttpRequest, WebSocket, Server-Sent Events, beacon, WebRTC (directly and through a blank iframe), image, font and stylesheet loads, prefetch, iframes and navigation are all attempted, and none reaches a listening test server. A control run without the protections must show that the same probe does reach the server.
 
 ---
 
 ## 11. The trusted strip
 
-### Requirement 11.1: The trusted strip is native and outside the interface's area
-- **Statement:** Every window must have a trusted strip drawn natively by the trusted core, in an area the user interface process cannot draw over or read.
-- **Reason:** Security indicators and decisions must not be forgeable by the untrusted interface or by page images.
-- **Source:** Decisions 4 and 18.
-- **Verification:** Test; review.
+### Requirement 11.1: The trusted strip shares the webview's window and is out of page code's reach
+- **Statement:** Every window must have a trusted strip, drawn natively by the window host in the same window as the webview but outside the webview's area, showing only the state the trusted core sends. The strip must never be a window of its own. Its input must reach the trusted core as strip input, a message kind that page intents can never produce.
+- **Reason:** A strip in a window of its own can be covered by any process's window, even a sandboxed one; a strip in the webview's window cannot be reached by page code, and on macOS the web content process is denied the window server (`docs/proofs.md` section 3).
+- **Source:** Decisions 4, 18 and 27.
+- **Verification:** Test: a page that draws fixed elements above the viewport at the highest stacking order, opens windows and requests full screen leaves the strip untouched; the hostile interface harness cannot produce strip input; review.
 
 ### Requirement 11.2: What the trusted strip holds
 - **Statement:** The trusted strip must hold the address field, the channel's identity, whether the channel is encrypted, Back, Forward, Reload and Home, the site-change screen, and every setting that affects security.
@@ -619,13 +619,13 @@ The process model is decided (decision 18, amended by decision 19). The interfac
 ## 12. Shell features
 
 ### Requirement 12.1: Tabs
-- **Statement:** The user interface process must draw a tab strip with drag to reorder, close buttons, overflow scrolling, and a live thumbnail of the tab's page on hover. The list and order of tabs, their creation and closing, and session restore must be decided by the trusted core.
+- **Statement:** The window host must draw a tab strip with drag to reorder, close buttons, overflow scrolling, and a live thumbnail of the tab's page on hover. The list and order of tabs, their creation and closing, and session restore must be decided by the trusted core.
 - **Reason:** The tab strip is decorative; tab state is trusted.
 - **Source:** Decision 3.
 - **Verification:** Test.
 
 ### Requirement 12.2: Page walls and transitions
-- **Statement:** The user interface process must show pages as grids, lists and stacks of images, with Cascading Style Sheets transforms and view transitions for zooming, subpage stacks and magazine overviews, and must respect the reduced-motion preference.
+- **Statement:** The window host must show pages as grids, lists and stacks of images, with Cascading Style Sheets transforms and view transitions for zooming, subpage stacks and magazine overviews, and must respect the reduced-motion preference.
 - **Reason:** The animated navigation of many pages at once is the purpose of the interface.
 - **Source:** Decisions 3 and 7.
 - **Verification:** Review; test with reduced motion.
@@ -637,7 +637,7 @@ The process model is decided (decision 18, amended by decision 19). The interfac
 - **Verification:** Test under every transform the interface uses.
 
 ### Requirement 12.4: Keys work in the tab
-- **Statement:** With the page area focused, page-number keys, Fastext colour keys, reveal, hold and mix must work. The user interface process must forward normalised key presses to the trusted core's input router, which maps them to functions as in `neoteletext/docs/hmi.md`. A key must only select among pages already held (requirement 4.7), and a page not yet received must show that it is being searched for, except on channels with only separate page files, where selecting a page not yet held fetches it (decision 23). A key that would leave the channel must go through the site-change screen.
+- **Statement:** With the page area focused, page-number keys, Fastext colour keys, reveal, hold and mix must work. The window host must forward normalised key presses to the trusted core's input router, which maps them to functions as in `neoteletext/docs/hmi.md`. A key must only select among pages already held (requirement 4.7), and a page not yet received must show that it is being searched for, except on channels with only separate page files, where selecting a page not yet held fetches it (decision 23). A key that would leave the channel must go through the site-change screen.
 - **Reason:** Teletext is driven by these keys, and they must work where the user is looking. Requirement 4.7 makes their source irrelevant to security.
 - **Source:** Decision 22.
 - **Verification:** Test each key with the page area focused; test with forged keys from the hostile interface harness that no request results.
