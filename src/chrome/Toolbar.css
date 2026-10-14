@@ -1,0 +1,48 @@
+.toolbar {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    min-width: 0;
+    padding-inline: 10px;
+    background: var(--raised);
+    border-bottom: 1px solid var(--line);
+}
+
+.toolbar__group {
+    display: flex;
+    gap: 2px;
+}
+
+.toolbar__button {
+    --button-size: 30px;
+    display: grid;
+    place-items: center;
+    flex: none;
+    width: var(--button-size);
+    height: var(--button-size);
+    padding: 0;
+    border: 0;
+    border-radius: 7px;
+    background: transparent;
+    color: var(--muted);
+}
+
+.toolbar__button:hover:not(:disabled) {
+    background: var(--line-soft);
+    color: var(--ink);
+}
+
+.toolbar__button:disabled {
+    color: var(--faint);
+    opacity: 0.55;
+}
+
+.toolbar__button--on {
+    background: var(--accent-soft);
+    color: var(--accent);
+}
+
+.toolbar__button--on:hover:not(:disabled) {
+    background: var(--accent-soft);
+    color: var(--accent);
+}

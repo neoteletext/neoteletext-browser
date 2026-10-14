@@ -1,0 +1,129 @@
+.egui-card {
+    display: grid;
+    gap: 8px;
+    width: var(--card-width);
+    max-width: 100%;
+    margin: 0;
+    transition:
+        width 160ms ease-out,
+        transform var(--transform-duration) var(--transform-ease);
+}
+
+.egui-card__frame {
+    position: relative;
+    aspect-ratio: 16 / 9;
+    max-width: 100%;
+    overflow: hidden;
+    border-radius: 7px;
+    background: var(--frame-placeholder);
+    box-shadow:
+        0 0 0 0.5px rgba(0, 0, 0, 0.18),
+        0 6px 18px -8px rgba(10, 14, 24, 0.45);
+}
+
+/* touch-action none: drags pan the picture instead of scrolling the page. */
+.egui-card__canvas {
+    display: block;
+    width: 100%;
+    height: 100%;
+    touch-action: none;
+}
+
+.egui-card__error {
+    position: absolute;
+    inset: 0;
+    display: grid;
+    place-items: center;
+    padding: 12px;
+    color: var(--badge-ink);
+    font-size: 12px;
+    text-align: center;
+}
+
+.egui-card__caption {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 8px;
+    min-width: 0;
+}
+
+.egui-card__title {
+    min-width: 0;
+    overflow: hidden;
+    font-size: 13.5px;
+    font-weight: 500;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.egui-card__template {
+    flex-shrink: 0;
+    color: var(--muted);
+    font: 400 11px/1 var(--font-mono);
+}
+
+/* Details only make sense beside the frame, so the grid hides them. */
+.egui-card__details {
+    display: none;
+}
+
+.wall--list .egui-card {
+    --list-frame-width: 176px;
+    grid-template-columns: var(--list-frame-width) minmax(0, 1fr);
+    align-items: center;
+    gap: 20px;
+    width: 100%;
+    padding-block: 12px;
+    border-bottom: 1px solid var(--line);
+}
+
+.wall--list .egui-card:first-child {
+    border-top: 1px solid var(--line);
+}
+
+.wall--list .egui-card__caption {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: baseline;
+    gap: 4px 16px;
+}
+
+.wall--list .egui-card__title {
+    font: 600 17px/1.25 var(--font-display);
+    white-space: normal;
+}
+
+.wall--list .egui-card__details {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px 20px;
+    grid-column: 1 / -1;
+    margin: 0;
+}
+
+.egui-card__details div {
+    display: flex;
+    gap: 6px;
+    align-items: baseline;
+}
+
+.egui-card__details dt {
+    color: var(--muted);
+    font-size: 11px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+}
+
+.egui-card__details dd {
+    margin: 0;
+    font: 400 12.5px/1.4 var(--font-mono);
+    font-variant-numeric: tabular-nums;
+}
+
+@media (max-width: 480px) {
+    .wall--list .egui-card {
+        --list-frame-width: 120px;
+        gap: 14px;
+    }
+}

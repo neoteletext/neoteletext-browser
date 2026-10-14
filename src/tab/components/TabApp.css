@@ -1,0 +1,13 @@
+html {
+    scrollbar-gutter: stable;
+}
+
+body {
+    background: var(--well);
+}
+
+.tab-main {
+    padding-block: 28px 40px;
+    padding-left: var(--gutter-left);
+    padding-right: var(--gutter-right);
+}

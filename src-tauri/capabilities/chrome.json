@@ -1,0 +1,15 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "chrome",
+  "description": "The browser chrome (tab strip, toolbar, devtools). Scoped to the chrome webview only: a capability that named the window would also cover every tab inside it.",
+  "webviews": ["chrome"],
+  "permissions": [
+    "core:default",
+    "core:window:allow-start-dragging",
+    "allow-create-tab",
+    "allow-close-tab",
+    "allow-select-tab",
+    "allow-navigate-tab",
+    "allow-set-content-bounds"
+  ]
+}

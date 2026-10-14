@@ -1,0 +1,73 @@
+/* The stage supplies the perspective; the wall and cards carry the
+   transforms. --card-width is set inline from the slider event. */
+.wall-stage {
+    --stage-perspective: 1800px;
+    perspective: var(--stage-perspective);
+    /* Tilt and fan push corners past the edges; clip so the page never
+       scrolls sideways. clip, unlike hidden, leaves vertical scroll alone. */
+    overflow-x: clip;
+}
+
+.wall {
+    --wall-gap: 14px;
+    --transform-duration: 420ms;
+    --transform-ease: cubic-bezier(0.2, 0.7, 0.1, 1);
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: calc(var(--wall-gap) * 2) var(--wall-gap);
+    transform-origin: 50% 0;
+    transition: transform var(--transform-duration) var(--transform-ease);
+}
+
+.wall--list {
+    flex-direction: column;
+    flex-wrap: nowrap;
+    gap: 0;
+    max-width: 54rem;
+    margin-inline: auto;
+}
+
+/* Tilt: the whole wall leans back like a print on a lightbox. */
+.wall--tilt {
+    transform: rotateX(22deg) rotateZ(-4deg) scale(0.94);
+}
+
+/* Fan: each card is turned a little, as if dealt by hand. The angles repeat
+   every five cards so neighbours never match. */
+.wall--fan .egui-card {
+    --fan-angle: 0deg;
+    --fan-lift: 0px;
+    transform: rotate(var(--fan-angle)) translateY(var(--fan-lift));
+}
+
+.wall--fan .egui-card:nth-child(5n + 1) {
+    --fan-angle: -3.5deg;
+}
+
+.wall--fan .egui-card:nth-child(5n + 2) {
+    --fan-angle: 2deg;
+    --fan-lift: 8px;
+}
+
+.wall--fan .egui-card:nth-child(5n + 3) {
+    --fan-angle: -1deg;
+    --fan-lift: -6px;
+}
+
+.wall--fan .egui-card:nth-child(5n + 4) {
+    --fan-angle: 4deg;
+    --fan-lift: 4px;
+}
+
+.wall--fan .egui-card:nth-child(5n) {
+    --fan-angle: -2.5deg;
+    --fan-lift: -3px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .wall,
+    .egui-card {
+        transition: none;
+    }
+}

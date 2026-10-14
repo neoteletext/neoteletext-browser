@@ -1,0 +1,24 @@
+html,
+body,
+#root {
+    height: 100%;
+}
+
+body {
+    background: var(--frame);
+    overflow: hidden;
+    user-select: none;
+    -webkit-user-select: none;
+    cursor: default;
+}
+
+/* Tab strip and toolbar are fixed rows; the content well takes the rest,
+   and the devtools dock claims its height only while open. */
+.browser {
+    --strip-height: 40px;
+    --toolbar-height: 46px;
+    --traffic-lights-width: 84px;
+    display: grid;
+    grid-template-rows: var(--strip-height) var(--toolbar-height) minmax(0, 1fr) auto;
+    height: 100%;
+}
