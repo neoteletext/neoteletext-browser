@@ -1,0 +1,19 @@
+[package]
+name = "sandbox-network-spike"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.90"
+publish = false
+description = "Proof A: a webview in an App Sandbox without the network entitlement cannot reach any network"
+
+[build-dependencies]
+tauri-build = { version = "2.7.2", features = [] }
+
+[dependencies]
+tauri = { version = "2.12.3", features = ["macos-proxy"] }
+
+[lints.rust]
+unsafe_code = "forbid"
+
+[lints.clippy]
+pedantic = { level = "warn", priority = -1 }
