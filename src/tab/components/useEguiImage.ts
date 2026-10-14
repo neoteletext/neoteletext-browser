@@ -87,7 +87,15 @@ export const useEguiImage = (canvasRef: RefObject<HTMLCanvasElement | null>, fra
             canvas.width = pixelSize.width;
             canvas.height = pixelSize.height;
             image?.resize(cssSize.width, cssSize.height, pixelSize.width, pixelSize.height);
-            request();
+            // Setting canvas.width wipes the canvas, and ResizeObserver runs
+            // after this frame's animation callbacks, just before paint. A
+            // redraw deferred to requestAnimationFrame would land a frame late,
+            // so while the slider moves every painted frame would be blank.
+            // Draw now, before this frame paints.
+            if (image) {
+                cancelAnimationFrame(animationFrame);
+                draw(performance.now());
+            }
         };
         const observer = new ResizeObserver(entries => entries.forEach(applySize));
         try {
