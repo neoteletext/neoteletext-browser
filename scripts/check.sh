@@ -9,7 +9,7 @@ mode="${1:-full}"
 step() { printf '\n== %s\n' "$*"; }
 
 rust_crates=()
-for manifest in src-tauri/Cargo.toml standin/Cargo.toml spikes/*/Cargo.toml; do
+for manifest in src-tauri/Cargo.toml standin/Cargo.toml spikes/*/Cargo.toml spikes/*/src-tauri/Cargo.toml; do
     [[ -f "$manifest" ]] && rust_crates+=("$manifest")
 done
 

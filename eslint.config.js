@@ -5,7 +5,7 @@ import reactRefresh from 'eslint-plugin-react-refresh'
 import tseslint from 'typescript-eslint'
 
 export default tseslint.config(
-  { ignores: ['dist', 'src-tauri', 'egui-image', 'tools', 'src/tab/egui-pkg'] },
+  { ignores: ['dist', 'src-tauri', 'egui-image', 'tools', 'src/tab/egui-pkg', '**/target', 'spikes/*/ui/*.js', 'standin'] },
   {
     extends: [js.configs.recommended, ...tseslint.configs.strict],
     files: ['**/*.{ts,tsx}'],
