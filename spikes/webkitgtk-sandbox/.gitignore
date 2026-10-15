@@ -4,3 +4,8 @@ wayland_probe
 extension/
 wayland-extension/
 *.log
+landlock_host
+strip_standin
+virtual_type
+generated/
+cover_attempt
