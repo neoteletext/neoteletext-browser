@@ -1,0 +1,28 @@
+[package]
+name = "vello-wall-spike"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.89"
+publish = false
+description = "The React prototype's tab with no interface framework and no GPU: our own layout, input and animation, drawn on the CPU by vello_cpu, text laid out by Parley, shown with softbuffer in a winit window"
+
+# Every dependency is permissively licensed: vello_cpu and Parley MIT or
+# Apache-2.0; winit Apache-2.0; softbuffer MIT or Apache-2.0.
+[dependencies]
+# The CPU renderer only: the minimum requirement is to run with no GPU.
+# Single-threaded: with its "multithreading" feature, vello_cpu 0.3.0's
+# worker threads kept a whole core busy while the window was idle.
+vello_cpu = { version = "=0.3.0", default-features = false, features = ["std", "text", "u8_pipeline"] }
+parley = "=0.12.0"
+winit = "=0.30.13"
+softbuffer = { version = "=0.4.8", default-features = false }
+standin = { path = "../../standin" }
+
+[lints.rust]
+unsafe_code = "forbid"
+
+[lints.clippy]
+pedantic = { level = "warn", priority = -1 }
+
+[profile.dev.package."*"]
+opt-level = 3
