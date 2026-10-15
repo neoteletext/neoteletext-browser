@@ -1,0 +1,24 @@
+[package]
+name = "egui-wall-spike"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.95"
+publish = false
+description = "The React prototype's tab, page wall and thumbnail size slider, in egui, drawn natively in Rust"
+
+[dependencies]
+# egui 0.36, the latest release. Only what this interface uses: the window
+# through winit, the wgpu renderer (Metal on macOS, as Bevy and Blitz use),
+# screen-reader support and the default fonts. Left out of the defaults:
+# Linux display back ends, the web screen reader, opening links, persistence.
+eframe = { version = "=0.36.2", default-features = false, features = ["accesskit", "default_fonts", "wgpu"] }
+standin = { path = "../../standin" }
+
+[lints.rust]
+unsafe_code = "forbid"
+
+[lints.clippy]
+pedantic = { level = "warn", priority = -1 }
+
+[profile.dev.package."*"]
+opt-level = 3
