@@ -246,7 +246,7 @@ All processes communicate over the framed pipe protocol of `neoteletext-app/src/
 |---|---|---|---|---|
 | macOS | Service, App Sandbox, no network | Service with the outgoing-network entitlement only | Service with no entitlements, and inside wasmi | The main application, holding the outgoing-network entitlement only because WKWebView renders nothing without it (`docs/proofs.md` section 2), and no file access beyond its bundle; the trusted core is a separate service |
 | Windows | Main process | AppContainer with the internet-client capability only | AppContainer without it, low integrity, job object, and inside wasmi | AppContainer; whether WebView2 can run without the internet-client capability is not yet proven |
-| Linux | Main process | Own process, Landlock and seccomp filter | Own process, Landlock and seccomp filter, and inside wasmi | Own process, Landlock; whether WebKitGTK can run without network is not yet proven |
+| Linux | Main process | Own process, Landlock and seccomp filter | Own process, Landlock and seccomp filter, and inside wasmi | Own process in an empty network namespace, which WebKitGTK runs in and its processes inherit (`docs/proofs.md` section 6.1), and Landlock. WebKitGTK's own content process sandbox is off under Tauri and cannot be turned on through it; even when on, it gives the content process the display (section 6, decision pending) |
 | Android | Main application process | Separate service process | Isolated service process with seccomp filter, and inside wasmi | The application's webview (see section 13) |
 | iOS | The application | Inside the application process | Inside the application process, inside wasmi only | The application's webview (see section 13) |
 

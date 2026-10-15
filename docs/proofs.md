@@ -3,11 +3,11 @@
 | | |
 |---|---|
 | **Date** | 15 October 2026 |
-| **Machine** | macOS 15.6 (build 24G84), Apple silicon |
-| **Versions** | Tauri 2.12.3, `wry` 0.57.0, Rust 1.97.1 |
+| **Machines** | macOS 15.6 (build 24G84), Apple silicon; Ubuntu 26.04 (Linux 7.0.0), x86-64 |
+| **Versions** | Tauri 2.12.4 and `wry` 0.57.0 in the spikes (their lockfiles); Rust 1.97.1 on macOS and 1.94.1 on Linux; on Linux WebKitGTK 2.52.6 (`webkit2gtk-4.1`), sway 1.11 |
 | **Purpose** | To prove, by measurement, the assumptions in [`architecture.md`](architecture.md) that the design rests on, before building on them. |
 
-Each proof is a throwaway program under `spikes/`, committed so that it can be run again. Results are what was measured on the machine above. Nothing here has been run on Windows or Linux yet (section 6).
+Each proof is a throwaway program under `spikes/`, committed so that it can be run again. Results are what was measured on the machines above. Sections 2 to 4 are macOS; section 6 is Linux. Nothing has been run on Windows (section 7).
 
 **The stand-in engine.** The proofs use `standin/`, a stand-in for the neoteletext engine with the same pipe framing (`neoteletext-app/src/pipe.rs`), synthetic pages at the native 480 by 500 raster with at most 32 colours, and an indexed Portable Network Graphics writer that compresses for real. A stand-in page is about 6 kilobytes, decoded correctly by macOS's own image decoder (`sips`) and by WebKit.
 
@@ -20,6 +20,8 @@ Each proof is a throwaway program under `spikes/`, committed so that it can be r
 | A | Can the operating system keep the interface's webview off the network? | **No on macOS.** Without the network entitlement WKWebView shows nothing at all; with it, the sandbox does not restrict destinations. **Page code can be kept off the network** by a strict Content Security Policy plus removing WebRTC in every frame: nothing reached the test server. |
 | B | Can a native trusted strip share a window with a webview from another process, without being covered or imitated? | **Not with two windows**: a window from another process, even a sandboxed one, covered the strip with a fake. **Yes with one window**: page code is confined to the webview's area, and WebKit's content process is denied the window server and network sockets by Apple's sandbox. |
 | C | Can frames flow from a decoder process to image elements fast enough for many pages? | **Yes.** 200 pages redrawn twice a second were all shown, each wave within 0.5 seconds; capacity is about 450 to 520 frames a second, limited by single-threaded encoding. |
+| A on Linux | Can the operating system keep the window host off the network? | **Yes.** In an empty network namespace the application's own page rendered, its messages to Rust worked, and nothing reached the test server. |
+| B on Linux | Is the web content process kept from the display, as on macOS? | **No.** Under Tauri, WebKitGTK's content process sandbox is off, and Tauri cannot turn it on. With the sandbox on, the display is still mounted into it: code in the content process connected to an X display that requires a cookie and covered the strip's area with its own window, and under Wayland it connected to the compositor and was offered the protocol for drawing above every window. |
 
 **Consequence:** the separate user interface process of decision 18, with its own window and no network, cannot be built on macOS as designed. Section 5 sets out what replaces it, for the owner to decide.
 
@@ -51,7 +53,7 @@ Every probe targets a test server (`test-server.py`) that logs each connection a
 
 **Findings.**
 1. On macOS the network entitlement is all or nothing for a webview. Without it WKWebView renders nothing, not even pages bundled with the application; with it, the App Sandbox does not restrict where requests go. **Requirement 10.11's third level, an interface process without network permission, cannot be met on macOS with the system webview.**
-2. Tauri 2.12.3's `proxy_url` had no observable effect on macOS 15.6: a live proxy was never contacted. The cause was not determined. It cannot be relied on.
+2. Tauri 2.12.4's `proxy_url` had no observable effect on macOS 15.6: a live proxy was never contacted. The cause was not determined. It cannot be relied on.
 3. The Content Security Policy of requirement 10.5 stops every TCP route but not WebRTC, which it does not govern.
 4. Removing WebRTC's interfaces in every frame, before any page script runs (Tauri's `initialization_script_for_all_frames`), closes WebRTC, including the blank-iframe route.
 5. Prefetch did not reach the server in any run.
@@ -163,12 +165,108 @@ Decision 18 places the interface in its own process, with its own window, no net
 
 ---
 
-## 6. Not yet proven
+## 6. Linux: Proofs A and B
+
+**Spikes:** `spikes/sandbox-network/` (Proof A, and the `SPIKE_WEBKIT_SANDBOX` switch of 6.3) and `spikes/webkitgtk-sandbox/` (6.2 to 6.5).
+
+**Machine and method.**
+- Ubuntu 26.04 with WebKitGTK 2.52.6. The test displays were private: Xvfb with no window manager, and sway with no screen or input devices (`WLR_BACKENDS=headless`). The machine's own desktop was not touched.
+- The Tauri spike was built with `cargo build --release --features tauri/custom-protocol`. For Proof A its probe page was pointed at a test server on the same machine, with the Content Security Policy off, so that only the operating system stood in the way.
+- Later runs were started under a private session bus (`dbus-run-session`). The machine's session bus had stopped answering, and GTK then waits for ever in `g_application_register` before opening a window.
+
+### 6.1 Proof A: the window host off the network
+
+| Variant | The application's own page | Reached the test server |
+|---|---|---|
+| No restriction (control) | Rendered | 9 requests over TCP |
+| The whole application in an empty network namespace (`unshare --user --map-root-user --net`) | Rendered; its messages to Rust arrived | **Nothing** |
+
+WebRTC was not available in this WebKitGTK build, so it sent nothing in either run.
+
+**Finding.** On Linux, unlike macOS, the window host can be denied the network by the operating system without breaking the webview. WebKitGTK's processes are its children and inherit the empty namespace, so this also denies the network to a compromised web content process.
+
+### 6.2 The web content process under Tauri
+
+**Method.** The spike's `WebKitWebProcess` was inspected through `/proc` while it ran.
+
+**Result.**
+- **Seccomp:** none.
+- **Namespaces:** the same network and mount namespaces as the application.
+- **Files:** it could see every X display socket and the whole home directory.
+
+`wry` 0.57.0 never calls `webkit_web_context_set_sandbox_enabled`, and WebKitGTK's sandbox is off unless the host turns it on.
+
+### 6.3 Turning the sandbox on from Tauri
+
+**Method.** With `SPIKE_WEBKIT_SANDBOX` set, the spike calls `set_sandbox_enabled(true)` on the webview's context through Tauri's `with_webview`, as soon as the window is built.
+
+**Result.** WebKitGTK stopped the application: `Sandboxing cannot be changed after subprocesses were spawned.` Tauri 2.12.4 offers no earlier point. WebKitGTK must be told before the context starts its first web process, and `wry` creates the context and loads the page in one step. **Turning the sandbox on needs a change to `wry`** (one call in `WebContextImpl::create_context`, `src/webkitgtk/web_context.rs`).
+
+### 6.4 With WebKitGTK's sandbox on: the X display
+
+**Method.**
+- `sandboxed_view.c` is a minimal WebKitGTK program with the sandbox on.
+- It loads a web process extension built from `x11_handshake.c`. WebKitGTK runs the extension inside every web content process, so the extension's code runs as code that had taken over the content process would, under its seccomp filter and namespaces.
+- The display requires an authorisation cookie, as a real desktop's does. As controls, `xdpyinfo` connected with the cookie and was refused without it.
+- Inside the content process, the extension:
+  1. performs the X11 connection handshake itself, with the cookie;
+  2. opens an override-redirect window at the strip's place (an override-redirect window is placed and stacked by the client alone; Inter-Client Communication Conventions Manual section 4.1.10);
+  3. raises it once the host's window is up.
+- The screen was then captured, and read at two points.
+
+**Results.**
+- **The sandbox was real:**
+  - the content process ran under `bwrap` with a seccomp filter;
+  - it had its own network namespace with only the loopback interface;
+  - it had its own mount namespace, and the home directory was not visible.
+- **The display was mounted in:** WebKitGTK bind-mounts the display socket (`/tmp/.X11-unix/X98`) and the cookie file named by `XAUTHORITY` into the sandbox, and passes both in the environment.
+- **The X server accepted the connection** from inside the content process.
+- **The fake strip covered the host's window.** At (400, 20), in the strip's area, the screen showed the extension's window (white, `srgb(255,255,255)`). Below it, at (400, 200), it showed the host's page (`srgb(34,34,34)`).
+
+### 6.5 With WebKitGTK's sandbox on: Wayland
+
+**Method.** As 6.4, under sway, with X disabled and GTK's Wayland back end. `wayland_probe.c` connects to the compositor and lists what it offers, first from the host and then as a web process extension.
+
+**Results.**
+- The compositor's socket (`/run/user/1000/wayland-1`) was mounted into the sandbox.
+- Code inside the content process connected, and was offered the same 50 interfaces as the host, including `zwlr_layer_shell_v1`. That protocol lets any client place a surface above every window.
+- Covering was not attempted under Wayland.
+- Compositors that do not offer the layer shell were not tested.
+
+### 6.6 Findings
+
+1. **Page code** is kept from the strip on Linux as on macOS: the strip is outside the webview's area, and page code cannot open windows.
+2. **A compromised web content process can cover the strip on Linux.**
+   - **On macOS** the content process is denied the window server (section 3.2).
+   - **On Linux** it must draw through the display, so WebKitGTK gives it the display even when its sandbox is on.
+   - **Under X11** any client can place a window over any other; measured.
+   - **Under Wayland** a client offered the layer shell can do the same. Without the layer shell, a client can still ask to go full screen; not tested.
+3. **Under Tauri as it stands,** a compromised content process has every right of the window host: its files, its display and its network. Section 6.1's empty network namespace removes the network; nothing has been measured yet that removes the files.
+4. **Requirement 11.1's reason** ("on macOS the web content process is denied the window server") has no counterpart on Linux. On Linux the strip protects against page code, not against an escape into the content process.
+
+### 6.7 The decision this needs
+
+These options are for the owner. Option 1 is recommended.
+
+1. **Accept, and confine the window host from outside.**
+   - The window host, and with it WebKitGTK's processes, runs in an empty network namespace (measured, 6.1) under a Landlock rule set. Landlock is inherited by child processes; whether WebKitGTK runs under a rule set narrow enough to matter is not yet measured.
+   - The strip's weakness against a compromised content process (finding 2) is recorded as a remaining risk on Linux.
+2. **As option 1, and also turn WebKitGTK's sandbox on** by carrying a one-line change to `wry` (6.3), until `wry` offers it.
+   - It adds a seccomp filter and a private file system view to the content process.
+   - It does not stop finding 2.
+   - It means maintaining a patched dependency.
+3. **As option 1 or 2, and on Linux show the strip's guarantee as weaker** to the user, for example in the site information view.
+
+---
+
+## 7. Not yet proven
 
 | Item | Why not yet |
 |---|---|
 | Proofs A and B on Windows (WebView2) | No Windows machine available |
-| Proofs A and B on Linux (WebKitGTK) | Not yet run; the Linux test machine `oldvga` is available |
+| Covering the strip under Wayland, and on compositors without the layer shell (GNOME's) | Section 6.5 measured the connection and the protocols offered, not a covering surface |
+| WebKitGTK under a Landlock rule set for the window host | Needs the window host's file needs listed first |
+| Proof B on Linux with a window manager running | The test display had none; override-redirect windows bypass window managers by design |
 | Proof D: the hostile interface harness | Needs the real trusted core and its message set; first item of the build |
 | Proof E: fetching never depends on viewing | Needs the fetching policy in neoteletext or the stand-in; part of the build |
 | Why Tauri's proxy setting had no effect | Not investigated further; not relied on |
