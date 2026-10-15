@@ -37,7 +37,7 @@ The design meets that standard by:
 
 - **Reading untrusted bytes only in processes with no rights.** These are the fetcher (network only), the decoder (no network, no files, inside the WebAssembly interpreter `wasmi`) and the font helper (no rights).
 - **Keeping a trusted core that contains no web engine,** reads no network format, and owns every secret and every decision.
-- **Treating the interface drawn with web technology as untrusted.** Its page code runs in the system webview's own sandboxed content process, which on macOS has no window server and no network sockets. The window host that holds the webview has no secrets and makes no decision (decision 27). The interface receives only images our own encoder made and cleaned plain text.
+- **Treating the interface drawn with web technology as untrusted.** Its page code runs in the system webview's own sandboxed content process, which on macOS has no window server and no network sockets. The window host that holds the webview has no secrets and makes no decision (decision 27). On Linux, where the content process has no sandbox of its own under Tauri, the window host and every process it starts are confined from outside: no network, no files and no local services (decision 28). The interface receives only images our own encoder made and cleaned plain text.
 - **Placing every security indicator and decision in a native trusted strip,** in the same window as the webview but outside page code's reach (`docs/proofs.md` section 3).
 - **Making updates verifiable and recoverable:** The Update Framework metadata, side-by-side installation, atomic switching and automatic rollback.
 
@@ -45,7 +45,8 @@ The design meets that standard by:
 1. A fault in the trusted core itself, which is why it is kept small.
 2. Spoofing of the trusted strip by page images or by the interface, in an interface built for animation.
 3. The update signing keys.
-4. Slow security updates of the Linux webview, now confined to a process with no rights.
+4. On Linux, the display. A fault in the web engine needs one, and under X11 a display lets it type into the user's other programs. The window host therefore gets a nested display of its own (decision 29). T42 Browser's own display host (decisions 30 and 31) draws the strip outside the nested display; its smallest form stopped every attempt to type into or cover the strip from inside (`docs/proofs.md` section 6.14).
+5. Slow security updates of the Linux webview, confined from outside to a process with no rights (decision 28).
 
 ---
 
@@ -218,7 +219,12 @@ update subdomain ──[8]──► updater ──► versions directory ──�
    - **Cannot:** draw over or read the trusted strip (Proof B2); produce strip input (requirement 11.1); reach the network, which is stopped by the Content Security Policy and WebRTC removal, with nothing reaching a test server in Proof A; read a secret; change channel; change a security setting.
 2. **The web content process compromised** by a memory-corruption fault in the web engine.
    - **Can:** everything in level 1, and ask the webview's networking process to load any address, bypassing the Content Security Policy, which is enforced inside the content process. That could send what is on screen to a server the attacker chooses.
-   - **Cannot:** open a window, so it cannot cover or imitate the trusted strip; open network sockets of its own; read files. On macOS its sandbox denies all three by default (`com.apple.WebProcess.sb`, `docs/proofs.md` section 3.2).
+   - **Cannot, on macOS:** open a window, so it cannot cover or imitate the trusted strip; open network sockets of its own; read files. Its sandbox denies all three by default (`com.apple.WebProcess.sb`, `docs/proofs.md` section 3.2).
+   - **On Linux** (decision 28, `docs/proofs.md` section 6.8):
+     - **Cannot:** it inherits the window host's confinement, so it cannot reach the network, read the user's files, or reach any local service.
+     - **Can:** reach the display it is given.
+       - **On the user's display:** it could cover the strip, and under X11 type into the user's other programs (`docs/proofs.md` section 6.8). Decision 29 therefore gives the window host a nested display of its own.
+       - **On a nested display:** it reaches nothing of the user's (section 6.11). With a stock compositor it can still type into the window host's own strip (section 6.12), so the strip moves to T42 Browser's own display host, outside the nested display (requirement 3.11, decision 30).
 3. **The window host compromised**, which requires a second fault: an escape from the web content process's sandbox.
    - **Can:** draw anything in its windows, including a false trusted strip; forge strip input, and so confirm navigations and change security settings; use the network entitlement the webview requires.
    - **Cannot:** read cookies, credentials, history or bookmarks, which stay in the trusted core (requirement 3.6); read the fetcher's connections or the decoders' memory.
@@ -237,7 +243,7 @@ update subdomain ──[8]──► updater ──► versions directory ──�
 
 ### 5.7 Boundary 7: the trusted strip
 
-The trusted strip is part of the trusted core and takes only the user's own input.
+The trusted strip is drawn natively by the window host, in the webview's window, from state the trusted core sends. It takes only the user's own input, which reaches the trusted core as strip input (decision 27).
 
 **Threats.**
 - Pasted or programmatic input confirming a navigation.
@@ -247,7 +253,7 @@ The trusted strip is part of the trusted core and takes only the user's own inpu
 - Confirmations are not accepted from pasted input or from the page area (requirement 8.5).
 - The address display rules emphasise the host and show internationalised names safely (requirement 11.3).
 
-**Remaining risk:** low.
+**Remaining risk:** low against page code. On Linux, a compromised web content process can forge or cover the strip while the strip is drawn inside a display the content process can reach. Requirement 3.11 moves it out, into T42 Browser's own display host (section 5.6, level 2; decision 30).
 
 ### 5.8 Boundary 8: updates
 
@@ -273,6 +279,8 @@ The system webview is many millions of lines of C++, Objective-C or Java with a 
   - no network for page code: the Content Security Policy, WebRTC removed in every frame, the webview's own feature switches, and the web content process's lack of sockets (requirement 10.11). On macOS the operating system cannot also deny the window host the network, because the webview then renders nothing (`docs/proofs.md` section 2).
 
 **Remaining risk.** A fault in the web engine (level 2 in section 5.6) could send what is on screen to an attacker's server, because the networking process serves the content process's requests and the operating system cannot remove the window host's network entitlement on macOS. It could not imitate the strip or read a secret. An escape into the window host (level 3) could also imitate the strip and forge confirmations, but still read no secret. Both need faults in the web engine itself. **Low likelihood; medium impact for level 2 (confidentiality of what is on screen), high for level 3 (navigation and settings, without secrets).**
+
+**On Linux** the network is closed to level 2 as well: the window host and its children run in an empty network namespace (decision 28). Level 2 still needs a display. On the user's display it could imitate the strip and, under X11, type into the user's other programs, so the window host gets a nested display of its own (decision 29). **Low likelihood; high impact (strip input forged) until T42 Browser's own display host (decision 30) is built in full. In its smallest form it already stopped every attempt from inside to type into the strip or cover it (`docs/proofs.md` section 6.14), so on Linux even level 3 can neither draw over the strip nor type into it.**
 
 ---
 
@@ -351,6 +359,8 @@ The updater can replace the application's code, so it is the most powerful compo
 - **No debugging endpoints in release builds** (requirement 10.8). The Chromium Embedded Framework trial showed how a debugging port gives any local process control of the interface.
 - **The data directory has user-only permissions.** On macOS it sits inside the App Sandbox container.
 
+- **On Linux, accessibility requests and input method text reach the display host** (decision 32). Any process of the user's on the accessibility bus can send a screen reader's requests, as it can to every desktop application. The display host must act on them only as on the user's own input in the strip, and nothing inside the window host's confinement can reach that bus (`docs/proofs.md` section 6.16).
+
 **Remaining risk:** low. A process running as the user can read the user's own files; that is outside this analysis's scope.
 
 ---
@@ -393,7 +403,7 @@ The updater can replace the application's code, so it is the most powerful compo
 |---|---|
 | macOS | Trusted core, fetcher and decoder as sandboxed services. The window host must hold the outgoing-network entitlement, because WKWebView renders nothing without it; page code is kept off the network by the Content Security Policy, WebRTC removal and the web content process's sandbox instead (decision 27, `docs/proofs.md`). The fetcher and decoder sandboxing gap in `neoteletext` must be closed (requirement 3.8). |
 | Windows | Full separation with AppContainers. WebView2 is updated independently by Microsoft. |
-| Linux | Full separation with Landlock and seccomp filters. WebKitGTK may lag upstream security fixes; it is confined to the window host, and the application warns about old versions (requirement 10.10). The window host can be denied the network outright (`docs/proofs.md` section 6.1). Under Tauri, WebKitGTK's content process is not sandboxed; even with its sandbox on, it is given the display, and from there it covered the strip's area under X11 and was offered the layer shell under Wayland (section 6). On Linux the strip therefore holds against page code but not against a compromised content process; the response is pending (section 6.7). |
+| Linux | Full separation with Landlock and seccomp filters. WebKitGTK may lag upstream security fixes; it is confined to the window host, and the application warns about old versions (requirement 10.10). Under Tauri, WebKitGTK's content process has no sandbox of its own. Instead the window host, and with it every WebKitGTK process, is confined from outside (decision 28, requirement 3.10): an empty network namespace, private `/run` and `/tmp` holding only the display's socket, and Landlock. Measured: no network, no home directory, no local service (`docs/proofs.md` section 6.8). The window host draws on a nested display of its own, never the user's (decision 29, requirement 3.11), on which it reached nothing of the user's (section 6.11). The strip is drawn outside it, by T42 Browser's own display host (decision 30). The window host has no system call filter yet (open decision 22). |
 | Android | The decoder runs in an isolated service process inside `wasmi`. The webview runs within the application's process space, so the separation of section 5.6 is weaker; the webview still receives no teletext data and holds no secrets. |
 | iOS | One process. The decoder's only wall is `wasmi`. WebKit's own content process still separates script from the application. This is the weakest platform, as in the engine design. |
 
@@ -409,6 +419,14 @@ The updater can replace the application's code, so it is the most powerful compo
 | egui (the engine's own design) | No | None | Not applicable | Lowest |
 
 This design keeps the full richness of the first proposal, including React, while matching the egui design's core property: there is no web engine in the trusted process. The owner adopted it on 15 October 2026 (decisions 18 and 19).
+
+**How the Linux confinement compares** with ten other ways of organising security in a Linux application (`architecture.md` section 6.7):
+- **What it matches:** Chromium's first sandbox layer (namespaces), Firefox's in-process WebAssembly sandboxing (the decoder in wasmi), and the virtual-machine systems' trusted display (the display host).
+- **What it lacks:** Chromium's second layer, a system call filter, for the window host (open decision 22). Until that is added, a fault in the web engine faces the whole kernel interface, though with no network, no user files, no local services and no display but its own.
+- **Not adopted:**
+  - *Flatpak* would take over updates, against decision 24, and has had sandbox escapes.
+  - *The Wayland security-context protocol* depends on the user's compositor; it is proposed as an extra layer (open decision 23).
+  - *A virtual machine per component* would be stronger, but far heavier; it is the upgrade path if process isolation proves insufficient.
 
 ---
 
@@ -433,16 +451,17 @@ These were observed on this codebase, not reasoned:
 |---|---|---|---|---|
 | 1 | The covert channel between channels through the pattern of requests: closed for bundled channels and channels with a contents file once requirements 4.7 and 5.15 to 5.17 are implemented; **accepted** for channels with only separate page files (decision 23) | Low; needs both a compromised interface and an attacker's per-page channel open | One channel's pages leak to another channel's server | Fetching never depends on viewing (decision 22); per-page channels' requests confined to their own channel and bounded (requirement 4.7) |
 | 2 | Spoofing of the trusted strip by page images or the interface, especially in animated or full-screen layouts | Medium | The user is misled into confirming a navigation | Native trusted strip; confirmations only there; recorded layout reviews (requirements 8.5, 11.1 to 11.4, 14.5) |
-| 3 | A web engine fault taking over the web content process (level 2 of section 5.6) | Low | What is on screen can be sent to an attacker's server through the webview's networking process; no secrets. No strip imitation on macOS; **on Linux the strip can be covered**, because the content process is given the display (`docs/proofs.md` section 6) | Platform updates of the web engine; no teletext bytes reach it; on macOS its sandbox denies windows and sockets (`docs/proofs.md` section 3.2); on Linux an empty network namespace for the window host and its children (section 6.1), with the rest pending (section 6.7) |
-| 4 | An escape from the web content process into the window host (level 3 of section 5.6) | Very low; needs a second fault | A false trusted strip and forged confirmations and settings; no secrets | Secrets kept in the trusted core (requirement 3.6); the window host makes no decision |
-| 5 | A fault in the trusted core, the one process holding everything | Low | Full compromise | Small, no web engine, no network format readers, fuzzed message readers, `unsafe` forbidden (requirements 3.2, 4.6, 14.2) |
-| 6 | Theft of the update root keys at threshold | Low | Malicious update | Threshold, offline hardware keys, separate holders (requirements 13.8, 13.9) |
-| 7 | A supply chain compromise of a Rust dependency in the trusted core | Low | Full compromise | Small dependency tree, review, auditing (requirements 3.2, 14.3) |
-| 8 | A supply chain compromise of React or another run-time JavaScript package, running as page code | Medium | Compromise of a process with nothing of value; it can switch tabs and show other pages of channels already open | Fixed approved list, lockfile review, `npm audit`, process isolation, intent restrictions (requirements 3.6, 4.5, 10.3) |
-| 9 | A Linux webview fault reached through our own content | Low | As the web engine faults above, for longer, because WebKitGTK updates may lag | No teletext data reaches it, sandbox, version warning (requirements 3.6, 10.1, 10.10) |
-| 10 | A decoder or fetcher fault | Low | Contained | No rights, `wasmi`, sandboxes (requirements 3.3, 3.4, 3.7) |
-| 11 | Exhaustion of resources | Low | Unresponsive tab or application | Visibility culling, limits, fuel (section 11) |
-| 12 | Runtime caller misattribution, as found with the Chromium Embedded Framework | Low on Tauri 2 | Permission bypass | One webview per window; attribution test on every runtime change (requirement 14.4) |
+| 3 | A web engine fault taking over the web content process (level 2 of section 5.6) | Low | What is on screen can be sent to an attacker's server through the webview's networking process; no secrets. No strip imitation on macOS; **on Linux the strip can be covered**, because the content process is given the display (`docs/proofs.md` section 6) | Platform updates of the web engine; no teletext bytes reach it; on macOS its sandbox denies windows and sockets (`docs/proofs.md` section 3.2); on Linux the window host's confinement, which its children inherit: no network, files or local services (decision 28) |
+| 4 | On Linux, the web content process using the display. On the user's display: typing into the user's other programs under X11 (measured). On a stock nested compositor: typing into the window host's strip (measured) | Low; needs a fault in the web engine | The user's account on the user's display; forged strip input on a stock nested compositor | A nested display of the window host's own (decision 29); the strip drawn outside it by the display host, T42 Browser's own, which offers no input injection (requirement 3.11, decisions 30 and 31; proved in its smallest form, `docs/proofs.md` section 6.14) |
+| 5 | An escape from the web content process into the window host (level 3 of section 5.6) | Very low; needs a second fault | A false trusted strip and forged confirmations and settings; no secrets | Secrets kept in the trusted core (requirement 3.6); the window host makes no decision |
+| 6 | A fault in the trusted core, the one process holding everything | Low | Full compromise | Small, no web engine, no network format readers, fuzzed message readers, `unsafe` forbidden (requirements 3.2, 4.6, 14.2) |
+| 7 | Theft of the update root keys at threshold | Low | Malicious update | Threshold, offline hardware keys, separate holders (requirements 13.8, 13.9) |
+| 8 | A supply chain compromise of a Rust dependency in the trusted core | Low | Full compromise | Small dependency tree, review, auditing (requirements 3.2, 14.3) |
+| 9 | A supply chain compromise of React or another run-time JavaScript package, running as page code | Medium | Compromise of a process with nothing of value; it can switch tabs and show other pages of channels already open | Fixed approved list, lockfile review, `npm audit`, process isolation, intent restrictions (requirements 3.6, 4.5, 10.3) |
+| 10 | A Linux webview fault reached through our own content | Low | As the web engine faults above, for longer, because WebKitGTK updates may lag | No teletext data reaches it; confined from outside (decision 28); version warning (requirements 3.6, 3.10, 10.1, 10.10) |
+| 11 | A decoder or fetcher fault | Low | Contained | No rights, `wasmi`, sandboxes (requirements 3.3, 3.4, 3.7) |
+| 12 | Exhaustion of resources | Low | Unresponsive tab or application | Visibility culling, limits, fuel (section 11) |
+| 13 | Runtime caller misattribution, as found with the Chromium Embedded Framework | Low on Tauri 2 | Permission bypass | One webview per window; attribution test on every runtime change (requirement 14.4) |
 
 ---
 
@@ -452,7 +471,7 @@ Every check below is in the project's check script, run by git hooks (requiremen
 
 1. **Engine dependencies:** no interface toolkit in any `neoteletext` crate used (requirement 2.2).
 2. **Trusted core dependencies:** no web engine, JavaScript engine or network format reader (requirement 3.2).
-3. **Process rights:** network and file access attempts fail in the fetcher, decoder and font helper, and file access outside the bundle fails in the window host, on each platform; page code reaches no network (requirements 3.3 to 3.7 and 10.11).
+3. **Process rights:** network and file access attempts fail in the fetcher, decoder and font helper, and file access outside the bundle fails in the window host, on each platform; page code reaches no network; on Linux, only the nested display's socket is reachable from the window host and its web content process, no request to the user's systemd succeeds, and nothing typed or pointed from inside the nested display reaches the trusted strip (requirements 3.3 to 3.7, 3.10, 3.11 and 10.11).
 4. **Message bounds and fuzzing:** every message kind, and fuzzing of every reader in the trusted core (requirements 4.2 and 4.6).
 5. **Intent restrictions:** every intent kind fails to change channel, confirm the site-change screen or change a setting (requirement 4.5).
 6. **Role crossing:** responses are refused in any role but their own (requirement 5.2).

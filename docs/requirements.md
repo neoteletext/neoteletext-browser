@@ -122,13 +122,13 @@ The process model is decided (decision 18).
 - **Verification:** Test: a malformed font is rejected; a font table whose shape is wrong is rejected by both checks.
 
 ### Requirement 3.6: The window host holds no secrets and decides nothing
-- **Statement:** The window host must never receive cookies, credentials, history or bookmarks beyond what is on screen, or any setting value that affects security, and must have no file access beyond its own bundled resources. It may hold the outgoing-network entitlement only where the platform's webview cannot render without it (macOS: `docs/proofs.md` section 2), and must never open a network connection of its own. It must make no decision: it shows the state the trusted core sends and passes on what the user did.
+- **Statement:** The window host must never receive cookies, credentials, history or bookmarks beyond what is on screen, or any setting value that affects security, and must have no file access beyond its own bundled resources. It may hold the outgoing-network entitlement only where the platform's webview cannot render without it (macOS: `docs/proofs.md` section 2), and must never open a network connection of its own. On Linux it must have no network at all (requirement 3.10). It must make no decision: it shows the state the trusted core sends and passes on what the user did.
 - **Reason:** The window host contains the system webview's interface to the web engine. An attacker who escaped the web content process into it must find nothing of value.
 - **Source:** Decisions 4, 18 and 27.
 - **Verification:** Test on each desktop platform: file access outside the bundle fails from the window host; the window host's own code makes no network connection (checked with the operating system's per-process network accounting); review of every message type sent to it.
 
 ### Requirement 3.7: Operating-system sandboxes
-- **Statement:** On each platform the processes must be sandboxed as in `architecture.md` section 6.5: App Sandbox and services on macOS; AppContainer, low integrity and job objects on Windows; Landlock and seccomp filters on Linux; isolated service processes on Android. On iOS, where one process is mandatory, the decoder must still run inside `wasmi`.
+- **Statement:** On each platform the processes must be sandboxed as in `architecture.md` section 6.5: App Sandbox and services on macOS; AppContainer, low integrity and job objects on Windows; Landlock and seccomp filters on Linux, and for the Linux window host the confinement of requirement 3.10 (whether it also gets a seccomp filter is open decision 22); isolated service processes on Android. On iOS, where one process is mandatory, the decoder must still run inside `wasmi`.
 - **Reason:** Each sandbox is a second wall behind the first.
 - **Source:** Architecture.
 - **Verification:** Test on each platform, as in requirements 3.3 to 3.6.
@@ -145,6 +145,38 @@ The process model is decided (decision 18).
 - **Source:** Decision 20.
 - **Verification:** Test: a hostile interface harness replaces the window host with an adversarial client that sends every intent kind with arbitrary values, malformed messages, floods and replayed messages, and the test shows that no channel change, settings change, secret disclosure, network access, file access or trusted strip forgery results. The test must also show that no information from one channel reaches another through requests (requirement 4.7).
 - **Status note:** The covert channel between channels described in `security-analysis.md` section 5.6 is closed by design by decision 22 and requirements 4.7 and 5.15 to 5.17; this requirement is met once those are implemented and pass their tests, **with one accepted exception:** on channels that publish only separate page files, page requests follow viewing (decision 23), so a compromised interface could signal through them.
+
+### Requirement 3.10: The Linux window host is confined from outside
+- **Statement:** On Linux the trusted core must start the window host:
+  1. in an empty network namespace;
+  2. in a private mount namespace in which `/run` and `/tmp` hold only the socket of the display in use;
+  3. under a Landlock rule set that grants read access only to the system directories, the display's socket and the application's own files, and write access only to shared memory, the null device and the graphics devices.
+
+  The window host must have no access to the home directory or to any data directory, and its webview must keep no website data. WebKitGTK's processes inherit all three layers, and nothing in the window host may lift them.
+- **Reason:** Under Tauri, WebKitGTK's content process has no sandbox of its own. Landlock alone is not enough, because it does not govern connecting to local sockets: with Landlock and an empty network namespace, 52 local services were still reachable. One of them was the user's session bus, through which the user's systemd ran a program outside the confinement (`docs/proofs.md` section 6.8).
+- **Source:** Decision 28.
+- **Verification:** Test on Linux, as `spikes/webkitgtk-sandbox/confined-host.sh` does:
+  - the webview renders the application's page and its messages reach Rust;
+  - `open()` of a file in the home directory, called inside the web content process, fails;
+  - of the machine's listening local sockets, only the display's can be reached from inside;
+  - `systemd-run --user` from inside fails;
+  - no network probe reaches a listening test server.
+- **Status note:** This requirement does not close the display. Requirement 3.11 does.
+
+### Requirement 3.11: The Linux window host draws on a nested display of its own
+- **Statement:** On Linux the window host must never be given the user's display, on any session, X11 or Wayland. It must draw on a nested display whose host runs outside the window host's confinement. The only display socket inside the confinement must be the nested display's. Then, requirements:
+  1. The nested display's host must offer the window host no protocol for input injection, screen copy, clipboard access without focus, or surfaces above other windows. It may offer the text-input protocol, through which it delivers only text the user's input method composed, and must not offer the input-method protocol (decision 32).
+  2. The trusted strip must be drawn by the nested display's host, outside the nested display, and its input sent by that host straight to the trusted core. That host is T42 Browser's own display host (decision 30).
+- **Reason:** The web content process must have a display, and under X11 a confined process typed a command into the user's terminal through it. On a nested display it reached nothing of the user's (`docs/proofs.md` section 6.11). Through a stock nested compositor's virtual keyboard, a process sharing the window host's confinement typed into the window host's own text field, so the strip cannot live inside the nested display (section 6.12).
+- **Source:** Decisions 29, 30, 31 and 32.
+- **Verification:** Test on Linux under an X11 desktop and a Wayland desktop, as `spikes/webkitgtk-sandbox/nested-host.sh` does:
+  - the page works;
+  - none of the user's display sockets or local services can be reached from inside;
+  - typing into a terminal on the user's display fails;
+  - typing and pointing through every protocol the nested display offers fails to reach the trusted strip;
+  - a window opened from inside the nested display cannot cover the strip;
+  - the user's own typing reaches the strip as strip input, and the window host's window as its input.
+- **Status note:** The smallest form of the display host (`spikes/display-host`) passes every one of these checks (`docs/proofs.md` section 6.14).
 
 ---
 
@@ -575,7 +607,7 @@ The process model is decided (decision 18, amended by decision 19). The interfac
 - **Verification:** Test with a mocked version.
 
 ### Requirement 10.11: Page code cannot use the network
-- **Statement:** Page code must be unable to reach any network, through: (1) the Content Security Policy of requirement 10.5; (2) WebRTC's interfaces (`RTCPeerConnection`, `webkitRTCPeerConnection`, `RTCDataChannel`, `RTCIceCandidate`, `RTCSessionDescription`, `RTCRtpSender`, `RTCRtpReceiver`, `RTCRtpTransceiver`) removed in every frame before any page script runs, because the Content Security Policy does not govern WebRTC; (3) the webview's own switches for media capture, geolocation, service workers and prefetching, wherever the platform offers them; (4) the platform's sandbox of the web content process, which on macOS allows it no network sockets. Where the operating system can also deny the window host the network without breaking the webview, it must: on Linux it can, with an empty network namespace that WebKitGTK's processes inherit (`docs/proofs.md` section 6.1); on macOS it cannot (section 2); on Windows it is not yet proven.
+- **Statement:** Page code must be unable to reach any network, through: (1) the Content Security Policy of requirement 10.5; (2) WebRTC's interfaces (`RTCPeerConnection`, `webkitRTCPeerConnection`, `RTCDataChannel`, `RTCIceCandidate`, `RTCSessionDescription`, `RTCRtpSender`, `RTCRtpReceiver`, `RTCRtpTransceiver`) removed in every frame before any page script runs, because the Content Security Policy does not govern WebRTC; (3) the webview's own switches for media capture, geolocation, service workers and prefetching, wherever the platform offers them; (4) the platform's sandbox of the web content process, which on macOS allows it no network sockets. Where the operating system can also deny the window host the network without breaking the webview, it must: on Linux it can, with an empty network namespace that WebKitGTK's processes inherit (`docs/proofs.md` section 6.1; requirement 3.10); on macOS it cannot (section 2); on Windows it is not yet proven.
 - **Reason:** On macOS, WKWebView renders nothing without the network entitlement, and with it the App Sandbox does not restrict destinations; the protection must therefore come from the layers that do work, measured in Proof A.
 - **Source:** Decisions 4, 20 and 27.
 - **Verification:** Test on each platform, inside the real webview: fetch, XMLHttpRequest, WebSocket, Server-Sent Events, beacon, WebRTC (directly and through a blank iframe), image, font and stylesheet loads, prefetch, iframes and navigation are all attempted, and none reaches a listening test server. A control run without the protections must show that the same probe does reach the server.
@@ -586,7 +618,7 @@ The process model is decided (decision 18, amended by decision 19). The interfac
 
 ### Requirement 11.1: The trusted strip shares the webview's window and is out of page code's reach
 - **Statement:** Every window must have a trusted strip, drawn natively by the window host in the same window as the webview but outside the webview's area, showing only the state the trusted core sends. The strip must never be a window of its own. Its input must reach the trusted core as strip input, a message kind that page intents can never produce.
-- **Reason:** A strip in a window of its own can be covered by any process's window, even a sandboxed one; a strip in the webview's window cannot be reached by page code, and on macOS the web content process is denied the window server (`docs/proofs.md` section 3). On Linux the web content process is given the display even inside WebKitGTK's sandbox, so there the strip is out of page code's reach but not out of a compromised content process's (section 6.6; decision pending, section 6.7).
+- **Reason:** A strip in a window of its own can be covered by any process's window, even a sandboxed one; a strip in the webview's window cannot be reached by page code, and on macOS the web content process is denied the window server (`docs/proofs.md` section 3). On Linux the web content process is given the display even inside WebKitGTK's sandbox, so there the strip is out of page code's reach but not out of a compromised content process's (section 6.9). On Linux the strip is therefore drawn by the host of the window host's nested display, outside it, by T42 Browser's own display host (decisions 29 and 30, requirement 3.11).
 - **Source:** Decisions 4, 18 and 27.
 - **Verification:** Test: a page that draws fixed elements above the viewport at the highest stacking order, opens windows and requests full screen leaves the strip untouched; the hostile interface harness cannot produce strip input; review.
 
@@ -671,6 +703,8 @@ The process model is decided (decision 18, amended by decision 19). The interfac
 - **Reason:** Teletext must be readable without sight.
 - **Source:** Architecture.
 - **Verification:** Test with VoiceOver, Narrator and Orca on the desktops.
+- **Linux:** The window host has no accessibility bus (requirement 3.10). The display host must publish the window's accessibility tree itself, from state the trusted core sends: the strip and its address, and each page image labelled with its cleaned text (decision 32). Accessibility requests reach the display host, never the window host, and the display host must act on them only as it would on the user's own input in the strip.
+- **Status note:** The display host's smallest form published a correct tree, followed the user's focus and acted on a screen reader's focus request; Orca read the tree on starting but did not follow later moves in the headless test, which is not explained (`docs/proofs.md` section 6.16).
 
 ---
 

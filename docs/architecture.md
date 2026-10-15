@@ -80,6 +80,11 @@ Each decision below was made by the owner on the date given. Requirements in `re
 | Decision 25 | 15 October 2026 | Updates are hosted at `update.neoteletext.com`, a subdomain used for nothing else. |
 | Decision 26 | 15 October 2026 | Every limit on fetching, refreshing and input is defined once, in neoteletext, and T42 Browser uses neoteletext's constants. The fetching policy of decisions 22 and 23 is implemented in neoteletext as well, not in T42 Browser. What T42 Browser needs from neoteletext is listed in section 5.1 and in `neoteletext/docs/t42-browser-open-questions.md`. |
 | Decision 27 | 15 October 2026 | Proofs A and B (`docs/proofs.md`) showed that on macOS a webview cannot be denied the network by the operating system without rendering nothing, and that a strip in a separate process's window can be covered by any other window. The interface process of decision 18 is therefore replaced by a **window host**: a process that owns the window, hosts the system webview and draws the native trusted strip in that same window. It holds the network entitlement only because the webview requires it, never uses it, and holds no secrets. The trusted core stays a separate process, holding every secret and making every decision. Page code is confined by the webview's own content process sandbox, the Content Security Policy and the removal of WebRTC in every frame. |
+| Decision 28 | 15 October 2026 | On Linux the window host is confined from outside (option 1 of `docs/proofs.md` section 6.7). It is started in an empty network namespace, with private `/run` and `/tmp` that hold only the socket of the display in use, under a Landlock rule set that grants no home directory and no data directory. WebKitGTK's processes inherit all three. WebKitGTK's own sandbox is not turned on, so `wry` is not patched. The private directories were added after measurement showed that Landlock alone left the user's session bus reachable, and through it a way to run programs outside the confinement (`docs/proofs.md` section 6.8). On Linux the trusted strip holds against page code but not against a compromised web content process, which keeps the display; that is recorded as a remaining risk, and what to do about the display is open decision 19. |
+| Decision 29 | 15 October 2026 | Security is critical, so on Linux the window host never receives the user's display. It draws on a nested display of its own, hosted by a process outside its confinement, on every Linux session, X11 or Wayland (option 1 of `docs/proofs.md` section 6.10). No session is supported by warning instead. Measured with cage as the nested compositor: the confined window host reached none of the user's display sockets or local services, and could not type into the user's terminal (`docs/proofs.md` section 6.11). The same measurement showed that a stock compositor still lets a compromised content process forge strip input, so the strip on Linux must be drawn by the nested display's host. How was open decision 20, closed by decision 30. |
+| Decision 30 | 15 October 2026 | On Linux the nested display of decision 29 is hosted by **T42 Browser's own display host** (option 1 of `docs/proofs.md` section 6.13), not by a stock or patched compositor. It is a small Wayland compositor, run outside the window host's confinement as a client of the user's desktop. It offers the window host only core window protocols: surfaces, shared memory and graphics buffers, and the desktop shell's windows. It offers no input injection, no screen copy, no clipboard access without focus and no surfaces above other windows. It takes input only from the user's real devices. It draws the trusted strip natively, outside the nested display, and sends strip input straight to the trusted core. Which compositor library it is built on was open decision 21, closed by decision 31. |
+| Decision 31 | 15 October 2026 | The display host of decision 30 is written in Rust, on Smithay (version 0.7.0 in the proof). Its smallest form, `spikes/display-host`, passed every test of `docs/proofs.md` section 6.14 under both an X11 and a Wayland desktop. |
+| Decision 32 | 15 October 2026 | On Linux, input methods and screen readers are handled by the display host, outside the window host's confinement; nothing new enters the confinement. The user's input method talks only to the display host, which serves the text-input protocol itself and delivers only composed text to the window host; it never offers the input-method protocol. The display host publishes the window's accessibility tree to the user's screen reader with AccessKit, built from state the trusted core sends: the strip, and each page image labelled with its cleaned text. The window host never reaches an accessibility bus. Measured in `docs/proofs.md` section 6.16. |
 
 ---
 
@@ -93,7 +98,8 @@ Each decision below was made by the owner on the date given. Requirements in `re
 | **Origin** | The combination of scheme, host and port of an address, as in traditional browsers. |
 | **Tab** | One view onto one channel at a time, with its own history. |
 | **Trusted core** | The process that holds everything the user trusts: which channel each tab shows, history, bookmarks, cookies, settings. It contains no web engine. |
-| **Window host** | The process that owns each window, hosts Tauri and the system webview, and draws the native trusted strip in the same window (decision 27). It holds no secrets and makes no decision; it renders the state the trusted core sends and passes on what the user did. The webview's page code runs in the webview's own content process, outside the window host. |
+| **Display host** | On Linux only: T42 Browser's own small Wayland compositor, written in Rust on Smithay (decision 31), outside the window host's confinement. It hosts the window host's nested display, draws the trusted strip natively beside it, and sends strip input to the trusted core (decisions 29 and 30). It is also the window's side of the user's input method and the window's publisher to the user's screen reader (decision 32). |
+| **Window host** | The process that owns each window, hosts Tauri and the system webview, and draws the native trusted strip in the same window (decision 27); on Linux the display host draws the strip instead (decision 30). It holds no secrets and makes no decision; it renders the state the trusted core sends and passes on what the user did. The webview's page code runs in the webview's own content process, outside the window host. |
 | **Web content process** | The system webview's own process in which page code runs, sandboxed by the platform. On macOS its sandbox denies everything by default, including the window server and network sockets (`docs/proofs.md` section 3.2). |
 | **Trusted strip** | A small native area at the top of each window, drawn natively by the window host from state the trusted core sends, in the same window as the webview. It shows the address and security state of the current tab and carries every security decision. Page code cannot draw over it or read it (`docs/proofs.md` section 3.2). |
 | **Fetcher** | The process that holds network connections and Transport Layer Security sessions, and runs the strict web protocol readers. |
@@ -173,13 +179,15 @@ This model was adopted by the owner on 15 October 2026 (decision 18).
 ┌──────▼──────────────────┐   ┌─────────▼──────────────────┐   ┌─────────▼────────────────────────┐
 │ fetcher                  │   │ decoder, one per channel    │   │ window host (decision 27)         │
 │ network connections,     │   │ content detection, readers, │   │ Tauri and the system webview      │
-│ Transport Layer Security,│   │ decoding, Presentation      │   │ owns the window; draws the native │
-│ protocol readers         │   │ Levels 1.0 to 3.5, render   │   │ trusted strip; hosts the webview  │
-│ network only             │   │ inside wasmi; no network,   │   │ no secrets; network entitlement   │
-│                          │   │ no files, no secrets        │   │ held only because WebKit needs it │
+│ Transport Layer Security,│   │ decoding, Presentation      │   │ hosts the webview; draws the      │
+│ protocol readers         │   │ Levels 1.0 to 3.5, render   │   │ trusted strip (on Linux the       │
+│ network only             │   │ inside wasmi; no network,   │   │ display host draws it, 6.6)       │
+│                          │   │ no files, no secrets        │   │ no secrets                        │
 └──────────────────────────┘   └─────────────────────────────┘   └───────────────────────────────────┘
        plus: the webview's own sandboxed content process, where page code runs;
-             font helper (confined), updater and launcher (section 12)
+             font helper (confined), updater and launcher (section 12);
+             on Linux, the display host, which hosts the window host's nested
+             display and draws the trusted strip (decision 30)
 ```
 
 | Process | Holds | May access | If compromised, the attacker gains |
@@ -188,8 +196,9 @@ This model was adopted by the owner on 15 October 2026 (decision 18).
 | **Fetcher** | Network connections, Transport Layer Security sessions, the cookies attached to the requests it is currently making | The network only | The ability to send and receive on the network, and the cookies of requests in flight; no files, no history, no other channels' cookies |
 | **Decoder** | One channel's pages | Nothing | Nothing outside its own memory, which holds one channel's public pages |
 | **Font helper** | One font being read | Nothing | Nothing; its output is checked by hash and by shape |
-| **Window host** | What is on screen, and the state of the trusted strip | Its windows, the pipe to the trusted core, and the network entitlement the webview requires, which it never uses | The ability to draw anything in its windows, including a false trusted strip, and to send intents and strip input, which the trusted core checks; no secrets. Reaching it requires escaping the web content process's sandbox. |
-| **Web content process** (the webview's own) | The page code | Nothing beyond what the platform's sandbox allows; on macOS no window server and no network sockets | The page's own area of the window, and requests through the webview's networking process, which the Content Security Policy and WebRTC removal stop for page code |
+| **Display host** (Linux only, decision 30) | The window host's nested display, and the trusted strip | The user's display, and the pipe to the trusted core for strip state and strip input | The user's display, and with it the trusted strip; it reads the window host's display protocol, so it is kept small, reads only core window protocols, and is fuzzed |
+| **Window host** | What is on screen, and the state of the trusted strip | Its windows, the pipe to the trusted core, and on macOS the network entitlement the webview requires, which it never uses. On Linux no network, no files beyond its own, no local service, and only a nested display of its own (decisions 28 and 29) | The ability to draw anything in its windows, including a false trusted strip, and to send intents and strip input, which the trusted core checks; no secrets. Reaching it requires escaping the web content process's sandbox. |
+| **Web content process** (the webview's own) | The page code | Nothing beyond what the platform's sandbox allows; on macOS no window server and no network sockets. On Linux it has no sandbox of its own under Tauri and inherits the window host's confinement, which leaves it only the nested display (decisions 28 and 29) | The page's own area of the window, and requests through the webview's networking process, which the Content Security Policy and WebRTC removal stop for page code |
 | **Updater** | The update being downloaded | The update subdomain only, and the versions directory | Nothing that survives: every update is checked against The Update Framework metadata before use |
 
 ### 6.2 Why bytes pass through the trusted core
@@ -237,8 +246,15 @@ All processes communicate over the framed pipe protocol of `neoteletext-app/src/
 | Core to interface | Frame | One page image: tab, magazine and page, subcode, frame version, Portable Network Graphics bytes |
 | Core to interface | Page text | The cleaned, bounded text of a page, for accessibility labels |
 | Interface to core | Intent | What the user did in the page area: show a page, scroll, change layout, switch tab, close tab, a key, a click on a page cell, which pages are visible. Never a navigation to another channel. |
-| Core to window host | Strip state | What the trusted strip shows: the address as formatted by the display rules, the channel's identity, the encryption state, the site-change screen when one is pending. |
-| Window host to core | Strip input | What the user did in the trusted strip: a typed address, Back, Forward, Reload, Home, a site-change confirmation or cancellation, a security setting. Strip input is a separate message kind from page intents, and only the native strip produces it. |
+| Core to window host (on Linux, to the display host) | Strip state | What the trusted strip shows: the address as formatted by the display rules, the channel's identity, the encryption state, the site-change screen when one is pending. |
+| Window host to core (on Linux, display host to core) | Strip input | What the user did in the trusted strip: a typed address, Back, Forward, Reload, Home, a site-change confirmation or cancellation, a security setting. Strip input is a separate message kind from page intents, and only the native strip produces it. |
+
+**Between the trusted core and the display host** (Linux only, decisions 30 and 32), besides strip state and strip input above:
+
+| Direction | Message | Meaning |
+|---|---|---|
+| Core to display host | Accessibility state | What the window's accessibility tree holds: the strip's state, and each shown page image with its cleaned, bounded text. The window host's own tree is never published on Linux. |
+| Display host to core | Accessibility request | What the user's screen reader asked for: focus the strip or a page, set the address, press a strip control. The trusted core treats it as strip input or as an intent, exactly as if the user had done it. |
 
 ### 6.5 Isolation on each platform
 
@@ -246,11 +262,63 @@ All processes communicate over the framed pipe protocol of `neoteletext-app/src/
 |---|---|---|---|---|
 | macOS | Service, App Sandbox, no network | Service with the outgoing-network entitlement only | Service with no entitlements, and inside wasmi | The main application, holding the outgoing-network entitlement only because WKWebView renders nothing without it (`docs/proofs.md` section 2), and no file access beyond its bundle; the trusted core is a separate service |
 | Windows | Main process | AppContainer with the internet-client capability only | AppContainer without it, low integrity, job object, and inside wasmi | AppContainer; whether WebView2 can run without the internet-client capability is not yet proven |
-| Linux | Main process | Own process, Landlock and seccomp filter | Own process, Landlock and seccomp filter, and inside wasmi | Own process in an empty network namespace, which WebKitGTK runs in and its processes inherit (`docs/proofs.md` section 6.1), and Landlock. WebKitGTK's own content process sandbox is off under Tauri and cannot be turned on through it; even when on, it gives the content process the display (section 6, decision pending) |
+| Linux | Main process | Own process, Landlock and seccomp filter | Own process, Landlock and seccomp filter, and inside wasmi | Own process, confined from outside (decision 28): an empty network namespace; private `/run` and `/tmp` holding only the display's socket; a Landlock rule set with no home directory and no data directory. WebKitGTK's processes inherit all three (`docs/proofs.md` section 6.8). WebKitGTK's own content process sandbox stays off. Draws on a nested display of its own, never the user's (decision 29); the strip is drawn outside it, by T42 Browser's own display host (decision 30). No system call filter yet (open decision 22). Section 6.6 summarises the Linux design and section 6.7 the alternatives considered |
 | Android | Main application process | Separate service process | Isolated service process with seccomp filter, and inside wasmi | The application's webview (see section 13) |
 | iOS | The application | Inside the application process | Inside the application process, inside wasmi only | The application's webview (see section 13) |
 
 Today, in `neoteletext`, the fetcher and decoder are separate processes on macOS but are not yet sandboxed there (`neoteletext/docs/user-guide.md`, "Phase 2"). The macOS sandboxing is required work.
+
+### 6.6 Linux: how the isolation is built
+
+On macOS the system's web engine confines its own content process, and the operating system keeps that process from the window server (`docs/proofs.md` sections 2 and 3). On Linux neither holds under Tauri (`docs/proofs.md` section 6), so T42 Browser builds the confinement itself, in three parts:
+
+1. **Confinement from outside (decision 28, requirement 3.10).**
+   - The trusted core starts the window host in an empty network namespace, with private `/run` and `/tmp` that hold only the nested display's socket, under a Landlock rule set with no home directory and no data directory.
+   - WebKitGTK's processes inherit all three.
+   - Measured: no network, no user files, and none of the machine's local services.
+2. **A nested display of the window host's own (decision 29, requirement 3.11).**
+   - The window host never receives the user's display, under X11 or Wayland.
+   - Measured: under X11 a confined process could otherwise type commands into the user's terminal.
+3. **T42 Browser's own display host (decisions 30 and 31).**
+   - **What it is:** a small Wayland compositor in Rust, on Smithay, running outside the confinement as an ordinary window on the user's desktop.
+   - **Its own drawing:** it draws the trusted strip itself, outside the nested display. Nothing inside can cover the strip or type into it, not even an escape into the window host.
+   - **What it offers the window host:** only core window protocols and text input.
+   - **Input methods and screen readers (decision 32):** it is the user's input method's side of the window, and the window's publisher to the user's screen reader.
+
+**Still open:** a system call filter for the window host (open decision 22), and the Wayland security-context protocol as a further layer (open decision 23). Both come from the research in section 6.7.
+
+### 6.7 Other ways to organise security in a Linux application
+
+Researched on 15 October 2026, to check the design of section 6.6 against what others do. For each: what it is, how it relates to T42 Browser, and what T42 Browser takes from it.
+
+| Approach | What it is | Relation to T42 Browser | What T42 Browser takes |
+|---|---|---|---|
+| 1. Chromium's sandbox | Two layers [1]. Layer 1: the renderer runs in empty namespaces from unprivileged user namespaces, which also allows cutting off the network. Layer 2: a seccomp-bpf system call filter, "designed to shelter the kernel from malicious code executing in userland". Chromium's own AppArmor and SELinux layers are deprecated. | Section 6.6's confinement is layer 1. **T42 Browser has no layer 2 for the window host.** | A system call filter for the window host, as for the fetcher and decoder (open decision 22) |
+| 2. WebKitGTK's own sandbox | Bubblewrap with a seccomp filter, and a filtering proxy for the session bus | Measured (`docs/proofs.md` sections 6.3 to 6.5): real, but it gives the content process the display, and Tauri cannot turn it on without a patched `wry` | Not used (decision 28) |
+| 3. Flatpak and portals | The whole application runs under Bubblewrap; trusted "portal" services outside it act for it, such as choosing files or capturing the screen, after asking the user | A proven pattern, but Flatpak would become the update path, against decision 24. It has had escapes: before 1.10.4 and 1.12.0, an application holding the Wayland or PipeWire socket could make portals treat it as unsandboxed [2]. | The portal idea, already present: the trusted core and display host act for the window host |
+| 4. The Wayland security-context protocol | A sandbox tags its Wayland connections, and the user's compositor withholds dangerous protocols from them [3][4]. One compositor withholds screen capture, virtual input, the layer shell, clipboard control and the protocol itself from tagged clients [5]. | The standard way to limit a sandbox's display. It depends on the user's compositor, does nothing under X11, and does not move the strip out of reach. | A further layer on desktops that support it (open decision 23) |
+| 5. Sandboxing libraries in the process: RLBox and wasm2c | Firefox compiles risky libraries to WebAssembly and back to C, so a fault cannot leave the library: Graphite, Hunspell, Ogg, Expat and Woff2 [6] | The same idea as the decoder running in wasmi | Already used for the decoder; candidates are the font helper and the image encoder |
+| 6. A virtual machine per component: Qubes OS, Spectrum, crosvm | Each component runs in its own lightweight virtual machine. Its windows reach the host's compositor through virtio-gpu's cross-domain mode and a proxy compositor [7][8]. | The strongest isolation, by hardware virtualisation; section 6.6's display host is the same idea without the virtual machine | Not now: far heavier to run and ship. The upgrade path if process isolation proves insufficient. |
+| 7. A user-space kernel: gVisor | System calls are answered by a kernel written in Go in user space, so the host kernel is barely reached [9] | Built for servers and containers; slow for input and output; awkward for graphical applications | Not used |
+| 8. systemd's sandboxing settings | One launch applies settings such as a private network, a protected home directory, restricted socket families and a system call filter | Could replace the hand-written launcher of section 6.6, but needs systemd, and the user's systemd is the escape route section 6.6 closes | A fallback if the launcher proves hard to maintain |
+| 9. AppArmor or SELinux profiles | A policy for each program, enforced by the operating system | Which one exists depends on the distribution, and Chromium deprecated both as sandbox layers [1] | An extra layer where present, never relied on |
+| 10. A separate user account per component (privilege separation, as in OpenSSH) | The risky part runs as its own unprivileged user, so ordinary file permissions keep it from the user's files | Needs a privileged helper or a system-wide install; under X11 it still shares the display | Not used: section 6.6 gets the same separation without privilege |
+
+**Conclusions.**
+- Section 6.6 matches the strongest practice short of virtual machines: Chromium's layer 1, an in-process WebAssembly wall as in Firefox, and a trusted display host as in the virtual-machine systems.
+- The one gap is a system call filter for the window host, which Chromium treats as essential (open decision 22).
+- Rows 8 to 10 rest on general knowledge and were not verified in this research.
+
+**Sources.**
+1. Chromium, "Linux Sandboxing": https://chromium.googlesource.com/chromium/src/+/71.0.3578.80/docs/linux_sandboxing.md
+2. CVE-2021-41133 (Flatpak): https://nvd.nist.gov/vuln/detail/CVE-2021-41133
+3. Wayland security context protocol: https://wayland.app/protocols/security-context-v1
+4. The protocol's addition to wayland-protocols: https://gitlab.freedesktop.org/wayland/wayland-protocols/commit/12c063088e97
+5. The Umbriel compositor's policy for sandboxed clients: https://docs.noctalia.dev/umbriel/security/
+6. Mozilla, "WebAssembly and Back Again: Fine-Grained Sandboxing in Firefox 95": https://hacks.mozilla.org/2021/12/webassembly-and-back-again-fine-grained-sandboxing-in-firefox-95/
+7. crosvm, Wayland forwarding: https://crosvm.dev/book/devices/wayland.html
+8. Spectrum OS, virtual machine Wayland support: https://lists.spectrum-os.org/archives/list/devel@spectrum-os.org/thread/BCXJ3JE7DK4SHDP37EMCMLWLDMCEPCYG/
+9. gVisor: https://gvisor.dev/docs
 
 ---
 
@@ -425,7 +493,7 @@ The shell is everything around the pages: tabs, the address field, the toolbar, 
 
 **How the shell is split:**
 
-- **The trusted strip,** drawn natively by the window host in the same window as the webview, from state the trusted core sends, holds the address field, the channel's identity, the security state and every security decision. Page code cannot reach it (decision 27).
+- **The trusted strip,** drawn natively by the window host in the same window as the webview, from state the trusted core sends, holds the address field, the channel's identity, the security state and every security decision. Page code cannot reach it (decision 27). On Linux the display host draws it instead, outside the window host's nested display (decision 30).
 - **The window host** draws everything decorative: page walls, transitions, the tab strip, panels, internal pages. It is a React application written in TypeScript (decision 19). It renders only from the state the trusted core sends, shows frames, forwards input and plays transitions. Page text is rendered only as React text nodes, which escape every value; nothing builds markup from strings. Its run-time JavaScript dependencies are a fixed, approved list: React, React DOM and the Tauri interface package.
 - **Rust owns all state.** The window host renders what it is told and reports what the user did. It decides nothing about navigation, channels, addresses or security.
 
@@ -437,6 +505,10 @@ trusted core ◄─────────────── intents ───�
 
 trusted core ──strip state: address, channel, security──► trusted strip (native, in the window host)
 trusted core ◄──strip input: typed address, confirmations── trusted strip (native, in the window host)
+
+on Linux the trusted strip is in the display host instead (decision 30):
+trusted core ──strip state, accessibility state──────────► display host
+trusted core ◄──strip input, accessibility requests─────── display host
 ```
 
 - The trusted core sends the window host a full snapshot of each tab's decorative state whenever it changes, so the interface never merges partial updates.
@@ -453,14 +525,14 @@ A tab shows the channel's name as cleaned text from the trusted core, a loading 
 
 ### 11.3 The trusted strip: address field, identity and security decisions
 
-The trusted strip is a native area along the top of every window, drawn by the window host in the same window as the webview but outside the webview's area, so page code cannot draw over it or read it (`docs/proofs.md` section 3.2). It shows only what the trusted core sends and passes every input to the trusted core as strip input.
+The trusted strip is a native area along the top of every window, drawn by the window host in the same window as the webview but outside the webview's area, so page code cannot draw over it or read it (`docs/proofs.md` section 3.2). On Linux it is drawn by the display host, outside the window host's nested display, so not even the window host can reach it (decision 30, `docs/proofs.md` section 6.14). It shows only what the trusted core sends and passes every input to the trusted core as strip input.
 
 - **Display mode:** the channel's address as formatted by the address display rules (scheme, host emphasised, internationalised names shown safely), whether the channel arrived encrypted, and the channel's name.
 - **Edit mode:** a native text field. On Enter the text goes to the trusted core, which parses it with `neoteletext-web`'s strict address parser and either navigates or shows an error inside the strip.
 - **Suggestions** from history and bookmarks are computed by the trusted core and shown by the trusted strip.
 - **The site-change screen** is shown by the trusted strip: the destination channel, how the navigation was started, and a confirmation. It is shown in the trusted strip only, never in the page area, so a page image cannot imitate it (decision 24).
 - **The trusted strip stays visible in every layout**, including full-screen and zoomed views. If a layout hides it, it reappears on any interaction.
-- **Native text input** gives the on-screen keyboard, input methods for every script, selection and pasting on every platform.
+- **Native text input** gives the on-screen keyboard, input methods for every script, selection and pasting on every platform. On Linux the display host is the input method's side of the strip and of the window host's text fields (decision 32).
 
 ### 11.4 Toolbar and navigation
 
@@ -510,6 +582,7 @@ A docked panel, toggled from the menu and the toolbar. All its data comes from t
 - The shell's markup is accessible to screen readers directly.
 - Each page image carries an accessible label holding the page's text, extracted by the trusted core from the decoded rows and passed as plain, cleaned text.
 - The trusted strip uses each platform's native accessibility.
+- **On Linux** the window host has no accessibility bus (decision 28). The display host publishes the window's tree itself, from the trusted core's accessibility state: the strip, and each page image with its text (decision 32).
 
 ### 11.11 Phones
 
@@ -592,7 +665,7 @@ The update mechanism is accepted only when these automated tests pass on every d
 |---|---|---|
 | macOS | WKWebView (WebKit) | Updated with the operating system |
 | Windows | WebView2 (Chromium) | Updated by Microsoft independently of the application |
-| Linux | WebKitGTK | Updated by the distribution; often weeks to months behind upstream security fixes. A start-up check of the WebKitGTK version, with a warning below a known-fixed release, is required. |
+| Linux | WebKitGTK | Updated by the distribution; often weeks to months behind upstream security fixes. A start-up check of the WebKitGTK version, with a warning below a known-fixed release, is required. The window host is confined from outside (decision 28) and draws on a nested display of its own, never the user's (decision 29). The trusted strip is drawn by T42 Browser's own display host, outside the nested display (decision 30). |
 | Android | Android System WebView (Chromium) | Updated through the Play Store. The webview cannot be moved into a separate process of the application's choosing in the same way as on desktops; the decoder's isolated service process and wasmi remain. |
 | iOS | WKWebView (WebKit) | One application process. The decoder's only wall is wasmi, as in `neoteletext/docs/desktop-browser.md` section 3.6. WebKit's own content process still separates script execution from the application. |
 
@@ -607,10 +680,13 @@ t42-browser/
   launcher/                 the small launcher and update stub (section 12)
   updater/                  the updater process
   src-tauri/                the window host (Tauri)
+    src/strip/              the native trusted strip on macOS and Windows (decision 27)
+  display-host/             Linux only: the display host, in Rust on Smithay (decisions 30 to 32):
+                            nested display, trusted strip, input methods, accessibility tree
   core/                     the trusted core (Rust, no web engine)
     src/state/              tabs, history, bookmarks, settings, sessions
-    src/strip/              the native trusted strip, per platform
-    src/routing/            fetcher and decoder process management and routing
+    src/routing/            starting, confining and routing the other processes,
+                            including the Linux confinement of the window host (decision 28)
     src/frames/             frame checking, de-duplication, image encoding
     src/cookies/            the cookie store (from neoteletext-web)
     src/policy/             navigation, site-change and address display rules
@@ -670,6 +746,11 @@ Tried on 15 October 2026 with `tauri` 3.0.0-alpha.4, `tauri-runtime-cef` 3.0.0-a
 | Open decision 16 | Closed by decision 22: fetching never depends on viewing. | — |
 | Open decision 17 | Closed by decision 23: channels with only separate page files fetch each page when it is selected, as an accepted exception. | — |
 | Open decision 18 | Moved to neoteletext by decision 26: the fetching limits, default refresh and grace period are defined there. | — |
+| Open decision 19 | Closed by decision 29: a nested display for the window host on every Linux session. | — |
+| Open decision 20 | Closed by decision 30: T42 Browser's own display host. | — |
+| Open decision 21 | Closed by decisions 31 (Rust, Smithay) and 32 (input methods and screen readers through the display host). | — |
+| Open decision 22 | Should the Linux window host also run under a seccomp system call filter, as Chromium's renderer does (section 6.7, approach 1)? The fetcher and decoder already have one (section 6.5); the window host has only the confinement of decision 28, so a fault in the web engine faces the whole kernel interface. The filter must allow what WebKitGTK and GTK need, which must be measured. | Yes: measure what WebKitGTK and GTK need under the confinement, and filter to that. |
+| Open decision 23 | Should the display host, on Wayland desktops that support the security-context protocol, also tag its own connection to the user's compositor, so the compositor withholds dangerous protocols from it too (section 6.7, approach 4)? It costs little and narrows what an escape into the display host could reach; it is unavailable under X11 and on compositors without the protocol. | Yes, where supported, as an extra layer that is never relied on. |
 
 ---
 
@@ -677,39 +758,59 @@ Tried on 15 October 2026 with `tauri` 3.0.0-alpha.4, `tauri-runtime-cef` 3.0.0-a
 
 | Term | Meaning |
 |---|---|
+| AccessKit | A Rust library that publishes an application's accessibility tree to each platform's screen readers; the display host uses it (decision 32). |
+| App Sandbox | The macOS sandbox for applications: a process runs with only the entitlements it is given. |
+| AppArmor | A Linux mechanism that enforces a security policy for each program, used by some distributions. |
 | AppContainer | The Windows sandbox for applications: a process runs with only the capabilities it is given. |
 | AppImage | A Linux packaging format: one self-contained executable file per application version. |
-| App Sandbox | The macOS sandbox for applications: a process runs with only the entitlements it is given. |
+| AT-SPI | The Linux accessibility interface: applications publish their contents on the accessibility bus, and screen readers such as Orca read them there. |
 | Authenticode | Microsoft's code signing for Windows executables. |
 | Blitz | A Rust engine from the Dioxus project that lays out and draws HyperText Markup Language and Cascading Style Sheets without a JavaScript engine. |
+| Bubblewrap | A Linux tool that starts a program in new namespaces with a chosen view of the file system; used by Flatpak and by WebKitGTK's own sandbox. |
 | Cascading Style Sheets | The language that describes how markup is laid out and styled, including transitions and animations. |
 | Chromium Embedded Framework | A framework for embedding the Chromium browser engine in an application. |
 | Colour Look-Up Table, Colour Map | In teletext Presentation Level 2.5, four tables of eight colours each, together the 32-colour Colour Map. |
+| Compositor | The program that combines windows into what a display shows and routes input to them; under Wayland it is the display server. |
 | Entitlement | On macOS, a permission granted to a signed application or service, such as outgoing network access. |
 | Fastext | Teletext's coloured links: four keys that jump to pages the broadcaster chose. |
+| Flatpak | A Linux packaging and sandboxing system: each application runs under Bubblewrap and reaches the desktop through portals. |
 | Glyph Bitmap Distribution Format | A text format for bitmap fonts, used for teletext fonts. |
+| gVisor | A kernel written in Go that runs in user space and answers a sandboxed program's system calls, so the host kernel is barely reached. |
 | Hamming 8/4 | The error protection teletext uses for addresses: each byte carries four data bits and can have one error corrected. |
 | HyperText Markup Language | The markup language of web pages; here used only for the decorative interface, and read only for link pointers during discovery. |
 | HyperText Transfer Protocol | The request and response protocol of the web. Version 1.1 is used. |
+| Input method | The program that turns key presses into text that cannot be typed directly, such as Chinese, Japanese or Korean; on Linux, IBus or Fcitx. |
 | JavaScript Object Notation | A text format for structured data, used by channel descriptors. |
-| Landlock | A Linux mechanism by which a process restricts its own access to files. |
+| Landlock | A Linux mechanism by which a process restricts its own and its children's access to files. It does not govern connecting to a local socket. |
+| Mount namespace | A Linux process's own view of the file system's mounts; directories can be replaced in it without affecting other processes. |
 | MSIX | Microsoft's Windows application package format, with transactional installation. |
+| Network namespace | A Linux process's own set of network interfaces; an empty one has only an unconnected loopback interface. |
 | Notarisation | Apple's automated check of a signed application before macOS will run it without warnings. |
 | Origin | Scheme, host and port of an address. |
 | Portable Network Graphics | A lossless image format with indexed palettes; used for every page image. |
+| Portal | A trusted service outside a sandbox that acts for a sandboxed application, such as choosing a file or capturing the screen, after asking the user. |
 | Presentation Level | The teletext standard's feature levels: 1.0 and 1.5 (basic), 2.5 (enhanced colours and characters), 3.5 (further enhancements). |
 | RFC 6265bis | The current draft of the Internet Engineering Task Force specification for cookies. |
+| RLBox | Firefox's framework for running a library in a WebAssembly sandbox inside the browser process. |
 | Same-origin policy | The traditional browser rule that a script may read data only from its own origin. |
 | seccomp filter | A Linux mechanism by which a process restricts which system calls it may make. |
+| Security-context protocol | A Wayland protocol by which a sandbox tags its connections so that the compositor can withhold dangerous protocols from them. |
+| SELinux | A Linux mechanism that enforces a security policy for each program and file, used by some distributions. |
 | Server-Sent Events | A standard way for a web server to push a stream of messages to a client over one HyperText Transfer Protocol response. |
+| Session bus | The D-Bus message bus of a user's login session, through which desktop services, including the user's systemd, take requests. |
 | SHA-256 | A cryptographic hash function from the Secure Hash Algorithm 2 family, producing a 256-bit digest. |
+| Smithay | A Rust library for writing Wayland compositors; the display host is built on it (decision 31). |
 | Tauri | A framework for building applications with a Rust core and a system webview interface. |
 | Teletext Text Interchange | A text file format for teletext pages, used by page editors. |
+| Text-input protocol | The Wayland protocol (`zwp_text_input_v3`) through which a compositor gives a window text an input method composed. |
 | The Update Framework | A specification for secure software updates that survive compromised servers and stolen keys, using signed, expiring metadata in separate roles. |
-| Transport Layer Security | The protocol that encrypts and authenticates network connections. |
 | `tough` | A Rust implementation of The Update Framework. |
+| Transport Layer Security | The protocol that encrypts and authenticates network connections. |
+| Virtual machine | A whole computer emulated with hardware support, with its own kernel; the strongest separation between programs on one machine. |
 | wasmi | A WebAssembly interpreter written in Rust, without just-in-time compilation; it runs the decoder. |
+| Wayland | The newer Linux display protocol, in which a client normally reaches only its own windows; what else it may do depends on the protocols the compositor offers. |
 | WebAssembly | A portable binary code format; the decoder is compiled to it and run inside wasmi so that a decoder fault stays inside its memory. |
-| Webview | An operating system's embeddable web engine: WKWebView, WebView2, WebKitGTK or Android System WebView. |
 | WebSocket | A protocol for a long-lived two-way connection over the web. |
+| Webview | An operating system's embeddable web engine: WKWebView, WebView2, WebKitGTK or Android System WebView. |
+| X11 | The older Linux display protocol, version 11 of the X Window System, in which any client can draw over, read and send input to every other client's windows. |
 | XPC service | On macOS, a helper process with its own sandbox and entitlements, started and managed by the system. |
