@@ -1,0 +1,58 @@
+# T42 Browser's native interface (docs/native-interface-design.md): an
+# interface core that draws only through its own drawing interface, the
+# drawing back ends, the interface process and the trusted core.
+[workspace]
+resolver = "3"
+members = ["interface-core", "draw-vello", "draw-embedded", "protocol", "interface", "core", "decoder", "fetcher", "site"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.90"
+publish = false
+
+# Every dependency is permissively licensed (design section 8).
+[workspace.dependencies]
+interface-core = { path = "interface-core" }
+draw-vello = { path = "draw-vello" }
+draw-embedded = { path = "draw-embedded" }
+protocol = { path = "protocol" }
+t42-decoder = { path = "decoder" }
+# The teletext engine, maintained in its own repository (design section
+# 4.0), pinned to one commit. Its repository is local until that commit is
+# published; Cargo reads the commit, never the engine's working tree. The
+# engine's recommended "modern-classic" profile (its decision E.71).
+neoteletext-core = { git = "file:///Users/andrewstuart/devel/neoteletext", rev = "f341e9483852bbe8b54ec0a43556c528df8d1b3c", default-features = false, features = ["modern-classic"] }
+neoteletext-formats = { git = "file:///Users/andrewstuart/devel/neoteletext", rev = "f341e9483852bbe8b54ec0a43556c528df8d1b3c", default-features = false, features = ["tti", "transport", "sliced"] }
+# The engine's web module: HTTP, channels, contents files and push, with no
+# network input or output of its own.
+neoteletext-web = { git = "file:///Users/andrewstuart/devel/neoteletext", rev = "f341e9483852bbe8b54ec0a43556c528df8d1b3c", default-features = false, features = ["push"] }
+# The engine's network port is these traits (its decision E.38); the
+# version the engine uses.
+embedded-io = { version = "=0.7.1", default-features = false }
+neoteletext-image = { git = "file:///Users/andrewstuart/devel/neoteletext", rev = "f341e9483852bbe8b54ec0a43556c528df8d1b3c", features = ["std"] }
+# MIT or Apache-2.0: sine, cosine and rounding without the standard library.
+libm = "=0.2.16"
+# Single-threaded: with its "multithreading" feature, vello_cpu 0.3.0's
+# worker threads kept a whole core busy while the window was idle
+# (prototypes/spikes/vello-wall).
+vello_cpu = { version = "=0.3.0", default-features = false, features = ["std", "text", "u8_pipeline"] }
+parley = "=0.12.0"
+winit = "=0.30.13"
+softbuffer = { version = "=0.4.8", default-features = false }
+# MIT or Apache-2.0, with no default features, so no standard library.
+embedded-graphics = { version = "=0.8.2", default-features = false }
+# MIT or Apache-2.0: reads the indexed images the trusted core writes (design section 6).
+png = "=0.18.1"
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+
+[workspace.lints.clippy]
+pedantic = { level = "warn", priority = -1 }
+
+[profile.dev.package."*"]
+opt-level = 3
+
+[profile.release]
+strip = true

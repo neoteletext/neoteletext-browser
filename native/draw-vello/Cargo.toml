@@ -1,0 +1,18 @@
+[package]
+name = "draw-vello"
+description = "The interface core's drawing interface on the processor: vello_cpu draws, Parley lays out and shapes text"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+interface-core.workspace = true
+vello_cpu.workspace = true
+parley.workspace = true
+
+[lints]
+workspace = true
+
+[dev-dependencies]
+t42-decoder.workspace = true

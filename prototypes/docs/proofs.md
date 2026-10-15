@@ -7,9 +7,9 @@
 | **Versions** | Tauri 2.12.4 and `wry` 0.57.0 in the spikes (their lockfiles); Rust 1.97.1 on macOS and 1.94.1 on Linux; on Linux WebKitGTK 2.52.6 (`webkit2gtk-4.1`), sway 1.11 |
 | **Purpose** | To prove, by measurement, the assumptions in [`architecture.md`](architecture.md) that the design rests on, before building on them. |
 
-Each proof is a throwaway program under `spikes/`, committed so that it can be run again. Results are what was measured on the machines above. Sections 2 to 4 are macOS; section 6 is Linux. Nothing has been run on Windows (section 7).
+Each proof is a throwaway program under `prototypes/spikes/`, committed so that it can be run again. Results are what was measured on the machines above. Sections 2 to 4 are macOS; section 6 is Linux. Nothing has been run on Windows (section 7).
 
-**The stand-in engine.** The proofs use `standin/`, a stand-in for the neoteletext engine with the same pipe framing (`neoteletext-app/src/pipe.rs`), synthetic pages at the native 480 by 500 raster with at most 32 colours, and an indexed Portable Network Graphics writer that compresses for real. A stand-in page is about 6 kilobytes, decoded correctly by macOS's own image decoder (`sips`) and by WebKit.
+**The stand-in engine.** The proofs use `prototypes/standin/`, a stand-in for the neoteletext engine with the same pipe framing (`neoteletext-app/src/pipe.rs`), synthetic pages at the native 480 by 500 raster with at most 32 colours, and an indexed Portable Network Graphics writer that compresses for real. A stand-in page is about 6 kilobytes, decoded correctly by macOS's own image decoder (`sips`) and by WebKit.
 
 ---
 
@@ -33,7 +33,7 @@ Each proof is a throwaway program under `spikes/`, committed so that it can be r
 
 ## 2. Proof A: keeping the webview off the network
 
-**Spike:** `spikes/sandbox-network/`.
+**Spike:** `prototypes/spikes/sandbox-network/`.
 
 **Method.** A Tauri application loads a probe page (`probe.ts`) that tries every way of reaching the network:
 - fetch, XMLHttpRequest, WebSocket, Server-Sent Events, beacon;
@@ -67,7 +67,7 @@ Every probe targets a test server (`test-server.py`) that logs each connection a
 
 ## 3. Proof B: one window, a native strip and a webview
 
-**Spike:** `spikes/window-composition/`.
+**Spike:** `prototypes/spikes/window-composition/`.
 
 ### 3.1 B1: two processes, two windows
 
@@ -100,7 +100,7 @@ So even a content process taken over by an attacker cannot open a window to cove
 
 ## 4. Proof C: frame throughput
 
-**Spike:** `spikes/frame-throughput/`.
+**Spike:** `prototypes/spikes/frame-throughput/`.
 
 **Method.**
 1. The stand-in decoder runs as a child process over the framed pipe.
@@ -171,7 +171,7 @@ Decision 18 places the interface in its own process, with its own window, no net
 
 ## 6. Linux: Proofs A and B
 
-**Spikes:** `spikes/sandbox-network/` (Proof A, and the `SPIKE_WEBKIT_SANDBOX` switch of 6.3) and `spikes/webkitgtk-sandbox/` (6.2 to 6.5, and 6.8).
+**Spikes:** `prototypes/spikes/sandbox-network/` (Proof A, and the `SPIKE_WEBKIT_SANDBOX` switch of 6.3) and `prototypes/spikes/webkitgtk-sandbox/` (6.2 to 6.5, and 6.8).
 
 **Machine and method.**
 - Ubuntu 26.04 with WebKitGTK 2.52.6. The test displays were private: Xvfb with no window manager, and sway with no screen or input devices (`WLR_BACKENDS=headless`). The machine's own desktop was not touched.
@@ -265,7 +265,7 @@ These options were put to the owner, with option 1 recommended.
 
 ### 6.8 Option 1 measured
 
-**Spike:** `spikes/webkitgtk-sandbox/confined-host.sh`, with:
+**Spike:** `prototypes/spikes/webkitgtk-sandbox/confined-host.sh`, with:
 - `landlock_host.c`, which applies a Landlock rule set and then starts the program;
 - `private-mounts.sh`, which gives the program private `/run` and `/tmp` directories;
 - `socket_reach.py`, which tries every listening local socket.
@@ -329,7 +329,7 @@ Findings 3 and 4 are **open decision 19** in `architecture.md` section 17. The o
 
 ### 6.11 Option 1 measured: a nested display
 
-**Spike:** `spikes/webkitgtk-sandbox/nested-host.sh`. Two more programs play the parts of the trusted strip and the attacker:
+**Spike:** `prototypes/spikes/webkitgtk-sandbox/nested-host.sh`. Two more programs play the parts of the trusted strip and the attacker:
 - `strip_standin.c`: a window with one text field, standing in for the strip's address field. It prints whatever is entered followed by Enter.
 - `virtual_type.c`: types a line through the compositor's virtual keyboard protocol, as a compromised content process could.
 
@@ -377,7 +377,7 @@ Finding 4 needs a nested display host that draws the strip itself and offers its
 
 ### 6.14 The display host proved
 
-**Spike:** `spikes/display-host/`, the smallest form of the display host, in Rust on Smithay 0.7.0. It runs as a window on the user's desktop through Smithay's winit back end, and hosts one program on a nested display. That program is the confined window host, started by `spikes/webkitgtk-sandbox/nested-host.sh` exactly as in 6.11. The display host:
+**Spike:** `prototypes/spikes/display-host/`, the smallest form of the display host, in Rust on Smithay 0.7.0. It runs as a window on the user's desktop through Smithay's winit back end, and hosts one program on a nested display. That program is the confined window host, started by `prototypes/spikes/webkitgtk-sandbox/nested-host.sh` exactly as in 6.11. The display host:
 - offers the hosted program only the interfaces listed below;
 - places every window it is given below the strip and sizes it to that area, whatever the window asks for, full screen included;
 - draws the strip last, above everything;
@@ -444,11 +444,11 @@ Two programs from 6.11 were used again, and one more was added:
 4. **No raw key releases after composition.** A key release reaches a window only if its press did; the input method keeps the presses it composes with.
 
 **The tests.**
-- **Input methods:** `spikes/webkitgtk-sandbox/input-method.sh`, on an X11 desktop.
+- **Input methods:** `prototypes/spikes/webkitgtk-sandbox/input-method.sh`, on an X11 desktop.
   - The user's input method is fcitx5 with its Hangul engine, in which the keys g, k, s always compose 한.
   - fcitx5 connects to the display host only, through the X input method protocol.
   - The confined window uses GTK's own Wayland input method module, and no input method service is reachable inside the confinement (6.8).
-- **Screen readers:** `spikes/webkitgtk-sandbox/accessibility.sh`, on an X11 desktop with the accessibility bus running.
+- **Screen readers:** `prototypes/spikes/webkitgtk-sandbox/accessibility.sh`, on an X11 desktop with the accessibility bus running.
   - `accessibility_probe.py` reads the bus through the same library Orca uses.
   - Orca 49 itself was then run, with its debug log recording what it would say.
 

@@ -8,11 +8,13 @@
 //! - a decoder's frame: 8-bit palette indices at the native raster of
 //!   40 columns by 25 rows of 12 by 20 dots, with at most 32 colours
 //!   ([`page`]);
+//! - a decoder process that renders the pages it is shown ([`decoder`]);
 //! - an indexed Portable Network Graphics writer in place of
 //!   `neoteletext-image` ([`png`]).
 //!
 //! The pages it draws are synthetic. They carry no teletext glyphs.
 
+pub mod decoder;
 pub mod page;
 pub mod pipe;
 pub mod png;

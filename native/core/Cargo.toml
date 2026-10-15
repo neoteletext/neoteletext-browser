@@ -1,0 +1,16 @@
+[package]
+name = "t42-browser"
+description = "The trusted core: starts the decoder and the interface process, checks every frame, encodes page images and decides what the trusted strip shows"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+interface-core.workspace = true
+protocol.workspace = true
+neoteletext-image.workspace = true
+neoteletext-core.workspace = true
+
+[lints]
+workspace = true

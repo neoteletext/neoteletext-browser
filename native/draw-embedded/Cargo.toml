@@ -1,0 +1,18 @@
+[package]
+name = "draw-embedded"
+description = "The interface core's drawing interface for microcontrollers: embedded-graphics onto any display, bitmap fonts, pages drawn upright only, no standard library"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+interface-core.workspace = true
+embedded-graphics.workspace = true
+libm.workspace = true
+
+[dev-dependencies]
+t42-decoder.workspace = true
+
+[lints]
+workspace = true

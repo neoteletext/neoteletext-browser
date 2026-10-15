@@ -5,16 +5,20 @@
 
 use std::collections::BTreeSet;
 use std::io::{self, BufReader, BufWriter};
-use std::process::ExitCode;
 
-use standin::page::render;
-use standin::pipe::{self, Message};
+use crate::page::render;
+use crate::pipe::{self, Message};
 
 // A channel has at most 2,048 page numbers (eight magazines of 256), so
 // the set of shown pages is bounded by that.
 const MAX_SHOWN: usize = 8 * 256;
 
-fn run() -> Result<(), pipe::PipeError> {
+/// Runs the decoder on standard input and output until `Close` or the end
+/// of input.
+///
+/// # Errors
+/// On a malformed message or a failed write.
+pub fn run() -> Result<(), pipe::PipeError> {
     let mut input = BufReader::new(io::stdin().lock());
     let mut output = BufWriter::new(io::stdout().lock());
     let mut shown: BTreeSet<(u32, u16)> = BTreeSet::new();
@@ -41,14 +45,4 @@ fn run() -> Result<(), pipe::PipeError> {
         }
     }
     Ok(())
-}
-
-fn main() -> ExitCode {
-    match run() {
-        Ok(()) => ExitCode::SUCCESS,
-        Err(error) => {
-            eprintln!("standin-decoder: {error}");
-            ExitCode::FAILURE
-        }
-    }
 }

@@ -1,0 +1,25 @@
+[package]
+name = "t42-decoder"
+description = "The decoder process: the neoteletext engine reads a channel's bytes, stores its pages and renders the pages on screen"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[lib]
+name = "decoder"
+path = "src/lib.rs"
+
+[[bin]]
+name = "t42-decoder"
+path = "src/main.rs"
+
+[dependencies]
+neoteletext-core.workspace = true
+neoteletext-formats.workspace = true
+neoteletext-image.workspace = true
+interface-core.workspace = true
+protocol.workspace = true
+
+[lints]
+workspace = true

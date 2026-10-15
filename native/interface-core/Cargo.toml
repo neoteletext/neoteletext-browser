@@ -1,0 +1,13 @@
+[package]
+name = "interface-core"
+description = "The interface's state, layout, animation and hit-testing, with no standard library and no drawing library: it draws only through the Canvas trait"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+libm.workspace = true
+
+[lints]
+workspace = true

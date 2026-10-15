@@ -1,0 +1,500 @@
+//! The zoomable page area: the page size control along its top, and below
+//! it the wall of the selected bank's pages, in a grid that grows and
+//! shrinks with the page size or, below a size, a list. Because this code
+//! lays out every page itself, it hit-tests the pointer against the same
+//! rectangles it draws (requirement 12.3).
+
+use alloc::format;
+use alloc::string::String;
+use alloc::vec::Vec;
+
+use crate::canvas::{CELL_HEIGHT, CELL_WIDTH, COLUMNS, Canvas, PAGE_HEIGHT, PAGE_WIDTH, PageKey, ROWS};
+use crate::geometry::{Point, Rect};
+use crate::size::{
+    DEFAULT_WIDTH, LIST_STOP, Layout, MAX_WIDTH, SWITCH_DWELL_MILLISECONDS, clamp_width, grid_width, layout_for_width,
+    max_width_for_window, next_layout,
+};
+use crate::theme::{
+    BUTTON, CAPTION, CAPTION_TITLE, CONTROL, MUTED, PANEL, READOUT, ROW_NUMBER, ROW_TITLE, RULE, RULE_SOFT,
+    SEGMENT_OFF, SELECTED, WHITE, WINDOW,
+};
+use crate::tween::{EASE_OUT, Tween};
+use crate::ui::{centred, label, outline};
+
+// ---- The control row along the panel's top ----
+const CONTROLS_HEIGHT: f64 = 48.0;
+const PADDING: f64 = 12.0;
+const BUTTON_SIZE: f64 = 32.0;
+const SEGMENT_WIDTH: f64 = 10.0;
+const SEGMENT_GAP: f64 = 3.0;
+const SEGMENT_HEIGHT: f64 = 18.0;
+const THUMB_WIDTH: f64 = 10.0;
+const THUMB_OVERHANG: f64 = 5.0;
+const READOUT_WIDTH: f64 = 76.0;
+const CONTROL_GAP: f64 = 10.0;
+/// The − and + buttons, and the arrow keys, move the page size this far.
+const SIZE_STEP: f32 = 24.0;
+const PERCENT: f64 = 100.0;
+/// Where the label's text starts below the row's top.
+const LABEL_DROP: f64 = 12.0;
+
+// ---- The wall ----
+const WALL_PADDING: f64 = 16.0;
+const COLUMN_GAP: f64 = 12.0;
+const ROW_GAP: f64 = 26.0;
+const CAPTION_GAP: f64 = 6.0;
+const CAPTION_HEIGHT: f64 = 18.0;
+const PAGE_ASPECT: f64 = PAGE_HEIGHT as f64 / PAGE_WIDTH as f64;
+const LIST_PAGE_WIDTH: f64 = 120.0;
+const LIST_ROW_PADDING: f64 = 8.0;
+const LIST_GAP: f64 = 16.0;
+const LIST_TITLE_RISE: f64 = 22.0;
+const LIST_DETAIL_DROP: f64 = 2.0;
+const SCROLL_BAR_WIDTH: f64 = 4.0;
+const SELECTED_BORDER: f64 = 3.0;
+/// The gap between a page and its frame.
+const FRAME: f64 = 1.0;
+const CAPTION_NUMBER_WIDTH: f64 = 44.0;
+
+/// The prototype's CSS transition for the page size: 160 ms ease-out.
+const WIDTH_TRANSITION_MILLISECONDS: u64 = 160;
+
+/// One page the wall shows.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct WallPage {
+    pub key: PageKey,
+    pub title: String,
+}
+
+/// A click on one character cell of a page.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct CellClick {
+    pub key: PageKey,
+    pub column: u8,
+    pub row: u8,
+}
+
+/// Where a page was last drawn, for hit-testing.
+struct Drawn {
+    key: PageKey,
+    rect: Rect,
+}
+
+pub struct Wall {
+    width: f32,
+    max: f32,
+    layout: Layout,
+    pending: Option<(Layout, u64)>,
+    shown_width: Tween,
+    scroll: f64,
+    /// A page to bring into view at the next draw.
+    reveal: Option<PageKey>,
+    dragging: bool,
+    /// The controls, where they were last drawn.
+    bar: Rect,
+    minus: Rect,
+    plus: Rect,
+    area: Rect,
+    drawn: Vec<Drawn>,
+}
+
+impl Default for Wall {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl Wall {
+    #[must_use]
+    pub fn new() -> Self {
+        Self {
+            width: DEFAULT_WIDTH,
+            max: MAX_WIDTH,
+            layout: layout_for_width(DEFAULT_WIDTH),
+            pending: None,
+            shown_width: Tween::new(DEFAULT_WIDTH, WIDTH_TRANSITION_MILLISECONDS, EASE_OUT),
+            scroll: 0.0,
+            reveal: None,
+            dragging: false,
+            bar: Rect::ZERO,
+            minus: Rect::ZERO,
+            plus: Rect::ZERO,
+            area: Rect::ZERO,
+            drawn: Vec::new(),
+        }
+    }
+
+    /// Starts the wall at its top, as for a newly chosen bank.
+    pub fn to_top(&mut self) {
+        self.scroll = 0.0;
+    }
+
+    /// Brings `key` into view at the next draw.
+    pub fn reveal(&mut self, key: PageKey) {
+        self.reveal = Some(key);
+    }
+
+    fn set_width(&mut self, width: f32, now: u64) {
+        self.width = clamp_width(width, self.max);
+        self.shown_width.set(self.width, now);
+    }
+
+    pub fn step(&mut self, direction: i8, now: u64) {
+        self.set_width(self.width + f32::from(direction) * SIZE_STEP, now);
+    }
+
+    fn width_at(&self, x: f64) -> f32 {
+        let fraction = ((x - self.bar.x0) / self.bar.width()).clamp(0.0, 1.0);
+        #[allow(clippy::cast_possible_truncation, reason = "a fraction between 0 and 1")]
+        let fraction = fraction as f32;
+        LIST_STOP + fraction * (self.max - LIST_STOP)
+    }
+
+    /// Returns whether the press was on the wall's controls.
+    pub fn pointer_pressed(&mut self, point: Point, now: u64) -> bool {
+        if self.bar.contains(point) {
+            self.dragging = true;
+            self.set_width(self.width_at(point.x), now);
+            return true;
+        }
+        if self.minus.contains(point) {
+            self.step(-1, now);
+            return true;
+        }
+        if self.plus.contains(point) {
+            self.step(1, now);
+            return true;
+        }
+        false
+    }
+
+    /// Returns whether the size changed.
+    pub fn pointer_moved(&mut self, point: Point, now: u64) -> bool {
+        if self.dragging {
+            self.set_width(self.width_at(point.x), now);
+        }
+        self.dragging
+    }
+
+    pub fn pointer_released(&mut self) {
+        self.dragging = false;
+    }
+
+    #[must_use]
+    pub fn contains(&self, point: Point) -> bool {
+        self.area.contains(point)
+    }
+
+    pub fn scroll_by(&mut self, distance: f64) {
+        self.scroll = (self.scroll + distance).max(0.0);
+    }
+
+    /// The cell under `point`.
+    #[must_use]
+    pub fn cell_at(&self, point: Point) -> Option<CellClick> {
+        if !self.area.contains(point) {
+            return None;
+        }
+        let drawn = self.drawn.iter().find(|drawn| drawn.rect.contains(point))?;
+        let x = (point.x - drawn.rect.x0) / drawn.rect.width() * f64::from(PAGE_WIDTH);
+        let y = (point.y - drawn.rect.y0) / drawn.rect.height() * f64::from(PAGE_HEIGHT);
+        #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss, reason = "both are within the page raster")]
+        let (column, row) = ((x / f64::from(CELL_WIDTH)) as u8, (y / f64::from(CELL_HEIGHT)) as u8);
+        (u16::from(column) < COLUMNS && u16::from(row) < ROWS).then_some(CellClick { key: drawn.key, column, row })
+    }
+
+    /// Where each page was drawn in the last frame: for screen readers'
+    /// bounds and for tests.
+    pub fn shown(&self) -> impl Iterator<Item = (PageKey, Rect)> + '_ {
+        self.drawn.iter().map(|drawn| (drawn.key, drawn.rect))
+    }
+
+    /// The pages drawn in the last frame, sorted and without repeats.
+    #[must_use]
+    pub fn visible(&self) -> Vec<PageKey> {
+        let mut visible: Vec<PageKey> = self.drawn.iter().map(|drawn| drawn.key).collect();
+        visible.sort_unstable();
+        visible
+    }
+
+    /// The layout trails the thumb through the hysteresis band and a short
+    /// dwell, so a fast sweep across the band does not switch it. Returns
+    /// whether the layout changed.
+    pub fn settle(&mut self, now: u64) -> bool {
+        let target = next_layout(self.layout, self.width);
+        if target == self.layout {
+            self.pending = None;
+            return false;
+        }
+        match self.pending {
+            Some((waiting_for, since)) if waiting_for == target => {
+                if now.saturating_sub(since) >= SWITCH_DWELL_MILLISECONDS {
+                    self.layout = target;
+                    self.pending = None;
+                    return true;
+                }
+                false
+            }
+            _ => {
+                self.pending = Some((target, now));
+                false
+            }
+        }
+    }
+
+    /// When a waiting layout switch falls due, in milliseconds.
+    #[must_use]
+    pub fn next_deadline(&self) -> Option<u64> {
+        self.pending.map(|(_, since)| since + SWITCH_DWELL_MILLISECONDS)
+    }
+
+    #[must_use]
+    pub fn animating(&self, now: u64) -> bool {
+        self.shown_width.moving(now)
+    }
+
+    /// Draws the panel in `panel`, with `pages` on the wall and `selected`
+    /// outlined.
+    pub fn draw<C: Canvas + ?Sized>(&mut self, canvas: &mut C, panel: Rect, pages: &[WallPage], selected: Option<PageKey>, now: u64) {
+        canvas.fill(panel, 0.0, PANEL);
+        self.area = Rect::new(panel.x0, panel.y0 + CONTROLS_HEIGHT, panel.x1, panel.y1);
+        #[allow(clippy::cast_possible_truncation, reason = "panel widths fit easily in f32")]
+        let available = (self.area.width() - WALL_PADDING * 2.0) as f32;
+        self.max = max_width_for_window(available);
+        if self.width > self.max {
+            self.set_width(self.width, now);
+        }
+        self.drawn.clear();
+        canvas.push_clip(self.area);
+        let content = match self.layout {
+            Layout::Grid => self.draw_grid(canvas, pages, selected, now),
+            Layout::List => self.draw_list(canvas, pages, selected),
+        };
+        canvas.pop_clip();
+        let view = self.area.height();
+        let total = content + WALL_PADDING * 2.0;
+        let max_scroll = (total - view).max(0.0);
+        self.scroll = self.scroll.min(max_scroll);
+        if max_scroll > 0.0 {
+            let bar = view * view / total;
+            let top = self.area.y0 + (view - bar) * self.scroll / max_scroll;
+            let left = self.area.x1 - SCROLL_BAR_WIDTH * 2.0;
+            canvas.fill(Rect::new(left, top, left + SCROLL_BAR_WIDTH, top + bar), SCROLL_BAR_WIDTH / 2.0, RULE);
+        }
+        self.draw_controls(canvas, panel);
+        outline(canvas, panel, RULE);
+    }
+
+    fn draw_page<C: Canvas + ?Sized>(&mut self, canvas: &mut C, key: PageKey, rect: Rect) {
+        // With no image yet a dark frame stands in, and the page still
+        // counts as visible, so that the trusted core renders it.
+        if !canvas.page(key, rect) {
+            canvas.fill(rect, 0.0, WINDOW);
+        }
+        self.drawn.push(Drawn { key, rect });
+    }
+
+    /// Scrolls so that the row at `top` to `bottom` (in unscrolled
+    /// content coordinates) is in view.
+    fn bring_into_view(&mut self, top: f64, bottom: f64) {
+        let view = self.area.height() - WALL_PADDING * 2.0;
+        if top < self.scroll {
+            self.scroll = top;
+        } else if bottom > self.scroll + view {
+            self.scroll = bottom - view;
+        }
+    }
+
+    /// Draws the grid and returns its height.
+    fn draw_grid<C: Canvas + ?Sized>(&mut self, canvas: &mut C, pages: &[WallPage], selected: Option<PageKey>, now: u64) -> f64 {
+        let area = self.area;
+        let available = area.width() - WALL_PADDING * 2.0;
+        let card_width = f64::from(grid_width(self.shown_width.value(now)));
+        #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss, reason = "a small, positive column count")]
+        let columns = (libm::floor((available + COLUMN_GAP) / (card_width + COLUMN_GAP)) as usize).max(1);
+        let rows = pages.len().div_ceil(columns);
+        let page_height = card_width * PAGE_ASPECT;
+        let card_height = page_height + CAPTION_GAP + CAPTION_HEIGHT;
+        let pitch = card_height + ROW_GAP;
+        #[allow(clippy::cast_precision_loss, reason = "small counts")]
+        let content = rows as f64 * card_height + rows.saturating_sub(1) as f64 * ROW_GAP;
+        if let Some(key) = self.reveal.take()
+            && let Some(index) = pages.iter().position(|page| page.key == key)
+        {
+            #[allow(clippy::cast_precision_loss, reason = "small counts")]
+            let top = (index / columns) as f64 * pitch;
+            self.bring_into_view(top, top + card_height);
+        }
+        let top = area.y0 + WALL_PADDING - self.scroll;
+        let centre_x = f64::midpoint(area.x0, area.x1);
+        for (index, page) in pages.iter().enumerate() {
+            let (row, column) = (index / columns, index % columns);
+            let in_row = columns.min(pages.len() - row * columns);
+            #[allow(clippy::cast_precision_loss, reason = "small counts")]
+            let row_width = in_row as f64 * card_width + (in_row - 1) as f64 * COLUMN_GAP;
+            #[allow(clippy::cast_precision_loss, reason = "small counts")]
+            let left = centre_x - row_width / 2.0 + column as f64 * (card_width + COLUMN_GAP);
+            #[allow(clippy::cast_precision_loss, reason = "small counts")]
+            let card_top = top + row as f64 * pitch;
+            // Only pages in the panel are drawn and reported visible
+            // (requirement 9.5).
+            if card_top > area.y1 || card_top + card_height < area.y0 {
+                continue;
+            }
+            let rect = Rect::new(left, card_top, left + card_width, card_top + page_height);
+            self.draw_page(canvas, page.key, rect);
+            // A frame, so a page's black edges stand apart from the panel.
+            outline(canvas, Rect::new(rect.x0 - FRAME, rect.y0 - FRAME, rect.x1 + FRAME, rect.y1 + FRAME), RULE);
+            if selected == Some(page.key) {
+                let ring = Rect::new(rect.x0 - SELECTED_BORDER, rect.y0 - SELECTED_BORDER, rect.x1 + SELECTED_BORDER, rect.y1 + SELECTED_BORDER);
+                for width in 0..3_u8 {
+                    let inset = f64::from(width);
+                    outline(canvas, Rect::new(ring.x0 + inset, ring.y0 + inset, ring.x1 - inset, ring.y1 - inset), WHITE);
+                }
+            }
+            let caption = Point::new(left, card_top + page_height + CAPTION_GAP);
+            label(canvas, caption, &format!("{:03X}", page.key.page), CAPTION, WHITE);
+            let title_at = Point::new(caption.x + CAPTION_NUMBER_WIDTH, caption.y + 1.0);
+            canvas.text(Rect::new(title_at.x, title_at.y, caption.x + card_width, title_at.y + CAPTION_HEIGHT), &page.title, CAPTION_TITLE, MUTED);
+        }
+        content
+    }
+
+    /// Draws the list and returns its height.
+    fn draw_list<C: Canvas + ?Sized>(&mut self, canvas: &mut C, pages: &[WallPage], selected: Option<PageKey>) -> f64 {
+        let area = self.area;
+        let left = area.x0 + WALL_PADDING;
+        let right = area.x1 - WALL_PADDING;
+        let page_height = LIST_PAGE_WIDTH * PAGE_ASPECT;
+        let row_height = page_height + LIST_ROW_PADDING * 2.0;
+        if let Some(key) = self.reveal.take()
+            && let Some(index) = pages.iter().position(|page| page.key == key)
+        {
+            #[allow(clippy::cast_precision_loss, reason = "small counts")]
+            let top = index as f64 * row_height;
+            self.bring_into_view(top, top + row_height);
+        }
+        let top = area.y0 + WALL_PADDING - self.scroll;
+        for (index, page) in pages.iter().enumerate() {
+            #[allow(clippy::cast_precision_loss, reason = "small counts")]
+            let row_top = top + index as f64 * row_height;
+            if row_top > area.y1 || row_top + row_height < area.y0 {
+                continue;
+            }
+            let row = Rect::new(left, row_top, right, row_top + row_height);
+            if selected == Some(page.key) {
+                canvas.fill(row, 0.0, SELECTED);
+            }
+            canvas.fill(Rect::new(left, row.y1 - 1.0, right, row.y1), 0.0, RULE_SOFT);
+            let rect = Rect::new(left + LIST_ROW_PADDING, row_top + LIST_ROW_PADDING, left + LIST_ROW_PADDING + LIST_PAGE_WIDTH, row_top + LIST_ROW_PADDING + page_height);
+            self.draw_page(canvas, page.key, rect);
+            let text_left = rect.x1 + LIST_GAP;
+            let middle = rect.y0 + page_height / 2.0;
+            label(canvas, Point::new(text_left, middle - LIST_TITLE_RISE), &format!("{:03X}", page.key.page), ROW_NUMBER, WHITE);
+            canvas.text(Rect::new(text_left, middle + LIST_DETAIL_DROP, right, row.y1), &page.title, ROW_TITLE, MUTED);
+        }
+        #[allow(clippy::cast_precision_loss, reason = "small counts")]
+        let height = row_height * pages.len() as f64;
+        height
+    }
+
+    fn draw_controls<C: Canvas + ?Sized>(&mut self, canvas: &mut C, panel: Rect) {
+        let row = Rect::new(panel.x0, panel.y0, panel.x1, panel.y0 + CONTROLS_HEIGHT);
+        canvas.fill(row, 0.0, PANEL);
+        canvas.fill(Rect::new(row.x0, row.y1 - 1.0, row.x1, row.y1), 0.0, RULE);
+        let middle = f64::midpoint(row.y0, row.y1);
+        let mut x = row.x0 + PADDING;
+        label(canvas, Point::new(x, row.y0 + LABEL_DROP), "Page size", CONTROL, WHITE);
+        x += canvas.text_width("Page size", CONTROL) + CONTROL_GAP * 1.5;
+
+        let right = row.x1 - PADDING;
+
+        // − [segments] + readout
+        self.minus = Rect::new(x, middle - BUTTON_SIZE / 2.0, x + BUTTON_SIZE, middle + BUTTON_SIZE / 2.0);
+        let readout = Rect::new(right - READOUT_WIDTH, row.y0, right, row.y1);
+        self.plus = Rect::new(readout.x0 - CONTROL_GAP - BUTTON_SIZE, self.minus.y0, readout.x0 - CONTROL_GAP, self.minus.y1);
+        for (button, glyph) in [(self.minus, "−"), (self.plus, "+")] {
+            canvas.fill(button, 0.0, BUTTON);
+            outline(canvas, button, WHITE);
+            centred(canvas, button, glyph, CONTROL, WHITE);
+        }
+        self.bar = Rect::new(self.minus.x1 + CONTROL_GAP, middle - SEGMENT_HEIGHT / 2.0, self.plus.x0 - CONTROL_GAP, middle + SEGMENT_HEIGHT / 2.0);
+        let fraction = f64::from((self.width - LIST_STOP) / (self.max - LIST_STOP)).clamp(0.0, 1.0);
+        let thumb = self.bar.x0 + fraction * (self.bar.width() - THUMB_WIDTH);
+        let mut segment = self.bar.x0;
+        while segment + SEGMENT_WIDTH <= self.bar.x1 {
+            canvas.fill(Rect::new(segment, self.bar.y0, segment + SEGMENT_WIDTH, self.bar.y1), 0.0, if segment < thumb { SELECTED } else { SEGMENT_OFF });
+            segment += SEGMENT_WIDTH + SEGMENT_GAP;
+        }
+        canvas.fill(Rect::new(thumb, self.bar.y0 - THUMB_OVERHANG, thumb + THUMB_WIDTH, self.bar.y1 + THUMB_OVERHANG), 0.0, WHITE);
+
+        let text = if self.layout == Layout::List {
+            String::from("List")
+        } else {
+            format!("{}%", libm::round(f64::from(grid_width(self.width)) / f64::from(PAGE_WIDTH) * PERCENT))
+        };
+        let width = canvas.text_width(&text, READOUT);
+        label(canvas, Point::new(readout.x1 - width, row.y0 + LABEL_DROP - 1.0), &text, READOUT, if self.layout == Layout::List { MUTED } else { WHITE });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::test_canvas::Recorder;
+
+    const PANEL: Rect = Rect::new(0.0, 0.0, 1000.0, 700.0);
+
+    fn pages(count: u16) -> Vec<WallPage> {
+        (0..count).map(|offset| WallPage { key: PageKey { channel: 1, page: 0x100 + offset }, title: "Title".into() }).collect()
+    }
+
+    #[test]
+    fn only_pages_on_screen_are_visible() {
+        let mut wall = Wall::new();
+        let mut canvas = Recorder::new();
+        wall.draw(&mut canvas, PANEL, &pages(24), None, 0);
+        let visible = wall.visible();
+        assert!(!visible.is_empty() && visible.len() < 24, "{} of 24 visible", visible.len());
+        assert_eq!(visible[0], PageKey { channel: 1, page: 0x100 });
+    }
+
+    #[test]
+    fn a_revealed_page_is_drawn() {
+        let mut wall = Wall::new();
+        let mut canvas = Recorder::new();
+        let pages = pages(24);
+        wall.draw(&mut canvas, PANEL, &pages, None, 0);
+        let last = pages[23].key;
+        assert!(!wall.visible().contains(&last));
+        wall.reveal(last);
+        wall.draw(&mut canvas, PANEL, &pages, None, 0);
+        assert!(wall.visible().contains(&last));
+    }
+
+    #[test]
+    fn a_click_finds_its_cell() {
+        let mut wall = Wall::new();
+        let mut canvas = Recorder::new();
+        wall.draw(&mut canvas, PANEL, &pages(24), None, 0);
+        let (key, rect) = canvas.pages.iter().copied().find(|(key, _)| key.page == 0x101).unwrap();
+        // The middle of column 10, row 3.
+        let point = Point::new(
+            rect.x0 + (10.5 * f64::from(CELL_WIDTH)) / f64::from(PAGE_WIDTH) * rect.width(),
+            rect.y0 + (3.5 * f64::from(CELL_HEIGHT)) / f64::from(PAGE_HEIGHT) * rect.height(),
+        );
+        assert_eq!(wall.cell_at(point), Some(CellClick { key, column: 10, row: 3 }));
+        assert_eq!(wall.cell_at(Point::new(rect.x0 - 2.0, rect.y0)), None, "the gap between pages");
+    }
+
+    #[test]
+    fn the_buttons_step_the_page_size() {
+        let mut wall = Wall::new();
+        let mut canvas = Recorder::new();
+        wall.draw(&mut canvas, PANEL, &pages(4), None, 0);
+        let before = wall.width;
+        let plus = wall.plus;
+        assert!(wall.pointer_pressed(Point::new(f64::midpoint(plus.x0, plus.x1), f64::midpoint(plus.y0, plus.y1)), 0));
+        assert!((wall.width - before - SIZE_STEP).abs() < f32::EPSILON);
+    }
+}

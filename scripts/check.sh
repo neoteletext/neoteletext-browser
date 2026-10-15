@@ -9,10 +9,10 @@ mode="${1:-full}"
 step() { printf '\n== %s\n' "$*"; }
 
 # Crates that build only on Linux: they need the Wayland libraries.
-linux_only=(spikes/display-host/Cargo.toml)
+linux_only=(prototypes/spikes/display-host/Cargo.toml)
 
 rust_crates=()
-for manifest in src-tauri/Cargo.toml standin/Cargo.toml spikes/*/Cargo.toml spikes/*/src-tauri/Cargo.toml; do
+for manifest in native/Cargo.toml prototypes/src-tauri/Cargo.toml prototypes/standin/Cargo.toml prototypes/spikes/*/Cargo.toml prototypes/spikes/*/src-tauri/Cargo.toml; do
     [[ -f "$manifest" ]] || continue
     if [[ "$(uname -s)" != Linux && " ${linux_only[*]} " == *" $manifest "* ]]; then
         printf '\n== Skipped on %s, checked on Linux only: %s\n' "$(uname -s)" "$manifest"
@@ -21,26 +21,26 @@ for manifest in src-tauri/Cargo.toml standin/Cargo.toml spikes/*/Cargo.toml spik
     rust_crates+=("$manifest")
 done
 
-step "TypeScript lint"
-npx eslint . --max-warnings 0
+step "TypeScript lint (prototypes)"
+(cd prototypes && npx eslint . --max-warnings 0)
 
-step "TypeScript types"
-npx tsc -b
+step "TypeScript types (prototypes)"
+(cd prototypes && npx tsc -b)
 
 for manifest in "${rust_crates[@]}"; do
     step "Clippy: $manifest"
-    cargo clippy --quiet --manifest-path "$manifest" --all-targets -- -D warnings
+    cargo clippy --quiet --manifest-path "$manifest" --workspace --all-targets -- -D warnings
     step "Tests: $manifest"
-    cargo test --quiet --manifest-path "$manifest"
+    cargo test --quiet --manifest-path "$manifest" --workspace
 done
 
 if [[ "$mode" == "full" ]]; then
     step "Clippy: egui-image (WebAssembly)"
-    cargo clippy --quiet --manifest-path egui-image/Cargo.toml --target wasm32-unknown-unknown --all-targets -- -D warnings
+    cargo clippy --quiet --manifest-path prototypes/egui-image/Cargo.toml --target wasm32-unknown-unknown --all-targets -- -D warnings
     step "WebAssembly build"
-    npm run --silent wasm
+    (cd prototypes && npm run --silent wasm)
     step "Frontend build"
-    npm run --silent build
+    (cd prototypes && npm run --silent build)
 fi
 
 step "All checks passed ($mode)"
