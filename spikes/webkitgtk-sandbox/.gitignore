@@ -1,0 +1,6 @@
+sandboxed_view
+x11_handshake
+wayland_probe
+extension/
+wayland-extension/
+*.log

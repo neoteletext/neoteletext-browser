@@ -12,6 +12,10 @@ tauri-build = { version = "2.7.2", features = [] }
 [dependencies]
 tauri = { version = "2.12.3", features = ["macos-proxy"] }
 
+[target.'cfg(target_os = "linux")'.dependencies]
+# The version wry 0.57.0 builds on, so the types are the same.
+webkit2gtk = "2.0.2"
+
 [lints.rust]
 unsafe_code = "forbid"
 

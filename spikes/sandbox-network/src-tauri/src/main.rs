@@ -40,7 +40,23 @@ fn main() {
                 println!("PROBE proxy: {proxy}");
                 builder = builder.proxy_url(Url::parse(&proxy)?);
             }
-            builder.build()?;
+            let window = builder.build()?;
+            // Linux: WebKitGTK's web process sandbox is off unless the host
+            // turns it on, and wry does not. SPIKE_WEBKIT_SANDBOX tests
+            // whether it can still be turned on once Tauri has built the
+            // webview; WebKitGTK only honours it before its first web process.
+            #[cfg(target_os = "linux")]
+            if std::env::var("SPIKE_WEBKIT_SANDBOX").is_ok() {
+                use webkit2gtk::{WebContextExt, WebViewExt};
+                window.with_webview(|webview| {
+                    if let Some(context) = webview.inner().context() {
+                        context.set_sandbox_enabled(true);
+                        println!("PROBE WebKitGTK sandbox requested; now reported as {}", context.is_sandbox_enabled());
+                    }
+                })?;
+            }
+            #[cfg(not(target_os = "linux"))]
+            let _ = window;
             Ok(())
         })
         .run(tauri::generate_context!())
