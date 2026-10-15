@@ -1,0 +1,20 @@
+[package]
+name = "macroquad-wall-spike"
+version = "0.1.0"
+edition = "2024"
+publish = false
+description = "The React prototype's tab, page wall and thumbnail size slider, in macroquad"
+
+[dependencies]
+# macroquad 0.4, MIT or Apache-2.0, without audio.
+macroquad = { version = "=0.4.16", default-features = false }
+standin = { path = "../../standin" }
+
+[lints.rust]
+unsafe_code = "forbid"
+
+[lints.clippy]
+pedantic = { level = "warn", priority = -1 }
+
+[profile.dev.package."*"]
+opt-level = 3
