@@ -72,6 +72,11 @@ check_no_panic_lists() {
 }
 
 check_native() {
+    # The fuzz crate has a lockfile of its own, which a dependency change
+    # in the workspace can leave stale.
+    step "native: lockfiles up to date"
+    (cd native && cargo metadata --quiet --locked --format-version 1 >/dev/null)
+    (cd native/fuzz && cargo metadata --quiet --locked --format-version 1 >/dev/null)
     step "native: formatting"
     (cd native && cargo fmt --check)
     check_no_panic_lists
@@ -238,6 +243,11 @@ $loose"
     (cd prototypes && npm run --silent wasm && npm run --silent build)
 
     check_linux
+
+    step "the gate changed nothing that is committed"
+    loose="$(git status --porcelain --untracked-files=no)"
+    [[ -z "$loose" ]] || fail "running the gate changed committed files, so what passed is not what is committed:
+$loose"
 }
 
 case "$mode" in
