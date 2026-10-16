@@ -1,2 +1,11 @@
 #!/usr/bin/env bash
-exec "$(git rev-parse --show-toplevel)/scripts/check.sh" full
+# Git passes one line per ref pushed: local ref, local commit, remote ref,
+# remote commit. The full gate checks each commit pushed; a deletion pushes
+# no commit.
+set -euo pipefail
+deleted="0000000000000000000000000000000000000000"
+pushed=()
+while read -r _ local_commit _ _; do
+    [[ "$local_commit" == "$deleted" ]] || pushed+=("$local_commit")
+done
+exec "$(git rev-parse --show-toplevel)/scripts/check.sh" full "${pushed[@]+"${pushed[@]}"}"

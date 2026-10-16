@@ -1,0 +1,44 @@
+# cargo-deny policy, run by scripts/check.sh full. Every dependency is
+# permissively licensed (design section 8), as the teletext engine's policy
+# (~/devel/neoteletext/deny.toml).
+
+[graph]
+all-features = true
+
+[advisories]
+version = 2
+yanked = "deny"
+ignore = [
+    # ttf-parser is unmaintained. It comes only from winit's Wayland window
+    # decorations (winit, sctk-adwaita, ab_glyph), drawing the title in a
+    # system font; no untrusted font reaches it. Turning off winit's
+    # adwaita feature would remove it.
+    { id = "RUSTSEC-2026-0192", reason = "Linux window titles only, no untrusted fonts; removal is the owner's decision" },
+]
+
+[licenses]
+version = 2
+# Permissive licences only; never GPL. Unicode-3.0 (OSI approved,
+# permissive) is the licence of ICU4X's segmentation and normalisation
+# data, which parley and winit use for text: 23 crates.
+allow = ["MIT", "Apache-2.0", "Apache-2.0 WITH LLVM-exception", "BSD-2-Clause", "BSD-3-Clause", "Zlib", "ISC", "CC0-1.0", "Unicode-3.0"]
+confidence-threshold = 0.9
+unused-allowed-license = "allow"
+
+# The workspace's own crates are never published.
+[licenses.private]
+ignore = true
+
+[bans]
+multiple-versions = "warn"
+wildcards = "deny"
+# The workspace's own crates refer to each other by path and are never
+# published.
+allow-wildcard-paths = true
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+# The teletext engine, pinned to one commit of its local repository (the
+# workspace's Cargo.toml).
+allow-git = ["file:///Users/andrewstuart/devel/neoteletext"]

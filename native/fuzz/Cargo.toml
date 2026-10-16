@@ -1,0 +1,86 @@
+# Fuzz targets for every reader of input from outside a process, run by
+# `cargo fuzz` in scripts/check.sh full. Outside the workspace: libFuzzer
+# needs a nightly compiler, and the workspace builds on stable without it.
+[package]
+name = "t42-fuzz"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "=0.4.13"
+protocol = { path = "../protocol" }
+decoder = { path = "../decoder", package = "t42-decoder" }
+t42-interface = { path = "../interface" }
+t42-browser = { path = "../core" }
+
+[workspace]
+members = ["."]
+
+[profile.release]
+debug = 1
+
+[lints.rust]
+unsafe_code = "forbid"
+
+[lints.clippy]
+pedantic = { level = "warn", priority = -1 }
+
+[[bin]]
+name = "interface_messages"
+path = "fuzz_targets/interface_messages.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "core_messages"
+path = "fuzz_targets/core_messages.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "decoder_messages"
+path = "fuzz_targets/decoder_messages.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fetcher_messages"
+path = "fuzz_targets/fetcher_messages.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "decoder_requests"
+path = "fuzz_targets/decoder_requests.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "engine"
+path = "fuzz_targets/engine.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "page_image"
+path = "fuzz_targets/page_image.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "address"
+path = "fuzz_targets/address.rs"
+test = false
+doc = false
+bench = false

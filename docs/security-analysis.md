@@ -337,9 +337,9 @@ Each check below belongs in the project's check script, run by git hooks (requir
 6. **Trusted core dependencies:** no web engine and no format reader (requirement 3.2).
 7. **Engine dependencies:** no interface toolkit; one pinned commit (requirements 2.2 and 2.5).
 8. **Process rights:** network and file access fail where denied, on each platform (requirements 3.3 to 3.7).
-9. **Fuzzing** of every reader in the trusted core and the interface (requirement 4.6).
+9. **Fuzzing** of every reader in the trusted core and the interface (requirement 4.6). **Built:** `native/fuzz`, one target for each message reader, the decoder's engine, the interface's image reader and the address parser.
 10. **The hostile interface harness** (requirements 3.9, 4.5 and 4.7).
 11. **Channel isolation:** cookies and pages never cross channels (requirements 7.3 and 7.8).
-12. **Dependencies:** `cargo-deny`, `cargo audit`, lockfile review (requirement 14.3).
+12. **Dependencies:** `cargo-deny`, `cargo audit`, lockfile review (requirement 14.3). **Built** in part: `cargo-deny`.
 13. **Updates:** the full set of update tests (requirement 13.12).
 14. **Spoofing:** recorded review of every layout (requirement 14.5).

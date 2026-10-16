@@ -1,0 +1,16 @@
+# The edit loop (scripts/try.sh with no arguments): Clippy on every save,
+# as strict as the commit gate; n switches to the tests, c back to Clippy.
+default_job = "clippy"
+
+[jobs.clippy]
+command = ["cargo", "clippy", "--workspace", "--all-targets", "--color", "always", "--", "-D", "warnings"]
+need_stdout = false
+
+[jobs.nextest]
+command = ["cargo", "nextest", "run", "--workspace", "--color", "always", "--hide-progress-bar", "--failure-output", "final"]
+need_stdout = true
+analyzer = "nextest"
+
+[keybindings]
+c = "job:clippy"
+n = "job:nextest"

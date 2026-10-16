@@ -503,6 +503,7 @@ t42-browser/
     fetcher/                the fetcher (t42-fetcher): the engine's user agent over the network
     interface/              the interface process (t42-interface): winit, softbuffer, the image reader
     site/                   a development tool, not shipped (t42-site): builds and serves a test channel
+    fuzz/                   fuzz targets for every reader of input from outside a process (nightly, outside the workspace)
   docs/                     this document, the requirements, the security analysis, the design record
   prototypes/               the earlier approaches, kept as the record (decision 33)
     docs/                   the earlier design's architecture, requirements, security analysis, proofs
@@ -510,7 +511,10 @@ t42-browser/
     src/, src-tauri/        the Tauri and React prototype
     standin/                the stand-in engine the prototypes use
     egui-image/             the egui page renderer compiled to WebAssembly
-  scripts/check.sh          the one check script; git hooks run it
+  scripts/check.sh          the one check script: "commit" before each commit, "full" before each push
+  scripts/try.sh            the edit loop: Clippy on every save, or one crate's Clippy and tests
+  scripts/tools.sh          the pinned development tools, installed into the ignored tools/
+  rust-toolchain.toml       the pinned compiler
 ```
 
 Still to come: the launcher and updater (section 12).

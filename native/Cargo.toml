@@ -4,6 +4,8 @@
 [workspace]
 resolver = "3"
 members = ["interface-core", "draw-vello", "draw-embedded", "protocol", "interface", "core", "decoder", "fetcher", "site"]
+# Built with a nightly compiler of its own (scripts/tools.sh).
+exclude = ["fuzz"]
 
 [workspace.package]
 version = "0.1.0"

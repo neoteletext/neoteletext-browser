@@ -814,21 +814,21 @@ Requirements 13.1 to 13.13 are unchanged from the earlier design, and are stated
 - **Reason:** Requirements that are not checked drift.
 - **Source:** Owner's baseline instructions.
 - **Verification:** Review of the hooks.
-- **State:** Met: `scripts/check.sh`, run by `.githooks`, lints and tests `native/` and every prototype. Many checks named in this document are not written yet.
+- **State:** Partly met. `scripts/check.sh commit`, run before each commit, formats, lints and tests only the parts the staged files touch, and refuses to run while those parts have changes that are not staged, so what it checks is what is committed. `scripts/check.sh full`, run before each push on a clean tree at the commit pushed, adds release tests, `cargo-deny`, `cargo-machete`, fuzzing, the prototypes' WebAssembly and frontend builds, and the Linux build and tests on the Linux host. Neither skips a step: a missing tool or an unreachable host fails the run. The compiler and every tool are pinned (`rust-toolchain.toml`, `scripts/tools.sh`). The full gate has not yet passed as a whole. Many checks named in this document are not written yet.
 
 ### Requirement 14.2: Strict compilation and linting
 - **Statement:** Rust code must build with `unsafe` code forbidden, the Clippy lint group `pedantic` enabled and warnings treated as errors; any suppression must be narrow, at its site, with a written reason.
 - **Reason:** Warnings are faults found early.
 - **Source:** Owner's baseline instructions.
 - **Verification:** Check.
-- **State:** Met.
+- **State:** Met. Beyond the statement: every public item is documented, and the crates that read input from outside their process (protocol, decoder, fetcher, core, interface) also deny every construct that can panic, with one list the check script keeps identical in each.
 
 ### Requirement 14.3: Dependencies
 - **Statement:** Lockfiles must be committed and their changes reviewed. `cargo-deny` and `cargo audit` must pass. Every library must be under a permissive licence (decision 34) and needs the owner's approval.
 - **Reason:** The supply chain is a route to compromise.
 - **Source:** Decisions 4 and 34; owner's baseline instructions.
 - **Verification:** Check.
-- **State:** Partly met: every dependency is pinned to an exact version and permissively licensed as far as checked. `cargo-deny` and `cargo audit` are not in the check script. The libraries in use await the owner's approval by name (open decision 6).
+- **State:** Partly met: every dependency is pinned to an exact version. `cargo-deny` runs in the full gate (`native/deny.toml`): licences, sources, and the RustSec advisories that `cargo audit` also reads; `cargo audit` itself is not run. One advisory is ignored pending the owner's decision: RUSTSEC-2026-0192, `ttf-parser` unmaintained, which only winit's Wayland window decorations use. The libraries in use await the owner's approval by name (open decision 6).
 
 ### Requirement 14.4: Withdrawn
 - **Was:** a runtime caller-attribution test before any change of Tauri or webview runtime.
