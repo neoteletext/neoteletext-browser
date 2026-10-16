@@ -9,7 +9,7 @@ use std::io::{Read, Write};
 use interface_core::canvas::{PAGE_HEIGHT, PAGE_WIDTH};
 use interface_core::channel::{PAGES, page_index};
 
-use super::{Fields, MAX_PAGE_TITLE, ProtocolError, push_text, read_frame, write_frame};
+use super::{Fields, MAX_PAGE_TITLE, ProtocolError, push_raw_text, push_text, read_frame, write_frame};
 
 /// The most bytes of a channel's data in one message.
 pub const MAX_CHUNK: usize = 64 * 1024;
@@ -132,10 +132,7 @@ pub fn write_to_core(out: &mut dyn Write, message: &FromDecoder) -> Result<(), P
             payload.extend_from_slice(&page.to_be_bytes());
             // The decoder's text is untrusted; it is checked for length
             // here and cleaned by the trusted core, not trusted to be clean.
-            let title = title.as_bytes();
-            let length = title.len().min(MAX_PAGE_TITLE);
-            payload.extend_from_slice(&u16::try_from(length).unwrap_or(0).to_be_bytes());
-            payload.extend_from_slice(&title[..length]);
+            push_raw_text(&mut payload, title, MAX_PAGE_TITLE);
             KIND_ARRIVED
         }
         FromDecoder::Frame { page, palette, indices } => {
@@ -209,6 +206,17 @@ fn _text(payload: &mut Vec<u8>, text: &str) -> Result<(), ProtocolError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_long_title_is_cut_on_a_character_boundary() {
+        // Two-byte 'é' straddles the limit: cutting at the byte would leave
+        // half a character, which arrives as U+FFFD.
+        let title = format!("{}é", "a".repeat(MAX_PAGE_TITLE - 1));
+        let mut bytes = Vec::new();
+        write_to_core(&mut bytes, &FromDecoder::Arrived { page: 0x100, title }).unwrap();
+        let arrived = read_from_decoder(&mut bytes.as_slice()).unwrap();
+        assert_eq!(arrived, Some(FromDecoder::Arrived { page: 0x100, title: "a".repeat(MAX_PAGE_TITLE - 1) }));
+    }
 
     #[test]
     fn every_kind_round_trips() {

@@ -211,6 +211,17 @@ fn push_key(payload: &mut Vec<u8>, key: PageKey) {
     payload.extend_from_slice(&key.page.to_be_bytes());
 }
 
+/// Untrusted text sent on for the trusted core to clean: cut to at most
+/// `limit` bytes on a character boundary, with a two-byte length before it.
+pub(crate) fn push_raw_text(payload: &mut Vec<u8>, text: &str, limit: usize) {
+    let mut end = text.len().min(limit);
+    while !text.is_char_boundary(end) {
+        end -= 1;
+    }
+    payload.extend_from_slice(&u16::try_from(end).unwrap_or(0).to_be_bytes());
+    payload.extend_from_slice(&text.as_bytes()[..end]);
+}
+
 fn push_text(payload: &mut Vec<u8>, text: &str, max_bytes: usize) -> Result<(), ProtocolError> {
     if !is_clean(text, max_bytes) {
         return Err(ProtocolError::BadValue("text not cleaned"));

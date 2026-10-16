@@ -9,7 +9,7 @@ use std::io::{Read, Write};
 
 use interface_core::channel::page_index;
 
-use super::{Fields, MAX_PAGE_TITLE, MAX_PAYLOAD, ProtocolError, read_frame, write_frame};
+use super::{Fields, MAX_PAGE_TITLE, MAX_PAYLOAD, ProtocolError, push_raw_text, read_frame, write_frame};
 
 /// The engine's contents file limits (`neoteletext-web` `contents`): at
 /// most 1000 lines, so at most 1000 entries, and 800 pages.
@@ -39,17 +39,6 @@ pub enum FromFetcher {
     Page { pushed: bool, bytes: Vec<u8> },
     /// Something for the log, not yet cleaned.
     Notice(String),
-}
-
-/// Text from the fetcher: cut to `limit` bytes, invalid UTF-8 replaced.
-/// The trusted core cleans it before anything shows it.
-fn push_raw_text(payload: &mut Vec<u8>, text: &str, limit: usize) {
-    let mut end = text.len().min(limit);
-    while !text.is_char_boundary(end) {
-        end -= 1;
-    }
-    payload.extend_from_slice(&u16::try_from(end).unwrap_or(0).to_be_bytes());
-    payload.extend_from_slice(&text.as_bytes()[..end]);
 }
 
 fn raw_text(fields: &mut Fields<'_>, limit: usize) -> Result<String, ProtocolError> {
