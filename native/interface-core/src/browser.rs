@@ -483,10 +483,12 @@ impl Browser {
     }
 
     /// The pointer's shape where it is: a hand over a page a click would
-    /// zoom or choose, the arrow elsewhere.
+    /// zoom or choose and over the overview's fold button, the arrow
+    /// elsewhere.
     #[must_use]
     pub fn cursor(&self) -> Cursor {
-        if self.wall.over_page() || self.previewed.is_some() { Cursor::Hand } else { Cursor::Arrow }
+        let over_toggle = self.regions.overview_toggle.contains(self.pointer);
+        if self.wall.over_page() || self.previewed.is_some() || over_toggle { Cursor::Hand } else { Cursor::Arrow }
     }
 
     /// Folds the overview into the footer, or opens it again.
@@ -1522,5 +1524,19 @@ mod tests {
         let point = cell_centre(&browser, page_index(0x105).unwrap());
         browser.pointer_moved(point.x, point.y, 2_000);
         assert_eq!(browser.cursor(), Cursor::Hand);
+    }
+
+    #[test]
+    fn the_pointer_is_a_hand_over_the_overview_fold_button() {
+        let (mut browser, mut canvas) = browser();
+        for folded in [false, true] {
+            let toggle = browser.regions.overview_toggle;
+            browser.pointer_moved(f64::midpoint(toggle.x0, toggle.x1), f64::midpoint(toggle.y0, toggle.y1), 0);
+            assert_eq!(browser.cursor(), Cursor::Hand, "folded: {folded}");
+            browser.pointer_moved(toggle.x0 - 1.0, f64::midpoint(toggle.y0, toggle.y1), 0);
+            assert_eq!(browser.cursor(), Cursor::Arrow, "folded: {folded}");
+            press_at(&mut browser, &mut canvas, toggle);
+            browser.draw(&mut canvas, WIDTH, HEIGHT, 0);
+        }
     }
 }
