@@ -41,7 +41,11 @@ libm = "=0.2.16"
 vello_cpu = { version = "=0.3.0", default-features = false, features = ["std", "text", "u8_pipeline"] }
 parley = "=0.12.0"
 winit = "=0.30.13"
-softbuffer = { version = "=0.4.8", default-features = false }
+# The same Linux displays as winit's default features, loaded at run time
+# as winit loads them; without a backend softbuffer does not build on
+# Linux. Its kms backend draws to the console with no window, which winit
+# cannot drive.
+softbuffer = { version = "=0.4.8", default-features = false, features = ["wayland", "wayland-dlopen", "x11", "x11-dlopen"] }
 # MIT or Apache-2.0, with no default features, so no standard library.
 embedded-graphics = { version = "=0.8.2", default-features = false }
 # MIT or Apache-2.0: reads the indexed images the trusted core writes (design section 6).
