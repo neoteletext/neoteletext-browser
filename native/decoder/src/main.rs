@@ -21,17 +21,18 @@ fn run() -> Result<(), ProtocolError> {
     // never sent again.
     let mut sent: BTreeMap<u16, Rendered> = BTreeMap::new();
 
-    let render = |engine: &Engine, pages: &[u16], sent: &mut BTreeMap<u16, Rendered>, output: &mut BufWriter<io::StdoutLock<'_>>| -> Result<(), ProtocolError> {
-        for &page in pages {
-            let Some(rendered) = engine.render(page) else { continue };
-            if sent.get(&page) == Some(&rendered) {
-                continue;
+    let render =
+        |engine: &Engine, pages: &[u16], sent: &mut BTreeMap<u16, Rendered>, output: &mut BufWriter<io::StdoutLock<'_>>| -> Result<(), ProtocolError> {
+            for &page in pages {
+                let Some(rendered) = engine.render(page) else { continue };
+                if sent.get(&page) == Some(&rendered) {
+                    continue;
+                }
+                write_to_core(output, &FromDecoder::Frame { page, palette: rendered.palette.clone(), indices: rendered.indices.clone() })?;
+                sent.insert(page, rendered);
             }
-            write_to_core(output, &FromDecoder::Frame { page, palette: rendered.palette.clone(), indices: rendered.indices.clone() })?;
-            sent.insert(page, rendered);
-        }
-        Ok(())
-    };
+            Ok(())
+        };
 
     while let Some(message) = read_from_core(&mut input)? {
         let arrived = match message {

@@ -26,7 +26,8 @@ const TITLES: [&str; 6] = ["Headlines", "World news", "Sport results", "Weather"
 
 /// A channel of sample pages, decoded and drawn by the teletext engine.
 fn browser(painter: &mut Painter) -> Result<Browser, String> {
-    let pages: Vec<u16> = (0..8_u16).flat_map(|magazine| [0x100, 0x101, 0x104, 0x110, 0x123].map(|page| page + magazine * 0x100)).filter(|&page| page < 0x900).collect();
+    let pages: Vec<u16> =
+        (0..8_u16).flat_map(|magazine| [0x100, 0x101, 0x104, 0x110, 0x123].map(|page| page + magazine * 0x100)).filter(|&page| page < 0x900).collect();
     let mut engine = Engine::new();
     let mut arrived = engine.feed(&decoder::sample::tti(&pages, &TITLES));
     arrived.extend(engine.finish());

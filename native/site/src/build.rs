@@ -73,7 +73,8 @@ fn samples(sources: &[PathBuf]) -> Vec<Sample> {
     let mut pool = Vec::new();
     for source in sources {
         let files: Vec<PathBuf> = if source.join("binaries").is_dir() {
-            let mut files: Vec<PathBuf> = fs::read_dir(source.join("binaries")).map(|entries| entries.flatten().map(|entry| entry.path()).collect()).unwrap_or_default();
+            let mut files: Vec<PathBuf> =
+                fs::read_dir(source.join("binaries")).map(|entries| entries.flatten().map(|entry| entry.path()).collect()).unwrap_or_default();
             files.sort();
             files
         } else {
@@ -212,10 +213,9 @@ pub fn build(out: &Path, push: &str, sources: &[PathBuf]) -> Result<Built, Strin
             let rule = LIVE.iter().find(|(number, _)| *number == page);
             let sample = match rule {
                 // A live page takes a sample whose title fits its subject.
-                Some((_, words)) => pool
-                    .iter()
-                    .find(|sample| words.iter().any(|word| sample.title.to_uppercase().contains(word)))
-                    .unwrap_or_else(|| next_for(magazine)),
+                Some((_, words)) => {
+                    pool.iter().find(|sample| words.iter().any(|word| sample.title.to_uppercase().contains(word))).unwrap_or_else(|| next_for(magazine))
+                }
                 None => next_for(magazine),
             };
             let title = contents_title(&sample.title);
@@ -255,7 +255,10 @@ pub fn build(out: &Path, push: &str, sources: &[PathBuf]) -> Result<Built, Strin
         }
     }
     write("contents.txt", &contents)?;
-    write("channel.json", &format!("{{\n  \"name\": \"{NAME}\",\n  \"initial_page\": \"100\",\n  \"push\": {{ \"address\": \"{push}\", \"method\": \"sse\" }}\n}}\n"))?;
+    write(
+        "channel.json",
+        &format!("{{\n  \"name\": \"{NAME}\",\n  \"initial_page\": \"100\",\n  \"push\": {{ \"address\": \"{push}\", \"method\": \"sse\" }}\n}}\n"),
+    )?;
     let pages = sections.iter().map(|(_, entries)| entries.len()).sum();
     Ok(Built { pages, live })
 }

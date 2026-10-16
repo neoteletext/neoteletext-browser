@@ -17,9 +17,9 @@ use crate::channel::{BANKS, Channel, PAGES, PAGES_PER_BANK, PageInfo, Status, pa
 use crate::editor::Editor;
 use crate::geometry::{Point, Rect};
 use crate::theme::{
-    ADDRESS, AXIS, BANK_COLOURS, BANK_COUNT, BANK_NAME, BANK_RANGE, BLACK, BUTTON, CELL_AVAILABLE, CELL_EMPTY, CELL_PULSE, COLUMN_HEAD, Colour, DIM, FIELD, FIELD_INK,
-    FIELD_SELECTION, GLYPH, GREEN, HEADING, INSECURE, LEGEND, MUTED, PANEL, RED, ROW_NUMBER, ROW_STATUS, ROW_TITLE, RULE, RULE_SOFT, SECURE, SELECTED, STAR_ON,
-    TAB_COLOURS, TAB_TITLE, UPDATED, WHITE, WINDOW, YELLOW, mix,
+    ADDRESS, AXIS, BANK_COLOURS, BANK_COUNT, BANK_NAME, BANK_RANGE, BLACK, BUTTON, CELL_AVAILABLE, CELL_EMPTY, CELL_PULSE, COLUMN_HEAD, Colour, DIM, FIELD,
+    FIELD_INK, FIELD_SELECTION, GLYPH, GREEN, HEADING, INSECURE, LEGEND, MUTED, PANEL, RED, ROW_NUMBER, ROW_STATUS, ROW_TITLE, RULE, RULE_SOFT, SECURE,
+    SELECTED, STAR_ON, TAB_COLOURS, TAB_TITLE, UPDATED, WHITE, WINDOW, YELLOW, mix,
 };
 use crate::ui::{HAIRLINE, border, centred, label, left_centred, outline, right_centred};
 use crate::wall::{CellClick, UPDATE_GLOW_MILLISECONDS, UPDATE_MARK_MILLISECONDS, Wall, WallPage, glow, since};
@@ -1051,6 +1051,39 @@ impl Browser {
         outline(canvas, panel, RULE);
     }
 
+    /// The overview's legend and page counts in `heading`, right-aligned to
+    /// end before `right`.
+    fn draw_legend<C: Canvas + ?Sized>(&self, canvas: &mut C, heading: Rect, right: f64) {
+        let middle = f64::midpoint(heading.y0, heading.y1);
+        let (present, loaded) = self.channel.counts();
+        let mut x = right - LEGEND_SPACING;
+        let counts = format!("{present} of {PAGES} pages have content, {loaded} loaded");
+        x -= canvas.text_width(&counts, LEGEND);
+        left_centred(canvas, Rect::new(x, heading.y0, heading.x1, heading.y1), 0.0, &counts, LEGEND, MUTED);
+        x -= LEGEND_SPACING * 2.0;
+        for (word, colour, ring) in [
+            ("Empty", CELL_EMPTY, false),
+            ("Available", CELL_AVAILABLE, false),
+            ("Loaded", YELLOW, false),
+            ("Shown", YELLOW, true),
+            ("Updated", UPDATED, false),
+        ]
+        .into_iter()
+        .rev()
+        {
+            let width = canvas.text_width(word, LEGEND);
+            x -= width;
+            left_centred(canvas, Rect::new(x, heading.y0, x + width, heading.y1), 0.0, word, LEGEND, MUTED);
+            x -= LEGEND_GAP + LEGEND_SWATCH;
+            let swatch = Rect::new(x, middle - LEGEND_SWATCH / 2.0, x + LEGEND_SWATCH, middle + LEGEND_SWATCH / 2.0);
+            canvas.fill(swatch, 0.0, colour);
+            if ring {
+                outline(canvas, swatch, WHITE);
+            }
+            x -= LEGEND_SPACING;
+        }
+    }
+
     fn draw_overview<C: Canvas + ?Sized>(&mut self, canvas: &mut C, panel: Rect, now: u64) {
         canvas.fill(panel, 0.0, PANEL);
         outline(canvas, panel, RULE);
@@ -1067,28 +1100,7 @@ impl Browser {
         if self.overview_folded {
             return;
         }
-        let (present, loaded) = self.channel.counts();
-
-        // The legend and the counts, from the right of the button.
-        let mut x = toggle.x0 - LEGEND_SPACING;
-        let counts = format!("{present} of {PAGES} pages have content, {loaded} loaded");
-        x -= canvas.text_width(&counts, LEGEND);
-        left_centred(canvas, Rect::new(x, heading.y0, heading.x1, heading.y1), 0.0, &counts, LEGEND, MUTED);
-        x -= LEGEND_SPACING * 2.0;
-        for (word, colour, ring) in
-            [("Empty", CELL_EMPTY, false), ("Available", CELL_AVAILABLE, false), ("Loaded", YELLOW, false), ("Shown", YELLOW, true), ("Updated", UPDATED, false)].into_iter().rev()
-        {
-            let width = canvas.text_width(word, LEGEND);
-            x -= width;
-            left_centred(canvas, Rect::new(x, heading.y0, x + width, heading.y1), 0.0, word, LEGEND, MUTED);
-            x -= LEGEND_GAP + LEGEND_SWATCH;
-            let swatch = Rect::new(x, middle - LEGEND_SWATCH / 2.0, x + LEGEND_SWATCH, middle + LEGEND_SWATCH / 2.0);
-            canvas.fill(swatch, 0.0, colour);
-            if ring {
-                outline(canvas, swatch, WHITE);
-            }
-            x -= LEGEND_SPACING;
-        }
+        self.draw_legend(canvas, heading, toggle.x0);
 
         let cells = Rect::new(panel.x0 + PADDING + AXIS_WIDTH, heading.y1, panel.x1 - PADDING, panel.y1 - PADDING);
         self.regions.cells = cells;
@@ -1234,8 +1246,12 @@ fn arrow<C: Canvas + ?Sized>(canvas: &mut C, rect: Rect, pointing_left: bool, co
     let sign = if pointing_left { -1.0 } else { 1.0 };
     let tip = Point::new(centre.x + sign * ARROW_LENGTH / 2.0, centre.y);
     let tail = centre.x - sign * ARROW_LENGTH / 2.0;
-    let shaft =
-        Rect::new(tail.min(tip.x - sign * ARROW_THICKNESS), centre.y - ARROW_THICKNESS / 2.0, tail.max(tip.x - sign * ARROW_THICKNESS), centre.y + ARROW_THICKNESS / 2.0);
+    let shaft = Rect::new(
+        tail.min(tip.x - sign * ARROW_THICKNESS),
+        centre.y - ARROW_THICKNESS / 2.0,
+        tail.max(tip.x - sign * ARROW_THICKNESS),
+        centre.y + ARROW_THICKNESS / 2.0,
+    );
     canvas.fill(shaft, 0.0, colour);
     for direction in [1.0, -1.0] {
         let back = Point::new(tip.x - sign * ARROW_HEAD, tip.y + direction * ARROW_HEAD);
@@ -1248,8 +1264,12 @@ fn arrow<C: Canvas + ?Sized>(canvas: &mut C, rect: Rect, pointing_left: bool, co
 fn padlock<C: Canvas + ?Sized>(canvas: &mut C, at: Point, colour: Colour) {
     let body = Rect::new(at.x, at.y - LOCK_HEIGHT / 2.0 + SHACKLE_HEIGHT / 2.0, at.x + LOCK_WIDTH, at.y + LOCK_HEIGHT / 2.0 + SHACKLE_HEIGHT / 2.0);
     canvas.fill(body, 1.5, colour);
-    let shackle =
-        Rect::new(at.x + (LOCK_WIDTH - SHACKLE_WIDTH) / 2.0, body.y0 - SHACKLE_HEIGHT, at.x + f64::midpoint(LOCK_WIDTH, SHACKLE_WIDTH), body.y0 + SHACKLE_THICKNESS);
+    let shackle = Rect::new(
+        at.x + (LOCK_WIDTH - SHACKLE_WIDTH) / 2.0,
+        body.y0 - SHACKLE_HEIGHT,
+        at.x + f64::midpoint(LOCK_WIDTH, SHACKLE_WIDTH),
+        body.y0 + SHACKLE_THICKNESS,
+    );
     canvas.fill(shackle, SHACKLE_WIDTH / 2.0, colour);
     canvas.fill(
         Rect::new(shackle.x0 + SHACKLE_THICKNESS, shackle.y0 + SHACKLE_THICKNESS, shackle.x1 - SHACKLE_THICKNESS, body.y0),

@@ -99,7 +99,6 @@ fn pixmap(rgba: Vec<u8>) -> Arc<Pixmap> {
     Arc::new(Pixmap::from_parts(rgba, PAGE_WIDTH, PAGE_HEIGHT, metadata))
 }
 
-
 pub struct Painter {
     context: RenderContext,
     resources: Resources,
@@ -325,7 +324,6 @@ impl Canvas for Painter {
     fn line_height(&mut self, style: Style) -> f64 {
         f64::from(self.layout("X", Style { caps: false, ..style }).height())
     }
-
 }
 
 #[cfg(test)]

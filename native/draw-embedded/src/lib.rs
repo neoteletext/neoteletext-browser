@@ -21,8 +21,8 @@ use embedded_graphics::prelude::*;
 use embedded_graphics::primitives::{PrimitiveStyle, Rectangle, RoundedRectangle, Triangle};
 use embedded_graphics::text::{Baseline, Text};
 use interface_core::canvas::{Canvas, PAGE_HEIGHT, PAGE_WIDTH, PageKey, Style};
-use interface_core::geometry::Rect;
 use interface_core::geometry::Point as LogicalPoint;
+use interface_core::geometry::Rect;
 use interface_core::theme::Colour;
 
 const PAGE_DOTS: usize = PAGE_WIDTH as usize * PAGE_HEIGHT as usize;
@@ -220,5 +220,4 @@ where
     fn line_height(&mut self, style: Style) -> f64 {
         f64::from(font(style).character_size.height)
     }
-
 }

@@ -52,9 +52,19 @@ enum Incoming {
     Tabs(Vec<TabInfo>, usize),
     Strip(StripState),
     Channel(Channel),
-    Arrived { channel: u32, page: u16, title: String },
-    Updated { channel: u32, page: u16 },
-    Page { key: PageKey, image: image::Indexed },
+    Arrived {
+        channel: u32,
+        page: u16,
+        title: String,
+    },
+    Updated {
+        channel: u32,
+        page: u16,
+    },
+    Page {
+        key: PageKey,
+        image: image::Indexed,
+    },
     /// The trusted core closed the pipe, asked to close, or broke the protocol.
     End(Option<String>),
 }

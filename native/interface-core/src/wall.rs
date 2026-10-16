@@ -11,15 +11,13 @@ use alloc::vec::Vec;
 use crate::canvas::{CELL_HEIGHT, CELL_WIDTH, COLUMNS, Canvas, PAGE_HEIGHT, PAGE_WIDTH, PageKey, ROWS};
 use crate::geometry::{Point, Rect};
 use crate::size::{
-    DEFAULT_WIDTH, Layout, MAX_WIDTH, clamp_width, fraction_of_width, grid_width, layout_for_width, max_width_for_window,
-    stepped_width, width_at_fraction,
+    DEFAULT_WIDTH, Layout, MAX_WIDTH, clamp_width, fraction_of_width, grid_width, layout_for_width, max_width_for_window, stepped_width, width_at_fraction,
 };
 use crate::theme::{
-    BUTTON, CAPTION, CAPTION_TITLE, CONTROL, MUTED, PANEL, READOUT, ROW_NUMBER, ROW_TITLE, RULE, RULE_SOFT,
-    SEGMENT_OFF, SELECTED, WHITE, WINDOW,
+    BUTTON, CAPTION, CAPTION_TITLE, CONTROL, MUTED, PANEL, READOUT, ROW_NUMBER, ROW_TITLE, RULE, RULE_SOFT, SEGMENT_OFF, SELECTED, WHITE, WINDOW,
 };
-use crate::tween::{EASE_OUT, STANDARD, Tween};
 use crate::theme::{UPDATED, mix};
+use crate::tween::{EASE_OUT, STANDARD, Tween};
 use crate::ui::{border, centred, label, outline};
 
 // ---- The control row along the panel's top ----
@@ -802,7 +800,12 @@ impl Wall {
                 canvas.fill(row, 0.0, SELECTED);
             }
             canvas.fill(Rect::new(left, row.y1 - 1.0, right, row.y1), 0.0, RULE_SOFT);
-            let rect = Rect::new(left + LIST_ROW_PADDING, row_top + LIST_ROW_PADDING, left + LIST_ROW_PADDING + LIST_PAGE_WIDTH, row_top + LIST_ROW_PADDING + page_height);
+            let rect = Rect::new(
+                left + LIST_ROW_PADDING,
+                row_top + LIST_ROW_PADDING,
+                left + LIST_ROW_PADDING + LIST_PAGE_WIDTH,
+                row_top + LIST_ROW_PADDING + page_height,
+            );
             self.draw_page(canvas, page.key, rect);
             let text_left = rect.x1 + LIST_GAP;
             let middle = rect.y0 + page_height / 2.0;

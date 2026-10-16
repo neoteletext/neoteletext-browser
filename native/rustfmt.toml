@@ -1,0 +1,5 @@
+# The width the native code was written at: 160 columns leaves the fewest
+# changes on first formatting (46 places, against several hundred at the
+# default 100).
+max_width = 160
+use_small_heuristics = "Max"

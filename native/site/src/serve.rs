@@ -59,7 +59,8 @@ struct Live {
 
 impl Live {
     fn read(folder: &Path) -> Self {
-        let mut files: Vec<PathBuf> = fs::read_dir(folder.join("live")).map(|entries| entries.flatten().map(|entry| entry.path()).collect()).unwrap_or_default();
+        let mut files: Vec<PathBuf> =
+            fs::read_dir(folder.join("live")).map(|entries| entries.flatten().map(|entry| entry.path()).collect()).unwrap_or_default();
         files.sort();
         let mut pages: Vec<Vec<String>> = Vec::new();
         let mut last = String::new();

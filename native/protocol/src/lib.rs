@@ -12,10 +12,10 @@ use std::io::{self, Read, Write};
 
 use interface_core::browser::{StripState, TabInfo};
 use interface_core::canvas::{COLUMNS, PageKey, ROWS};
+use interface_core::channel::{BANKS, Channel, PAGES, PageInfo, Status, page_index};
 /// Controls, and the invisible characters that reorder or hide text, are
 /// never shown from untrusted text (requirement 11.5).
 use interface_core::editor::hidden;
-use interface_core::channel::{BANKS, Channel, PAGES, PageInfo, Status, page_index};
 use interface_core::theme::TAB_COLOURS;
 
 /// The largest payload accepted, as the engine's pipe (`MAX_FRAME`).
@@ -78,17 +78,31 @@ const CELL_BYTES: usize = KEY_BYTES + 2;
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ToInterface {
     /// The window's tabs and which is active.
-    Tabs { tabs: Vec<TabInfo>, active: usize },
+    Tabs {
+        tabs: Vec<TabInfo>,
+        active: usize,
+    },
     /// What the trusted strip shows, as the trusted core formatted it.
     Strip(StripState),
     /// The active tab's channel: its banks and every page's status.
     Channel(Channel),
     /// One page's new status.
-    Page { channel: u32, page: u16, title: String },
+    Page {
+        channel: u32,
+        page: u16,
+        title: String,
+    },
     /// A page has a new version: the interface shows that it changed.
-    Updated { channel: u32, page: u16 },
+    Updated {
+        channel: u32,
+        page: u16,
+    },
     /// One page image, checked and encoded by the trusted core.
-    Frame { key: PageKey, version: u32, png: Vec<u8> },
+    Frame {
+        key: PageKey,
+        version: u32,
+        png: Vec<u8>,
+    },
     Close,
 }
 
@@ -100,7 +114,11 @@ pub enum ToCore {
     /// The pages now on screen (requirement 9.5).
     Visible(Vec<PageKey>),
     /// A click on one character cell of a page (requirement 12.3).
-    Cell { key: PageKey, column: u8, row: u8 },
+    Cell {
+        key: PageKey,
+        column: u8,
+        row: u8,
+    },
     SelectTab(u8),
     CloseTab(u8),
     NewTab,
@@ -301,7 +319,9 @@ pub fn write_to_interface(out: &mut dyn Write, message: &ToInterface) -> Result<
         ToInterface::Strip(strip) => {
             let flag = |set: bool, bit: u8| if set { bit } else { 0 };
             payload.push(
-                flag(strip.encrypted, ENCRYPTED) | flag(strip.back, CAN_GO_BACK) | flag(strip.forward, CAN_GO_FORWARD)
+                flag(strip.encrypted, ENCRYPTED)
+                    | flag(strip.back, CAN_GO_BACK)
+                    | flag(strip.forward, CAN_GO_FORWARD)
                     | flag(strip.bookmarked, BOOKMARKED)
                     | flag(strip.local, LOCAL),
             );
@@ -519,7 +539,15 @@ mod tests {
     const KEY: PageKey = PageKey { channel: 7, page: 0x123 };
 
     fn strip() -> StripState {
-        StripState { address: "https://example.invalid/".into(), identity: "example.invalid".into(), encrypted: true, back: true, forward: false, bookmarked: true, local: false }
+        StripState {
+            address: "https://example.invalid/".into(),
+            identity: "example.invalid".into(),
+            encrypted: true,
+            back: true,
+            forward: false,
+            bookmarked: true,
+            local: false,
+        }
     }
 
     fn channel() -> Channel {

@@ -98,10 +98,8 @@ impl ChannelState {
         channel.title.clone_from(&self.title);
         channel.banks.clone_from(&self.banks);
         for (index, title) in self.titles.iter().enumerate() {
-            channel.pages[index] = title.as_ref().map(|title| PageInfo {
-                title: title.clone(),
-                status: if self.loaded[index] { Status::Loaded } else { Status::Available },
-            });
+            channel.pages[index] =
+                title.as_ref().map(|title| PageInfo { title: title.clone(), status: if self.loaded[index] { Status::Loaded } else { Status::Available } });
         }
         channel
     }

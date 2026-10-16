@@ -4,12 +4,12 @@
 
 use std::convert::Infallible;
 
+use decoder::Engine;
 use draw_embedded::Screen;
 use embedded_graphics::pixelcolor::Rgb888;
 use embedded_graphics::prelude::*;
 use interface_core::browser::{Browser, Frame, Output, StripState, TabInfo};
 use interface_core::canvas::PageKey;
-use decoder::Engine;
 use interface_core::channel::{Channel, PageInfo, Status, page_index};
 use interface_core::theme::{BLACK, WINDOW};
 

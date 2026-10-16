@@ -35,13 +35,7 @@ pub fn decode(bytes: &[u8]) -> Result<Indexed, String> {
     if info.color_type != ColorType::Indexed || info.bit_depth != BitDepth::Eight {
         return Err("image is not indexed at 8 bits".into());
     }
-    let palette: Vec<[u8; 3]> = info
-        .palette
-        .as_ref()
-        .ok_or("image has no palette")?
-        .chunks_exact(RGB_BYTES)
-        .map(|rgb| [rgb[0], rgb[1], rgb[2]])
-        .collect();
+    let palette: Vec<[u8; 3]> = info.palette.as_ref().ok_or("image has no palette")?.chunks_exact(RGB_BYTES).map(|rgb| [rgb[0], rgb[1], rgb[2]]).collect();
     if palette.is_empty() || palette.len() > MAX_COLOURS {
         return Err(format!("palette of {} colours", palette.len()));
     }

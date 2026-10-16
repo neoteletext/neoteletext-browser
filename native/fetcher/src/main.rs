@@ -61,11 +61,19 @@ impl neoteletext_web::port::RandomSource for Random {
 
 /// What the agent asked for, owned, to act on after its call returns.
 enum Action {
-    Connect { connection: ConnectionId, host: String, port: u16, security: Security },
+    Connect {
+        connection: ConnectionId,
+        host: String,
+        port: u16,
+        security: Security,
+    },
     Send(ConnectionId, Vec<u8>),
     Close(ConnectionId),
     Timer(Instant),
-    Bytes { pushed: bool, bytes: Vec<u8> },
+    Bytes {
+        pushed: bool,
+        bytes: Vec<u8>,
+    },
     Ready,
     Contents(Vec<u8>),
     /// The page asked for has been answered, one way or another.
