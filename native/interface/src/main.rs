@@ -7,7 +7,19 @@
 //! A malformed message from the trusted core ends the process
 //! (`architecture.md` section 6.4).
 
-mod image;
+// No panicking constructs: this crate reads input from outside the
+// process. The same list is in each such crate; scripts/check.sh checks
+// that they agree.
+#![deny(
+    clippy::indexing_slicing,
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::arithmetic_side_effects,
+    clippy::unreachable,
+    clippy::todo,
+    clippy::unimplemented
+)]
 
 use std::io::{self, BufReader, BufWriter, Write};
 use std::num::NonZeroU32;
@@ -20,6 +32,7 @@ use interface_core::canvas::PageKey;
 use interface_core::channel::Channel;
 use protocol::{ToCore, ToInterface, read_from_core, write_to_core};
 use softbuffer::{Context, Surface};
+use t42_interface::image;
 use winit::application::ApplicationHandler;
 use winit::dpi::LogicalSize;
 use winit::event::{ElementState, Ime, MouseButton, MouseScrollDelta, WindowEvent};
@@ -408,7 +421,8 @@ impl ApplicationHandler<Incoming> for App {
             if now.saturating_sub(self.last_frame) >= interval {
                 self.request_redraw();
             }
-            event_loop.set_control_flow(ControlFlow::WaitUntil(self.start + Duration::from_millis(self.last_frame + interval)));
+            let next = self.start.checked_add(Duration::from_millis(self.last_frame.saturating_add(interval)));
+            event_loop.set_control_flow(next.map_or(ControlFlow::Wait, ControlFlow::WaitUntil));
         } else {
             event_loop.set_control_flow(ControlFlow::Wait);
         }

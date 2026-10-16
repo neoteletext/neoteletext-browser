@@ -55,7 +55,7 @@ fn encode(palette: &[[u8; 3]], indices: &[u8]) -> Option<Vec<u8>> {
     let mut out = Vec::new();
     let mut scratch = [0_u8; SCRATCH];
     let mut row = |y: usize, line: &mut [u8]| {
-        if let Some(source) = indices.get(y * width..(y + 1) * width) {
+        if let Some(source) = indices.chunks_exact(width).nth(y) {
             line.copy_from_slice(source);
         }
     };

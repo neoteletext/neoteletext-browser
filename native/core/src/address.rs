@@ -8,10 +8,12 @@ use std::path::PathBuf;
 /// An address as the trusted core keeps and shows it.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Address {
+    /// The address in full, as the address field shows it.
     pub text: String,
     /// The site's host, or a file's name: what the strip shows as the
     /// channel's identity.
     pub host: String,
+    /// Fetched over https.
     pub encrypted: bool,
     /// A file on this computer, at this absolute path.
     pub file: Option<PathBuf>,

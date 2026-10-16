@@ -10,6 +10,20 @@
 //! server on this computer or the local network is refused unless named
 //! with `--allow-local` (the engine's REQ-SEC-006).
 
+// No panicking constructs: this crate reads input from outside the
+// process. The same list is in each such crate; scripts/check.sh checks
+// that they agree.
+#![deny(
+    clippy::indexing_slicing,
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::arithmetic_side_effects,
+    clippy::unreachable,
+    clippy::todo,
+    clippy::unimplemented
+)]
+
 mod transport;
 
 use std::collections::VecDeque;
@@ -54,7 +68,9 @@ impl neoteletext_web::port::RandomSource for Random {
             let mut hasher = self.state.build_hasher();
             hasher.write_u64(self.counter);
             let value = hasher.finish().to_le_bytes();
-            chunk.copy_from_slice(&value[..chunk.len()]);
+            for (byte, &random) in chunk.iter_mut().zip(&value) {
+                *byte = random;
+            }
         }
     }
 }

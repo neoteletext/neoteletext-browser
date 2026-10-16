@@ -20,6 +20,9 @@ pub fn hidden(character: char) -> bool {
             | '\u{FEFF}')
 }
 
+/// A single line of editable text with a caret and a selection, as the
+/// address field uses it. Positions are byte offsets on character
+/// boundaries.
 pub struct Editor {
     text: String,
     caret: usize,
@@ -35,11 +38,13 @@ impl Editor {
         Self { text: String::new(), caret: 0, anchor: 0, limit }
     }
 
+    /// The text.
     #[must_use]
     pub fn text(&self) -> &str {
         &self.text
     }
 
+    /// The caret's byte offset.
     #[must_use]
     pub fn caret(&self) -> usize {
         self.caret
@@ -59,6 +64,7 @@ impl Editor {
         self.select_all();
     }
 
+    /// Selects all the text, with the caret at its end.
     pub fn select_all(&mut self) {
         self.anchor = 0;
         self.caret = self.text.len();
@@ -97,6 +103,7 @@ impl Editor {
         self.text[at..].chars().next().map_or(at, |character| at + character.len_utf8())
     }
 
+    /// Deletes the selection, or else the character before the caret.
     pub fn backspace(&mut self) {
         if !self.delete_selection() && self.caret > 0 {
             let start = self.previous(self.caret);
@@ -106,6 +113,7 @@ impl Editor {
         }
     }
 
+    /// Deletes the selection, or else the character after the caret.
     pub fn delete(&mut self) {
         if !self.delete_selection() && self.caret < self.text.len() {
             let end = self.next(self.caret);
@@ -123,6 +131,7 @@ impl Editor {
         }
     }
 
+    /// The same as [`Editor::left`], to the right.
     pub fn right(&mut self, extend: bool) {
         let (start, end) = self.selection();
         self.caret = if !extend && start != end { end } else { self.next(self.caret) };
@@ -131,6 +140,7 @@ impl Editor {
         }
     }
 
+    /// Moves the caret to the start, extending the selection when `extend` is set.
     pub fn home(&mut self, extend: bool) {
         self.caret = 0;
         if !extend {
@@ -138,6 +148,7 @@ impl Editor {
         }
     }
 
+    /// Moves the caret to the end, extending the selection when `extend` is set.
     pub fn end(&mut self, extend: bool) {
         self.caret = self.text.len();
         if !extend {

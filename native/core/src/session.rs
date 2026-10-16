@@ -12,8 +12,8 @@ use interface_core::theme::TAB_COLOURS;
 use protocol::fetcher::Entry;
 use protocol::{MAX_ADDRESS, MAX_BANK_NAME, MAX_IDENTITY, MAX_PAGE_TITLE, MAX_TAB_TITLE, MAX_TITLE, clean};
 
-use crate::address::{Address, parse};
 use crate::source::Source;
+use t42_browser::address::{Address, parse};
 
 /// The page a new tab opens, under `.invalid`, which never resolves
 /// (RFC 2606 section 2).
@@ -68,10 +68,13 @@ impl ChannelState {
                 Entry::Section(name) => section = clean(name, MAX_BANK_NAME),
                 Entry::Page { page, title } => {
                     let Some(index) = page_index(*page) else { continue };
-                    self.titles[index] = Some(clean(title, MAX_PAGE_TITLE));
-                    let bank = index / PAGES_PER_BANK;
-                    if self.banks[bank].is_empty() {
-                        self.banks[bank].clone_from(&section);
+                    if let Some(slot) = self.titles.get_mut(index) {
+                        *slot = Some(clean(title, MAX_PAGE_TITLE));
+                    }
+                    if let Some(bank) = self.banks.get_mut(index / PAGES_PER_BANK)
+                        && bank.is_empty()
+                    {
+                        bank.clone_from(&section);
                     }
                 }
             }
@@ -82,11 +85,12 @@ impl ChannelState {
     /// is new. A title from the contents file is kept.
     pub fn arrived(&mut self, page: u16, title: &str) -> Option<String> {
         let index = page_index(page)?;
-        if self.loaded[index] {
+        let loaded = self.loaded.get_mut(index)?;
+        if *loaded {
             return None;
         }
-        self.loaded[index] = true;
-        let title = self.titles[index].get_or_insert_with(|| clean(title, MAX_PAGE_TITLE)).clone();
+        *loaded = true;
+        let title = self.titles.get_mut(index)?.get_or_insert_with(|| clean(title, MAX_PAGE_TITLE)).clone();
         Some(title)
     }
 
@@ -97,9 +101,8 @@ impl ChannelState {
         channel.channel = self.id;
         channel.title.clone_from(&self.title);
         channel.banks.clone_from(&self.banks);
-        for (index, title) in self.titles.iter().enumerate() {
-            channel.pages[index] =
-                title.as_ref().map(|title| PageInfo { title: title.clone(), status: if self.loaded[index] { Status::Loaded } else { Status::Available } });
+        for ((slot, title), &loaded) in channel.pages.iter_mut().zip(&self.titles).zip(&self.loaded) {
+            *slot = title.as_ref().map(|title| PageInfo { title: title.clone(), status: if loaded { Status::Loaded } else { Status::Available } });
         }
         channel
     }
@@ -112,9 +115,10 @@ pub struct Tab {
 }
 
 impl Tab {
+    /// The address the tab is at in its history.
     #[must_use]
-    pub fn address(&self) -> &Address {
-        &self.history[self.position]
+    pub fn address(&self) -> Option<&Address> {
+        self.history.get(self.position)
     }
 }
 
@@ -144,9 +148,9 @@ impl Session {
     pub fn open(&mut self, typed: &str) -> Result<&ChannelState, String> {
         let address = parse(typed)?;
         let channel = self.channel_for(&address);
+        self.active = self.tabs.len();
         self.tabs.push(Tab { history: vec![address], position: 0, channel });
-        self.active = self.tabs.len() - 1;
-        Ok(&self.tabs[self.active].channel)
+        self.tabs.last().map(|tab| &tab.channel).ok_or_else(|| "no tab is open".into())
     }
 
     /// Opens `typed` in the active tab, after its current address in history.
@@ -157,9 +161,9 @@ impl Session {
         let address = parse(typed)?;
         let channel = self.channel_for(&address);
         let tab = self.tabs.get_mut(self.active).ok_or("no tab is open")?;
-        tab.history.truncate(tab.position + 1);
+        tab.history.truncate(tab.position.saturating_add(1));
         tab.history.push(address);
-        tab.position += 1;
+        tab.position = tab.history.len().saturating_sub(1);
         tab.channel = channel;
         Ok(())
     }
@@ -168,18 +172,19 @@ impl Session {
     /// whether it moved.
     pub fn go(&mut self, forward: bool) -> bool {
         let Some(tab) = self.tabs.get(self.active) else { return false };
-        let position = if forward { tab.position + 1 } else { tab.position.wrapping_sub(1) };
+        let position = if forward { tab.position.checked_add(1) } else { tab.position.checked_sub(1) };
+        let Some(position) = position else { return false };
         let Some(address) = tab.history.get(position).cloned() else { return false };
         let channel = self.channel_for(&address);
-        let tab = &mut self.tabs[self.active];
+        let Some(tab) = self.tabs.get_mut(self.active) else { return false };
         tab.position = position;
         tab.channel = channel;
         true
     }
 
     pub fn toggle_bookmark(&mut self) {
-        let Some(tab) = self.tabs.get(self.active) else { return };
-        let address = tab.address().text.clone();
+        let Some(address) = self.tabs.get(self.active).and_then(Tab::address) else { return };
+        let address = address.text.clone();
         if !self.bookmarks.remove(&address) {
             self.bookmarks.insert(address);
         }
@@ -207,9 +212,9 @@ impl Session {
         self.tabs
             .iter()
             .map(|tab| {
-                let host = &tab.address().host;
+                let host = tab.address().map_or("", |address| address.host.as_str());
                 // A tab's colour follows its site, so a site keeps its colour.
-                let colour = host.bytes().fold(0_u8, u8::wrapping_add) % u8::try_from(TAB_COLOURS.len()).unwrap_or(1);
+                let colour = host.bytes().fold(0_u8, u8::wrapping_add).checked_rem(u8::try_from(TAB_COLOURS.len()).unwrap_or(1)).unwrap_or(0);
                 TabInfo { title: clean(host, MAX_TAB_TITLE), colour }
             })
             .collect()
@@ -218,14 +223,14 @@ impl Session {
     #[must_use]
     pub fn strip(&self) -> StripState {
         let Some(tab) = self.active_tab() else { return StripState::default() };
-        let address = tab.address();
+        let Some(address) = tab.address() else { return StripState::default() };
         StripState {
             address: clean(&address.text, MAX_ADDRESS),
             identity: clean(&address.host, MAX_IDENTITY),
             encrypted: address.encrypted,
             local: address.file.is_some(),
             back: tab.position > 0,
-            forward: tab.position + 1 < tab.history.len(),
+            forward: tab.position.saturating_add(1) < tab.history.len(),
             bookmarked: self.bookmarks.contains(&address.text),
         }
     }

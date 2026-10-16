@@ -5,6 +5,20 @@
 //! exact length, and each side accepts only the kinds meant for it, so the
 //! interface can never send what only the trusted core may say.
 
+// No panicking constructs: this crate reads input from outside the
+// process. The same list is in each such crate; scripts/check.sh checks
+// that they agree.
+#![deny(
+    clippy::indexing_slicing,
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::arithmetic_side_effects,
+    clippy::unreachable,
+    clippy::todo,
+    clippy::unimplemented
+)]
+
 pub mod decoder;
 pub mod fetcher;
 
@@ -25,16 +39,21 @@ pub const MAX_PAYLOAD: usize = 256 * 1024;
 pub const MAX_PAGES: usize = 8 * 256;
 /// Lowest and highest teletext page numbers, magazine 8 written as 8.
 pub const FIRST_PAGE: u16 = 0x100;
+/// The highest teletext page number.
 pub const LAST_PAGE: u16 = 0x8FF;
-/// Bounds on the strip's and the view's text, in bytes of UTF-8.
+/// Bounds on the strip's and the view's text, in bytes of UTF-8: a
+/// channel's title.
 pub const MAX_TITLE: usize = 256;
+/// A channel's identity, its host name.
 pub const MAX_IDENTITY: usize = 256;
 /// The address bar's limit, as the trusted core's address rules.
 pub const MAX_ADDRESS: usize = interface_core::browser::MAX_ADDRESS;
 /// A page title: one row of a teletext page is 40 characters, and each
 /// takes at most four bytes of UTF-8.
 pub const MAX_PAGE_TITLE: usize = 40 * 4;
+/// A bank's name.
 pub const MAX_BANK_NAME: usize = 64;
+/// A tab's title.
 pub const MAX_TAB_TITLE: usize = 128;
 /// More tabs than any window shows.
 pub const MAX_TABS: usize = 64;
@@ -70,7 +89,6 @@ const ALL_FLAGS: u8 = ENCRYPTED | CAN_GO_BACK | CAN_GO_FORWARD | BOOKMARKED | LO
 
 const HEADER_BYTES: usize = 5;
 const KEY_BYTES: usize = 6;
-const LENGTH_BYTES: usize = 2;
 const FRAME_FIXED_BYTES: usize = KEY_BYTES + 4;
 const CELL_BYTES: usize = KEY_BYTES + 2;
 
@@ -79,7 +97,9 @@ const CELL_BYTES: usize = KEY_BYTES + 2;
 pub enum ToInterface {
     /// The window's tabs and which is active.
     Tabs {
+        /// Every tab, left to right.
         tabs: Vec<TabInfo>,
+        /// The index of the active tab.
         active: usize,
     },
     /// What the trusted strip shows, as the trusted core formatted it.
@@ -88,21 +108,30 @@ pub enum ToInterface {
     Channel(Channel),
     /// One page's new status.
     Page {
+        /// The channel.
         channel: u32,
+        /// The page number.
         page: u16,
+        /// Its title, cleaned.
         title: String,
     },
     /// A page has a new version: the interface shows that it changed.
     Updated {
+        /// The channel.
         channel: u32,
+        /// The page number.
         page: u16,
     },
     /// One page image, checked and encoded by the trusted core.
     Frame {
+        /// Which page.
         key: PageKey,
+        /// Counts up with each new image of the page, so an older one never replaces a newer.
         version: u32,
+        /// The image, an indexed PNG at the native size.
         png: Vec<u8>,
     },
+    /// The browser is closing: the interface ends.
     Close,
 }
 
@@ -115,26 +144,46 @@ pub enum ToCore {
     Visible(Vec<PageKey>),
     /// A click on one character cell of a page (requirement 12.3).
     Cell {
+        /// Which page.
         key: PageKey,
+        /// The cell's column, 0 to 39.
         column: u8,
+        /// The cell's row, 0 to 24.
         row: u8,
     },
+    /// Switch to the tab at this index.
     SelectTab(u8),
+    /// Close the tab at this index.
     CloseTab(u8),
+    /// Open a new tab.
     NewTab,
     /// Strip input: an address typed into the trusted strip.
     Navigate(String),
+    /// Strip input: go back in the tab's history.
     Back,
+    /// Strip input: go forward in the tab's history.
     Forward,
+    /// Strip input: bookmark the channel, or remove its bookmark.
     Bookmark,
 }
 
+/// Why a message could not be read or written.
 #[derive(Debug)]
 pub enum ProtocolError {
+    /// The pipe failed.
     Io(io::Error),
+    /// A payload longer than [`MAX_PAYLOAD`].
     TooLong(usize),
+    /// A kind this side does not accept.
     UnknownKind(u8),
-    BadLength { kind: u8, length: usize },
+    /// A payload of the wrong length for its kind.
+    BadLength {
+        /// The message kind.
+        kind: u8,
+        /// The payload's length.
+        length: usize,
+    },
+    /// A field out of bounds or malformed, and which.
     BadValue(&'static str),
 }
 
@@ -164,12 +213,21 @@ impl From<io::Error> for ProtocolError {
 pub fn clean(text: &str, max_bytes: usize) -> String {
     let mut out = String::with_capacity(text.len().min(max_bytes));
     for character in text.chars().filter(|&character| !hidden(character)) {
-        if out.len() + character.len_utf8() > max_bytes {
+        if out.len().saturating_add(character.len_utf8()) > max_bytes {
             break;
         }
         out.push(character);
     }
     out
+}
+
+/// Untrusted text sent on for the trusted core to clean: cut to at most
+/// `limit` bytes on a character boundary, with a two-byte length before it.
+pub(crate) fn push_raw_text(payload: &mut Vec<u8>, text: &str, limit: usize) {
+    let end = (0..=text.len().min(limit)).rev().find(|&end| text.is_char_boundary(end)).unwrap_or(0);
+    let cut = text.get(..end).unwrap_or_default();
+    payload.extend_from_slice(&u16::try_from(cut.len()).unwrap_or(0).to_be_bytes());
+    payload.extend_from_slice(cut.as_bytes());
 }
 
 fn is_clean(text: &str, max_bytes: usize) -> bool {
@@ -211,17 +269,6 @@ fn push_key(payload: &mut Vec<u8>, key: PageKey) {
     payload.extend_from_slice(&key.page.to_be_bytes());
 }
 
-/// Untrusted text sent on for the trusted core to clean: cut to at most
-/// `limit` bytes on a character boundary, with a two-byte length before it.
-pub(crate) fn push_raw_text(payload: &mut Vec<u8>, text: &str, limit: usize) {
-    let mut end = text.len().min(limit);
-    while !text.is_char_boundary(end) {
-        end -= 1;
-    }
-    payload.extend_from_slice(&u16::try_from(end).unwrap_or(0).to_be_bytes());
-    payload.extend_from_slice(&text.as_bytes()[..end]);
-}
-
 fn push_text(payload: &mut Vec<u8>, text: &str, max_bytes: usize) -> Result<(), ProtocolError> {
     if !is_clean(text, max_bytes) {
         return Err(ProtocolError::BadValue("text not cleaned"));
@@ -259,18 +306,20 @@ impl<'a> Fields<'a> {
         Ok(taken)
     }
 
+    fn array<const N: usize>(&mut self) -> Result<[u8; N], ProtocolError> {
+        self.take(N)?.try_into().map_err(|_| ProtocolError::BadValue("payload ends early"))
+    }
+
     fn u8(&mut self) -> Result<u8, ProtocolError> {
-        Ok(self.take(1)?[0])
+        Ok(u8::from_be_bytes(self.array()?))
     }
 
     fn u16(&mut self) -> Result<u16, ProtocolError> {
-        let bytes = self.take(LENGTH_BYTES)?;
-        Ok(u16::from_be_bytes([bytes[0], bytes[1]]))
+        Ok(u16::from_be_bytes(self.array()?))
     }
 
     fn u32(&mut self) -> Result<u32, ProtocolError> {
-        let bytes = self.take(4)?;
-        Ok(u32::from_be_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]))
+        Ok(u32::from_be_bytes(self.array()?))
     }
 
     fn key(&mut self) -> Result<PageKey, ProtocolError> {
@@ -439,7 +488,8 @@ pub fn read_from_core(input: &mut dyn Read) -> Result<Option<ToInterface>, Proto
                 let index = page_index(fields.u16()?).ok_or(ProtocolError::BadValue("page number"))?;
                 let status = Status::from_byte(fields.u8()?).ok_or(ProtocolError::BadValue("page status"))?;
                 let title = fields.text(MAX_PAGE_TITLE)?;
-                if channel.pages[index].replace(PageInfo { title, status }).is_some() {
+                let slot = channel.pages.get_mut(index).ok_or(ProtocolError::BadValue("page number"))?;
+                if slot.replace(PageInfo { title, status }).is_some() {
                     return Err(ProtocolError::BadValue("page listed twice"));
                 }
             }

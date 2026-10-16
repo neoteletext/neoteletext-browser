@@ -89,7 +89,9 @@ const WIDTH_TRANSITION_MILLISECONDS: u64 = 160;
 /// One page the wall shows.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct WallPage {
+    /// Which page.
     pub key: PageKey,
+    /// Its title, shown in its caption.
     pub title: String,
     /// When the page last had a new version, in milliseconds, if it has.
     pub updated: Option<u64>,
@@ -116,6 +118,7 @@ pub fn since(updated: Option<u64>, now: u64) -> Option<String> {
 
 /// An update glows for 3 seconds, and is marked with its age for a minute.
 pub const UPDATE_GLOW_MILLISECONDS: u64 = 3_000;
+/// How long an update is marked with its age.
 pub const UPDATE_MARK_MILLISECONDS: u64 = 60_000;
 const MILLISECONDS_PER_SECOND: u64 = 1_000;
 /// The width of an updated page's glowing frame, at its brightest.
@@ -124,8 +127,11 @@ const GLOW_WIDTH: f64 = 4.0;
 /// A click on one character cell of a page.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct CellClick {
+    /// The page clicked.
     pub key: PageKey,
+    /// The cell's column, 0 to 39.
     pub column: u8,
+    /// The cell's row, 0 to 24.
     pub row: u8,
 }
 
@@ -135,6 +141,8 @@ struct Drawn {
     rect: Rect,
 }
 
+/// The page area: a bank's pages as a grid or a list, the page size
+/// control above them, and a page zoomed to fill the area.
 pub struct Wall {
     width: f32,
     max: f32,
@@ -187,6 +195,7 @@ impl Default for Wall {
 }
 
 impl Wall {
+    /// A wall at the default page size, scrolled to the top, nothing zoomed.
     #[must_use]
     pub fn new() -> Self {
         Self {
@@ -358,6 +367,7 @@ impl Wall {
         }
     }
 
+    /// Steps the page size one notch smaller (`direction` below zero) or larger.
     pub fn step(&mut self, direction: i8, now: u64) {
         self.set_width(stepped_width(self.width, direction), now);
     }
@@ -399,15 +409,18 @@ impl Wall {
         self.dragging
     }
 
+    /// The main button was released: any drag of the page size bar ends.
     pub fn pointer_released(&mut self) {
         self.dragging = false;
     }
 
+    /// Whether `point` is in the page area, below the controls.
     #[must_use]
     pub fn contains(&self, point: Point) -> bool {
         self.area.contains(point)
     }
 
+    /// Scrolls the pages by `distance` logical pixels, down when positive, never above the top.
     pub fn scroll_by(&mut self, distance: f64) {
         self.scroll = (self.scroll + distance).max(0.0);
     }
@@ -540,6 +553,7 @@ impl Wall {
         layout_for_width(self.width)
     }
 
+    /// Whether anything on the wall is moving at `now`.
     #[must_use]
     pub fn animating(&self, now: u64) -> bool {
         self.shown_width.moving(now) || self.zoom.moving(now) || self.slide.moving(now) || self.hover.moving(now) || self.leave.moving(now)

@@ -251,9 +251,9 @@ mod tests {
     fn flash_changes_only_the_flash_row() {
         let off = render(5, 0x200, false);
         let on = render(5, 0x200, true);
-        let changed: Vec<usize> = off.indices.iter().zip(&on.indices).enumerate().filter(|(_, (a, b))| a != b).map(|(i, _)| i / COLUMNS_DOTS / CELL_HEIGHT).collect();
-        assert!(!changed.is_empty());
-        assert!(changed.iter().all(|&row| row == FLASH_ROW));
+        let mut changed: Vec<usize> = off.indices.iter().zip(&on.indices).enumerate().filter(|(_, (a, b))| a != b).map(|(i, _)| i / COLUMNS_DOTS / CELL_HEIGHT).collect();
+        changed.dedup();
+        assert_eq!(changed, [FLASH_ROW]);
     }
 
     #[test]

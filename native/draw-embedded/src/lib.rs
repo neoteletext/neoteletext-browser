@@ -53,6 +53,7 @@ struct PageImage {
 /// indices, so a small chip keeps only the visible pages
 /// ([`Screen::retain_pages`]).
 pub struct Screen<D> {
+    /// The display drawn on.
     pub target: D,
     pages: BTreeMap<PageKey, PageImage>,
     /// Clips in force, innermost last.
@@ -89,6 +90,7 @@ where
     D: DrawTarget,
     D::Color: From<Rgb888>,
 {
+    /// A screen drawing on `target`, holding no pages yet.
     pub fn new(target: D) -> Self {
         Self { target, pages: BTreeMap::new(), clips: Vec::new() }
     }

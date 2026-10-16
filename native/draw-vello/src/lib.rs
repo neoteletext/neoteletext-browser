@@ -43,7 +43,9 @@ fn style_key(style: Style) -> StyleKey {
 /// The shipped font the interface's text is drawn in.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Family {
+    /// Roboto.
     Roboto,
+    /// Open Sans.
     OpenSans,
 }
 
@@ -99,6 +101,8 @@ fn pixmap(rgba: Vec<u8>) -> Arc<Pixmap> {
     Arc::new(Pixmap::from_parts(rgba, PAGE_WIDTH, PAGE_HEIGHT, metadata))
 }
 
+/// The drawing back end on the processor: draws into a pixel buffer with
+/// `vello_cpu` and lays text out with `parley`.
 pub struct Painter {
     context: RenderContext,
     resources: Resources,
@@ -124,6 +128,7 @@ pub enum PageError {
 }
 
 impl Painter {
+    /// A painter drawing text in `family`, at a scale of one.
     #[must_use]
     pub fn new(family: Family) -> Self {
         let mut fonts = FontContext::new();

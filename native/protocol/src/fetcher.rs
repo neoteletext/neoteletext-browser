@@ -27,16 +27,29 @@ const ENTRY_PAGE: u8 = 2;
 /// One entry of a channel's contents file, in its order.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Entry {
+    /// A heading that starts a section of the contents.
     Section(String),
-    Page { page: u16, title: String },
+    /// A page the channel has.
+    Page {
+        /// Its page number.
+        page: u16,
+        /// Its title, not yet cleaned.
+        title: String,
+    },
 }
 
+/// From a fetcher to the trusted core. A fetcher is untrusted.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum FromFetcher {
     /// The channel's contents file, read.
     Contents(Vec<Entry>),
     /// Page bytes, TTI or T42, as fetched or pushed.
-    Page { pushed: bool, bytes: Vec<u8> },
+    Page {
+        /// Sent by the channel's push connection, not fetched in order.
+        pushed: bool,
+        /// The page file's bytes.
+        bytes: Vec<u8>,
+    },
     /// Something for the log, not yet cleaned.
     Notice(String),
 }

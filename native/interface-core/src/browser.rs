@@ -136,12 +136,16 @@ const DECIMAL_DIGITS: usize = 3;
 /// draws its own minimise, maximise and close buttons.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Frame {
+    /// Where the tabs start: the width the system's window buttons take on macOS.
     pub left_inset: f64,
+    /// Whether the browser draws its own minimise, maximise and close buttons.
     pub window_buttons: bool,
 }
 
+/// One tab as the trusted core describes it.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct TabInfo {
+    /// The channel's title.
     pub title: String,
     /// An index into [`TAB_COLOURS`].
     pub colour: u8,
@@ -152,21 +156,32 @@ pub struct TabInfo {
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 #[allow(clippy::struct_excessive_bools, reason = "independent facts the trusted core reports, each drawn on its own")]
 pub struct StripState {
+    /// The channel's address, as the address field shows it.
     pub address: String,
+    /// The channel's host name, highlighted within the address.
     pub identity: String,
+    /// The channel was fetched over an encrypted connection.
     pub encrypted: bool,
     /// The address is a file on this computer, not a site.
     pub local: bool,
+    /// The tab has history to go back to.
     pub back: bool,
+    /// The tab has history to go forward to.
     pub forward: bool,
+    /// The channel is bookmarked.
     pub bookmarked: bool,
 }
 
+/// Something the window itself should do, for the host to carry out.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum WindowAction {
+    /// Move the window: a press on the empty tab strip.
     Drag,
+    /// Minimise the window.
     Minimise,
+    /// Maximise the window, or restore it.
     Maximise,
+    /// Close the window.
     Close,
 }
 
@@ -175,16 +190,25 @@ pub enum WindowAction {
 pub enum Output {
     /// The pages now on screen (requirement 9.5).
     Visible(Vec<PageKey>),
+    /// A click on a cell of the zoomed page.
     Cell(CellClick),
+    /// Switch to the tab at this index.
     SelectTab(usize),
+    /// Close the tab at this index.
     CloseTab(usize),
+    /// Open a new tab.
     NewTab,
     /// Strip input: an address typed into the trusted strip.
     Navigate(String),
+    /// Go back in the tab's history.
     Back,
+    /// Go forward in the tab's history.
     Forward,
+    /// Bookmark the channel, or remove its bookmark.
     Bookmark,
+    /// Open the browser's menu.
     Menu,
+    /// Something the window should do.
     Window(WindowAction),
     /// Whether text input, including input methods, goes to the address field.
     TextInput(bool),
@@ -193,22 +217,34 @@ pub enum Output {
 /// A key the browser handles, as the host translates it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Key<'a> {
+    /// Text typed or composed by an input method.
     Text(&'a str),
+    /// Return or Enter.
     Enter,
+    /// Escape.
     Escape,
+    /// Backspace: deletes before the caret.
     Backspace,
+    /// Delete: deletes after the caret.
     Delete,
+    /// The left arrow.
     Left,
+    /// The right arrow.
     Right,
+    /// The up arrow.
     Up,
+    /// The down arrow.
     Down,
+    /// Home.
     Home,
+    /// End.
     End,
 }
 
 /// The shape the pointer should take.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Cursor {
+    /// The ordinary pointer.
     Arrow,
     /// Over something a click acts on.
     Hand,
@@ -217,7 +253,9 @@ pub enum Cursor {
 /// The modifier keys. `command` is Command on macOS and Control elsewhere.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Modifiers {
+    /// Shift is held.
     pub shift: bool,
+    /// Command (macOS) or Control (elsewhere) is held.
     pub command: bool,
 }
 
@@ -244,6 +282,9 @@ struct Regions {
     cells: Rect,
 }
 
+/// The whole browser window: tabs, trusted strip, banks, page list, page
+/// area and overview. It draws through a [`Canvas`] and reports what the
+/// user did as [`Output`]s; it holds no state the trusted core owns.
 pub struct Browser {
     frame: Frame,
     tabs: Vec<TabInfo>,
@@ -273,6 +314,7 @@ pub struct Browser {
 }
 
 impl Browser {
+    /// A browser with no tabs and an empty channel, drawn in `frame`.
     #[must_use]
     pub fn new(frame: Frame) -> Self {
         Self {
@@ -300,11 +342,13 @@ impl Browser {
         }
     }
 
+    /// The tabs as the trusted core reports them, and which is active.
     pub fn set_tabs(&mut self, tabs: Vec<TabInfo>, active: usize) {
         self.active = active.min(tabs.len().saturating_sub(1));
         self.tabs = tabs;
     }
 
+    /// What the trusted strip shows, as the trusted core decides it.
     pub fn set_strip(&mut self, strip: StripState) {
         self.strip = strip;
     }
@@ -355,11 +399,13 @@ impl Browser {
         self.updates.iter().find(|&&(updated, _)| updated == index).map(|&(_, at)| at)
     }
 
+    /// The page area.
     #[must_use]
     pub fn wall(&self) -> &Wall {
         &self.wall
     }
 
+    /// The page area, to change.
     pub fn wall_mut(&mut self) -> &mut Wall {
         &mut self.wall
     }
@@ -369,6 +415,7 @@ impl Browser {
         core::mem::take(&mut self.outputs)
     }
 
+    /// Whether anything is moving at `now`, so the host should keep drawing.
     #[must_use]
     pub fn animating(&self, now: u64) -> bool {
         self.frame_interval(now).is_some()
@@ -466,6 +513,8 @@ impl Browser {
 
     // ---- Input ----
 
+    /// The pointer moved to `x`, `y` in logical pixels; returns whether
+    /// the window needs drawing again.
     pub fn pointer_moved(&mut self, x: f64, y: f64, now: u64) -> bool {
         self.pointer = Point::new(x, y);
         let dragged = self.wall.pointer_moved(self.pointer, now);
@@ -498,6 +547,7 @@ impl Browser {
         self.previewed = None;
     }
 
+    /// The main button was released.
     pub fn pointer_released(&mut self) {
         self.wall.pointer_released();
     }

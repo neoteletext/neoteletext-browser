@@ -42,6 +42,7 @@ pub enum ToDecoder {
     Showing(Vec<u16>),
     /// Time has passed: render the shown pages again for flash.
     Tick,
+    /// The channel is closed: the decoder ends.
     Close,
 }
 
@@ -50,11 +51,26 @@ pub enum ToDecoder {
 pub enum FromDecoder {
     /// A page has been received completely for the first time, with a
     /// title taken from its text, not yet cleaned.
-    Arrived { page: u16, title: String },
+    Arrived {
+        /// The page number.
+        page: u16,
+        /// Its title.
+        title: String,
+    },
     /// A rendered page: palette indices, 480 by 500, into `palette`.
-    Frame { page: u16, palette: Vec<[u8; 3]>, indices: Vec<u8> },
+    Frame {
+        /// The page number.
+        page: u16,
+        /// Red, green and blue of each colour the page uses.
+        palette: Vec<[u8; 3]>,
+        /// One palette index per dot, row by row.
+        indices: Vec<u8>,
+    },
     /// A page already reported has changed: a new version arrived.
-    Updated { page: u16 },
+    Updated {
+        /// The page number.
+        page: u16,
+    },
 }
 
 fn display_page(fields: &mut Fields<'_>) -> Result<u16, ProtocolError> {
@@ -182,7 +198,7 @@ pub fn read_from_decoder(input: &mut dyn Read) -> Result<Option<FromDecoder>, Pr
             if colours == 0 || colours > MAX_COLOURS {
                 return Err(ProtocolError::BadValue("palette size"));
             }
-            let palette = fields.take(colours * RGB_BYTES)?.chunks_exact(RGB_BYTES).map(|rgb| [rgb[0], rgb[1], rgb[2]]).collect();
+            let palette = fields.take(colours.saturating_mul(RGB_BYTES))?.as_chunks::<RGB_BYTES>().0.to_vec();
             let indices = fields.take(PAGE_DOTS)?.to_vec();
             if indices.iter().any(|&index| usize::from(index) >= colours) {
                 return Err(ProtocolError::BadValue("index outside the palette"));

@@ -15,4 +15,4 @@ parley.workspace = true
 workspace = true
 
 [dev-dependencies]
-t42-decoder.workspace = true
+decoder.workspace = true

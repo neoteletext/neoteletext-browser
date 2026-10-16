@@ -1,0 +1,6 @@
+# Tests fail by panicking: the no-panic lints of the crates that read
+# outside input apply to their code, not to their tests.
+allow-unwrap-in-tests = true
+allow-expect-in-tests = true
+allow-panic-in-tests = true
+allow-indexing-slicing-in-tests = true

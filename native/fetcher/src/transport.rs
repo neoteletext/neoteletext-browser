@@ -13,17 +13,7 @@ use neoteletext_web::url::IpAddress;
 /// How long a connection may take to open; the agent's own limit is the
 /// engine's `DEFAULT_CONNECT_TIMEOUT_US`, ten seconds.
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
-/// One slot each for the fetch, push and live connections.
-const CONNECTIONS: usize = 3;
-
-fn slot(connection: ConnectionId) -> usize {
-    match connection {
-        ConnectionId::Fetch => 0,
-        ConnectionId::Push => 1,
-        ConnectionId::Live => 2,
-    }
-}
-
+/// The address the operating system resolved, as the engine writes one.
 pub fn address(ip: IpAddr) -> IpAddress {
     match ip {
         IpAddr::V4(v4) => IpAddress::V4(v4.octets()),
@@ -31,9 +21,25 @@ pub fn address(ip: IpAddr) -> IpAddress {
     }
 }
 
+/// An open connection and the address it reached.
+type Stream = Option<(TcpStream, IpAddress)>;
+
+/// The fetch, push and live connections.
 #[derive(Default)]
 pub struct Tcp {
-    streams: [Option<(TcpStream, IpAddress)>; CONNECTIONS],
+    fetch: Stream,
+    push: Stream,
+    live: Stream,
+}
+
+impl Tcp {
+    fn stream(&mut self, connection: ConnectionId) -> &mut Stream {
+        match connection {
+            ConnectionId::Fetch => &mut self.fetch,
+            ConnectionId::Push => &mut self.push,
+            ConnectionId::Live => &mut self.live,
+        }
+    }
 }
 
 impl embedded_io::ErrorType for Tcp {
@@ -49,21 +55,21 @@ impl Transport for Tcp {
         let stream = TcpStream::connect_timeout(&target, CONNECT_TIMEOUT).map_err(|_| ErrorKind::ConnectionRefused)?;
         stream.set_nonblocking(true).map_err(|_| ErrorKind::Other)?;
         let _ = stream.set_nodelay(true);
-        self.streams[slot(connection)] = Some((stream, address(target.ip())));
+        *self.stream(connection) = Some((stream, address(target.ip())));
         Ok(())
     }
 
     fn state(&mut self, connection: ConnectionId) -> LinkState {
-        self.streams[slot(connection)].as_ref().map_or(LinkState::Closed, |(_, ip)| LinkState::Open(*ip))
+        self.stream(connection).as_ref().map_or(LinkState::Closed, |(_, ip)| LinkState::Open(*ip))
     }
 
     fn send(&mut self, connection: ConnectionId, bytes: &[u8]) -> Result<(), ErrorKind> {
-        let (stream, _) = self.streams[slot(connection)].as_mut().ok_or(ErrorKind::NotConnected)?;
-        let mut sent = 0;
-        while sent < bytes.len() {
-            match stream.write(&bytes[sent..]) {
+        let (stream, _) = self.stream(connection).as_mut().ok_or(ErrorKind::NotConnected)?;
+        let mut rest = bytes;
+        while !rest.is_empty() {
+            match stream.write(rest) {
                 Ok(0) => return Err(ErrorKind::BrokenPipe),
-                Ok(count) => sent += count,
+                Ok(count) => rest = rest.get(count..).unwrap_or_default(),
                 // The socket is non-blocking; a full send buffer drains quickly.
                 Err(error) if error.kind() == IoErrorKind::WouldBlock => std::thread::sleep(Duration::from_millis(1)),
                 Err(_) => return Err(ErrorKind::BrokenPipe),
@@ -73,7 +79,7 @@ impl Transport for Tcp {
     }
 
     fn receive(&mut self, connection: ConnectionId, buffer: &mut [u8]) -> Result<Received, ErrorKind> {
-        let Some((stream, _)) = self.streams[slot(connection)].as_mut() else { return Ok(Received::Closed) };
+        let Some((stream, _)) = self.stream(connection).as_mut() else { return Ok(Received::Closed) };
         match stream.read(buffer) {
             Ok(0) => Ok(Received::Closed),
             Ok(count) => Ok(Received::Data(count)),
@@ -83,6 +89,6 @@ impl Transport for Tcp {
     }
 
     fn close(&mut self, connection: ConnectionId) {
-        self.streams[slot(connection)] = None;
+        *self.stream(connection) = None;
     }
 }

@@ -33,6 +33,7 @@ fn bezier_slope(a: f32, b: f32, t: f32) -> f32 {
 }
 
 impl Curve {
+    /// The eased value at `progress`, both from 0 to 1.
     #[must_use]
     pub fn at(self, progress: f32) -> f32 {
         let mut t = progress;
@@ -57,11 +58,13 @@ pub struct Tween {
 }
 
 impl Tween {
+    /// A tween resting at `value`, taking `duration` milliseconds for each move.
     #[must_use]
     pub fn new(value: f32, duration: u64, curve: Curve) -> Self {
         Self { from: value, to: value, start: 0, duration, curve }
     }
 
+    /// The value at `now`, in milliseconds.
     #[must_use]
     pub fn value(&self, now: u64) -> f32 {
         #[allow(clippy::cast_precision_loss, reason = "animation durations are a few hundred milliseconds")]
@@ -69,6 +72,7 @@ impl Tween {
         self.from + (self.to - self.from) * self.curve.at(progress)
     }
 
+    /// Starts moving towards `target` from wherever it is at `now`; the same target again changes nothing.
     pub fn set(&mut self, target: f32, now: u64) {
         if (target - self.to).abs() > f32::EPSILON {
             self.from = self.value(now);
@@ -77,6 +81,7 @@ impl Tween {
         }
     }
 
+    /// Whether it is still on its way at `now`.
     #[must_use]
     pub fn moving(&self, now: u64) -> bool {
         now.saturating_sub(self.start) < self.duration && (self.to - self.from).abs() > f32::EPSILON

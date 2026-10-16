@@ -15,7 +15,7 @@ softbuffer.workspace = true
 png.workspace = true
 
 [dev-dependencies]
-t42-decoder.workspace = true
+decoder.workspace = true
 neoteletext-image.workspace = true
 
 [lints]

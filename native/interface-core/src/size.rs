@@ -11,11 +11,15 @@ pub const MIN_WIDTH: f32 = 80.0;
 pub const MAX_WIDTH: f32 = 960.0;
 /// A single page may not exceed this share of the window.
 const MAX_WINDOW_SHARE: f32 = 0.9;
+/// The page width a new wall starts at: a third of the largest.
 pub const DEFAULT_WIDTH: f32 = 320.0;
 
+/// How the wall shows a bank's pages.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Layout {
+    /// Rows of page images.
     Grid,
+    /// One line per page: number and title, no image.
     List,
 }
 
@@ -26,11 +30,13 @@ pub fn layout_for_width(width: f32) -> Layout {
     if width <= MIN_WIDTH { Layout::List } else { Layout::Grid }
 }
 
+/// The widest a page may be in a window `window_width` wide.
 #[must_use]
 pub fn max_width_for_window(window_width: f32) -> f32 {
     libm::floorf(window_width * MAX_WINDOW_SHARE).clamp(MIN_WIDTH, MAX_WIDTH)
 }
 
+/// `width` kept between the smallest page and `max`.
 #[must_use]
 pub fn clamp_width(width: f32, max: f32) -> f32 {
     width.clamp(MIN_WIDTH, max)

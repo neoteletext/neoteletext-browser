@@ -8,8 +8,11 @@ use alloc::string::String;
 use alloc::vec;
 use alloc::vec::Vec;
 
+/// Banks of pages: one per magazine, 1 to 8.
 pub const BANKS: usize = 8;
+/// Display pages in a bank: two decimal digits, 00 to 99.
 pub const PAGES_PER_BANK: usize = 100;
+/// Display pages in a channel, 100 to 899.
 pub const PAGES: usize = BANKS * PAGES_PER_BANK;
 const MAGAZINE_SHIFT: u16 = 8;
 const TENS_SHIFT: u16 = 4;
@@ -26,6 +29,7 @@ pub enum Status {
 }
 
 impl Status {
+    /// The status a protocol byte names, or `None` for any other byte.
     #[must_use]
     pub fn from_byte(byte: u8) -> Option<Self> {
         match byte {
@@ -62,22 +66,30 @@ pub fn page_index(page: u16) -> Option<usize> {
     Some(usize::from((magazine - 1) * 100 + tens * DECIMAL + ones))
 }
 
+/// One page of a channel.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PageInfo {
+    /// The page's title, from the channel's contents or the page itself.
     pub title: String,
+    /// Whether it has arrived.
     pub status: Status,
 }
 
+/// A channel's banks and pages, as the trusted core reports them.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Channel {
+    /// The channel, as the trusted core numbers it.
     pub channel: u32,
+    /// The channel's title.
     pub title: String,
+    /// Each bank's name, [`BANKS`] of them.
     pub banks: Vec<String>,
     /// One entry per page index; `None` is a page the channel does not have.
     pub pages: Vec<Option<PageInfo>>,
 }
 
 impl Channel {
+    /// A channel with no title and no pages.
     #[must_use]
     pub fn empty() -> Self {
         Self { channel: 0, title: String::new(), banks: vec![String::new(); BANKS], pages: vec![None; PAGES] }

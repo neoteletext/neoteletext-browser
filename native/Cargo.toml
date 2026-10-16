@@ -17,7 +17,7 @@ interface-core = { path = "interface-core" }
 draw-vello = { path = "draw-vello" }
 draw-embedded = { path = "draw-embedded" }
 protocol = { path = "protocol" }
-t42-decoder = { path = "decoder" }
+decoder = { path = "decoder", package = "t42-decoder" }
 # The teletext engine, maintained in its own repository (design section
 # 4.0), pinned to one commit. Its repository is local until that commit is
 # published; Cargo reads the commit, never the engine's working tree. The
@@ -45,11 +45,20 @@ embedded-graphics = { version = "=0.8.2", default-features = false }
 # MIT or Apache-2.0: reads the indexed images the trusted core writes (design section 6).
 png = "=0.18.1"
 
+# Warnings are errors in every gate (scripts/check.sh).
 [workspace.lints.rust]
 unsafe_code = "forbid"
+missing_docs = "warn"
+unused_qualifications = "warn"
 
 [workspace.lints.clippy]
 pedantic = { level = "warn", priority = -1 }
+# Every exception says why, at the site.
+allow_attributes_without_reason = "warn"
+# Debugging leftovers and unfinished code never reach a commit.
+dbg_macro = "warn"
+todo = "warn"
+unimplemented = "warn"
 
 [profile.dev.package."*"]
 opt-level = 3

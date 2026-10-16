@@ -1,0 +1,8 @@
+[toolchain]
+# The release the teletext engine pins (~/devel/neoteletext), so both
+# repositories are checked by the same compiler and the same Clippy.
+channel = "1.99.0"
+components = ["clippy", "rustfmt"]
+# The prototypes' egui-image crate is built for WebAssembly.
+targets = ["wasm32-unknown-unknown"]
+profile = "minimal"

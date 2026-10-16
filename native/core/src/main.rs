@@ -12,7 +12,20 @@
 //! the addresses given with `--allow-local` (the engine's REQ-SEC-006).
 //! The decoder and the interface are found beside this program.
 
-mod address;
+// No panicking constructs: this crate reads input from outside the
+// process. The same list is in each such crate; scripts/check.sh checks
+// that they agree.
+#![deny(
+    clippy::indexing_slicing,
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::arithmetic_side_effects,
+    clippy::unreachable,
+    clippy::todo,
+    clippy::unimplemented
+)]
+
 mod frames;
 mod session;
 mod source;

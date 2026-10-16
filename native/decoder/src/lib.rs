@@ -8,6 +8,20 @@
 //! Everything here reads untrusted bytes, which is why it runs in a process
 //! of its own with no network and no files (design section 5).
 
+// No panicking constructs: this crate reads input from outside the
+// process. The same list is in each such crate; scripts/check.sh checks
+// that they agree.
+#![deny(
+    clippy::indexing_slicing,
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::arithmetic_side_effects,
+    clippy::unreachable,
+    clippy::todo,
+    clippy::unimplemented
+)]
+
 use std::time::Instant as Clock;
 
 use interface_core::canvas::{PAGE_HEIGHT, PAGE_WIDTH};
@@ -61,18 +75,25 @@ static GLYPHS: GlyphSet<'static> = GlyphSet::bedstead();
 /// its title.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Exported {
+    /// The page number.
     pub page: u16,
+    /// Each row's character codes.
     pub rows: Vec<[u8; COLUMNS]>,
+    /// The page's title.
     pub title: String,
 }
 
 /// A rendered page.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Rendered {
+    /// Red, green and blue of each colour the page uses.
     pub palette: Vec<[u8; 3]>,
+    /// One palette index per dot, row by row.
     pub indices: Vec<u8>,
 }
 
+/// The teletext engine for one channel: it reads the channel's bytes,
+/// keeps its pages, reports which have arrived or changed, and renders them.
 pub struct Engine {
     decoder: Decoder<'static>,
     reader: AutoReader,
@@ -92,6 +113,7 @@ impl Default for Engine {
 }
 
 impl Engine {
+    /// An engine with an empty page store.
     #[must_use]
     pub fn new() -> Self {
         // One store for the life of the process, as the engine's sessions do.
@@ -158,12 +180,13 @@ impl Engine {
             let number = page.key.address.mpp();
             let Some(index) = page_index(number) else { continue };
             let digest = digest(page);
-            match self.reported[index] {
+            let Some(reported) = self.reported.get_mut(index) else { continue };
+            match *reported {
                 None => fresh.push(number),
                 Some(before) if before != digest => self.updated.push(number),
                 Some(_) => {}
             }
-            self.reported[index] = Some(digest);
+            *reported = Some(digest);
         }
         self.updated.sort_unstable();
         self.updated.dedup();
@@ -244,11 +267,11 @@ fn title(grid: &Grid) -> String {
         // are graphics too, shown as letters by the blast-through rule.
         let glyphs = (0..COLUMNS).filter_map(|column| grid.cell(row, column).map(|cell| cell.glyph));
         let (mosaics, letters) = glyphs.fold((0_usize, 0_usize), |(mosaics, letters), glyph| match glyph {
-            Glyph::Mosaic { .. } => (mosaics + 1, letters),
-            Glyph::Char(_) => (mosaics, letters + 1),
+            Glyph::Mosaic { .. } => (mosaics.saturating_add(1), letters),
+            Glyph::Char(_) => (mosaics, letters.saturating_add(1)),
             Glyph::Space => (mosaics, letters),
         });
-        if mosaics * MOSAIC_SHARE > letters {
+        if mosaics.saturating_mul(MOSAIC_SHARE) > letters {
             continue;
         }
         let text: String = (0..COLUMNS)
@@ -315,11 +338,11 @@ mod tests {
         let mut engine = Engine::new();
         engine.feed(TTI);
         engine.finish();
-        assert!(engine.take_updated().is_empty());
+        assert_eq!(engine.take_updated(), [] as [u16; 0]);
         // The same page again, unchanged: no update.
         engine.feed(b"PN,10100\nSC,0000\nPS,8000\nOL,1,Sport results\n\n");
         engine.finish();
-        assert!(engine.take_updated().is_empty());
+        assert_eq!(engine.take_updated(), [] as [u16; 0]);
         // A changed version: an update, and not a new arrival.
         let arrived = engine.feed(b"PN,10100\nSC,0000\nPS,8000\nOL,1,Sport results: 2-1\n\n");
         assert!(arrived.is_empty() && engine.finish().is_empty());
@@ -331,8 +354,8 @@ mod tests {
         let mut engine = Engine::new();
         engine.feed(TTI);
         engine.finish();
-        assert!(engine.feed(b"").is_empty());
-        assert!(engine.finish().is_empty());
+        assert_eq!(engine.feed(b""), [] as [(u16, String); 0]);
+        assert_eq!(engine.finish(), [] as [(u16, String); 0]);
     }
 }
 
@@ -353,10 +376,9 @@ pub mod sample {
     #[must_use]
     pub fn tti(pages: &[u16], titles: &[&str]) -> Vec<u8> {
         let mut out = String::new();
-        for (index, &page) in pages.iter().enumerate() {
-            let colour = COLOURS[index % COLOURS.len()];
-            let mosaic = MOSAICS[(index + 1) % MOSAICS.len()];
-            let title = titles.get(index % titles.len().max(1)).copied().unwrap_or("");
+        // With no titles, every page is untitled.
+        let titles = titles.iter().copied().cycle().chain(core::iter::repeat(""));
+        for (((&page, colour), mosaic), title) in pages.iter().zip(COLOURS.iter().cycle()).zip(MOSAICS.iter().cycle().skip(1)).zip(titles) {
             let _ = write!(
                 out,
                 "PN,{page:03X}00\nSC,0000\nPS,8000\nOL,1,\x1b{colour}\x1b\x4d{title}\nOL,4,\x1bGPage {page:03X} of the sample channel\nOL,6,\x1bFThe teletext engine decoded and drew this.\nOL,10,\x1b{mosaic}{SOLID_BLOCKS}\nOL,11,\x1b{mosaic}{SOLID_BLOCKS}\n\n"

@@ -191,8 +191,10 @@ fn decode_frame(payload: &[u8]) -> Option<Result<Message, PipeError>> {
         return Some(Err(PipeError::BadValue("frame shape")));
     }
     let palette = payload[FRAME_FIXED_BYTES..palette_end]
-        .chunks_exact(RGB_BYTES)
-        .map(|rgb| Rgb { red: rgb[0], green: rgb[1], blue: rgb[2] })
+        .as_chunks::<RGB_BYTES>()
+        .0
+        .iter()
+        .map(|&[red, green, blue]| Rgb { red, green, blue })
         .collect();
     let indices = payload[palette_end..].to_vec();
     if indices.iter().any(|&index| usize::from(index) >= colours) {

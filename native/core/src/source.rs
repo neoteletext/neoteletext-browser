@@ -73,8 +73,8 @@ impl Source {
     pub fn next(&mut self, size: usize) -> Next<'_> {
         if self.sent < self.bytes.len() {
             let start = self.sent;
-            self.sent = (start + size).min(self.bytes.len());
-            return Next::Data(&self.bytes[start..self.sent]);
+            self.sent = start.saturating_add(size).min(self.bytes.len());
+            return Next::Data(self.bytes.get(start..self.sent).unwrap_or_default());
         }
         if self.ended {
             return Next::Done;

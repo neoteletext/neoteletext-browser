@@ -16,8 +16,11 @@ const PAGE_DOTS: usize = PAGE_WIDTH as usize * PAGE_HEIGHT as usize;
 /// compressed row and the inflate window are well under this.
 const DECODER_OVERHEAD: usize = 256 * 1024;
 
+/// A page image as read: its colours and one index into them per dot.
 pub struct Indexed {
+    /// Red, green and blue of each colour.
     pub palette: Vec<[u8; 3]>,
+    /// One palette index per dot, row by row.
     pub indices: Vec<u8>,
 }
 
@@ -35,7 +38,7 @@ pub fn decode(bytes: &[u8]) -> Result<Indexed, String> {
     if info.color_type != ColorType::Indexed || info.bit_depth != BitDepth::Eight {
         return Err("image is not indexed at 8 bits".into());
     }
-    let palette: Vec<[u8; 3]> = info.palette.as_ref().ok_or("image has no palette")?.chunks_exact(RGB_BYTES).map(|rgb| [rgb[0], rgb[1], rgb[2]]).collect();
+    let palette: Vec<[u8; 3]> = info.palette.as_ref().ok_or("image has no palette")?.as_chunks::<RGB_BYTES>().0.to_vec();
     if palette.is_empty() || palette.len() > MAX_COLOURS {
         return Err(format!("palette of {} colours", palette.len()));
     }
@@ -54,6 +57,7 @@ mod tests {
     use neoteletext_image::palette::Rgba;
 
     /// A page rendered by the engine, written as the trusted core writes it.
+    #[allow(clippy::arithmetic_side_effects, reason = "the PNG writer's scratch size for a width of at most 480")]
     fn engine_page(width: usize) -> (Vec<u8>, Vec<u8>, usize) {
         let mut engine = Engine::new();
         engine.feed(&decoder::sample::tti(&[0x100], &["Headlines"]));
@@ -62,8 +66,7 @@ mod tests {
         let palette: Vec<Rgba> = page.palette.iter().map(|&[red, green, blue]| Rgba::opaque(red, green, blue)).collect();
         let mut out = Vec::new();
         let mut scratch = vec![0; 2 * (width + 1)];
-        let source = usize::from(PAGE_WIDTH);
-        let mut row = |y: usize, line: &mut [u8]| line.copy_from_slice(&page.indices[y * source..y * source + width]);
+        let mut row = |y: usize, line: &mut [u8]| line.copy_from_slice(&page.indices.chunks_exact(usize::from(PAGE_WIDTH)).nth(y).unwrap()[..width]);
         neoteletext_image::png::write(&mut out, width, usize::from(PAGE_HEIGHT), &palette, &mut row, &mut scratch).unwrap();
         (out, page.indices, page.palette.len())
     }
