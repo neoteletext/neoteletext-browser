@@ -165,11 +165,20 @@ check_linux() {
     ssh -o BatchMode=yes -o ConnectTimeout=10 "$linux_host" true || fail "$linux_host is unreachable; the full gate needs it"
     rsync -a --delete --exclude target --exclude node_modules --exclude tools --exclude .git \
         --exclude native/fuzz/corpus --exclude native/fuzz/artifacts ./ "$linux_host:t42-browser-check/"
+    # The engine is a git dependency on a repository on this machine; its
+    # history goes to the host, and git there reads it in place of this
+    # machine's path, for these commands only.
+    local engine
+    engine="$(sed -n 's/^neoteletext-[a-z]* = { git = "\(file:[^"]*\)".*/\1/p' native/Cargo.toml | sort -u)"
+    [[ -n "$engine" && "$engine" != *$'\n'* ]] || fail "native/Cargo.toml must name one engine repository, found: ${engine:-none}"
+    rsync -a --delete "${engine#file://}/.git/" "$linux_host:t42-browser-check-engine.git/"
     local linux_only="${LINUX_ONLY[*]}"
-    # shellcheck disable=SC2029 # the crate list is expanded here on purpose
     # rustup installs the toolchain rust-toolchain.toml pins if the host
     # does not have it yet.
+    # shellcheck disable=SC2029 # the engine and the crate list are expanded here on purpose
     ssh "$linux_host" "set -e; . ~/.cargo/env; cd t42-browser-check; rustup toolchain install
+        export CARGO_NET_GIT_FETCH_WITH_CLI=true GIT_CONFIG_COUNT=1
+        export GIT_CONFIG_KEY_0=url.file://\$HOME/t42-browser-check-engine.git.insteadOf GIT_CONFIG_VALUE_0=$engine
         (cd native && cargo clippy --quiet --workspace --all-targets -- -D warnings && cargo test --quiet --workspace)
         for crate in $linux_only; do
             cargo clippy --quiet --manifest-path \$crate/Cargo.toml --workspace --all-targets -- -D warnings
