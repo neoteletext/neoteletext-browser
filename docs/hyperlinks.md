@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Status** | Adopted 20 October 2026 (the architecture's decision 41), every recommendation of section 16 taken as the decision. Not built; phase 1 (section 15) is next. |
+| **Status** | Adopted 20 October 2026 (the architecture's decision 41), every recommendation of section 16 taken as the decision; decision 42 confirms that the only underlining is for links and that the software draws it, never the page. Not built; phase 1 (section 15) is next. |
 | **Owner's brief** | Hyperlinks shown with a blue underline in the interface, controlled by the browser; underlining must not be possible from teletext source. Links to teletext open in T42 Browser; other links offer to open in the system's web browser. |
 | **Companion documents** | [`hyperlinks-security.md`](hyperlinks-security.md) analyses this design's security; its findings are applied here (section 18). [`architecture.md`](architecture.md) (sections 9.5, 9.6 and 11), [`requirements.md`](requirements.md) (sections 4, 7, 8, 11 and 12), [`security-analysis.md`](security-analysis.md) (spoofing and the line of death). The engine's decision E.36 and its TTI Link Extension (`~/devel/neoteletext/docs/spec/requirements/tti-link-extension.md`). |
 
