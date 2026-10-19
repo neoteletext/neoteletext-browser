@@ -571,6 +571,7 @@ Still to come: the launcher and updater (section 12).
 | Open decision 4 | Widgets: our own (built), or Masonry, once it draws with `vello_cpu` in a release | Our own, as built; reconsider for screen readers and text fields of teletext forms |
 | Open decision 5 | What does the microcontroller build cut, and where does its teletext come from? | Section 13 |
 | Open decision 6 | The libraries of `native/Cargo.toml`, each by name (requirement 14.3) | Approve the list as built |
+| Open decision 7 | The browser's own licence: it has no `LICENSE` file and no `license` field (`licensing.md` section 1) | MIT, as the engine |
 
 ---
 

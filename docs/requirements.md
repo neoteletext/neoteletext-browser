@@ -825,7 +825,7 @@ Requirements 13.1 to 13.13 are unchanged from the earlier design, and are stated
 - **State:** Met. Beyond the statement: every public item is documented, and the crates that read input from outside their process (protocol, decoder, fetcher, core, interface) also deny every construct that can panic, with one list the check script keeps identical in each.
 
 ### Requirement 14.3: Dependencies
-- **Statement:** Lockfiles must be committed and their changes reviewed. `cargo-deny` and `cargo audit` must pass. Every library must be under a permissive licence (decision 34) and needs the owner's approval.
+- **Statement:** Lockfiles must be committed and their changes reviewed. `cargo-deny` and `cargo audit` must pass. Every library compiled into the browser must be under a permissive licence (decision 34) and needs the owner's approval. System libraries linked at run time follow `licensing.md`, which admits LGPL ones linked dynamically and not shipped (decision 40).
 - **Reason:** The supply chain is a route to compromise.
 - **Source:** Decisions 4 and 34; owner's baseline instructions.
 - **Verification:** Check.
