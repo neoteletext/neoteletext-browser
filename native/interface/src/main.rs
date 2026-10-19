@@ -24,6 +24,7 @@
 use std::io::{self, BufReader, BufWriter, Write};
 use std::num::NonZeroU32;
 use std::rc::Rc;
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use draw_vello::{Family, Painter};
@@ -32,6 +33,7 @@ use interface_core::canvas::PageKey;
 use interface_core::channel::Channel;
 use protocol::{ToCore, ToInterface, read_from_core, write_to_core};
 use softbuffer::{Context, Surface};
+use t42_interface::audio::{self, Shared, Speaker};
 use t42_interface::image;
 use winit::application::ApplicationHandler;
 use winit::dpi::LogicalSize;
@@ -105,6 +107,8 @@ struct App {
     /// The pointer shape last set on the window.
     pointer_shape: Cursor,
     output: BufWriter<io::Stdout>,
+    /// The page last reported as opened.
+    opened: Option<PageKey>,
     exit: Option<String>,
 }
 
@@ -218,6 +222,12 @@ impl App {
                 }
             };
             self.send(event_loop, &message);
+        }
+        // The opened page's sounds play (the engine's REQ-AUD-012).
+        let opened = self.browser.opened();
+        if opened != self.opened {
+            self.opened = opened;
+            self.send(event_loop, &ToCore::Opened(opened));
         }
     }
 
@@ -431,7 +441,7 @@ impl ApplicationHandler<Incoming> for App {
 
 /// Reads the trusted core's messages until the pipe ends, decoding page
 /// images here so the window's thread never waits on them.
-fn read_core(proxy: &EventLoopProxy<Incoming>) {
+fn read_core(proxy: &EventLoopProxy<Incoming>, mixer: Option<&Shared>, trace: bool) {
     let mut input = BufReader::new(io::stdin().lock());
     let end = loop {
         let incoming = match read_from_core(&mut input) {
@@ -444,6 +454,16 @@ fn read_core(proxy: &EventLoopProxy<Incoming>) {
                 Ok(image) => Incoming::Page { key, image },
                 Err(error) => break Some(format!("bad page image from the trusted core: {error}")),
             },
+            // Sound goes straight to the mixer; the window need not wake.
+            Ok(Some(ToInterface::Audio(operation))) => {
+                if trace && !matches!(operation, protocol::audio::Audio::Samples { .. }) {
+                    eprintln!("t42-interface: audio {operation:?}");
+                }
+                if let Some(mixer) = mixer {
+                    audio::apply(mixer, operation);
+                }
+                continue;
+            }
             Ok(Some(ToInterface::Close) | None) => break None,
             Err(error) => break Some(format!("bad message from the trusted core: {error}")),
         };
@@ -460,7 +480,25 @@ fn main() -> std::process::ExitCode {
         return std::process::ExitCode::FAILURE;
     };
     let proxy = event_loop.create_proxy();
-    std::thread::spawn(move || read_core(&proxy));
+    // T42_AUDIO_TRACE reports the sound operations applied and the loudest
+    // sample the device played each half second, for checking sound
+    // without listening.
+    let trace = std::env::var_os("T42_AUDIO_TRACE").is_some();
+    // With no output device the browser runs silent.
+    let speaker = Speaker::open().map_err(|reason| eprintln!("t42-interface: no sound: {reason}")).ok();
+    let mixer = speaker.as_ref().map(|speaker| Arc::clone(&speaker.mixer));
+    if trace && let Some(peak) = speaker.as_ref().map(|speaker| Arc::clone(&speaker.peak)) {
+        std::thread::spawn(move || {
+            loop {
+                std::thread::sleep(Duration::from_millis(500));
+                let loudest = peak.swap(0, std::sync::atomic::Ordering::Relaxed);
+                if loudest > 0 {
+                    eprintln!("t42-interface: audio peak {loudest}");
+                }
+            }
+        });
+    }
+    std::thread::spawn(move || read_core(&proxy, mixer.as_ref(), trace));
     let mut app = App {
         start: Instant::now(),
         graphics: None,
@@ -472,6 +510,7 @@ fn main() -> std::process::ExitCode {
         dirty: false,
         pointer_shape: Cursor::Arrow,
         output: BufWriter::new(io::stdout()),
+        opened: None,
         exit: None,
     };
     if let Err(error) = event_loop.run_app(&mut app) {

@@ -15,4 +15,5 @@
     clippy::unimplemented
 )]
 
+pub mod audio;
 pub mod image;

@@ -63,7 +63,18 @@ fn run() -> Result<(), ProtocolError> {
                 continue;
             }
             ToDecoder::Close => break,
+            ToDecoder::Opened(page) => {
+                engine.open_page(page);
+                send_sounds(&mut engine, &mut output)?;
+                continue;
+            }
+            ToDecoder::Audible(heard) => {
+                engine.set_audible(heard);
+                send_sounds(&mut engine, &mut output)?;
+                continue;
+            }
         };
+        send_sounds(&mut engine, &mut output)?;
         for (page, title) in &arrived {
             write_to_core(&mut output, &FromDecoder::Arrived { page: *page, title: title.clone() })?;
         }
@@ -72,6 +83,14 @@ fn run() -> Result<(), ProtocolError> {
         }
         // A shown page that just arrived, or changed, is drawn at once.
         render(&engine, &showing, &mut sent, &mut output)?;
+    }
+    Ok(())
+}
+
+/// Sends the voice operations the audio receiver produced.
+fn send_sounds(engine: &mut Engine, output: &mut BufWriter<io::StdoutLock<'_>>) -> Result<(), ProtocolError> {
+    for audio in engine.take_sounds() {
+        write_to_core(output, &FromDecoder::Audio(audio))?;
     }
     Ok(())
 }

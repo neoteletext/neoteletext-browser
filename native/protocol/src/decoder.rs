@@ -26,10 +26,13 @@ const KIND_END: u8 = 49;
 const KIND_SHOWING: u8 = 50;
 const KIND_TICK: u8 = 51;
 const KIND_CLOSE: u8 = 52;
+const KIND_OPENED: u8 = 53;
+const KIND_AUDIBLE: u8 = 54;
 // Decoder to trusted core.
 const KIND_ARRIVED: u8 = 64;
 const KIND_FRAME: u8 = 65;
 const KIND_UPDATED: u8 = 66;
+const KIND_AUDIO: u8 = 67;
 
 /// From the trusted core to a decoder.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -44,6 +47,11 @@ pub enum ToDecoder {
     Tick,
     /// The channel is closed: the decoder ends.
     Close,
+    /// The page the user opened, or none: its sounds play while it is open.
+    Opened(Option<u16>),
+    /// Whether the channel is the one heard. Becoming heard, the decoder
+    /// sends its sounds again: the interface forgot them.
+    Audible(bool),
 }
 
 /// From a decoder to the trusted core.
@@ -71,6 +79,8 @@ pub enum FromDecoder {
         /// The page number.
         page: u16,
     },
+    /// A voice operation of the channel's audio receiver.
+    Audio(crate::audio::Audio),
 }
 
 fn display_page(fields: &mut Fields<'_>) -> Result<u16, ProtocolError> {
@@ -104,6 +114,17 @@ pub fn write_to_decoder(out: &mut dyn Write, message: &ToDecoder) -> Result<(), 
         }
         ToDecoder::Tick => KIND_TICK,
         ToDecoder::Close => KIND_CLOSE,
+        ToDecoder::Opened(page) => {
+            if let Some(page) = page {
+                page_index(*page).ok_or(ProtocolError::BadValue("page number"))?;
+                payload.extend_from_slice(&page.to_be_bytes());
+            }
+            KIND_OPENED
+        }
+        ToDecoder::Audible(heard) => {
+            payload.push(u8::from(*heard));
+            KIND_AUDIBLE
+        }
     };
     write_frame(out, kind, &payload)
 }
@@ -133,6 +154,12 @@ pub fn read_from_core(input: &mut dyn Read) -> Result<Option<ToDecoder>, Protoco
         }
         KIND_TICK => ToDecoder::Tick,
         KIND_CLOSE => ToDecoder::Close,
+        KIND_OPENED => ToDecoder::Opened(if payload.is_empty() { None } else { Some(display_page(&mut fields)?) }),
+        KIND_AUDIBLE => ToDecoder::Audible(match fields.u8()? {
+            0 => false,
+            1 => true,
+            _ => return Err(ProtocolError::BadValue("audible")),
+        }),
         other => return Err(ProtocolError::UnknownKind(other)),
     };
     fields.end()?;
@@ -166,6 +193,10 @@ pub fn write_to_core(out: &mut dyn Write, message: &FromDecoder) -> Result<(), P
         FromDecoder::Updated { page } => {
             payload.extend_from_slice(&page.to_be_bytes());
             KIND_UPDATED
+        }
+        FromDecoder::Audio(audio) => {
+            crate::audio::push(&mut payload, audio, crate::audio::Sender::Decoder)?;
+            KIND_AUDIO
         }
     };
     write_frame(out, kind, &payload)
@@ -206,6 +237,7 @@ pub fn read_from_decoder(input: &mut dyn Read) -> Result<Option<FromDecoder>, Pr
             FromDecoder::Frame { page, palette, indices }
         }
         KIND_UPDATED => FromDecoder::Updated { page: display_page(&mut fields)? },
+        KIND_AUDIO => FromDecoder::Audio(crate::audio::read(&mut fields, crate::audio::Sender::Decoder)?),
         other => return Err(ProtocolError::UnknownKind(other)),
     };
     fields.end()?;

@@ -8,6 +8,8 @@ publish.workspace = true
 
 [dependencies]
 interface-core.workspace = true
+# The audio profile's bounds: channels, gains, fades, rates.
+neoteletext-audio.workspace = true
 
 [lints]
 workspace = true

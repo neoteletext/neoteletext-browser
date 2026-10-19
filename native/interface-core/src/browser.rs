@@ -531,6 +531,14 @@ impl Browser {
         matches!(self.channel.pages.get(index), Some(Some(info)) if info.status == Status::Loaded).then_some(index)
     }
 
+    /// The page the user has opened, whose sounds play (the engine's
+    /// REQ-AUD-012): the zoomed page, or else the page chosen by number or
+    /// in the list, as a television goes to the page whose number is typed.
+    #[must_use]
+    pub fn opened(&self) -> Option<PageKey> {
+        self.wall.zoomed().or_else(|| self.selected.and_then(|index| self.page_key(index)))
+    }
+
     /// The pointer's shape where it is: a hand over a page a click would
     /// zoom or choose and over the overview's fold button, the arrow
     /// elsewhere.
@@ -1444,6 +1452,17 @@ mod tests {
         assert!(browser.animating(500));
         assert!(!browser.animating(100 + PULSE_MILLISECONDS));
         assert_eq!(browser.channel.counts().1, 1);
+    }
+
+    #[test]
+    fn the_opened_page_is_the_zoomed_one_or_else_the_one_chosen() {
+        let (mut browser, mut canvas) = browser();
+        assert_eq!(browser.opened(), None);
+        browser.key(Key::Text("401"), Modifiers::default(), 0);
+        assert_eq!(browser.opened(), Some(PageKey { channel: 7, page: 0x401 }));
+        let (key, rect) = browser.wall().shown().next().unwrap();
+        press_at(&mut browser, &mut canvas, rect);
+        assert_eq!(browser.opened(), Some(key), "a zoomed page wins");
     }
 
     #[test]

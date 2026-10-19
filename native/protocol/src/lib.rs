@@ -19,6 +19,7 @@
     clippy::unimplemented
 )]
 
+pub mod audio;
 pub mod decoder;
 pub mod fetcher;
 
@@ -66,12 +67,14 @@ const KIND_TABS: u8 = 5;
 const KIND_CHANNEL: u8 = 6;
 const KIND_PAGE: u8 = 8;
 const KIND_UPDATED: u8 = 9;
+const KIND_AUDIO: u8 = 10;
 // Interface to trusted core: intents.
 const KIND_VISIBLE: u8 = 16;
 const KIND_CELL: u8 = 17;
 const KIND_SELECT_TAB: u8 = 18;
 const KIND_CLOSE_TAB: u8 = 19;
 const KIND_NEW_TAB: u8 = 20;
+const KIND_OPENED: u8 = 21;
 // Interface to trusted core: strip input, kinds of their own
 // (`architecture.md` section 6.4).
 const KIND_NAVIGATE: u8 = 32;
@@ -131,6 +134,8 @@ pub enum ToInterface {
         /// The image, an indexed PNG at the native size.
         png: Vec<u8>,
     },
+    /// A voice operation of the channel heard, checked by the trusted core.
+    Audio(audio::Audio),
     /// The browser is closing: the interface ends.
     Close,
 }
@@ -157,6 +162,9 @@ pub enum ToCore {
     CloseTab(u8),
     /// Open a new tab.
     NewTab,
+    /// The page the user opened, zoomed on the wall, or none: its sounds
+    /// play while it is open (the engine's REQ-AUD-012).
+    Opened(Option<PageKey>),
     /// Strip input: an address typed into the trusted strip.
     Navigate(String),
     /// Strip input: go back in the tab's history.
@@ -426,6 +434,10 @@ pub fn write_to_interface(out: &mut dyn Write, message: &ToInterface) -> Result<
             payload.extend_from_slice(png);
             KIND_FRAME
         }
+        ToInterface::Audio(audio) => {
+            audio::push(&mut payload, audio, audio::Sender::Core)?;
+            KIND_AUDIO
+        }
         ToInterface::Close => KIND_CLOSE,
     };
     write_frame(out, kind, &payload)
@@ -516,6 +528,7 @@ pub fn read_from_core(input: &mut dyn Read) -> Result<Option<ToInterface>, Proto
             let png = fields.take(fields.bytes.len())?.to_vec();
             ToInterface::Frame { key, version, png }
         }
+        KIND_AUDIO => ToInterface::Audio(audio::read(&mut fields, audio::Sender::Core)?),
         KIND_CLOSE => ToInterface::Close,
         other => return Err(ProtocolError::UnknownKind(other)),
     };
@@ -548,6 +561,12 @@ pub fn write_to_core(out: &mut dyn Write, message: &ToCore) -> Result<(), Protoc
             KIND_CLOSE_TAB
         }
         ToCore::NewTab => KIND_NEW_TAB,
+        ToCore::Opened(key) => {
+            if let Some(key) = key {
+                push_key(&mut payload, *key);
+            }
+            KIND_OPENED
+        }
         ToCore::Navigate(address) => {
             push_text(&mut payload, address, MAX_ADDRESS)?;
             KIND_NAVIGATE
@@ -583,6 +602,7 @@ pub fn read_from_interface(input: &mut dyn Read) -> Result<Option<ToCore>, Proto
         KIND_SELECT_TAB => ToCore::SelectTab(fields.u8()?),
         KIND_CLOSE_TAB => ToCore::CloseTab(fields.u8()?),
         KIND_NEW_TAB => ToCore::NewTab,
+        KIND_OPENED => ToCore::Opened(if payload.is_empty() { None } else { Some(fields.key()?) }),
         KIND_NAVIGATE => ToCore::Navigate(fields.text(MAX_ADDRESS)?),
         KIND_BACK => ToCore::Back,
         KIND_FORWARD => ToCore::Forward,

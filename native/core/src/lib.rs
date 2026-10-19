@@ -1,5 +1,6 @@
 //! The trusted core's parser of typed addresses, a library so that it can
-//! be fuzzed on its own; the trusted core itself is `main.rs`.
+//! be fuzzed on its own, and its rules for what is heard; the trusted core
+//! itself is `main.rs`.
 
 // No panicking constructs: this crate reads input from outside the
 // process. The same list is in each such crate; scripts/check.sh checks
@@ -16,3 +17,4 @@
 )]
 
 pub mod address;
+pub mod hearing;

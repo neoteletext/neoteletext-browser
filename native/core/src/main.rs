@@ -44,6 +44,8 @@ use protocol::decoder::{FromDecoder, MAX_CHUNK, ToDecoder, read_from_decoder, wr
 use protocol::fetcher::{FromFetcher, MAX_NOTICE, read_from_fetcher};
 use protocol::{ToCore, ToInterface, clean, read_from_interface, write_to_interface};
 
+use t42_browser::hearing::{Hearing, Send};
+
 use crate::session::{HOME, Session};
 use crate::source::Next;
 
@@ -231,12 +233,25 @@ struct Core {
     frames: frames::Frames,
     /// The channel whose decoder was last told which pages are shown.
     showing: Option<u32>,
+    /// Which channel is heard, and what of its sound reached the interface.
+    hearing: Hearing,
     to_interface: BufWriter<ChildStdin>,
 }
 
 impl Core {
     fn send(&mut self, message: &ToInterface) -> Result<(), String> {
         write_to_interface(&mut self.to_interface, message).map_err(|error| format!("cannot write to the interface: {error}"))
+    }
+
+    /// Delivers what the hearing rules decided.
+    fn deliver(&mut self, sends: Vec<Send>) -> Result<(), String> {
+        for send in sends {
+            match send {
+                Send::Decoder(channel, message) => self.tell(channel, &message),
+                Send::Interface(message) => self.send(&message)?,
+            }
+        }
+        Ok(())
     }
 
     fn tell(&mut self, channel: u32, message: &ToDecoder) {
@@ -323,7 +338,9 @@ impl Core {
             let channel = tab.channel.view();
             self.send(&ToInterface::Channel(channel))?;
         }
-        Ok(())
+        // The active tab's channel is the one heard.
+        let sends = self.hearing.hear(self.active_channel());
+        self.deliver(sends)
     }
 
     fn active_channel(&self) -> Option<u32> {
@@ -364,6 +381,10 @@ impl Core {
                 self.session.open(HOME)?;
                 self.send_all()?;
             }
+            ToCore::Opened(key) => {
+                let sends = self.hearing.open(key);
+                self.deliver(sends)?;
+            }
             ToCore::Navigate(typed) => {
                 if let Err(reason) = self.session.navigate(&typed) {
                     eprintln!("t42-browser: {reason}");
@@ -400,6 +421,20 @@ impl Core {
         }
     }
 
+    /// A decoder that broke the protocol is closed; its channel's pages stay
+    /// as they were, and its sounds go.
+    fn decoder_ended(&mut self, channel: u32, reason: Option<String>) -> Result<(), String> {
+        if let Some(reason) = reason {
+            eprintln!("t42-browser: the decoder for channel {channel} stopped: {reason}");
+        }
+        if let Some(mut decoder) = self.decoders.remove(&channel) {
+            let _ = decoder.child.kill();
+            let _ = decoder.child.wait();
+        }
+        let sends = self.hearing.decoder_ended(channel);
+        self.deliver(sends)
+    }
+
     fn decoded(&mut self, channel: u32, message: FromDecoder) -> Result<(), String> {
         let active = self.active_channel();
         match message {
@@ -419,6 +454,11 @@ impl Core {
             FromDecoder::Frame { page, palette, indices } => {
                 if let Some((version, png)) = self.frames.accept(PageKey { channel, page }, &palette, &indices) {
                     self.send(&ToInterface::Frame { key: PageKey { channel, page }, version, png })?;
+                }
+            }
+            FromDecoder::Audio(audio) => {
+                if let Some(message) = self.hearing.decoded(channel, audio) {
+                    self.send(&message)?;
                 }
             }
         }
@@ -463,6 +503,7 @@ fn run() -> Result<(), String> {
         events,
         frames: frames::Frames::default(),
         showing: None,
+        hearing: Hearing::default(),
         to_interface: BufWriter::new(interface.stdin.take().ok_or("the interface has no input")?),
     };
     core.send_all()?;
@@ -494,18 +535,7 @@ fn run() -> Result<(), String> {
                 }
                 Ok(())
             }
-            Event::DecoderEnded(channel, reason) => {
-                // A decoder that broke the protocol is closed; its channel's
-                // pages stay as they were.
-                if let Some(reason) = reason {
-                    eprintln!("t42-browser: the decoder for channel {channel} stopped: {reason}");
-                }
-                if let Some(mut decoder) = core.decoders.remove(&channel) {
-                    let _ = decoder.child.kill();
-                    let _ = decoder.child.wait();
-                }
-                Ok(())
-            }
+            Event::DecoderEnded(channel, reason) => core.decoder_ended(channel, reason),
             Event::InterfaceEnded(None) => break Ok(()),
             Event::InterfaceEnded(Some(reason)) => break Err(format!("the interface broke the protocol and was closed: {reason}")),
         };

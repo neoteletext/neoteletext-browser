@@ -15,11 +15,17 @@ name = "t42-decoder"
 path = "src/main.rs"
 
 [dependencies]
+# The audio profile's receiver (the engine's area AUD).
+neoteletext-audio.workspace = true
 neoteletext-core.workspace = true
 neoteletext-formats.workspace = true
 neoteletext-image.workspace = true
 interface-core.workspace = true
 protocol.workspace = true
+
+[dev-dependencies]
+# Writing the audio packets the tests read.
+neoteletext-audio = { workspace = true, features = ["encode"] }
 
 [lints]
 workspace = true

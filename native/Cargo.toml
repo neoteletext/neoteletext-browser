@@ -24,15 +24,22 @@ decoder = { path = "decoder", package = "t42-decoder" }
 # 4.0), pinned to one commit. Its repository is local until that commit is
 # published; Cargo reads the commit, never the engine's working tree. The
 # engine's recommended "modern-classic" profile (its decision E.71).
-neoteletext-core = { git = "file:///Users/andrewstuart/devel/neoteletext", rev = "f341e9483852bbe8b54ec0a43556c528df8d1b3c", default-features = false, features = ["modern-classic"] }
-neoteletext-formats = { git = "file:///Users/andrewstuart/devel/neoteletext", rev = "f341e9483852bbe8b54ec0a43556c528df8d1b3c", default-features = false, features = ["tti", "transport", "sliced"] }
+neoteletext-core = { git = "file:///Users/andrewstuart/devel/neoteletext", rev = "8c5009427a151e79db4265aa020753a40d861d3f", default-features = false, features = ["modern-classic"] }
+neoteletext-formats = { git = "file:///Users/andrewstuart/devel/neoteletext", rev = "8c5009427a151e79db4265aa020753a40d861d3f", default-features = false, features = ["tti", "transport", "sliced"] }
 # The engine's web module: HTTP, channels, contents files and push, with no
 # network input or output of its own.
-neoteletext-web = { git = "file:///Users/andrewstuart/devel/neoteletext", rev = "f341e9483852bbe8b54ec0a43556c528df8d1b3c", default-features = false, features = ["push"] }
+neoteletext-web = { git = "file:///Users/andrewstuart/devel/neoteletext", rev = "8c5009427a151e79db4265aa020753a40d861d3f", default-features = false, features = ["push"] }
 # The engine's network port is these traits (its decision E.38); the
 # version the engine uses.
 embedded-io = { version = "=0.7.1", default-features = false }
-neoteletext-image = { git = "file:///Users/andrewstuart/devel/neoteletext", rev = "f341e9483852bbe8b54ec0a43556c528df8d1b3c", features = ["std"] }
+neoteletext-image = { git = "file:///Users/andrewstuart/devel/neoteletext", rev = "8c5009427a151e79db4265aa020753a40d861d3f", features = ["std"] }
+# The engine's audio profile (its area AUD): the receiver, and the mixer the
+# interface plays through.
+neoteletext-audio = { git = "file:///Users/andrewstuart/devel/neoteletext", rev = "8c5009427a151e79db4265aa020753a40d861d3f", default-features = false, features = ["idl", "ima"] }
+neoteletext-audio-mix = { git = "file:///Users/andrewstuart/devel/neoteletext", rev = "8c5009427a151e79db4265aa020753a40d861d3f" }
+# Apache-2.0: the operating systems' audio output (Core Audio on macOS),
+# without unsafe code of ours (decision 37).
+cpal = "=0.18.2"
 # MIT or Apache-2.0: sine, cosine and rounding without the standard library.
 libm = "=0.2.16"
 # Single-threaded: with its "multithreading" feature, vello_cpu 0.3.0's

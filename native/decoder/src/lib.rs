@@ -26,6 +26,8 @@ use std::time::Instant as Clock;
 
 use interface_core::canvas::{PAGE_HEIGHT, PAGE_WIDTH};
 use interface_core::channel::{PAGES, page_index};
+use neoteletext_audio::port::{SoundFormat, SoundId, Start, VoiceSink};
+use neoteletext_audio::receiver::Receiver;
 use neoteletext_core::acq::{Decoder, EnhancementPacket, EnhancementStore, EnhancementSubPage, StoredPage};
 use neoteletext_core::charset::to_unicode;
 use neoteletext_core::compose::compose_level;
@@ -42,6 +44,7 @@ use neoteletext_formats::Item;
 use neoteletext_formats::detect::{AutoConfig, AutoReader};
 use neoteletext_formats::item::Reader;
 use neoteletext_image::palette::{Rgba, colour_map_palette};
+use protocol::audio::{Audio, MAX_MESSAGE_SAMPLES, Sound};
 
 /// Stored pages and sub-pages, as the engine's own sessions keep
 /// (`neoteletext-app`'s `DEFAULT_PAGES`).
@@ -70,6 +73,12 @@ const FIRST_TEXT_ROW: usize = 1;
 const LAST_TEXT_ROW: usize = 23;
 
 static GLYPHS: GlyphSet<'static> = GlyphSet::bedstead();
+
+/// The audio store of a desktop receiver (the engine's REQ-AUD-017, Level
+/// B): 4 MB of compressed sound, 256 sounds and 8 records being reassembled.
+const AUDIO_ARENA: usize = 4 * 1024 * 1024;
+const AUDIO_OBJECTS: usize = 256;
+const AUDIO_RECORDS: usize = 8;
 
 /// A display page as stored: its number, its 25 rows of 7-bit codes, and
 /// its title.
@@ -104,6 +113,12 @@ pub struct Engine {
     started: Clock,
     /// Pages already reported whose content has since changed.
     updated: Vec<u16>,
+    /// The channel's sounds: the audio packets go here, not to the decoder.
+    audio: Receiver<'static, AUDIO_OBJECTS, AUDIO_RECORDS>,
+    /// Voice operations waiting to be sent.
+    sounds: Vec<Audio>,
+    /// The page the user opened, if any.
+    opened: Option<u16>,
 }
 
 impl Default for Engine {
@@ -124,11 +139,51 @@ impl Engine {
         // Detection decides the format; page files are encoded into
         // packets, so they take the same path as broadcasts.
         let reader = AutoReader::new(AutoConfig { encode_pages: true, ..AutoConfig::default() });
-        Self { decoder, reader, clock: 0, reported: vec![None; PAGES], started: Clock::now(), updated: Vec::new() }
+        let arena: &'static mut [u8] = Box::leak(vec![0_u8; AUDIO_ARENA].into_boxed_slice());
+        Self {
+            decoder,
+            reader,
+            clock: 0,
+            reported: vec![None; PAGES],
+            started: Clock::now(),
+            updated: Vec::new(),
+            audio: Receiver::new(arena),
+            sounds: Vec::new(),
+            opened: None,
+        }
+    }
+
+    /// The voice operations produced since the last call, once each.
+    pub fn take_sounds(&mut self) -> Vec<Audio> {
+        core::mem::take(&mut self.sounds)
+    }
+
+    /// The user opened `page`, or none: its sounds play while it is open
+    /// (the engine's REQ-AUD-012).
+    pub fn open_page(&mut self, page: Option<u16>) {
+        self.opened = page;
+        self.audio.open_page(page, &mut Outbox(&mut self.sounds));
+    }
+
+    /// Whether the channel is the one heard. Becoming heard, its sounds are
+    /// sent again, because the interface forgot them, and the open page's
+    /// sounds start again.
+    pub fn set_audible(&mut self, heard: bool) {
+        if heard {
+            self.audio.sink_lost();
+            let mut outbox = Outbox(&mut self.sounds);
+            self.audio.open_page(None, &mut outbox);
+            self.audio.open_page(self.opened, &mut outbox);
+        }
     }
 
     fn push_all(&mut self, packets: &[(Packet, PacketMeta)]) {
         for (packet, meta) in packets {
+            // The audio profile's packets go to its receiver; the decoder
+            // ignores packet 31 anyway (the engine's REQ-PKT-008).
+            if self.audio.push_packet(packet, &mut Outbox(&mut self.sounds)) {
+                continue;
+            }
             self.clock = match meta.timestamp_us {
                 Some(stamp) if stamp >= self.clock => stamp,
                 _ => self.clock.saturating_add(LINE_PERIOD_US),
@@ -248,6 +303,52 @@ impl Engine {
     }
 }
 
+/// The voice sink of a decoder: each operation becomes a message for the
+/// trusted core.
+struct Outbox<'a>(&'a mut Vec<Audio>);
+
+fn sound(id: SoundId) -> Sound {
+    Sound { handle: id.handle, generation: id.generation }
+}
+
+impl VoiceSink for Outbox<'_> {
+    fn define(&mut self, id: SoundId, format: SoundFormat) {
+        self.0.push(Audio::Define { sound: sound(id), rate_hz: format.rate_hz, samples: format.samples });
+    }
+
+    fn samples(&mut self, id: SoundId, first: u32, pcm: &[i16]) {
+        let mut start = first;
+        for piece in pcm.chunks(MAX_MESSAGE_SAMPLES) {
+            self.0.push(Audio::Samples { sound: sound(id), first: start, pcm: piece.to_vec() });
+            start = start.saturating_add(u32::try_from(piece.len()).unwrap_or(u32::MAX));
+        }
+    }
+
+    fn forget(&mut self, id: SoundId) {
+        self.0.push(Audio::Forget(sound(id)));
+    }
+
+    fn start(&mut self, channel: u8, start: Start) {
+        self.0.push(Audio::Start {
+            channel,
+            sound: sound(start.sound),
+            gain: start.gain,
+            fade_ms: start.fade_ms,
+            looped: start.looped,
+            duck_percent: start.duck_percent,
+            after_current: start.after_current,
+        });
+    }
+
+    fn stop(&mut self, channel: u8, fade_ms: u16) {
+        self.0.push(Audio::Stop { channel, fade_ms });
+    }
+
+    fn gain(&mut self, channel: u8, gain: u8, fade_ms: u16) {
+        self.0.push(Audio::Gain { channel, gain, fade_ms });
+    }
+}
+
 /// A digest of a page's rows: two versions with the same digest show the
 /// same text and mosaics.
 fn digest(page: &StoredPage) -> u64 {
@@ -347,6 +448,53 @@ mod tests {
         let arrived = engine.feed(b"PN,10100\nSC,0000\nPS,8000\nOL,1,Sport results: 2-1\n\n");
         assert!(arrived.is_empty() && engine.finish().is_empty());
         assert_eq!(engine.take_updated(), [0x101]);
+    }
+
+    /// The audio packets of a 2 000-sample PCM sound at 8 kHz that plays on
+    /// `page`, channel 1, written by the engine's encoder.
+    fn sound_stream(page: u16) -> Vec<u8> {
+        use neoteletext_audio::encode::{Command, Sound, packets};
+        let pcm: Vec<i16> = (0..2000).map(|n| i16::try_from(n % 64).unwrap().saturating_mul(100)).collect();
+        let sound = Sound::new(5, 1, neoteletext_audio::Codec::Pcm16, 8_000, 1000, &pcm).unwrap();
+        let mut records = vec![sound.object_record().unwrap()];
+        records.extend(sound.data_records());
+        let play = Command { channel: 1, sequence: 1, operation: 1, handle: 5, generation: 1, gain: 70, fade_ms: 20, flags: 0, duck: 0, page: Some(page) };
+        records.push(play.record());
+        packets(0, 0, &records).0.iter().flat_map(|packet| packet.bytes).collect()
+    }
+
+    #[test]
+    fn a_page_sound_is_sent_when_its_page_is_opened() {
+        let mut engine = Engine::new();
+        assert_eq!(engine.feed(&sound_stream(0x100)), [] as [(u16, String); 0], "audio packets are not pages");
+        engine.finish();
+        assert_eq!(engine.take_sounds(), [] as [Audio; 0], "nothing before the page is open");
+        engine.open_page(Some(0x100));
+        let sounds = engine.take_sounds();
+        let sound = Sound { handle: 5, generation: 1 };
+        assert_eq!(sounds.first(), Some(&Audio::Define { sound, rate_hz: 8_000, samples: 2000 }));
+        let samples: usize = sounds.iter().map(|audio| if let Audio::Samples { pcm, .. } = audio { pcm.len() } else { 0 }).sum();
+        assert_eq!(samples, 2000);
+        assert!(matches!(sounds.last(), Some(Audio::Start { channel: 1, gain: 70, fade_ms: 20, .. })));
+        // Leaving the page fades it out.
+        engine.open_page(Some(0x101));
+        assert_eq!(engine.take_sounds(), [Audio::Stop { channel: 1, fade_ms: 5 }]);
+    }
+
+    #[test]
+    fn becoming_heard_sends_the_open_pages_sounds_again() {
+        let mut engine = Engine::new();
+        // Detection holds the bytes until the stream is long enough or ends.
+        engine.feed(&sound_stream(0x100));
+        engine.finish();
+        engine.open_page(Some(0x100));
+        assert!(matches!(engine.take_sounds().last(), Some(Audio::Start { .. })));
+        engine.set_audible(false);
+        assert_eq!(engine.take_sounds(), [] as [Audio; 0]);
+        engine.set_audible(true);
+        let sounds = engine.take_sounds();
+        assert!(sounds.iter().any(|audio| matches!(audio, Audio::Define { .. })), "defined again: {sounds:?}");
+        assert!(matches!(sounds.last(), Some(Audio::Start { channel: 1, .. })));
     }
 
     #[test]
