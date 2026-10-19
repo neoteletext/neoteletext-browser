@@ -36,6 +36,7 @@
 14. Build, dependencies and verification
 15. Platforms
 16. Sound
+17. Hyperlinks
 
 ---
 
@@ -217,8 +218,9 @@
 
 ### Requirement 4.5: Intents cannot change channel
 - **Statement:** No page intent may cause a tab to navigate to another channel, change a security setting or read a cookie. Navigating must be possible only through strip input, message kinds of their own (requirement 11.1).
+  *Amended 20 October 2026 (decision 41):* a cell intent may start a page-started navigation (requirement 8.2) to a link the trusted core holds in its own link table (`hyperlinks.md` section 8); it reaches another channel only through the site-change screen (requirement 8.4) and the web only through the web-browser prompt (requirement 17.8). Intents still carry no address.
 - **Reason:** Page intents carry what the user did in the page area, where a page image can draw anything.
-- **Source:** Decisions 4 and 18.
+- **Source:** Decisions 4, 18 and 41.
 - **Verification:** Test: every intent kind is sent with values that would leave the channel or change a setting, and none succeeds.
 - **State:** Met by construction: no intent kind carries an address. The test is not written.
 
@@ -491,7 +493,7 @@
 - **Reason:** A file must not borrow the identity or cookies of a channel.
 - **Source:** Architecture.
 - **Verification:** Test.
-- **State:** Partly met: a file is its own channel with its own decoder, at most 64 megabytes or 4,096 page files. Links are not followed yet.
+- **State:** Partly met: a file is its own channel with its own decoder, at most 64 megabytes or 4,096 page files. Links are not followed yet; `hyperlinks.md` section 11 says how they will be.
 
 ---
 
@@ -509,7 +511,7 @@
 - **Reason:** Navigations a page starts are less trusted.
 - **Source:** Architecture.
 - **Verification:** Test.
-- **State:** Partly met: only user-started navigations exist.
+- **State:** Partly met: only user-started navigations exist. Page links are the first page-started navigation to be built (`hyperlinks.md`, decision 41).
 
 ### Requirement 8.3: The committed address is shown
 - **Statement:** The trusted strip must show the committed address until a new page commits.
@@ -720,14 +722,14 @@
 - **State:** Partly met: the window and its transitions are built. Reduced motion is not read from the platform.
 
 ### Requirement 12.3: Clicks on pages are cell clicks
-- **Statement:** A click on a page must be converted to a cell (column and row) from the pointer position and the rectangle the page was drawn in, and sent as an intent. The trusted core must decide, with the decoder, whether the cell is a link.
+- **Statement:** A click on a page must be converted to a cell (column and row) from the pointer position and the rectangle the page was drawn in, and sent as an intent, with the version of the frame it was made on. The trusted core must decide, from its own link table, whether the cell is a link (`hyperlinks.md` section 8; decision 41).
 - **Reason:** A page image can draw fake buttons; the click must mean only "this cell".
 - **Source:** Decision 4.
 - **Verification:** Test under every layout.
 - **State:** Partly met: cell clicks are computed and sent, with a test. The trusted core does not yet follow links.
 
 ### Requirement 12.4: Keys work in the tab
-- **Statement:** With the page area focused, page-number keys, Fastext colour keys, reveal, hold and mix must work. A key must only select among pages already held (requirement 4.7). A key that would leave the channel must go through the site-change screen.
+- **Statement:** With the page area focused, page-number keys, Fastext colour keys, reveal, hold and mix must work. A key must only select among pages already held (requirement 4.7). A key that would leave the channel must go through the site-change screen. A page number the page links with `LK`, or the descriptor aliases, follows that link (`hyperlinks.md` section 6; decision 41).
 - **Reason:** Teletext is driven by these keys.
 - **Source:** Decision 22.
 - **Verification:** Test each key.
@@ -829,7 +831,7 @@ Requirements 13.1 to 13.13 are unchanged from the earlier design, and are stated
 - **Reason:** The supply chain is a route to compromise.
 - **Source:** Decisions 4 and 34; owner's baseline instructions.
 - **Verification:** Check.
-- **State:** Partly met: every dependency is pinned to an exact version. `cargo-deny` runs in the full gate (`native/deny.toml`): licences, sources, and the RustSec advisories that `cargo audit` also reads; `cargo audit` itself is not run. One advisory is ignored pending the owner's decision: RUSTSEC-2026-0192, `ttf-parser` unmaintained, which only winit's Wayland window decorations use. The libraries in use await the owner's approval by name (open decision 6).
+- **State:** Partly met: every dependency is pinned to an exact version. `cargo-deny` runs in the full gate (`native/deny.toml`): licences, sources, and the RustSec advisories that `cargo audit` also reads; `cargo audit` itself is not run. One advisory is ignored pending the owner's decision: RUSTSEC-2026-0192, `ttf-parser` unmaintained, which only winit's Wayland window decorations use. The libraries in use were approved by name on 20 October 2026 (decision 41).
 
 ### Requirement 14.4: Withdrawn
 - **Was:** a runtime caller-attribution test before any change of Tauri or webview runtime.
@@ -954,3 +956,93 @@ Requirements 13.1 to 13.13 are unchanged from the earlier design, and are stated
 - **Source:** Decision 38; the engine's decision E.87.
 - **Verification:** Tests: the decoder's `a_live_sound_streams_and_fades_two_seconds_after_its_last_block`; the interface's `a_live_sound_plays_once_its_buffer_fills`; by hand on 19 October 2026, a ten-minute live sound written by `neottx sound --live` played from a file channel.
 - **State:** Met on macOS.
+
+---
+
+## 17. Hyperlinks
+
+Adopted on 20 October 2026 (decision 41) from [`hyperlinks.md`](hyperlinks.md), whose section numbers these cite; [`hyperlinks-security.md`](hyperlinks-security.md) is their security analysis. None is built yet.
+
+### Requirement 17.1: No teletext underline
+- **Statement:** Teletext's underline attribute is not drawn on any page shown by T42 Browser; separated mosaics are drawn as before.
+- **Reason:** An underline must mean only a link.
+- **Source:** Decision 41; `hyperlinks.md`.
+- **Verification:** Test: a Level 2.5 page with underlined text and separated mosaics.
+- **State:** Not met: not built.
+
+### Requirement 17.2: Links are drawn by the browser
+- **Statement:** Links are drawn only by the interface, over the page image, in one style the page cannot change (`hyperlinks.md` section 9.2), and only when a teletext dot is at least two device pixels.
+- **Reason:** A page must not be able to draw the browser's link.
+- **Source:** Decision 41; `hyperlinks.md`.
+- **Verification:** Test of the drawing at several scales; review.
+- **State:** Not met: not built.
+
+### Requirement 17.3: The trusted core decides every link
+- **Statement:** The trusted core decides every link, from the decoder's and the fetcher's candidates, checked as `hyperlinks.md` section 8.2 requires. The interface receives only where to draw and the link's kind.
+- **Reason:** The decoder and the page are untrusted; the interface holds no channel data.
+- **Source:** Decision 41; `hyperlinks.md`.
+- **Verification:** Test with out-of-range, overlapping, excessive and invalid links.
+- **State:** Not met: not built.
+
+### Requirement 17.4: Page numbers in the text are links
+- **Statement:** Page numbers in the text are links when, and only when, the rules of `hyperlinks.md` section 6.1 hold.
+- **Reason:** Navigation teletext readers already expect, without false links.
+- **Source:** Decision 41; `hyperlinks.md`.
+- **Verification:** Test of each rule, including currency, times, ranges and absent pages.
+- **State:** Not met: not built.
+
+### Requirement 17.5: Links are classified from their targets
+- **Statement:** Every link, from a page, a Fastext packet or the descriptor's aliases and services, is classified from its target alone, before any request, as `hyperlinks.md` section 7.1 requires; a named service is another channel.
+- **Reason:** No request before consent; the strip can say where a link leads.
+- **Source:** Decision 41; `hyperlinks.md`.
+- **Verification:** Test of every row of the table.
+- **State:** Not met: not built.
+
+### Requirement 17.6: The destination is shown in the strip
+- **Statement:** Pointing at or focusing a link shows its destination in the trusted strip.
+- **Reason:** The strip, not the underline, is the proof.
+- **Source:** Decision 41; `hyperlinks.md`.
+- **Verification:** Test; review.
+- **State:** Not met: not built.
+
+### Requirement 17.7: A click follows what the user saw
+- **Statement:** A click follows only the link of the frame it was made on, whose target equals the one the strip is showing, unchanged for at least 500 milliseconds.
+- **Reason:** Against bait and switch.
+- **Source:** Decision 41; `hyperlinks.md`.
+- **Verification:** Test with a fake clock: a page that changes a link's target each frame.
+- **State:** Not met: not built.
+
+### Requirement 17.8: Leaving goes through the strip
+- **Statement:** A link that leaves the channel goes through the site-change screen; a link to the web goes through the web-browser prompt; neither can be confirmed from the page area.
+- **Reason:** Leaving is the user's decision, made where a page cannot reach.
+- **Source:** Decision 41; `hyperlinks.md`.
+- **Verification:** Test for each kind, with clicks in the page area.
+- **State:** Not met: not built.
+
+### Requirement 17.9: The hand-off to the system's web browser
+- **Statement:** Only an `https` or `http` address the core's address rules accept, re-serialised from its parsed parts, is handed to the system's web browser, by the trusted core, as one argument with no shell, at most once per two seconds, from the selected tab of a focused window, and logged.
+- **Reason:** Opening an address must never run a program.
+- **Source:** Decision 41; `hyperlinks.md`.
+- **Verification:** Test with `file:`, custom schemes, paths, a leading `-` and over-long addresses; the "nothing else opens" test of `hyperlinks-security.md` section 15.
+- **State:** Not met: not built.
+
+### Requirement 17.10: Links by keyboard
+- **Statement:** Links can be reached and followed with the keyboard, and are in the accessibility tree.
+- **Reason:** Not everyone uses a pointer.
+- **Source:** Decision 41; `hyperlinks.md`.
+- **Verification:** Test.
+- **State:** Not met: not built.
+
+### Requirement 17.11: Prompts never take the focus
+- **Statement:** The web-browser prompt and the site-change screen never take the keyboard focus by themselves, and accept Enter only after the user moved the focus into them.
+- **Reason:** A confirmation key pressed for something else must not confirm.
+- **Source:** Decision 41; `hyperlinks.md`.
+- **Verification:** Test.
+- **State:** Not met: not built.
+
+### Requirement 17.12: The link-target parser
+- **Statement:** The core's link-target parser contains no panicking constructs and is fuzzed, as the message readers are.
+- **Reason:** It is the first page data the trusted core parses.
+- **Source:** Decision 41; `hyperlinks.md`.
+- **Verification:** The fuzz target `link_target` in the full gate; the lint.
+- **State:** Not met: not built.

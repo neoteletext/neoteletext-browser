@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Status** | Proposed, 20 October 2026. Not adopted and not built. Section 16 lists the decisions the owner is asked to take. |
+| **Status** | Adopted 20 October 2026 (the architecture's decision 41), every recommendation of section 16 taken as the decision. Not built; phase 1 (section 15) is next. |
 | **Owner's brief** | Hyperlinks shown with a blue underline in the interface, controlled by the browser; underlining must not be possible from teletext source. Links to teletext open in T42 Browser; other links offer to open in the system's web browser. |
 | **Companion documents** | [`hyperlinks-security.md`](hyperlinks-security.md) analyses this design's security; its findings are applied here (section 18). [`architecture.md`](architecture.md) (sections 9.5, 9.6 and 11), [`requirements.md`](requirements.md) (sections 4, 7, 8, 11 and 12), [`security-analysis.md`](security-analysis.md) (spoofing and the line of death). The engine's decision E.36 and its TTI Link Extension (`~/devel/neoteletext/docs/spec/requirements/tti-link-extension.md`). |
 
@@ -25,7 +25,7 @@
 13. Changes to existing decisions and requirements
 14. Proposed requirements
 15. Phases
-16. Decisions for the owner
+16. Decisions
 17. Tests
 18. Corrections from the security analysis
 
@@ -351,9 +351,11 @@ To be added to `requirements.md` as section 17 once adopted.
    - Links to a page in another channel (section 7.3).
 3. **Fastext,** on the same link table (requirement 12.4).
 
-## 16. Decisions for the owner
+## 16. Decisions
 
-| Number | Question | Recommendation |
+All taken by the owner on 20 October 2026 (decision 41), each as recommended.
+
+| Number | Question | Decided |
 |---|---|---|
 | 1 | May a link lead to another channel, amending requirement 4.5 as section 13 says? | Yes, through the site-change screen |
 | 2 | Are page numbers in the text links automatically (section 6.1)? | Yes, only for pages that exist, in phase 1 |
