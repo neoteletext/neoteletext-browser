@@ -3,6 +3,7 @@ name = "t42-browser"
 description = "The trusted core: starts the decoder and the interface process, checks every frame, encodes page images and decides what the trusted strip shows"
 version.workspace = true
 edition.workspace = true
+license.workspace = true
 rust-version.workspace = true
 publish.workspace = true
 

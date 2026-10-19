@@ -3,6 +3,7 @@ name = "protocol"
 description = "Messages between the trusted core and the interface process: framed, bounded and parsed strictly"
 version.workspace = true
 edition.workspace = true
+license.workspace = true
 rust-version.workspace = true
 publish.workspace = true
 

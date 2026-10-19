@@ -3,6 +3,7 @@ name = "draw-vello"
 description = "The interface core's drawing interface on the processor: vello_cpu draws, Parley lays out and shapes text"
 version.workspace = true
 edition.workspace = true
+license.workspace = true
 rust-version.workspace = true
 publish.workspace = true
 

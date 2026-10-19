@@ -3,6 +3,7 @@ name = "t42-interface"
 description = "The interface process: draws the window, the wall and the trusted strip, holds no secrets, has no network"
 version.workspace = true
 edition.workspace = true
+license.workspace = true
 rust-version.workspace = true
 publish.workspace = true
 

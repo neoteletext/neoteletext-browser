@@ -3,6 +3,7 @@ name = "draw-embedded"
 description = "The interface core's drawing interface for microcontrollers: embedded-graphics onto any display, bitmap fonts, pages drawn upright only, no standard library"
 version.workspace = true
 edition.workspace = true
+license.workspace = true
 rust-version.workspace = true
 publish.workspace = true
 

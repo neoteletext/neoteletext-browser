@@ -3,6 +3,7 @@ name = "dock-menu"
 description = "The menu of the browser's Dock icon on macOS: its tabs, which one is selected and which play sound, and mute or unmute all"
 version.workspace = true
 edition.workspace = true
+license.workspace = true
 rust-version.workspace = true
 publish.workspace = true
 

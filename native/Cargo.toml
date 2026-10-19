@@ -8,6 +8,7 @@ members = ["interface-core", "draw-vello", "draw-embedded", "protocol", "interfa
 exclude = ["fuzz"]
 
 [workspace.package]
+license = "MIT"
 version = "0.1.0"
 edition = "2024"
 rust-version = "1.90"

@@ -6,7 +6,7 @@ This is the project's reading of the licences, not legal advice.
 
 ## 1. The browser's own licence
 
-**Not yet declared.** The engine is MIT. The browser has no `LICENSE` file and no `license` field in its crates. Everything below assumes the browser will be MIT like the engine; the owner is to confirm (open decision 7 of `architecture.md`).
+**MIT,** as the engine, decided by the owner on 20 October 2026 (decision 41 of `architecture.md`): the `LICENSE` file at the repository's root, and the `license` field of the workspace's crates.
 
 ## 2. What is acceptable
 
