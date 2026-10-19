@@ -99,8 +99,13 @@ struct Fetcher {
 
 fn sibling(name: &str) -> Result<PathBuf, String> {
     let program = std::env::current_exe().map_err(|error| format!("cannot find this program: {error}"))?;
-    let path = program.parent().map(|directory| directory.join(name)).ok_or("this program has no directory")?;
+    let path = program.parent().map(|directory| directory.join(program_file(name))).ok_or("this program has no directory")?;
     if path.is_file() { Ok(path) } else { Err(format!("{} is missing", path.display())) }
+}
+
+/// A program's file name on this platform: `.exe` on Windows.
+fn program_file(name: &str) -> String {
+    format!("{name}{}", std::env::consts::EXE_SUFFIX)
 }
 
 fn spawn(command: &mut Command, what: &str) -> Result<Child, String> {
@@ -608,6 +613,17 @@ fn main() -> ExitCode {
             eprintln!("t42-browser: {error}");
             ExitCode::FAILURE
         }
+    }
+}
+
+#[cfg(test)]
+mod program_tests {
+    use super::*;
+
+    #[test]
+    fn a_helper_program_has_this_platforms_file_name() {
+        let expected = if cfg!(windows) { "t42-interface.exe" } else { "t42-interface" };
+        assert_eq!(program_file(INTERFACE), expected);
     }
 }
 
