@@ -423,6 +423,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "dock-menu"
+version = "0.1.0"
+dependencies = [
+ "objc2 0.5.3",
+ "objc2-app-kit",
+ "objc2-foundation 0.2.2",
+]
+
+[[package]]
 name = "downcast-rs"
 version = "1.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2125,6 +2134,7 @@ name = "t42-interface"
 version = "0.1.0"
 dependencies = [
  "cpal",
+ "dock-menu",
  "draw-vello",
  "interface-core",
  "neoteletext-audio-mix",

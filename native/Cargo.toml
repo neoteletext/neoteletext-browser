@@ -3,7 +3,7 @@
 # drawing back ends, the interface process and the trusted core.
 [workspace]
 resolver = "3"
-members = ["interface-core", "draw-vello", "draw-embedded", "protocol", "interface", "core", "decoder", "fetcher", "site"]
+members = ["interface-core", "draw-vello", "draw-embedded", "protocol", "interface", "core", "decoder", "fetcher", "site", "dock-menu"]
 # Built with a nightly compiler of its own (scripts/tools.sh).
 exclude = ["fuzz"]
 
@@ -19,6 +19,7 @@ interface-core = { path = "interface-core" }
 draw-vello = { path = "draw-vello" }
 draw-embedded = { path = "draw-embedded" }
 protocol = { path = "protocol" }
+dock-menu = { path = "dock-menu" }
 decoder = { path = "decoder", package = "t42-decoder" }
 # The teletext engine, maintained in its own repository (design section
 # 4.0), pinned to one commit. Its repository is local until that commit is

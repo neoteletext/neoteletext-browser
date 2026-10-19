@@ -14,6 +14,7 @@ winit.workspace = true
 softbuffer.workspace = true
 png.workspace = true
 neoteletext-audio-mix.workspace = true
+dock-menu.workspace = true
 
 # Sound is built for macOS only for now (decision 37): on Linux cpal links
 # the system's LGPL libasound, which awaits the owner (open decision D3).

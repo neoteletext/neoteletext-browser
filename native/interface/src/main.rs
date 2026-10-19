@@ -28,6 +28,7 @@ use std::rc::Rc;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use dock_menu::{Choice, DockTab};
 use draw_vello::{Family, Painter};
 use interface_core::browser::{Browser, Cursor, Frame, Key as BrowserKey, Modifiers, Output, StripState, TabInfo, WindowAction};
 use interface_core::canvas::PageKey;
@@ -86,6 +87,8 @@ enum Incoming {
     },
     /// The channels now playing sound, muted or not.
     Sounding(BTreeSet<u32>),
+    /// The user chose an item of the Dock menu.
+    Dock(Choice),
     /// The trusted core closed the pipe, asked to close, or broke the protocol.
     End(Option<String>),
 }
@@ -145,17 +148,27 @@ impl App {
         self.graphics.as_ref().map_or(1.0, |graphics| graphics.window.scale_factor())
     }
 
-    /// The window's title follows the tabs: the selected tab's, marked when
-    /// it plays sound as a web browser marks it.
+    /// The window's title and the Dock menu follow the tabs: the title is
+    /// the selected tab's, marked when it plays sound as a web browser
+    /// marks it, so the Dock's window list names the selected tab.
     fn show_tabs(&self) {
-        let Some(graphics) = &self.graphics else { return };
-        let title = match self.tabs.get(self.active) {
-            Some(tab) if tab.muted && self.browser.tab_sounding(tab) => format!("{} \u{2013} Muted \u{2013} {WINDOW_TITLE}", tab.title),
-            Some(tab) if self.browser.tab_sounding(tab) => format!("{} \u{2013} Audio playing \u{2013} {WINDOW_TITLE}", tab.title),
-            Some(tab) => format!("{} \u{2013} {WINDOW_TITLE}", tab.title),
-            None => WINDOW_TITLE.to_owned(),
+        let tab = |(index, tab): (usize, &TabInfo)| DockTab {
+            title: tab.title.clone(),
+            selected: index == self.active,
+            playing: self.browser.tab_sounding(tab),
+            muted: tab.muted,
         };
-        graphics.window.set_title(&title);
+        let tabs: Vec<DockTab> = self.tabs.iter().enumerate().map(tab).collect();
+        if let Some(graphics) = &self.graphics {
+            let title = match tabs.get(self.active) {
+                Some(tab) if tab.muted && tab.playing => format!("{} \u{2013} Muted \u{2013} {WINDOW_TITLE}", tab.title),
+                Some(tab) if tab.playing => format!("{} \u{2013} Audio playing \u{2013} {WINDOW_TITLE}", tab.title),
+                Some(tab) => format!("{} \u{2013} {WINDOW_TITLE}", tab.title),
+                None => WINDOW_TITLE.to_owned(),
+            };
+            graphics.window.set_title(&title);
+        }
+        dock_menu::set(tabs);
     }
 
     fn request_redraw(&self) {
@@ -367,6 +380,17 @@ impl ApplicationHandler<Incoming> for App {
                 }
                 return;
             }
+            Incoming::Dock(choice) => {
+                let message = match choice {
+                    Choice::Tab(index) => match u8::try_from(index) {
+                        Ok(index) => ToCore::SelectTab(index),
+                        Err(_) => return,
+                    },
+                    Choice::MuteAll(muted) => ToCore::MuteAll(muted),
+                };
+                self.send(event_loop, &message);
+                return;
+            }
             Incoming::Strip(strip) => self.browser.set_strip(strip),
             Incoming::Channel(channel) => self.browser.set_channel(channel),
             Incoming::Arrived { channel, page, title } => self.browser.add_page(channel, page, title, now),
@@ -521,6 +545,13 @@ fn main() -> std::process::ExitCode {
         return std::process::ExitCode::FAILURE;
     };
     let proxy = event_loop.create_proxy();
+    // The application's delegate exists once the event loop does; AppKit
+    // first asks it for the Dock menu as the application launches, so the
+    // menu is installed before then.
+    let dock_proxy = proxy.clone();
+    dock_menu::install(move |choice| {
+        let _ = dock_proxy.send_event(Incoming::Dock(choice));
+    });
     // T42_AUDIO_TRACE reports the sound operations applied and the loudest
     // sample the device played each half second, for checking sound
     // without listening.

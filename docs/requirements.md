@@ -649,10 +649,10 @@
 - **Why withdrawn:** there is no webview and no page code (decision 33).
 
 ### Requirement 10.12: No unsafe code
-- **Statement:** The interface process, like every crate of the application, must forbid `unsafe` code in its own source.
-- **Reason:** A memory-safety fault is the most likely way to take over a process.
-- **Source:** Architecture.
-- **Verification:** Check: the workspace lints forbid `unsafe_code`.
+- **Statement:** The interface process, like every crate of the application, must forbid `unsafe` code in its own source. The one exception is the `dock-menu` crate, whose macOS module reaches AppKit through the Objective-C runtime; it denies `unsafe_code` everywhere else, and each unsafe block there states why it is sound.
+- **Reason:** A memory-safety fault is the most likely way to take over a process. AppKit offers the Dock menu only through calls Rust cannot check (decision 39).
+- **Source:** Architecture; decision 39.
+- **Verification:** Check: the workspace lints forbid `unsafe_code`; `dock-menu` denies it and allows it only in `src/mac.rs`, with Clippy's `undocumented_unsafe_blocks`.
 - **State:** Met.
 
 ### Requirement 10.13: The interface process ends on a broken message
@@ -914,7 +914,7 @@ Requirements 13.1 to 13.13 are unchanged from the earlier design, and are stated
 - **State:** Met.
 
 ### Requirement 16.5: The opened page
-- **Statement:** A page's sounds must play while it is open: the page zoomed on the wall, or else the page chosen by number or in the list. Page sounds are on by default. A setting to turn them off, and a control for the master volume, must be added to the window; muting is requirements 16.7 and 16.8.
+- **Statement:** A page's sounds must play while it is open: the page zoomed on the wall, or else the page chosen by number or in the list. Page sounds are on by default. A setting to turn them off, and a control for the master volume, must be added to the window; muting is requirements 16.7 to 16.9.
 - **Reason:** Teletext attaches sounds to pages, and a television goes to the page whose number is typed.
 - **Source:** Decision 37; the engine's REQ-AUD-012.
 - **Verification:** Test: `the_opened_page_is_the_zoomed_one_or_else_the_one_chosen`; an end-to-end check by hand on 19 October 2026 (typing 100 played the page's chime).
@@ -940,6 +940,13 @@ Requirements 13.1 to 13.13 are unchanged from the earlier design, and are stated
 - **Source:** Decision 38.
 - **Verification:** Test: `the_mute_all_button_mutes_every_tab_until_all_are_muted`; by hand on 19 October 2026.
 - **State:** Met on macOS.
+
+### Requirement 16.9: The Dock menu
+- **Statement:** On macOS, right-clicking the browser's Dock icon must list its tabs, the selected one ticked and each playing or muted one marked with a speaker, then "Mute All Tabs", or "Unmute All Tabs" once every tab is muted. Choosing a tab must select it.
+- **Reason:** The owner asked for a Dock menu like a web browser's (decision 39).
+- **Source:** Decision 39.
+- **Verification:** Tests: `a_tab_is_marked_as_its_sound_is`, `mute_all_unmutes_once_every_tab_is_muted`; by hand on 19 October 2026: the menu ticked the selected tab and marked the playing one, choosing a tab selected it, and both mute items worked.
+- **State:** Met on macOS. Windows' taskbar jump list and Linux's launcher menus are not built.
 
 ### Requirement 16.10: Live sounds
 - **Statement:** A live sound (the engine's REQ-AUD-014) must play as its blocks arrive, from the newest block when its play starts, and fade out two seconds after its last block. The trusted core must tick every decoder, which keeps the clock of its live sounds.

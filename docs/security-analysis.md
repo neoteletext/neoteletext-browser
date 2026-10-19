@@ -168,6 +168,7 @@ Not present yet: no font is fetched. When fonts are, they are read by a confined
 - Text is only ever drawn as text runs: there is no markup to inject into (requirement 10.2).
 - No cookie, credential, setting or history beyond the strip's own state is ever sent (requirement 3.6).
 - Sound crosses only as voice operations and 16-bit samples, each bounded by the protocol and checked by the trusted core (requirement 16.4). The interface parses no audio format; it copies samples into one engine mixer per channel, which has no `unsafe` code. Each channel's sound is tagged by the trusted core, not the decoder, so a decoder cannot reach another channel's sound; only the trusted core can reset or mute a channel.
+- The Dock menu on macOS (decision 39) is the one place with `unsafe` code: Objective-C runtime calls in the interface process that add a method to winit's application delegate and build the menu from tab titles the trusted core cleaned. Its input is our own tab list; its output is a tab index or mute-all, sent to the trusted core as ordinary intents. Playing needs the operating system's audio output, reached through `cpal` on macOS; the interface's sandbox profile already allowed it (verified 19 October 2026).
 
 **Remaining risk:** low. The image reader is a third-party crate (`png`), reading only our own encoder's output; it must still be fuzzed (requirement 4.6).
 
