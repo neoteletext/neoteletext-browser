@@ -12,6 +12,9 @@
 //! the addresses given with `--allow-local` (the engine's REQ-SEC-006).
 //! The decoder and the interface are found beside this program.
 
+// On Windows, a desktop program: no console window opens with it. The
+// processes talk through the pipes they are given, not a console.
+#![cfg_attr(windows, windows_subsystem = "windows")]
 // No panicking constructs: this crate reads input from outside the
 // process. The same list is in each such crate; scripts/check.sh checks
 // that they agree.

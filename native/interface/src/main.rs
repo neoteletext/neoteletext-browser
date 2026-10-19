@@ -7,6 +7,9 @@
 //! A malformed message from the trusted core ends the process
 //! (`architecture.md` section 6.4).
 
+// On Windows, a desktop program: no console window opens with it. The
+// processes talk through the pipes they are given, not a console.
+#![cfg_attr(windows, windows_subsystem = "windows")]
 // No panicking constructs: this crate reads input from outside the
 // process. The same list is in each such crate; scripts/check.sh checks
 // that they agree.
