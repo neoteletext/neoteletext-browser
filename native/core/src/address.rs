@@ -1,9 +1,9 @@
 //! What the address field may open, and how the trusted strip shows it:
 //! a web address over https or http, with a plain host, and nothing that
 //! could make the strip misleading; or a file on this computer, as a
-//! `file://` address or an absolute path.
+//! `file://` address or a path absolute on this platform.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 /// An address as the trusted core keeps and shows it.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -22,21 +22,47 @@ pub struct Address {
 const SCHEME_SEPARATOR: &str = "://";
 const FILE_SCHEME: &str = "file://";
 
-/// A file address: `file:///path` or an absolute path.
+/// A file address: `file:///path`, or a path absolute on this platform
+/// (`/Users/...`, or `C:\\...` on Windows).
 fn parse_file(typed: &str) -> Option<Result<Address, String>> {
-    let path = typed.strip_prefix(FILE_SCHEME).or_else(|| typed.starts_with('/').then_some(typed))?;
+    let path = if let Some(rest) = typed.strip_prefix(FILE_SCHEME) {
+        url_to_path(rest)
+    } else if Path::new(typed).is_absolute() {
+        typed.to_owned()
+    } else {
+        return None;
+    };
     let check = || -> Result<Address, String> {
-        if !path.starts_with('/') {
-            return Err("File addresses need a full path from /".into());
+        if !Path::new(&path).is_absolute() {
+            return Err("File addresses need a full path".into());
         }
         if path.chars().any(interface_core::editor::hidden) {
             return Err("Addresses cannot contain hidden characters".into());
         }
-        let path = PathBuf::from(path);
+        let path = PathBuf::from(&path);
         let name = path.file_name().and_then(|name| name.to_str()).unwrap_or("/").to_owned();
-        Ok(Address { text: format!("{FILE_SCHEME}{}", path.display()), host: name, encrypted: false, file: Some(path) })
+        Ok(Address { text: format!("{FILE_SCHEME}{}", path_to_url(&path)), host: name, encrypted: false, file: Some(path) })
     };
     Some(check())
+}
+
+/// The path of a `file://` address. On Windows, `file:///C:/t42/x.t42`
+/// names `C:/t42/x.t42`: the slash before the drive letter is the URL's.
+fn url_to_path(rest: &str) -> String {
+    if cfg!(windows)
+        && let Some(drive) = rest.strip_prefix('/')
+        && drive.as_bytes().get(1) == Some(&b':')
+    {
+        return drive.to_owned();
+    }
+    rest.to_owned()
+}
+
+/// The path as a `file://` address writes it: forward slashes, and on
+/// Windows a slash before the drive letter.
+fn path_to_url(path: &Path) -> String {
+    let text = path.display().to_string();
+    if cfg!(windows) { format!("/{}", text.replace('\\', "/")) } else { text }
 }
 
 /// Turns what was typed into an address, or says why it cannot be opened.
@@ -105,13 +131,30 @@ mod tests {
         assert!(!address.encrypted);
     }
 
+    #[cfg(unix)]
     #[test]
     fn files_are_opened_by_full_path() {
         let address = parse("file:///Users/someone/teefax.t42").unwrap();
-        assert_eq!(address.file.as_deref(), Some(std::path::Path::new("/Users/someone/teefax.t42")));
+        assert_eq!(address.file.as_deref(), Some(Path::new("/Users/someone/teefax.t42")));
         assert_eq!(address.host, "teefax.t42");
         assert_eq!(parse("/Users/someone/pages").unwrap().text, "file:///Users/someone/pages");
         assert!(parse("file://relative/path").is_err());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_files_are_opened_by_drive_path() {
+        let address = parse(r"C:\t42\channel.t42").unwrap();
+        assert_eq!(address.file.as_deref(), Some(Path::new(r"C:\t42\channel.t42")));
+        assert_eq!((address.text.as_str(), address.host.as_str()), ("file:///C:/t42/channel.t42", "channel.t42"));
+        assert_eq!(parse("file:///C:/t42/channel.t42").unwrap().file.as_deref(), Some(Path::new("C:/t42/channel.t42")));
+        assert!(parse(r"\t42\channel.t42").is_err(), "a path without its drive is not full");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_windows_path_is_not_a_file_elsewhere() {
+        assert!(parse(r"C:\t42\channel.t42").is_err());
     }
 
     #[test]
