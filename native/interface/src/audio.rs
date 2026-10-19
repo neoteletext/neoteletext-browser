@@ -1,4 +1,4 @@
-//! The interface's sound (the engine's area AUD, decisions 37 and 38): the
+//! The interface's sound (the engine's area AUD, decisions 37, 38 and 40): the
 //! voice operations the trusted core passes on are applied to one engine
 //! mixer for each channel, so every tab is heard and each can be muted, and
 //! the operating system's output device plays their sum, through `cpal`.
@@ -9,19 +9,14 @@
 //! buffer, which never allocates or frees.
 
 use std::collections::{BTreeMap, BTreeSet};
-use std::sync::atomic::AtomicU16;
-#[cfg(target_os = "macos")]
-use std::sync::atomic::Ordering;
+use std::sync::atomic::{AtomicU16, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 
-#[cfg(target_os = "macos")]
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
-#[cfg(target_os = "macos")]
 use cpal::{SampleFormat, SizedSample, Stream};
 use neoteletext_audio_mix::{Mixer, SoundKey, Start};
 use protocol::audio::{Audio, Sound};
 
-#[cfg(target_os = "macos")]
 /// The most frames rendered at once: buffers larger than this are rendered
 /// in pieces, so the scratch buffer is allocated once, before playing.
 const SCRATCH_FRAMES: usize = 8192;
@@ -98,22 +93,9 @@ pub struct Speaker {
     pub mixers: Shared,
     /// The loudest sample rendered since it was last read, for diagnostics.
     pub peak: Arc<AtomicU16>,
-    #[cfg(target_os = "macos")]
     _stream: Stream,
 }
 
-#[cfg(not(target_os = "macos"))]
-impl Speaker {
-    /// Sound is built for macOS only so far (decision 37).
-    ///
-    /// # Errors
-    /// Always, on this platform.
-    pub fn open() -> Result<Self, String> {
-        Err("sound is not built for this platform yet".to_owned())
-    }
-}
-
-#[cfg(target_os = "macos")]
 impl Speaker {
     /// Opens the default output device at its own rate and format.
     ///
@@ -137,7 +119,6 @@ impl Speaker {
     }
 }
 
-#[cfg(target_os = "macos")]
 fn build<T>(device: &cpal::Device, config: cpal::StreamConfig, channels: usize, mixers: &Shared, peak: &Arc<AtomicU16>) -> Result<Stream, String>
 where
     T: SizedSample + OutputSample,
@@ -288,7 +269,6 @@ mod tests {
 
     /// Plays a second of a tone through the real default output device.
     /// It needs one, so it runs only when asked: `cargo test -- --ignored`.
-    #[cfg(target_os = "macos")]
     #[test]
     #[ignore = "needs an audio output device"]
     fn a_tone_plays_through_the_default_output_device() {

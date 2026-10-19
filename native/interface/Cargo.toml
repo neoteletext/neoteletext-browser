@@ -15,10 +15,9 @@ softbuffer.workspace = true
 png.workspace = true
 neoteletext-audio-mix.workspace = true
 dock-menu.workspace = true
-
-# Sound is built for macOS only for now (decision 37): on Linux cpal links
-# the system's LGPL libasound, which awaits the owner (open decision D3).
-[target.'cfg(target_os = "macos")'.dependencies]
+# The operating system's audio output: Core Audio on macOS, WASAPI on
+# Windows, and on Linux the system's ALSA library, libasound, linked
+# dynamically; the owner accepted its LGPL licence (decision 40).
 cpal.workspace = true
 
 [dev-dependencies]
