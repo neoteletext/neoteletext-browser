@@ -233,7 +233,7 @@ struct Core {
     frames: frames::Frames,
     /// The channel whose decoder was last told which pages are shown.
     showing: Option<u32>,
-    /// Which channel is heard, and what of its sound reached the interface.
+    /// What of each channel's sound reached the interface.
     hearing: Hearing,
     to_interface: BufWriter<ChildStdin>,
 }
@@ -282,6 +282,8 @@ impl Core {
         }
         let unused: Vec<u32> = self.decoders.keys().copied().filter(|id| !channels.iter().any(|(used, ..)| used == id)).collect();
         for id in unused {
+            let sends = self.hearing.channel_gone(id);
+            self.deliver(sends)?;
             if let Some(mut decoder) = self.decoders.remove(&id) {
                 let _ = write_to_decoder(&mut decoder.input, &ToDecoder::Close);
                 drop(decoder.input);
@@ -338,9 +340,23 @@ impl Core {
             let channel = tab.channel.view();
             self.send(&ToInterface::Channel(channel))?;
         }
-        // The active tab's channel is the one heard.
-        let sends = self.hearing.hear(self.active_channel());
+        self.send_mutes()
+    }
+
+    /// Tells the interface each tab's channel's mute, where it changed: a
+    /// muted tab's new channel starts muted.
+    fn send_mutes(&mut self) -> Result<(), String> {
+        let tabs: Vec<(u32, bool)> = self.session.tabs.iter().map(|tab| (tab.channel.id, tab.muted)).collect();
+        let sends = tabs.into_iter().filter_map(|(channel, muted)| self.hearing.mute(channel, muted)).collect();
         self.deliver(sends)
+    }
+
+    /// The tabs again, after a change of mute, and the mutes themselves.
+    fn send_tabs(&mut self) -> Result<(), String> {
+        let tabs = self.session.tab_infos();
+        let active = self.session.active;
+        self.send(&ToInterface::Tabs { tabs, active })?;
+        self.send_mutes()
     }
 
     fn active_channel(&self) -> Option<u32> {
@@ -382,8 +398,17 @@ impl Core {
                 self.send_all()?;
             }
             ToCore::Opened(key) => {
-                let sends = self.hearing.open(key);
+                let sends = self.hearing.open(self.active_channel(), key);
                 self.deliver(sends)?;
+            }
+            ToCore::MuteTab(index) => {
+                if self.session.toggle_mute(usize::from(index)) {
+                    self.send_tabs()?;
+                }
+            }
+            ToCore::MuteAll(muted) => {
+                self.session.mute_all(muted);
+                self.send_tabs()?;
             }
             ToCore::Navigate(typed) => {
                 if let Err(reason) = self.session.navigate(&typed) {
@@ -431,7 +456,7 @@ impl Core {
             let _ = decoder.child.kill();
             let _ = decoder.child.wait();
         }
-        let sends = self.hearing.decoder_ended(channel);
+        let sends = self.hearing.channel_gone(channel);
         self.deliver(sends)
     }
 
@@ -529,8 +554,12 @@ fn run() -> Result<(), String> {
                 core.load();
                 Ok(())
             }
+            // Every decoder ticks: the shown one redraws for flash, and each
+            // keeps its live sounds' clock (the engine's REQ-AUD-014). A
+            // decoder showing nothing renders nothing.
             Event::Flash => {
-                if let Some(channel) = core.showing {
+                let channels: Vec<u32> = core.decoders.keys().copied().collect();
+                for channel in channels {
                     core.tell(channel, &ToDecoder::Tick);
                 }
                 Ok(())

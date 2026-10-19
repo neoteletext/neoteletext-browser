@@ -21,6 +21,7 @@
 use std::collections::BTreeMap;
 use std::io::{self, BufReader, BufWriter};
 use std::process::ExitCode;
+use std::time::Instant;
 
 use decoder::{Engine, Rendered};
 use protocol::ProtocolError;
@@ -34,6 +35,9 @@ fn run() -> Result<(), ProtocolError> {
     // The last frame sent of each page shown, so an unchanged page is
     // never sent again.
     let mut sent: BTreeMap<u16, Rendered> = BTreeMap::new();
+    // The audio receiver's clock (the engine's REQ-AUD-014).
+    let started = Instant::now();
+    let now_ms = || u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
 
     let render =
         |engine: &Engine, pages: &[u16], sent: &mut BTreeMap<u16, Rendered>, output: &mut BufWriter<io::StdoutLock<'_>>| -> Result<(), ProtocolError> {
@@ -49,6 +53,7 @@ fn run() -> Result<(), ProtocolError> {
         };
 
     while let Some(message) = read_from_core(&mut input)? {
+        engine.tick_audio(now_ms());
         let arrived = match message {
             ToDecoder::Data(bytes) => engine.feed(&bytes),
             ToDecoder::End => engine.finish(),
@@ -59,17 +64,13 @@ fn run() -> Result<(), ProtocolError> {
                 continue;
             }
             ToDecoder::Tick => {
+                send_sounds(&mut engine, &mut output)?;
                 render(&engine, &showing, &mut sent, &mut output)?;
                 continue;
             }
             ToDecoder::Close => break,
             ToDecoder::Opened(page) => {
                 engine.open_page(page);
-                send_sounds(&mut engine, &mut output)?;
-                continue;
-            }
-            ToDecoder::Audible(heard) => {
-                engine.set_audible(heard);
                 send_sounds(&mut engine, &mut output)?;
                 continue;
             }

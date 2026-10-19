@@ -66,7 +66,13 @@ fn main() -> std::io::Result<()> {
     let mut screen = Screen::new(Memory(vec![Rgb888::BLACK; (WIDTH * HEIGHT) as usize]));
     let channel = channel_with_pages(&mut screen);
     let mut browser = Browser::new(Frame { left_inset: 0.0, window_buttons: false });
-    browser.set_tabs(vec![TabInfo { title: "news.invalid".into(), colour: 0 }, TabInfo { title: "sport.invalid".into(), colour: 1 }], 0);
+    browser.set_tabs(
+        vec![
+            TabInfo { title: "news.invalid".into(), colour: 0, channel: 1, muted: false },
+            TabInfo { title: "sport.invalid".into(), colour: 1, channel: 2, muted: false },
+        ],
+        0,
+    );
     browser.set_strip(StripState { address: "https://news.invalid/".into(), identity: "news.invalid".into(), encrypted: true, ..StripState::default() });
     browser.set_channel(channel);
     browser.draw(&mut screen, f64::from(WIDTH), f64::from(HEIGHT), 0);

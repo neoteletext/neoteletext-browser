@@ -21,6 +21,7 @@
     clippy::unimplemented
 )]
 
+use std::collections::BTreeSet;
 use std::io::{self, BufReader, BufWriter, Write};
 use std::num::NonZeroU32;
 use std::rc::Rc;
@@ -53,6 +54,9 @@ const RESIZE_MARGIN: f64 = 6.0;
 /// The shortest time between frames that only show what the trusted core
 /// sent: ten a second.
 const CHANGE_FRAME_MILLISECONDS: u64 = 100;
+/// How often the mixers are asked which tabs play sound: often enough that
+/// a tab's speaker follows its sound, rarely enough to cost nothing.
+const SOUNDING_POLL_MILLISECONDS: u64 = 250;
 
 /// On macOS the system's window buttons sit in the tab strip, as in
 /// Chrome; they take this much of its left end.
@@ -80,6 +84,8 @@ enum Incoming {
         key: PageKey,
         image: image::Indexed,
     },
+    /// The channels now playing sound, muted or not.
+    Sounding(BTreeSet<u32>),
     /// The trusted core closed the pipe, asked to close, or broke the protocol.
     End(Option<String>),
 }
@@ -109,6 +115,10 @@ struct App {
     output: BufWriter<io::Stdout>,
     /// The page last reported as opened.
     opened: Option<PageKey>,
+    /// The tabs as the trusted core last sent them, for the window's title
+    /// and the Dock menu.
+    tabs: Vec<TabInfo>,
+    active: usize,
     exit: Option<String>,
 }
 
@@ -133,6 +143,19 @@ impl App {
 
     fn scale(&self) -> f64 {
         self.graphics.as_ref().map_or(1.0, |graphics| graphics.window.scale_factor())
+    }
+
+    /// The window's title follows the tabs: the selected tab's, marked when
+    /// it plays sound as a web browser marks it.
+    fn show_tabs(&self) {
+        let Some(graphics) = &self.graphics else { return };
+        let title = match self.tabs.get(self.active) {
+            Some(tab) if tab.muted && self.browser.tab_sounding(tab) => format!("{} \u{2013} Muted \u{2013} {WINDOW_TITLE}", tab.title),
+            Some(tab) if self.browser.tab_sounding(tab) => format!("{} \u{2013} Audio playing \u{2013} {WINDOW_TITLE}", tab.title),
+            Some(tab) => format!("{} \u{2013} {WINDOW_TITLE}", tab.title),
+            None => WINDOW_TITLE.to_owned(),
+        };
+        graphics.window.set_title(&title);
     }
 
     fn request_redraw(&self) {
@@ -209,6 +232,11 @@ impl App {
                 Output::Back => ToCore::Back,
                 Output::Forward => ToCore::Forward,
                 Output::Bookmark => ToCore::Bookmark,
+                Output::MuteTab(index) => {
+                    let Ok(index) = u8::try_from(index) else { continue };
+                    ToCore::MuteTab(index)
+                }
+                Output::MuteAll(muted) => ToCore::MuteAll(muted),
                 Output::Menu => continue,
                 Output::Window(action) => {
                     self.window_action(event_loop, action);
@@ -320,12 +348,25 @@ impl ApplicationHandler<Incoming> for App {
             return;
         };
         self.graphics = Some(Graphics { window, surface, _context: context });
+        self.show_tabs();
     }
 
     fn user_event(&mut self, event_loop: &ActiveEventLoop, incoming: Incoming) {
         let now = self.now();
         match incoming {
-            Incoming::Tabs(tabs, active) => self.browser.set_tabs(tabs, active),
+            Incoming::Tabs(tabs, active) => {
+                self.browser.set_tabs(tabs.clone(), active);
+                self.tabs = tabs;
+                self.active = active;
+                self.show_tabs();
+            }
+            Incoming::Sounding(channels) => {
+                if self.browser.set_sounding(channels) {
+                    self.show_tabs();
+                    self.request_redraw();
+                }
+                return;
+            }
             Incoming::Strip(strip) => self.browser.set_strip(strip),
             Incoming::Channel(channel) => self.browser.set_channel(channel),
             Incoming::Arrived { channel, page, title } => self.browser.add_page(channel, page, title, now),
@@ -441,7 +482,7 @@ impl ApplicationHandler<Incoming> for App {
 
 /// Reads the trusted core's messages until the pipe ends, decoding page
 /// images here so the window's thread never waits on them.
-fn read_core(proxy: &EventLoopProxy<Incoming>, mixer: Option<&Shared>, trace: bool) {
+fn read_core(proxy: &EventLoopProxy<Incoming>, mixers: Option<&Shared>, trace: bool) {
     let mut input = BufReader::new(io::stdin().lock());
     let end = loop {
         let incoming = match read_from_core(&mut input) {
@@ -454,13 +495,13 @@ fn read_core(proxy: &EventLoopProxy<Incoming>, mixer: Option<&Shared>, trace: bo
                 Ok(image) => Incoming::Page { key, image },
                 Err(error) => break Some(format!("bad page image from the trusted core: {error}")),
             },
-            // Sound goes straight to the mixer; the window need not wake.
-            Ok(Some(ToInterface::Audio(operation))) => {
-                if trace && !matches!(operation, protocol::audio::Audio::Samples { .. }) {
-                    eprintln!("t42-interface: audio {operation:?}");
+            // Sound goes straight to the mixers; the window need not wake.
+            Ok(Some(ToInterface::Audio { channel, audio: operation })) => {
+                if trace && !matches!(operation, protocol::audio::Audio::Samples { .. } | protocol::audio::Audio::StreamSamples { .. }) {
+                    eprintln!("t42-interface: audio, channel {channel}: {operation:?}");
                 }
-                if let Some(mixer) = mixer {
-                    audio::apply(mixer, operation);
+                if let Some(mixers) = mixers {
+                    audio::apply(mixers, channel, operation);
                 }
                 continue;
             }
@@ -486,7 +527,24 @@ fn main() -> std::process::ExitCode {
     let trace = std::env::var_os("T42_AUDIO_TRACE").is_some();
     // With no output device the browser runs silent.
     let speaker = Speaker::open().map_err(|reason| eprintln!("t42-interface: no sound: {reason}")).ok();
-    let mixer = speaker.as_ref().map(|speaker| Arc::clone(&speaker.mixer));
+    let mixers = speaker.as_ref().map(|speaker| Arc::clone(&speaker.mixers));
+    // Which tabs play sound, told to the window when it changes.
+    if let Some(mixers) = mixers.clone() {
+        let proxy = proxy.clone();
+        std::thread::spawn(move || {
+            let mut last = BTreeSet::new();
+            loop {
+                std::thread::sleep(Duration::from_millis(SOUNDING_POLL_MILLISECONDS));
+                let sounding = mixers.lock().unwrap_or_else(std::sync::PoisonError::into_inner).sounding();
+                if sounding != last {
+                    last.clone_from(&sounding);
+                    if proxy.send_event(Incoming::Sounding(sounding)).is_err() {
+                        return;
+                    }
+                }
+            }
+        });
+    }
     if trace && let Some(peak) = speaker.as_ref().map(|speaker| Arc::clone(&speaker.peak)) {
         std::thread::spawn(move || {
             loop {
@@ -498,7 +556,7 @@ fn main() -> std::process::ExitCode {
             }
         });
     }
-    std::thread::spawn(move || read_core(&proxy, mixer.as_ref(), trace));
+    std::thread::spawn(move || read_core(&proxy, mixers.as_ref(), trace));
     let mut app = App {
         start: Instant::now(),
         graphics: None,
@@ -511,6 +569,8 @@ fn main() -> std::process::ExitCode {
         pointer_shape: Cursor::Arrow,
         output: BufWriter::new(io::stdout()),
         opened: None,
+        tabs: Vec::new(),
+        active: 0,
         exit: None,
     };
     if let Err(error) = event_loop.run_app(&mut app) {

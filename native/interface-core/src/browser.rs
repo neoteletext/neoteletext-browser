@@ -8,6 +8,7 @@
 //! trusted core; what the user does leaves as [`Output`]s, which the host
 //! turns into messages (design section 5.2).
 
+use alloc::collections::BTreeSet;
 use alloc::format;
 use alloc::string::String;
 use alloc::vec::Vec;
@@ -36,6 +37,12 @@ const TAB_MIN_WIDTH: f64 = 90.0;
 const TAB_GAP: f64 = 4.0;
 const TAB_TEXT_INSET: f64 = 14.0;
 const TAB_CLOSE: f64 = 22.0;
+/// A tab's sound button, before its close button, as Chrome places it.
+const TAB_SPEAKER: f64 = 24.0;
+/// The speaker glyph's half height; its parts are fractions of it.
+const SPEAKER_HALF: f64 = 7.0;
+/// The speaker's lines: its sound waves and the cross of a muted one.
+const SPEAKER_LINE: f64 = 2.0;
 const NEW_TAB: f64 = 38.0;
 const STRIP_MARGIN: f64 = 8.0;
 const WINDOW_BUTTON_WIDTH: f64 = 44.0;
@@ -149,6 +156,10 @@ pub struct TabInfo {
     pub title: String,
     /// An index into [`TAB_COLOURS`].
     pub colour: u8,
+    /// The tab's channel, whose sound the interface plays.
+    pub channel: u32,
+    /// The user muted the tab.
+    pub muted: bool,
 }
 
 /// What the trusted strip shows. The trusted core decides all of it; the
@@ -206,6 +217,10 @@ pub enum Output {
     Forward,
     /// Bookmark the channel, or remove its bookmark.
     Bookmark,
+    /// Mute the tab at this index, or unmute it.
+    MuteTab(usize),
+    /// Mute every tab, or unmute every tab.
+    MuteAll(bool),
     /// Open the browser's menu.
     Menu,
     /// Something the window should do.
@@ -259,10 +274,20 @@ pub struct Modifiers {
     pub command: bool,
 }
 
+/// Where a tab and its buttons were last drawn.
+#[derive(Clone, Copy, Debug)]
+struct TabRegion {
+    tab: Rect,
+    close: Rect,
+    /// The sound button, shown while the tab plays sound or is muted.
+    speaker: Option<Rect>,
+}
+
 /// Where the parts of the window were last drawn.
 #[derive(Default)]
 struct Regions {
-    tabs: Vec<(Rect, Rect)>,
+    tabs: Vec<TabRegion>,
+    mute_all: Rect,
     new_tab: Rect,
     strip: Rect,
     minimise: Rect,
@@ -289,6 +314,8 @@ pub struct Browser {
     frame: Frame,
     tabs: Vec<TabInfo>,
     active: usize,
+    /// The channels playing sound, muted or not.
+    sounding: BTreeSet<u32>,
     strip: StripState,
     channel: Channel,
     bank: usize,
@@ -321,6 +348,7 @@ impl Browser {
             frame,
             tabs: Vec::new(),
             active: 0,
+            sounding: BTreeSet::new(),
             strip: StripState::default(),
             channel: Channel::empty(),
             bank: 0,
@@ -346,6 +374,26 @@ impl Browser {
     pub fn set_tabs(&mut self, tabs: Vec<TabInfo>, active: usize) {
         self.active = active.min(tabs.len().saturating_sub(1));
         self.tabs = tabs;
+    }
+
+    /// The channels playing sound, muted or not, as the host's mixers
+    /// report. Returns whether that changed what the tabs show.
+    pub fn set_sounding(&mut self, sounding: BTreeSet<u32>) -> bool {
+        let changed = sounding != self.sounding;
+        self.sounding = sounding;
+        changed
+    }
+
+    /// Whether the tab plays sound, muted or not.
+    #[must_use]
+    pub fn tab_sounding(&self, tab: &TabInfo) -> bool {
+        self.sounding.contains(&tab.channel)
+    }
+
+    /// Whether every tab is muted: the mute-all button then unmutes them.
+    #[must_use]
+    pub fn all_muted(&self) -> bool {
+        !self.tabs.is_empty() && self.tabs.iter().all(|tab| tab.muted)
     }
 
     /// What the trusted strip shows, as the trusted core decides it.
@@ -576,16 +624,24 @@ impl Browser {
         }
         self.stop_editing();
         let regions = &self.regions;
-        if let Some(index) = regions.tabs.iter().position(|(tab, _)| tab.contains(point)) {
-            let close = regions.tabs[index].1;
-            self.outputs.push(if close.contains(point) { Output::CloseTab(index) } else { Output::SelectTab(index) });
+        if let Some(index) = regions.tabs.iter().position(|region| region.tab.contains(point)) {
+            let region = regions.tabs[index];
+            self.outputs.push(if region.close.contains(point) {
+                Output::CloseTab(index)
+            } else if region.speaker.is_some_and(|speaker| speaker.contains(point)) {
+                Output::MuteTab(index)
+            } else {
+                Output::SelectTab(index)
+            });
             return true;
         }
+        let mute_all = Output::MuteAll(!self.all_muted());
         let action = [
             (regions.new_tab, Output::NewTab),
             (regions.back, Output::Back),
             (regions.forward, Output::Forward),
             (regions.star, Output::Bookmark),
+            (regions.mute_all, mute_all),
             (regions.menu, Output::Menu),
             (regions.minimise, Output::Window(WindowAction::Minimise)),
             (regions.maximise, Output::Window(WindowAction::Maximise)),
@@ -889,11 +945,15 @@ impl Browser {
                 border(canvas, Rect::new(rect.x0, rect.y0, rect.x1, rect.y1 + BANK_BORDER), BANK_BORDER - 1.0, WHITE);
             }
             let close = Rect::new(rect.x1 - TAB_CLOSE - TAB_GAP * 2.0, rect.y0, rect.x1 - TAB_GAP, rect.y1);
-            canvas.push_clip(Rect::new(rect.x0, rect.y0, close.x0, rect.y1));
+            let speaker = (tab.muted || self.sounding.contains(&tab.channel)).then(|| Rect::new(close.x0 - TAB_SPEAKER, rect.y0, close.x0, rect.y1));
+            canvas.push_clip(Rect::new(rect.x0, rect.y0, speaker.map_or(close.x0, |speaker| speaker.x0), rect.y1));
             left_centred(canvas, rect, TAB_TEXT_INSET, &tab.title, TAB_TITLE, ink);
             canvas.pop_clip();
+            if let Some(speaker) = speaker {
+                speaker_glyph(canvas, speaker, tab.muted, ink);
+            }
             centred(canvas, close, "×", GLYPH, ink);
-            self.regions.tabs.push((rect, close));
+            self.regions.tabs.push(TabRegion { tab: rect, close, speaker });
             x = rect.x1 + TAB_GAP;
         }
         self.regions.new_tab = Rect::new(x + TAB_GAP, TAB_TOP_INACTIVE, x + TAB_GAP + NEW_TAB, STRIP_HEIGHT - TAB_GAP);
@@ -917,6 +977,11 @@ impl Browser {
             arrow(canvas, rect, pointing_left, if enabled { WHITE } else { DIM });
         }
         self.regions.menu = tool(width - MARGIN - TOOL_SIZE);
+        // Mute or unmute every tab, beside the menu.
+        self.regions.mute_all = tool(self.regions.menu.x0 - MARGIN - TOOL_SIZE);
+        canvas.fill(self.regions.mute_all, 0.0, BUTTON);
+        border(canvas, self.regions.mute_all, 2.0, RULE);
+        speaker_glyph(canvas, self.regions.mute_all, self.all_muted(), WHITE);
         canvas.fill(self.regions.menu, 0.0, BUTTON);
         border(canvas, self.regions.menu, 2.0, RULE);
         let middle = f64::midpoint(self.regions.menu.y0, self.regions.menu.y1);
@@ -926,7 +991,7 @@ impl Browser {
             canvas.fill(Rect::new(centre_x - MENU_BAR_WIDTH / 2.0, y, centre_x + MENU_BAR_WIDTH / 2.0, y + MENU_BAR_HEIGHT), 0.0, WHITE);
         }
 
-        let field = Rect::new(self.regions.forward.x1 + MARGIN * 2.0, top, self.regions.menu.x0 - MARGIN * 2.0, top + TOOL_SIZE);
+        let field = Rect::new(self.regions.forward.x1 + MARGIN * 2.0, top, self.regions.mute_all.x0 - MARGIN * 2.0, top + TOOL_SIZE);
         self.regions.field = field;
         canvas.fill(field, 0.0, FIELD);
         if self.editing {
@@ -1320,6 +1385,49 @@ fn arrow<C: Canvas + ?Sized>(canvas: &mut C, rect: Rect, pointing_left: bool, co
     }
 }
 
+/// A loudspeaker centred in `rect`: with sound waves, or crossed out when
+/// muted, as Chrome's tab shows it.
+fn speaker_glyph<C: Canvas + ?Sized>(canvas: &mut C, rect: Rect, muted: bool, colour: Colour) {
+    let centre = Point::new(f64::midpoint(rect.x0, rect.x1), f64::midpoint(rect.y0, rect.y1));
+    let half = SPEAKER_HALF;
+    // The magnet: a square of half the height, left of centre.
+    let back = centre.x - half;
+    canvas.fill(Rect::new(back, centre.y - half / 2.0, back + half / 2.0, centre.y + half / 2.0), 0.0, colour);
+    // The cone opens from the magnet to the full height at the centre.
+    let neck = back + half / 2.0;
+    canvas.polygon(
+        &[
+            Point::new(neck, centre.y - half / 2.0),
+            Point::new(centre.x, centre.y - half),
+            Point::new(centre.x, centre.y + half),
+            Point::new(neck, centre.y + half / 2.0),
+        ],
+        colour,
+    );
+    let right = centre.x + half / 4.0;
+    if muted {
+        // A cross to the right of the cone, two bars corner to corner.
+        let cross = Point::new(right + half / 2.0, centre.y);
+        let reach = half / 2.0;
+        let normal = SPEAKER_LINE / 2.0 / core::f64::consts::SQRT_2;
+        for direction in [1.0, -1.0] {
+            let along = Point::new(reach, reach * direction);
+            let across = Point::new(-normal * direction, normal);
+            canvas.polygon(&[cross - along + across, cross + along + across, cross + along - across, cross - along - across], colour);
+        }
+    } else {
+        // Two waves, drawn as bars rising with their distance.
+        for (offset, height) in [(0.0, half / 2.0), (half / 2.0, half)] {
+            let x = right + offset;
+            canvas.fill(
+                Rect::new(x, centre.y - height / 2.0 - SPEAKER_LINE / 2.0, x + SPEAKER_LINE, centre.y + height / 2.0 + SPEAKER_LINE / 2.0),
+                SPEAKER_LINE / 2.0,
+                colour,
+            );
+        }
+    }
+}
+
 /// A closed padlock with its body's left edge at `at.x`, centred on `at.y`.
 fn padlock<C: Canvas + ?Sized>(canvas: &mut C, at: Point, colour: Colour) {
     let body = Rect::new(at.x, at.y - LOCK_HEIGHT / 2.0 + SHACKLE_HEIGHT / 2.0, at.x + LOCK_WIDTH, at.y + LOCK_HEIGHT / 2.0 + SHACKLE_HEIGHT / 2.0);
@@ -1371,7 +1479,13 @@ mod tests {
 
     fn browser() -> (Browser, Recorder) {
         let mut browser = Browser::new(Frame { left_inset: 0.0, window_buttons: true });
-        browser.set_tabs(alloc::vec![TabInfo { title: "one".into(), colour: 0 }, TabInfo { title: "two".into(), colour: 1 }], 0);
+        browser.set_tabs(
+            alloc::vec![
+                TabInfo { title: "one".into(), colour: 0, channel: 7, muted: false },
+                TabInfo { title: "two".into(), colour: 1, channel: 8, muted: false }
+            ],
+            0,
+        );
         browser.set_strip(StripState {
             address: "https://example.invalid/".into(),
             identity: "example.invalid".into(),
@@ -1412,10 +1526,60 @@ mod tests {
     }
 
     #[test]
+    fn a_tab_playing_sound_shows_a_speaker_that_mutes_it() {
+        let (mut browser, mut canvas) = browser();
+        browser.take_outputs();
+        assert!(browser.regions.tabs.iter().all(|region| region.speaker.is_none()), "no sound, no speaker");
+        assert!(browser.set_sounding(BTreeSet::from([8])));
+        assert!(!browser.set_sounding(BTreeSet::from([8])), "the same again changes nothing");
+        browser.draw(&mut canvas, WIDTH, HEIGHT, 0);
+        assert!(browser.regions.tabs[0].speaker.is_none());
+        let speaker = browser.regions.tabs[1].speaker.expect("the second tab plays sound");
+        press_at(&mut browser, &mut canvas, speaker);
+        assert_eq!(browser.take_outputs(), [Output::MuteTab(1)], "a click on the speaker mutes, and does not select");
+        // Muted, the speaker stays even once the sound ends.
+        browser.set_tabs(
+            alloc::vec![
+                TabInfo { title: "one".into(), colour: 0, channel: 7, muted: true },
+                TabInfo { title: "two".into(), colour: 1, channel: 8, muted: false }
+            ],
+            0,
+        );
+        browser.set_sounding(BTreeSet::new());
+        browser.draw(&mut canvas, WIDTH, HEIGHT, 0);
+        assert!(browser.regions.tabs[0].speaker.is_some() && browser.regions.tabs[1].speaker.is_none());
+    }
+
+    #[test]
+    fn the_mute_all_button_mutes_every_tab_until_all_are_muted() {
+        let (mut browser, mut canvas) = browser();
+        browser.take_outputs();
+        let button = browser.regions.mute_all;
+        press_at(&mut browser, &mut canvas, button);
+        browser.set_tabs(
+            alloc::vec![
+                TabInfo { title: "one".into(), colour: 0, channel: 7, muted: true },
+                TabInfo { title: "two".into(), colour: 1, channel: 8, muted: false }
+            ],
+            0,
+        );
+        press_at(&mut browser, &mut canvas, button);
+        browser.set_tabs(
+            alloc::vec![
+                TabInfo { title: "one".into(), colour: 0, channel: 7, muted: true },
+                TabInfo { title: "two".into(), colour: 1, channel: 8, muted: true }
+            ],
+            0,
+        );
+        press_at(&mut browser, &mut canvas, button);
+        assert_eq!(browser.take_outputs(), [Output::MuteAll(true), Output::MuteAll(true), Output::MuteAll(false)]);
+    }
+
+    #[test]
     fn tabs_back_and_window_buttons_report_what_was_pressed() {
         let (mut browser, mut canvas) = browser();
         browser.take_outputs();
-        let (second, close) = browser.regions.tabs[1];
+        let TabRegion { tab: second, close, .. } = browser.regions.tabs[1];
         press_at(&mut browser, &mut canvas, Rect::new(second.x0, second.y0, second.x0 + 10.0, second.y1));
         press_at(&mut browser, &mut canvas, close);
         let (back, forward, close_window) = (browser.regions.back, browser.regions.forward, browser.regions.close);

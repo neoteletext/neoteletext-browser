@@ -117,8 +117,6 @@ pub struct Engine {
     audio: Receiver<'static, AUDIO_OBJECTS, AUDIO_RECORDS>,
     /// Voice operations waiting to be sent.
     sounds: Vec<Audio>,
-    /// The page the user opened, if any.
-    opened: Option<u16>,
 }
 
 impl Default for Engine {
@@ -149,7 +147,6 @@ impl Engine {
             updated: Vec::new(),
             audio: Receiver::new(arena),
             sounds: Vec::new(),
-            opened: None,
         }
     }
 
@@ -161,20 +158,14 @@ impl Engine {
     /// The user opened `page`, or none: its sounds play while it is open
     /// (the engine's REQ-AUD-012).
     pub fn open_page(&mut self, page: Option<u16>) {
-        self.opened = page;
         self.audio.open_page(page, &mut Outbox(&mut self.sounds));
     }
 
-    /// Whether the channel is the one heard. Becoming heard, its sounds are
-    /// sent again, because the interface forgot them, and the open page's
-    /// sounds start again.
-    pub fn set_audible(&mut self, heard: bool) {
-        if heard {
-            self.audio.sink_lost();
-            let mut outbox = Outbox(&mut self.sounds);
-            self.audio.open_page(None, &mut outbox);
-            self.audio.open_page(self.opened, &mut outbox);
-        }
+    /// The time, in milliseconds from any start: a live sound with no new
+    /// block for two seconds fades out (the engine's REQ-AUD-014). Called
+    /// before each piece of data and at each tick.
+    pub fn tick_audio(&mut self, now_ms: u64) {
+        self.audio.tick(now_ms, &mut Outbox(&mut self.sounds));
     }
 
     fn push_all(&mut self, packets: &[(Packet, PacketMeta)]) {
@@ -326,6 +317,16 @@ impl VoiceSink for Outbox<'_> {
 
     fn forget(&mut self, id: SoundId) {
         self.0.push(Audio::Forget(sound(id)));
+    }
+
+    fn stream(&mut self, id: SoundId, rate_hz: u32) {
+        self.0.push(Audio::Stream { sound: sound(id), rate_hz });
+    }
+
+    fn stream_samples(&mut self, id: SoundId, pcm: &[i16]) {
+        for piece in pcm.chunks(MAX_MESSAGE_SAMPLES) {
+            self.0.push(Audio::StreamSamples { sound: sound(id), pcm: piece.to_vec() });
+        }
     }
 
     fn start(&mut self, channel: u8, start: Start) {
@@ -482,19 +483,28 @@ mod tests {
     }
 
     #[test]
-    fn becoming_heard_sends_the_open_pages_sounds_again() {
+    fn a_live_sound_streams_and_fades_two_seconds_after_its_last_block() {
+        use neoteletext_audio::encode::{Command, Sound as Writer, packets};
+        let live = Writer::live(6, 1, neoteletext_audio::Codec::Pcm16, 8_000, 100).unwrap();
+        let play = Command { channel: 0, sequence: 1, operation: 1, handle: 6, generation: 1, gain: 50, fade_ms: 0, flags: 0, duck: 0, page: None };
+        let mut records = vec![live.object_record().unwrap(), play.record()];
+        for index in 0..4 {
+            records.extend(live.live_records(index, &[100; 50]));
+        }
+        let bytes: Vec<u8> = packets(0, 0, &records).0.iter().flat_map(|packet| packet.bytes).collect();
         let mut engine = Engine::new();
-        // Detection holds the bytes until the stream is long enough or ends.
-        engine.feed(&sound_stream(0x100));
+        engine.tick_audio(1_000);
+        engine.feed(&bytes);
         engine.finish();
-        engine.open_page(Some(0x100));
-        assert!(matches!(engine.take_sounds().last(), Some(Audio::Start { .. })));
-        engine.set_audible(false);
-        assert_eq!(engine.take_sounds(), [] as [Audio; 0]);
-        engine.set_audible(true);
         let sounds = engine.take_sounds();
-        assert!(sounds.iter().any(|audio| matches!(audio, Audio::Define { .. })), "defined again: {sounds:?}");
-        assert!(matches!(sounds.last(), Some(Audio::Start { channel: 1, .. })));
+        let sound = Sound { handle: 6, generation: 1 };
+        assert_eq!(sounds.first(), Some(&Audio::Stream { sound, rate_hz: 8_000 }), "{sounds:?}");
+        assert!(sounds.iter().any(|audio| matches!(audio, Audio::Start { channel: 0, .. })));
+        assert!(sounds.iter().any(|audio| matches!(audio, Audio::StreamSamples { pcm, .. } if pcm.len() == 50)));
+        engine.tick_audio(2_999);
+        assert_eq!(engine.take_sounds(), [] as [Audio; 0]);
+        engine.tick_audio(3_000);
+        assert_eq!(engine.take_sounds(), [Audio::Stop { channel: 0, fade_ms: neoteletext_audio::LIVE_STALL_FADE_MS }, Audio::Forget(sound)]);
     }
 
     #[test]

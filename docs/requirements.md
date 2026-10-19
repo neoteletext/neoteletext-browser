@@ -889,7 +889,7 @@ Requirements 13.1 to 13.13 are unchanged from the earlier design, and are stated
 - **Statement:** Sounds a channel carries, on EN 300 708 independent data lines of data channel 12, must be played as the engine's audio profile specifies (its area AUD, decisions E.84 to E.86): the latest command of each channel wins, and a page's sounds play while that page is open. The browser adds no rules of its own to what plays.
 - **Reason:** One set of rules for every receiver, kept in the engine (decision 36), so that a channel sounds the same in the browser as on a microcontroller.
 - **Source:** Decision 37; the engine's decisions E.84 to E.86.
-- **Verification:** Decoder tests: a page's sound is sent when its page is opened, faded when it is left, and sent again when the channel becomes heard.
+- **Verification:** Decoder tests: a page's sound is sent when its page is opened and faded when it is left; a live sound streams and fades two seconds after its last block.
 - **State:** Met on macOS.
 
 ### Requirement 16.2: Sound is read only in the decoder
@@ -899,26 +899,26 @@ Requirements 13.1 to 13.13 are unchanged from the earlier design, and are stated
 - **Verification:** Inspection: the audio receiver is a dependency of the decoder alone; the interface's sound module takes only `protocol::audio::Audio`.
 - **State:** Met.
 
-### Requirement 16.3: Only the active tab is heard
-- **Statement:** The trusted core must pass on the sound of the active tab's channel only. When another channel becomes the one heard, it must tell the interface to forget every sound at once, and tell the new channel's decoder, which sends its sounds again.
-- **Reason:** A background tab must not make sound, and a decoder cannot make a channel heard.
-- **Source:** Decision 37.
-- **Verification:** Test: `hearing::tests::only_the_active_channel_is_heard_and_switching_resets_the_interface`.
-- **State:** Met.
+### Requirement 16.3: Every tab is heard
+- **Statement:** The trusted core must pass on every channel's sound, tagged with its channel, and the interface must play each channel through its own mixer, so a background tab keeps playing, as in a web browser. A background tab keeps the page it had open. When a channel's decoder is gone, the trusted core must tell the interface to forget that channel's sounds.
+- **Reason:** The owner asked for tabs that play sound like Chrome's (decision 38); a decoder cannot touch another channel's sound.
+- **Source:** Decisions 37 and 38.
+- **Verification:** Tests: `hearing::tests::every_channel_is_heard_and_its_operations_are_tagged_with_it`, `the_opened_page_goes_to_the_active_channels_decoder_and_others_keep_theirs`; the interface's `every_channel_is_heard_and_a_muted_one_is_silent_but_still_sounding`; by hand on 19 October 2026, a live sound kept playing after its tab went to the background.
+- **State:** Met on macOS.
 
 ### Requirement 16.4: Every voice operation is checked twice
-- **Statement:** Every voice operation must be bounded by the protocol (a channel of 0 to 3, a gain of 0 to 100, a fade of 5 to 10 000 milliseconds, a profile sample rate, at most two minutes a sound and 32 768 samples a message), and checked again by the trusted core: a sound must be defined before it is filled or started, samples must lie within it, and the channel heard may hold at most 32 MB of samples in the interface. Only the trusted core may tell the interface to forget every sound.
+- **Statement:** Every voice operation must be bounded by the protocol (a channel of 0 to 3, a gain of 0 to 100, a fade of 5 to 10 000 milliseconds, a profile sample rate, at most two minutes a sound and 32 768 samples a message), and checked again by the trusted core: a sound must be defined before it is filled or started, samples must lie within it, a live sound takes only its next samples, and a channel may hold at most 32 MB of samples in the interface, every channel together 64 MB, a live sound counting as two seconds at 48 kHz. Only the trusted core may tell the interface to forget a channel's sounds, or mute it.
 - **Reason:** A compromised decoder could otherwise make the interface hold memory without bound, or reset another channel's sound.
 - **Source:** Requirements 4.2 and 4.4; decision 37.
-- **Verification:** Tests: the protocol's audio tests of every bound and of a decoder's reset; `hearing::tests::operations_are_checked_against_what_was_defined` and `the_ledger_bounds_what_the_interface_holds`.
+- **Verification:** Tests: the protocol's audio tests of every bound and of a decoder's reset or mute; `hearing::tests::operations_are_checked_against_what_was_defined`, `a_live_sound_takes_stream_samples_only` and `the_ledger_bounds_what_the_interface_holds`.
 - **State:** Met.
 
 ### Requirement 16.5: The opened page
-- **Statement:** A page's sounds must play while it is open: the page zoomed on the wall, or else the page chosen by number or in the list. Page sounds are on by default. A setting to turn them off, and a control for the master volume and mute, must be added to the window.
+- **Statement:** A page's sounds must play while it is open: the page zoomed on the wall, or else the page chosen by number or in the list. Page sounds are on by default. A setting to turn them off, and a control for the master volume, must be added to the window; muting is requirements 16.7 and 16.8.
 - **Reason:** Teletext attaches sounds to pages, and a television goes to the page whose number is typed.
 - **Source:** Decision 37; the engine's REQ-AUD-012.
 - **Verification:** Test: `the_opened_page_is_the_zoomed_one_or_else_the_one_chosen`; an end-to-end check by hand on 19 October 2026 (typing 100 played the page's chime).
-- **State:** Partly met: the setting, the volume and mute are not built.
+- **State:** Partly met: the setting and the volume are not built.
 
 ### Requirement 16.6: Sound output
 - **Statement:** The interface process must mix with the engine's mixer (`neoteletext-audio-mix`) and play through the operating system's output device with `cpal`, rendering on the audio thread without allocating. With no output device, the browser must run silent.
@@ -926,3 +926,24 @@ Requirements 13.1 to 13.13 are unchanged from the earlier design, and are stated
 - **Source:** Decision 37.
 - **Verification:** Interface tests of applying operations and rendering; `a_tone_plays_through_the_default_output_device`, run by hand because it needs a device (`cargo test -p t42-interface -- --ignored`); setting `T42_AUDIO_TRACE` makes the interface report the operations it applies and the loudest sample played.
 - **State:** Met on macOS. Not built on Windows and Linux, which run silent: on Linux `cpal` links the system's LGPL `libasound`, which awaits the owner (open decision D3 of the engine's `audio-platforms.md`).
+
+### Requirement 16.7: A tab shows its sound and mutes
+- **Statement:** A tab whose channel plays sound must show a speaker before its close button, and a muted tab a crossed-out speaker, whether or not it plays. A click on it must mute the tab, or unmute it, without selecting it. A tab's mute must follow it to the next channel it shows. The window's title must be the selected tab's, followed by "Audio playing" or "Muted" while it plays sound.
+- **Reason:** The owner asked for Chrome's behaviour (decision 38).
+- **Source:** Decision 38.
+- **Verification:** Tests: `a_tab_playing_sound_shows_a_speaker_that_mutes_it`, `muting_tells_the_interface_once_per_change`; by hand on 19 October 2026: the speaker appeared on a background tab playing a live sound, a click muted it (the device's peak fell to nothing), and the title read "livechannel.t42 – Muted – T42 Browser".
+- **State:** Met on macOS.
+
+### Requirement 16.8: Mute every tab
+- **Statement:** A button beside the menu must mute every tab, or, once every tab is muted, unmute every tab; its speaker is crossed out while every tab is muted.
+- **Reason:** The owner asked for it (decision 38).
+- **Source:** Decision 38.
+- **Verification:** Test: `the_mute_all_button_mutes_every_tab_until_all_are_muted`; by hand on 19 October 2026.
+- **State:** Met on macOS.
+
+### Requirement 16.10: Live sounds
+- **Statement:** A live sound (the engine's REQ-AUD-014) must play as its blocks arrive, from the newest block when its play starts, and fade out two seconds after its last block. The trusted core must tick every decoder, which keeps the clock of its live sounds.
+- **Reason:** The owner asked for live sounds (decision 38).
+- **Source:** Decision 38; the engine's decision E.87.
+- **Verification:** Tests: the decoder's `a_live_sound_streams_and_fades_two_seconds_after_its_last_block`; the interface's `a_live_sound_plays_once_its_buffer_fills`; by hand on 19 October 2026, a ten-minute live sound written by `neottx sound --live` played from a file channel.
+- **State:** Met on macOS.

@@ -40,7 +40,7 @@ fn browser(painter: &mut Painter) -> Result<Browser, String> {
         painter.set_page(PageKey { channel: CHANNEL, page }, &rendered.palette, &rendered.indices).map_err(|error| format!("{error:?}"))?;
     }
     let mut browser = Browser::new(Frame { left_inset: 0.0, window_buttons: true });
-    let tabs = TABS.iter().zip(0_u8..).map(|(&host, colour)| TabInfo { title: host.into(), colour }).collect();
+    let tabs = TABS.iter().zip(0_u8..).map(|(&host, colour)| TabInfo { title: host.into(), colour, channel: u32::from(colour), muted: false }).collect();
     browser.set_tabs(tabs, 2);
     browser.set_strip(StripState { address: "file:///samples/sample.tti".into(), identity: "sample.tti".into(), local: true, ..StripState::default() });
     browser.set_channel(channel);

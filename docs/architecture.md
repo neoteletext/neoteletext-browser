@@ -84,7 +84,8 @@ Each decision was made by the owner on the date given. Requirements in `requirem
 | Decision 34 | 15 October 2026 | **Targets and constraints:** microcontrollers are a target, with features cut; every target must work with no graphics processor, a graphics processor being a welcome extra; every library must be under a totally open licence. | — |
 | Decision 35 | 15 October 2026 | **The window,** built to the owner's mockups: the window frame drawn as Chrome draws it; labels in English; text in Roboto, in small capitals; page banks, a page list and a page area, with an overview of every page along the bottom; pages drawn flat only; a logarithmic page-size control that shrinks the pages over its whole travel and shows a list only at its left edge; a click on a page zooms it, and at the control's right end the wheel moves from page to page. Section 11 describes the window. | — |
 | Decision 36 | 15 October 2026 | **The engine is maintained in its own repository** and used by a pinned version, never copied or patched here. Only its core is used: `neoteletext-core`, `neoteletext-formats`, `neoteletext-image` and `neoteletext-web`. Its browser shell (`neoteletext-gui`, `neoteletext-browser` and its application crate) is not used. | Amended by decision 37: its audio crates are used too |
-| Decision 37 | 19 October 2026 | **Sound,** decided while the owner was away, as the owner had instructed. The engine's audio profile (its area AUD, decisions E.84 to E.86) is played on macOS. The decoder runs the engine's audio receiver (`neoteletext-audio`), which takes each packet before the teletext decoder; the trusted core passes on only the active tab's voice operations and checks each again; the interface mixes with the engine's `neoteletext-audio-mix` and plays through `cpal` 0.18.2 (Apache-2.0), a dependency on macOS only, because on Linux it links the system's LGPL `libasound` (open decision D3 of the engine's `audio-platforms.md`). A page's sounds play while it is open: the zoomed page, or else the page chosen by number or in the list. Page sounds are on by default; their setting, the volume and mute are not built yet. Section 6.4 lists the messages; requirements 16.1 to 16.6. | — |
+| Decision 37 | 19 October 2026 | **Sound,** decided while the owner was away, as the owner had instructed. The engine's audio profile (its area AUD, decisions E.84 to E.86) is played on macOS. The decoder runs the engine's audio receiver (`neoteletext-audio`), which takes each packet before the teletext decoder; the trusted core passes on only the active tab's voice operations and checks each again; the interface mixes with the engine's `neoteletext-audio-mix` and plays through `cpal` 0.18.2 (Apache-2.0), a dependency on macOS only, because on Linux it links the system's LGPL `libasound` (open decision D3 of the engine's `audio-platforms.md`). A page's sounds play while it is open: the zoomed page, or else the page chosen by number or in the list. Page sounds are on by default; their setting, the volume and mute are not built yet. Section 6.4 lists the messages; requirements 16.1 to 16.6. | Amended by decision 38: every tab is heard |
+| Decision 38 | 19 October 2026 | **Every tab is heard, and each can be muted,** as in Chrome, decided while the owner was away, as the owner asked. The trusted core passes on every channel's voice operations, tagged with the channel; the interface mixes one engine mixer per channel and plays their sum. A tab whose channel plays sound shows a speaker that mutes it, and a muted tab a crossed-out one that unmutes it; a button beside the menu mutes every tab, or unmutes every tab once all are muted. The trusted core keeps each tab's mute, which follows the tab to its next channel. A background tab keeps the page it had open, and its sound. The window's title is the selected tab's, marked "Audio playing" or "Muted" as Chrome marks it. Live sounds (the engine's REQ-AUD-014, decision E.87) play too: the trusted core ticks every decoder, which keeps the live sounds' clock. Requirements 16.3, 16.7 to 16.10. | — |
 
 ---
 
@@ -219,10 +220,9 @@ Every process speaks the same framing, the engine's: one kind byte, a 32-bit big
 | Data | Bytes of the channel, at most 64 kilobytes, passed on unread |
 | End | The channel's data has ended; finish what is buffered |
 | Showing | The pages the interface shows now, to render |
-| Tick | One flash unit has passed: render the shown pages again |
+| Tick | One flash unit has passed: render the shown pages again, and move the live sounds' clock on; sent to every decoder |
 | Close | Stop |
 | Opened | The page the user opened, or none: its sounds play while it is open |
-| Audible | Whether the channel is the one heard; becoming heard, the decoder sends its sounds again |
 
 **From a decoder to the trusted core:**
 
@@ -231,7 +231,7 @@ Every process speaks the same framing, the engine's: one kind byte, a 32-bit big
 | Arrived | A page was received completely for the first time: its number and a title from its first text row |
 | Updated | A page already held arrived again with different rows |
 | Frame | A rendered page: 480 by 500 palette indices and a palette of at most 32 colours, every index checked against the palette on arrival |
-| Audio | One voice operation of the channel's audio receiver: define a sound, its 16-bit samples (at most 32 768 a message), forget it, or start, stop or ramp one of four channels; every field bounded (requirement 16.4) |
+| Audio | One voice operation of the channel's audio receiver: define a sound, its 16-bit samples (at most 32 768 a message), forget it, announce a live sound and give its next samples, or start, stop or ramp one of four channels; every field bounded (requirement 16.4) |
 
 **From a fetcher to the trusted core** (`protocol::fetcher`):
 
@@ -245,18 +245,19 @@ Every process speaks the same framing, the engine's: one kind byte, a 32-bit big
 
 | Direction | Message | Meaning |
 |---|---|---|
-| Core to interface | Tabs | Each tab's cleaned title and colour, and which is active |
+| Core to interface | Tabs | Each tab's cleaned title, colour, channel and whether it is muted, and which is active |
 | Core to interface | Strip | What the trusted strip shows: the address as the address rules formatted it, the channel's identity, whether it is encrypted or a local file, whether Back and Forward can go anywhere, whether it is bookmarked |
 | Core to interface | Channel | The active channel: each page's status and title, and the banks' names |
 | Core to interface | Page | A page arrived, with its cleaned title |
 | Core to interface | Updated | A page changed |
 | Core to interface | Frame | One page image: channel and page, frame version, Portable Network Graphics bytes |
-| Core to interface | Audio | A voice operation of the channel heard, checked again by the trusted core; or a reset, which only the trusted core may send, when another channel becomes the one heard |
+| Core to interface | Audio | A voice operation of a channel, tagged with the channel and checked again by the trusted core; or, which only the trusted core may send, a reset when the channel is gone, or the channel's mute |
 | Core to interface | Close | The application is ending |
 | Interface to core | Visible | The pages the interface's layout puts on screen |
 | Interface to core | Cell | A click on a page's cell: page, column and row |
 | Interface to core | Select tab, close tab, new tab | Tab changes |
-| Interface to core | Opened | The page the user opened, passed to the decoder of the channel heard |
+| Interface to core | Opened | The page the user opened in the active tab, passed to that channel's decoder |
+| Interface to core | Mute tab, mute all | Mute or unmute one tab; mute or unmute every tab |
 | Interface to core | Strip input: navigate, back, forward, bookmark | What the user did in the trusted strip. These are message kinds of their own; no page intent can navigate |
 
 ### 6.5 Isolation on each platform

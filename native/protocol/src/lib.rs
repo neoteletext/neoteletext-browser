@@ -75,6 +75,8 @@ const KIND_SELECT_TAB: u8 = 18;
 const KIND_CLOSE_TAB: u8 = 19;
 const KIND_NEW_TAB: u8 = 20;
 const KIND_OPENED: u8 = 21;
+const KIND_MUTE_TAB: u8 = 22;
+const KIND_MUTE_ALL: u8 = 23;
 // Interface to trusted core: strip input, kinds of their own
 // (`architecture.md` section 6.4).
 const KIND_NAVIGATE: u8 = 32;
@@ -89,6 +91,8 @@ const CAN_GO_FORWARD: u8 = 4;
 const BOOKMARKED: u8 = 8;
 const LOCAL: u8 = 16;
 const ALL_FLAGS: u8 = ENCRYPTED | CAN_GO_BACK | CAN_GO_FORWARD | BOOKMARKED | LOCAL;
+// A tab's flags.
+const TAB_MUTED: u8 = 1;
 
 const HEADER_BYTES: usize = 5;
 const KEY_BYTES: usize = 6;
@@ -134,8 +138,13 @@ pub enum ToInterface {
         /// The image, an indexed PNG at the native size.
         png: Vec<u8>,
     },
-    /// A voice operation of the channel heard, checked by the trusted core.
-    Audio(audio::Audio),
+    /// A voice operation of a channel, checked by the trusted core.
+    Audio {
+        /// The channel whose sound it is.
+        channel: u32,
+        /// The operation.
+        audio: audio::Audio,
+    },
     /// The browser is closing: the interface ends.
     Close,
 }
@@ -165,6 +174,10 @@ pub enum ToCore {
     /// The page the user opened, zoomed on the wall, or none: its sounds
     /// play while it is open (the engine's REQ-AUD-012).
     Opened(Option<PageKey>),
+    /// Mute the tab at this index, or unmute it.
+    MuteTab(u8),
+    /// Mute every tab, or unmute every tab.
+    MuteAll(bool),
     /// Strip input: an address typed into the trusted strip.
     Navigate(String),
     /// Strip input: go back in the tab's history.
@@ -380,6 +393,8 @@ pub fn write_to_interface(out: &mut dyn Write, message: &ToInterface) -> Result<
             payload.push(u8::try_from(tabs.len()).map_err(|_| ProtocolError::BadValue("tabs"))?);
             for tab in tabs {
                 payload.push(tab.colour);
+                payload.extend_from_slice(&tab.channel.to_be_bytes());
+                payload.push(if tab.muted { TAB_MUTED } else { 0 });
                 push_text(&mut payload, &tab.title, MAX_TAB_TITLE)?;
             }
             KIND_TABS
@@ -434,8 +449,12 @@ pub fn write_to_interface(out: &mut dyn Write, message: &ToInterface) -> Result<
             payload.extend_from_slice(png);
             KIND_FRAME
         }
-        ToInterface::Audio(audio) => {
-            audio::push(&mut payload, audio, audio::Sender::Core)?;
+        ToInterface::Audio { channel, audio } => {
+            payload.extend_from_slice(&channel.to_be_bytes());
+            // Checked on its own, as the reader reads it after the channel.
+            let mut operation = Vec::new();
+            audio::push(&mut operation, audio, audio::Sender::Core)?;
+            payload.extend_from_slice(&operation);
             KIND_AUDIO
         }
         ToInterface::Close => KIND_CLOSE,
@@ -464,7 +483,12 @@ pub fn read_from_core(input: &mut dyn Read) -> Result<Option<ToInterface>, Proto
                     if usize::from(colour) >= TAB_COLOURS.len() {
                         return Err(ProtocolError::BadValue("tab colour"));
                     }
-                    Ok(TabInfo { colour, title: fields.text(MAX_TAB_TITLE)? })
+                    let channel = fields.u32()?;
+                    let flags = fields.u8()?;
+                    if flags & !TAB_MUTED != 0 {
+                        return Err(ProtocolError::BadValue("tab flags"));
+                    }
+                    Ok(TabInfo { colour, channel, muted: flags & TAB_MUTED != 0, title: fields.text(MAX_TAB_TITLE)? })
                 })
                 .collect::<Result<_, _>>()?;
             ToInterface::Tabs { tabs, active }
@@ -528,7 +552,7 @@ pub fn read_from_core(input: &mut dyn Read) -> Result<Option<ToInterface>, Proto
             let png = fields.take(fields.bytes.len())?.to_vec();
             ToInterface::Frame { key, version, png }
         }
-        KIND_AUDIO => ToInterface::Audio(audio::read(&mut fields, audio::Sender::Core)?),
+        KIND_AUDIO => ToInterface::Audio { channel: fields.u32()?, audio: audio::read(&mut fields, audio::Sender::Core)? },
         KIND_CLOSE => ToInterface::Close,
         other => return Err(ProtocolError::UnknownKind(other)),
     };
@@ -567,6 +591,14 @@ pub fn write_to_core(out: &mut dyn Write, message: &ToCore) -> Result<(), Protoc
             }
             KIND_OPENED
         }
+        ToCore::MuteTab(index) => {
+            payload.push(*index);
+            KIND_MUTE_TAB
+        }
+        ToCore::MuteAll(muted) => {
+            payload.push(u8::from(*muted));
+            KIND_MUTE_ALL
+        }
         ToCore::Navigate(address) => {
             push_text(&mut payload, address, MAX_ADDRESS)?;
             KIND_NAVIGATE
@@ -603,6 +635,12 @@ pub fn read_from_interface(input: &mut dyn Read) -> Result<Option<ToCore>, Proto
         KIND_CLOSE_TAB => ToCore::CloseTab(fields.u8()?),
         KIND_NEW_TAB => ToCore::NewTab,
         KIND_OPENED => ToCore::Opened(if payload.is_empty() { None } else { Some(fields.key()?) }),
+        KIND_MUTE_TAB => ToCore::MuteTab(fields.u8()?),
+        KIND_MUTE_ALL => ToCore::MuteAll(match fields.u8()? {
+            0 => false,
+            1 => true,
+            _ => return Err(ProtocolError::BadValue("mute")),
+        }),
         KIND_NAVIGATE => ToCore::Navigate(fields.text(MAX_ADDRESS)?),
         KIND_BACK => ToCore::Back,
         KIND_FORWARD => ToCore::Forward,
@@ -644,7 +682,13 @@ mod tests {
     #[test]
     fn every_kind_round_trips() {
         for message in [
-            ToInterface::Tabs { tabs: vec![TabInfo { title: "news".into(), colour: 1 }, TabInfo { title: "sport".into(), colour: 7 }], active: 1 },
+            ToInterface::Tabs {
+                tabs: vec![
+                    TabInfo { title: "news".into(), colour: 1, channel: 3, muted: false },
+                    TabInfo { title: "sport".into(), colour: 7, channel: 9, muted: true },
+                ],
+                active: 1,
+            },
             ToInterface::Strip(strip()),
             ToInterface::Channel(channel()),
             ToInterface::Page { channel: 9, page: 0x899, title: "Clock".into() },
@@ -707,8 +751,13 @@ mod tests {
         bytes = vec![KIND_STRIP, 0, 0, 0, 5, 0x20, 0, 0, 0, 0];
         assert!(matches!(read_from_core(&mut bytes.as_slice()), Err(ProtocolError::BadValue("strip flags"))));
         // A tab colour the interface has no colour for.
-        bytes = vec![KIND_TABS, 0, 0, 0, 5, 0, 1, 8, 0, 0];
+        bytes = vec![KIND_TABS, 0, 0, 0, 10, 0, 1, 8, 0, 0, 0, 1, 0, 0, 0];
         assert!(matches!(read_from_core(&mut bytes.as_slice()), Err(ProtocolError::BadValue("tab colour"))));
+        // Unknown tab flags, and a mute that is neither on nor off.
+        bytes = vec![KIND_TABS, 0, 0, 0, 10, 0, 1, 0, 0, 0, 0, 1, 2, 0, 0];
+        assert!(matches!(read_from_core(&mut bytes.as_slice()), Err(ProtocolError::BadValue("tab flags"))));
+        bytes = vec![KIND_MUTE_ALL, 0, 0, 0, 1, 2];
+        assert!(matches!(read_from_interface(&mut bytes.as_slice()), Err(ProtocolError::BadValue("mute"))));
     }
 
     #[test]

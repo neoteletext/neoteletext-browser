@@ -112,6 +112,8 @@ pub struct Tab {
     pub history: Vec<Address>,
     pub position: usize,
     pub channel: ChannelState,
+    /// The user muted the tab; it stays muted as it moves to other channels.
+    pub muted: bool,
 }
 
 impl Tab {
@@ -149,7 +151,7 @@ impl Session {
         let address = parse(typed)?;
         let channel = self.channel_for(&address);
         self.active = self.tabs.len();
-        self.tabs.push(Tab { history: vec![address], position: 0, channel });
+        self.tabs.push(Tab { history: vec![address], position: 0, channel, muted: false });
         self.tabs.last().map(|tab| &tab.channel).ok_or_else(|| "no tab is open".into())
     }
 
@@ -190,6 +192,20 @@ impl Session {
         }
     }
 
+    /// Mutes tab `index`, or unmutes it. Returns whether there is such a tab.
+    pub fn toggle_mute(&mut self, index: usize) -> bool {
+        let Some(tab) = self.tabs.get_mut(index) else { return false };
+        tab.muted = !tab.muted;
+        true
+    }
+
+    /// Mutes every tab, or unmutes every tab.
+    pub fn mute_all(&mut self, muted: bool) {
+        for tab in &mut self.tabs {
+            tab.muted = muted;
+        }
+    }
+
     /// Closes tab `index`; returns its channel so its decoder can be closed.
     pub fn close(&mut self, index: usize) -> Option<u32> {
         if index >= self.tabs.len() {
@@ -215,7 +231,7 @@ impl Session {
                 let host = tab.address().map_or("", |address| address.host.as_str());
                 // A tab's colour follows its site, so a site keeps its colour.
                 let colour = host.bytes().fold(0_u8, u8::wrapping_add).checked_rem(u8::try_from(TAB_COLOURS.len()).unwrap_or(1)).unwrap_or(0);
-                TabInfo { title: clean(host, MAX_TAB_TITLE), colour }
+                TabInfo { title: clean(host, MAX_TAB_TITLE), colour, channel: tab.channel.id, muted: tab.muted }
             })
             .collect()
     }
@@ -239,6 +255,25 @@ impl Session {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_tab_stays_muted_on_its_next_channel_and_mute_all_reaches_every_tab() {
+        let mut session = Session::new();
+        session.open("news.invalid").unwrap();
+        session.open("sport.invalid").unwrap();
+        assert!(session.toggle_mute(0));
+        assert!(!session.toggle_mute(2), "no such tab");
+        let first = session.tab_infos()[0].channel;
+        session.active = 0;
+        session.navigate("weather.invalid").unwrap();
+        let infos = session.tab_infos();
+        assert!(infos[0].channel != first && infos[0].muted, "the tab's new channel is muted");
+        assert!(!infos[1].muted);
+        session.mute_all(true);
+        assert!(session.tab_infos().iter().all(|tab| tab.muted));
+        session.mute_all(false);
+        assert!(session.tab_infos().iter().all(|tab| !tab.muted));
+    }
 
     #[test]
     fn history_goes_back_and_forward_and_a_new_address_drops_forward() {

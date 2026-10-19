@@ -1,7 +1,7 @@
 //! Sound on the pipes (`architecture.md` section 6.4, the engine's area AUD):
 //! the voice operations a decoder's audio receiver produces, carried to the
-//! trusted core and, if its channel is the one heard, on to the interface,
-//! which mixes and plays them. One payload form serves both pipes; the
+//! trusted core and on to the interface, tagged with their channel, which
+//! mixes and plays them. One payload form serves both pipes; the
 //! first byte names the operation, and each side accepts only the
 //! operations meant for it.
 
@@ -20,8 +20,12 @@ const OP_FORGET: u8 = 3;
 const OP_START: u8 = 4;
 const OP_STOP: u8 = 5;
 const OP_GAIN: u8 = 6;
-/// The trusted core's alone: the interface forgets every sound.
+/// The trusted core's alone: the interface forgets every sound of a channel.
 const OP_RESET: u8 = 7;
+const OP_STREAM: u8 = 8;
+const OP_STREAM_SAMPLES: u8 = 9;
+/// The trusted core's alone: the user muted or unmuted a channel.
+const OP_MUTE: u8 = 10;
 
 const FLAG_LOOP: u8 = 1;
 const FLAG_AFTER_CURRENT: u8 = 2;
@@ -92,9 +96,27 @@ pub enum Audio {
         /// 5 to 10 000 milliseconds.
         fade_ms: u16,
     },
-    /// Forget every sound and stop every channel at once: another channel
-    /// is now the one heard. Only the trusted core sends it.
+    /// A live sound exists (the engine's REQ-AUD-014): its samples follow
+    /// without end, in order.
+    Stream {
+        /// The sound.
+        sound: Sound,
+        /// One of the profile's sample rates.
+        rate_hz: u32,
+    },
+    /// The next samples of a live sound.
+    StreamSamples {
+        /// The sound.
+        sound: Sound,
+        /// At most [`MAX_MESSAGE_SAMPLES`].
+        pcm: Vec<i16>,
+    },
+    /// Forget every sound of the channel and stop its voices at once: its
+    /// decoder ended. Only the trusted core sends it.
     Reset,
+    /// The user muted the channel's tab, or unmuted it. Only the trusted
+    /// core sends it.
+    Mute(bool),
 }
 
 /// Who sends a payload, which decides what it may carry.
@@ -147,7 +169,20 @@ pub(crate) fn push(payload: &mut Vec<u8>, audio: &Audio, sender: Sender) -> Resu
             payload.extend_from_slice(&[OP_GAIN, *channel, *gain]);
             payload.extend_from_slice(&fade_ms.to_be_bytes());
         }
+        Audio::Stream { sound, rate_hz } => {
+            payload.push(OP_STREAM);
+            push_sound(payload, *sound);
+            payload.extend_from_slice(&rate_hz.to_be_bytes());
+        }
+        Audio::StreamSamples { sound, pcm } => {
+            payload.push(OP_STREAM_SAMPLES);
+            push_sound(payload, *sound);
+            for sample in pcm {
+                payload.extend_from_slice(&sample.to_le_bytes());
+            }
+        }
         Audio::Reset => payload.push(OP_RESET),
+        Audio::Mute(muted) => payload.extend_from_slice(&[OP_MUTE, u8::from(*muted)]),
     }
     // What would be refused on arrival is refused on sending.
     read(&mut Fields { bytes: payload }, sender).map(|_| ())
@@ -158,10 +193,7 @@ pub(crate) fn read(fields: &mut Fields<'_>, sender: Sender) -> Result<Audio, Pro
     let audio = match fields.u8()? {
         OP_DEFINE => {
             let sound = sound(fields)?;
-            let rate_hz = fields.u32()?;
-            if !SAMPLE_RATES.contains(&rate_hz) {
-                return Err(ProtocolError::BadValue("sample rate"));
-            }
+            let rate_hz = rate(fields)?;
             let samples = fields.u32()?;
             if samples == 0 || samples > MAX_SOUND_SAMPLES {
                 return Err(ProtocolError::BadValue("sound length"));
@@ -200,11 +232,34 @@ pub(crate) fn read(fields: &mut Fields<'_>, sender: Sender) -> Result<Audio, Pro
         }
         OP_STOP => Audio::Stop { channel: channel(fields)?, fade_ms: fade(fields)? },
         OP_GAIN => Audio::Gain { channel: channel(fields)?, gain: gain(fields)?, fade_ms: fade(fields)? },
+        OP_STREAM => Audio::Stream { sound: sound(fields)?, rate_hz: rate(fields)? },
+        OP_STREAM_SAMPLES => {
+            let sound = sound(fields)?;
+            let bytes = fields.take(fields.bytes.len())?;
+            let (pairs, odd) = bytes.as_chunks::<2>();
+            if !odd.is_empty() || pairs.is_empty() || pairs.len() > MAX_MESSAGE_SAMPLES {
+                return Err(ProtocolError::BadValue("samples"));
+            }
+            Audio::StreamSamples { sound, pcm: pairs.iter().map(|pair| i16::from_le_bytes(*pair)).collect() }
+        }
         OP_RESET if sender == Sender::Core => Audio::Reset,
+        OP_MUTE if sender == Sender::Core => Audio::Mute(match fields.u8()? {
+            0 => false,
+            1 => true,
+            _ => return Err(ProtocolError::BadValue("mute")),
+        }),
         _ => return Err(ProtocolError::BadValue("audio operation")),
     };
     fields.end()?;
     Ok(audio)
+}
+
+fn rate(fields: &mut Fields<'_>) -> Result<u32, ProtocolError> {
+    let rate_hz = fields.u32()?;
+    if !SAMPLE_RATES.contains(&rate_hz) {
+        return Err(ProtocolError::BadValue("sample rate"));
+    }
+    Ok(rate_hz)
 }
 
 fn sound(fields: &mut Fields<'_>) -> Result<Sound, ProtocolError> {
@@ -252,6 +307,8 @@ mod tests {
             Audio::Start { channel: 3, sound: SOUND, gain: 80, fade_ms: 5, looped: true, duck_percent: 25, after_current: true },
             Audio::Stop { channel: 0, fade_ms: 10_000 },
             Audio::Gain { channel: 1, gain: 0, fade_ms: 50 },
+            Audio::Stream { sound: SOUND, rate_hz: 8_000 },
+            Audio::StreamSamples { sound: SOUND, pcm: vec![1, -1] },
         ]
     }
 
@@ -262,18 +319,22 @@ mod tests {
             decoder_writes(&mut bytes, &FromDecoder::Audio(audio.clone())).unwrap();
             assert_eq!(read_from_decoder(&mut bytes.as_slice()).unwrap(), Some(FromDecoder::Audio(audio.clone())));
             let mut bytes = Vec::new();
-            write_to_interface(&mut bytes, &ToInterface::Audio(audio.clone())).unwrap();
-            assert_eq!(read_from_core(&mut bytes.as_slice()).unwrap(), Some(ToInterface::Audio(audio)));
+            write_to_interface(&mut bytes, &ToInterface::Audio { channel: 7, audio: audio.clone() }).unwrap();
+            assert_eq!(read_from_core(&mut bytes.as_slice()).unwrap(), Some(ToInterface::Audio { channel: 7, audio }));
         }
-        let mut bytes = Vec::new();
-        write_to_interface(&mut bytes, &ToInterface::Audio(Audio::Reset)).unwrap();
-        assert_eq!(read_from_core(&mut bytes.as_slice()).unwrap(), Some(ToInterface::Audio(Audio::Reset)));
-        for message in [ToDecoder::Opened(Some(0x123)), ToDecoder::Opened(None), ToDecoder::Audible(true), ToDecoder::Audible(false)] {
+        for audio in [Audio::Reset, Audio::Mute(true), Audio::Mute(false)] {
+            let mut bytes = Vec::new();
+            write_to_interface(&mut bytes, &ToInterface::Audio { channel: 1, audio: audio.clone() }).unwrap();
+            assert_eq!(read_from_core(&mut bytes.as_slice()).unwrap(), Some(ToInterface::Audio { channel: 1, audio }));
+        }
+        for message in [ToDecoder::Opened(Some(0x123)), ToDecoder::Opened(None)] {
             let mut bytes = Vec::new();
             write_to_decoder(&mut bytes, &message).unwrap();
             assert_eq!(decoder_reads(&mut bytes.as_slice()).unwrap(), Some(message));
         }
-        for message in [ToCore::Opened(Some(PageKey { channel: 4, page: 0x100 })), ToCore::Opened(None)] {
+        for message in
+            [ToCore::Opened(Some(PageKey { channel: 4, page: 0x100 })), ToCore::Opened(None), ToCore::MuteTab(2), ToCore::MuteAll(true), ToCore::MuteAll(false)]
+        {
             let mut bytes = Vec::new();
             write_to_core(&mut bytes, &message).unwrap();
             assert_eq!(read_from_interface(&mut bytes.as_slice()).unwrap(), Some(message));
@@ -281,8 +342,9 @@ mod tests {
     }
 
     #[test]
-    fn a_decoder_cannot_reset_the_interface() {
+    fn a_decoder_cannot_reset_or_mute_the_interface() {
         assert!(matches!(decoder_writes(&mut Vec::new(), &FromDecoder::Audio(Audio::Reset)), Err(ProtocolError::BadValue("audio operation"))));
+        assert!(matches!(decoder_writes(&mut Vec::new(), &FromDecoder::Audio(Audio::Mute(false))), Err(ProtocolError::BadValue("audio operation"))));
         // Written by hand, as a hostile decoder would, it is refused too.
         let bytes = [67, 0, 0, 0, 1, OP_RESET];
         assert!(matches!(read_from_decoder(&mut bytes.as_slice()), Err(ProtocolError::BadValue("audio operation"))));
@@ -301,6 +363,9 @@ mod tests {
         refused(Audio::Samples { sound: SOUND, first: 0, pcm: vec![0; MAX_MESSAGE_SAMPLES + 1] }, "samples");
         refused(Audio::Samples { sound: SOUND, first: MAX_SOUND_SAMPLES, pcm: vec![0] }, "samples beyond the sound");
         refused(Audio::Samples { sound: SOUND, first: u32::MAX, pcm: vec![0] }, "samples beyond the sound");
+        refused(Audio::Stream { sound: SOUND, rate_hz: 12_345 }, "sample rate");
+        refused(Audio::StreamSamples { sound: SOUND, pcm: vec![] }, "samples");
+        refused(Audio::StreamSamples { sound: SOUND, pcm: vec![0; MAX_MESSAGE_SAMPLES + 1] }, "samples");
         let start =
             |channel, gain, fade_ms, duck_percent| Audio::Start { channel, sound: SOUND, gain, fade_ms, looped: false, duck_percent, after_current: false };
         refused(start(4, 100, 5, 100), "audio channel");
@@ -313,9 +378,8 @@ mod tests {
             (vec![67, 0, 0, 0, 9, OP_SAMPLES, 0, 0, 0, 0, 0, 0, 0, 1], "samples"),
             (vec![67, 0, 0, 0, 10, OP_START, 0, 0, 0, 0, 100, 0, 5, 100, 4], "audio flags"),
             (vec![67, 0, 0, 0, 1, 99], "audio operation"),
-            (vec![54, 0, 0, 0, 1, 2], "audible"),
         ] {
-            let result = if bytes[0] == 54 { decoder_reads(&mut bytes.as_slice()).map(|_| ()) } else { read_from_decoder(&mut bytes.as_slice()).map(|_| ()) };
+            let result = read_from_decoder(&mut bytes.as_slice()).map(|_| ());
             assert!(matches!(result, Err(ProtocolError::BadValue(reason)) if reason == why), "{bytes:?}: {result:?}");
         }
     }
