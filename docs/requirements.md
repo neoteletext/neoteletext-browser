@@ -925,7 +925,7 @@ Requirements 13.1 to 13.13 are unchanged from the earlier design, and are stated
 - **Reason:** One mixer that behaves as the microcontrollers' does; `cpal` keeps unsafe code out of the browser's crates.
 - **Source:** Decisions 37 and 40.
 - **Verification:** Interface tests of applying operations and rendering; `a_tone_plays_through_the_default_output_device`, run by hand because it needs a device (`cargo test -p t42-interface -- --ignored`); setting `T42_AUDIO_TRACE` makes the interface report the operations it applies and the loudest sample played.
-- **State:** Met on macOS. Built for Windows (WASAPI) and Linux (ALSA, decision 40).
+- **State:** Met on macOS, Windows (WASAPI) and Linux (ALSA): on 19 October 2026 a page's sound played through each, as the device's peak level showed (decision 40).
 
 ### Requirement 16.7: A tab shows its sound and mutes
 - **Statement:** A tab whose channel plays sound must show a speaker before its close button, and a muted tab a crossed-out speaker, whether or not it plays. A click on it must mute the tab, or unmute it, without selecting it. A tab's mute must follow it to the next channel it shows. The window's title must be the selected tab's, followed by "Audio playing" or "Muted" while it plays sound.
