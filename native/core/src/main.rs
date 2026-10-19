@@ -589,8 +589,16 @@ fn run() -> Result<(), String> {
     if result.is_err() {
         let _ = interface.kill();
     }
-    let _ = interface.wait();
-    result
+    let status = interface.wait().map_err(|error| format!("cannot wait for the interface: {error}"))?;
+    ended(result, status)
+}
+
+/// The browser's outcome once the interface has ended: an interface that
+/// crashed or failed is a failure even when it closed its pipe cleanly, as
+/// a crashing process does.
+fn ended(result: Result<(), String>, interface: std::process::ExitStatus) -> Result<(), String> {
+    result?;
+    if interface.success() { Ok(()) } else { Err(format!("the interface ended abnormally ({interface})")) }
 }
 
 fn main() -> ExitCode {
@@ -600,5 +608,27 @@ fn main() -> ExitCode {
             eprintln!("t42-browser: {error}");
             ExitCode::FAILURE
         }
+    }
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use super::*;
+    use std::os::unix::process::ExitStatusExt;
+
+    /// A wait status as the kernel reports it: a signal number in the low
+    /// bits, or an exit code shifted into the second byte.
+    const SEGMENTATION_FAULT: i32 = 11;
+    const EXIT_CODE_SHIFT: u32 = 8;
+
+    #[test]
+    fn a_crashed_or_failed_interface_fails_the_browser() {
+        let clean = std::process::ExitStatus::from_raw(0);
+        assert_eq!(ended(Ok(()), clean), Ok(()));
+        let crashed = std::process::ExitStatus::from_raw(SEGMENTATION_FAULT);
+        assert!(ended(Ok(()), crashed).is_err_and(|error| error.contains("abnormally")), "a crash is not a clean exit");
+        let failed = std::process::ExitStatus::from_raw(1 << EXIT_CODE_SHIFT);
+        assert!(ended(Ok(()), failed).is_err());
+        assert_eq!(ended(Err("first".into()), crashed), Err("first".into()), "the first error is the one reported");
     }
 }
