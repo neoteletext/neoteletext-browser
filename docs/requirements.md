@@ -35,6 +35,7 @@
 13. The application update mechanism
 14. Build, dependencies and verification
 15. Platforms
+16. Sound
 
 ---
 
@@ -879,3 +880,49 @@ Requirements 13.1 to 13.13 are unchanged from the earlier design, and are stated
 - **Source:** Decision 34.
 - **Verification:** Test on a machine or virtual machine with no graphics processor.
 - **State:** Met on macOS by design (`vello_cpu` and softbuffer); not tested without a graphics processor.
+
+---
+
+## 16. Sound
+
+### Requirement 16.1: Sound follows the engine's audio profile
+- **Statement:** Sounds a channel carries, on EN 300 708 independent data lines of data channel 12, must be played as the engine's audio profile specifies (its area AUD, decisions E.84 to E.86): the latest command of each channel wins, and a page's sounds play while that page is open. The browser adds no rules of its own to what plays.
+- **Reason:** One set of rules for every receiver, kept in the engine (decision 36), so that a channel sounds the same in the browser as on a microcontroller.
+- **Source:** Decision 37; the engine's decisions E.84 to E.86.
+- **Verification:** Decoder tests: a page's sound is sent when its page is opened, faded when it is left, and sent again when the channel becomes heard.
+- **State:** Met on macOS.
+
+### Requirement 16.2: Sound is read only in the decoder
+- **Statement:** Audio packets must be read, reassembled, stored and decoded only in the decoder process. The trusted core must not parse them, and the interface process must receive only 16-bit samples and voice operations the trusted core checked.
+- **Reason:** Untrusted bytes are read only in a process with no rights (architecture principle 2), and nothing in the interface parses data from outside (principle 3).
+- **Source:** Decisions 18 and 37.
+- **Verification:** Inspection: the audio receiver is a dependency of the decoder alone; the interface's sound module takes only `protocol::audio::Audio`.
+- **State:** Met.
+
+### Requirement 16.3: Only the active tab is heard
+- **Statement:** The trusted core must pass on the sound of the active tab's channel only. When another channel becomes the one heard, it must tell the interface to forget every sound at once, and tell the new channel's decoder, which sends its sounds again.
+- **Reason:** A background tab must not make sound, and a decoder cannot make a channel heard.
+- **Source:** Decision 37.
+- **Verification:** Test: `hearing::tests::only_the_active_channel_is_heard_and_switching_resets_the_interface`.
+- **State:** Met.
+
+### Requirement 16.4: Every voice operation is checked twice
+- **Statement:** Every voice operation must be bounded by the protocol (a channel of 0 to 3, a gain of 0 to 100, a fade of 5 to 10 000 milliseconds, a profile sample rate, at most two minutes a sound and 32 768 samples a message), and checked again by the trusted core: a sound must be defined before it is filled or started, samples must lie within it, and the channel heard may hold at most 32 MB of samples in the interface. Only the trusted core may tell the interface to forget every sound.
+- **Reason:** A compromised decoder could otherwise make the interface hold memory without bound, or reset another channel's sound.
+- **Source:** Requirements 4.2 and 4.4; decision 37.
+- **Verification:** Tests: the protocol's audio tests of every bound and of a decoder's reset; `hearing::tests::operations_are_checked_against_what_was_defined` and `the_ledger_bounds_what_the_interface_holds`.
+- **State:** Met.
+
+### Requirement 16.5: The opened page
+- **Statement:** A page's sounds must play while it is open: the page zoomed on the wall, or else the page chosen by number or in the list. Page sounds are on by default. A setting to turn them off, and a control for the master volume and mute, must be added to the window.
+- **Reason:** Teletext attaches sounds to pages, and a television goes to the page whose number is typed.
+- **Source:** Decision 37; the engine's REQ-AUD-012.
+- **Verification:** Test: `the_opened_page_is_the_zoomed_one_or_else_the_one_chosen`; an end-to-end check by hand on 19 October 2026 (typing 100 played the page's chime).
+- **State:** Partly met: the setting, the volume and mute are not built.
+
+### Requirement 16.6: Sound output
+- **Statement:** The interface process must mix with the engine's mixer (`neoteletext-audio-mix`) and play through the operating system's output device with `cpal`, rendering on the audio thread without allocating. With no output device, the browser must run silent.
+- **Reason:** One mixer that behaves as the microcontrollers' does; `cpal` keeps unsafe code out of the browser's crates.
+- **Source:** Decision 37.
+- **Verification:** Interface tests of applying operations and rendering; `a_tone_plays_through_the_default_output_device`, run by hand because it needs a device (`cargo test -p t42-interface -- --ignored`); setting `T42_AUDIO_TRACE` makes the interface report the operations it applies and the loudest sample played.
+- **State:** Met on macOS. Not built on Windows and Linux, which run silent: on Linux `cpal` links the system's LGPL `libasound`, which awaits the owner (open decision D3 of the engine's `audio-platforms.md`).

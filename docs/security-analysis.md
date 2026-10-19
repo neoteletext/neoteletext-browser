@@ -150,6 +150,8 @@ Boundary 4 of the earlier design, the font helper, returns when fonts are fetche
 - **Cannot:** reach the network, other channels or the trusted core's state.
 - **Today, on macOS, can also:** read the user's files. It cannot send them anywhere, because it has no network, and it cannot encode them into frames the user would not see as pictures; but a later fault elsewhere could combine with it. Its sandbox must deny file reads (requirement 3.4).
 
+**Sound (requirements 16.1 to 16.4).** A decoder also reads its channel's audio packets, with the engine's bounded, fuzzed audio receiver, and sends voice operations and 16-bit samples. The trusted core passes on only the active tab's, re-checks each against the sounds that decoder defined, and holds the interface to 32 MB of its samples. A compromised decoder **can** play any sound in its own channel's four voices while its tab is active, as its server could; it **cannot** sound from a background tab, reset another channel's sounds, exceed the bounds, or play when the user has no output device.
+
 **Remaining risk:** low.
 
 ### 5.4 Boundary 4: fonts
@@ -165,6 +167,7 @@ Not present yet: no font is fetched. When fonts are, they are read by a confined
 - Text crosses only cleaned and bounded, and the interface refuses text that still holds a hidden character (requirements 4.8 and 11.5).
 - Text is only ever drawn as text runs: there is no markup to inject into (requirement 10.2).
 - No cookie, credential, setting or history beyond the strip's own state is ever sent (requirement 3.6).
+- Sound crosses only as voice operations and 16-bit samples, each bounded by the protocol and checked by the trusted core (requirement 16.4). The interface parses no audio format; it copies samples into the engine's mixer, which has no `unsafe` code. Playing needs the operating system's audio output, reached through `cpal` on macOS; the interface's sandbox profile already allowed it (verified 19 October 2026).
 
 **Remaining risk:** low. The image reader is a third-party crate (`png`), reading only our own encoder's output; it must still be fuzzed (requirement 4.6).
 

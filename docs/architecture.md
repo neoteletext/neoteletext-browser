@@ -83,7 +83,8 @@ Each decision was made by the owner on the date given. Requirements in `requirem
 | Decision 33 | 16 October 2026 | **The native architecture being built in `native/` is the architecture going forward.** The interface is drawn by T42 Browser's own Rust code with no web engine: an interface core that draws only through its own drawing interface, with back ends for the processor (`vello_cpu` and Parley) and for microcontrollers (`embedded-graphics`); a separate interface process with no secrets, which draws the window and the trusted strip; the trusted core, one decoder per channel and one fetcher per web channel, each a process of its own; frames on the pipe as indexed Portable Network Graphics images. The earlier approaches and their prototypes are kept in `prototypes/`. | — |
 | Decision 34 | 15 October 2026 | **Targets and constraints:** microcontrollers are a target, with features cut; every target must work with no graphics processor, a graphics processor being a welcome extra; every library must be under a totally open licence. | — |
 | Decision 35 | 15 October 2026 | **The window,** built to the owner's mockups: the window frame drawn as Chrome draws it; labels in English; text in Roboto, in small capitals; page banks, a page list and a page area, with an overview of every page along the bottom; pages drawn flat only; a logarithmic page-size control that shrinks the pages over its whole travel and shows a list only at its left edge; a click on a page zooms it, and at the control's right end the wheel moves from page to page. Section 11 describes the window. | — |
-| Decision 36 | 15 October 2026 | **The engine is maintained in its own repository** and used by a pinned version, never copied or patched here. Only its core is used: `neoteletext-core`, `neoteletext-formats`, `neoteletext-image` and `neoteletext-web`. Its browser shell (`neoteletext-gui`, `neoteletext-browser` and its application crate) is not used. | — |
+| Decision 36 | 15 October 2026 | **The engine is maintained in its own repository** and used by a pinned version, never copied or patched here. Only its core is used: `neoteletext-core`, `neoteletext-formats`, `neoteletext-image` and `neoteletext-web`. Its browser shell (`neoteletext-gui`, `neoteletext-browser` and its application crate) is not used. | Amended by decision 37: its audio crates are used too |
+| Decision 37 | 19 October 2026 | **Sound,** decided while the owner was away, as the owner had instructed. The engine's audio profile (its area AUD, decisions E.84 to E.86) is played on macOS. The decoder runs the engine's audio receiver (`neoteletext-audio`), which takes each packet before the teletext decoder; the trusted core passes on only the active tab's voice operations and checks each again; the interface mixes with the engine's `neoteletext-audio-mix` and plays through `cpal` 0.18.2 (Apache-2.0), a dependency on macOS only, because on Linux it links the system's LGPL `libasound` (open decision D3 of the engine's `audio-platforms.md`). A page's sounds play while it is open: the zoomed page, or else the page chosen by number or in the list. Page sounds are on by default; their setting, the volume and mute are not built yet. Section 6.4 lists the messages; requirements 16.1 to 16.6. | — |
 
 ---
 
@@ -187,7 +188,7 @@ Decision 18's shape, with the interface process in place of the web-engine windo
 | **Trusted core** | Everything the user trusts | Files the user opens as channels; starting the other processes | Everything; this is why it reads no network or teletext format and contains no web engine |
 | **Fetcher** | One channel's network connections and that channel's cookies | The network, which is its job | The ability to send and receive on the network, and that channel's cookies; no other channel's cookies, no history, no screen |
 | **Decoder** | One channel's pages | Nothing it needs; see section 6.5 for what the sandbox still allows | Pictures of its choosing in that channel's page images, which its server could draw anyway |
-| **Interface process** | What is on screen | The window and input; see section 6.5 | Everything on screen, including a false trusted strip, and the ability to send intents and **strip input**: it can navigate a tab to any address the trusted core's rules accept, go back and forward, and set bookmarks. No secrets, because none are sent to it |
+| **Interface process** | What is on screen | The window, input and the audio output; see section 6.5 | Everything on screen, including a false trusted strip, and the ability to send intents and **strip input**: it can navigate a tab to any address the trusted core's rules accept, go back and forward, and set bookmarks. No secrets, because none are sent to it |
 
 **The trusted strip and the interface process.** The strip is drawn by the interface process, in its own window, outside the page area (design section 5.2, option 1). That keeps the strip out of reach of every page image and every other process's window. It does not keep it out of reach of a fault in the interface process itself: a compromised interface process can draw a false strip and send strip input. Reaching it needs a fault in T42 Browser's own interface code or its drawing libraries, fed only by our own images and cleaned text (`security-analysis.md` section 5.6). Requirement 3.9's hostile interface harness tests every other property with an attacker's interface in its place.
 
@@ -220,6 +221,8 @@ Every process speaks the same framing, the engine's: one kind byte, a 32-bit big
 | Showing | The pages the interface shows now, to render |
 | Tick | One flash unit has passed: render the shown pages again |
 | Close | Stop |
+| Opened | The page the user opened, or none: its sounds play while it is open |
+| Audible | Whether the channel is the one heard; becoming heard, the decoder sends its sounds again |
 
 **From a decoder to the trusted core:**
 
@@ -228,6 +231,7 @@ Every process speaks the same framing, the engine's: one kind byte, a 32-bit big
 | Arrived | A page was received completely for the first time: its number and a title from its first text row |
 | Updated | A page already held arrived again with different rows |
 | Frame | A rendered page: 480 by 500 palette indices and a palette of at most 32 colours, every index checked against the palette on arrival |
+| Audio | One voice operation of the channel's audio receiver: define a sound, its 16-bit samples (at most 32 768 a message), forget it, or start, stop or ramp one of four channels; every field bounded (requirement 16.4) |
 
 **From a fetcher to the trusted core** (`protocol::fetcher`):
 
@@ -247,10 +251,12 @@ Every process speaks the same framing, the engine's: one kind byte, a 32-bit big
 | Core to interface | Page | A page arrived, with its cleaned title |
 | Core to interface | Updated | A page changed |
 | Core to interface | Frame | One page image: channel and page, frame version, Portable Network Graphics bytes |
+| Core to interface | Audio | A voice operation of the channel heard, checked again by the trusted core; or a reset, which only the trusted core may send, when another channel becomes the one heard |
 | Core to interface | Close | The application is ending |
 | Interface to core | Visible | The pages the interface's layout puts on screen |
 | Interface to core | Cell | A click on a page's cell: page, column and row |
 | Interface to core | Select tab, close tab, new tab | Tab changes |
+| Interface to core | Opened | The page the user opened, passed to the decoder of the channel heard |
 | Interface to core | Strip input: navigate, back, forward, bookmark | What the user did in the trusted strip. These are message kinds of their own; no page intent can navigate |
 
 ### 6.5 Isolation on each platform
@@ -478,7 +484,7 @@ With no web engine the application is far smaller: the interface process is abou
 
 | Platform | Window and input | Drawing | State |
 |---|---|---|---|
-| macOS | winit | `vello_cpu`, shown with softbuffer | **Built and run** on macOS 15.6, Apple silicon |
+| macOS | winit | `vello_cpu`, shown with softbuffer | **Built and run** on macOS 15.6, Apple silicon; **sound built and run** through `cpal` and Core Audio (decision 37) |
 | Windows, Linux | winit | as above | Not yet built or run |
 | iOS, Android | winit | as above; the graphics-processor back end may matter most here | Later (decision 24); frame time at phone resolutions to be measured |
 | Microcontrollers | the board's own display and input drivers | `embedded-graphics`, bitmap fonts | **The interface core drawn into a display in memory** by a test; no build for a microcontroller target yet |
@@ -498,10 +504,12 @@ t42-browser/
     draw-vello/             the drawing back end for desktops and phones: vello_cpu and Parley, with the fonts
     draw-embedded/          the drawing back end for microcontrollers: embedded-graphics
     protocol/               every message between processes: framing, bounds, kinds, text cleaning
-    core/                   the trusted core (t42-browser): tabs, history, addresses, routing, frames
+    core/                   the trusted core (t42-browser): tabs, history, addresses, routing, frames,
+                            and hearing.rs, which channel is heard and the checks on its sound
     decoder/                the decoder (t42-decoder): the engine as the decoder uses it
     fetcher/                the fetcher (t42-fetcher): the engine's user agent over the network
-    interface/              the interface process (t42-interface): winit, softbuffer, the image reader
+    interface/              the interface process (t42-interface): winit, softbuffer, the image reader,
+                            and audio.rs, the mixer and the output device
     site/                   a development tool, not shipped (t42-site): builds and serves a test channel
     fuzz/                   fuzz targets for every reader of input from outside a process (nightly, outside the workspace)
   docs/                     this document, the requirements, the security analysis, the design record
