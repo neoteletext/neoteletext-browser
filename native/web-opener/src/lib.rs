@@ -124,4 +124,12 @@ mod tests {
             assert_eq!(open(address), Err(OpenError::Refused), "{address:?} never reaches an opener");
         }
     }
+
+    /// Opens a page in the system's default web browser: run by hand on
+    /// each platform (`cargo test -p web-opener -- --ignored`).
+    #[test]
+    #[ignore = "opens the system's web browser"]
+    fn an_address_opens_in_the_default_browser() {
+        assert_eq!(open("https://www.example.com/"), Ok(()));
+    }
 }
