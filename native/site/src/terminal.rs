@@ -196,6 +196,15 @@ const FIRE_HANDLE: u8 = 9;
 const HIT_HANDLE: u8 = 10;
 const WIN_HANDLE: u8 = 11;
 const LOSE_HANDLE: u8 = 12;
+/// The typing page's sounds: a key's click, and Enter's bell.
+const CLICK_HANDLE: u8 = 13;
+const BELL_HANDLE: u8 = 14;
+/// A click: 25 ms of noise falling away fast, as a typewriter's key.
+const CLICK_SAMPLES: u32 = 200;
+const CLICK_DECAY: f64 = 6.0;
+/// A bell: E6, ringing for half a second.
+const BELL_HZ: f64 = 1_318.51;
+const BELL_SAMPLES: u32 = 4_000;
 /// A shot sweeps down from this pitch to this one, in hertz.
 const FIRE_FROM_HZ: f64 = 1_400.0;
 const FIRE_TO_HZ: f64 = 300.0;
@@ -227,18 +236,39 @@ fn fire_sound() -> Vec<i16> {
         .collect()
 }
 
-/// A hit: noise from a linear congruential generator (Numerical Recipes'
-/// constants), fading out.
+/// Noise from a linear congruential generator (Numerical Recipes'
+/// constants), shaped by `envelope` over `samples`.
 #[allow(clippy::cast_possible_truncation, reason = "the peak is a quarter of the samples' range")]
-fn hit_sound() -> Vec<i16> {
+fn noise(samples: u32, envelope: impl Fn(f64) -> f64) -> Vec<i16> {
     const MULTIPLIER: u32 = 1_664_525;
     const INCREMENT: u32 = 1_013_904_223;
     let mut state = 1_u32;
-    (0..HIT_SAMPLES)
+    (0..samples)
         .map(|index| {
             state = state.wrapping_mul(MULTIPLIER).wrapping_add(INCREMENT);
             let noise = f64::from(state >> 16) / f64::from(u16::MAX) * 2.0 - 1.0;
-            (noise * NOTE_PEAK * (1.0 - f64::from(index) / f64::from(HIT_SAMPLES))).round() as i16
+            (noise * NOTE_PEAK * envelope(f64::from(index) / f64::from(samples))).round() as i16
+        })
+        .collect()
+}
+
+/// A hit: noise fading out over a quarter of a second.
+fn hit_sound() -> Vec<i16> {
+    noise(HIT_SAMPLES, |share| 1.0 - share)
+}
+
+/// A key's click: a short burst of noise that falls away fast.
+fn click_sound() -> Vec<i16> {
+    noise(CLICK_SAMPLES, |share| (-CLICK_DECAY * share).exp())
+}
+
+/// Enter's bell.
+#[allow(clippy::cast_possible_truncation, reason = "the peak is a quarter of the samples' range")]
+fn bell_sound() -> Vec<i16> {
+    (0..BELL_SAMPLES)
+        .map(|index| {
+            let time = f64::from(index) / f64::from(NOTE_RATE);
+            ((2.0 * std::f64::consts::PI * BELL_HZ * time).sin() * NOTE_PEAK * (-NOTE_DECAY * time).exp()).round() as i16
         })
         .collect()
 }
@@ -654,7 +684,7 @@ impl Session {
             }
             Event::Up(press) => self.up(press),
         }
-        if matches!(self.page, 0x300 | 0x400) && !self.sounds_sent {
+        if matches!(self.page, 0x200 | 0x300 | 0x400) && !self.sounds_sent {
             self.sounds_sent = true;
             pushes.splice(0..0, self.sounds());
         }
@@ -669,6 +699,9 @@ impl Session {
         let name = key_name(press.key);
         let character = char::from_u32(u32::from(press.key)).filter(|_| name.is_none());
         let control = press.modifiers & key::CONTROL != 0;
+        // The typing page clicks on every key, as a typewriter does, and
+        // rings on Enter.
+        let sound = (self.page == 0x200).then_some(if name == Some("Enter") { BELL_HANDLE } else { CLICK_HANDLE });
         match (self.page, name, character) {
             // A press moves at once; held, the ship keeps moving each frame.
             (0x300, Some("ArrowLeft"), _) => {
@@ -716,7 +749,7 @@ impl Session {
             (_, _, Some(character)) if !control => self.character(character),
             _ => {}
         }
-        Vec::new()
+        sound.map(|handle| vec![self.play(handle)]).unwrap_or_default()
     }
 
     fn up(&mut self, press: Press) {
@@ -746,7 +779,14 @@ impl Session {
     /// piano's notes and the game's effects.
     fn sounds(&mut self) -> Vec<Push> {
         let notes = PIANO.iter().enumerate().filter_map(|(index, (_, _, frequency))| Some((FIRST_HANDLE + u8::try_from(index).ok()?, note(*frequency))));
-        let effects = [(FIRE_HANDLE, fire_sound()), (HIT_HANDLE, hit_sound()), (WIN_HANDLE, tune(&WIN_TUNE)), (LOSE_HANDLE, tune(&LOSE_TUNE))];
+        let effects = [
+            (FIRE_HANDLE, fire_sound()),
+            (HIT_HANDLE, hit_sound()),
+            (WIN_HANDLE, tune(&WIN_TUNE)),
+            (LOSE_HANDLE, tune(&LOSE_TUNE)),
+            (CLICK_HANDLE, click_sound()),
+            (BELL_HANDLE, bell_sound()),
+        ];
         let all: Vec<(u8, Vec<i16>)> = notes.chain(effects).collect();
         all.into_iter()
             .filter_map(|(handle, pcm)| {
@@ -1113,11 +1153,25 @@ mod tests {
     }
 
     #[test]
+    fn the_typing_page_clicks_on_keys_and_rings_on_enter() {
+        let mut session = Session::new(None);
+        feed(&mut session, &[Event::Page(Some(0x200))]);
+        let commands = |pushes: &[Push]| pushes.iter().filter(|push| matches!(push, Push::Packets(bytes) if bytes.len() == 42)).count();
+        let key = feed(&mut session, &[press('a')]);
+        assert_eq!(commands(&key), 1, "a click");
+        let enter = feed(&mut session, &[named("Enter")]);
+        assert_eq!(commands(&enter), 1, "a bell");
+        // The game's page does not click.
+        feed(&mut session, &[Event::Page(Some(0x300))]);
+        assert_eq!(commands(&feed(&mut session, &[press('a')])), 0);
+    }
+
+    #[test]
     fn the_piano_sends_its_sounds_then_a_command_a_key() {
         let mut session = Session::new(None);
         let pushes = feed(&mut session, &[Event::Page(Some(0x400))]);
         let sounds = pushes.iter().filter(|push| matches!(push, Push::Packets(bytes) if !bytes.is_empty() && bytes.len() % 42 == 0)).count();
-        assert_eq!(sounds, PIANO.len() + 4, "the notes and the game's four sounds");
+        assert_eq!(sounds, PIANO.len() + 6, "the notes, the game's four sounds and the typing page's two");
         let pushes = feed(&mut session, &[Event::Down(Press { key: u16::from(b'a'), modifiers: 0, physical: neoteletext_input::names::physical_key("KeyA") })]);
         assert!(matches!(pushes.first(), Some(Push::Packets(bytes)) if bytes.len() == 42), "one command, one packet");
         assert_eq!(session.piano, Some(0));
@@ -1155,7 +1209,7 @@ mod tests {
     fn the_game_sounds_a_shot_and_a_hit() {
         let mut session = Session::new(None);
         let opened = feed(&mut session, &[Event::Page(Some(0x300))]);
-        assert_eq!(opened.iter().filter(|push| matches!(push, Push::Packets(_))).count(), PIANO.len() + 4, "its sounds first");
+        assert_eq!(opened.iter().filter(|push| matches!(push, Push::Packets(_))).count(), PIANO.len() + 6, "its sounds first");
         let fired = feed(&mut session, &[Event::Down(Press { key: u16::from(b' '), modifiers: 0, physical: 0 })]);
         assert!(matches!(fired.first(), Some(Push::Packets(bytes)) if bytes.len() == 42), "the shot's command");
         // A shot one row below the bottom row's first invader hits it next frame.
