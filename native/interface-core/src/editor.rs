@@ -59,7 +59,11 @@ impl Editor {
     /// Replaces the text and selects all of it, as a browser does when the
     /// address field gains focus.
     pub fn set(&mut self, text: &str) {
+        // The caret and selection belong to the old text: left as they were,
+        // inserting would delete the old selection from the empty text.
         self.text.clear();
+        self.caret = 0;
+        self.anchor = 0;
         self.insert(text);
         self.select_all();
     }
@@ -172,6 +176,16 @@ impl Editor {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_field_can_be_set_again_after_its_text_was_selected() {
+        let mut editor = Editor::new(64);
+        editor.set("http://127.0.0.1:8071/terminal/");
+        editor.set("http://127.0.0.1:8071/terminal/");
+        assert_eq!((editor.text(), editor.selection()), ("http://127.0.0.1:8071/terminal/", (0, 31)));
+        editor.set("a.example");
+        assert_eq!((editor.text(), editor.selection()), ("a.example", (0, 9)));
+    }
 
     #[test]
     fn typing_replaces_the_selection_and_skips_hidden_characters() {
