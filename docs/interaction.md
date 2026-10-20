@@ -80,7 +80,7 @@ What goes: every key as it is pressed and released, Escape, Enter, Control-C, th
 
 There need be no cursor: a game has none, and keys go just the same. When there is one (section 7), it is where the channel says it is writing, nothing more: it is not clicked, and it does not gate the keys.
 
-**Links on an input channel.** The browser finds no page-number links of its own on a channel that takes input (`hyperlinks.md` section 6.1): the page is the host's alone, as a terminal's screen is, and "302" on it is the host's to answer. Only the links the channel declares (`LT` lines) show, and those keep working: a click on one follows the link and is not reported to the channel; every other click is reported as a cell (section 6, kind 5).
+**Links on an input channel.** Links work as everywhere else (`hyperlinks.md`): the browser finds page numbers in the text, declared links show, and pointing at one names its destination in the strip, exactly as a terminal emulator finds addresses in a host's output and makes them clickable. Because the host may want clicks (kind 5), the click is shared as terminals share it when the host has mouse reporting on: a plain click on any cell, link or not, goes to the host; Command-click (Control-Shift-click elsewhere) follows the link, which is the browser's modifier in any case. Tab and Enter go to the host like every other key, so on an input channel links are followed with the pointer, not the keyboard; opening a page by a link tells the host so (kind 4), as any page change does.
 
 That is all the viewer sees. Opening a page of a channel that takes input, with the channel's identity in the strip, is the consent, as sitting at a terminal is.
 
@@ -218,7 +218,7 @@ To be added to `requirements.md` as section 18 once adopted.
 | Number | Statement | Reason | Verification |
 |---|---|---|---|
 | 18.1 | The fetcher receives push over WebSocket, plain and TLS, and Server-Sent Events, with a heartbeat; pushed packets reach the decoder at once. | A channel pushes lines as a transmitter does. | Tests against `t42-site` in each mode. |
-| 18.2 | A key goes to a channel only while the tab is active, the open page is that channel's, and its descriptor declares input over its WebSocket; every key goes but the browser's own shortcuts, Command combinations on macOS and Control-Shift combinations elsewhere; closing the page stops it. On such a channel the browser finds no links of its own; a click on a declared link follows it and is not reported. | The open page is the terminal; the browser keeps exactly what a terminal emulator keeps, and the screen is the host's. | Test of each condition, Control-C and the F-keys among the keys that go; the link tests. |
+| 18.2 | A key goes to a channel only while the tab is active, the open page is that channel's, and its descriptor declares input over its WebSocket; every key goes but the browser's own shortcuts, Command combinations on macOS and Control-Shift combinations elsewhere; closing the page stops it. On such a channel a plain click goes to the host and Command-click follows a link. | The open page is the terminal; the browser keeps exactly what a terminal emulator keeps, links included. | Test of each condition, Control-C and the F-keys among the keys that go; the link tests. |
 | 18.3 | While keys go to a channel the strip says "Keys go to" the channel, with "Not secure" on a plain connection. | The viewer must always know who is listening. | Test; review. |
 | 18.4 | The fetcher takes from the trusted core only key records of at most 46 bytes, written to the push socket; nothing it takes changes what is fetched. | Requirement 4.7's one exception, bounded. | Test; the fetcher's reader fuzzed. |
 | 18.5 | A key record is sent within 1 ms of the key; the push socket has `TCP_NODELAY`; a pushed packet of the page being typed into is rendered on arrival, coalesced to the display rate, and drawn at the next frame, within 20 ms. | The latency budget. | A timed test in the full gate, pass or fail. |
@@ -256,7 +256,7 @@ The channel-as-screen use of qrkeyboard needs nothing built.
 ## 16. Tests
 
 - **Push:** each transport delivers a page and a row; a dead socket is found by the missing pong and reconnected with the subscription and a resume record.
-- **Links on an input channel:** no page number is underlined by the browser; a declared link is followed and not reported; any other click is reported as a cell.
+- **Links on an input channel:** page numbers are underlined as everywhere; a plain click on a link is reported to the host as a cell and follows nothing; Command-click follows it and is not reported; Tab goes to the host and focuses no link.
 - **Resume:** after a dropped socket the resume record goes first and the host's re-push of the open page is drawn.
 - **Typing:** keys go only under every condition of 18.2; every key goes, Escape, Enter, Control-C, the F-keys, digits and colour keys included; the strip's keys, a background tab's keys and the browser's shortcuts never go; closing the page stops them and releases a held key; on a channel without input three digits still choose a page locally.
 - **Page selection:** against `t42-site terminal`, `*302#` opens page 302, `#` the next, `*#` the one before, and `302` alone opens 302 where the page has no field.
