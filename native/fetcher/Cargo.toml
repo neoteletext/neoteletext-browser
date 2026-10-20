@@ -19,6 +19,8 @@ neoteletext-core.workspace = true
 embedded-io.workspace = true
 protocol.workspace = true
 interface-core = { workspace = true, optional = true }
+rustls.workspace = true
+webpki-roots.workspace = true
 
 [lints]
 workspace = true

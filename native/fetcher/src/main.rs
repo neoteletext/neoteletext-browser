@@ -174,8 +174,7 @@ fn descriptor_links(agent: &UserAgent<'_, Random, COOKIE_SLOTS, COOKIE_BYTES>) -
 
 fn run(channel: &str, allowed: &[IpAddr]) -> Result<(), String> {
     let mut storage = Box::new(Storage::default());
-    // No TLS in this port yet: https addresses are reported unreachable.
-    let mut config = Config { tls_available: false, redirects_within_channel: true, ..Config::default() };
+    let mut config = Config { tls_available: true, redirects_within_channel: true, ..Config::default() };
     for (slot, &ip) in config.allowed_local.iter_mut().zip(allowed.iter().take(ALLOWED_LOCAL)) {
         *slot = Some(address(ip));
     }

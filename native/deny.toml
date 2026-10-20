@@ -25,6 +25,12 @@ allow = ["MIT", "Apache-2.0", "Apache-2.0 WITH LLVM-exception", "BSD-2-Clause", 
 confidence-threshold = 0.9
 unused-allowed-license = "allow"
 
+# Mozilla's root certificate list, which the fetcher's and the phone
+# keyboard's TLS trust, as the engine's policy allows it.
+[[licenses.exceptions]]
+crate = "webpki-roots"
+allow = ["CDLA-Permissive-2.0"]
+
 # The workspace's own crates are never published.
 [licenses.private]
 ignore = true

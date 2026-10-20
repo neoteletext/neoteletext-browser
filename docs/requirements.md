@@ -303,7 +303,7 @@
 - **Reason:** These are the standard ways teletext services publish pages and push updates.
 - **Source:** Decision 12.
 - **Verification:** Test against a test server for each transport.
-- **State:** Partly met: plain HyperText Transfer Protocol and Server-Sent Events, exercised against the development site. Transport Layer Security needs a library (open decision 1); WebSocket and zxnet are not wired. No automated test yet.
+- **State:** Partly met: plain HyperText Transfer Protocol and Server-Sent Events, exercised against the development site; Transport Layer Security with `rustls` and Mozilla's root certificates (decision 41), checked by hand on 20 October 2026 against badssl.com, whose expired, self-signed and wrong-host certificates are refused and whose valid one is accepted. WebSocket and zxnet are not wired. No automated test yet.
 
 ### Requirement 5.9: Plain connections are allowed and shown
 - **Statement:** Channels reached without Transport Layer Security must be allowed, and the trusted strip must show that such a channel is not encrypted for as long as it is shown.

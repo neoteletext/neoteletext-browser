@@ -64,6 +64,11 @@ softbuffer = { version = "=0.4.8", default-features = false, features = ["waylan
 embedded-graphics = { version = "=0.8.2", default-features = false }
 # MIT or Apache-2.0: reads the indexed images the trusted core writes (design section 6).
 png = "=0.18.1"
+# Transport Layer Security for the fetcher and the phone keyboard (decision
+# 41: `rustls`), with ring's cryptography and Mozilla's root certificates,
+# the versions and features the engine's own fetcher uses.
+rustls = { version = "=0.23.46", default-features = false, features = ["ring", "std", "tls12"] }
+webpki-roots = "=1.0.9"
 
 # Warnings are errors in every gate (scripts/check.sh).
 [workspace.lints.rust]
