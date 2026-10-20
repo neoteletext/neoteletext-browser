@@ -4,7 +4,7 @@
 |---|---|
 | **Status** | Adopted 16 October 2026 (decision 33). Built in part, in `native/`; section 15 says what is built and what is not. |
 | **Date** | 16 October 2026 |
-| **Companion documents** | [`requirements.md`](requirements.md) states every requirement in full, numbered, with its reason, how it is verified and whether it is met. [`security-analysis.md`](security-analysis.md) analyses this architecture's security. [`hyperlinks.md`](hyperlinks.md) proposes hyperlinks (open decision 8) and [`hyperlinks-security.md`](hyperlinks-security.md) analyses their security. [`licensing.md`](licensing.md) says which licences may sit beside the browser's code. [`native-interface-design.md`](native-interface-design.md) records how this architecture was chosen, the prototypes it was chosen from, its review against the earlier design, and what was built when. |
+| **Companion documents** | [`requirements.md`](requirements.md) states every requirement in full, numbered, with its reason, how it is verified and whether it is met. [`security-analysis.md`](security-analysis.md) analyses this architecture's security. [`hyperlinks.md`](hyperlinks.md) specifies hyperlinks (decision 41) and [`hyperlinks-security.md`](hyperlinks-security.md) analyses their security. [`interaction.md`](interaction.md) proposes channel push, typing back and the cursor (open decision 9) and [`interaction-security.md`](interaction-security.md) analyses their security. [`licensing.md`](licensing.md) says which licences may sit beside the browser's code. [`native-interface-design.md`](native-interface-design.md) records how this architecture was chosen, the prototypes it was chosen from, its review against the earlier design, and what was built when. |
 | **The earlier design** | The Tauri design that came before, with its own architecture, requirements, security analysis and proofs, is kept in [`../prototypes/docs/`](../prototypes/docs/), beside the prototypes that tested it. This document replaces it; where the two differ, this one holds. |
 | **Engine documents** | The teletext engine's own design lives in `~/devel/neoteletext`: `ARCHITECTURE.md`, `docs/channels.md`, `docs/web-discovery-security.md`, `docs/font-security.md`. This document refers to them by path. |
 
@@ -573,7 +573,7 @@ Still to come: the launcher and updater (section 12).
 
 ## 16. Decisions still open
 
-None. Every decision below was taken on 20 October 2026 (decision 41), each as recommended; the questions are kept for reference.
+Open decision 9 only. Every decision before it was taken on 20 October 2026 (decision 41), each as recommended; the questions are kept for reference.
 
 | Number | Question | Decided (decision 41) |
 |---|---|---|
@@ -585,6 +585,7 @@ None. Every decision below was taken on 20 October 2026 (decision 41), each as r
 | Open decision 6 | The libraries of `native/Cargo.toml`, each by name (requirement 14.3) | Approve the list as built |
 | Open decision 7 | The browser's own licence: it has no `LICENSE` file and no `license` field (`licensing.md` section 1) | MIT, as the engine |
 | Open decision 8 | Hyperlinks: the proposal of `hyperlinks.md`, with its ten decisions (its section 16), the amendment of requirement 4.5 among them | Adopt it and build its phase 1 |
+| Open decision 9 | Push, typing back and the cursor: the proposal of `interaction.md`, with its twelve decisions (its section 14), the amendment of requirement 4.7 among them; decisions 2 and 10 are already taken | Adopt it and build its phase 1 |
 
 ---
 
