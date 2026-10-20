@@ -167,7 +167,7 @@ A QR on a screen; the phone that scans it becomes that screen's keyboard, remote
 | Step | Budget | How |
 |---|---|---|
 | Local echo on screen | One frame, 16 ms | The interface draws echoes at display rate |
-| Key record on the wire | 1 ms | Three pipe writes; the fetcher waits in `poll` on its sockets and its input together, not a 5 ms sleep |
+| Key record on the wire | 1 ms | Three pipe writes; the fetcher sleeps until its input or a socket's reader wakes it, not a 5 ms sleep |
 | The network, there and back | The network's: 1 ms on a local network, 20–40 ms across a country | `TCP_NODELAY`; one key per message |
 | The channel | The author's | Push the rows that changed, with the cursor record |
 | Pushed packet to screen | 20 ms | The decoder renders the page being typed into on arrival, coalesced to one render per 16 ms; the core sends the frame at once; the interface draws at the next display frame |
@@ -278,7 +278,7 @@ Built on 20 October 2026, all three phases, in the engine (its decisions E.90 to
 3. **The engine does not encode a `CU` line as a packet.** The formats crate reads and writes the line; the decoder reads it from the page it already has, so the formats crate takes nothing from the input profile (E.91).
 4. **Every fetched file and pushed message is read whole** and its pages completed at once. A pushed page had shown only when the next page of its magazine came, and the last page of each magazine of a fetched channel never arrived at all. A fetched copy of a page the channel pushed is older and is dropped, since the contents' order may bring it after the push.
 5. **The trusted core numbers the records,** not the interface: it alone sends page, focus, resume and release records. The interface numbers its keys for its echo, and the core tells it which it has seen acknowledged.
-6. **`Sent { seq }` is not sent.** The round trip runs from the core's send, within a millisecond of the wire on this computer; the fetcher wakes at once for a key. It looks at its sockets every 5 ms rather than in `poll`, which is most of the measured round trip (requirement 18.5).
+6. **`Sent { seq }` is not sent.** The round trip runs from the core's send, within a millisecond of the wire on this computer; the fetcher wakes at once for a key. Each connection's own thread reads its socket and wakes the fetcher when bytes arrive, so the channel's answer is taken at once too: the round trip's median fell from 6.3 ms, when the fetcher looked at its sockets every 5 ms, to 0.28 ms (requirement 18.5).
 7. **A host goes to a page by sending it.** When a cursor record names another page of the same channel than the one open, while keys go to that channel, the browser shows that page, as a terminal shows what its host sends: `*200#` on the reference channel opens page 200. It is the only thing a channel's record can make the browser do, within the channel, and never a fetch; the viewer choosing a page overrides it.
 8. **Command-Escape** (Control-Shift-Escape elsewhere) leaves the page, as section 5 has it; plain Escape is the host's.
 9. **The menu button opens the phone keyboard's panel;** the browser has no other menu yet. Phone keys go from the trusted core to the interface, which acts on them as on its own keys, so they type into a page or choose pages exactly as the keyboard does.

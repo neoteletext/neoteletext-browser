@@ -32,6 +32,11 @@ const PAGE: u16 = 0x200;
 /// the channel's answer to a key within the same 20 ms.
 const PIPELINE_BUDGET: Duration = Duration::from_millis(20);
 const ROUND_TRIP_BUDGET: Duration = Duration::from_millis(20);
+/// The fetcher wakes when the channel's answer arrives (requirement 18.5).
+/// When it looked at its sockets every 5 ms, that wait was most of the
+/// round trip: a median of 6.3 ms here on 21 October 2026, against 0.3 ms
+/// once woken by the bytes themselves, and 0.4 ms in a debug build.
+const WAKE_BUDGET: Duration = Duration::from_millis(2);
 
 struct Killed(Child);
 
@@ -149,6 +154,7 @@ fn keys_round_trip_and_pages_reach_the_screen_within_budget() {
         worst(&pipelines)
     );
     assert!(median(&mut round_trips.clone()) <= ROUND_TRIP_BUDGET, "{round_trips:?}");
+    assert!(median(&mut round_trips.clone()) <= WAKE_BUDGET, "the fetcher waited for its answer: {round_trips:?}");
     // The budget is the shipped build's: an unoptimised build's render and
     // encoding take about three times as long, and are only reported.
     if !cfg!(debug_assertions) {

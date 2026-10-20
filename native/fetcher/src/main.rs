@@ -36,7 +36,7 @@ use std::io::{self, BufWriter};
 use std::net::IpAddr;
 use std::process::ExitCode;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::mpsc::{self, RecvTimeoutError};
 use std::time::{Duration, Instant as Clock};
 
 use neoteletext_core::types::{Instant, PageAddress};
@@ -52,12 +52,20 @@ use crate::transport::{Tcp, address};
 /// The engine's own sizes for the cookie jar (its REQ-WEB-006 defaults).
 const COOKIE_SLOTS: usize = 100;
 const COOKIE_BYTES: usize = 32 * 1024;
-/// Bytes read from a socket at a time.
+/// Bytes passed to the agent at a time.
 const READ_CHUNK: usize = 16 * 1024;
-/// How long the loop waits when nothing happened: short enough that a
-/// pushed page arrives without noticeable delay. A key record from the
-/// trusted core ends the wait at once (`interaction.md` section 10).
-const IDLE: Duration = Duration::from_millis(5);
+
+/// What ends the loop's wait: it sleeps until one comes, or until the
+/// agent's next timer (`interaction.md` section 10, requirement 18.5).
+enum Wake {
+    /// A key record from the trusted core, sent at once.
+    #[cfg(feature = "interaction")]
+    Record(Vec<u8>),
+    /// A socket has bytes, or has ended.
+    Network,
+    /// The trusted core closed standard input.
+    Ended,
+}
 
 /// Randomness for the agent (WebSocket masks), from the operating system's
 /// per-process random keys, which `RandomState` draws.
@@ -195,7 +203,11 @@ fn run(channel: &str, allowed: &[IpAddr]) -> Result<(), String> {
     }
     let random = Random { state: RandomState::new(), counter: 0 };
     let mut agent: Box<UserAgent<'_, Random, COOKIE_SLOTS, COOKIE_BYTES>> = Box::new(UserAgent::new(config, storage.buffers(), random));
-    let mut pump = Pump::new(Tcp::default());
+    let (wakes, woken) = mpsc::channel::<Wake>();
+    let network = wakes.clone();
+    let mut pump = Pump::new(Tcp::new(Arc::new(move || {
+        let _ = network.send(Wake::Network);
+    })));
     let mut output = BufWriter::new(io::stdout().lock());
     let start = Clock::now();
     let clock = || Instant(u64::try_from(start.elapsed().as_micros()).unwrap_or(u64::MAX));
@@ -207,19 +219,14 @@ fn run(channel: &str, allowed: &[IpAddr]) -> Result<(), String> {
     // The trusted core closes standard input to end the fetcher. Before
     // then it sends only key records (requirement 18.4); anything else
     // ends the fetcher too.
-    let closed = Arc::new(AtomicBool::new(false));
-    let flag = closed.clone();
-    let (commands, received) = std::sync::mpsc::channel::<Vec<u8>>();
     std::thread::spawn(move || {
-        read_commands(&commands);
-        flag.store(true, Ordering::Relaxed);
-        // Wakes the loop to see it.
-        let _ = commands.send(Vec::new());
+        read_commands(&wakes);
+        let _ = wakes.send(Wake::Ended);
     });
 
     let mut actions = Vec::new();
     agent.handle(clock(), Input::OpenChannel(channel), &mut |out| collect(out, &mut actions));
-    while !closed.load(Ordering::Relaxed) {
+    loop {
         let mut busy = !actions.is_empty();
         for action in std::mem::take(&mut actions) {
             let send = |output: &mut BufWriter<io::StdoutLock<'_>>, message: FromFetcher| write_to_core(output, &message).map_err(|error| error.to_string());
@@ -279,29 +286,35 @@ fn run(channel: &str, allowed: &[IpAddr]) -> Result<(), String> {
             agent.handle(clock(), Input::Tick, &mut |out| collect(out, &mut actions));
         }
         // A key record goes the moment it arrives; otherwise the loop
-        // waits for one, or for the sockets' next look.
-        let wait = if busy { Duration::ZERO } else { IDLE };
-        if let Ok(record) = received.recv_timeout(wait) {
-            for record in std::iter::once(record).chain(received.try_iter()) {
+        // sleeps until a key, a socket or the agent's timer wakes it.
+        let first = match (busy, next_tick) {
+            (true, _) => woken.try_recv().ok(),
+            (false, Some(at)) => match woken.recv_timeout(Duration::from_micros(at.0.saturating_sub(clock().0))) {
+                Ok(wake) => Some(wake),
+                Err(RecvTimeoutError::Timeout) => None,
+                Err(RecvTimeoutError::Disconnected) => return Ok(()),
+            },
+            (false, None) => Some(woken.recv().map_err(|error| error.to_string())?),
+        };
+        for wake in first.into_iter().chain(std::iter::from_fn(|| woken.try_recv().ok())) {
+            match wake {
                 #[cfg(feature = "interaction")]
-                if !record.is_empty() {
-                    agent.handle(clock(), Input::Send(&record), &mut |out| collect(out, &mut actions));
-                }
-                #[cfg(not(feature = "interaction"))]
-                let _ = record;
+                Wake::Record(record) => agent.handle(clock(), Input::Send(&record), &mut |out| collect(out, &mut actions)),
+                // The sockets are looked at on the next turn.
+                Wake::Network => {}
+                Wake::Ended => return Ok(()),
             }
         }
     }
-    Ok(())
 }
 
 /// Reads the trusted core's key records until its pipe closes or breaks
 /// the protocol.
-fn read_commands(commands: &std::sync::mpsc::Sender<Vec<u8>>) {
+fn read_commands(commands: &mpsc::Sender<Wake>) {
     let mut input = io::BufReader::new(io::stdin().lock());
     #[cfg(feature = "interaction")]
     while let Ok(Some(protocol::fetcher::ToFetcher::Send(record))) = protocol::fetcher::read_to_fetcher(&mut input) {
-        if commands.send(record).is_err() {
+        if commands.send(Wake::Record(record)).is_err() {
             return;
         }
     }
