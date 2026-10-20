@@ -191,6 +191,13 @@
 - **Verification:** Tests of the policy: `a_tab_sleeps_once_it_has_not_been_shown_for_a_while_unless_it_sounds`, `a_channels_data_is_kept_for_its_next_decoder_and_too_much_keeps_it_awake`, `a_fetcher_holding_a_push_connection_is_kept`.
 - **State:** Partly met, 21 October 2026: built and its policy tested; a decoder that slept and woke has not been watched in the window by hand. The interface tells the trusted core which channels sound (`ToCore::Sounding`), the fetcher whether it holds a push connection (`FromFetcher::Pushing`); a decoder or fetcher put to sleep that reports after the next one started is not listened to.
 
+### Requirement 3.14: A decoder's store grows as it fills
+- **Statement:** A decoder must start with room for 256 pages and sub-pages, and report once when it has received as many as it has room for; the trusted core must then start it again with twice the room, up to 4,096, and give it what the channel's decoder was given and the pages shown. A channel whose data was too much to keep (requirement 3.13) keeps the decoder it has.
+- **Reason:** A store of 4,096 pages takes 10.5 MB from the start, and most channels have a few hundred pages.
+- **Source:** Decision 47.
+- **Verification:** Tests: `a_store_that_fills_is_reported_once`; the protocol's round trip of `StoreFull`.
+- **State:** Met, 21 October 2026: a decoder at rest took 16 MB of physical memory, and 6.2 MB with the first store (release, `vmmap`). The restart with more room has not been watched by hand with a channel of more than 256 pages.
+
 ---
 
 ## 4. Messages between processes

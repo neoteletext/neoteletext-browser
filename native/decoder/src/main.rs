@@ -29,16 +29,27 @@ use std::time::Duration;
 
 use decoder::{Engine, Flashing, Rendered};
 use protocol::ProtocolError;
-use protocol::decoder::{FromDecoder, ToDecoder, read_from_core, write_to_core};
+use protocol::decoder::{FIRST_STORE_PAGES, FromDecoder, MAX_STORE_PAGES, ToDecoder, read_from_core, write_to_core};
 
 /// Microseconds in a millisecond: the audio receiver keeps milliseconds.
 const MICROSECONDS_PER_MILLISECOND: u64 = 1000;
 
 type Output<'a> = BufWriter<io::StdoutLock<'a>>;
 
-fn run() -> Result<(), ProtocolError> {
+/// The store size the trusted core asked for: `--store-pages N`, from
+/// [`FIRST_STORE_PAGES`] to [`MAX_STORE_PAGES`].
+fn store_pages() -> Result<usize, String> {
+    let mut arguments = std::env::args().skip(1);
+    match (arguments.next().as_deref(), arguments.next().map(|value| value.parse::<usize>())) {
+        (None, _) => Ok(FIRST_STORE_PAGES),
+        (Some("--store-pages"), Some(Ok(pages))) if (FIRST_STORE_PAGES..=MAX_STORE_PAGES).contains(&pages) => Ok(pages),
+        _ => Err(format!("usage: t42-decoder [--store-pages {FIRST_STORE_PAGES} to {MAX_STORE_PAGES}]")),
+    }
+}
+
+fn run(store_pages: usize) -> Result<(), ProtocolError> {
     let mut output = BufWriter::new(io::stdout().lock());
-    let mut engine = Engine::new();
+    let mut engine = Engine::with_store(store_pages);
     let mut showing: Vec<u16> = Vec::new();
     // The last frame sent of each page shown, so an unchanged page is
     // never sent again.
@@ -115,6 +126,9 @@ fn run() -> Result<(), ProtocolError> {
         // A shown page drawn again only when its reception moved, or data
         // every page may draw from changed.
         let changed = engine.take_changed();
+        if engine.take_store_full() {
+            write_to_core(&mut output, &FromDecoder::StoreFull)?;
+        }
         let pages: Vec<u16> = showing.iter().copied().filter(|page| changed.everything || changed.pages.contains(page)).collect();
         draw(&engine, &pages, now, &mut sent, &mut flashing, &mut output)?;
     }
@@ -166,7 +180,14 @@ fn send_sounds(engine: &mut Engine, output: &mut Output<'_>) -> Result<(), Proto
 }
 
 fn main() -> ExitCode {
-    match run() {
+    let pages = match store_pages() {
+        Ok(pages) => pages,
+        Err(usage) => {
+            eprintln!("t42-decoder: {usage}");
+            return ExitCode::FAILURE;
+        }
+    };
+    match run(pages) {
         Ok(()) => ExitCode::SUCCESS,
         Err(error) => {
             eprintln!("t42-decoder: {error}");

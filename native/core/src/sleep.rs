@@ -58,6 +58,13 @@ impl Sleep {
         kept.messages.push(message.clone());
     }
 
+    /// Whether everything the channel's decoder was given is kept: false
+    /// once it grew past [`MAX_KEPT_BYTES`].
+    #[must_use]
+    pub fn has_everything(&self, channel: u32) -> bool {
+        !self.kept.get(&channel).is_some_and(|kept| kept.overflowed)
+    }
+
     /// What the channel's decoder was given, to give a new one.
     #[must_use]
     pub fn kept(&self, channel: u32) -> &[ToDecoder] {
@@ -138,8 +145,10 @@ mod tests {
         sleep.keep(3, &ToDecoder::Showing(vec![0x100]));
         sleep.keep(3, &ToDecoder::End);
         assert_eq!(sleep.kept(3), [data, ToDecoder::End], "data, not requests");
+        assert!(sleep.has_everything(3));
         sleep.keep(3, &ToDecoder::Whole { packets: false, pushed: true, bytes: vec![0; MAX_KEPT_BYTES] });
         assert_eq!(sleep.kept(3), [] as [ToDecoder; 0]);
+        assert!(!sleep.has_everything(3));
         assert!(sleep.awake(3, None, start), "what it showed would be lost");
         sleep.forget(3);
         assert!(!sleep.awake(3, None, start));

@@ -41,7 +41,7 @@ use std::thread;
 use std::time::Duration;
 
 use interface_core::canvas::PageKey;
-use protocol::decoder::{FromDecoder, MAX_CHUNK, MAX_WHOLE, ToDecoder, read_from_decoder, write_to_decoder};
+use protocol::decoder::{FIRST_STORE_PAGES, FromDecoder, MAX_CHUNK, MAX_STORE_PAGES, MAX_WHOLE, ToDecoder, read_from_decoder, write_to_decoder};
 use protocol::fetcher::{FromFetcher, MAX_NOTICE, Origin, read_from_fetcher};
 use protocol::{ToCore, ToInterface, clean, read_from_interface, write_to_interface};
 
@@ -172,8 +172,10 @@ fn sandboxed(path: &Path) -> Command {
 }
 
 /// Starts a decoder for `channel`, whose messages arrive as events.
-fn start_decoder(path: &Path, channel: u32, generation: u64, events: Sender<Event>) -> Result<Decoder, String> {
-    let mut child = spawn(&mut sandboxed(path), "decoder")?;
+fn start_decoder(path: &Path, channel: u32, generation: u64, store_pages: usize, events: Sender<Event>) -> Result<Decoder, String> {
+    let mut command = sandboxed(path);
+    command.arg("--store-pages").arg(store_pages.to_string());
+    let mut child = spawn(&mut command, "decoder")?;
     let output = child.stdout.take().ok_or("the decoder has no output")?;
     let input = BufWriter::new(child.stdin.take().ok_or("the decoder has no input")?);
     thread::spawn(move || {
@@ -278,6 +280,10 @@ struct Core {
     sleep: Sleep,
     /// The generation of the next decoder or fetcher started.
     generation: u64,
+    /// The store size of each channel's decoder, when grown past the first.
+    store_pages: BTreeMap<u32, usize>,
+    /// The pages last told shown to the decoder of [`Core::showing`].
+    shown_pages: Vec<u16>,
     /// The links of the pages on screen (`hyperlinks.md`).
     #[cfg(feature = "links")]
     links: Links,
@@ -410,7 +416,8 @@ impl Core {
                     eprintln!("t42-browser: {problem}");
                 }
                 self.generation = self.generation.wrapping_add(1);
-                let mut decoder = start_decoder(&self.decoder_path, *id, self.generation, self.events.clone())?;
+                let pages = self.store_pages.get(id).copied().unwrap_or(FIRST_STORE_PAGES);
+                let mut decoder = start_decoder(&self.decoder_path, *id, self.generation, pages, self.events.clone())?;
                 for message in self.sleep.kept(*id) {
                     let _ = write_to_decoder(&mut decoder.input, message);
                 }
@@ -454,6 +461,34 @@ impl Core {
             drop(decoder.input);
             let _ = decoder.child.wait();
         }
+        Ok(())
+    }
+
+    /// A decoder's store is full: it is started again with twice the room,
+    /// up to the most a store holds, and given what the channel's decoder
+    /// was given and the pages shown (decision 47). A channel whose data
+    /// was too much to keep keeps the decoder it has.
+    fn grow_decoder(&mut self, id: u32) -> Result<(), String> {
+        let pages = self.store_pages.get(&id).copied().unwrap_or(FIRST_STORE_PAGES);
+        if pages >= MAX_STORE_PAGES || !self.sleep.has_everything(id) {
+            return Ok(());
+        }
+        let pages = pages.saturating_mul(2).min(MAX_STORE_PAGES);
+        self.store_pages.insert(id, pages);
+        if let Some(mut decoder) = self.decoders.remove(&id) {
+            let _ = write_to_decoder(&mut decoder.input, &ToDecoder::Close);
+            drop(decoder.input);
+            let _ = decoder.child.wait();
+        }
+        self.generation = self.generation.wrapping_add(1);
+        let mut decoder = start_decoder(&self.decoder_path, id, self.generation, pages, self.events.clone())?;
+        for message in self.sleep.kept(id) {
+            let _ = write_to_decoder(&mut decoder.input, message);
+        }
+        if self.showing == Some(id) {
+            let _ = write_to_decoder(&mut decoder.input, &ToDecoder::Showing(self.shown_pages.clone()));
+        }
+        self.decoders.insert(id, decoder);
         Ok(())
     }
 
@@ -577,6 +612,7 @@ impl Core {
                 #[cfg(feature = "links")]
                 self.links.retain(&visible);
                 self.frames.set_visible(visible);
+                self.shown_pages.clone_from(&pages);
                 self.tell(channel, &ToDecoder::Showing(pages));
                 self.showing = Some(channel);
             }
@@ -709,6 +745,7 @@ impl Core {
     fn decoded(&mut self, channel: u32, message: FromDecoder) -> Result<(), String> {
         let active = self.active_channel();
         match message {
+            FromDecoder::StoreFull => self.grow_decoder(channel)?,
             FromDecoder::Arrived { page, title } => {
                 let Some(tab) = self.session.tabs.iter_mut().find(|tab| tab.channel.id == channel) else { return Ok(()) };
                 if let Some(title) = tab.channel.arrived(page, &title)
@@ -1015,6 +1052,8 @@ impl Core {
             hearing: Hearing::default(),
             sleep: Sleep::default(),
             generation: 0,
+            store_pages: BTreeMap::new(),
+            shown_pages: Vec::new(),
             #[cfg(feature = "links")]
             links: Links::default(),
             #[cfg(any(feature = "links", feature = "interaction"))]

@@ -41,6 +41,15 @@ const KIND_AUDIO: u8 = 67;
 const KIND_LINKS: u8 = 68;
 #[cfg(feature = "interaction")]
 const KIND_CURSOR: u8 = 69;
+const KIND_STORE_FULL: u8 = 70;
+
+/// The pages and sub-pages a decoder first has room for: about 0.7 MB of
+/// store, enough for most channels; a decoder that fills it is started
+/// again with twice the room (decision 47).
+pub const FIRST_STORE_PAGES: usize = 256;
+/// The most a decoder's store holds, as the engine's own sessions keep
+/// (`neoteletext-app`'s `DEFAULT_PAGES`): 10.5 MB.
+pub const MAX_STORE_PAGES: usize = 4096;
 
 /// From the trusted core to a decoder.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -95,6 +104,9 @@ pub enum FromDecoder {
         /// The page number.
         page: u16,
     },
+    /// The page store is full: the channel has more pages and sub-pages
+    /// than it has room for, and the oldest are being forgotten.
+    StoreFull,
     /// A voice operation of the channel's audio receiver.
     Audio(crate::audio::Audio),
     /// The links found in a page, sent before its image whenever they
@@ -259,6 +271,7 @@ pub fn write_to_core(out: &mut dyn Write, message: &FromDecoder) -> Result<(), P
             payload.extend_from_slice(body);
             KIND_CURSOR
         }
+        FromDecoder::StoreFull => KIND_STORE_FULL,
     };
     write_frame(out, kind, &payload)
 }
@@ -313,6 +326,7 @@ pub fn read_from_decoder(input: &mut dyn Read) -> Result<Option<FromDecoder>, Pr
         // Only its length here: the trusted core checks the fields.
         #[cfg(feature = "interaction")]
         KIND_CURSOR => FromDecoder::Cursor { body: fields.array()? },
+        KIND_STORE_FULL => FromDecoder::StoreFull,
         other => return Err(ProtocolError::UnknownKind(other)),
     };
     fields.end()?;
@@ -360,6 +374,7 @@ mod tests {
         for message in [
             FromDecoder::Arrived { page: 0x100, title: "Headlines".into() },
             FromDecoder::Updated { page: 0x302 },
+            FromDecoder::StoreFull,
             FromDecoder::Frame { page: 0x123, palette: vec![[0, 0, 0], [255, 255, 255]], indices },
         ] {
             let mut bytes = Vec::new();

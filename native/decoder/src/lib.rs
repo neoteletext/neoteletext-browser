@@ -50,10 +50,8 @@ use neoteletext_formats::item::Reader;
 use neoteletext_formats::t42::T42Variant;
 use neoteletext_image::palette::{Rgba, colour_map_palette};
 use protocol::audio::{Audio, MAX_MESSAGE_SAMPLES, Sound};
+use protocol::decoder::{FIRST_STORE_PAGES, MAX_STORE_PAGES};
 
-/// Stored pages and sub-pages, as the engine's own sessions keep
-/// (`neoteletext-app`'s `DEFAULT_PAGES`).
-const STORE_PAGES: usize = 4096;
 /// Packets kept for enhancement pages: the Level 3.5 total of EN 300 706
 /// Annex E.8 plus the eight Magazine Organization Tables, as the engine's
 /// sessions keep.
@@ -146,6 +144,13 @@ pub struct Engine {
     updated: Vec<u16>,
     /// What the engine's events said changed since it was last asked.
     changes: Changes,
+    /// The pages and sub-pages the store has room for.
+    store_pages: usize,
+    /// Every page and sub-page whose reception started: when there are as
+    /// many as the store has room for, it is full.
+    started_pages: BTreeSet<(u16, u16)>,
+    /// The full store was reported.
+    full_told: bool,
     /// Pages whose content was compared to tell whether it changed: the
     /// tests count them.
     #[cfg(test)]
@@ -170,11 +175,20 @@ impl Default for Engine {
 }
 
 impl Engine {
-    /// An engine with an empty page store.
+    /// An engine with an empty page store of the first size.
     #[must_use]
     pub fn new() -> Self {
-        // One store for the life of the process, as the engine's sessions do.
-        let slots: &'static mut [StoredPage] = Box::leak(vec![StoredPage::EMPTY; STORE_PAGES].into_boxed_slice());
+        Self::with_store(FIRST_STORE_PAGES)
+    }
+
+    /// An engine with an empty page store of `store_pages` pages and
+    /// sub-pages, at most [`MAX_STORE_PAGES`].
+    #[must_use]
+    pub fn with_store(store_pages: usize) -> Self {
+        let store_pages = store_pages.clamp(1, MAX_STORE_PAGES);
+        // One store for the life of the process, as the engine's sessions
+        // do; a bigger one needs a new process (decision 47).
+        let slots: &'static mut [StoredPage] = Box::leak(vec![StoredPage::EMPTY; store_pages].into_boxed_slice());
         let sub_pages = Box::leak(vec![EnhancementSubPage::EMPTY; ENHANCEMENT_SUB_PAGES].into_boxed_slice());
         let packets = Box::leak(vec![EnhancementPacket::EMPTY; ENHANCEMENT_PACKETS].into_boxed_slice());
         let decoder = Decoder::with_enhancement_store(slots, EnhancementStore::new(sub_pages, packets), Config::default());
@@ -196,6 +210,9 @@ impl Engine {
             started: Clock::now(),
             updated: Vec::new(),
             changes: Changes::default(),
+            store_pages,
+            started_pages: BTreeSet::new(),
+            full_told: false,
             #[cfg(test)]
             digests: 0,
             audio: Receiver::new(arena),
@@ -347,9 +364,21 @@ impl Engine {
     /// shown page is to be drawn again.
     pub fn take_changed(&mut self) -> Changed {
         let changes = core::mem::take(&mut self.changes);
+        self.started_pages.extend(changes.started.iter().copied());
         // Arrivals are still to be worked out from the completed pages.
         self.changes.completed = changes.completed;
         Changed { pages: changes.touched, everything: changes.everything }
+    }
+
+    /// True once, when as many pages and sub-pages have been received as
+    /// the store has room for: the oldest are being forgotten, and the
+    /// decoder should be started again with more room.
+    pub fn take_store_full(&mut self) -> bool {
+        if self.full_told || self.started_pages.len() < self.store_pages {
+            return false;
+        }
+        self.full_told = true;
+        true
     }
 
     /// Microseconds since the engine started, on the clock it renders flash
@@ -507,13 +536,19 @@ impl Engine {
 struct Changes {
     touched: BTreeSet<u16>,
     completed: BTreeSet<u16>,
+    /// Pages and sub-pages whose reception started.
+    started: BTreeSet<(u16, u16)>,
     everything: bool,
 }
 
 impl Changes {
     fn note(&mut self, event: &Event) {
         match event {
-            Event::PageStarted(key) | Event::PageErased(key) | Event::UpdateIndicator(key) | Event::PageUpdated { key, .. } => {
+            Event::PageStarted(key) => {
+                self.touched.insert(key.address.mpp());
+                self.started.insert((key.address.mpp(), key.subcode.value()));
+            }
+            Event::PageErased(key) | Event::UpdateIndicator(key) | Event::PageUpdated { key, .. } => {
                 self.touched.insert(key.address.mpp());
             }
             Event::PageCompleted(key) => {
@@ -977,6 +1012,19 @@ LT,5,0,7,web:https://www.example.invalid/\nLK,101,https://sport.invalid/\n";
         assert_eq!(flashing.due(off), [0x101]);
         flashing.retain(&[0x100]);
         assert_eq!(flashing.next_us(off), None, "no longer shown");
+    }
+
+    #[test]
+    fn a_store_that_fills_is_reported_once() {
+        const ROOM: usize = 4;
+        let mut engine = Engine::with_store(ROOM);
+        engine.feed_whole(false, false, &sample::tti(&[0x100, 0x101, 0x102], &[]));
+        engine.take_changed();
+        assert!(!engine.take_store_full(), "room for one more");
+        engine.feed_whole(false, false, &sample::tti(&[0x103, 0x104], &[]));
+        engine.take_changed();
+        assert!(engine.take_store_full(), "as many pages as the store has room for");
+        assert!(!engine.take_store_full(), "once");
     }
 
     #[test]
