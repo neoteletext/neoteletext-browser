@@ -409,7 +409,7 @@ Built on 20 October 2026, phases 1 and 2, behind the `links` cargo feature (on b
 5. **The pointer over a link that leaves** is the system's shortcut shape (`CursorIcon::Alias`): there is no "arrow out of a box" pointer.
 6. **The colours,** chosen on screen (decision 3): the link `#3D8BFF`, edged white on dark backgrounds and black on light ones; the strip's link text `#1A4FD8`.
 7. **The strip's questions name the bare destination** ("Open https://www.example.com/story in your web browser?"); the strip's pointing text adds "(leaves this channel)" or "(opens in your web browser)".
-8. **Linux hands over with `xdg-open`** until a D-Bus crate for the XDG Desktop Portal is approved (decision 10). Windows uses `ShellExecuteW`, built and linted for Windows but not yet run there.
+8. **Linux hands over with `xdg-open`** until a D-Bus crate for the XDG Desktop Portal is approved (decision 10). Windows uses `ShellExecuteW`, which opened an address in Edge in the Windows 11 VM; `xdg-open` has not been run by hand on Linux.
 9. **Not built:**
    - offering the system's web browser when a teletext address turns out not to be teletext (section 7.1): neither the fetcher nor the decoder reports that a channel's content was refused as not teletext, and that report has to be designed first;
    - Fastext (section 6.3; requirement 12.4);

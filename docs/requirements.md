@@ -1025,7 +1025,7 @@ Adopted on 20 October 2026 (decision 41) from [`hyperlinks.md`](hyperlinks.md), 
 - **Reason:** Opening an address must never run a program.
 - **Source:** Decision 41; `hyperlinks.md`.
 - **Verification:** Test with `file:`, custom schemes, paths, a leading `-` and over-long addresses; the "nothing else opens" test of `hyperlinks-security.md` section 15.
-- **State:** Partly met. macOS: `/usr/bin/open -u`, by hand on 20 October 2026 (an `https` address opened in the default browser and was logged). Linux: `xdg-open`; the XDG Desktop Portal awaits the approval of a D-Bus crate (hyperlink decision 10). Windows: `ShellExecuteW`, built and linted for Windows but not yet run there. Tests: `only_plain_https_and_http_addresses_are_handed_over`, `nothing_but_a_confirmation_hands_a_web_page_over`, `the_web_is_handed_over_only_with_the_focus_and_at_most_every_two_seconds`.
+- **State:** Partly met. macOS: `/usr/bin/open -u`, by hand on 20 October 2026 (an `https` address opened in the default browser and was logged). Linux: `xdg-open`; the XDG Desktop Portal awaits the approval of a D-Bus crate (hyperlink decision 10). Windows: `ShellExecuteW`, by hand on 20 October 2026 in the Windows 11 VM's desktop (`an_address_opens_in_the_default_browser`: Edge opened the address); every test passed there with links compiled in and out. Tests: `only_plain_https_and_http_addresses_are_handed_over`, `nothing_but_a_confirmation_hands_a_web_page_over`, `the_web_is_handed_over_only_with_the_focus_and_at_most_every_two_seconds`.
 
 ### Requirement 17.10: Links by keyboard
 - **Statement:** Links can be reached and followed with the keyboard, and are in the accessibility tree.
