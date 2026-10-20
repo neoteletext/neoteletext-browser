@@ -29,7 +29,6 @@
     clippy::unimplemented
 )]
 
-mod frames;
 mod session;
 mod source;
 
@@ -49,6 +48,7 @@ use protocol::{ToCore, ToInterface, clean, read_from_interface, write_to_interfa
 
 #[cfg(feature = "links")]
 use protocol::links::{LinkKind, Message as LinkMessage, Pointing, Spot};
+use t42_browser::frames;
 use t42_browser::hearing::{Hearing, Send};
 #[cfg(feature = "links")]
 use t42_browser::links::{Channel as LinkChannel, Follow, Links, Refusal};

@@ -12,6 +12,7 @@ use neoteletext_image::png;
 /// The engine's writer needs two rows of scratch, plus a filter byte each.
 const SCRATCH: usize = 2 * (PAGE_WIDTH as usize + 1);
 
+/// The frames sent of each visible page.
 #[derive(Default)]
 pub struct Frames {
     visible: Vec<PageKey>,

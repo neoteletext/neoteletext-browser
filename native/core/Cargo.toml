@@ -25,5 +25,11 @@ neoteletext-image.workspace = true
 neoteletext-core.workspace = true
 web-opener = { workspace = true, optional = true }
 
+# The latency test (`interaction.md` section 10) measures the decoder's
+# render, this crate's encoding and the interface's decoding.
+[dev-dependencies]
+decoder.workspace = true
+t42-interface = { path = "../interface", default-features = false }
+
 [lints]
 workspace = true

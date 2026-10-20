@@ -2490,6 +2490,8 @@ dependencies = [
  "neoteletext-image",
  "neoteletext-input",
  "protocol",
+ "t42-decoder",
+ "t42-interface",
  "web-opener",
 ]
 

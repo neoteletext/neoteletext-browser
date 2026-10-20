@@ -1,5 +1,6 @@
 //! The trusted core's parser of typed addresses, a library so that it can
-//! be fuzzed on its own, its rules for what is heard, and its hyperlinks;
+//! be fuzzed on its own, its rules for what is heard, its frame encoder
+//! (measured by the latency test), its typing rules and its hyperlinks;
 //! the trusted core itself is `main.rs`.
 
 // No panicking constructs: this crate reads input from outside the
@@ -17,6 +18,7 @@
 )]
 
 pub mod address;
+pub mod frames;
 pub mod hearing;
 #[cfg(feature = "links")]
 pub mod links;
