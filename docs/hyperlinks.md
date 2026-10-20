@@ -80,7 +80,7 @@
 ## 4. What a page can do
 
 A page controls every pixel of its own image. Even with the underline attribute ignored, it can still draw something that looks like an underline:
-- **DRCS characters:** a page can define 12 × 10 glyphs of its own, including letters with a line under them, or a cell whose top dot line is solid, placed under the text above it.
+- **DRCS characters:** a page can define 12 × 10 glyphs of its own, including letters with a line under them, or a cell whose top dot line is solid, placed under the text above it. *Amended 21 October 2026:* the engine, as pinned, no longer decodes DRCS (its decision E.95), so a page that uses them shows its Level 1 characters, and this way is closed.
 - **Mosaics:** the bottom sextants of G1 mosaics, and the bars and lines of the G3 smooth mosaics.
 - **Colour:** at Level 2.5 and 3.5 a page chooses its own colours from 4,096, close enough to any blue.
 

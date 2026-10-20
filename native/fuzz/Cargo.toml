@@ -19,8 +19,8 @@ decoder = { path = "../decoder", package = "t42-decoder" }
 t42-interface = { path = "../interface" }
 t42-browser = { path = "../core" }
 web-opener = { path = "../web-opener" }
-neoteletext-qrkeyboard = { git = "file:///Users/andrewstuart/devel/neoteletext", rev = "c789bd2cac99da9ebbfd13bd602b33e66e08915a" }
-neoteletext-input = { git = "file:///Users/andrewstuart/devel/neoteletext", rev = "c789bd2cac99da9ebbfd13bd602b33e66e08915a" }
+neoteletext-qrkeyboard = { git = "file:///Users/andrewstuart/devel/neoteletext", rev = "afe5f44b7de5c13a05ad3bad40f6695c649238a1" }
+neoteletext-input = { git = "file:///Users/andrewstuart/devel/neoteletext", rev = "afe5f44b7de5c13a05ad3bad40f6695c649238a1" }
 
 [workspace]
 members = ["."]

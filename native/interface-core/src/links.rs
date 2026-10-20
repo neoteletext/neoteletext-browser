@@ -16,9 +16,8 @@ use crate::ui::border;
 /// The lines of the page image one teletext dot takes: a cell of 12 by 10
 /// dots drawn in 20 lines (EN 300 706 clause 2, the engine's 12-by-20
 /// mode). A page draws no long horizontal line thinner than one dot: its
-/// characters, mosaics, smooth mosaics and DRCS patterns are all made of
-/// whole dots, and character rounding adds half-dot steps only to
-/// diagonals.
+/// characters, mosaics and smooth mosaics are all made of whole dots, and
+/// character rounding adds half-dot steps only to diagonals.
 pub const DOT_LINES: u16 = 2;
 /// Dots down a page: 25 rows of 10.
 const DOTS_DOWN: u16 = PAGE_HEIGHT / DOT_LINES;
