@@ -133,7 +133,8 @@ fn targets_are_classified_from_the_target_alone() {
 
 #[test]
 fn a_file_channels_links_to_the_web_leave_it() {
-    let file = address::parse("/teletext/recording.t42").unwrap();
+    // An absolute path on this platform.
+    let file = address::parse(if cfg!(windows) { r"C:\teletext\recording.t42" } else { "/teletext/recording.t42" }).unwrap();
     let channel = Channel { id: CHANNEL, address: &file, exists: &existing };
     let descriptor = Descriptor::default();
     assert_eq!(descriptor.resolve(&Target::Page(0x302), &channel), Some(Destination::Page(0x302)));
