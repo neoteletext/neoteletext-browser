@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Status** | Proposed, 20 October 2026. Not adopted and not built. Section 14 lists the decisions the owner is asked to take. |
+| **Status** | Adopted 20 October 2026 (the architecture's decision 44), every recommendation of section 14 taken as the decision. Not built; phase 1 (section 15) is next. |
 | **Owner's brief** | A channel pushes teletext lines to the browser as a transmitter pushes them to a television. Optionally the viewer types back, each key as it is pressed, as a terminal does, with the least latency that can be had: over the channel's WebSocket, or from a phone through qrkeyboard.com. A cursor on the screen, optionally. Nothing more onerous than a terminal. |
 | **Companion documents** | [`interaction-security.md`](interaction-security.md) is the security analysis. [`architecture.md`](architecture.md), [`requirements.md`](requirements.md), [`hyperlinks.md`](hyperlinks.md) (the same pattern: the channel supplies data, the browser draws the marks, the trusted core decides). The engine's REQ-WEB-002 and -005, its audio profile (area AUD, whose record carriage this reuses), and qrkeyboard's `DEVELOPER_GUIDE.md` (`~/devel/qrkeyboard/qrkeyboard`). |
 
@@ -23,7 +23,7 @@
 11. Processes and messages
 12. Changes to the engine
 13. Proposed requirements
-14. Decisions for the owner
+14. Decisions
 15. Phases
 16. Tests
 
@@ -228,9 +228,11 @@ To be added to `requirements.md` as section 18 once adopted.
 | 18.9 | The phone keyboard runs in its own sandboxed process, which alone holds the pairing secret; its keys reach the trusted core bounded and without modifiers and act exactly as local keys; its QR is shown only from the panel, with its one-line warning; one phone at a time; Finish in the strip; a dropped phone holds the screen for at most 30 s. | A phone is a keyboard, no more; whoever scans has it. | Tests of the reader and the bounds; the sandbox test; review. |
 | 18.10 | All of this is behind the `interaction` feature, the phone keyboard behind `phone-keyboard`, both on by default and both compilable out. | The owner wants features able to be compiled out. | The gates build without them. |
 
-## 14. Decisions for the owner
+## 14. Decisions
 
-| Number | Question | Recommendation |
+All taken by the owner on 20 October 2026 (decision 44), each as recommended; 2 and 10 were taken earlier the same day.
+
+| Number | Question | Decided |
 |---|---|---|
 | 1 | Amend requirement 4.7 for the one exception: bounded key records on the channel's own WebSocket, while a page of the channel is open | Yes; it is the feature |
 | 2 | Every key goes to the channel while a page of a channel that takes input is open, with no dialog, no click and no mode; closing the page stops it | Yes: that is a terminal, and the strip says who is listening |
