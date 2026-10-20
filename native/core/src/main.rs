@@ -320,6 +320,10 @@ impl Core {
                 let sends = self.typing.key(&intent, self.now());
                 self.deliver_typing(sends)?;
             }
+            ToCore::Editing(editing) => {
+                let sends = self.typing.editing(editing, self.now());
+                self.deliver_typing(sends)?;
+            }
             #[cfg(feature = "phone-keyboard")]
             ToCore::PhonePanel(open) => self.phone_panel(open)?,
             #[cfg(feature = "phone-keyboard")]
@@ -607,7 +611,7 @@ impl Core {
             #[cfg(any(feature = "links", feature = "interaction"))]
             ToCore::Focused(focused) => self.focused(focused)?,
             #[cfg(feature = "interaction")]
-            ToCore::Key(_) => self.input_intent(intent)?,
+            ToCore::Key(_) | ToCore::Editing(_) => self.input_intent(intent)?,
             #[cfg(feature = "phone-keyboard")]
             ToCore::PhonePanel(_) | ToCore::PhoneFinish => self.input_intent(intent)?,
         }

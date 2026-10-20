@@ -101,11 +101,19 @@ pub struct Typing {
     active: Option<u32>,
     /// The page the viewer opened in the active tab.
     opened: Option<PageKey>,
-    /// The window has the keyboard focus.
+    /// The window does not have the keyboard focus.
     unfocused: bool,
+    /// The viewer is editing the address: the keys are the strip's.
+    editing: bool,
 }
 
 impl Typing {
+    /// Whether the keys are away from the page (the engine's key record
+    /// kind 6): the window lost the focus, or the address is being edited.
+    fn away(&self) -> bool {
+        self.unfocused || self.editing
+    }
+
     /// Whether keys go to `channel` now: its tab active, its page open, its
     /// input socket open.
     fn on(&self, channel: u32) -> bool {
@@ -237,7 +245,7 @@ impl Typing {
                 state.connected_before = true;
             }
             self.tell_page(channel, now_ms, &mut sends);
-            if self.on(channel) && self.unfocused {
+            if self.on(channel) && self.away() {
                 self.send_own(channel, Event::Focus(false), now_ms, &mut sends);
             }
         } else if !open && let Some(state) = self.channels.get_mut(&channel) {
@@ -248,19 +256,34 @@ impl Typing {
         sends
     }
 
-    /// The window gained or lost the keyboard focus: the channel being
-    /// typed into is told, and keys still down are released.
+    /// The window gained or lost the keyboard focus.
     pub fn focused(&mut self, focused: bool, now_ms: u64) -> Vec<Send> {
+        let was_away = self.away();
+        self.unfocused = !focused;
+        self.keys_moved(was_away, now_ms)
+    }
+
+    /// The viewer began or stopped editing the address, whose keys are
+    /// the strip's, not the page's.
+    pub fn editing(&mut self, editing: bool, now_ms: u64) -> Vec<Send> {
+        let was_away = self.away();
+        self.editing = editing;
+        self.keys_moved(was_away, now_ms)
+    }
+
+    /// When the keys left the page or came back to it, the channel being
+    /// typed into is told, and keys still down are released.
+    fn keys_moved(&mut self, was_away: bool, now_ms: u64) -> Vec<Send> {
         let mut sends = Vec::new();
-        if self.unfocused != focused {
+        let away = self.away();
+        if away == was_away {
             return sends;
         }
-        self.unfocused = !focused;
         if let Some(channel) = self.active.filter(|&channel| self.on(channel)) {
-            if !focused {
+            if away {
                 self.release(channel, now_ms, &mut sends);
             }
-            self.send_own(channel, Event::Focus(focused), now_ms, &mut sends);
+            self.send_own(channel, Event::Focus(!away), now_ms, &mut sends);
         }
         sends
     }
@@ -271,7 +294,7 @@ impl Typing {
     pub fn key(&mut self, intent: &KeyIntent, now_ms: u64) -> Vec<Send> {
         let mut sends = Vec::new();
         let channel = intent.key.channel;
-        if !self.on(channel) || self.opened != Some(intent.key) || self.unfocused {
+        if !self.on(channel) || self.opened != Some(intent.key) || self.away() {
             return sends;
         }
         let Ok(record) = key::read(&intent.record) else { return sends };
@@ -417,6 +440,23 @@ mod tests {
         let events: Vec<Event> = records(&leaving).iter().map(|record| record.event).collect();
         assert_eq!(events, [Event::Up(Press { key: u16::from(b'a'), modifiers: 0, physical: 0 }), Event::Page(None)]);
         assert!(leaving.iter().any(|send| matches!(send, Send::Interface(state) if !state.on)));
+    }
+
+    #[test]
+    fn editing_the_address_takes_the_keys_from_the_page_and_says_so() {
+        let mut typing = ready();
+        typing.key(&down(b'a', 1), 0);
+        let editing = typing.editing(true, 1);
+        let events: Vec<Event> = records(&editing).iter().map(|record| record.event).collect();
+        assert_eq!(events, [Event::Up(Press { key: u16::from(b'a'), modifiers: 0, physical: 0 }), Event::Focus(false)]);
+        assert!(records(&typing.key(&down(b'b', 2), 2)).is_empty(), "the keys are the strip's");
+        // The window losing the focus while editing changes nothing for the
+        // page, nor does it coming back.
+        assert_eq!(typing.focused(false, 3), []);
+        assert_eq!(typing.focused(true, 4), []);
+        let done = typing.editing(false, 5);
+        assert_eq!(records(&done).iter().map(|record| record.event).collect::<Vec<_>>(), [Event::Focus(true)]);
+        assert_eq!(records(&typing.key(&down(b'c', 3), 6)).len(), 1);
     }
 
     #[test]

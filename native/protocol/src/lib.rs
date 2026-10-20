@@ -101,6 +101,8 @@ const KIND_KEY: u8 = 27;
 const KIND_PHONE_PANEL: u8 = 28;
 #[cfg(feature = "phone-keyboard")]
 const KIND_PHONE_FINISH: u8 = 29;
+#[cfg(feature = "interaction")]
+const KIND_EDITING: u8 = 30;
 // Interface to trusted core: strip input, kinds of their own
 // (`architecture.md` section 6.4).
 const KIND_NAVIGATE: u8 = 32;
@@ -237,6 +239,10 @@ pub enum ToCore {
     /// The window gained or lost the keyboard focus.
     #[cfg(any(feature = "links", feature = "interaction"))]
     Focused(bool),
+    /// The viewer began or stopped editing the address: while they do,
+    /// keys are not the open page's (the engine's key record kind 6).
+    #[cfg(feature = "interaction")]
+    Editing(bool),
     /// A key, text or a click on the open page, for its channel if it
     /// takes input (`interaction.md` section 5).
     #[cfg(feature = "interaction")]
@@ -728,6 +734,11 @@ pub fn write_to_core(out: &mut dyn Write, message: &ToCore) -> Result<(), Protoc
             KIND_FOCUSED
         }
         #[cfg(feature = "interaction")]
+        ToCore::Editing(editing) => {
+            payload.push(u8::from(*editing));
+            KIND_EDITING
+        }
+        #[cfg(feature = "interaction")]
         ToCore::Key(intent) => {
             interaction::push_key(&mut payload, intent)?;
             KIND_KEY
@@ -813,6 +824,12 @@ pub fn read_from_interface(input: &mut dyn Read) -> Result<Option<ToCore>, Proto
             0 => false,
             1 => true,
             _ => return Err(ProtocolError::BadValue("focus")),
+        }),
+        #[cfg(feature = "interaction")]
+        KIND_EDITING => ToCore::Editing(match fields.u8()? {
+            0 => false,
+            1 => true,
+            _ => return Err(ProtocolError::BadValue("editing")),
         }),
         #[cfg(feature = "links")]
         KIND_CONFIRM => ToCore::Confirm(fields.u32()?),

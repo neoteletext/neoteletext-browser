@@ -203,6 +203,19 @@ mod tests {
     }
 
     #[test]
+    fn editing_round_trips_and_only_as_a_flag() {
+        use super::super::{ToCore, read_from_interface, write_to_core};
+        for editing in [true, false] {
+            let mut bytes = Vec::new();
+            write_to_core(&mut bytes, &ToCore::Editing(editing)).unwrap();
+            assert_eq!(read_from_interface(&mut bytes.as_slice()).unwrap().unwrap(), ToCore::Editing(editing));
+            // The framing: the kind, a 32-bit length, the flag.
+            bytes[5] = 2;
+            assert!(read_from_interface(&mut bytes.as_slice()).is_err(), "neither false nor true");
+        }
+    }
+
+    #[test]
     fn typing_round_trips_and_a_bad_cursor_is_refused() {
         let typing = Typing {
             channel: 3,

@@ -1065,7 +1065,7 @@ From `interaction.md` (decision 44), built on 20 October 2026 (decision 45).
 - **Reason:** The open page is the terminal; the browser keeps exactly what a terminal emulator keeps, links included.
 - **Source:** Decision 44; `interaction.md` section 5.
 - **Verification:** Test of each condition, Control-C and the F-keys among the keys that go; the link tests.
-- **State:** Met. Tests: `keys_go_only_under_every_condition`, `records_are_numbered_and_held_keys_are_released_on_leaving`, `keys_go_only_while_the_core_says_so`, `command_never_goes`; by hand on macOS on 20 October 2026 against `t42-site terminal`: `*200#` went to page 200, typed letters reached the channel, the game moved and fired, the piano played.
+- **State:** Met. Tests: `keys_go_only_under_every_condition`, `records_are_numbered_and_held_keys_are_released_on_leaving`, `keys_go_only_while_the_core_says_so`, `command_never_goes`, `editing_the_address_takes_the_keys_from_the_page_and_says_so`; by hand on macOS on 20 October 2026 against `t42-site terminal`: `*200#` went to page 200, typed letters reached the channel, the game moved and fired, the piano played, and Command-L into the address field showed the channel's "Your keys went elsewhere." until Escape gave the keys back.
 
 ### Requirement 18.3: The strip says where keys go
 - **Statement:** While keys go to a channel the strip says "Keys go to" the channel, with "Not secure" on a plain connection.

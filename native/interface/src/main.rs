@@ -293,10 +293,14 @@ impl App {
                     self.window_action(event_loop, action);
                     continue;
                 }
+                // Text input is on exactly while the address is edited, when
+                // the keys are not the open page's: its channel is told.
                 Output::TextInput(allowed) => {
                     if let Some(graphics) = &self.graphics {
                         graphics.window.set_ime_allowed(allowed);
                     }
+                    #[cfg(feature = "interaction")]
+                    self.send(event_loop, &ToCore::Editing(allowed));
                     continue;
                 }
             };
