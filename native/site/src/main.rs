@@ -10,9 +10,11 @@
 //! - `t42-site terminal [port] [--relay <address>]` serves the terminal
 //!   channel, which takes the viewer's keys (`interaction.md`), at
 //!   `http://127.0.0.1:<port>/terminal/` (port 8071 unless given); with a
-//!   qrkeyboard relay, its page 600 takes a phone's keys too.
+//!   qrkeyboard relay, its page 600 takes a phone's keys too; with
+//!   `--podcast <file.wav>`, its page 700 plays that episode.
 
 mod build;
+mod podcast;
 mod serve;
 mod terminal;
 mod websocket;
@@ -40,11 +42,17 @@ fn main() -> ExitCode {
             serve::run(&PathBuf::from(&arguments[1]), CHANNEL, port)
         }
         Some("terminal") => {
-            let relay = arguments.iter().position(|argument| argument == "--relay").and_then(|at| arguments.get(at + 1)).cloned();
+            let option = |name: &str| arguments.iter().position(|argument| argument == name).and_then(|at| arguments.get(at + 1)).cloned();
             let port = arguments.get(1).filter(|argument| !argument.starts_with("--")).and_then(|port| port.parse().ok()).unwrap_or(terminal::DEFAULT_PORT);
-            terminal::run(port, relay.as_deref())
+            option("--podcast")
+                .map(|path| podcast::read(path.as_ref()))
+                .transpose()
+                .and_then(|episode| terminal::run(port, &terminal::Settings { relay: option("--relay"), podcast: episode.map(std::sync::Arc::new) }))
         }
-        _ => Err("usage: t42-site build <folder> <sample>... | t42-site serve <folder> [port] | t42-site terminal [port] [--relay <address>]".into()),
+        _ => Err(
+            "usage: t42-site build <folder> <sample>... | t42-site serve <folder> [port] | t42-site terminal [port] [--relay <address>] [--podcast <file.wav>]"
+                .into(),
+        ),
     };
     match result {
         Ok(()) => ExitCode::SUCCESS,

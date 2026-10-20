@@ -17,13 +17,15 @@
 //!   plain click is reported to the host;
 //! - 600, with `--relay`, a phone as keyboard with the channel as the
 //!   screen: the page draws a qrkeyboard QR in mosaics, and the phone's
-//!   keys type into it.
+//!   keys type into it;
+//! - 700, with `--podcast`, an episode from a WAVE file streamed as live
+//!   sound: Space plays and pauses, the arrows skip, Enter starts again.
 
 use std::collections::BTreeMap;
 use std::fmt::Write as _;
 use std::io::{self, BufRead, BufReader, Write};
 use std::net::{TcpListener, TcpStream};
-use std::sync::mpsc;
+use std::sync::{Arc, mpsc};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -33,6 +35,7 @@ use neoteletext_input::cursor::{ECHO, MASKED, NO_CURSOR};
 use neoteletext_input::key::{self, Event, Press};
 use neoteletext_input::names::{key_name, physical_name};
 
+use crate::podcast::{self, Episode, Player};
 use crate::websocket;
 
 /// The channel's folder.
@@ -56,6 +59,8 @@ const ALPHA_CYAN: u8 = 0x06;
 const ALPHA_WHITE: u8 = 0x07;
 const DOUBLE_HEIGHT: u8 = 0x0D;
 const MOSAIC_RED: u8 = 0x11;
+const MOSAIC_BLUE: u8 = 0x14;
+const MOSAIC_CYAN: u8 = 0x16;
 const MOSAIC_WHITE: u8 = 0x17;
 const NEW_BACKGROUND: u8 = 0x1D;
 const BLACK_BACKGROUND: u8 = 0x1C;
@@ -70,14 +75,21 @@ const ENGLISH_HASH: u8 = 0x5F;
 const COLUMNS: usize = 40;
 
 /// The pages, in the contents file's order, with their titles.
-const PAGES: [(u16, &str); 6] = [
+const PAGES: [(u16, &str); 7] = [
     (0x100, "Index"),
     (0x200, "Type into a page"),
     (0x300, "Invaders: a game"),
     (0x400, "Piano: notes on keys"),
     (0x500, "Links and clicks"),
     (0x600, "Your phone as keyboard"),
+    (0x700, "Podcast: play and skip"),
 ];
+/// The podcast's progress bar, in cells: with its two colour codes, the
+/// width of a row less a margin.
+const PROGRESS_CELLS: usize = 36;
+/// A solid mosaic cell (EN 300 706 Table 48: all six sixels set).
+const SOLID_MOSAIC: char = '\x7f';
+const SECONDS_PER_MINUTE: u64 = 60;
 
 /// A row of a page: 7-bit codes, at most 40.
 #[derive(Clone, Default)]
@@ -215,12 +227,14 @@ const HIT_SAMPLES: u32 = 2_000;
 const TUNE_NOTE_SAMPLES: u32 = 1_000;
 const WIN_TUNE: [f64; 4] = [523.25, 659.25, 783.99, 1_046.50];
 const LOSE_TUNE: [f64; 3] = [392.00, 329.63, 196.00];
-/// The audio profile's four channels (REQ-AUD-010).
-const AUDIO_CHANNELS: u8 = 4;
+/// The channels the effects take in turn: the first three of the audio
+/// profile's four (REQ-AUD-010), the fourth being the podcast's.
+const AUDIO_CHANNELS: u8 = 3;
+const _: () = assert!(podcast::CHANNEL == AUDIO_CHANNELS, "the podcast has a channel of its own");
 const NOTE_GAIN: u8 = 80;
 const NOTE_FADE_MS: u16 = 5;
 /// The audio service the channel's sounds are on.
-const AUDIO_SERVICE: u8 = 0;
+pub const AUDIO_SERVICE: u8 = 0;
 
 /// A shot: a sine sweeping down, fading out.
 #[allow(clippy::cast_possible_truncation, reason = "the peak is a quarter of the samples' range")]
@@ -442,6 +456,15 @@ struct Field {
     masked: bool,
 }
 
+/// What the channel was started with, which every session shares.
+#[derive(Clone, Default)]
+pub struct Settings {
+    /// The qrkeyboard relay of page 600.
+    pub relay: Option<String>,
+    /// The episode of page 700.
+    pub podcast: Option<Arc<Episode>>,
+}
+
 /// One viewer's session: the page open, and every page's state.
 struct Session {
     page: u16,
@@ -463,6 +486,11 @@ struct Session {
     click: Option<(u8, u8)>,
     phone: Option<Phone>,
     relay: Option<String>,
+    /// The episode and this viewer's place in it.
+    podcast: Option<(Arc<Episode>, Player)>,
+    /// The second page 700 last showed and whether it was playing, so the
+    /// page is pushed each second and when the episode ends.
+    shown: Option<(u64, bool)>,
 }
 
 /// The phone keyboard of page 600: the screen side in its own thread.
@@ -481,7 +509,7 @@ enum PhoneEvent {
 }
 
 impl Session {
-    fn new(relay: Option<String>) -> Self {
+    fn new(settings: Settings) -> Self {
         Self {
             page: 0x100,
             previous: Vec::new(),
@@ -502,7 +530,9 @@ impl Session {
             record_id: 0,
             click: None,
             phone: None,
-            relay,
+            relay: settings.relay,
+            podcast: settings.podcast.map(|episode| (episode, Player::new())),
+            shown: None,
         }
     }
 
@@ -515,6 +545,7 @@ impl Session {
             0x400 => self.piano(),
             0x500 => self.links(),
             0x600 => self.phone_page(),
+            0x700 => self.podcast_page(),
             other => {
                 let mut page = Page::new(other, "No such page");
                 page.row(4, Row::new().code(ALPHA_WHITE).text("*100# goes back to the index."));
@@ -608,6 +639,40 @@ impl Session {
         }
         page.row(22, Row::new().code(ALPHA_WHITE).text(&phone.state));
         page.row(21, Row::new().code(ALPHA_GREEN).text(&format!("Phone typed: {}", phone.typed)));
+        page
+    }
+
+    fn podcast_page(&self) -> Page {
+        let mut page = Page::new(0x700, "Podcast");
+        let Some((episode, player)) = &self.podcast else {
+            page.row(4, Row::new().code(ALPHA_WHITE).text("Start t42-site with --podcast FILE.wav"));
+            page.row(5, Row::new().code(ALPHA_WHITE).text("to listen here."));
+            return page;
+        };
+        let title: String = episode.title.chars().take(COLUMNS - 2).collect();
+        page.row(3, Row::new().code(ALPHA_YELLOW).code(DOUBLE_HEIGHT).text(&title));
+        let (position, length) = (player.position(episode), episode.samples.len());
+        let state = match (player.playing(), position) {
+            (true, _) => "Playing",
+            (false, 0) => "Ready: press Space",
+            (false, at) if at >= length => "Finished",
+            (false, _) => "Paused",
+        };
+        page.row(6, Row::new().code(ALPHA_GREEN).text(state));
+        let clock = |samples: usize| {
+            let seconds = episode.seconds(samples);
+            format!("{}:{:02}", seconds / SECONDS_PER_MINUTE, seconds % SECONDS_PER_MINUTE)
+        };
+        page.row(8, Row::new().code(ALPHA_WHITE).text(&format!("{} / {}", clock(position), clock(length))));
+        let filled = position.saturating_mul(PROGRESS_CELLS).checked_div(length).unwrap_or(0).min(PROGRESS_CELLS);
+        let bar = |cells: usize| SOLID_MOSAIC.to_string().repeat(cells);
+        for row in [10, 11] {
+            page.row(row, Row::new().code(MOSAIC_CYAN).text(&bar(filled)).code(MOSAIC_BLUE).text(&bar(PROGRESS_CELLS - filled)));
+        }
+        page.row(14, Row::new().code(ALPHA_CYAN).text("Space plays and pauses."));
+        page.row(15, Row::new().code(ALPHA_CYAN).text(&format!("Left and Right skip {} seconds.", podcast::SKIP_SECONDS)));
+        page.row(16, Row::new().code(ALPHA_CYAN).text("Enter starts it again."));
+        page.row(18, Row::new().code(ALPHA_MAGENTA).text("It plays on while you read other pages."));
         page
     }
 
@@ -732,6 +797,10 @@ impl Session {
                     self.select(character);
                 }
             }
+            (0x700, Some("ArrowLeft"), _) => return self.listen(|player, episode, record_id| player.skip(episode, -podcast::SKIP_SECONDS, record_id)),
+            (0x700, Some("ArrowRight"), _) => return self.listen(|player, episode, record_id| player.skip(episode, podcast::SKIP_SECONDS, record_id)),
+            (0x700, Some("Enter"), _) => return self.listen(Player::restart),
+            (0x700, _, Some(' ')) if press.modifiers & key::REPEAT == 0 => return self.listen(Player::toggle),
             (0x200, Some("Tab"), _) => self.focus = (self.focus + 1) % self.fields.len(),
             (0x200, Some("Backspace"), _) => {
                 self.fields[self.focus].text.pop();
@@ -800,7 +869,7 @@ impl Session {
             .collect()
     }
 
-    /// The command that plays a sound, on the next of the four channels.
+    /// The command that plays a sound, on the next of the effects' channels.
     fn play(&mut self, handle: u8) -> Push {
         let channel = self.next_channel;
         self.next_channel = (self.next_channel + 1) % AUDIO_CHANNELS;
@@ -821,6 +890,28 @@ impl Session {
         let (packets, next) = packets(AUDIO_SERVICE, self.record_id, &[command.record()]);
         self.record_id = next;
         Push::Packets(packets.iter().flat_map(|packet| packet.bytes).collect())
+    }
+
+    /// Does `action` to this viewer's podcast: what it sends, pushed.
+    fn listen(&mut self, action: impl FnOnce(&mut Player, &Episode, &mut u8) -> Vec<u8>) -> Vec<Push> {
+        let Some((episode, player)) = &mut self.podcast else { return Vec::new() };
+        let bytes = action(player, episode, &mut self.record_id);
+        if bytes.is_empty() { Vec::new() } else { vec![Push::Packets(bytes)] }
+    }
+
+    /// The podcast's next blocks, wherever the viewer is, and page 700
+    /// again each second and when it stops, while it is open.
+    fn podcast_frame(&mut self) -> Vec<Push> {
+        let mut pushes = self.listen(Player::stream);
+        if self.page == 0x700
+            && let Some((episode, player)) = &self.podcast
+        {
+            let now = (episode.seconds(player.position(episode)), player.playing());
+            if self.shown.replace(now) != Some(now) {
+                pushes.push(Push::Page(self.render().tti()));
+            }
+        }
+        pushes
     }
 
     /// One frame of the game: its sounds, then its page.
@@ -947,9 +1038,9 @@ fn index() -> Page {
 }
 
 /// The page files a viewer fetches before the session starts.
-fn page_file(number: u16, relay: Option<&str>) -> Option<String> {
+fn page_file(number: u16, settings: &Settings) -> Option<String> {
     PAGES.iter().any(|(page, _)| *page == number).then(|| {
-        let mut session = Session::new(relay.map(str::to_owned));
+        let mut session = Session::new(settings.clone());
         session.page = number;
         session.render().tti()
     })
@@ -973,11 +1064,11 @@ fn respond(stream: &mut TcpStream, status: &str, media: &str, body: &[u8]) -> io
 
 /// A viewer's WebSocket: key records in, pages and sounds out, and the
 /// game's frames while its page is open.
-fn session(mut stream: TcpStream, relay: Option<String>) -> io::Result<()> {
+fn session(mut stream: TcpStream, settings: Settings) -> io::Result<()> {
     stream.set_read_timeout(Some(FRAME))?;
     stream.set_nodelay(true)?;
     let mut reader = websocket::Reader::default();
-    let mut session = Session::new(relay);
+    let mut session = Session::new(settings);
     let mut last_frame = Instant::now();
     loop {
         let Some(frames) = reader.read(&mut stream)? else { return Ok(()) };
@@ -1003,6 +1094,9 @@ fn session(mut stream: TcpStream, relay: Option<String>) -> io::Result<()> {
         if session.phone_events() {
             send(&mut stream, Push::Page(session.render().tti()))?;
         }
+        for push in session.podcast_frame() {
+            send(&mut stream, push)?;
+        }
         if session.page == 0x300 && last_frame.elapsed() >= FRAME {
             last_frame = Instant::now();
             for push in session.frame() {
@@ -1019,7 +1113,7 @@ fn send(stream: &mut TcpStream, push: Push) -> io::Result<()> {
     }
 }
 
-fn serve(mut stream: TcpStream, port: u16, relay: Option<&str>) -> io::Result<()> {
+fn serve(mut stream: TcpStream, port: u16, settings: &Settings) -> io::Result<()> {
     let mut reader = BufReader::new(stream.try_clone()?);
     loop {
         let mut head = String::new();
@@ -1043,7 +1137,7 @@ fn serve(mut stream: TcpStream, port: u16, relay: Option<&str>) -> io::Result<()
         if path == format!("{folder}push") {
             let Some(accept) = websocket::accept(&head) else { return respond(&mut stream, "426 Upgrade Required", "text/plain", b"") };
             websocket::handshake(&mut stream, &accept)?;
-            return session(stream, relay.map(str::to_owned));
+            return session(stream, settings.clone());
         }
         let Some(name) = path.strip_prefix(&folder) else {
             respond(&mut stream, "404 Not Found", "text/plain", b"not found")?;
@@ -1057,7 +1151,7 @@ fn serve(mut stream: TcpStream, port: u16, relay: Option<&str>) -> io::Result<()
                 respond(&mut stream, "200 OK", "application/json", json.as_bytes())?;
             }
             "contents.txt" => respond(&mut stream, "200 OK", "text/plain", contents_file().as_bytes())?,
-            _ => match name.strip_suffix(".tti").and_then(|number| u16::from_str_radix(number, 16).ok()).and_then(|number| page_file(number, relay)) {
+            _ => match name.strip_suffix(".tti").and_then(|number| u16::from_str_radix(number, 16).ok()).and_then(|number| page_file(number, settings)) {
                 Some(tti) => respond(&mut stream, "200 OK", "text/x-teletext-tti", tti.as_bytes())?,
                 None => respond(&mut stream, "404 Not Found", "text/plain", b"not found")?,
             },
@@ -1066,14 +1160,14 @@ fn serve(mut stream: TcpStream, port: u16, relay: Option<&str>) -> io::Result<()
 }
 
 /// Serves the terminal channel at `http://127.0.0.1:<port>/terminal/`,
-/// with the phone page's relay when one is given.
-pub fn run(port: u16, relay: Option<&str>) -> Result<(), String> {
+/// with the phone page's relay and the podcast's episode when given.
+pub fn run(port: u16, settings: &Settings) -> Result<(), String> {
     let listener = TcpListener::bind(("127.0.0.1", port)).map_err(|error| format!("port {port}: {error}"))?;
     eprintln!("t42-site: serving the terminal channel at http://127.0.0.1:{port}/{CHANNEL}/");
     for stream in listener.incoming().flatten() {
-        let relay = relay.map(str::to_owned);
+        let settings = settings.clone();
         thread::spawn(move || {
-            if let Err(error) = serve(stream, port, relay.as_deref()) {
+            if let Err(error) = serve(stream, port, &settings) {
                 eprintln!("t42-site: {error}");
             }
         });
@@ -1112,7 +1206,7 @@ mod tests {
 
     #[test]
     fn pages_are_chosen_as_on_prestel() {
-        let mut session = Session::new(None);
+        let mut session = Session::new(Settings::default());
         feed(&mut session, &[press('*'), press('3'), press('0'), press('0'), press('#')]);
         assert_eq!(session.page, 0x300);
         feed(&mut session, &[press('#')]);
@@ -1128,7 +1222,7 @@ mod tests {
 
     #[test]
     fn typing_echoes_and_acknowledges() {
-        let mut session = Session::new(None);
+        let mut session = Session::new(Settings::default());
         let pushes = feed(&mut session, &[Event::Page(Some(0x200)), press('A'), press('n'), named("Enter")]);
         let Some(Push::Page(last)) = pushes.last() else { panic!() };
         assert!(last.contains("Hello, An!"), "{last}");
@@ -1138,15 +1232,16 @@ mod tests {
         assert!(page.contains("CU,8,14,11,3,"), "the secret field is masked: {page}");
     }
 
-    struct Count(usize);
+    /// The channels the receiver started sounds on.
+    struct Count(Vec<u8>);
     impl neoteletext_audio::port::VoiceSink for Count {
         fn define(&mut self, _: neoteletext_audio::port::SoundId, _: neoteletext_audio::port::SoundFormat) {}
         fn samples(&mut self, _: neoteletext_audio::port::SoundId, _: u32, _: &[i16]) {}
         fn forget(&mut self, _: neoteletext_audio::port::SoundId) {}
         fn stream(&mut self, _: neoteletext_audio::port::SoundId, _: u32) {}
         fn stream_samples(&mut self, _: neoteletext_audio::port::SoundId, _: &[i16]) {}
-        fn start(&mut self, _: u8, _: neoteletext_audio::port::Start) {
-            self.0 += 1;
+        fn start(&mut self, channel: u8, _: neoteletext_audio::port::Start) {
+            self.0.push(channel);
         }
         fn stop(&mut self, _: u8, _: u16) {}
         fn gain(&mut self, _: u8, _: u8, _: u16) {}
@@ -1154,7 +1249,7 @@ mod tests {
 
     #[test]
     fn the_typing_page_clicks_on_keys_and_rings_on_enter() {
-        let mut session = Session::new(None);
+        let mut session = Session::new(Settings::default());
         feed(&mut session, &[Event::Page(Some(0x200))]);
         let commands = |pushes: &[Push]| pushes.iter().filter(|push| matches!(push, Push::Packets(bytes) if bytes.len() == 42)).count();
         let key = feed(&mut session, &[press('a')]);
@@ -1168,7 +1263,7 @@ mod tests {
 
     #[test]
     fn the_piano_sends_its_sounds_then_a_command_a_key() {
-        let mut session = Session::new(None);
+        let mut session = Session::new(Settings::default());
         let pushes = feed(&mut session, &[Event::Page(Some(0x400))]);
         let sounds = pushes.iter().filter(|push| matches!(push, Push::Packets(bytes) if !bytes.is_empty() && bytes.len() % 42 == 0)).count();
         assert_eq!(sounds, PIANO.len() + 6, "the notes, the game's four sounds and the typing page's two");
@@ -1178,24 +1273,62 @@ mod tests {
         // The sounds decode with the engine's own receiver.
         let mut arena = vec![0_u8; 1 << 20];
         let mut receiver = neoteletext_audio::receiver::Receiver::<16, 4>::new(&mut arena);
-        let mut sink = Count(0);
-        let mut session = Session::new(None);
+        let mut sink = Count(Vec::new());
+        let mut session = Session::new(Settings::default());
         let mut all = feed(&mut session, &[Event::Page(Some(0x400))]);
         all.extend(feed(&mut session, &[press('s')]));
-        for push in all {
+        hear(&mut receiver, &mut sink, all);
+        assert_eq!(sink.0.len(), 1, "the note played");
+    }
+
+    fn hear(receiver: &mut neoteletext_audio::receiver::Receiver<'_, 16, 4>, sink: &mut Count, pushes: Vec<Push>) {
+        for push in pushes {
             if let Push::Packets(bytes) = push {
-                for chunk in bytes.chunks(42) {
-                    let packet = neoteletext_core::packet::Packet { bytes: chunk.try_into().unwrap() };
-                    receiver.push_packet(&packet, &mut sink);
+                for chunk in bytes.as_chunks::<42>().0 {
+                    receiver.push_packet(&neoteletext_core::packet::Packet { bytes: *chunk }, sink);
                 }
             }
         }
-        assert_eq!(sink.0, 1, "the note played");
+    }
+
+    #[test]
+    fn the_podcast_plays_on_space_on_a_channel_of_its_own() {
+        let rate = 8_000;
+        let episode = Episode { title: "Pilot".to_owned(), rate, samples: vec![500; usize::try_from(rate).unwrap() * 3] };
+        let mut session = Session::new(Settings { relay: None, podcast: Some(Arc::new(episode)) });
+        let mut arena = vec![0_u8; 1 << 20];
+        let mut receiver = neoteletext_audio::receiver::Receiver::<16, 4>::new(&mut arena);
+        let mut sink = Count(Vec::new());
+        let mut pushes = feed(&mut session, &[Event::Page(Some(0x700))]);
+        assert!(session.render().tti().contains("Ready: press Space"));
+        pushes.extend(feed(&mut session, &[press(' ')]));
+        assert!(session.render().tti().contains("Playing"));
+        assert!(session.render().tti().contains("0:00 / 0:03"));
+        // The typing page clicks on the effects' channels, never the podcast's.
+        pushes.extend(feed(&mut session, &[Event::Page(Some(0x200)), press('a'), press('b'), press('c'), press('d')]));
+        hear(&mut receiver, &mut sink, pushes);
+        assert_eq!(sink.0, [podcast::CHANNEL, 0, 1, 2, 0], "the podcast, then four clicks in turn on the other three");
+    }
+
+    #[test]
+    fn the_podcast_page_says_when_the_episode_ends_within_a_second() {
+        // Ten and a half seconds: skipped to ten, it ends half a second later,
+        // in the second it began.
+        let rate = 8_000;
+        let samples = usize::try_from(rate).unwrap() * 21 / 2;
+        let episode = Episode { title: "Short".to_owned(), rate, samples: vec![500; samples] };
+        let mut session = Session::new(Settings { relay: None, podcast: Some(Arc::new(episode)) });
+        feed(&mut session, &[Event::Page(Some(0x700)), named("ArrowRight"), press(' ')]);
+        session.podcast_frame();
+        assert!(session.render().tti().contains("0:10 / 0:10"));
+        thread::sleep(Duration::from_millis(700));
+        let pushes = session.podcast_frame();
+        assert!(matches!(pushes.last(), Some(Push::Page(tti)) if tti.contains("Finished")), "the stop, then the page");
     }
 
     #[test]
     fn the_game_has_no_cursor_and_moves_while_a_key_is_held() {
-        let mut session = Session::new(None);
+        let mut session = Session::new(Settings::default());
         let start = session.invaders.ship;
         feed(&mut session, &[Event::Page(Some(0x300)), named("ArrowLeft")]);
         assert_eq!(session.invaders.ship, start - 1, "a press moves at once");
@@ -1207,7 +1340,7 @@ mod tests {
 
     #[test]
     fn the_game_sounds_a_shot_and_a_hit() {
-        let mut session = Session::new(None);
+        let mut session = Session::new(Settings::default());
         let opened = feed(&mut session, &[Event::Page(Some(0x300))]);
         assert_eq!(opened.iter().filter(|push| matches!(push, Push::Packets(_))).count(), PIANO.len() + 6, "its sounds first");
         let fired = feed(&mut session, &[Event::Down(Press { key: u16::from(b' '), modifiers: 0, physical: 0 })]);
@@ -1231,7 +1364,7 @@ mod tests {
 
     #[test]
     fn a_click_is_the_hosts() {
-        let mut session = Session::new(None);
+        let mut session = Session::new(Settings::default());
         feed(&mut session, &[Event::Page(Some(0x500)), Event::Click { column: 7, row: 11 }]);
         assert!(session.render().tti().contains("You clicked column 7, row 11."));
     }
