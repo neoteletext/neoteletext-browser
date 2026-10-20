@@ -236,7 +236,8 @@
 - **Reason:** A hostile interface sees pages of every open channel; if it could influence fetching it could encode one channel's pages in the pattern of requests to another.
 - **Source:** Decisions 20 and 22.
 - **Verification:** Test with the hostile interface harness: across every intent kind and key, with arbitrary values and timing, the requests reaching a test server are identical to a run with no interface activity.
-- **State:** Met by construction: the fetcher takes no input from the trusted core at all, and the interface's visibility reports reach only the decoder's rendering. The test is not written. Channels with only separate page files are not supported yet.
+- **State:** Met by construction: the fetcher takes from the trusted core only key records (requirement 18.4), which name no address, page or connection and go only to the channel's own push WebSocket; the interface's visibility reports reach only the decoder's rendering. The test is not written. Channels with only separate page files are not supported yet.
+- **Amended 20 October 2026 (decision 44):** the one further exception is requirement 18.4's key records, bounded, on the channel's own WebSocket, while a page of a channel that declares input is open.
 
 ### Requirement 4.8: Untrusted text is cleaned on both sides
 - **Statement:** Every piece of text in a message that came from outside the application must be cleaned (requirement 11.5) by its sender and checked again by its receiver, which refuses text that still holds a hidden character.
@@ -1047,3 +1048,77 @@ Adopted on 20 October 2026 (decision 41) from [`hyperlinks.md`](hyperlinks.md), 
 - **Source:** Decision 41; `hyperlinks.md`.
 - **Verification:** The fuzz target `link_target` in the full gate; the lint.
 - **State:** Met: the fuzz target `link_target` (seven million runs in its first 30 seconds, no fault) runs in the full gate, and the core's library carries the no-panic lint list.
+
+## 18. Push, typing and the cursor
+
+From `interaction.md` (decision 44), built on 20 October 2026 (decision 45).
+
+### Requirement 18.1: Push over every transport, with a heartbeat
+- **Statement:** The fetcher receives push over WebSocket, plain and TLS, and Server-Sent Events, with a heartbeat; pushed packets reach the decoder at once.
+- **Reason:** A channel pushes lines as a transmitter does.
+- **Source:** Decision 44; `interaction.md` section 4.
+- **Verification:** Tests against `t42-site` in each mode.
+- **State:** Partly met. WebSocket push, plain, is exercised against `t42-site terminal` by the latency test; TLS is `rustls` (requirement 5.8), not yet tried against a `wss` channel; Server-Sent Events against `t42-site serve`. The heartbeat is the engine's (its decision E.92), with tests there. A pushed message and a fetched file are read whole and their pages completed at once (`a_pushed_page_shows_as_it_arrives`).
+
+### Requirement 18.2: When keys go to a channel
+- **Statement:** A key goes to a channel only while the tab is active, the open page is that channel's, and its descriptor declares input over its WebSocket; every key goes but the browser's own shortcuts, Command combinations on macOS and Control-Shift combinations elsewhere; closing the page stops it. On such a channel a plain click goes to the host and Command-click follows a link.
+- **Reason:** The open page is the terminal; the browser keeps exactly what a terminal emulator keeps, links included.
+- **Source:** Decision 44; `interaction.md` section 5.
+- **Verification:** Test of each condition, Control-C and the F-keys among the keys that go; the link tests.
+- **State:** Met. Tests: `keys_go_only_under_every_condition`, `records_are_numbered_and_held_keys_are_released_on_leaving`, `keys_go_only_while_the_core_says_so`, `command_never_goes`; by hand on macOS on 20 October 2026 against `t42-site terminal`: `*200#` went to page 200, typed letters reached the channel, the game moved and fired, the piano played.
+
+### Requirement 18.3: The strip says where keys go
+- **Statement:** While keys go to a channel the strip says "Keys go to" the channel, with "Not secure" on a plain connection.
+- **Reason:** The viewer must always know who is listening.
+- **Source:** Decision 44.
+- **Verification:** Test; review.
+- **State:** Met, with the round trip beside it; seen on macOS on 20 October 2026 ("Keys go to 127.0.0.1 · 7 ms · Not secure").
+
+### Requirement 18.4: The fetcher takes only key records
+- **Statement:** The fetcher takes from the trusted core only key records of at most 46 bytes, written to the push socket; nothing it takes changes what is fetched.
+- **Reason:** Requirement 4.7's one exception, bounded.
+- **Source:** Decision 44.
+- **Verification:** Test; the fetcher's reader fuzzed.
+- **State:** Met: `read_to_fetcher` accepts one kind, checked by the engine's key-record reader on both sides; the engine's agent drops anything over 46 bytes or on a channel without input (its test `input_goes_on_the_push_websocket_only_when_declared`); the fuzz target `fetcher_commands`.
+
+### Requirement 18.5: Latency
+- **Statement:** A key record is sent within 1 ms of the key; the push socket has `TCP_NODELAY`; a pushed packet of the page being typed into is rendered on arrival, coalesced to the display rate, and drawn at the next frame, within 20 ms.
+- **Reason:** The latency budget.
+- **Source:** Decision 44; `interaction.md` section 10.
+- **Verification:** A timed test in the full gate, pass or fail.
+- **State:** Met on macOS, measured by `keys_round_trip_and_pages_reach_the_screen_within_budget` on 20 October 2026 (release build): key to the channel's pushed page, median 7.4 ms on this computer's own network; render, PNG encoding and the interface's decoding together, median 7.4 ms (render 3.3, encode 3.7, decode 0.4); in a debug build the three take a median of 19 ms. The fetcher wakes at once for a key; it looks at its sockets every 5 ms, which is most of the round trip here. The interface draws at 16 ms while keys go to a channel.
+
+### Requirement 18.6: Cursor records are checked
+- **Statement:** The trusted core checks every cursor record and passes the interface only the cursor, the field, the flags and the round trip.
+- **Reason:** The decoder is untrusted.
+- **Source:** Decision 44.
+- **Verification:** Test with out-of-range records.
+- **State:** Met: the engine's `cursor::from_body` on the trusted core's side, the interface's reader checks again; tests `the_cursor_is_checked_and_its_acknowledgement_measures_the_round_trip`, `typing_round_trips_and_a_bad_cursor_is_refused`; the fuzz target `cursor_records`. A record naming another page of the same channel shows that page (decision 45).
+
+### Requirement 18.7: Cursor and echo
+- **Statement:** The cursor and the echo are drawn by the interface over the open page's image, in styles no page can draw, never as an underline; an echo is only the viewer's own printable key within the record's width, provisional, removed on acknowledgement or after two seconds.
+- **Reason:** A page must not forge them; typing must not pretend.
+- **Source:** Decision 44.
+- **Verification:** Tests; review.
+- **State:** Met: an amber bar or block outline that blinks, echoes in amber on a dark cell; tests `echo_stays_in_its_width_is_masked_and_clears_on_acknowledgement_or_time`, `the_cursor_is_drawn_only_while_typing`; seen on macOS on 20 October 2026.
+
+### Requirement 18.8: The round trip, and no key logged
+- **Statement:** The round trip is measured from acknowledgements, for at most 256 unacknowledged records, and shown in the developer readout; no key is ever logged.
+- **Reason:** Measure; keys are private.
+- **Source:** Decision 44.
+- **Verification:** The test of 18.5; a log test.
+- **State:** Partly met: measured and shown in the strip (the browser has no developer readout); the log carries no key, by inspection; the log test is not written.
+
+### Requirement 18.9: The phone keyboard
+- **Statement:** The phone keyboard runs in its own sandboxed process, which alone holds the pairing secret; its keys reach the trusted core bounded and without modifiers and act exactly as local keys; its QR is shown only from the panel, with its one-line warning; one phone at a time; Finish in the strip; a dropped phone holds the screen for at most 30 s.
+- **Reason:** A phone is a keyboard, no more; whoever scans has it.
+- **Source:** Decision 44; `interaction.md` section 9.
+- **Verification:** Tests of the reader and the bounds; the sandbox test; review.
+- **State:** Partly met: `t42-keyboard`, run with the fetcher's sandbox on macOS; the protocol's tests and the fuzz target `phone_keys`; the panel's tests (`the_panel_shows_the_qr_and_the_warning_and_finish_is_asked_for`); pairing and keys through a locally run relay in the engine's tests; and on 20 October 2026, `t42-keyboard` itself against a locally run relay: its QR, read by a QR reader, joined a simulated phone, which paired, and the phone's keys and text came out of the process as bounded messages. The panel was not opened by hand: posting clicks to the window without bringing it forward did not reach it. qrkeyboard's public relay does not yet run protocol 3 (its `RELEASE_STATUS.md`), so the browser's panel has not paired with a real phone; `T42_QRKEYBOARD_RELAY` names a local relay for testing. Five wrong PINs lock (the engine's screen); the browser starts the no-PIN mode.
+
+### Requirement 18.10: Both compile out
+- **Statement:** All of this is behind the `interaction` feature, the phone keyboard behind `phone-keyboard`, both on by default and both compilable out.
+- **Reason:** The owner wants features able to be compiled out.
+- **Source:** Decision 44.
+- **Verification:** The gates build without them.
+- **State:** Met: the commit gate lints the workspace with every optional area out, and with hyperlinks, typing, and both, alone.

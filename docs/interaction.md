@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Status** | Adopted 20 October 2026 (the architecture's decision 44), every recommendation of section 14 taken as the decision. Not built; phase 1 (section 15) is next. |
+| **Status** | Adopted 20 October 2026 (the architecture's decision 44), every recommendation of section 14 taken as the decision. Built the same day, all three phases (decision 45); section 17 lists what building changed. |
 | **Owner's brief** | A channel pushes teletext lines to the browser as a transmitter pushes them to a television. Optionally the viewer types back, each key as it is pressed, as a terminal does, with the least latency that can be had: over the channel's WebSocket, or from a phone through qrkeyboard.com. A cursor on the screen, optionally. Nothing more onerous than a terminal. |
 | **Companion documents** | [`interaction-security.md`](interaction-security.md) is the security analysis. [`architecture.md`](architecture.md), [`requirements.md`](requirements.md), [`hyperlinks.md`](hyperlinks.md) (the same pattern: the channel supplies data, the browser draws the marks, the trusted core decides). The engine's REQ-WEB-002 and -005, its audio profile (area AUD, whose record carriage this reuses), and qrkeyboard's `DEVELOPER_GUIDE.md` (`~/devel/qrkeyboard/qrkeyboard`). |
 
@@ -268,4 +268,22 @@ The channel-as-screen use of qrkeyboard needs nothing built.
 - **Latency:** a key on the wire within 1 ms; a pushed row on screen within 20 ms; a page pushed twenty times a second with the codecs measured; numbers in the full gate.
 - **The phone:** the keyboard process's readers fuzzed; a key with a modifier, over 32 bytes, or text over 995 bytes refused; keys act as local keys; the QR only from the panel; Finish ends the session; five wrong PINs lock.
 - **Compiled out:** builds and tests without `interaction` and without `phone-keyboard`.
+
+## 17. What building changed
+
+Built on 20 October 2026, all three phases, in the engine (its decisions E.90 to E.94) and here (decision 45). Where the build departs from sections 1 to 16, this section is the design:
+
+1. **The cursor record is on data channel 12, not 13.** EN 300 708 Table 16 gives data channel 13 to Datavideo. The record is type 4 of the audio profile's frame on the profile's own channel 12, always one fragment, which the audio receiver steps over (engine decision E.91).
+2. **`input` sits in the descriptor's `push` object:** `"push": { "address": …, "method": "websocket", "input": true }`, refused with server-sent events (E.92).
+3. **The engine does not encode a `CU` line as a packet.** The formats crate reads and writes the line; the decoder reads it from the page it already has, so the formats crate takes nothing from the input profile (E.91).
+4. **Every fetched file and pushed message is read whole** and its pages completed at once. A pushed page had shown only when the next page of its magazine came, and the last page of each magazine of a fetched channel never arrived at all. A fetched copy of a page the channel pushed is older and is dropped, since the contents' order may bring it after the push.
+5. **The trusted core numbers the records,** not the interface: it alone sends page, focus, resume and release records. The interface numbers its keys for its echo, and the core tells it which it has seen acknowledged.
+6. **`Sent { seq }` is not sent.** The round trip runs from the core's send, within a millisecond of the wire on this computer; the fetcher wakes at once for a key. It looks at its sockets every 5 ms rather than in `poll`, which is most of the measured round trip (requirement 18.5).
+7. **A host goes to a page by sending it.** When a cursor record names another page of the same channel than the one open, while keys go to that channel, the browser shows that page, as a terminal shows what its host sends: `*200#` on the reference channel opens page 200. It is the only thing a channel's record can make the browser do, within the channel, and never a fetch; the viewer choosing a page overrides it.
+8. **Command-Escape** (Control-Shift-Escape elsewhere) leaves the page, as section 5 has it; plain Escape is the host's.
+9. **The menu button opens the phone keyboard's panel;** the browser has no other menu yet. Phone keys go from the trusted core to the interface, which acts on them as on its own keys, so they type into a page or choose pages exactly as the keyboard does.
+10. **The echo** is amber on a dark cell, in the interface's monospace face; a block cursor is an amber outline, so the character under it shows.
+11. **QR codes** are drawn by Project Nayuki's `qrcodegen` in the engine (its decision E.93). A join address of qrkeyboard's length is a 37-module code; as teletext mosaics, one sixel a module, it is 24 columns by 15 rows, and a QR reader read it from a rendered page.
+12. **`neottx view` leaves with Control-],** as telnet does, since a terminal window has no Command key (E.94).
+13. **qrkeyboard's public relay does not run protocol 3 yet** (its `RELEASE_STATUS.md`). Everything was tested against a copy of the relay run locally; `T42_QRKEYBOARD_RELAY` points the browser at one.
 - **By hand:** typing into `t42-site terminal` over a slow link with echo on and off; a phone driving the browser; a phone driving a channel whose page carries the QR, on the browser and on `neottx`.
