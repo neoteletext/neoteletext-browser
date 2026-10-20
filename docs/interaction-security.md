@@ -13,7 +13,7 @@ The browser has only ever sent a channel requests for its files. This feature se
 
 The design holds because of four properties:
 1. **Keys go only where the viewer sat down:** to the channel of the page the viewer opened, while the strip says "Keys go to …". No page, record or message can start it; only the viewer opening a page of a channel that declares input. This is a terminal's rule, and no weaker: a terminal window with focus sends every key to its host.
-2. **What leaves is bounded and dumb:** a 12-byte record of the viewer's own key and the browser's own clock, written to the channel's own WebSocket. The fetcher takes nothing else from the trusted core; fetching is unchanged.
+2. **What leaves is bounded and dumb:** a 14-byte record of the viewer's own key, where it is on the keyboard, and the browser's own clock, written to the channel's own WebSocket. The fetcher takes nothing else from the trusted core; fetching is unchanged.
 3. **What comes back is drawn, never obeyed:** a cursor record places a cursor and clears an echo; it cannot request, navigate or change a setting. The cursor and the echo are overlays no page can draw.
 4. **A phone is a keyboard and no more:** its keys do what the local keyboard's do, through the same checks, from a process that holds the pairing secret and nothing else.
 
@@ -45,14 +45,14 @@ phone ──▶ relay ──▶ t42-keyboard ── PhoneKey
 | `input` declared without a WebSocket, or a push address off the channel's origin | Refused by the descriptor parser, as `push` is today |
 | Cursor records in a push stream, a file or a broadcast | Decoded and dropped unless the channel declares input over a WebSocket and the page is open |
 | A push flood, now that the decoder renders on arrival | Coalesced to one render per 16 ms per page; the 64 KB message limit stands |
-| A hijacked socket after reconnection | The resume record carries only a sequence number; there is no token to steal |
+| A hijacked socket after reconnection | The resume record carries only a sequence number; there is no token to steal. A viewer's identity across connections is the engine's cookies, with the engine's rules (REQ-WEB-006), never anything in the records |
 | A plain `ws://` connection | "Not secure" in the strip beside "Keys go to", as the address field shows it; decision 10 |
 
 ### B. The fetcher and the trusted core
 
 | Threat | Mitigation |
 |---|---|
-| `Send` influences fetching (requirement 4.7) | It is the only kind the fetcher reads; at most 44 bytes; written to the push socket and nothing else; it names no address, page or connection |
+| `Send` influences fetching (requirement 4.7) | It is the only kind the fetcher reads; at most 46 bytes; written to the push socket and nothing else; it names no address, page or connection |
 | A compromised fetcher sends keys it was not given | It has none: the core gives it a record only under section 5 of the design |
 | The fetcher's new reader | Panic-free (the no-panic lint list) and fuzzed (`fetcher_commands`) |
 | A false `Sent { seq }` | Only the round-trip clock reads it, bounded to 256 entries |
@@ -75,6 +75,8 @@ phone ──▶ relay ──▶ t42-keyboard ── PhoneKey
 | Shortcuts captured by a channel | Command combinations on macOS and Control-Shift combinations elsewhere never go, exactly the keys a terminal emulator keeps; Control-C and the F-keys go, as from a terminal; the close button, a click outside the page or the browser's close shortcut is the way out |
 | The viewer forgets where the keys go | "Keys go to adventure.example" in the strip the whole time; closing the page, the tab or the channel stops it |
 | Page numbers typed into a game | They go to the channel, as to a Prestel host, which takes `*nnn#` by convention (design section 5.1); on a channel without input the browser takes three digits locally as a teletext set does. The viewer who wants the browser's own navigation closes the page, as they would leave a terminal |
+| A page number underlined as a browser link on a terminal page, followed locally against the host's intent | The browser finds no links of its own on an input channel; only declared links show, and a click on one is the link's, never reported as a cell |
+| The physical key code as a fingerprint of the keyboard | It says which position a key is at, as `KeyboardEvent.code` does on every web page; the layout it implies is already implied by the characters typed |
 | Typing rhythm as a side channel | The channel sees arrival times, as any terminal host does, and now the browser's own millisecond clock on each key, which is the same information without the network's jitter; it is relative to an arbitrary start and is never the time of day; stated in section 6 |
 | **A compromised interface** sends `Typed` for keys never pressed | It can type into the channel whose page is open, as the viewer: the existing residual of open decision 3, bounded to that channel. It cannot type into another, since the core requires the open page's channel to declare input |
 
@@ -120,7 +122,7 @@ Typing tells the channel the viewer's keys and the pages they open, which is wha
 ## 8. Checks that keep these properties
 
 - **"Nothing else sends":** every message kind and every key, driven with no page open, with a page of a channel without input open, in a background tab, and in the strip, never produces a `Send`; with a page of a channel with input open, only `Typed` from that page does, and never a browser shortcut.
-- **Bounds:** a `Send` over 44 bytes refused; `PhoneKey` with a modifier, over 32 bytes, or text over 995 refused; the 121st key in a second dropped and never a key-up; the clock holds 256.
+- **Bounds:** a `Send` over 46 bytes refused; `PhoneKey` with a modifier, over 32 bytes, or text over 995 refused; the 121st key in a second dropped and never a key-up; the clock holds 256.
 - **Cursor records:** every field's bounds; a record for a page not open or a channel without input changes nothing; `acked` out of order; a flood coalesced.
 - **Fuzz targets:** `fetcher_commands`, `cursor_records`, `phone_keys`, and the keyboard process's relay and frame readers, in the full gate.
 - **Log test:** no key code or text in the log or the readout.

@@ -80,6 +80,8 @@ What goes: every key as it is pressed and released, Escape, Enter, Control-C, th
 
 There need be no cursor: a game has none, and keys go just the same. When there is one (section 7), it is where the channel says it is writing, nothing more: it is not clicked, and it does not gate the keys.
 
+**Links on an input channel.** The browser finds no page-number links of its own on a channel that takes input (`hyperlinks.md` section 6.1): the page is the host's alone, as a terminal's screen is, and "302" on it is the host's to answer. Only the links the channel declares (`LT` lines) show, and those keep working: a click on one follows the link and is not reported to the channel; every other click is reported as a cell (section 6, kind 5).
+
 That is all the viewer sees. Opening a page of a channel that takes input, with the channel's identity in the strip, is the consent, as sitting at a terminal is.
 
 ### 5.1 Page numbers: the teletext and videotex conventions
@@ -93,7 +95,7 @@ So a channel that takes input is asked to follow the videotex convention for pag
 
 ## 6. The key record
 
-Twelve bytes, so a key costs nothing to parse and a microcontroller can send one:
+Fourteen bytes, so a key costs nothing to parse and a microcontroller can send one:
 
 ```
 byte 0     version (1)
@@ -102,24 +104,31 @@ bytes 2-3  sequence number, big-endian, from 1, wrapping
 bytes 4-7  the browser's clock when the key happened, milliseconds, wrapping
 bytes 8-9  a
 bytes 10-11 b
-bytes 12-  text, kind 3 only: UTF-8, at most 32 bytes
+bytes 12-13 c
+bytes 14-  text, kind 3 only: UTF-8, at most 32 bytes
 ```
+
+Fourteen bytes with `c`, which only key down and key up use.
 
 The clock is the browser's own, from any start, and only its differences mean anything: as cloud-gaming input does, it lets a channel order keys across network jitter, tell a key held 40 ms from one held 400 ms, and, against the acknowledgement, measure delay one way. It is never the time of day.
 
-| Kind | Meaning | a | b |
-|---|---|---|---|
-| 1 | Key down | key code | modifiers: 1 Shift, 2 Control, 4 Alt (Option); 16 repeat. Command never goes |
-| 2 | Key up | key code | modifiers |
-| 3 | Text committed by an input method or a phone | 0 | 0 |
-| 4 | The viewer opened a page (or none) | page number as teletext writes it, 0x100–0x8FF, or 0 | 0 |
-| 5 | A click on a cell of the open page | column 0–39 | row 0–24 |
-| 6 | The keys left the page (0) or came to it (1) | 0 or 1 | 0 |
-| 7 | The connection was re-made; the last sequence number sent | that number | 0 |
+| Kind | Meaning | a | b | c |
+|---|---|---|---|---|
+| 1 | Key down | key code: what the key means | modifiers: 1 Shift, 2 Control, 4 Alt (Option); 16 repeat. Command never goes | physical key: where it is |
+| 2 | Key up | key code | modifiers | physical key |
+| 3 | Text committed by an input method or a phone | 0 | 0 | 0 |
+| 4 | The viewer opened a page (or none) | page number as teletext writes it, 0x100–0x8FF, or 0 | 0 | 0 |
+| 5 | A click on a cell of the open page | column 0–39 | row 0–24 | 0 |
+| 6 | The keys left the page (0) or came to it (1) | 0 or 1 | 0 | 0 |
+| 7 | The connection was re-made; the last sequence number sent. The host answers by pushing the open page again, so the viewer never looks at a stale screen | that number | 0 | 0 |
 
-**Key codes:** a printable character is its Unicode scalar value (the Basic Multilingual Plane; others arrive as kind 3); a named key is `0xF000` plus a number from one table in the engine: `Enter` 1, `Backspace` 2, `Tab` 3, `Escape` 4, `ArrowUp` 5, `ArrowDown` 6, `ArrowLeft` 7, `ArrowRight` 8, `Home` 9, `End` 10, `PageUp` 11, `PageDown` 12, `Delete` 13, `ColorF0Red` 20, `ColorF1Green` 21, `ColorF2Yellow` 22, `ColorF3Blue` 23, `Teletext` 24, `Info` 25, `Subtitle` 26, `ChannelUp` 27, `ChannelDown` 28. The names are the W3C's, which qrkeyboard's layouts use, so a phone's `teletext` layout maps one to one.
+**Key codes** (`a`): what the key means on the viewer's layout. A printable character is its Unicode scalar value (the Basic Multilingual Plane; others arrive as kind 3); a named key is `0xF000` plus a number from one table in the engine, the W3C `KeyboardEvent.key` names numbered: the editing keys (`Enter`, `Backspace`, `Tab`, `Escape`, `Delete`, `Insert`), the arrows, `Home`, `End`, `PageUp`, `PageDown`, the F-keys 1 to 24, the numeric keypad's keys, the media keys (`MediaPlayPause`, `MediaStop`, `MediaRewind`, `MediaFastForward`, `MediaTrackPrevious`, `MediaTrackNext`, `AudioVolumeUp`, `AudioVolumeDown`, `AudioVolumeMute`), and every television key qrkeyboard's `remote` and `teletext` layouts send (`ColorF0Red` to `ColorF3Blue`, `Teletext`, `Info`, `Subtitle`, `Guide`, `Settings`, `Exit`, `ChannelUp`, `ChannelDown`, `BrowserBack`, `BrowserHome`, `ContextMenu`, `Power`). The table is written once, in the engine, and a phone's layout maps one to one.
 
-A record is one binary WebSocket message, at most 44 bytes. At most 120 a second (qrkeyboard's relay limit, and more than any typist); beyond that, keys are dropped but never a key-up. A key held when the page closes is released.
+**Physical keys** (`c`): where the key is, the W3C `KeyboardEvent.code` names numbered in the same table (`KeyW`, `Digit1`, `Numpad5`), so a game asks for the key at W's position and gets it on an AZERTY keyboard too; 0 when unknown, as from a phone.
+
+A record is one binary WebSocket message, at most 46 bytes. At most 120 a second (qrkeyboard's relay limit, and more than any typist); beyond that, keys are dropped but never a key-up. A key held when the page closes is released.
+
+**Sessions across connections.** A connection is a session; nothing in the records identifies a viewer across two. A channel that must know a returning viewer (a game's score, a shell's login) uses the engine's cookies, which the WebSocket upgrade carries as any request to the channel does (REQ-WEB-006; the engine is to confirm it on the upgrade), as a web application would.
 
 ## 7. The cursor record
 
@@ -135,7 +144,7 @@ One packet: a record on an independent data line, packet 4/31, data channel 13 (
 | `width` | 1 | How far local echo may run from the column, 1–40 cells; 0 for none |
 | `flags` | 1 | 1 echo; 2 masked (echo `*`); 4 block cursor rather than a bar |
 
-A TTI page may carry it as a line, `CR,row,column,width,flags`, which the engine's encoder emits as the packet. There is no cursor in the teletext standards, X/26's reserved modes are not ours to take, and a record on a data line is the mechanism the audio profile proved.
+A TTI page may carry it as a line, `CU,row,column,width,flags`, which the engine's encoder emits as the packet. There is no cursor in the teletext standards, X/26's reserved modes are not ours to take, and a record on a data line is the mechanism the audio profile proved.
 
 ## 8. Local echo
 
@@ -147,7 +156,7 @@ Without `echo`, nothing shows until the channel pushes: right for a password, a 
 
 A QR on a screen; the phone that scans it becomes that screen's keyboard, remote or gamepad, through a relay at `qrkeyboard.com`, encrypted end to end so the relay sees nothing but sizes and timing. Keys arrive as W3C names, down and up; its `teletext` layout is the colour keys, the digits and page keys. Two screens can take it:
 
-**The channel is the screen.** The channel's server creates the qrkeyboard instance, holds its token, pairs and decrypts, and draws the QR into a page as mosaics (13 cells by 9 rows for a 25-module QR). The viewer scans the page; the phone drives the channel; the channel pushes what changed. The browser has no part: this works on `neottx`, on any receiver, and on a broadcast television. Nothing to build but `neottx qr`, which writes a QR as mosaic rows.
+**The channel is the screen.** The channel's server creates the qrkeyboard instance, holds its token, pairs and decrypts, and draws the QR into a page as mosaics (13 cells by 9 rows for a 25-module QR). The viewer scans the page; the phone drives the channel; the channel pushes what changed. The browser has no part: this works on `neottx`, on any receiver, and on a broadcast television. qrkeyboard ships a browser SDK only, so a channel author would otherwise have to implement its pairing and cryptography; **`neottx keyboard`** does it for them: a bridge that creates the instance, prints the QR as mosaic rows for the author's page, pairs with the phone, and forwards its keys to the channel's input socket as key records, exactly as the browser would send them. A channel then takes a phone and a browser alike.
 
 **The browser is the screen.** From the menu, "Phone keyboard" opens a panel with the QR, an optional PIN, and one line: "Scan with your phone camera to type here. Anyone who can see this code can type." The phone's keys are then the browser's keys: they choose pages, follow links, and type into a page as section 5 describes, through the same checks. The strip shows "Phone connected" and a Finish button. Built as a `t42-keyboard` process, sandboxed with the network only, which alone holds the pairing secret: it talks to the relay, pairs (the QR's key, or SPAKE2 with the PIN), decrypts, and sends each key to the trusted core as a bounded message with no modifiers. The cryptography is RustCrypto (`aes-gcm`, `hkdf`, `sha2`; `p256` for the PIN mode), each a library approval.
 
@@ -165,7 +174,7 @@ A QR on a screen; the phone that scans it becomes that screen's keyboard, remote
 
 qrkeyboard adds the relay's two hops before the first step.
 
-**Measured, not reasoned:** every key record has a number and the cursor record's `acked` closes the loop, when the channel sends one (a game that wants the readout sends the record with no cursor); the core keeps the send times of the last 256 unacknowledged records, never the keys, and the developer readout shows the round trip. The browser's own path is a timed test in the full gate against `t42-site terminal`, a reference channel that echoes keys into a page: pass or fail numbers.
+**Measured, not reasoned:** every key record has a number and the cursor record's `acked` closes the loop, when the channel sends one (a game that wants the readout sends the record with no cursor); the core keeps the send times of the last 256 unacknowledged records, never the keys, and the developer readout shows the round trip. The browser's own path is a timed test in the full gate against `t42-site terminal`, a reference channel that echoes keys into a page: pass or fail numbers. The 20 ms figure is a budget, not a measurement, until that test runs: it includes the core encoding a 480-by-500 indexed PNG and the interface decoding it for every frame, which a game at twenty frames a second does forty times a second across two processes. The test pushes a page twenty times a second with both codecs in the measurement, and the budget is revised from the number before phase 2.
 
 ## 11. Processes and messages
 
@@ -181,7 +190,7 @@ phone ──▶ relay ──▶ t42-keyboard ────────┘ keys, a
 |---|---|---|
 | Interface → core | `Typed { key, page, version }` | A key while a page of a channel that takes input is open: down, up or text |
 | Core → interface | `Typing { channel, on, cursor, echo, round_trip }` | Whether keys go to the channel, and the cursor record's place and flags |
-| Core → fetcher | `Send(bytes)` | One key record, at most 44 bytes: the only thing a fetcher takes from the core, and it cannot change what is fetched |
+| Core → fetcher | `Send(bytes)` | One key record, at most 46 bytes: the only thing a fetcher takes from the core, and it cannot change what is fetched |
 | Fetcher → core | `Sent { seq }` | Written to the network, for the round-trip clock |
 | Decoder → core | `Cursor { page, record }` | A cursor record from the push stream, untrusted |
 | Core → decoder | `Typing(bool)` | Render the open page on arrival |
@@ -196,10 +205,10 @@ As engine decisions (E.90 onward):
 1. **REQ-WEB-002:** the descriptor's `"input": true`, allowed only with `push.method: "websocket"`.
 2. **REQ-WEB-005:** a binary message from the browser is a key record; rows of an opened page may be pushed alone; the heartbeat. **REQ-AUD-008 amended:** audio records travel as 4/31 packets over a WebSocket, never as bare binary messages; binary means packets.
 3. **Area INT:** the key record and its key-code table; the cursor record on data channel 13; the audio crate's record and fragment code shared with it.
-4. **The TTI `CR` line,** kept by the writer, emitted by the encoder.
+4. **The TTI `CU` line,** kept by the writer, emitted by the encoder.
 5. **The agent:** `Input::Send(bytes)` on the push socket; `Output::Cursor`; `TCP_NODELAY`; the heartbeat.
 6. **The acquisition:** the page in progress can be rendered.
-7. **`neottx qr`** writes a QR as mosaic rows; **`neottx view`** types back over its WebSocket, so authors can test a channel without the browser.
+7. **`neottx qr`** writes a QR as mosaic rows; **`neottx keyboard`** pairs with a phone through qrkeyboard and forwards its keys to a channel's input socket as key records; **`neottx view`** types back over its WebSocket, so authors can test a channel without the browser.
 8. **Decision E.38 stands:** the records are `no_std`; the WebSocket, TLS and cryptography stay out of the microcontroller crates.
 
 ## 13. Proposed requirements
@@ -209,9 +218,9 @@ To be added to `requirements.md` as section 18 once adopted.
 | Number | Statement | Reason | Verification |
 |---|---|---|---|
 | 18.1 | The fetcher receives push over WebSocket, plain and TLS, and Server-Sent Events, with a heartbeat; pushed packets reach the decoder at once. | A channel pushes lines as a transmitter does. | Tests against `t42-site` in each mode. |
-| 18.2 | A key goes to a channel only while the tab is active, the open page is that channel's, and its descriptor declares input over its WebSocket; every key goes but the browser's own shortcuts, Command combinations on macOS and Control-Shift combinations elsewhere; closing the page stops it. | The open page is the terminal; the browser keeps exactly what a terminal emulator keeps. | Test of each condition, Control-C and the F-keys among the keys that go. |
+| 18.2 | A key goes to a channel only while the tab is active, the open page is that channel's, and its descriptor declares input over its WebSocket; every key goes but the browser's own shortcuts, Command combinations on macOS and Control-Shift combinations elsewhere; closing the page stops it. On such a channel the browser finds no links of its own; a click on a declared link follows it and is not reported. | The open page is the terminal; the browser keeps exactly what a terminal emulator keeps, and the screen is the host's. | Test of each condition, Control-C and the F-keys among the keys that go; the link tests. |
 | 18.3 | While keys go to a channel the strip says "Keys go to" the channel, with "Not secure" on a plain connection. | The viewer must always know who is listening. | Test; review. |
-| 18.4 | The fetcher takes from the trusted core only key records of at most 44 bytes, written to the push socket; nothing it takes changes what is fetched. | Requirement 4.7's one exception, bounded. | Test; the fetcher's reader fuzzed. |
+| 18.4 | The fetcher takes from the trusted core only key records of at most 46 bytes, written to the push socket; nothing it takes changes what is fetched. | Requirement 4.7's one exception, bounded. | Test; the fetcher's reader fuzzed. |
 | 18.5 | A key record is sent within 1 ms of the key; the push socket has `TCP_NODELAY`; a pushed packet of the page being typed into is rendered on arrival, coalesced to the display rate, and drawn at the next frame, within 20 ms. | The latency budget. | A timed test in the full gate, pass or fail. |
 | 18.6 | The trusted core checks every cursor record and passes the interface only the cursor, the field, the flags and the round trip. | The decoder is untrusted. | Test with out-of-range records. |
 | 18.7 | The cursor and the echo are drawn by the interface over the open page's image, in styles no page can draw, never as an underline; an echo is only the viewer's own printable key within the record's width, provisional, removed on acknowledgement or after two seconds. | A page must not forge them; typing must not pretend. | Tests; review. |
@@ -233,26 +242,28 @@ To be added to `requirements.md` as section 18 once adopted.
 | 8 | TLS (`rustls`) and RustCrypto (`aes-gcm`, `hkdf`, `sha2`, and later `p256` for PINs) in a new keyboard process | Yes, each a library approval; ship the no-PIN mode first |
 | 9 | REQ-AUD-008 resolved as "a binary WebSocket message is packets" | Yes |
 | 10 | Typing over a plain `ws://` connection, with "Not secure" in the strip, or refused until TLS? | Allow it, as plain channels are allowed. **Decided by the owner on 20 October 2026: allowed, with "Not secure" in the strip.** |
-| 11 | `neottx qr` and `neottx view`'s typing back, in the engine | Yes |
+| 11 | `neottx qr`, `neottx keyboard` and `neottx view`'s typing back, in the engine | Yes; without the bridge, a phone for a channel means every author implementing qrkeyboard's cryptography |
 | 12 | Page selection on a channel with input follows the videotex convention (`*nnn#`, `#`, `*#`, `*00`), with three plain digits also accepted where the host has no other use for them; the browser interprets neither | Yes: it is what a terminal did, and the reference channel and `neottx view` carry the pattern |
 
 ## 15. Phases
 
 1. **Push and latency:** WebSocket push wired and heartbeat; TLS; the decoder renders on arrival while typing; the fetcher waits in `poll`; `t42-site terminal`; the timed test.
 2. **Typing:** the descriptor's `input`; the key and cursor records in the engine; `Typed`, `Send`, `Cursor`; the cursor and the strip's state; local echo; the round-trip readout; `neottx view` typing back.
-3. **The phone keyboard:** the keyboard process, the panel, the strip's state; `neottx qr`.
+3. **The phone keyboard:** the keyboard process, the panel, the strip's state; `neottx qr` and `neottx keyboard`.
 
 The channel-as-screen use of qrkeyboard needs nothing built.
 
 ## 16. Tests
 
 - **Push:** each transport delivers a page and a row; a dead socket is found by the missing pong and reconnected with the subscription and a resume record.
+- **Links on an input channel:** no page number is underlined by the browser; a declared link is followed and not reported; any other click is reported as a cell.
+- **Resume:** after a dropped socket the resume record goes first and the host's re-push of the open page is drawn.
 - **Typing:** keys go only under every condition of 18.2; every key goes, Escape, Enter, Control-C, the F-keys, digits and colour keys included; the strip's keys, a background tab's keys and the browser's shortcuts never go; closing the page stops them and releases a held key; on a channel without input three digits still choose a page locally.
 - **Page selection:** against `t42-site terminal`, `*302#` opens page 302, `#` the next, `*#` the one before, and `302` alone opens 302 where the page has no field.
-- **Records:** every kind round-trips; over 44 bytes refused; the clock counts up and wraps; the 121st key in a second dropped but never a key-up; every cursor field's bounds; a record for a page not open changes nothing; `acked` out of order.
+- **Records:** every kind round-trips; over 46 bytes refused; the clock counts up and wraps; a key's physical code is its position and its code its meaning, checked on a non-QWERTY layout; the 121st key in a second dropped but never a key-up; every cursor field's bounds; a record for a page not open changes nothing; `acked` out of order.
 - **Cursor and echo:** drawn only on the open page while a cursor is placed; with no record, or a record with no cursor, nothing is drawn and keys still go; the echo stays within the record's width, is masked when asked, and is removed on acknowledgement or after two seconds; never an underline.
 - **A game:** against a `t42-site` mode that pushes a moving page twenty times a second, key down and up with repeat reach it, and the frames are drawn at the display rate with no cursor on screen.
-- **Latency:** a key on the wire within 1 ms; a pushed row on screen within 20 ms; numbers in the full gate.
+- **Latency:** a key on the wire within 1 ms; a pushed row on screen within 20 ms; a page pushed twenty times a second with the codecs measured; numbers in the full gate.
 - **The phone:** the keyboard process's readers fuzzed; a key with a modifier, over 32 bytes, or text over 995 bytes refused; keys act as local keys; the QR only from the panel; Finish ends the session; five wrong PINs lock.
 - **Compiled out:** builds and tests without `interaction` and without `phone-keyboard`.
 - **By hand:** typing into `t42-site terminal` over a slow link with echo on and off; a phone driving the browser; a phone driving a channel whose page carries the QR, on the browser and on `neottx`.
