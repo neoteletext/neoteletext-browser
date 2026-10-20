@@ -356,11 +356,12 @@
 - **State:** Not met: the site-change screen is not built.
 
 ### Requirement 5.14: No referrer and a minimal user agent
-- **Statement:** The fetcher must send no `Referer` header and only the engine's minimal user agent profile.
-- **Reason:** Requests must reveal as little as possible about the user.
-- **Source:** Architecture.
-- **Verification:** Test: inspect requests received by a test server.
-- **State:** Met by the engine's user agent; the test is not written here.
+- **Statement:** The fetcher must send no `Referer` header and only the engine's minimal user agent profile. Its `User-Agent` must name T42 Browser, its version and its platform, as the engine's REQ-WEB-031 defines: `T42Browser/<version> (<operating system family>; <architecture>) neoteletext/<version>`, for example `T42Browser/0.1.0 (macOS; arm64) neoteletext/0.1.0`, with no version of the operating system and nothing about the person or the computer; on every request and on the push WebSocket's upgrade.
+- **Reason:** Requests must reveal as little as possible about the user; a channel needs to know which receiver it serves, as a web site does.
+- **Source:** Architecture; the owner's instruction of 21 October 2026 (decision 47); the engine's decision E.99.
+- **Verification:** Test: inspect requests and the upgrade received by a test server.
+- **State:** Met for the profile; the user agent string is not built (it is `neoteletext/<version>` until the engine builds REQ-WEB-031); the test is not written here.
+- *Amended 21 October 2026:* the user agent names the browser, its version and its platform.
 
 ### Requirement 5.15: Whole-channel fetching in a fixed order
 - **Statement:** When a channel opens, its pages must be fetched in an order fixed by the channel's own data: the whole bundle if there is one; every page file listed in the contents file, in its order, if there is one; otherwise the initial page, with further pages fetched when selected (decision 23). Fetching must stop at the engine's maximum channel size and proceed at its request rate.
