@@ -1086,7 +1086,7 @@ From `interaction.md` (decision 44), built on 20 October 2026 (decision 45).
 - **Reason:** The latency budget.
 - **Source:** Decision 44; `interaction.md` section 10.
 - **Verification:** A timed test in the full gate, pass or fail.
-- **State:** Met on macOS, measured by `keys_round_trip_and_pages_reach_the_screen_within_budget` on 20 October 2026 (release build): key to the channel's pushed page, median 7.4 ms on this computer's own network; render, PNG encoding and the interface's decoding together, median 7.4 ms (render 3.3, encode 3.7, decode 0.4); in a debug build the three take a median of 19 ms. The fetcher wakes at once for a key; it looks at its sockets every 5 ms, which is most of the round trip here. The interface draws at 16 ms while keys go to a channel.
+- **State:** Met on macOS, measured by `keys_round_trip_and_pages_reach_the_screen_within_budget` on 20 October 2026 (release build): key to the channel's pushed page, median 7.4 ms on this computer's own network; render, PNG encoding and the interface's decoding together, median 7.4 ms (render 3.3, encode 3.7, decode 0.4); in a debug build the three take about three times as long, which the test reports and holds only the round trip to; it builds the channel and the fetcher itself, so it runs on a fresh tree, and passed in the Windows 11 VM on 20 October 2026. The fetcher wakes at once for a key; it looks at its sockets every 5 ms, which is most of the round trip here. The interface draws at 16 ms while keys go to a channel.
 
 ### Requirement 18.6: Cursor records are checked
 - **Statement:** The trusted core checks every cursor record and passes the interface only the cursor, the field, the flags and the round trip.
