@@ -3,7 +3,7 @@
 #![no_main]
 
 use libfuzzer_sys::fuzz_target;
-use t42_browser::typing::{Send, Typing};
+use neoteletext::typing::{Send, Typing};
 
 fuzz_target!(|data: &[u8]| {
     let key = interface_core::canvas::PageKey { channel: 7, page: 0x100 };

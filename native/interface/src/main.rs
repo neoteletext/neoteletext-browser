@@ -36,10 +36,10 @@ use draw_vello::{Family, Painter};
 use interface_core::browser::{Browser, Cursor, Frame, Key as BrowserKey, Modifiers, Output, StripState, TabInfo, WindowAction};
 use interface_core::canvas::PageKey;
 use interface_core::channel::Channel;
+use neoteletext_interface::audio::{self, Shared, Speaker};
+use neoteletext_interface::image;
 use protocol::{ToCore, ToInterface, read_from_core, write_to_core};
 use softbuffer::{Context, Surface};
-use t42_interface::audio::{self, Shared, Speaker};
-use t42_interface::image;
 use winit::application::ApplicationHandler;
 use winit::dpi::LogicalSize;
 use winit::event::{ElementState, Ime, MouseButton, MouseScrollDelta, WindowEvent};
@@ -47,7 +47,7 @@ use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop, EventLoopProxy}
 use winit::keyboard::{Key, ModifiersState, NamedKey};
 use winit::window::{CursorIcon, ResizeDirection, Window, WindowId};
 
-const WINDOW_TITLE: &str = "T42 Browser";
+const WINDOW_TITLE: &str = "NeoTeletext";
 const WINDOW_WIDTH: f64 = 1440.0;
 const WINDOW_HEIGHT: f64 = 900.0;
 const MINIMUM_WIDTH: f64 = 1000.0;
@@ -370,9 +370,9 @@ impl App {
         #[allow(clippy::cast_possible_truncation, reason = "the record's clock wraps")]
         let clock = now as u32;
         let down = event.state == ElementState::Pressed;
-        let modifiers = t42_interface::keys::modifiers(self.modifiers, down && event.repeat);
-        let physical = t42_interface::keys::physical(event.physical_key);
-        let changed = match t42_interface::keys::code(&event.logical_key) {
+        let modifiers = neoteletext_interface::keys::modifiers(self.modifiers, down && event.repeat);
+        let physical = neoteletext_interface::keys::physical(event.physical_key);
+        let changed = match neoteletext_interface::keys::code(&event.logical_key) {
             Some(code) => self.browser.terminal_key(down, code, modifiers, physical, clock, now),
             // A character outside the Basic Multilingual Plane, or a key
             // that types several: it goes as text when pressed.
@@ -745,7 +745,7 @@ fn read_core(proxy: &EventLoopProxy<Incoming>, mixers: Option<&Shared>, trace: b
             // Sound goes straight to the mixers; the window need not wake.
             Ok(Some(ToInterface::Audio { channel, audio: operation })) => {
                 if trace && !matches!(operation, protocol::audio::Audio::Samples { .. } | protocol::audio::Audio::StreamSamples { .. }) {
-                    eprintln!("t42-interface: audio, channel {channel}: {operation:?}");
+                    eprintln!("neoteletext-interface: audio, channel {channel}: {operation:?}");
                 }
                 if let Some(mixers) = mixers {
                     audio::apply(mixers, channel, operation);
@@ -772,7 +772,7 @@ fn read_core(proxy: &EventLoopProxy<Incoming>, mixers: Option<&Shared>, trace: b
 
 fn main() -> std::process::ExitCode {
     let Ok(event_loop) = EventLoop::<Incoming>::with_user_event().build() else {
-        eprintln!("t42-interface: cannot open the event loop");
+        eprintln!("neoteletext-interface: cannot open the event loop");
         return std::process::ExitCode::FAILURE;
     };
     let proxy = event_loop.create_proxy();
@@ -783,12 +783,12 @@ fn main() -> std::process::ExitCode {
     dock_menu::install(move |choice| {
         let _ = dock_proxy.send_event(Incoming::Dock(choice));
     });
-    // T42_AUDIO_TRACE reports the sound operations applied and the loudest
+    // NEOTELETEXT_AUDIO_TRACE reports the sound operations applied and the loudest
     // sample the device played each half second, for checking sound
     // without listening.
-    let trace = std::env::var_os("T42_AUDIO_TRACE").is_some();
+    let trace = std::env::var_os("NEOTELETEXT_AUDIO_TRACE").is_some();
     // With no output device the browser runs silent.
-    let speaker = Speaker::open().map_err(|reason| eprintln!("t42-interface: no sound: {reason}")).ok();
+    let speaker = Speaker::open().map_err(|reason| eprintln!("neoteletext-interface: no sound: {reason}")).ok();
     let mixers = speaker.as_ref().map(|speaker| Arc::clone(&speaker.mixers));
     // Which tabs play sound, told to the window when it changes.
     if let Some(mixers) = mixers.clone() {
@@ -813,7 +813,7 @@ fn main() -> std::process::ExitCode {
                 std::thread::sleep(Duration::from_millis(500));
                 let loudest = peak.swap(0, std::sync::atomic::Ordering::Relaxed);
                 if loudest > 0 {
-                    eprintln!("t42-interface: audio peak {loudest}");
+                    eprintln!("neoteletext-interface: audio peak {loudest}");
                 }
             }
         });
@@ -836,11 +836,11 @@ fn main() -> std::process::ExitCode {
         exit: None,
     };
     if let Err(error) = event_loop.run_app(&mut app) {
-        eprintln!("t42-interface: {error}");
+        eprintln!("neoteletext-interface: {error}");
         return std::process::ExitCode::FAILURE;
     }
     if let Some(reason) = app.exit {
-        eprintln!("t42-interface: {reason}");
+        eprintln!("neoteletext-interface: {reason}");
         return std::process::ExitCode::FAILURE;
     }
     let _ = app.output.flush();

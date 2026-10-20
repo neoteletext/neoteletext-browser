@@ -2,7 +2,7 @@
 # Decisions 29 and 30, measured: the confined window host (as in
 # confined-host.sh) given a nested display of its own, hosted by a compositor
 # that is itself a client of the user's display: cage, a stock compositor, or
-# T42 Browser's own display host (spikes/display-host). The window host
+# NeoTeletext's own display host (spikes/display-host). The window host
 # receives only the nested display's socket, never the user's display. Can it
 # still reach the user's other programs, or the trusted strip?
 # Usage: nested-host.sh <the sandbox-network spike's directory> x11|wayland cage|<display host program>
@@ -12,7 +12,7 @@ desktop=$2
 compositor=$3
 cd "$(dirname "$0")"
 here=$PWD
-proofs="$HOME/t42-proofs"
+proofs="$HOME/neoteletext-proofs"
 ESCAPED="$proofs/escaped"
 rm -f "$ESCAPED"
 

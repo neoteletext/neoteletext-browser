@@ -22,7 +22,7 @@ use size::{
 };
 use tween::{EASE_OUT, TRANSFORM_EASE, Tween};
 
-const WINDOW_TITLE: &str = "T42 Browser: macroquad page wall";
+const WINDOW_TITLE: &str = "NeoTeletext: macroquad page wall";
 const WINDOW_WIDTH: i32 = 1280;
 const WINDOW_HEIGHT: i32 = 820;
 

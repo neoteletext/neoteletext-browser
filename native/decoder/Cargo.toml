@@ -1,5 +1,5 @@
 [package]
-name = "t42-decoder"
+name = "neoteletext-decoder"
 description = "The decoder process: the neoteletext engine reads a channel's bytes, stores its pages and renders the pages on screen"
 version.workspace = true
 edition.workspace = true
@@ -12,7 +12,7 @@ name = "decoder"
 path = "src/lib.rs"
 
 [[bin]]
-name = "t42-decoder"
+name = "neoteletext-decoder"
 path = "src/main.rs"
 
 # Finding links in pages (`hyperlinks.md` section 6).

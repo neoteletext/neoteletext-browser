@@ -26,7 +26,7 @@ const TAB_PAGE: &str = "/tab.html";
 const SRC_PARAM: &str = "src";
 const DEVTOOLS_EVENT: &str = "devtools-entry";
 
-const WINDOW_TITLE: &str = "T42 Browser";
+const WINDOW_TITLE: &str = "NeoTeletext";
 const WINDOW_SIZE: (f64, f64) = (1360.0, 900.0);
 const MIN_WINDOW_SIZE: (f64, f64) = (760.0, 540.0);
 // Centres the traffic lights in the chrome's 40px tab strip; the chrome's

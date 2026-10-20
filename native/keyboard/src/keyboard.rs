@@ -12,7 +12,7 @@ use neoteletext_qrkeyboard::screen::{Event, Screen};
 use protocol::keyboard::{FromKeyboard, MAX_PHONE_TEXT, PhoneState, Qr, ToKeyboard, read_to_keyboard, write_to_core};
 
 /// What the phone shows as the screen's name.
-const NAME: &str = "T42 Browser";
+const NAME: &str = "NeoTeletext";
 /// A dropped phone keeps the browser for at most this long (requirement
 /// 18.9), not qrkeyboard's default five minutes.
 const REJOIN_SECONDS: u32 = 30;
@@ -123,7 +123,7 @@ pub fn main() -> ExitCode {
     match run(relay, pin) {
         Ok(()) => ExitCode::SUCCESS,
         Err(error) => {
-            eprintln!("t42-keyboard: {error}");
+            eprintln!("neoteletext-keyboard: {error}");
             ExitCode::FAILURE
         }
     }

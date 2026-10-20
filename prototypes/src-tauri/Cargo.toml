@@ -1,7 +1,7 @@
 [package]
-name = "t42-browser"
+name = "neoteletext"
 version = "0.1.0"
-description = "T42 Browser"
+description = "NeoTeletext"
 edition = "2024"
 rust-version = "1.90"
 publish = false

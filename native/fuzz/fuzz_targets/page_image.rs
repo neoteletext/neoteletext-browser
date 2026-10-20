@@ -4,5 +4,5 @@
 use libfuzzer_sys::fuzz_target;
 
 fuzz_target!(|data: &[u8]| {
-    core::hint::black_box(t42_interface::image::decode(data).is_ok());
+    core::hint::black_box(neoteletext_interface::image::decode(data).is_ok());
 });

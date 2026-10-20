@@ -1,4 +1,4 @@
-# T42 Browser: proofs
+# NeoTeletext: proofs
 
 | | |
 |---|---|
@@ -22,7 +22,7 @@ Each proof is a throwaway program under `prototypes/spikes/`, committed so that 
 | C | Can frames flow from a decoder process to image elements fast enough for many pages? | **Yes.** 200 pages redrawn twice a second were all shown, each wave within 0.5 seconds; capacity is about 450 to 520 frames a second, limited by single-threaded encoding. |
 | A on Linux | Can the operating system keep the window host off the network? | **Yes.** In an empty network namespace the application's own page rendered, its messages to Rust worked, and nothing reached the test server. |
 | Nested display on Linux | Does a nested display of the window host's own close the display as a way out? | **Outward, yes; inward, not with a stock compositor.** On a nested cage compositor the confined window host's page worked, and it could reach none of the user's display sockets or local services; typing into the user's terminal failed. But through cage's virtual keyboard, a process sharing the window host's confinement typed an address and Enter into the window host's own text field. |
-| Display host on Linux | Does T42 Browser's own display host (decision 30) close what cage left open? | **Yes, in its smallest form.** Under both an X11 and a Wayland desktop the confined window host's page worked and reached nothing of the user's. The host offered 7 interfaces, none for input injection, screen copy, overlays or the clipboard without focus. Typing into the strip from inside failed; a window asking for full screen left the strip on screen; the user's own typing reached the strip and the hosted window as intended. |
+| Display host on Linux | Does NeoTeletext's own display host (decision 30) close what cage left open? | **Yes, in its smallest form.** Under both an X11 and a Wayland desktop the confined window host's page worked and reached nothing of the user's. The host offered 7 interfaces, none for input injection, screen copy, overlays or the clipboard without focus. Typing into the strip from inside failed; a window asking for full screen left the strip on screen; the user's own typing reached the strip and the hosted window as intended. |
 | Input methods and screen readers on Linux | Can the confined window host have both without reaching any service? | **Yes, through the display host.** Text composed by the user's input method (fcitx5, Hangul) reached the strip and the confined window through the display host. The display host published the window's accessibility tree itself; a screen reader's view of it was correct and followed the user, and the confined window host was never on the accessibility bus. Orca read the tree on starting but did not announce later moves in this headless set-up; not explained. |
 | B on Linux | Is the web content process kept from the display, as on macOS? | **No.** Under Tauri, WebKitGTK's content process sandbox is off, and Tauri cannot turn it on. With the sandbox on, the display is still mounted into it: code in the content process connected to an X display that requires a cookie and covered the strip's area with its own window, and under Wayland it connected to the compositor and was offered the protocol for drawing above every window. |
 | Confinement on Linux | Can the window host be confined from outside, so that a compromised content process gains nothing? | **Partly.** An empty network namespace, private `/run` and `/tmp` holding only the display's socket, and a Landlock rule set leave the webview working, and deny the content process the network, the home directory and every local service. **The display remains a way out:** under X11 a fully confined process typed a command into the user's terminal, and it ran. |
@@ -366,7 +366,7 @@ Findings 3 and 4 are **open decision 19** in `architecture.md` section 17. The o
 
 Finding 4 needs a nested display host that draws the strip itself and offers its clients only what a window needs. No stock compositor does both. This is **open decision 20** in `architecture.md` section 17:
 
-1. **Recommended: T42 Browser's own display host for Linux.**
+1. **Recommended: NeoTeletext's own display host for Linux.**
    - **What it is:** a small Wayland compositor, run outside the window host's confinement, as a client of the user's desktop.
    - **What it offers the window host:** only core window protocols, such as surfaces, shared memory and graphics buffers, and the desktop shell's windows. Input comes only from the user's real devices.
    - **What it does itself:** composites the window host's window below a natively drawn trusted strip, and sends strip input to the trusted core.
@@ -458,11 +458,11 @@ Two programs from 6.11 were used again, and one more was added:
 |---|---|
 | The user types g, k, s and Enter in the strip | Strip input `"한"` |
 | The same in the confined window host's text field | The field received `"한"`. It got only the composed text and the Enter key: no raw letters, and no key releases without presses |
-| The accessibility bus, read from outside | One application, the display host: a frame "T42 Browser", an entry "Address", and an image labelled with the page text, focused |
+| The accessibility bus, read from outside | One application, the display host: a frame "NeoTeletext", an entry "Address", and an image labelled with the page text, focused |
 | The user types `teletext.example` in the strip | The entry's text read `teletext.example`, and the entry was focused |
 | A screen reader asks for the strip while the page has focus | Granted; the display host received the request and moved the keyboard to the strip |
 | Focus events while the user moves from page to strip | Received in order: the image, then the entry |
-| Orca on starting | Said "T42 Browser", "Address", "entry", "teletext.example" |
+| Orca on starting | Said "NeoTeletext", "Address", "entry", "teletext.example" |
 | Orca as the user then moves | **Nothing said, and no event logged by Orca**, although a second listener running alongside Orca received both focus events from the display host at the same moments. Not explained; this set-up has no window manager and no real session |
 | The confined window host on the accessibility bus | **Never**, though it was running throughout |
 
@@ -492,7 +492,7 @@ Two programs from 6.11 were used again, and one more was added:
 | Covering the strip under Wayland, and on compositors without the layer shell (GNOME's) | Section 6.5 measured the connection and the protocols offered, not a covering surface |
 | Typing through sway's virtual keyboard directly on the user's desktop | Measured through the same protocol on cage, also wlroots (section 6.11); not on sway itself. No longer decisive: the window host never receives the user's display (decision 29) |
 | The accessibility bus and input method service passed through the confinement | Section 6.9, finding 4 |
-| The rest of T42 Browser's own display host | Section 6.15, finding 4, and section 6.17, finding 4 |
+| The rest of NeoTeletext's own display host | Section 6.15, finding 4, and section 6.17, finding 4 |
 | WebKitGTK and GTK under a system call filter, inside the window host's confinement | Open decision 22 (`architecture.md` section 6.7, approach 1) |
 | The display host tagging its own connection with the Wayland security-context protocol | Open decision 23 (`architecture.md` section 6.7, approach 4) |
 | Orca following the user's moves | Section 6.16: Orca received no events from the display host after starting, though another listener did; needs a real desktop session |

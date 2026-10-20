@@ -1,4 +1,4 @@
-# T42 Browser: channel push, typing back, and the cursor
+# NeoTeletext: channel push, typing back, and the cursor
 
 | | |
 |---|---|
@@ -91,7 +91,7 @@ Typing a page number is the one key sequence with a convention of its own, and t
 - **Teletext:** the receiver holds the pages, so the receiver takes three digits and shows the page; the digits never leave the set. That is a channel **without input**, and the browser does it today: three digits choose a page of the channel.
 - **Videotex (Prestel):** the terminal holds nothing, so every key goes to the host, and the host takes the page command: `*` then the page number then `#` goes to that page; `#` alone goes on to the next page; `*#` goes back to the one before; `*00` shows the page again. A plain digit is data, a menu choice or an answer, which the host interprets. That is a channel **with input**, and the host does it, as a Prestel computer did, by pushing the page.
 
-So a channel that takes input is asked to follow the videotex convention for page selection, `*nnn#`, `#` and `*#`, and may also take three plain digits as a page number where it has no other use for them, as a teletext service on a videotex host would. The browser does not interpret either; it sends the keys. A channel may show the number as it is typed by pushing row 0 with the digits in the header's page field, as a Prestel terminal's top line showed `*123`, or by setting the cursor with echo. The reference channel `t42-site terminal` and `neottx view` implement both conventions, so authors have the pattern to copy.
+So a channel that takes input is asked to follow the videotex convention for page selection, `*nnn#`, `#` and `*#`, and may also take three plain digits as a page number where it has no other use for them, as a teletext service on a videotex host would. The browser does not interpret either; it sends the keys. A channel may show the number as it is typed by pushing row 0 with the digits in the header's page field, as a Prestel terminal's top line showed `*123`, or by setting the cursor with echo. The reference channel `neoteletext-site terminal` and `neottx view` implement both conventions, so authors have the pattern to copy.
 
 ## 6. The key record
 
@@ -158,7 +158,7 @@ A QR on a screen; the phone that scans it becomes that screen's keyboard, remote
 
 **The channel is the screen.** The channel's server creates the qrkeyboard instance, holds its token, pairs and decrypts, and draws the QR into a page as mosaics (13 cells by 9 rows for a 25-module QR). The viewer scans the page; the phone drives the channel; the channel pushes what changed. The browser has no part: this works on `neottx`, on any receiver, and on a broadcast television. qrkeyboard ships a browser SDK only, so a channel author would otherwise have to implement its pairing and cryptography; **`neottx keyboard`** does it for them: a bridge that creates the instance, prints the QR as mosaic rows for the author's page, pairs with the phone, and forwards its keys to the channel's input socket as key records, exactly as the browser would send them. A channel then takes a phone and a browser alike.
 
-**The browser is the screen.** From the menu, "Phone keyboard" opens a panel with the QR, an optional PIN, and one line: "Scan with your phone camera to type here. Anyone who can see this code can type." The phone's keys are then the browser's keys: they choose pages, follow links, and type into a page as section 5 describes, through the same checks. The strip shows "Phone connected" and a Finish button. Built as a `t42-keyboard` process, sandboxed with the network only, which alone holds the pairing secret: it talks to the relay, pairs (the QR's key, or SPAKE2 with the PIN), decrypts, and sends each key to the trusted core as a bounded message with no modifiers. The cryptography is RustCrypto (`aes-gcm`, `hkdf`, `sha2`; `p256` for the PIN mode), each a library approval.
+**The browser is the screen.** From the menu, "Phone keyboard" opens a panel with the QR, an optional PIN, and one line: "Scan with your phone camera to type here. Anyone who can see this code can type." The phone's keys are then the browser's keys: they choose pages, follow links, and type into a page as section 5 describes, through the same checks. The strip shows "Phone connected" and a Finish button. Built as a `neoteletext-keyboard` process, sandboxed with the network only, which alone holds the pairing secret: it talks to the relay, pairs (the QR's key, or SPAKE2 with the PIN), decrypts, and sends each key to the trusted core as a bounded message with no modifiers. The cryptography is RustCrypto (`aes-gcm`, `hkdf`, `sha2`; `p256` for the PIN mode), each a library approval.
 
 ## 10. Latency
 
@@ -174,7 +174,7 @@ A QR on a screen; the phone that scans it becomes that screen's keyboard, remote
 
 qrkeyboard adds the relay's two hops before the first step.
 
-**Measured, not reasoned:** every key record has a number and the cursor record's `acked` closes the loop, when the channel sends one (a game that wants the readout sends the record with no cursor); the core keeps the send times of the last 256 unacknowledged records, never the keys, and the developer readout shows the round trip. The browser's own path is a timed test in the full gate against `t42-site terminal`, a reference channel that echoes keys into a page: pass or fail numbers. The 20 ms figure is a budget, not a measurement, until that test runs: it includes the core encoding a 480-by-500 indexed PNG and the interface decoding it for every frame, which a game at twenty frames a second does forty times a second across two processes. The test pushes a page twenty times a second with both codecs in the measurement, and the budget is revised from the number before phase 2.
+**Measured, not reasoned:** every key record has a number and the cursor record's `acked` closes the loop, when the channel sends one (a game that wants the readout sends the record with no cursor); the core keeps the send times of the last 256 unacknowledged records, never the keys, and the developer readout shows the round trip. The browser's own path is a timed test in the full gate against `neoteletext-site terminal`, a reference channel that echoes keys into a page: pass or fail numbers. The 20 ms figure is a budget, not a measurement, until that test runs: it includes the core encoding a 480-by-500 indexed PNG and the interface decoding it for every frame, which a game at twenty frames a second does forty times a second across two processes. The test pushes a page twenty times a second with both codecs in the measurement, and the budget is revised from the number before phase 2.
 
 ## 11. Processes and messages
 
@@ -183,7 +183,7 @@ keys (typing)                         key records
 interface ──────▶ trusted core ───────────────────▶ fetcher ──▶ channel's WebSocket
     ▲   cursor, echo, "typing into"      ▲ cursor records
     └────────────────────────────────────┼───────── decoder ◀── pushed packets ◀── fetcher
-phone ──▶ relay ──▶ t42-keyboard ────────┘ keys, as the interface's own
+phone ──▶ relay ──▶ neoteletext-keyboard ────────┘ keys, as the interface's own
 ```
 
 | Direction | Message | Meaning |
@@ -217,7 +217,7 @@ To be added to `requirements.md` as section 18 once adopted.
 
 | Number | Statement | Reason | Verification |
 |---|---|---|---|
-| 18.1 | The fetcher receives push over WebSocket, plain and TLS, and Server-Sent Events, with a heartbeat; pushed packets reach the decoder at once. | A channel pushes lines as a transmitter does. | Tests against `t42-site` in each mode. |
+| 18.1 | The fetcher receives push over WebSocket, plain and TLS, and Server-Sent Events, with a heartbeat; pushed packets reach the decoder at once. | A channel pushes lines as a transmitter does. | Tests against `neoteletext-site` in each mode. |
 | 18.2 | A key goes to a channel only while the tab is active, the open page is that channel's, and its descriptor declares input over its WebSocket; every key goes but the browser's own shortcuts, Command combinations on macOS and Control-Shift combinations elsewhere; closing the page stops it. On such a channel a plain click goes to the host and Command-click follows a link. | The open page is the terminal; the browser keeps exactly what a terminal emulator keeps, links included. | Test of each condition, Control-C and the F-keys among the keys that go; the link tests. |
 | 18.3 | While keys go to a channel the strip says "Keys go to" the channel, with "Not secure" on a plain connection. | The viewer must always know who is listening. | Test; review. |
 | 18.4 | The fetcher takes from the trusted core only key records of at most 46 bytes, written to the push socket; nothing it takes changes what is fetched. | Requirement 4.7's one exception, bounded. | Test; the fetcher's reader fuzzed. |
@@ -249,7 +249,7 @@ All taken by the owner on 20 October 2026 (decision 44), each as recommended; 2 
 
 ## 15. Phases
 
-1. **Push and latency:** WebSocket push wired and heartbeat; TLS; the decoder renders on arrival while typing; the fetcher waits in `poll`; `t42-site terminal`; the timed test.
+1. **Push and latency:** WebSocket push wired and heartbeat; TLS; the decoder renders on arrival while typing; the fetcher waits in `poll`; `neoteletext-site terminal`; the timed test.
 2. **Typing:** the descriptor's `input`; the key and cursor records in the engine; `Typed`, `Send`, `Cursor`; the cursor and the strip's state; local echo; the round-trip readout; `neottx view` typing back.
 3. **The phone keyboard:** the keyboard process, the panel, the strip's state; `neottx qr` and `neottx keyboard`.
 
@@ -261,10 +261,10 @@ The channel-as-screen use of qrkeyboard needs nothing built.
 - **Links on an input channel:** page numbers are underlined as everywhere; a plain click on a link is reported to the host as a cell and follows nothing; Command-click follows it and is not reported; Tab goes to the host and focuses no link.
 - **Resume:** after a dropped socket the resume record goes first and the host's re-push of the open page is drawn.
 - **Typing:** keys go only under every condition of 18.2; every key goes, Escape, Enter, Control-C, the F-keys, digits and colour keys included; the strip's keys, a background tab's keys and the browser's shortcuts never go; closing the page stops them and releases a held key; on a channel without input three digits still choose a page locally.
-- **Page selection:** against `t42-site terminal`, `*302#` opens page 302, `#` the next, `*#` the one before, and `302` alone opens 302 where the page has no field.
+- **Page selection:** against `neoteletext-site terminal`, `*302#` opens page 302, `#` the next, `*#` the one before, and `302` alone opens 302 where the page has no field.
 - **Records:** every kind round-trips; over 46 bytes refused; the clock counts up and wraps; a key's physical code is its position and its code its meaning, checked on a non-QWERTY layout; the 121st key in a second dropped but never a key-up; every cursor field's bounds; a record for a page not open changes nothing; `acked` out of order.
 - **Cursor and echo:** drawn only on the open page while a cursor is placed; with no record, or a record with no cursor, nothing is drawn and keys still go; the echo stays within the record's width, is masked when asked, and is removed on acknowledgement or after two seconds; never an underline.
-- **A game:** against a `t42-site` mode that pushes a moving page twenty times a second, key down and up with repeat reach it, and the frames are drawn at the display rate with no cursor on screen.
+- **A game:** against a `neoteletext-site` mode that pushes a moving page twenty times a second, key down and up with repeat reach it, and the frames are drawn at the display rate with no cursor on screen.
 - **Latency:** a key on the wire within 1 ms; a pushed row on screen within 20 ms; a page pushed twenty times a second with the codecs measured; numbers in the full gate.
 - **The phone:** the keyboard process's readers fuzzed; a key with a modifier, over 32 bytes, or text over 995 bytes refused; keys act as local keys; the QR only from the panel; Finish ends the session; five wrong PINs lock.
 - **Compiled out:** builds and tests without `interaction` and without `phone-keyboard`.
@@ -285,6 +285,6 @@ Built on 20 October 2026, all three phases, in the engine (its decisions E.90 to
 10. **The echo** is amber on a dark cell, in the interface's monospace face; a block cursor is an amber outline, so the character under it shows.
 11. **QR codes** are drawn by Project Nayuki's `qrcodegen` in the engine (its decision E.93). A join address of qrkeyboard's length is a 37-module code; as teletext mosaics, one sixel a module, it is 24 columns by 15 rows, and a QR reader read it from a rendered page.
 12. **`neottx view` leaves with Control-],** as telnet does, since a terminal window has no Command key (E.94).
-13. **qrkeyboard's public relay does not run protocol 3 yet** (its `RELEASE_STATUS.md`). Everything was tested against a copy of the relay run locally; `T42_QRKEYBOARD_RELAY` points the browser at one. *Amended 21 October 2026 (decision 46):* qrkeyboard.com runs protocol 3 since that day, and the engine's screen paired through it.
+13. **qrkeyboard's public relay does not run protocol 3 yet** (its `RELEASE_STATUS.md`). Everything was tested against a copy of the relay run locally; `NEOTELETEXT_QRKEYBOARD_RELAY` points the browser at one. *Amended 21 October 2026 (decision 46):* qrkeyboard.com runs protocol 3 since that day, and the engine's screen paired through it.
 14. **Editing the address takes the keys from the page, and the channel is told,** with the same "keys left" record (kind 6) as when the window loses the focus, and "keys came" when the editing ends. The interface says when editing starts and stops, a message of its own beside the window's focus, which also governs handing links over (requirement 17.9).
-- **By hand:** typing into `t42-site terminal` over a slow link with echo on and off; a phone driving the browser; a phone driving a channel whose page carries the QR, on the browser and on `neottx`.
+- **By hand:** typing into `neoteletext-site terminal` over a slow link with echo on and off; a phone driving the browser; a phone driving a channel whose page carries the QR, on the browser and on `neottx`.

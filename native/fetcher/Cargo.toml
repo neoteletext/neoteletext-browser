@@ -1,5 +1,5 @@
 [package]
-name = "t42-fetcher"
+name = "neoteletext-fetcher"
 description = "The fetcher process: the engine's web module opens a channel, fetches its pages in the channel's own order and holds its push connection"
 version.workspace = true
 edition.workspace = true

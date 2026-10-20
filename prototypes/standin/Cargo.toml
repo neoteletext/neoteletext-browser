@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2024"
 rust-version = "1.90"
 publish = false
-description = "A stand-in for the neoteletext engine, for building and testing T42 Browser without depending on the neoteletext working tree"
+description = "A stand-in for the neoteletext engine, for building and testing NeoTeletext without depending on the neoteletext working tree"
 
 [dependencies]
 

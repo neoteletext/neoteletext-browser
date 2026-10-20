@@ -1,4 +1,4 @@
-# T42 Browser: security analysis of hyperlinks
+# NeoTeletext: security analysis of hyperlinks
 
 | | |
 |---|---|
@@ -38,7 +38,7 @@ The design holds up because of three properties, and the analysis shows they are
 2. **Nothing leaves without the user acting in the strip.** Within a channel, a link is as safe as typing a page number. Leaving a channel, and leaving teletext, each need a confirmation drawn where no page can reach and accepted from no input a page can produce.
 3. **The hand-off to the operating system is a single, parsed, re-serialised `https` or `http` address, passed as one argument by the trusted core.** The operating system is never asked to open anything else.
 
-The largest remaining risk is one the architecture already carries: a **compromised interface process** can forge strip input. With hyperlinks that forgery can open an address in the system's web browser, which makes T42 Browser a possible delivery route for an exploit against *that* browser. Section 14 ranks it and section 9 bounds it.
+The largest remaining risk is one the architecture already carries: a **compromised interface process** can forge strip input. With hyperlinks that forgery can open an address in the system's web browser, which makes NeoTeletext a possible delivery route for an exploit against *that* browser. Section 14 ranks it and section 9 bounds it.
 
 ## 2. What is protected
 
@@ -46,7 +46,7 @@ In addition to `security-analysis.md` section 2:
 
 - **The user's understanding of where a click leads.** A link must never take the user somewhere other than where the browser said it would.
 - **The boundary of the channel.** No page may move a tab to another channel, or another origin, without the site-change screen.
-- **The boundary of the browser.** No page may cause anything to run or open outside T42 Browser without the user's confirmation in the strip.
+- **The boundary of the browser.** No page may cause anything to run or open outside NeoTeletext without the user's confirmation in the strip.
 - **The trusted core's integrity.** Link data is page data; parsing it in the core must not add a way to crash or confuse the core.
 - **The user's attention.** Prompts must not be forced, flooded or timed to catch a click meant for something else.
 
@@ -189,7 +189,7 @@ On every platform the address is one argument; no command line is assembled from
 
 ### 9.3 What the opener does with it is out of our hands
 
-The default browser may itself be vulnerable, or the user may have set an unusual handler for `https`. T42 Browser cannot defend that, and does not try: the hand-off is only ever a consequence of the user's confirmation of a visible address, which is the same assurance a link in an email client gives.
+The default browser may itself be vulnerable, or the user may have set an unusual handler for `https`. NeoTeletext cannot defend that, and does not try: the hand-off is only ever a consequence of the user's confirmation of a visible address, which is the same assurance a link in an email client gives.
 
 ### 9.4 Never automatic
 

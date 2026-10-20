@@ -2,7 +2,7 @@ import {invoke} from '@tauri-apps/api/core';
 import {SAMPLE_SRC} from '../shared/t42';
 
 const VISITS_KEY = 't42.visits';
-const VISITS_COOKIE = 't42_visits';
+const VISITS_COOKIE = 'neoteletext_visits';
 const ONE_YEAR_SECONDS = 60 * 60 * 24 * 365;
 
 // Counts loads in this tab's data store. A new tab gets a new store, so it

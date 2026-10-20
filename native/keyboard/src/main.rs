@@ -5,7 +5,7 @@
 //! secret; it has the network and nothing else, and runs until the trusted
 //! core closes its input or says Finish.
 //!
-//! Usage: `t42-keyboard [relay] [--pin]`, qrkeyboard's own relay unless
+//! Usage: `neoteletext-keyboard [relay] [--pin]`, qrkeyboard's own relay unless
 //! another is named.
 
 // On Windows, a desktop program: no console window opens with it.
@@ -36,6 +36,6 @@ fn main() -> ExitCode {
 
 #[cfg(not(feature = "phone-keyboard"))]
 fn main() -> ExitCode {
-    eprintln!("t42-keyboard: built without the phone keyboard");
+    eprintln!("neoteletext-keyboard: built without the phone keyboard");
     ExitCode::FAILURE
 }

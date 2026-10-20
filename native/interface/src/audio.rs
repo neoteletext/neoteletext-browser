@@ -139,7 +139,7 @@ where
                 let loudest = render(&mixers, data, channels, &mut scratch);
                 peak.fetch_max(loudest, Ordering::Relaxed);
             },
-            |error| eprintln!("t42-interface: audio output: {error}"),
+            |error| eprintln!("neoteletext-interface: audio output: {error}"),
             None,
         )
         .map_err(|error| format!("cannot open the audio output: {error}"))

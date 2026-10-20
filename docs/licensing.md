@@ -1,6 +1,6 @@
-# T42 Browser: licensing
+# NeoTeletext: licensing
 
-T42 Browser follows the teletext engine's licensing rule, set out in `LICENSING.md` of the neoteletext repository: using third-party material must never compromise the MIT licence. Anyone who takes our code must be able to use, change and ship it, open or closed, under the MIT licence alone. This document applies that rule to the browser and records what the browser uses.
+NeoTeletext follows the teletext engine's licensing rule, set out in `LICENSING.md` of the neoteletext repository: using third-party material must never compromise the MIT licence. Anyone who takes our code must be able to use, change and ship it, open or closed, under the MIT licence alone. This document applies that rule to the browser and records what the browser uses.
 
 This is the project's reading of the licences, not legal advice.
 

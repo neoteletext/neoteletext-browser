@@ -24,7 +24,7 @@ use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
 use winit::keyboard::{Key, NamedKey};
 use winit::window::{Window, WindowId};
 
-const WINDOW_TITLE: &str = "T42 Browser: vello_cpu and Parley page wall, no framework, no GPU";
+const WINDOW_TITLE: &str = "NeoTeletext: vello_cpu and Parley page wall, no framework, no GPU";
 const WINDOW_WIDTH: f64 = 1280.0;
 const WINDOW_HEIGHT: f64 = 820.0;
 /// Logical pixels scrolled for one wheel line.

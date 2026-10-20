@@ -1302,6 +1302,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "neoteletext"
+version = "0.1.0"
+dependencies = [
+ "interface-core",
+ "neoteletext-core",
+ "neoteletext-image",
+ "neoteletext-input",
+ "protocol",
+ "web-opener",
+]
+
+[[package]]
 name = "neoteletext-audio"
 version = "0.1.0"
 source = "git+file:///Users/andrewstuart/devel/neoteletext-engine?rev=88d09b11eb6ed5ecb421526d3370c5ec57d786e2#88d09b11eb6ed5ecb421526d3370c5ec57d786e2"
@@ -1320,11 +1332,39 @@ version = "0.1.0"
 source = "git+file:///Users/andrewstuart/devel/neoteletext-engine?rev=88d09b11eb6ed5ecb421526d3370c5ec57d786e2#88d09b11eb6ed5ecb421526d3370c5ec57d786e2"
 
 [[package]]
+name = "neoteletext-decoder"
+version = "0.1.0"
+dependencies = [
+ "interface-core",
+ "neoteletext-audio",
+ "neoteletext-core",
+ "neoteletext-formats",
+ "neoteletext-image",
+ "neoteletext-input",
+ "protocol",
+]
+
+[[package]]
 name = "neoteletext-formats"
 version = "0.1.0"
 source = "git+file:///Users/andrewstuart/devel/neoteletext-engine?rev=88d09b11eb6ed5ecb421526d3370c5ec57d786e2#88d09b11eb6ed5ecb421526d3370c5ec57d786e2"
 dependencies = [
  "neoteletext-core",
+]
+
+[[package]]
+name = "neoteletext-fuzz"
+version = "0.0.0"
+dependencies = [
+ "interface-core",
+ "libfuzzer-sys",
+ "neoteletext",
+ "neoteletext-decoder",
+ "neoteletext-input",
+ "neoteletext-interface",
+ "neoteletext-qrkeyboard",
+ "protocol",
+ "web-opener",
 ]
 
 [[package]]
@@ -1342,6 +1382,22 @@ source = "git+file:///Users/andrewstuart/devel/neoteletext-engine?rev=88d09b11eb
 dependencies = [
  "neoteletext-audio",
  "neoteletext-core",
+]
+
+[[package]]
+name = "neoteletext-interface"
+version = "0.1.0"
+dependencies = [
+ "cpal",
+ "dock-menu",
+ "draw-vello",
+ "interface-core",
+ "neoteletext-audio-mix",
+ "neoteletext-input",
+ "png",
+ "protocol",
+ "softbuffer",
+ "winit",
 ]
 
 [[package]]
@@ -2434,62 +2490,6 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 3.0.9",
-]
-
-[[package]]
-name = "t42-browser"
-version = "0.1.0"
-dependencies = [
- "interface-core",
- "neoteletext-core",
- "neoteletext-image",
- "neoteletext-input",
- "protocol",
- "web-opener",
-]
-
-[[package]]
-name = "t42-decoder"
-version = "0.1.0"
-dependencies = [
- "interface-core",
- "neoteletext-audio",
- "neoteletext-core",
- "neoteletext-formats",
- "neoteletext-image",
- "neoteletext-input",
- "protocol",
-]
-
-[[package]]
-name = "t42-fuzz"
-version = "0.0.0"
-dependencies = [
- "interface-core",
- "libfuzzer-sys",
- "neoteletext-input",
- "neoteletext-qrkeyboard",
- "protocol",
- "t42-browser",
- "t42-decoder",
- "t42-interface",
- "web-opener",
-]
-
-[[package]]
-name = "t42-interface"
-version = "0.1.0"
-dependencies = [
- "cpal",
- "dock-menu",
- "draw-vello",
- "interface-core",
- "neoteletext-audio-mix",
- "neoteletext-input",
- "png",
- "protocol",
- "softbuffer",
- "winit",
 ]
 
 [[package]]

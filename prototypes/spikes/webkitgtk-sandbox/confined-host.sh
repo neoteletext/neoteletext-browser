@@ -12,7 +12,7 @@ spike="$(cd "$1" && pwd)/src-tauri/target/release/sandbox-network-spike"
 cd "$(dirname "$0")"
 here=$PWD
 DISPLAY_NUMBER=:97
-proofs="$HOME/t42-proofs"
+proofs="$HOME/neoteletext-proofs"
 SECRET="$proofs/secret.txt"
 ESCAPED="$proofs/escaped"
 echo "a file the window host must not read" > "$SECRET"

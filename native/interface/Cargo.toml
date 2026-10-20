@@ -1,5 +1,5 @@
 [package]
-name = "t42-interface"
+name = "neoteletext-interface"
 description = "The interface process: draws the window, the wall and the trusted strip, holds no secrets, has no network"
 version.workspace = true
 edition.workspace = true

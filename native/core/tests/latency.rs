@@ -1,5 +1,5 @@
 //! The timed test of `interaction.md` section 10 and requirement 18.5:
-//! against the reference channel `t42-site terminal`, twenty keys at twenty
+//! against the reference channel `neoteletext-site terminal`, twenty keys at twenty
 //! a second go through the real fetcher to the channel, whose pushed page
 //! comes back; each page is then decoded and rendered by the decoder,
 //! encoded as the trusted core encodes it, and decoded as the interface
@@ -51,7 +51,7 @@ impl Drop for Killed {
 /// builds only its own package's programs.
 fn programs() -> (PathBuf, PathBuf) {
     let mut build = Command::new(env!("CARGO"));
-    build.args(["build", "--quiet", "--package", "t42-site", "--package", "t42-fetcher"]);
+    build.args(["build", "--quiet", "--package", "neoteletext-site", "--package", "neoteletext-fetcher"]);
     if !cfg!(debug_assertions) {
         build.arg("--release");
     }
@@ -60,7 +60,7 @@ fn programs() -> (PathBuf, PathBuf) {
     let deps = std::env::current_exe().unwrap();
     let directory = deps.parent().and_then(|deps| deps.parent()).unwrap().to_path_buf();
     let path = |name: &str| directory.join(format!("{name}{}", std::env::consts::EXE_SUFFIX));
-    (path("t42-site"), path("t42-fetcher"))
+    (path("neoteletext-site"), path("neoteletext-fetcher"))
 }
 
 fn record(sequence: u16, event: Event<'_>) -> Vec<u8> {
@@ -119,7 +119,7 @@ fn keys_round_trip_and_pages_reach_the_screen_within_budget() {
     next_push(Instant::now() + LIMIT);
 
     let mut engine = decoder::Engine::new();
-    let mut frames = t42_browser::frames::Frames::default();
+    let mut frames = neoteletext::frames::Frames::default();
     let key = PageKey { channel: 1, page: PAGE };
     frames.set_visible(vec![key]);
     let (mut round_trips, mut renders, mut encodes, mut decodes) = (Vec::new(), Vec::new(), Vec::new(), Vec::new());
@@ -138,7 +138,7 @@ fn keys_round_trip_and_pages_reach_the_screen_within_budget() {
         let (_, png) = frames.accept(key, &rendered.palette, &rendered.indices).expect("a new image");
         encodes.push(started.elapsed());
         let started = Instant::now();
-        t42_interface::image::decode(&png).expect("the interface reads it");
+        neoteletext_interface::image::decode(&png).expect("the interface reads it");
         decodes.push(started.elapsed());
         std::thread::sleep(KEY_INTERVAL.saturating_sub(sent.elapsed()));
     }

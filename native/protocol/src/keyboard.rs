@@ -1,5 +1,5 @@
 //! The phone keyboard (`interaction.md` section 9, requirement 18.9): the
-//! messages between the trusted core and the `t42-keyboard` process, which
+//! messages between the trusted core and the `neoteletext-keyboard` process, which
 //! alone holds the pairing secret, and the panel and keys the trusted core
 //! passes on to the interface. Everything the keyboard process sends is
 //! untrusted and bounded here.

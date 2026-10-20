@@ -1,4 +1,4 @@
-# T42 Browser: requirements
+# NeoTeletext: requirements
 
 | | |
 |---|---|
@@ -40,7 +40,7 @@
 ## 1. Purpose and scope
 
 ### Requirement 1.1: What the application is
-- **Statement:** T42 Browser must be an application for browsing teletext delivered over the web and from local files. Each tab must show one teletext channel, and every page shown must be a teletext page.
+- **Statement:** NeoTeletext must be an application for browsing teletext delivered over the web and from local files. Each tab must show one teletext channel, and every page shown must be a teletext page.
 - **Reason:** This defines the product and bounds what it may fetch and show.
 - **Source:** Decisions 1, 3 and 12.
 - **Verification:** Review.
@@ -62,28 +62,28 @@
 ## 2. The teletext engine
 
 ### Requirement 2.1: The engine is `neoteletext`
-- **Statement:** All teletext recognition, decoding and rendering must be done by the `neoteletext` crates `neoteletext-core`, `neoteletext-formats` and `neoteletext-slicer`. All web protocol reading must be done by `neoteletext-web`. T42 Browser must not contain a second implementation of any of these.
+- **Statement:** All teletext recognition, decoding and rendering must be done by the `neoteletext` crates `neoteletext-core`, `neoteletext-formats` and `neoteletext-slicer`. All web protocol reading must be done by `neoteletext-web`. NeoTeletext must not contain a second implementation of any of these.
 - **Reason:** One implementation, already tested and fuzzed, is safer than two.
 - **Source:** Decision 1.
 - **Verification:** Review.
 
 ### Requirement 2.2: The engine does not depend on a user interface toolkit
-- **Statement:** No `neoteletext` crate that T42 Browser uses may depend on egui, eframe, winit, wgpu, glow, Tauri or any other user interface or graphics toolkit.
-- **Reason:** The engine must stay usable from any front end, and the trusted processes must not carry toolkit code they do not need. As of 15 October 2026 only `neoteletext-gui` depends on egui, and T42 Browser does not use it.
+- **Statement:** No `neoteletext` crate that NeoTeletext uses may depend on egui, eframe, winit, wgpu, glow, Tauri or any other user interface or graphics toolkit.
+- **Reason:** The engine must stay usable from any front end, and the trusted processes must not carry toolkit code they do not need. As of 15 October 2026 only `neoteletext-gui` depends on egui, and NeoTeletext does not use it.
 - **Source:** Decision 1.
 - **Verification:** Check: a script runs `cargo tree` on each `neoteletext` crate the application uses and fails if any of those toolkits appears.
 
 ### Requirement 2.3: The engine's own guarantees are kept
-- **Statement:** The `neoteletext` crates must be built with their own checks, fuzzing and feature rules, and T42 Browser must not enable any feature of them that the engine's rules forbid in a browser build.
+- **Statement:** The `neoteletext` crates must be built with their own checks, fuzzing and feature rules, and NeoTeletext must not enable any feature of them that the engine's rules forbid in a browser build.
 - **Reason:** The engine's safety rests on those rules.
 - **Source:** Architecture.
-- **Verification:** Check: the T42 Browser check script runs the `neoteletext` check script for the revision it builds against.
+- **Verification:** Check: the NeoTeletext check script runs the `neoteletext` check script for the revision it builds against.
 
 ### Requirement 2.4: Limits and fetching behaviour come from neoteletext
-- **Statement:** Every limit on fetching, refreshing and input (response sizes, time-outs, redirects, decompressed size, channel size, request rate, refresh schedule, the grace period after the last tab on a channel closes, and the live-feed malformed-packet threshold) must be a constant defined once in neoteletext and used by T42 Browser by name. The fetching policy of requirements 4.7 and 5.15 to 5.17 must be implemented in neoteletext and switched on by T42 Browser. Where neoteletext does not yet define a limit or behaviour, it must be added there, as listed in `architecture.md` section 5.1, not in T42 Browser.
+- **Statement:** Every limit on fetching, refreshing and input (response sizes, time-outs, redirects, decompressed size, channel size, request rate, refresh schedule, the grace period after the last tab on a channel closes, and the live-feed malformed-packet threshold) must be a constant defined once in neoteletext and used by NeoTeletext by name. The fetching policy of requirements 4.7 and 5.15 to 5.17 must be implemented in neoteletext and switched on by NeoTeletext. Where neoteletext does not yet define a limit or behaviour, it must be added there, as listed in `architecture.md` section 5.1, not in NeoTeletext.
 - **Reason:** One definition of every value and one implementation of channel fetching, as neoteletext's own rule REQ-GEN-014 and requirement 2.1 of this document require.
 - **Source:** Decision 26.
-- **Verification:** Check: T42 Browser's source defines no constant for any of these limits; review.
+- **Verification:** Check: NeoTeletext's source defines no constant for any of these limits; review.
 
 ---
 
@@ -166,7 +166,7 @@ The process model is decided (decision 18).
 ### Requirement 3.11: The Linux window host draws on a nested display of its own
 - **Statement:** On Linux the window host must never be given the user's display, on any session, X11 or Wayland. It must draw on a nested display whose host runs outside the window host's confinement. The only display socket inside the confinement must be the nested display's. Then, requirements:
   1. The nested display's host must offer the window host no protocol for input injection, screen copy, clipboard access without focus, or surfaces above other windows. It may offer the text-input protocol, through which it delivers only text the user's input method composed, and must not offer the input-method protocol (decision 32).
-  2. The trusted strip must be drawn by the nested display's host, outside the nested display, and its input sent by that host straight to the trusted core. That host is T42 Browser's own display host (decision 30).
+  2. The trusted strip must be drawn by the nested display's host, outside the nested display, and its input sent by that host straight to the trusted core. That host is NeoTeletext's own display host (decision 30).
 - **Reason:** The web content process must have a display, and under X11 a confined process typed a command into the user's terminal through it. On a nested display it reached nothing of the user's (`docs/proofs.md` section 6.11). Through a stock nested compositor's virtual keyboard, a process sharing the window host's confinement typed into the window host's own text field, so the strip cannot live inside the nested display (section 6.12).
 - **Source:** Decisions 29, 30, 31 and 32.
 - **Verification:** Test on Linux under an X11 desktop and a Wayland desktop, as `prototypes/spikes/webkitgtk-sandbox/nested-host.sh` does:
@@ -618,7 +618,7 @@ The process model is decided (decision 18, amended by decision 19). The interfac
 
 ### Requirement 11.1: The trusted strip shares the webview's window and is out of page code's reach
 - **Statement:** Every window must have a trusted strip, drawn natively by the window host in the same window as the webview but outside the webview's area, showing only the state the trusted core sends. The strip must never be a window of its own. Its input must reach the trusted core as strip input, a message kind that page intents can never produce.
-- **Reason:** A strip in a window of its own can be covered by any process's window, even a sandboxed one; a strip in the webview's window cannot be reached by page code, and on macOS the web content process is denied the window server (`docs/proofs.md` section 3). On Linux the web content process is given the display even inside WebKitGTK's sandbox, so there the strip is out of page code's reach but not out of a compromised content process's (section 6.9). On Linux the strip is therefore drawn by the host of the window host's nested display, outside it, by T42 Browser's own display host (decisions 29 and 30, requirement 3.11).
+- **Reason:** A strip in a window of its own can be covered by any process's window, even a sandboxed one; a strip in the webview's window cannot be reached by page code, and on macOS the web content process is denied the window server (`docs/proofs.md` section 3). On Linux the web content process is given the display even inside WebKitGTK's sandbox, so there the strip is out of page code's reach but not out of a compromised content process's (section 6.9). On Linux the strip is therefore drawn by the host of the window host's nested display, outside it, by NeoTeletext's own display host (decisions 29 and 30, requirement 3.11).
 - **Source:** Decisions 4, 18 and 27.
 - **Verification:** Test: a page that draws fixed elements above the viewport at the highest stacking order, opens windows and requests full screen leaves the strip untouched; the hostile interface harness cannot produce strip input; review.
 

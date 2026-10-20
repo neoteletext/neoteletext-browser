@@ -1,5 +1,5 @@
 [package]
-name = "t42-site"
+name = "neoteletext-site"
 description = "A development tool, not shipped: builds a fictional 800-page channel from sample recordings, and serves it with push updates"
 version.workspace = true
 edition.workspace = true

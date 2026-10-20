@@ -29,7 +29,7 @@ use crate::state::HostState;
 /// Millihertz, as Wayland outputs report refresh rates.
 const REFRESH_MILLIHERTZ: i32 = 60_000;
 const BACKGROUND: [f32; 4] = [0.0, 0.0, 0.0, 1.0];
-const WINDOW_TITLE: &str = "T42 Browser";
+const WINDOW_TITLE: &str = "NeoTeletext";
 /// OpenGL ES 3.0, as Smithay's renderer requires.
 const GL_VERSION: (u8, u8) = (3, 0);
 
@@ -84,8 +84,8 @@ impl HostWindow {
 
         let mode = Mode { size: (width, height).into(), refresh: REFRESH_MILLIHERTZ };
         let output = Output::new(
-            "t42-display-host".into(),
-            PhysicalProperties { size: (0, 0).into(), subpixel: Subpixel::Unknown, make: "T42 Browser".into(), model: "display host".into() },
+            "neoteletext-display-host".into(),
+            PhysicalProperties { size: (0, 0).into(), subpixel: Subpixel::Unknown, make: "NeoTeletext".into(), model: "display host".into() },
         );
         let _global = output.create_global::<HostState>(&state.display_handle);
         // The window's framebuffer is upside down, as in Smithay's own back end.

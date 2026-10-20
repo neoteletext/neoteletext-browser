@@ -6,7 +6,7 @@
 //! between the agent and the sockets, and sends what arrives to the
 //! trusted core on standard output.
 //!
-//! Usage: `t42-fetcher <channel address> [--allow-local <ip>]...`. A
+//! Usage: `neoteletext-fetcher <channel address> [--allow-local <ip>]...`. A
 //! server on this computer or the local network is refused unless named
 //! with `--allow-local` (the engine's REQ-SEC-006).
 
@@ -330,7 +330,7 @@ fn read_commands(commands: &mpsc::Sender<Wake>) {
 fn main() -> ExitCode {
     let mut arguments = std::env::args().skip(1);
     let Some(channel) = arguments.next() else {
-        eprintln!("t42-fetcher: usage: t42-fetcher <channel address> [--allow-local <ip>]...");
+        eprintln!("neoteletext-fetcher: usage: neoteletext-fetcher <channel address> [--allow-local <ip>]...");
         return ExitCode::FAILURE;
     };
     let mut allowed = Vec::new();
@@ -338,14 +338,14 @@ fn main() -> ExitCode {
         if let ("--allow-local", Some(Ok(ip))) = (argument.as_str(), arguments.next().map(|ip| ip.parse::<IpAddr>())) {
             allowed.push(ip);
         } else {
-            eprintln!("t42-fetcher: {argument}: not understood");
+            eprintln!("neoteletext-fetcher: {argument}: not understood");
             return ExitCode::FAILURE;
         }
     }
     match run(&channel, &allowed) {
         Ok(()) => ExitCode::SUCCESS,
         Err(error) => {
-            eprintln!("t42-fetcher: {error}");
+            eprintln!("neoteletext-fetcher: {error}");
             ExitCode::FAILURE
         }
     }

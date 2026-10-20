@@ -13,7 +13,7 @@ use protocol::fetcher::Entry;
 use protocol::{MAX_ADDRESS, MAX_BANK_NAME, MAX_IDENTITY, MAX_PAGE_TITLE, MAX_TAB_TITLE, MAX_TITLE, clean};
 
 use crate::source::Source;
-use t42_browser::address::{Address, parse};
+use neoteletext::address::{Address, parse};
 
 /// The page a new tab opens, under `.invalid`, which never resolves
 /// (RFC 2606 section 2).

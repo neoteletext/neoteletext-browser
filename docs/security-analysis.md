@@ -1,4 +1,4 @@
-# T42 Browser: security analysis
+# NeoTeletext: security analysis
 
 | | |
 |---|---|
@@ -37,7 +37,7 @@ It meets that standard by:
 
 - **Reading untrusted bytes only in processes with no rights:** the fetcher (one per web channel, network only) and the decoder (one per channel, no network).
 - **Keeping a trusted core that contains no web engine,** reads no network or teletext format, draws nothing, and owns every secret and every decision.
-- **Having no web engine at all.** The interface is T42 Browser's own Rust code. It runs no script, parses no markup, and reads only images our own encoder made and text the trusted core cleaned. The whole class of web-engine risk that the earlier design spent decisions 27 to 32 containing is gone.
+- **Having no web engine at all.** The interface is NeoTeletext's own Rust code. It runs no script, parses no markup, and reads only images our own encoder made and text the trusted core cleaned. The whole class of web-engine risk that the earlier design spent decisions 27 to 32 containing is gone.
 - **Keeping the address and every security decision in the trusted strip,** outside the page area, where no page image is ever drawn.
 
 **What decision 33 accepted.** The trusted strip is drawn by the interface process. A fault in the interface process could therefore draw a false strip and send strip input (section 5.6). In the earlier design that needed a fault in a web engine plus an escape from its sandbox; here it needs a fault in our own interface code or its drawing libraries, reached only through our own images and cleaned text. Open decision 3 asks whether to move the strip into a smaller process.
@@ -185,7 +185,7 @@ Not present yet: no font is fetched. When fonts are, they are read by a confined
 **What a compromised interface process can do.** The trusted strip is drawn by the interface process, so its integrity rests on that process (decision 33; requirement 3.9):
 - **Can:** draw a false strip; send strip input, and so navigate any tab to any address the trusted core's rules accept, go back and forward, and set bookmarks; see every page on screen.
 - **Cannot:** read cookies, history beyond what is shown, or files (once its sandbox denies reads); reach the network; change what any fetcher requests; change a security setting, because none is reachable from strip input yet. When the site-change screen and security settings are built (requirements 8.4 and 11.2), a compromised interface could confirm them too; that is the cost of option 1 that open decision 3 weighs.
-- **What reaching it takes:** a fault in T42 Browser's own interface code (no `unsafe`, requirement 10.12) or in its drawing libraries (`vello_cpu`, Parley, `png`, winit, softbuffer), reached only through our own images, cleaned text and the user's own input.
+- **What reaching it takes:** a fault in NeoTeletext's own interface code (no `unsafe`, requirement 10.12) or in its drawing libraries (`vello_cpu`, Parley, `png`, winit, softbuffer), reached only through our own images, cleaned text and the user's own input.
 
 **Remaining risk:** low likelihood; high impact within its reach (navigation under the user's eyes, without secrets). Controls: small code, no `unsafe`, fuzzing of the interface's readers and the hostile interface harness (requirements 3.9 and 4.6, not met), and open decision 3.
 
@@ -200,7 +200,7 @@ The earlier design's main concession was the system webview: many millions of li
 - **No script runs,** so no package supply chain runs in the interface, and no script can reach the network.
 - **The interface process can be denied the network on every platform,** including macOS, where proof A showed a webview cannot (`../prototypes/docs/proofs.md` section 2). Built on macOS.
 - **On Linux,** the interface needs the display as any application does, and nothing more; no nested display or display host is needed, because nothing in it is a web engine to contain.
-- **The cost:** T42 Browser owns its interface code, including what browsers gave for free: text editing, input methods, accessibility. Each is our code and must be tested as such.
+- **The cost:** NeoTeletext owns its interface code, including what browsers gave for free: text editing, input methods, accessibility. Each is our code and must be tested as such.
 
 ---
 

@@ -8,7 +8,7 @@ set -uo pipefail
 display_host=$(cd "$(dirname "$1")" && pwd)/$(basename "$1")
 cd "$(dirname "$0")"
 here=$PWD
-proofs="$HOME/t42-proofs"
+proofs="$HOME/neoteletext-proofs"
 output="$proofs/accessibility-output.txt"
 PAGE_TEXT="P100 T42 NEWS  Headlines: teletext returns to the web"
 

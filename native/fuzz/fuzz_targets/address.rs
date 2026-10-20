@@ -5,5 +5,5 @@ use libfuzzer_sys::fuzz_target;
 
 fuzz_target!(|data: &[u8]| {
     let Ok(text) = core::str::from_utf8(data) else { return };
-    core::hint::black_box(t42_browser::address::parse(text).is_ok());
+    core::hint::black_box(neoteletext::address::parse(text).is_ok());
 });

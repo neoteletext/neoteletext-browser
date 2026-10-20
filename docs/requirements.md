@@ -1,4 +1,4 @@
-# T42 Browser: requirements
+# NeoTeletext: requirements
 
 | | |
 |---|---|
@@ -43,7 +43,7 @@
 ## 1. Purpose and scope
 
 ### Requirement 1.1: What the application is
-- **Statement:** T42 Browser must be an application for browsing teletext delivered over the web and from local files. Each tab must show one teletext channel, and every page shown must be a teletext page.
+- **Statement:** NeoTeletext must be an application for browsing teletext delivered over the web and from local files. Each tab must show one teletext channel, and every page shown must be a teletext page.
 - **Reason:** This defines the product and bounds what it may fetch and show.
 - **Source:** Decisions 1, 12 and 33.
 - **Verification:** Review.
@@ -68,35 +68,35 @@
 ## 2. The teletext engine
 
 ### Requirement 2.1: The engine is `neoteletext`
-- **Statement:** All teletext recognition, decoding and rendering must be done by the `neoteletext` crates. All web protocol reading must be done by `neoteletext-web`. T42 Browser must not contain a second implementation of any of these.
+- **Statement:** All teletext recognition, decoding and rendering must be done by the `neoteletext` crates. All web protocol reading must be done by `neoteletext-web`. NeoTeletext must not contain a second implementation of any of these.
 - **Reason:** One implementation, already tested and fuzzed, is safer than two.
 - **Source:** Decisions 1 and 36.
 - **Verification:** Review.
 - **State:** Met: the decoder uses the engine's readers, decoder and renderer, and the fetcher the engine's user agent.
 
 ### Requirement 2.2: The engine does not depend on a user interface toolkit
-- **Statement:** No `neoteletext` crate that T42 Browser uses may depend on a user interface or graphics toolkit.
+- **Statement:** No `neoteletext` crate that NeoTeletext uses may depend on a user interface or graphics toolkit.
 - **Reason:** The trusted processes must not carry toolkit code they do not need.
 - **Source:** Decision 1.
 - **Verification:** Check: a script runs `cargo tree` on each `neoteletext` crate the application uses and fails if any toolkit appears.
 - **State:** Met; the check is not written.
 
 ### Requirement 2.3: The engine's own guarantees are kept
-- **Statement:** The `neoteletext` crates must be built with their own checks, fuzzing and feature rules, and T42 Browser must not enable any feature of them that the engine's rules forbid in a browser build.
+- **Statement:** The `neoteletext` crates must be built with their own checks, fuzzing and feature rules, and NeoTeletext must not enable any feature of them that the engine's rules forbid in a browser build.
 - **Reason:** The engine's safety rests on those rules.
 - **Source:** Architecture.
-- **Verification:** Check: the T42 Browser check script runs the `neoteletext` check script for the commit it builds against.
+- **Verification:** Check: the NeoTeletext check script runs the `neoteletext` check script for the commit it builds against.
 - **State:** Not met: the check is not written.
 
 ### Requirement 2.4: Limits and fetching behaviour come from neoteletext
-- **Statement:** Every limit on fetching, refreshing and input must be a constant defined once in neoteletext and used by T42 Browser by name. The fetching policy of requirements 4.7 and 5.15 to 5.17 must be implemented in neoteletext. Where neoteletext does not yet define a limit or behaviour, it must be added there (`architecture.md` section 5.1), not in T42 Browser.
+- **Statement:** Every limit on fetching, refreshing and input must be a constant defined once in neoteletext and used by NeoTeletext by name. The fetching policy of requirements 4.7 and 5.15 to 5.17 must be implemented in neoteletext. Where neoteletext does not yet define a limit or behaviour, it must be added there (`architecture.md` section 5.1), not in NeoTeletext.
 - **Reason:** One definition of every value and one implementation of channel fetching.
 - **Source:** Decision 26.
-- **Verification:** Check: T42 Browser's source defines no constant for any of these limits; review.
+- **Verification:** Check: NeoTeletext's source defines no constant for any of these limits; review.
 - **State:** Partly met. The fetcher restates three of the engine's values instead of naming them: the cookie store's size (100 cookies, 32 kilobytes) and the connection time-out (10 seconds). The trusted core's pace for file channels, 0.2 seconds, is the engine's fetch interval written again.
 
 ### Requirement 2.5: The engine is pinned and never patched
-- **Statement:** T42 Browser must depend on the engine by one pinned commit, read from the engine's repository, never from a copy of its source or its working tree, and must never patch it locally.
+- **Statement:** NeoTeletext must depend on the engine by one pinned commit, read from the engine's repository, never from a copy of its source or its working tree, and must never patch it locally.
 - **Reason:** The engine is maintained in its own repository, by its own process (decision 36).
 - **Source:** Decision 36.
 - **Verification:** Check: every `neoteletext` dependency in `native/Cargo.toml` names the same `rev`.
@@ -356,7 +356,7 @@
 - **State:** Not met: the site-change screen is not built.
 
 ### Requirement 5.14: No referrer and a minimal user agent
-- **Statement:** The fetcher must send no `Referer` header and only the engine's minimal user agent profile. Its `User-Agent` must name T42 Browser, its version and its platform, as the engine's REQ-WEB-031 defines: `T42Browser/<version> (<operating system family>; <architecture>) neoteletext/<version>`, for example `T42Browser/0.1.0 (macOS; arm64) neoteletext/0.1.0`, with no version of the operating system and nothing about the person or the computer; on every request and on the push WebSocket's upgrade.
+- **Statement:** The fetcher must send no `Referer` header and only the engine's minimal user agent profile. Its `User-Agent` must name NeoTeletext, its version and its platform, as the engine's REQ-WEB-031 defines: `NeoTeletext/<version> (<operating system family>; <architecture>) neoteletext/<version>`, for example `NeoTeletext/0.1.0 (macOS; arm64) neoteletext/0.1.0`, with no version of the operating system and nothing about the person or the computer; on every request and on the push WebSocket's upgrade.
 - **Reason:** Requests must reveal as little as possible about the user; a channel needs to know which receiver it serves, as a web site does.
 - **Source:** Architecture; the owner's instruction of 21 October 2026 (decision 47); the engine's decision E.99.
 - **Verification:** Test: inspect requests and the upgrade received by a test server.
@@ -943,14 +943,14 @@ Requirements 13.1 to 13.13 are unchanged from the earlier design, and are stated
 - **Statement:** The interface process must mix with the engine's mixer (`neoteletext-audio-mix`) and play through the operating system's output device with `cpal`, rendering on the audio thread without allocating. With no output device, the browser must run silent.
 - **Reason:** One mixer that behaves as the microcontrollers' does; `cpal` keeps unsafe code out of the browser's crates.
 - **Source:** Decisions 37 and 40.
-- **Verification:** Interface tests of applying operations and rendering; `a_tone_plays_through_the_default_output_device`, run by hand because it needs a device (`cargo test -p t42-interface -- --ignored`); setting `T42_AUDIO_TRACE` makes the interface report the operations it applies and the loudest sample played.
+- **Verification:** Interface tests of applying operations and rendering; `a_tone_plays_through_the_default_output_device`, run by hand because it needs a device (`cargo test -p neoteletext-interface -- --ignored`); setting `NEOTELETEXT_AUDIO_TRACE` makes the interface report the operations it applies and the loudest sample played.
 - **State:** Met on macOS, Windows (WASAPI) and Linux (ALSA): on 19 October 2026 a page's sound played through each, as the device's peak level showed (decision 40).
 
 ### Requirement 16.7: A tab shows its sound and mutes
 - **Statement:** A tab whose channel plays sound must show a speaker before its close button, and a muted tab a crossed-out speaker, whether or not it plays. A click on it must mute the tab, or unmute it, without selecting it. A tab's mute must follow it to the next channel it shows. The window's title must be the selected tab's, followed by "Audio playing" or "Muted" while it plays sound.
 - **Reason:** The owner asked for Chrome's behaviour (decision 38).
 - **Source:** Decision 38.
-- **Verification:** Tests: `a_tab_playing_sound_shows_a_speaker_that_mutes_it`, `muting_tells_the_interface_once_per_change`; by hand on 19 October 2026: the speaker appeared on a background tab playing a live sound, a click muted it (the device's peak fell to nothing), and the title read "livechannel.t42 – Muted – T42 Browser".
+- **Verification:** Tests: `a_tab_playing_sound_shows_a_speaker_that_mutes_it`, `muting_tells_the_interface_once_per_change`; by hand on 19 October 2026: the speaker appeared on a background tab playing a live sound, a click muted it (the device's peak fell to nothing), and the title read "livechannel.t42 – Muted – NeoTeletext".
 - **State:** Met on macOS.
 
 ### Requirement 16.8: Mute every tab
@@ -981,7 +981,7 @@ Requirements 13.1 to 13.13 are unchanged from the earlier design, and are stated
 Adopted on 20 October 2026 (decision 41) from [`hyperlinks.md`](hyperlinks.md), whose section numbers these cite; [`hyperlinks-security.md`](hyperlinks-security.md) is their security analysis. Built the same day behind the `links` feature, on by default; the browser builds and passes its tests with it compiled out too (`--no-default-features`).
 
 ### Requirement 17.1: No teletext underline
-- **Statement:** Teletext's underline attribute is not drawn on any page shown by T42 Browser; separated mosaics are drawn as before.
+- **Statement:** Teletext's underline attribute is not drawn on any page shown by NeoTeletext; separated mosaics are drawn as before.
 - **Reason:** An underline must mean only a link.
 - **Source:** Decision 41; `hyperlinks.md`.
 - **Verification:** Test: a Level 2.5 page with underlined text and separated mosaics.
@@ -1073,15 +1073,15 @@ From `interaction.md` (decision 44), built on 20 October 2026 (decision 45).
 - **Statement:** The fetcher receives push over WebSocket, plain and TLS, and Server-Sent Events, with a heartbeat; pushed packets reach the decoder at once.
 - **Reason:** A channel pushes lines as a transmitter does.
 - **Source:** Decision 44; `interaction.md` section 4.
-- **Verification:** Tests against `t42-site` in each mode.
-- **State:** Partly met. WebSocket push, plain, is exercised against `t42-site terminal` by the latency test; TLS is `rustls` (requirement 5.8), not yet tried against a `wss` channel; Server-Sent Events against `t42-site serve`. The heartbeat is the engine's (its decision E.92), with tests there. A pushed message and a fetched file are read whole and their pages completed at once (`a_pushed_page_shows_as_it_arrives`).
+- **Verification:** Tests against `neoteletext-site` in each mode.
+- **State:** Partly met. WebSocket push, plain, is exercised against `neoteletext-site terminal` by the latency test; TLS is `rustls` (requirement 5.8), not yet tried against a `wss` channel; Server-Sent Events against `neoteletext-site serve`. The heartbeat is the engine's (its decision E.92), with tests there. A pushed message and a fetched file are read whole and their pages completed at once (`a_pushed_page_shows_as_it_arrives`).
 
 ### Requirement 18.2: When keys go to a channel
 - **Statement:** A key goes to a channel only while the tab is active, the open page is that channel's, and its descriptor declares input over its WebSocket; every key goes but the browser's own shortcuts, Command combinations on macOS and Control-Shift combinations elsewhere; closing the page stops it. On such a channel a plain click goes to the host and Command-click follows a link.
 - **Reason:** The open page is the terminal; the browser keeps exactly what a terminal emulator keeps, links included.
 - **Source:** Decision 44; `interaction.md` section 5.
 - **Verification:** Test of each condition, Control-C and the F-keys among the keys that go; the link tests.
-- **State:** Met. Tests: `keys_go_only_under_every_condition`, `records_are_numbered_and_held_keys_are_released_on_leaving`, `keys_go_only_while_the_core_says_so`, `command_never_goes`, `editing_the_address_takes_the_keys_from_the_page_and_says_so`; by hand on macOS on 20 October 2026 against `t42-site terminal`: `*200#` went to page 200, typed letters reached the channel, the game moved and fired, the piano played, and Command-L into the address field showed the channel's "Your keys went elsewhere." until Escape gave the keys back.
+- **State:** Met. Tests: `keys_go_only_under_every_condition`, `records_are_numbered_and_held_keys_are_released_on_leaving`, `keys_go_only_while_the_core_says_so`, `command_never_goes`, `editing_the_address_takes_the_keys_from_the_page_and_says_so`; by hand on macOS on 20 October 2026 against `neoteletext-site terminal`: `*200#` went to page 200, typed letters reached the channel, the game moved and fired, the piano played, and Command-L into the address field showed the channel's "Your keys went elsewhere." until Escape gave the keys back.
 
 ### Requirement 18.3: The strip says where keys go
 - **Statement:** While keys go to a channel the strip says "Keys go to" the channel, with "Not secure" on a plain connection.
@@ -1130,7 +1130,7 @@ From `interaction.md` (decision 44), built on 20 October 2026 (decision 45).
 - **Reason:** A phone is a keyboard, no more; whoever scans has it.
 - **Source:** Decision 44; `interaction.md` section 9.
 - **Verification:** Tests of the reader and the bounds; the sandbox test; review.
-- **State:** Partly met: `t42-keyboard`, run with the fetcher's sandbox on macOS; the protocol's tests and the fuzz target `phone_keys`; the panel's tests (`the_panel_shows_the_qr_and_the_warning_and_finish_is_asked_for`); pairing and keys through a locally run relay in the engine's tests; and on 20 October 2026, `t42-keyboard` itself against a locally run relay: its QR, read by a QR reader, joined a simulated phone, which paired, and the phone's keys and text came out of the process as bounded messages. The panel was not opened by hand: posting clicks to the window without bringing it forward did not reach it. qrkeyboard.com runs protocol 3 since 21 October 2026, and the engine's screen paired through it that day; the browser's panel has not yet paired with a real phone; `T42_QRKEYBOARD_RELAY` names a local relay for testing. Five wrong PINs lock (the engine's screen); the browser starts the no-PIN mode.
+- **State:** Partly met: `neoteletext-keyboard`, run with the fetcher's sandbox on macOS; the protocol's tests and the fuzz target `phone_keys`; the panel's tests (`the_panel_shows_the_qr_and_the_warning_and_finish_is_asked_for`); pairing and keys through a locally run relay in the engine's tests; and on 20 October 2026, `neoteletext-keyboard` itself against a locally run relay: its QR, read by a QR reader, joined a simulated phone, which paired, and the phone's keys and text came out of the process as bounded messages. The panel was not opened by hand: posting clicks to the window without bringing it forward did not reach it. qrkeyboard.com runs protocol 3 since 21 October 2026, and the engine's screen paired through it that day; the browser's panel has not yet paired with a real phone; `NEOTELETEXT_QRKEYBOARD_RELAY` names a local relay for testing. Five wrong PINs lock (the engine's screen); the browser starts the no-PIN mode.
 
 ### Requirement 18.10: Both compile out
 - **Statement:** All of this is behind the `interaction` feature, the phone keyboard behind `phone-keyboard`, both on by default and both compilable out.

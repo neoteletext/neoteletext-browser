@@ -1,4 +1,4 @@
-# T42 Browser: security analysis of push, typing back and the cursor
+# NeoTeletext: security analysis of push, typing back and the cursor
 
 | | |
 |---|---|
@@ -35,7 +35,7 @@ channel ─────▶ fetcher ────────▶ trusted core ◀�
   ▲  push        │  pushed bytes    │  ▲                 ▲ pushed packets
   └─ key records ┴◀── Send ─────────┘  │ Typed
                                        │
-phone ──▶ relay ──▶ t42-keyboard ── PhoneKey
+phone ──▶ relay ──▶ neoteletext-keyboard ── PhoneKey
 ```
 
 ### A. The channel into the fetcher

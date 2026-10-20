@@ -1,5 +1,5 @@
 [package]
-name = "t42-keyboard"
+name = "neoteletext-keyboard"
 description = "The phone keyboard process: pairs a phone through qrkeyboard's relay and passes its keys to the trusted core; it alone holds the pairing secret"
 version.workspace = true
 edition.workspace = true

@@ -1,13 +1,13 @@
-//! A development tool for T42 Browser, not shipped:
+//! A development tool for NeoTeletext, not shipped:
 //!
-//! - `t42-site build <folder> <sample>...` builds the fictional channel
+//! - `neoteletext-site build <folder> <sample>...` builds the fictional channel
 //!   "Halcyon Teletext", every page from 100 to 899, in `<folder>/halcyon/`,
 //!   from sample recordings (`.t42` files, or folders with
 //!   `binaries/NNN.bin` per page).
-//! - `t42-site serve <folder> [port]` serves it, with push updates to its
+//! - `neoteletext-site serve <folder> [port]` serves it, with push updates to its
 //!   live pages, at `http://127.0.0.1:<port>/halcyon/` (port 8070 unless
 //!   given).
-//! - `t42-site terminal [port] [--relay <address>]` serves the terminal
+//! - `neoteletext-site terminal [port] [--relay <address>]` serves the terminal
 //!   channel, which takes the viewer's keys (`interaction.md`), at
 //!   `http://127.0.0.1:<port>/terminal/` (port 8071 unless given); with a
 //!   qrkeyboard relay, its page 600 takes a phone's keys too; with
@@ -34,7 +34,7 @@ fn main() -> ExitCode {
             let push = format!("http://127.0.0.1:{DEFAULT_PORT}/{CHANNEL}/push");
             build::build(&folder, &push, &sources).map(|built| {
                 let live: Vec<String> = built.live.iter().map(|page| format!("{page:03X}")).collect();
-                eprintln!("t42-site: {}: {} pages, live pages {}", folder.display(), built.pages, live.join(" "));
+                eprintln!("neoteletext-site: {}: {} pages, live pages {}", folder.display(), built.pages, live.join(" "));
             })
         }
         Some("serve") if arguments.len() >= 2 => {
@@ -50,14 +50,14 @@ fn main() -> ExitCode {
                 .and_then(|episode| terminal::run(port, &terminal::Settings { relay: option("--relay"), podcast: episode.map(std::sync::Arc::new) }))
         }
         _ => Err(
-            "usage: t42-site build <folder> <sample>... | t42-site serve <folder> [port] | t42-site terminal [port] [--relay <address>] [--podcast <file.wav>]"
+            "usage: neoteletext-site build <folder> <sample>... | neoteletext-site serve <folder> [port] | neoteletext-site terminal [port] [--relay <address>] [--podcast <file.wav>]"
                 .into(),
         ),
     };
     match result {
         Ok(()) => ExitCode::SUCCESS,
         Err(error) => {
-            eprintln!("t42-site: {error}");
+            eprintln!("neoteletext-site: {error}");
             ExitCode::FAILURE
         }
     }

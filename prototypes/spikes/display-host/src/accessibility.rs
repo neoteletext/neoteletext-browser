@@ -17,7 +17,7 @@ const STRIP: NodeId = NodeId(1);
 const PAGE: NodeId = NodeId(2);
 /// The strip's text: screen readers read a text field through its text runs.
 const STRIP_TEXT: NodeId = NodeId(3);
-const APPLICATION_NAME: &str = "T42 Browser";
+const APPLICATION_NAME: &str = "NeoTeletext";
 const STRIP_LABEL: &str = "Address";
 
 /// What the tree is built from.

@@ -38,7 +38,7 @@ pub fn build<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<Menu<R>> {
 
     let app_menu = Submenu::with_items(
         app,
-        "T42 Browser",
+        "NeoTeletext",
         true,
         &[
             &PredefinedMenuItem::about(app, None, None)?,

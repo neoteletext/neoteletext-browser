@@ -1,4 +1,4 @@
-# T42 Browser: architecture
+# NeoTeletext: architecture
 
 | | |
 |---|---|
@@ -13,7 +13,7 @@
 
 ## Contents
 
-1. What T42 Browser is
+1. What NeoTeletext is
 2. The owner's decisions so far
 3. Concepts and terms
 4. Design principles
@@ -34,9 +34,9 @@
 
 ---
 
-## 1. What T42 Browser is
+## 1. What NeoTeletext is
 
-T42 Browser is a desktop and phone application for browsing teletext.
+NeoTeletext is a desktop and phone application for browsing teletext.
 
 - **Teletext** is the page-based information service defined by the European Telecommunications Standards Institute standard EN 300 706, "Enhanced Teletext specification". A copy is at `~/devel/teletext-reference/teletext-standards/en_300706v010201o.pdf`.
 - **Every tab is one teletext channel.** A teletext channel is one teletext service. The standard lets one service carry many pages: eight magazines, numbered 1 to 8, each with pages numbered 00 to FF in hexadecimal, and each page with subpages.
@@ -57,7 +57,7 @@ Each decision below was made by the owner on the date given. Requirements in `re
 | Decision 2 | 15 October 2026 | Tauri version 2. The Tauri 3 alpha with the Chromium Embedded Framework runtime was tried and stopped (section 16). Its work is kept on branch `tauri3`. It is not reported upstream. |
 | Decision 3 | 15 October 2026 | The interface is drawn with HyperText Markup Language and Cascading Style Sheets, because it allows a richly animated interface for navigating many teletext pages at once. |
 | Decision 4 | 15 October 2026 | Security is paramount. Being hacked is not acceptable under any circumstances. |
-| Decision 5 | 15 October 2026 | Pages are shown as images. The viewer is always the T42 Browser application, never an ordinary web browser, so images travel inside the application and never over a local network port. |
+| Decision 5 | 15 October 2026 | Pages are shown as images. The viewer is always the NeoTeletext application, never an ordinary web browser, so images travel inside the application and never over a local network port. |
 | Decision 6 | 15 October 2026 | The page palette is 32 colours: the Colour Map of teletext Presentation Level 2.5, which is four Colour Look-Up Tables of eight colours each. Colours must be reproduced exactly, so no lossy image format is used. |
 | Decision 7 | 15 October 2026 | Many pages are shown on screen at once. |
 | Decision 8 | 15 October 2026 | A new frame of a page replaces the whole image. Changed-rectangle patches are added only if measurement shows they are needed. |
@@ -74,15 +74,15 @@ Each decision below was made by the owner on the date given. Requirements in `re
 | Decision 19 | 15 October 2026 | The interface is a HyperText Markup Language, Cascading Style Sheets and TypeScript application running in the webview, inside the untrusted window host, with React as its framework. Blitz is rejected, because it has no JavaScript engine and cannot run such an application. Decision 18 is amended accordingly: React and its run-time dependencies are allowed in the window host; process isolation, the native trusted strip and every other part of decision 18 stand. |
 | Decision 20 | 15 October 2026 | Whether the interface is written with React or with plain HyperText Markup Language, Cascading Style Sheets and JavaScript must make no difference to security. Every security property must hold even if the window host runs code written by an attacker. |
 | Decision 21 | 15 October 2026 | Superseded the same day by decision 22. It had closed the covert channel between channels by accepting page requests only from trusted input, which would have stopped page-number and Fastext keys from working in the tab. |
-| Decision 22 | 15 October 2026 | Fetching never depends on viewing. A channel's pages are fetched in an order fixed by the channel's own data, and refreshed on a fixed schedule or by the channel's push feed, never according to which page is shown, selected or requested. Page-number and Fastext keys work in the tab and only select among pages already held, so no key and no interface request ever causes, delays, reorders or prioritises a network request. Navigations to other channels still go through the trusted strip. This replaces `neoteletext`'s fetching of a page's own file when it is viewed and its prefetching of Fastext targets and neighbouring pages (its requirement REQ-NAV-004) in T42 Browser. |
+| Decision 22 | 15 October 2026 | Fetching never depends on viewing. A channel's pages are fetched in an order fixed by the channel's own data, and refreshed on a fixed schedule or by the channel's push feed, never according to which page is shown, selected or requested. Page-number and Fastext keys work in the tab and only select among pages already held, so no key and no interface request ever causes, delays, reorders or prioritises a network request. Navigations to other channels still go through the trusted strip. This replaces `neoteletext`'s fetching of a page's own file when it is viewed and its prefetching of Fastext targets and neighbouring pages (its requirement REQ-NAV-004) in NeoTeletext. |
 | Decision 23 | 15 October 2026 | Channels that publish only separate page files, with no bundle (`index.t42`) and no contents file (`contents.txt`), have each page fetched when it is selected, as any browser fetches what is asked for. This is a knowingly accepted exception to decision 20 for those channels only: if the window host were compromised, its forged key presses could cause page requests whose pattern carries information to another channel's server, and those channels' servers can see which pages are read. Bundled channels and channels with a contents file keep decision 22 in full. |
 | Decision 24 | 15 October 2026 | Every recommendation for open decisions 1 and 3 to 13 is accepted: (1) `neoteletext-browser` is reused for navigation, history, site-change and address rules; (3) the site-change screen is native, in the trusted strip only; (4) the address field is always visible; (5) both conventional tabs and a zoomable overview of tabs, magazines and pages; (6) a certificate that fails its checks is a hard stop with no way to proceed; (7) private windows come after the first version; (8) no per-tab containers; (9) page images, with a palette-index canvas only if measurement shows images limit very large walls; (10) `tough` implements The Update Framework; (11) one launcher scheme on every desktop; (12) desktop first, phones later; (13) three hardware security keys for the update root, held by three separate people, one kept in a safe. |
 | Decision 25 | 15 October 2026 | Updates are hosted at `update.neoteletext.com`, a subdomain used for nothing else. |
-| Decision 26 | 15 October 2026 | Every limit on fetching, refreshing and input is defined once, in neoteletext, and T42 Browser uses neoteletext's constants. The fetching policy of decisions 22 and 23 is implemented in neoteletext as well, not in T42 Browser. What T42 Browser needs from neoteletext is listed in section 5.1 and in `neoteletext/docs/t42-browser-open-questions.md`. |
+| Decision 26 | 15 October 2026 | Every limit on fetching, refreshing and input is defined once, in neoteletext, and NeoTeletext uses neoteletext's constants. The fetching policy of decisions 22 and 23 is implemented in neoteletext as well, not in NeoTeletext. What NeoTeletext needs from neoteletext is listed in section 5.1 and in `neoteletext/docs/neoteletext-browser-open-questions.md`. |
 | Decision 27 | 15 October 2026 | Proofs A and B (`docs/proofs.md`) showed that on macOS a webview cannot be denied the network by the operating system without rendering nothing, and that a strip in a separate process's window can be covered by any other window. The interface process of decision 18 is therefore replaced by a **window host**: a process that owns the window, hosts the system webview and draws the native trusted strip in that same window. It holds the network entitlement only because the webview requires it, never uses it, and holds no secrets. The trusted core stays a separate process, holding every secret and making every decision. Page code is confined by the webview's own content process sandbox, the Content Security Policy and the removal of WebRTC in every frame. |
 | Decision 28 | 15 October 2026 | On Linux the window host is confined from outside (option 1 of `docs/proofs.md` section 6.7). It is started in an empty network namespace, with private `/run` and `/tmp` that hold only the socket of the display in use, under a Landlock rule set that grants no home directory and no data directory. WebKitGTK's processes inherit all three. WebKitGTK's own sandbox is not turned on, so `wry` is not patched. The private directories were added after measurement showed that Landlock alone left the user's session bus reachable, and through it a way to run programs outside the confinement (`docs/proofs.md` section 6.8). On Linux the trusted strip holds against page code but not against a compromised web content process, which keeps the display; that is recorded as a remaining risk, and what to do about the display is open decision 19. |
 | Decision 29 | 15 October 2026 | Security is critical, so on Linux the window host never receives the user's display. It draws on a nested display of its own, hosted by a process outside its confinement, on every Linux session, X11 or Wayland (option 1 of `docs/proofs.md` section 6.10). No session is supported by warning instead. Measured with cage as the nested compositor: the confined window host reached none of the user's display sockets or local services, and could not type into the user's terminal (`docs/proofs.md` section 6.11). The same measurement showed that a stock compositor still lets a compromised content process forge strip input, so the strip on Linux must be drawn by the nested display's host. How was open decision 20, closed by decision 30. |
-| Decision 30 | 15 October 2026 | On Linux the nested display of decision 29 is hosted by **T42 Browser's own display host** (option 1 of `docs/proofs.md` section 6.13), not by a stock or patched compositor. It is a small Wayland compositor, run outside the window host's confinement as a client of the user's desktop. It offers the window host only core window protocols: surfaces, shared memory and graphics buffers, and the desktop shell's windows. It offers no input injection, no screen copy, no clipboard access without focus and no surfaces above other windows. It takes input only from the user's real devices. It draws the trusted strip natively, outside the nested display, and sends strip input straight to the trusted core. Which compositor library it is built on was open decision 21, closed by decision 31. |
+| Decision 30 | 15 October 2026 | On Linux the nested display of decision 29 is hosted by **NeoTeletext's own display host** (option 1 of `docs/proofs.md` section 6.13), not by a stock or patched compositor. It is a small Wayland compositor, run outside the window host's confinement as a client of the user's desktop. It offers the window host only core window protocols: surfaces, shared memory and graphics buffers, and the desktop shell's windows. It offers no input injection, no screen copy, no clipboard access without focus and no surfaces above other windows. It takes input only from the user's real devices. It draws the trusted strip natively, outside the nested display, and sends strip input straight to the trusted core. Which compositor library it is built on was open decision 21, closed by decision 31. |
 | Decision 31 | 15 October 2026 | The display host of decision 30 is written in Rust, on Smithay (version 0.7.0 in the proof). Its smallest form, `prototypes/spikes/display-host`, passed every test of `docs/proofs.md` section 6.14 under both an X11 and a Wayland desktop. |
 | Decision 32 | 15 October 2026 | On Linux, input methods and screen readers are handled by the display host, outside the window host's confinement; nothing new enters the confinement. The user's input method talks only to the display host, which serves the text-input protocol itself and delivers only composed text to the window host; it never offers the input-method protocol. The display host publishes the window's accessibility tree to the user's screen reader with AccessKit, built from state the trusted core sends: the strip, and each page image labelled with its cleaned text. The window host never reaches an accessibility bus. Measured in `docs/proofs.md` section 6.16. |
 
@@ -98,7 +98,7 @@ Each decision below was made by the owner on the date given. Requirements in `re
 | **Origin** | The combination of scheme, host and port of an address, as in traditional browsers. |
 | **Tab** | One view onto one channel at a time, with its own history. |
 | **Trusted core** | The process that holds everything the user trusts: which channel each tab shows, history, bookmarks, cookies, settings. It contains no web engine. |
-| **Display host** | On Linux only: T42 Browser's own small Wayland compositor, written in Rust on Smithay (decision 31), outside the window host's confinement. It hosts the window host's nested display, draws the trusted strip natively beside it, and sends strip input to the trusted core (decisions 29 and 30). It is also the window's side of the user's input method and the window's publisher to the user's screen reader (decision 32). |
+| **Display host** | On Linux only: NeoTeletext's own small Wayland compositor, written in Rust on Smithay (decision 31), outside the window host's confinement. It hosts the window host's nested display, draws the trusted strip natively beside it, and sends strip input to the trusted core (decisions 29 and 30). It is also the window's side of the user's input method and the window's publisher to the user's screen reader (decision 32). |
 | **Window host** | The process that owns each window, hosts Tauri and the system webview, and draws the native trusted strip in the same window (decision 27); on Linux the display host draws the strip instead (decision 30). It holds no secrets and makes no decision; it renders the state the trusted core sends and passes on what the user did. The webview's page code runs in the webview's own content process, outside the window host. |
 | **Web content process** | The system webview's own process in which page code runs, sandboxed by the platform. On macOS its sandbox denies everything by default, including the window server and network sockets (`docs/proofs.md` section 3.2). |
 | **Trusted strip** | A small native area at the top of each window, drawn natively by the window host from state the trusted core sends, in the same window as the webview. It shows the address and security state of the current tab and carries every security decision. Page code cannot draw over it or read it (`docs/proofs.md` section 3.2). |
@@ -128,7 +128,7 @@ The engine is `neoteletext` (`~/devel/neoteletext-engine`), a Rust implementatio
 
 **The engine does not depend on egui.** This was checked on 15 October 2026 with `cargo tree` on every crate. Only `neoteletext-gui`, the egui application, depends on egui or any graphics toolkit.
 
-| Crate | What it does | Reused by T42 Browser |
+| Crate | What it does | Reused by NeoTeletext |
 |---|---|---|
 | `neoteletext-core` | Packet decoding, page store, Presentation Levels 1.0 to 3.5, rendering a page to palette indices, the input router | Yes, inside the decoder |
 | `neoteletext-formats` | Readers for T42 packet files, Teletext Text Interchange page files, transport streams and other formats; content-based format detection; the strict Glyph Bitmap Distribution Format font reader | Yes, inside the decoder and the font helper |
@@ -138,15 +138,15 @@ The engine is `neoteletext` (`~/devel/neoteletext-engine`), a Rust implementatio
 | `neoteletext-app` | Starting and sandboxing processes, the framed pipe protocol between processes | Yes, in the trusted core |
 | `neoteletext-browser` | Navigation, history, the site-change screen's rules, address display, as platform-free logic | Yes, in the trusted core (decision 24) |
 | `neoteletext-cli` | The `neottx` command-line program | Not part of the application |
-| `neoteletext-gui` | The egui interface | **Replaced** by the T42 Browser shell |
+| `neoteletext-gui` | The egui interface | **Replaced** by the NeoTeletext shell |
 
 ---
 
 ### 5.1 Changes required in neoteletext
 
-T42 Browser defines no limit and no fetching behaviour of its own (decision 26). Everything below is work in neoteletext, recorded with its questions in `neoteletext/docs/t42-browser-open-questions.md`. That document also records where T42 Browser's decisions conflict with decisions already made in neoteletext, for the owner to resolve there.
+NeoTeletext defines no limit and no fetching behaviour of its own (decision 26). Everything below is work in neoteletext, recorded with its questions in `neoteletext/docs/neoteletext-browser-open-questions.md`. That document also records where NeoTeletext's decisions conflict with decisions already made in neoteletext, for the owner to resolve there.
 
-| Change | Where in neoteletext | T42 Browser decisions and requirements |
+| Change | Where in neoteletext | NeoTeletext decisions and requirements |
 |---|---|---|
 | A fetching policy in which fetching never depends on viewing: whole channel in an order fixed by the channel's data, refreshes only by schedule or push, no prefetch by viewing, and on-demand fetching only for channels with only separate page files | `neoteletext-web`, `neoteletext-browser` | Decisions 22 and 23; requirements 4.7, 5.15 and 5.16 |
 | A grace period during which a closed tab's channel keeps refreshing | `neoteletext-browser` | Requirement 5.17 |
@@ -157,7 +157,7 @@ T42 Browser defines no limit and no fetching behaviour of its own (decision 26).
 | Sandboxes for the fetcher and decoder on macOS and Windows | `neoteletext-app` | Requirements 3.7 and 3.8 |
 | A page's text, cleaned of control, bidirectional and zero-width characters and bounded, for display and accessibility | `neoteletext-core` or `neoteletext-browser` | Requirements 11.5 and 12.9 |
 
-**Limits T42 Browser takes from neoteletext.** Among them, as of 15 October 2026: `contents::MAX_PAGES` (800 pages), `contents::MAX_BYTES` (64 kilobytes), `DEFAULT_PAGE_LIMIT` (256 kilobytes), `DEFAULT_PUSH_LIMIT`, `DEFAULT_DESCRIPTOR_LIMIT`, `DEFAULT_HEADER_LIMIT`, `DEFAULT_FORM_LIMIT`, `DEFAULT_FETCH_INTERVAL_US` (one request every 0.2 seconds), `DEFAULT_CONNECT_TIMEOUT_US` (10 seconds), `DEFAULT_RESPONSE_TIMEOUT_US` (30 seconds), and `MIN_REFRESH_SECONDS` and `MAX_REFRESH_SECONDS` (5 seconds and 24 hours). The full table is in `neoteletext/docs/t42-browser-open-questions.md` section 3.
+**Limits NeoTeletext takes from neoteletext.** Among them, as of 15 October 2026: `contents::MAX_PAGES` (800 pages), `contents::MAX_BYTES` (64 kilobytes), `DEFAULT_PAGE_LIMIT` (256 kilobytes), `DEFAULT_PUSH_LIMIT`, `DEFAULT_DESCRIPTOR_LIMIT`, `DEFAULT_HEADER_LIMIT`, `DEFAULT_FORM_LIMIT`, `DEFAULT_FETCH_INTERVAL_US` (one request every 0.2 seconds), `DEFAULT_CONNECT_TIMEOUT_US` (10 seconds), `DEFAULT_RESPONSE_TIMEOUT_US` (30 seconds), and `MIN_REFRESH_SECONDS` and `MAX_REFRESH_SECONDS` (5 seconds and 24 hours). The full table is in `neoteletext/docs/neoteletext-browser-open-questions.md` section 3.
 
 ---
 
@@ -238,7 +238,7 @@ All processes communicate over the framed pipe protocol of `neoteletext-app/src/
 | Form | The page has a form: its fields and destination |
 | Status | Searching, found, stale, and the page title from row 0 |
 
-**Between the trusted core and the window host** (new in T42 Browser):
+**Between the trusted core and the window host** (new in NeoTeletext):
 
 | Direction | Message | Meaning |
 |---|---|---|
@@ -262,7 +262,7 @@ All processes communicate over the framed pipe protocol of `neoteletext-app/src/
 |---|---|---|---|---|
 | macOS | Service, App Sandbox, no network | Service with the outgoing-network entitlement only | Service with no entitlements, and inside wasmi | The main application, holding the outgoing-network entitlement only because WKWebView renders nothing without it (`docs/proofs.md` section 2), and no file access beyond its bundle; the trusted core is a separate service |
 | Windows | Main process | AppContainer with the internet-client capability only | AppContainer without it, low integrity, job object, and inside wasmi | AppContainer; whether WebView2 can run without the internet-client capability is not yet proven |
-| Linux | Main process | Own process, Landlock and seccomp filter | Own process, Landlock and seccomp filter, and inside wasmi | Own process, confined from outside (decision 28): an empty network namespace; private `/run` and `/tmp` holding only the display's socket; a Landlock rule set with no home directory and no data directory. WebKitGTK's processes inherit all three (`docs/proofs.md` section 6.8). WebKitGTK's own content process sandbox stays off. Draws on a nested display of its own, never the user's (decision 29); the strip is drawn outside it, by T42 Browser's own display host (decision 30). No system call filter yet (open decision 22). Section 6.6 summarises the Linux design and section 6.7 the alternatives considered |
+| Linux | Main process | Own process, Landlock and seccomp filter | Own process, Landlock and seccomp filter, and inside wasmi | Own process, confined from outside (decision 28): an empty network namespace; private `/run` and `/tmp` holding only the display's socket; a Landlock rule set with no home directory and no data directory. WebKitGTK's processes inherit all three (`docs/proofs.md` section 6.8). WebKitGTK's own content process sandbox stays off. Draws on a nested display of its own, never the user's (decision 29); the strip is drawn outside it, by NeoTeletext's own display host (decision 30). No system call filter yet (open decision 22). Section 6.6 summarises the Linux design and section 6.7 the alternatives considered |
 | Android | Main application process | Separate service process | Isolated service process with seccomp filter, and inside wasmi | The application's webview (see section 13) |
 | iOS | The application | Inside the application process | Inside the application process, inside wasmi only | The application's webview (see section 13) |
 
@@ -270,7 +270,7 @@ Today, in `neoteletext`, the fetcher and decoder are separate processes on macOS
 
 ### 6.6 Linux: how the isolation is built
 
-On macOS the system's web engine confines its own content process, and the operating system keeps that process from the window server (`docs/proofs.md` sections 2 and 3). On Linux neither holds under Tauri (`docs/proofs.md` section 6), so T42 Browser builds the confinement itself, in three parts:
+On macOS the system's web engine confines its own content process, and the operating system keeps that process from the window server (`docs/proofs.md` sections 2 and 3). On Linux neither holds under Tauri (`docs/proofs.md` section 6), so NeoTeletext builds the confinement itself, in three parts:
 
 1. **Confinement from outside (decision 28, requirement 3.10).**
    - The trusted core starts the window host in an empty network namespace, with private `/run` and `/tmp` that hold only the nested display's socket, under a Landlock rule set with no home directory and no data directory.
@@ -279,7 +279,7 @@ On macOS the system's web engine confines its own content process, and the opera
 2. **A nested display of the window host's own (decision 29, requirement 3.11).**
    - The window host never receives the user's display, under X11 or Wayland.
    - Measured: under X11 a confined process could otherwise type commands into the user's terminal.
-3. **T42 Browser's own display host (decisions 30 and 31).**
+3. **NeoTeletext's own display host (decisions 30 and 31).**
    - **What it is:** a small Wayland compositor in Rust, on Smithay, running outside the confinement as an ordinary window on the user's desktop.
    - **Its own drawing:** it draws the trusted strip itself, outside the nested display. Nothing inside can cover the strip or type into it, not even an escape into the window host.
    - **What it offers the window host:** only core window protocols and text input.
@@ -289,11 +289,11 @@ On macOS the system's web engine confines its own content process, and the opera
 
 ### 6.7 Other ways to organise security in a Linux application
 
-Researched on 15 October 2026, to check the design of section 6.6 against what others do. For each: what it is, how it relates to T42 Browser, and what T42 Browser takes from it.
+Researched on 15 October 2026, to check the design of section 6.6 against what others do. For each: what it is, how it relates to NeoTeletext, and what NeoTeletext takes from it.
 
-| Approach | What it is | Relation to T42 Browser | What T42 Browser takes |
+| Approach | What it is | Relation to NeoTeletext | What NeoTeletext takes |
 |---|---|---|---|
-| 1. Chromium's sandbox | Two layers [1]. Layer 1: the renderer runs in empty namespaces from unprivileged user namespaces, which also allows cutting off the network. Layer 2: a seccomp-bpf system call filter, "designed to shelter the kernel from malicious code executing in userland". Chromium's own AppArmor and SELinux layers are deprecated. | Section 6.6's confinement is layer 1. **T42 Browser has no layer 2 for the window host.** | A system call filter for the window host, as for the fetcher and decoder (open decision 22) |
+| 1. Chromium's sandbox | Two layers [1]. Layer 1: the renderer runs in empty namespaces from unprivileged user namespaces, which also allows cutting off the network. Layer 2: a seccomp-bpf system call filter, "designed to shelter the kernel from malicious code executing in userland". Chromium's own AppArmor and SELinux layers are deprecated. | Section 6.6's confinement is layer 1. **NeoTeletext has no layer 2 for the window host.** | A system call filter for the window host, as for the fetcher and decoder (open decision 22) |
 | 2. WebKitGTK's own sandbox | Bubblewrap with a seccomp filter, and a filtering proxy for the session bus | Measured (`docs/proofs.md` sections 6.3 to 6.5): real, but it gives the content process the display, and Tauri cannot turn it on without a patched `wry` | Not used (decision 28) |
 | 3. Flatpak and portals | The whole application runs under Bubblewrap; trusted "portal" services outside it act for it, such as choosing files or capturing the screen, after asking the user | A proven pattern, but Flatpak would become the update path, against decision 24. It has had escapes: before 1.10.4 and 1.12.0, an application holding the Wayland or PipeWire socket could make portals treat it as unsandboxed [2]. | The portal idea, already present: the trusted core and display host act for the window host |
 | 4. The Wayland security-context protocol | A sandbox tags its Wayland connections, and the user's compositor withholds dangerous protocols from them [3][4]. One compositor withholds screen capture, virtual input, the layer shell, clipboard control and the protocol itself from tagged clients [5]. | The standard way to limit a sandbox's display. It depends on the user's compositor, does nothing under X11, and does not move the strip out of reach. | A further layer on desktops that support it (open decision 23) |
@@ -373,7 +373,7 @@ Decision 22. The pattern of network requests must reveal nothing about which pag
 - **Keys and interface requests only select among pages already held.** They never cause, delay, reorder or prioritise a request, except on channels with only separate page files, where selecting a page not yet held fetches it (decision 23).
 - **Closing a tab** would stop its channel's refreshes, which the channel's server could notice. A closed tab's channel therefore keeps refreshing for a fixed grace period, defined in neoteletext (section 5.1).
 - **Limits:** the maximum channel size and request rate are neoteletext's constants (section 5.1). The policy itself is implemented in neoteletext (decision 26).
-- **What this replaces:** in `neoteletext`, a page's own file is fetched when the page is viewed, and the Fastext targets and neighbouring pages are prefetched (its requirement REQ-NAV-004). T42 Browser does neither.
+- **What this replaces:** in `neoteletext`, a page's own file is fetched when the page is viewed, and the Fastext targets and neighbouring pages are prefetched (its requirement REQ-NAV-004). NeoTeletext does neither.
 - **Privacy gain:** a channel's server cannot see which of its pages a viewer reads.
 
 ## 8. Content detection
@@ -415,7 +415,7 @@ Traditional browsers stop scripts from reading other origins' data. Teletext has
 
 The cookie store is `neoteletext-web`'s, which follows the cookie specification draft RFC 6265bis of 30 September 2026 as browsers implement it, made stricter:
 
-| Behaviour | Traditional browser | T42 Browser |
+| Behaviour | Traditional browser | NeoTeletext |
 |---|---|---|
 | Scope | The host, or a whole domain with the `Domain` attribute | **The host only, always.** The `Domain` attribute is ignored. |
 | `Secure` attribute | Sent only over Transport Layer Security | The same. Plain connections are allowed but never receive `Secure` cookies. |
@@ -426,7 +426,7 @@ The cookie store is `neoteletext-web`'s, which follows the cookie specification 
 | Third-party cookies | Blocked or partitioned | **There is no third-party context at all.** A page cannot cause a credentialed request to another origin. |
 | Sharing between tabs | Same-site tabs share cookies | Tabs on the same channel share cookies (decision 11) |
 
-**Where the cookie store lives.** In `neoteletext` today the web state machine, cookie store included, runs inside the fetcher process (`neoteletext-app/src/fetch.rs`). In T42 Browser the **trusted core owns the cookie store**. The fetcher is given, for each request, only the cookies that request carries, and returns any `Set-Cookie` headers to the trusted core, which applies them. A compromised fetcher therefore sees only the cookies of requests in flight, never the whole store. This is a change to the current arrangement and is listed as required work.
+**Where the cookie store lives.** In `neoteletext` today the web state machine, cookie store included, runs inside the fetcher process (`neoteletext-app/src/fetch.rs`). In NeoTeletext the **trusted core owns the cookie store**. The fetcher is given, for each request, only the cookies that request carries, and returns any `Set-Cookie` headers to the trusted core, which applies them. A compromised fetcher therefore sees only the cookies of requests in flight, never the whole store. This is a change to the current arrangement and is listed as required work.
 
 ### 9.4 Storage and caches
 
@@ -665,7 +665,7 @@ The update mechanism is accepted only when these automated tests pass on every d
 |---|---|---|
 | macOS | WKWebView (WebKit) | Updated with the operating system |
 | Windows | WebView2 (Chromium) | Updated by Microsoft independently of the application |
-| Linux | WebKitGTK | Updated by the distribution; often weeks to months behind upstream security fixes. A start-up check of the WebKitGTK version, with a warning below a known-fixed release, is required. The window host is confined from outside (decision 28) and draws on a nested display of its own, never the user's (decision 29). The trusted strip is drawn by T42 Browser's own display host, outside the nested display (decision 30). |
+| Linux | WebKitGTK | Updated by the distribution; often weeks to months behind upstream security fixes. A start-up check of the WebKitGTK version, with a warning below a known-fixed release, is required. The window host is confined from outside (decision 28) and draws on a nested display of its own, never the user's (decision 29). The trusted strip is drawn by NeoTeletext's own display host, outside the nested display (decision 30). |
 | Android | Android System WebView (Chromium) | Updated through the Play Store. The webview cannot be moved into a separate process of the application's choosing in the same way as on desktops; the decoder's isolated service process and wasmi remain. |
 | iOS | WKWebView (WebKit) | One application process. The decoder's only wall is wasmi, as in `neoteletext/docs/desktop-browser.md` section 3.6. WebKit's own content process still separates script execution from the application. |
 
@@ -676,7 +676,7 @@ The update mechanism is accepted only when these automated tests pass on every d
 ## 14. Code layout
 
 ```
-t42-browser/
+neoteletext/
   launcher/                 the small launcher and update stub (section 12)
   updater/                  the updater process
   src-tauri/                the window host (Tauri)
@@ -747,7 +747,7 @@ Tried on 15 October 2026 with `tauri` 3.0.0-alpha.4, `tauri-runtime-cef` 3.0.0-a
 | Open decision 17 | Closed by decision 23: channels with only separate page files fetch each page when it is selected, as an accepted exception. | — |
 | Open decision 18 | Moved to neoteletext by decision 26: the fetching limits, default refresh and grace period are defined there. | — |
 | Open decision 19 | Closed by decision 29: a nested display for the window host on every Linux session. | — |
-| Open decision 20 | Closed by decision 30: T42 Browser's own display host. | — |
+| Open decision 20 | Closed by decision 30: NeoTeletext's own display host. | — |
 | Open decision 21 | Closed by decisions 31 (Rust, Smithay) and 32 (input methods and screen readers through the display host). | — |
 | Open decision 22 | Should the Linux window host also run under a seccomp system call filter, as Chromium's renderer does (section 6.7, approach 1)? The fetcher and decoder already have one (section 6.5); the window host has only the confinement of decision 28, so a fault in the web engine faces the whole kernel interface. The filter must allow what WebKitGTK and GTK need, which must be measured. | Yes: measure what WebKitGTK and GTK need under the confinement, and filter to that. |
 | Open decision 23 | Should the display host, on Wayland desktops that support the security-context protocol, also tag its own connection to the user's compositor, so the compositor withholds dangerous protocols from it too (section 6.7, approach 4)? It costs little and narrows what an escape into the display host could reach; it is unavailable under X11 and on compositors without the protocol. | Yes, where supported, as an extra layer that is never relied on. |

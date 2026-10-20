@@ -14,7 +14,7 @@ use bevy::prelude::*;
 use bevy::window::WindowResolution;
 use bevy::winit::WinitSettings;
 
-const WINDOW_TITLE: &str = "T42 Browser: Bevy page wall";
+const WINDOW_TITLE: &str = "NeoTeletext: Bevy page wall";
 const WINDOW_WIDTH: u32 = 1280;
 const WINDOW_HEIGHT: u32 = 820;
 

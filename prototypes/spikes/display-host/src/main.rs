@@ -1,4 +1,4 @@
-//! The smallest form of T42 Browser's own display host for Linux
+//! The smallest form of NeoTeletext's own display host for Linux
 //! (decisions 30 to 32, requirement 3.11). It is a Wayland compositor that
 //! runs as a window on the user's desktop and hosts one program, the window
 //! host, on a nested display. It:

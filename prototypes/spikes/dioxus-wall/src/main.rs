@@ -13,7 +13,7 @@ mod tab;
 
 use dioxus::native::{Config, LogicalSize, WindowAttributes};
 
-const WINDOW_TITLE: &str = "T42 Browser: Dioxus page wall";
+const WINDOW_TITLE: &str = "NeoTeletext: Dioxus page wall";
 const WINDOW_WIDTH: f64 = 1280.0;
 const WINDOW_HEIGHT: f64 = 820.0;
 

@@ -1,4 +1,4 @@
-# T42 Browser's native interface (docs/native-interface-design.md): an
+# NeoTeletext's native interface (docs/native-interface-design.md): an
 # interface core that draws only through its own drawing interface, the
 # drawing back ends, the interface process and the trusted core.
 [workspace]
@@ -26,7 +26,7 @@ draw-embedded = { path = "draw-embedded", default-features = false }
 protocol = { path = "protocol", default-features = false }
 dock-menu = { path = "dock-menu", default-features = false }
 web-opener = { path = "web-opener", default-features = false }
-decoder = { path = "decoder", package = "t42-decoder", default-features = false }
+decoder = { path = "decoder", package = "neoteletext-decoder", default-features = false }
 # The teletext engine, maintained in its own repository (design section
 # 4.0), pinned to one commit. Its repository is local until that commit is
 # published; Cargo reads the commit, never the engine's working tree. The

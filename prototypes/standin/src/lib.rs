@@ -1,6 +1,6 @@
 //! A stand-in for the neoteletext engine, used to build and test T42
 //! Browser while the real engine's changes (`architecture.md` section 5.1)
-//! are made. It reproduces only the shapes T42 Browser depends on:
+//! are made. It reproduces only the shapes NeoTeletext depends on:
 //!
 //! - the framed pipe protocol of `neoteletext-app/src/pipe.rs`: a kind
 //!   byte, a 32-bit big-endian length and the payload, bounded and parsed

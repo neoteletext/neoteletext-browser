@@ -43,7 +43,7 @@ declare_class!(
     unsafe impl ClassType for Target {
         type Super = NSObject;
         type Mutability = mutability::MainThreadOnly;
-        const NAME: &'static str = "T42BrowserDockMenuTarget";
+        const NAME: &'static str = "NeoTeletextDockMenuTarget";
     }
 
     impl DeclaredClass for Target {}

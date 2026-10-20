@@ -1,9 +1,9 @@
-# T42 Browser: hyperlinks
+# NeoTeletext: hyperlinks
 
 | | |
 |---|---|
 | **Status** | Adopted 20 October 2026 (the architecture's decision 41), every recommendation of section 16 taken as the decision; decision 42 confirms that the only underlining is for links and that the software draws it, never the page. Phases 1 and 2 built the same day, behind the `links` feature (section 15); section 19 lists what building them changed (decision 43). |
-| **Owner's brief** | Hyperlinks shown with a blue underline in the interface, controlled by the browser; underlining must not be possible from teletext source. Links to teletext open in T42 Browser; other links offer to open in the system's web browser. |
+| **Owner's brief** | Hyperlinks shown with a blue underline in the interface, controlled by the browser; underlining must not be possible from teletext source. Links to teletext open in NeoTeletext; other links offer to open in the system's web browser. |
 | **Companion documents** | [`hyperlinks-security.md`](hyperlinks-security.md) analyses this design's security; its findings are applied here (section 18). [`architecture.md`](architecture.md) (sections 9.5, 9.6 and 11), [`requirements.md`](requirements.md) (sections 4, 7, 8, 11 and 12), [`security-analysis.md`](security-analysis.md) (spoofing and the line of death). The engine's decision E.36 and its TTI Link Extension (`~/devel/neoteletext-engine/docs/spec/requirements/tti-link-extension.md`). |
 
 ---
@@ -321,7 +321,7 @@ To be added to `requirements.md` as section 17 once adopted.
 
 | Number | Statement | Reason | Verification |
 |---|---|---|---|
-| 17.1 | Teletext's underline attribute is not drawn on any page shown by T42 Browser; separated mosaics are drawn as before. | An underline must mean only a link. | Test: a Level 2.5 page with underlined text and separated mosaics. |
+| 17.1 | Teletext's underline attribute is not drawn on any page shown by NeoTeletext; separated mosaics are drawn as before. | An underline must mean only a link. | Test: a Level 2.5 page with underlined text and separated mosaics. |
 | 17.2 | Links are drawn only by the interface, over the page image, in one style the page cannot change (section 9.2), and only when a teletext dot is at least two device pixels. | A page must not be able to draw the browser's link. | Test of the drawing at several scales; review. |
 | 17.3 | The trusted core decides every link, from the decoder's candidates, checked as section 8.2 requires. The interface receives only where to draw. | The decoder and the page are untrusted; the interface holds no channel data. | Test with out-of-range, overlapping, excessive and invalid links. |
 | 17.4 | Page numbers in the text are links when, and only when, section 6.1's rules hold. | Navigation teletext readers already expect, without false links. | Test of each rule, including currency, times and absent pages. |

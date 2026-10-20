@@ -2,7 +2,7 @@
 # `cargo fuzz` in scripts/check.sh full. Outside the workspace: libFuzzer
 # needs a nightly compiler, and the workspace builds on stable without it.
 [package]
-name = "t42-fuzz"
+name = "neoteletext-fuzz"
 version = "0.0.0"
 edition = "2024"
 license = "MIT"
@@ -15,9 +15,9 @@ cargo-fuzz = true
 libfuzzer-sys = "=0.4.13"
 protocol = { path = "../protocol" }
 interface-core = { path = "../interface-core" }
-decoder = { path = "../decoder", package = "t42-decoder" }
-t42-interface = { path = "../interface" }
-t42-browser = { path = "../core" }
+decoder = { path = "../decoder", package = "neoteletext-decoder" }
+neoteletext-interface = { path = "../interface" }
+neoteletext = { path = "../core" }
 web-opener = { path = "../web-opener" }
 neoteletext-qrkeyboard = { git = "file:///Users/andrewstuart/devel/neoteletext-engine", rev = "88d09b11eb6ed5ecb421526d3370c5ec57d786e2" }
 neoteletext-input = { git = "file:///Users/andrewstuart/devel/neoteletext-engine", rev = "88d09b11eb6ed5ecb421526d3370c5ec57d786e2" }

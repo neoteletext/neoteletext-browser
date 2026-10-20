@@ -5,7 +5,7 @@
 //! strip shows. It never parses teletext data and never draws; the
 //! interface never reaches a decoder.
 //!
-//! Usage: `t42-browser [--allow-local <ip>]... [address]...`, each address
+//! Usage: `neoteletext [--allow-local <ip>]... [address]...`, each address
 //! a web channel's folder (`http://host/folder/`), a `file://` address, or
 //! an absolute path to a recording, a page file or a folder of page files.
 //! A channel on this computer or the local network is fetched only from
@@ -45,26 +45,26 @@ use protocol::decoder::{FIRST_STORE_PAGES, FromDecoder, MAX_CHUNK, MAX_STORE_PAG
 use protocol::fetcher::{FromFetcher, MAX_NOTICE, Origin, read_from_fetcher};
 use protocol::{ToCore, ToInterface, clean, read_from_interface, write_to_interface};
 
+use neoteletext::frames;
+use neoteletext::hearing::{Hearing, Send};
+#[cfg(feature = "links")]
+use neoteletext::links::{Channel as LinkChannel, Follow, Links, Refusal};
+use neoteletext::sleep::Sleep;
 #[cfg(feature = "links")]
 use protocol::links::{LinkKind, Message as LinkMessage, Pointing, Spot};
-use t42_browser::frames;
-use t42_browser::hearing::{Hearing, Send};
-#[cfg(feature = "links")]
-use t42_browser::links::{Channel as LinkChannel, Follow, Links, Refusal};
-use t42_browser::sleep::Sleep;
 
 use crate::session::{HOME, Session, Went};
 use crate::source::Next;
 
-const DECODER: &str = "t42-decoder";
-const FETCHER: &str = "t42-fetcher";
-const INTERFACE: &str = "t42-interface";
+const DECODER: &str = "neoteletext-decoder";
+const FETCHER: &str = "neoteletext-fetcher";
+const INTERFACE: &str = "neoteletext-interface";
 #[cfg(feature = "phone-keyboard")]
-const KEYBOARD: &str = "t42-keyboard";
+const KEYBOARD: &str = "neoteletext-keyboard";
 /// A relay other than qrkeyboard's own, for testing against one run
 /// locally.
 #[cfg(feature = "phone-keyboard")]
-const RELAY_VARIABLE: &str = "T42_QRKEYBOARD_RELAY";
+const RELAY_VARIABLE: &str = "NEOTELETEXT_QRKEYBOARD_RELAY";
 
 /// A channel's data is handed to its decoder in pieces of 64 packets of 42
 /// bytes (2,688 bytes) every 0.2 seconds, the engine's
@@ -292,7 +292,7 @@ struct Core {
     started: std::time::Instant,
     /// Typing into a page (`interaction.md`).
     #[cfg(feature = "interaction")]
-    typing: t42_browser::typing::Typing,
+    typing: neoteletext::typing::Typing,
     /// The page the viewer opened in the active tab.
     #[cfg(feature = "interaction")]
     opened: Option<PageKey>,
@@ -356,17 +356,17 @@ impl Core {
     /// Delivers what the typing rules decided: key records to a channel's
     /// fetcher, the typing state to the interface.
     #[cfg(feature = "interaction")]
-    fn deliver_typing(&mut self, sends: Vec<t42_browser::typing::Send>) -> Result<(), String> {
+    fn deliver_typing(&mut self, sends: Vec<neoteletext::typing::Send>) -> Result<(), String> {
         use protocol::fetcher::{ToFetcher, write_to_fetcher};
         for send in sends {
             match send {
-                t42_browser::typing::Send::Fetcher(channel, record) => {
+                neoteletext::typing::Send::Fetcher(channel, record) => {
                     let Some(input) = self.fetchers.get_mut(&channel).and_then(|fetcher| fetcher.input.as_mut()) else { continue };
                     // A fetcher that cannot be written to has stopped; its
                     // reader reports that, and the socket's state follows.
                     let _ = write_to_fetcher(input, &ToFetcher::Send(record));
                 }
-                t42_browser::typing::Send::Interface(state) => self.send(&ToInterface::Typing(state))?,
+                neoteletext::typing::Send::Interface(state) => self.send(&ToInterface::Typing(state))?,
             }
         }
         Ok(())
@@ -414,7 +414,7 @@ impl Core {
             let awake = self.sleep.awake(*id, active, now);
             if awake && !self.decoders.contains_key(id) {
                 if let Some(problem) = problem {
-                    eprintln!("t42-browser: {problem}");
+                    eprintln!("neoteletext: {problem}");
                 }
                 self.generation = self.generation.wrapping_add(1);
                 let pages = self.store_pages.get(id).copied().unwrap_or(FIRST_STORE_PAGES);
@@ -532,7 +532,7 @@ impl Core {
                     self.tell(channel, &ToDecoder::Whole { packets, pushed, bytes });
                 }
             }
-            FromFetcher::Notice(text) => eprintln!("t42-browser: channel {channel}: {}", clean(&text, MAX_NOTICE)),
+            FromFetcher::Notice(text) => eprintln!("neoteletext: channel {channel}: {}", clean(&text, MAX_NOTICE)),
             FromFetcher::Pushing(open) => {
                 self.sleep.set_pushing(channel, open);
                 // A live channel wakes at once, not at the next look.
@@ -631,7 +631,7 @@ impl Core {
                     self.follow(followed, "a click")?;
                 }
                 #[cfg(not(feature = "links"))]
-                eprintln!("t42-browser: cell {column},{row} of image {version} of page {:03X} on channel {}", key.page, key.channel);
+                eprintln!("neoteletext: cell {column},{row} of image {version} of page {:03X} on channel {}", key.page, key.channel);
             }
             ToCore::SelectTab(index) => {
                 if usize::from(index) < self.session.tabs.len() {
@@ -674,7 +674,7 @@ impl Core {
             ToCore::Sounding(channels) => self.sleep.set_sounding(&channels),
             ToCore::Navigate(typed) => {
                 if let Err(reason) = self.session.navigate(&typed) {
-                    eprintln!("t42-browser: {reason}");
+                    eprintln!("neoteletext: {reason}");
                 }
                 self.send_all()?;
             }
@@ -737,7 +737,7 @@ impl Core {
             return Ok(());
         }
         if let Some(reason) = reason {
-            eprintln!("t42-browser: the decoder for channel {channel} stopped: {reason}");
+            eprintln!("neoteletext: the decoder for channel {channel} stopped: {reason}");
         }
         if let Some(mut decoder) = self.decoders.remove(&channel) {
             let _ = decoder.child.kill();
@@ -897,7 +897,7 @@ impl Core {
 
     fn phone_ended(&mut self, reason: Option<String>) -> Result<(), String> {
         if let Some(reason) = reason {
-            eprintln!("t42-browser: the phone keyboard stopped: {reason}");
+            eprintln!("neoteletext: the phone keyboard stopped: {reason}");
         }
         if let Some((mut child, _)) = self.phone.take() {
             let _ = child.kill();
@@ -1002,7 +1002,7 @@ impl Core {
         match followed {
             Err(Refusal::NotALink) => Ok(()),
             Err(refusal) => {
-                eprintln!("t42-browser: {what} was not followed: {refusal:?}");
+                eprintln!("neoteletext: {what} was not followed: {refusal:?}");
                 Ok(())
             }
             Ok(Follow::Page(page)) => {
@@ -1031,11 +1031,11 @@ impl Core {
         let at = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |since| since.as_secs());
         match web_opener::open(address) {
             Ok(()) => {
-                eprintln!("t42-browser: handed {address} to the web browser, from {from}, at {at} seconds past 1970");
+                eprintln!("neoteletext: handed {address} to the web browser, from {from}, at {at} seconds past 1970");
                 Ok(())
             }
             Err(error) => {
-                eprintln!("t42-browser: {address}: {error}");
+                eprintln!("neoteletext: {address}: {error}");
                 self.link(LinkMessage::Pointing(Some(Pointing { kind: LinkKind::Web, text: "Could not open your web browser".into() })))
             }
         }
@@ -1064,7 +1064,7 @@ impl Core {
             #[cfg(any(feature = "links", feature = "interaction"))]
             started: std::time::Instant::now(),
             #[cfg(feature = "interaction")]
-            typing: t42_browser::typing::Typing::default(),
+            typing: neoteletext::typing::Typing::default(),
             #[cfg(feature = "interaction")]
             opened: None,
             #[cfg(feature = "phone-keyboard")]
@@ -1096,7 +1096,7 @@ fn run() -> Result<(), String> {
     let mut session = Session::new();
     for address in &addresses {
         if let Err(reason) = session.open(address) {
-            eprintln!("t42-browser: {address}: {reason}");
+            eprintln!("neoteletext: {address}: {reason}");
         }
     }
     if session.tabs.is_empty() {
@@ -1126,7 +1126,7 @@ fn run() -> Result<(), String> {
             }
             Event::FetcherEnded(channel, generation, reason) => {
                 if core.fetchers.get(&channel).map(|fetcher| fetcher.generation) == Some(generation) {
-                    eprintln!("t42-browser: the fetcher for channel {channel} stopped{}", reason.map(|reason| format!(": {reason}")).unwrap_or_default());
+                    eprintln!("neoteletext: the fetcher for channel {channel} stopped{}", reason.map(|reason| format!(": {reason}")).unwrap_or_default());
                     if let Some(mut fetcher) = core.fetchers.remove(&channel) {
                         let _ = fetcher.child.wait();
                     }
@@ -1190,7 +1190,7 @@ fn main() -> ExitCode {
     match run() {
         Ok(()) => ExitCode::SUCCESS,
         Err(error) => {
-            eprintln!("t42-browser: {error}");
+            eprintln!("neoteletext: {error}");
             ExitCode::FAILURE
         }
     }
@@ -1202,7 +1202,7 @@ mod program_tests {
 
     #[test]
     fn a_helper_program_has_this_platforms_file_name() {
-        let expected = if cfg!(windows) { "t42-interface.exe" } else { "t42-interface" };
+        let expected = if cfg!(windows) { "neoteletext-interface.exe" } else { "neoteletext-interface" };
         assert_eq!(program_file(INTERFACE), expected);
     }
 }

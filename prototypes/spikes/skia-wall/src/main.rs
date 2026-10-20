@@ -23,7 +23,7 @@ use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
 use winit::keyboard::{Key, NamedKey};
 use winit::window::{Window, WindowId};
 
-const WINDOW_TITLE: &str = "T42 Browser: tiny-skia page wall, no framework";
+const WINDOW_TITLE: &str = "NeoTeletext: tiny-skia page wall, no framework";
 const WINDOW_WIDTH: f64 = 1280.0;
 const WINDOW_HEIGHT: f64 = 820.0;
 /// Logical pixels scrolled for one wheel line.

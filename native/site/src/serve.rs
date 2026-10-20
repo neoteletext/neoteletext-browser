@@ -144,7 +144,7 @@ fn serve(mut stream: TcpStream, root: &Path, push_path: &str, updates: &Arc<Mute
         let mut parts = request.split(' ');
         let (method, target) = (parts.next().unwrap_or_default(), parts.next().unwrap_or_default());
         let path = target.split('?').next().unwrap_or_default();
-        eprintln!("t42-site: {method} {target}");
+        eprintln!("neoteletext-site: {method} {target}");
         if method != "GET" {
             respond(&mut stream, "405 Method Not Allowed", "text/plain", b"")?;
             continue;
@@ -172,7 +172,7 @@ pub fn run(root: &Path, channel: &str, port: u16) -> Result<(), String> {
     let push_path = format!("/{channel}/push");
     let updates: Arc<Mutex<Vec<(u64, String)>>> = Arc::new(Mutex::new(Vec::new()));
     let mut live = Live::read(&root.join(channel));
-    eprintln!("t42-site: serving http://127.0.0.1:{port}/{channel}/ with {} live pages", live.pages.len());
+    eprintln!("neoteletext-site: serving http://127.0.0.1:{port}/{channel}/ with {} live pages", live.pages.len());
     let feed = updates.clone();
     thread::spawn(move || {
         loop {

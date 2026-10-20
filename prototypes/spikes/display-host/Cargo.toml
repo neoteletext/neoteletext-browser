@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2024"
 rust-version = "1.87"
 publish = false
-description = "Decisions 30 to 32: the smallest form of T42 Browser's own display host for Linux"
+description = "Decisions 30 to 32: the smallest form of NeoTeletext's own display host for Linux"
 
 [dependencies.smithay]
 version = "=0.7.0"

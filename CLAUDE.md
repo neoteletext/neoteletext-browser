@@ -1,4 +1,4 @@
-# T42 Browser
+# NeoTeletext
 
 A desktop browser for teletext channels on the web, built on the neoteletext engine (`~/devel/neoteletext-engine`) at a pinned commit. The code is in `native/`; the earlier Tauri design and its prototypes are in `prototypes/`.
 
@@ -24,7 +24,7 @@ A desktop browser for teletext channels on the web, built on the neoteletext eng
 
 - Tools: `scripts/tools.sh` installs the pinned tools into the ignored `tools/`; the check script sources it and refuses other versions.
 - Edit loop: `scripts/try.sh` (Clippy on every save) or `scripts/try.sh <crate> [filter]`.
-- Gates: `scripts/check.sh commit` (pre-commit), `scripts/check.sh full` (pre-push; its Linux stage runs on `T42_LINUX_HOST`, `foundintelquiet4060` by default).
-- The reference channel: `cargo run -p t42-site -- terminal [port] [--relay URL] [--podcast FILE.wav]`.
-- A local qrkeyboard relay for tests: `T42_QRKEYBOARD_RELAY` names one; qrkeyboard.com runs protocol 3 since 21 October 2026.
+- Gates: `scripts/check.sh commit` (pre-commit), `scripts/check.sh full` (pre-push; its Linux stage runs on `NEOTELETEXT_LINUX_HOST`, `foundintelquiet4060` by default).
+- The reference channel: `cargo run -p neoteletext-site -- terminal [port] [--relay URL] [--podcast FILE.wav]`.
+- A local qrkeyboard relay for tests: `NEOTELETEXT_QRKEYBOARD_RELAY` names one; qrkeyboard.com runs protocol 3 since 21 October 2026.
 - Windows: built and tested by hand in the virtual machine (`DEVELOPMENT.md` section 12.1).

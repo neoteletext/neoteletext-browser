@@ -1,4 +1,4 @@
-# T42 Browser: native interface design
+# NeoTeletext: native interface design
 
 | | |
 |---|---|
@@ -27,14 +27,14 @@
 
 ## 1. Summary
 
-T42 Browser's interface would be drawn by T42 Browser's own Rust code, with no web engine:
+NeoTeletext's interface would be drawn by NeoTeletext's own Rust code, with no web engine:
 
 - **Drawing on the processor is the minimum.** Every target must work with no graphics processor. `vello_cpu` draws on the processor; a graphics-processor renderer of the same family is an optional upgrade where it helps.
 - **One interface core, several drawing back ends.** The state, layout, animation, hit-testing and input handling are written once. They draw through one small drawing interface, with back ends for desktops and phones (`vello_cpu`, optionally Vello on the graphics processor) and for microcontrollers (`embedded-graphics`).
 - **Widgets come from Masonry, or are ours.** Masonry, Linebender's widget layer, provides the text input, buttons, sliders, scrolling, screen-reader support and input methods the shell needs, and in its unreleased source can draw with `vello_cpu`. If it proves unsuitable, the same widgets are built on Taffy (layout), Parley (text and editing) and AccessKit (screen readers).
 - **No web engine means most of the web-engine security work is no longer needed.** Decisions 27 to 32, and the two approved but unrecorded decisions on the Linux window host's system call filter and the Wayland security context, exist only to contain a web engine. The process separation of decision 18 for fetching, decoding and the trusted core stays.
 
-The cost: T42 Browser owns its interface code, including the parts browsers give for free (text editing, accessibility, input methods), and depends on young libraries.
+The cost: NeoTeletext owns its interface code, including the parts browsers give for free (text editing, accessibility, input methods), and depends on young libraries.
 
 ---
 
@@ -75,10 +75,10 @@ Every native prototype idled at no processor use once configured to redraw only 
 
 ### 4.0 The engine is a separate project
 
-The teletext engine, `neoteletext`, is maintained in its own repository (`~/devel/neoteletext-engine`), not in T42 Browser's. This design does not move it, copy it or change it:
+The teletext engine, `neoteletext`, is maintained in its own repository (`~/devel/neoteletext-engine`), not in NeoTeletext's. This design does not move it, copy it or change it:
 
-- **T42 Browser depends on the engine's crates by a pinned version**, never on a copy of their source. The interface core, the drawing back ends, the interface process and the trusted core are T42 Browser's own code; decoding, rendering to palette indices, the page store, fetching rules and every limit (decision 26) are the engine's.
-- **Changes the engine needs are made in the engine's repository**, by its own process, and recorded in `neoteletext/docs/t42-browser-open-questions.md` (`../prototypes/docs/architecture.md` section 5.1). T42 Browser never patches them locally.
+- **NeoTeletext depends on the engine's crates by a pinned version**, never on a copy of their source. The interface core, the drawing back ends, the interface process and the trusted core are NeoTeletext's own code; decoding, rendering to palette indices, the page store, fetching rules and every limit (decision 26) are the engine's.
+- **Changes the engine needs are made in the engine's repository**, by its own process, and recorded in `neoteletext/docs/neoteletext-browser-open-questions.md` (`../prototypes/docs/architecture.md` section 5.1). NeoTeletext never patches them locally.
 - **The engine's core is in use** (section 12.2): `neoteletext-core`, `neoteletext-formats` and `neoteletext-image`, at commit `f341e94`, in the engine's recommended `modern-classic` profile. The engine's browser shell (`neoteletext-gui`, `neoteletext-browser`) and its application crate are not used. `standin`, the earlier stand-in for the engine, remains only for the earlier prototypes.
 - **The microcontroller build** uses the same engine crates that are already `no_std` (section 7), so the engine stays one code base for every target.
 
@@ -116,7 +116,7 @@ The shell needs: the address field (requirement 11.3), buttons, the thumbnail sl
 | Option | What it gives | Against it |
 |---|---|---|
 | **A. Masonry** (Linebender; Apache-2.0) | `TextInput`, `TextArea`, `Button`, `Checkbox`, `Slider`, `ProgressBar`, `Spinner`, `Label`, `Prose`, `Image`, `Flex`, `Grid`, `ZStack`, `Portal`, `ScrollBar`, `VirtualScroll`, `Split`, and in its source also `Canvas`, `Svg`, `RadioButtons`, `Switch`, `StepInput`, `CollapsePanel`; screen readers through AccessKit; input methods through `ui-events` | Alpha. Drawing with `vello_cpu` exists only in unreleased source (Linebender, 2026 first quarter: Masonry moved to the `imaging` rendering abstraction); the published 0.4.0 uses Vello on the graphics processor with `wgpu` 26. No statement on iOS or Android. Not for microcontrollers. |
-| **B. Our own widgets** | Exactly what T42 Browser needs, all reviewable: Taffy for layout, Parley's `PlainEditor` for the address field, AccessKit for screen readers, `arboard` for the clipboard, input methods from winit (proven in the Linux display host, `../prototypes/docs/proofs.md` section 6.16) | Text editing, accessibility and input methods done well are real, permanent work |
+| **B. Our own widgets** | Exactly what NeoTeletext needs, all reviewable: Taffy for layout, Parley's `PlainEditor` for the address field, AccessKit for screen readers, `arboard` for the clipboard, input methods from winit (proven in the Linux display host, `../prototypes/docs/proofs.md` section 6.16) | Text editing, accessibility and input methods done well are real, permanent work |
 
 **Recommended:** prove option A first (section 12); fall back to option B where it falls short. Either way the microcontroller build uses its own minimal widgets on `embedded-graphics`.
 
@@ -143,13 +143,13 @@ With no web engine, nothing in the interface runs code that was not shipped with
 
 On iOS and on microcontrollers there is one process in any case, as `../prototypes/docs/architecture.md` section 13 already records for iOS.
 
-**The trusted strip under option 1** is drawn by the interface process. That was the position before decision 27 for the strip's integrity against page code, and here there is no page code: the strip can be imitated only by a fault in T42 Browser's own interface process. Requirement 3.9's hostile interface harness, which replaces the interface process with an attacker's, still holds every other property.
+**The trusted strip under option 1** is drawn by the interface process. That was the position before decision 27 for the strip's integrity against page code, and here there is no page code: the strip can be imitated only by a fault in NeoTeletext's own interface process. Requirement 3.9's hostile interface harness, which replaces the interface process with an attacker's, still holds every other property.
 
 ### 5.3 Sandboxing the interface process
 
 - **No network** on every platform (it needs none).
 - **No files** beyond its own resources and shipped fonts.
-- **Display access** is needed, as for any application. Under X11 any application can send input to others (`../prototypes/docs/proofs.md` section 6.8); the interface process is T42 Browser's own code, not a web engine, so this is the same exposure every desktop application has, not a containment problem.
+- **Display access** is needed, as for any application. Under X11 any application can send input to others (`../prototypes/docs/proofs.md` section 6.8); the interface process is NeoTeletext's own code, not a web engine, so this is the same exposure every desktop application has, not a containment problem.
 - **A system call filter** on Linux, and the platform sandboxes of `../prototypes/docs/architecture.md` section 6.5, as for the decoder.
 
 ---
@@ -343,7 +343,7 @@ These are easy to lose in a move away from a browser engine, and each is require
 8. **The developer tools panel** (requirement 12.7) needs text tables, from the widget layer.
 9. **Localisation of the interface's own text** has never been specified in any document; it should be, now that the interface's text is ours.
 10. **The cookie store moving into the trusted core**, and **macOS sandboxing of the fetcher and decoder**, are still unsolved (`../prototypes/docs/architecture.md` section 5.1, requirement 3.8); this design does not change them.
-11. **The ten open questions for neoteletext** (`neoteletext/docs/t42-browser-open-questions.md`) are still unanswered and are independent of the interface.
+11. **The ten open questions for neoteletext** (`neoteletext/docs/neoteletext-browser-open-questions.md`) are still unanswered and are independent of the interface.
 12. **The display scale:** every measurement here was at a scale of 1; drawing on the processor costs about four times as much at a scale of 2.
 
 ---
@@ -358,9 +358,9 @@ These are easy to lose in a move away from a browser engine, and each is require
 | Drawing on the processor | `draw-vello` | `vello_cpu` and Parley; 1280 by 820 drawn in 10.0 milliseconds (first frame, fonts loading) |
 | Drawing on a microcontroller | `draw-embedded` | `embedded-graphics`, `no_std`; the same tab drawn into an 800 by 480 display in memory |
 | Messages between trusted core and interface | `protocol` | Framed and bounded; each side refuses the other side's kinds; text checked for hidden characters on both sides |
-| Interface process | `t42-interface` | 4.7 megabytes with its two fonts; reads indexed images with the `png` crate; on macOS runs under a sandbox profile with no network and no file writes |
-| Trusted core | `t42-browser` | 0.5 megabytes; starts the decoder and the interface, routes visible pages to the decoder, drops unchanged frames, encodes images, sets the strip, flashes at 0.75 hertz (neoteletext decision E.12) |
-| Decoder | `t42-decoder` | 0.4 megabytes; the stand-in's decoder until the engine's exists (section 4.0) |
+| Interface process | `neoteletext-interface` | 4.7 megabytes with its two fonts; reads indexed images with the `png` crate; on macOS runs under a sandbox profile with no network and no file writes |
+| Trusted core | `neoteletext` | 0.5 megabytes; starts the decoder and the interface, routes visible pages to the decoder, drops unchanged frames, encodes images, sets the strip, flashes at 0.75 hertz (neoteletext decision E.12) |
+| Decoder | `neoteletext-decoder` | 0.4 megabytes; the stand-in's decoder until the engine's exists (section 4.0) |
 
 Running, the interface used about 215 megabytes and the trusted core 18; while every page flashed, the interface used about 5% of one core and the trusted core about 2%. Killing the trusted core ended the other two processes.
 
@@ -390,12 +390,12 @@ The decoder process is now the engine. What each process does with it:
 
 | Process | Engine crates | What it does |
 |---|---|---|
-| Decoder (`t42-decoder`) | `neoteletext-core`, `neoteletext-formats`, `neoteletext-image` (palette) | Detects the format of a channel's bytes and reads them into packets (T42 recordings, TTI page files, transport streams, sliced records); decodes them into the engine's page store; reports each display page as it is first received completely, with a title from the first text row of the engine's grid (its character sets, mosaics left out); composes shown pages at the engine's default presentation level and renders them in its resolved colour mode, with Bedstead, at its own flash timing (decision E.48), into 480 by 500 palette indices with a palette of at most 32 colours. No network and no file writes: on macOS it runs under the same sandbox profile as the interface. |
-| Trusted core (`t42-browser`) | `neoteletext-image` (PNG writer), `neoteletext-core` (flash timing constants) | Reads a channel from a file or a folder of page files, never parsing it, and hands it to the channel's decoder in pieces of 64 packets every 0.2 seconds, whatever is on screen (decision 22); starts one decoder per channel; tells the decoder which pages are shown and prompts it once per flash unit; checks and encodes each frame. |
+| Decoder (`neoteletext-decoder`) | `neoteletext-core`, `neoteletext-formats`, `neoteletext-image` (palette) | Detects the format of a channel's bytes and reads them into packets (T42 recordings, TTI page files, transport streams, sliced records); decodes them into the engine's page store; reports each display page as it is first received completely, with a title from the first text row of the engine's grid (its character sets, mosaics left out); composes shown pages at the engine's default presentation level and renders them in its resolved colour mode, with Bedstead, at its own flash timing (decision E.48), into 480 by 500 palette indices with a palette of at most 32 colours. No network and no file writes: on macOS it runs under the same sandbox profile as the interface. |
+| Trusted core (`neoteletext`) | `neoteletext-image` (PNG writer), `neoteletext-core` (flash timing constants) | Reads a channel from a file or a folder of page files, never parsing it, and hands it to the channel's decoder in pieces of 64 packets every 0.2 seconds, whatever is on screen (decision 22); starts one decoder per channel; tells the decoder which pages are shown and prompts it once per flash unit; checks and encodes each frame. |
 
 **Pinning.** The dependency is a `git` source at the engine's commit `f341e94` in its local repository, because that commit is not yet published; Cargo reads the commit, never the engine's working tree, where another session works. When the commit is published, the source becomes the engine's own repository address at the same commit.
 
-**Addresses.** A channel is opened by a `file://` address or an absolute path, given on the command line (`t42-browser <address>...`) or typed into the strip. The strip shows "File" for these. Web addresses are accepted but open an empty channel, because the fetcher is not built.
+**Addresses.** A channel is opened by a `file://` address or an absolute path, given on the command line (`neoteletext <address>...`) or typed into the strip. The strip shows "File" for these. Web addresses are accepted but open an empty channel, because the fetcher is not built.
 
 **Messages between trusted core and decoder** (`protocol::decoder`): to the decoder, data, end of data, the pages shown, a tick and close; from it, a page arrived (number and title, which the trusted core cleans) and a rendered page. Each direction refuses the other's kinds; every length, page number and palette index is checked on arrival.
 
@@ -405,17 +405,17 @@ The decoder process is now the engine. What each process does with it:
 
 ### 12.3 Web channels and push (15 October 2026)
 
-A channel is a folder on a web server, as the engine's `docs/channels.md` defines it: `channel.json` names the push feed, `contents.txt` lists every page with its title under section headings, and each page is `NNN.tti`. T42 Browser now opens such channels.
+A channel is a folder on a web server, as the engine's `docs/channels.md` defines it: `channel.json` names the push feed, `contents.txt` lists every page with its title under section headings, and each page is `NNN.tti`. NeoTeletext now opens such channels.
 
 | Part | What it does |
 |---|---|
-| Fetcher (`t42-fetcher`) | One per web channel, started by the trusted core. The engine's web module (`neoteletext-web`, the `push` feature) opens the channel (`channel.json`, then the bundle `index.t42` if there is one), reads `contents.txt`, fetches every page it lists in its order at the engine's rate, and holds the push connection, subscribed to all pages, over server-sent events. The program itself only moves bytes between the agent and plain TCP sockets. No TLS yet, so `https` channels are reported unreachable. On macOS it may use the network but write no files. |
+| Fetcher (`neoteletext-fetcher`) | One per web channel, started by the trusted core. The engine's web module (`neoteletext-web`, the `push` feature) opens the channel (`channel.json`, then the bundle `index.t42` if there is one), reads `contents.txt`, fetches every page it lists in its order at the engine's rate, and holds the push connection, subscribed to all pages, over server-sent events. The program itself only moves bytes between the agent and plain TCP sockets. No TLS yet, so `https` channels are reported unreachable. On macOS it may use the network but write no files. |
 | Trusted core | Starts a fetcher for each web channel; takes the contents file's titles and section names for the banks; passes page bytes, fetched or pushed, to the channel's decoder unread. A server on this computer or the local network is reached only when named with `--allow-local` (the engine's REQ-SEC-006). |
 | Decoder | Reports a page that arrives for the first time, and a page whose new version differs from the last (a digest of its rows), as updated. |
 | Interface | Pages listed but not yet arrived show as available. An updated page: in the overview, an amber ring bursts from its cell and an amber dot stays for a minute; in the page list, its row flashes amber and shows "Updated 12s"; in the page area, its frame glows amber, fading over 3 seconds, and its caption shows the same age. |
-| Site tool (`t42-site`, not shipped) | `build` makes "Halcyon Teletext", a fictional channel of all 800 pages, from sample recordings decoded by the engine, keeping each page in its original hundred where it can: a front page and section indexes of its own, `contents.txt` and `channel.json`. Ten pages are live (101 and 102 news, 150 newsflash, 201 and 202 markets, 302 and 303 sport results, 401 weather, 410 travel, 601 television), each with four versions. `serve` serves the folder and pushes one live page every 1.5 seconds as a server-sent event named `page`, rotating its versions and stamping row 23 "LIVE · UPDATED" with the time. The samples are broadcast recordings, so the built site stays in the ignored `native/target/sites` and is never committed. |
+| Site tool (`neoteletext-site`, not shipped) | `build` makes "Halcyon Teletext", a fictional channel of all 800 pages, from sample recordings decoded by the engine, keeping each page in its original hundred where it can: a front page and section indexes of its own, `contents.txt` and `channel.json`. Ten pages are live (101 and 102 news, 150 newsflash, 201 and 202 markets, 302 and 303 sport results, 401 weather, 410 travel, 601 television), each with four versions. `serve` serves the folder and pushes one live page every 1.5 seconds as a server-sent event named `page`, rotating its versions and stamping row 23 "LIVE · UPDATED" with the time. The samples are broadcast recordings, so the built site stays in the ignored `native/target/sites` and is never committed. |
 
-To run it: `t42-site build target/sites <recordings>...`, `t42-site serve target/sites`, then `t42-browser --allow-local 127.0.0.1 http://127.0.0.1:8070/halcyon/`. Measured: 218 of the 800 pages arrived in the first 45 seconds, at the engine's one request every 0.2 seconds; pushes arrived and showed as updates throughout.
+To run it: `neoteletext-site build target/sites <recordings>...`, `neoteletext-site serve target/sites`, then `neoteletext --allow-local 127.0.0.1 http://127.0.0.1:8070/halcyon/`. Measured: 218 of the 800 pages arrived in the first 45 seconds, at the engine's one request every 0.2 seconds; pushes arrived and showed as updates throughout.
 
 **Not yet built:** TLS for `https` channels, and WebSocket push; following page links and Fastext from a click on a cell; sub-pages beyond the latest; the engine's contents files and bank names; reveal and the engine's viewer for page entry; rendering only when a flashing page changes, instead of twelve times a second.
 

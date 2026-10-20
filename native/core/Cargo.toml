@@ -1,5 +1,5 @@
 [package]
-name = "t42-browser"
+name = "neoteletext"
 description = "The trusted core: starts the decoder and the interface process, checks every frame, encodes page images and decides what the trusted strip shows"
 version.workspace = true
 edition.workspace = true
@@ -29,7 +29,7 @@ web-opener = { workspace = true, optional = true }
 # render, this crate's encoding and the interface's decoding.
 [dev-dependencies]
 decoder.workspace = true
-t42-interface = { path = "../interface", default-features = false }
+neoteletext-interface = { path = "../interface", default-features = false }
 
 [lints]
 workspace = true

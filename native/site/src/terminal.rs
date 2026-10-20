@@ -1,4 +1,4 @@
-//! `t42-site terminal`: the reference channel that takes input
+//! `neoteletext-site terminal`: the reference channel that takes input
 //! (`interaction.md` sections 5 to 10), as a host a terminal talks to. Its
 //! descriptor declares `push.input`; each viewer's WebSocket is a session
 //! with its own pages, and every key record that arrives is answered by
@@ -136,7 +136,7 @@ struct Page {
 impl Page {
     fn new(number: u16, title: &str) -> Self {
         let mut page = Self { number, rows: BTreeMap::new(), cursor: None, acked: 0, links: Vec::new() };
-        page.row(0, Row::new().at(8).code(ALPHA_YELLOW).text(&format!("T42 TERMINAL {number:03X}")));
+        page.row(0, Row::new().at(8).code(ALPHA_YELLOW).text(&format!("NEOTELETEXT TERMINAL {number:03X}")));
         // Row 1 is double height, so row 2 is its lower half.
         page.row(1, Row::new().code(ALPHA_BLUE).code(NEW_BACKGROUND).code(ALPHA_YELLOW).code(DOUBLE_HEIGHT).text(&title.to_uppercase()));
         page
@@ -631,7 +631,7 @@ impl Session {
     fn phone_page(&self) -> Page {
         let mut page = Page::new(0x600, "Your phone as keyboard");
         let Some(phone) = &self.phone else {
-            let why = if self.relay.is_some() { "Preparing the QR code..." } else { "Start t42-site with --relay to try this." };
+            let why = if self.relay.is_some() { "Preparing the QR code..." } else { "Start neoteletext-site with --relay to try this." };
             page.row(4, Row::new().code(ALPHA_WHITE).text(why));
             return page;
         };
@@ -651,7 +651,7 @@ impl Session {
     fn podcast_page(&self) -> Page {
         let mut page = Page::new(0x700, "Podcast");
         let Some((episode, player)) = &self.podcast else {
-            page.row(4, Row::new().code(ALPHA_WHITE).text("Start t42-site with --podcast FILE.wav"));
+            page.row(4, Row::new().code(ALPHA_WHITE).text("Start neoteletext-site with --podcast FILE.wav"));
             page.row(5, Row::new().code(ALPHA_WHITE).text("to listen here."));
             return page;
         };
@@ -977,7 +977,7 @@ fn phone(relay: &str, events: &mpsc::Sender<PhoneEvent>) {
     use neoteletext_qrkeyboard::config::{Layout, ScreenConfig};
     use neoteletext_qrkeyboard::qr::{Correction, Matrix};
     use neoteletext_qrkeyboard::screen::{Event as ScreenEvent, Screen};
-    let config = ScreenConfig { name: "T42 terminal channel".into(), layout: Layout::Terminal, pin: false, rejoin_seconds: Some(30) };
+    let config = ScreenConfig { name: "NeoTeletext terminal channel".into(), layout: Layout::Terminal, pin: false, rejoin_seconds: Some(30) };
     let mut screen = match Screen::create(relay, config) {
         Ok(screen) => screen,
         Err(error) => {
@@ -1092,7 +1092,7 @@ fn session(mut stream: TcpStream, settings: Settings) -> io::Result<()> {
                             send(&mut stream, push)?;
                         }
                     }
-                    Err(error) => eprintln!("t42-site: a record refused: {error:?}"),
+                    Err(error) => eprintln!("neoteletext-site: a record refused: {error:?}"),
                 },
                 websocket::PING => websocket::write(&mut stream, websocket::PONG, &payload)?,
                 websocket::CLOSE => {
@@ -1144,7 +1144,7 @@ fn serve(mut stream: TcpStream, port: u16, settings: &Settings) -> io::Result<()
         }
         let target = head.split(' ').nth(1).unwrap_or_default().to_owned();
         let path = target.split('?').next().unwrap_or_default();
-        eprintln!("t42-site: GET {target}");
+        eprintln!("neoteletext-site: GET {target}");
         let folder = format!("/{CHANNEL}/");
         if path == format!("{folder}push") {
             let Some(accept) = websocket::accept(&head) else { return respond(&mut stream, "426 Upgrade Required", "text/plain", b"") };
@@ -1158,7 +1158,7 @@ fn serve(mut stream: TcpStream, port: u16, settings: &Settings) -> io::Result<()
         match name {
             "channel.json" => {
                 let json = format!(
-                    r#"{{"name":"T42 terminal channel","push":{{"address":"ws://127.0.0.1:{port}/{CHANNEL}/push","method":"websocket","input":true}}}}"#
+                    r#"{{"name":"NeoTeletext terminal channel","push":{{"address":"ws://127.0.0.1:{port}/{CHANNEL}/push","method":"websocket","input":true}}}}"#
                 );
                 respond(&mut stream, "200 OK", "application/json", json.as_bytes())?;
             }
@@ -1175,12 +1175,12 @@ fn serve(mut stream: TcpStream, port: u16, settings: &Settings) -> io::Result<()
 /// with the phone page's relay and the podcast's episode when given.
 pub fn run(port: u16, settings: &Settings) -> Result<(), String> {
     let listener = TcpListener::bind(("127.0.0.1", port)).map_err(|error| format!("port {port}: {error}"))?;
-    eprintln!("t42-site: serving the terminal channel at http://127.0.0.1:{port}/{CHANNEL}/");
+    eprintln!("neoteletext-site: serving the terminal channel at http://127.0.0.1:{port}/{CHANNEL}/");
     for stream in listener.incoming().flatten() {
         let settings = settings.clone();
         thread::spawn(move || {
             if let Err(error) = serve(stream, port, &settings) {
-                eprintln!("t42-site: {error}");
+                eprintln!("neoteletext-site: {error}");
             }
         });
     }

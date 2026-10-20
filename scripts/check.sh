@@ -12,17 +12,17 @@
 #                             release tests, licences and advisories,
 #                             unused dependencies, fuzzing, the
 #                             WebAssembly and frontend builds, and the
-#                             Linux build and tests on $T42_LINUX_HOST
+#                             Linux build and tests on $NEOTELETEXT_LINUX_HOST
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
 mode="${1:-}"
 # The Linux host the Wayland window host and the Linux sandbox are checked
 # on: the fastest of the Linux test machines (20 cores, against oldvga's 4).
-linux_host="${T42_LINUX_HOST:-foundintelquiet4060}"
+linux_host="${NEOTELETEXT_LINUX_HOST:-foundintelquiet4060}"
 # Seconds each fuzz target runs in the full gate, after replaying every
 # input that has ever found a fault (native/fuzz/regressions/).
-fuzz_seconds="${T42_FUZZ_SECONDS:-20}"
+fuzz_seconds="${NEOTELETEXT_FUZZ_SECONDS:-20}"
 
 step() { printf '\n== %s\n' "$*"; }
 fail() {
@@ -102,7 +102,7 @@ check_native() {
 feature_list() {
     local area package list=""
     for area in "$@"; do
-        for package in interface-core protocol t42-decoder t42-fetcher t42-browser t42-interface; do
+        for package in interface-core protocol neoteletext-decoder neoteletext-fetcher neoteletext neoteletext-interface; do
             list="${list:+$list,}$package/$area"
         done
     done
@@ -192,21 +192,21 @@ check_linux() {
     step "Linux on $linux_host: native and the Linux-only prototypes, Clippy and tests"
     ssh -o BatchMode=yes -o ConnectTimeout=10 "$linux_host" true || fail "$linux_host is unreachable; the full gate needs it"
     rsync -a --delete --exclude target --exclude node_modules --exclude tools --exclude .git \
-        --exclude native/fuzz/corpus --exclude native/fuzz/artifacts ./ "$linux_host:t42-browser-check/"
+        --exclude native/fuzz/corpus --exclude native/fuzz/artifacts ./ "$linux_host:neoteletext-browser-check/"
     # The engine is a git dependency on a repository on this machine; its
     # history goes to the host, and git there reads it in place of this
     # machine's path, for these commands only.
     local engine
     engine="$(sed -n 's/^neoteletext-[a-z]* = { git = "\(file:[^"]*\)".*/\1/p' native/Cargo.toml | sort -u)"
     [[ -n "$engine" && "$engine" != *$'\n'* ]] || fail "native/Cargo.toml must name one engine repository, found: ${engine:-none}"
-    rsync -a --delete "${engine#file://}/.git/" "$linux_host:t42-browser-check-engine.git/"
+    rsync -a --delete "${engine#file://}/.git/" "$linux_host:neoteletext-browser-check-engine.git/"
     local linux_only="${LINUX_ONLY[*]}"
     # rustup installs the toolchain rust-toolchain.toml pins if the host
     # does not have it yet.
     # shellcheck disable=SC2029 # the engine and the crate list are expanded here on purpose
-    ssh "$linux_host" "set -e; . ~/.cargo/env; cd t42-browser-check; rustup toolchain install
+    ssh "$linux_host" "set -e; . ~/.cargo/env; cd neoteletext-browser-check; rustup toolchain install
         export CARGO_NET_GIT_FETCH_WITH_CLI=true GIT_CONFIG_COUNT=1
-        export GIT_CONFIG_KEY_0=url.file://\$HOME/t42-browser-check-engine.git.insteadOf GIT_CONFIG_VALUE_0=$engine
+        export GIT_CONFIG_KEY_0=url.file://\$HOME/neoteletext-browser-check-engine.git.insteadOf GIT_CONFIG_VALUE_0=$engine
         (cd native && cargo clippy --quiet --workspace --all-targets -- -D warnings && cargo test --quiet --workspace \\
             && cargo clippy --quiet --workspace --all-targets --no-default-features -- -D warnings)
         for crate in $linux_only; do

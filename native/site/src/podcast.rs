@@ -338,7 +338,7 @@ mod tests {
 
     #[test]
     fn a_wave_file_is_read_and_stereo_mixed_to_mono() {
-        let directory = std::env::temp_dir().join(format!("t42-podcast-{}", std::process::id()));
+        let directory = std::env::temp_dir().join(format!("neoteletext-podcast-{}", std::process::id()));
         std::fs::create_dir_all(&directory).unwrap();
         let path = directory.join("Episode one.wav");
         std::fs::write(&path, wave(16_000, 2, &[100, 300, -100, -300])).unwrap();

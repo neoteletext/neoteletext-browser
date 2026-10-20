@@ -578,7 +578,7 @@ dependencies = [
  "embedded-graphics",
  "interface-core",
  "libm",
- "t42-decoder",
+ "neoteletext-decoder",
 ]
 
 [[package]]
@@ -586,8 +586,8 @@ name = "draw-vello"
 version = "0.1.0"
 dependencies = [
  "interface-core",
+ "neoteletext-decoder",
  "parley",
- "t42-decoder",
  "vello_cpu",
 ]
 
@@ -1347,6 +1347,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "neoteletext"
+version = "0.1.0"
+dependencies = [
+ "interface-core",
+ "neoteletext-core",
+ "neoteletext-decoder",
+ "neoteletext-image",
+ "neoteletext-input",
+ "neoteletext-interface",
+ "protocol",
+ "web-opener",
+]
+
+[[package]]
 name = "neoteletext-audio"
 version = "0.1.0"
 source = "git+file:///Users/andrewstuart/devel/neoteletext-engine?rev=88d09b11eb6ed5ecb421526d3370c5ec57d786e2#88d09b11eb6ed5ecb421526d3370c5ec57d786e2"
@@ -1363,6 +1377,32 @@ source = "git+file:///Users/andrewstuart/devel/neoteletext-engine?rev=88d09b11eb
 name = "neoteletext-core"
 version = "0.1.0"
 source = "git+file:///Users/andrewstuart/devel/neoteletext-engine?rev=88d09b11eb6ed5ecb421526d3370c5ec57d786e2#88d09b11eb6ed5ecb421526d3370c5ec57d786e2"
+
+[[package]]
+name = "neoteletext-decoder"
+version = "0.1.0"
+dependencies = [
+ "interface-core",
+ "neoteletext-audio",
+ "neoteletext-core",
+ "neoteletext-formats",
+ "neoteletext-image",
+ "neoteletext-input",
+ "protocol",
+]
+
+[[package]]
+name = "neoteletext-fetcher"
+version = "0.1.0"
+dependencies = [
+ "embedded-io",
+ "interface-core",
+ "neoteletext-core",
+ "neoteletext-web",
+ "protocol",
+ "rustls",
+ "webpki-roots",
+]
 
 [[package]]
 name = "neoteletext-formats"
@@ -1390,6 +1430,33 @@ dependencies = [
 ]
 
 [[package]]
+name = "neoteletext-interface"
+version = "0.1.0"
+dependencies = [
+ "cpal",
+ "dock-menu",
+ "draw-vello",
+ "interface-core",
+ "neoteletext-audio-mix",
+ "neoteletext-decoder",
+ "neoteletext-image",
+ "neoteletext-input",
+ "png",
+ "protocol",
+ "softbuffer",
+ "winit",
+]
+
+[[package]]
+name = "neoteletext-keyboard"
+version = "0.1.0"
+dependencies = [
+ "neoteletext-input",
+ "neoteletext-qrkeyboard",
+ "protocol",
+]
+
+[[package]]
 name = "neoteletext-qrkeyboard"
 version = "0.1.0"
 source = "git+file:///Users/andrewstuart/devel/neoteletext-engine?rev=88d09b11eb6ed5ecb421526d3370c5ec57d786e2#88d09b11eb6ed5ecb421526d3370c5ec57d786e2"
@@ -1404,6 +1471,18 @@ dependencies = [
  "rustls",
  "sha2",
  "webpki-roots",
+]
+
+[[package]]
+name = "neoteletext-site"
+version = "0.1.0"
+dependencies = [
+ "neoteletext-audio",
+ "neoteletext-core",
+ "neoteletext-decoder",
+ "neoteletext-input",
+ "neoteletext-qrkeyboard",
+ "neoteletext-web",
 ]
 
 [[package]]
@@ -2479,85 +2558,6 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 3.0.9",
-]
-
-[[package]]
-name = "t42-browser"
-version = "0.1.0"
-dependencies = [
- "interface-core",
- "neoteletext-core",
- "neoteletext-image",
- "neoteletext-input",
- "protocol",
- "t42-decoder",
- "t42-interface",
- "web-opener",
-]
-
-[[package]]
-name = "t42-decoder"
-version = "0.1.0"
-dependencies = [
- "interface-core",
- "neoteletext-audio",
- "neoteletext-core",
- "neoteletext-formats",
- "neoteletext-image",
- "neoteletext-input",
- "protocol",
-]
-
-[[package]]
-name = "t42-fetcher"
-version = "0.1.0"
-dependencies = [
- "embedded-io",
- "interface-core",
- "neoteletext-core",
- "neoteletext-web",
- "protocol",
- "rustls",
- "webpki-roots",
-]
-
-[[package]]
-name = "t42-interface"
-version = "0.1.0"
-dependencies = [
- "cpal",
- "dock-menu",
- "draw-vello",
- "interface-core",
- "neoteletext-audio-mix",
- "neoteletext-image",
- "neoteletext-input",
- "png",
- "protocol",
- "softbuffer",
- "t42-decoder",
- "winit",
-]
-
-[[package]]
-name = "t42-keyboard"
-version = "0.1.0"
-dependencies = [
- "neoteletext-input",
- "neoteletext-qrkeyboard",
- "protocol",
-]
-
-[[package]]
-name = "t42-site"
-version = "0.1.0"
-dependencies = [
- "neoteletext-audio",
- "neoteletext-core",
- "neoteletext-input",
- "neoteletext-qrkeyboard",
- "neoteletext-web",
- "t42-decoder",
 ]
 
 [[package]]

@@ -10,7 +10,7 @@ mod size;
 mod theme;
 mod wall;
 
-const WINDOW_TITLE: &str = "T42 Browser: egui page wall";
+const WINDOW_TITLE: &str = "NeoTeletext: egui page wall";
 const WINDOW_SIZE: [f32; 2] = [1280.0, 820.0];
 
 fn main() -> eframe::Result {

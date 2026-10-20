@@ -1,4 +1,4 @@
-# T42 Browser: architecture
+# NeoTeletext: architecture
 
 | | |
 |---|---|
@@ -14,7 +14,7 @@
 
 ## Contents
 
-1. What T42 Browser is
+1. What NeoTeletext is
 2. The owner's decisions
 3. Concepts and terms
 4. Design principles
@@ -34,15 +34,15 @@
 
 ---
 
-## 1. What T42 Browser is
+## 1. What NeoTeletext is
 
-T42 Browser is an application for browsing teletext, on desktops, then phones, and with features cut on microcontrollers.
+NeoTeletext is an application for browsing teletext, on desktops, then phones, and with features cut on microcontrollers.
 
 - **Teletext** is the page-based information service defined by the European Telecommunications Standards Institute standard EN 300 706, "Enhanced Teletext specification". A copy is at `~/devel/teletext-reference/teletext-standards/en_300706v010201o.pdf`.
-- **Every tab is one teletext channel.** A teletext channel is one teletext service: eight magazines, numbered 1 to 8, each with pages numbered 00 to FF in hexadecimal, and each page with subpages. T42 Browser shows pages 100 to 899.
+- **Every tab is one teletext channel.** A teletext channel is one teletext service: eight magazines, numbered 1 to 8, each with pages numbered 00 to FF in hexadecimal, and each page with subpages. NeoTeletext shows pages 100 to 899.
 - **A channel comes from the web or from a file.** On the web a channel is a folder on a server (`neoteletext/docs/channels.md`); a file is a recording or a folder of page files on this computer.
 - **Every image on screen is one teletext page,** rendered by the teletext engine at the native raster and scaled by the interface.
-- **The interface is drawn by T42 Browser's own Rust code, with no web engine.** It draws on the processor, so it needs no graphics processor, and it shows many pages at once and animates between them.
+- **The interface is drawn by NeoTeletext's own Rust code, with no web engine.** It draws on the processor, so it needs no graphics processor, and it shows many pages at once and animates between them.
 - **Security is paramount.** The owner has stated that there are no circumstances under which being hacked is acceptable (decision 4). Where a choice trades capability against security, security wins.
 
 ---
@@ -79,8 +79,8 @@ Each decision was made by the owner on the date given. Requirements in `requirem
 | Decision 24 | 15 October 2026 | The recommendations for open decisions 1 and 3 to 13 are accepted. | **Kept**, except item (1), reuse of `neoteletext-browser`, superseded by decision 36, and item (9), the palette-index canvas, which decision 33 fulfils |
 | Decision 25 | 15 October 2026 | Updates are hosted at `update.neoteletext.com`. | **Kept** |
 | Decision 26 | 15 October 2026 | Every limit on fetching, refreshing and input is defined once, in neoteletext, as is the fetching policy of decisions 22 and 23. | **Kept** |
-| Decisions 27 to 32 | 15 October 2026 | The window host holding the system webview, its Linux confinement, the nested display, T42 Browser's own display host on Smithay, and input methods and screen readers through the display host. | **Retired** by decision 33: each existed only to contain a web engine. Their measurements stay in `../prototypes/docs/proofs.md` as the record of why no web engine was kept |
-| Decision 33 | 16 October 2026 | **The native architecture being built in `native/` is the architecture going forward.** The interface is drawn by T42 Browser's own Rust code with no web engine: an interface core that draws only through its own drawing interface, with back ends for the processor (`vello_cpu` and Parley) and for microcontrollers (`embedded-graphics`); a separate interface process with no secrets, which draws the window and the trusted strip; the trusted core, one decoder per channel and one fetcher per web channel, each a process of its own; frames on the pipe as indexed Portable Network Graphics images. The earlier approaches and their prototypes are kept in `prototypes/`. | — |
+| Decisions 27 to 32 | 15 October 2026 | The window host holding the system webview, its Linux confinement, the nested display, NeoTeletext's own display host on Smithay, and input methods and screen readers through the display host. | **Retired** by decision 33: each existed only to contain a web engine. Their measurements stay in `../prototypes/docs/proofs.md` as the record of why no web engine was kept |
+| Decision 33 | 16 October 2026 | **The native architecture being built in `native/` is the architecture going forward.** The interface is drawn by NeoTeletext's own Rust code with no web engine: an interface core that draws only through its own drawing interface, with back ends for the processor (`vello_cpu` and Parley) and for microcontrollers (`embedded-graphics`); a separate interface process with no secrets, which draws the window and the trusted strip; the trusted core, one decoder per channel and one fetcher per web channel, each a process of its own; frames on the pipe as indexed Portable Network Graphics images. The earlier approaches and their prototypes are kept in `prototypes/`. | — |
 | Decision 34 | 15 October 2026 | **Targets and constraints:** microcontrollers are a target, with features cut; every target must work with no graphics processor, a graphics processor being a welcome extra; every library must be under a totally open licence. | — |
 | Decision 35 | 15 October 2026 | **The window,** built to the owner's mockups: the window frame drawn as Chrome draws it; labels in English; text in Roboto, in small capitals; page banks, a page list and a page area, with an overview of every page along the bottom; pages drawn flat only; a logarithmic page-size control that shrinks the pages over its whole travel and shows a list only at its left edge; a click on a page zooms it, and at the control's right end the wheel moves from page to page. Section 11 describes the window. | — |
 | Decision 36 | 15 October 2026 | **The engine is maintained in its own repository** and used by a pinned version, never copied or patched here. Only its core is used: `neoteletext-core`, `neoteletext-formats`, `neoteletext-image` and `neoteletext-web`. Its browser shell (`neoteletext-gui`, `neoteletext-browser` and its application crate) is not used. | Amended by decision 37: its audio crates are used too |
@@ -139,9 +139,9 @@ Each decision was made by the owner on the date given. Requirements in `requirem
 
 The engine is `neoteletext` (`~/devel/neoteletext-engine`), a Rust implementation of World System Teletext, EN 300 706, Presentation Levels 1.0, 1.5, 2.5 and 3.5, less what the owner removed on 20 October 2026: dynamically redefinable characters (DRCS) are not decoded, and the Level 3.5 font styles (bold, italic and proportional spacing) are not drawn (its decisions E.95 and E.96). Its core is `no_std` (it does not depend on the Rust standard library) and performs no input or output of its own: it is fed bytes and returns results.
 
-**It is a separate project** (decision 36). T42 Browser depends on its crates at one pinned commit, `88d09b1`, through a `git` source in the engine's local repository, because that commit is not yet published; Cargo reads the commit, never the engine's working tree. When the commit is published, the source becomes the engine's own repository address at the same commit. Changes the engine needs are made in the engine's repository by its own process, never patched here.
+**It is a separate project** (decision 36). NeoTeletext depends on its crates at one pinned commit, `88d09b1`, through a `git` source in the engine's local repository, because that commit is not yet published; Cargo reads the commit, never the engine's working tree. When the commit is published, the source becomes the engine's own repository address at the same commit. Changes the engine needs are made in the engine's repository by its own process, never patched here.
 
-| Crate | What it does | Used by T42 Browser |
+| Crate | What it does | Used by NeoTeletext |
 |---|---|---|
 | `neoteletext-core` | Packet decoding, page store, Presentation Levels 1.0 to 3.5, rendering a page to palette indices, flash timing | In the decoder; its flash timing constants in the trusted core; its page addresses in the fetcher. Built with the engine's recommended `modern-classic` profile (its decision E.71) |
 | `neoteletext-formats` | Readers for T42 recordings, Teletext Text Interchange page files, transport streams and sliced records; content detection | In the decoder, with the `tti`, `transport` and `sliced` features |
@@ -152,18 +152,18 @@ The engine is `neoteletext` (`~/devel/neoteletext-engine`), a Rust implementatio
 
 ### 5.1 Changes required in neoteletext
 
-T42 Browser defines no limit and no fetching behaviour of its own (decision 26). Everything below is work in neoteletext, recorded with its questions in `neoteletext/docs/t42-browser-open-questions.md`.
+NeoTeletext defines no limit and no fetching behaviour of its own (decision 26). Everything below is work in neoteletext, recorded with its questions in `neoteletext/docs/neoteletext-browser-open-questions.md`.
 
-| Change | T42 Browser requirements |
+| Change | NeoTeletext requirements |
 |---|---|
 | A grace period during which a closed tab's channel keeps refreshing | Requirement 5.17 |
 | A threshold of malformed packets after which a live feed is closed | Requirement 6.5 |
 | A default refresh schedule for a channel that declares none, if none exists | Requirement 5.16 |
 | The cookie store separable from the user agent, so the trusted core can own it | Requirement 7.5 |
 | A page's text, cleaned of control, bidirectional and zero-width characters and bounded, for display and accessibility | Requirements 11.5 and 12.9 |
-| Transport Layer Security for the engine's network port, or a statement of which library T42 Browser should supply it with | Requirement 5.8 |
+| Transport Layer Security for the engine's network port, or a statement of which library NeoTeletext should supply it with | Requirement 5.8 |
 
-**Limits T42 Browser takes from neoteletext.** Among them: `contents::MAX_PAGES` (800 pages), `contents::MAX_BYTES` (64 kilobytes), `DEFAULT_PAGE_LIMIT` (256 kilobytes), `DEFAULT_PUSH_LIMIT`, `DEFAULT_DESCRIPTOR_LIMIT`, `DEFAULT_HEADER_LIMIT`, `DEFAULT_FETCH_INTERVAL_US` (one request every 0.2 seconds), `DEFAULT_CONNECT_TIMEOUT_US` (10 seconds), `DEFAULT_RESPONSE_TIMEOUT_US` (30 seconds), and `MIN_REFRESH_SECONDS` and `MAX_REFRESH_SECONDS`. The full table is in `neoteletext/docs/t42-browser-open-questions.md` section 3.
+**Limits NeoTeletext takes from neoteletext.** Among them: `contents::MAX_PAGES` (800 pages), `contents::MAX_BYTES` (64 kilobytes), `DEFAULT_PAGE_LIMIT` (256 kilobytes), `DEFAULT_PUSH_LIMIT`, `DEFAULT_DESCRIPTOR_LIMIT`, `DEFAULT_HEADER_LIMIT`, `DEFAULT_FETCH_INTERVAL_US` (one request every 0.2 seconds), `DEFAULT_CONNECT_TIMEOUT_US` (10 seconds), `DEFAULT_RESPONSE_TIMEOUT_US` (30 seconds), and `MIN_REFRESH_SECONDS` and `MAX_REFRESH_SECONDS`. The full table is in `neoteletext/docs/neoteletext-browser-open-questions.md` section 3.
 
 ---
 
@@ -200,7 +200,7 @@ Decision 18's shape, with the interface process in place of the web-engine windo
 | **Decoder** | One channel's pages | Nothing it needs; see section 6.5 for what the sandbox still allows | Pictures of its choosing in that channel's page images, which its server could draw anyway |
 | **Interface process** | What is on screen | The window, input and the audio output; see section 6.5 | Everything on screen, including a false trusted strip, and the ability to send intents and **strip input**: it can navigate a tab to any address the trusted core's rules accept, go back and forward, and set bookmarks. No secrets, because none are sent to it |
 
-**The trusted strip and the interface process.** The strip is drawn by the interface process, in its own window, outside the page area (design section 5.2, option 1). That keeps the strip out of reach of every page image and every other process's window. It does not keep it out of reach of a fault in the interface process itself: a compromised interface process can draw a false strip and send strip input. Reaching it needs a fault in T42 Browser's own interface code or its drawing libraries, fed only by our own images and cleaned text (`security-analysis.md` section 5.6). Requirement 3.9's hostile interface harness tests every other property with an attacker's interface in its place.
+**The trusted strip and the interface process.** The strip is drawn by the interface process, in its own window, outside the page area (design section 5.2, option 1). That keeps the strip out of reach of every page image and every other process's window. It does not keep it out of reach of a fault in the interface process itself: a compromised interface process can draw a false strip and send strip input. Reaching it needs a fault in NeoTeletext's own interface code or its drawing libraries, fed only by our own images and cleaned text (`security-analysis.md` section 5.6). Requirement 3.9's hostile interface harness tests every other property with an attacker's interface in its place.
 
 ### 6.2 Why bytes pass through the trusted core
 
@@ -289,7 +289,7 @@ What is built today is in **bold**; the rest is required.
 
 **The macOS profiles today start from "allow everything" and deny network and file writes.** They stop the two things that matter most, sending data away and changing the user's files, but they still allow reading the user's files. A profile that starts from "deny everything" is required (requirement 3.7).
 
-**On Linux there is no confinement of the interface beyond the platform's,** because there is no web engine to contain: the interface process is T42 Browser's own code, and it needs the display as any application does. Under X11 any application can send input to other applications' windows (`../prototypes/docs/proofs.md` section 6.8); that is the exposure of every X11 application, not a containment problem.
+**On Linux there is no confinement of the interface beyond the platform's,** because there is no web engine to contain: the interface process is NeoTeletext's own code, and it needs the display as any application does. Under X11 any application can send input to other applications' windows (`../prototypes/docs/proofs.md` section 6.8); that is the exposure of every X11 application, not a containment problem.
 
 ---
 
@@ -514,19 +514,19 @@ With no web engine the application is far smaller: the interface process is abou
 ## 14. Code layout
 
 ```
-t42-browser/
+neoteletext/
   native/                   the application (a Cargo workspace)
     interface-core/         the window's state, layout, animation and input; no standard library
     draw-vello/             the drawing back end for desktops and phones: vello_cpu and Parley, with the fonts
     draw-embedded/          the drawing back end for microcontrollers: embedded-graphics
     protocol/               every message between processes: framing, bounds, kinds, text cleaning
-    core/                   the trusted core (t42-browser): tabs, history, addresses, routing, frames,
+    core/                   the trusted core (neoteletext): tabs, history, addresses, routing, frames,
                             and hearing.rs, which channel is heard and the checks on its sound
-    decoder/                the decoder (t42-decoder): the engine as the decoder uses it
-    fetcher/                the fetcher (t42-fetcher): the engine's user agent over the network
-    interface/              the interface process (t42-interface): winit, softbuffer, the image reader,
+    decoder/                the decoder (neoteletext-decoder): the engine as the decoder uses it
+    fetcher/                the fetcher (neoteletext-fetcher): the engine's user agent over the network
+    interface/              the interface process (neoteletext-interface): winit, softbuffer, the image reader,
                             and audio.rs, the mixer and the output device
-    site/                   a development tool, not shipped (t42-site): builds and serves a test channel
+    site/                   a development tool, not shipped (neoteletext-site): builds and serves a test channel
     fuzz/                   fuzz targets for every reader of input from outside a process (nightly, outside the workspace)
   docs/                     this document, the requirements, the security analysis, the design record
   prototypes/               the earlier approaches, kept as the record (decision 33)

@@ -43,7 +43,7 @@ fn store_pages() -> Result<usize, String> {
     match (arguments.next().as_deref(), arguments.next().map(|value| value.parse::<usize>())) {
         (None, _) => Ok(FIRST_STORE_PAGES),
         (Some("--store-pages"), Some(Ok(pages))) if (FIRST_STORE_PAGES..=MAX_STORE_PAGES).contains(&pages) => Ok(pages),
-        _ => Err(format!("usage: t42-decoder [--store-pages {FIRST_STORE_PAGES} to {MAX_STORE_PAGES}]")),
+        _ => Err(format!("usage: neoteletext-decoder [--store-pages {FIRST_STORE_PAGES} to {MAX_STORE_PAGES}]")),
     }
 }
 
@@ -183,14 +183,14 @@ fn main() -> ExitCode {
     let pages = match store_pages() {
         Ok(pages) => pages,
         Err(usage) => {
-            eprintln!("t42-decoder: {usage}");
+            eprintln!("neoteletext-decoder: {usage}");
             return ExitCode::FAILURE;
         }
     };
     match run(pages) {
         Ok(()) => ExitCode::SUCCESS,
         Err(error) => {
-            eprintln!("t42-decoder: {error}");
+            eprintln!("neoteletext-decoder: {error}");
             ExitCode::FAILURE
         }
     }

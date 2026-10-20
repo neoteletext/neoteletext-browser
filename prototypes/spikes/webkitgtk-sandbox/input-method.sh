@@ -9,7 +9,7 @@ set -uo pipefail
 display_host=$(cd "$(dirname "$1")" && pwd)/$(basename "$1")
 cd "$(dirname "$0")"
 here=$PWD
-proofs="$HOME/t42-proofs"
+proofs="$HOME/neoteletext-proofs"
 output="$proofs/input-method-output.txt"
 
 Xvfb :97 -screen 0 1280x900x24 -nolisten tcp -ac >/dev/null 2>&1 &

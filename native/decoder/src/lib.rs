@@ -494,7 +494,7 @@ impl Engine {
     /// Renders the latest sub-page of `page` at the engine's flash phase
     /// for now, in the resolved colour mode, whose palette is the page's
     /// Colour Map of at most 32 colours. The page's own underline is not
-    /// drawn: in T42 Browser an underline means a link, and the browser
+    /// drawn: in NeoTeletext an underline means a link, and the browser
     /// draws links itself (decision 42, the engine's decision E.88).
     #[must_use]
     pub fn render(&self, page: u16) -> Option<Rendered> {
@@ -865,7 +865,7 @@ mod tests {
         assert_eq!(engine.take_sounds(), [Audio::Stop { channel: 0, fade_ms: neoteletext_audio::LIVE_STALL_FADE_MS }, Audio::Forget(sound)]);
     }
 
-    /// Decision 42: in T42 Browser only links are underlined, so the page's
+    /// Decision 42: in NeoTeletext only links are underlined, so the page's
     /// own underline (a Level 2.5 Display Attribute) is not drawn.
     #[test]
     fn the_pages_own_underline_is_not_drawn() {

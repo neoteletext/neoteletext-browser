@@ -93,7 +93,7 @@ fn samples(sources: &[PathBuf]) -> Vec<Sample> {
                 pool.push(Sample { original: page, rows, title });
             }
         }
-        eprintln!("t42-site: {}: {} pages so far", source.display(), pool.len());
+        eprintln!("neoteletext-site: {}: {} pages so far", source.display(), pool.len());
     }
     pool
 }
