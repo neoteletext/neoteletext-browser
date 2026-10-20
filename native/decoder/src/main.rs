@@ -71,6 +71,7 @@ fn run() -> Result<(), ProtocolError> {
         engine.tick_audio(now_ms());
         let arrived = match message {
             ToDecoder::Data(bytes) => engine.feed(&bytes),
+            ToDecoder::Pushed { packets, bytes } => engine.feed_pushed(packets, &bytes),
             ToDecoder::End => engine.finish(),
             ToDecoder::Showing(pages) => {
                 sent.retain(|page, _| pages.contains(page));

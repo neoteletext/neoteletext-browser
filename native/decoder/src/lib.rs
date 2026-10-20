@@ -44,8 +44,9 @@ use neoteletext_core::packet::{Packet, PacketMeta};
 use neoteletext_core::render::{FlashPhase, IndexBuffer, IndexFormat, RenderOptions, render_screen};
 use neoteletext_core::types::{Instant, PageAddress, SubCode};
 use neoteletext_formats::Item;
-use neoteletext_formats::detect::{AutoConfig, AutoReader};
+use neoteletext_formats::detect::{AutoConfig, AutoReader, Format};
 use neoteletext_formats::item::Reader;
+use neoteletext_formats::t42::T42Variant;
 use neoteletext_image::palette::{Rgba, colour_map_palette};
 use protocol::audio::{Audio, MAX_MESSAGE_SAMPLES, Sound};
 
@@ -122,6 +123,10 @@ pub struct Found {
 pub struct Engine {
     decoder: Decoder<'static>,
     reader: AutoReader,
+    /// Pushed TTI pages and pushed packets, each read in its own form: a
+    /// channel may fetch one and push the other (the engine's REQ-WEB-005).
+    pushed_pages: AutoReader,
+    pushed_packets: AutoReader,
     clock: u64,
     /// The display pages already reported as arrived, each with a digest
     /// of its content, to tell when a new version changes it.
@@ -156,10 +161,14 @@ impl Engine {
         // Detection decides the format; page files are encoded into
         // packets, so they take the same path as broadcasts.
         let reader = AutoReader::new(AutoConfig { encode_pages: true, ..AutoConfig::default() });
+        let pushed_pages = AutoReader::new(AutoConfig { format: Some(Format::Tti), encode_pages: true, ..AutoConfig::default() });
+        let pushed_packets = AutoReader::new(AutoConfig { format: Some(Format::T42(T42Variant::Plain)), ..AutoConfig::default() });
         let arena: &'static mut [u8] = Box::leak(vec![0_u8; AUDIO_ARENA].into_boxed_slice());
         Self {
             decoder,
             reader,
+            pushed_pages,
+            pushed_packets,
             clock: 0,
             reported: vec![None; PAGES],
             started: Clock::now(),
@@ -221,6 +230,35 @@ impl Engine {
         self.arrivals()
     }
 
+    /// Feeds one message the channel pushed, whole, and completes the pages
+    /// in it at once: a pushed page shows as it arrives, not when the next
+    /// page of its magazine begins (`interaction.md` section 10).
+    pub fn feed_pushed(&mut self, packets: bool, bytes: &[u8]) -> Vec<(u16, String)> {
+        let mut items = Vec::new();
+        #[cfg(feature = "links")]
+        let lines = &mut self.lines;
+        let reader = if packets { &mut self.pushed_packets } else { &mut self.pushed_pages };
+        let mut take = |item: Item<'_>| match item {
+            Item::Packet { packet, meta } => items.push((packet, meta)),
+            #[cfg(feature = "links")]
+            Item::Page(page) => lines.read(page),
+            _ => {}
+        };
+        reader.feed(bytes, &mut take);
+        reader.finish(&mut take);
+        self.push_all(&items);
+        self.complete();
+        self.arrivals()
+    }
+
+    /// Completes every page still being received, as the end of a stream
+    /// or a timeout does (EN 300 706 clause 7.2: a page ends with the next
+    /// header of its magazine, or when the receiver gives up waiting).
+    fn complete(&mut self) {
+        self.clock = self.clock.saturating_add(PAGE_COMPLETION_TIMEOUT_US.saturating_mul(2));
+        self.decoder.tick(Instant(self.clock), &mut |_| {});
+    }
+
     /// The pages whose content changed since they were reported, once each.
     pub fn take_updated(&mut self) -> Vec<u16> {
         core::mem::take(&mut self.updated)
@@ -238,8 +276,7 @@ impl Engine {
             _ => {}
         });
         self.push_all(&packets);
-        self.clock = self.clock.saturating_add(PAGE_COMPLETION_TIMEOUT_US.saturating_mul(2));
-        self.decoder.tick(Instant(self.clock), &mut |_| {});
+        self.complete();
         self.arrivals()
     }
 
@@ -602,6 +639,42 @@ LT,5,0,7,web:https://www.example.invalid/\nLK,101,https://sport.invalid/\n";
         engine.finish();
         let links = engine.render(0x100).unwrap().links;
         assert_eq!(links.candidates.iter().map(at).collect::<Vec<_>>(), [(5, 3, 7, Found::Declared("302".into()))], "row 7 is blank");
+    }
+
+    /// `interaction.md` section 10: a pushed page shows when its message
+    /// arrives, not when the next page of its magazine begins; and a channel
+    /// may push packets after fetching page files.
+    #[test]
+    fn a_pushed_page_shows_as_it_arrives() {
+        let text = |engine: &Engine| -> String {
+            let (grid, _) = engine.grid(0x100).unwrap();
+            (0..11)
+                .map(|column| match grid.cell(1, column).unwrap().glyph {
+                    Glyph::Char(character) => to_unicode(character).base,
+                    _ => ' ',
+                })
+                .collect()
+        };
+        let mut engine = Engine::new();
+        engine.feed(TTI);
+        engine.finish();
+        assert_eq!(engine.feed_pushed(false, b"PN,10000\nSC,0000\nPS,8000\nOL,1,Version one\n"), [] as [(u16, String); 0], "an update, not an arrival");
+        assert_eq!(text(&engine), "Version one");
+        assert_eq!(engine.take_updated(), [0x100]);
+        engine.feed_pushed(false, b"PN,10000\nSC,0000\nPS,8000\nOL,1,Version two\n");
+        assert_eq!(text(&engine), "Version two");
+        // The same page pushed as packets: the TTI page encoded by the engine.
+        let mut packets = Vec::new();
+        let mut reader = AutoReader::new(AutoConfig { format: Some(Format::Tti), encode_pages: true, ..AutoConfig::default() });
+        let mut take = |item: Item<'_>| {
+            if let Item::Packet { packet, .. } = item {
+                packets.extend_from_slice(&packet.bytes);
+            }
+        };
+        reader.feed(b"PN,10000\nSC,0000\nPS,8000\nOL,1,Packet push\n", &mut take);
+        reader.finish(&mut take);
+        engine.feed_pushed(true, &packets);
+        assert_eq!(text(&engine), "Packet push");
     }
 
     #[test]

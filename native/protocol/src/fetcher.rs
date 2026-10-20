@@ -26,6 +26,22 @@ const KIND_LINKS: u8 = 83;
 const ENTRY_SECTION: u8 = 1;
 const ENTRY_PAGE: u8 = 2;
 
+/// Where page bytes came from, and so how the decoder reads them.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Origin {
+    /// Fetched, in the channel's order: a page file of any format.
+    Fetched,
+    /// A WebSocket text message or a server-sent event: one TTI page,
+    /// whole (the engine's REQ-WEB-005).
+    PushedPage,
+    /// A WebSocket binary message: whole 42-byte packets.
+    PushedPackets,
+}
+
+const ORIGIN_FETCHED: u8 = 0;
+const ORIGIN_PUSHED_PAGE: u8 = 1;
+const ORIGIN_PUSHED_PACKETS: u8 = 2;
+
 /// One entry of a channel's contents file, in its order.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Entry {
@@ -47,8 +63,8 @@ pub enum FromFetcher {
     Contents(Vec<Entry>),
     /// Page bytes, TTI or T42, as fetched or pushed.
     Page {
-        /// Sent by the channel's push connection, not fetched in order.
-        pushed: bool,
+        /// Fetched, or pushed and in which form.
+        origin: Origin,
         /// The page file's bytes.
         bytes: Vec<u8>,
     },
@@ -99,11 +115,15 @@ pub fn write_to_core(out: &mut dyn Write, message: &FromFetcher) -> Result<(), P
             }
             KIND_CONTENTS
         }
-        FromFetcher::Page { pushed, bytes } => {
+        FromFetcher::Page { origin, bytes } => {
             if bytes.len() >= MAX_PAYLOAD {
                 return Err(ProtocolError::TooLong(bytes.len()));
             }
-            payload.push(u8::from(*pushed));
+            payload.push(match origin {
+                Origin::Fetched => ORIGIN_FETCHED,
+                Origin::PushedPage => ORIGIN_PUSHED_PAGE,
+                Origin::PushedPackets => ORIGIN_PUSHED_PACKETS,
+            });
             payload.extend_from_slice(bytes);
             KIND_PAGE
         }
@@ -148,12 +168,13 @@ pub fn read_from_fetcher(input: &mut dyn Read) -> Result<Option<FromFetcher>, Pr
             FromFetcher::Contents(entries)
         }
         KIND_PAGE => {
-            let pushed = match fields.u8()? {
-                0 => false,
-                1 => true,
+            let origin = match fields.u8()? {
+                ORIGIN_FETCHED => Origin::Fetched,
+                ORIGIN_PUSHED_PAGE => Origin::PushedPage,
+                ORIGIN_PUSHED_PACKETS => Origin::PushedPackets,
                 _ => return Err(ProtocolError::BadValue("page origin")),
             };
-            FromFetcher::Page { pushed, bytes: fields.take(fields.bytes.len())?.to_vec() }
+            FromFetcher::Page { origin, bytes: fields.take(fields.bytes.len())?.to_vec() }
         }
         KIND_NOTICE => FromFetcher::Notice(raw_text(&mut fields, MAX_NOTICE)?),
         #[cfg(feature = "links")]
@@ -175,7 +196,9 @@ mod tests {
     fn every_kind_round_trips() {
         for message in [
             FromFetcher::Contents(vec![Entry::Section("News".into()), Entry::Page { page: 0x101, title: "Headlines".into() }]),
-            FromFetcher::Page { pushed: true, bytes: b"PN,10100\\nOL,1,Hello\\n".to_vec() },
+            FromFetcher::Page { origin: Origin::PushedPage, bytes: b"PN,10100\\nOL,1,Hello\\n".to_vec() },
+            FromFetcher::Page { origin: Origin::PushedPackets, bytes: vec![0; 42] },
+            FromFetcher::Page { origin: Origin::Fetched, bytes: vec![1, 2, 3] },
             FromFetcher::Notice("Opened".into()),
         ] {
             let mut bytes = Vec::new();

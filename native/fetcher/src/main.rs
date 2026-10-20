@@ -43,8 +43,9 @@ use neoteletext_core::types::{Instant, PageAddress};
 use neoteletext_web::agent::{Config, Event, Input, Output, Source, Storage, Subscription, UserAgent};
 use neoteletext_web::consts::ALLOWED_LOCAL;
 use neoteletext_web::contents::{self, Entry as ContentsEntry};
+use neoteletext_web::http::MediaType;
 use neoteletext_web::port::{ConnectionId, NetOutput, Pump, Security};
-use protocol::fetcher::{Entry, FromFetcher, write_to_core};
+use protocol::fetcher::{Entry, FromFetcher, Origin, write_to_core};
 
 use crate::transport::{Tcp, address};
 
@@ -90,7 +91,7 @@ enum Action {
     Close(ConnectionId),
     Timer(Instant),
     Bytes {
-        pushed: bool,
+        origin: Origin,
         bytes: Vec<u8>,
     },
     Ready,
@@ -110,7 +111,12 @@ fn collect(output: Output<'_>, actions: &mut Vec<Action>) {
         return;
     }
     if let Output::PageBytes(page) = output {
-        actions.push(Action::Bytes { pushed: page.source == Source::Push, bytes: page.bytes.to_vec() });
+        let origin = match (page.source, page.media) {
+            (Source::Push, MediaType::T42) => Origin::PushedPackets,
+            (Source::Push, _) => Origin::PushedPage,
+            _ => Origin::Fetched,
+        };
+        actions.push(Action::Bytes { origin, bytes: page.bytes.to_vec() });
         // A bundle, a form's answer or a push is page bytes too; only a page
         // fetch ends the wait for the next one.
         if matches!(page.source, Source::Page { .. }) {
@@ -204,7 +210,7 @@ fn run(channel: &str, allowed: &[IpAddr]) -> Result<(), String> {
                 Action::Send(connection, bytes) => pump.execute(NetOutput::Send(connection, &bytes)),
                 Action::Close(connection) => pump.execute(NetOutput::Close(connection)),
                 Action::Timer(at) => next_tick = Some(next_tick.map_or(at, |current| current.min(at))),
-                Action::Bytes { pushed, bytes } => send(&mut output, FromFetcher::Page { pushed, bytes })?,
+                Action::Bytes { origin, bytes } => send(&mut output, FromFetcher::Page { origin, bytes })?,
                 Action::Ready => {
                     // The descriptor's links, for the trusted core to decide
                     // (`hyperlinks.md` section 6.4).

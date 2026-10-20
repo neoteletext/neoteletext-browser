@@ -44,7 +44,7 @@ use std::time::Duration;
 use interface_core::canvas::PageKey;
 use neoteletext_core::consts::{FLASH_CYCLE_US, FLASH_UNITS};
 use protocol::decoder::{FromDecoder, MAX_CHUNK, ToDecoder, read_from_decoder, write_to_decoder};
-use protocol::fetcher::{FromFetcher, MAX_NOTICE, read_from_fetcher};
+use protocol::fetcher::{FromFetcher, MAX_NOTICE, Origin, read_from_fetcher};
 use protocol::{ToCore, ToInterface, clean, read_from_interface, write_to_interface};
 
 #[cfg(feature = "links")]
@@ -331,13 +331,21 @@ impl Core {
                     }
                 }
             }
-            FromFetcher::Page { bytes, .. } => {
+            FromFetcher::Page { origin: Origin::Fetched, bytes } => {
                 // Untouched, a piece at a time; each page file ends its last
                 // line, so the next one starts cleanly.
                 for piece in bytes.chunks(MAX_CHUNK - 1) {
                     self.tell(channel, &ToDecoder::Data(piece.to_vec()));
                 }
                 self.tell(channel, &ToDecoder::Data(b"\n".to_vec()));
+            }
+            // A pushed message goes whole and at once, so its page shows as
+            // it arrives (`interaction.md` section 10). The fetcher's
+            // messages are at most the engine's 64 KB push limit.
+            FromFetcher::Page { origin, bytes } => {
+                if bytes.len() <= MAX_CHUNK {
+                    self.tell(channel, &ToDecoder::Pushed { packets: origin == Origin::PushedPackets, bytes });
+                }
             }
             FromFetcher::Notice(text) => eprintln!("t42-browser: channel {channel}: {}", clean(&text, MAX_NOTICE)),
             #[cfg(feature = "links")]
