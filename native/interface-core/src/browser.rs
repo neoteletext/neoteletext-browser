@@ -8,7 +8,7 @@
 //! trusted core; what the user does leaves as [`Output`]s, which the host
 //! turns into messages (design section 5.2).
 
-use alloc::collections::BTreeSet;
+use alloc::collections::{BTreeMap, BTreeSet};
 use alloc::format;
 use alloc::string::String;
 use alloc::vec::Vec;
@@ -24,6 +24,9 @@ use crate::theme::{
 };
 use crate::ui::{HAIRLINE, border, centred, label, left_centred, outline, right_centred};
 use crate::wall::{CellClick, UPDATE_GLOW_MILLISECONDS, UPDATE_MARK_MILLISECONDS, Wall, WallPage, glow, since};
+
+#[cfg(feature = "links")]
+mod link_ui;
 
 /// The address field's limit, as the trusted core's address rules.
 pub const MAX_ADDRESS: usize = 2048;
@@ -227,6 +230,25 @@ pub enum Output {
     Window(WindowAction),
     /// Whether text input, including input methods, goes to the address field.
     TextInput(bool),
+    /// The pointer or the keyboard's focus is on this cell of a link, or on
+    /// no link: the trusted strip shows where it leads.
+    #[cfg(feature = "links")]
+    Point(Option<crate::links::LinkCell>),
+    /// A page number typed that the open page or the channel links
+    /// elsewhere.
+    #[cfg(feature = "links")]
+    Typed {
+        /// The number.
+        number: u16,
+        /// The open page and its image's version, if a page is open.
+        opened: Option<(PageKey, u32)>,
+    },
+    /// Strip input: yes to the strip's question of this number.
+    #[cfg(feature = "links")]
+    Confirm(u32),
+    /// Strip input: no to the strip's question of this number.
+    #[cfg(feature = "links")]
+    Cancel(u32),
 }
 
 /// A key the browser handles, as the host translates it.
@@ -254,6 +276,8 @@ pub enum Key<'a> {
     Home,
     /// End.
     End,
+    /// Tab: with Shift, backwards.
+    Tab,
 }
 
 /// The shape the pointer should take.
@@ -263,6 +287,8 @@ pub enum Cursor {
     Arrow,
     /// Over something a click acts on.
     Hand,
+    /// Over a link that leaves the channel: the shape of a shortcut.
+    External,
 }
 
 /// The modifier keys. `command` is Command on macOS and Control elsewhere.
@@ -272,6 +298,8 @@ pub struct Modifiers {
     pub shift: bool,
     /// Command (macOS) or Control (elsewhere) is held.
     pub command: bool,
+    /// The key is held down and repeating.
+    pub repeat: bool,
 }
 
 /// Where a tab and its buttons were last drawn.
@@ -336,8 +364,14 @@ pub struct Browser {
     previewed: Option<usize>,
     pointer: Point,
     visible: Vec<PageKey>,
+    /// The version of each page's latest image, as the trusted core sent
+    /// it: a click names the image it was made on.
+    versions: BTreeMap<PageKey, u32>,
     regions: Regions,
     outputs: Vec<Output>,
+    /// Hyperlinks (`hyperlinks.md`).
+    #[cfg(feature = "links")]
+    links: link_ui::LinkUi,
 }
 
 impl Browser {
@@ -365,9 +399,20 @@ impl Browser {
             previewed: None,
             pointer: Point::ORIGIN,
             visible: Vec::new(),
+            versions: BTreeMap::new(),
             regions: Regions::default(),
             outputs: Vec::new(),
+            #[cfg(feature = "links")]
+            links: link_ui::LinkUi::default(),
         }
+    }
+
+    /// A new image of a page arrived, of this version.
+    pub fn frame_version(&mut self, key: PageKey, version: u32) {
+        self.versions.insert(key, version);
+        // The links under the pointer are now those of the new image.
+        #[cfg(feature = "links")]
+        self.repoint();
     }
 
     /// The tabs as the trusted core reports them, and which is active.
@@ -405,6 +450,7 @@ impl Browser {
     /// first bank; the same channel again keeps the choice.
     pub fn set_channel(&mut self, channel: Channel) {
         if channel.channel != self.channel.channel {
+            self.versions.clear();
             self.bank = 0;
             self.selected = None;
             self.list_scroll = 0.0;
@@ -431,6 +477,8 @@ impl Browser {
             self.pulses.push((index, now));
         }
         *slot = Some(PageInfo { title, status: Status::Loaded });
+        #[cfg(feature = "links")]
+        self.show_pending(channel, page, now);
     }
 
     /// A page has a new version: it glows, and is marked with its age.
@@ -570,7 +618,11 @@ impl Browser {
         let previewed = self.overview_page(self.pointer);
         let preview_changed = previewed != self.previewed;
         self.previewed = previewed;
-        dragged || hovered || preview_changed
+        #[cfg(feature = "links")]
+        let linked = self.repoint();
+        #[cfg(not(feature = "links"))]
+        let linked = false;
+        dragged || hovered || preview_changed || linked
     }
 
     /// The overview's cell under `point`, when its page has arrived.
@@ -592,6 +644,10 @@ impl Browser {
     /// elsewhere.
     #[must_use]
     pub fn cursor(&self) -> Cursor {
+        #[cfg(feature = "links")]
+        if let Some(cursor) = self.link_cursor() {
+            return cursor;
+        }
         let over_toggle = self.regions.overview_toggle.contains(self.pointer);
         if self.wall.over_page() || self.previewed.is_some() || over_toggle { Cursor::Hand } else { Cursor::Arrow }
     }
@@ -611,6 +667,11 @@ impl Browser {
     /// A press of the main button, with `extend` when Shift is held.
     #[allow(clippy::too_many_lines, reason = "one hit-test per part of the window, in drawing order")]
     pub fn pointer_pressed<C: Canvas + ?Sized>(&mut self, canvas: &mut C, extend: bool, now: u64) -> bool {
+        // The strip's question, drawn over the address field.
+        #[cfg(feature = "links")]
+        if self.link_press(now) {
+            return true;
+        }
         let point = self.pointer;
         let regions = &self.regions;
         if regions.field.contains(point) {
@@ -697,7 +758,8 @@ impl Browser {
             // A page on the wall zooms to fill the area; on a zoomed page a
             // click is on one of its cells, where links will be followed.
             if self.wall.zoomed().is_some() {
-                self.outputs.push(Output::Cell(click));
+                let version = self.versions.get(&click.key).copied().unwrap_or_default();
+                self.outputs.push(Output::Cell(CellClick { version, ..click }));
             } else {
                 self.wall.zoom(click.key, now);
             }
@@ -752,6 +814,10 @@ impl Browser {
         if self.editing {
             return self.edit(key, modifiers.shift);
         }
+        #[cfg(feature = "links")]
+        if let Some(changed) = self.link_key(key, modifiers, now) {
+            return changed;
+        }
         match key {
             Key::Escape => return self.wall.unzoom(now),
             Key::Left => self.wall.step(-1, now),
@@ -764,6 +830,12 @@ impl Browser {
                     if self.digits.len() == DECIMAL_DIGITS {
                         let page = u16::from_str_radix(&self.digits, 16).ok();
                         self.digits.clear();
+                        // A number the open page or the channel links
+                        // elsewhere goes to the trusted core.
+                        #[cfg(feature = "links")]
+                        if page.is_some_and(|page| self.link_typed(page)) {
+                            continue;
+                        }
                         if let Some(index) = page.and_then(page_index)
                             && matches!(self.channel.pages.get(index), Some(Some(_)))
                         {
@@ -803,6 +875,7 @@ impl Browser {
                 }
             }
             Key::Escape => self.stop_editing(),
+            Key::Tab => return false,
             Key::Backspace => self.editor.backspace(),
             Key::Delete => self.editor.delete(),
             Key::Left => self.editor.left(shift),
@@ -889,6 +962,8 @@ impl Browser {
             .collect();
         let selected = self.selected.and_then(|index| self.page_key(index));
         self.wall.draw(canvas, zoom, &pages, selected, now);
+        #[cfg(feature = "links")]
+        self.draw_links(canvas);
         let mut visible = self.wall.visible();
         // The overview's previewed page is on screen too, so the trusted
         // core has it rendered, whichever bank it is in.
@@ -997,6 +1072,13 @@ impl Browser {
         if self.editing {
             border(canvas, field, 2.0, SELECTED);
         }
+        // The strip's question takes the whole field: no address, no star.
+        #[cfg(feature = "links")]
+        if self.draw_prompt(canvas, field) {
+            self.regions.star = Rect::ZERO;
+            self.regions.field_text = Rect::ZERO;
+            return;
+        }
         let middle = f64::midpoint(field.y0, field.y1);
         let mut text_left = field.x0 + FIELD_PADDING;
         if self.strip.local {
@@ -1015,7 +1097,15 @@ impl Browser {
         star(canvas, Point::new(f64::midpoint(self.regions.star.x0, self.regions.star.x1), middle), if self.strip.bookmarked { STAR_ON } else { FIELD_INK });
         let text = Rect::new(text_left, field.y0, self.regions.star.x0, field.y1);
         self.regions.field_text = text;
-        self.draw_address(canvas, text);
+        // While the pointer or the focus is on a link, the field shows where
+        // it leads (requirement 17.6).
+        #[cfg(feature = "links")]
+        let pointing = !self.editing && self.draw_pointing(canvas, text);
+        #[cfg(not(feature = "links"))]
+        let pointing = false;
+        if !pointing {
+            self.draw_address(canvas, text);
+        }
     }
 
     fn draw_address<C: Canvas + ?Sized>(&mut self, canvas: &mut C, area: Rect) {

@@ -129,10 +129,26 @@ const GLOW_WIDTH: f64 = 4.0;
 pub struct CellClick {
     /// The page clicked.
     pub key: PageKey,
+    /// The version of the page's image on screen. The wall knows no
+    /// versions; the browser fills it in.
+    pub version: u32,
     /// The cell's column, 0 to 39.
     pub column: u8,
     /// The cell's row, 0 to 24.
     pub row: u8,
+}
+
+/// The cell of a page drawn in `rect` under `point`, as column and row.
+#[must_use]
+pub fn cell_in(rect: Rect, point: Point) -> Option<(u8, u8)> {
+    if !rect.contains(point) {
+        return None;
+    }
+    let x = (point.x - rect.x0) / rect.width() * f64::from(PAGE_WIDTH);
+    let y = (point.y - rect.y0) / rect.height() * f64::from(PAGE_HEIGHT);
+    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss, reason = "both are within the page raster")]
+    let (column, row) = ((x / f64::from(CELL_WIDTH)) as u8, (y / f64::from(CELL_HEIGHT)) as u8);
+    (u16::from(column) < COLUMNS && u16::from(row) < ROWS).then_some((column, row))
 }
 
 /// Where a page was last drawn, for hit-testing.
@@ -186,6 +202,9 @@ pub struct Wall {
     close: Rect,
     area: Rect,
     drawn: Vec<Drawn>,
+    /// The page zoomed in full and at rest, and where it was drawn: links
+    /// are shown and followed only there (`hyperlinks.md` section 10.1).
+    open: Option<(PageKey, Rect)>,
 }
 
 impl Default for Wall {
@@ -225,6 +244,7 @@ impl Wall {
             close: Rect::ZERO,
             area: Rect::ZERO,
             drawn: Vec::new(),
+            open: None,
         }
     }
 
@@ -470,11 +490,21 @@ impl Wall {
         }
         // Topmost first: a zooming page is drawn over the wall.
         let drawn = self.drawn.iter().rev().find(|drawn| drawn.rect.contains(point))?;
-        let x = (point.x - drawn.rect.x0) / drawn.rect.width() * f64::from(PAGE_WIDTH);
-        let y = (point.y - drawn.rect.y0) / drawn.rect.height() * f64::from(PAGE_HEIGHT);
-        #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss, reason = "both are within the page raster")]
-        let (column, row) = ((x / f64::from(CELL_WIDTH)) as u8, (y / f64::from(CELL_HEIGHT)) as u8);
-        (u16::from(column) < COLUMNS && u16::from(row) < ROWS).then_some(CellClick { key: drawn.key, column, row })
+        let (column, row) = cell_in(drawn.rect, point)?;
+        Some(CellClick { key: drawn.key, version: 0, column, row })
+    }
+
+    /// The page zoomed in full and at rest, and where it was drawn in the
+    /// last frame.
+    #[must_use]
+    pub fn open(&self) -> Option<(PageKey, Rect)> {
+        self.open
+    }
+
+    /// The page area, below the controls, as last drawn.
+    #[must_use]
+    pub fn area(&self) -> Rect {
+        self.area
     }
 
     /// Where each page was drawn in the last frame: for screen readers'
@@ -578,6 +608,7 @@ impl Wall {
         self.focus = selected;
         self.page_keys = pages.iter().map(|page| page.key).collect();
         self.drawn.clear();
+        self.open = None;
         // A zoomed page that has left the wall (another bank, another
         // channel) ends the zoom at once.
         if let Some(key) = self.zoomed
@@ -681,6 +712,9 @@ impl Wall {
             }
             let Some(other) = current.checked_add_signed(neighbour as isize).and_then(|index| pages.get(index)) else { continue };
             self.draw_page(canvas, other.key, shifted);
+            if neighbour == 0 && slide.abs() < f64::from(f32::EPSILON) {
+                self.open = Some((other.key, shifted));
+            }
             outline(canvas, Rect::new(shifted.x0 - FRAME, shifted.y0 - FRAME, shifted.x1 + FRAME, shifted.y1 + FRAME), RULE);
         }
         // The caption line stays put on its own background; pages slide
@@ -917,7 +951,7 @@ mod tests {
             rect.x0 + (10.5 * f64::from(CELL_WIDTH)) / f64::from(PAGE_WIDTH) * rect.width(),
             rect.y0 + (3.5 * f64::from(CELL_HEIGHT)) / f64::from(PAGE_HEIGHT) * rect.height(),
         );
-        assert_eq!(wall.cell_at(point), Some(CellClick { key, column: 10, row: 3 }));
+        assert_eq!(wall.cell_at(point), Some(CellClick { key, version: 0, column: 10, row: 3 }));
         assert_eq!(wall.cell_at(Point::new(rect.x0 - 2.0, rect.y0)), None, "the gap between pages");
     }
 

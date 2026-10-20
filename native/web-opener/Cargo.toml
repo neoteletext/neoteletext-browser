@@ -1,0 +1,29 @@
+[package]
+name = "web-opener"
+description = "Hands a checked web address to the system's web browser, as one argument and with no shell: open -u on macOS, xdg-open on Linux, ShellExecuteW on Windows"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+# The bindings winit already uses on Windows, so no crate is added to the
+# build; these features only enable the shell's ShellExecuteW.
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "=0.52.0", features = ["Win32_Foundation", "Win32_UI_Shell", "Win32_UI_WindowsAndMessaging"] }
+
+# As the Dock menu's crate (decision 39): unsafe code is denied, not
+# forbidden, and allowed only in the Windows module, each block with its
+# reason.
+[lints.rust]
+unsafe_code = "deny"
+missing_docs = "warn"
+unused_qualifications = "warn"
+
+[lints.clippy]
+pedantic = { level = "warn", priority = -1 }
+allow_attributes_without_reason = "warn"
+dbg_macro = "warn"
+todo = "warn"
+unimplemented = "warn"
+undocumented_unsafe_blocks = "warn"

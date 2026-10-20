@@ -7,6 +7,12 @@ license.workspace = true
 rust-version.workspace = true
 publish.workspace = true
 
+# The link messages (`hyperlinks.md` section 8.1); off, they are compiled
+# out and every side refuses their kinds.
+[features]
+default = ["links"]
+links = ["interface-core/links"]
+
 [dependencies]
 interface-core.workspace = true
 # The audio profile's bounds: channels, gains, fades, rates.

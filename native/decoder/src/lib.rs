@@ -24,6 +24,9 @@
 
 use std::time::Instant as Clock;
 
+#[cfg(feature = "links")]
+pub mod links;
+
 use interface_core::canvas::{PAGE_HEIGHT, PAGE_WIDTH};
 use interface_core::channel::{PAGES, page_index};
 use neoteletext_audio::port::{SoundFormat, SoundId, Start, VoiceSink};
@@ -99,6 +102,19 @@ pub struct Rendered {
     pub palette: Vec<[u8; 3]>,
     /// One palette index per dot, row by row.
     pub indices: Vec<u8>,
+    /// The links found in the page (`hyperlinks.md` section 6).
+    #[cfg(feature = "links")]
+    pub links: Found,
+}
+
+/// The links of a page as the decoder finds them, untrusted.
+#[cfg(feature = "links")]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Found {
+    /// Page numbers in its text and runs its `LT` lines declare.
+    pub candidates: Vec<protocol::links::Candidate>,
+    /// Its `LK` lines.
+    pub numbers: Vec<protocol::links::NumberLink>,
 }
 
 /// The teletext engine for one channel: it reads the channel's bytes,
@@ -117,6 +133,9 @@ pub struct Engine {
     audio: Receiver<'static, AUDIO_OBJECTS, AUDIO_RECORDS>,
     /// Voice operations waiting to be sent.
     sounds: Vec<Audio>,
+    /// The `LT` and `LK` lines of every page file read.
+    #[cfg(feature = "links")]
+    lines: links::Lines,
 }
 
 impl Default for Engine {
@@ -147,6 +166,8 @@ impl Engine {
             updated: Vec::new(),
             audio: Receiver::new(arena),
             sounds: Vec::new(),
+            #[cfg(feature = "links")]
+            lines: links::Lines::default(),
         }
     }
 
@@ -187,10 +208,14 @@ impl Engine {
     /// Pages that changed are kept for [`Engine::take_updated`].
     pub fn feed(&mut self, bytes: &[u8]) -> Vec<(u16, String)> {
         let mut packets = Vec::new();
-        self.reader.feed(bytes, &mut |item| {
-            if let Item::Packet { packet, meta } = item {
-                packets.push((packet, meta));
-            }
+        #[cfg(feature = "links")]
+        let lines = &mut self.lines;
+        self.reader.feed(bytes, &mut |item| match item {
+            Item::Packet { packet, meta } => packets.push((packet, meta)),
+            // A page file's link lines are kept beside its packets.
+            #[cfg(feature = "links")]
+            Item::Page(page) => lines.read(page),
+            _ => {}
         });
         self.push_all(&packets);
         self.arrivals()
@@ -204,10 +229,13 @@ impl Engine {
     /// Ends the channel's data: completes every page still being received.
     pub fn finish(&mut self) -> Vec<(u16, String)> {
         let mut packets = Vec::new();
-        self.reader.finish(&mut |item| {
-            if let Item::Packet { packet, meta } = item {
-                packets.push((packet, meta));
-            }
+        #[cfg(feature = "links")]
+        let lines = &mut self.lines;
+        self.reader.finish(&mut |item| match item {
+            Item::Packet { packet, meta } => packets.push((packet, meta)),
+            #[cfg(feature = "links")]
+            Item::Page(page) => lines.read(page),
+            _ => {}
         });
         self.push_all(&packets);
         self.clock = self.clock.saturating_add(PAGE_COMPLETION_TIMEOUT_US.saturating_mul(2));
@@ -237,7 +265,7 @@ impl Engine {
         self.updated.sort_unstable();
         self.updated.dedup();
         fresh.sort_unstable();
-        fresh.into_iter().map(|page| (page, self.grid(page).map(|grid| title(&grid)).unwrap_or_default())).collect()
+        fresh.into_iter().map(|page| (page, self.grid(page).map(|(grid, _)| title(&grid)).unwrap_or_default())).collect()
     }
 
     /// Every display page received completely, each with its 25 rows of
@@ -254,7 +282,7 @@ impl Engine {
             .map(|page| {
                 let number = page.key.address.mpp();
                 let rows = page.cells.iter().take(ROWS).copied().collect();
-                Exported { page: number, rows, title: self.grid(number).map(|grid| title(&grid)).unwrap_or_default() }
+                Exported { page: number, rows, title: self.grid(number).map(|(grid, _)| title(&grid)).unwrap_or_default() }
             })
             .collect();
         pages.sort_by_key(|page| page.page);
@@ -262,8 +290,9 @@ impl Engine {
         pages
     }
 
-    /// The page's grid, as the engine composes it for display.
-    fn grid(&self, page: u16) -> Option<Grid> {
+    /// The page's grid, as the engine composes it for display, and the
+    /// sub-code of the sub-page shown.
+    fn grid(&self, page: u16) -> Option<(Grid, u16)> {
         let address = PageAddress::from_mpp(page)?;
         let stored = self.decoder.store().get(address, SubCode::ANY)?;
         let config = self.decoder.config();
@@ -273,24 +302,37 @@ impl Engine {
         build_grid(&mut grid, Some(stored), &magazine, config, &options);
         let lookup = self.decoder.enhancement_lookup();
         let _ = compose_level(&mut grid, stored, &magazine, &lookup, config, &options);
-        Some(grid)
+        Some((grid, stored.key.subcode.value()))
     }
 
     /// Renders the latest sub-page of `page` at the engine's flash phase
     /// for now, in the resolved colour mode, whose palette is the page's
-    /// Colour Map of at most 32 colours.
+    /// Colour Map of at most 32 colours. The page's own underline is not
+    /// drawn: in T42 Browser an underline means a link, and the browser
+    /// draws links itself (decision 42, the engine's decision E.88).
     #[must_use]
     pub fn render(&self, page: u16) -> Option<Rendered> {
         page_index(page)?;
-        let grid = self.grid(page)?;
+        #[cfg_attr(not(feature = "links"), allow(unused_variables, reason = "the sub-code finds a page's link lines"))]
+        let (grid, subcode) = self.grid(page)?;
         let config = self.decoder.config();
         let elapsed = u64::try_from(self.started.elapsed().as_micros()).unwrap_or(u64::MAX);
-        let render = RenderOptions::resolved(config, false, FlashPhase::at(Instant(elapsed)));
+        let render = RenderOptions::resolved(config, false, FlashPhase::at(Instant(elapsed))).with_underline(false);
         let mut indices = vec![0_u8; PAGE_DOTS];
         let mut buffer = IndexBuffer { format: IndexFormat::Bits8, data: &mut indices, stride: usize::from(PAGE_WIDTH) };
         render_screen(&grid, ALL_ROWS, &GLYPHS, render, &mut buffer).ok()?;
-        let palette = colour_map_palette(&grid.colour_map, PICTURE).iter().map(|colour| [colour.r, colour.g, colour.b]).collect();
-        Some(Rendered { palette, indices })
+        let palette: Vec<[u8; 3]> = colour_map_palette(&grid.colour_map, PICTURE).iter().map(|colour| [colour.r, colour.g, colour.b]).collect();
+        #[cfg(feature = "links")]
+        let links = {
+            let (candidates, numbers) = links::find(&grid, &palette, self.lines.get(page, subcode));
+            Found { candidates, numbers }
+        };
+        Some(Rendered {
+            palette,
+            indices,
+            #[cfg(feature = "links")]
+            links,
+        })
     }
 }
 
@@ -505,6 +547,61 @@ mod tests {
         assert_eq!(engine.take_sounds(), [] as [Audio; 0]);
         engine.tick_audio(3_000);
         assert_eq!(engine.take_sounds(), [Audio::Stop { channel: 0, fade_ms: neoteletext_audio::LIVE_STALL_FADE_MS }, Audio::Forget(sound)]);
+    }
+
+    /// Decision 42: in T42 Browser only links are underlined, so the page's
+    /// own underline (a Level 2.5 Display Attribute) is not drawn.
+    #[test]
+    fn the_pages_own_underline_is_not_drawn() {
+        use neoteletext_core::packet::DisplayAttributes;
+        use neoteletext_formats::author::DisplayPage;
+        let mut page = DisplayPage::new(PageAddress::from_mpp(0x100).unwrap(), SubCode::new(0));
+        page.text(3, 4, b"UNDERLINE").unwrap();
+        page.local().position(3, 0).unwrap().attributes(4, DisplayAttributes { underline: true, ..DisplayAttributes::default() });
+        let mut bytes = Vec::new();
+        neoteletext_formats::write::write_tti(&[&page.build().unwrap()], &mut bytes).unwrap();
+        let mut engine = Engine::new();
+        engine.feed(&bytes);
+        engine.finish();
+        let rendered = engine.render(0x100).unwrap();
+        let (grid, _) = engine.grid(0x100).unwrap();
+        assert!(grid.cell(3, 4).is_some_and(|cell| cell.attributes.underline()), "the page does underline the word");
+        // The last line of row 3 under the word, which an underline fills.
+        let width = usize::from(PAGE_WIDTH);
+        let cell = usize::from(interface_core::canvas::CELL_WIDTH);
+        let height = usize::from(interface_core::canvas::CELL_HEIGHT);
+        let line = 3 * height + height - 1;
+        let under = &rendered.indices[line * width + 4 * cell..line * width + 13 * cell];
+        // Columns 0 to 3 of the row are not underlined: their last line is
+        // the row's background.
+        let background = rendered.indices[line * width];
+        assert!(under.iter().all(|&index| index == background), "no line under the text");
+    }
+
+    /// `hyperlinks.md` section 6: the page numbers in a page's text and its
+    /// `LT` and `LK` lines are found, for the trusted core to decide.
+    #[cfg(feature = "links")]
+    #[test]
+    fn a_pages_links_are_found_in_its_text_and_its_link_lines() {
+        use protocol::links::{Candidate, Found, NumberLink};
+        let page = b"PN,10000\nSC,0000\nPS,8000\nOL,1,News index\nOL,3,Sport 101\nOL,5,Weather here\n\
+LT,5,0,7,web:https://www.example.invalid/\nLK,101,https://sport.invalid/\n";
+        let mut engine = Engine::new();
+        engine.feed(page);
+        engine.finish();
+        let links = engine.render(0x100).unwrap().links;
+        let at = |candidate: &Candidate| (candidate.row, candidate.column, candidate.length, candidate.target.clone());
+        assert_eq!(
+            links.candidates.iter().map(at).collect::<Vec<_>>(),
+            [(5, 0, 7, Found::Declared("web:https://www.example.invalid/".into())), (3, 6, 3, Found::Number(0x101))]
+        );
+        assert_eq!(links.numbers, [NumberLink { number: 0x101, target: "https://sport.invalid/".into() }]);
+        // A run over blank cells is trimmed to the text it covers.
+        let mut engine = Engine::new();
+        engine.feed(b"PN,10000\nSC,0000\nPS,8000\nOL,5,   Weather\nLT,5,0,20,302\nLT,7,0,10,303\n");
+        engine.finish();
+        let links = engine.render(0x100).unwrap().links;
+        assert_eq!(links.candidates.iter().map(at).collect::<Vec<_>>(), [(5, 3, 7, Found::Declared("302".into()))], "row 7 is blank");
     }
 
     #[test]

@@ -73,4 +73,10 @@ pub trait Canvas {
     fn text_width(&mut self, text: &str, style: Style) -> f64;
     /// The height of one line of text in `style`, in logical pixels.
     fn line_height(&mut self, style: Style) -> f64;
+    /// Device pixels per logical pixel: what the browser draws finer than a
+    /// page's own dots is measured in device pixels (`hyperlinks.md`
+    /// section 9.2).
+    fn device_scale(&self) -> f64 {
+        1.0
+    }
 }

@@ -32,6 +32,8 @@ const KIND_ARRIVED: u8 = 64;
 const KIND_FRAME: u8 = 65;
 const KIND_UPDATED: u8 = 66;
 const KIND_AUDIO: u8 = 67;
+#[cfg(feature = "links")]
+const KIND_LINKS: u8 = 68;
 
 /// From the trusted core to a decoder.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -77,6 +79,22 @@ pub enum FromDecoder {
     },
     /// A voice operation of the channel's audio receiver.
     Audio(crate::audio::Audio),
+    /// The links found in a page, sent before its image whenever they
+    /// change (`hyperlinks.md` section 8.1): untrusted, for the trusted
+    /// core to check and decide.
+    #[cfg(feature = "links")]
+    Links {
+        /// The page number.
+        page: u16,
+        /// A new image of the page follows: its links are for that image.
+        /// Otherwise only the links changed, and they are for the image the
+        /// trusted core already has.
+        with_image: bool,
+        /// Page numbers in its text and the runs its `LT` lines declare.
+        candidates: Vec<crate::links::Candidate>,
+        /// Its `LK` lines.
+        numbers: Vec<crate::links::NumberLink>,
+    },
 }
 
 fn display_page(fields: &mut Fields<'_>) -> Result<u16, ProtocolError> {
@@ -185,6 +203,13 @@ pub fn write_to_core(out: &mut dyn Write, message: &FromDecoder) -> Result<(), P
             crate::audio::push(&mut payload, audio, crate::audio::Sender::Decoder)?;
             KIND_AUDIO
         }
+        #[cfg(feature = "links")]
+        FromDecoder::Links { page, with_image, candidates, numbers } => {
+            payload.extend_from_slice(&page.to_be_bytes());
+            payload.push(u8::from(*with_image));
+            crate::links::push_found(&mut payload, candidates, numbers)?;
+            KIND_LINKS
+        }
     };
     write_frame(out, kind, &payload)
 }
@@ -225,6 +250,17 @@ pub fn read_from_decoder(input: &mut dyn Read) -> Result<Option<FromDecoder>, Pr
         }
         KIND_UPDATED => FromDecoder::Updated { page: display_page(&mut fields)? },
         KIND_AUDIO => FromDecoder::Audio(crate::audio::read(&mut fields, crate::audio::Sender::Decoder)?),
+        #[cfg(feature = "links")]
+        KIND_LINKS => {
+            let page = display_page(&mut fields)?;
+            let with_image = match fields.u8()? {
+                0 => false,
+                1 => true,
+                _ => return Err(ProtocolError::BadValue("with image")),
+            };
+            let (candidates, numbers) = crate::links::read_found(&mut fields)?;
+            FromDecoder::Links { page, with_image, candidates, numbers }
+        }
         other => return Err(ProtocolError::UnknownKind(other)),
     };
     fields.end()?;

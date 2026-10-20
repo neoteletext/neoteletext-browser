@@ -17,10 +17,56 @@ pub struct Address {
     pub encrypted: bool,
     /// A file on this computer, at this absolute path.
     pub file: Option<PathBuf>,
+    /// The page the address names after `#`, as `#302` or `#302:0001`
+    /// does (`hyperlinks.md` section 7.3): a page of the channel, never
+    /// sent in a request.
+    pub page: Option<u16>,
+}
+
+impl Address {
+    /// The address without its fragment: the channel itself, as fetched.
+    #[must_use]
+    pub fn channel_text(&self) -> &str {
+        if self.file.is_some() {
+            return &self.text;
+        }
+        self.text.split_once(FRAGMENT).map_or(self.text.as_str(), |(channel, _)| channel)
+    }
+
+    /// The same channel at `page`: its address with `#` and the page number.
+    #[must_use]
+    pub fn with_page(&self, page: u16) -> Self {
+        let text = if self.file.is_some() { self.text.clone() } else { format!("{}{FRAGMENT}{page:03X}", self.channel_text()) };
+        Self { text, page: Some(page), ..self.clone() }
+    }
+
+    /// Whether `other` is the same channel, whatever page each names.
+    #[must_use]
+    pub fn same_channel(&self, other: &Self) -> bool {
+        self.channel_text() == other.channel_text() && self.file == other.file
+    }
 }
 
 const SCHEME_SEPARATOR: &str = "://";
 const FILE_SCHEME: &str = "file://";
+const FRAGMENT: char = '#';
+/// Hexadecimal digits of a page number and of a sub-page number.
+const PAGE_DIGITS: usize = 3;
+const SUBPAGE_DIGITS: usize = 4;
+const HEXADECIMAL: u32 = 16;
+
+/// The page a fragment names: three hexadecimal digits of a display page,
+/// optionally followed by `:` and four of a sub-page, which is not kept.
+#[must_use]
+pub fn fragment_page(fragment: &str) -> Option<u16> {
+    let (page, subpage) = fragment.split_once(':').map_or((fragment, None), |(page, subpage)| (page, Some(subpage)));
+    let digits = |text: &str, count: usize| text.len() == count && text.bytes().all(|byte| byte.is_ascii_hexdigit());
+    if !digits(page, PAGE_DIGITS) || subpage.is_some_and(|subpage| !digits(subpage, SUBPAGE_DIGITS)) {
+        return None;
+    }
+    let page = u16::from_str_radix(page, HEXADECIMAL).ok()?;
+    interface_core::channel::page_index(page).map(|_| page)
+}
 
 /// A file address: `file:///path`, or a path absolute on this platform
 /// (`/Users/...`, or `C:\\...` on Windows).
@@ -41,7 +87,7 @@ fn parse_file(typed: &str) -> Option<Result<Address, String>> {
         }
         let path = PathBuf::from(&path);
         let name = path.file_name().and_then(|name| name.to_str()).unwrap_or("/").to_owned();
-        Ok(Address { text: format!("{FILE_SCHEME}{}", path_to_url(&path)), host: name, encrypted: false, file: Some(path) })
+        Ok(Address { text: format!("{FILE_SCHEME}{}", path_to_url(&path)), host: name, encrypted: false, file: Some(path), page: None })
     };
     Some(check())
 }
@@ -111,9 +157,10 @@ pub fn parse(typed: &str) -> Result<Address, String> {
     if path.chars().any(interface_core::editor::hidden) || path.contains(' ') {
         return Err("Addresses cannot contain spaces or hidden characters".into());
     }
-    let path = if path.is_empty() { "/" } else { path };
+    let path = if path.is_empty() || path.starts_with(['?', FRAGMENT]) { format!("/{path}") } else { path.to_owned() };
+    let page = path.split_once(FRAGMENT).and_then(|(_, fragment)| fragment_page(fragment));
     let port = port.map(|port| format!(":{port}")).unwrap_or_default();
-    Ok(Address { text: format!("{scheme}{SCHEME_SEPARATOR}{host}{port}{path}"), host, encrypted, file: None })
+    Ok(Address { text: format!("{scheme}{SCHEME_SEPARATOR}{host}{port}{path}"), host, encrypted, file: None, page })
 }
 
 #[cfg(test)]
@@ -155,6 +202,23 @@ mod tests {
     #[test]
     fn a_windows_path_is_not_a_file_elsewhere() {
         assert!(parse(r"C:\t42\channel.t42").is_err());
+    }
+
+    #[test]
+    fn a_fragment_names_a_page_of_the_channel_and_is_never_fetched() {
+        let address = parse("weather.invalid/teletext/#302").unwrap();
+        assert_eq!(address.page, Some(0x302));
+        assert_eq!(address.text, "https://weather.invalid/teletext/#302");
+        assert_eq!(address.channel_text(), "https://weather.invalid/teletext/");
+        assert_eq!(parse("weather.invalid/#302:0001").unwrap().page, Some(0x302), "a sub-page is allowed and not kept");
+        assert_eq!(parse("weather.invalid#302").unwrap().text, "https://weather.invalid/#302");
+        for fragment in ["#1A0", "#30", "#3022", "#302:1", "#section", "#902"] {
+            let address = parse(&format!("weather.invalid/{fragment}")).unwrap();
+            assert_eq!(address.page, None, "{fragment} is not a display page");
+        }
+        let at = address.with_page(0x100);
+        assert_eq!((at.text.as_str(), at.page), ("https://weather.invalid/teletext/#100", Some(0x100)));
+        assert!(at.same_channel(&address) && !at.same_channel(&parse("weather.invalid/other/").unwrap()));
     }
 
     #[test]

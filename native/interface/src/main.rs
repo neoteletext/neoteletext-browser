@@ -86,8 +86,12 @@ enum Incoming {
     },
     Page {
         key: PageKey,
+        version: u32,
         image: image::Indexed,
     },
+    /// About hyperlinks.
+    #[cfg(feature = "links")]
+    Link(protocol::links::Message),
     /// The channels now playing sound, muted or not.
     Sounding(BTreeSet<u32>),
     /// The user chose an item of the Dock menu.
@@ -182,7 +186,7 @@ impl App {
 
     fn modifiers(&self) -> Modifiers {
         let command = if cfg!(target_os = "macos") { self.modifiers.super_key() } else { self.modifiers.control_key() };
-        Modifiers { shift: self.modifiers.shift_key(), command }
+        Modifiers { shift: self.modifiers.shift_key(), command, repeat: false }
     }
 
     fn send(&mut self, event_loop: &ActiveEventLoop, message: &ToCore) {
@@ -224,6 +228,8 @@ impl App {
             graphics.window.set_cursor(match cursor {
                 Cursor::Arrow => CursorIcon::Default,
                 Cursor::Hand => CursorIcon::Pointer,
+                // A link that leaves the channel: the shape of a shortcut.
+                Cursor::External => CursorIcon::Alias,
             });
         }
     }
@@ -238,7 +244,17 @@ impl App {
                     self.painter.retain_pages(|key| visible.contains(key));
                     ToCore::Visible(visible)
                 }
-                Output::Cell(click) => ToCore::Cell { key: click.key, column: click.column, row: click.row },
+                Output::Cell(click) => ToCore::Cell { key: click.key, version: click.version, column: click.column, row: click.row },
+                #[cfg(feature = "links")]
+                Output::Point(cell) => {
+                    ToCore::Point(cell.map(|cell| protocol::links::Spot { key: cell.key, version: cell.version, column: cell.column, row: cell.row }))
+                }
+                #[cfg(feature = "links")]
+                Output::Typed { number, opened } => ToCore::Typed { number, opened },
+                #[cfg(feature = "links")]
+                Output::Confirm(id) => ToCore::Confirm(id),
+                #[cfg(feature = "links")]
+                Output::Cancel(id) => ToCore::Cancel(id),
                 Output::SelectTab(index) | Output::CloseTab(index) => {
                     let Ok(index) = u8::try_from(index) else { continue };
                     if matches!(output, Output::SelectTab(_)) { ToCore::SelectTab(index) } else { ToCore::CloseTab(index) }
@@ -312,10 +328,11 @@ impl App {
         graphics.window.drag_resize_window(direction).is_ok()
     }
 
-    fn key(&mut self, key: &Key, text: Option<&str>) -> bool {
+    fn key(&mut self, key: &Key, text: Option<&str>, repeat: bool) -> bool {
         let now = self.now();
-        let modifiers = self.modifiers();
+        let modifiers = Modifiers { repeat, ..self.modifiers() };
         let named = match key {
+            Key::Named(NamedKey::Tab) => Some(BrowserKey::Tab),
             Key::Named(NamedKey::Enter) => Some(BrowserKey::Enter),
             Key::Named(NamedKey::Escape) => Some(BrowserKey::Escape),
             Key::Named(NamedKey::Backspace) => Some(BrowserKey::Backspace),
@@ -398,12 +415,26 @@ impl ApplicationHandler<Incoming> for App {
             Incoming::Channel(channel) => self.browser.set_channel(channel),
             Incoming::Arrived { channel, page, title } => self.browser.add_page(channel, page, title, now),
             Incoming::Updated { channel, page } => self.browser.page_updated(channel, page, now),
-            Incoming::Page { key, image } => {
+            Incoming::Page { key, version, image } => {
                 if let Err(error) = self.painter.set_page(key, &image.palette, &image.indices) {
                     self.exit = Some(format!("bad page image: {error:?}"));
                     event_loop.exit();
                     return;
                 }
+                self.browser.frame_version(key, version);
+                self.act(event_loop);
+            }
+            #[cfg(feature = "links")]
+            Incoming::Link(message) => {
+                use protocol::links::Message;
+                match message {
+                    Message::Page { key, links } => self.browser.set_links(key, links),
+                    Message::Pointing(pointing) => self.browser.set_pointing(pointing),
+                    Message::Prompt(prompt) => self.browser.set_prompt(prompt, now),
+                    Message::Show(key) => self.browser.show(key, now),
+                    Message::Aliases { channel, numbers } => self.browser.set_aliases(channel, numbers),
+                }
+                self.act(event_loop);
             }
             Incoming::End(reason) => {
                 self.exit = reason;
@@ -431,6 +462,13 @@ impl ApplicationHandler<Incoming> for App {
             WindowEvent::Resized(_) | WindowEvent::ScaleFactorChanged { .. } => true,
             WindowEvent::ModifiersChanged(modifiers) => {
                 self.modifiers = modifiers.state();
+                false
+            }
+            // A web page is handed over only while the window has the
+            // keyboard focus (requirement 17.9).
+            #[cfg(feature = "links")]
+            WindowEvent::Focused(focused) => {
+                self.send(event_loop, &ToCore::Focused(focused));
                 false
             }
             WindowEvent::CursorMoved { position, .. } => {
@@ -463,7 +501,7 @@ impl ApplicationHandler<Incoming> for App {
                 MouseScrollDelta::PixelDelta(position) => self.browser.scroll_by(-position.y / scale, now),
             },
             WindowEvent::KeyboardInput { event, .. } if event.state == ElementState::Pressed => {
-                let changed = self.key(&event.logical_key, event.text.as_deref());
+                let changed = self.key(&event.logical_key, event.text.as_deref(), event.repeat);
                 self.act(event_loop);
                 changed
             }
@@ -518,8 +556,8 @@ fn read_core(proxy: &EventLoopProxy<Incoming>, mixers: Option<&Shared>, trace: b
             Ok(Some(ToInterface::Channel(channel))) => Incoming::Channel(channel),
             Ok(Some(ToInterface::Page { channel, page, title })) => Incoming::Arrived { channel, page, title },
             Ok(Some(ToInterface::Updated { channel, page })) => Incoming::Updated { channel, page },
-            Ok(Some(ToInterface::Frame { key, png, .. })) => match image::decode(&png) {
-                Ok(image) => Incoming::Page { key, image },
+            Ok(Some(ToInterface::Frame { key, version, png })) => match image::decode(&png) {
+                Ok(image) => Incoming::Page { key, version, image },
                 Err(error) => break Some(format!("bad page image from the trusted core: {error}")),
             },
             // Sound goes straight to the mixers; the window need not wake.
@@ -532,6 +570,8 @@ fn read_core(proxy: &EventLoopProxy<Incoming>, mixers: Option<&Shared>, trace: b
                 }
                 continue;
             }
+            #[cfg(feature = "links")]
+            Ok(Some(ToInterface::Link(message))) => Incoming::Link(message),
             Ok(Some(ToInterface::Close) | None) => break None,
             Err(error) => break Some(format!("bad message from the trusted core: {error}")),
         };

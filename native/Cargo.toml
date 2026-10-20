@@ -3,7 +3,7 @@
 # drawing back ends, the interface process and the trusted core.
 [workspace]
 resolver = "3"
-members = ["interface-core", "draw-vello", "draw-embedded", "protocol", "interface", "core", "decoder", "fetcher", "site", "dock-menu"]
+members = ["interface-core", "draw-vello", "draw-embedded", "protocol", "interface", "core", "decoder", "fetcher", "site", "dock-menu", "web-opener"]
 # Built with a nightly compiler of its own (scripts/tools.sh).
 exclude = ["fuzz"]
 
@@ -15,30 +15,35 @@ rust-version = "1.90"
 publish = false
 
 # Every dependency is permissively licensed (design section 8).
+# The workspace's own crates take no default features from each other:
+# each crate's `links` feature (on by default) turns on its dependencies'
+# own, so `--no-default-features` builds the browser with hyperlinks
+# compiled out (`hyperlinks.md`).
 [workspace.dependencies]
-interface-core = { path = "interface-core" }
-draw-vello = { path = "draw-vello" }
-draw-embedded = { path = "draw-embedded" }
-protocol = { path = "protocol" }
-dock-menu = { path = "dock-menu" }
-decoder = { path = "decoder", package = "t42-decoder" }
+interface-core = { path = "interface-core", default-features = false }
+draw-vello = { path = "draw-vello", default-features = false }
+draw-embedded = { path = "draw-embedded", default-features = false }
+protocol = { path = "protocol", default-features = false }
+dock-menu = { path = "dock-menu", default-features = false }
+web-opener = { path = "web-opener", default-features = false }
+decoder = { path = "decoder", package = "t42-decoder", default-features = false }
 # The teletext engine, maintained in its own repository (design section
 # 4.0), pinned to one commit. Its repository is local until that commit is
 # published; Cargo reads the commit, never the engine's working tree. The
 # engine's recommended "modern-classic" profile (its decision E.71).
-neoteletext-core = { git = "file:///Users/andrewstuart/devel/neoteletext", rev = "940443016d1656ca3c2657433cf56bd278bf1ddb", default-features = false, features = ["modern-classic"] }
-neoteletext-formats = { git = "file:///Users/andrewstuart/devel/neoteletext", rev = "940443016d1656ca3c2657433cf56bd278bf1ddb", default-features = false, features = ["tti", "transport", "sliced"] }
+neoteletext-core = { git = "file:///Users/andrewstuart/devel/neoteletext", rev = "a6258147daa933ba41d3c74fa718100bbdf5028d", default-features = false, features = ["modern-classic"] }
+neoteletext-formats = { git = "file:///Users/andrewstuart/devel/neoteletext", rev = "a6258147daa933ba41d3c74fa718100bbdf5028d", default-features = false, features = ["tti", "transport", "sliced"] }
 # The engine's web module: HTTP, channels, contents files and push, with no
 # network input or output of its own.
-neoteletext-web = { git = "file:///Users/andrewstuart/devel/neoteletext", rev = "940443016d1656ca3c2657433cf56bd278bf1ddb", default-features = false, features = ["push"] }
+neoteletext-web = { git = "file:///Users/andrewstuart/devel/neoteletext", rev = "a6258147daa933ba41d3c74fa718100bbdf5028d", default-features = false, features = ["push"] }
 # The engine's network port is these traits (its decision E.38); the
 # version the engine uses.
 embedded-io = { version = "=0.7.1", default-features = false }
-neoteletext-image = { git = "file:///Users/andrewstuart/devel/neoteletext", rev = "940443016d1656ca3c2657433cf56bd278bf1ddb", features = ["std"] }
+neoteletext-image = { git = "file:///Users/andrewstuart/devel/neoteletext", rev = "a6258147daa933ba41d3c74fa718100bbdf5028d", features = ["std"] }
 # The engine's audio profile (its area AUD): the receiver, and the mixer the
 # interface plays through.
-neoteletext-audio = { git = "file:///Users/andrewstuart/devel/neoteletext", rev = "940443016d1656ca3c2657433cf56bd278bf1ddb", default-features = false, features = ["idl", "ima"] }
-neoteletext-audio-mix = { git = "file:///Users/andrewstuart/devel/neoteletext", rev = "940443016d1656ca3c2657433cf56bd278bf1ddb" }
+neoteletext-audio = { git = "file:///Users/andrewstuart/devel/neoteletext", rev = "a6258147daa933ba41d3c74fa718100bbdf5028d", default-features = false, features = ["idl", "ima"] }
+neoteletext-audio-mix = { git = "file:///Users/andrewstuart/devel/neoteletext", rev = "a6258147daa933ba41d3c74fa718100bbdf5028d" }
 # Apache-2.0: the operating systems' audio output (Core Audio on macOS),
 # without unsafe code of ours (decision 37).
 cpal = "=0.18.2"

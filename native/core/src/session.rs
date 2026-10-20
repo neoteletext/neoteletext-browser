@@ -45,7 +45,9 @@ impl ChannelState {
                 Ok(source) => (source, None, None),
                 Err(problem) => (Source::empty(), None, Some(problem)),
             },
-            None => (Source::empty(), Some(address.text.clone()), None),
+            // A web channel is fetched without its fragment, which names a
+            // page and is never sent (`hyperlinks.md` section 7.3).
+            None => (Source::empty(), Some(address.channel_text().to_owned()), None),
         };
         Self {
             id,
@@ -81,6 +83,13 @@ impl ChannelState {
         }
     }
 
+    /// Whether the channel has `page`: listed in its contents, or arrived.
+    #[cfg(feature = "links")]
+    #[must_use]
+    pub fn has_page(&self, page: u16) -> bool {
+        page_index(page).is_some_and(|index| self.titles.get(index).is_some_and(Option::is_some) || self.loaded.get(index).is_some_and(|loaded| *loaded))
+    }
+
     /// Records a page the decoder reports; returns its title when the page
     /// is new. A title from the contents file is kept.
     pub fn arrived(&mut self, page: u16, title: &str) -> Option<String> {
@@ -108,8 +117,29 @@ impl ChannelState {
     }
 }
 
+/// One entry of a tab's history.
+#[derive(Clone, Debug)]
+pub struct Visit {
+    pub address: Address,
+    /// A link on a page started it, not the user in the trusted strip
+    /// (requirement 8.2).
+    #[allow(dead_code, reason = "recorded as requirement 8.2 asks; no rule reads it yet, only the tests")]
+    pub by_page: bool,
+}
+
+/// Where going back or forward took the tab.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Went {
+    /// Nowhere: there was no history that way.
+    Nowhere,
+    /// Another page of the same channel, which stays open.
+    Page(Option<u16>),
+    /// Another channel.
+    Channel,
+}
+
 pub struct Tab {
-    pub history: Vec<Address>,
+    pub history: Vec<Visit>,
     pub position: usize,
     pub channel: ChannelState,
     /// The user muted the tab; it stays muted as it moves to other channels.
@@ -120,7 +150,7 @@ impl Tab {
     /// The address the tab is at in its history.
     #[must_use]
     pub fn address(&self) -> Option<&Address> {
-        self.history.get(self.position)
+        self.history.get(self.position).map(|visit| &visit.address)
     }
 }
 
@@ -151,7 +181,7 @@ impl Session {
         let address = parse(typed)?;
         let channel = self.channel_for(&address);
         self.active = self.tabs.len();
-        self.tabs.push(Tab { history: vec![address], position: 0, channel, muted: false });
+        self.tabs.push(Tab { history: vec![Visit { address, by_page: false }], position: 0, channel, muted: false });
         self.tabs.last().map(|tab| &tab.channel).ok_or_else(|| "no tab is open".into())
     }
 
@@ -161,27 +191,60 @@ impl Session {
     /// When the address cannot be opened, or there is no tab.
     pub fn navigate(&mut self, typed: &str) -> Result<(), String> {
         let address = parse(typed)?;
+        self.visit(address, false)
+    }
+
+    /// Opens another channel in the active tab because a link on a page led
+    /// there and the user confirmed it in the trusted strip.
+    ///
+    /// # Errors
+    /// When there is no tab.
+    #[cfg(feature = "links")]
+    pub fn follow(&mut self, address: Address) -> Result<(), String> {
+        self.visit(address, true)
+    }
+
+    fn visit(&mut self, address: Address, by_page: bool) -> Result<(), String> {
         let channel = self.channel_for(&address);
         let tab = self.tabs.get_mut(self.active).ok_or("no tab is open")?;
         tab.history.truncate(tab.position.saturating_add(1));
-        tab.history.push(address);
+        tab.history.push(Visit { address, by_page });
         tab.position = tab.history.len().saturating_sub(1);
         tab.channel = channel;
         Ok(())
     }
 
-    /// Moves the active tab back or forward in its history. Returns
-    /// whether it moved.
-    pub fn go(&mut self, forward: bool) -> bool {
-        let Some(tab) = self.tabs.get(self.active) else { return false };
+    /// A link on a page of the active tab led to another page of its
+    /// channel: the tab's history gains the page, and the channel stays open.
+    /// Returns the address the strip now shows.
+    #[cfg(feature = "links")]
+    pub fn show_page(&mut self, page: u16) -> Option<&Address> {
+        let tab = self.tabs.get_mut(self.active)?;
+        let address = tab.address()?.with_page(page);
+        tab.history.truncate(tab.position.saturating_add(1));
+        tab.history.push(Visit { address, by_page: true });
+        tab.position = tab.history.len().saturating_sub(1);
+        tab.address()
+    }
+
+    /// Moves the active tab back or forward in its history. Another page of
+    /// the same channel keeps the channel open.
+    pub fn go(&mut self, forward: bool) -> Went {
+        let Some(tab) = self.tabs.get(self.active) else { return Went::Nowhere };
         let position = if forward { tab.position.checked_add(1) } else { tab.position.checked_sub(1) };
-        let Some(position) = position else { return false };
-        let Some(address) = tab.history.get(position).cloned() else { return false };
-        let channel = self.channel_for(&address);
-        let Some(tab) = self.tabs.get_mut(self.active) else { return false };
+        let Some(position) = position else { return Went::Nowhere };
+        let Some(visit) = tab.history.get(position).cloned() else { return Went::Nowhere };
+        let same = tab.address().is_some_and(|current| current.same_channel(&visit.address));
+        let channel = (!same).then(|| self.channel_for(&visit.address));
+        let Some(tab) = self.tabs.get_mut(self.active) else { return Went::Nowhere };
         tab.position = position;
-        tab.channel = channel;
-        true
+        match channel {
+            Some(channel) => {
+                tab.channel = channel;
+                Went::Channel
+            }
+            None => Went::Page(visit.address.page),
+        }
     }
 
     pub fn toggle_bookmark(&mut self) {
@@ -281,12 +344,31 @@ mod tests {
         session.open("news.invalid").unwrap();
         session.navigate("sport.invalid").unwrap();
         assert!(session.strip().back && !session.strip().forward);
-        assert!(session.go(false));
+        assert_eq!(session.go(false), Went::Channel);
         assert_eq!(session.strip().identity, "news.invalid");
         assert!(session.strip().forward);
         session.navigate("weather.invalid").unwrap();
         assert!(!session.strip().forward, "forward history is dropped");
-        assert!(!session.go(true));
+        assert_eq!(session.go(true), Went::Nowhere);
+    }
+
+    #[cfg(feature = "links")]
+    #[test]
+    fn a_link_within_the_channel_keeps_it_open_and_is_recorded_as_the_pages() {
+        let mut session = Session::new();
+        session.open("news.invalid/teletext/").unwrap();
+        let channel = session.tabs[0].channel.id;
+        assert_eq!(session.show_page(0x302).map(|address| address.text.as_str()), Some("https://news.invalid/teletext/#302"));
+        assert!(session.tabs[0].history[1].by_page && !session.tabs[0].history[0].by_page);
+        assert_eq!(session.tabs[0].channel.id, channel, "the same channel, still open");
+        assert_eq!(session.go(false), Went::Page(None));
+        assert_eq!(session.go(true), Went::Page(Some(0x302)));
+        assert_eq!(session.tabs[0].channel.id, channel);
+        // A link to another channel opens it, recorded as the page's.
+        session.follow(parse("https://sport.invalid/#401").unwrap()).unwrap();
+        assert!(session.tabs[0].history[2].by_page);
+        assert_ne!(session.tabs[0].channel.id, channel);
+        assert_eq!(session.tabs[0].channel.web.as_deref(), Some("https://sport.invalid/"), "the fragment is never fetched");
     }
 
     #[test]
@@ -343,7 +425,7 @@ mod tests {
         assert!(session.strip().bookmarked);
         session.navigate("sport.invalid").unwrap();
         assert!(!session.strip().bookmarked);
-        session.go(false);
+        assert_eq!(session.go(false), Went::Channel);
         assert!(session.strip().bookmarked);
     }
 }

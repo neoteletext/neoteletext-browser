@@ -15,6 +15,11 @@ path = "src/lib.rs"
 name = "t42-decoder"
 path = "src/main.rs"
 
+# Finding links in pages (`hyperlinks.md` section 6).
+[features]
+default = ["links"]
+links = ["protocol/links", "interface-core/links"]
+
 [dependencies]
 # The audio profile's receiver (the engine's area AUD).
 neoteletext-audio.workspace = true
@@ -27,6 +32,8 @@ protocol.workspace = true
 [dev-dependencies]
 # Writing the audio packets the tests read.
 neoteletext-audio = { workspace = true, features = ["encode"] }
+# Authoring a Level 2.5 test page, and writing it as TTI.
+neoteletext-formats = { workspace = true, features = ["std"] }
 
 [lints]
 workspace = true

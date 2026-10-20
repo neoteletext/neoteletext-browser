@@ -22,6 +22,8 @@
 pub mod audio;
 pub mod decoder;
 pub mod fetcher;
+#[cfg(feature = "links")]
+pub mod links;
 
 use std::io::{self, Read, Write};
 
@@ -77,12 +79,22 @@ const KIND_NEW_TAB: u8 = 20;
 const KIND_OPENED: u8 = 21;
 const KIND_MUTE_TAB: u8 = 22;
 const KIND_MUTE_ALL: u8 = 23;
+#[cfg(feature = "links")]
+const KIND_POINT: u8 = 24;
+#[cfg(feature = "links")]
+const KIND_TYPED: u8 = 25;
+#[cfg(feature = "links")]
+const KIND_FOCUSED: u8 = 26;
 // Interface to trusted core: strip input, kinds of their own
 // (`architecture.md` section 6.4).
 const KIND_NAVIGATE: u8 = 32;
 const KIND_BACK: u8 = 33;
 const KIND_FORWARD: u8 = 34;
 const KIND_BOOKMARK: u8 = 35;
+#[cfg(feature = "links")]
+const KIND_CONFIRM: u8 = 36;
+#[cfg(feature = "links")]
+const KIND_CANCEL: u8 = 37;
 
 // The strip's flags.
 const ENCRYPTED: u8 = 1;
@@ -97,7 +109,7 @@ const TAB_MUTED: u8 = 1;
 const HEADER_BYTES: usize = 5;
 const KEY_BYTES: usize = 6;
 const FRAME_FIXED_BYTES: usize = KEY_BYTES + 4;
-const CELL_BYTES: usize = KEY_BYTES + 2;
+const CELL_BYTES: usize = KEY_BYTES + 4 + 2;
 
 /// From the trusted core to the interface.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -145,6 +157,9 @@ pub enum ToInterface {
         /// The operation.
         audio: audio::Audio,
     },
+    /// About hyperlinks (`hyperlinks.md` section 8.1).
+    #[cfg(feature = "links")]
+    Link(links::Message),
     /// The browser is closing: the interface ends.
     Close,
 }
@@ -160,6 +175,8 @@ pub enum ToCore {
     Cell {
         /// Which page.
         key: PageKey,
+        /// The image of the page that was on screen.
+        version: u32,
         /// The cell's column, 0 to 39.
         column: u8,
         /// The cell's row, 0 to 24.
@@ -178,6 +195,22 @@ pub enum ToCore {
     MuteTab(u8),
     /// Mute every tab, or unmute every tab.
     MuteAll(bool),
+    /// The cell under the pointer or the keyboard's focus, when it is on a
+    /// link, or none: the trusted strip shows where it leads.
+    #[cfg(feature = "links")]
+    Point(Option<links::Spot>),
+    /// A page number typed that the open page or the channel links
+    /// elsewhere.
+    #[cfg(feature = "links")]
+    Typed {
+        /// The number.
+        number: u16,
+        /// The open page and its image's version, if a page is open.
+        opened: Option<(PageKey, u32)>,
+    },
+    /// The window gained or lost the keyboard focus.
+    #[cfg(feature = "links")]
+    Focused(bool),
     /// Strip input: an address typed into the trusted strip.
     Navigate(String),
     /// Strip input: go back in the tab's history.
@@ -186,6 +219,12 @@ pub enum ToCore {
     Forward,
     /// Strip input: bookmark the channel, or remove its bookmark.
     Bookmark,
+    /// Strip input: yes to the strip's question of this number.
+    #[cfg(feature = "links")]
+    Confirm(u32),
+    /// Strip input: no to the strip's question of this number.
+    #[cfg(feature = "links")]
+    Cancel(u32),
 }
 
 /// Why a message could not be read or written.
@@ -457,6 +496,8 @@ pub fn write_to_interface(out: &mut dyn Write, message: &ToInterface) -> Result<
             payload.extend_from_slice(&operation);
             KIND_AUDIO
         }
+        #[cfg(feature = "links")]
+        ToInterface::Link(message) => links::push_message(&mut payload, message)?,
         ToInterface::Close => KIND_CLOSE,
     };
     write_frame(out, kind, &payload)
@@ -553,6 +594,8 @@ pub fn read_from_core(input: &mut dyn Read) -> Result<Option<ToInterface>, Proto
             ToInterface::Frame { key, version, png }
         }
         KIND_AUDIO => ToInterface::Audio { channel: fields.u32()?, audio: audio::read(&mut fields, audio::Sender::Core)? },
+        #[cfg(feature = "links")]
+        kind if links::is_message(kind) => ToInterface::Link(links::read_message(kind, &mut fields)?),
         KIND_CLOSE => ToInterface::Close,
         other => return Err(ProtocolError::UnknownKind(other)),
     };
@@ -571,8 +614,9 @@ pub fn write_to_core(out: &mut dyn Write, message: &ToCore) -> Result<(), Protoc
             push_keys(&mut payload, keys)?;
             KIND_VISIBLE
         }
-        ToCore::Cell { key, column, row } => {
+        ToCore::Cell { key, version, column, row } => {
             push_key(&mut payload, *key);
+            payload.extend_from_slice(&version.to_be_bytes());
             payload.extend_from_slice(&[*column, *row]);
             KIND_CELL
         }
@@ -606,6 +650,36 @@ pub fn write_to_core(out: &mut dyn Write, message: &ToCore) -> Result<(), Protoc
         ToCore::Back => KIND_BACK,
         ToCore::Forward => KIND_FORWARD,
         ToCore::Bookmark => KIND_BOOKMARK,
+        #[cfg(feature = "links")]
+        ToCore::Point(spot) => {
+            links::push_spot(&mut payload, spot.as_ref());
+            KIND_POINT
+        }
+        #[cfg(feature = "links")]
+        ToCore::Typed { number, opened } => {
+            page_index(*number).ok_or(ProtocolError::BadValue("page number"))?;
+            payload.extend_from_slice(&number.to_be_bytes());
+            if let Some((key, version)) = opened {
+                push_key(&mut payload, *key);
+                payload.extend_from_slice(&version.to_be_bytes());
+            }
+            KIND_TYPED
+        }
+        #[cfg(feature = "links")]
+        ToCore::Focused(focused) => {
+            payload.push(u8::from(*focused));
+            KIND_FOCUSED
+        }
+        #[cfg(feature = "links")]
+        ToCore::Confirm(id) => {
+            payload.extend_from_slice(&id.to_be_bytes());
+            KIND_CONFIRM
+        }
+        #[cfg(feature = "links")]
+        ToCore::Cancel(id) => {
+            payload.extend_from_slice(&id.to_be_bytes());
+            KIND_CANCEL
+        }
     };
     write_frame(out, kind, &payload)
 }
@@ -625,11 +699,12 @@ pub fn read_from_interface(input: &mut dyn Read) -> Result<Option<ToCore>, Proto
                 return Err(ProtocolError::BadLength { kind, length: payload.len() });
             }
             let key = fields.key()?;
+            let version = fields.u32()?;
             let (column, row) = (fields.u8()?, fields.u8()?);
             if u16::from(column) >= COLUMNS || u16::from(row) >= ROWS {
                 return Err(ProtocolError::BadValue("cell outside the page"));
             }
-            ToCore::Cell { key, column, row }
+            ToCore::Cell { key, version, column, row }
         }
         KIND_SELECT_TAB => ToCore::SelectTab(fields.u8()?),
         KIND_CLOSE_TAB => ToCore::CloseTab(fields.u8()?),
@@ -645,6 +720,25 @@ pub fn read_from_interface(input: &mut dyn Read) -> Result<Option<ToCore>, Proto
         KIND_BACK => ToCore::Back,
         KIND_FORWARD => ToCore::Forward,
         KIND_BOOKMARK => ToCore::Bookmark,
+        #[cfg(feature = "links")]
+        KIND_POINT => ToCore::Point(if payload.is_empty() { None } else { Some(links::read_spot(&mut fields)?) }),
+        #[cfg(feature = "links")]
+        KIND_TYPED => {
+            let number = fields.u16()?;
+            page_index(number).ok_or(ProtocolError::BadValue("page number"))?;
+            let opened = if fields.bytes.is_empty() { None } else { Some((fields.key()?, fields.u32()?)) };
+            ToCore::Typed { number, opened }
+        }
+        #[cfg(feature = "links")]
+        KIND_FOCUSED => ToCore::Focused(match fields.u8()? {
+            0 => false,
+            1 => true,
+            _ => return Err(ProtocolError::BadValue("focus")),
+        }),
+        #[cfg(feature = "links")]
+        KIND_CONFIRM => ToCore::Confirm(fields.u32()?),
+        #[cfg(feature = "links")]
+        KIND_CANCEL => ToCore::Cancel(fields.u32()?),
         other => return Err(ProtocolError::UnknownKind(other)),
     };
     fields.end()?;
@@ -702,7 +796,7 @@ mod tests {
         }
         for message in [
             ToCore::Visible(vec![KEY]),
-            ToCore::Cell { key: KEY, column: 39, row: 24 },
+            ToCore::Cell { key: KEY, version: 7, column: 39, row: 24 },
             ToCore::SelectTab(3),
             ToCore::CloseTab(0),
             ToCore::NewTab,
@@ -734,7 +828,7 @@ mod tests {
         bytes.extend_from_slice(&u32::try_from(MAX_PAYLOAD + 1).unwrap().to_be_bytes());
         assert!(matches!(read_from_core(&mut bytes.as_slice()), Err(ProtocolError::TooLong(_))));
         // A cell outside the 40 by 25 page.
-        let mut bytes = vec![KIND_CELL, 0, 0, 0, 8, 0, 0, 0, 7, 0x01, 0x23, 40, 0];
+        let mut bytes = vec![KIND_CELL, 0, 0, 0, 12, 0, 0, 0, 7, 0x01, 0x23, 0, 0, 0, 1, 40, 0];
         assert!(matches!(read_from_interface(&mut bytes.as_slice()), Err(ProtocolError::BadValue("cell outside the page"))));
         // A page count larger than the payload holds.
         bytes = vec![KIND_VISIBLE, 0, 0, 0, 2, 0, 1];
@@ -758,6 +852,24 @@ mod tests {
         assert!(matches!(read_from_core(&mut bytes.as_slice()), Err(ProtocolError::BadValue("tab flags"))));
         bytes = vec![KIND_MUTE_ALL, 0, 0, 0, 1, 2];
         assert!(matches!(read_from_interface(&mut bytes.as_slice()), Err(ProtocolError::BadValue("mute"))));
+    }
+
+    /// With hyperlinks compiled out, no side accepts their kinds.
+    #[cfg(not(feature = "links"))]
+    #[test]
+    fn with_links_compiled_out_their_kinds_are_refused() {
+        for kind in 11..=15 {
+            let bytes = [kind, 0, 0, 0, 0];
+            assert!(matches!(read_from_core(&mut bytes.as_slice()), Err(ProtocolError::UnknownKind(refused)) if refused == kind));
+        }
+        for kind in [24, 25, 26, 36, 37] {
+            let bytes = [kind, 0, 0, 0, 0];
+            assert!(matches!(read_from_interface(&mut bytes.as_slice()), Err(ProtocolError::UnknownKind(refused)) if refused == kind));
+        }
+        let bytes = [68, 0, 0, 0, 0];
+        assert!(matches!(decoder::read_from_decoder(&mut bytes.as_slice()), Err(ProtocolError::UnknownKind(68))));
+        let bytes = [83, 0, 0, 0, 0];
+        assert!(matches!(fetcher::read_from_fetcher(&mut bytes.as_slice()), Err(ProtocolError::UnknownKind(83))));
     }
 
     #[test]

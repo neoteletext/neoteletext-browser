@@ -47,9 +47,13 @@ use protocol::decoder::{FromDecoder, MAX_CHUNK, ToDecoder, read_from_decoder, wr
 use protocol::fetcher::{FromFetcher, MAX_NOTICE, read_from_fetcher};
 use protocol::{ToCore, ToInterface, clean, read_from_interface, write_to_interface};
 
+#[cfg(feature = "links")]
+use protocol::links::{LinkKind, Message as LinkMessage, Pointing, Spot};
 use t42_browser::hearing::{Hearing, Send};
+#[cfg(feature = "links")]
+use t42_browser::links::{Channel as LinkChannel, Follow, Links, Refusal};
 
-use crate::session::{HOME, Session};
+use crate::session::{HOME, Session, Went};
 use crate::source::Next;
 
 const DECODER: &str = "t42-decoder";
@@ -243,6 +247,12 @@ struct Core {
     showing: Option<u32>,
     /// What of each channel's sound reached the interface.
     hearing: Hearing,
+    /// The links of the pages on screen (`hyperlinks.md`).
+    #[cfg(feature = "links")]
+    links: Links,
+    /// When the trusted core started: the links' clock.
+    #[cfg(feature = "links")]
+    started: std::time::Instant,
     to_interface: BufWriter<ChildStdin>,
 }
 
@@ -290,6 +300,8 @@ impl Core {
         }
         let unused: Vec<u32> = self.decoders.keys().copied().filter(|id| !channels.iter().any(|(used, ..)| used == id)).collect();
         for id in unused {
+            #[cfg(feature = "links")]
+            self.links.channel_gone(id);
             let sends = self.hearing.channel_gone(id);
             self.deliver(sends)?;
             if let Some(mut decoder) = self.decoders.remove(&id) {
@@ -328,6 +340,14 @@ impl Core {
                 self.tell(channel, &ToDecoder::Data(b"\n".to_vec()));
             }
             FromFetcher::Notice(text) => eprintln!("t42-browser: channel {channel}: {}", clean(&text, MAX_NOTICE)),
+            #[cfg(feature = "links")]
+            FromFetcher::Links { aliases, services } => {
+                self.links.descriptor(channel, &aliases, &services);
+                if self.active_channel() == Some(channel) {
+                    self.link(LinkMessage::Aliases { channel, numbers: self.links.aliases(channel) })?;
+                }
+                self.redecide_channel(channel)?;
+            }
         }
         Ok(())
     }
@@ -348,6 +368,8 @@ impl Core {
             let channel = tab.channel.view();
             self.send(&ToInterface::Channel(channel))?;
         }
+        #[cfg(feature = "links")]
+        self.send_links_afresh()?;
         self.send_mutes()
     }
 
@@ -379,14 +401,23 @@ impl Core {
                 // Only the active channel's pages can be asked for.
                 let visible: Vec<PageKey> = visible.into_iter().filter(|key| key.channel == channel).collect();
                 let pages = visible.iter().map(|key| key.page).collect();
+                #[cfg(feature = "links")]
+                self.links.retain(&visible);
                 self.frames.set_visible(visible);
                 self.tell(channel, &ToDecoder::Showing(pages));
                 self.showing = Some(channel);
             }
-            ToCore::Cell { key, column, row } => {
-                // Where page links and Fastext will be followed, by the
-                // trusted core's own rules.
-                eprintln!("t42-browser: cell {column},{row} of page {:03X} on channel {}", key.page, key.channel);
+            ToCore::Cell { key, version, column, row } => {
+                // A click means only "this cell"; the trusted core decides
+                // whether a link is there (requirement 12.3).
+                #[cfg(feature = "links")]
+                {
+                    let (now, active) = (self.now(), self.active_channel());
+                    let followed = self.links.click(Spot { key, version, column, row }, active, now);
+                    self.follow(followed, "a click")?;
+                }
+                #[cfg(not(feature = "links"))]
+                eprintln!("t42-browser: cell {column},{row} of image {version} of page {:03X} on channel {}", key.page, key.channel);
             }
             ToCore::SelectTab(index) => {
                 if usize::from(index) < self.session.tabs.len() {
@@ -406,6 +437,8 @@ impl Core {
                 self.send_all()?;
             }
             ToCore::Opened(key) => {
+                #[cfg(feature = "links")]
+                self.links.opened(key);
                 let sends = self.hearing.open(self.active_channel(), key);
                 self.deliver(sends)?;
             }
@@ -424,15 +457,25 @@ impl Core {
                 }
                 self.send_all()?;
             }
-            ToCore::Back | ToCore::Forward => {
-                if self.session.go(matches!(intent, ToCore::Forward)) {
-                    self.send_all()?;
+            ToCore::Back | ToCore::Forward => match self.session.go(matches!(intent, ToCore::Forward)) {
+                Went::Nowhere => {}
+                Went::Channel => self.send_all()?,
+                // Another page of the same channel: it stays open.
+                #[cfg_attr(not(feature = "links"), allow(unused_variables, reason = "only a link opens a page"))]
+                Went::Page(page) => {
+                    self.send(&ToInterface::Strip(self.session.strip()))?;
+                    #[cfg(feature = "links")]
+                    if let (Some(page), Some(channel)) = (page, self.active_channel()) {
+                        self.link(LinkMessage::Show(PageKey { channel, page }))?;
+                    }
                 }
-            }
+            },
             ToCore::Bookmark => {
                 self.session.toggle_bookmark();
                 self.send(&ToInterface::Strip(self.session.strip()))?;
             }
+            #[cfg(feature = "links")]
+            ToCore::Point(_) | ToCore::Typed { .. } | ToCore::Focused(_) | ToCore::Confirm(_) | ToCore::Cancel(_) => self.link_intent(&intent)?,
         }
         Ok(true)
     }
@@ -477,6 +520,9 @@ impl Core {
                     && active == Some(channel)
                 {
                     self.send(&ToInterface::Page { channel, page, title })?;
+                    // A number on a page shown becomes a link once its page exists.
+                    #[cfg(feature = "links")]
+                    self.redecide_channel(channel)?;
                 }
             }
             FromDecoder::Updated { page } => {
@@ -485,8 +531,28 @@ impl Core {
                 }
             }
             FromDecoder::Frame { page, palette, indices } => {
-                if let Some((version, png)) = self.frames.accept(PageKey { channel, page }, &palette, &indices) {
-                    self.send(&ToInterface::Frame { key: PageKey { channel, page }, version, png })?;
+                let key = PageKey { channel, page };
+                match self.frames.accept(key, &palette, &indices) {
+                    Some((version, png)) => {
+                        // The image's links first, so the interface has them
+                        // when the image arrives (`hyperlinks.md` section 8.1).
+                        #[cfg(feature = "links")]
+                        self.links_of_image(key, version)?;
+                        self.send(&ToInterface::Frame { key, version, png })?;
+                    }
+                    // The same image again: only its links may have changed.
+                    #[cfg(feature = "links")]
+                    None => self.redecide(key)?,
+                    #[cfg(not(feature = "links"))]
+                    None => {}
+                }
+            }
+            #[cfg(feature = "links")]
+            FromDecoder::Links { page, with_image, candidates, numbers } => {
+                let key = PageKey { channel, page };
+                self.links.found(key, candidates, numbers);
+                if !with_image {
+                    self.redecide(key)?;
                 }
             }
             FromDecoder::Audio(audio) => {
@@ -496,6 +562,145 @@ impl Core {
             }
         }
         Ok(())
+    }
+}
+
+/// Hyperlinks (`hyperlinks.md`): the trusted core decides every link and
+/// follows it by its own rules.
+#[cfg(feature = "links")]
+impl Core {
+    fn now(&self) -> u64 {
+        u64::try_from(self.started.elapsed().as_millis()).unwrap_or(u64::MAX)
+    }
+
+    fn link(&mut self, message: LinkMessage) -> Result<(), String> {
+        self.send(&ToInterface::Link(message))
+    }
+
+    /// Runs `decide` with the link table and channel `id` as links see it.
+    fn with_channel<T>(&mut self, id: u32, decide: impl FnOnce(&mut Links, &LinkChannel<'_>) -> T) -> Option<T> {
+        let Self { session, links, .. } = self;
+        let tab = session.tabs.iter().find(|tab| tab.channel.id == id)?;
+        let address = tab.address()?;
+        let exists = |page: u16| tab.channel.has_page(page);
+        Some(decide(links, &LinkChannel { id, address, exists: &exists }))
+    }
+
+    /// A new image of a page was sent: its links, for the interface.
+    fn links_of_image(&mut self, key: PageKey, version: u32) -> Result<(), String> {
+        let now = self.now();
+        if let Some(links) = self.with_channel(key.channel, |table, channel| table.image(key, version, channel, now)) {
+            self.link(LinkMessage::Page { key, links })?;
+        }
+        self.repoint()
+    }
+
+    /// Decides a page's links again, and sends them when they changed.
+    fn redecide(&mut self, key: PageKey) -> Result<(), String> {
+        let now = self.now();
+        if let Some(Some(links)) = self.with_channel(key.channel, |table, channel| table.redecide(key, channel, now)) {
+            self.link(LinkMessage::Page { key, links })?;
+        }
+        self.repoint()
+    }
+
+    /// Decides again the links of every page on screen of `channel`.
+    fn redecide_channel(&mut self, channel: u32) -> Result<(), String> {
+        for key in self.links.pages_of(channel) {
+            self.redecide(key)?;
+        }
+        Ok(())
+    }
+
+    /// The strip's destination follows a change of links.
+    fn repoint(&mut self) -> Result<(), String> {
+        match self.links.repoint() {
+            Some(pointing) => self.link(LinkMessage::Pointing(pointing)),
+            None => Ok(()),
+        }
+    }
+
+    /// After a change of tab or channel: no page's links, no question in
+    /// the strip, the channel's aliases, and the page its address names.
+    fn send_links_afresh(&mut self) -> Result<(), String> {
+        self.links.clear_pages();
+        self.links.forget_prompt();
+        self.link(LinkMessage::Prompt(None))?;
+        self.link(LinkMessage::Pointing(None))?;
+        let Some(channel) = self.active_channel() else { return Ok(()) };
+        self.link(LinkMessage::Aliases { channel, numbers: self.links.aliases(channel) })?;
+        let page = self.session.active_tab().and_then(|tab| tab.address()).and_then(|address| address.page);
+        match page {
+            Some(page) => self.link(LinkMessage::Show(PageKey { channel, page })),
+            None => Ok(()),
+        }
+    }
+
+    fn link_intent(&mut self, intent: &ToCore) -> Result<(), String> {
+        let now = self.now();
+        match intent {
+            ToCore::Point(spot) => {
+                let pointing = self.links.point(*spot);
+                self.link(LinkMessage::Pointing(pointing))?;
+            }
+            ToCore::Typed { number, opened } => {
+                let followed = self.links.typed(*number, *opened, self.active_channel(), now);
+                self.follow(followed, "a typed page number")?;
+            }
+            ToCore::Focused(focused) => self.links.focused(*focused),
+            ToCore::Confirm(id) => {
+                let followed = self.links.confirm(*id, now);
+                self.follow(followed, "a confirmation")?;
+            }
+            // Declining has no effect but to close the question (requirement 8.6).
+            ToCore::Cancel(id) if self.links.cancel(*id) => self.link(LinkMessage::Prompt(None))?,
+            _ => {}
+        }
+        Ok(())
+    }
+
+    /// Carries out what a click, a typed number or a confirmation led to.
+    fn follow(&mut self, followed: Result<Follow, Refusal>, what: &str) -> Result<(), String> {
+        match followed {
+            Err(Refusal::NotALink) => Ok(()),
+            Err(refusal) => {
+                eprintln!("t42-browser: {what} was not followed: {refusal:?}");
+                Ok(())
+            }
+            Ok(Follow::Page(page)) => {
+                let Some(channel) = self.active_channel() else { return Ok(()) };
+                if self.session.show_page(page).is_some() {
+                    self.send(&ToInterface::Strip(self.session.strip()))?;
+                }
+                self.link(LinkMessage::Show(PageKey { channel, page }))
+            }
+            Ok(Follow::Ask(prompt)) => self.link(LinkMessage::Prompt(Some(prompt))),
+            Ok(Follow::Leave(address)) => {
+                self.session.follow(address)?;
+                self.send_all()
+            }
+            Ok(Follow::HandOff(address)) => {
+                self.link(LinkMessage::Prompt(None))?;
+                self.hand_off(&address)
+            }
+        }
+    }
+
+    /// Hands a web page to the system's web browser, logged with the page
+    /// it came from and the time (requirement 17.9).
+    fn hand_off(&mut self, address: &str) -> Result<(), String> {
+        let from = self.links.opened_page().map(|key| format!("page {:03X} of channel {}", key.page, key.channel)).unwrap_or_default();
+        let at = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |since| since.as_secs());
+        match web_opener::open(address) {
+            Ok(()) => {
+                eprintln!("t42-browser: handed {address} to the web browser, from {from}, at {at} seconds past 1970");
+                Ok(())
+            }
+            Err(error) => {
+                eprintln!("t42-browser: {address}: {error}");
+                self.link(LinkMessage::Pointing(Some(Pointing { kind: LinkKind::Web, text: "Could not open your web browser".into() })))
+            }
+        }
     }
 }
 
@@ -537,6 +742,10 @@ fn run() -> Result<(), String> {
         frames: frames::Frames::default(),
         showing: None,
         hearing: Hearing::default(),
+        #[cfg(feature = "links")]
+        links: Links::default(),
+        #[cfg(feature = "links")]
+        started: std::time::Instant::now(),
         to_interface: BufWriter::new(interface.stdin.take().ok_or("the interface has no input")?),
     };
     core.send_all()?;

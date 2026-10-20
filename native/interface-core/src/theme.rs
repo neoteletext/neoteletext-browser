@@ -20,6 +20,13 @@ const fn rgb(red: u8, green: u8, blue: u8) -> Colour {
     Colour { red, green, blue }
 }
 
+/// A link's underline, drawn over the page by the browser (`hyperlinks.md`
+/// section 9.2): near the web's link blue, light enough to show on black,
+/// and edged white or black to show on every teletext background.
+pub const LINK: Colour = rgb(0x3d, 0x8b, 0xff);
+/// A link's destination and the trusted strip's questions, as ink on the
+/// address field.
+pub const LINK_INK: Colour = rgb(0x1a, 0x4f, 0xd8);
 /// Black: the tab strip, and ink on light tab colours.
 pub const BLACK: Colour = rgb(0x00, 0x00, 0x00);
 /// White: headings, labels, and ink on dark tab colours.

@@ -145,6 +145,27 @@ fn contents_entries(bytes: &[u8]) -> (Vec<Entry>, Vec<PageAddress>) {
     (entries, pages)
 }
 
+/// The aliases and named services of the open channel's descriptor, as
+/// written: untrusted, for the trusted core to parse. Aliases of numbers
+/// that are not display pages are left out.
+#[cfg(feature = "links")]
+fn descriptor_links(agent: &UserAgent<'_, Random, COOKIE_SLOTS, COOKIE_BYTES>) -> Option<FromFetcher> {
+    use protocol::links::{Alias, MAX_ALIASES, MAX_SERVICES, Service};
+    let descriptor = agent.descriptor()?;
+    let aliases: Vec<Alias> = descriptor
+        .aliases()
+        .filter(|alias| interface_core::channel::page_index(alias.page.mpp()).is_some())
+        .map(|alias| Alias { page: alias.page.mpp(), target: descriptor.alias_target(alias).to_owned() })
+        .take(MAX_ALIASES)
+        .collect();
+    let services: Vec<Service> = descriptor
+        .services()
+        .map(|service| Service { name: service.short_name.as_str().to_owned(), address: descriptor.service_address(service).to_owned() })
+        .take(MAX_SERVICES)
+        .collect();
+    (!aliases.is_empty() || !services.is_empty()).then_some(FromFetcher::Links { aliases, services })
+}
+
 fn run(channel: &str, allowed: &[IpAddr]) -> Result<(), String> {
     let mut storage = Box::new(Storage::default());
     // No TLS in this port yet: https addresses are reported unreachable.
@@ -185,6 +206,12 @@ fn run(channel: &str, allowed: &[IpAddr]) -> Result<(), String> {
                 Action::Timer(at) => next_tick = Some(next_tick.map_or(at, |current| current.min(at))),
                 Action::Bytes { pushed, bytes } => send(&mut output, FromFetcher::Page { pushed, bytes })?,
                 Action::Ready => {
+                    // The descriptor's links, for the trusted core to decide
+                    // (`hyperlinks.md` section 6.4).
+                    #[cfg(feature = "links")]
+                    if let Some(links) = descriptor_links(&agent) {
+                        send(&mut output, links)?;
+                    }
                     // The whole channel: its contents file, then every page it
                     // lists; and the push connection, for all its pages.
                     agent.handle(clock(), Input::FetchContents, &mut |out| collect(out, &mut actions));

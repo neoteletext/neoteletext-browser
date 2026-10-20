@@ -10,16 +10,23 @@ use crate::theme::Colour;
 pub struct Recorder {
     pub pages: Vec<(PageKey, Rect)>,
     pub texts: Vec<(Rect, alloc::string::String)>,
+    pub fills: Vec<(Rect, Colour)>,
+    pub scale: f64,
 }
 
 impl Recorder {
     pub fn new() -> Self {
-        Self { pages: Vec::new(), texts: Vec::new() }
+        Self { pages: Vec::new(), texts: Vec::new(), fills: Vec::new(), scale: 2.0 }
     }
 }
 
 impl Canvas for Recorder {
-    fn fill(&mut self, _: Rect, _: f64, _: Colour) {}
+    fn fill(&mut self, rect: Rect, _: f64, colour: Colour) {
+        self.fills.push((rect, colour));
+    }
+    fn device_scale(&self) -> f64 {
+        self.scale
+    }
     fn dim(&mut self, _: Rect, _: f32) {}
     fn polygon(&mut self, _: &[Point], _: Colour) {}
     fn push_clip(&mut self, _: Rect) {}

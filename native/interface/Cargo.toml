@@ -7,6 +7,12 @@ license.workspace = true
 rust-version.workspace = true
 publish.workspace = true
 
+# Drawing links and asking before they leave (`hyperlinks.md` sections 9
+# and 10).
+[features]
+default = ["links"]
+links = ["protocol/links", "interface-core/links"]
+
 [dependencies]
 interface-core.workspace = true
 draw-vello.workspace = true

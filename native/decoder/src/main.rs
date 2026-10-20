@@ -46,10 +46,22 @@ fn run() -> Result<(), ProtocolError> {
         |engine: &Engine, pages: &[u16], sent: &mut BTreeMap<u16, Rendered>, output: &mut BufWriter<io::StdoutLock<'_>>| -> Result<(), ProtocolError> {
             for &page in pages {
                 let Some(rendered) = engine.render(page) else { continue };
-                if sent.get(&page) == Some(&rendered) {
+                let before = sent.get(&page);
+                if before == Some(&rendered) {
                     continue;
                 }
-                write_to_core(output, &FromDecoder::Frame { page, palette: rendered.palette.clone(), indices: rendered.indices.clone() })?;
+                // A page's links go before its image, so the trusted core
+                // has them for the image when it arrives (`hyperlinks.md`
+                // section 8.1).
+                let new_image = before.is_none_or(|before| before.palette != rendered.palette || before.indices != rendered.indices);
+                #[cfg(feature = "links")]
+                if before.map(|before| &before.links) != Some(&rendered.links) {
+                    let links = rendered.links.clone();
+                    write_to_core(output, &FromDecoder::Links { page, with_image: new_image, candidates: links.candidates, numbers: links.numbers })?;
+                }
+                if new_image {
+                    write_to_core(output, &FromDecoder::Frame { page, palette: rendered.palette.clone(), indices: rendered.indices.clone() })?;
+                }
                 sent.insert(page, rendered);
             }
             Ok(())

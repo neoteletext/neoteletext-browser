@@ -7,11 +7,18 @@ license.workspace = true
 rust-version.workspace = true
 publish.workspace = true
 
+# Passing on the descriptor's aliases and named services (`hyperlinks.md`
+# section 6.4).
+[features]
+default = ["links"]
+links = ["protocol/links", "dep:interface-core"]
+
 [dependencies]
 neoteletext-web.workspace = true
 neoteletext-core.workspace = true
 embedded-io.workspace = true
 protocol.workspace = true
+interface-core = { workspace = true, optional = true }
 
 [lints]
 workspace = true

@@ -1072,7 +1072,7 @@ dependencies = [
 [[package]]
 name = "neoteletext-audio"
 version = "0.1.0"
-source = "git+file:///Users/andrewstuart/devel/neoteletext?rev=940443016d1656ca3c2657433cf56bd278bf1ddb#940443016d1656ca3c2657433cf56bd278bf1ddb"
+source = "git+file:///Users/andrewstuart/devel/neoteletext?rev=a6258147daa933ba41d3c74fa718100bbdf5028d#a6258147daa933ba41d3c74fa718100bbdf5028d"
 dependencies = [
  "neoteletext-core",
 ]
@@ -1080,17 +1080,17 @@ dependencies = [
 [[package]]
 name = "neoteletext-audio-mix"
 version = "0.1.0"
-source = "git+file:///Users/andrewstuart/devel/neoteletext?rev=940443016d1656ca3c2657433cf56bd278bf1ddb#940443016d1656ca3c2657433cf56bd278bf1ddb"
+source = "git+file:///Users/andrewstuart/devel/neoteletext?rev=a6258147daa933ba41d3c74fa718100bbdf5028d#a6258147daa933ba41d3c74fa718100bbdf5028d"
 
 [[package]]
 name = "neoteletext-core"
 version = "0.1.0"
-source = "git+file:///Users/andrewstuart/devel/neoteletext?rev=940443016d1656ca3c2657433cf56bd278bf1ddb#940443016d1656ca3c2657433cf56bd278bf1ddb"
+source = "git+file:///Users/andrewstuart/devel/neoteletext?rev=a6258147daa933ba41d3c74fa718100bbdf5028d#a6258147daa933ba41d3c74fa718100bbdf5028d"
 
 [[package]]
 name = "neoteletext-formats"
 version = "0.1.0"
-source = "git+file:///Users/andrewstuart/devel/neoteletext?rev=940443016d1656ca3c2657433cf56bd278bf1ddb#940443016d1656ca3c2657433cf56bd278bf1ddb"
+source = "git+file:///Users/andrewstuart/devel/neoteletext?rev=a6258147daa933ba41d3c74fa718100bbdf5028d#a6258147daa933ba41d3c74fa718100bbdf5028d"
 dependencies = [
  "neoteletext-core",
 ]
@@ -1098,7 +1098,7 @@ dependencies = [
 [[package]]
 name = "neoteletext-image"
 version = "0.1.0"
-source = "git+file:///Users/andrewstuart/devel/neoteletext?rev=940443016d1656ca3c2657433cf56bd278bf1ddb#940443016d1656ca3c2657433cf56bd278bf1ddb"
+source = "git+file:///Users/andrewstuart/devel/neoteletext?rev=a6258147daa933ba41d3c74fa718100bbdf5028d#a6258147daa933ba41d3c74fa718100bbdf5028d"
 dependencies = [
  "neoteletext-core",
 ]
@@ -2045,6 +2045,7 @@ dependencies = [
  "neoteletext-core",
  "neoteletext-image",
  "protocol",
+ "web-opener",
 ]
 
 [[package]]
@@ -2068,6 +2069,7 @@ dependencies = [
  "t42-browser",
  "t42-decoder",
  "t42-interface",
+ "web-opener",
 ]
 
 [[package]]
@@ -2468,6 +2470,13 @@ dependencies = [
  "log",
  "once_cell",
  "pkg-config",
+]
+
+[[package]]
+name = "web-opener"
+version = "0.1.0"
+dependencies = [
+ "windows-sys 0.52.0",
 ]
 
 [[package]]

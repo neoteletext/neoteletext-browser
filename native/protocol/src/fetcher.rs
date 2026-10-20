@@ -20,6 +20,8 @@ pub const MAX_NOTICE: usize = 512;
 const KIND_CONTENTS: u8 = 80;
 const KIND_PAGE: u8 = 81;
 const KIND_NOTICE: u8 = 82;
+#[cfg(feature = "links")]
+const KIND_LINKS: u8 = 83;
 
 const ENTRY_SECTION: u8 = 1;
 const ENTRY_PAGE: u8 = 2;
@@ -52,6 +54,16 @@ pub enum FromFetcher {
     },
     /// Something for the log, not yet cleaned.
     Notice(String),
+    /// The page numbers the channel's descriptor links elsewhere, and the
+    /// services it names for `name:mpp` targets (`hyperlinks.md` section
+    /// 6.4), untrusted.
+    #[cfg(feature = "links")]
+    Links {
+        /// Its aliases.
+        aliases: Vec<crate::links::Alias>,
+        /// Its named services.
+        services: Vec<crate::links::Service>,
+    },
 }
 
 fn raw_text(fields: &mut Fields<'_>, limit: usize) -> Result<String, ProtocolError> {
@@ -99,6 +111,11 @@ pub fn write_to_core(out: &mut dyn Write, message: &FromFetcher) -> Result<(), P
             push_raw_text(&mut payload, text, MAX_NOTICE);
             KIND_NOTICE
         }
+        #[cfg(feature = "links")]
+        FromFetcher::Links { aliases, services } => {
+            crate::links::push_channel_links(&mut payload, aliases, services)?;
+            KIND_LINKS
+        }
     };
     write_frame(out, kind, &payload)
 }
@@ -139,6 +156,11 @@ pub fn read_from_fetcher(input: &mut dyn Read) -> Result<Option<FromFetcher>, Pr
             FromFetcher::Page { pushed, bytes: fields.take(fields.bytes.len())?.to_vec() }
         }
         KIND_NOTICE => FromFetcher::Notice(raw_text(&mut fields, MAX_NOTICE)?),
+        #[cfg(feature = "links")]
+        KIND_LINKS => {
+            let (aliases, services) = crate::links::read_channel_links(&mut fields)?;
+            FromFetcher::Links { aliases, services }
+        }
         other => return Err(ProtocolError::UnknownKind(other)),
     };
     fields.end()?;
