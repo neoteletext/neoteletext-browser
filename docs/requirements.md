@@ -184,6 +184,13 @@
 - **Verification:** Test: two web channels open two fetchers, and each fetcher's requests reach only its own channel's server.
 - **State:** Met; the test is not written.
 
+### Requirement 3.13: Background tabs sleep
+- **Statement:** A channel's decoder, and its fetcher unless the fetcher holds a push connection, must run only while its tab is awake: while it is the active tab, while its sound plays, and for 15 minutes after it was last shown. A tab restored with a session and not yet shown must sleep. What the trusted core gave a channel's decoder must be kept, up to 8 MB, and given to a new decoder when the tab wakes, with the rest of a file channel read as before; a channel whose data grows beyond that stays awake. The trusted core must look for tabs that may sleep at least once a minute.
+- **Reason:** A decoder at rest takes 16 MB (measured 21 October 2026), so 64 tabs, the most a session holds, would take a gigabyte for pages nobody is looking at.
+- **Source:** Decision 47.
+- **Verification:** Tests of the policy: `a_tab_sleeps_once_it_has_not_been_shown_for_a_while_unless_it_sounds`, `a_channels_data_is_kept_for_its_next_decoder_and_too_much_keeps_it_awake`, `a_fetcher_holding_a_push_connection_is_kept`.
+- **State:** Partly met, 21 October 2026: built and its policy tested; a decoder that slept and woke has not been watched in the window by hand. The interface tells the trusted core which channels sound (`ToCore::Sounding`), the fetcher whether it holds a push connection (`FromFetcher::Pushing`); a decoder or fetcher put to sleep that reports after the next one started is not listened to.
+
 ---
 
 ## 4. Messages between processes

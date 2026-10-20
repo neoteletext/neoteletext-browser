@@ -532,6 +532,8 @@ impl ApplicationHandler<Incoming> for App {
                 self.show_tabs();
             }
             Incoming::Sounding(channels) => {
+                // The trusted core keeps a sounding tab awake (decision 47).
+                self.send(event_loop, &ToCore::Sounding(channels.iter().copied().collect()));
                 if self.browser.set_sounding(channels) {
                     self.show_tabs();
                     self.request_redraw();

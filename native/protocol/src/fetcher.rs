@@ -24,6 +24,7 @@ const KIND_NOTICE: u8 = 82;
 const KIND_LINKS: u8 = 83;
 #[cfg(feature = "interaction")]
 const KIND_INPUT: u8 = 84;
+const KIND_PUSHING: u8 = 85;
 #[cfg(feature = "interaction")]
 const KIND_SEND: u8 = 96;
 
@@ -82,6 +83,9 @@ pub enum FromFetcher {
     },
     /// Something for the log, not yet cleaned.
     Notice(String),
+    /// The channel's push connection opened (true) or was lost: a sleeping
+    /// tab keeps its fetcher while it holds one (decision 47).
+    Pushing(bool),
     /// The page numbers the channel's descriptor links elsewhere, and the
     /// services it names for `name:mpp` targets (`hyperlinks.md` section
     /// 6.4), untrusted.
@@ -198,6 +202,10 @@ pub fn write_to_core(out: &mut dyn Write, message: &FromFetcher) -> Result<(), P
             payload.push(u8::from(*open) | (u8::from(*secure) << 1));
             KIND_INPUT
         }
+        FromFetcher::Pushing(open) => {
+            payload.push(u8::from(*open));
+            KIND_PUSHING
+        }
     };
     write_frame(out, kind, &payload)
 }
@@ -254,6 +262,11 @@ pub fn read_from_fetcher(input: &mut dyn Read) -> Result<Option<FromFetcher>, Pr
             }
             FromFetcher::Input { open: flags & 1 != 0, secure: flags & 2 != 0 }
         }
+        KIND_PUSHING => FromFetcher::Pushing(match fields.u8()? {
+            0 => false,
+            1 => true,
+            _ => return Err(ProtocolError::BadValue("pushing")),
+        }),
         other => return Err(ProtocolError::UnknownKind(other)),
     };
     fields.end()?;
@@ -274,6 +287,7 @@ mod tests {
             FromFetcher::Page { origin: Origin::FetchedPage, bytes: b"PN,10000\\n".to_vec() },
             FromFetcher::Page { origin: Origin::FetchedPackets, bytes: vec![0; 84] },
             FromFetcher::Notice("Opened".into()),
+            FromFetcher::Pushing(true),
         ] {
             let mut bytes = Vec::new();
             write_to_core(&mut bytes, &message).unwrap();

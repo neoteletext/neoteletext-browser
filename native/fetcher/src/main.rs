@@ -109,7 +109,6 @@ enum Action {
     Answered,
     Notice(String),
     /// The push connection opened or was lost.
-    #[cfg(feature = "interaction")]
     Push(bool),
 }
 
@@ -143,11 +142,9 @@ fn collect(output: Output<'_>, actions: &mut Vec<Action>) {
         Output::Event(Event::ServiceReady { .. }) => Action::Ready,
         Output::Event(Event::Contents(bytes)) => Action::Contents(bytes.to_vec()),
         Output::Event(Event::PageCurrent { .. } | Event::PageNotInService { .. } | Event::FetchFailed { .. }) => Action::Answered,
-        #[cfg(feature = "interaction")]
         Output::Event(Event::PushConnected(_)) => Action::Push(true),
         // A lost connection waits before the next; a bad message that
         // keeps the connection says it is retried at once, and is not one.
-        #[cfg(feature = "interaction")]
         Output::Event(Event::PushLost { retry_in_us, .. }) if retry_in_us > 0 => Action::Push(false),
         // A key record not sent: nothing is told, as nothing was asked.
         #[cfg(feature = "interaction")]
@@ -256,10 +253,12 @@ fn run(channel: &str, allowed: &[IpAddr]) -> Result<(), String> {
                 Action::Answered => waiting = false,
                 // Keys may go to the channel while its WebSocket is open, if
                 // its descriptor says it takes them (`interaction.md`).
-                #[cfg(feature = "interaction")]
                 Action::Push(open) => {
-                    let declared = agent.descriptor().filter(|descriptor| descriptor.input());
-                    if let Some(descriptor) = declared {
+                    // The trusted core keeps a sleeping tab's fetcher while
+                    // it holds a push connection (decision 47).
+                    send(&mut output, FromFetcher::Pushing(open))?;
+                    #[cfg(feature = "interaction")]
+                    if let Some(descriptor) = agent.descriptor().filter(|descriptor| descriptor.input()) {
                         let secure = descriptor.push().is_some_and(|(url, _)| url.is_secure());
                         send(&mut output, FromFetcher::Input { open, secure })?;
                     }

@@ -103,6 +103,7 @@ const KIND_PHONE_PANEL: u8 = 28;
 const KIND_PHONE_FINISH: u8 = 29;
 #[cfg(feature = "interaction")]
 const KIND_EDITING: u8 = 30;
+const KIND_SOUNDING: u8 = 31;
 // Interface to trusted core: strip input, kinds of their own
 // (`architecture.md` section 6.4).
 const KIND_NAVIGATE: u8 = 32;
@@ -223,6 +224,9 @@ pub enum ToCore {
     MuteTab(u8),
     /// Mute every tab, or unmute every tab.
     MuteAll(bool),
+    /// The channels whose sound is playing or about to, sent when it
+    /// changes: a tab that sounds is never put to sleep (decision 47).
+    Sounding(Vec<u32>),
     /// The cell under the pointer or the keyboard's focus, when it is on a
     /// link, or none: the trusted strip shows where it leads.
     #[cfg(feature = "links")]
@@ -406,6 +410,10 @@ impl<'a> Fields<'a> {
         let (taken, rest) = self.bytes.split_at(count);
         self.bytes = rest;
         Ok(taken)
+    }
+
+    fn is_empty(&self) -> bool {
+        self.bytes.is_empty()
     }
 
     fn array<const N: usize>(&mut self) -> Result<[u8; N], ProtocolError> {
@@ -706,6 +714,15 @@ pub fn write_to_core(out: &mut dyn Write, message: &ToCore) -> Result<(), Protoc
             payload.push(u8::from(*muted));
             KIND_MUTE_ALL
         }
+        ToCore::Sounding(channels) => {
+            if channels.len() > MAX_TABS {
+                return Err(ProtocolError::BadValue("too many channels"));
+            }
+            for channel in channels {
+                payload.extend_from_slice(&channel.to_be_bytes());
+            }
+            KIND_SOUNDING
+        }
         ToCore::Navigate(address) => {
             push_text(&mut payload, address, MAX_ADDRESS)?;
             KIND_NAVIGATE
@@ -796,6 +813,16 @@ pub fn read_from_interface(input: &mut dyn Read) -> Result<Option<ToCore>, Proto
             1 => true,
             _ => return Err(ProtocolError::BadValue("mute")),
         }),
+        KIND_SOUNDING => {
+            let mut channels = Vec::new();
+            while !fields.is_empty() {
+                if channels.len() == MAX_TABS {
+                    return Err(ProtocolError::BadValue("too many channels"));
+                }
+                channels.push(fields.u32()?);
+            }
+            ToCore::Sounding(channels)
+        }
         KIND_NAVIGATE => ToCore::Navigate(fields.text(MAX_ADDRESS)?),
         KIND_BACK => ToCore::Back,
         KIND_FORWARD => ToCore::Forward,
@@ -896,6 +923,7 @@ mod tests {
             ToCore::SelectTab(3),
             ToCore::CloseTab(0),
             ToCore::NewTab,
+            ToCore::Sounding(vec![3, 7]),
             ToCore::Navigate("sport.invalid".into()),
             ToCore::Back,
             ToCore::Forward,

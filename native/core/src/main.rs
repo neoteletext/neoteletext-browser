@@ -51,6 +51,7 @@ use t42_browser::frames;
 use t42_browser::hearing::{Hearing, Send};
 #[cfg(feature = "links")]
 use t42_browser::links::{Channel as LinkChannel, Follow, Links, Refusal};
+use t42_browser::sleep::Sleep;
 
 use crate::session::{HOME, Session, Went};
 use crate::source::Next;
@@ -74,6 +75,9 @@ const PACKET_BYTES: usize = 42;
 const CHUNK_PACKETS: usize = 64;
 const CHUNK_BYTES: usize = PACKET_BYTES * CHUNK_PACKETS;
 const LOAD_INTERVAL: Duration = Duration::from_millis(200);
+/// How often the trusted core looks for tabs that may sleep: a tab sleeps
+/// at most this long after its time is up (decision 47).
+const SLEEP_CHECK: Duration = Duration::from_secs(60);
 
 /// The interface's and the decoders' sandbox on macOS: no network and no
 /// writing to files. Proof A showed the system webview cannot run like
@@ -86,13 +90,15 @@ const SANDBOX: &str = "(version 1)
 (allow file-write-data (literal \"/dev/null\"))";
 
 enum Event {
-    Decoded(u32, FromDecoder),
-    Fetched(u32, FromFetcher),
-    FetcherEnded(u32, Option<String>),
-    DecoderEnded(u32, Option<String>),
+    Decoded(u32, u64, FromDecoder),
+    Fetched(u32, u64, FromFetcher),
+    FetcherEnded(u32, u64, Option<String>),
+    DecoderEnded(u32, u64, Option<String>),
     Intent(ToCore),
     InterfaceEnded(Option<String>),
     Load,
+    /// Time to see which tabs may sleep (decision 47).
+    Sleep,
     /// The phone keyboard process said something, untrusted.
     #[cfg(feature = "phone-keyboard")]
     Phone(protocol::keyboard::FromKeyboard),
@@ -104,10 +110,15 @@ enum Event {
 struct Decoder {
     child: Child,
     input: BufWriter<ChildStdin>,
+    /// Which of the channel's decoders this is: one put to sleep may still
+    /// report after the next has started, and is then not listened to.
+    generation: u64,
 }
 
 struct Fetcher {
     child: Child,
+    /// As [`Decoder::generation`].
+    generation: u64,
     /// The only thing a fetcher is given: key records (requirement 18.4).
     #[cfg(feature = "interaction")]
     input: Option<BufWriter<ChildStdin>>,
@@ -161,7 +172,7 @@ fn sandboxed(path: &Path) -> Command {
 }
 
 /// Starts a decoder for `channel`, whose messages arrive as events.
-fn start_decoder(path: &Path, channel: u32, events: Sender<Event>) -> Result<Decoder, String> {
+fn start_decoder(path: &Path, channel: u32, generation: u64, events: Sender<Event>) -> Result<Decoder, String> {
     let mut child = spawn(&mut sandboxed(path), "decoder")?;
     let output = child.stdout.take().ok_or("the decoder has no output")?;
     let input = BufWriter::new(child.stdin.take().ok_or("the decoder has no input")?);
@@ -170,7 +181,7 @@ fn start_decoder(path: &Path, channel: u32, events: Sender<Event>) -> Result<Dec
         let end = loop {
             match read_from_decoder(&mut output) {
                 Ok(Some(message)) => {
-                    if events.send(Event::Decoded(channel, message)).is_err() {
+                    if events.send(Event::Decoded(channel, generation, message)).is_err() {
                         return;
                     }
                 }
@@ -178,14 +189,14 @@ fn start_decoder(path: &Path, channel: u32, events: Sender<Event>) -> Result<Dec
                 Err(error) => break Some(error.to_string()),
             }
         };
-        let _ = events.send(Event::DecoderEnded(channel, end));
+        let _ = events.send(Event::DecoderEnded(channel, generation, end));
     });
-    Ok(Decoder { child, input })
+    Ok(Decoder { child, input, generation })
 }
 
 /// Starts a fetcher for the web channel at `address`, whose messages
 /// arrive as events.
-fn start_fetcher(path: &Path, address: &str, allow_local: &[String], channel: u32, events: Sender<Event>) -> Result<Fetcher, String> {
+fn start_fetcher(path: &Path, address: &str, allow_local: &[String], channel: u32, generation: u64, events: Sender<Event>) -> Result<Fetcher, String> {
     let mut command = sandboxed_with_network(path);
     command.arg(address);
     for ip in allow_local {
@@ -198,7 +209,7 @@ fn start_fetcher(path: &Path, address: &str, allow_local: &[String], channel: u3
         let end = loop {
             match read_from_fetcher(&mut output) {
                 Ok(Some(message)) => {
-                    if events.send(Event::Fetched(channel, message)).is_err() {
+                    if events.send(Event::Fetched(channel, generation, message)).is_err() {
                         return;
                     }
                 }
@@ -206,12 +217,13 @@ fn start_fetcher(path: &Path, address: &str, allow_local: &[String], channel: u3
                 Err(error) => break Some(error.to_string()),
             }
         };
-        let _ = events.send(Event::FetcherEnded(channel, end));
+        let _ = events.send(Event::FetcherEnded(channel, generation, end));
     });
     #[cfg(feature = "interaction")]
     let input = child.stdin.take().map(BufWriter::new);
     Ok(Fetcher {
         child,
+        generation,
         #[cfg(feature = "interaction")]
         input,
     })
@@ -262,6 +274,10 @@ struct Core {
     showing: Option<u32>,
     /// What of each channel's sound reached the interface.
     hearing: Hearing,
+    /// Which tabs sleep, and what their decoders were given (decision 47).
+    sleep: Sleep,
+    /// The generation of the next decoder or fetcher started.
+    generation: u64,
     /// The links of the pages on screen (`hyperlinks.md`).
     #[cfg(feature = "links")]
     links: Links,
@@ -366,54 +382,90 @@ impl Core {
     }
 
     fn tell(&mut self, channel: u32, message: &ToDecoder) {
+        // Kept whether or not the channel is awake: a sleeping channel's
+        // pushed pages are there when it wakes.
+        self.sleep.keep(channel, message);
         let Some(decoder) = self.decoders.get_mut(&channel) else { return };
         // A decoder that cannot be written to has stopped; its reader
         // reports that, and its pages stay as they were.
         let _ = write_to_decoder(&mut decoder.input, message);
     }
 
-    /// Starts a decoder for every channel that has none, and closes the
-    /// decoders of channels no tab shows any more.
+    /// Starts a decoder for every awake channel that has none, giving it
+    /// what the channel's last decoder was given; puts to sleep the
+    /// channels that may sleep (decision 47); and closes the decoders and
+    /// fetchers of channels no tab shows any more.
     fn match_decoders(&mut self) -> Result<(), String> {
+        let now = std::time::Instant::now();
+        let active = self.active_channel();
+        if let Some(channel) = active {
+            self.sleep.seen(channel, now);
+        }
         let channels: Vec<(u32, Option<String>, Option<String>)> =
             self.session.tabs.iter().map(|tab| (tab.channel.id, tab.channel.problem.clone(), tab.channel.web.clone())).collect();
         for (id, problem, web) in &channels {
-            if !self.decoders.contains_key(id) {
+            let awake = self.sleep.awake(*id, active, now);
+            if awake && !self.decoders.contains_key(id) {
                 if let Some(problem) = problem {
                     eprintln!("t42-browser: {problem}");
                 }
-                let decoder = start_decoder(&self.decoder_path, *id, self.events.clone())?;
+                self.generation = self.generation.wrapping_add(1);
+                let mut decoder = start_decoder(&self.decoder_path, *id, self.generation, self.events.clone())?;
+                for message in self.sleep.kept(*id) {
+                    let _ = write_to_decoder(&mut decoder.input, message);
+                }
                 self.decoders.insert(*id, decoder);
-                // A web channel's pages come from its own fetcher.
-                if let Some(address) = web {
-                    let fetcher = start_fetcher(&self.fetcher_path, address, &self.allow_local, *id, self.events.clone())?;
+            } else if !awake && self.decoders.contains_key(id) {
+                self.put_to_sleep(*id)?;
+            }
+            // A web channel's pages come from its own fetcher, kept while
+            // its tab sleeps only if it holds a push connection.
+            if let Some(address) = web {
+                let wanted = awake || self.sleep.keeps_fetcher(*id);
+                if wanted && !self.fetchers.contains_key(id) {
+                    self.generation = self.generation.wrapping_add(1);
+                    let fetcher = start_fetcher(&self.fetcher_path, address, &self.allow_local, *id, self.generation, self.events.clone())?;
                     self.fetchers.insert(*id, fetcher);
+                } else if !wanted {
+                    self.stop_fetcher(*id);
                 }
             }
         }
-        let unused: Vec<u32> = self.decoders.keys().copied().filter(|id| !channels.iter().any(|(used, ..)| used == id)).collect();
+        let unused: Vec<u32> = self.decoders.keys().chain(self.fetchers.keys()).copied().filter(|id| !channels.iter().any(|(used, ..)| used == id)).collect();
         for id in unused {
-            #[cfg(feature = "links")]
-            self.links.channel_gone(id);
-            #[cfg(feature = "interaction")]
-            self.typing.channel_gone(id);
-            let sends = self.hearing.channel_gone(id);
-            self.deliver(sends)?;
-            if let Some(mut decoder) = self.decoders.remove(&id) {
-                let _ = write_to_decoder(&mut decoder.input, &ToDecoder::Close);
-                drop(decoder.input);
-                let _ = decoder.child.wait();
-            }
-            if let Some(mut fetcher) = self.fetchers.remove(&id) {
-                // Closing its input ends a fetcher.
-                drop(fetcher.child.stdin.take());
-                #[cfg(feature = "interaction")]
-                drop(fetcher.input.take());
-                let _ = fetcher.child.kill();
-                let _ = fetcher.child.wait();
-            }
+            self.put_to_sleep(id)?;
+            self.stop_fetcher(id);
+            self.sleep.forget(id);
         }
         Ok(())
+    }
+
+    /// Closes a channel's decoder, and forgets what it showed: its links,
+    /// its typing and its sounds.
+    fn put_to_sleep(&mut self, id: u32) -> Result<(), String> {
+        #[cfg(feature = "links")]
+        self.links.channel_gone(id);
+        #[cfg(feature = "interaction")]
+        self.typing.channel_gone(id);
+        let sends = self.hearing.channel_gone(id);
+        self.deliver(sends)?;
+        if let Some(mut decoder) = self.decoders.remove(&id) {
+            let _ = write_to_decoder(&mut decoder.input, &ToDecoder::Close);
+            drop(decoder.input);
+            let _ = decoder.child.wait();
+        }
+        Ok(())
+    }
+
+    fn stop_fetcher(&mut self, id: u32) {
+        if let Some(mut fetcher) = self.fetchers.remove(&id) {
+            // Closing its input ends a fetcher.
+            drop(fetcher.child.stdin.take());
+            #[cfg(feature = "interaction")]
+            drop(fetcher.input.take());
+            let _ = fetcher.child.kill();
+            let _ = fetcher.child.wait();
+        }
     }
 
     fn fetched(&mut self, channel: u32, message: FromFetcher) -> Result<(), String> {
@@ -447,6 +499,7 @@ impl Core {
                 }
             }
             FromFetcher::Notice(text) => eprintln!("t42-browser: channel {channel}: {}", clean(&text, MAX_NOTICE)),
+            FromFetcher::Pushing(open) => self.sleep.set_pushing(channel, open),
             #[cfg(feature = "interaction")]
             FromFetcher::Input { open, secure } => {
                 let sends = self.typing.input(channel, open, secure, self.now());
@@ -577,6 +630,7 @@ impl Core {
                 self.session.mute_all(muted);
                 self.send_tabs()?;
             }
+            ToCore::Sounding(channels) => self.sleep.set_sounding(&channels),
             ToCore::Navigate(typed) => {
                 if let Err(reason) = self.session.navigate(&typed) {
                     eprintln!("t42-browser: {reason}");
@@ -617,6 +671,11 @@ impl Core {
     fn load(&mut self) {
         let mut messages = Vec::new();
         for tab in &mut self.session.tabs {
+            // A sleeping channel's file waits where it is: what was read is
+            // kept, and the rest is read when it wakes.
+            if !self.decoders.contains_key(&tab.channel.id) {
+                continue;
+            }
             let message = match tab.channel.source.next(CHUNK_BYTES) {
                 Next::Data(bytes) => ToDecoder::Data(bytes.to_vec()),
                 Next::End => ToDecoder::End,
@@ -631,7 +690,11 @@ impl Core {
 
     /// A decoder that broke the protocol is closed; its channel's pages stay
     /// as they were, and its sounds go.
-    fn decoder_ended(&mut self, channel: u32, reason: Option<String>) -> Result<(), String> {
+    fn decoder_ended(&mut self, channel: u32, generation: u64, reason: Option<String>) -> Result<(), String> {
+        // A decoder put to sleep, or one before it, has nothing more to say.
+        if self.decoders.get(&channel).map(|decoder| decoder.generation) != Some(generation) {
+            return Ok(());
+        }
         if let Some(reason) = reason {
             eprintln!("t42-browser: the decoder for channel {channel} stopped: {reason}");
         }
@@ -950,6 +1013,8 @@ impl Core {
             frames: frames::Frames::default(),
             showing: None,
             hearing: Hearing::default(),
+            sleep: Sleep::default(),
+            generation: 0,
             #[cfg(feature = "links")]
             links: Links::default(),
             #[cfg(any(feature = "links", feature = "interaction"))]
@@ -982,6 +1047,7 @@ fn run() -> Result<(), String> {
     let (events, incoming) = mpsc::channel();
     read_interface(&mut interface, events.clone())?;
     every(LOAD_INTERVAL, events.clone(), || Event::Load);
+    every(SLEEP_CHECK, events.clone(), || Event::Sleep);
 
     let mut session = Session::new();
     for address in &addresses {
@@ -1000,12 +1066,26 @@ fn run() -> Result<(), String> {
     let result = loop {
         let Ok(event) = incoming.recv() else { break Ok(()) };
         let step = match event {
-            Event::Decoded(channel, message) => core.decoded(channel, message),
-            Event::Fetched(channel, message) => core.fetched(channel, message),
-            Event::FetcherEnded(channel, reason) => {
-                eprintln!("t42-browser: the fetcher for channel {channel} stopped{}", reason.map(|reason| format!(": {reason}")).unwrap_or_default());
-                if let Some(mut fetcher) = core.fetchers.remove(&channel) {
-                    let _ = fetcher.child.wait();
+            Event::Decoded(channel, generation, message) => {
+                if core.decoders.get(&channel).map(|decoder| decoder.generation) == Some(generation) {
+                    core.decoded(channel, message)
+                } else {
+                    Ok(())
+                }
+            }
+            Event::Fetched(channel, generation, message) => {
+                if core.fetchers.get(&channel).map(|fetcher| fetcher.generation) == Some(generation) {
+                    core.fetched(channel, message)
+                } else {
+                    Ok(())
+                }
+            }
+            Event::FetcherEnded(channel, generation, reason) => {
+                if core.fetchers.get(&channel).map(|fetcher| fetcher.generation) == Some(generation) {
+                    eprintln!("t42-browser: the fetcher for channel {channel} stopped{}", reason.map(|reason| format!(": {reason}")).unwrap_or_default());
+                    if let Some(mut fetcher) = core.fetchers.remove(&channel) {
+                        let _ = fetcher.child.wait();
+                    }
                 }
                 Ok(())
             }
@@ -1018,7 +1098,8 @@ fn run() -> Result<(), String> {
                 core.load();
                 Ok(())
             }
-            Event::DecoderEnded(channel, reason) => core.decoder_ended(channel, reason),
+            Event::DecoderEnded(channel, generation, reason) => core.decoder_ended(channel, generation, reason),
+            Event::Sleep => core.match_decoders(),
             #[cfg(feature = "phone-keyboard")]
             Event::Phone(message) => core.phone_said(message),
             #[cfg(feature = "phone-keyboard")]

@@ -22,5 +22,6 @@ pub mod frames;
 pub mod hearing;
 #[cfg(feature = "links")]
 pub mod links;
+pub mod sleep;
 #[cfg(feature = "interaction")]
 pub mod typing;
