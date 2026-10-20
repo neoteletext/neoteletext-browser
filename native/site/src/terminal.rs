@@ -1007,7 +1007,12 @@ fn phone(relay: &str, events: &mpsc::Sender<PhoneEvent>) {
 
 /// A key's name for the page, as the channel heard it.
 fn describe(press: Press) -> String {
-    let name = key_name(press.key).map_or_else(|| char::from_u32(u32::from(press.key)).map(String::from).unwrap_or_default(), str::to_owned);
+    let name = match (key_name(press.key), char::from_u32(u32::from(press.key))) {
+        (Some(name), _) => name.to_owned(),
+        // The space bar types a space, which on the page would be nothing.
+        (None, Some(' ')) => "Space".to_owned(),
+        (None, character) => character.map(String::from).unwrap_or_default(),
+    };
     let mut text = String::new();
     for (bit, label) in [(key::CONTROL, "Ctrl-"), (key::ALT, "Alt-"), (key::SHIFT, "Shift-")] {
         if press.modifiers & bit != 0 {
@@ -1308,6 +1313,8 @@ mod tests {
         pushes.extend(feed(&mut session, &[Event::Page(Some(0x200)), press('a'), press('b'), press('c'), press('d')]));
         hear(&mut receiver, &mut sink, pushes);
         assert_eq!(sink.0, [podcast::CHANNEL, 0, 1, 2, 0], "the podcast, then four clicks in turn on the other three");
+        feed(&mut session, &[press(' ')]);
+        assert!(session.render().tti().contains("Last key: Space\r\n"), "the space bar named");
     }
 
     #[test]
