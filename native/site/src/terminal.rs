@@ -486,6 +486,9 @@ struct Session {
     click: Option<(u8, u8)>,
     phone: Option<Phone>,
     relay: Option<String>,
+    /// The viewer's keys went elsewhere: to another window, or to the
+    /// browser's address field (key record kind 6).
+    away: bool,
     /// The episode and this viewer's place in it.
     podcast: Option<(Arc<Episode>, Player)>,
     /// The second page 700 last showed and whether it was playing, so the
@@ -531,6 +534,7 @@ impl Session {
             click: None,
             phone: None,
             relay: settings.relay,
+            away: false,
             podcast: settings.podcast.map(|episode| (episode, Player::new())),
             shown: None,
         }
@@ -552,7 +556,9 @@ impl Session {
                 page
             }
         };
-        if !self.selection.is_empty() {
+        if self.away {
+            page.row(23, Row::new().code(ALPHA_MAGENTA).text("Your keys went elsewhere."));
+        } else if !self.selection.is_empty() {
             page.row(23, Row::new().code(ALPHA_YELLOW).text(&format!("Page {}", self.selection)));
         } else if !self.last_key.is_empty() {
             page.row(23, Row::new().code(ALPHA_CYAN).text(&format!("Last key: {}", self.last_key)));
@@ -735,8 +741,9 @@ impl Session {
                 self.page = page;
                 self.selection.clear();
             }
+            Event::Focus(here) => self.away = !here,
             // A new connection: the page is pushed again below.
-            Event::Page(None) | Event::Focus(_) | Event::Resume(_) => {}
+            Event::Page(None) | Event::Resume(_) => {}
             Event::Click { column, row } => self.click = Some((column, row)),
             Event::Text(text) => {
                 for character in text.chars() {
@@ -1367,6 +1374,15 @@ mod tests {
         let contents = contents_file();
         let read = neoteletext_web::contents::read(contents.as_bytes()).unwrap();
         assert_eq!(read.flatten().count(), PAGES.len() + 1);
+    }
+
+    #[test]
+    fn the_page_says_when_the_keys_went_elsewhere() {
+        let mut session = Session::new(Settings::default());
+        feed(&mut session, &[Event::Page(Some(0x200)), Event::Focus(false)]);
+        assert!(session.render().tti().contains("Your keys went elsewhere."));
+        feed(&mut session, &[Event::Focus(true)]);
+        assert!(!session.render().tti().contains("elsewhere"));
     }
 
     #[test]
