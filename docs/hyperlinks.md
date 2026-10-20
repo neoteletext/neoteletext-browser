@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Status** | Adopted 20 October 2026 (the architecture's decision 41), every recommendation of section 16 taken as the decision; decision 42 confirms that the only underlining is for links and that the software draws it, never the page. Not built; phase 1 (section 15) is next. |
+| **Status** | Adopted 20 October 2026 (the architecture's decision 41), every recommendation of section 16 taken as the decision; decision 42 confirms that the only underlining is for links and that the software draws it, never the page. Phases 1 and 2 built the same day, behind the `links` feature (section 15); section 19 lists what building them changed (decision 43). |
 | **Owner's brief** | Hyperlinks shown with a blue underline in the interface, controlled by the browser; underlining must not be possible from teletext source. Links to teletext open in T42 Browser; other links offer to open in the system's web browser. |
 | **Companion documents** | [`hyperlinks-security.md`](hyperlinks-security.md) analyses this design's security; its findings are applied here (section 18). [`architecture.md`](architecture.md) (sections 9.5, 9.6 and 11), [`requirements.md`](requirements.md) (sections 4, 7, 8, 11 and 12), [`security-analysis.md`](security-analysis.md) (spoofing and the line of death). The engine's decision E.36 and its TTI Link Extension (`~/devel/neoteletext/docs/spec/requirements/tti-link-extension.md`). |
 
@@ -28,6 +28,7 @@
 16. Decisions
 17. Tests
 18. Corrections from the security analysis
+19. What building it changed
 
 ---
 
@@ -222,7 +223,7 @@ The browser is never patched (requirement 2.5); the option goes through the engi
 - **Steady:** it does not flash with flashing text, and does not change with the page's colour or palette.
 - **Only under shown text:** a run is trimmed to its shown, non-blank cells before drawing, and a run with none is not drawn, so a page cannot draw blue lines on empty space with `LT` runs. At most about 400 cells of a page can be underlined (eight `LT` runs and 24 found numbers).
 - **Concealed text:** a link in concealed cells is not drawn until the user reveals it.
-- **Only when large enough:** links are drawn only when a teletext dot is at least two device pixels. Below that, no line can be thinner than the page's own.
+- **Only when large enough:** links are drawn only when a teletext dot is at least one and a half device pixels, so that the one-pixel hairline is at most two thirds of the page's finest line (section 19, item 1).
 
 **Focus.** A link chosen with the keyboard gets the interface's focus ring around its cells, as well as its underline (section 10.3).
 
@@ -396,3 +397,22 @@ Applied on 20 October 2026 from [`hyperlinks-security.md`](hyperlinks-security.m
 8. Hand-offs are limited to one per two seconds, from the selected tab of a focused window, and logged (section 12, requirement 17.9).
 9. The `-` rule in finding page numbers is dropped; ranges link both numbers (section 6.1).
 10. Plain `http` hand-offs are a decision for the owner (decision 9).
+
+## 19. What building it changed
+
+Built on 20 October 2026, phases 1 and 2, behind the `links` cargo feature (on by default; `--no-default-features` compiles hyperlinks out, and the gates build and test both ways). Decision 43 of the architecture asks the owner to confirm these:
+
+1. **The size floor is one and a half device pixels a dot, not two.** Measured: on an ordinary screen at the default window size the open page is drawn 498 pixels high, a dot 1.99 pixels, and with the floor at two no links were drawn at all. The property the floor protects holds at one and a half: the one-pixel hairline is two thirds of a dot or less (requirement 17.2, amended).
+2. **Page numbers in the text** (section 6.1): a lone `p` may come before a number ("p302"); a number joined to digits by `.`, `,` or `:` on either side is not a page number ("3.142", "1,500", "123:45"); a `-` no longer excludes one ("140-145" links both).
+3. **A decoder's link message says whether an image follows,** so the trusted core attaches links to the image they were found in, and decides them again at once when only the links changed.
+4. **The interface reports the pointer's link again whenever a new image arrives.** A flashing page renews its image twelve times a second and the trusted core keeps four images' links; without this the strip would lose its destination within a third of a second.
+5. **The pointer over a link that leaves** is the system's shortcut shape (`CursorIcon::Alias`): there is no "arrow out of a box" pointer.
+6. **The colours,** chosen on screen (decision 3): the link `#3D8BFF`, edged white on dark backgrounds and black on light ones; the strip's link text `#1A4FD8`.
+7. **The strip's questions name the bare destination** ("Open https://www.example.com/story in your web browser?"); the strip's pointing text adds "(leaves this channel)" or "(opens in your web browser)".
+8. **Linux hands over with `xdg-open`** until a D-Bus crate for the XDG Desktop Portal is approved (decision 10). Windows uses `ShellExecuteW`, built and linted for Windows but not yet run there.
+9. **Not built:**
+   - offering the system's web browser when a teletext address turns out not to be teletext (section 7.1): neither the fetcher nor the decoder reports that a channel's content was refused as not teletext, and that report has to be designed first;
+   - Fastext (section 6.3; requirement 12.4);
+   - links in the accessibility tree: the browser has none yet (requirement 12.9).
+10. **The history records page-started visits** (requirement 8.2), but no rule reads the record yet.
+

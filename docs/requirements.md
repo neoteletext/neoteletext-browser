@@ -222,7 +222,7 @@
 - **Reason:** Page intents carry what the user did in the page area, where a page image can draw anything.
 - **Source:** Decisions 4, 18 and 41.
 - **Verification:** Test: every intent kind is sent with values that would leave the channel or change a setting, and none succeeds.
-- **State:** Met by construction: no intent kind carries an address. The test is not written.
+- **State:** Met by construction: no intent kind carries an address. A cell or a typed number names only a cell or a number; the trusted core takes any target from its own link table, and leaving goes through the site-change screen or the web-browser prompt (test: `nothing_but_a_confirmation_hands_a_web_page_over`). The test driving every intent kind is not written.
 
 ### Requirement 4.6: The readers are fuzzed
 - **Statement:** The trusted core's readers of messages from the fetchers, the decoders and the interface, and the interface's reader of messages and images from the trusted core, must be fuzzed continuously.
@@ -511,7 +511,7 @@
 - **Reason:** Navigations a page starts are less trusted.
 - **Source:** Architecture.
 - **Verification:** Test.
-- **State:** Partly met: only user-started navigations exist. Page links are the first page-started navigation to be built (`hyperlinks.md`, decision 41).
+- **State:** Partly met: page links are recorded as page-started in the tab's history (test: `a_link_within_the_channel_keeps_it_open_and_is_recorded_as_the_pages`), and leave only through the site-change screen. No rule reads the record yet. Fastext, redirects and discovery results are not built.
 
 ### Requirement 8.3: The committed address is shown
 - **Statement:** The trusted strip must show the committed address until a new page commits.
@@ -525,21 +525,21 @@
 - **Reason:** The user must always see and agree to a change of channel.
 - **Source:** Decision 9.
 - **Verification:** Test for each kind of page-started navigation.
-- **State:** Not met: page-started navigations do not exist yet.
+- **State:** Partly met: for links, built and seen on macOS on 20 October 2026; for Fastext, redirects and discovery results, not built.
 
 ### Requirement 8.5: The site-change screen cannot be faked by a page
 - **Statement:** The site-change screen must be drawn only in the trusted strip, never in the page area, and a confirmation must not be accepted from a click inside the page area or from pasted input.
 - **Reason:** A page image can draw anything.
 - **Source:** Decisions 4 and 24.
 - **Verification:** Test; review.
-- **State:** Not met: not built.
+- **State:** Met for links: the screen is drawn only in the strip, and confirmed only by strip input of its own kind, never a click in the page area, not within half a second of appearing, and by Enter only once the user moved the focus to it (tests in `hyperlinks-security.md` section 15).
 
 ### Requirement 8.6: Cancelling returns to the committed page
 - **Statement:** Cancelling the site-change screen must return the tab to its committed page unchanged.
 - **Reason:** Declining must have no effect.
 - **Source:** Architecture.
 - **Verification:** Test.
-- **State:** Not met: not built.
+- **State:** Met for links: cancelling closes the question and changes nothing else (tests: `leaving_and_the_web_are_asked_about_and_answered_only_after_half_a_second`, `nothing_but_a_confirmation_hands_a_web_page_over`).
 
 ---
 
@@ -651,10 +651,10 @@
 - **Why withdrawn:** there is no webview and no page code (decision 33).
 
 ### Requirement 10.12: No unsafe code
-- **Statement:** The interface process, like every crate of the application, must forbid `unsafe` code in its own source. The one exception is the `dock-menu` crate, whose macOS module reaches AppKit through the Objective-C runtime; it denies `unsafe_code` everywhere else, and each unsafe block there states why it is sound.
+- **Statement:** The interface process, like every crate of the application, must forbid `unsafe` code in its own source. There are two exceptions: the `dock-menu` crate, whose macOS module reaches AppKit through the Objective-C runtime; and the `web-opener` crate, whose Windows module calls the shell's `ShellExecuteW` (hyperlink decision 7). Each denies `unsafe_code` everywhere else, and each unsafe block states why it is sound.
 - **Reason:** A memory-safety fault is the most likely way to take over a process. AppKit offers the Dock menu only through calls Rust cannot check (decision 39).
 - **Source:** Architecture; decision 39.
-- **Verification:** Check: the workspace lints forbid `unsafe_code`; `dock-menu` denies it and allows it only in `src/mac.rs`, with Clippy's `undocumented_unsafe_blocks`.
+- **Verification:** Check: the workspace lints forbid `unsafe_code`; `dock-menu` denies it and allows it only in `src/mac.rs`, and `web-opener` only in `src/windows.rs`, each with Clippy's `undocumented_unsafe_blocks`.
 - **State:** Met.
 
 ### Requirement 10.13: The interface process ends on a broken message
@@ -726,14 +726,14 @@
 - **Reason:** A page image can draw fake buttons; the click must mean only "this cell".
 - **Source:** Decision 4.
 - **Verification:** Test under every layout.
-- **State:** Partly met: cell clicks are computed and sent, with a test. The trusted core does not yet follow links.
+- **State:** Met: a click carries the version of the image it was made on (test: `a_click_names_the_image_it_was_made_on`), and the trusted core follows links by its own rules.
 
 ### Requirement 12.4: Keys work in the tab
 - **Statement:** With the page area focused, page-number keys, Fastext colour keys, reveal, hold and mix must work. A key must only select among pages already held (requirement 4.7). A key that would leave the channel must go through the site-change screen. A page number the page links with `LK`, or the descriptor aliases, follows that link (`hyperlinks.md` section 6; decision 41).
 - **Reason:** Teletext is driven by these keys.
 - **Source:** Decision 22.
 - **Verification:** Test each key.
-- **State:** Partly met: three digits choose a page of the channel, and Up and Down step through pages. Fastext, reveal, hold and mix are not built.
+- **State:** Partly met: three digits choose a page of the channel, or follow the open page's `LK` line or the channel's alias (test: `a_number_the_page_or_channel_links_goes_to_the_trusted_core`), and Up and Down step through pages. Fastext, reveal, hold and mix are not built.
 
 ### Requirement 12.5: Menus and shortcuts
 - **Statement:** The application must provide a native menu bar (File, Edit, View, History, Window) carrying the browser's shortcuts. Menu items and buttons must send the same intents.
@@ -961,88 +961,89 @@ Requirements 13.1 to 13.13 are unchanged from the earlier design, and are stated
 
 ## 17. Hyperlinks
 
-Adopted on 20 October 2026 (decision 41) from [`hyperlinks.md`](hyperlinks.md), whose section numbers these cite; [`hyperlinks-security.md`](hyperlinks-security.md) is their security analysis. None is built yet.
+Adopted on 20 October 2026 (decision 41) from [`hyperlinks.md`](hyperlinks.md), whose section numbers these cite; [`hyperlinks-security.md`](hyperlinks-security.md) is their security analysis. Built the same day behind the `links` feature, on by default; the browser builds and passes its tests with it compiled out too (`--no-default-features`).
 
 ### Requirement 17.1: No teletext underline
 - **Statement:** Teletext's underline attribute is not drawn on any page shown by T42 Browser; separated mosaics are drawn as before.
 - **Reason:** An underline must mean only a link.
 - **Source:** Decision 41; `hyperlinks.md`.
 - **Verification:** Test: a Level 2.5 page with underlined text and separated mosaics.
-- **State:** Not met: not built.
+- **State:** Met: the decoder renders with the engine's `underline` option off (decision E.88). Test: `the_pages_own_underline_is_not_drawn`, which fails without the change.
 
 ### Requirement 17.2: Links are drawn by the browser
-- **Statement:** Links are drawn only by the interface, over the page image, in one style the page cannot change (`hyperlinks.md` section 9.2), and only when a teletext dot is at least two device pixels.
+- **Statement:** Links are drawn only by the interface, over the page image, in one style the page cannot change (`hyperlinks.md` section 9.2), and only when a teletext dot is at least one and a half device pixels.
+  *Amended 20 October 2026:* two device pixels, as adopted, showed no links on a page shown at its own size on an ordinary screen (`hyperlinks.md` section 19).
 - **Reason:** A page must not be able to draw the browser's link.
 - **Source:** Decision 41; `hyperlinks.md`.
 - **Verification:** Test of the drawing at several scales; review.
-- **State:** Not met: not built.
+- **State:** Met: the interface draws a hairline at screen resolution with a contrasting edge, only over the image the links belong to. Tests: `links_are_drawn_only_when_a_dot_is_one_and_a_half_device_pixels`, `the_underline_is_along_the_bottom_of_the_cells_and_finer_than_a_dot`, `links_are_drawn_only_over_their_own_image`; seen on macOS on 20 October 2026.
 
 ### Requirement 17.3: The trusted core decides every link
 - **Statement:** The trusted core decides every link, from the decoder's and the fetcher's candidates, checked as `hyperlinks.md` section 8.2 requires. The interface receives only where to draw and the link's kind.
 - **Reason:** The decoder and the page are untrusted; the interface holds no channel data.
 - **Source:** Decision 41; `hyperlinks.md`.
 - **Verification:** Test with out-of-range, overlapping, excessive and invalid links.
-- **State:** Not met: not built.
+- **State:** Met: the trusted core checks rows, bounds, overlaps and targets, and the interface receives places and kinds only. Tests: `links_are_checked_and_decided`, `malformed_links_are_refused`, `a_target_too_long_is_refused_never_cut`.
 
 ### Requirement 17.4: Page numbers in the text are links
 - **Statement:** Page numbers in the text are links when, and only when, the rules of `hyperlinks.md` section 6.1 hold.
 - **Reason:** Navigation teletext readers already expect, without false links.
 - **Source:** Decision 41; `hyperlinks.md`.
 - **Verification:** Test of each rule, including currency, times, ranges and absent pages.
-- **State:** Not met: not built.
+- **State:** Met, with the refinements of `hyperlinks.md` section 19. Tests: `page_numbers_stand_alone`, `a_pages_links_are_found_in_its_text_and_its_link_lines`.
 
 ### Requirement 17.5: Links are classified from their targets
 - **Statement:** Every link, from a page, a Fastext packet or the descriptor's aliases and services, is classified from its target alone, before any request, as `hyperlinks.md` section 7.1 requires; a named service is another channel.
 - **Reason:** No request before consent; the strip can say where a link leads.
 - **Source:** Decision 41; `hyperlinks.md`.
 - **Verification:** Test of every row of the table.
-- **State:** Not met: not built.
+- **State:** Met. Tests: `targets_are_classified_from_the_target_alone`, `a_file_channels_links_to_the_web_leave_it`, `a_pages_number_links_and_the_channels_aliases_remap_numbers`.
 
 ### Requirement 17.6: The destination is shown in the strip
 - **Statement:** Pointing at or focusing a link shows its destination in the trusted strip.
 - **Reason:** The strip, not the underline, is the proof.
 - **Source:** Decision 41; `hyperlinks.md`.
 - **Verification:** Test; review.
-- **State:** Not met: not built.
+- **State:** Met. Tests: `the_pointer_on_a_link_is_reported_once_per_link_with_its_shape`, `a_new_image_under_the_pointer_is_reported_again`, `the_strip_shows_where_a_link_leads_in_place_of_the_address`; by hand on macOS on 20 October 2026.
 
 ### Requirement 17.7: A click follows what the user saw
 - **Statement:** A click follows only the link of the frame it was made on, whose target equals the one the strip is showing, unchanged for at least 500 milliseconds.
 - **Reason:** Against bait and switch.
 - **Source:** Decision 41; `hyperlinks.md`.
 - **Verification:** Test with a fake clock: a page that changes a link's target each frame.
-- **State:** Not met: not built.
+- **State:** Met. Tests: `a_click_follows_only_the_link_the_strip_shows_once_it_has_settled`, `a_link_that_changes_under_the_pointer_is_not_followed`, `an_unchanged_link_keeps_its_age_across_new_images`, `a_click_names_the_image_it_was_made_on`.
 
 ### Requirement 17.8: Leaving goes through the strip
 - **Statement:** A link that leaves the channel goes through the site-change screen; a link to the web goes through the web-browser prompt; neither can be confirmed from the page area.
 - **Reason:** Leaving is the user's decision, made where a page cannot reach.
 - **Source:** Decision 41; `hyperlinks.md`.
 - **Verification:** Test for each kind, with clicks in the page area.
-- **State:** Not met: not built.
+- **State:** Met. Tests: `leaving_and_the_web_are_asked_about_and_answered_only_after_half_a_second`, `the_question_waits_half_a_second_and_never_takes_the_focus`; by hand on macOS on 20 October 2026: a link to another channel showed the site-change screen, Go left, Back returned.
 
 ### Requirement 17.9: The hand-off to the system's web browser
 - **Statement:** Only an `https` or `http` address the core's address rules accept, re-serialised from its parsed parts, is handed to the system's web browser, by the trusted core, as one argument with no shell, at most once per two seconds, from the selected tab of a focused window, and logged.
 - **Reason:** Opening an address must never run a program.
 - **Source:** Decision 41; `hyperlinks.md`.
 - **Verification:** Test with `file:`, custom schemes, paths, a leading `-` and over-long addresses; the "nothing else opens" test of `hyperlinks-security.md` section 15.
-- **State:** Not met: not built.
+- **State:** Partly met. macOS: `/usr/bin/open -u`, by hand on 20 October 2026 (an `https` address opened in the default browser and was logged). Linux: `xdg-open`; the XDG Desktop Portal awaits the approval of a D-Bus crate (hyperlink decision 10). Windows: `ShellExecuteW`, built and linted for Windows but not yet run there. Tests: `only_plain_https_and_http_addresses_are_handed_over`, `nothing_but_a_confirmation_hands_a_web_page_over`, `the_web_is_handed_over_only_with_the_focus_and_at_most_every_two_seconds`.
 
 ### Requirement 17.10: Links by keyboard
 - **Statement:** Links can be reached and followed with the keyboard, and are in the accessibility tree.
 - **Reason:** Not everyone uses a pointer.
 - **Source:** Decision 41; `hyperlinks.md`.
 - **Verification:** Test.
-- **State:** Not met: not built.
+- **State:** Partly met: Tab, Shift-Tab, Enter and Escape, with a test (`tab_moves_between_links_and_enter_follows_the_focused_one`). The accessibility tree does not exist yet (requirement 12.9), so screen readers see no links.
 
 ### Requirement 17.11: Prompts never take the focus
 - **Statement:** The web-browser prompt and the site-change screen never take the keyboard focus by themselves, and accept Enter only after the user moved the focus into them.
 - **Reason:** A confirmation key pressed for something else must not confirm.
 - **Source:** Decision 41; `hyperlinks.md`.
 - **Verification:** Test.
-- **State:** Not met: not built.
+- **State:** Met. Test: `the_question_waits_half_a_second_and_never_takes_the_focus`.
 
 ### Requirement 17.12: The link-target parser
 - **Statement:** The core's link-target parser contains no panicking constructs and is fuzzed, as the message readers are.
 - **Reason:** It is the first page data the trusted core parses.
 - **Source:** Decision 41; `hyperlinks.md`.
 - **Verification:** The fuzz target `link_target` in the full gate; the lint.
-- **State:** Not met: not built.
+- **State:** Met: the fuzz target `link_target` (seven million runs in its first 30 seconds, no fault) runs in the full gate, and the core's library carries the no-panic lint list.

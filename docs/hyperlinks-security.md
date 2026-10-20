@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Status** | Written 20 October 2026 against [`hyperlinks.md`](hyperlinks.md) as proposed. The spec was corrected from this analysis (its section 18 lists the corrections). |
+| **Status** | Written 20 October 2026 against [`hyperlinks.md`](hyperlinks.md) as proposed. The spec was corrected from this analysis (its section 18 lists the corrections), and built the same day; its section 19 lists what building changed, none of which weakens a property analysed here. Section 15's checks are in the gates. |
 | **Method** | The method of [`security-analysis.md`](security-analysis.md): what is protected, who attacks, each trust boundary the feature crosses, the mitigations, and the remaining risk ranked. |
 | **Scope** | Links found in page text, links a page declares, links a descriptor declares, following links within and between channels, and handing a link to the system's web browser. Fastext shares the link table and is covered where it differs. |
 

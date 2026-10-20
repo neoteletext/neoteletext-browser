@@ -90,6 +90,7 @@ Each decision was made by the owner on the date given. Requirements in `requirem
 | Decision 40 | 19 October 2026 | **Sound on every desktop.** The owner accepted linking the system's LGPL `libasound` on Linux (the engine's open decision D3), dynamically, as `cpal` does. `cpal` is now a dependency on every platform: Core Audio on macOS, WASAPI on Windows, ALSA on Linux, where building needs the ALSA headers (`libasound2-dev` on Ubuntu). With no output device the browser still runs silent. | — |
 | Decision 41 | 20 October 2026 | **Every open recommendation is accepted as a decision.** Open decisions 1 to 8 of section 16, as recommended there: Transport Layer Security from the engine or else `rustls`; `wasmi` as the decoder's wall on iOS, its cost measured on desktops first; the trusted strip stays in the interface process, revisited if fuzzing finds faults; our own widgets; the microcontroller build as section 13; the libraries of `native/Cargo.toml` approved as built; the browser licensed under the MIT licence, as the engine; and hyperlinks adopted as `hyperlinks.md` proposes, with its ten decisions as recommended, its phase 1 to be built next. Requirement 4.5 is amended so a link may start a page-started navigation, which leaves the channel only through the site-change screen. | — |
 | Decision 42 | 20 October 2026 | **The only underlining is for links, and the software draws it, never the page.** Teletext's underline attribute is not drawn on any page the browser shows: the engine's `underline` render option (its decision E.88) is turned off, so no page code, TTI line, DRCS glyph or attribute can produce the browser's link underline. The link underline is drawn by the interface process over the page image, at screen resolution, as a hairline finer than any teletext dot, so that no page can produce it either; it is not drawn by the engine's renderer into the teletext image, which a page could imitate dot for dot. The trusted core decides what is a link; the engine decides nothing about links. | — |
+| Decision 43 | 20 October 2026 | **Hyperlinks built, with what building them changed,** for the owner to confirm (`hyperlinks.md` section 19). Chief among them: links are drawn when a teletext dot is at least one and a half device pixels, not two, since two showed no links on a page at its own size on an ordinary screen; the pointer over a link that leaves is the system's shortcut shape; the link blue is `#3D8BFF`; and on Linux the hand-off uses `xdg-open` until a D-Bus crate is approved. Not built: Fastext, screen readers, and offering the web browser when a teletext address turns out not to be teletext. | — |
 
 ---
 
@@ -236,6 +237,7 @@ Every process speaks the same framing, the engine's: one kind byte, a 32-bit big
 | Updated | A page already held arrived again with different rows |
 | Frame | A rendered page: 480 by 500 palette indices and a palette of at most 32 colours, every index checked against the palette on arrival |
 | Audio | One voice operation of the channel's audio receiver: define a sound, its 16-bit samples (at most 32 768 a message), forget it, announce a live sound and give its next samples, or start, stop or ramp one of four channels; every field bounded (requirement 16.4) |
+| Links | The links found in a page, before its image when they change: at most 32 runs (page numbers in its text and its `LT` lines, each a place and either a page number or a target as written, at most 256 bytes, never cut) and its `LK` lines; and whether an image follows (`hyperlinks.md` section 8.1) |
 
 **From a fetcher to the trusted core** (`protocol::fetcher`):
 
@@ -244,6 +246,7 @@ Every process speaks the same framing, the engine's: one kind byte, a 32-bit big
 | Contents | The channel's contents file as the engine read it: section headings and page entries with titles, at most 1,000 entries |
 | Page | A page's bytes, fetched or pushed, passed to the decoder unread |
 | Notice | A short report, such as an unreachable address, cleaned and shown in the trusted core's log |
+| Links | The descriptor's aliases (at most 16) and named services (at most 16), as written, for the trusted core to parse |
 
 **Between the trusted core and the interface process** (`protocol`):
 
@@ -256,13 +259,17 @@ Every process speaks the same framing, the engine's: one kind byte, a 32-bit big
 | Core to interface | Updated | A page changed |
 | Core to interface | Frame | One page image: channel and page, frame version, Portable Network Graphics bytes |
 | Core to interface | Audio | A voice operation of a channel, tagged with the channel and checked again by the trusted core; or, which only the trusted core may send, a reset when the channel is gone, or the channel's mute |
+| Core to interface | Link: page links | Where each link of one image of a page lies and what kind of place it leads to, never its target; and the page numbers it remaps |
+| Core to interface | Link: pointing, prompt | What the strip shows of the link under the pointer or the focus; the site-change screen or the web-browser prompt, with its number |
+| Core to interface | Link: show, aliases | Open a page a link led to; the page numbers the channel's descriptor links elsewhere |
 | Core to interface | Close | The application is ending |
 | Interface to core | Visible | The pages the interface's layout puts on screen |
-| Interface to core | Cell | A click on a page's cell: page, column and row |
+| Interface to core | Cell | A click on a page's cell: page, the version of its image on screen, column and row |
+| Interface to core | Point, typed, focused | The link cell under the pointer or the focus, or none; a page number the page or channel links elsewhere; whether the window has the keyboard focus |
 | Interface to core | Select tab, close tab, new tab | Tab changes |
 | Interface to core | Opened | The page the user opened in the active tab, passed to that channel's decoder |
 | Interface to core | Mute tab, mute all | Mute or unmute one tab; mute or unmute every tab |
-| Interface to core | Strip input: navigate, back, forward, bookmark | What the user did in the trusted strip. These are message kinds of their own; no page intent can navigate |
+| Interface to core | Strip input: navigate, back, forward, bookmark, confirm, cancel | What the user did in the trusted strip, including the answer to its question, which names the question. These are message kinds of their own; a page intent reaches another channel only through the site-change screen |
 
 ### 6.5 Isolation on each platform
 
@@ -546,11 +553,12 @@ Still to come: the launcher and updater (section 12).
 - The window of section 11, drawn on the processor; and the same interface core drawn by the microcontroller back end in a test.
 - macOS sandbox profiles for the decoder, the fetcher and the interface.
 - The address rules of section 9.6; tabs, history and bookmarks in memory.
+- Hyperlinks, phases 1 and 2 of `hyperlinks.md` (20 October 2026), behind the `links` feature, on by default: page numbers found in the text and `LT`, `LK` and descriptor links, decided by the trusted core; the underline drawn by the interface; the destination, the site-change screen and the web-browser prompt in the strip; the hand-off to the system's web browser (`web-opener`); `#302` page addresses.
 
 **Not built:**
 
 - Transport Layer Security and `https` channels; WebSocket push.
-- Following page links and Fastext; the site-change screen; sub-pages beyond the latest; reveal.
+- Fastext; the site-change screen for redirects and discovery results; sub-pages beyond the latest; reveal.
 - The trusted core's own sandbox; sandbox profiles that deny file reads; any sandbox on Windows, Linux, Android or iOS.
 - Sharing one decoder and cookie store between tabs on the same channel (decision 11); the trusted core owning the cookie store.
 - The grace period for closed tabs; the live-feed threshold; refresh schedules.
