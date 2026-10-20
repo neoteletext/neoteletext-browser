@@ -41,7 +41,6 @@ use std::thread;
 use std::time::Duration;
 
 use interface_core::canvas::PageKey;
-use neoteletext_core::consts::{FLASH_CYCLE_US, FLASH_UNITS};
 use protocol::decoder::{FromDecoder, MAX_CHUNK, MAX_WHOLE, ToDecoder, read_from_decoder, write_to_decoder};
 use protocol::fetcher::{FromFetcher, MAX_NOTICE, Origin, read_from_fetcher};
 use protocol::{ToCore, ToInterface, clean, read_from_interface, write_to_interface};
@@ -75,10 +74,6 @@ const PACKET_BYTES: usize = 42;
 const CHUNK_PACKETS: usize = 64;
 const CHUNK_BYTES: usize = PACKET_BYTES * CHUNK_PACKETS;
 const LOAD_INTERVAL: Duration = Duration::from_millis(200);
-/// The shown pages are drawn again once per flash unit: the engine's flash
-/// cycle of one second in twelve units (its decision E.48), so every flash
-/// rate it renders is shown.
-const FLASH_UNIT: Duration = Duration::from_micros(FLASH_CYCLE_US / FLASH_UNITS as u64);
 
 /// The interface's and the decoders' sandbox on macOS: no network and no
 /// writing to files. Proof A showed the system webview cannot run like
@@ -97,7 +92,6 @@ enum Event {
     DecoderEnded(u32, Option<String>),
     Intent(ToCore),
     InterfaceEnded(Option<String>),
-    Flash,
     Load,
     /// The phone keyboard process said something, untrusted.
     #[cfg(feature = "phone-keyboard")]
@@ -987,7 +981,6 @@ fn run() -> Result<(), String> {
     let mut interface = spawn(&mut sandboxed(&sibling(INTERFACE)?), "interface")?;
     let (events, incoming) = mpsc::channel();
     read_interface(&mut interface, events.clone())?;
-    every(FLASH_UNIT, events.clone(), || Event::Flash);
     every(LOAD_INTERVAL, events.clone(), || Event::Load);
 
     let mut session = Session::new();
@@ -1023,16 +1016,6 @@ fn run() -> Result<(), String> {
             },
             Event::Load => {
                 core.load();
-                Ok(())
-            }
-            // Every decoder ticks: the shown one redraws for flash, and each
-            // keeps its live sounds' clock (the engine's REQ-AUD-014). A
-            // decoder showing nothing renders nothing.
-            Event::Flash => {
-                let channels: Vec<u32> = core.decoders.keys().copied().collect();
-                for channel in channels {
-                    core.tell(channel, &ToDecoder::Tick);
-                }
                 Ok(())
             }
             Event::DecoderEnded(channel, reason) => core.decoder_ended(channel, reason),

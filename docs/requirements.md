@@ -589,11 +589,12 @@
 - **State:** Met; the long-run memory test is not written.
 
 ### Requirement 9.7: Flash follows the engine's timing
-- **Statement:** Flash must be rendered by the decoder at the engine's flash timing (one second in twelve units, its decision E.48), for shown pages only, and step 3 of `architecture.md` section 10 must pass on only the frames that changed.
-- **Reason:** The engine defines flash; rendering only shown pages keeps it cheap.
-- **Source:** Architecture. (The earlier requirement had the trusted core alternate two stored phases; rendering in the decoder was measured at about 7 seconds of processor time a minute for the shown channel and is to be made cheaper by rendering only when a flashing page changes.)
+- **Statement:** Flash must be rendered by the decoder at the engine's flash timing (one second in twelve units, its decision E.48), for shown pages that have flashing cells only, and only when their flash phase changes, by the decoder's own clock; and step 3 of `architecture.md` section 10 must pass on only the frames that changed. A shown page is otherwise drawn again only when the engine reports that its reception moved, or that data every page may draw from changed.
+- **Reason:** The engine defines flash; rendering only what changes keeps it cheap.
+- **Source:** Architecture; decision 47. (The earlier requirement had the trusted core alternate two stored phases; rendering in the decoder was measured at about 7 seconds of processor time a minute for the shown channel.)
 - **Verification:** Test.
-- **State:** Met.
+- **State:** Met, 21 October 2026: tests `only_a_shown_page_that_flashes_wakes_the_decoder_and_only_when_its_phase_changes`, `a_message_reports_only_the_pages_it_touched`, `arrivals_compare_only_the_pages_that_completed` (one comparison for one page, where scanning the store made 140 of 200). Measured by driving the release decoder for 10 seconds with one shown page: a steady page took 0.15 s of processor time when the trusted core ticked it twelve times a second, and 0.01 s on the decoder's own clock; a flashing page 0.21 s and 0.24 s, drawing 20 and 21 frames, two a second.
+- *Amended 21 October 2026 (decision 47):* drawn by the decoder's own clock, for flashing pages only and at their phase changes; the trusted core no longer ticks decoders.
 
 ### Requirement 9.8: Scaling and pixel shape in the drawing transform
 - **Statement:** Pages must be scaled, and their pixel shape corrected, by the interface when it draws them, never by rendering again at other sizes.
@@ -952,7 +953,7 @@ Requirements 13.1 to 13.13 are unchanged from the earlier design, and are stated
 - **State:** Met on macOS. Windows' taskbar jump list and Linux's launcher menus are not built.
 
 ### Requirement 16.10: Live sounds
-- **Statement:** A live sound (the engine's REQ-AUD-014) must play as its blocks arrive, from the newest block when its play starts, and fade out two seconds after its last block. The trusted core must tick every decoder, which keeps the clock of its live sounds.
+- **Statement:** A live sound (the engine's REQ-AUD-014) must play as its blocks arrive, from the newest block when its play starts, and fade out two seconds after its last block. Each decoder keeps the clock of its live sounds itself, waking when the audio receiver says it next needs a tick (the engine's decision E.98), and not otherwise. *Amended 21 October 2026 (decision 47):* the trusted core ticked every decoder twelve times a second for this.
 - **Reason:** The owner asked for live sounds (decision 38).
 - **Source:** Decision 38; the engine's decision E.87.
 - **Verification:** Tests: the decoder's `a_live_sound_streams_and_fades_two_seconds_after_its_last_block`; the interface's `a_live_sound_plays_once_its_buffer_fills`; by hand on 19 October 2026, a ten-minute live sound written by `neottx sound --live` played from a file channel.

@@ -24,67 +24,81 @@
 use std::collections::BTreeMap;
 use std::io::{self, BufReader, BufWriter};
 use std::process::ExitCode;
-use std::time::Instant;
+use std::sync::mpsc::{self, RecvTimeoutError};
+use std::time::Duration;
 
-use decoder::{Engine, Rendered};
+use decoder::{Engine, Flashing, Rendered};
 use protocol::ProtocolError;
 use protocol::decoder::{FromDecoder, ToDecoder, read_from_core, write_to_core};
 
+/// Microseconds in a millisecond: the audio receiver keeps milliseconds.
+const MICROSECONDS_PER_MILLISECOND: u64 = 1000;
+
+type Output<'a> = BufWriter<io::StdoutLock<'a>>;
+
 fn run() -> Result<(), ProtocolError> {
-    let mut input = BufReader::new(io::stdin().lock());
     let mut output = BufWriter::new(io::stdout().lock());
     let mut engine = Engine::new();
     let mut showing: Vec<u16> = Vec::new();
     // The last frame sent of each page shown, so an unchanged page is
     // never sent again.
     let mut sent: BTreeMap<u16, Rendered> = BTreeMap::new();
-    // The audio receiver's clock (the engine's REQ-AUD-014).
-    let started = Instant::now();
-    let now_ms = || u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
-
-    let render =
-        |engine: &Engine, pages: &[u16], sent: &mut BTreeMap<u16, Rendered>, output: &mut BufWriter<io::StdoutLock<'_>>| -> Result<(), ProtocolError> {
-            for &page in pages {
-                let Some(rendered) = engine.render(page) else { continue };
-                let before = sent.get(&page);
-                if before == Some(&rendered) {
-                    continue;
-                }
-                // A page's links go before its image, so the trusted core
-                // has them for the image when it arrives (`hyperlinks.md`
-                // section 8.1).
-                let new_image = before.is_none_or(|before| before.palette != rendered.palette || before.indices != rendered.indices);
-                #[cfg(feature = "links")]
-                if before.map(|before| &before.links) != Some(&rendered.links) {
-                    let links = rendered.links.clone();
-                    write_to_core(output, &FromDecoder::Links { page, with_image: new_image, candidates: links.candidates, numbers: links.numbers })?;
-                }
-                if new_image {
-                    write_to_core(output, &FromDecoder::Frame { page, palette: rendered.palette.clone(), indices: rendered.indices.clone() })?;
-                }
-                sent.insert(page, rendered);
+    let mut flashing = Flashing::default();
+    // The trusted core's messages are read on a thread of their own, so
+    // the loop also wakes, by itself, for flash and for its sounds' clock:
+    // it sleeps until a message, the next flash phase of a shown page
+    // that flashes, or the audio receiver's next tick, whichever is first,
+    // and with none of these, until a message (decision 47).
+    let (messages, incoming) = mpsc::channel();
+    std::thread::spawn(move || {
+        let mut input = BufReader::new(io::stdin().lock());
+        loop {
+            let message = read_from_core(&mut input);
+            let last = !matches!(message, Ok(Some(_)));
+            if messages.send(message).is_err() || last {
+                return;
             }
-            Ok(())
-        };
+        }
+    });
 
-    while let Some(message) = read_from_core(&mut input)? {
-        engine.tick_audio(now_ms());
+    loop {
+        let now = engine.now_us();
+        let audio = engine.next_audio_tick_ms().map(|ms| ms.saturating_mul(MICROSECONDS_PER_MILLISECOND));
+        let deadline = [flashing.next_us(now), audio].into_iter().flatten().min();
+        let received = match deadline {
+            Some(at) => match incoming.recv_timeout(Duration::from_micros(at.saturating_sub(now))) {
+                Ok(message) => Some(message),
+                Err(RecvTimeoutError::Timeout) => None,
+                Err(RecvTimeoutError::Disconnected) => return Ok(()),
+            },
+            None => match incoming.recv() {
+                Ok(message) => Some(message),
+                Err(_) => return Ok(()),
+            },
+        };
+        let now = engine.now_us();
+        engine.tick_audio(now.checked_div(MICROSECONDS_PER_MILLISECOND).unwrap_or(0));
+        let Some(message) = received else {
+            // A deadline: the sounds' clock, and the flashing pages whose
+            // phase has changed.
+            send_sounds(&mut engine, &mut output)?;
+            draw(&engine, &flashing.due(now), now, &mut sent, &mut flashing, &mut output)?;
+            continue;
+        };
+        let Some(message) = message? else { return Ok(()) };
         let arrived = match message {
             ToDecoder::Data(bytes) => engine.feed(&bytes),
             ToDecoder::Whole { packets, pushed, bytes } => engine.feed_whole(packets, pushed, &bytes),
             ToDecoder::End => engine.finish(),
             ToDecoder::Showing(pages) => {
                 sent.retain(|page, _| pages.contains(page));
+                flashing.retain(&pages);
                 showing = pages;
-                render(&engine, &showing, &mut sent, &mut output)?;
+                let fresh: Vec<u16> = showing.iter().copied().filter(|page| !sent.contains_key(page)).collect();
+                draw(&engine, &fresh, now, &mut sent, &mut flashing, &mut output)?;
                 continue;
             }
-            ToDecoder::Tick => {
-                send_sounds(&mut engine, &mut output)?;
-                render(&engine, &showing, &mut sent, &mut output)?;
-                continue;
-            }
-            ToDecoder::Close => break,
+            ToDecoder::Close => return Ok(()),
             ToDecoder::Opened(page) => {
                 engine.open_page(page);
                 send_sounds(&mut engine, &mut output)?;
@@ -98,15 +112,49 @@ fn run() -> Result<(), ProtocolError> {
         for page in engine.take_updated() {
             write_to_core(&mut output, &FromDecoder::Updated { page })?;
         }
-        // A shown page that just arrived, or changed, is drawn at once.
-        render(&engine, &showing, &mut sent, &mut output)?;
+        // A shown page drawn again only when its reception moved, or data
+        // every page may draw from changed.
+        let changed = engine.take_changed();
+        let pages: Vec<u16> = showing.iter().copied().filter(|page| changed.everything || changed.pages.contains(page)).collect();
+        draw(&engine, &pages, now, &mut sent, &mut flashing, &mut output)?;
+    }
+}
+
+/// Draws `pages` at `now_us` and sends those that changed: a page's links
+/// go before its image, so the trusted core has them for the image when it
+/// arrives (`hyperlinks.md` section 8.1).
+fn draw(
+    engine: &Engine,
+    pages: &[u16],
+    now_us: u64,
+    sent: &mut BTreeMap<u16, Rendered>,
+    flashing: &mut Flashing,
+    output: &mut Output<'_>,
+) -> Result<(), ProtocolError> {
+    for &page in pages {
+        let Some(rendered) = engine.render_at(page, now_us) else { continue };
+        flashing.drawn(page, &rendered);
+        let before = sent.get(&page);
+        if before == Some(&rendered) {
+            continue;
+        }
+        let new_image = before.is_none_or(|before| before.palette != rendered.palette || before.indices != rendered.indices);
+        #[cfg(feature = "links")]
+        if before.map(|before| &before.links) != Some(&rendered.links) {
+            let links = rendered.links.clone();
+            write_to_core(output, &FromDecoder::Links { page, with_image: new_image, candidates: links.candidates, numbers: links.numbers })?;
+        }
+        if new_image {
+            write_to_core(output, &FromDecoder::Frame { page, palette: rendered.palette.clone(), indices: rendered.indices.clone() })?;
+        }
+        sent.insert(page, rendered);
     }
     Ok(())
 }
 
 /// Sends the voice operations the audio receiver produced, and the
 /// cursor records found.
-fn send_sounds(engine: &mut Engine, output: &mut BufWriter<io::StdoutLock<'_>>) -> Result<(), ProtocolError> {
+fn send_sounds(engine: &mut Engine, output: &mut Output<'_>) -> Result<(), ProtocolError> {
     for audio in engine.take_sounds() {
         write_to_core(output, &FromDecoder::Audio(audio))?;
     }

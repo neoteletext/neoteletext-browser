@@ -27,7 +27,8 @@ const RGB_BYTES: usize = 3;
 const KIND_DATA: u8 = 48;
 const KIND_END: u8 = 49;
 const KIND_SHOWING: u8 = 50;
-const KIND_TICK: u8 = 51;
+// 51 was the trusted core's tick, removed on 21 October 2026 (decision
+// 47): the decoder keeps its own clock. The number is not reused.
 const KIND_CLOSE: u8 = 52;
 const KIND_OPENED: u8 = 53;
 const KIND_WHOLE: u8 = 54;
@@ -48,10 +49,9 @@ pub enum ToDecoder {
     Data(Vec<u8>),
     /// The channel's data is complete.
     End,
-    /// The pages to render now and at every tick: those on screen.
+    /// The pages to render: those on screen. The decoder draws them again
+    /// when they change and, by its own clock, when they flash.
     Showing(Vec<u16>),
-    /// Time has passed: render the shown pages again for flash.
-    Tick,
     /// The channel is closed: the decoder ends.
     Close,
     /// The page the user opened, or none: its sounds play while it is open.
@@ -153,7 +153,6 @@ pub fn write_to_decoder(out: &mut dyn Write, message: &ToDecoder) -> Result<(), 
             }
             KIND_SHOWING
         }
-        ToDecoder::Tick => KIND_TICK,
         ToDecoder::Close => KIND_CLOSE,
         ToDecoder::Opened(page) => {
             if let Some(page) = page {
@@ -197,7 +196,6 @@ pub fn read_from_core(input: &mut dyn Read) -> Result<Option<ToDecoder>, Protoco
             }
             ToDecoder::Showing((0..count).map(|_| display_page(&mut fields)).collect::<Result<_, _>>()?)
         }
-        KIND_TICK => ToDecoder::Tick,
         KIND_CLOSE => ToDecoder::Close,
         KIND_OPENED => ToDecoder::Opened(if payload.is_empty() { None } else { Some(display_page(&mut fields)?) }),
         KIND_WHOLE => {
@@ -351,7 +349,6 @@ mod tests {
             ToDecoder::Whole { packets: false, pushed: false, bytes: b"PN,10000\n".to_vec() },
             ToDecoder::End,
             ToDecoder::Showing(vec![0x100, 0x899]),
-            ToDecoder::Tick,
             ToDecoder::Close,
         ] {
             let mut bytes = Vec::new();

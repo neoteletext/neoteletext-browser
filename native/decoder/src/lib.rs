@@ -22,6 +22,7 @@
     clippy::unimplemented
 )]
 
+use std::collections::{BTreeMap, BTreeSet};
 use std::time::Instant as Clock;
 
 #[cfg(feature = "links")]
@@ -31,11 +32,11 @@ use interface_core::canvas::{PAGE_HEIGHT, PAGE_WIDTH};
 use interface_core::channel::{PAGES, page_index};
 use neoteletext_audio::port::{SoundFormat, SoundId, Start, VoiceSink};
 use neoteletext_audio::receiver::Receiver;
-use neoteletext_core::acq::{Decoder, EnhancementPacket, EnhancementStore, EnhancementSubPage, StoredPage};
+use neoteletext_core::acq::{Decoder, EnhancementPacket, EnhancementStore, EnhancementSubPage, Event, StoredPage};
 use neoteletext_core::charset::to_unicode;
 use neoteletext_core::compose::compose_level;
 use neoteletext_core::config::Config;
-use neoteletext_core::consts::{COLUMNS, ROWS};
+use neoteletext_core::consts::{COLUMNS, FLASH_CYCLE_US, FLASH_UNITS, ROWS};
 use neoteletext_core::consts::{ENHANCEMENT_PACKETS_LEVEL_35, MAGAZINES, MOT_PACKETS, PAGE_COMPLETION_TIMEOUT_US};
 use neoteletext_core::fsm::PageState;
 use neoteletext_core::glyphs::GlyphSet;
@@ -103,6 +104,9 @@ pub struct Rendered {
     pub palette: Vec<[u8; 3]>,
     /// One palette index per dot, row by row.
     pub indices: Vec<u8>,
+    /// The flash phase it was drawn in, when the page has flashing cells:
+    /// it is drawn again only when the phase changes.
+    pub flash: Option<FlashPhase>,
     /// The links found in the page (`hyperlinks.md` section 6).
     #[cfg(feature = "links")]
     pub links: Found,
@@ -129,7 +133,7 @@ pub struct Engine {
     pushed_packets: AutoReader,
     /// The pages the channel has pushed: a fetched copy of one is older
     /// than what the channel pushed, and is dropped.
-    pushed: std::collections::BTreeSet<u16>,
+    pushed: BTreeSet<u16>,
     /// For each magazine, whether its page now arriving in fetched data is
     /// one the channel pushed, whose packets are dropped.
     skipping: [bool; MAGAZINES],
@@ -140,6 +144,12 @@ pub struct Engine {
     started: Clock,
     /// Pages already reported whose content has since changed.
     updated: Vec<u16>,
+    /// What the engine's events said changed since it was last asked.
+    changes: Changes,
+    /// Pages whose content was compared to tell whether it changed: the
+    /// tests count them.
+    #[cfg(test)]
+    digests: usize,
     /// The channel's sounds: the audio packets go here, not to the decoder.
     audio: Receiver<'static, AUDIO_OBJECTS, AUDIO_RECORDS>,
     /// Voice operations waiting to be sent.
@@ -179,12 +189,15 @@ impl Engine {
             reader,
             pushed_pages,
             pushed_packets,
-            pushed: std::collections::BTreeSet::new(),
+            pushed: BTreeSet::new(),
             skipping: [false; MAGAZINES],
             clock: 0,
             reported: vec![None; PAGES],
             started: Clock::now(),
             updated: Vec::new(),
+            changes: Changes::default(),
+            #[cfg(test)]
+            digests: 0,
             audio: Receiver::new(arena),
             sounds: Vec::new(),
             #[cfg(feature = "links")]
@@ -238,7 +251,8 @@ impl Engine {
                 Some(stamp) if stamp >= self.clock => stamp,
                 _ => self.clock.saturating_add(LINE_PERIOD_US),
             };
-            self.decoder.push(packet, meta, Instant(self.clock), &mut |_| {});
+            let changes = &mut self.changes;
+            self.decoder.push(packet, meta, Instant(self.clock), &mut |event| changes.note(&event));
         }
     }
 
@@ -323,7 +337,34 @@ impl Engine {
     /// header of its magazine, or when the receiver gives up waiting).
     fn complete(&mut self) {
         self.clock = self.clock.saturating_add(PAGE_COMPLETION_TIMEOUT_US.saturating_mul(2));
-        self.decoder.tick(Instant(self.clock), &mut |_| {});
+        let changes = &mut self.changes;
+        self.decoder.tick(Instant(self.clock), &mut |event| changes.note(&event));
+    }
+
+    /// The pages whose packets arrived, or whose reception started, ended
+    /// or was erased, since the last call; and whether data every page may
+    /// use changed (a magazine's or an enhancement page's), when every
+    /// shown page is to be drawn again.
+    pub fn take_changed(&mut self) -> Changed {
+        let changes = core::mem::take(&mut self.changes);
+        // Arrivals are still to be worked out from the completed pages.
+        self.changes.completed = changes.completed;
+        Changed { pages: changes.touched, everything: changes.everything }
+    }
+
+    /// Microseconds since the engine started, on the clock it renders flash
+    /// and keeps sounds by.
+    #[must_use]
+    pub fn now_us(&self) -> u64 {
+        u64::try_from(self.started.elapsed().as_micros()).unwrap_or(u64::MAX)
+    }
+
+    /// When the audio receiver next needs [`Engine::tick_audio`], in
+    /// milliseconds on [`Engine::now_us`]'s clock: `None` while no live
+    /// sound plays (the engine's decision E.98).
+    #[must_use]
+    pub fn next_audio_tick_ms(&self) -> Option<u64> {
+        self.audio.next_tick_ms()
     }
 
     /// The pages whose content changed since they were reported, once each.
@@ -356,12 +397,19 @@ impl Engine {
     /// a title from its text.
     fn arrivals(&mut self) -> Vec<(u16, String)> {
         let mut fresh = Vec::new();
-        for page in self.decoder.store().pages() {
+        // Only pages whose reception completed can have arrived or changed:
+        // the engine's events say which, so the store is not searched.
+        for number in core::mem::take(&mut self.changes.completed) {
+            let Some(index) = page_index(number) else { continue };
+            let Some(address) = PageAddress::from_mpp(number) else { continue };
+            let Some(page) = self.decoder.store().get(address, SubCode::ANY) else { continue };
             if page.state != PageState::Complete {
                 continue;
             }
-            let number = page.key.address.mpp();
-            let Some(index) = page_index(number) else { continue };
+            #[cfg(test)]
+            {
+                self.digests = self.digests.saturating_add(1);
+            }
             let digest = digest(page);
             let Some(reported) = self.reported.get_mut(index) else { continue };
             match *reported {
@@ -421,12 +469,19 @@ impl Engine {
     /// draws links itself (decision 42, the engine's decision E.88).
     #[must_use]
     pub fn render(&self, page: u16) -> Option<Rendered> {
+        self.render_at(page, self.now_us())
+    }
+
+    /// Renders `page` at the flash phase of `now_us`, on
+    /// [`Engine::now_us`]'s clock.
+    #[must_use]
+    pub fn render_at(&self, page: u16, now_us: u64) -> Option<Rendered> {
         page_index(page)?;
         #[cfg_attr(not(feature = "links"), allow(unused_variables, reason = "the sub-code finds a page's link lines"))]
         let (grid, subcode) = self.grid(page)?;
         let config = self.decoder.config();
-        let elapsed = u64::try_from(self.started.elapsed().as_micros()).unwrap_or(u64::MAX);
-        let render = RenderOptions::resolved(config, false, FlashPhase::at(Instant(elapsed))).with_underline(false);
+        let phase = FlashPhase::at(Instant(now_us));
+        let render = RenderOptions::resolved(config, false, phase).with_underline(false);
         let mut indices = vec![0_u8; PAGE_DOTS];
         let mut buffer = IndexBuffer { format: IndexFormat::Bits8, data: &mut indices, stride: usize::from(PAGE_WIDTH) };
         render_screen(&grid, ALL_ROWS, &GLYPHS, render, &mut buffer).ok()?;
@@ -436,12 +491,96 @@ impl Engine {
             let (candidates, numbers) = links::find(&grid, &palette, self.lines.get(page, subcode));
             Found { candidates, numbers }
         };
+        let flashes = grid.cells.iter().flatten().any(|cell| cell.flash);
         Some(Rendered {
             palette,
             indices,
+            flash: flashes.then_some(phase),
             #[cfg(feature = "links")]
             links,
         })
+    }
+}
+
+/// What the engine's events said changed.
+#[derive(Default)]
+struct Changes {
+    touched: BTreeSet<u16>,
+    completed: BTreeSet<u16>,
+    everything: bool,
+}
+
+impl Changes {
+    fn note(&mut self, event: &Event) {
+        match event {
+            Event::PageStarted(key) | Event::PageErased(key) | Event::UpdateIndicator(key) | Event::PageUpdated { key, .. } => {
+                self.touched.insert(key.address.mpp());
+            }
+            Event::PageCompleted(key) => {
+                self.touched.insert(key.address.mpp());
+                self.completed.insert(key.address.mpp());
+            }
+            // Data every page of a magazine, or any page, may draw from.
+            Event::MagazineData(_) | Event::EnhancementPageChanged(_) => self.everything = true,
+            _ => {}
+        }
+    }
+}
+
+/// What changed since [`Engine::take_changed`] was last called.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Changed {
+    /// The display pages whose reception moved.
+    pub pages: BTreeSet<u16>,
+    /// Every page may draw differently.
+    pub everything: bool,
+}
+
+/// The shown pages with flashing cells, each with the flash phase it was
+/// last drawn in: the decoder wakes for flash only when one of them is
+/// shown, and draws a page again only when its phase changes (requirement
+/// 9.7).
+#[derive(Debug, Default)]
+pub struct Flashing {
+    pages: BTreeMap<u16, FlashPhase>,
+}
+
+impl Flashing {
+    /// Records how `page` was last drawn.
+    pub fn drawn(&mut self, page: u16, rendered: &Rendered) {
+        match rendered.flash {
+            Some(phase) => self.pages.insert(page, phase),
+            None => self.pages.remove(&page),
+        };
+    }
+
+    /// Keeps only the pages still shown.
+    pub fn retain(&mut self, shown: &[u16]) {
+        self.pages.retain(|page, _| shown.contains(page));
+    }
+
+    /// The flashing pages whose phase at `now_us` differs from the one they
+    /// were drawn in.
+    #[must_use]
+    pub fn due(&self, now_us: u64) -> Vec<u16> {
+        let phase = FlashPhase::at(Instant(now_us));
+        self.pages.iter().filter(|&(_, &drawn)| drawn != phase).map(|(&page, _)| page).collect()
+    }
+
+    /// When the flash phase next changes, if any shown page flashes: the
+    /// start of the next of the twelve units of the one-second cycle (the
+    /// engine's decision E.48).
+    #[must_use]
+    pub fn next_us(&self, now_us: u64) -> Option<u64> {
+        if self.pages.is_empty() {
+            return None;
+        }
+        let units = u64::from(FLASH_UNITS);
+        let cycle = now_us.checked_div(FLASH_CYCLE_US).unwrap_or(0).saturating_mul(FLASH_CYCLE_US);
+        let within = now_us.saturating_sub(cycle);
+        let unit = within.saturating_mul(units).checked_div(FLASH_CYCLE_US).unwrap_or(0);
+        let next = unit.saturating_add(1).saturating_mul(FLASH_CYCLE_US).div_ceil(units);
+        Some(cycle.saturating_add(next))
     }
 }
 
@@ -791,6 +930,53 @@ LT,5,0,7,web:https://www.example.invalid/\nLK,101,https://sport.invalid/\n";
         // other page of its magazine follows.
         let arrived = engine.feed_whole(false, false, b"PN,30000\nSC,0000\nPS,8000\nOL,1,Third magazine\n");
         assert_eq!(arrived, [(0x300, "Third magazine".to_owned())]);
+    }
+
+    #[test]
+    fn a_message_reports_only_the_pages_it_touched() {
+        let mut engine = Engine::new();
+        engine.feed_whole(false, false, TTI);
+        assert_eq!(engine.take_changed().pages, BTreeSet::from([0x100, 0x101]));
+        engine.feed_whole(false, false, b"PN,10100\nSC,0000\nPS,8000\nOL,1,Sport results: 2-1\n\n");
+        let changed = engine.take_changed();
+        assert_eq!(changed.pages, BTreeSet::from([0x101]), "only the page in the message");
+        assert!(!changed.everything);
+        assert_eq!(engine.take_changed(), Changed::default(), "once each");
+    }
+
+    #[test]
+    fn arrivals_compare_only_the_pages_that_completed() {
+        // A store of many pages: one page more must not compare them all,
+        // as scanning the store on every message did (1.5 ms a message at
+        // 4,096 pages, release build, 21 October 2026).
+        const PAGES_STORED: u16 = 200;
+        let mut engine = Engine::new();
+        let numbers: Vec<u16> = (0..PAGES_STORED).map(|offset| 0x100 + offset / 10 * 0x10 + offset % 10).collect();
+        engine.feed_whole(false, false, &sample::tti(&numbers, &[]));
+        let before = engine.digests;
+        engine.feed_whole(false, false, b"PN,10100\nSC,0000\nPS,8000\nOL,1,One page more\n\n");
+        assert_eq!(engine.digests - before, 1, "only the page that completed");
+        assert_eq!(engine.take_updated(), [0x101]);
+    }
+
+    #[test]
+    fn only_a_shown_page_that_flashes_wakes_the_decoder_and_only_when_its_phase_changes() {
+        let mut engine = Engine::new();
+        engine.feed_whole(false, false, b"PN,10000\nSC,0000\nPS,8000\nOL,1,Steady\n\nPN,10100\nSC,0000\nPS,8000\nOL,1,\x1b\x48Flashing\n\n");
+        let mut flashing = Flashing::default();
+        // Unit 0 of a cycle: slow flash on (decision E.48).
+        let start = 3 * FLASH_CYCLE_US;
+        flashing.drawn(0x100, &engine.render_at(0x100, start).unwrap());
+        assert_eq!(flashing.next_us(start), None, "a steady page never wakes it");
+        flashing.drawn(0x101, &engine.render_at(0x101, start).unwrap());
+        let unit = FLASH_CYCLE_US.div_ceil(u64::from(FLASH_UNITS));
+        assert_eq!(flashing.next_us(start), Some(start + unit), "the next flash unit");
+        // Slow flash stays on until unit 9: nothing to draw before then.
+        assert_eq!(flashing.due(start + unit), [] as [u16; 0]);
+        let off = start + 9 * FLASH_CYCLE_US / u64::from(FLASH_UNITS) + 1;
+        assert_eq!(flashing.due(off), [0x101]);
+        flashing.retain(&[0x100]);
+        assert_eq!(flashing.next_us(off), None, "no longer shown");
     }
 
     #[test]
