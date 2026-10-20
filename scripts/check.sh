@@ -46,7 +46,7 @@ readonly PROTOTYPE_CRATES
 # The crates that read input from outside their process, each with the
 # same no-panic lint list at its root.
 readonly NO_PANIC_ROOTS=(native/protocol/src/lib.rs native/decoder/src/lib.rs native/decoder/src/main.rs native/fetcher/src/main.rs
-    native/core/src/lib.rs native/core/src/main.rs native/interface/src/lib.rs native/interface/src/main.rs)
+    native/core/src/lib.rs native/core/src/main.rs native/interface/src/lib.rs native/interface/src/main.rs native/web-opener/src/lib.rs)
 
 is_linux_only() {
     local crate="$1" only
@@ -82,6 +82,10 @@ check_native() {
     check_no_panic_lists
     step "native: Clippy, warnings as errors"
     (cd native && cargo clippy --quiet --workspace --all-targets -- -D warnings)
+    # Hyperlinks are a feature on by default; the browser must build without
+    # them too (hyperlinks.md).
+    step "native: Clippy with hyperlinks compiled out, warnings as errors"
+    (cd native && cargo clippy --quiet --workspace --all-targets --no-default-features -- -D warnings)
     step "native: tests"
     (cd native && cargo nextest run --workspace --hide-progress-bar --status-level fail --final-status-level fail)
 }
@@ -184,7 +188,8 @@ check_linux() {
     ssh "$linux_host" "set -e; . ~/.cargo/env; cd t42-browser-check; rustup toolchain install
         export CARGO_NET_GIT_FETCH_WITH_CLI=true GIT_CONFIG_COUNT=1
         export GIT_CONFIG_KEY_0=url.file://\$HOME/t42-browser-check-engine.git.insteadOf GIT_CONFIG_VALUE_0=$engine
-        (cd native && cargo clippy --quiet --workspace --all-targets -- -D warnings && cargo test --quiet --workspace)
+        (cd native && cargo clippy --quiet --workspace --all-targets -- -D warnings && cargo test --quiet --workspace \\
+            && cargo clippy --quiet --workspace --all-targets --no-default-features -- -D warnings)
         for crate in $linux_only; do
             cargo clippy --quiet --manifest-path \$crate/Cargo.toml --workspace --all-targets -- -D warnings
             cargo test --quiet --manifest-path \$crate/Cargo.toml --workspace
@@ -226,6 +231,8 @@ $loose"
     (cd native && cargo test --quiet --workspace --doc)
     step "native: release tests"
     (cd native && cargo nextest run --workspace --release --hide-progress-bar --status-level fail --final-status-level fail)
+    step "native: tests with hyperlinks compiled out"
+    (cd native && cargo nextest run --workspace --no-default-features --hide-progress-bar --status-level fail --final-status-level fail)
     step "native: licences, advisories and sources"
     (cd native && cargo deny check)
     step "native: no unused dependencies"
