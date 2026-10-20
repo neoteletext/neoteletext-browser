@@ -1,6 +1,6 @@
 # cargo-deny policy, run by scripts/check.sh full. Every dependency is
 # permissively licensed (design section 8), as the teletext engine's policy
-# (~/devel/neoteletext/deny.toml).
+# (~/devel/neoteletext-engine/deny.toml).
 
 [graph]
 all-features = true
@@ -47,4 +47,4 @@ unknown-registry = "deny"
 unknown-git = "deny"
 # The teletext engine, pinned to one commit of its local repository (the
 # workspace's Cargo.toml).
-allow-git = ["file:///Users/andrewstuart/devel/neoteletext"]
+allow-git = ["file:///Users/andrewstuart/devel/neoteletext-engine"]

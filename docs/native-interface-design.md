@@ -75,7 +75,7 @@ Every native prototype idled at no processor use once configured to redraw only 
 
 ### 4.0 The engine is a separate project
 
-The teletext engine, `neoteletext`, is maintained in its own repository (`~/devel/neoteletext`), not in T42 Browser's. This design does not move it, copy it or change it:
+The teletext engine, `neoteletext`, is maintained in its own repository (`~/devel/neoteletext-engine`), not in T42 Browser's. This design does not move it, copy it or change it:
 
 - **T42 Browser depends on the engine's crates by a pinned version**, never on a copy of their source. The interface core, the drawing back ends, the interface process and the trusted core are T42 Browser's own code; decoding, rendering to palette indices, the page store, fetching rules and every limit (decision 26) are the engine's.
 - **Changes the engine needs are made in the engine's repository**, by its own process, and recorded in `neoteletext/docs/t42-browser-open-questions.md` (`../prototypes/docs/architecture.md` section 5.1). T42 Browser never patches them locally.

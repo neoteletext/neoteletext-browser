@@ -4,7 +4,7 @@
 |---|---|
 | **Status** | Adopted 20 October 2026 (the architecture's decision 41), every recommendation of section 16 taken as the decision; decision 42 confirms that the only underlining is for links and that the software draws it, never the page. Phases 1 and 2 built the same day, behind the `links` feature (section 15); section 19 lists what building them changed (decision 43). |
 | **Owner's brief** | Hyperlinks shown with a blue underline in the interface, controlled by the browser; underlining must not be possible from teletext source. Links to teletext open in T42 Browser; other links offer to open in the system's web browser. |
-| **Companion documents** | [`hyperlinks-security.md`](hyperlinks-security.md) analyses this design's security; its findings are applied here (section 18). [`architecture.md`](architecture.md) (sections 9.5, 9.6 and 11), [`requirements.md`](requirements.md) (sections 4, 7, 8, 11 and 12), [`security-analysis.md`](security-analysis.md) (spoofing and the line of death). The engine's decision E.36 and its TTI Link Extension (`~/devel/neoteletext/docs/spec/requirements/tti-link-extension.md`). |
+| **Companion documents** | [`hyperlinks-security.md`](hyperlinks-security.md) analyses this design's security; its findings are applied here (section 18). [`architecture.md`](architecture.md) (sections 9.5, 9.6 and 11), [`requirements.md`](requirements.md) (sections 4, 7, 8, 11 and 12), [`security-analysis.md`](security-analysis.md) (spoofing and the line of death). The engine's decision E.36 and its TTI Link Extension (`~/devel/neoteletext-engine/docs/spec/requirements/tti-link-extension.md`). |
 
 ---
 
@@ -63,7 +63,7 @@
 
 ## 3. Where things stand
 
-**The engine** (`~/devel/neoteletext`):
+**The engine** (`~/devel/neoteletext-engine`):
 - **Underline.** Teletext's underline is the Level 2.5 and 3.5 display attribute, set by the enhancement packets (X/26): bit 6 of `CellAttributes` (`crates/neoteletext-core/src/level1.rs`, `underline()`). For G1 mosaics the same bit means "separated". The renderer draws it as the last dot line of a G0 or G2 character (`render.rs`, `styled_line`; REQ-RND-035). Nothing else sets it: TTI, edit.tf and the text writer have no underline syntax.
 - **Links.** Decision E.36 makes the Fastext coloured keys the engine's links, with the prompts in row 24 drawn by the receiver, and rejects link markers drawn by the page. Decision E.64 added two TTI lines:
   - `LK`, a page number the page shows, linked to a target;

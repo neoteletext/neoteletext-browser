@@ -5,7 +5,7 @@
 | **Status** | Proposed. Nothing in this document is implemented except where it says "prototype". |
 | **Date** | 15 October 2026 |
 | **Companion documents** | [`requirements.md`](requirements.md) states every requirement in full, numbered, with its reason and how it is verified. [`security-analysis.md`](security-analysis.md) analyses this architecture's security. |
-| **Engine documents** | The teletext engine's own design lives in `~/devel/neoteletext`: `ARCHITECTURE.md`, `docs/desktop-browser.md`, `docs/channels.md`, `docs/web-discovery-security.md`, `docs/font-security.md`. This document refers to them by path. |
+| **Engine documents** | The teletext engine's own design lives in `~/devel/neoteletext-engine`: `ARCHITECTURE.md`, `docs/desktop-browser.md`, `docs/channels.md`, `docs/web-discovery-security.md`, `docs/font-security.md`. This document refers to them by path. |
 
 **Abbreviations.** This project avoids abbreviations, because they hide meaning. Where a technical term is normally known by its initials, the full name is written out, followed by the initials in brackets only when the initials are a literal identifier in code, configuration or a standard's title. Section 18 is a glossary of every technical term used.
 
@@ -124,7 +124,7 @@ Each decision below was made by the owner on the date given. Requirements in `re
 
 ## 5. The teletext engine and what is reused
 
-The engine is `neoteletext` (`~/devel/neoteletext`), a Rust implementation of World System Teletext, European Telecommunications Standards Institute EN 300 706, Presentation Levels 1.0, 1.5, 2.5 and 3.5. Its core library is `no_std` (it does not depend on the Rust standard library) and performs no input or output of its own: it is fed bytes and returns results.
+The engine is `neoteletext` (`~/devel/neoteletext-engine`), a Rust implementation of World System Teletext, European Telecommunications Standards Institute EN 300 706, Presentation Levels 1.0, 1.5, 2.5 and 3.5. Its core library is `no_std` (it does not depend on the Rust standard library) and performs no input or output of its own: it is fed bytes and returns results.
 
 **The engine does not depend on egui.** This was checked on 15 October 2026 with `cargo tree` on every crate. Only `neoteletext-gui`, the egui application, depends on egui or any graphics toolkit.
 

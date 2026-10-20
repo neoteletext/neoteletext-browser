@@ -1,5 +1,5 @@
 [toolchain]
-# The release the teletext engine pins (~/devel/neoteletext), so both
+# The release the teletext engine pins (~/devel/neoteletext-engine), so both
 # repositories are checked by the same compiler and the same Clippy.
 channel = "1.99.0"
 components = ["clippy", "rustfmt"]
