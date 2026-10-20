@@ -399,8 +399,9 @@ impl Core {
 
     /// Starts a decoder for every awake channel that has none, giving it
     /// what the channel's last decoder was given; puts to sleep the
-    /// channels that may sleep (decision 47); and closes the decoders and
-    /// fetchers of channels no tab shows any more.
+    /// decoders of channels that may sleep (decision 47); starts a fetcher
+    /// for every open web channel; and closes the decoders and fetchers of
+    /// channels no tab shows any more.
     fn match_decoders(&mut self) -> Result<(), String> {
         let now = std::time::Instant::now();
         let active = self.active_channel();
@@ -425,17 +426,15 @@ impl Core {
             } else if !awake && self.decoders.contains_key(id) {
                 self.put_to_sleep(*id)?;
             }
-            // A web channel's pages come from its own fetcher, kept while
-            // its tab sleeps only if it holds a push connection.
-            if let Some(address) = web {
-                let wanted = awake || self.sleep.keeps_fetcher(*id);
-                if wanted && !self.fetchers.contains_key(id) {
-                    self.generation = self.generation.wrapping_add(1);
-                    let fetcher = start_fetcher(&self.fetcher_path, address, &self.allow_local, *id, self.generation, self.events.clone())?;
-                    self.fetchers.insert(*id, fetcher);
-                } else if !wanted {
-                    self.stop_fetcher(*id);
-                }
+            // A web channel's pages come from its own fetcher, which runs
+            // for as long as its tab is open, asleep or not: fetching never
+            // depends on viewing (decision 22).
+            if let Some(address) = web
+                && !self.fetchers.contains_key(id)
+            {
+                self.generation = self.generation.wrapping_add(1);
+                let fetcher = start_fetcher(&self.fetcher_path, address, &self.allow_local, *id, self.generation, self.events.clone())?;
+                self.fetchers.insert(*id, fetcher);
             }
         }
         let unused: Vec<u32> = self.decoders.keys().chain(self.fetchers.keys()).copied().filter(|id| !channels.iter().any(|(used, ..)| used == id)).collect();
@@ -534,7 +533,13 @@ impl Core {
                 }
             }
             FromFetcher::Notice(text) => eprintln!("t42-browser: channel {channel}: {}", clean(&text, MAX_NOTICE)),
-            FromFetcher::Pushing(open) => self.sleep.set_pushing(channel, open),
+            FromFetcher::Pushing(open) => {
+                self.sleep.set_pushing(channel, open);
+                // A live channel wakes at once, not at the next look.
+                if open {
+                    self.match_decoders()?;
+                }
+            }
             #[cfg(feature = "interaction")]
             FromFetcher::Input { open, secure } => {
                 let sends = self.typing.input(channel, open, secure, self.now());

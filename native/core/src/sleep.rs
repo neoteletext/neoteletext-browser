@@ -1,12 +1,14 @@
-//! Sleeping tabs (decision 47), as other browsers put background tabs to
-//! sleep: a channel's decoder, and its fetcher unless the fetcher holds a
-//! push connection, run only while its tab is awake. A tab is awake while
-//! it is the active one, while its sound plays, and for [`SLEEP_AFTER`]
-//! after it was last shown; a tab restored with a session and never shown
-//! sleeps from the start. What the trusted core gave a channel's decoder
-//! is kept, and given to a new decoder when the tab wakes, so its pages are
-//! there at once. A decoder at rest takes 16 MB (measured 21 October
-//! 2026); the bytes kept of a channel are a few hundred kilobytes.
+//! Sleeping tabs (decision 47). Teletext is mostly pushed: a tab whose
+//! channel holds a push connection is live, and never sleeps. A tab with
+//! nothing live (a static channel already fetched, or a file) has its
+//! decoder closed while it sleeps; its fetcher is never closed or paused,
+//! since fetching never depends on viewing (decision 22). A tab is awake
+//! while it is the active one, while its channel holds a push connection,
+//! while its sound plays, and for [`SLEEP_AFTER`] after it was last shown;
+//! a tab restored with a session, never shown and with nothing live, sleeps
+//! from the start. What the trusted core gave a channel's decoder is kept,
+//! and given to a new decoder when the tab wakes, so its pages are there at
+//! once. A decoder at rest takes 6.2 MB (measured 21 October 2026).
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::time::{Duration, Instant};
@@ -90,18 +92,12 @@ impl Sleep {
         }
     }
 
-    /// Whether the channel's fetcher must keep running while its tab
-    /// sleeps: it holds a push connection, whose pages are kept.
-    #[must_use]
-    pub fn keeps_fetcher(&self, channel: u32) -> bool {
-        self.pushing.contains(&channel)
-    }
-
     /// Whether the channel's tab is awake at `now`, `active` being the
     /// active tab's channel.
     #[must_use]
     pub fn awake(&self, channel: u32, active: Option<u32>, now: Instant) -> bool {
         active == Some(channel)
+            || self.pushing.contains(&channel)
             || self.sounding.contains(&channel)
             || self.kept.get(&channel).is_some_and(|kept| kept.overflowed)
             || self.seen.get(&channel).is_some_and(|&seen| now.saturating_duration_since(seen) < SLEEP_AFTER)
@@ -155,12 +151,12 @@ mod tests {
     }
 
     #[test]
-    fn a_fetcher_holding_a_push_connection_is_kept() {
+    fn a_tab_whose_channel_pushes_never_sleeps() {
+        let start = Instant::now();
         let mut sleep = Sleep::default();
-        assert!(!sleep.keeps_fetcher(4));
         sleep.set_pushing(4, true);
-        assert!(sleep.keeps_fetcher(4));
+        assert!(sleep.awake(4, None, start + SLEEP_AFTER * 10), "it is live");
         sleep.set_pushing(4, false);
-        assert!(!sleep.keeps_fetcher(4));
+        assert!(!sleep.awake(4, None, start));
     }
 }
