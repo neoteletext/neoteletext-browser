@@ -6,7 +6,9 @@
 //! The mixers are shared between the thread that reads the trusted core and
 //! the device's audio thread behind a mutex. The reader holds it only to
 //! apply one operation; the audio thread holds it only to render one
-//! buffer, which never allocates or frees.
+//! buffer, which never allocates or frees. The longest an operation holds
+//! it is defining the largest sound, 0.37 ms on 21 October 2026, against
+//! a device buffer of about 10 ms.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::atomic::{AtomicU16, Ordering};
@@ -48,11 +50,15 @@ impl Mixers {
     }
 
     /// Renders the sum of every channel into `out`, using `scratch`, as long
-    /// as `out`, for each. It never allocates or frees.
+    /// as `out`, for each. It never allocates or frees. A channel with
+    /// nothing playing or about to is silent and is not rendered: a mixer
+    /// costs its work for every sample whether or not it sounds, so a few
+    /// hundred tabs that once played a sound would otherwise take a whole
+    /// processor core on the audio thread.
     fn render(&mut self, out: &mut [i16], scratch: &mut [i16]) {
         out.fill(0);
         let Some(scratch) = scratch.get_mut(..out.len()) else { return };
-        for mixer in self.channels.values_mut() {
+        for mixer in self.channels.values_mut().filter(|mixer| mixer.active()) {
             mixer.render(scratch);
             for (sum, &sample) in out.iter_mut().zip(scratch.iter()) {
                 *sum = sum.saturating_add(sample);
@@ -218,6 +224,31 @@ mod tests {
         let expected = f32::from_i16(8_000);
         assert!((data[700] - expected).abs() < 0.01, "{} against {expected}", data[700]);
         assert_eq!(data[700].to_bits(), data[701].to_bits(), "both channels alike");
+    }
+
+    #[test]
+    fn silent_channels_cost_the_audio_thread_nothing() {
+        // Tabs that once had a sound and now play none: each mixer rendered
+        // anyway cost 2 ms of processor time a second of audio (release
+        // build, 21 October 2026), so these 500 took a whole core, and many
+        // times that in a debug build.
+        const TABS: u32 = 500;
+        const RATE: u32 = 48_000;
+        const PIECE: usize = 512;
+        const BUDGET: std::time::Duration = std::time::Duration::from_millis(100);
+        let mixers = Mutex::new(Mixers::new(RATE));
+        for channel in 0..TABS {
+            apply(&mixers, channel, Audio::Define { sound: SOUND, rate_hz: RATE, samples: 1 });
+        }
+        let mut data = vec![0_i16; PIECE];
+        let mut scratch = vec![0_i16; 2 * PIECE];
+        let started = std::time::Instant::now();
+        for _ in 0..usize::try_from(RATE).unwrap() / PIECE {
+            render(&mixers, &mut data, 1, &mut scratch);
+        }
+        let spent = started.elapsed();
+        assert!(spent < BUDGET, "a second of audio took {spent:?} for {TABS} silent channels");
+        assert!(data.iter().all(|&sample| sample == 0));
     }
 
     #[test]
