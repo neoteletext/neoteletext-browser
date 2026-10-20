@@ -356,7 +356,7 @@
 - **State:** Not met: the site-change screen is not built.
 
 ### Requirement 5.14: No referrer and a minimal user agent
-- **Statement:** The fetcher must send no `Referer` header and only the engine's minimal user agent profile. Its `User-Agent` must name NeoTeletext, its version and its platform, as the engine's REQ-WEB-031 defines: `NeoTeletext/<version> (<operating system family>; <architecture>) neoteletext/<version>`, for example `NeoTeletext/0.1.0 (macOS; arm64) neoteletext/0.1.0`, with no version of the operating system and nothing about the person or the computer; on every request and on the push WebSocket's upgrade.
+- **Statement:** The fetcher must send no `Referer` header and only the engine's minimal user agent profile. Its `User-Agent` must be `NeoTeletext/<significant version> (<operating system family>)`, as the engine's REQ-WEB-031 defines, for example `NeoTeletext/0.1 (macOS)`: honest, the version that changes compatibility only, the operating system's family and nothing more (no version of it, no architecture, nothing about the person or the computer), the same for every user of a build; on every request and on the push WebSocket's upgrade.
 - **Reason:** Requests must reveal as little as possible about the user; a channel needs to know which receiver it serves, as a web site does.
 - **Source:** Architecture; the owner's instruction of 21 October 2026 (decision 47); the engine's decision E.99.
 - **Verification:** Test: inspect requests and the upgrade received by a test server.
