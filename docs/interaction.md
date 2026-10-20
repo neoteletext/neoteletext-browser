@@ -271,7 +271,7 @@ The channel-as-screen use of qrkeyboard needs nothing built.
 
 ## 17. What building changed
 
-Built on 20 October 2026, all three phases, in the engine (its decisions E.90 to E.94) and here (decision 45). Where the build departs from sections 1 to 16, this section is the design:
+Built on 20 October 2026, all three phases, in the engine (its decisions E.90 to E.94) and here (decision 45). Where the build departs from sections 1 to 16, this section is the design. The owner confirmed every item on 21 October 2026 (decision 46):
 
 1. **The cursor record is on data channel 12, not 13.** EN 300 708 Table 16 gives data channel 13 to Datavideo. The record is type 4 of the audio profile's frame on the profile's own channel 12, always one fragment, which the audio receiver steps over (engine decision E.91).
 2. **`input` sits in the descriptor's `push` object:** `"push": { "address": …, "method": "websocket", "input": true }`, refused with server-sent events (E.92).
