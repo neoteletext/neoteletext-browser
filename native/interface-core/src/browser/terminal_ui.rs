@@ -372,6 +372,30 @@ mod tests {
         assert!(browser.terminal.echoes.is_empty());
     }
 
+    /// `interaction.md` section 5: on a channel that takes input a plain
+    /// click is the host's, and the browser's modifier makes it the
+    /// browser's, to follow a link.
+    #[test]
+    fn a_plain_click_is_the_hosts_and_the_browsers_modifier_keeps_it() {
+        let mut browser = browser();
+        browser.set_typing(typing(None, 0), 0);
+        let (_, page) = browser.wall.open().unwrap();
+        let mut canvas = Recorder::new();
+        // The middle of column 10, row 5.
+        let x = page.x0 + page.width() * (10.5 / 40.0);
+        let y = page.y0 + page.height() * (5.5 / 25.0);
+        browser.pointer_moved(x, y, 10_000);
+        browser.pointer_pressed(&mut canvas, false, 10_000);
+        let outputs = browser.take_outputs();
+        assert_eq!(terminal(&outputs).iter().map(|record| record.event).collect::<Vec<_>>(), [Event::Click { column: 10, row: 5 }]);
+        assert!(!outputs.iter().any(|output| matches!(output, Output::Cell(_))));
+        browser.set_browser_modifier(true);
+        browser.pointer_pressed(&mut canvas, false, 10_000);
+        let outputs = browser.take_outputs();
+        assert!(outputs.iter().any(|output| matches!(output, Output::Cell(_))), "a link's click");
+        assert_eq!(terminal(&outputs).len(), 0);
+    }
+
     #[test]
     fn long_text_goes_in_pieces_of_32_bytes() {
         let mut browser = browser();

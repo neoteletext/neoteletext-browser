@@ -191,12 +191,72 @@ const NOTE_PEAK: f64 = 8_000.0;
 const NOTE_DECAY: f64 = 6.0;
 /// The handles the notes take: 1 to 8.
 const FIRST_HANDLE: u8 = 1;
+/// The game's sounds: a shot, a hit, a win and a loss, after the notes.
+const FIRE_HANDLE: u8 = 9;
+const HIT_HANDLE: u8 = 10;
+const WIN_HANDLE: u8 = 11;
+const LOSE_HANDLE: u8 = 12;
+/// A shot sweeps down from this pitch to this one, in hertz.
+const FIRE_FROM_HZ: f64 = 1_400.0;
+const FIRE_TO_HZ: f64 = 300.0;
+const FIRE_SAMPLES: u32 = 1_200;
+/// A hit is noise, a quarter of a second.
+const HIT_SAMPLES: u32 = 2_000;
+/// A win rises C E G C; a loss falls G E C, each note this long.
+const TUNE_NOTE_SAMPLES: u32 = 1_000;
+const WIN_TUNE: [f64; 4] = [523.25, 659.25, 783.99, 1_046.50];
+const LOSE_TUNE: [f64; 3] = [392.00, 329.63, 196.00];
 /// The audio profile's four channels (REQ-AUD-010).
 const AUDIO_CHANNELS: u8 = 4;
 const NOTE_GAIN: u8 = 80;
 const NOTE_FADE_MS: u16 = 5;
 /// The audio service the channel's sounds are on.
 const AUDIO_SERVICE: u8 = 0;
+
+/// A shot: a sine sweeping down, fading out.
+#[allow(clippy::cast_possible_truncation, reason = "the peak is a quarter of the samples' range")]
+fn fire_sound() -> Vec<i16> {
+    let mut phase = 0.0_f64;
+    (0..FIRE_SAMPLES)
+        .map(|index| {
+            let share = f64::from(index) / f64::from(FIRE_SAMPLES);
+            let frequency = FIRE_FROM_HZ + (FIRE_TO_HZ - FIRE_FROM_HZ) * share;
+            phase += 2.0 * std::f64::consts::PI * frequency / f64::from(NOTE_RATE);
+            (phase.sin() * NOTE_PEAK * (1.0 - share)).round() as i16
+        })
+        .collect()
+}
+
+/// A hit: noise from a linear congruential generator (Numerical Recipes'
+/// constants), fading out.
+#[allow(clippy::cast_possible_truncation, reason = "the peak is a quarter of the samples' range")]
+fn hit_sound() -> Vec<i16> {
+    const MULTIPLIER: u32 = 1_664_525;
+    const INCREMENT: u32 = 1_013_904_223;
+    let mut state = 1_u32;
+    (0..HIT_SAMPLES)
+        .map(|index| {
+            state = state.wrapping_mul(MULTIPLIER).wrapping_add(INCREMENT);
+            let noise = f64::from(state >> 16) / f64::from(u16::MAX) * 2.0 - 1.0;
+            (noise * NOTE_PEAK * (1.0 - f64::from(index) / f64::from(HIT_SAMPLES))).round() as i16
+        })
+        .collect()
+}
+
+/// A short tune: each note a sine that fades.
+#[allow(clippy::cast_possible_truncation, reason = "the peak is a quarter of the samples' range")]
+fn tune(notes: &[f64]) -> Vec<i16> {
+    notes
+        .iter()
+        .flat_map(|frequency| {
+            (0..TUNE_NOTE_SAMPLES).map(move |index| {
+                let time = f64::from(index) / f64::from(NOTE_RATE);
+                let fade = 1.0 - f64::from(index) / f64::from(TUNE_NOTE_SAMPLES);
+                ((2.0 * std::f64::consts::PI * frequency * time).sin() * NOTE_PEAK * fade).round() as i16
+            })
+        })
+        .collect()
+}
 
 /// One note's samples: a sine with an exponential decay.
 #[allow(clippy::cast_possible_truncation, reason = "the peak is a quarter of the samples' range")]
@@ -221,6 +281,15 @@ const INVADER_SPACING: i32 = 4;
 /// The invaders step sideways every few frames, and down at each edge.
 const INVADER_PERIOD: u32 = 4;
 
+/// What happened in one frame of the game.
+#[derive(Default)]
+struct Happened {
+    /// A shot hit an invader.
+    hit: bool,
+    /// The game ended in this frame: won, or lost.
+    over: Option<bool>,
+}
+
 struct Invaders {
     alive: Vec<(i32, i32)>,
     offset: i32,
@@ -241,9 +310,11 @@ impl Invaders {
         Self { alive, offset: 2, direction: 1, drop: 0, ship: 19, shots: Vec::new(), left: false, right: false, score: 0, frames: 0, over: None }
     }
 
-    fn tick(&mut self) {
+    /// One frame of the game: what happened in it, for its sounds.
+    fn tick(&mut self) -> Happened {
+        let mut happened = Happened::default();
         if self.over.is_some() {
-            return;
+            return happened;
         }
         self.frames += 1;
         if self.left {
@@ -263,6 +334,7 @@ impl Invaders {
                 self.alive.remove(position);
                 hit.push(index);
                 self.score += 10;
+                happened.hit = true;
             }
         }
         for index in hit.into_iter().rev() {
@@ -285,6 +357,8 @@ impl Invaders {
         } else if self.alive.iter().any(|&(_, y)| INVADER_TOP + y + self.drop >= SHIP_ROW) {
             self.over = Some(false);
         }
+        happened.over = self.over;
+        happened
     }
 
     fn page(&self, acked: u16) -> Page {
@@ -580,7 +654,7 @@ impl Session {
             }
             Event::Up(press) => self.up(press),
         }
-        if self.page == 0x400 && !self.sounds_sent {
+        if matches!(self.page, 0x300 | 0x400) && !self.sounds_sent {
             self.sounds_sent = true;
             pushes.splice(0..0, self.sounds());
         }
@@ -606,8 +680,9 @@ impl Session {
                 self.invaders.ship = (self.invaders.ship + 1).min(FIELD_RIGHT - 2);
             }
             (0x300, _, Some(' ')) if press.modifiers & key::REPEAT == 0 => {
-                if self.invaders.shots.len() < 3 {
+                if self.invaders.shots.len() < 3 && self.invaders.over.is_none() {
                     self.invaders.shots.push((self.invaders.ship + 1, SHIP_ROW - 1));
+                    return vec![self.play(FIRE_HANDLE)];
                 }
             }
             (0x300, Some("Enter"), _) if self.invaders.over.is_some() => self.invaders = Invaders::new(),
@@ -618,7 +693,7 @@ impl Session {
                     && press.modifiers & key::REPEAT == 0
                 {
                     self.piano = Some(index);
-                    return vec![self.play(index)];
+                    return vec![self.play(FIRST_HANDLE + u8::try_from(index).unwrap_or(0))];
                 }
                 if let Some(character) = character {
                     self.select(character);
@@ -667,14 +742,15 @@ impl Session {
         }
     }
 
-    /// Every note's sound, as packets, one message a note.
+    /// Every sound of the channel, as packets, one message a sound: the
+    /// piano's notes and the game's effects.
     fn sounds(&mut self) -> Vec<Push> {
-        PIANO
-            .iter()
-            .enumerate()
-            .filter_map(|(index, (_, _, frequency))| {
-                let handle = FIRST_HANDLE + u8::try_from(index).ok()?;
-                let sound = Sound::new(handle, 1, Codec::ImaAdpcm, NOTE_RATE, NOTE_BLOCK, &note(*frequency)).ok()?;
+        let notes = PIANO.iter().enumerate().filter_map(|(index, (_, _, frequency))| Some((FIRST_HANDLE + u8::try_from(index).ok()?, note(*frequency))));
+        let effects = [(FIRE_HANDLE, fire_sound()), (HIT_HANDLE, hit_sound()), (WIN_HANDLE, tune(&WIN_TUNE)), (LOSE_HANDLE, tune(&LOSE_TUNE))];
+        let all: Vec<(u8, Vec<i16>)> = notes.chain(effects).collect();
+        all.into_iter()
+            .filter_map(|(handle, pcm)| {
+                let sound = Sound::new(handle, 1, Codec::ImaAdpcm, NOTE_RATE, NOTE_BLOCK, &pcm).ok()?;
                 let mut records = vec![sound.object_record().ok()?];
                 records.extend(sound.data_records());
                 let (packets, next) = packets(AUDIO_SERVICE, self.record_id, &records);
@@ -684,13 +760,12 @@ impl Session {
             .collect()
     }
 
-    /// The command that plays a note, on the next of the four channels.
-    fn play(&mut self, index: usize) -> Push {
+    /// The command that plays a sound, on the next of the four channels.
+    fn play(&mut self, handle: u8) -> Push {
         let channel = self.next_channel;
         self.next_channel = (self.next_channel + 1) % AUDIO_CHANNELS;
         let sequence = &mut self.audio_sequence[usize::from(channel)];
         *sequence = sequence.wrapping_add(1);
-        let handle = FIRST_HANDLE + u8::try_from(index).unwrap_or(0);
         let command = Command {
             channel,
             sequence: *sequence,
@@ -706,6 +781,22 @@ impl Session {
         let (packets, next) = packets(AUDIO_SERVICE, self.record_id, &[command.record()]);
         self.record_id = next;
         Push::Packets(packets.iter().flat_map(|packet| packet.bytes).collect())
+    }
+
+    /// One frame of the game: its sounds, then its page.
+    fn frame(&mut self) -> Vec<Push> {
+        let happened = self.invaders.tick();
+        let mut pushes = Vec::new();
+        if happened.hit {
+            pushes.push(self.play(HIT_HANDLE));
+        }
+        match happened.over {
+            Some(true) => pushes.push(self.play(WIN_HANDLE)),
+            Some(false) => pushes.push(self.play(LOSE_HANDLE)),
+            None => {}
+        }
+        pushes.push(Push::Page(self.render().tti()));
+        pushes
     }
 
     fn start_phone(&mut self) {
@@ -874,8 +965,9 @@ fn session(mut stream: TcpStream, relay: Option<String>) -> io::Result<()> {
         }
         if session.page == 0x300 && last_frame.elapsed() >= FRAME {
             last_frame = Instant::now();
-            session.invaders.tick();
-            send(&mut stream, Push::Page(session.render().tti()))?;
+            for push in session.frame() {
+                send(&mut stream, push)?;
+            }
         }
     }
 }
@@ -1025,7 +1117,7 @@ mod tests {
         let mut session = Session::new(None);
         let pushes = feed(&mut session, &[Event::Page(Some(0x400))]);
         let sounds = pushes.iter().filter(|push| matches!(push, Push::Packets(bytes) if !bytes.is_empty() && bytes.len() % 42 == 0)).count();
-        assert_eq!(sounds, PIANO.len());
+        assert_eq!(sounds, PIANO.len() + 4, "the notes and the game's four sounds");
         let pushes = feed(&mut session, &[Event::Down(Press { key: u16::from(b'a'), modifiers: 0, physical: neoteletext_input::names::physical_key("KeyA") })]);
         assert!(matches!(pushes.first(), Some(Push::Packets(bytes)) if bytes.len() == 42), "one command, one packet");
         assert_eq!(session.piano, Some(0));
@@ -1057,6 +1149,23 @@ mod tests {
         session.invaders.tick();
         assert_eq!(session.invaders.ship, start - 3, "and held, each frame");
         assert!(session.render().tti().contains("CU,255,0,0,0,"));
+    }
+
+    #[test]
+    fn the_game_sounds_a_shot_and_a_hit() {
+        let mut session = Session::new(None);
+        let opened = feed(&mut session, &[Event::Page(Some(0x300))]);
+        assert_eq!(opened.iter().filter(|push| matches!(push, Push::Packets(_))).count(), PIANO.len() + 4, "its sounds first");
+        let fired = feed(&mut session, &[Event::Down(Press { key: u16::from(b' '), modifiers: 0, physical: 0 })]);
+        assert!(matches!(fired.first(), Some(Push::Packets(bytes)) if bytes.len() == 42), "the shot's command");
+        // A shot one row below the bottom row's first invader hits it next frame.
+        session.invaders.shots.clear();
+        let (x, y) = *session.invaders.alive.last().unwrap();
+        let (offset, drop) = (session.invaders.offset, session.invaders.drop);
+        session.invaders.shots.push((x + offset + 1, INVADER_TOP + y + drop + 1));
+        let frame = session.frame();
+        assert!(matches!(frame.first(), Some(Push::Packets(bytes)) if bytes.len() == 42), "a hit sounds");
+        assert_eq!(session.invaders.score, 10);
     }
 
     #[test]
