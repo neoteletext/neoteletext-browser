@@ -138,7 +138,7 @@ Each decision was made by the owner on the date given. Requirements in `requirem
 
 The engine is `neoteletext` (`~/devel/neoteletext-engine`), a Rust implementation of World System Teletext, EN 300 706, Presentation Levels 1.0, 1.5, 2.5 and 3.5, less what the owner removed on 20 October 2026: dynamically redefinable characters (DRCS) are not decoded, and the Level 3.5 font styles (bold, italic and proportional spacing) are not drawn (its decisions E.95 and E.96). Its core is `no_std` (it does not depend on the Rust standard library) and performs no input or output of its own: it is fed bytes and returns results.
 
-**It is a separate project** (decision 36). T42 Browser depends on its crates at one pinned commit, `afe5f44`, through a `git` source in the engine's local repository, because that commit is not yet published; Cargo reads the commit, never the engine's working tree. When the commit is published, the source becomes the engine's own repository address at the same commit. Changes the engine needs are made in the engine's repository by its own process, never patched here.
+**It is a separate project** (decision 36). T42 Browser depends on its crates at one pinned commit, `88d09b1`, through a `git` source in the engine's local repository, because that commit is not yet published; Cargo reads the commit, never the engine's working tree. When the commit is published, the source becomes the engine's own repository address at the same commit. Changes the engine needs are made in the engine's repository by its own process, never patched here.
 
 | Crate | What it does | Used by T42 Browser |
 |---|---|---|
