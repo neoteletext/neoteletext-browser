@@ -22,6 +22,10 @@
 pub mod audio;
 pub mod decoder;
 pub mod fetcher;
+#[cfg(feature = "interaction")]
+pub mod interaction;
+#[cfg(feature = "phone-keyboard")]
+pub mod keyboard;
 #[cfg(feature = "links")]
 pub mod links;
 
@@ -70,6 +74,12 @@ const KIND_CHANNEL: u8 = 6;
 const KIND_PAGE: u8 = 8;
 const KIND_UPDATED: u8 = 9;
 const KIND_AUDIO: u8 = 10;
+#[cfg(feature = "interaction")]
+const KIND_TYPING: u8 = 40;
+#[cfg(feature = "phone-keyboard")]
+const KIND_PHONE: u8 = 41;
+#[cfg(feature = "phone-keyboard")]
+const KIND_PHONE_KEY: u8 = 42;
 // Interface to trusted core: intents.
 const KIND_VISIBLE: u8 = 16;
 const KIND_CELL: u8 = 17;
@@ -83,8 +93,14 @@ const KIND_MUTE_ALL: u8 = 23;
 const KIND_POINT: u8 = 24;
 #[cfg(feature = "links")]
 const KIND_TYPED: u8 = 25;
-#[cfg(feature = "links")]
+#[cfg(any(feature = "links", feature = "interaction"))]
 const KIND_FOCUSED: u8 = 26;
+#[cfg(feature = "interaction")]
+const KIND_KEY: u8 = 27;
+#[cfg(feature = "phone-keyboard")]
+const KIND_PHONE_PANEL: u8 = 28;
+#[cfg(feature = "phone-keyboard")]
+const KIND_PHONE_FINISH: u8 = 29;
 // Interface to trusted core: strip input, kinds of their own
 // (`architecture.md` section 6.4).
 const KIND_NAVIGATE: u8 = 32;
@@ -160,6 +176,16 @@ pub enum ToInterface {
     /// About hyperlinks (`hyperlinks.md` section 8.1).
     #[cfg(feature = "links")]
     Link(links::Message),
+    /// Whether keys go to the open page's channel, and its cursor
+    /// (`interaction.md` section 11).
+    #[cfg(feature = "interaction")]
+    Typing(interaction::Typing),
+    /// The phone keyboard's panel and state (`interaction.md` section 9).
+    #[cfg(feature = "phone-keyboard")]
+    Phone(keyboard::PhoneView),
+    /// A key of the paired phone, which the interface takes as its own.
+    #[cfg(feature = "phone-keyboard")]
+    PhoneKey(keyboard::PhoneKey),
     /// The browser is closing: the interface ends.
     Close,
 }
@@ -209,8 +235,18 @@ pub enum ToCore {
         opened: Option<(PageKey, u32)>,
     },
     /// The window gained or lost the keyboard focus.
-    #[cfg(feature = "links")]
+    #[cfg(any(feature = "links", feature = "interaction"))]
     Focused(bool),
+    /// A key, text or a click on the open page, for its channel if it
+    /// takes input (`interaction.md` section 5).
+    #[cfg(feature = "interaction")]
+    Key(interaction::KeyIntent),
+    /// Strip input: open the phone keyboard's panel, or close it.
+    #[cfg(feature = "phone-keyboard")]
+    PhonePanel(bool),
+    /// Strip input: end the phone keyboard's session.
+    #[cfg(feature = "phone-keyboard")]
+    PhoneFinish,
     /// Strip input: an address typed into the trusted strip.
     Navigate(String),
     /// Strip input: go back in the tab's history.
@@ -498,6 +534,21 @@ pub fn write_to_interface(out: &mut dyn Write, message: &ToInterface) -> Result<
         }
         #[cfg(feature = "links")]
         ToInterface::Link(message) => links::push_message(&mut payload, message)?,
+        #[cfg(feature = "interaction")]
+        ToInterface::Typing(typing) => {
+            interaction::push_typing(&mut payload, typing)?;
+            KIND_TYPING
+        }
+        #[cfg(feature = "phone-keyboard")]
+        ToInterface::Phone(view) => {
+            keyboard::push_view(&mut payload, view)?;
+            KIND_PHONE
+        }
+        #[cfg(feature = "phone-keyboard")]
+        ToInterface::PhoneKey(key) => {
+            keyboard::push_phone_key(&mut payload, key)?;
+            KIND_PHONE_KEY
+        }
         ToInterface::Close => KIND_CLOSE,
     };
     write_frame(out, kind, &payload)
@@ -596,6 +647,12 @@ pub fn read_from_core(input: &mut dyn Read) -> Result<Option<ToInterface>, Proto
         KIND_AUDIO => ToInterface::Audio { channel: fields.u32()?, audio: audio::read(&mut fields, audio::Sender::Core)? },
         #[cfg(feature = "links")]
         kind if links::is_message(kind) => ToInterface::Link(links::read_message(kind, &mut fields)?),
+        #[cfg(feature = "interaction")]
+        KIND_TYPING => ToInterface::Typing(interaction::read_typing(&mut fields)?),
+        #[cfg(feature = "phone-keyboard")]
+        KIND_PHONE => ToInterface::Phone(keyboard::read_view(&mut fields)?),
+        #[cfg(feature = "phone-keyboard")]
+        KIND_PHONE_KEY => ToInterface::PhoneKey(keyboard::read_phone_key(&mut fields)?),
         KIND_CLOSE => ToInterface::Close,
         other => return Err(ProtocolError::UnknownKind(other)),
     };
@@ -665,11 +722,23 @@ pub fn write_to_core(out: &mut dyn Write, message: &ToCore) -> Result<(), Protoc
             }
             KIND_TYPED
         }
-        #[cfg(feature = "links")]
+        #[cfg(any(feature = "links", feature = "interaction"))]
         ToCore::Focused(focused) => {
             payload.push(u8::from(*focused));
             KIND_FOCUSED
         }
+        #[cfg(feature = "interaction")]
+        ToCore::Key(intent) => {
+            interaction::push_key(&mut payload, intent)?;
+            KIND_KEY
+        }
+        #[cfg(feature = "phone-keyboard")]
+        ToCore::PhonePanel(open) => {
+            payload.push(u8::from(*open));
+            KIND_PHONE_PANEL
+        }
+        #[cfg(feature = "phone-keyboard")]
+        ToCore::PhoneFinish => KIND_PHONE_FINISH,
         #[cfg(feature = "links")]
         ToCore::Confirm(id) => {
             payload.extend_from_slice(&id.to_be_bytes());
@@ -729,7 +798,17 @@ pub fn read_from_interface(input: &mut dyn Read) -> Result<Option<ToCore>, Proto
             let opened = if fields.bytes.is_empty() { None } else { Some((fields.key()?, fields.u32()?)) };
             ToCore::Typed { number, opened }
         }
-        #[cfg(feature = "links")]
+        #[cfg(feature = "interaction")]
+        KIND_KEY => ToCore::Key(interaction::read_key(&mut fields)?),
+        #[cfg(feature = "phone-keyboard")]
+        KIND_PHONE_PANEL => ToCore::PhonePanel(match fields.u8()? {
+            0 => false,
+            1 => true,
+            _ => return Err(ProtocolError::BadValue("phone panel")),
+        }),
+        #[cfg(feature = "phone-keyboard")]
+        KIND_PHONE_FINISH => ToCore::PhoneFinish,
+        #[cfg(any(feature = "links", feature = "interaction"))]
         KIND_FOCUSED => ToCore::Focused(match fields.u8()? {
             0 => false,
             1 => true,
@@ -862,7 +941,12 @@ mod tests {
             let bytes = [kind, 0, 0, 0, 0];
             assert!(matches!(read_from_core(&mut bytes.as_slice()), Err(ProtocolError::UnknownKind(refused)) if refused == kind));
         }
-        for kind in [24, 25, 26, 36, 37] {
+        #[cfg(not(feature = "interaction"))]
+        for kind in [26, 27] {
+            let bytes = [kind, 0, 0, 0, 0];
+            assert!(matches!(read_from_interface(&mut bytes.as_slice()), Err(ProtocolError::UnknownKind(refused)) if refused == kind));
+        }
+        for kind in [24, 25, 36, 37] {
             let bytes = [kind, 0, 0, 0, 0];
             assert!(matches!(read_from_interface(&mut bytes.as_slice()), Err(ProtocolError::UnknownKind(refused)) if refused == kind));
         }

@@ -22,15 +22,25 @@ const KIND_PAGE: u8 = 81;
 const KIND_NOTICE: u8 = 82;
 #[cfg(feature = "links")]
 const KIND_LINKS: u8 = 83;
+#[cfg(feature = "interaction")]
+const KIND_INPUT: u8 = 84;
+#[cfg(feature = "interaction")]
+const KIND_SEND: u8 = 96;
 
 const ENTRY_SECTION: u8 = 1;
 const ENTRY_PAGE: u8 = 2;
 
-/// Where page bytes came from, and so how the decoder reads them.
+/// Where page bytes came from, and so how the decoder reads them. Each
+/// is whole: a page file, a bundle or one pushed message.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Origin {
-    /// Fetched, in the channel's order: a page file of any format.
+    /// Fetched, of a format the decoder detects (`text/plain`, or no
+    /// media type the engine names).
     Fetched,
+    /// Fetched as TTI.
+    FetchedPage,
+    /// Fetched as T42 packets.
+    FetchedPackets,
     /// A WebSocket text message or a server-sent event: one TTI page,
     /// whole (the engine's REQ-WEB-005).
     PushedPage,
@@ -41,6 +51,8 @@ pub enum Origin {
 const ORIGIN_FETCHED: u8 = 0;
 const ORIGIN_PUSHED_PAGE: u8 = 1;
 const ORIGIN_PUSHED_PACKETS: u8 = 2;
+const ORIGIN_FETCHED_PAGE: u8 = 3;
+const ORIGIN_FETCHED_PACKETS: u8 = 4;
 
 /// One entry of a channel's contents file, in its order.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -80,6 +92,49 @@ pub enum FromFetcher {
         /// Its named services.
         services: Vec<crate::links::Service>,
     },
+    /// The channel's push WebSocket opened or closed, when its descriptor
+    /// says it takes input (`interaction.md` section 5): keys may go now,
+    /// and whether they go encrypted.
+    #[cfg(feature = "interaction")]
+    Input {
+        /// The socket is open.
+        open: bool,
+        /// It is `wss`.
+        secure: bool,
+    },
+}
+
+/// From the trusted core to a fetcher: the only thing a fetcher takes
+/// (requirement 4.7 and its one exception, 18.4).
+#[cfg(feature = "interaction")]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ToFetcher {
+    /// One key record for the channel's push WebSocket, at most 46 bytes,
+    /// checked by the engine's reader on both sides.
+    Send(Vec<u8>),
+}
+
+/// # Errors
+/// When writing fails or the record is not a key record.
+#[cfg(feature = "interaction")]
+pub fn write_to_fetcher(out: &mut dyn Write, message: &ToFetcher) -> Result<(), ProtocolError> {
+    let ToFetcher::Send(record) = message;
+    crate::interaction::check_record(record)?;
+    write_frame(out, KIND_SEND, record)
+}
+
+/// Reads one message from the trusted core, or `None` at a clean end.
+///
+/// # Errors
+/// On input errors, any other kind, and anything but a key record.
+#[cfg(feature = "interaction")]
+pub fn read_to_fetcher(input: &mut dyn Read) -> Result<Option<ToFetcher>, ProtocolError> {
+    let Some((kind, payload)) = read_frame(input)? else { return Ok(None) };
+    if kind != KIND_SEND {
+        return Err(ProtocolError::UnknownKind(kind));
+    }
+    crate::interaction::check_record(&payload)?;
+    Ok(Some(ToFetcher::Send(payload)))
 }
 
 fn raw_text(fields: &mut Fields<'_>, limit: usize) -> Result<String, ProtocolError> {
@@ -121,6 +176,8 @@ pub fn write_to_core(out: &mut dyn Write, message: &FromFetcher) -> Result<(), P
             }
             payload.push(match origin {
                 Origin::Fetched => ORIGIN_FETCHED,
+                Origin::FetchedPage => ORIGIN_FETCHED_PAGE,
+                Origin::FetchedPackets => ORIGIN_FETCHED_PACKETS,
                 Origin::PushedPage => ORIGIN_PUSHED_PAGE,
                 Origin::PushedPackets => ORIGIN_PUSHED_PACKETS,
             });
@@ -135,6 +192,11 @@ pub fn write_to_core(out: &mut dyn Write, message: &FromFetcher) -> Result<(), P
         FromFetcher::Links { aliases, services } => {
             crate::links::push_channel_links(&mut payload, aliases, services)?;
             KIND_LINKS
+        }
+        #[cfg(feature = "interaction")]
+        FromFetcher::Input { open, secure } => {
+            payload.push(u8::from(*open) | (u8::from(*secure) << 1));
+            KIND_INPUT
         }
     };
     write_frame(out, kind, &payload)
@@ -170,6 +232,8 @@ pub fn read_from_fetcher(input: &mut dyn Read) -> Result<Option<FromFetcher>, Pr
         KIND_PAGE => {
             let origin = match fields.u8()? {
                 ORIGIN_FETCHED => Origin::Fetched,
+                ORIGIN_FETCHED_PAGE => Origin::FetchedPage,
+                ORIGIN_FETCHED_PACKETS => Origin::FetchedPackets,
                 ORIGIN_PUSHED_PAGE => Origin::PushedPage,
                 ORIGIN_PUSHED_PACKETS => Origin::PushedPackets,
                 _ => return Err(ProtocolError::BadValue("page origin")),
@@ -181,6 +245,14 @@ pub fn read_from_fetcher(input: &mut dyn Read) -> Result<Option<FromFetcher>, Pr
         KIND_LINKS => {
             let (aliases, services) = crate::links::read_channel_links(&mut fields)?;
             FromFetcher::Links { aliases, services }
+        }
+        #[cfg(feature = "interaction")]
+        KIND_INPUT => {
+            let flags = fields.u8()?;
+            if flags > 3 {
+                return Err(ProtocolError::BadValue("input flags"));
+            }
+            FromFetcher::Input { open: flags & 1 != 0, secure: flags & 2 != 0 }
         }
         other => return Err(ProtocolError::UnknownKind(other)),
     };
@@ -199,6 +271,8 @@ mod tests {
             FromFetcher::Page { origin: Origin::PushedPage, bytes: b"PN,10100\\nOL,1,Hello\\n".to_vec() },
             FromFetcher::Page { origin: Origin::PushedPackets, bytes: vec![0; 42] },
             FromFetcher::Page { origin: Origin::Fetched, bytes: vec![1, 2, 3] },
+            FromFetcher::Page { origin: Origin::FetchedPage, bytes: b"PN,10000\\n".to_vec() },
+            FromFetcher::Page { origin: Origin::FetchedPackets, bytes: vec![0; 84] },
             FromFetcher::Notice("Opened".into()),
         ] {
             let mut bytes = Vec::new();

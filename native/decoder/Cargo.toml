@@ -17,10 +17,14 @@ path = "src/main.rs"
 
 # Finding links in pages (`hyperlinks.md` section 6).
 [features]
-default = ["links"]
+default = ["links", "interaction"]
 links = ["protocol/links", "interface-core/links"]
+# Typing into a page (`interaction.md`): off, the typing messages are
+# compiled out and every side refuses their kinds.
+interaction = ["protocol/interaction", "interface-core/interaction", "dep:neoteletext-input"]
 
 [dependencies]
+neoteletext-input = { workspace = true, optional = true }
 # The audio profile's receiver (the engine's area AUD).
 neoteletext-audio.workspace = true
 neoteletext-core.workspace = true

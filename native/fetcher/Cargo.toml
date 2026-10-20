@@ -10,8 +10,11 @@ publish.workspace = true
 # Passing on the descriptor's aliases and named services (`hyperlinks.md`
 # section 6.4).
 [features]
-default = ["links"]
+default = ["links", "interaction"]
 links = ["protocol/links", "dep:interface-core"]
+# Typing into a page (`interaction.md`): off, the typing messages are
+# compiled out and every side refuses their kinds.
+interaction = ["protocol/interaction"]
 
 [dependencies]
 neoteletext-web.workspace = true

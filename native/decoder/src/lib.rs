@@ -127,6 +127,12 @@ pub struct Engine {
     /// channel may fetch one and push the other (the engine's REQ-WEB-005).
     pushed_pages: AutoReader,
     pushed_packets: AutoReader,
+    /// The pages the channel has pushed: a fetched copy of one is older
+    /// than what the channel pushed, and is dropped.
+    pushed: std::collections::BTreeSet<u16>,
+    /// For each magazine, whether its page now arriving in fetched data is
+    /// one the channel pushed, whose packets are dropped.
+    skipping: [bool; MAGAZINES],
     clock: u64,
     /// The display pages already reported as arrived, each with a digest
     /// of its content, to tell when a new version changes it.
@@ -141,6 +147,10 @@ pub struct Engine {
     /// The `LT` and `LK` lines of every page file read.
     #[cfg(feature = "links")]
     lines: links::Lines,
+    /// Cursor records found since the last call, as sent: their bodies,
+    /// for the trusted core to check (`interaction.md` section 7).
+    #[cfg(feature = "interaction")]
+    cursors: Vec<[u8; neoteletext_input::cursor::BODY]>,
 }
 
 impl Default for Engine {
@@ -169,6 +179,8 @@ impl Engine {
             reader,
             pushed_pages,
             pushed_packets,
+            pushed: std::collections::BTreeSet::new(),
+            skipping: [false; MAGAZINES],
             clock: 0,
             reported: vec![None; PAGES],
             started: Clock::now(),
@@ -177,6 +189,8 @@ impl Engine {
             sounds: Vec::new(),
             #[cfg(feature = "links")]
             lines: links::Lines::default(),
+            #[cfg(feature = "interaction")]
+            cursors: Vec::new(),
         }
     }
 
@@ -198,8 +212,23 @@ impl Engine {
         self.audio.tick(now_ms, &mut Outbox(&mut self.sounds));
     }
 
+    /// The cursor records found since the last call, once each.
+    #[cfg(feature = "interaction")]
+    pub fn take_cursors(&mut self) -> Vec<[u8; neoteletext_input::cursor::BODY]> {
+        core::mem::take(&mut self.cursors)
+    }
+
     fn push_all(&mut self, packets: &[(Packet, PacketMeta)]) {
         for (packet, meta) in packets {
+            // A cursor record (the engine's REQ-INT-005) rides the audio
+            // profile's data channel; only one that reads goes on.
+            #[cfg(feature = "interaction")]
+            if let Some(found) = neoteletext_input::cursor::from_packet(packet) {
+                if let Ok(cursor) = found {
+                    self.cursors.push(cursor.body());
+                }
+                continue;
+            }
             // The audio profile's packets go to its receiver; the decoder
             // ignores packet 31 anyway (the engine's REQ-PKT-008).
             if self.audio.push_packet(packet, &mut Outbox(&mut self.sounds)) {
@@ -217,38 +246,76 @@ impl Engine {
     /// Pages that changed are kept for [`Engine::take_updated`].
     pub fn feed(&mut self, bytes: &[u8]) -> Vec<(u16, String)> {
         let mut packets = Vec::new();
-        #[cfg(feature = "links")]
-        let lines = &mut self.lines;
+        let mut pages = PageLines {
+            #[cfg(feature = "links")]
+            lines: &mut self.lines,
+            #[cfg(feature = "interaction")]
+            cursors: &mut self.cursors,
+            unused: core::marker::PhantomData,
+        };
         self.reader.feed(bytes, &mut |item| match item {
             Item::Packet { packet, meta } => packets.push((packet, meta)),
-            // A page file's link lines are kept beside its packets.
-            #[cfg(feature = "links")]
-            Item::Page(page) => lines.read(page),
+            // A page file's link and cursor lines are kept beside its packets.
+            Item::Page(page) => pages.read(page),
             _ => {}
         });
+        self.drop_pushed(&mut packets);
         self.push_all(&packets);
         self.arrivals()
     }
 
-    /// Feeds one message the channel pushed, whole, and completes the pages
-    /// in it at once: a pushed page shows as it arrives, not when the next
-    /// page of its magazine begins (`interaction.md` section 10).
-    pub fn feed_pushed(&mut self, packets: bool, bytes: &[u8]) -> Vec<(u16, String)> {
+    /// Feeds one whole page file, bundle or pushed message, and completes
+    /// the pages in it at once: a page shows as it arrives, not when the
+    /// next page of its magazine begins (`interaction.md` section 10). A
+    /// fetched copy of a page the channel pushed is older, and dropped.
+    pub fn feed_whole(&mut self, packets: bool, pushed: bool, bytes: &[u8]) -> Vec<(u16, String)> {
         let mut items = Vec::new();
-        #[cfg(feature = "links")]
-        let lines = &mut self.lines;
+        let mut pages = PageLines {
+            #[cfg(feature = "links")]
+            lines: &mut self.lines,
+            #[cfg(feature = "interaction")]
+            cursors: &mut self.cursors,
+            unused: core::marker::PhantomData,
+        };
         let reader = if packets { &mut self.pushed_packets } else { &mut self.pushed_pages };
         let mut take = |item: Item<'_>| match item {
             Item::Packet { packet, meta } => items.push((packet, meta)),
-            #[cfg(feature = "links")]
-            Item::Page(page) => lines.read(page),
+            Item::Page(page) => pages.read(page),
             _ => {}
         };
         reader.feed(bytes, &mut take);
         reader.finish(&mut take);
+        if pushed {
+            for (packet, _) in &items {
+                if let Some(page) = header_page(packet) {
+                    self.pushed.insert(page);
+                }
+            }
+        } else {
+            self.drop_pushed(&mut items);
+        }
         self.push_all(&items);
         self.complete();
         self.arrivals()
+    }
+
+    /// Drops the fetched packets of pages the channel has pushed: a page
+    /// file fetched in the contents' order may arrive after the channel
+    /// pushed a newer version, and must not replace it.
+    fn drop_pushed(&mut self, packets: &mut Vec<(Packet, PacketMeta)>) {
+        if self.pushed.is_empty() {
+            return;
+        }
+        let (pushed, skipping) = (&self.pushed, &mut self.skipping);
+        packets.retain(|(packet, _)| {
+            let Ok(address) = neoteletext_core::packet::decode_address(packet) else { return true };
+            let magazine = usize::from(address.magazine.number()) % MAGAZINES;
+            let Some(skip) = skipping.get_mut(magazine) else { return true };
+            if address.number == 0 {
+                *skip = header_page(packet).is_some_and(|page| pushed.contains(&page));
+            }
+            !*skip
+        });
     }
 
     /// Completes every page still being received, as the end of a stream
@@ -267,14 +334,19 @@ impl Engine {
     /// Ends the channel's data: completes every page still being received.
     pub fn finish(&mut self) -> Vec<(u16, String)> {
         let mut packets = Vec::new();
-        #[cfg(feature = "links")]
-        let lines = &mut self.lines;
+        let mut pages = PageLines {
+            #[cfg(feature = "links")]
+            lines: &mut self.lines,
+            #[cfg(feature = "interaction")]
+            cursors: &mut self.cursors,
+            unused: core::marker::PhantomData,
+        };
         self.reader.finish(&mut |item| match item {
             Item::Packet { packet, meta } => packets.push((packet, meta)),
-            #[cfg(feature = "links")]
-            Item::Page(page) => lines.read(page),
+            Item::Page(page) => pages.read(page),
             _ => {}
         });
+        self.drop_pushed(&mut packets);
         self.push_all(&packets);
         self.complete();
         self.arrivals()
@@ -370,6 +442,39 @@ impl Engine {
             #[cfg(feature = "links")]
             links,
         })
+    }
+}
+
+/// The page number a header packet starts, as teletext writes it.
+fn header_page(packet: &Packet) -> Option<u16> {
+    match neoteletext_core::packet::decode(packet) {
+        Ok(neoteletext_core::packet::Decoded::Header(header)) => Some(PageAddress { magazine: header.magazine, page: header.page? }.mpp()),
+        _ => None,
+    }
+}
+
+/// What a page file says beyond its packets: its link lines and its
+/// cursor line, kept as each page is read.
+struct PageLines<'a> {
+    #[cfg(feature = "links")]
+    lines: &'a mut links::Lines,
+    #[cfg(feature = "interaction")]
+    cursors: &'a mut Vec<[u8; neoteletext_input::cursor::BODY]>,
+    unused: core::marker::PhantomData<&'a ()>,
+}
+
+impl PageLines<'_> {
+    #[cfg_attr(not(any(feature = "links", feature = "interaction")), allow(unused_variables, clippy::unused_self, reason = "the lines are compiled out"))]
+    fn read(&mut self, page: &neoteletext_formats::page::PageFile) {
+        #[cfg(feature = "links")]
+        self.lines.read(page);
+        // The engine's REQ-INT-006: a `CU` line is the page's cursor record.
+        #[cfg(feature = "interaction")]
+        if let Some(line) = page.cursor {
+            let [p0, p1] = page.address.mpp().to_be_bytes();
+            let [a0, a1] = line.acked.to_be_bytes();
+            self.cursors.push([p0, p1, a0, a1, line.row, line.column, line.width, line.flags]);
+        }
     }
 }
 
@@ -658,10 +763,10 @@ LT,5,0,7,web:https://www.example.invalid/\nLK,101,https://sport.invalid/\n";
         let mut engine = Engine::new();
         engine.feed(TTI);
         engine.finish();
-        assert_eq!(engine.feed_pushed(false, b"PN,10000\nSC,0000\nPS,8000\nOL,1,Version one\n"), [] as [(u16, String); 0], "an update, not an arrival");
+        assert_eq!(engine.feed_whole(false, true, b"PN,10000\nSC,0000\nPS,8000\nOL,1,Version one\n"), [] as [(u16, String); 0], "an update, not an arrival");
         assert_eq!(text(&engine), "Version one");
         assert_eq!(engine.take_updated(), [0x100]);
-        engine.feed_pushed(false, b"PN,10000\nSC,0000\nPS,8000\nOL,1,Version two\n");
+        engine.feed_whole(false, true, b"PN,10000\nSC,0000\nPS,8000\nOL,1,Version two\n");
         assert_eq!(text(&engine), "Version two");
         // The same page pushed as packets: the TTI page encoded by the engine.
         let mut packets = Vec::new();
@@ -673,8 +778,19 @@ LT,5,0,7,web:https://www.example.invalid/\nLK,101,https://sport.invalid/\n";
         };
         reader.feed(b"PN,10000\nSC,0000\nPS,8000\nOL,1,Packet push\n", &mut take);
         reader.finish(&mut take);
-        engine.feed_pushed(true, &packets);
+        engine.feed_whole(true, true, &packets);
         assert_eq!(text(&engine), "Packet push");
+        // A fetched copy of a pushed page, older, does not replace it,
+        // whether it comes whole or in pieces.
+        engine.feed_whole(false, false, b"PN,10000\nSC,0000\nPS,8000\nOL,1,Fetched old\n");
+        assert_eq!(text(&engine), "Packet push");
+        engine.feed(b"PN,10000\nSC,0000\nPS,8000\nOL,1,Fetched old\n");
+        engine.finish();
+        assert_eq!(text(&engine), "Packet push");
+        // A fetched file's last page arrives with the file, though no
+        // other page of its magazine follows.
+        let arrived = engine.feed_whole(false, false, b"PN,30000\nSC,0000\nPS,8000\nOL,1,Third magazine\n");
+        assert_eq!(arrived, [(0x300, "Third magazine".to_owned())]);
     }
 
     #[test]

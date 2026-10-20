@@ -9,6 +9,14 @@ publish.workspace = true
 
 [dependencies]
 decoder.workspace = true
+# The terminal channel (`interaction.md`): key records, cursor records,
+# sounds for its piano, the WebSocket accept value, and qrkeyboard for its
+# phone page.
+neoteletext-input.workspace = true
+neoteletext-audio = { workspace = true, features = ["encode"] }
+neoteletext-web.workspace = true
+neoteletext-core.workspace = true
+neoteletext-qrkeyboard.workspace = true
 
 [lints]
 workspace = true

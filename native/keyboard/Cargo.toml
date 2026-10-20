@@ -1,0 +1,22 @@
+[package]
+name = "t42-keyboard"
+description = "The phone keyboard process: pairs a phone through qrkeyboard's relay and passes its keys to the trusted core; it alone holds the pairing secret"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+# The whole program is the phone keyboard; without the feature it only
+# says so, and the workspace's other crates build without it too.
+[features]
+default = ["phone-keyboard"]
+phone-keyboard = ["protocol/phone-keyboard", "dep:neoteletext-qrkeyboard", "dep:neoteletext-input"]
+
+[dependencies]
+protocol.workspace = true
+neoteletext-qrkeyboard = { workspace = true, optional = true }
+neoteletext-input = { workspace = true, optional = true }
+
+[lints]
+workspace = true

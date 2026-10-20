@@ -20,3 +20,5 @@ pub mod address;
 pub mod hearing;
 #[cfg(feature = "links")]
 pub mod links;
+#[cfg(feature = "interaction")]
+pub mod typing;

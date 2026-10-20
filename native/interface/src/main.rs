@@ -58,6 +58,10 @@ const RESIZE_MARGIN: f64 = 6.0;
 /// The shortest time between frames that only show what the trusted core
 /// sent: ten a second.
 const CHANGE_FRAME_MILLISECONDS: u64 = 100;
+/// One frame of a 60 hertz display: what a channel being typed into
+/// pushes is drawn at the next (`interaction.md` section 10).
+#[cfg(feature = "interaction")]
+const TYPING_FRAME_MILLISECONDS: u64 = 16;
 /// How often the mixers are asked which tabs play sound: often enough that
 /// a tab's speaker follows its sound, rarely enough to cost nothing.
 const SOUNDING_POLL_MILLISECONDS: u64 = 250;
@@ -92,6 +96,15 @@ enum Incoming {
     /// About hyperlinks.
     #[cfg(feature = "links")]
     Link(protocol::links::Message),
+    /// Whether keys go to the open page's channel.
+    #[cfg(feature = "interaction")]
+    Typing(protocol::interaction::Typing),
+    /// The phone keyboard's panel and state.
+    #[cfg(feature = "phone-keyboard")]
+    Phone(protocol::keyboard::PhoneView),
+    /// A key of the paired phone.
+    #[cfg(feature = "phone-keyboard")]
+    PhoneKey(protocol::keyboard::PhoneKey),
     /// The channels now playing sound, muted or not.
     Sounding(BTreeSet<u32>),
     /// The user chose an item of the Dock menu.
@@ -255,6 +268,12 @@ impl App {
                 Output::Confirm(id) => ToCore::Confirm(id),
                 #[cfg(feature = "links")]
                 Output::Cancel(id) => ToCore::Cancel(id),
+                #[cfg(feature = "interaction")]
+                Output::Terminal { key, local, record } => ToCore::Key(protocol::interaction::KeyIntent { key, local, record }),
+                #[cfg(feature = "phone-keyboard")]
+                Output::PhonePanel(open) => ToCore::PhonePanel(open),
+                #[cfg(feature = "phone-keyboard")]
+                Output::PhoneFinish => ToCore::PhoneFinish,
                 Output::SelectTab(index) | Output::CloseTab(index) => {
                     let Ok(index) = u8::try_from(index) else { continue };
                     if matches!(output, Output::SelectTab(_)) { ToCore::SelectTab(index) } else { ToCore::CloseTab(index) }
@@ -326,6 +345,121 @@ impl App {
             _ => return false,
         };
         graphics.window.drag_resize_window(direction).is_ok()
+    }
+
+    /// Whether the browser's own modifier is held: Command on macOS,
+    /// Control and Shift elsewhere, the keys a terminal emulator keeps.
+    #[cfg(feature = "interaction")]
+    fn browser_modifier(&self) -> bool {
+        if cfg!(target_os = "macos") { self.modifiers.super_key() } else { self.modifiers.control_key() && self.modifiers.shift_key() }
+    }
+
+    /// A key while keys go to a channel: every key but the browser's own
+    /// goes, down and up (`interaction.md` section 5). Returns whether the
+    /// key was the channel's.
+    #[cfg(feature = "interaction")]
+    fn terminal_key(&mut self, event: &winit::event::KeyEvent) -> Option<bool> {
+        if self.browser.typing_target().is_none() || self.browser_modifier() {
+            return None;
+        }
+        let now = self.now();
+        #[allow(clippy::cast_possible_truncation, reason = "the record's clock wraps")]
+        let clock = now as u32;
+        let down = event.state == ElementState::Pressed;
+        let modifiers = t42_interface::keys::modifiers(self.modifiers, down && event.repeat);
+        let physical = t42_interface::keys::physical(event.physical_key);
+        let changed = match t42_interface::keys::code(&event.logical_key) {
+            Some(code) => self.browser.terminal_key(down, code, modifiers, physical, clock, now),
+            // A character outside the Basic Multilingual Plane, or a key
+            // that types several: it goes as text when pressed.
+            None => match (&event.logical_key, down) {
+                (Key::Character(text), true) => self.browser.terminal_text(text, clock, now),
+                _ => false,
+            },
+        };
+        Some(changed)
+    }
+
+    /// The phone keyboard's state, for its panel and the strip.
+    #[cfg(feature = "phone-keyboard")]
+    fn show_phone(&mut self, view: protocol::keyboard::PhoneView) {
+        use interface_core::browser::{PhoneStatus, PhoneUiView};
+        use protocol::keyboard::PhoneState;
+        let status = match view.state {
+            PhoneState::Preparing => PhoneStatus::Preparing,
+            PhoneState::Scan => PhoneStatus::Scan,
+            PhoneState::Connected => PhoneStatus::Connected,
+            PhoneState::Waiting => PhoneStatus::Waiting,
+            PhoneState::PinFailed(left) => PhoneStatus::PinFailed(left),
+            PhoneState::Locked => PhoneStatus::Locked,
+            PhoneState::Finished => PhoneStatus::Finished,
+        };
+        self.browser.set_phone(PhoneUiView { status, qr: view.qr.map(|qr| (qr.size, qr.bits)), pin: view.pin });
+    }
+
+    /// Whether keys go to the open page's channel, as the trusted core says.
+    #[cfg(feature = "interaction")]
+    fn show_typing(&mut self, typing: &protocol::interaction::Typing, now: u64) {
+        let cursor = typing.cursor.map(|cursor| interface_core::browser::CursorView {
+            row: cursor.row,
+            column: cursor.column,
+            width: cursor.width,
+            flags: cursor.flags,
+        });
+        let view = interface_core::browser::TypingView {
+            channel: typing.channel,
+            page: typing.page,
+            on: typing.on,
+            secure: typing.secure,
+            cursor,
+            acked: typing.acked,
+            round_trip_ms: typing.round_trip_ms,
+            show: typing.show,
+        };
+        self.browser.set_typing(view, now);
+    }
+
+    /// A key of the paired phone: it acts as a key of the window's own
+    /// keyboard, with no modifier (requirement 18.9).
+    #[cfg(feature = "phone-keyboard")]
+    fn phone_key(&mut self, key: protocol::keyboard::PhoneKey) -> bool {
+        use neoteletext_input::names::{character_key, named_key};
+        use protocol::keyboard::PhoneKey;
+        let now = self.now();
+        #[allow(clippy::cast_possible_truncation, reason = "the record's clock wraps")]
+        let clock = now as u32;
+        let typing = self.browser.typing_target().is_some();
+        match key {
+            PhoneKey::Text(text) if typing => self.browser.terminal_text(&text, clock, now),
+            PhoneKey::Text(text) => self.browser.key(BrowserKey::Text(&text), Modifiers::default(), now),
+            PhoneKey::Key { down, name } => {
+                let mut characters = name.chars();
+                let single = match (characters.next(), characters.next()) {
+                    (Some(character), None) => Some(character),
+                    _ => None,
+                };
+                let code = named_key(&name).or_else(|| single.and_then(character_key));
+                if typing {
+                    return code.is_some_and(|code| self.browser.terminal_key(down, code, 0, 0, clock, now));
+                }
+                if !down {
+                    return false;
+                }
+                let browser_key = match name.as_str() {
+                    "Enter" => BrowserKey::Enter,
+                    "Escape" | "BrowserBack" | "Exit" => BrowserKey::Escape,
+                    "Backspace" => BrowserKey::Backspace,
+                    "Tab" => BrowserKey::Tab,
+                    "ArrowLeft" => BrowserKey::Left,
+                    "ArrowRight" => BrowserKey::Right,
+                    "ArrowUp" | "ChannelUp" => BrowserKey::Up,
+                    "ArrowDown" | "ChannelDown" => BrowserKey::Down,
+                    _ if single.is_some() => BrowserKey::Text(&name),
+                    _ => return false,
+                };
+                self.browser.key(browser_key, Modifiers::default(), now)
+            }
+        }
     }
 
     fn key(&mut self, key: &Key, text: Option<&str>, repeat: bool) -> bool {
@@ -424,6 +558,23 @@ impl ApplicationHandler<Incoming> for App {
                 self.browser.frame_version(key, version);
                 self.act(event_loop);
             }
+            #[cfg(feature = "phone-keyboard")]
+            Incoming::Phone(view) => {
+                self.show_phone(view);
+                self.request_redraw();
+            }
+            #[cfg(feature = "phone-keyboard")]
+            Incoming::PhoneKey(key) => {
+                if self.phone_key(key) {
+                    self.request_redraw();
+                }
+                self.act(event_loop);
+            }
+            #[cfg(feature = "interaction")]
+            Incoming::Typing(typing) => {
+                self.show_typing(&typing, now);
+                self.act(event_loop);
+            }
             #[cfg(feature = "links")]
             Incoming::Link(message) => {
                 use protocol::links::Message;
@@ -462,11 +613,16 @@ impl ApplicationHandler<Incoming> for App {
             WindowEvent::Resized(_) | WindowEvent::ScaleFactorChanged { .. } => true,
             WindowEvent::ModifiersChanged(modifiers) => {
                 self.modifiers = modifiers.state();
+                #[cfg(feature = "interaction")]
+                {
+                    let held = self.browser_modifier();
+                    self.browser.set_browser_modifier(held);
+                }
                 false
             }
             // A web page is handed over only while the window has the
             // keyboard focus (requirement 17.9).
-            #[cfg(feature = "links")]
+            #[cfg(any(feature = "links", feature = "interaction"))]
             WindowEvent::Focused(focused) => {
                 self.send(event_loop, &ToCore::Focused(focused));
                 false
@@ -500,8 +656,21 @@ impl ApplicationHandler<Incoming> for App {
                 MouseScrollDelta::LineDelta(_, y) => self.browser.wheel_lines(-f64::from(y), now),
                 MouseScrollDelta::PixelDelta(position) => self.browser.scroll_by(-position.y / scale, now),
             },
+            #[cfg(feature = "interaction")]
+            WindowEvent::KeyboardInput { ref event, .. } if self.browser.typing_target().is_some() && !self.browser_modifier() => {
+                let changed = self.terminal_key(event).unwrap_or(false);
+                self.act(event_loop);
+                changed
+            }
             WindowEvent::KeyboardInput { event, .. } if event.state == ElementState::Pressed => {
                 let changed = self.key(&event.logical_key, event.text.as_deref(), event.repeat);
+                self.act(event_loop);
+                changed
+            }
+            #[cfg(feature = "interaction")]
+            WindowEvent::Ime(Ime::Commit(text)) if self.browser.typing_target().is_some() => {
+                #[allow(clippy::cast_possible_truncation, reason = "the record's clock wraps")]
+                let changed = self.browser.terminal_text(&text, now as u32, now);
                 self.act(event_loop);
                 changed
             }
@@ -526,9 +695,16 @@ impl ApplicationHandler<Incoming> for App {
         if self.browser.settle(now) {
             self.request_redraw();
         }
+        // While keys go to a channel, what it pushes is drawn at the
+        // display's rate (`interaction.md` section 10).
+        #[cfg(feature = "interaction")]
+        let change = if self.browser.typing_target().is_some() { TYPING_FRAME_MILLISECONDS } else { CHANGE_FRAME_MILLISECONDS };
+        #[cfg(not(feature = "interaction"))]
+        let change = CHANGE_FRAME_MILLISECONDS;
         let interval = match (self.browser.frame_interval(now), self.dirty) {
-            (Some(interval), _) => Some(interval),
-            (None, true) => Some(CHANGE_FRAME_MILLISECONDS),
+            (Some(interval), true) => Some(interval.min(change)),
+            (Some(interval), false) => Some(interval),
+            (None, true) => Some(change),
             (None, false) => None,
         };
         if let Some(interval) = interval {
@@ -572,6 +748,12 @@ fn read_core(proxy: &EventLoopProxy<Incoming>, mixers: Option<&Shared>, trace: b
             }
             #[cfg(feature = "links")]
             Ok(Some(ToInterface::Link(message))) => Incoming::Link(message),
+            #[cfg(feature = "interaction")]
+            Ok(Some(ToInterface::Typing(typing))) => Incoming::Typing(typing),
+            #[cfg(feature = "phone-keyboard")]
+            Ok(Some(ToInterface::Phone(view))) => Incoming::Phone(view),
+            #[cfg(feature = "phone-keyboard")]
+            Ok(Some(ToInterface::PhoneKey(key))) => Incoming::PhoneKey(key),
             Ok(Some(ToInterface::Close) | None) => break None,
             Err(error) => break Some(format!("bad message from the trusted core: {error}")),
         };

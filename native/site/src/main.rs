@@ -7,9 +7,15 @@
 //! - `t42-site serve <folder> [port]` serves it, with push updates to its
 //!   live pages, at `http://127.0.0.1:<port>/halcyon/` (port 8070 unless
 //!   given).
+//! - `t42-site terminal [port] [--relay <address>]` serves the terminal
+//!   channel, which takes the viewer's keys (`interaction.md`), at
+//!   `http://127.0.0.1:<port>/terminal/` (port 8071 unless given); with a
+//!   qrkeyboard relay, its page 600 takes a phone's keys too.
 
 mod build;
 mod serve;
+mod terminal;
+mod websocket;
 
 use std::path::PathBuf;
 use std::process::ExitCode;
@@ -33,7 +39,12 @@ fn main() -> ExitCode {
             let port = arguments.get(2).and_then(|port| port.parse().ok()).unwrap_or(DEFAULT_PORT);
             serve::run(&PathBuf::from(&arguments[1]), CHANNEL, port)
         }
-        _ => Err("usage: t42-site build <folder> <sample>... | t42-site serve <folder> [port]".into()),
+        Some("terminal") => {
+            let relay = arguments.iter().position(|argument| argument == "--relay").and_then(|at| arguments.get(at + 1)).cloned();
+            let port = arguments.get(1).filter(|argument| !argument.starts_with("--")).and_then(|port| port.parse().ok()).unwrap_or(terminal::DEFAULT_PORT);
+            terminal::run(port, relay.as_deref())
+        }
+        _ => Err("usage: t42-site build <folder> <sample>... | t42-site serve <folder> [port] | t42-site terminal [port] [--relay <address>]".into()),
     };
     match result {
         Ok(()) => ExitCode::SUCCESS,

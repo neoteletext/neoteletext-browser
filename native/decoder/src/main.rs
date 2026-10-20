@@ -71,7 +71,7 @@ fn run() -> Result<(), ProtocolError> {
         engine.tick_audio(now_ms());
         let arrived = match message {
             ToDecoder::Data(bytes) => engine.feed(&bytes),
-            ToDecoder::Pushed { packets, bytes } => engine.feed_pushed(packets, &bytes),
+            ToDecoder::Whole { packets, pushed, bytes } => engine.feed_whole(packets, pushed, &bytes),
             ToDecoder::End => engine.finish(),
             ToDecoder::Showing(pages) => {
                 sent.retain(|page, _| pages.contains(page));
@@ -104,10 +104,15 @@ fn run() -> Result<(), ProtocolError> {
     Ok(())
 }
 
-/// Sends the voice operations the audio receiver produced.
+/// Sends the voice operations the audio receiver produced, and the
+/// cursor records found.
 fn send_sounds(engine: &mut Engine, output: &mut BufWriter<io::StdoutLock<'_>>) -> Result<(), ProtocolError> {
     for audio in engine.take_sounds() {
         write_to_core(output, &FromDecoder::Audio(audio))?;
+    }
+    #[cfg(feature = "interaction")]
+    for body in engine.take_cursors() {
+        write_to_core(output, &FromDecoder::Cursor { body })?;
     }
     Ok(())
 }

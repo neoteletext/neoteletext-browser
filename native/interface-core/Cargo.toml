@@ -9,10 +9,16 @@ publish.workspace = true
 
 # Hyperlinks drawn by the browser (`hyperlinks.md`); off, they are compiled out.
 [features]
-default = ["links"]
+default = ["links", "interaction", "phone-keyboard"]
 links = []
+# Typing into a page (`interaction.md`): off, the typing messages are
+# compiled out and every side refuses their kinds.
+interaction = ["dep:neoteletext-input"]
+# The phone keyboard's panel and strip (`interaction.md` section 9).
+phone-keyboard = ["interaction"]
 
 [dependencies]
+neoteletext-input = { workspace = true, optional = true }
 libm.workspace = true
 
 [lints]

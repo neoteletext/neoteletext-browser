@@ -46,7 +46,8 @@ readonly PROTOTYPE_CRATES
 # The crates that read input from outside their process, each with the
 # same no-panic lint list at its root.
 readonly NO_PANIC_ROOTS=(native/protocol/src/lib.rs native/decoder/src/lib.rs native/decoder/src/main.rs native/fetcher/src/main.rs
-    native/core/src/lib.rs native/core/src/main.rs native/interface/src/lib.rs native/interface/src/main.rs native/web-opener/src/lib.rs)
+    native/core/src/lib.rs native/core/src/main.rs native/interface/src/lib.rs native/interface/src/main.rs native/web-opener/src/lib.rs
+    native/keyboard/src/main.rs)
 
 is_linux_only() {
     local crate="$1" only
@@ -84,10 +85,28 @@ check_native() {
     (cd native && cargo clippy --quiet --workspace --all-targets -- -D warnings)
     # Hyperlinks are a feature on by default; the browser must build without
     # them too (hyperlinks.md).
-    step "native: Clippy with hyperlinks compiled out, warnings as errors"
+    step "native: Clippy with hyperlinks, typing and the phone keyboard compiled out, warnings as errors"
     (cd native && cargo clippy --quiet --workspace --all-targets --no-default-features -- -D warnings)
+    # Each optional area alone, and typing without the phone keyboard
+    # (interaction.md, requirement 18.10).
+    local area
+    for area in "links" "interaction" "links interaction"; do
+        step "native: Clippy with only: $area"
+        (cd native && cargo clippy --quiet --workspace --all-targets --no-default-features --features "$(feature_list $area)" -- -D warnings)
+    done
     step "native: tests"
     (cd native && cargo nextest run --workspace --hide-progress-bar --status-level fail --final-status-level fail)
+}
+
+# The packages that have each optional area, as `package/area` features.
+feature_list() {
+    local area package list=""
+    for area in "$@"; do
+        for package in interface-core protocol t42-decoder t42-fetcher t42-browser t42-interface; do
+            list="${list:+$list,}$package/$area"
+        done
+    done
+    printf '%s' "$list"
 }
 
 check_prototype() {

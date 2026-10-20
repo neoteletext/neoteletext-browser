@@ -9,10 +9,16 @@ publish.workspace = true
 
 # Deciding and following links (`hyperlinks.md` sections 7, 8 and 11).
 [features]
-default = ["links"]
+default = ["links", "interaction", "phone-keyboard"]
 links = ["protocol/links", "interface-core/links", "dep:web-opener"]
+# Typing into a page (`interaction.md`): off, the typing messages are
+# compiled out and every side refuses their kinds.
+interaction = ["protocol/interaction", "interface-core/interaction", "dep:neoteletext-input"]
+# The phone keyboard (`interaction.md` section 9): its process, its panel.
+phone-keyboard = ["interaction", "protocol/phone-keyboard", "interface-core/phone-keyboard"]
 
 [dependencies]
+neoteletext-input = { workspace = true, optional = true }
 interface-core.workspace = true
 protocol.workspace = true
 neoteletext-image.workspace = true

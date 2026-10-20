@@ -27,6 +27,14 @@ use crate::wall::{CellClick, UPDATE_GLOW_MILLISECONDS, UPDATE_MARK_MILLISECONDS,
 
 #[cfg(feature = "links")]
 mod link_ui;
+#[cfg(feature = "interaction")]
+mod terminal_ui;
+#[cfg(feature = "interaction")]
+pub use terminal_ui::{CursorView, TypingView};
+#[cfg(feature = "phone-keyboard")]
+mod phone_ui;
+#[cfg(feature = "phone-keyboard")]
+pub use phone_ui::{PhoneStatus, PhoneUiView};
 
 /// The address field's limit, as the trusted core's address rules.
 pub const MAX_ADDRESS: usize = 2048;
@@ -249,6 +257,23 @@ pub enum Output {
     /// Strip input: no to the strip's question of this number.
     #[cfg(feature = "links")]
     Cancel(u32),
+    /// A key, text or a click on the open page, whose channel takes input
+    /// (`interaction.md` section 5): a key record with no sequence number.
+    #[cfg(feature = "interaction")]
+    Terminal {
+        /// The open page.
+        key: PageKey,
+        /// The browser's number of the key, for its echo.
+        local: u32,
+        /// The engine's key record.
+        record: Vec<u8>,
+    },
+    /// Strip input: the phone keyboard's panel opened, or closed.
+    #[cfg(feature = "phone-keyboard")]
+    PhonePanel(bool),
+    /// Strip input: end the phone keyboard's session.
+    #[cfg(feature = "phone-keyboard")]
+    PhoneFinish,
 }
 
 /// A key the browser handles, as the host translates it.
@@ -372,6 +397,12 @@ pub struct Browser {
     /// Hyperlinks (`hyperlinks.md`).
     #[cfg(feature = "links")]
     links: link_ui::LinkUi,
+    /// Typing into a page (`interaction.md`).
+    #[cfg(feature = "interaction")]
+    terminal: terminal_ui::TerminalUi,
+    /// The phone keyboard (`interaction.md` section 9).
+    #[cfg(feature = "phone-keyboard")]
+    phone: phone_ui::PhoneUi,
 }
 
 impl Browser {
@@ -404,6 +435,10 @@ impl Browser {
             outputs: Vec::new(),
             #[cfg(feature = "links")]
             links: link_ui::LinkUi::default(),
+            #[cfg(feature = "interaction")]
+            terminal: terminal_ui::TerminalUi::default(),
+            #[cfg(feature = "phone-keyboard")]
+            phone: phone_ui::PhoneUi::default(),
         }
     }
 
@@ -531,6 +566,9 @@ impl Browser {
             // The "Updated 12s" marks count whole seconds.
             Some(MARK_FRAME_MILLISECONDS)
         } else {
+            #[cfg(feature = "interaction")]
+            return self.terminal_frame_interval();
+            #[cfg(not(feature = "interaction"))]
             None
         }
     }
@@ -541,7 +579,11 @@ impl Browser {
         self.pulses.retain(|&(_, start)| now.saturating_sub(start) < PULSE_MILLISECONDS);
         let updates = self.updates.len();
         self.updates.retain(|&(_, at)| now.saturating_sub(at) < UPDATE_MARK_MILLISECONDS);
-        self.pulses.len() != before || self.updates.len() != updates
+        #[cfg(feature = "interaction")]
+        let echoes = self.settle_echoes(now);
+        #[cfg(not(feature = "interaction"))]
+        let echoes = false;
+        self.pulses.len() != before || self.updates.len() != updates || echoes
     }
 
     fn page_key(&self, index: usize) -> Option<PageKey> {
@@ -667,6 +709,10 @@ impl Browser {
     /// A press of the main button, with `extend` when Shift is held.
     #[allow(clippy::too_many_lines, reason = "one hit-test per part of the window, in drawing order")]
     pub fn pointer_pressed<C: Canvas + ?Sized>(&mut self, canvas: &mut C, extend: bool, now: u64) -> bool {
+        #[cfg(feature = "phone-keyboard")]
+        if self.phone_press(self.pointer) {
+            return true;
+        }
         // The strip's question, drawn over the address field.
         #[cfg(feature = "links")]
         if self.link_press(now) {
@@ -711,6 +757,12 @@ impl Browser {
         .into_iter()
         .find(|(rect, _)| rect.contains(point));
         if let Some((_, output)) = action {
+            // The menu holds the phone keyboard.
+            #[cfg(feature = "phone-keyboard")]
+            if output == Output::Menu {
+                self.toggle_phone_panel();
+                return true;
+            }
             let allowed = match output {
                 Output::Back => self.strip.back,
                 Output::Forward => self.strip.forward,
@@ -757,6 +809,15 @@ impl Browser {
             }
             // A page on the wall zooms to fill the area; on a zoomed page a
             // click is on one of its cells, where links will be followed.
+            // On a page whose channel takes input a plain click is the
+            // host's, as a terminal with mouse reporting gives it; the
+            // browser's modifier makes it the browser's (`interaction.md`
+            // section 5).
+            #[cfg(feature = "interaction")]
+            if self.wall.zoomed().is_some() && self.click_is_hosts() {
+                #[allow(clippy::cast_possible_truncation, reason = "the record's clock wraps")]
+                return self.terminal_click(now as u32);
+            }
             if self.wall.zoomed().is_some() {
                 let version = self.versions.get(&click.key).copied().unwrap_or_default();
                 self.outputs.push(Output::Cell(CellClick { version, ..click }));
@@ -809,7 +870,7 @@ impl Browser {
     /// Returns whether the window needs drawing again.
     pub fn key(&mut self, key: Key<'_>, modifiers: Modifiers, now: u64) -> bool {
         if modifiers.command {
-            return self.shortcut(key);
+            return self.shortcut(key, now);
         }
         if self.editing {
             return self.edit(key, modifiers.shift);
@@ -849,7 +910,13 @@ impl Browser {
         true
     }
 
-    fn shortcut(&mut self, key: Key<'_>) -> bool {
+    fn shortcut(&mut self, key: Key<'_>, now: u64) -> bool {
+        // The browser's Escape: leaves a page whose channel has every
+        // other key (`interaction.md` section 5).
+        if key == Key::Escape {
+            self.stop_editing();
+            return self.wall.unzoom(now);
+        }
         let Key::Text(text) = key else { return false };
         match text.to_ascii_lowercase().as_str() {
             "l" => self.start_editing(),
@@ -964,6 +1031,8 @@ impl Browser {
         self.wall.draw(canvas, zoom, &pages, selected, now);
         #[cfg(feature = "links")]
         self.draw_links(canvas);
+        #[cfg(feature = "interaction")]
+        self.draw_terminal(canvas, now);
         let mut visible = self.wall.visible();
         // The overview's previewed page is on screen too, so the trusted
         // core has it rendered, whichever bank it is in.
@@ -982,6 +1051,8 @@ impl Browser {
         self.draw_toolbar(canvas, width);
         self.draw_tab_strip(canvas, width);
         self.draw_preview(canvas, width);
+        #[cfg(feature = "phone-keyboard")]
+        self.draw_phone_panel(canvas);
         // Pages may have moved under a still pointer: by scrolling, a new
         // size or a zoom.
         self.wall.hover(self.pointer, now);
@@ -1096,6 +1167,10 @@ impl Browser {
         self.regions.star = Rect::new(field.x1 - TOOL_SIZE, field.y0, field.x1, field.y1);
         star(canvas, Point::new(f64::midpoint(self.regions.star.x0, self.regions.star.x1), middle), if self.strip.bookmarked { STAR_ON } else { FIELD_INK });
         let text = Rect::new(text_left, field.y0, self.regions.star.x0, field.y1);
+        #[cfg(feature = "phone-keyboard")]
+        let text = self.draw_phone_badge(canvas, text);
+        #[cfg(feature = "interaction")]
+        let text = self.draw_typing_badge(canvas, text);
         self.regions.field_text = text;
         // While the pointer or the focus is on a link, the field shows where
         // it leads (requirement 17.6).

@@ -43,7 +43,7 @@ use std::time::Duration;
 
 use interface_core::canvas::PageKey;
 use neoteletext_core::consts::{FLASH_CYCLE_US, FLASH_UNITS};
-use protocol::decoder::{FromDecoder, MAX_CHUNK, ToDecoder, read_from_decoder, write_to_decoder};
+use protocol::decoder::{FromDecoder, MAX_CHUNK, MAX_WHOLE, ToDecoder, read_from_decoder, write_to_decoder};
 use protocol::fetcher::{FromFetcher, MAX_NOTICE, Origin, read_from_fetcher};
 use protocol::{ToCore, ToInterface, clean, read_from_interface, write_to_interface};
 
@@ -59,6 +59,12 @@ use crate::source::Next;
 const DECODER: &str = "t42-decoder";
 const FETCHER: &str = "t42-fetcher";
 const INTERFACE: &str = "t42-interface";
+#[cfg(feature = "phone-keyboard")]
+const KEYBOARD: &str = "t42-keyboard";
+/// A relay other than qrkeyboard's own, for testing against one run
+/// locally.
+#[cfg(feature = "phone-keyboard")]
+const RELAY_VARIABLE: &str = "T42_QRKEYBOARD_RELAY";
 
 /// A channel's data is handed to its decoder in pieces of 64 packets of 42
 /// bytes (2,688 bytes) every 0.2 seconds, the engine's
@@ -93,6 +99,12 @@ enum Event {
     InterfaceEnded(Option<String>),
     Flash,
     Load,
+    /// The phone keyboard process said something, untrusted.
+    #[cfg(feature = "phone-keyboard")]
+    Phone(protocol::keyboard::FromKeyboard),
+    /// The phone keyboard process ended.
+    #[cfg(feature = "phone-keyboard")]
+    PhoneEnded(Option<String>),
 }
 
 struct Decoder {
@@ -102,6 +114,9 @@ struct Decoder {
 
 struct Fetcher {
     child: Child,
+    /// The only thing a fetcher is given: key records (requirement 18.4).
+    #[cfg(feature = "interaction")]
+    input: Option<BufWriter<ChildStdin>>,
 }
 
 fn sibling(name: &str) -> Result<PathBuf, String> {
@@ -199,7 +214,13 @@ fn start_fetcher(path: &Path, address: &str, allow_local: &[String], channel: u3
         };
         let _ = events.send(Event::FetcherEnded(channel, end));
     });
-    Ok(Fetcher { child })
+    #[cfg(feature = "interaction")]
+    let input = child.stdin.take().map(BufWriter::new);
+    Ok(Fetcher {
+        child,
+        #[cfg(feature = "interaction")]
+        input,
+    })
 }
 
 fn read_interface(child: &mut Child, events: Sender<Event>) -> Result<(), String> {
@@ -250,13 +271,87 @@ struct Core {
     /// The links of the pages on screen (`hyperlinks.md`).
     #[cfg(feature = "links")]
     links: Links,
-    /// When the trusted core started: the links' clock.
-    #[cfg(feature = "links")]
+    /// When the trusted core started: the clock of links and of typing.
+    #[cfg(any(feature = "links", feature = "interaction"))]
     started: std::time::Instant,
+    /// Typing into a page (`interaction.md`).
+    #[cfg(feature = "interaction")]
+    typing: t42_browser::typing::Typing,
+    /// The page the viewer opened in the active tab.
+    #[cfg(feature = "interaction")]
+    opened: Option<PageKey>,
+    /// The phone keyboard process, while one runs.
+    #[cfg(feature = "phone-keyboard")]
+    phone: Option<(Child, BufWriter<ChildStdin>)>,
+    /// What the interface shows of it.
+    #[cfg(feature = "phone-keyboard")]
+    phone_view: protocol::keyboard::PhoneView,
     to_interface: BufWriter<ChildStdin>,
 }
 
 impl Core {
+    /// Milliseconds since the trusted core started.
+    #[cfg(any(feature = "links", feature = "interaction"))]
+    fn now(&self) -> u64 {
+        u64::try_from(self.started.elapsed().as_millis()).unwrap_or(u64::MAX)
+    }
+
+    /// The window gained or lost the keyboard focus: links hand off only
+    /// with it, and the channel being typed into is told.
+    #[cfg(any(feature = "links", feature = "interaction"))]
+    #[cfg_attr(not(feature = "interaction"), allow(clippy::unnecessary_wraps, reason = "only typing can fail here"))]
+    fn focused(&mut self, focused: bool) -> Result<(), String> {
+        #[cfg(feature = "links")]
+        self.links.focused(focused);
+        #[cfg(feature = "interaction")]
+        {
+            let sends = self.typing.focused(focused, self.now());
+            self.deliver_typing(sends)?;
+        }
+        Ok(())
+    }
+
+    /// The keyboard's intents: a key for the open page's channel, and the
+    /// phone keyboard's panel.
+    #[cfg(feature = "interaction")]
+    fn input_intent(&mut self, intent: ToCore) -> Result<(), String> {
+        match intent {
+            ToCore::Key(intent) => {
+                let sends = self.typing.key(&intent, self.now());
+                self.deliver_typing(sends)?;
+            }
+            #[cfg(feature = "phone-keyboard")]
+            ToCore::PhonePanel(open) => self.phone_panel(open)?,
+            #[cfg(feature = "phone-keyboard")]
+            ToCore::PhoneFinish => {
+                if let Some((_, input)) = &mut self.phone {
+                    let _ = protocol::keyboard::write_to_keyboard(input, &protocol::keyboard::ToKeyboard::Finish);
+                }
+            }
+            _ => {}
+        }
+        Ok(())
+    }
+
+    /// Delivers what the typing rules decided: key records to a channel's
+    /// fetcher, the typing state to the interface.
+    #[cfg(feature = "interaction")]
+    fn deliver_typing(&mut self, sends: Vec<t42_browser::typing::Send>) -> Result<(), String> {
+        use protocol::fetcher::{ToFetcher, write_to_fetcher};
+        for send in sends {
+            match send {
+                t42_browser::typing::Send::Fetcher(channel, record) => {
+                    let Some(input) = self.fetchers.get_mut(&channel).and_then(|fetcher| fetcher.input.as_mut()) else { continue };
+                    // A fetcher that cannot be written to has stopped; its
+                    // reader reports that, and the socket's state follows.
+                    let _ = write_to_fetcher(input, &ToFetcher::Send(record));
+                }
+                t42_browser::typing::Send::Interface(state) => self.send(&ToInterface::Typing(state))?,
+            }
+        }
+        Ok(())
+    }
+
     fn send(&mut self, message: &ToInterface) -> Result<(), String> {
         write_to_interface(&mut self.to_interface, message).map_err(|error| format!("cannot write to the interface: {error}"))
     }
@@ -302,6 +397,8 @@ impl Core {
         for id in unused {
             #[cfg(feature = "links")]
             self.links.channel_gone(id);
+            #[cfg(feature = "interaction")]
+            self.typing.channel_gone(id);
             let sends = self.hearing.channel_gone(id);
             self.deliver(sends)?;
             if let Some(mut decoder) = self.decoders.remove(&id) {
@@ -312,6 +409,8 @@ impl Core {
             if let Some(mut fetcher) = self.fetchers.remove(&id) {
                 // Closing its input ends a fetcher.
                 drop(fetcher.child.stdin.take());
+                #[cfg(feature = "interaction")]
+                drop(fetcher.input.take());
                 let _ = fetcher.child.kill();
                 let _ = fetcher.child.wait();
             }
@@ -339,15 +438,22 @@ impl Core {
                 }
                 self.tell(channel, &ToDecoder::Data(b"\n".to_vec()));
             }
-            // A pushed message goes whole and at once, so its page shows as
-            // it arrives (`interaction.md` section 10). The fetcher's
-            // messages are at most the engine's 64 KB push limit.
+            // A file or a pushed message of a form the fetcher knows goes
+            // whole and at once, so its pages show as it arrives
+            // (`interaction.md` section 10).
             FromFetcher::Page { origin, bytes } => {
-                if bytes.len() <= MAX_CHUNK {
-                    self.tell(channel, &ToDecoder::Pushed { packets: origin == Origin::PushedPackets, bytes });
+                if bytes.len() <= MAX_WHOLE {
+                    let packets = matches!(origin, Origin::PushedPackets | Origin::FetchedPackets);
+                    let pushed = matches!(origin, Origin::PushedPackets | Origin::PushedPage);
+                    self.tell(channel, &ToDecoder::Whole { packets, pushed, bytes });
                 }
             }
             FromFetcher::Notice(text) => eprintln!("t42-browser: channel {channel}: {}", clean(&text, MAX_NOTICE)),
+            #[cfg(feature = "interaction")]
+            FromFetcher::Input { open, secure } => {
+                let sends = self.typing.input(channel, open, secure, self.now());
+                self.deliver_typing(sends)?;
+            }
             #[cfg(feature = "links")]
             FromFetcher::Links { aliases, services } => {
                 self.links.descriptor(channel, &aliases, &services);
@@ -364,6 +470,14 @@ impl Core {
     /// interface then reports what is visible afresh.
     fn send_all(&mut self) -> Result<(), String> {
         self.match_decoders()?;
+        // Another tab or channel: the keys leave the page they were going
+        // to; the interface reports what it opens next.
+        #[cfg(feature = "interaction")]
+        {
+            self.opened = None;
+            let sends = self.typing.opened(self.active_channel(), None, self.now());
+            self.deliver_typing(sends)?;
+        }
         self.frames = frames::Frames::default();
         if let Some(previous) = self.showing.take() {
             self.tell(previous, &ToDecoder::Showing(Vec::new()));
@@ -445,6 +559,12 @@ impl Core {
                 self.send_all()?;
             }
             ToCore::Opened(key) => {
+                #[cfg(feature = "interaction")]
+                {
+                    self.opened = key;
+                    let sends = self.typing.opened(self.active_channel(), key, self.now());
+                    self.deliver_typing(sends)?;
+                }
                 #[cfg(feature = "links")]
                 self.links.opened(key);
                 let sends = self.hearing.open(self.active_channel(), key);
@@ -483,7 +603,13 @@ impl Core {
                 self.send(&ToInterface::Strip(self.session.strip()))?;
             }
             #[cfg(feature = "links")]
-            ToCore::Point(_) | ToCore::Typed { .. } | ToCore::Focused(_) | ToCore::Confirm(_) | ToCore::Cancel(_) => self.link_intent(&intent)?,
+            ToCore::Point(_) | ToCore::Typed { .. } | ToCore::Confirm(_) | ToCore::Cancel(_) => self.link_intent(&intent)?,
+            #[cfg(any(feature = "links", feature = "interaction"))]
+            ToCore::Focused(focused) => self.focused(focused)?,
+            #[cfg(feature = "interaction")]
+            ToCore::Key(_) => self.input_intent(intent)?,
+            #[cfg(feature = "phone-keyboard")]
+            ToCore::PhonePanel(_) | ToCore::PhoneFinish => self.input_intent(intent)?,
         }
         Ok(true)
     }
@@ -563,6 +689,11 @@ impl Core {
                     self.redecide(key)?;
                 }
             }
+            #[cfg(feature = "interaction")]
+            FromDecoder::Cursor { body } => {
+                let sends = self.typing.cursor(channel, body, self.now());
+                self.deliver_typing(sends)?;
+            }
             FromDecoder::Audio(audio) => {
                 if let Some(message) = self.hearing.decoded(channel, audio) {
                     self.send(&message)?;
@@ -573,14 +704,111 @@ impl Core {
     }
 }
 
+/// The phone keyboard (`interaction.md` section 9, requirement 18.9): a
+/// process of its own holds the pairing secret; the trusted core shows its
+/// QR in the panel and gives the interface the phone's keys, which act as
+/// the interface's own.
+#[cfg(feature = "phone-keyboard")]
+impl Core {
+    fn send_phone(&mut self) -> Result<(), String> {
+        let view = self.phone_view.clone();
+        self.send(&ToInterface::Phone(view))
+    }
+
+    /// The panel opened or closed. Opening starts the keyboard process if
+    /// none runs; closing it before a phone is paired ends it.
+    fn phone_panel(&mut self, open: bool) -> Result<(), String> {
+        use protocol::keyboard::PhoneState;
+        if !open {
+            if self.phone_view.state != PhoneState::Connected
+                && let Some((mut child, input)) = self.phone.take()
+            {
+                // Its input closing ends it, and the relay hears it leave.
+                drop(input);
+                let _ = child.wait();
+                self.phone_view = protocol::keyboard::PhoneView { state: PhoneState::Finished, qr: None, pin: None };
+                self.send_phone()?;
+            }
+            return Ok(());
+        }
+        if self.phone.is_some() {
+            return self.send_phone();
+        }
+        let mut command = sandboxed_with_network(&sibling(KEYBOARD)?);
+        // Without one, the keyboard process uses qrkeyboard's own relay.
+        if let Ok(relay) = std::env::var(RELAY_VARIABLE) {
+            command.arg(relay);
+        }
+        let mut child = spawn(&mut command, "phone keyboard")?;
+        let output = child.stdout.take().ok_or("the phone keyboard has no output")?;
+        let input = BufWriter::new(child.stdin.take().ok_or("the phone keyboard has no input")?);
+        let events = self.events.clone();
+        thread::spawn(move || {
+            let mut output = BufReader::new(output);
+            let end = loop {
+                match protocol::keyboard::read_from_keyboard(&mut output) {
+                    Ok(Some(message)) => {
+                        if events.send(Event::Phone(message)).is_err() {
+                            return;
+                        }
+                    }
+                    Ok(None) => break None,
+                    Err(error) => break Some(error.to_string()),
+                }
+            };
+            let _ = events.send(Event::PhoneEnded(end));
+        });
+        self.phone = Some((child, input));
+        self.phone_view = protocol::keyboard::PhoneView { state: PhoneState::Preparing, qr: None, pin: None };
+        self.send_phone()
+    }
+
+    /// What the keyboard process said: its QR and state for the panel, and
+    /// the phone's keys, only while it is paired.
+    fn phone_said(&mut self, message: protocol::keyboard::FromKeyboard) -> Result<(), String> {
+        use protocol::keyboard::{FromKeyboard, PhoneKey, PhoneState};
+        match message {
+            FromKeyboard::Join { qr, pin } => {
+                self.phone_view.qr = Some(qr);
+                self.phone_view.pin = pin;
+                self.send_phone()
+            }
+            FromKeyboard::State(state) => {
+                self.phone_view.state = state;
+                if matches!(state, PhoneState::Finished | PhoneState::Connected) {
+                    // Once paired, or over, the QR is not shown again.
+                    self.phone_view.qr = None;
+                    self.phone_view.pin = None;
+                }
+                self.send_phone()
+            }
+            FromKeyboard::Key { down, name } if self.phone_view.state == PhoneState::Connected => {
+                self.send(&ToInterface::PhoneKey(PhoneKey::Key { down, name }))
+            }
+            FromKeyboard::Text(text) if self.phone_view.state == PhoneState::Connected => {
+                self.send(&ToInterface::PhoneKey(PhoneKey::Text(clean(&text, protocol::keyboard::MAX_PHONE_TEXT))))
+            }
+            FromKeyboard::Key { .. } | FromKeyboard::Text(_) => Ok(()),
+        }
+    }
+
+    fn phone_ended(&mut self, reason: Option<String>) -> Result<(), String> {
+        if let Some(reason) = reason {
+            eprintln!("t42-browser: the phone keyboard stopped: {reason}");
+        }
+        if let Some((mut child, _)) = self.phone.take() {
+            let _ = child.kill();
+            let _ = child.wait();
+        }
+        self.phone_view = protocol::keyboard::PhoneView { state: protocol::keyboard::PhoneState::Finished, qr: None, pin: None };
+        self.send_phone()
+    }
+}
+
 /// Hyperlinks (`hyperlinks.md`): the trusted core decides every link and
 /// follows it by its own rules.
 #[cfg(feature = "links")]
 impl Core {
-    fn now(&self) -> u64 {
-        u64::try_from(self.started.elapsed().as_millis()).unwrap_or(u64::MAX)
-    }
-
     fn link(&mut self, message: LinkMessage) -> Result<(), String> {
         self.send(&ToInterface::Link(message))
     }
@@ -655,7 +883,6 @@ impl Core {
                 let followed = self.links.typed(*number, *opened, self.active_channel(), now);
                 self.follow(followed, "a typed page number")?;
             }
-            ToCore::Focused(focused) => self.links.focused(*focused),
             ToCore::Confirm(id) => {
                 let followed = self.links.confirm(*id, now);
                 self.follow(followed, "a confirmation")?;
@@ -712,6 +939,36 @@ impl Core {
     }
 }
 
+impl Core {
+    fn new(session: Session, allow_local: Vec<String>, events: Sender<Event>, to_interface: BufWriter<ChildStdin>) -> Result<Self, String> {
+        Ok(Self {
+            session,
+            decoders: BTreeMap::new(),
+            decoder_path: sibling(DECODER)?,
+            fetchers: BTreeMap::new(),
+            fetcher_path: sibling(FETCHER)?,
+            allow_local,
+            events,
+            frames: frames::Frames::default(),
+            showing: None,
+            hearing: Hearing::default(),
+            #[cfg(feature = "links")]
+            links: Links::default(),
+            #[cfg(any(feature = "links", feature = "interaction"))]
+            started: std::time::Instant::now(),
+            #[cfg(feature = "interaction")]
+            typing: t42_browser::typing::Typing::default(),
+            #[cfg(feature = "interaction")]
+            opened: None,
+            #[cfg(feature = "phone-keyboard")]
+            phone: None,
+            #[cfg(feature = "phone-keyboard")]
+            phone_view: protocol::keyboard::PhoneView { state: protocol::keyboard::PhoneState::Finished, qr: None, pin: None },
+            to_interface,
+        })
+    }
+}
+
 fn run() -> Result<(), String> {
     let mut addresses = Vec::new();
     let mut allow_local = Vec::new();
@@ -739,23 +996,8 @@ fn run() -> Result<(), String> {
         session.open(HOME)?;
     }
     session.active = 0;
-    let mut core = Core {
-        session,
-        decoders: BTreeMap::new(),
-        decoder_path: sibling(DECODER)?,
-        fetchers: BTreeMap::new(),
-        fetcher_path: sibling(FETCHER)?,
-        allow_local,
-        events,
-        frames: frames::Frames::default(),
-        showing: None,
-        hearing: Hearing::default(),
-        #[cfg(feature = "links")]
-        links: Links::default(),
-        #[cfg(feature = "links")]
-        started: std::time::Instant::now(),
-        to_interface: BufWriter::new(interface.stdin.take().ok_or("the interface has no input")?),
-    };
+    let to_interface = BufWriter::new(interface.stdin.take().ok_or("the interface has no input")?);
+    let mut core = Core::new(session, allow_local, events, to_interface)?;
     core.send_all()?;
 
     let result = loop {
@@ -790,6 +1032,10 @@ fn run() -> Result<(), String> {
                 Ok(())
             }
             Event::DecoderEnded(channel, reason) => core.decoder_ended(channel, reason),
+            #[cfg(feature = "phone-keyboard")]
+            Event::Phone(message) => core.phone_said(message),
+            #[cfg(feature = "phone-keyboard")]
+            Event::PhoneEnded(reason) => core.phone_ended(reason),
             Event::InterfaceEnded(None) => break Ok(()),
             Event::InterfaceEnded(Some(reason)) => break Err(format!("the interface broke the protocol and was closed: {reason}")),
         };
@@ -800,6 +1046,8 @@ fn run() -> Result<(), String> {
 
     for (_, mut fetcher) in std::mem::take(&mut core.fetchers) {
         drop(fetcher.child.stdin.take());
+        #[cfg(feature = "interaction")]
+        drop(fetcher.input.take());
         let _ = fetcher.child.kill();
         let _ = fetcher.child.wait();
     }

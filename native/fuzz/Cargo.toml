@@ -14,10 +14,13 @@ cargo-fuzz = true
 [dependencies]
 libfuzzer-sys = "=0.4.13"
 protocol = { path = "../protocol" }
+interface-core = { path = "../interface-core" }
 decoder = { path = "../decoder", package = "t42-decoder" }
 t42-interface = { path = "../interface" }
 t42-browser = { path = "../core" }
 web-opener = { path = "../web-opener" }
+neoteletext-qrkeyboard = { git = "file:///Users/andrewstuart/devel/neoteletext", rev = "c789bd2cac99da9ebbfd13bd602b33e66e08915a" }
+neoteletext-input = { git = "file:///Users/andrewstuart/devel/neoteletext", rev = "c789bd2cac99da9ebbfd13bd602b33e66e08915a" }
 
 [workspace]
 members = ["."]
@@ -90,6 +93,34 @@ bench = false
 [[bin]]
 name = "link_target"
 path = "fuzz_targets/link_target.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fetcher_commands"
+path = "fuzz_targets/fetcher_commands.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "cursor_records"
+path = "fuzz_targets/cursor_records.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "phone_keys"
+path = "fuzz_targets/phone_keys.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "relay_messages"
+path = "fuzz_targets/relay_messages.rs"
 test = false
 doc = false
 bench = false

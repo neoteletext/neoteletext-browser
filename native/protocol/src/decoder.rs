@@ -13,6 +13,9 @@ use super::{Fields, MAX_PAGE_TITLE, ProtocolError, push_raw_text, push_text, rea
 
 /// The most bytes of a channel's data in one message.
 pub const MAX_CHUNK: usize = 64 * 1024;
+/// The most bytes of one whole file or message: the largest payload less
+/// this message's own byte, above the engine's 256 KB page limit.
+pub const MAX_WHOLE: usize = crate::MAX_PAYLOAD - 1;
 /// The Colour Map of Presentation Levels 2.5 and 3.5: 32 entries (EN 300
 /// 706 clause 12.4); every page is rendered in the engine's resolved
 /// colour mode, which indexes it.
@@ -27,7 +30,7 @@ const KIND_SHOWING: u8 = 50;
 const KIND_TICK: u8 = 51;
 const KIND_CLOSE: u8 = 52;
 const KIND_OPENED: u8 = 53;
-const KIND_PUSHED: u8 = 54;
+const KIND_WHOLE: u8 = 54;
 // Decoder to trusted core.
 const KIND_ARRIVED: u8 = 64;
 const KIND_FRAME: u8 = 65;
@@ -35,6 +38,8 @@ const KIND_UPDATED: u8 = 66;
 const KIND_AUDIO: u8 = 67;
 #[cfg(feature = "links")]
 const KIND_LINKS: u8 = 68;
+#[cfg(feature = "interaction")]
+const KIND_CURSOR: u8 = 69;
 
 /// From the trusted core to a decoder.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -51,13 +56,16 @@ pub enum ToDecoder {
     Close,
     /// The page the user opened, or none: its sounds play while it is open.
     Opened(Option<u16>),
-    /// One message the channel pushed, whole: a TTI page, or whole 42-byte
-    /// packets. Its pages are complete as it ends, so they show at once
-    /// (`interaction.md` section 10).
-    Pushed {
+    /// A whole page file, bundle or pushed message: a TTI page, or whole
+    /// 42-byte packets. Its pages are complete as it ends, so they show at
+    /// once (`interaction.md` section 10); a fetched copy of a page the
+    /// channel has pushed is older and is dropped.
+    Whole {
         /// Packets, not a TTI page.
         packets: bool,
-        /// The message.
+        /// Pushed by the channel, not fetched.
+        pushed: bool,
+        /// The bytes.
         bytes: Vec<u8>,
     },
 }
@@ -105,6 +113,15 @@ pub enum FromDecoder {
         /// Its `LK` lines.
         numbers: Vec<crate::links::NumberLink>,
     },
+    /// A cursor record the channel sent for a page, from a pushed packet or
+    /// a page's `CU` line: untrusted, its body as sent, for the trusted
+    /// core to check (`interaction.md` section 7).
+    #[cfg(feature = "interaction")]
+    Cursor {
+        /// The record's body: page, acknowledgement, row, column, width
+        /// and flags.
+        body: [u8; neoteletext_input::cursor::BODY],
+    },
 }
 
 fn display_page(fields: &mut Fields<'_>) -> Result<u16, ProtocolError> {
@@ -145,13 +162,13 @@ pub fn write_to_decoder(out: &mut dyn Write, message: &ToDecoder) -> Result<(), 
             }
             KIND_OPENED
         }
-        ToDecoder::Pushed { packets, bytes } => {
-            if bytes.len() > MAX_CHUNK {
+        ToDecoder::Whole { packets, pushed, bytes } => {
+            if bytes.len() > MAX_WHOLE {
                 return Err(ProtocolError::TooLong(bytes.len()));
             }
-            payload.push(u8::from(*packets));
+            payload.push(u8::from(*packets) | (u8::from(*pushed) << 1));
             payload.extend_from_slice(bytes);
-            KIND_PUSHED
+            KIND_WHOLE
         }
     };
     write_frame(out, kind, &payload)
@@ -183,17 +200,16 @@ pub fn read_from_core(input: &mut dyn Read) -> Result<Option<ToDecoder>, Protoco
         KIND_TICK => ToDecoder::Tick,
         KIND_CLOSE => ToDecoder::Close,
         KIND_OPENED => ToDecoder::Opened(if payload.is_empty() { None } else { Some(display_page(&mut fields)?) }),
-        KIND_PUSHED => {
-            let packets = match fields.u8()? {
-                0 => false,
-                1 => true,
-                _ => return Err(ProtocolError::BadValue("pushed form")),
-            };
+        KIND_WHOLE => {
+            let flags = fields.u8()?;
+            if flags > 3 {
+                return Err(ProtocolError::BadValue("whole form"));
+            }
             let bytes = fields.take(fields.bytes.len())?;
-            if bytes.len() > MAX_CHUNK {
+            if bytes.len() > MAX_WHOLE {
                 return Err(ProtocolError::TooLong(bytes.len()));
             }
-            ToDecoder::Pushed { packets, bytes: bytes.to_vec() }
+            ToDecoder::Whole { packets: flags & 1 != 0, pushed: flags & 2 != 0, bytes: bytes.to_vec() }
         }
         other => return Err(ProtocolError::UnknownKind(other)),
     };
@@ -239,6 +255,11 @@ pub fn write_to_core(out: &mut dyn Write, message: &FromDecoder) -> Result<(), P
             payload.push(u8::from(*with_image));
             crate::links::push_found(&mut payload, candidates, numbers)?;
             KIND_LINKS
+        }
+        #[cfg(feature = "interaction")]
+        FromDecoder::Cursor { body } => {
+            payload.extend_from_slice(body);
+            KIND_CURSOR
         }
     };
     write_frame(out, kind, &payload)
@@ -291,6 +312,9 @@ pub fn read_from_decoder(input: &mut dyn Read) -> Result<Option<FromDecoder>, Pr
             let (candidates, numbers) = crate::links::read_found(&mut fields)?;
             FromDecoder::Links { page, with_image, candidates, numbers }
         }
+        // Only its length here: the trusted core checks the fields.
+        #[cfg(feature = "interaction")]
+        KIND_CURSOR => FromDecoder::Cursor { body: fields.array()? },
         other => return Err(ProtocolError::UnknownKind(other)),
     };
     fields.end()?;
@@ -323,8 +347,8 @@ mod tests {
     fn every_kind_round_trips() {
         for message in [
             ToDecoder::Data(vec![1, 2, 3]),
-            ToDecoder::Pushed { packets: true, bytes: vec![0; 42] },
-            ToDecoder::Pushed { packets: false, bytes: b"PN,10000\n".to_vec() },
+            ToDecoder::Whole { packets: true, pushed: true, bytes: vec![0; 42] },
+            ToDecoder::Whole { packets: false, pushed: false, bytes: b"PN,10000\n".to_vec() },
             ToDecoder::End,
             ToDecoder::Showing(vec![0x100, 0x899]),
             ToDecoder::Tick,

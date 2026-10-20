@@ -10,10 +10,17 @@ publish.workspace = true
 # The link messages (`hyperlinks.md` section 8.1); off, they are compiled
 # out and every side refuses their kinds.
 [features]
-default = ["links"]
+default = ["links", "interaction", "phone-keyboard"]
 links = ["interface-core/links"]
+# Typing into a page (`interaction.md`): off, the typing messages are
+# compiled out and every side refuses their kinds.
+interaction = ["dep:neoteletext-input", "interface-core/interaction"]
+# The phone keyboard (`interaction.md` section 9), which types as the
+# interface's own keyboard does.
+phone-keyboard = ["interaction", "interface-core/phone-keyboard"]
 
 [dependencies]
+neoteletext-input = { workspace = true, optional = true }
 interface-core.workspace = true
 # The audio profile's bounds: channels, gains, fades, rates.
 neoteletext-audio.workspace = true

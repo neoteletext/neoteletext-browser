@@ -32,7 +32,7 @@ mod transport;
 use std::collections::VecDeque;
 use std::collections::hash_map::RandomState;
 use std::hash::{BuildHasher, Hasher};
-use std::io::{self, BufWriter, Read};
+use std::io::{self, BufWriter};
 use std::net::IpAddr;
 use std::process::ExitCode;
 use std::sync::Arc;
@@ -54,8 +54,9 @@ const COOKIE_SLOTS: usize = 100;
 const COOKIE_BYTES: usize = 32 * 1024;
 /// Bytes read from a socket at a time.
 const READ_CHUNK: usize = 16 * 1024;
-/// How long the loop sleeps when nothing happened: short enough that a
-/// pushed page arrives without noticeable delay.
+/// How long the loop waits when nothing happened: short enough that a
+/// pushed page arrives without noticeable delay. A key record from the
+/// trusted core ends the wait at once (`interaction.md` section 10).
 const IDLE: Duration = Duration::from_millis(5);
 
 /// Randomness for the agent (WebSocket masks), from the operating system's
@@ -99,6 +100,9 @@ enum Action {
     /// The page asked for has been answered, one way or another.
     Answered,
     Notice(String),
+    /// The push connection opened or was lost.
+    #[cfg(feature = "interaction")]
+    Push(bool),
 }
 
 fn collect(output: Output<'_>, actions: &mut Vec<Action>) {
@@ -114,6 +118,8 @@ fn collect(output: Output<'_>, actions: &mut Vec<Action>) {
         let origin = match (page.source, page.media) {
             (Source::Push, MediaType::T42) => Origin::PushedPackets,
             (Source::Push, _) => Origin::PushedPage,
+            (_, MediaType::T42) => Origin::FetchedPackets,
+            (_, MediaType::Tti) => Origin::FetchedPage,
             _ => Origin::Fetched,
         };
         actions.push(Action::Bytes { origin, bytes: page.bytes.to_vec() });
@@ -129,6 +135,15 @@ fn collect(output: Output<'_>, actions: &mut Vec<Action>) {
         Output::Event(Event::ServiceReady { .. }) => Action::Ready,
         Output::Event(Event::Contents(bytes)) => Action::Contents(bytes.to_vec()),
         Output::Event(Event::PageCurrent { .. } | Event::PageNotInService { .. } | Event::FetchFailed { .. }) => Action::Answered,
+        #[cfg(feature = "interaction")]
+        Output::Event(Event::PushConnected(_)) => Action::Push(true),
+        // A lost connection waits before the next; a bad message that
+        // keeps the connection says it is retried at once, and is not one.
+        #[cfg(feature = "interaction")]
+        Output::Event(Event::PushLost { retry_in_us, .. }) if retry_in_us > 0 => Action::Push(false),
+        // A key record not sent: nothing is told, as nothing was asked.
+        #[cfg(feature = "interaction")]
+        Output::Event(Event::InputDropped) => return,
         Output::Event(event) => Action::Notice(format!("{event:?}")),
         _ => return,
     });
@@ -189,13 +204,17 @@ fn run(channel: &str, allowed: &[IpAddr]) -> Result<(), String> {
     let mut queue: VecDeque<PageAddress> = VecDeque::new();
     let mut waiting = false;
 
-    // The trusted core closes standard input to end the fetcher.
+    // The trusted core closes standard input to end the fetcher. Before
+    // then it sends only key records (requirement 18.4); anything else
+    // ends the fetcher too.
     let closed = Arc::new(AtomicBool::new(false));
     let flag = closed.clone();
+    let (commands, received) = std::sync::mpsc::channel::<Vec<u8>>();
     std::thread::spawn(move || {
-        let mut sink = [0_u8; 64];
-        while matches!(io::stdin().read(&mut sink), Ok(count) if count > 0) {}
+        read_commands(&commands);
         flag.store(true, Ordering::Relaxed);
+        // Wakes the loop to see it.
+        let _ = commands.send(Vec::new());
     });
 
     let mut actions = Vec::new();
@@ -228,6 +247,16 @@ fn run(channel: &str, allowed: &[IpAddr]) -> Result<(), String> {
                     queue.extend(pages);
                 }
                 Action::Answered => waiting = false,
+                // Keys may go to the channel while its WebSocket is open, if
+                // its descriptor says it takes them (`interaction.md`).
+                #[cfg(feature = "interaction")]
+                Action::Push(open) => {
+                    let declared = agent.descriptor().filter(|descriptor| descriptor.input());
+                    if let Some(descriptor) = declared {
+                        let secure = descriptor.push().is_some_and(|(url, _)| url.is_secure());
+                        send(&mut output, FromFetcher::Input { open, secure })?;
+                    }
+                }
                 Action::Notice(text) => send(&mut output, FromFetcher::Notice(text))?,
             }
         }
@@ -249,11 +278,41 @@ fn run(channel: &str, allowed: &[IpAddr]) -> Result<(), String> {
             busy = true;
             agent.handle(clock(), Input::Tick, &mut |out| collect(out, &mut actions));
         }
-        if !busy {
-            std::thread::sleep(IDLE);
+        // A key record goes the moment it arrives; otherwise the loop
+        // waits for one, or for the sockets' next look.
+        let wait = if busy { Duration::ZERO } else { IDLE };
+        if let Ok(record) = received.recv_timeout(wait) {
+            for record in std::iter::once(record).chain(received.try_iter()) {
+                #[cfg(feature = "interaction")]
+                if !record.is_empty() {
+                    agent.handle(clock(), Input::Send(&record), &mut |out| collect(out, &mut actions));
+                }
+                #[cfg(not(feature = "interaction"))]
+                let _ = record;
+            }
         }
     }
     Ok(())
+}
+
+/// Reads the trusted core's key records until its pipe closes or breaks
+/// the protocol.
+fn read_commands(commands: &std::sync::mpsc::Sender<Vec<u8>>) {
+    let mut input = io::BufReader::new(io::stdin().lock());
+    #[cfg(feature = "interaction")]
+    while let Ok(Some(protocol::fetcher::ToFetcher::Send(record))) = protocol::fetcher::read_to_fetcher(&mut input) {
+        if commands.send(record).is_err() {
+            return;
+        }
+    }
+    #[cfg(not(feature = "interaction"))]
+    {
+        use std::io::Read;
+        // Without typing the fetcher takes nothing: the pipe only ends it.
+        let _ = commands;
+        let mut sink = [0_u8; 64];
+        while matches!(input.read(&mut sink), Ok(count) if count > 0) {}
+    }
 }
 
 fn main() -> ExitCode {
