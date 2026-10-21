@@ -171,6 +171,18 @@ fn contents_entries(bytes: &[u8]) -> (Vec<Entry>, Vec<PageAddress>) {
     (entries, pages)
 }
 
+/// The browser as it names itself to channels, as browsers should have
+/// (requirement 5.14, the engine's REQ-WEB-031): `NeoTeletext/0.1
+/// (macOS)`, its own product, so the engine is not named again.
+fn product() -> Option<neoteletext_web::user_agent::Product> {
+    neoteletext_web::user_agent::os_family().map(|family| neoteletext_web::user_agent::Product {
+        name: "NeoTeletext",
+        version: env!("CARGO_PKG_VERSION"),
+        family,
+        engine_own: true,
+    })
+}
+
 /// The aliases and named services of the open channel's descriptor, as
 /// written: untrusted, for the trusted core to parse. Aliases of numbers
 /// that are not display pages are left out.
@@ -194,7 +206,7 @@ fn descriptor_links(agent: &UserAgent<'_, Random, COOKIE_SLOTS, COOKIE_BYTES>) -
 
 fn run(channel: &str, allowed: &[IpAddr]) -> Result<(), String> {
     let mut storage = Box::new(Storage::default());
-    let mut config = Config { tls_available: true, redirects_within_channel: true, ..Config::default() };
+    let mut config = Config { tls_available: true, redirects_within_channel: true, product: product(), ..Config::default() };
     for (slot, &ip) in config.allowed_local.iter_mut().zip(allowed.iter().take(ALLOWED_LOCAL)) {
         *slot = Some(address(ip));
     }
@@ -348,5 +360,20 @@ fn main() -> ExitCode {
             eprintln!("neoteletext-fetcher: {error}");
             ExitCode::FAILURE
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Requirement 5.14, the engine's REQ-WEB-031: the browser names itself
+    /// `NeoTeletext/0.1 (<family>)`.
+    #[test]
+    fn the_user_agent_names_the_browser() {
+        let product = product().expect("a desktop names its family");
+        let named = neoteletext_web::user_agent::UserAgentString::new(&product).expect("a valid user agent");
+        let family = neoteletext_web::user_agent::os_family().expect("a desktop names its family");
+        assert_eq!(named.as_str(), format!("NeoTeletext/0.1 ({family})"));
     }
 }

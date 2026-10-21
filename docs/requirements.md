@@ -362,7 +362,7 @@
 - **Reason:** Requests must reveal as little as possible about the user; a channel needs to know which receiver it serves, as a web site does.
 - **Source:** Architecture; the owner's instruction of 21 October 2026 (decision 47); the engine's decision E.99.
 - **Verification:** Test: inspect requests and the upgrade received by a test server.
-- **State:** Met for the profile; the user agent string is not built (it is `neoteletext/<version>` until the engine builds REQ-WEB-031); the test is not written here.
+- **State:** Met: the fetcher names the browser to the engine's agent, which sends `NeoTeletext/0.1 (macOS)` on every request and on the push upgrade (the engine's REQ-WEB-031, built 21 October 2026; test `the_user_agent_names_the_browser` here, and the engine's `the_user_agent_goes_on_requests_and_the_upgrade`).
 - *Amended 21 October 2026:* the user agent names the browser, its version and its platform.
 
 ### Requirement 5.15: Whole-channel fetching in a fixed order
