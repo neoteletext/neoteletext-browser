@@ -10,6 +10,7 @@
 //! sends intents; this decides, and alone encodes the protocol
 //! (REQ-INT-132). Nothing a channel or a decoder sends can start it.
 
+use std::borrow::Cow;
 use std::collections::{BTreeMap, VecDeque};
 
 use interface_core::canvas::PageKey;
@@ -98,6 +99,12 @@ impl Channel {
             Ok(0) | Err(_) => None,
         }
     }
+}
+
+/// `text` in Unicode Normalization Form C, borrowed when it already is.
+fn nfc(text: &str) -> Cow<'_, str> {
+    use unicode_normalization::{IsNormalized, UnicodeNormalization, is_nfc_quick};
+    if is_nfc_quick(text.chars()) == IsNormalized::Yes { Cow::Borrowed(text) } else { Cow::Owned(text.nfc().collect()) }
 }
 
 /// The session's clock: the core's milliseconds, wrapping.
@@ -321,13 +328,23 @@ impl Typing {
         let Some(state) = self.channels.get_mut(&channel) else { return sends };
         let open = Some(input.key.page);
         let all_keys = state.session.modes_on(open) & ALL_KEYS != 0;
+        // Text goes in Normalization Form C (section 5.7 rule 3,
+        // REQ-INT-116), a KEY's text too; a paste goes as it was copied.
+        let normalized = match &input.intent {
+            Intent::Text(text) | Intent::Key { text: Some(text), .. } => nfc(text),
+            _ => Cow::Borrowed(""),
+        };
         let item = match &input.intent {
             // A key that types text, with no command modifier, is the text
             // (section 5.3), unless the channel asked for every key.
             Intent::Key { action: Action::Press | Action::Repeat, text: Some(text), mods, .. }
                 if !all_keys && mods & COMMANDS == 0 && text.chars().all(event::printable) =>
             {
-                Item::Text(text)
+                Item::Text(&normalized)
+            }
+            Intent::Text(_) => Item::Text(&normalized),
+            Intent::Key { action, key, mods, text: Some(_), base } => {
+                Item::Event(Event::Key(event::Key { action: *action, key: *key, mods: *mods, text: Some(&normalized), base: *base }))
             }
             intent => intent.item(),
         };
@@ -554,6 +571,21 @@ mod tests {
             ["Event(Key(Key { action: Press, key: Character('a'), mods: 0, text: Some(\"a\"), base: None }))"],
             "every key a KEY in ALL_KEYS"
         );
+    }
+
+    /// REQ-INT-116 rule 3: a decomposed `e` and combining accent go as
+    /// U+00E9, as text and as a KEY's text.
+    #[test]
+    fn text_goes_in_normalization_form_c() {
+        let mut typing = ready(PAGE_CAP | ALL_KEYS);
+        let text = InputIntent { key: PAGE, local: 1, intent: Intent::Text("e\u{301}".into()) };
+        assert_eq!(items(&typing.input_intent(&text, 0)), ["Text(\"\u{e9}\")"]);
+        typing.control(PAGE.channel, &[0xFF, 0x02, u8::try_from(ALL_KEYS).unwrap()], 0);
+        let key = Intent::Key { action: Action::Press, key: KeyCode::Character('e'), mods: 0, text: Some("e\u{301}".into()), base: None };
+        let sent = items(&typing.input_intent(&InputIntent { key: PAGE, local: 2, intent: key }, 0));
+        assert_eq!(sent, ["Event(Key(Key { action: Press, key: Character('e'), mods: 0, text: Some(\"\u{e9}\"), base: None }))"]);
+        let paste = InputIntent { key: PAGE, local: 3, intent: Intent::Paste("e\u{301}".into()) };
+        assert_eq!(items(&typing.input_intent(&paste, 0)), [r#"Event(Paste("e\u{301}"))"#], "a paste as copied");
     }
 
     /// REQ-INT-115: the mouse goes only in a mouse mode, and the page's own

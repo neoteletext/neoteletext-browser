@@ -75,6 +75,14 @@ png = "=0.18.1"
 # the versions and features the engine's own fetcher uses.
 rustls = { version = "=0.23.46", default-features = false, features = ["ring", "std", "tls12"] }
 webpki-roots = "=1.0.10"
+# MIT or Apache-2.0: typed text sent in Unicode Normalization Form C
+# (INPUT.md section 5.7 rule 3, REQ-INT-116; decision 49).
+unicode-normalization = "=0.1.25"
+# MIT or Apache-2.0: the system clipboard's text, for a paste into a page
+# that takes input (REQ-INT-136; decision 49): AppKit's pasteboard on
+# macOS, the Win32 clipboard (clipboard-win, BSL-1.0) on Windows, X11 on
+# Linux. Without default features, so no image support.
+arboard = { version = "=3.6.1", default-features = false }
 
 # Warnings are errors in every gate (scripts/check.sh).
 [workspace.lints.rust]

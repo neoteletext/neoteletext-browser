@@ -396,6 +396,24 @@ impl App {
         }
     }
 
+    /// Whether `event` is the browser's paste shortcut, the browser's
+    /// modifier and V, while keys go to a channel.
+    #[cfg(feature = "interaction")]
+    fn is_paste(&self, event: &winit::event::KeyEvent) -> bool {
+        use winit::platform::modifier_supplement::KeyEventExtModifierSupplement;
+        self.browser.typing_target().is_some()
+            && self.browser_modifier()
+            && matches!(event.key_without_modifiers(), Key::Character(ref key) if key.eq_ignore_ascii_case("v"))
+    }
+
+    /// The clipboard's text to the channel, as one PASTE; a clipboard that
+    /// holds no text pastes nothing.
+    #[cfg(feature = "interaction")]
+    fn paste(&mut self) -> bool {
+        let text = arboard::Clipboard::new().and_then(|mut clipboard| clipboard.get_text());
+        text.is_ok_and(|text| self.browser.terminal_paste(&text))
+    }
+
     /// Whether the browser's own modifier is held: Command on macOS,
     /// Control and Shift elsewhere, the keys a terminal emulator keeps.
     #[cfg(feature = "interaction")]
@@ -710,6 +728,14 @@ impl ApplicationHandler<Incoming> for App {
             #[cfg(feature = "interaction")]
             WindowEvent::KeyboardInput { ref event, .. } if self.browser.typing_target().is_some() && !self.browser_modifier() => {
                 let changed = self.terminal_key(event).unwrap_or(false);
+                self.act(event_loop);
+                changed
+            }
+            // The browser's paste shortcut while keys go to a channel: the
+            // clipboard's text as one PASTE (INPUT.md section 9.1).
+            #[cfg(feature = "interaction")]
+            WindowEvent::KeyboardInput { ref event, .. } if event.state == ElementState::Pressed && self.is_paste(event) => {
+                let changed = self.paste();
                 self.act(event_loop);
                 changed
             }

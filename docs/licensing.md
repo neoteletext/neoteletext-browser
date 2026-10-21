@@ -19,6 +19,8 @@ This is the project's reading of the licences, not legal advice.
 
 The owner accepted the system's LGPL `libasound` for sound on Linux on 19 October 2026 (decision 40).
 
+`arboard`, approved on 21 October 2026 for the clipboard (decision 49), uses two crates on Windows only under BSL-1.0, the Boost Software License: `clipboard-win` and `error-code`. It is permissive, OSI-approved and FSF-free, and asks less than MIT: its notice need not be carried in a binary distribution. `native/deny.toml` allows it for those two crates alone.
+
 ## 3. What is not acceptable
 
 - **GPL and AGPL code.** Linking it into the browser would put the whole browser under the GPL. CREDITS.md names one GPL project, fullPage.js, for an idea only; no code was taken.
@@ -37,7 +39,7 @@ The owner accepted the system's LGPL `libasound` for sound on Linux on 19 Octobe
 
 Measured on 20 October 2026 from `cargo metadata --all-features` and from the built programs.
 
-- **Crates:** about 300, all under the licences of section 2. Most are MIT or Apache-2.0. Besides those are the 22 ICU4X crates (Unicode-3.0), which `parley` and `winit` use for text, and `tiny-skia` (BSD-3-Clause). The engine's crates are MIT.
+- **Crates:** about 300, all under the licences of section 2, and on Windows `clipboard-win` and `error-code` under BSL-1.0 (section 2). Most are MIT or Apache-2.0. Besides those are the 22 ICU4X crates (Unicode-3.0), which `parley` and `winit` use for text, and `tiny-skia` (BSD-3-Clause). The engine's crates are MIT.
 - **Fonts:** Roboto and Open Sans (SIL OFL 1.1).
 - **Linux system libraries,** linked dynamically and not shipped:
   - glibc (`libc`, `libm`): LGPL-2.1-or-later

@@ -31,6 +31,16 @@ unused-allowed-license = "allow"
 crate = "webpki-roots"
 allow = ["CDLA-Permissive-2.0"]
 
+# The clipboard's Windows crates, through arboard (decision 49,
+# docs/licensing.md section 2): the Boost Software License, permissive.
+[[licenses.exceptions]]
+crate = "clipboard-win"
+allow = ["BSL-1.0"]
+
+[[licenses.exceptions]]
+crate = "error-code"
+allow = ["BSL-1.0"]
+
 # The workspace's own crates are never published.
 [licenses.private]
 ignore = true
