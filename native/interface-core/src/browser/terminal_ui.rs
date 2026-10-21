@@ -158,7 +158,7 @@ impl Browser {
     pub fn typing_target(&self) -> Option<PageKey> {
         let typing = self.terminal.typing.filter(|typing| typing.on)?;
         let key = PageKey { channel: typing.channel, page: typing.page };
-        (self.opened() == Some(key) && !self.editing).then_some(key)
+        (self.opened() == Some(key) && !self.editing && !self.settings_editing()).then_some(key)
     }
 
     /// The modes in force on the page keys go to, 0 when none.

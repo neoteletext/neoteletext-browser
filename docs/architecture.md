@@ -555,6 +555,7 @@ Still to come: the launcher and updater (section 12).
 - macOS sandbox profiles for the decoder, the fetcher and the interface.
 - The address rules of section 9.6; tabs, history and bookmarks in memory.
 - Hyperlinks, phases 1 and 2 of `hyperlinks.md` (20 October 2026), behind the `links` feature, on by default: page numbers found in the text and `LT`, `LK` and descriptor links, decided by the trusted core; the underline drawn by the interface; the destination, the site-change screen and the web-browser prompt in the strip; the hand-off to the system's web browser (`web-opener`); `#302` page addresses.
+- Settings kept between runs with the bookmarks, the settings panel of the strip, Home and the start page `neoteletext:home`, the developer console, and HTTP and SOCKS5 proxies (`settings-home-console-proxy.md`, decision 51, 21 October 2026).
 
 **Not built:**
 
@@ -563,9 +564,9 @@ Still to come: the launcher and updater (section 12).
 - The trusted core's own sandbox; sandbox profiles that deny file reads; any sandbox on Windows, Linux, Android or iOS.
 - Sharing one decoder and cookie store between tabs on the same channel (decision 11); the trusted core owning the cookie store.
 - The grace period for closed tabs; the live-feed threshold; refresh schedules.
-- Saving history, bookmarks and sessions.
+- Saving history and sessions.
 - Fonts from channels and the font helper; discovery.
-- Screen readers, the menu bar and its shortcuts, the clipboard, multiple windows, developer tools, reduced motion.
+- Screen readers, the menu bar and its shortcuts, the clipboard, multiple windows, reduced motion.
 - The hostile interface harness and fuzzing of the message readers.
 - The updater and launcher.
 - Builds on Windows, Linux, phones and microcontroller targets.

@@ -1397,6 +1397,7 @@ dependencies = [
  "neoteletext-image",
  "neoteletext-input",
  "neoteletext-interface",
+ "neoteletext-web",
  "protocol",
  "unicode-normalization",
  "web-opener",
@@ -1496,6 +1497,7 @@ version = "0.1.0"
 dependencies = [
  "neoteletext-input",
  "neoteletext-qrkeyboard",
+ "neoteletext-web",
  "protocol",
 ]
 

@@ -6,9 +6,12 @@
 //! between the agent and the sockets, and sends what arrives to the
 //! trusted core on standard output.
 //!
-//! Usage: `neoteletext-fetcher <channel address> [--allow-local <ip>]...`. A
-//! server on this computer or the local network is refused unless named
-//! with `--allow-local` (the engine's REQ-SEC-006).
+//! Usage: `neoteletext-fetcher <channel address> [--allow-local <ip>]...
+//! [--proxy <url>]`. A server on this computer or the local network is
+//! refused unless named with `--allow-local` (the engine's REQ-SEC-006).
+//! With `--proxy http://host:port` or `socks5://host:port` every
+//! connection goes through that proxy (requirement 19.10); it is given only
+//! here, when the fetcher starts (requirement 19.12).
 
 // On Windows, a desktop program: no console window opens with it. The
 // processes talk through the pipes they are given, not a console.
@@ -45,6 +48,7 @@ use neoteletext_web::consts::ALLOWED_LOCAL;
 use neoteletext_web::contents::{self, Entry as ContentsEntry};
 use neoteletext_web::http::MediaType;
 use neoteletext_web::port::{ConnectionId, NetOutput, Pump, Security};
+use neoteletext_web::proxy::Proxy;
 use protocol::fetcher::{Entry, FromFetcher, Origin, write_to_core};
 
 use crate::transport::{Tcp, address};
@@ -54,6 +58,9 @@ const COOKIE_SLOTS: usize = 100;
 const COOKIE_BYTES: usize = 32 * 1024;
 /// Bytes passed to the agent at a time.
 const READ_CHUNK: usize = 16 * 1024;
+// An exchange reports an address the engine accepted, so the protocol's
+// bound must hold the engine's longest.
+const _: () = assert!(protocol::fetcher::MAX_EXCHANGE_URL >= neoteletext_web::consts::MAX_URL_LENGTH);
 
 /// What ends the loop's wait: it sleeps until one comes, or until the
 /// agent's next timer (REQ-INT-135).
@@ -107,7 +114,9 @@ enum Action {
     Contents(Vec<u8>),
     /// The page asked for has been answered, one way or another.
     Answered,
-    Notice(String),
+    /// A message for the trusted core as it is: a notice, or an exchange
+    /// for the developer console (the engine's REQ-WEB-033).
+    Tell(FromFetcher),
     /// The push connection opened or was lost.
     Push(bool),
 }
@@ -143,13 +152,20 @@ fn collect(output: Output<'_>, actions: &mut Vec<Action>) {
         Output::Event(Event::Contents(bytes)) => Action::Contents(bytes.to_vec()),
         Output::Event(Event::PageCurrent { .. } | Event::PageNotInService { .. } | Event::FetchFailed { .. }) => Action::Answered,
         Output::Event(Event::PushConnected(_)) => Action::Push(true),
+        Output::Event(Event::Exchanged { method, url, status, bytes, elapsed_us }) => Action::Tell(FromFetcher::Exchange {
+            method: String::from_utf8_lossy(method.token()).into_owned(),
+            url: url.to_owned(),
+            status,
+            bytes: u64::try_from(bytes).unwrap_or(u64::MAX),
+            elapsed_us,
+        }),
         // A lost connection waits before the next; a bad message that
         // keeps the connection says it is retried at once, and is not one.
         Output::Event(Event::PushLost { retry_in_us, .. }) if retry_in_us > 0 => Action::Push(false),
         // An input message not sent: nothing is told, as nothing was asked.
         #[cfg(feature = "interaction")]
         Output::Event(Event::InputDropped) => return,
-        Output::Event(event) => Action::Notice(format!("{event:?}")),
+        Output::Event(event) => Action::Tell(FromFetcher::Notice(format!("{event:?}"))),
         _ => return,
     });
 }
@@ -204,9 +220,10 @@ fn descriptor_links(agent: &UserAgent<'_, Random, COOKIE_SLOTS, COOKIE_BYTES>) -
     (!aliases.is_empty() || !services.is_empty()).then_some(FromFetcher::Links { aliases, services })
 }
 
-fn run(channel: &str, allowed: &[IpAddr]) -> Result<(), String> {
+fn run(channel: &str, allowed: &[IpAddr], proxy: Option<Proxy>) -> Result<(), String> {
     let mut storage = Box::new(Storage::default());
-    let mut config = Config { tls_available: true, redirects_within_channel: true, product: product(), ..Config::default() };
+    // Proxied, local names are refused before the proxy is asked (REQ-WEB-032).
+    let mut config = Config { tls_available: true, redirects_within_channel: true, product: product(), proxied: proxy.is_some(), ..Config::default() };
     for (slot, &ip) in config.allowed_local.iter_mut().zip(allowed.iter().take(ALLOWED_LOCAL)) {
         *slot = Some(address(ip));
     }
@@ -214,9 +231,12 @@ fn run(channel: &str, allowed: &[IpAddr]) -> Result<(), String> {
     let mut agent: Box<UserAgent<'_, Random, COOKIE_SLOTS, COOKIE_BYTES>> = Box::new(UserAgent::new(config, storage.buffers(), random));
     let (wakes, woken) = mpsc::channel::<Wake>();
     let network = wakes.clone();
-    let mut pump = Pump::new(Tcp::new(Arc::new(move || {
-        let _ = network.send(Wake::Network);
-    })));
+    let mut pump = Pump::new(Tcp::new(
+        Arc::new(move || {
+            let _ = network.send(Wake::Network);
+        }),
+        proxy,
+    ));
     let mut output = BufWriter::new(io::stdout().lock());
     let start = Clock::now();
     let clock = || Instant(u64::try_from(start.elapsed().as_micros()).unwrap_or(u64::MAX));
@@ -275,8 +295,11 @@ fn run(channel: &str, allowed: &[IpAddr]) -> Result<(), String> {
                         send(&mut output, FromFetcher::Input { open, secure })?;
                     }
                 }
-                Action::Notice(text) => send(&mut output, FromFetcher::Notice(text))?,
+                Action::Tell(message) => send(&mut output, message)?,
             }
+        }
+        if pump.transport.take_proxy_failure() {
+            write_to_core(&mut output, &FromFetcher::ProxyFailed).map_err(|error| error.to_string())?;
         }
         // One page at a time, in the contents file's order; the agent
         // spaces the requests at the engine's rate.
@@ -339,22 +362,37 @@ fn read_commands(commands: &mpsc::Sender<Wake>) {
     }
 }
 
-fn main() -> ExitCode {
-    let mut arguments = std::env::args().skip(1);
-    let Some(channel) = arguments.next() else {
-        eprintln!("neoteletext-fetcher: usage: neoteletext-fetcher <channel address> [--allow-local <ip>]...");
-        return ExitCode::FAILURE;
-    };
-    let mut allowed = Vec::new();
-    while let Some(argument) = arguments.next() {
-        if let ("--allow-local", Some(Ok(ip))) = (argument.as_str(), arguments.next().map(|ip| ip.parse::<IpAddr>())) {
-            allowed.push(ip);
-        } else {
-            eprintln!("neoteletext-fetcher: {argument}: not understood");
-            return ExitCode::FAILURE;
+/// What the trusted core started the fetcher with.
+struct Arguments {
+    channel: String,
+    allowed: Vec<IpAddr>,
+    proxy: Option<Proxy>,
+}
+
+fn arguments(given: impl IntoIterator<Item = String>) -> Result<Arguments, String> {
+    let mut given = given.into_iter();
+    let channel = given.next().ok_or("usage: neoteletext-fetcher <channel address> [--allow-local <ip>]... [--proxy <url>]")?;
+    let mut read = Arguments { channel, allowed: Vec::new(), proxy: None };
+    while let Some(argument) = given.next() {
+        let value = given.next().ok_or_else(|| format!("{argument} needs a value"))?;
+        match argument.as_str() {
+            "--allow-local" => read.allowed.push(value.parse::<IpAddr>().map_err(|_| format!("{value}: not an IP address"))?),
+            "--proxy" if read.proxy.is_none() => read.proxy = Some(Proxy::parse(&value)?),
+            _ => return Err(format!("{argument}: not understood")),
         }
     }
-    match run(&channel, &allowed) {
+    Ok(read)
+}
+
+fn main() -> ExitCode {
+    let read = match arguments(std::env::args().skip(1)) {
+        Ok(read) => read,
+        Err(error) => {
+            eprintln!("neoteletext-fetcher: {error}");
+            return ExitCode::FAILURE;
+        }
+    };
+    match run(&read.channel, &read.allowed, read.proxy) {
         Ok(()) => ExitCode::SUCCESS,
         Err(error) => {
             eprintln!("neoteletext-fetcher: {error}");
@@ -375,5 +413,25 @@ mod tests {
         let named = neoteletext_web::user_agent::UserAgentString::new(&product).expect("a valid user agent");
         let family = neoteletext_web::user_agent::os_family().expect("a desktop names its family");
         assert_eq!(named.as_str(), format!("NeoTeletext/0.1 ({family})"));
+    }
+
+    fn read(given: &[&str]) -> Result<Arguments, String> {
+        arguments(given.iter().map(|&argument| argument.to_owned()))
+    }
+
+    /// Requirement 19.12: the fetcher takes its proxy as an argument when
+    /// it starts, once.
+    #[test]
+    fn the_fetcher_reads_its_proxy_argument() {
+        let plain = read(&["https://a.example/"]).unwrap();
+        assert!(plain.proxy.is_none() && plain.allowed.is_empty());
+        let given = read(&["https://a.example/", "--allow-local", "10.0.0.2", "--proxy", "http://p.example:3128"]).unwrap();
+        let proxy = given.proxy.unwrap();
+        assert_eq!((proxy.kind, proxy.host.as_str(), proxy.port), (neoteletext_web::proxy::ProxyKind::Http, "p.example", 3128));
+        assert_eq!(given.allowed, ["10.0.0.2".parse::<IpAddr>().unwrap()]);
+        assert!(read(&["https://a.example/", "--proxy", "ftp://p.example:21"]).is_err());
+        assert!(read(&["https://a.example/", "--proxy"]).is_err());
+        assert!(read(&["https://a.example/", "--proxy", "http://p:1", "--proxy", "http://q:1"]).is_err(), "one proxy");
+        assert!(read(&[]).is_err());
     }
 }

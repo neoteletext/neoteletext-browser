@@ -1,7 +1,8 @@
 //! The trusted core's parser of typed addresses, a library so that it can
 //! be fuzzed on its own, its rules for what is heard, its frame encoder
-//! (measured by the latency test), its typing rules and its hyperlinks;
-//! the trusted core itself is `main.rs`.
+//! (measured by the latency test), its typing rules, its hyperlinks, its
+//! settings, its start page and its console's entries; the trusted core
+//! itself is `main.rs`.
 
 // No panicking constructs: this crate reads input from outside the
 // process. The same list is in each such crate; scripts/check.sh checks
@@ -18,10 +19,13 @@
 )]
 
 pub mod address;
+pub mod console;
 pub mod frames;
 pub mod hearing;
 #[cfg(feature = "links")]
 pub mod links;
+pub mod settings;
 pub mod sleep;
+pub mod start_page;
 #[cfg(feature = "interaction")]
 pub mod typing;

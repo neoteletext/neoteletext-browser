@@ -63,6 +63,13 @@ impl Source {
         Ok(Self { bytes, sent: 0, ended: false })
     }
 
+    /// A channel of these bytes, written by the trusted core itself: the
+    /// start page.
+    #[must_use]
+    pub fn from_bytes(bytes: Vec<u8>) -> Self {
+        Self { bytes, sent: 0, ended: false }
+    }
+
     /// A channel with no data, for addresses that cannot be read yet.
     #[must_use]
     pub fn empty() -> Self {

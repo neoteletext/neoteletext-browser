@@ -4,8 +4,8 @@
 
 use std::cell::RefCell;
 
-use libfuzzer_sys::fuzz_target;
 use decoder::Engine;
+use libfuzzer_sys::fuzz_target;
 
 thread_local! {
     // One engine for the whole run: each engine leaks its page store, one

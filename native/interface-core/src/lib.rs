@@ -15,12 +15,14 @@ extern crate alloc;
 pub mod browser;
 pub mod canvas;
 pub mod channel;
+pub mod console;
 pub mod editor;
 pub mod geometry;
 #[cfg(feature = "interaction")]
 pub mod input;
 #[cfg(feature = "links")]
 pub mod links;
+pub mod settings;
 pub mod size;
 #[cfg(test)]
 mod test_canvas;

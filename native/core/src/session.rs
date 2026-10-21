@@ -4,8 +4,6 @@
 //! 22): a page arrives whether or not anyone looks at it, and looking at a
 //! page never brings it sooner.
 
-use std::collections::BTreeSet;
-
 use interface_core::browser::{StripState, TabInfo};
 use interface_core::channel::{BANKS, Channel, PAGES, PAGES_PER_BANK, PageInfo, Status, page_index};
 use interface_core::theme::TAB_COLOURS;
@@ -13,11 +11,9 @@ use protocol::fetcher::Entry;
 use protocol::{MAX_ADDRESS, MAX_BANK_NAME, MAX_IDENTITY, MAX_PAGE_TITLE, MAX_TAB_TITLE, MAX_TITLE, clean};
 
 use crate::source::Source;
-use neoteletext::address::{Address, parse};
-
-/// The page a new tab opens, under `.invalid`, which never resolves
-/// (RFC 2606 section 2).
-pub const HOME: &str = "https://home.invalid/";
+use neoteletext::address::{Address, START_PAGE, parse};
+use neoteletext::settings::MAX_BOOKMARKS;
+use neoteletext::start_page;
 
 /// One channel shown in a tab: the pages its contents file lists and the
 /// pages its decoder has reported.
@@ -39,7 +35,14 @@ pub struct ChannelState {
 }
 
 impl ChannelState {
-    fn new(id: u32, address: &Address) -> Self {
+    fn new(id: u32, address: &Address, bookmarks: &[String]) -> Self {
+        // The start page is written here, from the bookmarks, and needs no
+        // network (requirement 19.7).
+        if address.is_start_page() {
+            let mut channel = Self::with(id, address, Source::from_bytes(start_page::pages(bookmarks)), None, None);
+            channel.set_contents(&start_page::contents(bookmarks));
+            return channel;
+        }
         let (source, web, problem) = match &address.file {
             Some(path) => match Source::read(path) {
                 Ok(source) => (source, None, None),
@@ -49,6 +52,10 @@ impl ChannelState {
             // page and is never sent (`hyperlinks.md` section 7.3).
             None => (Source::empty(), Some(address.channel_text().to_owned()), None),
         };
+        Self::with(id, address, source, web, problem)
+    }
+
+    fn with(id: u32, address: &Address, source: Source, web: Option<String>, problem: Option<String>) -> Self {
         Self {
             id,
             title: clean(&address.host, MAX_TITLE),
@@ -157,20 +164,52 @@ impl Tab {
 pub struct Session {
     pub tabs: Vec<Tab>,
     pub active: usize,
-    bookmarks: BTreeSet<String>,
+    /// In the order added, at most [`MAX_BOOKMARKS`] (requirement 19.5).
+    bookmarks: Vec<String>,
     next_channel: u32,
 }
 
 impl Session {
     #[must_use]
-    pub fn new() -> Self {
-        Self { tabs: Vec::new(), active: 0, bookmarks: BTreeSet::new(), next_channel: 1 }
+    pub fn new(bookmarks: Vec<String>) -> Self {
+        Self { tabs: Vec::new(), active: 0, bookmarks, next_channel: 1 }
     }
 
     fn channel_for(&mut self, address: &Address) -> ChannelState {
         let id = self.next_channel;
         self.next_channel = self.next_channel.wrapping_add(1).max(1);
-        ChannelState::new(id, address)
+        ChannelState::new(id, address, &self.bookmarks)
+    }
+
+    /// The bookmarks, in the order added.
+    #[must_use]
+    pub fn bookmarks(&self) -> &[String] {
+        &self.bookmarks
+    }
+
+    /// The bookmark the active tab's start page opens at `page`, if the
+    /// tab shows the start page (requirement 19.7).
+    #[must_use]
+    pub fn start_page_bookmark(&self, channel: u32, page: u16) -> Option<String> {
+        let tab = self.active_tab().filter(|tab| tab.channel.id == channel)?;
+        tab.address().filter(|address| address.is_start_page())?;
+        start_page::bookmark_at(page, &self.bookmarks).map(str::to_owned)
+    }
+
+    /// Opens a bookmark the start page chose, as the user's own navigation:
+    /// the start page's place in history becomes its front page, so going
+    /// back returns to it rather than opening the bookmark again.
+    ///
+    /// # Errors
+    /// When the address cannot be opened, or there is no tab.
+    pub fn open_from_start_page(&mut self, bookmark: &str) -> Result<(), String> {
+        let address = parse(bookmark)?;
+        let front = parse(START_PAGE)?;
+        let tab = self.tabs.get_mut(self.active).ok_or("no tab is open")?;
+        if let Some(visit) = tab.history.get_mut(tab.position).filter(|visit| visit.address.is_start_page()) {
+            visit.address = front;
+        }
+        self.visit(address, false)
     }
 
     /// Opens a tab at `typed` and makes it active.
@@ -247,12 +286,21 @@ impl Session {
         }
     }
 
-    pub fn toggle_bookmark(&mut self) {
-        let Some(address) = self.tabs.get(self.active).and_then(Tab::address) else { return };
-        let address = address.text.clone();
-        if !self.bookmarks.remove(&address) {
-            self.bookmarks.insert(address);
+    /// Bookmarks the active tab's channel, or removes its bookmark; returns
+    /// whether the bookmarks changed. A channel is kept by its address
+    /// without a page, and at most [`MAX_BOOKMARKS`] are kept.
+    pub fn toggle_bookmark(&mut self) -> bool {
+        let Some(address) = self.tabs.get(self.active).and_then(Tab::address) else { return false };
+        let address = address.channel_text().to_owned();
+        if let Some(index) = self.bookmarks.iter().position(|bookmark| *bookmark == address) {
+            self.bookmarks.remove(index);
+            return true;
         }
+        if self.bookmarks.len() >= MAX_BOOKMARKS {
+            return false;
+        }
+        self.bookmarks.push(address);
+        true
     }
 
     /// Mutes tab `index`, or unmutes it. Returns whether there is such a tab.
@@ -310,7 +358,9 @@ impl Session {
             local: address.file.is_some(),
             back: tab.position > 0,
             forward: tab.position.saturating_add(1) < tab.history.len(),
-            bookmarked: self.bookmarks.contains(&address.text),
+            bookmarked: self.bookmarks.iter().any(|bookmark| bookmark == address.channel_text()),
+            built_in: address.is_start_page(),
+            notice: String::new(),
         }
     }
 }
@@ -321,7 +371,7 @@ mod tests {
 
     #[test]
     fn a_tab_stays_muted_on_its_next_channel_and_mute_all_reaches_every_tab() {
-        let mut session = Session::new();
+        let mut session = Session::new(Vec::new());
         session.open("news.invalid").unwrap();
         session.open("sport.invalid").unwrap();
         assert!(session.toggle_mute(0));
@@ -340,7 +390,7 @@ mod tests {
 
     #[test]
     fn history_goes_back_and_forward_and_a_new_address_drops_forward() {
-        let mut session = Session::new();
+        let mut session = Session::new(Vec::new());
         session.open("news.invalid").unwrap();
         session.navigate("sport.invalid").unwrap();
         assert!(session.strip().back && !session.strip().forward);
@@ -355,7 +405,7 @@ mod tests {
     #[cfg(feature = "links")]
     #[test]
     fn a_link_within_the_channel_keeps_it_open_and_is_recorded_as_the_pages() {
-        let mut session = Session::new();
+        let mut session = Session::new(Vec::new());
         session.open("news.invalid/teletext/").unwrap();
         let channel = session.tabs[0].channel.id;
         assert_eq!(session.show_page(0x302).map(|address| address.text.as_str()), Some("https://news.invalid/teletext/#302"));
@@ -373,7 +423,7 @@ mod tests {
 
     #[test]
     fn a_page_is_recorded_once_with_its_title_cleaned() {
-        let mut session = Session::new();
+        let mut session = Session::new(Vec::new());
         session.open("news.invalid").unwrap();
         let channel = &mut session.tabs[0].channel;
         assert!(channel.web.is_some(), "a web channel has a fetcher");
@@ -385,7 +435,7 @@ mod tests {
 
     #[test]
     fn the_contents_file_lists_pages_and_names_sections() {
-        let mut session = Session::new();
+        let mut session = Session::new(Vec::new());
         session.open("news.invalid").unwrap();
         let channel = &mut session.tabs[0].channel;
         channel.set_contents(&[
@@ -405,7 +455,7 @@ mod tests {
 
     #[test]
     fn closing_tabs_keeps_a_valid_active_tab() {
-        let mut session = Session::new();
+        let mut session = Session::new(Vec::new());
         for host in ["a.invalid", "b.invalid", "c.invalid"] {
             session.open(host).unwrap();
         }
@@ -419,7 +469,7 @@ mod tests {
 
     #[test]
     fn bookmarks_follow_the_address() {
-        let mut session = Session::new();
+        let mut session = Session::new(Vec::new());
         session.open("news.invalid").unwrap();
         session.toggle_bookmark();
         assert!(session.strip().bookmarked);
@@ -427,5 +477,56 @@ mod tests {
         assert!(!session.strip().bookmarked);
         assert_eq!(session.go(false), Went::Channel);
         assert!(session.strip().bookmarked);
+        assert_eq!(session.bookmarks(), ["https://news.invalid/"]);
+    }
+
+    /// Requirement 19.5: a channel once, by its address without a page, in
+    /// the order added, at most 1 000.
+    #[test]
+    fn bookmarks_are_kept_in_order_and_bounded() {
+        let full: Vec<String> = (0..MAX_BOOKMARKS).map(|n| format!("https://b{n}.invalid/")).collect();
+        let mut session = Session::new(full);
+        session.open("news.invalid/#302").unwrap();
+        assert!(!session.toggle_bookmark(), "no room");
+        assert!(!session.strip().bookmarked);
+        session.navigate("b5.invalid").unwrap();
+        assert!(session.strip().bookmarked);
+        assert!(session.toggle_bookmark(), "removed");
+        assert_eq!(session.bookmarks().len(), MAX_BOOKMARKS - 1);
+        session.navigate("news.invalid/#302").unwrap();
+        assert!(session.toggle_bookmark());
+        assert_eq!(session.bookmarks().last().map(String::as_str), Some("https://news.invalid/"), "added last, without its page");
+    }
+
+    /// Requirement 19.7: the start page is served from the bookmarks with
+    /// no fetcher, and its bookmark pages open them as the user's own
+    /// navigation; back returns to its front page.
+    #[test]
+    fn the_start_page_opens_its_bookmarks() {
+        let mut session = Session::new(vec!["https://news.invalid/".into()]);
+        session.open(START_PAGE).unwrap();
+        let channel = &session.tabs[0].channel;
+        assert!(channel.web.is_none() && channel.problem.is_none(), "no network");
+        assert_eq!(channel.view().pages[start_page_index(0x201)].as_ref().map(|page| page.title.as_str()), Some("news.invalid/"));
+        assert!(session.strip().built_in);
+        let id = channel.id;
+        assert_eq!(session.start_page_bookmark(id, 0x201).as_deref(), Some("https://news.invalid/"));
+        assert_eq!(session.start_page_bookmark(id, 0x202), None);
+        assert_eq!(session.start_page_bookmark(id.wrapping_add(1), 0x201), None, "another channel's page");
+        session.tabs[0].history[0].address = parse("neoteletext:home#201").unwrap();
+        session.open_from_start_page("https://news.invalid/").unwrap();
+        assert_eq!(session.strip().identity, "news.invalid");
+        assert!(!session.tabs[0].history[1].by_page, "the user's own navigation");
+        assert_eq!(session.go(false), Went::Channel);
+        assert_eq!(session.strip().address, START_PAGE, "back at the front page, not the bookmark's");
+        let id = session.tabs[0].channel.id;
+        assert_eq!(session.start_page_bookmark(id, 0x201).as_deref(), Some("https://news.invalid/"));
+        session.navigate("news.invalid").unwrap();
+        let id = session.tabs[0].channel.id;
+        assert_eq!(session.start_page_bookmark(id, 0x201), None, "only on the start page");
+    }
+
+    fn start_page_index(page: u16) -> usize {
+        page_index(page).unwrap()
     }
 }

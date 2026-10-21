@@ -9,8 +9,11 @@
 //! a web channel's folder (`http://host/folder/`), a `file://` address, or
 //! an absolute path to a recording, a page file or a folder of page files.
 //! A channel on this computer or the local network is fetched only from
-//! the addresses given with `--allow-local` (the engine's REQ-SEC-006).
-//! The decoder and the interface are found beside this program.
+//! the addresses given with `--allow-local` or allowed in the settings
+//! (the engine's REQ-SEC-006). With no address, the tab opens the home
+//! address of the settings, which the trusted core keeps between runs
+//! (`settings-home-console-proxy.md`). The decoder and the interface are
+//! found beside this program.
 
 // On Windows, a desktop program: no console window opens with it. The
 // processes talk through the pipes they are given, not a console.
@@ -41,19 +44,23 @@ use std::thread;
 use std::time::Duration;
 
 use interface_core::canvas::PageKey;
+use protocol::console::ConsoleTab;
 use protocol::decoder::{FIRST_STORE_PAGES, FromDecoder, MAX_CHUNK, MAX_STORE_PAGES, MAX_WHOLE, ToDecoder, read_from_decoder, write_to_decoder};
 use protocol::fetcher::{FromFetcher, MAX_NOTICE, Origin, read_from_fetcher};
+use protocol::settings::{ProxyView, SettingChange, SettingsView};
 use protocol::{ToCore, ToInterface, clean, read_from_interface, write_to_interface};
 
+use neoteletext::console::{Console, exchange_text};
 use neoteletext::frames;
 use neoteletext::hearing::{Hearing, Send};
 #[cfg(feature = "links")]
 use neoteletext::links::{Channel as LinkChannel, Follow, Links, Refusal};
+use neoteletext::settings::{self as stored, Settings};
 use neoteletext::sleep::Sleep;
 #[cfg(feature = "links")]
 use protocol::links::{LinkKind, Message as LinkMessage, Pointing, Spot};
 
-use crate::session::{HOME, Session, Went};
+use crate::session::{Session, Went};
 use crate::source::Next;
 
 const DECODER: &str = "neoteletext-decoder";
@@ -78,6 +85,9 @@ const LOAD_INTERVAL: Duration = Duration::from_millis(200);
 /// How often the trusted core looks for tabs that may sleep: a tab sleeps
 /// at most this long after its time is up (decision 47).
 const SLEEP_CHECK: Duration = Duration::from_secs(60);
+/// How long the strip says a notice (`settings-home-console-proxy-security.md`
+/// section 3).
+const NOTICE_TIME: Duration = Duration::from_secs(10);
 
 /// The interface's and the decoders' sandbox on macOS: no network and no
 /// writing to files. Proof A showed the system webview cannot run like
@@ -198,11 +208,16 @@ fn start_decoder(path: &Path, channel: u32, generation: u64, store_pages: usize,
 
 /// Starts a fetcher for the web channel at `address`, whose messages
 /// arrive as events.
-fn start_fetcher(path: &Path, address: &str, allow_local: &[String], channel: u32, generation: u64, events: Sender<Event>) -> Result<Fetcher, String> {
+/// A fetcher is given its proxy only here, when it starts: a change of the
+/// proxy reaches fetchers started after it (requirement 19.12).
+fn start_fetcher(path: &Path, address: &str, reach: &Reach, channel: u32, generation: u64, events: Sender<Event>) -> Result<Fetcher, String> {
     let mut command = sandboxed_with_network(path);
     command.arg(address);
-    for ip in allow_local {
+    for ip in &reach.allow_local {
         command.arg("--allow-local").arg(ip);
+    }
+    if let Some(proxy) = &reach.proxy {
+        command.arg("--proxy").arg(proxy);
     }
     let mut child = spawn(&mut command, "fetcher")?;
     let output = child.stdout.take().ok_or("the fetcher has no output")?;
@@ -262,14 +277,38 @@ fn every(period: Duration, events: Sender<Event>, event: fn() -> Event) {
     });
 }
 
+/// Where a new fetcher may connect: the local addresses allowed, from the
+/// command line and the settings, and the proxy of the settings.
+struct Reach {
+    allow_local: Vec<String>,
+    proxy: Option<String>,
+}
+
+impl Reach {
+    fn of(command_line: &[String], settings: &Settings) -> Self {
+        let mut allow_local = command_line.to_vec();
+        allow_local.extend(settings.local.iter().map(ToString::to_string));
+        Self { allow_local, proxy: settings.proxy.as_ref().map(stored::Proxy::url) }
+    }
+}
+
 struct Core {
     session: Session,
     decoders: BTreeMap<u32, Decoder>,
     decoder_path: PathBuf,
     fetchers: BTreeMap<u32, Fetcher>,
     fetcher_path: PathBuf,
-    /// Local-network servers the user allowed (`--allow-local`).
+    /// Local-network servers the user allowed with `--allow-local`.
     allow_local: Vec<String>,
+    /// The settings and where they are kept (requirement 19.1).
+    settings: Settings,
+    settings_folder: Option<PathBuf>,
+    /// Why the last change the panel asked for was refused.
+    refusal: Option<String>,
+    /// What the strip says, until when (requirements 19.3, 19.10).
+    notice: Option<(String, std::time::Instant)>,
+    /// The developer console's entries (requirement 19.9).
+    console: Console,
     events: Sender<Event>,
     frames: frames::Frames,
     /// The channel whose decoder was last told which pages are shown.
@@ -287,8 +326,8 @@ struct Core {
     /// The links of the pages on screen (`hyperlinks.md`).
     #[cfg(feature = "links")]
     links: Links,
-    /// When the trusted core started: the clock of links and of typing.
-    #[cfg(any(feature = "links", feature = "interaction"))]
+    /// When the trusted core started: the clock of links, of typing and of
+    /// the console.
     started: std::time::Instant,
     /// Typing into a page (`interaction.md`).
     #[cfg(feature = "interaction")]
@@ -307,7 +346,6 @@ struct Core {
 
 impl Core {
     /// Milliseconds since the trusted core started.
-    #[cfg(any(feature = "links", feature = "interaction"))]
     fn now(&self) -> u64 {
         u64::try_from(self.started.elapsed().as_millis()).unwrap_or(u64::MAX)
     }
@@ -445,7 +483,8 @@ impl Core {
                 && !self.fetchers.contains_key(id)
             {
                 self.generation = self.generation.wrapping_add(1);
-                let fetcher = start_fetcher(&self.fetcher_path, address, &self.allow_local, *id, self.generation, self.events.clone())?;
+                let reach = Reach::of(&self.allow_local, &self.settings);
+                let fetcher = start_fetcher(&self.fetcher_path, address, &reach, *id, self.generation, self.events.clone())?;
                 self.fetchers.insert(*id, fetcher);
             }
         }
@@ -454,6 +493,7 @@ impl Core {
             self.put_to_sleep(id)?;
             self.stop_fetcher(id);
             self.sleep.forget(id);
+            self.console.forget(id);
         }
         Ok(())
     }
@@ -515,6 +555,7 @@ impl Core {
     }
 
     fn fetched(&mut self, channel: u32, message: FromFetcher) -> Result<(), String> {
+        self.console_fetched(channel, &message);
         match message {
             FromFetcher::Contents(entries) => {
                 let Some(tab) = self.session.tabs.iter_mut().find(|tab| tab.channel.id == channel) else { return Ok(()) };
@@ -545,6 +586,21 @@ impl Core {
                 }
             }
             FromFetcher::Notice(text) => eprintln!("neoteletext: channel {channel}: {}", clean(&text, MAX_NOTICE)),
+            // Said in the trusted core's own words, of the channel's host as
+            // the strip shows it: a fetcher cannot write the strip.
+            FromFetcher::ProxyFailed => {
+                let host = self.session.tabs.iter().find(|tab| tab.channel.id == channel).and_then(|tab| tab.address()).map(|address| address.host.clone());
+                if let Some(host) = host {
+                    let text = format!("The proxy refused the connection to {host}");
+                    self.console.add(channel, ConsoleTab::Notices, self.now(), &text);
+                    if self.active_channel() == Some(channel) {
+                        self.say(text)?;
+                    } else {
+                        eprintln!("neoteletext: {text}");
+                    }
+                }
+            }
+            FromFetcher::Exchange { .. } => {}
             FromFetcher::Pushing(open) => {
                 self.sleep.set_pushing(channel, open);
                 // A live channel wakes at once, not at the next look.
@@ -588,11 +644,12 @@ impl Core {
         let tabs = self.session.tab_infos();
         let active = self.session.active;
         self.send(&ToInterface::Tabs { tabs, active })?;
-        self.send(&ToInterface::Strip(self.session.strip()))?;
+        self.send(&ToInterface::Strip(self.strip()))?;
         if let Some(tab) = self.session.active_tab() {
             let channel = tab.channel.view();
             self.send(&ToInterface::Channel(channel))?;
         }
+        self.send_console()?;
         #[cfg(feature = "links")]
         self.send_links_afresh()?;
         self.send_mutes()
@@ -659,9 +716,13 @@ impl Core {
                 self.send_all()?;
             }
             ToCore::NewTab => {
-                self.session.open(HOME)?;
+                let home = self.settings.home.clone();
+                open_home(&mut self.session, &home)?;
                 self.send_all()?;
             }
+            // The start page's bookmark pages open their bookmarks, as the
+            // user's own navigation (requirement 19.7).
+            ToCore::Opened(Some(key)) if self.session.start_page_bookmark(key.channel, key.page).is_some() => self.open_start_page_bookmark(key)?,
             ToCore::Opened(key) => {
                 #[cfg(feature = "interaction")]
                 {
@@ -696,17 +757,14 @@ impl Core {
                 // Another page of the same channel: it stays open.
                 #[cfg_attr(not(feature = "links"), allow(unused_variables, reason = "only a link opens a page"))]
                 Went::Page(page) => {
-                    self.send(&ToInterface::Strip(self.session.strip()))?;
+                    self.send(&ToInterface::Strip(self.strip()))?;
                     #[cfg(feature = "links")]
                     if let (Some(page), Some(channel)) = (page, self.active_channel()) {
                         self.link(LinkMessage::Show(PageKey { channel, page }))?;
                     }
                 }
             },
-            ToCore::Bookmark => {
-                self.session.toggle_bookmark();
-                self.send(&ToInterface::Strip(self.session.strip()))?;
-            }
+            ToCore::Bookmark | ToCore::Home | ToCore::ChangeSetting(_) | ToCore::Console(_) => self.settings_intent(intent)?,
             #[cfg(feature = "links")]
             ToCore::Point(_) | ToCore::Typed { .. } | ToCore::Confirm(_) | ToCore::Cancel(_) => self.link_intent(&intent)?,
             #[cfg(any(feature = "links", feature = "interaction"))]
@@ -750,6 +808,8 @@ impl Core {
         }
         if let Some(reason) = reason {
             eprintln!("neoteletext: the decoder for channel {channel} stopped: {reason}");
+            let at = self.now();
+            self.console.add(channel, ConsoleTab::Notices, at, &format!("the decoder stopped: {reason}"));
         }
         if let Some(mut decoder) = self.decoders.remove(&channel) {
             let _ = decoder.child.kill();
@@ -765,7 +825,12 @@ impl Core {
             FromDecoder::StoreFull => self.grow_decoder(channel)?,
             FromDecoder::Arrived { page, title } => {
                 let Some(tab) = self.session.tabs.iter_mut().find(|tab| tab.channel.id == channel) else { return Ok(()) };
-                if let Some(title) = tab.channel.arrived(page, &title)
+                let title = tab.channel.arrived(page, &title);
+                if let Some(title) = &title {
+                    let at = self.now();
+                    self.console.add(channel, ConsoleTab::Pages, at, &format!("page {page:03X} arrived: {title}"));
+                }
+                if let Some(title) = title
                     && active == Some(channel)
                 {
                     self.send(&ToInterface::Page { channel, page, title })?;
@@ -775,6 +840,8 @@ impl Core {
                 }
             }
             FromDecoder::Updated { page } => {
+                let at = self.now();
+                self.console.add(channel, ConsoleTab::Pages, at, &format!("page {page:03X} changed"));
                 if active == Some(channel) {
                     self.send(&ToInterface::Updated { channel, page })?;
                 }
@@ -824,6 +891,231 @@ impl Core {
     }
 }
 
+/// Settings, the strip's notice and the developer console
+/// (`settings-home-console-proxy.md`).
+impl Core {
+    /// The strip as the session has it, with the notice while it lasts.
+    fn strip(&self) -> interface_core::browser::StripState {
+        let mut strip = self.session.strip();
+        if let Some((text, until)) = &self.notice
+            && std::time::Instant::now() < *until
+        {
+            strip.notice = clean(text, protocol::MAX_STRIP_NOTICE);
+        }
+        strip
+    }
+
+    /// The strip's intents of the settings: the star, Home, a change the
+    /// panel asks for, and the console.
+    fn settings_intent(&mut self, intent: ToCore) -> Result<(), String> {
+        match intent {
+            ToCore::Bookmark => {
+                if self.session.toggle_bookmark() {
+                    self.settings.bookmarks = self.session.bookmarks().to_vec();
+                    self.save_settings();
+                }
+                self.send(&ToInterface::Strip(self.strip()))
+            }
+            ToCore::Home => {
+                let home = self.settings.home.clone();
+                if let Err(reason) = self.session.navigate(&home) {
+                    eprintln!("neoteletext: {home}: {reason}");
+                }
+                self.send_all()
+            }
+            ToCore::ChangeSetting(change) => self.change_setting(change),
+            ToCore::Console(open) => {
+                self.console.set_open(open);
+                self.send_console()
+            }
+            _ => Ok(()),
+        }
+    }
+
+    /// A bookmark page of the start page was opened: its bookmark opens.
+    fn open_start_page_bookmark(&mut self, key: PageKey) -> Result<(), String> {
+        if let Some(bookmark) = self.session.start_page_bookmark(key.channel, key.page)
+            && let Err(reason) = self.session.open_from_start_page(&bookmark)
+        {
+            eprintln!("neoteletext: {reason}");
+        }
+        self.send_all()
+    }
+
+    /// Says `text` in the strip for a while, and in the log.
+    fn say(&mut self, text: String) -> Result<(), String> {
+        eprintln!("neoteletext: {text}");
+        let now = std::time::Instant::now();
+        self.notice = Some((text, now.checked_add(NOTICE_TIME).unwrap_or(now)));
+        self.send(&ToInterface::Strip(self.strip()))
+    }
+
+    /// The notice's time is up: the strip shows the address again.
+    fn notice_tick(&mut self) -> Result<(), String> {
+        if self.notice.as_ref().is_some_and(|(_, until)| std::time::Instant::now() >= *until) {
+            self.notice = None;
+            self.send(&ToInterface::Strip(self.strip()))?;
+        }
+        Ok(())
+    }
+
+    /// What a fetcher said, as the console's entries: exchanges and push
+    /// events, packets, notices (requirement 19.9).
+    fn console_fetched(&mut self, channel: u32, message: &FromFetcher) {
+        let at = self.now();
+        match message {
+            FromFetcher::Page { origin, bytes } => {
+                let pushed = matches!(origin, Origin::PushedPackets | Origin::PushedPage);
+                let packets = matches!(origin, Origin::PushedPackets | Origin::FetchedPackets);
+                if packets {
+                    self.console.packets(channel, at, pushed, bytes);
+                }
+                if pushed {
+                    let form = if packets { "packets" } else { "a page" };
+                    self.console.add(channel, ConsoleTab::Network, at, &format!("push: {form}, {} bytes", bytes.len()));
+                }
+            }
+            FromFetcher::Pushing(open) => {
+                self.console.add(channel, ConsoleTab::Network, at, if *open { "push: connected" } else { "push: lost" });
+            }
+            FromFetcher::Exchange { method, url, status, bytes, elapsed_us } => {
+                self.console.add(channel, ConsoleTab::Network, at, &exchange_text(method, url, *status, *bytes, *elapsed_us));
+            }
+            FromFetcher::Notice(text) => self.console.add(channel, ConsoleTab::Notices, at, text),
+            _ => {}
+        }
+    }
+
+    /// Sends the open tab's new console entries, while the console is open.
+    fn send_console(&mut self) -> Result<(), String> {
+        for update in self.console.updates(self.active_channel()) {
+            self.send(&ToInterface::Console(update))?;
+        }
+        Ok(())
+    }
+
+    /// The settings as the panel shows them, with the last refusal.
+    fn send_settings(&mut self) -> Result<(), String> {
+        let proxy = match &self.settings.proxy {
+            None => ProxyView::None,
+            Some(stored::Proxy::Http { host, port }) => ProxyView::Http { host: clean(host, protocol::settings::MAX_PROXY_HOST), port: *port },
+            Some(stored::Proxy::Socks5 { host, port }) => ProxyView::Socks5 { host: clean(host, protocol::settings::MAX_PROXY_HOST), port: *port },
+        };
+        let view = SettingsView {
+            home: clean(&self.settings.home, protocol::MAX_ADDRESS),
+            sound: self.settings.sound,
+            volume: self.settings.volume,
+            proxy,
+            local: self.settings.local.iter().map(ToString::to_string).collect(),
+            refusal: self.refusal.as_deref().map(|refusal| clean(refusal, protocol::settings::MAX_REFUSAL)),
+        };
+        self.send(&ToInterface::Settings(view))
+    }
+
+    /// Writes the settings, if there is a place for them; a failure is
+    /// logged and said in the panel.
+    fn save_settings(&mut self) {
+        let Some(folder) = &self.settings_folder else { return };
+        if let Err(error) = self.settings.save(folder) {
+            eprintln!("neoteletext: the settings could not be saved in {}: {error}", folder.display());
+            self.refusal = Some("The settings could not be saved".into());
+        }
+    }
+
+    /// A change the panel asked for, checked as strip input (requirement
+    /// 19.3): kept and saved when the rules accept it, said in the panel
+    /// when not; a change of a security setting is said in the strip and
+    /// logged.
+    fn change_setting(&mut self, change: SettingChange) -> Result<(), String> {
+        let current = self.session.active_tab().and_then(|tab| tab.address()).map(|address| address.channel_text().to_owned());
+        match checked_change(&mut self.settings, change, current.as_deref()) {
+            Ok(security) => {
+                self.refusal = None;
+                self.save_settings();
+                if let Some(text) = security {
+                    self.say(text)?;
+                }
+            }
+            Err(reason) => self.refusal = Some(reason),
+        }
+        self.send_settings()
+    }
+}
+
+/// Applies one change to `settings` if its setting's rule accepts it;
+/// returns what the strip says of a change of a security setting, or why
+/// the change was refused. `current` is the open channel's address.
+fn checked_change(settings: &mut Settings, change: SettingChange, current: Option<&str>) -> Result<Option<String>, String> {
+    const NOT_LOCAL: &str = "Not an address on this computer or the local network";
+    match change {
+        SettingChange::Home(typed) => {
+            let address = neoteletext::address::parse(&typed)?;
+            address.channel_text().clone_into(&mut settings.home);
+            Ok(None)
+        }
+        SettingChange::HomeIsThisPage => {
+            current.ok_or("No channel is open")?.clone_into(&mut settings.home);
+            Ok(None)
+        }
+        SettingChange::Sound(on) => {
+            settings.sound = on;
+            Ok(None)
+        }
+        SettingChange::Volume(volume) if volume <= stored::MAX_VOLUME => {
+            settings.volume = volume;
+            Ok(None)
+        }
+        SettingChange::Volume(_) => Err("The volume is from 0 to 100".into()),
+        SettingChange::Proxy(ProxyView::None) => {
+            let was = settings.proxy.take();
+            Ok(was.map(|_| "No proxy: channels opened from now connect directly".to_owned()))
+        }
+        SettingChange::Proxy(view) => {
+            let (kind, host, port) = match &view {
+                ProxyView::Http { host, port } => ("http", host, *port),
+                ProxyView::Socks5 { host, port } => ("socks5", host, *port),
+                ProxyView::None => return Ok(None),
+            };
+            let proxy = stored::Proxy::from_parts(kind, host.trim(), port).ok_or("Not a proxy: a host and a port from 1 to 65535")?;
+            let text = format!("Proxy {}: channels opened from now go through it", proxy.url());
+            settings.proxy = Some(proxy);
+            Ok(Some(text))
+        }
+        SettingChange::AddLocal(typed) => {
+            let address: std::net::IpAddr = typed.trim().parse().map_err(|_| NOT_LOCAL)?;
+            if !stored::is_local(address) {
+                return Err(NOT_LOCAL.into());
+            }
+            if settings.local.contains(&address) {
+                return Err(format!("{address} is allowed already"));
+            }
+            if settings.local.len() >= stored::MAX_LOCAL {
+                return Err(format!("At most {} local addresses can be allowed", stored::MAX_LOCAL));
+            }
+            settings.local.push(address);
+            Ok(Some(format!("{address} on the local network allowed for channels opened from now")))
+        }
+        SettingChange::RemoveLocal(index) => {
+            let index = usize::from(index);
+            if index >= settings.local.len() {
+                return Err("No such address".into());
+            }
+            let address = settings.local.remove(index);
+            Ok(Some(format!("{address} on the local network no longer allowed")))
+        }
+    }
+}
+
+/// Opens the home address in a new tab; one that cannot be opened, as a
+/// file gone, opens the start page instead.
+fn open_home(session: &mut Session, home: &str) -> Result<(), String> {
+    if let Err(reason) = session.open(home) {
+        eprintln!("neoteletext: {home}: {reason}");
+        session.open(stored::START_PAGE)?;
+    }
+    Ok(())
+}
+
 /// The phone keyboard (INPUT.md section 10, REQ-INT-138): a
 /// process of its own holds the pairing secret; the trusted core shows its
 /// QR in the panel and gives the interface the phone's keys, which act as
@@ -858,6 +1150,10 @@ impl Core {
         // Without one, the keyboard process uses qrkeyboard's own relay.
         if let Ok(relay) = std::env::var(RELAY_VARIABLE) {
             command.arg(relay);
+        }
+        // The proxy, given only at its start (requirement 19.12).
+        if let Some(proxy) = &self.settings.proxy {
+            command.arg("--proxy").arg(proxy.url());
         }
         let mut child = spawn(&mut command, "phone keyboard")?;
         let output = child.stdout.take().ok_or("the phone keyboard has no output")?;
@@ -1025,7 +1321,7 @@ impl Core {
             Ok(Follow::Page(page)) => {
                 let Some(channel) = self.active_channel() else { return Ok(()) };
                 if self.session.show_page(page).is_some() {
-                    self.send(&ToInterface::Strip(self.session.strip()))?;
+                    self.send(&ToInterface::Strip(self.strip()))?;
                 }
                 self.link(LinkMessage::Show(PageKey { channel, page }))
             }
@@ -1060,7 +1356,14 @@ impl Core {
 }
 
 impl Core {
-    fn new(session: Session, allow_local: Vec<String>, events: Sender<Event>, to_interface: BufWriter<ChildStdin>) -> Result<Self, String> {
+    fn new(
+        session: Session,
+        allow_local: Vec<String>,
+        kept: (Settings, Option<PathBuf>),
+        events: Sender<Event>,
+        to_interface: BufWriter<ChildStdin>,
+    ) -> Result<Self, String> {
+        let (settings, settings_folder) = kept;
         Ok(Self {
             session,
             decoders: BTreeMap::new(),
@@ -1068,6 +1371,11 @@ impl Core {
             fetchers: BTreeMap::new(),
             fetcher_path: sibling(FETCHER)?,
             allow_local,
+            settings,
+            settings_folder,
+            refusal: None,
+            notice: None,
+            console: Console::default(),
             events,
             frames: frames::Frames::default(),
             showing: None,
@@ -1078,7 +1386,6 @@ impl Core {
             shown_pages: Vec::new(),
             #[cfg(feature = "links")]
             links: Links::default(),
-            #[cfg(any(feature = "links", feature = "interaction"))]
             started: std::time::Instant::now(),
             #[cfg(feature = "interaction")]
             typing: neoteletext::typing::Typing::default(),
@@ -1091,6 +1398,28 @@ impl Core {
             to_interface,
         })
     }
+}
+
+/// The settings kept between runs, and where (requirement 19.1); lines
+/// dropped by their rules are logged (requirement 19.2).
+fn load_settings() -> (Settings, Option<PathBuf>) {
+    let folder = stored::folder();
+    let settings = match &folder {
+        Some(folder) => match Settings::load(folder) {
+            Ok((settings, dropped)) => {
+                for line in dropped {
+                    eprintln!("neoteletext: {line}");
+                }
+                settings
+            }
+            Err(error) => {
+                eprintln!("neoteletext: the settings in {} could not be read: {error}", folder.display());
+                Settings::default()
+            }
+        },
+        None => Settings::default(),
+    };
+    (settings, folder)
 }
 
 fn run() -> Result<(), String> {
@@ -1110,18 +1439,20 @@ fn run() -> Result<(), String> {
     every(LOAD_INTERVAL, events.clone(), || Event::Load);
     every(SLEEP_CHECK, events.clone(), || Event::Sleep);
 
-    let mut session = Session::new();
+    let (settings, settings_folder) = load_settings();
+    let mut session = Session::new(settings.bookmarks.clone());
     for address in &addresses {
         if let Err(reason) = session.open(address) {
             eprintln!("neoteletext: {address}: {reason}");
         }
     }
     if session.tabs.is_empty() {
-        session.open(HOME)?;
+        open_home(&mut session, &settings.home)?;
     }
     session.active = 0;
     let to_interface = BufWriter::new(interface.stdin.take().ok_or("the interface has no input")?);
-    let mut core = Core::new(session, allow_local, events, to_interface)?;
+    let mut core = Core::new(session, allow_local, (settings, settings_folder), events, to_interface)?;
+    core.send_settings()?;
     core.send_all()?;
 
     let result = loop {
@@ -1157,7 +1488,7 @@ fn run() -> Result<(), String> {
             },
             Event::Load => {
                 core.load();
-                core.typing_tick()
+                core.typing_tick().and_then(|()| core.notice_tick()).and_then(|()| core.send_console())
             }
             Event::DecoderEnded(channel, generation, reason) => core.decoder_ended(channel, generation, reason),
             Event::Sleep => core.match_decoders(),
@@ -1216,6 +1547,55 @@ fn main() -> ExitCode {
 #[cfg(test)]
 mod program_tests {
     use super::*;
+
+    /// Requirement 19.3: each change is checked by its setting's rule; a
+    /// refused one changes nothing and says why; a security setting's
+    /// change is said.
+    #[test]
+    fn each_setting_change_is_checked() {
+        let mut settings = Settings::default();
+        let mut change = |change: SettingChange| checked_change(&mut settings, change, Some("https://open.example/"));
+        assert_eq!(change(SettingChange::Home("news.example/teletext/#302".into())), Ok(None));
+        assert!(change(SettingChange::Home("javascript:alert(1)".into())).is_err());
+        assert!(change(SettingChange::Home("neoteletext:settings".into())).is_err());
+        assert_eq!(change(SettingChange::Volume(101)), Err("The volume is from 0 to 100".into()));
+        assert_eq!(change(SettingChange::Volume(30)), Ok(None));
+        assert_eq!(change(SettingChange::Sound(false)), Ok(None));
+        assert_eq!(change(SettingChange::Proxy(ProxyView::None)), Ok(None), "no proxy before: nothing to say");
+        assert!(change(SettingChange::Proxy(ProxyView::Http { host: "bad host".into(), port: 8080 })).is_err());
+        assert!(change(SettingChange::Proxy(ProxyView::Socks5 { host: "p.example".into(), port: 0 })).is_err());
+        let said = change(SettingChange::Proxy(ProxyView::Socks5 { host: " 127.0.0.1 ".into(), port: 1080 })).unwrap().unwrap();
+        assert!(said.contains("socks5://127.0.0.1:1080"), "{said}");
+        assert!(change(SettingChange::Proxy(ProxyView::None)).unwrap().is_some(), "removing it is said");
+        for refused in ["93.184.216.34", "not an address", "8.8.8.8", "2001:4860::8888"] {
+            assert_eq!(change(SettingChange::AddLocal(refused.into())), Err("Not an address on this computer or the local network".into()), "{refused}");
+        }
+        assert!(change(SettingChange::AddLocal("192.168.1.20".into())).unwrap().is_some());
+        assert!(change(SettingChange::AddLocal("192.168.1.20".into())).is_err(), "once");
+        for n in 0..20 {
+            let _ = change(SettingChange::AddLocal(format!("10.0.0.{n}")));
+        }
+        assert!(change(SettingChange::RemoveLocal(16)).is_err());
+        assert!(change(SettingChange::RemoveLocal(0)).unwrap().is_some());
+        assert_eq!(change(SettingChange::HomeIsThisPage), Ok(None));
+        assert_eq!(settings.home, "https://open.example/");
+        assert_eq!((settings.volume, settings.sound, settings.proxy.is_none()), (30, false, true));
+        assert_eq!(settings.local.len(), stored::MAX_LOCAL - 1);
+        assert!(!settings.local.contains(&"192.168.1.20".parse().unwrap()));
+        assert_eq!(checked_change(&mut settings, SettingChange::HomeIsThisPage, None), Err("No channel is open".into()));
+    }
+
+    /// Requirement 19.12: a fetcher is started with the proxy and local
+    /// addresses of the settings.
+    #[test]
+    fn a_fetcher_is_given_the_proxy_and_the_local_addresses() {
+        let settings =
+            Settings { proxy: stored::Proxy::from_parts("http", "p.example", 3128), local: vec!["10.0.0.2".parse().unwrap()], ..Settings::default() };
+        let reach = Reach::of(&["192.168.0.9".to_owned()], &settings);
+        assert_eq!(reach.allow_local, ["192.168.0.9", "10.0.0.2"]);
+        assert_eq!(reach.proxy.as_deref(), Some("http://p.example:3128"));
+        assert_eq!(Reach::of(&[], &Settings::default()).proxy, None);
+    }
 
     #[test]
     fn a_helper_program_has_this_platforms_file_name() {

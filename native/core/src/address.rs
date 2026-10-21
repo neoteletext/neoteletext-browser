@@ -40,6 +40,12 @@ impl Address {
         Self { text, page: Some(page), ..self.clone() }
     }
 
+    /// Whether this is the browser's own start page (requirement 19.7).
+    #[must_use]
+    pub fn is_start_page(&self) -> bool {
+        self.file.is_none() && self.channel_text() == START_PAGE
+    }
+
     /// Whether `other` is the same channel, whatever page each names.
     #[must_use]
     pub fn same_channel(&self, other: &Self) -> bool {
@@ -47,6 +53,10 @@ impl Address {
     }
 }
 
+/// The browser's own start page (`settings-home-console-proxy.md`
+/// section 2.2), the one `neoteletext:` address.
+pub const START_PAGE: &str = "neoteletext:home";
+const BUILT_IN_SCHEME: &str = "neoteletext:";
 const SCHEME_SEPARATOR: &str = "://";
 const FILE_SCHEME: &str = "file://";
 const FRAGMENT: char = '#';
@@ -111,6 +121,18 @@ fn path_to_url(path: &Path) -> String {
     if cfg!(windows) { format!("/{}", text.replace('\\', "/")) } else { text }
 }
 
+/// `neoteletext:home`, with a page after `#` if one is named: any other
+/// `neoteletext:` address is refused (requirement 19.7).
+fn parse_built_in(typed: &str) -> Result<Address, String> {
+    let (channel, fragment) = typed.split_once(FRAGMENT).map_or((typed, None), |(channel, fragment)| (channel, Some(fragment)));
+    if !channel.eq_ignore_ascii_case(START_PAGE) {
+        return Err("The only neoteletext: address is neoteletext:home".into());
+    }
+    let page = fragment.and_then(fragment_page);
+    let text = page.map_or_else(|| START_PAGE.to_owned(), |page| format!("{START_PAGE}{FRAGMENT}{page:03X}"));
+    Ok(Address { text, host: crate::start_page::NAME.to_owned(), encrypted: false, file: None, page })
+}
+
 /// Turns what was typed into an address, or says why it cannot be opened.
 ///
 /// # Errors
@@ -122,6 +144,9 @@ pub fn parse(typed: &str) -> Result<Address, String> {
     }
     if typed.len() > protocol::MAX_ADDRESS {
         return Err(format!("Addresses are limited to {} characters", protocol::MAX_ADDRESS));
+    }
+    if typed.get(..BUILT_IN_SCHEME.len()).is_some_and(|scheme| scheme.eq_ignore_ascii_case(BUILT_IN_SCHEME)) {
+        return parse_built_in(typed);
     }
     if let Some(file) = parse_file(typed) {
         return file;
@@ -219,6 +244,23 @@ mod tests {
         let at = address.with_page(0x100);
         assert_eq!((at.text.as_str(), at.page), ("https://weather.invalid/teletext/#100", Some(0x100)));
         assert!(at.same_channel(&address) && !at.same_channel(&parse("weather.invalid/other/").unwrap()));
+    }
+
+    /// Requirement 19.7: the start page, and no other `neoteletext:` address.
+    #[test]
+    fn the_start_page_is_the_one_built_in_address() {
+        let address = parse("neoteletext:home").unwrap();
+        assert!(address.is_start_page());
+        assert_eq!((address.text.as_str(), address.file.as_deref(), address.encrypted), (START_PAGE, None, false));
+        assert_eq!(parse(" NeoTeletext:Home ").unwrap().text, START_PAGE);
+        let at = parse("neoteletext:home#201").unwrap();
+        assert_eq!((at.text.as_str(), at.page), ("neoteletext:home#201", Some(0x201)));
+        assert!(at.is_start_page() && at.same_channel(&address));
+        assert_eq!(parse("neoteletext:home#junk").unwrap().text, START_PAGE, "a fragment that is not a page is dropped");
+        for typed in ["neoteletext:settings", "neoteletext:", "neoteletext:home/x", "neoteletext://home", "neoteletext:homex"] {
+            assert!(parse(typed).is_err(), "{typed:?} should be refused");
+        }
+        assert!(!parse("https://home.example/").unwrap().is_start_page());
     }
 
     #[test]

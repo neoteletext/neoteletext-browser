@@ -9,6 +9,9 @@
 //! buffer, which never allocates or frees. The longest an operation holds
 //! it is defining the largest sound, 0.37 ms on 21 October 2026, against
 //! a device buffer of about 10 ms.
+//!
+//! The settings' sound and volume (requirement 19.4) are each mixer's
+//! master: off silences every channel, and the volume scales them all.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::atomic::{AtomicU16, Ordering};
@@ -30,17 +33,36 @@ fn key(sound: Sound) -> SoundKey {
     (sound.handle, sound.generation)
 }
 
+/// The loudest volume: the engine mixer's master is a percentage.
+const MAX_VOLUME: u8 = 100;
+const _: () = assert!(MAX_VOLUME == protocol::settings::MAX_VOLUME);
+
 /// One mixer for each channel with sound, at the output's rate.
 pub struct Mixers {
     rate_hz: u32,
     channels: BTreeMap<u32, Mixer>,
+    /// The settings: page sounds play, and their volume.
+    sound: bool,
+    volume: u8,
+    /// The channels whose tabs are muted.
+    muted: BTreeSet<u32>,
 }
 
 impl Mixers {
-    /// No channel has sound yet.
+    /// No channel has sound yet; sound is on at full volume until the
+    /// settings say otherwise.
     #[must_use]
     pub fn new(rate_hz: u32) -> Self {
-        Self { rate_hz, channels: BTreeMap::new() }
+        Self { rate_hz, channels: BTreeMap::new(), sound: true, volume: MAX_VOLUME, muted: BTreeSet::new() }
+    }
+
+    /// Each channel's master: the volume, silent when sound is off or the
+    /// tab is muted.
+    fn master(&mut self, channel: u32) {
+        let silent = !self.sound || self.muted.contains(&channel);
+        if let Some(mixer) = self.channels.get_mut(&channel) {
+            mixer.set_master(self.volume, silent);
+        }
     }
 
     /// The channels sounding or about to, muted or not: their tabs show it.
@@ -67,16 +89,46 @@ impl Mixers {
     }
 }
 
+/// The settings' sound and volume, for every channel (requirement 19.4).
+pub fn set_sound(mixers: &Mutex<Mixers>, sound: bool, volume: u8) {
+    let mut mixers = mixers.lock().unwrap_or_else(PoisonError::into_inner);
+    mixers.sound = sound;
+    mixers.volume = volume.min(MAX_VOLUME);
+    let channels: Vec<u32> = mixers.channels.keys().copied().collect();
+    for channel in channels {
+        mixers.master(channel);
+    }
+}
+
 /// Applies one voice operation of `channel` from the trusted core.
 pub fn apply(mixers: &Mutex<Mixers>, channel: u32, audio: Audio) {
     let mut mixers = mixers.lock().unwrap_or_else(PoisonError::into_inner);
     let rate = mixers.rate_hz;
-    if matches!(audio, Audio::Reset) {
+    match audio {
         // The channel is gone.
-        mixers.channels.remove(&channel);
+        Audio::Reset => {
+            mixers.channels.remove(&channel);
+            mixers.muted.remove(&channel);
+            return;
+        }
+        Audio::Mute(muted) => {
+            if muted {
+                mixers.muted.insert(channel);
+            } else {
+                mixers.muted.remove(&channel);
+            }
+        }
+        _ => {}
+    }
+    if let std::collections::btree_map::Entry::Vacant(vacant) = mixers.channels.entry(channel) {
+        vacant.insert(Mixer::new(rate));
+        mixers.master(channel);
+    }
+    if matches!(audio, Audio::Mute(_)) {
+        mixers.master(channel);
         return;
     }
-    let mixer = mixers.channels.entry(channel).or_insert_with(|| Mixer::new(rate));
+    let Some(mixer) = mixers.channels.get_mut(&channel) else { return };
     match audio {
         Audio::Define { sound, rate_hz, samples } => mixer.define(key(sound), rate_hz, usize::try_from(samples).unwrap_or(0)),
         Audio::Samples { sound, first, pcm } => mixer.samples(key(sound), usize::try_from(first).unwrap_or(usize::MAX), &pcm),
@@ -88,8 +140,7 @@ pub fn apply(mixers: &Mutex<Mixers>, channel: u32, audio: Audio) {
         Audio::Gain { channel, gain, fade_ms } => mixer.gain(usize::from(channel), gain, fade_ms),
         Audio::Stream { sound, rate_hz } => mixer.stream(key(sound), rate_hz),
         Audio::StreamSamples { sound, pcm } => mixer.stream_samples(key(sound), &pcm),
-        Audio::Mute(muted) => mixer.set_master(100, muted),
-        Audio::Reset => {}
+        Audio::Mute(_) | Audio::Reset => {}
     }
 }
 
@@ -285,6 +336,41 @@ mod tests {
         apply(&mixers, 1, Audio::Mute(false));
         render(&mixers, &mut data, 1, &mut [0; 512]);
         assert!((11_800..=12_200).contains(&data[300]), "unmuted: {}", data[300]);
+    }
+
+    /// Requirement 19.4: sound off silences every channel, a muted tab
+    /// stays muted, and the volume scales them.
+    #[test]
+    fn the_settings_silence_and_scale_every_channel() {
+        // Five seconds each, longer than every render below together.
+        const SAMPLES: u32 = 40_000;
+        let play = |mixers: &Mutex<Mixers>, channel: u32, value: i16| {
+            apply(mixers, channel, Audio::Define { sound: SOUND, rate_hz: 8_000, samples: SAMPLES });
+            apply(mixers, channel, Audio::Samples { sound: SOUND, first: 0, pcm: vec![value; usize::try_from(SAMPLES).unwrap()] });
+            apply(mixers, channel, Audio::Start { channel: 0, sound: SOUND, gain: 100, fade_ms: 5, looped: false, duck_percent: 100, after_current: false });
+        };
+        let mixers = Mutex::new(Mixers::new(8_000));
+        play(&mixers, 1, 8_000);
+        play(&mixers, 2, 4_000);
+        let mut data = vec![0_i16; 400];
+        let mut heard = |sound: bool, volume: u8| {
+            set_sound(&mixers, sound, volume);
+            render(&mixers, &mut data, 1, &mut [0; 512]);
+            data[300]
+        };
+        assert_eq!(heard(false, 100), 0, "sound off");
+        for volume in [0_u8, 10, 25, 50, 80, 100] {
+            let expected = 12_000 * i32::from(volume) / 100;
+            let sample = i32::from(heard(true, volume));
+            assert!((sample - expected).abs() <= 120, "volume {volume}: {sample} against {expected}");
+        }
+        apply(&mixers, 1, Audio::Mute(true));
+        assert!((3_900..=4_100).contains(&heard(true, 100)), "tab 1 still muted");
+        assert!((1_900..=2_100).contains(&heard(true, 50)));
+        assert_eq!(heard(false, 50), 0);
+        play(&mixers, 3, 4_000);
+        assert_eq!(heard(false, 50), 0, "a channel that starts later is silent too");
+        assert!((3_900..=4_100).contains(&heard(true, 50)), "and scaled: {}", data[300]);
     }
 
     #[test]

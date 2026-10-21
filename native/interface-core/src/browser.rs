@@ -25,8 +25,10 @@ use crate::theme::{
 use crate::ui::{HAIRLINE, border, centred, label, left_centred, outline, right_centred};
 use crate::wall::{CellClick, UPDATE_GLOW_MILLISECONDS, UPDATE_MARK_MILLISECONDS, Wall, WallPage, glow, since};
 
+mod console_ui;
 #[cfg(feature = "links")]
 mod link_ui;
+mod settings_ui;
 #[cfg(feature = "interaction")]
 mod terminal_ui;
 #[cfg(feature = "interaction")]
@@ -84,6 +86,18 @@ const MENU_BAR_GAP: f64 = 7.0;
 const ARROW_LENGTH: f64 = 20.0;
 const ARROW_HEAD: f64 = 9.0;
 const ARROW_THICKNESS: f64 = 3.0;
+/// The Home button's house: its width, the roof's height, and the body's.
+const HOUSE_WIDTH: f64 = 20.0;
+const ROOF_HEIGHT: f64 = 9.0;
+const HOUSE_BODY_HEIGHT: f64 = 9.0;
+const HOUSE_BODY_INSET: f64 = 3.0;
+const DOOR_WIDTH: f64 = 5.0;
+const DOOR_HEIGHT: f64 = 6.0;
+/// The gear: its teeth, their reach, and the hub.
+const GEAR_TEETH: usize = 8;
+const GEAR_OUTER: f64 = 11.0;
+const GEAR_INNER: f64 = 8.0;
+const GEAR_HUB: f64 = 3.5;
 
 // ---- Panels ----
 const BODY_TOP: f64 = TOOLBAR_TOP + TOOLBAR_HEIGHT + MARGIN;
@@ -192,6 +206,11 @@ pub struct StripState {
     pub forward: bool,
     /// The channel is bookmarked.
     pub bookmarked: bool,
+    /// The address is the browser's own start page, `neoteletext:home`.
+    pub built_in: bool,
+    /// What the strip says for a while, when not empty: a change of a
+    /// security setting, a proxy that refused (requirements 19.3, 19.10).
+    pub notice: String,
 }
 
 /// Something the window itself should do, for the host to carry out.
@@ -228,6 +247,12 @@ pub enum Output {
     Forward,
     /// Bookmark the channel, or remove its bookmark.
     Bookmark,
+    /// Strip input: open the home address (requirement 19.6).
+    Home,
+    /// Strip input: a change the settings panel asks for (requirement 19.3).
+    Setting(crate::settings::SettingChange),
+    /// The developer console opened or closed (requirement 19.8).
+    Console(bool),
     /// Mute the tab at this index, or unmute it.
     MuteTab(usize),
     /// Mute every tab, or unmute every tab.
@@ -318,11 +343,14 @@ pub enum Cursor {
 
 /// The modifier keys. `command` is Command on macOS and Control elsewhere.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[allow(clippy::struct_excessive_bools, reason = "independent keys, each held or not, as the platform reports them")]
 pub struct Modifiers {
     /// Shift is held.
     pub shift: bool,
     /// Command (macOS) or Control (elsewhere) is held.
     pub command: bool,
+    /// Option (macOS) or Alt (elsewhere) is held.
+    pub alt: bool,
     /// The key is held down and repeating.
     pub repeat: bool,
 }
@@ -348,6 +376,8 @@ struct Regions {
     close: Rect,
     back: Rect,
     forward: Rect,
+    home: Rect,
+    gear: Rect,
     field: Rect,
     field_text: Rect,
     star: Rect,
@@ -394,6 +424,12 @@ pub struct Browser {
     versions: BTreeMap<PageKey, u32>,
     regions: Regions,
     outputs: Vec<Output>,
+    /// The window below the strip, where the settings panel is centred.
+    body: Rect,
+    /// The settings panel (requirement 19.3).
+    settings: settings_ui::SettingsUi,
+    /// The developer console (requirement 19.8).
+    console: console_ui::ConsoleUi,
     /// Hyperlinks (`hyperlinks.md`).
     #[cfg(feature = "links")]
     links: link_ui::LinkUi,
@@ -433,6 +469,9 @@ impl Browser {
             versions: BTreeMap::new(),
             regions: Regions::default(),
             outputs: Vec::new(),
+            body: Rect::ZERO,
+            settings: settings_ui::SettingsUi::default(),
+            console: console_ui::ConsoleUi::default(),
             #[cfg(feature = "links")]
             links: link_ui::LinkUi::default(),
             #[cfg(feature = "interaction")]
@@ -641,6 +680,9 @@ impl Browser {
     }
 
     fn start_editing(&mut self) {
+        if self.settings_open() {
+            self.toggle_settings();
+        }
         if !self.editing {
             self.editing = true;
             self.editor.set(&self.strip.address);
@@ -714,6 +756,13 @@ impl Browser {
     /// A press of the main button, with `extend` when Shift is held.
     #[allow(clippy::too_many_lines, reason = "one hit-test per part of the window, in drawing order")]
     pub fn pointer_pressed<C: Canvas + ?Sized>(&mut self, canvas: &mut C, extend: bool, now: u64) -> bool {
+        // The settings panel is drawn over everything below the strip.
+        if self.settings_press(self.pointer) {
+            return true;
+        }
+        if self.console_press(self.pointer) {
+            return true;
+        }
         #[cfg(feature = "phone-keyboard")]
         if self.phone_press(self.pointer) {
             return true;
@@ -752,6 +801,8 @@ impl Browser {
             (regions.new_tab, Output::NewTab),
             (regions.back, Output::Back),
             (regions.forward, Output::Forward),
+            (regions.home, Output::Home),
+            (regions.gear, Output::Menu),
             (regions.star, Output::Bookmark),
             (regions.mute_all, mute_all),
             (regions.menu, Output::Menu),
@@ -762,6 +813,11 @@ impl Browser {
         .into_iter()
         .find(|(rect, _)| rect.contains(point));
         if let Some((_, output)) = action {
+            // The gear opens the settings panel.
+            if output == Output::Menu && regions.gear.contains(point) {
+                self.toggle_settings();
+                return true;
+            }
             // The menu holds the phone keyboard.
             #[cfg(feature = "phone-keyboard")]
             if output == Output::Menu {
@@ -849,6 +905,9 @@ impl Browser {
 
     /// Scrolls whatever is under the pointer.
     pub fn scroll_by(&mut self, distance: f64, now: u64) -> bool {
+        if self.console_scroll(distance) {
+            return true;
+        }
         if self.wall.over_bar(self.pointer) {
             self.wall.wheel_bar(distance, now);
             return true;
@@ -874,7 +933,15 @@ impl Browser {
     /// Returns whether the window needs drawing again.
     pub fn key(&mut self, key: Key<'_>, modifiers: Modifiers, now: u64) -> bool {
         if modifiers.command {
-            return self.shortcut(key, now);
+            return self.shortcut(key, modifiers, now);
+        }
+        // Alt-Home, the Home button's key away from macOS (requirement 19.6).
+        if modifiers.alt && key == Key::Home {
+            self.outputs.push(Output::Home);
+            return true;
+        }
+        if let Some(changed) = self.settings_key(key, modifiers.shift) {
+            return changed;
         }
         if self.editing {
             return self.edit(key, modifiers.shift);
@@ -914,7 +981,7 @@ impl Browser {
         true
     }
 
-    fn shortcut(&mut self, key: Key<'_>, now: u64) -> bool {
+    fn shortcut(&mut self, key: Key<'_>, modifiers: Modifiers, now: u64) -> bool {
         // The browser's Escape: leaves a page whose channel has every
         // other key (INPUT.md section 9.1).
         if key == Key::Escape {
@@ -924,7 +991,15 @@ impl Browser {
         let Key::Text(text) = key else { return false };
         match text.to_ascii_lowercase().as_str() {
             "l" => self.start_editing(),
+            "a" if self.settings_editing() => return self.settings_select_all(),
             "a" if self.editing => self.editor.select_all(),
+            // The settings panel (requirement 19.3), Home (requirement
+            // 19.6) and the console (requirement 19.8): Command-comma,
+            // Command-Shift-H and Command-Option-I on macOS; Control-comma
+            // and Control-Shift-I elsewhere, where Home is Alt-Home.
+            "," => self.toggle_settings(),
+            "h" if modifiers.shift => self.outputs.push(Output::Home),
+            "i" if modifiers.alt || modifiers.shift => self.toggle_console(),
             "t" => self.outputs.push(Output::NewTab),
             "w" => self.outputs.push(Output::CloseTab(self.active)),
             "[" if self.strip.back => self.outputs.push(Output::Back),
@@ -1016,7 +1091,15 @@ impl Browser {
     pub fn draw<C: Canvas + ?Sized>(&mut self, canvas: &mut C, width: f64, height: f64, now: u64) {
         self.regions = Regions::default();
         canvas.fill(Rect::new(0.0, 0.0, width, height), 0.0, WINDOW);
-        let overview_height = if self.overview_folded { HEADING_HEIGHT } else { OVERVIEW_HEIGHT };
+        self.body = Rect::new(MARGIN, BODY_TOP, width - MARGIN, height - MARGIN);
+        // The console docks where the overview is.
+        let overview_height = if self.console.open() {
+            console_ui::CONSOLE_HEIGHT
+        } else if self.overview_folded {
+            HEADING_HEIGHT
+        } else {
+            OVERVIEW_HEIGHT
+        };
         let overview = Rect::new(MARGIN, height - MARGIN - overview_height, width - MARGIN, height - MARGIN);
         let body_bottom = overview.y0 - MARGIN;
         let banks = Rect::new(MARGIN, BODY_TOP, MARGIN + BANKS_WIDTH, body_bottom);
@@ -1051,12 +1134,17 @@ impl Browser {
         }
         self.draw_banks(canvas, banks);
         self.draw_list(canvas, list, now);
-        self.draw_overview(canvas, overview, now);
+        if self.console.open() {
+            self.draw_console(canvas, overview);
+        } else {
+            self.draw_overview(canvas, overview, now);
+        }
         self.draw_toolbar(canvas, width);
         self.draw_tab_strip(canvas, width);
         self.draw_preview(canvas, width);
         #[cfg(feature = "phone-keyboard")]
         self.draw_phone_panel(canvas);
+        self.draw_settings_panel(canvas);
         // Pages may have moved under a still pointer: by scrolling, a new
         // size or a zoom.
         self.wall.hover(self.pointer, now);
@@ -1126,12 +1214,22 @@ impl Browser {
             border(canvas, rect, 2.0, if enabled { SELECTED } else { RULE });
             arrow(canvas, rect, pointing_left, if enabled { WHITE } else { DIM });
         }
+        // Home, after Forward (requirement 19.6).
+        self.regions.home = tool(MARGIN + TOOL_SIZE * 2.0);
+        canvas.fill(self.regions.home, 0.0, BUTTON);
+        border(canvas, self.regions.home, 2.0, RULE);
+        house(canvas, self.regions.home, WHITE);
         self.regions.menu = tool(width - MARGIN - TOOL_SIZE);
         // Mute or unmute every tab, beside the menu.
         self.regions.mute_all = tool(self.regions.menu.x0 - MARGIN - TOOL_SIZE);
         canvas.fill(self.regions.mute_all, 0.0, BUTTON);
         border(canvas, self.regions.mute_all, 2.0, RULE);
         speaker_glyph(canvas, self.regions.mute_all, self.all_muted(), WHITE);
+        // The settings panel's gear, at the right of the strip (requirement 19.3).
+        self.regions.gear = tool(self.regions.mute_all.x0 - MARGIN - TOOL_SIZE);
+        canvas.fill(self.regions.gear, 0.0, if self.settings_open() { SELECTED } else { BUTTON });
+        border(canvas, self.regions.gear, 2.0, RULE);
+        gear(canvas, self.regions.gear, WHITE);
         canvas.fill(self.regions.menu, 0.0, BUTTON);
         border(canvas, self.regions.menu, 2.0, RULE);
         let middle = f64::midpoint(self.regions.menu.y0, self.regions.menu.y1);
@@ -1141,7 +1239,7 @@ impl Browser {
             canvas.fill(Rect::new(centre_x - MENU_BAR_WIDTH / 2.0, y, centre_x + MENU_BAR_WIDTH / 2.0, y + MENU_BAR_HEIGHT), 0.0, WHITE);
         }
 
-        let field = Rect::new(self.regions.forward.x1 + MARGIN * 2.0, top, self.regions.mute_all.x0 - MARGIN * 2.0, top + TOOL_SIZE);
+        let field = Rect::new(self.regions.home.x1 + MARGIN * 2.0, top, self.regions.gear.x0 - MARGIN * 2.0, top + TOOL_SIZE);
         self.regions.field = field;
         canvas.fill(field, 0.0, FIELD);
         if self.editing {
@@ -1156,7 +1254,11 @@ impl Browser {
         }
         let middle = f64::midpoint(field.y0, field.y1);
         let mut text_left = field.x0 + FIELD_PADDING;
-        if self.strip.local {
+        if self.strip.built_in {
+            let word = "NeoTeletext";
+            left_centred(canvas, Rect::new(text_left, field.y0, field.x1, field.y1), 0.0, word, ROW_STATUS, FIELD_INK);
+            text_left += canvas.text_width(word, ROW_STATUS) + LOCK_GAP;
+        } else if self.strip.local {
             let word = "File";
             left_centred(canvas, Rect::new(text_left, field.y0, field.x1, field.y1), 0.0, word, ROW_STATUS, FIELD_INK);
             text_left += canvas.text_width(word, ROW_STATUS) + LOCK_GAP;
@@ -1182,7 +1284,14 @@ impl Browser {
         let pointing = !self.editing && self.draw_pointing(canvas, text);
         #[cfg(not(feature = "links"))]
         let pointing = false;
-        if !pointing {
+        // The trusted core's notice, for a while (requirements 19.3, 19.10).
+        let noticed = !self.editing && !pointing && !self.strip.notice.is_empty();
+        if noticed {
+            canvas.push_clip(text);
+            left_centred(canvas, text, 0.0, &self.strip.notice, ADDRESS, INSECURE);
+            canvas.pop_clip();
+        }
+        if !pointing && !noticed {
             self.draw_address(canvas, text);
         }
     }
@@ -1616,6 +1725,33 @@ fn padlock<C: Canvas + ?Sized>(canvas: &mut C, at: Point, colour: Colour) {
 }
 
 /// A five-pointed star centred on `centre`.
+/// The Home button's house: a roof over a body with a door.
+fn house<C: Canvas + ?Sized>(canvas: &mut C, rect: Rect, colour: Colour) {
+    let centre = Point::new(f64::midpoint(rect.x0, rect.x1), f64::midpoint(rect.y0, rect.y1));
+    let top = centre.y - f64::midpoint(ROOF_HEIGHT, HOUSE_BODY_HEIGHT);
+    let eaves = top + ROOF_HEIGHT;
+    canvas.polygon(&[Point::new(centre.x, top), Point::new(centre.x + HOUSE_WIDTH / 2.0, eaves), Point::new(centre.x - HOUSE_WIDTH / 2.0, eaves)], colour);
+    let body = Rect::new(centre.x - HOUSE_WIDTH / 2.0 + HOUSE_BODY_INSET, eaves, centre.x + HOUSE_WIDTH / 2.0 - HOUSE_BODY_INSET, eaves + HOUSE_BODY_HEIGHT);
+    canvas.fill(body, 0.0, colour);
+    canvas.fill(Rect::new(centre.x - DOOR_WIDTH / 2.0, body.y1 - DOOR_HEIGHT, centre.x + DOOR_WIDTH / 2.0, body.y1), 0.0, BUTTON);
+}
+
+/// The settings button's gear: teeth round a hub.
+fn gear<C: Canvas + ?Sized>(canvas: &mut C, rect: Rect, colour: Colour) {
+    let centre = Point::new(f64::midpoint(rect.x0, rect.x1), f64::midpoint(rect.y0, rect.y1));
+    let mut points = Vec::with_capacity(GEAR_TEETH * 4);
+    for corner in 0..GEAR_TEETH * 4 {
+        #[allow(clippy::cast_precision_loss, reason = "a few corners")]
+        let angle = core::f64::consts::TAU * corner as f64 / (GEAR_TEETH * 4) as f64;
+        // Each tooth: two corners out, two in.
+        let radius = if corner % 4 < 2 { GEAR_OUTER } else { GEAR_INNER };
+        let (sine, cosine) = libm::sincos(angle);
+        points.push(Point::new(centre.x + radius * cosine, centre.y + radius * sine));
+    }
+    canvas.polygon(&points, colour);
+    canvas.fill(Rect::new(centre.x - GEAR_HUB, centre.y - GEAR_HUB, centre.x + GEAR_HUB, centre.y + GEAR_HUB), GEAR_HUB, BUTTON);
+}
+
 fn star<C: Canvas + ?Sized>(canvas: &mut C, centre: Point, colour: Colour) {
     let mut points = Vec::with_capacity(STAR_POINTS * 2);
     for point in 0..STAR_POINTS * 2 {
@@ -1940,5 +2076,55 @@ mod tests {
             press_at(&mut browser, &mut canvas, toggle);
             browser.draw(&mut canvas, WIDTH, HEIGHT, 0);
         }
+    }
+
+    /// Requirement 19.6: the Home button after Forward, Command-Shift-H on
+    /// macOS and Alt-Home elsewhere.
+    #[test]
+    fn home_is_asked_for_by_its_button_and_its_keys() {
+        let (mut browser, mut canvas) = browser();
+        browser.take_outputs();
+        let (forward, home) = (browser.regions.forward, browser.regions.home);
+        assert!(home.x0 >= forward.x1 && (home.y0 - forward.y0).abs() < f64::EPSILON, "after Forward, in its row");
+        press_at(&mut browser, &mut canvas, home);
+        assert_eq!(browser.take_outputs(), [Output::Home]);
+        browser.key(Key::Text("H"), Modifiers { command: true, shift: true, ..Modifiers::default() }, 0);
+        assert_eq!(browser.take_outputs(), [Output::Home]);
+        browser.key(Key::Home, Modifiers { alt: true, ..Modifiers::default() }, 0);
+        assert_eq!(browser.take_outputs(), [Output::Home]);
+        browser.key(Key::Text("h"), Modifiers { command: true, ..Modifiers::default() }, 0);
+        assert_eq!(browser.take_outputs(), [], "Command-H alone is not Home");
+    }
+
+    /// Requirements 19.3 and 19.10: the trusted core's notice takes the
+    /// address's place while it lasts; the start page is named as the
+    /// browser's own, not "Not secure".
+    #[test]
+    fn the_strip_says_the_notice_and_names_the_start_page() {
+        let (mut browser, _) = browser();
+        browser.set_strip(StripState { notice: "The proxy refused the connection to example.invalid".into(), ..browser.strip.clone() });
+        let mut canvas = Recorder::new();
+        browser.draw(&mut canvas, WIDTH, HEIGHT, 0);
+        let texts: Vec<&str> = canvas.texts.iter().map(|(_, text)| text.as_str()).collect();
+        assert!(texts.contains(&"The proxy refused the connection to example.invalid"), "{texts:?}");
+        assert!(!texts.contains(&"example.invalid"), "the notice in the address's place");
+        browser.set_strip(StripState { address: "neoteletext:home".into(), identity: "NeoTeletext".into(), built_in: true, ..StripState::default() });
+        let mut canvas = Recorder::new();
+        browser.draw(&mut canvas, WIDTH, HEIGHT, 0);
+        let texts: Vec<&str> = canvas.texts.iter().map(|(_, text)| text.as_str()).collect();
+        assert!(texts.contains(&"NeoTeletext") && !texts.contains(&"Not secure"), "{texts:?}");
+    }
+
+    /// Requirement 19.8: the console docks in the overview's place.
+    #[test]
+    fn the_console_takes_the_overviews_place() {
+        let (mut browser, _) = browser();
+        browser.toggle_console();
+        let mut canvas = Recorder::new();
+        browser.draw(&mut canvas, WIDTH, HEIGHT, 0);
+        assert_eq!(browser.regions.overview, Rect::ZERO, "no overview");
+        let texts: Vec<&str> = canvas.texts.iter().map(|(_, text)| text.as_str()).collect();
+        assert!(texts.contains(&"Network 0") && texts.contains(&"Pause"), "{texts:?}");
+        assert!(browser.console.area.y1 <= HEIGHT && browser.console.area.y0 > BODY_TOP);
     }
 }

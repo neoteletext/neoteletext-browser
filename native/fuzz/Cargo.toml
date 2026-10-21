@@ -91,6 +91,13 @@ doc = false
 bench = false
 
 [[bin]]
+name = "settings_file"
+path = "fuzz_targets/settings_file.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
 name = "link_target"
 path = "fuzz_targets/link_target.rs"
 test = false

@@ -334,7 +334,7 @@
 - **Reason:** A remote page must not be able to reach devices on the user's own network.
 - **Source:** Architecture; `neoteletext` requirement REQ-SEC-006.
 - **Verification:** Test for each range.
-- **State:** Partly met: refused by the engine's user agent unless allowed, but allowed only with `--allow-local` on the command line; there is no setting in the strip yet.
+- **State:** Met: refused by the engine's user agent unless allowed, with `--allow-local` or in the settings panel (requirement 19.3); through a proxy, by requirement 19.11.
 
 ### Requirement 5.11: Compression is bounded
 - **Statement:** The fetcher must undo compression with a fixed maximum decompressed size, the engine's constant.
@@ -699,7 +699,7 @@
 - **Reason:** Everything that decides or shows trust is in one place.
 - **Source:** Decision 4.
 - **Verification:** Review.
-- **State:** Partly met: the address, identity, encryption state, Back, Forward and the bookmark star. Reload, Home, the site-change screen and the security settings are not built.
+- **State:** Partly met: the address, identity, encryption state, Back, Forward, Home, the bookmark star, and the security settings in the settings panel (decision 51). Reload and the site-change screen are not built.
 
 ### Requirement 11.3: The address field
 - **Statement:** In display mode the address field must show the address as formatted by the address rules, with the host emphasised and internationalised names shown safely. In edit mode its text must be sent, on Enter, to the trusted core, which opens it or says why it cannot.
@@ -766,14 +766,14 @@
 - **Reason:** Security settings must stay in the strip.
 - **Source:** Decision 4.
 - **Verification:** Test.
-- **State:** Not met.
+- **State:** Partly met: the settings are shown in the strip's panel from the trusted core's settings view, and the security settings change only there; the bookmarks are shown on the start page, which the trusted core writes (decision 51). History has no page.
 
 ### Requirement 12.7: Developer tools
-- **Statement:** A docked developer tools panel must show, for the current channel: the packet log, the page store, network requests, cookies, frame statistics and engine warnings, all from the trusted core and shown as text.
+- **Statement:** A docked developer tools panel must show, for the current channel: the packet log, the pages, network requests and notices, all from the trusted core and shown as text; never a cookie (amended 21 October 2026, decision 51; requirement 19.8).
 - **Reason:** Diagnosis without exposing the trusted core.
 - **Source:** Architecture.
 - **Verification:** Test that hostile packet contents appear as text.
-- **State:** Not met.
+- **State:** Met by requirements 19.8 and 19.9 (decision 51).
 
 ### Requirement 12.8: Windows
 - **Statement:** Each window must have one trusted strip. Moving a tab between windows must be a change of state in the trusted core. Frames for a page must go only to the window showing it.
@@ -939,7 +939,7 @@ Requirements 13.1 to 13.13 are unchanged from the earlier design, and are stated
 - **Reason:** Teletext attaches sounds to pages, and a television goes to the page whose number is typed.
 - **Source:** Decision 37; the engine's REQ-AUD-012.
 - **Verification:** Test: `the_opened_page_is_the_zoomed_one_or_else_the_one_chosen`; an end-to-end check by hand on 19 October 2026 (typing 100 played the page's chime).
-- **State:** Partly met: the setting and the volume are not built.
+- **State:** Met: the setting and the volume are in the settings panel (requirement 19.4).
 
 ### Requirement 16.6: Sound output
 - **Statement:** The interface process must mix with the engine's mixer (`neoteletext-audio-mix`) and play through the operating system's output device with `cpal`, rendering on the audio thread without allocating. With no output device, the browser must run silent.
@@ -1152,81 +1152,81 @@ From `settings-home-console-proxy.md` and its security analysis (decision 51).
 - **Reason:** A browser that forgets its home page and bookmarks each run is not a browser.
 - **Source:** Decision 51.
 - **Verification:** Test: settings written, read back, and a write interrupted before the rename leaves the old file.
-- **State:** Not met.
+- **State:** Met: `settings_round_trip_through_their_file`, `the_file_is_written_whole_or_not_at_all`; at start the trusted core reads it, missing meaning the defaults; by hand on macOS on 21 October 2026, the star wrote `bookmark neoteletext:home` to the file and a later start read it.
 
 ### Requirement 19.2: The settings file is read strictly
-- **Statement:** The settings file must be read as section 1.2 defines it: a version line, at most 256 KB, at most 2 048 bytes a line, each value checked by its setting's own rule; a line that breaks a rule or names nothing known is dropped and logged, and the rest stand.
+- **Statement:** The settings file must be read as section 1.2 defines it: a version line, at most 256 KB, a line at most its name, a space and a value of 2 048 bytes (amended 21 October 2026 on building it: a line of 2 048 bytes could not hold the longest address the address rules accept, so a bookmark of that length was dropped at the next start), each value checked by its setting's own rule; a line that breaks a rule or names nothing known is dropped and logged, and the rest stand.
 - **Reason:** The file is outside input: another program can write it.
 - **Source:** Decision 51; `settings-home-console-proxy-security.md` section 3.
 - **Verification:** Test of each rule; the fuzz target `settings_file`.
-- **State:** Not met.
+- **State:** Met in tests: `the_file_is_read_strictly`, `at_most_16_local_addresses_and_1000_bookmarks`, `the_longest_address_is_kept` (which failed with the line bound of 2 048 bytes); the fuzz target `settings_file` checks every bound and that what was read writes a file that reads back the same, in the full gate.
 
 ### Requirement 19.3: The settings panel
 - **Statement:** The settings must be shown and changed in a panel of the trusted strip, opened by its gear button, Command-comma on macOS and Control-comma elsewhere; each change must be strip input the trusted core checks, a refused one said in the panel; a change of a security setting (the proxy, the local addresses) must be said in the strip's notice and logged. The interface receives the settings only as the text the panel shows.
 - **Reason:** Security settings belong in the strip (requirement 11.2); the interface decides nothing (requirement 3.6).
 - **Source:** Decision 51.
 - **Verification:** Interface and trusted-core tests of each control and each refusal.
-- **State:** Not met.
+- **State:** Met in tests: `each_control_asks_for_its_change`, `the_panel_shows_the_settings_and_the_refusal`, `the_gear_and_its_shortcut_open_the_panel`, `each_setting_change_is_checked` (every rule and refusal), `the_strip_says_the_notice_and_names_the_start_page`. By hand on macOS: Command-comma opens the panel and Escape closes it. Its controls were not pressed by hand: clicks posted to the window do not reach it.
 
 ### Requirement 19.4: Sound and its volume
 - **Statement:** The sound setting must silence every page's sound, and the volume scale it, from 0 to 100, in the interface's mixer.
 - **Reason:** Requirement 16.5 named the setting and the volume.
 - **Source:** Decision 51.
 - **Verification:** A mixer test of silence and of each volume's gain.
-- **State:** Not met.
+- **State:** Met in tests: `the_settings_silence_and_scale_every_channel` (sound off silent; volumes 0, 10, 25, 50, 80 and 100 each within 1 per cent of their gain; a muted tab stays muted; a channel that starts later follows the settings). Not yet listened to.
 
 ### Requirement 19.5: Bookmarks are kept
 - **Statement:** The star must add or remove the open channel's address, at most 1 000 kept, in the order added, between runs.
 - **Reason:** Bookmarks are the user's list of channels.
 - **Source:** Decision 51.
 - **Verification:** Test.
-- **State:** Not met.
+- **State:** Met: `bookmarks_are_kept_in_order_and_bounded`, `bookmarks_follow_the_address`, `the_longest_address_is_kept`; by hand on macOS (requirement 19.1's check).
 
 ### Requirement 19.6: The Home button
 - **Statement:** The strip must show a Home button after Forward; it, Command-Shift-H on macOS and Alt-Home elsewhere must open the home address in the active tab as a navigation the user starts (requirement 8.2), and a new tab must open the home address.
 - **Reason:** Requirement 11.2 named it; home is where a browser starts.
 - **Source:** Decision 51.
 - **Verification:** Interface and trusted-core tests.
-- **State:** Not met.
+- **State:** Met: `home_is_asked_for_by_its_button_and_its_keys`, the trusted core's `ToCore::Home` navigation; by hand on macOS, Command-Shift-H opened the start page in the tab. The interface accepts each shortcut on every platform (`settings-home-console-proxy.md` section 7).
 
 ### Requirement 19.7: The start page
 - **Statement:** The address `neoteletext:home` must be a channel the trusted core serves itself as teletext, with no network: page 100 telling how to open a channel and listing the bookmarks from page 201, and pages 201 to 299 one for each bookmark, which open it as the user's navigation. Any other `neoteletext:` address must be refused. Its text must be built only from addresses the address rules accepted and cleaned (requirement 11.5).
 - **Reason:** A home that needs no network, and shows the user's own channels, is always there.
 - **Source:** Decision 51.
 - **Verification:** Tests of the pages, of choosing a bookmark, and of hostile addresses in bookmarks.
-- **State:** Not met.
+- **State:** Met: `the_start_page_is_the_one_built_in_address`, `the_pages_tell_how_to_open_a_channel_and_list_the_bookmarks`, `a_hostile_address_cannot_break_out_of_its_line`, `the_start_page_opens_its_bookmarks`; by hand on macOS, typing 202 on the start page opened its bookmark, and Back returned to page 100.
 
 ### Requirement 19.8: The developer console
 - **Statement:** A panel docked at the bottom of the window, opened by Command-Option-I on macOS and Control-Shift-I elsewhere, must show for the active tab's channel the tabs Network, Packets, Pages and Notices of `settings-home-console-proxy.md` section 3.1, each keeping its newest 1 000 entries a channel, with pause and clear. It must never show a cookie, a form's values, a key typed into a page or the pairing secret.
 - **Reason:** Diagnosis of a channel without exposing the trusted core (requirement 12.7).
 - **Source:** Decision 51.
 - **Verification:** Interface tests of each tab; a test that hostile text and bytes are shown as text.
-- **State:** Not met.
+- **State:** Met in tests: `each_tab_shows_its_entries` (hostile text shown as the text it is), `pause_holds_and_clear_empties`, `its_shortcut_on_each_platform`, `the_console_takes_the_overviews_place`; by hand on macOS, Command-Option-I docked it with the reference channel's exchanges and push events. No cookie, form value, typed key or pairing secret reaches the trusted core's console entries (review of `console_fetched` and `decoded`).
 
 ### Requirement 19.9: The console's data
 - **Statement:** The fetcher must report each exchange and each push event to the trusted core (the engine's REQ-WEB-033), bounded and read by a reader that refuses anything else; the trusted core must read each packet's address with the engine, keep each tab's entries, and send the open tab's as cleaned text, at most 200 entries a message, only while the console is open.
 - **Reason:** The data is the channel's; it must reach the interface as text, never as anything it acts on.
 - **Source:** Decision 51.
 - **Verification:** Protocol tests of the bounds; the fuzz target `fetcher_messages`; a trusted-core test of the packet entries.
-- **State:** Not met.
+- **State:** Met: `FromFetcher::Exchange` and `ProxyFailed` bounded and refused when malformed (the fetcher protocol's `every_kind_round_trips` and `malformed_contents_are_refused`), read by the fuzz target `fetcher_messages` in the full gate; `packets_are_read_with_the_engine_and_shown_as_text`, `each_tab_keeps_its_newest_1000`, `only_new_entries_go_and_only_while_open`.
 
 ### Requirement 19.10: Proxies
 - **Statement:** The fetcher's and the phone keyboard's connections must go through the proxy the settings name: an HTTP proxy by `CONNECT`, or a SOCKS5 proxy with no authentication sending the host's name (the engine's REQ-WEB-032). A proxy that refuses, fails or does not answer in time must fail the connection, with the reason in the strip's notice, and nothing must go direct instead.
 - **Reason:** Many networks reach the web only through a proxy; a fallback would leak what the user chose to send through it.
 - **Source:** Decision 51.
 - **Verification:** Tests against a local HTTP proxy and a local SOCKS5 proxy, of success, refusal and silence.
-- **State:** Not met.
+- **State:** Met: `a_connection_goes_through_an_http_proxy`, `a_connection_goes_through_a_socks5_proxy`, `a_refusal_fails_the_connection`, `a_silent_proxy_fails_in_time` against proxies on this computer; by hand on macOS on 21 October 2026 through a local HTTP proxy, the fetch and push connections were tunnels, and with the proxy stopped the strip said "The proxy refused the connection to 127.0.0.1" and nothing went direct. The phone keyboard takes `--proxy` (`the_keyboard_reads_its_relay_pin_and_proxy`); its relay through a proxy is untested.
 
 ### Requirement 19.11: The local network through a proxy
 - **Statement:** With a proxy, an address written as a local IP address, `localhost` and names under `.local` and `.internal` must be refused unless allowed (requirement 5.10), before anything is sent to the proxy.
 - **Reason:** The proxy resolves names, so the browser cannot see where every name leads; it keeps the rule where it can.
 - **Source:** Decision 51; `settings-home-console-proxy-security.md` section 3.
 - **Verification:** Test of each refused form.
-- **State:** Not met.
+- **State:** Met by the engine's agent, which the fetcher runs with `proxied` set: the engine's `local_hosts_are_seen_before_the_proxy` (each refused form) and `through_a_proxy_local_names_are_refused_and_the_proxy_may_be_local` (the agent refuses before connecting), REQ-WEB-032.
 
 ### Requirement 19.12: The fetcher takes its proxy only when started
 - **Statement:** The trusted core must give a fetcher its proxy as a command-line argument when it starts it, and a change of the proxy must take effect for fetchers started after it; no message may change where a running fetcher connects (requirement 4.7).
 - **Reason:** Requirement 4.7: nothing the trusted core sends a running fetcher changes what it fetches.
 - **Source:** Decision 51.
 - **Verification:** Review; a test that the fetcher reads its proxy argument.
-- **State:** Not met.
+- **State:** Met: `the_fetcher_reads_its_proxy_argument`, `a_fetcher_is_given_the_proxy_and_the_local_addresses`, `the_keyboard_reads_its_relay_pin_and_proxy`; review: no message to a running fetcher carries a proxy (`ToFetcher` has input messages only).

@@ -11,12 +11,14 @@ publish.workspace = true
 # says so, and the workspace's other crates build without it too.
 [features]
 default = ["phone-keyboard"]
-phone-keyboard = ["protocol/phone-keyboard", "dep:neoteletext-qrkeyboard", "dep:neoteletext-input"]
+phone-keyboard = ["protocol/phone-keyboard", "dep:neoteletext-qrkeyboard", "dep:neoteletext-input", "dep:neoteletext-web"]
 
 [dependencies]
 protocol.workspace = true
 neoteletext-qrkeyboard = { workspace = true, optional = true }
 neoteletext-input = { workspace = true, optional = true }
+# The engine's proxy encoding, for the relay's connections (requirement 19.10).
+neoteletext-web = { workspace = true, optional = true, features = ["std"] }
 
 [lints]
 workspace = true

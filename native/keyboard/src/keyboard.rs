@@ -9,6 +9,7 @@ use neoteletext_input::session::Limiter;
 use neoteletext_qrkeyboard::config::{Layout, ScreenConfig};
 use neoteletext_qrkeyboard::qr::{Correction, Matrix};
 use neoteletext_qrkeyboard::screen::{Event, Screen};
+use neoteletext_web::proxy::Proxy;
 use protocol::keyboard::{FromKeyboard, MAX_PHONE_TEXT, PhoneState, Qr, ToKeyboard, read_to_keyboard, write_to_core};
 
 /// What the phone shows as the screen's name.
@@ -41,12 +42,12 @@ fn clock(started: Instant) -> u32 {
     u32::try_from(started.elapsed().as_millis() & u128::from(u32::MAX)).unwrap_or(0)
 }
 
-fn run(relay: &str, pin: bool) -> Result<(), String> {
+fn run(relay: &str, pin: bool, proxy: Option<Proxy>) -> Result<(), String> {
     let mut output = BufWriter::new(io::stdout().lock());
     let mut send = |message: &FromKeyboard| write_to_core(&mut output, message).map_err(|error| error.to_string());
     send(&FromKeyboard::State(PhoneState::Preparing))?;
     let config = ScreenConfig { name: NAME.into(), layout: Layout::Terminal, pin, rejoin_seconds: Some(REJOIN_SECONDS) };
-    let mut screen = match Screen::create(relay, config, None) {
+    let mut screen = match Screen::create(relay, config, proxy) {
         Ok(screen) => screen,
         Err(error) => {
             send(&FromKeyboard::State(PhoneState::Finished))?;
@@ -122,16 +123,60 @@ fn run(relay: &str, pin: bool) -> Result<(), String> {
     }
 }
 
+/// What the trusted core started the keyboard with: `[relay] [--pin]
+/// [--proxy URL]`. The proxy is given only at the start, as a fetcher's is
+/// (requirement 19.12).
+struct Arguments {
+    relay: String,
+    pin: bool,
+    proxy: Option<Proxy>,
+}
+
+fn arguments(given: impl IntoIterator<Item = String>) -> Result<Arguments, String> {
+    let mut read = Arguments { relay: neoteletext_qrkeyboard::RELAY.to_owned(), pin: false, proxy: None };
+    let mut given = given.into_iter();
+    while let Some(argument) = given.next() {
+        match argument.as_str() {
+            "--pin" => read.pin = true,
+            "--proxy" => read.proxy = Some(Proxy::parse(&given.next().ok_or("--proxy needs an address")?)?),
+            other if other.starts_with("--") => return Err(format!("{other}: not understood")),
+            _ => read.relay = argument,
+        }
+    }
+    Ok(read)
+}
+
 /// Runs the phone keyboard until the trusted core ends it.
 pub fn main() -> ExitCode {
-    let arguments: Vec<String> = std::env::args().skip(1).collect();
-    let pin = arguments.iter().any(|argument| argument == "--pin");
-    let relay = arguments.iter().find(|argument| !argument.starts_with("--")).map_or(neoteletext_qrkeyboard::RELAY, String::as_str);
-    match run(relay, pin) {
+    match arguments(std::env::args().skip(1)).and_then(|read| run(&read.relay, read.pin, read.proxy)) {
         Ok(()) => ExitCode::SUCCESS,
         Err(error) => {
             eprintln!("neoteletext-keyboard: {error}");
             ExitCode::FAILURE
         }
+    }
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used, reason = "a test")]
+mod tests {
+    use super::*;
+
+    fn read(given: &[&str]) -> Result<Arguments, String> {
+        arguments(given.iter().map(|&argument| argument.to_owned()))
+    }
+
+    /// Requirement 19.12: the proxy comes only as an argument at the start.
+    #[test]
+    fn the_keyboard_reads_its_relay_pin_and_proxy() {
+        let plain = read(&[]).unwrap();
+        assert_eq!((plain.relay.as_str(), plain.pin, plain.proxy.is_none()), (neoteletext_qrkeyboard::RELAY, false, true));
+        let given = read(&["wss://relay.example/", "--pin", "--proxy", "socks5://127.0.0.1:1080"]).unwrap();
+        assert_eq!((given.relay.as_str(), given.pin), ("wss://relay.example/", true));
+        let proxy = given.proxy.unwrap();
+        assert_eq!((proxy.host.as_str(), proxy.port), ("127.0.0.1", 1080));
+        assert!(read(&["--proxy"]).is_err());
+        assert!(read(&["--proxy", "ftp://p.example:21"]).is_err());
+        assert!(read(&["--other"]).is_err());
     }
 }

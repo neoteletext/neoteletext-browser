@@ -107,6 +107,10 @@ enum Incoming {
     PhoneKey(protocol::keyboard::PhoneKey),
     /// The channels now playing sound, muted or not.
     Sounding(BTreeSet<u32>),
+    /// The settings, for the panel of the trusted strip.
+    Settings(interface_core::settings::SettingsView),
+    /// New entries for the developer console.
+    Console(interface_core::console::ConsoleUpdate),
     /// The user chose an item of the Dock menu.
     Dock(Choice),
     /// The trusted core closed the pipe, asked to close, or broke the protocol.
@@ -204,7 +208,7 @@ impl App {
 
     fn modifiers(&self) -> Modifiers {
         let command = if cfg!(target_os = "macos") { self.modifiers.super_key() } else { self.modifiers.control_key() };
-        Modifiers { shift: self.modifiers.shift_key(), command, repeat: false }
+        Modifiers { shift: self.modifiers.shift_key(), command, alt: self.modifiers.alt_key(), repeat: false }
     }
 
     fn send(&mut self, event_loop: &ActiveEventLoop, message: &ToCore) {
@@ -288,6 +292,9 @@ impl App {
                 Output::Back => ToCore::Back,
                 Output::Forward => ToCore::Forward,
                 Output::Bookmark => ToCore::Bookmark,
+                Output::Home => ToCore::Home,
+                Output::Setting(change) => ToCore::ChangeSetting(change),
+                Output::Console(open) => ToCore::Console(open),
                 Output::MuteTab(index) => {
                     let Ok(index) = u8::try_from(index) else { continue };
                     ToCore::MuteTab(index)
@@ -619,6 +626,8 @@ impl ApplicationHandler<Incoming> for App {
                 return;
             }
             Incoming::Strip(strip) => self.browser.set_strip(strip),
+            Incoming::Settings(view) => self.browser.set_settings(view),
+            Incoming::Console(update) => self.browser.console_update(update),
             Incoming::Channel(channel) => self.browser.set_channel(channel),
             Incoming::Arrived { channel, page, title } => self.browser.add_page(channel, page, title, now),
             Incoming::Updated { channel, page } => self.browser.page_updated(channel, page, now),
@@ -740,7 +749,11 @@ impl ApplicationHandler<Incoming> for App {
                 changed
             }
             WindowEvent::KeyboardInput { event, .. } if event.state == ElementState::Pressed => {
-                let changed = self.key(&event.logical_key, event.text.as_deref(), event.repeat);
+                use winit::platform::modifier_supplement::KeyEventExtModifierSupplement;
+                // A shortcut is its key without the modifiers: Option on
+                // macOS changes the character a key types.
+                let key = if self.modifiers().command { event.key_without_modifiers() } else { event.logical_key.clone() };
+                let changed = self.key(&key, event.text.as_deref(), event.repeat);
                 self.act(event_loop);
                 changed
             }
@@ -841,6 +854,14 @@ fn read_core(proxy: &EventLoopProxy<Incoming>, mixers: Option<&Shared>, trace: b
             Ok(Some(ToInterface::Phone(view))) => Incoming::Phone(view),
             #[cfg(feature = "phone-keyboard")]
             Ok(Some(ToInterface::PhoneKey(key))) => Incoming::PhoneKey(key),
+            // The sound and the volume go to the mixers too (requirement 19.4).
+            Ok(Some(ToInterface::Settings(view))) => {
+                if let Some(mixers) = mixers {
+                    audio::set_sound(mixers, view.sound, view.volume);
+                }
+                Incoming::Settings(view)
+            }
+            Ok(Some(ToInterface::Console(update))) => Incoming::Console(update),
             Ok(Some(ToInterface::Close) | None) => break None,
             Err(error) => break Some(format!("bad message from the trusted core: {error}")),
         };

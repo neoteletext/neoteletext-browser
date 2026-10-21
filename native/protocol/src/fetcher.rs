@@ -9,13 +9,21 @@ use std::io::{Read, Write};
 
 use interface_core::channel::page_index;
 
-use super::{Fields, MAX_PAGE_TITLE, MAX_PAYLOAD, ProtocolError, push_raw_text, read_frame, write_frame};
+use super::{Fields, MAX_ADDRESS, MAX_PAGE_TITLE, MAX_PAYLOAD, ProtocolError, push_raw_text, read_frame, write_frame};
 
 /// The engine's contents file limits (`neoteletext-web` `contents`): at
 /// most 1000 lines, so at most 1000 entries, and 800 pages.
 pub const MAX_ENTRIES: usize = 1000;
 /// A notice for the log.
 pub const MAX_NOTICE: usize = 512;
+/// The longest method an exchange reports: `GET` and `POST` are the
+/// engine's (its `http::Method`).
+pub const MAX_METHOD: usize = 8;
+/// The longest address an exchange reports: the engine's `MAX_URL_LENGTH`,
+/// which is the address field's limit too.
+pub const MAX_EXCHANGE_URL: usize = MAX_ADDRESS;
+/// HTTP status codes are three digits from 100 (RFC 9110 section 15).
+const STATUS_CODES: core::ops::RangeInclusive<u16> = 100..=599;
 
 const KIND_CONTENTS: u8 = 80;
 const KIND_PAGE: u8 = 81;
@@ -25,6 +33,8 @@ const KIND_LINKS: u8 = 83;
 #[cfg(feature = "interaction")]
 const KIND_INPUT: u8 = 84;
 const KIND_PUSHING: u8 = 85;
+const KIND_EXCHANGE: u8 = 86;
+const KIND_PROXY_FAILED: u8 = 87;
 #[cfg(feature = "interaction")]
 const KIND_SEND: u8 = 96;
 
@@ -86,6 +96,24 @@ pub enum FromFetcher {
     /// The channel's push connection opened (true) or was lost: a sleeping
     /// tab keeps its fetcher while it holds one (decision 47).
     Pushing(bool),
+    /// One exchange the agent made (the engine's REQ-WEB-033), for the
+    /// developer console (requirement 19.9), not yet cleaned.
+    Exchange {
+        /// The request's method.
+        method: String,
+        /// The address asked for.
+        url: String,
+        /// The response's status code.
+        status: u16,
+        /// The body's bytes.
+        bytes: u64,
+        /// Microseconds from the request to the end of its response.
+        elapsed_us: u64,
+    },
+    /// The proxy refused, failed or did not answer a connection
+    /// (requirement 19.10). It carries nothing: the trusted core says it in
+    /// its own words, so a fetcher cannot write the strip.
+    ProxyFailed,
     /// The page numbers the channel's descriptor links elsewhere, and the
     /// services it names for `name:mpp` targets (`hyperlinks.md` section
     /// 6.4), untrusted.
@@ -207,6 +235,18 @@ pub fn write_to_core(out: &mut dyn Write, message: &FromFetcher) -> Result<(), P
             payload.push(u8::from(*open));
             KIND_PUSHING
         }
+        FromFetcher::Exchange { method, url, status, bytes, elapsed_us } => {
+            if !STATUS_CODES.contains(status) {
+                return Err(ProtocolError::BadValue("status"));
+            }
+            push_raw_text(&mut payload, method, MAX_METHOD);
+            push_raw_text(&mut payload, url, MAX_EXCHANGE_URL);
+            payload.extend_from_slice(&status.to_be_bytes());
+            payload.extend_from_slice(&bytes.to_be_bytes());
+            payload.extend_from_slice(&elapsed_us.to_be_bytes());
+            KIND_EXCHANGE
+        }
+        FromFetcher::ProxyFailed => KIND_PROXY_FAILED,
     };
     write_frame(out, kind, &payload)
 }
@@ -268,6 +308,21 @@ pub fn read_from_fetcher(input: &mut dyn Read) -> Result<Option<FromFetcher>, Pr
             1 => true,
             _ => return Err(ProtocolError::BadValue("pushing")),
         }),
+        KIND_EXCHANGE => {
+            let method = raw_text(&mut fields, MAX_METHOD)?;
+            if method.is_empty() || !method.bytes().all(|byte| byte.is_ascii_uppercase()) {
+                return Err(ProtocolError::BadValue("method"));
+            }
+            let url = raw_text(&mut fields, MAX_EXCHANGE_URL)?;
+            let status = fields.u16()?;
+            if !STATUS_CODES.contains(&status) {
+                return Err(ProtocolError::BadValue("status"));
+            }
+            let bytes = u64::from_be_bytes(fields.array()?);
+            let elapsed_us = u64::from_be_bytes(fields.array()?);
+            FromFetcher::Exchange { method, url, status, bytes, elapsed_us }
+        }
+        KIND_PROXY_FAILED => FromFetcher::ProxyFailed,
         other => return Err(ProtocolError::UnknownKind(other)),
     };
     fields.end()?;
@@ -289,6 +344,8 @@ mod tests {
             FromFetcher::Page { origin: Origin::FetchedPackets, bytes: vec![0; 84] },
             FromFetcher::Notice("Opened".into()),
             FromFetcher::Pushing(true),
+            FromFetcher::Exchange { method: "GET".into(), url: "https://a.example/100.tti".into(), status: 200, bytes: 512, elapsed_us: 1_234 },
+            FromFetcher::ProxyFailed,
         ] {
             let mut bytes = Vec::new();
             write_to_core(&mut bytes, &message).unwrap();
@@ -304,6 +361,25 @@ mod tests {
         // An unknown entry kind.
         let bytes = [KIND_CONTENTS, 0, 0, 0, 3, 0, 1, 9];
         assert!(matches!(read_from_fetcher(&mut bytes.as_slice()), Err(ProtocolError::BadValue("contents entry"))));
+        // An exchange's status out of range, and a method that is not one.
+        let exchange = |method: &[u8], status: u16| {
+            let mut payload = vec![0, u8::try_from(method.len()).unwrap()];
+            payload.extend_from_slice(method);
+            payload.extend_from_slice(&[0, 1, b'/']);
+            payload.extend_from_slice(&status.to_be_bytes());
+            payload.extend_from_slice(&[0; 16]);
+            let mut bytes = vec![KIND_EXCHANGE, 0, 0, 0, u8::try_from(payload.len()).unwrap()];
+            bytes.extend(payload);
+            read_from_fetcher(&mut bytes.as_slice())
+        };
+        assert!(exchange(b"GET", 200).is_ok());
+        assert!(matches!(exchange(b"GET", 99), Err(ProtocolError::BadValue("status"))));
+        assert!(matches!(exchange(b"GET", 600), Err(ProtocolError::BadValue("status"))));
+        assert!(matches!(exchange(b"get\n", 200), Err(ProtocolError::BadValue("method"))));
+        assert!(matches!(exchange(b"", 200), Err(ProtocolError::BadValue("method"))));
+        assert!(matches!(exchange(b"VERYLONGMETHOD", 200), Err(ProtocolError::BadValue("text too long"))));
+        let bytes = [KIND_PROXY_FAILED, 0, 0, 0, 1, 0];
+        assert!(read_from_fetcher(&mut bytes.as_slice()).is_err(), "nothing after it");
         // A fetcher sending a decoder's kind.
         let bytes = [65, 0, 0, 0, 0];
         assert!(matches!(read_from_fetcher(&mut bytes.as_slice()), Err(ProtocolError::UnknownKind(65))));

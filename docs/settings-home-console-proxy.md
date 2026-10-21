@@ -30,7 +30,7 @@ One text file, `settings.txt`, in the platform's place for an application's sett
 - Windows: `%APPDATA%\NeoTeletext\`
 - Linux and other Unix systems: `$XDG_CONFIG_HOME/neoteletext/`, or `~/.config/neoteletext/` when that is not set.
 
-Each line is a name, one space, and a value: `home neoteletext:home`, `sound on`, `volume 80`, `proxy socks5 127.0.0.1 1080`, `allow-local 192.168.1.20`, `bookmark https://news.example/teletext/`. The first line is `neoteletext-settings 1`, the format's version. The file is at most 256 KB and a line at most 2 048 bytes; a value is checked as the setting's own rule says (an address by the trusted core's address rules of requirement 11.3, a number within its range). A line that breaks a rule, or a name not known, is dropped and written to the log; the rest stand. The file is written whole to a temporary file beside it and renamed over it, so a crash never leaves half a file.
+Each line is a name, one space, and a value: `home neoteletext:home`, `sound on`, `volume 80`, `proxy socks5 127.0.0.1 1080`, `allow-local 192.168.1.20`, `bookmark https://news.example/teletext/`. The first line is `neoteletext-settings 1`, the format's version. The file is at most 256 KB and a line at most its name, a space and a value of 2 048 bytes, the longest address; a value is checked as the setting's own rule says (an address by the trusted core's address rules of requirement 11.3, a number within its range). A line that breaks a rule, or a name not known, is dropped and written to the log; the rest stand. The file is written whole to a temporary file beside it and renamed over it, so a crash never leaves half a file.
 
 ### 1.3 The settings panel
 
@@ -120,4 +120,17 @@ Requirements 19.1 to 19.12 of `requirements.md`.
 
 ## 7. What building changed
 
-Filled in when built.
+Built on 21 October 2026. Building changed these:
+
+1. **A line's bound.** A line of 2 048 bytes could not hold the longest address the address rules accept, so such a bookmark would have been dropped at the next start (the test `the_longest_address_is_kept` failed). A line is now at most its name, a space and a value of 2 048 bytes; requirement 19.2 is amended.
+2. **The strip's notice** is a field of the strip's state, text the trusted core writes; it takes the address's place for ten seconds. A proxy's failure reaches the trusted core as `ProxyFailed`, a message that carries nothing, and the trusted core says it in its own words with the channel's host as the strip shows it, so a fetcher cannot write the strip. The fetcher calls any failure on the way to the proxy the proxy's: its name not found, no answer, a refusal.
+3. **Push events** are not a message of their own (section 5's `PushEvent`): the trusted core reads them from the fetcher's existing `Pushing` and pushed `Page` messages. The Network tab shows "push: connected", "push: lost" and each pushed message's form and size.
+4. **The Pages tab** is a log of each page's arrival, with its title, and of each change, rather than a table of the decoder's store.
+5. **The Packets tab** lists the packets a fetcher received as T42, fetched or pushed. A file channel's data and TTI pages are not packets; the trusted core does not read a file channel's bytes, so they are not listed.
+6. **The console** docks in the overview's place while it is open. Clear empties the interface's view; the trusted core keeps its own entries.
+7. **The settings panel** is centred over the window below the strip, not over the page area, which is too small for it at the smallest window. The gear sits to the left of the mute-all and menu buttons. Volume steps by 10. A proxy's kind, host and port go together with Apply or Enter; None goes at once.
+8. **Shortcuts.** The interface core is the same on every platform, so it takes each platform's shortcut everywhere: Home is Command-Shift-H (Control-Shift-H away from macOS) and Alt-Home; the console is Command-Option-I and Command-Shift-I (Control-Shift-I away from macOS). Shortcuts are read from the key without its modifiers, as Option changes the character a key types on macOS.
+9. **Local addresses** allowed in the settings reach fetchers started after the change, as the proxy does (requirement 19.12); `--allow-local` on the command line still adds to them.
+10. **The start page** lists 15 bookmarks on page 100, with a line naming the pages of the rest; pages 201 to 299 hold the first 99 bookmarks, and later ones are kept but have no page. Its page list shows each bookmark's address as the title. It is written when the tab opens it, so a bookmark added while it is shown appears the next time it opens. Characters the English G0 set draws as other symbols (`#`, `[`, `\`, `]`, `^`, `_`, `` ` ``, `{`, `|`, `}`, `~`) show as `?`. The strip names it "NeoTeletext" where a channel shows its padlock or "Not secure". Going back from a bookmark it opened returns to page 100, not to the bookmark's page, which would open it again.
+11. **The phone keyboard** process takes `--proxy` when it starts, as the fetcher does.
+12. **The view types** of the settings and the console live in the interface core, as the strip's do, and the protocol encodes them.

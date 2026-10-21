@@ -20,6 +20,7 @@
 )]
 
 pub mod audio;
+pub mod console;
 pub mod decoder;
 pub mod fetcher;
 #[cfg(feature = "interaction")]
@@ -28,6 +29,7 @@ pub mod interaction;
 pub mod keyboard;
 #[cfg(feature = "links")]
 pub mod links;
+pub mod settings;
 
 use std::io::{self, Read, Write};
 
@@ -53,6 +55,9 @@ pub const LAST_PAGE: u16 = 0x8FF;
 pub const MAX_TITLE: usize = 256;
 /// A channel's identity, its host name.
 pub const MAX_IDENTITY: usize = 256;
+/// The longest notice the strip says, as "The proxy refused the
+/// connection to" and a host of at most 253 bytes.
+pub const MAX_STRIP_NOTICE: usize = 320;
 /// The address bar's limit, as the trusted core's address rules.
 pub const MAX_ADDRESS: usize = interface_core::browser::MAX_ADDRESS;
 /// A page title: one row of a teletext page is 40 characters, and each
@@ -80,6 +85,8 @@ const KIND_TYPING: u8 = 40;
 const KIND_PHONE: u8 = 41;
 #[cfg(feature = "phone-keyboard")]
 const KIND_PHONE_KEY: u8 = 42;
+const KIND_SETTINGS: u8 = 43;
+const KIND_CONSOLE_UPDATE: u8 = 44;
 // Interface to trusted core: intents.
 const KIND_VISIBLE: u8 = 16;
 const KIND_CELL: u8 = 17;
@@ -114,6 +121,9 @@ const KIND_BOOKMARK: u8 = 35;
 const KIND_CONFIRM: u8 = 36;
 #[cfg(feature = "links")]
 const KIND_CANCEL: u8 = 37;
+const KIND_CONSOLE: u8 = 38;
+const KIND_HOME: u8 = 39;
+const KIND_CHANGE_SETTING: u8 = 45;
 
 // The strip's flags.
 const ENCRYPTED: u8 = 1;
@@ -121,7 +131,8 @@ const CAN_GO_BACK: u8 = 2;
 const CAN_GO_FORWARD: u8 = 4;
 const BOOKMARKED: u8 = 8;
 const LOCAL: u8 = 16;
-const ALL_FLAGS: u8 = ENCRYPTED | CAN_GO_BACK | CAN_GO_FORWARD | BOOKMARKED | LOCAL;
+const BUILT_IN: u8 = 32;
+const ALL_FLAGS: u8 = ENCRYPTED | CAN_GO_BACK | CAN_GO_FORWARD | BOOKMARKED | LOCAL | BUILT_IN;
 // A tab's flags.
 const TAB_MUTED: u8 = 1;
 
@@ -189,6 +200,11 @@ pub enum ToInterface {
     /// A key of the paired phone, which the interface takes as its own.
     #[cfg(feature = "phone-keyboard")]
     PhoneKey(keyboard::PhoneKey),
+    /// The settings, for the panel of the trusted strip (requirement
+    /// 19.3) and the mixer's sound and volume (requirement 19.4).
+    Settings(settings::SettingsView),
+    /// New entries for the developer console (requirement 19.9).
+    Console(console::ConsoleUpdate),
     /// The browser is closing: the interface ends.
     Close,
 }
@@ -265,6 +281,14 @@ pub enum ToCore {
     Forward,
     /// Strip input: bookmark the channel, or remove its bookmark.
     Bookmark,
+    /// Strip input: open the home address in the active tab (requirement
+    /// 19.6).
+    Home,
+    /// Strip input: a change the settings panel asks for (requirement
+    /// 19.3).
+    ChangeSetting(settings::SettingChange),
+    /// The developer console opened or closed (requirement 19.8).
+    Console(bool),
     /// Strip input: yes to the strip's question of this number.
     #[cfg(feature = "links")]
     Confirm(u32),
@@ -471,6 +495,7 @@ impl<'a> Fields<'a> {
 /// # Errors
 /// When writing fails, or the message breaks a bound or carries text that
 /// was not cleaned.
+#[allow(clippy::too_many_lines, reason = "one arm for each kind of message, in the order of the kinds")]
 pub fn write_to_interface(out: &mut dyn Write, message: &ToInterface) -> Result<(), ProtocolError> {
     let mut payload = Vec::new();
     let kind = match message {
@@ -495,10 +520,12 @@ pub fn write_to_interface(out: &mut dyn Write, message: &ToInterface) -> Result<
                     | flag(strip.back, CAN_GO_BACK)
                     | flag(strip.forward, CAN_GO_FORWARD)
                     | flag(strip.bookmarked, BOOKMARKED)
-                    | flag(strip.local, LOCAL),
+                    | flag(strip.local, LOCAL)
+                    | flag(strip.built_in, BUILT_IN),
             );
             push_text(&mut payload, &strip.identity, MAX_IDENTITY)?;
             push_text(&mut payload, &strip.address, MAX_ADDRESS)?;
+            push_text(&mut payload, &strip.notice, MAX_STRIP_NOTICE)?;
             KIND_STRIP
         }
         ToInterface::Channel(channel) => {
@@ -563,6 +590,14 @@ pub fn write_to_interface(out: &mut dyn Write, message: &ToInterface) -> Result<
             keyboard::push_phone_key(&mut payload, key)?;
             KIND_PHONE_KEY
         }
+        ToInterface::Settings(view) => {
+            settings::push_view(&mut payload, view)?;
+            KIND_SETTINGS
+        }
+        ToInterface::Console(update) => {
+            console::push_update(&mut payload, update)?;
+            KIND_CONSOLE_UPDATE
+        }
         ToInterface::Close => KIND_CLOSE,
     };
     write_frame(out, kind, &payload)
@@ -573,6 +608,7 @@ pub fn write_to_interface(out: &mut dyn Write, message: &ToInterface) -> Result<
 /// # Errors
 /// On input errors, a kind the trusted core may not send, and any payload
 /// that is malformed or out of bounds.
+#[allow(clippy::too_many_lines, reason = "one arm for each kind of message, in the order of the kinds")]
 pub fn read_from_core(input: &mut dyn Read) -> Result<Option<ToInterface>, ProtocolError> {
     let Some((kind, payload)) = read_frame(input)? else { return Ok(None) };
     let mut fields = Fields { bytes: &payload };
@@ -613,6 +649,8 @@ pub fn read_from_core(input: &mut dyn Read) -> Result<Option<ToInterface>, Proto
                 forward: flags & CAN_GO_FORWARD != 0,
                 bookmarked: flags & BOOKMARKED != 0,
                 local: flags & LOCAL != 0,
+                built_in: flags & BUILT_IN != 0,
+                notice: fields.text(MAX_STRIP_NOTICE)?,
             })
         }
         KIND_CHANNEL => {
@@ -667,6 +705,8 @@ pub fn read_from_core(input: &mut dyn Read) -> Result<Option<ToInterface>, Proto
         KIND_PHONE => ToInterface::Phone(keyboard::read_view(&mut fields)?),
         #[cfg(feature = "phone-keyboard")]
         KIND_PHONE_KEY => ToInterface::PhoneKey(keyboard::read_phone_key(&mut fields)?),
+        KIND_SETTINGS => ToInterface::Settings(settings::read_view(&mut fields)?),
+        KIND_CONSOLE_UPDATE => ToInterface::Console(console::read_update(&mut fields)?),
         KIND_CLOSE => ToInterface::Close,
         other => return Err(ProtocolError::UnknownKind(other)),
     };
@@ -678,6 +718,7 @@ pub fn read_from_core(input: &mut dyn Read) -> Result<Option<ToInterface>, Proto
 ///
 /// # Errors
 /// When writing fails or the message breaks a bound.
+#[allow(clippy::too_many_lines, reason = "one arm for each kind of message, in the order of the kinds")]
 pub fn write_to_core(out: &mut dyn Write, message: &ToCore) -> Result<(), ProtocolError> {
     let mut payload = Vec::new();
     let kind = match message {
@@ -730,6 +771,15 @@ pub fn write_to_core(out: &mut dyn Write, message: &ToCore) -> Result<(), Protoc
         ToCore::Back => KIND_BACK,
         ToCore::Forward => KIND_FORWARD,
         ToCore::Bookmark => KIND_BOOKMARK,
+        ToCore::Home => KIND_HOME,
+        ToCore::ChangeSetting(change) => {
+            settings::push_change(&mut payload, change)?;
+            KIND_CHANGE_SETTING
+        }
+        ToCore::Console(open) => {
+            payload.push(u8::from(*open));
+            KIND_CONSOLE
+        }
         #[cfg(feature = "links")]
         ToCore::Point(spot) => {
             links::push_spot(&mut payload, spot.as_ref());
@@ -827,6 +877,13 @@ pub fn read_from_interface(input: &mut dyn Read) -> Result<Option<ToCore>, Proto
         KIND_BACK => ToCore::Back,
         KIND_FORWARD => ToCore::Forward,
         KIND_BOOKMARK => ToCore::Bookmark,
+        KIND_HOME => ToCore::Home,
+        KIND_CHANGE_SETTING => ToCore::ChangeSetting(settings::read_change(&mut fields)?),
+        KIND_CONSOLE => ToCore::Console(match fields.u8()? {
+            0 => false,
+            1 => true,
+            _ => return Err(ProtocolError::BadValue("flag")),
+        }),
         #[cfg(feature = "links")]
         KIND_POINT => ToCore::Point(if payload.is_empty() { None } else { Some(links::read_spot(&mut fields)?) }),
         #[cfg(feature = "links")]
@@ -883,6 +940,8 @@ mod tests {
             forward: false,
             bookmarked: true,
             local: false,
+            built_in: false,
+            notice: "Proxy changed to socks5://127.0.0.1:1080".into(),
         }
     }
 
@@ -911,6 +970,19 @@ mod tests {
             ToInterface::Page { channel: 9, page: 0x899, title: "Clock".into() },
             ToInterface::Updated { channel: 9, page: 0x302 },
             ToInterface::Frame { key: KEY, version: 3, png: vec![1, 2, 3] },
+            ToInterface::Settings(settings::SettingsView {
+                home: "neoteletext:home".into(),
+                sound: false,
+                volume: 30,
+                proxy: settings::ProxyView::None,
+                local: Vec::new(),
+                refusal: None,
+            }),
+            ToInterface::Console(console::ConsoleUpdate {
+                channel: 2,
+                replace: false,
+                entries: vec![console::ConsoleEntry { tab: console::ConsoleTab::Notices, at_ms: 5, text: "x".into() }],
+            }),
             ToInterface::Close,
         ] {
             let mut bytes = Vec::new();
@@ -928,6 +1000,9 @@ mod tests {
             ToCore::Back,
             ToCore::Forward,
             ToCore::Bookmark,
+            ToCore::Home,
+            ToCore::ChangeSetting(settings::SettingChange::Volume(40)),
+            ToCore::Console(true),
         ] {
             let mut bytes = Vec::new();
             write_to_core(&mut bytes, &message).unwrap();
@@ -966,7 +1041,7 @@ mod tests {
         // A new page with a hexadecimal number, and unknown strip flags.
         bytes = vec![KIND_PAGE, 0, 0, 0, 8, 0, 0, 0, 9, 0x1A, 0x00, 0, 0];
         assert!(matches!(read_from_core(&mut bytes.as_slice()), Err(ProtocolError::BadValue("page number"))));
-        bytes = vec![KIND_STRIP, 0, 0, 0, 5, 0x20, 0, 0, 0, 0];
+        bytes = vec![KIND_STRIP, 0, 0, 0, 7, 0x40, 0, 0, 0, 0, 0, 0];
         assert!(matches!(read_from_core(&mut bytes.as_slice()), Err(ProtocolError::BadValue("strip flags"))));
         // A tab colour the interface has no colour for.
         bytes = vec![KIND_TABS, 0, 0, 0, 10, 0, 1, 8, 0, 0, 0, 1, 0, 0, 0];
