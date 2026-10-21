@@ -57,7 +57,7 @@ cpal = "=0.18.2"
 libm = "=0.2.16"
 # Single-threaded: with its "multithreading" feature, vello_cpu 0.3.0's
 # worker threads kept a whole core busy while the window was idle
-# (prototypes/spikes/vello-wall).
+# (prototypes/spikes/vello-wall, at the tag prototypes-final).
 vello_cpu = { version = "=0.3.0", default-features = false, features = ["std", "text", "u8_pipeline"] }
 parley = "=0.12.0"
 winit = "=0.30.13"

@@ -3,7 +3,7 @@
 | | |
 |---|---|
 | **Status** | Adopted 16 October 2026 with the native architecture (decision 33). Every limit these requirements refer to is a constant defined in neoteletext (decision 26; requirement 2.4). |
-| **Companion documents** | [`architecture.md`](architecture.md) explains the design these requirements describe. [`security-analysis.md`](security-analysis.md) analyses its security. The earlier design's requirements are in [`../prototypes/docs/requirements.md`](../prototypes/docs/requirements.md). |
+| **Companion documents** | [`architecture.md`](architecture.md) explains the design these requirements describe. [`security-analysis.md`](security-analysis.md) analyses its security. The earlier design's requirements were in `prototypes/docs/requirements.md`, kept in git at the tag `prototypes-final` since the prototypes were removed (decision 50); a path under `prototypes/` here is a path there. |
 
 ## How to read this document
 
@@ -623,7 +623,7 @@
 - **Reason:** The design assumes a few kilobytes per page.
 - **Source:** Architecture.
 - **Verification:** Recorded measurement.
-- **State:** Partly met: about 6 kilobytes a page on the stand-in engine (`../prototypes/docs/proofs.md` section 4); not yet measured on real channels.
+- **State:** Partly met: about 6 kilobytes a page on the stand-in engine (`prototypes/docs/proofs.md` section 4); not yet measured on real channels.
 
 ---
 
@@ -687,7 +687,7 @@
 
 ### Requirement 11.1: The trusted strip and strip input
 - **Statement:** Every window must have a trusted strip, drawn by the interface process in that window, outside the page area, showing only the state the trusted core sends. It must never be a window of its own. Its input must reach the trusted core as strip input, message kinds that page intents never use.
-- **Reason:** A strip in a window of its own can be covered by any other window (`../prototypes/docs/proofs.md` section 3); in the page area a page image could imitate it.
+- **Reason:** A strip in a window of its own can be covered by any other window (`prototypes/docs/proofs.md` section 3); in the page area a page image could imitate it.
 - **Source:** Decisions 4, 18 and 33.
 - **Verification:** Test: no page intent produces a navigation; review of every layout.
 - **State:** Met.
@@ -805,7 +805,7 @@
 
 ## 13. The application update mechanism
 
-Requirements 13.1 to 13.13 are unchanged from the earlier design, and are stated there in full (`../prototypes/docs/requirements.md` section 13). In brief:
+Requirements 13.1 to 13.13 are unchanged from the earlier design, and are stated there in full (`prototypes/docs/requirements.md` section 13). In brief:
 
 | Requirement | Statement |
 |---|---|
@@ -834,7 +834,7 @@ Requirements 13.1 to 13.13 are unchanged from the earlier design, and are stated
 - **Reason:** Requirements that are not checked drift.
 - **Source:** Owner's baseline instructions.
 - **Verification:** Review of the hooks.
-- **State:** Partly met. `scripts/check.sh commit`, run before each commit, formats, lints and tests only the parts the staged files touch, and refuses to run while those parts have changes that are not staged, so what it checks is what is committed. `scripts/check.sh full`, run before each push on a clean tree at the commit pushed, adds release tests, `cargo-deny`, `cargo-machete`, fuzzing, the prototypes' WebAssembly and frontend builds, and the Linux build and tests on the Linux host. Neither skips a step: a missing tool or an unreachable host fails the run. The compiler and every tool are pinned (`rust-toolchain.toml`, `scripts/tools.sh`). The full gate has not yet passed as a whole. Many checks named in this document are not written yet.
+- **State:** Partly met. `scripts/check.sh commit`, run before each commit, formats, lints and tests only the parts the staged files touch, and refuses to run while those parts have changes that are not staged, so what it checks is what is committed. `scripts/check.sh full`, run before each push on a clean tree at the commit pushed, adds release tests, `cargo-deny`, `cargo-machete`, fuzzing, and the Linux build and tests on the Linux host; since 21 October 2026 it builds no prototypes, which were removed (decision 50). Neither skips a step: a missing tool or an unreachable host fails the run. The compiler and every tool are pinned (`rust-toolchain.toml`, `scripts/tools.sh`). The full gate passed as a whole on 21 October 2026. Many checks named in this document are not written yet.
 
 ### Requirement 14.2: Strict compilation and linting
 - **Statement:** Rust code must build with `unsafe` code forbidden, the Clippy lint group `pedantic` enabled and warnings treated as errors; any suppression must be narrow, at its site, with a written reason.

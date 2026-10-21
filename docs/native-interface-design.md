@@ -2,9 +2,9 @@
 
 | | |
 |---|---|
-| **Status** | **Adopted 16 October 2026** (decision 33 of [`architecture.md`](architecture.md)): the owner chose the native architecture built here as the one going forward. Proposed 15 October 2026. This document is now the record of how it was chosen and what was built when; [`architecture.md`](architecture.md), [`requirements.md`](requirements.md) and [`security-analysis.md`](security-analysis.md) describe it as it stands. References below to the earlier documents point to their copies in `../prototypes/docs/`. |
-| **Purpose** | To specify an interface drawn natively in Rust, with no web engine, that runs on macOS, Windows, Linux, iOS and Android and, with features cut, on microcontrollers; and to review it against [`../prototypes/docs/architecture.md`](../prototypes/docs/architecture.md), [`../prototypes/docs/requirements.md`](../prototypes/docs/requirements.md), [`../prototypes/docs/security-analysis.md`](../prototypes/docs/security-analysis.md) and [`../prototypes/docs/proofs.md`](../prototypes/docs/proofs.md) so that nothing important is lost. |
-| **Evidence** | Nine interface prototypes built on 15 October 2026, all under `prototypes/spikes/` (section 2). Measurements are from macOS 15.6 on Apple silicon at a display scale of 1 unless stated. |
+| **Status** | **Adopted 16 October 2026** (decision 33 of [`architecture.md`](architecture.md)): the owner chose the native architecture built here as the one going forward. Proposed 15 October 2026. This document is now the record of how it was chosen and what was built when; [`architecture.md`](architecture.md), [`requirements.md`](requirements.md) and [`security-analysis.md`](security-analysis.md) describe it as it stands. References below to the earlier documents point to their copies in `prototypes/docs/`. |
+| **Purpose** | To specify an interface drawn natively in Rust, with no web engine, that runs on macOS, Windows, Linux, iOS and Android and, with features cut, on microcontrollers; and to review it against `prototypes/docs/architecture.md`, `prototypes/docs/requirements.md`, `prototypes/docs/security-analysis.md` and `prototypes/docs/proofs.md` so that nothing important is lost. |
+| **Evidence** | Nine interface prototypes built on 15 October 2026, all under `prototypes/spikes/` (section 2), removed with the prototypes on 21 October 2026 (decision 50) and kept in git at the tag `prototypes-final`, where every `prototypes/` path here is. Measurements are from macOS 15.6 on Apple silicon at a display scale of 1 unless stated. |
 
 **Abbreviations.** None are used. Crate names such as `vello_cpu` are literal identifiers.
 
@@ -45,7 +45,7 @@ Every prototype shows the same tab as the React prototype: a header with the thu
 | Prototype | Folder | Size | Needs a graphics processor | Text | Notes |
 |---|---|---|---|---|---|
 | React in the system webview (Tauri 2) | `prototypes/src`, `prototypes/src-tauri` | 11 megabytes (application bundle) | No | The browser's | The current design; brings decisions 27 to 32 |
-| Tauri 3 with the Chromium Embedded Framework | branch `tauri3` | about 334 megabytes | No | The browser's | Caller attribution failed (`../prototypes/docs/architecture.md` section 16); no phones |
+| Tauri 3 with the Chromium Embedded Framework | branch `tauri3` | about 334 megabytes | No | The browser's | Caller attribution failed (`prototypes/docs/architecture.md` section 16); no phones |
 | Chromium Embedded Framework directly | Linux test machine only | 1.5 gigabytes unstripped | No | The browser's | The bindings' own example; our application not completed |
 | Bevy | `prototypes/spikes/bevy-wall` | 54.0 megabytes | Yes | No editable text field | Redrew every frame until set to desktop mode |
 | Dioxus native (Blitz) | `prototypes/spikes/dioxus-wall` | 19.7 megabytes | Yes, by default | Real text; no range input; two-dimensional transforms only | Pointer positions only in window coordinates |
@@ -78,7 +78,7 @@ Every native prototype idled at no processor use once configured to redraw only 
 The teletext engine, `neoteletext`, is maintained in its own repository (`~/devel/neoteletext-engine`), not in NeoTeletext's. This design does not move it, copy it or change it:
 
 - **NeoTeletext depends on the engine's crates by a pinned version**, never on a copy of their source. The interface core, the drawing back ends, the interface process and the trusted core are NeoTeletext's own code; decoding, rendering to palette indices, the page store, fetching rules and every limit (decision 26) are the engine's.
-- **Changes the engine needs are made in the engine's repository**, by its own process, and recorded in `neoteletext/docs/neoteletext-browser-open-questions.md` (`../prototypes/docs/architecture.md` section 5.1). NeoTeletext never patches them locally.
+- **Changes the engine needs are made in the engine's repository**, by its own process, and recorded in `neoteletext/docs/neoteletext-browser-open-questions.md` (`prototypes/docs/architecture.md` section 5.1). NeoTeletext never patches them locally.
 - **The engine's core is in use** (section 12.2): `neoteletext-core`, `neoteletext-formats` and `neoteletext-image`, at commit `f341e94`, in the engine's recommended `modern-classic` profile. The engine's browser shell (`neoteletext-gui`, `neoteletext-browser`) and its application crate are not used. `standin`, the earlier stand-in for the engine, remains only for the earlier prototypes.
 - **The microcontroller build** uses the same engine crates that are already `no_std` (section 7), so the engine stays one code base for every target.
 
@@ -116,7 +116,7 @@ The shell needs: the address field (requirement 11.3), buttons, the thumbnail sl
 | Option | What it gives | Against it |
 |---|---|---|
 | **A. Masonry** (Linebender; Apache-2.0) | `TextInput`, `TextArea`, `Button`, `Checkbox`, `Slider`, `ProgressBar`, `Spinner`, `Label`, `Prose`, `Image`, `Flex`, `Grid`, `ZStack`, `Portal`, `ScrollBar`, `VirtualScroll`, `Split`, and in its source also `Canvas`, `Svg`, `RadioButtons`, `Switch`, `StepInput`, `CollapsePanel`; screen readers through AccessKit; input methods through `ui-events` | Alpha. Drawing with `vello_cpu` exists only in unreleased source (Linebender, 2026 first quarter: Masonry moved to the `imaging` rendering abstraction); the published 0.4.0 uses Vello on the graphics processor with `wgpu` 26. No statement on iOS or Android. Not for microcontrollers. |
-| **B. Our own widgets** | Exactly what NeoTeletext needs, all reviewable: Taffy for layout, Parley's `PlainEditor` for the address field, AccessKit for screen readers, `arboard` for the clipboard, input methods from winit (proven in the Linux display host, `../prototypes/docs/proofs.md` section 6.16) | Text editing, accessibility and input methods done well are real, permanent work |
+| **B. Our own widgets** | Exactly what NeoTeletext needs, all reviewable: Taffy for layout, Parley's `PlainEditor` for the address field, AccessKit for screen readers, `arboard` for the clipboard, input methods from winit (proven in the Linux display host, `prototypes/docs/proofs.md` section 6.16) | Text editing, accessibility and input methods done well are real, permanent work |
 
 **Recommended:** prove option A first (section 12); fall back to option B where it falls short. Either way the microcontroller build uses its own minimal widgets on `embedded-graphics`.
 
@@ -138,10 +138,10 @@ With no web engine, nothing in the interface runs code that was not shipped with
 
 | Option | Desktop and Android | What a compromise of the interface would gain |
 |---|---|---|
-| **1. A separate interface process, recommended** | Keeps decision 18's shape: trusted core, fetcher, decoders, font helper, **interface process**, updater, launcher. The interface process draws the window, the wall and the trusted strip, holds no secrets, and can be denied the network and files on every desktop, including macOS, now that there is no WebKit (proof A's limit, `../prototypes/docs/proofs.md` section 2, no longer applies). | The ability to draw a false strip and send intents and strip input, which the trusted core checks; no secrets. Reaching it needs a fault in our own Rust interface code or its libraries, fed only by our own frames and cleaned text. |
+| **1. A separate interface process, recommended** | Keeps decision 18's shape: trusted core, fetcher, decoders, font helper, **interface process**, updater, launcher. The interface process draws the window, the wall and the trusted strip, holds no secrets, and can be denied the network and files on every desktop, including macOS, now that there is no WebKit (proof A's limit, `prototypes/docs/proofs.md` section 2, no longer applies). | The ability to draw a false strip and send intents and strip input, which the trusted core checks; no secrets. Reaching it needs a fault in our own Rust interface code or its libraries, fed only by our own frames and cleaned text. |
 | 2. The interface inside the trusted core | One process fewer, as `neoteletext`'s egui design had it. | Everything: the drawing and text-shaping libraries would sit beside every secret. |
 
-On iOS and on microcontrollers there is one process in any case, as `../prototypes/docs/architecture.md` section 13 already records for iOS.
+On iOS and on microcontrollers there is one process in any case, as `prototypes/docs/architecture.md` section 13 already records for iOS.
 
 **The trusted strip under option 1** is drawn by the interface process. That was the position before decision 27 for the strip's integrity against page code, and here there is no page code: the strip can be imitated only by a fault in NeoTeletext's own interface process. Requirement 3.9's hostile interface harness, which replaces the interface process with an attacker's, still holds every other property.
 
@@ -149,14 +149,14 @@ On iOS and on microcontrollers there is one process in any case, as `../prototyp
 
 - **No network** on every platform (it needs none).
 - **No files** beyond its own resources and shipped fonts.
-- **Display access** is needed, as for any application. Under X11 any application can send input to others (`../prototypes/docs/proofs.md` section 6.8); the interface process is NeoTeletext's own code, not a web engine, so this is the same exposure every desktop application has, not a containment problem.
-- **A system call filter** on Linux, and the platform sandboxes of `../prototypes/docs/architecture.md` section 6.5, as for the decoder.
+- **Display access** is needed, as for any application. Under X11 any application can send input to others (`prototypes/docs/proofs.md` section 6.8); the interface process is NeoTeletext's own code, not a web engine, so this is the same exposure every desktop application has, not a containment problem.
+- **A system call filter** on Linux, and the platform sandboxes of `prototypes/docs/architecture.md` section 6.5, as for the decoder.
 
 ---
 
 ## 6. How a page reaches the screen
 
-Steps 1 to 3 and 6 of `../prototypes/docs/architecture.md` section 10 are unchanged: the decoder renders palette indices; the trusted core checks every frame, keeps flash phases and never resends an unchanged frame.
+Steps 1 to 3 and 6 of `prototypes/docs/architecture.md` section 10 are unchanged: the decoder renders palette indices; the trusted core checks every frame, keeps flash phases and never resends an unchanged frame.
 
 **Transport to the interface process.** Two options:
 
@@ -220,7 +220,7 @@ Every library below is under a permissive licence, as far as checked; each still
 2. **Drawing on the processor as the minimum**, with `vello_cpu` and Parley; Vello on the graphics processor optional.
 3. **Widgets:** prove Masonry first, with our own widgets on Taffy, Parley and AccessKit as the fallback (section 4.3).
 4. **Process model:** a separate interface process with no secrets, drawing the trusted strip (section 5.2, option 1).
-5. **Retire decisions 27 to 32** (window host, Linux confinement, nested display, display host, Smithay, input methods and screen readers through the display host), and the approved but unrecorded system call filter and security context for the Linux window host, keeping their measurements in `../prototypes/docs/proofs.md` as the record of why a web engine was not kept.
+5. **Retire decisions 27 to 32** (window host, Linux confinement, nested display, display host, Smithay, input methods and screen readers through the display host), and the approved but unrecorded system call filter and security context for the Linux window host, keeping their measurements in `prototypes/docs/proofs.md` as the record of why a web engine was not kept.
 6. **Frames on the pipe stay indexed Portable Network Graphics images** (section 6).
 7. **Microcontrollers** become a target with a cut feature set, to be defined (section 7).
 8. **The libraries of section 8**, each by name.
@@ -247,7 +247,7 @@ Every library below is under a permissive licence, as far as checked; each still
 
 Every recorded decision and requirement, and what this design does to it. "Kept" means unchanged; "changed" says how; "retired" means it existed only for the web engine.
 
-### 11.1 Decisions (`../prototypes/docs/architecture.md` section 2)
+### 11.1 Decisions (`prototypes/docs/architecture.md` section 2)
 
 | Decision | Effect |
 |---|---|
@@ -270,7 +270,7 @@ Every recorded decision and requirement, and what this design does to it. "Kept"
 | 27 to 32 | Retired (section 9, item 5) |
 | Approved, not yet recorded: system call filter and security context for the Linux window host | Retired before recording, unless the owner wants them recorded and then retired; a system call filter applies instead to the interface process (section 5.3) |
 
-### 11.2 Design principles (`../prototypes/docs/architecture.md` section 4)
+### 11.2 Design principles (`prototypes/docs/architecture.md` section 4)
 
 | Principle | Effect |
 |---|---|
@@ -280,7 +280,7 @@ Every recorded decision and requirement, and what this design does to it. "Kept"
 
 Decision 27's other finding, that a strip drawn in a separate process's window can be covered by any other window, is respected: the strip is drawn in the interface process's own window (section 5.2).
 
-### 11.3 Requirements (`../prototypes/docs/requirements.md`)
+### 11.3 Requirements (`prototypes/docs/requirements.md`)
 
 | Requirements | Effect |
 |---|---|
@@ -311,7 +311,7 @@ Decision 27's other finding, that a strip drawn in a separate process's window c
 | 14.4 (runtime attribution test) | Retired with Tauri; replaced by a test that each window's messages are attributed to that window |
 | 15.1, 15.2 | Kept, and extended to microcontrollers with a cut feature set |
 
-### 11.4 Security analysis (`../prototypes/docs/security-analysis.md`)
+### 11.4 Security analysis (`prototypes/docs/security-analysis.md`)
 
 | Section | Effect |
 |---|---|
@@ -325,7 +325,7 @@ Decision 27's other finding, that a strip drawn in a separate process's window c
 | 16 (ranked risks) | Changed: web-engine risks (ranks 3, 4, 5, 9, 10 and 13) removed; a fault in the interface process added |
 | 17 (checks) | Changed: webview configuration checks replaced by interface-process sandbox checks |
 
-### 11.5 Proofs (`../prototypes/docs/proofs.md`)
+### 11.5 Proofs (`prototypes/docs/proofs.md`)
 
 Kept as the record. Proofs A, B and the Linux proofs explain why a web engine was not kept; Proof C's frame sizes still apply to the pipe. Proofs D (hostile interface harness) and E (fetching independence) remain to be built, unchanged in purpose.
 
@@ -342,7 +342,7 @@ These are easy to lose in a move away from a browser engine, and each is require
 7. **Clipboard, drag and drop, multiple windows** (requirements 10.9 and 12.8): from `arboard` and winit.
 8. **The developer tools panel** (requirement 12.7) needs text tables, from the widget layer.
 9. **Localisation of the interface's own text** has never been specified in any document; it should be, now that the interface's text is ours.
-10. **The cookie store moving into the trusted core**, and **macOS sandboxing of the fetcher and decoder**, are still unsolved (`../prototypes/docs/architecture.md` section 5.1, requirement 3.8); this design does not change them.
+10. **The cookie store moving into the trusted core**, and **macOS sandboxing of the fetcher and decoder**, are still unsolved (`prototypes/docs/architecture.md` section 5.1, requirement 3.8); this design does not change them.
 11. **The ten open questions for neoteletext** (`neoteletext/docs/neoteletext-browser-open-questions.md`) are still unanswered and are independent of the interface.
 12. **The display scale:** every measurement here was at a scale of 1; drawing on the processor costs about four times as much at a scale of 2.
 
@@ -431,4 +431,4 @@ To run it: `neoteletext-site build target/sites <recordings>...`, `neoteletext-s
 1. **Proof N1: Masonry with `vello_cpu`.** The same tab, with Masonry at a pinned source commit drawing through `vello_cpu`; measure size, idle use and frame time, and try `TextInput` as the address field with an input method and a screen reader.
 2. **Proof N2: one core, two back ends.** The tab's interface core drawing through `vello_cpu` in a window and through `embedded-graphics` into an in-memory display built without the standard library.
 3. **Proof N3: platforms.** The `vello_cpu` version built and run on Linux and Windows, and in iOS and Android simulators, with frame times at phone resolutions and at a display scale of 2.
-4. **On the owner's decisions** (section 9): update `../prototypes/docs/architecture.md`, `../prototypes/docs/requirements.md` and `../prototypes/docs/security-analysis.md` as section 11 lists.
+4. **On the owner's decisions** (section 9): update `prototypes/docs/architecture.md`, `prototypes/docs/requirements.md` and `prototypes/docs/security-analysis.md` as section 11 lists.

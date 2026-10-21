@@ -3,7 +3,8 @@
 | | |
 |---|---|
 | **Status** | Analysis of the native architecture (decision 33), 16 October 2026. Where a point was observed on this codebase rather than reasoned, it says so. Where the design and what is built differ, both are given. |
-| **Companion documents** | [`architecture.md`](architecture.md) describes the design. [`requirements.md`](requirements.md) states each requirement this analysis relies on, numbered, with whether it is met; this document cites them as "Requirement N.N". The earlier design's analysis, with its web engine, is in [`../prototypes/docs/security-analysis.md`](../prototypes/docs/security-analysis.md). |
+| **Companion documents** | [`architecture.md`](architecture.md) describes the design. [`requirements.md`](requirements.md) states each requirement this analysis relies on, numbered, with whether it is met; this document cites them as "Requirement N.N". The earlier design's analysis, with its web engine, is in `prototypes/docs/security-analysis.md`. |
+| **The prototypes** | Removed on 21 October 2026 (decision 50); a path under `prototypes/` here is a path at the git tag `prototypes-final`. |
 
 **Abbreviations.** None are used. Technical terms are written out in full; `architecture.md` section 17 is the glossary.
 
@@ -178,7 +179,7 @@ Not present yet: no font is fetched. When fonts are, they are read by a confined
 
 **Mitigations.**
 - **Page intents carry no address.** They can report visible pages, click a cell, and select, close or open tabs (requirement 4.5).
-- **Visible pages affect only rendering,** never fetching: the fetcher takes no input from the trusted core at all, so nothing the interface does can change any request (requirement 4.7). This closes the covert channel between channels that the earlier design found (`../prototypes/docs/security-analysis.md` section 5.6) for every channel fetched from a contents file or a bundle, and for files.
+- **Visible pages affect only rendering,** never fetching: the fetcher takes no input from the trusted core at all, so nothing the interface does can change any request (requirement 4.7). This closes the covert channel between channels that the earlier design found (`prototypes/docs/security-analysis.md` section 5.6) for every channel fetched from a contents file or a bundle, and for files.
 - **Visible pages of another channel are filtered out** by the trusted core (requirement 4.4).
 - Every message is bounded and checked; a malformed one ends the application (requirements 4.2 and 4.3).
 
@@ -193,12 +194,12 @@ Not present yet: no font is fetched. When fonts are, they are read by a confined
 
 ## 6. What leaving the web engine changed
 
-The earlier design's main concession was the system webview: many millions of lines of C++ and Objective-C with a steady flow of security fixes, which it contained with a window host, a Content Security Policy, the removal of WebRTC, and on Linux an outside confinement, a nested display and a display host of its own (`../prototypes/docs/security-analysis.md` section 6).
+The earlier design's main concession was the system webview: many millions of lines of C++ and Objective-C with a steady flow of security fixes, which it contained with a window host, a Content Security Policy, the removal of WebRTC, and on Linux an outside confinement, a nested display and a display host of its own (`prototypes/docs/security-analysis.md` section 6).
 
 **With no web engine:**
 - **The three levels of compromise collapse to one:** a fault in the interface process (section 5.6).
 - **No script runs,** so no package supply chain runs in the interface, and no script can reach the network.
-- **The interface process can be denied the network on every platform,** including macOS, where proof A showed a webview cannot (`../prototypes/docs/proofs.md` section 2). Built on macOS.
+- **The interface process can be denied the network on every platform,** including macOS, where proof A showed a webview cannot (`prototypes/docs/proofs.md` section 2). Built on macOS.
 - **On Linux,** the interface needs the display as any application does, and nothing more; no nested display or display host is needed, because nothing in it is a web engine to contain.
 - **The cost:** NeoTeletext owns its interface code, including what browsers gave for free: text editing, input methods, accessibility. Each is our code and must be tested as such.
 
@@ -221,7 +222,7 @@ The earlier design's main concession was the system webview: many millions of li
 
 ## 8. The application update mechanism
 
-Unchanged from the earlier design (`../prototypes/docs/security-analysis.md` section 8), and not built: The Update Framework with offline threshold keys, side-by-side installation, an atomic switch, automatic rollback, profiles never migrated in place, and one launcher scheme on every desktop. Its remaining risks are key custody and faults in the launcher, both low once requirements 13.1 to 13.13 are met.
+Unchanged from the earlier design (`prototypes/docs/security-analysis.md` section 8), and not built: The Update Framework with offline threshold keys, side-by-side installation, an atomic switch, automatic rollback, profiles never migrated in place, and one launcher scheme on every desktop. Its remaining risks are key custody and faults in the launcher, both low once requirements 13.1 to 13.13 are met.
 
 ---
 
@@ -295,7 +296,7 @@ Unchanged from the earlier design (`../prototypes/docs/security-analysis.md` sec
 
 | Design | Web engine | Script at run time | What compromising the interface gains | Interface richness |
 |---|---|---|---|---|
-| The earlier design (React in a webview, window host, native strip; `../prototypes/docs/`) | Yes, contained | Yes, as page code | Level 1 (page code): wrong pixels and the use of open channels; level 3 (an escape into the window host): a false strip and forged strip input, no secrets | Full |
+| The earlier design (React in a webview, window host, native strip; `prototypes/docs/`) | Yes, contained | Yes, as page code | Level 1 (page code): wrong pixels and the use of open channels; level 3 (an escape into the window host): a false strip and forged strip input, no secrets | Full |
 | **This design, adopted** (our own native interface in its own process, drawing the strip) | **No** | **None** | A false strip and forged strip input, no secrets; reaching it needs a fault in our own code or its drawing libraries | Full, by our own drawing |
 | The same, with the strip in a smaller separate process (open decision 3) | No | None | Wrong pixels in the page area only | Full |
 | egui (the engine's own design) | No | None | Everything, in one process | Lowest |

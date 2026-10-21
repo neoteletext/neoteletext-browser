@@ -3,7 +3,6 @@
 # WebAssembly package, and TypeScript's incremental build records.
 target/
 dist
-prototypes/src/tab/egui-pkg
 *.tsbuildinfo
 # Installed tools and packages.
 node_modules

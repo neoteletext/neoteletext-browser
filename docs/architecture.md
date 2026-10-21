@@ -5,7 +5,7 @@
 | **Status** | Adopted 16 October 2026 (decision 33). Built in part, in `native/`; section 15 says what is built and what is not. |
 | **Date** | 16 October 2026 |
 | **Companion documents** | [`requirements.md`](requirements.md) states every requirement in full, numbered, with its reason, how it is verified and whether it is met. [`security-analysis.md`](security-analysis.md) analyses this architecture's security. [`hyperlinks.md`](hyperlinks.md) specifies hyperlinks (decision 41) and [`hyperlinks-security.md`](hyperlinks-security.md) analyses their security. [`interaction.md`](interaction.md) specifies channel push, typing back and the cursor (decision 44) and [`interaction-security.md`](interaction-security.md) analyses their security. [`licensing.md`](licensing.md) says which licences may sit beside the browser's code. [`native-interface-design.md`](native-interface-design.md) records how this architecture was chosen, the prototypes it was chosen from, its review against the earlier design, and what was built when. |
-| **The earlier design** | The Tauri design that came before, with its own architecture, requirements, security analysis and proofs, is kept in [`../prototypes/docs/`](../prototypes/docs/), beside the prototypes that tested it. This document replaces it; where the two differ, this one holds. |
+| **The earlier design** | The Tauri design that came before, with its own architecture, requirements, security analysis and proofs, was kept in `prototypes/docs/`, beside the prototypes that tested it, until they were removed on 21 October 2026 (decision 50); they are in git at the tag `prototypes-final`, and a path under `prototypes/` in this document is a path there. This document replaces it; where the two differ, this one holds. |
 | **Engine documents** | The teletext engine's own design lives in `~/devel/neoteletext-engine`: `ARCHITECTURE.md`, `docs/channels.md`, `docs/web-discovery-security.md`, `docs/font-security.md`. This document refers to them by path. |
 
 **Abbreviations.** This project avoids abbreviations, because they hide meaning. Where a technical term is normally known by its initials, the full name is written out, followed by the initials in brackets only when the initials are a literal identifier in code, configuration or a standard's title. Section 17 is a glossary of every technical term used.
@@ -49,7 +49,7 @@ NeoTeletext is an application for browsing teletext, on desktops, then phones, a
 
 ## 2. The owner's decisions
 
-Each decision was made by the owner on the date given. Requirements in `requirements.md` cite the decision they come from. Decisions 1 to 32 were recorded with the earlier design (`../prototypes/docs/architecture.md` section 2), where their full text stays; their numbers are kept here so that every citation still holds.
+Each decision was made by the owner on the date given. Requirements in `requirements.md` cite the decision they come from. Decisions 1 to 32 were recorded with the earlier design (`prototypes/docs/architecture.md` section 2), where their full text stays; their numbers are kept here so that every citation still holds.
 
 | Number | Date | Decision | Now |
 |---|---|---|---|
@@ -79,7 +79,7 @@ Each decision was made by the owner on the date given. Requirements in `requirem
 | Decision 24 | 15 October 2026 | The recommendations for open decisions 1 and 3 to 13 are accepted. | **Kept**, except item (1), reuse of `neoteletext-browser`, superseded by decision 36, and item (9), the palette-index canvas, which decision 33 fulfils |
 | Decision 25 | 15 October 2026 | Updates are hosted at `update.neoteletext.com`. | **Kept** |
 | Decision 26 | 15 October 2026 | Every limit on fetching, refreshing and input is defined once, in neoteletext, as is the fetching policy of decisions 22 and 23. | **Kept** |
-| Decisions 27 to 32 | 15 October 2026 | The window host holding the system webview, its Linux confinement, the nested display, NeoTeletext's own display host on Smithay, and input methods and screen readers through the display host. | **Retired** by decision 33: each existed only to contain a web engine. Their measurements stay in `../prototypes/docs/proofs.md` as the record of why no web engine was kept |
+| Decisions 27 to 32 | 15 October 2026 | The window host holding the system webview, its Linux confinement, the nested display, NeoTeletext's own display host on Smithay, and input methods and screen readers through the display host. | **Retired** by decision 33: each existed only to contain a web engine. Their measurements stay in `prototypes/docs/proofs.md` as the record of why no web engine was kept |
 | Decision 33 | 16 October 2026 | **The native architecture being built in `native/` is the architecture going forward.** The interface is drawn by NeoTeletext's own Rust code with no web engine: an interface core that draws only through its own drawing interface, with back ends for the processor (`vello_cpu` and Parley) and for microcontrollers (`embedded-graphics`); a separate interface process with no secrets, which draws the window and the trusted strip; the trusted core, one decoder per channel and one fetcher per web channel, each a process of its own; frames on the pipe as indexed Portable Network Graphics images. The earlier approaches and their prototypes are kept in `prototypes/`. | — |
 | Decision 34 | 15 October 2026 | **Targets and constraints:** microcontrollers are a target, with features cut; every target must work with no graphics processor, a graphics processor being a welcome extra; every library must be under a totally open licence. | — |
 | Decision 35 | 15 October 2026 | **The window,** built to the owner's mockups: the window frame drawn as Chrome draws it; labels in English; text in Roboto, in small capitals; page banks, a page list and a page area, with an overview of every page along the bottom; pages drawn flat only; a logarithmic page-size control that shrinks the pages over its whole travel and shows a list only at its left edge; a click on a page zooms it, and at the control's right end the wheel moves from page to page. Section 11 describes the window. | — |
@@ -97,6 +97,7 @@ Each decision was made by the owner on the date given. Requirements in `requirem
 | Decision 47 | 21 October 2026 | **Waiting and scale, as the review of 21 October recommended** (`~/devel/neoteletext-common/reviews/2026-10-21-waiting-and-efficiency.md`), on the owner's instruction to fix what it found: the audio callback renders only the channels that are sounding; the decoder keeps its own clock and draws a shown page only when its reception moves, or for flash when it flashes and its phase changes, and the trusted core's flash timer and its tick to every decoder go; a background tab with nothing live sleeps: its decoder is closed, while a tab whose channel holds a push connection never sleeps, and no fetcher is closed or paused for being behind (decision 22); and a decoder's page store grows as it fills. The review's pause of a background tab's fetching was dropped on the owner's word that teletext is mostly pushed. The audio callback's lock was measured and kept: the longest an operation holds it is 0.37 ms. | — |
 | Decision 48 | 21 October 2026 | **Input protocol version 2** (`~/devel/neoteletext-common/INPUT.md`, the engine's decision E.100), adopted by the owner with every requirement numbered and built: the interface sends intents (keys pressed, repeating and released, text, the mouse and the wheel, paste and composition) and never the protocol; the trusted core keeps one input session a channel in the engine's `neoteletext-input`, sends HELLO and waits for WELCOME, applies the channel's and the page's modes, the rate and the input count, and alone encodes; the decoder passes on control records and a page's `IM` line beside cursor records; the mouse goes only when the channel or the page asks; requirements 18.2 to 18.10 give way to REQ-INT-130 to REQ-INT-139, and `interaction.md` keeps push and its history. | Amended by decision 49: the clipboard and normalization are built |
 | Decision 49 | 21 October 2026 | **Two libraries for the input system, approved by the owner** ("if those libraries are rust then approved"): `unicode-normalization` in the trusted core, which sends typed text, and a KEY's text, in Normalization Form C (INPUT.md section 5.7 rule 3, REQ-INT-116); and `arboard` in the interface, whose clipboard text the browser's paste shortcut sends as one PASTE while keys go to a channel (REQ-INT-136). `arboard` brings `clipboard-win` and `error-code` on Windows, under BSL-1.0, allowed for those two crates (`licensing.md` section 2). | — |
+| Decision 50 | 21 October 2026 | **The prototypes are removed** (the owner: "why is tauri still in there we dropped it"): the Tauri application and its React front end, the stand-in engine, the egui page renderer for WebAssembly, the two Tauri proofs, the webview sandbox spikes and the interface toolkit spikes, all of the design decision 33 left behind. Their findings stay in this repository's documents; the code is in git at the tag `prototypes-final`, and a path under `prototypes/` in any document is a path there. The full gate no longer builds them, and the toolchain no longer needs the WebAssembly target. | — |
 
 ---
 
@@ -291,7 +292,7 @@ What is built today is in **bold**; the rest is required.
 
 **The macOS profiles today start from "allow everything" and deny network and file writes.** They stop the two things that matter most, sending data away and changing the user's files, but they still allow reading the user's files. A profile that starts from "deny everything" is required (requirement 3.7).
 
-**On Linux there is no confinement of the interface beyond the platform's,** because there is no web engine to contain: the interface process is NeoTeletext's own code, and it needs the display as any application does. Under X11 any application can send input to other applications' windows (`../prototypes/docs/proofs.md` section 6.8); that is the exposure of every X11 application, not a containment problem.
+**On Linux there is no confinement of the interface beyond the platform's,** because there is no web engine to contain: the interface process is NeoTeletext's own code, and it needs the display as any application does. Under X11 any application can send input to other applications' windows (`prototypes/docs/proofs.md` section 6.8); that is the exposure of every X11 application, not a containment problem.
 
 ---
 
@@ -429,7 +430,7 @@ Each file is its own channel, with no cookies. It is read by the trusted core an
 
 **Showing many pages at once (decision 7).** The interface knows exactly which pages its layout puts on screen and reports them; the trusted core asks the decoder only for those, of the active channel only. A channel of 800 pages costs what is visible.
 
-**Why images, not raw indices, on the pipe.** A page image is about 6 kilobytes (`../prototypes/docs/proofs.md` section 4), already written by the engine, and the interface's reader sees only files our own encoder produced. In one process (iOS, microcontrollers) frames go from decoder to interface as indices, with no encoding.
+**Why images, not raw indices, on the pipe.** A page image is about 6 kilobytes (`prototypes/docs/proofs.md` section 4), already written by the engine, and the interface's reader sees only files our own encoder produced. In one process (iOS, microcontrollers) frames go from decoder to interface as indices, with no encoding.
 
 ---
 
@@ -486,7 +487,7 @@ The window is decision 35's, drawn by the interface process from the interface c
 
 ## 12. The application update mechanism
 
-Unchanged from the earlier design (`../prototypes/docs/architecture.md` section 12), and not built. In brief:
+Unchanged from the earlier design (`prototypes/docs/architecture.md` section 12), and not built. In brief:
 
 - **No failure leaves the user without a working application:** a new version is installed beside the running one, verified against The Update Framework metadata and the platform's code signature, switched to by one atomic rename of a pointer, and rolled back automatically if it fails its health check or fails to start twice. Profiles are copied and migrated, never changed in place.
 - **Verification** is The Update Framework (decision 16), implemented by `tough` (decision 24): separate root, targets, snapshot and timestamp roles, a threshold of root keys held offline by three people, expiring metadata, versions that only increase.
@@ -531,12 +532,6 @@ neoteletext/
     site/                   a development tool, not shipped (neoteletext-site): builds and serves a test channel
     fuzz/                   fuzz targets for every reader of input from outside a process (nightly, outside the workspace)
   docs/                     this document, the requirements, the security analysis, the design record
-  prototypes/               the earlier approaches, kept as the record (decision 33)
-    docs/                   the earlier design's architecture, requirements, security analysis, proofs
-    spikes/                 the interface and sandbox prototypes
-    src/, src-tauri/        the Tauri and React prototype
-    standin/                the stand-in engine the prototypes use
-    egui-image/             the egui page renderer compiled to WebAssembly
   scripts/check.sh          the one check script: "commit" before each commit, "full" before each push
   scripts/try.sh            the edit loop: Clippy on every save, or one crate's Clippy and tests
   scripts/tools.sh          the pinned development tools, installed into the ignored tools/
@@ -584,7 +579,7 @@ None. Every decision below was taken on 20 October 2026 (decisions 41 and 44), e
 |---|---|---|
 | Open decision 1 | Which library gives the fetcher Transport Layer Security? | Ask the engine first (section 5.1); otherwise `rustls`, which is pure Rust and permissively licensed |
 | Open decision 2 | Does the decoder also run inside the WebAssembly interpreter `wasmi`, as the earlier design required? It is the decoder's only wall on iOS, where there is one process | Yes on iOS at least; measure its cost on desktops before deciding there |
-| Open decision 3 | Is the trusted strip drawn by the interface process, as now, or by a smaller separate process, so that a fault in the interface's drawing cannot forge strip input (`security-analysis.md` section 5.6)? A separate process's window can be covered by other windows (`../prototypes/docs/proofs.md` section 3), so it would have to draw in the same window | Keep it in the interface process; make the interface process as small and as tested as the trusted core's readers, and revisit if the harness or fuzzing finds faults |
+| Open decision 3 | Is the trusted strip drawn by the interface process, as now, or by a smaller separate process, so that a fault in the interface's drawing cannot forge strip input (`security-analysis.md` section 5.6)? A separate process's window can be covered by other windows (`prototypes/docs/proofs.md` section 3), so it would have to draw in the same window | Keep it in the interface process; make the interface process as small and as tested as the trusted core's readers, and revisit if the harness or fuzzing finds faults |
 | Open decision 4 | Widgets: our own (built), or Masonry, once it draws with `vello_cpu` in a release | Our own, as built; reconsider for screen readers and text fields of teletext forms |
 | Open decision 5 | What does the microcontroller build cut, and where does its teletext come from? | Section 13 |
 | Open decision 6 | The libraries of `native/Cargo.toml`, each by name (requirement 14.3) | Approve the list as built |

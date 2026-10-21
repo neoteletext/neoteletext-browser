@@ -1,7 +1,0 @@
-.content-host {
-    position: relative;
-    display: grid;
-    place-items: center;
-    min-height: 0;
-    background: var(--well);
-}

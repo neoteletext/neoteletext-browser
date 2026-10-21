@@ -10,15 +10,14 @@
 #   scripts/check.sh full     the pre-push gate: everything, on a clean
 #                             tree at the commit being pushed, including
 #                             release tests, licences and advisories,
-#                             unused dependencies, fuzzing, the
-#                             WebAssembly and frontend builds, and the
-#                             Linux build and tests on $NEOTELETEXT_LINUX_HOST
+#                             unused dependencies, fuzzing, and the Linux
+#                             build and tests on $NEOTELETEXT_LINUX_HOST
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
 mode="${1:-}"
-# The Linux host the Wayland window host and the Linux sandbox are checked
-# on: the fastest of the Linux test machines (20 cores, against oldvga's 4).
+# The Linux host the browser is built and tested on: the fastest of the
+# Linux test machines (20 cores, against oldvga's 4).
 linux_host="${NEOTELETEXT_LINUX_HOST:-foundintelquiet4060}"
 # Seconds each fuzz target runs in the full gate, after replaying every
 # input that has ever found a fault (native/fuzz/regressions/).
@@ -35,27 +34,11 @@ out_of_date="$(tools_out_of_date)"
 [[ -z "$out_of_date" ]] || fail "tools missing or at another version (run scripts/tools.sh):
 $out_of_date"
 
-# Crates that build only on Linux: they need the Wayland libraries.
-readonly LINUX_ONLY=(prototypes/spikes/display-host)
-# Every prototype crate: each folder of these with a Cargo.toml.
-PROTOTYPE_CRATES=()
-for crate in prototypes/src-tauri prototypes/standin prototypes/spikes/*/ prototypes/spikes/*/src-tauri; do
-    [[ -f "${crate%/}/Cargo.toml" ]] && PROTOTYPE_CRATES+=("${crate%/}")
-done
-readonly PROTOTYPE_CRATES
 # The crates that read input from outside their process, each with the
 # same no-panic lint list at its root.
 readonly NO_PANIC_ROOTS=(native/protocol/src/lib.rs native/decoder/src/lib.rs native/decoder/src/main.rs native/fetcher/src/main.rs
     native/core/src/lib.rs native/core/src/main.rs native/interface/src/lib.rs native/interface/src/main.rs native/web-opener/src/lib.rs
     native/keyboard/src/main.rs)
-
-is_linux_only() {
-    local crate="$1" only
-    for only in "${LINUX_ONLY[@]}"; do
-        [[ "$crate" == "$only" ]] && return 0
-    done
-    return 1
-}
 
 check_no_panic_lists() {
     step "the no-panic lint list is the same in every crate that reads outside input"
@@ -109,22 +92,6 @@ feature_list() {
     printf '%s' "$list"
 }
 
-check_prototype() {
-    local crate="$1"
-    if [[ "$(uname -s)" != Linux ]] && is_linux_only "$crate"; then
-        step "prototype $crate: Linux only, checked on $linux_host in the full gate"
-        return
-    fi
-    step "prototype $crate: Clippy and tests"
-    cargo clippy --quiet --manifest-path "$crate/Cargo.toml" --workspace --all-targets -- -D warnings
-    cargo test --quiet --manifest-path "$crate/Cargo.toml" --workspace
-}
-
-check_typescript() {
-    step "prototypes: TypeScript lint and types"
-    (cd prototypes && npx eslint . --max-warnings 0 && npx tsc -b)
-}
-
 # Paths with changes that are not staged, or files git does not track,
 # under any of the given paths.
 unstaged_under() {
@@ -140,58 +107,29 @@ commit_gate() {
         return
     fi
 
-    local native=no typescript=no everything=no path crate
-    local prototypes=()
+    local native=no path
     while IFS= read -r path; do
         case "$path" in
-        native/*) native=yes ;;
-        scripts/* | .githooks/* | rust-toolchain.toml) everything=yes ;;
-        prototypes/*)
-            local in_crate=no
-            for crate in "${PROTOTYPE_CRATES[@]}"; do
-                if [[ "$path" == "$crate/"* ]]; then
-                    in_crate=yes
-                    [[ " ${prototypes[*]-} " == *" $crate "* ]] || prototypes+=("$crate")
-                fi
-            done
-            # Whatever is not in a Rust crate belongs to the TypeScript build.
-            [[ "$in_crate" == yes ]] || typescript=yes
-            ;;
+        native/* | scripts/* | .githooks/* | rust-toolchain.toml) native=yes ;;
         esac
     done <<<"$staged"
-    if [[ "$everything" == yes ]]; then
-        native=yes
-        typescript=yes
-        prototypes=()
-        prototypes=("${PROTOTYPE_CRATES[@]}")
-    fi
 
     # What is checked must be what is committed: no unstaged edit or
     # untracked file may sit in a part being checked.
-    local scope=()
-    [[ "$everything" == yes ]] && scope=(.)
-    [[ "$native" == yes ]] && scope+=(native)
-    [[ "$typescript" == yes ]] && scope+=(prototypes)
-    scope+=("${prototypes[@]+"${prototypes[@]}"}")
-    if [[ ${#scope[@]} -gt 0 ]]; then
+    if [[ "$native" == yes ]]; then
         local loose
-        loose="$(unstaged_under "${scope[@]}")"
+        loose="$(unstaged_under native scripts .githooks rust-toolchain.toml)"
         [[ -z "$loose" ]] || fail "changes that are not staged would make this check test something other than the commit; stage or stash them:
 $loose"
+        check_native
     fi
-
-    [[ "$native" == yes ]] && check_native
-    [[ "$typescript" == yes ]] && check_typescript
-    for crate in "${prototypes[@]+"${prototypes[@]}"}"; do
-        check_prototype "$crate"
-    done
     return 0
 }
 
 check_linux() {
-    step "Linux on $linux_host: native and the Linux-only prototypes, Clippy and tests"
+    step "Linux on $linux_host: native, Clippy and tests"
     ssh -o BatchMode=yes -o ConnectTimeout=10 "$linux_host" true || fail "$linux_host is unreachable; the full gate needs it"
-    rsync -a --delete --exclude target --exclude node_modules --exclude tools --exclude .git \
+    rsync -a --delete --exclude target --exclude tools --exclude .git \
         --exclude native/fuzz/corpus --exclude native/fuzz/artifacts ./ "$linux_host:neoteletext-browser-check/"
     # The engine is a git dependency on a repository on this machine; its
     # history goes to the host, and git there reads it in place of this
@@ -200,19 +138,14 @@ check_linux() {
     engine="$(sed -n 's/^neoteletext-[a-z]* = { git = "\(file:[^"]*\)".*/\1/p' native/Cargo.toml | sort -u)"
     [[ -n "$engine" && "$engine" != *$'\n'* ]] || fail "native/Cargo.toml must name one engine repository, found: ${engine:-none}"
     rsync -a --delete "${engine#file://}/.git/" "$linux_host:neoteletext-browser-check-engine.git/"
-    local linux_only="${LINUX_ONLY[*]}"
     # rustup installs the toolchain rust-toolchain.toml pins if the host
     # does not have it yet.
-    # shellcheck disable=SC2029 # the engine and the crate list are expanded here on purpose
+    # shellcheck disable=SC2029 # the engine is expanded here on purpose
     ssh "$linux_host" "set -e; . ~/.cargo/env; cd neoteletext-browser-check; rustup toolchain install
         export CARGO_NET_GIT_FETCH_WITH_CLI=true GIT_CONFIG_COUNT=1
         export GIT_CONFIG_KEY_0=url.file://\$HOME/neoteletext-browser-check-engine.git.insteadOf GIT_CONFIG_VALUE_0=$engine
         (cd native && cargo clippy --quiet --workspace --all-targets -- -D warnings && cargo test --quiet --workspace \\
-            && cargo clippy --quiet --workspace --all-targets --no-default-features -- -D warnings)
-        for crate in $linux_only; do
-            cargo clippy --quiet --manifest-path \$crate/Cargo.toml --workspace --all-targets -- -D warnings
-            cargo test --quiet --manifest-path \$crate/Cargo.toml --workspace
-        done"
+            && cargo clippy --quiet --workspace --all-targets --no-default-features -- -D warnings)"
 }
 
 check_fuzz() {
@@ -257,16 +190,6 @@ $loose"
     step "native: no unused dependencies"
     (cd native && cargo machete)
     check_fuzz
-
-    check_typescript
-    local crate
-    for crate in "${PROTOTYPE_CRATES[@]}"; do
-        check_prototype "$crate"
-    done
-    step "prototypes: egui-image Clippy for WebAssembly"
-    cargo clippy --quiet --manifest-path prototypes/egui-image/Cargo.toml --target wasm32-unknown-unknown --all-targets -- -D warnings
-    step "prototypes: WebAssembly and frontend builds"
-    (cd prototypes && npm run --silent wasm && npm run --silent build)
 
     check_linux
 
