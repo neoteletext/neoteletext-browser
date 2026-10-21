@@ -1,0 +1,52 @@
+[package]
+name = "confine"
+description = "The processes' sandboxes: the trusted core starts each helper confined (sandbox-exec on macOS; a restricted token, job object, mitigation policies and AppContainer on Windows), and on Linux each helper confines itself at start (Landlock, a network namespace, seccomp)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+# Linux (decision 52): Landlock's and seccomp's system calls through the
+# crates the engine's own `neottx` sandbox uses (its decision E.33). Both
+# are safe APIs; the unsafe code of this crate on Linux is two calls of
+# `libc`, for the network namespace and no-new-privileges.
+[target.'cfg(target_os = "linux")'.dependencies]
+# MIT or Apache-2.0, by the Landlock kernel maintainer.
+landlock = "=0.4.7"
+# Apache-2.0 or BSD-3-Clause, the rust-vmm project's seccomp filter builder.
+seccompiler = "=0.5.0"
+# MIT or Apache-2.0.
+libc = "=0.2.190"
+
+# Windows: the bindings winit and web-opener already use, so no crate is
+# added; the features enable the token, job, pipe and process calls.
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "=0.52.0", features = [
+    "Win32_Foundation",
+    "Win32_Security",
+    "Win32_Security_Authorization",
+    "Win32_Security_Isolation",
+    "Win32_System_Console",
+    "Win32_System_JobObjects",
+    "Win32_System_Pipes",
+    "Win32_System_SystemServices",
+    "Win32_System_Threading",
+    "Win32_System_WindowsProgramming",
+] }
+
+# As the Dock menu's and the web opener's crates: unsafe code is denied,
+# not forbidden, and allowed only in the Linux and Windows modules, each
+# block with its reason (requirement 10.12, decision 52).
+[lints.rust]
+unsafe_code = "deny"
+missing_docs = "warn"
+unused_qualifications = "warn"
+
+[lints.clippy]
+pedantic = { level = "warn", priority = -1 }
+allow_attributes_without_reason = "warn"
+dbg_macro = "warn"
+todo = "warn"
+unimplemented = "warn"
+undocumented_unsafe_blocks = "warn"

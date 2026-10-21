@@ -35,6 +35,11 @@ impl Source {
     /// A sentence for the log, when nothing could be read.
     pub fn read(path: &Path) -> Result<Self, String> {
         let metadata = fs::metadata(path).map_err(|error| format!("{}: {error}", path.display()))?;
+        // Only files and folders: a pipe would hold the trusted core at
+        // its open, and a device is not a recording.
+        if !metadata.is_dir() && !metadata.is_file() {
+            return Err(format!("{}: not a file or a folder", path.display()));
+        }
         let mut bytes = Vec::new();
         let take = |file: &Path, bytes: &mut Vec<u8>| -> Result<(), String> {
             let room = MAX_SOURCE_BYTES.saturating_sub(bytes.len() as u64);
@@ -76,6 +81,12 @@ impl Source {
         Self { bytes: Vec::new(), sent: 0, ended: true }
     }
 
+    /// Whether [`Source::next`] has anything left to give.
+    #[must_use]
+    pub fn has_more(&self) -> bool {
+        self.sent < self.bytes.len() || !self.ended
+    }
+
     /// The next piece of at most `size` bytes, then the end, then nothing.
     pub fn next(&mut self, size: usize) -> Next<'_> {
         if self.sent < self.bytes.len() {
@@ -109,5 +120,22 @@ mod tests {
     #[test]
     fn a_missing_file_is_reported() {
         assert!(Source::read(Path::new("/nonexistent/teletext.t42")).is_err());
+    }
+
+    /// Only a file or a folder is a channel: a socket, like a pipe or a
+    /// device, is refused before it is opened, so it can hold nothing up.
+    /// Before this, the trusted core opened whatever the path named.
+    #[cfg(unix)]
+    #[test]
+    fn a_socket_or_pipe_is_not_a_channel() {
+        let folder = std::env::temp_dir().join(format!("neoteletext-source-test-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&folder);
+        fs::create_dir_all(&folder).unwrap();
+        let socket = folder.join("teletext.sock");
+        let _listener = std::os::unix::net::UnixListener::bind(&socket).unwrap();
+        let refused = Source::read(&socket).err().unwrap();
+        assert!(refused.ends_with("not a file or a folder"), "{refused}");
+        assert!(Source::read(&folder).is_ok(), "the folder itself is a channel, with the socket skipped");
+        fs::remove_dir_all(&folder).unwrap();
     }
 }

@@ -406,6 +406,13 @@ impl Typing {
         sends
     }
 
+    /// Whether a channel is being waited on to answer HELLO, so
+    /// [`Typing::tick`] has something to time.
+    #[must_use]
+    pub fn waiting(&self) -> bool {
+        self.channels.values().any(|state| matches!(state.session.state(), State::Waiting(_)))
+    }
+
     /// Time passes: a channel that has not answered HELLO within
     /// `WELCOME_TIMEOUT` takes no input, and the strip says so.
     pub fn tick(&mut self, now_ms: u64) -> Vec<Send> {

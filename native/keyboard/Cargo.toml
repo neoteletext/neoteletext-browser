@@ -14,6 +14,7 @@ default = ["phone-keyboard"]
 phone-keyboard = ["protocol/phone-keyboard", "dep:neoteletext-qrkeyboard", "dep:neoteletext-input", "dep:neoteletext-web"]
 
 [dependencies]
+confine.workspace = true
 protocol.workspace = true
 neoteletext-qrkeyboard = { workspace = true, optional = true }
 neoteletext-input = { workspace = true, optional = true }

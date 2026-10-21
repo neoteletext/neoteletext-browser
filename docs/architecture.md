@@ -99,6 +99,8 @@ Each decision was made by the owner on the date given. Requirements in `requirem
 | Decision 49 | 21 October 2026 | **Two libraries for the input system, approved by the owner** ("if those libraries are rust then approved"): `unicode-normalization` in the trusted core, which sends typed text, and a KEY's text, in Normalization Form C (INPUT.md section 5.7 rule 3, REQ-INT-116); and `arboard` in the interface, whose clipboard text the browser's paste shortcut sends as one PASTE while keys go to a channel (REQ-INT-136). `arboard` brings `clipboard-win` and `error-code` on Windows, under BSL-1.0, allowed for those two crates (`licensing.md` section 2). | — |
 | Decision 50 | 21 October 2026 | **The prototypes are removed** (the owner: "why is tauri still in there we dropped it"): the Tauri application and its React front end, the stand-in engine, the egui page renderer for WebAssembly, the two Tauri proofs, the webview sandbox spikes and the interface toolkit spikes, all of the design decision 33 left behind. Their findings stay in this repository's documents; the code is in git at the tag `prototypes-final`, and a path under `prototypes/` in any document is a path there. The full gate no longer builds them, and the toolchain no longer needs the WebAssembly target. | — |
 | Decision 51 | 21 October 2026 | **Settings, the home page, the developer console and proxies** (`settings-home-console-proxy.md`, with its security analysis), designed, specified and adopted on the owner's instruction to design, specify, number the requirements of and build each: settings and bookmarks kept by the trusted core in its own file and changed in a panel of the trusted strip; a Home button and a start page, `neoteletext:home`, served by the trusted core as teletext; a docked developer console of the channel's network activity, packets, pages and notices; HTTP and SOCKS5 proxies for every connection, with no fallback. Requirements 19.1 to 19.12; requirement 3.6 amended: the interface receives a security setting only as the text the strip shows, and acts on none. The engine gives proxies and a report of each exchange (its decision E.102). | — |
+| Decision 52 | 22 October 2026 | **Every helper is sandboxed on every platform, from "deny everything"** (`sandboxing.md` section 5): macOS `sandbox-exec` profiles; on Linux each helper confines itself before any thread with Landlock, an empty network namespace where allowed and a required seccomp deny-list (crates `landlock` and `seccompiler`, as the engine's `neottx`); on Windows a job object, mitigation policies, an AppContainer for the decoder and fetcher and a restricted token for the interface (`windows-sys`); the one layer every machine has is required, the rest applied when the machine allows and reported. `confine` is the third crate with unsafe code (requirement 10.12). The trusted core stays unconfined until packaging (requirement 3.8). | Built; owner to confirm |
+| Decision 53 | 22 October 2026 | **The browser waits on what it needs and draws what is on screen** (the efficiency work of 21 October 2026): the sound device runs only while a channel sounds; the window asks for frames only for what is drawn; every process flushes its pipe once per event, not per message; the trusted core computes its next deadline instead of two timer threads, and writes every pipe through a queue with a writer thread (`outbox.rs`), replacing a decoder that stops reading and ending with an interface that does; the fetcher opens connections on their own threads under the agent's connect limit; the decoder wakes for flash only when a rate a shown page uses changes phase; the engine tells a port of magazine data, timers and stalls only when they change (its decision E.103). | Built; owner to confirm |
 
 ---
 
@@ -143,7 +145,7 @@ Each decision was made by the owner on the date given. Requirements in `requirem
 
 The engine is `neoteletext` (`~/devel/neoteletext-engine`), a Rust implementation of World System Teletext, EN 300 706, Presentation Levels 1.0, 1.5, 2.5 and 3.5, less what the owner removed on 20 October 2026: dynamically redefinable characters (DRCS) are not decoded, and the Level 3.5 font styles (bold, italic and proportional spacing) are not drawn (its decisions E.95 and E.96). Its core is `no_std` (it does not depend on the Rust standard library) and performs no input or output of its own: it is fed bytes and returns results.
 
-**It is a separate project** (decision 36). NeoTeletext depends on its crates at one pinned commit, `e66d241`, through a `git` source in the engine's local repository, because that commit is not yet published; Cargo reads the commit, never the engine's working tree. When the commit is published, the source becomes the engine's own repository address at the same commit. Changes the engine needs are made in the engine's repository by its own process, never patched here.
+**It is a separate project** (decision 36). NeoTeletext depends on its crates at one pinned commit, `c7a84cf`, through a `git` source in the engine's local repository, because that commit is not yet published; Cargo reads the commit, never the engine's working tree. When the commit is published, the source becomes the engine's own repository address at the same commit. Changes the engine needs are made in the engine's repository by its own process, never patched here.
 
 | Crate | What it does | Used by NeoTeletext |
 |---|---|---|
@@ -225,6 +227,7 @@ Every process speaks the same framing, the engine's: one kind byte, a 32-bit big
 - **Each side accepts only the kinds meant for it,** so no process can send what only another may say.
 - **Text that came from outside** (page titles, bank names, notices, addresses) is cleaned on both sides: control characters, bidirectional controls and zero-width characters removed, and cut to its bound (requirement 11.5).
 - **A process that breaks the protocol is closed.** A decoder or fetcher that does so is stopped and its channel's pages stay as they were; an interface that does so ends the application; a malformed message from the trusted core ends the interface.
+- **Each process flushes its pipe once per event, not per message** (decision 53), so what one event produced goes in one write. **The trusted core writes every pipe through a queue with a writer thread of its own** (`core/src/outbox.rs`): its one thread, which owns every tab, never waits on a process that is slow to read. A decoder that stops reading fills its queue, 16 MB, and is killed and replaced with what it was given (decision 47); an interface that stops reading ends the browser.
 
 **From the trusted core to a decoder** (`protocol::decoder`):
 
@@ -284,14 +287,14 @@ What is built today is in **bold**; the rest is required.
 
 | Platform | Trusted core | Fetcher | Decoder | Interface process |
 |---|---|---|---|---|
-| macOS | **Not sandboxed.** Required: the App Sandbox, with access only to its data directory and files the user chooses | **`sandbox-exec` profile: network allowed, file writes denied.** Required: file reads denied too | **`sandbox-exec` profile: network and file writes denied.** Required: file reads denied too | **The decoder's profile: network and file writes denied.** Required: file reads limited to its own resources and fonts |
-| Windows | Not built | AppContainer with the internet-client capability only | AppContainer without it, low integrity, job object | AppContainer without the internet-client capability |
-| Linux | Not built | Landlock and a seccomp filter | Landlock and a seccomp filter | Landlock, an empty network namespace and a seccomp filter; the display is the only service it needs |
+| macOS | **Not sandboxed:** macOS refuses a nested `sandbox-exec`, so a confined core could start no confined child. Required: the App Sandbox, with access only to its data directory and files the user chooses | **`sandbox-exec` profile from "deny everything": outbound TCP and the name resolver, no file reads otherwise, no programs** | **`sandbox-exec` profile from "deny everything": its pipes alone** | **`sandbox-exec` profile from "deny everything": the system's folders and metadata, the window, font, text-input, pasteboard, notification, preference, sound and Dock services; no network, no programs** |
+| Windows | Not sandboxed | **AppContainer with the internet-client capability (and the private-network one when local addresses are allowed), job object, mitigation policies, Win32k filter** | **Less privileged AppContainer with no capabilities, job object, mitigation policies, Win32k filter** | **Restricted token at low integrity, job object, mitigation policies.** Required: no reads of the user's files |
+| Linux | Not sandboxed | **Landlock (the resolver's directories), seccomp (sockets of the internet families only)** | **Empty network namespace where allowed, Landlock (nothing readable), seccomp (no sockets)** | **Empty network namespace where allowed, Landlock (fonts, preferences, the system's directories), seccomp (local-domain sockets only)** |
 | Android | Main application process | Separate service process | Isolated service process with a seccomp filter | The application's activity |
 | iOS | One application process | Inside it | Inside it; the WebAssembly interpreter `wasmi` as its wall (open decision 2) | Inside it |
 | Microcontrollers | One program; a single-purpose device, with its own analysis (section 13) | | | |
 
-**The macOS profiles today start from "allow everything" and deny network and file writes.** They stop the two things that matter most, sending data away and changing the user's files, but they still allow reading the user's files. A profile that starts from "deny everything" is required (requirement 3.7).
+**The macOS profiles start from "deny everything"** (21 October 2026), import Apple's baseline for any process (`system.sb`) and allow only what each process is for; `security-analysis.md` section 13 says how they were made. Every child, on every platform, is started with an environment of only what it needs.
 
 **On Linux there is no confinement of the interface beyond the platform's,** because there is no web engine to contain: the interface process is NeoTeletext's own code, and it needs the display as any application does. Under X11 any application can send input to other applications' windows (`prototypes/docs/proofs.md` section 6.8); that is the exposure of every X11 application, not a containment problem.
 
@@ -427,7 +430,7 @@ Each file is its own channel, with no cookies. It is read by the trusted core an
 3. **The trusted core encodes an indexed Portable Network Graphics image** with the engine's writer, unless the frame is identical to the last one it sent for that page.
 4. **The trusted core sends the image to the interface process,** with the page's key and a frame version.
 5. **The interface process reads it** with a strict reader that accepts only what our encoder writes: indexed, 8 bits a dot, exactly 480 by 500, at most 32 colours, with a bound on the memory its decoding may take. It keeps the page's colours until a newer frame replaces them whole (decision 8), and draws the page scaled into its rectangle with nearest-neighbour sampling.
-6. **Flash** is rendered by the decoder at the engine's timing, by its own clock: when a shown page has flashing cells it wakes at the next flash unit (one second in twelve, the engine's decision E.48) and draws the page again if its phase changed, and step 3 passes on only the frames that changed (decision 47). The decoder also wakes when its audio receiver next needs the time (the engine's decision E.98); otherwise it sleeps until the trusted core writes to it.
+6. **Flash** is rendered by the decoder at the engine's timing, by its own clock: when a shown page has flashing cells it wakes at the next flash unit at which a rate a shown page uses changes phase (one second in twelve, the engine's decision E.48; a page with slow flash alone is drawn twice a second, not seven times) and draws the page again if its phase changed, and step 3 passes on only the frames that changed (decision 47). The decoder also wakes when its audio receiver next needs the time (the engine's decision E.98); otherwise it sleeps until the trusted core writes to it.
 
 **Showing many pages at once (decision 7).** The interface knows exactly which pages its layout puts on screen and reports them; the trusted core asks the decoder only for those, of the active channel only. A channel of 800 pages costs what is visible.
 
@@ -455,7 +458,7 @@ The window is decision 35's, drawn by the interface process from the interface c
         └── embedded-graphics + bitmap fonts               microcontrollers, features cut
 ```
 
-- **Redrawing is on demand:** only on input, a change of state, or while something animates.
+- **Redrawing is on demand:** only on input, a change of state, or while something animates; and frames are asked for only for what is drawn (decision 53): an update to a page of another bank starts no frames beyond the overview's ring. The sound device runs only while a channel sounds, so an idle browser costs the audio thread nothing.
 - **Widgets are our own** (design section 4.3, option B): the address field's editor is in the interface core, so it works without the standard library; text is laid out by Parley. Masonry, the alternative, is not proven (open decision 4).
 - **Text** is Roboto, shipped with the application under the SIL Open Font License 1.1, in small capitals: every letter a capital, letters written in lower case drawn 80% as large. Open Sans is shipped too, for comparison.
 
@@ -524,6 +527,9 @@ neoteletext/
     draw-vello/             the drawing back end for desktops and phones: vello_cpu and Parley, with the fonts
     draw-embedded/          the drawing back end for microcontrollers: embedded-graphics
     protocol/               every message between processes: framing, bounds, kinds, text cleaning
+    confine/                the processes' sandboxes: sandbox-exec profiles on macOS, Landlock, a network
+                            namespace and seccomp on Linux, a job object, restricted token, mitigation
+                            policies and AppContainer on Windows (sandboxing.md)
     core/                   the trusted core (neoteletext): tabs, history, addresses, routing, frames,
                             and hearing.rs, which channel is heard and the checks on its sound
     decoder/                the decoder (neoteletext-decoder): the engine as the decoder uses it

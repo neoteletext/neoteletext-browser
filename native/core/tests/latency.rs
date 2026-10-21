@@ -9,7 +9,7 @@
 #![cfg(feature = "interaction")]
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::cast_precision_loss, reason = "a test")]
 
-use std::io::{BufRead, BufReader, BufWriter};
+use std::io::{BufRead, BufReader, BufWriter, Write};
 use std::net::TcpListener;
 use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
@@ -82,6 +82,7 @@ fn open_session(input: &mut BufWriter<std::process::ChildStdin>, received: &mpsc
     let mut hello = [0; neoteletext_input::MAX_MESSAGE];
     let length = neoteletext_input::event::write(&Item::Event(session.open(0, None)), &mut hello).unwrap();
     write_to_fetcher(input, &ToFetcher::Send(hello[..length].to_vec())).unwrap();
+    input.flush().unwrap();
     loop {
         match received.recv_timeout(deadline.saturating_duration_since(Instant::now())) {
             Ok((_, FromFetcher::Page { origin: Origin::PushedPackets, bytes })) => {
@@ -150,6 +151,7 @@ fn keys_round_trip_and_pages_reach_the_screen_within_budget() {
     }
     let mut session = open_session(&mut input, &received, deadline);
     write_to_fetcher(&mut input, &ToFetcher::Send(message(&mut session, &Item::Event(Event::Page(PAGE))))).unwrap();
+    input.flush().unwrap();
     next_push(Instant::now() + LIMIT);
 
     let mut engine = decoder::Engine::new();
@@ -162,6 +164,7 @@ fn keys_round_trip_and_pages_reach_the_screen_within_budget() {
         let typed = message(&mut session, &Item::Text(character.encode_utf8(&mut [0; 4])));
         let sent = Instant::now();
         write_to_fetcher(&mut input, &ToFetcher::Send(typed)).unwrap();
+        input.flush().unwrap();
         let (arrived, bytes) = next_push(sent + LIMIT);
         round_trips.push(arrived - sent);
         let started = Instant::now();
@@ -169,7 +172,7 @@ fn keys_round_trip_and_pages_reach_the_screen_within_budget() {
         let rendered = engine.render(PAGE).expect("the page renders");
         renders.push(started.elapsed());
         let started = Instant::now();
-        let (_, png) = frames.accept(key, &rendered.palette, &rendered.indices).expect("a new image");
+        let (_, png) = frames.accept(key, rendered.palette, rendered.indices).expect("a new image");
         encodes.push(started.elapsed());
         let started = Instant::now();
         neoteletext_interface::image::decode(&png).expect("the interface reads it");

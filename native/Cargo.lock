@@ -353,6 +353,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "confine"
+version = "0.1.0"
+dependencies = [
+ "landlock",
+ "libc",
+ "seccompiler",
+ "windows-sys 0.52.0",
+]
+
+[[package]]
 name = "const-oid"
 version = "0.9.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -668,6 +678,26 @@ name = "embedded-io"
 version = "0.7.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9eb1aa714776b75c7e67e1da744b81a129b3ff919c8712b5e1b32252c1f07cc7"
+
+[[package]]
+name = "enumflags2"
+version = "0.7.12"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1027f7680c853e056ebcec683615fb6fbbc07dbaa13b4d5d9442b146ded4ecef"
+dependencies = [
+ "enumflags2_derive",
+]
+
+[[package]]
+name = "enumflags2_derive"
+version = "0.7.12"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "67c78a4d8fdf9953a5c9d458f9efe940fd97a0cab0941c075a813ac594733827"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.119",
+]
 
 [[package]]
 name = "equivalent"
@@ -1238,6 +1268,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "landlock"
+version = "0.4.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4cca98e95f35b29d469dade6724c6f96cec9236640f745a0e99b0334ec320ab1"
+dependencies = [
+ "enumflags2",
+ "libc",
+ "thiserror 2.0.21",
+]
+
+[[package]]
 name = "libc"
 version = "0.2.190"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1391,6 +1432,7 @@ dependencies = [
 name = "neoteletext"
 version = "0.1.0"
 dependencies = [
+ "confine",
  "interface-core",
  "neoteletext-core",
  "neoteletext-decoder",
@@ -1406,7 +1448,7 @@ dependencies = [
 [[package]]
 name = "neoteletext-audio"
 version = "0.1.0"
-source = "git+file:///Users/andrewstuart/devel/neoteletext-engine?rev=e66d24152f887f3fcfb6553b2e88f2a66887aa5a#e66d24152f887f3fcfb6553b2e88f2a66887aa5a"
+source = "git+file:///Users/andrewstuart/devel/neoteletext-engine?rev=c7a84cff00d4232bb6a2c50e8f6a5334e655626e#c7a84cff00d4232bb6a2c50e8f6a5334e655626e"
 dependencies = [
  "neoteletext-core",
 ]
@@ -1414,17 +1456,18 @@ dependencies = [
 [[package]]
 name = "neoteletext-audio-mix"
 version = "0.1.0"
-source = "git+file:///Users/andrewstuart/devel/neoteletext-engine?rev=e66d24152f887f3fcfb6553b2e88f2a66887aa5a#e66d24152f887f3fcfb6553b2e88f2a66887aa5a"
+source = "git+file:///Users/andrewstuart/devel/neoteletext-engine?rev=c7a84cff00d4232bb6a2c50e8f6a5334e655626e#c7a84cff00d4232bb6a2c50e8f6a5334e655626e"
 
 [[package]]
 name = "neoteletext-core"
 version = "0.1.0"
-source = "git+file:///Users/andrewstuart/devel/neoteletext-engine?rev=e66d24152f887f3fcfb6553b2e88f2a66887aa5a#e66d24152f887f3fcfb6553b2e88f2a66887aa5a"
+source = "git+file:///Users/andrewstuart/devel/neoteletext-engine?rev=c7a84cff00d4232bb6a2c50e8f6a5334e655626e#c7a84cff00d4232bb6a2c50e8f6a5334e655626e"
 
 [[package]]
 name = "neoteletext-decoder"
 version = "0.1.0"
 dependencies = [
+ "confine",
  "interface-core",
  "neoteletext-audio",
  "neoteletext-core",
@@ -1438,6 +1481,7 @@ dependencies = [
 name = "neoteletext-fetcher"
 version = "0.1.0"
 dependencies = [
+ "confine",
  "embedded-io",
  "interface-core",
  "neoteletext-core",
@@ -1450,7 +1494,7 @@ dependencies = [
 [[package]]
 name = "neoteletext-formats"
 version = "0.1.0"
-source = "git+file:///Users/andrewstuart/devel/neoteletext-engine?rev=e66d24152f887f3fcfb6553b2e88f2a66887aa5a#e66d24152f887f3fcfb6553b2e88f2a66887aa5a"
+source = "git+file:///Users/andrewstuart/devel/neoteletext-engine?rev=c7a84cff00d4232bb6a2c50e8f6a5334e655626e#c7a84cff00d4232bb6a2c50e8f6a5334e655626e"
 dependencies = [
  "neoteletext-core",
 ]
@@ -1458,7 +1502,7 @@ dependencies = [
 [[package]]
 name = "neoteletext-image"
 version = "0.1.0"
-source = "git+file:///Users/andrewstuart/devel/neoteletext-engine?rev=e66d24152f887f3fcfb6553b2e88f2a66887aa5a#e66d24152f887f3fcfb6553b2e88f2a66887aa5a"
+source = "git+file:///Users/andrewstuart/devel/neoteletext-engine?rev=c7a84cff00d4232bb6a2c50e8f6a5334e655626e#c7a84cff00d4232bb6a2c50e8f6a5334e655626e"
 dependencies = [
  "neoteletext-core",
 ]
@@ -1466,7 +1510,7 @@ dependencies = [
 [[package]]
 name = "neoteletext-input"
 version = "0.1.0"
-source = "git+file:///Users/andrewstuart/devel/neoteletext-engine?rev=e66d24152f887f3fcfb6553b2e88f2a66887aa5a#e66d24152f887f3fcfb6553b2e88f2a66887aa5a"
+source = "git+file:///Users/andrewstuart/devel/neoteletext-engine?rev=c7a84cff00d4232bb6a2c50e8f6a5334e655626e#c7a84cff00d4232bb6a2c50e8f6a5334e655626e"
 dependencies = [
  "neoteletext-audio",
  "neoteletext-core",
@@ -1477,6 +1521,7 @@ name = "neoteletext-interface"
 version = "0.1.0"
 dependencies = [
  "arboard",
+ "confine",
  "cpal",
  "dock-menu",
  "draw-vello",
@@ -1495,6 +1540,7 @@ dependencies = [
 name = "neoteletext-keyboard"
 version = "0.1.0"
 dependencies = [
+ "confine",
  "neoteletext-input",
  "neoteletext-qrkeyboard",
  "neoteletext-web",
@@ -1504,7 +1550,7 @@ dependencies = [
 [[package]]
 name = "neoteletext-qrkeyboard"
 version = "0.1.0"
-source = "git+file:///Users/andrewstuart/devel/neoteletext-engine?rev=e66d24152f887f3fcfb6553b2e88f2a66887aa5a#e66d24152f887f3fcfb6553b2e88f2a66887aa5a"
+source = "git+file:///Users/andrewstuart/devel/neoteletext-engine?rev=c7a84cff00d4232bb6a2c50e8f6a5334e655626e#c7a84cff00d4232bb6a2c50e8f6a5334e655626e"
 dependencies = [
  "aes-gcm",
  "getrandom 0.2.17",
@@ -1533,7 +1579,7 @@ dependencies = [
 [[package]]
 name = "neoteletext-web"
 version = "0.1.0"
-source = "git+file:///Users/andrewstuart/devel/neoteletext-engine?rev=e66d24152f887f3fcfb6553b2e88f2a66887aa5a#e66d24152f887f3fcfb6553b2e88f2a66887aa5a"
+source = "git+file:///Users/andrewstuart/devel/neoteletext-engine?rev=c7a84cff00d4232bb6a2c50e8f6a5334e655626e#c7a84cff00d4232bb6a2c50e8f6a5334e655626e"
 dependencies = [
  "embedded-io",
  "neoteletext-core",
@@ -2431,6 +2477,15 @@ dependencies = [
  "generic-array",
  "subtle",
  "zeroize",
+]
+
+[[package]]
+name = "seccompiler"
+version = "0.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a4ae55de56877481d112a559bbc12667635fdaf5e005712fd4e2b2fa50ffc884"
+dependencies = [
+ "libc",
 ]
 
 [[package]]

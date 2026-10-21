@@ -372,9 +372,11 @@ fn write_frame(out: &mut dyn Write, kind: u8, payload: &[u8]) -> Result<(), Prot
     let mut header = [0_u8; HEADER_BYTES];
     header[0] = kind;
     header[1..].copy_from_slice(&length.to_be_bytes());
+    // Not flushed here: a process flushes once it has handled an event,
+    // before it waits for the next, so the messages of one event go in one
+    // write rather than one each.
     out.write_all(&header)?;
     out.write_all(payload)?;
-    out.flush()?;
     Ok(())
 }
 
@@ -389,9 +391,22 @@ fn read_frame(input: &mut dyn Read) -> Result<Option<(u8, Vec<u8>)>, ProtocolErr
     if length > MAX_PAYLOAD {
         return Err(ProtocolError::TooLong(length));
     }
-    let mut payload = vec![0_u8; length];
-    input.read_exact(&mut payload)?;
+    // Read into room reserved for it, not into a payload zeroed first: a
+    // page frame is 240 KB, and zeroing it was most of the cost of reading
+    // one.
+    let mut payload = Vec::with_capacity(length);
+    input.take(u64::try_from(length).map_err(|_| ProtocolError::TooLong(length))?).read_to_end(&mut payload)?;
+    if payload.len() != length {
+        return Err(io::Error::from(io::ErrorKind::UnexpectedEof).into());
+    }
     Ok(Some((header[0], payload)))
+}
+
+/// `payload` from `offset` on, as its own vector, moved rather than
+/// copied: the payload's room is kept and its bytes shifted down.
+pub(crate) fn tail(mut payload: Vec<u8>, offset: usize) -> Vec<u8> {
+    payload.drain(..offset.min(payload.len()));
+    payload
 }
 
 fn push_key(payload: &mut Vec<u8>, key: PageKey) {
@@ -560,6 +575,7 @@ pub fn write_to_interface(out: &mut dyn Write, message: &ToInterface) -> Result<
             KIND_UPDATED
         }
         ToInterface::Frame { key, version, png } => {
+            payload.reserve_exact(FRAME_FIXED_BYTES.saturating_add(png.len()));
             push_key(&mut payload, *key);
             payload.extend_from_slice(&version.to_be_bytes());
             payload.extend_from_slice(png);
@@ -693,8 +709,8 @@ pub fn read_from_core(input: &mut dyn Read) -> Result<Option<ToInterface>, Proto
             }
             let key = fields.key()?;
             let version = fields.u32()?;
-            let png = fields.take(fields.bytes.len())?.to_vec();
-            ToInterface::Frame { key, version, png }
+            let png = tail(payload, FRAME_FIXED_BYTES);
+            return Ok(Some(ToInterface::Frame { key, version, png }));
         }
         KIND_AUDIO => ToInterface::Audio { channel: fields.u32()?, audio: audio::read(&mut fields, audio::Sender::Core)? },
         #[cfg(feature = "links")]

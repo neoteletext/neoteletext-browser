@@ -92,6 +92,11 @@ fn parse_file(typed: &str) -> Option<Result<Address, String>> {
         if !Path::new(&path).is_absolute() {
             return Err("File addresses need a full path".into());
         }
+        // A share or a device on Windows (`\\server\share`, `\\.\pipe\x`)
+        // would make the trusted core open a network or a pipe.
+        if cfg!(windows) && (path.starts_with("\\\\") || path.starts_with("//")) {
+            return Err("File addresses cannot name a network share or a device".into());
+        }
         if path.chars().any(interface_core::editor::hidden) {
             return Err("Addresses cannot contain hidden characters".into());
         }
@@ -221,6 +226,11 @@ mod tests {
         assert_eq!((address.text.as_str(), address.host.as_str()), ("file:///C:/t42/channel.t42", "channel.t42"));
         assert_eq!(parse("file:///C:/t42/channel.t42").unwrap().file.as_deref(), Some(Path::new("C:/t42/channel.t42")));
         assert!(parse(r"\t42\channel.t42").is_err(), "a path without its drive is not full");
+        // A share would make the trusted core open a network connection;
+        // a device path, a pipe. Before this both were file addresses.
+        assert!(parse(r"\\server\share\channel.t42").is_err());
+        assert!(parse(r"\\.\pipe\teletext").is_err());
+        assert!(parse("file:////server/share/channel.t42").is_err());
     }
 
     #[cfg(unix)]

@@ -27,4 +27,5 @@ A desktop browser for teletext channels on the web, built on the neoteletext eng
 - Gates: `scripts/check.sh commit` (pre-commit), `scripts/check.sh full` (pre-push; its Linux stage runs on `NEOTELETEXT_LINUX_HOST`, `foundintelquiet4060` by default).
 - The reference channel: `cargo run -p neoteletext-site -- terminal [port] [--relay URL] [--podcast FILE.wav]`.
 - A local qrkeyboard relay for tests: `NEOTELETEXT_QRKEYBOARD_RELAY` names one; qrkeyboard.com runs protocol 3 since 21 October 2026.
+- Diagnostics on standard error: `NEOTELETEXT_AUDIO_TRACE=1` reports the sound operations and the device's peak level; `NEOTELETEXT_FRAME_TRACE=1` reports every frame drawn and its cost, and every page frame and update that arrives. Each helper reports what confined it at start (`confine`); on Windows `NEOTELETEXT_CONFINE_NO_CONTAINER=1` starts the decoder and fetcher without their AppContainer, as on a folder the container may not read.
 - Windows: built and tested by hand in the virtual machine (`DEVELOPMENT.md` section 12.1).

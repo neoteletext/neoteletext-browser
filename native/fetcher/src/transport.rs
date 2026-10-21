@@ -1,11 +1,14 @@
 //! The engine's network port over the operating system's sockets, plain
 //! or with Transport Layer Security (requirement 5.8; decision 41 chose
-//! `rustls`), trusting Mozilla's root certificates. A connection opens and
-//! completes its handshake blocking, within the engine's own connect
-//! limit. Then a thread of its own reads the socket, blocking, and wakes
-//! the fetcher's loop the moment bytes arrive, so the loop sleeps until
-//! something happens and never waits on one socket while another has data
-//! (REQ-INT-135).
+//! `rustls`), trusting Mozilla's root certificates. A connection is opened
+//! on a thread of its own: the name is resolved, each of its addresses
+//! tried, the proxy's tunnel asked for and the handshake completed there,
+//! blocking, while the loop goes on and reads the outcome through
+//! [`Transport::state`], as the engine's port expects; the agent's own
+//! connect limit bounds the whole. Once open, another thread reads the
+//! socket, blocking, and wakes the fetcher's loop the moment bytes
+//! arrive, so the loop sleeps until something happens and never waits on
+//! one socket while another has data (REQ-INT-135).
 //!
 //! With a proxy (requirement 19.10), every connection is a tunnel the
 //! proxy opens, asked for by the engine's encoding before TLS starts, so
@@ -58,11 +61,25 @@ struct Connection {
     peer: IpAddress,
 }
 
+/// A connection did not open; the port is not told why (the engine's
+/// agent treats every failure alike), only whether the proxy is to blame.
+struct Failure {
+    proxy: bool,
+}
+
+/// A connection as the loop sees it.
+enum Link {
+    /// Being opened on its thread, which sends the outcome here.
+    Connecting(Receiver<Result<Connection, Failure>>),
+    Open(Connection),
+    Failed,
+}
+
 /// The fetch, push and live connections.
 pub struct Tcp {
-    fetch: Option<Connection>,
-    push: Option<Connection>,
-    live: Option<Connection>,
+    fetch: Option<Link>,
+    push: Option<Link>,
+    live: Option<Link>,
     tls: Arc<rustls::ClientConfig>,
     wake: Wake,
     /// Every connection goes through it, if set.
@@ -84,21 +101,7 @@ impl Tcp {
         std::mem::take(&mut self.proxy_failed)
     }
 
-    /// A socket to `host` and `port`: direct, or a tunnel the proxy opened.
-    /// The proxy's own address may be local: the user chose it.
-    fn reach(&self, host: &str, port: u16) -> Result<(TcpStream, IpAddr), Reached> {
-        let (to_host, to_port) = self.proxy.as_ref().map_or((host, port), |proxy| (proxy.host.as_str(), proxy.port));
-        let target = (to_host, to_port).to_socket_addrs().map_err(|_| Reached::NotFound)?.next().ok_or(Reached::NotFound)?;
-        let mut socket = TcpStream::connect_timeout(&target, CONNECT_TIMEOUT).map_err(|_| Reached::Refused)?;
-        socket.set_read_timeout(Some(CONNECT_TIMEOUT)).map_err(|_| Reached::Other)?;
-        socket.set_write_timeout(Some(CONNECT_TIMEOUT)).map_err(|_| Reached::Other)?;
-        if let Some(proxy) = &self.proxy {
-            proxy.open_tunnel(&mut socket, host, port).map_err(|_| Reached::ProxyRefused)?;
-        }
-        Ok((socket, target.ip()))
-    }
-
-    fn connection(&mut self, connection: ConnectionId) -> &mut Option<Connection> {
+    fn connection(&mut self, connection: ConnectionId) -> &mut Option<Link> {
         match connection {
             ConnectionId::Fetch => &mut self.fetch,
             ConnectionId::Push => &mut self.push,
@@ -106,52 +109,75 @@ impl Tcp {
         }
     }
 
-    fn open(&mut self, host: &str, port: u16, security: Security) -> Result<Connection, ErrorKind> {
-        let (mut socket, ip) = match self.reach(host, port) {
-            Ok(reached) => reached,
-            Err(failure) => {
-                // Any failure on the way to the proxy is the proxy's.
-                self.proxy_failed |= self.proxy.is_some();
-                return Err(match failure {
-                    Reached::NotFound => ErrorKind::NotFound,
-                    Reached::Refused | Reached::ProxyRefused => ErrorKind::ConnectionRefused,
-                    Reached::Other => ErrorKind::Other,
-                });
-            }
-        };
-        // An input message goes in its own packet at once (`interaction.md`
-        // section 10).
-        socket.set_nodelay(true).map_err(|_| ErrorKind::Other)?;
-        let tls = match security {
-            Security::Plain => None,
-            Security::Tls => {
-                let name = rustls::pki_types::ServerName::try_from(host.to_owned()).map_err(|_| ErrorKind::InvalidInput)?;
-                let mut connection = rustls::ClientConnection::new(self.tls.clone(), name).map_err(|_| ErrorKind::Other)?;
-                // A certificate that fails is a hard stop (requirement 7.11).
-                while connection.is_handshaking() {
-                    connection.complete_io(&mut socket).map_err(|_| ErrorKind::PermissionDenied)?;
+    /// The connection, once its thread has reported; the proxy's failure
+    /// is noted here.
+    fn settle(&mut self, connection: ConnectionId) -> &mut Option<Link> {
+        let mut proxy_failed = false;
+        let slot = self.connection(connection);
+        if let Some(Link::Connecting(outcome)) = slot {
+            match outcome.try_recv() {
+                Ok(Ok(open)) => *slot = Some(Link::Open(open)),
+                Ok(Err(failure)) => {
+                    proxy_failed = failure.proxy;
+                    *slot = Some(Link::Failed);
                 }
-                Some(Box::new(connection))
+                Err(TryRecvError::Empty) => {}
+                Err(TryRecvError::Disconnected) => *slot = Some(Link::Failed),
             }
-        };
-        // From here the reader thread waits on the socket for as long as
-        // it is open; the agent's own timers decide when it has been
-        // silent too long, and closing it ends the wait.
-        socket.set_read_timeout(None).map_err(|_| ErrorKind::Other)?;
-        let reader = socket.try_clone().map_err(|_| ErrorKind::Other)?;
-        let (chunks, incoming) = mpsc::sync_channel(READS_AHEAD);
-        let wake = self.wake.clone();
-        std::thread::spawn(move || read_socket(reader, &chunks, &*wake));
-        Ok(Connection { socket, tls, incoming, pending: VecDeque::new(), peer: address(ip) })
+        }
+        self.proxy_failed |= proxy_failed;
+        self.connection(connection)
     }
 }
 
-/// Why no socket was reached.
-enum Reached {
-    NotFound,
-    Refused,
-    ProxyRefused,
-    Other,
+/// A socket to `host` and `port`: direct, or a tunnel the proxy opened,
+/// trying each address the name resolves to in turn. The proxy's own
+/// address may be local: the user chose it.
+fn reach(proxy: Option<&Proxy>, host: &str, port: u16) -> Option<(TcpStream, IpAddr)> {
+    let (to_host, to_port) = proxy.map_or((host, port), |proxy| (proxy.host.as_str(), proxy.port));
+    for target in (to_host, to_port).to_socket_addrs().ok()? {
+        let Ok(mut socket) = TcpStream::connect_timeout(&target, CONNECT_TIMEOUT) else { continue };
+        socket.set_read_timeout(Some(CONNECT_TIMEOUT)).ok()?;
+        socket.set_write_timeout(Some(CONNECT_TIMEOUT)).ok()?;
+        if let Some(proxy) = proxy {
+            proxy.open_tunnel(&mut socket, host, port).ok()?;
+        }
+        return Some((socket, target.ip()));
+    }
+    None
+}
+
+/// Opens a connection, blocking: on the connection's own thread.
+fn open(tls: &Arc<rustls::ClientConfig>, proxy: Option<&Proxy>, wake: &Wake, host: &str, port: u16, security: Security) -> Result<Connection, Failure> {
+    // Any failure on the way to the proxy is the proxy's.
+    fn own<E>(_: E) -> Failure {
+        Failure { proxy: false }
+    }
+    let (mut socket, ip) = reach(proxy, host, port).ok_or(Failure { proxy: proxy.is_some() })?;
+    // An input message goes in its own packet at once (`interaction.md`
+    // section 10).
+    socket.set_nodelay(true).map_err(own)?;
+    let tls = match security {
+        Security::Plain => None,
+        Security::Tls => {
+            let name = rustls::pki_types::ServerName::try_from(host.to_owned()).map_err(own)?;
+            let mut connection = rustls::ClientConnection::new(Arc::clone(tls), name).map_err(own)?;
+            // A certificate that fails is a hard stop (requirement 7.11).
+            while connection.is_handshaking() {
+                connection.complete_io(&mut socket).map_err(own)?;
+            }
+            Some(Box::new(connection))
+        }
+    };
+    // From here the reader thread waits on the socket for as long as
+    // it is open; the agent's own timers decide when it has been
+    // silent too long, and closing it ends the wait.
+    socket.set_read_timeout(None).map_err(own)?;
+    let reader = socket.try_clone().map_err(own)?;
+    let (chunks, incoming) = mpsc::sync_channel(READS_AHEAD);
+    let wake = Arc::clone(wake);
+    std::thread::spawn(move || read_socket(reader, &chunks, &*wake));
+    Ok(Connection { socket, tls, incoming, pending: VecDeque::new(), peer: address(ip) })
 }
 
 /// The reader thread: passes on what the socket gives until it ends, or
@@ -249,18 +275,36 @@ impl embedded_io::ErrorType for Tcp {
 }
 
 impl Transport for Tcp {
+    /// Starts opening the connection on a thread of its own, and returns
+    /// at once; [`Transport::state`] says how it went.
     fn connect(&mut self, connection: ConnectionId, host: &str, port: u16, security: Security) -> Result<(), ErrorKind> {
-        let open = self.open(host, port, security)?;
-        *self.connection(connection) = Some(open);
+        self.close(connection);
+        let (done, outcome) = mpsc::sync_channel(1);
+        let (tls, proxy, wake, host) = (Arc::clone(&self.tls), self.proxy.clone(), Arc::clone(&self.wake), host.to_owned());
+        std::thread::spawn(move || {
+            let opened = open(&tls, proxy.as_ref(), &wake, &host, port, security);
+            // The connection was closed while opening: the socket goes,
+            // and its reader thread with it.
+            if let Err(mpsc::SendError(Ok(open))) = done.send(opened) {
+                let _ = open.socket.shutdown(Shutdown::Both);
+            }
+            wake();
+        });
+        *self.connection(connection) = Some(Link::Connecting(outcome));
         Ok(())
     }
 
     fn state(&mut self, connection: ConnectionId) -> LinkState {
-        self.connection(connection).as_ref().map_or(LinkState::Closed, |open| LinkState::Open(open.peer))
+        match self.settle(connection) {
+            None => LinkState::Closed,
+            Some(Link::Connecting(_)) => LinkState::Connecting,
+            Some(Link::Open(open)) => LinkState::Open(open.peer),
+            Some(Link::Failed) => LinkState::Failed,
+        }
     }
 
     fn send(&mut self, connection: ConnectionId, bytes: &[u8]) -> Result<(), ErrorKind> {
-        let open = self.connection(connection).as_mut().ok_or(ErrorKind::NotConnected)?;
+        let Some(Link::Open(open)) = self.settle(connection) else { return Err(ErrorKind::NotConnected) };
         // Written whole, blocking, within the write limit: a request or a
         // input message is small, and the socket drains it at once.
         let mut socket = &open.socket;
@@ -272,13 +316,18 @@ impl Transport for Tcp {
     }
 
     fn receive(&mut self, connection: ConnectionId, buffer: &mut [u8]) -> Result<Received, ErrorKind> {
-        Ok(self.connection(connection).as_mut().map_or(Received::Closed, |open| open.receive(buffer)))
+        Ok(match self.settle(connection) {
+            Some(Link::Open(open)) => open.receive(buffer),
+            Some(Link::Connecting(_)) => Received::Nothing,
+            None | Some(Link::Failed) => Received::Closed,
+        })
     }
 
     fn close(&mut self, connection: ConnectionId) {
         // Ends the reader thread's wait; the bytes it still holds are
-        // dropped with the channel.
-        if let Some(open) = self.connection(connection).take() {
+        // dropped with the channel. A connection still opening is dropped
+        // by its thread when it finds no one to give it to.
+        if let Some(Link::Open(open)) = self.connection(connection).take() {
             let _ = open.socket.shutdown(Shutdown::Both);
         }
     }
@@ -354,6 +403,18 @@ mod tests {
         Tcp::new(Arc::new(|| {}), Some(proxy))
     }
 
+    /// The connection's state once it is no longer opening, within the
+    /// connect limit and a little.
+    fn settled(tcp: &mut Tcp, connection: ConnectionId) -> LinkState {
+        let started = Instant::now();
+        loop {
+            match tcp.state(connection) {
+                LinkState::Connecting if started.elapsed() < CONNECT_TIMEOUT + Duration::from_secs(1) => std::thread::sleep(Duration::from_millis(1)),
+                state => return state,
+            }
+        }
+    }
+
     /// Reads what comes back through the tunnel, within a second.
     fn echoed(tcp: &mut Tcp) -> Vec<u8> {
         let started = Instant::now();
@@ -374,6 +435,7 @@ mod tests {
         let (proxy, server) = proxy(Proxying::HttpAllows);
         let mut tcp = tcp(proxy);
         tcp.connect(ConnectionId::Fetch, "news.example", 80, Security::Plain).unwrap();
+        assert!(matches!(settled(&mut tcp, ConnectionId::Fetch), LinkState::Open(_)));
         assert!(!tcp.take_proxy_failure());
         tcp.send(ConnectionId::Fetch, b"through").unwrap();
         assert_eq!(echoed(&mut tcp), b"through");
@@ -389,6 +451,7 @@ mod tests {
         let (proxy, server) = proxy(Proxying::SocksAllows);
         let mut tcp = tcp(proxy);
         tcp.connect(ConnectionId::Fetch, "news.example", 443, Security::Plain).unwrap();
+        assert!(matches!(settled(&mut tcp, ConnectionId::Fetch), LinkState::Open(_)));
         tcp.send(ConnectionId::Fetch, b"socks").unwrap();
         assert_eq!(echoed(&mut tcp), b"socks");
         let asked = server.join().unwrap();
@@ -405,29 +468,74 @@ mod tests {
         for proxying in [Proxying::HttpRefuses, Proxying::SocksRefuses] {
             let (proxy, server) = proxy(proxying);
             let mut tcp = tcp(proxy);
-            assert_eq!(tcp.connect(ConnectionId::Fetch, "news.example", 80, Security::Plain), Err(ErrorKind::ConnectionRefused));
+            tcp.connect(ConnectionId::Fetch, "news.example", 80, Security::Plain).unwrap();
+            assert!(matches!(settled(&mut tcp, ConnectionId::Fetch), LinkState::Failed));
             assert!(tcp.take_proxy_failure());
             assert!(!tcp.take_proxy_failure(), "said once");
-            assert!(matches!(tcp.state(ConnectionId::Fetch), LinkState::Closed));
             drop(server.join());
         }
         // No proxy listening at all is the proxy's failure too.
         let port = TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port();
         let mut tcp = tcp(Proxy::parse(&format!("http://127.0.0.1:{port}")).unwrap());
-        assert!(tcp.connect(ConnectionId::Fetch, "news.example", 80, Security::Plain).is_err());
+        tcp.connect(ConnectionId::Fetch, "news.example", 80, Security::Plain).unwrap();
+        assert!(matches!(settled(&mut tcp, ConnectionId::Fetch), LinkState::Failed));
         assert!(tcp.take_proxy_failure());
     }
 
     /// Requirement 19.10: a proxy that does not answer fails the connection
-    /// within the connect limit.
+    /// within the connect limit; and the loop is never held while it is
+    /// waited on (REQ-INT-135): connecting returns at once, and the other
+    /// connections go on. Before this, a silent proxy held the fetcher's
+    /// one loop for the whole ten seconds.
     #[test]
-    fn a_silent_proxy_fails_in_time() {
+    fn a_silent_proxy_fails_in_time_and_holds_nothing_up() {
         let (proxy, server) = proxy(Proxying::Silent);
         let mut tcp = tcp(proxy);
         let started = Instant::now();
-        assert!(tcp.connect(ConnectionId::Fetch, "news.example", 80, Security::Plain).is_err());
+        tcp.connect(ConnectionId::Fetch, "news.example", 80, Security::Plain).unwrap();
+        assert!(started.elapsed() < Duration::from_millis(100), "connecting returned at once: {:?}", started.elapsed());
+        assert!(matches!(tcp.state(ConnectionId::Fetch), LinkState::Connecting));
+        assert_eq!(tcp.receive(ConnectionId::Fetch, &mut [0; 8]), Ok(Received::Nothing), "nothing yet, and no waiting");
+        assert!(matches!(settled(&mut tcp, ConnectionId::Fetch), LinkState::Failed));
         assert!(started.elapsed() < CONNECT_TIMEOUT + Duration::from_secs(1), "{:?}", started.elapsed());
         assert!(tcp.take_proxy_failure());
         drop(server.join());
+    }
+
+    /// Requirement 5.8: the TLS handshake, now on the connection's own
+    /// thread, completes against a real host, and the connection carries
+    /// a request and its answer. It needs the internet, so it runs only
+    /// when asked: `cargo test -- --ignored`.
+    #[test]
+    #[ignore = "needs the internet"]
+    fn a_tls_connection_opens_on_its_thread_and_answers() {
+        let mut tcp = Tcp::new(Arc::new(|| {}), None);
+        tcp.connect(ConnectionId::Fetch, "example.com", 443, Security::Tls).unwrap();
+        assert!(matches!(tcp.state(ConnectionId::Fetch), LinkState::Connecting | LinkState::Open(_)));
+        assert!(matches!(settled(&mut tcp, ConnectionId::Fetch), LinkState::Open(_)));
+        tcp.send(ConnectionId::Fetch, b"HEAD / HTTP/1.1\r\nHost: example.com\r\nConnection: close\r\n\r\n").unwrap();
+        let started = Instant::now();
+        let mut answer = Vec::new();
+        let mut buffer = [0_u8; 1024];
+        while started.elapsed() < Duration::from_secs(10) && !answer.starts_with(b"HTTP/1.1 ") {
+            match tcp.receive(ConnectionId::Fetch, &mut buffer) {
+                Ok(Received::Data(count)) => answer.extend_from_slice(&buffer[..count]),
+                Ok(Received::Closed) => break,
+                _ => std::thread::sleep(Duration::from_millis(5)),
+            }
+        }
+        assert!(answer.starts_with(b"HTTP/1.1 "), "{}", String::from_utf8_lossy(&answer));
+    }
+
+    /// A connection closed while it opens is dropped by its thread, and
+    /// a later connection on the same slot is its own.
+    #[test]
+    fn a_connection_closed_while_opening_is_let_go() {
+        let (proxy, _server) = proxy(Proxying::Silent);
+        let mut tcp = tcp(proxy);
+        tcp.connect(ConnectionId::Fetch, "news.example", 80, Security::Plain).unwrap();
+        tcp.close(ConnectionId::Fetch);
+        assert!(matches!(tcp.state(ConnectionId::Fetch), LinkState::Closed));
+        assert!(!tcp.take_proxy_failure(), "a closed connection's failure is nobody's");
     }
 }

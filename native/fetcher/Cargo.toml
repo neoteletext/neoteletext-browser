@@ -17,6 +17,7 @@ links = ["protocol/links", "dep:interface-core"]
 interaction = ["protocol/interaction"]
 
 [dependencies]
+confine.workspace = true
 # With `std`: the proxy handshake over a socket (requirement 19.10).
 neoteletext-web = { workspace = true, features = ["std"] }
 neoteletext-core.workspace = true

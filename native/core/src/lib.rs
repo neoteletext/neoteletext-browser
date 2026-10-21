@@ -24,6 +24,7 @@ pub mod frames;
 pub mod hearing;
 #[cfg(feature = "links")]
 pub mod links;
+pub mod outbox;
 pub mod settings;
 pub mod sleep;
 pub mod start_page;

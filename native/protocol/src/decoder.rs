@@ -22,6 +22,10 @@ pub const MAX_WHOLE: usize = crate::MAX_PAYLOAD - 1;
 pub const MAX_COLOURS: usize = 32;
 const PAGE_DOTS: usize = PAGE_WIDTH as usize * PAGE_HEIGHT as usize;
 const RGB_BYTES: usize = 3;
+/// A frame's page number and its count of colours, before the palette.
+const FRAME_HEADER_BYTES: usize = 2 + 1;
+/// A whole page's flags, before its bytes.
+const WHOLE_FLAGS_BYTES: usize = 1;
 
 // Trusted core to decoder.
 const KIND_DATA: u8 = 48;
@@ -163,6 +167,7 @@ pub fn write_to_decoder(out: &mut dyn Write, message: &ToDecoder) -> Result<(), 
             if bytes.len() > MAX_CHUNK {
                 return Err(ProtocolError::TooLong(bytes.len()));
             }
+            payload.reserve_exact(bytes.len());
             payload.extend_from_slice(bytes);
             KIND_DATA
         }
@@ -189,6 +194,7 @@ pub fn write_to_decoder(out: &mut dyn Write, message: &ToDecoder) -> Result<(), 
             if bytes.len() > MAX_WHOLE {
                 return Err(ProtocolError::TooLong(bytes.len()));
             }
+            payload.reserve_exact(WHOLE_FLAGS_BYTES.saturating_add(bytes.len()));
             payload.push(u8::from(*packets) | (u8::from(*pushed) << 1));
             payload.extend_from_slice(bytes);
             KIND_WHOLE
@@ -206,11 +212,12 @@ pub fn read_from_core(input: &mut dyn Read) -> Result<Option<ToDecoder>, Protoco
     let Some((kind, payload)) = read_frame(input)? else { return Ok(None) };
     let mut fields = Fields { bytes: &payload };
     let message = match kind {
+        // The payload is the data: it is moved, not copied.
         KIND_DATA => {
             if payload.len() > MAX_CHUNK {
                 return Err(ProtocolError::TooLong(payload.len()));
             }
-            ToDecoder::Data(fields.take(payload.len())?.to_vec())
+            return Ok(Some(ToDecoder::Data(payload)));
         }
         KIND_END => ToDecoder::End,
         KIND_SHOWING => {
@@ -227,16 +234,36 @@ pub fn read_from_core(input: &mut dyn Read) -> Result<Option<ToDecoder>, Protoco
             if flags > 3 {
                 return Err(ProtocolError::BadValue("whole form"));
             }
-            let bytes = fields.take(fields.bytes.len())?;
-            if bytes.len() > MAX_WHOLE {
-                return Err(ProtocolError::TooLong(bytes.len()));
+            let length = fields.bytes.len();
+            if length > MAX_WHOLE {
+                return Err(ProtocolError::TooLong(length));
             }
-            ToDecoder::Whole { packets: flags & 1 != 0, pushed: flags & 2 != 0, bytes: bytes.to_vec() }
+            return Ok(Some(ToDecoder::Whole { packets: flags & 1 != 0, pushed: flags & 2 != 0, bytes: crate::tail(payload, WHOLE_FLAGS_BYTES) }));
         }
         other => return Err(ProtocolError::UnknownKind(other)),
     };
     fields.end()?;
     Ok(Some(message))
+}
+
+/// Writes a page's frame, [`FromDecoder::Frame`], from the decoder's own
+/// palette and indices: a frame is 240 KB, and this way it is not copied
+/// into a message first.
+///
+/// # Errors
+/// When writing fails or the frame is not a page's shape.
+pub fn write_frame_to_core(out: &mut dyn Write, page: u16, palette: &[[u8; 3]], indices: &[u8]) -> Result<(), ProtocolError> {
+    if palette.is_empty() || palette.len() > MAX_COLOURS || indices.len() != PAGE_DOTS {
+        return Err(ProtocolError::BadValue("frame shape"));
+    }
+    let mut payload = Vec::with_capacity(FRAME_HEADER_BYTES.saturating_add(palette.len().saturating_mul(RGB_BYTES)).saturating_add(PAGE_DOTS));
+    payload.extend_from_slice(&page.to_be_bytes());
+    payload.push(u8::try_from(palette.len()).unwrap_or(0));
+    for colour in palette {
+        payload.extend_from_slice(colour);
+    }
+    payload.extend_from_slice(indices);
+    write_frame(out, KIND_FRAME, &payload)
 }
 
 /// # Errors
@@ -251,18 +278,7 @@ pub fn write_to_core(out: &mut dyn Write, message: &FromDecoder) -> Result<(), P
             push_raw_text(&mut payload, title, MAX_PAGE_TITLE);
             KIND_ARRIVED
         }
-        FromDecoder::Frame { page, palette, indices } => {
-            if palette.is_empty() || palette.len() > MAX_COLOURS || indices.len() != PAGE_DOTS {
-                return Err(ProtocolError::BadValue("frame shape"));
-            }
-            payload.extend_from_slice(&page.to_be_bytes());
-            payload.push(u8::try_from(palette.len()).unwrap_or(0));
-            for colour in palette {
-                payload.extend_from_slice(colour);
-            }
-            payload.extend_from_slice(indices);
-            KIND_FRAME
-        }
+        FromDecoder::Frame { page, palette, indices } => return write_frame_to_core(out, *page, palette, indices),
         FromDecoder::Updated { page } => {
             payload.extend_from_slice(&page.to_be_bytes());
             KIND_UPDATED
@@ -324,11 +340,14 @@ pub fn read_from_decoder(input: &mut dyn Read) -> Result<Option<FromDecoder>, Pr
                 return Err(ProtocolError::BadValue("palette size"));
             }
             let palette = fields.take(colours.saturating_mul(RGB_BYTES))?.as_chunks::<RGB_BYTES>().0.to_vec();
-            let indices = fields.take(PAGE_DOTS)?.to_vec();
+            let indices = fields.take(PAGE_DOTS)?;
             if indices.iter().any(|&index| usize::from(index) >= colours) {
                 return Err(ProtocolError::BadValue("index outside the palette"));
             }
-            FromDecoder::Frame { page, palette, indices }
+            fields.end()?;
+            // The indices are the rest of the payload: moved, not copied.
+            let offset = payload.len().saturating_sub(PAGE_DOTS);
+            return Ok(Some(FromDecoder::Frame { page, palette, indices: crate::tail(payload, offset) }));
         }
         KIND_UPDATED => FromDecoder::Updated { page: display_page(&mut fields)? },
         KIND_AUDIO => FromDecoder::Audio(crate::audio::read(&mut fields, crate::audio::Sender::Decoder)?),

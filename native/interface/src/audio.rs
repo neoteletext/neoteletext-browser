@@ -8,13 +8,25 @@
 //! apply one operation; the audio thread holds it only to render one
 //! buffer, which never allocates or frees. The longest an operation holds
 //! it is defining the largest sound, 0.37 ms on 21 October 2026, against
-//! a device buffer of about 10 ms.
+//! a device buffer of about 10 ms. The audio thread waits for the lock
+//! rather than skipping a buffer: a skipped buffer is a click, and the
+//! wait is bounded by that measurement. What the reader frees (a channel's
+//! whole mixer) it frees after letting go.
+//!
+//! The device runs only while a channel sounds. Whichever thread finds
+//! that the channels went from silent to sounding or back wakes a watcher
+//! through a channel (decision 46: a program waits on what it needs, never
+//! by looking again on a timer); the watcher tells the window, which
+//! starts or stops the device. Idle, the browser then costs the audio
+//! thread nothing: before this, the device ran all the time and woke the
+//! process about a hundred times a second (measured 21 October 2026).
 //!
 //! The settings' sound and volume (requirement 19.4) are each mixer's
 //! master: off silences every channel, and the volume scales them all.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::atomic::{AtomicU16, Ordering};
+use std::sync::mpsc::{Receiver, SyncSender, TrySendError};
 use std::sync::{Arc, Mutex, PoisonError};
 
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
@@ -46,6 +58,11 @@ pub struct Mixers {
     volume: u8,
     /// The channels whose tabs are muted.
     muted: BTreeSet<u32>,
+    /// Whether any channel sounded when last looked.
+    active: bool,
+    /// Woken when that changes. It holds one wake, and a wake that finds
+    /// one waiting is not needed: the watcher looks afresh each time.
+    wake: Option<SyncSender<()>>,
 }
 
 impl Mixers {
@@ -53,7 +70,23 @@ impl Mixers {
     /// settings say otherwise.
     #[must_use]
     pub fn new(rate_hz: u32) -> Self {
-        Self { rate_hz, channels: BTreeMap::new(), sound: true, volume: MAX_VOLUME, muted: BTreeSet::new() }
+        Self { rate_hz, channels: BTreeMap::new(), sound: true, volume: MAX_VOLUME, muted: BTreeSet::new(), active: false, wake: None }
+    }
+
+    /// Wakes the watcher when the channels went from silent to sounding or
+    /// back. Called with the lock held, on the audio thread too: it never
+    /// blocks or allocates.
+    fn note_activity(&mut self) {
+        let active = self.channels.values().any(Mixer::active);
+        if active == self.active {
+            return;
+        }
+        self.active = active;
+        if let Some(wake) = &self.wake
+            && let Err(TrySendError::Disconnected(())) = wake.try_send(())
+        {
+            self.wake = None;
+        }
     }
 
     /// Each channel's master: the volume, silent when sound is off or the
@@ -86,6 +119,24 @@ impl Mixers {
                 *sum = sum.saturating_add(sample);
             }
         }
+        // A sound ends here, on the audio thread.
+        self.note_activity();
+    }
+}
+
+/// Waits for the channels to go from silent to sounding or back, and tells
+/// `changed` which channels sound, muted or not, each time that set
+/// changes. Returns when the mixers are gone or `changed` says to stop.
+pub fn watch(mixers: &Mutex<Mixers>, wakes: &Receiver<()>, mut changed: impl FnMut(BTreeSet<u32>) -> bool) {
+    let mut last = BTreeSet::new();
+    while wakes.recv().is_ok() {
+        let sounding = mixers.lock().unwrap_or_else(PoisonError::into_inner).sounding();
+        if sounding != last {
+            last.clone_from(&sounding);
+            if !changed(sounding) {
+                return;
+            }
+        }
     }
 }
 
@@ -105,10 +156,14 @@ pub fn apply(mixers: &Mutex<Mixers>, channel: u32, audio: Audio) {
     let mut mixers = mixers.lock().unwrap_or_else(PoisonError::into_inner);
     let rate = mixers.rate_hz;
     match audio {
-        // The channel is gone.
+        // The channel is gone. Its mixer, with every sound it held, is
+        // freed once the audio thread can have the lock again.
         Audio::Reset => {
-            mixers.channels.remove(&channel);
+            let gone = mixers.channels.remove(&channel);
             mixers.muted.remove(&channel);
+            mixers.note_activity();
+            drop(mixers);
+            drop(gone);
             return;
         }
         Audio::Mute(muted) => {
@@ -142,19 +197,27 @@ pub fn apply(mixers: &Mutex<Mixers>, channel: u32, audio: Audio) {
         Audio::StreamSamples { sound, pcm } => mixer.stream_samples(key(sound), &pcm),
         Audio::Mute(_) | Audio::Reset => {}
     }
+    // A sound starts here, on the reader's thread, while the device may
+    // be stopped.
+    mixers.note_activity();
 }
 
-/// The output device, playing a mixer. Dropped, it stops.
+/// The output device, playing the mixers while a channel sounds. Dropped,
+/// it stops.
 pub struct Speaker {
     /// The mixers the device plays.
     pub mixers: Shared,
     /// The loudest sample rendered since it was last read, for diagnostics.
     pub peak: Arc<AtomicU16>,
-    _stream: Stream,
+    /// Wakes for [`watch`], taken once by the thread that watches.
+    pub wakes: Option<Receiver<()>>,
+    stream: Stream,
+    playing: bool,
 }
 
 impl Speaker {
-    /// Opens the default output device at its own rate and format.
+    /// Opens the default output device at its own rate and format, stopped
+    /// until a channel sounds.
     ///
     /// # Errors
     /// No output device, or one whose format the mixer cannot feed.
@@ -162,7 +225,10 @@ impl Speaker {
         let device = cpal::default_host().default_output_device().ok_or("no audio output device")?;
         let supported = device.default_output_config().map_err(|error| format!("the audio output's format: {error}"))?;
         let config = supported.config();
-        let mixers: Shared = Arc::new(Mutex::new(Mixers::new(config.sample_rate)));
+        let (wake, wakes) = std::sync::mpsc::sync_channel(1);
+        let mut mixers = Mixers::new(config.sample_rate);
+        mixers.wake = Some(wake);
+        let mixers: Shared = Arc::new(Mutex::new(mixers));
         let channels = usize::from(config.channels).max(1);
         let peak = Arc::new(AtomicU16::new(0));
         let stream = match supported.sample_format() {
@@ -171,8 +237,22 @@ impl Speaker {
             SampleFormat::U16 => build::<u16>(&device, config, channels, &mixers, &peak),
             other => return Err(format!("the audio output's sample format {other} is not supported")),
         }?;
-        stream.play().map_err(|error| format!("cannot start the audio output: {error}"))?;
-        Ok(Self { mixers, peak, _stream: stream })
+        // Some platforms start a stream as it is built; this one waits.
+        let _ = stream.pause();
+        Ok(Self { mixers, peak, wakes: Some(wakes), stream, playing: false })
+    }
+
+    /// Runs the device while `playing`, and stops it otherwise. A device
+    /// that cannot stop keeps running: sound matters more than the wakeups.
+    pub fn set_playing(&mut self, playing: bool) {
+        if playing == self.playing {
+            return;
+        }
+        let result = if playing { self.stream.play() } else { self.stream.pause() };
+        match result {
+            Ok(()) => self.playing = playing,
+            Err(error) => eprintln!("neoteletext-interface: audio output: {error}"),
+        }
     }
 }
 
@@ -384,12 +464,47 @@ mod tests {
         assert!((5_800..=6_200).contains(&data[300]), "{}", data[300]);
     }
 
-    /// Plays a second of a tone through the real default output device.
-    /// It needs one, so it runs only when asked: `cargo test -- --ignored`.
+    /// The watcher is woken once when a sound starts and once when the
+    /// last ends, never while sounds come and go in between, and it
+    /// reports the sounding channels each time they change.
+    #[test]
+    fn the_watcher_is_woken_only_when_silence_starts_or_ends() {
+        let (wake, wakes) = std::sync::mpsc::sync_channel(1);
+        let mut mixers = Mixers::new(8_000);
+        mixers.wake = Some(wake);
+        let mixers = Mutex::new(mixers);
+        apply(&mixers, 1, Audio::Define { sound: SOUND, rate_hz: 8_000, samples: 4000 });
+        assert!(wakes.try_recv().is_err(), "a defined sound does not sound");
+        play(&mixers, 1, 8_000);
+        assert!(wakes.try_recv().is_ok(), "the first sound wakes the watcher");
+        play(&mixers, 2, 4_000);
+        assert!(wakes.try_recv().is_err(), "a second channel sounding changes nothing for the device");
+        // The sounds last half a second: a quarter rendered, then another.
+        let mut data = vec![0_i16; 2_000];
+        render(&mixers, &mut data, 1, &mut [0; 512]);
+        assert!(wakes.try_recv().is_err(), "still sounding after a quarter of a second");
+        render(&mixers, &mut data, 1, &mut [0; 512]);
+        render(&mixers, &mut data, 1, &mut [0; 512]);
+        assert!(wakes.try_recv().is_ok(), "the audio thread wakes the watcher as the last sound ends");
+        assert_eq!(mixers.lock().unwrap().sounding(), BTreeSet::new());
+        // The watcher reports each change of the set, and stops when told.
+        play(&mixers, 3, 1_000);
+        let reported = Mutex::new(Vec::new());
+        watch(&mixers, &wakes, |sounding| {
+            reported.lock().unwrap().push(sounding);
+            false
+        });
+        assert_eq!(reported.into_inner().unwrap(), [BTreeSet::from([3])]);
+    }
+
+    /// Plays a second of a tone through the real default output device,
+    /// which runs only while the tone plays. It needs a device, so it runs
+    /// only when asked: `cargo test -- --ignored`.
     #[test]
     #[ignore = "needs an audio output device"]
     fn a_tone_plays_through_the_default_output_device() {
-        let speaker = Speaker::open().expect("an output device");
+        let mut speaker = Speaker::open().expect("an output device");
+        let wakes = speaker.wakes.take().unwrap();
         let rate: i32 = 16_000;
         // A triangle wave of about 889 Hz: 18 samples a period.
         let tone: Vec<i16> = (0..rate)
@@ -401,9 +516,14 @@ mod tests {
         apply(&speaker.mixers, 1, Audio::Define { sound: SOUND, rate_hz: 16_000, samples: 16_000 });
         apply(&speaker.mixers, 1, Audio::Samples { sound: SOUND, first: 0, pcm: tone });
         apply(&speaker.mixers, 1, Audio::Start { channel: 0, sound: SOUND, gain: 50, fade_ms: 20, looped: false, duck_percent: 100, after_current: false });
+        assert!(wakes.recv_timeout(std::time::Duration::from_millis(100)).is_ok(), "the start wakes the watcher");
+        std::thread::sleep(std::time::Duration::from_millis(300));
+        assert_eq!(speaker.mixers.lock().unwrap().sounding(), BTreeSet::from([1]), "the device is stopped: nothing was consumed");
+        speaker.set_playing(true);
         std::thread::sleep(std::time::Duration::from_millis(300));
         assert_eq!(speaker.mixers.lock().unwrap().sounding(), BTreeSet::from([1]), "still playing after 300 ms: the device is pulling samples");
-        std::thread::sleep(std::time::Duration::from_millis(1000));
+        assert!(wakes.recv_timeout(std::time::Duration::from_millis(1500)).is_ok(), "the end wakes the watcher");
         assert_eq!(speaker.mixers.lock().unwrap().sounding(), BTreeSet::new(), "finished: the device consumed the whole second");
+        speaker.set_playing(false);
     }
 }

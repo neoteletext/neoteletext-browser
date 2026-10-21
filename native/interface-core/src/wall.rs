@@ -88,11 +88,11 @@ const WIDTH_TRANSITION_MILLISECONDS: u64 = 160;
 
 /// One page the wall shows.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct WallPage {
+pub struct WallPage<'a> {
     /// Which page.
     pub key: PageKey,
     /// Its title, shown in its caption.
-    pub title: String,
+    pub title: &'a str,
     /// When the page last had a new version, in milliseconds, if it has.
     pub updated: Option<u64>,
 }
@@ -591,7 +591,7 @@ impl Wall {
 
     /// Draws the panel in `panel`, with `pages` on the wall and `selected`
     /// outlined.
-    pub fn draw<C: Canvas + ?Sized>(&mut self, canvas: &mut C, panel: Rect, pages: &[WallPage], selected: Option<PageKey>, now: u64) {
+    pub fn draw<C: Canvas + ?Sized>(&mut self, canvas: &mut C, panel: Rect, pages: &[WallPage<'_>], selected: Option<PageKey>, now: u64) {
         canvas.fill(panel, 0.0, PANEL);
         self.area = Rect::new(panel.x0, panel.y0 + CONTROLS_HEIGHT, panel.x1, panel.y1);
         #[allow(clippy::cast_possible_truncation, reason = "panel widths fit easily in f32")]
@@ -693,7 +693,7 @@ impl Wall {
 
     /// Draws one page alone, as large as the area allows, with its number
     /// and title above it; returns the height it fills.
-    fn draw_zoomed<C: Canvas + ?Sized>(&mut self, canvas: &mut C, pages: &[WallPage], key: PageKey, now: u64) -> f64 {
+    fn draw_zoomed<C: Canvas + ?Sized>(&mut self, canvas: &mut C, pages: &[WallPage<'_>], key: PageKey, now: u64) -> f64 {
         self.scroll = self.scroll.max(0.0);
         let area = self.area;
         let Some(current) = pages.iter().position(|page| page.key == key) else { return 0.0 };
@@ -722,7 +722,7 @@ impl Wall {
         canvas.fill(Rect::new(area.x0, area.y0, area.x1, rect.y0 - FRAME), 0.0, PANEL);
         let caption = Point::new(rect.x0, area.y0 + WALL_PADDING);
         label(canvas, caption, &format!("{:03X}", key.page), CAPTION, WHITE);
-        canvas.text(Rect::new(caption.x + CAPTION_NUMBER_WIDTH, caption.y + 1.0, rect.x1, caption.y + CAPTION_HEIGHT), &page.title, CAPTION_TITLE, MUTED);
+        canvas.text(Rect::new(caption.x + CAPTION_NUMBER_WIDTH, caption.y + 1.0, rect.x1, caption.y + CAPTION_HEIGHT), page.title, CAPTION_TITLE, MUTED);
         area.height() - WALL_PADDING * 2.0
     }
 
@@ -755,7 +755,7 @@ impl Wall {
     }
 
     /// Draws the grid and returns its height.
-    fn draw_grid<C: Canvas + ?Sized>(&mut self, canvas: &mut C, pages: &[WallPage], selected: Option<PageKey>, now: u64) -> f64 {
+    fn draw_grid<C: Canvas + ?Sized>(&mut self, canvas: &mut C, pages: &[WallPage<'_>], selected: Option<PageKey>, now: u64) -> f64 {
         let area = self.area;
         let available = area.width() - WALL_PADDING * 2.0;
         let card_width = f64::from(grid_width(self.shown_width.value(now)));
@@ -817,13 +817,13 @@ impl Wall {
                 title_end -= width + CAPTION_GAP;
                 label(canvas, Point::new(caption.x + card_width - width, caption.y), &age, CAPTION, UPDATED);
             }
-            canvas.text(Rect::new(title_at.x, title_at.y, title_end, title_at.y + CAPTION_HEIGHT), &page.title, CAPTION_TITLE, MUTED);
+            canvas.text(Rect::new(title_at.x, title_at.y, title_end, title_at.y + CAPTION_HEIGHT), page.title, CAPTION_TITLE, MUTED);
         }
         content
     }
 
     /// Draws the list and returns its height.
-    fn draw_list<C: Canvas + ?Sized>(&mut self, canvas: &mut C, pages: &[WallPage], selected: Option<PageKey>) -> f64 {
+    fn draw_list<C: Canvas + ?Sized>(&mut self, canvas: &mut C, pages: &[WallPage<'_>], selected: Option<PageKey>) -> f64 {
         let area = self.area;
         let left = area.x0 + WALL_PADDING;
         let right = area.x1 - WALL_PADDING;
@@ -858,7 +858,7 @@ impl Wall {
             let text_left = rect.x1 + LIST_GAP;
             let middle = rect.y0 + page_height / 2.0;
             label(canvas, Point::new(text_left, middle - LIST_TITLE_RISE), &format!("{:03X}", page.key.page), ROW_NUMBER, WHITE);
-            canvas.text(Rect::new(text_left, middle + LIST_DETAIL_DROP, right, row.y1), &page.title, ROW_TITLE, MUTED);
+            canvas.text(Rect::new(text_left, middle + LIST_DETAIL_DROP, right, row.y1), page.title, ROW_TITLE, MUTED);
         }
         #[allow(clippy::cast_precision_loss, reason = "small counts")]
         let height = row_height * pages.len() as f64;
@@ -913,8 +913,8 @@ mod tests {
 
     const PANEL: Rect = Rect::new(0.0, 0.0, 1000.0, 700.0);
 
-    fn pages(count: u16) -> Vec<WallPage> {
-        (0..count).map(|offset| WallPage { key: PageKey { channel: 1, page: 0x100 + offset }, title: "Title".into(), updated: None }).collect()
+    fn pages(count: u16) -> Vec<WallPage<'static>> {
+        (0..count).map(|offset| WallPage { key: PageKey { channel: 1, page: 0x100 + offset }, title: "Title", updated: None }).collect()
     }
 
     #[test]
@@ -960,7 +960,7 @@ mod tests {
         canvas.pages.iter().rev().find(|(drawn, _)| *drawn == key).map(|&(_, rect)| rect).unwrap()
     }
 
-    fn draw_at(wall: &mut Wall, pages: &[WallPage], now: u64) -> Recorder {
+    fn draw_at(wall: &mut Wall, pages: &[WallPage<'_>], now: u64) -> Recorder {
         let mut canvas = Recorder::new();
         wall.draw(&mut canvas, PANEL, pages, None, now);
         canvas

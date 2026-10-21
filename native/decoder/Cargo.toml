@@ -24,6 +24,7 @@ links = ["protocol/links", "interface-core/links"]
 interaction = ["protocol/interaction", "interface-core/interaction", "dep:neoteletext-input"]
 
 [dependencies]
+confine.workspace = true
 neoteletext-input = { workspace = true, optional = true }
 # The audio profile's receiver (the engine's area AUD).
 neoteletext-audio.workspace = true

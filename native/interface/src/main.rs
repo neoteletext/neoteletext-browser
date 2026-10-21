@@ -62,10 +62,6 @@ const CHANGE_FRAME_MILLISECONDS: u64 = 100;
 /// pushes is drawn at the next (`interaction.md` section 10).
 #[cfg(feature = "interaction")]
 const TYPING_FRAME_MILLISECONDS: u64 = 16;
-/// How often the mixers are asked which tabs play sound: often enough that
-/// a tab's speaker follows its sound, rarely enough to cost nothing.
-const SOUNDING_POLL_MILLISECONDS: u64 = 250;
-
 /// On macOS the system's window buttons sit in the tab strip, as in
 /// Chrome; they take this much of its left end.
 #[cfg(target_os = "macos")]
@@ -117,6 +113,14 @@ enum Incoming {
     End(Option<String>),
 }
 
+#[derive(Default)]
+struct InputMethod {
+    /// The address is being edited: the method is the field's.
+    address: bool,
+    /// The method is enabled now.
+    allowed: bool,
+}
+
 struct Graphics {
     window: Rc<Window>,
     surface: Surface<Rc<Window>, Rc<Window>>,
@@ -130,6 +134,9 @@ struct App {
     browser: Browser,
     /// Exists before the window, so page images that arrive first are kept.
     painter: Painter,
+    /// The output device, run only while a channel sounds; none when the
+    /// computer has no output.
+    speaker: Option<Speaker>,
     modifiers: ModifiersState,
     /// The pointer, in logical pixels.
     cursor: (f64, f64),
@@ -147,11 +154,13 @@ struct App {
     tabs: Vec<TabInfo>,
     active: usize,
     exit: Option<String>,
-    /// The address is being edited: the input method is the field's.
-    address_ime: bool,
-    /// Whether the window's input method is enabled now: while the address
-    /// is edited, and while keys go to a channel (INPUT.md section 9.1).
-    ime_allowed: bool,
+    /// The window's input method: whether the address is being edited, so
+    /// the method is the field's, and whether the method is enabled now,
+    /// which it is while the address is edited and while keys go to a
+    /// channel (INPUT.md section 9.1).
+    ime: InputMethod,
+    /// Reports each frame and what it cost, for measuring the drawing.
+    trace_frames: bool,
 }
 
 fn attributes() -> winit::window::WindowAttributes {
@@ -229,13 +238,25 @@ impl App {
         }
         self.last_frame = now;
         self.dirty = false;
+        let started = Instant::now();
         self.painter.begin(width, height, graphics.window.scale_factor());
         let logical = (f64::from(width) / self.painter.scale, f64::from(height) / self.painter.scale);
         self.browser.draw(&mut self.painter, logical.0, logical.1, now);
+        let drawn = started.elapsed();
         let Ok(mut buffer) = graphics.surface.buffer_mut() else { return };
         self.painter.finish(&mut buffer);
+        let rendered = started.elapsed();
         graphics.window.pre_present_notify();
         let _ = buffer.present();
+        if self.trace_frames {
+            let presented = started.elapsed();
+            eprintln!(
+                "neoteletext-interface: frame at {now} ms: drawn {:?}, rendered {:?}, presented {:?}, {width}x{height}",
+                drawn,
+                rendered.saturating_sub(drawn),
+                presented.saturating_sub(rendered)
+            );
+        }
         self.act(event_loop);
     }
 
@@ -308,7 +329,7 @@ impl App {
                 // Text input is on exactly while the address is edited, when
                 // the keys are not the open page's: its channel is told.
                 Output::TextInput(allowed) => {
-                    self.address_ime = allowed;
+                    self.ime.address = allowed;
                     self.sync_ime();
                     #[cfg(feature = "interaction")]
                     self.send(event_loop, &ToCore::Editing(allowed));
@@ -366,14 +387,14 @@ impl App {
     /// keys go to a channel, whose composed text then goes to it.
     fn sync_ime(&mut self) {
         #[cfg(feature = "interaction")]
-        let allowed = self.address_ime || self.browser.typing_target().is_some();
+        let allowed = self.ime.address || self.browser.typing_target().is_some();
         #[cfg(not(feature = "interaction"))]
-        let allowed = self.address_ime;
-        if allowed != self.ime_allowed
+        let allowed = self.ime.address;
+        if allowed != self.ime.allowed
             && let Some(graphics) = &self.graphics
         {
             graphics.window.set_ime_allowed(allowed);
-            self.ime_allowed = allowed;
+            self.ime.allowed = allowed;
         }
     }
 
@@ -606,6 +627,9 @@ impl ApplicationHandler<Incoming> for App {
                 self.show_tabs();
             }
             Incoming::Sounding(channels) => {
+                if let Some(speaker) = self.speaker.as_mut() {
+                    speaker.set_playing(!channels.is_empty());
+                }
                 // The trusted core keeps a sounding tab awake (decision 47).
                 self.send(event_loop, &ToCore::Sounding(channels.iter().copied().collect()));
                 if self.browser.set_sounding(channels) {
@@ -630,8 +654,16 @@ impl ApplicationHandler<Incoming> for App {
             Incoming::Console(update) => self.browser.console_update(update),
             Incoming::Channel(channel) => self.browser.set_channel(channel),
             Incoming::Arrived { channel, page, title } => self.browser.add_page(channel, page, title, now),
-            Incoming::Updated { channel, page } => self.browser.page_updated(channel, page, now),
+            Incoming::Updated { channel, page } => {
+                if self.trace_frames {
+                    eprintln!("neoteletext-interface: at {now} ms: page {page:03X} of channel {channel} updated");
+                }
+                self.browser.page_updated(channel, page, now);
+            }
             Incoming::Page { key, version, image } => {
+                if self.trace_frames {
+                    eprintln!("neoteletext-interface: at {now} ms: frame {version} of page {:03X} of channel {}", key.page, key.channel);
+                }
                 if let Err(error) = self.painter.set_page(key, &image.palette, &image.indices) {
                     self.exit = Some(format!("bad page image: {error:?}"));
                     event_loop.exit();
@@ -791,6 +823,12 @@ impl ApplicationHandler<Incoming> for App {
     /// Redraws while something animates; otherwise sleeps until the next
     /// event.
     fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
+        // What the events produced goes to the trusted core before waiting.
+        if let Err(error) = self.output.flush() {
+            self.exit = Some(format!("cannot write to the trusted core: {error}"));
+            event_loop.exit();
+            return;
+        }
         let now = self.now();
         if self.browser.settle(now) {
             self.request_redraw();
@@ -873,6 +911,16 @@ fn read_core(proxy: &EventLoopProxy<Incoming>, mixers: Option<&Shared>, trace: b
 }
 
 fn main() -> std::process::ExitCode {
+    // First, before any thread and before the window system is reached:
+    // the window, fonts, text input, the pasteboard and the sound output,
+    // no network (requirement 3.6).
+    match confine::apply(confine::Role::Interface) {
+        Ok(report) => eprintln!("neoteletext-interface: confined: {report}"),
+        Err(error) => {
+            eprintln!("neoteletext-interface: {error}");
+            return std::process::ExitCode::FAILURE;
+        }
+    }
     let Ok(event_loop) = EventLoop::<Incoming>::with_user_event().build() else {
         eprintln!("neoteletext-interface: cannot open the event loop");
         return std::process::ExitCode::FAILURE;
@@ -890,24 +938,13 @@ fn main() -> std::process::ExitCode {
     // without listening.
     let trace = std::env::var_os("NEOTELETEXT_AUDIO_TRACE").is_some();
     // With no output device the browser runs silent.
-    let speaker = Speaker::open().map_err(|reason| eprintln!("neoteletext-interface: no sound: {reason}")).ok();
+    let mut speaker = Speaker::open().map_err(|reason| eprintln!("neoteletext-interface: no sound: {reason}")).ok();
     let mixers = speaker.as_ref().map(|speaker| Arc::clone(&speaker.mixers));
-    // Which tabs play sound, told to the window when it changes.
-    if let Some(mixers) = mixers.clone() {
+    // Which tabs play sound, told to the window when it changes, which
+    // runs the device only while one does.
+    if let Some((mixers, wakes)) = speaker.as_mut().and_then(|speaker| Some((Arc::clone(&speaker.mixers), speaker.wakes.take()?))) {
         let proxy = proxy.clone();
-        std::thread::spawn(move || {
-            let mut last = BTreeSet::new();
-            loop {
-                std::thread::sleep(Duration::from_millis(SOUNDING_POLL_MILLISECONDS));
-                let sounding = mixers.lock().unwrap_or_else(std::sync::PoisonError::into_inner).sounding();
-                if sounding != last {
-                    last.clone_from(&sounding);
-                    if proxy.send_event(Incoming::Sounding(sounding)).is_err() {
-                        return;
-                    }
-                }
-            }
-        });
+        std::thread::spawn(move || audio::watch(&mixers, &wakes, |sounding| proxy.send_event(Incoming::Sounding(sounding)).is_ok()));
     }
     if trace && let Some(peak) = speaker.as_ref().map(|speaker| Arc::clone(&speaker.peak)) {
         std::thread::spawn(move || {
@@ -926,6 +963,7 @@ fn main() -> std::process::ExitCode {
         graphics: None,
         browser: Browser::new(FRAME),
         painter: Painter::new(Family::Roboto),
+        speaker,
         modifiers: ModifiersState::empty(),
         cursor: (0.0, 0.0),
         last_frame: 0,
@@ -936,8 +974,9 @@ fn main() -> std::process::ExitCode {
         tabs: Vec::new(),
         active: 0,
         exit: None,
-        address_ime: false,
-        ime_allowed: false,
+        ime: InputMethod::default(),
+        // NEOTELETEXT_FRAME_TRACE reports every frame drawn and its cost.
+        trace_frames: std::env::var_os("NEOTELETEXT_FRAME_TRACE").is_some(),
     };
     if let Err(error) = event_loop.run_app(&mut app) {
         eprintln!("neoteletext-interface: {error}");

@@ -38,6 +38,9 @@ pub struct Console {
     open: bool,
     /// The channel last sent and the number of its newest entry sent.
     sent: Option<(u32, u64)>,
+    /// Whether anything came or went since the last send: without it, a
+    /// send has nothing to look for.
+    changed: bool,
 }
 
 fn slot(tab: ConsoleTab) -> usize {
@@ -50,6 +53,7 @@ impl Console {
         let entry = ConsoleEntry { tab, at_ms, text: clean(text, MAX_ENTRY) };
         let number = self.next;
         self.next = self.next.saturating_add(1);
+        self.changed = true;
         let log = self.channels.entry(channel).or_default();
         let Some(entries) = log.tabs.get_mut(slot(tab)) else { return };
         if entries.len() >= KEPT {
@@ -73,6 +77,7 @@ impl Console {
     /// The channel is gone: its entries go.
     pub fn forget(&mut self, channel: u32) {
         self.channels.remove(&channel);
+        self.changed = true;
     }
 
     /// The console opened or closed. Opened, it is sent the active
@@ -80,6 +85,13 @@ impl Console {
     pub fn set_open(&mut self, open: bool) {
         self.open = open;
         self.sent = None;
+        self.changed = true;
+    }
+
+    /// Whether the console is open, so it is to be sent what comes.
+    #[must_use]
+    pub fn is_open(&self) -> bool {
+        self.open
     }
 
     /// What to send the interface for the `active` channel: nothing while
@@ -91,6 +103,10 @@ impl Console {
             Some((sent, last)) if sent == channel => (false, Some(last)),
             _ => (true, None),
         };
+        if !replace && !self.changed {
+            return Vec::new();
+        }
+        self.changed = false;
         let mut entries: Vec<&(u64, ConsoleEntry)> = self
             .channels
             .get(&channel)

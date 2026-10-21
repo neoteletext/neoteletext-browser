@@ -236,9 +236,21 @@ impl Settings {
     /// # Errors
     /// When the folder cannot be made or the file written or renamed.
     pub fn save(&self, folder: &Path) -> std::io::Result<()> {
+        use std::io::Write as _;
         std::fs::create_dir_all(folder)?;
         let temporary = folder.join(TEMPORARY_NAME);
-        std::fs::write(&temporary, self.text())?;
+        let mut options = std::fs::OpenOptions::new();
+        options.write(true).create(true).truncate(true);
+        // The user's bookmarks and proxy are theirs alone.
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt as _;
+            options.mode(0o600);
+        }
+        let mut file = options.open(&temporary)?;
+        file.write_all(self.text().as_bytes())?;
+        file.sync_all()?;
+        drop(file);
         std::fs::rename(&temporary, folder.join(FILE_NAME))
     }
 }
@@ -336,6 +348,12 @@ mod tests {
         let first = Settings { volume: 10, ..Settings::default() };
         first.save(&folder).unwrap();
         assert_eq!(Settings::load(&folder).unwrap().0, first);
+        // The user's alone: before this the file took the default mode.
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt as _;
+            assert_eq!(std::fs::metadata(folder.join(FILE_NAME)).unwrap().permissions().mode() & 0o777, 0o600);
+        }
         // A temporary file left by a crash before the rename is ignored.
         std::fs::write(folder.join(TEMPORARY_NAME), "neoteletext-settings 1\nvolume 9").unwrap();
         assert_eq!(Settings::load(&folder).unwrap().0, first);

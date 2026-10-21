@@ -432,3 +432,7 @@ To run it: `neoteletext-site build target/sites <recordings>...`, `neoteletext-s
 2. **Proof N2: one core, two back ends.** The tab's interface core drawing through `vello_cpu` in a window and through `embedded-graphics` into an in-memory display built without the standard library.
 3. **Proof N3: platforms.** The `vello_cpu` version built and run on Linux and Windows, and in iOS and Android simulators, with frame times at phone resolutions and at a display scale of 2.
 4. **On the owner's decisions** (section 9): update `prototypes/docs/architecture.md`, `prototypes/docs/requirements.md` and `prototypes/docs/security-analysis.md` as section 11 lists.
+
+### 12.5 Efficiency, then sandboxes on every platform (21 and 22 October 2026)
+
+An analysis of the processes' interaction, memory, latency, threads and polling (21 October 2026) led to decision 53: the sound device stopped while silent, frames only for what is drawn, one flush per event, the trusted core's computed deadline and its outbox writer threads, the fetcher's threaded connects, flash wakes from used rates only, and the engine's E.103. A security review of the same day led to the macOS profiles from "deny everything" and, on the owner's instruction the next day, to decision 52 and the `confine` crate for Linux and Windows (`sandboxing.md`). Both were built and measured before being recorded, as `DEVELOPMENT.md` section 2.2 allows.

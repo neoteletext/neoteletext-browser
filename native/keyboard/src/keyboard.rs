@@ -1,6 +1,6 @@
 //! The phone keyboard itself: the instance, the QR, pairing and the keys.
 
-use std::io::{self, BufReader, BufWriter};
+use std::io::{self, BufReader, BufWriter, Write};
 use std::process::ExitCode;
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
@@ -44,18 +44,18 @@ fn clock(started: Instant) -> u32 {
 
 fn run(relay: &str, pin: bool, proxy: Option<Proxy>) -> Result<(), String> {
     let mut output = BufWriter::new(io::stdout().lock());
-    let mut send = |message: &FromKeyboard| write_to_core(&mut output, message).map_err(|error| error.to_string());
-    send(&FromKeyboard::State(PhoneState::Preparing))?;
+    let send = |output: &mut BufWriter<io::StdoutLock<'_>>, message: &FromKeyboard| write_to_core(output, message).map_err(|error| error.to_string());
+    send(&mut output, &FromKeyboard::State(PhoneState::Preparing))?;
     let config = ScreenConfig { name: NAME.into(), layout: Layout::Terminal, pin, rejoin_seconds: Some(REJOIN_SECONDS) };
     let mut screen = match Screen::create(relay, config, proxy) {
         Ok(screen) => screen,
         Err(error) => {
-            send(&FromKeyboard::State(PhoneState::Finished))?;
+            send(&mut output, &FromKeyboard::State(PhoneState::Finished))?;
             return Err(format!("no phone keyboard: {error}"));
         }
     };
     let matrix = Matrix::new(&screen.join().url, Correction::Medium).map_err(|error| error.to_string())?;
-    send(&FromKeyboard::Join { qr: qr(&matrix), pin: screen.join().pin.clone() })?;
+    send(&mut output, &FromKeyboard::Join { qr: qr(&matrix), pin: screen.join().pin.clone() })?;
     // The trusted core's Finish, or the end of its pipe.
     let (finish, finished) = mpsc::channel();
     std::thread::spawn(move || {
@@ -69,12 +69,14 @@ fn run(relay: &str, pin: bool, proxy: Option<Proxy>) -> Result<(), String> {
         if let Ok(asked) = finished.try_recv() {
             if asked {
                 let _ = screen.finish();
-                send(&FromKeyboard::State(PhoneState::Finished))?;
+                send(&mut output, &FromKeyboard::State(PhoneState::Finished))?;
             } else {
                 screen.close();
             }
             return Ok(());
         }
+        // What the last events produced goes before waiting.
+        output.flush().map_err(|error| error.to_string())?;
         let events = screen.poll(POLL).map_err(|error| error.to_string())?;
         for event in events {
             let message = match event {
@@ -84,7 +86,7 @@ fn run(relay: &str, pin: bool, proxy: Option<Proxy>) -> Result<(), String> {
                 Event::PinFailed(left) => FromKeyboard::State(PhoneState::PinFailed(u8::try_from(left).unwrap_or(u8::MAX))),
                 Event::Locked => FromKeyboard::State(PhoneState::Locked),
                 Event::Finished => {
-                    send(&FromKeyboard::State(PhoneState::Finished))?;
+                    send(&mut output, &FromKeyboard::State(PhoneState::Finished))?;
                     return Ok(());
                 }
                 // At most 120 input units a second, a character of text
@@ -111,14 +113,14 @@ fn run(relay: &str, pin: bool, proxy: Option<Proxy>) -> Result<(), String> {
                         if !limiter.allow(clock(started), false) {
                             break;
                         }
-                        send(&FromKeyboard::Key { down: true, name: key.to_owned() })?;
-                        send(&FromKeyboard::Key { down: false, name: key.to_owned() })?;
+                        send(&mut output, &FromKeyboard::Key { down: true, name: key.to_owned() })?;
+                        send(&mut output, &FromKeyboard::Key { down: false, name: key.to_owned() })?;
                     }
                     continue;
                 }
                 Event::Down(_) | Event::Up(_) => continue,
             };
-            send(&message)?;
+            send(&mut output, &message)?;
         }
     }
 }
@@ -148,7 +150,14 @@ fn arguments(given: impl IntoIterator<Item = String>) -> Result<Arguments, Strin
 
 /// Runs the phone keyboard until the trusted core ends it.
 pub fn main() -> ExitCode {
-    match arguments(std::env::args().skip(1)).and_then(|read| run(&read.relay, read.pin, read.proxy)) {
+    // First, before any thread: the network and nothing else. What
+    // confined it is not printed: this process prints one thing, why it
+    // stopped (REQ-INT-137).
+    match confine::apply(confine::Role::Network)
+        .map(drop)
+        .and_then(|()| arguments(std::env::args().skip(1)))
+        .and_then(|read| run(&read.relay, read.pin, read.proxy))
+    {
         Ok(()) => ExitCode::SUCCESS,
         Err(error) => {
             eprintln!("neoteletext-keyboard: {error}");

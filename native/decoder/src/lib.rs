@@ -40,7 +40,7 @@ use neoteletext_core::consts::{COLUMNS, FLASH_CYCLE_US, FLASH_UNITS, ROWS};
 use neoteletext_core::consts::{ENHANCEMENT_PACKETS_LEVEL_35, MAGAZINES, MOT_PACKETS, PAGE_COMPLETION_TIMEOUT_US};
 use neoteletext_core::fsm::PageState;
 use neoteletext_core::glyphs::GlyphSet;
-use neoteletext_core::level1::{DisplayOptions, Glyph, Grid, build_grid};
+use neoteletext_core::level1::{DisplayOptions, FlashRate, Glyph, Grid, build_grid};
 use neoteletext_core::packet::{Packet, PacketMeta};
 use neoteletext_core::render::{FlashPhase, IndexBuffer, IndexFormat, RenderOptions, render_screen};
 use neoteletext_core::types::{Instant, PageAddress, SubCode};
@@ -102,9 +102,10 @@ pub struct Rendered {
     pub palette: Vec<[u8; 3]>,
     /// One palette index per dot, row by row.
     pub indices: Vec<u8>,
-    /// The flash phase it was drawn in, when the page has flashing cells:
-    /// it is drawn again only when the phase changes.
-    pub flash: Option<FlashPhase>,
+    /// The flash phase it was drawn in and the rates its cells flash at,
+    /// when the page has flashing cells: it is drawn again only when the
+    /// phase of a rate it uses changes.
+    pub flash: Option<(FlashPhase, FlashRates)>,
     /// The links found in the page (`hyperlinks.md` section 6).
     #[cfg(feature = "links")]
     pub links: Found,
@@ -518,13 +519,22 @@ impl Engine {
     /// [`Engine::now_us`]'s clock.
     #[must_use]
     pub fn render_at(&self, page: u16, now_us: u64) -> Option<Rendered> {
+        self.render_into(page, now_us, Vec::new())
+    }
+
+    /// [`Engine::render_at`] into `indices`, a page's worth of room kept
+    /// from an earlier frame: a flashing page is rendered seven times a
+    /// second, and need not take 240 KB afresh each time.
+    #[must_use]
+    pub fn render_into(&self, page: u16, now_us: u64, mut indices: Vec<u8>) -> Option<Rendered> {
         page_index(page)?;
         #[cfg_attr(not(feature = "links"), allow(unused_variables, reason = "the sub-code finds a page's link lines"))]
         let (grid, subcode) = self.grid(page)?;
         let config = self.decoder.config();
         let phase = FlashPhase::at(Instant(now_us));
         let render = RenderOptions::resolved(config, false, phase).with_underline(false);
-        let mut indices = vec![0_u8; PAGE_DOTS];
+        indices.clear();
+        indices.resize(PAGE_DOTS, 0);
         let mut buffer = IndexBuffer { format: IndexFormat::Bits8, data: &mut indices, stride: usize::from(PAGE_WIDTH) };
         render_screen(&grid, ALL_ROWS, &GLYPHS, render, &mut buffer).ok()?;
         let palette: Vec<[u8; 3]> = colour_map_palette(&grid.colour_map, PICTURE).iter().map(|colour| [colour.r, colour.g, colour.b]).collect();
@@ -533,11 +543,11 @@ impl Engine {
             let (candidates, numbers) = links::find(&grid, &palette, self.lines.get(page, subcode));
             Found { candidates, numbers }
         };
-        let flashes = grid.cells.iter().flatten().any(|cell| cell.flash);
+        let rates = FlashRates::of(grid.cells.iter().flatten().filter(|cell| cell.flash).map(|cell| cell.attributes.flash_rate()));
         Some(Rendered {
             palette,
             indices,
-            flash: flashes.then_some(phase),
+            flash: (!rates.is_empty()).then_some((phase, rates)),
             #[cfg(feature = "links")]
             links,
         })
@@ -584,20 +594,52 @@ pub struct Changed {
     pub everything: bool,
 }
 
+/// The flash rates of the engine's decision E.48, in the order of
+/// [`FlashRates`]' bits.
+const RATES: [FlashRate; 4] = [FlashRate::Slow, FlashRate::FastPhase1, FlashRate::FastPhase2, FlashRate::FastPhase3];
+
+/// The set of flash rates a page's cells use: one bit for each of
+/// [`RATES`].
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct FlashRates(u8);
+
+impl FlashRates {
+    /// The rates of `cells`.
+    pub fn of(cells: impl Iterator<Item = FlashRate>) -> Self {
+        Self(cells.fold(0, |used, rate| used | RATES.iter().position(|&each| each == rate).map_or(0, |index| 1_u8 << index)))
+    }
+
+    fn is_empty(self) -> bool {
+        self.0 == 0
+    }
+
+    fn union(self, other: Self) -> Self {
+        Self(self.0 | other.0)
+    }
+
+    /// Whether any of these rates is in a different phase in `drawn` and
+    /// `now`: whether a page drawn in `drawn` looks different at `now`.
+    fn differ(self, drawn: FlashPhase, now: FlashPhase) -> bool {
+        RATES.iter().enumerate().any(|(index, &rate)| self.0 & (1_u8 << index) != 0 && drawn.is_on(rate) != now.is_on(rate))
+    }
+}
+
 /// The shown pages with flashing cells, each with the flash phase it was
-/// last drawn in: the decoder wakes for flash only when one of them is
-/// shown, and draws a page again only when its phase changes (requirement
-/// 9.7).
+/// last drawn in and the rates it uses: the decoder wakes for flash only
+/// when one of them is shown, and only when a rate one of them uses
+/// changes phase, and draws a page again only when a rate it uses did
+/// (requirement 9.7). A page with slow flash alone is drawn twice a
+/// second, not seven times.
 #[derive(Debug, Default)]
 pub struct Flashing {
-    pages: BTreeMap<u16, FlashPhase>,
+    pages: BTreeMap<u16, (FlashPhase, FlashRates)>,
 }
 
 impl Flashing {
     /// Records how `page` was last drawn.
     pub fn drawn(&mut self, page: u16, rendered: &Rendered) {
         match rendered.flash {
-            Some(phase) => self.pages.insert(page, phase),
+            Some(flash) => self.pages.insert(page, flash),
             None => self.pages.remove(&page),
         };
     }
@@ -607,27 +649,32 @@ impl Flashing {
         self.pages.retain(|page, _| shown.contains(page));
     }
 
-    /// The flashing pages whose phase at `now_us` differs from the one they
-    /// were drawn in.
+    /// The flashing pages that look different at `now_us` from how they
+    /// were drawn.
     #[must_use]
     pub fn due(&self, now_us: u64) -> Vec<u16> {
         let phase = FlashPhase::at(Instant(now_us));
-        self.pages.iter().filter(|&(_, &drawn)| drawn != phase).map(|(&page, _)| page).collect()
+        self.pages.iter().filter(|&(_, &(drawn, rates))| rates.differ(drawn, phase)).map(|(&page, _)| page).collect()
     }
 
-    /// When the flash phase next changes, if any shown page flashes: the
-    /// start of the next of the twelve units of the one-second cycle (the
-    /// engine's decision E.48).
+    /// When a rate some shown page uses next changes phase, if any shown
+    /// page flashes: the start of that one of the twelve units of the
+    /// one-second cycle (the engine's decision E.48).
     #[must_use]
     pub fn next_us(&self, now_us: u64) -> Option<u64> {
-        if self.pages.is_empty() {
+        let used = self.pages.values().fold(FlashRates::default(), |used, &(_, rates)| used.union(rates));
+        if used.is_empty() {
             return None;
         }
         let units = u64::from(FLASH_UNITS);
         let cycle = now_us.checked_div(FLASH_CYCLE_US).unwrap_or(0).saturating_mul(FLASH_CYCLE_US);
         let within = now_us.saturating_sub(cycle);
         let unit = within.saturating_mul(units).checked_div(FLASH_CYCLE_US).unwrap_or(0);
-        let next = unit.saturating_add(1).saturating_mul(FLASH_CYCLE_US).div_ceil(units);
+        let phase = FlashPhase::at_unit(u8::try_from(unit).unwrap_or(0));
+        // The first later unit whose phase differs for a rate in use; every
+        // rate changes within a cycle, so one is found.
+        let ahead = (1..=units).find(|&ahead| used.differ(phase, FlashPhase::at_unit(u8::try_from(unit.saturating_add(ahead)).unwrap_or(0)))).unwrap_or(1);
+        let next = unit.saturating_add(ahead).saturating_mul(FLASH_CYCLE_US).div_ceil(units);
         Some(cycle.saturating_add(next))
     }
 }
@@ -1047,9 +1094,13 @@ LT,5,0,7,web:https://www.example.invalid/\nLK,101,https://sport.invalid/\n";
         assert_eq!(flashing.next_us(start), None, "a steady page never wakes it");
         flashing.drawn(0x101, &engine.render_at(0x101, start).unwrap());
         let unit = FLASH_CYCLE_US.div_ceil(u64::from(FLASH_UNITS));
-        assert_eq!(flashing.next_us(start), Some(start + unit), "the next flash unit");
-        // Slow flash stays on until unit 9: nothing to draw before then.
+        // Slow flash, the only rate the page uses, stays on until unit 9:
+        // the fast rates change phase before then, but change nothing on
+        // this page, so the decoder sleeps until unit 9. Before this it
+        // woke at every unit and drew the page at seven of the twelve.
+        assert_eq!(flashing.next_us(start), Some(start + (9 * FLASH_CYCLE_US).div_ceil(u64::from(FLASH_UNITS))), "unit 9, where the slow flash turns off");
         assert_eq!(flashing.due(start + unit), [] as [u16; 0]);
+        assert_eq!(flashing.due(start + 2 * unit + 1), [] as [u16; 0], "the fast rates' change at unit 2 is not this page's");
         let off = start + 9 * FLASH_CYCLE_US / u64::from(FLASH_UNITS) + 1;
         assert_eq!(flashing.due(off), [0x101]);
         flashing.retain(&[0x100]);

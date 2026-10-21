@@ -88,7 +88,7 @@ fn platform(address: &str) -> Result<(), OpenError> {
         command.arg("-u");
         command
     } else {
-        Command::new("xdg-open")
+        Command::new("/usr/bin/xdg-open")
     };
     let mut child =
         command.arg(address).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null()).spawn().map_err(|error| OpenError::Failed(error.to_string()))?;

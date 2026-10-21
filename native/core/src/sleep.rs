@@ -41,8 +41,8 @@ pub struct Sleep {
 impl Sleep {
     /// Keeps `message` for the channel's next decoder: its data, not its
     /// requests.
-    pub fn keep(&mut self, channel: u32, message: &ToDecoder) {
-        let bytes = match message {
+    pub fn keep(&mut self, channel: u32, message: ToDecoder) {
+        let bytes = match &message {
             ToDecoder::Data(bytes) | ToDecoder::Whole { bytes, .. } => bytes.len(),
             ToDecoder::End => 0,
             _ => return,
@@ -57,7 +57,7 @@ impl Sleep {
             kept.messages = Vec::new();
             return;
         }
-        kept.messages.push(message.clone());
+        kept.messages.push(message);
     }
 
     /// Whether everything the channel's decoder was given is kept: false
@@ -137,12 +137,12 @@ mod tests {
         let start = Instant::now();
         let mut sleep = Sleep::default();
         let data = ToDecoder::Data(vec![1; 10]);
-        sleep.keep(3, &data);
-        sleep.keep(3, &ToDecoder::Showing(vec![0x100]));
-        sleep.keep(3, &ToDecoder::End);
+        sleep.keep(3, data.clone());
+        sleep.keep(3, ToDecoder::Showing(vec![0x100]));
+        sleep.keep(3, ToDecoder::End);
         assert_eq!(sleep.kept(3), [data, ToDecoder::End], "data, not requests");
         assert!(sleep.has_everything(3));
-        sleep.keep(3, &ToDecoder::Whole { packets: false, pushed: true, bytes: vec![0; MAX_KEPT_BYTES] });
+        sleep.keep(3, ToDecoder::Whole { packets: false, pushed: true, bytes: vec![0; MAX_KEPT_BYTES] });
         assert_eq!(sleep.kept(3), [] as [ToDecoder; 0]);
         assert!(!sleep.has_everything(3));
         assert!(sleep.awake(3, None, start), "what it showed would be lost");

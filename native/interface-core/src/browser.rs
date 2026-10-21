@@ -390,6 +390,20 @@ struct Regions {
     cells: Rect,
 }
 
+impl Regions {
+    /// Forgets the last frame's regions, keeping the lists' room for the
+    /// next frame's.
+    fn clear(&mut self) {
+        let mut tabs = core::mem::take(&mut self.tabs);
+        let mut banks = core::mem::take(&mut self.banks);
+        let mut rows = core::mem::take(&mut self.rows);
+        tabs.clear();
+        banks.clear();
+        rows.clear();
+        *self = Self { tabs, banks, rows, ..Self::default() };
+    }
+}
+
 /// The whole browser window: tabs, trusted strip, banks, page list, page
 /// area and overview. It draws through a [`Canvas`] and reports what the
 /// user did as [`Output`]s; it holds no state the trusted core owns.
@@ -596,12 +610,21 @@ impl Browser {
     /// second for the overview's dots, which need no more.
     #[must_use]
     pub fn frame_interval(&self, now: u64) -> Option<u64> {
-        let since_update = |limit: u64| self.updates.iter().any(|&(_, at)| now.saturating_sub(at) < limit);
+        // An update glows and is marked with its age where its page is
+        // drawn: on the wall and in the list, which show the bank. The
+        // overview's ring bursts for every page, while the overview shows.
+        let in_bank = |index: usize| index / PAGES_PER_BANK == self.bank;
+        let since_update =
+            |limit: u64, everywhere: bool| self.updates.iter().any(|&(index, at)| (everywhere || in_bank(index)) && now.saturating_sub(at) < limit);
+        let rings = !self.overview_folded && !self.console.open();
         if self.wall.animating(now) {
             Some(SMOOTH_FRAME_MILLISECONDS)
-        } else if self.pulses.iter().any(|&(_, start)| now.saturating_sub(start) < PULSE_MILLISECONDS) || since_update(UPDATE_GLOW_MILLISECONDS) {
+        } else if self.pulses.iter().any(|&(_, start)| now.saturating_sub(start) < PULSE_MILLISECONDS)
+            || since_update(UPDATE_GLOW_MILLISECONDS, false)
+            || (rings && since_update(UPDATE_RING_MILLISECONDS, true))
+        {
             Some(PULSE_FRAME_MILLISECONDS)
-        } else if since_update(UPDATE_MARK_MILLISECONDS) {
+        } else if since_update(UPDATE_MARK_MILLISECONDS, false) {
             // The "Updated 12s" marks count whole seconds.
             Some(MARK_FRAME_MILLISECONDS)
         } else {
@@ -1089,7 +1112,7 @@ impl Browser {
 
     /// Draws the whole window; `width` and `height` are logical pixels.
     pub fn draw<C: Canvas + ?Sized>(&mut self, canvas: &mut C, width: f64, height: f64, now: u64) {
-        self.regions = Regions::default();
+        self.regions.clear();
         canvas.fill(Rect::new(0.0, 0.0, width, height), 0.0, WINDOW);
         self.body = Rect::new(MARGIN, BODY_TOP, width - MARGIN, height - MARGIN);
         // The console docks where the overview is.
@@ -1106,16 +1129,21 @@ impl Browser {
         let list = Rect::new(banks.x1 + MARGIN, BODY_TOP, banks.x1 + MARGIN + LIST_WIDTH, body_bottom);
         let zoom = Rect::new(list.x1 + MARGIN, BODY_TOP, width - MARGIN, body_bottom);
 
-        let pages: Vec<WallPage> = self
-            .bank_pages()
-            .into_iter()
+        // The titles are borrowed from the channel while the wall draws:
+        // the fields are borrowed apart.
+        let first = self.bank * PAGES_PER_BANK;
+        let (channel, updates) = (&self.channel, &self.updates);
+        let pages: Vec<WallPage<'_>> = (first..first + PAGES_PER_BANK)
             .filter_map(|index| {
-                let info = self.channel.pages.get(index)?.as_ref()?;
-                Some(WallPage { key: self.page_key(index)?, title: info.title.clone(), updated: self.updated_at(index) })
+                let info = channel.pages.get(index)?.as_ref()?;
+                let key = PageKey { channel: channel.channel, page: page_number(index)? };
+                let updated_at = updates.iter().find(|&&(which, _)| which == index).map(|&(_, at)| at);
+                Some(WallPage { key, title: &info.title, updated: updated_at })
             })
             .collect();
         let selected = self.selected.and_then(|index| self.page_key(index));
         self.wall.draw(canvas, zoom, &pages, selected, now);
+        drop(pages);
         #[cfg(feature = "links")]
         self.draw_links(canvas);
         #[cfg(feature = "interaction")]
@@ -1507,6 +1535,14 @@ impl Browser {
 
         let cells = Rect::new(panel.x0 + PADDING + AXIS_WIDTH, heading.y1, panel.x1 - PADDING, panel.y1 - PADDING);
         self.regions.cells = cells;
+        // Which cells are on screen, looked up once for each rather than
+        // searched for in the list of visible pages 800 times.
+        let mut on_screen = [false; PAGES];
+        for key in self.visible.iter().filter(|key| key.channel == self.channel.channel) {
+            if let Some(cell) = page_index(key.page).and_then(|index| on_screen.get_mut(index)) {
+                *cell = true;
+            }
+        }
         #[allow(clippy::cast_precision_loss, reason = "small counts")]
         let (width, height) = (cells.width() / PAGES_PER_BANK as f64, cells.height() / BANKS as f64);
         for (bank, &bank_colour) in BANK_COLOURS.iter().enumerate() {
@@ -1528,7 +1564,7 @@ impl Browser {
                     _ => CELL_EMPTY,
                 };
                 canvas.fill(cell, 0.0, colour);
-                if self.page_key(index).is_some_and(|key| self.visible.contains(&key)) {
+                if on_screen.get(index).copied().unwrap_or(false) {
                     outline(canvas, cell, WHITE);
                 }
                 if self.selected == Some(index) {
@@ -1921,6 +1957,24 @@ mod tests {
         assert!(browser.animating(500));
         assert!(!browser.animating(100 + PULSE_MILLISECONDS));
         assert_eq!(browser.channel.counts().1, 1);
+    }
+
+    /// An update glows and is marked with its age where its page is drawn,
+    /// the wall and the list, which show one bank: a page of another bank
+    /// asks for frames only while its ring bursts in the overview. Before
+    /// this, any update anywhere drew the whole window ten times a second
+    /// for three seconds and once a second for a minute.
+    #[test]
+    fn an_update_in_another_bank_asks_for_frames_only_while_its_ring_bursts() {
+        let (mut browser, _) = browser();
+        assert_eq!(browser.bank, 0);
+        browser.page_updated(7, 0x401, 100);
+        assert_eq!(browser.frame_interval(200), Some(PULSE_FRAME_MILLISECONDS), "the ring in the overview");
+        assert_eq!(browser.frame_interval(100 + UPDATE_RING_MILLISECONDS), None, "nothing of it is on screen");
+        browser.page_updated(7, 0x101, 100);
+        assert_eq!(browser.frame_interval(100 + UPDATE_RING_MILLISECONDS), Some(PULSE_FRAME_MILLISECONDS), "the glow on the wall");
+        assert_eq!(browser.frame_interval(100 + UPDATE_GLOW_MILLISECONDS), Some(MARK_FRAME_MILLISECONDS), "the age mark on the wall");
+        assert_eq!(browser.frame_interval(100 + UPDATE_MARK_MILLISECONDS), None, "the mark has gone");
     }
 
     #[test]

@@ -35,7 +35,7 @@ mod transport;
 use std::collections::VecDeque;
 use std::collections::hash_map::RandomState;
 use std::hash::{BuildHasher, Hasher};
-use std::io::{self, BufWriter};
+use std::io::{self, BufWriter, Write};
 use std::net::IpAddr;
 use std::process::ExitCode;
 use std::sync::Arc;
@@ -61,6 +61,22 @@ const READ_CHUNK: usize = 16 * 1024;
 // An exchange reports an address the engine accepted, so the protocol's
 // bound must hold the engine's longest.
 const _: () = assert!(protocol::fetcher::MAX_EXCHANGE_URL >= neoteletext_web::consts::MAX_URL_LENGTH);
+
+/// The wake that ends the loop's wait: none at once while the loop is
+/// busy; otherwise the first to come, an input message the moment it
+/// arrives, or none once the agent's timer is due; and the end once the
+/// wakers are gone.
+fn wait_for_wake(woken: &mpsc::Receiver<Wake>, busy: bool, next_tick: Option<Instant>, now: Instant) -> Option<Wake> {
+    match (busy, next_tick) {
+        (true, _) => woken.try_recv().ok(),
+        (false, Some(at)) => match woken.recv_timeout(Duration::from_micros(at.0.saturating_sub(now.0))) {
+            Ok(wake) => Some(wake),
+            Err(RecvTimeoutError::Timeout) => None,
+            Err(RecvTimeoutError::Disconnected) => Some(Wake::Ended),
+        },
+        (false, None) => Some(woken.recv().unwrap_or(Wake::Ended)),
+    }
+}
 
 /// What ends the loop's wait: it sleeps until one comes, or until the
 /// agent's next timer (REQ-INT-135).
@@ -319,17 +335,9 @@ fn run(channel: &str, allowed: &[IpAddr], proxy: Option<Proxy>) -> Result<(), St
             busy = true;
             agent.handle(clock(), Input::Tick, &mut |out| collect(out, &mut actions));
         }
-        // An input message goes the moment it arrives; otherwise the loop
-        // sleeps until a key, a socket or the agent's timer wakes it.
-        let first = match (busy, next_tick) {
-            (true, _) => woken.try_recv().ok(),
-            (false, Some(at)) => match woken.recv_timeout(Duration::from_micros(at.0.saturating_sub(clock().0))) {
-                Ok(wake) => Some(wake),
-                Err(RecvTimeoutError::Timeout) => None,
-                Err(RecvTimeoutError::Disconnected) => return Ok(()),
-            },
-            (false, None) => Some(woken.recv().map_err(|error| error.to_string())?),
-        };
+        // What this turn produced goes before waiting.
+        output.flush().map_err(|error| error.to_string())?;
+        let first = wait_for_wake(&woken, busy, next_tick, clock());
         for wake in first.into_iter().chain(std::iter::from_fn(|| woken.try_recv().ok())) {
             match wake {
                 #[cfg(feature = "interaction")]
@@ -385,6 +393,14 @@ fn arguments(given: impl IntoIterator<Item = String>) -> Result<Arguments, Strin
 }
 
 fn main() -> ExitCode {
+    // First, before any thread: the network and nothing else (requirement 3.3).
+    match confine::apply(confine::Role::Network) {
+        Ok(report) => eprintln!("neoteletext-fetcher: confined: {report}"),
+        Err(error) => {
+            eprintln!("neoteletext-fetcher: {error}");
+            return ExitCode::FAILURE;
+        }
+    }
     let read = match arguments(std::env::args().skip(1)) {
         Ok(read) => read,
         Err(error) => {

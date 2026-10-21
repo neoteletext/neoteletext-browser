@@ -18,6 +18,7 @@ interaction = ["protocol/interaction", "interface-core/interaction", "dep:neotel
 phone-keyboard = ["interaction", "protocol/phone-keyboard", "interface-core/phone-keyboard"]
 
 [dependencies]
+confine.workspace = true
 neoteletext-input = { workspace = true, optional = true }
 unicode-normalization = { workspace = true, optional = true }
 interface-core.workspace = true

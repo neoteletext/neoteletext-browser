@@ -36,9 +36,10 @@ mod session;
 mod source;
 
 use std::collections::BTreeMap;
-use std::io::{BufReader, BufWriter, Write};
+use std::ffi::OsString;
+use std::io::{BufReader, Write};
 use std::path::{Path, PathBuf};
-use std::process::{Child, ChildStdin, Command, ExitCode, Stdio};
+use std::process::ExitCode;
 use std::sync::mpsc::{self, Sender};
 use std::thread;
 use std::time::Duration;
@@ -50,11 +51,13 @@ use protocol::fetcher::{FromFetcher, MAX_NOTICE, Origin, read_from_fetcher};
 use protocol::settings::{ProxyView, SettingChange, SettingsView};
 use protocol::{ToCore, ToInterface, clean, read_from_interface, write_to_interface};
 
+use confine::{Process, Role};
 use neoteletext::console::{Console, exchange_text};
 use neoteletext::frames;
 use neoteletext::hearing::{Hearing, Send};
 #[cfg(feature = "links")]
 use neoteletext::links::{Channel as LinkChannel, Follow, Links, Refusal};
+use neoteletext::outbox::Outbox;
 use neoteletext::settings::{self as stored, Settings};
 use neoteletext::sleep::Sleep;
 #[cfg(feature = "links")]
@@ -89,16 +92,6 @@ const SLEEP_CHECK: Duration = Duration::from_secs(60);
 /// section 3).
 const NOTICE_TIME: Duration = Duration::from_secs(10);
 
-/// The interface's and the decoders' sandbox on macOS: no network and no
-/// writing to files. Proof A showed the system webview cannot run like
-/// this; neither of these has a webview (design section 5.2).
-#[cfg(target_os = "macos")]
-const SANDBOX: &str = "(version 1)
-(allow default)
-(deny network*)
-(deny file-write*)
-(allow file-write-data (literal \"/dev/null\"))";
-
 enum Event {
     Decoded(u32, u64, FromDecoder),
     Fetched(u32, u64, FromFetcher),
@@ -106,9 +99,6 @@ enum Event {
     DecoderEnded(u32, u64, Option<String>),
     Intent(ToCore),
     InterfaceEnded(Option<String>),
-    Load,
-    /// Time to see which tabs may sleep (decision 47).
-    Sleep,
     /// The phone keyboard process said something, untrusted.
     #[cfg(feature = "phone-keyboard")]
     Phone(protocol::keyboard::FromKeyboard),
@@ -117,21 +107,27 @@ enum Event {
     PhoneEnded(Option<String>),
 }
 
+/// The helpers the trusted core starts for channels, beside its own program.
+struct Programs {
+    decoder: PathBuf,
+    fetcher: PathBuf,
+}
+
 struct Decoder {
-    child: Child,
-    input: BufWriter<ChildStdin>,
+    child: Process,
+    input: Outbox,
     /// Which of the channel's decoders this is: one put to sleep may still
     /// report after the next has started, and is then not listened to.
     generation: u64,
 }
 
 struct Fetcher {
-    child: Child,
+    child: Process,
     /// As [`Decoder::generation`].
     generation: u64,
     /// The only thing a fetcher is given: input messages (REQ-INT-133).
     #[cfg(feature = "interaction")]
-    input: Option<BufWriter<ChildStdin>>,
+    input: Option<Outbox>,
 }
 
 fn sibling(name: &str) -> Result<PathBuf, String> {
@@ -145,49 +141,33 @@ fn program_file(name: &str) -> String {
     format!("{name}{}", std::env::consts::EXE_SUFFIX)
 }
 
-fn spawn(command: &mut Command, what: &str) -> Result<Child, String> {
-    command.stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::inherit()).spawn().map_err(|error| format!("cannot start the {what}: {error}"))
+/// Starts a helper confined as its role says (decision 52), with its
+/// pipes and an environment of only what it needs: the trusted core's
+/// environment is the user's, and a decoder or a fetcher has no business
+/// with any of it; the interface gets the window system's.
+fn spawn(program: &Path, arguments: &[OsString], role: Role, local_network: bool, what: &str) -> Result<Process, String> {
+    let environment = confine::environment(role);
+    let process = confine::spawn(&confine::Spawn { program, arguments, role, environment: &environment, local_network })
+        .map_err(|error| format!("cannot start the {what}: {error}"))?;
+    eprintln!("neoteletext: the {what} started confined: {}", process.report);
+    Ok(process)
 }
 
-/// The fetcher's sandbox on macOS: the network, which is its job, and no
-/// writing to files.
-#[cfg(target_os = "macos")]
-const FETCHER_SANDBOX: &str = "(version 1)
-(allow default)
-(deny file-write*)
-(allow file-write-data (literal \"/dev/null\"))";
-
-/// A command that runs `path` with the network but no file writes.
-fn sandboxed_with_network(path: &Path) -> Command {
-    #[cfg(target_os = "macos")]
-    {
-        let mut command = Command::new("/usr/bin/sandbox-exec");
-        command.arg("-p").arg(FETCHER_SANDBOX).arg(path);
-        command
-    }
-    #[cfg(not(target_os = "macos"))]
-    Command::new(path)
-}
-
-/// A command that runs `path` in the sandbox, where there is one.
-fn sandboxed(path: &Path) -> Command {
-    #[cfg(target_os = "macos")]
-    {
-        let mut command = Command::new("/usr/bin/sandbox-exec");
-        command.arg("-p").arg(SANDBOX).arg(path);
-        command
-    }
-    #[cfg(not(target_os = "macos"))]
-    Command::new(path)
+/// Ends a decoder: told to close, and killed rather than waited for, so
+/// one that has stopped reading holds nothing up. It has nothing the
+/// trusted core needs: what it was given is kept (decision 47).
+fn stop_decoder(mut decoder: Decoder) {
+    let _ = write_to_decoder(&mut decoder.input, &ToDecoder::Close);
+    drop(decoder.input);
+    let _ = decoder.child.kill();
+    let _ = decoder.child.wait();
 }
 
 /// Starts a decoder for `channel`, whose messages arrive as events.
 fn start_decoder(path: &Path, channel: u32, generation: u64, store_pages: usize, events: Sender<Event>) -> Result<Decoder, String> {
-    let mut command = sandboxed(path);
-    command.arg("--store-pages").arg(store_pages.to_string());
-    let mut child = spawn(&mut command, "decoder")?;
+    let mut child = spawn(path, &[OsString::from("--store-pages"), OsString::from(store_pages.to_string())], Role::Decoder, false, "decoder")?;
     let output = child.stdout.take().ok_or("the decoder has no output")?;
-    let input = BufWriter::new(child.stdin.take().ok_or("the decoder has no input")?);
+    let input = Outbox::new(child.stdin.take().ok_or("the decoder has no input")?);
     thread::spawn(move || {
         let mut output = BufReader::new(output);
         let end = loop {
@@ -211,15 +191,16 @@ fn start_decoder(path: &Path, channel: u32, generation: u64, store_pages: usize,
 /// A fetcher is given its proxy only here, when it starts: a change of the
 /// proxy reaches fetchers started after it (requirement 19.12).
 fn start_fetcher(path: &Path, address: &str, reach: &Reach, channel: u32, generation: u64, events: Sender<Event>) -> Result<Fetcher, String> {
-    let mut command = sandboxed_with_network(path);
-    command.arg(address);
+    let mut arguments = vec![OsString::from(address)];
     for ip in &reach.allow_local {
-        command.arg("--allow-local").arg(ip);
+        arguments.push(OsString::from("--allow-local"));
+        arguments.push(OsString::from(ip));
     }
     if let Some(proxy) = &reach.proxy {
-        command.arg("--proxy").arg(proxy);
+        arguments.push(OsString::from("--proxy"));
+        arguments.push(OsString::from(proxy));
     }
-    let mut child = spawn(&mut command, "fetcher")?;
+    let mut child = spawn(path, &arguments, Role::Network, !reach.allow_local.is_empty(), "fetcher")?;
     let output = child.stdout.take().ok_or("the fetcher has no output")?;
     thread::spawn(move || {
         let mut output = BufReader::new(output);
@@ -237,7 +218,7 @@ fn start_fetcher(path: &Path, address: &str, reach: &Reach, channel: u32, genera
         let _ = events.send(Event::FetcherEnded(channel, generation, end));
     });
     #[cfg(feature = "interaction")]
-    let input = child.stdin.take().map(BufWriter::new);
+    let input = child.stdin.take().map(Outbox::new);
     Ok(Fetcher {
         child,
         generation,
@@ -246,7 +227,7 @@ fn start_fetcher(path: &Path, address: &str, reach: &Reach, channel: u32, genera
     })
 }
 
-fn read_interface(child: &mut Child, events: Sender<Event>) -> Result<(), String> {
+fn read_interface(child: &mut Process, events: Sender<Event>) -> Result<(), String> {
     let output = child.stdout.take().ok_or("the interface has no output")?;
     thread::spawn(move || {
         let mut input = BufReader::new(output);
@@ -264,17 +245,6 @@ fn read_interface(child: &mut Child, events: Sender<Event>) -> Result<(), String
         let _ = events.send(Event::InterfaceEnded(end));
     });
     Ok(())
-}
-
-fn every(period: Duration, events: Sender<Event>, event: fn() -> Event) {
-    thread::spawn(move || {
-        loop {
-            thread::sleep(period);
-            if events.send(event()).is_err() {
-                return;
-            }
-        }
-    });
 }
 
 /// Where a new fetcher may connect: the local addresses allowed, from the
@@ -329,6 +299,11 @@ struct Core {
     /// When the trusted core started: the clock of links, of typing and of
     /// the console.
     started: std::time::Instant,
+    /// When the channels are next given data, and the other work of that
+    /// pace is done, while any of it is wanted ([`Core::loading_wanted`]).
+    next_load: std::time::Instant,
+    /// When next to see which tabs may sleep (decision 47).
+    next_sleep_check: std::time::Instant,
     /// Typing into a page (`interaction.md`).
     #[cfg(feature = "interaction")]
     typing: neoteletext::typing::Typing,
@@ -337,11 +312,11 @@ struct Core {
     opened: Option<PageKey>,
     /// The phone keyboard process, while one runs.
     #[cfg(feature = "phone-keyboard")]
-    phone: Option<(Child, BufWriter<ChildStdin>)>,
+    phone: Option<(Process, Outbox)>,
     /// What the interface shows of it.
     #[cfg(feature = "phone-keyboard")]
     phone_view: protocol::keyboard::PhoneView,
-    to_interface: BufWriter<ChildStdin>,
+    to_interface: Outbox,
 }
 
 impl Core {
@@ -430,21 +405,22 @@ impl Core {
     fn deliver(&mut self, sends: Vec<Send>) -> Result<(), String> {
         for send in sends {
             match send {
-                Send::Decoder(channel, message) => self.tell(channel, &message),
+                Send::Decoder(channel, message) => self.tell(channel, message),
                 Send::Interface(message) => self.send(&message)?,
             }
         }
         Ok(())
     }
 
-    fn tell(&mut self, channel: u32, message: &ToDecoder) {
+    fn tell(&mut self, channel: u32, message: ToDecoder) {
+        if let Some(decoder) = self.decoders.get_mut(&channel) {
+            // A decoder that cannot be written to has stopped; its reader
+            // reports that, and its pages stay as they were.
+            let _ = write_to_decoder(&mut decoder.input, &message);
+        }
         // Kept whether or not the channel is awake: a sleeping channel's
         // pushed pages are there when it wakes.
         self.sleep.keep(channel, message);
-        let Some(decoder) = self.decoders.get_mut(&channel) else { return };
-        // A decoder that cannot be written to has stopped; its reader
-        // reports that, and its pages stay as they were.
-        let _ = write_to_decoder(&mut decoder.input, message);
     }
 
     /// Starts a decoder for every awake channel that has none, giving it
@@ -507,10 +483,8 @@ impl Core {
         self.typing.channel_gone(id);
         let sends = self.hearing.channel_gone(id);
         self.deliver(sends)?;
-        if let Some(mut decoder) = self.decoders.remove(&id) {
-            let _ = write_to_decoder(&mut decoder.input, &ToDecoder::Close);
-            drop(decoder.input);
-            let _ = decoder.child.wait();
+        if let Some(decoder) = self.decoders.remove(&id) {
+            stop_decoder(decoder);
         }
         Ok(())
     }
@@ -526,10 +500,8 @@ impl Core {
         }
         let pages = pages.saturating_mul(2).min(MAX_STORE_PAGES);
         self.store_pages.insert(id, pages);
-        if let Some(mut decoder) = self.decoders.remove(&id) {
-            let _ = write_to_decoder(&mut decoder.input, &ToDecoder::Close);
-            drop(decoder.input);
-            let _ = decoder.child.wait();
+        if let Some(decoder) = self.decoders.remove(&id) {
+            stop_decoder(decoder);
         }
         self.generation = self.generation.wrapping_add(1);
         let mut decoder = start_decoder(&self.decoder_path, id, self.generation, pages, self.events.clone())?;
@@ -571,9 +543,9 @@ impl Core {
                 // Untouched, a piece at a time; each page file ends its last
                 // line, so the next one starts cleanly.
                 for piece in bytes.chunks(MAX_CHUNK - 1) {
-                    self.tell(channel, &ToDecoder::Data(piece.to_vec()));
+                    self.tell(channel, ToDecoder::Data(piece.to_vec()));
                 }
-                self.tell(channel, &ToDecoder::Data(b"\n".to_vec()));
+                self.tell(channel, ToDecoder::Data(b"\n".to_vec()));
             }
             // A file or a pushed message of a form the fetcher knows goes
             // whole and at once, so its pages show as it arrives
@@ -582,7 +554,7 @@ impl Core {
                 if bytes.len() <= MAX_WHOLE {
                     let packets = matches!(origin, Origin::PushedPackets | Origin::FetchedPackets);
                     let pushed = matches!(origin, Origin::PushedPackets | Origin::PushedPage);
-                    self.tell(channel, &ToDecoder::Whole { packets, pushed, bytes });
+                    self.tell(channel, ToDecoder::Whole { packets, pushed, bytes });
                 }
             }
             FromFetcher::Notice(text) => eprintln!("neoteletext: channel {channel}: {}", clean(&text, MAX_NOTICE)),
@@ -639,7 +611,7 @@ impl Core {
         }
         self.frames = frames::Frames::default();
         if let Some(previous) = self.showing.take() {
-            self.tell(previous, &ToDecoder::Showing(Vec::new()));
+            self.tell(previous, ToDecoder::Showing(Vec::new()));
         }
         let tabs = self.session.tab_infos();
         let active = self.session.active;
@@ -687,7 +659,7 @@ impl Core {
                 self.links.retain(&visible);
                 self.frames.set_visible(visible);
                 self.shown_pages.clone_from(&pages);
-                self.tell(channel, &ToDecoder::Showing(pages));
+                self.tell(channel, ToDecoder::Showing(pages));
                 self.showing = Some(channel);
             }
             ToCore::Cell { key, version, column, row } => {
@@ -795,7 +767,7 @@ impl Core {
             messages.push((tab.channel.id, message));
         }
         for (channel, message) in messages {
-            self.tell(channel, &message);
+            self.tell(channel, message);
         }
     }
 
@@ -848,7 +820,7 @@ impl Core {
             }
             FromDecoder::Frame { page, palette, indices } => {
                 let key = PageKey { channel, page };
-                match self.frames.accept(key, &palette, &indices) {
+                match self.frames.accept(key, palette, indices) {
                     Some((version, png)) => {
                         // The image's links first, so the interface has them
                         // when the image arrives (`hyperlinks.md` section 8.1).
@@ -990,6 +962,77 @@ impl Core {
     fn send_console(&mut self) -> Result<(), String> {
         for update in self.console.updates(self.active_channel()) {
             self.send(&ToInterface::Console(update))?;
+        }
+        Ok(())
+    }
+
+    /// Sends what the last event produced to each process, before waiting
+    /// for the next. A decoder that has stopped reading is replaced, with
+    /// what it was given (decision 47); a fetcher's or the phone's lost
+    /// input is theirs to notice; the interface is the browser.
+    fn flush(&mut self) -> Result<(), String> {
+        let stuck: Vec<u32> = self.decoders.iter_mut().filter_map(|(&id, decoder)| decoder.input.flush().is_err().then_some(id)).collect();
+        for id in stuck {
+            eprintln!("neoteletext: the decoder for channel {id} stopped reading and is replaced");
+            self.put_to_sleep(id)?;
+        }
+        #[cfg(feature = "interaction")]
+        for fetcher in self.fetchers.values_mut() {
+            if let Some(input) = fetcher.input.as_mut() {
+                let _ = input.flush();
+            }
+        }
+        #[cfg(feature = "phone-keyboard")]
+        if let Some((_, input)) = self.phone.as_mut() {
+            let _ = input.flush();
+        }
+        self.to_interface.flush().map_err(|error| format!("cannot write to the interface: {error}"))?;
+        // A replaced decoder starts again at once if its tab is awake.
+        if self.decoders.len() < self.session.tabs.len() {
+            self.match_decoders()?;
+        }
+        Ok(())
+    }
+
+    /// Whether anything is done at the loading pace (`LOAD_INTERVAL`): a
+    /// channel's file still being fed, a channel being waited on to take
+    /// keys, or the console open to be sent what comes.
+    fn loading_wanted(&self) -> bool {
+        let feeding = self.session.tabs.iter().any(|tab| self.decoders.contains_key(&tab.channel.id) && tab.channel.source.has_more());
+        #[cfg(feature = "interaction")]
+        let typing = self.typing.waiting();
+        #[cfg(not(feature = "interaction"))]
+        let typing = false;
+        feeding || typing || self.console.is_open()
+    }
+
+    /// When the trusted core next has timed work, if it has any: it waits
+    /// for an event until then, and with none, for an event alone
+    /// (decision 46).
+    fn next_wake(&self) -> Option<std::time::Instant> {
+        let mut next = Some(self.next_sleep_check);
+        if self.loading_wanted() {
+            next = next.map(|at| at.min(self.next_load));
+        }
+        if let Some((_, until)) = &self.notice {
+            next = next.map(|at| at.min(*until));
+        }
+        next
+    }
+
+    /// The timed work now due.
+    fn tick(&mut self) -> Result<(), String> {
+        let now = std::time::Instant::now();
+        if now >= self.next_load && self.loading_wanted() {
+            self.next_load = now.checked_add(LOAD_INTERVAL).unwrap_or(now);
+            self.load();
+            self.typing_tick()?;
+            self.send_console()?;
+        }
+        self.notice_tick()?;
+        if now >= self.next_sleep_check {
+            self.next_sleep_check = now.checked_add(SLEEP_CHECK).unwrap_or(now);
+            self.match_decoders()?;
         }
         Ok(())
     }
@@ -1146,18 +1189,22 @@ impl Core {
         if self.phone.is_some() {
             return self.send_phone();
         }
-        let mut command = sandboxed_with_network(&sibling(KEYBOARD)?);
-        // Without one, the keyboard process uses qrkeyboard's own relay.
-        if let Ok(relay) = std::env::var(RELAY_VARIABLE) {
-            command.arg(relay);
+        let mut arguments = Vec::new();
+        // Without one, the keyboard process uses qrkeyboard's own relay. Only
+        // an address is passed on: anything else would be read as a flag.
+        if let Ok(relay) = std::env::var(RELAY_VARIABLE)
+            && (relay.starts_with("https://") || relay.starts_with("http://"))
+        {
+            arguments.push(OsString::from(relay));
         }
         // The proxy, given only at its start (requirement 19.12).
         if let Some(proxy) = &self.settings.proxy {
-            command.arg("--proxy").arg(proxy.url());
+            arguments.push(OsString::from("--proxy"));
+            arguments.push(OsString::from(proxy.url()));
         }
-        let mut child = spawn(&mut command, "phone keyboard")?;
+        let mut child = spawn(&sibling(KEYBOARD)?, &arguments, Role::Network, true, "phone keyboard")?;
         let output = child.stdout.take().ok_or("the phone keyboard has no output")?;
-        let input = BufWriter::new(child.stdin.take().ok_or("the phone keyboard has no input")?);
+        let input = Outbox::new(child.stdin.take().ok_or("the phone keyboard has no input")?);
         let events = self.events.clone();
         thread::spawn(move || {
             let mut output = BufReader::new(output);
@@ -1361,15 +1408,16 @@ impl Core {
         allow_local: Vec<String>,
         kept: (Settings, Option<PathBuf>),
         events: Sender<Event>,
-        to_interface: BufWriter<ChildStdin>,
-    ) -> Result<Self, String> {
+        to_interface: Outbox,
+        programs: Programs,
+    ) -> Self {
         let (settings, settings_folder) = kept;
-        Ok(Self {
+        Self {
             session,
             decoders: BTreeMap::new(),
-            decoder_path: sibling(DECODER)?,
+            decoder_path: programs.decoder,
             fetchers: BTreeMap::new(),
-            fetcher_path: sibling(FETCHER)?,
+            fetcher_path: programs.fetcher,
             allow_local,
             settings,
             settings_folder,
@@ -1387,6 +1435,8 @@ impl Core {
             #[cfg(feature = "links")]
             links: Links::default(),
             started: std::time::Instant::now(),
+            next_load: std::time::Instant::now(),
+            next_sleep_check: std::time::Instant::now().checked_add(SLEEP_CHECK).unwrap_or_else(std::time::Instant::now),
             #[cfg(feature = "interaction")]
             typing: neoteletext::typing::Typing::default(),
             #[cfg(feature = "interaction")]
@@ -1396,7 +1446,7 @@ impl Core {
             #[cfg(feature = "phone-keyboard")]
             phone_view: protocol::keyboard::PhoneView { state: protocol::keyboard::PhoneState::Finished, qr: None, pin: None },
             to_interface,
-        })
+        }
     }
 }
 
@@ -1422,6 +1472,39 @@ fn load_settings() -> (Settings, Option<PathBuf>) {
     (settings, folder)
 }
 
+/// Handles one event; `Ok(false)` once the browser is to end.
+fn handle(core: &mut Core, event: Event) -> Result<bool, String> {
+    match event {
+        Event::Decoded(channel, generation, message) => {
+            if core.decoders.get(&channel).map(|decoder| decoder.generation) == Some(generation) {
+                core.decoded(channel, message)?;
+            }
+        }
+        Event::Fetched(channel, generation, message) => {
+            if core.fetchers.get(&channel).map(|fetcher| fetcher.generation) == Some(generation) {
+                core.fetched(channel, message)?;
+            }
+        }
+        Event::FetcherEnded(channel, generation, reason) => {
+            if core.fetchers.get(&channel).map(|fetcher| fetcher.generation) == Some(generation) {
+                eprintln!("neoteletext: the fetcher for channel {channel} stopped{}", reason.map(|reason| format!(": {reason}")).unwrap_or_default());
+                if let Some(mut fetcher) = core.fetchers.remove(&channel) {
+                    let _ = fetcher.child.wait();
+                }
+            }
+        }
+        Event::Intent(intent) => return core.intent(intent),
+        Event::DecoderEnded(channel, generation, reason) => core.decoder_ended(channel, generation, reason)?,
+        #[cfg(feature = "phone-keyboard")]
+        Event::Phone(message) => core.phone_said(message)?,
+        #[cfg(feature = "phone-keyboard")]
+        Event::PhoneEnded(reason) => core.phone_ended(reason)?,
+        Event::InterfaceEnded(None) => return Ok(false),
+        Event::InterfaceEnded(Some(reason)) => return Err(format!("the interface broke the protocol and was closed: {reason}")),
+    }
+    Ok(true)
+}
+
 fn run() -> Result<(), String> {
     let mut addresses = Vec::new();
     let mut allow_local = Vec::new();
@@ -1433,11 +1516,9 @@ fn run() -> Result<(), String> {
             addresses.push(argument);
         }
     }
-    let mut interface = spawn(&mut sandboxed(&sibling(INTERFACE)?), "interface")?;
+    let mut interface = spawn(&sibling(INTERFACE)?, &[], Role::Interface, false, "interface")?;
     let (events, incoming) = mpsc::channel();
     read_interface(&mut interface, events.clone())?;
-    every(LOAD_INTERVAL, events.clone(), || Event::Load);
-    every(SLEEP_CHECK, events.clone(), || Event::Sleep);
 
     let (settings, settings_folder) = load_settings();
     let mut session = Session::new(settings.bookmarks.clone());
@@ -1450,57 +1531,38 @@ fn run() -> Result<(), String> {
         open_home(&mut session, &settings.home)?;
     }
     session.active = 0;
-    let to_interface = BufWriter::new(interface.stdin.take().ok_or("the interface has no input")?);
-    let mut core = Core::new(session, allow_local, (settings, settings_folder), events, to_interface)?;
+    let to_interface = Outbox::new(interface.stdin.take().ok_or("the interface has no input")?);
+    let programs = Programs { decoder: sibling(DECODER)?, fetcher: sibling(FETCHER)? };
+    let mut core = Core::new(session, allow_local, (settings, settings_folder), events, to_interface, programs);
     core.send_settings()?;
     core.send_all()?;
+    core.flush()?;
 
     let result = loop {
-        let Ok(event) = incoming.recv() else { break Ok(()) };
-        let step = match event {
-            Event::Decoded(channel, generation, message) => {
-                if core.decoders.get(&channel).map(|decoder| decoder.generation) == Some(generation) {
-                    core.decoded(channel, message)
-                } else {
-                    Ok(())
-                }
-            }
-            Event::Fetched(channel, generation, message) => {
-                if core.fetchers.get(&channel).map(|fetcher| fetcher.generation) == Some(generation) {
-                    core.fetched(channel, message)
-                } else {
-                    Ok(())
-                }
-            }
-            Event::FetcherEnded(channel, generation, reason) => {
-                if core.fetchers.get(&channel).map(|fetcher| fetcher.generation) == Some(generation) {
-                    eprintln!("neoteletext: the fetcher for channel {channel} stopped{}", reason.map(|reason| format!(": {reason}")).unwrap_or_default());
-                    if let Some(mut fetcher) = core.fetchers.remove(&channel) {
-                        let _ = fetcher.child.wait();
-                    }
-                }
-                Ok(())
-            }
-            Event::Intent(intent) => match core.intent(intent) {
-                Ok(true) => Ok(()),
-                Ok(false) => break Ok(()),
-                Err(error) => Err(error),
+        // An event, or the time for timed work, whichever is first.
+        let event = match core.next_wake() {
+            Some(at) => match incoming.recv_timeout(at.saturating_duration_since(std::time::Instant::now())) {
+                Ok(event) => Some(event),
+                Err(mpsc::RecvTimeoutError::Timeout) => None,
+                Err(mpsc::RecvTimeoutError::Disconnected) => break Ok(()),
             },
-            Event::Load => {
-                core.load();
-                core.typing_tick().and_then(|()| core.notice_tick()).and_then(|()| core.send_console())
-            }
-            Event::DecoderEnded(channel, generation, reason) => core.decoder_ended(channel, generation, reason),
-            Event::Sleep => core.match_decoders(),
-            #[cfg(feature = "phone-keyboard")]
-            Event::Phone(message) => core.phone_said(message),
-            #[cfg(feature = "phone-keyboard")]
-            Event::PhoneEnded(reason) => core.phone_ended(reason),
-            Event::InterfaceEnded(None) => break Ok(()),
-            Event::InterfaceEnded(Some(reason)) => break Err(format!("the interface broke the protocol and was closed: {reason}")),
+            None => match incoming.recv() {
+                Ok(event) => Some(event),
+                Err(_) => break Ok(()),
+            },
         };
-        if let Err(error) = step {
-            break Err(error);
+        let Some(event) = event else {
+            if let Err(error) = core.tick().and_then(|()| core.flush()) {
+                break Err(error);
+            }
+            continue;
+        };
+        // Timed work falls due while events are handled too: a feed that
+        // just started, a notice that expired, the sleep check.
+        match handle(&mut core, event).and_then(|go| core.tick().and_then(|()| core.flush()).map(|()| go)) {
+            Ok(true) => {}
+            Ok(false) => break Ok(()),
+            Err(error) => break Err(error),
         }
     };
 
@@ -1511,13 +1573,11 @@ fn run() -> Result<(), String> {
         let _ = fetcher.child.kill();
         let _ = fetcher.child.wait();
     }
-    for (_, mut decoder) in std::mem::take(&mut core.decoders) {
-        let _ = write_to_decoder(&mut decoder.input, &ToDecoder::Close);
-        let _ = decoder.input.flush();
-        drop(decoder.input);
-        let _ = decoder.child.wait();
+    for (_, decoder) in std::mem::take(&mut core.decoders) {
+        stop_decoder(decoder);
     }
     let _ = write_to_interface(&mut core.to_interface, &ToInterface::Close);
+    let _ = core.to_interface.flush();
     drop(core);
     if result.is_err() {
         let _ = interface.kill();
@@ -1623,5 +1683,57 @@ mod tests {
         let failed = std::process::ExitStatus::from_raw(1 << EXIT_CODE_SHIFT);
         assert!(ended(Ok(()), failed).is_err());
         assert_eq!(ended(Err("first".into()), crashed), Err("first".into()), "the first error is the one reported");
+    }
+    /// A trusted core for a test: no tabs, no helpers, the interface a
+    /// buffer.
+    fn test_core() -> Core {
+        let (events, _incoming) = mpsc::channel();
+        let programs = Programs { decoder: PathBuf::from("/nonexistent/decoder"), fetcher: PathBuf::from("/nonexistent/fetcher") };
+        Core::new(Session::new(Vec::new()), Vec::new(), (Settings::default(), None), events, Outbox::new(Vec::new()), programs)
+    }
+
+    /// Decision 53: the trusted core waits for an event until its next
+    /// deadline, which is the sleep check alone while nothing is fed, no
+    /// typing waits and the console is closed; the console open, it is
+    /// the loading pace. Before this, two threads woke it every 200 ms and
+    /// every 60 s for the life of the process.
+    #[test]
+    fn the_core_wakes_only_for_work_it_has() {
+        let mut core = test_core();
+        let now = std::time::Instant::now();
+        let idle = core.next_wake().unwrap();
+        assert!(idle >= now + SLEEP_CHECK.saturating_sub(Duration::from_secs(1)), "the sleep check alone: {:?}", idle - now);
+        core.console.set_open(true);
+        assert!(core.next_wake().unwrap() <= std::time::Instant::now(), "the console open: due now");
+        core.tick().unwrap();
+        let paced = core.next_wake().unwrap();
+        assert!(paced > std::time::Instant::now() && paced <= std::time::Instant::now() + LOAD_INTERVAL, "then at the loading pace");
+        core.console.set_open(false);
+        assert!(core.next_wake().unwrap() >= now + SLEEP_CHECK.saturating_sub(Duration::from_secs(1)), "closed: the sleep check alone");
+    }
+
+    /// Decision 53: a decoder that stops reading is given up once 16 MB
+    /// wait for it, and killed; the trusted core's thread never waits on
+    /// it. The decoder here is `sleep`, which reads nothing. Before this,
+    /// the core blocked on the pipe and every tab with it.
+    #[cfg(unix)]
+    #[test]
+    fn a_decoder_that_stops_reading_is_killed_and_forgotten() {
+        let mut core = test_core();
+        let program = PathBuf::from("/bin/sleep");
+        let arguments = [OsString::from("60")];
+        let mut child =
+            confine::spawn(&confine::Spawn { program: &program, arguments: &arguments, role: Role::Decoder, environment: &[], local_network: false }).unwrap();
+        let input = Outbox::new(child.stdin.take().unwrap());
+        core.decoders.insert(1, Decoder { child, input, generation: 1 });
+        let started = std::time::Instant::now();
+        let chunk = vec![0_u8; MAX_CHUNK - 1];
+        let chunks = neoteletext::outbox::MAX_QUEUED_BYTES / chunk.len() + 2;
+        for _ in 0..chunks {
+            core.tell(1, ToDecoder::Data(chunk.clone()));
+        }
+        core.flush().unwrap();
+        assert!(!core.decoders.contains_key(&1), "given up");
+        assert!(started.elapsed() < Duration::from_secs(5), "never waited on it: {:?}", started.elapsed());
     }
 }

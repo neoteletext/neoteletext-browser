@@ -115,14 +115,15 @@ Boundary 4 of the earlier design, the font helper, returns when fonts are fetche
 - The engine's limits on size, time and redirects, and on decompressed size (requirements 5.11 and 5.12).
 - The local network refused unless the user names an address (requirement 5.10).
 - One fetcher per channel (requirement 3.12).
+- A connection, its proxy tunnel and its TLS handshake are opened on a thread of their own and the engine's connect limit bounds the whole, so a slow or silent server or proxy holds up nothing else the fetcher does (decision 53).
 
 **If a fetcher is compromised.**
 - **Has:** the network; its own channel's connections and cookies.
 - **Does not have:** other channels' cookies, which sit in their own fetchers; the trusted core's state; the screen, except through messages the trusted core checks.
 - **Can:** send false pages and contents for its own channel, which that channel's server, or a network attacker on a plain connection, could do anyway.
-- **Today, on macOS, can also:** read the user's files, because its sandbox profile denies only file writes (requirement 3.3), and send them over the network. This is the most serious gap in what is built (section 16, rank 3).
+- **On macOS, cannot** (21 October 2026): read any file but the system's name-resolution files, start a program, reach any service but the resolver's, or see the user's environment: its profile starts from "deny everything" (section 13). On Linux and Windows it is not confined yet, and there it can read the user's files and send them.
 
-**Remaining risk:** low by design; **medium as built** until the fetcher's sandbox denies file reads.
+**Remaining risk:** low by design and on macOS; **medium on Linux and Windows** until their sandboxes exist.
 
 ### 5.2 Boundary 2: the fetcher into the trusted core
 
@@ -145,11 +146,12 @@ Boundary 4 of the earlier design, the font helper, returns when fonts are fetche
 - Every frame is checked on arrival: the exact raster size, at most 32 colours, every index within the palette, a valid page number (requirement 9.2).
 - Frames are passed on only for pages the interface shows, and only when changed (requirements 9.4 and 9.5).
 - Titles are cleaned and bounded (requirement 11.5).
+- The trusted core writes to each decoder, each fetcher, the phone keyboard and the interface through a queue of its own with a writing thread (`core/src/outbox.rs`), never from the thread that owns the tabs. A decoder that stops reading fills its queue, 16 MB, and is then killed and replaced, with what it was given (decision 47); the core never waits for a process to read, so a decoder that stalls, by fault or on purpose, stalls its own channel only.
 
 **If a decoder is compromised.**
 - **Can:** draw any picture into its own channel's page images and give its pages any title, which its server could do anyway.
 - **Cannot:** reach the network, other channels or the trusted core's state.
-- **Today, on macOS, can also:** read the user's files. It cannot send them anywhere, because it has no network, and it cannot encode them into frames the user would not see as pictures; but a later fault elsewhere could combine with it. Its sandbox must deny file reads (requirement 3.4).
+- **On macOS, cannot** (21 October 2026): read any file but the system's own, start a program, look up any service, or see the user's environment: its profile starts from "deny everything" and allows its pipes alone (section 13). On Linux and Windows it is not confined yet, and there it can read the user's files, though it has nowhere to send them but its frames.
 
 **Sound (requirements 16.1 to 16.4).** A decoder also reads its channel's audio packets, with the engine's bounded, fuzzed audio receiver, and sends voice operations and 16-bit samples. The trusted core passes on only the active tab's, re-checks each against the sounds that decoder defined, and holds the interface to 32 MB of its samples. A compromised decoder **can** play any sound in its own channel's four voices while its tab is active, as its server could; it **cannot** sound from a background tab, reset another channel's sounds, exceed the bounds, or play when the user has no output device.
 
@@ -260,9 +262,10 @@ Unchanged from the earlier design (`prototypes/docs/security-analysis.md` sectio
 - Every message bounded; at most 1,000 contents entries; files at most 64 megabytes or 4,096 page files.
 - The engine's response and decompression limits (requirements 5.11 and 5.12).
 - A decoder or fetcher that breaks the protocol is stopped; its channel's pages stay.
+- A decoder that stops reading what the trusted core sends is killed once 16 MB wait for it, and started again with what it was given; the trusted core's own thread never waits on a process (`core/src/outbox.rs`, section 5.3). An interface that stops reading ends the browser with a message, since without it there is no browser.
 - The window redraws only on input, change or animation; a folded overview draws nothing and starts no animation (observed in this codebase's tests).
 
-**Not yet:** restarting a decoder that stops answering; the live-feed threshold (requirement 6.5); a bound on how many tabs, decoders and fetchers may run.
+**Not yet:** the live-feed threshold (requirement 6.5); a bound on how many tabs, decoders and fetchers may run.
 
 **Remaining risk:** low.
 
@@ -284,9 +287,9 @@ Unchanged from the earlier design (`prototypes/docs/security-analysis.md` sectio
 
 | Platform | Notes |
 |---|---|
-| macOS | The decoder, fetcher and interface run under `sandbox-exec` profiles: no network for the decoder and interface, no file writes for any. The profiles start from "allow everything", so file reads are still allowed, and `sandbox-exec` is deprecated by Apple; the release needs the App Sandbox with each process as its own helper, starting from "deny everything" (requirements 3.7 and 3.8). The trusted core is not sandboxed. |
-| Windows | Not built. AppContainers for the fetcher, decoder and interface (`architecture.md` section 6.5). |
-| Linux | Not built. Landlock and seccomp filters for every untrusted process, and an empty network namespace for the decoder and interface. The interface needs the display like any application. |
+| macOS | The decoder, fetcher, phone keyboard and interface run under `sandbox-exec` profiles that start from "deny everything" and import Apple's baseline for any process (`system.sb`: the loader, system libraries, time zones, random numbers), then allow what each is for (`core/src/main.rs`, `confinement`): the decoder nothing but its pipes; the fetcher and keyboard outbound TCP, the name resolver's socket and files, and no file reads otherwise; the interface the system's folders, metadata of any path, and the services of the window, fonts, text input, the pasteboard, notifications, preferences, sound and the Dock, with no network. None may start a program. The profiles were made by running each process under candidates (21 October 2026): the kernel reports denials only to administrators' logs, so a denied operation shows as a crash, and the sound services' absence as a silent browser. Children get an environment of only what they need (`spawn`). **The trusted core is not confined:** macOS refuses a nested `sandbox-exec`, so a core under a profile could start no confined child. Its confinement needs the App Sandbox at packaging (requirement 3.8) or each child confining itself in-process through the C API, which is unsafe code the owner has not approved. `sandbox-exec` is deprecated by Apple and still present. |
+| Windows | Built 22 October 2026 (`sandboxing.md`, decision 52): the trusted core starts every helper in a job object (kill-on-close, one process, UI restrictions for those without a window), with the process mitigation policies (DEP, ASLR, control-flow guard, no dynamic code, no child processes, no remote or low-integrity images, and the Win32k filter for the decoder and fetcher), with only the two pipe handles inherited and the environment the core chose; the decoder in a less privileged AppContainer with no capabilities and the fetcher and keyboard in an AppContainer with the internet client capability (and the private network one when the user allowed local addresses); the interface with a restricted token at low integrity, since it needs the desktop, so it can still read the user's files. An AppContainer reads only what grants read to `ALL APPLICATION PACKAGES`: packaging sets that on the program folder, and without it the helper runs with the restricted token alone and says so. Built and tested in the virtual machine on `foundintelquiet4060`. |
+| Linux | Built 22 October 2026 (`sandboxing.md`, decision 52): each helper confines itself first thing in `main`, before any thread: no new privileges; for the decoder and interface an empty network namespace where unprivileged user namespaces are allowed; Landlock, the newest the kernel has, with only the directories the role may read (none for a decoder; the resolver's for a fetcher; fonts, preferences and the system's for the interface) and no TCP for the roles without the network; and a seccomp deny-list of system calls, which is required: no programs, no tracing, no mounting, no kernel interfaces a helper has no use for, and sockets only of the families the role needs (none for a decoder). What applied is reported at start; a machine without Landlock or user namespaces runs with seccomp alone and says so. Measured on Ubuntu 26.04 (kernel 7.0): the crate's probe tests pass and the browser runs under Xvfb with every helper reporting its layers. |
 | Android, iOS | Later. On iOS, with one process, the decoder's only wall is whatever open decision 2 chooses. |
 | Microcontrollers | A single-purpose device with one program; it needs its own analysis once its features are decided (open decision 5). |
 
@@ -320,9 +323,9 @@ These were observed, not reasoned:
 |---|---|---|---|---|
 | 1 | Spoofing of the trusted strip by page images, especially in animated layouts and popups | Medium | The user is misled about where they are | Strip outside the page area; page images kept below it; recorded layout reviews (requirements 11.1 to 11.4, 14.5) |
 | 2 | A fault in the interface process, which draws the strip | Low | A false strip and forged navigation; no secrets | Our own code, no `unsafe`, inputs limited to our own images and cleaned text; fuzzing and the hostile harness (requirements 3.9, 4.6, 10.12); open decision 3 |
-| 3 | **As built:** sandboxes that allow file reads on macOS, and none elsewhere | Low (needs a fault in a reader first) | A compromised fetcher could send the user's files to a server | Profiles that start from "deny everything"; the App Sandbox; Windows and Linux sandboxes (requirements 3.3, 3.4, 3.6 to 3.8) |
+| 3 | **As built:** no sandbox on Windows and Linux, and none for the trusted core on macOS | Low (needs a fault in a reader first) | A compromised fetcher could send the user's files to a server, on those platforms | macOS profiles from "deny everything" (built 21 October 2026); the App Sandbox; Windows and Linux sandboxes (requirements 3.3, 3.4, 3.6 to 3.8) |
 | 4 | A fault in the trusted core, the one process holding everything | Low | Full compromise | Small, no format readers, bounded protocol, no `unsafe` (requirements 3.2, 4.2, 14.2); fuzzing (requirement 4.6) |
-| 5 | **As built:** no Transport Layer Security | Certain, for now | Every channel readable and alterable on the network | Shown as "Not secure"; open decision 1 |
+| 5 | A plain `http` channel | Depends on the channel | That channel readable and alterable on the network | Transport Layer Security with `rustls` and Mozilla's roots for `https` channels (decision 41); a plain channel shown as "Not secure" |
 | 6 | Theft of the update root keys at threshold (once updates exist) | Low | Malicious update | Threshold, offline hardware keys, separate holders (requirements 13.8, 13.9) |
 | 7 | A supply chain compromise of a Rust dependency | Low | Depends on the process it sits in | Pinned versions, permissive licences, review; `cargo-deny` and `cargo audit` (requirement 14.3) |
 | 8 | A decoder or fetcher fault, with the sandboxes complete | Low | Contained to one channel | Separate processes per channel, no rights (requirements 3.3, 3.4, 3.12) |

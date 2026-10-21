@@ -22,14 +22,14 @@
 )]
 
 use std::collections::BTreeMap;
-use std::io::{self, BufReader, BufWriter};
+use std::io::{self, BufReader, BufWriter, Write};
 use std::process::ExitCode;
 use std::sync::mpsc::{self, RecvTimeoutError};
 use std::time::Duration;
 
 use decoder::{Engine, Flashing, Rendered};
 use protocol::ProtocolError;
-use protocol::decoder::{FIRST_STORE_PAGES, FromDecoder, MAX_STORE_PAGES, ToDecoder, read_from_core, write_to_core};
+use protocol::decoder::{FIRST_STORE_PAGES, FromDecoder, MAX_STORE_PAGES, ToDecoder, read_from_core, write_frame_to_core, write_to_core};
 
 /// Microseconds in a millisecond: the audio receiver keeps milliseconds.
 const MICROSECONDS_PER_MILLISECOND: u64 = 1000;
@@ -54,6 +54,8 @@ fn run(store_pages: usize) -> Result<(), ProtocolError> {
     // The last frame sent of each page shown, so an unchanged page is
     // never sent again.
     let mut sent: BTreeMap<u16, Rendered> = BTreeMap::new();
+    // A page's worth of room for the next render, from the last frame not kept.
+    let mut spare: Vec<u8> = Vec::new();
     let mut flashing = Flashing::default();
     // The trusted core's messages are read on a thread of their own, so
     // the loop also wakes, by itself, for flash and for its sounds' clock:
@@ -73,6 +75,8 @@ fn run(store_pages: usize) -> Result<(), ProtocolError> {
     });
 
     loop {
+        // What the last message or deadline produced goes before waiting.
+        output.flush()?;
         let now = engine.now_us();
         let audio = engine.next_audio_tick_ms().map(|ms| ms.saturating_mul(MICROSECONDS_PER_MILLISECOND));
         let deadline = [flashing.next_us(now), audio].into_iter().flatten().min();
@@ -93,7 +97,7 @@ fn run(store_pages: usize) -> Result<(), ProtocolError> {
             // A deadline: the sounds' clock, and the flashing pages whose
             // phase has changed.
             send_sounds(&mut engine, &mut output)?;
-            draw(&engine, &flashing.due(now), now, &mut sent, &mut flashing, &mut output)?;
+            draw(&engine, &flashing.due(now), now, &mut sent, &mut spare, &mut flashing, &mut output)?;
             continue;
         };
         let Some(message) = message? else { return Ok(()) };
@@ -106,7 +110,7 @@ fn run(store_pages: usize) -> Result<(), ProtocolError> {
                 flashing.retain(&pages);
                 showing = pages;
                 let fresh: Vec<u16> = showing.iter().copied().filter(|page| !sent.contains_key(page)).collect();
-                draw(&engine, &fresh, now, &mut sent, &mut flashing, &mut output)?;
+                draw(&engine, &fresh, now, &mut sent, &mut spare, &mut flashing, &mut output)?;
                 continue;
             }
             ToDecoder::Close => return Ok(()),
@@ -130,7 +134,7 @@ fn run(store_pages: usize) -> Result<(), ProtocolError> {
             write_to_core(&mut output, &FromDecoder::StoreFull)?;
         }
         let pages: Vec<u16> = showing.iter().copied().filter(|page| changed.everything || changed.pages.contains(page)).collect();
-        draw(&engine, &pages, now, &mut sent, &mut flashing, &mut output)?;
+        draw(&engine, &pages, now, &mut sent, &mut spare, &mut flashing, &mut output)?;
     }
 }
 
@@ -142,14 +146,17 @@ fn draw(
     pages: &[u16],
     now_us: u64,
     sent: &mut BTreeMap<u16, Rendered>,
+    spare: &mut Vec<u8>,
     flashing: &mut Flashing,
     output: &mut Output<'_>,
 ) -> Result<(), ProtocolError> {
     for &page in pages {
-        let Some(rendered) = engine.render_at(page, now_us) else { continue };
+        // Rendered into the room kept from the last frame not sent.
+        let Some(rendered) = engine.render_into(page, now_us, core::mem::take(spare)) else { continue };
         flashing.drawn(page, &rendered);
         let before = sent.get(&page);
         if before == Some(&rendered) {
+            *spare = rendered.indices;
             continue;
         }
         let new_image = before.is_none_or(|before| before.palette != rendered.palette || before.indices != rendered.indices);
@@ -159,9 +166,11 @@ fn draw(
             write_to_core(output, &FromDecoder::Links { page, with_image: new_image, candidates: links.candidates, numbers: links.numbers })?;
         }
         if new_image {
-            write_to_core(output, &FromDecoder::Frame { page, palette: rendered.palette.clone(), indices: rendered.indices.clone() })?;
+            write_frame_to_core(output, page, &rendered.palette, &rendered.indices)?;
         }
-        sent.insert(page, rendered);
+        if let Some(replaced) = sent.insert(page, rendered) {
+            *spare = replaced.indices;
+        }
     }
     Ok(())
 }
@@ -186,6 +195,14 @@ fn send_sounds(engine: &mut Engine, output: &mut Output<'_>) -> Result<(), Proto
 }
 
 fn main() -> ExitCode {
+    // First, before any thread: its pipes and nothing else (requirement 3.4).
+    match confine::apply(confine::Role::Decoder) {
+        Ok(report) => eprintln!("neoteletext-decoder: confined: {report}"),
+        Err(error) => {
+            eprintln!("neoteletext-decoder: {error}");
+            return ExitCode::FAILURE;
+        }
+    }
     let pages = match store_pages() {
         Ok(pages) => pages,
         Err(usage) => {

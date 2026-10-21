@@ -19,6 +19,8 @@ This is the project's reading of the licences, not legal advice.
 
 The owner accepted the system's LGPL `libasound` for sound on Linux on 19 October 2026 (decision 40).
 
+`landlock` (MIT or Apache-2.0), `seccompiler` (Apache-2.0 or BSD-3-Clause) and `libc` (MIT or Apache-2.0), approved on 22 October 2026 for the Linux sandboxes (decision 52), are Linux-only dependencies of `confine`.
+
 `arboard`, approved on 21 October 2026 for the clipboard (decision 49), uses two crates on Windows only under BSL-1.0, the Boost Software License: `clipboard-win` and `error-code`. It is permissive, OSI-approved and FSF-free, and asks less than MIT: its notice need not be carried in a binary distribution. `native/deny.toml` allows it for those two crates alone.
 
 ## 3. What is not acceptable

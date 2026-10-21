@@ -111,8 +111,11 @@ pub struct Painter {
     layouts: LayoutContext<()>,
     pages: HashMap<PageKey, Image>,
     /// Text laid out once and reused: the interface draws the same
-    /// strings every frame, and measures each before drawing it.
-    layouts_made: HashMap<(String, StyleKey), Layout<()>>,
+    /// strings every frame, and measures each before drawing it. By style,
+    /// then by text, so a lookup borrows the text rather than copying it.
+    layouts_made: HashMap<StyleKey, HashMap<String, Layout<()>>>,
+    /// How many layouts are kept, against [`LAYOUT_CACHE_LIMIT`].
+    layouts_kept: usize,
     family: Family,
     /// Logical pixels to device pixels.
     pub scale: f64,
@@ -143,6 +146,7 @@ impl Painter {
             layouts: LayoutContext::new(),
             pages: HashMap::new(),
             layouts_made: HashMap::new(),
+            layouts_kept: 0,
             family,
             scale: 1.0,
         }
@@ -199,16 +203,18 @@ impl Painter {
     }
 
     /// The layout of `text` in `style`, made on first use.
-    fn layout(&mut self, text: &str, style: Style) -> &Layout<()> {
-        let key = (String::from(text), style_key(style));
-        if !self.layouts_made.contains_key(&key) {
-            if self.layouts_made.len() >= LAYOUT_CACHE_LIMIT {
+    fn layout(&mut self, text: &str, style: Style) -> Option<&Layout<()>> {
+        let key = style_key(style);
+        if !self.layouts_made.get(&key).is_some_and(|texts| texts.contains_key(text)) {
+            if self.layouts_kept >= LAYOUT_CACHE_LIMIT {
                 self.layouts_made.clear();
+                self.layouts_kept = 0;
             }
             let layout = self.make_layout(text, style);
-            self.layouts_made.insert(key.clone(), layout);
+            self.layouts_made.entry(key).or_default().insert(String::from(text), layout);
+            self.layouts_kept = self.layouts_kept.saturating_add(1);
         }
-        &self.layouts_made[&key]
+        self.layouts_made.get(&key)?.get(text)
     }
 
     fn make_layout(&mut self, text: &str, style: Style) -> Layout<()> {
@@ -294,40 +300,40 @@ impl Canvas for Painter {
     }
 
     fn text(&mut self, area: Rect, text: &str, style: Style, paint: Colour) {
-        // Taken out while drawing, so the context can be borrowed, then put back.
-        self.layout(text, style);
-        let key = (String::from(text), style_key(style));
-        let Some(layout) = self.layouts_made.remove(&key) else { return };
-        self.context.set_transform(self.base());
-        self.context.push_clip_layer(&rect(area).to_path(TOLERANCE));
-        let transform = self.base() * Affine::translate((area.x0, area.y0));
-        self.context.set_paint(colour(paint));
+        if self.layout(text, style).is_none() {
+            return;
+        }
+        // The layout is borrowed from the cache while the context draws it:
+        // the fields are borrowed apart.
+        let base = self.base();
+        let Self { context, resources, layouts_made, .. } = self;
+        let Some(layout) = layouts_made.get(&style_key(style)).and_then(|texts| texts.get(text)) else { return };
+        context.set_transform(base);
+        context.push_clip_layer(&rect(area).to_path(TOLERANCE));
+        let transform = base * Affine::translate((area.x0, area.y0));
+        context.set_paint(colour(paint));
+        let mut coordinates: Vec<i16> = Vec::new();
         for line in layout.lines() {
             for item in line.items() {
                 let PositionedLayoutItem::GlyphRun(run) = item else { continue };
                 let glyphs = run.positioned_glyphs().map(|glyph| Glyph { id: glyph.id, x: glyph.x, y: glyph.y });
-                self.context.set_transform(transform);
+                context.set_transform(transform);
                 // The run's variation settings carry its weight: the shipped fonts
                 // are variable fonts, with weight as an axis.
-                let coordinates: Vec<i16> = run.run().normalized_coords().iter().map(|coordinate| coordinate.to_bits()).collect();
-                let _ = self
-                    .context
-                    .glyph_run(&mut self.resources, run.run().font())
-                    .font_size(run.run().font_size())
-                    .normalized_coords(&coordinates)
-                    .fill_glyphs(glyphs);
+                coordinates.clear();
+                coordinates.extend(run.run().normalized_coords().iter().map(|coordinate| coordinate.to_bits()));
+                let _ = context.glyph_run(resources, run.run().font()).font_size(run.run().font_size()).normalized_coords(&coordinates).fill_glyphs(glyphs);
             }
         }
-        self.context.pop_layer();
-        self.layouts_made.insert(key, layout);
+        context.pop_layer();
     }
 
     fn text_width(&mut self, text: &str, style: Style) -> f64 {
-        f64::from(self.layout(text, style).width())
+        self.layout(text, style).map_or(0.0, |layout| f64::from(layout.width()))
     }
 
     fn line_height(&mut self, style: Style) -> f64 {
-        f64::from(self.layout("X", Style { caps: false, ..style }).height())
+        self.layout("X", Style { caps: false, ..style }).map_or(0.0, |layout| f64::from(layout.height()))
     }
 }
 

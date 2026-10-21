@@ -127,14 +127,14 @@
 - **Reason:** The fetcher reads untrusted protocol data and must be worth little to an attacker who compromises it.
 - **Source:** Architecture; `neoteletext` requirement REQ-SEC-018.
 - **Verification:** Test on each platform: the fetcher's attempts to read or write a file, or start a process, fail.
-- **State:** Partly met. On macOS the fetcher cannot write files, but its profile allows reading them; elsewhere it is not sandboxed.
+- **State:** Met on macOS and Linux, 22 October 2026 (`sandboxing.md`, decision 52): on macOS its profile starts from "deny everything" and allows outbound TCP, the name resolver's socket and files, and nothing else; on Linux it confines itself with Landlock (the resolver's directories readable, nothing else) and a seccomp filter (no programs, sockets of the internet families only), tested by the crate's probe. Partly met on Windows: an AppContainer with the internet client capability, in a job object with the mitigation policies, which denies file reads only where packaging granted the container read of the program folder.
 
 ### Requirement 3.4: The decoder has no rights
 - **Statement:** Each decoder must have no network access, no file access and no secrets.
 - **Reason:** The decoder reads the most untrusted data; a fault in it must stay inside its own process.
 - **Source:** Architecture.
 - **Verification:** Test on each platform: the decoder's attempts to open a file or a network connection fail.
-- **State:** Partly met. On macOS the decoder has no network and cannot write files, but its profile allows reading them; elsewhere it is not sandboxed. Whether it also runs inside `wasmi` is open decision 2.
+- **State:** Met on macOS and Linux, 22 October 2026 (`sandboxing.md`, decision 52): on macOS its profile starts from "deny everything" and allows its pipes alone; on Linux it confines itself with an empty network namespace (where unprivileged user namespaces are allowed), Landlock with nothing readable and a seccomp filter with no sockets, no programs and no files, tested by the crate's probe (it can open no file, start no program, connect nowhere, write nothing). On Windows a less privileged AppContainer with no capabilities, in a job object with the mitigation policies and the Win32k filter. Whether it also runs inside `wasmi` is open decision 2.
 
 ### Requirement 3.5: The font helper has no rights
 - **Statement:** Fonts fetched from the network must be read by a confined font helper with no network access, no file access and no secrets. Its output must be checked by the trusted core (hash and table shape) and checked again by the decoder before use.
@@ -148,14 +148,14 @@
 - **Reason:** An attacker who took over the interface must find nothing of value.
 - **Source:** Decisions 4, 18 and 33.
 - **Verification:** Test on each platform: network and file access fail from the interface process; review of every message type sent to it.
-- **State:** Partly met. No secret is ever sent to it (review of `protocol`). On macOS it has no network and cannot write files, but its profile allows reading them; elsewhere it is not sandboxed.
+- **State:** Partly met. No secret is ever sent to it (review of `protocol`). On macOS its profile starts from "deny everything" and allows the system's folders and the window, font, text-input, pasteboard, notification, preference, sound and Dock services, with no network and no programs; on Linux it confines itself with an empty network namespace where allowed, Landlock (fonts, preferences and the system's directories readable) and a seccomp filter (local-domain sockets only, no programs); on Windows a restricted token at low integrity in a job object with the mitigation policies, which does not stop reads of the user's files. Its environment is cut to the window system's on every platform (22 October 2026, `sandboxing.md`).
 
 ### Requirement 3.7: Operating-system sandboxes
 - **Statement:** On each platform the processes must be sandboxed as in `architecture.md` section 6.5, starting from "deny everything" and allowing only what each process needs.
 - **Reason:** Each sandbox is a second wall behind the first.
 - **Source:** Architecture.
 - **Verification:** Test on each platform, as in requirements 3.3 to 3.6.
-- **State:** Partly met. macOS has `sandbox-exec` profiles for the decoder, fetcher and interface that start from "allow everything" and deny the network (decoder and interface) and file writes (all three). The trusted core is not sandboxed. Windows, Linux, Android and iOS have nothing yet.
+- **State:** Partly met, 22 October 2026 (`sandboxing.md`, decision 52): every helper is confined from "deny everything" on macOS (`sandbox-exec` profiles), Linux (Landlock, a network namespace and seccomp, applied by the helper itself before any thread, the filter required and the rest reported) and Windows (job object, mitigation policies, AppContainer for the decoder and fetcher, a restricted token for the interface), with an environment of only what it needs. Not met: the trusted core on every platform (on macOS it needs the App Sandbox, since a nested `sandbox-exec` is refused); the interface's file reads on Windows; Android and iOS.
 
 ### Requirement 3.8: The macOS sandboxing gap is closed
 - **Statement:** The fetcher and decoder must be sandboxed on macOS before the first release.
@@ -209,7 +209,7 @@
 - **Reason:** One small, strict protocol for every boundary.
 - **Source:** Architecture.
 - **Verification:** Review.
-- **State:** Met.
+- **State:** Met. Since 22 October 2026 (decision 53) a process flushes its pipe once per event rather than per message; under eight flashing pages the interface's system calls fell from 2,133 to 540 in 10 seconds.
 
 ### Requirement 4.2: Every message is bounded
 - **Statement:** Every message, and every field in it, must have a fixed maximum size, stated in code as a named constant. A message larger than its maximum must be rejected before its payload is read.
@@ -612,6 +612,7 @@
 - **Verification:** Test.
 - **State:** Met, 21 October 2026: tests `only_a_shown_page_that_flashes_wakes_the_decoder_and_only_when_its_phase_changes`, `a_message_reports_only_the_pages_it_touched`, `arrivals_compare_only_the_pages_that_completed` (one comparison for one page, where scanning the store made 140 of 200). Measured by driving the release decoder for 10 seconds with one shown page: a steady page took 0.15 s of processor time when the trusted core ticked it twelve times a second, and 0.01 s on the decoder's own clock; a flashing page 0.21 s and 0.24 s, drawing 20 and 21 frames, two a second.
 - *Amended 21 October 2026 (decision 47):* drawn by the decoder's own clock, for flashing pages only and at their phase changes; the trusted core no longer ticks decoders.
+- *Amended 22 October 2026 (decision 53):* at the phase changes of the rates the page's cells use, not of every rate: a page with slow flash alone is drawn twice a second, not seven times (the test above, which failed on the earlier code; under eight flashing pages the decoder took 0.7 to 1.1 % of a processor against 6.3 %).
 
 ### Requirement 9.8: Scaling and pixel shape in the drawing transform
 - **Statement:** Pages must be scaled, and their pixel shape corrected, by the interface when it draws them, never by rendering again at other sizes.
@@ -670,11 +671,11 @@
 - **Why withdrawn:** there is no webview and no page code (decision 33).
 
 ### Requirement 10.12: No unsafe code
-- **Statement:** The interface process, like every crate of the application, must forbid `unsafe` code in its own source. There are two exceptions: the `dock-menu` crate, whose macOS module reaches AppKit through the Objective-C runtime; and the `web-opener` crate, whose Windows module calls the shell's `ShellExecuteW` (hyperlink decision 7). Each denies `unsafe_code` everywhere else, and each unsafe block states why it is sound.
+- **Statement:** The interface process, like every crate of the application, must forbid `unsafe` code in its own source. There are three exceptions: the `dock-menu` crate, whose macOS module reaches AppKit through the Objective-C runtime; the `web-opener` crate, whose Windows module calls the shell's `ShellExecuteW` (hyperlink decision 7); and the `confine` crate, whose Linux module makes two C library calls for the network namespace and no-new-privileges and whose Windows module makes the Win32 calls that create a confined process (decision 52). Each denies `unsafe_code` everywhere else, and each unsafe block states why it is sound.
 - **Reason:** A memory-safety fault is the most likely way to take over a process. AppKit offers the Dock menu only through calls Rust cannot check (decision 39).
 - **Source:** Architecture; decision 39.
-- **Verification:** Check: the workspace lints forbid `unsafe_code`; `dock-menu` denies it and allows it only in `src/mac.rs`, and `web-opener` only in `src/windows.rs`, each with Clippy's `undocumented_unsafe_blocks`.
-- **State:** Met.
+- **Verification:** Check: the workspace lints forbid `unsafe_code`; `dock-menu` denies it and allows it only in `src/mac.rs`, `web-opener` only in `src/windows.rs`, and `confine` only in `src/linux.rs` and `src/windows.rs`, each with Clippy's `undocumented_unsafe_blocks`.
+- **State:** Met; amended 22 October 2026 (decision 52) for `confine`.
 
 ### Requirement 10.13: The interface process ends on a broken message
 - **Statement:** The interface process must end at the first malformed message from the trusted core, rather than try to continue.
@@ -794,7 +795,7 @@
 - **Reason:** A live channel's value is in its changes; the user must see which pages are live.
 - **Source:** Owner's request of 15 October 2026 (`native-interface-design.md` section 12.3).
 - **Verification:** Test.
-- **State:** Met, with tests of the decoder's change detection; the window's marks were checked by eye.
+- **State:** Met, with tests of the decoder's change detection; the window's marks were checked by eye. Since 22 October 2026 (decision 53) an update asks for frames only where its page is drawn, the wall and the list, and for the overview's ring while it bursts (`an_update_in_another_bank_asks_for_frames_only_while_its_ring_bursts`, which failed on the earlier code).
 
 ### Requirement 12.11: The clipboard and input methods
 - **Statement:** The address field must support copy, paste and text composed by an input method, shown while it is composed.
@@ -946,7 +947,7 @@ Requirements 13.1 to 13.13 are unchanged from the earlier design, and are stated
 - **Reason:** One mixer that behaves as the microcontrollers' does; `cpal` keeps unsafe code out of the browser's crates.
 - **Source:** Decisions 37 and 40.
 - **Verification:** Interface tests of applying operations and rendering; `a_tone_plays_through_the_default_output_device`, run by hand because it needs a device (`cargo test -p neoteletext-interface -- --ignored`); setting `NEOTELETEXT_AUDIO_TRACE` makes the interface report the operations it applies and the loudest sample played.
-- **State:** Met on macOS, Windows (WASAPI) and Linux (ALSA): on 19 October 2026 a page's sound played through each, as the device's peak level showed (decision 40).
+- **State:** Met on macOS, Windows (WASAPI) and Linux (ALSA): on 19 October 2026 a page's sound played through each, as the device's peak level showed (decision 40). Since 22 October 2026 (decision 53) the device runs only while a channel sounds: it is stopped at start and started on the first sound by a watcher the mixer wakes (`the_watcher_is_woken_only_when_silence_starts_or_ends`; `a_tone_plays_through_the_default_output_device` by hand on macOS, where the idle browser's wakeups fell from 1,030 to about 150 in 10 seconds); on Windows the device opened in the confined interface in the virtual machine's desktop session; the stop and start on Windows and Linux were not watched.
 
 ### Requirement 16.7: A tab shows its sound and mutes
 - **Statement:** A tab whose channel plays sound must show a speaker before its close button, and a muted tab a crossed-out speaker, whether or not it plays. A click on it must mute the tab, or unmute it, without selecting it. A tab's mute must follow it to the next channel it shows. The window's title must be the selected tab's, followed by "Audio playing" or "Muted" while it plays sound.
@@ -1215,7 +1216,7 @@ From `settings-home-console-proxy.md` and its security analysis (decision 51).
 - **Reason:** Many networks reach the web only through a proxy; a fallback would leak what the user chose to send through it.
 - **Source:** Decision 51.
 - **Verification:** Tests against a local HTTP proxy and a local SOCKS5 proxy, of success, refusal and silence.
-- **State:** Met: `a_connection_goes_through_an_http_proxy`, `a_connection_goes_through_a_socks5_proxy`, `a_refusal_fails_the_connection`, `a_silent_proxy_fails_in_time` against proxies on this computer; by hand on macOS on 21 October 2026 through a local HTTP proxy, the fetch and push connections were tunnels, and with the proxy stopped the strip said "The proxy refused the connection to 127.0.0.1" and nothing went direct. The phone keyboard takes `--proxy` (`the_keyboard_reads_its_relay_pin_and_proxy`); its relay through a proxy is untested.
+- **State:** Met: `a_connection_goes_through_an_http_proxy`, `a_connection_goes_through_a_socks5_proxy`, `a_refusal_fails_the_connection`, `a_silent_proxy_fails_in_time` against proxies on this computer; by hand on macOS on 21 October 2026 through a local HTTP proxy, the fetch and push connections were tunnels, and with the proxy stopped the strip said "The proxy refused the connection to 127.0.0.1" and nothing went direct. The phone keyboard takes `--proxy` (`the_keyboard_reads_its_relay_pin_and_proxy`); its relay through a proxy is untested. Since 22 October 2026 (decision 53) a connection, its tunnel and its handshake are opened on a thread of their own and the agent's connect limit bounds them, so a silent proxy no longer holds the fetcher's loop (`a_silent_proxy_fails_in_time_and_holds_nothing_up`, which failed on the earlier code).
 
 ### Requirement 19.11: The local network through a proxy
 - **Statement:** With a proxy, an address written as a local IP address, `localhost` and names under `.local` and `.internal` must be refused unless allowed (requirement 5.10), before anything is sent to the proxy.
