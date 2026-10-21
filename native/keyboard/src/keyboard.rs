@@ -46,7 +46,7 @@ fn run(relay: &str, pin: bool) -> Result<(), String> {
     let mut send = |message: &FromKeyboard| write_to_core(&mut output, message).map_err(|error| error.to_string());
     send(&FromKeyboard::State(PhoneState::Preparing))?;
     let config = ScreenConfig { name: NAME.into(), layout: Layout::Terminal, pin, rejoin_seconds: Some(REJOIN_SECONDS) };
-    let mut screen = match Screen::create(relay, config) {
+    let mut screen = match Screen::create(relay, config, None) {
         Ok(screen) => screen,
         Err(error) => {
             send(&FromKeyboard::State(PhoneState::Finished))?;

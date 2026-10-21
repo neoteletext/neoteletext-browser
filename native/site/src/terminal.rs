@@ -1060,7 +1060,7 @@ fn phone(relay: &str, events: &mpsc::Sender<PhoneEvent>) {
     use neoteletext_qrkeyboard::qr::{Correction, Matrix};
     use neoteletext_qrkeyboard::screen::{Event as ScreenEvent, Screen};
     let config = ScreenConfig { name: "NeoTeletext terminal channel".into(), layout: Layout::Terminal, pin: false, rejoin_seconds: Some(30) };
-    let mut screen = match Screen::create(relay, config) {
+    let mut screen = match Screen::create(relay, config, None) {
         Ok(screen) => screen,
         Err(error) => {
             let _ = events.send(PhoneEvent::State(format!("No relay: {error}")));
