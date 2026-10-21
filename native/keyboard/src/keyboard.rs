@@ -5,7 +5,7 @@ use std::process::ExitCode;
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
-use neoteletext_input::key::Limiter;
+use neoteletext_input::session::Limiter;
 use neoteletext_qrkeyboard::config::{Layout, ScreenConfig};
 use neoteletext_qrkeyboard::qr::{Correction, Matrix};
 use neoteletext_qrkeyboard::screen::{Event, Screen};
@@ -86,12 +86,19 @@ fn run(relay: &str, pin: bool) -> Result<(), String> {
                     send(&FromKeyboard::State(PhoneState::Finished))?;
                     return Ok(());
                 }
-                // At most 120 keys a second, and never a key-up dropped.
+                // At most 120 input units a second, a character of text
+                // each, and never a key-up dropped (REQ-INT-109).
                 Event::Down(name) if limiter.allow(clock(started), false) => FromKeyboard::Key { down: true, name },
                 Event::Up(name) if limiter.allow(clock(started), true) => FromKeyboard::Key { down: false, name },
-                Event::Text(text) if limiter.allow(clock(started), false) => {
+                Event::Text(text) => {
                     let end = (0..=text.len().min(MAX_PHONE_TEXT)).rev().find(|&end| text.is_char_boundary(end)).unwrap_or(0);
-                    let printable: String = text.get(..end).unwrap_or_default().chars().filter(|character| !character.is_control()).collect();
+                    let printable: String = text
+                        .get(..end)
+                        .unwrap_or_default()
+                        .chars()
+                        .filter(|character| !character.is_control())
+                        .take_while(|_| limiter.allow(clock(started), false))
+                        .collect();
                     if printable.is_empty() {
                         continue;
                     }
@@ -108,7 +115,7 @@ fn run(relay: &str, pin: bool) -> Result<(), String> {
                     }
                     continue;
                 }
-                Event::Down(_) | Event::Up(_) | Event::Text(_) => continue,
+                Event::Down(_) | Event::Up(_) => continue,
             };
             send(&message)?;
         }

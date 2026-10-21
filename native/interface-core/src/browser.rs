@@ -257,16 +257,16 @@ pub enum Output {
     /// Strip input: no to the strip's question of this number.
     #[cfg(feature = "links")]
     Cancel(u32),
-    /// A key, text or a click on the open page, whose channel takes input
-    /// (`interaction.md` section 5): a key record with no sequence number.
+    /// Input on the open page, whose channel takes it (REQ-INT-132): an
+    /// intent, which the trusted core encodes.
     #[cfg(feature = "interaction")]
     Terminal {
         /// The open page.
         key: PageKey,
-        /// The browser's number of the key, for its echo.
+        /// The browser's number of the intent, for its echo.
         local: u32,
-        /// The engine's key record.
-        record: Vec<u8>,
+        /// What the viewer did.
+        intent: crate::input::Intent,
     },
     /// Strip input: the phone keyboard's panel opened, or closed.
     #[cfg(feature = "phone-keyboard")]
@@ -400,7 +400,7 @@ pub struct Browser {
     /// Typing into a page (`interaction.md`).
     #[cfg(feature = "interaction")]
     terminal: terminal_ui::TerminalUi,
-    /// The phone keyboard (`interaction.md` section 9).
+    /// The phone keyboard (INPUT.md section 10).
     #[cfg(feature = "phone-keyboard")]
     phone: phone_ui::PhoneUi,
 }
@@ -659,6 +659,8 @@ impl Browser {
         let hovered = self.wall.hover(self.pointer, now);
         let previewed = self.overview_page(self.pointer);
         let preview_changed = previewed != self.previewed;
+        #[cfg(feature = "interaction")]
+        self.terminal_moved();
         self.previewed = previewed;
         #[cfg(feature = "links")]
         let linked = self.repoint();
@@ -704,6 +706,9 @@ impl Browser {
     /// The main button was released.
     pub fn pointer_released(&mut self) {
         self.wall.pointer_released();
+        // A button the channel saw pressed is released to it.
+        #[cfg(feature = "interaction")]
+        self.terminal_button(neoteletext_input::event::MouseAction::Release, 0);
     }
 
     /// A press of the main button, with `extend` when Shift is held.
@@ -809,14 +814,13 @@ impl Browser {
             }
             // A page on the wall zooms to fill the area; on a zoomed page a
             // click is on one of its cells, where links will be followed.
-            // On a page whose channel takes input a plain click is the
-            // host's, as a terminal with mouse reporting gives it; the
-            // browser's modifier makes it the browser's (`interaction.md`
-            // section 5).
+            // On a page whose channel or page asked for the mouse a plain
+            // click is the host's, as a terminal with mouse reporting gives
+            // it; the browser's modifier keeps it the browser's (INPUT.md
+            // section 6.5, REQ-INT-115).
             #[cfg(feature = "interaction")]
             if self.wall.zoomed().is_some() && self.click_is_hosts() {
-                #[allow(clippy::cast_possible_truncation, reason = "the record's clock wraps")]
-                return self.terminal_click(now as u32);
+                return self.terminal_button(neoteletext_input::event::MouseAction::Press, 0);
             }
             if self.wall.zoomed().is_some() {
                 let version = self.versions.get(&click.key).copied().unwrap_or_default();
@@ -912,7 +916,7 @@ impl Browser {
 
     fn shortcut(&mut self, key: Key<'_>, now: u64) -> bool {
         // The browser's Escape: leaves a page whose channel has every
-        // other key (`interaction.md` section 5).
+        // other key (INPUT.md section 9.1).
         if key == Key::Escape {
             self.stop_editing();
             return self.wall.unzoom(now);

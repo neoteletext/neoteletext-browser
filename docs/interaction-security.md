@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Status** | Written 20 October 2026 against [`interaction.md`](interaction.md) as proposed, and revised with it when the design was simplified to the terminal model. Section 9 records what building changed. |
+| **Status** | Written 20 October 2026 against [`interaction.md`](interaction.md) as proposed, and revised with it when the design was simplified to the terminal model. Section 9 records what building changed. Since 21 October 2026 the input system's own analysis is `~/devel/neoteletext-common/INPUT.md` section 11 (decision 48), which takes this one's threats over for protocol version 2; this document stands for the browser's processes and boundaries. |
 | **Method** | The method of [`security-analysis.md`](security-analysis.md): what is protected, who attacks, each boundary the feature crosses, the mitigations, and the remaining risk ranked. |
 
 ---
@@ -54,7 +54,7 @@ phone ──▶ relay ──▶ neoteletext-keyboard ── PhoneKey
 |---|---|
 | `Send` influences fetching (requirement 4.7) | It is the only kind the fetcher reads; at most 46 bytes; written to the push socket and nothing else; it names no address, page or connection |
 | A compromised fetcher sends keys it was not given | It has none: the core gives it a record only under section 5 of the design |
-| The fetcher's new reader | Panic-free (the no-panic lint list) and fuzzed (`fetcher_commands`) |
+| The fetcher's new reader | Panic-free (the no-panic lint list) and fuzzed (`fetcher_commands`): input messages only, read by the engine's input stream reader (INPUT.md, REQ-INT-133) |
 | A false `Sent { seq }` | Only the round-trip clock reads it, bounded to 256 entries |
 
 ### C. The decoder into the trusted core
@@ -124,7 +124,7 @@ Typing tells the channel the viewer's keys and the pages they open, which is wha
 - **"Nothing else sends":** every message kind and every key, driven with no page open, with a page of a channel without input open, in a background tab, and in the strip, never produces a `Send`; with a page of a channel with input open, only `Typed` from that page does, and never a browser shortcut.
 - **Bounds:** a `Send` over 46 bytes refused; `PhoneKey` with a modifier, over 32 bytes, or text over 995 refused; the 121st key in a second dropped and never a key-up; the clock holds 256.
 - **Cursor records:** every field's bounds; a record for a page not open or a channel without input changes nothing; `acked` out of order; a flood coalesced.
-- **Fuzz targets:** `fetcher_commands`, `cursor_records`, `phone_keys`, and the keyboard process's relay and frame readers, in the full gate.
+- **Fuzz targets:** `fetcher_commands`, `input_records` (cursor and control records), `phone_keys`, and the keyboard process's relay and frame readers, in the full gate; the engine fuzzes the input stream and the control record itself.
 - **Log test:** no key code or text in the log or the readout.
 - **Phone:** the configuration hash matches a fixture from `~/devel/qrkeyboard`; a reused counter refused; five wrong PINs lock; Finish ends the session.
 - **Review** of the strip's "Keys go to" state and of the panel, against the spoofing list (requirement 14.5).
@@ -133,6 +133,6 @@ Typing tells the channel the viewer's keys and the pages they open, which is wha
 ## 9. What building changed
 
 - **A cursor record may show another page of the same channel** (`interaction.md` section 17 item 7). It cannot leave the channel, fetch, or act while keys do not go to the channel; the viewer's own choice of page overrides it. A hostile channel can move the viewer among its own pages, which it could already do by pushing what it likes into the page open. Rank 5's spoofing risk is unchanged.
-- **The fetcher reads key records only**, one message kind, each checked by the engine's reader before the agent writes it, which itself drops anything over 46 bytes or for a channel that does not declare input. Fuzzed as `fetcher_commands`.
+- **The fetcher reads input messages only**, one message kind, whole items of the input stream checked by the engine's reader before the agent writes it, which itself drops anything over 4 096 bytes or for a channel that does not declare input (INPUT.md, REQ-INT-133). Fuzzed as `fetcher_commands`.
 - **Phone keys travel core to interface,** which acts on them as its own keys; the interface's messages back are the same intents a keyboard makes, checked by the trusted core as always. A phone key has no modifier by construction: the keyboard process's message has no field for one. Fuzzed as `phone_keys` and, for the keyboard process's readers, `relay_messages`.
 - **Remaining risk 1 is narrowed:** TLS (`rustls`) is built, so a channel on `wss://` types encrypted; a plain `ws://` channel still shows "Not secure".

@@ -143,6 +143,11 @@ struct App {
     tabs: Vec<TabInfo>,
     active: usize,
     exit: Option<String>,
+    /// The address is being edited: the input method is the field's.
+    address_ime: bool,
+    /// Whether the window's input method is enabled now: while the address
+    /// is edited, and while keys go to a channel (INPUT.md section 9.1).
+    ime_allowed: bool,
 }
 
 fn attributes() -> winit::window::WindowAttributes {
@@ -269,7 +274,7 @@ impl App {
                 #[cfg(feature = "links")]
                 Output::Cancel(id) => ToCore::Cancel(id),
                 #[cfg(feature = "interaction")]
-                Output::Terminal { key, local, record } => ToCore::Key(protocol::interaction::KeyIntent { key, local, record }),
+                Output::Terminal { key, local, intent } => ToCore::Input(protocol::interaction::InputIntent { key, local, intent }),
                 #[cfg(feature = "phone-keyboard")]
                 Output::PhonePanel(open) => ToCore::PhonePanel(open),
                 #[cfg(feature = "phone-keyboard")]
@@ -296,9 +301,8 @@ impl App {
                 // Text input is on exactly while the address is edited, when
                 // the keys are not the open page's: its channel is told.
                 Output::TextInput(allowed) => {
-                    if let Some(graphics) = &self.graphics {
-                        graphics.window.set_ime_allowed(allowed);
-                    }
+                    self.address_ime = allowed;
+                    self.sync_ime();
                     #[cfg(feature = "interaction")]
                     self.send(event_loop, &ToCore::Editing(allowed));
                     continue;
@@ -351,6 +355,47 @@ impl App {
         graphics.window.drag_resize_window(direction).is_ok()
     }
 
+    /// Enables the window's input method while the address is edited or
+    /// keys go to a channel, whose composed text then goes to it.
+    fn sync_ime(&mut self) {
+        #[cfg(feature = "interaction")]
+        let allowed = self.address_ime || self.browser.typing_target().is_some();
+        #[cfg(not(feature = "interaction"))]
+        let allowed = self.address_ime;
+        if allowed != self.ime_allowed
+            && let Some(graphics) = &self.graphics
+        {
+            graphics.window.set_ime_allowed(allowed);
+            self.ime_allowed = allowed;
+        }
+    }
+
+    /// The wheel: the channel's over its page when it asked for the mouse
+    /// (INPUT.md section 9.1), in lines positive right and down; otherwise
+    /// the browser's, to scroll. Returns whether the window needs drawing.
+    fn wheel(&mut self, event_loop: &ActiveEventLoop, delta: MouseScrollDelta, now: u64) -> bool {
+        let scale = self.scale();
+        #[cfg(feature = "interaction")]
+        {
+            let lines = |pixels: f64| pixels / scale / interface_core::browser::LINE_HEIGHT;
+            let channels = match delta {
+                MouseScrollDelta::LineDelta(x, y) => self.browser.terminal_wheel(f64::from(x), -f64::from(y)),
+                MouseScrollDelta::PixelDelta(position) => self.browser.terminal_wheel(lines(position.x), lines(-position.y)),
+            };
+            if let Some(changed) = channels {
+                self.act(event_loop);
+                return changed;
+            }
+        }
+        #[cfg(not(feature = "interaction"))]
+        let _ = event_loop;
+        match delta {
+            // A wheel that moves in notches; a trackpad reports pixels.
+            MouseScrollDelta::LineDelta(_, y) => self.browser.wheel_lines(-f64::from(y), now),
+            MouseScrollDelta::PixelDelta(position) => self.browser.scroll_by(-position.y / scale, now),
+        }
+    }
+
     /// Whether the browser's own modifier is held: Command on macOS,
     /// Control and Shift elsewhere, the keys a terminal emulator keeps.
     #[cfg(feature = "interaction")]
@@ -359,25 +404,29 @@ impl App {
     }
 
     /// A key while keys go to a channel: every key but the browser's own
-    /// goes, down and up (`interaction.md` section 5). Returns whether the
+    /// goes, pressed, repeating and released, as the trusted core's
+    /// session asks for them (INPUT.md section 9.1). Returns whether the
     /// key was the channel's.
     #[cfg(feature = "interaction")]
     fn terminal_key(&mut self, event: &winit::event::KeyEvent) -> Option<bool> {
+        use neoteletext_input::event::Action;
+        use winit::platform::modifier_supplement::KeyEventExtModifierSupplement;
         if self.browser.typing_target().is_none() || self.browser_modifier() {
             return None;
         }
         let now = self.now();
-        #[allow(clippy::cast_possible_truncation, reason = "the record's clock wraps")]
-        let clock = now as u32;
-        let down = event.state == ElementState::Pressed;
-        let modifiers = neoteletext_interface::keys::modifiers(self.modifiers, down && event.repeat);
-        let physical = neoteletext_interface::keys::physical(event.physical_key);
-        let changed = match neoteletext_interface::keys::code(&event.logical_key) {
-            Some(code) => self.browser.terminal_key(down, code, modifiers, physical, clock, now),
-            // A character outside the Basic Multilingual Plane, or a key
-            // that types several: it goes as text when pressed.
-            None => match (&event.logical_key, down) {
-                (Key::Character(text), true) => self.browser.terminal_text(text, clock, now),
+        let action = match (event.state, event.repeat) {
+            (ElementState::Pressed, false) => Action::Press,
+            (ElementState::Pressed, true) => Action::Repeat,
+            (ElementState::Released, _) => Action::Release,
+        };
+        let unmodified = event.key_without_modifiers();
+        let parts = neoteletext_interface::keys::parts(action, &event.logical_key, &unmodified, event.physical_key, event.text.as_deref(), self.modifiers);
+        let changed = match parts {
+            Some(parts) => self.browser.terminal_key(parts.action, parts.key, parts.mods, parts.text.as_deref(), parts.base, now),
+            // A key that types several characters: they go as text.
+            None => match (&event.text, action) {
+                (Some(text), Action::Press) => self.browser.terminal_text(text, now),
                 _ => false,
             },
         };
@@ -415,26 +464,26 @@ impl App {
             page: typing.page,
             on: typing.on,
             secure: typing.secure,
+            refused: typing.refused,
+            modes: typing.modes,
             cursor,
             acked: typing.acked,
             round_trip_ms: typing.round_trip_ms,
             show: typing.show,
         };
         self.browser.set_typing(view, now);
+        self.sync_ime();
     }
 
     /// A key of the paired phone: it acts as a key of the window's own
-    /// keyboard, with no modifier (requirement 18.9).
+    /// keyboard, with no modifier (REQ-INT-138).
     #[cfg(feature = "phone-keyboard")]
     fn phone_key(&mut self, key: protocol::keyboard::PhoneKey) -> bool {
-        use neoteletext_input::names::{character_key, named_key};
         use protocol::keyboard::PhoneKey;
         let now = self.now();
-        #[allow(clippy::cast_possible_truncation, reason = "the record's clock wraps")]
-        let clock = now as u32;
         let typing = self.browser.typing_target().is_some();
         match key {
-            PhoneKey::Text(text) if typing => self.browser.terminal_text(&text, clock, now),
+            PhoneKey::Text(text) if typing => self.browser.terminal_text(&text, now),
             PhoneKey::Text(text) => self.browser.key(BrowserKey::Text(&text), Modifiers::default(), now),
             PhoneKey::Key { down, name } => {
                 let mut characters = name.chars();
@@ -442,9 +491,9 @@ impl App {
                     (Some(character), None) => Some(character),
                     _ => None,
                 };
-                let code = named_key(&name).or_else(|| single.and_then(character_key));
                 if typing {
-                    return code.is_some_and(|code| self.browser.terminal_key(down, code, 0, 0, clock, now));
+                    return neoteletext_interface::keys::phone_parts(down, &name)
+                        .is_some_and(|parts| self.browser.terminal_key(parts.action, parts.key, parts.mods, parts.text.as_deref(), parts.base, now));
                 }
                 if !down {
                     return false;
@@ -657,11 +706,7 @@ impl ApplicationHandler<Incoming> for App {
                 self.browser.pointer_released();
                 false
             }
-            WindowEvent::MouseWheel { delta, .. } => match delta {
-                // A wheel that moves in notches; a trackpad reports pixels.
-                MouseScrollDelta::LineDelta(_, y) => self.browser.wheel_lines(-f64::from(y), now),
-                MouseScrollDelta::PixelDelta(position) => self.browser.scroll_by(-position.y / scale, now),
-            },
+            WindowEvent::MouseWheel { delta, .. } => self.wheel(event_loop, delta, now),
             #[cfg(feature = "interaction")]
             WindowEvent::KeyboardInput { ref event, .. } if self.browser.typing_target().is_some() && !self.browser_modifier() => {
                 let changed = self.terminal_key(event).unwrap_or(false);
@@ -675,8 +720,18 @@ impl ApplicationHandler<Incoming> for App {
             }
             #[cfg(feature = "interaction")]
             WindowEvent::Ime(Ime::Commit(text)) if self.browser.typing_target().is_some() => {
-                #[allow(clippy::cast_possible_truncation, reason = "the record's clock wraps")]
-                let changed = self.browser.terminal_text(&text, now as u32, now);
+                let changed = self.browser.terminal_text(&text, now);
+                self.act(event_loop);
+                changed
+            }
+            // The input method's preedit goes to the channel in the COMPOSE
+            // mode (INPUT.md section 9.1), its cursor as a code-point
+            // offset.
+            #[cfg(feature = "interaction")]
+            WindowEvent::Ime(Ime::Preedit(text, cursor)) if self.browser.composes_for_channel() => {
+                let at = cursor.map_or(text.len(), |(start, _)| start);
+                let offset = text.get(..at).map_or(0, |before| before.chars().count());
+                let changed = self.browser.terminal_compose(u32::try_from(offset).unwrap_or(u32::MAX), &text);
                 self.act(event_loop);
                 changed
             }
@@ -834,6 +889,8 @@ fn main() -> std::process::ExitCode {
         tabs: Vec::new(),
         active: 0,
         exit: None,
+        address_ime: false,
+        ime_allowed: false,
     };
     if let Err(error) = event_loop.run_app(&mut app) {
         eprintln!("neoteletext-interface: {error}");

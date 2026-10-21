@@ -1,6 +1,7 @@
-//! The timed test of `interaction.md` section 10 and requirement 18.5:
-//! against the reference channel `neoteletext-site terminal`, twenty keys at twenty
-//! a second go through the real fetcher to the channel, whose pushed page
+//! The timed test of REQ-INT-135: against the reference channel
+//! `neoteletext-site terminal`, a session is opened with HELLO and
+//! WELCOME as the trusted core opens it, then twenty keys at twenty a
+//! second go through the real fetcher to the channel, whose pushed page
 //! comes back; each page is then decoded and rendered by the decoder,
 //! encoded as the trusted core encodes it, and decoded as the interface
 //! decodes it. The numbers are printed; the round trip must be within the
@@ -16,7 +17,10 @@ use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
 use interface_core::canvas::PageKey;
-use neoteletext_input::key::{Event, MAX_RECORD, Press, Record};
+use neoteletext_input::control::{Control, FRAGMENT_DATA, from_packet};
+use neoteletext_input::event::{Event, Item};
+use neoteletext_input::modes::PAGE_CAP;
+use neoteletext_input::session::Session;
 use protocol::fetcher::{FromFetcher, Origin, ToFetcher, read_from_fetcher, write_to_fetcher};
 
 /// Keys sent, at twenty a second (`interaction.md` section 2).
@@ -32,7 +36,7 @@ const PAGE: u16 = 0x200;
 /// the channel's answer to a key within the same 20 ms.
 const PIPELINE_BUDGET: Duration = Duration::from_millis(20);
 const ROUND_TRIP_BUDGET: Duration = Duration::from_millis(20);
-/// The fetcher wakes when the channel's answer arrives (requirement 18.5).
+/// The fetcher wakes when the channel's answer arrives (REQ-INT-135).
 /// When it looked at its sockets every 5 ms, that wait was most of the
 /// round trip: a median of 6.3 ms here on 21 October 2026, against 0.3 ms
 /// once woken by the bytes themselves, and 0.4 ms in a debug build.
@@ -63,10 +67,39 @@ fn programs() -> (PathBuf, PathBuf) {
     (path("neoteletext-site"), path("neoteletext-fetcher"))
 }
 
-fn record(sequence: u16, event: Event<'_>) -> Vec<u8> {
-    let mut out = [0; MAX_RECORD];
-    let length = Record { sequence, clock_ms: 0, event }.write(&mut out).unwrap();
+/// `item` as the receiver's session encodes it.
+fn message(session: &mut Session, item: &Item<'_>) -> Vec<u8> {
+    let mut out = [0; neoteletext_input::MAX_MESSAGE];
+    let length = session.send(item, Some(PAGE), 0, &mut out).unwrap();
+    assert!(length > 0, "{item:?} went");
     out[..length].to_vec()
+}
+
+/// HELLO, and the channel's WELCOME in pushed packets (INPUT.md section
+/// 6.1): the session the keys then go in.
+fn open_session(input: &mut BufWriter<std::process::ChildStdin>, received: &mpsc::Receiver<(Instant, FromFetcher)>, deadline: Instant) -> Session {
+    let mut session = Session::new(PAGE_CAP);
+    let mut hello = [0; neoteletext_input::MAX_MESSAGE];
+    let length = neoteletext_input::event::write(&Item::Event(session.open(0, None)), &mut hello).unwrap();
+    write_to_fetcher(input, &ToFetcher::Send(hello[..length].to_vec())).unwrap();
+    loop {
+        match received.recv_timeout(deadline.saturating_duration_since(Instant::now())) {
+            Ok((_, FromFetcher::Page { origin: Origin::PushedPackets, bytes })) => {
+                let mut buffer = [0; FRAGMENT_DATA];
+                let welcome =
+                    bytes.as_chunks::<42>().0.iter().find_map(|bytes| match from_packet(&neoteletext_core::packet::Packet { bytes: *bytes }, &mut buffer) {
+                        Some(Ok(Control::Welcome { version, caps })) => Some((version, caps)),
+                        _ => None,
+                    });
+                if let Some((version, caps)) = welcome {
+                    session.welcome(version, caps).unwrap();
+                    return session;
+                }
+            }
+            Ok(_) => {}
+            Err(error) => panic!("no WELCOME: {error}"),
+        }
+    }
 }
 
 fn median(times: &mut [Duration]) -> Duration {
@@ -115,7 +148,8 @@ fn keys_round_trip_and_pages_reach_the_screen_within_budget() {
             Err(error) => panic!("the channel's input never opened: {error}"),
         }
     }
-    write_to_fetcher(&mut input, &ToFetcher::Send(record(1, Event::Page(Some(PAGE))))).unwrap();
+    let mut session = open_session(&mut input, &received, deadline);
+    write_to_fetcher(&mut input, &ToFetcher::Send(message(&mut session, &Item::Event(Event::Page(PAGE))))).unwrap();
     next_push(Instant::now() + LIMIT);
 
     let mut engine = decoder::Engine::new();
@@ -124,10 +158,10 @@ fn keys_round_trip_and_pages_reach_the_screen_within_budget() {
     frames.set_visible(vec![key]);
     let (mut round_trips, mut renders, mut encodes, mut decodes) = (Vec::new(), Vec::new(), Vec::new(), Vec::new());
     for index in 0..KEYS {
-        let character = b'a' + u8::try_from(index % 26).unwrap();
-        let press = Press { key: u16::from(character), modifiers: 0, physical: 0 };
+        let character = char::from(b'a' + u8::try_from(index % 26).unwrap());
+        let typed = message(&mut session, &Item::Text(character.encode_utf8(&mut [0; 4])));
         let sent = Instant::now();
-        write_to_fetcher(&mut input, &ToFetcher::Send(record(index + 2, Event::Down(press)))).unwrap();
+        write_to_fetcher(&mut input, &ToFetcher::Send(typed)).unwrap();
         let (arrived, bytes) = next_push(sent + LIMIT);
         round_trips.push(arrived - sent);
         let started = Instant::now();

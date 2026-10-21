@@ -97,7 +97,7 @@ pub enum FromFetcher {
         services: Vec<crate::links::Service>,
     },
     /// The channel's push WebSocket opened or closed, when its descriptor
-    /// says it takes input (`interaction.md` section 5): keys may go now,
+    /// says it takes input (INPUT.md section 4): a session may start now,
     /// and whether they go encrypted.
     #[cfg(feature = "interaction")]
     Input {
@@ -113,31 +113,32 @@ pub enum FromFetcher {
 #[cfg(feature = "interaction")]
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ToFetcher {
-    /// One key record for the channel's push WebSocket, at most 46 bytes,
-    /// checked by the engine's reader on both sides.
+    /// One input message for the channel's push WebSocket: whole items of
+    /// the input stream, at most 4 096 bytes, read by the engine's reader on
+    /// both sides (REQ-INT-133).
     Send(Vec<u8>),
 }
 
 /// # Errors
-/// When writing fails or the record is not a key record.
+/// When writing fails or the message is not whole items of the input stream.
 #[cfg(feature = "interaction")]
 pub fn write_to_fetcher(out: &mut dyn Write, message: &ToFetcher) -> Result<(), ProtocolError> {
     let ToFetcher::Send(record) = message;
-    crate::interaction::check_record(record)?;
+    crate::interaction::check_message(record)?;
     write_frame(out, KIND_SEND, record)
 }
 
 /// Reads one message from the trusted core, or `None` at a clean end.
 ///
 /// # Errors
-/// On input errors, any other kind, and anything but a key record.
+/// On input errors, any other kind, and anything but an input message.
 #[cfg(feature = "interaction")]
 pub fn read_to_fetcher(input: &mut dyn Read) -> Result<Option<ToFetcher>, ProtocolError> {
     let Some((kind, payload)) = read_frame(input)? else { return Ok(None) };
     if kind != KIND_SEND {
         return Err(ProtocolError::UnknownKind(kind));
     }
-    crate::interaction::check_record(&payload)?;
+    crate::interaction::check_message(&payload)?;
     Ok(Some(ToFetcher::Send(payload)))
 }
 

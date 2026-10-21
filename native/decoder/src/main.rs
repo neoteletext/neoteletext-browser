@@ -167,14 +167,20 @@ fn draw(
 }
 
 /// Sends the voice operations the audio receiver produced, and the
-/// cursor records found.
+/// channel's records for its input found.
 fn send_sounds(engine: &mut Engine, output: &mut Output<'_>) -> Result<(), ProtocolError> {
     for audio in engine.take_sounds() {
         write_to_core(output, &FromDecoder::Audio(audio))?;
     }
     #[cfg(feature = "interaction")]
-    for body in engine.take_cursors() {
-        write_to_core(output, &FromDecoder::Cursor { body })?;
+    {
+        let input = engine.take_input();
+        for body in input.cursors {
+            write_to_core(output, &FromDecoder::Cursor { body })?;
+        }
+        for body in input.controls {
+            write_to_core(output, &FromDecoder::InputControl { body })?;
+        }
     }
     Ok(())
 }

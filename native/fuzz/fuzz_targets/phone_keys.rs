@@ -1,5 +1,5 @@
 //! What the trusted core reads from the phone keyboard process, which
-//! talks to a relay and is untrusted (requirement 18.9).
+//! talks to a relay and is untrusted (REQ-INT-138).
 #![no_main]
 
 use libfuzzer_sys::fuzz_target;

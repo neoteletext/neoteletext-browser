@@ -119,7 +119,7 @@ struct Fetcher {
     child: Child,
     /// As [`Decoder::generation`].
     generation: u64,
-    /// The only thing a fetcher is given: key records (requirement 18.4).
+    /// The only thing a fetcher is given: input messages (REQ-INT-133).
     #[cfg(feature = "interaction")]
     input: Option<BufWriter<ChildStdin>>,
 }
@@ -327,13 +327,13 @@ impl Core {
         Ok(())
     }
 
-    /// The keyboard's intents: a key for the open page's channel, and the
+    /// The keyboard's intents: input for the open page's channel, and the
     /// phone keyboard's panel.
     #[cfg(feature = "interaction")]
     fn input_intent(&mut self, intent: ToCore) -> Result<(), String> {
         match intent {
-            ToCore::Key(intent) => {
-                let sends = self.typing.key(&intent, self.now());
+            ToCore::Input(intent) => {
+                let sends = self.typing.input_intent(&intent, self.now());
                 self.deliver_typing(sends)?;
             }
             ToCore::Editing(editing) => {
@@ -353,8 +353,20 @@ impl Core {
         Ok(())
     }
 
-    /// Delivers what the typing rules decided: key records to a channel's
-    /// fetcher, the typing state to the interface.
+    /// Lets time pass for typing: a channel that has not answered HELLO
+    /// in time takes no input (INPUT.md section 6.1).
+    #[cfg_attr(not(feature = "interaction"), allow(clippy::unnecessary_wraps, clippy::unused_self, reason = "only typing has a time"))]
+    fn typing_tick(&mut self) -> Result<(), String> {
+        #[cfg(feature = "interaction")]
+        {
+            let sends = self.typing.tick(self.now());
+            self.deliver_typing(sends)?;
+        }
+        Ok(())
+    }
+
+    /// Delivers what the typing rules decided: input messages to a
+    /// channel's fetcher, the typing state to the interface.
     #[cfg(feature = "interaction")]
     fn deliver_typing(&mut self, sends: Vec<neoteletext::typing::Send>) -> Result<(), String> {
         use protocol::fetcher::{ToFetcher, write_to_fetcher};
@@ -700,7 +712,7 @@ impl Core {
             #[cfg(any(feature = "links", feature = "interaction"))]
             ToCore::Focused(focused) => self.focused(focused)?,
             #[cfg(feature = "interaction")]
-            ToCore::Key(_) | ToCore::Editing(_) => self.input_intent(intent)?,
+            ToCore::Input(_) | ToCore::Editing(_) => self.input_intent(intent)?,
             #[cfg(feature = "phone-keyboard")]
             ToCore::PhonePanel(_) | ToCore::PhoneFinish => self.input_intent(intent)?,
         }
@@ -797,6 +809,11 @@ impl Core {
                 let sends = self.typing.cursor(channel, body, self.now());
                 self.deliver_typing(sends)?;
             }
+            #[cfg(feature = "interaction")]
+            FromDecoder::InputControl { body } => {
+                let sends = self.typing.control(channel, &body, self.now());
+                self.deliver_typing(sends)?;
+            }
             FromDecoder::Audio(audio) => {
                 if let Some(message) = self.hearing.decoded(channel, audio) {
                     self.send(&message)?;
@@ -807,7 +824,7 @@ impl Core {
     }
 }
 
-/// The phone keyboard (`interaction.md` section 9, requirement 18.9): a
+/// The phone keyboard (INPUT.md section 10, REQ-INT-138): a
 /// process of its own holds the pairing secret; the trusted core shows its
 /// QR in the panel and gives the interface the phone's keys, which act as
 /// the interface's own.
@@ -1140,7 +1157,7 @@ fn run() -> Result<(), String> {
             },
             Event::Load => {
                 core.load();
-                Ok(())
+                core.typing_tick()
             }
             Event::DecoderEnded(channel, generation, reason) => core.decoder_ended(channel, generation, reason),
             Event::Sleep => core.match_decoders(),

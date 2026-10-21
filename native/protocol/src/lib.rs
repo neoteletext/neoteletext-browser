@@ -96,7 +96,7 @@ const KIND_TYPED: u8 = 25;
 #[cfg(any(feature = "links", feature = "interaction"))]
 const KIND_FOCUSED: u8 = 26;
 #[cfg(feature = "interaction")]
-const KIND_KEY: u8 = 27;
+const KIND_INPUT: u8 = 27;
 #[cfg(feature = "phone-keyboard")]
 const KIND_PHONE_PANEL: u8 = 28;
 #[cfg(feature = "phone-keyboard")]
@@ -183,7 +183,7 @@ pub enum ToInterface {
     /// (`interaction.md` section 11).
     #[cfg(feature = "interaction")]
     Typing(interaction::Typing),
-    /// The phone keyboard's panel and state (`interaction.md` section 9).
+    /// The phone keyboard's panel and state (INPUT.md section 10).
     #[cfg(feature = "phone-keyboard")]
     Phone(keyboard::PhoneView),
     /// A key of the paired phone, which the interface takes as its own.
@@ -244,13 +244,13 @@ pub enum ToCore {
     #[cfg(any(feature = "links", feature = "interaction"))]
     Focused(bool),
     /// The viewer began or stopped editing the address: while they do,
-    /// keys are not the open page's (the engine's key record kind 6).
+    /// keys are not the open page's, and the channel has `FOCUS_OUT`.
     #[cfg(feature = "interaction")]
     Editing(bool),
-    /// A key, text or a click on the open page, for its channel if it
-    /// takes input (`interaction.md` section 5).
+    /// A key, text, the mouse, a paste or a composition on the open page,
+    /// for its channel if it takes input (REQ-INT-130, REQ-INT-132).
     #[cfg(feature = "interaction")]
-    Key(interaction::KeyIntent),
+    Input(interaction::InputIntent),
     /// Strip input: open the phone keyboard's panel, or close it.
     #[cfg(feature = "phone-keyboard")]
     PhonePanel(bool),
@@ -756,9 +756,9 @@ pub fn write_to_core(out: &mut dyn Write, message: &ToCore) -> Result<(), Protoc
             KIND_EDITING
         }
         #[cfg(feature = "interaction")]
-        ToCore::Key(intent) => {
-            interaction::push_key(&mut payload, intent)?;
-            KIND_KEY
+        ToCore::Input(intent) => {
+            interaction::push_input(&mut payload, intent)?;
+            KIND_INPUT
         }
         #[cfg(feature = "phone-keyboard")]
         ToCore::PhonePanel(open) => {
@@ -837,7 +837,7 @@ pub fn read_from_interface(input: &mut dyn Read) -> Result<Option<ToCore>, Proto
             ToCore::Typed { number, opened }
         }
         #[cfg(feature = "interaction")]
-        KIND_KEY => ToCore::Key(interaction::read_key(&mut fields)?),
+        KIND_INPUT => ToCore::Input(interaction::read_input(&mut fields)?),
         #[cfg(feature = "phone-keyboard")]
         KIND_PHONE_PANEL => ToCore::PhonePanel(match fields.u8()? {
             0 => false,

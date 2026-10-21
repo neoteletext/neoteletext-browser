@@ -16,9 +16,9 @@ pub const MAX_JOIN: usize = 512;
 /// A key's W3C name or one character: the longest name in the engine's
 /// table is 20 bytes.
 pub const MAX_KEY_NAME: usize = 32;
-/// Text the phone typed at once, as the engine's key record carries
-/// (`neoteletext_input::key::MAX_TEXT` is 32 bytes a record; the
-/// interface splits longer text).
+/// Text the phone typed at once, within qrkeyboard's frame of 1 024 bytes
+/// less its envelope; it goes on as one text intent, within the input
+/// system's 4 000 (REQ-INT-138).
 pub const MAX_PHONE_TEXT: usize = 995;
 /// A PIN: four digits.
 pub const MAX_PIN: usize = 8;

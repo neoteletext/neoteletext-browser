@@ -162,10 +162,23 @@ pub struct Engine {
     /// The `LT` and `LK` lines of every page file read.
     #[cfg(feature = "links")]
     lines: links::Lines,
-    /// Cursor records found since the last call, as sent: their bodies,
-    /// for the trusted core to check (`interaction.md` section 7).
+    /// The channel's records for its input found since the last call, as
+    /// sent, for the trusted core to check (INPUT.md section 7).
     #[cfg(feature = "interaction")]
-    cursors: Vec<[u8; neoteletext_input::cursor::BODY]>,
+    input: InputRecords,
+}
+
+/// The channel's records for its input, untrusted, in their order of
+/// arrival within each kind.
+#[cfg(feature = "interaction")]
+#[derive(Debug, Default, PartialEq, Eq)]
+pub struct InputRecords {
+    /// Cursor records' bodies (REQ-INT-005, REQ-INT-110), from packets and
+    /// `CU` lines.
+    pub cursors: Vec<[u8; neoteletext_input::cursor::BODY]>,
+    /// Control messages' bodies (REQ-INT-111), from packets, and a page's
+    /// `IM` line as `PAGE_MODES` (REQ-INT-114).
+    pub controls: Vec<Vec<u8>>,
 }
 
 impl Default for Engine {
@@ -220,7 +233,7 @@ impl Engine {
             #[cfg(feature = "links")]
             lines: links::Lines::default(),
             #[cfg(feature = "interaction")]
-            cursors: Vec::new(),
+            input: InputRecords::default(),
         }
     }
 
@@ -242,21 +255,21 @@ impl Engine {
         self.audio.tick(now_ms, &mut Outbox(&mut self.sounds));
     }
 
-    /// The cursor records found since the last call, once each.
+    /// The channel's records for its input found since the last call, once
+    /// each.
     #[cfg(feature = "interaction")]
-    pub fn take_cursors(&mut self) -> Vec<[u8; neoteletext_input::cursor::BODY]> {
-        core::mem::take(&mut self.cursors)
+    pub fn take_input(&mut self) -> InputRecords {
+        core::mem::take(&mut self.input)
     }
 
     fn push_all(&mut self, packets: &[(Packet, PacketMeta)]) {
         for (packet, meta) in packets {
-            // A cursor record (the engine's REQ-INT-005) rides the audio
-            // profile's data channel; only one that reads goes on.
+            // The channel's cursor and control records (INPUT.md section 7)
+            // ride the audio profile's data channel; only one that reads
+            // goes on, as its body.
             #[cfg(feature = "interaction")]
-            if let Some(found) = neoteletext_input::cursor::from_packet(packet) {
-                if let Ok(cursor) = found {
-                    self.cursors.push(cursor.body());
-                }
+            if neoteletext_input::is_input_packet(packet) {
+                self.input.take_packet(packet);
                 continue;
             }
             // The audio profile's packets go to its receiver; the decoder
@@ -281,7 +294,7 @@ impl Engine {
             #[cfg(feature = "links")]
             lines: &mut self.lines,
             #[cfg(feature = "interaction")]
-            cursors: &mut self.cursors,
+            input: &mut self.input,
             unused: core::marker::PhantomData,
         };
         self.reader.feed(bytes, &mut |item| match item {
@@ -305,7 +318,7 @@ impl Engine {
             #[cfg(feature = "links")]
             lines: &mut self.lines,
             #[cfg(feature = "interaction")]
-            cursors: &mut self.cursors,
+            input: &mut self.input,
             unused: core::marker::PhantomData,
         };
         let reader = if packets { &mut self.pushed_packets } else { &mut self.pushed_pages };
@@ -408,7 +421,7 @@ impl Engine {
             #[cfg(feature = "links")]
             lines: &mut self.lines,
             #[cfg(feature = "interaction")]
-            cursors: &mut self.cursors,
+            input: &mut self.input,
             unused: core::marker::PhantomData,
         };
         self.reader.finish(&mut |item| match item {
@@ -633,7 +646,7 @@ struct PageLines<'a> {
     #[cfg(feature = "links")]
     lines: &'a mut links::Lines,
     #[cfg(feature = "interaction")]
-    cursors: &'a mut Vec<[u8; neoteletext_input::cursor::BODY]>,
+    input: &'a mut InputRecords,
     unused: core::marker::PhantomData<&'a ()>,
 }
 
@@ -642,12 +655,18 @@ impl PageLines<'_> {
     fn read(&mut self, page: &neoteletext_formats::page::PageFile) {
         #[cfg(feature = "links")]
         self.lines.read(page);
-        // The engine's REQ-INT-006: a `CU` line is the page's cursor record.
+        // REQ-INT-006: a `CU` line is the page's cursor record.
         #[cfg(feature = "interaction")]
         if let Some(line) = page.cursor {
             let [p0, p1] = page.address.mpp().to_be_bytes();
             let [a0, a1] = line.acked.to_be_bytes();
-            self.cursors.push([p0, p1, a0, a1, line.row, line.column, line.width, line.flags]);
+            self.input.cursors.push([p0, p1, a0, a1, line.row, line.column, line.width, line.flags]);
+        }
+        // REQ-INT-114: an `IM` line is the page's own modes, as a
+        // PAGE_MODES record of the channel's would say them.
+        #[cfg(feature = "interaction")]
+        if let Some(line) = page.input_modes {
+            self.input.page_modes(page.address.mpp(), line.modes);
         }
     }
 }
@@ -967,6 +986,29 @@ LT,5,0,7,web:https://www.example.invalid/\nLK,101,https://sport.invalid/\n";
         assert_eq!(arrived, [(0x300, "Third magazine".to_owned())]);
     }
 
+    /// REQ-INT-110, REQ-INT-111 and REQ-INT-114: a page's `CU` and `IM`
+    /// lines, and a pushed cursor or control record, reach the trusted
+    /// core as bodies; nothing else does.
+    #[cfg(feature = "interaction")]
+    #[test]
+    fn the_channels_input_records_are_passed_on() {
+        use neoteletext_input::control::{Control, packet_of, read_body};
+        use neoteletext_input::modes::MOUSE_BUTTONS;
+        let mut engine = Engine::new();
+        engine.feed_whole(false, true, b"PN,50000\r\nOL,1,Links\r\nCU,255,0,0,0,7\r\nIM,8\r\n");
+        let input = engine.take_input();
+        assert_eq!(input.cursors, [[0x05, 0x00, 0, 7, 255, 0, 0, 0]]);
+        assert_eq!(input.controls.iter().map(|body| read_body(body).unwrap()).collect::<Vec<_>>(), [Control::PageModes { page: 0x500, modes: MOUSE_BUTTONS }]);
+        let welcome = packet_of(&Control::Welcome { version: 2, caps: MOUSE_BUTTONS }, 0, 1).unwrap();
+        engine.feed_whole(true, true, &welcome.bytes);
+        let input = engine.take_input();
+        assert_eq!(input.controls.iter().map(|body| read_body(body).unwrap()).collect::<Vec<_>>(), [Control::Welcome { version: 2, caps: MOUSE_BUTTONS }]);
+        assert_eq!(input.cursors, [] as [[u8; neoteletext_input::cursor::BODY]; 0]);
+        assert_eq!(engine.take_input(), InputRecords::default(), "once each");
+        engine.feed_whole(false, true, b"PN,50100\r\nOL,1,None\r\n");
+        assert_eq!(engine.take_input(), InputRecords::default(), "a page without the lines");
+    }
+
     #[test]
     fn a_message_reports_only_the_pages_it_touched() {
         let mut engine = Engine::new();
@@ -1063,5 +1105,32 @@ pub mod sample {
             );
         }
         out.into_bytes()
+    }
+}
+
+#[cfg(feature = "interaction")]
+impl InputRecords {
+    /// A cursor or control record's packet: its body kept when it reads.
+    fn take_packet(&mut self, packet: &Packet) {
+        use neoteletext_input::control;
+        if let Some(Ok(cursor)) = neoteletext_input::cursor::from_packet(packet) {
+            self.cursors.push(cursor.body());
+            return;
+        }
+        let mut buffer = [0_u8; control::FRAGMENT_DATA];
+        if let Some(Ok(message)) = control::from_packet(packet, &mut buffer) {
+            self.control(&message);
+        }
+    }
+
+    fn page_modes(&mut self, page: u16, modes: u32) {
+        self.control(&neoteletext_input::control::Control::PageModes { page, modes });
+    }
+
+    fn control(&mut self, message: &neoteletext_input::control::Control<'_>) {
+        let mut body = [0_u8; neoteletext_input::control::MAX_BODY];
+        if let Ok(length) = neoteletext_input::control::write_body(message, &mut body) {
+            self.controls.push(body.get(..length).unwrap_or(&[]).to_vec());
+        }
     }
 }

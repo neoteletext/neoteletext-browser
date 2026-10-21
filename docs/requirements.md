@@ -250,7 +250,7 @@
 - **Reason:** A hostile interface sees pages of every open channel; if it could influence fetching it could encode one channel's pages in the pattern of requests to another.
 - **Source:** Decisions 20 and 22.
 - **Verification:** Test with the hostile interface harness: across every intent kind and key, with arbitrary values and timing, the requests reaching a test server are identical to a run with no interface activity.
-- **State:** Met by construction: the fetcher takes from the trusted core only key records (requirement 18.4), which name no address, page or connection and go only to the channel's own push WebSocket; the interface's visibility reports reach only the decoder's rendering. The test is not written. Channels with only separate page files are not supported yet.
+- **State:** Met by construction: the fetcher takes from the trusted core only input messages (REQ-INT-133; requirement 18.4 before 21 October 2026), which name no address, page or connection and go only to the channel's own push WebSocket; the interface's visibility reports reach only the decoder's rendering. The test is not written. Channels with only separate page files are not supported yet.
 - **Amended 20 October 2026 (decision 44):** the one further exception is requirement 18.4's key records, bounded, on the channel's own WebSocket, while a page of a channel that declares input is open.
 
 ### Requirement 4.8: Untrusted text is cleaned on both sides
@@ -1067,7 +1067,7 @@ Adopted on 20 October 2026 (decision 41) from [`hyperlinks.md`](hyperlinks.md), 
 
 ## 18. Push, typing and the cursor
 
-From `interaction.md` (decision 44), built on 20 October 2026 (decision 45).
+From `interaction.md` (decision 44), built on 20 October 2026 (decision 45). On 21 October 2026 the input system's own requirements moved to `~/devel/neoteletext-common/INPUT.md` (decision 48); 18.1, push, stays here.
 
 ### Requirement 18.1: Push over every transport, with a heartbeat
 - **Statement:** The fetcher receives push over WebSocket, plain and TLS, and Server-Sent Events, with a heartbeat; pushed packets reach the decoder at once.
@@ -1077,64 +1077,62 @@ From `interaction.md` (decision 44), built on 20 October 2026 (decision 45).
 - **State:** Partly met. WebSocket push, plain, is exercised against `neoteletext-site terminal` by the latency test; TLS is `rustls` (requirement 5.8), not yet tried against a `wss` channel; Server-Sent Events against `neoteletext-site serve`. The heartbeat is the engine's (its decision E.92), with tests there. A pushed message and a fetched file are read whole and their pages completed at once (`a_pushed_page_shows_as_it_arrives`).
 
 ### Requirement 18.2: When keys go to a channel
-- **Statement:** A key goes to a channel only while the tab is active, the open page is that channel's, and its descriptor declares input over its WebSocket; every key goes but the browser's own shortcuts, Command combinations on macOS and Control-Shift combinations elsewhere; closing the page stops it. On such a channel a plain click goes to the host and Command-click follows a link.
-- **Reason:** The open page is the terminal; the browser keeps exactly what a terminal emulator keeps, links included.
-- **Source:** Decision 44; `interaction.md` section 5.
-- **Verification:** Test of each condition, Control-C and the F-keys among the keys that go; the link tests.
-- **State:** Met. Tests: `keys_go_only_under_every_condition`, `records_are_numbered_and_held_keys_are_released_on_leaving`, `keys_go_only_while_the_core_says_so`, `command_never_goes`, `editing_the_address_takes_the_keys_from_the_page_and_says_so`; by hand on macOS on 20 October 2026 against `neoteletext-site terminal`: `*200#` went to page 200, typed letters reached the channel, the game moved and fired, the piano played, and Command-L into the address field showed the channel's "Your keys went elsewhere." until Escape gave the keys back.
+- **State:** Withdrawn on 21 October 2026 (decision 48): replaced by REQ-INT-130 and REQ-INT-136 of `~/devel/neoteletext-common/INPUT.md`, below. Its text as built for version 1 is in this repository's history.
 
 ### Requirement 18.3: The strip says where keys go
-- **Statement:** While keys go to a channel the strip says "Keys go to" the channel, with "Not secure" on a plain connection.
-- **Reason:** The viewer must always know who is listening.
-- **Source:** Decision 44.
-- **Verification:** Test; review.
-- **State:** Met, with the round trip beside it; seen on macOS on 20 October 2026 ("Keys go to 127.0.0.1 · 7 ms · Not secure").
+- **State:** Withdrawn on 21 October 2026 (decision 48): replaced by REQ-INT-131 of `~/devel/neoteletext-common/INPUT.md`, below. Its text as built for version 1 is in this repository's history.
 
 ### Requirement 18.4: The fetcher takes only key records
-- **Statement:** The fetcher takes from the trusted core only key records of at most 46 bytes, written to the push socket; nothing it takes changes what is fetched.
-- **Reason:** Requirement 4.7's one exception, bounded.
-- **Source:** Decision 44.
-- **Verification:** Test; the fetcher's reader fuzzed.
-- **State:** Met: `read_to_fetcher` accepts one kind, checked by the engine's key-record reader on both sides; the engine's agent drops anything over 46 bytes or on a channel without input (its test `input_goes_on_the_push_websocket_only_when_declared`); the fuzz target `fetcher_commands`.
+- **State:** Withdrawn on 21 October 2026 (decision 48): replaced by REQ-INT-133 of `~/devel/neoteletext-common/INPUT.md`, below. Its text as built for version 1 is in this repository's history.
 
 ### Requirement 18.5: Latency
-- **Statement:** A key record is sent within 1 ms of the key; the push socket has `TCP_NODELAY`; a pushed packet of the page being typed into is rendered on arrival, coalesced to the display rate, and drawn at the next frame, within 20 ms.
-- **Reason:** The latency budget.
-- **Source:** Decision 44; `interaction.md` section 10.
-- **Verification:** A timed test in the full gate, pass or fail.
-- **State:** Met on macOS, measured by `keys_round_trip_and_pages_reach_the_screen_within_budget` on 20 October 2026 (release build): key to the channel's pushed page, median 7.4 ms on this computer's own network; render, PNG encoding and the interface's decoding together, median 7.4 ms (render 3.3, encode 3.7, decode 0.4); in a debug build the three take about three times as long, which the test reports and holds only the round trip to; it builds the channel and the fetcher itself, so it runs on a fresh tree, and passed in the Windows 11 VM on 20 October 2026. The fetcher wakes at once for a key, and, since 21 October 2026, for the channel's answer: each connection's own thread reads its socket and wakes the loop when bytes arrive. Before, the loop looked at its sockets every 5 ms, and the round trip's median was 6.3 ms; after, 0.28 ms (release, five runs each), and the test holds the median to 2 ms. In the Windows 11 VM on 21 October 2026, release build: median 1.16 ms, worst 1.43 ms, and every other test passed. The interface draws at 16 ms while keys go to a channel.
+- **State:** Withdrawn on 21 October 2026 (decision 48): replaced by REQ-INT-135 of `~/devel/neoteletext-common/INPUT.md`, below. Its text as built for version 1 is in this repository's history.
 
 ### Requirement 18.6: Cursor records are checked
-- **Statement:** The trusted core checks every cursor record and passes the interface only the cursor, the field, the flags and the round trip.
-- **Reason:** The decoder is untrusted.
-- **Source:** Decision 44.
-- **Verification:** Test with out-of-range records.
-- **State:** Met: the engine's `cursor::from_body` on the trusted core's side, the interface's reader checks again; tests `the_cursor_is_checked_and_its_acknowledgement_measures_the_round_trip`, `typing_round_trips_and_a_bad_cursor_is_refused`; the fuzz target `cursor_records`. A record naming another page of the same channel shows that page (decision 45).
+- **State:** Withdrawn on 21 October 2026 (decision 48): replaced by REQ-INT-134 of `~/devel/neoteletext-common/INPUT.md`, below. Its text as built for version 1 is in this repository's history.
 
 ### Requirement 18.7: Cursor and echo
-- **Statement:** The cursor and the echo are drawn by the interface over the open page's image, in styles no page can draw, never as an underline; an echo is only the viewer's own printable key within the record's width, provisional, removed on acknowledgement or after two seconds.
-- **Reason:** A page must not forge them; typing must not pretend.
-- **Source:** Decision 44.
-- **Verification:** Tests; review.
-- **State:** Met: an amber bar or block outline that blinks, echoes in amber on a dark cell; tests `echo_stays_in_its_width_is_masked_and_clears_on_acknowledgement_or_time`, `the_cursor_is_drawn_only_while_typing`; seen on macOS on 20 October 2026.
+- **State:** Withdrawn on 21 October 2026 (decision 48): replaced by REQ-INT-134 of `~/devel/neoteletext-common/INPUT.md`, below. Its text as built for version 1 is in this repository's history.
 
 ### Requirement 18.8: The round trip, and no key logged
-- **Statement:** The round trip is measured from acknowledgements, for at most 256 unacknowledged records, and shown in the developer readout; no key is ever logged.
-- **Reason:** Measure; keys are private.
-- **Source:** Decision 44.
-- **Verification:** The test of 18.5; a log test.
-- **State:** Partly met: measured and shown in the strip (the browser has no developer readout); the log carries no key, by inspection; the log test is not written.
+- **State:** Withdrawn on 21 October 2026 (decision 48): replaced by REQ-INT-137 of `~/devel/neoteletext-common/INPUT.md`, below. Its text as built for version 1 is in this repository's history.
 
 ### Requirement 18.9: The phone keyboard
-- **Statement:** The phone keyboard runs in its own sandboxed process, which alone holds the pairing secret; its keys reach the trusted core bounded and without modifiers and act exactly as local keys; its QR is shown only from the panel, with its one-line warning; one phone at a time; Finish in the strip; a dropped phone holds the screen for at most 30 s.
-- **Reason:** A phone is a keyboard, no more; whoever scans has it.
-- **Source:** Decision 44; `interaction.md` section 9.
-- **Verification:** Tests of the reader and the bounds; the sandbox test; review.
-- **State:** Partly met: `neoteletext-keyboard`, run with the fetcher's sandbox on macOS; the protocol's tests and the fuzz target `phone_keys`; the panel's tests (`the_panel_shows_the_qr_and_the_warning_and_finish_is_asked_for`); pairing and keys through a locally run relay in the engine's tests; and on 20 October 2026, `neoteletext-keyboard` itself against a locally run relay: its QR, read by a QR reader, joined a simulated phone, which paired, and the phone's keys and text came out of the process as bounded messages. The panel was not opened by hand: posting clicks to the window without bringing it forward did not reach it. qrkeyboard.com runs protocol 3 since 21 October 2026, and the engine's screen paired through it that day; the browser's panel has not yet paired with a real phone; `NEOTELETEXT_QRKEYBOARD_RELAY` names a local relay for testing. Five wrong PINs lock (the engine's screen); the browser starts the no-PIN mode.
+- **State:** Withdrawn on 21 October 2026 (decision 48): replaced by REQ-INT-138 of `~/devel/neoteletext-common/INPUT.md`, below. Its text as built for version 1 is in this repository's history.
 
 ### Requirement 18.10: Both compile out
-- **Statement:** All of this is behind the `interaction` feature, the phone keyboard behind `phone-keyboard`, both on by default and both compilable out.
-- **Reason:** The owner wants features able to be compiled out.
-- **Source:** Decision 44.
-- **Verification:** The gates build without them.
+- **State:** Withdrawn on 21 October 2026 (decision 48): replaced by REQ-INT-139 of `~/devel/neoteletext-common/INPUT.md`, below. Its text as built for version 1 is in this repository's history.
+
+### The input system: REQ-INT-130 to REQ-INT-139
+
+The input system's requirements for NeoTeletext are in `~/devel/neoteletext-common/INPUT.md` section 12, which holds each one's statement, reason and verification; the engine's REQ-INT-101 to REQ-INT-116 are the protocol's, built in its `neoteletext-input` and traced by the engine. Here is where each of NeoTeletext's stands.
+
+#### REQ-INT-130: When keys go
+- **State:** Met in tests: `input_goes_only_under_every_condition`, `a_session_starts_with_hello_and_waits_for_welcome`, `leaving_the_page_says_focus_out_and_page_zero`, `editing_the_address_takes_the_keys_from_the_page_and_says_so`, `keys_go_only_while_the_core_says_so`, `command_never_goes`. Version 2 has not been tried by hand in the window.
+
+#### REQ-INT-131: The strip
+- **State:** Met in tests: `the_strip_says_where_keys_go` ("Keys go to", the round trip, "Not secure", and "did not answer" for a channel that did not welcome input).
+
+#### REQ-INT-132: The trusted core encodes
+- **State:** Met: the interface sends intents (`interface_core::input::Intent`), which the protocol reads whole and refuses out of bounds, and the trusted core's session alone encodes, HELLO, RESIZE, PAGE and FOCUS included; tests `every_intent_round_trips`, `what_breaks_a_bound_is_refused`, `a_session_starts_with_hello_and_waits_for_welcome`.
+
+#### REQ-INT-133: The fetcher
+- **State:** Met: `read_to_fetcher` takes only input messages, whole items of the stream of at most 4 096 bytes, read by the engine's reader on both sides; test `a_message_for_the_fetcher_is_whole_and_bounded`; the fuzz target `fetcher_commands`.
+
+#### REQ-INT-134: Cursor and echo drawn safely
+- **State:** Met: the engine's `cursor::from_body` in the trusted core, checked again by the interface's reader; tests `echo_stays_in_its_width_is_masked_and_clears_on_acknowledgement_or_time`, `the_cursor_is_drawn_only_while_typing`, `the_acknowledgement_clears_echo_and_measures_the_round_trip`, `typing_round_trips_and_a_bad_cursor_or_mode_is_refused`; the fuzz target `input_records`.
+
+#### REQ-INT-135: Latency
+- **State:** Met on macOS, by `keys_round_trip_and_pages_reach_the_screen_within_budget`, which now opens the session with HELLO and WELCOME and types text: on 21 October 2026, release build, key to the channel's pushed page median 0.22 ms, worst 0.42 ms; render 0.90 ms, encoding 1.73 ms and the interface's decoding 0.17 ms (medians), the three together at worst 3.19 ms. Not yet run on Windows or Linux with version 2.
+
+#### REQ-INT-136: Mouse, paste and composition
+- **State:** Partly met. Clicks, moves and the wheel go only in a mouse mode, over the page, the browser's modifier keeping a click the browser's; the preedit goes as COMPOSE in that mode; the input method is enabled while keys go: tests `a_click_is_the_hosts_only_in_a_mouse_mode`, `the_wheel_and_moves_go_only_when_asked_for`, `paste_is_one_intent_and_composition_only_in_its_mode`, `the_mouse_goes_only_when_the_page_or_channel_asks`. **Paste is NOT DONE:** the interface has no way to read the system clipboard without a library, which awaits the owner's approval; the path from a paste to the channel is built and tested. The preedit is untested with a real input method.
+
+#### REQ-INT-137: No key is logged, and the round trip is measured
+- **State:** Met: measured from acknowledgements, at most 256 sends remembered (the engine's `at_most_256_sends_are_remembered`), and shown in the strip; no code that handles input prints or logs, and the keyboard process prints only why it stopped (test `no_input_code_logs`).
+
+#### REQ-INT-138: The phone keyboard
+- **State:** As requirement 18.9 stood, with the phone's keys now the protocol's: text as text, named keys their functional codes, no modifiers (test `a_phones_keys_have_no_modifiers`); the keyboard process counts 120 input units a second, a character of text each. The panel has not yet paired with a real phone.
+
+#### REQ-INT-139: Compiled out
 - **State:** Met: the commit gate lints the workspace with every optional area out, and with hyperlinks, typing, and both, alone.

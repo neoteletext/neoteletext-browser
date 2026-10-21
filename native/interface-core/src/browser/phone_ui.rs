@@ -1,5 +1,5 @@
-//! The phone keyboard's panel and strip (`interaction.md` section 9,
-//! requirement 18.9): the menu button opens a panel with the QR to scan,
+//! The phone keyboard's panel and strip (INPUT.md section 10,
+//! REQ-INT-138): the menu button opens a panel with the QR to scan,
 //! the PIN in PIN mode, and the one line of warning; while a phone is the
 //! keyboard the strip says so, with Finish.
 
@@ -43,7 +43,7 @@ pub struct PhoneUiView {
     pub pin: Option<String>,
 }
 
-/// The one line every QR panel shows (`interaction.md` section 9).
+/// The one line every QR panel shows (INPUT.md section 10).
 pub const WARNING: &str = "Scan with your phone camera to type here. Anyone who can see this code can type.";
 const PANEL_WIDTH: f64 = 460.0;
 const PANEL_HEIGHT: f64 = 560.0;

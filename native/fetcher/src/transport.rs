@@ -5,7 +5,7 @@
 //! limit. Then a thread of its own reads the socket, blocking, and wakes
 //! the fetcher's loop the moment bytes arrive, so the loop sleeps until
 //! something happens and never waits on one socket while another has data
-//! (requirement 18.5).
+//! (REQ-INT-135).
 
 use std::collections::VecDeque;
 use std::io::{ErrorKind as IoErrorKind, Read, Write};
@@ -80,7 +80,7 @@ impl Tcp {
     fn open(&self, host: &str, port: u16, security: Security) -> Result<Connection, ErrorKind> {
         let target = (host, port).to_socket_addrs().map_err(|_| ErrorKind::NotFound)?.next().ok_or(ErrorKind::NotFound)?;
         let mut socket = TcpStream::connect_timeout(&target, CONNECT_TIMEOUT).map_err(|_| ErrorKind::ConnectionRefused)?;
-        // A key record goes in its own packet at once (`interaction.md`
+        // An input message goes in its own packet at once (`interaction.md`
         // section 10).
         socket.set_nodelay(true).map_err(|_| ErrorKind::Other)?;
         socket.set_read_timeout(Some(CONNECT_TIMEOUT)).map_err(|_| ErrorKind::Other)?;
@@ -217,7 +217,7 @@ impl Transport for Tcp {
     fn send(&mut self, connection: ConnectionId, bytes: &[u8]) -> Result<(), ErrorKind> {
         let open = self.connection(connection).as_mut().ok_or(ErrorKind::NotConnected)?;
         // Written whole, blocking, within the write limit: a request or a
-        // key record is small, and the socket drains it at once.
+        // input message is small, and the socket drains it at once.
         let mut socket = &open.socket;
         let written = match open.tls.as_deref_mut() {
             None => socket.write_all(bytes).and_then(|()| socket.flush()),

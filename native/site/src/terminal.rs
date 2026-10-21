@@ -1,7 +1,7 @@
 //! `neoteletext-site terminal`: the reference channel that takes input
-//! (`interaction.md` sections 5 to 10), as a host a terminal talks to. Its
+//! (INPUT.md, protocol version 2), as a host a terminal talks to. Its
 //! descriptor declares `push.input`; each viewer's WebSocket is a session
-//! with its own pages, and every key record that arrives is answered by
+//! with its own pages, and every item of input that arrives is answered by
 //! pushing the page it changed.
 //!
 //! - 100, the index, and the page-selection convention of a videotex
@@ -31,9 +31,12 @@ use std::time::{Duration, Instant};
 
 use neoteletext_audio::Codec;
 use neoteletext_audio::encode::{Command, Sound, packets};
+use neoteletext_input::control::{Control, packet_of};
 use neoteletext_input::cursor::{ECHO, MASKED, NO_CURSOR};
-use neoteletext_input::key::{self, Event, Press};
-use neoteletext_input::names::{key_name, physical_name};
+use neoteletext_input::digits::decimal_digit;
+use neoteletext_input::event::{ALT, Action, CONTROL, Event, Item, Key, KeyCode, MAX_STREAM_ITEM, MouseAction, SHIFT, StreamDecoder, units};
+use neoteletext_input::keys;
+use neoteletext_input::modes::{ALL_KEYS, BASE_KEY, CURSOR_CAP, ECHO_CAP, KEY_RELEASE, MOUSE_BUTTONS, PAGE_CAP};
 
 use crate::podcast::{self, Episode, Player};
 use crate::websocket;
@@ -123,19 +126,27 @@ impl Row {
     }
 }
 
-/// A page as TTI: its rows, and its cursor record as a `CU` line.
+/// What the channel uses of what a receiver offers (INPUT.md section 6.2):
+/// pages, the cursor and echo, and the modes its pages ask for.
+const USED: u32 = PAGE_CAP | CURSOR_CAP | ECHO_CAP | ALL_KEYS | KEY_RELEASE | BASE_KEY | MOUSE_BUTTONS;
+
+/// A page as TTI: its rows, its cursor record as a `CU` line and the
+/// input modes it asks for as an `IM` line.
 struct Page {
     number: u16,
     rows: BTreeMap<u8, Row>,
     cursor: Option<(u8, u8, u8, u8)>,
+    /// The input count acted on (INPUT.md section 7.1).
     acked: u16,
+    /// The page's own input modes while it is open (REQ-INT-114).
+    modes: u32,
     /// `LT` lines: a run of text that is a link.
     links: Vec<String>,
 }
 
 impl Page {
     fn new(number: u16, title: &str) -> Self {
-        let mut page = Self { number, rows: BTreeMap::new(), cursor: None, acked: 0, links: Vec::new() };
+        let mut page = Self { number, rows: BTreeMap::new(), cursor: None, acked: 0, modes: page_modes(number), links: Vec::new() };
         page.row(0, Row::new().at(8).code(ALPHA_YELLOW).text(&format!("NEOTELETEXT TERMINAL {number:03X}")));
         // Row 1 is double height, so row 2 is its lower half.
         page.row(1, Row::new().code(ALPHA_BLUE).code(NEW_BACKGROUND).code(ALPHA_YELLOW).code(DOUBLE_HEIGHT).text(&title.to_uppercase()));
@@ -169,7 +180,22 @@ impl Page {
         // with no cursor still acknowledges the keys, for the round trip.
         let (row, column, width, flags) = self.cursor.unwrap_or((NO_CURSOR, 0, 0, 0));
         let _ = write!(out, "CU,{row},{column},{width},{flags},{}\r\n", self.acked);
+        if self.modes != 0 {
+            let _ = write!(out, "IM,{}\r\n", self.modes);
+        }
         out
+    }
+}
+
+/// The input modes each page asks for (INPUT.md section 6.4): the game
+/// its arrows' releases; the piano every key, its releases and where it
+/// is, so A to K play on any layout; the links page a click.
+fn page_modes(number: u16) -> u32 {
+    match number {
+        0x300 => KEY_RELEASE,
+        0x400 => ALL_KEYS | KEY_RELEASE | BASE_KEY,
+        0x500 => MOUSE_BUTTONS,
+        _ => 0,
     }
 }
 
@@ -469,7 +495,8 @@ pub struct Settings {
 struct Session {
     page: u16,
     previous: Vec<u16>,
-    /// The last key record's number, which the pushed page acknowledges.
+    /// The input count acted on, which the pushed page acknowledges
+    /// (INPUT.md section 7.1).
     acked: u16,
     /// Page selection typed so far: `*` and digits, or plain digits.
     selection: String,
@@ -487,7 +514,7 @@ struct Session {
     phone: Option<Phone>,
     relay: Option<String>,
     /// The viewer's keys went elsewhere: to another window, or to the
-    /// browser's address field (key record kind 6).
+    /// browser's address field (`FOCUS_OUT`).
     away: bool,
     /// The episode and this viewer's place in it.
     podcast: Option<(Arc<Episode>, Player)>,
@@ -689,11 +716,14 @@ impl Session {
         }
     }
 
-    /// The videotex convention (`interaction.md` section 5.1), and three
+    /// The videotex convention (INPUT.md section 9.4), and three
     /// plain digits where the page has no field. Returns whether the key
     /// was part of a page selection.
     fn select(&mut self, character: char) -> bool {
         let field_page = self.page == 0x200;
+        // The decimal digits of any script select as 0 to 9 (INPUT.md
+        // section 5.7 rule 8).
+        let character = decimal_digit(character).map_or(character, |digit| char::from(b'0' + digit));
         match character {
             '*' => "*".clone_into(&mut self.selection),
             '#' if self.selection == "*" => {
@@ -732,29 +762,39 @@ impl Session {
         true
     }
 
-    /// Acts on one key record; returns what to push.
-    fn key(&mut self, record: &key::Record<'_>) -> Vec<Push> {
-        self.acked = record.sequence;
+    /// Acts on one item of the input stream; returns what to push.
+    fn item(&mut self, item: &Item<'_>) -> Vec<Push> {
+        // The input count (INPUT.md section 7.1): a character or an event
+        // counts one, modulo 65 536.
+        self.acked = self.acked.wrapping_add(u16::try_from(units(item) & u32::from(u16::MAX)).unwrap_or(0));
         let mut pushes = Vec::new();
-        match record.event {
-            Event::Page(Some(page)) => {
-                self.page = page;
-                self.selection.clear();
-            }
-            Event::Focus(here) => self.away = !here,
-            // A new connection: the page is pushed again below.
-            Event::Page(None) | Event::Resume(_) => {}
-            Event::Click { column, row } => self.click = Some((column, row)),
-            Event::Text(text) => {
+        match item {
+            Item::Text(text) | Item::Event(Event::Paste(text)) => {
                 for character in text.chars() {
-                    self.character(character);
+                    pushes.extend(self.character(character));
                 }
             }
-            Event::Down(press) => {
-                self.last_key = describe(press);
-                pushes.extend(self.down(press));
+            Item::Event(Event::Hello { version, caps, .. }) => return self.welcome(*version, *caps),
+            Item::Event(Event::Page(0)) => {}
+            Item::Event(Event::Page(page)) => {
+                self.page = *page;
+                self.selection.clear();
             }
-            Event::Up(press) => self.up(press),
+            Item::Event(Event::FocusIn) => self.away = false,
+            // The keys went elsewhere: what was held is let go (REQ-INT-108).
+            Item::Event(Event::FocusOut) => {
+                self.away = true;
+                self.release_all();
+            }
+            Item::Event(Event::Mouse(mouse)) if mouse.action == MouseAction::Press => {
+                self.click = u8::try_from(mouse.at.column).ok().zip(u8::try_from(mouse.at.row).ok());
+            }
+            Item::Event(Event::Key(key)) if key.action == Action::Release => self.up(key),
+            Item::Event(Event::Key(key)) => {
+                self.last_key = describe(key);
+                pushes.extend(self.down(key));
+            }
+            Item::Event(_) => {}
         }
         if matches!(self.page, 0x200 | 0x300 | 0x400) && !self.sounds_sent {
             self.sounds_sent = true;
@@ -767,10 +807,36 @@ impl Session {
         pushes
     }
 
-    fn down(&mut self, press: Press) -> Vec<Push> {
-        let name = key_name(press.key);
-        let character = char::from_u32(u32::from(press.key)).filter(|_| name.is_none());
-        let control = press.modifiers & key::CONTROL != 0;
+    /// HELLO: WELCOME back with what the channel uses of what is offered,
+    /// as a control record (INPUT.md section 7.2).
+    fn welcome(&mut self, version: u32, caps: u32) -> Vec<Push> {
+        if version != neoteletext_input::VERSION {
+            return Vec::new();
+        }
+        let welcome = Control::Welcome { version, caps: caps & USED };
+        let Ok(packet) = packet_of(&welcome, AUDIO_SERVICE, self.record_id) else { return Vec::new() };
+        self.record_id = self.record_id.wrapping_add(1);
+        vec![Push::Packets(packet.bytes.to_vec())]
+    }
+
+    /// Everything held is released: the game's ship stops, the note ends.
+    fn release_all(&mut self) {
+        self.invaders.left = false;
+        self.invaders.right = false;
+        self.piano = None;
+    }
+
+    fn down(&mut self, key: &Key<'_>) -> Vec<Push> {
+        let name = match key.key {
+            KeyCode::Functional(code) => keys::name(code),
+            KeyCode::Character(_) => None,
+        };
+        let character = match key.key {
+            KeyCode::Character(character) => Some(character),
+            KeyCode::Functional(_) => None,
+        };
+        let repeat = key.action == Action::Repeat;
+        let control = key.mods & CONTROL != 0;
         // The typing page clicks on every key, as a typewriter does, and
         // rings on Enter.
         let sound = (self.page == 0x200).then_some(if name == Some("Enter") { BELL_HANDLE } else { CLICK_HANDLE });
@@ -784,30 +850,24 @@ impl Session {
                 self.invaders.right = true;
                 self.invaders.ship = (self.invaders.ship + 1).min(FIELD_RIGHT - 2);
             }
-            (0x300, _, Some(' ')) if press.modifiers & key::REPEAT == 0 => {
-                if self.invaders.shots.len() < 3 && self.invaders.over.is_none() {
-                    self.invaders.shots.push((self.invaders.ship + 1, SHIP_ROW - 1));
-                    return vec![self.play(FIRE_HANDLE)];
-                }
-            }
             (0x300, Some("Enter"), _) if self.invaders.over.is_some() => self.invaders = Invaders::new(),
             (0x400, _, _) => {
-                let position = physical_name(press.physical);
-                let index = PIANO.iter().position(|(code, letter, _)| position == Some(code) || character.map(|c| c.to_ascii_lowercase()) == Some(*letter));
+                // By position on any layout, or by letter.
+                let letter = key.base.or(character).map(|character| character.to_ascii_lowercase());
+                let index = PIANO.iter().position(|(_, piano, _)| letter == Some(*piano));
                 if let Some(index) = index
-                    && press.modifiers & key::REPEAT == 0
+                    && !repeat
                 {
                     self.piano = Some(index);
                     return vec![self.play(FIRST_HANDLE + u8::try_from(index).unwrap_or(0))];
                 }
-                if let Some(character) = character {
-                    self.select(character);
+                for typed in key.text.unwrap_or_default().chars() {
+                    self.select(typed);
                 }
             }
             (0x700, Some("ArrowLeft"), _) => return self.listen(|player, episode, record_id| player.skip(episode, -podcast::SKIP_SECONDS, record_id)),
             (0x700, Some("ArrowRight"), _) => return self.listen(|player, episode, record_id| player.skip(episode, podcast::SKIP_SECONDS, record_id)),
             (0x700, Some("Enter"), _) => return self.listen(Player::restart),
-            (0x700, _, Some(' ')) if press.modifiers & key::REPEAT == 0 => return self.listen(Player::toggle),
             (0x200, Some("Tab"), _) => self.focus = (self.focus + 1) % self.fields.len(),
             (0x200, Some("Backspace"), _) => {
                 self.fields[self.focus].text.pop();
@@ -822,16 +882,23 @@ impl Session {
                 let name = self.fields[0].text.trim().to_owned();
                 self.greeting = if name.is_empty() { "Type your name first.".to_owned() } else { format!("Hello, {name}!") };
             }
-            (_, _, Some(character)) if !control => self.character(character),
+            // A KEY with text, when every key is asked for.
+            (_, _, Some(_)) if !control && !repeat => {
+                let mut pushes = Vec::new();
+                for typed in key.text.unwrap_or_default().chars() {
+                    pushes.extend(self.character(typed));
+                }
+                return pushes;
+            }
             _ => {}
         }
         sound.map(|handle| vec![self.play(handle)]).unwrap_or_default()
     }
 
-    fn up(&mut self, press: Press) {
-        match key_name(press.key) {
-            Some("ArrowLeft") => self.invaders.left = false,
-            Some("ArrowRight") => self.invaders.right = false,
+    fn up(&mut self, key: &Key<'_>) {
+        match key.key {
+            KeyCode::Functional(code) if keys::name(code) == Some("ArrowLeft") => self.invaders.left = false,
+            KeyCode::Functional(code) if keys::name(code) == Some("ArrowRight") => self.invaders.right = false,
             _ => {}
         }
         if self.page == 0x400 {
@@ -839,16 +906,31 @@ impl Session {
         }
     }
 
-    fn character(&mut self, character: char) {
+    /// A character typed: Space fires and plays, a digit or `*` or `#`
+    /// selects a page, and on the typing page it goes into the field.
+    fn character(&mut self, character: char) -> Vec<Push> {
+        match (self.page, character) {
+            (0x300, ' ') => {
+                if self.invaders.shots.len() < 3 && self.invaders.over.is_none() {
+                    self.invaders.shots.push((self.invaders.ship + 1, SHIP_ROW - 1));
+                    return vec![self.play(FIRE_HANDLE)];
+                }
+                return Vec::new();
+            }
+            (0x700, ' ') => return self.listen(Player::toggle),
+            _ => {}
+        }
         if self.select(character) {
-            return;
+            return Vec::new();
         }
         if self.page == 0x200 {
             let field = &mut self.fields[self.focus];
             if field.text.chars().count() < usize::from(field.width) && character.is_ascii() && !character.is_ascii_control() {
                 field.text.push(character);
             }
+            return vec![self.play(CLICK_HANDLE)];
         }
+        Vec::new()
     }
 
     /// Every sound of the channel, as packets, one message a sound: the
@@ -971,7 +1053,7 @@ impl Session {
     }
 }
 
-/// The channel as the screen of qrkeyboard (`interaction.md` section 9):
+/// The channel as the screen of qrkeyboard (INPUT.md section 10):
 /// the instance, its QR as mosaic rows, and the phone's keys.
 fn phone(relay: &str, events: &mpsc::Sender<PhoneEvent>) {
     use neoteletext_qrkeyboard::config::{Layout, ScreenConfig};
@@ -1013,22 +1095,22 @@ fn phone(relay: &str, events: &mpsc::Sender<PhoneEvent>) {
 }
 
 /// A key's name for the page, as the channel heard it.
-fn describe(press: Press) -> String {
-    let name = match (key_name(press.key), char::from_u32(u32::from(press.key))) {
-        (Some(name), _) => name.to_owned(),
+fn describe(key: &Key<'_>) -> String {
+    let name = match key.key {
+        KeyCode::Functional(code) => keys::name(code).unwrap_or("Unidentified").to_owned(),
         // The space bar types a space, which on the page would be nothing.
-        (None, Some(' ')) => "Space".to_owned(),
-        (None, character) => character.map(String::from).unwrap_or_default(),
+        KeyCode::Character(' ') => "Space".to_owned(),
+        KeyCode::Character(character) => String::from(character),
     };
     let mut text = String::new();
-    for (bit, label) in [(key::CONTROL, "Ctrl-"), (key::ALT, "Alt-"), (key::SHIFT, "Shift-")] {
-        if press.modifiers & bit != 0 {
+    for (bit, label) in [(CONTROL, "Ctrl-"), (ALT, "Alt-"), (SHIFT, "Shift-")] {
+        if key.mods & bit != 0 {
             text.push_str(label);
         }
     }
     text.push_str(&name);
-    if let Some(position) = physical_name(press.physical) {
-        let _ = write!(text, " at {position}");
+    if let Some(base) = key.base {
+        let _ = write!(text, " at {}", base.to_ascii_uppercase());
     }
     text
 }
@@ -1074,26 +1156,32 @@ fn respond(stream: &mut TcpStream, status: &str, media: &str, body: &[u8]) -> io
     stream.flush()
 }
 
-/// A viewer's WebSocket: key records in, pages and sounds out, and the
+/// A viewer's WebSocket: the input stream in, pages and sounds out, and the
 /// game's frames while its page is open.
 fn session(mut stream: TcpStream, settings: Settings) -> io::Result<()> {
     stream.set_read_timeout(Some(FRAME))?;
     stream.set_nodelay(true)?;
     let mut reader = websocket::Reader::default();
     let mut session = Session::new(settings);
+    // The viewer's input stream, read across messages (INPUT.md section
+    // 5.1); a protocol error closes the connection (section 8).
+    let mut input = StreamDecoder::<MAX_STREAM_ITEM>::default();
     let mut last_frame = Instant::now();
     loop {
         let Some(frames) = reader.read(&mut stream)? else { return Ok(()) };
         for (opcode, payload) in frames {
             match opcode {
-                websocket::BINARY => match key::read(&payload) {
-                    Ok(record) => {
-                        for push in session.key(&record) {
-                            send(&mut stream, push)?;
-                        }
+                websocket::BINARY => {
+                    let mut pushes = Vec::new();
+                    if let Err(error) = input.push(&payload, &mut |item| pushes.extend(session.item(&item))) {
+                        eprintln!("neoteletext-site: input refused: {error:?}");
+                        let _ = websocket::write(&mut stream, websocket::CLOSE, &[]);
+                        return Ok(());
                     }
-                    Err(error) => eprintln!("neoteletext-site: a record refused: {error:?}"),
-                },
+                    for push in pushes {
+                        send(&mut stream, push)?;
+                    }
+                }
                 websocket::PING => websocket::write(&mut stream, websocket::PONG, &payload)?,
                 websocket::CLOSE => {
                     let _ = websocket::write(&mut stream, websocket::CLOSE, &payload);
@@ -1190,30 +1278,83 @@ pub fn run(port: u16, settings: &Settings) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use neoteletext_input::key::{MAX_RECORD, Record};
-    use neoteletext_input::names::named_key;
+    use neoteletext_input::event::{Mouse, Point, read_message, write};
 
-    fn record(sequence: u16, event: Event<'_>) -> Vec<u8> {
-        let mut out = [0; MAX_RECORD];
-        let length = Record { sequence, clock_ms: 0, event }.write(&mut out).unwrap();
+    /// One item as a receiver sends it.
+    fn encoded(item: &Item<'_>) -> Vec<u8> {
+        let mut out = [0; neoteletext_input::MAX_MESSAGE];
+        let length = write(item, &mut out).unwrap();
         out[..length].to_vec()
     }
 
-    fn press(character: char) -> Event<'static> {
-        Event::Down(Press { key: u16::try_from(u32::from(character)).unwrap(), modifiers: 0, physical: 0 })
+    /// A printable key, as a receiver sends it outside `ALL_KEYS`: its text.
+    fn press(character: char) -> Vec<u8> {
+        encoded(&Item::Text(character.encode_utf8(&mut [0; 4])))
     }
 
-    fn named(name: &str) -> Event<'static> {
-        Event::Down(Press { key: named_key(name).unwrap(), modifiers: 0, physical: 0 })
+    fn key(action: Action, key: KeyCode, text: Option<&str>, base: Option<char>) -> Vec<u8> {
+        encoded(&Item::Event(Event::Key(Key { action, key, mods: 0, text, base })))
     }
 
-    fn feed(session: &mut Session, events: &[Event<'_>]) -> Vec<Push> {
+    fn named(name: &str) -> Vec<u8> {
+        key(Action::Press, KeyCode::Functional(keys::code(name).unwrap()), None, None)
+    }
+
+    fn page(number: u16) -> Vec<u8> {
+        encoded(&Item::Event(Event::Page(number)))
+    }
+
+    fn feed(session: &mut Session, messages: &[Vec<u8>]) -> Vec<Push> {
         let mut pushes = Vec::new();
-        for (index, event) in events.iter().enumerate() {
-            let bytes = record(u16::try_from(index + 1).unwrap(), *event);
-            pushes.extend(session.key(&key::read(&bytes).unwrap()));
+        for message in messages {
+            read_message(message, &mut |item| pushes.extend(session.item(&item))).unwrap();
         }
         pushes
+    }
+
+    /// INPUT.md section 6.1: HELLO is answered with WELCOME, a control
+    /// record of what the channel uses of what was offered.
+    #[test]
+    fn hello_is_answered_with_welcome() {
+        let mut session = Session::new(Settings::default());
+        let offered = PAGE_CAP | CURSOR_CAP | MOUSE_BUTTONS | neoteletext_input::modes::COMPOSE;
+        let pushes = feed(&mut session, &[encoded(&Item::Event(Event::Hello { version: 2, caps: offered, agent: None }))]);
+        let [Push::Packets(bytes)] = pushes.as_slice() else { panic!("one packet") };
+        let packet = neoteletext_core::packet::Packet { bytes: bytes.as_slice().try_into().unwrap() };
+        let mut buffer = [0; neoteletext_input::control::FRAGMENT_DATA];
+        let welcome = neoteletext_input::control::from_packet(&packet, &mut buffer);
+        assert_eq!(welcome, Some(Ok(Control::Welcome { version: 2, caps: PAGE_CAP | CURSOR_CAP | MOUSE_BUTTONS })));
+        assert!(feed(&mut session, &[encoded(&Item::Event(Event::Hello { version: 1, caps: 0, agent: None }))]).is_empty(), "another version");
+    }
+
+    /// REQ-INT-116 rule 8: native digits select pages too.
+    #[test]
+    fn the_digits_of_any_script_choose_a_page() {
+        let mut session = Session::new(Settings::default());
+        feed(&mut session, &[press('٣'), press('٠'), press('٠')]);
+        assert_eq!(session.page, 0x300, "Arabic-Indic three hundred");
+        feed(&mut session, &[press('*'), press('५'), press('०'), press('०'), press('#')]);
+        assert_eq!(session.page, 0x500, "Devanagari, the videotex way");
+    }
+
+    /// REQ-INT-108: `FOCUS_OUT` lets go of what is held.
+    #[test]
+    fn focus_out_releases_the_held_arrow() {
+        let mut session = Session::new(Settings::default());
+        feed(&mut session, &[page(0x300), named("ArrowLeft")]);
+        assert!(session.invaders.left);
+        feed(&mut session, &[encoded(&Item::Event(Event::FocusOut))]);
+        assert!(!session.invaders.left, "no release was sent, and none was needed");
+    }
+
+    /// REQ-INT-114: pages ask for their own modes in `IM` lines.
+    #[test]
+    fn pages_ask_for_their_modes() {
+        let mut session = Session::new(Settings::default());
+        feed(&mut session, &[page(0x500)]);
+        assert!(session.render().tti().contains(&format!("IM,{MOUSE_BUTTONS}\r\n")));
+        feed(&mut session, &[page(0x200)]);
+        assert!(!session.render().tti().contains("IM,"), "the typing page needs none");
     }
 
     #[test]
@@ -1227,7 +1368,7 @@ mod tests {
         assert_eq!(session.page, 0x300, "*# goes back");
         feed(&mut session, &[press('5'), press('0'), press('0')]);
         assert_eq!(session.page, 0x500, "three digits where there is no field");
-        feed(&mut session, &[Event::Page(Some(0x200)), press('1'), press('0'), press('0')]);
+        feed(&mut session, &[page(0x200), press('1'), press('0'), press('0')]);
         assert_eq!(session.page, 0x200, "on a page with a field digits are text");
         assert_eq!(session.fields[0].text, "100");
     }
@@ -1235,10 +1376,10 @@ mod tests {
     #[test]
     fn typing_echoes_and_acknowledges() {
         let mut session = Session::new(Settings::default());
-        let pushes = feed(&mut session, &[Event::Page(Some(0x200)), press('A'), press('n'), named("Enter")]);
+        let pushes = feed(&mut session, &[page(0x200), press('A'), press('n'), named("Enter")]);
         let Some(Push::Page(last)) = pushes.last() else { panic!() };
         assert!(last.contains("Hello, An!"), "{last}");
-        assert!(last.contains("CU,5,15,18,1,4"), "the cursor after the name, echo on, acknowledging key 4: {last}");
+        assert!(last.contains("CU,5,15,18,1,4"), "the cursor after the name, echo on, acknowledging an input count of 4: {last}");
         feed(&mut session, &[named("Tab"), press('x')]);
         let page = session.render().tti();
         assert!(page.contains("CU,8,14,11,3,"), "the secret field is masked: {page}");
@@ -1262,33 +1403,37 @@ mod tests {
     #[test]
     fn the_typing_page_clicks_on_keys_and_rings_on_enter() {
         let mut session = Session::new(Settings::default());
-        feed(&mut session, &[Event::Page(Some(0x200))]);
+        feed(&mut session, &[page(0x200)]);
         let commands = |pushes: &[Push]| pushes.iter().filter(|push| matches!(push, Push::Packets(bytes) if bytes.len() == 42)).count();
         let key = feed(&mut session, &[press('a')]);
         assert_eq!(commands(&key), 1, "a click");
         let enter = feed(&mut session, &[named("Enter")]);
         assert_eq!(commands(&enter), 1, "a bell");
         // The game's page does not click.
-        feed(&mut session, &[Event::Page(Some(0x300))]);
+        feed(&mut session, &[page(0x300)]);
         assert_eq!(commands(&feed(&mut session, &[press('a')])), 0);
     }
 
     #[test]
     fn the_piano_sends_its_sounds_then_a_command_a_key() {
         let mut session = Session::new(Settings::default());
-        let pushes = feed(&mut session, &[Event::Page(Some(0x400))]);
+        let pushes = feed(&mut session, &[page(0x400)]);
         let sounds = pushes.iter().filter(|push| matches!(push, Push::Packets(bytes) if !bytes.is_empty() && bytes.len() % 42 == 0)).count();
         assert_eq!(sounds, PIANO.len() + 6, "the notes, the game's four sounds and the typing page's two");
-        let pushes = feed(&mut session, &[Event::Down(Press { key: u16::from(b'a'), modifiers: 0, physical: neoteletext_input::names::physical_key("KeyA") })]);
+        // In ALL_KEYS, the page's own mode: `q` on AZERTY, where A is on a
+        // United States layout, plays the first note (REQ-INT-116).
+        let pushes = feed(&mut session, &[key(Action::Press, KeyCode::Character('q'), Some("q"), Some('a'))]);
         assert!(matches!(pushes.first(), Some(Push::Packets(bytes)) if bytes.len() == 42), "one command, one packet");
         assert_eq!(session.piano, Some(0));
+        feed(&mut session, &[key(Action::Release, KeyCode::Character('q'), None, Some('a'))]);
+        assert_eq!(session.piano, None, "the release ends the note");
         // The sounds decode with the engine's own receiver.
         let mut arena = vec![0_u8; 1 << 20];
         let mut receiver = neoteletext_audio::receiver::Receiver::<16, 4>::new(&mut arena);
         let mut sink = Count(Vec::new());
         let mut session = Session::new(Settings::default());
-        let mut all = feed(&mut session, &[Event::Page(Some(0x400))]);
-        all.extend(feed(&mut session, &[press('s')]));
+        let mut all = feed(&mut session, &[page(0x400)]);
+        all.extend(feed(&mut session, &[key(Action::Press, KeyCode::Character('s'), Some("s"), None)]));
         hear(&mut receiver, &mut sink, all);
         assert_eq!(sink.0.len(), 1, "the note played");
     }
@@ -1311,16 +1456,16 @@ mod tests {
         let mut arena = vec![0_u8; 1 << 20];
         let mut receiver = neoteletext_audio::receiver::Receiver::<16, 4>::new(&mut arena);
         let mut sink = Count(Vec::new());
-        let mut pushes = feed(&mut session, &[Event::Page(Some(0x700))]);
+        let mut pushes = feed(&mut session, &[page(0x700)]);
         assert!(session.render().tti().contains("Ready: press Space"));
         pushes.extend(feed(&mut session, &[press(' ')]));
         assert!(session.render().tti().contains("Playing"));
         assert!(session.render().tti().contains("0:00 / 0:03"));
         // The typing page clicks on the effects' channels, never the podcast's.
-        pushes.extend(feed(&mut session, &[Event::Page(Some(0x200)), press('a'), press('b'), press('c'), press('d')]));
+        pushes.extend(feed(&mut session, &[page(0x200), press('a'), press('b'), press('c'), press('d')]));
         hear(&mut receiver, &mut sink, pushes);
         assert_eq!(sink.0, [podcast::CHANNEL, 0, 1, 2, 0], "the podcast, then four clicks in turn on the other three");
-        feed(&mut session, &[press(' ')]);
+        feed(&mut session, &[key(Action::Press, KeyCode::Character(' '), None, None)]);
         assert!(session.render().tti().contains("Last key: Space\r\n"), "the space bar named");
     }
 
@@ -1332,7 +1477,7 @@ mod tests {
         let samples = usize::try_from(rate).unwrap() * 21 / 2;
         let episode = Episode { title: "Short".to_owned(), rate, samples: vec![500; samples] };
         let mut session = Session::new(Settings { relay: None, podcast: Some(Arc::new(episode)) });
-        feed(&mut session, &[Event::Page(Some(0x700)), named("ArrowRight"), press(' ')]);
+        feed(&mut session, &[page(0x700), named("ArrowRight"), press(' ')]);
         session.podcast_frame();
         assert!(session.render().tti().contains("0:10 / 0:10"));
         thread::sleep(Duration::from_millis(700));
@@ -1344,7 +1489,7 @@ mod tests {
     fn the_game_has_no_cursor_and_moves_while_a_key_is_held() {
         let mut session = Session::new(Settings::default());
         let start = session.invaders.ship;
-        feed(&mut session, &[Event::Page(Some(0x300)), named("ArrowLeft")]);
+        feed(&mut session, &[page(0x300), named("ArrowLeft")]);
         assert_eq!(session.invaders.ship, start - 1, "a press moves at once");
         session.invaders.tick();
         session.invaders.tick();
@@ -1355,9 +1500,9 @@ mod tests {
     #[test]
     fn the_game_sounds_a_shot_and_a_hit() {
         let mut session = Session::new(Settings::default());
-        let opened = feed(&mut session, &[Event::Page(Some(0x300))]);
+        let opened = feed(&mut session, &[page(0x300)]);
         assert_eq!(opened.iter().filter(|push| matches!(push, Push::Packets(_))).count(), PIANO.len() + 6, "its sounds first");
-        let fired = feed(&mut session, &[Event::Down(Press { key: u16::from(b' '), modifiers: 0, physical: 0 })]);
+        let fired = feed(&mut session, &[press(' ')]);
         assert!(matches!(fired.first(), Some(Push::Packets(bytes)) if bytes.len() == 42), "the shot's command");
         // A shot one row below the bottom row's first invader hits it next frame.
         session.invaders.shots.clear();
@@ -1379,16 +1524,17 @@ mod tests {
     #[test]
     fn the_page_says_when_the_keys_went_elsewhere() {
         let mut session = Session::new(Settings::default());
-        feed(&mut session, &[Event::Page(Some(0x200)), Event::Focus(false)]);
+        feed(&mut session, &[page(0x200), encoded(&Item::Event(Event::FocusOut))]);
         assert!(session.render().tti().contains("Your keys went elsewhere."));
-        feed(&mut session, &[Event::Focus(true)]);
+        feed(&mut session, &[encoded(&Item::Event(Event::FocusIn))]);
         assert!(!session.render().tti().contains("elsewhere"));
     }
 
     #[test]
     fn a_click_is_the_hosts() {
         let mut session = Session::new(Settings::default());
-        feed(&mut session, &[Event::Page(Some(0x500)), Event::Click { column: 7, row: 11 }]);
+        let at = Point { column: 7, row: 11, pixels: None, mods: 0 };
+        feed(&mut session, &[page(0x500), encoded(&Item::Event(Event::Mouse(Mouse { action: MouseAction::Press, button: 0, at })))]);
         assert!(session.render().tti().contains("You clicked column 7, row 11."));
     }
 }

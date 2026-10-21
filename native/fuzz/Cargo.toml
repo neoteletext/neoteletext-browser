@@ -19,8 +19,8 @@ decoder = { path = "../decoder", package = "neoteletext-decoder" }
 neoteletext-interface = { path = "../interface" }
 neoteletext = { path = "../core" }
 web-opener = { path = "../web-opener" }
-neoteletext-qrkeyboard = { git = "file:///Users/andrewstuart/devel/neoteletext-engine", rev = "88d09b11eb6ed5ecb421526d3370c5ec57d786e2" }
-neoteletext-input = { git = "file:///Users/andrewstuart/devel/neoteletext-engine", rev = "88d09b11eb6ed5ecb421526d3370c5ec57d786e2" }
+neoteletext-qrkeyboard = { git = "file:///Users/andrewstuart/devel/neoteletext-engine", rev = "32e292d77e3cab061f08f69f5c7fbb9ce83fd8ed" }
+neoteletext-input = { git = "file:///Users/andrewstuart/devel/neoteletext-engine", rev = "32e292d77e3cab061f08f69f5c7fbb9ce83fd8ed" }
 
 [workspace]
 members = ["."]
@@ -105,8 +105,8 @@ doc = false
 bench = false
 
 [[bin]]
-name = "cursor_records"
-path = "fuzz_targets/cursor_records.rs"
+name = "input_records"
+path = "fuzz_targets/input_records.rs"
 test = false
 doc = false
 bench = false

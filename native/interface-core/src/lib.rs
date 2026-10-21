@@ -17,6 +17,8 @@ pub mod canvas;
 pub mod channel;
 pub mod editor;
 pub mod geometry;
+#[cfg(feature = "interaction")]
+pub mod input;
 #[cfg(feature = "links")]
 pub mod links;
 pub mod size;

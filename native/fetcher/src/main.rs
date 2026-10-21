@@ -56,9 +56,9 @@ const COOKIE_BYTES: usize = 32 * 1024;
 const READ_CHUNK: usize = 16 * 1024;
 
 /// What ends the loop's wait: it sleeps until one comes, or until the
-/// agent's next timer (`interaction.md` section 10, requirement 18.5).
+/// agent's next timer (REQ-INT-135).
 enum Wake {
-    /// A key record from the trusted core, sent at once.
+    /// An input message from the trusted core, sent at once.
     #[cfg(feature = "interaction")]
     Record(Vec<u8>),
     /// A socket has bytes, or has ended.
@@ -146,7 +146,7 @@ fn collect(output: Output<'_>, actions: &mut Vec<Action>) {
         // A lost connection waits before the next; a bad message that
         // keeps the connection says it is retried at once, and is not one.
         Output::Event(Event::PushLost { retry_in_us, .. }) if retry_in_us > 0 => Action::Push(false),
-        // A key record not sent: nothing is told, as nothing was asked.
+        // An input message not sent: nothing is told, as nothing was asked.
         #[cfg(feature = "interaction")]
         Output::Event(Event::InputDropped) => return,
         Output::Event(event) => Action::Notice(format!("{event:?}")),
@@ -214,7 +214,7 @@ fn run(channel: &str, allowed: &[IpAddr]) -> Result<(), String> {
     let mut waiting = false;
 
     // The trusted core closes standard input to end the fetcher. Before
-    // then it sends only key records (requirement 18.4); anything else
+    // then it sends only input messages (REQ-INT-133); anything else
     // ends the fetcher too.
     std::thread::spawn(move || {
         read_commands(&wakes);
@@ -284,7 +284,7 @@ fn run(channel: &str, allowed: &[IpAddr]) -> Result<(), String> {
             busy = true;
             agent.handle(clock(), Input::Tick, &mut |out| collect(out, &mut actions));
         }
-        // A key record goes the moment it arrives; otherwise the loop
+        // An input message goes the moment it arrives; otherwise the loop
         // sleeps until a key, a socket or the agent's timer wakes it.
         let first = match (busy, next_tick) {
             (true, _) => woken.try_recv().ok(),
@@ -307,7 +307,7 @@ fn run(channel: &str, allowed: &[IpAddr]) -> Result<(), String> {
     }
 }
 
-/// Reads the trusted core's key records until its pipe closes or breaks
+/// Reads the trusted core's input messages until its pipe closes or breaks
 /// the protocol.
 fn read_commands(commands: &mpsc::Sender<Wake>) {
     let mut input = io::BufReader::new(io::stdin().lock());

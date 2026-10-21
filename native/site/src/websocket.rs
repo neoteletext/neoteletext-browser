@@ -6,8 +6,8 @@
 use std::io::{self, Read, Write};
 use std::net::TcpStream;
 
-/// The largest message read: a key record is 46 bytes.
-const MAX_MESSAGE: usize = 4096;
+/// The largest message read: an input message (INPUT.md section 5.1).
+const MAX_MESSAGE: usize = neoteletext_input::MAX_MESSAGE;
 /// Section 5.2: the FIN bit, the opcode's bits and the mask bit.
 const FIN: u8 = 0x80;
 const OPCODE: u8 = 0x0F;

@@ -42,6 +42,8 @@ const KIND_LINKS: u8 = 68;
 #[cfg(feature = "interaction")]
 const KIND_CURSOR: u8 = 69;
 const KIND_STORE_FULL: u8 = 70;
+#[cfg(feature = "interaction")]
+const KIND_INPUT_CONTROL: u8 = 71;
 
 /// The pages and sub-pages a decoder first has room for: about 0.7 MB of
 /// store, enough for most channels; a decoder that fills it is started
@@ -127,12 +129,22 @@ pub enum FromDecoder {
     },
     /// A cursor record the channel sent for a page, from a pushed packet or
     /// a page's `CU` line: untrusted, its body as sent, for the trusted
-    /// core to check (`interaction.md` section 7).
+    /// core to check (INPUT.md section 7.1).
     #[cfg(feature = "interaction")]
     Cursor {
         /// The record's body: page, acknowledgement, row, column, width
         /// and flags.
         body: [u8; neoteletext_input::cursor::BODY],
+    },
+    /// An input control record the channel sent (WELCOME, `PUSH_MODE`,
+    /// `POP_MODE`, `PAGE_MODES`), or a page's `IM` line as `PAGE_MODES`:
+    /// untrusted, its body as sent, at most
+    /// `neoteletext_input::control::MAX_BODY` bytes, for the trusted core
+    /// to read (REQ-INT-111, REQ-INT-114).
+    #[cfg(feature = "interaction")]
+    InputControl {
+        /// The control message's body.
+        body: Vec<u8>,
     },
 }
 
@@ -271,6 +283,14 @@ pub fn write_to_core(out: &mut dyn Write, message: &FromDecoder) -> Result<(), P
             payload.extend_from_slice(body);
             KIND_CURSOR
         }
+        #[cfg(feature = "interaction")]
+        FromDecoder::InputControl { body } => {
+            if body.len() > neoteletext_input::control::MAX_BODY {
+                return Err(ProtocolError::TooLong(body.len()));
+            }
+            payload.extend_from_slice(body);
+            KIND_INPUT_CONTROL
+        }
         FromDecoder::StoreFull => KIND_STORE_FULL,
     };
     write_frame(out, kind, &payload)
@@ -326,6 +346,14 @@ pub fn read_from_decoder(input: &mut dyn Read) -> Result<Option<FromDecoder>, Pr
         // Only its length here: the trusted core checks the fields.
         #[cfg(feature = "interaction")]
         KIND_CURSOR => FromDecoder::Cursor { body: fields.array()? },
+        #[cfg(feature = "interaction")]
+        KIND_INPUT_CONTROL => {
+            let length = fields.bytes.len();
+            if length > neoteletext_input::control::MAX_BODY {
+                return Err(ProtocolError::TooLong(length));
+            }
+            FromDecoder::InputControl { body: fields.take(length)?.to_vec() }
+        }
         KIND_STORE_FULL => FromDecoder::StoreFull,
         other => return Err(ProtocolError::UnknownKind(other)),
     };
@@ -381,6 +409,23 @@ mod tests {
             write_to_core(&mut bytes, &message).unwrap();
             assert_eq!(read_from_decoder(&mut bytes.as_slice()).unwrap().unwrap(), message);
         }
+    }
+
+    /// REQ-INT-111: a control record's body goes to the trusted core as
+    /// sent, within one fragment's body.
+    #[cfg(feature = "interaction")]
+    #[test]
+    fn an_input_control_body_round_trips_within_its_bound() {
+        let message = FromDecoder::InputControl { body: vec![0xFF, 0x01, 2, 0] };
+        let mut bytes = Vec::new();
+        write_to_core(&mut bytes, &message).unwrap();
+        assert_eq!(read_from_decoder(&mut bytes.as_slice()).unwrap().unwrap(), message);
+        let long = FromDecoder::InputControl { body: vec![0; neoteletext_input::control::MAX_BODY + 1] };
+        assert!(write_to_core(&mut Vec::new(), &long).is_err());
+        let mut bytes = vec![KIND_INPUT_CONTROL];
+        bytes.extend_from_slice(&u32::try_from(neoteletext_input::control::MAX_BODY + 1).unwrap().to_be_bytes());
+        bytes.extend(std::iter::repeat_n(0, neoteletext_input::control::MAX_BODY + 1));
+        assert!(read_from_decoder(&mut bytes.as_slice()).is_err());
     }
 
     #[test]
