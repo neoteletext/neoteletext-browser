@@ -1316,7 +1316,7 @@ dependencies = [
 [[package]]
 name = "neoteletext-audio"
 version = "0.1.0"
-source = "git+file:///Users/andrewstuart/devel/neoteletext-engine?rev=32e292d77e3cab061f08f69f5c7fbb9ce83fd8ed#32e292d77e3cab061f08f69f5c7fbb9ce83fd8ed"
+source = "git+file:///Users/andrewstuart/devel/neoteletext-engine?rev=eb667c1ecc7733bf6e2c39d82258593da834c7ee#eb667c1ecc7733bf6e2c39d82258593da834c7ee"
 dependencies = [
  "neoteletext-core",
 ]
@@ -1324,12 +1324,12 @@ dependencies = [
 [[package]]
 name = "neoteletext-audio-mix"
 version = "0.1.0"
-source = "git+file:///Users/andrewstuart/devel/neoteletext-engine?rev=32e292d77e3cab061f08f69f5c7fbb9ce83fd8ed#32e292d77e3cab061f08f69f5c7fbb9ce83fd8ed"
+source = "git+file:///Users/andrewstuart/devel/neoteletext-engine?rev=eb667c1ecc7733bf6e2c39d82258593da834c7ee#eb667c1ecc7733bf6e2c39d82258593da834c7ee"
 
 [[package]]
 name = "neoteletext-core"
 version = "0.1.0"
-source = "git+file:///Users/andrewstuart/devel/neoteletext-engine?rev=32e292d77e3cab061f08f69f5c7fbb9ce83fd8ed#32e292d77e3cab061f08f69f5c7fbb9ce83fd8ed"
+source = "git+file:///Users/andrewstuart/devel/neoteletext-engine?rev=eb667c1ecc7733bf6e2c39d82258593da834c7ee#eb667c1ecc7733bf6e2c39d82258593da834c7ee"
 
 [[package]]
 name = "neoteletext-decoder"
@@ -1347,7 +1347,7 @@ dependencies = [
 [[package]]
 name = "neoteletext-formats"
 version = "0.1.0"
-source = "git+file:///Users/andrewstuart/devel/neoteletext-engine?rev=32e292d77e3cab061f08f69f5c7fbb9ce83fd8ed#32e292d77e3cab061f08f69f5c7fbb9ce83fd8ed"
+source = "git+file:///Users/andrewstuart/devel/neoteletext-engine?rev=eb667c1ecc7733bf6e2c39d82258593da834c7ee#eb667c1ecc7733bf6e2c39d82258593da834c7ee"
 dependencies = [
  "neoteletext-core",
 ]
@@ -1370,7 +1370,7 @@ dependencies = [
 [[package]]
 name = "neoteletext-image"
 version = "0.1.0"
-source = "git+file:///Users/andrewstuart/devel/neoteletext-engine?rev=32e292d77e3cab061f08f69f5c7fbb9ce83fd8ed#32e292d77e3cab061f08f69f5c7fbb9ce83fd8ed"
+source = "git+file:///Users/andrewstuart/devel/neoteletext-engine?rev=eb667c1ecc7733bf6e2c39d82258593da834c7ee#eb667c1ecc7733bf6e2c39d82258593da834c7ee"
 dependencies = [
  "neoteletext-core",
 ]
@@ -1378,7 +1378,7 @@ dependencies = [
 [[package]]
 name = "neoteletext-input"
 version = "0.1.0"
-source = "git+file:///Users/andrewstuart/devel/neoteletext-engine?rev=32e292d77e3cab061f08f69f5c7fbb9ce83fd8ed#32e292d77e3cab061f08f69f5c7fbb9ce83fd8ed"
+source = "git+file:///Users/andrewstuart/devel/neoteletext-engine?rev=eb667c1ecc7733bf6e2c39d82258593da834c7ee#eb667c1ecc7733bf6e2c39d82258593da834c7ee"
 dependencies = [
  "neoteletext-audio",
  "neoteletext-core",
@@ -1403,7 +1403,7 @@ dependencies = [
 [[package]]
 name = "neoteletext-qrkeyboard"
 version = "0.1.0"
-source = "git+file:///Users/andrewstuart/devel/neoteletext-engine?rev=32e292d77e3cab061f08f69f5c7fbb9ce83fd8ed#32e292d77e3cab061f08f69f5c7fbb9ce83fd8ed"
+source = "git+file:///Users/andrewstuart/devel/neoteletext-engine?rev=eb667c1ecc7733bf6e2c39d82258593da834c7ee#eb667c1ecc7733bf6e2c39d82258593da834c7ee"
 dependencies = [
  "aes-gcm",
  "getrandom 0.2.17",
@@ -1420,7 +1420,7 @@ dependencies = [
 [[package]]
 name = "neoteletext-web"
 version = "0.1.0"
-source = "git+file:///Users/andrewstuart/devel/neoteletext-engine?rev=32e292d77e3cab061f08f69f5c7fbb9ce83fd8ed#32e292d77e3cab061f08f69f5c7fbb9ce83fd8ed"
+source = "git+file:///Users/andrewstuart/devel/neoteletext-engine?rev=eb667c1ecc7733bf6e2c39d82258593da834c7ee#eb667c1ecc7733bf6e2c39d82258593da834c7ee"
 dependencies = [
  "embedded-io",
  "neoteletext-core",
@@ -2223,9 +2223,9 @@ dependencies = [
 
 [[package]]
 name = "rustls-webpki"
-version = "0.103.15"
+version = "0.103.16"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f3c3cf1d8b1e7d4927e2d154c3fcb02979afb9939629c62cd9048d4f07b60ac2"
+checksum = "4443b1b6d39d7c663139942cc4558262562d2c84123bb6282ef177009ca8b281"
 dependencies = [
  "ring",
  "rustls-pki-types",

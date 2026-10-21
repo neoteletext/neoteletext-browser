@@ -19,8 +19,8 @@ decoder = { path = "../decoder", package = "neoteletext-decoder" }
 neoteletext-interface = { path = "../interface" }
 neoteletext = { path = "../core" }
 web-opener = { path = "../web-opener" }
-neoteletext-qrkeyboard = { git = "file:///Users/andrewstuart/devel/neoteletext-engine", rev = "32e292d77e3cab061f08f69f5c7fbb9ce83fd8ed" }
-neoteletext-input = { git = "file:///Users/andrewstuart/devel/neoteletext-engine", rev = "32e292d77e3cab061f08f69f5c7fbb9ce83fd8ed" }
+neoteletext-qrkeyboard = { git = "file:///Users/andrewstuart/devel/neoteletext-engine", rev = "eb667c1ecc7733bf6e2c39d82258593da834c7ee" }
+neoteletext-input = { git = "file:///Users/andrewstuart/devel/neoteletext-engine", rev = "eb667c1ecc7733bf6e2c39d82258593da834c7ee" }
 
 [workspace]
 members = ["."]
