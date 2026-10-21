@@ -37,6 +37,8 @@
 15. Platforms
 16. Sound
 17. Hyperlinks
+18. Push, typing and the cursor
+19. Settings, the home page, the developer console and proxies
 
 ---
 
@@ -142,7 +144,7 @@
 - **State:** Not met: fonts are not fetched yet.
 
 ### Requirement 3.6: The interface process holds no secrets and decides nothing
-- **Statement:** The interface process must never receive cookies, credentials, history or bookmarks beyond what is on screen, or any setting value that affects security. It must have **no network on every platform**, and no file access beyond its own resources and fonts. It must make no decision: it shows the state the trusted core sends and passes on what the user did.
+- **Statement:** The interface process must never receive cookies, credentials, history or bookmarks beyond what is on screen, or any setting value that affects security other than as the text the trusted strip shows, on which it acts in no way (amended 21 October 2026, decision 51). It must have **no network on every platform**, and no file access beyond its own resources and fonts. It must make no decision: it shows the state the trusted core sends and passes on what the user did.
 - **Reason:** An attacker who took over the interface must find nothing of value.
 - **Source:** Decisions 4, 18 and 33.
 - **Verification:** Test on each platform: network and file access fail from the interface process; review of every message type sent to it.
@@ -1139,3 +1141,92 @@ The input system's requirements for NeoTeletext are in `~/devel/neoteletext-comm
 
 #### REQ-INT-139: Compiled out
 - **State:** Met: the commit gate lints the workspace with every optional area out, and with hyperlinks, typing, and both, alone.
+
+
+## 19. Settings, the home page, the developer console and proxies
+
+From `settings-home-console-proxy.md` and its security analysis (decision 51).
+
+### Requirement 19.1: Settings are kept between runs
+- **Statement:** The trusted core must keep the settings of `settings-home-console-proxy.md` section 1.1 and the bookmarks in one file, `settings.txt`, in the platform's place for an application's settings (macOS `~/Library/Application Support/NeoTeletext/`, Windows `%APPDATA%\\NeoTeletext\\`, elsewhere `$XDG_CONFIG_HOME/neoteletext/` or `~/.config/neoteletext/`), write it whole to a temporary file renamed over it, and read it at start, missing meaning the defaults.
+- **Reason:** A browser that forgets its home page and bookmarks each run is not a browser.
+- **Source:** Decision 51.
+- **Verification:** Test: settings written, read back, and a write interrupted before the rename leaves the old file.
+- **State:** Not met.
+
+### Requirement 19.2: The settings file is read strictly
+- **Statement:** The settings file must be read as section 1.2 defines it: a version line, at most 256 KB, at most 2 048 bytes a line, each value checked by its setting's own rule; a line that breaks a rule or names nothing known is dropped and logged, and the rest stand.
+- **Reason:** The file is outside input: another program can write it.
+- **Source:** Decision 51; `settings-home-console-proxy-security.md` section 3.
+- **Verification:** Test of each rule; the fuzz target `settings_file`.
+- **State:** Not met.
+
+### Requirement 19.3: The settings panel
+- **Statement:** The settings must be shown and changed in a panel of the trusted strip, opened by its gear button, Command-comma on macOS and Control-comma elsewhere; each change must be strip input the trusted core checks, a refused one said in the panel; a change of a security setting (the proxy, the local addresses) must be said in the strip's notice and logged. The interface receives the settings only as the text the panel shows.
+- **Reason:** Security settings belong in the strip (requirement 11.2); the interface decides nothing (requirement 3.6).
+- **Source:** Decision 51.
+- **Verification:** Interface and trusted-core tests of each control and each refusal.
+- **State:** Not met.
+
+### Requirement 19.4: Sound and its volume
+- **Statement:** The sound setting must silence every page's sound, and the volume scale it, from 0 to 100, in the interface's mixer.
+- **Reason:** Requirement 16.5 named the setting and the volume.
+- **Source:** Decision 51.
+- **Verification:** A mixer test of silence and of each volume's gain.
+- **State:** Not met.
+
+### Requirement 19.5: Bookmarks are kept
+- **Statement:** The star must add or remove the open channel's address, at most 1 000 kept, in the order added, between runs.
+- **Reason:** Bookmarks are the user's list of channels.
+- **Source:** Decision 51.
+- **Verification:** Test.
+- **State:** Not met.
+
+### Requirement 19.6: The Home button
+- **Statement:** The strip must show a Home button after Forward; it, Command-Shift-H on macOS and Alt-Home elsewhere must open the home address in the active tab as a navigation the user starts (requirement 8.2), and a new tab must open the home address.
+- **Reason:** Requirement 11.2 named it; home is where a browser starts.
+- **Source:** Decision 51.
+- **Verification:** Interface and trusted-core tests.
+- **State:** Not met.
+
+### Requirement 19.7: The start page
+- **Statement:** The address `neoteletext:home` must be a channel the trusted core serves itself as teletext, with no network: page 100 telling how to open a channel and listing the bookmarks from page 201, and pages 201 to 299 one for each bookmark, which open it as the user's navigation. Any other `neoteletext:` address must be refused. Its text must be built only from addresses the address rules accepted and cleaned (requirement 11.5).
+- **Reason:** A home that needs no network, and shows the user's own channels, is always there.
+- **Source:** Decision 51.
+- **Verification:** Tests of the pages, of choosing a bookmark, and of hostile addresses in bookmarks.
+- **State:** Not met.
+
+### Requirement 19.8: The developer console
+- **Statement:** A panel docked at the bottom of the window, opened by Command-Option-I on macOS and Control-Shift-I elsewhere, must show for the active tab's channel the tabs Network, Packets, Pages and Notices of `settings-home-console-proxy.md` section 3.1, each keeping its newest 1 000 entries a channel, with pause and clear. It must never show a cookie, a form's values, a key typed into a page or the pairing secret.
+- **Reason:** Diagnosis of a channel without exposing the trusted core (requirement 12.7).
+- **Source:** Decision 51.
+- **Verification:** Interface tests of each tab; a test that hostile text and bytes are shown as text.
+- **State:** Not met.
+
+### Requirement 19.9: The console's data
+- **Statement:** The fetcher must report each exchange and each push event to the trusted core (the engine's REQ-WEB-033), bounded and read by a reader that refuses anything else; the trusted core must read each packet's address with the engine, keep each tab's entries, and send the open tab's as cleaned text, at most 200 entries a message, only while the console is open.
+- **Reason:** The data is the channel's; it must reach the interface as text, never as anything it acts on.
+- **Source:** Decision 51.
+- **Verification:** Protocol tests of the bounds; the fuzz target `fetcher_messages`; a trusted-core test of the packet entries.
+- **State:** Not met.
+
+### Requirement 19.10: Proxies
+- **Statement:** The fetcher's and the phone keyboard's connections must go through the proxy the settings name: an HTTP proxy by `CONNECT`, or a SOCKS5 proxy with no authentication sending the host's name (the engine's REQ-WEB-032). A proxy that refuses, fails or does not answer in time must fail the connection, with the reason in the strip's notice, and nothing must go direct instead.
+- **Reason:** Many networks reach the web only through a proxy; a fallback would leak what the user chose to send through it.
+- **Source:** Decision 51.
+- **Verification:** Tests against a local HTTP proxy and a local SOCKS5 proxy, of success, refusal and silence.
+- **State:** Not met.
+
+### Requirement 19.11: The local network through a proxy
+- **Statement:** With a proxy, an address written as a local IP address, `localhost` and names under `.local` and `.internal` must be refused unless allowed (requirement 5.10), before anything is sent to the proxy.
+- **Reason:** The proxy resolves names, so the browser cannot see where every name leads; it keeps the rule where it can.
+- **Source:** Decision 51; `settings-home-console-proxy-security.md` section 3.
+- **Verification:** Test of each refused form.
+- **State:** Not met.
+
+### Requirement 19.12: The fetcher takes its proxy only when started
+- **Statement:** The trusted core must give a fetcher its proxy as a command-line argument when it starts it, and a change of the proxy must take effect for fetchers started after it; no message may change where a running fetcher connects (requirement 4.7).
+- **Reason:** Requirement 4.7: nothing the trusted core sends a running fetcher changes what it fetches.
+- **Source:** Decision 51.
+- **Verification:** Review; a test that the fetcher reads its proxy argument.
+- **State:** Not met.
