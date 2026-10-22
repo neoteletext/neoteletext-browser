@@ -160,7 +160,7 @@ Steps 1 to 3 and 6 of `prototypes/docs/architecture.md` section 10 are unchanged
 
 **Transport to the interface process.** Two options:
 
-- **Keep the indexed Portable Network Graphics images** of requirement 9.3 on the pipe: about 6 kilobytes a page (proof C), already written by `neoteletext-image`. The interface process decodes them with a pure-Rust decoder, reading only images our own encoder produced. **Recommended.**
+- *(Replaced on 22 October 2026 by the second option, runs and changes: `architecture.md` decision 61.)* **Keep the indexed Portable Network Graphics images** of requirement 9.3 on the pipe: about 6 kilobytes a page (proof C), already written by `neoteletext-image`. The interface process decodes them with a pure-Rust decoder, reading only images our own encoder produced. **Recommended.**
 - Send checked palette indices with a simple run-length encoding of our own: no image decoder in the interface, more of our own format code.
 
 The interface turns indices and palette into colours once per frame, keeps the image until a newer frame replaces it whole (requirement 9.6), and reports visibility from its own layout (requirement 9.5), which it knows exactly. Scaling and the 4:3 pixel-shape correction (requirement 9.8) become part of the page's drawing transform, with nearest-neighbour sampling.

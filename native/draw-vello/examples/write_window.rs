@@ -37,7 +37,7 @@ fn browser(painter: &mut Painter) -> Result<Browser, String> {
         let index = page_index(page).ok_or("a page outside 100 to 899")?;
         channel.pages[index] = Some(PageInfo { title, status: Status::Loaded });
         let rendered = engine.render(page).ok_or("a page that did not render")?;
-        painter.set_page(PageKey { channel: CHANNEL, page }, &rendered.palette, &rendered.indices).map_err(|error| format!("{error:?}"))?;
+        painter.set_page(PageKey { channel: CHANNEL, page }, &rendered.palette, rendered.screen, &rendered.indices).map_err(|error| format!("{error:?}"))?;
     }
     let mut browser = Browser::new(Frame { left_inset: 0.0, window_buttons: true });
     let tabs = TABS

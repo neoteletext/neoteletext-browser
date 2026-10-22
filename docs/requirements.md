@@ -584,6 +584,7 @@
 - **Source:** Decisions 5 and 6.
 - **Verification:** Test: decoding the image gives back the exact indices and palette; any other image is refused.
 - **State:** Met, with tests.
+- *Amended 22 October 2026 (decision 61):* the trusted core must encode each frame in `protocol::frame`'s form (its palette of at most 32 colours, its screen colour, and its dots raw, in runs, or as changes against the frame of the same page the interface holds, whichever is smallest), and the interface must read only that form: the screen colour and every dot within the palette, the dots filling 480 by 500 exactly, changes only against the version it holds. Met: `every_form_reads_back_exactly`, `a_broken_image_is_refused`, `a_frame_is_sent_as_its_changes_against_the_last`; the fuzz target `page_image` (every bound, round trip). The `png` crate is gone from the interface.
 
 ### Requirement 9.4: Unchanged frames are not sent again
 - **Statement:** The trusted core must not send a frame identical to the last one sent for that page.
@@ -605,6 +606,7 @@
 - **Source:** Decision 8.
 - **Verification:** Test: no blank frame during rapid updates; memory stays bounded over a long run.
 - **State:** Met; the long-run memory test is not written.
+- *Amended 22 October 2026 (decision 61):* a frame may be sent as its changes against the last frame of the page, which the interface holds; the interface still replaces the page's image whole, once the frame is read and applied, and a frame of changes to a page it no longer holds is dropped, since the trusted core sends a page whole when it is shown again.
 
 ### Requirement 9.7: Flash follows the engine's timing
 - **Statement:** Flash must be rendered by the decoder at the engine's flash timing (one second in twelve units, its decision E.48), for shown pages that have flashing cells only, and only when their flash phase changes, by the decoder's own clock; and step 3 of `architecture.md` section 10 must pass on only the frames that changed. A shown page is otherwise drawn again only when the engine reports that its reception moved, or that data every page may draw from changed.
@@ -627,7 +629,21 @@
 - **Reason:** The design assumes a few kilobytes per page.
 - **Source:** Architecture.
 - **Verification:** Recorded measurement.
-- **State:** Partly met: about 6 kilobytes a page on the stand-in engine (`prototypes/docs/proofs.md` section 4); not yet measured on real channels.
+- **State:** Partly met: about 6 kilobytes a page on the stand-in engine (`prototypes/docs/proofs.md` section 4). On 22 October 2026, on 800 pages of a recorded channel (decision 61): 16.7 kilobytes a page on average in runs, 29 at the 95th percentile, encoded in 156 microseconds and read in 55; a flashing page's next phase 2.1 kilobytes as changes, encoded in 118 microseconds and read in 8. Not yet measured on a live channel.
+
+### Requirement 9.10: The Colour Map of Levels 2.5 and 3.5
+- **Statement:** Pages must be shown in the Colour Map of EN 300 706 clause 12.4 as the page's packets define it: CLUTs 2 and 3 from X/28/0, else M/29/0; at Level 3.5, CLUTs 0 and 1 from X/28/4, else M/29/4, never CLUT 1 entry 0, which stays transparent; with the default row colour, black background colour substitution and colour table re-mapping of Table 4, and the colours that X/26 triplets select.
+- **Reason:** Decision 6 is the Colour Map of Level 2.5, and the owner asked for both levels exactly as specified.
+- **Source:** Decisions 6 and 60.
+- **Verification:** Test: a page's X/28/0 and X/28/4 reach the frame's palette and its dots; the engine's own tests of each rule.
+- **State:** Met, 22 October 2026: `a_page_redefines_its_colour_map` (decoder: X/28/0 redefining CLUT 2 with re-mapping 5 drawing red from CLUT 2, X/28/4 redefining CLUT 0, CLUT 1 entry 0 left transparent), which fails without the engine's `colours32`; the engine's `colour_map_from_page_packets`, `screen_and_row_colours`, `remapping_and_black_background_substitution`, `colour_triplets_set_colour_map_indices` and `colour_map_sources_and_precedence` (run in the engine's gate with every feature). Table 4's re-mapping read against the engine's table, row for row. Where the standard does not settle which of X/28/4 and M/29/0 wins a field, the page's own packet does (the engine's decision E.44).
+
+### Requirement 9.11: The screen colour is shown
+- **Statement:** Each page must be drawn inside a border of its screen colour (Table 4's Default Screen Colour, or clause 12.3's Full Screen Colour from X/26), one character cell wide at the sides, and links and cells must be found in the page's image, not its border.
+- **Reason:** The standard colours the screen area outside the page's rows; without a border nothing shows it.
+- **Source:** Decision 60.
+- **Verification:** Test.
+- **State:** Met: the decoder sends the engine's resolved screen colour with each frame (`write_frame_to_core`, refused when outside the palette), the interface keeps it with the page (`a_page_with_an_index_outside_its_palette_is_refused`), and every place a page is drawn draws it (`image_within`, `draw_page_on_screen`); the wall's tests find cells and the zoomed page within the image.
 
 ---
 
@@ -1407,3 +1423,4 @@ Adopted and built on 22 October 2026 by decision 57, while the owner was away, a
 - **Source:** Decision 59.
 - **Verification:** Test.
 - **State:** Met: `restore on|off` in `settings.txt` (`settings_round_trip_through_their_file`), the panel's row "Tabs at start: Restore, Home" (`each_control_asks_for_its_change`), checked as strip input (`each_setting_change_is_checked`); seen on macOS.
+

@@ -17,7 +17,7 @@ The design of installation and updates on every desktop is `docs/installation-an
 
 - **The keyboard process waits on the relay 50 ms at a time** (`keyboard/src/keyboard.rs`, `POLL`): the qrkeyboard client's `poll` is a socket read with a timeout and offers no way to be woken, so Finish is noticed within 50 ms by polling. An event-driven wait needs a waker in the engine's qrkeyboard client.
 - **The proxy's `CONNECT` reply is read a byte at a time** (the engine's `proxy.rs`, `tunnel`): bounded now by the agent's connect limit on the connect thread, but one system call a byte; reading in chunks needs `open_tunnel` to hand back the bytes it over-read.
-- **The decoder's and core's CPU under flashing pages** is the engine's rendering and the core's PNG encoding (eight flashing pages: decoder 0.7 to 1.1 %, core 1.4 to 1.6 %, interface 3.4 %): the next steps are the engine's row renderer per changed row and a faster deflate, both the engine's.
+- **The decoder's and core's CPU under flashing pages** is the engine's rendering, and was the core's PNG encoding (eight flashing pages: decoder 0.7 to 1.1 %, core 1.4 to 1.6 %, interface 3.4 %). The PNG encoding is gone (decision 61: a flashing page's next phase now encodes in 118 microseconds against 1,578); the core's share under flashing pages is to be measured again. The next step is the engine's row renderer per changed row, the engine's.
 
 ### Waits on a machine or a hand
 

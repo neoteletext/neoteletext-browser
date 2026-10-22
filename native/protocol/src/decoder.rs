@@ -22,8 +22,9 @@ pub const MAX_WHOLE: usize = crate::MAX_PAYLOAD - 1;
 pub const MAX_COLOURS: usize = 32;
 const PAGE_DOTS: usize = PAGE_WIDTH as usize * PAGE_HEIGHT as usize;
 const RGB_BYTES: usize = 3;
-/// A frame's page number and its count of colours, before the palette.
-const FRAME_HEADER_BYTES: usize = 2 + 1;
+/// A frame's page number and its count of colours, before the palette,
+/// and its screen colour after it.
+const FRAME_HEADER_BYTES: usize = 2 + 1 + 1;
 /// A whole page's flags, before its bytes.
 const WHOLE_FLAGS_BYTES: usize = 1;
 
@@ -102,6 +103,9 @@ pub enum FromDecoder {
         page: u16,
         /// Red, green and blue of each colour the page uses.
         palette: Vec<[u8; 3]>,
+        /// The palette index of the screen around the page (EN 300 706
+        /// Table 4, Default Screen Colour; clause 12.3, Full Screen Colour).
+        screen: u8,
         /// One palette index per dot, row by row.
         indices: Vec<u8>,
     },
@@ -252,8 +256,8 @@ pub fn read_from_core(input: &mut dyn Read) -> Result<Option<ToDecoder>, Protoco
 ///
 /// # Errors
 /// When writing fails or the frame is not a page's shape.
-pub fn write_frame_to_core(out: &mut dyn Write, page: u16, palette: &[[u8; 3]], indices: &[u8]) -> Result<(), ProtocolError> {
-    if palette.is_empty() || palette.len() > MAX_COLOURS || indices.len() != PAGE_DOTS {
+pub fn write_frame_to_core(out: &mut dyn Write, page: u16, palette: &[[u8; 3]], screen: u8, indices: &[u8]) -> Result<(), ProtocolError> {
+    if palette.is_empty() || palette.len() > MAX_COLOURS || indices.len() != PAGE_DOTS || usize::from(screen) >= palette.len() {
         return Err(ProtocolError::BadValue("frame shape"));
     }
     let mut payload = Vec::with_capacity(FRAME_HEADER_BYTES.saturating_add(palette.len().saturating_mul(RGB_BYTES)).saturating_add(PAGE_DOTS));
@@ -262,6 +266,7 @@ pub fn write_frame_to_core(out: &mut dyn Write, page: u16, palette: &[[u8; 3]], 
     for colour in palette {
         payload.extend_from_slice(colour);
     }
+    payload.push(screen);
     payload.extend_from_slice(indices);
     write_frame(out, KIND_FRAME, &payload)
 }
@@ -278,7 +283,7 @@ pub fn write_to_core(out: &mut dyn Write, message: &FromDecoder) -> Result<(), P
             push_raw_text(&mut payload, title, MAX_PAGE_TITLE);
             KIND_ARRIVED
         }
-        FromDecoder::Frame { page, palette, indices } => return write_frame_to_core(out, *page, palette, indices),
+        FromDecoder::Frame { page, palette, screen, indices } => return write_frame_to_core(out, *page, palette, *screen, indices),
         FromDecoder::Updated { page } => {
             payload.extend_from_slice(&page.to_be_bytes());
             KIND_UPDATED
@@ -340,6 +345,10 @@ pub fn read_from_decoder(input: &mut dyn Read) -> Result<Option<FromDecoder>, Pr
                 return Err(ProtocolError::BadValue("palette size"));
             }
             let palette = fields.take(colours.saturating_mul(RGB_BYTES))?.as_chunks::<RGB_BYTES>().0.to_vec();
+            let screen = fields.u8()?;
+            if usize::from(screen) >= colours {
+                return Err(ProtocolError::BadValue("screen colour outside the palette"));
+            }
             let indices = fields.take(PAGE_DOTS)?;
             if indices.iter().any(|&index| usize::from(index) >= colours) {
                 return Err(ProtocolError::BadValue("index outside the palette"));
@@ -347,7 +356,7 @@ pub fn read_from_decoder(input: &mut dyn Read) -> Result<Option<FromDecoder>, Pr
             fields.end()?;
             // The indices are the rest of the payload: moved, not copied.
             let offset = payload.len().saturating_sub(PAGE_DOTS);
-            return Ok(Some(FromDecoder::Frame { page, palette, indices: crate::tail(payload, offset) }));
+            return Ok(Some(FromDecoder::Frame { page, palette, screen, indices: crate::tail(payload, offset) }));
         }
         KIND_UPDATED => FromDecoder::Updated { page: display_page(&mut fields)? },
         KIND_AUDIO => FromDecoder::Audio(crate::audio::read(&mut fields, crate::audio::Sender::Decoder)?),
@@ -422,7 +431,7 @@ mod tests {
             FromDecoder::Arrived { page: 0x100, title: "Headlines".into() },
             FromDecoder::Updated { page: 0x302 },
             FromDecoder::StoreFull,
-            FromDecoder::Frame { page: 0x123, palette: vec![[0, 0, 0], [255, 255, 255]], indices },
+            FromDecoder::Frame { page: 0x123, palette: vec![[0, 0, 0], [255, 255, 255]], screen: 1, indices },
         ] {
             let mut bytes = Vec::new();
             write_to_core(&mut bytes, &message).unwrap();
@@ -453,10 +462,15 @@ mod tests {
         let mut bytes = Vec::new();
         write_to_decoder(&mut bytes, &ToDecoder::End).unwrap();
         assert!(matches!(read_from_decoder(&mut bytes.as_slice()), Err(ProtocolError::UnknownKind(KIND_END))));
-        // An index outside its palette.
-        let mut payload = vec![0x01, 0x00, 1, 0, 0, 0];
+        // A screen colour outside its palette, then an index.
+        let mut payload = vec![0x01, 0x00, 1, 0, 0, 0, 1];
         payload.extend(std::iter::repeat_n(0, PAGE_DOTS));
-        payload[6] = 1;
+        let mut bytes = vec![KIND_FRAME];
+        bytes.extend_from_slice(&u32::try_from(payload.len()).unwrap().to_be_bytes());
+        bytes.extend_from_slice(&payload);
+        assert!(matches!(read_from_decoder(&mut bytes.as_slice()), Err(ProtocolError::BadValue("screen colour outside the palette"))));
+        payload[6] = 0;
+        payload[7] = 1;
         let mut bytes = vec![KIND_FRAME];
         bytes.extend_from_slice(&u32::try_from(payload.len()).unwrap().to_be_bytes());
         bytes.extend_from_slice(&payload);

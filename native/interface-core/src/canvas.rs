@@ -29,6 +29,43 @@ pub const CELL_HEIGHT: u16 = 20;
 pub const PAGE_WIDTH: u16 = COLUMNS * CELL_WIDTH;
 /// A page's height in lines at its native size.
 pub const PAGE_HEIGHT: u16 = ROWS * CELL_HEIGHT;
+/// The screen around a page, in dots across on each side: one character
+/// cell. EN 300 706 colours the screen area outside the page's rows in the
+/// page's screen colour (Table 4, Default Screen Colour; clause 12.3, Full
+/// Screen Colour) but gives it no size; a television shows it as its
+/// border, and the browser draws it one cell wide (decision 60).
+pub const SCREEN_BORDER: u16 = CELL_WIDTH;
+
+/// How much larger a page with its screen is than its image, both ways.
+pub const SCREEN_SCALE: f64 = (PAGE_WIDTH as f64 + 2.0 * SCREEN_BORDER as f64) / PAGE_WIDTH as f64;
+
+/// Where a page's image sits when the page, with its screen, is drawn in
+/// `rect`: scaled alike both ways so that the screen is
+/// [`SCREEN_BORDER`] dots wide at the sides, and centred down, so the
+/// screen above and below is as wide in proportion.
+#[must_use]
+pub fn image_within(rect: Rect) -> Rect {
+    let across = f64::from(PAGE_WIDTH) + 2.0 * f64::from(SCREEN_BORDER);
+    let scale = rect.width() / across;
+    let (width, height) = (f64::from(PAGE_WIDTH) * scale, f64::from(PAGE_HEIGHT) * scale);
+    let (left, top) = (rect.x0 + f64::from(SCREEN_BORDER) * scale, f64::midpoint(rect.y0, rect.y1) - height / 2.0);
+    Rect::new(left, top, left + width, top + height)
+}
+
+/// Draws a page with its screen in `rect`, or `stand_in` there when the
+/// back end holds no image of it yet; returns where the image is, for
+/// hit-testing and links.
+pub fn draw_page_on_screen<C: Canvas + ?Sized>(canvas: &mut C, key: PageKey, rect: Rect, stand_in: Colour) -> Rect {
+    let image = image_within(rect);
+    match canvas.screen(key) {
+        Some(screen) => {
+            canvas.fill(rect, 0.0, screen);
+            canvas.page(key, image);
+        }
+        None => canvas.fill(rect, 0.0, stand_in),
+    }
+    image
+}
 
 /// Text styles: a size in logical pixels, whether monospaced or bold, and
 /// whether drawn in small capitals: every letter a capital, with letters
@@ -67,6 +104,9 @@ pub trait Canvas {
     /// A page's latest image, scaled to fill `rect`. Returns false when
     /// the back end holds no image of that page yet.
     fn page(&mut self, key: PageKey, rect: Rect) -> bool;
+    /// The colour of the screen around a page's latest image, as its frame
+    /// said; none when the back end holds no image of that page yet.
+    fn screen(&mut self, key: PageKey) -> Option<Colour>;
     /// Text with its top-left corner at `rect`'s top-left, clipped to `rect`.
     fn text(&mut self, rect: Rect, text: &str, style: Style, colour: Colour);
     /// The width of `text` in logical pixels.

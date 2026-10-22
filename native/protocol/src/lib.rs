@@ -23,6 +23,7 @@ pub mod audio;
 pub mod console;
 pub mod decoder;
 pub mod fetcher;
+pub mod frame;
 #[cfg(feature = "interaction")]
 pub mod interaction;
 #[cfg(feature = "phone-keyboard")]
@@ -200,8 +201,8 @@ pub enum ToInterface {
         key: PageKey,
         /// Counts up with each new image of the page, so an older one never replaces a newer.
         version: u32,
-        /// The image, an indexed PNG at the native size.
-        png: Vec<u8>,
+        /// The image, in [`frame`]'s form.
+        image: Vec<u8>,
     },
     /// The channels sounding now, muted or not, for the tabs' speakers;
     /// the sound helper says it and the trusted core passes it on
@@ -648,11 +649,11 @@ pub fn write_to_interface(out: &mut dyn Write, message: &ToInterface) -> Result<
             payload.extend_from_slice(&page.to_be_bytes());
             KIND_UPDATED
         }
-        ToInterface::Frame { key, version, png } => {
-            payload.reserve_exact(FRAME_FIXED_BYTES.saturating_add(png.len()));
+        ToInterface::Frame { key, version, image } => {
+            payload.reserve_exact(FRAME_FIXED_BYTES.saturating_add(image.len()));
             push_key(&mut payload, *key);
             payload.extend_from_slice(&version.to_be_bytes());
-            payload.extend_from_slice(png);
+            payload.extend_from_slice(image);
             KIND_FRAME
         }
         ToInterface::Sounding(channels) => {
@@ -813,8 +814,8 @@ pub fn read_from_core(input: &mut dyn Read) -> Result<Option<ToInterface>, Proto
             }
             let key = fields.key()?;
             let version = fields.u32()?;
-            let png = tail(payload, FRAME_FIXED_BYTES);
-            return Ok(Some(ToInterface::Frame { key, version, png }));
+            let image = tail(payload, FRAME_FIXED_BYTES);
+            return Ok(Some(ToInterface::Frame { key, version, image }));
         }
         KIND_TAB_SOUNDING => {
             let mut channels = Vec::new();
@@ -1142,7 +1143,7 @@ mod tests {
             ToInterface::Channel(channel()),
             ToInterface::Page { channel: 9, page: 0x899, title: "Clock".into() },
             ToInterface::Updated { channel: 9, page: 0x302 },
-            ToInterface::Frame { key: KEY, version: 3, png: vec![1, 2, 3] },
+            ToInterface::Frame { key: KEY, version: 3, image: vec![1, 2, 3] },
             ToInterface::Settings(settings::SettingsView {
                 home: "neoteletext:home".into(),
                 sound: false,

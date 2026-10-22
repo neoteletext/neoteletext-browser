@@ -72,7 +72,7 @@
   The engine parses both (`neoteletext-formats`, `page.rs` and `tti.rs`): at most eight of each per page, with a target of at most 256 bytes. The engine's requirements for showing links (REQ-NAV-013 and REQ-NAV-015) moved to this repository with the browser and were withdrawn there; this document restates them.
 
 **The browser:**
-- **Drawing.** The decoder renders each page with the engine's `render_screen` into a 480 × 500 indexed image. The trusted core checks it and sends it on as an indexed PNG. The interface draws it with `Canvas::page`, and already draws browser-owned things over pages in `Wall::draw_page`: the hover frame, the zoom outline, the close button, and the update glow.
+- **Drawing.** The decoder renders each page with the engine's `render_screen` into a 480 × 500 indexed image. The trusted core checks it and sends it on as a page image (an indexed PNG until decision 61). The interface draws it with `Canvas::page`, and already draws browser-owned things over pages in `Wall::draw_page`: the hover frame, the zoom outline, the close button, and the update glow.
 - **Clicks.** A click is converted to a cell (`Wall::cell_at`) and sent as `ToCore::Cell { key, column, row }`. The core only logs it (`core/src/main.rs`).
 - **Navigation.** Navigation exists only from the strip (requirements 4.5 and 11.1). Page-started navigations, the site-change screen and Fastext are not built (requirements 8.2, 8.4, 8.5 and 12.4).
 - **Underline.** The browser has no underline code of its own.

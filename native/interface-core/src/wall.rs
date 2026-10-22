@@ -8,7 +8,7 @@ use alloc::format;
 use alloc::string::String;
 use alloc::vec::Vec;
 
-use crate::canvas::{CELL_HEIGHT, CELL_WIDTH, COLUMNS, Canvas, PAGE_HEIGHT, PAGE_WIDTH, PageKey, ROWS};
+use crate::canvas::{CELL_HEIGHT, CELL_WIDTH, COLUMNS, Canvas, PAGE_HEIGHT, PAGE_WIDTH, PageKey, ROWS, draw_page_on_screen};
 use crate::geometry::{Point, Rect};
 use crate::size::{
     DEFAULT_WIDTH, Layout, MAX_WIDTH, clamp_width, fraction_of_width, grid_width, layout_for_width, max_width_for_window, stepped_width, width_at_fraction,
@@ -151,10 +151,13 @@ pub fn cell_in(rect: Rect, point: Point) -> Option<(u8, u8)> {
     (u16::from(column) < COLUMNS && u16::from(row) < ROWS).then_some((column, row))
 }
 
-/// Where a page was last drawn, for hit-testing.
+/// Where a page was last drawn: its place with its screen, which the
+/// layout and its animations move, and its image within, which cells and
+/// links are found in.
 struct Drawn {
     key: PageKey,
     rect: Rect,
+    image: Rect,
 }
 
 /// The page area: a bank's pages as a grid or a list, the page size
@@ -489,8 +492,8 @@ impl Wall {
             return None;
         }
         // Topmost first: a zooming page is drawn over the wall.
-        let drawn = self.drawn.iter().rev().find(|drawn| drawn.rect.contains(point))?;
-        let (column, row) = cell_in(drawn.rect, point)?;
+        let drawn = self.drawn.iter().rev().find(|drawn| drawn.image.contains(point))?;
+        let (column, row) = cell_in(drawn.image, point)?;
         Some(CellClick { key: drawn.key, version: 0, column, row })
     }
 
@@ -510,7 +513,7 @@ impl Wall {
     /// Where each page was drawn in the last frame: for screen readers'
     /// bounds and for tests.
     pub fn shown(&self) -> impl Iterator<Item = (PageKey, Rect)> + '_ {
-        self.drawn.iter().map(|drawn| (drawn.key, drawn.rect))
+        self.drawn.iter().map(|drawn| (drawn.key, drawn.image))
     }
 
     /// The pages drawn in the last frame, sorted and without repeats.
@@ -654,13 +657,13 @@ impl Wall {
         outline(canvas, panel, RULE);
     }
 
-    fn draw_page<C: Canvas + ?Sized>(&mut self, canvas: &mut C, key: PageKey, rect: Rect) {
+    /// Draws a page with its screen around it; returns where its image is.
+    fn draw_page<C: Canvas + ?Sized>(&mut self, canvas: &mut C, key: PageKey, rect: Rect) -> Rect {
         // With no image yet a dark frame stands in, and the page still
         // counts as visible, so that the trusted core renders it.
-        if !canvas.page(key, rect) {
-            canvas.fill(rect, 0.0, WINDOW);
-        }
-        self.drawn.push(Drawn { key, rect });
+        let image = draw_page_on_screen(canvas, key, rect, WINDOW);
+        self.drawn.push(Drawn { key, rect, image });
+        image
     }
 
     /// Where a zoomed page sits: as large as the area allows, keeping its
@@ -711,9 +714,9 @@ impl Wall {
                 continue;
             }
             let Some(other) = current.checked_add_signed(neighbour as isize).and_then(|index| pages.get(index)) else { continue };
-            self.draw_page(canvas, other.key, shifted);
+            let image = self.draw_page(canvas, other.key, shifted);
             if neighbour == 0 && slide.abs() < f64::from(f32::EPSILON) {
-                self.open = Some((other.key, shifted));
+                self.open = Some((other.key, image));
             }
             outline(canvas, Rect::new(shifted.x0 - FRAME, shifted.y0 - FRAME, shifted.x1 + FRAME, shifted.y1 + FRAME), RULE);
         }
@@ -909,6 +912,7 @@ impl Wall {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::canvas::image_within;
     use crate::test_canvas::Recorder;
 
     const PANEL: Rect = Rect::new(0.0, 0.0, 1000.0, 700.0);
@@ -976,7 +980,7 @@ mod tests {
         wall.zoom(key, 0);
         // Halfway through, the page is between its slot and its zoomed place.
         let middle = last_rect(&draw_at(&mut wall, &pages, ZOOM_MILLISECONDS / 2), key);
-        let full = wall.zoomed_rect();
+        let full = image_within(wall.zoomed_rect());
         assert!(middle.width() > slot.width() && middle.width() < full.width(), "{slot:?} {middle:?} {full:?}");
         assert!(wall.animating(ZOOM_MILLISECONDS / 2));
         // At the end it fills the area alone.
@@ -1077,7 +1081,7 @@ mod tests {
         wall.zoom(pages[1].key, 0);
         let start = 1_000;
         draw_at(&mut wall, &pages, start);
-        let full = wall.zoomed_rect();
+        let full = image_within(wall.zoomed_rect());
         // Towards the user: the next page.
         assert_eq!(wall.wheel_pages(WHEEL_PER_PAGE, start), Some(pages[2].key));
         // Part-way, both pages are on the strip, the new one rising.

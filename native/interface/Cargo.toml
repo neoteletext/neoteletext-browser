@@ -27,12 +27,7 @@ draw-vello.workspace = true
 protocol.workspace = true
 winit.workspace = true
 softbuffer.workspace = true
-png.workspace = true
 dock-menu.workspace = true
-
-[dev-dependencies]
-decoder.workspace = true
-neoteletext-image.workspace = true
 
 [lints]
 workspace = true

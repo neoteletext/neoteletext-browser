@@ -867,15 +867,15 @@ impl Core {
                     self.send(&ToInterface::Updated { channel, page })?;
                 }
             }
-            FromDecoder::Frame { page, palette, indices } => {
+            FromDecoder::Frame { page, palette, screen, indices } => {
                 let key = PageKey { channel, page };
-                match self.frames.accept(key, palette, indices) {
-                    Some((version, png)) => {
+                match self.frames.accept(key, palette, screen, indices) {
+                    Some((version, image)) => {
                         // The image's links first, so the interface has them
                         // when the image arrives (`hyperlinks.md` section 8.1).
                         #[cfg(feature = "links")]
                         self.links_of_image(key, version)?;
-                        self.send(&ToInterface::Frame { key, version, png })?;
+                        self.send(&ToInterface::Frame { key, version, image })?;
                         // The page drew: its tab's visit is recorded
                         // (requirement 20.1).
                         self.record_pending(channel)?;

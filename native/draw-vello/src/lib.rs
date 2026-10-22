@@ -109,7 +109,8 @@ pub struct Painter {
     target: Pixmap,
     fonts: FontContext,
     layouts: LayoutContext<()>,
-    pages: HashMap<PageKey, Image>,
+    /// Each page's image and the colour of the screen around it.
+    pages: HashMap<PageKey, (Image, Colour)>,
     /// Text laid out once and reused: the interface draws the same
     /// strings every frame, and measures each before drawing it. By style,
     /// then by text, so a lookup borrows the text rather than copying it.
@@ -180,16 +181,18 @@ impl Painter {
     ///
     /// # Errors
     /// When the indices are not a full page or one is outside the palette.
-    pub fn set_page(&mut self, key: PageKey, palette: &[[u8; 3]], indices: &[u8]) -> Result<(), PageError> {
+    pub fn set_page(&mut self, key: PageKey, palette: &[[u8; 3]], screen: u8, indices: &[u8]) -> Result<(), PageError> {
         if indices.len() != PAGE_DOTS {
             return Err(PageError::Size);
         }
+        let [red, green, blue] = *palette.get(usize::from(screen)).ok_or(PageError::Index)?;
+        let screen = Colour { red, green, blue };
         let mut rgba = Vec::with_capacity(PAGE_DOTS * RGBA_BYTES);
         for &index in indices {
             let [red, green, blue] = *palette.get(usize::from(index)).ok_or(PageError::Index)?;
             rgba.extend_from_slice(&[red, green, blue, OPAQUE]);
         }
-        self.pages.insert(key, image(pixmap(rgba)));
+        self.pages.insert(key, (image(pixmap(rgba)), screen));
         Ok(())
     }
 
@@ -289,8 +292,12 @@ impl Canvas for Painter {
         self.context.fill_path(&RoundedRect::from_rect(rect(area), radius).to_path(TOLERANCE));
     }
 
+    fn screen(&mut self, key: PageKey) -> Option<Colour> {
+        self.pages.get(&key).map(|(_, screen)| *screen)
+    }
+
     fn page(&mut self, key: PageKey, area: Rect) -> bool {
-        let Some(page) = self.pages.get(&key) else { return false };
+        let Some((page, _)) = self.pages.get(&key) else { return false };
         let (width, height) = (f64::from(PAGE_WIDTH), f64::from(PAGE_HEIGHT));
         let placement = Affine::translate((area.x0, area.y0)) * Affine::scale_non_uniform(area.width() / width, area.height() / height);
         self.context.set_transform(self.base() * placement);
@@ -353,10 +360,12 @@ mod tests {
         let mut painter = Painter::new(Family::Roboto);
         let key = PageKey { channel: 1, page: 0x100 };
         let mut indices = vec![0; PAGE_DOTS];
-        assert_eq!(painter.set_page(key, &[[0, 0, 0]], &indices[1..]), Err(PageError::Size));
+        assert_eq!(painter.set_page(key, &[[0, 0, 0]], 0, &indices[1..]), Err(PageError::Size));
+        assert_eq!(painter.set_page(key, &[[0, 0, 0]], 1, &indices), Err(PageError::Index), "the screen colour");
         indices[7] = 1;
-        assert_eq!(painter.set_page(key, &[[0, 0, 0]], &indices), Err(PageError::Index));
+        assert_eq!(painter.set_page(key, &[[0, 0, 0]], 0, &indices), Err(PageError::Index));
         indices[7] = 0;
-        assert_eq!(painter.set_page(key, &[[0, 0, 0]], &indices), Ok(()));
+        assert_eq!(painter.set_page(key, &[[9, 8, 7]], 0, &indices), Ok(()));
+        assert_eq!(painter.screen(key), Some(Colour { red: 9, green: 8, blue: 7 }));
     }
 }

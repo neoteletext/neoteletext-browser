@@ -46,6 +46,8 @@ pub enum PageError {
 
 struct PageImage {
     palette: Vec<Rgb888>,
+    /// The colour of the screen around the page.
+    screen: Colour,
     indices: Vec<u8>,
 }
 
@@ -105,15 +107,17 @@ where
     /// # Errors
     /// When the indices are not a full page, or the palette or an index is
     /// out of range.
-    pub fn set_page(&mut self, key: PageKey, palette: &[[u8; 3]], indices: &[u8]) -> Result<(), PageError> {
+    pub fn set_page(&mut self, key: PageKey, palette: &[[u8; 3]], screen: u8, indices: &[u8]) -> Result<(), PageError> {
         if indices.len() != PAGE_DOTS {
             return Err(PageError::Size);
         }
         if palette.is_empty() || palette.len() > MAX_COLOURS || indices.iter().any(|&index| usize::from(index) >= palette.len()) {
             return Err(PageError::Palette);
         }
+        let [red, green, blue] = *palette.get(usize::from(screen)).ok_or(PageError::Palette)?;
+        let screen = Colour { red, green, blue };
         let palette = palette.iter().map(|&[red, green, blue]| Rgb888::new(red, green, blue)).collect();
-        self.pages.insert(key, PageImage { palette, indices: indices.to_vec() });
+        self.pages.insert(key, PageImage { palette, screen, indices: indices.to_vec() });
         Ok(())
     }
 
@@ -178,6 +182,10 @@ where
             let right = area.x0 + area.width() * f64::from(end);
             self.fill(Rect::new(left, area.y0, right.max(left + 1.0), area.y1), 0.0, colour);
         }
+    }
+
+    fn screen(&mut self, key: PageKey) -> Option<Colour> {
+        self.pages.get(&key).map(|page| page.screen)
     }
 
     fn page(&mut self, key: PageKey, place: Rect) -> bool {

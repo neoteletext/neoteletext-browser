@@ -159,6 +159,8 @@ fn keys_round_trip_and_pages_reach_the_screen_within_budget() {
     let key = PageKey { channel: 1, page: PAGE };
     frames.set_visible(vec![key]);
     let (mut round_trips, mut renders, mut encodes, mut decodes) = (Vec::new(), Vec::new(), Vec::new(), Vec::new());
+    // The frame the interface holds, which the next is read against.
+    let mut held: Option<(u32, Vec<u8>)> = None;
     for index in 0..KEYS {
         let character = char::from(b'a' + u8::try_from(index % 26).unwrap());
         let typed = message(&mut session, &Item::Text(character.encode_utf8(&mut [0; 4])));
@@ -172,11 +174,13 @@ fn keys_round_trip_and_pages_reach_the_screen_within_budget() {
         let rendered = engine.render(PAGE).expect("the page renders");
         renders.push(started.elapsed());
         let started = Instant::now();
-        let (_, png) = frames.accept(key, rendered.palette, rendered.indices).expect("a new image");
+        let (version, image) = frames.accept(key, rendered.palette, rendered.screen, rendered.indices).expect("a new image");
         encodes.push(started.elapsed());
         let started = Instant::now();
-        neoteletext_interface::image::decode(&png).expect("the interface reads it");
+        let read = protocol::frame::decode(&image, held.as_ref().map(|(version, indices): &(u32, Vec<u8>)| (*version, indices.as_slice())))
+            .expect("the interface reads it");
         decodes.push(started.elapsed());
+        held = Some((version, read.indices));
         std::thread::sleep(KEY_INTERVAL.saturating_sub(sent.elapsed()));
     }
     let pipelines: Vec<Duration> = (0..renders.len()).map(|index| renders[index] + encodes[index] + decodes[index]).collect();

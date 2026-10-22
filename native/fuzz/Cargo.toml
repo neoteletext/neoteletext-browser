@@ -16,7 +16,6 @@ libfuzzer-sys = "=0.4.13"
 protocol = { path = "../protocol" }
 interface-core = { path = "../interface-core" }
 decoder = { path = "../decoder", package = "neoteletext-decoder" }
-neoteletext-interface = { path = "../interface" }
 neoteletext = { path = "../core" }
 web-opener = { path = "../web-opener" }
 confine = { path = "../confine" }

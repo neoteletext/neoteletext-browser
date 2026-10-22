@@ -24,7 +24,7 @@
     clippy::unimplemented
 )]
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashMap};
 use std::io::{self, BufReader, BufWriter, Write};
 use std::num::NonZeroU32;
 use std::rc::Rc;
@@ -36,7 +36,7 @@ use interface_core::browser::{Browser, Cursor, Frame, Key as BrowserKey, Modifie
 use interface_core::canvas::PageKey;
 use interface_core::channel::Channel;
 use interface_core::library::WindowGeometry;
-use neoteletext_interface::image;
+use protocol::frame::{self, FrameError};
 use protocol::{ToCore, ToInterface, read_from_core, write_to_core};
 use softbuffer::{Context, Surface};
 use winit::application::ApplicationHandler;
@@ -96,7 +96,9 @@ enum Incoming {
     Page {
         key: PageKey,
         version: u32,
-        image: image::Indexed,
+        /// In `protocol::frame`'s form, read on the window's thread against
+        /// the frame of the page it holds.
+        image: Vec<u8>,
     },
     /// About hyperlinks.
     #[cfg(feature = "links")]
@@ -181,6 +183,9 @@ struct App {
     ime: InputMethod,
     /// Reports each frame and what it cost, for measuring the drawing.
     trace_frames: bool,
+    /// The version and indices of the last frame of each page shown, which
+    /// the next frame of the page may be sent as changes against.
+    held: HashMap<PageKey, (u32, Vec<u8>)>,
     /// The window opens once the event loop has resumed and the trusted
     /// core's first message has come, which is the window's kept place when
     /// a session is restored (`history-and-bookmarks.md` section 15.3).
@@ -351,6 +356,7 @@ impl App {
                 Output::Visible(visible) => {
                     // Images of pages no longer shown are dropped (requirement 9.5).
                     self.painter.retain_pages(|key| visible.contains(key));
+                    self.held.retain(|key, _| visible.contains(key));
                     ToCore::Visible(visible)
                 }
                 Output::Cell(click) => ToCore::Cell { key: click.key, version: click.version, column: click.column, row: click.row },
@@ -736,6 +742,33 @@ impl ApplicationHandler<Incoming> for App {
 }
 
 impl App {
+    /// Reads a page's frame against the one held and shows it; false when
+    /// it is not shown: changes to a page no longer held, or a broken frame,
+    /// which ends the interface.
+    fn show_frame(&mut self, event_loop: &ActiveEventLoop, key: PageKey, version: u32, image: &[u8]) -> bool {
+        let held = self.held.get(&key).map(|(version, indices)| (*version, indices.as_slice()));
+        let image = match frame::decode(image, held) {
+            Ok(image) => image,
+            // Changes to a page this window stopped showing while
+            // they were on their way: the trusted core sends the
+            // page whole when it is shown again.
+            Err(FrameError::Base) if held.is_none() => return false,
+            Err(error) => {
+                self.exit = Some(format!("bad page image from the trusted core: {error}"));
+                event_loop.exit();
+                return false;
+            }
+        };
+        if let Err(error) = self.painter.set_page(key, &image.palette, image.screen, &image.indices) {
+            self.exit = Some(format!("bad page image: {error:?}"));
+            event_loop.exit();
+            return false;
+        }
+        self.held.insert(key, (version, image.indices));
+        self.browser.frame_version(key, version);
+        true
+    }
+
     /// Opens the window once the event loop has resumed and the trusted
     /// core has spoken.
     fn open_window(&mut self, event_loop: &ActiveEventLoop) {
@@ -839,13 +872,9 @@ impl App {
                 if self.trace_frames {
                     eprintln!("neoteletext-interface: at {now} ms: frame {version} of page {:03X} of channel {}", key.page, key.channel);
                 }
-                if let Err(error) = self.painter.set_page(key, &image.palette, &image.indices) {
-                    self.exit = Some(format!("bad page image: {error:?}"));
-                    event_loop.exit();
-                    return;
+                if self.show_frame(event_loop, key, version, &image) {
+                    self.act(event_loop);
                 }
-                self.browser.frame_version(key, version);
-                self.act(event_loop);
             }
             #[cfg(feature = "phone-keyboard")]
             Incoming::Phone(view) => {
@@ -1001,8 +1030,10 @@ impl App {
     }
 }
 
-/// Reads the trusted core's messages until the pipe ends, decoding page
-/// images here so the window's thread never waits on them.
+/// Reads the trusted core's messages until the pipe ends. Page images are
+/// read on the window's thread, against the frame of the page it holds: a
+/// whole page in runs takes about 45 microseconds, and a page's changes 5
+/// (measured 22 October 2026).
 fn read_core(proxy: &EventLoopProxy<Incoming>) {
     let mut input = BufReader::new(io::stdin().lock());
     let end = loop {
@@ -1012,10 +1043,7 @@ fn read_core(proxy: &EventLoopProxy<Incoming>) {
             Ok(Some(ToInterface::Channel(channel))) => Incoming::Channel(channel),
             Ok(Some(ToInterface::Page { channel, page, title })) => Incoming::Arrived { channel, page, title },
             Ok(Some(ToInterface::Updated { channel, page })) => Incoming::Updated { channel, page },
-            Ok(Some(ToInterface::Frame { key, version, png })) => match image::decode(&png) {
-                Ok(image) => Incoming::Page { key, version, image },
-                Err(error) => break Some(format!("bad page image from the trusted core: {error}")),
-            },
+            Ok(Some(ToInterface::Frame { key, version, image })) => Incoming::Page { key, version, image },
             Ok(Some(ToInterface::Sounding(channels))) => Incoming::Sounding(channels.into_iter().collect()),
             #[cfg(feature = "links")]
             Ok(Some(ToInterface::Link(message))) => Incoming::Link(message),
@@ -1086,6 +1114,7 @@ fn main() -> std::process::ExitCode {
         ime: InputMethod::default(),
         // NEOTELETEXT_FRAME_TRACE reports every frame drawn and its cost.
         trace_frames: std::env::var_os("NEOTELETEXT_FRAME_TRACE").is_some(),
+        held: HashMap::new(),
         resumed: false,
         heard: Heard::Nothing,
         reported: None,

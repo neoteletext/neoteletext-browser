@@ -1,5 +1,6 @@
-//! The interface process's reader of page images, a library so that it can
-//! be fuzzed on its own; the interface itself is `main.rs`.
+//! The interface process's reading of the phone keyboard's keys, a library
+//! so that it can be tested on its own; the interface itself is `main.rs`.
+//! Page images are read by `protocol::frame` (decision 61).
 
 // No panicking constructs: this crate reads input from outside the
 // process. The same list is in each such crate; scripts/check.sh checks
@@ -15,6 +16,5 @@
     clippy::unimplemented
 )]
 
-pub mod image;
 #[cfg(feature = "interaction")]
 pub mod keys;

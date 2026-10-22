@@ -55,7 +55,7 @@ where
         let Some(index) = page_index(page) else { continue };
         channel.pages[index] = Some(PageInfo { title, status: Status::Loaded });
         if let Some(rendered) = engine.render(page) {
-            let _ = screen.set_page(PageKey { channel: CHANNEL, page }, &rendered.palette, &rendered.indices);
+            let _ = screen.set_page(PageKey { channel: CHANNEL, page }, &rendered.palette, rendered.screen, &rendered.indices);
         }
     }
     channel

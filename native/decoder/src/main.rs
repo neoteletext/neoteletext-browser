@@ -159,14 +159,15 @@ fn draw(
             *spare = rendered.indices;
             continue;
         }
-        let new_image = before.is_none_or(|before| before.palette != rendered.palette || before.indices != rendered.indices);
+        let new_image =
+            before.is_none_or(|before| before.palette != rendered.palette || before.screen != rendered.screen || before.indices != rendered.indices);
         #[cfg(feature = "links")]
         if before.map(|before| &before.links) != Some(&rendered.links) {
             let links = rendered.links.clone();
             write_to_core(output, &FromDecoder::Links { page, with_image: new_image, candidates: links.candidates, numbers: links.numbers })?;
         }
         if new_image {
-            write_frame_to_core(output, page, &rendered.palette, &rendered.indices)?;
+            write_frame_to_core(output, page, &rendered.palette, rendered.screen, &rendered.indices)?;
         }
         if let Some(replaced) = sent.insert(page, rendered) {
             *spare = replaced.indices;

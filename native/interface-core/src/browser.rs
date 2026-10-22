@@ -13,7 +13,7 @@ use alloc::format;
 use alloc::string::String;
 use alloc::vec::Vec;
 
-use crate::canvas::{Canvas, PAGE_HEIGHT, PAGE_WIDTH, PageKey};
+use crate::canvas::{Canvas, PAGE_HEIGHT, PAGE_WIDTH, PageKey, SCREEN_SCALE, draw_page_on_screen};
 use crate::channel::{BANKS, Channel, PAGES, PAGES_PER_BANK, PageInfo, Status, page_index, page_number};
 use crate::editor::Editor;
 use crate::geometry::{Point, Rect};
@@ -1798,18 +1798,21 @@ impl Browser {
         #[allow(clippy::cast_precision_loss, reason = "small counts")]
         let (centre, cell_top) = (cells.x0 + ((index % PAGES_PER_BANK) as f64 + 0.5) * cell_width, cells.y0 + (index / PAGES_PER_BANK) as f64 * cell_height);
         let bottom = cell_top - PREVIEW_GAP;
-        let scale = ((bottom - self.body.y0) / f64::from(PAGE_HEIGHT)).min(1.0);
+        // The image at most its native size, with its screen around it.
+        let scale = ((bottom - self.body.y0) / (f64::from(PAGE_HEIGHT) * SCREEN_SCALE)).min(1.0);
         if scale <= 0.0 {
             return;
         }
-        let (page_width, page_height) = (f64::from(PAGE_WIDTH) * scale, f64::from(PAGE_HEIGHT) * scale);
+        let (page_width, page_height) = (f64::from(PAGE_WIDTH) * scale * SCREEN_SCALE, f64::from(PAGE_HEIGHT) * scale * SCREEN_SCALE);
         let left = (centre - page_width / 2.0).clamp(MARGIN, (width - MARGIN - page_width).max(MARGIN));
         let rect = Rect::new(left, bottom - page_height, left + page_width, bottom);
         canvas.dim(Rect::new(rect.x0 + PREVIEW_SHADOW, rect.y0 + PREVIEW_SHADOW, rect.x1 + PREVIEW_SHADOW, rect.y1 + PREVIEW_SHADOW), PREVIEW_SHADOW_DARKNESS);
-        canvas.fill(rect, 0.0, BLACK);
-        if !canvas.page(key, rect) {
+        if canvas.screen(key).is_none() {
             // Asked for when the pointer arrived; it shows when rendered.
+            canvas.fill(rect, 0.0, BLACK);
             centred(canvas, rect, &format!("{:03X}", key.page), HEADING, MUTED);
+        } else {
+            draw_page_on_screen(canvas, key, rect, BLACK);
         }
         outline(canvas, rect, WHITE);
     }

@@ -171,14 +171,14 @@ Not present yet: no font is fetched. When fonts are, they are read by a confined
 **Threats.** Teletext data reaching the interface's readers; deceptive characters in page text; secrets leaking into the interface.
 
 **Mitigations.**
-- Pages cross only as indexed Portable Network Graphics images our encoder produced from checked palette indices. The interface's reader accepts only that shape: indexed, 8 bits a dot, exactly 480 by 500, at most 32 colours, with a bound on its memory (requirement 9.3). An attacker controls pixel values within a fixed raster and palette, never file structure.
+- Pages cross only as page images our encoder produced from checked palette indices (`protocol::frame`, decision 61). The interface's reader accepts only that shape: at most 32 colours, the screen colour and every dot within them, the dots filling 480 by 500 exactly, changes only against the frame it holds (requirement 9.3). An attacker controls dot values within a fixed raster and palette, never file structure.
 - Text crosses only cleaned and bounded, and the interface refuses text that still holds a hidden character (requirements 4.8 and 11.5).
 - Text is only ever drawn as text runs: there is no markup to inject into (requirement 10.2).
 - No cookie, credential, setting or history beyond the strip's own state is ever sent (requirement 3.6).
 - No sound crosses: the interface is told only which channels are sounding, for the tabs' speakers (decision 55; section 5.7).
 - The Dock menu on macOS (decision 39) is the one place with `unsafe` code: Objective-C runtime calls in the interface process that add a method to winit's application delegate and build the menu from tab titles the trusted core cleaned. Its input is our own tab list; its output is a tab index or mute-all, sent to the trusted core as ordinary intents.
 
-**Remaining risk:** low. The image reader is a third-party crate (`png`), reading only our own encoder's output; it must still be fuzzed (requirement 4.6).
+**Remaining risk:** low. The image reader is our own, about a hundred lines with no third-party decoder, reading only our own encoder's output, and fuzzed (`page_image`, requirement 4.6).
 
 ### 5.6 Boundary 6: intents and strip input from the interface process
 
@@ -193,7 +193,7 @@ Not present yet: no font is fetched. When fonts are, they are read by a confined
 **What a compromised interface process can do.** The trusted strip is drawn by the interface process, so its integrity rests on that process (decision 33; requirement 3.9):
 - **Can:** draw a false strip; send strip input, and so navigate any tab to any address the trusted core's rules accept, go back and forward, and set bookmarks; see every page on screen; open the history panel and the bookmarks manager and page through them, reading every row 100 at a time, and remove history or bookmarks by the rows' numbers (decision 57; `history-and-bookmarks-security.md` section 4, its first risk).
 - **Cannot:** read cookies, history beyond the panels' views, or files (once its sandbox denies reads); reach the network; change what any fetcher requests; change a security setting, because none is reachable from strip input yet. When the site-change screen and security settings are built (requirements 8.4 and 11.2), a compromised interface could confirm them too; that is the cost of option 1 that open decision 3 weighs.
-- **What reaching it takes:** a fault in NeoTeletext's own interface code (no `unsafe`, requirement 10.12) or in its drawing libraries (`vello_cpu`, Parley, `png`, winit, softbuffer), reached only through our own images, cleaned text and the user's own input.
+- **What reaching it takes:** a fault in NeoTeletext's own interface code (no `unsafe`, requirement 10.12) or in its drawing libraries (`vello_cpu`, Parley, winit, softbuffer), reached only through our own images, cleaned text and the user's own input.
 
 **Remaining risk:** low likelihood; high impact within its reach (navigation under the user's eyes, without secrets). Controls: small code, no `unsafe`, fuzzing of the interface's readers and the hostile interface harness (requirements 3.9 and 4.6, not met), and open decision 3.
 

@@ -23,7 +23,6 @@ neoteletext-input = { workspace = true, optional = true }
 unicode-normalization = { workspace = true, optional = true }
 interface-core.workspace = true
 protocol.workspace = true
-neoteletext-image.workspace = true
 neoteletext-core.workspace = true
 # The engine's reading of a proxy's address (settings, decision 51).
 neoteletext-web.workspace = true
@@ -33,7 +32,6 @@ web-opener = { workspace = true, optional = true }
 # render, this crate's encoding and the interface's decoding.
 [dev-dependencies]
 decoder.workspace = true
-neoteletext-interface = { path = "../interface", default-features = false }
 
 [lints]
 workspace = true

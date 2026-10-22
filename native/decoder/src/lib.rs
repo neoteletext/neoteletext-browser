@@ -100,6 +100,10 @@ pub struct Exported {
 pub struct Rendered {
     /// Red, green and blue of each colour the page uses.
     pub palette: Vec<[u8; 3]>,
+    /// The palette index of the screen around the page: its Full Screen
+    /// Colour, else its Default Screen Colour (EN 300 706 clause 12.3,
+    /// Table 4), as the engine resolved them.
+    pub screen: u8,
     /// One palette index per dot, row by row.
     pub indices: Vec<u8>,
     /// The flash phase it was drawn in and the rates its cells flash at,
@@ -546,6 +550,7 @@ impl Engine {
         let rates = FlashRates::of(grid.cells.iter().flatten().filter(|cell| cell.flash).map(|cell| cell.attributes.flash_rate()));
         Some(Rendered {
             palette,
+            screen: grid.screen_colour,
             indices,
             flash: (!rates.is_empty()).then_some((phase, rates)),
             #[cfg(feature = "links")]
@@ -839,6 +844,60 @@ mod tests {
         let row_one = &page.indices[usize::from(PAGE_WIDTH) * 20..usize::from(PAGE_WIDTH) * 40];
         assert!(row_one.iter().any(|&index| page.palette[usize::from(index)] == [0xFF, 0, 0]), "no red in row 1");
         assert!(engine.render(0x102).is_none(), "a page never received");
+    }
+
+    /// Decision 60: the Colour Map of EN 300 706 clause 12.4 reaches the
+    /// frame. Page 100's X/28/0 (Table 4) redefines CLUTs 2 and 3 and sets
+    /// Colour Table Re-mapping 5, so the Level 1 foreground colours come
+    /// from CLUT 2; page 101's X/28/4 (Table 10, Level 3.5) redefines CLUTs
+    /// 0 and 1, but never CLUT 1 entry 0, which stays transparent.
+    #[test]
+    fn a_page_redefines_its_colour_map() {
+        use neoteletext_core::ecc::with_odd_parity;
+        use neoteletext_core::packet::{PageFormat, encode};
+        use neoteletext_core::types::{ControlBits, DefaultColourFields, Designations, PageAddress, PresentationFields, Rgb12, SubCode};
+
+        const ALPHA_RED: u8 = 0x01;
+        const REMAPPING_FOREGROUND_CLUT_2: u8 = 5;
+        const CLUT_2_RED: usize = 2 * 8 + 1;
+        const TRANSPARENT: usize = 8;
+        let words = |green: u8| core::array::from_fn(|entry| Rgb12::new(u8::try_from(entry).unwrap(), green, 0xF));
+        let fields = |remapping: u8, green: u8| PresentationFields {
+            designations: Some(Designations { default: 0, second: 0x7F }),
+            colours: Some(DefaultColourFields { screen: 0, row: 0, black_background_substitution: false, remapping }),
+            colour_words: Some(words(green)),
+            ..PresentationFields::default()
+        };
+        let page = |mpp: u16, designation: u8, fields: &PresentationFields| {
+            let address = PageAddress::from_mpp(mpp).unwrap();
+            let mut text = [with_odd_parity(b' '); 40];
+            for (slot, &code) in text.iter_mut().zip([ALPHA_RED, b'R', b'E', b'D'].iter()) {
+                *slot = with_odd_parity(code);
+            }
+            [
+                encode::header(address.magazine, address.page, SubCode::new(0), ControlBits(0), &[with_odd_parity(b' '); 32]),
+                encode::page_enhancement(address.magazine, designation, PageFormat { function: 0, coding: 0 }, fields),
+                encode::row(address.magazine, 1, &text),
+            ]
+        };
+        let packets: Vec<u8> =
+            page(0x100, 0, &fields(REMAPPING_FOREGROUND_CLUT_2, 3)).into_iter().chain(page(0x101, 4, &fields(0, 9))).flat_map(|packet| packet.bytes).collect();
+        let mut engine = Engine::new();
+        engine.feed(&packets);
+        engine.finish();
+        let row_one = |page: &Rendered| page.indices[usize::from(PAGE_WIDTH) * 20..usize::from(PAGE_WIDTH) * 40].to_vec();
+        let scaled = |colour: Rgb12| [colour.red() * 17, colour.green() * 17, colour.blue() * 17];
+
+        let remapped = engine.render(0x100).unwrap();
+        assert_eq!(remapped.palette.len(), 32);
+        assert_eq!(remapped.palette[CLUT_2_RED], scaled(Rgb12::new(1, 3, 0xF)), "CLUT 2 entry 1 as X/28/0 sent it");
+        assert!(row_one(&remapped).contains(&u8::try_from(CLUT_2_RED).unwrap()), "red drawn from CLUT 2");
+        assert_eq!(remapped.palette[1], [0xFF, 0, 0], "CLUT 0 is fixed below Level 3.5's X/28/4");
+
+        let redefined = engine.render(0x101).unwrap();
+        assert_eq!(redefined.palette[1], scaled(Rgb12::new(1, 9, 0xF)), "CLUT 0 entry 1 as X/28/4 sent it");
+        assert!(row_one(&redefined).contains(&1), "red is CLUT 0 entry 1, redefined");
+        assert_eq!(redefined.palette[TRANSPARENT], [0, 0, 0], "CLUT 1 entry 0 stays transparent, shown as the picture behind");
     }
 
     #[test]

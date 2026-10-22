@@ -32,8 +32,10 @@ decoder = { path = "decoder", package = "neoteletext-decoder", default-features 
 # The teletext engine, maintained in its own repository (design section
 # 4.0), pinned to one commit. Its repository is local until that commit is
 # published; Cargo reads the commit, never the engine's working tree. The
-# engine's recommended "modern-classic" profile (its decision E.71).
-neoteletext-core = { git = "file:///Users/andrewstuart/devel/neoteletext-engine", rev = "c7a84cff00d4232bb6a2c50e8f6a5334e655626e", default-features = false, features = ["modern-classic"] }
+# engine's "modern-classic" profile (its decision E.71) with the Colour
+# Map of Levels 2.5 and 3.5, which that profile leaves out: decision 6 is
+# 32 colours, and decision 60 restores them.
+neoteletext-core = { git = "file:///Users/andrewstuart/devel/neoteletext-engine", rev = "c7a84cff00d4232bb6a2c50e8f6a5334e655626e", default-features = false, features = ["modern-classic", "colours32"] }
 neoteletext-formats = { git = "file:///Users/andrewstuart/devel/neoteletext-engine", rev = "c7a84cff00d4232bb6a2c50e8f6a5334e655626e", default-features = false, features = ["tti", "transport", "sliced"] }
 # The engine's web module: HTTP, channels, contents files and push, with no
 # network input or output of its own.
@@ -75,8 +77,6 @@ winit = "=0.30.13"
 softbuffer = { version = "=0.4.8", default-features = false, features = ["wayland", "wayland-dlopen", "x11", "x11-dlopen"] }
 # MIT or Apache-2.0, with no default features, so no standard library.
 embedded-graphics = { version = "=0.8.2", default-features = false }
-# MIT or Apache-2.0: reads the indexed images the trusted core writes (design section 6).
-png = "=0.18.1"
 # Transport Layer Security for the fetcher and the phone keyboard (decision
 # 41: `rustls`), with ring's cryptography and Mozilla's root certificates,
 # the versions and features the engine's own fetcher uses.

@@ -36,6 +36,9 @@ impl Canvas for Recorder {
         self.pages.push((key, rect));
         true
     }
+    fn screen(&mut self, _: PageKey) -> Option<Colour> {
+        Some(crate::theme::BLACK)
+    }
     fn text(&mut self, rect: Rect, text: &str, _: Style, _: Colour) {
         self.texts.push((rect, text.into()));
     }
