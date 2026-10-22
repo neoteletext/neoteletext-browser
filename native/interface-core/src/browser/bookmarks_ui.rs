@@ -125,6 +125,15 @@ impl BookmarksUi {
 }
 
 impl Browser {
+    /// The manager's symbol buttons.
+    pub(super) fn bookmarks_tips(&self, tips: &mut Vec<(Rect, String)>) {
+        let controls = &self.bookmarks.controls;
+        tips.push((controls.close, format!("Close bookmarks ({})", self.keys_named("Option+Cmd+B", "Ctrl+Shift+O"))));
+        for &(_, folder, _, _, remove) in &controls.items {
+            tips.push((remove, if folder { "Delete this folder and what it holds" } else { "Delete this bookmark" }.into()));
+        }
+    }
+
     /// The manager's view as the trusted core sent it, at `now`.
     pub fn set_bookmarks(&mut self, view: BookmarksView, now: u64) {
         let undo = (!view.undo.is_empty()).then(|| view.undo.clone());

@@ -84,8 +84,6 @@ struct Controls {
     apply: Rect,
     add: Rect,
     removes: Vec<(usize, Rect)>,
-    remember_on: Rect,
-    remember_off: Rect,
     restore_on: Rect,
     restore_off: Rect,
     cookie_modes: Vec<(CookieMode, Rect)>,
@@ -165,6 +163,17 @@ impl SettingsUi {
 }
 
 impl Browser {
+    /// The panel's symbol buttons.
+    pub(super) fn settings_tips(&self, tips: &mut Vec<(Rect, String)>) {
+        let controls = &self.settings.controls;
+        tips.push((controls.close, format!("Close settings ({})", self.keys_named("Cmd+,", "Ctrl+,"))));
+        tips.push((controls.quieter, "Quieter".into()));
+        tips.push((controls.louder, "Louder".into()));
+        for &(_, rect) in &controls.removes {
+            tips.push((rect, "Stop allowing this local address".into()));
+        }
+    }
+
     /// The settings as the trusted core sent them.
     pub fn set_settings(&mut self, view: SettingsView) {
         self.settings.view = Some(view);
@@ -288,10 +297,6 @@ impl Browser {
         let controls = &self.settings.controls;
         let change = if controls.this_page.contains(point) {
             Some(SettingChange::HomeIsThisPage)
-        } else if controls.remember_on.contains(point) {
-            Some(SettingChange::RememberHistory(true))
-        } else if controls.remember_off.contains(point) {
-            Some(SettingChange::RememberHistory(false))
         } else if controls.restore_on.contains(point) {
             Some(SettingChange::RestoreSession(true))
         } else if controls.restore_off.contains(point) {
@@ -299,7 +304,7 @@ impl Browser {
         } else if let Some(&(mode, _)) = controls.cookie_modes.iter().find(|(_, rect)| rect.contains(point)) {
             Some(SettingChange::Cookies(mode))
         } else if controls.manage_cookies.contains(point) {
-            self.set_cookies_open(true);
+            self.manage_cookies();
             return true;
         } else if controls.sound_on.contains(point) {
             Some(SettingChange::Sound(true))
@@ -409,15 +414,6 @@ impl Browser {
         }
         y += ROW + ROW_GAP;
 
-        // History remembered or not (requirement 20.7).
-        let remember = view.as_ref().is_none_or(|view| view.remember_history);
-        left_centred(canvas, row(y), 0.0, "History", ROW_TITLE, WHITE);
-        controls.remember_on = Rect::new(field_left, y, field_left + BUTTON_WIDTH * 1.5, y + ROW);
-        controls.remember_off = Rect::new(controls.remember_on.x1 + GAP, y, controls.remember_on.x1 + GAP + BUTTON_WIDTH * 1.5, y + ROW);
-        button(canvas, controls.remember_on, "Remember", remember);
-        button(canvas, controls.remember_off, "Forget", !remember);
-        y += ROW + ROW_GAP;
-
         // At start, the last session restored or the home address
         // (requirement 20.24).
         let restore = view.as_ref().is_none_or(|view| view.restore_session);
@@ -501,7 +497,6 @@ mod tests {
             volume: 80,
             proxy: ProxyView::None,
             local: alloc::vec!["192.168.1.20".into()],
-            remember_history: true,
             restore_session: true,
             cookies: CookieMode::Keep,
             refusal: None,
@@ -558,16 +553,18 @@ mod tests {
         );
         let _ = port;
         assert_eq!(press(&mut browser, none), [Output::Setting(SettingChange::Proxy(ProxyView::None))]);
-        let (forget, restore, home_at_start) =
-            (browser.settings.controls.remember_off, browser.settings.controls.restore_on, browser.settings.controls.restore_off);
-        assert_eq!(press(&mut browser, forget), [Output::Setting(SettingChange::RememberHistory(false))]);
+        let (restore, home_at_start) = (browser.settings.controls.restore_on, browser.settings.controls.restore_off);
         assert_eq!(press(&mut browser, home_at_start), [Output::Setting(SettingChange::RestoreSession(false))]);
         assert_eq!(press(&mut browser, restore), [Output::Setting(SettingChange::RestoreSession(true))]);
         let on_close = browser.settings.controls.cookie_modes[1].1;
         assert_eq!(press(&mut browser, on_close), [Output::Setting(SettingChange::Cookies(CookieMode::Close))]);
         let manage = browser.settings.controls.manage_cookies;
-        assert_eq!(press(&mut browser, manage), [Output::Cookies(crate::cookies::CookiesRequest::Panel(true))], "the settings panel gives way to it");
-        assert!(browser.cookies_open() && !browser.settings_open());
+        assert_eq!(
+            press(&mut browser, manage),
+            [Output::Console(true), Output::Cookies(crate::cookies::CookiesRequest::Panel(true))],
+            "the settings panel gives way to the console's cookies"
+        );
+        assert!(browser.cookies_open() && browser.console_open() && !browser.settings_open());
         browser.toggle_settings();
         browser.draw(&mut Recorder::new(), 1440.0, 900.0, 0);
         browser.take_outputs();

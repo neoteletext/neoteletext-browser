@@ -6,6 +6,12 @@
 
 /// Seconds in a day.
 pub const SECONDS_PER_DAY: i64 = 86_400;
+
+/// Seconds since 1970, UTC, now; 0 if the clock is before 1970.
+#[must_use]
+pub fn utc_now() -> i64 {
+    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).ok().and_then(|since| i64::try_from(since.as_secs()).ok()).unwrap_or(0)
+}
 const SECONDS_PER_HOUR: i64 = 3_600;
 const SECONDS_PER_MINUTE: i64 = 60;
 /// Days in a 400-year era of the Gregorian calendar.

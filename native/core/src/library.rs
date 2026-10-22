@@ -10,7 +10,7 @@ use std::collections::BTreeMap;
 use confine::LocalTime;
 use neoteletext::bookmarks::{BAR, Bookmarks, OTHER, Removed};
 use neoteletext::calendar::{day_text, day_words, local_day, time_words};
-use neoteletext::history::{DAY, FOUR_WEEKS, HOUR, History, Range, Visit, WEEK};
+use neoteletext::history::{DAY, FIFTEEN_MINUTES, FOUR_WEEKS, HOUR, History, Range, Visit, WEEK};
 use protocol::library::{
     BarRequest, BarView, BookmarkRequest, BookmarksView, ClearRange, ClosedTab, FolderRow, HistoryRequest, HistoryRow, HistoryView, ItemRow, MAX_CLOSED,
     MAX_LABEL, MAX_NAME, MAX_NOTICE, MAX_SHOWN_ADDRESS, MAX_SUGGESTIONS, MAX_VIEW_ROWS, StarRequest, StarView, Suggestion, Suggestions, TabEntry, TabList,
@@ -183,12 +183,12 @@ impl Core {
         if let Some(visit) = tab.history.get_mut(tab.position) {
             visit.title.clone_from(&title);
         }
-        if tab.private || !self.settings.remember_history || address.is_start_page() {
+        if tab.private || address.is_start_page() {
             return Ok(());
         }
         let time = self.local_time();
         self.expire_history(local_day(time.utc, time.offset));
-        let visit = Visit { address: address.text.clone(), channel, title, typed: pending.typed };
+        let visit = Visit { address: address.text.clone(), channel, title, typed: pending.typed, reload: pending.reload };
         if let Some(line) = self.library.history.record(&visit, time.utc, time.offset)
             && let Some(folder) = self.settings_folder.clone()
         {
@@ -260,6 +260,15 @@ impl Core {
             HistoryRequest::Query { text, first } => {
                 self.library.history_panel = Some((clean(&text, protocol::library::MAX_QUERY), usize::try_from(first).unwrap_or(usize::MAX)));
             }
+            // Chrome's "More from this site": the panel searches the row's host.
+            HistoryRequest::MoreFromSite(number) => {
+                let host =
+                    self.library.history_numbers.get(number).and_then(|(_, address)| neoteletext::address::parse(address).ok()).map(|address| address.host);
+                if let Some(host) = host {
+                    let text = clean(&format!("{}{host}", neoteletext::history::HOST_SEARCH), protocol::library::MAX_QUERY);
+                    self.library.history_panel = Some((text, 0));
+                }
+            }
             HistoryRequest::Open { number, new_tab } => {
                 let Some((_, address)) = self.library.history_numbers.get(number).cloned() else { return self.send_history() };
                 return self.open_address(&address, new_tab);
@@ -267,18 +276,14 @@ impl Core {
             HistoryRequest::Remove(numbers) => {
                 let keys: Vec<(i64, String)> = numbers.iter().filter_map(|number| self.library.history_numbers.get(*number).cloned()).collect();
                 let removed = self.library.history.remove(&keys);
+                self.remove_entries_of(&removed)?;
                 self.save_history();
-                self.library.history_notice = notice(&format!("{removed} removed from history"));
-            }
-            HistoryRequest::ForgetChannel(number) => {
-                let Some((_, address)) = self.library.history_numbers.get(number).cloned() else { return self.send_history() };
-                let removed = self.library.history.forget_channel(&address);
-                self.save_history();
-                self.library.history_notice = notice(&format!("This channel forgotten: {removed} removed from history"));
+                self.library.history_notice = notice(&format!("{} removed from history", removed.len()));
             }
             HistoryRequest::Clear(range) => {
                 let now = self.local_time().utc;
                 let range = match range {
+                    ClearRange::FifteenMinutes => History::since(now, FIFTEEN_MINUTES),
                     ClearRange::Hour => History::since(now, HOUR),
                     ClearRange::Day => History::since(now, DAY),
                     ClearRange::Week => History::since(now, WEEK),
@@ -286,8 +291,13 @@ impl Core {
                     ClearRange::All => Range::All,
                 };
                 let removed = self.library.history.clear(range);
-                if range == Range::All {
-                    self.session.closed.clear();
+                // The tabs' and closed tabs' entries of that time go too.
+                let changed = match range {
+                    Range::All => self.session.remove_entries(|_| true),
+                    Range::Since(since) => self.session.remove_entries(|visit| visit.at >= since),
+                };
+                if changed {
+                    self.send(&ToInterface::Strip(self.strip()))?;
                 }
                 self.save_history();
                 self.library.history_notice = notice(&format!("History cleared: {removed} removed"));
@@ -295,6 +305,7 @@ impl Core {
             HistoryRequest::ClearCookies(range) => {
                 let now = self.local_time().utc;
                 let since = match range {
+                    ClearRange::FifteenMinutes => Some(now.saturating_sub(FIFTEEN_MINUTES)),
                     ClearRange::Hour => Some(now.saturating_sub(HOUR)),
                     ClearRange::Day => Some(now.saturating_sub(DAY)),
                     ClearRange::Week => Some(now.saturating_sub(WEEK)),
@@ -362,18 +373,13 @@ impl Core {
         }
         let closed: Vec<(u32, String)> = self.session.closed.iter().take(MAX_CLOSED).map(|closed| (closed.id, clean(&closed.title, MAX_NAME))).collect();
         let closed = closed.into_iter().map(|(id, title)| ClosedTab { number: self.library.closed_numbers.number(id), title }).collect();
-        let remembering = self.settings.remember_history;
-        let mut notice_text = self.library.history_notice.clone();
-        if !remembering && notice_text.is_empty() {
-            notice_text = notice("History is not being remembered. Clear history removes what is kept.");
-        }
+        let notice_text = self.library.history_notice.clone();
         let view = HistoryView {
             query,
             first: u32::try_from(first).unwrap_or(u32::MAX),
             total: u32::try_from(total).unwrap_or(u32::MAX),
             rows,
             closed,
-            remembering,
             notice: notice_text,
         };
         self.send(&ToInterface::History(view))
@@ -428,21 +434,29 @@ impl Core {
 
     /// The active tab's Back or Forward list (requirement 20.10).
     pub(crate) fn send_tab_list(&mut self, forward: bool) -> Result<(), String> {
-        let entries = self
-            .session
-            .tab_list(forward)
-            .into_iter()
-            .filter_map(|(steps, visit)| {
-                let title = if visit.title.is_empty() { visit.address.host.clone() } else { visit.title.clone() };
-                Some(TabEntry {
-                    steps: u8::try_from(steps).ok()?,
-                    page: visit.address.page,
-                    title: clean(&title, MAX_NAME),
-                    address: shown_address(&visit.address.text),
-                })
+        let entry = |(steps, visit): (usize, &crate::session::Visit)| {
+            let title = if visit.title.is_empty() { visit.address.host.clone() } else { visit.title.clone() };
+            Some(TabEntry {
+                steps: u8::try_from(steps).ok()?,
+                page: visit.address.page,
+                title: clean(&title, MAX_NAME),
+                address: shown_address(&visit.address.text),
             })
-            .collect();
-        self.send(&ToInterface::TabList(TabList { forward, entries }))
+        };
+        let entries = self.session.tab_list(forward).into_iter().filter_map(entry).collect();
+        let chapters = self.session.chapter_stops(forward).into_iter().filter_map(entry).collect();
+        self.send(&ToInterface::TabList(TabList { forward, entries, chapters }))
+    }
+
+    /// After rows were removed: the addresses no day has a row of any more
+    /// leave the tabs' and closed tabs' lists, as Chrome removes the
+    /// entries of the addresses whose history is gone.
+    fn remove_entries_of(&mut self, removed: &[String]) -> Result<(), String> {
+        let gone: Vec<&String> = removed.iter().filter(|address| !self.library.history.has_address(address)).collect();
+        if !gone.is_empty() && self.session.remove_entries(|visit| gone.contains(&&visit.address.text)) {
+            self.send(&ToInterface::Strip(self.strip()))?;
+        }
+        Ok(())
     }
 
     /// Back or Forward several steps at once, from a list.
@@ -927,8 +941,6 @@ mod tests {
         let private = test.core.session.tabs[1].channel.id;
         test.core.record_pending(private).unwrap();
         test.visit("neoteletext:home");
-        test.core.settings.remember_history = false;
-        test.visit("sport.invalid");
         assert_eq!(test.core.library.history.len(), 1, "{:?}", test.core.library.history.query(""));
         assert_eq!(test.core.session.tabs[0].history[0].title, "news.invalid", "the tab's entry has its title");
     }

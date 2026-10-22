@@ -733,6 +733,7 @@ impl Core {
                 let went = self.session.go(matches!(intent, ToCore::Forward));
                 self.went(went)?;
             }
+            ToCore::Reload => self.reload()?,
             ToCore::Bookmark => self.star()?,
             ToCore::Home | ToCore::ChangeSetting(_) | ToCore::Console(_) => self.settings_intent(intent)?,
             ToCore::History(_)
@@ -782,6 +783,11 @@ impl Core {
             Ok(()) => self.kept_session = text,
             Err(error) => eprintln!("neoteletext: the session could not be kept in {}: {error}", folder.display()),
         }
+    }
+
+    /// Reload: the active tab's channel opens afresh (requirement 11.2).
+    fn reload(&mut self) -> Result<(), String> {
+        if self.session.reload() { self.send_all() } else { Ok(()) }
     }
 
     /// After Back, Forward or a step from their lists: another channel is
@@ -1173,7 +1179,6 @@ impl Core {
             volume: self.settings.volume,
             proxy,
             local: self.settings.local.iter().map(ToString::to_string).collect(),
-            remember_history: self.settings.remember_history,
             restore_session: self.settings.restore,
             cookies: cookie_control::mode_view(self.settings.cookies),
             refusal: self.refusal.as_deref().map(|refusal| clean(refusal, protocol::settings::MAX_REFUSAL)),
@@ -1277,13 +1282,8 @@ fn checked_change(settings: &mut Settings, change: SettingChange, current: Optio
             let address = settings.local.remove(index);
             Ok(Some(format!("{address} on the local network no longer allowed")))
         }
-        // Remembering history is the user's privacy, not a security setting
-        // the strip says (requirement 20.7).
-        SettingChange::RememberHistory(on) => {
-            settings.remember_history = on;
-            Ok(None)
-        }
-        // So is restoring the last session (requirement 20.24).
+        // Restoring the last session is the user's privacy, not a security
+        // setting the strip says (requirement 20.24).
         SettingChange::RestoreSession(on) => {
             settings.restore = on;
             Ok(None)
@@ -1305,6 +1305,7 @@ fn checked_change(settings: &mut Settings, change: SettingChange, current: Optio
 /// last of them active; with neither, the home address. Without a session
 /// restored, the first tab is active, as before.
 fn open_at_start(session: &mut Session, saved: Option<&Saved>, addresses: &[String], home: &str) -> Result<(), String> {
+    session.now = neoteletext::calendar::utc_now();
     let restored = saved.is_some_and(|saved| session.restore(saved) > 0);
     for address in addresses {
         if let Err(reason) = session.open(address) {
@@ -1538,6 +1539,11 @@ impl Core {
             }
             Ok(Follow::Page(page)) => {
                 let Some(channel) = self.active_channel() else { return Ok(()) };
+                // A link to the page shown reloads it, as in Chrome.
+                let shown = self.session.active_tab().and_then(|tab| tab.address()).is_some_and(|shown| shown.page == Some(page));
+                if shown {
+                    return self.reload();
+                }
                 if self.session.show_page(page).is_some() {
                     self.send(&ToInterface::Strip(self.strip()))?;
                 }
@@ -1722,7 +1728,11 @@ fn handle(core: &mut Core, event: Event) -> Result<bool, String> {
                 }
             }
         }
-        Event::Intent(intent) => return core.intent(intent),
+        Event::Intent(intent) => {
+            // What the intent changes in a tab's list is stamped with now.
+            core.session.now = neoteletext::calendar::utc_now();
+            return core.intent(intent);
+        }
         Event::DecoderEnded(channel, generation, reason) => core.decoder_ended(channel, generation, reason),
         #[cfg(feature = "phone-keyboard")]
         Event::Phone(message) => core.phone_said(message)?,
@@ -1998,10 +2008,9 @@ mod program_tests {
         assert!(change(SettingChange::RemoveLocal(16)).is_err());
         assert!(change(SettingChange::RemoveLocal(0)).unwrap().is_some());
         assert_eq!(change(SettingChange::HomeIsThisPage), Ok(None));
-        // Privacy settings, not security ones: nothing said in the strip.
-        assert_eq!(change(SettingChange::RememberHistory(false)), Ok(None));
+        // A privacy setting, not a security one: nothing said in the strip.
         assert_eq!(change(SettingChange::RestoreSession(false)), Ok(None));
-        assert_eq!((settings.remember_history, settings.restore), (false, false));
+        assert!(!settings.restore);
         assert_eq!(settings.home, "https://open.example/");
         assert_eq!((settings.volume, settings.sound, settings.proxy.is_none()), (30, false, true));
         assert_eq!(settings.local.len(), stored::MAX_LOCAL - 1);

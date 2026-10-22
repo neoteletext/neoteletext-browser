@@ -2,8 +2,9 @@
 //! requirement 19.8): a panel docked at the bottom of the window, in place
 //! of the overview, opened by Command-Option-I on macOS and Control-Shift-I
 //! elsewhere, with a tab each for the active channel's network exchanges,
-//! packets, pages and notices. What it shows is the trusted core's cleaned
-//! text, drawn as text and never interpreted. It can pause, which stops it
+//! packets, pages and notices, and one for managing cookies
+//! (`cookies_ui.rs`). What it shows is the trusted core's cleaned text,
+//! drawn as text and never interpreted. It can pause, which stops it
 //! scrolling, and clear.
 
 use alloc::collections::VecDeque;
@@ -46,21 +47,28 @@ pub(super) struct ConsoleUi {
     /// Lines scrolled back from the newest.
     back: usize,
     pub(super) area: Rect,
-    tabs: Vec<(ConsoleTab, Rect)>,
+    tabs: Vec<(Tab, Rect)>,
     pause: Rect,
     clear: Rect,
     close: Rect,
 }
 
-/// The tab shown: [`ConsoleTab`] with a default.
+/// The tab shown: one of the trusted core's entries, or the cookies.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-struct Tab(ConsoleTab);
+pub(super) enum Tab {
+    Entries(ConsoleTab),
+    Cookies,
+}
 
 impl Default for Tab {
     fn default() -> Self {
-        Self(ConsoleTab::Network)
+        Self::Entries(ConsoleTab::Network)
     }
 }
+
+/// Every tab, in the order the console shows them.
+const TABS: [Tab; ConsoleTab::ALL.len() + 1] =
+    [Tab::Entries(ConsoleTab::ALL[0]), Tab::Entries(ConsoleTab::ALL[1]), Tab::Entries(ConsoleTab::ALL[2]), Tab::Entries(ConsoleTab::ALL[3]), Tab::Cookies];
 
 impl ConsoleUi {
     pub(super) const fn open(&self) -> bool {
@@ -75,9 +83,12 @@ impl ConsoleUi {
         entries.push_back(entry);
     }
 
-    fn shown(&self) -> &VecDeque<ConsoleEntry> {
-        let index = self.tab.0.index();
-        &self.entries[index]
+    /// The entries of the tab shown; none on the cookies' tab.
+    fn shown(&self) -> Option<&VecDeque<ConsoleEntry>> {
+        match self.tab {
+            Tab::Entries(tab) => self.entries.get(tab.index()),
+            Tab::Cookies => None,
+        }
     }
 }
 
@@ -114,6 +125,24 @@ impl Browser {
     pub(super) fn toggle_console(&mut self) {
         self.console.open = !self.console.open;
         self.outputs.push(Output::Console(self.console.open));
+        if self.console.tab == Tab::Cookies {
+            self.set_cookies_open(self.console.open);
+        }
+    }
+
+    /// The console, open at its cookies' tab, from the settings panel.
+    pub(super) fn manage_cookies(&mut self) {
+        self.close_panels();
+        if !self.console.open {
+            self.toggle_console();
+        }
+        self.choose_console_tab(Tab::Cookies);
+    }
+
+    fn choose_console_tab(&mut self, tab: Tab) {
+        self.console.tab = tab;
+        self.console.back = 0;
+        self.set_cookies_open(tab == Tab::Cookies);
     }
 
     fn set_paused(&mut self, paused: bool) {
@@ -132,16 +161,17 @@ impl Browser {
             return false;
         }
         if let Some(&(tab, _)) = self.console.tabs.iter().find(|(_, rect)| rect.contains(point)) {
-            self.console.tab = Tab(tab);
-            self.console.back = 0;
+            self.choose_console_tab(tab);
+        } else if self.console.close.contains(point) {
+            self.toggle_console();
+        } else if self.console.tab == Tab::Cookies {
+            self.cookies_press(point);
         } else if self.console.pause.contains(point) {
             self.set_paused(!self.console.paused);
         } else if self.console.clear.contains(point) {
             self.console.entries.iter_mut().for_each(VecDeque::clear);
             self.console.held.clear();
             self.console.back = 0;
-        } else if self.console.close.contains(point) {
-            self.toggle_console();
         }
         true
     }
@@ -154,9 +184,37 @@ impl Browser {
         }
         #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss, reason = "a few lines of wheel")]
         let lines = libm::ceil(distance.abs() / LINE) as usize;
-        let most = self.console.shown().len();
+        let most = self.console.shown().map_or(0, VecDeque::len);
         self.console.back = if distance < 0.0 { self.console.back.saturating_add(lines).min(most) } else { self.console.back.saturating_sub(lines) };
         true
+    }
+
+    /// The console's tabs and buttons, and the cookies' controls.
+    pub(super) fn console_tips(&self, tips: &mut Vec<(Rect, alloc::string::String)>) {
+        if !self.console.open {
+            return;
+        }
+        for &(tab, rect) in &self.console.tabs {
+            let words = match tab {
+                Tab::Entries(ConsoleTab::Network) => "Each exchange with the channel's server, and the push connection's events",
+                Tab::Entries(ConsoleTab::Packets) => "Each teletext packet received",
+                Tab::Entries(ConsoleTab::Pages) => "The pages the decoder holds",
+                Tab::Entries(ConsoleTab::Notices) => "Notices, refusals and warnings",
+                Tab::Cookies => "Cookies kept for each site and channel: delete or block them",
+            };
+            tips.push((rect, words.into()));
+        }
+        let close = format!("Close the console ({})", self.keys_named("Option+Cmd+I", "Ctrl+Shift+I"));
+        tips.push((self.console.close, close));
+        if self.console.tab == Tab::Cookies {
+            self.cookies_tips(tips);
+        } else {
+            tips.push((
+                self.console.pause,
+                if self.console.paused { "Scroll again, with what arrived meanwhile" } else { "Stop scrolling; what arrives waits" }.into(),
+            ));
+            tips.push((self.console.clear, "Empty every tab's entries".into()));
+        }
     }
 
     /// The console, docked at the bottom in `area`.
@@ -167,37 +225,52 @@ impl Browser {
         outline(canvas, area, RULE);
         let bar = Rect::new(area.x0 + PADDING, area.y0 + GAP, area.x1 - PADDING, area.y0 + GAP + BAR_HEIGHT);
         let mut x = bar.x0;
-        for tab in ConsoleTab::ALL {
+        for tab in TABS {
             let rect = Rect::new(x, bar.y0, x + TAB_WIDTH, bar.y1);
-            let chosen = self.console.tab.0 == tab;
+            let chosen = self.console.tab == tab;
             canvas.fill(rect, RADIUS, if chosen { SELECTED } else { BUTTON });
             border(canvas, rect, 1.0, if chosen { SELECTED } else { RULE });
-            let count = self.console.entries[tab.index()].len();
-            centred(canvas, rect, &format!("{} {count}", tab.label()), ROW_STATUS, WHITE);
+            let label = match tab {
+                Tab::Entries(tab) => format!("{} {}", tab.label(), self.console.entries[tab.index()].len()),
+                Tab::Cookies => "Cookies".into(),
+            };
+            centred(canvas, rect, &label, ROW_STATUS, WHITE);
             self.console.tabs.push((tab, rect));
             x = rect.x1 + GAP;
         }
         self.console.close = Rect::new(bar.x1 - CLOSE_WIDTH, bar.y0, bar.x1, bar.y1);
-        self.console.clear = Rect::new(self.console.close.x0 - GAP - BUTTON_WIDTH, bar.y0, self.console.close.x0 - GAP, bar.y1);
-        self.console.pause = Rect::new(self.console.clear.x0 - GAP - BUTTON_WIDTH, bar.y0, self.console.clear.x0 - GAP, bar.y1);
-        for (rect, word, chosen) in [
-            (self.console.pause, if self.console.paused { "Resume" } else { "Pause" }, self.console.paused),
-            (self.console.clear, "Clear", false),
-            (self.console.close, "\u{00D7}", false),
-        ] {
+        // Pause and Clear are the entries'; the cookies' tab has its own controls.
+        let entries_shown = self.console.tab != Tab::Cookies;
+        let (clear, pause) = if entries_shown {
+            let clear = Rect::new(self.console.close.x0 - GAP - BUTTON_WIDTH, bar.y0, self.console.close.x0 - GAP, bar.y1);
+            (clear, Rect::new(clear.x0 - GAP - BUTTON_WIDTH, bar.y0, clear.x0 - GAP, bar.y1))
+        } else {
+            (Rect::default(), Rect::default())
+        };
+        (self.console.clear, self.console.pause) = (clear, pause);
+        let mut buttons = alloc::vec![(self.console.close, "\u{00D7}", false)];
+        if entries_shown {
+            buttons.push((self.console.pause, if self.console.paused { "Resume" } else { "Pause" }, self.console.paused));
+            buttons.push((self.console.clear, "Clear", false));
+        }
+        for (rect, word, chosen) in buttons {
             canvas.fill(rect, RADIUS, if chosen { SELECTED } else { BUTTON });
             border(canvas, rect, 1.0, RULE);
             centred(canvas, rect, word, ROW_TITLE, WHITE);
         }
-        let title = Rect::new(x + GAP, bar.y0, self.console.pause.x0 - GAP, bar.y1);
+        let leftmost = if entries_shown { self.console.pause.x0 } else { self.console.close.x0 };
+        let title = Rect::new(x + GAP, bar.y0, leftmost - GAP, bar.y1);
         canvas.push_clip(title);
         left_centred(canvas, title, 0.0, "Console", HEADING, MUTED);
         canvas.pop_clip();
 
         let list = Rect::new(area.x0 + PADDING, bar.y1 + GAP, area.x1 - PADDING, area.y1 - GAP);
+        let Some(entries) = self.console.shown() else {
+            self.draw_cookies(canvas, list);
+            return;
+        };
         #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss, reason = "a panel's lines")]
         let rows = libm::floor(list.height() / LINE).max(0.0) as usize;
-        let entries = self.console.shown();
         let end = entries.len().saturating_sub(self.console.back);
         let start = end.saturating_sub(rows);
         canvas.push_clip(list);

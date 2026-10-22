@@ -34,7 +34,6 @@ enum Item {
     BookmarkPage,
     #[cfg(feature = "phone-keyboard")]
     Phone,
-    Cookies,
     Console,
     Settings,
 }
@@ -50,7 +49,6 @@ impl Item {
         Self::BookmarkPage,
         #[cfg(feature = "phone-keyboard")]
         Self::Phone,
-        Self::Cookies,
         Self::Console,
         Self::Settings,
     ];
@@ -69,7 +67,6 @@ impl Item {
             Self::BookmarkPage => ("Bookmark this page", "Cmd+D", "Ctrl+D"),
             #[cfg(feature = "phone-keyboard")]
             Self::Phone => ("Phone keyboard", "", ""),
-            Self::Cookies => ("Cookies and site data", "", ""),
             Self::Console => ("Developer console", "Option+Cmd+I", "Ctrl+Shift+I"),
             Self::Settings => ("Settings", "Cmd+,", "Ctrl+,"),
         }
@@ -129,7 +126,6 @@ impl Browser {
             Item::BookmarkPage => self.outputs.push(Output::Bookmark),
             #[cfg(feature = "phone-keyboard")]
             Item::Phone => self.toggle_phone_panel(),
-            Item::Cookies => self.set_cookies_open(true),
             Item::Console => self.toggle_console(),
             Item::Settings => {
                 if !self.settings_open() {
@@ -237,13 +233,19 @@ impl Browser {
         self.popups.list_area = Rect::ZERO;
         let Some(list) = self.popups.tab_list.clone() else { return };
         let anchor = if list.forward { self.regions.forward } else { self.regions.back };
-        #[allow(clippy::cast_precision_loss, reason = "at most fifteen entries")]
-        let height = ROW * (list.entries.len() + 1) as f64;
+        // The chapter stops, when there are any, after a rule of their own.
+        let rows = list.entries.len() + list.chapters.len() + 1;
+        #[allow(clippy::cast_precision_loss, reason = "at most eighteen rows")]
+        let height = ROW * rows as f64;
         let area = Rect::new(anchor.x0, anchor.y1 + HAIRLINE, anchor.x0 + LIST_WIDTH, anchor.y1 + HAIRLINE + height);
         canvas.fill(area, 0.0, BLACK);
         border(canvas, area, HAIRLINE, RULE);
         let mut y = area.y0;
-        for entry in &list.entries {
+        let chapters_from = list.entries.len();
+        for (index, entry) in list.entries.iter().chain(&list.chapters).enumerate() {
+            if index == chapters_from {
+                canvas.fill(Rect::new(area.x0, y, area.x1, y + HAIRLINE), 0.0, RULE);
+            }
             let rect = Rect::new(area.x0, y, area.x1, y + ROW);
             if rect.contains(self.pointer) {
                 canvas.fill(rect, 0.0, SELECTED);
@@ -383,7 +385,6 @@ impl Browser {
     }
 
     /// Whether the menu or a Back or Forward list is open.
-    #[cfg(feature = "interaction")]
     pub(super) fn popup_open(&self) -> bool {
         self.popups.menu_open || self.popups.tab_list.is_some()
     }
@@ -442,11 +443,21 @@ mod tests {
                 TabEntry { steps: 1, page: None, title: "a".into(), address: "https://a.example/".into() },
                 TabEntry { steps: 2, page: Some(0x302), title: "b".into(), address: "https://b.example/#302".into() }
             ],
+            chapters: alloc::vec![TabEntry { steps: 20, page: None, title: "c".into(), address: "https://c.example/".into() }],
         });
         browser.draw(&mut Recorder::new(), 1440.0, 900.0, 0);
         let second = browser.popups.entries[1].1;
         press(&mut browser, second, 2_000);
         assert_eq!(browser.take_outputs(), [Output::GoTo { forward: false, steps: 2 }]);
+        browser.set_tab_list(TabList {
+            forward: false,
+            entries: alloc::vec![],
+            chapters: alloc::vec![TabEntry { steps: 20, page: None, title: "c".into(), address: "https://c.example/".into() }],
+        });
+        browser.draw(&mut Recorder::new(), 1440.0, 900.0, 0);
+        let chapter = browser.popups.entries[0].1;
+        press(&mut browser, chapter, 2_100);
+        assert_eq!(browser.take_outputs(), [Output::GoTo { forward: false, steps: 20 }], "a chapter stop goes there");
         assert!(!browser.secondary_pressed(), "nothing open, and not on Back");
         assert_eq!(browser.take_outputs(), []);
         browser.pointer_moved(middle(back).x, middle(back).y, 3_000);

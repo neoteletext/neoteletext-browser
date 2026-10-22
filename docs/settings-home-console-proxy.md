@@ -68,8 +68,9 @@ A panel docked at the bottom of the window (requirement 12.7), opened by Command
 - **Packets:** each packet received on the tab, newest last: the time, where it came from (fetched or pushed), its magazine and row, the page number of a header, and its 40 data bytes as text and as hexadecimal.
 - **Pages:** the pages the channel's decoder holds, with their titles and when each last changed.
 - **Notices:** the engine's and the trusted core's notices for the channel: refusals, warnings, protocol errors.
+- **Cookies** (decision 63, 23 October 2026): the cookies panel of `cookies.md` section 4.1, for every site and channel rather than the active tab's alone: counts, sizes, last use, delete and block, never a name or value. Pause and Clear are the other tabs'; the settings panel's "Manage…" opens the console here.
 
-Each tab keeps its newest 1 000 entries a channel. The panel can pause, which stops it scrolling, and clear. It never shows a cookie, a form's values, a key typed into a page or the pairing secret: the interface never receives those (requirement 3.6).
+Each of the first four tabs keeps its newest 1 000 entries a channel. The panel can pause, which stops it scrolling, and clear. It never shows a cookie, a form's values, a key typed into a page or the pairing secret: the interface never receives those (requirement 3.6).
 
 ### 3.2 Where it comes from
 

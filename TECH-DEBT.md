@@ -48,3 +48,13 @@ The design of installation and updates on every desktop is `docs/installation-an
 - **Requirement 3.9's hostile-interface harness** (an interface that sends every kind of message malformed and oversized, against which the trusted core must stand) is still unwritten; the protocol's own tests cover malformed and oversized messages one kind at a time.
 - **Damage-limited drawing in the interface:** a frame on macOS is draw 3 ms, render 4 ms, present 6 ms, and the present is CoreGraphics copying softbuffer's fresh buffer, which needs unsafe code or another presentation library to change.
 
+
+## From the owner's requests of 23 October 2026 (decision 63)
+
+Built in rapid iteration and recorded (decision 63; requirements 11.2, 11.6, 12.1, 12.7, 12.12, 19.8 and 21.6; `architecture.md` section 11.2; `cookies.md` section 4.1; `settings-home-console-proxy.md` section 3.1; `sandboxing.md` section 6; the security analyses). Owed:
+
+- **Tests:** Reload's button place in the toolbar's order test, and Command-R and Control-R; a middle press on a tab closing it and elsewhere doing nothing; switching the console's tabs asking for the cookies' rows and stopping them. Each must fail on the code before.
+- **Reviews:** every control drawn as an icon, a symbol or cut text has a tip (requirement 12.12).
+- **The macOS window:** a check that the window is on the screen needs a desktop session; for now by hand, as on 23 October 2026.
+- **History as Chrome's (decision 64):** a row's menu lacks Chrome's "Remove bookmark".
+- **The latency budget under load:** `keys_round_trip_and_pages_reach_the_screen_within_budget` failed with the key-to-page median at 2.05 ms and 3.22 ms against the 2 ms `WAKE_BUDGET` while the machine's load average was about 30, and passed alone at other moments; it is the test, not the code, that the load decides. Whether its budget should allow for a loaded machine, or the gate run it alone, is to settle.

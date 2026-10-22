@@ -720,6 +720,7 @@
 - **Source:** Decision 4.
 - **Verification:** Review.
 - **State:** Partly met: the address, identity, encryption state, Back, Forward, Home, the bookmark star, and the security settings in the settings panel (decision 51). Reload and the site-change screen are not built.
+- *Amended 23 October 2026 (decision 63):* Reload is built (requirement 11.6), between Forward and Home. State: partly met; the site-change screen is not built.
 
 ### Requirement 11.3: The address field
 - **Statement:** In display mode the address field must show the address as formatted by the address rules, with the host emphasised and internationalised names shown safely. In edit mode its text must be sent, on Enter, to the trusted core, which opens it or says why it cannot.
@@ -742,6 +743,14 @@
 - **Verification:** Test.
 - **State:** Met, with tests: `protocol::clean` on the sending side and a check on the receiving side; the address editor never inserts hidden characters.
 
+### Requirement 11.6: Reload
+- **Statement:** The strip must show a Reload button between Forward and Home; it, Command-R on macOS and Control-R elsewhere must open the active tab's channel afresh, with a new decoder and fetcher reading its pages again, at the tab's place in its history, which must not change. Reload is strip input carrying nothing; the trusted core decides what is opened.
+- **Reason:** A channel that stalls, or a file that changed, is otherwise opened again only by typing its address, which adds to the tab's history.
+- **Source:** Decision 63.
+- **Verification:** Trusted-core test: a reload gives the tab a new channel at the same address and leaves its history as it was. Interface tests of the button, its place and the shortcuts.
+- **State:** Built 23 October 2026 (`ToCore::Reload`, `Session::reload`), and seen on macOS: the strip shows Back, Forward, Reload and Home; the button sends Reload (`a_tip_shows_after_a_rest_and_goes_on_a_press`); `a_reload_opens_the_channel_afresh_where_the_tab_is` (a new channel at the same address, the history as it was, a reload waiting to be recorded); in history a reload counts no visit (requirement 20.1). The shortcut's test is owed (`TECH-DEBT.md`).
+- *Amended 23 October 2026 (decision 64):* entering the address shown in the address field, or following a link to it, is a reload, as Chrome makes it (`chrome.history`'s reload transition: "pressing Enter in the address bar"; `ShouldTreatNavigationAsReload`): no new entry, and not a typed visit. State: met, `a_reload_opens_the_channel_afresh_where_the_tab_is`.
+
 ---
 
 ## 12. Window features
@@ -752,6 +761,7 @@
 - **Source:** Decisions 33 and 35.
 - **Verification:** Test.
 - **State:** Partly met: tabs, close and new tab. Drag to reorder, overflow and session restore are not built.
+- *Amended 23 October 2026 (decision 63):* a press of the middle button on a tab must close it, as the tab's close button does. State: built (`Browser::middle_pressed`), its test owed (`TECH-DEBT.md`). Session restore has been built since 22 October 2026 (requirement 20.22).
 
 ### Requirement 12.2: Page walls and transitions
 - **Statement:** The interface must show the window of decision 35 (banks, page list, page area, overview), with its transitions, and must respect the platform's reduced-motion preference.
@@ -796,6 +806,7 @@
 - **Source:** Architecture.
 - **Verification:** Test that hostile packet contents appear as text.
 - **State:** Met by requirements 19.8 and 19.9 (decision 51).
+- *Amended 23 October 2026 (decision 63):* the panel also manages cookies, in a tab of its own showing the rows of requirement 21.6; it still never shows a cookie's name or value.
 
 ### Requirement 12.8: Windows
 - **Statement:** Each window must have one trusted strip. Moving a tab between windows must be a change of state in the trusted core. Frames for a page must go only to the window showing it.
@@ -824,6 +835,13 @@
 - **Source:** Architecture.
 - **Verification:** Test on each desktop.
 - **State:** Partly met: composed text is inserted when committed. The clipboard (needs a library) and showing text while it is composed are not built.
+
+### Requirement 12.12: Tips
+- **Statement:** Every control the window draws as an icon, a symbol or text that may be cut short must have a tip: a label naming it, saying what it does, and giving its shortcut on the platform where it has one. A tip must show when the pointer has rested on its control for half a second, beside the pointer and inside the window, over everything else; a press must put it away until the pointer leaves the control, and leaving must put it away. Tips must be the interface's own words, except a tab's title and a bookmark's name, which must be shown as the cleaned text they are (requirement 11.5). While a panel or list is open over the window, only its tips and the strip's must show.
+- **Reason:** An icon alone does not say what it does, and the shortcuts are otherwise found only in the menu.
+- **Source:** Decision 63.
+- **Verification:** Interface tests: a tip shows after the rest and not before, with each platform's shortcut, and goes on a press and on leaving; a review that every icon, symbol and cut text has one.
+- **State:** Built 23 October 2026, with tests `a_tip_shows_after_a_rest_and_goes_on_a_press` and `tips_name_each_platforms_shortcut`; seen on macOS. Tips cover the tab strip (each tab's title, its close and sound buttons, new tab, the window buttons elsewhere than macOS), the toolbar (Back, Forward, Reload, Home, the address field, the star, mute all, settings, the menu), the bookmarks bar's chips, the banks, the page size's buttons, the overview's fold, the console's tabs and buttons, the cookies' buttons, and the close, remove and volume buttons of the settings, history and bookmarks panels and the phone keyboard's. The review of every control is owed (`TECH-DEBT.md`).
 
 ---
 
@@ -1226,6 +1244,7 @@ From `settings-home-console-proxy.md` and its security analysis (decision 51).
 - **Source:** Decision 51.
 - **Verification:** Interface tests of each tab; a test that hostile text and bytes are shown as text.
 - **State:** Met in tests: `each_tab_shows_its_entries` (hostile text shown as the text it is), `pause_holds_and_clear_empties`, `its_shortcut_on_each_platform`, `the_console_takes_the_overviews_place`; by hand on macOS, Command-Option-I docked it with the reference channel's exchanges and push events. No cookie, form value, typed key or pairing secret reaches the trusted core's console entries (review of `console_fetched` and `decoded`).
+- *Amended 23 October 2026 (decision 63):* a fifth tab, Cookies, holds the cookies panel of requirement 21.6, whose rows the trusted core sends only while that tab is shown with the console open; Pause and Clear are the other tabs' and are not shown on it. "Never shows a cookie" stays: the tab shows the rows' counts, sizes and last use, never a name or value. State: built; `the_search_asks_for_rows` checks that closing the console stops the rows and opening it asks for them again; seen on macOS.
 
 ### Requirement 19.9: The console's data
 - **Statement:** The fetcher must report each exchange and each push event to the trusted core (the engine's REQ-WEB-033), bounded and read by a reader that refuses anything else; the trusted core must read each packet's address with the engine, keep each tab's entries, and send the open tab's as cleaned text, at most 200 entries a message, only while the console is open.
@@ -1265,6 +1284,8 @@ Adopted and built on 22 October 2026 by decision 57, while the owner was away, a
 - **Source:** Decision 57.
 - **Verification:** Test of each kind of navigation, of a page that never draws, of updates, of the start page, of a private tab and of the setting.
 - **State:** Met, 22 October 2026: `a_visit_is_recorded_once_its_page_draws` (recorded on the first frame drawn, once; not in a private tab, not the start page, not while history is not remembered), `navigations_wait_to_be_recorded` (each kind of navigation waits, typed or not; within a channel at once), `a_page_is_one_row_a_day`; by hand on macOS, a channel visited wrote its row to `history.txt`. A page chosen on the wall by its number or a click is the interface's own and not a navigation, so not a visit (`history-and-bookmarks.md` section 14).
+- *Amended 23 October 2026 (decision 63):* a reload (requirement 11.6) moves its row's last visit to the time its page draws, and makes the day's row if there is none, but adds to neither the day's visits nor those typed, as Chrome and Firefox count no reload (Chromium's `HistoryBackend::AddPageVisit`; Firefox's `VISIT_COUNT_INC` in `nsPlacesTriggers.h`); suggestions, ranked by visits, are not raised by reloading. State: met, `a_reload_moves_the_last_visit_and_counts_none`, which fails when a reload is counted.
+- *Amended 23 October 2026 (decision 65):* "Remember history" is withdrawn (requirement 20.7): every page of an ordinary tab is recorded; private tabs and the browser's own pages are not.
 
 ### Requirement 20.2: History is kept for 90 days
 - **Statement:** History must be kept between runs in `history.txt` in the settings folder, readable and writable by the user alone on macOS and Linux, appended at each visit and written whole to a temporary file renamed over it at start, at quit, when it holds twice as many lines as rows, and at once after any removal; rows older than 90 days, beyond 50 000, or beyond a file of 16 MiB must be removed, the oldest first.
@@ -1286,6 +1307,7 @@ Adopted and built on 22 October 2026 by decision 57, while the owner was away, a
 - **Source:** Decision 57.
 - **Verification:** Interface and trusted-core tests.
 - **State:** Met in tests: `the_panel_shows_rows_and_opens_them_by_number`, `the_search_and_the_wheel_ask_for_rows`; by hand on macOS, Command-Y opened it with the day's heading and the row's time, title and address. A row opens in a new tab with Shift-click (section 14).
+- *Amended 23 October 2026 (decision 64):* each row has Chrome's menu, "More from this site", which makes the search `host:` and the row's host, and "Remove from history", in place of its remove button; a search beginning `host:` answers the rows of that host alone, in any case. State: met, `rows_are_removed_by_number` (the menu's two items), `history_is_removed_as_asked` (`host:`).
 
 ### Requirement 20.5: The interface sees only history on screen
 - **Statement:** The trusted core must send the history panel at most 100 rows at a time, each with a number for that view, and must act on the interface's requests to open or remove rows only by those numbers.
@@ -1301,13 +1323,12 @@ Adopted and built on 22 October 2026 by decision 57, while the owner was away, a
 - **Verification:** Tests of each, reading the file after each.
 - **State:** Met: `history_is_removed_as_asked`, `rows_are_removed_by_their_numbers_and_from_the_file` (the file read after each removal), `rows_are_removed_by_number`.
 - *Amended 22 October 2026 (decision 62):* the clearing offers cookies, alone or with history (requirement 21.8).
+- *Amended 23 October 2026 (decision 64):* as Chrome removes them (`browsing_data::RemoveNavigationEntries`), removing history also removes from every tab's back-and-forward list, but never the entry a tab is at, and from the recently closed tabs, a closed tab going whole when the entry it was at is removed: for a time, the entries the tab came to in it; for rows, the entries of addresses no day has a row of any more. Private tabs are not touched. The ranges begin with Chrome's last 15 minutes. State: met, `removed_history_leaves_the_tabs_lists`.
+- *Amended 23 October 2026 (decision 65):* "every row of a channel" is withdrawn with "Forget this channel", which Chrome does not have; a site's rows are found with "More from this site" (requirement 20.4), selected and removed. The protocol's request code 5 is not reused.
 
-### Requirement 20.7: "Remember history"
-- **Statement:** A setting, on by default and kept in `settings.txt`, must stop all recording when off, and turning it off must offer to clear what is kept.
-- **Reason:** Some users want no record.
-- **Source:** Decision 57.
-- **Verification:** Test.
-- **State:** Met in tests: `a_visit_is_recorded_once_its_page_draws` (nothing recorded while off); the settings panel's "History: Remember, Forget"; the history panel then says history is not remembered and offers Clear history (section 14). Not pressed by hand: posted clicks do not reach the window.
+### Requirement 20.7: Withdrawn: "Remember history"
+Withdrawn on 23 October 2026 (decision 65): history follows Chrome (decision 64), which has no such setting; a user who wants no record browses in a private tab (requirement 20.8). Removed from the settings panel, `settings.txt` and the protocol, whose change code 8 is not reused; a `history` line in an older settings file is dropped and logged as an unknown line (`the_file_is_read_strictly`).
+- **Was:** A setting, on by default and kept in `settings.txt`, must stop all recording when off, and turning it off must offer to clear what is kept.
 
 ### Requirement 20.8: Private tabs
 - **Statement:** A private tab, opened by Command-Shift-N on macOS and Control-Shift-N elsewhere, must record no history, no typed address and no recently closed entry, and must be marked "Private" in the strip and in its tab.
@@ -1322,6 +1343,7 @@ Adopted and built on 22 October 2026 by decision 57, while the owner was away, a
 - **Source:** Decision 57.
 - **Verification:** Test.
 - **State:** Met: `closed_tabs_reopen_where_they_were`, `rows_are_removed_by_number` (reopened from the panel).
+- *Amended 23 October 2026 (decision 64):* the closed tabs are kept in `session.txt` with the session and come back at the next start, as Chrome keeps them (`TabRestoreServiceImpl`). State: met, `closed_tabs_are_kept_between_runs`.
 
 ### Requirement 20.10: Back and Forward lists
 - **Statement:** Holding Back or Forward, or a secondary click on it, must list at most 15 of the tab's entries that way, nearest first; choosing one must move the tab there.
@@ -1329,6 +1351,7 @@ Adopted and built on 22 October 2026 by decision 57, while the owner was away, a
 - **Source:** Decision 57.
 - **Verification:** Interface and trusted-core tests.
 - **State:** Met: `back_and_forward_lists_go_several_steps`, `a_list_entry_goes_there`, `back_held_opens_its_list` (held 500 ms or a secondary click).
+- *Amended 23 October 2026 (decision 64):* the list holds at most 12 entries, Chrome's `kMaxHistoryItems`; when it is full, up to 5 chapter stops follow it after a rule, each the nearest entry beyond where the host changes, as Chrome's `kMaxChapterStops` and `FindChapterStop`, the host standing for Chrome's registrable domain since decision 62 dropped the Public Suffix List; then "Show all history". A tab keeps at most 50 entries, the oldest dropped, Chrome's `kMaxSessionHistoryEntries`. State: met, `back_lists_twelve_then_chapter_stops_and_a_tab_keeps_fifty`, `back_held_opens_its_list` (a chapter stop goes there).
 
 ### Requirement 20.11: Suggestions in the address field
 - **Statement:** While the user types an address, the trusted core must offer at most 8 suggestions from bookmarks, then from history, each shown with its address as the address rules print it; an inline completion must come only from addresses the user typed before.
@@ -1406,6 +1429,7 @@ Adopted and built on 22 October 2026 by decision 57, while the owner was away, a
 - **Source:** Decision 59.
 - **Verification:** Tests: each kind of change writes the file; private tabs are never in it; a write stopped before its rename leaves the last one.
 - **State:** Met: `the_session_is_kept_after_every_change` (a mute, a page drawing with its title, the window only once still, a private tab never), `the_session_is_kept_and_restored`, `the_session_round_trips_through_its_file` (mode 0600), `a_long_list_is_kept_around_its_place`; a temporary file left before its rename is ignored (`the_session_round_trips_through_its_file`). By hand on 22 October 2026: on macOS the browser killed with `SIGKILL` left `session.txt` with both tabs, without the private tab, and the window's place; on Linux and Windows likewise (requirement 20.22).
+- *Amended 23 October 2026 (decision 64):* each entry keeps the time the tab last came to it, and the recently closed tabs are kept too (requirement 20.9); the file is version 2, and a version 1 file is not read, so the session of a build before is not restored once. State: met, `the_session_round_trips_through_its_file`.
 
 ### Requirement 20.22: The session is restored at start
 - **Statement:** With "Restore previous session" on, the browser must start with the kept session's window, tabs, lists and active tab, the command line's addresses opening as further tabs, the last of them active; with it off or with no session, as before.
@@ -1420,6 +1444,7 @@ Adopted and built on 22 October 2026 by decision 57, while the owner was away, a
 - **Source:** Decision 59.
 - **Verification:** Test of each rule; the fuzz target `session_file`.
 - **State:** Met: `the_file_is_read_strictly` (session; the exact lines and tabs dropped); the fuzz target `session_file` (every bound, round trip; 2.6 million runs from a seeded file, no fault). A restored address passes the address rules again (`Session::restore`).
+- *Amended 23 October 2026 (decision 64):* version 2: an entry's time must be a whole number of seconds from 1970 or later, and a `closed` line begins a closed tab as `tab` begins a tab. State: met, `the_file_is_read_strictly`.
 
 ### Requirement 20.24: Restoring is a setting
 - **Statement:** The settings must include "Restore previous session", on by default, kept in `settings.txt` and changed in the settings panel.
@@ -1475,6 +1500,7 @@ Adopted and built on 22 October 2026 by decision 57, while the owner was away, a
 - **Source:** Decision 62.
 - **Verification:** Interface test; a test that no view carries a name or value.
 - **State:** Met: `the_panel_lists_deletes_and_blocks` (no name or value in the view; delete by number; a number of an earlier view names nothing), `the_panel_lists_and_asks_by_number` (interface), `views_and_requests_round_trip` (the largest view fits a message).
+- *Amended 23 October 2026 (decision 63):* the panel is the developer console's Cookies tab (requirement 19.8), opened there and by the settings panel's "Manage…", which opens the console at it; the menu's "Cookies and site data" is removed. Its rows, requests and the absence of any name or value are unchanged. State: met, `the_panel_lists_and_asks_by_number` and `the_search_asks_for_rows` updated to the console; seen on macOS.
 
 ### Requirement 21.7: The cookie settings
 - **Statement:** The settings must offer Keep, Delete when the browser closes, and Block all, Keep by default, and a list of blocked channels, kept in `settings.txt`.

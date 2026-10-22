@@ -36,6 +36,7 @@ mod settings_ui;
 mod star_ui;
 #[cfg(feature = "interaction")]
 mod terminal_ui;
+mod tips_ui;
 mod widgets;
 #[cfg(feature = "interaction")]
 pub use terminal_ui::{CursorView, TypingView};
@@ -102,6 +103,16 @@ const HOUSE_BODY_HEIGHT: f64 = 9.0;
 const HOUSE_BODY_INSET: f64 = 3.0;
 const DOOR_WIDTH: f64 = 5.0;
 const DOOR_HEIGHT: f64 = 6.0;
+/// The Reload button's circling arrow: the ring's radius to its middle,
+/// its thickness, the gap at the top right where the arrow's head is, the
+/// head's length, and the corners the curve is drawn with.
+const RELOAD_RADIUS: f64 = 8.0;
+const RELOAD_THICKNESS: f64 = 3.0;
+const RELOAD_GAP_DEGREES: f64 = 70.0;
+const RELOAD_HEAD: f64 = 6.0;
+/// How far the head's base reaches either side of the ring's middle.
+const RELOAD_HEAD_REACH: f64 = 5.5;
+const RELOAD_SEGMENTS: usize = 24;
 /// The gear: its teeth, their reach, and the hub.
 const GEAR_TEETH: usize = 8;
 const GEAR_OUTER: f64 = 11.0;
@@ -262,6 +273,8 @@ pub enum Output {
     Bookmark,
     /// Strip input: open the home address (requirement 19.6).
     Home,
+    /// Strip input: open the tab's channel afresh (requirement 11.2).
+    Reload,
     /// Strip input: what the history panel asks for (requirement 20.4).
     History(crate::library::HistoryRequest),
     /// Strip input: what the cookies panel asks for (requirement 21.6).
@@ -417,6 +430,7 @@ struct Regions {
     close: Rect,
     back: Rect,
     forward: Rect,
+    reload: Rect,
     home: Rect,
     gear: Rect,
     field: Rect,
@@ -489,6 +503,8 @@ pub struct Browser {
     history: history_ui::HistoryUi,
     /// The cookies panel (requirement 21.6).
     cookies: cookies_ui::CookiesUi,
+    /// What each control is, shown when the pointer rests on it.
+    tips: tips_ui::TipsUi,
     /// The bookmarks manager (requirement 20.17).
     bookmarks: bookmarks_ui::BookmarksUi,
     /// The star's popover (requirement 20.16).
@@ -543,6 +559,7 @@ impl Browser {
             console: console_ui::ConsoleUi::default(),
             history: history_ui::HistoryUi::default(),
             cookies: cookies_ui::CookiesUi::default(),
+            tips: tips_ui::TipsUi::default(),
             bookmarks: bookmarks_ui::BookmarksUi::default(),
             star: star_ui::StarUi::default(),
             bar: star_ui::BarUi::default(),
@@ -680,7 +697,7 @@ impl Browser {
             |limit: u64, everywhere: bool| self.updates.iter().any(|&(index, at)| (everywhere || in_bank(index)) && now.saturating_sub(at) < limit);
         let rings = !self.overview_folded && !self.console.open();
         // A held Back or Forward opens its list at its time; Undo ends.
-        let deadline = self.hold_deadline(now).into_iter().chain(self.bookmarks_deadline(now)).min();
+        let deadline = self.hold_deadline(now).into_iter().chain(self.bookmarks_deadline(now)).chain(self.tips_deadline(now)).min();
         if self.wall.animating(now) {
             Some(SMOOTH_FRAME_MILLISECONDS)
         } else if deadline.is_some() {
@@ -712,7 +729,8 @@ impl Browser {
         #[cfg(not(feature = "interaction"))]
         let echoes = false;
         let held = self.settle_hold(now);
-        self.pulses.len() != before || self.updates.len() != updates || echoes || held
+        let tipped = self.tips_settle(now);
+        self.pulses.len() != before || self.updates.len() != updates || echoes || held || tipped
     }
 
     fn page_key(&self, index: usize) -> Option<PageKey> {
@@ -774,7 +792,7 @@ impl Browser {
     /// takes the keys rather than the page's channel.
     #[cfg(feature = "interaction")]
     fn strip_has_keys(&self) -> bool {
-        self.settings_open() || self.history_open() || self.cookies_open() || self.bookmarks_open() || self.star_open() || self.popup_open()
+        self.settings_open() || self.history_open() || self.cookies_editing() || self.bookmarks_open() || self.star_open() || self.popup_open()
     }
 
     /// Closes every panel of the strip, before another opens: one at a time.
@@ -787,9 +805,6 @@ impl Browser {
         }
         if self.history_open() {
             self.set_history_open(false);
-        }
-        if self.cookies_open() {
-            self.set_cookies_open(false);
         }
         if self.bookmarks_open() {
             self.toggle_bookmarks();
@@ -825,7 +840,8 @@ impl Browser {
         let linked = self.repoint();
         #[cfg(not(feature = "links"))]
         let linked = false;
-        dragged || hovered || preview_changed || linked
+        let tipped = self.tips_moved(now);
+        dragged || hovered || preview_changed || linked || tipped
     }
 
     /// The overview's cell under `point`, when its page has arrived.
@@ -876,6 +892,7 @@ impl Browser {
     /// A press of the main button, with `extend` when Shift is held.
     #[allow(clippy::too_many_lines, reason = "one hit-test per part of the window, in drawing order")]
     pub fn pointer_pressed<C: Canvas + ?Sized>(&mut self, canvas: &mut C, extend: bool, now: u64) -> bool {
+        self.tips_pressed();
         // Shift opens what a press opens in a new tab.
         self.press_new_tab = extend;
         // The drop-downs and the star's popover are over everything; the
@@ -883,7 +900,7 @@ impl Browser {
         if self.popups_press(self.pointer, extend) || self.star_press(self.pointer) {
             return true;
         }
-        if self.history_press(self.pointer, extend) || self.cookies_press(self.pointer) || self.bookmarks_press(self.pointer) {
+        if self.history_press(self.pointer, extend) || self.bookmarks_press(self.pointer) {
             return true;
         }
         if self.settings_press(self.pointer) {
@@ -945,6 +962,7 @@ impl Browser {
         let mute_all = Output::MuteAll(!self.all_muted());
         let action = [
             (regions.new_tab, Output::NewTab),
+            (regions.reload, Output::Reload),
             (regions.home, Output::Home),
             (regions.star, Output::Bookmark),
             (regions.mute_all, mute_all),
@@ -1029,6 +1047,15 @@ impl Browser {
             return true;
         }
         self.scroll_by(lines * LINE_HEIGHT, now)
+    }
+
+    /// A press of the middle button: on a tab, the tab closes, as in every
+    /// current browser.
+    pub fn middle_pressed(&mut self) -> bool {
+        self.tips_pressed();
+        let Some(index) = self.regions.tabs.iter().position(|region| region.tab.contains(self.pointer)) else { return false };
+        self.outputs.push(Output::CloseTab(index));
+        true
     }
 
     /// A secondary click: on Back or Forward, its list is asked for
@@ -1169,6 +1196,8 @@ impl Browser {
             // and Control-Shift-I elsewhere, where Home is Alt-Home.
             "," => self.toggle_settings(),
             "h" if modifiers.shift => self.outputs.push(Output::Home),
+            // Reload: Command-R on macOS, Control-R elsewhere.
+            "r" => self.outputs.push(Output::Reload),
             "i" if modifiers.alt || modifiers.shift => self.toggle_console(),
             // History, bookmarks and private tabs (`history-and-bookmarks.md`
             // section 6): each platform's keys are taken everywhere.
@@ -1343,10 +1372,10 @@ impl Browser {
         self.draw_phone_panel(canvas);
         self.draw_settings_panel(canvas);
         self.draw_history_panel(canvas);
-        self.draw_cookies_panel(canvas);
         self.draw_bookmarks_panel(canvas, now);
         self.draw_star_popover(canvas);
         self.draw_popups(canvas);
+        self.draw_tips(canvas, width, height);
         // Pages may have moved under a still pointer: by scrolling, a new
         // size or a zoom.
         self.wall.hover(self.pointer, now);
@@ -1426,8 +1455,12 @@ impl Browser {
             border(canvas, rect, 2.0, if enabled { SELECTED } else { RULE });
             arrow(canvas, rect, pointing_left, if enabled { WHITE } else { DIM });
         }
-        // Home, after Forward (requirement 19.6).
-        self.regions.home = tool(MARGIN + TOOL_SIZE * 2.0);
+        // Reload, then Home after it (requirements 11.2 and 19.6).
+        self.regions.reload = tool(MARGIN + TOOL_SIZE * 2.0);
+        canvas.fill(self.regions.reload, 0.0, BUTTON);
+        border(canvas, self.regions.reload, 2.0, RULE);
+        reload_glyph(canvas, self.regions.reload, WHITE);
+        self.regions.home = tool(MARGIN + TOOL_SIZE * 3.0);
         canvas.fill(self.regions.home, 0.0, BUTTON);
         border(canvas, self.regions.home, 2.0, RULE);
         house(canvas, self.regions.home, WHITE);
@@ -1963,6 +1996,37 @@ fn house<C: Canvas + ?Sized>(canvas: &mut C, rect: Rect, colour: Colour) {
     let body = Rect::new(centre.x - HOUSE_WIDTH / 2.0 + HOUSE_BODY_INSET, eaves, centre.x + HOUSE_WIDTH / 2.0 - HOUSE_BODY_INSET, eaves + HOUSE_BODY_HEIGHT);
     canvas.fill(body, 0.0, colour);
     canvas.fill(Rect::new(centre.x - DOOR_WIDTH / 2.0, body.y1 - DOOR_HEIGHT, centre.x + DOOR_WIDTH / 2.0, body.y1), 0.0, BUTTON);
+}
+
+/// The Reload button's arrow, circling clockwise to its head at the top.
+fn reload_glyph<C: Canvas + ?Sized>(canvas: &mut C, rect: Rect, colour: Colour) {
+    let centre = Point::new(f64::midpoint(rect.x0, rect.x1), f64::midpoint(rect.y0, rect.y1));
+    let (outer, inner) = (RELOAD_RADIUS + RELOAD_THICKNESS / 2.0, RELOAD_RADIUS - RELOAD_THICKNESS / 2.0);
+    // Angles grow clockwise on the screen, whose y grows downwards; the
+    // ring runs from the gap's right end round to the top.
+    let end = -core::f64::consts::FRAC_PI_2;
+    let start = end + RELOAD_GAP_DEGREES.to_radians();
+    let finish = end + core::f64::consts::TAU;
+    let at = |angle: f64, radius: f64| {
+        let (sine, cosine) = libm::sincos(angle);
+        Point::new(centre.x + radius * cosine, centre.y + radius * sine)
+    };
+    let mut points = Vec::with_capacity((RELOAD_SEGMENTS + 1) * 2);
+    for step in 0..=RELOAD_SEGMENTS {
+        #[allow(clippy::cast_precision_loss, reason = "a few corners")]
+        let angle = start + (finish - start) * step as f64 / RELOAD_SEGMENTS as f64;
+        points.push(at(angle, outer));
+    }
+    for step in (0..=RELOAD_SEGMENTS).rev() {
+        #[allow(clippy::cast_precision_loss, reason = "a few corners")]
+        let angle = start + (finish - start) * step as f64 / RELOAD_SEGMENTS as f64;
+        points.push(at(angle, inner));
+    }
+    canvas.polygon(&points, colour);
+    // The head, at the top, pointing the way the ring turns: to the right.
+    let top = at(finish, RELOAD_RADIUS);
+    canvas
+        .polygon(&[Point::new(top.x, top.y - RELOAD_HEAD_REACH), Point::new(top.x + RELOAD_HEAD, top.y), Point::new(top.x, top.y + RELOAD_HEAD_REACH)], colour);
 }
 
 /// The settings button's gear: teeth round a hub.

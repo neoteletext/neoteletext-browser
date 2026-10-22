@@ -1,32 +1,30 @@
-//! The cookies panel of the trusted strip (`cookies.md` section 4.1,
-//! requirement 21.6): opened from the settings panel and the menu; it
-//! shows each site with cookies and its channels, their counts and sizes
-//! and when last used, never a cookie's name or value, and asks for each
-//! search, deletion and block by the rows' numbers, as strip input. It
-//! keeps no cookie of its own.
+//! Cookie management, a tab of the developer console (`cookies.md` section
+//! 4.1, requirement 21.6), which the settings panel opens too: it shows
+//! each site with cookies and its channels, their counts and sizes and when
+//! last used, never a cookie's name or value, and asks for each search,
+//! deletion and block by the rows' numbers, as strip input. It keeps no
+//! cookie of its own.
 
 use alloc::format;
 use alloc::string::String;
 
-use super::widgets::{button, field, panel, panel_rect};
+use super::widgets::{button, field};
 use super::{Browser, Key, Output};
 use crate::canvas::Canvas;
 use crate::cookies::{CookiesRequest, CookiesView, MAX_QUERY};
 use crate::editor::Editor;
 use crate::geometry::{Point, Rect};
-use crate::theme::{CAPTION, DIM, HEADING, MUTED, ROW_STATUS, ROW_TITLE, RULE_SOFT, WHITE};
+use crate::theme::{CAPTION, DIM, MUTED, ROW_STATUS, ROW_TITLE, RULE_SOFT, WHITE};
 use crate::ui::{centred, left_centred, right_centred};
 
-const PANEL_WIDTH: f64 = 820.0;
-const PANEL_HEIGHT: f64 = 680.0;
-const PADDING: f64 = 20.0;
-const HEADING_HEIGHT: f64 = 34.0;
-const CONTROL_HEIGHT: f64 = 32.0;
+const CONTROL_HEIGHT: f64 = 28.0;
 const GAP: f64 = 8.0;
 const SMALL_BUTTON: f64 = 32.0;
 const WIDE_BUTTON: f64 = 150.0;
 const BLOCK_BUTTON: f64 = 90.0;
-const ROW_HEIGHT: f64 = 30.0;
+/// Rows close enough that several fit in the docked console.
+const ROW_HEIGHT: f64 = 26.0;
+const SEARCH_WIDTH: f64 = 320.0;
 /// A channel's row is set in under its site's.
 const INDENT: f64 = 24.0;
 const COUNT_WIDTH: f64 = 110.0;
@@ -48,8 +46,7 @@ struct Drawn {
 /// Where the panel's controls were last drawn.
 #[derive(Debug, Default)]
 struct Controls {
-    panel: Rect,
-    close: Rect,
+    area: Rect,
     search: Rect,
     delete_all: Rect,
     confirm: Rect,
@@ -86,18 +83,17 @@ impl Browser {
         self.cookies.view = Some(view);
     }
 
-    /// Whether the cookies panel is open.
+    /// Whether the console shows the cookies' tab.
     #[must_use]
     pub fn cookies_open(&self) -> bool {
         self.cookies.open
     }
 
+    /// The cookies' tab shown, or no longer: the trusted core sends its
+    /// rows only while it is.
     pub(super) fn set_cookies_open(&mut self, open: bool) {
         if self.cookies.open == open {
             return;
-        }
-        if open {
-            self.close_panels();
         }
         self.cookies.open = open;
         self.cookies.confirming = false;
@@ -125,18 +121,14 @@ impl Browser {
         self.cookies.open && self.cookies.focused
     }
 
-    /// A key while the panel is open; `None` when it is not the panel's.
+    /// A key while the cookies are shown; `None` when it is not theirs.
     pub(super) fn cookies_key(&mut self, key: Key<'_>, shift: bool) -> Option<bool> {
         if !self.cookies.open {
             return None;
         }
         if !self.cookies.focused {
-            if key == Key::Escape {
-                if self.cookies.confirming {
-                    self.cookies.confirming = false;
-                } else {
-                    self.set_cookies_open(false);
-                }
+            if key == Key::Escape && self.cookies.confirming {
+                self.cookies.confirming = false;
                 return Some(true);
             }
             return None;
@@ -168,9 +160,9 @@ impl Browser {
         true
     }
 
-    /// The wheel over the panel: further rows are asked for.
+    /// The wheel over the cookies: further rows are asked for.
     pub(super) fn cookies_scroll(&mut self, distance: f64) -> bool {
-        if !self.cookies.open || !self.cookies.controls.panel.contains(self.pointer) {
+        if !self.cookies.open || !self.cookies.controls.area.contains(self.pointer) {
             return false;
         }
         let Some(view) = &self.cookies.view else { return true };
@@ -184,16 +176,12 @@ impl Browser {
         true
     }
 
-    /// A press on the panel; returns whether it was the panel's.
+    /// A press on the cookies; returns whether it was theirs.
     pub(super) fn cookies_press(&mut self, point: Point) -> bool {
-        if !self.cookies.open || !self.cookies.controls.panel.contains(point) {
+        if !self.cookies.open || !self.cookies.controls.area.contains(point) {
             return false;
         }
         let controls = &self.cookies.controls;
-        if controls.close.contains(point) {
-            self.set_cookies_open(false);
-            return true;
-        }
         if controls.search.contains(point) {
             if !self.cookies.focused {
                 self.cookies.focused = true;
@@ -220,33 +208,49 @@ impl Browser {
         true
     }
 
-    /// The panel, over the window below the strip, while it is open.
-    #[allow(clippy::too_many_lines, reason = "one part of the panel after another, in drawing order")]
-    pub(super) fn draw_cookies_panel<C: Canvas + ?Sized>(&mut self, canvas: &mut C) {
-        let mut controls = Controls::default();
-        if !self.cookies.open {
-            self.cookies.controls = controls;
-            return;
+    /// The cookies' controls: each row's delete and block buttons.
+    pub(super) fn cookies_tips(&self, tips: &mut alloc::vec::Vec<(Rect, String)>) {
+        let rows = self.cookies.view.as_ref().map_or(&[][..], |view| view.rows.as_slice());
+        for drawn in &self.cookies.controls.rows {
+            let Some(row) = rows.iter().find(|row| row.number == drawn.number) else { continue };
+            let whose = if row.site { "this site and all its channels" } else { "this channel" };
+            tips.push((drawn.delete, format!("Delete the cookies of {whose}")));
+            if let Some((rect, blocked)) = drawn.block {
+                let words = if blocked { "Let this channel keep cookies again" } else { "Keep no cookies for this channel" };
+                tips.push((rect, words.into()));
+            }
         }
-        let area = panel_rect(self.body, PANEL_WIDTH, PANEL_HEIGHT);
-        panel(canvas, area);
-        controls.panel = area;
-        let (left, right) = (area.x0 + PADDING, area.x1 - PADDING);
-        let heading = Rect::new(left, area.y0 + PADDING, right, area.y0 + PADDING + HEADING_HEIGHT);
-        left_centred(canvas, heading, 0.0, "Cookies and site data", HEADING, WHITE);
-        controls.close = Rect::new(right - SMALL_BUTTON, heading.y0, right, heading.y0 + SMALL_BUTTON);
-        button(canvas, controls.close, "\u{00D7}", false);
-        let view = self.cookies.view.clone().unwrap_or_default();
-        let mut y = heading.y1 + GAP;
+        tips.push((self.cookies.controls.delete_all, "Delete every cookie, after you confirm".into()));
+    }
 
-        // The search, and "Delete all…".
-        controls.delete_all = Rect::new(right - WIDE_BUTTON, y, right, y + CONTROL_HEIGHT);
-        button(canvas, controls.delete_all, "Delete all\u{2026}", self.cookies.confirming);
-        controls.search = Rect::new(left, y, controls.delete_all.x0 - GAP, y + CONTROL_HEIGHT);
+    /// The cookies, in the console's `area` below its tabs.
+    pub(super) fn draw_cookies<C: Canvas + ?Sized>(&mut self, canvas: &mut C, area: Rect) {
+        let mut controls = Controls { area, ..Controls::default() };
+        let (left, right) = (area.x0, area.x1);
+        let view = self.cookies.view.clone().unwrap_or_default();
+        let mut y = area.y0;
+
+        // The search, the totals and the trusted core's word, and "Delete all…".
+        controls.search = Rect::new(left, y, (left + SEARCH_WIDTH).min(right), y + CONTROL_HEIGHT);
         field(canvas, controls.search, &self.cookies.query, self.cookies.focused);
         if self.cookies.query.text().is_empty() && !self.cookies.focused {
             left_centred(canvas, controls.search, GAP, "Search sites", ROW_STATUS, DIM);
         }
+        controls.delete_all = Rect::new(right - WIDE_BUTTON, y, right, y + CONTROL_HEIGHT);
+        button(canvas, controls.delete_all, "Delete all\u{2026}", self.cookies.confirming);
+        let words_area = Rect::new(controls.search.x1 + GAP, y, controls.delete_all.x0 - GAP, y + CONTROL_HEIGHT);
+        let mut words = format!("{} cookies, {}", view.count, size(view.bytes));
+        if view.total > 0 {
+            let shown = usize::try_from(view.first).unwrap_or(0) + view.rows.len();
+            let last = shown.min(usize::try_from(view.total).unwrap_or(0));
+            words = format!("{words} \u{00B7} rows {} to {last} of {}", view.first + 1, view.total);
+        }
+        canvas.push_clip(words_area);
+        right_centred(canvas, words_area, 0.0, &words, ROW_STATUS, MUTED);
+        if !view.notice.is_empty() {
+            left_centred(canvas, words_area, 0.0, &view.notice, ROW_STATUS, WHITE);
+        }
+        canvas.pop_clip();
         y += CONTROL_HEIGHT + GAP;
         if self.cookies.confirming {
             let line = Rect::new(left, y, right, y + CONTROL_HEIGHT);
@@ -259,8 +263,7 @@ impl Browser {
         }
 
         // The rows: each site, then its channels set in.
-        let footer = area.y1 - PADDING - CONTROL_HEIGHT;
-        controls.list = Rect::new(left, y, right, footer - GAP);
+        controls.list = Rect::new(left, y, right, area.y1);
         canvas.push_clip(controls.list);
         if view.rows.is_empty() {
             let empty = if view.query.is_empty() { "No cookies are kept" } else { "No site matches" };
@@ -298,19 +301,6 @@ impl Browser {
         }
         canvas.pop_clip();
 
-        // The totals, where the rows are among all, and the trusted core's word.
-        let footer = Rect::new(left, footer, right, footer + CONTROL_HEIGHT);
-        let mut words = format!("{} cookies, {}", view.count, size(view.bytes));
-        if view.total > 0 {
-            let last = (usize::try_from(view.first).unwrap_or(0) + controls.rows.len()).min(usize::try_from(view.total).unwrap_or(0));
-            words = format!("{words} \u{00B7} rows {} to {last} of {}", view.first + 1, view.total);
-        }
-        right_centred(canvas, footer, 0.0, &words, ROW_STATUS, MUTED);
-        if !view.notice.is_empty() {
-            canvas.push_clip(Rect::new(left, footer.y0, f64::midpoint(left, right), footer.y1));
-            left_centred(canvas, footer, 0.0, &view.notice, ROW_STATUS, WHITE);
-            canvas.pop_clip();
-        }
         self.cookies.controls = controls;
     }
 }
@@ -341,7 +331,8 @@ mod tests {
     fn open() -> Browser {
         let mut browser = Browser::new(Frame { left_inset: 0.0, window_buttons: false });
         browser.draw(&mut Recorder::new(), 1440.0, 900.0, 0);
-        browser.set_cookies_open(true);
+        browser.manage_cookies();
+        assert_eq!(browser.take_outputs(), [Output::Console(true), Output::Cookies(CookiesRequest::Panel(true))], "the console opens at its cookies");
         browser.set_cookies(view());
         browser.draw(&mut Recorder::new(), 1440.0, 900.0, 0);
         browser.take_outputs();
@@ -362,7 +353,7 @@ mod tests {
         browser.draw(&mut canvas, 1440.0, 900.0, 0);
         let texts: alloc::vec::Vec<&str> = canvas.texts.iter().map(|(_, text)| text.as_str()).collect();
         for expected in [
-            "Cookies and site data",
+            "Cookies",
             "https://news.example",
             "/teletext/",
             "2 \u{00B7} 2 KB",
@@ -397,7 +388,8 @@ mod tests {
         assert_eq!(browser.take_outputs(), [Output::Cookies(CookiesRequest::DeleteAll)]);
     }
 
-    /// The search follows what is typed; Escape closes the panel.
+    /// The search follows what is typed; closing the console stops the
+    /// rows, and opening it again asks for them.
     #[test]
     fn the_search_asks_for_rows() {
         let mut browser = open();
@@ -406,8 +398,11 @@ mod tests {
         browser.key(Key::Text("n"), Modifiers::default(), 0);
         assert_eq!(browser.take_outputs(), [Output::TextInput(true), Output::Cookies(CookiesRequest::Query { text: "n".into(), first: 0 })]);
         browser.key(Key::Escape, Modifiers::default(), 0);
-        browser.key(Key::Escape, Modifiers::default(), 0);
-        assert_eq!(browser.take_outputs(), [Output::TextInput(false), Output::Cookies(CookiesRequest::Panel(false))]);
+        assert_eq!(browser.take_outputs(), [Output::TextInput(false)]);
+        browser.toggle_console();
+        assert_eq!(browser.take_outputs(), [Output::Console(false), Output::Cookies(CookiesRequest::Panel(false))]);
         assert!(!browser.cookies_open());
+        browser.toggle_console();
+        assert_eq!(browser.take_outputs(), [Output::Console(true), Output::Cookies(CookiesRequest::Panel(true))]);
     }
 }

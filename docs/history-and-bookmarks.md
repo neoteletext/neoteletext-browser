@@ -46,7 +46,9 @@ A **row** of history is one address on one day:
 
 **A visit** is a navigation of a tab to an address, of any kind (typed, a bookmark, a history row, a link, Back and Forward, Home, three digits typed on the page), recorded when the tab first shows that page: its first frame is drawn. A page number with no page behind it, which never draws, is not recorded. A pushed update, a new subpage or a redraw of the same page is not a visit.
 
-**Not recorded:** the browser's own `neoteletext:` pages; anything in a private tab (section 2.7); anything while "Remember history" is off (section 2.6).
+**A reload** (decision 63) is not a visit, as neither Chrome nor Firefox counts one: when its page draws, the address's row for the day takes the reload's time as its last visit, and is made if the day has none, but its visits and typed visits stay as they were, so suggestions are not raised by reloading.
+
+**Not recorded:** the browser's own `neoteletext:` pages; anything in a private tab (section 2.7). *Amended by decision 65:* "Remember history" is gone (section 2.6).
 
 Recording happens in the trusted core, which already knows each navigation and each frame drawn. Nothing about history is sent to a decoder, a fetcher or the phone keyboard: a channel never learns what else the user has seen (requirement 7.3).
 
@@ -78,8 +80,8 @@ A panel of the trusted strip, as the settings panel is (`settings-home-console-p
 - **A search field** at the top. The trusted core searches each row's address, channel title and page title for the text, ignoring case.
 - **The rows, newest first, under a heading for each day:** "Today: Wednesday 22 October 2026", "Yesterday: …", then each date. Each row shows the time (`14:05`), the channel's title, the page number and the page's title, and below them the address as the address rules print it (section 9).
 - **Choosing a row** opens its address in the active tab as a navigation the user starts (requirement 8.2); Command-click or a middle click, and Control-click away from macOS, opens it in a new tab.
-- **Each row has a remove button**, and rows can be selected with their check boxes for "Remove selected".
-- **"Forget this channel"**, on a row's menu, removes every row of its channel.
+- **Each row has a menu** (decision 64, as Chrome's): "More from this site", which searches `host:` and the row's host, and "Remove from history"; rows can be selected with their check boxes for "Remove selected".
+- *"Forget this channel" was withdrawn by decision 65:* Chrome has no such command; "More from this site" finds a site's rows, which can then be selected and removed.
 - **"Clear history…"** opens the clearing choices (section 2.5).
 - **Recently closed** tabs head the panel when there are any (section 2.8).
 
@@ -91,11 +93,11 @@ The trusted core sends the panel **at most 100 rows at a time**, the rows on scr
 - **A time range,** from "Clear history…": the last hour, the last 24 hours, the last 7 days, the last 4 weeks, or everything (Chrome's ranges). A row is in the range when its last visit is.
 - **Everything** also empties recently closed tabs and the typed-address record that inline completion uses.
 
-The file is compacted at once (section 2.3). Removal does not reach the tabs' own back-and-forward lists, as no browser's does; closing the tab does.
+The file is compacted at once (section 2.3). *Amended by decision 64:* as Chrome does, removal also reaches the tabs' back-and-forward lists, never the entry a tab is at, and the recently closed tabs (section 16); this section had said no browser does, which Chrome's source shows wrong. The ranges begin with the last 15 minutes, as Chrome's do.
 
 ### 2.6 "Remember history"
 
-A setting of the settings panel (`settings-home-console-proxy.md` section 1.1), on by default, kept in `settings.txt` as `history on`. Off, nothing is recorded, the panel shows what was recorded before with "History is not being remembered", and turning it off offers to clear what is kept.
+*Withdrawn on 23 October 2026 by decision 65:* history follows Chrome, which has no such setting; a private tab is the way to browse without a record. It was a setting of the settings panel, on by default, kept in `settings.txt` as `history on`; off, nothing was recorded.
 
 ### 2.7 Private tabs
 
@@ -105,11 +107,11 @@ Cookies are already kept only for a fetcher's life (the engine's REQ-SEC-013), s
 
 ### 2.8 Recently closed tabs
 
-The trusted core keeps the **last 25 closed tabs** in memory, each with its whole back-and-forward list and position (Chrome keeps 25). Command-Shift-T on macOS and Control-Shift-T elsewhere reopens the most recent one where it was; the history panel and the History menu list them by title. They are not kept between runs: restoring a session is its own design (section 1.2).
+The trusted core keeps the **last 25 closed tabs**, each with its whole back-and-forward list and position (Chrome keeps 25); *amended by decision 64,* they are kept with the session between runs, as Chrome's are (section 16). Command-Shift-T on macOS and Control-Shift-T elsewhere reopens the most recent one where it was; the history panel and the History menu list them by title. They are not kept between runs: restoring a session is its own design (section 1.2).
 
 ### 2.9 Back and Forward lists
 
-Pressing and holding Back or Forward, or a secondary click on it, opens a list of the tab's entries that way, the nearest first, at most 15 (a bound on the view, to be fitted to the smallest window when built), each with its page number and title; the last line is "Show all history". Choosing an entry moves the tab there, as Back pressed that many times would. The list is the trusted core's view of that tab's own entries.
+Pressing and holding Back or Forward, or a secondary click on it, opens a list of the tab's entries that way, the nearest first, at most 12, then, when it is full, up to 5 chapter stops where the host changes (decision 64, as Chrome's; section 16), each with its page number and title; the last line is "Show all history". Choosing an entry moves the tab there, as Back pressed that many times would. The list is the trusted core's view of that tab's own entries.
 
 ### 2.10 The address field's suggestions
 
@@ -479,15 +481,19 @@ A restored tab fetches its channel afresh, as a navigation does; it is not a vis
 ### 15.4 The file
 
 ```
-neoteletext-session 1
+neoteletext-session 2
 window	120	80	1440	900	0
 active	1
 tab	0	1
-entry	0	https://news.example/teletext/	news.example
-entry	1	https://news.example/teletext/#302	WEATHER
+entry	0	1792656300	https://news.example/teletext/	news.example
+entry	1	1792656360	https://news.example/teletext/#302	WEATHER
 tab	1	0
-entry	0	neoteletext:home	NeoTeletext
+entry	0	1792656000	neoteletext:home	NeoTeletext
+closed	0	0
+entry	0	1792655000	https://sport.example/	sport.example
 ```
+
+*Version 2, decision 64:* each entry carries the time the tab last came to it, in seconds since 1970 (UTC), so that clearing history by time reaches the tabs' lists; `closed` lines, after the tabs, hold the recently closed tabs, most recent first, at most 25. A version 1 file is not read.
 
 Tab-separated: `window` with x, y, width, height and maximised (0 or 1); `active` with the active tab's place; each `tab` with its mute and its place in its list, followed by its `entry` lines, each with whether a page started it, its address and its title. **Read strictly**, as `history.txt` is: the version line; at most 8 MiB (64 tabs of 50 entries of the longest line, rounded up); every field within its bound and rule, every address one the address rules accept, every title clean; a tab with no entry, or a place beyond its entries, is dropped with its entries; an active place beyond the tabs is the first. A fuzz target, `session_file`. Another program can write the file; it can already change the user's files.
 
@@ -502,4 +508,32 @@ The session file holds addresses, as history does: it is kept on the user's disk
 3. **Where the system does not say where the window is** (Wayland), the interface reports nothing and the session keeps no window line; the system places the window.
 4. **The session is written once at start**, so a start with restoring off replaces the last session with the new one: "Restore previous session" off means the browser starts at Home, not that the last session is kept aside. Turning it on later restores the browser as it was when it was last closed.
 5. **A tab's back-and-forward entries keep the title** drawn for them; an entry not yet drawn has an empty title until it is.
+
+## 16. Chrome's rules (decision 64)
+
+The owner asked on 23 October 2026 that history follow Chrome. Each rule below was read from Chrome's source that day (`chromium/src`, main); where ours differed it now follows Chrome, and where Chrome has nothing to model ours stays, listed for the owner.
+
+| Rule | Chrome, and where | Ours before | Now |
+|---|---|---|---|
+| How long history is kept | 90 days (`HistoryBackend::kExpireDaysThreshold`) | 90 days | Same |
+| What a visit is | Each committed main-frame navigation, not an error page (`HistoryTabHelper::DidFinishNavigation`, `RenderFrameImpl`: `should_update_history = !HasUnreachableURL()`) | Each navigation, when its page first draws; a page that never draws is not one | Same in effect: a channel's page drawing is its commit |
+| A reload | A visit row, the last visit moved, the visit count and typed count not raised (`HistoryBackend::AddPageVisit`, `IsTypedIncrement`) | Counted as a visit until decision 63 | The day's row's last visit moves; nothing counted |
+| The address shown, entered again or linked to | A reload: no new entry (`chrome.history` "reload: … pressing Enter in the address bar"; `ShouldTreatNavigationAsReload`) | A new entry and a visit | A reload |
+| Back and Forward | A visit, counted, never typed (`PageTransitionIsNewNavigation`) | The same | Same |
+| What history shows | One row per address per day, the latest visit (`REMOVE_DUPLICATES_PER_DAY`) | One row per address per day | Same |
+| A row's menu | "More from this site" (`host:` search), "Remove from history", "Remove bookmark" when bookmarked (`history_list.html.ts`) | A remove button; "Forget this channel" for selected rows | The menu with the first two; "Remove bookmark" not built |
+| Clearing ranges | Last 15 minutes, hour, 24 hours, 7 days, 4 weeks, all time (`browsing_data::TimePeriod`) | Without 15 minutes | With it |
+| Removing history and the tabs | The entries of that time, or of addresses wholly removed, leave every tab's list but its current entry, and the closed tabs; a closed tab whose current entry goes is dropped; incognito untouched (`browsing_data::RemoveNavigationEntries`, `TabRestoreServiceHelper::DeleteFromTab`) | Not touched | As Chrome; each entry now keeps the time the tab came to it |
+| Recently closed tabs | 25 (`TabRestoreServiceHelper::kMaxEntries`), kept between runs (`TabRestoreServiceImpl::LoadTabsFromLastSession`) | 25, in memory | 25, kept in `session.txt` |
+| A tab's list | At most 50 entries, the oldest dropped (`blink::kMaxSessionHistoryEntries`) | Unbounded in memory, 50 kept | 50 |
+| The Back and Forward menus | 12 entries, then up to 5 chapter stops by registrable domain, then "Show full history" (`BackForwardMenuModel::kMaxHistoryItems`, `kMaxChapterStops`) | 15 entries | 12 and the chapter stops, by host: decision 62 dropped the Public Suffix List |
+| Suggestions | Up to 8 on a desktop (`AutocompleteResult::GetMaxMatches`), scored by typed count, visits and recency; inline completion from typed addresses | Up to 8: bookmarks, then history by visits and recency; inline from typed addresses | Unchanged; Chrome's scoring is not modelled |
+| Turning history off | No setting (only an enterprise policy) | "Remember history" | Removed (decision 65) |
+| Removing a whole site | No such command on the history page | "Forget this channel" | Removed (decision 65); "More from this site", then select and remove |
+| The file's size | No bound but age | 50 000 rows, 16 MiB | Kept: every file the trusted core reads is bounded |
+| Private tabs | Incognito records nothing and has no closed tabs of its own (`TabRestoreServiceFactory`: the original profile only) | The same | Same |
+
+**Where Firefox differs**, read from its source the same day, for the record: it stores a reload as a visit of its own type but skips it when the address was visited in the last 6 minutes (`History.cpp`, `RECENTLY_VISITED_URIS_MAX_AGE`), and counts none (`nsPlacesTriggers.h`, `VISIT_COUNT_INC`); and it records no visit for Back or Forward at all (`nsDocShell::ShouldUpdateGlobalHistory`, `LOAD_CMD_HISTORY`), where Chrome records and counts one. On the owner's instruction Chrome's rules are the ones followed; for a reload the two agree on what is counted (decision 63).
+
+**The host for the registrable domain.** Chrome's chapter stops change at each registrable domain, which needs the Public Suffix List; this browser has none (decision 62), so they change at each host. Why, and what that costs, is `cookies.md` section 1.1. *Decided by decision 65,* the owner having left it to the implementer: the host stays. Two hosts of one organisation make two chapters rather than one, a small difference in one menu; shipping the list for it alone would add data to keep current, and an old copy would give wrong answers, for no gain in safety.
 

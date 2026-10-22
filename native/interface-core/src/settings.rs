@@ -40,8 +40,6 @@ pub struct SettingsView {
     pub proxy: ProxyView,
     /// The local addresses allowed, as text.
     pub local: Vec<String>,
-    /// History is remembered (requirement 20.7).
-    pub remember_history: bool,
     /// The last session is restored at start (requirement 20.24).
     pub restore_session: bool,
     /// What is kept of cookies (requirement 21.7).
@@ -67,8 +65,6 @@ pub enum SettingChange {
     AddLocal(String),
     /// Stop allowing the local address at this place in the list.
     RemoveLocal(u8),
-    /// Remember history, or stop (requirement 20.7).
-    RememberHistory(bool),
     /// Restore the last session at start, or open the home address
     /// (requirement 20.24).
     RestoreSession(bool),

@@ -102,8 +102,6 @@ pub struct Settings {
     pub proxy: Option<Proxy>,
     /// Addresses on this computer or the local network allowed.
     pub local: Vec<IpAddr>,
-    /// History is remembered (requirement 20.7).
-    pub remember_history: bool,
     /// The bookmarks bar is shown (requirement 20.18).
     pub bar: bool,
     /// The last session is restored at start (requirement 20.24).
@@ -122,7 +120,6 @@ impl Default for Settings {
             volume: MAX_VOLUME,
             proxy: None,
             local: Vec::new(),
-            remember_history: true,
             bar: false,
             restore: true,
             cookies: crate::cookies::Mode::Keep,
@@ -190,7 +187,6 @@ impl Settings {
         match name {
             "home" => checked_address(value).map(|home| self.home = home).is_some(),
             "sound" => switch(value).map(|on| self.sound = on).is_some(),
-            "history" => switch(value).map(|on| self.remember_history = on).is_some(),
             "bar" => switch(value).map(|on| self.bar = on).is_some(),
             "restore" => switch(value).map(|on| self.restore = on).is_some(),
             "cookies" => match value {
@@ -238,7 +234,6 @@ impl Settings {
         ];
         lines.extend(self.proxy.iter().map(Proxy::line));
         lines.extend(self.local.iter().map(|address| format!("{ALLOW_LOCAL} {address}")));
-        lines.push(format!("history {}", if self.remember_history { "on" } else { "off" }));
         lines.push(format!("bar {}", if self.bar { "on" } else { "off" }));
         lines.push(format!("restore {}", if self.restore { "on" } else { "off" }));
         lines.push(format!(
@@ -333,7 +328,6 @@ mod tests {
             volume: 40,
             proxy: Some(Proxy::Socks5 { host: "127.0.0.1".into(), port: 1080 }),
             local: vec!["192.168.1.20".parse().unwrap()],
-            remember_history: false,
             bar: true,
             restore: false,
             cookies: crate::cookies::Mode::Close,
@@ -355,11 +349,13 @@ mod tests {
         assert_eq!(settings.home, START_PAGE);
         assert_eq!(settings.proxy, None);
         assert_eq!(settings.local, ["10.0.0.1".parse::<IpAddr>().unwrap()], "only a local address may be allowed");
-        assert!(settings.remember_history && !settings.bar);
+        assert!(!settings.bar);
         // A bookmark line is no longer a setting: bookmarks are in their own
         // file (requirement 19.2, amended by decision 57).
         assert_eq!(dropped.len(), 9, "{dropped:?}");
         assert_eq!(Settings::read("volume 30\n").0.volume, MAX_VOLUME, "no version line: the defaults");
+        // Decision 65: "Remember history" is gone; its line is dropped and said.
+        assert_eq!(Settings::read(&format!("{VERSION_LINE}\nhistory off\n")).1.len(), 1);
         let long = format!("{VERSION_LINE}\nhome https://{}.example/\n", "a".repeat(MAX_VALUE));
         assert_eq!(Settings::read(&long).1.len(), 1);
         let huge = "x".repeat(MAX_FILE + 1);

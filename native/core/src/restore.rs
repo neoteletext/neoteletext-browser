@@ -1,38 +1,48 @@
 //! The session (`history-and-bookmarks.md` section 15, requirements 20.21
-//! to 20.23): the window's place and size and every tab but private ones,
-//! each with its back-and-forward list, kept in `session.txt` after every
-//! change so that it can always be restored; read strictly, since another
-//! program can write the file.
+//! to 20.23): the window's place and size, every tab but private ones and
+//! the recently closed tabs, each with its back-and-forward list and each
+//! entry's time, kept in `session.txt` after every change so that it can
+//! always be restored, as Chrome keeps its session and its closed tabs
+//! (`TabRestoreServiceImpl`); read strictly, since another program can
+//! write the file.
 
 use std::path::Path;
 
-use interface_core::library::WindowGeometry;
+use interface_core::library::{MAX_CLOSED, MAX_TAB_ENTRIES, WindowGeometry};
 
 use crate::history::write_whole;
 
-const VERSION_LINE: &str = "neoteletext-session 1";
+const VERSION_LINE: &str = "neoteletext-session 2";
 const FILE_NAME: &str = "session.txt";
 const TEMPORARY_NAME: &str = "session.txt.new";
 const SEPARATOR: char = '\t';
 /// The most tabs kept: as many as the window has (`protocol::MAX_TABS`).
 pub const MAX_TABS: usize = protocol::MAX_TABS;
 /// The most entries kept of a tab's back-and-forward list, those nearest
-/// its place (section 15.1).
-pub const MAX_ENTRIES: usize = 50;
+/// its place (section 15.1): all a tab holds.
+pub const MAX_ENTRIES: usize = MAX_TAB_ENTRIES;
 /// The longest title kept of an entry.
 pub const MAX_TITLE: usize = protocol::MAX_TITLE;
-/// The longest line: `entry`, a flag, an address and a title.
-const MAX_LINE: usize = "entry".len() + 1 + 1 + 1 + protocol::MAX_ADDRESS + 1 + MAX_TITLE;
-/// The largest file read: every tab with every entry at the longest line,
-/// with room for the window, active and tab lines, rounded up to 8 MiB.
-pub const MAX_FILE: usize = 8 * 1024 * 1024;
-const _: () = assert!(MAX_TABS * (MAX_ENTRIES + 1) * (MAX_LINE + 1) + 1024 < MAX_FILE, "the file bound holds every tab at the longest lines");
+/// The longest digits of an entry's time, `i64::MAX`.
+const MAX_TIME_DIGITS: usize = 19;
+/// The longest line: `entry`, a flag, a time, an address and a title.
+const MAX_LINE: usize = "entry".len() + 1 + 1 + 1 + MAX_TIME_DIGITS + 1 + protocol::MAX_ADDRESS + 1 + MAX_TITLE;
+/// The largest file read: every tab and closed tab with every entry at the
+/// longest line, with room for the window, active and tab lines, rounded
+/// up to 16 MiB, as the history file's bound.
+pub const MAX_FILE: usize = 16 * 1024 * 1024;
+const _: () = assert!(
+    (MAX_TABS + MAX_CLOSED) * (MAX_ENTRIES + 1) * (MAX_LINE + 1) + 1024 < MAX_FILE,
+    "the file bound holds every tab and closed tab at the longest lines"
+);
 
 /// One entry of a kept tab's list.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Entry {
     /// A link on a page started it.
     pub by_page: bool,
+    /// When the tab last came to it, in seconds since 1970 (UTC).
+    pub at: i64,
     /// Its address, as the address rules print it.
     pub address: String,
     /// Its title.
@@ -59,6 +69,9 @@ pub struct Saved {
     pub active: usize,
     /// The kept tabs, in the strip's order.
     pub tabs: Vec<Tab>,
+    /// The recently closed tabs, the most recent first, at most
+    /// [`MAX_CLOSED`].
+    pub closed: Vec<Tab>,
 }
 
 impl Tab {
@@ -105,18 +118,20 @@ impl Saved {
         let mut lines = text.lines();
         if lines.next() != Some(VERSION_LINE) {
             if !text.is_empty() {
-                dropped.push("the session file has no version line; none read".to_owned());
+                dropped.push(format!("the session file's first line is not \"{VERSION_LINE}\"; none read"));
             }
             return (saved, dropped);
         }
-        // A tab being read, dropped whole when any line of it breaks a rule.
-        let mut tab: Option<(Tab, bool)> = None;
-        let finish = |saved: &mut Self, tab: Option<(Tab, bool)>, dropped: &mut Vec<String>| {
-            let Some((tab, broken)) = tab else { return };
-            if broken || tab.entries.is_empty() || tab.position >= tab.entries.len() || saved.tabs.len() >= MAX_TABS {
+        // A tab or closed tab being read, dropped whole when any line of it
+        // breaks a rule: the tab, whether broken, whether closed.
+        let mut tab: Option<(Tab, bool, bool)> = None;
+        let finish = |saved: &mut Self, tab: Option<(Tab, bool, bool)>, dropped: &mut Vec<String>| {
+            let Some((tab, broken, closed)) = tab else { return };
+            let (list, most) = if closed { (&mut saved.closed, MAX_CLOSED) } else { (&mut saved.tabs, MAX_TABS) };
+            if broken || tab.entries.is_empty() || tab.position >= tab.entries.len() || list.len() >= most {
                 dropped.push("a tab of the session file dropped".to_owned());
             } else {
-                saved.tabs.push(tab);
+                list.push(tab);
             }
         };
         let mut active = 0;
@@ -146,27 +161,29 @@ impl Saved {
                         }
                     }
                     ["active", place] => place.parse().map(|place| active = place).is_ok(),
-                    ["tab", muted, position] => {
+                    [kind @ ("tab" | "closed"), muted, position] => {
                         finish(&mut saved, tab.take(), &mut dropped);
+                        let closed = *kind == "closed";
                         if let (Some(muted), Ok(position)) = (flag(muted), position.parse::<usize>()) {
-                            tab = Some((Tab { muted, position, entries: Vec::new() }, false));
+                            tab = Some((Tab { muted, position, entries: Vec::new() }, false, closed));
                             true
                         } else {
-                            tab = Some((Tab { muted: false, position: 0, entries: Vec::new() }, true));
+                            tab = Some((Tab { muted: false, position: 0, entries: Vec::new() }, true, closed));
                             false
                         }
                     }
-                    ["entry", by_page, address, title] => {
+                    ["entry", by_page, at, address, title] => {
                         let entry = (|| {
                             let title = (protocol::clean(title, MAX_TITLE) == *title).then(|| (*title).to_owned())?;
-                            Some(Entry { by_page: flag(by_page)?, address: kept_address(address)?, title })
+                            let at = at.parse::<i64>().ok().filter(|at| *at >= 0)?;
+                            Some(Entry { by_page: flag(by_page)?, at, address: kept_address(address)?, title })
                         })();
                         match (&mut tab, entry) {
-                            (Some((tab, _)), Some(entry)) if tab.entries.len() < MAX_ENTRIES => {
+                            (Some((tab, _, _)), Some(entry)) if tab.entries.len() < MAX_ENTRIES => {
                                 tab.entries.push(entry);
                                 true
                             }
-                            (Some((_, broken)), _) => {
+                            (Some((_, broken, _)), _) => {
                                 *broken = true;
                                 false
                             }
@@ -192,10 +209,12 @@ impl Saved {
             lines.push(format!("window\t{}\t{}\t{}\t{}\t{}", window.x, window.y, window.width, window.height, digit(window.maximised)));
         }
         lines.push(format!("active\t{}", self.active));
-        for tab in self.tabs.iter().take(MAX_TABS) {
-            lines.push(format!("tab\t{}\t{}", digit(tab.muted), tab.position));
+        let tabs = self.tabs.iter().take(MAX_TABS).map(|tab| ("tab", tab));
+        let closed = self.closed.iter().take(MAX_CLOSED).map(|tab| ("closed", tab));
+        for (kind, tab) in tabs.chain(closed) {
+            lines.push(format!("{kind}\t{}\t{}", digit(tab.muted), tab.position));
             for entry in tab.entries.iter().take(MAX_ENTRIES) {
-                lines.push(format!("entry\t{}\t{}\t{}", digit(entry.by_page), entry.address, entry.title));
+                lines.push(format!("entry\t{}\t{}\t{}\t{}", digit(entry.by_page), entry.at, entry.address, entry.title));
             }
         }
         let mut text = lines.join("\n");
@@ -238,7 +257,7 @@ mod tests {
     use super::*;
 
     fn entry(address: &str) -> Entry {
-        Entry { by_page: false, address: address.into(), title: "News".into() }
+        Entry { by_page: false, at: 1_792_656_300, address: address.into(), title: "News".into() }
     }
 
     fn saved() -> Saved {
@@ -253,6 +272,7 @@ mod tests {
                 },
                 Tab { muted: true, position: 0, entries: vec![entry(crate::address::START_PAGE)] },
             ],
+            closed: vec![Tab { muted: false, position: 0, entries: vec![Entry { at: 0, ..entry("https://sport.example/") }] }],
         }
     }
 
@@ -289,18 +309,22 @@ mod tests {
             "window\t11\t21\t1440\t900\t0",
             "active\t7",
             "tab\t0\t0",
-            "entry\t0\thttps://a.example/\tA",
+            "entry\t0\t5\thttps://a.example/\tA",
             "tab\t2\t0",
-            "entry\t0\thttps://b.example/\tB",
+            "entry\t0\t5\thttps://b.example/\tB",
             "tab\t0\t5",
-            "entry\t0\thttps://c.example/\tC",
+            "entry\t0\t5\thttps://c.example/\tC",
             "tab\t0\t0",
-            "entry\t0\tnot an address\tD",
+            "entry\t0\t5\tnot an address\tD",
             "tab\t0\t0",
-            "entry\t0\thttps://e.example/\tE\u{202E}",
+            "entry\t0\t5\thttps://e.example/\tE\u{202E}",
             "tab\t0\t0",
-            "entry\t0\thttps://f.example/\tF",
+            "entry\t0\t5\thttps://f.example/\tF",
             "elephant",
+            "closed\t0\t0",
+            "entry\t0\t-1\thttps://g.example/\tG",
+            "closed\t0\t0",
+            "entry\t0\t9\thttps://h.example/\tH",
         ]
         .join("\n");
         let (saved, dropped) = Saved::read(&text);
@@ -310,8 +334,12 @@ mod tests {
         assert_eq!(saved.active, 0, "seven is beyond the tabs");
         let line = |n: usize| format!("line {n} of the session file dropped");
         let tab = "a tab of the session file dropped".to_owned();
-        assert_eq!(dropped, [line(2), line(4), line(8), tab.clone(), tab.clone(), line(13), tab.clone(), line(15), tab, line(18)]);
+        let closed: Vec<(&str, i64)> = saved.closed.iter().map(|tab| (tab.entries[0].address.as_str(), tab.entries[0].at)).collect();
+        assert_eq!(closed, [("https://h.example/", 9)], "a time before 1970 breaks its tab");
+        assert_eq!(dropped, [line(2), line(4), line(8), tab.clone(), tab.clone(), line(13), tab.clone(), line(15), tab.clone(), line(18), line(20), tab]);
         assert_eq!(Saved::read("no version\ntab\t0\t0").0, Saved::default());
+        let (saved, dropped) = Saved::read("neoteletext-session 1\ntab\t0\t0\nentry\t0\thttps://a.example/\tA");
+        assert_eq!((saved, dropped.len()), (Saved::default(), 1), "the first version is not read");
     }
 
     /// Section 15.1: a long list is kept around its place.

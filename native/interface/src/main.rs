@@ -387,6 +387,7 @@ impl App {
                 Output::Forward => ToCore::Forward,
                 Output::Bookmark => ToCore::Bookmark,
                 Output::Home => ToCore::Home,
+                Output::Reload => ToCore::Reload,
                 Output::History(request) => ToCore::History(request),
                 Output::Cookies(request) => ToCore::Cookies(request),
                 Output::Bookmarks(request) => ToCore::Bookmarks(request),
@@ -803,6 +804,13 @@ impl App {
         self.report_window(event_loop);
     }
 
+    /// A press of the middle button: on a tab, it closes.
+    fn middle_pressed(&mut self, event_loop: &ActiveEventLoop) -> bool {
+        let changed = self.browser.middle_pressed();
+        self.act(event_loop);
+        changed
+    }
+
     /// Tells the trusted core where the window is and how large, to keep
     /// with the session (requirement 20.21); while maximised, the place and
     /// size it returns to.
@@ -973,6 +981,7 @@ impl App {
                 self.act(event_loop);
                 true
             }
+            WindowEvent::MouseInput { state: ElementState::Pressed, button: MouseButton::Middle, .. } => self.middle_pressed(event_loop),
             // A secondary click: Back's or Forward's list (requirement 20.10).
             WindowEvent::MouseInput { state: ElementState::Pressed, button: MouseButton::Right, .. } => {
                 let changed = self.browser.secondary_pressed();

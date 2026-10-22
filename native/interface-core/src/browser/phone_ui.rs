@@ -70,6 +70,13 @@ pub(super) struct PhoneUi {
 }
 
 impl Browser {
+    /// The panel's close button, while it is open.
+    pub(super) fn phone_tips(&self, tips: &mut Vec<(Rect, String)>) {
+        if self.phone.open {
+            tips.push((self.phone.close, "Close the phone keyboard".into()));
+        }
+    }
+
     /// The trusted core's word on the phone keyboard.
     pub fn set_phone(&mut self, view: PhoneUiView) {
         if view.status == PhoneStatus::Finished {

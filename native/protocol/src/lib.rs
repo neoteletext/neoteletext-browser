@@ -149,6 +149,7 @@ const KIND_GO_TO: u8 = 67;
 const KIND_NEW_PRIVATE_TAB: u8 = 68;
 const KIND_WINDOW: u8 = 69;
 const KIND_COOKIES: u8 = 70;
+const KIND_RELOAD: u8 = 71;
 
 // The strip's flags.
 const ENCRYPTED: u8 = 1;
@@ -323,6 +324,9 @@ pub enum ToCore {
     /// Strip input: open the home address in the active tab (requirement
     /// 19.6).
     Home,
+    /// Strip input: open the active tab's channel afresh, where it is in its
+    /// history (requirement 11.2).
+    Reload,
     /// Strip input: a change the settings panel asks for (requirement
     /// 19.3).
     ChangeSetting(settings::SettingChange),
@@ -358,7 +362,7 @@ pub enum ToCore {
     GoTo {
         /// Forward, or back.
         forward: bool,
-        /// How many steps, 1 to `library::MAX_TAB_LIST`.
+        /// How many steps, 1 to `library::MAX_STEPS`.
         steps: u8,
     },
     /// Strip input: open a private tab (requirement 20.8).
@@ -913,6 +917,7 @@ pub fn write_to_core(out: &mut dyn Write, message: &ToCore) -> Result<(), Protoc
         ToCore::Forward => KIND_FORWARD,
         ToCore::Bookmark => KIND_BOOKMARK,
         ToCore::Home => KIND_HOME,
+        ToCore::Reload => KIND_RELOAD,
         ToCore::ChangeSetting(change) => {
             settings::push_change(&mut payload, change)?;
             KIND_CHANGE_SETTING
@@ -998,7 +1003,7 @@ pub fn write_to_core(out: &mut dyn Write, message: &ToCore) -> Result<(), Protoc
             KIND_TAB_LIST
         }
         ToCore::GoTo { forward, steps } => {
-            if *steps == 0 || usize::from(*steps) > library::MAX_TAB_LIST {
+            if *steps == 0 || usize::from(*steps) > library::MAX_STEPS {
                 return Err(ProtocolError::BadValue("steps"));
             }
             payload.extend_from_slice(&[u8::from(*forward), *steps]);
@@ -1054,6 +1059,7 @@ pub fn read_from_interface(input: &mut dyn Read) -> Result<Option<ToCore>, Proto
         KIND_FORWARD => ToCore::Forward,
         KIND_BOOKMARK => ToCore::Bookmark,
         KIND_HOME => ToCore::Home,
+        KIND_RELOAD => ToCore::Reload,
         KIND_CHANGE_SETTING => ToCore::ChangeSetting(settings::read_change(&mut fields)?),
         KIND_CONSOLE => ToCore::Console(match fields.u8()? {
             0 => false,
@@ -1168,15 +1174,14 @@ mod tests {
                 volume: 30,
                 proxy: settings::ProxyView::None,
                 local: Vec::new(),
-                remember_history: true,
                 restore_session: true,
                 cookies: settings::CookieMode::Close,
                 refusal: None,
             }),
             ToInterface::Cookies(cookies::CookiesView { query: "news".into(), total: 0, ..cookies::CookiesView::default() }),
-            ToInterface::History(library::HistoryView { query: "news".into(), total: 0, remembering: true, ..library::HistoryView::default() }),
+            ToInterface::History(library::HistoryView { query: "news".into(), total: 0, ..library::HistoryView::default() }),
             ToInterface::Suggestions(library::Suggestions { text: "n".into(), inline: "news.example".into(), rows: Vec::new() }),
-            ToInterface::TabList(library::TabList { forward: true, entries: Vec::new() }),
+            ToInterface::TabList(library::TabList { forward: true, entries: Vec::new(), chapters: Vec::new() }),
             ToInterface::Bookmarks(library::BookmarksView::default()),
             ToInterface::Star(library::StarView { open: true, ..library::StarView::default() }),
             ToInterface::Bar(library::BarView { shown: true, ..library::BarView::default() }),
@@ -1202,6 +1207,7 @@ mod tests {
             ToCore::Forward,
             ToCore::Bookmark,
             ToCore::Home,
+            ToCore::Reload,
             ToCore::ChangeSetting(settings::SettingChange::Volume(40)),
             ToCore::Console(true),
             ToCore::History(library::HistoryRequest::Clear(library::ClearRange::All)),
@@ -1240,7 +1246,8 @@ mod tests {
         assert!(matches!(read_from_core(&mut bytes.as_slice()), Err(ProtocolError::UnknownKind(KIND_HISTORY))));
         // Steps a list never offers.
         assert!(write_to_core(&mut Vec::new(), &ToCore::GoTo { forward: false, steps: 0 }).is_err());
-        assert!(read_from_interface(&mut [KIND_GO_TO, 0, 0, 0, 2, 0, 16].as_slice()).is_err());
+        let beyond = u8::try_from(library::MAX_STEPS + 1).unwrap();
+        assert!(read_from_interface(&mut [KIND_GO_TO, 0, 0, 0, 2, 0, beyond].as_slice()).is_err());
     }
 
     #[test]

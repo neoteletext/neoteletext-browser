@@ -8,19 +8,20 @@ use super::{Fields, MAX_ADDRESS, MAX_PAGE_TITLE, ProtocolError, push_text};
 use interface_core::channel::page_index;
 
 pub use interface_core::library::{
-    BarRequest, BarView, BookmarkRequest, BookmarksView, ClearRange, ClosedTab, FolderRow, HistoryRequest, HistoryRow, HistoryView, ItemRow, MAX_CLOSED,
-    MAX_FOLDER_DEPTH, MAX_LABEL, MAX_NAME, MAX_NOTICE, MAX_PATH, MAX_QUERY, MAX_SHOWN_ADDRESS, MAX_SUGGESTIONS, MAX_TAB_LIST, MAX_VIEW_ROWS, StarRequest,
-    StarView, Suggestion, Suggestions, TabEntry, TabList, WindowGeometry,
+    BarRequest, BarView, BookmarkRequest, BookmarksView, ClearRange, ClosedTab, FolderRow, HistoryRequest, HistoryRow, HistoryView, ItemRow, MAX_CHAPTER_STOPS,
+    MAX_CLOSED, MAX_FOLDER_DEPTH, MAX_LABEL, MAX_NAME, MAX_NOTICE, MAX_PATH, MAX_QUERY, MAX_SHOWN_ADDRESS, MAX_STEPS, MAX_SUGGESTIONS, MAX_TAB_LIST,
+    MAX_VIEW_ROWS, StarRequest, StarView, Suggestion, Suggestions, TabEntry, TabList, WindowGeometry,
 };
 
 const HISTORY_PANEL: u8 = 1;
 const HISTORY_QUERY: u8 = 2;
 const HISTORY_OPEN: u8 = 3;
 const HISTORY_REMOVE: u8 = 4;
-const HISTORY_FORGET: u8 = 5;
+// 5 was "Forget this channel", removed by decision 65; never reused.
 const HISTORY_CLEAR: u8 = 6;
 const HISTORY_REOPEN: u8 = 7;
 const HISTORY_CLEAR_COOKIES: u8 = 8;
+const HISTORY_MORE_FROM_SITE: u8 = 9;
 
 const BOOKMARKS_PANEL: u8 = 1;
 const BOOKMARKS_FOLDER: u8 = 2;
@@ -176,6 +177,7 @@ fn push_range(range: ClearRange) -> u8 {
         ClearRange::Week => 3,
         ClearRange::FourWeeks => 4,
         ClearRange::All => 5,
+        ClearRange::FifteenMinutes => 6,
     }
 }
 
@@ -186,6 +188,7 @@ fn read_range(fields: &mut Fields<'_>) -> Result<ClearRange, ProtocolError> {
         3 => ClearRange::Week,
         4 => ClearRange::FourWeeks,
         5 => ClearRange::All,
+        6 => ClearRange::FifteenMinutes,
         _ => return Err(ProtocolError::BadValue("clear range")),
     })
 }
@@ -209,7 +212,6 @@ pub(crate) fn push_history_view(payload: &mut Vec<u8>, view: &HistoryView) -> Re
         payload.extend_from_slice(&closed.number.to_be_bytes());
         push_text(payload, &closed.title, MAX_NAME)?;
     }
-    push_flag(payload, view.remembering);
     push_text(payload, &view.notice, MAX_NOTICE)
 }
 
@@ -233,7 +235,7 @@ pub(crate) fn read_history_view(fields: &mut Fields<'_>) -> Result<HistoryView, 
         .collect::<Result<_, ProtocolError>>()?;
     let count = read_count(fields, MAX_CLOSED)?;
     let closed = (0..count).map(|_| Ok(ClosedTab { number: fields.u32()?, title: fields.text(MAX_NAME)? })).collect::<Result<_, ProtocolError>>()?;
-    Ok(HistoryView { query, first, total, rows, closed, remembering: read_flag(fields)?, notice: fields.text(MAX_NOTICE)? })
+    Ok(HistoryView { query, first, total, rows, closed, notice: fields.text(MAX_NOTICE)? })
 }
 
 pub(crate) fn push_history_request(payload: &mut Vec<u8>, request: &HistoryRequest) -> Result<(), ProtocolError> {
@@ -256,8 +258,8 @@ pub(crate) fn push_history_request(payload: &mut Vec<u8>, request: &HistoryReque
             payload.push(HISTORY_REMOVE);
             push_numbers(payload, numbers)?;
         }
-        HistoryRequest::ForgetChannel(number) => {
-            payload.push(HISTORY_FORGET);
+        HistoryRequest::MoreFromSite(number) => {
+            payload.push(HISTORY_MORE_FROM_SITE);
             payload.extend_from_slice(&number.to_be_bytes());
         }
         HistoryRequest::Clear(range) => payload.extend_from_slice(&[HISTORY_CLEAR, push_range(*range)]),
@@ -278,7 +280,7 @@ pub(crate) fn read_history_request(fields: &mut Fields<'_>) -> Result<HistoryReq
         HISTORY_QUERY => HistoryRequest::Query { text: fields.text(MAX_QUERY)?, first: fields.u32()? },
         HISTORY_OPEN => HistoryRequest::Open { number: fields.u32()?, new_tab: read_flag(fields)? },
         HISTORY_REMOVE => HistoryRequest::Remove(read_numbers(fields)?),
-        HISTORY_FORGET => HistoryRequest::ForgetChannel(fields.u32()?),
+        HISTORY_MORE_FROM_SITE => HistoryRequest::MoreFromSite(fields.u32()?),
         HISTORY_CLEAR => HistoryRequest::Clear(read_range(fields)?),
         HISTORY_CLEAR_COOKIES => HistoryRequest::ClearCookies(read_range(fields)?),
         HISTORY_REOPEN => HistoryRequest::Reopen(if fields.is_empty() { None } else { Some(fields.u32()?) }),
@@ -313,35 +315,41 @@ pub(crate) fn read_suggestions(fields: &mut Fields<'_>) -> Result<Suggestions, P
 
 pub(crate) fn push_tab_list(payload: &mut Vec<u8>, list: &TabList) -> Result<(), ProtocolError> {
     push_flag(payload, list.forward);
-    push_count(payload, list.entries.len(), MAX_TAB_LIST)?;
-    for entry in &list.entries {
-        if entry.steps == 0 || usize::from(entry.steps) > MAX_TAB_LIST {
-            return Err(ProtocolError::BadValue("steps"));
+    for (entries, most) in [(&list.entries, MAX_TAB_LIST), (&list.chapters, MAX_CHAPTER_STOPS)] {
+        push_count(payload, entries.len(), most)?;
+        for entry in entries {
+            if entry.steps == 0 || usize::from(entry.steps) > MAX_STEPS {
+                return Err(ProtocolError::BadValue("steps"));
+            }
+            payload.push(entry.steps);
+            push_page(payload, entry.page)?;
+            push_text(payload, &entry.title, MAX_NAME)?;
+            push_text(payload, &entry.address, MAX_SHOWN_ADDRESS)?;
         }
-        payload.push(entry.steps);
-        push_page(payload, entry.page)?;
-        push_text(payload, &entry.title, MAX_NAME)?;
-        push_text(payload, &entry.address, MAX_SHOWN_ADDRESS)?;
     }
     Ok(())
 }
 
 pub(crate) fn read_tab_list(fields: &mut Fields<'_>) -> Result<TabList, ProtocolError> {
     let forward = read_flag(fields)?;
-    let count = read_count(fields, MAX_TAB_LIST)?;
-    let entries = (0..count)
-        .map(|_| {
-            let steps = read_steps(fields)?;
-            Ok(TabEntry { steps, page: read_page(fields)?, title: fields.text(MAX_NAME)?, address: fields.text(MAX_SHOWN_ADDRESS)? })
-        })
-        .collect::<Result<_, ProtocolError>>()?;
-    Ok(TabList { forward, entries })
+    let mut read = |most: usize| -> Result<Vec<TabEntry>, ProtocolError> {
+        let count = read_count(fields, most)?;
+        (0..count)
+            .map(|_| {
+                let steps = read_steps(fields)?;
+                Ok(TabEntry { steps, page: read_page(fields)?, title: fields.text(MAX_NAME)?, address: fields.text(MAX_SHOWN_ADDRESS)? })
+            })
+            .collect()
+    };
+    let entries = read(MAX_TAB_LIST)?;
+    let chapters = read(MAX_CHAPTER_STOPS)?;
+    Ok(TabList { forward, entries, chapters })
 }
 
-/// How many steps a Back or Forward list's entry is, 1 to [`MAX_TAB_LIST`].
+/// How many steps a Back or Forward list's entry is, 1 to [`MAX_STEPS`].
 pub(crate) fn read_steps(fields: &mut Fields<'_>) -> Result<u8, ProtocolError> {
     let steps = fields.u8()?;
-    if steps == 0 || usize::from(steps) > MAX_TAB_LIST { Err(ProtocolError::BadValue("steps")) } else { Ok(steps) }
+    if steps == 0 || usize::from(steps) > MAX_STEPS { Err(ProtocolError::BadValue("steps")) } else { Ok(steps) }
 }
 
 pub(crate) fn push_bookmarks_view(payload: &mut Vec<u8>, view: &BookmarksView) -> Result<(), ProtocolError> {
@@ -595,7 +603,6 @@ mod tests {
                 address: "https://news.example/teletext/#302".into(),
             }],
             closed: vec![ClosedTab { number: 3, title: "Sport".into() }],
-            remembering: true,
             notice: String::new(),
         }
     }
@@ -626,7 +633,11 @@ mod tests {
             read_suggestions,
         );
         round_trip(
-            &TabList { forward: false, entries: vec![TabEntry { steps: 2, page: None, title: "Sport".into(), address: "https://sport.example/".into() }] },
+            &TabList {
+                forward: false,
+                entries: vec![TabEntry { steps: 2, page: None, title: "Sport".into(), address: "https://sport.example/".into() }],
+                chapters: vec![TabEntry { steps: 30, page: Some(0x100), title: "News".into(), address: "https://news.example/".into() }],
+            },
             push_tab_list,
             read_tab_list,
         );
@@ -657,9 +668,10 @@ mod tests {
             HistoryRequest::Query { text: "x".into(), first: 100 },
             HistoryRequest::Open { number: 4, new_tab: true },
             HistoryRequest::Remove(vec![1, 2, 3]),
-            HistoryRequest::ForgetChannel(9),
+            HistoryRequest::MoreFromSite(9),
             HistoryRequest::Clear(ClearRange::FourWeeks),
             HistoryRequest::ClearCookies(ClearRange::Hour),
+            HistoryRequest::Clear(ClearRange::FifteenMinutes),
             HistoryRequest::Reopen(None),
             HistoryRequest::Reopen(Some(3)),
         ] {
@@ -710,7 +722,7 @@ mod tests {
         view.rows[0].page = Some(0x0FF);
         assert!(push_history_view(&mut Vec::new(), &view).is_err());
         assert!(push_folder(&mut Vec::new(), &folder(1, u8::try_from(MAX_FOLDER_DEPTH + 1).unwrap())).is_err());
-        assert!(read_history_request(&mut Fields { bytes: &[HISTORY_CLEAR, 6] }).is_err());
+        assert!(read_history_request(&mut Fields { bytes: &[HISTORY_CLEAR, 7] }).is_err(), "no seventh range");
         assert!(read_history_request(&mut Fields { bytes: &[99] }).is_err());
         assert!(read_bookmark_request(&mut Fields { bytes: &[99] }).is_err());
         assert!(read_star_request(&mut Fields { bytes: &[99] }).is_err());
@@ -739,7 +751,6 @@ mod tests {
             total: u32::MAX,
             rows: vec![row; MAX_VIEW_ROWS],
             closed: vec![ClosedTab { number: 1, title: long(MAX_NAME) }; MAX_CLOSED],
-            remembering: true,
             notice: long(MAX_NOTICE),
         };
         let mut payload = Vec::new();

@@ -76,6 +76,15 @@ pub(super) struct BarUi {
 }
 
 impl Browser {
+    /// The bar's chips: each bookmark's whole name, which a chip may cut short.
+    pub(super) fn bar_tips(&self, tips: &mut Vec<(Rect, String)>) {
+        for &(number, folder, rect) in &self.bar.chips {
+            if let Some(item) = self.bar.view.items.iter().find(|item| item.number == number) {
+                tips.push((rect, if folder { alloc::format!("{} (folder)", item.name) } else { item.name.clone() }));
+            }
+        }
+    }
+
     /// The star's popover as the trusted core sent it.
     pub fn set_star(&mut self, view: StarView) {
         let opening = view.open && !self.star.view.open;

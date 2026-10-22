@@ -28,13 +28,33 @@
 | Legacy | Why it existed | Why it goes |
 |---|---|---|
 | The `Domain` attribute and cookies shared across subdomains | Sites spread across hosts | The engine ignores it (REQ-WEB-006): every cookie is host-only, and then channel-only (REQ-WEB-026) |
-| The Public Suffix List | To stop `Domain=.co.uk` | No `Domain`, so no list to ship and keep current |
+| The Public Suffix List | To stop `Domain=.co.uk` | No `Domain`, so no list to ship and keep current (section 1.1) |
 | Third-party cookies, `SameSite=None` for embedded content, `Partitioned` (CHIPS) | Embedded content | Nothing is embedded; `Partitioned` is accepted and changes nothing, `None` matters only to a form sent to another channel |
 | Cookies shared between `http` and `https`, and between ports | RFC 6265's host-only rule ignores scheme and port | A channel is its scheme, host, port and folder (requirement 7.1) |
 | `Set-Cookie2`, `Cookie2`, `$Version`, `$Path` | RFC 2965, obsolete since 2011 | Ignored |
 | Session cookies surviving a restart | Browsers that restore a session restore its session cookies | Never written (section 6): a session cookie is the most valuable thing to steal and the least meant to last |
 | Script access (`document.cookie`, the Cookie Store API) | Scripts | There is no script engine (requirement 1.3); every cookie is in effect `HttpOnly` |
 | Unbounded or per-domain-only limits | History | Bounds per channel and in total, as section 5 says |
+
+### 1.1 The Public Suffix List, and what leaving it out costs
+
+*Written 23 October 2026, at the owner's question, to record decision 62's reasoning in full.*
+
+**What it is.** A list, kept by Mozilla and shipped by every major browser, of the parts of a name under which anyone may register a site: `com`, `org`, `co.uk`, `com.au`, `github.io` and some ten thousand more. Rules cannot work it out: `co.uk` is open to anyone, while `bbc.co.uk` is one organisation's. The part one step below a public suffix is the **registrable domain** (`example.co.uk` for `news.example.co.uk`).
+
+**What browsers use it for.**
+- **Cookies, first.** A site may set `Domain=example.co.uk` to share a cookie across its hosts. Without the list it could set `Domain=co.uk`, and the cookie would go to every British site: tracking across all of them, or cookies planted on them. The list is how a browser refuses `co.uk` and allows `example.co.uk`.
+- **Grouping by site.** The registrable domain is the "site" of `SameSite`, of storage partitioning, of the part of the address Chrome emphasises, of `Clear-Site-Data`'s reach, and of the chapter stops of Chrome's Back and Forward menus.
+
+**Why this design leaves it out** (decision 62):
+1. Every cookie belongs to the one host that set it: the engine ignores `Domain` (REQ-WEB-006) and narrows a cookie further to its channel (REQ-WEB-026). Nothing can widen a cookie, so there is nothing to check against the list.
+2. A page cannot embed anything from another channel, so there is no third party for the list to tell apart.
+3. A list is data to ship, keep current and check; an old copy gives wrong answers. Leaving out what earns nothing is the point of this design.
+
+**What it costs.**
+- Channels on several hosts of one organisation, `news.example.co.uk` and `sport.example.co.uk`, cannot share a sign-in cookie: each signs in alone. Stricter than any browser, and accepted for privacy.
+- Where Chrome groups by registrable domain, this browser groups by host or by channel: `Clear-Site-Data` reaches the channel alone (sections 8 and 13 item 8); the address field emphasises the host (requirement 11.3); the chapter stops of the Back and Forward lists change at each host (`history-and-bookmarks.md` section 16, decision 64), so those two hosts are one chapter in Chrome and two here.
+- If grouping by organisation is wanted later, the list would come back for that alone, as data the trusted core reads; no cookie rule would change.
 
 ## 2. Where cookies live
 
@@ -56,12 +76,12 @@ Private tabs share **one private cookie session**: a jar per channel, separate f
 
 ### 4.1 The cookies panel
 
-Opened from the settings panel ("Cookies: Manage…") and from the menu ("Cookies and site data"). It lists, for the ordinary session:
+The developer console's Cookies tab (decision 63, 23 October 2026), opened there or by the settings panel's "Cookies: Manage…", which opens the console at it; until then it was a panel over the window, opened from the settings and from the menu's "Cookies and site data", which is removed. The trusted core sends its rows only while the tab is shown with the console open. It lists, for the ordinary session:
 
 - **By site**: each origin with cookies (`https://news.example`), its total count and size, and when it was last used; under it, each channel of that origin (its folder), with the same.
 - **Per channel**: Delete; Block.
 - **Per site**: Delete all for this site, which deletes every channel's jar on that origin.
-- **At the top**: a search field over the identities, "Delete all cookies", and the count and size in all.
+- **At the top**: a search field over the identities, the count and size in all with the trusted core's word, and "Delete all cookies".
 
 **The panel never shows a cookie's name or value.** Requirement 3.6 keeps cookies from the interface; names often carry identifiers, and values are credentials. A developer who needs them uses the channel's server, as with the console (requirement 19.8). The panel's rows are views with view numbers, as the history panel's are (`history-and-bookmarks.md` section 4): the interface can ask for a row's deletion by its number and nothing else.
 
@@ -77,7 +97,7 @@ Opened from the settings panel ("Cookies: Manage…") and from the menu ("Cookie
 - **Block all:** no cookie is stored or sent. A channel that needs a session will not keep one; the strip says so the first time a channel sets a cookie that is refused ("This channel's cookies are blocked").
 - **A blocked channel** is treated as Block all, for that channel alone.
 
-These are privacy settings, not security settings: a change is not said in the strip (as "Remember history", requirement 20.7), and each is strip input checked by the trusted core.
+These are privacy settings, not security settings: a change is not said in the strip (as restoring the session, requirement 20.24), and each is strip input checked by the trusted core.
 
 ### 4.3 Clearing with history
 

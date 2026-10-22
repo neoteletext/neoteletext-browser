@@ -191,7 +191,7 @@ Not present yet: no font is fetched. When fonts are, they are read by a confined
 - Every message is bounded and checked; a malformed one ends the application (requirements 4.2 and 4.3).
 
 **What a compromised interface process can do.** The trusted strip is drawn by the interface process, so its integrity rests on that process (decision 33; requirement 3.9):
-- **Can:** draw a false strip; send strip input, and so navigate any tab to any address the trusted core's rules accept, go back and forward, and set bookmarks; see every page on screen; open the history panel and the bookmarks manager and page through them, reading every row 100 at a time, and remove history or bookmarks by the rows' numbers (decision 57; `history-and-bookmarks-security.md` section 4, its first risk).
+- **Can:** draw a false strip; send strip input, and so navigate any tab to any address the trusted core's rules accept, go back and forward, reload (decision 63: the active tab's channel opened again at the same address, which the trusted core holds; the message carries nothing), and set bookmarks; see every page on screen; open the history panel and the bookmarks manager and page through them, reading every row 100 at a time, and remove history or bookmarks by the rows' numbers (decision 57; `history-and-bookmarks-security.md` section 4, its first risk).
 - **Cannot:** read cookies, history beyond the panels' views, or files (once its sandbox denies reads); reach the network; change what any fetcher requests; change a security setting, because none is reachable from strip input yet. When the site-change screen and security settings are built (requirements 8.4 and 11.2), a compromised interface could confirm them too; that is the cost of option 1 that open decision 3 weighs.
 - **What reaching it takes:** a fault in NeoTeletext's own interface code (no `unsafe`, requirement 10.12) or in its drawing libraries (`vello_cpu`, Parley, winit, softbuffer), reached only through our own images, cleaned text and the user's own input.
 
@@ -305,9 +305,10 @@ Designed and adopted, not built (decision 54): `installation-and-updates.md`, wi
 - **Cookies are host-only and channel-only,** held by the trusted core and sent only with their own channel's requests; there is no third-party context (requirements 7.6, 7.7 and 21.1). Persistent cookies are kept between runs only sealed, never a session or private one; the cookies panel deletes them by channel, site or all, the settings keep them, delete them when the browser closes or block them, and history's clearing takes them by time (requirements 21.4 to 21.8).
 - **No `Referer` header, and a minimal user agent** (requirement 5.14).
 - **The interface process stores nothing** (requirement 7.9).
-- **History stays on the computer** (decision 57): kept 90 days in `history.txt`, readable by the user alone, sent to no channel, decoder or fetcher (requirement 20.12) and never over the network; the user removes any of it, or all, from the panel, turns it off in the settings, or browses in a private tab that records nothing (requirements 20.6 to 20.8). Like every browser's, it is not encrypted on the disk. The session (decision 59) holds the open tabs' addresses the same way, never a private tab's, and is kept with "Remember history" off too, as the tabs are open; turning restoring off does not remove it.
+- **History stays on the computer** (decision 57): kept 90 days in `history.txt`, readable by the user alone, sent to no channel, decoder or fetcher (requirement 20.12) and never over the network; the user removes any of it, or all, from the panel, or browses in a private tab that records nothing (requirements 20.6 and 20.8; "Remember history" was withdrawn by decision 65, as Chrome has none). Like every browser's, it is not encrypted on the disk. The session (decision 59) holds the open tabs' addresses the same way, never a private tab's; turning restoring off does not remove it.
+- **Removing history reaches the tabs** (decision 64, as Chrome): the removed entries leave every tab's back-and-forward list but the entry it is at, and the recently closed tabs. Closed tabs are kept on the disk with the session, as Chrome keeps them (requirement 20.21).
 - **No telemetry.**
-- **Every channel is unencrypted today,** because Transport Layer Security is not built; the strip says "Not secure" (requirement 5.9). A network observer can read what is fetched.
+- **A plain-HTTP channel is unencrypted;** `https` channels use Transport Layer Security (decision 41). The strip says "Not secure" for plain HTTP (requirement 5.9), where a network observer can read what is fetched.
 - **Closing a tab** stops its fetcher at once, which the channel's server can see; the grace period is required (requirement 5.17).
 
 ---
@@ -344,6 +345,7 @@ These were observed, not reasoned:
 2. **macOS reports a slow mouse-wheel notch as a tenth of a line,** and speeds up quick ones (measured 16 October 2026). Not a security finding; recorded because the interface's handling of input is our own code now, and each such assumption must be measured.
 3. **The engine's user agent fetches a channel in its contents file's order at its own fixed rate,** whatever is on screen: measured, 218 of 800 pages in 45 seconds. The fetcher takes no input from the trusted core, so the interface has no path to influence fetching.
 4. **The interface's protocol refuses every kind it may not receive,** and messages with hidden characters, oversized lengths or trailing bytes (tests in `protocol`).
+6. **A sandbox profile can hide the window without an error.** On macOS 15.6 the interface's profile lacked the window manager's service, `com.apple.windowmanager.server`: the window was made and drawn, never shown, and nothing failed (23 October 2026, `sandboxing.md` section 6). A denial shows only in the system's log; a missing service is found by allowing all lookups once and reading the denials.
 
 ---
 

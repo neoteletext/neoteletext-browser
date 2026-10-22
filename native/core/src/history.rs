@@ -69,6 +69,10 @@ pub struct Visit {
     pub title: String,
     /// Typed in the address field.
     pub typed: bool,
+    /// A reload: it moves the row's last visit, or makes the day's row, and
+    /// counts no visit, as Chrome and Firefox count none (Chrome's
+    /// `HistoryBackend::AddPageVisit`, Firefox's `VISIT_COUNT_INC`).
+    pub reload: bool,
 }
 
 /// What a clearing removes (section 2.5).
@@ -126,11 +130,6 @@ impl Row {
     /// The address without its scheme, for completion and channel matching.
     fn bare(&self) -> &str {
         SCHEMES.iter().find_map(|scheme| self.address.strip_prefix(scheme)).unwrap_or(&self.address)
-    }
-
-    /// The channel the row's address is of.
-    fn channel_text(&self) -> String {
-        address::parse(&self.address).map(|parsed| parsed.channel_text().to_owned()).unwrap_or_default()
     }
 }
 
@@ -209,9 +208,10 @@ impl History {
         let address = recordable(&visit.address)?;
         let day = local_day(utc, offset);
         let key = (day, address);
-        let typed = u32::from(visit.typed);
+        let typed = u32::from(visit.typed && !visit.reload);
+        let counted = u32::from(!visit.reload);
         let row = if let Some(row) = self.index.get(&key).and_then(|&at| self.rows.get_mut(at)) {
-            row.visits = row.visits.saturating_add(1);
+            row.visits = row.visits.saturating_add(counted);
             row.typed = row.typed.saturating_add(typed);
             row.last = utc;
             row.offset = offset;
@@ -223,7 +223,7 @@ impl History {
                 day,
                 last: utc,
                 offset,
-                visits: 1,
+                visits: counted,
                 typed,
                 address: key.1.clone(),
                 channel: protocol::clean(&visit.channel, MAX_CHANNEL_TITLE),
@@ -285,30 +285,43 @@ impl History {
     #[must_use]
     pub fn query(&self, query: &str) -> Vec<&Row> {
         let query = query.to_lowercase();
+        // `host:` names one host, as Chrome's history search does.
+        let host = query.strip_prefix(HOST_SEARCH).map(str::trim);
         let mut rows: Vec<&Row> = self
             .rows
             .iter()
-            .filter(|row| query.is_empty() || [&row.address, &row.channel, &row.title].iter().any(|text| text.to_lowercase().contains(&query)))
+            .filter(|row| match host {
+                Some(host) => address::parse(&row.address).is_ok_and(|address| address.host.eq_ignore_ascii_case(host)),
+                None => query.is_empty() || [&row.address, &row.channel, &row.title].iter().any(|text| text.to_lowercase().contains(&query)),
+            })
             .collect();
         rows.sort_by(|a, b| b.last.cmp(&a.last).then_with(|| a.address.cmp(&b.address)));
         rows
     }
 
-    /// Removes the rows of these days and addresses; returns how many went.
-    pub fn remove(&mut self, keys: &[(i64, String)]) -> usize {
-        let before = self.rows.len();
-        self.rows.retain(|row| !keys.iter().any(|(day, address)| *day == row.day && *address == row.address));
-        self.reindex();
-        before.saturating_sub(self.rows.len())
+    /// Removes the rows of these days and addresses; returns the addresses
+    /// of the rows that went.
+    pub fn remove(&mut self, keys: &[(i64, String)]) -> Vec<String> {
+        self.remove_where(|row| keys.iter().any(|(day, address)| *day == row.day && *address == row.address))
     }
 
-    /// Removes every row of the channel `address` is of; returns how many went.
-    pub fn forget_channel(&mut self, address: &str) -> usize {
-        let Ok(channel) = address::parse(address).map(|parsed| parsed.channel_text().to_owned()) else { return 0 };
-        let before = self.rows.len();
-        self.rows.retain(|row| row.channel_text() != channel);
+    fn remove_where(&mut self, gone: impl Fn(&Row) -> bool) -> Vec<String> {
+        let mut addresses = Vec::new();
+        self.rows.retain(|row| {
+            let goes = gone(row);
+            if goes {
+                addresses.push(row.address.clone());
+            }
+            !goes
+        });
         self.reindex();
-        before.saturating_sub(self.rows.len())
+        addresses
+    }
+
+    /// Whether any day has a row of `address`.
+    #[must_use]
+    pub fn has_address(&self, address: &str) -> bool {
+        self.rows.iter().any(|row| row.address == address)
     }
 
     /// Removes the rows `range` covers; returns how many went.
@@ -422,7 +435,13 @@ impl History {
     }
 }
 
-/// "Clear history"'s last hour, in seconds (section 2.5).
+/// The search that names one host, as Chrome's history page writes "More
+/// from this site" (`history_list.ts`: `'host:' + domain`).
+pub const HOST_SEARCH: &str = "host:";
+
+/// "Clear history"'s last 15 minutes, in seconds (section 2.5).
+pub const FIFTEEN_MINUTES: i64 = 15 * 60;
+/// Its last hour.
 pub const HOUR: i64 = 3_600;
 /// Its last 24 hours.
 pub const DAY: i64 = SECONDS_PER_DAY;
@@ -465,7 +484,24 @@ mod tests {
     const SYDNEY: i32 = 11 * 3_600;
 
     fn visit(address: &str, typed: bool) -> Visit {
-        Visit { address: address.into(), channel: "News Example".into(), title: "WEATHER".into(), typed }
+        Visit { address: address.into(), channel: "News Example".into(), title: "WEATHER".into(), typed, reload: false }
+    }
+
+    /// Decision 63: a reload moves the row's last visit and counts no
+    /// visit; on a day with no visit yet it makes the day's row, with none
+    /// counted, as Chrome and Firefox record a reload without counting it.
+    #[test]
+    fn a_reload_moves_the_last_visit_and_counts_none() {
+        let mut history = History::default();
+        history.record(&visit("https://news.example/", true), NOW, 0);
+        let reload = Visit { reload: true, ..visit("https://news.example/", true) };
+        history.record(&reload, NOW + 60, 0);
+        let today = &history.query("")[0];
+        assert_eq!((today.visits, today.typed, today.last), (1, 1, NOW + 60));
+        history.record(&reload, NOW + SECONDS_PER_DAY, 0);
+        let rows = history.query("");
+        assert_eq!(rows.len(), 2, "the next day has its row");
+        assert_eq!((rows[0].visits, rows[0].typed, rows[0].last), (0, 0, NOW + SECONDS_PER_DAY));
     }
 
     fn scratch(name: &str) -> std::path::PathBuf {
@@ -582,10 +618,14 @@ mod tests {
         history.record(&visit("https://news.example/teletext/#302", false), NOW - 30 * 60, 0);
         history.record(&visit("https://sport.example/", false), NOW - 10, 0);
         assert_eq!(history.clear(History::since(NOW, HOUR)), 2);
-        assert_eq!(history.forget_channel("https://news.example/teletext/#999"), 1);
+        assert_eq!(history.remove(&[(local_day(NOW, 0), "https://news.example/teletext/#100".into())]), ["https://news.example/teletext/#100"]);
         assert!(history.is_empty());
         history.record(&visit("https://sport.example/", false), NOW, 0);
-        assert_eq!(history.remove(&[(local_day(NOW, 0), "https://sport.example/".into())]), 1);
+        assert_eq!(history.query("host:SPORT.example").len(), 1, "host: names one host, in any case");
+        assert!(history.query("host:example").is_empty(), "the whole host");
+        assert!(history.has_address("https://sport.example/"));
+        assert_eq!(history.remove(&[(local_day(NOW, 0), "https://sport.example/".into())]), ["https://sport.example/"]);
+        assert!(!history.has_address("https://sport.example/"));
         history.record(&visit("https://sport.example/", false), NOW, 0);
         assert_eq!(history.clear(Range::All), 1);
     }

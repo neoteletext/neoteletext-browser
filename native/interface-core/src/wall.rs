@@ -504,6 +504,12 @@ impl Wall {
         self.open
     }
 
+    /// The page size's smaller and larger buttons, as last drawn.
+    #[must_use]
+    pub const fn size_buttons(&self) -> (Rect, Rect) {
+        (self.minus, self.plus)
+    }
+
     /// The page area, below the controls, as last drawn.
     #[must_use]
     pub fn area(&self) -> Rect {

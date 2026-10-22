@@ -15,7 +15,7 @@ use crate::canvas::Canvas;
 use crate::editor::Editor;
 use crate::geometry::{Point, Rect};
 use crate::library::{ClearRange, HistoryRequest, HistoryView, MAX_QUERY, MAX_VIEW_ROWS};
-use crate::theme::{ADDRESS, CAPTION, DIM, HEADING, MUTED, ROW_STATUS, ROW_TITLE, RULE_SOFT, SELECTED, WHITE};
+use crate::theme::{ADDRESS, BUTTON, CAPTION, DIM, HEADING, MUTED, ROW_STATUS, ROW_TITLE, RULE, RULE_SOFT, SELECTED, WHITE};
 use crate::ui::{border, centred, left_centred, right_centred};
 
 const PANEL_WIDTH: f64 = 820.0;
@@ -26,6 +26,8 @@ const CONTROL_HEIGHT: f64 = 32.0;
 const GAP: f64 = 8.0;
 const SMALL_BUTTON: f64 = 32.0;
 const WIDE_BUTTON: f64 = 150.0;
+/// A row's menu: as wide as its longest item.
+const MENU_WIDTH: f64 = 200.0;
 const RANGE_BUTTON: f64 = 112.0;
 const ROW_HEIGHT: f64 = 30.0;
 const DAY_HEIGHT: f64 = 30.0;
@@ -37,7 +39,8 @@ const CLOSED_SHOWN: usize = 4;
 /// How many rows one turn of the wheel moves the view.
 const WHEEL_ROWS: usize = 3;
 /// The ranges "Clear history" offers, as the design names them (section 2.5).
-const RANGES: [(ClearRange, &str); 5] = [
+const RANGES: [(ClearRange, &str); 6] = [
+    (ClearRange::FifteenMinutes, "Last 15 minutes"),
     (ClearRange::Hour, "Last hour"),
     (ClearRange::Day, "Last 24 hours"),
     (ClearRange::Week, "Last 7 days"),
@@ -58,11 +61,32 @@ struct Controls {
     with_cookies: Rect,
     cancel: Rect,
     remove_selected: Rect,
-    forget: Rect,
     closed: Vec<(u32, Rect)>,
-    /// Each row: its number, its check box, its remove button, the row.
+    /// Each row: its number, its check box, its menu button, the row.
     rows: Vec<(u32, Rect, Rect, Rect)>,
     list: Rect,
+    /// A row's open menu: its items and where they were drawn.
+    menu: Vec<(RowAction, Rect)>,
+    menu_area: Rect,
+}
+
+/// What a row's menu offers, as Chrome's history page does: "More from
+/// this site" and "Remove from history" (its `history_list.html.ts`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum RowAction {
+    MoreFromSite,
+    Remove,
+}
+
+impl RowAction {
+    const ALL: [Self; 2] = [Self::MoreFromSite, Self::Remove];
+
+    const fn words(self) -> &'static str {
+        match self {
+            Self::MoreFromSite => "More from this site",
+            Self::Remove => "Remove from history",
+        }
+    }
 }
 
 /// The panel's state in the browser.
@@ -75,6 +99,8 @@ pub(super) struct HistoryUi {
     clearing: bool,
     clears: Clears,
     controls: Controls,
+    /// The row whose menu is open.
+    menu: Option<u32>,
 }
 
 /// What clearing clears: history, as it did; cookies, when chosen
@@ -96,11 +122,21 @@ impl Default for HistoryUi {
             clearing: false,
             clears: Clears { history: true, cookies: false },
             controls: Controls::default(),
+            menu: None,
         }
     }
 }
 
 impl Browser {
+    /// The panel's symbol buttons.
+    pub(super) fn history_tips(&self, tips: &mut Vec<(Rect, String)>) {
+        let controls = &self.history.controls;
+        tips.push((controls.close, format!("Close history ({})", self.keys_named("Cmd+Y", "Ctrl+H"))));
+        for &(_, _, menu, _) in &controls.rows {
+            tips.push((menu, "More from this site, or remove from history".into()));
+        }
+    }
+
     /// The history panel's rows as the trusted core sent them.
     pub fn set_history(&mut self, view: HistoryView) {
         // Numbers of an earlier view name nothing now.
@@ -113,6 +149,11 @@ impl Browser {
             .collect();
         self.history.selected = view.rows.iter().filter(|row| addresses.contains(row.address.as_str())).map(|row| row.number).collect();
         self.history.selected.retain(|number| numbers.contains(number));
+        // A search the trusted core made, "More from this site", shows in
+        // the field.
+        if !self.history.focused && self.history.query.text() != view.query {
+            self.history.query.set(&view.query);
+        }
         self.history.view = Some(view);
     }
 
@@ -237,6 +278,15 @@ impl Browser {
         if !controls.panel.contains(point) {
             return false;
         }
+        // A row's open menu takes the press; anywhere else closes it.
+        if let Some(number) = self.history.menu.take() {
+            match controls.menu.iter().find(|(_, rect)| rect.contains(point)).map(|(action, _)| *action) {
+                Some(RowAction::MoreFromSite) => self.outputs.push(Output::History(HistoryRequest::MoreFromSite(number))),
+                Some(RowAction::Remove) => self.outputs.push(Output::History(HistoryRequest::Remove(alloc::vec![number]))),
+                None => {}
+            }
+            return true;
+        }
         if controls.close.contains(point) {
             self.set_history_open(false);
             return true;
@@ -271,16 +321,11 @@ impl Browser {
             let numbers: Vec<u32> = self.history.selected.iter().copied().take(MAX_VIEW_ROWS).collect();
             self.history.selected.clear();
             self.outputs.push(Output::History(HistoryRequest::Remove(numbers)));
-        } else if controls.forget.contains(point) {
-            if let Some(&number) = self.history.selected.iter().next() {
-                self.history.selected.clear();
-                self.outputs.push(Output::History(HistoryRequest::ForgetChannel(number)));
-            }
         } else if let Some(&(number, _)) = controls.closed.iter().find(|(_, rect)| rect.contains(point)) {
             self.outputs.push(Output::History(HistoryRequest::Reopen(Some(number))));
-        } else if let Some(&(number, check, remove, _)) = controls.rows.iter().find(|(_, _, _, row)| row.contains(point)) {
-            if remove.contains(point) {
-                self.outputs.push(Output::History(HistoryRequest::Remove(alloc::vec![number])));
+        } else if let Some(&(number, check, menu, _)) = controls.rows.iter().find(|(_, _, _, row)| row.contains(point)) {
+            if menu.contains(point) {
+                self.history.menu = Some(number);
             } else if check.contains(point) {
                 if !self.history.selected.remove(&number) {
                     self.history.selected.insert(number);
@@ -345,8 +390,6 @@ impl Browser {
         } else if !self.history.selected.is_empty() {
             controls.remove_selected = Rect::new(left, y, left + WIDE_BUTTON * 1.2, y + CONTROL_HEIGHT);
             button(canvas, controls.remove_selected, &format!("Remove selected ({})", self.history.selected.len()), false);
-            controls.forget = Rect::new(controls.remove_selected.x1 + GAP, y, controls.remove_selected.x1 + GAP + WIDE_BUTTON * 1.2, y + CONTROL_HEIGHT);
-            button(canvas, controls.forget, "Forget this channel", false);
             y += CONTROL_HEIGHT + GAP;
         }
 
@@ -402,12 +445,13 @@ impl Browser {
             border(canvas, check, 1.0, if checked { SELECTED } else { MUTED });
             let time = Rect::new(check.x1 + GAP, y, check.x1 + GAP + TIME_WIDTH, y + ROW_HEIGHT);
             left_centred(canvas, time, 0.0, &row.time, ROW_STATUS, MUTED);
-            let remove = Rect::new(right - SMALL_BUTTON, y, right, y + ROW_HEIGHT);
-            if hovered {
-                centred(canvas, remove, "\u{00D7}", ROW_TITLE, WHITE);
+            // The row's menu button, as Chrome's: shown while hovered or open.
+            let menu = Rect::new(right - SMALL_BUTTON, y, right, y + ROW_HEIGHT);
+            if hovered || self.history.menu == Some(row.number) {
+                centred(canvas, menu, "\u{22EE}", ROW_TITLE, WHITE);
             }
             // The title and the address it leads to, always both (requirement 20.13).
-            let text = Rect::new(time.x1, y, remove.x0 - GAP, y + ROW_HEIGHT);
+            let text = Rect::new(time.x1, y, menu.x0 - GAP, y + ROW_HEIGHT);
             let middle = f64::midpoint(text.x0, text.x1);
             let title = match row.page {
                 Some(page) => format!("{} {page:03X} {}", row.channel, row.title),
@@ -419,10 +463,33 @@ impl Browser {
             canvas.push_clip(Rect::new(middle, y, text.x1, y + ROW_HEIGHT));
             left_centred(canvas, Rect::new(middle, y, text.x1, y + ROW_HEIGHT), 0.0, &row.address, ADDRESS, DIM);
             canvas.pop_clip();
-            controls.rows.push((row.number, check, remove, rect));
+            controls.rows.push((row.number, check, menu, rect));
             y += ROW_HEIGHT;
         }
         canvas.pop_clip();
+
+        // The open row's menu, below its button and inside the panel.
+        if let Some(&(_, _, button_rect, _)) = controls.rows.iter().find(|(number, ..)| Some(*number) == self.history.menu) {
+            #[allow(clippy::cast_precision_loss, reason = "two items")]
+            let height = ROW_HEIGHT * RowAction::ALL.len() as f64;
+            let top = if button_rect.y1 + height > area.y1 { button_rect.y0 - height } else { button_rect.y1 };
+            let menu_area = Rect::new(button_rect.x1 - MENU_WIDTH, top, button_rect.x1, top + height);
+            canvas.fill(menu_area, 0.0, BUTTON);
+            border(canvas, menu_area, 1.0, RULE);
+            for (index, action) in RowAction::ALL.into_iter().enumerate() {
+                #[allow(clippy::cast_precision_loss, reason = "two items")]
+                let item_top = menu_area.y0 + ROW_HEIGHT * index as f64;
+                let item = Rect::new(menu_area.x0, item_top, menu_area.x1, item_top + ROW_HEIGHT);
+                if item.contains(self.pointer) {
+                    canvas.fill(item, 0.0, SELECTED);
+                }
+                left_centred(canvas, item, GAP, action.words(), ROW_TITLE, WHITE);
+                controls.menu.push((action, item));
+            }
+            controls.menu_area = menu_area;
+        } else {
+            self.history.menu = None;
+        }
 
         // Where the rows are among all, and the trusted core's word.
         let footer = Rect::new(left, footer, right, footer + CONTROL_HEIGHT);
@@ -432,7 +499,7 @@ impl Browser {
         }
         if !view.notice.is_empty() {
             canvas.push_clip(Rect::new(left, footer.y0, f64::midpoint(left, right) + WIDE_BUTTON, footer.y1));
-            left_centred(canvas, footer, 0.0, &view.notice, ROW_STATUS, if view.remembering { MUTED } else { WHITE });
+            left_centred(canvas, footer, 0.0, &view.notice, ROW_STATUS, MUTED);
             canvas.pop_clip();
         }
         self.history.controls = controls;
@@ -465,7 +532,6 @@ mod tests {
             total: 2,
             rows: alloc::vec![row(7, Some("Today: Thursday 22 October 2026"), "https://news.example/#302"), row(8, None, "https://sport.example/")],
             closed: alloc::vec![ClosedTab { number: 3, title: "weather.example".into() }],
-            remembering: true,
             notice: String::new(),
         }
     }
@@ -512,15 +578,16 @@ mod tests {
     #[test]
     fn rows_are_removed_by_number() {
         let mut browser = open();
-        let (number, check, remove, _) = browser.history.controls.rows[0];
-        browser.pointer_moved(middle(remove).x, middle(remove).y, 0);
-        browser.history_press(middle(remove), false);
-        assert_eq!(browser.take_outputs(), [Output::History(HistoryRequest::Remove(alloc::vec![number]))]);
-        browser.history_press(middle(check), false);
-        browser.draw(&mut Recorder::new(), 1440.0, 900.0, 0);
-        let forget = browser.history.controls.forget;
-        browser.history_press(middle(forget), false);
-        assert_eq!(browser.take_outputs(), [Output::History(HistoryRequest::ForgetChannel(number))]);
+        let (number, _, menu, _) = browser.history.controls.rows[0];
+        browser.pointer_moved(middle(menu).x, middle(menu).y, 0);
+        // The row's menu, as Chrome's: more from this site, or remove.
+        for (index, expected) in [(0, HistoryRequest::MoreFromSite(number)), (1, HistoryRequest::Remove(alloc::vec![number]))] {
+            browser.history_press(middle(menu), false);
+            browser.draw(&mut Recorder::new(), 1440.0, 900.0, 0);
+            let item = browser.history.controls.menu[index].1;
+            browser.history_press(middle(item), false);
+            assert_eq!(browser.take_outputs(), [Output::History(expected)]);
+        }
         // The rows move as the toolbar comes and goes: measured afresh.
         browser.draw(&mut Recorder::new(), 1440.0, 900.0, 0);
         let check = browser.history.controls.rows[0].1;
@@ -532,7 +599,7 @@ mod tests {
         let clear = browser.history.controls.clear;
         browser.history_press(middle(clear), false);
         browser.draw(&mut Recorder::new(), 1440.0, 900.0, 0);
-        let all = browser.history.controls.ranges[4].1;
+        let all = browser.history.controls.ranges.iter().find(|(range, _)| *range == ClearRange::All).unwrap().1;
         browser.history_press(middle(all), false);
         assert_eq!(browser.take_outputs(), [Output::History(HistoryRequest::Clear(ClearRange::All))]);
         // Requirement 21.8: cookies too, or cookies alone.
@@ -540,7 +607,7 @@ mod tests {
         browser.draw(&mut Recorder::new(), 1440.0, 900.0, 0);
         let (with_history, with_cookies) = (browser.history.controls.with_history, browser.history.controls.with_cookies);
         browser.history_press(middle(with_cookies), false);
-        let hour = browser.history.controls.ranges[0].1;
+        let hour = browser.history.controls.ranges.iter().find(|(range, _)| *range == ClearRange::Hour).unwrap().1;
         browser.history_press(middle(hour), false);
         assert_eq!(
             browser.take_outputs(),
@@ -549,7 +616,7 @@ mod tests {
         browser.history_press(middle(clear), false);
         browser.draw(&mut Recorder::new(), 1440.0, 900.0, 0);
         browser.history_press(middle(with_history), false);
-        let day = browser.history.controls.ranges[1].1;
+        let day = browser.history.controls.ranges.iter().find(|(range, _)| *range == ClearRange::Day).unwrap().1;
         browser.history_press(middle(day), false);
         assert_eq!(browser.take_outputs(), [Output::History(HistoryRequest::ClearCookies(ClearRange::Day))]);
         let closed = browser.history.controls.closed[0].1;
