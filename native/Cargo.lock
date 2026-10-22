@@ -621,6 +621,7 @@ dependencies = [
 name = "draw-vello"
 version = "0.1.0"
 dependencies = [
+ "fontique",
  "interface-core",
  "neoteletext-decoder",
  "parley",
@@ -1522,11 +1523,9 @@ version = "0.1.0"
 dependencies = [
  "arboard",
  "confine",
- "cpal",
  "dock-menu",
  "draw-vello",
  "interface-core",
- "neoteletext-audio-mix",
  "neoteletext-decoder",
  "neoteletext-image",
  "neoteletext-input",
@@ -1574,6 +1573,16 @@ dependencies = [
  "neoteletext-input",
  "neoteletext-qrkeyboard",
  "neoteletext-web",
+]
+
+[[package]]
+name = "neoteletext-sound"
+version = "0.1.0"
+dependencies = [
+ "confine",
+ "cpal",
+ "neoteletext-audio-mix",
+ "protocol",
 ]
 
 [[package]]

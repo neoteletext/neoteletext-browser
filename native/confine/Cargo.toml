@@ -16,6 +16,10 @@ publish.workspace = true
 landlock = "=0.4.7"
 # Apache-2.0 or BSD-3-Clause, the rust-vmm project's seccomp filter builder.
 seccompiler = "=0.5.0"
+
+# macOS and Linux: passing descriptors between the broker and the core
+# (`sendmsg`, `recvmsg`), and Linux's namespace and privilege calls.
+[target.'cfg(unix)'.dependencies]
 # MIT or Apache-2.0.
 libc = "=0.2.190"
 
@@ -27,17 +31,19 @@ windows-sys = { version = "=0.52.0", features = [
     "Win32_Security",
     "Win32_Security_Authorization",
     "Win32_Security_Isolation",
+    "Win32_Storage_FileSystem",
     "Win32_System_Console",
     "Win32_System_JobObjects",
     "Win32_System_Pipes",
     "Win32_System_SystemServices",
     "Win32_System_Threading",
+    "Win32_System_Time",
     "Win32_System_WindowsProgramming",
 ] }
 
 # As the Dock menu's and the web opener's crates: unsafe code is denied,
-# not forbidden, and allowed only in the Linux and Windows modules, each
-# block with its reason (requirement 10.12, decision 52).
+# not forbidden, and allowed only in the Linux, Unix and Windows modules,
+# each block with its reason (requirement 10.12, decisions 52 and 56).
 [lints.rust]
 unsafe_code = "deny"
 missing_docs = "warn"
@@ -50,3 +56,10 @@ dbg_macro = "warn"
 todo = "warn"
 unimplemented = "warn"
 undocumented_unsafe_blocks = "warn"
+
+# The sandbox tests' probe (tests/probe.rs): a process of one thread, as a
+# helper is when it confines itself. Never shipped.
+[[bin]]
+name = "confine-probe"
+test = false
+doc = false

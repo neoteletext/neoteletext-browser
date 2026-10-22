@@ -45,9 +45,9 @@ Measured on 20 October 2026 from `cargo metadata --all-features` and from the bu
 - **Fonts:** Roboto and Open Sans (SIL OFL 1.1).
 - **Linux system libraries,** linked dynamically and not shipped:
   - glibc (`libc`, `libm`): LGPL-2.1-or-later
-  - `libasound`, for sound: LGPL-2.1-or-later
+  - `libasound`, for sound, linked by the sound helper alone (decision 55): LGPL-2.1-or-later
   - `libgcc_s`: GPL-3.0 with the GCC Runtime Library Exception
-  - `libfontconfig`, through `fontique`, to find system fonts: MIT-style
+  - `libfontconfig`, through `fontique`, to find system fonts, loaded at run time when present (`fontconfig-dlopen`): MIT-style
   - `libfreetype`: the FreeType License, which it offers as an alternative to GPL-2.0
   - `libexpat`: MIT
   - `libpng`: the libpng licence

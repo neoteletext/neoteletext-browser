@@ -17,3 +17,10 @@ workspace = true
 
 [dev-dependencies]
 decoder.workspace = true
+
+[target.'cfg(target_os = "linux")'.dependencies]
+fontique.workspace = true
+
+# Named for its feature only: nothing is imported from it.
+[package.metadata.cargo-machete]
+ignored = ["fontique"]

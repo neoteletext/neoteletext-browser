@@ -38,7 +38,7 @@ $out_of_date"
 # same no-panic lint list at its root.
 readonly NO_PANIC_ROOTS=(native/protocol/src/lib.rs native/decoder/src/lib.rs native/decoder/src/main.rs native/fetcher/src/main.rs
     native/core/src/lib.rs native/core/src/main.rs native/interface/src/lib.rs native/interface/src/main.rs native/web-opener/src/lib.rs
-    native/keyboard/src/main.rs)
+    native/keyboard/src/main.rs native/sound/src/lib.rs native/sound/src/main.rs native/confine/src/lib.rs)
 
 check_no_panic_lists() {
     step "the no-panic lint list is the same in every crate that reads outside input"

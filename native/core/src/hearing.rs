@@ -1,17 +1,18 @@
-//! What of each channel's sound reaches the interface (`architecture.md`
-//! section 6, the engine's area AUD, decision 38). Every tab is heard, as in
-//! a web browser: a background tab's sound keeps playing until the user
-//! mutes it. Every voice operation is checked here again, as frames are,
-//! and a ledger bounds the samples the decoders can make the interface hold.
+//! What of each channel's sound reaches the sound helper (`architecture.md`
+//! section 6, the engine's area AUD, decisions 38 and 55). Every tab is
+//! heard, as in a web browser: a background tab's sound keeps playing until
+//! the user mutes it. Every voice operation is checked here again, as
+//! frames are, and a ledger bounds the samples the decoders can make the
+//! sound helper hold.
 
 use std::collections::BTreeMap;
 
 use interface_core::canvas::PageKey;
-use protocol::ToInterface;
 use protocol::audio::{Audio, Sound};
 use protocol::decoder::ToDecoder;
+use protocol::sound::ToSound;
 
-/// The most samples of sound the interface holds for one channel: 32 MB
+/// The most samples of sound the sound helper holds for one channel: 32 MB
 /// of 16-bit PCM.
 pub const MAX_HELD_SAMPLES: u64 = 16 * 1024 * 1024;
 /// The most it holds for every channel together: two channels' worth.
@@ -25,11 +26,11 @@ pub const STREAM_HELD_SAMPLES: u32 = 48_000 * 2;
 pub enum Send {
     /// To the decoder of a channel.
     Decoder(u32, ToDecoder),
-    /// To the interface.
-    Interface(ToInterface),
+    /// To the sound helper.
+    Sound(ToSound),
 }
 
-/// What of one channel's sound reached the interface.
+/// What of one channel's sound reached the sound helper.
 #[derive(Debug, Default)]
 struct Heard {
     /// The page the user last opened in the channel's tab.
@@ -62,21 +63,21 @@ impl Hearing {
         vec![Send::Decoder(active, ToDecoder::Opened(page))]
     }
 
-    /// The user muted or unmuted `channel`'s tab: what to tell the
-    /// interface, if it changed.
+    /// The user muted or unmuted `channel`'s tab: what to tell the sound
+    /// helper, if it changed.
     pub fn mute(&mut self, channel: u32, muted: bool) -> Option<Send> {
         let heard = self.channels.entry(channel).or_default();
         if heard.muted == muted {
             return None;
         }
         heard.muted = muted;
-        Some(Send::Interface(ToInterface::Audio { channel, audio: Audio::Mute(muted) }))
+        Some(Send::Sound(ToSound::Audio { channel, audio: Audio::Mute(muted) }))
     }
 
     /// A voice operation from the decoder of `channel`: what to pass on, if
     /// anything. An operation on a sound never defined, beyond its length,
     /// or beyond the ledger is dropped.
-    pub fn decoded(&mut self, channel: u32, audio: Audio) -> Option<ToInterface> {
+    pub fn decoded(&mut self, channel: u32, audio: Audio) -> Option<ToSound> {
         let heard = self.channels.entry(channel).or_default();
         let charge = |heard: &mut Heard, total: &mut u64, sound: Sound, samples: u32, live: bool| -> Option<()> {
             let previous = u64::from(heard.sounds.get(&sound).map_or(0, |(samples, _)| *samples));
@@ -118,7 +119,7 @@ impl Hearing {
             // both from a decoder, and they are refused here too.
             Audio::Reset | Audio::Mute(_) => return None,
         }
-        Some(ToInterface::Audio { channel, audio })
+        Some(ToSound::Audio { channel, audio })
     }
 
     /// `channel` has no decoder any more (its tab closed or moved on, or
@@ -126,7 +127,7 @@ impl Hearing {
     pub fn channel_gone(&mut self, channel: u32) -> Vec<Send> {
         let Some(heard) = self.channels.remove(&channel) else { return Vec::new() };
         self.held = self.held.saturating_sub(heard.held);
-        vec![Send::Interface(ToInterface::Audio { channel, audio: Audio::Reset })]
+        vec![Send::Sound(ToSound::Audio { channel, audio: Audio::Reset })]
     }
 }
 
@@ -147,8 +148,8 @@ mod tests {
     #[test]
     fn every_channel_is_heard_and_its_operations_are_tagged_with_it() {
         let mut hearing = Hearing::default();
-        assert_eq!(hearing.decoded(1, define(10)), Some(ToInterface::Audio { channel: 1, audio: define(10) }));
-        assert_eq!(hearing.decoded(2, define(10)), Some(ToInterface::Audio { channel: 2, audio: define(10) }), "a background tab is heard");
+        assert_eq!(hearing.decoded(1, define(10)), Some(ToSound::Audio { channel: 1, audio: define(10) }));
+        assert_eq!(hearing.decoded(2, define(10)), Some(ToSound::Audio { channel: 2, audio: define(10) }), "a background tab is heard");
         assert!(hearing.decoded(2, start()).is_some());
         assert!(hearing.decoded(3, start()).is_none(), "each channel's sounds are its own");
     }
@@ -171,9 +172,9 @@ mod tests {
     fn muting_tells_the_interface_once_per_change() {
         let mut hearing = Hearing::default();
         assert_eq!(hearing.mute(3, false), None, "channels start unmuted");
-        assert_eq!(hearing.mute(3, true), Some(Send::Interface(ToInterface::Audio { channel: 3, audio: Audio::Mute(true) })));
+        assert_eq!(hearing.mute(3, true), Some(Send::Sound(ToSound::Audio { channel: 3, audio: Audio::Mute(true) })));
         assert_eq!(hearing.mute(3, true), None);
-        assert_eq!(hearing.mute(3, false), Some(Send::Interface(ToInterface::Audio { channel: 3, audio: Audio::Mute(false) })));
+        assert_eq!(hearing.mute(3, false), Some(Send::Sound(ToSound::Audio { channel: 3, audio: Audio::Mute(false) })));
     }
 
     #[test]
@@ -221,7 +222,7 @@ mod tests {
             assert!(hearing.decoded(2, Audio::Define { sound: Sound { handle, generation: 1 }, rate_hz: 48_000, samples: big }).is_some());
         }
         assert!(hearing.decoded(3, Audio::Define { sound: SOUND, rate_hz: 48_000, samples: big }).is_none(), "over the total");
-        assert_eq!(hearing.channel_gone(1), [Send::Interface(ToInterface::Audio { channel: 1, audio: Audio::Reset })]);
+        assert_eq!(hearing.channel_gone(1), [Send::Sound(ToSound::Audio { channel: 1, audio: Audio::Reset })]);
         assert_eq!(hearing.channel_gone(1), []);
         assert!(hearing.decoded(3, Audio::Define { sound: SOUND, rate_hz: 48_000, samples: big }).is_some(), "the gone channel's room is free");
     }

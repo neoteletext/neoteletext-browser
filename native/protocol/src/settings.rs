@@ -30,6 +30,8 @@ const CHANGE_VOLUME: u8 = 4;
 const CHANGE_PROXY: u8 = 5;
 const CHANGE_ADD_LOCAL: u8 = 6;
 const CHANGE_REMOVE_LOCAL: u8 = 7;
+const CHANGE_REMEMBER_HISTORY: u8 = 8;
+const CHANGE_RESTORE_SESSION: u8 = 9;
 
 fn push_proxy(payload: &mut Vec<u8>, proxy: &ProxyView) -> Result<(), ProtocolError> {
     match proxy {
@@ -81,6 +83,8 @@ pub(crate) fn push_view(payload: &mut Vec<u8>, view: &SettingsView) -> Result<()
     for address in &view.local {
         push_text(payload, address, MAX_LOCAL_TEXT)?;
     }
+    push_flag(payload, view.remember_history);
+    push_flag(payload, view.restore_session);
     match &view.refusal {
         Some(refusal) => {
             push_flag(payload, true);
@@ -101,8 +105,10 @@ pub(crate) fn read_view(fields: &mut Fields<'_>) -> Result<SettingsView, Protoco
         return Err(ProtocolError::BadValue("too many local addresses"));
     }
     let local = (0..count).map(|_| fields.text(MAX_LOCAL_TEXT)).collect::<Result<Vec<_>, _>>()?;
+    let remember_history = read_flag(fields)?;
+    let restore_session = read_flag(fields)?;
     let refusal = if read_flag(fields)? { Some(fields.text(MAX_REFUSAL)?) } else { None };
-    Ok(SettingsView { home, sound, volume, proxy, local, refusal })
+    Ok(SettingsView { home, sound, volume, proxy, local, remember_history, restore_session, refusal })
 }
 
 pub(crate) fn push_change(payload: &mut Vec<u8>, change: &SettingChange) -> Result<(), ProtocolError> {
@@ -131,6 +137,14 @@ pub(crate) fn push_change(payload: &mut Vec<u8>, change: &SettingChange) -> Resu
             push_text(payload, address, MAX_LOCAL_TEXT)?;
         }
         SettingChange::RemoveLocal(index) => payload.extend_from_slice(&[CHANGE_REMOVE_LOCAL, *index]),
+        SettingChange::RememberHistory(on) => {
+            payload.push(CHANGE_REMEMBER_HISTORY);
+            push_flag(payload, *on);
+        }
+        SettingChange::RestoreSession(on) => {
+            payload.push(CHANGE_RESTORE_SESSION);
+            push_flag(payload, *on);
+        }
     }
     Ok(())
 }
@@ -144,6 +158,8 @@ pub(crate) fn read_change(fields: &mut Fields<'_>) -> Result<SettingChange, Prot
         CHANGE_PROXY => SettingChange::Proxy(read_proxy(fields)?),
         CHANGE_ADD_LOCAL => SettingChange::AddLocal(fields.text(MAX_LOCAL_TEXT)?),
         CHANGE_REMOVE_LOCAL => SettingChange::RemoveLocal(fields.u8()?),
+        CHANGE_REMEMBER_HISTORY => SettingChange::RememberHistory(read_flag(fields)?),
+        CHANGE_RESTORE_SESSION => SettingChange::RestoreSession(read_flag(fields)?),
         _ => return Err(ProtocolError::BadValue("setting change")),
     })
 }
@@ -159,6 +175,8 @@ mod tests {
             volume: 70,
             proxy: ProxyView::Socks5 { host: "127.0.0.1".into(), port: 1080 },
             local: vec!["192.168.1.20".into()],
+            remember_history: false,
+            restore_session: true,
             refusal: Some("Not an address on this computer or the local network".into()),
         }
     }
@@ -177,6 +195,8 @@ mod tests {
             SettingChange::Proxy(ProxyView::None),
             SettingChange::AddLocal("10.0.0.1".into()),
             SettingChange::RemoveLocal(0),
+            SettingChange::RememberHistory(false),
+            SettingChange::RestoreSession(false),
         ] {
             let mut payload = Vec::new();
             push_change(&mut payload, &change).unwrap();

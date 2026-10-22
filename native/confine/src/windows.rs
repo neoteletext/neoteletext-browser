@@ -13,14 +13,17 @@
 //!   low-integrity images, no dynamic code (Rust needs none), no child
 //!   processes; and for a helper with no window, the Win32k system-call
 //!   filter, so it cannot reach the window system at all.
-//! - **An `AppContainer`** for the decoder (no capabilities, and opted out
-//!   of the all-application-packages permission: a less privileged
-//!   `AppContainer`) and the fetcher (the internet client capability, and
-//!   the private network one when the user allowed local addresses).
-//!   The helper's program must grant read to `ALL APPLICATION PACKAGES`,
-//!   which an installation under Program Files does and a folder of the
-//!   user's does not; when the `AppContainer` start fails, the helper is
-//!   started with the restricted token alone and the report says so.
+//! - **An `AppContainer`** for every process but the interface: the
+//!   decoder and the trusted core in a less privileged one with no
+//!   capabilities, the sound helper with none, the fetcher and keyboard
+//!   with the internet client capability (and the private network one
+//!   when the user allowed local addresses). The program's folder must
+//!   grant read to `ALL APPLICATION PACKAGES`, which an installation under
+//!   Program Files does and the installer sets elsewhere; when the
+//!   `AppContainer` cannot be made or started, the process is not started
+//!   at all (decision 58: security is never downgraded).
+//! - **The interface** has the restricted token at low integrity in place
+//!   of a container, by design: it needs the desktop.
 //!
 //! Only the two pipe handles are inherited, by the handle list; the
 //! environment is the one the trusted core chose, and nothing else.
@@ -37,17 +40,23 @@ use std::io;
 use std::os::windows::ffi::OsStrExt as _;
 use std::os::windows::io::FromRawHandle as _;
 use std::os::windows::process::ExitStatusExt as _;
+use std::path::Path;
 use std::process::ExitStatus;
 use std::ptr;
 
 use windows_sys::Win32::Foundation::{
-    CloseHandle, GetLastError, HANDLE, HANDLE_FLAG_INHERIT, INVALID_HANDLE_VALUE, LocalFree, PSID, SetHandleInformation, WAIT_OBJECT_0,
+    CloseHandle, DUPLICATE_SAME_ACCESS, DuplicateHandle, GetLastError, HANDLE, HANDLE_FLAG_INHERIT, INVALID_HANDLE_VALUE, LocalFree, PSID,
+    SetHandleInformation, WAIT_OBJECT_0,
 };
-use windows_sys::Win32::Security::Authorization::ConvertStringSidToSidW;
+use windows_sys::Win32::Security::Authorization::{
+    ConvertStringSidToSidW, EXPLICIT_ACCESS_W, GRANT_ACCESS, GetNamedSecurityInfoW, NO_MULTIPLE_TRUSTEE, SE_FILE_OBJECT, SetEntriesInAclW,
+    SetNamedSecurityInfoW, TRUSTEE_IS_SID, TRUSTEE_IS_WELL_KNOWN_GROUP, TRUSTEE_W,
+};
 use windows_sys::Win32::Security::Isolation::{CreateAppContainerProfile, DeriveAppContainerSidFromAppContainerName};
 use windows_sys::Win32::Security::{
-    CreateRestrictedToken, DISABLE_MAX_PRIVILEGE, FreeSid, SECURITY_ATTRIBUTES, SECURITY_CAPABILITIES, SID_AND_ATTRIBUTES, SetTokenInformation,
-    TOKEN_ADJUST_DEFAULT, TOKEN_ASSIGN_PRIMARY, TOKEN_DUPLICATE, TOKEN_MANDATORY_LABEL, TOKEN_QUERY, TokenIntegrityLevel,
+    ACL, CreateRestrictedToken, DACL_SECURITY_INFORMATION, DISABLE_MAX_PRIVILEGE, FreeSid, PSECURITY_DESCRIPTOR, SECURITY_ATTRIBUTES, SECURITY_CAPABILITIES,
+    SID_AND_ATTRIBUTES, SetTokenInformation, TOKEN_ADJUST_DEFAULT, TOKEN_ASSIGN_PRIMARY, TOKEN_DUPLICATE, TOKEN_MANDATORY_LABEL, TOKEN_QUERY,
+    TokenIntegrityLevel,
 };
 use windows_sys::Win32::System::Console::{GetStdHandle, STD_ERROR_HANDLE};
 use windows_sys::Win32::System::JobObjects::{
@@ -58,7 +67,9 @@ use windows_sys::Win32::System::JobObjects::{
     JobObjectExtendedLimitInformation, SetInformationJobObject,
 };
 use windows_sys::Win32::System::Pipes::CreatePipe;
-use windows_sys::Win32::System::SystemServices::{SE_GROUP_INTEGRITY, SE_GROUP_USE_FOR_DENY_ONLY};
+use windows_sys::Win32::System::SystemServices::{
+    SE_GROUP_ENABLED, SE_GROUP_INTEGRITY, SE_GROUP_USE_FOR_DENY_ONLY, TIME_ZONE_ID_DAYLIGHT, TIME_ZONE_ID_STANDARD,
+};
 use windows_sys::Win32::System::Threading::{
     CREATE_SUSPENDED, CREATE_UNICODE_ENVIRONMENT, CreateProcessAsUserW, CreateProcessW, DeleteProcThreadAttributeList, EXTENDED_STARTUPINFO_PRESENT,
     GetCurrentProcess, GetExitCodeProcess, INFINITE, InitializeProcThreadAttributeList, LPPROC_THREAD_ATTRIBUTE_LIST, OpenProcessToken,
@@ -66,6 +77,7 @@ use windows_sys::Win32::System::Threading::{
     PROC_THREAD_ATTRIBUTE_MITIGATION_POLICY, PROC_THREAD_ATTRIBUTE_SECURITY_CAPABILITIES, PROCESS_INFORMATION, ResumeThread, STARTF_USESTDHANDLES,
     STARTUPINFOEXW, TerminateProcess, UpdateProcThreadAttribute, WaitForSingleObject,
 };
+use windows_sys::Win32::System::Time::{GetTimeZoneInformation, TIME_ZONE_ID_INVALID, TIME_ZONE_INFORMATION};
 use windows_sys::Win32::System::WindowsProgramming::{PROCESS_CREATION_ALL_APPLICATION_PACKAGES_OPT_OUT, PROCESS_CREATION_CHILD_PROCESS_RESTRICTED};
 
 use crate::{Process, Report, Role, Spawn};
@@ -99,6 +111,12 @@ const PRIVATE_NETWORK_SID: &str = "S-1-15-3-3";
 /// The `AppContainer` profiles, one a role, registered once for the user.
 const CONTAINER_DECODER: &str = "NeoTeletext.Decoder";
 const CONTAINER_NETWORK: &str = "NeoTeletext.Fetcher";
+const CONTAINER_CORE: &str = "NeoTeletext.Core";
+const CONTAINER_SOUND: &str = "NeoTeletext.Sound";
+/// Full access, for the core's settings folder (`GENERIC_ALL`).
+const GENERIC_ALL: u32 = 0x1000_0000;
+/// The grant reaches the folder's files and folders (`SUB_CONTAINERS_AND_OBJECTS_INHERIT`).
+const INHERIT_TO_ALL: u32 = 0x3;
 /// How many attributes a start carries at most.
 const ATTRIBUTES: u32 = 5;
 
@@ -110,6 +128,11 @@ pub struct Inner {
 }
 
 impl Inner {
+    /// The process, for duplicating handles into it.
+    pub(crate) fn raw_process(&self) -> HANDLE {
+        self.process
+    }
+
     pub fn kill(&mut self) -> io::Result<()> {
         if unsafe { TerminateProcess(self.process, 1) } == 0 { Err(io::Error::last_os_error()) } else { Ok(()) }
     }
@@ -322,7 +345,12 @@ fn restricted_token() -> io::Result<Owned> {
 
 /// The `AppContainer`'s SID for a role, its profile made on first use.
 fn container(role: Role) -> io::Result<ContainerSid> {
-    let name = wide(if role == Role::Decoder { CONTAINER_DECODER } else { CONTAINER_NETWORK });
+    let name = wide(match role {
+        Role::Decoder => CONTAINER_DECODER,
+        Role::Core => CONTAINER_CORE,
+        Role::Sound => CONTAINER_SOUND,
+        Role::Network | Role::Interface => CONTAINER_NETWORK,
+    });
     let display = wide("NeoTeletext");
     let description = wide("A helper process of the NeoTeletext browser");
     let mut sid: PSID = ptr::null_mut();
@@ -398,7 +426,9 @@ fn start(
         | mitigation::CONTROL_FLOW_GUARD_ALWAYS_ON
         | mitigation::IMAGE_LOAD_NO_REMOTE_ALWAYS_ON
         | mitigation::IMAGE_LOAD_NO_LOW_LABEL_ALWAYS_ON;
-    if spawn.role != Role::Interface {
+    // No window system for those without a window. The sound helper keeps
+    // it: Core Audio's COM apartments may need it.
+    if matches!(spawn.role, Role::Decoder | Role::Network | Role::Core) {
         policy |= mitigation::WIN32K_SYSTEM_CALL_DISABLE_ALWAYS_ON;
     }
     let policy = [policy, 0_u64];
@@ -409,13 +439,14 @@ fn start(
     let mut security = SECURITY_CAPABILITIES { AppContainerSid: ptr::null_mut(), Capabilities: ptr::null_mut(), CapabilityCount: 0, Reserved: 0 };
     let opt_out: u32 = PROCESS_CREATION_ALL_APPLICATION_PACKAGES_OPT_OUT;
     if let Some((sid, capability_sids)) = container {
-        // SE_GROUP_ENABLED is what a capability carries.
-        capabilities = capability_sids.iter().map(|sid| SID_AND_ATTRIBUTES { Sid: sid.0, Attributes: 0x4 }).collect();
+        // Enabled is what a capability carries.
+        let enabled = u32::try_from(SE_GROUP_ENABLED).unwrap_or(0);
+        capabilities = capability_sids.iter().map(|sid| SID_AND_ATTRIBUTES { Sid: sid.0, Attributes: enabled }).collect();
         security.AppContainerSid = sid.0;
         security.Capabilities = capabilities.as_ptr().cast_mut();
         security.CapabilityCount = u32::try_from(capabilities.len()).unwrap_or(0);
         add_attribute(&attributes, PROC_THREAD_ATTRIBUTE_SECURITY_CAPABILITIES as usize, &security, size_of::<SECURITY_CAPABILITIES>())?;
-        if spawn.role == Role::Decoder {
+        if matches!(spawn.role, Role::Decoder | Role::Core) {
             add_attribute(&attributes, PROC_THREAD_ATTRIBUTE_ALL_APPLICATION_PACKAGES_POLICY as usize, &opt_out, size_of::<u32>())?;
         }
     }
@@ -470,6 +501,97 @@ fn start(
     Ok(information)
 }
 
+/// Grants the container `sid` full access to `folder` and everything in
+/// it: the trusted core's settings (decision 56).
+fn grant(folder: &Path, sid: &ContainerSid) -> io::Result<()> {
+    let path = wide(folder);
+    let mut old: *mut ACL = ptr::null_mut();
+    let mut descriptor: PSECURITY_DESCRIPTOR = ptr::null_mut();
+    let read = unsafe {
+        GetNamedSecurityInfoW(
+            path.as_ptr(),
+            SE_FILE_OBJECT,
+            DACL_SECURITY_INFORMATION,
+            ptr::null_mut(),
+            ptr::null_mut(),
+            &raw mut old,
+            ptr::null_mut(),
+            &raw mut descriptor,
+        )
+    };
+    if read != 0 {
+        return Err(io::Error::from_raw_os_error(i32::try_from(read).unwrap_or(0)));
+    }
+    let access = EXPLICIT_ACCESS_W {
+        grfAccessPermissions: GENERIC_ALL,
+        grfAccessMode: GRANT_ACCESS,
+        grfInheritance: INHERIT_TO_ALL,
+        Trustee: TRUSTEE_W {
+            pMultipleTrustee: ptr::null_mut(),
+            MultipleTrusteeOperation: NO_MULTIPLE_TRUSTEE,
+            TrusteeForm: TRUSTEE_IS_SID,
+            TrusteeType: TRUSTEE_IS_WELL_KNOWN_GROUP,
+            ptstrName: sid.0.cast(),
+        },
+    };
+    let mut new: *mut ACL = ptr::null_mut();
+    let merged = unsafe { SetEntriesInAclW(1, &raw const access, old, &raw mut new) };
+    let written = if merged == 0 {
+        unsafe {
+            SetNamedSecurityInfoW(path.as_ptr().cast_mut(), SE_FILE_OBJECT, DACL_SECURITY_INFORMATION, ptr::null_mut(), ptr::null_mut(), new, ptr::null())
+        }
+    } else {
+        merged
+    };
+    unsafe {
+        LocalFree(new.cast());
+        LocalFree(descriptor.cast());
+    }
+    if written != 0 { Err(io::Error::from_raw_os_error(i32::try_from(written).unwrap_or(0))) } else { Ok(()) }
+}
+
+/// Duplicates `file`'s handle into the process `into` and returns its
+/// value there, for the broker to send the core (decision 56).
+pub(crate) fn duplicate_into(file: &File, into: HANDLE) -> io::Result<u64> {
+    use std::os::windows::io::AsRawHandle as _;
+    let mut theirs: HANDLE = 0;
+    if unsafe { DuplicateHandle(GetCurrentProcess(), file.as_raw_handle() as HANDLE, into, &raw mut theirs, 0, 0, DUPLICATE_SAME_ACCESS) } == 0 {
+        return Err(last_error());
+    }
+    u64::try_from(theirs).map_err(|_| io::ErrorKind::InvalidData.into())
+}
+
+/// Seconds in a minute: Windows gives a zone's bias in minutes.
+const SECONDS_PER_MINUTE: i32 = 60;
+
+/// The local time zone's offset from UTC now, in seconds: the negated bias
+/// `GetTimeZoneInformation` gives, with the daylight or standard bias in
+/// force now added to it.
+pub fn local_offset() -> io::Result<i32> {
+    // SAFETY: an all-zero TIME_ZONE_INFORMATION is a valid value of a plain
+    // C struct, and the call writes into the one it is given.
+    let mut information: TIME_ZONE_INFORMATION = unsafe { std::mem::zeroed() };
+    let zone = unsafe { GetTimeZoneInformation(&raw mut information) };
+    let bias = match zone {
+        TIME_ZONE_ID_INVALID => return Err(last_error()),
+        TIME_ZONE_ID_DAYLIGHT => information.Bias.saturating_add(information.DaylightBias),
+        TIME_ZONE_ID_STANDARD => information.Bias.saturating_add(information.StandardBias),
+        _ => information.Bias,
+    };
+    Ok(bias.saturating_mul(SECONDS_PER_MINUTE).saturating_neg())
+}
+
+/// The file of a handle value the broker duplicated into this process.
+pub(crate) fn file_from_handle_value(value: u64) -> io::Result<File> {
+    let handle = HANDLE::try_from(value).map_err(|_| io::ErrorKind::InvalidData)?;
+    if handle == 0 || handle == INVALID_HANDLE_VALUE {
+        return Err(io::ErrorKind::InvalidData.into());
+    }
+    // The broker made this handle for this process and sent its value
+    // once; it is ours alone to own.
+    Ok(unsafe { File::from_raw_handle(handle as _) })
+}
+
 /// Starts a helper confined as its role says.
 pub fn spawn(spawn: &Spawn<'_>) -> io::Result<Process> {
     let (their_stdin, our_stdin) = pipe()?;
@@ -482,38 +604,32 @@ pub fn spawn(spawn: &Spawn<'_>) -> io::Result<Process> {
         inherited.push(stderr);
     }
     let job = job(spawn.role)?;
-    let mut report =
-        Report { layers: vec![String::from("job object"), String::from("mitigation policies"), String::from("no child processes")], missing: Vec::new() };
-    let mut started = None;
-    // NEOTELETEXT_CONFINE_NO_CONTAINER makes a helper start as it would on
-    // a folder the container may not read, for checking that path.
-    let no_container = std::env::var_os("NEOTELETEXT_CONFINE_NO_CONTAINER").is_some();
-    if spawn.role != Role::Interface && !no_container {
-        match container(spawn.role) {
-            Ok(sid) => {
-                let mut capabilities = Vec::new();
-                if spawn.role == Role::Network {
-                    capabilities.push(Sid::parse(INTERNET_CLIENT_SID)?);
-                    if spawn.local_network {
-                        capabilities.push(Sid::parse(PRIVATE_NETWORK_SID)?);
-                    }
-                }
-                match start(spawn, &inherited, their_stdin.0, their_stdout.0, Some((&sid, &capabilities))) {
-                    Ok(information) => {
-                        report.layers.push(String::from(if spawn.role == Role::Decoder { "less privileged AppContainer" } else { "AppContainer" }));
-                        started = Some(information);
-                    }
-                    Err(error) => report.missing.push(format!("an AppContainer ({error}; the program folder must grant read to ALL APPLICATION PACKAGES)")),
-                }
-            }
-            Err(error) => report.missing.push(format!("an AppContainer ({error})")),
-        }
-    }
-    let information = if let Some(information) = started {
-        information
-    } else {
+    let mut report = Report { layers: vec![String::from("job object"), String::from("mitigation policies"), String::from("no child processes")] };
+    let information = if spawn.role == Role::Interface {
+        // The interface's sandbox by design, not a fallback: it needs the
+        // desktop, which a container cannot reach.
         let information = start(spawn, &inherited, their_stdin.0, their_stdout.0, None)?;
         report.layers.push(String::from("restricted token at low integrity"));
+        information
+    } else {
+        // Every other role runs in its container or not at all
+        // (decision 58).
+        let sid = container(spawn.role).map_err(|error| io::Error::new(error.kind(), format!("cannot make its AppContainer: {error}")))?;
+        let mut capabilities = Vec::new();
+        if spawn.role == Role::Network {
+            capabilities.push(Sid::parse(INTERNET_CLIENT_SID)?);
+            if spawn.local_network {
+                capabilities.push(Sid::parse(PRIVATE_NETWORK_SID)?);
+            }
+        }
+        if spawn.role == Role::Core
+            && let Some(folder) = spawn.writable
+        {
+            grant(folder, &sid)?;
+        }
+        let information = start(spawn, &inherited, their_stdin.0, their_stdout.0, Some((&sid, &capabilities)))
+            .map_err(|error| io::Error::new(error.kind(), format!("cannot start in its AppContainer: {error}")))?;
+        report.layers.push(String::from(if matches!(spawn.role, Role::Decoder | Role::Core) { "less privileged AppContainer" } else { "AppContainer" }));
         information
     };
     let process = Owned(information.hProcess);

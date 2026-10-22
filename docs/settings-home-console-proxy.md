@@ -20,7 +20,7 @@ The browser keeps a few settings between runs, and the bookmarks with them. The 
 | Local addresses allowed | Up to 16 addresses on this computer or the local network | None | The settings panel (a security setting) |
 | Bookmarks | Up to 1 000 addresses | None | The star in the strip |
 
-Nothing else is kept: no history, no cookies (the engine keeps cookies only for the life of a fetcher, its REQ-SEC-013), no window position.
+Nothing else is kept: no history, no cookies (the engine keeps cookies only for the life of a fetcher, its REQ-SEC-013), no window position. *Amended 22 October 2026:* history and bookmarks are kept (decision 57), and the window and its tabs as the session (decision 59), each in a file of its own (`history-and-bookmarks.md`).
 
 ### 1.2 The file
 

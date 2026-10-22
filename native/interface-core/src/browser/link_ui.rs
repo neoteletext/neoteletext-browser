@@ -365,7 +365,7 @@ mod tests {
     /// A browser with its first page zoomed and open, its image at `VERSION`.
     fn opened() -> (Browser, Recorder, PageKey, Rect) {
         let mut browser = Browser::new(Frame { left_inset: 0.0, window_buttons: true });
-        browser.set_tabs(vec![TabInfo { title: "one".into(), colour: 0, channel: 7, muted: false }], 0);
+        browser.set_tabs(vec![TabInfo { title: "one".into(), colour: 0, channel: 7, muted: false, private: false }], 0);
         browser.set_strip(StripState { address: "https://news.invalid/".into(), identity: "news.invalid".into(), encrypted: true, ..StripState::default() });
         browser.set_channel(channel());
         let mut canvas = Recorder::new();

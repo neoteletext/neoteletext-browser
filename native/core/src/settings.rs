@@ -1,6 +1,8 @@
-//! The settings and bookmarks the trusted core keeps between runs
-//! (`settings-home-console-proxy.md` section 1, requirements 19.1, 19.2
-//! and 19.5): one text file, read strictly and written whole.
+//! The settings the trusted core keeps between runs
+//! (`settings-home-console-proxy.md` section 1, requirements 19.1 and
+//! 19.2, with "Remember history" and the bookmarks bar of
+//! `history-and-bookmarks.md`): one text file, read strictly and written
+//! whole. The bookmarks are in a file of their own (`bookmarks.rs`).
 
 use std::net::IpAddr;
 use std::path::{Path, PathBuf};
@@ -20,8 +22,6 @@ const ALLOW_LOCAL: &str = "allow-local";
 pub const MAX_LINE: usize = ALLOW_LOCAL.len() + 1 + MAX_VALUE;
 /// The most local addresses allowed (section 1.1).
 pub const MAX_LOCAL: usize = 16;
-/// The most bookmarks kept.
-pub const MAX_BOOKMARKS: usize = 1000;
 /// The loudest volume.
 pub const MAX_VOLUME: u8 = 100;
 pub use crate::address::START_PAGE;
@@ -82,6 +82,7 @@ impl Proxy {
 
 /// The settings (section 1.1).
 #[derive(Clone, Debug, PartialEq, Eq)]
+#[allow(clippy::struct_excessive_bools, reason = "independent settings, each on or off, as the file and the panel keep them")]
 pub struct Settings {
     /// The home address.
     pub home: String,
@@ -93,13 +94,17 @@ pub struct Settings {
     pub proxy: Option<Proxy>,
     /// Addresses on this computer or the local network allowed.
     pub local: Vec<IpAddr>,
-    /// The bookmarks, in the order added.
-    pub bookmarks: Vec<String>,
+    /// History is remembered (requirement 20.7).
+    pub remember_history: bool,
+    /// The bookmarks bar is shown (requirement 20.18).
+    pub bar: bool,
+    /// The last session is restored at start (requirement 20.24).
+    pub restore: bool,
 }
 
 impl Default for Settings {
     fn default() -> Self {
-        Self { home: START_PAGE.to_owned(), sound: true, volume: MAX_VOLUME, proxy: None, local: Vec::new(), bookmarks: Vec::new() }
+        Self { home: START_PAGE.to_owned(), sound: true, volume: MAX_VOLUME, proxy: None, local: Vec::new(), remember_history: true, bar: false, restore: true }
     }
 }
 
@@ -113,8 +118,8 @@ pub fn is_local(address: IpAddr) -> bool {
     }
 }
 
-/// An address the home and bookmarks may hold: the start page, or one the
-/// address rules accept, in their form.
+/// An address the home may hold: the start page, or one the address rules
+/// accept, in their form, without its page.
 #[must_use]
 pub fn checked_address(text: &str) -> Option<String> {
     if text == START_PAGE {
@@ -154,19 +159,17 @@ impl Settings {
     /// Takes one line; false when it breaks a rule or names nothing known.
     fn take(&mut self, line: &str) -> bool {
         let (name, value) = line.split_once(' ').unwrap_or((line, ""));
+        let switch = |value: &str| match value {
+            "on" => Some(true),
+            "off" => Some(false),
+            _ => None,
+        };
         match name {
             "home" => checked_address(value).map(|home| self.home = home).is_some(),
-            "sound" => match value {
-                "on" => {
-                    self.sound = true;
-                    true
-                }
-                "off" => {
-                    self.sound = false;
-                    true
-                }
-                _ => false,
-            },
+            "sound" => switch(value).map(|on| self.sound = on).is_some(),
+            "history" => switch(value).map(|on| self.remember_history = on).is_some(),
+            "bar" => switch(value).map(|on| self.bar = on).is_some(),
+            "restore" => switch(value).map(|on| self.restore = on).is_some(),
             "volume" => value.parse::<u8>().ok().filter(|&volume| volume <= MAX_VOLUME).map(|volume| self.volume = volume).is_some(),
             "proxy" => {
                 let mut parts = value.split(' ');
@@ -178,13 +181,6 @@ impl Settings {
             ALLOW_LOCAL => match value.parse::<IpAddr>() {
                 Ok(address) if is_local(address) && self.local.len() < MAX_LOCAL && !self.local.contains(&address) => {
                     self.local.push(address);
-                    true
-                }
-                _ => false,
-            },
-            "bookmark" => match checked_address(value) {
-                Some(bookmark) if self.bookmarks.len() < MAX_BOOKMARKS && !self.bookmarks.contains(&bookmark) => {
-                    self.bookmarks.push(bookmark);
                     true
                 }
                 _ => false,
@@ -204,7 +200,9 @@ impl Settings {
         ];
         lines.extend(self.proxy.iter().map(Proxy::line));
         lines.extend(self.local.iter().map(|address| format!("{ALLOW_LOCAL} {address}")));
-        lines.extend(self.bookmarks.iter().map(|bookmark| format!("bookmark {bookmark}")));
+        lines.push(format!("history {}", if self.remember_history { "on" } else { "off" }));
+        lines.push(format!("bar {}", if self.bar { "on" } else { "off" }));
+        lines.push(format!("restore {}", if self.restore { "on" } else { "off" }));
         let mut text = lines.join("\n");
         text.push('\n');
         text
@@ -288,7 +286,9 @@ mod tests {
             volume: 40,
             proxy: Some(Proxy::Socks5 { host: "127.0.0.1".into(), port: 1080 }),
             local: vec!["192.168.1.20".parse().unwrap()],
-            bookmarks: vec!["https://news.example/teletext/".into(), START_PAGE.into()],
+            remember_history: false,
+            bar: true,
+            restore: false,
         };
         let (read, dropped) = Settings::read(&settings.text());
         assert_eq!((read, dropped), (settings, Vec::<String>::new()));
@@ -299,14 +299,16 @@ mod tests {
     /// stand.
     #[test]
     fn the_file_is_read_strictly() {
-        let text = "neoteletext-settings 1\nvolume 101\nvolume 30\nsound maybe\nhome javascript:alert(1)\nproxy ftp p.example 21\nproxy http p.example 0\nallow-local 93.184.216.34\nallow-local 10.0.0.1\nbookmark not an address\nunknown thing\nbookmark https://a.example/\nbookmark https://a.example/\n";
+        let text = "neoteletext-settings 1\nvolume 101\nvolume 30\nsound maybe\nhome javascript:alert(1)\nproxy ftp p.example 21\nproxy http p.example 0\nallow-local 93.184.216.34\nallow-local 10.0.0.1\nhistory maybe\nbar off\nunknown thing\nbookmark https://a.example/\n";
         let (settings, dropped) = Settings::read(text);
         assert_eq!(settings.volume, 30);
         assert!(settings.sound, "the default stands");
         assert_eq!(settings.home, START_PAGE);
         assert_eq!(settings.proxy, None);
         assert_eq!(settings.local, ["10.0.0.1".parse::<IpAddr>().unwrap()], "only a local address may be allowed");
-        assert_eq!(settings.bookmarks.len(), 1, "a bookmark once");
+        assert!(settings.remember_history && !settings.bar);
+        // A bookmark line is no longer a setting: bookmarks are in their own
+        // file (requirement 19.2, amended by decision 57).
         assert_eq!(dropped.len(), 9, "{dropped:?}");
         assert_eq!(Settings::read("volume 30\n").0.volume, MAX_VOLUME, "no version line: the defaults");
         let long = format!("{VERSION_LINE}\nhome https://{}.example/\n", "a".repeat(MAX_VALUE));
@@ -315,28 +317,25 @@ mod tests {
         assert_eq!(Settings::read(&huge).0, Settings::default());
     }
 
-    /// Requirement 19.5: a bookmark as long as the address field allows is
+    /// Requirement 19.1: a home as long as the address field allows is
     /// kept between runs; its line is its name and the address.
     #[test]
     fn the_longest_address_is_kept() {
         let path = "a".repeat(protocol::MAX_ADDRESS - "https://a.example/".len());
         let address = format!("https://a.example/{path}");
         assert_eq!(checked_address(&address).as_deref(), Some(address.as_str()), "the address rules take it");
-        let settings = Settings { home: address.clone(), bookmarks: vec![address], ..Settings::default() };
+        let settings = Settings { home: address, ..Settings::default() };
         assert_eq!(Settings::read(&settings.text()), (settings, Vec::new()));
     }
 
     #[test]
-    fn at_most_16_local_addresses_and_1000_bookmarks() {
+    fn at_most_16_local_addresses() {
         let mut text = String::from("neoteletext-settings 1\n");
         for n in 0..20 {
             let _ = writeln!(text, "allow-local 10.0.0.{n}");
         }
-        for n in 0..1002 {
-            let _ = writeln!(text, "bookmark https://b{n}.example/");
-        }
         let (settings, _) = Settings::read(&text);
-        assert_eq!((settings.local.len(), settings.bookmarks.len()), (MAX_LOCAL, MAX_BOOKMARKS));
+        assert_eq!(settings.local.len(), MAX_LOCAL);
     }
 
     /// Requirement 19.1: a write that stops before its rename leaves the

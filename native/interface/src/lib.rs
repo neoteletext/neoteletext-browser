@@ -15,7 +15,6 @@
     clippy::unimplemented
 )]
 
-pub mod audio;
 pub mod image;
 #[cfg(feature = "interaction")]
 pub mod keys;

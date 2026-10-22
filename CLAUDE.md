@@ -8,7 +8,7 @@ A desktop browser for teletext channels on the web, built on the neoteletext eng
 
 - `docs/requirements.md`: every requirement, numbered by section ("Requirement 6.3"), each with Statement, Reason, Source, Verification and a dated State. The only normative text.
 - `docs/architecture.md`: the design. Section 2 is the owner's decisions (Decision n, with a "Now" column); section 5 the engine and its pinned commit; section 15 what is built; section 17 the glossary.
-- `docs/security-analysis.md`, and one security analysis per feature beside its design: `hyperlinks.md` with `hyperlinks-security.md`, `interaction.md` with `interaction-security.md`.
+- `docs/security-analysis.md`, and one security analysis per feature beside its design: `hyperlinks.md` with `hyperlinks-security.md`, `interaction.md` with `interaction-security.md`, `sandboxing.md` with `sandboxing-security.md`, `history-and-bookmarks.md` with `history-and-bookmarks-security.md`.
 - `docs/licensing.md` and `CREDITS.md`.
 - `docs/native-interface-design.md`: how the native interface was chosen and what was built when.
 
@@ -27,5 +27,5 @@ A desktop browser for teletext channels on the web, built on the neoteletext eng
 - Gates: `scripts/check.sh commit` (pre-commit), `scripts/check.sh full` (pre-push; its Linux stage runs on `NEOTELETEXT_LINUX_HOST`, `foundintelquiet4060` by default).
 - The reference channel: `cargo run -p neoteletext-site -- terminal [port] [--relay URL] [--podcast FILE.wav]`.
 - A local qrkeyboard relay for tests: `NEOTELETEXT_QRKEYBOARD_RELAY` names one; qrkeyboard.com runs protocol 3 since 21 October 2026.
-- Diagnostics on standard error: `NEOTELETEXT_AUDIO_TRACE=1` reports the sound operations and the device's peak level; `NEOTELETEXT_FRAME_TRACE=1` reports every frame drawn and its cost, and every page frame and update that arrives. Each helper reports what confined it at start (`confine`); on Windows `NEOTELETEXT_CONFINE_NO_CONTAINER=1` starts the decoder and fetcher without their AppContainer, as on a folder the container may not read.
+- Diagnostics on standard error: `NEOTELETEXT_AUDIO_TRACE=1` reports the sound operations and the device's peak level; `NEOTELETEXT_FRAME_TRACE=1` reports every frame drawn and its cost, and every page frame and update that arrives. Each helper reports what confined it at start (`confine`); every layer is required, and a process that cannot have one does not run (decision 58).
 - Windows: built and tested by hand in the virtual machine (`DEVELOPMENT.md` section 12.1).

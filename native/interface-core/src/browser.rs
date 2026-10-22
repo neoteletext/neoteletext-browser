@@ -19,18 +19,23 @@ use crate::editor::Editor;
 use crate::geometry::{Point, Rect};
 use crate::theme::{
     ADDRESS, AXIS, BANK_COLOURS, BANK_COUNT, BANK_NAME, BANK_RANGE, BLACK, BUTTON, CELL_AVAILABLE, CELL_EMPTY, CELL_PULSE, COLUMN_HEAD, Colour, DIM, FIELD,
-    FIELD_INK, FIELD_SELECTION, GLYPH, GREEN, HEADING, INSECURE, LEGEND, MUTED, PANEL, RED, ROW_NUMBER, ROW_STATUS, ROW_TITLE, RULE, RULE_SOFT, SECURE,
-    SELECTED, STAR_ON, TAB_COLOURS, TAB_TITLE, UPDATED, WHITE, WINDOW, YELLOW, mix,
+    FIELD_INK, FIELD_SELECTION, GLYPH, GREEN, HEADING, INSECURE, LEGEND, MUTED, PANEL, PRIVATE, RED, ROW_NUMBER, ROW_STATUS, ROW_TITLE, RULE, RULE_SOFT,
+    SECURE, SELECTED, STAR_ON, TAB_COLOURS, TAB_TITLE, UPDATED, WHITE, WINDOW, YELLOW, mix,
 };
 use crate::ui::{HAIRLINE, border, centred, label, left_centred, outline, right_centred};
 use crate::wall::{CellClick, UPDATE_GLOW_MILLISECONDS, UPDATE_MARK_MILLISECONDS, Wall, WallPage, glow, since};
 
+mod bookmarks_ui;
 mod console_ui;
+mod history_ui;
 #[cfg(feature = "links")]
 mod link_ui;
+mod popup_ui;
 mod settings_ui;
+mod star_ui;
 #[cfg(feature = "interaction")]
 mod terminal_ui;
+mod widgets;
 #[cfg(feature = "interaction")]
 pub use terminal_ui::{CursorView, TypingView};
 #[cfg(feature = "phone-keyboard")]
@@ -50,6 +55,8 @@ const TAB_MIN_WIDTH: f64 = 90.0;
 const TAB_GAP: f64 = 4.0;
 const TAB_TEXT_INSET: f64 = 14.0;
 const TAB_CLOSE: f64 = 22.0;
+/// A private tab's mark, before its title.
+const PRIVATE_MARK: f64 = 10.0;
 /// A tab's sound button, before its close button, as Chrome places it.
 const TAB_SPEAKER: f64 = 24.0;
 /// The speaker glyph's half height; its parts are fractions of it.
@@ -76,6 +83,7 @@ const SHACKLE_WIDTH: f64 = 10.0;
 const SHACKLE_HEIGHT: f64 = 8.0;
 const SHACKLE_THICKNESS: f64 = 2.5;
 const LOCK_GAP: f64 = 12.0;
+/// The star's size, in the strip and beside a bookmark's suggestion.
 const STAR_RADIUS: f64 = 11.0;
 const STAR_INNER: f64 = 0.45;
 const STAR_POINTS: usize = 5;
@@ -185,6 +193,8 @@ pub struct TabInfo {
     pub channel: u32,
     /// The user muted the tab.
     pub muted: bool,
+    /// A private tab, which records no history (requirement 20.8).
+    pub private: bool,
 }
 
 /// What the trusted strip shows. The trusted core decides all of it; the
@@ -208,6 +218,8 @@ pub struct StripState {
     pub bookmarked: bool,
     /// The address is the browser's own start page, `neoteletext:home`.
     pub built_in: bool,
+    /// The tab is private: it records no history (requirement 20.8).
+    pub private: bool,
     /// What the strip says for a while, when not empty: a change of a
     /// security setting, a proxy that refused (requirements 19.3, 19.10).
     pub notice: String,
@@ -249,6 +261,34 @@ pub enum Output {
     Bookmark,
     /// Strip input: open the home address (requirement 19.6).
     Home,
+    /// Strip input: what the history panel asks for (requirement 20.4).
+    History(crate::library::HistoryRequest),
+    /// Strip input: what the bookmarks manager asks for (requirement 20.17).
+    Bookmarks(crate::library::BookmarkRequest),
+    /// Strip input: what the star's popover asks for (requirement 20.16).
+    Star(crate::library::StarRequest),
+    /// Strip input: what the bookmarks bar asks for (requirement 20.18).
+    Bar(crate::library::BarRequest),
+    /// The address field's text, for suggestions (requirement 20.11).
+    Suggest(String),
+    /// Strip input: open a suggestion, by its number.
+    Suggestion {
+        /// The suggestion's number.
+        number: u32,
+        /// In a new tab.
+        new_tab: bool,
+    },
+    /// Back's or Forward's list, asked for (requirement 20.10).
+    TabList(bool),
+    /// Strip input: go this many steps back or forward.
+    GoTo {
+        /// Forward, or back.
+        forward: bool,
+        /// How many steps.
+        steps: u8,
+    },
+    /// Strip input: open a private tab (requirement 20.8).
+    NewPrivateTab,
     /// Strip input: a change the settings panel asks for (requirement 19.3).
     Setting(crate::settings::SettingChange),
     /// The developer console opened or closed (requirement 19.8).
@@ -257,8 +297,6 @@ pub enum Output {
     MuteTab(usize),
     /// Mute every tab, or unmute every tab.
     MuteAll(bool),
-    /// Open the browser's menu.
-    Menu,
     /// Something the window should do.
     Window(WindowAction),
     /// Whether text input, including input methods, goes to the address field.
@@ -444,6 +482,18 @@ pub struct Browser {
     settings: settings_ui::SettingsUi,
     /// The developer console (requirement 19.8).
     console: console_ui::ConsoleUi,
+    /// The history panel (requirement 20.4).
+    history: history_ui::HistoryUi,
+    /// The bookmarks manager (requirement 20.17).
+    bookmarks: bookmarks_ui::BookmarksUi,
+    /// The star's popover (requirement 20.16).
+    star: star_ui::StarUi,
+    /// The bookmarks bar (requirement 20.18).
+    bar: star_ui::BarUi,
+    /// The menu, Back's and Forward's lists, and the suggestions.
+    popups: popup_ui::PopupUi,
+    /// The last press asked for a new tab: Shift was held.
+    press_new_tab: bool,
     /// Hyperlinks (`hyperlinks.md`).
     #[cfg(feature = "links")]
     links: link_ui::LinkUi,
@@ -486,6 +536,12 @@ impl Browser {
             body: Rect::ZERO,
             settings: settings_ui::SettingsUi::default(),
             console: console_ui::ConsoleUi::default(),
+            history: history_ui::HistoryUi::default(),
+            bookmarks: bookmarks_ui::BookmarksUi::default(),
+            star: star_ui::StarUi::default(),
+            bar: star_ui::BarUi::default(),
+            popups: popup_ui::PopupUi::default(),
+            press_new_tab: false,
             #[cfg(feature = "links")]
             links: link_ui::LinkUi::default(),
             #[cfg(feature = "interaction")]
@@ -617,8 +673,12 @@ impl Browser {
         let since_update =
             |limit: u64, everywhere: bool| self.updates.iter().any(|&(index, at)| (everywhere || in_bank(index)) && now.saturating_sub(at) < limit);
         let rings = !self.overview_folded && !self.console.open();
+        // A held Back or Forward opens its list at its time; Undo ends.
+        let deadline = self.hold_deadline(now).into_iter().chain(self.bookmarks_deadline(now)).min();
         if self.wall.animating(now) {
             Some(SMOOTH_FRAME_MILLISECONDS)
+        } else if deadline.is_some() {
+            deadline
         } else if self.pulses.iter().any(|&(_, start)| now.saturating_sub(start) < PULSE_MILLISECONDS)
             || since_update(UPDATE_GLOW_MILLISECONDS, false)
             || (rings && since_update(UPDATE_RING_MILLISECONDS, true))
@@ -645,7 +705,8 @@ impl Browser {
         let echoes = self.settle_echoes(now);
         #[cfg(not(feature = "interaction"))]
         let echoes = false;
-        self.pulses.len() != before || self.updates.len() != updates || echoes
+        let held = self.settle_hold(now);
+        self.pulses.len() != before || self.updates.len() != updates || echoes || held
     }
 
     fn page_key(&self, index: usize) -> Option<PageKey> {
@@ -696,9 +757,33 @@ impl Browser {
     }
 
     fn stop_editing(&mut self) {
+        self.close_suggestions();
         if self.editing {
             self.editing = false;
             self.outputs.push(Output::TextInput(false));
+        }
+    }
+
+    /// Whether a panel, popover or list of the strip is open, which then
+    /// takes the keys rather than the page's channel.
+    #[cfg(feature = "interaction")]
+    fn strip_has_keys(&self) -> bool {
+        self.settings_open() || self.history_open() || self.bookmarks_open() || self.star_open() || self.popup_open()
+    }
+
+    /// Closes every panel of the strip, before another opens: one at a time.
+    fn close_panels(&mut self) {
+        if self.star_open() {
+            self.star_done();
+        }
+        if self.settings_open() {
+            self.toggle_settings();
+        }
+        if self.history_open() {
+            self.set_history_open(false);
+        }
+        if self.bookmarks_open() {
+            self.toggle_bookmarks();
         }
     }
 
@@ -770,6 +855,9 @@ impl Browser {
 
     /// The main button was released.
     pub fn pointer_released(&mut self) {
+        self.release_back_or_forward();
+        let new_tab = self.press_new_tab;
+        self.bookmarks_released(new_tab);
         self.wall.pointer_released();
         // A button the channel saw pressed is released to it.
         #[cfg(feature = "interaction")]
@@ -779,7 +867,16 @@ impl Browser {
     /// A press of the main button, with `extend` when Shift is held.
     #[allow(clippy::too_many_lines, reason = "one hit-test per part of the window, in drawing order")]
     pub fn pointer_pressed<C: Canvas + ?Sized>(&mut self, canvas: &mut C, extend: bool, now: u64) -> bool {
-        // The settings panel is drawn over everything below the strip.
+        // Shift opens what a press opens in a new tab.
+        self.press_new_tab = extend;
+        // The drop-downs and the star's popover are over everything; the
+        // panels over everything below the strip.
+        if self.popups_press(self.pointer, extend) || self.star_press(self.pointer) {
+            return true;
+        }
+        if self.history_press(self.pointer, extend) || self.bookmarks_press(self.pointer) {
+            return true;
+        }
         if self.settings_press(self.pointer) {
             return true;
         }
@@ -819,16 +916,29 @@ impl Browser {
             });
             return true;
         }
+        // Back and Forward act when released, or open their lists when held.
+        for (rect, forward, enabled) in [(regions.back, false, self.strip.back), (regions.forward, true, self.strip.forward)] {
+            if rect.contains(point) {
+                if enabled {
+                    self.hold_back_or_forward(forward, now);
+                }
+                return true;
+            }
+        }
+        if regions.gear.contains(point) {
+            self.toggle_settings();
+            return true;
+        }
+        if regions.menu.contains(point) {
+            self.toggle_menu();
+            return true;
+        }
         let mute_all = Output::MuteAll(!self.all_muted());
         let action = [
             (regions.new_tab, Output::NewTab),
-            (regions.back, Output::Back),
-            (regions.forward, Output::Forward),
             (regions.home, Output::Home),
-            (regions.gear, Output::Menu),
             (regions.star, Output::Bookmark),
             (regions.mute_all, mute_all),
-            (regions.menu, Output::Menu),
             (regions.minimise, Output::Window(WindowAction::Minimise)),
             (regions.maximise, Output::Window(WindowAction::Maximise)),
             (regions.close, Output::Window(WindowAction::Close)),
@@ -836,27 +946,13 @@ impl Browser {
         .into_iter()
         .find(|(rect, _)| rect.contains(point));
         if let Some((_, output)) = action {
-            // The gear opens the settings panel.
-            if output == Output::Menu && regions.gear.contains(point) {
-                self.toggle_settings();
-                return true;
-            }
-            // The menu holds the phone keyboard.
-            #[cfg(feature = "phone-keyboard")]
-            if output == Output::Menu {
-                self.toggle_phone_panel();
-                return true;
-            }
-            let allowed = match output {
-                Output::Back => self.strip.back,
-                Output::Forward => self.strip.forward,
-                _ => true,
-            };
-            if allowed {
-                self.outputs.push(output);
-            }
+            self.outputs.push(output);
             return true;
         }
+        if self.bar_press(point, extend) {
+            return true;
+        }
+        let regions = &self.regions;
         if regions.strip.contains(point) {
             self.outputs.push(Output::Window(WindowAction::Drag));
             return false;
@@ -926,8 +1022,26 @@ impl Browser {
         self.scroll_by(lines * LINE_HEIGHT, now)
     }
 
+    /// A secondary click: on Back or Forward, its list is asked for
+    /// (requirement 20.10).
+    pub fn secondary_pressed(&mut self) -> bool {
+        for (rect, forward, enabled) in [(self.regions.back, false, self.strip.back), (self.regions.forward, true, self.strip.forward)] {
+            if rect.contains(self.pointer) {
+                if enabled {
+                    self.ask_tab_list(forward);
+                }
+                return true;
+            }
+        }
+        // Anywhere else, an open list closes.
+        self.close_popup()
+    }
+
     /// Scrolls whatever is under the pointer.
     pub fn scroll_by(&mut self, distance: f64, now: u64) -> bool {
+        if self.history_scroll(distance) || self.bookmarks_scroll(distance) {
+            return true;
+        }
         if self.console_scroll(distance) {
             return true;
         }
@@ -962,6 +1076,18 @@ impl Browser {
         if modifiers.alt && key == Key::Home {
             self.outputs.push(Output::Home);
             return true;
+        }
+        if key == Key::Escape && self.close_popup() {
+            return true;
+        }
+        if let Some(changed) = self.star_key(key, modifiers.shift) {
+            return changed;
+        }
+        if let Some(changed) = self.history_key(key, modifiers.shift) {
+            return changed;
+        }
+        if let Some(changed) = self.bookmarks_key(key, modifiers.shift) {
+            return changed;
         }
         if let Some(changed) = self.settings_key(key, modifiers.shift) {
             return changed;
@@ -1011,10 +1137,18 @@ impl Browser {
             self.stop_editing();
             return self.wall.unzoom(now);
         }
+        // Clear history: Command-Shift-Delete (section 6).
+        if matches!(key, Key::Delete | Key::Backspace) && modifiers.shift {
+            self.clear_history_choices();
+            return true;
+        }
         let Key::Text(text) = key else { return false };
         match text.to_ascii_lowercase().as_str() {
             "l" => self.start_editing(),
             "a" if self.settings_editing() => return self.settings_select_all(),
+            "a" if self.history_editing() => return self.history_select_all(),
+            "a" if self.bookmarks_editing() => return self.bookmarks_select_all(),
+            "a" if self.star_editing() => return self.star_select_all(),
             "a" if self.editing => self.editor.select_all(),
             // The settings panel (requirement 19.3), Home (requirement
             // 19.6) and the console (requirement 19.8): Command-comma,
@@ -1023,6 +1157,14 @@ impl Browser {
             "," => self.toggle_settings(),
             "h" if modifiers.shift => self.outputs.push(Output::Home),
             "i" if modifiers.alt || modifiers.shift => self.toggle_console(),
+            // History, bookmarks and private tabs (`history-and-bookmarks.md`
+            // section 6): each platform's keys are taken everywhere.
+            "y" | "h" => self.toggle_history(),
+            "o" if modifiers.shift => self.toggle_bookmarks(),
+            "b" if modifiers.alt => self.toggle_bookmarks(),
+            "b" if modifiers.shift => self.toggle_bar(),
+            "t" if modifiers.shift => self.outputs.push(Output::History(crate::library::HistoryRequest::Reopen(None))),
+            "n" if modifiers.shift => self.outputs.push(Output::NewPrivateTab),
             "t" => self.outputs.push(Output::NewTab),
             "w" => self.outputs.push(Output::CloseTab(self.active)),
             "[" if self.strip.back => self.outputs.push(Output::Back),
@@ -1034,14 +1176,19 @@ impl Browser {
     }
 
     fn edit(&mut self, key: Key<'_>, shift: bool) -> bool {
+        let before = String::from(self.editor.text());
         match key {
             Key::Text(text) => self.editor.insert(text),
             Key::Enter => {
+                let chosen = self.take_chosen_suggestion();
                 let address = String::from(self.editor.text().trim());
                 self.stop_editing();
-                if !address.is_empty() {
+                if let Some(number) = chosen {
+                    self.outputs.push(Output::Suggestion { number, new_tab: false });
+                } else if !address.is_empty() {
                     self.outputs.push(Output::Navigate(address));
                 }
+                return true;
             }
             Key::Escape => self.stop_editing(),
             Key::Tab => return false,
@@ -1049,8 +1196,14 @@ impl Browser {
             Key::Delete => self.editor.delete(),
             Key::Left => self.editor.left(shift),
             Key::Right => self.editor.right(shift),
+            Key::Up | Key::Down if self.choose_suggestion(key == Key::Down) => {}
             Key::Home | Key::Up => self.editor.home(shift),
             Key::End | Key::Down => self.editor.end(shift),
+        }
+        // What is typed asks for suggestions (requirement 20.11).
+        if self.editing && self.editor.text() != before {
+            // Typed over a selection is not a deletion; Backspace and Delete are.
+            self.edited(matches!(key, Key::Backspace | Key::Delete));
         }
         true
     }
@@ -1114,7 +1267,9 @@ impl Browser {
     pub fn draw<C: Canvas + ?Sized>(&mut self, canvas: &mut C, width: f64, height: f64, now: u64) {
         self.regions.clear();
         canvas.fill(Rect::new(0.0, 0.0, width, height), 0.0, WINDOW);
-        self.body = Rect::new(MARGIN, BODY_TOP, width - MARGIN, height - MARGIN);
+        // The bookmarks bar, when shown, is a row of the strip above the body.
+        let body_top = BODY_TOP + if self.bar_shown() { star_ui::BAR_HEIGHT } else { 0.0 };
+        self.body = Rect::new(MARGIN, body_top, width - MARGIN, height - MARGIN);
         // The console docks where the overview is.
         let overview_height = if self.console.open() {
             console_ui::CONSOLE_HEIGHT
@@ -1125,9 +1280,9 @@ impl Browser {
         };
         let overview = Rect::new(MARGIN, height - MARGIN - overview_height, width - MARGIN, height - MARGIN);
         let body_bottom = overview.y0 - MARGIN;
-        let banks = Rect::new(MARGIN, BODY_TOP, MARGIN + BANKS_WIDTH, body_bottom);
-        let list = Rect::new(banks.x1 + MARGIN, BODY_TOP, banks.x1 + MARGIN + LIST_WIDTH, body_bottom);
-        let zoom = Rect::new(list.x1 + MARGIN, BODY_TOP, width - MARGIN, body_bottom);
+        let banks = Rect::new(MARGIN, body_top, MARGIN + BANKS_WIDTH, body_bottom);
+        let list = Rect::new(banks.x1 + MARGIN, body_top, banks.x1 + MARGIN + LIST_WIDTH, body_bottom);
+        let zoom = Rect::new(list.x1 + MARGIN, body_top, width - MARGIN, body_bottom);
 
         // The titles are borrowed from the channel while the wall draws:
         // the fields are borrowed apart.
@@ -1168,11 +1323,16 @@ impl Browser {
             self.draw_overview(canvas, overview, now);
         }
         self.draw_toolbar(canvas, width);
+        self.draw_bar(canvas, TOOLBAR_TOP + TOOLBAR_HEIGHT, width);
         self.draw_tab_strip(canvas, width);
         self.draw_preview(canvas, width);
         #[cfg(feature = "phone-keyboard")]
         self.draw_phone_panel(canvas);
         self.draw_settings_panel(canvas);
+        self.draw_history_panel(canvas);
+        self.draw_bookmarks_panel(canvas, now);
+        self.draw_star_popover(canvas);
+        self.draw_popups(canvas);
         // Pages may have moved under a still pointer: by scrolling, a new
         // size or a zoom.
         self.wall.hover(self.pointer, now);
@@ -1213,7 +1373,17 @@ impl Browser {
             let close = Rect::new(rect.x1 - TAB_CLOSE - TAB_GAP * 2.0, rect.y0, rect.x1 - TAB_GAP, rect.y1);
             let speaker = (tab.muted || self.sounding.contains(&tab.channel)).then(|| Rect::new(close.x0 - TAB_SPEAKER, rect.y0, close.x0, rect.y1));
             canvas.push_clip(Rect::new(rect.x0, rect.y0, speaker.map_or(close.x0, |speaker| speaker.x0), rect.y1));
-            left_centred(canvas, rect, TAB_TEXT_INSET, &tab.title, TAB_TITLE, ink);
+            // A private tab's mark, before its title (requirement 20.8).
+            let inset = if tab.private {
+                let middle = f64::midpoint(rect.y0, rect.y1);
+                let mark =
+                    Rect::new(rect.x0 + TAB_TEXT_INSET, middle - PRIVATE_MARK / 2.0, rect.x0 + TAB_TEXT_INSET + PRIVATE_MARK, middle + PRIVATE_MARK / 2.0);
+                canvas.fill(mark, PRIVATE_MARK / 2.0, PRIVATE);
+                TAB_TEXT_INSET + PRIVATE_MARK + TAB_GAP * 2.0
+            } else {
+                TAB_TEXT_INSET
+            };
+            left_centred(canvas, rect, inset, &tab.title, TAB_TITLE, ink);
             canvas.pop_clip();
             if let Some(speaker) = speaker {
                 speaker_glyph(canvas, speaker, tab.muted, ink);
@@ -1282,6 +1452,12 @@ impl Browser {
         }
         let middle = f64::midpoint(field.y0, field.y1);
         let mut text_left = field.x0 + FIELD_PADDING;
+        // A private tab says so first (requirement 20.8).
+        if self.strip.private {
+            let word = "Private";
+            left_centred(canvas, Rect::new(text_left, field.y0, field.x1, field.y1), 0.0, word, ROW_STATUS, PRIVATE);
+            text_left += canvas.text_width(word, ROW_STATUS) + LOCK_GAP;
+        }
         if self.strip.built_in {
             let word = "NeoTeletext";
             left_centred(canvas, Rect::new(text_left, field.y0, field.x1, field.y1), 0.0, word, ROW_STATUS, FIELD_INK);
@@ -1622,7 +1798,7 @@ impl Browser {
         #[allow(clippy::cast_precision_loss, reason = "small counts")]
         let (centre, cell_top) = (cells.x0 + ((index % PAGES_PER_BANK) as f64 + 0.5) * cell_width, cells.y0 + (index / PAGES_PER_BANK) as f64 * cell_height);
         let bottom = cell_top - PREVIEW_GAP;
-        let scale = ((bottom - BODY_TOP) / f64::from(PAGE_HEIGHT)).min(1.0);
+        let scale = ((bottom - self.body.y0) / f64::from(PAGE_HEIGHT)).min(1.0);
         if scale <= 0.0 {
             return;
         }
@@ -1822,8 +1998,8 @@ mod tests {
         let mut browser = Browser::new(Frame { left_inset: 0.0, window_buttons: true });
         browser.set_tabs(
             alloc::vec![
-                TabInfo { title: "one".into(), colour: 0, channel: 7, muted: false },
-                TabInfo { title: "two".into(), colour: 1, channel: 8, muted: false }
+                TabInfo { title: "one".into(), colour: 0, channel: 7, muted: false, private: false },
+                TabInfo { title: "two".into(), colour: 1, channel: 8, muted: false, private: false }
             ],
             0,
         );
@@ -1881,8 +2057,8 @@ mod tests {
         // Muted, the speaker stays even once the sound ends.
         browser.set_tabs(
             alloc::vec![
-                TabInfo { title: "one".into(), colour: 0, channel: 7, muted: true },
-                TabInfo { title: "two".into(), colour: 1, channel: 8, muted: false }
+                TabInfo { title: "one".into(), colour: 0, channel: 7, muted: true, private: false },
+                TabInfo { title: "two".into(), colour: 1, channel: 8, muted: false, private: false }
             ],
             0,
         );
@@ -1899,16 +2075,16 @@ mod tests {
         press_at(&mut browser, &mut canvas, button);
         browser.set_tabs(
             alloc::vec![
-                TabInfo { title: "one".into(), colour: 0, channel: 7, muted: true },
-                TabInfo { title: "two".into(), colour: 1, channel: 8, muted: false }
+                TabInfo { title: "one".into(), colour: 0, channel: 7, muted: true, private: false },
+                TabInfo { title: "two".into(), colour: 1, channel: 8, muted: false, private: false }
             ],
             0,
         );
         press_at(&mut browser, &mut canvas, button);
         browser.set_tabs(
             alloc::vec![
-                TabInfo { title: "one".into(), colour: 0, channel: 7, muted: true },
-                TabInfo { title: "two".into(), colour: 1, channel: 8, muted: true }
+                TabInfo { title: "one".into(), colour: 0, channel: 7, muted: true, private: false },
+                TabInfo { title: "two".into(), colour: 1, channel: 8, muted: true, private: false }
             ],
             0,
         );
@@ -1925,7 +2101,10 @@ mod tests {
         press_at(&mut browser, &mut canvas, close);
         let (back, forward, close_window) = (browser.regions.back, browser.regions.forward, browser.regions.close);
         press_at(&mut browser, &mut canvas, back);
+        browser.pointer_released();
+        // Forward acts when released, so that holding it opens its list.
         press_at(&mut browser, &mut canvas, forward);
+        browser.pointer_released();
         press_at(&mut browser, &mut canvas, close_window);
         assert_eq!(
             browser.take_outputs(),
@@ -1942,7 +2121,11 @@ mod tests {
         press_at(&mut browser, &mut canvas, field);
         browser.key(Key::Text("sport.invalid"), Modifiers::default(), 0);
         browser.key(Key::Enter, Modifiers::default(), 0);
-        assert_eq!(browser.take_outputs(), [Output::TextInput(true), Output::TextInput(false), Output::Navigate("sport.invalid".into())]);
+        // What is typed asks for suggestions on the way (requirement 20.11).
+        assert_eq!(
+            browser.take_outputs(),
+            [Output::TextInput(true), Output::Suggest("sport.invalid".into()), Output::TextInput(false), Output::Navigate("sport.invalid".into())]
+        );
     }
 
     #[test]
@@ -2146,8 +2329,10 @@ mod tests {
         assert_eq!(browser.take_outputs(), [Output::Home]);
         browser.key(Key::Home, Modifiers { alt: true, ..Modifiers::default() }, 0);
         assert_eq!(browser.take_outputs(), [Output::Home]);
+        // Command-H alone is not Home: it is History, Control-H's place away
+        // from macOS (`history-and-bookmarks.md` section 6).
         browser.key(Key::Text("h"), Modifiers { command: true, ..Modifiers::default() }, 0);
-        assert_eq!(browser.take_outputs(), [], "Command-H alone is not Home");
+        assert_eq!(browser.take_outputs(), [Output::History(crate::library::HistoryRequest::Panel(true))]);
     }
 
     /// Requirements 19.3 and 19.10: the trusted core's notice takes the

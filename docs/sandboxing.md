@@ -2,16 +2,16 @@
 
 | | |
 |---|---|
-| **Status** | Built 22 October 2026 on the owner's instruction ("do both"), after the options of 21 October 2026; decision 52 below records it, for the owner to confirm. |
-| **Requirements** | 3.3, 3.4, 3.6, 3.7 (each process confined, from "deny everything"), 3.8 (the macOS gap), 10.12 (where unsafe code may be). |
+| **Status** | Built 22 October 2026 on the owner's instruction ("do both"), after the options of 21 October 2026; decision 52 below records it, for the owner to confirm. The sound helper (decision 55) and the trusted core behind a broker (decision 56, section 7) built the same day on the owner's instruction ("DO THIS PROPERLY NOW NOT LATER"). Decision 58, the same day, rescinded decision 52's "degrade and report": every layer is required (section 8). |
+| **Requirements** | 3.1 (the processes), 3.3, 3.4, 3.6, 3.7 (each process confined, from "deny everything"), 3.8 (the trusted core confined), 10.12 (where unsafe code may be), 16.6 (silent without a sound device). |
 | **Security analysis** | [`sandboxing-security.md`](sandboxing-security.md); [`security-analysis.md`](security-analysis.md) section 13 holds the per-platform summary. |
-| **Code** | `native/confine`: `spawn`, the trusted core's side, and `apply`, a helper's side; `macos.rs`, `linux.rs`, `windows.rs`. |
+| **Code** | `native/confine`: `spawn`, the parent's side, and `apply`, a process's own side; `macos.rs`, `linux.rs`, `windows.rs`; `broker.rs`, the broker and the core's end of it, and `unix.rs`, passing descriptors on Unix. `native/core/build.rs` (section 7.4). |
 
 ## 1. What is wanted
 
-Every helper of the trusted core, on every platform, runs with only what it is for: a decoder with its pipes alone; a fetcher and the phone keyboard with the network and the name resolver; the interface with the window system, fonts, text input, the pasteboard, the sound output and the Dock, and no network. The sandbox must hold on any machine the browser is installed on, without an installer step, root, or a kernel the user cannot be expected to have, and it must say what it applied.
+Every helper of the trusted core, on every platform, runs with only what it is for: a decoder with its pipes alone; a fetcher and the phone keyboard with the network and the name resolver; the interface with the window system, fonts, text input, the pasteboard and the Dock, and no network; the sound helper with the sound output alone (decision 55); and the trusted core with its settings folder alone (decision 56). The sandbox must hold, whole, on every machine the browser runs on, and say what it applied; a machine that cannot give it all does not run the browser (decision 58, section 8). Decision 52 had asked instead that it run anywhere without an installer step, root or a recent kernel, with less where it must.
 
-The helpers only ever receive: everything they work on arrives over their pipe from the trusted core, which is why the sandboxes here deny and never broker. That is the property that keeps them small.
+The helpers only ever receive: everything they work on arrives over their pipe from the trusted core, which is why their sandboxes deny and never broker. That is the property that keeps them small. The trusted core is the one process that needs things done for it, starting programs, reading a file channel and opening the web browser, and a broker does those (section 7).
 
 ## 2. The options, by platform
 
@@ -29,7 +29,7 @@ Chromium and Firefox arrived at the same layering: the syscall filter is mandato
 
 **Windows** has one model since Vista, which Chromium, Edge, Office and Adobe Reader use: the token is the sandbox. A job object (the helper dies with the core and may start nothing), a restricted token at low integrity (no writes to the user's files or registry), process mitigation policies (DEP, ASLR, CFG, no dynamic code, no child processes, the Win32k filter for a process without a window) and, from Windows 8, an AppContainer with named capabilities (none for the decoder; the internet client for the fetcher). All of it is applied by the parent at process creation, which suits the trusted core, and all of it is in `windows-sys`, already a dependency.
 
-**macOS** was done on 21 October 2026 with `sandbox-exec` profiles from "deny everything"; `security-analysis.md` section 13 records how. macOS refuses a nested `sandbox-exec`, so the trusted core itself waits for the App Sandbox at packaging (requirement 3.8).
+**macOS** was done on 21 October 2026 with `sandbox-exec` profiles from "deny everything"; `security-analysis.md` section 13 records how. macOS refuses a nested `sandbox-exec`, so a confined trusted core cannot start its helpers itself; the broker (section 7) starts them, each under its own profile.
 
 ### 2.1 Library or not
 
@@ -39,19 +39,19 @@ Linux is raw system calls either way. With the crates `landlock` (by the Landloc
 
 One crate, `confine`, so the trusted core keeps no platform code:
 
-- `confine::spawn(Spawn { program, arguments, role, environment, local_network })` starts a helper confined as the platform's parent side allows, with its pipes, and an environment of exactly what the core passes (nothing for a decoder or fetcher; the window system's variables for the interface). It returns a `Process` with a `Report` of what confined it.
-- `confine::apply(role)` is the first call in each helper's `main`, before any thread: on Linux it applies, in order, no-new-privileges, an empty network namespace for the roles without the network (best effort), Landlock with the directories the role may read (best effort, the newest the kernel has), and the seccomp deny-list (required; without it the helper ends and the core says so, except on an architecture no filter exists for, which is reported). On macOS and Windows it reports that the core confined it.
+- `confine::spawn(Spawn { program, arguments, role, environment, local_network, writable })` starts a helper confined as the platform's parent side allows, with its pipes, and an environment of exactly what the core passes (nothing for a decoder or fetcher; the window system's variables for the interface). It returns a `Process` with a `Report` of what confined it.
+- `confine::apply(role, writable)` is the first call in each helper's `main`, and in the trusted core's, before any thread: on Linux it applies, in order, no-new-privileges, an empty network namespace for the roles without the network, Landlock with the directories the role may read, and the seccomp deny-list. Since decision 58 each is required: the first that cannot be applied ends the process with its reason, and the parent says so. On macOS and Windows it reports that the broker confined it.
 - Each helper prints what confined it, once, at start, and the core prints what it applied; the phone keyboard prints nothing of it, because that process prints one thing only (REQ-INT-137).
 
-The seccomp deny-list: starting programs (`execve`, `execveat`, `fork`, `vfork`, `clone` without `CLONE_THREAD`, `clone3` answered "not implemented" so the C library falls back to `clone`), tracing and reaching into processes (`ptrace`, `process_vm_*`, `kcmp`), mounting and namespaces after our own (`mount`, `umount2`, `pivot_root`, `chroot`, `unshare`, `setns`), kernel interfaces a helper has no use for (`io_uring_*`, `bpf`, `keyctl`, `add_key`, `request_key`, `userfaultfd`, `perf_event_open`, `kexec_*`, `reboot`, `swapon`, `swapoff`, module loading, `acct`, clock and host-name setting, `open_by_handle_at`, `fanotify_init`, and on x86-64 `iopl` and `ioperm`), and sockets: none for a decoder; for a fetcher only `AF_INET`, `AF_INET6`, `AF_NETLINK` (the resolver asks which address families exist) and `AF_UNIX` (the name service cache); for the interface only `AF_UNIX` (the display, the sound server, the input method); `listen` and `accept4` for none.
+The seccomp deny-list: starting programs (`execve`, `execveat`, `fork`, `vfork`, `clone` without `CLONE_THREAD`, `clone3` answered "not implemented" so the C library falls back to `clone`), tracing and reaching into processes (`ptrace`, `process_vm_*`, `kcmp`), mounting and namespaces after our own (`mount`, `umount2`, `pivot_root`, `chroot`, `unshare`, `setns`), kernel interfaces a helper has no use for (`io_uring_*`, `bpf`, `keyctl`, `add_key`, `request_key`, `userfaultfd`, `perf_event_open`, `kexec_*`, `reboot`, `swapon`, `swapoff`, module loading, `acct`, clock and host-name setting, `open_by_handle_at`, `fanotify_init`, and on x86-64 `iopl` and `ioperm`), and sockets: none for a decoder; for a fetcher only `AF_INET`, `AF_INET6`, `AF_NETLINK` (the resolver asks which address families exist) and `AF_UNIX` (the name service cache); for the interface only `AF_UNIX` (the display and the input method); for the sound helper only `AF_UNIX` (the sound server); for the trusted core none, as for a decoder (its broker's socket is inherited, not made); `listen` and `accept4` for none.
 
-Windows: the decoder in a less privileged AppContainer with no capabilities, the fetcher and keyboard in an AppContainer with the internet client capability and, when the user has allowed local addresses, the private network one; every helper in a job object with kill-on-close and a limit of one process, with every mitigation policy above, no child processes, and for the decoder and fetcher the Win32k filter and the UI restrictions (no desktop, clipboard or handles); the interface with a restricted token at low integrity instead of a container, since it needs the desktop. Only the two pipe handles are inherited. An AppContainer can read only what grants read to `ALL APPLICATION PACKAGES`: an installation under Program Files does, a folder of the user's does not; when the container start fails, the helper is started with the restricted token alone and the report says so.
+Windows: the decoder in a less privileged AppContainer with no capabilities, the fetcher and keyboard in an AppContainer with the internet client capability and, when the user has allowed local addresses, the private network one; every helper in a job object with kill-on-close and a limit of one process, with every mitigation policy above, no child processes, and for the decoder and fetcher the Win32k filter and the UI restrictions (no desktop, clipboard or handles); the interface with a restricted token at low integrity instead of a container, since it needs the desktop; the sound helper in an AppContainer with no capabilities (the audio service admits containers); the trusted core in a less privileged AppContainer with the Win32k filter and no capabilities, its settings folder granted to its container (section 7). Only the two pipe handles are inherited. An AppContainer can read only what grants read to `ALL APPLICATION PACKAGES`: an installation under Program Files does, a folder of the user's does not. Decision 52 started a helper with the restricted token alone when its container failed; since decision 58 it is not started.
 
 ## 4. Measured
 
 - **macOS**, 21 October 2026: the four helpers under their profiles; the browser fetches, decodes, draws and opens the sound device; idle costs unchanged.
 - **Linux**, 22 October 2026, Ubuntu 26.04 on `foundintelquiet4060` (kernel 7.0, Landlock in the LSM list, unprivileged user namespaces allowed): the crate's probe tests pass (a decoder can open no file, start no program, connect nowhere and write nothing; a fetcher can start no program and write nothing, and has the network); the browser under Xvfb with the terminal channel reports the decoder "network namespace, Landlock, seccomp", the fetcher "Landlock, seccomp", the interface "network namespace, Landlock, seccomp", fetches and draws (47 frames in 20 s). Machines without Landlock or user namespaces run with seccomp alone and say so; none was to hand.
-- **Windows**, 22 October 2026, Windows 11 in the virtual machine on `foundintelquiet4060`: the workspace builds and every test passes there; in the logged-in desktop session the browser runs with every layer on: the interface at low integrity in its job with the mitigation policies drew the channel's pages and opened the sound device, the decoder ran in a less privileged AppContainer. Started from an `ssh` session instead (session 0, no window station), the interface fails at `CoInitialize` with "access denied" at low integrity and the sound device is refused at medium: a test of the Windows sandbox must run in the desktop session (a one-off interactive scheduled task does it; `DEVELOPMENT.md` section 12.1). The network role reaches its relay from inside the sandbox: `the_keyboard_reaches_its_relay_confined` (`core/tests/confined_keyboard.rs`, needs the internet) passed in the virtual machine in both sessions, in the AppContainer and, with `NEOTELETEXT_CONFINE_NO_CONTAINER` forcing the fallback, under the restricted token at low integrity; and on macOS under the profile.
+- **Windows**, 22 October 2026, Windows 11 in the virtual machine on `foundintelquiet4060`: the workspace builds and every test passes there; in the logged-in desktop session the browser runs with every layer on: the interface at low integrity in its job with the mitigation policies drew the channel's pages and opened the sound device, the decoder ran in a less privileged AppContainer. Started from an `ssh` session instead (session 0, no window station), the interface fails at `CoInitialize` with "access denied" at low integrity and the sound device is refused at medium: a test of the Windows sandbox must run in the desktop session (a one-off interactive scheduled task does it; `DEVELOPMENT.md` section 12.1). The network role reaches its relay from inside the sandbox: `the_keyboard_reaches_its_relay_confined` (`core/tests/confined_keyboard.rs`, needs the internet) passed in the virtual machine in both sessions, in the AppContainer and, with `NEOTELETEXT_CONFINE_NO_CONTAINER` forcing the fallback, under the restricted token at low integrity (the fallback and the variable were removed by decision 58); and on macOS under the profile.
 
 ## 5. Decision 52 (for the owner to confirm)
 
@@ -60,7 +60,9 @@ Decided on 22 October 2026, on the owner's instruction, after the options of 21 
 2. On Linux the crates `landlock` and `seccompiler`, with `libc`, as the engine's own `neottx` uses (its decision E.33); the deny-list rather than an allow-list of system calls, so no C library or kernel release can stop a helper from running.
 3. On Windows the Win32 calls in `windows-sys`, already a dependency; `confine` is the third crate permitted unsafe code (requirement 10.12 amended), on its Linux and Windows modules only, each block with its reason.
 4. A helper confines itself first thing, before any thread, where the platform makes a process confine itself (Linux); the trusted core confines it at its start where the parent does (macOS, Windows).
-5. The trusted core on macOS stays unconfined until the App Sandbox at packaging (requirement 3.8); macOS refuses a nested `sandbox-exec`.
+5. The trusted core on macOS stays unconfined until the App Sandbox at packaging (requirement 3.8); macOS refuses a nested `sandbox-exec`. *Amended by decision 56:* the trusted core is confined on every platform now, behind a broker (section 7).
+
+*Item 1's "the stronger optional layers are applied when the machine allows and reported" rescinded by decision 58* (section 8): every layer is required.
 
 *Reason:* security first (decision 4); a sandbox that depends on user namespaces fails on the machines users have, as Chromium's and Electron's did on Ubuntu 24.04; the crates keep the BPF program, where a mistake hides, with the people who run it in production.
 
@@ -72,3 +74,85 @@ Decided on 22 October 2026, on the owner's instruction, after the options of 21 
 2. **An AppContainer needs the user's profile variables** (`USERPROFILE`, `LOCALAPPDATA`, `APPDATA` and their kin) in the child's environment, or `CreateProcess` fails with "environment option not found"; the core passes them to every Windows helper.
 3. **A Windows helper with a window must be started in the desktop session.** From an `ssh` session (session 0, no window station) the interface dies at `CoInitialize` at low integrity; the test runs through an interactive scheduled task.
 4. Found on the way: `rsync` does not see a re-vendored crate, because `cargo vendor` stamps every file with the same date, so the Windows export is sent with `--checksum` and the virtual machine's vendor folder removed before its copy (`DEVELOPMENT.md` section 12.1).
+
+## 7. The broker: the trusted core confined (decision 56)
+
+### 7.1 Why a broker
+
+The trusted core parses what the decoders and the interface send, holds the settings and decides every link, so a flaw in it is the browser's worst case; decision 52 left it unconfined because it starts the helpers, and on macOS a sandboxed process cannot start another under a different profile. The App Sandbox with XPC services was weighed and refused: XPC starts one instance of a service per application, not one decoder per channel, without private API, and a helper the core started itself would inherit the core's sandbox, wider than the decoder's. A broker keeps one process per channel and each helper's own sandbox, on every platform alike.
+
+### 7.2 The shape
+
+`neoteletext`, the program the user starts, is the broker, and the one process not confined. It does nothing but:
+1. Start `neoteletext --core` confined, with the user's arguments, an environment of only what the core needs (`confine::environment(Role::Core)`), and one channel to it.
+2. Serve the core's requests until the core ends, then end every helper still alive and end as the core did.
+
+The core's requests:
+
+| Request | What the broker does | Bound or rule |
+|---|---|---|
+| Spawn a program | Starts one of the browser's own helpers (`Program`: decoder, fetcher, interface, phone keyboard, sound helper), beside itself, confined by the role that program has; passes the core its two pipes | The core names a program, never a path or a role; at most `MAX_HELPERS` (512) alive; at most `MAX_ARGUMENTS` (64) arguments of at most `MAX_TEXT` (4,096) bytes, which each helper checks as before |
+| Kill, wait | Ends or waits for a helper the core started, by the number the broker gave it | Only the broker's own numbers |
+| Read | Reads a file channel's bytes by the browser's channel rules (`source.rs`) and returns them | Refused under the user's secret folders (`.ssh`, `.gnupg`, `.aws`, the keychains and the like), however the path is named; at most 64 MB and 4,096 files (`MAX_REPLY`) |
+| Open the web | Hands a checked address to the system's browser through `web-opener` | `web-opener`'s checks, as before (requirement 17.9) |
+
+The channel is a local-domain socket pair on macOS and Linux, the core's standard input, which carries each helper's pipes as descriptors (`SCM_RIGHTS`, `confine/src/unix.rs`). On Windows it is two pipes, and the broker duplicates the helper's pipe handles into the core's process with `DuplicateHandle` and sends their values. Every message is a kind byte, a length and a payload, read within its bound; a request the broker cannot parse ends the core. The broker's decoders are fuzzed (`broker_requests`, `broker_replies`).
+
+A compromised core gains nothing it did not have: it can start only the browser's helpers, each confined as always; read only what a file channel could already name, minus the secret folders; and open only what a link could already open.
+
+### 7.3 The trusted core's confinement
+
+| Platform | How | What the core keeps |
+|---|---|---|
+| macOS | The broker starts it under a `sandbox-exec` profile from "deny everything": `(deny network*)`, no services looked up, the system reads every process needs | Read and write in its settings folder |
+| Linux | It confines itself first thing, before any thread, as the helpers do: no-new-privileges, an empty network namespace, Landlock, the seccomp deny-list with no socket family | Read and write in its settings folder; its inherited socket to the broker |
+| Windows | The broker starts it in a less privileged AppContainer (`NeoTeletext.Core`) with no capabilities, in a job with every mitigation policy, no child processes and the Win32k filter; the settings folder is granted to the container's identity before the start. A container that cannot start means no core and no browser (decision 58) | Read and write in its settings folder |
+
+The sound helper (decision 55) runs as its own role: on macOS a profile with the audio services and nothing else; on Linux `AF_UNIX` for the sound server and Landlock's read of the sound devices; on Windows an AppContainer with no capabilities.
+
+### 7.4 What building changed
+
+1. **A process denied Win32k cannot load `shell32.dll`.** On Windows `neoteletext.exe` is both the broker and the core, and the broker opens web pages through `ShellExecuteW`. Imported directly, `shell32.dll` loads `user32.dll` and `gdi32.dll`, whose start fails under the Win32k filter: the core ended before its first line with `STATUS_DLL_INIT_FAILED` (0xC0000142). `core/build.rs` delay-loads `shell32.dll` in that one program, so it loads at the broker's first hand-off and never in the core. `the_trusted_core_starts_confined_and_reaches_its_own_code` (`core/tests/confined_core.rs`) failed with exactly that exit before and passes after, in the virtual machine.
+2. **The program folder needs no grant beyond `ALL APPLICATION PACKAGES`.** A less privileged AppContainer does not match that group, but the core and decoder still started and ran with only it granted (measured in the virtual machine, `ALL RESTRICTED APPLICATION PACKAGES` removed): the program's image is opened by the parent that creates the process, and the system's libraries grant both groups. The virtual machine's build script grants `ALL APPLICATION PACKAGES` read on its target folder, so the tests can start confined processes from it.
+3. **The interface no longer needs ALSA's library or fontconfig's.** With sound in its own helper and fontconfig loaded at run time (`fontique`'s `fontconfig-dlopen`; the interface draws with its own fonts), `readelf -d` on Linux shows the interface needing only the C library, `libm` and `libgcc_s`; only `neoteletext-sound` needs `libasound.so.2`.
+
+### 7.5 Measured, 22 October 2026
+
+- **macOS:** the release browser with the reference channel: the broker started the core under `sandbox-exec`; every helper is the broker's child, under its own profile; typed 700 and Space, the podcast's stream reached the sound helper, which played it (12 peaks in 6 s) and said so, and the tab showed its speaker. A file channel read through the broker drew its pages. `a_tone_plays_through_the_confined_sound_helper` (`sound/tests/confined.rs`, needs an output device) passes.
+- **Linux**, `foundintelquiet4060`: under X11 with PipeWire and under a headless `sway`, the core reports "network namespace, Landlock, seccomp" and every helper its own layers, and the pages draw (43 and 46 frames). With `libasound.so.2` and `libfontconfig.so.1` hidden by bind mounts in a private mount namespace, the browser starts and draws (42 frames); the sound helper fails to load and the core says "no sound" and carries on (requirement 16.6). The confined tone test passes through PipeWire (its sink there is the null sink: the host has no sound card).
+- **Windows**, the virtual machine: the workspace builds and every test passes; with the program folder granting `ALL APPLICATION PACKAGES` alone, in the desktop session the core runs in its less privileged AppContainer, the decoder in its own, the sound helper in an AppContainer, the interface at low integrity, and the file channel read through the broker draws (17 frames in 15 s). The confined tone test passes in the desktop session.
+
+## 8. Decision 58: every layer required
+
+The owner decided on 22 October 2026: **security is paramount; there can be no weakening or downgrading of security.** It rescinds decision 52's "degrade and report".
+
+### 8.1 What changed
+
+| Platform | Before (decision 52) | Now (decision 58) |
+|---|---|---|
+| Linux | seccomp required; the network namespace and Landlock applied when the machine allowed, reported when not; Landlock "the best the kernel offers", reported "in part" when the kernel enforced less; an architecture without a filter reported | The network namespace (for every role but the network's), Landlock at version 5 enforced whole, and seccomp each required; the first that cannot be applied ends the process with its reason |
+| Windows | When a container could not start, the helper (and from decision 56 the trusted core) started with the restricted token alone; `NEOTELETEXT_CONFINE_NO_CONTAINER` forced that for testing | Every process but the interface runs in its AppContainer or not at all; the variable is gone |
+| macOS | The profile required | Unchanged |
+| Elsewhere | "Not confined", and run | Refused: no sandbox, no browser |
+
+The report says only what is in force; there is nothing "without" any more.
+
+Building it found one downgrade that had been reported as normal: under X11 the interface's Landlock was enforced only "in part" on a kernel that supports all of it, because the display's authority file, a file, was given a directory's read rights. A file is now given a file's rights only.
+
+### 8.2 What a machine needs now
+
+- **Linux:** kernel 6.10 or later with Landlock enabled (Landlock 5); unprivileged user namespaces allowed for the browser; x86-64, AArch64 or RISC-V 64 (the architectures `seccompiler` writes filters for). Ubuntu from 24.04 restricts unprivileged user namespaces by default (`kernel.apparmor_restrict_unprivileged_userns = 1`) unless an AppArmor profile allows them for the program, as Ubuntu's own `apparmor` package carries for Chrome and Firefox; the test host `foundintelquiet4060` runs with the restriction off (measured: `0`), which is why every run there had its namespaces. On a default Ubuntu 24.04 or later, the browser will not start until such a profile is installed, which needs root (section 8.3). Kernels before 6.10 (Ubuntu 24.04's first kernel is 6.8; Debian 12's 6.1; RHEL 9's 5.14) do not run it.
+- **Windows:** the user's profile folders in each process's environment, which the broker passes (`confine::environment`). A program folder that grants containers nothing does not stop a start: measured on 22 October 2026, a decoder started in its less privileged container from the user's temporary folder. Whether every helper then works from such a folder was not run; Program Files grants `ALL APPLICATION PACKAGES` read in any case.
+- **macOS:** unchanged.
+
+### 8.3 For the owner
+
+Decision 54 installs per user, with no administrator, on every desktop. On Linux that cannot install the AppArmor profile a default Ubuntu now needs, nor raise an old kernel. The choices are the owner's: a system-wide package on such distributions that installs the profile, or a documented requirement that the user or their administrator allow it. Neither weakens the sandbox.
+
+### 8.4 Tests
+
+- `a_helper_without_its_namespace_does_not_run` (`confine/tests/probe.rs`): a decoder whose `unshare` is refused, as on a distribution that forbids user namespaces, must refuse to run. On the code before, it ran "without a network namespace".
+- `a_file_to_read_keeps_landlock_whole`: the interface with a file to read gets every Landlock right enforced. On the code before, "Landlock (in part)".
+- `a_helper_whose_container_cannot_be_made_is_not_started` (`confine/src/lib.rs`, Windows): a decoder whose container cannot be made, without the user's profile folders in its environment, must not start. On the code before, it started with the restricted token alone; and `a_helper_gets_only_the_environment_it_is_given` had been passing that way, without its container, unseen. It is now given a decoder's real environment.
+- The probes now run as a program of their own, `confine-probe`, with one thread, as a helper is when it confines itself: a test harness's threads make the kernel refuse a new user namespace, which the code before had silently reported as missing, so its own probe tests had run without the namespace.
+

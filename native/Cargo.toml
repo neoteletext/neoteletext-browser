@@ -3,7 +3,7 @@
 # drawing back ends, the interface process and the trusted core.
 [workspace]
 resolver = "3"
-members = ["interface-core", "draw-vello", "draw-embedded", "protocol", "interface", "core", "decoder", "fetcher", "site", "dock-menu", "web-opener", "keyboard", "confine"]
+members = ["interface-core", "draw-vello", "draw-embedded", "protocol", "interface", "core", "decoder", "fetcher", "site", "dock-menu", "web-opener", "keyboard", "confine", "sound"]
 # Built with a nightly compiler of its own (scripts/tools.sh).
 exclude = ["fuzz"]
 
@@ -62,6 +62,11 @@ libm = "=0.2.16"
 # (prototypes/spikes/vello-wall, at the tag prototypes-final).
 vello_cpu = { version = "=0.3.0", default-features = false, features = ["std", "text", "u8_pipeline"] }
 parley = "=0.12.0"
+# Parley's font finder, named only to load fontconfig at run time on Linux,
+# so the interface starts on a machine without it and draws with its own
+# fonts (installation-and-updates.md section 4.3). The same version as
+# Parley's.
+fontique = { version = "=0.12.0", default-features = false, features = ["fontconfig-dlopen"] }
 winit = "=0.30.13"
 # The same Linux displays as winit's default features, loaded at run time
 # as winit loads them; without a backend softbuffer does not build on

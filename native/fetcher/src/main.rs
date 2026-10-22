@@ -394,7 +394,7 @@ fn arguments(given: impl IntoIterator<Item = String>) -> Result<Arguments, Strin
 
 fn main() -> ExitCode {
     // First, before any thread: the network and nothing else (requirement 3.3).
-    match confine::apply(confine::Role::Network) {
+    match confine::apply(confine::Role::Network, None) {
         Ok(report) => eprintln!("neoteletext-fetcher: confined: {report}"),
         Err(error) => {
             eprintln!("neoteletext-fetcher: {error}");

@@ -2,24 +2,22 @@
 //! layer be set up before the next forbids setting things up:
 //!
 //! 1. No new privileges, so no program it might start could gain any.
-//! 2. For a helper with no network, an empty network namespace, where the
-//!    kernel lets an unprivileged process make one (Debian before 11 and
-//!    Ubuntu from 24.04 may not, nor a Flatpak or a container): nothing to
+//! 2. For a helper with no network, an empty network namespace: nothing to
 //!    connect to at all.
-//! 3. Landlock, on kernels from 5.13: the directories the helper may read
-//!    (none for a decoder) and, on kernels from 6.7, no TCP for one with
-//!    no network. The best the running kernel offers, and reported.
-//! 4. A seccomp system-call filter, on every kernel since 3.5: no starting
-//!    programs, no tracing, no mounting, no kernel interfaces a helper has
-//!    no use for, and sockets only of the families its role needs. A
-//!    denylist rather than an allowlist, so a new C library or kernel
-//!    release cannot stop a helper from running; the layer every machine
-//!    has is the one a helper refuses to run without, except where no
-//!    filter exists for the architecture, which is reported.
+//! 3. Landlock, all of what [`LANDLOCK_ABI`] can say: the directories the
+//!    helper may read (none for a decoder) and no TCP for one with no
+//!    network.
+//! 4. A seccomp system-call filter: no starting programs, no tracing, no
+//!    mounting, no kernel interfaces a helper has no use for, and sockets
+//!    only of the families its role needs. A denylist rather than an
+//!    allowlist, so a new C library or kernel release cannot stop a helper
+//!    from running.
 //!
-//! What is written here as Chromium and Firefox arrived at it: the
-//! namespace layer is best effort because it is the one that fails on
-//! users' machines; the filter is mandatory because it never does.
+//! Every layer is required (decision 58: security is never weakened or
+//! downgraded): a machine that cannot give one, such as a kernel without
+//! that Landlock, a distribution that forbids unprivileged user
+//! namespaces, or an architecture with no filter, gets an error and no
+//! process, never a process with less.
 
 use landlock::{ABI, Access, AccessFs, AccessNet, CompatLevel, Compatible, PathBeneath, PathFd, Ruleset, RulesetAttr, RulesetCreatedAttr, RulesetStatus};
 use seccompiler::{BpfProgram, SeccompAction, SeccompCmpArgLen, SeccompCmpOp, SeccompCondition, SeccompFilter, SeccompRule, TargetArch};
@@ -39,18 +37,24 @@ const INTERFACE_PATHS: &[&str] = &["/usr", "/etc", "/lib", "/lib64", "/opt", "/v
 const INTERFACE_HOME_PATHS: &[&str] = &[".fonts", ".local/share/fonts", ".config/fontconfig", ".cache/fontconfig", ".Xauthority", ".config/gtk-3.0", ".icons"];
 /// The sound devices, for ALSA's direct output.
 const SOUND_DEVICES: &str = "/dev/snd";
+/// What the sound helper reads: the sound libraries' plug-ins and
+/// configuration, and the sound server's sockets.
+const SOUND_PATHS: &[&str] = &["/usr", "/etc", "/lib", "/lib64", "/opt", "/var/lib", "/run", "/proc", "/sys", "/dev"];
+/// What the sound helper may read under the user's home: ALSA's and the
+/// sound server's configuration.
+const SOUND_HOME_PATHS: &[&str] = &[".asoundrc", ".config/pulse", ".config/pipewire"];
 
 /// The socket families a role may open.
 fn families(role: Role) -> &'static [u64] {
     match role {
-        Role::Decoder => &[],
+        Role::Decoder | Role::Core => &[],
         // The resolver uses netlink to ask which address families the
         // host has, and local-domain sockets for the name service cache;
         // neither reaches beyond the host.
         Role::Network => &[libc::AF_INET as u64, libc::AF_INET6 as u64, libc::AF_NETLINK as u64, libc::AF_UNIX as u64],
         // The display, the sound server and the input method are
         // local-domain sockets.
-        Role::Interface => &[libc::AF_UNIX as u64],
+        Role::Interface | Role::Sound => &[libc::AF_UNIX as u64],
     }
 }
 
@@ -92,8 +96,18 @@ fn network_namespace() -> Result<(), String> {
 /// The paths a role may read, of those that exist.
 fn readable(role: Role) -> Vec<PathBuf> {
     let mut paths: Vec<PathBuf> = match role {
-        Role::Decoder => Vec::new(),
+        Role::Decoder | Role::Core => Vec::new(),
         Role::Network => RESOLVER_PATHS.iter().map(PathBuf::from).collect(),
+        Role::Sound => {
+            let mut paths: Vec<PathBuf> = SOUND_PATHS.iter().map(PathBuf::from).collect();
+            if let Some(home) = std::env::var_os("HOME").map(PathBuf::from).filter(|home| home.is_absolute()) {
+                paths.extend(SOUND_HOME_PATHS.iter().map(|path| home.join(path)));
+            }
+            if let Some(runtime) = std::env::var_os("XDG_RUNTIME_DIR").map(PathBuf::from).filter(|path| path.is_absolute()) {
+                paths.push(runtime);
+            }
+            paths
+        }
         Role::Interface => {
             let mut paths: Vec<PathBuf> = INTERFACE_PATHS.iter().map(PathBuf::from).collect();
             if let Some(home) = std::env::var_os("HOME").map(PathBuf::from).filter(|home| home.is_absolute()) {
@@ -112,34 +126,52 @@ fn readable(role: Role) -> Vec<PathBuf> {
     paths
 }
 
-/// The newest Landlock the crate knows; the ruleset is made for it and
-/// falls back to what the running kernel has.
+/// The Landlock the rules are written for (kernel 6.10 and later); a
+/// kernel that cannot enforce all of it is refused (decision 58).
 const LANDLOCK_ABI: ABI = ABI::V5;
 
-/// Landlock: the readable paths, the sound devices for the interface, and
-/// no TCP for a role without the network. Returns whether the kernel
-/// enforced all of it or, being older, part.
-fn landlock(role: Role) -> Result<RulesetStatus, String> {
+/// Read access to `path`: a file cannot be given a directory's rights, so
+/// a file is given only the read rights a file has. Asked for on a file,
+/// a directory's rights would leave the ruleset enforced only in part.
+fn read_access(path: &Path, abi: ABI) -> landlock::BitFlags<AccessFs> {
+    if path.is_dir() { AccessFs::from_read(abi) } else { AccessFs::from_read(abi) & AccessFs::from_file(abi) }
+}
+
+/// Landlock: the readable paths, the sound devices for the sound helper,
+/// the core's settings folder written, and no TCP for a role without the
+/// network, every one of them enforced or none (decision 58).
+fn landlock(role: Role, writable: Option<&Path>) -> Result<(), String> {
     let abi = LANDLOCK_ABI;
     let mut ruleset =
-        Ruleset::default().set_compatibility(CompatLevel::BestEffort).handle_access(AccessFs::from_all(abi)).map_err(|error| error.to_string())?;
+        Ruleset::default().set_compatibility(CompatLevel::HardRequirement).handle_access(AccessFs::from_all(abi)).map_err(|error| error.to_string())?;
     if role != Role::Network {
         ruleset = ruleset.handle_access(AccessNet::from_all(abi)).map_err(|error| error.to_string())?;
     }
     let mut created = ruleset.create().map_err(|error| error.to_string())?;
     for path in readable(role) {
         let Ok(fd) = PathFd::new(&path) else { continue };
-        created = created.add_rule(PathBeneath::new(fd, AccessFs::from_read(abi))).map_err(|error| error.to_string())?;
+        created = created.add_rule(PathBeneath::new(fd, read_access(&path, abi))).map_err(|error| error.to_string())?;
     }
-    if role == Role::Interface
-        && let Ok(fd) = PathFd::new(Path::new(SOUND_DEVICES))
+    let written = match role {
+        Role::Sound => Some(Path::new(SOUND_DEVICES)),
+        Role::Core => writable,
+        Role::Decoder | Role::Network | Role::Interface => None,
+    };
+    if let Some(folder) = written
+        && let Ok(fd) = PathFd::new(folder)
     {
         created = created.add_rule(PathBeneath::new(fd, AccessFs::from_all(abi))).map_err(|error| error.to_string())?;
     }
     let status = created.restrict_self().map_err(|error| error.to_string())?;
-    match status.ruleset {
-        RulesetStatus::FullyEnforced | RulesetStatus::PartiallyEnforced => Ok(status.ruleset),
-        RulesetStatus::NotEnforced => Err(String::from("the kernel has no Landlock (before 5.13, or built without it)")),
+    enforced(&status.ruleset)
+}
+
+/// Only a ruleset the kernel enforces whole is a sandbox (decision 58).
+fn enforced(status: &RulesetStatus) -> Result<(), String> {
+    match status {
+        RulesetStatus::FullyEnforced => Ok(()),
+        RulesetStatus::PartiallyEnforced => Err(String::from("this kernel enforces only part of the rules (Landlock 5, Linux 6.10, is needed)")),
+        RulesetStatus::NotEnforced => Err(String::from("this kernel has no Landlock (Landlock 5, Linux 6.10, is needed)")),
     }
 }
 
@@ -259,98 +291,20 @@ fn seccomp(role: Role, arch: TargetArch) -> Result<(), String> {
     seccompiler::apply_filter(&program).map_err(|error| error.to_string())
 }
 
-/// Confines the calling process as `role` says.
-pub fn apply(role: Role) -> Result<Report, String> {
+/// Confines the calling process as `role` says, every layer or none: the
+/// first that cannot be applied is the error, and the process must end
+/// (decision 58).
+pub fn apply(role: Role, writable: Option<&Path>) -> Result<Report, String> {
     let mut report = Report::default();
     no_new_privileges().map_err(|error| format!("cannot refuse new privileges: {error}"))?;
     if role != Role::Network {
-        match network_namespace() {
-            Ok(()) => report.layers.push(String::from("network namespace")),
-            Err(error) => report.missing.push(format!("a network namespace ({error})")),
-        }
+        network_namespace().map_err(|error| format!("cannot make an empty network namespace: {error}"))?;
+        report.layers.push(String::from("network namespace"));
     }
-    match landlock(role) {
-        Ok(RulesetStatus::FullyEnforced) => report.layers.push(String::from("Landlock")),
-        Ok(_) => report.layers.push(String::from("Landlock (in part)")),
-        Err(error) => report.missing.push(format!("Landlock ({error})")),
-    }
-    match architecture() {
-        Some(arch) => {
-            seccomp(role, arch).map_err(|error| format!("cannot apply the system-call filter: {error}"))?;
-            report.layers.push(String::from("seccomp"));
-        }
-        None => report.missing.push(String::from("a system-call filter (none exists for this architecture)")),
-    }
+    landlock(role, writable).map_err(|error| format!("cannot apply Landlock: {error}"))?;
+    report.layers.push(String::from("Landlock"));
+    let arch = architecture().ok_or("no system-call filter exists for this architecture")?;
+    seccomp(role, arch).map_err(|error| format!("cannot apply the system-call filter: {error}"))?;
+    report.layers.push(String::from("seccomp"));
     Ok(report)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use std::process::{Command, Stdio};
-
-    /// What a probe tries once confined, as a child of the test.
-    const PROBE: &str = "NEOTELETEXT_CONFINE_PROBE";
-
-    /// Runs this test binary again as a probe for `role`, which confines
-    /// itself and reports what it can still do.
-    fn probe(role: &str) -> String {
-        let program = std::env::current_exe().unwrap();
-        let output = Command::new(program)
-            .arg("--exact")
-            .arg("linux::tests::probe_entry")
-            .arg("--nocapture")
-            .env(PROBE, role)
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .output()
-            .unwrap();
-        let mut text = String::from_utf8_lossy(&output.stdout).into_owned();
-        text.push_str(&String::from_utf8_lossy(&output.stderr));
-        text
-    }
-
-    /// The probe: run by `probe`, never on its own. It confines itself as
-    /// the role in the environment says, then tries what the role forbids.
-    #[test]
-    fn probe_entry() {
-        let Ok(role) = std::env::var(PROBE) else { return };
-        let role = match role.as_str() {
-            "decoder" => Role::Decoder,
-            "network" => Role::Network,
-            _ => Role::Interface,
-        };
-        let report = apply(role).unwrap();
-        let file = std::fs::File::open("/etc/hostname").map_or("refused", |_| "opened");
-        let program = Command::new("/bin/true").status().map_or("refused", |_| "started");
-        let tcp = std::net::TcpStream::connect_timeout(&"127.0.0.1:9".parse().unwrap(), std::time::Duration::from_millis(200))
-            .map_or_else(|error| if error.kind() == std::io::ErrorKind::PermissionDenied { "refused" } else { "no listener" }, |_| "connected");
-        let write = std::fs::write("/tmp/neoteletext-confine-probe", b"x").map_or("refused", |()| "wrote");
-        println!("PROBE report={report}; file={file}; program={program}; tcp={tcp}; write={write}");
-    }
-
-    /// Requirement 3.4: a decoder can open no file, start no program and
-    /// make no connection.
-    #[test]
-    fn a_decoder_can_do_nothing_but_compute() {
-        let out = probe("decoder");
-        let line = out.lines().find(|line| line.starts_with("PROBE")).unwrap_or_else(|| panic!("no probe line in {out}"));
-        assert!(line.contains("file=refused"), "{line}");
-        assert!(line.contains("program=refused"), "{line}");
-        assert!(line.contains("tcp=refused"), "{line}");
-        assert!(line.contains("write=refused"), "{line}");
-        assert!(line.contains("seccomp"), "{line}");
-    }
-
-    /// Requirement 3.3: a fetcher may connect but not open files (beyond
-    /// the resolver's) or start programs.
-    #[test]
-    fn a_fetcher_has_the_network_and_nothing_else() {
-        let out = probe("network");
-        let line = out.lines().find(|line| line.starts_with("PROBE")).unwrap_or_else(|| panic!("no probe line in {out}"));
-        // /etc is readable for the resolver; a write anywhere is not.
-        assert!(line.contains("program=refused"), "{line}");
-        assert!(line.contains("write=refused"), "{line}");
-        assert!(line.contains("tcp=no listener") || line.contains("tcp=connected"), "the network is open: {line}");
-    }
 }

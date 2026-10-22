@@ -68,6 +68,12 @@ impl Source {
         Ok(Self { bytes, sent: 0, ended: false })
     }
 
+    /// The channel's bytes, for the broker to send the core (decision 56).
+    #[must_use]
+    pub fn into_bytes(self) -> Vec<u8> {
+        self.bytes
+    }
+
     /// A channel of these bytes, written by the trusted core itself: the
     /// start page.
     #[must_use]

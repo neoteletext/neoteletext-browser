@@ -158,7 +158,9 @@ impl Browser {
     pub fn typing_target(&self) -> Option<PageKey> {
         let typing = self.terminal.typing.filter(|typing| typing.on)?;
         let key = PageKey { channel: typing.channel, page: typing.page };
-        (self.opened() == Some(key) && !self.editing && !self.settings_editing()).then_some(key)
+        // While a panel, popover or list of the strip is open, the keys are
+        // the strip's (`history-and-bookmarks.md` section 2.4).
+        (self.opened() == Some(key) && !self.editing && !self.strip_has_keys()).then_some(key)
     }
 
     /// The modes in force on the page keys go to, 0 when none.
@@ -474,6 +476,26 @@ mod tests {
         browser.set_typing(TypingView { on: false, ..typing(None, 0) }, 0);
         press(&mut browser, 'b', 0);
         assert_eq!(intents(&browser.take_outputs()), [] as [Intent; 0], "typing is off");
+    }
+
+    /// A panel, popover or list of the strip, while open, takes the keys:
+    /// none go to the page's channel. Before, Return in the star's popover
+    /// went to a channel that takes keys, and the popover never closed.
+    #[test]
+    fn the_strips_panels_take_the_keys_from_the_channel() {
+        let mut browser = browser();
+        browser.set_typing(typing(None, 0), 0);
+        assert_eq!(browser.typing_target(), Some(KEY));
+        browser.set_star(crate::library::StarView { open: true, ..crate::library::StarView::default() });
+        assert_eq!(browser.typing_target(), None, "the star's popover");
+        browser.set_star(crate::library::StarView::default());
+        browser.toggle_history();
+        assert_eq!(browser.typing_target(), None, "the history panel");
+        browser.toggle_history();
+        browser.toggle_menu();
+        assert_eq!(browser.typing_target(), None, "the menu");
+        browser.toggle_menu();
+        assert_eq!(browser.typing_target(), Some(KEY));
     }
 
     /// REQ-INT-134: echo of the viewer's own printable keys, within the

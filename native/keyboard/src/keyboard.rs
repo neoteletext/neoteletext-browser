@@ -153,7 +153,7 @@ pub fn main() -> ExitCode {
     // First, before any thread: the network and nothing else. What
     // confined it is not printed: this process prints one thing, why it
     // stopped (REQ-INT-137).
-    match confine::apply(confine::Role::Network)
+    match confine::apply(confine::Role::Network, None)
         .map(drop)
         .and_then(|()| arguments(std::env::args().skip(1)))
         .and_then(|read| run(&read.relay, read.pin, read.proxy))

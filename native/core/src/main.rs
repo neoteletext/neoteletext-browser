@@ -32,6 +32,7 @@
     clippy::unimplemented
 )]
 
+mod library;
 mod session;
 mod source;
 
@@ -40,24 +41,31 @@ use std::ffi::OsString;
 use std::io::{BufReader, Write};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
+use std::sync::Arc;
 use std::sync::mpsc::{self, Sender};
 use std::thread;
 use std::time::Duration;
 
 use interface_core::canvas::PageKey;
+use interface_core::library::WindowGeometry;
 use protocol::console::ConsoleTab;
 use protocol::decoder::{FIRST_STORE_PAGES, FromDecoder, MAX_CHUNK, MAX_STORE_PAGES, MAX_WHOLE, ToDecoder, read_from_decoder, write_to_decoder};
 use protocol::fetcher::{FromFetcher, MAX_NOTICE, Origin, read_from_fetcher};
 use protocol::settings::{ProxyView, SettingChange, SettingsView};
+use protocol::sound::{FromSound, ToSound, read_from_sound, write_to_sound};
 use protocol::{ToCore, ToInterface, clean, read_from_interface, write_to_interface};
 
-use confine::{Process, Role};
+use confine::Role;
+use confine::broker::{Broker, Exit, Handlers, Helper, Program};
+use neoteletext::bookmarks::Bookmarks;
 use neoteletext::console::{Console, exchange_text};
 use neoteletext::frames;
 use neoteletext::hearing::{Hearing, Send};
+use neoteletext::history::History;
 #[cfg(feature = "links")]
 use neoteletext::links::{Channel as LinkChannel, Follow, Links, Refusal};
 use neoteletext::outbox::Outbox;
+use neoteletext::restore::Saved;
 use neoteletext::settings::{self as stored, Settings};
 use neoteletext::sleep::Sleep;
 #[cfg(feature = "links")]
@@ -66,11 +74,7 @@ use protocol::links::{LinkKind, Message as LinkMessage, Pointing, Spot};
 use crate::session::{Session, Went};
 use crate::source::Next;
 
-const DECODER: &str = "neoteletext-decoder";
-const FETCHER: &str = "neoteletext-fetcher";
-const INTERFACE: &str = "neoteletext-interface";
 #[cfg(feature = "phone-keyboard")]
-const KEYBOARD: &str = "neoteletext-keyboard";
 /// A relay other than qrkeyboard's own, for testing against one run
 /// locally.
 #[cfg(feature = "phone-keyboard")]
@@ -88,6 +92,9 @@ const LOAD_INTERVAL: Duration = Duration::from_millis(200);
 /// How often the trusted core looks for tabs that may sleep: a tab sleeps
 /// at most this long after its time is up (decision 47).
 const SLEEP_CHECK: Duration = Duration::from_secs(60);
+/// How long the window is still before its place is kept: a drag is one
+/// write (`history-and-bookmarks.md` section 15.2).
+const WINDOW_STILL: Duration = Duration::from_secs(1);
 /// How long the strip says a notice (`settings-home-console-proxy-security.md`
 /// section 3).
 const NOTICE_TIME: Duration = Duration::from_secs(10);
@@ -105,16 +112,14 @@ enum Event {
     /// The phone keyboard process ended.
     #[cfg(feature = "phone-keyboard")]
     PhoneEnded(Option<String>),
-}
-
-/// The helpers the trusted core starts for channels, beside its own program.
-struct Programs {
-    decoder: PathBuf,
-    fetcher: PathBuf,
+    /// The sound helper said something, untrusted (decision 55).
+    Sound(FromSound),
+    /// The sound helper ended: the browser runs silent.
+    SoundEnded(Option<String>),
 }
 
 struct Decoder {
-    child: Process,
+    child: Helper,
     input: Outbox,
     /// Which of the channel's decoders this is: one put to sleep may still
     /// report after the next has started, and is then not listened to.
@@ -122,7 +127,7 @@ struct Decoder {
 }
 
 struct Fetcher {
-    child: Process,
+    child: Helper,
     /// As [`Decoder::generation`].
     generation: u64,
     /// The only thing a fetcher is given: input messages (REQ-INT-133).
@@ -130,27 +135,13 @@ struct Fetcher {
     input: Option<Outbox>,
 }
 
-fn sibling(name: &str) -> Result<PathBuf, String> {
-    let program = std::env::current_exe().map_err(|error| format!("cannot find this program: {error}"))?;
-    let path = program.parent().map(|directory| directory.join(program_file(name))).ok_or("this program has no directory")?;
-    if path.is_file() { Ok(path) } else { Err(format!("{} is missing", path.display())) }
-}
-
-/// A program's file name on this platform: `.exe` on Windows.
-fn program_file(name: &str) -> String {
-    format!("{name}{}", std::env::consts::EXE_SUFFIX)
-}
-
-/// Starts a helper confined as its role says (decision 52), with its
-/// pipes and an environment of only what it needs: the trusted core's
-/// environment is the user's, and a decoder or a fetcher has no business
-/// with any of it; the interface gets the window system's.
-fn spawn(program: &Path, arguments: &[OsString], role: Role, local_network: bool, what: &str) -> Result<Process, String> {
-    let environment = confine::environment(role);
-    let process = confine::spawn(&confine::Spawn { program, arguments, role, environment: &environment, local_network })
-        .map_err(|error| format!("cannot start the {what}: {error}"))?;
-    eprintln!("neoteletext: the {what} started confined: {}", process.report);
-    Ok(process)
+/// Asks the broker for a helper (decision 56): it starts it confined as
+/// its program's role says (decision 52), with an environment of only
+/// what it needs, and passes the trusted core its pipes.
+fn spawn(broker: &Arc<Broker>, program: Program, arguments: &[String], local_network: bool) -> Result<Helper, String> {
+    let helper = broker.spawn(program, arguments, local_network).map_err(|error| format!("cannot start the {}: {error}", program.name()))?;
+    eprintln!("neoteletext: the {} started confined: {}", program.name(), helper.report);
+    Ok(helper)
 }
 
 /// Ends a decoder: told to close, and killed rather than waited for, so
@@ -164,8 +155,8 @@ fn stop_decoder(mut decoder: Decoder) {
 }
 
 /// Starts a decoder for `channel`, whose messages arrive as events.
-fn start_decoder(path: &Path, channel: u32, generation: u64, store_pages: usize, events: Sender<Event>) -> Result<Decoder, String> {
-    let mut child = spawn(path, &[OsString::from("--store-pages"), OsString::from(store_pages.to_string())], Role::Decoder, false, "decoder")?;
+fn start_decoder(broker: &Arc<Broker>, channel: u32, generation: u64, store_pages: usize, events: Sender<Event>) -> Result<Decoder, String> {
+    let mut child = spawn(broker, Program::Decoder, &[String::from("--store-pages"), store_pages.to_string()], false)?;
     let output = child.stdout.take().ok_or("the decoder has no output")?;
     let input = Outbox::new(child.stdin.take().ok_or("the decoder has no input")?);
     thread::spawn(move || {
@@ -190,17 +181,17 @@ fn start_decoder(path: &Path, channel: u32, generation: u64, store_pages: usize,
 /// arrive as events.
 /// A fetcher is given its proxy only here, when it starts: a change of the
 /// proxy reaches fetchers started after it (requirement 19.12).
-fn start_fetcher(path: &Path, address: &str, reach: &Reach, channel: u32, generation: u64, events: Sender<Event>) -> Result<Fetcher, String> {
-    let mut arguments = vec![OsString::from(address)];
+fn start_fetcher(broker: &Arc<Broker>, address: &str, reach: &Reach, channel: u32, generation: u64, events: Sender<Event>) -> Result<Fetcher, String> {
+    let mut arguments = vec![address.to_owned()];
     for ip in &reach.allow_local {
-        arguments.push(OsString::from("--allow-local"));
-        arguments.push(OsString::from(ip));
+        arguments.push(String::from("--allow-local"));
+        arguments.push(ip.clone());
     }
     if let Some(proxy) = &reach.proxy {
-        arguments.push(OsString::from("--proxy"));
-        arguments.push(OsString::from(proxy));
+        arguments.push(String::from("--proxy"));
+        arguments.push(proxy.clone());
     }
-    let mut child = spawn(path, &arguments, Role::Network, !reach.allow_local.is_empty(), "fetcher")?;
+    let mut child = spawn(broker, Program::Fetcher, &arguments, !reach.allow_local.is_empty())?;
     let output = child.stdout.take().ok_or("the fetcher has no output")?;
     thread::spawn(move || {
         let mut output = BufReader::new(output);
@@ -227,7 +218,7 @@ fn start_fetcher(path: &Path, address: &str, reach: &Reach, channel: u32, genera
     })
 }
 
-fn read_interface(child: &mut Process, events: Sender<Event>) -> Result<(), String> {
+fn read_interface(child: &mut Helper, events: Sender<Event>) -> Result<(), String> {
     let output = child.stdout.take().ok_or("the interface has no output")?;
     thread::spawn(move || {
         let mut input = BufReader::new(output);
@@ -265,9 +256,10 @@ impl Reach {
 struct Core {
     session: Session,
     decoders: BTreeMap<u32, Decoder>,
-    decoder_path: PathBuf,
+    /// Starts helpers, reads file channels and opens web addresses for the
+    /// core (decision 56); none in a test.
+    broker: Option<Arc<Broker>>,
     fetchers: BTreeMap<u32, Fetcher>,
-    fetcher_path: PathBuf,
     /// Local-network servers the user allowed with `--allow-local`.
     allow_local: Vec<String>,
     /// The settings and where they are kept (requirement 19.1).
@@ -312,11 +304,23 @@ struct Core {
     opened: Option<PageKey>,
     /// The phone keyboard process, while one runs.
     #[cfg(feature = "phone-keyboard")]
-    phone: Option<(Process, Outbox)>,
+    phone: Option<(Helper, Outbox)>,
     /// What the interface shows of it.
     #[cfg(feature = "phone-keyboard")]
     phone_view: protocol::keyboard::PhoneView,
     to_interface: Outbox,
+    /// The sound helper's pipe, while it runs (decision 55).
+    sound: Option<(Helper, Outbox)>,
+    /// History, and the panels of history and bookmarks
+    /// (`history-and-bookmarks.md`).
+    library: library::Library,
+    /// The window's place and size kept with the session, and one the
+    /// interface reported since, kept once the window is still: a drag is
+    /// one write (`history-and-bookmarks.md` section 15.2).
+    window: Option<WindowGeometry>,
+    window_moved: Option<(WindowGeometry, std::time::Instant)>,
+    /// The session's text last written, so an unchanged one is not.
+    kept_session: String,
 }
 
 impl Core {
@@ -402,14 +406,13 @@ impl Core {
     }
 
     /// Delivers what the hearing rules decided.
-    fn deliver(&mut self, sends: Vec<Send>) -> Result<(), String> {
+    fn deliver(&mut self, sends: Vec<Send>) {
         for send in sends {
             match send {
                 Send::Decoder(channel, message) => self.tell(channel, message),
-                Send::Interface(message) => self.send(&message)?,
+                Send::Sound(message) => self.tell_sound(&message),
             }
         }
-        Ok(())
     }
 
     fn tell(&mut self, channel: u32, message: ToDecoder) {
@@ -444,13 +447,13 @@ impl Core {
                 }
                 self.generation = self.generation.wrapping_add(1);
                 let pages = self.store_pages.get(id).copied().unwrap_or(FIRST_STORE_PAGES);
-                let mut decoder = start_decoder(&self.decoder_path, *id, self.generation, pages, self.events.clone())?;
+                let mut decoder = start_decoder(self.broker()?, *id, self.generation, pages, self.events.clone())?;
                 for message in self.sleep.kept(*id) {
                     let _ = write_to_decoder(&mut decoder.input, message);
                 }
                 self.decoders.insert(*id, decoder);
             } else if !awake && self.decoders.contains_key(id) {
-                self.put_to_sleep(*id)?;
+                self.put_to_sleep(*id);
             }
             // A web channel's pages come from its own fetcher, which runs
             // for as long as its tab is open, asleep or not: fetching never
@@ -460,13 +463,13 @@ impl Core {
             {
                 self.generation = self.generation.wrapping_add(1);
                 let reach = Reach::of(&self.allow_local, &self.settings);
-                let fetcher = start_fetcher(&self.fetcher_path, address, &reach, *id, self.generation, self.events.clone())?;
+                let fetcher = start_fetcher(self.broker()?, address, &reach, *id, self.generation, self.events.clone())?;
                 self.fetchers.insert(*id, fetcher);
             }
         }
         let unused: Vec<u32> = self.decoders.keys().chain(self.fetchers.keys()).copied().filter(|id| !channels.iter().any(|(used, ..)| used == id)).collect();
         for id in unused {
-            self.put_to_sleep(id)?;
+            self.put_to_sleep(id);
             self.stop_fetcher(id);
             self.sleep.forget(id);
             self.console.forget(id);
@@ -476,17 +479,16 @@ impl Core {
 
     /// Closes a channel's decoder, and forgets what it showed: its links,
     /// its typing and its sounds.
-    fn put_to_sleep(&mut self, id: u32) -> Result<(), String> {
+    fn put_to_sleep(&mut self, id: u32) {
         #[cfg(feature = "links")]
         self.links.channel_gone(id);
         #[cfg(feature = "interaction")]
         self.typing.channel_gone(id);
         let sends = self.hearing.channel_gone(id);
-        self.deliver(sends)?;
+        self.deliver(sends);
         if let Some(decoder) = self.decoders.remove(&id) {
             stop_decoder(decoder);
         }
-        Ok(())
     }
 
     /// A decoder's store is full: it is started again with twice the room,
@@ -504,7 +506,7 @@ impl Core {
             stop_decoder(decoder);
         }
         self.generation = self.generation.wrapping_add(1);
-        let mut decoder = start_decoder(&self.decoder_path, id, self.generation, pages, self.events.clone())?;
+        let mut decoder = start_decoder(self.broker()?, id, self.generation, pages, self.events.clone())?;
         for message in self.sleep.kept(id) {
             let _ = write_to_decoder(&mut decoder.input, message);
         }
@@ -624,15 +626,16 @@ impl Core {
         self.send_console()?;
         #[cfg(feature = "links")]
         self.send_links_afresh()?;
-        self.send_mutes()
+        self.send_mutes();
+        Ok(())
     }
 
     /// Tells the interface each tab's channel's mute, where it changed: a
     /// muted tab's new channel starts muted.
-    fn send_mutes(&mut self) -> Result<(), String> {
+    fn send_mutes(&mut self) {
         let tabs: Vec<(u32, bool)> = self.session.tabs.iter().map(|tab| (tab.channel.id, tab.muted)).collect();
         let sends = tabs.into_iter().filter_map(|(channel, muted)| self.hearing.mute(channel, muted)).collect();
-        self.deliver(sends)
+        self.deliver(sends);
     }
 
     /// The tabs again, after a change of mute, and the mutes themselves.
@@ -640,7 +643,8 @@ impl Core {
         let tabs = self.session.tab_infos();
         let active = self.session.active;
         self.send(&ToInterface::Tabs { tabs, active })?;
-        self.send_mutes()
+        self.send_mutes();
+        Ok(())
     }
 
     fn active_channel(&self) -> Option<u32> {
@@ -686,6 +690,7 @@ impl Core {
                     return Ok(false);
                 }
                 self.send_all()?;
+                self.send_history()?;
             }
             ToCore::NewTab => {
                 let home = self.settings.home.clone();
@@ -705,7 +710,7 @@ impl Core {
                 #[cfg(feature = "links")]
                 self.links.opened(key);
                 let sends = self.hearing.open(self.active_channel(), key);
-                self.deliver(sends)?;
+                self.deliver(sends);
             }
             ToCore::MuteTab(index) => {
                 if self.session.toggle_mute(usize::from(index)) {
@@ -716,27 +721,28 @@ impl Core {
                 self.session.mute_all(muted);
                 self.send_tabs()?;
             }
-            ToCore::Sounding(channels) => self.sleep.set_sounding(&channels),
             ToCore::Navigate(typed) => {
-                if let Err(reason) = self.session.navigate(&typed) {
+                if let Err(reason) = self.session.navigate(&typed, true) {
                     eprintln!("neoteletext: {reason}");
                 }
                 self.send_all()?;
             }
-            ToCore::Back | ToCore::Forward => match self.session.go(matches!(intent, ToCore::Forward)) {
-                Went::Nowhere => {}
-                Went::Channel => self.send_all()?,
-                // Another page of the same channel: it stays open.
-                #[cfg_attr(not(feature = "links"), allow(unused_variables, reason = "only a link opens a page"))]
-                Went::Page(page) => {
-                    self.send(&ToInterface::Strip(self.strip()))?;
-                    #[cfg(feature = "links")]
-                    if let (Some(page), Some(channel)) = (page, self.active_channel()) {
-                        self.link(LinkMessage::Show(PageKey { channel, page }))?;
-                    }
-                }
-            },
-            ToCore::Bookmark | ToCore::Home | ToCore::ChangeSetting(_) | ToCore::Console(_) => self.settings_intent(intent)?,
+            ToCore::Back | ToCore::Forward => {
+                let went = self.session.go(matches!(intent, ToCore::Forward));
+                self.went(went)?;
+            }
+            ToCore::Bookmark => self.star()?,
+            ToCore::Home | ToCore::ChangeSetting(_) | ToCore::Console(_) => self.settings_intent(intent)?,
+            ToCore::History(_)
+            | ToCore::Bookmarks(_)
+            | ToCore::Star(_)
+            | ToCore::Bar(_)
+            | ToCore::Suggest(_)
+            | ToCore::Suggestion { .. }
+            | ToCore::TabList(_)
+            | ToCore::GoTo { .. }
+            | ToCore::NewPrivateTab => self.library_intent(intent)?,
+            ToCore::Window(window) => self.window_moved = std::time::Instant::now().checked_add(WINDOW_STILL).map(|still| (window, still)),
             #[cfg(feature = "links")]
             ToCore::Point(_) | ToCore::Typed { .. } | ToCore::Confirm(_) | ToCore::Cancel(_) => self.link_intent(&intent)?,
             #[cfg(any(feature = "links", feature = "interaction"))]
@@ -746,7 +752,50 @@ impl Core {
             #[cfg(feature = "phone-keyboard")]
             ToCore::PhonePanel(_) | ToCore::PhoneFinish => self.input_intent(intent)?,
         }
+        // Another page of a channel already drawing is a visit at once.
+        self.record_drawn()?;
+        self.keep_session();
         Ok(true)
+    }
+
+    /// Keeps the window's place the interface last reported.
+    fn keep_window(&mut self) {
+        if let Some((window, _)) = self.window_moved.take() {
+            self.window = Some(window);
+            self.keep_session();
+        }
+    }
+
+    /// Writes the session if it changed, so that it can always be restored
+    /// (requirement 20.21); a failure is logged.
+    fn keep_session(&mut self) {
+        let Some(folder) = &self.settings_folder else { return };
+        let text = self.session.saved(self.window).text();
+        if text == self.kept_session {
+            return;
+        }
+        match Saved::save(folder, &text) {
+            Ok(()) => self.kept_session = text,
+            Err(error) => eprintln!("neoteletext: the session could not be kept in {}: {error}", folder.display()),
+        }
+    }
+
+    /// After Back, Forward or a step from their lists: another channel is
+    /// sent afresh; another page of the same channel stays open.
+    fn went(&mut self, went: Went) -> Result<(), String> {
+        match went {
+            Went::Nowhere => Ok(()),
+            Went::Channel => self.send_all(),
+            #[cfg_attr(not(feature = "links"), allow(unused_variables, reason = "only a link opens a page"))]
+            Went::Page(page) => {
+                self.send(&ToInterface::Strip(self.strip()))?;
+                #[cfg(feature = "links")]
+                if let (Some(page), Some(channel)) = (page, self.active_channel()) {
+                    self.link(LinkMessage::Show(PageKey { channel, page }))?;
+                }
+                Ok(())
+            }
+        }
     }
 
     /// Hands every channel the next piece of its data, whether or not it
@@ -773,10 +822,10 @@ impl Core {
 
     /// A decoder that broke the protocol is closed; its channel's pages stay
     /// as they were, and its sounds go.
-    fn decoder_ended(&mut self, channel: u32, generation: u64, reason: Option<String>) -> Result<(), String> {
+    fn decoder_ended(&mut self, channel: u32, generation: u64, reason: Option<String>) {
         // A decoder put to sleep, or one before it, has nothing more to say.
         if self.decoders.get(&channel).map(|decoder| decoder.generation) != Some(generation) {
-            return Ok(());
+            return;
         }
         if let Some(reason) = reason {
             eprintln!("neoteletext: the decoder for channel {channel} stopped: {reason}");
@@ -788,7 +837,7 @@ impl Core {
             let _ = decoder.child.wait();
         }
         let sends = self.hearing.channel_gone(channel);
-        self.deliver(sends)
+        self.deliver(sends);
     }
 
     fn decoded(&mut self, channel: u32, message: FromDecoder) -> Result<(), String> {
@@ -827,6 +876,9 @@ impl Core {
                         #[cfg(feature = "links")]
                         self.links_of_image(key, version)?;
                         self.send(&ToInterface::Frame { key, version, png })?;
+                        // The page drew: its tab's visit is recorded
+                        // (requirement 20.1).
+                        self.record_pending(channel)?;
                     }
                     // The same image again: only its links may have changed.
                     #[cfg(feature = "links")]
@@ -855,7 +907,7 @@ impl Core {
             }
             FromDecoder::Audio(audio) => {
                 if let Some(message) = self.hearing.decoded(channel, audio) {
-                    self.send(&message)?;
+                    self.tell_sound(&message);
                 }
             }
         }
@@ -877,20 +929,13 @@ impl Core {
         strip
     }
 
-    /// The strip's intents of the settings: the star, Home, a change the
-    /// panel asks for, and the console.
+    /// The strip's intents of the settings: Home, a change the panel asks
+    /// for, and the console.
     fn settings_intent(&mut self, intent: ToCore) -> Result<(), String> {
         match intent {
-            ToCore::Bookmark => {
-                if self.session.toggle_bookmark() {
-                    self.settings.bookmarks = self.session.bookmarks().to_vec();
-                    self.save_settings();
-                }
-                self.send(&ToInterface::Strip(self.strip()))
-            }
             ToCore::Home => {
                 let home = self.settings.home.clone();
-                if let Err(reason) = self.session.navigate(&home) {
+                if let Err(reason) = self.session.navigate(&home, false) {
                     eprintln!("neoteletext: {home}: {reason}");
                 }
                 self.send_all()
@@ -974,7 +1019,7 @@ impl Core {
         let stuck: Vec<u32> = self.decoders.iter_mut().filter_map(|(&id, decoder)| decoder.input.flush().is_err().then_some(id)).collect();
         for id in stuck {
             eprintln!("neoteletext: the decoder for channel {id} stopped reading and is replaced");
-            self.put_to_sleep(id)?;
+            self.put_to_sleep(id);
         }
         #[cfg(feature = "interaction")]
         for fetcher in self.fetchers.values_mut() {
@@ -985,6 +1030,12 @@ impl Core {
         #[cfg(feature = "phone-keyboard")]
         if let Some((_, input)) = self.phone.as_mut() {
             let _ = input.flush();
+        }
+        if let Some((_, input)) = self.sound.as_mut()
+            && input.flush().is_err()
+        {
+            eprintln!("neoteletext: no sound: the sound helper stopped reading");
+            self.sound = None;
         }
         self.to_interface.flush().map_err(|error| format!("cannot write to the interface: {error}"))?;
         // A replaced decoder starts again at once if its tab is awake.
@@ -1017,6 +1068,9 @@ impl Core {
         if let Some((_, until)) = &self.notice {
             next = next.map(|at| at.min(*until));
         }
+        if let Some((_, still)) = self.window_moved {
+            next = next.map(|at| at.min(still));
+        }
         next
     }
 
@@ -1034,11 +1088,71 @@ impl Core {
             self.next_sleep_check = now.checked_add(SLEEP_CHECK).unwrap_or(now);
             self.match_decoders()?;
         }
+        if self.window_moved.is_some_and(|(_, still)| now >= still) {
+            self.keep_window();
+        }
         Ok(())
     }
 
-    /// The settings as the panel shows them, with the last refusal.
+    /// Passes a checked voice operation or the settings to the sound
+    /// helper; with none, the browser is silent and they go nowhere.
+    fn tell_sound(&mut self, message: &ToSound) {
+        if let Some((_, input)) = self.sound.as_mut() {
+            let _ = write_to_sound(input, message);
+        }
+    }
+
+    /// Which channels sound, as the sound helper said: a sounding tab stays
+    /// awake (decision 47) and shows its speaker.
+    fn sounding(&mut self, channels: Vec<u32>) -> Result<(), String> {
+        self.sleep.set_sounding(&channels);
+        self.send(&ToInterface::Sounding(channels))
+    }
+
+    /// The broker, which a test's core has none of.
+    fn broker(&self) -> Result<&Arc<Broker>, String> {
+        self.broker.as_ref().ok_or_else(|| String::from("no broker: this trusted core starts nothing"))
+    }
+
+    /// Starts the sound helper, whose messages arrive as events; when it
+    /// cannot start, as on a Linux without the system's sound library, the
+    /// browser runs silent (requirement 16.6).
+    fn start_sound(&mut self) {
+        let Ok(broker) = self.broker().cloned() else { return };
+        let mut child = match spawn(&broker, Program::Sound, &[], false) {
+            Ok(child) => child,
+            Err(error) => {
+                eprintln!("neoteletext: no sound: {error}");
+                return;
+            }
+        };
+        let (Some(output), Some(input)) = (child.stdout.take(), child.stdin.take()) else { return };
+        let events = self.events.clone();
+        thread::spawn(move || {
+            let mut output = BufReader::new(output);
+            let end = loop {
+                match read_from_sound(&mut output) {
+                    Ok(Some(message)) => {
+                        if events.send(Event::Sound(message)).is_err() {
+                            return;
+                        }
+                    }
+                    Ok(None) => break None,
+                    Err(error) => break Some(error.to_string()),
+                }
+            };
+            let _ = events.send(Event::SoundEnded(end));
+        });
+        self.sound = Some((child, Outbox::new(input)));
+        let message = ToSound::Settings { sound: self.settings.sound, volume: self.settings.volume };
+        self.tell_sound(&message);
+    }
+
+    /// The settings as the panel shows them, with the last refusal; the
+    /// sound helper is told the sound and the volume (requirement 19.4).
     fn send_settings(&mut self) -> Result<(), String> {
+        let message = ToSound::Settings { sound: self.settings.sound, volume: self.settings.volume };
+        self.tell_sound(&message);
         let proxy = match &self.settings.proxy {
             None => ProxyView::None,
             Some(stored::Proxy::Http { host, port }) => ProxyView::Http { host: clean(host, protocol::settings::MAX_PROXY_HOST), port: *port },
@@ -1050,6 +1164,8 @@ impl Core {
             volume: self.settings.volume,
             proxy,
             local: self.settings.local.iter().map(ToString::to_string).collect(),
+            remember_history: self.settings.remember_history,
+            restore_session: self.settings.restore,
             refusal: self.refusal.as_deref().map(|refusal| clean(refusal, protocol::settings::MAX_REFUSAL)),
         };
         self.send(&ToInterface::Settings(view))
@@ -1081,7 +1197,8 @@ impl Core {
             }
             Err(reason) => self.refusal = Some(reason),
         }
-        self.send_settings()
+        self.send_settings()?;
+        self.send_history()
     }
 }
 
@@ -1146,7 +1263,38 @@ fn checked_change(settings: &mut Settings, change: SettingChange, current: Optio
             let address = settings.local.remove(index);
             Ok(Some(format!("{address} on the local network no longer allowed")))
         }
+        // Remembering history is the user's privacy, not a security setting
+        // the strip says (requirement 20.7).
+        SettingChange::RememberHistory(on) => {
+            settings.remember_history = on;
+            Ok(None)
+        }
+        // So is restoring the last session (requirement 20.24).
+        SettingChange::RestoreSession(on) => {
+            settings.restore = on;
+            Ok(None)
+        }
     }
+}
+
+/// The tabs at start (`history-and-bookmarks.md` section 15.3): the last
+/// session's, when it is restored, then the command line's addresses, the
+/// last of them active; with neither, the home address. Without a session
+/// restored, the first tab is active, as before.
+fn open_at_start(session: &mut Session, saved: Option<&Saved>, addresses: &[String], home: &str) -> Result<(), String> {
+    let restored = saved.is_some_and(|saved| session.restore(saved) > 0);
+    for address in addresses {
+        if let Err(reason) = session.open(address) {
+            eprintln!("neoteletext: {address}: {reason}");
+        }
+    }
+    if session.tabs.is_empty() {
+        open_home(session, home)?;
+    }
+    if !restored {
+        session.active = 0;
+    }
+    Ok(())
 }
 
 /// Opens the home address in a new tab; one that cannot be opened, as a
@@ -1195,14 +1343,14 @@ impl Core {
         if let Ok(relay) = std::env::var(RELAY_VARIABLE)
             && (relay.starts_with("https://") || relay.starts_with("http://"))
         {
-            arguments.push(OsString::from(relay));
+            arguments.push(relay);
         }
         // The proxy, given only at its start (requirement 19.12).
         if let Some(proxy) = &self.settings.proxy {
-            arguments.push(OsString::from("--proxy"));
-            arguments.push(OsString::from(proxy.url()));
+            arguments.push(String::from("--proxy"));
+            arguments.push(proxy.url());
         }
-        let mut child = spawn(&sibling(KEYBOARD)?, &arguments, Role::Network, true, "phone keyboard")?;
+        let mut child = spawn(self.broker()?, Program::Keyboard, &arguments, true)?;
         let output = child.stdout.take().ok_or("the phone keyboard has no output")?;
         let input = Outbox::new(child.stdin.take().ok_or("the phone keyboard has no input")?);
         let events = self.events.clone();
@@ -1389,7 +1537,7 @@ impl Core {
     fn hand_off(&mut self, address: &str) -> Result<(), String> {
         let from = self.links.opened_page().map(|key| format!("page {:03X} of channel {}", key.page, key.channel)).unwrap_or_default();
         let at = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |since| since.as_secs());
-        match web_opener::open(address) {
+        match self.broker()?.open_web(address) {
             Ok(()) => {
                 eprintln!("neoteletext: handed {address} to the web browser, from {from}, at {at} seconds past 1970");
                 Ok(())
@@ -1409,15 +1557,14 @@ impl Core {
         kept: (Settings, Option<PathBuf>),
         events: Sender<Event>,
         to_interface: Outbox,
-        programs: Programs,
+        broker: Option<Arc<Broker>>,
     ) -> Self {
         let (settings, settings_folder) = kept;
         Self {
             session,
             decoders: BTreeMap::new(),
-            decoder_path: programs.decoder,
+            broker,
             fetchers: BTreeMap::new(),
-            fetcher_path: programs.fetcher,
             allow_local,
             settings,
             settings_folder,
@@ -1446,6 +1593,11 @@ impl Core {
             #[cfg(feature = "phone-keyboard")]
             phone_view: protocol::keyboard::PhoneView { state: protocol::keyboard::PhoneState::Finished, qr: None, pin: None },
             to_interface,
+            sound: None,
+            library: library::Library::default(),
+            window: None,
+            window_moved: None,
+            kept_session: String::new(),
         }
     }
 }
@@ -1472,6 +1624,59 @@ fn load_settings() -> (Settings, Option<PathBuf>) {
     (settings, folder)
 }
 
+/// The bookmarks kept between runs (requirement 20.19); lines dropped by
+/// their rules are logged (requirement 20.20).
+fn load_bookmarks(folder: Option<&Path>) -> Bookmarks {
+    let Some(folder) = folder else { return Bookmarks::default() };
+    match Bookmarks::load(folder) {
+        Ok((bookmarks, dropped)) => {
+            for line in dropped {
+                eprintln!("neoteletext: {line}");
+            }
+            bookmarks
+        }
+        Err(error) => {
+            eprintln!("neoteletext: the bookmarks in {} could not be read: {error}", folder.display());
+            Bookmarks::default()
+        }
+    }
+}
+
+/// History kept between runs (requirement 20.2); lines dropped by their
+/// rules are logged (requirement 20.3).
+fn load_history(folder: Option<&Path>) -> History {
+    let Some(folder) = folder else { return History::default() };
+    match History::load(folder) {
+        Ok((history, dropped)) => {
+            for line in dropped {
+                eprintln!("neoteletext: {line}");
+            }
+            history
+        }
+        Err(error) => {
+            eprintln!("neoteletext: the history in {} could not be read: {error}", folder.display());
+            History::default()
+        }
+    }
+}
+
+/// The session kept from the last run (`history-and-bookmarks.md` section
+/// 15); lines dropped by their rules are logged (requirement 20.23).
+fn load_session(folder: Option<&Path>) -> Option<Saved> {
+    match Saved::load(folder?) {
+        Ok((saved, dropped)) => {
+            for line in dropped {
+                eprintln!("neoteletext: {line}");
+            }
+            saved
+        }
+        Err(error) => {
+            eprintln!("neoteletext: the last session could not be read: {error}");
+            None
+        }
+    }
+}
+
 /// Handles one event; `Ok(false)` once the browser is to end.
 fn handle(core: &mut Core, event: Event) -> Result<bool, String> {
     match event {
@@ -1494,21 +1699,27 @@ fn handle(core: &mut Core, event: Event) -> Result<bool, String> {
             }
         }
         Event::Intent(intent) => return core.intent(intent),
-        Event::DecoderEnded(channel, generation, reason) => core.decoder_ended(channel, generation, reason)?,
+        Event::DecoderEnded(channel, generation, reason) => core.decoder_ended(channel, generation, reason),
         #[cfg(feature = "phone-keyboard")]
         Event::Phone(message) => core.phone_said(message)?,
         #[cfg(feature = "phone-keyboard")]
         Event::PhoneEnded(reason) => core.phone_ended(reason)?,
+        Event::Sound(FromSound::Sounding(channels)) => core.sounding(channels)?,
+        Event::SoundEnded(reason) => {
+            eprintln!("neoteletext: no sound: the sound helper ended{}", reason.map(|reason| format!(": {reason}")).unwrap_or_default());
+            core.sound = None;
+            core.sounding(Vec::new())?;
+        }
         Event::InterfaceEnded(None) => return Ok(false),
         Event::InterfaceEnded(Some(reason)) => return Err(format!("the interface broke the protocol and was closed: {reason}")),
     }
     Ok(true)
 }
 
-fn run() -> Result<(), String> {
+fn run(broker: &Arc<Broker>, given: impl Iterator<Item = String>) -> Result<(), String> {
     let mut addresses = Vec::new();
     let mut allow_local = Vec::new();
-    let mut arguments = std::env::args().skip(1);
+    let mut arguments = given;
     while let Some(argument) = arguments.next() {
         if argument == "--allow-local" {
             allow_local.push(arguments.next().ok_or("--allow-local needs an address")?);
@@ -1516,26 +1727,35 @@ fn run() -> Result<(), String> {
             addresses.push(argument);
         }
     }
-    let mut interface = spawn(&sibling(INTERFACE)?, &[], Role::Interface, false, "interface")?;
+    let mut interface = spawn(broker, Program::Interface, &[], false)?;
     let (events, incoming) = mpsc::channel();
     read_interface(&mut interface, events.clone())?;
 
     let (settings, settings_folder) = load_settings();
-    let mut session = Session::new(settings.bookmarks.clone());
-    for address in &addresses {
-        if let Err(reason) = session.open(address) {
-            eprintln!("neoteletext: {address}: {reason}");
-        }
+    let bookmarks = load_bookmarks(settings_folder.as_deref());
+    let saved = load_session(settings_folder.as_deref()).filter(|_| settings.restore);
+    // The window's place first: the interface opens its window with the
+    // first message it is sent (section 15.3).
+    let mut to_interface = Outbox::new(interface.stdin.take().ok_or("the interface has no input")?);
+    let window = saved.as_ref().and_then(|saved| saved.window);
+    if let Some(window) = window {
+        write_to_interface(&mut to_interface, &ToInterface::Window(window)).map_err(|error| format!("cannot write to the interface: {error}"))?;
+        to_interface.flush().map_err(|error| format!("cannot write to the interface: {error}"))?;
     }
-    if session.tabs.is_empty() {
-        open_home(&mut session, &settings.home)?;
-    }
-    session.active = 0;
-    let to_interface = Outbox::new(interface.stdin.take().ok_or("the interface has no input")?);
-    let programs = Programs { decoder: sibling(DECODER)?, fetcher: sibling(FETCHER)? };
-    let mut core = Core::new(session, allow_local, (settings, settings_folder), events, to_interface, programs);
+    // File channels are read by the broker: the core reads no file but its
+    // settings, history and bookmarks (decision 56).
+    let reader = Arc::clone(broker);
+    let mut session = Session::with_reader(bookmarks, Box::new(move |path: &Path| reader.read_source(path).map(source::Source::from_bytes)));
+    open_at_start(&mut session, saved.as_ref(), &addresses, &settings.home)?;
+    let history = load_history(settings_folder.as_deref());
+    let mut core = Core::new(session, allow_local, (settings, settings_folder), events, to_interface, Some(Arc::clone(broker)));
+    core.library.history = history;
+    core.window = window;
+    core.keep_session();
+    core.start_sound();
     core.send_settings()?;
     core.send_all()?;
+    core.send_bar()?;
     core.flush()?;
 
     let result = loop {
@@ -1566,6 +1786,8 @@ fn run() -> Result<(), String> {
         }
     };
 
+    // A move not yet kept.
+    core.keep_window();
     for (_, mut fetcher) in std::mem::take(&mut core.fetchers) {
         drop(fetcher.child.stdin.take());
         #[cfg(feature = "interaction")]
@@ -1576,6 +1798,13 @@ fn run() -> Result<(), String> {
     for (_, decoder) in std::mem::take(&mut core.decoders) {
         stop_decoder(decoder);
     }
+    if let Some((mut helper, mut input)) = core.sound.take() {
+        let _ = write_to_sound(&mut input, &ToSound::Close);
+        let _ = input.flush();
+        drop(input);
+        let _ = helper.kill();
+        let _ = helper.wait();
+    }
     let _ = write_to_interface(&mut core.to_interface, &ToInterface::Close);
     let _ = core.to_interface.flush();
     drop(core);
@@ -1583,19 +1812,73 @@ fn run() -> Result<(), String> {
         let _ = interface.kill();
     }
     let status = interface.wait().map_err(|error| format!("cannot wait for the interface: {error}"))?;
-    ended(result, status)
+    ended(result, &status)
 }
 
 /// The browser's outcome once the interface has ended: an interface that
 /// crashed or failed is a failure even when it closed its pipe cleanly, as
 /// a crashing process does.
-fn ended(result: Result<(), String>, interface: std::process::ExitStatus) -> Result<(), String> {
+fn ended(result: Result<(), String>, interface: &Exit) -> Result<(), String> {
     result?;
-    if interface.success() { Ok(()) } else { Err(format!("the interface ended abnormally ({interface})")) }
+    if interface.success { Ok(()) } else { Err(format!("the interface ended abnormally ({interface})")) }
+}
+
+/// The trusted core's own flag: the broker starts this program again
+/// with it (decision 56).
+const CORE_FLAG: &str = "--core";
+
+/// Folders under the home folder whose files are the user's secrets: the
+/// broker never reads a file channel there for the core, however it is
+/// named (decision 56).
+const SECRET_FOLDERS: &[&str] = &[".ssh", ".gnupg", ".aws", ".kube", ".password-store", ".config/gcloud", ".docker", "Library/Keychains", "Library/Cookies"];
+
+/// The trusted core: confined first (decision 56), then the browser.
+fn core() -> Result<(), String> {
+    let report = confine::apply(Role::Core, stored::folder().as_deref())?;
+    eprintln!("neoteletext: the trusted core is confined: {report}");
+    let broker = Broker::from_parent().map_err(|error| error.to_string())?;
+    run(&broker, std::env::args().skip(2))
+}
+
+/// A file channel's bytes, read by the broker for the core: never from a
+/// folder of the user's secrets, and bounded as `Source::read` bounds it.
+fn read_for_core(path: &Path) -> Result<Vec<u8>, String> {
+    let canonical = path.canonicalize().map_err(|error| format!("{}: {error}", path.display()))?;
+    let home = std::env::var_os("HOME").or_else(|| std::env::var_os("USERPROFILE")).map(PathBuf::from);
+    if let Some(home) = home.and_then(|home| home.canonicalize().ok())
+        && SECRET_FOLDERS.iter().any(|secret| canonical.starts_with(home.join(secret)))
+    {
+        return Err(format!("{}: not a channel", path.display()));
+    }
+    source::Source::read(&canonical).map(source::Source::into_bytes)
+}
+
+/// The broker (decision 56): the program the user starts, and the one
+/// process not confined. It starts the trusted core confined, then serves
+/// its requests until it ends.
+fn broker() -> Result<(), String> {
+    let program = std::env::current_exe().map_err(|error| format!("cannot find this program: {error}"))?;
+    let programs = program.parent().ok_or("this program has no directory")?.to_path_buf();
+    let settings = stored::folder().ok_or("there is no folder for the settings")?;
+    std::fs::create_dir_all(&settings).map_err(|error| format!("{}: {error}", settings.display()))?;
+    let mut arguments = vec![OsString::from(CORE_FLAG)];
+    arguments.extend(std::env::args_os().skip(1));
+    let environment = confine::environment(Role::Core);
+    let core = confine::broker::start_core(&program, &arguments, &settings, &environment).map_err(|error| format!("cannot start the trusted core: {error}"))?;
+    eprintln!("neoteletext: the trusted core started confined: {}", core.report);
+    #[cfg(feature = "links")]
+    let open_web = |address: &str| web_opener::open(address).map_err(|error| error.to_string());
+    // With links compiled out the core never asks; if it does, it is refused.
+    #[cfg(not(feature = "links"))]
+    let open_web = |_: &str| Err(String::from("links are compiled out"));
+    let handlers = Handlers { read_source: &read_for_core, open_web: &open_web, environment: &confine::environment };
+    let exit = confine::broker::serve(core, &programs, &handlers).map_err(|error| format!("cannot wait for the trusted core: {error}"))?;
+    if exit.success { Ok(()) } else { Err(format!("the trusted core ended abnormally ({exit})")) }
 }
 
 fn main() -> ExitCode {
-    match run() {
+    let step = if std::env::args().nth(1).as_deref() == Some(CORE_FLAG) { core() } else { broker() };
+    match step {
         Ok(()) => ExitCode::SUCCESS,
         Err(error) => {
             eprintln!("neoteletext: {error}");
@@ -1607,6 +1890,35 @@ fn main() -> ExitCode {
 #[cfg(test)]
 mod program_tests {
     use super::*;
+
+    /// Section 15.3 and requirement 20.24: the tabs at start.
+    #[test]
+    fn the_tabs_at_start() {
+        let addresses = |session: &Session| session.tabs.iter().map(|tab| tab.address().unwrap().text.clone()).collect::<Vec<_>>();
+        let mut kept = Session::new(Bookmarks::default());
+        kept.open("news.invalid").unwrap();
+        kept.open("sport.invalid").unwrap();
+        kept.active = 0;
+        let saved = kept.saved(None);
+        let given = ["weather.invalid".to_owned(), "tv.invalid".to_owned()];
+
+        let mut session = Session::new(Bookmarks::default());
+        open_at_start(&mut session, Some(&saved), &[], stored::START_PAGE).unwrap();
+        assert_eq!((addresses(&session), session.active), (vec!["https://news.invalid/".to_owned(), "https://sport.invalid/".to_owned()], 0), "as it was");
+
+        let mut session = Session::new(Bookmarks::default());
+        open_at_start(&mut session, Some(&saved), &given, stored::START_PAGE).unwrap();
+        assert_eq!(addresses(&session).len(), 4);
+        assert_eq!(session.active, 3, "the last address given is active");
+
+        let mut session = Session::new(Bookmarks::default());
+        open_at_start(&mut session, None, &given, stored::START_PAGE).unwrap();
+        assert_eq!((addresses(&session), session.active), (vec!["https://weather.invalid/".to_owned(), "https://tv.invalid/".to_owned()], 0), "as before");
+
+        let mut session = Session::new(Bookmarks::default());
+        open_at_start(&mut session, Some(&Saved::default()), &[], stored::START_PAGE).unwrap();
+        assert_eq!(addresses(&session), [stored::START_PAGE], "nothing kept: the home address");
+    }
 
     /// Requirement 19.3: each change is checked by its setting's rule; a
     /// refused one changes nothing and says why; a security setting's
@@ -1638,6 +1950,10 @@ mod program_tests {
         assert!(change(SettingChange::RemoveLocal(16)).is_err());
         assert!(change(SettingChange::RemoveLocal(0)).unwrap().is_some());
         assert_eq!(change(SettingChange::HomeIsThisPage), Ok(None));
+        // Privacy settings, not security ones: nothing said in the strip.
+        assert_eq!(change(SettingChange::RememberHistory(false)), Ok(None));
+        assert_eq!(change(SettingChange::RestoreSession(false)), Ok(None));
+        assert_eq!((settings.remember_history, settings.restore), (false, false));
         assert_eq!(settings.home, "https://open.example/");
         assert_eq!((settings.volume, settings.sound, settings.proxy.is_none()), (30, false, true));
         assert_eq!(settings.local.len(), stored::MAX_LOCAL - 1);
@@ -1660,7 +1976,21 @@ mod program_tests {
     #[test]
     fn a_helper_program_has_this_platforms_file_name() {
         let expected = if cfg!(windows) { "neoteletext-interface.exe" } else { "neoteletext-interface" };
-        assert_eq!(program_file(INTERFACE), expected);
+        assert_eq!(Program::Interface.file_name(), expected);
+    }
+
+    /// Decision 56: the broker reads no file channel in a folder of the
+    /// user's secrets for the core, however the path is written.
+    #[cfg(unix)]
+    #[test]
+    fn the_broker_reads_no_secret_for_the_core() {
+        let Some(home) = std::env::var_os("HOME").map(PathBuf::from) else { return };
+        let ssh = home.join(".ssh");
+        if !ssh.is_dir() {
+            return;
+        }
+        let refused = read_for_core(&ssh.join("..").join(".ssh")).unwrap_err();
+        assert!(refused.ends_with("not a channel"), "{refused}");
     }
 }
 
@@ -1676,20 +2006,19 @@ mod tests {
 
     #[test]
     fn a_crashed_or_failed_interface_fails_the_browser() {
-        let clean = std::process::ExitStatus::from_raw(0);
-        assert_eq!(ended(Ok(()), clean), Ok(()));
-        let crashed = std::process::ExitStatus::from_raw(SEGMENTATION_FAULT);
-        assert!(ended(Ok(()), crashed).is_err_and(|error| error.contains("abnormally")), "a crash is not a clean exit");
-        let failed = std::process::ExitStatus::from_raw(1 << EXIT_CODE_SHIFT);
-        assert!(ended(Ok(()), failed).is_err());
-        assert_eq!(ended(Err("first".into()), crashed), Err("first".into()), "the first error is the one reported");
+        let clean = Exit::from(std::process::ExitStatus::from_raw(0));
+        assert_eq!(ended(Ok(()), &clean), Ok(()));
+        let crashed = Exit::from(std::process::ExitStatus::from_raw(SEGMENTATION_FAULT));
+        assert!(ended(Ok(()), &crashed).is_err_and(|error| error.contains("abnormally")), "a crash is not a clean exit");
+        let failed = Exit::from(std::process::ExitStatus::from_raw(1 << EXIT_CODE_SHIFT));
+        assert!(ended(Ok(()), &failed).is_err());
+        assert_eq!(ended(Err("first".into()), &crashed), Err("first".into()), "the first error is the one reported");
     }
     /// A trusted core for a test: no tabs, no helpers, the interface a
     /// buffer.
     fn test_core() -> Core {
         let (events, _incoming) = mpsc::channel();
-        let programs = Programs { decoder: PathBuf::from("/nonexistent/decoder"), fetcher: PathBuf::from("/nonexistent/fetcher") };
-        Core::new(Session::new(Vec::new()), Vec::new(), (Settings::default(), None), events, Outbox::new(Vec::new()), programs)
+        Core::new(Session::new(Bookmarks::default()), Vec::new(), (Settings::default(), None), events, Outbox::new(Vec::new()), None)
     }
 
     /// Decision 53: the trusted core waits for an event until its next
@@ -1722,8 +2051,17 @@ mod tests {
         let mut core = test_core();
         let program = PathBuf::from("/bin/sleep");
         let arguments = [OsString::from("60")];
-        let mut child =
-            confine::spawn(&confine::Spawn { program: &program, arguments: &arguments, role: Role::Decoder, environment: &[], local_network: false }).unwrap();
+        let mut child = Helper::local(
+            confine::spawn(&confine::Spawn {
+                program: &program,
+                arguments: &arguments,
+                role: Role::Decoder,
+                environment: &[],
+                local_network: false,
+                writable: None,
+            })
+            .unwrap(),
+        );
         let input = Outbox::new(child.stdin.take().unwrap());
         core.decoders.insert(1, Decoder { child, input, generation: 1 });
         let started = std::time::Instant::now();

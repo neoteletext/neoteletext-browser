@@ -20,6 +20,7 @@ pub mod editor;
 pub mod geometry;
 #[cfg(feature = "interaction")]
 pub mod input;
+pub mod library;
 #[cfg(feature = "links")]
 pub mod links;
 pub mod settings;

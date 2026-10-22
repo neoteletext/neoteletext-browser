@@ -28,7 +28,6 @@ use std::collections::BTreeSet;
 use std::io::{self, BufReader, BufWriter, Write};
 use std::num::NonZeroU32;
 use std::rc::Rc;
-use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use dock_menu::{Choice, DockTab};
@@ -36,12 +35,12 @@ use draw_vello::{Family, Painter};
 use interface_core::browser::{Browser, Cursor, Frame, Key as BrowserKey, Modifiers, Output, StripState, TabInfo, WindowAction};
 use interface_core::canvas::PageKey;
 use interface_core::channel::Channel;
-use neoteletext_interface::audio::{self, Shared, Speaker};
+use interface_core::library::WindowGeometry;
 use neoteletext_interface::image;
 use protocol::{ToCore, ToInterface, read_from_core, write_to_core};
 use softbuffer::{Context, Surface};
 use winit::application::ApplicationHandler;
-use winit::dpi::LogicalSize;
+use winit::dpi::{LogicalPosition, LogicalSize};
 use winit::event::{ElementState, Ime, MouseButton, MouseScrollDelta, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop, EventLoopProxy};
 use winit::keyboard::{Key, ModifiersState, NamedKey};
@@ -69,6 +68,16 @@ const FRAME: Frame = Frame { left_inset: 72.0, window_buttons: false };
 /// Elsewhere the browser draws the whole frame, as Chrome does.
 #[cfg(not(target_os = "macos"))]
 const FRAME: Frame = Frame { left_inset: 0.0, window_buttons: true };
+
+/// The trusted core's views of history and bookmarks.
+enum Library {
+    History(interface_core::library::HistoryView),
+    Suggestions(interface_core::library::Suggestions),
+    TabList(interface_core::library::TabList),
+    Bookmarks(interface_core::library::BookmarksView),
+    Star(interface_core::library::StarView),
+    Bar(interface_core::library::BarView),
+}
 
 /// What the reader thread hands to the window's thread.
 enum Incoming {
@@ -107,6 +116,10 @@ enum Incoming {
     Settings(interface_core::settings::SettingsView),
     /// New entries for the developer console.
     Console(interface_core::console::ConsoleUpdate),
+    /// History, bookmarks and their panels (`history-and-bookmarks.md`).
+    Library(Library),
+    /// Where the window was when the session was kept.
+    Window(WindowGeometry),
     /// The user chose an item of the Dock menu.
     Dock(Choice),
     /// The trusted core closed the pipe, asked to close, or broke the protocol.
@@ -128,15 +141,22 @@ struct Graphics {
     _context: Context<Rc<Window>>,
 }
 
+/// What the trusted core first said, which the window waits for.
+#[derive(Clone, Copy)]
+enum Heard {
+    Nothing,
+    /// Its first message, not the window's kept place.
+    Spoke,
+    /// The window's kept place, as its first message.
+    Window(WindowGeometry),
+}
+
 struct App {
     start: Instant,
     graphics: Option<Graphics>,
     browser: Browser,
     /// Exists before the window, so page images that arrive first are kept.
     painter: Painter,
-    /// The output device, run only while a channel sounds; none when the
-    /// computer has no output.
-    speaker: Option<Speaker>,
     modifiers: ModifiersState,
     /// The pointer, in logical pixels.
     cursor: (f64, f64),
@@ -161,13 +181,29 @@ struct App {
     ime: InputMethod,
     /// Reports each frame and what it cost, for measuring the drawing.
     trace_frames: bool,
+    /// The window opens once the event loop has resumed and the trusted
+    /// core's first message has come, which is the window's kept place when
+    /// a session is restored (`history-and-bookmarks.md` section 15.3).
+    resumed: bool,
+    heard: Heard,
+    /// The place and size last reported to the trusted core, and the last
+    /// before the window was maximised, which it returns to.
+    reported: Option<WindowGeometry>,
+    normal: Option<WindowGeometry>,
 }
 
-fn attributes() -> winit::window::WindowAttributes {
-    let attributes = Window::default_attributes()
+/// The window, at its kept place and size when there are some.
+fn attributes(kept: Option<WindowGeometry>) -> winit::window::WindowAttributes {
+    let mut attributes = Window::default_attributes()
         .with_title(WINDOW_TITLE)
         .with_inner_size(LogicalSize::new(WINDOW_WIDTH, WINDOW_HEIGHT))
         .with_min_inner_size(LogicalSize::new(MINIMUM_WIDTH, MINIMUM_HEIGHT));
+    if let Some(kept) = kept {
+        attributes = attributes
+            .with_position(LogicalPosition::new(kept.x, kept.y))
+            .with_inner_size(LogicalSize::new(kept.width, kept.height))
+            .with_maximized(kept.maximised);
+    }
     #[cfg(target_os = "macos")]
     {
         use winit::platform::macos::WindowAttributesExtMacOS;
@@ -175,6 +211,36 @@ fn attributes() -> winit::window::WindowAttributes {
     }
     #[cfg(not(target_os = "macos"))]
     attributes.with_decorations(false)
+}
+
+/// Whether the kept window's top left corner falls on a display now: one
+/// unplugged since is not used, and the system places the window
+/// (`history-and-bookmarks.md` section 15.3).
+fn on_a_display(event_loop: &ActiveEventLoop, kept: &WindowGeometry) -> bool {
+    event_loop.available_monitors().any(|monitor| {
+        let scale = monitor.scale_factor();
+        let position: LogicalPosition<f64> = monitor.position().to_logical(scale);
+        let size: LogicalSize<f64> = monitor.size().to_logical(scale);
+        let (x, y) = (f64::from(kept.x), f64::from(kept.y));
+        x >= position.x && x < position.x + size.width && y >= position.y && y < position.y + size.height
+    })
+}
+
+/// The window's place and size in logical points, as the session keeps
+/// them; none where the system does not say where the window is.
+fn geometry(window: &Window) -> Option<WindowGeometry> {
+    let scale = window.scale_factor();
+    let position: LogicalPosition<f64> = window.outer_position().ok()?.to_logical(scale);
+    let size: LogicalSize<f64> = window.inner_size().to_logical(scale);
+    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss, reason = "rounded, then checked within the session's bounds")]
+    let geometry = WindowGeometry {
+        x: position.x.round() as i32,
+        y: position.y.round() as i32,
+        width: size.width.round() as u32,
+        height: size.height.round() as u32,
+        maximised: window.is_maximized(),
+    };
+    geometry.is_plausible().then_some(geometry)
 }
 
 impl App {
@@ -314,6 +380,15 @@ impl App {
                 Output::Forward => ToCore::Forward,
                 Output::Bookmark => ToCore::Bookmark,
                 Output::Home => ToCore::Home,
+                Output::History(request) => ToCore::History(request),
+                Output::Bookmarks(request) => ToCore::Bookmarks(request),
+                Output::Star(request) => ToCore::Star(request),
+                Output::Bar(request) => ToCore::Bar(request),
+                Output::Suggest(text) => ToCore::Suggest(text),
+                Output::Suggestion { number, new_tab } => ToCore::Suggestion { number, new_tab },
+                Output::TabList(forward) => ToCore::TabList(forward),
+                Output::GoTo { forward, steps } => ToCore::GoTo { forward, steps },
+                Output::NewPrivateTab => ToCore::NewPrivateTab,
                 Output::Setting(change) => ToCore::ChangeSetting(change),
                 Output::Console(open) => ToCore::Console(open),
                 Output::MuteTab(index) => {
@@ -321,7 +396,6 @@ impl App {
                     ToCore::MuteTab(index)
                 }
                 Output::MuteAll(muted) => ToCore::MuteAll(muted),
-                Output::Menu => continue,
                 Output::Window(action) => {
                     self.window_action(event_loop, action);
                     continue;
@@ -594,10 +668,86 @@ impl App {
 
 impl ApplicationHandler<Incoming> for App {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
-        if self.graphics.is_some() {
+        self.resumed = true;
+        self.open_window(event_loop);
+    }
+
+    fn user_event(&mut self, event_loop: &ActiveEventLoop, incoming: Incoming) {
+        if matches!(self.heard, Heard::Nothing) {
+            self.heard = if let Incoming::Window(kept) = &incoming { Heard::Window(*kept) } else { Heard::Spoke };
+            self.open_window(event_loop);
+        }
+        self.incoming(event_loop, incoming);
+    }
+
+    fn window_event(&mut self, event_loop: &ActiveEventLoop, window_id: WindowId, event: WindowEvent) {
+        if matches!(event, WindowEvent::Moved(_) | WindowEvent::Resized(_)) {
+            self.report_window(event_loop);
+        }
+        self.window_input(event_loop, window_id, event);
+    }
+
+    fn device_event(&mut self, _event_loop: &ActiveEventLoop, _device: winit::event::DeviceId, _event: winit::event::DeviceEvent) {}
+
+    /// Redraws while something animates; otherwise sleeps until the next
+    /// event.
+    fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
+        // What the events produced goes to the trusted core before waiting.
+        if let Err(error) = self.output.flush() {
+            self.exit = Some(format!("cannot write to the trusted core: {error}"));
+            event_loop.exit();
             return;
         }
-        let Ok(window) = event_loop.create_window(attributes()) else {
+        let now = self.now();
+        if self.browser.settle(now) {
+            // What settling asked for, as a held Back's list, goes now.
+            self.act(event_loop);
+            if let Err(error) = self.output.flush() {
+                self.exit = Some(format!("cannot write to the trusted core: {error}"));
+                event_loop.exit();
+                return;
+            }
+            self.request_redraw();
+        }
+        // While keys go to a channel, what it pushes is drawn at the
+        // display's rate (`interaction.md` section 10).
+        #[cfg(feature = "interaction")]
+        let change = if self.browser.typing_target().is_some() { TYPING_FRAME_MILLISECONDS } else { CHANGE_FRAME_MILLISECONDS };
+        #[cfg(not(feature = "interaction"))]
+        let change = CHANGE_FRAME_MILLISECONDS;
+        let interval = match (self.browser.frame_interval(now), self.dirty) {
+            (Some(interval), true) => Some(interval.min(change)),
+            (Some(interval), false) => Some(interval),
+            (None, true) => Some(change),
+            (None, false) => None,
+        };
+        if let Some(interval) = interval {
+            // Frames at the pace the browser asks for, rather than as fast
+            // as the processor allows.
+            if now.saturating_sub(self.last_frame) >= interval {
+                self.request_redraw();
+            }
+            let next = self.start.checked_add(Duration::from_millis(self.last_frame.saturating_add(interval)));
+            event_loop.set_control_flow(next.map_or(ControlFlow::Wait, ControlFlow::WaitUntil));
+        } else {
+            event_loop.set_control_flow(ControlFlow::Wait);
+        }
+    }
+}
+
+impl App {
+    /// Opens the window once the event loop has resumed and the trusted
+    /// core has spoken.
+    fn open_window(&mut self, event_loop: &ActiveEventLoop) {
+        if self.graphics.is_some() || !self.resumed {
+            return;
+        }
+        let kept = match self.heard {
+            Heard::Nothing => return,
+            Heard::Spoke => None,
+            Heard::Window(kept) => Some(kept).filter(|kept| on_a_display(event_loop, kept)),
+        };
+        let Ok(window) = event_loop.create_window(attributes(kept)) else {
             self.exit = Some("cannot open a window".into());
             event_loop.exit();
             return;
@@ -615,23 +765,40 @@ impl ApplicationHandler<Incoming> for App {
         };
         self.graphics = Some(Graphics { window, surface, _context: context });
         self.show_tabs();
+        self.report_window(event_loop);
     }
 
-    fn user_event(&mut self, event_loop: &ActiveEventLoop, incoming: Incoming) {
+    /// Tells the trusted core where the window is and how large, to keep
+    /// with the session (requirement 20.21); while maximised, the place and
+    /// size it returns to.
+    fn report_window(&mut self, event_loop: &ActiveEventLoop) {
+        let Some(now) = self.graphics.as_ref().and_then(|graphics| geometry(&graphics.window)) else { return };
+        let report = if now.maximised {
+            self.normal.map_or(now, |normal| WindowGeometry { maximised: true, ..normal })
+        } else {
+            self.normal = Some(now);
+            now
+        };
+        if self.reported != Some(report) {
+            self.reported = Some(report);
+            self.send(event_loop, &ToCore::Window(report));
+        }
+    }
+
+    fn incoming(&mut self, event_loop: &ActiveEventLoop, incoming: Incoming) {
         let now = self.now();
         match incoming {
+            // Used when the window opens; it opens with the first message.
+            Incoming::Window(_) => return,
             Incoming::Tabs(tabs, active) => {
                 self.browser.set_tabs(tabs.clone(), active);
                 self.tabs = tabs;
                 self.active = active;
                 self.show_tabs();
             }
+            // The sound helper said which channels sound, through the
+            // trusted core (decision 55).
             Incoming::Sounding(channels) => {
-                if let Some(speaker) = self.speaker.as_mut() {
-                    speaker.set_playing(!channels.is_empty());
-                }
-                // The trusted core keeps a sounding tab awake (decision 47).
-                self.send(event_loop, &ToCore::Sounding(channels.iter().copied().collect()));
                 if self.browser.set_sounding(channels) {
                     self.show_tabs();
                     self.request_redraw();
@@ -652,6 +819,14 @@ impl ApplicationHandler<Incoming> for App {
             Incoming::Strip(strip) => self.browser.set_strip(strip),
             Incoming::Settings(view) => self.browser.set_settings(view),
             Incoming::Console(update) => self.browser.console_update(update),
+            Incoming::Library(view) => match view {
+                Library::History(view) => self.browser.set_history(view),
+                Library::Suggestions(suggestions) => self.browser.set_suggestions(suggestions),
+                Library::TabList(list) => self.browser.set_tab_list(list),
+                Library::Bookmarks(view) => self.browser.set_bookmarks(view, now),
+                Library::Star(view) => self.browser.set_star(view),
+                Library::Bar(view) => self.browser.set_bar(view),
+            },
             Incoming::Channel(channel) => self.browser.set_channel(channel),
             Incoming::Arrived { channel, page, title } => self.browser.add_page(channel, page, title, now),
             Incoming::Updated { channel, page } => {
@@ -712,7 +887,7 @@ impl ApplicationHandler<Incoming> for App {
         self.dirty = true;
     }
 
-    fn window_event(&mut self, event_loop: &ActiveEventLoop, _window_id: WindowId, event: WindowEvent) {
+    fn window_input(&mut self, event_loop: &ActiveEventLoop, _window_id: WindowId, event: WindowEvent) {
         let scale = self.scale();
         let now = self.now();
         let changed = match event {
@@ -763,7 +938,14 @@ impl ApplicationHandler<Incoming> for App {
             }
             WindowEvent::MouseInput { state: ElementState::Released, button: MouseButton::Left, .. } => {
                 self.browser.pointer_released();
-                false
+                self.act(event_loop);
+                true
+            }
+            // A secondary click: Back's or Forward's list (requirement 20.10).
+            WindowEvent::MouseInput { state: ElementState::Pressed, button: MouseButton::Right, .. } => {
+                let changed = self.browser.secondary_pressed();
+                self.act(event_loop);
+                changed
             }
             WindowEvent::MouseWheel { delta, .. } => self.wheel(event_loop, delta, now),
             #[cfg(feature = "interaction")]
@@ -817,51 +999,11 @@ impl ApplicationHandler<Incoming> for App {
             self.request_redraw();
         }
     }
-
-    fn device_event(&mut self, _event_loop: &ActiveEventLoop, _device: winit::event::DeviceId, _event: winit::event::DeviceEvent) {}
-
-    /// Redraws while something animates; otherwise sleeps until the next
-    /// event.
-    fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
-        // What the events produced goes to the trusted core before waiting.
-        if let Err(error) = self.output.flush() {
-            self.exit = Some(format!("cannot write to the trusted core: {error}"));
-            event_loop.exit();
-            return;
-        }
-        let now = self.now();
-        if self.browser.settle(now) {
-            self.request_redraw();
-        }
-        // While keys go to a channel, what it pushes is drawn at the
-        // display's rate (`interaction.md` section 10).
-        #[cfg(feature = "interaction")]
-        let change = if self.browser.typing_target().is_some() { TYPING_FRAME_MILLISECONDS } else { CHANGE_FRAME_MILLISECONDS };
-        #[cfg(not(feature = "interaction"))]
-        let change = CHANGE_FRAME_MILLISECONDS;
-        let interval = match (self.browser.frame_interval(now), self.dirty) {
-            (Some(interval), true) => Some(interval.min(change)),
-            (Some(interval), false) => Some(interval),
-            (None, true) => Some(change),
-            (None, false) => None,
-        };
-        if let Some(interval) = interval {
-            // Frames at the pace the browser asks for, rather than as fast
-            // as the processor allows.
-            if now.saturating_sub(self.last_frame) >= interval {
-                self.request_redraw();
-            }
-            let next = self.start.checked_add(Duration::from_millis(self.last_frame.saturating_add(interval)));
-            event_loop.set_control_flow(next.map_or(ControlFlow::Wait, ControlFlow::WaitUntil));
-        } else {
-            event_loop.set_control_flow(ControlFlow::Wait);
-        }
-    }
 }
 
 /// Reads the trusted core's messages until the pipe ends, decoding page
 /// images here so the window's thread never waits on them.
-fn read_core(proxy: &EventLoopProxy<Incoming>, mixers: Option<&Shared>, trace: bool) {
+fn read_core(proxy: &EventLoopProxy<Incoming>) {
     let mut input = BufReader::new(io::stdin().lock());
     let end = loop {
         let incoming = match read_from_core(&mut input) {
@@ -874,16 +1016,7 @@ fn read_core(proxy: &EventLoopProxy<Incoming>, mixers: Option<&Shared>, trace: b
                 Ok(image) => Incoming::Page { key, version, image },
                 Err(error) => break Some(format!("bad page image from the trusted core: {error}")),
             },
-            // Sound goes straight to the mixers; the window need not wake.
-            Ok(Some(ToInterface::Audio { channel, audio: operation })) => {
-                if trace && !matches!(operation, protocol::audio::Audio::Samples { .. } | protocol::audio::Audio::StreamSamples { .. }) {
-                    eprintln!("neoteletext-interface: audio, channel {channel}: {operation:?}");
-                }
-                if let Some(mixers) = mixers {
-                    audio::apply(mixers, channel, operation);
-                }
-                continue;
-            }
+            Ok(Some(ToInterface::Sounding(channels))) => Incoming::Sounding(channels.into_iter().collect()),
             #[cfg(feature = "links")]
             Ok(Some(ToInterface::Link(message))) => Incoming::Link(message),
             #[cfg(feature = "interaction")]
@@ -892,14 +1025,15 @@ fn read_core(proxy: &EventLoopProxy<Incoming>, mixers: Option<&Shared>, trace: b
             Ok(Some(ToInterface::Phone(view))) => Incoming::Phone(view),
             #[cfg(feature = "phone-keyboard")]
             Ok(Some(ToInterface::PhoneKey(key))) => Incoming::PhoneKey(key),
-            // The sound and the volume go to the mixers too (requirement 19.4).
-            Ok(Some(ToInterface::Settings(view))) => {
-                if let Some(mixers) = mixers {
-                    audio::set_sound(mixers, view.sound, view.volume);
-                }
-                Incoming::Settings(view)
-            }
+            Ok(Some(ToInterface::Settings(view))) => Incoming::Settings(view),
             Ok(Some(ToInterface::Console(update))) => Incoming::Console(update),
+            Ok(Some(ToInterface::History(view))) => Incoming::Library(Library::History(view)),
+            Ok(Some(ToInterface::Suggestions(suggestions))) => Incoming::Library(Library::Suggestions(suggestions)),
+            Ok(Some(ToInterface::TabList(list))) => Incoming::Library(Library::TabList(list)),
+            Ok(Some(ToInterface::Bookmarks(view))) => Incoming::Library(Library::Bookmarks(view)),
+            Ok(Some(ToInterface::Star(view))) => Incoming::Library(Library::Star(view)),
+            Ok(Some(ToInterface::Bar(view))) => Incoming::Library(Library::Bar(view)),
+            Ok(Some(ToInterface::Window(window))) => Incoming::Window(window),
             Ok(Some(ToInterface::Close) | None) => break None,
             Err(error) => break Some(format!("bad message from the trusted core: {error}")),
         };
@@ -914,7 +1048,7 @@ fn main() -> std::process::ExitCode {
     // First, before any thread and before the window system is reached:
     // the window, fonts, text input, the pasteboard and the sound output,
     // no network (requirement 3.6).
-    match confine::apply(confine::Role::Interface) {
+    match confine::apply(confine::Role::Interface, None) {
         Ok(report) => eprintln!("neoteletext-interface: confined: {report}"),
         Err(error) => {
             eprintln!("neoteletext-interface: {error}");
@@ -933,37 +1067,12 @@ fn main() -> std::process::ExitCode {
     dock_menu::install(move |choice| {
         let _ = dock_proxy.send_event(Incoming::Dock(choice));
     });
-    // NEOTELETEXT_AUDIO_TRACE reports the sound operations applied and the loudest
-    // sample the device played each half second, for checking sound
-    // without listening.
-    let trace = std::env::var_os("NEOTELETEXT_AUDIO_TRACE").is_some();
-    // With no output device the browser runs silent.
-    let mut speaker = Speaker::open().map_err(|reason| eprintln!("neoteletext-interface: no sound: {reason}")).ok();
-    let mixers = speaker.as_ref().map(|speaker| Arc::clone(&speaker.mixers));
-    // Which tabs play sound, told to the window when it changes, which
-    // runs the device only while one does.
-    if let Some((mixers, wakes)) = speaker.as_mut().and_then(|speaker| Some((Arc::clone(&speaker.mixers), speaker.wakes.take()?))) {
-        let proxy = proxy.clone();
-        std::thread::spawn(move || audio::watch(&mixers, &wakes, |sounding| proxy.send_event(Incoming::Sounding(sounding)).is_ok()));
-    }
-    if trace && let Some(peak) = speaker.as_ref().map(|speaker| Arc::clone(&speaker.peak)) {
-        std::thread::spawn(move || {
-            loop {
-                std::thread::sleep(Duration::from_millis(500));
-                let loudest = peak.swap(0, std::sync::atomic::Ordering::Relaxed);
-                if loudest > 0 {
-                    eprintln!("neoteletext-interface: audio peak {loudest}");
-                }
-            }
-        });
-    }
-    std::thread::spawn(move || read_core(&proxy, mixers.as_ref(), trace));
+    std::thread::spawn(move || read_core(&proxy));
     let mut app = App {
         start: Instant::now(),
         graphics: None,
         browser: Browser::new(FRAME),
         painter: Painter::new(Family::Roboto),
-        speaker,
         modifiers: ModifiersState::empty(),
         cursor: (0.0, 0.0),
         last_frame: 0,
@@ -977,6 +1086,10 @@ fn main() -> std::process::ExitCode {
         ime: InputMethod::default(),
         // NEOTELETEXT_FRAME_TRACE reports every frame drawn and its cost.
         trace_frames: std::env::var_os("NEOTELETEXT_FRAME_TRACE").is_some(),
+        resumed: false,
+        heard: Heard::Nothing,
+        reported: None,
+        normal: None,
     };
     if let Err(error) = event_loop.run_app(&mut app) {
         eprintln!("neoteletext-interface: {error}");

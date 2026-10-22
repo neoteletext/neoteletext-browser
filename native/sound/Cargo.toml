@@ -1,0 +1,29 @@
+[package]
+name = "neoteletext-sound"
+description = "The sound helper (decision 55): plays the voice operations the trusted core checked, through the system's sound output, and nothing else"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[lib]
+name = "sound"
+path = "src/lib.rs"
+
+[[bin]]
+name = "neoteletext-sound"
+path = "src/main.rs"
+
+[dependencies]
+confine.workspace = true
+protocol.workspace = true
+neoteletext-audio-mix.workspace = true
+# The operating system's audio output: Core Audio on macOS, WASAPI on
+# Windows, and on Linux the system's ALSA library, libasound, linked
+# dynamically; the owner accepted its LGPL licence (decision 40). Only
+# this helper links it, so a Linux without it runs silent (decision 55).
+cpal.workspace = true
+
+[lints]
+workspace = true

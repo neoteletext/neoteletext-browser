@@ -101,6 +101,9 @@ pub const UPDATED: Colour = rgb(0xff, 0xb0, 0x20);
 pub const TYPING: Colour = rgb(0xff, 0xbf, 0x40);
 /// Behind an echoed character: dark, so the amber reads on any page.
 pub const TYPING_FIELD: Colour = rgb(0x20, 0x18, 0x08);
+/// A private tab's word and mark (requirement 20.8): a colour no other part of
+/// the strip uses.
+pub const PRIVATE: Colour = rgb(0xb0, 0x6c, 0xff);
 
 /// `from` moved towards `to` by `amount`, 0 to 1: for highlights that
 /// fade, with no transparency needed.

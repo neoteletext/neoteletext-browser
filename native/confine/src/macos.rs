@@ -37,8 +37,16 @@ fn home() -> Option<PathBuf> {
     std::env::var_os("HOME").map(PathBuf::from).filter(|home| home.is_absolute())
 }
 
-/// The profile for `program` as `role` says.
-fn profile(program: &Path, role: Role) -> String {
+/// The system's folders and the metadata of any path, which the
+/// window system's and Core Audio's libraries read.
+const SYSTEM_READS: &str = "(deny network*)
+(allow file-read-metadata)
+(allow file-read* (subpath \"/System\") (subpath \"/Library\") (subpath \"/usr\") (subpath \"/private/var/db\") (subpath \"/private/var/folders\") (subpath \"/private/etc\") (subpath \"/dev\"))
+";
+
+/// The profile for `program` as `role` says; `writable` is the core's
+/// settings folder.
+fn profile(program: &Path, role: Role, writable: Option<&Path>) -> String {
     let mut profile = preamble(program);
     match role {
         Role::Decoder => profile.push_str("(deny network*)\n"),
@@ -55,13 +63,12 @@ fn profile(program: &Path, role: Role) -> String {
         // October 2026): it needs to read the system's folders and the
         // metadata of any path (the root's symbolic links), and the
         // services of the window, fonts, text input, the pasteboard,
-        // notifications, preferences, sound and the Dock. Without the
-        // sound services it runs silent.
-        Role::Interface => profile.push_str(
-            "(deny network*)
-(allow file-read-metadata)
-(allow file-read* (subpath \"/System\") (subpath \"/Library\") (subpath \"/usr\") (subpath \"/private/var/db\") (subpath \"/private/var/folders\") (subpath \"/private/etc\") (subpath \"/dev\"))
-(allow mach-lookup
+        // notifications, preferences and the Dock. Sound is the sound
+        // helper's (decision 55).
+        Role::Interface => {
+            profile.push_str(SYSTEM_READS);
+            profile.push_str(
+                "(allow mach-lookup
   (global-name \"com.apple.windowserver.active\")
   (global-name \"com.apple.CARenderServer\")
   (global-name \"com.apple.CoreDisplay.master\")
@@ -79,14 +86,35 @@ fn profile(program: &Path, role: Role) -> String {
   (global-name \"com.apple.system.notification_center\")
   (global-name \"com.apple.cfprefsd.daemon\")
   (global-name \"com.apple.cfprefsd.agent\")
+  (global-name \"com.apple.dock.server\")
+  (global-name \"com.apple.dock.fullscreen\"))
+",
+            );
+        }
+        // The sound output: Core Audio's services, which the interface
+        // used before decision 55 (found 21 October 2026: without them it
+        // ran silent), and the system's folders for its plug-ins.
+        Role::Sound => {
+            profile.push_str(SYSTEM_READS);
+            profile.push_str(
+                "(allow mach-lookup
   (global-name \"com.apple.audio.coreaudiod\")
   (global-name \"com.apple.audio.audiohald\")
   (global-name \"com.apple.audio.AudioComponentRegistrar\")
   (global-name \"com.apple.audio.SandboxHelper\")
-  (global-name \"com.apple.dock.server\")
-  (global-name \"com.apple.dock.fullscreen\"))
+  (global-name \"com.apple.cfprefsd.daemon\")
+  (global-name \"com.apple.cfprefsd.agent\"))
 ",
-        ),
+            );
+        }
+        // The trusted core: its settings folder, read and written, and
+        // nothing else (decision 56).
+        Role::Core => {
+            profile.push_str("(deny network*)\n");
+            if let Some(folder) = writable {
+                let _ = writeln!(profile, "(allow file-read* file-write* (subpath \"{}\"))", folder.display());
+            }
+        }
     }
     if let (Role::Interface, Some(home)) = (role, home()) {
         for folder in ["Library/Fonts", "Library/Preferences", "Library/Keyboard Layouts", "Library/Input Methods"] {
@@ -99,7 +127,7 @@ fn profile(program: &Path, role: Role) -> String {
 /// The command that runs the helper under its profile.
 pub fn command(spawn: &Spawn<'_>) -> Command {
     let mut command = Command::new("/usr/bin/sandbox-exec");
-    command.arg("-p").arg(profile(spawn.program, spawn.role)).arg(spawn.program).args(spawn.arguments);
+    command.arg("-p").arg(profile(spawn.program, spawn.role, spawn.writable)).arg(spawn.program).args(spawn.arguments);
     command
 }
 
@@ -112,14 +140,18 @@ mod tests {
     #[test]
     fn profiles_start_from_nothing_and_give_the_network_only_to_fetchers() {
         let program = Path::new("/Applications/NeoTeletext.app/Contents/MacOS/neoteletext-decoder");
-        for role in [Role::Decoder, Role::Network, Role::Interface] {
-            let profile = profile(program, role);
+        for role in [Role::Decoder, Role::Network, Role::Interface, Role::Core, Role::Sound] {
+            let profile = profile(program, role, None);
             assert!(profile.starts_with("(version 1)\n(deny default)\n(import \"system.sb\")\n"), "{role:?}");
             assert!(profile.contains("(allow process-exec (literal \"/Applications/NeoTeletext.app/Contents/MacOS/neoteletext-decoder\"))"));
             assert_eq!(profile.contains("(deny network*)"), role != Role::Network, "{role:?}");
             assert_eq!(profile.contains("(system-network)"), role == Role::Network, "{role:?}");
             assert!(!profile.contains("(allow default)"));
         }
-        assert!(!profile(program, Role::Decoder).contains("mach-lookup"), "a decoder looks nothing up");
+        assert!(!profile(program, Role::Decoder, None).contains("mach-lookup"), "a decoder looks nothing up");
+        assert!(!profile(program, Role::Core, None).contains("mach-lookup"), "nor does the core");
+        assert!(!profile(program, Role::Interface, None).contains("audio"), "sound is the sound helper's");
+        let core = profile(program, Role::Core, Some(Path::new("/Users/someone/Library/Application Support/NeoTeletext")));
+        assert!(core.contains("(allow file-read* file-write* (subpath \"/Users/someone/Library/Application Support/NeoTeletext\"))"));
     }
 }

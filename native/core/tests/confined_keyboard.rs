@@ -40,8 +40,15 @@ fn the_keyboard_reaches_its_relay_confined() {
     let program = keyboard();
     let arguments: [OsString; 0] = [];
     let environment = confine::environment(Role::Network);
-    let mut process =
-        confine::spawn(&Spawn { program: &program, arguments: &arguments, role: Role::Network, environment: &environment, local_network: false }).unwrap();
+    let mut process = confine::spawn(&Spawn {
+        program: &program,
+        arguments: &arguments,
+        role: Role::Network,
+        environment: &environment,
+        local_network: false,
+        writable: None,
+    })
+    .unwrap();
     eprintln!("started: {}", process.report);
     let mut output = BufReader::new(process.stdout.take().unwrap());
     let started = Instant::now();

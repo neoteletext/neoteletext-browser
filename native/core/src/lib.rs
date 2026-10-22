@@ -19,12 +19,16 @@
 )]
 
 pub mod address;
+pub mod bookmarks;
+pub mod calendar;
 pub mod console;
 pub mod frames;
 pub mod hearing;
+pub mod history;
 #[cfg(feature = "links")]
 pub mod links;
 pub mod outbox;
+pub mod restore;
 pub mod settings;
 pub mod sleep;
 pub mod start_page;

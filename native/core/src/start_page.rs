@@ -1,16 +1,20 @@
 //! The start page, `neoteletext:home` (`settings-home-console-proxy.md`
 //! section 2.2, requirement 19.7): a channel the trusted core writes
 //! itself as TTI and gives to a decoder as any channel's pages, with no
-//! network. Page 100 tells how to open a channel and lists the bookmarks;
-//! pages 201 to 299 are one for each bookmark, and opening one opens it.
+//! network. Page 100 tells how to open a channel and lists the bookmarks
+//! by name under their folders' names (`history-and-bookmarks.md` section
+//! 3.5); pages 201 to 299 are one for each bookmark, and opening one opens
+//! it.
 //!
-//! Its text is built only from addresses the address rules accepted, and
-//! each is written as printable ASCII cut to its row, so no address can
-//! end a TTI line early or carry a control code.
+//! Its text is built only from cleaned names and addresses the address
+//! rules accepted, and each is written as printable ASCII cut to its row,
+//! so no name or address can end a TTI line early or carry a control code.
 
 use std::fmt::Write as _;
 
 use protocol::fetcher::Entry;
+
+use crate::bookmarks::Listed;
 
 /// The start page's channel name.
 pub const NAME: &str = "NeoTeletext";
@@ -53,10 +57,25 @@ pub fn bookmark_page(index: usize) -> Option<u16> {
     Some((digit(100) << 8) | (digit(10) << 4) | digit(1))
 }
 
+/// The bookmarks among `listed`, in order: their names and addresses.
+fn bookmarks(listed: &[Listed]) -> Vec<(&str, &str)> {
+    listed
+        .iter()
+        .filter_map(|line| match line {
+            Listed::Bookmark { name, address } => Some((name.as_str(), address.as_str())),
+            Listed::Folder(_) => None,
+        })
+        .collect()
+}
+
 /// The bookmark that page `page` of the start page opens.
 #[must_use]
-pub fn bookmark_at(page: u16, bookmarks: &[String]) -> Option<&str> {
-    (0..bookmarks.len().min(MAX_LISTED)).find(|&index| bookmark_page(index) == Some(page)).and_then(|index| bookmarks.get(index)).map(String::as_str)
+pub fn bookmark_at(page: u16, listed: &[Listed]) -> Option<String> {
+    let bookmarks = bookmarks(listed);
+    (0..bookmarks.len().min(MAX_LISTED))
+        .find(|&index| bookmark_page(index) == Some(page))
+        .and_then(|index| bookmarks.get(index))
+        .map(|(_, address)| (*address).to_owned())
 }
 
 /// An address as a row shows it: without `https://`, printable ASCII the
@@ -81,7 +100,8 @@ fn page(out: &mut String, number: u16, description: &str, rows: &[(usize, String
 
 /// The start page's pages, as TTI.
 #[must_use]
-pub fn pages(bookmarks: &[String]) -> Vec<u8> {
+pub fn pages(listed_lines: &[Listed]) -> Vec<u8> {
+    let bookmarks = bookmarks(listed_lines);
     let listed = bookmarks.len().min(MAX_LISTED);
     let mut front = vec![
         (1, format!("{ESCAPE}{YELLOW}{ESCAPE}\x4d{NAME}")),
@@ -94,25 +114,40 @@ pub fn pages(bookmarks: &[String]) -> Vec<u8> {
     } else {
         front.push((LIST_FIRST_ROW - 1, format!("{ESCAPE}{GREEN}Bookmarks")));
     }
-    for (index, bookmark) in bookmarks.iter().take(listed.min(LIST_ROWS)).enumerate() {
-        let Some(number) = bookmark_page(index) else { break };
-        front.push((LIST_FIRST_ROW.saturating_add(index), format!("{ESCAPE}{YELLOW}{number:03X} {ESCAPE}{WHITE}{}", shown(bookmark, COLUMNS - LIST_PREFIX))));
+    // Folders' names and bookmarks, as many as page 100's rows hold.
+    let mut row = LIST_FIRST_ROW;
+    let mut index = 0_usize;
+    for line in listed_lines {
+        if row >= LIST_FIRST_ROW.saturating_add(LIST_ROWS) || index >= listed {
+            break;
+        }
+        let text = match line {
+            Listed::Folder(name) => format!("{ESCAPE}{GREEN}{}", shown(name, COLUMNS - 1)),
+            Listed::Bookmark { name, .. } => {
+                let Some(number) = bookmark_page(index) else { break };
+                index = index.saturating_add(1);
+                format!("{ESCAPE}{YELLOW}{number:03X} {ESCAPE}{WHITE}{}", shown(name, COLUMNS - LIST_PREFIX))
+            }
+        };
+        front.push((row, text));
+        row = row.saturating_add(1);
     }
-    if listed > LIST_ROWS {
+    if index < listed {
         let last = bookmark_page(listed.saturating_sub(1)).unwrap_or(FRONT_PAGE);
         front.push((
             LIST_FIRST_ROW.saturating_add(LIST_ROWS),
-            format!("{ESCAPE}{CYAN}More on pages {:03X} to {last:03X}", bookmark_page(LIST_ROWS).unwrap_or(last)),
+            format!("{ESCAPE}{CYAN}More on pages {:03X} to {last:03X}", bookmark_page(index).unwrap_or(last)),
         ));
     }
     let mut out = String::new();
     page(&mut out, FRONT_PAGE, NAME, &front);
-    for (index, bookmark) in bookmarks.iter().take(listed).enumerate() {
+    for (index, (name, address)) in bookmarks.iter().take(listed).enumerate() {
         let Some(number) = bookmark_page(index) else { break };
         let rows = [
             (1, format!("{ESCAPE}{YELLOW}{ESCAPE}\x4dBookmark {number:03X}")),
             (3, format!("{ESCAPE}{WHITE}Opening")),
-            (4, format!("{ESCAPE}{CYAN}{}", shown(bookmark, COLUMNS - 1))),
+            (4, format!("{ESCAPE}{WHITE}{}", shown(name, COLUMNS - 1))),
+            (5, format!("{ESCAPE}{CYAN}{}", shown(address, COLUMNS - 1))),
         ];
         page(&mut out, number, "Bookmark", &rows);
     }
@@ -120,14 +155,14 @@ pub fn pages(bookmarks: &[String]) -> Vec<u8> {
 }
 
 /// The start page's contents, for the page list: page 100, then each
-/// bookmark's page by its address.
+/// bookmark's page by its name.
 #[must_use]
-pub fn contents(bookmarks: &[String]) -> Vec<Entry> {
+pub fn contents(listed: &[Listed]) -> Vec<Entry> {
     let mut entries = vec![Entry::Section(NAME.to_owned()), Entry::Page { page: FRONT_PAGE, title: "Start".to_owned() }];
     entries.push(Entry::Section("Bookmarks".to_owned()));
-    for (index, bookmark) in bookmarks.iter().take(MAX_LISTED).enumerate() {
+    for (index, (name, _)) in bookmarks(listed).iter().take(MAX_LISTED).enumerate() {
         if let Some(page) = bookmark_page(index) {
-            entries.push(Entry::Page { page, title: shown(bookmark, COLUMNS) });
+            entries.push(Entry::Page { page, title: shown(name, COLUMNS) });
         }
     }
     entries
@@ -138,6 +173,11 @@ pub fn contents(bookmarks: &[String]) -> Vec<Entry> {
 mod tests {
     use super::*;
 
+    /// Bookmarks named by their addresses.
+    fn named(addresses: &[String]) -> Vec<Listed> {
+        addresses.iter().map(|address| Listed::Bookmark { name: address.clone(), address: address.clone() }).collect()
+    }
+
     #[test]
     fn bookmarks_take_the_decimal_pages_from_201() {
         assert_eq!(bookmark_page(0), Some(0x201));
@@ -145,28 +185,37 @@ mod tests {
         assert_eq!(bookmark_page(9), Some(0x210));
         assert_eq!(bookmark_page(98), Some(0x299));
         assert_eq!(bookmark_page(99), None);
-        let bookmarks: Vec<String> = (0..120).map(|n| format!("https://b{n}.example/")).collect();
-        assert_eq!(bookmark_at(0x210, &bookmarks), Some("https://b9.example/"));
-        assert_eq!(bookmark_at(0x20A, &bookmarks), None, "not a decimal page");
-        assert_eq!(bookmark_at(0x100, &bookmarks), None);
+        let mut listed = named(&(0..120).map(|n| format!("https://b{n}.example/")).collect::<Vec<_>>());
+        listed.insert(3, Listed::Folder("A folder takes no page".into()));
+        assert_eq!(bookmark_at(0x210, &listed).as_deref(), Some("https://b9.example/"));
+        assert_eq!(bookmark_at(0x20A, &listed), None, "not a decimal page");
+        assert_eq!(bookmark_at(0x100, &listed), None);
         assert_eq!(bookmark_at(0x201, &[]), None);
     }
 
-    /// Requirement 19.7: page 100 and a page a bookmark, in TTI.
+    /// Requirement 19.7: page 100 and a page a bookmark, in TTI; a
+    /// bookmark shows its name, and its page its address too.
     #[test]
     fn the_pages_tell_how_to_open_a_channel_and_list_the_bookmarks() {
-        let text = String::from_utf8(pages(&["https://news.example/teletext/".into(), "neoteletext:home".into()])).unwrap();
+        let listed = [
+            Listed::Bookmark { name: "News Example".into(), address: "https://news.example/teletext/".into() },
+            Listed::Folder("Weather".into()),
+            Listed::Bookmark { name: "Start".into(), address: "neoteletext:home".into() },
+        ];
+        let text = String::from_utf8(pages(&listed)).unwrap();
         assert!(text.contains("PN,10000\r\n") && text.contains("PN,20100\r\n") && text.contains("PN,20200\r\n"), "{text}");
         assert!(text.contains("Type a channel's address above."));
-        assert!(text.contains("201 \x1bGnews.example/teletext/"), "{text}");
+        assert!(text.contains("201 \x1bGNews Example"), "{text}");
+        assert!(text.contains("\x1bBWeather"), "the folder's name as a heading: {text}");
+        assert!(text.contains("\x1bFnews.example/teletext/"), "the bookmark's page shows its address: {text}");
         assert!(!text.contains("PN,20300"));
         let empty = String::from_utf8(pages(&[])).unwrap();
         assert!(empty.contains("No bookmarks yet"));
         assert_eq!(empty.matches("PN,").count(), 1);
     }
 
-    /// Requirement 19.7: whatever an address holds, every line of TTI is
-    /// one of the start page's own, and no address carries a control code
+    /// Requirement 19.7: whatever a name or address holds, every line of
+    /// TTI is one of the start page's own, and none carries a control code
     /// or a line's end.
     #[test]
     fn a_hostile_address_cannot_break_out_of_its_line() {
@@ -176,7 +225,10 @@ mod tests {
             format!("https://a.example/{}", "x".repeat(4000)),
             "https://a.example/\u{202E}\u{0}é#_[]".to_owned(),
         ];
-        let text = String::from_utf8(pages(&hostile)).unwrap();
+        let mut listed = named(&hostile);
+        listed.push(Listed::Folder("\r\nPN,10000\r\nOL,1,forged\x1bA".into()));
+        listed.push(Listed::Bookmark { name: "\r\nPN,10000\x1bM".into(), address: "https://b.example/".into() });
+        let text = String::from_utf8(pages(&listed)).unwrap();
         for line in text.split("\r\n").filter(|line| !line.is_empty()) {
             let (code, rest) = line.split_once(',').unwrap();
             assert!(["DE", "PN", "SC", "PS", "OL"].contains(&code), "{line:?}");
@@ -192,13 +244,13 @@ mod tests {
         }
         let numbers: Vec<&str> = text.split("\r\n").filter(|line| line.starts_with("PN,")).collect();
         assert_eq!(numbers.iter().filter(|line| **line == "PN,10000").count(), 1, "no forged page");
-        assert_eq!(numbers.len(), 1 + hostile.len());
+        assert_eq!(numbers.len(), 1 + hostile.len() + 1);
     }
 
     #[test]
     fn the_contents_name_each_bookmark() {
-        let entries = contents(&["https://news.example/".into()]);
-        assert!(entries.contains(&Entry::Page { page: 0x201, title: "news.example/".into() }));
+        let entries = contents(&[Listed::Bookmark { name: "News".into(), address: "https://news.example/".into() }]);
+        assert!(entries.contains(&Entry::Page { page: 0x201, title: "News".into() }));
         assert!(entries.contains(&Entry::Page { page: FRONT_PAGE, title: "Start".into() }));
     }
 }

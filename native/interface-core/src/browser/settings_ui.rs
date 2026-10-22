@@ -9,16 +9,19 @@ use alloc::format;
 use alloc::string::String;
 use alloc::vec::Vec;
 
+use super::widgets::{RADIUS, button, field, panel, panel_rect};
 use super::{Browser, Key, Output};
-use crate::canvas::{Canvas, Style};
+use crate::canvas::Canvas;
 use crate::editor::Editor;
 use crate::geometry::{Point, Rect};
 use crate::settings::{ProxyView, SettingChange, SettingsView};
-use crate::theme::{ADDRESS, BUTTON, FIELD, FIELD_INK, FIELD_SELECTION, HEADING, INSECURE, MUTED, PANEL, ROW_STATUS, ROW_TITLE, RULE, SELECTED, WHITE};
-use crate::ui::{border, centred, left_centred, outline};
+use crate::theme::{BUTTON, HEADING, INSECURE, MUTED, ROW_STATUS, ROW_TITLE, RULE, WHITE};
+use crate::ui::{border, centred, left_centred};
 
 const PANEL_WIDTH: f64 = 600.0;
-const PANEL_HEIGHT: f64 = 516.0;
+/// Room for its heading, eight rows, two rows of chips and the trusted
+/// core's word.
+const PANEL_HEIGHT: f64 = 604.0;
 const PADDING: f64 = 20.0;
 const HEADING_HEIGHT: f64 = 34.0;
 const ROW: f64 = 32.0;
@@ -30,9 +33,6 @@ const WIDE_BUTTON: f64 = 130.0;
 const SMALL_BUTTON: f64 = 32.0;
 const PORT_WIDTH: f64 = 90.0;
 const FIELD_PADDING: f64 = 8.0;
-const CARET_WIDTH: f64 = 2.0;
-const RADIUS: f64 = 4.0;
-const OUTLINE: f64 = 2.0;
 /// The local addresses as chips, this many to a row.
 const CHIPS_PER_ROW: usize = 3;
 const CHIP_HEIGHT: f64 = 26.0;
@@ -47,7 +47,6 @@ const HOME_LIMIT: usize = super::MAX_ADDRESS;
 const HOST_LIMIT: usize = 255;
 const PORT_LIMIT: usize = 5;
 const LOCAL_LIMIT: usize = 45;
-const FIELD_TEXT: Style = ADDRESS;
 
 /// A text field of the panel.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -85,6 +84,10 @@ struct Controls {
     apply: Rect,
     add: Rect,
     removes: Vec<(usize, Rect)>,
+    remember_on: Rect,
+    remember_off: Rect,
+    restore_on: Rect,
+    restore_off: Rect,
 }
 
 /// The panel's state in the browser.
@@ -283,6 +286,14 @@ impl Browser {
         let controls = &self.settings.controls;
         let change = if controls.this_page.contains(point) {
             Some(SettingChange::HomeIsThisPage)
+        } else if controls.remember_on.contains(point) {
+            Some(SettingChange::RememberHistory(true))
+        } else if controls.remember_off.contains(point) {
+            Some(SettingChange::RememberHistory(false))
+        } else if controls.restore_on.contains(point) {
+            Some(SettingChange::RestoreSession(true))
+        } else if controls.restore_off.contains(point) {
+            Some(SettingChange::RestoreSession(false))
         } else if controls.sound_on.contains(point) {
             Some(SettingChange::Sound(true))
         } else if controls.sound_off.contains(point) {
@@ -311,7 +322,7 @@ impl Browser {
             self.change(change);
         }
         // The panel takes every press on it.
-        panel_rect(self.settings_area()).contains(point)
+        panel_rect(self.settings_area(), PANEL_WIDTH, PANEL_HEIGHT).contains(point)
     }
 
     /// The area the panel is centred in: below the strip.
@@ -327,9 +338,9 @@ impl Browser {
             self.settings.controls = controls;
             return;
         }
-        let panel = panel_rect(self.settings_area());
-        canvas.fill(panel, 8.0, PANEL);
-        outline(canvas, panel, RULE);
+        let panel_area = panel_rect(self.settings_area(), PANEL_WIDTH, PANEL_HEIGHT);
+        panel(canvas, panel_area);
+        let panel = panel_area;
         let left = panel.x0 + PADDING;
         let right = panel.x1 - PADDING;
         let heading = Rect::new(left, panel.y0 + PADDING, right, panel.y0 + PADDING + HEADING_HEIGHT);
@@ -391,6 +402,25 @@ impl Browser {
         }
         y += ROW + ROW_GAP;
 
+        // History remembered or not (requirement 20.7).
+        let remember = view.as_ref().is_none_or(|view| view.remember_history);
+        left_centred(canvas, row(y), 0.0, "History", ROW_TITLE, WHITE);
+        controls.remember_on = Rect::new(field_left, y, field_left + BUTTON_WIDTH * 1.5, y + ROW);
+        controls.remember_off = Rect::new(controls.remember_on.x1 + GAP, y, controls.remember_on.x1 + GAP + BUTTON_WIDTH * 1.5, y + ROW);
+        button(canvas, controls.remember_on, "Remember", remember);
+        button(canvas, controls.remember_off, "Forget", !remember);
+        y += ROW + ROW_GAP;
+
+        // At start, the last session restored or the home address
+        // (requirement 20.24).
+        let restore = view.as_ref().is_none_or(|view| view.restore_session);
+        left_centred(canvas, row(y), 0.0, "Tabs at start", ROW_TITLE, WHITE);
+        controls.restore_on = Rect::new(field_left, y, field_left + BUTTON_WIDTH * 1.5, y + ROW);
+        controls.restore_off = Rect::new(controls.restore_on.x1 + GAP, y, controls.restore_on.x1 + GAP + BUTTON_WIDTH * 1.5, y + ROW);
+        button(canvas, controls.restore_on, "Restore", restore);
+        button(canvas, controls.restore_off, "Home", !restore);
+        y += ROW + ROW_GAP;
+
         // The local addresses allowed: a field to add one, then each.
         left_centred(canvas, row(y), 0.0, "Local network", ROW_TITLE, WHITE);
         controls.add = Rect::new(right - BUTTON_WIDTH, y, right, y + ROW);
@@ -431,51 +461,10 @@ impl Browser {
         self.settings.controls = controls;
     }
 
-    fn draw_settings_field<C: Canvas + ?Sized>(&mut self, canvas: &mut C, field: Field, rect: Rect) {
-        let focused = self.settings.focus == Some(field);
-        canvas.fill(rect, RADIUS, FIELD);
-        if focused {
-            border(canvas, rect, OUTLINE, SELECTED);
-        }
-        let editor = self.settings.editor(field);
-        let text = editor.text();
-        let line = canvas.line_height(FIELD_TEXT);
-        let top = (rect.y0 + rect.y1 - line) / 2.0;
-        let inner = Rect::new(rect.x0 + FIELD_PADDING, rect.y0, rect.x1 - FIELD_PADDING, rect.y1);
-        canvas.push_clip(inner);
-        let caret = canvas.text_width(text.get(..editor.caret()).unwrap_or_default(), FIELD_TEXT);
-        // Keep the caret in view.
-        let shift = (caret - inner.width() + CARET_WIDTH).max(0.0);
-        let x = inner.x0 - shift;
-        if focused {
-            let (start, end) = editor.selection();
-            if start != end {
-                let from = canvas.text_width(text.get(..start).unwrap_or_default(), FIELD_TEXT);
-                let to = canvas.text_width(text.get(..end).unwrap_or_default(), FIELD_TEXT);
-                canvas.fill(Rect::new(x + from, top, x + to, top + line), 0.0, FIELD_SELECTION);
-            }
-        }
-        canvas.text(Rect::new(x, top, inner.x1 + shift, top + line), text, FIELD_TEXT, FIELD_INK);
-        if focused {
-            canvas.fill(Rect::new(x + caret, top, x + caret + CARET_WIDTH, top + line), 0.0, FIELD_INK);
-        }
-        canvas.pop_clip();
+    fn draw_settings_field<C: Canvas + ?Sized>(&mut self, canvas: &mut C, which: Field, rect: Rect) {
+        let focused = self.settings.focus == Some(which);
+        field(canvas, rect, self.settings.editor(which), focused);
     }
-}
-
-/// A button of the panel, filled when `chosen`.
-fn button<C: Canvas + ?Sized>(canvas: &mut C, rect: Rect, word: &str, chosen: bool) {
-    canvas.fill(rect, RADIUS, if chosen { SELECTED } else { BUTTON });
-    border(canvas, rect, OUTLINE, if chosen { SELECTED } else { RULE });
-    centred(canvas, rect, word, ROW_TITLE, WHITE);
-}
-
-/// The panel, centred in `area` and no larger than it.
-fn panel_rect(area: Rect) -> Rect {
-    let width = PANEL_WIDTH.min(area.width());
-    let height = PANEL_HEIGHT.min(area.height());
-    let centre = Point::new(f64::midpoint(area.x0, area.x1), f64::midpoint(area.y0, area.y1));
-    Rect::new(centre.x - width / 2.0, centre.y - height / 2.0, centre.x + width / 2.0, centre.y + height / 2.0)
 }
 
 #[cfg(test)]
@@ -491,6 +480,8 @@ mod tests {
             volume: 80,
             proxy: ProxyView::None,
             local: alloc::vec!["192.168.1.20".into()],
+            remember_history: true,
+            restore_session: true,
             refusal: None,
         }
     }
@@ -545,6 +536,11 @@ mod tests {
         );
         let _ = port;
         assert_eq!(press(&mut browser, none), [Output::Setting(SettingChange::Proxy(ProxyView::None))]);
+        let (forget, restore, home_at_start) =
+            (browser.settings.controls.remember_off, browser.settings.controls.restore_on, browser.settings.controls.restore_off);
+        assert_eq!(press(&mut browser, forget), [Output::Setting(SettingChange::RememberHistory(false))]);
+        assert_eq!(press(&mut browser, home_at_start), [Output::Setting(SettingChange::RestoreSession(false))]);
+        assert_eq!(press(&mut browser, restore), [Output::Setting(SettingChange::RestoreSession(true))]);
         // A field's change goes on Enter.
         press(&mut browser, home);
         browser.key(Key::Text("a"), Modifiers { command: true, ..Modifiers::default() }, 0);

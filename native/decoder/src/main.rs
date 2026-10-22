@@ -196,7 +196,7 @@ fn send_sounds(engine: &mut Engine, output: &mut Output<'_>) -> Result<(), Proto
 
 fn main() -> ExitCode {
     // First, before any thread: its pipes and nothing else (requirement 3.4).
-    match confine::apply(confine::Role::Decoder) {
+    match confine::apply(confine::Role::Decoder, None) {
         Ok(report) => eprintln!("neoteletext-decoder: confined: {report}"),
         Err(error) => {
             eprintln!("neoteletext-decoder: {error}");

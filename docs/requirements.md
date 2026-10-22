@@ -52,9 +52,9 @@
 - **State:** Met.
 
 ### Requirement 1.2: Security comes first
-- **Statement:** Where a requirement trades capability, convenience or performance against security, the choice that is more secure must be made, and the trade-off must be recorded in `security-analysis.md`.
-- **Reason:** The owner has stated that being hacked is not acceptable under any circumstances.
-- **Source:** Decision 4.
+- **Statement:** Where a requirement trades capability, convenience or performance against security, the choice that is more secure must be made, and the trade-off must be recorded in `security-analysis.md`. Security must never be weakened or downgraded: no protection the design names may be dropped because a machine cannot give it, no weaker mode may be fallen back to, and no setting, switch or variable may select one; a process that cannot have every protection is not run (decision 58).
+- **Reason:** The owner has stated that being hacked is not acceptable under any circumstances, and that security is paramount, with no weakening or downgrading.
+- **Source:** Decisions 4 and 58.
 - **Verification:** Review of every change that touches a requirement in sections 3 to 8, 10, 11 or 13.
 - **State:** Met as a practice.
 
@@ -109,11 +109,11 @@
 ## 3. Processes and isolation
 
 ### Requirement 3.1: Separate processes
-- **Statement:** The application must run as separate processes: a trusted core, one fetcher per web channel, one decoder per channel, an interface process, and, when built, a font helper, an updater and a launcher.
+- **Statement:** The application must run as separate processes: a broker, the one process not confined, which starts the others and does for the trusted core only what section 7 of `sandboxing.md` lists; a trusted core; one fetcher per web channel; one decoder per channel; an interface process; a sound helper; the phone keyboard while it is open; and, when built, a font helper, an updater and a launcher.
 - **Reason:** Separation lets each part hold only what it needs, so that a compromise of one part gains little.
-- **Source:** Decisions 18 and 33.
+- **Source:** Decisions 18, 33, 55 and 56.
 - **Verification:** Test: the running application's process list matches this set.
-- **State:** Met for the four processes built; the test is not written.
+- **State:** Met for the processes built (broker, trusted core, fetcher, decoder, interface, sound helper, phone keyboard): on 22 October 2026, on macOS, every helper and the core ran as the broker's children (`sandboxing.md` section 7.5). The test of the process list is not written; `the_trusted_core_starts_confined_and_reaches_its_own_code` starts the core through the broker.
 
 ### Requirement 3.2: The trusted core contains no web engine and no format reader
 - **Statement:** The trusted core must not link or load a web engine, a script engine or any reader of network or teletext formats. It must receive only typed, bounded results from the other processes.
@@ -149,20 +149,21 @@
 - **Source:** Decisions 4, 18 and 33.
 - **Verification:** Test on each platform: network and file access fail from the interface process; review of every message type sent to it.
 - **State:** Partly met. No secret is ever sent to it (review of `protocol`). On macOS its profile starts from "deny everything" and allows the system's folders and the window, font, text-input, pasteboard, notification, preference, sound and Dock services, with no network and no programs; on Linux it confines itself with an empty network namespace where allowed, Landlock (fonts, preferences and the system's directories readable) and a seccomp filter (local-domain sockets only, no programs); on Windows a restricted token at low integrity in a job object with the mitigation policies, which does not stop reads of the user's files. Its environment is cut to the window system's on every platform (22 October 2026, `sandboxing.md`).
+- *Amended 22 October 2026 (decision 57):* "beyond what is on screen" is exact for history and bookmarks: the interface receives them only as the views of `history-and-bookmarks.md` section 4, at most 100 rows at a time, and names a row only by its view's number (requirement 20.5).
 
 ### Requirement 3.7: Operating-system sandboxes
-- **Statement:** On each platform the processes must be sandboxed as in `architecture.md` section 6.5, starting from "deny everything" and allowing only what each process needs.
+- **Statement:** On each platform the processes must be sandboxed as in `architecture.md` section 6.5, starting from "deny everything" and allowing only what each process needs. Every layer named there for a process is required: a process that cannot have all of them must not run, and must not run with fewer (decision 58).
 - **Reason:** Each sandbox is a second wall behind the first.
 - **Source:** Architecture.
 - **Verification:** Test on each platform, as in requirements 3.3 to 3.6.
-- **State:** Partly met, 22 October 2026 (`sandboxing.md`, decision 52): every helper is confined from "deny everything" on macOS (`sandbox-exec` profiles), Linux (Landlock, a network namespace and seccomp, applied by the helper itself before any thread, the filter required and the rest reported) and Windows (job object, mitigation policies, AppContainer for the decoder and fetcher, a restricted token for the interface), with an environment of only what it needs. Not met: the trusted core on every platform (on macOS it needs the App Sandbox, since a nested `sandbox-exec` is refused); the interface's file reads on Windows; Android and iOS.
+- **State:** Partly met, 22 October 2026 (`sandboxing.md`, decisions 52, 55, 56 and 58): every helper is confined from "deny everything" on macOS (`sandbox-exec` profiles), Linux (Landlock enforced whole, a network namespace for those without the network, and seccomp, applied by the helper itself before any thread, every layer required since decision 58: `a_helper_without_its_namespace_does_not_run` and `a_file_to_read_keeps_landlock_whole` failed on the code that reported a missing layer and ran) and Windows (job object, mitigation policies, AppContainer for the decoder, fetcher and sound helper, required since decision 58, with no fallback: `a_helper_whose_container_cannot_be_made_is_not_started`; a restricted token for the interface by design), with an environment of only what it needs; the sound helper holds the sound output and the interface no longer does; the trusted core is confined on all three behind the broker, with no network, no programs and only its settings folder (`sandboxing.md` section 7), checked by `the_trusted_core_starts_confined_and_reaches_its_own_code` on each and by running the browser on each. Not met: the broker itself, which is unconfined by design and parses only the core's bounded requests; the interface's file reads on Windows; Android and iOS.
 
 ### Requirement 3.8: The macOS sandboxing gap is closed
-- **Statement:** The fetcher and decoder must be sandboxed on macOS before the first release.
+- **Statement:** The fetcher and decoder must be sandboxed on macOS before the first release, and the trusted core too (decision 56).
 - **Reason:** Without it the macOS build lacks the second wall.
 - **Source:** Architecture.
 - **Verification:** Test, as in requirements 3.3 and 3.4, on macOS.
-- **State:** Partly met, as requirement 3.7 says. `sandbox-exec` is deprecated by Apple; the release build needs the App Sandbox with each process as a helper of its own.
+- **State:** Met for the build, 22 October 2026: every process but the broker runs under a `sandbox-exec` profile, the trusted core's started by the broker (`sandboxing.md` section 7). `sandbox-exec` is deprecated by Apple; it still works on macOS 15, and the release build's packaging (`installation-and-updates.md` section 4.1) must keep each process under a profile of its own.
 
 ### Requirement 3.9: Security does not depend on the interface's code
 - **Statement:** Every security property in this document must hold even if the interface process runs code written by an attacker, **except** the integrity of the trusted strip and of strip input, which the interface process draws and sends (`architecture.md` section 6.1, open decision 3).
@@ -191,7 +192,7 @@
 - **Reason:** Teletext is mostly pushed, and a pushing channel is live in the background, so only a tab with nothing live sleeps; its decoder at rest took 16 MB before requirement 3.14 and 6.2 MB after, for pages nobody is looking at. Closing or pausing a fetcher would tell the channel's server when its tab is looked at.
 - **Source:** Decision 47.
 - **Verification:** Tests of the policy: `a_tab_sleeps_once_it_has_not_been_shown_for_a_while_unless_it_sounds`, `a_channels_data_is_kept_for_its_next_decoder_and_too_much_keeps_it_awake`, `a_tab_whose_channel_pushes_never_sleeps`.
-- **State:** Partly met, 21 October 2026: built and its policy tested; a decoder that slept and woke has not been watched in the window by hand. The interface tells the trusted core which channels sound (`ToCore::Sounding`), the fetcher whether it holds a push connection (`FromFetcher::Pushing`); a decoder or fetcher put to sleep that reports after the next one started is not listened to.
+- **State:** Partly met, 21 October 2026: built and its policy tested; a decoder that slept and woke has not been watched in the window by hand. The sound helper tells the trusted core which channels sound (`FromSound::Sounding`, since decision 55; the interface did before), the fetcher whether it holds a push connection (`FromFetcher::Pushing`); a decoder or fetcher put to sleep that reports after the next one started is not listened to.
 
 ### Requirement 3.14: A decoder's store grows as it fills
 - **Statement:** A decoder must start with room for 256 pages and sub-pages, and report once when it has received as many as it has room for; the trusted core must then start it again with twice the room, up to 4,096, and give it what the channel's decoder was given and the pages shown. A channel whose data was too much to keep (requirement 3.13) keeps the decoder it has.
@@ -241,11 +242,11 @@
 - **State:** Met by construction: no intent kind carries an address. A cell or a typed number names only a cell or a number; the trusted core takes any target from its own link table, and leaving goes through the site-change screen or the web-browser prompt (test: `nothing_but_a_confirmation_hands_a_web_page_over`). The test driving every intent kind is not written.
 
 ### Requirement 4.6: The readers are fuzzed
-- **Statement:** The trusted core's readers of messages from the fetchers, the decoders and the interface, and the interface's reader of messages and images from the trusted core, must be fuzzed continuously.
+- **Statement:** The trusted core's readers of messages from the fetchers, the decoders, the interface, the sound helper and the broker, the interface's reader of messages and images from the trusted core, the sound helper's reader of the core's messages, and the broker's reader of the core's requests, must be fuzzed continuously.
 - **Reason:** These readers are each process's only exposure to the others.
 - **Source:** Architecture.
 - **Verification:** Check: fuzzing targets exist for each reader and run in the full check.
-- **State:** Not met.
+- **State:** Met, 22 October 2026: `native/fuzz` has a target for each reader (`fetcher_messages`, `decoder_messages`, `core_messages`, `interface_messages`, `page_image`, `sound_messages`, `sound_requests`, `broker_requests`, `broker_replies`, and the readers of addresses, settings, link targets, input records, phone keys and relay messages), and the full check replays every input that ever found a fault and then runs each target for 20 seconds. Between pushes nothing fuzzes, so "continuously" means at every push.
 
 ### Requirement 4.7: No interface request or key affects fetching
 - **Statement:** No intent from the interface and no key press, however received, may cause, delay, reorder or prioritise a network request. Selecting a page may only show a page the channel's decoder already holds. **Exception (decision 23):** on a channel that publishes only separate page files, selecting a page not yet held fetches that page's file, within the tab's own channel and the limits of requirement 5.12.
@@ -671,11 +672,11 @@
 - **Why withdrawn:** there is no webview and no page code (decision 33).
 
 ### Requirement 10.12: No unsafe code
-- **Statement:** The interface process, like every crate of the application, must forbid `unsafe` code in its own source. There are three exceptions: the `dock-menu` crate, whose macOS module reaches AppKit through the Objective-C runtime; the `web-opener` crate, whose Windows module calls the shell's `ShellExecuteW` (hyperlink decision 7); and the `confine` crate, whose Linux module makes two C library calls for the network namespace and no-new-privileges and whose Windows module makes the Win32 calls that create a confined process (decision 52). Each denies `unsafe_code` everywhere else, and each unsafe block states why it is sound.
+- **Statement:** The interface process, like every crate of the application, must forbid `unsafe` code in its own source. There are three exceptions: the `dock-menu` crate, whose macOS module reaches AppKit through the Objective-C runtime; the `web-opener` crate, whose Windows module calls the shell's `ShellExecuteW` (hyperlink decision 7); and the `confine` crate, whose Linux module makes two C library calls for the network namespace and no-new-privileges, whose Unix module passes pipes between processes as descriptors with `sendmsg` and `recvmsg` (decision 56), and whose Windows module makes the Win32 calls that create a confined process and hand it pipes (decisions 52 and 56). Each denies `unsafe_code` everywhere else, and each unsafe block states why it is sound.
 - **Reason:** A memory-safety fault is the most likely way to take over a process. AppKit offers the Dock menu only through calls Rust cannot check (decision 39).
 - **Source:** Architecture; decision 39.
-- **Verification:** Check: the workspace lints forbid `unsafe_code`; `dock-menu` denies it and allows it only in `src/mac.rs`, `web-opener` only in `src/windows.rs`, and `confine` only in `src/linux.rs` and `src/windows.rs`, each with Clippy's `undocumented_unsafe_blocks`.
-- **State:** Met; amended 22 October 2026 (decision 52) for `confine`.
+- **Verification:** Check: the workspace lints forbid `unsafe_code`; `dock-menu` denies it and allows it only in `src/mac.rs`, `web-opener` only in `src/windows.rs`, and `confine` only in `src/linux.rs`, `src/unix.rs` and `src/windows.rs`, each with Clippy's `undocumented_unsafe_blocks`.
+- **State:** Met; amended 22 October 2026 (decisions 52 and 56) for `confine`.
 
 ### Requirement 10.13: The interface process ends on a broken message
 - **Statement:** The interface process must end at the first malformed message from the trusted core, rather than try to continue.
@@ -761,6 +762,7 @@
 - **Source:** Prototype finding.
 - **Verification:** Test each shortcut.
 - **State:** Not met: the menu button exists with no menu.
+- *Amended 22 October 2026 (decision 57):* until the menu bar is built, the menu button's menu holds New tab, New private tab, Reopen closed tab, History, Bookmarks, the bookmarks bar, Bookmark this page, the phone keyboard, the developer console and Settings, each with its shortcut; the History and Bookmarks menus hold what `history-and-bookmarks.md` section 6 lists. State: the menu button's menu is built (`the_menu_holds_history_and_bookmarks`); the menu bar is not.
 
 ### Requirement 12.6: Internal pages
 - **Statement:** Bookmarks, history and settings must be shown from data the trusted core supplies, except settings that affect security, which must be changed only in the trusted strip.
@@ -768,6 +770,7 @@
 - **Source:** Decision 4.
 - **Verification:** Test.
 - **State:** Partly met: the settings are shown in the strip's panel from the trusted core's settings view, and the security settings change only there; the bookmarks are shown on the start page, which the trusted core writes (decision 51). History has no page.
+- *Amended 22 October 2026 (decision 57):* history has the panel of requirement 20.4 and bookmarks the manager of requirement 20.17, both from the trusted core's views.
 
 ### Requirement 12.7: Developer tools
 - **Statement:** A docked developer tools panel must show, for the current channel: the packet log, the pages, network requests and notices, all from the trusted core and shown as text; never a cookie (amended 21 October 2026, decision 51; requirement 19.8).
@@ -915,22 +918,22 @@ Requirements 13.1 to 13.13 are unchanged from the earlier design, and are stated
 - **State:** Met on macOS.
 
 ### Requirement 16.2: Sound is read only in the decoder
-- **Statement:** Audio packets must be read, reassembled, stored and decoded only in the decoder process. The trusted core must not parse them, and the interface process must receive only 16-bit samples and voice operations the trusted core checked.
+- **Statement:** Audio packets must be read, reassembled, stored and decoded only in the decoder process. The trusted core must not parse them, and the sound helper must receive only 16-bit samples and voice operations the trusted core checked (decision 55).
 - **Reason:** Untrusted bytes are read only in a process with no rights (architecture principle 2), and nothing in the interface parses data from outside (principle 3).
 - **Source:** Decisions 18 and 37.
-- **Verification:** Inspection: the audio receiver is a dependency of the decoder alone; the interface's sound module takes only `protocol::audio::Audio`.
-- **State:** Met.
+- **Verification:** Inspection: the audio receiver is a dependency of the decoder alone; the sound helper takes only `protocol::sound::ToSound`, whose audio is `protocol::audio::Audio`; the interface takes no sound at all, only which channels are sounding.
+- **State:** Met; since 22 October 2026 the sound helper, not the interface (decision 55).
 
 ### Requirement 16.3: Every tab is heard
-- **Statement:** The trusted core must pass on every channel's sound, tagged with its channel, and the interface must play each channel through its own mixer, so a background tab keeps playing, as in a web browser. A background tab keeps the page it had open. When a channel's decoder is gone, the trusted core must tell the interface to forget that channel's sounds.
+- **Statement:** The trusted core must pass on every channel's sound, tagged with its channel, and the sound helper must play each channel through its own mixer, so a background tab keeps playing, as in a web browser. A background tab keeps the page it had open. When a channel's decoder is gone, the trusted core must tell the sound helper to forget that channel's sounds.
 - **Reason:** The owner asked for tabs that play sound like Chrome's (decision 38); a decoder cannot touch another channel's sound.
 - **Source:** Decisions 37 and 38.
-- **Verification:** Tests: `hearing::tests::every_channel_is_heard_and_its_operations_are_tagged_with_it`, `the_opened_page_goes_to_the_active_channels_decoder_and_others_keep_theirs`; the interface's `every_channel_is_heard_and_a_muted_one_is_silent_but_still_sounding`; by hand on 19 October 2026, a live sound kept playing after its tab went to the background.
+- **Verification:** Tests: `hearing::tests::every_channel_is_heard_and_its_operations_are_tagged_with_it`, `the_opened_page_goes_to_the_active_channels_decoder_and_others_keep_theirs`; the sound helper's `every_channel_is_heard_and_a_muted_one_is_silent_but_still_sounding`; by hand on 19 October 2026, a live sound kept playing after its tab went to the background.
 - **State:** Met on macOS.
 
 ### Requirement 16.4: Every voice operation is checked twice
-- **Statement:** Every voice operation must be bounded by the protocol (a channel of 0 to 3, a gain of 0 to 100, a fade of 5 to 10 000 milliseconds, a profile sample rate, at most two minutes a sound and 32 768 samples a message), and checked again by the trusted core: a sound must be defined before it is filled or started, samples must lie within it, a live sound takes only its next samples, and a channel may hold at most 32 MB of samples in the interface, every channel together 64 MB, a live sound counting as two seconds at 48 kHz. Only the trusted core may tell the interface to forget a channel's sounds, or mute it.
-- **Reason:** A compromised decoder could otherwise make the interface hold memory without bound, or reset another channel's sound.
+- **Statement:** Every voice operation must be bounded by the protocol (a channel of 0 to 3, a gain of 0 to 100, a fade of 5 to 10 000 milliseconds, a profile sample rate, at most two minutes a sound and 32 768 samples a message), and checked again by the trusted core: a sound must be defined before it is filled or started, samples must lie within it, a live sound takes only its next samples, and a channel may hold at most 32 MB of samples in the sound helper, every channel together 64 MB, a live sound counting as two seconds at 48 kHz. Only the trusted core may tell the sound helper to forget a channel's sounds, or mute it.
+- **Reason:** A compromised decoder could otherwise make the sound helper hold memory without bound, or reset another channel's sound.
 - **Source:** Requirements 4.2 and 4.4; decision 37.
 - **Verification:** Tests: the protocol's audio tests of every bound and of a decoder's reset or mute; `hearing::tests::operations_are_checked_against_what_was_defined`, `a_live_sound_takes_stream_samples_only` and `the_ledger_bounds_what_the_interface_holds`.
 - **State:** Met.
@@ -943,11 +946,11 @@ Requirements 13.1 to 13.13 are unchanged from the earlier design, and are stated
 - **State:** Met: the setting and the volume are in the settings panel (requirement 19.4).
 
 ### Requirement 16.6: Sound output
-- **Statement:** The interface process must mix with the engine's mixer (`neoteletext-audio-mix`) and play through the operating system's output device with `cpal`, rendering on the audio thread without allocating. With no output device, the browser must run silent.
+- **Statement:** The sound helper must mix with the engine's mixer (`neoteletext-audio-mix`) and play through the operating system's output device with `cpal`, rendering on the audio thread without allocating. With no output device, or no system sound library, the browser must run silent.
 - **Reason:** One mixer that behaves as the microcontrollers' does; `cpal` keeps unsafe code out of the browser's crates.
-- **Source:** Decisions 37 and 40.
-- **Verification:** Interface tests of applying operations and rendering; `a_tone_plays_through_the_default_output_device`, run by hand because it needs a device (`cargo test -p neoteletext-interface -- --ignored`); setting `NEOTELETEXT_AUDIO_TRACE` makes the interface report the operations it applies and the loudest sample played.
-- **State:** Met on macOS, Windows (WASAPI) and Linux (ALSA): on 19 October 2026 a page's sound played through each, as the device's peak level showed (decision 40). Since 22 October 2026 (decision 53) the device runs only while a channel sounds: it is stopped at start and started on the first sound by a watcher the mixer wakes (`the_watcher_is_woken_only_when_silence_starts_or_ends`; `a_tone_plays_through_the_default_output_device` by hand on macOS, where the idle browser's wakeups fell from 1,030 to about 150 in 10 seconds); on Windows the device opened in the confined interface in the virtual machine's desktop session; the stop and start on Windows and Linux were not watched.
+- **Source:** Decisions 37, 40 and 55.
+- **Verification:** The sound helper's tests of applying operations and rendering; `a_tone_plays_through_the_default_output_device` and `a_tone_plays_through_the_confined_sound_helper`, run by hand because they need a device (`cargo test -p neoteletext-sound -- --ignored`); setting `NEOTELETEXT_AUDIO_TRACE` makes the sound helper report the operations it applies and the loudest sample played.
+- **State:** Met on macOS, Windows (WASAPI) and Linux (ALSA): on 19 October 2026 a page's sound played through each, as the device's peak level showed (decision 40). Since 22 October 2026 (decision 53) the device runs only while a channel sounds: it is stopped at start and started on the first sound by a watcher the mixer wakes (`the_watcher_is_woken_only_when_silence_starts_or_ends`; `a_tone_plays_through_the_default_output_device` by hand on macOS, where the idle browser's wakeups fell from 1,030 to about 150 in 10 seconds); on Windows the device opened in the confined interface in the virtual machine's desktop session; the stop and start on Windows and Linux were not watched. Since 22 October 2026 (decision 55) the sound helper plays, confined: `a_tone_plays_through_the_confined_sound_helper` passed on macOS, on Linux through PipeWire and on Windows in the desktop session, each reporting the channel sounding and then silent, the second consumed in real time; on macOS a podcast played through the whole browser and the tab showed its speaker; on Linux with `libasound.so.2` hidden the browser started, drew and ran silent (`sandboxing.md` section 7.5).
 
 ### Requirement 16.7: A tab shows its sound and mutes
 - **Statement:** A tab whose channel plays sound must show a speaker before its close button, and a muted tab a crossed-out speaker, whether or not it plays. A click on it must mute the tab, or unmute it, without selecting it. A tab's mute must follow it to the next channel it shows. The window's title must be the selected tab's, followed by "Audio playing" or "Muted" while it plays sound.
@@ -1154,13 +1157,16 @@ From `settings-home-console-proxy.md` and its security analysis (decision 51).
 - **Source:** Decision 51.
 - **Verification:** Test: settings written, read back, and a write interrupted before the rename leaves the old file.
 - **State:** Met: `settings_round_trip_through_their_file`, `the_file_is_written_whole_or_not_at_all`; at start the trusted core reads it, missing meaning the defaults; by hand on macOS on 21 October 2026, the star wrote `bookmark neoteletext:home` to the file and a later start read it.
+- *Amended 22 October 2026 (decision 57):* bookmarks are kept in `bookmarks.txt` beside it (requirement 20.19), and history in `history.txt` (requirement 20.2); `settings.txt` adds `history on|off` and `bar on|off`.
+- *Amended 22 October 2026 (decision 59):* `settings.txt` adds `restore on|off`, and the session is kept in `session.txt` beside it (requirement 20.21).
 
 ### Requirement 19.2: The settings file is read strictly
 - **Statement:** The settings file must be read as section 1.2 defines it: a version line, at most 256 KB, a line at most its name, a space and a value of 2 048 bytes (amended 21 October 2026 on building it: a line of 2 048 bytes could not hold the longest address the address rules accept, so a bookmark of that length was dropped at the next start), each value checked by its setting's own rule; a line that breaks a rule or names nothing known is dropped and logged, and the rest stand.
 - **Reason:** The file is outside input: another program can write it.
 - **Source:** Decision 51; `settings-home-console-proxy-security.md` section 3.
 - **Verification:** Test of each rule; the fuzz target `settings_file`.
-- **State:** Met in tests: `the_file_is_read_strictly`, `at_most_16_local_addresses_and_1000_bookmarks`, `the_longest_address_is_kept` (which failed with the line bound of 2 048 bytes); the fuzz target `settings_file` checks every bound and that what was read writes a file that reads back the same, in the full gate.
+- **State:** Met in tests: `the_file_is_read_strictly`, `at_most_16_local_addresses`, `the_longest_address_is_kept` (which failed with the line bound of 2 048 bytes); the fuzz target `settings_file` checks every bound and that what was read writes a file that reads back the same, in the full gate.
+- *Amended 22 October 2026 (decision 57):* a `bookmark` line is no longer a setting: it is dropped and logged like any line naming nothing known (`the_file_is_read_strictly`).
 
 ### Requirement 19.3: The settings panel
 - **Statement:** The settings must be shown and changed in a panel of the trusted strip, opened by its gear button, Command-comma on macOS and Control-comma elsewhere; each change must be strip input the trusted core checks, a refused one said in the panel; a change of a security setting (the proxy, the local addresses) must be said in the strip's notice and logged. The interface receives the settings only as the text the panel shows.
@@ -1170,18 +1176,15 @@ From `settings-home-console-proxy.md` and its security analysis (decision 51).
 - **State:** Met in tests: `each_control_asks_for_its_change`, `the_panel_shows_the_settings_and_the_refusal`, `the_gear_and_its_shortcut_open_the_panel`, `each_setting_change_is_checked` (every rule and refusal), `the_strip_says_the_notice_and_names_the_start_page`. By hand on macOS: Command-comma opens the panel and Escape closes it. Its controls were not pressed by hand: clicks posted to the window do not reach it.
 
 ### Requirement 19.4: Sound and its volume
-- **Statement:** The sound setting must silence every page's sound, and the volume scale it, from 0 to 100, in the interface's mixer.
+- **Statement:** The sound setting must silence every page's sound, and the volume scale it, from 0 to 100, in the sound helper's mixer (decision 55).
 - **Reason:** Requirement 16.5 named the setting and the volume.
 - **Source:** Decision 51.
 - **Verification:** A mixer test of silence and of each volume's gain.
 - **State:** Met in tests: `the_settings_silence_and_scale_every_channel` (sound off silent; volumes 0, 10, 25, 50, 80 and 100 each within 1 per cent of their gain; a muted tab stays muted; a channel that starts later follows the settings). Not yet listened to.
 
-### Requirement 19.5: Bookmarks are kept
-- **Statement:** The star must add or remove the open channel's address, at most 1 000 kept, in the order added, between runs.
-- **Reason:** Bookmarks are the user's list of channels.
-- **Source:** Decision 51.
-- **Verification:** Test.
-- **State:** Met: `bookmarks_are_kept_in_order_and_bounded`, `bookmarks_follow_the_address`, `the_longest_address_is_kept`; by hand on macOS (requirement 19.1's check).
+### Requirement 19.5: Withdrawn: Bookmarks are kept
+- Withdrawn on 22 October 2026 (decision 57): replaced by requirements 20.15, 20.16 and 20.19, which keep bookmarks with names in folders, the star keeping the page shown.
+- **Was:** The star must add or remove the open channel's address, at most 1 000 kept, in the order added, between runs.
 
 ### Requirement 19.6: The Home button
 - **Statement:** The strip must show a Home button after Forward; it, Command-Shift-H on macOS and Alt-Home elsewhere must open the home address in the active tab as a navigation the user starts (requirement 8.2), and a new tab must open the home address.
@@ -1196,6 +1199,7 @@ From `settings-home-console-proxy.md` and its security analysis (decision 51).
 - **Source:** Decision 51.
 - **Verification:** Tests of the pages, of choosing a bookmark, and of hostile addresses in bookmarks.
 - **State:** Met: `the_start_page_is_the_one_built_in_address`, `the_pages_tell_how_to_open_a_channel_and_list_the_bookmarks`, `a_hostile_address_cannot_break_out_of_its_line`, `the_start_page_opens_its_bookmarks`; by hand on macOS, typing 202 on the start page opened its bookmark, and Back returned to page 100.
+- *Amended 22 October 2026 (decision 57):* the start page lists the Bookmarks bar's bookmarks and then Other bookmarks', by name, each folder's name as a heading; a bookmark's page shows its name and its address (`the_pages_tell_how_to_open_a_channel_and_list_the_bookmarks`).
 
 ### Requirement 19.8: The developer console
 - **Statement:** A panel docked at the bottom of the window, opened by Command-Option-I on macOS and Control-Shift-I elsewhere, must show for the active tab's channel the tabs Network, Packets, Pages and Notices of `settings-home-console-proxy.md` section 3.1, each keeping its newest 1 000 entries a channel, with pause and clear. It must never show a cookie, a form's values, a key typed into a page or the pairing secret.
@@ -1231,3 +1235,175 @@ From `settings-home-console-proxy.md` and its security analysis (decision 51).
 - **Source:** Decision 51.
 - **Verification:** Review; a test that the fetcher reads its proxy argument.
 - **State:** Met: `the_fetcher_reads_its_proxy_argument`, `a_fetcher_is_given_the_proxy_and_the_local_addresses`, `the_keyboard_reads_its_relay_pin_and_proxy`; review: no message to a running fetcher carries a proxy (`ToFetcher` has input messages only).
+
+## 20. History and bookmarks
+
+Adopted and built on 22 October 2026 by decision 57, while the owner was away, as the owner instructed; the design is `history-and-bookmarks.md`, its security analysis `history-and-bookmarks-security.md`.
+
+### Requirement 20.1: Visits are recorded
+- **Statement:** The trusted core must record each page a tab shows, as one row per address and local day, with the channel's and page's titles cleaned, the last visit's time, the day's visits and how many the user typed; a visit is a navigation recorded when the tab draws that page's first frame, and a pushed update, a subpage or a redraw is not one. The browser's own `neoteletext:` pages, private tabs and everything while "Remember history" is off must not be recorded.
+- **Reason:** History is the record of what the user saw, and only that.
+- **Source:** Decision 57.
+- **Verification:** Test of each kind of navigation, of a page that never draws, of updates, of the start page, of a private tab and of the setting.
+- **State:** Met, 22 October 2026: `a_visit_is_recorded_once_its_page_draws` (recorded on the first frame drawn, once; not in a private tab, not the start page, not while history is not remembered), `navigations_wait_to_be_recorded` (each kind of navigation waits, typed or not; within a channel at once), `a_page_is_one_row_a_day`; by hand on macOS, a channel visited wrote its row to `history.txt`. A page chosen on the wall by its number or a click is the interface's own and not a navigation, so not a visit (`history-and-bookmarks.md` section 14).
+
+### Requirement 20.2: History is kept for 90 days
+- **Statement:** History must be kept between runs in `history.txt` in the settings folder, readable and writable by the user alone on macOS and Linux, appended at each visit and written whole to a temporary file renamed over it at start, at quit, when it holds twice as many lines as rows, and at once after any removal; rows older than 90 days, beyond 50 000, or beyond a file of 16 MiB must be removed, the oldest first.
+- **Reason:** A browser's history outlives a run, within bounds that keep start fast and the record from growing forever.
+- **Source:** Decision 57.
+- **Verification:** Tests of round trip, of each bound, of a broken last line, and of compaction.
+- **State:** Met in tests, 22 October 2026: `history_round_trips_through_its_file` (appended, read back, compacted, written readable by the user alone), `history_is_kept_ninety_days_and_bounded`; by hand on macOS the file was created `-rw-------`.
+
+### Requirement 20.3: The history file is read strictly
+- **Statement:** `history.txt` must be read as section 2.3 of `history-and-bookmarks.md` defines it: a version line, at most 16 MiB, each line seven tab-separated fields each within its bound and rule; a line that breaks a rule is dropped and logged, and the rest stand.
+- **Reason:** The file is outside input: another program can write it.
+- **Source:** Decision 57.
+- **Verification:** Test of each rule; the fuzz target `history_file`.
+- **State:** Met: `the_file_is_read_strictly` (each rule, a broken last line); the fuzz target `history_file` reads anything, keeps the bounds, and what it read writes a file that reads back the same (20 seconds, no fault, 22 October 2026).
+
+### Requirement 20.4: The history panel
+- **Statement:** A panel of the trusted strip, opened by Command-Y on macOS and Control-H elsewhere and from the menus, must show history newest first under a heading for each day, each row with its time, channel title, page number, page title and address, with a search of addresses and titles; choosing a row must open it as a navigation the user starts, in the active tab or a new one.
+- **Reason:** The browser-style view of what was seen.
+- **Source:** Decision 57.
+- **Verification:** Interface and trusted-core tests.
+- **State:** Met in tests: `the_panel_shows_rows_and_opens_them_by_number`, `the_search_and_the_wheel_ask_for_rows`; by hand on macOS, Command-Y opened it with the day's heading and the row's time, title and address. A row opens in a new tab with Shift-click (section 14).
+
+### Requirement 20.5: The interface sees only history on screen
+- **Statement:** The trusted core must send the history panel at most 100 rows at a time, each with a number for that view, and must act on the interface's requests to open or remove rows only by those numbers.
+- **Reason:** Requirement 3.6: a compromised interface finds nothing beyond what is on screen, and cannot name an address of its own through history.
+- **Source:** Decision 57.
+- **Verification:** Test that no view holds more than 100 rows and that an unknown or stale number is refused.
+- **State:** Met: `rows_are_removed_by_their_numbers_and_from_the_file` (a number from an earlier view is refused), `the_largest_views_fit_one_message`.
+
+### Requirement 20.6: History can be removed
+- **Statement:** The user must be able to remove a row, selected rows, every row of a channel, and every row whose last visit is within the last hour, 24 hours, 7 days, 4 weeks or ever; removing everything must also empty recently closed tabs and the typed record; removed rows must be gone from `history.txt` before the panel shows them removed.
+- **Reason:** The user owns their history.
+- **Source:** Decision 57.
+- **Verification:** Tests of each, reading the file after each.
+- **State:** Met: `history_is_removed_as_asked`, `rows_are_removed_by_their_numbers_and_from_the_file` (the file read after each removal), `rows_are_removed_by_number`.
+
+### Requirement 20.7: "Remember history"
+- **Statement:** A setting, on by default and kept in `settings.txt`, must stop all recording when off, and turning it off must offer to clear what is kept.
+- **Reason:** Some users want no record.
+- **Source:** Decision 57.
+- **Verification:** Test.
+- **State:** Met in tests: `a_visit_is_recorded_once_its_page_draws` (nothing recorded while off); the settings panel's "History: Remember, Forget"; the history panel then says history is not remembered and offers Clear history (section 14). Not pressed by hand: posted clicks do not reach the window.
+
+### Requirement 20.8: Private tabs
+- **Statement:** A private tab, opened by Command-Shift-N on macOS and Control-Shift-N elsewhere, must record no history, no typed address and no recently closed entry, and must be marked "Private" in the strip and in its tab.
+- **Reason:** Browser-style browsing that leaves no record.
+- **Source:** Decision 57.
+- **Verification:** Test of each, and that the mark is shown.
+- **State:** Met: `closed_tabs_reopen_where_they_were` (not kept), `navigations_wait_to_be_recorded` (marked), `a_visit_is_recorded_once_its_page_draws` (not recorded); by hand on macOS, Command-Shift-N opened a tab with the mark in the tab and "Private" in the strip, and nothing was recorded.
+
+### Requirement 20.9: Recently closed tabs
+- **Statement:** The trusted core must keep the last 25 closed tabs, other than private ones, in memory with their whole back-and-forward lists; Command-Shift-T on macOS and Control-Shift-T elsewhere must reopen the most recent where it was.
+- **Reason:** Closing a tab by mistake must not lose it.
+- **Source:** Decision 57.
+- **Verification:** Test.
+- **State:** Met: `closed_tabs_reopen_where_they_were`, `rows_are_removed_by_number` (reopened from the panel).
+
+### Requirement 20.10: Back and Forward lists
+- **Statement:** Holding Back or Forward, or a secondary click on it, must list at most 15 of the tab's entries that way, nearest first; choosing one must move the tab there.
+- **Reason:** Browser-style navigation through a tab's list.
+- **Source:** Decision 57.
+- **Verification:** Interface and trusted-core tests.
+- **State:** Met: `back_and_forward_lists_go_several_steps`, `a_list_entry_goes_there`, `back_held_opens_its_list` (held 500 ms or a secondary click).
+
+### Requirement 20.11: Suggestions in the address field
+- **Statement:** While the user types an address, the trusted core must offer at most 8 suggestions from bookmarks, then from history, each shown with its address as the address rules print it; an inline completion must come only from addresses the user typed before.
+- **Reason:** What was seen before is quicker to reach; a channel must not choose what the field completes to.
+- **Source:** Decision 57.
+- **Verification:** Tests of the order, the bound, and that a link followed or a title never completes the field.
+- **State:** Met: `completion_comes_only_from_what_was_typed`, `suggestions_come_from_bookmarks_then_history`, `typing_asks_for_suggestions_and_completes_inline`.
+
+### Requirement 20.12: History never reaches a channel
+- **Statement:** No history row, title, count or typed address may be sent to any decoder, fetcher or phone keyboard.
+- **Reason:** A channel must not learn what else the user has seen (requirement 7.3).
+- **Source:** Decision 57.
+- **Verification:** Review of every message to those processes.
+- **State:** Met by review, 22 October 2026: history is held by the trusted core's `library` module and sent only in `ToInterface` views; no `ToDecoder`, `ToFetcher` or keyboard message carries a row, title, count or typed address.
+
+### Requirement 20.13: Hostile titles stay text
+- **Statement:** Every channel title, page title and bookmark name must be cleaned and cut wherever it is shown, and shown beside the address it leads to, never in the address's place.
+- **Reason:** Titles are the channel author's text.
+- **Source:** Decision 57.
+- **Verification:** Tests with hostile titles in every place they are shown.
+- **State:** Met in tests: every view shows the address beside the title (`the_panel_shows_rows_and_opens_them_by_number`, `items_open_by_number`); titles are cleaned and cut when kept (`the_file_is_read_strictly`) and on the start page (`a_hostile_address_cannot_break_out_of_its_line`, hostile names too).
+
+### Requirement 20.14: History and bookmarks do not slow the start
+- **Statement:** With 50 000 history rows and 10 000 bookmarks, the time from start to the first frame must not grow by more than 50 milliseconds over a start with none.
+- **Reason:** The browser must open at once.
+- **Source:** Decision 57.
+- **Verification:** Measurement, release build, recorded with its date.
+- **State:** Met, measured 22 October 2026 on macOS, release build, the reference channel: from launch to the first page frame, five starts each, median 375 ms with no files and 318 ms with 50 000 history rows and 10 000 bookmarks (the files are read before the trusted core's first message to the interface, so they are on the measured path). The measurement found the bookmarks reader keeping only 9 998 of 10 000 (`the_most_bookmarks_are_read_whole` failed on it); fixed.
+
+### Requirement 20.15: Bookmarks and folders
+- **Statement:** Bookmarks must have a name and an address, and folders a name and an order of bookmarks and folders; the folders Bookmarks bar and Other bookmarks must always exist; at most 10 000 bookmarks and folders together, 16 folders deep, a name of 256 bytes and an address of 2 048.
+- **Reason:** Browser-style bookmarks, bounded.
+- **Source:** Decision 57.
+- **Verification:** Tests of each bound.
+- **State:** Met: `bookmarks_live_in_folders`, `bookmarks_are_bounded`.
+
+### Requirement 20.16: The star
+- **Statement:** The star must be filled when the strip's address is bookmarked; clicking an empty star, Command-D on macOS or Control-D elsewhere must bookmark the address the strip shows, page included, and open a popover to change its name and folder, keep the whole channel instead, or remove it.
+- **Reason:** Browser-style bookmarking of what is shown.
+- **Source:** Decision 57.
+- **Verification:** Interface and trusted-core tests.
+- **State:** Met: `the_star_bookmarks_the_page_shown`, `the_popover_asks_for_each_change`; by hand on macOS, Command-D opened the popover with the channel's name in Other bookmarks, and Return closed it.
+
+### Requirement 20.17: The bookmarks manager
+- **Statement:** A panel of the strip, opened by Command-Option-B on macOS and Control-Shift-O elsewhere and from the menus, must show the folder tree and a folder's contents, search names and addresses, and open, edit, remove (with Undo for ten seconds), add folders, move and sort; the trusted core must send it at most 100 items at a time with view numbers and act only by those numbers.
+- **Reason:** Bookmarks must be managed, and requirement 3.6 holds for them as for history.
+- **Source:** Decision 57.
+- **Verification:** Interface and trusted-core tests.
+- **State:** Met in tests: `the_manager_edits_by_number`, `bookmarks_are_managed`, `items_open_by_number`, `the_manager_asks_for_each_change` (a drag onto a folder moves); by hand on macOS, Command-Option-B opened it. A move is by dragging (section 14).
+
+### Requirement 20.18: The bookmarks bar
+- **Statement:** An optional row of the strip, off by default and shown or hidden by Command-Shift-B on macOS and Control-Shift-B elsewhere, must show the Bookmarks bar folder, drawn from the trusted core's view.
+- **Reason:** Browser-style quick access, kept in the trusted strip.
+- **Source:** Decision 57.
+- **Verification:** Interface test.
+- **State:** Met: `the_bar_shows_its_folder`, `the_bar_opens_its_bookmarks`; by hand on macOS, Command-Shift-B showed it below the address and wrote `bar on`.
+
+### Requirement 20.19: Bookmarks are kept
+- **Statement:** Bookmarks must be kept in `bookmarks.txt` in the settings folder, written whole to a temporary file renamed over it at each change.
+- **Reason:** As requirement 19.1, for bookmarks.
+- **Source:** Decision 57.
+- **Verification:** Tests of round trip and of an interrupted write.
+- **State:** Met: `bookmarks_round_trip_through_their_file`; by hand on macOS the file was created `-rw-------`.
+
+### Requirement 20.20: The bookmarks file is read strictly
+- **Statement:** `bookmarks.txt` must be read as section 3.6 of `history-and-bookmarks.md` defines it: a version line, at most 24 MiB, unique numbers, each folder before its contents so no cycle can be read, depth at most 16, each field within its bound and rule; a line that breaks a rule is dropped and logged with anything inside it.
+- **Reason:** The file is outside input.
+- **Source:** Decision 57.
+- **Verification:** Test of each rule; the fuzz target `bookmarks_file`.
+- **State:** Met: `the_file_is_read_strictly` (bookmarks; no cycle, depth, each rule), `the_most_bookmarks_are_read_whole`; the fuzz target `bookmarks_file` (every item reached once from the two folders, every bound, round trip; 20 seconds, no fault).
+
+### Requirement 20.21: The session is always kept
+- **Statement:** The trusted core must keep the window's place, size and maximised state and every tab but private ones, each with its back-and-forward list (at most 50 entries, nearest its place), its place and its mute, and which tab is active, in `session.txt` in the settings folder, readable by the user alone, written whole after every change of the tabs and within a second of the window's last move or resize.
+- **Reason:** The owner's instruction: the system must always be able to restore the current state of windows and tabs, whatever ends it.
+- **Source:** Decision 59.
+- **Verification:** Tests: each kind of change writes the file; private tabs are never in it; a write stopped before its rename leaves the last one.
+- **State:** Met: `the_session_is_kept_after_every_change` (a mute, a page drawing with its title, the window only once still, a private tab never), `the_session_is_kept_and_restored`, `the_session_round_trips_through_its_file` (mode 0600), `a_long_list_is_kept_around_its_place`; a temporary file left before its rename is ignored (`the_session_round_trips_through_its_file`). By hand on 22 October 2026: on macOS the browser killed with `SIGKILL` left `session.txt` with both tabs, without the private tab, and the window's place; on Linux and Windows likewise (requirement 20.22).
+
+### Requirement 20.22: The session is restored at start
+- **Statement:** With "Restore previous session" on, the browser must start with the kept session's window, tabs, lists and active tab, the command line's addresses opening as further tabs, the last of them active; with it off or with no session, as before.
+- **Reason:** The owner's instruction: restoring is what happens when the application starts.
+- **Source:** Decision 59.
+- **Verification:** Tests of the restore, with and without the setting and with command-line addresses; a demonstration on each desktop.
+- **State:** Met in tests: `the_tabs_at_start` (as it was; addresses after it, the last active; off, as before; nothing kept, the home address), `the_session_is_kept_and_restored`. By hand on macOS on 22 October 2026: the next start had both tabs, the second active, and the window at the place and size written into the file (300, 200, 1100 by 700); with restoring off, one tab at the home address. On Linux (X11 under Xvfb, foundintelquiet4060) and on Windows (the virtual machine's desktop), the same day: a browser killed with both tabs open kept them in `session.txt` (0600 on Linux), and the next start restored them with the window at the place and size written into the file (`xwininfo` 1100×700+200+100; `GetWindowRect` 150, 120, 1100 by 700).
+
+### Requirement 20.23: The session file is read strictly
+- **Statement:** `session.txt` must be read as `history-and-bookmarks.md` section 15.4 defines it, every field within its bound and rule; what breaks a rule is dropped and logged.
+- **Reason:** The file is outside input.
+- **Source:** Decision 59.
+- **Verification:** Test of each rule; the fuzz target `session_file`.
+- **State:** Met: `the_file_is_read_strictly` (session; the exact lines and tabs dropped); the fuzz target `session_file` (every bound, round trip; 2.6 million runs from a seeded file, no fault). A restored address passes the address rules again (`Session::restore`).
+
+### Requirement 20.24: Restoring is a setting
+- **Statement:** The settings must include "Restore previous session", on by default, kept in `settings.txt` and changed in the settings panel.
+- **Reason:** The owner's instruction.
+- **Source:** Decision 59.
+- **Verification:** Test.
+- **State:** Met: `restore on|off` in `settings.txt` (`settings_round_trip_through_their_file`), the panel's row "Tabs at start: Restore, Home" (`each_control_asks_for_its_change`), checked as strip input (`each_setting_change_is_checked`); seen on macOS.

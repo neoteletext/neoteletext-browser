@@ -294,7 +294,8 @@ fn fade(fields: &mut Fields<'_>) -> Result<u16, ProtocolError> {
 mod tests {
     use super::*;
     use crate::decoder::{FromDecoder, ToDecoder, read_from_core as decoder_reads, read_from_decoder, write_to_core as decoder_writes, write_to_decoder};
-    use crate::{ToCore, ToInterface, read_from_core, read_from_interface, write_to_core, write_to_interface};
+    use crate::sound::{ToSound, read_to_sound, write_to_sound};
+    use crate::{ToCore, read_from_interface, write_to_core};
     use interface_core::canvas::PageKey;
 
     const SOUND: Sound = Sound { handle: 3, generation: 9 };
@@ -319,13 +320,13 @@ mod tests {
             decoder_writes(&mut bytes, &FromDecoder::Audio(audio.clone())).unwrap();
             assert_eq!(read_from_decoder(&mut bytes.as_slice()).unwrap(), Some(FromDecoder::Audio(audio.clone())));
             let mut bytes = Vec::new();
-            write_to_interface(&mut bytes, &ToInterface::Audio { channel: 7, audio: audio.clone() }).unwrap();
-            assert_eq!(read_from_core(&mut bytes.as_slice()).unwrap(), Some(ToInterface::Audio { channel: 7, audio }));
+            write_to_sound(&mut bytes, &ToSound::Audio { channel: 7, audio: audio.clone() }).unwrap();
+            assert_eq!(read_to_sound(&mut bytes.as_slice()).unwrap(), Some(ToSound::Audio { channel: 7, audio }));
         }
         for audio in [Audio::Reset, Audio::Mute(true), Audio::Mute(false)] {
             let mut bytes = Vec::new();
-            write_to_interface(&mut bytes, &ToInterface::Audio { channel: 1, audio: audio.clone() }).unwrap();
-            assert_eq!(read_from_core(&mut bytes.as_slice()).unwrap(), Some(ToInterface::Audio { channel: 1, audio }));
+            write_to_sound(&mut bytes, &ToSound::Audio { channel: 1, audio: audio.clone() }).unwrap();
+            assert_eq!(read_to_sound(&mut bytes.as_slice()).unwrap(), Some(ToSound::Audio { channel: 1, audio }));
         }
         for message in [ToDecoder::Opened(Some(0x123)), ToDecoder::Opened(None)] {
             let mut bytes = Vec::new();

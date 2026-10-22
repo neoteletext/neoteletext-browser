@@ -99,8 +99,14 @@ Each decision was made by the owner on the date given. Requirements in `requirem
 | Decision 49 | 21 October 2026 | **Two libraries for the input system, approved by the owner** ("if those libraries are rust then approved"): `unicode-normalization` in the trusted core, which sends typed text, and a KEY's text, in Normalization Form C (INPUT.md section 5.7 rule 3, REQ-INT-116); and `arboard` in the interface, whose clipboard text the browser's paste shortcut sends as one PASTE while keys go to a channel (REQ-INT-136). `arboard` brings `clipboard-win` and `error-code` on Windows, under BSL-1.0, allowed for those two crates (`licensing.md` section 2). | — |
 | Decision 50 | 21 October 2026 | **The prototypes are removed** (the owner: "why is tauri still in there we dropped it"): the Tauri application and its React front end, the stand-in engine, the egui page renderer for WebAssembly, the two Tauri proofs, the webview sandbox spikes and the interface toolkit spikes, all of the design decision 33 left behind. Their findings stay in this repository's documents; the code is in git at the tag `prototypes-final`, and a path under `prototypes/` in any document is a path there. The full gate no longer builds them, and the toolchain no longer needs the WebAssembly target. | — |
 | Decision 51 | 21 October 2026 | **Settings, the home page, the developer console and proxies** (`settings-home-console-proxy.md`, with its security analysis), designed, specified and adopted on the owner's instruction to design, specify, number the requirements of and build each: settings and bookmarks kept by the trusted core in its own file and changed in a panel of the trusted strip; a Home button and a start page, `neoteletext:home`, served by the trusted core as teletext; a docked developer console of the channel's network activity, packets, pages and notices; HTTP and SOCKS5 proxies for every connection, with no fallback. Requirements 19.1 to 19.12; requirement 3.6 amended: the interface receives a security setting only as the text the strip shows, and acts on none. The engine gives proxies and a report of each exchange (its decision E.102). | — |
-| Decision 52 | 22 October 2026 | **Every helper is sandboxed on every platform, from "deny everything"** (`sandboxing.md` section 5): macOS `sandbox-exec` profiles; on Linux each helper confines itself before any thread with Landlock, an empty network namespace where allowed and a required seccomp deny-list (crates `landlock` and `seccompiler`, as the engine's `neottx`); on Windows a job object, mitigation policies, an AppContainer for the decoder and fetcher and a restricted token for the interface (`windows-sys`); the one layer every machine has is required, the rest applied when the machine allows and reported. `confine` is the third crate with unsafe code (requirement 10.12). The trusted core stays unconfined until packaging (requirement 3.8). | Built; owner to confirm |
+| Decision 52 | 22 October 2026 | **Every helper is sandboxed on every platform, from "deny everything"** (`sandboxing.md` section 5): macOS `sandbox-exec` profiles; on Linux each helper confines itself before any thread with Landlock, an empty network namespace where allowed and a required seccomp deny-list (crates `landlock` and `seccompiler`, as the engine's `neottx`); on Windows a job object, mitigation policies, an AppContainer for the decoder and fetcher and a restricted token for the interface (`windows-sys`); the one layer every machine has is required, the rest applied when the machine allows and reported. `confine` is the third crate with unsafe code (requirement 10.12). The trusted core stays unconfined until packaging (requirement 3.8). | Built; item 1's "degrade and report" rescinded by decision 58: every layer is required; the rest for the owner to confirm |
 | Decision 53 | 22 October 2026 | **The browser waits on what it needs and draws what is on screen** (the efficiency work of 21 October 2026): the sound device runs only while a channel sounds; the window asks for frames only for what is drawn; every process flushes its pipe once per event, not per message; the trusted core computes its next deadline instead of two timer threads, and writes every pipe through a queue with a writer thread (`outbox.rs`), replacing a decoder that stops reading and ending with an interface that does; the fetcher opens connections on their own threads under the agent's connect limit; the decoder wakes for flash only when a rate a shown page uses changes phase; the engine tells a port of magazine data, timers and stalls only when they change (its decision E.103). | Built; owner to confirm |
+| Decision 54 | 22 October 2026 | **Installation and updates on every desktop** (`installation-and-updates.md`), adopted by the owner: the launcher, side-by-side versions and a state file switched by an atomic rename, a trial with a health check and rollback after two failed starts; a confined updater that only stages; two signatures by keys held apart (The Update Framework in the updater, the platform's pinned signer in the launcher); `tough` kept as the client; on macOS one bundle swapped whole, proved first by a spike; per-user installs with no administrator; the timestamp expires after 7 days. **Updates are suggested, never imposed:** the browser checks and offers a new version in the strip, and downloads and installs nothing until the user accepts. | Adopted |
+| Decision 55 | 22 October 2026 | **Sound plays in a helper process of its own** (`neoteletext-sound`), not in the interface: the interface no longer links the system's sound library, so it starts on a Linux without ALSA, and the browser runs silent there (requirement 16.6); the sound helper is confined to the sound output, and the interface loses its access to it. | Built |
+| Decision 56 | 22 October 2026 | **The trusted core is confined on every platform, behind a broker** (`sandboxing.md` section 7): a small unconfined broker, the program the user starts, starts the core confined and starts every helper on the core's request, passing the core the helper's pipes; it also reads a file channel's bytes and hands a web address to the system's browser for it. The core then has no network, starts no program and reads nothing but its settings folder. Chosen over the App Sandbox with XPC services, which cannot give each channel its own decoder process without private API and whose helpers would otherwise inherit the core's wider sandbox. Amends decision 52 item 5. | Built |
+| Decision 57 | 22 October 2026 | **Browser-style history and bookmarks** (`history-and-bookmarks.md`, with `history-and-bookmarks-security.md`), proposed on the owner's request: history kept 90 days as one row per page per day, in a panel of the strip with search and removal by row, channel and time range; "Remember history"; private tabs; 25 recently closed tabs; Back and Forward lists; address-field suggestions with inline completion only from typed addresses; bookmarks with names and folders, the star bookmarking the page shown, a manager, an optional bookmarks bar, kept in `bookmarks.txt`; requirements 20.1 to 20.20 and amendments to 3.6, 12.5, 12.6, 19.1, 19.2, 19.5 and 19.7 on adoption. Eleven items for the owner in its section 13, among them a time-zone crate. | Adopted and built 22 October 2026 while the owner was away, as the owner instructed; section 13's items as recommended but item 10 (local time from the broker, no crate); departures in `history-and-bookmarks.md` section 14, for the owner to confirm |
+| Decision 58 | 22 October 2026 | **Security is paramount: there can be no weakening or downgrading of security.** Decided by the owner on 22 October 2026, in the owner's words, rescinding decision 52's rule that optional sandbox layers be applied "when the machine allows" and reported when missing. 1. Every protection the design names for a process is required: a process that cannot have all of it is not run, and nothing runs in its place with less. 2. No fallback to a weaker mode, and no switch, setting or variable that selects one (`NEOTELETEXT_CONFINE_NO_CONTAINER` removed). 3. On Linux the network namespace, Landlock enforced whole at the version the rules are written for (Landlock 5, Linux 6.10) and the seccomp filter are each required; on Windows the AppContainer of every process but the interface; on macOS the `sandbox-exec` profile, as before. 4. A machine that cannot give them gets a clear error and no browser. Reason: decision 4; a sandbox that quietly becomes less is a weakness an attacker can arrange. | Built 22 October 2026 |
+| Decision 59 | 22 October 2026 | **The session is always kept and restored at start**, on the owner's instruction: "the system must always be able to restore the current state of windows and tabs, and this is what should happen when the application starts too. Settings must include to enable/disable restore previous session." The window's place and size and every tab but private ones, with their back-and-forward lists, kept in `session.txt` after every change; restored at start unless "Restore previous session" is off (`history-and-bookmarks.md` section 15, requirements 20.21 to 20.24). | Built 22 October 2026 |
 
 ---
 
@@ -177,12 +183,17 @@ NeoTeletext defines no limit and no fetching behaviour of its own (decision 26).
 
 ### 6.1 The process model
 
-Decision 18's shape, with the interface process in place of the web-engine window host (decision 33).
+Decision 18's shape, with the interface process in place of the web-engine window host (decision 33), sound in a helper of its own (decision 55), and a broker that starts every process and does for the confined trusted core what it may not do itself (decision 56; `sandboxing.md` section 7).
 
 ```
-┌──────────────────────── trusted core (Rust, no web engine, draws nothing) ────────────────────────┐
+┌────────── broker (the program the user starts; the one process not confined) ──────────┐
+│ starts the trusted core confined, then each helper the core asks for, confined by its  │
+│ program's role, passing the core its pipes; reads file channels; opens the web browser │
+└───────────────────────────────────────────┬────────────────────────────────────────────┘
+                                            │ bounded requests, pipes passed as descriptors or handles
+┌───────────────────────────────────────────▼─── trusted core (Rust, no web engine, draws nothing) ┐
 │ owns: tabs, history, bookmarks, settings, address rules, which pages are visible, frame checking, │
-│ image encoding, the state of the trusted strip; reads file channels and passes them on unread     │
+│ image encoding, the state of the trusted strip; passes file channels on unread                    │
 └──────┬─────────────────────────────┬──────────────────────────────────┬───────────────────────────┘
        │ framed pipe                  │ framed pipe                       │ framed pipe
        │ contents, page bytes,        │ bytes, shown pages, ticks in;     │ tabs, strip, channel, frames out;
@@ -196,15 +207,18 @@ Decision 18's shape, with the interface process in place of the web-engine windo
 │ network, no file writes   │  │ no secrets                       │  │ no network, no file writes, no       │
 │                           │  │                                  │  │ secrets                              │
 └───────────────────────────┘  └──────────────────────────────────┘  └──────────────────────────────────────┘
+       also: the sound helper (checked voice operations in, which channels sound out) and, while open, the phone keyboard
        still to come: updater and launcher (section 12); a font helper when fonts are fetched (requirement 3.5)
 ```
 
 | Process | Holds | May access | If compromised, the attacker gains |
 |---|---|---|---|
-| **Trusted core** | Everything the user trusts | Files the user opens as channels; starting the other processes | Everything; this is why it reads no network or teletext format and contains no web engine |
+| **Broker** | Nothing of the user's | Everything the user may; it does only what section 7 of `sandboxing.md` lists | The user's rights; this is why it parses only the trusted core's few bounded requests and reads nothing else from outside |
+| **Trusted core** | Everything the user trusts in the browser | Its settings folder; through the broker, starting the browser's own helpers, reading file channels and opening the web browser | The browser's state and the strip, but not the user's files or the network, which its sandbox denies (decision 56); this is why it reads no network or teletext format and contains no web engine |
 | **Fetcher** | One channel's network connections and that channel's cookies | The network, which is its job | The ability to send and receive on the network, and that channel's cookies; no other channel's cookies, no history, no screen |
 | **Decoder** | One channel's pages | Nothing it needs; see section 6.5 for what the sandbox still allows | Pictures of its choosing in that channel's page images, which its server could draw anyway |
-| **Interface process** | What is on screen | The window, input and the audio output; see section 6.5 | Everything on screen, including a false trusted strip, and the ability to send intents and **strip input**: it can navigate a tab to any address the trusted core's rules accept, go back and forward, and set bookmarks. No secrets, because none are sent to it |
+| **Sound helper** | The sound now playing | The audio output alone | Sound of its choosing, and a false report of which tabs sound |
+| **Interface process** | What is on screen | The window and input; see section 6.5 | Everything on screen, including a false trusted strip, and the ability to send intents and **strip input**: it can navigate a tab to any address the trusted core's rules accept, go back and forward, and set bookmarks. No secrets, because none are sent to it |
 
 **The trusted strip and the interface process.** The strip is drawn by the interface process, in its own window, outside the page area (design section 5.2, option 1). That keeps the strip out of reach of every page image and every other process's window. It does not keep it out of reach of a fault in the interface process itself: a compromised interface process can draw a false strip and send strip input. Reaching it needs a fault in NeoTeletext's own interface code or its drawing libraries, fed only by our own images and cleaned text (`security-analysis.md` section 5.6). Requirement 3.9's hostile interface harness tests every other property with an attacker's interface in its place.
 
@@ -285,16 +299,16 @@ Every process speaks the same framing, the engine's: one kind byte, a 32-bit big
 
 What is built today is in **bold**; the rest is required.
 
-| Platform | Trusted core | Fetcher | Decoder | Interface process |
-|---|---|---|---|---|
-| macOS | **Not sandboxed:** macOS refuses a nested `sandbox-exec`, so a confined core could start no confined child. Required: the App Sandbox, with access only to its data directory and files the user chooses | **`sandbox-exec` profile from "deny everything": outbound TCP and the name resolver, no file reads otherwise, no programs** | **`sandbox-exec` profile from "deny everything": its pipes alone** | **`sandbox-exec` profile from "deny everything": the system's folders and metadata, the window, font, text-input, pasteboard, notification, preference, sound and Dock services; no network, no programs** |
-| Windows | Not sandboxed | **AppContainer with the internet-client capability (and the private-network one when local addresses are allowed), job object, mitigation policies, Win32k filter** | **Less privileged AppContainer with no capabilities, job object, mitigation policies, Win32k filter** | **Restricted token at low integrity, job object, mitigation policies.** Required: no reads of the user's files |
-| Linux | Not sandboxed | **Landlock (the resolver's directories), seccomp (sockets of the internet families only)** | **Empty network namespace where allowed, Landlock (nothing readable), seccomp (no sockets)** | **Empty network namespace where allowed, Landlock (fonts, preferences, the system's directories), seccomp (local-domain sockets only)** |
-| Android | Main application process | Separate service process | Isolated service process with a seccomp filter | The application's activity |
-| iOS | One application process | Inside it | Inside it; the WebAssembly interpreter `wasmi` as its wall (open decision 2) | Inside it |
+| Platform | Trusted core | Fetcher | Decoder | Interface process | Sound helper |
+|---|---|---|---|---|---|
+| macOS | **`sandbox-exec` profile from "deny everything", started by the broker: its settings folder read and written; no network, services or programs** | **`sandbox-exec` profile from "deny everything": outbound TCP and the name resolver, no file reads otherwise, no programs** | **`sandbox-exec` profile from "deny everything": its pipes alone** | **`sandbox-exec` profile from "deny everything": the system's folders and metadata, the window, font, text-input, pasteboard, notification, preference and Dock services; no network, no programs** | **`sandbox-exec` profile from "deny everything": the audio services alone** |
+| Windows | **Less privileged AppContainer with no capabilities, its settings folder granted, job object, mitigation policies, Win32k filter** | **AppContainer with the internet-client capability (and the private-network one when local addresses are allowed), job object, mitigation policies, Win32k filter** | **Less privileged AppContainer with no capabilities, job object, mitigation policies, Win32k filter** | **Restricted token at low integrity, job object, mitigation policies.** Required: no reads of the user's files | **AppContainer with no capabilities, job object, mitigation policies** |
+| Linux | **Confines itself before any thread: empty network namespace where allowed, Landlock (its settings folder), seccomp (no sockets)** | **Landlock (the resolver's directories), seccomp (sockets of the internet families only)** | **Empty network namespace where allowed, Landlock (nothing readable), seccomp (no sockets)** | **Empty network namespace where allowed, Landlock (fonts, preferences, the system's directories), seccomp (local-domain sockets only)** | **Empty network namespace where allowed, Landlock (the sound devices), seccomp (local-domain sockets only)** |
+| Android | Main application process | Separate service process | Isolated service process with a seccomp filter | The application's activity | Inside the activity |
+| iOS | One application process | Inside it | Inside it; the WebAssembly interpreter `wasmi` as its wall (open decision 2) | Inside it | Inside it |
 | Microcontrollers | One program; a single-purpose device, with its own analysis (section 13) | | | |
 
-**The macOS profiles start from "deny everything"** (21 October 2026), import Apple's baseline for any process (`system.sb`) and allow only what each process is for; `security-analysis.md` section 13 says how they were made. Every child, on every platform, is started with an environment of only what it needs.
+**The macOS profiles start from "deny everything"** (21 October 2026), import Apple's baseline for any process (`system.sb`) and allow only what each process is for; `security-analysis.md` section 13 says how they were made. Every child, on every platform, is started with an environment of only what it needs. The broker is the one process not confined, on every platform (`security-analysis.md` section 5.8).
 
 **On Linux there is no confinement of the interface beyond the platform's,** because there is no web engine to contain: the interface process is NeoTeletext's own code, and it needs the display as any application does. Under X11 any application can send input to other applications' windows (`prototypes/docs/proofs.md` section 6.8); that is the exposure of every X11 application, not a containment problem.
 
@@ -523,19 +537,26 @@ With no web engine the application is far smaller: the interface process is abou
 ```
 neoteletext/
   native/                   the application (a Cargo workspace)
-    interface-core/         the window's state, layout, animation and input; no standard library
+    interface-core/         the window's state, layout, animation and input; no standard library; the
+                            history panel, bookmarks manager, star's popover, bookmarks bar, menu,
+                            Back and Forward lists and suggestions (browser/*_ui.rs, library.rs)
     draw-vello/             the drawing back end for desktops and phones: vello_cpu and Parley, with the fonts
     draw-embedded/          the drawing back end for microcontrollers: embedded-graphics
     protocol/               every message between processes: framing, bounds, kinds, text cleaning
     confine/                the processes' sandboxes: sandbox-exec profiles on macOS, Landlock, a network
                             namespace and seccomp on Linux, a job object, restricted token, mitigation
-                            policies and AppContainer on Windows (sandboxing.md)
-    core/                   the trusted core (neoteletext): tabs, history, addresses, routing, frames,
-                            and hearing.rs, which channel is heard and the checks on its sound
+                            policies and AppContainer on Windows (sandboxing.md); broker.rs, the broker
+                            and the trusted core's end of it, and unix.rs, pipes passed as descriptors
+    core/                   the broker and the trusted core (neoteletext, and neoteletext --core): tabs,
+                            history, addresses, routing, frames, and hearing.rs, which channel is heard
+                            and the checks on its sound; history.rs, bookmarks.rs and calendar.rs, kept
+                            history and bookmarks and their files, and library.rs, their panels' views
+                            and requests (history-and-bookmarks.md); build.rs delay-loads shell32.dll on
+                            Windows
     decoder/                the decoder (neoteletext-decoder): the engine as the decoder uses it
     fetcher/                the fetcher (neoteletext-fetcher): the engine's user agent over the network
-    interface/              the interface process (neoteletext-interface): winit, softbuffer, the image reader,
-                            and audio.rs, the mixer and the output device
+    interface/              the interface process (neoteletext-interface): winit, softbuffer, the image reader
+    sound/                  the sound helper (neoteletext-sound): audio.rs, the mixers and the output device
     site/                   a development tool, not shipped (neoteletext-site): builds and serves a test channel
     fuzz/                   fuzz targets for every reader of input from outside a process (nightly, outside the workspace)
   docs/                     this document, the requirements, the security analysis, the design record
@@ -559,23 +580,28 @@ Still to come: the launcher and updater (section 12).
 - File channels, fed at the same pace.
 - The window of section 11, drawn on the processor; and the same interface core drawn by the microcontroller back end in a test.
 - macOS sandbox profiles for the decoder, the fetcher and the interface.
+- Every process but the broker confined on macOS, Windows and Linux from "deny everything" (decision 52, 22 October 2026); sound in a helper of its own (decision 55); the trusted core confined behind the broker (decision 56; `sandboxing.md` section 7).
+- Builds and tests on Windows, in a virtual machine, and on Linux (`DEVELOPMENT.md` section 12).
+- Transport Layer Security and `https` channels (decision 41); fuzz targets for every reader of another process's messages (requirement 4.6).
 - The address rules of section 9.6; tabs, history and bookmarks in memory.
 - Hyperlinks, phases 1 and 2 of `hyperlinks.md` (20 October 2026), behind the `links` feature, on by default: page numbers found in the text and `LT`, `LK` and descriptor links, decided by the trusted core; the underline drawn by the interface; the destination, the site-change screen and the web-browser prompt in the strip; the hand-off to the system's web browser (`web-opener`); `#302` page addresses.
 - Settings kept between runs with the bookmarks, the settings panel of the strip, Home and the start page `neoteletext:home`, the developer console, and HTTP and SOCKS5 proxies (`settings-home-console-proxy.md`, decision 51, 21 October 2026).
+- History and bookmarks (`history-and-bookmarks.md`, decision 57, 22 October 2026): history kept 90 days with its panel, search and removal, "Remember history", private tabs, recently closed tabs, Back and Forward lists, address-field suggestions; bookmarks in folders with the star's popover, a manager, a bookmarks bar, import and export in this browser's format; the menu button's menu.
+- The session kept after every change and restored at start, with its setting (`history-and-bookmarks.md` section 15, decision 59, 22 October 2026).
 
 **Not built:**
 
-- Transport Layer Security and `https` channels; WebSocket push.
+- WebSocket push.
 - Fastext; the site-change screen for redirects and discovery results; sub-pages beyond the latest; reveal.
-- The trusted core's own sandbox; sandbox profiles that deny file reads; any sandbox on Windows, Linux, Android or iOS.
+- Any sandbox on Android or iOS; a Windows interface that cannot read the user's files.
 - Sharing one decoder and cookie store between tabs on the same channel (decision 11); the trusted core owning the cookie store.
 - The grace period for closed tabs; the live-feed threshold; refresh schedules.
-- Saving history and sessions.
+- Restoring the last session's tabs at start.
 - Fonts from channels and the font helper; discovery.
 - Screen readers, the menu bar and its shortcuts, the clipboard, multiple windows, reduced motion.
-- The hostile interface harness and fuzzing of the message readers.
+- The hostile interface harness.
 - The updater and launcher.
-- Builds on Windows, Linux, phones and microcontroller targets.
+- Builds on phones and microcontroller targets.
 
 ---
 

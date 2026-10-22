@@ -27,9 +27,11 @@ pub mod fetcher;
 pub mod interaction;
 #[cfg(feature = "phone-keyboard")]
 pub mod keyboard;
+pub mod library;
 #[cfg(feature = "links")]
 pub mod links;
 pub mod settings;
+pub mod sound;
 
 use std::io::{self, Read, Write};
 
@@ -78,7 +80,7 @@ const KIND_TABS: u8 = 5;
 const KIND_CHANNEL: u8 = 6;
 const KIND_PAGE: u8 = 8;
 const KIND_UPDATED: u8 = 9;
-const KIND_AUDIO: u8 = 10;
+const KIND_TAB_SOUNDING: u8 = 10;
 #[cfg(feature = "interaction")]
 const KIND_TYPING: u8 = 40;
 #[cfg(feature = "phone-keyboard")]
@@ -110,7 +112,6 @@ const KIND_PHONE_PANEL: u8 = 28;
 const KIND_PHONE_FINISH: u8 = 29;
 #[cfg(feature = "interaction")]
 const KIND_EDITING: u8 = 30;
-const KIND_SOUNDING: u8 = 31;
 // Interface to trusted core: strip input, kinds of their own
 // (`architecture.md` section 6.4).
 const KIND_NAVIGATE: u8 = 32;
@@ -124,6 +125,25 @@ const KIND_CANCEL: u8 = 37;
 const KIND_CONSOLE: u8 = 38;
 const KIND_HOME: u8 = 39;
 const KIND_CHANGE_SETTING: u8 = 45;
+// History and bookmarks (`history-and-bookmarks.md` section 5): the
+// trusted core's views, then the interface's requests.
+const KIND_HISTORY_VIEW: u8 = 50;
+const KIND_SUGGESTIONS: u8 = 51;
+const KIND_TAB_LIST_VIEW: u8 = 52;
+const KIND_BOOKMARKS_VIEW: u8 = 53;
+const KIND_STAR_VIEW: u8 = 54;
+const KIND_BAR_VIEW: u8 = 55;
+const KIND_WINDOW_VIEW: u8 = 56;
+const KIND_HISTORY: u8 = 60;
+const KIND_BOOKMARKS: u8 = 61;
+const KIND_STAR: u8 = 62;
+const KIND_BAR: u8 = 63;
+const KIND_SUGGEST: u8 = 64;
+const KIND_SUGGESTION: u8 = 65;
+const KIND_TAB_LIST: u8 = 66;
+const KIND_GO_TO: u8 = 67;
+const KIND_NEW_PRIVATE_TAB: u8 = 68;
+const KIND_WINDOW: u8 = 69;
 
 // The strip's flags.
 const ENCRYPTED: u8 = 1;
@@ -132,9 +152,12 @@ const CAN_GO_FORWARD: u8 = 4;
 const BOOKMARKED: u8 = 8;
 const LOCAL: u8 = 16;
 const BUILT_IN: u8 = 32;
-const ALL_FLAGS: u8 = ENCRYPTED | CAN_GO_BACK | CAN_GO_FORWARD | BOOKMARKED | LOCAL | BUILT_IN;
+const PRIVATE: u8 = 64;
+const ALL_FLAGS: u8 = ENCRYPTED | CAN_GO_BACK | CAN_GO_FORWARD | BOOKMARKED | LOCAL | BUILT_IN | PRIVATE;
 // A tab's flags.
 const TAB_MUTED: u8 = 1;
+const TAB_PRIVATE: u8 = 2;
+const TAB_FLAGS: u8 = TAB_MUTED | TAB_PRIVATE;
 
 const HEADER_BYTES: usize = 5;
 const KEY_BYTES: usize = 6;
@@ -180,13 +203,10 @@ pub enum ToInterface {
         /// The image, an indexed PNG at the native size.
         png: Vec<u8>,
     },
-    /// A voice operation of a channel, checked by the trusted core.
-    Audio {
-        /// The channel whose sound it is.
-        channel: u32,
-        /// The operation.
-        audio: audio::Audio,
-    },
+    /// The channels sounding now, muted or not, for the tabs' speakers;
+    /// the sound helper says it and the trusted core passes it on
+    /// (decision 55).
+    Sounding(Vec<u32>),
     /// About hyperlinks (`hyperlinks.md` section 8.1).
     #[cfg(feature = "links")]
     Link(links::Message),
@@ -205,6 +225,21 @@ pub enum ToInterface {
     Settings(settings::SettingsView),
     /// New entries for the developer console (requirement 19.9).
     Console(console::ConsoleUpdate),
+    /// The history panel's rows (requirement 20.4).
+    History(library::HistoryView),
+    /// Suggestions for what is typed in the address field (requirement 20.11).
+    Suggestions(library::Suggestions),
+    /// The active tab's Back or Forward list (requirement 20.10).
+    TabList(library::TabList),
+    /// The bookmarks manager's folders and items (requirement 20.17).
+    Bookmarks(library::BookmarksView),
+    /// The star's popover (requirement 20.16).
+    Star(library::StarView),
+    /// The bookmarks bar (requirement 20.18).
+    Bar(library::BarView),
+    /// The window's place and size, restored from the last session
+    /// (requirement 20.22).
+    Window(library::WindowGeometry),
     /// The browser is closing: the interface ends.
     Close,
 }
@@ -240,9 +275,6 @@ pub enum ToCore {
     MuteTab(u8),
     /// Mute every tab, or unmute every tab.
     MuteAll(bool),
-    /// The channels whose sound is playing or about to, sent when it
-    /// changes: a tab that sounds is never put to sleep (decision 47).
-    Sounding(Vec<u32>),
     /// The cell under the pointer or the keyboard's focus, when it is on a
     /// link, or none: the trusted strip shows where it leads.
     #[cfg(feature = "links")]
@@ -295,6 +327,38 @@ pub enum ToCore {
     /// Strip input: no to the strip's question of this number.
     #[cfg(feature = "links")]
     Cancel(u32),
+    /// Strip input: what the history panel asks for (requirements 20.4 to
+    /// 20.9).
+    History(library::HistoryRequest),
+    /// Strip input: what the bookmarks manager asks for (requirement 20.17).
+    Bookmarks(library::BookmarkRequest),
+    /// Strip input: what the star's popover asks for (requirement 20.16).
+    Star(library::StarRequest),
+    /// Strip input: what the bookmarks bar asks for (requirement 20.18).
+    Bar(library::BarRequest),
+    /// The address field's text, for suggestions (requirement 20.11).
+    Suggest(String),
+    /// Strip input: open a suggestion, by its number.
+    Suggestion {
+        /// The suggestion's number.
+        number: u32,
+        /// In a new tab.
+        new_tab: bool,
+    },
+    /// The active tab's Back or Forward list, asked for (requirement 20.10).
+    TabList(bool),
+    /// Strip input: move the active tab this many steps back or forward.
+    GoTo {
+        /// Forward, or back.
+        forward: bool,
+        /// How many steps, 1 to `library::MAX_TAB_LIST`.
+        steps: u8,
+    },
+    /// Strip input: open a private tab (requirement 20.8).
+    NewPrivateTab,
+    /// The window moved, was resized, or was maximised or restored, for
+    /// the session (requirement 20.21).
+    Window(library::WindowGeometry),
 }
 
 /// Why a message could not be read or written.
@@ -505,6 +569,15 @@ impl<'a> Fields<'a> {
     }
 }
 
+/// A one-byte flag: 0 or 1, nothing else.
+fn read_flag(fields: &mut Fields<'_>) -> Result<bool, ProtocolError> {
+    match fields.u8()? {
+        0 => Ok(false),
+        1 => Ok(true),
+        _ => Err(ProtocolError::BadValue("flag")),
+    }
+}
+
 /// Writes a message to the interface.
 ///
 /// # Errors
@@ -523,7 +596,7 @@ pub fn write_to_interface(out: &mut dyn Write, message: &ToInterface) -> Result<
             for tab in tabs {
                 payload.push(tab.colour);
                 payload.extend_from_slice(&tab.channel.to_be_bytes());
-                payload.push(if tab.muted { TAB_MUTED } else { 0 });
+                payload.push(if tab.muted { TAB_MUTED } else { 0 } | if tab.private { TAB_PRIVATE } else { 0 });
                 push_text(&mut payload, &tab.title, MAX_TAB_TITLE)?;
             }
             KIND_TABS
@@ -536,7 +609,8 @@ pub fn write_to_interface(out: &mut dyn Write, message: &ToInterface) -> Result<
                     | flag(strip.forward, CAN_GO_FORWARD)
                     | flag(strip.bookmarked, BOOKMARKED)
                     | flag(strip.local, LOCAL)
-                    | flag(strip.built_in, BUILT_IN),
+                    | flag(strip.built_in, BUILT_IN)
+                    | flag(strip.private, PRIVATE),
             );
             push_text(&mut payload, &strip.identity, MAX_IDENTITY)?;
             push_text(&mut payload, &strip.address, MAX_ADDRESS)?;
@@ -581,13 +655,14 @@ pub fn write_to_interface(out: &mut dyn Write, message: &ToInterface) -> Result<
             payload.extend_from_slice(png);
             KIND_FRAME
         }
-        ToInterface::Audio { channel, audio } => {
-            payload.extend_from_slice(&channel.to_be_bytes());
-            // Checked on its own, as the reader reads it after the channel.
-            let mut operation = Vec::new();
-            audio::push(&mut operation, audio, audio::Sender::Core)?;
-            payload.extend_from_slice(&operation);
-            KIND_AUDIO
+        ToInterface::Sounding(channels) => {
+            if channels.len() > MAX_TABS {
+                return Err(ProtocolError::BadValue("too many channels"));
+            }
+            for channel in channels {
+                payload.extend_from_slice(&channel.to_be_bytes());
+            }
+            KIND_TAB_SOUNDING
         }
         #[cfg(feature = "links")]
         ToInterface::Link(message) => links::push_message(&mut payload, message)?,
@@ -613,6 +688,34 @@ pub fn write_to_interface(out: &mut dyn Write, message: &ToInterface) -> Result<
         ToInterface::Console(update) => {
             console::push_update(&mut payload, update)?;
             KIND_CONSOLE_UPDATE
+        }
+        ToInterface::History(view) => {
+            library::push_history_view(&mut payload, view)?;
+            KIND_HISTORY_VIEW
+        }
+        ToInterface::Suggestions(suggestions) => {
+            library::push_suggestions(&mut payload, suggestions)?;
+            KIND_SUGGESTIONS
+        }
+        ToInterface::TabList(list) => {
+            library::push_tab_list(&mut payload, list)?;
+            KIND_TAB_LIST_VIEW
+        }
+        ToInterface::Bookmarks(view) => {
+            library::push_bookmarks_view(&mut payload, view)?;
+            KIND_BOOKMARKS_VIEW
+        }
+        ToInterface::Star(view) => {
+            library::push_star_view(&mut payload, view)?;
+            KIND_STAR_VIEW
+        }
+        ToInterface::Bar(view) => {
+            library::push_bar_view(&mut payload, view)?;
+            KIND_BAR_VIEW
+        }
+        ToInterface::Window(window) => {
+            library::push_window(&mut payload, window)?;
+            KIND_WINDOW_VIEW
         }
         ToInterface::Close => KIND_CLOSE,
     };
@@ -643,10 +746,10 @@ pub fn read_from_core(input: &mut dyn Read) -> Result<Option<ToInterface>, Proto
                     }
                     let channel = fields.u32()?;
                     let flags = fields.u8()?;
-                    if flags & !TAB_MUTED != 0 {
+                    if flags & !TAB_FLAGS != 0 {
                         return Err(ProtocolError::BadValue("tab flags"));
                     }
-                    Ok(TabInfo { colour, channel, muted: flags & TAB_MUTED != 0, title: fields.text(MAX_TAB_TITLE)? })
+                    Ok(TabInfo { colour, channel, muted: flags & TAB_MUTED != 0, private: flags & TAB_PRIVATE != 0, title: fields.text(MAX_TAB_TITLE)? })
                 })
                 .collect::<Result<_, _>>()?;
             ToInterface::Tabs { tabs, active }
@@ -666,6 +769,7 @@ pub fn read_from_core(input: &mut dyn Read) -> Result<Option<ToInterface>, Proto
                 bookmarked: flags & BOOKMARKED != 0,
                 local: flags & LOCAL != 0,
                 built_in: flags & BUILT_IN != 0,
+                private: flags & PRIVATE != 0,
                 notice: fields.text(MAX_STRIP_NOTICE)?,
             })
         }
@@ -712,7 +816,16 @@ pub fn read_from_core(input: &mut dyn Read) -> Result<Option<ToInterface>, Proto
             let png = tail(payload, FRAME_FIXED_BYTES);
             return Ok(Some(ToInterface::Frame { key, version, png }));
         }
-        KIND_AUDIO => ToInterface::Audio { channel: fields.u32()?, audio: audio::read(&mut fields, audio::Sender::Core)? },
+        KIND_TAB_SOUNDING => {
+            let mut channels = Vec::new();
+            while !fields.is_empty() {
+                if channels.len() == MAX_TABS {
+                    return Err(ProtocolError::BadValue("too many channels"));
+                }
+                channels.push(fields.u32()?);
+            }
+            ToInterface::Sounding(channels)
+        }
         #[cfg(feature = "links")]
         kind if links::is_message(kind) => ToInterface::Link(links::read_message(kind, &mut fields)?),
         #[cfg(feature = "interaction")]
@@ -723,6 +836,13 @@ pub fn read_from_core(input: &mut dyn Read) -> Result<Option<ToInterface>, Proto
         KIND_PHONE_KEY => ToInterface::PhoneKey(keyboard::read_phone_key(&mut fields)?),
         KIND_SETTINGS => ToInterface::Settings(settings::read_view(&mut fields)?),
         KIND_CONSOLE_UPDATE => ToInterface::Console(console::read_update(&mut fields)?),
+        KIND_HISTORY_VIEW => ToInterface::History(library::read_history_view(&mut fields)?),
+        KIND_SUGGESTIONS => ToInterface::Suggestions(library::read_suggestions(&mut fields)?),
+        KIND_TAB_LIST_VIEW => ToInterface::TabList(library::read_tab_list(&mut fields)?),
+        KIND_BOOKMARKS_VIEW => ToInterface::Bookmarks(library::read_bookmarks_view(&mut fields)?),
+        KIND_STAR_VIEW => ToInterface::Star(library::read_star_view(&mut fields)?),
+        KIND_BAR_VIEW => ToInterface::Bar(library::read_bar_view(&mut fields)?),
+        KIND_WINDOW_VIEW => ToInterface::Window(library::read_window(&mut fields)?),
         KIND_CLOSE => ToInterface::Close,
         other => return Err(ProtocolError::UnknownKind(other)),
     };
@@ -770,15 +890,6 @@ pub fn write_to_core(out: &mut dyn Write, message: &ToCore) -> Result<(), Protoc
         ToCore::MuteAll(muted) => {
             payload.push(u8::from(*muted));
             KIND_MUTE_ALL
-        }
-        ToCore::Sounding(channels) => {
-            if channels.len() > MAX_TABS {
-                return Err(ProtocolError::BadValue("too many channels"));
-            }
-            for channel in channels {
-                payload.extend_from_slice(&channel.to_be_bytes());
-            }
-            KIND_SOUNDING
         }
         ToCore::Navigate(address) => {
             push_text(&mut payload, address, MAX_ADDRESS)?;
@@ -843,6 +954,47 @@ pub fn write_to_core(out: &mut dyn Write, message: &ToCore) -> Result<(), Protoc
             payload.extend_from_slice(&id.to_be_bytes());
             KIND_CANCEL
         }
+        ToCore::History(request) => {
+            library::push_history_request(&mut payload, request)?;
+            KIND_HISTORY
+        }
+        ToCore::Bookmarks(request) => {
+            library::push_bookmark_request(&mut payload, request)?;
+            KIND_BOOKMARKS
+        }
+        ToCore::Star(request) => {
+            library::push_star_request(&mut payload, request)?;
+            KIND_STAR
+        }
+        ToCore::Bar(request) => {
+            library::push_bar_request(&mut payload, request);
+            KIND_BAR
+        }
+        ToCore::Suggest(text) => {
+            push_text(&mut payload, text, MAX_ADDRESS)?;
+            KIND_SUGGEST
+        }
+        ToCore::Suggestion { number, new_tab } => {
+            payload.extend_from_slice(&number.to_be_bytes());
+            payload.push(u8::from(*new_tab));
+            KIND_SUGGESTION
+        }
+        ToCore::TabList(forward) => {
+            payload.push(u8::from(*forward));
+            KIND_TAB_LIST
+        }
+        ToCore::GoTo { forward, steps } => {
+            if *steps == 0 || usize::from(*steps) > library::MAX_TAB_LIST {
+                return Err(ProtocolError::BadValue("steps"));
+            }
+            payload.extend_from_slice(&[u8::from(*forward), *steps]);
+            KIND_GO_TO
+        }
+        ToCore::NewPrivateTab => KIND_NEW_PRIVATE_TAB,
+        ToCore::Window(window) => {
+            library::push_window(&mut payload, window)?;
+            KIND_WINDOW
+        }
     };
     write_frame(out, kind, &payload)
 }
@@ -879,16 +1031,6 @@ pub fn read_from_interface(input: &mut dyn Read) -> Result<Option<ToCore>, Proto
             1 => true,
             _ => return Err(ProtocolError::BadValue("mute")),
         }),
-        KIND_SOUNDING => {
-            let mut channels = Vec::new();
-            while !fields.is_empty() {
-                if channels.len() == MAX_TABS {
-                    return Err(ProtocolError::BadValue("too many channels"));
-                }
-                channels.push(fields.u32()?);
-            }
-            ToCore::Sounding(channels)
-        }
         KIND_NAVIGATE => ToCore::Navigate(fields.text(MAX_ADDRESS)?),
         KIND_BACK => ToCore::Back,
         KIND_FORWARD => ToCore::Forward,
@@ -935,6 +1077,19 @@ pub fn read_from_interface(input: &mut dyn Read) -> Result<Option<ToCore>, Proto
         KIND_CONFIRM => ToCore::Confirm(fields.u32()?),
         #[cfg(feature = "links")]
         KIND_CANCEL => ToCore::Cancel(fields.u32()?),
+        KIND_HISTORY => ToCore::History(library::read_history_request(&mut fields)?),
+        KIND_BOOKMARKS => ToCore::Bookmarks(library::read_bookmark_request(&mut fields)?),
+        KIND_STAR => ToCore::Star(library::read_star_request(&mut fields)?),
+        KIND_BAR => ToCore::Bar(library::read_bar_request(&mut fields)?),
+        KIND_SUGGEST => ToCore::Suggest(fields.text(MAX_ADDRESS)?),
+        KIND_SUGGESTION => ToCore::Suggestion { number: fields.u32()?, new_tab: read_flag(&mut fields)? },
+        KIND_TAB_LIST => ToCore::TabList(read_flag(&mut fields)?),
+        KIND_GO_TO => {
+            let forward = read_flag(&mut fields)?;
+            ToCore::GoTo { forward, steps: library::read_steps(&mut fields)? }
+        }
+        KIND_NEW_PRIVATE_TAB => ToCore::NewPrivateTab,
+        KIND_WINDOW => ToCore::Window(library::read_window(&mut fields)?),
         other => return Err(ProtocolError::UnknownKind(other)),
     };
     fields.end()?;
@@ -957,6 +1112,7 @@ mod tests {
             bookmarked: true,
             local: false,
             built_in: false,
+            private: true,
             notice: "Proxy changed to socks5://127.0.0.1:1080".into(),
         }
     }
@@ -974,10 +1130,11 @@ mod tests {
     #[test]
     fn every_kind_round_trips() {
         for message in [
+            ToInterface::Sounding(vec![3, 7]),
             ToInterface::Tabs {
                 tabs: vec![
-                    TabInfo { title: "news".into(), colour: 1, channel: 3, muted: false },
-                    TabInfo { title: "sport".into(), colour: 7, channel: 9, muted: true },
+                    TabInfo { title: "news".into(), colour: 1, channel: 3, muted: false, private: false },
+                    TabInfo { title: "sport".into(), colour: 7, channel: 9, muted: true, private: true },
                 ],
                 active: 1,
             },
@@ -992,8 +1149,16 @@ mod tests {
                 volume: 30,
                 proxy: settings::ProxyView::None,
                 local: Vec::new(),
+                remember_history: true,
+                restore_session: true,
                 refusal: None,
             }),
+            ToInterface::History(library::HistoryView { query: "news".into(), total: 0, remembering: true, ..library::HistoryView::default() }),
+            ToInterface::Suggestions(library::Suggestions { text: "n".into(), inline: "news.example".into(), rows: Vec::new() }),
+            ToInterface::TabList(library::TabList { forward: true, entries: Vec::new() }),
+            ToInterface::Bookmarks(library::BookmarksView::default()),
+            ToInterface::Star(library::StarView { open: true, ..library::StarView::default() }),
+            ToInterface::Bar(library::BarView { shown: true, ..library::BarView::default() }),
             ToInterface::Console(console::ConsoleUpdate {
                 channel: 2,
                 replace: false,
@@ -1011,7 +1176,6 @@ mod tests {
             ToCore::SelectTab(3),
             ToCore::CloseTab(0),
             ToCore::NewTab,
-            ToCore::Sounding(vec![3, 7]),
             ToCore::Navigate("sport.invalid".into()),
             ToCore::Back,
             ToCore::Forward,
@@ -1019,6 +1183,16 @@ mod tests {
             ToCore::Home,
             ToCore::ChangeSetting(settings::SettingChange::Volume(40)),
             ToCore::Console(true),
+            ToCore::History(library::HistoryRequest::Clear(library::ClearRange::All)),
+            ToCore::Bookmarks(library::BookmarkRequest::Undo),
+            ToCore::Star(library::StarRequest::Done),
+            ToCore::Bar(library::BarRequest::Show(true)),
+            ToCore::Suggest("news".into()),
+            ToCore::Suggestion { number: 4, new_tab: true },
+            ToCore::TabList(false),
+            ToCore::GoTo { forward: true, steps: 15 },
+            ToCore::NewPrivateTab,
+            ToCore::Window(library::WindowGeometry { x: 10, y: 20, width: 1440, height: 900, maximised: false }),
         ] {
             let mut bytes = Vec::new();
             write_to_core(&mut bytes, &message).unwrap();
@@ -1035,6 +1209,16 @@ mod tests {
         bytes.clear();
         write_to_core(&mut bytes, &ToCore::Navigate("x".into())).unwrap();
         assert!(matches!(read_from_core(&mut bytes.as_slice()), Err(ProtocolError::UnknownKind(KIND_NAVIGATE))));
+        // The interface sending history as if it were the trusted core's.
+        bytes.clear();
+        write_to_interface(&mut bytes, &ToInterface::History(library::HistoryView::default())).unwrap();
+        assert!(matches!(read_from_interface(&mut bytes.as_slice()), Err(ProtocolError::UnknownKind(KIND_HISTORY_VIEW))));
+        bytes.clear();
+        write_to_core(&mut bytes, &ToCore::History(library::HistoryRequest::Panel(true))).unwrap();
+        assert!(matches!(read_from_core(&mut bytes.as_slice()), Err(ProtocolError::UnknownKind(KIND_HISTORY))));
+        // Steps a list never offers.
+        assert!(write_to_core(&mut Vec::new(), &ToCore::GoTo { forward: false, steps: 0 }).is_err());
+        assert!(read_from_interface(&mut [KIND_GO_TO, 0, 0, 0, 2, 0, 16].as_slice()).is_err());
     }
 
     #[test]
@@ -1057,13 +1241,13 @@ mod tests {
         // A new page with a hexadecimal number, and unknown strip flags.
         bytes = vec![KIND_PAGE, 0, 0, 0, 8, 0, 0, 0, 9, 0x1A, 0x00, 0, 0];
         assert!(matches!(read_from_core(&mut bytes.as_slice()), Err(ProtocolError::BadValue("page number"))));
-        bytes = vec![KIND_STRIP, 0, 0, 0, 7, 0x40, 0, 0, 0, 0, 0, 0];
+        bytes = vec![KIND_STRIP, 0, 0, 0, 7, 0x80, 0, 0, 0, 0, 0, 0];
         assert!(matches!(read_from_core(&mut bytes.as_slice()), Err(ProtocolError::BadValue("strip flags"))));
         // A tab colour the interface has no colour for.
         bytes = vec![KIND_TABS, 0, 0, 0, 10, 0, 1, 8, 0, 0, 0, 1, 0, 0, 0];
         assert!(matches!(read_from_core(&mut bytes.as_slice()), Err(ProtocolError::BadValue("tab colour"))));
         // Unknown tab flags, and a mute that is neither on nor off.
-        bytes = vec![KIND_TABS, 0, 0, 0, 10, 0, 1, 0, 0, 0, 0, 1, 2, 0, 0];
+        bytes = vec![KIND_TABS, 0, 0, 0, 10, 0, 1, 0, 0, 0, 0, 1, 4, 0, 0];
         assert!(matches!(read_from_core(&mut bytes.as_slice()), Err(ProtocolError::BadValue("tab flags"))));
         bytes = vec![KIND_MUTE_ALL, 0, 0, 0, 1, 2];
         assert!(matches!(read_from_interface(&mut bytes.as_slice()), Err(ProtocolError::BadValue("mute"))));
