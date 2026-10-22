@@ -8,7 +8,7 @@ A desktop browser for teletext channels on the web, built on the neoteletext eng
 
 - `docs/requirements.md`: every requirement, numbered by section ("Requirement 6.3"), each with Statement, Reason, Source, Verification and a dated State. The only normative text.
 - `docs/architecture.md`: the design. Section 2 is the owner's decisions (Decision n, with a "Now" column); section 5 the engine and its pinned commit; section 15 what is built; section 17 the glossary.
-- `docs/security-analysis.md`, and one security analysis per feature beside its design: `hyperlinks.md` with `hyperlinks-security.md`, `interaction.md` with `interaction-security.md`, `sandboxing.md` with `sandboxing-security.md`, `history-and-bookmarks.md` with `history-and-bookmarks-security.md`.
+- `docs/security-analysis.md`, and one security analysis per feature beside its design: `hyperlinks.md` with `hyperlinks-security.md`, `interaction.md` with `interaction-security.md`, `sandboxing.md` with `sandboxing-security.md`, `history-and-bookmarks.md` with `history-and-bookmarks-security.md`, `cookies.md` with `cookies-security.md`.
 - `docs/licensing.md` and `CREDITS.md`.
 - `docs/native-interface-design.md`: how the native interface was chosen and what was built when.
 

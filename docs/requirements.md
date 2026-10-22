@@ -457,6 +457,7 @@
 - **Source:** Decision 11.
 - **Verification:** Test.
 - **State:** Not met: every tab opens its own channel.
+- *Note of 22 October 2026:* designed in `cookies.md` (decision 62, proposed), requirements 21.1 and 21.2.
 
 ### Requirement 7.5: The trusted core owns the cookie store
 - **Statement:** The cookie store must live in the trusted core. For each request the trusted core must give the fetcher only the cookies that request carries, and the fetcher must return any `Set-Cookie` headers to the trusted core.
@@ -464,6 +465,7 @@
 - **Source:** Decision 4.
 - **Verification:** Test: the fetcher process holds no cookie store.
 - **State:** Not met: each fetcher holds its own channel's store, inside the engine's user agent, in memory. Needs the engine change of `architecture.md` section 5.1.
+- *Note of 22 October 2026:* designed in `cookies.md` (decision 62, proposed), requirements 21.1 and 21.2.
 
 ### Requirement 7.6: Cookie rules
 - **Statement:** The cookie store must follow the engine's: the draft RFC 6265bis, every cookie scoped to its host only, `Secure` cookies never sent over plain connections, the `__Host-` and `__Secure-` prefixes and expiry enforced, and `SameSite` applied to form submissions that go to another channel.
@@ -1424,3 +1426,85 @@ Adopted and built on 22 October 2026 by decision 57, while the owner was away, a
 - **Verification:** Test.
 - **State:** Met: `restore on|off` in `settings.txt` (`settings_round_trip_through_their_file`), the panel's row "Tabs at start: Restore, Home" (`each_control_asks_for_its_change`), checked as strip input (`each_setting_change_is_checked`); seen on macOS.
 
+---
+
+## 21. Cookies
+
+**Proposed 22 October 2026 (decision 62, `cookies.md`, with `cookies-security.md`).** None is built; each states what building it must meet.
+
+### Requirement 21.1: The trusted core owns the cookies
+- **Statement:** Every cookie must be kept by the trusted core, one jar per channel under the engine's rules (REQ-WEB-006, REQ-WEB-026); a fetcher must hold none, receiving for each request only that request's `Cookie` header and returning each `Set-Cookie` line to the trusted core.
+- **Reason:** A fetcher compromised by its channel's server then sees only the cookies of requests in flight (requirement 7.5).
+- **Source:** Decision 62.
+- **Verification:** Test: the fetcher has no jar; a request carries the trusted core's header; a `Set-Cookie` line reaches the trusted core's jar.
+- **State:** Not met: proposed 22 October 2026.
+
+### Requirement 21.2: Tabs on a channel share its cookies
+- **Statement:** Every ordinary tab showing a channel must use the same jar.
+- **Reason:** Decision 11, requirement 7.4.
+- **Source:** Decision 62.
+- **Verification:** Test with two tabs.
+- **State:** Not met: proposed 22 October 2026.
+
+### Requirement 21.3: Private tabs have their own cookies
+- **Statement:** Private tabs must share one jar per channel, separate from the ordinary jars, held in memory only and emptied when the last private tab closes.
+- **Reason:** What a private window means in every browser.
+- **Source:** Decision 62.
+- **Verification:** Test.
+- **State:** Not met: proposed 22 October 2026.
+
+### Requirement 21.4: Only persistent cookies are kept, and only encrypted
+- **Statement:** Between runs only unexpired cookies with a lifetime may be kept, never session cookies, private cookies or cookies of a blocked channel, in `cookies.bin`, readable by the user alone, sealed under a key kept in the platform's secret store; when the key cannot be had, nothing is written.
+- **Reason:** A cookie file is a set of credentials; decision 58 forbids a weaker mode.
+- **Source:** Decision 62.
+- **Verification:** Tests: round trip; a file unreadable without the key; no file written when the key is refused; no session cookie in the file.
+- **State:** Not met: proposed 22 October 2026.
+
+### Requirement 21.5: The cookie file is read strictly
+- **Statement:** `cookies.bin` must be read with every field within its bound, each cookie passed through the engine's rules again; what breaks a rule is dropped and logged.
+- **Reason:** The file is outside input once decrypted, since another program of the user can replace it with the key.
+- **Source:** Decision 62.
+- **Verification:** Test of each rule; the fuzz target `cookie_file`.
+- **State:** Not met: proposed 22 October 2026.
+
+### Requirement 21.6: The cookies panel
+- **Statement:** A panel must list the channels and sites with cookies, with their counts, sizes and last use, never a cookie's name or value, and must delete a channel's cookies, a site's, or all, and block or unblock a channel, by view numbers alone.
+- **Reason:** The control every browser gives, without giving the interface any cookie (requirement 3.6).
+- **Source:** Decision 62.
+- **Verification:** Interface test; a test that no view carries a name or value.
+- **State:** Not met: proposed 22 October 2026.
+
+### Requirement 21.7: The cookie settings
+- **Statement:** The settings must offer Keep, Delete when the browser closes, and Block all, Keep by default, and a list of blocked channels, kept in `settings.txt`.
+- **Reason:** As in every browser.
+- **Source:** Decision 62.
+- **Verification:** Test of each.
+- **State:** Not met: proposed 22 October 2026.
+
+### Requirement 21.8: Cookies are cleared with history
+- **Statement:** The history panel's clearing must offer cookies, alone or with history, for its time ranges, by the cookies' creation time.
+- **Reason:** Browsers' "Clear browsing data".
+- **Source:** Decision 62.
+- **Verification:** Test.
+- **State:** Not met: proposed 22 October 2026.
+
+### Requirement 21.9: `Clear-Site-Data` empties the channel's own jar
+- **Statement:** A response from the channel over `https` naming `"cookies"` or `"*"` in `Clear-Site-Data` must empty that channel's jar and no other; over plain HTTP it must be ignored.
+- **Reason:** The current way for a server to sign a user out everywhere; limited to the channel by REQ-WEB-026.
+- **Source:** Decision 62.
+- **Verification:** Test.
+- **State:** Not met: proposed 22 October 2026.
+
+### Requirement 21.10: Cookies are bounded
+- **Statement:** At most 180 cookies a channel and 3 000 in all, each within the engine's sizes and 400 days, the file within 32 MiB, and the `Set-Cookie` lines from a fetcher within the engine's bounds on one response's headers (16 KiB, 64 headers).
+- **Reason:** Bounded memory and input (the baseline instructions).
+- **Source:** Decision 62.
+- **Verification:** Test at each bound.
+- **State:** Not met: proposed 22 October 2026.
+
+### Requirement 21.11: Legacy cookie mechanisms are not supported
+- **Statement:** `Set-Cookie2`, `Cookie2` and `$`-prefixed attributes must be ignored, `Domain` must not widen a cookie (the engine's host-only rule), and no cookie may be shared across schemes, ports or channels.
+- **Reason:** Section 1's table.
+- **Source:** Decision 62.
+- **Verification:** Test.
+- **State:** Not met: proposed 22 October 2026.
