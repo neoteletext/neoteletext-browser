@@ -14,6 +14,14 @@ ignore = [
     # system font; no untrusted font reaches it. Turning off winit's
     # adwaita feature would remove it.
     { id = "RUSTSEC-2026-0192", reason = "Linux window titles only, no untrusted fonts; removal is the owner's decision" },
+    # zvariant, zvariant_derive and zbus_names were merged into zbus 6.0 on
+    # 16 October 2026 and are no longer published apart: not a fault. They
+    # come only from the Secret Service client that keeps the cookie file's
+    # key on Linux (keyring's zbus store, secret-service, zbus 5), which has
+    # not moved to zbus 6 yet. Remove these three when it has.
+    { id = "RUSTSEC-2026-0370", reason = "zvariant merged into zbus 6; the Linux Secret Service client is not on zbus 6 yet" },
+    { id = "RUSTSEC-2026-0371", reason = "zbus_names merged into zbus 6; the Linux Secret Service client is not on zbus 6 yet" },
+    { id = "RUSTSEC-2026-0372", reason = "zvariant_derive merged into zbus 6; the Linux Secret Service client is not on zbus 6 yet" },
 ]
 
 [licenses]

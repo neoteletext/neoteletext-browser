@@ -33,6 +33,15 @@ The design of installation and updates on every desktop is `docs/installation-an
 - **Session restore (decision 59) by hand:** a maximised window and a display unplugged between runs were not tried; the window's place is not kept on Wayland, where the system does not say it (`history-and-bookmarks.md` section 15.6).
 - **On Linux the zone is read once:** glibc's `localtime_r` reads the time zone at its first call, so a change of zone while the browser runs is seen at the next start (`history-and-bookmarks.md` section 14, item 1).
 
+### Cookies (decision 62)
+
+- **By hand:** the cookies panel, its settings row and the clearing switches were driven by tests; a real sign-in on a channel that sets cookies, kept across a restart, waits on a channel that does (the reference channel sets none).
+- **The Keychain may ask an unsigned build** whether it may read the cookie file's key, after each rebuild, and the browser's start waits for the answer; a signed release is not asked (`docs/cookies.md` section 15 item 5).
+- **Linux without a Secret Service** (a minimal desktop, or none) keeps cookies for the run only, and says so in the panel. The Linux gate host has GNOME Keyring installed for the test (22 October 2026).
+- **Windows: no channel on loopback.** A fetcher's AppContainer cannot reach `localhost`; a loopback exemption is a packaging question (`docs/cookies.md` section 15 item 11).
+- **Device Bound Session Credentials** wait on the engine's REQ-WEB-017.
+- **Three advisories ignored narrowly** in `native/deny.toml` (RUSTSEC-2026-0370 to 0372): `zvariant`, `zvariant_derive` and `zbus_names` were merged into `zbus` 6.0 on 16 October 2026; the Linux Secret Service client under `keyring` is still on `zbus` 5. Remove the three when it moves.
+
 ### Its own feature
 
 - **The console's Notices tab should show what confined each process** (today each helper prints it to standard error at start, which a Windows helper started from Explorer has no way to show): a message kind from each helper to the core, and an entry per process. Requirement 3.7 would then be checkable from the window.

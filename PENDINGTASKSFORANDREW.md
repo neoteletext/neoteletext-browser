@@ -4,7 +4,7 @@ What only Andrew can do: accounts, money, keys, people, machines, and checks tha
 
 ## Accounts and certificates (unblock signed releases, `docs/installation-and-updates.md` sections 4 and 10)
 
-1. **Join the Apple Developer Program** (paid yearly), then create a **Developer ID Application** certificate on this Mac. It signs and notarises the macOS bundle. Without it macOS 15 will not open the browser for an ordinary user. Checked 22 October 2026: this Mac has no code-signing identity.
+1. **Join the Apple Developer Program** (paid yearly), then create a **Developer ID Application** certificate on this Mac. It signs and notarises the macOS bundle. Without it macOS 15 will not open the browser for an ordinary user. Checked 22 October 2026: this Mac has no code-signing identity. A signed build also lets the Keychain trust the browser across updates: an unsigned build may be asked for permission to read the cookie file's key after each rebuild (`docs/cookies.md` section 15 item 5).
 2. **Get a Windows code-signing certificate** whose key sits in a hardware module (the CA/Browser Forum rule since June 2023): a hardware token from a certificate authority, or a cloud signing service such as Microsoft's. It signs every Windows executable and the installer.
 3. **Choose the update host** for `update.neoteletext.com` (decisions 17 and 25). It must serve static files over TLS and host nothing else, and it need not be trusted.
 

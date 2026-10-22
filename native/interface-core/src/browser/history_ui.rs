@@ -53,6 +53,9 @@ struct Controls {
     search: Rect,
     clear: Rect,
     ranges: Vec<(ClearRange, Rect)>,
+    /// What clearing clears: history, cookies (requirement 21.8).
+    with_history: Rect,
+    with_cookies: Rect,
     cancel: Rect,
     remove_selected: Rect,
     forget: Rect,
@@ -70,7 +73,16 @@ pub(super) struct HistoryUi {
     focused: bool,
     selected: BTreeSet<u32>,
     clearing: bool,
+    clears: Clears,
     controls: Controls,
+}
+
+/// What clearing clears: history, as it did; cookies, when chosen
+/// (requirement 21.8).
+#[derive(Clone, Copy, Debug)]
+struct Clears {
+    history: bool,
+    cookies: bool,
 }
 
 impl Default for HistoryUi {
@@ -82,6 +94,7 @@ impl Default for HistoryUi {
             focused: false,
             selected: BTreeSet::new(),
             clearing: false,
+            clears: Clears { history: true, cookies: false },
             controls: Controls::default(),
         }
     }
@@ -241,10 +254,19 @@ impl Browser {
             self.history.clearing = !self.history.clearing;
         } else if controls.cancel.contains(point) {
             self.history.clearing = false;
+        } else if controls.with_history.contains(point) {
+            self.history.clears.history = !self.history.clears.history;
+        } else if controls.with_cookies.contains(point) {
+            self.history.clears.cookies = !self.history.clears.cookies;
         } else if let Some(&(range, _)) = controls.ranges.iter().find(|(_, rect)| rect.contains(point)) {
             self.history.clearing = false;
             self.history.selected.clear();
-            self.outputs.push(Output::History(HistoryRequest::Clear(range)));
+            if self.history.clears.history {
+                self.outputs.push(Output::History(HistoryRequest::Clear(range)));
+            }
+            if self.history.clears.cookies {
+                self.outputs.push(Output::History(HistoryRequest::ClearCookies(range)));
+            }
         } else if controls.remove_selected.contains(point) {
             let numbers: Vec<u32> = self.history.selected.iter().copied().take(MAX_VIEW_ROWS).collect();
             self.history.selected.clear();
@@ -304,6 +326,12 @@ impl Browser {
 
         // The clearing choices, or what to do with the rows selected.
         if self.history.clearing {
+            left_centred(canvas, Rect::new(left, y, left + RANGE_BUTTON, y + CONTROL_HEIGHT), 0.0, "Clear", CAPTION, MUTED);
+            controls.with_history = Rect::new(left + RANGE_BUTTON, y, left + RANGE_BUTTON * 2.0, y + CONTROL_HEIGHT);
+            button(canvas, controls.with_history, "History", self.history.clears.history);
+            controls.with_cookies = Rect::new(controls.with_history.x1 + GAP, y, controls.with_history.x1 + GAP + RANGE_BUTTON, y + CONTROL_HEIGHT);
+            button(canvas, controls.with_cookies, "Cookies", self.history.clears.cookies);
+            y += CONTROL_HEIGHT + GAP;
             let mut x = left;
             for (range, word) in RANGES {
                 let rect = Rect::new(x, y, x + RANGE_BUTTON, y + CONTROL_HEIGHT);
@@ -507,6 +535,23 @@ mod tests {
         let all = browser.history.controls.ranges[4].1;
         browser.history_press(middle(all), false);
         assert_eq!(browser.take_outputs(), [Output::History(HistoryRequest::Clear(ClearRange::All))]);
+        // Requirement 21.8: cookies too, or cookies alone.
+        browser.history_press(middle(clear), false);
+        browser.draw(&mut Recorder::new(), 1440.0, 900.0, 0);
+        let (with_history, with_cookies) = (browser.history.controls.with_history, browser.history.controls.with_cookies);
+        browser.history_press(middle(with_cookies), false);
+        let hour = browser.history.controls.ranges[0].1;
+        browser.history_press(middle(hour), false);
+        assert_eq!(
+            browser.take_outputs(),
+            [Output::History(HistoryRequest::Clear(ClearRange::Hour)), Output::History(HistoryRequest::ClearCookies(ClearRange::Hour))]
+        );
+        browser.history_press(middle(clear), false);
+        browser.draw(&mut Recorder::new(), 1440.0, 900.0, 0);
+        browser.history_press(middle(with_history), false);
+        let day = browser.history.controls.ranges[1].1;
+        browser.history_press(middle(day), false);
+        assert_eq!(browser.take_outputs(), [Output::History(HistoryRequest::ClearCookies(ClearRange::Day))]);
         let closed = browser.history.controls.closed[0].1;
         browser.history_press(middle(closed), false);
         assert_eq!(browser.take_outputs(), [Output::History(HistoryRequest::Reopen(Some(3)))]);

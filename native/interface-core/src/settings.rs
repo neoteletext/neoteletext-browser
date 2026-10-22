@@ -44,6 +44,8 @@ pub struct SettingsView {
     pub remember_history: bool,
     /// The last session is restored at start (requirement 20.24).
     pub restore_session: bool,
+    /// What is kept of cookies (requirement 21.7).
+    pub cookies: CookieMode,
     /// Why the last change was refused, if it was.
     pub refusal: Option<String>,
 }
@@ -70,4 +72,18 @@ pub enum SettingChange {
     /// Restore the last session at start, or open the home address
     /// (requirement 20.24).
     RestoreSession(bool),
+    /// What is kept of cookies (requirement 21.7).
+    Cookies(CookieMode),
+}
+
+/// What is kept of cookies (`cookies.md` section 4.2).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum CookieMode {
+    /// Persistent cookies between runs.
+    #[default]
+    Keep,
+    /// None once the browser closes.
+    Close,
+    /// None stored or sent.
+    Block,
 }

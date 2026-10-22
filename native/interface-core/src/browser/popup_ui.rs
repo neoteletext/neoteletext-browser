@@ -34,6 +34,7 @@ enum Item {
     BookmarkPage,
     #[cfg(feature = "phone-keyboard")]
     Phone,
+    Cookies,
     Console,
     Settings,
 }
@@ -49,6 +50,7 @@ impl Item {
         Self::BookmarkPage,
         #[cfg(feature = "phone-keyboard")]
         Self::Phone,
+        Self::Cookies,
         Self::Console,
         Self::Settings,
     ];
@@ -67,6 +69,7 @@ impl Item {
             Self::BookmarkPage => ("Bookmark this page", "Cmd+D", "Ctrl+D"),
             #[cfg(feature = "phone-keyboard")]
             Self::Phone => ("Phone keyboard", "", ""),
+            Self::Cookies => ("Cookies and site data", "", ""),
             Self::Console => ("Developer console", "Option+Cmd+I", "Ctrl+Shift+I"),
             Self::Settings => ("Settings", "Cmd+,", "Ctrl+,"),
         }
@@ -126,6 +129,7 @@ impl Browser {
             Item::BookmarkPage => self.outputs.push(Output::Bookmark),
             #[cfg(feature = "phone-keyboard")]
             Item::Phone => self.toggle_phone_panel(),
+            Item::Cookies => self.set_cookies_open(true),
             Item::Console => self.toggle_console(),
             Item::Settings => {
                 if !self.settings_open() {

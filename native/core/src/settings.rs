@@ -11,15 +11,23 @@ use crate::address;
 
 /// The first line of the file: its format and version.
 const VERSION_LINE: &str = "neoteletext-settings 1";
-/// The longest file read (section 1.2).
-pub const MAX_FILE: usize = 256 * 1024;
 /// The longest value: an address as long as the address field allows.
 pub const MAX_VALUE: usize = protocol::MAX_ADDRESS;
-/// The name of a local address's line, the longest name a line starts with.
+/// The name of a local address's line.
 const ALLOW_LOCAL: &str = "allow-local";
+/// The name of a blocked channel's line (`cookies.md` section 4.2), the
+/// longest name a line starts with.
+const COOKIE_BLOCK: &str = "cookie-block";
 /// The longest line read: a name, a space and a value, so whatever the
 /// address rules accept is kept.
-pub const MAX_LINE: usize = ALLOW_LOCAL.len() + 1 + MAX_VALUE;
+pub const MAX_LINE: usize = COOKIE_BLOCK.len() + 1 + MAX_VALUE;
+const _: () = assert!(COOKIE_BLOCK.len() >= ALLOW_LOCAL.len(), "the longest name sets the longest line");
+/// The most channels whose cookies are blocked (`cookies.md` section 4.2).
+pub const MAX_BLOCKED: usize = 1_000;
+/// The longest file read (section 1.2): every blocked channel at the
+/// longest line, with room for the rest, rounded up to 3 MiB.
+pub const MAX_FILE: usize = 3 * 1024 * 1024;
+const _: () = assert!(MAX_BLOCKED * (MAX_LINE + 1) + 256 * 1024 <= MAX_FILE, "the file bound holds every blocked channel");
 /// The most local addresses allowed (section 1.1).
 pub const MAX_LOCAL: usize = 16;
 /// The loudest volume.
@@ -100,11 +108,26 @@ pub struct Settings {
     pub bar: bool,
     /// The last session is restored at start (requirement 20.24).
     pub restore: bool,
+    /// What is kept of cookies (requirement 21.7).
+    pub cookies: crate::cookies::Mode,
+    /// The channels whose cookies are blocked, by their identity.
+    pub cookie_block: Vec<String>,
 }
 
 impl Default for Settings {
     fn default() -> Self {
-        Self { home: START_PAGE.to_owned(), sound: true, volume: MAX_VOLUME, proxy: None, local: Vec::new(), remember_history: true, bar: false, restore: true }
+        Self {
+            home: START_PAGE.to_owned(),
+            sound: true,
+            volume: MAX_VOLUME,
+            proxy: None,
+            local: Vec::new(),
+            remember_history: true,
+            bar: false,
+            restore: true,
+            cookies: crate::cookies::Mode::Keep,
+            cookie_block: Vec::new(),
+        }
     }
 }
 
@@ -170,6 +193,21 @@ impl Settings {
             "history" => switch(value).map(|on| self.remember_history = on).is_some(),
             "bar" => switch(value).map(|on| self.bar = on).is_some(),
             "restore" => switch(value).map(|on| self.restore = on).is_some(),
+            "cookies" => match value {
+                "keep" => Some(crate::cookies::Mode::Keep),
+                "close" => Some(crate::cookies::Mode::Close),
+                "block" => Some(crate::cookies::Mode::Block),
+                _ => None,
+            }
+            .map(|mode| self.cookies = mode)
+            .is_some(),
+            COOKIE_BLOCK => match crate::cookies::Channel::of(value).filter(|channel| channel.key == value) {
+                Some(channel) if self.cookie_block.len() < MAX_BLOCKED && !self.cookie_block.contains(&channel.key) => {
+                    self.cookie_block.push(channel.key);
+                    true
+                }
+                _ => false,
+            },
             "volume" => value.parse::<u8>().ok().filter(|&volume| volume <= MAX_VOLUME).map(|volume| self.volume = volume).is_some(),
             "proxy" => {
                 let mut parts = value.split(' ');
@@ -203,6 +241,15 @@ impl Settings {
         lines.push(format!("history {}", if self.remember_history { "on" } else { "off" }));
         lines.push(format!("bar {}", if self.bar { "on" } else { "off" }));
         lines.push(format!("restore {}", if self.restore { "on" } else { "off" }));
+        lines.push(format!(
+            "cookies {}",
+            match self.cookies {
+                crate::cookies::Mode::Keep => "keep",
+                crate::cookies::Mode::Close => "close",
+                crate::cookies::Mode::Block => "block",
+            }
+        ));
+        lines.extend(self.cookie_block.iter().map(|key| format!("{COOKIE_BLOCK} {key}")));
         let mut text = lines.join("\n");
         text.push('\n');
         text
@@ -289,6 +336,8 @@ mod tests {
             remember_history: false,
             bar: true,
             restore: false,
+            cookies: crate::cookies::Mode::Close,
+            cookie_block: vec!["https://news.example/teletext/".into()],
         };
         let (read, dropped) = Settings::read(&settings.text());
         assert_eq!((read, dropped), (settings, Vec::<String>::new()));

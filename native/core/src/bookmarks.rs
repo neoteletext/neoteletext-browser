@@ -568,7 +568,7 @@ impl Bookmarks {
     /// # Errors
     /// When the folder cannot be made or the file written or renamed.
     pub fn save(&self, folder: &Path) -> std::io::Result<()> {
-        write_whole(folder, FILE_NAME, TEMPORARY_NAME, &self.text())
+        write_whole(folder, FILE_NAME, TEMPORARY_NAME, self.text())
     }
 
     /// Writes the bookmarks to a new file beside `bookmarks.txt`, named by
@@ -583,7 +583,7 @@ impl Bookmarks {
             if path.exists() {
                 continue;
             }
-            write_whole(folder, &name, &format!("{name}.new"), &self.text())?;
+            write_whole(folder, &name, &format!("{name}.new"), self.text())?;
             return Ok(path);
         }
         Err(std::io::Error::other("too many exports today"))

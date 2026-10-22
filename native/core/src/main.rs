@@ -32,6 +32,7 @@
     clippy::unimplemented
 )]
 
+mod cookie_control;
 mod library;
 mod session;
 mod source;
@@ -130,8 +131,8 @@ struct Fetcher {
     child: Helper,
     /// As [`Decoder::generation`].
     generation: u64,
-    /// The only thing a fetcher is given: input messages (REQ-INT-133).
-    #[cfg(feature = "interaction")]
+    /// What a fetcher is given: input messages (REQ-INT-133), and the
+    /// answers to its cookie questions (decision 62).
     input: Option<Outbox>,
 }
 
@@ -208,14 +209,8 @@ fn start_fetcher(broker: &Arc<Broker>, address: &str, reach: &Reach, channel: u3
         };
         let _ = events.send(Event::FetcherEnded(channel, generation, end));
     });
-    #[cfg(feature = "interaction")]
     let input = child.stdin.take().map(Outbox::new);
-    Ok(Fetcher {
-        child,
-        generation,
-        #[cfg(feature = "interaction")]
-        input,
-    })
+    Ok(Fetcher { child, generation, input })
 }
 
 fn read_interface(child: &mut Helper, events: Sender<Event>) -> Result<(), String> {
@@ -319,6 +314,8 @@ struct Core {
     /// one write (`history-and-bookmarks.md` section 15.2).
     window: Option<WindowGeometry>,
     window_moved: Option<(WindowGeometry, std::time::Instant)>,
+    /// Every cookie, and the cookies panel (`cookies.md`).
+    cookies: cookie_control::Cookies,
     /// The session's text last written, so an unchanged one is not.
     kept_session: String,
 }
@@ -521,7 +518,6 @@ impl Core {
         if let Some(mut fetcher) = self.fetchers.remove(&id) {
             // Closing its input ends a fetcher.
             drop(fetcher.child.stdin.take());
-            #[cfg(feature = "interaction")]
             drop(fetcher.input.take());
             let _ = fetcher.child.kill();
             let _ = fetcher.child.wait();
@@ -575,6 +571,12 @@ impl Core {
                 }
             }
             FromFetcher::Exchange { .. } => {}
+            message @ (FromFetcher::CookieQuestion { .. }
+            | FromFetcher::ReachedQuestion { .. }
+            | FromFetcher::CookieSet { .. }
+            | FromFetcher::ClearSiteData(_)) => {
+                self.cookie_message(channel, message)?;
+            }
             FromFetcher::Pushing(open) => {
                 self.sleep.set_pushing(channel, open);
                 // A live channel wakes at once, not at the next look.
@@ -743,6 +745,7 @@ impl Core {
             | ToCore::GoTo { .. }
             | ToCore::NewPrivateTab => self.library_intent(intent)?,
             ToCore::Window(window) => self.window_moved = std::time::Instant::now().checked_add(WINDOW_STILL).map(|still| (window, still)),
+            ToCore::Cookies(request) => self.cookies_request(request)?,
             #[cfg(feature = "links")]
             ToCore::Point(_) | ToCore::Typed { .. } | ToCore::Confirm(_) | ToCore::Cancel(_) => self.link_intent(&intent)?,
             #[cfg(any(feature = "links", feature = "interaction"))]
@@ -754,6 +757,7 @@ impl Core {
         }
         // Another page of a channel already drawing is a visit at once.
         self.record_drawn()?;
+        self.private_cookies_closed();
         self.keep_session();
         Ok(true)
     }
@@ -1021,7 +1025,6 @@ impl Core {
             eprintln!("neoteletext: the decoder for channel {id} stopped reading and is replaced");
             self.put_to_sleep(id);
         }
-        #[cfg(feature = "interaction")]
         for fetcher in self.fetchers.values_mut() {
             if let Some(input) = fetcher.input.as_mut() {
                 let _ = input.flush();
@@ -1071,6 +1074,9 @@ impl Core {
         if let Some((_, still)) = self.window_moved {
             next = next.map(|at| at.min(still));
         }
+        if let Some(due) = self.cookies.due {
+            next = next.map(|at| at.min(due));
+        }
         next
     }
 
@@ -1090,6 +1096,9 @@ impl Core {
         }
         if self.window_moved.is_some_and(|(_, still)| now >= still) {
             self.keep_window();
+        }
+        if self.cookies.due.is_some_and(|due| now >= due) {
+            self.keep_cookies();
         }
         Ok(())
     }
@@ -1166,6 +1175,7 @@ impl Core {
             local: self.settings.local.iter().map(ToString::to_string).collect(),
             remember_history: self.settings.remember_history,
             restore_session: self.settings.restore,
+            cookies: cookie_control::mode_view(self.settings.cookies),
             refusal: self.refusal.as_deref().map(|refusal| clean(refusal, protocol::settings::MAX_REFUSAL)),
         };
         self.send(&ToInterface::Settings(view))
@@ -1187,10 +1197,14 @@ impl Core {
     /// logged.
     fn change_setting(&mut self, change: SettingChange) -> Result<(), String> {
         let current = self.session.active_tab().and_then(|tab| tab.address()).map(|address| address.channel_text().to_owned());
+        let cookies = if let SettingChange::Cookies(mode) = change { Some(mode) } else { None };
         match checked_change(&mut self.settings, change, current.as_deref()) {
             Ok(security) => {
                 self.refusal = None;
                 self.save_settings();
+                if let Some(mode) = cookies {
+                    self.cookie_mode_changed(mode);
+                }
                 if let Some(text) = security {
                     self.say(text)?;
                 }
@@ -1272,6 +1286,15 @@ fn checked_change(settings: &mut Settings, change: SettingChange, current: Optio
         // So is restoring the last session (requirement 20.24).
         SettingChange::RestoreSession(on) => {
             settings.restore = on;
+            Ok(None)
+        }
+        // And what is kept of cookies (requirement 21.7).
+        SettingChange::Cookies(mode) => {
+            settings.cookies = match mode {
+                protocol::settings::CookieMode::Keep => neoteletext::cookies::Mode::Keep,
+                protocol::settings::CookieMode::Close => neoteletext::cookies::Mode::Close,
+                protocol::settings::CookieMode::Block => neoteletext::cookies::Mode::Block,
+            };
             Ok(None)
         }
     }
@@ -1597,6 +1620,7 @@ impl Core {
             library: library::Library::default(),
             window: None,
             window_moved: None,
+            cookies: cookie_control::Cookies::default(),
             kept_session: String::new(),
         }
     }
@@ -1751,6 +1775,7 @@ fn run(broker: &Arc<Broker>, given: impl Iterator<Item = String>) -> Result<(), 
     let mut core = Core::new(session, allow_local, (settings, settings_folder), events, to_interface, Some(Arc::clone(broker)));
     core.library.history = history;
     core.window = window;
+    core.cookies_at_start();
     core.keep_session();
     core.start_sound();
     core.send_settings()?;
@@ -1786,11 +1811,11 @@ fn run(broker: &Arc<Broker>, given: impl Iterator<Item = String>) -> Result<(), 
         }
     };
 
-    // A move not yet kept.
+    // A move not yet kept, and cookies not yet written or to remove.
     core.keep_window();
+    core.cookies_at_exit();
     for (_, mut fetcher) in std::mem::take(&mut core.fetchers) {
         drop(fetcher.child.stdin.take());
-        #[cfg(feature = "interaction")]
         drop(fetcher.input.take());
         let _ = fetcher.child.kill();
         let _ = fetcher.child.wait();
@@ -1840,6 +1865,29 @@ fn core() -> Result<(), String> {
     run(&broker, std::env::args().skip(2))
 }
 
+/// What the cookie file's key is kept under in the platform's secret store
+/// (`cookies.md` section 7): a name a person reading the store recognises.
+const KEY_SERVICE: &str = "NeoTeletext cookie file";
+const KEY_ACCOUNT: &str = "cookies.bin";
+
+/// The cookie file's key, read by the broker from the platform's secret
+/// store, or made there the first time from the system's random source
+/// (requirement 21.4). The trusted core cannot reach the store.
+fn cookie_key() -> Result<Vec<u8>, String> {
+    let entry = keyring::Entry::new(KEY_SERVICE, KEY_ACCOUNT).map_err(|error| format!("no secret store: {error}"))?;
+    match entry.get_secret() {
+        Ok(key) => Ok(key),
+        Err(keyring::Error::NoEntry) => {
+            use ring::rand::SecureRandom as _;
+            let mut key = vec![0_u8; confine::broker::COOKIE_KEY_BYTES];
+            ring::rand::SystemRandom::new().fill(&mut key).map_err(|_| String::from("no random source"))?;
+            entry.set_secret(&key).map_err(|error| format!("the secret store refused the key: {error}"))?;
+            Ok(key)
+        }
+        Err(error) => Err(format!("the secret store refused: {error}")),
+    }
+}
+
 /// A file channel's bytes, read by the broker for the core: never from a
 /// folder of the user's secrets, and bounded as `Source::read` bounds it.
 fn read_for_core(path: &Path) -> Result<Vec<u8>, String> {
@@ -1871,7 +1919,7 @@ fn broker() -> Result<(), String> {
     // With links compiled out the core never asks; if it does, it is refused.
     #[cfg(not(feature = "links"))]
     let open_web = |_: &str| Err(String::from("links are compiled out"));
-    let handlers = Handlers { read_source: &read_for_core, open_web: &open_web, environment: &confine::environment };
+    let handlers = Handlers { read_source: &read_for_core, open_web: &open_web, environment: &confine::environment, cookie_key: &cookie_key };
     let exit = confine::broker::serve(core, &programs, &handlers).map_err(|error| format!("cannot wait for the trusted core: {error}"))?;
     if exit.success { Ok(()) } else { Err(format!("the trusted core ended abnormally ({exit})")) }
 }

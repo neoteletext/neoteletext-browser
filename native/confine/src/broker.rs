@@ -49,12 +49,16 @@ const KIND_WAIT: u8 = 3;
 const KIND_READ: u8 = 4;
 const KIND_OPEN_WEB: u8 = 5;
 const KIND_LOCAL_TIME: u8 = 6;
+const KIND_COOKIE_KEY: u8 = 7;
 const KIND_SPAWNED: u8 = 11;
 const KIND_DONE: u8 = 12;
 const KIND_EXITED: u8 = 13;
 const KIND_SOURCE: u8 = 14;
 const KIND_FAILED: u8 = 15;
 const KIND_TIME: u8 = 16;
+const KIND_KEY: u8 = 17;
+/// The cookie file's key: 256 bits (`cookies.md` section 7).
+pub const COOKIE_KEY_BYTES: usize = 32;
 
 /// The browser's own helpers: the only programs the broker starts.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -170,6 +174,9 @@ pub enum Request {
     /// cannot read from the system's files (`history-and-bookmarks.md`
     /// section 7).
     LocalTime,
+    /// The cookie file's key, from the platform's secret store, which the
+    /// core cannot reach (`cookies.md` section 10).
+    CookieKey,
 }
 
 /// The broker's answer.
@@ -193,6 +200,8 @@ pub enum Reply {
     Failed(String),
     /// The time and the local offset.
     Time(LocalTime),
+    /// The cookie file's key.
+    Key(Vec<u8>),
 }
 
 fn push_text(payload: &mut Vec<u8>, text: &str) -> io::Result<()> {
@@ -288,6 +297,7 @@ pub fn encode_request(request: &Request) -> io::Result<Vec<u8>> {
             KIND_OPEN_WEB
         }
         Request::LocalTime => KIND_LOCAL_TIME,
+        Request::CookieKey => KIND_COOKIE_KEY,
     };
     frame(kind, &payload)
 }
@@ -319,6 +329,7 @@ pub fn decode_request(kind: u8, payload: &[u8]) -> io::Result<Request> {
         KIND_READ => Request::Read(fields.text()?),
         KIND_OPEN_WEB => Request::OpenWeb(fields.text()?),
         KIND_LOCAL_TIME => Request::LocalTime,
+        KIND_COOKIE_KEY => Request::CookieKey,
         _ => return Err(io::Error::new(io::ErrorKind::InvalidData, "no such request")),
     };
     fields.end()?;
@@ -362,6 +373,13 @@ pub fn encode_reply(reply: &Reply) -> io::Result<Vec<u8>> {
             payload.extend_from_slice(&time.offset.to_be_bytes());
             KIND_TIME
         }
+        Reply::Key(key) => {
+            if key.len() != COOKIE_KEY_BYTES {
+                return Err(io::Error::new(io::ErrorKind::InvalidInput, "a key of the wrong length"));
+            }
+            payload.extend_from_slice(key);
+            KIND_KEY
+        }
     };
     frame(kind, &payload)
 }
@@ -392,6 +410,7 @@ pub fn decode_reply(kind: u8, payload: Vec<u8>) -> io::Result<Reply> {
             }
             Reply::Time(time)
         }
+        KIND_KEY => Reply::Key(fields.take(COOKIE_KEY_BYTES)?.to_vec()),
         _ => return Err(io::Error::new(io::ErrorKind::InvalidData, "no such reply")),
     };
     fields.end()?;
@@ -632,6 +651,18 @@ impl Broker {
         }
     }
 
+    /// The cookie file's key, from the platform's secret store.
+    ///
+    /// # Errors
+    /// Why it could not be had: no secret store, or one that refused.
+    pub fn cookie_key(&self) -> Result<[u8; COOKIE_KEY_BYTES], String> {
+        match self.ask(&Request::CookieKey).map_err(|error| error.to_string())? {
+            (Reply::Key(key), _) => key.try_into().map_err(|_| String::from("a key of the wrong length")),
+            (Reply::Failed(reason), _) => Err(reason),
+            _ => Err(String::from("an unexpected reply")),
+        }
+    }
+
     /// Hands `address` to the system's browser, through the broker.
     ///
     /// # Errors
@@ -655,6 +686,9 @@ pub struct Handlers<'a> {
     pub open_web: &'a dyn Fn(&str) -> Result<(), String>,
     /// The environment a helper of a role is given.
     pub environment: &'a dyn Fn(Role) -> Vec<(OsString, OsString)>,
+    /// The cookie file's key, read from the platform's secret store or
+    /// made there.
+    pub cookie_key: &'a dyn Fn() -> Result<Vec<u8>, String>,
 }
 
 /// The core, started confined, and the broker's end of its channel.
@@ -789,6 +823,11 @@ fn answer(core: &mut Core, helpers: &mut Helpers, programs: &Path, handlers: &Ha
             Ok(time) => Reply::Time(time),
             Err(error) => Reply::Failed(format!("the local time cannot be read: {error}")),
         },
+        Request::CookieKey => match (handlers.cookie_key)() {
+            Ok(key) if key.len() == COOKIE_KEY_BYTES => Reply::Key(key),
+            Ok(_) => Reply::Failed(String::from("the secret store holds a key of the wrong length")),
+            Err(reason) => Reply::Failed(reason),
+        },
     };
     core.channel.write(&encode_reply(&reply)?)
 }
@@ -846,6 +885,7 @@ mod tests {
             Request::Read("/tmp/x.t42".into()),
             Request::OpenWeb("https://a.example/".into()),
             Request::LocalTime,
+            Request::CookieKey,
         ] {
             assert_eq!(round_trip(&request), request);
         }
@@ -856,6 +896,7 @@ mod tests {
             Reply::Source(vec![1, 2, 3]),
             Reply::Failed("no".into()),
             Reply::Time(LocalTime { utc: 1_792_656_300, offset: 39_600 }),
+            Reply::Key(vec![9; COOKIE_KEY_BYTES]),
         ] {
             let bytes = encode_reply(&reply).unwrap();
             let (kind, _) = header(bytes[..HEADER_BYTES].try_into().unwrap(), MAX_REPLY).unwrap();

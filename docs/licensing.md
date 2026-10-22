@@ -21,6 +21,8 @@ The owner accepted the system's LGPL `libasound` for sound on Linux on 19 Octobe
 
 `landlock` (MIT or Apache-2.0), `seccompiler` (Apache-2.0 or BSD-3-Clause) and `libc` (MIT or Apache-2.0), approved on 22 October 2026 for the Linux sandboxes (decision 52), are Linux-only dependencies of `confine`.
 
+`keyring` 4.2.0 (MIT or Apache-2.0), chosen on 22 October 2026 while the owner was away for the cookie file's key (decision 62, `cookies.md` section 13 item 7, to confirm), brings the Keychain store on macOS, the Credential Manager store on Windows, and on Linux the Secret Service over `zbus`, all MIT or Apache-2.0; `ring`, already in the tree under rustls, gives the cipher. The broker alone calls them.
+
 `arboard`, approved on 21 October 2026 for the clipboard (decision 49), uses two crates on Windows only under BSL-1.0, the Boost Software License: `clipboard-win` and `error-code`. It is permissive, OSI-approved and FSF-free, and asks less than MIT: its notice need not be carried in a binary distribution. `native/deny.toml` allows it for those two crates alone.
 
 ## 3. What is not acceptable

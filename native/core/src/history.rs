@@ -394,7 +394,7 @@ impl History {
     /// # Errors
     /// When the folder cannot be made or the file written or renamed.
     pub fn save(&mut self, folder: &Path) -> std::io::Result<()> {
-        write_whole(folder, FILE_NAME, TEMPORARY_NAME, &self.text())?;
+        write_whole(folder, FILE_NAME, TEMPORARY_NAME, self.text())?;
         self.file_lines = self.rows.len();
         Ok(())
     }
@@ -443,13 +443,13 @@ pub(crate) fn private_options() -> std::fs::OpenOptions {
     options
 }
 
-/// Writes `text` to `name` in `folder` whole, through `temporary`.
-pub(crate) fn write_whole(folder: &Path, name: &str, temporary: &str, text: &str) -> std::io::Result<()> {
+/// Writes `bytes` to `name` in `folder` whole, through `temporary`.
+pub(crate) fn write_whole(folder: &Path, name: &str, temporary: &str, bytes: impl AsRef<[u8]>) -> std::io::Result<()> {
     use std::io::Write as _;
     std::fs::create_dir_all(folder)?;
     let temporary = folder.join(temporary);
     let mut file = private_options().create(true).truncate(true).open(&temporary)?;
-    file.write_all(text.as_bytes())?;
+    file.write_all(bytes.as_ref())?;
     file.sync_all()?;
     drop(file);
     std::fs::rename(&temporary, folder.join(name))

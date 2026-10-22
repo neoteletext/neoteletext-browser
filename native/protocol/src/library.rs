@@ -20,6 +20,7 @@ const HISTORY_REMOVE: u8 = 4;
 const HISTORY_FORGET: u8 = 5;
 const HISTORY_CLEAR: u8 = 6;
 const HISTORY_REOPEN: u8 = 7;
+const HISTORY_CLEAR_COOKIES: u8 = 8;
 
 const BOOKMARKS_PANEL: u8 = 1;
 const BOOKMARKS_FOLDER: u8 = 2;
@@ -260,6 +261,7 @@ pub(crate) fn push_history_request(payload: &mut Vec<u8>, request: &HistoryReque
             payload.extend_from_slice(&number.to_be_bytes());
         }
         HistoryRequest::Clear(range) => payload.extend_from_slice(&[HISTORY_CLEAR, push_range(*range)]),
+        HistoryRequest::ClearCookies(range) => payload.extend_from_slice(&[HISTORY_CLEAR_COOKIES, push_range(*range)]),
         HistoryRequest::Reopen(number) => {
             payload.push(HISTORY_REOPEN);
             if let Some(number) = number {
@@ -278,6 +280,7 @@ pub(crate) fn read_history_request(fields: &mut Fields<'_>) -> Result<HistoryReq
         HISTORY_REMOVE => HistoryRequest::Remove(read_numbers(fields)?),
         HISTORY_FORGET => HistoryRequest::ForgetChannel(fields.u32()?),
         HISTORY_CLEAR => HistoryRequest::Clear(read_range(fields)?),
+        HISTORY_CLEAR_COOKIES => HistoryRequest::ClearCookies(read_range(fields)?),
         HISTORY_REOPEN => HistoryRequest::Reopen(if fields.is_empty() { None } else { Some(fields.u32()?) }),
         _ => return Err(ProtocolError::BadValue("history request")),
     })
@@ -656,6 +659,7 @@ mod tests {
             HistoryRequest::Remove(vec![1, 2, 3]),
             HistoryRequest::ForgetChannel(9),
             HistoryRequest::Clear(ClearRange::FourWeeks),
+            HistoryRequest::ClearCookies(ClearRange::Hour),
             HistoryRequest::Reopen(None),
             HistoryRequest::Reopen(Some(3)),
         ] {

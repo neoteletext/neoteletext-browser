@@ -77,12 +77,21 @@ fn message(session: &mut Session, item: &Item<'_>) -> Vec<u8> {
 
 /// HELLO, and the channel's WELCOME in pushed packets (INPUT.md section
 /// 6.1): the session the keys then go in.
-fn open_session(input: &mut BufWriter<std::process::ChildStdin>, received: &mpsc::Receiver<(Instant, FromFetcher)>, deadline: Instant) -> Session {
+/// The fetcher's input, written by the test and by the thread that answers
+/// its cookie questions as the trusted core does, one message at a time.
+type Input = std::sync::Arc<std::sync::Mutex<BufWriter<std::process::ChildStdin>>>;
+
+fn send(input: &Input, message: &ToFetcher) {
+    let mut input = input.lock().unwrap();
+    write_to_fetcher(&mut *input, message).unwrap();
+    input.flush().unwrap();
+}
+
+fn open_session(input: &Input, received: &mpsc::Receiver<(Instant, FromFetcher)>, deadline: Instant) -> Session {
     let mut session = Session::new(PAGE_CAP);
     let mut hello = [0; neoteletext_input::MAX_MESSAGE];
     let length = neoteletext_input::event::write(&Item::Event(session.open(0, None)), &mut hello).unwrap();
-    write_to_fetcher(input, &ToFetcher::Send(hello[..length].to_vec())).unwrap();
-    input.flush().unwrap();
+    send(input, &ToFetcher::Send(hello[..length].to_vec()));
     loop {
         match received.recv_timeout(deadline.saturating_duration_since(Instant::now())) {
             Ok((_, FromFetcher::Page { origin: Origin::PushedPackets, bytes })) => {
@@ -121,15 +130,24 @@ fn keys_round_trip_and_pages_reach_the_screen_within_budget() {
     let channel = format!("http://127.0.0.1:{port}/terminal/");
     let mut fetcher =
         Command::new(fetcher_program).args([channel.as_str(), "--allow-local", "127.0.0.1"]).stdin(Stdio::piped()).stdout(Stdio::piped()).spawn().unwrap();
-    let mut input = BufWriter::new(fetcher.stdin.take().unwrap());
+    let input: Input = std::sync::Arc::new(std::sync::Mutex::new(BufWriter::new(fetcher.stdin.take().unwrap())));
     let output = fetcher.stdout.take().unwrap();
     let _fetcher = Killed(fetcher);
     let (sender, received) = mpsc::channel();
+    let answering = std::sync::Arc::clone(&input);
     std::thread::spawn(move || {
         let mut output = BufReader::new(output);
         while let Ok(Some(message)) = read_from_fetcher(&mut output) {
-            if sender.send((Instant::now(), message)).is_err() {
-                return;
+            // The channel sets no cookie: the trusted core's answers are
+            // empty (decision 62).
+            match message {
+                FromFetcher::CookieQuestion { id, .. } => send(&answering, &ToFetcher::CookieAnswer { id, header: Vec::new() }),
+                FromFetcher::ReachedQuestion { id, .. } => send(&answering, &ToFetcher::ReachedAnswer { id, reached: false }),
+                message => {
+                    if sender.send((Instant::now(), message)).is_err() {
+                        return;
+                    }
+                }
             }
         }
     });
@@ -149,9 +167,8 @@ fn keys_round_trip_and_pages_reach_the_screen_within_budget() {
             Err(error) => panic!("the channel's input never opened: {error}"),
         }
     }
-    let mut session = open_session(&mut input, &received, deadline);
-    write_to_fetcher(&mut input, &ToFetcher::Send(message(&mut session, &Item::Event(Event::Page(PAGE))))).unwrap();
-    input.flush().unwrap();
+    let mut session = open_session(&input, &received, deadline);
+    send(&input, &ToFetcher::Send(message(&mut session, &Item::Event(Event::Page(PAGE)))));
     next_push(Instant::now() + LIMIT);
 
     let mut engine = decoder::Engine::new();
@@ -165,8 +182,7 @@ fn keys_round_trip_and_pages_reach_the_screen_within_budget() {
         let character = char::from(b'a' + u8::try_from(index % 26).unwrap());
         let typed = message(&mut session, &Item::Text(character.encode_utf8(&mut [0; 4])));
         let sent = Instant::now();
-        write_to_fetcher(&mut input, &ToFetcher::Send(typed)).unwrap();
-        input.flush().unwrap();
+        send(&input, &ToFetcher::Send(typed));
         let (arrived, bytes) = next_push(sent + LIMIT);
         round_trips.push(arrived - sent);
         let started = Instant::now();

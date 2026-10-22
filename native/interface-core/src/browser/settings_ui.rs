@@ -14,14 +14,14 @@ use super::{Browser, Key, Output};
 use crate::canvas::Canvas;
 use crate::editor::Editor;
 use crate::geometry::{Point, Rect};
-use crate::settings::{ProxyView, SettingChange, SettingsView};
+use crate::settings::{CookieMode, ProxyView, SettingChange, SettingsView};
 use crate::theme::{BUTTON, HEADING, INSECURE, MUTED, ROW_STATUS, ROW_TITLE, RULE, WHITE};
 use crate::ui::{border, centred, left_centred};
 
 const PANEL_WIDTH: f64 = 600.0;
-/// Room for its heading, eight rows, two rows of chips and the trusted
+/// Room for its heading, nine rows, two rows of chips and the trusted
 /// core's word.
-const PANEL_HEIGHT: f64 = 604.0;
+const PANEL_HEIGHT: f64 = 648.0;
 const PADDING: f64 = 20.0;
 const HEADING_HEIGHT: f64 = 34.0;
 const ROW: f64 = 32.0;
@@ -88,6 +88,8 @@ struct Controls {
     remember_off: Rect,
     restore_on: Rect,
     restore_off: Rect,
+    cookie_modes: Vec<(CookieMode, Rect)>,
+    manage_cookies: Rect,
 }
 
 /// The panel's state in the browser.
@@ -294,6 +296,11 @@ impl Browser {
             Some(SettingChange::RestoreSession(true))
         } else if controls.restore_off.contains(point) {
             Some(SettingChange::RestoreSession(false))
+        } else if let Some(&(mode, _)) = controls.cookie_modes.iter().find(|(_, rect)| rect.contains(point)) {
+            Some(SettingChange::Cookies(mode))
+        } else if controls.manage_cookies.contains(point) {
+            self.set_cookies_open(true);
+            return true;
         } else if controls.sound_on.contains(point) {
             Some(SettingChange::Sound(true))
         } else if controls.sound_off.contains(point) {
@@ -421,6 +428,20 @@ impl Browser {
         button(canvas, controls.restore_off, "Home", !restore);
         y += ROW + ROW_GAP;
 
+        // What is kept of cookies, and their panel (requirement 21.7).
+        let cookies = view.as_ref().map_or(CookieMode::Keep, |view| view.cookies);
+        left_centred(canvas, row(y), 0.0, "Cookies", ROW_TITLE, WHITE);
+        let mut x = field_left;
+        for (mode, word) in [(CookieMode::Keep, "Keep"), (CookieMode::Close, "On close"), (CookieMode::Block, "Block")] {
+            let rect = Rect::new(x, y, x + BUTTON_WIDTH * 1.2, y + ROW);
+            button(canvas, rect, word, cookies == mode);
+            controls.cookie_modes.push((mode, rect));
+            x = rect.x1 + GAP;
+        }
+        controls.manage_cookies = Rect::new(right - WIDE_BUTTON, y, right, y + ROW);
+        button(canvas, controls.manage_cookies, "Manage\u{2026}", false);
+        y += ROW + ROW_GAP;
+
         // The local addresses allowed: a field to add one, then each.
         left_centred(canvas, row(y), 0.0, "Local network", ROW_TITLE, WHITE);
         controls.add = Rect::new(right - BUTTON_WIDTH, y, right, y + ROW);
@@ -482,6 +503,7 @@ mod tests {
             local: alloc::vec!["192.168.1.20".into()],
             remember_history: true,
             restore_session: true,
+            cookies: CookieMode::Keep,
             refusal: None,
         }
     }
@@ -541,6 +563,14 @@ mod tests {
         assert_eq!(press(&mut browser, forget), [Output::Setting(SettingChange::RememberHistory(false))]);
         assert_eq!(press(&mut browser, home_at_start), [Output::Setting(SettingChange::RestoreSession(false))]);
         assert_eq!(press(&mut browser, restore), [Output::Setting(SettingChange::RestoreSession(true))]);
+        let on_close = browser.settings.controls.cookie_modes[1].1;
+        assert_eq!(press(&mut browser, on_close), [Output::Setting(SettingChange::Cookies(CookieMode::Close))]);
+        let manage = browser.settings.controls.manage_cookies;
+        assert_eq!(press(&mut browser, manage), [Output::Cookies(crate::cookies::CookiesRequest::Panel(true))], "the settings panel gives way to it");
+        assert!(browser.cookies_open() && !browser.settings_open());
+        browser.toggle_settings();
+        browser.draw(&mut Recorder::new(), 1440.0, 900.0, 0);
+        browser.take_outputs();
         // A field's change goes on Enter.
         press(&mut browser, home);
         browser.key(Key::Text("a"), Modifiers { command: true, ..Modifiers::default() }, 0);

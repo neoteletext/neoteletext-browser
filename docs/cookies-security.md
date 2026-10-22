@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Design** | [`cookies.md`](cookies.md), proposed 22 October 2026 (decision 62). |
+| **Design** | [`cookies.md`](cookies.md), proposed and built 22 October 2026 (decision 62); what building settled is its section 15. |
 | **Rule** | Decision 58: no weakening or downgrading of security, and no fallback to a weaker mode. |
 | **Builds on** | [`security-analysis.md`](security-analysis.md) sections 5 and 12; the engine's REQ-WEB-006, REQ-WEB-026 and REQ-SEC-013. |
 

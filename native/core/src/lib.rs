@@ -22,6 +22,7 @@ pub mod address;
 pub mod bookmarks;
 pub mod calendar;
 pub mod console;
+pub mod cookies;
 pub mod frames;
 pub mod hearing;
 pub mod history;

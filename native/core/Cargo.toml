@@ -27,6 +27,8 @@ neoteletext-core.workspace = true
 # The engine's reading of a proxy's address (settings, decision 51).
 neoteletext-web.workspace = true
 web-opener = { workspace = true, optional = true }
+ring.workspace = true
+keyring.workspace = true
 
 # The latency test (`interaction.md` section 10) measures the decoder's
 # render, this crate's encoding and the interface's decoding.

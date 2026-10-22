@@ -30,14 +30,17 @@
     clippy::unimplemented
 )]
 
+mod cookies;
 mod transport;
 
+use std::cell::RefCell;
 use std::collections::VecDeque;
 use std::collections::hash_map::RandomState;
 use std::hash::{BuildHasher, Hasher};
 use std::io::{self, BufWriter, Write};
 use std::net::IpAddr;
 use std::process::ExitCode;
+use std::rc::Rc;
 use std::sync::Arc;
 use std::sync::mpsc::{self, RecvTimeoutError};
 use std::time::{Duration, Instant as Clock};
@@ -49,13 +52,15 @@ use neoteletext_web::contents::{self, Entry as ContentsEntry};
 use neoteletext_web::http::MediaType;
 use neoteletext_web::port::{ConnectionId, NetOutput, Pump, Security};
 use neoteletext_web::proxy::Proxy;
-use protocol::fetcher::{Entry, FromFetcher, Origin, write_to_core};
+use protocol::fetcher::{Entry, FromFetcher, Origin, ToFetcher, read_to_fetcher, write_to_core};
 
 use crate::transport::{Tcp, address};
 
-/// The engine's own sizes for the cookie jar (its REQ-WEB-006 defaults).
-const COOKIE_SLOTS: usize = 100;
-const COOKIE_BYTES: usize = 32 * 1024;
+/// The agent's own cookie jar holds nothing: the trusted core keeps the
+/// cookies (decision 62).
+const COOKIE_SLOTS: usize = 0;
+const COOKIE_BYTES: usize = 0;
+const _: () = assert!(size_of::<cookies::UnusedJar>() == size_of::<neoteletext_web::cookie::CookieJar<COOKIE_SLOTS, COOKIE_BYTES>>());
 /// Bytes passed to the agent at a time.
 const READ_CHUNK: usize = 16 * 1024;
 // An exchange reports an address the engine accepted, so the protocol's
@@ -244,8 +249,13 @@ fn run(channel: &str, allowed: &[IpAddr], proxy: Option<Proxy>) -> Result<(), St
         *slot = Some(address(ip));
     }
     let random = Random { state: RandomState::new(), counter: 0 };
-    let mut agent: Box<UserAgent<'_, Random, COOKIE_SLOTS, COOKIE_BYTES>> = Box::new(UserAgent::new(config, storage.buffers(), random));
     let (wakes, woken) = mpsc::channel::<Wake>();
+    // The trusted core's answers to the cookie questions, read by the same
+    // thread that reads its input messages.
+    let (answers, answered) = mpsc::channel();
+    let output: cookies::Output = Rc::new(RefCell::new(BufWriter::new(io::stdout())));
+    let mut store = cookies::CoreCookies::new(Rc::clone(&output), answered);
+    let mut agent: Box<UserAgent<'_, Random, COOKIE_SLOTS, COOKIE_BYTES>> = Box::new(UserAgent::with_cookies(config, storage.buffers(), random, &mut store));
     let network = wakes.clone();
     let mut pump = Pump::new(Tcp::new(
         Arc::new(move || {
@@ -253,7 +263,6 @@ fn run(channel: &str, allowed: &[IpAddr], proxy: Option<Proxy>) -> Result<(), St
         }),
         proxy,
     ));
-    let mut output = BufWriter::new(io::stdout().lock());
     let start = Clock::now();
     let clock = || Instant(u64::try_from(start.elapsed().as_micros()).unwrap_or(u64::MAX));
     let mut buffer = vec![0_u8; READ_CHUNK];
@@ -265,7 +274,7 @@ fn run(channel: &str, allowed: &[IpAddr], proxy: Option<Proxy>) -> Result<(), St
     // then it sends only input messages (REQ-INT-133); anything else
     // ends the fetcher too.
     std::thread::spawn(move || {
-        read_commands(&wakes);
+        read_commands(&wakes, &answers);
         let _ = wakes.send(Wake::Ended);
     });
 
@@ -274,19 +283,19 @@ fn run(channel: &str, allowed: &[IpAddr], proxy: Option<Proxy>) -> Result<(), St
     loop {
         let mut busy = !actions.is_empty();
         for action in std::mem::take(&mut actions) {
-            let send = |output: &mut BufWriter<io::StdoutLock<'_>>, message: FromFetcher| write_to_core(output, &message).map_err(|error| error.to_string());
+            let send = |output: &cookies::Output, message: FromFetcher| write_to_core(&mut *output.borrow_mut(), &message).map_err(|error| error.to_string());
             match action {
                 Action::Connect { connection, host, port, security } => pump.execute(NetOutput::Connect { connection, host: &host, port, security }),
                 Action::Send(connection, bytes) => pump.execute(NetOutput::Send(connection, &bytes)),
                 Action::Close(connection) => pump.execute(NetOutput::Close(connection)),
                 Action::Timer(at) => next_tick = Some(next_tick.map_or(at, |current| current.min(at))),
-                Action::Bytes { origin, bytes } => send(&mut output, FromFetcher::Page { origin, bytes })?,
+                Action::Bytes { origin, bytes } => send(&output, FromFetcher::Page { origin, bytes })?,
                 Action::Ready => {
                     // The descriptor's links, for the trusted core to decide
                     // (`hyperlinks.md` section 6.4).
                     #[cfg(feature = "links")]
                     if let Some(links) = descriptor_links(&agent) {
-                        send(&mut output, links)?;
+                        send(&output, links)?;
                     }
                     // The whole channel: its contents file, then every page it
                     // lists; and the push connection, for all its pages.
@@ -295,7 +304,7 @@ fn run(channel: &str, allowed: &[IpAddr], proxy: Option<Proxy>) -> Result<(), St
                 }
                 Action::Contents(bytes) => {
                     let (entries, pages) = contents_entries(&bytes);
-                    send(&mut output, FromFetcher::Contents(entries))?;
+                    send(&output, FromFetcher::Contents(entries))?;
                     queue.extend(pages);
                 }
                 Action::Answered => waiting = false,
@@ -304,18 +313,18 @@ fn run(channel: &str, allowed: &[IpAddr], proxy: Option<Proxy>) -> Result<(), St
                 Action::Push(open) => {
                     // The trusted core keeps a sleeping tab's fetcher while
                     // it holds a push connection (decision 47).
-                    send(&mut output, FromFetcher::Pushing(open))?;
+                    send(&output, FromFetcher::Pushing(open))?;
                     #[cfg(feature = "interaction")]
                     if let Some(descriptor) = agent.descriptor().filter(|descriptor| descriptor.input()) {
                         let secure = descriptor.push().is_some_and(|(url, _)| url.is_secure());
-                        send(&mut output, FromFetcher::Input { open, secure })?;
+                        send(&output, FromFetcher::Input { open, secure })?;
                     }
                 }
-                Action::Tell(message) => send(&mut output, message)?,
+                Action::Tell(message) => send(&output, message)?,
             }
         }
         if pump.transport.take_proxy_failure() {
-            write_to_core(&mut output, &FromFetcher::ProxyFailed).map_err(|error| error.to_string())?;
+            write_to_core(&mut *output.borrow_mut(), &FromFetcher::ProxyFailed).map_err(|error| error.to_string())?;
         }
         // One page at a time, in the contents file's order; the agent
         // spaces the requests at the engine's rate.
@@ -336,7 +345,7 @@ fn run(channel: &str, allowed: &[IpAddr], proxy: Option<Proxy>) -> Result<(), St
             agent.handle(clock(), Input::Tick, &mut |out| collect(out, &mut actions));
         }
         // What this turn produced goes before waiting.
-        output.flush().map_err(|error| error.to_string())?;
+        output.borrow_mut().flush().map_err(|error| error.to_string())?;
         let first = wait_for_wake(&woken, busy, next_tick, clock());
         for wake in first.into_iter().chain(std::iter::from_fn(|| woken.try_recv().ok())) {
             match wake {
@@ -350,23 +359,21 @@ fn run(channel: &str, allowed: &[IpAddr], proxy: Option<Proxy>) -> Result<(), St
     }
 }
 
-/// Reads the trusted core's input messages until its pipe closes or breaks
-/// the protocol.
-fn read_commands(commands: &mpsc::Sender<Wake>) {
+/// Reads the trusted core's messages until its pipe closes or breaks the
+/// protocol: input messages wake the loop, and cookie answers go to the
+/// store waiting for them.
+#[cfg_attr(not(feature = "interaction"), allow(unused_variables, reason = "without typing no input message wakes the loop"))]
+fn read_commands(commands: &mpsc::Sender<Wake>, answers: &mpsc::Sender<ToFetcher>) {
     let mut input = io::BufReader::new(io::stdin().lock());
-    #[cfg(feature = "interaction")]
-    while let Ok(Some(protocol::fetcher::ToFetcher::Send(record))) = protocol::fetcher::read_to_fetcher(&mut input) {
-        if commands.send(Wake::Record(record)).is_err() {
+    while let Ok(Some(message)) = read_to_fetcher(&mut input) {
+        let delivered = match message {
+            #[cfg(feature = "interaction")]
+            ToFetcher::Send(record) => commands.send(Wake::Record(record)).is_ok(),
+            answer @ (ToFetcher::CookieAnswer { .. } | ToFetcher::ReachedAnswer { .. }) => answers.send(answer).is_ok(),
+        };
+        if !delivered {
             return;
         }
-    }
-    #[cfg(not(feature = "interaction"))]
-    {
-        use std::io::Read;
-        // Without typing the fetcher takes nothing: the pipe only ends it.
-        let _ = commands;
-        let mut sink = [0_u8; 64];
-        while matches!(input.read(&mut sink), Ok(count) if count > 0) {}
     }
 }
 
@@ -420,6 +427,58 @@ fn main() -> ExitCode {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Decision 62: the agent the fetcher builds asks its store for each
+    /// request's cookies, which it does only with the engine's `cookies`
+    /// feature compiled in; without it no cookie is ever kept or sent.
+    #[test]
+    fn the_agent_asks_for_each_requests_cookies() {
+        #[derive(Debug, Default)]
+        struct Asked(Vec<String>);
+        impl neoteletext_web::cookie::Cookies for Asked {
+            fn header_for(
+                &mut self,
+                host: &str,
+                path: &str,
+                _: bool,
+                _: neoteletext_web::cookie::Site,
+                _: u64,
+                _: &mut neoteletext_web::bytes::Writer<'_>,
+            ) -> (usize, bool) {
+                self.0.push(format!("{host}{path}"));
+                (0, false)
+            }
+            fn store_within(
+                &mut self,
+                _: &[u8],
+                _: &str,
+                _: &str,
+                _: Option<&str>,
+                _: bool,
+                _: u64,
+                _: bool,
+            ) -> Result<(), neoteletext_web::cookie::CookieRejected> {
+                Ok(())
+            }
+            fn reached_securely(&self, _: &str, _: u64) -> bool {
+                false
+            }
+            fn clear_host(&mut self, _: &str) {}
+            fn wipe(&mut self) {}
+        }
+        let mut storage = Box::new(Storage::default());
+        let mut asked = Asked::default();
+        let config = Config { tls_available: true, redirects_within_channel: true, ..Config::default() };
+        let random = Random { state: RandomState::new(), counter: 0 };
+        let mut agent: Box<UserAgent<'_, Random, COOKIE_SLOTS, COOKIE_BYTES>> =
+            Box::new(UserAgent::with_cookies(config, storage.buffers(), random, &mut asked));
+        let mut actions = Vec::new();
+        agent.handle(Instant(0), Input::OpenChannel("http://a.example/tt/"), &mut |out| collect(out, &mut actions));
+        let connected = neoteletext_web::port::NetInput::Connected(ConnectionId::Fetch, neoteletext_web::url::IpAddress::V4([93, 184, 216, 34]));
+        agent.handle(Instant(0), Input::Net(connected), &mut |out| collect(out, &mut actions));
+        drop(agent);
+        assert_eq!(asked.0, ["a.example/tt/channel.json"]);
+    }
 
     /// Requirement 5.14, the engine's REQ-WEB-031: the browser names itself
     /// `NeoTeletext/0.1 (<family>)`.

@@ -18,7 +18,7 @@ pub const MAX_VOLUME: u8 = 100;
 /// The longest refusal the panel says.
 pub const MAX_REFUSAL: usize = 160;
 
-pub use interface_core::settings::{ProxyView, SettingChange, SettingsView};
+pub use interface_core::settings::{CookieMode, ProxyView, SettingChange, SettingsView};
 
 const PROXY_NONE: u8 = 0;
 const PROXY_HTTP: u8 = 1;
@@ -32,6 +32,24 @@ const CHANGE_ADD_LOCAL: u8 = 6;
 const CHANGE_REMOVE_LOCAL: u8 = 7;
 const CHANGE_REMEMBER_HISTORY: u8 = 8;
 const CHANGE_RESTORE_SESSION: u8 = 9;
+const CHANGE_COOKIES: u8 = 10;
+
+fn push_mode(mode: CookieMode) -> u8 {
+    match mode {
+        CookieMode::Keep => 0,
+        CookieMode::Close => 1,
+        CookieMode::Block => 2,
+    }
+}
+
+fn read_mode(fields: &mut Fields<'_>) -> Result<CookieMode, ProtocolError> {
+    Ok(match fields.u8()? {
+        0 => CookieMode::Keep,
+        1 => CookieMode::Close,
+        2 => CookieMode::Block,
+        _ => return Err(ProtocolError::BadValue("cookie mode")),
+    })
+}
 
 fn push_proxy(payload: &mut Vec<u8>, proxy: &ProxyView) -> Result<(), ProtocolError> {
     match proxy {
@@ -85,6 +103,7 @@ pub(crate) fn push_view(payload: &mut Vec<u8>, view: &SettingsView) -> Result<()
     }
     push_flag(payload, view.remember_history);
     push_flag(payload, view.restore_session);
+    payload.push(push_mode(view.cookies));
     match &view.refusal {
         Some(refusal) => {
             push_flag(payload, true);
@@ -107,8 +126,9 @@ pub(crate) fn read_view(fields: &mut Fields<'_>) -> Result<SettingsView, Protoco
     let local = (0..count).map(|_| fields.text(MAX_LOCAL_TEXT)).collect::<Result<Vec<_>, _>>()?;
     let remember_history = read_flag(fields)?;
     let restore_session = read_flag(fields)?;
+    let cookies = read_mode(fields)?;
     let refusal = if read_flag(fields)? { Some(fields.text(MAX_REFUSAL)?) } else { None };
-    Ok(SettingsView { home, sound, volume, proxy, local, remember_history, restore_session, refusal })
+    Ok(SettingsView { home, sound, volume, proxy, local, remember_history, restore_session, cookies, refusal })
 }
 
 pub(crate) fn push_change(payload: &mut Vec<u8>, change: &SettingChange) -> Result<(), ProtocolError> {
@@ -145,6 +165,7 @@ pub(crate) fn push_change(payload: &mut Vec<u8>, change: &SettingChange) -> Resu
             payload.push(CHANGE_RESTORE_SESSION);
             push_flag(payload, *on);
         }
+        SettingChange::Cookies(mode) => payload.extend_from_slice(&[CHANGE_COOKIES, push_mode(*mode)]),
     }
     Ok(())
 }
@@ -160,6 +181,7 @@ pub(crate) fn read_change(fields: &mut Fields<'_>) -> Result<SettingChange, Prot
         CHANGE_REMOVE_LOCAL => SettingChange::RemoveLocal(fields.u8()?),
         CHANGE_REMEMBER_HISTORY => SettingChange::RememberHistory(read_flag(fields)?),
         CHANGE_RESTORE_SESSION => SettingChange::RestoreSession(read_flag(fields)?),
+        CHANGE_COOKIES => SettingChange::Cookies(read_mode(fields)?),
         _ => return Err(ProtocolError::BadValue("setting change")),
     })
 }
@@ -177,6 +199,7 @@ mod tests {
             local: vec!["192.168.1.20".into()],
             remember_history: false,
             restore_session: true,
+            cookies: CookieMode::Close,
             refusal: Some("Not an address on this computer or the local network".into()),
         }
     }
@@ -197,6 +220,7 @@ mod tests {
             SettingChange::RemoveLocal(0),
             SettingChange::RememberHistory(false),
             SettingChange::RestoreSession(false),
+            SettingChange::Cookies(CookieMode::Block),
         ] {
             let mut payload = Vec::new();
             push_change(&mut payload, &change).unwrap();

@@ -21,6 +21,7 @@
 
 pub mod audio;
 pub mod console;
+pub mod cookies;
 pub mod decoder;
 pub mod fetcher;
 pub mod frame;
@@ -135,6 +136,8 @@ const KIND_BOOKMARKS_VIEW: u8 = 53;
 const KIND_STAR_VIEW: u8 = 54;
 const KIND_BAR_VIEW: u8 = 55;
 const KIND_WINDOW_VIEW: u8 = 56;
+// The cookies panel (`cookies.md` section 9).
+const KIND_COOKIES_VIEW: u8 = 57;
 const KIND_HISTORY: u8 = 60;
 const KIND_BOOKMARKS: u8 = 61;
 const KIND_STAR: u8 = 62;
@@ -145,6 +148,7 @@ const KIND_TAB_LIST: u8 = 66;
 const KIND_GO_TO: u8 = 67;
 const KIND_NEW_PRIVATE_TAB: u8 = 68;
 const KIND_WINDOW: u8 = 69;
+const KIND_COOKIES: u8 = 70;
 
 // The strip's flags.
 const ENCRYPTED: u8 = 1;
@@ -241,6 +245,8 @@ pub enum ToInterface {
     /// The window's place and size, restored from the last session
     /// (requirement 20.22).
     Window(library::WindowGeometry),
+    /// The cookies panel (requirement 21.6).
+    Cookies(cookies::CookiesView),
     /// The browser is closing: the interface ends.
     Close,
 }
@@ -360,6 +366,8 @@ pub enum ToCore {
     /// The window moved, was resized, or was maximised or restored, for
     /// the session (requirement 20.21).
     Window(library::WindowGeometry),
+    /// Strip input from the cookies panel (requirement 21.6).
+    Cookies(cookies::CookiesRequest),
 }
 
 /// Why a message could not be read or written.
@@ -718,6 +726,10 @@ pub fn write_to_interface(out: &mut dyn Write, message: &ToInterface) -> Result<
             library::push_window(&mut payload, window)?;
             KIND_WINDOW_VIEW
         }
+        ToInterface::Cookies(view) => {
+            cookies::push_view(&mut payload, view)?;
+            KIND_COOKIES_VIEW
+        }
         ToInterface::Close => KIND_CLOSE,
     };
     write_frame(out, kind, &payload)
@@ -844,6 +856,7 @@ pub fn read_from_core(input: &mut dyn Read) -> Result<Option<ToInterface>, Proto
         KIND_STAR_VIEW => ToInterface::Star(library::read_star_view(&mut fields)?),
         KIND_BAR_VIEW => ToInterface::Bar(library::read_bar_view(&mut fields)?),
         KIND_WINDOW_VIEW => ToInterface::Window(library::read_window(&mut fields)?),
+        KIND_COOKIES_VIEW => ToInterface::Cookies(cookies::read_view(&mut fields)?),
         KIND_CLOSE => ToInterface::Close,
         other => return Err(ProtocolError::UnknownKind(other)),
     };
@@ -996,6 +1009,10 @@ pub fn write_to_core(out: &mut dyn Write, message: &ToCore) -> Result<(), Protoc
             library::push_window(&mut payload, window)?;
             KIND_WINDOW
         }
+        ToCore::Cookies(request) => {
+            cookies::push_request(&mut payload, request)?;
+            KIND_COOKIES
+        }
     };
     write_frame(out, kind, &payload)
 }
@@ -1091,6 +1108,7 @@ pub fn read_from_interface(input: &mut dyn Read) -> Result<Option<ToCore>, Proto
         }
         KIND_NEW_PRIVATE_TAB => ToCore::NewPrivateTab,
         KIND_WINDOW => ToCore::Window(library::read_window(&mut fields)?),
+        KIND_COOKIES => ToCore::Cookies(cookies::read_request(&mut fields)?),
         other => return Err(ProtocolError::UnknownKind(other)),
     };
     fields.end()?;
@@ -1152,8 +1170,10 @@ mod tests {
                 local: Vec::new(),
                 remember_history: true,
                 restore_session: true,
+                cookies: settings::CookieMode::Close,
                 refusal: None,
             }),
+            ToInterface::Cookies(cookies::CookiesView { query: "news".into(), total: 0, ..cookies::CookiesView::default() }),
             ToInterface::History(library::HistoryView { query: "news".into(), total: 0, remembering: true, ..library::HistoryView::default() }),
             ToInterface::Suggestions(library::Suggestions { text: "n".into(), inline: "news.example".into(), rows: Vec::new() }),
             ToInterface::TabList(library::TabList { forward: true, entries: Vec::new() }),
@@ -1194,6 +1214,7 @@ mod tests {
             ToCore::GoTo { forward: true, steps: 15 },
             ToCore::NewPrivateTab,
             ToCore::Window(library::WindowGeometry { x: 10, y: 20, width: 1440, height: 900, maximised: false }),
+            ToCore::Cookies(cookies::CookiesRequest::Block { number: 3, blocked: true }),
         ] {
             let mut bytes = Vec::new();
             write_to_core(&mut bytes, &message).unwrap();

@@ -72,6 +72,7 @@ const FRAME: Frame = Frame { left_inset: 0.0, window_buttons: true };
 /// The trusted core's views of history and bookmarks.
 enum Library {
     History(interface_core::library::HistoryView),
+    Cookies(interface_core::cookies::CookiesView),
     Suggestions(interface_core::library::Suggestions),
     TabList(interface_core::library::TabList),
     Bookmarks(interface_core::library::BookmarksView),
@@ -387,6 +388,7 @@ impl App {
                 Output::Bookmark => ToCore::Bookmark,
                 Output::Home => ToCore::Home,
                 Output::History(request) => ToCore::History(request),
+                Output::Cookies(request) => ToCore::Cookies(request),
                 Output::Bookmarks(request) => ToCore::Bookmarks(request),
                 Output::Star(request) => ToCore::Star(request),
                 Output::Bar(request) => ToCore::Bar(request),
@@ -854,6 +856,7 @@ impl App {
             Incoming::Console(update) => self.browser.console_update(update),
             Incoming::Library(view) => match view {
                 Library::History(view) => self.browser.set_history(view),
+                Library::Cookies(view) => self.browser.set_cookies(view),
                 Library::Suggestions(suggestions) => self.browser.set_suggestions(suggestions),
                 Library::TabList(list) => self.browser.set_tab_list(list),
                 Library::Bookmarks(view) => self.browser.set_bookmarks(view, now),
@@ -1056,6 +1059,7 @@ fn read_core(proxy: &EventLoopProxy<Incoming>) {
             Ok(Some(ToInterface::Settings(view))) => Incoming::Settings(view),
             Ok(Some(ToInterface::Console(update))) => Incoming::Console(update),
             Ok(Some(ToInterface::History(view))) => Incoming::Library(Library::History(view)),
+            Ok(Some(ToInterface::Cookies(view))) => Incoming::Library(Library::Cookies(view)),
             Ok(Some(ToInterface::Suggestions(suggestions))) => Incoming::Library(Library::Suggestions(suggestions)),
             Ok(Some(ToInterface::TabList(list))) => Incoming::Library(Library::TabList(list)),
             Ok(Some(ToInterface::Bookmarks(view))) => Incoming::Library(Library::Bookmarks(view)),

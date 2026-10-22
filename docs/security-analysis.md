@@ -58,7 +58,7 @@ It meets that standard by:
 | Asset | Where it lives | Why it matters |
 |---|---|---|
 | Which channel each tab shows, and the address the user sees | Trusted core; shown in the trusted strip | The user's decisions rest on it |
-| Cookies, and anything a channel's login sets | Today: each fetcher, for its own channel. Required: the trusted core (requirement 7.5) | Access to the user's accounts on teletext services |
+| Cookies, and anything a channel's login sets | The trusted core, one jar for ordinary tabs and one for private, each channel's under its own tag; persistent ones kept between runs in `cookies.bin`, sealed under a key in the platform's secret store, never a session cookie (decision 62, requirements 7.5 and 21.4) | Access to the user's accounts on teletext services |
 | History, bookmarks, settings, sessions | Trusted core: history kept 90 days in `history.txt`, bookmarks in `bookmarks.txt`, settings in `settings.txt`, the session (the window and every tab but private ones, with their lists) in `session.txt`, each in the settings folder and readable by the user alone (decisions 57 and 59) | Private, and history most of all: which pages the user read and when; settings control security |
 | The user's own files | The file system; opened by the trusted core when the user names one, and decoded by a decoder | Private |
 | The integrity of the application's code | Installed versions; in time the launcher and update keys | Everything else depends on it |
@@ -123,8 +123,8 @@ Boundary 4 of the earlier design, the font helper, returns when fonts are fetche
 - A connection, its proxy tunnel and its TLS handshake are opened on a thread of their own and the engine's connect limit bounds the whole, so a slow or silent server or proxy holds up nothing else the fetcher does (decision 53).
 
 **If a fetcher is compromised.**
-- **Has:** the network; its own channel's connections and cookies.
-- **Does not have:** other channels' cookies, which sit in their own fetchers; the trusted core's state; the screen, except through messages the trusted core checks.
+- **Has:** the network; its own channel's connections; the cookies of the requests it is sending, which it asks the trusted core for one request at a time (decision 62).
+- **Does not have:** a cookie jar: it can neither read its channel's other cookies nor any other channel's, and a cookie it reports is stored only if its channel's host and scheme sent it (requirement 21.1); the trusted core's state; the screen, except through messages the trusted core checks.
 - **Can:** send false pages and contents for its own channel, which that channel's server, or a network attacker on a plain connection, could do anyway.
 - **On macOS, cannot** (21 October 2026): read any file but the system's name-resolution files, start a program, reach any service but the resolver's, or see the user's environment: its profile starts from "deny everything" (section 13). On Linux and Windows it is not confined yet, and there it can read the user's files and send them.
 
@@ -302,7 +302,7 @@ Designed and adopted, not built (decision 54): `installation-and-updates.md`, wi
 ## 12. Privacy
 
 - **Fetching never depends on viewing** (decision 22): a channel's server cannot see which of its pages a viewer reads (requirements 4.7 and 5.15).
-- **Cookies are host-only** and stay within their channel's fetcher; there is no third-party context (requirements 7.6 and 7.7).
+- **Cookies are host-only and channel-only,** held by the trusted core and sent only with their own channel's requests; there is no third-party context (requirements 7.6, 7.7 and 21.1). Persistent cookies are kept between runs only sealed, never a session or private one; the cookies panel deletes them by channel, site or all, the settings keep them, delete them when the browser closes or block them, and history's clearing takes them by time (requirements 21.4 to 21.8).
 - **No `Referer` header, and a minimal user agent** (requirement 5.14).
 - **The interface process stores nothing** (requirement 7.9).
 - **History stays on the computer** (decision 57): kept 90 days in `history.txt`, readable by the user alone, sent to no channel, decoder or fetcher (requirement 20.12) and never over the network; the user removes any of it, or all, from the panel, turns it off in the settings, or browses in a private tab that records nothing (requirements 20.6 to 20.8). Like every browser's, it is not encrypted on the disk. The session (decision 59) holds the open tabs' addresses the same way, never a private tab's, and is kept with "Remember history" off too, as the tabs are open; turning restoring off does not remove it.

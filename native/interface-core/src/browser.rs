@@ -27,6 +27,7 @@ use crate::wall::{CellClick, UPDATE_GLOW_MILLISECONDS, UPDATE_MARK_MILLISECONDS,
 
 mod bookmarks_ui;
 mod console_ui;
+mod cookies_ui;
 mod history_ui;
 #[cfg(feature = "links")]
 mod link_ui;
@@ -263,6 +264,8 @@ pub enum Output {
     Home,
     /// Strip input: what the history panel asks for (requirement 20.4).
     History(crate::library::HistoryRequest),
+    /// Strip input: what the cookies panel asks for (requirement 21.6).
+    Cookies(crate::cookies::CookiesRequest),
     /// Strip input: what the bookmarks manager asks for (requirement 20.17).
     Bookmarks(crate::library::BookmarkRequest),
     /// Strip input: what the star's popover asks for (requirement 20.16).
@@ -484,6 +487,8 @@ pub struct Browser {
     console: console_ui::ConsoleUi,
     /// The history panel (requirement 20.4).
     history: history_ui::HistoryUi,
+    /// The cookies panel (requirement 21.6).
+    cookies: cookies_ui::CookiesUi,
     /// The bookmarks manager (requirement 20.17).
     bookmarks: bookmarks_ui::BookmarksUi,
     /// The star's popover (requirement 20.16).
@@ -537,6 +542,7 @@ impl Browser {
             settings: settings_ui::SettingsUi::default(),
             console: console_ui::ConsoleUi::default(),
             history: history_ui::HistoryUi::default(),
+            cookies: cookies_ui::CookiesUi::default(),
             bookmarks: bookmarks_ui::BookmarksUi::default(),
             star: star_ui::StarUi::default(),
             bar: star_ui::BarUi::default(),
@@ -768,7 +774,7 @@ impl Browser {
     /// takes the keys rather than the page's channel.
     #[cfg(feature = "interaction")]
     fn strip_has_keys(&self) -> bool {
-        self.settings_open() || self.history_open() || self.bookmarks_open() || self.star_open() || self.popup_open()
+        self.settings_open() || self.history_open() || self.cookies_open() || self.bookmarks_open() || self.star_open() || self.popup_open()
     }
 
     /// Closes every panel of the strip, before another opens: one at a time.
@@ -781,6 +787,9 @@ impl Browser {
         }
         if self.history_open() {
             self.set_history_open(false);
+        }
+        if self.cookies_open() {
+            self.set_cookies_open(false);
         }
         if self.bookmarks_open() {
             self.toggle_bookmarks();
@@ -874,7 +883,7 @@ impl Browser {
         if self.popups_press(self.pointer, extend) || self.star_press(self.pointer) {
             return true;
         }
-        if self.history_press(self.pointer, extend) || self.bookmarks_press(self.pointer) {
+        if self.history_press(self.pointer, extend) || self.cookies_press(self.pointer) || self.bookmarks_press(self.pointer) {
             return true;
         }
         if self.settings_press(self.pointer) {
@@ -1039,7 +1048,7 @@ impl Browser {
 
     /// Scrolls whatever is under the pointer.
     pub fn scroll_by(&mut self, distance: f64, now: u64) -> bool {
-        if self.history_scroll(distance) || self.bookmarks_scroll(distance) {
+        if self.history_scroll(distance) || self.cookies_scroll(distance) || self.bookmarks_scroll(distance) {
             return true;
         }
         if self.console_scroll(distance) {
@@ -1084,6 +1093,9 @@ impl Browser {
             return changed;
         }
         if let Some(changed) = self.history_key(key, modifiers.shift) {
+            return changed;
+        }
+        if let Some(changed) = self.cookies_key(key, modifiers.shift) {
             return changed;
         }
         if let Some(changed) = self.bookmarks_key(key, modifiers.shift) {
@@ -1147,6 +1159,7 @@ impl Browser {
             "l" => self.start_editing(),
             "a" if self.settings_editing() => return self.settings_select_all(),
             "a" if self.history_editing() => return self.history_select_all(),
+            "a" if self.cookies_editing() => return self.cookies_select_all(),
             "a" if self.bookmarks_editing() => return self.bookmarks_select_all(),
             "a" if self.star_editing() => return self.star_select_all(),
             "a" if self.editing => self.editor.select_all(),
@@ -1330,6 +1343,7 @@ impl Browser {
         self.draw_phone_panel(canvas);
         self.draw_settings_panel(canvas);
         self.draw_history_panel(canvas);
+        self.draw_cookies_panel(canvas);
         self.draw_bookmarks_panel(canvas, now);
         self.draw_star_popover(canvas);
         self.draw_popups(canvas);

@@ -42,18 +42,18 @@ impl<T> Default for Numbers<T> {
 
 impl<T> Numbers<T> {
     /// A new view: the last view's numbers name nothing now.
-    fn fresh(&mut self) {
+    pub(crate) fn fresh(&mut self) {
         self.map.clear();
     }
 
-    fn number(&mut self, value: T) -> u32 {
+    pub(crate) fn number(&mut self, value: T) -> u32 {
         let number = self.next;
         self.next = self.next.wrapping_add(1).max(1);
         self.map.insert(number, value);
         number
     }
 
-    fn get(&self, number: u32) -> Option<&T> {
+    pub(crate) fn get(&self, number: u32) -> Option<&T> {
         self.map.get(&number)
     }
 }
@@ -291,6 +291,19 @@ impl Core {
                 }
                 self.save_history();
                 self.library.history_notice = notice(&format!("History cleared: {removed} removed"));
+            }
+            HistoryRequest::ClearCookies(range) => {
+                let now = self.local_time().utc;
+                let since = match range {
+                    ClearRange::Hour => Some(now.saturating_sub(HOUR)),
+                    ClearRange::Day => Some(now.saturating_sub(DAY)),
+                    ClearRange::Week => Some(now.saturating_sub(WEEK)),
+                    ClearRange::FourWeeks => Some(now.saturating_sub(FOUR_WEEKS)),
+                    ClearRange::All => None,
+                };
+                let removed = self.clear_cookies_since(since);
+                self.library.history_notice = notice(&format!("Cookies cleared: {removed} removed"));
+                self.send_cookies()?;
             }
             HistoryRequest::Reopen(number) => {
                 let id = match number {

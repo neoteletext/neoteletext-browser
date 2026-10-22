@@ -28,7 +28,8 @@ fn the_trusted_core_starts_confined_and_reaches_its_own_code() {
     eprintln!("started: {}", core.report);
     let refuse_read = |_: &Path| Err(String::from("this test reads nothing"));
     let refuse_web = |_: &str| Err(String::from("this test opens nothing"));
-    let handlers = Handlers { read_source: &refuse_read, open_web: &refuse_web, environment: &confine::environment };
+    let refuse_key = || Err(String::from("this test keeps no cookies"));
+    let handlers = Handlers { read_source: &refuse_read, open_web: &refuse_web, environment: &confine::environment, cookie_key: &refuse_key };
     let exit = serve(core, programs, &handlers).unwrap();
     assert_eq!(exit.text, REFUSED);
 }

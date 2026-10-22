@@ -457,7 +457,7 @@
 - **Source:** Decision 11.
 - **Verification:** Test.
 - **State:** Not met: every tab opens its own channel.
-- *Note of 22 October 2026:* designed in `cookies.md` (decision 62, proposed), requirements 21.1 and 21.2.
+- *Met 22 October 2026* by requirements 21.1 and 21.2 (decision 62): the trusted core holds every cookie, one jar for the ordinary tabs and one for the private, each channel's under its own tag.
 
 ### Requirement 7.5: The trusted core owns the cookie store
 - **Statement:** The cookie store must live in the trusted core. For each request the trusted core must give the fetcher only the cookies that request carries, and the fetcher must return any `Set-Cookie` headers to the trusted core.
@@ -465,7 +465,7 @@
 - **Source:** Decision 4.
 - **Verification:** Test: the fetcher process holds no cookie store.
 - **State:** Not met: each fetcher holds its own channel's store, inside the engine's user agent, in memory. Needs the engine change of `architecture.md` section 5.1.
-- *Note of 22 October 2026:* designed in `cookies.md` (decision 62, proposed), requirements 21.1 and 21.2.
+- *Met 22 October 2026* by requirements 21.1 and 21.2 (decision 62): the trusted core holds every cookie, one jar for the ordinary tabs and one for the private, each channel's under its own tag.
 
 ### Requirement 7.6: Cookie rules
 - **Statement:** The cookie store must follow the engine's: the draft RFC 6265bis, every cookie scoped to its host only, `Secure` cookies never sent over plain connections, the `__Host-` and `__Secure-` prefixes and expiry enforced, and `SameSite` applied to form submissions that go to another channel.
@@ -1177,6 +1177,7 @@ From `settings-home-console-proxy.md` and its security analysis (decision 51).
 - **State:** Met: `settings_round_trip_through_their_file`, `the_file_is_written_whole_or_not_at_all`; at start the trusted core reads it, missing meaning the defaults; by hand on macOS on 21 October 2026, the star wrote `bookmark neoteletext:home` to the file and a later start read it.
 - *Amended 22 October 2026 (decision 57):* bookmarks are kept in `bookmarks.txt` beside it (requirement 20.19), and history in `history.txt` (requirement 20.2); `settings.txt` adds `history on|off` and `bar on|off`.
 - *Amended 22 October 2026 (decision 59):* `settings.txt` adds `restore on|off`, and the session is kept in `session.txt` beside it (requirement 20.21).
+- *Amended 22 October 2026 (decision 62):* `settings.txt` adds `cookies keep|close|block` and `cookie-block` lines, and kept cookies are in `cookies.bin` beside it, sealed (requirement 21.4); the file's bound is 3 MiB, for 1 000 blocked channels.
 
 ### Requirement 19.2: The settings file is read strictly
 - **Statement:** The settings file must be read as section 1.2 defines it: a version line, at most 256 KB, a line at most its name, a space and a value of 2 048 bytes (amended 21 October 2026 on building it: a line of 2 048 bytes could not hold the longest address the address rules accept, so a bookmark of that length was dropped at the next start), each value checked by its setting's own rule; a line that breaks a rule or names nothing known is dropped and logged, and the rest stand.
@@ -1299,6 +1300,7 @@ Adopted and built on 22 October 2026 by decision 57, while the owner was away, a
 - **Source:** Decision 57.
 - **Verification:** Tests of each, reading the file after each.
 - **State:** Met: `history_is_removed_as_asked`, `rows_are_removed_by_their_numbers_and_from_the_file` (the file read after each removal), `rows_are_removed_by_number`.
+- *Amended 22 October 2026 (decision 62):* the clearing offers cookies, alone or with history (requirement 21.8).
 
 ### Requirement 20.7: "Remember history"
 - **Statement:** A setting, on by default and kept in `settings.txt`, must stop all recording when off, and turning it off must offer to clear what is kept.
@@ -1430,81 +1432,81 @@ Adopted and built on 22 October 2026 by decision 57, while the owner was away, a
 
 ## 21. Cookies
 
-**Proposed 22 October 2026 (decision 62, `cookies.md`, with `cookies-security.md`).** None is built; each states what building it must meet.
+**Proposed and built 22 October 2026 (decision 62, `cookies.md`, with `cookies-security.md`).**
 
 ### Requirement 21.1: The trusted core owns the cookies
 - **Statement:** Every cookie must be kept by the trusted core, one jar per channel under the engine's rules (REQ-WEB-006, REQ-WEB-026); a fetcher must hold none, receiving for each request only that request's `Cookie` header and returning each `Set-Cookie` line to the trusted core.
 - **Reason:** A fetcher compromised by its channel's server then sees only the cookies of requests in flight (requirement 7.5).
 - **Source:** Decision 62.
 - **Verification:** Test: the fetcher has no jar; a request carries the trusted core's header; a `Set-Cookie` line reaches the trusted core's jar.
-- **State:** Not met: proposed 22 October 2026.
+- **State:** Met, 22 October 2026: `each_fetcher_is_answered_with_its_channels_cookies` (a fetcher of another channel, or of none, asking for this host is answered with nothing; one cannot plant another channel's cookie), `a_channels_cookies_stay_in_the_channel`, `the_fetcher_keeps_no_cookie` (the agent's own jar holds none, `CookieJar<0, 0>`), and the engine's `a_port_keeps_the_cookies` (E.104); `the_agent_asks_for_each_requests_cookies` (the engine's `cookies` feature compiled in; it fails without); the fuzz targets `fetcher_messages` and `fetcher_commands` read the questions and answers. By hand on 22 October 2026 on macOS, Linux (Xvfb) and Windows (the virtual machine's desktop), against a local channel whose server sets a persistent and a session cookie: every request after the first carried both.
 
 ### Requirement 21.2: Tabs on a channel share its cookies
 - **Statement:** Every ordinary tab showing a channel must use the same jar.
 - **Reason:** Decision 11, requirement 7.4.
 - **Source:** Decision 62.
 - **Verification:** Test with two tabs.
-- **State:** Not met: proposed 22 October 2026.
+- **State:** Met: `each_fetcher_is_answered_with_its_channels_cookies` (a second tab on the channel is answered with the first's cookie).
 
 ### Requirement 21.3: Private tabs have their own cookies
 - **Statement:** Private tabs must share one jar per channel, separate from the ordinary jars, held in memory only and emptied when the last private tab closes.
 - **Reason:** What a private window means in every browser.
 - **Source:** Decision 62.
 - **Verification:** Test.
-- **State:** Not met: proposed 22 October 2026.
+- **State:** Met: `each_fetcher_is_answered_with_its_channels_cookies` (a private tab's cookie not in the ordinary tabs, gone with the last private tab), `private_and_blocked_cookies`.
 
 ### Requirement 21.4: Only persistent cookies are kept, and only encrypted
 - **Statement:** Between runs only unexpired cookies with a lifetime may be kept, never session cookies, private cookies or cookies of a blocked channel, in `cookies.bin`, readable by the user alone, sealed under a key kept in the platform's secret store; when the key cannot be had, nothing is written.
 - **Reason:** A cookie file is a set of credentials; decision 58 forbids a weaker mode.
 - **Source:** Decision 62.
 - **Verification:** Tests: round trip; a file unreadable without the key; no file written when the key is refused; no session cookie in the file.
-- **State:** Not met: proposed 22 October 2026.
+- **State:** Met: `the_file_is_sealed` (no cookie or channel in the clear, another key or a changed byte refused, a fresh nonce, mode 0600), `kept_cookies_are_written_sealed_and_removed_on_close` (no session cookie written), `without_the_key_nothing_is_written`. The key is kept by the broker with `keyring` 4.2.0 in the Keychain, the Credential Manager or the Secret Service (`cookies.md` section 13 item 7). By hand on 22 October 2026 on macOS (a keychain of the test's own), Linux (GNOME Keyring as the Secret Service) and Windows (the Credential Manager): `cookies.bin` sealed, mode 0600 on macOS and Linux, no cookie or host in it in the clear, the key in the platform's store; after the browser was killed and started again, its first requests carried the persistent cookie and not the session cookie.
 
 ### Requirement 21.5: The cookie file is read strictly
 - **Statement:** `cookies.bin` must be read with every field within its bound, each cookie passed through the engine's rules again; what breaks a rule is dropped and logged.
 - **Reason:** The file is outside input once decrypted, since another program of the user can replace it with the key.
 - **Source:** Decision 62.
 - **Verification:** Test of each rule; the fuzz target `cookie_file`.
-- **State:** Not met: proposed 22 October 2026.
+- **State:** Met: `the_file_keeps_persistent_cookies_of_named_channels` (each broken channel line dropped, cookies of no channel dropped, a store that never kept a cookie reads its own file); the fuzz target `cookie_file`, which found the last of these before release (`cookies.md` section 15 item 10).
 
 ### Requirement 21.6: The cookies panel
 - **Statement:** A panel must list the channels and sites with cookies, with their counts, sizes and last use, never a cookie's name or value, and must delete a channel's cookies, a site's, or all, and block or unblock a channel, by view numbers alone.
 - **Reason:** The control every browser gives, without giving the interface any cookie (requirement 3.6).
 - **Source:** Decision 62.
 - **Verification:** Interface test; a test that no view carries a name or value.
-- **State:** Not met: proposed 22 October 2026.
+- **State:** Met: `the_panel_lists_deletes_and_blocks` (no name or value in the view; delete by number; a number of an earlier view names nothing), `the_panel_lists_and_asks_by_number` (interface), `views_and_requests_round_trip` (the largest view fits a message).
 
 ### Requirement 21.7: The cookie settings
 - **Statement:** The settings must offer Keep, Delete when the browser closes, and Block all, Keep by default, and a list of blocked channels, kept in `settings.txt`.
 - **Reason:** As in every browser.
 - **Source:** Decision 62.
 - **Verification:** Test of each.
-- **State:** Not met: proposed 22 October 2026.
+- **State:** Met: `settings_round_trip_through_their_file` (`cookies close`, a `cookie-block` line), `each_control_asks_for_its_change` (Keep, On close, Block and Manage…), `private_and_blocked_cookies`, `kept_cookies_are_written_sealed_and_removed_on_close` (On close removes the file).
 
 ### Requirement 21.8: Cookies are cleared with history
 - **Statement:** The history panel's clearing must offer cookies, alone or with history, for its time ranges, by the cookies' creation time.
 - **Reason:** Browsers' "Clear browsing data".
 - **Source:** Decision 62.
 - **Verification:** Test.
-- **State:** Not met: proposed 22 October 2026.
+- **State:** Met: `rows_are_removed_by_number` (History and Cookies switches beside the ranges), `clearing_with_history_removes_cookies_of_the_range`, `listing_and_deleting` (by creation time).
 
 ### Requirement 21.9: `Clear-Site-Data` empties the channel's own jar
 - **Statement:** A response from the channel over `https` naming `"cookies"` or `"*"` in `Clear-Site-Data` must empty that channel's jar and no other; over plain HTTP it must be ignored.
 - **Reason:** The current way for a server to sign a user out everywhere; limited to the channel by REQ-WEB-026.
 - **Source:** Decision 62.
 - **Verification:** Test.
-- **State:** Not met: proposed 22 October 2026.
+- **State:** Met: the engine's `clear_site_data_names_cookies` and `clear_site_data_clears_before_the_response_sets` (over plain HTTP ignored), and `listing_and_deleting` (the channel alone, never over plain HTTP).
 
 ### Requirement 21.10: Cookies are bounded
 - **Statement:** At most 180 cookies a channel and 3 000 in all, each within the engine's sizes and 400 days, the file within 32 MiB, and the `Set-Cookie` lines from a fetcher within the engine's bounds on one response's headers (16 KiB, 64 headers).
 - **Reason:** Bounded memory and input (the baseline instructions).
 - **Source:** Decision 62.
 - **Verification:** Test at each bound.
-- **State:** Not met: proposed 22 October 2026.
+- **State:** Met: `cookies_are_bounded` (180 a channel, the oldest going first; 3 000 in all), `cookie_messages_are_bounded`; the file's bound in `cookies::load`; the engine's tests of its sizes and its 400 days.
 
 ### Requirement 21.11: Legacy cookie mechanisms are not supported
 - **Statement:** `Set-Cookie2`, `Cookie2` and `$`-prefixed attributes must be ignored, `Domain` must not widen a cookie (the engine's host-only rule), and no cookie may be shared across schemes, ports or channels.
 - **Reason:** Section 1's table.
 - **Source:** Decision 62.
 - **Verification:** Test.
-- **State:** Not met: proposed 22 October 2026.
+- **State:** Met: `a_channels_cookies_stay_in_the_channel` (another folder, scheme or port has none); the engine reads `Set-Cookie` alone of the cookie headers and ignores unknown attributes and `Domain` (its REQ-WEB-006 tests).

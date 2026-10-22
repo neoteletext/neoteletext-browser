@@ -2,9 +2,9 @@
 
 | | |
 |---|---|
-| **Status** | Proposed 22 October 2026 on the owner's request for "a specification and requirements for a full cookie implementation, which, to the extent that it makes sense, be a duplicate of the most modern thinking about browser cookies, and to the extent that it makes sense, ditches historical legacy no longer relevant", written while the owner was away, with the decisions it needed made and listed in section 13 (decision 62). Not built. |
+| **Status** | Proposed 22 October 2026 on the owner's request for "a specification and requirements for a full cookie implementation, which, to the extent that it makes sense, be a duplicate of the most modern thinking about browser cookies, and to the extent that it makes sense, ditches historical legacy no longer relevant", written while the owner was away, with the decisions it needed made and listed in section 13 (decision 62). Built the same day, on the owner's "when all tasks complete, fully implement cookie specification", with section 13's items as recommended and item 7's libraries chosen; section 15 lists what building settled, for the owner to confirm. |
 | **Security** | [`cookies-security.md`](cookies-security.md), whose findings this design takes. |
-| **Requirements** | Section 21 of [`requirements.md`](requirements.md), proposed; requirements 7.4 and 7.5 are met by it once built. Section 12 below is the text as proposed. |
+| **Requirements** | Section 21 of [`requirements.md`](requirements.md), with their states; requirements 7.4 and 7.5 are met by it. Section 12 below is the text as proposed. |
 | **Builds on** | The engine's cookie jar (`neoteletext-web` `cookie.rs`; its REQ-WEB-006, REQ-WEB-026, REQ-SEC-013 and decision E.35), channels as the boundary (requirement 7.1), the trusted core behind the broker (decision 56), history's clearing ranges and private tabs (`history-and-bookmarks.md` sections 2.5 and 2.7), the settings panel (`settings-home-console-proxy.md` section 1.3), session restore (decision 59). |
 
 ## 1. What is wanted, and what is not
@@ -219,7 +219,7 @@ Decided while the owner was away, on the owner's instruction to make the decisio
 4. **Persistence only encrypted, never in the clear** (sections 6 and 7), as decision 58 asks.
 5. **The panel shows no cookie names or values** (section 4.1), as requirement 3.6 asks.
 6. **Chrome's limits**, 180 a channel and 3 000 in all (section 5), not the engine's small-device defaults of 50 and 100.
-7. **Libraries for encryption at rest (owner's choice; not built until chosen).** Recommended: the cipher from RustCrypto (`chacha20poly1305`), Apache-2.0 or MIT, widely reviewed; macOS `security-framework`; Windows DPAPI through the `windows` crate already in the tree; Linux the Secret Service through a small D-Bus client, with the kernel keyring as the fallback store (not a weaker mode: the same encryption, another place for its key). Until chosen, cookies last for the run only, as today.
+7. **Libraries for encryption at rest.** The recommendation was RustCrypto's `chacha20poly1305` and a crate for each store. Chosen in building: **`ring`** for the cipher (ChaCha20-Poly1305) and the system's random source, already in the tree under rustls, so no new cryptography; and **`keyring` 4.2.0** (MIT or Apache-2.0) for the stores: the macOS Keychain, the Windows Credential Manager (which DPAPI protects) and the Secret Service over a pure-Rust D-Bus client (`zbus`). The kernel keyring is not used on Linux: it does not survive a restart, so a key kept there would make the file unreadable after one. Where no Secret Service runs, cookies last for the run only, as decision 58 asks. Library choice is the owner's: this one awaits confirmation.
 8. **`Clear-Site-Data` clears the channel only** (section 8), not the registrable domain the specification names, since NeoTeletext has no registrable domains.
 9. **A blocked channel and "Block all"** are offered; per-channel allow lists under "Block all" are not, to keep one rule a channel.
 10. **Clearing with history uses creation time**, as Chrome does.
@@ -229,3 +229,21 @@ Decided while the owner was away, on the owner's instruction to make the decisio
 - **Device Bound Session Credentials** (the engine's REQ-WEB-017, Phase 2): the key would live in the Secure Enclave, a TPM or the platform's store, reached through the broker. To be designed when the engine has it.
 - **Storage other than cookies:** NeoTeletext has none (no script, no local storage, no cache that outlives a run beyond the engine's).
 - **Importing cookies from another browser:** never; it would read another program's credentials.
+
+## 15. What building settled
+
+Built on 22 October 2026 (decision 62); each item for the owner to confirm.
+
+1. **One jar for the ordinary tabs and one for the private, each channel under a tag.** The engine's jar keeps cookies by host; each channel's cookies are kept under a tag of its own (`c1`, `c2` …), which the jar's host rules accept, with the trusted core's table of tags to channels written into the file. The jar's per-host limit is then the per-channel limit. One jar of 3 000 cookies and 4 MiB of text is made on first need, on a thread with room for it (it is too large for a default stack while it is boxed).
+2. **The engine's change** is its decision E.104 (commit `64c1a97`): `Cookies`, an interface for a store, which the agent takes from a port with `UserAgent::with_cookies`; `Clear-Site-Data`; and each cookie's times in seconds, with listing and removal, and a saved format of version 2. The fetcher gives its agent a store that asks the trusted core, and the agent's own jar holds no cookie (`CookieJar<0, 0>`).
+3. **A fetcher is answered only with its own channel's cookies**, for requests on its channel's host and scheme within its folder. A form sent to another origin therefore carries no cookie at all: stricter than REQ-WEB-006's rule, which would send that origin's `SameSite=None` cookies, since that origin's cookies belong to its own channels. A cookie set by a response from another host is refused. A push connection's cookies are kept in the channel's folder.
+4. **Whether a host was reached securely** is answered from every `https` channel of that host, the engine's REQ-SEC-007, so a plain-HTTP channel of a host whose `https` channel set a cookie is refused as a downgrade. That is one bit about another channel, given to protect this one.
+5. **The key is asked for at start**, when cookies are kept. On macOS a build not signed with a stable identity, as a development build, may be asked by the Keychain whether it may read the key after each rebuild, and the browser waits for the answer; a signed release is not asked (`PENDINGTASKSFORANDREW.md` item 1).
+6. **"On close" removes the file at start and at exit; "Block all" leaves it and reads nothing**, so turning Keep on again restores the cookies kept before.
+7. **A refused cookie is noted in the developer console without its name or value**; a blocked channel's first refused cookie is said in the strip once.
+8. **The panel lists a blocked channel with no cookies**, so it can be unblocked there.
+9. **Clearing with history** offers History and Cookies as two switches beside the ranges, History on as before.
+10. **The engine's `cookies` feature was off in the browser** (its `neoteletext-web` was built with `push` alone), so the agent had never kept or sent a cookie: a real run found it, as `CookieRejected(NotCompiledIn)`. It is on, and `the_agent_asks_for_each_requests_cookies` fails without it.
+11. **On Windows a fetcher cannot reach this computer's own loopback addresses**: its AppContainer forbids it, and Windows grants that only to a package by an exemption the browser does not ask for. A channel served on `localhost` opens on macOS and Linux but not on Windows; one on the local network opens with `--allow-local`.
+12. **Fuzzing found a fault before release:** a store that never kept a cookie wrote a file it could not read back (no empty line after its channels). Fixed, with a test and the input kept in `native/fuzz/regressions/cookie_file/`.
+

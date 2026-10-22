@@ -35,25 +35,25 @@ decoder = { path = "decoder", package = "neoteletext-decoder", default-features 
 # engine's "modern-classic" profile (its decision E.71) with the Colour
 # Map of Levels 2.5 and 3.5, which that profile leaves out: decision 6 is
 # 32 colours, and decision 60 restores them.
-neoteletext-core = { git = "file:///Users/andrewstuart/devel/neoteletext-engine", rev = "c7a84cff00d4232bb6a2c50e8f6a5334e655626e", default-features = false, features = ["modern-classic", "colours32"] }
-neoteletext-formats = { git = "file:///Users/andrewstuart/devel/neoteletext-engine", rev = "c7a84cff00d4232bb6a2c50e8f6a5334e655626e", default-features = false, features = ["tti", "transport", "sliced"] }
+neoteletext-core = { git = "file:///Users/andrewstuart/devel/neoteletext-engine", rev = "64c1a97ac89922ff0dcfc112f0ae005fce71e6ba", default-features = false, features = ["modern-classic", "colours32"] }
+neoteletext-formats = { git = "file:///Users/andrewstuart/devel/neoteletext-engine", rev = "64c1a97ac89922ff0dcfc112f0ae005fce71e6ba", default-features = false, features = ["tti", "transport", "sliced"] }
 # The engine's web module: HTTP, channels, contents files and push, with no
 # network input or output of its own.
-neoteletext-web = { git = "file:///Users/andrewstuart/devel/neoteletext-engine", rev = "c7a84cff00d4232bb6a2c50e8f6a5334e655626e", default-features = false, features = ["push"] }
+neoteletext-web = { git = "file:///Users/andrewstuart/devel/neoteletext-engine", rev = "64c1a97ac89922ff0dcfc112f0ae005fce71e6ba", default-features = false, features = ["push", "cookies"] }
 # The engine's network port is these traits (its decision E.38); the
 # version the engine uses.
 embedded-io = { version = "=0.7.1", default-features = false }
-neoteletext-image = { git = "file:///Users/andrewstuart/devel/neoteletext-engine", rev = "c7a84cff00d4232bb6a2c50e8f6a5334e655626e", features = ["std"] }
+neoteletext-image = { git = "file:///Users/andrewstuart/devel/neoteletext-engine", rev = "64c1a97ac89922ff0dcfc112f0ae005fce71e6ba", features = ["std"] }
 # The engine's audio profile (its area AUD): the receiver, and the mixer the
 # interface plays through.
-neoteletext-audio = { git = "file:///Users/andrewstuart/devel/neoteletext-engine", rev = "c7a84cff00d4232bb6a2c50e8f6a5334e655626e", default-features = false, features = ["idl", "ima"] }
+neoteletext-audio = { git = "file:///Users/andrewstuart/devel/neoteletext-engine", rev = "64c1a97ac89922ff0dcfc112f0ae005fce71e6ba", default-features = false, features = ["idl", "ima"] }
 # The engine's qrkeyboard client (its decision E.93): the phone keyboard
 # process's pairing and encryption, and the terminal channel's phone page.
-neoteletext-qrkeyboard = { git = "file:///Users/andrewstuart/devel/neoteletext-engine", rev = "c7a84cff00d4232bb6a2c50e8f6a5334e655626e" }
+neoteletext-qrkeyboard = { git = "file:///Users/andrewstuart/devel/neoteletext-engine", rev = "64c1a97ac89922ff0dcfc112f0ae005fce71e6ba" }
 # The engine's input profile (its area INT): key records and the cursor
 # record (`interaction.md`).
-neoteletext-input = { git = "file:///Users/andrewstuart/devel/neoteletext-engine", rev = "c7a84cff00d4232bb6a2c50e8f6a5334e655626e", default-features = false }
-neoteletext-audio-mix = { git = "file:///Users/andrewstuart/devel/neoteletext-engine", rev = "c7a84cff00d4232bb6a2c50e8f6a5334e655626e" }
+neoteletext-input = { git = "file:///Users/andrewstuart/devel/neoteletext-engine", rev = "64c1a97ac89922ff0dcfc112f0ae005fce71e6ba", default-features = false }
+neoteletext-audio-mix = { git = "file:///Users/andrewstuart/devel/neoteletext-engine", rev = "64c1a97ac89922ff0dcfc112f0ae005fce71e6ba" }
 # Apache-2.0: the operating systems' audio output (Core Audio on macOS),
 # without unsafe code of ours (decision 37).
 cpal = "=0.18.2"
@@ -81,6 +81,13 @@ embedded-graphics = { version = "=0.8.2", default-features = false }
 # 41: `rustls`), with ring's cryptography and Mozilla's root certificates,
 # the versions and features the engine's own fetcher uses.
 rustls = { version = "=0.23.46", default-features = false, features = ["ring", "std", "tls12"] }
+# Apache-2.0 AND ISC, already under rustls: the cookie file's authenticated
+# cipher and its nonces (`cookies.md` section 7, decision 62).
+ring = { version = "=0.17.14", default-features = false }
+# MIT or Apache-2.0: the key of the cookie file kept in the platform's
+# secret store, the Keychain, Credential Manager or the Secret Service
+# (`cookies.md` section 7, decision 62), read by the broker alone.
+keyring = { version = "=4.2.0" }
 webpki-roots = "=1.0.10"
 # MIT or Apache-2.0: typed text sent in Unicode Normalization Form C
 # (INPUT.md section 5.7 rule 3, REQ-INT-116; decision 49).

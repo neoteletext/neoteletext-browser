@@ -19,8 +19,8 @@ decoder = { path = "../decoder", package = "neoteletext-decoder" }
 neoteletext = { path = "../core" }
 web-opener = { path = "../web-opener" }
 confine = { path = "../confine" }
-neoteletext-qrkeyboard = { git = "file:///Users/andrewstuart/devel/neoteletext-engine", rev = "c7a84cff00d4232bb6a2c50e8f6a5334e655626e" }
-neoteletext-input = { git = "file:///Users/andrewstuart/devel/neoteletext-engine", rev = "c7a84cff00d4232bb6a2c50e8f6a5334e655626e" }
+neoteletext-qrkeyboard = { git = "file:///Users/andrewstuart/devel/neoteletext-engine", rev = "64c1a97ac89922ff0dcfc112f0ae005fce71e6ba" }
+neoteletext-input = { git = "file:///Users/andrewstuart/devel/neoteletext-engine", rev = "64c1a97ac89922ff0dcfc112f0ae005fce71e6ba" }
 
 [workspace]
 members = ["."]
@@ -163,6 +163,13 @@ bench = false
 [[bin]]
 name = "history_file"
 path = "fuzz_targets/history_file.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "cookie_file"
+path = "fuzz_targets/cookie_file.rs"
 test = false
 doc = false
 bench = false
