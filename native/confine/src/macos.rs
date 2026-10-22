@@ -64,7 +64,9 @@ fn profile(program: &Path, role: Role, writable: Option<&Path>) -> String {
         // metadata of any path (the root's symbolic links), and the
         // services of the window, fonts, text input, the pasteboard,
         // notifications, preferences and the Dock. Sound is the sound
-        // helper's (decision 55).
+        // helper's (decision 55). Without the window manager's service
+        // (found 23 October 2026, macOS 15.6) the window is made and drawn
+        // but never put on the screen.
         Role::Interface => {
             profile.push_str(SYSTEM_READS);
             profile.push_str(
@@ -87,7 +89,8 @@ fn profile(program: &Path, role: Role, writable: Option<&Path>) -> String {
   (global-name \"com.apple.cfprefsd.daemon\")
   (global-name \"com.apple.cfprefsd.agent\")
   (global-name \"com.apple.dock.server\")
-  (global-name \"com.apple.dock.fullscreen\"))
+  (global-name \"com.apple.dock.fullscreen\")
+  (global-name \"com.apple.windowmanager.server\"))
 ",
             );
         }
@@ -151,6 +154,10 @@ mod tests {
         assert!(!profile(program, Role::Decoder, None).contains("mach-lookup"), "a decoder looks nothing up");
         assert!(!profile(program, Role::Core, None).contains("mach-lookup"), "nor does the core");
         assert!(!profile(program, Role::Interface, None).contains("audio"), "sound is the sound helper's");
+        assert!(
+            profile(program, Role::Interface, None).contains("(global-name \"com.apple.windowmanager.server\")"),
+            "without it the window never reaches the screen"
+        );
         let core = profile(program, Role::Core, Some(Path::new("/Users/someone/Library/Application Support/NeoTeletext")));
         assert!(core.contains("(allow file-read* file-write* (subpath \"/Users/someone/Library/Application Support/NeoTeletext\"))"));
     }
