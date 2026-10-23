@@ -5,7 +5,7 @@
 
 use std::collections::BTreeMap;
 use std::io::{self, BufReader, BufWriter, Write};
-use std::sync::mpsc::{self, RecvTimeoutError};
+use std::sync::mpsc::{self, Receiver, RecvTimeoutError};
 use std::time::Duration;
 
 use crate::{Engine, Flashing, Rendered};
@@ -97,17 +97,7 @@ pub fn run(store_pages: usize) -> Result<(), ProtocolError> {
     // it sleeps until a message, the next flash phase of a shown page
     // that flashes, or the audio receiver's next tick, whichever is first,
     // and with none of these, until a message (decision 47).
-    let (messages, incoming) = mpsc::channel();
-    std::thread::spawn(move || {
-        let mut input = BufReader::new(io::stdin().lock());
-        loop {
-            let message = read_from_core(&mut input);
-            let last = !matches!(message, Ok(Some(_)));
-            if messages.send(message).is_err() || last {
-                return;
-            }
-        }
-    });
+    let incoming = read_messages();
 
     loop {
         // What the last message or deadline produced goes before waiting.
@@ -115,16 +105,10 @@ pub fn run(store_pages: usize) -> Result<(), ProtocolError> {
         let now = engine.now_us();
         let audio = engine.next_audio_tick_ms().map(|ms| ms.saturating_mul(MICROSECONDS_PER_MILLISECOND));
         let deadline = [flashing.next_us(now), audio].into_iter().flatten().min();
-        let received = match deadline {
-            Some(at) => match incoming.recv_timeout(Duration::from_micros(at.saturating_sub(now))) {
-                Ok(message) => Some(message),
-                Err(RecvTimeoutError::Timeout) => None,
-                Err(RecvTimeoutError::Disconnected) => return Ok(()),
-            },
-            None => match incoming.recv() {
-                Ok(message) => Some(message),
-                Err(_) => return Ok(()),
-            },
+        let received = match wait(&incoming, deadline, now) {
+            Woken::Message(message) => Some(message),
+            Woken::Deadline => None,
+            Woken::Ended => return Ok(()),
         };
         let now = engine.now_us();
         engine.tick_audio(now.checked_div(MICROSECONDS_PER_MILLISECOND).unwrap_or(0));
@@ -164,16 +148,7 @@ pub fn run(store_pages: usize) -> Result<(), ProtocolError> {
                 continue;
             }
         };
-        send_sounds(&mut engine, &mut output)?;
-        for (page, title) in &arrived {
-            write_to_core(&mut output, &FromDecoder::Arrived { page: *page, title: title.clone() })?;
-        }
-        for page in engine.take_updated() {
-            write_to_core(&mut output, &FromDecoder::Updated { page })?;
-        }
-        for log in engine.take_logs() {
-            write_to_core(&mut output, &FromDecoder::ChannelLog { level: log.level, page: log.page, text: log.text })?;
-        }
+        report(&mut engine, &arrived, &mut output)?;
         // A shown page drawn again only when its reception moved, or data
         // every page may draw from changed.
         let changed = engine.take_changed();
@@ -183,6 +158,66 @@ pub fn run(store_pages: usize) -> Result<(), ProtocolError> {
         let pages: Vec<u16> = showing.iter().copied().filter(|page| changed.everything || changed.pages.contains(page)).collect();
         draw(&engine, &pages, now, &mut sent, &mut spare, &mut flashing, &mut output)?;
     }
+}
+
+/// A message read from the trusted core: one, the end of its pipe, or an
+/// error.
+type Received = Result<Option<ToDecoder>, ProtocolError>;
+
+/// What the loop woke for.
+enum Woken {
+    /// A message from the trusted core.
+    Message(Received),
+    /// The deadline passed first.
+    Deadline,
+    /// The reader of the trusted core's messages ended.
+    Ended,
+}
+
+/// Reads the trusted core's messages on a thread of their own, until its
+/// pipe ends or a message cannot be read.
+fn read_messages() -> Receiver<Received> {
+    let (messages, incoming) = mpsc::channel();
+    std::thread::spawn(move || {
+        let mut input = BufReader::new(io::stdin().lock());
+        loop {
+            let message = read_from_core(&mut input);
+            let last = !matches!(message, Ok(Some(_)));
+            if messages.send(message).is_err() || last {
+                return;
+            }
+        }
+    });
+    incoming
+}
+
+/// Waits for a message until `deadline` (microseconds by the engine's
+/// clock, which reads `now`), or with none for as long as it takes.
+fn wait(incoming: &Receiver<Received>, deadline: Option<u64>, now: u64) -> Woken {
+    match deadline {
+        Some(at) => match incoming.recv_timeout(Duration::from_micros(at.saturating_sub(now))) {
+            Ok(message) => Woken::Message(message),
+            Err(RecvTimeoutError::Timeout) => Woken::Deadline,
+            Err(RecvTimeoutError::Disconnected) => Woken::Ended,
+        },
+        None => incoming.recv().map_or(Woken::Ended, Woken::Message),
+    }
+}
+
+/// Sends what the bytes fed produced: the sounds, the pages that arrived,
+/// the pages received again and the channel's log lines.
+fn report(engine: &mut Engine, arrived: &[(u16, String)], output: &mut Output<'_>) -> Result<(), ProtocolError> {
+    send_sounds(engine, output)?;
+    for (page, title) in arrived {
+        write_to_core(output, &FromDecoder::Arrived { page: *page, title: title.clone() })?;
+    }
+    for page in engine.take_updated() {
+        write_to_core(output, &FromDecoder::Updated { page })?;
+    }
+    for log in engine.take_logs() {
+        write_to_core(output, &FromDecoder::ChannelLog { level: log.level, page: log.page, text: log.text })?;
+    }
+    Ok(())
 }
 
 /// Draws `pages` at `now_us` and sends those that changed: a page's links
