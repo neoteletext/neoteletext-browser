@@ -7,7 +7,7 @@
 use std::collections::VecDeque;
 use std::path::Path;
 
-use interface_core::browser::{StripState, TabInfo};
+use interface_core::browser::{CertificateProblem, StripState, TabInfo};
 use interface_core::channel::{BANKS, Channel, PAGES, PAGES_PER_BANK, PageInfo, Status, page_index};
 use interface_core::theme::TAB_COLOURS;
 use protocol::fetcher::Entry;
@@ -37,6 +37,9 @@ pub struct ChannelState {
     pub web: Option<String>,
     /// Why the channel has no data, for the log.
     pub problem: Option<String>,
+    /// Its certificate was refused, and why, until its contents next arrive
+    /// (`certificate-errors.md`, decision 83).
+    pub refused: Option<CertificateProblem>,
 }
 
 impl ChannelState {
@@ -71,6 +74,7 @@ impl ChannelState {
             source,
             web,
             problem,
+            refused: None,
         }
     }
 
@@ -954,6 +958,7 @@ impl Session {
             built_in: address.is_start_page(),
             private: tab.private,
             notice: String::new(),
+            refused: tab.channel.refused,
         }
     }
 }

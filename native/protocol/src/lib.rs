@@ -38,7 +38,7 @@ pub mod sound;
 
 use std::io::{self, Read, Write};
 
-use interface_core::browser::{StripState, TabInfo};
+use interface_core::browser::{CertificateProblem, StripState, TabInfo};
 use interface_core::canvas::{COLUMNS, PageKey, ROWS};
 use interface_core::channel::{BANKS, Channel, PAGES, PageInfo, Status, page_index};
 /// Controls, and the invisible characters that reorder or hide text, are
@@ -618,6 +618,20 @@ fn window_intent(kind: u8, fields: &mut Fields<'_>) -> Result<ToCore, ProtocolEr
     })
 }
 
+/// A certificate problem's code on the wire: its place among
+/// [`CertificateProblem::ALL`], from 1; 0 is none.
+#[must_use]
+pub fn problem_code(problem: CertificateProblem) -> u8 {
+    let place = CertificateProblem::ALL.iter().position(|each| *each == problem).unwrap_or(0);
+    u8::try_from(place).map_or(u8::MAX, |place| place.saturating_add(1))
+}
+
+/// The certificate problem of a code, when it names one.
+#[must_use]
+pub fn problem_of(code: u8) -> Option<CertificateProblem> {
+    CertificateProblem::ALL.get(usize::from(code).checked_sub(1)?).copied()
+}
+
 /// A window's number, never [`NEW_WINDOW`].
 fn window_number(fields: &mut Fields<'_>) -> Result<u32, ProtocolError> {
     let window = fields.u32()?;
@@ -748,6 +762,7 @@ pub fn write_to_interface(out: &mut dyn Write, message: &ToInterface) -> Result<
             push_text(&mut payload, &strip.identity, MAX_IDENTITY)?;
             push_text(&mut payload, &strip.address, MAX_ADDRESS)?;
             push_text(&mut payload, &strip.notice, MAX_STRIP_NOTICE)?;
+            payload.push(strip.refused.map_or(0, problem_code));
             KIND_STRIP
         }
         ToInterface::Channel(channel) => {
@@ -938,6 +953,10 @@ pub fn read_from_core(input: &mut dyn Read) -> Result<Option<ToInterface>, Proto
                 built_in: flags & BUILT_IN != 0,
                 private: flags & PRIVATE != 0,
                 notice: fields.text(MAX_STRIP_NOTICE)?,
+                refused: match fields.u8()? {
+                    0 => None,
+                    code => Some(problem_of(code).ok_or(ProtocolError::BadValue("certificate problem"))?),
+                },
             })
         }
         KIND_CHANNEL => {
@@ -1339,7 +1358,24 @@ mod tests {
             built_in: false,
             private: true,
             notice: "Proxy changed to socks5://127.0.0.1:1080".into(),
+            refused: Some(CertificateProblem::Revoked),
         }
+    }
+
+    /// Decision 83: a refused certificate's kind is one of seven codes;
+    /// any other is a broken message.
+    #[test]
+    fn a_certificate_problem_is_held_to_its_codes() {
+        for problem in CertificateProblem::ALL {
+            assert_eq!(problem_of(problem_code(problem)), Some(problem));
+        }
+        assert_eq!(problem_of(0), None);
+        assert_eq!(problem_of(8), None);
+        let mut bytes = Vec::new();
+        write_to_interface(&mut bytes, &ToInterface::Strip(strip())).unwrap();
+        let last = bytes.len() - 1;
+        bytes[last] = 9;
+        assert!(read_from_core(&mut bytes.as_slice()).is_err());
     }
 
     fn channel() -> Channel {

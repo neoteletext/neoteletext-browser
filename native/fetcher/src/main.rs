@@ -326,6 +326,9 @@ fn run(channel: &str, allowed: &[IpAddr], proxy: Option<Proxy>) -> Result<(), St
         if pump.transport.take_proxy_failure() {
             write_to_core(&mut *output.borrow_mut(), &FromFetcher::ProxyFailed).map_err(|error| error.to_string())?;
         }
+        if let Some(problem) = pump.transport.take_certificate_refusal() {
+            write_to_core(&mut *output.borrow_mut(), &FromFetcher::CertificateRefused(problem)).map_err(|error| error.to_string())?;
+        }
         // One page at a time, in the contents file's order; the agent
         // spaces the requests at the engine's rate.
         if !waiting && let Some(page) = queue.pop_front() {

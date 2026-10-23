@@ -517,6 +517,13 @@ Withdrawn on 23 October 2026 (decision 66): no font is fetched; every page is dr
 - **Verification:** Test.
 - **State:** Met, 20 October 2026: a file is its own channel with its own decoder and no fetcher or cookies, at most 64 megabytes (`MAX_SOURCE_BYTES`) or 4,096 page files (`MAX_FILES`, `native/core/src/source.rs`); its links to its own pages open at once, and those to a web channel or the web leave it through the site-change screen or the web-browser prompt (`hyperlinks.md` section 11 item 4, decision 41; `a_file_channels_links_to_the_web_leave_it`).
 
+### Requirement 7.13: A refused certificate is explained
+- **Statement:** When a connection of a tab's channel is refused because of its certificate, the tab's page area must show the certificate-error screen in place of the channel's pages: the host as the trusted strip shows it, never a name from the certificate; what failed, in the trusted core's words, chosen from a fixed list by the kind of failure; that there is no way past it; and Try again, Go back (when the tab has history) and Close tab, with nothing that opens the channel anyway. The strip must mark the channel refused while the screen shows. The screen must go when the channel's contents next arrive or the tab goes elsewhere.
+- **Reason:** A refused channel looked like a slow one, and the reason reached only the log; a person must be told why a channel will not open, without being offered a way past the refusal (decision 24).
+- **Source:** Decision 83 (`certificate-errors.md`).
+- **Verification:** Tests: the kinds told apart from the TLS library's errors; a failed handshake reported once; the strip and the Log told once; the screen's words and buttons.
+- **State:** Met, 23 October 2026: `certificate_failures_are_told_apart`, `a_failed_handshake_is_reported_once`, `a_refused_certificate_shows_until_the_contents_arrive`, `a_refused_certificate_shows_why_and_no_way_past`, `the_screens_buttons_are_reload_back_and_close`. Not yet seen against a channel whose certificate has expired.
+
 ---
 
 ## 8. Navigation and the site-change screen

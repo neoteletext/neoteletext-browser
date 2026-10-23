@@ -33,6 +33,7 @@ mod history_ui;
 #[cfg(feature = "links")]
 mod link_ui;
 mod popup_ui;
+mod refused_ui;
 mod remote_ui;
 mod settings_ui;
 mod star_ui;
@@ -238,6 +239,59 @@ pub struct StripState {
     /// What the strip says for a while, when not empty: a change of a
     /// security setting, a proxy that refused (requirements 19.3, 19.10).
     pub notice: String,
+    /// The channel's certificate was refused, and why: the page area shows
+    /// the certificate-error screen (`certificate-errors.md`, decision 83).
+    pub refused: Option<CertificateProblem>,
+}
+
+/// Why a channel's certificate was refused (`certificate-errors.md`
+/// section 3), as the fetcher's TLS library said it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CertificateProblem {
+    /// It has expired.
+    Expired,
+    /// It is not valid yet.
+    NotYetValid,
+    /// No authority this browser trusts issued it.
+    UnknownIssuer,
+    /// It is for another host.
+    WrongHost,
+    /// Its issuer withdrew it.
+    Revoked,
+    /// It is not valid for another reason.
+    Invalid,
+    /// The secure handshake failed before the certificate was judged.
+    Handshake,
+}
+
+impl CertificateProblem {
+    /// Every kind, in the order of their codes on the wire.
+    pub const ALL: [Self; 7] = [Self::Expired, Self::NotYetValid, Self::UnknownIssuer, Self::WrongHost, Self::Revoked, Self::Invalid, Self::Handshake];
+
+    /// What the screen says failed, in the trusted core's words.
+    #[must_use]
+    pub const fn sentence(self) -> &'static str {
+        match self {
+            Self::Expired => "Its certificate has expired.",
+            Self::NotYetValid => "Its certificate is not valid yet.",
+            Self::UnknownIssuer => {
+                "Its certificate was not issued by an authority this browser trusts; a certificate the server made for itself is refused so."
+            }
+            Self::WrongHost => "Its certificate is for another site.",
+            Self::Revoked => "Its certificate has been withdrawn by the authority that issued it.",
+            Self::Invalid => "Its certificate is not valid.",
+            Self::Handshake => "The secure connection to it could not be made.",
+        }
+    }
+
+    /// What may help, for the failures a person can mend.
+    #[must_use]
+    pub const fn hint(self) -> Option<&'static str> {
+        match self {
+            Self::Expired | Self::NotYetValid => Some("If this computer's date or time is wrong, correct it and try again."),
+            _ => None,
+        }
+    }
 }
 
 /// Something the window itself should do, for the host to carry out.
@@ -545,6 +599,8 @@ pub struct Browser {
     page_controls: controls_ui::ControlsUi,
     /// The remote control (decision 68).
     remote: remote_ui::RemoteUi,
+    /// The certificate-error screen's buttons (decision 83).
+    refused: refused_ui::RefusedUi,
     /// The tab strip's overflow and dragging (decision 69).
     tab_strip: tabs_ui::TabsUi,
     /// The bookmarks manager (requirement 20.17).
@@ -604,6 +660,7 @@ impl Browser {
             tips: tips_ui::TipsUi::default(),
             page_controls: controls_ui::ControlsUi::default(),
             remote: remote_ui::RemoteUi::default(),
+            refused: refused_ui::RefusedUi::default(),
             tab_strip: tabs_ui::TabsUi::default(),
             bookmarks: bookmarks_ui::BookmarksUi::default(),
             star: star_ui::StarUi::default(),
@@ -976,6 +1033,9 @@ impl Browser {
         // The strip's question, drawn over the address field.
         #[cfg(feature = "links")]
         if self.link_press(now) {
+            return true;
+        }
+        if self.refused_press(self.pointer) {
             return true;
         }
         if self.remote_press(self.pointer, now) {
@@ -1467,6 +1527,8 @@ impl Browser {
         self.draw_links(canvas);
         #[cfg(feature = "interaction")]
         self.draw_terminal(canvas, now);
+        // A refused certificate: its screen in place of the pages.
+        self.draw_refusal(canvas, zoom);
         let mut visible = self.wall.visible();
         // The overview's previewed page is on screen too, so the trusted
         // core has it rendered, whichever bank it is in.
@@ -1597,6 +1659,10 @@ impl Browser {
             let word = "File";
             left_centred(canvas, Rect::new(text_left, field.y0, field.x1, field.y1), 0.0, word, ROW_STATUS, FIELD_INK);
             text_left += canvas.text_width(word, ROW_STATUS) + LOCK_GAP;
+        } else if self.strip.refused.is_some() {
+            let warning = "Certificate refused";
+            left_centred(canvas, Rect::new(text_left, field.y0, field.x1, field.y1), 0.0, warning, ROW_STATUS, INSECURE);
+            text_left += canvas.text_width(warning, ROW_STATUS) + LOCK_GAP;
         } else if self.strip.encrypted {
             padlock(canvas, Point::new(text_left, middle), SECURE);
             text_left += LOCK_WIDTH + LOCK_GAP;

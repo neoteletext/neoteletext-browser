@@ -100,7 +100,7 @@ qrkeyboard relay ──[13]──► phone keyboard ──[13]──► trusted 
 | Boundary | What crosses | The receiving side treats it as |
 |---|---|---|
 | 1. Network to fetcher | Raw protocol bytes | Untrusted |
-| 2. Fetcher to trusted core | The contents file as typed entries; page bytes, forwarded unread; notices, exchanges for the console, push and input state, the descriptor's links, cookie questions, `Set-Cookie` values and `Clear-Site-Data`; to the fetcher, input for its push WebSocket and cookie answers | Untrusted, checked as data |
+| 2. Fetcher to trusted core | The contents file as typed entries; page bytes, forwarded unread; notices, exchanges for the console, push and input state, the descriptor's links, cookie questions, `Set-Cookie` values and `Clear-Site-Data`, and the kind of a refused certificate, one byte (decision 83, `certificate-errors-security.md`); to the fetcher, input for its push WebSocket and cookie answers | Untrusted, checked as data |
 | 3. Trusted core and decoder | Bytes and whole files, shown pages, the open page and its view in; arrivals, updates, frames, links, sub-pages, voice operations, cursor and input-control records, channel log lines and, for an import, bookmarks out | Decoder output untrusted |
 | 5. Trusted core to interface | Images our encoder made, cleaned text, tab, strip and channel state | The interface's input; contains nothing secret |
 | 6. Interface to trusted core | Intents and strip input | Untrusted intents; strip input trusted only as far as the interface process is (section 5.6) |

@@ -943,6 +943,30 @@ mod tests {
         }
     }
 
+    /// Requirement 7.13: a channel's refused certificate reaches its strip
+    /// and the Log once, and goes when the channel's contents arrive.
+    #[test]
+    fn a_refused_certificate_shows_until_the_contents_arrive() {
+        use interface_core::browser::CertificateProblem;
+        use protocol::fetcher::FromFetcher;
+        let mut test = Test::new("certificate");
+        test.core.session.open("news.invalid").unwrap();
+        let channel = test.core.session.tabs[0].channel.id;
+        test.sent();
+        test.core.fetched(channel, FromFetcher::CertificateRefused(CertificateProblem::Expired)).unwrap();
+        test.core.fetched(channel, FromFetcher::CertificateRefused(CertificateProblem::Expired)).unwrap();
+        let strips: Vec<_> = test.sent().into_iter().filter_map(|message| if let ToInterface::Strip(strip) = message { Some(strip) } else { None }).collect();
+        assert_eq!(strips.len(), 1, "once, however often the agent retries");
+        assert_eq!((strips[0].refused, strips[0].identity.as_str()), (Some(CertificateProblem::Expired), "news.invalid"));
+        test.core.console.set_open(true);
+        let logged =
+            test.core.console.updates(Some(channel)).iter().flat_map(|update| update.entries.iter()).filter(|entry| entry.text.contains("was refused")).count();
+        assert_eq!(logged, 1, "said once in the Log");
+        test.core.fetched(channel, FromFetcher::Contents(Vec::new())).unwrap();
+        let strips: Vec<_> = test.sent().into_iter().filter_map(|message| if let ToInterface::Strip(strip) = message { Some(strip) } else { None }).collect();
+        assert_eq!(strips.last().map(|strip| strip.refused), Some(None));
+    }
+
     /// `multiple-windows.md`: a message for another window than the last
     /// is preceded by its window's number; intents act on the window they
     /// say they are from, and are not acted on from a window not open.

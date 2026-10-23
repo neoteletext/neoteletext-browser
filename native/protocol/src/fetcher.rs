@@ -7,6 +7,8 @@
 
 use std::io::{Read, Write};
 
+pub use interface_core::browser::CertificateProblem;
+
 use interface_core::channel::page_index;
 
 use super::{Fields, MAX_ADDRESS, MAX_PAGE_TITLE, MAX_PAYLOAD, ProtocolError, push_raw_text, read_frame, write_frame};
@@ -47,6 +49,7 @@ const KIND_COOKIE_QUESTION: u8 = 88;
 const KIND_REACHED_QUESTION: u8 = 89;
 const KIND_COOKIE_SET: u8 = 90;
 const KIND_CLEAR_SITE_DATA: u8 = 91;
+const KIND_CERTIFICATE_REFUSED: u8 = 92;
 #[cfg(feature = "interaction")]
 const KIND_SEND: u8 = 96;
 const KIND_COOKIE_ANSWER: u8 = 97;
@@ -144,6 +147,10 @@ pub enum FromFetcher {
     /// (requirement 19.10). It carries nothing: the trusted core says it in
     /// its own words, so a fetcher cannot write the strip.
     ProxyFailed,
+    /// A connection of the channel was refused because of its certificate,
+    /// and why (`certificate-errors.md`, decision 83). It names no host:
+    /// the trusted core knows the fetcher's channel.
+    CertificateRefused(CertificateProblem),
     /// The page numbers the channel's descriptor links elsewhere, and the
     /// services it names for `name:mpp` targets (`hyperlinks.md` section
     /// 6.4), untrusted.
@@ -367,6 +374,10 @@ pub fn write_to_core(out: &mut dyn Write, message: &FromFetcher) -> Result<(), P
             KIND_EXCHANGE
         }
         FromFetcher::ProxyFailed => KIND_PROXY_FAILED,
+        FromFetcher::CertificateRefused(problem) => {
+            payload.push(crate::problem_code(*problem));
+            KIND_CERTIFICATE_REFUSED
+        }
         FromFetcher::CookieQuestion { .. } | FromFetcher::ReachedQuestion { .. } | FromFetcher::CookieSet { .. } | FromFetcher::ClearSiteData(_) => {
             push_cookie_message(&mut payload, message)?
         }
@@ -530,6 +541,7 @@ pub fn read_from_fetcher(input: &mut dyn Read) -> Result<Option<FromFetcher>, Pr
             FromFetcher::Exchange { method, url, status, bytes, elapsed_us }
         }
         KIND_PROXY_FAILED => FromFetcher::ProxyFailed,
+        KIND_CERTIFICATE_REFUSED => FromFetcher::CertificateRefused(crate::problem_of(fields.u8()?).ok_or(ProtocolError::BadValue("certificate problem"))?),
         KIND_COOKIE_QUESTION | KIND_REACHED_QUESTION | KIND_COOKIE_SET | KIND_CLEAR_SITE_DATA => read_cookie_message(kind, &mut fields)?,
         other => return Err(ProtocolError::UnknownKind(other)),
     };
@@ -554,6 +566,8 @@ mod tests {
             FromFetcher::Pushing(true),
             FromFetcher::Exchange { method: "GET".into(), url: "https://a.example/100.tti".into(), status: 200, bytes: 512, elapsed_us: 1_234 },
             FromFetcher::ProxyFailed,
+            FromFetcher::CertificateRefused(CertificateProblem::Expired),
+            FromFetcher::CertificateRefused(CertificateProblem::Handshake),
             FromFetcher::CookieQuestion { id: 7, host: "a.example".into(), path: "/tt/100.tti".into(), secure: true, site: CookieSite::SameService },
             FromFetcher::CookieQuestion { id: 8, host: "b.example".into(), path: "/".into(), secure: false, site: CookieSite::CrossOriginForm },
             FromFetcher::ReachedQuestion { id: 9, host: "a.example".into() },

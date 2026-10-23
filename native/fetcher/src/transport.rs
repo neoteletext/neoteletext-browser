@@ -26,6 +26,7 @@ use embedded_io::ErrorKind;
 use neoteletext_web::port::{ConnectionId, LinkState, Received, Security, Transport};
 use neoteletext_web::proxy::Proxy;
 use neoteletext_web::url::IpAddress;
+use protocol::fetcher::CertificateProblem;
 
 /// How long a connection, with its TLS handshake, may take to open; the
 /// agent's own limit is the engine's `DEFAULT_CONNECT_TIMEOUT_US`, ten
@@ -62,9 +63,28 @@ struct Connection {
 }
 
 /// A connection did not open; the port is not told why (the engine's
-/// agent treats every failure alike), only whether the proxy is to blame.
+/// agent treats every failure alike), only whether the proxy is to blame
+/// and whether the certificate was refused (`certificate-errors.md`).
 struct Failure {
     proxy: bool,
+    certificate: Option<CertificateProblem>,
+}
+
+/// The kind of a failed secure handshake, from the TLS library's error
+/// (`certificate-errors.md` section 3).
+fn certificate_problem(error: &std::io::Error) -> CertificateProblem {
+    use rustls::CertificateError as Certificate;
+    match error.get_ref().and_then(|inner| inner.downcast_ref::<rustls::Error>()) {
+        Some(rustls::Error::InvalidCertificate(certificate)) => match certificate {
+            Certificate::Expired | Certificate::ExpiredContext { .. } => CertificateProblem::Expired,
+            Certificate::NotValidYet | Certificate::NotValidYetContext { .. } => CertificateProblem::NotYetValid,
+            Certificate::UnknownIssuer => CertificateProblem::UnknownIssuer,
+            Certificate::NotValidForName | Certificate::NotValidForNameContext { .. } => CertificateProblem::WrongHost,
+            Certificate::Revoked => CertificateProblem::Revoked,
+            _ => CertificateProblem::Invalid,
+        },
+        _ => CertificateProblem::Handshake,
+    }
 }
 
 /// A connection as the loop sees it.
@@ -86,6 +106,8 @@ pub struct Tcp {
     proxy: Option<Proxy>,
     /// The proxy failed a connection since this was last asked.
     proxy_failed: bool,
+    /// A certificate was refused since this was last asked, and why.
+    refused: Option<CertificateProblem>,
 }
 
 impl Tcp {
@@ -93,12 +115,17 @@ impl Tcp {
         // ring is the one provider built in, so the builder installs it.
         let roots = rustls::RootCertStore::from_iter(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
         let tls = rustls::ClientConfig::builder().with_root_certificates(roots).with_no_client_auth();
-        Self { fetch: None, push: None, live: None, tls: Arc::new(tls), wake, proxy, proxy_failed: false }
+        Self { fetch: None, push: None, live: None, tls: Arc::new(tls), wake, proxy, proxy_failed: false, refused: None }
     }
 
     /// Whether the proxy failed a connection since this was last asked.
     pub fn take_proxy_failure(&mut self) -> bool {
         std::mem::take(&mut self.proxy_failed)
+    }
+
+    /// The certificate refused since this was last asked, and why.
+    pub fn take_certificate_refusal(&mut self) -> Option<CertificateProblem> {
+        self.refused.take()
     }
 
     fn connection(&mut self, connection: ConnectionId) -> &mut Option<Link> {
@@ -113,12 +140,14 @@ impl Tcp {
     /// is noted here.
     fn settle(&mut self, connection: ConnectionId) -> &mut Option<Link> {
         let mut proxy_failed = false;
+        let mut refused = None;
         let slot = self.connection(connection);
         if let Some(Link::Connecting(outcome)) = slot {
             match outcome.try_recv() {
                 Ok(Ok(open)) => *slot = Some(Link::Open(open)),
                 Ok(Err(failure)) => {
                     proxy_failed = failure.proxy;
+                    refused = failure.certificate;
                     *slot = Some(Link::Failed);
                 }
                 Err(TryRecvError::Empty) => {}
@@ -126,6 +155,7 @@ impl Tcp {
             }
         }
         self.proxy_failed |= proxy_failed;
+        self.refused = refused.or(self.refused);
         self.connection(connection)
     }
 }
@@ -153,9 +183,13 @@ fn reach(proxy: Option<&Proxy>, host: &str, port: u16) -> Option<(TcpStream, IpA
 fn open(tls: &Arc<rustls::ClientConfig>, proxy: Option<&Proxy>, wake: &Wake, host: &str, port: u16, security: Security) -> Result<Connection, Failure> {
     // Any failure on the way to the proxy is the proxy's.
     fn own<E>(_: E) -> Failure {
-        Failure { proxy: false }
+        Failure { proxy: false, certificate: None }
     }
-    let (mut socket, ip, early) = reach(proxy, host, port).ok_or(Failure { proxy: proxy.is_some() })?;
+    // A failure of the secure handshake, and why.
+    fn refused(error: &std::io::Error) -> Failure {
+        Failure { proxy: false, certificate: Some(certificate_problem(error)) }
+    }
+    let (mut socket, ip, early) = reach(proxy, host, port).ok_or(Failure { proxy: proxy.is_some(), certificate: None })?;
     // An input message goes in its own packet at once (`interaction.md`
     // section 10).
     socket.set_nodelay(true).map_err(own)?;
@@ -175,11 +209,11 @@ fn open(tls: &Arc<rustls::ClientConfig>, proxy: Option<&Proxy>, wake: &Wake, hos
                 if connection.read_tls(&mut early).map_err(own)? == 0 {
                     break;
                 }
-                connection.process_new_packets().map_err(own)?;
+                connection.process_new_packets().map_err(|error| refused(&std::io::Error::new(std::io::ErrorKind::InvalidData, error)))?;
             }
             // A certificate that fails is a hard stop (requirement 7.11).
             while connection.is_handshaking() {
-                connection.complete_io(&mut socket).map_err(own)?;
+                connection.complete_io(&mut socket).map_err(|error| refused(&error))?;
             }
             Some(Box::new(connection))
         }
@@ -459,6 +493,42 @@ mod tests {
         let asked = String::from_utf8(server.join().unwrap()).unwrap();
         assert!(asked.starts_with("CONNECT news.example:80 HTTP/1.1\r\n"), "{asked}");
         assert!(matches!(tcp.state(ConnectionId::Fetch), LinkState::Open(IpAddress::V4([127, 0, 0, 1]))), "the peer is the proxy");
+    }
+
+    /// `certificate-errors.md` section 3: each of the TLS library's
+    /// certificate errors is told apart, and any other handshake failure is
+    /// one kind.
+    #[test]
+    fn certificate_failures_are_told_apart() {
+        use rustls::CertificateError as Certificate;
+        let of = |error: rustls::Error| certificate_problem(&std::io::Error::new(std::io::ErrorKind::InvalidData, error));
+        assert_eq!(of(rustls::Error::InvalidCertificate(Certificate::Expired)), CertificateProblem::Expired);
+        assert_eq!(of(rustls::Error::InvalidCertificate(Certificate::NotValidYet)), CertificateProblem::NotYetValid);
+        assert_eq!(of(rustls::Error::InvalidCertificate(Certificate::UnknownIssuer)), CertificateProblem::UnknownIssuer);
+        assert_eq!(of(rustls::Error::InvalidCertificate(Certificate::NotValidForName)), CertificateProblem::WrongHost);
+        assert_eq!(of(rustls::Error::InvalidCertificate(Certificate::Revoked)), CertificateProblem::Revoked);
+        assert_eq!(of(rustls::Error::InvalidCertificate(Certificate::BadSignature)), CertificateProblem::Invalid);
+        assert_eq!(of(rustls::Error::DecryptError), CertificateProblem::Handshake);
+        assert_eq!(certificate_problem(&std::io::Error::from(std::io::ErrorKind::ConnectionReset)), CertificateProblem::Handshake);
+    }
+
+    /// A server that does not speak TLS fails the handshake: the connection
+    /// fails and the refusal is reported once, as a failed handshake.
+    #[test]
+    fn a_failed_handshake_is_reported_once() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let server = std::thread::spawn(move || {
+            let (mut socket, _) = listener.accept().unwrap();
+            let _ = socket.write_all(b"HTTP/1.1 400 Bad Request\r\n\r\nnot a TLS server");
+        });
+        let mut tcp = Tcp::new(Arc::new(|| {}), None);
+        tcp.connect(ConnectionId::Fetch, "127.0.0.1", port, Security::Tls).unwrap();
+        assert!(matches!(settled(&mut tcp, ConnectionId::Fetch), LinkState::Failed));
+        assert_eq!(tcp.take_certificate_refusal(), Some(CertificateProblem::Handshake));
+        assert_eq!(tcp.take_certificate_refusal(), None, "once");
+        assert!(!tcp.take_proxy_failure());
+        server.join().unwrap();
     }
 
     /// The engine's E.102: the host's bytes that arrive with the proxy's
