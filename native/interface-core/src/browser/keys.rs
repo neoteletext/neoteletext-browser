@@ -135,6 +135,13 @@ impl Browser {
             }
             return true;
         }
+        self.shortcut_letter(text, modifiers, now)
+    }
+
+    /// A shortcut of the command key and a letter or sign typed as
+    /// `text`: the browser's own, each where the platform's browsers have
+    /// it. Returns whether it was one.
+    fn shortcut_letter(&mut self, text: &str, modifiers: Modifiers, now: u64) -> bool {
         match text.to_ascii_lowercase().as_str() {
             "l" => self.start_editing(),
             "a" => {
