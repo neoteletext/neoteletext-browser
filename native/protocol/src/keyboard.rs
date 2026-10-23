@@ -29,6 +29,13 @@ fn bytes_of(size: usize) -> usize {
     size.saturating_mul(size).div_ceil(8)
 }
 
+// The interface pipe's kinds of the phone keyboard (`interface/kinds.rs`
+// lists every kind of that pipe): strip input, then the trusted core's.
+pub(crate) const KIND_PHONE_PANEL: u8 = 28;
+pub(crate) const KIND_PHONE_FINISH: u8 = 29;
+pub(crate) const KIND_PHONE: u8 = 41;
+pub(crate) const KIND_PHONE_KEY: u8 = 42;
+
 const KIND_JOIN: u8 = 112;
 const KIND_STATE: u8 = 113;
 const KIND_KEY: u8 = 114;

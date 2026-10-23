@@ -1,6 +1,26 @@
 //! The kind bytes of the trusted core's messages to the interface and the
 //! interface's intents to the trusted core, and the flag bits of the
 //! strip's and a tab's state.
+//!
+//! The kinds of an optional area live in that area's file, so they are
+//! compiled out with it; they are listed here so that the numbering reads
+//! in one place:
+//!
+//! | Kind | Name | File |
+//! |---|---|---|
+//! | 11 to 15 | `KIND_PAGE_LINKS` to `KIND_ALIASES` | `links.rs` |
+//! | 24 | `KIND_POINT` | `links.rs` |
+//! | 25 | `KIND_TYPED` | `links.rs` |
+//! | 26 | `KIND_FOCUSED` | here: hyperlinks and typing both use it |
+//! | 27 | `KIND_INPUT` | `interaction.rs` |
+//! | 28 | `KIND_PHONE_PANEL` | `keyboard.rs` |
+//! | 29 | `KIND_PHONE_FINISH` | `keyboard.rs` |
+//! | 30 | `KIND_EDITING` | `interaction.rs` |
+//! | 36 | `KIND_CONFIRM` | `links.rs` |
+//! | 37 | `KIND_CANCEL` | `links.rs` |
+//! | 40 | `KIND_TYPING` | `interaction.rs` |
+//! | 41 | `KIND_PHONE` | `keyboard.rs` |
+//! | 42 | `KIND_PHONE_KEY` | `keyboard.rs` |
 
 // Trusted core to interface.
 pub(crate) const KIND_STRIP: u8 = 2;
@@ -11,12 +31,6 @@ pub(crate) const KIND_CHANNEL: u8 = 6;
 pub(crate) const KIND_PAGE: u8 = 8;
 pub(crate) const KIND_UPDATED: u8 = 9;
 pub(crate) const KIND_TAB_SOUNDING: u8 = 10;
-#[cfg(feature = "interaction")]
-pub(crate) const KIND_TYPING: u8 = 40;
-#[cfg(feature = "phone-keyboard")]
-pub(crate) const KIND_PHONE: u8 = 41;
-#[cfg(feature = "phone-keyboard")]
-pub(crate) const KIND_PHONE_KEY: u8 = 42;
 pub(crate) const KIND_SETTINGS: u8 = 43;
 pub(crate) const KIND_CONSOLE_UPDATE: u8 = 44;
 // Windows (`multiple-windows.md`, decision 72).
@@ -32,30 +46,14 @@ pub(crate) const KIND_NEW_TAB: u8 = 20;
 pub(crate) const KIND_OPENED: u8 = 21;
 pub(crate) const KIND_MUTE_TAB: u8 = 22;
 pub(crate) const KIND_MUTE_ALL: u8 = 23;
-#[cfg(feature = "links")]
-pub(crate) const KIND_POINT: u8 = 24;
-#[cfg(feature = "links")]
-pub(crate) const KIND_TYPED: u8 = 25;
 #[cfg(any(feature = "links", feature = "interaction"))]
 pub(crate) const KIND_FOCUSED: u8 = 26;
-#[cfg(feature = "interaction")]
-pub(crate) const KIND_INPUT: u8 = 27;
-#[cfg(feature = "phone-keyboard")]
-pub(crate) const KIND_PHONE_PANEL: u8 = 28;
-#[cfg(feature = "phone-keyboard")]
-pub(crate) const KIND_PHONE_FINISH: u8 = 29;
-#[cfg(feature = "interaction")]
-pub(crate) const KIND_EDITING: u8 = 30;
 // Interface to trusted core: strip input, kinds of their own
 // (`architecture.md` section 6.4).
 pub(crate) const KIND_NAVIGATE: u8 = 32;
 pub(crate) const KIND_BACK: u8 = 33;
 pub(crate) const KIND_FORWARD: u8 = 34;
 pub(crate) const KIND_BOOKMARK: u8 = 35;
-#[cfg(feature = "links")]
-pub(crate) const KIND_CONFIRM: u8 = 36;
-#[cfg(feature = "links")]
-pub(crate) const KIND_CANCEL: u8 = 37;
 pub(crate) const KIND_CONSOLE: u8 = 38;
 pub(crate) const KIND_HOME: u8 = 39;
 pub(crate) const KIND_CHANGE_SETTING: u8 = 45;

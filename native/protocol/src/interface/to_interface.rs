@@ -5,19 +5,19 @@
 use std::io::{Read, Write};
 
 use super::ToInterface;
-#[cfg(feature = "interaction")]
-use super::kinds::KIND_TYPING;
 use super::kinds::{
     KIND_BAR_VIEW, KIND_BOOKMARKS_VIEW, KIND_CHANNEL, KIND_CLOSE, KIND_CLOSE_WINDOW_VIEW, KIND_CONSOLE_UPDATE, KIND_COOKIES_VIEW, KIND_FRAME,
     KIND_HISTORY_VIEW, KIND_OPEN_WINDOW, KIND_PAGE, KIND_PAGE_CONTROLS, KIND_REMOTE, KIND_SETTINGS, KIND_STAR_VIEW, KIND_STRIP, KIND_SUGGESTIONS,
     KIND_TAB_LIST_VIEW, KIND_TAB_SOUNDING, KIND_TABS, KIND_TARGET, KIND_UPDATE_VIEW, KIND_UPDATED, KIND_WINDOW_VIEW,
 };
-#[cfg(feature = "phone-keyboard")]
-use super::kinds::{KIND_PHONE, KIND_PHONE_KEY};
 use super::pages::{FRAME_FIXED_BYTES, push_channel, push_frame, push_page, push_updated, read_channel, read_frame_head, read_page, read_updated};
 use super::strip::{push_strip, read_strip};
 use super::tabs::{push_channels, push_tabs, read_channels, read_tabs};
 use super::windows::{push_open_window, read_open_window, window_number};
+#[cfg(feature = "interaction")]
+use crate::interaction::KIND_TYPING;
+#[cfg(feature = "phone-keyboard")]
+use crate::keyboard::{KIND_PHONE, KIND_PHONE_KEY};
 use crate::{Fields, ProtocolError, console, controls, cookies, library, read_frame, settings, tail, write_frame};
 
 /// Writes a message to the interface.

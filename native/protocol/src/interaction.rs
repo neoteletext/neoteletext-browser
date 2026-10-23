@@ -14,6 +14,12 @@ use super::{Fields, ProtocolError};
 
 pub use interface_core::input::Intent;
 
+// The pipe's kinds of typing (`interface/kinds.rs` lists every kind of
+// the pipe): the interface's intents, then the trusted core's state.
+pub(crate) const KIND_INPUT: u8 = 27;
+pub(crate) const KIND_EDITING: u8 = 30;
+pub(crate) const KIND_TYPING: u8 = 40;
+
 /// Whether an intent is within the protocol's bounds: what the engine's
 /// writer writes and its reader reads back (REQ-INT-102, REQ-INT-103).
 fn check(intent: &Intent) -> Result<(), ProtocolError> {

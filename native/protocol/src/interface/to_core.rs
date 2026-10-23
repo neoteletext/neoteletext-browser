@@ -13,14 +13,14 @@ use super::kinds::{
     KIND_NEW_PRIVATE_TAB, KIND_NEW_TAB, KIND_NEW_WINDOW, KIND_OPENED, KIND_PAGE_CONTROL, KIND_RELOAD, KIND_SELECT_TAB, KIND_STAR, KIND_SUGGEST,
     KIND_SUGGESTION, KIND_TAB_LIST, KIND_TAB_TO_WINDOW, KIND_VISIBLE, KIND_WINDOW,
 };
-#[cfg(feature = "links")]
-use super::kinds::{KIND_CANCEL, KIND_CONFIRM, KIND_POINT, KIND_TYPED};
-#[cfg(feature = "interaction")]
-use super::kinds::{KIND_EDITING, KIND_INPUT};
-#[cfg(feature = "phone-keyboard")]
-use super::kinds::{KIND_PHONE_FINISH, KIND_PHONE_PANEL};
 use super::pages::{CELL_BYTES, push_cell, read_cell};
 use super::windows::{push_tab_to_window, push_window_number, window_intent};
+#[cfg(feature = "interaction")]
+use crate::interaction::{KIND_EDITING, KIND_INPUT};
+#[cfg(feature = "phone-keyboard")]
+use crate::keyboard::{KIND_PHONE_FINISH, KIND_PHONE_PANEL};
+#[cfg(feature = "links")]
+use crate::links::{KIND_CANCEL, KIND_CONFIRM, KIND_POINT, KIND_TYPED};
 use crate::{Fields, MAX_ADDRESS, MAX_TABS, ProtocolError, controls, cookies, library, push_key, push_keys, push_text, read_frame, settings, write_frame};
 
 /// Writes a message to the trusted core.

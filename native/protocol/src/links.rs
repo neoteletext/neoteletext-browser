@@ -39,6 +39,12 @@ pub const MAX_REMAPPED: usize = MAX_NUMBER_LINKS + MAX_ALIASES;
 /// words about it.
 pub const MAX_DESTINATION: usize = MAX_ADDRESS + 64;
 
+// Interface to trusted core (`interface/kinds.rs` lists every kind of the
+// pipe).
+pub(crate) const KIND_POINT: u8 = 24;
+pub(crate) const KIND_TYPED: u8 = 25;
+pub(crate) const KIND_CONFIRM: u8 = 36;
+pub(crate) const KIND_CANCEL: u8 = 37;
 // Trusted core to interface.
 const KIND_PAGE_LINKS: u8 = 11;
 const KIND_POINTING: u8 = 12;
