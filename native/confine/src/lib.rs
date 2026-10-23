@@ -53,6 +53,9 @@ mod unix;
 mod windows;
 
 pub use environment::environment;
+#[cfg(target_os = "linux")]
+#[doc(hidden)]
+pub use linux::probe;
 pub use process::{Input, Output, Process};
 pub use role::{Report, Role};
 pub use spawn::{Spawn, apply, spawn};

@@ -28,7 +28,8 @@ const ENVIRONMENT_NEEDED: &[&str] = &[
 const ENVIRONMENT_NEEDED: &[&str] = &[];
 /// What the interface needs besides: the window system, the user's
 /// folders for fonts and preferences, the locale, and its own
-/// diagnostics.
+/// diagnostics. Not the session bus's address: nothing in the interface
+/// uses D-Bus (decision 86).
 const ENVIRONMENT_WINDOW: &[&str] = &[
     "HOME",
     "USERPROFILE",
@@ -43,7 +44,6 @@ const ENVIRONMENT_WINDOW: &[&str] = &[
     "XDG_CONFIG_HOME",
     "XDG_DATA_HOME",
     "XDG_DATA_DIRS",
-    "DBUS_SESSION_BUS_ADDRESS",
     "LANG",
     "LC_ALL",
     "LC_CTYPE",

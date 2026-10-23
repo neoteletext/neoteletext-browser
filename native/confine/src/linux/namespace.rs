@@ -1,7 +1,7 @@
 //! The first two layers: no new privileges, and an empty network
-//! namespace.
+//! namespace, with a mount namespace of the helper's own.
 
-#![expect(unsafe_code, reason = "the C library calls for the network namespace and no-new-privileges (requirement 10.12)")]
+#![expect(unsafe_code, reason = "the C library calls for the namespaces and no-new-privileges (requirement 10.12)")]
 
 /// No new privileges: nothing started from here on can gain any, and
 /// Landlock and seccomp require it.
@@ -14,6 +14,8 @@ pub(super) fn no_new_privileges() -> Result<(), String> {
 
 /// An empty network namespace, if the kernel lets an unprivileged process
 /// make one: the process is then alone on a network with nothing on it.
+/// A mount namespace of its own comes with it, in which the interface and
+/// the sound helper cover the system's sockets (decision 86, `runtime`).
 /// The user namespace that makes that possible maps the user to
 /// themselves, so the sound server and the display still see who is
 /// connecting; unmapped, the process would be "nobody" to them, and
@@ -23,7 +25,7 @@ pub(super) fn network_namespace() -> Result<(), String> {
     let (uid, gid) = unsafe { (libc::getuid(), libc::getgid()) };
     // SAFETY: unshare takes flags only; the process has one thread here,
     // which CLONE_NEWUSER requires.
-    let result = unsafe { libc::unshare(libc::CLONE_NEWUSER | libc::CLONE_NEWNET) };
+    let result = unsafe { libc::unshare(libc::CLONE_NEWUSER | libc::CLONE_NEWNET | libc::CLONE_NEWNS) };
     if result != 0 {
         return Err(std::io::Error::last_os_error().to_string());
     }

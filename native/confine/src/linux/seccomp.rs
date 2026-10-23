@@ -42,6 +42,9 @@ pub(super) fn seccomp(role: Role, arch: TargetArch) -> Result<(), String> {
         libc::SYS_process_vm_readv,
         libc::SYS_process_vm_writev,
         libc::SYS_kcmp,
+        // A copy of another process's descriptor, which reaches whatever
+        // that process holds open (decision 86).
+        libc::SYS_pidfd_getfd,
         // Mounting and namespaces, after our own.
         libc::SYS_mount,
         libc::SYS_umount2,
@@ -104,7 +107,21 @@ pub(super) fn seccomp(role: Role, arch: TargetArch) -> Result<(), String> {
             .collect::<Result<Vec<_>, _>>()
             .map_err(|error| error.to_string())?;
         let other_family = SeccompRule::new(conditions).map_err(|error| error.to_string())?;
-        rules.insert(number(libc::SYS_socket), vec![other_family]);
+        let mut socket = vec![other_family];
+        // Of netlink, routing alone, which the resolver asks for the
+        // host's address families (decision 86); the rules of one call are
+        // alternatives, so this refuses every other netlink protocol.
+        let netlink = libc::AF_NETLINK as u64;
+        if allowed.contains(&netlink) {
+            let route = u64::try_from(libc::NETLINK_ROUTE).map_err(|_| "NETLINK_ROUTE")?;
+            let other_netlink = SeccompRule::new(vec![
+                SeccompCondition::new(0, SeccompCmpArgLen::Dword, SeccompCmpOp::Eq, netlink).map_err(|error| error.to_string())?,
+                SeccompCondition::new(2, SeccompCmpArgLen::Dword, SeccompCmpOp::Ne, route).map_err(|error| error.to_string())?,
+            ])
+            .map_err(|error| error.to_string())?;
+            socket.push(other_netlink);
+        }
+        rules.insert(number(libc::SYS_socket), socket);
         rules.insert(number(libc::SYS_listen), always());
         rules.insert(number(libc::SYS_accept4), always());
     }

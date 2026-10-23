@@ -3,7 +3,9 @@
 //!
 //! 1. No new privileges, so no program it might start could gain any.
 //! 2. For a helper with no network, an empty network namespace: nothing to
-//!    connect to at all.
+//!    connect to at all; and for the interface and the sound helper, which
+//!    open local sockets, their own `/run` and `/tmp` holding only the
+//!    sockets they need (decision 86).
 //! 3. Landlock, all of what [`landlock::LANDLOCK_ABI`] can say: the directories the
 //!    helper may read (none for a decoder) and no TCP for one with no
 //!    network.
@@ -26,6 +28,8 @@ use crate::{Report, Role};
 mod landlock;
 mod namespace;
 mod paths;
+pub mod probe;
+mod runtime;
 mod seccomp;
 
 /// Confines the calling process as `role` says, every layer or none: the
@@ -37,6 +41,10 @@ pub(crate) fn apply(role: Role, writable: Option<&Path>) -> Result<Report, Strin
     if !matches!(role, Role::Network | Role::Updater { .. }) {
         namespace::network_namespace().map_err(|error| format!("cannot make an empty network namespace: {error}"))?;
         report.layers.push(String::from("network namespace"));
+    }
+    if matches!(role, Role::Interface | Role::Sound) {
+        runtime::private_runtime(role).map_err(|error| format!("cannot make its own /run and /tmp: {error}"))?;
+        report.layers.push(String::from("private /run and /tmp"));
     }
     landlock::landlock(role, writable).map_err(|error| format!("cannot apply Landlock: {error}"))?;
     report.layers.push(String::from("Landlock"));

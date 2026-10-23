@@ -67,5 +67,82 @@ fn a_helper_without_its_namespace_does_not_run() {
 #[test]
 fn a_file_to_read_keeps_landlock_whole() {
     let line = probe("interface", &[("XAUTHORITY", "/etc/hostname")]);
-    assert!(line.starts_with("PROBE report=network namespace, Landlock, seccomp;"), "{line}");
+    assert!(line.starts_with("PROBE report=network namespace, private /run and /tmp, Landlock, seccomp;"), "{line}");
+}
+
+/// A runtime folder of the test's own, as `XDG_RUNTIME_DIR` names one,
+/// holding listening sockets named as the session bus, the Wayland display
+/// and the sound server name theirs. The listeners live as long as the
+/// value; a connection is queued without being accepted.
+struct Runtime {
+    folder: std::path::PathBuf,
+    _listeners: Vec<std::os::unix::net::UnixListener>,
+}
+
+impl Runtime {
+    fn new(name: &str) -> Self {
+        let folder = std::path::Path::new(env!("CARGO_TARGET_TMPDIR")).join(format!("probe-runtime-{name}"));
+        let _ = std::fs::remove_dir_all(&folder);
+        std::fs::create_dir_all(&folder).unwrap();
+        let listeners = ["bus", "wayland-0", "pipewire-0"].iter().map(|socket| std::os::unix::net::UnixListener::bind(folder.join(socket)).unwrap()).collect();
+        Self { folder, _listeners: listeners }
+    }
+
+    fn probe(&self, role: &str) -> String {
+        probe(role, &[("XDG_RUNTIME_DIR", self.folder.to_str().unwrap())])
+    }
+}
+
+/// Decision 86 (finding F-01): a fetcher, the phone keyboard and the
+/// updater may open no local socket, so none can reach the session bus,
+/// where systemd starts any program unconfined, the system bus, or an
+/// agent's socket; of netlink they keep routing alone, which the resolver
+/// asks; names still resolve. Before, `bus` connected, and so did an audit
+/// netlink socket.
+#[test]
+fn a_network_helper_reaches_no_local_socket() {
+    let runtime = Runtime::new("network");
+    for role in ["network", "updater"] {
+        let line = runtime.probe(role);
+        for expected in
+            ["bus=refused", "display=refused", "user-bus=refused", "system-bus=refused", "netlink-route=opened", "netlink-audit=refused", "resolve=resolved"]
+        {
+            assert!(line.contains(expected), "{role}: {expected}: {line}");
+        }
+    }
+}
+
+/// Decision 86: the interface sees no `/run` or `/tmp` but its own private
+/// ones, and its runtime folder holds only its display's socket, so it
+/// reaches neither the session nor the system bus. Before, `bus`
+/// connected, and the real session bus was there to reach.
+#[test]
+fn the_interface_reaches_its_display_and_no_bus() {
+    let runtime = Runtime::new("interface");
+    let line = runtime.probe("interface");
+    assert!(line.starts_with("PROBE report=network namespace, private /run and /tmp, Landlock, seccomp;"), "{line}");
+    for expected in ["display=connected", "bus=absent", "sound=absent", "user-bus=absent", "system-bus=absent"] {
+        assert!(line.contains(expected), "{expected}: {line}");
+    }
+}
+
+/// Decision 86: the sound helper reaches its sound server and no bus.
+#[test]
+fn the_sound_helper_reaches_its_server_and_no_bus() {
+    let runtime = Runtime::new("sound");
+    let line = runtime.probe("sound");
+    assert!(line.starts_with("PROBE report=network namespace, private /run and /tmp, Landlock, seccomp;"), "{line}");
+    for expected in ["sound=connected", "bus=absent", "display=absent", "user-bus=absent", "system-bus=absent"] {
+        assert!(line.contains(expected), "{expected}: {line}");
+    }
+}
+
+/// Decision 86: no helper may take a copy of another process's
+/// descriptors (`pidfd_getfd`). Before, a fetcher took one of its own.
+#[test]
+fn no_helper_takes_another_process_descriptor() {
+    for role in ["decoder", "network", "interface", "sound", "updater"] {
+        let line = probe(role, &[]);
+        assert!(line.contains("steal=refused"), "{role}: {line}");
+    }
 }
