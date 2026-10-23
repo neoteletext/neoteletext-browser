@@ -8,10 +8,9 @@ Decisions 52 and 53 are recorded in `docs/architecture.md` section 2 for the own
 
 ### Waits on packaging
 
-The design of installation and updates on every desktop is `docs/installation-and-updates.md` (adopted 22 October 2026, decision 54); it settles the first item below once built, and the second waits on it.
+The installer and updater (decision 54, built as decisions 68 to 77, 23 October 2026) settled the first item that stood here: the Windows installer grants `ALL APPLICATION PACKAGES` read and execute on `versions\`, and the helpers start from the installed folder (the end-to-end test). What is left:
 
-- **Windows: helpers run from a per-user folder** that grants containers nothing were seen to start (a decoder, 22 October 2026) but not run through a whole session; the installer is to grant `ALL APPLICATION PACKAGES` read on the program folder, as Program Files does, until that is measured. A container that cannot start no longer falls back: the process does not run (decision 58).
-- **Windows: the interface can read the user's files.** It runs at low integrity without an AppContainer, since it needs the desktop; the AppContainer for a windowed process is a packaging-time question (the window station must grant the container). Sound no longer stands in the way: it is the sound helper's (decision 55).
+- **Windows: the interface can read the user's files.** It runs at low integrity without an AppContainer, since it needs the desktop; a container for a windowed process needs the window station and desktop to grant it, which was not tried (decision 73 keeps the restricted token). Sound no longer stands in the way: it is the sound helper's (decision 55).
 
 ### Waits on the engine (its own process)
 
@@ -21,7 +20,7 @@ The design of installation and updates on every desktop is `docs/installation-an
 
 ### Waits on a machine or a hand
 
-- **Linux on a default Ubuntu from 24.04** (unprivileged user namespaces restricted by AppArmor): the browser refuses to run there since decision 58, as `a_helper_without_its_namespace_does_not_run` shows by a filter; no such machine was run, and the AppArmor profile that would let it run is the owner's question (`docs/sandboxing.md` section 8.3). Kernels before 6.10 and 32-bit Arm are refused likewise, by reading.
+- **Linux on a default Ubuntu from 24.04** (unprivileged user namespaces restricted by AppArmor): the browser refuses to run there without the profile it ships (decision 72), and runs confined with it, as measured on the Linux host with the restriction turned on (23 October 2026); a desktop Ubuntu 24.04 itself was not run. Kernels before 6.10 and 32-bit Arm are refused likewise, by reading.
 - **macOS, by hand under the profiles:** typing into a channel (text-input services) and paste (the pasteboard) were not driven; the Dock menu, fonts with non-Latin titles, name resolution and sound were. Anything denied shows as a crash; `sudo log show --predicate 'sender == "Sandbox"'` names it.
 - **The audio device's stop and start** was watched on macOS only; on Windows and Linux the confined sound helper played a tone and reported the channel sounding and then silent (`a_tone_plays_through_the_confined_sound_helper`), but the device's own stop was not watched.
 - **Requirement 3.1's test of the process list** is not written: the processes were seen by hand on macOS (`ps`), Linux and Windows. A test needs the browser started whole, with a window, in each platform's desktop session.
@@ -38,7 +37,7 @@ The design of installation and updates on every desktop is `docs/installation-an
 - **By hand:** the cookies panel, its settings row and the clearing switches were driven by tests; a real sign-in on a channel that sets cookies, kept across a restart, waits on a channel that does (the reference channel sets none).
 - **The Keychain may ask an unsigned build** whether it may read the cookie file's key, after each rebuild, and the browser's start waits for the answer; a signed release is not asked (`docs/cookies.md` section 15 item 5).
 - **Linux without a Secret Service** (a minimal desktop, or none) keeps cookies for the run only, and says so in the panel. The Linux gate host has GNOME Keyring installed for the test (22 October 2026).
-- **Windows: no channel on loopback.** A fetcher's AppContainer cannot reach `localhost`; a loopback exemption is a packaging question (`docs/cookies.md` section 15 item 11).
+- **Windows: no channel on loopback.** A fetcher's AppContainer cannot reach `localhost`; the exemption (`CheckNetIsolation LoopbackExempt -a -p=<the fetcher container's SID>`; the tool refuses the container's name) needs an administrator, so a per-user installer does not give it (decision 73); it is the owner's one command, and the settings panel does not yet say so (`docs/cookies.md` section 15 item 11).
 - **Device Bound Session Credentials** wait on the engine's REQ-WEB-017.
 - **Three advisories ignored narrowly** in `native/deny.toml` (RUSTSEC-2026-0370 to 0372): `zvariant`, `zvariant_derive` and `zbus_names` were merged into `zbus` 6.0 on 16 October 2026; the Linux Secret Service client under `keyring` is still on `zbus` 5. Remove the three when it moves.
 
@@ -58,3 +57,16 @@ Built in rapid iteration and recorded (decision 63; requirements 11.2, 11.6, 12.
 - **The macOS window:** a check that the window is on the screen needs a desktop session; for now by hand, as on 23 October 2026.
 - **History as Chrome's (decision 64):** a row's menu lacks Chrome's "Remove bookmark".
 - **The latency budget under load:** `keys_round_trip_and_pages_reach_the_screen_within_budget` failed with the key-to-page median at 2.05 ms and 3.22 ms against the 2 ms `WAKE_BUDGET` while the machine's load average was about 30, and passed alone at other moments; it is the test, not the code, that the load decides. Whether its budget should allow for a loaded machine, or the gate run it alone, is to settle.
+
+
+## From the installer and updater work of 23 October 2026 (decisions 68 to 77)
+
+Built while the owner was away; the questions and answers are `IMPLEMENTATION-LOG.md`'s section "Installer and updater". Owed:
+
+- **The owner's:** the Apple Developer ID and notarisation, the Windows signing certificate in its hardware module, the update host, the hardware root keys and their ceremony, the timestamp machine (`PENDINGTASKSFORANDREW.md`). Until then `native/release-identity/production/` names the host alone and a production build checks nothing. The macOS end-to-end test signs ad hoc with an identifier requirement; a Developer ID requirement and notarised stapling are proven only with the certificate.
+- **By hand:** the macOS offer to move a translocated bundle (a CoreFoundation alert, which a test cannot press); the Windows uninstaller's message boxes from Settings › Apps (the end-to-end test runs the removal without them); the Start menu shortcut opened by a click.
+- **Not run:** the Linux release build on the C library 2.28 (`scripts/release/build-linux.sh`, which needs an AlmaLinux 8 image); macOS 11 and Windows 10 1703, the oldest the design names; the conformance suite `tuf-conformance` (a Python program; its cases are the browser's own tests).
+- **The stub is 233,864 bytes,** not the design's few kilobytes (`IMPLEMENTATION-LOG.md` row 26).
+- **The shortcut's item list names folders in ASCII:** a user folder with other characters is given as `?` there and in full in the link information; whether Windows then resolves it was not measured.
+- **No icon** of the browser's own on any desktop: the art is the owner's.
+- **The full gate's Windows stage** does not run the installer's end-to-end test (`scripts/updates-e2e.ps1`); it is run by hand in the virtual machine (`DEVELOPMENT.md` section 12.1), as the Windows build is.

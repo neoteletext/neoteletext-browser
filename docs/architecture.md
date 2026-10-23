@@ -114,6 +114,23 @@ Each decision was made by the owner on the date given. Requirements in `requirem
 | Decision 64 | 23 October 2026 | **History follows Chrome's rules**, on the owner's instruction "model the history rules on chrome", each read from Chrome's source (`history-and-bookmarks.md` section 16): 1. a reload, the address shown entered again, or a link to it, adds no entry and counts no visit or typed visit, but moves the last visit; 2. the Back and Forward lists hold 12 entries, then up to 5 chapter stops where the host changes, then "Show all history"; a tab keeps 50 entries; 3. removing history removes the matching entries from the tabs' lists, never the one a tab is at, and from the closed tabs; 4. the closed tabs are kept between runs; 5. clearing offers the last 15 minutes; 6. a history row's menu offers "More from this site" (a `host:` search) and "Remove from history". Kept where Chrome has nothing to model: the history file's bounds. "Remember history" and "Forget this channel", which Chrome lacks, and the host for chapter stops went to the owner (decision 65). Requirements 11.6, 20.4, 20.6, 20.9, 20.10, 20.21 and 20.23 amended. | Built 23 October 2026; the session file is version 2, so a session saved by an earlier build is not restored once; Chrome's "Remove bookmark" in a row's menu not built |
 | Decision 65 | 23 October 2026 | **What Chrome lacks goes, and chapter stops change at each host**, the owner's answers to decision 64's questions ("1 no 2 no 3 you decide"): 1. "Remember history" is removed: every page of an ordinary tab is recorded, and a private tab is the way to keep none (requirement 20.7 withdrawn); 2. "Forget this channel" is removed: "More from this site" finds a site's rows to select and remove (requirement 20.6 amended); 3. left to the implementer: chapter stops keep changing at each host, since shipping the Public Suffix List for one menu adds data to keep current for no gain in safety (`cookies.md` section 1.1, `history-and-bookmarks.md` section 16). The protocol's codes for the two (setting change 8, history request 5) are not reused. | Built 23 October 2026 |
 
+### Decisions of the installer and updater work (provisional numbers)
+
+Taken on 23 October 2026 while the owner was away, as the owner had instructed ("do everything, do not stop, make the decisions you need"), in the branch that built decision 54. **Their numbers are provisional:** they follow the main branch's decision 67 and are to be renumbered where they land when merged; every citation of them is in this block, `installation-and-updates.md`, its security analysis, `requirements.md` section 13, `IMPLEMENTATION-LOG.md`'s section "Installer and updater" and `PENDINGTASKSFORANDREW.md`. Each is for the owner to confirm.
+
+| Number | Date | Decision | Now |
+|---|---|---|---|
+| Decision 68 | 23 October 2026 | **The installer and the updater, built on every desktop** as decision 54 adopted them (`installation-and-updates.md`): the launcher (`native/launcher`), the updater (`native/tuf/updater`), the Windows stub and installer (`native/stub`, `native/installer`), the release tool (`native/tuf/release`), and the core's side of updates (`core/src/updates.rs`). The updater and the release tool are a workspace of their own, `native/tuf`, so `tough`'s dependencies never reach the browser's crates through Cargo's feature unification (a second `rustls` provider makes `ClientConfig::builder()` panic). The departures from the design are its section 14. Taken while the owner was away. | Built 23 October 2026; owner to confirm |
+| Decision 69 | 23 October 2026 | **Libraries:** `tough` 0.24.0 (MIT or Apache-2.0) and what it brings, `tokio` on one thread, `aws-lc-rs`, `serde_json`, `jiff` among them, in `native/tuf` alone; `miniz_oxide` 0.9.1 (MIT, Zlib or Apache-2.0) for the release files' DEFLATE, with gzip's framing written to RFC 1952; `rustix` 1.1.5 (Apache-2.0 WITH LLVM-exception, Apache-2.0 or MIT), already in the tree, named for the folder exchange and a process group's end; `rcgen` 0.14.10 (MIT or Apache-2.0) in the release tool, for test certificates only. Every licence checked by `cargo deny`. Taken while the owner was away. | Owner to confirm |
+| Decision 70 | 23 October 2026 | **A fourth crate with unsafe code, `os-install`** (requirement 10.12 amended): CoreFoundation's alert on macOS, for the launcher, which has no window; on Windows `WinVerifyTrust` with the signer certificate's public key pinned, the per-user uninstall entry in the registry, and a message box. `confine`'s Windows module, already permitted, gains the grant to `ALL APPLICATION PACKAGES` and the removal of the containers' profiles. Taken while the owner was away. | Owner to confirm |
+| Decision 71 | 23 October 2026 | **The release's identity is built in** (`native/release-identity`): the update host and its port, a test host's certificate root, The Update Framework's first root, the Linux release key, the macOS designated requirement and the Windows signer's key, read at build time from `production/` or from a test identity's folder, never at run time (decision 58). Until the key ceremony the production identity names only `update.neoteletext.com:443`, so a production build checks, stages and accepts nothing. Taken while the owner was away. | Owner to confirm |
+| Decision 72 | 23 October 2026 | **Linux and AppArmor** (`sandboxing.md` section 8.3, the owner's question of decision 58): a stated requirement, not a system-wide package. Every Linux version carries `neoteletext.apparmor`, which lets the browser's programs where a per-user installation keeps them make a user namespace and changes nothing else; `neoteletext --install` prints the two administrator commands that install it where unprivileged user namespaces are restricted; the browser still refuses to run without its namespace. Taken while the owner was away. | Owner to confirm |
+| Decision 73 | 23 October 2026 | **Windows packaging:** the installer grants `ALL APPLICATION PACKAGES` read and execute on `versions\` (no administrator; the user owns the folder), and the launcher copies each version it accepts into `versions\` rather than renaming it, since what the updater wrote carries its container's full control and the low integrity label; the helpers' `AppContainer` profiles are made at their first start and removed by the uninstaller; a fetcher's loopback exemption needs an administrator and is not given, so a channel on the same computer needs the owner's one command (`CheckNetIsolation LoopbackExempt -a -p=<SID>`, the fetcher container's SID, since the tool refuses the container's name); the interface keeps its restricted token at low integrity (`installation-and-updates.md` section 14). Taken while the owner was away. | Owner to confirm |
+| Decision 74 | 23 October 2026 | **macOS's update files are apart from the settings,** in `~/Library/Application Support/NeoTeletext Updates/`, since the confined trusted core may write its settings folder. Taken while the owner was away. | Owner to confirm |
+| Decision 75 | 23 October 2026 | **The launcher and the broker:** the launcher stays the broker's parent and alone writes the state, committing a trial when the broker writes `healthy`; a trial that ends badly is counted and the choice made again in the same start; one that says nothing in 45 seconds is ended with every process it started; an exclusive lock guards every change; an unreadable state is rebuilt from what is installed. A version is healthy when its window's first frame reached the screen, its settings were read and no decoder ended in error, within 30 seconds. On macOS and Windows the version accepted is read from a mark in the broker's signed bytes. Taken while the owner was away. | Owner to confirm |
+| Decision 76 | 23 October 2026 | **Updates in the browser:** "Check for updates" (`updates on` in `settings.txt`, on by default); the settings panel shows the version, the trusted core's line about updates and "Install <version>"; the strip says the offer once as a notice; nothing is downloaded until Install is pressed; "Updates unavailable" after the timestamp's 7 days without a successful check; the updater goes through the user's proxy. Taken while the owner was away. | Owner to confirm |
+| Decision 77 | 23 October 2026 | **Removal** (requirement 13.20): `--uninstall` on the terminal on Linux and macOS (and on macOS a bundle moved to the Bin, which leaves the settings, as macOS does), asking before the settings go; on Windows from Settings › Apps, asking with message boxes, a copy of the launcher in `%TEMP%` doing the removal and staying there. Taken while the owner was away. | Owner to confirm |
+
 ---
 
 ## 3. Concepts and terms
@@ -515,7 +532,7 @@ The window is decision 35's, drawn by the interface process from the interface c
 
 ## 12. The application update mechanism
 
-Unchanged from the earlier design (`prototypes/docs/architecture.md` section 12), and not built. In brief:
+`installation-and-updates.md` is the design (decision 54), built on 23 October 2026 (decisions 68 to 77 of that work): a launcher that chooses, accepts, tries, commits and rolls back versions; a confined updater that verifies The Update Framework's repository and stages; per-user installs with no administrator on every desktop. In brief, as the earlier design (`prototypes/docs/architecture.md` section 12) put it:
 
 - **No failure leaves the user without a working application:** a new version is installed beside the running one, verified against The Update Framework metadata and the platform's code signature, switched to by one atomic rename of a pointer, and rolled back automatically if it fails its health check or fails to start twice. Profiles are copied and migrated, never changed in place.
 - **Verification** is The Update Framework (decision 16), implemented by `tough` (decision 24): separate root, targets, snapshot and timestamp roles, a threshold of root keys held offline by three people, expiring metadata, versions that only increase.
@@ -568,6 +585,17 @@ neoteletext/
     interface/              the interface process (neoteletext-interface): winit, softbuffer, the image reader
     sound/                  the sound helper (neoteletext-sound): audio.rs, the mixers and the output device
     site/                   a development tool, not shipped (neoteletext-site): builds and serves a test channel
+    update/                 what the launcher, the updater, the installer and the release tool share: versions,
+                            the platforms' release files, the manifest, the launcher's state, gzip, the release
+                            key's signatures, the version mark, the updater's messages, safe writes, acceptance
+    release-identity/       the release's identity, built in at build time (production/, or a test identity)
+    launcher/               the launcher (neoteletext-launcher): versions, trials, rollback, the broker's start,
+                            Linux's --install and every desktop's --uninstall
+    os-install/             the unsafe calls installing needs: CoreFoundation's alert, WinVerifyTrust, the registry
+    stub/                   the Windows stub, NeoTeletext.exe, which starts launcher-a.exe or launcher-b.exe
+    installer/              the Windows installer, NeoTeletext-Setup.exe, carrying its release
+    tuf/                    a workspace of its own: updater/ (neoteletext-updater, confined, with tough) and
+                            release/ (the release tool and a test HTTPS host), and their fuzz targets
     fuzz/                   fuzz targets for every reader of input from outside a process (nightly, outside the workspace)
   docs/                     this document, the requirements, the security analysis, the design record
   scripts/check.sh          the one check script: "commit" before each commit, "full" before each push
@@ -576,7 +604,7 @@ neoteletext/
   rust-toolchain.toml       the pinned compiler
 ```
 
-Still to come: the launcher and updater (section 12).
+`scripts/updates-e2e.sh` and `scripts/updates-e2e.ps1` are the end-to-end tests of installation and updates, run by hand; `scripts/release/` holds the release procedure's steps (`installation-and-updates.md` section 10).
 
 ---
 
@@ -602,6 +630,7 @@ Still to come: the launcher and updater (section 12).
 - Cookies held by the trusted core, one jar for ordinary tabs and one for private, fetchers asking per request; kept between runs sealed under a key in the platform's secret store; the cookies panel, its settings, clearing with history and `Clear-Site-Data` (`cookies.md`, decision 62, 22 October 2026).
 - Reload, closing a tab with the middle button, cookie management in the developer console, and tips on every icon and symbol (decision 63, 23 October 2026).
 - History following Chrome's rules (`history-and-bookmarks.md` section 16, decision 64, 23 October 2026): reloads counted as Chrome counts them, lists of 12 with chapter stops, removal reaching the tabs' lists, closed tabs kept between runs, the last 15 minutes, a row's menu.
+- Installation and updates on every desktop (`installation-and-updates.md`, decisions 54 and 68 to 77 of that work, 23 October 2026): the launcher, the confined updater with `tough`, the Windows stub and installer, Linux's `--install`, removal, the release tool, and the core's offer, setting and health check, proved end to end with test keys on macOS, Windows and Linux.
 
 **Not built:**
 
@@ -613,7 +642,7 @@ Still to come: the launcher and updater (section 12).
 - Fonts from channels and the font helper; discovery.
 - Screen readers, the menu bar and its shortcuts, the clipboard, multiple windows, reduced motion.
 - The hostile interface harness.
-- The updater and launcher.
+- A release signed by the owner's keys: the certificates, the hardware keys, the update host and the key ceremony are the owner's (`PENDINGTASKSFORANDREW.md`); the Linux release build on the C library 2.28; an icon of the browser's own.
 - Builds on phones and microcontroller targets.
 
 ---

@@ -44,6 +44,7 @@ The owner accepted the system's LGPL `libasound` for sound on Linux on 19 Octobe
 Measured on 20 October 2026 from `cargo metadata --all-features` and from the built programs.
 
 - **Crates:** about 300, all under the licences of section 2, and on Windows `clipboard-win` and `error-code` under BSL-1.0 (section 2). Most are MIT or Apache-2.0. Besides those are the 22 ICU4X crates (Unicode-3.0), which `parley` and `winit` use for text, and `tiny-skia` (BSD-3-Clause). The engine's crates are MIT.
+- **The installer and updater's crates** (23 October 2026, decision 69 of that work; `cargo deny` in both workspaces): in the browser's workspace `miniz_oxide` (MIT, Zlib or Apache-2.0) and `rustix` (Apache-2.0 WITH LLVM-exception, Apache-2.0 or MIT), named directly; in the updater's own workspace, `native/tuf`, `tough` (MIT or Apache-2.0) and what it brings, among them `tokio` (MIT), `serde_json` (MIT or Apache-2.0), `jiff` (MIT or Unlicense, taken under MIT), `aws-lc-rs` (ISC and Apache-2.0 or ISC) and `aws-lc-sys`, the AWS-LC library built from source (ISC, Apache-2.0, MIT and BSD-3-Clause, every part permitted); and `rcgen` (MIT or Apache-2.0), in the release tool only, for test certificates.
 - **Fonts:** Roboto and Open Sans (SIL OFL 1.1).
 - **Linux system libraries,** linked dynamically and not shipped:
   - glibc (`libc`, `libm`): LGPL-2.1-or-later

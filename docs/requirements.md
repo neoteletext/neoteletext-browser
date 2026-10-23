@@ -695,6 +695,7 @@
 - **Source:** Architecture; decision 39.
 - **Verification:** Check: the workspace lints forbid `unsafe_code`; `dock-menu` denies it and allows it only in `src/mac.rs`, `web-opener` only in `src/windows.rs`, and `confine` only in `src/linux.rs`, `src/unix.rs` and `src/windows.rs`, each with Clippy's `undocumented_unsafe_blocks`.
 - **State:** Met; amended 22 October 2026 (decisions 52 and 56) for `confine`.
+- *Amended 23 October 2026 (decision 70 of the installer work, number provisional):* a fourth exception, the `os-install` crate, whose macOS module calls CoreFoundation's alert for the launcher, which has no window, and whose Windows module calls `WinVerifyTrust` and reads the signer's certificate, writes and removes the per-user uninstall entry, and shows a message box (`installation-and-updates.md` sections 4 and 5). It denies `unsafe_code` everywhere else and allows it only in `src/macos.rs` and `src/windows.rs`. `confine`'s Windows module also grants `ALL APPLICATION PACKAGES` read on the programs' folder and removes the containers' profiles. The launcher, the updater, the installer, the stub and the release tool forbid unsafe code; the folder exchange is `rustix`'s safe interface.
 
 ### Requirement 10.13: The interface process ends on a broken message
 - **Statement:** The interface process must end at the first malformed message from the trusted core, rather than try to continue.
@@ -865,7 +866,72 @@ Requirements 13.1 to 13.13 are unchanged from the earlier design, and are stated
 | 13.12 | Automated tests of every failure on every desktop |
 | 13.13 | Phones update only through their stores |
 
-- **State of all of section 13:** Not met: the updater and launcher are not built.
+- **State of 13.1 to 13.13**, 23 October 2026 (`installation-and-updates.md` sections 14 and 15; decisions 68 to 77 of the installer work, numbers provisional): built on every desktop. 13.1 to 13.5: `a_staged_version_is_accepted_tried_and_committed`, `a_broken_version_is_rolled_back_after_two_starts` (crash, hang and silence), `a_version_not_signed_or_not_whole_is_refused`, `a_lost_state_is_rebuilt_from_what_is_installed` and `the_launcher_killed_at_every_step_still_starts_and_finishes_the_update` (`native/launcher/tests/launcher.rs`), on macOS, Linux and Windows; the state written to a new file, flushed and renamed (`update::files::write_atomically`). 13.6: `a_new_format_copies_and_the_old_file_is_kept_as_it_was` and the settings read through the profile rule. 13.7: the macOS bundle exchanged with `renamex_np`, Linux's launcher folder with `renameat2` (`a_launcher_release_exchanges_the_launcher_folder`), Windows's stub and two copies; the release tool's launcher-unchanged check (`a_changed_launcher_needs_a_launcher_release`). 13.8: `tough` 0.24 in the confined updater, the root's threshold, expiry, version and rotation tested in `native/tuf/release/tests/updates.rs`; the root keys built in through the release identity. 13.9: the release tool signs with hardware keys through a program and names an absent root holder's key by its public half; the key ceremony is the owner's (not met until it is held). 13.10: one launcher scheme on all three desktops. 13.11: the updater alone reaches the update host, its sandbox one port (`the_updater_reaches_one_port_and_writes_only_its_staging_folder`, Linux and macOS); the host's name pinned by TLS and by the transport; `update.neoteletext.com` not yet chosen. 13.12: the tests above and `the_updater_killed_at_every_step_still_stages_whole`, run in the gates on macOS and Linux and by hand on Windows, and the end-to-end runs of section 15 of the design. 13.13: no phone builds yet.
+
+### Requirement 13.7 (amended)
+*Amended 23 October 2026 (decisions 54 and 68):* on macOS the launcher is the bundle's main executable, inside the bundle, exchanged with it, and the release tool's `check` refuses a launcher that differs from the last launcher release's unless the release says it is one (`installation-and-updates.md` sections 4.1 and 7).
+
+### Requirement 13.8 (amended)
+*Amended 23 October 2026 (decisions 54, 68 and 69):* `tough` 0.24 runs in the confined updater, in a workspace of its own (`native/tuf`); its first trusted root is the release identity's (decision 71).
+
+### Requirement 13.10 (amended)
+*Amended 23 October 2026 (decision 54):* "the launcher scheme" is `installation-and-updates.md` section 3's model on every desktop.
+
+### Requirement 13.14: Two independent signatures
+- **Statement:** A version must run only after the updater verified it against The Update Framework's metadata and the launcher verified it was signed by the platform's pinned signer: the macOS bundle's designated requirement, every Windows program's Authenticode signer's public key, or on Linux the release key's signature of the manifest and of every file. The launcher must also find the folder holding exactly the files the release's manifest names, each of its length and SHA-256, and the version newer than the current one and not known bad, read from what the platform signed.
+- **Reason:** Shipping malware then needs both the targets key and a platform key, held apart (`installation-and-updates.md` section 5).
+- **Source:** Decision 54; decisions 68 and 75 of the installer work.
+- **Verification:** Test: a release the targets key signed but the platform's signer did not is refused; a release with a file changed, missing or extra is refused.
+- **State:** Met for the build, 23 October 2026: `a_complete_signed_version_is_accepted_and_every_fault_refused` (`update::accept`, the Linux signer) and `a_version_not_signed_or_not_whole_is_refused`; end to end with each platform's own check and test signers (macOS ad hoc with an identifier requirement, a test Authenticode certificate, a test release key), section 15 of the design. Not met until the owner's certificates and release key exist.
+
+### Requirement 13.15: Installation without an administrator
+- **Statement:** The browser must install in the user's own folders with no administrator on every desktop: per user on Windows (`%LOCALAPPDATA%\Programs\NeoTeletext`) and Linux (`~/.local/share/neoteletext`), in `/Applications` for an administrator on macOS, else `~/Applications`. Nothing it installs may need elevation to update.
+- **Reason:** An elevated updater would be the most powerful process doing the most dangerous thing (`installation-and-updates.md` section 4.2).
+- **Source:** Decision 54.
+- **Verification:** Demonstration on each desktop, as an ordinary user; review of what the installer writes.
+- **State:** Met, 23 October 2026: `NeoTeletext-Setup.exe` in a limited desktop session, `neoteletext --install` and the macOS bundle copied, each in section 15 of the design. On a Linux that restricts user namespaces the browser runs only once an administrator installs its AppArmor profile (requirement 13.16).
+
+### Requirement 13.16: Supported systems
+- **Statement:** Releases must start on macOS 11 and later; Windows 10 version 1703 and later; and Linux with the C library 2.28 and later, kernel 6.10 with Landlock, and unprivileged user namespaces allowed for the browser's programs, which on a system that restricts them (Ubuntu from 24.04) means its AppArmor profile, `neoteletext.apparmor`, installed once by an administrator.
+- **Reason:** Every sandbox layer is required (decision 58), and a per-user install cannot install an AppArmor profile (`sandboxing.md` section 8.3).
+- **Source:** Decision 54; decision 72 of the installer work.
+- **Verification:** Check: the release build's newest C library symbol; demonstration on each system's oldest version.
+- **State:** Partly met, 23 October 2026: the profile ships with every Linux version and `--install` says how to install it; the C library 2.28 build is a script not yet run (it needs an AlmaLinux 8 image); macOS 11 and Windows 10 1703 not run.
+
+### Requirement 13.17: No forced restart, nothing imposed
+- **Statement:** The browser must offer a newer version (once in the strip, and in the settings panel while it stands) and download and stage nothing until the user accepts. A staged version must start at the browser's next start, never by restarting it under the user. "Check for updates", on by default, must stop the updater from starting at all when off.
+- **Reason:** The owner's answer to section 12, item 9 of the design: updates are suggested, never imposed.
+- **Source:** Decision 54; decision 76 of the installer work.
+- **Verification:** Test.
+- **State:** Met, 23 October 2026: `a_newer_version_is_offered_once_and_downloaded_only_when_accepted` and `the_panel_offers_an_update_only_when_the_trusted_core_does`; the launcher accepts staged versions only at its start.
+
+### Requirement 13.18: The updater is confined
+- **Statement:** The updater must run confined like the other helpers, every layer required: TCP to one port only, the update host's or the user's proxy's, the system's name resolution, and its staging folder written; no other file written, no program started, no secret of the user's held. Its folder and port must be the broker's rules', never the trusted core's word.
+- **Reason:** It is the process that parses the update host's data (`installation-and-updates.md` section 8.1).
+- **Source:** Decision 54.
+- **Verification:** Test on each desktop.
+- **State:** Met, 23 October 2026: `the_updater_reaches_one_port_and_writes_only_its_staging_folder` on Linux (Landlock's port rule and the fetcher's socket families) and as a profile on macOS; on Windows an `AppContainer` with the internet client capability, which cannot be told a port, the host pinned by TLS; the updater confined end to end on each desktop (section 15 of the design).
+
+### Requirement 13.19: The health check decides
+- **Statement:** A trial version must be committed only when, within 30 seconds of its start, its window's first frame has reached the screen, its settings were read or found absent, and no decoder ended in error; one that is not healthy within 45 seconds must be ended with every process it started, and counted as a failed start.
+- **Reason:** The check is what the user would notice: a window that draws, with sandboxes that hold (`installation-and-updates.md` section 3.2).
+- **Source:** Decision 54; decision 75 of the installer work.
+- **Verification:** Test.
+- **State:** Met, 23 October 2026: `a_version_is_healthy_only_when_it_drew_read_its_settings_and_lost_no_helper`, and the launcher's rollback of a version that hangs or crashes.
+
+### Requirement 13.20: Uninstall
+- **Statement:** Removing the browser must remove its programs, its update files and its menu entries, and must ask before removing the user's settings, bookmarks, history and cookies.
+- **Reason:** "Leaves nothing behind when removed" (`installation-and-updates.md` section 1), and the user's data is the user's.
+- **Source:** Decision 54; decision 77 of the installer work.
+- **Verification:** Demonstration on each desktop.
+- **State:** Met, 23 October 2026, end to end (section 15 of the design): `--uninstall` on Linux and macOS; on Windows the uninstaller's copy removes the folder, the shortcut, the uninstall entry and the containers' profiles. Its message boxes were not pressed by a hand; on Windows its temporary copy stays in `%TEMP%`.
+
+### Requirement 13.21: The release's identity is built in
+- **Statement:** What a build trusts for updates (the update host, The Update Framework's first root, the platform signers) must be fixed when it is built, and no setting, file or variable read at run time may change it.
+- **Reason:** A trust anyone running as the user could redirect would be a downgrade (decision 58).
+- **Source:** Decision 71 of the installer work.
+- **Verification:** Review; test: the production identity names the update host of decision 25.
+- **State:** Met, 23 October 2026: `native/release-identity`, `the_production_identity_names_the_update_host`.
 
 ---
 
