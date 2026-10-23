@@ -31,7 +31,7 @@
     clippy::unimplemented
 )]
 
-pub mod install;
+pub mod launcher_release;
 #[cfg(target_os = "macos")]
 mod macos;
 mod start;
@@ -430,7 +430,7 @@ impl Launcher {
             self.tidy_versions(&state);
             // A launcher that cannot be replaced now is replaced at the
             // next commit; the version runs either way.
-            if let Err(why) = install::launcher_release(self, version) {
+            if let Err(why) = launcher_release::launcher_release(self, version) {
                 eprintln!("neoteletext: the launcher is not replaced: {why}");
             }
         }

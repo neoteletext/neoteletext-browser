@@ -13,7 +13,7 @@ use update::layout::{Layout, settings_folder};
 use update::platform::{Family, LAUNCHER_PROGRAM};
 use update::version::Version;
 
-use crate::install::LINUX_LAUNCHER;
+use crate::launcher_release::LINUX_LAUNCHER;
 use crate::{Launcher, io_text};
 
 /// Asks on the terminal; whether the answer was yes.
