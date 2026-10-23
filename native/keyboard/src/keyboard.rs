@@ -2,11 +2,12 @@
 
 use std::io::{self, BufReader, BufWriter, Write};
 use std::process::ExitCode;
-use std::sync::mpsc;
+use std::sync::{Arc, Mutex, mpsc};
 use std::time::Instant;
 
 use neoteletext_input::session::Limiter;
 use neoteletext_qrkeyboard::config::{Layout, ScreenConfig};
+use neoteletext_qrkeyboard::net::Waker;
 use neoteletext_qrkeyboard::qr::{Correction, Matrix};
 use neoteletext_qrkeyboard::screen::{Event, Screen};
 use neoteletext_web::proxy::Proxy;
@@ -44,6 +45,24 @@ fn run(relay: &str, pin: bool, proxy: Option<Proxy>) -> Result<(), String> {
     let mut output = BufWriter::new(io::stdout().lock());
     let send = |output: &mut BufWriter<io::StdoutLock<'_>>, message: &FromKeyboard| write_to_core(output, message).map_err(|error| error.to_string());
     send(&mut output, &FromKeyboard::State(PhoneState::Preparing))?;
+    // The trusted core's Finish, or the end of its pipe, is watched from
+    // the start (finding F-26): reaching the relay can take as long as the
+    // relay likes, and closing the pipe must end this process meanwhile,
+    // so the core never waits on it. Once the screen exists the watcher
+    // wakes its wait (the engine's E.106) and the loop ends the session;
+    // before then there is no session, and the process ends at once.
+    let (finish, finished) = mpsc::channel();
+    let waker: Arc<Mutex<Option<Waker>>> = Arc::new(Mutex::new(None));
+    let watched = Arc::clone(&waker);
+    std::thread::spawn(move || {
+        let mut input = BufReader::new(io::stdin().lock());
+        let finish_asked = matches!(read_to_keyboard(&mut input), Ok(Some(ToKeyboard::Finish)));
+        let _ = finish.send(finish_asked);
+        match watched.lock().ok().and_then(|mut slot| slot.take()) {
+            Some(waker) => waker.wake(),
+            None => std::process::exit(0),
+        }
+    });
     let config = ScreenConfig { name: NAME.into(), layout: Layout::Terminal, pin, rejoin_seconds: Some(REJOIN_SECONDS) };
     let mut screen = match Screen::create(relay, config, proxy) {
         Ok(screen) => screen,
@@ -52,18 +71,9 @@ fn run(relay: &str, pin: bool, proxy: Option<Proxy>) -> Result<(), String> {
             return Err(format!("no phone keyboard: {error}"));
         }
     };
+    *waker.lock().map_err(|_| "the input watcher stopped")? = Some(screen.waker());
     let matrix = Matrix::new(&screen.join().url, Correction::Medium).map_err(|error| error.to_string())?;
     send(&mut output, &FromKeyboard::Join { qr: qr(&matrix), pin: screen.join().pin.clone() })?;
-    // The trusted core's Finish, or the end of its pipe, which wakes the
-    // screen's wait (the engine's E.106): nothing waits by the clock.
-    let (finish, finished) = mpsc::channel();
-    let waker = screen.waker();
-    std::thread::spawn(move || {
-        let mut input = BufReader::new(io::stdin().lock());
-        let finish_asked = matches!(read_to_keyboard(&mut input), Ok(Some(ToKeyboard::Finish)));
-        let _ = finish.send(finish_asked);
-        waker.wake();
-    });
     let started = Instant::now();
     let mut limiter = Limiter::new();
     loop {
