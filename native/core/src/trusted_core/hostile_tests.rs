@@ -210,6 +210,73 @@ fn channels(session: &Session) -> Vec<(String, bool)> {
 /// or hand a page to the web browser: a page intent must never ask.
 const NO_BROKER: &str = "no broker: this trusted core starts nothing";
 
+/// The [`ROUNDS`] of messages made at random, each read as the core reads
+/// the interface's pipe and acted on, checked after each; how many the
+/// reader took and how many it refused.
+#[allow(clippy::arithmetic_side_effects, reason = "a test's counts")]
+fn hostile_rounds(core: &mut Core, start_page: PageKey, private: u32) -> (usize, usize) {
+    let mut random = Random(0x5EED_0309_2026);
+    let shapes = shapes(&mut random);
+    let samples = samples(start_page, private);
+    assert!(shapes.len() > 30, "the reader accepted only {} shapes", shapes.len());
+    let (mut taken, mut refused) = (0_usize, 0_usize);
+    for round in 0..ROUNDS {
+        let bytes = frame(&mut random, &shapes, &samples);
+        let mut input = bytes.as_slice();
+        // A malformed message ends the interface's reader, and the browser
+        // with it (requirement 4.3): refused, not acted on.
+        let Ok(Some(intent)) = read_from_interface(&mut input) else {
+            refused += 1;
+            continue;
+        };
+        taken += 1;
+        let page_intent = is_page_intent(&intent);
+        let described = format!("{intent:?}");
+        let before = (channels(&core.session), core.settings.clone(), core.session.bookmarks.text());
+        // An error is the browser ending, as for a write that failed; a
+        // panic is the fault the harness is for.
+        let result = core.intent(intent);
+        if page_intent {
+            assert_ne!(result, Err(String::from(NO_BROKER)), "round {round}: a page intent asked to start a helper or hand a page on: {described}");
+        }
+        if !matches!(result, Ok(true)) {
+            // The last tab closed: the browser would end. Open another and
+            // go on, as a new start would.
+            if core.session.tabs.is_empty() {
+                core.session.open("https://news.invalid/teletext/").unwrap();
+            }
+            continue;
+        }
+        if page_intent {
+            assert_eq!(
+                (channels(&core.session), core.settings.clone(), core.session.bookmarks.text()),
+                before,
+                "round {round}: a page intent moved a tab, changed a setting or the bookmarks: {described}"
+            );
+        }
+    }
+    (taken, refused)
+}
+
+/// Every message the core sent the interface, once the core has gone,
+/// checked for the cookie's value; how many there were.
+#[allow(clippy::arithmetic_side_effects, reason = "a test's counts")]
+fn sent_without_the_cookie(written: &mpsc::Receiver<Vec<u8>>) -> usize {
+    let mut bytes = Vec::new();
+    // The writing thread ends once all is written, and its sink with it.
+    while let Ok(chunk) = written.recv() {
+        bytes.extend(chunk);
+    }
+    let mut output = bytes.as_slice();
+    let mut messages = 0_usize;
+    while let Ok(Some(message)) = read_from_core(&mut output) {
+        messages += 1;
+        assert!(!format!("{message:?}").contains(SECRET), "a cookie reached the interface: {message:?}");
+    }
+    assert!(!String::from_utf8_lossy(&bytes).contains(SECRET), "a cookie's value in the bytes sent");
+    messages
+}
+
 #[test]
 fn the_core_stands_against_a_hostile_interface() {
     let folder = std::env::temp_dir().join(format!("neoteletext-hostile-{}", std::process::id()));
@@ -257,60 +324,10 @@ fn the_core_stands_against_a_hostile_interface() {
         assert_eq!((channels(&core.session), core.session.bookmarks.text()), before, "{described} moved a tab");
     }
 
-    let mut random = Random(0x5EED_0309_2026);
-    let shapes = shapes(&mut random);
-    let samples = samples(start_page, private);
-    assert!(shapes.len() > 30, "the reader accepted only {} shapes", shapes.len());
-    let (mut taken, mut refused) = (0_usize, 0_usize);
-    for round in 0..ROUNDS {
-        let bytes = frame(&mut random, &shapes, &samples);
-        let mut input = bytes.as_slice();
-        // A malformed message ends the interface's reader, and the browser
-        // with it (requirement 4.3): refused, not acted on.
-        let Ok(Some(intent)) = read_from_interface(&mut input) else {
-            refused += 1;
-            continue;
-        };
-        taken += 1;
-        let page_intent = is_page_intent(&intent);
-        let described = format!("{intent:?}");
-        let before = (channels(&core.session), core.settings.clone(), core.session.bookmarks.text());
-        // An error is the browser ending, as for a write that failed; a
-        // panic is the fault the harness is for.
-        let result = core.intent(intent);
-        if page_intent {
-            assert_ne!(result, Err(String::from(NO_BROKER)), "round {round}: a page intent asked to start a helper or hand a page on: {described}");
-        }
-        if !matches!(result, Ok(true)) {
-            // The last tab closed: the browser would end. Open another and
-            // go on, as a new start would.
-            if core.session.tabs.is_empty() {
-                core.session.open("https://news.invalid/teletext/").unwrap();
-            }
-            continue;
-        }
-        if page_intent {
-            assert_eq!(
-                (channels(&core.session), core.settings.clone(), core.session.bookmarks.text()),
-                before,
-                "round {round}: a page intent moved a tab, changed a setting or the bookmarks: {described}"
-            );
-        }
-    }
+    let (taken, refused) = hostile_rounds(&mut core, start_page, private);
     core.to_interface.flush().unwrap();
     drop(core);
-    let mut bytes = Vec::new();
-    // The writing thread ends once all is written, and its sink with it.
-    while let Ok(chunk) = written.recv() {
-        bytes.extend(chunk);
-    }
-    let mut output = bytes.as_slice();
-    let mut messages = 0_usize;
-    while let Ok(Some(message)) = read_from_core(&mut output) {
-        messages += 1;
-        assert!(!format!("{message:?}").contains(SECRET), "a cookie reached the interface: {message:?}");
-    }
-    assert!(!String::from_utf8_lossy(&bytes).contains(SECRET), "a cookie's value in the bytes sent");
+    let messages = sent_without_the_cookie(&written);
     // The harness reached the core often, not only the reader.
     assert!(taken > ROUNDS / 5 && refused > 0 && messages > 0, "accepted {taken}, refused {refused}, sent {messages}");
     let _ = std::fs::remove_dir_all(&folder);
