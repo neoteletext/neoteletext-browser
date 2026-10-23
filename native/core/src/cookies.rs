@@ -251,13 +251,17 @@ impl Store {
     }
 
     /// Whether `host` was reached securely with a cookie still live, in any
-    /// of its `https` channels (the engine's REQ-SEC-007).
+    /// of its `https` channels (the engine's REQ-SEC-007), told only to
+    /// `asking`, a channel on that host, and from its own jar, private or
+    /// ordinary, so that no fetcher learns of another host or of the other
+    /// jar (finding F-27).
     #[must_use]
-    pub fn reached_securely(&self, host: &str, now: u64) -> bool {
-        self.channels
-            .iter()
-            .filter(|(_, channel)| channel.secure && channel.host == host)
-            .any(|(tag, _)| [&self.ordinary, &self.private].into_iter().flatten().any(|jar| jar.reached_securely(tag, now)))
+    pub fn reached_securely(&self, private: bool, asking: &Channel, host: &str, now: u64) -> bool {
+        if asking.host != host {
+            return false;
+        }
+        let Some(jar) = (if private { &self.private } else { &self.ordinary }) else { return false };
+        self.channels.iter().filter(|(_, channel)| channel.secure && channel.host == host).any(|(tag, _)| jar.reached_securely(tag, now))
     }
 
     /// The ordinary channels with cookies, by key.

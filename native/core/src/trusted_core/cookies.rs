@@ -106,7 +106,10 @@ impl Core {
                 return Ok(Some(ToFetcher::CookieAnswer { id, header }));
             }
             FromFetcher::ReachedQuestion { id, host } => {
-                let reached = self.cookies.store.reached_securely(&host, now);
+                // Only of the asking channel's own host, from its tab's jar:
+                // no fetcher learns where else the user has been (finding
+                // F-27, `cookies-security.md`).
+                let reached = owner.is_some_and(|(owner, private)| self.cookies.store.reached_securely(private, &owner, &host, now));
                 return Ok(Some(ToFetcher::ReachedAnswer { id, reached }));
             }
             FromFetcher::CookieSet { host, path, secure, line, .. } => {
