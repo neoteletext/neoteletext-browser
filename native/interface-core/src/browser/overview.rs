@@ -120,6 +120,18 @@ impl Browser {
 
         let cells = Rect::new(panel.x0 + PADDING + AXIS_WIDTH, heading.y1, panel.x1 - PADDING, panel.y1 - PADDING);
         self.regions.cells = cells;
+        #[allow(clippy::cast_precision_loss, reason = "small counts")]
+        let size = (cells.width() / PAGES_PER_BANK as f64, cells.height() / BANKS as f64);
+        self.draw_cells(canvas, panel, cells, size, now);
+        self.draw_rings(canvas, cells, size, now);
+        self.draw_pulses(canvas, cells, size, now);
+    }
+
+    /// The bank axis and a cell for each of the 800 pages in `cells`, each
+    /// `size` wide and high: its state's colour, outlined on screen, ringed
+    /// when chosen, dotted for a minute after an update.
+    fn draw_cells<C: Canvas + ?Sized>(&self, canvas: &mut C, panel: Rect, cells: Rect, size: (f64, f64), now: u64) {
+        let (width, height) = size;
         // Which cells are on screen, looked up once for each rather than
         // searched for in the list of visible pages 800 times.
         let mut on_screen = [false; PAGES];
@@ -128,8 +140,6 @@ impl Browser {
                 *cell = true;
             }
         }
-        #[allow(clippy::cast_precision_loss, reason = "small counts")]
-        let (width, height) = (cells.width() / PAGES_PER_BANK as f64, cells.height() / BANKS as f64);
         for (bank, &bank_colour) in BANK_COLOURS.iter().enumerate() {
             #[allow(clippy::cast_precision_loss, reason = "eight banks")]
             let top = cells.y0 + bank as f64 * height;
@@ -163,7 +173,11 @@ impl Browser {
                 }
             }
         }
-        // A ring bursting out of each page just updated, growing and fading.
+    }
+
+    /// A ring bursting out of each page just updated, growing and fading.
+    fn draw_rings<C: Canvas + ?Sized>(&self, canvas: &mut C, cells: Rect, size: (f64, f64), now: u64) {
+        let (width, height) = size;
         for &(index, at) in &self.updates {
             let elapsed = now.saturating_sub(at);
             if elapsed >= UPDATE_RING_MILLISECONDS {
@@ -177,7 +191,11 @@ impl Browser {
             let ring = Rect::new(centre.x - radius, centre.y - radius, centre.x + radius, centre.y + radius);
             border(canvas, ring, UPDATE_RING_WIDTH, mix(UPDATED, PANEL, progress));
         }
-        // A dot on each page just received, shrinking away.
+    }
+
+    /// A dot on each page just received, shrinking away.
+    fn draw_pulses<C: Canvas + ?Sized>(&self, canvas: &mut C, cells: Rect, size: (f64, f64), now: u64) {
+        let (width, height) = size;
         for &(index, start) in &self.pulses {
             let elapsed = now.saturating_sub(start);
             if elapsed >= PULSE_MILLISECONDS {
