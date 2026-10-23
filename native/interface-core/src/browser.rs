@@ -22,7 +22,7 @@ use crate::wall::Wall;
 mod address;
 mod banks;
 mod bookmarks;
-mod console_ui;
+mod console_panel;
 mod controls_ui;
 mod cookies_ui;
 #[cfg(test)]
@@ -110,7 +110,7 @@ pub struct Browser {
     /// The settings panel (requirement 19.3).
     settings: settings_panel::SettingsUi,
     /// The developer console (requirement 19.8).
-    console: console_ui::ConsoleUi,
+    console: console_panel::ConsoleUi,
     /// The history panel (requirement 20.4).
     history: history::HistoryUi,
     /// The cookies panel (requirement 21.6).
@@ -176,7 +176,7 @@ impl Browser {
             outputs: Vec::new(),
             body: Rect::ZERO,
             settings: settings_panel::SettingsUi::default(),
-            console: console_ui::ConsoleUi::default(),
+            console: console_panel::ConsoleUi::default(),
             history: history::HistoryUi::default(),
             cookies: cookies_ui::CookiesUi::default(),
             tips: tips_ui::TipsUi::default(),

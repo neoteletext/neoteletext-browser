@@ -4,7 +4,7 @@
 
 use alloc::vec::Vec;
 
-use crate::browser::console_ui::CONSOLE_HEIGHT;
+use crate::browser::console_panel::CONSOLE_HEIGHT;
 use crate::browser::star_ui::BAR_HEIGHT;
 use crate::browser::toolbar::{TOOLBAR_HEIGHT, TOOLBAR_TOP};
 use crate::browser::{Browser, Output};
