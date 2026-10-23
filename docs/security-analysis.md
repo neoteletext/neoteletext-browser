@@ -195,7 +195,7 @@ Removed by decision 66: no font is fetched from a channel, so there is no font f
 - **Cannot:** read cookies, history beyond the panels' views, or files (once its sandbox denies reads); reach the network; change what any fetcher requests; change a security setting, because none is reachable from strip input yet. When the site-change screen and security settings are built (requirements 8.4 and 11.2), a compromised interface could confirm them too; that is the cost of option 1 that open decision 3 weighs.
 - **What reaching it takes:** a fault in NeoTeletext's own interface code (no `unsafe`, requirement 10.12) or in its drawing libraries (`vello_cpu`, Parley, winit, softbuffer), reached only through our own images, cleaned text and the user's own input.
 
-**Remaining risk:** low likelihood; high impact within its reach (navigation under the user's eyes, without secrets). Controls: small code, no `unsafe`, fuzzing of the interface's readers and the hostile interface harness (requirements 3.9 and 4.6, not met), and open decision 3.
+**Remaining risk:** low likelihood; high impact within its reach (navigation under the user's eyes, without secrets). Controls: small code, no `unsafe`, fuzzing of the interface's readers and the hostile interface harness (requirements 4.6 met, 3.9 met in part), and open decision 3.
 
 ---
 
@@ -378,7 +378,7 @@ Each check below belongs in the project's check script, run by git hooks (requir
 7. **Engine dependencies:** no interface toolkit; one pinned commit (requirements 2.2 and 2.5).
 8. **Process rights:** network and file access fail where denied, on each platform (requirements 3.3 to 3.7).
 9. **Fuzzing** of every reader in the trusted core and the interface (requirement 4.6). **Built:** `native/fuzz`, one target for each message reader, the decoder's engine, the interface's image reader and the address parser.
-10. **The hostile interface harness** (requirements 3.9, 4.5 and 4.7).
+10. **The hostile interface harness** (requirements 3.9, 4.5 and 4.7). **Built** in part: `native/core/src/hostile_tests.rs` against the trusted core alone; requirement 4.7's request comparison waits on running helpers.
 11. **Channel isolation:** cookies and pages never cross channels (requirements 7.3 and 7.8).
 12. **Dependencies:** `cargo-deny`, `cargo audit`, lockfile review (requirement 14.3). **Built** in part: `cargo-deny`.
 13. **Updates:** the full set of update tests (requirement 13.12).

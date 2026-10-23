@@ -44,7 +44,7 @@ The design of installation and updates on every desktop is `docs/installation-an
 
 ### Its own feature
 
-- **Requirement 3.9's hostile-interface harness** (an interface that sends every kind of message malformed and oversized, against which the trusted core must stand) is still unwritten; the protocol's own tests cover malformed and oversized messages one kind at a time.
+- **Requirement 3.9's harness with running helpers:** the harness built on 23 October 2026 drives the trusted core alone; showing that no file or network is reached, and that requests are identical to a quiet run (requirement 4.7), needs a decoder and fetcher running against a test server.
 - **Damage-limited drawing in the interface:** a frame on macOS is draw 3 ms, render 4 ms, present 6 ms, and the present is CoreGraphics copying softbuffer's fresh buffer, which needs unsafe code or another presentation library to change.
 
 

@@ -617,7 +617,7 @@ Still to come: the launcher and updater (section 12).
 - The grace period for closed tabs; the live-feed threshold; refresh schedules.
 - Discovery.
 - Screen readers, the menu bar and its shortcuts, the clipboard, multiple windows, reduced motion.
-- The hostile interface harness.
+- The hostile interface harness with running helpers (the harness against the trusted core alone is built).
 - The updater and launcher.
 - Builds on phones and microcontroller targets.
 

@@ -33,6 +33,8 @@
 )]
 
 mod cookie_control;
+#[cfg(test)]
+mod hostile_tests;
 mod library;
 mod page_controls;
 mod session;
