@@ -13,28 +13,28 @@ fn launched(version: Version) -> Updates {
 #[test]
 fn a_newer_version_is_offered_once_and_downloaded_only_when_accepted() {
     let mut updates = launched(Version::new(0, 1, 0));
-    updates.said(FromUpdater::Latest { version: Some(Version::new(0, 2, 0)), checked: 100 });
+    updates.said(FromUpdater::Latest { version: Some(Version::new(0, 2, 0)), checked: 100 }, 100);
     assert!(updates.strip, "offered in the strip");
     assert_eq!(updates.offer(), Some(Version::new(0, 2, 0)));
     assert_eq!(updates.downloading, None, "nothing downloaded before the user accepts");
     updates.later();
     assert!(!updates.strip);
-    updates.said(FromUpdater::Latest { version: Some(Version::new(0, 2, 0)), checked: 200 });
+    updates.said(FromUpdater::Latest { version: Some(Version::new(0, 2, 0)), checked: 200 }, 200);
     assert!(!updates.strip, "offered once");
     assert_eq!(updates.status(true, 200), "NeoTeletext 0.2.0 is available", "the panel keeps offering it");
     updates.install();
     assert_eq!(updates.downloading, Some(Version::new(0, 2, 0)));
-    updates.said(FromUpdater::Staged(Version::new(0, 2, 0)));
+    updates.said(FromUpdater::Staged(Version::new(0, 2, 0)), 200);
     assert_eq!(updates.status(true, 200), "NeoTeletext 0.2.0 starts at the next start");
     assert_eq!(updates.offer(), None);
 
     let mut state = State::installed(Version::new(0, 1, 0));
     state.mark_bad(Version::new(0, 2, 0));
     let mut updates = Updates { keyed: true, ..Updates::new(Some(state), None, true) };
-    updates.said(FromUpdater::Latest { version: Some(Version::new(0, 2, 0)), checked: 100 });
+    updates.said(FromUpdater::Latest { version: Some(Version::new(0, 2, 0)), checked: 100 }, 100);
     assert_eq!(updates.offer(), None, "a version rolled back is never offered");
     assert!(!updates.strip);
-    updates.said(FromUpdater::Latest { version: Some(Version::new(0, 1, 0)), checked: 100 });
+    updates.said(FromUpdater::Latest { version: Some(Version::new(0, 1, 0)), checked: 100 }, 100);
     assert_eq!(updates.offer(), None, "nor an older or the same version");
 }
 
@@ -47,12 +47,35 @@ fn updates_are_unavailable_only_after_seven_days() {
         assert!(unkeyed.status(true, 0).contains("no update keys"));
     }
     let mut updates = launched(Version::new(0, 1, 0));
-    updates.said(FromUpdater::Latest { version: None, checked: 1_000 });
+    updates.said(FromUpdater::Latest { version: None, checked: 1_000 }, 1_000);
     assert_eq!(updates.status(true, 1_000), "NeoTeletext is up to date");
-    updates.said(FromUpdater::Failed { reason: String::from("the timestamp has expired"), last_success: Some(1_000) });
+    updates.said(FromUpdater::Failed { reason: String::from("the timestamp has expired"), last_success: Some(1_000) }, 1_000);
     assert!(updates.status(true, 1_000 + UNAVAILABLE_AFTER).starts_with("Could not check"), "not yet");
     assert_eq!(updates.status(true, 1_001 + UNAVAILABLE_AFTER), "Updates unavailable");
     assert_eq!(updates.status(false, 1_001 + UNAVAILABLE_AFTER), "Not checking for updates");
+}
+
+/// Finding F-93: the age of the last successful check is the core's own,
+/// from when it received the updater's report; the times the updater
+/// reports, on its clock, change nothing.
+#[test]
+fn the_age_of_a_check_is_on_the_cores_clock() {
+    let mut updates = launched(Version::new(0, 1, 0));
+    // An updater whose clock is far ahead: its check would seem fresh
+    // for ever.
+    updates.said(FromUpdater::Latest { version: None, checked: i64::MAX }, 1_000);
+    updates.said(FromUpdater::Failed { reason: String::from("the timestamp has expired"), last_success: Some(i64::MAX) }, 2_000);
+    assert!(updates.status(true, 1_000 + UNAVAILABLE_AFTER).starts_with("Could not check"), "not yet");
+    assert_eq!(updates.status(true, 1_001 + UNAVAILABLE_AFTER), "Updates unavailable");
+    // And one whose clock is far behind: its success is not stale at once.
+    let mut behind = launched(Version::new(0, 1, 0));
+    behind.said(FromUpdater::Latest { version: None, checked: 0 }, 1_000);
+    behind.said(FromUpdater::Failed { reason: String::from("no network"), last_success: Some(0) }, 1_000);
+    assert!(behind.status(true, 1_000 + UNAVAILABLE_AFTER).starts_with("Could not check"));
+    // A failure alone is not a success at any time the updater names.
+    let mut failed = launched(Version::new(0, 1, 0));
+    failed.said(FromUpdater::Failed { reason: String::from("no network"), last_success: Some(i64::MAX) }, 1_000);
+    assert_eq!(failed.status(true, 1_000), "Updates unavailable");
 }
 
 /// Section 3.2: healthy once the window has drawn within 30 seconds,

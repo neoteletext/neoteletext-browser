@@ -76,6 +76,8 @@ pub struct Updates {
     pub state_refused: Option<String>,
     updater: Option<(Helper, Box<dyn Write + Send>)>,
     latest: Option<Version>,
+    /// When the core received the updater's last report of a successful
+    /// check, on its own clock, in seconds since 1970 (UTC).
     last_success: Option<i64>,
     failure: Option<String>,
     downloading: Option<Version>,
@@ -201,12 +203,15 @@ impl Updates {
         self.next_check = Instant::now().checked_add(CHECK_INTERVAL);
     }
 
-    /// The updater said something, untrusted. Whether the view changed.
-    pub fn said(&mut self, message: FromUpdater) -> bool {
+    /// The updater said something, untrusted, received at `received` on
+    /// the core's clock (seconds since 1970, UTC). Whether the view changed.
+    /// The age of a check is the core's own: the times the updater reports
+    /// are on its clock, and are not used (finding F-93).
+    pub fn said(&mut self, message: FromUpdater, received: i64) -> bool {
         match message {
-            FromUpdater::Latest { version, checked } => {
+            FromUpdater::Latest { version, checked: _ } => {
                 self.latest = version;
-                self.last_success = Some(checked);
+                self.last_success = Some(received);
                 self.failure = None;
                 if let Some(newer) = self.offer()
                     && self.offered != Some(newer)
@@ -222,9 +227,8 @@ impl Updates {
                     self.strip = false;
                 }
             }
-            FromUpdater::Failed { reason, last_success } => {
+            FromUpdater::Failed { reason, last_success: _ } => {
                 self.downloading = None;
-                self.last_success = last_success.or(self.last_success);
                 self.failure = Some(reason);
             }
         }

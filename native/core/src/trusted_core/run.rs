@@ -60,7 +60,7 @@ fn handle(core: &mut Core, event: Event) -> Result<bool, String> {
         }
         Event::BookmarksRead(read) => core.bookmarks_read(read)?,
         Event::Updater(message) => {
-            core.updates.said(message);
+            core.updates.said(message, neoteletext::calendar::utc_now());
             core.send_update()?;
         }
         Event::UpdaterEnded(reason) => {
