@@ -26,6 +26,13 @@ pub const MAX_FILE: usize = 24 * 1024 * 1024;
 const _: () = assert!(MAX_FILE == protocol::decoder::MAX_BOOKMARK_FILE, "a decoder reads a file of the same bound");
 const _: () = assert!(MAX_ITEMS * (MAX_LINE + 1) + VERSION_LINE.len() < MAX_FILE, "the file bound holds every item at the longest line");
 
+/// Whether `bytes` begin as this browser's bookmarks file does, with its
+/// version line: what the broker reads for an import (decision 88).
+#[must_use]
+pub fn is_bookmarks_file(bytes: &[u8]) -> bool {
+    bytes.strip_prefix(VERSION_LINE.as_bytes()).is_some_and(|rest| rest.is_empty() || rest.starts_with(b"\n") || rest.starts_with(b"\r\n"))
+}
+
 impl Bookmarks {
     /// Reads the file's text (section 3.6): lines that break a rule are
     /// dropped with anything inside them, and described in the second

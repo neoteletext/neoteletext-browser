@@ -471,7 +471,7 @@ impl Bookmarks {
 }
 
 mod file;
-pub use file::MAX_FILE;
+pub use file::{MAX_FILE, is_bookmarks_file};
 
 #[cfg(test)]
 mod tests;

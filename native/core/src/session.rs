@@ -71,7 +71,7 @@ impl Session {
     #[cfg(test)]
     #[must_use]
     pub fn new(bookmarks: Bookmarks) -> Self {
-        Self::with_reader(bookmarks, Box::new(|path: &Path| Source::read(path)))
+        Self::with_reader(bookmarks, Box::new(|path: &Path| Source::read(path, &crate::source::Places::new(None, Vec::new())).map_err(String::from)))
     }
 
     /// A session that reads file channels with `reader`.
