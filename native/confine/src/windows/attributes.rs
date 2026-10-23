@@ -48,7 +48,9 @@ const ATTRIBUTES: u32 = 5;
 /// privileged container its opt-out of `ALL APPLICATION PACKAGES`.
 struct Attributes {
     list: LPPROC_THREAD_ATTRIBUTE_LIST,
-    _storage: Vec<u8>,
+    /// The list's room, in 64-bit words, so it is aligned for the pointers
+    /// and sizes it holds (finding F-59): bytes have no alignment.
+    _storage: Vec<u64>,
 }
 
 impl Drop for Attributes {
@@ -61,7 +63,7 @@ fn attributes(count: u32) -> io::Result<Attributes> {
     let mut size = 0_usize;
     // The first call says how much room the list needs.
     unsafe { InitializeProcThreadAttributeList(ptr::null_mut(), count, 0, &raw mut size) };
-    let mut storage = vec![0_u8; size];
+    let mut storage = vec![0_u64; size.div_ceil(size_of::<u64>())];
     let list: LPPROC_THREAD_ATTRIBUTE_LIST = storage.as_mut_ptr().cast();
     if unsafe { InitializeProcThreadAttributeList(list, count, 0, &raw mut size) } == 0 {
         return Err(last_error());
