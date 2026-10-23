@@ -47,12 +47,12 @@ pub fn apply(role: Role, writable: Option<&Path>) -> Result<Report, String> {
     #[cfg(target_os = "macos")]
     {
         let _ = (role, writable);
-        Ok(Report { layers: vec![String::from("sandbox-exec, by its parent")] })
+        Ok(crate::macos::apply())
     }
     #[cfg(windows)]
     {
         let _ = (role, writable);
-        Ok(Report { layers: vec![String::from("its parent's token, job and policies")] })
+        Ok(crate::windows::apply())
     }
     #[cfg(not(any(target_os = "linux", target_os = "macos", windows)))]
     {

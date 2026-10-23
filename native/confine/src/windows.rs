@@ -84,6 +84,12 @@ pub fn remove_containers() {
     container::remove_containers();
 }
 
+/// A process's own side: its parent started it with the token, job and
+/// policies that confine it.
+pub(crate) fn apply() -> Report {
+    Report { layers: vec![String::from("its parent's token, job and policies")] }
+}
+
 /// Starts a helper confined as its role says.
 pub(crate) fn spawn(spawn: &Spawn<'_>) -> io::Result<Process> {
     let (their_stdin, our_stdin) = pipe()?;
