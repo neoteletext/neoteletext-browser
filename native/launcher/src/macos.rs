@@ -4,14 +4,15 @@
 //! broker's version mark), so after a power cut at any step the launcher
 //! finds the bundles where they are and finishes or undoes the swap:
 //!
-//! - The trial's bundle is staged in `staging/<trial>/NeoTeletext.app`
-//!   and exchanged with the installed one (`renamex_np`, `RENAME_SWAP`);
-//!   the old current bundle is then in the staging folder, and is moved
-//!   to `previous/`, from where a rollback exchanges it back.
+//! - The trial's bundle is the launcher's own copy of what was staged,
+//!   accepted in `accepting/<trial>/NeoTeletext.app` (decision 87), and
+//!   exchanged with the installed one (`renamex_np`, `RENAME_SWAP`); the
+//!   old current bundle is then in that folder, and is moved to
+//!   `previous/`, from where a rollback exchanges it back.
 //! - The state is written before each exchange, so it names what the
 //!   installed bundle is to be, and [`reconcile`] makes it so.
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use update::fault;
 use update::files;
@@ -43,8 +44,8 @@ pub fn installed(launcher: &Launcher) -> Result<Version, String> {
 }
 
 /// Makes the installed bundle the version the state runs, by exchanging
-/// it with the previous or the staged bundle of that version, or, when
-/// that version is nowhere, makes the state name what is installed.
+/// it with the previous bundle or the accepted copy of that version, or,
+/// when that version is nowhere, makes the state name what is installed.
 /// Whether the state changed and is to be written.
 pub fn reconcile(launcher: &Launcher, state: &mut State) -> Result<bool, String> {
     let installed_bundle = bundle(launcher)?.to_path_buf();
@@ -55,8 +56,8 @@ pub fn reconcile(launcher: &Launcher, state: &mut State) -> Result<bool, String>
         return Ok(false);
     }
     let previous = launcher.layout.previous_bundle();
-    let staged = launcher.layout.staged(wanted).join(BUNDLE);
-    let source = [previous, staged].into_iter().find(|candidate| version_of(candidate).ok() == Some(wanted));
+    let accepted = launcher.layout.accepted(wanted).join(BUNDLE);
+    let source = [previous, accepted].into_iter().find(|candidate| version_of(candidate).ok() == Some(wanted));
     if let Some(source) = source {
         files::exchange(&source, &installed_bundle)
             .map_err(|error| format!("cannot exchange {} with {}: {error}", source.display(), installed_bundle.display()))?;
@@ -77,33 +78,40 @@ pub fn reconcile(launcher: &Launcher, state: &mut State) -> Result<bool, String>
     Ok(true)
 }
 
-/// Whether `folder`, in the staging folder, holds the old current bundle
-/// after a trial's exchange, to be moved to `previous/`.
-pub fn holds_old_current(launcher: &Launcher, state: &State, folder: &Path) -> bool {
-    state.running() != state.current
-        && version_of(&folder.join(BUNDLE)).ok() == Some(state.current)
-        && launcher.layout.previous_bundle().as_path() != folder.join(BUNDLE)
+/// After a trial's exchange, the trial's accepted folder holds the old
+/// current bundle: it goes to `previous/`, replacing what was there. Only
+/// that folder is looked at, which only the launcher writes.
+fn move_old_current(launcher: &Launcher, state: &State) {
+    let Some(trial) = state.trial else { return };
+    let folder = launcher.layout.accepted(trial.version);
+    if version_of(&folder.join(BUNDLE)).ok() != Some(state.current) {
+        return;
+    }
+    let previous = launcher.layout.previous();
+    let discard = files::with_suffix(&previous, ".discard");
+    let _ = files::remove_tree(&discard);
+    if previous.exists() && std::fs::rename(&previous, &discard).is_err() {
+        return;
+    }
+    fault::point("previous-discarded");
+    if std::fs::rename(&folder, &previous).is_ok() {
+        fault::point("previous-moved");
+        let _ = std::fs::remove_file(previous.join(MANIFEST));
+        let _ = files::sync_folder(&launcher.layout.root);
+    }
+    let _ = files::remove_tree(&discard);
 }
 
-/// After a trial's exchange, its staging folder holds the old current
-/// bundle: it goes to `previous/`, replacing what was there.
-fn move_old_current(launcher: &Launcher, state: &State) {
-    let Ok(entries) = std::fs::read_dir(launcher.layout.staging()) else { return };
-    let holding: Vec<PathBuf> = entries.filter_map(Result::ok).map(|entry| entry.path()).filter(|path| holds_old_current(launcher, state, path)).collect();
-    for folder in holding {
-        let previous = launcher.layout.previous();
-        let discard = files::with_suffix(&previous, ".discard");
-        let _ = files::remove_tree(&discard);
-        if previous.exists() && std::fs::rename(&previous, &discard).is_err() {
-            continue;
+/// The launcher's copies no longer needed: all but the trial's, while its
+/// bundle is still to be exchanged in or the old current bundle still to
+/// be moved out.
+pub fn tidy_accepting(launcher: &Launcher, state: &State) {
+    let Ok(entries) = std::fs::read_dir(launcher.layout.accepting()) else { return };
+    let kept = state.trial.map(|trial| launcher.layout.accepted(trial.version));
+    for entry in entries.filter_map(Result::ok) {
+        if Some(entry.path()) != kept {
+            let _ = files::remove_tree(&entry.path());
         }
-        fault::point("previous-discarded");
-        if std::fs::rename(&folder, &previous).is_ok() {
-            fault::point("previous-moved");
-            let _ = std::fs::remove_file(previous.join(MANIFEST));
-            let _ = files::sync_folder(&launcher.layout.root);
-        }
-        let _ = files::remove_tree(&discard);
     }
 }
 

@@ -11,6 +11,7 @@ use update::version::Version;
 
 use crate::io_text;
 use crate::launcher_release::LINUX_LAUNCHER;
+use crate::trial::COPYING_SUFFIX;
 
 /// The user's data folder for applications' entries (`XDG_DATA_HOME`).
 fn data_home() -> Option<PathBuf> {
@@ -73,33 +74,13 @@ pub(super) const APPARMOR_TARGET: &str = "/etc/apparmor.d/neoteletext";
 pub fn install_linux(own: &Path) -> Result<(), String> {
     let platform = update::platform::Platform::LinuxX86_64;
     let source = own.parent().ok_or("this program has no folder")?;
-    let versions: Vec<(Version, PathBuf)> = std::fs::read_dir(source)
-        .map_err(|error| io_text(source, &error))?
-        .filter_map(|entry| {
-            let entry = entry.ok()?;
-            Some((entry.file_name().to_str().and_then(Version::parse)?, entry.path()))
-        })
-        .collect();
-    let [(version, folder)] = versions.as_slice() else { return Err(format!("{} must hold exactly one version's folder", source.display())) };
-    let signer = crate::pinned_signer(platform);
-    update::accept::accept(folder, platform, signer.as_ref()).map_err(|why| format!("the release is refused: {why}"))?;
     let layout = Layout::for_user(Family::Linux, None).ok_or("there is no home folder to install in")?;
-    if layout.state().exists() {
+    let signer = crate::pinned_signer(platform);
+    let Some((version, installed)) = install_version(source, &layout, signer.as_ref())? else {
         println!("NeoTeletext is already installed in {}; it keeps itself up to date.", layout.root.display());
         return Ok(());
-    }
-    std::fs::create_dir_all(layout.versions()).map_err(|error| io_text(&layout.versions(), &error))?;
-    let installed = layout.version(*version);
-    files::remove_tree(&installed).map_err(|error| io_text(&installed, &error))?;
-    files::copy_tree(folder, &installed).map_err(|error| io_text(&installed, &error))?;
-    let bin = layout.launcher_folder();
-    std::fs::create_dir_all(&bin).map_err(|error| io_text(&bin, &error))?;
-    let launcher = bin.join(LINUX_LAUNCHER);
-    let bytes = std::fs::read(installed.join(LAUNCHER_PROGRAM)).map_err(|error| io_text(&installed, &error))?;
-    files::write_synced(&launcher, &bytes, true).map_err(|error| io_text(&launcher, &error))?;
-    files::sync_folder(&bin).map_err(|error| io_text(&bin, &error))?;
-    files::write_atomically(&layout.state(), update::state::State::installed(*version).to_text().as_bytes())
-        .map_err(|error| io_text(&layout.state(), &error))?;
+    };
+    let launcher = layout.launcher_folder().join(LINUX_LAUNCHER);
     if let Some(entry) = desktop_entry() {
         if let Some(folder) = entry.parent() {
             let _ = std::fs::create_dir_all(folder);
@@ -125,9 +106,115 @@ pub fn install_linux(own: &Path) -> Result<(), String> {
     Ok(())
 }
 
+/// The one version's folder in `source` installed into `layout` with its
+/// launcher and a state naming it: the version and its folder, or `None`
+/// when an installation is there already.
+fn install_version(source: &Path, layout: &Layout, signer: &dyn update::accept::Signer) -> Result<Option<(Version, PathBuf)>, String> {
+    let platform = update::platform::Platform::LinuxX86_64;
+    let versions: Vec<(Version, PathBuf)> = std::fs::read_dir(source)
+        .map_err(|error| io_text(source, &error))?
+        .filter_map(|entry| {
+            let entry = entry.ok()?;
+            Some((entry.file_name().to_str().and_then(Version::parse)?, entry.path()))
+        })
+        .collect();
+    let [(version, folder)] = versions.as_slice() else { return Err(format!("{} must hold exactly one version's folder", source.display())) };
+    if layout.state().exists() {
+        return Ok(None);
+    }
+    // Copied first, then the copy accepted, as the launcher accepts an
+    // update (decision 87): what is checked is what is installed, whatever
+    // changes in the unpacked tarball meanwhile (finding F-69).
+    std::fs::create_dir_all(layout.versions()).map_err(|error| io_text(&layout.versions(), &error))?;
+    let copying = layout.versions().join(format!("{version}{COPYING_SUFFIX}"));
+    files::remove_tree(&copying).map_err(|error| io_text(&copying, &error))?;
+    files::copy_tree(folder, &copying).map_err(|error| io_text(&copying, &error))?;
+    let accepted = update::accept::accept(&copying, platform, signer).map_err(|why| format!("the release is refused: {why}"))?;
+    if accepted != *version {
+        return Err(format!("the release is refused: {} holds {accepted}", folder.display()));
+    }
+    let installed = layout.version(*version);
+    files::remove_tree(&installed).map_err(|error| io_text(&installed, &error))?;
+    std::fs::rename(&copying, &installed).map_err(|error| io_text(&installed, &error))?;
+    files::sync_folder(&layout.versions()).map_err(|error| io_text(&layout.versions(), &error))?;
+    let bin = layout.launcher_folder();
+    std::fs::create_dir_all(&bin).map_err(|error| io_text(&bin, &error))?;
+    let launcher = bin.join(LINUX_LAUNCHER);
+    let bytes = std::fs::read(installed.join(LAUNCHER_PROGRAM)).map_err(|error| io_text(&installed, &error))?;
+    files::write_synced(&launcher, &bytes, true).map_err(|error| io_text(&launcher, &error))?;
+    files::sync_folder(&bin).map_err(|error| io_text(&bin, &error))?;
+    files::write_atomically(&layout.state(), update::state::State::installed(*version).to_text().as_bytes())
+        .map_err(|error| io_text(&layout.state(), &error))?;
+    Ok(Some((*version, installed)))
+}
+
 #[cfg(test)]
+#[allow(clippy::unwrap_used, reason = "a test")]
 mod tests {
     use super::*;
+    use update::accept::{LinuxSigner, Signer};
+    use update::manifest::{Entry, Manifest};
+    use update::platform::{MANIFEST, MANIFEST_SIGNATURE, Platform, SIGNATURE_SUFFIX};
+
+    use ring::signature::{Ed25519KeyPair, KeyPair as _};
+
+    /// A complete Linux version of `version` in `folder`, signed by `pair`.
+    fn signed_version(folder: &Path, version: Version, pair: &Ed25519KeyPair) {
+        let platform = Platform::LinuxX86_64;
+        let mut entries = Vec::new();
+        for file in platform.files().into_iter().filter(|file| !file.path.ends_with(SIGNATURE_SUFFIX)) {
+            let bytes = format!("{} of {version}", file.path).into_bytes();
+            let path = folder.join(&file.path);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            files::write_synced(&path, &bytes, file.executable).unwrap();
+            let signature = pair.sign(&bytes);
+            let signature_path = format!("{}{SIGNATURE_SUFFIX}", file.path);
+            std::fs::write(folder.join(&signature_path), signature.as_ref()).unwrap();
+            entries.push(Entry { path: file.path, length: bytes.len() as u64, sha256: update::sha256(&bytes) });
+            entries.push(Entry { path: signature_path, length: signature.as_ref().len() as u64, sha256: update::sha256(signature.as_ref()) });
+        }
+        entries.sort_by(|a, b| a.path.cmp(&b.path));
+        let manifest = Manifest { version, platform, files: entries }.to_text();
+        std::fs::write(folder.join(MANIFEST), &manifest).unwrap();
+        std::fs::write(folder.join(MANIFEST_SIGNATURE), pair.sign(manifest.as_bytes()).as_ref()).unwrap();
+    }
+
+    /// The release key's check, after which the unpacked tarball's launcher
+    /// is changed, as another program of the user's could change it while
+    /// `--install` runs.
+    struct ChangedAfterAcceptance {
+        signer: LinuxSigner,
+        source: PathBuf,
+    }
+
+    impl Signer for ChangedAfterAcceptance {
+        fn check(&self, folder: &Path, manifest: &Manifest) -> Result<(), String> {
+            self.signer.check(folder, manifest)?;
+            std::fs::write(&self.source, b"changed after acceptance").map_err(|error| error.to_string())
+        }
+    }
+
+    /// Finding F-69: `--install` copies the version first and accepts the
+    /// copy, so a file changed in the unpacked tarball after the check is
+    /// not what is installed.
+    #[test]
+    fn a_file_changed_after_acceptance_is_not_installed() {
+        let folder = std::env::temp_dir().join(format!("neoteletext-install-linux-changed-{}", std::process::id()));
+        let _ = files::remove_tree(&folder);
+        let version = Version::new(0, 1, 0);
+        let source = folder.join("unpacked");
+        let pair = Ed25519KeyPair::from_pkcs8(Ed25519KeyPair::generate_pkcs8(&ring::rand::SystemRandom::new()).unwrap().as_ref()).unwrap();
+        signed_version(&source.join(version.to_string()), version, &pair);
+        let launcher = source.join(version.to_string()).join(LAUNCHER_PROGRAM);
+        let genuine = std::fs::read(&launcher).unwrap();
+        let signer = ChangedAfterAcceptance { signer: LinuxSigner { key: Some(pair.public_key().as_ref().try_into().unwrap()) }, source: launcher };
+        let layout = Layout { family: Family::Linux, root: folder.join("installation"), bundle: None };
+        let installed = install_version(&source, &layout, &signer).unwrap().unwrap();
+        assert_eq!(installed.0, version);
+        assert!(std::fs::read(installed.1.join(LAUNCHER_PROGRAM)).unwrap() == genuine, "the version installed is the one accepted");
+        assert!(std::fs::read(layout.launcher_folder().join(LINUX_LAUNCHER)).unwrap() == genuine, "the launcher installed is the one accepted");
+        files::remove_tree(&folder).unwrap();
+    }
 
     #[test]
     fn the_menu_entry_starts_the_launcher() {

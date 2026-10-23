@@ -16,8 +16,9 @@ use crate::{COMPRESSED, Https};
 /// newest root and the versions seen, so the host cannot roll them back)
 /// and the time of the last successful check.
 pub const METADATA: &str = update::layout::UPDATER_METADATA;
-/// The file in it holding the last successful check's time.
-pub(super) const CHECKED: &str = "checked";
+/// The file in it holding the last successful check's time; the launcher
+/// keeps only the names `update::layout` lists there.
+pub(super) const CHECKED: &str = update::layout::UPDATER_CHECKED;
 /// The longest that file is: a time in decimal seconds.
 const MAX_CHECKED: usize = 24;
 /// How many times a release file that fails its checks is fetched before

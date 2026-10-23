@@ -13,7 +13,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use launcher::{HEALTH_DEADLINE, Launcher};
+use launcher::{Chosen, HEALTH_DEADLINE, Launcher};
 use ring::signature::{Ed25519KeyPair, KeyPair as _};
 use update::accept::{LinuxSigner, Signer};
 use update::layout::Layout;
@@ -174,6 +174,22 @@ impl Fixture {
         self.launcher(deadline).run(&[OsString::from(self.folder.join("log"))]).unwrap()
     }
 
+    /// The bytes of the broker that runs as `version` once it is the
+    /// trial: the installed bundle's on macOS, the version's folder's
+    /// elsewhere.
+    fn broker_of(&self, version: Version) -> Vec<u8> {
+        let program = match platform().family() {
+            Family::Macos => self.layout.bundle.clone().unwrap().join("Contents/MacOS").join(MARKED_PROGRAM),
+            Family::Linux | Family::Windows => self.layout.version(version).join(platform().program_file(MARKED_PROGRAM)),
+        };
+        fs::read(program).unwrap()
+    }
+
+    /// The staged broker of `version`.
+    fn staged_broker(&self, version: Version) -> PathBuf {
+        self.layout.staged(version).join(platform().program_path(MARKED_PROGRAM))
+    }
+
     /// The installed version, by its broker's mark.
     fn installed(&self) -> Version {
         let program = match platform().family() {
@@ -273,6 +289,68 @@ fn a_version_not_signed_or_not_whole_is_refused() {
     assert!(!fixture.log().contains("0.3.0"), "never started");
 }
 
+/// Decision 87 (finding F-02): what the launcher accepts is its own copy,
+/// so a hard link the confined updater made into the staged version
+/// before acceptance cannot change the version afterwards, and the
+/// launcher keeps nothing under `staging/metadata` but the updater's own
+/// files.
+#[cfg(unix)]
+#[test]
+fn a_hard_link_into_staging_cannot_change_an_accepted_version() {
+    let fixture = Fixture::new("hard-link");
+    fixture.install(OLD, "healthy");
+    fixture.stage(NEW, "healthy", true);
+    let staged = fixture.staged_broker(NEW);
+    let accepted = fs::read(&staged).unwrap();
+    let metadata = fixture.layout.staging().join(update::layout::UPDATER_METADATA);
+    fs::create_dir_all(&metadata).unwrap();
+    let link = metadata.join("kept");
+    fs::hard_link(&staged, &link).unwrap();
+    assert_eq!(fixture.launcher(HEALTH_DEADLINE).prepare().unwrap(), Chosen::Trial(NEW));
+    if link.exists() {
+        fs::write(&link, b"#!/bin/sh\necho changed after acceptance\n").unwrap();
+    }
+    assert!(fixture.broker_of(NEW) == accepted, "the accepted version changed through a hard link");
+    assert!(!link.exists(), "a file that is not the updater's own is removed from staging/metadata");
+}
+
+/// Decision 87 (finding F-02): a staged version whose folder is a link is
+/// refused, and what the link names is left alone.
+#[cfg(unix)]
+#[test]
+fn a_staged_root_that_is_a_link_is_refused() {
+    let fixture = Fixture::new("root-link");
+    fixture.install(OLD, "healthy");
+    let elsewhere = fixture.folder.join("elsewhere").join(NEW.to_string());
+    fixture.version(&elsewhere, NEW, "healthy", true);
+    fs::create_dir_all(fixture.layout.staging()).unwrap();
+    std::os::unix::fs::symlink(&elsewhere, fixture.layout.staged(NEW)).unwrap();
+    assert_eq!(fixture.launcher(HEALTH_DEADLINE).prepare().unwrap(), Chosen::Run(OLD));
+    let state = fixture.state();
+    assert_eq!((state.current, state.trial), (OLD, None));
+    assert_eq!(fixture.installed(), OLD);
+    assert!(fs::symlink_metadata(fixture.layout.staged(NEW)).is_err(), "the link is removed");
+    assert!(elsewhere.join(MANIFEST).is_file(), "what it named is left alone");
+}
+
+/// Decision 87 (finding F-02): a write descriptor the updater kept open on
+/// a staged file cannot change the version once it is accepted.
+#[test]
+fn an_open_write_descriptor_cannot_change_an_accepted_version() {
+    use std::io::Write as _;
+    let fixture = Fixture::new("descriptor");
+    fixture.install(OLD, "healthy");
+    fixture.stage(NEW, "healthy", true);
+    let staged = fixture.staged_broker(NEW);
+    let accepted = fs::read(&staged).unwrap();
+    let mut kept = fs::OpenOptions::new().write(true).open(&staged).unwrap();
+    assert_eq!(fixture.launcher(HEALTH_DEADLINE).prepare().unwrap(), Chosen::Trial(NEW));
+    kept.write_all(b"changed after acceptance").unwrap();
+    kept.sync_all().unwrap();
+    drop(kept);
+    assert!(fixture.broker_of(NEW) == accepted, "the accepted version changed through a descriptor kept open");
+}
+
 /// A missing or unreadable state file is rebuilt from what is installed.
 #[test]
 fn a_lost_state_is_rebuilt_from_what_is_installed() {
@@ -287,8 +365,8 @@ fn a_lost_state_is_rebuilt_from_what_is_installed() {
 fn fault_points() -> Vec<&'static str> {
     let mut points = vec!["state-written-before-rename", "state-renamed", "accept-written", "trial-counted", "commit-before-write", "commit-written"];
     match platform().family() {
-        Family::Macos => points.extend(["bundle-exchanged", "previous-discarded", "previous-moved"]),
-        Family::Linux => points.extend(["accept-moved", "launcher-written", "launcher-exchanged"]),
+        Family::Macos => points.extend(["accept-copied", "bundle-exchanged", "previous-discarded", "previous-moved"]),
+        Family::Linux => points.extend(["accept-copied", "accept-moved", "launcher-written", "launcher-exchanged"]),
         Family::Windows => points.extend(["accept-copied", "accept-moved"]),
     }
     points

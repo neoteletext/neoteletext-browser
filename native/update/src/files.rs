@@ -115,13 +115,27 @@ pub fn exchange(a: &Path, b: &Path) -> io::Result<()> {
     rustix::fs::renameat_with(rustix::fs::CWD, a, rustix::fs::CWD, b, rustix::fs::RenameFlags::EXCHANGE).map_err(io::Error::from)
 }
 
+/// Refuses `folder` when it is itself a link: a folder another process
+/// wrote is read only where it is, never through a link to somewhere else
+/// (decision 87).
+///
+/// # Errors
+/// When it is a link, or cannot be examined.
+pub fn refuse_link(folder: &Path) -> io::Result<()> {
+    if fs::symlink_metadata(folder)?.file_type().is_symlink() {
+        return Err(io::Error::new(io::ErrorKind::InvalidData, format!("{} is a link", folder.display())));
+    }
+    Ok(())
+}
+
 /// Copies the folder `from` to the new folder `to`, files flushed and
 /// programs kept executable; a symbolic link, which no release has, is
-/// refused, so nothing outside `from` is reached.
+/// refused, `from` itself included, so nothing outside `from` is reached.
 ///
 /// # Errors
 /// When anything cannot be read or written, or is a link.
 pub fn copy_tree(from: &Path, to: &Path) -> io::Result<()> {
+    refuse_link(from)?;
     fs::create_dir(to)?;
     for entry in fs::read_dir(from)? {
         let entry = entry?;
@@ -168,10 +182,10 @@ pub fn remove_tree(path: &Path) -> io::Result<()> {
 }
 
 /// Every file under `folder`, as paths relative to it with `/` between
-/// parts, in byte order; a link is refused.
+/// parts, in byte order; a link is refused, `folder` itself included.
 ///
 /// # Errors
-/// When the folder cannot be read, holds a link, or holds more than
+/// When the folder cannot be read, is or holds a link, or holds more than
 /// `max` files.
 pub fn list_files(folder: &Path, max: usize) -> io::Result<Vec<String>> {
     fn walk(base: &Path, folder: &Path, prefix: &str, max: usize, out: &mut Vec<String>) -> io::Result<()> {
@@ -193,6 +207,7 @@ pub fn list_files(folder: &Path, max: usize) -> io::Result<Vec<String>> {
         }
         Ok(())
     }
+    refuse_link(folder)?;
     let mut out = Vec::new();
     walk(folder, folder, "", max, &mut out)?;
     out.sort();
@@ -256,6 +271,10 @@ mod tests {
             std::os::unix::fs::symlink("/etc", from.join("link")).unwrap();
             assert!(copy_tree(&from, &folder.join("again")).is_err());
             assert!(list_files(&from, 8).is_err());
+            let to_link = folder.join("to-link");
+            std::os::unix::fs::symlink(folder.join("to"), &to_link).unwrap();
+            assert!(list_files(&to_link, 8).is_err(), "a folder that is a link");
+            assert!(copy_tree(&to_link, &folder.join("through")).is_err(), "a folder that is a link");
         }
         remove_tree(&folder).unwrap();
     }

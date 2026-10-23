@@ -14,10 +14,10 @@ use update::version::Version;
 use crate::macos;
 use crate::{Chosen, Launcher, io_text, launcher_release};
 
-/// What a Windows version is called under `versions\` while it is copied
-/// in: no version's name, so `tidy` removes one left by a launcher
-/// stopped part way.
-const COPYING_SUFFIX: &str = ".copying";
+/// What a version is called under `versions/` while it is copied in: no
+/// version's name, so `tidy` removes one left by a launcher stopped part
+/// way.
+pub(crate) const COPYING_SUFFIX: &str = ".copying";
 
 impl Launcher {
     /// Steps 1 to 4, holding the lock alone: what this start runs.
@@ -100,34 +100,52 @@ impl Launcher {
         found
     }
 
-    /// Step 3: accepts `version` and makes it the trial.
+    /// Step 3: accepts `version` and makes it the trial. What is accepted
+    /// is the launcher's own copy of what the updater staged, made where
+    /// only the launcher writes and checked there, never the staged files
+    /// themselves: the confined updater could otherwise change a version
+    /// after its check, through a hard link, a descriptor it kept open, or
+    /// a staged folder that is a link (decision 87).
     fn accept(&self, version: Version, state: &mut State) -> Result<(), String> {
         let staged = self.layout.staged(version);
+        let staged_there = match std::fs::symlink_metadata(&staged) {
+            Ok(metadata) if metadata.file_type().is_symlink() => return Err(String::from("the staged version is a link")),
+            Ok(_) => true,
+            Err(_) => false,
+        };
         match self.platform.family() {
             Family::Macos => {
-                let accepted = update::accept::accept(&staged, self.platform, self.signer.as_ref())?;
-                debug_assert_eq!(accepted, version, "accept checks the folder's name");
+                let accepted = self.layout.accepted(version);
+                std::fs::create_dir_all(self.layout.accepting()).map_err(|error| io_text(&self.layout.accepting(), &error))?;
+                self.copy_and_accept(&staged, &accepted, version)?;
                 state.trial = Some(Trial { version, failed: 0 });
                 self.write_state(state)?;
                 fault::point("accept-written");
+                // The staged copy goes now; one left behind is tidied.
+                let _ = files::remove_tree(&staged);
                 #[cfg(target_os = "macos")]
                 macos::reconcile(self, state)?;
                 Ok(())
             }
             Family::Windows | Family::Linux => {
                 let installed = self.layout.version(version);
-                let from = if staged.is_dir() { staged } else { installed.clone() };
-                update::accept::accept(&from, self.platform, self.signer.as_ref())?;
-                if from != installed {
+                if staged_there {
                     std::fs::create_dir_all(self.layout.versions()).map_err(|error| io_text(&self.layout.versions(), &error))?;
                     files::remove_tree(&installed).map_err(|error| io_text(&installed, &error))?;
-                    if self.platform.family() == Family::Windows {
-                        self.copy_in(&from, &installed, version)?;
-                    } else {
-                        std::fs::rename(&from, &installed).map_err(|error| io_text(&from, &error))?;
-                    }
+                    let copying = self.layout.versions().join(format!("{version}{COPYING_SUFFIX}"));
+                    self.copy_and_accept(&staged, &copying, version)?;
+                    std::fs::rename(&copying, &installed).map_err(|error| io_text(&copying, &error))?;
                     files::sync_folder(&self.layout.versions()).map_err(|error| io_text(&self.layout.versions(), &error))?;
+                    // The staged copy goes now; one left behind is tidied.
+                    let _ = files::remove_tree(&staged);
                     fault::point("accept-moved");
+                } else {
+                    // Copied and renamed in by a start that ended before it
+                    // wrote the state: the launcher's own copy, checked again.
+                    let accepted = update::accept::accept(&installed, self.platform, self.signer.as_ref())?;
+                    if accepted != version {
+                        return Err(format!("{} says {accepted}", installed.display()));
+                    }
                 }
                 state.trial = Some(Trial { version, failed: 0 });
                 self.write_state(state)?;
@@ -137,27 +155,22 @@ impl Launcher {
         }
     }
 
-    /// Windows: the staged `version` copied into `installed` by the
-    /// launcher, not renamed, and checked again there. What the updater
-    /// wrote carries its container's full control and the low integrity
-    /// label of every file an `AppContainer` writes; renamed, a version
-    /// would keep both, so the updater could change it after it was
-    /// checked, and the mitigation that refuses low integrity programs
-    /// would refuse its helpers (measured end to end: "Access is denied").
-    /// A copy is the launcher's, under `versions\`'s access list. A copy
-    /// cut short is under a name that is no version, which `tidy` removes.
-    fn copy_in(&self, staged: &Path, installed: &Path, version: Version) -> Result<(), String> {
-        let copying = self.layout.versions().join(format!("{version}{COPYING_SUFFIX}"));
-        files::remove_tree(&copying).map_err(|error| io_text(&copying, &error))?;
-        files::copy_tree(staged, &copying).map_err(|error| io_text(&copying, &error))?;
+    /// The staged `version` copied by the launcher into `copy`, a folder
+    /// only the launcher writes, and accepted there. On Windows a copy is
+    /// also what makes a version the launcher's: what the updater wrote
+    /// carries its container's full control and the low integrity label of
+    /// every file an `AppContainer` writes, and the mitigation that refuses
+    /// low integrity programs would refuse its helpers (measured end to
+    /// end: "Access is denied"). A copy cut short is never what the state
+    /// names, and is made again or tidied.
+    fn copy_and_accept(&self, staged: &Path, copy: &Path, version: Version) -> Result<(), String> {
+        files::remove_tree(copy).map_err(|error| io_text(copy, &error))?;
+        files::copy_tree(staged, copy).map_err(|error| io_text(copy, &error))?;
         fault::point("accept-copied");
-        let copied = update::accept::accept(&copying, self.platform, self.signer.as_ref())?;
+        let copied = update::accept::accept(copy, self.platform, self.signer.as_ref())?;
         if copied != version {
             return Err(format!("the copy of {version} says {copied}"));
         }
-        std::fs::rename(&copying, installed).map_err(|error| io_text(&copying, &error))?;
-        // The staged copy goes now; one left behind is tidied.
-        let _ = files::remove_tree(staged);
         Ok(())
     }
 
