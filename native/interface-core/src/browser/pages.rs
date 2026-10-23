@@ -10,7 +10,7 @@ use crate::browser::frames::PULSE_LIMIT;
 use crate::canvas::PageKey;
 use crate::channel::{Channel, PAGES_PER_BANK, PageInfo, Status, page_index, page_number};
 
-use super::ROW_HEIGHT;
+use crate::browser::page_list::ROW_HEIGHT;
 
 const DECIMAL_DIGITS: usize = 3;
 

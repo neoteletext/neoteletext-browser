@@ -9,27 +9,21 @@
 //! turns into messages (design section 5.2).
 
 use alloc::collections::{BTreeMap, BTreeSet};
-use alloc::format;
 use alloc::string::String;
 use alloc::vec::Vec;
 
-use crate::browser::address::FIELD_PADDING;
-use crate::browser::frames::{PULSE_MILLISECONDS, PULSE_SCALE};
-use crate::browser::glyphs::{LOCK_WIDTH, WINDOW_GLYPH, WINDOW_GLYPH_THICKNESS, arrow, chevron, gear, house, padlock, reload_glyph, speaker_glyph, star};
+use crate::browser::glyphs::{WINDOW_GLYPH, WINDOW_GLYPH_THICKNESS};
 use crate::browser::regions::Regions;
-use crate::canvas::{Canvas, PAGE_HEIGHT, PAGE_WIDTH, PageKey, SCREEN_SCALE, draw_page_on_screen};
-use crate::channel::{BANKS, Channel, PAGES, PAGES_PER_BANK, Status, page_index, page_number};
+use crate::canvas::{Canvas, PageKey};
+use crate::channel::{Channel, PAGES_PER_BANK, page_index, page_number};
 use crate::editor::Editor;
 use crate::geometry::{Point, Rect};
-use crate::theme::{
-    ADDRESS, AXIS, BANK_COLOURS, BANK_COUNT, BANK_NAME, BANK_RANGE, BLACK, BUTTON, CELL_AVAILABLE, CELL_EMPTY, CELL_PULSE, COLUMN_HEAD, DIM, FIELD, FIELD_INK,
-    GREEN, HEADING, INSECURE, LEGEND, MUTED, PANEL, PRIVATE, RED, ROW_NUMBER, ROW_STATUS, ROW_TITLE, RULE, RULE_SOFT, SECURE, SELECTED, STAR_ON, UPDATED,
-    WHITE, WINDOW, YELLOW, mix,
-};
-use crate::ui::{HAIRLINE, border, centred, label, left_centred, outline, right_centred};
-use crate::wall::{CellClick, Wall, WallPage, glow, since};
+use crate::theme::{BLACK, GREEN, RED, YELLOW};
+use crate::ui::border;
+use crate::wall::{CellClick, Wall};
 
 mod address;
+mod banks;
 mod bookmarks_ui;
 mod console_ui;
 mod controls_ui;
@@ -43,6 +37,8 @@ mod history_ui;
 #[cfg(feature = "links")]
 mod link_ui;
 mod output;
+mod overview;
+mod page_list;
 mod pages;
 #[cfg(feature = "phone-keyboard")]
 mod phone_ui;
@@ -57,7 +53,9 @@ mod tabs_ui;
 #[cfg(feature = "interaction")]
 mod terminal_ui;
 mod tips_ui;
+mod toolbar;
 mod widgets;
+mod window;
 
 pub use output::{Output, WindowAction};
 #[cfg(feature = "phone-keyboard")]
@@ -88,59 +86,8 @@ const WINDOW_BUTTON_WIDTH: f64 = 44.0;
 const WINDOW_BUTTON_HEIGHT: f64 = 32.0;
 const WINDOW_BUTTON_GAP: f64 = 6.0;
 // ---- Toolbar ----
-const TOOLBAR_TOP: f64 = STRIP_HEIGHT;
-const TOOLBAR_HEIGHT: f64 = 54.0;
-const TOOL_SIZE: f64 = 44.0;
-const TOOL_INSET: f64 = 5.0;
-const LOCK_GAP: f64 = 12.0;
-const MENU_BAR_WIDTH: f64 = 22.0;
-const MENU_BAR_HEIGHT: f64 = 3.0;
-const MENU_BAR_GAP: f64 = 7.0;
 // ---- Panels ----
-const BODY_TOP: f64 = TOOLBAR_TOP + TOOLBAR_HEIGHT + MARGIN;
-const MARGIN: f64 = 8.0;
-const BANKS_WIDTH: f64 = 212.0;
-const LIST_WIDTH: f64 = 260.0;
-const OVERVIEW_HEIGHT: f64 = 176.0;
-const HEADING_HEIGHT: f64 = 40.0;
-const PADDING: f64 = 12.0;
-const BANK_GAP: f64 = 6.0;
-const BANK_MAX_HEIGHT: f64 = 60.0;
-/// Each bank's colour, as a thin bar down the left of its entry.
-const SWATCH_WIDTH: f64 = 6.0;
-const SWATCH_INSET: f64 = 8.0;
-const BANK_BORDER: f64 = 3.0;
-const BANK_RANGE_RISE: f64 = 2.0;
-const ROW_HEIGHT: f64 = 27.0;
-const COLUMN_HEAD_HEIGHT: f64 = 26.0;
-/// Where the title column starts: after a three-digit page number.
-const TITLE_COLUMN: f64 = 56.0;
-const SCROLL_BAR_WIDTH: f64 = 4.0;
-
 // ---- Overview ----
-const AXIS_WIDTH: f64 = 40.0;
-const CELL_GAP: f64 = 2.0;
-const LEGEND_SWATCH: f64 = 10.0;
-const LEGEND_GAP: f64 = 6.0;
-const LEGEND_SPACING: f64 = 18.0;
-/// An updated row flashes this far towards amber at first.
-const ROW_FLASH: f64 = 0.6;
-/// The overview's update ring: 1.2 seconds, growing to five cells wide,
-/// two pixels thick.
-const UPDATE_RING_MILLISECONDS: u64 = 1_200;
-const UPDATE_RING_SCALE: f64 = 4.0;
-const UPDATE_RING_WIDTH: f64 = 2.0;
-/// The update dot leaves a quarter of the cell all round.
-const UPDATE_DOT_INSET: f64 = 0.25;
-/// The button at the overview's top right that folds it into the footer
-/// and opens it again, with its chevron.
-const TOGGLE_SIZE: f64 = 28.0;
-/// A page under the pointer in the overview pops up at its native size,
-/// this far above its cell, with a shadow offset as the wall's hover.
-const PREVIEW_GAP: f64 = 8.0;
-const PREVIEW_SHADOW: f64 = 8.0;
-const PREVIEW_SHADOW_DARKNESS: f32 = 0.6;
-
 /// Scrolling by one wheel line.
 pub const LINE_HEIGHT: f64 = 21.0;
 /// A key the browser handles, as the host translates it.
@@ -404,12 +351,6 @@ impl Browser {
         dragged || hovered || preview_changed || linked || tipped || tabbed
     }
 
-    /// The overview's cell under `point`, when its page has arrived.
-    fn overview_page(&self, point: Point) -> Option<usize> {
-        let index = self.cell_index(point)?;
-        matches!(self.channel.pages.get(index), Some(Some(info)) if info.status == Status::Loaded).then_some(index)
-    }
-
     /// The pointer's shape where it is: a hand over a page a click would
     /// zoom or choose and over the overview's fold button, the arrow
     /// elsewhere.
@@ -421,13 +362,6 @@ impl Browser {
         }
         let over_toggle = self.regions.overview_toggle.contains(self.pointer);
         if self.wall.over_page() || self.previewed.is_some() || over_toggle { Cursor::Hand } else { Cursor::Arrow }
-    }
-
-    /// Folds the overview into the footer, or opens it again.
-    fn toggle_overview(&mut self) {
-        self.overview_folded = !self.overview_folded;
-        self.pulses.clear();
-        self.previewed = None;
     }
 
     /// The main button was released.
@@ -813,102 +747,7 @@ impl Browser {
         true
     }
 
-    fn cell_index(&self, point: Point) -> Option<usize> {
-        let cells = self.regions.cells;
-        if !cells.contains(point) {
-            return None;
-        }
-        #[allow(clippy::cast_precision_loss, reason = "small counts")]
-        let (width, height) = (cells.width() / PAGES_PER_BANK as f64, cells.height() / BANKS as f64);
-        #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss, reason = "the point is inside the grid")]
-        let (column, row) = (((point.x - cells.x0) / width) as usize, ((point.y - cells.y0) / height) as usize);
-        (column < PAGES_PER_BANK && row < BANKS).then_some(row * PAGES_PER_BANK + column)
-    }
-
     // ---- Drawing ----
-
-    /// Draws the whole window; `width` and `height` are logical pixels.
-    pub fn draw<C: Canvas + ?Sized>(&mut self, canvas: &mut C, width: f64, height: f64, now: u64) {
-        self.regions.clear();
-        canvas.fill(Rect::new(0.0, 0.0, width, height), 0.0, WINDOW);
-        // The bookmarks bar, when shown, is a row of the strip above the body.
-        let body_top = BODY_TOP + if self.bar_shown() { star_ui::BAR_HEIGHT } else { 0.0 };
-        // The docked remote narrows the content (decision 68).
-        let right = width - MARGIN - self.remote_docked_width(now);
-        self.body = Rect::new(MARGIN, body_top, right, height - MARGIN);
-        // The console docks where the overview is.
-        let overview_height = if self.console.open() {
-            console_ui::CONSOLE_HEIGHT
-        } else if self.overview_folded {
-            HEADING_HEIGHT
-        } else {
-            OVERVIEW_HEIGHT
-        };
-        let overview = Rect::new(MARGIN, height - MARGIN - overview_height, right, height - MARGIN);
-        let body_bottom = overview.y0 - MARGIN;
-        let banks = Rect::new(MARGIN, body_top, MARGIN + BANKS_WIDTH, body_bottom);
-        let list = Rect::new(banks.x1 + MARGIN, body_top, banks.x1 + MARGIN + LIST_WIDTH, body_bottom);
-        let zoom = Rect::new(list.x1 + MARGIN, body_top, right, body_bottom);
-
-        // The titles are borrowed from the channel while the wall draws:
-        // the fields are borrowed apart.
-        let first = self.bank * PAGES_PER_BANK;
-        let (channel, updates) = (&self.channel, &self.updates);
-        let pages: Vec<WallPage<'_>> = (first..first + PAGES_PER_BANK)
-            .filter_map(|index| {
-                let info = channel.pages.get(index)?.as_ref()?;
-                let key = PageKey { channel: channel.channel, page: page_number(index)? };
-                let updated_at = updates.iter().find(|&&(which, _)| which == index).map(|&(_, at)| at);
-                Some(WallPage { key, title: &info.title, updated: updated_at })
-            })
-            .collect();
-        let selected = self.selected.and_then(|index| self.page_key(index));
-        self.wall.draw(canvas, zoom, &pages, selected, now);
-        drop(pages);
-        #[cfg(feature = "links")]
-        self.draw_links(canvas);
-        #[cfg(feature = "interaction")]
-        self.draw_terminal(canvas, now);
-        // A refused certificate: its screen in place of the pages.
-        self.draw_refusal(canvas, zoom);
-        let mut visible = self.wall.visible();
-        // The overview's previewed page is on screen too, so the trusted
-        // core has it rendered, whichever bank it is in.
-        if let Some(key) = self.previewed.and_then(|index| self.page_key(index))
-            && !visible.contains(&key)
-        {
-            visible.push(key);
-        }
-        if visible != self.visible {
-            self.visible.clone_from(&visible);
-            self.outputs.push(Output::Visible(visible));
-        }
-        self.draw_banks(canvas, banks);
-        self.draw_list(canvas, list, now);
-        if self.console.open() {
-            self.draw_console(canvas, overview);
-        } else {
-            self.draw_overview(canvas, overview, now);
-        }
-        self.draw_toolbar(canvas, width);
-        self.draw_bar(canvas, TOOLBAR_TOP + TOOLBAR_HEIGHT, width);
-        self.draw_tab_strip(canvas, width);
-        self.draw_preview(canvas, width);
-        self.draw_remote(canvas, width, height, body_top, now);
-        #[cfg(feature = "phone-keyboard")]
-        self.draw_phone_panel(canvas);
-        self.draw_settings_panel(canvas);
-        self.draw_history_panel(canvas);
-        self.draw_bookmarks_panel(canvas, now);
-        self.draw_star_popover(canvas);
-        self.draw_tab_overflow(canvas, width);
-        self.draw_popups(canvas);
-        self.draw_page_controls(canvas);
-        self.draw_tips(canvas, width, height);
-        // Pages may have moved under a still pointer: by scrolling, a new
-        // size or a zoom.
-        self.wall.hover(self.pointer, now);
-    }
 
     fn draw_tab_strip<C: Canvas + ?Sized>(&mut self, canvas: &mut C, width: f64) {
         canvas.fill(Rect::new(0.0, 0.0, width, STRIP_HEIGHT), 0.0, BLACK);
@@ -928,388 +767,6 @@ impl Browser {
         let left = self.frame.left_inset + STRIP_MARGIN;
         self.draw_tabs(canvas, left, right);
         self.regions.strip = Rect::new(0.0, 0.0, width, STRIP_HEIGHT);
-    }
-
-    fn draw_toolbar<C: Canvas + ?Sized>(&mut self, canvas: &mut C, width: f64) {
-        let bar = Rect::new(0.0, TOOLBAR_TOP, width, TOOLBAR_TOP + TOOLBAR_HEIGHT);
-        canvas.fill(bar, 0.0, BLACK);
-        canvas.fill(Rect::new(0.0, bar.y1 - HAIRLINE, width, bar.y1), 0.0, RULE);
-        let top = bar.y0 + TOOL_INSET;
-        let tool = |x: f64| Rect::new(x, top, x + TOOL_SIZE, top + TOOL_SIZE);
-        self.regions.back = tool(MARGIN);
-        self.regions.forward = tool(MARGIN + TOOL_SIZE);
-        for (rect, enabled, pointing_left) in [(self.regions.back, self.strip.back, true), (self.regions.forward, self.strip.forward, false)] {
-            canvas.fill(rect, 0.0, BUTTON);
-            border(canvas, rect, 2.0, if enabled { SELECTED } else { RULE });
-            arrow(canvas, rect, pointing_left, if enabled { WHITE } else { DIM });
-        }
-        // Reload, then Home after it (requirements 11.2 and 19.6).
-        self.regions.reload = tool(MARGIN + TOOL_SIZE * 2.0);
-        canvas.fill(self.regions.reload, 0.0, BUTTON);
-        border(canvas, self.regions.reload, 2.0, RULE);
-        reload_glyph(canvas, self.regions.reload, WHITE);
-        self.regions.home = tool(MARGIN + TOOL_SIZE * 3.0);
-        canvas.fill(self.regions.home, 0.0, BUTTON);
-        border(canvas, self.regions.home, 2.0, RULE);
-        house(canvas, self.regions.home, WHITE);
-        self.regions.menu = tool(width - MARGIN - TOOL_SIZE);
-        // Mute or unmute every tab, beside the menu.
-        self.regions.mute_all = tool(self.regions.menu.x0 - MARGIN - TOOL_SIZE);
-        canvas.fill(self.regions.mute_all, 0.0, BUTTON);
-        border(canvas, self.regions.mute_all, 2.0, RULE);
-        speaker_glyph(canvas, self.regions.mute_all, self.all_muted(), WHITE);
-        // The settings panel's gear, at the right of the strip (requirement 19.3).
-        self.regions.gear = tool(self.regions.mute_all.x0 - MARGIN - TOOL_SIZE);
-        canvas.fill(self.regions.gear, 0.0, if self.settings_open() { SELECTED } else { BUTTON });
-        border(canvas, self.regions.gear, 2.0, RULE);
-        gear(canvas, self.regions.gear, WHITE);
-        canvas.fill(self.regions.menu, 0.0, BUTTON);
-        border(canvas, self.regions.menu, 2.0, RULE);
-        let middle = f64::midpoint(self.regions.menu.y0, self.regions.menu.y1);
-        let centre_x = f64::midpoint(self.regions.menu.x0, self.regions.menu.x1);
-        for offset in [-MENU_BAR_GAP, 0.0, MENU_BAR_GAP] {
-            let y = middle + offset - MENU_BAR_HEIGHT / 2.0;
-            canvas.fill(Rect::new(centre_x - MENU_BAR_WIDTH / 2.0, y, centre_x + MENU_BAR_WIDTH / 2.0, y + MENU_BAR_HEIGHT), 0.0, WHITE);
-        }
-
-        let field = Rect::new(self.regions.home.x1 + MARGIN * 2.0, top, self.regions.gear.x0 - MARGIN * 2.0, top + TOOL_SIZE);
-        self.regions.field = field;
-        canvas.fill(field, 0.0, FIELD);
-        if self.editing {
-            border(canvas, field, 2.0, SELECTED);
-        }
-        // The strip's question takes the whole field: no address, no star.
-        #[cfg(feature = "links")]
-        if self.draw_prompt(canvas, field) {
-            self.regions.star = Rect::ZERO;
-            self.regions.field_text = Rect::ZERO;
-            return;
-        }
-        let middle = f64::midpoint(field.y0, field.y1);
-        let mut text_left = field.x0 + FIELD_PADDING;
-        // A private tab says so first (requirement 20.8).
-        if self.strip.private {
-            let word = "Private";
-            left_centred(canvas, Rect::new(text_left, field.y0, field.x1, field.y1), 0.0, word, ROW_STATUS, PRIVATE);
-            text_left += canvas.text_width(word, ROW_STATUS) + LOCK_GAP;
-        }
-        if self.strip.built_in {
-            let word = "NeoTeletext";
-            left_centred(canvas, Rect::new(text_left, field.y0, field.x1, field.y1), 0.0, word, ROW_STATUS, FIELD_INK);
-            text_left += canvas.text_width(word, ROW_STATUS) + LOCK_GAP;
-        } else if self.strip.local {
-            let word = "File";
-            left_centred(canvas, Rect::new(text_left, field.y0, field.x1, field.y1), 0.0, word, ROW_STATUS, FIELD_INK);
-            text_left += canvas.text_width(word, ROW_STATUS) + LOCK_GAP;
-        } else if self.strip.refused.is_some() {
-            let warning = "Certificate refused";
-            left_centred(canvas, Rect::new(text_left, field.y0, field.x1, field.y1), 0.0, warning, ROW_STATUS, INSECURE);
-            text_left += canvas.text_width(warning, ROW_STATUS) + LOCK_GAP;
-        } else if self.strip.encrypted {
-            padlock(canvas, Point::new(text_left, middle), SECURE);
-            text_left += LOCK_WIDTH + LOCK_GAP;
-        } else {
-            let warning = "Not secure";
-            left_centred(canvas, Rect::new(text_left, field.y0, field.x1, field.y1), 0.0, warning, ROW_STATUS, INSECURE);
-            text_left += canvas.text_width(warning, ROW_STATUS) + LOCK_GAP;
-        }
-        self.regions.star = Rect::new(field.x1 - TOOL_SIZE, field.y0, field.x1, field.y1);
-        star(canvas, Point::new(f64::midpoint(self.regions.star.x0, self.regions.star.x1), middle), if self.strip.bookmarked { STAR_ON } else { FIELD_INK });
-        let text = Rect::new(text_left, field.y0, self.regions.star.x0, field.y1);
-        #[cfg(feature = "phone-keyboard")]
-        let text = self.draw_phone_badge(canvas, text);
-        #[cfg(feature = "interaction")]
-        let text = self.draw_typing_badge(canvas, text);
-        self.regions.field_text = text;
-        // While the pointer or the focus is on a link, the field shows where
-        // it leads (requirement 17.6).
-        #[cfg(feature = "links")]
-        let pointing = !self.editing && self.draw_pointing(canvas, text);
-        #[cfg(not(feature = "links"))]
-        let pointing = false;
-        // The trusted core's notice, for a while (requirements 19.3, 19.10).
-        let noticed = !self.editing && !pointing && !self.strip.notice.is_empty();
-        if noticed {
-            canvas.push_clip(text);
-            left_centred(canvas, text, 0.0, &self.strip.notice, ADDRESS, INSECURE);
-            canvas.pop_clip();
-        }
-        if !pointing && !noticed {
-            self.draw_address(canvas, text);
-        }
-    }
-
-    fn draw_banks<C: Canvas + ?Sized>(&mut self, canvas: &mut C, panel: Rect) {
-        canvas.fill(panel, 0.0, PANEL);
-        outline(canvas, panel, RULE);
-        let heading = Rect::new(panel.x0, panel.y0, panel.x1, panel.y0 + HEADING_HEIGHT);
-        left_centred(canvas, heading, PADDING, "Page banks", HEADING, WHITE);
-        canvas.fill(Rect::new(panel.x0, heading.y1 - HAIRLINE, panel.x1, heading.y1), 0.0, RULE);
-        #[allow(clippy::cast_precision_loss, reason = "eight banks")]
-        let height = ((panel.height() - HEADING_HEIGHT - BANK_GAP) / BANKS as f64 - BANK_GAP).min(BANK_MAX_HEIGHT);
-        for (bank, &colour) in BANK_COLOURS.iter().enumerate() {
-            #[allow(clippy::cast_precision_loss, reason = "eight banks")]
-            let top = heading.y1 + BANK_GAP + bank as f64 * (height + BANK_GAP);
-            let rect = Rect::new(panel.x0 + BANK_GAP, top, panel.x1 - BANK_GAP, top + height);
-            let chosen = bank == self.bank;
-            canvas.fill(rect, 0.0, if chosen { BUTTON } else { PANEL });
-            if chosen {
-                border(canvas, rect, BANK_BORDER, colour);
-            } else {
-                outline(canvas, rect, RULE_SOFT);
-            }
-            let middle = f64::midpoint(rect.y0, rect.y1);
-            let swatch = Rect::new(rect.x0 + PADDING, rect.y0 + SWATCH_INSET, rect.x0 + PADDING + SWATCH_WIDTH, rect.y1 - SWATCH_INSET);
-            canvas.fill(swatch, 0.0, colour);
-            let text_left = swatch.x1 + PADDING;
-            let range = format!("{}00-{}99", bank + 1, bank + 1);
-            let name = self.channel.banks.get(bank).map_or("", String::as_str);
-            let range_height = canvas.line_height(BANK_RANGE);
-            let name_height = canvas.line_height(BANK_NAME);
-            let top = middle - f64::midpoint(range_height, name_height) - BANK_RANGE_RISE;
-            label(canvas, Point::new(text_left, top), &range, BANK_RANGE, colour);
-            canvas.text(Rect::new(text_left, top + range_height, rect.x1 - PADDING, top + range_height + name_height), name, BANK_NAME, colour);
-            right_centred(
-                canvas,
-                Rect::new(rect.x0, rect.y0, rect.x1, rect.y0 + range_height + PADDING),
-                PADDING,
-                &format!("{}", self.channel.bank_count(bank)),
-                BANK_COUNT,
-                MUTED,
-            );
-            self.regions.banks.push(rect);
-        }
-    }
-
-    fn draw_list<C: Canvas + ?Sized>(&mut self, canvas: &mut C, panel: Rect, now: u64) {
-        canvas.fill(panel, 0.0, PANEL);
-        let heading = Rect::new(panel.x0, panel.y0, panel.x1, panel.y0 + HEADING_HEIGHT);
-        canvas.fill(heading, 0.0, SELECTED);
-        let pages = self.bank_pages();
-        let first = self.bank + 1;
-        let name = self.channel.banks.get(self.bank).map_or("", String::as_str);
-        let title = if name.is_empty() {
-            format!("Pages {first}00-{first}99 ({})", pages.len())
-        } else {
-            format!("{first}00 {name} · pages {first}00-{first}99 ({})", pages.len())
-        };
-        canvas.push_clip(heading);
-        left_centred(canvas, heading, PADDING, &title, HEADING, WHITE);
-        canvas.pop_clip();
-
-        let head = Rect::new(panel.x0, heading.y1, panel.x1, heading.y1 + COLUMN_HEAD_HEIGHT);
-        let title_x = panel.x0 + TITLE_COLUMN;
-        for (x, text) in [(panel.x0 + PADDING, "Page"), (title_x + PADDING, "Title")] {
-            left_centred(canvas, Rect::new(x, head.y0, panel.x1, head.y1), 0.0, text, COLUMN_HEAD, MUTED);
-        }
-        canvas.fill(Rect::new(panel.x0, head.y1 - HAIRLINE, panel.x1, head.y1), 0.0, RULE);
-
-        let area = Rect::new(panel.x0, head.y1, panel.x1, panel.y1);
-        self.regions.list = area;
-        #[allow(clippy::cast_precision_loss, reason = "at most 100 rows")]
-        let content = pages.len() as f64 * ROW_HEIGHT;
-        let max_scroll = (content - area.height()).max(0.0);
-        self.list_scroll = self.list_scroll.min(max_scroll);
-        canvas.push_clip(area);
-        for (position, &index) in pages.iter().enumerate() {
-            #[allow(clippy::cast_precision_loss, reason = "at most 100 rows")]
-            let top = area.y0 + position as f64 * ROW_HEIGHT - self.list_scroll;
-            if top > area.y1 || top + ROW_HEIGHT < area.y0 {
-                continue;
-            }
-            let row = Rect::new(area.x0, top, area.x1, top + ROW_HEIGHT);
-            self.regions.rows.push((row, index));
-            let Some(Some(info)) = self.channel.pages.get(index) else {
-                continue;
-            };
-            let chosen = self.selected == Some(index);
-            if chosen {
-                canvas.fill(row, 0.0, SELECTED);
-            }
-            canvas.fill(Rect::new(row.x0, row.y1 - HAIRLINE, row.x1, row.y1), 0.0, RULE_SOFT);
-            // A row just updated flashes amber and fades back.
-            let updated = self.updated_at(index);
-            let glowing = glow(updated, now);
-            if glowing > 0.0 {
-                canvas.fill(row, 0.0, mix(if chosen { SELECTED } else { PANEL }, UPDATED, glowing * ROW_FLASH));
-            }
-            let number = page_number(index).map_or_else(String::new, |page| format!("{page:03X}"));
-            left_centred(canvas, row, PADDING, &number, ROW_NUMBER, WHITE);
-            let mut title_end = row.x1 - PADDING;
-            if let Some(age) = since(updated, now) {
-                title_end -= canvas.text_width(&age, ROW_STATUS) + PADDING;
-                right_centred(canvas, row, PADDING, &age, ROW_STATUS, UPDATED);
-            }
-            canvas.push_clip(Rect::new(title_x, row.y0, title_end, row.y1));
-            left_centred(canvas, Rect::new(title_x, row.y0, row.x1, row.y1), PADDING, &info.title, ROW_TITLE, WHITE);
-            canvas.pop_clip();
-        }
-        canvas.pop_clip();
-        if max_scroll > 0.0 {
-            let bar = area.height() * area.height() / content;
-            let top = area.y0 + (area.height() - bar) * self.list_scroll / max_scroll;
-            canvas.fill(Rect::new(area.x1 - SCROLL_BAR_WIDTH * 2.0, top, area.x1 - SCROLL_BAR_WIDTH, top + bar), SCROLL_BAR_WIDTH / 2.0, RULE);
-        }
-        outline(canvas, panel, RULE);
-    }
-
-    /// The overview's legend and page counts in `heading`, right-aligned to
-    /// end before `right`.
-    fn draw_legend<C: Canvas + ?Sized>(&self, canvas: &mut C, heading: Rect, right: f64) {
-        let middle = f64::midpoint(heading.y0, heading.y1);
-        let (present, loaded) = self.channel.counts();
-        let mut x = right - LEGEND_SPACING;
-        let counts = format!("{present} of {PAGES} pages have content, {loaded} loaded");
-        x -= canvas.text_width(&counts, LEGEND);
-        left_centred(canvas, Rect::new(x, heading.y0, heading.x1, heading.y1), 0.0, &counts, LEGEND, MUTED);
-        x -= LEGEND_SPACING * 2.0;
-        for (word, colour, ring) in [
-            ("Empty", CELL_EMPTY, false),
-            ("Available", CELL_AVAILABLE, false),
-            ("Loaded", YELLOW, false),
-            ("Shown", YELLOW, true),
-            ("Updated", UPDATED, false),
-        ]
-        .into_iter()
-        .rev()
-        {
-            let width = canvas.text_width(word, LEGEND);
-            x -= width;
-            left_centred(canvas, Rect::new(x, heading.y0, x + width, heading.y1), 0.0, word, LEGEND, MUTED);
-            x -= LEGEND_GAP + LEGEND_SWATCH;
-            let swatch = Rect::new(x, middle - LEGEND_SWATCH / 2.0, x + LEGEND_SWATCH, middle + LEGEND_SWATCH / 2.0);
-            canvas.fill(swatch, 0.0, colour);
-            if ring {
-                outline(canvas, swatch, WHITE);
-            }
-            x -= LEGEND_SPACING;
-        }
-    }
-
-    fn draw_overview<C: Canvas + ?Sized>(&mut self, canvas: &mut C, panel: Rect, now: u64) {
-        canvas.fill(panel, 0.0, PANEL);
-        outline(canvas, panel, RULE);
-        let heading = Rect::new(panel.x0, panel.y0, panel.x1, panel.y0 + HEADING_HEIGHT);
-        left_centred(canvas, heading, PADDING, &format!("All {PAGES} pages · overview"), HEADING, WHITE);
-        let middle = f64::midpoint(heading.y0, heading.y1);
-        let toggle = Rect::new(heading.x1 - PADDING - TOGGLE_SIZE, middle - TOGGLE_SIZE / 2.0, heading.x1 - PADDING, middle + TOGGLE_SIZE / 2.0);
-        self.regions.overview = panel;
-        self.regions.overview_toggle = toggle;
-        canvas.fill(toggle, 0.0, BUTTON);
-        outline(canvas, toggle, RULE);
-        // Down folds it away; up brings it back.
-        chevron(canvas, toggle, !self.overview_folded, WHITE);
-        if self.overview_folded {
-            return;
-        }
-        self.draw_legend(canvas, heading, toggle.x0);
-
-        let cells = Rect::new(panel.x0 + PADDING + AXIS_WIDTH, heading.y1, panel.x1 - PADDING, panel.y1 - PADDING);
-        self.regions.cells = cells;
-        // Which cells are on screen, looked up once for each rather than
-        // searched for in the list of visible pages 800 times.
-        let mut on_screen = [false; PAGES];
-        for key in self.visible.iter().filter(|key| key.channel == self.channel.channel) {
-            if let Some(cell) = page_index(key.page).and_then(|index| on_screen.get_mut(index)) {
-                *cell = true;
-            }
-        }
-        #[allow(clippy::cast_precision_loss, reason = "small counts")]
-        let (width, height) = (cells.width() / PAGES_PER_BANK as f64, cells.height() / BANKS as f64);
-        for (bank, &bank_colour) in BANK_COLOURS.iter().enumerate() {
-            #[allow(clippy::cast_precision_loss, reason = "eight banks")]
-            let top = cells.y0 + bank as f64 * height;
-            let axis = Rect::new(panel.x0 + PADDING, top, cells.x0, top + height);
-            left_centred(canvas, axis, 0.0, &format!("{}00", bank + 1), AXIS, if bank == self.bank { WHITE } else { MUTED });
-            if bank == self.bank {
-                canvas.fill(Rect::new(axis.x0 - PADDING / 2.0, top + CELL_GAP, axis.x0 - PADDING / 2.0 + CELL_GAP, top + height - CELL_GAP), 0.0, WHITE);
-            }
-            for column in 0..PAGES_PER_BANK {
-                let index = bank * PAGES_PER_BANK + column;
-                #[allow(clippy::cast_precision_loss, reason = "small counts")]
-                let left = cells.x0 + column as f64 * width;
-                let cell = Rect::new(left, top, left + width - CELL_GAP, top + height - CELL_GAP);
-                let colour = match self.channel.pages.get(index) {
-                    Some(Some(info)) if info.status == Status::Loaded => bank_colour,
-                    Some(Some(_)) => CELL_AVAILABLE,
-                    _ => CELL_EMPTY,
-                };
-                canvas.fill(cell, 0.0, colour);
-                if on_screen.get(index).copied().unwrap_or(false) {
-                    outline(canvas, cell, WHITE);
-                }
-                if self.selected == Some(index) {
-                    border(canvas, Rect::new(cell.x0 - CELL_GAP, cell.y0 - CELL_GAP, cell.x1 + CELL_GAP, cell.y1 + CELL_GAP), CELL_GAP, SELECTED);
-                }
-                // An amber dot for a minute after each update.
-                if since(self.updated_at(index), now).is_some() {
-                    let inset = cell.width().min(cell.height()) * UPDATE_DOT_INSET;
-                    let dot = Rect::new(cell.x0 + inset, cell.y0 + inset, cell.x1 - inset, cell.y1 - inset);
-                    canvas.fill(dot, dot.width().min(dot.height()) / 2.0, UPDATED);
-                }
-            }
-        }
-        // A ring bursting out of each page just updated, growing and fading.
-        for &(index, at) in &self.updates {
-            let elapsed = now.saturating_sub(at);
-            if elapsed >= UPDATE_RING_MILLISECONDS {
-                continue;
-            }
-            #[allow(clippy::cast_precision_loss, reason = "under two seconds")]
-            let progress = elapsed as f64 / UPDATE_RING_MILLISECONDS as f64;
-            #[allow(clippy::cast_precision_loss, reason = "small counts")]
-            let centre = Point::new(cells.x0 + ((index % PAGES_PER_BANK) as f64 + 0.5) * width, cells.y0 + ((index / PAGES_PER_BANK) as f64 + 0.5) * height);
-            let radius = width.min(height) * (1.0 + UPDATE_RING_SCALE * progress) / 2.0;
-            let ring = Rect::new(centre.x - radius, centre.y - radius, centre.x + radius, centre.y + radius);
-            border(canvas, ring, UPDATE_RING_WIDTH, mix(UPDATED, PANEL, progress));
-        }
-        // A dot on each page just received, shrinking away.
-        for &(index, start) in &self.pulses {
-            let elapsed = now.saturating_sub(start);
-            if elapsed >= PULSE_MILLISECONDS {
-                continue;
-            }
-            #[allow(clippy::cast_precision_loss, reason = "under a second")]
-            let remaining = 1.0 - elapsed as f64 / PULSE_MILLISECONDS as f64;
-            #[allow(clippy::cast_precision_loss, reason = "small counts")]
-            let centre = Point::new(cells.x0 + ((index % PAGES_PER_BANK) as f64 + 0.5) * width, cells.y0 + ((index / PAGES_PER_BANK) as f64 + 0.5) * height);
-            let radius = width.min(height) * PULSE_SCALE * remaining / 2.0;
-            canvas.fill(Rect::new(centre.x - radius, centre.y - radius, centre.x + radius, centre.y + radius), radius, CELL_PULSE);
-        }
-    }
-}
-
-impl Browser {
-    /// The overview's page under the pointer, at its native size, above
-    /// its cell. It never covers the tab strip or the trusted strip, where
-    /// a page image could pass for the address: on a short window it
-    /// shrinks to fit below them.
-    fn draw_preview<C: Canvas + ?Sized>(&self, canvas: &mut C, width: f64) {
-        let Some(index) = self.previewed else { return };
-        let Some(key) = self.page_key(index) else { return };
-        let cells = self.regions.cells;
-        #[allow(clippy::cast_precision_loss, reason = "small counts")]
-        let (cell_width, cell_height) = (cells.width() / PAGES_PER_BANK as f64, cells.height() / BANKS as f64);
-        #[allow(clippy::cast_precision_loss, reason = "small counts")]
-        let (centre, cell_top) = (cells.x0 + ((index % PAGES_PER_BANK) as f64 + 0.5) * cell_width, cells.y0 + (index / PAGES_PER_BANK) as f64 * cell_height);
-        let bottom = cell_top - PREVIEW_GAP;
-        // The image at most its native size, with its screen around it.
-        let scale = ((bottom - self.body.y0) / (f64::from(PAGE_HEIGHT) * SCREEN_SCALE)).min(1.0);
-        if scale <= 0.0 {
-            return;
-        }
-        let (page_width, page_height) = (f64::from(PAGE_WIDTH) * scale * SCREEN_SCALE, f64::from(PAGE_HEIGHT) * scale * SCREEN_SCALE);
-        let left = (centre - page_width / 2.0).clamp(MARGIN, (width - MARGIN - page_width).max(MARGIN));
-        let rect = Rect::new(left, bottom - page_height, left + page_width, bottom);
-        canvas.dim(Rect::new(rect.x0 + PREVIEW_SHADOW, rect.y0 + PREVIEW_SHADOW, rect.x1 + PREVIEW_SHADOW, rect.y1 + PREVIEW_SHADOW), PREVIEW_SHADOW_DARKNESS);
-        if canvas.screen(key).is_none() {
-            // Asked for when the pointer arrived; it shows when rendered.
-            canvas.fill(rect, 0.0, BLACK);
-            centred(canvas, rect, &format!("{:03X}", key.page), HEADING, MUTED);
-        } else {
-            draw_page_on_screen(canvas, key, rect, BLACK);
-        }
-        outline(canvas, rect, WHITE);
     }
 }
 
@@ -1337,30 +794,8 @@ fn draw_window_buttons<C: Canvas + ?Sized>(canvas: &mut C, regions: &Regions) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::browser::fixture::{HEIGHT, WIDTH, browser, cell_centre, press_at};
+    use crate::browser::fixture::{HEIGHT, WIDTH, browser, press_at};
     use crate::browser::regions::TabRegion;
-    use crate::test_canvas::Recorder;
-
-    #[test]
-    fn the_first_bank_is_shown_and_reported_visible() {
-        let (mut browser, _) = browser();
-        let outputs = browser.take_outputs();
-        let Some(Output::Visible(visible)) = outputs.first() else { panic!("{outputs:?}") };
-        assert!(visible.iter().all(|key| key.channel == 7 && (0x100..0x200).contains(&key.page)));
-        assert_eq!(visible[0].page, 0x100);
-    }
-
-    #[test]
-    fn choosing_a_bank_shows_its_pages() {
-        let (mut browser, mut canvas) = browser();
-        browser.take_outputs();
-        let bank = browser.regions.banks[4];
-        press_at(&mut browser, &mut canvas, bank);
-        browser.draw(&mut canvas, WIDTH, HEIGHT, 0);
-        let outputs = browser.take_outputs();
-        let Some(Output::Visible(visible)) = outputs.first() else { panic!("{outputs:?}") };
-        assert!(visible.iter().all(|key| (0x500..0x600).contains(&key.page)), "{visible:?}");
-    }
 
     #[test]
     fn a_tab_playing_sound_shows_a_speaker_that_mutes_it() {
@@ -1479,117 +914,6 @@ mod tests {
         assert_eq!(browser.wall().layout_for_tests(), crate::size::Layout::List);
     }
 
-    #[test]
-    fn a_click_on_the_overview_selects_its_page() {
-        let (mut browser, mut canvas) = browser();
-        let cells = browser.regions.cells;
-        #[allow(clippy::cast_precision_loss, reason = "small counts")]
-        let (width, height) = (cells.width() / PAGES_PER_BANK as f64, cells.height() / BANKS as f64);
-        // Page 610: bank 5, column 10.
-        let point = Point::new(cells.x0 + 10.5 * width, cells.y0 + 5.5 * height);
-        browser.pointer_moved(point.x, point.y, 0);
-        browser.pointer_pressed(&mut canvas, false, 0);
-        assert_eq!(browser.selected, page_index(0x610));
-        assert_eq!(browser.bank, 5);
-    }
-
-    #[test]
-    fn a_page_in_the_overview_pops_up_at_native_size_under_a_hand() {
-        let (mut browser, mut canvas) = browser();
-        browser.add_page(7, 0x610, "Weather".into(), 0);
-        browser.draw(&mut canvas, WIDTH, HEIGHT, 0);
-        browser.take_outputs();
-        // Over a page not yet arrived: the arrow, and nothing pops up.
-        let waiting = cell_centre(&browser, page_index(0x611).unwrap());
-        assert!(!browser.pointer_moved(waiting.x, waiting.y, 0));
-        assert_eq!(browser.cursor(), Cursor::Arrow);
-        // Over a page that has arrived: a hand, and the page at 480 by 500.
-        let point = cell_centre(&browser, page_index(0x610).unwrap());
-        assert!(browser.pointer_moved(point.x, point.y, 0));
-        assert_eq!(browser.cursor(), Cursor::Hand);
-        canvas.pages.clear();
-        browser.draw(&mut canvas, WIDTH, HEIGHT, 0);
-        let key = PageKey { channel: 7, page: 0x610 };
-        let &(_, rect) = canvas.pages.iter().rev().find(|(drawn, _)| *drawn == key).expect("the preview is drawn");
-        assert_eq!((rect.width(), rect.height()), (f64::from(PAGE_WIDTH), f64::from(PAGE_HEIGHT)));
-        assert!(rect.y1 <= point.y && rect.y0 >= BODY_TOP, "above its cell, below the trusted strip: {rect:?}");
-        // It is reported visible, so the trusted core has it rendered.
-        let outputs = browser.take_outputs();
-        assert!(outputs.iter().any(|output| matches!(output, Output::Visible(visible) if visible.contains(&key))), "{outputs:?}");
-        // On a short window it shrinks rather than cover the strip.
-        let short = BODY_TOP + OVERVIEW_HEIGHT + 300.0;
-        browser.draw(&mut canvas, WIDTH, short, 0);
-        let point = cell_centre(&browser, page_index(0x610).unwrap());
-        browser.pointer_moved(point.x, point.y, 0);
-        canvas.pages.clear();
-        browser.draw(&mut canvas, WIDTH, short, 0);
-        let &(_, rect) = canvas.pages.iter().rev().find(|(drawn, _)| *drawn == key).expect("the preview is drawn");
-        assert!(rect.y0 >= BODY_TOP && rect.height() < f64::from(PAGE_HEIGHT), "{rect:?}");
-    }
-
-    #[test]
-    fn the_overview_folds_into_the_footer_and_rests_there() {
-        let (mut browser, mut canvas) = browser();
-        let open_cells = browser.regions.cells;
-        let wall_before = browser.regions.list;
-        let toggle = browser.regions.overview_toggle;
-        press_at(&mut browser, &mut canvas, toggle);
-        browser.draw(&mut canvas, WIDTH, HEIGHT, 0);
-        // Folded: one heading high at the bottom, no cells, the panels above taller.
-        assert!((browser.regions.overview.height() - HEADING_HEIGHT).abs() < 1e-9);
-        assert_eq!(browser.regions.cells, Rect::ZERO);
-        assert!(browser.regions.list.height() > wall_before.height());
-        // A page arriving starts no animation and asks for no frames.
-        browser.add_page(7, 0x105, "Arrived while folded".into(), 1_000);
-        assert!(!browser.animating(1_000));
-        assert!(!browser.pointer_moved(open_cells.x0 + 1.0, open_cells.y0 + 1.0, 1_000), "nothing to hover");
-        assert_eq!(browser.cursor(), Cursor::Arrow);
-        // Opened again: drawn as things are now, the page that arrived loaded.
-        let toggle = browser.regions.overview_toggle;
-        press_at(&mut browser, &mut canvas, toggle);
-        browser.draw(&mut canvas, WIDTH, HEIGHT, 2_000);
-        assert_eq!(browser.regions.cells, open_cells);
-        let point = cell_centre(&browser, page_index(0x105).unwrap());
-        browser.pointer_moved(point.x, point.y, 2_000);
-        assert_eq!(browser.cursor(), Cursor::Hand);
-    }
-
-    #[test]
-    fn the_pointer_is_a_hand_over_the_overview_fold_button() {
-        let (mut browser, mut canvas) = browser();
-        for folded in [false, true] {
-            let toggle = browser.regions.overview_toggle;
-            browser.pointer_moved(f64::midpoint(toggle.x0, toggle.x1), f64::midpoint(toggle.y0, toggle.y1), 0);
-            assert_eq!(browser.cursor(), Cursor::Hand, "folded: {folded}");
-            browser.pointer_moved(toggle.x0 - 1.0, f64::midpoint(toggle.y0, toggle.y1), 0);
-            assert_eq!(browser.cursor(), Cursor::Arrow, "folded: {folded}");
-            press_at(&mut browser, &mut canvas, toggle);
-            browser.draw(&mut canvas, WIDTH, HEIGHT, 0);
-        }
-    }
-
-    /// Requirements 11.2 and 11.6 (decision 63): Back, Forward, Reload and
-    /// Home in that order in one row; Reload by its button and by
-    /// Command-R, Control-R away from macOS, which the interface takes on
-    /// every platform as the command key.
-    #[test]
-    fn reload_sits_between_forward_and_home_and_has_its_keys() {
-        let (mut browser, mut canvas) = browser();
-        browser.take_outputs();
-        let regions = &browser.regions;
-        let row = [regions.back, regions.forward, regions.reload, regions.home];
-        for pair in row.windows(2) {
-            assert!(pair[1].x0 >= pair[0].x1 && (pair[1].y0 - pair[0].y0).abs() < f64::EPSILON, "{pair:?}");
-        }
-        let reload = browser.regions.reload;
-        press_at(&mut browser, &mut canvas, reload);
-        assert_eq!(browser.take_outputs(), [Output::Reload]);
-        browser.key(Key::Text("r"), Modifiers { command: true, ..Modifiers::default() }, 0);
-        assert_eq!(browser.take_outputs(), [Output::Reload]);
-        browser.key(Key::Text("r"), Modifiers::default(), 0);
-        assert_eq!(browser.take_outputs(), [], "r alone is no shortcut");
-    }
-
     /// Requirement 12.1 (decision 63): the middle button closes the tab it
     /// is on, and does nothing elsewhere.
     #[test]
@@ -1606,45 +930,6 @@ mod tests {
         assert_eq!(browser.take_outputs(), [], "not on a tab: nothing");
     }
 
-    /// Requirement 19.6: the Home button after Forward, Command-Shift-H on
-    /// macOS and Alt-Home elsewhere.
-    #[test]
-    fn home_is_asked_for_by_its_button_and_its_keys() {
-        let (mut browser, mut canvas) = browser();
-        browser.take_outputs();
-        let (forward, home) = (browser.regions.forward, browser.regions.home);
-        assert!(home.x0 >= forward.x1 && (home.y0 - forward.y0).abs() < f64::EPSILON, "after Forward, in its row");
-        press_at(&mut browser, &mut canvas, home);
-        assert_eq!(browser.take_outputs(), [Output::Home]);
-        browser.key(Key::Text("H"), Modifiers { command: true, shift: true, ..Modifiers::default() }, 0);
-        assert_eq!(browser.take_outputs(), [Output::Home]);
-        browser.key(Key::Home, Modifiers { alt: true, ..Modifiers::default() }, 0);
-        assert_eq!(browser.take_outputs(), [Output::Home]);
-        // Command-H alone is not Home: it is History, Control-H's place away
-        // from macOS (`history-and-bookmarks.md` section 6).
-        browser.key(Key::Text("h"), Modifiers { command: true, ..Modifiers::default() }, 0);
-        assert_eq!(browser.take_outputs(), [Output::History(crate::library::HistoryRequest::Panel(true))]);
-    }
-
-    /// Requirements 19.3 and 19.10: the trusted core's notice takes the
-    /// address's place while it lasts; the start page is named as the
-    /// browser's own, not "Not secure".
-    #[test]
-    fn the_strip_says_the_notice_and_names_the_start_page() {
-        let (mut browser, _) = browser();
-        browser.set_strip(StripState { notice: "The proxy refused the connection to example.invalid".into(), ..browser.strip.clone() });
-        let mut canvas = Recorder::new();
-        browser.draw(&mut canvas, WIDTH, HEIGHT, 0);
-        let texts: Vec<&str> = canvas.texts.iter().map(|(_, text)| text.as_str()).collect();
-        assert!(texts.contains(&"The proxy refused the connection to example.invalid"), "{texts:?}");
-        assert!(!texts.contains(&"example.invalid"), "the notice in the address's place");
-        browser.set_strip(StripState { address: "neoteletext:home".into(), identity: "NeoTeletext".into(), built_in: true, ..StripState::default() });
-        let mut canvas = Recorder::new();
-        browser.draw(&mut canvas, WIDTH, HEIGHT, 0);
-        let texts: Vec<&str> = canvas.texts.iter().map(|(_, text)| text.as_str()).collect();
-        assert!(texts.contains(&"NeoTeletext") && !texts.contains(&"Not secure"), "{texts:?}");
-    }
-
     /// Shift-Command-W, Control-Shift-W away from macOS, closes the window
     /// (decision 84); Command-W the tab.
     #[test]
@@ -1655,18 +940,5 @@ mod tests {
         assert_eq!(browser.take_outputs(), [Output::Window(WindowAction::Close)]);
         browser.key(Key::Text("w"), Modifiers { command: true, ..Modifiers::default() }, 0);
         assert_eq!(browser.take_outputs(), [Output::CloseTab(browser.active)]);
-    }
-
-    /// Requirement 19.8: the console docks in the overview's place.
-    #[test]
-    fn the_console_takes_the_overviews_place() {
-        let (mut browser, _) = browser();
-        browser.toggle_console();
-        let mut canvas = Recorder::new();
-        browser.draw(&mut canvas, WIDTH, HEIGHT, 0);
-        assert_eq!(browser.regions.overview, Rect::ZERO, "no overview");
-        let texts: Vec<&str> = canvas.texts.iter().map(|(_, text)| text.as_str()).collect();
-        assert!(texts.contains(&"Network 0") && texts.contains(&"Pause"), "{texts:?}");
-        assert!(browser.console.area.y1 <= HEIGHT && browser.console.area.y0 > BODY_TOP);
     }
 }

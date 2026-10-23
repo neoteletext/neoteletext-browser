@@ -131,7 +131,7 @@ impl Browser {
     /// The width the docked remote takes from the window's content at
     /// `now`, with its margin.
     pub(super) fn remote_docked_width(&self, now: u64) -> f64 {
-        f64::from(self.remote.out(now)) * (REMOTE_WIDTH + super::MARGIN)
+        f64::from(self.remote.out(now)) * (REMOTE_WIDTH + crate::browser::window::MARGIN)
     }
 
     /// A press on the remote or its handle; returns whether it was there.
@@ -202,14 +202,14 @@ impl Browser {
         self.remote.panel = Rect::ZERO;
         self.remote.title = Rect::ZERO;
         self.remote.handle = Rect::ZERO;
-        let bottom = height - super::MARGIN;
+        let bottom = height - crate::browser::window::MARGIN;
         let out = self.remote_docked_width(now);
         let panel_height = panel_height().min(bottom - top);
         let panel = match self.remote.place.mode {
             RemoteMode::Floating => {
                 let (x, y) = self.remote.dragged.unwrap_or((f64::from(self.remote.place.x), f64::from(self.remote.place.y)));
                 // Kept inside the window, below the strip.
-                let x = x.clamp(super::MARGIN, (width - super::MARGIN - REMOTE_WIDTH).max(super::MARGIN));
+                let x = x.clamp(crate::browser::window::MARGIN, (width - crate::browser::window::MARGIN - REMOTE_WIDTH).max(crate::browser::window::MARGIN));
                 let y = y.clamp(top, (bottom - panel_height).max(top));
                 Some(Rect::new(x, y, x + REMOTE_WIDTH, y + panel_height))
             }
@@ -447,7 +447,7 @@ mod tests {
         browser.draw(&mut Recorder::new(), WIDTH, HEIGHT, SLIDE_MILLISECONDS / 2);
         assert!(browser.remote_animating(SLIDE_MILLISECONDS / 2), "sliding in");
         browser.draw(&mut Recorder::new(), WIDTH, HEIGHT, SLIDE_MILLISECONDS);
-        assert!((full.x1 - browser.body.x1 - (REMOTE_WIDTH + super::super::MARGIN)).abs() < 0.5, "the body narrows by the remote");
+        assert!((full.x1 - browser.body.x1 - (REMOTE_WIDTH + crate::browser::window::MARGIN)).abs() < 0.5, "the body narrows by the remote");
         let handle = browser.remote.handle;
         assert!(browser.remote_press(middle(handle), SLIDE_MILLISECONDS));
         assert_eq!(browser.take_outputs(), [Output::Setting(SettingChange::Remote(RemotePlace { mode: RemoteMode::Hidden, x: 0, y: 0 }))]);

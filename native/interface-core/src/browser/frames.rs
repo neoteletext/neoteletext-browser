@@ -5,7 +5,7 @@ use crate::browser::Browser;
 use crate::channel::{PAGES, PAGES_PER_BANK};
 use crate::wall::{UPDATE_GLOW_MILLISECONDS, UPDATE_MARK_MILLISECONDS};
 
-use super::UPDATE_RING_MILLISECONDS;
+use crate::browser::overview::UPDATE_RING_MILLISECONDS;
 
 /// How long the dot marking a newly received page lasts.
 pub(super) const PULSE_MILLISECONDS: u64 = 900;

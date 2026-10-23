@@ -11,9 +11,10 @@ use alloc::vec::Vec;
 use super::glyphs::speaker_glyph;
 use super::regions::TabRegion;
 use super::{
-    BANK_BORDER, Browser, NEW_TAB, Output, PRIVATE_MARK, STRIP_HEIGHT, TAB_CLOSE, TAB_GAP, TAB_MAX_WIDTH, TAB_MIN_WIDTH, TAB_SPEAKER, TAB_TEXT_INSET, TAB_TOP,
+    Browser, NEW_TAB, Output, PRIVATE_MARK, STRIP_HEIGHT, TAB_CLOSE, TAB_GAP, TAB_MAX_WIDTH, TAB_MIN_WIDTH, TAB_SPEAKER, TAB_TEXT_INSET, TAB_TOP,
     TAB_TOP_INACTIVE,
 };
+use crate::browser::banks::BANK_BORDER;
 use crate::canvas::Canvas;
 use crate::geometry::{Point, Rect};
 use crate::theme::{BLACK, BUTTON, GLYPH, PRIVATE, ROW_STATUS, RULE, SELECTED, TAB_COLOURS, TAB_TITLE, WHITE};
