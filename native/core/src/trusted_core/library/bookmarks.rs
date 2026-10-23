@@ -14,6 +14,8 @@ use super::{Manager, depth_of, notice, shown_address};
 
 /// What separates a folder's names in a search result's place.
 const PLACE_SEPARATOR: &str = " / ";
+/// What the manager says for every file the broker did not read.
+const NOT_IMPORTED: &str = "Not imported: not a bookmarks file this browser can read";
 
 impl Core {
     /// After any change of the bookmarks: kept, and every view of them
@@ -99,9 +101,9 @@ impl Core {
             }
             BookmarkRequest::Undo => {
                 if let Some(removed) = self.library.undo.take()
-                    && !self.session.bookmarks.restore(removed)
+                    && let Err(reason) = self.session.bookmarks.restore(removed)
                 {
-                    self.library.manager_notice = notice("It cannot be put back: its folder is gone");
+                    self.library.manager_notice = notice(&reason);
                 }
             }
             BookmarkRequest::Sort => {
@@ -144,7 +146,9 @@ impl Core {
                 }
             }
             Ok(_) => notice("That file is too large to be bookmarks"),
-            Err(reason) => notice(&format!("Not imported: {reason}")),
+            // The broker's refusal is one sentence whatever the reason
+            // (decision 88), and so is this.
+            Err(_) => notice(NOT_IMPORTED),
         };
     }
 

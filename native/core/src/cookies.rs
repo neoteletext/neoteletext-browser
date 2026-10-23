@@ -11,6 +11,7 @@
 //! jar's per-host limit is then the per-channel limit, and no cookie can
 //! pass between channels, schemes or ports (requirement 21.11).
 
+use crate::dropped::Dropped;
 use std::collections::{BTreeMap, BTreeSet};
 
 use neoteletext_web::bytes::Writer;
@@ -34,7 +35,7 @@ const MAX_CHANNELS: usize = TOTAL;
 const MAX_HEADER: usize = protocol::fetcher::MAX_COOKIE_HEADER;
 const _: () = assert!(MAX_HEADER == neoteletext_web::consts::DEFAULT_REQUEST_LIMIT, "the engine's room for a request");
 const _: () = assert!(protocol::fetcher::MAX_SET_COOKIE == neoteletext_web::consts::DEFAULT_HEADER_LIMIT, "the engine's limit on a response's headers");
-const FILE_VERSION: &str = "neoteletext-cookie-file 1";
+pub(crate) const FILE_VERSION: &str = "neoteletext-cookie-file 1";
 const TAG_PREFIX: &str = "c";
 /// Room for building a jar of this size: its records and arena, which a
 /// thread of the default size could not hold while the box is made.
@@ -251,13 +252,17 @@ impl Store {
     }
 
     /// Whether `host` was reached securely with a cookie still live, in any
-    /// of its `https` channels (the engine's REQ-SEC-007).
+    /// of its `https` channels (the engine's REQ-SEC-007), told only to
+    /// `asking`, a channel on that host, and from its own jar, private or
+    /// ordinary, so that no fetcher learns of another host or of the other
+    /// jar (finding F-27).
     #[must_use]
-    pub fn reached_securely(&self, host: &str, now: u64) -> bool {
-        self.channels
-            .iter()
-            .filter(|(_, channel)| channel.secure && channel.host == host)
-            .any(|(tag, _)| [&self.ordinary, &self.private].into_iter().flatten().any(|jar| jar.reached_securely(tag, now)))
+    pub fn reached_securely(&self, private: bool, asking: &Channel, host: &str, now: u64) -> bool {
+        if asking.host != host {
+            return false;
+        }
+        let Some(jar) = (if private { &self.private } else { &self.ordinary }) else { return false };
+        self.channels.iter().filter(|(_, channel)| channel.secure && channel.host == host).any(|(tag, _)| jar.reached_securely(tag, now))
     }
 
     /// The ordinary channels with cookies, by key.
@@ -383,42 +388,52 @@ impl Store {
     /// cookie passed through the engine's rules again; a cookie of a channel
     /// the file does not name, or a blocked one, is dropped. Returns what
     /// was dropped, to log.
-    pub fn import(&mut self, text: &[u8], now: u64) -> Vec<String> {
-        let mut dropped = Vec::new();
+    pub fn import(&mut self, text: &[u8], now: u64) -> Dropped {
+        let mut dropped = Dropped::default();
         if text.len() > MAX_FILE {
-            dropped.push(format!("the cookie file is longer than {MAX_FILE} bytes; none read"));
+            dropped.push(|| format!("the cookie file is longer than {MAX_FILE} bytes; none read"));
             return dropped;
         }
         let Some(rest) = text.strip_prefix(format!("{FILE_VERSION}\n").as_bytes()) else {
-            dropped.push("the cookie file has no version line; none read".to_owned());
+            dropped.push(|| "the cookie file has no version line; none read".to_owned());
             return dropped;
         };
         let Some(split) = rest.windows(2).position(|pair| pair == b"\n\n").map(|at| at.saturating_add(1)).or((rest.first() == Some(&b'\n')).then_some(0))
         else {
-            dropped.push("the cookie file has no end to its channels; none read".to_owned());
+            dropped.push(|| "the cookie file has no end to its channels; none read".to_owned());
             return dropped;
         };
         let (table, saved) = rest.split_at(split);
         let saved = saved.strip_prefix(b"\n").unwrap_or(saved);
         let mut named: BTreeMap<String, Channel> = BTreeMap::new();
+        // A channel is named once, under a tag this store does not use: a
+        // key under a second tag would keep cookies its deletion and its
+        // block do not reach, and a tag in use would merge two channels'
+        // cookies (finding F-33). The second's cookies are then strays.
+        let mut keys: BTreeSet<String> = self.tags.keys().cloned().collect();
         for line in String::from_utf8_lossy(table).lines().filter(|line| !line.is_empty()) {
             let fields: Vec<&str> = line.split('\t').collect();
             let channel = match fields.as_slice() {
-                ["channel", tag, key] if named.len() < MAX_CHANNELS && is_tag(tag) && !named.contains_key(*tag) => {
+                ["channel", tag, key]
+                    if named.len() < MAX_CHANNELS && is_tag(tag) && !named.contains_key(*tag) && !self.channels.contains_key(*tag) && !keys.contains(*key) =>
+                {
                     Channel::of(key).filter(|channel| channel.key == *key)
                 }
                 _ => None,
             };
+            if let Some(channel) = &channel {
+                keys.insert(channel.key.clone());
+            }
             match channel {
                 Some(channel) => {
                     named.insert((*fields.get(1).unwrap_or(&"")).to_owned(), channel);
                 }
-                None => dropped.push("a channel line of the cookie file dropped".to_owned()),
+                None => dropped.push(|| "a channel line of the cookie file dropped".to_owned()),
             }
         }
         let blocked = self.blocked.clone();
         let Some(jar) = self.jar(false) else {
-            dropped.push("no memory for cookies; none read".to_owned());
+            dropped.push(|| "no memory for cookies; none read".to_owned());
             return dropped;
         };
         jar.import(saved, now);
@@ -427,7 +442,7 @@ impl Store {
         let strays = jar
             .remove_where(&|cookie| std::str::from_utf8(cookie.host).ok().and_then(|tag| named.get(tag)).is_none_or(|channel| blocked.contains(&channel.key)));
         if strays > 0 {
-            dropped.push(format!("{strays} cookies of no channel, or a blocked one, dropped"));
+            dropped.push(|| format!("{strays} cookies of no channel, or a blocked one, dropped"));
         }
         for (tag, channel) in named {
             let number = tag.strip_prefix(TAG_PREFIX).and_then(|digits| digits.parse::<u64>().ok()).unwrap_or(0);

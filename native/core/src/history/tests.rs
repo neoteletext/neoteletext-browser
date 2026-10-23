@@ -101,9 +101,9 @@ fn the_file_is_read_strictly() {
         line.replace("WEATHER", "WEA\u{202E}THER"),
         format!("{line}\textra"),
         line.replace("2026-10-22", "2026-10-21"),
-        String::new(),
     ];
-    let mut text = format!("{VERSION_LINE}\n{line}\n");
+    // An empty line is skipped, not dropped (finding F-31).
+    let mut text = format!("{VERSION_LINE}\n{line}\n\n");
     for line in &broken {
         text.push_str(line);
         text.push('\n');

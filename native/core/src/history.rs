@@ -4,15 +4,18 @@
 //! when compacted or after a removal; read strictly, since another program
 //! can write the file.
 
+use crate::dropped::Dropped;
 use std::collections::BTreeMap;
 use std::path::Path;
 
 use crate::address;
 use crate::calendar::{SECONDS_PER_DAY, day_text, local_day, read_day};
+#[cfg(unix)]
+use crate::private_file::keep_private;
 use crate::private_file::{Read, private_options, read_text, write_whole};
 
 /// The first line of the file: its format and version.
-const VERSION_LINE: &str = "neoteletext-history 1";
+pub(crate) const VERSION_LINE: &str = "neoteletext-history 1";
 /// The file's name in the settings folder, and the one written before the
 /// rename.
 const FILE_NAME: &str = "history.txt";
@@ -144,27 +147,30 @@ impl History {
     /// Reads the file's text (section 2.3): lines that break a rule are
     /// dropped and described in the second value, for the log.
     #[must_use]
-    pub fn read(text: &str) -> (Self, Vec<String>) {
+    pub fn read(text: &str) -> (Self, Dropped) {
         let mut history = Self::default();
-        let mut dropped = Vec::new();
+        let mut dropped = Dropped::default();
         if text.len() > MAX_FILE {
-            dropped.push(format!("the history file is longer than {MAX_FILE} bytes; none read"));
+            dropped.push(|| format!("the history file is longer than {MAX_FILE} bytes; none read"));
             return (history, dropped);
         }
         let mut lines = text.lines();
         if lines.next() != Some(VERSION_LINE) {
             if !text.is_empty() {
-                dropped.push("the history file has no version line; none read".to_owned());
+                dropped.push(|| "the history file has no version line; none read".to_owned());
             }
             return (history, dropped);
         }
         for (index, line) in lines.enumerate() {
+            if line.is_empty() {
+                continue;
+            }
             history.file_lines = history.file_lines.saturating_add(1);
             match Row::read(line) {
                 // A later line for the same day and address is that row's
                 // newer state.
                 Some(row) => history.put(row),
-                None => dropped.push(format!("line {} of the history file dropped", index.saturating_add(2))),
+                None => dropped.push(|| format!("line {} of the history file dropped", index.saturating_add(2))),
             }
         }
         (history, dropped)
@@ -314,11 +320,11 @@ impl History {
     ///
     /// # Errors
     /// When the file exists but cannot be read.
-    pub fn load(folder: &Path) -> std::io::Result<(Self, Vec<String>)> {
+    pub fn load(folder: &Path) -> std::io::Result<(Self, Dropped)> {
         let path = folder.join(FILE_NAME);
         match read_text(&path, MAX_FILE)? {
-            Read::Missing => Ok((Self::default(), Vec::new())),
-            Read::TooLong => Ok((Self::default(), vec![format!("the history file is longer than {MAX_FILE} bytes; none read")])),
+            Read::Missing => Ok((Self::default(), Dropped::default())),
+            Read::TooLong => Ok((Self::default(), Dropped::one(format!("the history file is longer than {MAX_FILE} bytes; none read")))),
             Read::Text(text) => Ok(Self::read(&text)),
         }
     }
@@ -344,6 +350,10 @@ impl History {
         let path = folder.join(FILE_NAME);
         let new = !path.exists();
         let mut file = private_options().append(true).create(true).open(&path)?;
+        #[cfg(unix)]
+        if !new {
+            keep_private(&path)?;
+        }
         if new {
             writeln!(file, "{VERSION_LINE}")?;
         }

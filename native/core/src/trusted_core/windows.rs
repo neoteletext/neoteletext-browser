@@ -20,6 +20,31 @@ pub(super) struct Shown {
 }
 
 impl Core {
+    /// When a frame held in any window falls due (finding F-11).
+    pub(super) fn frames_due_at(&self) -> Option<std::time::Instant> {
+        std::iter::once(&self.frames).chain(self.shown_elsewhere.values().map(|shown| &shown.frames)).filter_map(frames::Frames::next_due).min()
+    }
+
+    /// Sends every window's held frames whose interval is up, each in its
+    /// own window.
+    pub(super) fn send_due_frames(&mut self, now: std::time::Instant) -> Result<(), String> {
+        let here = self.session.window;
+        let windows: Vec<u32> = std::iter::once(here)
+            .chain(self.shown_elsewhere.iter().filter(|(_, shown)| shown.frames.next_due().is_some_and(|due| due <= now)).map(|(id, _)| *id))
+            .collect();
+        let mut result = Ok(());
+        for window in windows {
+            self.switch_window(window);
+            for (key, version, image) in self.frames.due(now) {
+                result = result.and_then(|()| self.send_frame(key, version, image));
+            }
+        }
+        self.switch_window(here);
+        result.and_then(|()| self.send_controls())
+    }
+}
+
+impl Core {
     /// Makes window `id` the one at hand, with what it shows; false when
     /// there is no such window.
     pub(super) fn switch_window(&mut self, id: u32) -> bool {
@@ -141,6 +166,12 @@ impl Core {
         if !into_new && !self.session.window_ids().contains(&window) {
             return Ok(());
         }
+        // A tab keeps to its kind of window: a private tab's cookies,
+        // history and session are kept apart from an ordinary one's
+        // (finding F-83).
+        if !into_new && self.session.others.iter().find(|other| other.id == window).is_some_and(|other| other.private != self.session.private_window) {
+            return self.say(String::from("A tab cannot move between a private window and another"));
+        }
         if into_new && self.session.window_count() >= interface_core::library::MAX_WINDOWS {
             return self.say(format!("At most {} windows are open at once", interface_core::library::MAX_WINDOWS));
         }
@@ -177,6 +208,13 @@ impl Core {
     pub(super) fn window_intent(&mut self, intent: &ToCore) -> Result<bool, String> {
         match *intent {
             ToCore::From(window) => {
+                // The strip's question is the window's that asked it: once
+                // intents come from another, it is forgotten, so no answer
+                // from there follows it (finding F-65).
+                #[cfg(feature = "links")]
+                if window != self.session.window && self.links.forget_prompt() {
+                    self.link(protocol::links::Message::Prompt(None))?;
+                }
                 self.from_closed = !self.switch_window(window);
                 if !self.from_closed {
                     self.refresh_if_stale()?;
@@ -268,6 +306,80 @@ mod tests {
         assert_eq!(test.core.session.geometry, None);
         test.core.switch_window(second);
         assert_eq!(test.core.session.geometry, Some(place));
+    }
+
+    /// Finding F-65: the strip's question belongs to the window that asked
+    /// it: once intents come from another window, a confirmation follows
+    /// nothing there. Before, window A's question confirmed from window B
+    /// handed B's tab on.
+    #[cfg(feature = "links")]
+    #[test]
+    fn a_question_is_answered_only_in_its_own_window() {
+        use interface_core::canvas::PageKey;
+        use neoteletext::links::{Channel, DWELL_MILLISECONDS, Follow};
+        use protocol::links::{Candidate, Fastext, Found, Spot};
+        let mut test = Test::new("question-window");
+        test.core.session.open("https://news.invalid/teletext/").unwrap();
+        let first = test.core.session.window;
+        let channel = test.core.session.tabs[0].channel.id;
+        let key = PageKey { channel, page: 0x100 };
+        let address = test.core.session.tabs[0].address().unwrap().clone();
+        let web = Candidate { row: 5, column: 0, length: 7, double: false, light: false, target: Found::Declared("web:https://www.example.invalid/".into()) };
+        test.core.links.opened(Some(key));
+        test.core.links.found(key, vec![web], Vec::new(), Fastext::default());
+        test.core.links.image(key, 1, &Channel { id: channel, address: &address, exists: &|_| true }, 0);
+        let spot = Spot { key, version: 1, column: 1, row: 5 };
+        test.core.links.point(Some(spot));
+        let Ok(Follow::Ask(prompt)) = test.core.links.click(spot, Some(channel), DWELL_MILLISECONDS) else { panic!("asked") };
+        let second = test.core.session.new_window(false).unwrap();
+        test.core.session.open("https://sport.invalid/teletext/").unwrap();
+        test.core.switch_window(first);
+        test.core.intent(ToCore::From(second)).unwrap();
+        // Past the question's half second.
+        std::thread::sleep(std::time::Duration::from_millis(neoteletext::links::PROMPT_DELAY_MILLISECONDS + DWELL_MILLISECONDS + 100));
+        assert_eq!(test.core.intent(ToCore::Confirm(prompt.id)), Ok(true), "nothing handed on: with no broker, a hand-off fails");
+        assert_eq!(test.core.links.prompt(), None, "the question went with its window");
+    }
+
+    /// Finding F-83: a tab does not move between a private window and an
+    /// ordinary one, either way: its cookies, history and kept session
+    /// are its window's kind's.
+    #[test]
+    fn a_tab_stays_in_its_kind_of_window() {
+        let mut test = Test::new("tab-kind");
+        test.core.session.open("https://news.invalid/teletext/").unwrap();
+        test.core.session.open("https://sport.invalid/teletext/").unwrap();
+        let ordinary = test.core.session.window;
+        let private = test.core.session.new_window(true).unwrap();
+        test.core.session.open("https://weather.invalid/teletext/").unwrap();
+        test.core.switch_window(ordinary);
+        test.core.intent(ToCore::From(ordinary)).unwrap();
+        // A move made would start the moved tab's helpers, which this
+        // core, with no broker, cannot: only where the tabs are is looked at.
+        let _ = test.core.intent(ToCore::TabToWindow { tab: 0, window: private, index: 0 });
+        test.core.switch_window(ordinary);
+        assert_eq!(test.core.session.tabs.len(), 2, "the ordinary tab stayed");
+        test.core.intent(ToCore::From(private)).unwrap();
+        let _ = test.core.intent(ToCore::TabToWindow { tab: 0, window: ordinary, index: 0 });
+        test.core.switch_window(private);
+        assert_eq!(test.core.session.tabs.len(), 1, "the private tab stayed");
+    }
+
+    /// Finding F-84: what a private tab does is logged in its own console,
+    /// never in the browser-wide lines every window's console shows.
+    #[test]
+    fn a_private_tabs_log_lines_stay_in_its_window() {
+        let mut test = Test::new("private-log");
+        test.core.session.open("https://news.invalid/teletext/").unwrap();
+        let ordinary = test.core.session.window;
+        test.core.session.new_window(true).unwrap();
+        test.core.session.open_private("https://secret.invalid/teletext/").unwrap();
+        let _ = test.core.intent(ToCore::Navigate("ftp://secret-typed.invalid/".into()));
+        test.core.switch_window(ordinary);
+        test.core.console.set_open(true);
+        let shown: Vec<String> =
+            test.core.console.updates(test.core.active_channel()).into_iter().flat_map(|update| update.entries).map(|entry| entry.text).collect();
+        assert!(!shown.iter().any(|text| text.contains("ftp")), "{shown:?}");
     }
 
     /// Requirements 20.21 and 20.22: the session is written after every

@@ -10,6 +10,15 @@ use protocol::decoder::{FIRST_STORE_PAGES, MAX_STORE_PAGES, ToDecoder, write_to_
 use super::Core;
 use super::processes::{Reach, end, start_decoder, start_fetcher, stop_decoder};
 
+/// The most times a channel's decoder is replaced, for stopping reading,
+/// in [`DECODER_RESTART_WINDOW`] before the channel is given up (finding
+/// F-30): a decoder is replaced at once, with what it was given (decision
+/// 47), and an honest one stalls once, not again and again.
+const MAX_DECODER_RESTARTS: usize = 5;
+/// The time in which those replacements are counted: the sleep check's
+/// minute (`SLEEP_CHECK`).
+const DECODER_RESTART_WINDOW: std::time::Duration = super::SLEEP_CHECK;
+
 impl Core {
     pub(super) fn tell(&mut self, channel: u32, message: ToDecoder) {
         if let Some(decoder) = self.decoders.get_mut(&channel) {
@@ -43,9 +52,11 @@ impl Core {
             self.session.all_tabs().map(|tab| (tab.channel.id, tab.channel.problem.clone(), tab.channel.web.clone())).collect();
         for (id, problem, web) in &channels {
             let awake = self.sleep.awake(*id, active, now);
-            if awake && !self.decoders.contains_key(id) {
-                if let Some(problem) = problem {
-                    self.log(Level::Warning, None, problem);
+            if awake && !self.decoders.contains_key(id) && !self.given_up.contains(id) {
+                // A restored file is read as its tab is first shown
+                // (finding F-53).
+                if let Some(problem) = problem.clone().or_else(|| self.session.read_unread(*id)) {
+                    self.log(Level::Warning, None, &problem);
                 }
                 self.generation = self.generation.wrapping_add(1);
                 let pages = self.store_pages.get(id).copied().unwrap_or(FIRST_STORE_PAGES);
@@ -78,6 +89,9 @@ impl Core {
             self.sleep.forget(id);
             self.console.forget(id);
         }
+        let open = |id: &u32| channels.iter().any(|(used, ..)| used == id);
+        self.given_up.retain(open);
+        self.restarts.retain(|id, _| open(id));
         Ok(())
     }
 
@@ -137,13 +151,24 @@ impl Core {
         if self.decoders.get(&channel).map(|decoder| decoder.generation) != Some(generation) {
             return;
         }
-        if let Some(reason) = reason {
+        let heard = self.decoders.get(&channel).is_some_and(|decoder| decoder.heard);
+        if let Some(reason) = &reason {
             self.log(Level::Error, Some(channel), &format!("the decoder for channel {channel} stopped: {reason}"));
-            // A decoder that cannot confine itself ends at once: the
-            // version is not healthy (section 3.2 of the installation design).
-            self.updates.helper_failed(&format!("the decoder stopped: {reason}"));
             let at = self.now();
             self.console.log(Some(channel), Level::Error, at, &format!("decoder: stopped: {reason}"));
+        } else if !heard {
+            self.log(Level::Error, Some(channel), &format!("the decoder for channel {channel} stopped before it first spoke"));
+        }
+        // A decoder that breaks its protocol, or ends before it first
+        // speaks, as one that cannot confine itself does, even with its
+        // pipe closed cleanly, makes the version unhealthy (section 3.2 of
+        // the installation design, finding F-12). The core's own ends of a
+        // decoder were discarded above by its generation.
+        if reason.is_some() || !heard {
+            self.updates.helper_failed(&format!(
+                "the decoder stopped{}",
+                reason.map_or_else(|| String::from(" before it first spoke"), |reason| format!(": {reason}"))
+            ));
         }
         if let Some(mut decoder) = self.decoders.remove(&channel) {
             end(&mut decoder.child);
@@ -152,14 +177,62 @@ impl Core {
         self.deliver(sends);
     }
 
+    /// The decoder of `channel` at `generation` said something.
+    pub(super) fn decoder_heard(&mut self, channel: u32, generation: u64) {
+        if let Some(decoder) = self.decoders.get_mut(&channel).filter(|decoder| decoder.generation == generation) {
+            decoder.heard = true;
+        }
+    }
+
+    /// The fetcher of `channel` at `generation` said something.
+    pub(super) fn fetcher_heard(&mut self, channel: u32, generation: u64) {
+        if let Some(fetcher) = self.fetchers.get_mut(&channel).filter(|fetcher| fetcher.generation == generation) {
+            fetcher.heard = true;
+        }
+    }
+
+    /// A fetcher ended. One the core did not end, that ended before it
+    /// first spoke, as one that cannot confine itself does, fails the
+    /// version (finding F-12); one that ends after speaking is not
+    /// counted, so a hostile server that crashes it cannot force a
+    /// rollback.
+    pub(super) fn fetcher_ended(&mut self, channel: u32, generation: u64, reason: Option<String>) {
+        if self.fetchers.get(&channel).map(|fetcher| fetcher.generation) == Some(generation) {
+            let stopped = format!("the fetcher for channel {channel} stopped{}", reason.map(|reason| format!(": {reason}")).unwrap_or_default());
+            self.log(Level::Error, None, &stopped);
+            if let Some(mut fetcher) = self.fetchers.remove(&channel) {
+                if !fetcher.heard {
+                    self.updates.helper_failed(&format!("{stopped} before it first spoke"));
+                }
+                let _ = fetcher.child.wait();
+            }
+        }
+    }
+
     /// Sends what the last event produced to each process, before waiting
     /// for the next. A decoder that has stopped reading is replaced, with
     /// what it was given (decision 47); a fetcher's or the phone's lost
     /// input is theirs to notice; the interface is the browser.
     pub(super) fn flush(&mut self) -> Result<(), String> {
         let stuck: Vec<u32> = self.decoders.iter_mut().filter_map(|(&id, decoder)| decoder.input.flush().is_err().then_some(id)).collect();
+        let now = std::time::Instant::now();
         for id in stuck {
-            self.log(Level::Error, None, &format!("the decoder for channel {id} stopped reading and is replaced"));
+            // A decoder its channel's data keeps overwhelming is replaced
+            // a few times, then the channel is given up until it is
+            // reloaded, which makes a new channel (finding F-30).
+            let restarts = self.restarts.entry(id).or_default();
+            restarts.retain(|at| now.saturating_duration_since(*at) < DECODER_RESTART_WINDOW);
+            restarts.push_back(now);
+            if restarts.len() > MAX_DECODER_RESTARTS {
+                self.given_up.insert(id);
+                self.log(
+                    Level::Error,
+                    Some(id),
+                    &format!("the decoder for channel {id} stopped reading too often and the channel is given up until it is reloaded"),
+                );
+            } else {
+                self.log(Level::Error, None, &format!("the decoder for channel {id} stopped reading and is replaced"));
+            }
             self.put_to_sleep(id);
         }
         for fetcher in self.fetchers.values_mut() {
@@ -179,7 +252,7 @@ impl Core {
         }
         self.to_interface.flush().map_err(|error| format!("cannot write to the interface: {error}"))?;
         // A replaced decoder starts again at once if its tab is awake.
-        if self.decoders.len() < self.session.tab_count() {
+        if self.decoders.len().saturating_add(self.given_up.len()) < self.session.tab_count() {
             self.match_decoders()?;
         }
         Ok(())
@@ -187,8 +260,10 @@ impl Core {
 }
 
 #[cfg(all(test, unix))]
+#[allow(clippy::unwrap_used, clippy::arithmetic_side_effects, reason = "a test")]
 mod tests {
-    use super::super::processes::Decoder;
+    use super::super::Core;
+    use super::super::processes::{Decoder, Fetcher};
     use super::super::test_support::test_core;
     use super::*;
     use confine::Role;
@@ -221,7 +296,7 @@ mod tests {
             .unwrap(),
         );
         let input = Outbox::new(child.stdin.take().unwrap());
-        core.decoders.insert(1, Decoder { child, input, generation: 1 });
+        core.decoders.insert(1, Decoder { child, input, generation: 1, heard: false });
         let started = std::time::Instant::now();
         let chunk = vec![0_u8; MAX_CHUNK - 1];
         let chunks = neoteletext::outbox::MAX_QUEUED_BYTES / chunk.len() + 2;
@@ -231,5 +306,81 @@ mod tests {
         core.flush().unwrap();
         assert!(!core.decoders.contains_key(&1), "given up");
         assert!(started.elapsed() < Duration::from_secs(5), "never waited on it: {:?}", started.elapsed());
+    }
+
+    /// A helper of a test, confined as `role`: `program` with `arguments`.
+    fn stand_in(program: &str, arguments: &[&str], role: Role) -> Helper {
+        let program = PathBuf::from(program);
+        let arguments: Vec<OsString> = arguments.iter().map(OsString::from).collect();
+        Helper::local(
+            confine::spawn(&confine::Spawn { program: &program, arguments: &arguments, role, environment: &[], local_network: false, writable: None }).unwrap(),
+        )
+    }
+
+    /// Whether the version is healthy once its window has drawn and
+    /// settled.
+    fn healthy_once_settled(core: &mut Core) -> bool {
+        core.updates.drawn();
+        core.updates.health.healthy(std::time::Instant::now() + super::super::updates::HEALTH_SETTLE)
+    }
+
+    /// Finding F-12: a decoder that ends before it first speaks, as one
+    /// that cannot confine itself does, marks the version unhealthy, even
+    /// when its pipe closed cleanly; one that ends after speaking, as a
+    /// hostile channel's could, is not counted.
+    #[test]
+    fn a_decoder_that_ends_before_it_speaks_fails_the_version() {
+        let mut core = test_core();
+        let mut child = stand_in("/usr/bin/false", &[], Role::Decoder);
+        let input = Outbox::new(child.stdin.take().unwrap());
+        core.decoders.insert(1, Decoder { child, input, generation: 1, heard: false });
+        core.decoder_ended(1, 1, None);
+        assert!(!healthy_once_settled(&mut core), "a decoder that never spoke failed the version");
+
+        let mut core = test_core();
+        let mut child = stand_in("/usr/bin/false", &[], Role::Decoder);
+        let input = Outbox::new(child.stdin.take().unwrap());
+        core.decoders.insert(1, Decoder { child, input, generation: 1, heard: false });
+        core.decoder_heard(1, 1);
+        core.decoder_ended(1, 1, None);
+        assert!(healthy_once_settled(&mut core), "a decoder that spoke first is not counted");
+    }
+
+    /// Finding F-30: a channel whose decoder stops reading more than
+    /// `MAX_DECODER_RESTARTS` times in `DECODER_RESTART_WINDOW` is given up
+    /// until it is reloaded: no further decoder is started for it. Before
+    /// this, each was replaced at once, for as long as its data came.
+    #[test]
+    fn a_decoder_replaced_too_often_leaves_its_channel_failed() {
+        let mut core = test_core();
+        core.session.open("/nowhere/news.t42").unwrap();
+        let channel = core.session.tabs.last().unwrap().channel.id;
+        let chunk = vec![0_u8; MAX_CHUNK - 1];
+        let chunks = neoteletext::outbox::MAX_QUEUED_BYTES / chunk.len() + 2;
+        for generation in 1..=6 {
+            let mut child = stand_in("/bin/sleep", &["60"], Role::Decoder);
+            let input = Outbox::new(child.stdin.take().unwrap());
+            core.decoders.insert(channel, Decoder { child, input, generation, heard: true });
+            for _ in 0..chunks {
+                core.tell(channel, ToDecoder::Data(chunk.clone()));
+            }
+            // With no broker, the restart this tries fails, as it may.
+            let _ = core.flush();
+            assert!(!core.decoders.contains_key(&channel), "replacement {generation} given up");
+        }
+        // With no broker, starting a decoder fails: none is tried now.
+        assert_eq!(core.match_decoders(), Ok(()), "no decoder is started for a channel given up");
+    }
+
+    /// Finding F-12: a fetcher that ends before it first speaks, unasked,
+    /// marks the version unhealthy.
+    #[test]
+    fn a_fetcher_that_ends_before_it_speaks_fails_the_version() {
+        let mut core = test_core();
+        let child = stand_in("/usr/bin/false", &[], Role::Network);
+        core.fetchers.insert(1, Fetcher { child, generation: 1, input: None, heard: false });
+        core.fetcher_ended(1, 1, None);
+        assert!(!core.fetchers.contains_key(&1));
+        assert!(!healthy_once_settled(&mut core), "a fetcher that never spoke failed the version");
     }
 }

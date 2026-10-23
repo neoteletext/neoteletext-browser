@@ -85,7 +85,7 @@ impl Session {
                 }
                 let Some(history) = kept_history(kept) else { continue };
                 let Some(address) = history.get(kept.position).map(|visit| visit.address.clone()) else { continue };
-                let channel = self.channel_for(&address);
+                let channel = self.channel_later(&address);
                 if place == kept_window.active {
                     active = Some(self.tabs.len());
                 }

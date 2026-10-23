@@ -2,6 +2,7 @@
 //! 3.6, requirements 20.19 and 20.20): its lines read strictly, written
 //! whole, and exported beside it.
 
+use crate::dropped::Dropped;
 use std::collections::BTreeMap;
 use std::path::Path;
 
@@ -10,7 +11,7 @@ use crate::private_file::{Read, read_text, write_whole};
 use super::{BAR, Bookmarks, Item, MAX_DEPTH, MAX_ITEMS, MAX_NAME, OTHER, ROOT, SEPARATOR, bookmark_address};
 
 /// The first line of the file: its format and version.
-pub(super) const VERSION_LINE: &str = "neoteletext-bookmarks 1";
+pub(crate) const VERSION_LINE: &str = "neoteletext-bookmarks 1";
 pub(super) const FILE_NAME: &str = "bookmarks.txt";
 const TEMPORARY_NAME: &str = "bookmarks.txt.new";
 /// An export's name before its date: `bookmarks-export-2026-10-22.txt`.
@@ -26,22 +27,29 @@ pub const MAX_FILE: usize = 24 * 1024 * 1024;
 const _: () = assert!(MAX_FILE == protocol::decoder::MAX_BOOKMARK_FILE, "a decoder reads a file of the same bound");
 const _: () = assert!(MAX_ITEMS * (MAX_LINE + 1) + VERSION_LINE.len() < MAX_FILE, "the file bound holds every item at the longest line");
 
+/// Whether `bytes` begin as this browser's bookmarks file does, with its
+/// version line: what the broker reads for an import (decision 88).
+#[must_use]
+pub fn is_bookmarks_file(bytes: &[u8]) -> bool {
+    bytes.strip_prefix(VERSION_LINE.as_bytes()).is_some_and(|rest| rest.is_empty() || rest.starts_with(b"\n") || rest.starts_with(b"\r\n"))
+}
+
 impl Bookmarks {
     /// Reads the file's text (section 3.6): lines that break a rule are
     /// dropped with anything inside them, and described in the second
     /// value, for the log.
     #[must_use]
-    pub fn read(text: &str) -> (Self, Vec<String>) {
+    pub fn read(text: &str) -> (Self, Dropped) {
         let mut bookmarks = Self::default();
-        let mut dropped = Vec::new();
+        let mut dropped = Dropped::default();
         if text.len() > MAX_FILE {
-            dropped.push(format!("the bookmarks file is longer than {MAX_FILE} bytes; none read"));
+            dropped.push(|| format!("the bookmarks file is longer than {MAX_FILE} bytes; none read"));
             return (bookmarks, dropped);
         }
         let mut lines = text.lines();
         if lines.next() != Some(VERSION_LINE) {
             if !text.is_empty() {
-                dropped.push("the bookmarks file has no version line; none read".to_owned());
+                dropped.push(|| "the bookmarks file has no version line; none read".to_owned());
             }
             return (bookmarks, dropped);
         }
@@ -53,7 +61,7 @@ impl Bookmarks {
                 continue;
             }
             if !bookmarks.take(line, &mut numbers) {
-                dropped.push(format!("line {} of the bookmarks file dropped", index.saturating_add(2)));
+                dropped.push(|| format!("line {} of the bookmarks file dropped", index.saturating_add(2)));
             }
         }
         (bookmarks, dropped)
@@ -111,11 +119,24 @@ impl Bookmarks {
     pub fn text(&self) -> String {
         let mut text = String::from(VERSION_LINE);
         text.push('\n');
-        for id in self.walk() {
+        // Numbered in the order written, as `read` numbers what it reads,
+        // so that the file read back is written the same (finding F-104).
+        let order = self.walk();
+        let mut numbers: BTreeMap<u32, u32> = BTreeMap::from([(ROOT, ROOT), (BAR, BAR), (OTHER, OTHER)]);
+        let mut next = OTHER.saturating_add(1);
+        for &id in &order {
+            numbers.entry(id).or_insert_with(|| {
+                let number = next;
+                next = next.saturating_add(1);
+                number
+            });
+        }
+        for id in order {
             let Some(item) = self.items.get(&id) else { continue };
+            let (number, parent) = (numbers.get(&id).copied().unwrap_or(id), numbers.get(&item.parent).copied().unwrap_or(item.parent));
             let line = match &item.address {
-                Some(address) => format!("bookmark{SEPARATOR}{id}{SEPARATOR}{}{SEPARATOR}{}{SEPARATOR}{address}", item.parent, item.name),
-                None => format!("folder{SEPARATOR}{id}{SEPARATOR}{}{SEPARATOR}{}", item.parent, item.name),
+                Some(address) => format!("bookmark{SEPARATOR}{number}{SEPARATOR}{parent}{SEPARATOR}{}{SEPARATOR}{address}", item.name),
+                None => format!("folder{SEPARATOR}{number}{SEPARATOR}{parent}{SEPARATOR}{}", item.name),
             };
             text.push_str(&line);
             text.push('\n');
@@ -128,11 +149,11 @@ impl Bookmarks {
     ///
     /// # Errors
     /// When the file exists but cannot be read.
-    pub fn load(folder: &Path) -> std::io::Result<(Self, Vec<String>)> {
+    pub fn load(folder: &Path) -> std::io::Result<(Self, Dropped)> {
         let path = folder.join(FILE_NAME);
         match read_text(&path, MAX_FILE)? {
-            Read::Missing => Ok((Self::default(), Vec::new())),
-            Read::TooLong => Ok((Self::default(), vec![format!("the bookmarks file is longer than {MAX_FILE} bytes; none read")])),
+            Read::Missing => Ok((Self::default(), Dropped::default())),
+            Read::TooLong => Ok((Self::default(), Dropped::one(format!("the bookmarks file is longer than {MAX_FILE} bytes; none read")))),
             Read::Text(text) => Ok(Self::read(&text)),
         }
     }

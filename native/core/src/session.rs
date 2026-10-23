@@ -71,7 +71,7 @@ impl Session {
     #[cfg(test)]
     #[must_use]
     pub fn new(bookmarks: Bookmarks) -> Self {
-        Self::with_reader(bookmarks, Box::new(|path: &Path| Source::read(path)))
+        Self::with_reader(bookmarks, Box::new(|path: &Path| Source::read(path, &crate::source::Places::new(None, Vec::new())).map_err(String::from)))
     }
 
     /// A session that reads file channels with `reader`.
@@ -100,6 +100,26 @@ impl Session {
         ChannelState::new(id, address, &self.bookmarks, &self.reader)
     }
 
+    /// A channel for a restored tab: a file is read only when its tab is
+    /// first shown ([`Session::read_unread`]), not every restored file
+    /// through the broker at start (finding F-53).
+    fn channel_later(&mut self, address: &Address) -> ChannelState {
+        if address.file.is_none() {
+            return self.channel_for(address);
+        }
+        let id = self.next_channel;
+        self.next_channel = self.next_channel.wrapping_add(1).max(1);
+        ChannelState::unread(id, address)
+    }
+
+    /// Reads the file of `channel`'s tab if it was left unread at start;
+    /// why it has no data, when it could not be read.
+    pub fn read_unread(&mut self, channel: u32) -> Option<String> {
+        let reader = &self.reader;
+        let tab = self.tabs.iter_mut().chain(self.others.iter_mut().flat_map(|window| window.tabs.iter_mut())).find(|tab| tab.channel.id == channel)?;
+        tab.channel.read_now(reader)
+    }
+
     /// The bookmark the active tab's start page opens at `page`, if the
     /// tab shows the start page (requirement 19.7).
     #[must_use]
@@ -115,6 +135,7 @@ impl Session {
     ///
     /// # Errors
     /// When the address cannot be opened, or there is no tab.
+    #[cfg_attr(not(feature = "links"), allow(dead_code, reason = "only a confirmed link opens a bookmark from the start page"))]
     pub fn open_from_start_page(&mut self, bookmark: &str) -> Result<(), String> {
         let address = parse(bookmark)?;
         let front = parse(START_PAGE)?;

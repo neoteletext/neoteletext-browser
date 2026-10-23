@@ -79,7 +79,7 @@ fn bookmarks_are_managed() {
     let removed = bookmarks.remove(weather).unwrap();
     assert_eq!(removed.name, "Weather");
     assert!(bookmarks.item(page).is_none(), "its contents went with it");
-    assert!(bookmarks.restore(removed));
+    assert_eq!(bookmarks.restore(removed), Ok(()));
     assert_eq!(bookmarks.path(page), [OTHER, weather]);
     assert!(bookmarks.remove(BAR).is_none());
     assert!(bookmarks.move_to(weather, weather, 0).is_err(), "not into itself");
@@ -166,4 +166,52 @@ fn an_import_goes_into_its_own_folder() {
     let imported = bookmarks.children(OTHER).last().copied().unwrap();
     assert_eq!(bookmarks.item(imported).unwrap().name, IMPORTED_NAME);
     assert_eq!(bookmarks.children(imported).len(), 2);
+}
+
+/// Finding F-53: another browser's bookmark of a file on this computer is
+/// left out of an import: a file the user never chose here is not opened.
+#[test]
+fn an_imported_file_bookmark_is_left_out() {
+    let entries = [
+        BookmarkEntry::Link { name: "Notes".into(), address: "file:///Users/someone/notes.t42".into() },
+        BookmarkEntry::Link { name: "Path".into(), address: "/Users/someone/notes.t42".into() },
+        BookmarkEntry::Link { name: "News".into(), address: "https://news.example/teletext/".into() },
+    ];
+    let (read, refused) = Bookmarks::from_entries(&entries);
+    assert_eq!((read.len(), refused), (1, 2));
+}
+
+/// Finding F-79: an undo that would put a removed folder deeper than
+/// folders may go, its folder having moved deeper since, is refused, and
+/// the file stays readable whole.
+#[test]
+fn an_undo_too_deep_is_refused() {
+    let mut bookmarks = Bookmarks::default();
+    let mut deepest = OTHER;
+    for _ in 1..MAX_DEPTH {
+        deepest = bookmarks.add_folder(deepest, "deep").unwrap();
+    }
+    let outer = bookmarks.add_folder(OTHER, "outer").unwrap();
+    let removed_folder = bookmarks.add_folder(outer, "removed").unwrap();
+    bookmarks.add_folder(removed_folder, "inside").unwrap();
+    let removed = bookmarks.remove(removed_folder).unwrap();
+    bookmarks.move_to(outer, deepest, 0).unwrap();
+    assert_eq!(bookmarks.restore(removed), Err(format!("It cannot be put back: folders are at most {MAX_DEPTH} deep")));
+    let (read, dropped) = Bookmarks::read(&bookmarks.text());
+    assert!(dropped.is_empty(), "{dropped:?}");
+    assert_eq!(read.len(), bookmarks.len());
+}
+
+/// Finding F-104: the file a read writes is the file it reads back: its
+/// lines are numbered in the order they are written, as reading numbers
+/// them. The `bookmarks_file` fuzz target's 52-byte input: a folder read
+/// second but placed in the bar was written first with the larger number.
+#[test]
+fn the_file_written_reads_back_the_same() {
+    let found = "neoteletext-bookmarks 1\nfolder\t22\t2\t.\nfolder\t222\t1\tt";
+    let (read, _) = Bookmarks::read(found);
+    let written = read.text();
+    let (again, dropped) = Bookmarks::read(&written);
+    assert!(dropped.is_empty(), "{dropped:?}");
+    assert_eq!(again.text(), written);
 }

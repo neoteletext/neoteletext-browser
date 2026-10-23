@@ -138,7 +138,7 @@ impl Core {
             ToCore::MuteTab(_) | ToCore::MuteAll(_) | ToCore::MoveTab { .. } => self.tab_intent(&intent)?,
             ToCore::Navigate(typed) => {
                 if let Err(reason) = self.session.navigate(&typed, true) {
-                    self.log(Level::Warning, None, &reason);
+                    self.log(Level::Warning, self.log_place(), &reason);
                 }
                 self.send_all()?;
             }
@@ -206,6 +206,11 @@ impl Core {
     /// The page open in the active tab changed: its keys, its links, its
     /// sounds and its controls follow it.
     fn opened(&mut self, key: Option<PageKey>) -> Result<(), String> {
+        // Only a page of the active tab's channel opens: a key of another
+        // tab's would let the page controls and typing reach its decoder
+        // (finding F-66).
+        let active = self.active_channel();
+        let key = key.filter(|key| Some(key.channel) == active);
         #[cfg(feature = "interaction")]
         {
             self.opened = key;
@@ -243,13 +248,21 @@ impl Core {
     }
 
     /// A bookmark page of the start page was opened: its bookmark opens.
+    /// A start-page bookmark's page opened in the page area: shown, and its
+    /// bookmark offered through the site-change screen, as a link to
+    /// another channel is, never opened by the intent alone (requirement
+    /// 4.5, finding F-67).
     fn open_start_page_bookmark(&mut self, key: PageKey) -> Result<(), String> {
-        if let Some(bookmark) = self.session.start_page_bookmark(key.channel, key.page)
-            && let Err(reason) = self.session.open_from_start_page(&bookmark)
-        {
-            self.log(Level::Warning, None, &reason);
+        let bookmark = self.session.start_page_bookmark(key.channel, key.page);
+        self.opened(Some(key))?;
+        #[cfg(feature = "links")]
+        if let Some(address) = bookmark.and_then(|bookmark| neoteletext::address::parse(&bookmark).ok()) {
+            let followed = self.links.ask(neoteletext::links::Destination::Channel(address), self.now());
+            self.follow(followed, "a start-page bookmark")?;
         }
-        self.send_all()
+        #[cfg(not(feature = "links"))]
+        let _ = bookmark;
+        Ok(())
     }
 
     /// The window gained or lost the keyboard focus: links hand off only
@@ -265,5 +278,28 @@ impl Core {
             self.deliver_typing(sends)?;
         }
         Ok(())
+    }
+}
+
+#[cfg(all(test, feature = "links"))]
+#[allow(clippy::unwrap_used, reason = "a test")]
+mod tests {
+    use super::super::test_support::Test;
+    use interface_core::canvas::PageKey;
+    use protocol::ToCore;
+    use protocol::links::PromptKind;
+
+    /// Finding F-67 (requirement 4.5): a start-page bookmark's page opened
+    /// in the page area is shown, not acted on: its bookmark opens only
+    /// after the site-change screen, as a link to another channel does.
+    #[test]
+    fn a_start_page_bookmark_opens_after_the_site_change_screen() {
+        let mut test = Test::new("start-page-intent");
+        test.core.session.bookmarks.add(neoteletext::bookmarks::BAR, "News", "https://news.invalid/").unwrap();
+        test.core.session.open(neoteletext::address::START_PAGE).unwrap();
+        let channel = test.core.session.tabs[0].channel.id;
+        test.core.intent(ToCore::Opened(Some(PageKey { channel, page: 0x201 }))).unwrap();
+        assert!(test.core.session.active_tab().and_then(|tab| tab.address()).is_some_and(neoteletext::address::Address::is_start_page), "still the start page");
+        assert_eq!(test.core.links.prompt().map(|prompt| prompt.kind), Some(PromptKind::Leave), "the site-change screen asks");
     }
 }

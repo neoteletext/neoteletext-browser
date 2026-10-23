@@ -173,4 +173,21 @@ mod tests {
         assert!(state.view_of(key).reveal);
         assert!(!state.view_of(PageKey { channel: 1, page: 0x100 }).reveal, "another page's view is its own");
     }
+
+    /// Finding F-66: a page opened must be of the active tab's channel; a
+    /// key naming another tab's channel opens nothing, so the page controls
+    /// cannot reach that tab's decoder.
+    #[test]
+    fn only_a_page_of_the_active_channel_opens() {
+        let mut test = super::super::test_support::Test::new("opened-key");
+        test.core.session.open("https://news.invalid/teletext/").unwrap();
+        let other = test.core.session.tabs[0].channel.id;
+        test.core.session.open("https://sport.invalid/teletext/").unwrap();
+        let active = test.core.active_channel().unwrap();
+        test.core.intent(protocol::ToCore::Opened(Some(PageKey { channel: other, page: 0x100 }))).unwrap();
+        assert_eq!(test.core.controls.open, None, "another tab's page");
+        let key = PageKey { channel: active, page: 0x100 };
+        test.core.intent(protocol::ToCore::Opened(Some(key))).unwrap();
+        assert_eq!(test.core.controls.open, Some(key));
+    }
 }

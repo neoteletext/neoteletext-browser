@@ -184,7 +184,7 @@ impl Links {
                 None => Destination::Page(target.page),
                 Some(place) => {
                     let address = descriptor?.by_place.get(usize::from(place))?.as_ref()?;
-                    Destination::Channel(address.with_page(target.page))
+                    Destination::Channel(address.with_page(target.page)?)
                 }
             };
             Some((destination, target.subcode))
@@ -359,6 +359,16 @@ impl Links {
         self.pointed.as_ref().map(|(_, destination)| Pointing { kind: destination.kind(), text: destination.describe() })
     }
 
+    /// Asks the strip's question for `destination`, as a link to it would:
+    /// what a start-page bookmark opened in the page area leads to
+    /// (requirement 4.5, finding F-67).
+    ///
+    /// # Errors
+    /// Why it is not asked.
+    pub fn ask(&mut self, destination: Destination, now: u64) -> Result<Follow, Refusal> {
+        self.follow(destination, now)
+    }
+
     /// A click on a cell. It follows a link only when the click is on the
     /// open page of the active channel, in an image the trusted core sent
     /// lately, on a link whose destination the strip is showing, and which
@@ -410,7 +420,7 @@ impl Links {
                     Target::Page(page) => Destination::Page(*page),
                     Target::Service { name, page } => {
                         let (_, address) = descriptor.services.iter().find(|(known, _)| known == name).ok_or(Refusal::NotALink)?;
-                        Destination::Channel(address.with_page(*page))
+                        Destination::Channel(address.with_page(*page).ok_or(Refusal::NotALink)?)
                     }
                     Target::Channel(address) => Destination::Channel(address.clone()),
                     Target::Web(_) => return Err(Refusal::NotALink),

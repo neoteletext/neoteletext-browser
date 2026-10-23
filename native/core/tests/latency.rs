@@ -190,7 +190,7 @@ fn keys_round_trip_and_pages_reach_the_screen_within_budget() {
         let rendered = engine.render(PAGE).expect("the page renders");
         renders.push(started.elapsed());
         let started = Instant::now();
-        let (version, image) = frames.accept(key, rendered.palette, rendered.screen, rendered.indices).expect("a new image");
+        let (version, image) = frames.accept(key, rendered.palette, rendered.screen, rendered.indices, Instant::now()).expect("a new image");
         encodes.push(started.elapsed());
         let started = Instant::now();
         let read = protocol::frame::decode(&image, held.as_ref().map(|(version, indices): &(u32, Vec<u8>)| (*version, indices.as_slice())))

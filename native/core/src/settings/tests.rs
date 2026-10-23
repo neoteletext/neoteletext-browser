@@ -2,6 +2,7 @@
 #![allow(clippy::unwrap_used, clippy::indexing_slicing, reason = "a test")]
 
 use super::*;
+use crate::dropped::Dropped;
 use std::fmt::Write as _;
 
 /// Requirement 19.1: written, read back.
@@ -21,7 +22,7 @@ fn settings_round_trip_through_their_file() {
         remote: RemotePlace { mode: RemoteMode::Floating, x: 900, y: 140 },
     };
     let (read, dropped) = Settings::read(&settings.text());
-    assert_eq!((read, dropped), (settings, Vec::<String>::new()));
+    assert_eq!((read, dropped), (settings, Dropped::default()));
     assert_eq!(Settings::read("").0, Settings::default());
 }
 
@@ -69,7 +70,7 @@ fn the_longest_address_is_kept() {
     let address = format!("https://a.example/{path}");
     assert_eq!(checked_address(&address).as_deref(), Some(address.as_str()), "the address rules take it");
     let settings = Settings { home: address, ..Settings::default() };
-    assert_eq!(Settings::read(&settings.text()), (settings, Vec::new()));
+    assert_eq!(Settings::read(&settings.text()), (settings, Dropped::default()));
 }
 
 /// `installation-and-updates.md` section 3.3: this format's file is
@@ -79,7 +80,7 @@ fn the_settings_are_this_formats_file_and_keep_the_update_setting() {
     assert_eq!(update::profile::file_name(PROFILE, FORMAT), FILE_NAME);
     assert_eq!(VERSION_LINE, format!("neoteletext-settings {FORMAT}"));
     let off = Settings { check_updates: false, ..Settings::default() };
-    assert_eq!(Settings::read(&off.text()), (off, Vec::new()));
+    assert_eq!(Settings::read(&off.text()), (off, Dropped::default()));
     assert!(Settings::default().check_updates, "on by default");
 }
 

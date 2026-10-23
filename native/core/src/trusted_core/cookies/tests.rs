@@ -38,6 +38,30 @@ fn each_fetcher_is_answered_with_its_channels_cookies() {
     assert_eq!(test.core.cookie_reply(news, reached).unwrap(), Some(ToFetcher::ReachedAnswer { id: 4, reached: true }));
 }
 
+/// Finding F-27: a fetcher learns whether a host was reached securely only
+/// for its own channel's host, from its own tab's jar: not for another
+/// host, and not from the private jar for an ordinary tab.
+#[test]
+fn a_fetcher_learns_only_its_own_hosts_secure_reach() {
+    let mut test = Test::new("reached");
+    let news = test.tab("https://news.example/teletext/", false);
+    let other = test.tab("https://other.example/teletext/", false);
+    test.set(news, "news.example", "id=1");
+    let reached = |test: &mut Test, channel: u32, host: &str| {
+        let question = FromFetcher::ReachedQuestion { id: 4, host: host.into() };
+        let Some(ToFetcher::ReachedAnswer { id: 4, reached }) = test.core.cookie_reply(channel, question).unwrap() else { panic!("no answer") };
+        reached
+    };
+    assert!(reached(&mut test, news, "news.example"), "its own host");
+    assert!(!reached(&mut test, other, "news.example"), "another channel's host");
+    assert!(!reached(&mut test, 999, "news.example"), "no such channel");
+    let private = test.tab("https://secret.example/teletext/", true);
+    test.set(private, "secret.example", "p=1");
+    assert!(reached(&mut test, private, "secret.example"), "the private tab's own");
+    let ordinary = test.tab("https://secret.example/teletext/", false);
+    assert!(!reached(&mut test, ordinary, "secret.example"), "an ordinary tab learns nothing of the private jar");
+}
+
 /// Requirements 21.6 and 21.7: the panel lists sites and channels with no
 /// name or value, deletes by number, and blocking is kept in the
 /// settings and refuses the channel's cookies.
@@ -114,7 +138,7 @@ fn kept_cookies_are_written_sealed_and_removed_on_close() {
     let sealed = kept::load(&test.folder).unwrap().unwrap();
     let opened = kept::open(&key, &sealed).unwrap();
     let mut restored = Store::new();
-    assert_eq!(restored.import(&opened, now_unix()), Vec::<String>::new());
+    assert!(restored.import(&opened, now_unix()).is_empty());
     assert_eq!(restored.listed()[0].count, 1, "the session cookie is not written");
     test.core.cookie_mode_changed(protocol::settings::CookieMode::Close);
     assert_eq!(kept::load(&test.folder).unwrap(), None, "on close: no file");
