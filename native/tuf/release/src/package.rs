@@ -57,22 +57,13 @@ fn info_plist(version: Version) -> String {
 }
 
 /// The `AppArmor` profile every Linux version carries (`sandboxing.md`
-/// section 8.3; `installation-and-updates.md` section 14): on a system
-/// that restricts unprivileged user namespaces, it lets the browser's own
-/// programs, where a per-user installation keeps them, make the empty
-/// network namespace their sandbox needs, and changes nothing else.
-pub const APPARMOR: &str = "# NeoTeletext: its programs may make a user namespace, for the empty
-# network namespace of their sandbox (docs/sandboxing.md section 8).
-# Installed by an administrator once; it covers every later version.
-abi <abi/4.0>,
-include <tunables/global>
-
-profile neoteletext @{HOME}/.local/share/neoteletext/versions/*/neoteletext{,-*} flags=(unconfined) {
-  userns,
-
-  include if exists <local/neoteletext>
+/// section 8.3; `installation-and-updates.md` section 14), for the default
+/// installation's root: the four programs that make namespaces, there
+/// alone (decision 95). `neoteletext --install` writes and prints one for
+/// the root it installs in.
+fn apparmor() -> String {
+    update::platform::apparmor_profile(update::platform::APPARMOR_DEFAULT_ROOT)
 }
-";
 
 /// Lays out version `version` for `platform` in `out`, a new folder, from
 /// the built programs in `programs`.
@@ -97,7 +88,7 @@ pub fn layout(platform: Platform, version: Version, programs: &Path, out: &Path)
             let plist = out.join(BUNDLE).join("Contents/Info.plist");
             files::write_synced(&plist, info_plist(version).as_bytes(), false).map_err(|error| error.to_string())?;
         }
-        Family::Linux => files::write_synced(&out.join(APPARMOR_PROFILE), APPARMOR.as_bytes(), false).map_err(|error| error.to_string())?,
+        Family::Linux => files::write_synced(&out.join(APPARMOR_PROFILE), apparmor().as_bytes(), false).map_err(|error| error.to_string())?,
         Family::Windows => {}
     }
     Ok(())
@@ -214,4 +205,23 @@ pub fn targets(folder: &Path, platform: Platform, out: &Path) -> Result<(), Stri
         std::fs::write(&target, update::gzip::compress(&bytes)).map_err(|error| format!("{}: {error}", target.display()))?;
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Decision 95 (finding F-23): the profile every Linux release carries
+    /// lets only the four programs that make namespaces make them, at the
+    /// default installation's path, and says so.
+    #[test]
+    fn the_release_profile_names_only_the_programs_that_make_namespaces() {
+        let profile = apparmor();
+        assert!(
+            profile.contains("\"@{HOME}/.local/share/neoteletext/versions/*/{neoteletext,neoteletext-decoder,neoteletext-interface,neoteletext-sound}\""),
+            "{profile}"
+        );
+        assert!(!profile.contains("neoteletext{,-*}"), "no pattern for every program: {profile}");
+        assert_eq!(profile.matches("userns").count(), 2, "one rule, and the sentence saying what it allows: {profile}");
+    }
 }

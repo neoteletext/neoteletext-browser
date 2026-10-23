@@ -62,6 +62,20 @@ const APPARMOR_RESTRICTION: &str = "/proc/sys/kernel/apparmor_restrict_unprivile
 /// Where an administrator installs the browser's profile.
 pub(super) const APPARMOR_TARGET: &str = "/etc/apparmor.d/neoteletext";
 
+/// The `AppArmor` profile for the installation at `root`, by its real path
+/// (`AppArmor` matches a program by the path the kernel resolved, so a
+/// root reached through a link, or under `XDG_DATA_HOME`, is named as it
+/// is), written to `root`'s `neoteletext.apparmor` for an administrator to
+/// install: where it is, and its text (decision 95).
+fn profile_for(root: &Path) -> Result<(PathBuf, String), String> {
+    let real = root.canonicalize().map_err(|error| io_text(root, &error))?;
+    let named = update::platform::apparmor_root(&real).ok_or_else(|| format!("no AppArmor profile can name {}", real.display()))?;
+    let text = update::platform::apparmor_profile(&named);
+    let file = root.join(update::platform::APPARMOR_PROFILE);
+    files::write_atomically(&file, text.as_bytes()).map_err(|error| io_text(&file, &error))?;
+    Ok((file, text))
+}
+
 /// Linux: `neoteletext --install`, run from the unpacked tarball, whose
 /// signature the download page says how to check first: the version
 /// beside this program is checked by the pinned release key, copied into
@@ -76,7 +90,7 @@ pub fn install_linux(own: &Path) -> Result<(), String> {
     let source = own.parent().ok_or("this program has no folder")?;
     let layout = Layout::for_user(Family::Linux, None).ok_or("there is no home folder to install in")?;
     let signer = crate::pinned_signer(platform);
-    let Some((version, installed)) = install_version(source, &layout, signer.as_ref())? else {
+    let Some((version, _)) = install_version(source, &layout, signer.as_ref())? else {
         println!("NeoTeletext is already installed in {}; it keeps itself up to date.", layout.root.display());
         return Ok(());
     };
@@ -94,14 +108,19 @@ pub fn install_linux(own: &Path) -> Result<(), String> {
         None => println!("Start it from the applications menu, or with {} .", launcher.display()),
     }
     if std::fs::read_to_string(APPARMOR_RESTRICTION).is_ok_and(|value| value.trim() == "1") && !Path::new(APPARMOR_TARGET).exists() {
-        let profile = installed.join(update::platform::APPARMOR_PROFILE);
-        println!(
-            "\nThis system lets a program make a user namespace, which the browser's sandbox needs, only when an AppArmor profile allows it.\n\
-             An administrator must install the browser's profile once (it covers every later version):\n\n    \
-             sudo install -m 644 {} {APPARMOR_TARGET}\n    sudo apparmor_parser -r {APPARMOR_TARGET}\n\n\
-             Until then the browser refuses to start: it never runs with less of its sandbox.",
-            profile.display()
-        );
+        match profile_for(&layout.root) {
+            Ok((profile, text)) => println!(
+                "\nThis system lets a program make a user namespace, which the browser's sandbox needs, only when an AppArmor profile allows it.\n\
+                 An administrator must install the browser's profile once (it covers every later version). It allows user namespaces,\n\
+                 and nothing else, to any program at these four paths, which you can write:\n\n{text}\n    \
+                 sudo install -m 644 {} {APPARMOR_TARGET}\n    sudo apparmor_parser -r {APPARMOR_TARGET}\n\n\
+                 Until then the browser refuses to start: it never runs with less of its sandbox.",
+                profile.display()
+            ),
+            Err(why) => {
+                println!("\nThis system restricts user namespaces, which the browser's sandbox needs, but {why}; until it has a profile it refuses to start.");
+            }
+        }
     }
     Ok(())
 }
@@ -217,6 +236,25 @@ mod tests {
         assert_eq!(installed.0, version);
         assert!(std::fs::read(installed.1.join(LAUNCHER_PROGRAM)).unwrap() == genuine, "the version installed is the one accepted");
         assert!(std::fs::read(layout.launcher_folder().join(LINUX_LAUNCHER)).unwrap() == genuine, "the launcher installed is the one accepted");
+        files::remove_tree(&folder).unwrap();
+    }
+
+    /// Decision 95 (finding F-23): the profile the launcher writes names
+    /// the four programs that make namespaces under the installation's
+    /// real root, however it was reached.
+    #[test]
+    fn the_profile_names_the_real_root() {
+        let folder = std::env::temp_dir().join(format!("neoteletext-apparmor-{}", std::process::id()));
+        let _ = files::remove_tree(&folder);
+        std::fs::create_dir_all(folder.join("real")).unwrap();
+        std::os::unix::fs::symlink(folder.join("real"), folder.join("through")).unwrap();
+        let (file, text) = profile_for(&folder.join("through")).unwrap();
+        let real = folder.join("real").canonicalize().unwrap();
+        assert_eq!(std::fs::read_to_string(&file).unwrap(), text);
+        assert!(
+            text.contains(&format!("\"{}/versions/*/{{neoteletext,neoteletext-decoder,neoteletext-interface,neoteletext-sound}}\"", real.display())),
+            "{text}"
+        );
         files::remove_tree(&folder).unwrap();
     }
 
