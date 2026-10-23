@@ -24,12 +24,11 @@ use super::{Core, Event};
 
 /// How often the updater looks while the browser runs (section 3.4).
 pub const CHECK_INTERVAL: Duration = Duration::from_secs(24 * 60 * 60);
-/// The time a version has to show it is healthy (section 3.2).
-pub const HEALTH_WINDOW: Duration = Duration::from_secs(30);
-/// How long after its first frame a version's helpers are given to fail
-/// before it is found healthy: a helper that cannot confine itself ends
-/// at once.
-pub const HEALTH_SETTLE: Duration = Duration::from_secs(2);
+/// The time a version has to show it is healthy (section 3.2), and how
+/// long after its first frame its helpers are given to fail: defined once
+/// in `update::layout` for the core and the launcher, whose health
+/// deadline is made of them (decision 93).
+pub use update::layout::{HEALTH_SETTLE, HEALTH_WINDOW};
 /// After this long without a successful check, the panel says "Updates
 /// unavailable" (section 9.3): the timestamp's life.
 pub const UNAVAILABLE_AFTER: i64 = update::wire::TIMESTAMP_DAYS * 24 * 60 * 60;
