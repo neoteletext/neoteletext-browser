@@ -3,6 +3,7 @@
 //! browser only draws them.
 
 use alloc::string::String;
+
 /// How the window's frame is drawn, as Chrome does on each platform: on
 /// macOS the system's window buttons sit in the tab strip, so the tabs
 /// start after them; elsewhere there is no system frame, and the browser

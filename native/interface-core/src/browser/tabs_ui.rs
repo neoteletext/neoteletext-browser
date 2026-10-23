@@ -8,13 +8,15 @@ use alloc::format;
 use alloc::string::String;
 use alloc::vec::Vec;
 
+use super::glyphs::speaker_glyph;
+use super::regions::TabRegion;
 use super::{
-    BANK_BORDER, Browser, GLYPH, NEW_TAB, Output, PRIVATE_MARK, STRIP_HEIGHT, TAB_CLOSE, TAB_COLOURS, TAB_GAP, TAB_MAX_WIDTH, TAB_MIN_WIDTH, TAB_SPEAKER,
-    TAB_TEXT_INSET, TAB_TOP, TAB_TOP_INACTIVE, TabRegion, speaker_glyph,
+    BANK_BORDER, Browser, NEW_TAB, Output, PRIVATE_MARK, STRIP_HEIGHT, TAB_CLOSE, TAB_GAP, TAB_MAX_WIDTH, TAB_MIN_WIDTH, TAB_SPEAKER, TAB_TEXT_INSET, TAB_TOP,
+    TAB_TOP_INACTIVE,
 };
 use crate::canvas::Canvas;
 use crate::geometry::{Point, Rect};
-use crate::theme::{BLACK, BUTTON, PRIVATE, ROW_STATUS, RULE, SELECTED, TAB_TITLE, WHITE};
+use crate::theme::{BLACK, BUTTON, GLYPH, PRIVATE, ROW_STATUS, RULE, SELECTED, TAB_COLOURS, TAB_TITLE, WHITE};
 use crate::ui::{HAIRLINE, border, centred, left_centred, outline};
 
 /// How far a tab must move with the button held before it is dragged, not

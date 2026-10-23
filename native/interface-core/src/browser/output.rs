@@ -7,6 +7,7 @@ use alloc::vec::Vec;
 
 use crate::canvas::PageKey;
 use crate::wall::CellClick;
+
 /// Something the window itself should do, for the host to carry out.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum WindowAction {

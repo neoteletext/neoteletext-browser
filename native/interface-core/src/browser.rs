@@ -13,14 +13,16 @@ use alloc::format;
 use alloc::string::String;
 use alloc::vec::Vec;
 
+use crate::browser::glyphs::{LOCK_WIDTH, WINDOW_GLYPH, WINDOW_GLYPH_THICKNESS, arrow, chevron, gear, house, padlock, reload_glyph, speaker_glyph, star};
+use crate::browser::regions::Regions;
 use crate::canvas::{Canvas, PAGE_HEIGHT, PAGE_WIDTH, PageKey, SCREEN_SCALE, draw_page_on_screen};
 use crate::channel::{BANKS, Channel, PAGES, PAGES_PER_BANK, PageInfo, Status, page_index, page_number};
 use crate::editor::Editor;
 use crate::geometry::{Point, Rect};
 use crate::theme::{
     ADDRESS, AXIS, BANK_COLOURS, BANK_COUNT, BANK_NAME, BANK_RANGE, BLACK, BUTTON, CELL_AVAILABLE, CELL_EMPTY, CELL_PULSE, COLUMN_HEAD, Colour, DIM, FIELD,
-    FIELD_INK, FIELD_SELECTION, GLYPH, GREEN, HEADING, INSECURE, LEGEND, MUTED, PANEL, PRIVATE, RED, ROW_NUMBER, ROW_STATUS, ROW_TITLE, RULE, RULE_SOFT,
-    SECURE, SELECTED, STAR_ON, TAB_COLOURS, UPDATED, WHITE, WINDOW, YELLOW, mix,
+    FIELD_INK, FIELD_SELECTION, GREEN, HEADING, INSECURE, LEGEND, MUTED, PANEL, PRIVATE, RED, ROW_NUMBER, ROW_STATUS, ROW_TITLE, RULE, RULE_SOFT, SECURE,
+    SELECTED, STAR_ON, UPDATED, WHITE, WINDOW, YELLOW, mix,
 };
 use crate::ui::{HAIRLINE, border, centred, label, left_centred, outline, right_centred};
 use crate::wall::{CellClick, UPDATE_GLOW_MILLISECONDS, UPDATE_MARK_MILLISECONDS, Wall, WallPage, glow, since};
@@ -29,6 +31,9 @@ mod bookmarks_ui;
 mod console_ui;
 mod controls_ui;
 mod cookies_ui;
+#[cfg(test)]
+mod fixture;
+mod glyphs;
 mod history_ui;
 #[cfg(feature = "links")]
 mod link_ui;
@@ -37,6 +42,7 @@ mod output;
 mod phone_ui;
 mod popup_ui;
 mod refused_ui;
+mod regions;
 mod remote_ui;
 mod settings_ui;
 mod shown;
@@ -70,64 +76,22 @@ const TAB_CLOSE: f64 = 22.0;
 const PRIVATE_MARK: f64 = 10.0;
 /// A tab's sound button, before its close button, as Chrome places it.
 const TAB_SPEAKER: f64 = 24.0;
-/// The speaker glyph's half height; its parts are fractions of it.
-const SPEAKER_HALF: f64 = 7.0;
-/// The speaker's lines: its sound waves and the cross of a muted one.
-const SPEAKER_LINE: f64 = 2.0;
 const NEW_TAB: f64 = 38.0;
 const STRIP_MARGIN: f64 = 8.0;
 const WINDOW_BUTTON_WIDTH: f64 = 44.0;
 const WINDOW_BUTTON_HEIGHT: f64 = 32.0;
 const WINDOW_BUTTON_GAP: f64 = 6.0;
-const WINDOW_GLYPH: f64 = 14.0;
-const WINDOW_GLYPH_THICKNESS: f64 = 3.0;
-
 // ---- Toolbar ----
 const TOOLBAR_TOP: f64 = STRIP_HEIGHT;
 const TOOLBAR_HEIGHT: f64 = 54.0;
 const TOOL_SIZE: f64 = 44.0;
 const TOOL_INSET: f64 = 5.0;
 const FIELD_PADDING: f64 = 12.0;
-const LOCK_WIDTH: f64 = 16.0;
-const LOCK_HEIGHT: f64 = 12.0;
-const SHACKLE_WIDTH: f64 = 10.0;
-const SHACKLE_HEIGHT: f64 = 8.0;
-const SHACKLE_THICKNESS: f64 = 2.5;
 const LOCK_GAP: f64 = 12.0;
-/// The star's size, in the strip and beside a bookmark's suggestion.
-const STAR_RADIUS: f64 = 11.0;
-const STAR_INNER: f64 = 0.45;
-const STAR_POINTS: usize = 5;
 const CARET_WIDTH: f64 = 2.0;
 const MENU_BAR_WIDTH: f64 = 22.0;
 const MENU_BAR_HEIGHT: f64 = 3.0;
 const MENU_BAR_GAP: f64 = 7.0;
-const ARROW_LENGTH: f64 = 20.0;
-const ARROW_HEAD: f64 = 9.0;
-const ARROW_THICKNESS: f64 = 3.0;
-/// The Home button's house: its width, the roof's height, and the body's.
-const HOUSE_WIDTH: f64 = 20.0;
-const ROOF_HEIGHT: f64 = 9.0;
-const HOUSE_BODY_HEIGHT: f64 = 9.0;
-const HOUSE_BODY_INSET: f64 = 3.0;
-const DOOR_WIDTH: f64 = 5.0;
-const DOOR_HEIGHT: f64 = 6.0;
-/// The Reload button's circling arrow: the ring's radius to its middle,
-/// its thickness, the gap at the top right where the arrow's head is, the
-/// head's length, and the corners the curve is drawn with.
-const RELOAD_RADIUS: f64 = 8.0;
-const RELOAD_THICKNESS: f64 = 3.0;
-const RELOAD_GAP_DEGREES: f64 = 70.0;
-const RELOAD_HEAD: f64 = 6.0;
-/// How far the head's base reaches either side of the ring's middle.
-const RELOAD_HEAD_REACH: f64 = 5.5;
-const RELOAD_SEGMENTS: usize = 24;
-/// The gear: its teeth, their reach, and the hub.
-const GEAR_TEETH: usize = 8;
-const GEAR_OUTER: f64 = 11.0;
-const GEAR_INNER: f64 = 8.0;
-const GEAR_HUB: f64 = 3.5;
-
 // ---- Panels ----
 const BODY_TOP: f64 = TOOLBAR_TOP + TOOLBAR_HEIGHT + MARGIN;
 const MARGIN: f64 = 8.0;
@@ -178,9 +142,6 @@ const PULSE_FRAME_MILLISECONDS: u64 = 100;
 /// The button at the overview's top right that folds it into the footer
 /// and opens it again, with its chevron.
 const TOGGLE_SIZE: f64 = 28.0;
-const CHEVRON_WIDTH: f64 = 12.0;
-const CHEVRON_HEIGHT: f64 = 6.0;
-const CHEVRON_THICKNESS: f64 = 2.5;
 /// A page under the pointer in the overview pops up at its native size,
 /// this far above its cell, with a shadow offset as the wall's hover.
 const PREVIEW_GAP: f64 = 8.0;
@@ -243,58 +204,6 @@ pub struct Modifiers {
     pub alt: bool,
     /// The key is held down and repeating.
     pub repeat: bool,
-}
-
-/// Where a tab and its buttons were last drawn.
-#[derive(Clone, Copy, Debug)]
-struct TabRegion {
-    /// The tab's place among the tabs.
-    index: usize,
-    tab: Rect,
-    close: Rect,
-    /// The sound button, shown while the tab plays sound or is muted.
-    speaker: Option<Rect>,
-}
-
-/// Where the parts of the window were last drawn.
-#[derive(Default)]
-struct Regions {
-    tabs: Vec<TabRegion>,
-    mute_all: Rect,
-    new_tab: Rect,
-    strip: Rect,
-    minimise: Rect,
-    maximise: Rect,
-    close: Rect,
-    back: Rect,
-    forward: Rect,
-    reload: Rect,
-    home: Rect,
-    gear: Rect,
-    field: Rect,
-    field_text: Rect,
-    star: Rect,
-    menu: Rect,
-    banks: Vec<Rect>,
-    list: Rect,
-    rows: Vec<(Rect, usize)>,
-    overview: Rect,
-    overview_toggle: Rect,
-    cells: Rect,
-}
-
-impl Regions {
-    /// Forgets the last frame's regions, keeping the lists' room for the
-    /// next frame's.
-    fn clear(&mut self) {
-        let mut tabs = core::mem::take(&mut self.tabs);
-        let mut banks = core::mem::take(&mut self.banks);
-        let mut rows = core::mem::take(&mut self.rows);
-        tabs.clear();
-        banks.clear();
-        rows.clear();
-        *self = Self { tabs, banks, rows, ..Self::default() };
-    }
 }
 
 /// The whole browser window: tabs, trusted strip, banks, page list, page
@@ -1813,25 +1722,6 @@ impl Browser {
     }
 }
 
-/// A chevron in `rect`, pointing down or up.
-fn chevron<C: Canvas + ?Sized>(canvas: &mut C, rect: Rect, down: bool, colour: Colour) {
-    let centre = Point::new(f64::midpoint(rect.x0, rect.x1), f64::midpoint(rect.y0, rect.y1));
-    let (tip, base) = if down { (CHEVRON_HEIGHT / 2.0, -CHEVRON_HEIGHT / 2.0) } else { (-CHEVRON_HEIGHT / 2.0, CHEVRON_HEIGHT / 2.0) };
-    let thickness = if down { -CHEVRON_THICKNESS } else { CHEVRON_THICKNESS };
-    let half = CHEVRON_WIDTH / 2.0;
-    canvas.polygon(
-        &[
-            Point::new(centre.x - half, centre.y + base),
-            Point::new(centre.x, centre.y + tip),
-            Point::new(centre.x + half, centre.y + base),
-            Point::new(centre.x + half, centre.y + base + thickness),
-            Point::new(centre.x, centre.y + tip + thickness),
-            Point::new(centre.x - half, centre.y + base + thickness),
-        ],
-        colour,
-    );
-}
-
 fn draw_window_buttons<C: Canvas + ?Sized>(canvas: &mut C, regions: &Regions) {
     for (rect, colour) in [(regions.minimise, GREEN), (regions.maximise, YELLOW), (regions.close, RED)] {
         canvas.fill(rect, 0.0, colour);
@@ -1853,202 +1743,12 @@ fn draw_window_buttons<C: Canvas + ?Sized>(canvas: &mut C, regions: &Regions) {
     }
 }
 
-/// A left- or right-pointing arrow centred in `rect`.
-fn arrow<C: Canvas + ?Sized>(canvas: &mut C, rect: Rect, pointing_left: bool, colour: Colour) {
-    let centre = Point::new(f64::midpoint(rect.x0, rect.x1), f64::midpoint(rect.y0, rect.y1));
-    let sign = if pointing_left { -1.0 } else { 1.0 };
-    let tip = Point::new(centre.x + sign * ARROW_LENGTH / 2.0, centre.y);
-    let tail = centre.x - sign * ARROW_LENGTH / 2.0;
-    let shaft = Rect::new(
-        tail.min(tip.x - sign * ARROW_THICKNESS),
-        centre.y - ARROW_THICKNESS / 2.0,
-        tail.max(tip.x - sign * ARROW_THICKNESS),
-        centre.y + ARROW_THICKNESS / 2.0,
-    );
-    canvas.fill(shaft, 0.0, colour);
-    for direction in [1.0, -1.0] {
-        let back = Point::new(tip.x - sign * ARROW_HEAD, tip.y + direction * ARROW_HEAD);
-        let thick = Point::new(sign * ARROW_THICKNESS * 0.7, 0.0);
-        canvas.polygon(&[tip, back, back + thick, tip + thick], colour);
-    }
-}
-
-/// A loudspeaker centred in `rect`: with sound waves, or crossed out when
-/// muted, as Chrome's tab shows it.
-fn speaker_glyph<C: Canvas + ?Sized>(canvas: &mut C, rect: Rect, muted: bool, colour: Colour) {
-    let centre = Point::new(f64::midpoint(rect.x0, rect.x1), f64::midpoint(rect.y0, rect.y1));
-    let half = SPEAKER_HALF;
-    // The magnet: a square of half the height, left of centre.
-    let back = centre.x - half;
-    canvas.fill(Rect::new(back, centre.y - half / 2.0, back + half / 2.0, centre.y + half / 2.0), 0.0, colour);
-    // The cone opens from the magnet to the full height at the centre.
-    let neck = back + half / 2.0;
-    canvas.polygon(
-        &[
-            Point::new(neck, centre.y - half / 2.0),
-            Point::new(centre.x, centre.y - half),
-            Point::new(centre.x, centre.y + half),
-            Point::new(neck, centre.y + half / 2.0),
-        ],
-        colour,
-    );
-    let right = centre.x + half / 4.0;
-    if muted {
-        // A cross to the right of the cone, two bars corner to corner.
-        let cross = Point::new(right + half / 2.0, centre.y);
-        let reach = half / 2.0;
-        let normal = SPEAKER_LINE / 2.0 / core::f64::consts::SQRT_2;
-        for direction in [1.0, -1.0] {
-            let along = Point::new(reach, reach * direction);
-            let across = Point::new(-normal * direction, normal);
-            canvas.polygon(&[cross - along + across, cross + along + across, cross + along - across, cross - along - across], colour);
-        }
-    } else {
-        // Two waves, drawn as bars rising with their distance.
-        for (offset, height) in [(0.0, half / 2.0), (half / 2.0, half)] {
-            let x = right + offset;
-            canvas.fill(
-                Rect::new(x, centre.y - height / 2.0 - SPEAKER_LINE / 2.0, x + SPEAKER_LINE, centre.y + height / 2.0 + SPEAKER_LINE / 2.0),
-                SPEAKER_LINE / 2.0,
-                colour,
-            );
-        }
-    }
-}
-
-/// A closed padlock with its body's left edge at `at.x`, centred on `at.y`.
-fn padlock<C: Canvas + ?Sized>(canvas: &mut C, at: Point, colour: Colour) {
-    let body = Rect::new(at.x, at.y - LOCK_HEIGHT / 2.0 + SHACKLE_HEIGHT / 2.0, at.x + LOCK_WIDTH, at.y + LOCK_HEIGHT / 2.0 + SHACKLE_HEIGHT / 2.0);
-    canvas.fill(body, 1.5, colour);
-    let shackle = Rect::new(
-        at.x + (LOCK_WIDTH - SHACKLE_WIDTH) / 2.0,
-        body.y0 - SHACKLE_HEIGHT,
-        at.x + f64::midpoint(LOCK_WIDTH, SHACKLE_WIDTH),
-        body.y0 + SHACKLE_THICKNESS,
-    );
-    canvas.fill(shackle, SHACKLE_WIDTH / 2.0, colour);
-    canvas.fill(
-        Rect::new(shackle.x0 + SHACKLE_THICKNESS, shackle.y0 + SHACKLE_THICKNESS, shackle.x1 - SHACKLE_THICKNESS, body.y0),
-        (SHACKLE_WIDTH - SHACKLE_THICKNESS * 2.0) / 2.0,
-        FIELD,
-    );
-}
-
-/// A five-pointed star centred on `centre`.
-/// The Home button's house: a roof over a body with a door.
-fn house<C: Canvas + ?Sized>(canvas: &mut C, rect: Rect, colour: Colour) {
-    let centre = Point::new(f64::midpoint(rect.x0, rect.x1), f64::midpoint(rect.y0, rect.y1));
-    let top = centre.y - f64::midpoint(ROOF_HEIGHT, HOUSE_BODY_HEIGHT);
-    let eaves = top + ROOF_HEIGHT;
-    canvas.polygon(&[Point::new(centre.x, top), Point::new(centre.x + HOUSE_WIDTH / 2.0, eaves), Point::new(centre.x - HOUSE_WIDTH / 2.0, eaves)], colour);
-    let body = Rect::new(centre.x - HOUSE_WIDTH / 2.0 + HOUSE_BODY_INSET, eaves, centre.x + HOUSE_WIDTH / 2.0 - HOUSE_BODY_INSET, eaves + HOUSE_BODY_HEIGHT);
-    canvas.fill(body, 0.0, colour);
-    canvas.fill(Rect::new(centre.x - DOOR_WIDTH / 2.0, body.y1 - DOOR_HEIGHT, centre.x + DOOR_WIDTH / 2.0, body.y1), 0.0, BUTTON);
-}
-
-/// The Reload button's arrow, circling clockwise to its head at the top.
-fn reload_glyph<C: Canvas + ?Sized>(canvas: &mut C, rect: Rect, colour: Colour) {
-    let centre = Point::new(f64::midpoint(rect.x0, rect.x1), f64::midpoint(rect.y0, rect.y1));
-    let (outer, inner) = (RELOAD_RADIUS + RELOAD_THICKNESS / 2.0, RELOAD_RADIUS - RELOAD_THICKNESS / 2.0);
-    // Angles grow clockwise on the screen, whose y grows downwards; the
-    // ring runs from the gap's right end round to the top.
-    let end = -core::f64::consts::FRAC_PI_2;
-    let start = end + RELOAD_GAP_DEGREES.to_radians();
-    let finish = end + core::f64::consts::TAU;
-    let at = |angle: f64, radius: f64| {
-        let (sine, cosine) = libm::sincos(angle);
-        Point::new(centre.x + radius * cosine, centre.y + radius * sine)
-    };
-    let mut points = Vec::with_capacity((RELOAD_SEGMENTS + 1) * 2);
-    for step in 0..=RELOAD_SEGMENTS {
-        #[allow(clippy::cast_precision_loss, reason = "a few corners")]
-        let angle = start + (finish - start) * step as f64 / RELOAD_SEGMENTS as f64;
-        points.push(at(angle, outer));
-    }
-    for step in (0..=RELOAD_SEGMENTS).rev() {
-        #[allow(clippy::cast_precision_loss, reason = "a few corners")]
-        let angle = start + (finish - start) * step as f64 / RELOAD_SEGMENTS as f64;
-        points.push(at(angle, inner));
-    }
-    canvas.polygon(&points, colour);
-    // The head, at the top, pointing the way the ring turns: to the right.
-    let top = at(finish, RELOAD_RADIUS);
-    canvas
-        .polygon(&[Point::new(top.x, top.y - RELOAD_HEAD_REACH), Point::new(top.x + RELOAD_HEAD, top.y), Point::new(top.x, top.y + RELOAD_HEAD_REACH)], colour);
-}
-
-/// The settings button's gear: teeth round a hub.
-fn gear<C: Canvas + ?Sized>(canvas: &mut C, rect: Rect, colour: Colour) {
-    let centre = Point::new(f64::midpoint(rect.x0, rect.x1), f64::midpoint(rect.y0, rect.y1));
-    let mut points = Vec::with_capacity(GEAR_TEETH * 4);
-    for corner in 0..GEAR_TEETH * 4 {
-        #[allow(clippy::cast_precision_loss, reason = "a few corners")]
-        let angle = core::f64::consts::TAU * corner as f64 / (GEAR_TEETH * 4) as f64;
-        // Each tooth: two corners out, two in.
-        let radius = if corner % 4 < 2 { GEAR_OUTER } else { GEAR_INNER };
-        let (sine, cosine) = libm::sincos(angle);
-        points.push(Point::new(centre.x + radius * cosine, centre.y + radius * sine));
-    }
-    canvas.polygon(&points, colour);
-    canvas.fill(Rect::new(centre.x - GEAR_HUB, centre.y - GEAR_HUB, centre.x + GEAR_HUB, centre.y + GEAR_HUB), GEAR_HUB, BUTTON);
-}
-
-fn star<C: Canvas + ?Sized>(canvas: &mut C, centre: Point, colour: Colour) {
-    let mut points = Vec::with_capacity(STAR_POINTS * 2);
-    for point in 0..STAR_POINTS * 2 {
-        #[allow(clippy::cast_precision_loss, reason = "ten points")]
-        let angle = core::f64::consts::PI * point as f64 / STAR_POINTS as f64 - core::f64::consts::FRAC_PI_2;
-        let radius = if point % 2 == 0 { STAR_RADIUS } else { STAR_RADIUS * STAR_INNER };
-        let (sine, cosine) = libm::sincos(angle);
-        points.push(Point::new(centre.x + radius * cosine, centre.y + radius * sine));
-    }
-    canvas.polygon(&points, colour);
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::browser::fixture::{HEIGHT, WIDTH, browser, cell_centre, press_at};
+    use crate::browser::regions::TabRegion;
     use crate::test_canvas::Recorder;
-
-    const WIDTH: f64 = 1440.0;
-    const HEIGHT: f64 = 900.0;
-
-    fn channel() -> Channel {
-        let mut channel = Channel::empty();
-        channel.channel = 7;
-        channel.title = "Test".into();
-        for index in (0..PAGES).filter(|index| index % 3 != 2) {
-            channel.pages[index] = Some(PageInfo { title: format!("Page {index}"), status: Status::Available });
-        }
-        channel
-    }
-
-    fn browser() -> (Browser, Recorder) {
-        let mut browser = Browser::new(Frame { left_inset: 0.0, window_buttons: true });
-        browser.set_tabs(
-            alloc::vec![
-                TabInfo { title: "one".into(), colour: 0, channel: 7, muted: false, private: false },
-                TabInfo { title: "two".into(), colour: 1, channel: 8, muted: false, private: false }
-            ],
-            0,
-        );
-        browser.set_strip(StripState {
-            address: "https://example.invalid/".into(),
-            identity: "example.invalid".into(),
-            encrypted: true,
-            forward: true,
-            ..StripState::default()
-        });
-        browser.set_channel(channel());
-        let mut canvas = Recorder::new();
-        browser.draw(&mut canvas, WIDTH, HEIGHT, 0);
-        (browser, canvas)
-    }
-
-    fn press_at(browser: &mut Browser, canvas: &mut Recorder, rect: Rect) {
-        browser.pointer_moved(f64::midpoint(rect.x0, rect.x1), f64::midpoint(rect.y0, rect.y1), 0);
-        browser.pointer_pressed(canvas, false, 0);
-    }
 
     #[test]
     fn the_first_bank_is_shown_and_reported_visible() {
@@ -2258,15 +1958,6 @@ mod tests {
         browser.pointer_pressed(&mut canvas, false, 0);
         assert_eq!(browser.selected, page_index(0x610));
         assert_eq!(browser.bank, 5);
-    }
-
-    /// The overview cell of page `index`'s centre.
-    fn cell_centre(browser: &Browser, index: usize) -> Point {
-        let cells = browser.regions.cells;
-        #[allow(clippy::cast_precision_loss, reason = "small counts")]
-        let (width, height) = (cells.width() / PAGES_PER_BANK as f64, cells.height() / BANKS as f64);
-        #[allow(clippy::cast_precision_loss, reason = "small counts")]
-        Point::new(cells.x0 + ((index % PAGES_PER_BANK) as f64 + 0.5) * width, cells.y0 + ((index / PAGES_PER_BANK) as f64 + 0.5) * height)
     }
 
     #[test]

@@ -7,6 +7,7 @@
 use alloc::string::String;
 use alloc::vec::Vec;
 
+use super::glyphs::{STAR_RADIUS, star};
 use super::{Browser, Output};
 use crate::canvas::Canvas;
 use crate::geometry::{Point, Rect};
@@ -377,7 +378,7 @@ impl Browser {
                 canvas.fill(rect, 0.0, RULE_SOFT);
             }
             if row.bookmarked {
-                super::star(canvas, Point::new(rect.x0 + GAP + super::STAR_RADIUS, f64::midpoint(rect.y0, rect.y1)), STAR_ON);
+                star(canvas, Point::new(rect.x0 + GAP + STAR_RADIUS, f64::midpoint(rect.y0, rect.y1)), STAR_ON);
             }
             // The address as the address rules print it, the title lighter
             // beside it, never in its place (requirement 20.13).
