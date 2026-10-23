@@ -2,7 +2,8 @@
 //! (decision 56): a decoder, a fetcher, the bookmark reader, the
 //! interface's pipe, and where a fetcher may connect.
 
-use std::io::BufReader;
+use std::fs::File;
+use std::io::{BufReader, Read};
 use std::sync::Arc;
 use std::sync::mpsc::Sender;
 use std::thread;
@@ -12,7 +13,7 @@ use neoteletext::outbox::Outbox;
 use neoteletext::settings::{self as stored, Settings};
 use protocol::decoder::{BookmarkEntry, FromDecoder, MAX_BOOKMARK_ENTRIES, MAX_CHUNK, ToDecoder, read_from_decoder, write_to_decoder};
 use protocol::fetcher::read_from_fetcher;
-use protocol::read_from_interface;
+use protocol::{ProtocolError, read_from_interface};
 
 use super::Event;
 
@@ -72,21 +73,13 @@ pub(super) fn start_decoder(broker: &Arc<Broker>, channel: u32, generation: u64,
     let mut child = spawn(broker, Program::Decoder, &[String::from("--store-pages"), store_pages.to_string()], false)?;
     let output = child.stdout.take().ok_or("the decoder has no output")?;
     let input = Outbox::new(child.stdin.take().ok_or("the decoder has no input")?);
-    thread::spawn(move || {
-        let mut output = BufReader::new(output);
-        let end = loop {
-            match read_from_decoder(&mut output) {
-                Ok(Some(message)) => {
-                    if events.send(Event::Decoded(channel, generation, message)).is_err() {
-                        return;
-                    }
-                }
-                Ok(None) => break None,
-                Err(error) => break Some(error.to_string()),
-            }
-        };
-        let _ = events.send(Event::DecoderEnded(channel, generation, end));
-    });
+    relay(
+        output,
+        read_from_decoder,
+        events,
+        move |message| Event::Decoded(channel, generation, message),
+        move |end| Event::DecoderEnded(channel, generation, end),
+    );
     Ok(Decoder { child, input, generation })
 }
 
@@ -148,33 +141,40 @@ pub(super) fn start_fetcher(
     }
     let mut child = spawn(broker, Program::Fetcher, &arguments, !reach.allow_local.is_empty())?;
     let output = child.stdout.take().ok_or("the fetcher has no output")?;
-    thread::spawn(move || {
-        let mut output = BufReader::new(output);
-        let end = loop {
-            match read_from_fetcher(&mut output) {
-                Ok(Some(message)) => {
-                    if events.send(Event::Fetched(channel, generation, message)).is_err() {
-                        return;
-                    }
-                }
-                Ok(None) => break None,
-                Err(error) => break Some(error.to_string()),
-            }
-        };
-        let _ = events.send(Event::FetcherEnded(channel, generation, end));
-    });
+    relay(
+        output,
+        read_from_fetcher,
+        events,
+        move |message| Event::Fetched(channel, generation, message),
+        move |end| Event::FetcherEnded(channel, generation, end),
+    );
     let input = child.stdin.take().map(Outbox::new);
     Ok(Fetcher { child, generation, input })
 }
 
 pub(super) fn read_interface(child: &mut Helper, events: Sender<Event>) -> Result<(), String> {
     let output = child.stdout.take().ok_or("the interface has no output")?;
+    relay(output, read_from_interface, events, Event::Intent, Event::InterfaceEnded);
+    Ok(())
+}
+
+/// Reads a helper's messages on a thread of its own, each sent to the
+/// trusted core's thread as the event `said` makes of it, until the pipe
+/// ends or breaks the protocol, which is sent as the event `ended` makes
+/// of why; it stops early once the trusted core has gone.
+pub(super) fn relay<M: 'static>(
+    output: File,
+    read: fn(&mut dyn Read) -> Result<Option<M>, ProtocolError>,
+    events: Sender<Event>,
+    said: impl Fn(M) -> Event + Send + 'static,
+    ended: impl FnOnce(Option<String>) -> Event + Send + 'static,
+) {
     thread::spawn(move || {
-        let mut input = BufReader::new(output);
+        let mut output = BufReader::new(output);
         let end = loop {
-            match read_from_interface(&mut input) {
-                Ok(Some(intent)) => {
-                    if events.send(Event::Intent(intent)).is_err() {
+            match read(&mut output) {
+                Ok(Some(message)) => {
+                    if events.send(said(message)).is_err() {
                         return;
                     }
                 }
@@ -182,9 +182,8 @@ pub(super) fn read_interface(child: &mut Helper, events: Sender<Event>) -> Resul
                 Err(error) => break Some(error.to_string()),
             }
         };
-        let _ = events.send(Event::InterfaceEnded(end));
+        let _ = events.send(ended(end));
     });
-    Ok(())
 }
 
 #[cfg(test)]

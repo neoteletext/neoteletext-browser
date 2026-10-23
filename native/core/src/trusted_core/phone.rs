@@ -3,15 +3,12 @@
 //! QR in the panel and gives the interface the phone's keys, which act as
 //! the interface's own.
 
-use std::io::BufReader;
-use std::thread;
-
 use confine::broker::Program;
 use neoteletext::outbox::Outbox;
 use protocol::console::Level;
 use protocol::{ToInterface, clean};
 
-use super::processes::spawn;
+use super::processes::{relay, spawn};
 use super::{Core, Event};
 
 /// A relay other than qrkeyboard's own, for testing against one run
@@ -60,21 +57,7 @@ impl Core {
         let output = child.stdout.take().ok_or("the phone keyboard has no output")?;
         let input = Outbox::new(child.stdin.take().ok_or("the phone keyboard has no input")?);
         let events = self.events.clone();
-        thread::spawn(move || {
-            let mut output = BufReader::new(output);
-            let end = loop {
-                match protocol::keyboard::read_from_keyboard(&mut output) {
-                    Ok(Some(message)) => {
-                        if events.send(Event::Phone(message)).is_err() {
-                            return;
-                        }
-                    }
-                    Ok(None) => break None,
-                    Err(error) => break Some(error.to_string()),
-                }
-            };
-            let _ = events.send(Event::PhoneEnded(end));
-        });
+        relay(output, protocol::keyboard::read_from_keyboard, events, Event::Phone, Event::PhoneEnded);
         self.note(Level::Info, None, &format!("phone keyboard: confined: {}", child.report));
         self.phone = Some((child, input));
         self.phone_view = protocol::keyboard::PhoneView { state: PhoneState::Preparing, qr: None, pin: None };

@@ -1,16 +1,13 @@
 //! The sound helper (decision 55, requirement 16.6): started, told each
 //! checked operation and the settings, and which channels it says sound.
 
-use std::io::BufReader;
-use std::thread;
-
 use confine::broker::Program;
 use neoteletext::outbox::Outbox;
 use protocol::ToInterface;
 use protocol::console::Level;
 use protocol::sound::{ToSound, read_from_sound, write_to_sound};
 
-use super::processes::spawn;
+use super::processes::{relay, spawn};
 use super::{Core, Event};
 
 impl Core {
@@ -50,21 +47,7 @@ impl Core {
         };
         let (Some(output), Some(input)) = (child.stdout.take(), child.stdin.take()) else { return };
         let events = self.events.clone();
-        thread::spawn(move || {
-            let mut output = BufReader::new(output);
-            let end = loop {
-                match read_from_sound(&mut output) {
-                    Ok(Some(message)) => {
-                        if events.send(Event::Sound(message)).is_err() {
-                            return;
-                        }
-                    }
-                    Ok(None) => break None,
-                    Err(error) => break Some(error.to_string()),
-                }
-            };
-            let _ = events.send(Event::SoundEnded(end));
-        });
+        relay(output, read_from_sound, events, Event::Sound, Event::SoundEnded);
         self.note(Level::Info, None, &format!("sound helper: confined: {}", child.report));
         self.sound = Some((child, Outbox::new(input)));
         let message = ToSound::Settings { sound: self.settings.sound, volume: self.settings.volume };
