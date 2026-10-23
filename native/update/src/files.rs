@@ -104,6 +104,59 @@ pub fn read_bounded(path: &Path, max: usize) -> io::Result<Vec<u8>> {
     Ok(bytes)
 }
 
+/// Reads the plain file at `path`, at most `max` bytes, refusing a longer
+/// file rather than reading part of it. The file is opened without
+/// following a link at its own name (`O_NOFOLLOW`; on Windows the reparse
+/// point itself), and what was opened must be a plain file, so a name
+/// another process changes cannot turn the read into one of something
+/// else, and no more than `max` bytes are ever read (finding F-50).
+///
+/// # Errors
+/// When it cannot be opened or read, is not a plain file, or is longer
+/// than `max`.
+pub fn read_regular(path: &Path, max: u64) -> io::Result<Vec<u8>> {
+    let mut options = OpenOptions::new();
+    options.read(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt as _;
+        options.custom_flags(NO_FOLLOW);
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::OpenOptionsExt as _;
+        options.custom_flags(FILE_FLAG_OPEN_REPARSE_POINT);
+    }
+    let file = options.open(path)?;
+    let metadata = file.metadata()?;
+    if !metadata.file_type().is_file() {
+        return Err(io::Error::new(io::ErrorKind::InvalidData, format!("{} is not a plain file", path.display())));
+    }
+    let longer = || io::Error::new(io::ErrorKind::InvalidData, format!("{} is longer than {max} bytes", path.display()));
+    if metadata.len() > max {
+        return Err(longer());
+    }
+    let mut bytes = Vec::with_capacity(usize::try_from(metadata.len()).unwrap_or(0));
+    file.take(max.saturating_add(1)).read_to_end(&mut bytes)?;
+    if u64::try_from(bytes.len()).map_or(true, |read| read > max) {
+        return Err(longer());
+    }
+    Ok(bytes)
+}
+
+/// `open`'s flag that refuses a link at the final name (POSIX.1-2017
+/// `open`), as `rustix` names it, in the type `OpenOptionsExt` takes.
+#[cfg(unix)]
+const NO_FOLLOW: i32 = i32::from_ne_bytes(rustix::fs::OFlags::NOFOLLOW.bits().to_ne_bytes());
+
+/// `CreateFileW`'s flag that opens a reparse point (a link or a junction)
+/// itself rather than what it names: `FILE_FLAG_OPEN_REPARSE_POINT`,
+/// 0x00200000 in the Windows SDK's `WinBase.h` and Microsoft's
+/// `CreateFileW` documentation. Written here because this crate has no
+/// Windows bindings and takes no new dependency for one constant.
+#[cfg(windows)]
+const FILE_FLAG_OPEN_REPARSE_POINT: u32 = 0x0020_0000;
+
 /// Exchanges two folders on the same volume in one step: each name then
 /// names the other's contents (requirement 13.7).
 ///

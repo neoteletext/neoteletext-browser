@@ -55,7 +55,7 @@ Reviewed against the build of decisions 73 to 82 (`installation-and-updates.md` 
 | Process | Input | Who can write it | Bound and check |
 |---|---|---|---|
 | Launcher (unconfined) | `state` | Anything running as the user | 2 KiB, read strictly (`update::state`), fuzzed (`launcher_state`); an unreadable one is rebuilt from what is installed, never trusted in part |
-| Launcher | A staged version's `manifest` and files | The updater, and anything running as the user | 16 KiB manifest read strictly (`update::manifest`, fuzzed `release_manifest`); each file at most 64 MiB, its length and SHA-256 checked; the folder must hold exactly the files named, every path one of the platform's fixed list; then the pinned signer |
+| Launcher | A staged version's `manifest` and files | The updater, and anything running as the user | 16 KiB manifest read strictly (`update::manifest`, fuzzed `release_manifest`); the launcher copies only the files it names, each opened without following a link at its name and read to at most its manifest length (finding F-50), and checks the copy: exactly the files named, every path one of the platform's fixed list, each of its length and SHA-256; then the pinned signer |
 | Launcher | The broker's version mark | As above, inside what the platform signed | A bounded search, exactly one mark (`update::mark`, fuzzed `version_mark`) |
 | Launcher | The broker's standard output | The version being tried | 64-byte lines; only `healthy` means anything, and only for the version it started as a trial |
 | Updater (confined) | HTTP responses | The update host or the network, under TLS | The engine's head and body readers, a body at most 64 MiB (`read_response`, fuzzed `http_response`) |

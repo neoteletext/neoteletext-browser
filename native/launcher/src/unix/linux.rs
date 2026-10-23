@@ -128,7 +128,7 @@ fn install_version(source: &Path, layout: &Layout, signer: &dyn update::accept::
     std::fs::create_dir_all(layout.versions()).map_err(|error| io_text(&layout.versions(), &error))?;
     let copying = layout.versions().join(format!("{version}{COPYING_SUFFIX}"));
     files::remove_tree(&copying).map_err(|error| io_text(&copying, &error))?;
-    files::copy_tree(folder, &copying).map_err(|error| io_text(&copying, &error))?;
+    update::accept::copy_release(folder, &copying, platform).map_err(|why| format!("the release is refused: {why}"))?;
     let accepted = update::accept::accept(&copying, platform, signer).map_err(|why| format!("the release is refused: {why}"))?;
     if accepted != *version {
         return Err(format!("the release is refused: {} holds {accepted}", folder.display()));

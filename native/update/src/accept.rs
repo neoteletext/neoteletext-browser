@@ -88,6 +88,63 @@ pub fn complete(folder: &Path, platform: Platform) -> Result<Manifest, String> {
     Ok(manifest)
 }
 
+/// Copies the release in `from`, a folder another process wrote, to the
+/// new folder `to`, as the launcher copies a version before it accepts it
+/// (decision 87): the manifest, read strictly and for `platform`; the
+/// manifest's signature where the platform has one; and each file the
+/// manifest names, read to at most its length, each program made
+/// executable by the platform's list, not by its mode in `from`. Nothing
+/// else in `from` is read, so whatever else a staged folder holds, the copy
+/// is no larger than the release (finding F-50). The copy is then for
+/// [`accept`] to check.
+///
+/// # Errors
+/// When the manifest is refused, a file cannot be read or is longer than
+/// the manifest says, or the copy cannot be written.
+pub fn copy_release(from: &Path, to: &Path, platform: Platform) -> Result<(), String> {
+    files::refuse_link(from).map_err(|error| error.to_string())?;
+    let manifest_bytes = files::read_regular(&from.join(MANIFEST), max_manifest()).map_err(|error| format!("the manifest: {error}"))?;
+    let manifest = Manifest::parse(&manifest_bytes).map_err(|refused| format!("the manifest: {refused}"))?;
+    if manifest.platform != platform {
+        return Err(format!("a release for {}, not {platform}", manifest.platform));
+    }
+    let written = |path: &str, bytes: &[u8], executable: bool| -> Result<(), String> {
+        let target = to.join(path);
+        if let Some(folder) = target.parent() {
+            std::fs::create_dir_all(folder).map_err(|error| format!("{}: {error}", folder.display()))?;
+        }
+        files::write_synced(&target, bytes, executable).map_err(|error| format!("{}: {error}", target.display()))
+    };
+    std::fs::create_dir(to).map_err(|error| format!("{}: {error}", to.display()))?;
+    written(MANIFEST, &manifest_bytes, false)?;
+    if own_files(platform).iter().any(|own| own == MANIFEST_SIGNATURE) {
+        let signature =
+            files::read_regular(&from.join(MANIFEST_SIGNATURE), SIGNATURE_BYTES as u64).map_err(|error| format!("{MANIFEST_SIGNATURE}: {error}"))?;
+        written(MANIFEST_SIGNATURE, &signature, false)?;
+    }
+    for entry in &manifest.files {
+        let bytes = files::read_regular(&from.join(&entry.path), entry.length).map_err(|error| format!("{}: {error}", entry.path))?;
+        written(&entry.path, &bytes, platform.file(&entry.path).is_some_and(|file| file.executable))?;
+    }
+    sync_folders(to)
+}
+
+/// Every folder under `folder`, and `folder`, flushed, so the copy's
+/// names are on the disk before it is renamed into place.
+fn sync_folders(folder: &Path) -> Result<(), String> {
+    for entry in std::fs::read_dir(folder).map_err(|error| format!("{}: {error}", folder.display()))?.filter_map(Result::ok) {
+        if entry.file_type().is_ok_and(|kind| kind.is_dir()) {
+            sync_folders(&entry.path())?;
+        }
+    }
+    files::sync_folder(folder).map_err(|error| format!("{}: {error}", folder.display()))
+}
+
+/// The manifest's bound, as a file length.
+fn max_manifest() -> u64 {
+    u64::try_from(MAX_MANIFEST).unwrap_or(u64::MAX)
+}
+
 /// Accepts the version in `folder`, staged or being installed, for
 /// `platform`: complete, signed by the pinned signer, and of the version
 /// its folder's name says.
@@ -255,6 +312,57 @@ pub(crate) mod tests {
         linux_version(&misnamed, version, &pair);
         assert!(accept(&misnamed, Platform::LinuxX86_64, &signer).unwrap_err().contains("name"));
         assert!(accept(&good, Platform::WindowsX86_64, &signer).is_err(), "another platform's release");
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    /// Finding F-50: a release is copied by its manifest alone, each file to
+    /// at most its length, so what else a staged folder holds is never read.
+    #[test]
+    fn a_release_is_copied_by_its_manifest_alone() {
+        /// Far larger than any release file, and sparse, so it costs nothing.
+        const HUGE: u64 = 100 * 1024 * 1024;
+        let root = scratch("copy");
+        let pair = key_pair();
+        let signer = LinuxSigner { key: Some(pair.public_key().as_ref().try_into().unwrap()) };
+        let version = Version::new(0, 3, 0);
+        let staged = root.join("staged").join("0.3.0");
+        linux_version(&staged, version, &pair);
+        fs::File::create(staged.join("extra")).unwrap().set_len(HUGE).unwrap();
+        fs::create_dir_all(staged.join("more")).unwrap();
+        fs::write(staged.join("more/extra"), b"not the release's").unwrap();
+        let copy = root.join("copy").join("0.3.0");
+        fs::create_dir_all(copy.parent().unwrap()).unwrap();
+        copy_release(&staged, &copy, Platform::LinuxX86_64).unwrap();
+        assert!(!copy.join("extra").exists() && !copy.join("more").exists(), "nothing but the release is copied");
+        assert_eq!(accept(&copy, Platform::LinuxX86_64, &signer), Ok(version), "the copy is the release");
+        assert!(files::is_executable(&fs::metadata(copy.join("neoteletext")).unwrap()) || cfg!(not(unix)), "a program by the platform's list");
+
+        let refused = |name: &str, change: &dyn Fn(&Path)| {
+            let staged = root.join(name).join("0.3.0");
+            linux_version(&staged, version, &pair);
+            change(&staged);
+            let copy = root.join(name).join("copy");
+            let result = copy_release(&staged, &copy, Platform::LinuxX86_64);
+            assert!(result.is_err(), "{name}: {result:?}");
+            result.unwrap_err()
+        };
+        let longer = refused("longer", &|folder| {
+            fs::OpenOptions::new().write(true).open(folder.join("neoteletext-decoder")).unwrap().set_len(HUGE).unwrap();
+        });
+        assert!(longer.contains("longer"), "{longer}");
+        refused("another platform", &|folder| {
+            let text = fs::read_to_string(folder.join(MANIFEST)).unwrap().replace("linux-x86_64", "macos-arm64");
+            fs::write(folder.join(MANIFEST), text).unwrap();
+        });
+        #[cfg(unix)]
+        {
+            let link = refused("link", &|folder| {
+                let file = folder.join("neoteletext-decoder");
+                fs::rename(&file, folder.join("decoder-elsewhere")).unwrap();
+                std::os::unix::fs::symlink(folder.join("decoder-elsewhere"), &file).unwrap();
+            });
+            assert!(link.contains("neoteletext-decoder"), "{link}");
+        }
         fs::remove_dir_all(&root).unwrap();
     }
 }

@@ -165,7 +165,7 @@ impl Launcher {
     /// names, and is made again or tidied.
     fn copy_and_accept(&self, staged: &Path, copy: &Path, version: Version) -> Result<(), String> {
         files::remove_tree(copy).map_err(|error| io_text(copy, &error))?;
-        files::copy_tree(staged, copy).map_err(|error| io_text(copy, &error))?;
+        update::accept::copy_release(staged, copy, self.platform)?;
         fault::point("accept-copied");
         let copied = update::accept::accept(copy, self.platform, self.signer.as_ref())?;
         if copied != version {

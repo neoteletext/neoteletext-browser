@@ -360,6 +360,23 @@ fn an_open_write_descriptor_cannot_change_an_accepted_version() {
     assert!(fixture.broker_of(NEW) == accepted, "the accepted version changed through a descriptor kept open");
 }
 
+/// Finding F-50: the launcher copies a staged version by its manifest
+/// alone, so a large file the updater left beside the release is neither
+/// read nor copied, and the release is accepted.
+#[test]
+fn an_extra_file_in_a_staged_version_is_not_copied() {
+    /// Far larger than any release file, and sparse, so it costs nothing.
+    const HUGE: u64 = 100 * 1024 * 1024;
+    let fixture = Fixture::new("extra");
+    fixture.install(OLD, "healthy");
+    fixture.stage(NEW, "healthy", true);
+    fs::File::create(fixture.layout.staged(NEW).join("extra")).unwrap().set_len(HUGE).unwrap();
+    assert_eq!(fixture.launcher(HEALTH_DEADLINE).prepare().unwrap(), Chosen::Trial(NEW));
+    if platform().family() != Family::Macos {
+        assert!(!fixture.layout.version(NEW).join("extra").exists());
+    }
+}
+
 /// A missing or unreadable state file is rebuilt from what is installed.
 #[test]
 fn a_lost_state_is_rebuilt_from_what_is_installed() {
