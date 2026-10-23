@@ -249,13 +249,9 @@ impl Browser {
         Some(true)
     }
 
-    /// Command-A in the search field.
-    pub(super) fn history_select_all(&mut self) -> bool {
-        if !self.history_editing() {
-            return false;
-        }
-        self.history.query.select_all();
-        true
+    /// The search field, while it has the keys.
+    pub(super) fn history_field(&mut self) -> Option<&mut Editor> {
+        self.history_editing().then_some(&mut self.history.query)
     }
 
     /// The wheel over the panel: further rows are asked for.

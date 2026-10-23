@@ -286,11 +286,10 @@ impl Browser {
         Some(true)
     }
 
-    /// Command-A in a field of the manager.
-    pub(super) fn bookmarks_select_all(&mut self) -> bool {
-        let Some(field) = self.bookmarks.focus.filter(|_| self.bookmarks.open) else { return false };
-        self.bookmarks.editor(field).select_all();
-        true
+    /// The manager's field with the keys.
+    pub(super) fn bookmarks_field(&mut self) -> Option<&mut Editor> {
+        let field = self.bookmarks.focus.filter(|_| self.bookmarks.open)?;
+        Some(self.bookmarks.editor(field))
     }
 
     /// The wheel over the manager: its lists move.

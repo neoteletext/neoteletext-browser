@@ -30,7 +30,7 @@ use std::num::NonZeroU32;
 use std::rc::Rc;
 use std::time::{Duration, Instant};
 
-use dock_menu::{Choice, DockTab};
+use dock_menu::{Choice, DockTab, EditAction, MenuAction, MenuItem, ShortcutKey};
 use draw_vello::{Family, Painter};
 use interface_core::browser::{Browser, Cursor, Frame, Key as BrowserKey, Modifiers, Output, StripState, TabInfo, WindowAction};
 use interface_core::canvas::PageKey;
@@ -133,6 +133,8 @@ enum Incoming {
     Window(WindowGeometry),
     /// The user chose an item of the Dock menu.
     Dock(Choice),
+    /// The user chose an item of the menu bar (decision 84).
+    Menu(&'static MenuItem),
     /// The messages that follow are for this window (`multiple-windows.md`).
     Target(u32),
     /// Open a window of this number.
@@ -263,6 +265,20 @@ struct App {
     /// a session is restored (`history-and-bookmarks.md` section 15.3).
     resumed: bool,
     heard: Heard,
+    /// The system clipboard, opened when first used and then held: on
+    /// Linux, what was copied is served only while it is open.
+    clipboard: Option<arboard::Clipboard>,
+}
+
+/// The edit a clipboard key makes with the browser's modifier; Select All
+/// is the interface core's own shortcut.
+fn clipboard_key(character: &str) -> Option<EditAction> {
+    match character.to_ascii_lowercase().as_str() {
+        "x" => Some(EditAction::Cut),
+        "c" => Some(EditAction::Copy),
+        "v" => Some(EditAction::Paste),
+        _ => None,
+    }
 }
 
 /// The window, at its kept place and size when there are some.
@@ -589,8 +605,8 @@ impl App {
                 Output::NewPrivateTab => ToCore::NewPrivateTab,
                 Output::NewWindow { private } => ToCore::NewWindow { private },
                 Output::TabToNewWindow => {
-                    let Ok(tab) = u8::try_from(self.view.active) else { continue };
-                    ToCore::TabToWindow { tab, window: protocol::NEW_WINDOW, index: 0 }
+                    let Some(message) = self.tab_to_new_window() else { continue };
+                    message
                 }
                 Output::TabOut { index, x, y } => {
                     let Some(message) = self.tab_out(index, x, y) else { continue };
@@ -726,8 +742,92 @@ impl App {
     /// holds no text pastes nothing.
     #[cfg(feature = "interaction")]
     fn paste(&mut self) -> bool {
-        let text = arboard::Clipboard::new().and_then(|mut clipboard| clipboard.get_text());
-        text.is_ok_and(|text| self.view.browser.terminal_paste(&text))
+        self.clipboard_text().is_some_and(|text| self.view.browser.terminal_paste(&text))
+    }
+
+    /// The system clipboard, opened when first needed.
+    fn clipboard(&mut self) -> Option<&mut arboard::Clipboard> {
+        if self.clipboard.is_none() {
+            self.clipboard = arboard::Clipboard::new().ok();
+        }
+        self.clipboard.as_mut()
+    }
+
+    /// The clipboard's text; `None` when it holds none.
+    fn clipboard_text(&mut self) -> Option<String> {
+        self.clipboard()?.get_text().ok()
+    }
+
+    /// Puts `text` on the clipboard; returns whether it is there.
+    fn copy_text(&mut self, text: String) -> bool {
+        self.clipboard().is_some_and(|clipboard| clipboard.set_text(text).is_ok())
+    }
+
+    /// Cut, Copy, Paste or Select All in the browser's field with the keys
+    /// (`menu-bar.md` section 4); a paste while keys go to a channel goes
+    /// to the channel (decision 49). Returns whether the window needs
+    /// drawing again.
+    fn edit_field(&mut self, action: EditAction) -> bool {
+        let now = self.now();
+        match action {
+            EditAction::Copy => {
+                if let Some(text) = self.view.browser.selected_text() {
+                    self.copy_text(text);
+                }
+                false
+            }
+            // Removed only once it is on the clipboard.
+            EditAction::Cut => {
+                let copied = self.view.browser.selected_text().is_some_and(|text| self.copy_text(text));
+                copied && self.view.browser.cut(now).is_some()
+            }
+            EditAction::Paste => {
+                #[cfg(feature = "interaction")]
+                if self.view.browser.typing_target().is_some() {
+                    return self.paste();
+                }
+                self.clipboard_text().is_some_and(|text| self.view.browser.paste_text(&text, now))
+            }
+            EditAction::SelectAll => self.view.browser.key(BrowserKey::Text("a"), Modifiers { command: true, ..Modifiers::default() }, now),
+        }
+    }
+
+    /// An item of the menu bar: the key it names given to the interface
+    /// core, so a menu item and its key do the same (requirement 12.5).
+    /// Returns whether the window needs drawing again.
+    fn menu_chosen(&mut self, event_loop: &ActiveEventLoop, item: &MenuItem) -> bool {
+        match item.action {
+            MenuAction::Browser => {
+                let Some(shortcut) = item.shortcut else { return false };
+                let key = match shortcut.key {
+                    ShortcutKey::Text(text) => BrowserKey::Text(text),
+                    ShortcutKey::Left => BrowserKey::Left,
+                    ShortcutKey::Right => BrowserKey::Right,
+                };
+                let modifiers = Modifiers { command: true, shift: shortcut.shift, alt: shortcut.alt, repeat: false };
+                let now = self.now();
+                self.view.browser.key(key, modifiers, now)
+            }
+            MenuAction::NewPrivateWindow => {
+                self.send(event_loop, &ToCore::NewWindow { private: true });
+                false
+            }
+            MenuAction::TabToNewWindow => {
+                if let Some(message) = self.tab_to_new_window() {
+                    self.send(event_loop, &message);
+                }
+                false
+            }
+            MenuAction::Edit(action) => self.edit_field(action),
+            // The system answers its own items; they never come here.
+            MenuAction::System(_) => false,
+        }
+    }
+
+    /// The open tab moved to a window of its own.
+    fn tab_to_new_window(&self) -> Option<ToCore> {
+        let tab = u8::try_from(self.view.active).ok()?;
+        Some(ToCore::TabToWindow { tab, window: protocol::NEW_WINDOW, index: 0 })
     }
 
     /// Whether the browser's own modifier is held: Command on macOS,
@@ -881,6 +981,15 @@ impl App {
             return self.view.browser.key(named, modifiers, now);
         }
         if modifiers.command {
+            // The fields' clipboard keys (decision 84): on macOS the Edit
+            // menu takes them first.
+            if let Key::Character(character) = key
+                && !modifiers.shift
+                && !modifiers.alt
+                && let Some(action) = clipboard_key(character)
+            {
+                return self.edit_field(action);
+            }
             // Shortcuts use the key itself, not what it would type.
             if let Key::Character(character) = key {
                 return self.view.browser.key(BrowserKey::Text(character), modifiers, now);
@@ -907,8 +1016,8 @@ impl ApplicationHandler<Incoming> for App {
             Incoming::Target(window) => self.target = window,
             Incoming::OpenWindow { window, geometry } => self.open_another(event_loop, window, geometry),
             Incoming::CloseWindow(window) => self.close_view(window),
-            // The Dock menu is the focused window's.
-            Incoming::Dock(_) => {
+            // The Dock menu and the menu bar are the focused window's.
+            Incoming::Dock(_) | Incoming::Menu(_) => {
                 self.switch_view(self.focused);
                 self.incoming(event_loop, incoming);
             }
@@ -1125,6 +1234,10 @@ impl App {
                 };
                 self.send(event_loop, &message);
                 return;
+            }
+            Incoming::Menu(item) => {
+                self.menu_chosen(event_loop, item);
+                self.act(event_loop);
             }
             Incoming::Strip(strip) => self.view.browser.set_strip(strip),
             Incoming::Settings(view) => self.view.browser.set_settings(view),
@@ -1377,7 +1490,11 @@ fn main() -> std::process::ExitCode {
             return std::process::ExitCode::FAILURE;
         }
     }
-    let Ok(event_loop) = EventLoop::<Incoming>::with_user_event().build() else {
+    let mut builder = EventLoop::<Incoming>::with_user_event();
+    // The browser's own menu bar replaces winit's (decision 84).
+    #[cfg(target_os = "macos")]
+    winit::platform::macos::EventLoopBuilderExtMacOS::with_default_menu(&mut builder, false);
+    let Ok(event_loop) = builder.build() else {
         eprintln!("neoteletext-interface: cannot open the event loop");
         return std::process::ExitCode::FAILURE;
     };
@@ -1388,6 +1505,10 @@ fn main() -> std::process::ExitCode {
     let dock_proxy = proxy.clone();
     dock_menu::install(move |choice| {
         let _ = dock_proxy.send_event(Incoming::Dock(choice));
+    });
+    let menu_proxy = proxy.clone();
+    dock_menu::install_menu_bar(move |item| {
+        let _ = menu_proxy.send_event(Incoming::Menu(item));
     });
     std::thread::spawn(move || read_core(&proxy));
     let mut app = App {
@@ -1408,6 +1529,7 @@ fn main() -> std::process::ExitCode {
         first_frame: None,
         resumed: false,
         heard: Heard::Nothing,
+        clipboard: None,
     };
     if let Err(error) = event_loop.run_app(&mut app) {
         eprintln!("neoteletext-interface: {error}");

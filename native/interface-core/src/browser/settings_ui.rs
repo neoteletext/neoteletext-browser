@@ -283,11 +283,10 @@ impl Browser {
         Some(true)
     }
 
-    /// Command-A in a field of the panel.
-    pub(super) fn settings_select_all(&mut self) -> bool {
-        let Some(field) = self.settings.focus.filter(|_| self.settings.open) else { return false };
-        self.settings.editor(field).select_all();
-        true
+    /// The panel's field with the keys.
+    pub(super) fn settings_field(&mut self) -> Option<&mut Editor> {
+        let field = self.settings.focus.filter(|_| self.settings.open)?;
+        Some(self.settings.editor(field))
     }
 
     /// A press on the panel; returns whether it was the panel's.

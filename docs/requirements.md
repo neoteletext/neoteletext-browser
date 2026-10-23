@@ -795,11 +795,12 @@ Withdrawn on 23 October 2026 (decision 66): no font is fetched; every page is dr
 - **State:** Met, 23 October 2026: three digits choose a page of the channel, or follow the open page's `LK` line or the channel's alias (test: `a_number_the_page_or_channel_links_goes_to_the_trusted_core`), Up and Down step through pages, and Fastext, reveal, hold and mix are built (requirements 22.1 to 22.4, decision 67: `the_viewers_keys_ask_for_the_controls`, `fastext_keys_follow_as_links_do`, `reveal_and_mix_change_the_page_drawn`, `a_held_page_keeps_its_version`).
 
 ### Requirement 12.5: Menus and shortcuts
-- **Statement:** The application must provide a native menu bar (File, Edit, View, History, Window) carrying the browser's shortcuts. Menu items and buttons must send the same intents.
+- **Statement:** On macOS the application must provide a native menu bar (NeoTeletext, File, Edit, View, History, Bookmarks, Window) carrying the browser's shortcuts; on Windows and Linux, where browsers show none, the menu button's menu is its counterpart. Menu items and buttons must send the same intents.
 - **Reason:** Shortcuts must work whatever has focus.
 - **Source:** Prototype finding.
 - **Verification:** Test each shortcut.
 - **State:** Partly met, 23 October 2026: the menu button's menu is built (`the_menu_holds_history_and_bookmarks`), with New tab, New window, New private tab, New private window, Move tab to new window, Reopen closed tab, History, Bookmarks, the bookmarks bar, Bookmark this page, the phone keyboard, the developer console, the remote control and Settings, each with its shortcut where it has one (decisions 57, 68 and 72); the native menu bar is not built.
+- *Amended 23 October 2026 (decision 84, `menu-bar.md`):* the menu bar on macOS only. State: met, 23 October 2026. The menus are a table in `dock-menu` (`every_menu_item_has_one_meaning`, `a_menu_item_is_found_by_its_number`), built in AppKit in place of winit's; each item gives the interface core the key it names. By hand on macOS: Command-N through the menu opened one window, not two; Command-M, which only the menu answers, minimised the window; Shift-Command-W closed it; Command-Q ended every process.
 - *Amended 22 October 2026 (decision 57):* until the menu bar is built, the menu button's menu holds New tab, New private tab, Reopen closed tab, History, Bookmarks, the bookmarks bar, Bookmark this page, the phone keyboard, the developer console and Settings, each with its shortcut; the History and Bookmarks menus hold what `history-and-bookmarks.md` section 6 lists. State: the menu button's menu is built (`the_menu_holds_history_and_bookmarks`); the menu bar is not.
 
 ### Requirement 12.6: Internal pages
@@ -840,11 +841,11 @@ Withdrawn on 23 October 2026 (decision 66): no font is fetched; every page is dr
 - **State:** Met, with tests of the decoder's change detection; the window's marks were checked by eye. Since 22 October 2026 (decision 53) an update asks for frames only where its page is drawn, the wall and the list, and for the overview's ring while it bursts (`an_update_in_another_bank_asks_for_frames_only_while_its_ring_bursts`, which failed on the earlier code).
 
 ### Requirement 12.11: The clipboard and input methods
-- **Statement:** The address field must support copy, paste and text composed by an input method, shown while it is composed.
+- **Statement:** The address field and every other text field the browser draws must support cut, copy, paste and select all through the system clipboard, a paste typed as typing is, and the address field text composed by an input method, shown while it is composed.
 - **Reason:** Addresses are pasted more often than typed, and many scripts need an input method.
 - **Source:** Architecture.
 - **Verification:** Test on each desktop.
-- **State:** Partly met: composed text is inserted when committed. The address field has no copy or paste, and does not show text while it is composed; `arboard` (decision 49) is in the interface but used only for paste to a channel (REQ-INT-136).
+- **State:** Partly met, 23 October 2026 (decision 84): cut, copy, paste and select all in every field, through the Edit menu on macOS and the browser's modifier with X, C, V and A everywhere (`the_focused_field_copies_cuts_and_pastes`); by hand on macOS, through the interface's sandbox, each once. Composed text is inserted when committed, but not shown while it is composed.
 
 ### Requirement 12.12: Tips
 - **Statement:** Every control the window draws as an icon, a symbol or text that may be cut short must have a tip: a label naming it, saying what it does, and giving its shortcut on the platform where it has one. A tip must show when the pointer has rested on its control for half a second, beside the pointer and inside the window, over everything else; a press must put it away until the pointer leaves the control, and leaving must put it away. Tips must be the interface's own words, except a tab's title and a bookmark's name, which must be shown as the cleaned text they are (requirement 11.5). While a panel or list is open over the window, only its tips and the strip's must show.

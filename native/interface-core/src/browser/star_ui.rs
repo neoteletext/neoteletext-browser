@@ -154,13 +154,9 @@ impl Browser {
         Some(true)
     }
 
-    /// Command-A in the popover's name.
-    pub(super) fn star_select_all(&mut self) -> bool {
-        if !self.star_editing() {
-            return false;
-        }
-        self.star.name.select_all();
-        true
+    /// The popover's name, while it has the keys.
+    pub(super) fn star_field(&mut self) -> Option<&mut Editor> {
+        self.star_editing().then_some(&mut self.star.name)
     }
 
     /// A press while the popover is open; a press outside it is Done, as a

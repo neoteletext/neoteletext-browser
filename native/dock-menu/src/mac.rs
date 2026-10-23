@@ -1,4 +1,4 @@
-//! The Dock menu through `AppKit`. Every `unsafe` block and impl here says
+//! The Dock menu and the menu bar through `AppKit`. Every `unsafe` block and impl here says
 //! why it is sound; nowhere else in the browser has any (decision 39).
 #![expect(unsafe_code, reason = "AppKit and the Objective-C runtime are reached only through unsafe calls (decision 39)")]
 
@@ -8,10 +8,10 @@ use std::ffi::CStr;
 use objc2::rc::Retained;
 use objc2::runtime::{AnyObject, Sel};
 use objc2::{ClassType, DeclaredClass, declare_class, ffi, msg_send_id, mutability, sel};
-use objc2_app_kit::{NSApplication, NSControlStateValueOn, NSMenu, NSMenuItem};
+use objc2_app_kit::{NSApplication, NSControlStateValueOn, NSEventModifierFlags, NSLeftArrowFunctionKey, NSMenu, NSMenuItem, NSRightArrowFunctionKey};
 use objc2_foundation::{MainThreadMarker, NSInteger, NSObject, NSObjectProtocol, NSString};
 
-use crate::{Choice, DockTab, mute_all_item, tab_title};
+use crate::{Choice, DockTab, Entry, MENU_BAR, MenuAction, MenuItem, Shortcut, ShortcutKey, SystemAction, menu_item, mute_all_item, tab_title};
 
 /// The tag of the mute-all item; a tab's item is tagged with its index.
 const MUTE_ALL_TAG: NSInteger = -1;
@@ -30,8 +30,17 @@ struct State {
     menu: Retained<NSMenu>,
 }
 
+/// Whom the menu bar tells, and the target its items are sent to; the
+/// menus themselves the application holds.
+struct MenuBar {
+    choose: Box<dyn Fn(&'static MenuItem)>,
+    #[expect(dead_code, reason = "held only so that it lives: a menu item does not retain its target")]
+    target: Retained<Target>,
+}
+
 thread_local! {
     static STATE: RefCell<Option<State>> = const { RefCell::new(None) };
+    static MENU_BAR_STATE: RefCell<Option<MenuBar>> = const { RefCell::new(None) };
 }
 
 declare_class!(
@@ -56,6 +65,13 @@ declare_class!(
             let tag = unsafe { item.tag() };
             chosen(tag);
         }
+
+        #[method(chooseMenuBarItem:)]
+        fn choose_menu_bar_item(&self, item: &NSMenuItem) {
+            // SAFETY: reading a menu item's tag has no requirements.
+            let tag = unsafe { item.tag() };
+            menu_bar_chosen(tag);
+        }
     }
 );
 
@@ -77,6 +93,117 @@ fn chosen(tag: NSInteger) {
         };
         (state.choose)(choice);
     });
+}
+
+/// Reports the menu bar's item numbered `tag`.
+fn menu_bar_chosen(tag: NSInteger) {
+    let Some(item) = usize::try_from(tag).ok().and_then(menu_item) else { return };
+    MENU_BAR_STATE.with(|state| {
+        let Ok(state) = state.try_borrow() else { return };
+        if let Some(state) = state.as_ref() {
+            (state.choose)(item);
+        }
+    });
+}
+
+/// A new target for menu items, on the main thread.
+fn new_target(mtm: MainThreadMarker) -> Retained<Target> {
+    let this = mtm.alloc::<Target>().set_ivars(());
+    // SAFETY: NSObject's `init` on a fresh allocation.
+    unsafe { msg_send_id![super(this), init] }
+}
+
+/// The system's own action for `action`, sent along the responder chain.
+fn system_selector(action: SystemAction) -> Sel {
+    match action {
+        SystemAction::About => sel!(orderFrontStandardAboutPanel:),
+        SystemAction::Hide => sel!(hide:),
+        SystemAction::HideOthers => sel!(hideOtherApplications:),
+        SystemAction::ShowAll => sel!(unhideAllApplications:),
+        SystemAction::Quit => sel!(terminate:),
+        SystemAction::Minimise => sel!(performMiniaturize:),
+        SystemAction::Zoom => sel!(performZoom:),
+    }
+}
+
+/// The key equivalent `AppKit` shows and answers for `shortcut`.
+fn key_equivalent(shortcut: Shortcut) -> (String, NSEventModifierFlags) {
+    let key = match shortcut.key {
+        ShortcutKey::Text(text) => String::from(text),
+        ShortcutKey::Left => char::from_u32(NSLeftArrowFunctionKey).map(String::from).unwrap_or_default(),
+        ShortcutKey::Right => char::from_u32(NSRightArrowFunctionKey).map(String::from).unwrap_or_default(),
+    };
+    let mut flags = NSEventModifierFlags::NSEventModifierFlagCommand;
+    if shortcut.shift {
+        flags |= NSEventModifierFlags::NSEventModifierFlagShift;
+    }
+    if shortcut.alt {
+        flags |= NSEventModifierFlags::NSEventModifierFlagOption;
+    }
+    (key, flags)
+}
+
+/// One menu bar item, numbered `tag`.
+fn menu_bar_item(mtm: MainThreadMarker, item: &MenuItem, tag: NSInteger, target: &Target) -> Retained<NSMenuItem> {
+    let (key, flags) = item.shortcut.map_or_else(|| (String::new(), NSEventModifierFlags::empty()), key_equivalent);
+    let action = match item.action {
+        MenuAction::System(action) => system_selector(action),
+        _ => sel!(chooseMenuBarItem:),
+    };
+    // SAFETY: a new item with a fixed title, an action and a key from the
+    // crate's own table. The system's items have no target, so they go
+    // along the responder chain to the window or the application, which
+    // answer them; the others go to the target, held in `MENU_BAR_STATE`
+    // for the process's life.
+    unsafe {
+        let menu_item = NSMenuItem::initWithTitle_action_keyEquivalent(mtm.alloc(), &NSString::from_str(item.title), Some(action), &NSString::from_str(&key));
+        menu_item.setKeyEquivalentModifierMask(flags);
+        if !matches!(item.action, MenuAction::System(_)) {
+            menu_item.setTarget(Some(target));
+            menu_item.setTag(tag);
+        }
+        menu_item
+    }
+}
+
+/// Gives the application the menu bar of [`MENU_BAR`] in place of the
+/// one winit makes; `choose` hears each item chosen that is not the
+/// system's. Call it on the main thread once the application has
+/// launched, when winit has set its own. Called again, it changes nothing.
+pub fn install_menu_bar(choose: impl Fn(&'static MenuItem) + 'static) {
+    let Some(mtm) = MainThreadMarker::new() else { return };
+    let installed = MENU_BAR_STATE.with(|state| state.borrow().is_some());
+    if installed {
+        return;
+    }
+    let target = new_target(mtm);
+    let bar = NSMenu::new(mtm);
+    let mut tag: NSInteger = 0;
+    let app = NSApplication::sharedApplication(mtm);
+    for menu in MENU_BAR {
+        let title = NSString::from_str(menu.title);
+        // SAFETY: a new menu titled from the crate's own table.
+        let submenu = unsafe { NSMenu::initWithTitle(mtm.alloc(), &title) };
+        for entry in menu.entries {
+            match entry {
+                Entry::Item(item) => {
+                    submenu.addItem(&menu_bar_item(mtm, item, tag, &target));
+                    tag += 1;
+                }
+                Entry::Separator => submenu.addItem(&NSMenuItem::separatorItem(mtm)),
+            }
+        }
+        let holder = NSMenuItem::new(mtm);
+        holder.setSubmenu(Some(&submenu));
+        bar.addItem(&holder);
+        if menu.lists_windows {
+            // SAFETY: naming the menu the system lists the windows in, on
+            // the main thread.
+            unsafe { app.setWindowsMenu(Some(&submenu)) };
+        }
+    }
+    app.setMainMenu(Some(&bar));
+    MENU_BAR_STATE.with(|cell| *cell.borrow_mut() = Some(MenuBar { choose: Box::new(choose), target }));
 }
 
 /// Rebuilds the menu's items from the tabs.
@@ -146,12 +273,7 @@ pub fn install(choose: impl Fn(Choice) + 'static) {
     // sees the new method. winit holds the delegate meanwhile.
     app.setDelegate(None);
     app.setDelegate(Some(&delegate));
-    let target: Retained<Target> = {
-        let this = mtm.alloc::<Target>().set_ivars(());
-        // SAFETY: NSObject's `init` on a fresh allocation.
-        unsafe { msg_send_id![super(this), init] }
-    };
-    let state = State { tabs: Vec::new(), choose: Box::new(choose), target, menu: NSMenu::new(mtm) };
+    let state = State { tabs: Vec::new(), choose: Box::new(choose), target: new_target(mtm), menu: NSMenu::new(mtm) };
     build(mtm, &state);
     STATE.with(|cell| *cell.borrow_mut() = Some(state));
 }

@@ -1,6 +1,6 @@
 [package]
 name = "dock-menu"
-description = "The menu of the browser's Dock icon on macOS: its tabs, which one is selected and which play sound, and mute or unmute all"
+description = "The menus of the browser on macOS: the Dock icon's, with its tabs and mute or unmute all, and the menu bar"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -12,7 +12,7 @@ publish.workspace = true
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2 = "=0.5.3"
 objc2-foundation = { version = "=0.2.2", features = ["NSObject", "NSString", "NSThread"] }
-objc2-app-kit = { version = "=0.2.2", features = ["NSApplication", "NSCell", "NSMenu", "NSMenuItem", "NSResponder"] }
+objc2-app-kit = { version = "=0.2.2", features = ["NSApplication", "NSCell", "NSEvent", "NSMenu", "NSMenuItem", "NSResponder"] }
 
 # The workspace's lints, except that unsafe code is denied rather than
 # forbidden: this is the one crate allowed it, at each site with its

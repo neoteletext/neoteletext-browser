@@ -267,13 +267,9 @@ impl Browser {
         self.console.open && self.console.searching
     }
 
-    /// Command-A in the log's search.
-    pub(super) fn console_select_all(&mut self) -> bool {
-        if !self.console_searching() {
-            return false;
-        }
-        self.console.search.select_all();
-        true
+    /// The log's search, while it has the keys.
+    pub(super) fn console_field(&mut self) -> Option<&mut Editor> {
+        self.console_searching().then_some(&mut self.console.search)
     }
 
     /// A key while the log's search takes them; `None` when it does not.

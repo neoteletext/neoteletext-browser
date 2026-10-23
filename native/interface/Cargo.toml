@@ -14,14 +14,16 @@ default = ["links", "interaction", "phone-keyboard"]
 links = ["protocol/links", "interface-core/links"]
 # Typing into a page (`interaction.md`): off, the typing messages are
 # compiled out and every side refuses their kinds.
-interaction = ["protocol/interaction", "interface-core/interaction", "dep:neoteletext-input", "dep:arboard"]
+interaction = ["protocol/interaction", "interface-core/interaction", "dep:neoteletext-input"]
 # The phone keyboard's panel, strip and keys (`interaction.md` section 9).
 phone-keyboard = ["interaction", "protocol/phone-keyboard", "interface-core/phone-keyboard"]
 
 [dependencies]
 confine.workspace = true
 neoteletext-input = { workspace = true, optional = true }
-arboard = { workspace = true, optional = true }
+# The clipboard: pasting into a channel, and the fields' cut, copy and
+# paste (decision 84).
+arboard.workspace = true
 interface-core.workspace = true
 draw-vello.workspace = true
 protocol.workspace = true

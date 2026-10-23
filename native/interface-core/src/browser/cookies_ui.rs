@@ -151,13 +151,9 @@ impl Browser {
         Some(true)
     }
 
-    /// Command-A in the search field.
-    pub(super) fn cookies_select_all(&mut self) -> bool {
-        if !self.cookies_editing() {
-            return false;
-        }
-        self.cookies.query.select_all();
-        true
+    /// The search field, while it has the keys.
+    pub(super) fn cookies_field(&mut self) -> Option<&mut Editor> {
+        self.cookies_editing().then_some(&mut self.cookies.query)
     }
 
     /// The wheel over the cookies: further rows are asked for.

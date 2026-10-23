@@ -1360,13 +1360,10 @@ impl Browser {
         }
         match text.to_ascii_lowercase().as_str() {
             "l" => self.start_editing(),
-            "a" if self.settings_editing() => return self.settings_select_all(),
-            "a" if self.history_editing() => return self.history_select_all(),
-            "a" if self.cookies_editing() => return self.cookies_select_all(),
-            "a" if self.console_searching() => return self.console_select_all(),
-            "a" if self.bookmarks_editing() => return self.bookmarks_select_all(),
-            "a" if self.star_editing() => return self.star_select_all(),
-            "a" if self.editing => self.editor.select_all(),
+            "a" => {
+                let Some(field) = self.focused_field() else { return false };
+                field.select_all();
+            }
             // The settings panel (requirement 19.3), Home (requirement
             // 19.6) and the console (requirement 19.8): Command-comma,
             // Command-Shift-H and Command-Option-I on macOS; Control-comma
@@ -1388,6 +1385,7 @@ impl Browser {
             "n" if modifiers.shift => self.outputs.push(Output::NewPrivateTab),
             "t" => self.outputs.push(Output::NewTab),
             "n" => self.outputs.push(Output::NewWindow { private: false }),
+            "w" if modifiers.shift => self.outputs.push(Output::Window(WindowAction::Close)),
             "w" => self.outputs.push(Output::CloseTab(self.active)),
             "[" if self.strip.back => self.outputs.push(Output::Back),
             "]" if self.strip.forward => self.outputs.push(Output::Forward),
@@ -1395,6 +1393,58 @@ impl Browser {
             _ => return false,
         }
         true
+    }
+
+    /// The text field that has the keys: a panel's, in the order their
+    /// keys are taken, or the address field.
+    fn focused_field(&mut self) -> Option<&mut Editor> {
+        if self.star_editing() {
+            return self.star_field();
+        }
+        if self.history_editing() {
+            return self.history_field();
+        }
+        if self.cookies_editing() {
+            return self.cookies_field();
+        }
+        if self.console_searching() {
+            return self.console_field();
+        }
+        if self.bookmarks_editing() {
+            return self.bookmarks_field();
+        }
+        if self.settings_editing() {
+            return self.settings_field();
+        }
+        self.editing.then_some(&mut self.editor)
+    }
+
+    /// The selected text of the field with the keys, for Copy (decision
+    /// 84); `None` when no field has them or nothing is selected.
+    #[must_use]
+    pub fn selected_text(&mut self) -> Option<String> {
+        let field = self.focused_field()?;
+        let (start, end) = field.selection();
+        field.text().get(start..end).filter(|text| !text.is_empty()).map(String::from)
+    }
+
+    /// Cut: the selected text, as [`Browser::selected_text`], deleted from
+    /// its field as Backspace deletes it, so the field's own rules hold.
+    pub fn cut(&mut self, now: u64) -> Option<String> {
+        let text = self.selected_text()?;
+        self.key(Key::Backspace, Modifiers::default(), now);
+        Some(text)
+    }
+
+    /// Paste: `text` typed into the field with the keys, as typing it
+    /// would, so its hidden characters are dropped and its length bounded.
+    /// Nothing happens when no field has the keys. Returns whether the
+    /// window needs drawing again.
+    pub fn paste_text(&mut self, text: &str, now: u64) -> bool {
+        if self.focused_field().is_none() {
+            return false;
+        }
+        self.key(Key::Text(text), Modifiers::default(), now)
     }
 
     fn edit(&mut self, key: Key<'_>, shift: bool) -> bool {
@@ -2621,6 +2671,42 @@ mod tests {
         browser.draw(&mut canvas, WIDTH, HEIGHT, 0);
         let texts: Vec<&str> = canvas.texts.iter().map(|(_, text)| text.as_str()).collect();
         assert!(texts.contains(&"NeoTeletext") && !texts.contains(&"Not secure"), "{texts:?}");
+    }
+
+    /// Requirement 12.11 (decision 84): the field with the keys copies, cuts
+    /// and takes a paste as typing, hidden characters dropped; with no field
+    /// focused, nothing is copied and a paste goes nowhere, not to the page.
+    #[test]
+    fn the_focused_field_copies_cuts_and_pastes() {
+        let (mut browser, _) = browser();
+        browser.set_strip(StripState { address: "https://news.example/".into(), ..browser.strip.clone() });
+        browser.take_outputs();
+        assert_eq!(browser.selected_text(), None);
+        assert!(!browser.paste_text("101", 0) && browser.digits.is_empty(), "no field: the page's number keys are not typed");
+        let command = Modifiers { command: true, ..Modifiers::default() };
+        browser.key(Key::Text("l"), command, 0);
+        assert_eq!(browser.selected_text().as_deref(), Some("https://news.example/"), "Open Location selects the address");
+        browser.key(Key::End, Modifiers::default(), 0);
+        assert_eq!(browser.selected_text(), None, "nothing selected");
+        assert!(browser.paste_text("1\u{202E}0\n0", 0));
+        assert_eq!(browser.editor.text(), "https://news.example/100", "hidden characters dropped");
+        browser.key(Key::Text("a"), command, 0);
+        assert_eq!(browser.cut(0).as_deref(), Some("https://news.example/100"));
+        assert_eq!(browser.editor.text(), "", "cut removes it");
+        browser.key(Key::Escape, Modifiers::default(), 0);
+        assert!(!browser.key(Key::Text("a"), command, 0), "select all with no field is no shortcut");
+    }
+
+    /// Shift-Command-W, Control-Shift-W away from macOS, closes the window
+    /// (decision 84); Command-W the tab.
+    #[test]
+    fn shift_w_closes_the_window() {
+        let (mut browser, _) = browser();
+        browser.take_outputs();
+        browser.key(Key::Text("W"), Modifiers { command: true, shift: true, ..Modifiers::default() }, 0);
+        assert_eq!(browser.take_outputs(), [Output::Window(WindowAction::Close)]);
+        browser.key(Key::Text("w"), Modifiers { command: true, ..Modifiers::default() }, 0);
+        assert_eq!(browser.take_outputs(), [Output::CloseTab(browser.active)]);
     }
 
     /// Requirement 19.8: the console docks in the overview's place.
