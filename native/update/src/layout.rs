@@ -37,14 +37,18 @@ pub const UPDATER_METADATA: &str = "metadata";
 /// The file in the updater's folder holding the last successful check's
 /// time.
 pub const UPDATER_CHECKED: &str = "checked";
+/// The file in the updater's folder holding the highest version of The
+/// Update Framework's root the updater has reached (decision 91).
+pub const UPDATER_ROOT_VERSION: &str = "root-version";
 /// Every name the updater's folder may hold: The Update Framework's
 /// client's datastore (`tough` 0.24 writes `root.json`, `timestamp.json`,
 /// `snapshot.json`, `targets.json` and `latest_known_time.json`, and
 /// nothing else for a repository without delegations) and the updater's
-/// own [`UPDATER_CHECKED`]. The launcher removes anything else there, so
-/// nothing the confined updater leaves in its folder outlives a start
-/// (decision 87).
-pub const UPDATER_METADATA_FILES: [&str; 6] = ["root.json", "timestamp.json", "snapshot.json", "targets.json", "latest_known_time.json", UPDATER_CHECKED];
+/// own [`UPDATER_CHECKED`] and [`UPDATER_ROOT_VERSION`]. The launcher
+/// removes anything else there, so nothing the confined updater leaves in
+/// its folder outlives a start (decision 87).
+pub const UPDATER_METADATA_FILES: [&str; 7] =
+    ["root.json", "timestamp.json", "snapshot.json", "targets.json", "latest_known_time.json", UPDATER_CHECKED, UPDATER_ROOT_VERSION];
 /// What the broker writes to the launcher once the trusted core found
 /// the version healthy (section 3.2).
 pub const HEALTHY_LINE: &str = "healthy\n";

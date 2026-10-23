@@ -311,6 +311,31 @@ fn a_root_is_rotated_only_by_a_threshold_of_old_and_new_keys() {
     assert_eq!(block(client.check()), Ok(Some(VERSION)), "rotated");
 }
 
+/// Decision 91 (finding F-06): the updater keeps the highest root version
+/// it has reached, so once it has reached root 2, a host that stops
+/// serving `2.root.json` cannot roll it back to root 1's keys, which a
+/// rotation retired.
+#[test]
+fn a_root_older_than_one_reached_is_refused() {
+    let fixture = Fixture::new("root-floor");
+    let client = fixture.client("staging");
+    assert!(block(client.check()).is_ok());
+    let mut arguments = vec![String::from("root"), text(&fixture.metadata().join("2.root.json")), String::from("2")];
+    for name in ["root-1", "root-2"] {
+        arguments.extend([String::from("--root"), key(&fixture, name)]);
+    }
+    let third = Command::new(env!("CARGO_BIN_EXE_neoteletext-release")).args(["public", &key(&fixture, "root-3")]).output().unwrap();
+    arguments.extend([String::from("--root"), format!("public:{}", String::from_utf8(third.stdout).unwrap().trim())]);
+    for role in ["targets", "snapshot", "timestamp"] {
+        arguments.extend([format!("--{role}"), key(&fixture, role)]);
+    }
+    release(&arguments.iter().map(String::as_str).collect::<Vec<_>>());
+    assert_eq!(block(client.check()), Ok(Some(VERSION)), "root 2 reached");
+    std::fs::remove_file(fixture.metadata().join("2.root.json")).unwrap();
+    let refused = block(client.check()).unwrap_err();
+    assert!(refused.contains("older root"), "{refused}");
+}
+
 /// The launcher-unchanged check (section 7): a launcher that differs from
 /// the last launcher release's is refused unless the release says it is
 /// one.

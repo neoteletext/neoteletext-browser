@@ -21,6 +21,11 @@ pub const METADATA: &str = update::layout::UPDATER_METADATA;
 pub(super) const CHECKED: &str = update::layout::UPDATER_CHECKED;
 /// The longest that file is: a time in decimal seconds.
 const MAX_CHECKED: usize = 24;
+/// The file in it holding the highest root version reached (decision 91).
+const ROOT_VERSION: &str = update::layout::UPDATER_ROOT_VERSION;
+/// The longest that file is: a root version, at most `u64::MAX`'s 20
+/// decimal digits, and its line's end.
+const MAX_ROOT_VERSION: usize = 21;
 /// How many times a release file that fails its checks is fetched before
 /// the download waits for the next check (section 3.1, step 2).
 pub const MAX_ATTEMPTS: u32 = 3;
@@ -72,20 +77,40 @@ impl Config {
         std::str::from_utf8(&bytes).ok()?.trim_end().parse().ok()
     }
 
+    /// The highest root version reached, if one was recorded.
+    fn root_floor(&self) -> Option<u64> {
+        let bytes = files::read_bounded(&self.metadata().join(ROOT_VERSION), MAX_ROOT_VERSION).ok()?;
+        std::str::from_utf8(&bytes).ok()?.strip_suffix('\n')?.parse().ok()
+    }
+
     /// Loads and verifies the repository: The Update Framework's client
     /// workflow (its specification's section 5: root rotation, then the
     /// timestamp, snapshot and targets, each signed by its role's keys to
-    /// threshold, unexpired, and never older than the versions kept).
+    /// threshold, unexpired, and never older than the versions kept). The
+    /// chain of roots is verified from the built-in root every time, and a
+    /// root older than the highest one reached before is refused: a host
+    /// that stops serving the newer roots cannot take the updater back to
+    /// keys a rotation retired (decision 91).
     pub(super) async fn load(&self) -> Result<Repository, String> {
         std::fs::create_dir_all(self.metadata()).map_err(|error| format!("{}: {error}", self.metadata().display()))?;
         let base = |folder: &str| url::Url::parse(&format!("https://{}:{}/{folder}/", self.host, self.port)).map_err(|error| error.to_string());
-        RepositoryLoader::new(&self.root, base("metadata")?, base("targets")?)
+        let repository = RepositoryLoader::new(&self.root, base("metadata")?, base("targets")?)
             .transport(self.https.clone())
             .datastore(self.metadata())
             .limits(limits())
             .load()
             .await
-            .map_err(|error| format!("the update repository is refused: {}", chain(&error)))
+            .map_err(|error| format!("the update repository is refused: {}", chain(&error)))?;
+        let reached = repository.root().signed.version.get();
+        match self.root_floor() {
+            Some(floor) if reached < floor => {
+                return Err(format!("the update repository is refused: the update host offered an older root (version {reached}, after {floor})"));
+            }
+            Some(floor) if reached == floor => {}
+            _ => files::write_atomically(&self.metadata().join(ROOT_VERSION), format!("{reached}\n").as_bytes())
+                .map_err(|error| format!("{ROOT_VERSION}: {error}"))?,
+        }
+        Ok(repository)
     }
 
     /// The newest version the repository names for this platform.
