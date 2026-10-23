@@ -7,6 +7,7 @@
 use std::io::{Read, Write};
 
 use super::{Fields, ProtocolError, push_text, read_frame, write_frame};
+use crate::text::is_clean;
 
 /// The largest QR code: version 40 is 177 modules a side (ISO/IEC 18004
 /// Table 1).
@@ -173,8 +174,12 @@ pub fn navigates_pages(name: &str) -> bool {
     PAGE_NAVIGATION_KEYS.contains(&name)
 }
 
+/// A key name is refused where the interface's pipe would refuse it: a
+/// control or any other hidden character ([`is_clean`]), so a hostile
+/// keyboard process ends only its own pipe, never the trusted core's write
+/// to the interface (finding F-28).
 fn clean_name(name: &str) -> Result<(), ProtocolError> {
-    let ok = !name.is_empty() && name.len() <= MAX_KEY_NAME && name.chars().all(|character| !character.is_control());
+    let ok = !name.is_empty() && is_clean(name, MAX_KEY_NAME);
     if ok { Ok(()) } else { Err(ProtocolError::BadValue("phone key")) }
 }
 
@@ -414,6 +419,15 @@ mod tests {
         };
         assert!(frame(KIND_KEY, b"\x01Esc\x1b").is_err(), "a control in a name");
         assert!(frame(KIND_KEY, &[1; 40]).is_err(), "a long name");
+        // Finding F-28: a name the interface's pipe would refuse is refused
+        // here, so only the keyboard's pipe ends, never the browser.
+        for hidden in ["a\u{200B}", "\u{202E}Enter", "\u{FEFF}", "1\u{2066}"] {
+            let mut payload = vec![1];
+            payload.extend_from_slice(hidden.as_bytes());
+            assert!(frame(KIND_KEY, &payload).is_err(), "{hidden:?}");
+            let key = PhoneKey::Key { down: true, name: hidden.into() };
+            assert!(push_phone_key(&mut Vec::new(), &key).is_err(), "{hidden:?}");
+        }
         assert!(frame(KIND_TEXT, &[b'a'; MAX_PHONE_TEXT + 1]).is_err());
         assert!(frame(KIND_JOIN, &[200]).is_err(), "a QR too big");
         assert!(frame(KIND_STATE, &[9, 0]).is_err());
