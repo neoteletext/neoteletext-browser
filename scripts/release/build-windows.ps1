@@ -13,6 +13,8 @@ $ErrorActionPreference = "Stop"
 # says this is a test (finding F-24).
 if ($env:NEOTELETEXT_RELEASE_IDENTITY -and -not $Test) { throw "NEOTELETEXT_RELEASE_IDENTITY names a test identity; give -Test for a test release" }
 $testFlags = @()
+# A release is built from a commit (finding F-73).
+if (git status --porcelain --untracked-files=no) { throw "the tree has changes; a release is built from a commit" }
 if ($Test) { $testFlags = @("--test-identity") }
 $signtool = (Get-ChildItem -Recurse -Filter signtool.exe "C:\Program Files (x86)\Windows Kits\10\bin" | Where-Object { $_.FullName -like "*\x64\*" } | Select-Object -First 1).FullName
 function Sign($files) {
