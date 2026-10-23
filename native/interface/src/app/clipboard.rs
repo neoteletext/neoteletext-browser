@@ -19,6 +19,30 @@ pub(super) fn clipboard_key(character: &str) -> Option<EditAction> {
     }
 }
 
+/// The most of the clipboard any taker uses: a paste to a channel, a
+/// PASTE of at most `MAX_PASTE` bytes (the input system's REQ-INT-103),
+/// or, built without typing, the longest field, the address field.
+#[cfg(feature = "interaction")]
+const MAX_CLIPBOARD: usize = neoteletext_input::MAX_PASTE;
+#[cfg(not(feature = "interaction"))]
+const MAX_CLIPBOARD: usize = interface_core::browser::MAX_ADDRESS;
+// Every field takes at most the address field's length, which the
+// clipboard's bound must cover.
+const _: () = assert!(MAX_CLIPBOARD >= interface_core::browser::MAX_ADDRESS);
+
+/// The clipboard's text as far as any taker uses it, cut on a character
+/// boundary as soon as it is read (finding F-54), the rest let go: the
+/// clipboard is any program's to fill, and nothing past the bound is
+/// kept or passed on.
+fn bounded(mut text: String) -> String {
+    if text.len() > MAX_CLIPBOARD {
+        let end = (0..=MAX_CLIPBOARD).rev().find(|&end| text.is_char_boundary(end)).unwrap_or(0);
+        text.truncate(end);
+        text.shrink_to_fit();
+    }
+    text
+}
+
 impl App {
     /// The system clipboard, opened when first needed.
     fn clipboard(&mut self) -> Option<&mut arboard::Clipboard> {
@@ -30,7 +54,7 @@ impl App {
 
     /// The clipboard's text; `None` when it holds none.
     pub(super) fn clipboard_text(&mut self) -> Option<String> {
-        self.clipboard()?.get_text().ok()
+        self.clipboard()?.get_text().ok().map(bounded)
     }
 
     /// Puts `text` on the clipboard; returns whether it is there.
@@ -109,5 +133,22 @@ impl App {
             Choice::MuteAll(muted) => ToCore::MuteAll(muted),
         };
         self.send(event_loop, &message);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Finding F-54: the clipboard's text is cut to what any taker uses as
+    /// soon as it is read, on a character boundary.
+    #[test]
+    fn the_clipboard_is_cut_as_soon_as_it_is_read() {
+        let huge = "é".repeat(MAX_CLIPBOARD);
+        let cut = bounded(huge);
+        assert!(cut.len() <= MAX_CLIPBOARD && cut.len() > MAX_CLIPBOARD - "é".len(), "{}", cut.len());
+        assert!(cut.chars().all(|character| character == 'é'), "cut on a character boundary");
+        assert!(cut.capacity() <= MAX_CLIPBOARD, "the rest is let go");
+        assert_eq!(bounded("short".into()), "short");
     }
 }
