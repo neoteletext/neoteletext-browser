@@ -17,6 +17,10 @@ pub(super) enum Row {
     Channel(String),
 }
 
+/// A channel listed in the panel: its origin, its key, its cookies' count
+/// and bytes, when one was last used, and whether it is blocked.
+type Listed = (String, String, usize, usize, u64, bool);
+
 impl Core {
     /// A request of the panel, strip input (requirement 21.6).
     pub(crate) fn cookies_request(&mut self, request: CookiesRequest) -> Result<(), String> {
@@ -70,7 +74,7 @@ impl Core {
         let listed = self.cookies.store.listed();
         let (count, bytes) = listed.iter().fold((0_usize, 0_usize), |(count, bytes), row| (count.saturating_add(row.count), bytes.saturating_add(row.bytes)));
         let query = self.cookies.query.to_lowercase();
-        let mut channels: Vec<(String, String, usize, usize, u64, bool)> = listed
+        let mut channels: Vec<Listed> = listed
             .into_iter()
             .map(|row| {
                 let blocked = self.cookies.store.blocked.contains(&row.key);
@@ -86,45 +90,7 @@ impl Core {
         }
         channels.retain(|(_, key, ..)| query.is_empty() || key.to_lowercase().contains(&query));
         channels.sort();
-        let used = |at: u64| {
-            if at == 0 {
-                String::new()
-            } else {
-                let day = neoteletext::calendar::local_day(i64::try_from(at).unwrap_or(i64::MAX), offset);
-                clean(&neoteletext::calendar::day_words(day), MAX_USED)
-            }
-        };
-        // Each origin, then its channels.
-        let mut rows: Vec<(Row, CookieRow)> = Vec::new();
-        let mut index = 0;
-        while let Some((origin, ..)) = channels.get(index) {
-            let origin = origin.clone();
-            let members: Vec<&(String, String, usize, usize, u64, bool)> = channels.iter().skip(index).take_while(|(other, ..)| *other == origin).collect();
-            let site_row = CookieRow {
-                number: 0,
-                site: true,
-                label: clean(&origin, MAX_LABEL),
-                count: u32::try_from(members.iter().map(|member| member.2).sum::<usize>()).unwrap_or(u32::MAX),
-                bytes: u64::try_from(members.iter().map(|member| member.3).sum::<usize>()).unwrap_or(u64::MAX),
-                used: used(members.iter().map(|member| member.4).max().unwrap_or(0)),
-                blocked: false,
-            };
-            rows.push((Row::Site(origin.clone()), site_row));
-            for (_, key, count, size, at, blocked) in &members {
-                let folder = key.strip_prefix(origin.as_str()).unwrap_or(key);
-                let row = CookieRow {
-                    number: 0,
-                    site: false,
-                    label: clean(folder, MAX_LABEL),
-                    count: u32::try_from(*count).unwrap_or(u32::MAX),
-                    bytes: u64::try_from(*size).unwrap_or(u64::MAX),
-                    used: used(*at),
-                    blocked: *blocked,
-                };
-                rows.push((Row::Channel(key.clone()), row));
-            }
-            index = index.saturating_add(members.len());
-        }
+        let rows = site_rows(&channels, offset);
         let total = u32::try_from(rows.len()).unwrap_or(u32::MAX);
         let first = self.cookies.first.min(total);
         self.cookies.numbers.fresh();
@@ -149,4 +115,48 @@ impl Core {
         };
         self.send(&ToInterface::Cookies(view))
     }
+}
+
+/// The panel's rows of the sorted `channels`: each origin, then its
+/// channels; when each was last used, as a day at `offset` from UTC.
+fn site_rows(channels: &[Listed], offset: i32) -> Vec<(Row, CookieRow)> {
+    let used = |at: u64| {
+        if at == 0 {
+            String::new()
+        } else {
+            let day = neoteletext::calendar::local_day(i64::try_from(at).unwrap_or(i64::MAX), offset);
+            clean(&neoteletext::calendar::day_words(day), MAX_USED)
+        }
+    };
+    let mut rows: Vec<(Row, CookieRow)> = Vec::new();
+    let mut index = 0;
+    while let Some((origin, ..)) = channels.get(index) {
+        let origin = origin.clone();
+        let members: Vec<&Listed> = channels.iter().skip(index).take_while(|(other, ..)| *other == origin).collect();
+        let site_row = CookieRow {
+            number: 0,
+            site: true,
+            label: clean(&origin, MAX_LABEL),
+            count: u32::try_from(members.iter().map(|member| member.2).sum::<usize>()).unwrap_or(u32::MAX),
+            bytes: u64::try_from(members.iter().map(|member| member.3).sum::<usize>()).unwrap_or(u64::MAX),
+            used: used(members.iter().map(|member| member.4).max().unwrap_or(0)),
+            blocked: false,
+        };
+        rows.push((Row::Site(origin.clone()), site_row));
+        for (_, key, count, size, at, blocked) in &members {
+            let folder = key.strip_prefix(origin.as_str()).unwrap_or(key);
+            let row = CookieRow {
+                number: 0,
+                site: false,
+                label: clean(folder, MAX_LABEL),
+                count: u32::try_from(*count).unwrap_or(u32::MAX),
+                bytes: u64::try_from(*size).unwrap_or(u64::MAX),
+                used: used(*at),
+                blocked: *blocked,
+            };
+            rows.push((Row::Channel(key.clone()), row));
+        }
+        index = index.saturating_add(members.len());
+    }
+    rows
 }
