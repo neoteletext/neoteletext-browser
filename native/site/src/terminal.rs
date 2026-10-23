@@ -340,6 +340,21 @@ fn note(frequency: f64) -> Vec<i16> {
         .collect()
 }
 
+/// Every sound of the channel with the handle it takes: the piano's
+/// notes and the effects.
+fn library() -> Vec<(u8, Vec<i16>)> {
+    let notes = PIANO.iter().enumerate().filter_map(|(index, (_, _, frequency))| Some((FIRST_HANDLE + u8::try_from(index).ok()?, note(*frequency))));
+    let effects = [
+        (FIRE_HANDLE, fire_sound()),
+        (HIT_HANDLE, hit_sound()),
+        (WIN_HANDLE, tune(&WIN_TUNE)),
+        (LOSE_HANDLE, tune(&LOSE_TUNE)),
+        (CLICK_HANDLE, click_sound()),
+        (BELL_HANDLE, bell_sound()),
+    ];
+    notes.chain(effects).collect()
+}
+
 /// The invaders' playfield.
 const FIELD_LEFT: i32 = 1;
 const FIELD_RIGHT: i32 = 38;
@@ -936,17 +951,8 @@ impl Session {
     /// Every sound of the channel, as packets, one message a sound: the
     /// piano's notes and the game's effects.
     fn sounds(&mut self) -> Vec<Push> {
-        let notes = PIANO.iter().enumerate().filter_map(|(index, (_, _, frequency))| Some((FIRST_HANDLE + u8::try_from(index).ok()?, note(*frequency))));
-        let effects = [
-            (FIRE_HANDLE, fire_sound()),
-            (HIT_HANDLE, hit_sound()),
-            (WIN_HANDLE, tune(&WIN_TUNE)),
-            (LOSE_HANDLE, tune(&LOSE_TUNE)),
-            (CLICK_HANDLE, click_sound()),
-            (BELL_HANDLE, bell_sound()),
-        ];
-        let all: Vec<(u8, Vec<i16>)> = notes.chain(effects).collect();
-        all.into_iter()
+        library()
+            .into_iter()
             .filter_map(|(handle, pcm)| {
                 let sound = Sound::new(handle, 1, Codec::ImaAdpcm, NOTE_RATE, NOTE_BLOCK, &pcm).ok()?;
                 let mut records = vec![sound.object_record().ok()?];
