@@ -68,7 +68,7 @@ fn run(relay: &str, pin: bool, proxy: Option<Proxy>) -> Result<(), String> {
         Ok(screen) => screen,
         Err(error) => {
             send(&mut output, &FromKeyboard::State(PhoneState::Finished))?;
-            return Err(format!("no phone keyboard: {error}"));
+            return Err(format!("no phone keyboard: {}", reason(&error)));
         }
     };
     *waker.lock().map_err(|_| "the input watcher stopped")? = Some(screen.waker());
@@ -88,7 +88,7 @@ fn run(relay: &str, pin: bool, proxy: Option<Proxy>) -> Result<(), String> {
         }
         // What the last events produced goes before waiting.
         output.flush().map_err(|error| error.to_string())?;
-        let events = screen.wait(None).map_err(|error| error.to_string())?;
+        let events = screen.wait(None).map_err(|error| reason(&error))?;
         for event in events {
             let message = match event {
                 Event::Scan => FromKeyboard::State(PhoneState::Scan),
@@ -135,6 +135,21 @@ fn run(relay: &str, pin: bool, proxy: Option<Proxy>) -> Result<(), String> {
         }
     }
 }
+
+/// Why the relay failed, as this process prints it on its one line, which
+/// the trusted core logs. A TLS failure is one fixed sentence (finding
+/// F-40): the TLS library's text can carry the names a presented
+/// certificate holds, which a hostile network chooses.
+fn reason(error: &neoteletext_qrkeyboard::Error) -> String {
+    match error {
+        neoteletext_qrkeyboard::Error::Tls(_) => TLS_REFUSED.to_owned(),
+        other => other.to_string(),
+    }
+}
+
+/// What a TLS failure with the relay is reported as: a certificate that
+/// does not verify is the usual cause, and a hard stop (requirement 7.11).
+const TLS_REFUSED: &str = "TLS with the relay failed: its certificate was refused or the connection broke";
 
 /// What the trusted core started the keyboard with: `[relay] [--pin]
 /// [--proxy URL]`. The proxy is given only at the start, as a fetcher's is
@@ -184,6 +199,17 @@ mod tests {
 
     fn read(given: &[&str]) -> Result<Arguments, String> {
         arguments(given.iter().map(|&argument| argument.to_owned()))
+    }
+
+    /// Finding F-40: a TLS failure is printed as a fixed sentence, never
+    /// with the names a presented certificate carries.
+    #[test]
+    fn a_tls_failure_names_nothing_from_the_certificate() {
+        use neoteletext_qrkeyboard::Error;
+        let presented = Error::Tls("invalid peer certificate: NotValidForName: \"attacker.example\", \"Evil Corp CA\"".into());
+        let said = reason(&presented);
+        assert!(!said.contains("attacker.example") && !said.contains("Evil Corp"), "{said}");
+        assert_eq!(reason(&Error::Status(503)), "the relay answered 503", "other failures say what they said");
     }
 
     /// Requirement 19.12: the proxy comes only as an argument at the start.
