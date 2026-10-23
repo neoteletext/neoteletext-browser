@@ -21,7 +21,7 @@ use crate::wall::Wall;
 
 mod address;
 mod banks;
-mod bookmarks_ui;
+mod bookmarks;
 mod console_ui;
 mod controls_ui;
 mod cookies_ui;
@@ -126,7 +126,7 @@ pub struct Browser {
     /// The tab strip's overflow and dragging (decision 69).
     tab_strip: tab_strip::TabsUi,
     /// The bookmarks manager (requirement 20.17).
-    bookmarks: bookmarks_ui::BookmarksUi,
+    bookmarks: bookmarks::BookmarksUi,
     /// The star's popover (requirement 20.16).
     star: star_ui::StarUi,
     /// The bookmarks bar (requirement 20.18).
@@ -184,7 +184,7 @@ impl Browser {
             remote: remote_ui::RemoteUi::default(),
             refused: refused_ui::RefusedUi::default(),
             tab_strip: tab_strip::TabsUi::default(),
-            bookmarks: bookmarks_ui::BookmarksUi::default(),
+            bookmarks: bookmarks::BookmarksUi::default(),
             star: star_ui::StarUi::default(),
             bar: star_ui::BarUi::default(),
             popups: popup_ui::PopupUi::default(),
