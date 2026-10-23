@@ -11,8 +11,8 @@ use crate::browser::{Browser, Output};
 use crate::canvas::Canvas;
 use crate::geometry::{Point, Rect};
 use crate::library::Suggestions;
+use crate::text::{HAIRLINE, border, left_centred};
 use crate::theme::{ADDRESS, BLACK, DIM, ROW_STATUS, RULE, RULE_SOFT, SELECTED, STAR_ON, WHITE};
-use crate::ui::{HAIRLINE, border, left_centred};
 
 /// The address field's suggestions' state in the browser.
 #[derive(Debug, Default)]

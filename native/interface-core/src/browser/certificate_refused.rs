@@ -10,8 +10,8 @@ use super::widgets::{button, panel};
 use super::{Browser, Output};
 use crate::canvas::{Canvas, Style};
 use crate::geometry::{Point, Rect};
+use crate::text::left_centred;
 use crate::theme::{DIM, HEADING, INSECURE, ROW_STATUS, ROW_TITLE, WHITE};
-use crate::ui::left_centred;
 
 /// The screen's panel, at most this wide; narrower areas take it whole.
 const PANEL_WIDTH: f64 = 640.0;

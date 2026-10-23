@@ -16,8 +16,8 @@ use crate::canvas::Canvas;
 use crate::controls::{FastextKey, PageControl, PageControls};
 use crate::geometry::Rect;
 use crate::settings::RemoteMode;
+use crate::text::{border, centred, left_centred, outline};
 use crate::theme::{BUTTON, CONTROL, CYAN, DIM, GREEN, HEADING, PANEL, READOUT, RED, ROW_STATUS, ROW_TITLE, RULE, SELECTED, WHITE, YELLOW};
-use crate::ui::{border, centred, left_centred, outline};
 
 impl Browser {
     /// The remote, docked at the right of the body or floating over it,

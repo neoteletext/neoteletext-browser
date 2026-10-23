@@ -11,8 +11,8 @@ use super::{BAR_SHARE, BLINK_MILLISECONDS, BLOCK_LINE_SHARE, ECHO_TEXT_SHARE};
 use crate::browser::Browser;
 use crate::canvas::{COLUMNS, Canvas, PageKey, ROWS, Style};
 use crate::geometry::Rect;
+use crate::text::left_centred;
 use crate::theme::{FIELD_INK, INSECURE, ROW_STATUS, TYPING, TYPING_FIELD};
-use crate::ui::left_centred;
 
 /// The strip's badge: its padding and its corner.
 const BADGE_PADDING: f64 = 10.0;
@@ -49,7 +49,7 @@ impl Browser {
             let rect = cell(column);
             if cursor.flags & BLOCK != 0 {
                 let line = cell_width * BLOCK_LINE_SHARE;
-                crate::ui::border(canvas, rect, line, TYPING);
+                crate::text::border(canvas, rect, line, TYPING);
             } else {
                 canvas.fill(Rect::new(rect.x0, rect.y0, rect.x0 + cell_width * BAR_SHARE, rect.y1), 0.0, TYPING);
             }

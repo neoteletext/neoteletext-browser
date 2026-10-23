@@ -15,8 +15,8 @@ use crate::browser::widgets::{TRIANGLE, button, field, panel, panel_rect, triang
 use crate::canvas::Canvas;
 use crate::geometry::{Point, Rect};
 use crate::library::BookmarksView;
+use crate::text::{border, centred, left_centred};
 use crate::theme::{ADDRESS, BUTTON, CAPTION, DIM, HEADING, MUTED, ROW_STATUS, ROW_TITLE, RULE, RULE_SOFT, SELECTED, WHITE};
-use crate::ui::{border, centred, left_centred};
 
 impl Browser {
     /// The manager's symbol buttons.

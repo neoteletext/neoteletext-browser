@@ -12,8 +12,8 @@ use crate::browser::{Browser, Output};
 use crate::canvas::Canvas;
 use crate::geometry::{Point, Rect};
 use crate::library::{BarRequest, BarView, ItemRow};
+use crate::text::{HAIRLINE, border, left_centred};
 use crate::theme::{BLACK, BUTTON, DIM, ROW_STATUS, ROW_TITLE, RULE, RULE_SOFT, SELECTED, WHITE};
-use crate::ui::{HAIRLINE, border, left_centred};
 
 /// The bar's height, below the address row.
 pub(in crate::browser) const BAR_HEIGHT: f64 = 34.0;

@@ -13,8 +13,8 @@ use crate::canvas::Canvas;
 use crate::editor::Editor;
 use crate::geometry::{Point, Rect};
 use crate::library::{MAX_NAME, StarRequest, StarView};
+use crate::text::{HAIRLINE, border, left_centred};
 use crate::theme::{BLACK, BUTTON, HEADING, ROW_TITLE, RULE, RULE_SOFT, SELECTED, WHITE};
-use crate::ui::{HAIRLINE, border, left_centred};
 
 const POPOVER_WIDTH: f64 = 380.0;
 const PADDING: f64 = 16.0;

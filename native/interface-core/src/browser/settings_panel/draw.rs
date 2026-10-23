@@ -14,8 +14,8 @@ use crate::browser::widgets::{RADIUS, button, field, panel, panel_rect};
 use crate::canvas::Canvas;
 use crate::geometry::Rect;
 use crate::settings::CookieMode;
+use crate::text::{border, centred, left_centred};
 use crate::theme::{BUTTON, HEADING, INSECURE, MUTED, ROW_STATUS, ROW_TITLE, RULE, WHITE};
-use crate::ui::{border, centred, left_centred};
 
 impl Browser {
     /// The panel's symbol buttons.

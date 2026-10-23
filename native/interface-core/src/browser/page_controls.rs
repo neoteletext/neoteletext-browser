@@ -11,8 +11,8 @@ use super::{Browser, Key, Output};
 use crate::canvas::Canvas;
 use crate::controls::{FastextKey, PageControl, PageControls};
 use crate::geometry::{Point, Rect};
+use crate::text::{border, centred};
 use crate::theme::{BUTTON, ROW_TITLE, RULE, WHITE};
-use crate::ui::{border, centred};
 
 /// The sub-page control: its height, each step's width, the count's width,
 /// and its distance from the page's top right corner.

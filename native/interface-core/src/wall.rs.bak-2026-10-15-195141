@@ -19,7 +19,7 @@ use crate::theme::{
     SEGMENT_OFF, SELECTED, WHITE, WINDOW,
 };
 use crate::tween::{EASE_OUT, Tween};
-use crate::ui::{centred, label, outline};
+use crate::text::{centred, label, outline};
 
 // ---- The control row along the panel's top ----
 const CONTROLS_HEIGHT: f64 = 48.0;

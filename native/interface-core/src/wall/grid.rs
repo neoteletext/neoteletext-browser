@@ -9,9 +9,9 @@ use super::{Wall, WallPage};
 use crate::canvas::{Canvas, PAGE_HEIGHT, PAGE_WIDTH, PageKey};
 use crate::geometry::{Point, Rect};
 use crate::size::grid_width;
+use crate::text::{border, label, outline};
 use crate::theme::{CAPTION, CAPTION_TITLE, MUTED, ROW_NUMBER, ROW_TITLE, RULE, RULE_SOFT, SELECTED, WHITE};
 use crate::theme::{UPDATED, mix};
-use crate::ui::{border, label, outline};
 
 pub(super) const WALL_PADDING: f64 = 16.0;
 const COLUMN_GAP: f64 = 12.0;

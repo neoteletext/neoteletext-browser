@@ -8,9 +8,9 @@ use super::grid::{CAPTION_GAP, CAPTION_HEIGHT, CAPTION_NUMBER_WIDTH, FRAME, PAGE
 use super::{Wall, WallPage};
 use crate::canvas::{Canvas, PageKey};
 use crate::geometry::{Point, Rect};
+use crate::text::{label, outline};
 use crate::theme::{BUTTON, CAPTION, CAPTION_TITLE, MUTED, PANEL, RULE, WHITE};
 use crate::tween::{STANDARD, Tween};
-use crate::ui::{label, outline};
 
 /// The zoom from the wall and back: Material 3's medium duration of 300
 /// milliseconds on its standard curve, `cubic-bezier(0.2, 0, 0, 1)`

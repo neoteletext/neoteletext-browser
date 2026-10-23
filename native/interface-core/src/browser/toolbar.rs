@@ -8,8 +8,8 @@ use crate::browser::glyphs::{LOCK_WIDTH, arrow, gear, house, padlock, reload_gly
 use crate::browser::window::MARGIN;
 use crate::canvas::Canvas;
 use crate::geometry::{Point, Rect};
+use crate::text::{HAIRLINE, border, left_centred};
 use crate::theme::{ADDRESS, BLACK, BUTTON, DIM, FIELD, FIELD_INK, INSECURE, PRIVATE, ROW_STATUS, RULE, SECURE, SELECTED, STAR_ON, WHITE};
-use crate::ui::{HAIRLINE, border, left_centred};
 
 use crate::browser::tab_strip::STRIP_HEIGHT;
 

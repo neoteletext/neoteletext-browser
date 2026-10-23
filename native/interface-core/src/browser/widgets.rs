@@ -5,8 +5,8 @@
 use crate::canvas::{Canvas, Style};
 use crate::editor::Editor;
 use crate::geometry::{Point, Rect};
+use crate::text::{border, centred, outline};
 use crate::theme::{ADDRESS, BUTTON, Colour, FIELD, FIELD_INK, FIELD_SELECTION, PANEL, ROW_TITLE, RULE, SELECTED, WHITE};
-use crate::ui::{border, centred, outline};
 
 /// A control's corners.
 pub(super) const RADIUS: f64 = 4.0;

@@ -14,8 +14,8 @@ use super::Browser;
 use crate::canvas::Canvas;
 use crate::channel::{PAGES_PER_BANK, page_number};
 use crate::geometry::{Point, Rect};
+use crate::text::{border, left_centred};
 use crate::theme::{BUTTON, ROW_TITLE, RULE, WHITE};
-use crate::ui::{border, left_centred};
 
 /// How long the pointer rests on a control before its tip shows: about
 /// what macOS and the common browsers wait.

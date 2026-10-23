@@ -14,8 +14,8 @@ use crate::browser::glyphs::{WINDOW_GLYPH, WINDOW_GLYPH_THICKNESS, speaker_glyph
 use crate::browser::regions::{Regions, TabRegion};
 use crate::canvas::Canvas;
 use crate::geometry::{Point, Rect};
+use crate::text::{HAIRLINE, border, centred, left_centred, outline};
 use crate::theme::{BLACK, BUTTON, GLYPH, GREEN, PRIVATE, RED, ROW_STATUS, RULE, SELECTED, TAB_COLOURS, TAB_TITLE, WHITE, YELLOW};
-use crate::ui::{HAIRLINE, border, centred, left_centred, outline};
 
 impl Browser {
     pub(in crate::browser) fn draw_tab_strip<C: Canvas + ?Sized>(&mut self, canvas: &mut C, width: f64) {

@@ -9,8 +9,8 @@ use crate::browser::window::{HEADING_HEIGHT, PADDING};
 use crate::canvas::Canvas;
 use crate::channel::BANKS;
 use crate::geometry::{Point, Rect};
+use crate::text::{HAIRLINE, border, label, left_centred, outline, right_centred};
 use crate::theme::{BANK_COLOURS, BANK_COUNT, BANK_NAME, BANK_RANGE, BUTTON, HEADING, MUTED, PANEL, RULE, RULE_SOFT, WHITE};
-use crate::ui::{HAIRLINE, border, label, left_centred, outline, right_centred};
 
 const BANK_GAP: f64 = 6.0;
 const BANK_MAX_HEIGHT: f64 = 60.0;

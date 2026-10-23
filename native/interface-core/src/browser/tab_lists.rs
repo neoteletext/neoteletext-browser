@@ -9,8 +9,8 @@ use crate::browser::{Browser, Output};
 use crate::canvas::Canvas;
 use crate::geometry::{Point, Rect};
 use crate::library::TabList;
+use crate::text::{HAIRLINE, border, left_centred};
 use crate::theme::{BLACK, ROW_TITLE, RULE, SELECTED, WHITE};
-use crate::ui::{HAIRLINE, border, left_centred};
 
 const LIST_WIDTH: f64 = 460.0;
 /// How long Back or Forward is held before its list opens.

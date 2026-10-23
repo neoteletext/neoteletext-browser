@@ -10,8 +10,8 @@ use alloc::vec::Vec;
 use super::{Browser, Output};
 use crate::canvas::Canvas;
 use crate::geometry::{Point, Rect};
+use crate::text::{border, centred, left_centred, outline};
 use crate::theme::{BLACK, BUTTON, CAPTION, FIELD_INK, HEADING, MUTED, PANEL, ROW_STATUS, ROW_TITLE, RULE, TYPING, WHITE};
-use crate::ui::{border, centred, left_centred, outline};
 
 /// Where the phone keyboard stands, as the trusted core says.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

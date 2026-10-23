@@ -12,10 +12,10 @@ use crate::browser::window::{HEADING_HEIGHT, MARGIN, PADDING};
 use crate::canvas::{Canvas, PAGE_HEIGHT, PAGE_WIDTH, SCREEN_SCALE, draw_page_on_screen};
 use crate::channel::{BANKS, PAGES, PAGES_PER_BANK, Status, page_index};
 use crate::geometry::{Point, Rect};
+use crate::text::{border, centred, left_centred, outline};
 use crate::theme::{
     AXIS, BANK_COLOURS, BLACK, BUTTON, CELL_AVAILABLE, CELL_EMPTY, CELL_PULSE, HEADING, LEGEND, MUTED, PANEL, RULE, SELECTED, UPDATED, WHITE, YELLOW, mix,
 };
-use crate::ui::{border, centred, left_centred, outline};
 use crate::wall::since;
 
 const AXIS_WIDTH: f64 = 40.0;

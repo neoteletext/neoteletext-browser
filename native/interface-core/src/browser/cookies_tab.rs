@@ -14,8 +14,8 @@ use crate::canvas::Canvas;
 use crate::cookies::{CookiesRequest, CookiesView, MAX_QUERY};
 use crate::editor::Editor;
 use crate::geometry::{Point, Rect};
+use crate::text::{centred, left_centred, right_centred};
 use crate::theme::{CAPTION, DIM, MUTED, ROW_STATUS, ROW_TITLE, RULE_SOFT, WHITE};
-use crate::ui::{centred, left_centred, right_centred};
 
 const CONTROL_HEIGHT: f64 = 28.0;
 const GAP: f64 = 8.0;

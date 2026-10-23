@@ -14,8 +14,8 @@ use crate::canvas::{Canvas, PageKey};
 use crate::channel::page_index;
 use crate::geometry::Rect;
 use crate::links::{self, LinkCell, LinkKind, PageLinks, Pointing, Prompt, PromptButton, PromptKind};
+use crate::text::{border, centred, left_centred};
 use crate::theme::{ADDRESS, BUTTON, FIELD_INK, INSECURE, LINK, LINK_INK, ROW_STATUS, ROW_TITLE, RULE, WHITE};
-use crate::ui::{border, centred, left_centred};
 use crate::wall::{CellClick, cell_in};
 
 /// The strip's questions take no answer in their first half second, as the

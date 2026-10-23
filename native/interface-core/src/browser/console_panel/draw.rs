@@ -13,8 +13,8 @@ use crate::browser::widgets::field;
 use crate::canvas::Canvas;
 use crate::console::{ConsoleTab, Level};
 use crate::geometry::Rect;
+use crate::text::{border, centred, left_centred, outline};
 use crate::theme::{BUTTON, DIM, HEADING, MUTED, PANEL, ROW_STATUS, ROW_TITLE, RULE, SELECTED, WHITE};
-use crate::ui::{border, centred, left_centred, outline};
 
 impl Browser {
     /// The console's tabs and buttons, and the cookies' controls.

@@ -9,8 +9,8 @@ use super::Wall;
 use crate::canvas::{Canvas, PAGE_WIDTH};
 use crate::geometry::{Point, Rect};
 use crate::size::{Layout, clamp_width, fraction_of_width, grid_width, stepped_width, width_at_fraction};
+use crate::text::{centred, label, outline};
 use crate::theme::{BUTTON, CONTROL, MUTED, PANEL, READOUT, RULE, SEGMENT_OFF, SELECTED, WHITE};
-use crate::ui::{centred, label, outline};
 
 pub(super) const CONTROLS_HEIGHT: f64 = 48.0;
 const PADDING: f64 = 12.0;

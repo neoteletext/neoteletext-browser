@@ -8,8 +8,8 @@ use super::{Drawn, Wall, WallPage};
 use crate::canvas::{Canvas, PageKey, draw_page_on_screen};
 use crate::geometry::Rect;
 use crate::size::{Layout, clamp_width, max_width_for_window};
+use crate::text::outline;
 use crate::theme::{PANEL, RULE, WINDOW};
-use crate::ui::outline;
 
 impl Wall {
     /// Draws the panel in `panel`, with `pages` on the wall and `selected`

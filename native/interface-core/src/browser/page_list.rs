@@ -10,8 +10,8 @@ use crate::browser::window::{HEADING_HEIGHT, PADDING};
 use crate::canvas::Canvas;
 use crate::channel::page_number;
 use crate::geometry::Rect;
+use crate::text::{HAIRLINE, left_centred, outline, right_centred};
 use crate::theme::{COLUMN_HEAD, HEADING, MUTED, PANEL, ROW_NUMBER, ROW_STATUS, ROW_TITLE, RULE, RULE_SOFT, SELECTED, UPDATED, WHITE, mix};
-use crate::ui::{HAIRLINE, left_centred, outline, right_centred};
 use crate::wall::{glow, since};
 
 pub(super) const ROW_HEIGHT: f64 = 27.0;

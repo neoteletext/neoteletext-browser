@@ -5,9 +5,9 @@ use super::Wall;
 use super::grid::FRAME;
 use crate::canvas::Canvas;
 use crate::geometry::{Point, Rect};
+use crate::text::outline;
 use crate::theme::WHITE;
 use crate::tween::{EASE_OUT, Tween};
-use crate::ui::outline;
 
 /// A page under the pointer pops out: 6% larger, over 150 milliseconds
 /// ease-out, as the prototype's width transition, with a shadow offset by

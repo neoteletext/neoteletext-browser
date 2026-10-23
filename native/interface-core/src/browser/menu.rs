@@ -9,8 +9,8 @@ use crate::browser::{Browser, Output};
 use crate::canvas::Canvas;
 use crate::geometry::{Point, Rect};
 use crate::library::{BarRequest, HistoryRequest};
+use crate::text::{HAIRLINE, border, left_centred, right_centred};
 use crate::theme::{BLACK, MUTED, ROW_STATUS, ROW_TITLE, RULE, SELECTED, WHITE};
-use crate::ui::{HAIRLINE, border, left_centred, right_centred};
 
 const MENU_WIDTH: f64 = 300.0;
 
