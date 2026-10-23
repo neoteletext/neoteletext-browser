@@ -34,6 +34,7 @@ mod history;
 mod keys;
 #[cfg(feature = "links")]
 mod link_ui;
+mod menu;
 mod output;
 mod overview;
 mod page_list;
@@ -41,13 +42,15 @@ mod pages;
 #[cfg(feature = "phone-keyboard")]
 mod phone_ui;
 mod pointer;
-mod popup_ui;
+mod popups;
 mod refused_ui;
 mod regions;
 mod remote_ui;
 mod settings_panel;
 mod shown;
 mod star_ui;
+mod suggestions;
+mod tab_lists;
 mod tab_strip;
 mod tips_ui;
 mod toolbar;
@@ -131,8 +134,12 @@ pub struct Browser {
     star: star_ui::StarUi,
     /// The bookmarks bar (requirement 20.18).
     bar: star_ui::BarUi,
-    /// The menu, Back's and Forward's lists, and the suggestions.
-    popups: popup_ui::PopupUi,
+    /// The menu button's menu.
+    menu: menu::MenuUi,
+    /// Back's and Forward's lists.
+    tab_lists: tab_lists::TabListUi,
+    /// The address field's suggestions.
+    suggestions: suggestions::SuggestionsUi,
     /// The last press asked for a new tab: Shift was held.
     press_new_tab: bool,
     /// Hyperlinks (`hyperlinks.md`).
@@ -187,7 +194,9 @@ impl Browser {
             bookmarks: bookmarks::BookmarksUi::default(),
             star: star_ui::StarUi::default(),
             bar: star_ui::BarUi::default(),
-            popups: popup_ui::PopupUi::default(),
+            menu: menu::MenuUi::default(),
+            tab_lists: tab_lists::TabListUi::default(),
+            suggestions: suggestions::SuggestionsUi::default(),
             press_new_tab: false,
             #[cfg(feature = "links")]
             links: link_ui::LinkUi::default(),
