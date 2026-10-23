@@ -1,10 +1,17 @@
 //! The engine's tests, a child of `engine` so that they reach its views,
 //! its digests and its grid.
 
+use super::feed::MAX_LOGS_HELD;
 use super::*;
 use crate::{Flashing, sample};
 use neoteletext_core::charset::to_unicode;
+#[cfg(feature = "links")]
+use neoteletext_core::consts::ROWS;
 use neoteletext_core::consts::{FLASH_CYCLE_US, FLASH_UNITS};
+use neoteletext_core::level1::Glyph;
+use neoteletext_core::types::{PageAddress, SubCode};
+use neoteletext_formats::Item;
+use neoteletext_formats::item::Reader;
 use protocol::audio::Sound;
 use std::fmt::Write as _;
 
