@@ -359,6 +359,16 @@ impl Links {
         self.pointed.as_ref().map(|(_, destination)| Pointing { kind: destination.kind(), text: destination.describe() })
     }
 
+    /// Asks the strip's question for `destination`, as a link to it would:
+    /// what a start-page bookmark opened in the page area leads to
+    /// (requirement 4.5, finding F-67).
+    ///
+    /// # Errors
+    /// Why it is not asked.
+    pub fn ask(&mut self, destination: Destination, now: u64) -> Result<Follow, Refusal> {
+        self.follow(destination, now)
+    }
+
     /// A click on a cell. It follows a link only when the click is on the
     /// open page of the active channel, in an image the trusted core sent
     /// lately, on a link whose destination the strip is showing, and which

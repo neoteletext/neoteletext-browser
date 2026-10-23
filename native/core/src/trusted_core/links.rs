@@ -118,7 +118,14 @@ impl Core {
             }
             Ok(Follow::Ask(prompt)) => self.link(LinkMessage::Prompt(Some(prompt))),
             Ok(Follow::Leave(address)) => {
-                self.session.follow(address)?;
+                // From the start page, the user's own navigation, with the
+                // start page's front page behind it (requirement 19.7).
+                let from_start_page = self.session.active_tab().and_then(|tab| tab.address()).is_some_and(neoteletext::address::Address::is_start_page);
+                if from_start_page {
+                    self.session.open_from_start_page(&address.text)?;
+                } else {
+                    self.session.follow(address)?;
+                }
                 self.send_all()
             }
             Ok(Follow::HandOff(address)) => {

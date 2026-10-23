@@ -135,6 +135,7 @@ impl Session {
     ///
     /// # Errors
     /// When the address cannot be opened, or there is no tab.
+    #[cfg_attr(not(feature = "links"), allow(dead_code, reason = "only a confirmed link opens a bookmark from the start page"))]
     pub fn open_from_start_page(&mut self, bookmark: &str) -> Result<(), String> {
         let address = parse(bookmark)?;
         let front = parse(START_PAGE)?;
