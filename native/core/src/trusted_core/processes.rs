@@ -98,9 +98,23 @@ pub(super) fn start_decoder(broker: &Arc<Broker>, channel: u32, generation: u64,
 /// 71): it is given the file and reports what it holds, which arrives as
 /// one event, and is ended.
 pub(super) fn start_bookmark_reader(broker: &Arc<Broker>, file: Vec<u8>, events: Sender<Event>) -> Result<(), String> {
-    let mut child = spawn(broker, Program::Decoder, &[String::from("--bookmarks")], false)?;
+    let child = spawn(broker, Program::Decoder, &[String::from("--bookmarks")], false)?;
+    read_bookmarks_with(child, file, events, BOOKMARK_READ_DEADLINE)
+}
+
+/// How long the bookmark reader has to read a file and say what it holds
+/// before it is killed (finding F-85): its largest file, 24 MiB
+/// (`MAX_BOOKMARK_FILE`), read in well under a second here; ten seconds
+/// leave room for a slow computer.
+const BOOKMARK_READ_DEADLINE: std::time::Duration = std::time::Duration::from_secs(10);
+
+/// Gives the bookmark reader `child` the file, and sends what it reports,
+/// or, once `deadline` has passed with no answer, kills it and says so.
+fn read_bookmarks_with(mut child: Helper, file: Vec<u8>, events: Sender<Event>, deadline: std::time::Duration) -> Result<(), String> {
     let output = child.stdout.take().ok_or("the bookmark reader has no output")?;
     let mut input = child.stdin.take().ok_or("the bookmark reader has no input")?;
+    let (answer, answered) = std::sync::mpsc::channel();
+    // The exchange on a thread of its own, which killing the reader ends.
     thread::spawn(move || {
         let exchange = move || -> Result<(Vec<BookmarkEntry>, u32), String> {
             // The reader takes the whole file before it says anything.
@@ -121,7 +135,10 @@ pub(super) fn start_bookmark_reader(broker: &Arc<Broker>, file: Vec<u8>, events:
                 }
             }
         };
-        let read = exchange();
+        let _ = answer.send(exchange());
+    });
+    thread::spawn(move || {
+        let read = answered.recv_timeout(deadline).unwrap_or_else(|_| Err(String::from("the bookmark reader took too long")));
         end(&mut child);
         let _ = events.send(Event::BookmarksRead(read));
     });
@@ -236,6 +253,23 @@ mod tests {
     /// largest pipe without privileges (`/proc/sys/fs/pipe-max-size`, 1 MiB)
     /// is more than macOS's 64 KiB and the reader's 8 KiB together.
     const PIPE_AND_READER_BUFFERS: usize = 1024 * 1024;
+
+    /// Finding F-85: a bookmark reader that never answers is ended at its
+    /// deadline, and the import says it was not imported.
+    #[cfg(unix)]
+    #[test]
+    fn a_bookmark_reader_that_never_answers_is_ended() {
+        const DEADLINE: Duration = Duration::from_millis(200);
+        let program = std::path::PathBuf::from("/bin/sleep");
+        let arguments = [std::ffi::OsString::from("60")];
+        let spawn =
+            confine::Spawn { program: &program, arguments: &arguments, role: confine::Role::Decoder, environment: &[], local_network: false, writable: None };
+        let child = Helper::local(confine::spawn(&spawn).unwrap());
+        let (events, incoming) = mpsc::channel();
+        read_bookmarks_with(child, b"<!DOCTYPE NETSCAPE-Bookmark-file-1>".to_vec(), events, DEADLINE).unwrap();
+        let answer = incoming.recv_timeout(Duration::from_secs(5));
+        assert!(matches!(&answer, Ok(Event::BookmarksRead(Err(reason))) if reason == "the bookmark reader took too long"), "no answer in five seconds");
+    }
 
     /// Finding F-10: a helper that writes faster than the trusted core
     /// handles its messages is held at its budget, on its own pipe, so the
