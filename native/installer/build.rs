@@ -48,7 +48,9 @@ fn main() {
         found.sort();
         for (name, path) in found {
             println!("cargo:rerun-if-changed={}", path.display());
-            let _ = writeln!(out, "    (\"{name}\", include_bytes!(r\"{}\")),", path.display());
+            // Written as string literals by `{:?}`, which escapes them, so no
+            // file's name can end the literal (finding F-89).
+            let _ = writeln!(out, "    ({name:?}, include_bytes!({:?})),", path.to_str().expect("a payload path that is text"));
         }
     }
     out.push_str("];\n");

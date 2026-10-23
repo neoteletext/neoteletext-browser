@@ -24,9 +24,9 @@ fn text(folder: &Path, name: &str) -> Option<String> {
     println!("cargo:rerun-if-changed={}", path.display());
     let text = std::fs::read_to_string(&path).ok()?;
     let text = text.strip_suffix('\n').unwrap_or(&text);
-    // One line, written into a raw string: a designated requirement quotes
-    // its values (`certificate leaf = H"..."`).
-    assert!(!text.contains('\n') && !text.contains("\"#"), "{} must be one line", path.display());
+    // One line; it is written as a string literal by `{:?}`, which escapes
+    // what a designated requirement quotes (`certificate leaf = H"..."`).
+    assert!(!text.contains('\n'), "{} must be one line", path.display());
     Some(text.to_owned())
 }
 
@@ -61,10 +61,14 @@ fn main() {
     let host = text(&folder, "host").expect("an identity names its update host");
     assert!(!host.is_empty() && host.bytes().all(|byte| byte.is_ascii_alphanumeric() || byte == b'-' || byte == b'.'), "the host must be a plain DNS name");
     let port: u16 = text(&folder, "port").map_or(443, |port| port.parse().expect("the port must be a number"));
-    let optional_bytes = |path: Option<PathBuf>| path.map_or_else(|| String::from("None"), |path| format!("Some(include_bytes!(r\"{}\"))", path.display()));
+    // Every path and name is written as a string literal by `{:?}`, which
+    // escapes it, so no folder's name can end the literal (finding F-89).
+    let optional_bytes = |path: Option<PathBuf>| {
+        path.map_or_else(|| String::from("None"), |path| format!("Some(include_bytes!({:?}))", path.to_str().expect("an identity's path is text")))
+    };
     let optional_key = |key: Option<String>| key.map_or_else(|| String::from("None"), |key| format!("Some({key})"));
     let mut out = String::new();
-    let _ = writeln!(out, "/// Which identity this build carries.\npub const NAME: &str = r\"{name}\";");
+    let _ = writeln!(out, "/// Which identity this build carries.\npub const NAME: &str = {name:?};");
     let kind = if name == "production" { "production" } else { "test" };
     let _ = writeln!(
         out,
@@ -89,7 +93,7 @@ fn main() {
         "/// The release key: Linux's files and the Linux and Windows manifests.\npub const RELEASE_KEY: Option<[u8; 32]> = {};",
         optional_key(key(&folder, "linux-release.pub"))
     );
-    let requirement = text(&folder, "macos-requirement").map_or_else(|| String::from("None"), |requirement| format!("Some(r#\"{requirement}\"#)"));
+    let requirement = text(&folder, "macos-requirement").map_or_else(|| String::from("None"), |requirement| format!("Some({requirement:?})"));
     let _ = writeln!(out, "/// The macOS designated requirement.\npub const MACOS_REQUIREMENT: Option<&str> = {requirement};");
     let _ = writeln!(
         out,
