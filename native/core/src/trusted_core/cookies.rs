@@ -14,8 +14,8 @@ use protocol::cookies::{CookieRow, CookiesRequest, CookiesView, MAX_LABEL, MAX_N
 use protocol::fetcher::{CookieSite, FromFetcher, ToFetcher, write_to_fetcher};
 use protocol::{ToInterface, clean};
 
-use crate::Core;
-use crate::library::Numbers;
+use super::Core;
+use super::library::Numbers;
 use protocol::console::Level;
 
 /// How long after a change the cookies are written: a burst of changes is

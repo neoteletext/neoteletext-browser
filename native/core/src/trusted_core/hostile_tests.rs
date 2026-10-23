@@ -21,8 +21,11 @@ use interface_core::controls::{FastextKey, PageControl};
 use protocol::fetcher::FromFetcher;
 use protocol::{ToCore, read_from_core, read_from_interface, write_to_core};
 
+use super::Core;
 use crate::session::Session;
-use crate::{Bookmarks, Core, Outbox, Settings};
+use neoteletext::bookmarks::Bookmarks;
+use neoteletext::outbox::Outbox;
+use neoteletext::settings::Settings;
 
 /// A cookie's value no message to the interface may ever hold (requirement
 /// 3.6).

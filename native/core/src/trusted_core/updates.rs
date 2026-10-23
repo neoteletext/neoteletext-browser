@@ -22,7 +22,7 @@ use update::state::{MAX_STATE, State};
 use update::version::Version;
 use update::wire::{FromUpdater, ToUpdater, read_from_updater, write_to_updater};
 
-use crate::Event;
+use super::Event;
 
 /// How often the updater looks while the browser runs (section 3.4).
 pub const CHECK_INTERVAL: Duration = Duration::from_secs(24 * 60 * 60);

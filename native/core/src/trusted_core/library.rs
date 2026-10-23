@@ -18,7 +18,7 @@ use protocol::library::{
 use protocol::{MAX_TITLE, clean};
 use protocol::{ToCore, ToInterface};
 
-use crate::Core;
+use super::Core;
 use protocol::console::Level;
 use protocol::decoder::BookmarkEntry;
 
@@ -593,7 +593,7 @@ impl Core {
             // Another browser's file: read by a decoder, never here
             // (requirement 3.2, decision 71).
             Ok(bytes) if bytes.len() <= neoteletext::bookmarks::MAX_FILE && protocol::decoder::is_netscape_bookmarks(&bytes) => {
-                match self.broker().and_then(|broker| crate::start_bookmark_reader(broker, bytes, self.events.clone())) {
+                match self.broker().and_then(|broker| super::start_bookmark_reader(broker, bytes, self.events.clone())) {
                     Ok(()) => notice("Reading another browser's bookmarks…"),
                     Err(reason) => notice(&format!("Not imported: {reason}")),
                 }
@@ -865,8 +865,8 @@ impl Core {
 #[allow(clippy::unwrap_used, clippy::indexing_slicing, clippy::arithmetic_side_effects, reason = "a test")]
 mod tests {
     use super::*;
-    use crate::WINDOW_STILL;
     use crate::session::Session;
+    use crate::trusted_core::WINDOW_STILL;
     use interface_core::library::WindowGeometry;
     use neoteletext::outbox::Outbox;
     use neoteletext::settings::Settings;
