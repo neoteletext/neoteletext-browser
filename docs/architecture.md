@@ -187,7 +187,7 @@ Taken on 23 October 2026 while the owner was away, as the owner had instructed (
 
 The engine is `neoteletext` (`~/devel/neoteletext-engine`), a Rust implementation of World System Teletext, EN 300 706, Presentation Levels 1.0, 1.5, 2.5 and 3.5, less what the owner removed on 20 October 2026: dynamically redefinable characters (DRCS) are not decoded, and the Level 3.5 font styles (bold, italic and proportional spacing) are not drawn (its decisions E.95 and E.96). Its core is `no_std` (it does not depend on the Rust standard library) and performs no input or output of its own: it is fed bytes and returns results.
 
-**It is a separate project** (decision 36). NeoTeletext depends on its crates at one pinned commit, `00c90ea` (23 October 2026: E.106 to E.111, the qrkeyboard waker, a proxy's answer read in chunks, the receiver's row 24 and links in the formats crate, channel log lines, Device Bound Session Credentials behind a feature, and fonts named by channels withdrawn), through a `git` source in the engine's local repository, because that commit is not yet published; Cargo reads the commit, never the engine's working tree. When the commit is published, the source becomes the engine's own repository address at the same commit. Changes the engine needs are made in the engine's repository by its own process, never patched here.
+**It is a separate project** (decision 36). NeoTeletext depends on its crates, in every workspace, at one pinned commit, `fb2dd8a` (23 October 2026: E.106 to E.111, every feature set built again, the qrkeyboard waker, a proxy's answer read in chunks, the receiver's row 24 and links in the formats crate, channel log lines, Device Bound Session Credentials behind a feature, and fonts named by channels withdrawn), through a `git` source in the engine's local repository, because that commit is not yet published; Cargo reads the commit, never the engine's working tree. When the commit is published, the source becomes the engine's own repository address at the same commit. Changes the engine needs are made in the engine's repository by its own process, never patched here.
 
 | Crate | What it does | Used by NeoTeletext |
 |---|---|---|
@@ -679,7 +679,7 @@ neoteletext-browser/
 **Built** (23 October 2026), with 440 tests passing in `native/` (`cargo test --workspace --all-features` on macOS) and the updater's own in `native/tuf`:
 
 - The broker, the trusted core, the decoder, the fetcher, the interface process, the sound helper, the phone keyboard and the updater, each its own program, communicating only over the bounded protocols of section 6.4; and the launcher, which starts the broker.
-- The engine at a pinned commit, `00c90ea`, decoding T42 recordings, Teletext Text Interchange page files, transport streams and sliced records.
+- The engine at a pinned commit, `fb2dd8a`, decoding T42 recordings, Teletext Text Interchange page files, transport streams and sliced records.
 - Web channels over the HyperText Transfer Protocol, plain or with Transport Layer Security: the contents file, fetching in its order at the engine's rate, push over Server-Sent Events and WebSocket, update marks in the window.
 - File channels, fed at the same pace.
 - The window of section 11, drawn on the processor, redrawing only the boxes that changed since the last frame (`native-interface-design.md` section 12.7); and the same interface core drawn by the microcontroller back end in a test.

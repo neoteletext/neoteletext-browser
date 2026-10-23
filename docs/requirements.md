@@ -105,8 +105,8 @@
 - **Statement:** NeoTeletext must depend on the engine by one pinned commit, read from the engine's repository, never from a copy of its source or its working tree, and must never patch it locally.
 - **Reason:** The engine is maintained in its own repository, by its own process (decision 36).
 - **Source:** Decision 36.
-- **Verification:** Check: every `neoteletext` dependency in `native/Cargo.toml` names the same `rev`.
-- **State:** Not met, 23 October 2026: `native/Cargo.toml` names the engine's `00c90ea`, but the updater's workspace (`native/tuf/Cargo.toml`, `neoteletext-web`) and the fuzz workspace (`native/fuzz/Cargo.toml`, `neoteletext-qrkeyboard` and `neoteletext-input`) still name `d9ca77f`, so the fuzz targets build two engines. The check is not written; `scripts/check.sh` checks that `native/Cargo.toml` names one engine repository, not one commit. The pinned commit is in the engine's local repository and is not yet published.
+- **Verification:** Check: every `neoteletext` dependency in every workspace names the same `rev`.
+- **State:** Met, 23 October 2026: `native/Cargo.toml`, the updater's workspace (`native/tuf/Cargo.toml`) and the fuzz workspace (`native/fuzz/Cargo.toml`) name the engine's `fb2dd8a`, and `scripts/check.sh` fails unless every workspace names one engine commit (`check_engine_pin`). The pinned commit is in the engine's local repository.
 
 ---
 

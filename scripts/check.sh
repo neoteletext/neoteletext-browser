@@ -57,7 +57,16 @@ check_no_panic_lists() {
     done
 }
 
+# Requirement 2.5: every workspace depends on the engine at one commit.
+check_engine_pin() {
+    step "the engine is pinned at one commit in every workspace"
+    local revs
+    revs="$(sed -n 's/^neoteletext-[a-z-]* = { git = "file:[^"]*", rev = "\([0-9a-f]*\)".*/\1/p' native/Cargo.toml native/tuf/Cargo.toml native/fuzz/Cargo.toml | sort -u)"
+    [[ -n "$revs" && "$revs" != *$'\n'* ]] || fail "the workspaces must name one engine commit, found: ${revs:-none}"
+}
+
 check_native() {
+    check_engine_pin
     # The fuzz crate has a lockfile of its own, which a dependency change
     # in the workspace can leave stale.
     step "native: lockfiles up to date"
