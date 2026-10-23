@@ -14,8 +14,8 @@ use crate::canvas::Canvas;
 use crate::editor::Editor;
 use crate::geometry::{Point, Rect};
 use crate::library::{BookmarkRequest, BookmarksView, MAX_NAME, MAX_PATH, MAX_QUERY};
-use crate::theme::{ADDRESS, CAPTION, DIM, HEADING, MUTED, ROW_STATUS, ROW_TITLE, RULE, RULE_SOFT, SELECTED, WHITE};
-use crate::ui::{centred, left_centred};
+use crate::theme::{ADDRESS, BUTTON, CAPTION, DIM, HEADING, MUTED, ROW_STATUS, ROW_TITLE, RULE, RULE_SOFT, SELECTED, WHITE};
+use crate::ui::{border, centred, left_centred};
 
 const PANEL_WIDTH: f64 = 900.0;
 const PANEL_HEIGHT: f64 = 680.0;
@@ -29,6 +29,9 @@ const TREE_WIDTH: f64 = 240.0;
 const ROW_HEIGHT: f64 = 30.0;
 const INDENT: f64 = 14.0;
 const EDIT_BUTTON: f64 = 56.0;
+/// The "Move…" button of a row, and the folder chooser it opens.
+const MOVE_BUTTON: f64 = 64.0;
+const CHOOSER_WIDTH: f64 = 260.0;
 /// How long "Removed …" offers Undo, as long as the strip's notices last.
 const UNDO_MILLISECONDS: u64 = 10_000;
 /// How far a press moves before it is a drag.
@@ -77,8 +80,23 @@ struct Controls {
     contents: Rect,
     /// Folders of the tree and of the path: number and row.
     folders: Vec<(u32, Rect)>,
-    /// Items: number, whether a folder, row, edit button, remove button.
-    items: Vec<(u32, bool, Rect, Rect, Rect)>,
+    /// Items of the open folder, as drawn.
+    items: Vec<ItemControls>,
+    /// The folder chooser's folders, and where it lies, while it is open.
+    chooser: Vec<(u32, Rect)>,
+    chooser_area: Rect,
+}
+
+/// An item's row and buttons, where last drawn.
+#[derive(Clone, Copy, Debug, Default)]
+struct ItemControls {
+    number: u32,
+    folder: bool,
+    row: Rect,
+    edit: Rect,
+    /// "Move…": a chooser of the folder to move it into.
+    moving: Rect,
+    remove: Rect,
 }
 
 /// The manager's state in the browser.
@@ -92,6 +110,8 @@ pub(super) struct BookmarksUi {
     form: Option<Form>,
     /// An item pressed, and where, which a move of the pointer makes a drag.
     pressed: Option<(u32, Point)>,
+    /// The item whose folder chooser is open.
+    moving: Option<u32>,
     /// When the view's "Removed …" arrived, and what it said.
     undo_since: Option<(u64, String)>,
     controls: Controls,
@@ -108,6 +128,7 @@ impl Default for BookmarksUi {
             address: Editor::new(MAX_PATH),
             form: None,
             pressed: None,
+            moving: None,
             undo_since: None,
             controls: Controls::default(),
         }
@@ -129,8 +150,8 @@ impl Browser {
     pub(super) fn bookmarks_tips(&self, tips: &mut Vec<(Rect, String)>) {
         let controls = &self.bookmarks.controls;
         tips.push((controls.close, format!("Close bookmarks ({})", self.keys_named("Option+Cmd+B", "Ctrl+Shift+O"))));
-        for &(_, folder, _, _, remove) in &controls.items {
-            tips.push((remove, if folder { "Delete this folder and what it holds" } else { "Delete this bookmark" }.into()));
+        for item in &controls.items {
+            tips.push((item.remove, if item.folder { "Delete this folder and what it holds" } else { "Delete this bookmark" }.into()));
         }
     }
 
@@ -215,6 +236,9 @@ impl Browser {
         }
         let Some(field) = self.bookmarks.focus else {
             if key == Key::Escape {
+                if self.bookmarks.moving.take().is_some() {
+                    return Some(true);
+                }
                 if self.bookmarks.form.take().is_none() {
                     self.toggle_bookmarks();
                 }
@@ -301,6 +325,13 @@ impl Browser {
         if !controls.panel.contains(point) {
             return false;
         }
+        // The folder chooser takes the press; anywhere else closes it.
+        if let Some(number) = self.bookmarks.moving.take() {
+            if let Some(&(folder, _)) = controls.chooser.iter().find(|(_, rect)| rect.contains(point)) {
+                self.outputs.push(Output::Bookmarks(BookmarkRequest::Move { number, folder, index: u32::MAX }));
+            }
+            return true;
+        }
         if controls.close.contains(point) {
             self.toggle_bookmarks();
             return true;
@@ -330,7 +361,7 @@ impl Browser {
             None
         };
         let folder = controls.folders.iter().find(|(_, rect)| rect.contains(point)).map(|&(number, _)| number);
-        let item = controls.items.iter().find(|(_, _, row, _, _)| row.contains(point)).copied();
+        let item = controls.items.iter().find(|item| item.row.contains(point)).copied();
         if save {
             self.submit_form();
             return true;
@@ -347,9 +378,11 @@ impl Browser {
             self.outputs.push(Output::Bookmarks(request));
         } else if let Some(number) = folder {
             self.outputs.push(Output::Bookmarks(BookmarkRequest::Folder(number)));
-        } else if let Some((number, _, _, edit, remove)) = item {
+        } else if let Some(ItemControls { number, edit, moving, remove, .. }) = item {
             if remove.contains(point) {
                 self.outputs.push(Output::Bookmarks(BookmarkRequest::Remove(number)));
+            } else if moving.contains(point) {
+                self.bookmarks.moving = Some(number);
             } else if edit.contains(point) {
                 let shown = self.bookmarks.view.as_ref().and_then(|view| view.items.iter().find(|item| item.number == number)).cloned();
                 if let Some(shown) = shown {
@@ -363,6 +396,57 @@ impl Browser {
         true
     }
 
+    /// The bookmark, not a folder, whose row is at `point`, away from its
+    /// buttons.
+    pub(super) fn bookmark_at(&self, point: Point) -> Option<u32> {
+        if !self.bookmarks.open || self.bookmarks.moving.is_some() {
+            return None;
+        }
+        let item = self.bookmarks.controls.items.iter().find(|item| item.row.contains(point))?;
+        let on_button = [item.edit, item.moving, item.remove].iter().any(|button| button.contains(point));
+        (!item.folder && !on_button).then_some(item.number)
+    }
+
+    /// The folder chooser of the item being moved, below its "Move…"
+    /// button, or above it near the foot of `within`: the folders the tree
+    /// shows, as far as they fit, but the item itself.
+    fn draw_chooser<C: Canvas + ?Sized>(&mut self, canvas: &mut C, view: &BookmarksView, controls: &mut Controls, within: Rect) {
+        let Some(number) = self.bookmarks.moving else { return };
+        let Some(item) = controls.items.iter().find(|item| item.number == number).copied() else {
+            // Its row is gone: scrolled away, or the item removed.
+            self.bookmarks.moving = None;
+            return;
+        };
+        let folders: Vec<_> = view.folders.iter().filter(|folder| folder.number != number).collect();
+        let fit = libm::floor((within.y1 - within.y0) / ROW_HEIGHT);
+        #[allow(clippy::cast_precision_loss, reason = "at most a view's rows")]
+        let rows = (folders.len() as f64).min(fit).max(1.0);
+        let height = rows * ROW_HEIGHT;
+        let top = if item.moving.y1 + height > within.y1 { (item.moving.y0 - height).max(within.y0) } else { item.moving.y1 };
+        let area = Rect::new((item.moving.x1 - CHOOSER_WIDTH).max(within.x0), top, item.moving.x1, top + height);
+        canvas.fill(area, 0.0, BUTTON);
+        border(canvas, area, 1.0, RULE);
+        if folders.is_empty() {
+            left_centred(canvas, area, GAP, "No other folder to move it into", ROW_STATUS, DIM);
+        }
+        canvas.push_clip(area);
+        let mut y = area.y0;
+        for folder in folders {
+            if y + ROW_HEIGHT > area.y1 + f64::EPSILON {
+                break;
+            }
+            let row = Rect::new(area.x0, y, area.x1, y + ROW_HEIGHT);
+            if row.contains(self.pointer) {
+                canvas.fill(row, 0.0, SELECTED);
+            }
+            left_centred(canvas, row, GAP + INDENT * f64::from(folder.depth), &folder.name, ROW_TITLE, WHITE);
+            controls.chooser.push((folder.number, row));
+            y += ROW_HEIGHT;
+        }
+        canvas.pop_clip();
+        controls.chooser_area = area;
+    }
+
     /// The main button released over the manager: an item pressed and not
     /// moved opens; one dragged onto a folder or another item moves there.
     pub(super) fn bookmarks_released(&mut self, new_tab: bool) -> bool {
@@ -370,7 +454,7 @@ impl Browser {
         let point = self.pointer;
         let controls = &self.bookmarks.controls;
         let moved = (point.x - from.x).abs() > DRAG_DISTANCE || (point.y - from.y).abs() > DRAG_DISTANCE;
-        let is_folder = controls.items.iter().any(|&(each, folder, _, _, _)| each == number && folder);
+        let is_folder = controls.items.iter().any(|item| item.number == number && item.folder);
         if !moved {
             let request = if is_folder { BookmarkRequest::Folder(number) } else { BookmarkRequest::Open { number, new_tab } };
             self.outputs.push(Output::Bookmarks(request));
@@ -382,7 +466,7 @@ impl Browser {
         // Dropped on a folder: into it, at its end; on an item of the open
         // folder: before it.
         let onto_folder = controls.folders.iter().find(|(_, rect)| rect.contains(point)).map(|&(folder, _)| folder);
-        let onto_item = controls.items.iter().position(|(_, _, row, _, _)| row.contains(point));
+        let onto_item = controls.items.iter().position(|item| item.row.contains(point));
         let open_folder = self.bookmarks.view.as_ref().and_then(|view| view.path.last()).map(|folder| folder.number);
         let request = match (onto_folder, onto_item, open_folder) {
             (Some(folder), _, _) if folder != number => Some(BookmarkRequest::Move { number, folder, index: u32::MAX }),
@@ -552,11 +636,13 @@ impl Browser {
             }
             let remove = Rect::new(right - SMALL_BUTTON, row_y, right, row_y + ROW_HEIGHT);
             let edit = Rect::new(remove.x0 - EDIT_BUTTON, row_y, remove.x0, row_y + ROW_HEIGHT);
-            if hovered {
+            let moving = Rect::new(edit.x0 - MOVE_BUTTON, row_y, edit.x0, row_y + ROW_HEIGHT);
+            if hovered || self.bookmarks.moving == Some(item.number) {
+                centred(canvas, moving, "Move\u{2026}", ROW_STATUS, WHITE);
                 centred(canvas, edit, "Edit", ROW_STATUS, WHITE);
                 centred(canvas, remove, "\u{00D7}", ROW_TITLE, WHITE);
             }
-            let text = Rect::new(contents_left + GAP, row_y, edit.x0 - GAP, row_y + ROW_HEIGHT);
+            let text = Rect::new(contents_left + GAP, row_y, moving.x0 - GAP, row_y + ROW_HEIGHT);
             let middle = f64::midpoint(text.x0, text.x1);
             canvas.push_clip(Rect::new(text.x0, row_y, if item.folder { text.x1 } else { middle - GAP }, row_y + ROW_HEIGHT));
             let inset = if item.folder {
@@ -574,10 +660,12 @@ impl Browser {
                 left_centred(canvas, Rect::new(middle, row_y, text.x1, row_y + ROW_HEIGHT), 0.0, &place, ADDRESS, DIM);
                 canvas.pop_clip();
             }
-            controls.items.push((item.number, item.folder, rect, edit, remove));
+            controls.items.push(ItemControls { number: item.number, folder: item.folder, row: rect, edit, moving, remove });
             row_y += ROW_HEIGHT;
         }
         canvas.pop_clip();
+        let within = Rect::new(left, controls.contents.y0, right, footer);
+        self.draw_chooser(canvas, &view, &mut controls, within);
 
         // Undo, for a while, and the trusted core's word.
         let footer = Rect::new(left, footer, right, footer + CONTROL_HEIGHT);
@@ -660,13 +748,80 @@ mod tests {
         for expected in ["Bookmarks", "News Example", "https://news.example/", "Weather"] {
             assert!(texts.contains(&expected), "{expected} in {texts:?}");
         }
-        let folder = browser.bookmarks.controls.items[1].2;
+        let folder = browser.bookmarks.controls.items[1].row;
         assert_eq!(click(&mut browser, folder), [Output::Bookmarks(BookmarkRequest::Folder(6))]);
-        let bookmark = browser.bookmarks.controls.items[0].2;
+        let bookmark = browser.bookmarks.controls.items[0].row;
         assert_eq!(
             click(&mut browser, bookmark),
             [Output::Bookmarks(BookmarkRequest::Open { number: 5, new_tab: false }), Output::Bookmarks(BookmarkRequest::Panel(false))]
         );
+    }
+
+    /// "Move…" opens a chooser of the folders, the item's own left out; a
+    /// folder chosen asks for the move, to the folder's end; Escape or a
+    /// press elsewhere closes it and asks for nothing.
+    #[test]
+    fn move_to_chooses_a_folder() {
+        let mut browser = open();
+        let sport = browser.bookmarks.controls.items[1];
+        let moving = sport.moving;
+        browser.pointer_moved(middle(sport.row).x, middle(sport.row).y, 0);
+        let mut canvas = Recorder::new();
+        browser.draw(&mut canvas, 1440.0, 900.0, 0);
+        assert!(canvas.texts.iter().any(|(_, text)| text == "Move\u{2026}"), "shown on the row under the pointer");
+        browser.bookmarks_press(middle(moving));
+        browser.draw(&mut Recorder::new(), 1440.0, 900.0, 0);
+        let chosen: Vec<u32> = browser.bookmarks.controls.chooser.iter().map(|&(number, _)| number).collect();
+        assert_eq!(chosen, [2, 3, 4]);
+        let weather = browser.bookmarks.controls.chooser[2].1;
+        assert!(browser.bookmarks_press(middle(weather)));
+        assert_eq!(browser.take_outputs(), [Output::Bookmarks(BookmarkRequest::Move { number: 6, folder: 4, index: u32::MAX })]);
+        browser.draw(&mut Recorder::new(), 1440.0, 900.0, 0);
+        assert!(browser.bookmarks.controls.chooser.is_empty(), "closed once chosen");
+        // Escape closes it; the manager stays open.
+        browser.bookmarks_press(middle(moving));
+        browser.key(Key::Escape, Modifiers::default(), 0);
+        browser.draw(&mut Recorder::new(), 1440.0, 900.0, 0);
+        assert!(browser.bookmarks.controls.chooser.is_empty() && browser.bookmarks.open);
+        // A press elsewhere closes it and does nothing else.
+        browser.bookmarks_press(middle(moving));
+        browser.draw(&mut Recorder::new(), 1440.0, 900.0, 0);
+        let bookmark = browser.bookmarks.controls.items[0].row;
+        assert!(browser.bookmarks_press(middle(bookmark)));
+        browser.bookmarks_released(false);
+        assert_eq!(browser.take_outputs(), []);
+        // A folder moved never lists itself.
+        let news = browser.bookmarks.controls.items[0].moving;
+        browser.set_bookmarks(
+            BookmarksView {
+                items: alloc::vec![ItemRow { number: 4, folder: true, name: "Weather".into(), address: String::new(), place: String::new() }],
+                items_total: 1,
+                ..view()
+            },
+            0,
+        );
+        browser.draw(&mut Recorder::new(), 1440.0, 900.0, 0);
+        browser.bookmarks_press(middle(news));
+        browser.draw(&mut Recorder::new(), 1440.0, 900.0, 0);
+        assert!(browser.bookmarks.controls.chooser.iter().all(|&(number, _)| number != 4));
+    }
+
+    /// The middle button and Command-click open a bookmark in a new tab,
+    /// and leave the manager open; on a folder, a button or the chooser
+    /// they open nothing.
+    #[test]
+    fn the_middle_button_and_command_click_open_in_a_new_tab() {
+        let mut browser = open();
+        let [news, sport] = [browser.bookmarks.controls.items[0], browser.bookmarks.controls.items[1]];
+        for (pressed, expected) in [(news.row, true), (sport.row, false), (news.remove, false), (news.edit, false)] {
+            browser.pointer_moved(middle(pressed).x, middle(pressed).y, 0);
+            assert_eq!(browser.middle_pressed(), expected);
+        }
+        assert_eq!(browser.take_outputs(), [Output::Bookmarks(BookmarkRequest::Open { number: 5, new_tab: true })]);
+        browser.pointer_moved(middle(news.row).x, middle(news.row).y, 0);
+        assert!(browser.new_tab_pressed());
+        assert_eq!(browser.take_outputs(), [Output::Bookmarks(BookmarkRequest::Open { number: 5, new_tab: true })]);
+        assert!(browser.bookmarks.open);
     }
 
     /// Requirement 20.17: a new folder, an edit, a removal and its undo, a
@@ -679,7 +834,7 @@ mod tests {
         browser.key(Key::Text("Weather"), Modifiers::default(), 0);
         browser.key(Key::Enter, Modifiers::default(), 0);
         assert_eq!(browser.take_outputs(), [Output::TextInput(false), Output::Bookmarks(BookmarkRequest::NewFolder("Weather".into()))]);
-        let edit = browser.bookmarks.controls.items[0].3;
+        let edit = browser.bookmarks.controls.items[0].edit;
         browser.pointer_moved(middle(edit).x, middle(edit).y, 0);
         browser.bookmarks_press(middle(edit));
         browser.take_outputs();
@@ -691,7 +846,7 @@ mod tests {
             [Output::TextInput(false), Output::Bookmarks(BookmarkRequest::Edit { number: 5, name: "News".into(), address: "https://news.example/".into() })]
         );
         browser.draw(&mut Recorder::new(), 1440.0, 900.0, 0);
-        let remove = browser.bookmarks.controls.items[0].4;
+        let remove = browser.bookmarks.controls.items[0].remove;
         browser.pointer_moved(middle(remove).x, middle(remove).y, 0);
         browser.bookmarks_press(middle(remove));
         assert_eq!(browser.take_outputs(), [Output::Bookmarks(BookmarkRequest::Remove(5))]);
@@ -703,7 +858,7 @@ mod tests {
         assert!(!browser.bookmarks_undo_shown(100 + UNDO_MILLISECONDS), "ten seconds");
         // Dragged onto Weather in the tree.
         browser.draw(&mut Recorder::new(), 1440.0, 900.0, 0);
-        let (bookmark, weather) = (browser.bookmarks.controls.items[0].2, browser.bookmarks.controls.folders[2].1);
+        let (bookmark, weather) = (browser.bookmarks.controls.items[0].row, browser.bookmarks.controls.folders[2].1);
         browser.pointer_moved(middle(bookmark).x, middle(bookmark).y, 0);
         browser.bookmarks_press(middle(bookmark));
         browser.pointer_moved(middle(weather).x, middle(weather).y, 0);

@@ -329,6 +329,12 @@ impl Browser {
         self.popups.chosen = None;
     }
 
+    /// The suggestion at `point`, while they show.
+    pub(super) fn suggestion_at(&self, point: Point) -> Option<u32> {
+        self.popups.suggestions.as_ref()?;
+        self.popups.rows.iter().find(|(_, rect)| rect.contains(point)).map(|&(number, _)| number)
+    }
+
     /// A press on a suggestion: it opens, as the user's own navigation.
     pub(super) fn suggestion_press(&mut self, point: Point, new_tab: bool) -> bool {
         if self.popups.suggestions.is_none() || !self.popups.suggestions_area.contains(point) {

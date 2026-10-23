@@ -27,6 +27,18 @@ const RGB_BYTES: usize = 3;
 const FRAME_HEADER_BYTES: usize = 2 + 1 + 1;
 /// A whole page's flags, before its bytes.
 const WHOLE_FLAGS_BYTES: usize = 1;
+/// The largest bookmark file a decoder reads (decision 71): the trusted
+/// core's own bookmark file's bound.
+pub const MAX_BOOKMARK_FILE: usize = 24 * 1024 * 1024;
+/// The most entries a decoder reports from a bookmark file: the trusted
+/// core's bound on bookmarks and folders.
+pub const MAX_BOOKMARK_ENTRIES: usize = 10_000;
+/// A bookmark's name as a decoder reports it, before the trusted core
+/// cleans it: the name's bound, with room for what cleaning removes.
+pub const MAX_BOOKMARK_NAME: usize = 4 * interface_core::library::MAX_NAME;
+/// The first line of the Netscape bookmark file, which every browser
+/// writes and reads (decision 71).
+pub const NETSCAPE_DOCTYPE: &str = "<!DOCTYPE NETSCAPE-Bookmark-file-1>";
 
 // Trusted core to decoder.
 const KIND_DATA: u8 = 48;
@@ -51,6 +63,10 @@ const KIND_STORE_FULL: u8 = 70;
 #[cfg(feature = "interaction")]
 const KIND_INPUT_CONTROL: u8 = 71;
 const KIND_SUBPAGES: u8 = 72;
+const KIND_BOOKMARK_FOLDER: u8 = 73;
+const KIND_BOOKMARK_FOLDER_END: u8 = 74;
+const KIND_BOOKMARK_LINK: u8 = 75;
+const KIND_BOOKMARKS_READ: u8 = 76;
 /// A view's flags: reveal, hold, mix, and a sub-page chosen.
 const VIEW_REVEAL: u8 = 1;
 const VIEW_HOLD: u8 = 2;
@@ -144,6 +160,15 @@ pub enum FromDecoder {
     /// The page store is full: the channel has more pages and sub-pages
     /// than it has room for, and the oldest are being forgotten.
     StoreFull,
+    /// Something found in a bookmark file the decoder was given to read
+    /// (decision 71).
+    Bookmark(BookmarkEntry),
+    /// The bookmark file is read: what was found has been sent, and this
+    /// many bookmarks and folders were left out.
+    BookmarksRead {
+        /// Left out: not addresses, too deep, or past the bound.
+        skipped: u32,
+    },
     /// A voice operation of the channel's audio receiver.
     Audio(crate::audio::Audio),
     /// The links found in a page, sent before its image whenever they
@@ -193,6 +218,33 @@ pub enum FromDecoder {
         /// The control message's body.
         body: Vec<u8>,
     },
+}
+
+/// One thing a decoder found in a bookmark file, in the file's order
+/// (decision 71): untrusted, for the trusted core to check.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum BookmarkEntry {
+    /// A folder opens, by this name; what follows is in it until its end.
+    Folder(String),
+    /// The folder last opened ends.
+    FolderEnd,
+    /// A bookmark.
+    Link {
+        /// Its name.
+        name: String,
+        /// Its address, as written.
+        address: String,
+    },
+}
+
+/// Whether `bytes` are a Netscape bookmark file: its first line, after
+/// any byte order mark and white space, in any case. Only the first line
+/// is looked at; the file is read by a decoder (decision 71).
+#[must_use]
+pub fn is_netscape_bookmarks(bytes: &[u8]) -> bool {
+    let bytes = bytes.strip_prefix("\u{feff}".as_bytes()).unwrap_or(bytes);
+    let start = bytes.iter().position(|byte| !byte.is_ascii_whitespace()).unwrap_or(bytes.len());
+    bytes.get(start..).and_then(|rest| rest.get(..NETSCAPE_DOCTYPE.len())).is_some_and(|first| first.eq_ignore_ascii_case(NETSCAPE_DOCTYPE.as_bytes()))
 }
 
 fn display_page(fields: &mut Fields<'_>) -> Result<u16, ProtocolError> {
@@ -400,6 +452,20 @@ pub fn write_to_core(out: &mut dyn Write, message: &FromDecoder) -> Result<(), P
             KIND_INPUT_CONTROL
         }
         FromDecoder::StoreFull => KIND_STORE_FULL,
+        FromDecoder::Bookmark(BookmarkEntry::Folder(name)) => {
+            push_raw_text(&mut payload, name, MAX_BOOKMARK_NAME);
+            KIND_BOOKMARK_FOLDER
+        }
+        FromDecoder::Bookmark(BookmarkEntry::FolderEnd) => KIND_BOOKMARK_FOLDER_END,
+        FromDecoder::Bookmark(BookmarkEntry::Link { name, address }) => {
+            push_raw_text(&mut payload, name, MAX_BOOKMARK_NAME);
+            push_raw_text(&mut payload, address, crate::MAX_ADDRESS);
+            KIND_BOOKMARK_LINK
+        }
+        FromDecoder::BookmarksRead { skipped } => {
+            payload.extend_from_slice(&skipped.to_be_bytes());
+            KIND_BOOKMARKS_READ
+        }
     };
     write_frame(out, kind, &payload)
 }
@@ -416,14 +482,7 @@ pub fn read_from_decoder(input: &mut dyn Read) -> Result<Option<FromDecoder>, Pr
     let message = match kind {
         KIND_ARRIVED => {
             let page = display_page(&mut fields)?;
-            let length = usize::from(fields.u16()?);
-            if length > MAX_PAGE_TITLE {
-                return Err(ProtocolError::BadValue("title too long"));
-            }
-            // Invalid UTF-8 is replaced, never trusted; the trusted core
-            // cleans what remains.
-            let title = String::from_utf8_lossy(fields.take(length)?).into_owned();
-            FromDecoder::Arrived { page, title }
+            FromDecoder::Arrived { page, title: raw_text(&mut fields, MAX_PAGE_TITLE, "title too long")? }
         }
         KIND_FRAME => {
             let page = display_page(&mut fields)?;
@@ -486,10 +545,28 @@ pub fn read_from_decoder(input: &mut dyn Read) -> Result<Option<FromDecoder>, Pr
             FromDecoder::InputControl { body: fields.take(length)?.to_vec() }
         }
         KIND_STORE_FULL => FromDecoder::StoreFull,
+        KIND_BOOKMARK_FOLDER => FromDecoder::Bookmark(BookmarkEntry::Folder(raw_text(&mut fields, MAX_BOOKMARK_NAME, "name too long")?)),
+        KIND_BOOKMARK_FOLDER_END => FromDecoder::Bookmark(BookmarkEntry::FolderEnd),
+        KIND_BOOKMARK_LINK => {
+            let name = raw_text(&mut fields, MAX_BOOKMARK_NAME, "name too long")?;
+            let address = raw_text(&mut fields, crate::MAX_ADDRESS, "address too long")?;
+            FromDecoder::Bookmark(BookmarkEntry::Link { name, address })
+        }
+        KIND_BOOKMARKS_READ => FromDecoder::BookmarksRead { skipped: fields.u32()? },
         other => return Err(ProtocolError::UnknownKind(other)),
     };
     fields.end()?;
     Ok(Some(message))
+}
+
+/// Text a decoder found, of at most `limit` bytes: invalid UTF-8 is
+/// replaced, never trusted, and the trusted core cleans what remains.
+fn raw_text(fields: &mut Fields<'_>, limit: usize, too_long: &'static str) -> Result<String, ProtocolError> {
+    let length = usize::from(fields.u16()?);
+    if length > limit {
+        return Err(ProtocolError::BadValue(too_long));
+    }
+    Ok(String::from_utf8_lossy(fields.take(length)?).into_owned())
 }
 
 // Kept for symmetry with the interface's messages: text the trusted core
@@ -539,11 +616,35 @@ mod tests {
             FromDecoder::Frame { page: 0x123, palette: vec![[0, 0, 0], [255, 255, 255]], screen: 1, indices },
             FromDecoder::SubPages { page: 0x302, subcodes: vec![1, 2, 3], shown: 2 },
             FromDecoder::SubPages { page: 0x100, subcodes: vec![interface_core::controls::ANY_SUBCODE], shown: interface_core::controls::ANY_SUBCODE },
+            FromDecoder::Bookmark(BookmarkEntry::Folder("Bookmarks bar".into())),
+            FromDecoder::Bookmark(BookmarkEntry::FolderEnd),
+            FromDecoder::Bookmark(BookmarkEntry::Link { name: "Teefax".into(), address: "https://teastop.co.uk/teefax/".into() }),
+            FromDecoder::BookmarksRead { skipped: 3 },
         ] {
             let mut bytes = Vec::new();
             write_to_core(&mut bytes, &message).unwrap();
             assert_eq!(read_from_decoder(&mut bytes.as_slice()).unwrap().unwrap(), message);
         }
+    }
+
+    /// Decision 71: a bookmark's text longer than its bound is refused,
+    /// and the Netscape file is known by its first line alone.
+    #[test]
+    fn a_bookmark_entry_is_held_to_its_bounds() {
+        let mut bytes = vec![KIND_BOOKMARK_FOLDER];
+        let length = MAX_BOOKMARK_NAME + 1;
+        bytes.extend_from_slice(&u32::try_from(length + 2).unwrap().to_be_bytes());
+        bytes.extend_from_slice(&u16::try_from(length).unwrap().to_be_bytes());
+        bytes.extend(std::iter::repeat_n(b'a', length));
+        assert!(read_from_decoder(&mut bytes.as_slice()).is_err());
+        let link = FromDecoder::Bookmark(BookmarkEntry::Link { name: "n".into(), address: "h".repeat(crate::MAX_ADDRESS + 9) });
+        let mut bytes = Vec::new();
+        write_to_core(&mut bytes, &link).unwrap();
+        let Some(FromDecoder::Bookmark(BookmarkEntry::Link { address, .. })) = read_from_decoder(&mut bytes.as_slice()).unwrap() else { panic!("a link") };
+        assert_eq!(address.len(), crate::MAX_ADDRESS, "cut to its bound as it is sent");
+        assert!(is_netscape_bookmarks(b"\xef\xbb\xbf \n<!doctype netscape-bookmark-file-1>\n<DL>"));
+        assert!(!is_netscape_bookmarks(b"<html><!DOCTYPE NETSCAPE-Bookmark-file-1>"));
+        assert!(!is_netscape_bookmarks(b"<!DOCTYPE NETSCAPE"));
     }
 
     /// REQ-INT-111: a control record's body goes to the trusted core as

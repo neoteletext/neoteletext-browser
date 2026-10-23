@@ -29,22 +29,64 @@ use std::time::Duration;
 
 use decoder::{Engine, Flashing, Rendered};
 use protocol::ProtocolError;
-use protocol::decoder::{FIRST_STORE_PAGES, FromDecoder, MAX_STORE_PAGES, ToDecoder, read_from_core, write_frame_to_core, write_to_core};
+use protocol::decoder::{FIRST_STORE_PAGES, FromDecoder, MAX_BOOKMARK_FILE, MAX_STORE_PAGES, ToDecoder, read_from_core, write_frame_to_core, write_to_core};
 
 /// Microseconds in a millisecond: the audio receiver keeps milliseconds.
 const MICROSECONDS_PER_MILLISECOND: u64 = 1000;
 
 type Output<'a> = BufWriter<io::StdoutLock<'a>>;
 
-/// The store size the trusted core asked for: `--store-pages N`, from
-/// [`FIRST_STORE_PAGES`] to [`MAX_STORE_PAGES`].
-fn store_pages() -> Result<usize, String> {
+/// What the trusted core started the decoder for.
+enum Mode {
+    /// A channel, with a store of this many pages.
+    Channel(usize),
+    /// To read one bookmark file (decision 71).
+    Bookmarks,
+}
+
+/// The mode the trusted core asked for: a channel's store size,
+/// `--store-pages N` from [`FIRST_STORE_PAGES`] to [`MAX_STORE_PAGES`], or
+/// `--bookmarks`.
+fn mode() -> Result<Mode, String> {
     let mut arguments = std::env::args().skip(1);
     match (arguments.next().as_deref(), arguments.next().map(|value| value.parse::<usize>())) {
-        (None, _) => Ok(FIRST_STORE_PAGES),
-        (Some("--store-pages"), Some(Ok(pages))) if (FIRST_STORE_PAGES..=MAX_STORE_PAGES).contains(&pages) => Ok(pages),
-        _ => Err(format!("usage: neoteletext-decoder [--store-pages {FIRST_STORE_PAGES} to {MAX_STORE_PAGES}]")),
+        (None, _) => Ok(Mode::Channel(FIRST_STORE_PAGES)),
+        (Some("--store-pages"), Some(Ok(pages))) if (FIRST_STORE_PAGES..=MAX_STORE_PAGES).contains(&pages) => Ok(Mode::Channel(pages)),
+        (Some("--bookmarks"), None) => Ok(Mode::Bookmarks),
+        _ => Err(format!("usage: neoteletext-decoder [--store-pages {FIRST_STORE_PAGES} to {MAX_STORE_PAGES} | --bookmarks]")),
     }
+}
+
+/// Reads a bookmark file the trusted core sends as data, to its end, and
+/// reports what it holds (decision 71).
+fn read_bookmarks() -> Result<(), ProtocolError> {
+    let mut input = BufReader::new(io::stdin().lock());
+    let mut file: Vec<u8> = Vec::new();
+    loop {
+        match read_from_core(&mut input)? {
+            Some(ToDecoder::Data(bytes)) => {
+                if file.len().saturating_add(bytes.len()) > MAX_BOOKMARK_FILE {
+                    return Err(ProtocolError::TooLong(file.len().saturating_add(bytes.len())));
+                }
+                file.extend_from_slice(&bytes);
+            }
+            Some(ToDecoder::End) => break,
+            Some(_) => return Err(ProtocolError::BadValue("a bookmark reader takes only data")),
+            None => return Ok(()),
+        }
+    }
+    let mut output = BufWriter::new(io::stdout().lock());
+    match decoder::netscape::read(&file) {
+        Ok(found) => {
+            for entry in found.entries {
+                write_to_core(&mut output, &FromDecoder::Bookmark(entry))?;
+            }
+            write_to_core(&mut output, &FromDecoder::BookmarksRead { skipped: found.skipped })?;
+        }
+        Err(not_read) => eprintln!("neoteletext-decoder: not a bookmark file this reader reads: {not_read:?}"),
+    }
+    output.flush()?;
+    Ok(())
 }
 
 fn run(store_pages: usize) -> Result<(), ProtocolError> {
@@ -218,14 +260,15 @@ fn main() -> ExitCode {
             return ExitCode::FAILURE;
         }
     }
-    let pages = match store_pages() {
-        Ok(pages) => pages,
+    let ran = match mode() {
+        Ok(Mode::Channel(pages)) => run(pages),
+        Ok(Mode::Bookmarks) => read_bookmarks(),
         Err(usage) => {
             eprintln!("neoteletext-decoder: {usage}");
             return ExitCode::FAILURE;
         }
     };
-    match run(pages) {
+    match ran {
         Ok(()) => ExitCode::SUCCESS,
         Err(error) => {
             eprintln!("neoteletext-decoder: {error}");

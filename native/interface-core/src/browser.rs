@@ -1079,12 +1079,43 @@ impl Browser {
         self.scroll_by(lines * LINE_HEIGHT, now)
     }
 
-    /// A press of the middle button: on a tab, the tab closes, as in every
-    /// current browser.
+    /// A press of the middle button: on a tab, the tab closes, and on what
+    /// opens a channel, it opens in a new tab, as in every current browser.
     pub fn middle_pressed(&mut self) -> bool {
         self.tips_pressed();
-        let Some(region) = self.regions.tabs.iter().rev().find(|region| region.tab.contains(self.pointer)) else { return false };
-        self.outputs.push(Output::CloseTab(region.index));
+        if let Some(region) = self.regions.tabs.iter().rev().find(|region| region.tab.contains(self.pointer)) {
+            self.outputs.push(Output::CloseTab(region.index));
+            return true;
+        }
+        self.open_in_new_tab()
+    }
+
+    /// A press of the main button with Command (Control elsewhere): what
+    /// opens a channel opens it in a new tab, as Shift does. Anywhere else
+    /// it is not taken, and is an ordinary press.
+    pub fn new_tab_pressed(&mut self) -> bool {
+        self.tips_pressed();
+        self.open_in_new_tab()
+    }
+
+    /// Opens what is under the pointer in a new tab: a suggestion, a
+    /// bookmark of the bar or its list, a history row or a bookmark of the
+    /// manager, in the order they lie over each other.
+    fn open_in_new_tab(&mut self) -> bool {
+        let point = self.pointer;
+        let output = if let Some(number) = self.suggestion_at(point) {
+            self.stop_editing();
+            Output::Suggestion { number, new_tab: true }
+        } else if let Some(number) = self.bar_bookmark_at(point) {
+            Output::Bar(crate::library::BarRequest::Open { number, new_tab: true })
+        } else if let Some(number) = self.history_row_at(point) {
+            Output::History(crate::library::HistoryRequest::Open { number, new_tab: true })
+        } else if let Some(number) = self.bookmark_at(point) {
+            Output::Bookmarks(crate::library::BookmarkRequest::Open { number, new_tab: true })
+        } else {
+            return false;
+        };
+        self.outputs.push(output);
         true
     }
 

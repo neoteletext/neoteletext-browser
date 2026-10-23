@@ -53,7 +53,9 @@ use std::time::Duration;
 use interface_core::canvas::PageKey;
 use interface_core::library::WindowGeometry;
 use protocol::console::{ConsoleTab, Level};
-use protocol::decoder::{FIRST_STORE_PAGES, FromDecoder, MAX_CHUNK, MAX_STORE_PAGES, MAX_WHOLE, ToDecoder, read_from_decoder, write_to_decoder};
+use protocol::decoder::{
+    BookmarkEntry, FIRST_STORE_PAGES, FromDecoder, MAX_BOOKMARK_ENTRIES, MAX_CHUNK, MAX_STORE_PAGES, MAX_WHOLE, ToDecoder, read_from_decoder, write_to_decoder,
+};
 use protocol::fetcher::{FromFetcher, MAX_NOTICE, Origin, read_from_fetcher};
 use protocol::settings::{ProxyView, SettingChange, SettingsView};
 use protocol::sound::{FromSound, ToSound, read_from_sound, write_to_sound};
@@ -120,6 +122,8 @@ enum Event {
     Sound(FromSound),
     /// The sound helper ended: the browser runs silent.
     SoundEnded(Option<String>),
+    /// A decoder read another browser's bookmark file (decision 71).
+    BookmarksRead(Result<(Vec<BookmarkEntry>, u32), String>),
 }
 
 struct Decoder {
@@ -179,6 +183,41 @@ fn start_decoder(broker: &Arc<Broker>, channel: u32, generation: u64, store_page
         let _ = events.send(Event::DecoderEnded(channel, generation, end));
     });
     Ok(Decoder { child, input, generation })
+}
+
+/// Starts a decoder to read another browser's bookmark file (decision
+/// 71): it is given the file and reports what it holds, which arrives as
+/// one event, and is ended.
+pub(crate) fn start_bookmark_reader(broker: &Arc<Broker>, file: Vec<u8>, events: Sender<Event>) -> Result<(), String> {
+    let mut child = spawn(broker, Program::Decoder, &[String::from("--bookmarks")], false)?;
+    let output = child.stdout.take().ok_or("the bookmark reader has no output")?;
+    let mut input = child.stdin.take().ok_or("the bookmark reader has no input")?;
+    thread::spawn(move || {
+        let exchange = move || -> Result<(Vec<BookmarkEntry>, u32), String> {
+            // The reader takes the whole file before it says anything.
+            for chunk in file.chunks(MAX_CHUNK) {
+                write_to_decoder(&mut input, &ToDecoder::Data(chunk.to_vec())).map_err(|error| error.to_string())?;
+            }
+            write_to_decoder(&mut input, &ToDecoder::End).map_err(|error| error.to_string())?;
+            let mut output = BufReader::new(output);
+            let mut entries = Vec::new();
+            loop {
+                match read_from_decoder(&mut output).map_err(|error| error.to_string())? {
+                    // Each folder's end follows its folder: twice the bound
+                    // holds every honest file.
+                    Some(FromDecoder::Bookmark(entry)) if entries.len() < 2 * MAX_BOOKMARK_ENTRIES => entries.push(entry),
+                    Some(FromDecoder::BookmarksRead { skipped }) => return Ok((entries, skipped)),
+                    Some(_) => return Err(String::from("the bookmark reader said what it may not")),
+                    None => return Err(String::from("it is not a bookmark file the reader can read")),
+                }
+            }
+        };
+        let read = exchange();
+        let _ = child.kill();
+        let _ = child.wait();
+        let _ = events.send(Event::BookmarksRead(read));
+    });
+    Ok(())
 }
 
 /// Starts a fetcher for the web channel at `address`, whose messages
@@ -891,6 +930,11 @@ impl Core {
         let active = self.active_channel();
         match message {
             FromDecoder::StoreFull => self.grow_decoder(channel)?,
+            // Only a decoder started to read bookmarks reports them; from a
+            // channel's they change nothing.
+            FromDecoder::Bookmark(_) | FromDecoder::BookmarksRead { .. } => {
+                self.log(Level::Warning, Some(channel), "the channel's decoder reported bookmarks, which it may not; ignored");
+            }
             FromDecoder::Arrived { page, title } => {
                 let Some(tab) = self.session.tabs.iter_mut().find(|tab| tab.channel.id == channel) else { return Ok(()) };
                 let title = tab.channel.arrived(page, &title);
@@ -1807,6 +1851,7 @@ fn handle(core: &mut Core, event: Event) -> Result<bool, String> {
             core.sound = None;
             core.sounding(Vec::new())?;
         }
+        Event::BookmarksRead(read) => core.bookmarks_read(read)?,
         Event::InterfaceEnded(None) => return Ok(false),
         Event::InterfaceEnded(Some(reason)) => return Err(format!("the interface broke the protocol and was closed: {reason}")),
     }

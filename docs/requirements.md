@@ -121,7 +121,7 @@
 - **Reason:** The trusted core holds everything the user trusts; it must be the smallest and least exposed part.
 - **Source:** Decision 4.
 - **Verification:** Check: the trusted core's dependency tree contains no web engine, script engine, `neoteletext-formats` or `neoteletext-web`.
-- **State:** Met: the trusted core depends on `neoteletext-core` for flash timing and `neoteletext-image` for the image writer only. The check is not written.
+- **State:** Met: the trusted core depends on `neoteletext-core` for flash timing and `neoteletext-image` for the image writer only. Another browser's bookmark file, which is HTML, is read by a decoder started for it; the trusted core looks only at its first line to know it (decision 71). The check is not written.
 
 ### Requirement 3.3: The fetcher has only the network
 - **Statement:** The fetcher must be able to reach the network and nothing else: no files, and no other processes except through its pipe to the trusted core.
@@ -1327,7 +1327,7 @@ Adopted and built on 22 October 2026 by decision 57, while the owner was away, a
 - **Reason:** The browser-style view of what was seen.
 - **Source:** Decision 57.
 - **Verification:** Interface and trusted-core tests.
-- **State:** Met in tests: `the_panel_shows_rows_and_opens_them_by_number`, `the_search_and_the_wheel_ask_for_rows`; by hand on macOS, Command-Y opened it with the day's heading and the row's time, title and address. A row opens in a new tab with Shift-click (section 14).
+- **State:** Met in tests: `the_panel_shows_rows_and_opens_them_by_number`, `the_search_and_the_wheel_ask_for_rows`; by hand on macOS, Command-Y opened it with the day's heading and the row's time, title and address. A row opens in a new tab with Shift-click, Command-click (Control-click elsewhere) or the middle button (`the_middle_button_opens_a_row_in_a_new_tab`, decision 71).
 - *Amended 23 October 2026 (decision 64):* each row has Chrome's menu, "More from this site", which makes the search `host:` and the row's host, "Remove from history", and "Remove bookmark", which removes every bookmark of the address, when it is bookmarked (`a_rows_bookmarks_are_removed_from_its_menu`), in place of its remove button; a search beginning `host:` answers the rows of that host alone, in any case. State: met, `rows_are_removed_by_number` (the menu's two items), `history_is_removed_as_asked` (`host:`).
 
 ### Requirement 20.5: The interface sees only history on screen
@@ -1421,7 +1421,7 @@ Withdrawn on 23 October 2026 (decision 65): history follows Chrome (decision 64)
 - **Reason:** Bookmarks must be managed, and requirement 3.6 holds for them as for history.
 - **Source:** Decision 57.
 - **Verification:** Interface and trusted-core tests.
-- **State:** Met in tests: `the_manager_edits_by_number`, `bookmarks_are_managed`, `items_open_by_number`, `the_manager_asks_for_each_change` (a drag onto a folder moves); by hand on macOS, Command-Option-B opened it. A move is by dragging (section 14).
+- **State:** Met in tests: `the_manager_edits_by_number`, `bookmarks_are_managed`, `items_open_by_number`, `the_manager_asks_for_each_change` (a drag onto a folder moves); by hand on macOS, Command-Option-B opened it. A move is by dragging, or by a row's "Move…" and the folder chosen (`move_to_chooses_a_folder`, decision 71).
 
 ### Requirement 20.18: The bookmarks bar
 - **Statement:** An optional row of the strip, off by default and shown or hidden by Command-Shift-B on macOS and Control-Shift-B elsewhere, must show the Bookmarks bar folder, drawn from the trusted core's view.
@@ -1473,6 +1473,13 @@ Withdrawn on 23 October 2026 (decision 65): history follows Chrome (decision 64)
 - **Source:** Decision 59.
 - **Verification:** Test.
 - **State:** Met: `restore on|off` in `settings.txt` (`settings_round_trip_through_their_file`), the panel's row "Tabs at start: Restore, Home" (`each_control_asks_for_its_change`), checked as strip input (`each_setting_change_is_checked`); seen on macOS.
+
+### Requirement 20.25: Bookmarks from another browser
+- **Statement:** The bookmarks manager's Import must read another browser's Netscape bookmark file as well as this browser's own, into "Imported" under Other bookmarks, its folders kept. The file must be read by a decoder process started for it, confined as every decoder is, never by the trusted core; the decoder must report only folders, their ends and bookmarks, each bounded; the trusted core must keep only addresses its address rules accept, clean every name, and keep the bounds of requirement 20.15.
+- **Reason:** Every browser writes the file, and the owner asked for the to-do list's item done; the trusted core reads no outside format (requirement 3.2).
+- **Source:** Decision 71.
+- **Verification:** Tests, and fuzzing of the reader.
+- **State:** Met (23 October 2026): `a_browsers_file_gives_its_folders_and_bookmarks_in_order`, `folders_deeper_than_the_bookmarks_keep_join_the_folder_around_them`, `lengths_and_counts_are_bounded` and four more in `decoder/src/netscape.rs`; `a_confined_decoder_reads_another_browsers_bookmarks` (a Firefox file, the decoder under its sandbox); `another_browsers_bookmarks_come_in_as_channels_only` (`place:` and `javascript:` refused, a hidden character cleaned); `a_bookmark_entry_is_held_to_its_bounds`; the fuzz target `netscape_file` (1.77 million runs without a fault on 23 October 2026). Exporting in that format is not built: this browser's bookmarks are channels, which another browser opens only as web pages.
 
 ---
 

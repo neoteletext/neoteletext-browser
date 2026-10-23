@@ -187,3 +187,10 @@ path = "fuzz_targets/bookmarks_file.rs"
 test = false
 doc = false
 bench = false
+
+[[bin]]
+name = "netscape_file"
+path = "fuzz_targets/netscape_file.rs"
+test = false
+doc = false
+bench = false

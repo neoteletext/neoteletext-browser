@@ -1028,7 +1028,10 @@ impl App {
                 if self.resize_from_edge(self.cursor.0, self.cursor.1) {
                     return;
                 }
-                let changed = self.browser.pointer_pressed(&mut self.painter, self.modifiers.shift_key(), now);
+                // Command-click (Control-click elsewhere) opens in a new tab
+                // what opens a channel; anywhere else it is a press.
+                let changed = (self.modifiers().command && self.browser.new_tab_pressed())
+                    || self.browser.pointer_pressed(&mut self.painter, self.modifiers.shift_key(), now);
                 self.act(event_loop);
                 changed
             }

@@ -20,6 +20,7 @@ use protocol::{ToCore, ToInterface};
 
 use crate::Core;
 use protocol::console::Level;
+use protocol::decoder::BookmarkEntry;
 
 /// What separates a folder's names in a search result's place.
 const PLACE_SEPARATOR: &str = " / ";
@@ -588,6 +589,14 @@ impl Core {
             Err(reason) => Err(reason),
         };
         self.library.manager_notice = match read {
+            // Another browser's file: read by a decoder, never here
+            // (requirement 3.2, decision 71).
+            Ok(bytes) if bytes.len() <= neoteletext::bookmarks::MAX_FILE && protocol::decoder::is_netscape_bookmarks(&bytes) => {
+                match self.broker().and_then(|broker| crate::start_bookmark_reader(broker, bytes, self.events.clone())) {
+                    Ok(()) => notice("Reading another browser's bookmarks…"),
+                    Err(reason) => notice(&format!("Not imported: {reason}")),
+                }
+            }
             Ok(bytes) if bytes.len() <= neoteletext::bookmarks::MAX_FILE => {
                 let (read, dropped) = Bookmarks::read(&String::from_utf8_lossy(&bytes));
                 if read.is_empty() {
@@ -603,6 +612,28 @@ impl Core {
             Ok(_) => notice("That file is too large to be bookmarks"),
             Err(reason) => notice(&format!("Not imported: {reason}")),
         };
+    }
+
+    /// What a decoder read from another browser's bookmark file, into
+    /// "Imported" (decision 71).
+    pub(crate) fn bookmarks_read(&mut self, read: Result<(Vec<BookmarkEntry>, u32), String>) -> Result<(), String> {
+        self.library.manager_notice = match read {
+            Ok((entries, skipped)) => {
+                let (read, refused) = Bookmarks::from_entries(&entries);
+                let left_out = usize::try_from(skipped).unwrap_or(usize::MAX).saturating_add(refused);
+                if read.is_empty() {
+                    notice("No bookmarks in that file that this browser can open")
+                } else {
+                    match self.session.bookmarks.import(&read) {
+                        Ok(count) if left_out == 0 => notice(&format!("{count} imported into Imported")),
+                        Ok(count) => notice(&format!("{count} imported into Imported; {left_out} left out, not channel addresses or too deep")),
+                        Err(reason) => notice(&reason),
+                    }
+                }
+            }
+            Err(reason) => notice(&format!("Not imported: {reason}")),
+        };
+        self.bookmarks_changed()
     }
 
     /// Writes the bookmarks to a new file beside the browser's own.
@@ -1053,6 +1084,35 @@ mod tests {
         test.core.star_request(StarRequest::Remove).unwrap();
         assert!(test.core.session.bookmarks.is_empty());
         assert!(std::fs::read_to_string(test.folder.join("bookmarks.txt")).unwrap().lines().count() == 3, "the two folders and the version");
+    }
+
+    /// Decision 71: what a decoder read from another browser's file comes
+    /// in under Imported, its folders kept, its names cleaned, and only
+    /// what the address rules accept; what is left out is counted.
+    #[test]
+    fn another_browsers_bookmarks_come_in_as_channels_only() {
+        let mut test = Test::new("netscape");
+        let link = |name: &str, address: &str| BookmarkEntry::Link { name: name.into(), address: address.into() };
+        let entries = vec![
+            BookmarkEntry::Folder("Bookmarks bar".into()),
+            link("Teefax\u{202e}", "https://teastop.co.uk/teefax/"),
+            link("Most Visited", "place:sort=8"),
+            link("A script", "javascript:alert(1)"),
+            BookmarkEntry::FolderEnd,
+            link("News", "news.invalid/#302"),
+        ];
+        test.core.bookmarks_read(Ok((entries, 2))).unwrap();
+        let bookmarks = &test.core.session.bookmarks;
+        let imported = bookmarks.children(OTHER).iter().copied().find(|&id| bookmarks.item(id).unwrap().name == "Imported").unwrap();
+        let names = |folder: u32| bookmarks.children(folder).iter().map(|&id| bookmarks.item(id).unwrap().name.clone()).collect::<Vec<_>>();
+        assert_eq!(names(imported), ["Bookmarks bar", "News"]);
+        let bar = bookmarks.children(imported)[0];
+        assert_eq!(names(bar), ["Teefax"], "the name cleaned; place: and javascript: refused");
+        assert_eq!(test.core.library.manager_notice, notice("3 imported into Imported; 4 left out, not channel addresses or too deep"));
+        test.core.bookmarks_read(Err("it is not a bookmark file the reader can read".into())).unwrap();
+        assert_eq!(test.core.library.manager_notice, notice("Not imported: it is not a bookmark file the reader can read"));
+        test.core.bookmarks_read(Ok((vec![link("Only a script", "javascript:void(0)")], 0))).unwrap();
+        assert_eq!(test.core.library.manager_notice, notice("No bookmarks in that file that this browser can open"));
     }
 
     /// Requirement 20.17: the manager's folders, a new folder, removal and

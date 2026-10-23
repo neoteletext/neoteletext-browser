@@ -274,6 +274,15 @@ impl Browser {
         true
     }
 
+    /// The row whose title is at `point`, not its check box or menu.
+    pub(super) fn history_row_at(&self, point: Point) -> Option<u32> {
+        if !self.history.open || self.history.menu.is_some() {
+            return None;
+        }
+        let (number, check, menu, _) = self.history.controls.rows.iter().find(|(_, _, _, row)| row.contains(point))?;
+        (!check.contains(point) && !menu.contains(point)).then_some(*number)
+    }
+
     /// A press on the panel; returns whether it was the panel's. With
     /// `new_tab`, a row opens in a new tab.
     pub(super) fn history_press(&mut self, point: Point, new_tab: bool) -> bool {
@@ -582,6 +591,23 @@ mod tests {
             browser.take_outputs(),
             [Output::History(HistoryRequest::Open { number: 8, new_tab: false }), Output::History(HistoryRequest::Panel(false))]
         );
+    }
+
+    /// The middle button and Command-click open a row in a new tab and leave
+    /// the panel open; on its check box, its menu or a button, nothing.
+    #[test]
+    fn the_middle_button_opens_a_row_in_a_new_tab() {
+        let mut browser = open();
+        let (_, check, menu, row) = browser.history.controls.rows[1];
+        let clear = browser.history.controls.clear;
+        for (pressed, expected) in [(row, true), (check, false), (menu, false), (clear, false)] {
+            let at = if pressed == row { Point::new(row.x0 + 200.0, middle(row).y) } else { middle(pressed) };
+            browser.pointer_moved(at.x, at.y, 0);
+            assert_eq!(browser.middle_pressed(), expected);
+        }
+        assert!(!browser.new_tab_pressed(), "the pointer is on Clear history");
+        assert_eq!(browser.take_outputs(), [Output::History(HistoryRequest::Open { number: 8, new_tab: true })]);
+        assert!(browser.history.open);
     }
 
     /// Requirement 20.6: remove a row, selected rows, a channel, a range;

@@ -3,6 +3,7 @@
 //! that are always there, kept in `bookmarks.txt` written whole at each
 //! change and read strictly, since another program can write it.
 
+use protocol::decoder::BookmarkEntry;
 use std::collections::BTreeMap;
 use std::path::Path;
 
@@ -20,6 +21,7 @@ const EXPORT_SUFFIX: &str = ".txt";
 const MAX_EXPORTS_A_DAY: u32 = 99;
 /// The most bookmarks and folders together (section 3.1).
 pub const MAX_ITEMS: usize = 10_000;
+const _: () = assert!(MAX_ITEMS == protocol::decoder::MAX_BOOKMARK_ENTRIES, "a decoder reports no more than are kept");
 /// The deepest folder: the two always there are at depth 0.
 pub const MAX_DEPTH: usize = protocol::library::MAX_FOLDER_DEPTH;
 /// The longest name.
@@ -29,6 +31,7 @@ const MAX_LINE: usize = "bookmark".len() + 2 * 10 + MAX_NAME + protocol::MAX_ADD
 /// The largest file read: [`MAX_ITEMS`] of the longest line, and the
 /// version line, rounded up to 24 MiB (section 3.6).
 pub const MAX_FILE: usize = 24 * 1024 * 1024;
+const _: () = assert!(MAX_FILE == protocol::decoder::MAX_BOOKMARK_FILE, "a decoder reads a file of the same bound");
 const _: () = assert!(MAX_ITEMS * (MAX_LINE + 1) + VERSION_LINE.len() < MAX_FILE, "the file bound holds every item at the longest line");
 /// The folder above the two that are always there.
 pub const ROOT: u32 = 0;
@@ -525,6 +528,42 @@ impl Bookmarks {
             self.insert(Item { id: new, parent, name: item.name.clone(), address: item.address.clone() }, None);
         }
         Ok(map.len().saturating_sub(2))
+    }
+
+    /// Bookmarks from what a decoder read from another browser's file
+    /// (decision 71), under Other bookmarks: each name cleaned and each
+    /// address held to the address rules, as typed ones are. The second
+    /// value counts the folders and bookmarks refused.
+    #[must_use]
+    pub fn from_entries(entries: &[BookmarkEntry]) -> (Self, usize) {
+        let mut bookmarks = Self::default();
+        // The folder each entry goes into; a folder refused takes its
+        // contents into the folder around it.
+        let mut folders = vec![OTHER];
+        let mut refused = 0_usize;
+        for entry in entries {
+            let here = folders.last().copied().unwrap_or(OTHER);
+            match entry {
+                BookmarkEntry::Folder(name) => {
+                    let opened = bookmarks.add_folder(here, name).unwrap_or_else(|_| {
+                        refused = refused.saturating_add(1);
+                        here
+                    });
+                    folders.push(opened);
+                }
+                BookmarkEntry::FolderEnd => {
+                    if folders.len() > 1 {
+                        folders.pop();
+                    }
+                }
+                BookmarkEntry::Link { name, address } => {
+                    if bookmarks.add(here, name, address).is_err() {
+                        refused = refused.saturating_add(1);
+                    }
+                }
+            }
+        }
+        (bookmarks, refused)
     }
 
     /// The file's text: every item in order, a folder before its contents.

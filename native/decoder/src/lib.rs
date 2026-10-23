@@ -27,6 +27,7 @@ use std::time::Instant as Clock;
 
 #[cfg(feature = "links")]
 pub mod links;
+pub mod netscape;
 
 use interface_core::canvas::{PAGE_HEIGHT, PAGE_WIDTH};
 use interface_core::channel::{PAGES, page_index};

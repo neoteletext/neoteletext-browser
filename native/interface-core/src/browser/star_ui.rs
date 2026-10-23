@@ -285,6 +285,17 @@ impl Browser {
         self.outputs.push(Output::Bar(BarRequest::Show(!self.bar.view.shown)));
     }
 
+    /// The bookmark of the bar, or of its open list, at `point`.
+    pub(super) fn bar_bookmark_at(&self, point: Point) -> Option<u32> {
+        if !self.bar.view.shown {
+            return None;
+        }
+        if let Some(&(number, _)) = self.bar.list.iter().find(|(_, rect)| rect.contains(point)) {
+            return Some(number);
+        }
+        self.bar.chips.iter().find(|(_, folder, rect)| !folder && rect.contains(point)).map(|&(number, _, _)| number)
+    }
+
     /// A press on the bar or its open list; with `new_tab`, a bookmark
     /// opens in a new tab.
     pub(super) fn bar_press(&mut self, point: Point, new_tab: bool) -> bool {
@@ -447,6 +458,25 @@ mod tests {
         browser.star_press(Point::new(10.0, 600.0));
         assert_eq!(browser.take_outputs(), [Output::Star(StarRequest::Edit { name: "Weather".into(), folder: 11 }), Output::Star(StarRequest::Done)]);
         assert!(!browser.star_open());
+    }
+
+    /// The middle button opens a bar bookmark in a new tab; on a folder's
+    /// chip it opens nothing.
+    #[test]
+    fn the_middle_button_opens_a_bar_bookmark_in_a_new_tab() {
+        let mut browser = browser();
+        let items = alloc::vec![
+            ItemRow { number: 1, folder: false, name: "News".into(), address: "https://news.example/".into(), place: String::new() },
+            ItemRow { number: 2, folder: true, name: "Weather".into(), address: String::new(), place: String::new() },
+        ];
+        browser.set_bar(BarView { shown: true, items, open: None });
+        browser.draw(&mut Recorder::new(), 1440.0, 900.0, 0);
+        let (news, weather) = (browser.bar.chips[0].2, browser.bar.chips[1].2);
+        browser.pointer_moved(middle(weather).x, middle(weather).y, 0);
+        assert!(!browser.middle_pressed());
+        browser.pointer_moved(middle(news).x, middle(news).y, 0);
+        assert!(browser.middle_pressed());
+        assert_eq!(browser.take_outputs(), [Output::Bar(BarRequest::Open { number: 1, new_tab: true })]);
     }
 
     /// Requirement 20.18: the bar's chips open bookmarks and folders, and

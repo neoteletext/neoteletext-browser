@@ -156,9 +156,11 @@ Boundary 4 of the earlier design, the font helper, is gone: no font is fetched f
 **If a decoder is compromised.**
 - **Can:** draw any picture into its own channel's page images and give its pages any title, which its server could do anyway.
 - **Cannot:** reach the network, other channels or the trusted core's state.
-- **On macOS, cannot** (21 October 2026): read any file but the system's own, start a program, look up any service, or see the user's environment: its profile starts from "deny everything" and allows its pipes alone (section 13). On Linux and Windows it is not confined yet, and there it can read the user's files, though it has nowhere to send them but its frames.
+- **Cannot, on every platform** (decisions 52 and 58): read any file but the system's own, start a program, or reach the network: on macOS its profile starts from "deny everything" and allows its pipes alone (section 13); on Linux, Landlock, its own network namespace and a system-call filter; on Windows, a restricted token in an AppContainer with no capabilities, in a job (`sandboxing.md`). A layer that cannot be had stops it from running.
 
 **Sound (requirements 16.1 to 16.4).** A decoder also reads its channel's audio packets, with the engine's bounded, fuzzed audio receiver, and sends voice operations and 16-bit samples. The trusted core passes on only the active tab's, re-checks each against the sounds that decoder defined, and holds the interface to 32 MB of its samples. A compromised decoder **can** play any sound in its own channel's four voices while its tab is active, as its server could; it **cannot** sound from a background tab, reset another channel's sounds, exceed the bounds, or play when the user has no output device.
+
+**Another browser's bookmarks (decision 71).** A decoder started with `--bookmarks` reads one Netscape bookmark file, the HTML another browser wrote, and nothing else; the trusted core gives it the file the user named and takes back only folders, their ends and bookmarks, each bounded, then holds every address to its address rules and cleans every name (requirement 20.25). A compromised reader **can** put wrong bookmarks under Imported, each an address the rules accept and the user sees before opening; it **cannot** reach anything a channel's decoder cannot, nor anything but the one file it was given.
 
 **Remaining risk:** low.
 

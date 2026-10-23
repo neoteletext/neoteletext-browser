@@ -29,7 +29,7 @@ The design of installation and updates on every desktop is `docs/installation-an
 ### History and bookmarks (decision 57)
 
 - **By hand:** dragging a bookmark, the folder list of the star's popover, the bar's folder lists and the clearing ranges were driven by tests, not by a hand on the window (posted clicks do not reach it); the panels were seen on macOS only.
-- **Not built:** reading another browser's bookmarks (the Netscape file, which would need a confined reader of its HTML); a "Move to…" chooser beside dragging; middle-click and Command-click for a new tab (Shift-click does it).
+- **Bookmark files from other browsers** are read since 23 October 2026 (decision 71) but not written: export is in this browser's format only. The file is named by its typed path; a file chooser waits on the owner (`history-and-bookmarks.md` section 3.7).
 - **Session restore (decision 59) by hand:** a maximised window and a display unplugged between runs were not tried; the window's place is not kept on Wayland, where the system does not say it (`history-and-bookmarks.md` section 15.6).
 - **On Linux the zone is read once:** glibc's `localtime_r` reads the time zone at its first call, so a change of zone while the browser runs is seen at the next start (`history-and-bookmarks.md` section 14, item 1).
 
