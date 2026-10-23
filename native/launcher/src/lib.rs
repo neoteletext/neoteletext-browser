@@ -347,6 +347,11 @@ impl Launcher {
         if let Ok(entries) = std::fs::read_dir(self.layout.staging()) {
             for entry in entries.filter_map(Result::ok) {
                 let name = entry.file_name();
+                // The updater's trusted metadata, which keeps the host from
+                // rolling the repository back (requirement 13.8).
+                if name == update::layout::UPDATER_METADATA {
+                    continue;
+                }
                 let wanted = name.to_str().and_then(Version::parse).is_some_and(|version| version > state.current && !state.is_bad(version));
                 #[cfg(target_os = "macos")]
                 let wanted = wanted || macos::holds_old_current(self, state, &entry.path());

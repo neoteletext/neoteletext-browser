@@ -1,0 +1,45 @@
+# Fuzz targets for the updater's readers of downloaded data
+# (installation-and-updates-security.md section 5): The Update Framework's
+# metadata, as `tough` reads it, and the update host's HTTP responses. Run
+# by `cargo fuzz` in scripts/check.sh full, beside native/fuzz.
+[package]
+name = "neoteletext-updater-fuzz"
+version = "0.0.0"
+edition = "2024"
+license = "MIT"
+publish = false
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "=0.4.13"
+tough = { version = "=0.24.0", default-features = false }
+serde_json = "=1.0.154"
+neoteletext-updater = { path = "../updater" }
+
+[workspace]
+members = ["."]
+
+[profile.release]
+debug = 1
+
+[lints.rust]
+unsafe_code = "forbid"
+
+[lints.clippy]
+pedantic = { level = "warn", priority = -1 }
+
+[[bin]]
+name = "tuf_metadata"
+path = "fuzz_targets/tuf_metadata.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "http_response"
+path = "fuzz_targets/http_response.rs"
+test = false
+doc = false
+bench = false

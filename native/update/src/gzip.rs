@@ -95,6 +95,18 @@ pub fn compress(bytes: &[u8]) -> Vec<u8> {
 /// On a member the release tool would not write, a damaged stream, a
 /// length other than `length`, or a CRC that does not match.
 pub fn decompress(member: &[u8], length: usize) -> Result<Vec<u8>, Refused> {
+    let out = decompress_at_most(member, length)?;
+    if out.len() == length { Ok(out) } else { Err(Refused("not the length the release says")) }
+}
+
+/// The bytes of a gzip member of at most `max` bytes, for a file whose
+/// own length nothing gives beforehand: the manifest, which gives the
+/// others'.
+///
+/// # Errors
+/// As [`decompress`], and on output beyond `max`.
+pub fn decompress_at_most(member: &[u8], max: usize) -> Result<Vec<u8>, Refused> {
+    let length = max;
     let Some((header, rest)) = member.split_first_chunk::<HEADER_BYTES>() else { return Err(Refused("shorter than a gzip header")) };
     let [id1, id2, method, flags, _, _, _, _, _, _] = *header;
     if (id1, id2, method) != (ID1, ID2, CM_DEFLATE) {
@@ -114,8 +126,8 @@ pub fn decompress(member: &[u8], length: usize) -> Result<Vec<u8>, Refused> {
         TINFLStatus::HasMoreOutput => return Err(Refused("longer than the release says")),
         _ => return Err(Refused("a damaged or truncated stream")),
     }
-    if written != length {
-        return Err(Refused("not the length the release says"));
+    if written > length {
+        return Err(Refused("longer than the release says"));
     }
     out.truncate(written);
     let trailer = rest.get(consumed..).ok_or(Refused("a damaged stream"))?;
@@ -153,6 +165,8 @@ mod tests {
         assert_eq!(compress(&data), member, "the same bytes every time");
         assert_eq!(decompress(&member, data.len() - 2), Err(Refused("longer than the release says")));
         assert!(decompress(&member, data.len() - 1).is_err(), "one byte too long");
+        assert_eq!(decompress_at_most(&member, data.len() * 2).unwrap(), data);
+        assert!(decompress_at_most(&member, data.len() - 1).is_err());
         assert_eq!(decompress(&member, data.len() + 1), Err(Refused("not the length the release says")));
         let mut flipped = member.clone();
         let last = flipped.len() - 5;

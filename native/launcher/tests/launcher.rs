@@ -26,8 +26,11 @@ const OLD: Version = Version::new(0, 1, 0);
 const NEW: Version = Version::new(0, 2, 0);
 /// What the test signer looks for in a broker.
 const SIGNED: &[u8] = b"\x02signed=test\x02";
-/// A trial that hangs is given this long, not the real deadline.
-const SHORT_DEADLINE: Duration = Duration::from_secs(3);
+/// A trial that hangs is given this long, not the real deadline: long
+/// enough for a loaded machine to start a program it has not run before,
+/// which macOS first checks (measured 23 October 2026: over 3 seconds while
+/// the workspace's tests ran beside it).
+const SHORT_DEADLINE: Duration = Duration::from_secs(15);
 /// The fault child's variable: the fixture it runs.
 const CHILD: &str = "LAUNCHER_TEST_FAULT_CHILD";
 
@@ -215,15 +218,18 @@ fn a_broken_version_is_rolled_back_after_two_starts() {
         let fixture = Fixture::new(&format!("rollback-{behaviour}"));
         fixture.install(OLD, "healthy");
         fixture.stage(NEW, behaviour, true);
-        let code = fixture.run(SHORT_DEADLINE);
+        // Only a version that hangs waits out its deadline; the others end
+        // of themselves, however slowly a loaded machine starts them.
+        let deadline = if behaviour == "hang" { SHORT_DEADLINE } else { HEALTH_DEADLINE };
+        let code = fixture.run(deadline);
         let state = fixture.state();
         if behaviour == "quiet" {
             // Ended successfully, as a user quitting does: counted, not
             // retried; the next two starts roll it back.
             assert_eq!(code, Some(0));
             assert_eq!(state.trial.map(|trial| (trial.version, trial.failed)), Some((NEW, 1)));
-            fixture.run(SHORT_DEADLINE);
-            fixture.run(SHORT_DEADLINE);
+            fixture.run(deadline);
+            fixture.run(deadline);
         }
         let state = fixture.state();
         assert_eq!(state.current, OLD, "{behaviour}");
@@ -237,7 +243,7 @@ fn a_broken_version_is_rolled_back_after_two_starts() {
         // The rollback is said in one start only, and the bad version is
         // never tried again.
         fixture.stage(NEW, behaviour, true);
-        fixture.run(SHORT_DEADLINE);
+        fixture.run(deadline);
         assert_eq!(fixture.state().rolled_back, None);
         assert_eq!(fixture.log().matches("0.2.0").count(), 2, "{behaviour}");
     }

@@ -29,6 +29,11 @@ neoteletext-web.workspace = true
 web-opener = { workspace = true, optional = true }
 ring.workspace = true
 keyring.workspace = true
+# The launcher's state, the updater's messages and the installation's
+# places (installation-and-updates.md), and the port the updater's
+# sandbox gives it (section 8.1).
+update.workspace = true
+release-identity.workspace = true
 
 # The latency test (`interaction.md` section 10) measures the decoder's
 # render, this crate's encoding and the interface's decoding.

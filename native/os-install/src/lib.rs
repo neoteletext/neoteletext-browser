@@ -30,7 +30,7 @@ mod macos;
 mod windows;
 
 #[cfg(windows)]
-pub use windows::{UninstallEntry, WindowsSigner, remove_uninstall_entry, uninstall_entry};
+pub use windows::{UninstallEntry, WindowsSigner, remove_uninstall_entry, signer_key, uninstall_entry};
 
 /// Asks the user `question` under `title`, with the buttons `yes` and
 /// `no`; whether they chose `yes`. Where the system has no dialog for a

@@ -35,6 +35,11 @@ pub const MAX_VOLUME: u8 = 100;
 pub use crate::address::START_PAGE;
 /// The file's name in the settings folder.
 const FILE_NAME: &str = "settings.txt";
+/// The settings' format, whose file is its own (`installation-and-updates.md`
+/// section 3.3): format 1 is `settings.txt`.
+const FORMAT: u32 = 1;
+/// The settings' name among the formats' files.
+const PROFILE: &str = "settings";
 /// The temporary file written before the rename.
 const TEMPORARY_NAME: &str = "settings.txt.new";
 
@@ -106,6 +111,9 @@ pub struct Settings {
     pub bar: bool,
     /// The last session is restored at start (requirement 20.24).
     pub restore: bool,
+    /// The browser checks for updates (`installation-and-updates.md`
+    /// section 3.4).
+    pub check_updates: bool,
     /// What is kept of cookies (requirement 21.7).
     pub cookies: crate::cookies::Mode,
     /// The channels whose cookies are blocked, by their identity.
@@ -122,6 +130,7 @@ impl Default for Settings {
             local: Vec::new(),
             bar: false,
             restore: true,
+            check_updates: true,
             cookies: crate::cookies::Mode::Keep,
             cookie_block: Vec::new(),
         }
@@ -189,6 +198,7 @@ impl Settings {
             "sound" => switch(value).map(|on| self.sound = on).is_some(),
             "bar" => switch(value).map(|on| self.bar = on).is_some(),
             "restore" => switch(value).map(|on| self.restore = on).is_some(),
+            "updates" => switch(value).map(|on| self.check_updates = on).is_some(),
             "cookies" => match value {
                 "keep" => Some(crate::cookies::Mode::Keep),
                 "close" => Some(crate::cookies::Mode::Close),
@@ -236,6 +246,7 @@ impl Settings {
         lines.extend(self.local.iter().map(|address| format!("{ALLOW_LOCAL} {address}")));
         lines.push(format!("bar {}", if self.bar { "on" } else { "off" }));
         lines.push(format!("restore {}", if self.restore { "on" } else { "off" }));
+        lines.push(format!("updates {}", if self.check_updates { "on" } else { "off" }));
         lines.push(format!(
             "cookies {}",
             match self.cookies {
@@ -255,7 +266,9 @@ impl Settings {
     /// # Errors
     /// When the file exists but cannot be read.
     pub fn load(folder: &Path) -> std::io::Result<(Self, Vec<String>)> {
-        let path = folder.join(FILE_NAME);
+        // This format's own file, copied from the newest older format's
+        // the first time (`installation-and-updates.md` section 3.3).
+        let (path, _) = update::profile::prepare(folder, PROFILE, FORMAT)?;
         match std::fs::metadata(&path) {
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok((Self::default(), Vec::new())),
             Err(error) => return Err(error),
@@ -330,6 +343,7 @@ mod tests {
             local: vec!["192.168.1.20".parse().unwrap()],
             bar: true,
             restore: false,
+            check_updates: false,
             cookies: crate::cookies::Mode::Close,
             cookie_block: vec!["https://news.example/teletext/".into()],
         };
@@ -371,6 +385,17 @@ mod tests {
         assert_eq!(checked_address(&address).as_deref(), Some(address.as_str()), "the address rules take it");
         let settings = Settings { home: address, ..Settings::default() };
         assert_eq!(Settings::read(&settings.text()), (settings, Vec::new()));
+    }
+
+    /// `installation-and-updates.md` section 3.3: this format's file is
+    /// the one the profile rule names, and "Check for updates" is kept.
+    #[test]
+    fn the_settings_are_this_formats_file_and_keep_the_update_setting() {
+        assert_eq!(update::profile::file_name(PROFILE, FORMAT), FILE_NAME);
+        assert_eq!(VERSION_LINE, format!("neoteletext-settings {FORMAT}"));
+        let off = Settings { check_updates: false, ..Settings::default() };
+        assert_eq!(Settings::read(&off.text()), (off, Vec::new()));
+        assert!(Settings::default().check_updates, "on by default");
     }
 
     #[test]

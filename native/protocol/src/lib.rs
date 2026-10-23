@@ -150,6 +150,11 @@ const KIND_NEW_PRIVATE_TAB: u8 = 68;
 const KIND_WINDOW: u8 = 69;
 const KIND_COOKIES: u8 = 70;
 const KIND_RELOAD: u8 = 71;
+// Updates (`installation-and-updates.md` sections 3.2 and 3.4), far from
+// the others, so kinds added beside these elsewhere do not meet them.
+const KIND_UPDATE_VIEW: u8 = 120;
+const KIND_DRAWN: u8 = 121;
+const KIND_INSTALL_UPDATE: u8 = 122;
 
 // The strip's flags.
 const ENCRYPTED: u8 = 1;
@@ -229,6 +234,9 @@ pub enum ToInterface {
     /// The settings, for the panel of the trusted strip (requirement
     /// 19.3) and the mixer's sound and volume (requirement 19.4).
     Settings(settings::SettingsView),
+    /// Updates, for the settings panel (`installation-and-updates.md`
+    /// section 3.4).
+    Update(settings::UpdateView),
     /// New entries for the developer console (requirement 19.9).
     Console(console::ConsoleUpdate),
     /// The history panel's rows (requirement 20.4).
@@ -330,6 +338,12 @@ pub enum ToCore {
     /// Strip input: a change the settings panel asks for (requirement
     /// 19.3).
     ChangeSetting(settings::SettingChange),
+    /// The window drew its first frame: a part of the version's health
+    /// (`installation-and-updates.md` section 3.2).
+    Drawn,
+    /// Strip input: install the version the settings panel offers
+    /// (section 3.4).
+    InstallUpdate,
     /// The developer console opened or closed (requirement 19.8).
     Console(bool),
     /// Strip input: yes to the strip's question of this number.
@@ -698,6 +712,10 @@ pub fn write_to_interface(out: &mut dyn Write, message: &ToInterface) -> Result<
             settings::push_view(&mut payload, view)?;
             KIND_SETTINGS
         }
+        ToInterface::Update(view) => {
+            settings::push_update(&mut payload, view)?;
+            KIND_UPDATE_VIEW
+        }
         ToInterface::Console(update) => {
             console::push_update(&mut payload, update)?;
             KIND_CONSOLE_UPDATE
@@ -852,6 +870,7 @@ pub fn read_from_core(input: &mut dyn Read) -> Result<Option<ToInterface>, Proto
         #[cfg(feature = "phone-keyboard")]
         KIND_PHONE_KEY => ToInterface::PhoneKey(keyboard::read_phone_key(&mut fields)?),
         KIND_SETTINGS => ToInterface::Settings(settings::read_view(&mut fields)?),
+        KIND_UPDATE_VIEW => ToInterface::Update(settings::read_update(&mut fields)?),
         KIND_CONSOLE_UPDATE => ToInterface::Console(console::read_update(&mut fields)?),
         KIND_HISTORY_VIEW => ToInterface::History(library::read_history_view(&mut fields)?),
         KIND_SUGGESTIONS => ToInterface::Suggestions(library::read_suggestions(&mut fields)?),
@@ -918,6 +937,8 @@ pub fn write_to_core(out: &mut dyn Write, message: &ToCore) -> Result<(), Protoc
         ToCore::Bookmark => KIND_BOOKMARK,
         ToCore::Home => KIND_HOME,
         ToCore::Reload => KIND_RELOAD,
+        ToCore::Drawn => KIND_DRAWN,
+        ToCore::InstallUpdate => KIND_INSTALL_UPDATE,
         ToCore::ChangeSetting(change) => {
             settings::push_change(&mut payload, change)?;
             KIND_CHANGE_SETTING
@@ -1060,6 +1081,8 @@ pub fn read_from_interface(input: &mut dyn Read) -> Result<Option<ToCore>, Proto
         KIND_BOOKMARK => ToCore::Bookmark,
         KIND_HOME => ToCore::Home,
         KIND_RELOAD => ToCore::Reload,
+        KIND_DRAWN => ToCore::Drawn,
+        KIND_INSTALL_UPDATE => ToCore::InstallUpdate,
         KIND_CHANGE_SETTING => ToCore::ChangeSetting(settings::read_change(&mut fields)?),
         KIND_CONSOLE => ToCore::Console(match fields.u8()? {
             0 => false,
@@ -1178,6 +1201,7 @@ mod tests {
                 cookies: settings::CookieMode::Close,
                 refusal: None,
             }),
+            ToInterface::Update(settings::UpdateView { version: "0.1.0".into(), status: "NeoTeletext is up to date".into(), offer: None, checking: true }),
             ToInterface::Cookies(cookies::CookiesView { query: "news".into(), total: 0, ..cookies::CookiesView::default() }),
             ToInterface::History(library::HistoryView { query: "news".into(), total: 0, ..library::HistoryView::default() }),
             ToInterface::Suggestions(library::Suggestions { text: "n".into(), inline: "news.example".into(), rows: Vec::new() }),
@@ -1208,6 +1232,8 @@ mod tests {
             ToCore::Bookmark,
             ToCore::Home,
             ToCore::Reload,
+            ToCore::Drawn,
+            ToCore::InstallUpdate,
             ToCore::ChangeSetting(settings::SettingChange::Volume(40)),
             ToCore::Console(true),
             ToCore::History(library::HistoryRequest::Clear(library::ClearRange::All)),

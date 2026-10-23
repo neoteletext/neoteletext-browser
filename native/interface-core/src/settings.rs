@@ -70,6 +70,22 @@ pub enum SettingChange {
     RestoreSession(bool),
     /// What is kept of cookies (requirement 21.7).
     Cookies(CookieMode),
+    /// Check for updates, or not (`installation-and-updates.md` section 3.4).
+    CheckUpdates(bool),
+}
+
+/// Updates, as the settings panel shows them (`installation-and-updates.md`
+/// section 3.4), in the trusted core's words.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct UpdateView {
+    /// The version running, or empty when the browser was not installed.
+    pub version: String,
+    /// What the trusted core says of updates.
+    pub status: String,
+    /// The version the user may install, when there is one.
+    pub offer: Option<String>,
+    /// The browser checks for updates.
+    pub checking: bool,
 }
 
 /// What is kept of cookies (`cookies.md` section 4.2).

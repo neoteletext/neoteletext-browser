@@ -11,6 +11,10 @@ use std::io::{self, Read, Write};
 
 use crate::version::{self, Version};
 
+/// The timestamp's life, in days (section 9.3; the owner's answer to
+/// section 12, item 8): the release tool signs it so, and the core says
+/// "Updates unavailable" after so long without a successful check.
+pub const TIMESTAMP_DAYS: i64 = 7;
 /// The longest payload of any message.
 pub const MAX_MESSAGE: usize = 512;
 /// The longest reason the updater gives, in bytes.

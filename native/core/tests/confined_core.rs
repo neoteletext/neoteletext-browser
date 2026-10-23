@@ -29,7 +29,18 @@ fn the_trusted_core_starts_confined_and_reaches_its_own_code() {
     let refuse_read = |_: &Path| Err(String::from("this test reads nothing"));
     let refuse_web = |_: &str| Err(String::from("this test opens nothing"));
     let refuse_key = || Err(String::from("this test keeps no cookies"));
-    let handlers = Handlers { read_source: &refuse_read, open_web: &refuse_web, environment: &confine::environment, cookie_key: &refuse_key };
+    let refuse_health = || Err(String::from("this test has no launcher"));
+    let refuse_state = || Err(String::from("this test has no launcher"));
+    let refuse_updater = |_: &[String]| Err(String::from("this test has no launcher"));
+    let handlers = Handlers {
+        read_source: &refuse_read,
+        open_web: &refuse_web,
+        environment: &confine::environment,
+        cookie_key: &refuse_key,
+        healthy: &refuse_health,
+        update_state: &refuse_state,
+        updater: &refuse_updater,
+    };
     let exit = serve(core, programs, &handlers).unwrap();
     assert_eq!(exit.text, REFUSED);
 }

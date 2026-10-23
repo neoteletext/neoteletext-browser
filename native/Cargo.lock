@@ -1811,8 +1811,10 @@ dependencies = [
  "neoteletext-input",
  "neoteletext-web",
  "protocol",
+ "release-identity",
  "ring",
  "unicode-normalization",
+ "update",
  "web-opener",
 ]
 

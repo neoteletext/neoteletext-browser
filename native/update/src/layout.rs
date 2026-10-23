@@ -30,6 +30,9 @@ pub const WINDOWS_LAUNCHER_CHOICE: &str = "launcher";
 /// The variable the launcher sets for the broker it starts: the broker
 /// then reports health on its standard output and may run the updater.
 pub const LAUNCHED_VARIABLE: &str = "NEOTELETEXT_LAUNCHED";
+/// The updater's own folder in the staging folder, kept between runs: The
+/// Update Framework's trusted metadata and its last check's time.
+pub const UPDATER_METADATA: &str = "metadata";
 /// What the broker writes to the launcher once the trusted core found
 /// the version healthy (section 3.2).
 pub const HEALTHY_LINE: &str = "healthy\n";

@@ -1,0 +1,48 @@
+[package]
+name = "neoteletext-release"
+description = "The release tool (installation-and-updates.md section 10): lays out and lists a release, signs Linux's files with the release key, checks a release as the launcher will, signs The Update Framework's repository, re-signs its timestamp, and makes test identities; and a static HTTPS host for tests"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "neoteletext-release"
+path = "src/main.rs"
+
+# A static HTTPS host for the updater's tests, never shipped.
+[[bin]]
+name = "neoteletext-test-host"
+path = "src/host.rs"
+
+[dependencies]
+update.workspace = true
+release-identity.workspace = true
+tough.workspace = true
+tokio.workspace = true
+async-trait.workspace = true
+rustls.workspace = true
+ring.workspace = true
+# MIT or Apache-2.0, under `tough`: its signing calls take this random
+# source.
+aws-lc-rs = { version = "=1.18.2" }
+# MIT or Apache-2.0, under `tough`: the root metadata read back, and the
+# repository's addresses on disk.
+serde_json = "=1.0.154"
+url.workspace = true
+# MIT or Unlicense, under `tough`: the metadata's expiry times.
+jiff = { version = "=0.2.38", default-features = false, features = ["std"] }
+
+# MIT or Apache-2.0, of the rustls project: the test host's certificate
+# and its root, for a test identity (`test-identity`); no release uses it.
+rcgen = { version = "=0.14.10", default-features = false, features = ["crypto", "pem", "ring"] }
+
+[dev-dependencies]
+neoteletext-updater = { path = "../updater" }
+
+[target.'cfg(windows)'.dependencies]
+os-install = { path = "../../os-install" }
+
+[lints]
+workspace = true

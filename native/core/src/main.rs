@@ -36,6 +36,7 @@ mod cookie_control;
 mod library;
 mod session;
 mod source;
+mod updates;
 
 use std::collections::BTreeMap;
 use std::ffi::OsString;
@@ -117,6 +118,10 @@ enum Event {
     Sound(FromSound),
     /// The sound helper ended: the browser runs silent.
     SoundEnded(Option<String>),
+    /// The updater said something, untrusted (`installation-and-updates.md`).
+    Updater(update::wire::FromUpdater),
+    /// The updater ended.
+    UpdaterEnded(Option<String>),
 }
 
 struct Decoder {
@@ -318,6 +323,8 @@ struct Core {
     cookies: cookie_control::Cookies,
     /// The session's text last written, so an unchanged one is not.
     kept_session: String,
+    /// Updates (`installation-and-updates.md`).
+    updates: updates::Updates,
 }
 
 impl Core {
@@ -735,7 +742,7 @@ impl Core {
             }
             ToCore::Reload => self.reload()?,
             ToCore::Bookmark => self.star()?,
-            ToCore::Home | ToCore::ChangeSetting(_) | ToCore::Console(_) => self.settings_intent(intent)?,
+            ToCore::Home | ToCore::ChangeSetting(_) | ToCore::Console(_) | ToCore::Drawn | ToCore::InstallUpdate => self.settings_intent(intent)?,
             ToCore::History(_)
             | ToCore::Bookmarks(_)
             | ToCore::Star(_)
@@ -839,6 +846,9 @@ impl Core {
         }
         if let Some(reason) = reason {
             eprintln!("neoteletext: the decoder for channel {channel} stopped: {reason}");
+            // A decoder that cannot confine itself ends at once: the
+            // version is not healthy (section 3.2 of the installation design).
+            self.updates.helper_failed(&format!("the decoder stopped: {reason}"));
             let at = self.now();
             self.console.add(channel, ConsoleTab::Notices, at, &format!("the decoder stopped: {reason}"));
         }
@@ -955,6 +965,7 @@ impl Core {
                 self.console.set_open(open);
                 self.send_console()
             }
+            ToCore::Drawn | ToCore::InstallUpdate => self.update_intent(&intent),
             _ => Ok(()),
         }
     }
@@ -1083,7 +1094,47 @@ impl Core {
         if let Some(due) = self.cookies.due {
             next = next.map(|at| at.min(due));
         }
+        if let Some(due) = self.updates.due() {
+            next = next.map(|at| at.min(due));
+        }
         next
+    }
+
+    /// Updates as the settings panel shows them (section 3.4 of the
+    /// installation design), and the strip's offer, said once.
+    fn send_update(&mut self) -> Result<(), String> {
+        if self.updates.strip
+            && let Some(version) = self.updates.offer()
+        {
+            self.updates.later();
+            self.say(format!("NeoTeletext {version} is available: Install it in Settings"))?;
+        }
+        let status = self.updates.status(self.settings.check_updates, neoteletext::calendar::utc_now());
+        let view = interface_core::settings::UpdateView {
+            version: self.updates.running().map(|version| version.to_string()).unwrap_or_default(),
+            status: clean(&status, protocol::settings::MAX_UPDATE_STATUS),
+            offer: self.updates.offer().map(|version| version.to_string()),
+            checking: self.settings.check_updates,
+        };
+        self.send(&ToInterface::Update(view))
+    }
+
+    /// The window's first frame, a part of the version's health, or the
+    /// user's acceptance of the version offered (sections 3.2 and 3.4).
+    fn update_intent(&mut self, intent: &ToCore) -> Result<(), String> {
+        if matches!(intent, ToCore::InstallUpdate) {
+            self.updates.install();
+            return self.send_update();
+        }
+        self.updates.drawn();
+        Ok(())
+    }
+
+    /// Starts the updater when the settings let it check (section 3.4).
+    fn start_updater(&mut self) {
+        let Ok(broker) = self.broker().cloned() else { return };
+        let proxy = self.settings.proxy.as_ref().map(stored::Proxy::url);
+        self.updates.start(&broker, self.settings.check_updates, proxy.as_deref(), &self.events);
     }
 
     /// The timed work now due.
@@ -1105,6 +1156,9 @@ impl Core {
         }
         if self.cookies.due.is_some_and(|due| now >= due) {
             self.keep_cookies();
+        }
+        if self.updates.due().is_some_and(|due| now >= due) {
+            self.updates.tick(self.broker.as_deref(), now);
         }
         Ok(())
     }
@@ -1203,12 +1257,22 @@ impl Core {
     fn change_setting(&mut self, change: SettingChange) -> Result<(), String> {
         let current = self.session.active_tab().and_then(|tab| tab.address()).map(|address| address.channel_text().to_owned());
         let cookies = if let SettingChange::Cookies(mode) = change { Some(mode) } else { None };
+        let checking = if let SettingChange::CheckUpdates(on) = change { Some(on) } else { None };
         match checked_change(&mut self.settings, change, current.as_deref()) {
             Ok(security) => {
                 self.refusal = None;
                 self.save_settings();
                 if let Some(mode) = cookies {
                     self.cookie_mode_changed(mode);
+                }
+                match checking {
+                    // "Off" stops the updater from starting at all.
+                    Some(false) => self.updates.stop(),
+                    Some(true) => self.start_updater(),
+                    None => {}
+                }
+                if checking.is_some() {
+                    self.send_update()?;
                 }
                 if let Some(text) = security {
                     self.say(text)?;
@@ -1295,6 +1359,12 @@ fn checked_change(settings: &mut Settings, change: SettingChange, current: Optio
                 protocol::settings::CookieMode::Close => neoteletext::cookies::Mode::Close,
                 protocol::settings::CookieMode::Block => neoteletext::cookies::Mode::Block,
             };
+            Ok(None)
+        }
+        // And whether to check for updates (`installation-and-updates.md`
+        // section 3.4).
+        SettingChange::CheckUpdates(on) => {
+            settings.check_updates = on;
             Ok(None)
         }
     }
@@ -1628,14 +1698,18 @@ impl Core {
             window_moved: None,
             cookies: cookie_control::Cookies::default(),
             kept_session: String::new(),
+            updates: updates::Updates::default(),
         }
     }
 }
 
 /// The settings kept between runs, and where (requirement 19.1); lines
 /// dropped by their rules are logged (requirement 19.2).
-fn load_settings() -> (Settings, Option<PathBuf>) {
+fn load_settings() -> (Settings, Option<PathBuf>, bool) {
     let folder = stored::folder();
+    // Whether they were read or found absent: a part of the version's
+    // health (`installation-and-updates.md` section 3.2).
+    let mut read = true;
     let settings = match &folder {
         Some(folder) => match Settings::load(folder) {
             Ok((settings, dropped)) => {
@@ -1646,12 +1720,13 @@ fn load_settings() -> (Settings, Option<PathBuf>) {
             }
             Err(error) => {
                 eprintln!("neoteletext: the settings in {} could not be read: {error}", folder.display());
+                read = false;
                 Settings::default()
             }
         },
         None => Settings::default(),
     };
-    (settings, folder)
+    (settings, folder, read)
 }
 
 /// The bookmarks kept between runs (requirement 20.19); lines dropped by
@@ -1744,6 +1819,14 @@ fn handle(core: &mut Core, event: Event) -> Result<bool, String> {
             core.sound = None;
             core.sounding(Vec::new())?;
         }
+        Event::Updater(message) => {
+            core.updates.said(message);
+            core.send_update()?;
+        }
+        Event::UpdaterEnded(reason) => {
+            core.updates.ended(reason);
+            core.send_update()?;
+        }
         Event::InterfaceEnded(None) => return Ok(false),
         Event::InterfaceEnded(Some(reason)) => return Err(format!("the interface broke the protocol and was closed: {reason}")),
     }
@@ -1765,7 +1848,7 @@ fn run(broker: &Arc<Broker>, given: impl Iterator<Item = String>) -> Result<(), 
     let (events, incoming) = mpsc::channel();
     read_interface(&mut interface, events.clone())?;
 
-    let (settings, settings_folder) = load_settings();
+    let (settings, settings_folder, settings_read) = load_settings();
     let bookmarks = load_bookmarks(settings_folder.as_deref());
     let saved = load_session(settings_folder.as_deref()).filter(|_| settings.restore);
     // The window's place first: the interface opens its window with the
@@ -1788,7 +1871,12 @@ fn run(broker: &Arc<Broker>, given: impl Iterator<Item = String>) -> Result<(), 
     core.cookies_at_start();
     core.keep_session();
     core.start_sound();
+    // Updates: the launcher's state, then the updater, when the settings
+    // let it check (`installation-and-updates.md` section 3.4).
+    core.updates = updates::Updates::of_broker(broker, settings_read);
+    core.start_updater();
     core.send_settings()?;
+    core.send_update()?;
     core.send_all()?;
     core.send_bar()?;
     core.flush()?;
@@ -1929,7 +2017,15 @@ fn broker() -> Result<(), String> {
     // With links compiled out the core never asks; if it does, it is refused.
     #[cfg(not(feature = "links"))]
     let open_web = |_: &str| Err(String::from("links are compiled out"));
-    let handlers = Handlers { read_source: &read_for_core, open_web: &open_web, environment: &confine::environment, cookie_key: &cookie_key };
+    let handlers = Handlers {
+        read_source: &read_for_core,
+        open_web: &open_web,
+        environment: &confine::environment,
+        cookie_key: &cookie_key,
+        healthy: &updates::tell_launcher_healthy,
+        update_state: &updates::launcher_state,
+        updater: &updates::updater_grant,
+    };
     let exit = confine::broker::serve(core, &programs, &handlers).map_err(|error| format!("cannot wait for the trusted core: {error}"))?;
     if exit.success { Ok(()) } else { Err(format!("the trusted core ended abnormally ({exit})")) }
 }

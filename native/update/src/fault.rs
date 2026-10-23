@@ -24,6 +24,12 @@ pub fn armed(name: &str) -> bool {
     }
 }
 
+/// Ends the process here if `name:<index>` is the fault point asked for:
+/// a point met once a file, so a test can end between any two writes.
+pub fn point_at(name: &str, index: usize) {
+    point(&format!("{name}:{index}"));
+}
+
 /// Ends the process here if `name` is the fault point asked for.
 pub fn point(name: &str) {
     if armed(name) {

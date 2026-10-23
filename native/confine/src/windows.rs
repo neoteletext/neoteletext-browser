@@ -113,6 +113,14 @@ const CONTAINER_DECODER: &str = "NeoTeletext.Decoder";
 const CONTAINER_NETWORK: &str = "NeoTeletext.Fetcher";
 const CONTAINER_CORE: &str = "NeoTeletext.Core";
 const CONTAINER_SOUND: &str = "NeoTeletext.Sound";
+const CONTAINER_UPDATER: &str = "NeoTeletext.Updater";
+/// Every container's name, for the installer to make them and the
+/// uninstaller to remove them.
+pub const CONTAINERS: [&str; 5] = [CONTAINER_DECODER, CONTAINER_NETWORK, CONTAINER_CORE, CONTAINER_SOUND, CONTAINER_UPDATER];
+/// `ALL APPLICATION PACKAGES` (`SECURITY_BUILTIN_PACKAGE_ANY_PACKAGE`).
+const ALL_APPLICATION_PACKAGES_SID: &str = "S-1-15-2-1";
+/// Read and run, for the program folder (`GENERIC_READ | GENERIC_EXECUTE`).
+const GENERIC_READ_EXECUTE: u32 = 0x8000_0000 | 0x2000_0000;
 /// Full access, for the core's settings folder (`GENERIC_ALL`).
 const GENERIC_ALL: u32 = 0x1000_0000;
 /// The grant reaches the folder's files and folders (`SUB_CONTAINERS_AND_OBJECTS_INHERIT`).
@@ -349,6 +357,7 @@ fn container(role: Role) -> io::Result<ContainerSid> {
         Role::Decoder => CONTAINER_DECODER,
         Role::Core => CONTAINER_CORE,
         Role::Sound => CONTAINER_SOUND,
+        Role::Updater { .. } => CONTAINER_UPDATER,
         Role::Network | Role::Interface => CONTAINER_NETWORK,
     });
     let display = wide("NeoTeletext");
@@ -428,7 +437,7 @@ fn start(
         | mitigation::IMAGE_LOAD_NO_LOW_LABEL_ALWAYS_ON;
     // No window system for those without a window. The sound helper keeps
     // it: Core Audio's COM apartments may need it.
-    if matches!(spawn.role, Role::Decoder | Role::Network | Role::Core) {
+    if matches!(spawn.role, Role::Decoder | Role::Network | Role::Core | Role::Updater { .. }) {
         policy |= mitigation::WIN32K_SYSTEM_CALL_DISABLE_ALWAYS_ON;
     }
     let policy = [policy, 0_u64];
@@ -502,8 +511,22 @@ fn start(
 }
 
 /// Grants the container `sid` full access to `folder` and everything in
-/// it: the trusted core's settings (decision 56).
+/// it: the trusted core's settings (decision 56), the updater's staging
+/// folder.
 fn grant(folder: &Path, sid: &ContainerSid) -> io::Result<()> {
+    grant_to(folder, sid.0, GENERIC_ALL)
+}
+
+/// Grants `ALL APPLICATION PACKAGES` read and run on `folder` and
+/// everything in it (`installation-and-updates.md` section 4.2).
+pub fn grant_packages_read(folder: &Path) -> io::Result<()> {
+    let packages = Sid::parse(ALL_APPLICATION_PACKAGES_SID)?;
+    grant_to(folder, packages.0, GENERIC_READ_EXECUTE)
+}
+
+/// Adds to `folder`'s access list an entry granting `sid` `permissions`,
+/// inherited by everything in it.
+fn grant_to(folder: &Path, sid: PSID, permissions: u32) -> io::Result<()> {
     let path = wide(folder);
     let mut old: *mut ACL = ptr::null_mut();
     let mut descriptor: PSECURITY_DESCRIPTOR = ptr::null_mut();
@@ -523,7 +546,7 @@ fn grant(folder: &Path, sid: &ContainerSid) -> io::Result<()> {
         return Err(io::Error::from_raw_os_error(i32::try_from(read).unwrap_or(0)));
     }
     let access = EXPLICIT_ACCESS_W {
-        grfAccessPermissions: GENERIC_ALL,
+        grfAccessPermissions: permissions,
         grfAccessMode: GRANT_ACCESS,
         grfInheritance: INHERIT_TO_ALL,
         Trustee: TRUSTEE_W {
@@ -531,7 +554,7 @@ fn grant(folder: &Path, sid: &ContainerSid) -> io::Result<()> {
             MultipleTrusteeOperation: NO_MULTIPLE_TRUSTEE,
             TrusteeForm: TRUSTEE_IS_SID,
             TrusteeType: TRUSTEE_IS_WELL_KNOWN_GROUP,
-            ptstrName: sid.0.cast(),
+            ptstrName: sid.cast(),
         },
     };
     let mut new: *mut ACL = ptr::null_mut();
@@ -616,13 +639,15 @@ pub fn spawn(spawn: &Spawn<'_>) -> io::Result<Process> {
         // (decision 58).
         let sid = container(spawn.role).map_err(|error| io::Error::new(error.kind(), format!("cannot make its AppContainer: {error}")))?;
         let mut capabilities = Vec::new();
-        if spawn.role == Role::Network {
+        // A container cannot be told a port: the updater's host is pinned by
+        // TLS (`installation-and-updates.md` section 8.1).
+        if matches!(spawn.role, Role::Network | Role::Updater { .. }) {
             capabilities.push(Sid::parse(INTERNET_CLIENT_SID)?);
             if spawn.local_network {
                 capabilities.push(Sid::parse(PRIVATE_NETWORK_SID)?);
             }
         }
-        if spawn.role == Role::Core
+        if matches!(spawn.role, Role::Core | Role::Updater { .. })
             && let Some(folder) = spawn.writable
         {
             grant(folder, &sid)?;

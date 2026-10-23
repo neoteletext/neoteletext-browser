@@ -307,6 +307,9 @@ pub enum Output {
     NewPrivateTab,
     /// Strip input: a change the settings panel asks for (requirement 19.3).
     Setting(crate::settings::SettingChange),
+    /// Strip input: install the version the settings panel offers
+    /// (`installation-and-updates.md` section 3.4).
+    InstallUpdate,
     /// The developer console opened or closed (requirement 19.8).
     Console(bool),
     /// Mute the tab at this index, or unmute it.

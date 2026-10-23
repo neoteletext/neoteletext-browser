@@ -50,6 +50,8 @@ const KIND_READ: u8 = 4;
 const KIND_OPEN_WEB: u8 = 5;
 const KIND_LOCAL_TIME: u8 = 6;
 const KIND_COOKIE_KEY: u8 = 7;
+const KIND_HEALTHY: u8 = 8;
+const KIND_UPDATE_STATE: u8 = 9;
 const KIND_SPAWNED: u8 = 11;
 const KIND_DONE: u8 = 12;
 const KIND_EXITED: u8 = 13;
@@ -59,6 +61,12 @@ const KIND_TIME: u8 = 16;
 const KIND_KEY: u8 = 17;
 /// The cookie file's key: 256 bits (`cookies.md` section 7).
 pub const COOKIE_KEY_BYTES: usize = 32;
+/// The port of TLS, the update host's (`installation-and-updates.md`
+/// section 8.1).
+const HTTPS_PORT: u16 = 443;
+/// The longest launcher state the broker hands the core: the state file's
+/// own bound (`update::state::MAX_STATE`), with room.
+pub const MAX_UPDATE_STATE: usize = 4 * 1024;
 
 /// The browser's own helpers: the only programs the broker starts.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -73,12 +81,26 @@ pub enum Program {
     Keyboard,
     /// The sound output (decision 55).
     Sound,
+    /// The updater (`installation-and-updates.md` section 3).
+    Updater,
+}
+
+/// What the broker's own rules give the updater: the folder it writes and
+/// the one port it reaches (`installation-and-updates.md` section 8.1).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct UpdaterGrant {
+    /// Its staging folder.
+    pub staging: PathBuf,
+    /// The update host's port, or the proxy's.
+    pub port: u16,
 }
 
 impl Program {
-    const ALL: [Self; 5] = [Self::Decoder, Self::Fetcher, Self::Interface, Self::Keyboard, Self::Sound];
+    const ALL: [Self; 6] = [Self::Decoder, Self::Fetcher, Self::Interface, Self::Keyboard, Self::Sound, Self::Updater];
 
-    /// The role it is confined as, decided here and never by the core.
+    /// The role it is confined as, decided here and never by the core; the
+    /// updater's port is the broker's handler's (`Handlers::updater`), and
+    /// this its role on the port of TLS.
     #[must_use]
     pub fn role(self) -> Role {
         match self {
@@ -86,6 +108,7 @@ impl Program {
             Self::Fetcher | Self::Keyboard => Role::Network,
             Self::Interface => Role::Interface,
             Self::Sound => Role::Sound,
+            Self::Updater => Role::Updater { port: HTTPS_PORT },
         }
     }
 
@@ -98,6 +121,7 @@ impl Program {
             Self::Interface => "interface",
             Self::Keyboard => "phone keyboard",
             Self::Sound => "sound helper",
+            Self::Updater => "updater",
         }
     }
 
@@ -110,6 +134,7 @@ impl Program {
             Self::Interface => "neoteletext-interface",
             Self::Keyboard => "neoteletext-keyboard",
             Self::Sound => "neoteletext-sound",
+            Self::Updater => "neoteletext-updater",
         };
         format!("{name}{}", std::env::consts::EXE_SUFFIX)
     }
@@ -121,6 +146,7 @@ impl Program {
             Self::Interface => 3,
             Self::Keyboard => 4,
             Self::Sound => 5,
+            Self::Updater => 6,
         }
     }
 
@@ -177,6 +203,13 @@ pub enum Request {
     /// The cookie file's key, from the platform's secret store, which the
     /// core cannot reach (`cookies.md` section 10).
     CookieKey,
+    /// The version is healthy (`installation-and-updates.md` section 3.2):
+    /// the broker tells the launcher, which commits a trial.
+    Healthy,
+    /// The launcher's state file, which the core may not read itself:
+    /// answered with its bytes, or refused when no launcher started the
+    /// broker.
+    UpdateState,
 }
 
 /// The broker's answer.
@@ -298,6 +331,8 @@ pub fn encode_request(request: &Request) -> io::Result<Vec<u8>> {
         }
         Request::LocalTime => KIND_LOCAL_TIME,
         Request::CookieKey => KIND_COOKIE_KEY,
+        Request::Healthy => KIND_HEALTHY,
+        Request::UpdateState => KIND_UPDATE_STATE,
     };
     frame(kind, &payload)
 }
@@ -330,6 +365,8 @@ pub fn decode_request(kind: u8, payload: &[u8]) -> io::Result<Request> {
         KIND_OPEN_WEB => Request::OpenWeb(fields.text()?),
         KIND_LOCAL_TIME => Request::LocalTime,
         KIND_COOKIE_KEY => Request::CookieKey,
+        KIND_HEALTHY => Request::Healthy,
+        KIND_UPDATE_STATE => Request::UpdateState,
         _ => return Err(io::Error::new(io::ErrorKind::InvalidData, "no such request")),
     };
     fields.end()?;
@@ -663,6 +700,31 @@ impl Broker {
         }
     }
 
+    /// Says the version is healthy, for the launcher (section 3.2 of the
+    /// installation design).
+    ///
+    /// # Errors
+    /// Why it could not be said.
+    pub fn healthy(&self) -> Result<(), String> {
+        match self.ask(&Request::Healthy).map_err(|error| error.to_string())? {
+            (Reply::Done, _) => Ok(()),
+            (Reply::Failed(reason), _) => Err(reason),
+            _ => Err(String::from("an unexpected reply")),
+        }
+    }
+
+    /// The launcher's state file's bytes, which the core reads strictly.
+    ///
+    /// # Errors
+    /// When no launcher started the browser, or the state cannot be read.
+    pub fn update_state(&self) -> Result<Vec<u8>, String> {
+        match self.ask(&Request::UpdateState).map_err(|error| error.to_string())? {
+            (Reply::Source(bytes), _) if bytes.len() <= MAX_UPDATE_STATE => Ok(bytes),
+            (Reply::Failed(reason), _) => Err(reason),
+            _ => Err(String::from("an unexpected reply")),
+        }
+    }
+
     /// Hands `address` to the system's browser, through the broker.
     ///
     /// # Errors
@@ -689,6 +751,13 @@ pub struct Handlers<'a> {
     /// The cookie file's key, read from the platform's secret store or
     /// made there.
     pub cookie_key: &'a dyn Fn() -> Result<Vec<u8>, String>,
+    /// Tells the launcher the version is healthy.
+    pub healthy: &'a dyn Fn() -> Result<(), String>,
+    /// The launcher's state file's bytes.
+    pub update_state: &'a dyn Fn() -> Result<Vec<u8>, String>,
+    /// What the updater, started with these arguments, may write and
+    /// reach; refused where no launcher installed the browser.
+    pub updater: &'a dyn Fn(&[String]) -> Result<UpdaterGrant, String>,
 }
 
 /// The core, started confined, and the broker's end of its channel.
@@ -828,6 +897,15 @@ fn answer(core: &mut Core, helpers: &mut Helpers, programs: &Path, handlers: &Ha
             Ok(_) => Reply::Failed(String::from("the secret store holds a key of the wrong length")),
             Err(reason) => Reply::Failed(reason),
         },
+        Request::Healthy => match (handlers.healthy)() {
+            Ok(()) => Reply::Done,
+            Err(reason) => Reply::Failed(reason),
+        },
+        Request::UpdateState => match (handlers.update_state)() {
+            Ok(bytes) if bytes.len() <= MAX_UPDATE_STATE => Reply::Source(bytes),
+            Ok(_) => Reply::Failed(String::from("the launcher's state is too long")),
+            Err(reason) => Reply::Failed(reason),
+        },
     };
     core.channel.write(&encode_reply(&reply)?)
 }
@@ -835,9 +913,14 @@ fn answer(core: &mut Core, helpers: &mut Helpers, programs: &Path, handlers: &Ha
 /// Starts one of the browser's own helpers, beside the broker.
 fn start_helper(programs: &Path, program: Program, local_network: bool, arguments: &[String], handlers: &Handlers<'_>) -> io::Result<Process> {
     let path: PathBuf = programs.join(program.file_name());
+    // The updater's folder and port are the broker's rules', from where it
+    // is installed and the proxy the core names, never the core's word.
+    let grant = if program == Program::Updater { Some((handlers.updater)(arguments).map_err(io::Error::other)?) } else { None };
+    let role = grant.as_ref().map_or(program.role(), |grant| Role::Updater { port: grant.port });
+    let writable = grant.as_ref().map(|grant| grant.staging.as_path());
     let arguments: Vec<OsString> = arguments.iter().map(OsString::from).collect();
-    let environment = (handlers.environment)(program.role());
-    crate::spawn(&Spawn { program: &path, arguments: &arguments, role: program.role(), environment: &environment, local_network, writable: None })
+    let environment = (handlers.environment)(role);
+    crate::spawn(&Spawn { program: &path, arguments: &arguments, role, environment: &environment, local_network, writable })
 }
 
 /// Sends the core a started helper's number, with its two pipes.
@@ -886,6 +969,9 @@ mod tests {
             Request::OpenWeb("https://a.example/".into()),
             Request::LocalTime,
             Request::CookieKey,
+            Request::Healthy,
+            Request::UpdateState,
+            Request::Spawn { program: Program::Updater, local_network: false, arguments: vec!["--proxy".into(), "http://proxy.example:3128".into()] },
         ] {
             assert_eq!(round_trip(&request), request);
         }
@@ -925,5 +1011,6 @@ mod tests {
         // The role comes from the program, never from the core.
         assert_eq!(Program::Keyboard.role(), Role::Network);
         assert_eq!(Program::Sound.role(), Role::Sound);
+        assert_eq!(Program::Updater.role(), Role::Updater { port: HTTPS_PORT }, "its port is the broker's rules', never the core's");
     }
 }

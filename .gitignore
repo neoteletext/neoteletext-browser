@@ -14,3 +14,6 @@ native/fuzz/artifacts
 native/fuzz/coverage
 # Scratch: test keys, test builds and test sites made by hand or by scripts.
 tmp/
+native/tuf/fuzz/corpus
+native/tuf/fuzz/artifacts
+native/tuf/fuzz/coverage
