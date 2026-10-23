@@ -1,7 +1,10 @@
 // Tests of `hyperlinks.md` sections 6 to 12 and requirements 17.3 to
 // 17.12, and of the findings of `hyperlinks-security.md` section 13.
 
+use super::destination::{Descriptor, INITIAL_PAGE};
 use super::*;
+use crate::address;
+use protocol::links::{LinkKind, MAX_SERVICE_NAME, MAX_TARGET, PromptKind};
 
 const CHANNEL: u32 = 7;
 const OPEN: PageKey = PageKey { channel: CHANNEL, page: 0x100 };

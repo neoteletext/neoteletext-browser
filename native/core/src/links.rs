@@ -12,26 +12,26 @@
 use std::collections::{BTreeMap, VecDeque};
 
 use interface_core::canvas::{COLUMNS, PageKey};
-use interface_core::channel::page_index;
 use interface_core::controls::FastextKey;
-use protocol::links::{
-    Alias, Candidate, Fastext, Found, LinkKind, LinkRun, MAX_DESTINATION, MAX_REMAPPED, MAX_RUNS, MAX_SERVICE_NAME, MAX_TARGET, NumberLink, PageLinks,
-    Pointing, Prompt, PromptKind, Service, Spot,
-};
-use protocol::{MAX_ADDRESS, clean};
+use protocol::links::{Alias, Candidate, Fastext, Found, LinkRun, MAX_REMAPPED, MAX_RUNS, NumberLink, PageLinks, Pointing, Prompt, Service, Spot};
 
-use crate::address::{self, Address};
+use crate::address::Address;
+
+mod destination;
+mod prompt;
+mod target;
+
+use destination::Descriptor;
+pub use destination::{Channel, Destination};
+use prompt::Asking;
+pub use prompt::{HANDOFF_INTERVAL_MILLISECONDS, PROMPT_DELAY_MILLISECONDS};
+pub use target::{Target, parse_target, web_address};
+use target::{channel_address, name};
 
 /// A click follows a link only once its target has stayed the same for
 /// half a second, the time browsers give a permission prompt before they
 /// accept a click (`hyperlinks.md` section 10.2, requirement 17.7).
 pub const DWELL_MILLISECONDS: u64 = 500;
-/// The strip's questions accept no answer in their first half second
-/// (`hyperlinks.md` section 12).
-pub const PROMPT_DELAY_MILLISECONDS: u64 = 500;
-/// At most one web page is handed to the system's web browser every two
-/// seconds (requirement 17.9).
-pub const HANDOFF_INTERVAL_MILLISECONDS: u64 = 2_000;
 /// The images of each page whose links are kept: a click names the image it
 /// was made on, and one only a little old still counts (`hyperlinks.md`
 /// section 8.3).
@@ -40,270 +40,6 @@ pub const KEPT_IMAGES: usize = 4;
 /// holds links (`hyperlinks.md` sections 6.1 and 8.2).
 const FIRST_LINK_ROW: u8 = 1;
 const LAST_LINK_ROW: u8 = 23;
-/// A web address handed to the system's web browser: the address bar's
-/// limit.
-const MAX_WEB: usize = MAX_ADDRESS;
-/// The page a channel opens at when a link names its folder and no page:
-/// the teletext initial page (the engine's REQ-WEB-018 default).
-const INITIAL_PAGE: u16 = 0x100;
-/// The digits of a page number and of a sub-page number in a target
-/// (TTI Link Extension section E.1).
-const PAGE_DIGITS: usize = 3;
-const SUBPAGE_DIGITS: usize = 4;
-const HEXADECIMAL: u32 = 16;
-/// The two schemes a link may name, and the mark of a web page.
-const HTTPS: &str = "https";
-const HTTP: &str = "http";
-const SCHEME_SEPARATOR: &str = "://";
-const WEB: &str = "web:";
-/// The files of a channel that are pages (the engine's REQ-WEB-019).
-const PAGE_FILES: [&str; 2] = [".tti", ".t42"];
-
-/// A link target as a page or a descriptor writes it, parsed: the forms of
-/// the TTI Link Extension's section E.1 and `web:` (the engine's decision
-/// E.88).
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum Target {
-    /// A page of this channel.
-    Page(u16),
-    /// A page of a service the channel's descriptor names.
-    Service {
-        /// The service's short name.
-        name: String,
-        /// The page.
-        page: u16,
-    },
-    /// A teletext channel or page file at an address.
-    Channel(Address),
-    /// A web page: its address, rebuilt from its parsed parts.
-    Web(String),
-}
-
-/// Parses a link target. Everything that is not exactly one of the forms
-/// is refused: a target is page data, the only page data the trusted core
-/// reads (requirement 17.12).
-#[must_use]
-pub fn parse_target(text: &str) -> Option<Target> {
-    // Printable ASCII with no spaces or commas, at most 256 bytes (TTI
-    // Link Extension section E.1).
-    if text.is_empty() || text.len() > MAX_TARGET || !text.bytes().all(|byte| byte.is_ascii_graphic() && byte != b',') {
-        return None;
-    }
-    if let Some(web) = text.strip_prefix(WEB) {
-        return web_address(web).map(Target::Web);
-    }
-    if text.contains(SCHEME_SEPARATOR) {
-        return channel_address(text).map(Target::Channel);
-    }
-    let mut parts = text.split(':');
-    let (first, second, third) = (parts.next()?, parts.next(), parts.next());
-    if parts.next().is_some() {
-        return None;
-    }
-    match (second, third) {
-        (None, _) => page(first).map(Target::Page),
-        // `mpp:ssss`, or `name:mpp`: a page number is three hexadecimal
-        // digits and a name of three such letters is read as a page.
-        (Some(second), None) => match (page(first), subpage(second)) {
-            (Some(page), Some(())) => Some(Target::Page(page)),
-            _ => Some(Target::Service { name: name(first)?, page: page(second)? }),
-        },
-        (Some(second), Some(third)) => {
-            subpage(third)?;
-            Some(Target::Service { name: name(first)?, page: page(second)? })
-        }
-    }
-}
-
-/// A display page: three hexadecimal digits naming a page of 100 to 899
-/// with no digit above 9.
-fn page(text: &str) -> Option<u16> {
-    if text.len() != PAGE_DIGITS || !text.bytes().all(|byte| byte.is_ascii_hexdigit()) {
-        return None;
-    }
-    let page = u16::from_str_radix(text, HEXADECIMAL).ok()?;
-    page_index(page).map(|_| page)
-}
-
-/// A sub-page: four hexadecimal digits. Links go to a page; its sub-page
-/// is shown as the page shows it.
-fn subpage(text: &str) -> Option<()> {
-    (text.len() == SUBPAGE_DIGITS && text.bytes().all(|byte| byte.is_ascii_hexdigit())).then_some(())
-}
-
-/// A service's short name: letters, digits and hyphens (TTI Link Extension
-/// section E.1).
-fn name(text: &str) -> Option<String> {
-    let valid = !text.is_empty() && text.len() <= MAX_SERVICE_NAME && text.bytes().all(|byte| byte.is_ascii_alphanumeric() || byte == b'-');
-    valid.then(|| text.to_owned())
-}
-
-/// The scheme of `text`, when it is `https` or `http` written in any case.
-fn web_scheme(text: &str) -> Option<(&'static str, &str)> {
-    let (scheme, rest) = text.split_once(SCHEME_SEPARATOR)?;
-    [HTTPS, HTTP].into_iter().find(|known| scheme.eq_ignore_ascii_case(known)).map(|known| (known, rest))
-}
-
-/// A teletext channel's address: `https` or `http` only, by the address
-/// rules the address field uses. A link never leads to a file.
-fn channel_address(text: &str) -> Option<Address> {
-    web_scheme(text)?;
-    let address = address::parse(text).ok()?;
-    address.file.is_none().then_some(address)
-}
-
-/// Characters a web address may hold after its host, as RFC 3986 section 2
-/// allows them: unreserved, reserved and the percent sign of an escape.
-fn uri_character(byte: u8) -> bool {
-    byte.is_ascii_alphanumeric() || b"-._~:/?#[]@!$&'()*+,;=%".contains(&byte)
-}
-
-/// A web address, rebuilt from its parsed parts so that what is handed on
-/// is exactly what was checked (`hyperlinks.md` section 12): `https` or
-/// `http`, a host of letters, digits, hyphens and dots, a numeric port,
-/// then only the characters RFC 3986 allows, every `%` starting an escape.
-/// Anything else is refused, never repaired.
-#[must_use]
-pub fn web_address(text: &str) -> Option<String> {
-    if text.len() > MAX_WEB {
-        return None;
-    }
-    let (scheme, rest) = web_scheme(text)?;
-    let end = rest.find(['/', '?', '#']).unwrap_or(rest.len());
-    let (authority, tail) = rest.split_at(end);
-    let (host, port) = match authority.split_once(':') {
-        Some((host, port)) => (host, Some(port.parse::<u16>().ok()?)),
-        None => (authority, None),
-    };
-    let label = |label: &str| !label.is_empty() && label.bytes().all(|byte| byte.is_ascii_alphanumeric() || byte == b'-');
-    if host.is_empty() || !host.split('.').all(label) {
-        return None;
-    }
-    let bytes = tail.as_bytes();
-    let escapes_whole = bytes
-        .iter()
-        .enumerate()
-        .filter(|&(_, &byte)| byte == b'%')
-        .all(|(at, _)| bytes.get(at.saturating_add(1)..at.saturating_add(3)).is_some_and(|hex| hex.iter().all(u8::is_ascii_hexdigit)));
-    if !bytes.iter().copied().all(uri_character) || !escapes_whole {
-        return None;
-    }
-    let host = host.to_ascii_lowercase();
-    let port = port.map(|port| format!(":{port}")).unwrap_or_default();
-    let tail = if tail.is_empty() || tail.starts_with(['?', '#']) { format!("/{tail}") } else { tail.to_owned() };
-    let rebuilt = format!("{scheme}{SCHEME_SEPARATOR}{host}{port}{tail}");
-    (rebuilt.len() <= MAX_WEB).then_some(rebuilt)
-}
-
-/// Where a link leads, decided.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum Destination {
-    /// A page of this channel: followed at once.
-    Page(u16),
-    /// Another channel, at the page its address names, if any: after the
-    /// site-change screen.
-    Channel(Address),
-    /// A web page: after the web-browser prompt, in the system's web browser.
-    Web(String),
-}
-
-impl Destination {
-    /// The kind the interface draws.
-    #[must_use]
-    pub fn kind(&self) -> LinkKind {
-        match self {
-            Self::Page(_) => LinkKind::Page,
-            Self::Channel(_) => LinkKind::Channel,
-            Self::Web(_) => LinkKind::Web,
-        }
-    }
-
-    /// Where it is, as the strip's questions name it, cleaned and cut to
-    /// the strip's limit (requirement 11.5).
-    #[must_use]
-    pub fn name(&self) -> String {
-        let text = match self {
-            Self::Page(page) => format!("Page {page:03X}"),
-            Self::Channel(address) => match address.page {
-                Some(page) => format!("Page {page:03X} of {}", address.host),
-                None => address.channel_text().to_owned(),
-            },
-            Self::Web(address) => address.clone(),
-        };
-        clean(&text, MAX_DESTINATION)
-    }
-
-    /// What the trusted strip says of it while the pointer or the focus is
-    /// on it: where it is, and whether it leaves.
-    #[must_use]
-    pub fn describe(&self) -> String {
-        let text = match self {
-            Self::Page(_) => self.name(),
-            Self::Channel(_) => format!("{} (leaves this channel)", self.name()),
-            Self::Web(_) => format!("{} (opens in your web browser)", self.name()),
-        };
-        clean(&text, MAX_DESTINATION)
-    }
-}
-
-/// The channel a link is on, as the trusted core knows it.
-pub struct Channel<'a> {
-    /// The channel's number.
-    pub id: u32,
-    /// Its address: a web channel's folder, or a file.
-    pub address: &'a Address,
-    /// Whether it has a page: listed in its contents, or arrived.
-    pub exists: &'a dyn Fn(u16) -> bool,
-}
-
-impl Channel<'_> {
-    /// The page of this channel an address names: its own folder with a
-    /// page, or one of its page files (`hyperlinks.md` section 7.1).
-    fn own_page(&self, address: &Address) -> Option<u16> {
-        if self.address.file.is_some() {
-            return None;
-        }
-        let folder = self.address.channel_text();
-        let other = address.channel_text();
-        if other == folder {
-            return Some(address.page.unwrap_or(INITIAL_PAGE));
-        }
-        let file = other.strip_prefix(folder)?;
-        let number = PAGE_FILES.iter().find_map(|extension| file.strip_suffix(extension))?;
-        // Page files are named in decimal digits: `302.tti` is page 302.
-        page(number).filter(|_| number.bytes().all(|byte| byte.is_ascii_digit()))
-    }
-}
-
-/// The aliases and named services of a channel's descriptor, parsed.
-#[derive(Clone, Debug, Default)]
-struct Descriptor {
-    aliases: Vec<(u16, Target)>,
-    services: Vec<(String, Address)>,
-    /// Every service in the descriptor's own order, as a Fastext link names
-    /// one by its place (the engine's `LinkTarget::service`); one whose
-    /// address is refused leads nowhere.
-    by_place: Vec<Option<Address>>,
-}
-
-impl Descriptor {
-    /// Where `target` leads from `channel`. A target that names an unknown
-    /// service leads nowhere (TTI Link Extension rule E.2.2); a named
-    /// service is another channel, at its own address
-    /// (`hyperlinks-security.md` finding 1).
-    fn resolve(&self, target: &Target, channel: &Channel<'_>) -> Option<Destination> {
-        match target {
-            Target::Page(page) => Some(Destination::Page(*page)),
-            Target::Service { name, page } => {
-                let (_, address) = self.services.iter().find(|(known, _)| known == name)?;
-                Some(Destination::Channel(address.with_page(*page)))
-            }
-            Target::Channel(address) => Some(channel.own_page(address).map_or_else(|| Destination::Channel(address.clone()), Destination::Page)),
-            Target::Web(address) => Some(Destination::Web(address.clone())),
-        }
-    }
-}
-
 /// One link of an image, decided.
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct Link {
@@ -372,13 +108,6 @@ pub enum Refusal {
     Unfocused,
     /// A web page was handed over less than two seconds ago.
     TooOften,
-}
-
-/// A question the trusted strip is asking.
-struct Asking {
-    prompt: Prompt,
-    asked: u64,
-    destination: Destination,
 }
 
 /// The links of every page on screen, and what the trusted strip is
@@ -692,78 +421,6 @@ impl Links {
             return Err(Refusal::NotALink);
         }
         self.follow(destination, now)
-    }
-
-    /// A page of this channel opens at once; anything else is asked about
-    /// in the trusted strip first, and a web page only while the window has
-    /// the keyboard focus.
-    fn follow(&mut self, destination: Destination, now: u64) -> Result<Follow, Refusal> {
-        let (kind, secure) = match &destination {
-            Destination::Page(page) => return Ok(Follow::Page(*page)),
-            Destination::Channel(address) => (PromptKind::Leave, address.encrypted),
-            Destination::Web(address) => {
-                if self.unfocused {
-                    return Err(Refusal::Unfocused);
-                }
-                (PromptKind::Web, address.starts_with(HTTPS))
-            }
-        };
-        self.next_prompt = self.next_prompt.wrapping_add(1);
-        let prompt = Prompt { id: self.next_prompt, kind, destination: destination.name(), secure };
-        // A new question replaces the one before; questions never stack.
-        self.asking = Some(Asking { prompt: prompt.clone(), asked: now, destination });
-        Ok(Follow::Ask(prompt))
-    }
-
-    /// The strip's question now, if any.
-    #[must_use]
-    pub fn prompt(&self) -> Option<Prompt> {
-        self.asking.as_ref().map(|asking| asking.prompt.clone())
-    }
-
-    /// Yes to the strip's question `id`. Refused within half a second of the
-    /// question, for another question, and, for a web page, without the
-    /// keyboard focus or within two seconds of the last web page handed over.
-    ///
-    /// # Errors
-    /// Why nothing is followed.
-    pub fn confirm(&mut self, id: u32, now: u64) -> Result<Follow, Refusal> {
-        let asking = self.asking.as_ref().filter(|asking| asking.prompt.id == id).ok_or(Refusal::NoPrompt)?;
-        if now.saturating_sub(asking.asked) < PROMPT_DELAY_MILLISECONDS {
-            return Err(Refusal::TooSoon);
-        }
-        if let Destination::Web(_) = asking.destination {
-            if self.unfocused {
-                return Err(Refusal::Unfocused);
-            }
-            if self.last_handoff.is_some_and(|last| now.saturating_sub(last) < HANDOFF_INTERVAL_MILLISECONDS) {
-                return Err(Refusal::TooOften);
-            }
-        }
-        let asking = self.asking.take().ok_or(Refusal::NoPrompt)?;
-        Ok(match asking.destination {
-            Destination::Page(page) => Follow::Page(page),
-            Destination::Channel(address) => Follow::Leave(address),
-            Destination::Web(address) => {
-                self.last_handoff = Some(now);
-                Follow::HandOff(address)
-            }
-        })
-    }
-
-    /// No to the strip's question `id`; returns whether it was the question
-    /// asked. Declining has no other effect (requirement 8.6).
-    pub fn cancel(&mut self, id: u32) -> bool {
-        let asked = self.asking.as_ref().is_some_and(|asking| asking.prompt.id == id);
-        if asked {
-            self.asking = None;
-        }
-        asked
-    }
-
-    /// Forgets the strip's question, as when the tab or its channel changes.
-    pub fn forget_prompt(&mut self) -> bool {
-        self.asking.take().is_some()
     }
 }
 
