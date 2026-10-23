@@ -232,7 +232,7 @@ Each is bounded in `protocol`, read by a reader that refuses anything else, and 
 
 ## 6. Menus and keys
 
-When the menu bar of requirement 12.5 is built, the **History** menu holds Back, Forward, Home, Show All History, Reopen Closed Tab, Recently Closed (a list), Clear History…, and the 10 most recent rows; the **Bookmarks** menu holds Bookmark This Page, Bookmark Manager, Show Bookmarks Bar, and the two folders as lists of at most 100 items each. Until then the menu button holds History, Bookmarks, New Private Tab and Reopen Closed Tab.
+When the menu bar of requirement 12.5 is built, the **History** menu holds Back, Forward, Home, Show All History, Reopen Closed Tab, Recently Closed (a list), Clear History…, and the 10 most recent rows; the **Bookmarks** menu holds Bookmark This Page, Bookmark Manager, Show Bookmarks Bar, and the two folders as lists of at most 100 items each. Until then the menu button's menu holds them, with New tab, New window, New private tab, New private window and the rest (section 14 item 9, `multiple-windows.md` section 5).
 
 | Action | macOS | Elsewhere |
 |---|---|---|
@@ -443,7 +443,7 @@ Built on 22 October 2026. Building changed these, each for the owner to confirm 
 5. **Moving a bookmark is by dragging** onto a folder in the tree, or onto an item of the open folder to go before it; since 23 October 2026 (decision 71) also by a row's "Move…", which lists the folders the tree lists, but the item itself, and moves it to the end of the one chosen.
 6. **The star's popover lists at most the first 100 folders**, in order, to choose from.
 7. **Export writes `bookmarks-export-<day>.txt` beside `bookmarks.txt`**, never over another, and says where. **Import reads a file in this browser's format by its path**, typed in the manager, through the broker's existing file read (no new power for the core, decision 58), into a folder "Imported" under Other bookmarks. Since 23 October 2026 (decision 71) another browser's Netscape bookmark file is read too, by a decoder started for it (section 3.7); it is not written.
-8. **"Remember history"** is a setting of the settings panel, "History: Remember, Forget". Turned off, the history panel says history is not remembered and offers Clear history; nothing is removed by turning it off.
+8. **"Remember history"** is a setting of the settings panel, "History: Remember, Forget". Turned off, the history panel says history is not remembered and offers Clear history; nothing is removed by turning it off. *Removed by decision 65:* every page of an ordinary tab is recorded and a private tab records none; a `remember` line in `settings.txt` is dropped and said (`core/src/settings.rs`).
 9. **The menu button opens a menu**: New tab, New private tab, Reopen closed tab, History, Bookmarks, the bookmarks bar, Bookmark this page, the phone keyboard (which the button opened directly before), the developer console and Settings. Its shortcuts are spelled out ("Shift+Cmd+N", "Ctrl+Shift+N"), and the folder marks and the star beside a suggestion are drawn: the browser's fonts have no key symbols, triangles or stars.
 10. **While a panel, popover or list of the strip is open, it takes the keys**, not the page's channel. Before, on a channel that takes keys, Return in the star's popover went to the channel and the popover stayed open (`the_strips_panels_take_the_keys_from_the_channel`).
 11. **Opening a panel closes the others**, and the star's popover as Done.
@@ -483,7 +483,7 @@ A restored tab fetches its channel afresh, as a navigation does; it is not a vis
 ### 15.4 The file
 
 ```
-neoteletext-session 2
+neoteletext-session 3
 window	120	80	1440	900	0
 active	1
 tab	0	1

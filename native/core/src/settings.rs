@@ -1,7 +1,7 @@
 //! The settings the trusted core keeps between runs
 //! (`settings-home-console-proxy.md` section 1, requirements 19.1 and
-//! 19.2, with "Remember history" and the bookmarks bar of
-//! `history-and-bookmarks.md`): one text file, read strictly and written
+//! 19.2, with the bookmarks bar of `history-and-bookmarks.md`; "Remember
+//! history" went with decision 65): one text file, read strictly and written
 //! whole. The bookmarks are in a file of their own (`bookmarks.rs`).
 
 use std::net::IpAddr;

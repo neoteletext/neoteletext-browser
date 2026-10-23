@@ -12,7 +12,7 @@ This is the project's reading of the licences, not legal advice.
 
 | Kind | Licences | Why our licence is not compromised | Conditions |
 |---|---|---|---|
-| **Code compiled into the browser** | MIT, Apache-2.0 (also with the LLVM exception), BSD-2-Clause, BSD-3-Clause, Zlib, ISC, CC0-1.0, and Unicode-3.0 for ICU4X's text data (`native/deny.toml`) | Permissive: they ask for a notice and nothing more | Keep their notices in any binary distribution |
+| **Code compiled into the browser** | MIT, Apache-2.0 (also with the LLVM exception), BSD-2-Clause, BSD-3-Clause, Zlib, ISC, CC0-1.0, and Unicode-3.0 for ICU4X's text data (`native/deny.toml`); `webpki-roots` alone under CDLA-Permissive-2.0, Mozilla's root certificates as data (an exception in `native/deny.toml` and `native/tuf/deny.toml`) | Permissive: they ask for a notice and nothing more | Keep their notices in any binary distribution |
 | **A choice of licences** | For example `byteorder` (Unlicense or MIT), `r-efi` (MIT, Apache-2.0 or LGPL-2.1-or-later) | We take it under a permissive choice | None beyond that choice's own |
 | **Fonts shipped with the browser** | SIL Open Font License 1.1 (Roboto, Open Sans, in `native/draw-vello/fonts/` with their licence texts) | The OFL binds the font, not the program that draws it | Ship the OFL text with each font; never sell a font on its own |
 | **System libraries loaded at run time and not shipped** | LGPL-2.1-or-later (glibc, ALSA's `libasound`), GPL with the GCC Runtime Library Exception (`libgcc_s`), and each operating system's own libraries | Linked dynamically from the user's own system, so the user can always replace them, which is all the LGPL asks | Never link them statically and never bundle them (section 3) |
@@ -35,7 +35,7 @@ The owner accepted the system's LGPL `libasound` for sound on Linux on 19 Octobe
 
 ## 4. How it is enforced
 
-- `cargo-deny` checks every crate against `native/deny.toml` on every full gate (`scripts/check.sh full`). The allow list is the engine's plus Unicode-3.0.
+- `cargo-deny` checks every crate against `native/deny.toml`, and the updater's workspace against `native/tuf/deny.toml`, on every full gate (`scripts/check.sh full`). The allow list is the engine's plus Unicode-3.0.
 - Every library is a library choice that needs the owner's approval (requirement 14.3), whatever its licence.
 - System libraries are outside cargo-deny's view. A new one is recorded in section 5 before it is used.
 
@@ -43,7 +43,7 @@ The owner accepted the system's LGPL `libasound` for sound on Linux on 19 Octobe
 
 Measured on 20 October 2026 from `cargo metadata --all-features` and from the built programs.
 
-- **Crates:** about 300, all under the licences of section 2, and on Windows `clipboard-win` and `error-code` under BSL-1.0 (section 2). Most are MIT or Apache-2.0. Besides those are the 22 ICU4X crates (Unicode-3.0), which `parley` and `winit` use for text, and `tiny-skia` (BSD-3-Clause). The engine's crates are MIT.
+- **Crates:** 408 from crates.io in `native/Cargo.lock` and 171 in `native/tuf/Cargo.lock` (23 October 2026, every platform's), all under the licences of section 2, and on Windows `clipboard-win` and `error-code` under BSL-1.0 (section 2). Most are MIT or Apache-2.0. Besides those are the 22 ICU4X crates (Unicode-3.0), which `parley` and `winit` use for text, and `tiny-skia` (BSD-3-Clause). The engine's crates are MIT.
 - **The installer and updater's crates** (23 October 2026, decision 74; `cargo deny` in both workspaces): in the browser's workspace `miniz_oxide` (MIT, Zlib or Apache-2.0) and `rustix` (Apache-2.0 WITH LLVM-exception, Apache-2.0 or MIT), named directly; in the updater's own workspace, `native/tuf`, `tough` (MIT or Apache-2.0) and what it brings, among them `tokio` (MIT), `serde_json` (MIT or Apache-2.0), `jiff` (MIT or Unlicense, taken under MIT), `aws-lc-rs` (ISC and Apache-2.0 or ISC) and `aws-lc-sys`, the AWS-LC library built from source (ISC, Apache-2.0, MIT and BSD-3-Clause, every part permitted); and `rcgen` (MIT or Apache-2.0), in the release tool only, for test certificates.
 - **Fonts:** Roboto and Open Sans (SIL OFL 1.1).
 - **Linux system libraries,** linked dynamically and not shipped:

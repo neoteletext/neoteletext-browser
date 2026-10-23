@@ -15,7 +15,7 @@
   - **Reason:** why it matters.
   - **Source:** the owner's decision it comes from (numbered in `architecture.md` section 2), or "Architecture" when it follows from the design, or "Prototype finding" when it was learned on this codebase.
   - **Verification:** how it is shown to hold. "Test" means an automated test. "Check" means an automated check in the project's check script. "Review" means a recorded human review.
-  - **State:** whether it is met today, **met**, **partly met** or **not met**, as of 16 October 2026, with what is missing.
+  - **State:** whether it is met today, **met**, **partly met** or **not met**, as of the date it gives, with what is missing.
 - **Engine requirements.** Where a requirement is already met by the teletext engine `neoteletext`, its own requirement identifier is cited, for example "`neoteletext` requirement REQ-SEC-006".
 
 ## Contents
@@ -39,6 +39,10 @@
 17. Hyperlinks
 18. Push, typing and the cursor
 19. Settings, the home page, the developer console and proxies
+20. History and bookmarks
+21. Cookies
+22. Fastext, reveal, hold, mix and sub-pages
+23. The remote control
 
 ---
 
@@ -59,7 +63,7 @@
 - **State:** Met as a practice.
 
 ### Requirement 1.3: No executable content
-- **Statement:** The application must never execute code supplied by a page, a channel, a server or a file. It must contain no interpreter reachable from outside data, except, if open decision 2 adopts it, the decoder's WebAssembly interpreter running only the application's own decoder module.
+- **Statement:** The application must never execute code supplied by a page, a channel, a server or a file. It must contain no interpreter reachable from outside data, except the decoder's WebAssembly interpreter, which decision 41 adopted for iOS (open decision 2), running only the application's own decoder module running only the application's own decoder module.
 - **Reason:** Downloaded code is the most direct route to compromise.
 - **Source:** Decision 4; `neoteletext` decision E.32.
 - **Verification:** Review; check that no crate in the application's dependency tree is a script engine, a web engine or a general interpreter.
@@ -95,14 +99,14 @@
 - **Reason:** One definition of every value and one implementation of channel fetching.
 - **Source:** Decision 26.
 - **Verification:** Check: NeoTeletext's source defines no constant for any of these limits; review.
-- **State:** Partly met. The fetcher restates three of the engine's values instead of naming them: the cookie store's size (100 cookies, 32 kilobytes) and the connection time-out (10 seconds). The trusted core's pace for file channels, 0.2 seconds, is the engine's fetch interval written again.
+- **State:** Partly met. Two of the engine's values are written again instead of named: the fetcher's connection time-out, 10 seconds (`CONNECT_TIMEOUT`, the engine's `DEFAULT_CONNECT_TIMEOUT_US`), and the trusted core's pace for file channels, 0.2 seconds (`LOAD_INTERVAL`, the engine's `DEFAULT_FETCH_INTERVAL_US`). Since 22 October 2026 the fetcher keeps no cookie store (decision 62); since 23 October 2026 the sub-page bound is the engine's `viewer::MAX_LISTED_SUBPAGES`, asserted equal to the interface core's.
 
 ### Requirement 2.5: The engine is pinned and never patched
 - **Statement:** NeoTeletext must depend on the engine by one pinned commit, read from the engine's repository, never from a copy of its source or its working tree, and must never patch it locally.
 - **Reason:** The engine is maintained in its own repository, by its own process (decision 36).
 - **Source:** Decision 36.
 - **Verification:** Check: every `neoteletext` dependency in `native/Cargo.toml` names the same `rev`.
-- **State:** Met; the check is not written. The pinned commit is in the engine's local repository and is not yet published.
+- **State:** Not met, 23 October 2026: `native/Cargo.toml` names the engine's `00c90ea`, but the updater's workspace (`native/tuf/Cargo.toml`, `neoteletext-web`) and the fuzz workspace (`native/fuzz/Cargo.toml`, `neoteletext-qrkeyboard` and `neoteletext-input`) still name `d9ca77f`, so the fuzz targets build two engines. The check is not written; `scripts/check.sh` checks that `native/Cargo.toml` names one engine repository, not one commit. The pinned commit is in the engine's local repository and is not yet published.
 
 ---
 
@@ -113,7 +117,7 @@
 - **Reason:** Separation lets each part hold only what it needs, so that a compromise of one part gains little.
 - **Source:** Decisions 18, 33, 55 and 56.
 - **Verification:** Test: the running application's process list matches this set.
-- **State:** Met for the processes built (broker, trusted core, fetcher, decoder, interface, sound helper, phone keyboard): on 22 October 2026, on macOS, every helper and the core ran as the broker's children (`sandboxing.md` section 7.5). The test of the process list is not written; `the_trusted_core_starts_confined_and_reaches_its_own_code` starts the core through the broker.
+- **State:** Met for the processes built (broker, trusted core, fetcher, decoder, interface, sound helper, phone keyboard, updater, launcher): on 22 October 2026, on macOS, every helper and the core ran as the broker's children (`sandboxing.md` section 7.5); on 23 October 2026 on macOS, Linux and Windows the launcher started the broker, which started the confined updater on the core's request (`installation-and-updates.md` section 15, decision 73). There is no font helper (decision 66). The test of the process list is not written; `the_trusted_core_starts_confined_and_reaches_its_own_code` starts the core through the broker.
 - *Amended 23 October 2026 (decision 66):* there is no font helper: fonts from channels are not supported.
 
 ### Requirement 3.2: The trusted core contains no web engine and no format reader
@@ -121,7 +125,7 @@
 - **Reason:** The trusted core holds everything the user trusts; it must be the smallest and least exposed part.
 - **Source:** Decision 4.
 - **Verification:** Check: the trusted core's dependency tree contains no web engine, script engine, `neoteletext-formats` or `neoteletext-web`.
-- **State:** Met: the trusted core depends on `neoteletext-core` for flash timing and `neoteletext-image` for the image writer only. Another browser's bookmark file, which is HTML, is read by a decoder started for it; the trusted core looks only at its first line to know it (decision 71). The check is not written.
+- **State:** Not met as stated, 23 October 2026: the trusted core links no web engine, script engine or `neoteletext-formats`, but it reads with the engine: `neoteletext-core` for each packet's address in the console (`console.rs`, requirement 19.9, decision 51) and the local-address rule; `neoteletext-web` for the address parser, the proxy's address (decision 51) and the cookie jar, which reads the `Set-Cookie` lines the fetcher passes on (decision 62, requirement 21.1); and `neoteletext-input` for the input records it encodes and the cursor records it checks (`typing.rs`, decision 48). `neoteletext-image` went with Portable Network Graphics (decision 61). Another browser's bookmark file is read by a decoder (decision 71). The check is not written; as the Verification words it, it would fail on `neoteletext-web`, so the Statement or the check needs the owner's word.
 
 ### Requirement 3.3: The fetcher has only the network
 - **Statement:** The fetcher must be able to reach the network and nothing else: no files, and no other processes except through its pipe to the trusted core.
@@ -135,7 +139,7 @@
 - **Reason:** The decoder reads the most untrusted data; a fault in it must stay inside its own process.
 - **Source:** Architecture.
 - **Verification:** Test on each platform: the decoder's attempts to open a file or a network connection fail.
-- **State:** Met on macOS and Linux, 22 October 2026 (`sandboxing.md`, decision 52): on macOS its profile starts from "deny everything" and allows its pipes alone; on Linux it confines itself with an empty network namespace (where unprivileged user namespaces are allowed), Landlock with nothing readable and a seccomp filter with no sockets, no programs and no files, tested by the crate's probe (it can open no file, start no program, connect nowhere, write nothing). On Windows a less privileged AppContainer with no capabilities, in a job object with the mitigation policies and the Win32k filter. Whether it also runs inside `wasmi` is open decision 2.
+- **State:** Met on macOS and Linux, 22 October 2026 (`sandboxing.md`, decision 52): on macOS its profile starts from "deny everything" and allows its pipes alone; on Linux it confines itself with an empty network namespace (required since decision 58), Landlock with nothing readable and a seccomp filter with no sockets, no programs and no files, tested by the crate's probe (it can open no file, start no program, connect nowhere, write nothing). On Windows a less privileged AppContainer with no capabilities, in a job object with the mitigation policies and the Win32k filter. On iOS it must also run inside `wasmi` (decision 41, open decision 2), not built; on desktops that waits on measuring its cost.
 
 ### Requirement 3.5: Withdrawn: The font helper has no rights
 Withdrawn on 23 October 2026 (decision 66): the browser does not support fonts from channels (the owner, 23 October 2026), so no font is fetched and there is no font helper.
@@ -163,13 +167,14 @@ Withdrawn on 23 October 2026 (decision 66): the browser does not support fonts f
 - **Source:** Architecture.
 - **Verification:** Test, as in requirements 3.3 and 3.4, on macOS.
 - **State:** Met for the build, 22 October 2026: every process but the broker runs under a `sandbox-exec` profile, the trusted core's started by the broker (`sandboxing.md` section 7). `sandbox-exec` is deprecated by Apple; it still works on macOS 15, and the release build's packaging (`installation-and-updates.md` section 4.1) must keep each process under a profile of its own.
+- *Amended 23 October 2026:* the bundle, started by its launcher, ran healthy with every process under its profile and the updater under its own (`installation-and-updates.md` section 15, decision 73).
 
 ### Requirement 3.9: Security does not depend on the interface's code
-- **Statement:** Every security property in this document must hold even if the interface process runs code written by an attacker, **except** the integrity of the trusted strip and of strip input, which the interface process draws and sends (`architecture.md` section 6.1, open decision 3).
+- **Statement:** Every security property in this document must hold even if the interface process runs code written by an attacker, **except** the integrity of the trusted strip and of strip input, which the interface process draws and sends (`architecture.md` section 6.1; decision 41 kept the strip in the interface process, open decision 3).
 - **Reason:** The owner's principle that the interface's code must make no difference to security (decision 20). In this architecture the strip is drawn by the interface process, so its integrity depends on that process; every other property must not.
 - **Source:** Decisions 20 and 33.
 - **Verification:** Test: a hostile interface harness replaces the interface process with an adversarial client that sends every intent kind with arbitrary values, malformed messages, floods and replayed messages; the test shows that no secret is disclosed, no file or network is reached, no channel's data reaches another channel's requests, and no intent other than strip input changes channel.
-- **State:** Met in part (23 October 2026): the harness (`native/core/src/hostile_tests.rs`, run by the commit gate) sends 30,000 messages made at the byte level, every kind with arbitrary values, mutated real messages, lengths that lie and kinds the interface may not send, through the protocol's own reader into the trusted core's own handling. It shows that the core never panics, that no cookie's value reaches the interface, and that no intent but strip input changes a tab's channel or a setting; a fault planted to move a tab on a page intent is caught within 20 messages. It drives the core in its own test process, not through a substitute interface process, since a way for the broker to start another interface would be a way into a release build (implementation log row 16). Not shown by it: that no file or network is reached (requirements 3.3 to 3.7, by the sandboxes) and that no channel's data reaches another's requests (requirement 7.3, by one fetcher per channel), which need running helpers.
+- **State:** Met in part (23 October 2026): the harness (`native/core/src/hostile_tests.rs`, run by the commit gate) sends 30,000 messages made at the byte level, every kind with arbitrary values, mutated real messages, lengths that lie and kinds the interface may not send, through the protocol's own reader into the trusted core's own handling. It shows that the core never panics, that no cookie's value reaches the interface, and that no intent but strip input changes a tab's channel or a setting; a fault planted to move a tab on a page intent is caught within 20 messages. It drives the core in its own test process, not through a substitute interface process, since a way for the broker to start another interface would be a way into a release build (`IMPLEMENTATION-LOG.md`, "The round of 23 October 2026", row 16). Not shown by it: that no file or network is reached (requirements 3.3 to 3.7, by the sandboxes) and that no channel's data reaches another's requests (requirement 7.3, by one fetcher per channel), which need running helpers.
 
 ### Requirement 3.10: Withdrawn
 - **Was:** the Linux window host confined from outside.
@@ -246,7 +251,7 @@ Withdrawn on 23 October 2026 (decision 66): the browser does not support fonts f
 - **Reason:** These readers are each process's only exposure to the others.
 - **Source:** Architecture.
 - **Verification:** Check: fuzzing targets exist for each reader and run in the full check.
-- **State:** Met, 22 October 2026: `native/fuzz` has a target for each reader (`fetcher_messages`, `decoder_messages`, `core_messages`, `interface_messages`, `page_image`, `sound_messages`, `sound_requests`, `broker_requests`, `broker_replies`, and the readers of addresses, settings, link targets, input records, phone keys and relay messages), and the full check replays every input that ever found a fault and then runs each target for 20 seconds. Between pushes nothing fuzzes, so "continuously" means at every push.
+- **State:** Met, 23 October 2026: `native/fuzz` has a target for each reader (`fetcher_messages`, `fetcher_commands`, `decoder_messages`, `decoder_requests`, `core_messages`, `interface_messages`, `page_image`, `sound_messages`, `sound_requests`, `broker_requests`, `broker_replies`, `updater_messages`, the readers of addresses, settings, link targets, input records, phone keys and relay messages, and of the files `history_file`, `bookmarks_file`, `session_file`, `cookie_file`, `netscape_file`, `launcher_state`, `release_manifest`, `version_mark` and `gzip_member`), and `native/tuf/fuzz` has `tuf_metadata` and `http_response`; the full check replays every input that ever found a fault and then runs each target of both for 20 seconds (`check_fuzz`). Between pushes nothing fuzzes, so "continuously" means at every push.
 
 ### Requirement 4.7: No interface request or key affects fetching
 - **Statement:** No intent from the interface and no key press, however received, may cause, delay, reorder or prioritise a network request. Selecting a page may only show a page the channel's decoder already holds. **Exception (decision 23):** on a channel that publishes only separate page files, selecting a page not yet held fetches that page's file, within the tab's own channel and the limits of requirement 5.12.
@@ -311,7 +316,7 @@ Withdrawn on 23 October 2026 (decision 66): the browser does not support fonts f
 - **State:** Not met: discovery is not built.
 
 ### Requirement 5.7: Withdrawn: Fonts are fetched only when named
-Withdrawn on 23 October 2026 (decision 66): no font is fetched (decision 66): every page is drawn in the engine's own fonts.
+Withdrawn on 23 October 2026 (decision 66): no font is fetched; every page is drawn in the engine's own fonts.
 - **Was:** A font must be fetched only when a page or channel names it, and used only after the checks of requirement 3.5. Teletext fonts from the network must never reach the interface process.
 
 ### Requirement 5.8: Transports
@@ -319,7 +324,7 @@ Withdrawn on 23 October 2026 (decision 66): no font is fetched (decision 66): ev
 - **Reason:** These are the standard ways teletext services publish pages and push updates.
 - **Source:** Decision 12.
 - **Verification:** Test against a test server for each transport.
-- **State:** Partly met: plain HyperText Transfer Protocol and Server-Sent Events, exercised against the development site; Transport Layer Security with `rustls` and Mozilla's root certificates (decision 41), checked by hand on 20 October 2026 against badssl.com, whose expired, self-signed and wrong-host certificates are refused and whose valid one is accepted. WebSocket and zxnet are not wired. No automated test yet.
+- **State:** Partly met: plain HyperText Transfer Protocol and Server-Sent Events, exercised against the development site; WebSocket push, plain, by `keys_round_trip_and_pages_reach_the_screen_within_budget` against `neoteletext-site terminal` (requirement 18.1); Transport Layer Security with `rustls` and Mozilla's root certificates (decision 41), checked by hand on 20 October 2026 against badssl.com, whose expired, self-signed and wrong-host certificates are refused and whose valid one is accepted; secure WebSocket not yet tried against a `wss` channel. The zxnet live feed is not wired. The only automated test of Transport Layer Security, `a_tls_connection_opens_on_its_thread_and_answers`, needs the internet and runs only with `--ignored`.
 
 ### Requirement 5.9: Plain connections are allowed and shown
 - **Statement:** Channels reached without Transport Layer Security must be allowed, and the trusted strip must show that such a channel is not encrypted for as long as it is shown.
@@ -354,12 +359,12 @@ Withdrawn on 23 October 2026 (decision 66): no font is fetched (decision 66): ev
 - **Reason:** A redirect must not move a tab to another channel without the user.
 - **Source:** Architecture.
 - **Verification:** Test.
-- **State:** Not met: the site-change screen is not built.
+- **State:** Not met: the site-change screen is built (requirement 8.4), but a redirect that leaves the channel is only refused, by the engine's agent with `redirects_within_channel` set (the engine's REQ-WEB-021); its `RedirectToOtherChannel` event is not passed to the trusted core, so the screen is never offered.
 
 ### Requirement 5.14: No referrer and a minimal user agent
 - **Statement:** The fetcher must send no `Referer` header and only the engine's minimal user agent profile. Its `User-Agent` must be `NeoTeletext/<significant version> (<operating system family>)`, as the engine's REQ-WEB-031 defines, for example `NeoTeletext/0.1 (macOS)`: honest, the version that changes compatibility only, the operating system's family and nothing more (no version of it, no architecture, nothing about the person or the computer), the same for every user of a build; on every request and on the push WebSocket's upgrade.
 - **Reason:** Requests must reveal as little as possible about the user; a channel needs to know which receiver it serves, as a web site does.
-- **Source:** Architecture; the owner's instruction of 21 October 2026 (decision 47); the engine's decision E.99.
+- **Source:** Architecture; the owner's instruction of 21 October 2026; the engine's decision E.99.
 - **Verification:** Test: inspect requests and the upgrade received by a test server.
 - **State:** Met: the fetcher names the browser to the engine's agent, which sends `NeoTeletext/0.1 (macOS)` on every request and on the push upgrade (the engine's REQ-WEB-031, built 21 October 2026; test `the_user_agent_names_the_browser` here, and the engine's `the_user_agent_goes_on_requests_and_the_upgrade`).
 - *Amended 21 October 2026:* the user agent names the browser, its version and its platform.
@@ -440,7 +445,7 @@ Withdrawn on 23 October 2026 (decision 66): no font is fetched (decision 66): ev
 - **Reason:** The channel plays the part a site plays in a traditional browser.
 - **Source:** Decision 9.
 - **Verification:** Test.
-- **State:** Met: every channel has its own decoder and fetcher, and the fetcher's cookies are its channel's.
+- **State:** Met: every channel has its own decoder and fetcher, and its own cookie jar in the trusted core (decision 62, requirement 21.1).
 
 ### Requirement 7.3: Channels never share data
 - **Statement:** A channel's pages, cookies, caches and history must never be visible to, mixed with or sent to another channel's decoder or requests.
@@ -454,16 +459,14 @@ Withdrawn on 23 October 2026 (decision 66): no font is fetched (decision 66): ev
 - **Reason:** The same behaviour as same-site tabs in a traditional browser.
 - **Source:** Decision 11.
 - **Verification:** Test.
-- **State:** Not met: every tab opens its own channel.
-- *Met 22 October 2026* by requirements 21.1 and 21.2 (decision 62): the trusted core holds every cookie, one jar for the ordinary tabs and one for the private, each channel's under its own tag.
+- **State:** Partly met, 22 October 2026: tabs on a channel share its cookies, one jar in the trusted core (requirements 21.1 and 21.2, decision 62; `each_fetcher_is_answered_with_its_channels_cookies`); every tab still opens its own decoder and fetcher (`Session::open_tab`).
 
 ### Requirement 7.5: The trusted core owns the cookie store
 - **Statement:** The cookie store must live in the trusted core. For each request the trusted core must give the fetcher only the cookies that request carries, and the fetcher must return any `Set-Cookie` headers to the trusted core.
 - **Reason:** A compromised fetcher must see only the cookies of requests in flight.
 - **Source:** Decision 4.
 - **Verification:** Test: the fetcher process holds no cookie store.
-- **State:** Not met: each fetcher holds its own channel's store, inside the engine's user agent, in memory. Needs the engine change of `architecture.md` section 5.1.
-- *Met 22 October 2026* by requirements 21.1 and 21.2 (decision 62): the trusted core holds every cookie, one jar for the ordinary tabs and one for the private, each channel's under its own tag.
+- **State:** Met, 22 October 2026 (decision 62, requirement 21.1): the trusted core holds every cookie, one jar for the ordinary tabs and one for the private, each channel's under its own tag; a fetcher holds none (`the_fetcher_keeps_no_cookie`, its agent's jar `CookieJar<0, 0>`), asks the trusted core for each request's `Cookie` header and returns each `Set-Cookie` line (`each_fetcher_is_answered_with_its_channels_cookies`, `the_agent_asks_for_each_requests_cookies`), through the engine's E.104.
 
 ### Requirement 7.6: Cookie rules
 - **Statement:** The cookie store must follow the engine's: the draft RFC 6265bis, every cookie scoped to its host only, `Secure` cookies never sent over plain connections, the `__Host-` and `__Secure-` prefixes and expiry enforced, and `SameSite` applied to form submissions that go to another channel.
@@ -491,7 +494,7 @@ Withdrawn on 23 October 2026 (decision 66): no font is fetched (decision 66): ev
 - **Reason:** The interface process is untrusted and must not accumulate anything of value.
 - **Source:** Decisions 4 and 33.
 - **Verification:** Test: the interface process writes no file.
-- **State:** Partly met: it writes no file (denied on macOS) and holds no cookies. It keeps the images of pages it has been sent until they are replaced.
+- **State:** Partly met: it writes no file (denied by its sandbox; on Windows its restricted token at low integrity denies writes to the user's files) and holds no cookies; it drops the image of every page its layout no longer shows each time it reports what is visible (`retain_pages` in `native/interface/src/main.rs`), so it holds only the shown channel's pages. Neither is tested.
 
 ### Requirement 7.10: Forms
 - **Statement:** A page's form must be sent only to its declared destination, through the fetcher. A form whose destination is another channel must go through the site-change screen, with that channel's `SameSite` cookies withheld. No form value may be filled in automatically.
@@ -505,14 +508,14 @@ Withdrawn on 23 October 2026 (decision 66): no font is fetched (decision 66): ev
 - **Reason:** A failed certificate means the connection cannot be trusted.
 - **Source:** Decisions 4 and 24.
 - **Verification:** Test with expired, self-signed and wrong-host certificates.
-- **State:** Not met: Transport Layer Security is not built.
+- **State:** Met, 20 October 2026 (decision 41): a certificate that fails `rustls`'s checks against Mozilla's roots ends the handshake and fails the connection, with nothing offered to proceed (`open` in `native/fetcher/src/transport.rs`); by hand against badssl.com, whose expired, self-signed and wrong-host certificates were refused (requirement 5.8). The test with such certificates is not written; `a_tls_connection_opens_on_its_thread_and_answers` (`--ignored`, needs the internet) shows only a valid one accepted.
 
 ### Requirement 7.12: Local files
 - **Statement:** Each local file must be its own channel with no cookies, read by the trusted core and decoded by its own decoder, and links from it to web addresses must go through the site-change screen.
 - **Reason:** A file must not borrow the identity or cookies of a channel.
 - **Source:** Architecture.
 - **Verification:** Test.
-- **State:** Partly met: a file is its own channel with its own decoder, at most 64 megabytes or 4,096 page files. Links are not followed yet; `hyperlinks.md` section 11 says how they will be.
+- **State:** Met, 20 October 2026: a file is its own channel with its own decoder and no fetcher or cookies, at most 64 megabytes (`MAX_SOURCE_BYTES`) or 4,096 page files (`MAX_FILES`, `native/core/src/source.rs`); its links to its own pages open at once, and those to a web channel or the web leave it through the site-change screen or the web-browser prompt (`hyperlinks.md` section 11 item 4, decision 41; `a_file_channels_links_to_the_web_leave_it`).
 
 ---
 
@@ -530,7 +533,7 @@ Withdrawn on 23 October 2026 (decision 66): no font is fetched (decision 66): ev
 - **Reason:** Navigations a page starts are less trusted.
 - **Source:** Architecture.
 - **Verification:** Test.
-- **State:** Partly met: page links are recorded as page-started in the tab's history (test: `a_link_within_the_channel_keeps_it_open_and_is_recorded_as_the_pages`), and leave only through the site-change screen. No rule reads the record yet. Fastext, redirects and discovery results are not built.
+- **State:** Partly met: page links are recorded as page-started in the tab's history (test: `a_link_within_the_channel_keeps_it_open_and_is_recorded_as_the_pages`), and leave only through the site-change screen; a Fastext key to a service the descriptor lists leaves the same way (`fastext_keys_follow_as_links_do`, decision 67). No rule reads the record yet. Redirects (requirement 5.13) and discovery results are not built.
 
 ### Requirement 8.3: The committed address is shown
 - **Statement:** The trusted strip must show the committed address until a new page commits.
@@ -544,7 +547,7 @@ Withdrawn on 23 October 2026 (decision 66): no font is fetched (decision 66): ev
 - **Reason:** The user must always see and agree to a change of channel.
 - **Source:** Decision 9.
 - **Verification:** Test for each kind of page-started navigation.
-- **State:** Partly met: for links, built and seen on macOS on 20 October 2026; for Fastext, redirects and discovery results, not built.
+- **State:** Partly met: for links, built and seen on macOS on 20 October 2026; for Fastext, built 23 October 2026 (decision 67; `fastext_keys_follow_as_links_do`); for redirects (requirement 5.13) and discovery results, not built.
 
 ### Requirement 8.5: The site-change screen cannot be faked by a page
 - **Statement:** The site-change screen must be drawn only in the trusted strip, never in the page area, and a confirmation must not be accepted from a click inside the page area or from pasted input.
@@ -688,7 +691,7 @@ Withdrawn on 23 October 2026 (decision 66): no font is fetched (decision 66): ev
 - **Why withdrawn:** there is no webview and no page code (decision 33).
 
 ### Requirement 10.12: No unsafe code
-- **Statement:** The interface process, like every crate of the application, must forbid `unsafe` code in its own source. There are three exceptions: the `dock-menu` crate, whose macOS module reaches AppKit through the Objective-C runtime; the `web-opener` crate, whose Windows module calls the shell's `ShellExecuteW` (hyperlink decision 7); and the `confine` crate, whose Linux module makes two C library calls for the network namespace and no-new-privileges, whose Unix module passes pipes between processes as descriptors with `sendmsg` and `recvmsg` (decision 56) and reads the local zone with `tzset` and `localtime_r` (decision 57), and whose Windows module makes the Win32 calls that create a confined process and hand it pipes (decisions 52 and 56). Each denies `unsafe_code` everywhere else, and each unsafe block states why it is sound.
+- **Statement:** The interface process, like every crate of the application, must forbid `unsafe` code in its own source. There are three exceptions: the `dock-menu` crate, whose macOS module reaches AppKit through the Objective-C runtime; the `web-opener` crate, whose Windows module calls the shell's `ShellExecuteW` (hyperlink decision 7); and the `confine` crate, whose Linux module makes C library calls for the network namespace (`getuid`, `getgid`, `unshare`) and no-new-privileges (`prctl`), whose Unix module passes pipes between processes as descriptors with `sendmsg` and `recvmsg` (decision 56) and reads the local zone with `tzset` and `localtime_r` (decision 57), and whose Windows module makes the Win32 calls that create a confined process and hand it pipes (decisions 52 and 56). Each denies `unsafe_code` everywhere else, and each unsafe block states why it is sound.
 - **Reason:** A memory-safety fault is the most likely way to take over a process. AppKit offers the Dock menu only through calls Rust cannot check (decision 39).
 - **Source:** Architecture; decision 39.
 - **Verification:** Check: the workspace lints forbid `unsafe_code`; `dock-menu` denies it and allows it only in `src/mac.rs`, `web-opener` only in `src/windows.rs`, and `confine` only in `src/linux.rs`, `src/unix.rs` and `src/windows.rs`, each with Clippy's `undocumented_unsafe_blocks`.
@@ -718,7 +721,7 @@ Withdrawn on 23 October 2026 (decision 66): no font is fetched (decision 66): ev
 - **Reason:** Everything that decides or shows trust is in one place.
 - **Source:** Decision 4.
 - **Verification:** Review.
-- **State:** Partly met: the address, identity, encryption state, Back, Forward, Home, the bookmark star, and the security settings in the settings panel (decision 51). Reload and the site-change screen are not built.
+- **State:** Met, 23 October 2026: the address, identity, encryption state, Back, Forward, Reload (requirement 11.6, decision 63) and Home, the bookmark star, the site-change screen (requirements 8.4 and 8.5, for links and Fastext) and the security settings in the settings panel (decision 51).
 - *Amended 23 October 2026 (decision 63):* Reload is built (requirement 11.6), between Forward and Home. State: partly met; the site-change screen is not built.
 
 ### Requirement 11.3: The address field
@@ -747,7 +750,7 @@ Withdrawn on 23 October 2026 (decision 66): no font is fetched (decision 66): ev
 - **Reason:** A channel that stalls, or a file that changed, is otherwise opened again only by typing its address, which adds to the tab's history.
 - **Source:** Decision 63.
 - **Verification:** Trusted-core test: a reload gives the tab a new channel at the same address and leaves its history as it was. Interface tests of the button, its place and the shortcuts.
-- **State:** Built 23 October 2026 (`ToCore::Reload`, `Session::reload`), and seen on macOS: the strip shows Back, Forward, Reload and Home; the button sends Reload (`a_tip_shows_after_a_rest_and_goes_on_a_press`); `a_reload_opens_the_channel_afresh_where_the_tab_is` (a new channel at the same address, the history as it was, a reload waiting to be recorded); in history a reload counts no visit (requirement 20.1). The shortcut's test is owed (`TECH-DEBT.md`).
+- **State:** Built 23 October 2026 (`ToCore::Reload`, `Session::reload`), and seen on macOS: the strip shows Back, Forward, Reload and Home; the button sends Reload (`a_tip_shows_after_a_rest_and_goes_on_a_press`); `a_reload_opens_the_channel_afresh_where_the_tab_is` (a new channel at the same address, the history as it was, a reload waiting to be recorded); in history a reload counts no visit (requirement 20.1). The button's place and the shortcut: `reload_sits_between_forward_and_home_and_has_its_keys`.
 - *Amended 23 October 2026 (decision 64):* entering the address shown in the address field, or following a link to it, is a reload, as Chrome makes it (`chrome.history`'s reload transition: "pressing Enter in the address bar"; `ShouldTreatNavigationAsReload`): no new entry, and not a typed visit. State: met, `a_reload_opens_the_channel_afresh_where_the_tab_is`.
 
 ---
@@ -759,7 +762,7 @@ Withdrawn on 23 October 2026 (decision 66): no font is fetched (decision 66): ev
 - **Reason:** The tab strip is drawn by the interface; tab state is trusted.
 - **Source:** Decisions 33 and 35.
 - **Verification:** Test.
-- **State:** Partly met: tabs, close and new tab. Drag to reorder, overflow and session restore are not built.
+- **State:** Met, 23 October 2026: tabs, close, new tab, closing by the middle button (`the_middle_button_closes_the_tab_under_it`, decision 63), dragging to reorder and overflow (requirements 12.13 to 12.15, decision 69), session restore (requirement 20.22, decision 59), and a tab dragged off the strip into a window of its own or onto another window's strip (requirement 12.8, decision 72; `a_tab_dragged_off_the_strip_leaves_the_window`).
 - *Amended 23 October 2026 (decision 63):* a press of the middle button on a tab must close it, as the tab's close button does. State: built, `the_middle_button_closes_the_tab_under_it`. Session restore has been built since 22 October 2026 (requirement 20.22).
 - *Amended 23 October 2026 (decision 69):* dragging to reorder and overflow are built (requirements 12.13 to 12.15); a tab dragged between windows waits on multiple windows (requirement 12.8).
 
@@ -782,14 +785,14 @@ Withdrawn on 23 October 2026 (decision 66): no font is fetched (decision 66): ev
 - **Reason:** Teletext is driven by these keys.
 - **Source:** Decision 22.
 - **Verification:** Test each key.
-- **State:** Partly met: three digits choose a page of the channel, or follow the open page's `LK` line or the channel's alias (test: `a_number_the_page_or_channel_links_goes_to_the_trusted_core`), and Up and Down step through pages. Fastext, reveal, hold and mix are not built.
+- **State:** Met, 23 October 2026: three digits choose a page of the channel, or follow the open page's `LK` line or the channel's alias (test: `a_number_the_page_or_channel_links_goes_to_the_trusted_core`), Up and Down step through pages, and Fastext, reveal, hold and mix are built (requirements 22.1 to 22.4, decision 67: `the_viewers_keys_ask_for_the_controls`, `fastext_keys_follow_as_links_do`, `reveal_and_mix_change_the_page_drawn`, `a_held_page_keeps_its_version`).
 
 ### Requirement 12.5: Menus and shortcuts
 - **Statement:** The application must provide a native menu bar (File, Edit, View, History, Window) carrying the browser's shortcuts. Menu items and buttons must send the same intents.
 - **Reason:** Shortcuts must work whatever has focus.
 - **Source:** Prototype finding.
 - **Verification:** Test each shortcut.
-- **State:** Not met: the menu button exists with no menu.
+- **State:** Partly met, 23 October 2026: the menu button's menu is built (`the_menu_holds_history_and_bookmarks`), with New tab, New window, New private tab, New private window, Move tab to new window, Reopen closed tab, History, Bookmarks, the bookmarks bar, Bookmark this page, the phone keyboard, the developer console, the remote control and Settings, each with its shortcut where it has one (decisions 57, 68 and 72); the native menu bar is not built.
 - *Amended 22 October 2026 (decision 57):* until the menu bar is built, the menu button's menu holds New tab, New private tab, Reopen closed tab, History, Bookmarks, the bookmarks bar, Bookmark this page, the phone keyboard, the developer console and Settings, each with its shortcut; the History and Bookmarks menus hold what `history-and-bookmarks.md` section 6 lists. State: the menu button's menu is built (`the_menu_holds_history_and_bookmarks`); the menu bar is not.
 
 ### Requirement 12.6: Internal pages
@@ -797,7 +800,7 @@ Withdrawn on 23 October 2026 (decision 66): no font is fetched (decision 66): ev
 - **Reason:** Security settings must stay in the strip.
 - **Source:** Decision 4.
 - **Verification:** Test.
-- **State:** Partly met: the settings are shown in the strip's panel from the trusted core's settings view, and the security settings change only there; the bookmarks are shown on the start page, which the trusted core writes (decision 51). History has no page.
+- **State:** Met, 22 October 2026: settings in the strip's panel, security settings changed only there (decision 51); history in the panel of requirement 20.4 and bookmarks in the manager of requirement 20.17, both from the trusted core's views (decision 57).
 - *Amended 22 October 2026 (decision 57):* history has the panel of requirement 20.4 and bookmarks the manager of requirement 20.17, both from the trusted core's views.
 
 ### Requirement 12.7: Developer tools
@@ -834,14 +837,14 @@ Withdrawn on 23 October 2026 (decision 66): no font is fetched (decision 66): ev
 - **Reason:** Addresses are pasted more often than typed, and many scripts need an input method.
 - **Source:** Architecture.
 - **Verification:** Test on each desktop.
-- **State:** Partly met: composed text is inserted when committed. The clipboard (needs a library) and showing text while it is composed are not built.
+- **State:** Partly met: composed text is inserted when committed. The address field has no copy or paste, and does not show text while it is composed; `arboard` (decision 49) is in the interface but used only for paste to a channel (REQ-INT-136).
 
 ### Requirement 12.12: Tips
 - **Statement:** Every control the window draws as an icon, a symbol or text that may be cut short must have a tip: a label naming it, saying what it does, and giving its shortcut on the platform where it has one. A tip must show when the pointer has rested on its control for half a second, beside the pointer and inside the window, over everything else; a press must put it away until the pointer leaves the control, and leaving must put it away. Tips must be the interface's own words, except a tab's title and a bookmark's name, which must be shown as the cleaned text they are (requirement 11.5). While a panel or list is open over the window, only its tips and the strip's must show.
 - **Reason:** An icon alone does not say what it does, and the shortcuts are otherwise found only in the menu.
 - **Source:** Decision 63.
 - **Verification:** Interface tests: a tip shows after the rest and not before, with each platform's shortcut, and goes on a press and on leaving; a review that every icon, symbol and cut text has one.
-- **State:** Built 23 October 2026, with tests `a_tip_shows_after_a_rest_and_goes_on_a_press` and `tips_name_each_platforms_shortcut`; seen on macOS. Tips cover the tab strip (each tab's title, its close and sound buttons, new tab, the window buttons elsewhere than macOS), the toolbar (Back, Forward, Reload, Home, the address field, the star, mute all, settings, the menu), the bookmarks bar's chips, the banks, the page size's buttons, the overview's fold, the console's tabs and buttons, the cookies' buttons, and the close, remove and volume buttons of the settings, history and bookmarks panels and the phone keyboard's. The review of every control is owed (`TECH-DEBT.md`).
+- **State:** Built 23 October 2026, with tests `a_tip_shows_after_a_rest_and_goes_on_a_press` and `tips_name_each_platforms_shortcut`; seen on macOS. Tips cover the tab strip (each tab's title, its close and sound buttons, new tab, the window buttons elsewhere than macOS), the toolbar (Back, Forward, Reload, Home, the address field, the star, mute all, settings, the menu), the bookmarks bar's chips, the banks, the page size's buttons, the overview's fold, the console's tabs and buttons, the cookies' buttons, and the close, remove and volume buttons of the settings, history and bookmarks panels and the phone keyboard's. The review of every control was done on 23 October 2026 and gave the open page's close button its tip (`a0efff5`).
 
 ### Requirement 12.13: Tabs are reordered by dragging
 - **Statement:** A tab pressed and moved more than 4 points must be dragged, a mark showing where it will go, and released must move there, by strip input the trusted core carries out, keeping the active tab active and saving the session; released where it started, or after Escape, nothing changes.
@@ -962,21 +965,21 @@ Requirements 13.1 to 13.13 are unchanged from the earlier design, and are stated
 - **Reason:** Requirements that are not checked drift.
 - **Source:** Owner's baseline instructions.
 - **Verification:** Review of the hooks.
-- **State:** Partly met. `scripts/check.sh commit`, run before each commit, formats, lints and tests only the parts the staged files touch, and refuses to run while those parts have changes that are not staged, so what it checks is what is committed. `scripts/check.sh full`, run before each push on a clean tree at the commit pushed, adds release tests, `cargo-deny`, `cargo-machete`, fuzzing, and the Linux build and tests on the Linux host; since 21 October 2026 it builds no prototypes, which were removed (decision 50). Neither skips a step: a missing tool or an unreachable host fails the run. The compiler and every tool are pinned (`rust-toolchain.toml`, `scripts/tools.sh`). The full gate passed as a whole on 21 October 2026. Many checks named in this document are not written yet.
+- **State:** Partly met. `scripts/check.sh commit`, run before each commit, formats, lints and tests only the parts the staged files touch, and refuses to run while those parts have changes that are not staged, so what it checks is what is committed. `scripts/check.sh full`, run before each push on a clean tree at the commit pushed, adds release tests, `cargo-deny`, `cargo-machete`, fuzzing, and the Linux build and tests on the Linux host, for the browser's workspace and the updater's (`native/tuf`); since 21 October 2026 it builds no prototypes, which were removed (decision 50). Neither skips a step: a missing tool or an unreachable host fails the run. The compiler and every tool are pinned (`rust-toolchain.toml`, `scripts/tools.sh`). The full gate passes at each push (the `pre-push` hook), the last on 23 October 2026. Many checks named in this document are not written yet.
 
 ### Requirement 14.2: Strict compilation and linting
 - **Statement:** Rust code must build with `unsafe` code forbidden, the Clippy lint group `pedantic` enabled and warnings treated as errors; any suppression must be narrow, at its site, with a written reason.
 - **Reason:** Warnings are faults found early.
 - **Source:** Owner's baseline instructions.
 - **Verification:** Check.
-- **State:** Met. Beyond the statement: every public item is documented, and the crates that read input from outside their process (protocol, decoder, fetcher, core, interface) also deny every construct that can panic, with one list the check script keeps identical in each.
+- **State:** Met. Beyond the statement: every public item is documented, and the crates that read input from outside their process (every crate in `NO_PANIC_ROOTS` of `scripts/check.sh`) also deny every construct that can panic, with one list the check script keeps identical in each.
 
 ### Requirement 14.3: Dependencies
 - **Statement:** Lockfiles must be committed and their changes reviewed. `cargo-deny` and `cargo audit` must pass. Every library compiled into the browser must be under a permissive licence (decision 34) and needs the owner's approval. System libraries linked at run time follow `licensing.md`, which admits LGPL ones linked dynamically and not shipped (decision 40).
 - **Reason:** The supply chain is a route to compromise.
 - **Source:** Decisions 4 and 34; owner's baseline instructions.
 - **Verification:** Check.
-- **State:** Partly met: every dependency is pinned to an exact version. `cargo-deny` runs in the full gate (`native/deny.toml`): licences, sources, and the RustSec advisories that `cargo audit` also reads; `cargo audit` itself is not run. One advisory is ignored pending the owner's decision: RUSTSEC-2026-0192, `ttf-parser` unmaintained, which only winit's Wayland window decorations use. The libraries in use were approved by name on 20 October 2026 (decision 41).
+- **State:** Partly met: every dependency is pinned to an exact version. `cargo-deny` runs in the full gate on both workspaces (`native/deny.toml`, `native/tuf/deny.toml`): licences, sources, and the RustSec advisories that `cargo audit` also reads; `cargo audit` itself is not run. Four advisories are ignored: RUSTSEC-2026-0192, `ttf-parser` unmaintained, which only winit's Wayland window decorations use, pending the owner's decision; and RUSTSEC-2026-0370 to 0372, `zvariant`, `zbus_names` and `zvariant_derive` merged into zbus 6, which the Linux Secret Service client (decision 62) has not moved to. The libraries in use were approved by name on 20 October 2026 (decision 41) and since by decisions 49, 62 and 74.
 
 ### Requirement 14.4: Withdrawn
 - **Was:** a runtime caller-attribution test before any change of Tauri or webview runtime.
@@ -1005,17 +1008,17 @@ Requirements 13.1 to 13.13 are unchanged from the earlier design, and are stated
 - **Reason:** The first version is desktop only (decision 24).
 - **Source:** Architecture.
 - **Verification:** The full check on each platform.
-- **State:** Partly met: macOS only.
+- **State:** Partly met, 23 October 2026: built and run on macOS, Linux (Ubuntu 26.04, X11 under Xvfb on `foundintelquiet4060`) and Windows 11 (the virtual machine's desktop): every process confined (requirement 3.7, decisions 52, 55, 56 and 58), sound (requirement 16.6, decision 40), session restore (requirement 20.22, decision 59), cookies (requirement 21.1, decision 62) and installation and updates (section 13, `installation-and-updates.md` section 15, decision 73). The full gate builds and tests on Linux (`check_linux`); Windows is built and tested by hand (`DEVELOPMENT.md` section 12.1). Not met on every platform: the Dock menu's counterparts (requirement 16.9), the interface's file reads on Windows (requirement 3.6), the XDG Desktop Portal (requirement 17.9).
 
 ### Requirement 15.2: Phones (after the first version)
-- **Statement:** When phones are added, Android must run the decoder in an isolated service process, and on iOS, where there is one process, the decoder must have a wall of its own (open decision 2). Every requirement not tied to process separation must still be met.
+- **Statement:** When phones are added, Android must run the decoder in an isolated service process, and on iOS, where there is one process, the decoder must have a wall of its own (decision 41: `wasmi`). Every requirement not tied to process separation must still be met.
 - **Reason:** Phones limit process separation.
 - **Source:** Architecture.
 - **Verification:** The full check on each phone platform.
 - **State:** Not met.
 
 ### Requirement 15.3: Microcontrollers
-- **Statement:** The interface core must build without the standard library and draw through the microcontroller back end. A microcontroller build must keep pages, page-number and Fastext keys, flash and a simple page wall, with the cuts the owner decides (open decision 5), and must have its own security analysis.
+- **Statement:** The interface core must build without the standard library and draw through the microcontroller back end. A microcontroller build must keep pages, page-number and Fastext keys, flash and a simple page wall, with the cuts the owner decides (decision 41: `architecture.md` section 13), and must have its own security analysis.
 - **Reason:** Microcontrollers are a target (decision 34).
 - **Source:** Decision 34.
 - **Verification:** Check: the interface core and the microcontroller back end build for a microcontroller target; a test draws the window into a display in memory.
@@ -1026,7 +1029,7 @@ Requirements 13.1 to 13.13 are unchanged from the earlier design, and are stated
 - **Reason:** Decision 34.
 - **Source:** Decision 34.
 - **Verification:** Test on a machine or virtual machine with no graphics processor.
-- **State:** Met on macOS by design (`vello_cpu` and softbuffer); not tested without a graphics processor.
+- **State:** Met by design on every desktop (`vello_cpu` and softbuffer; no graphics library is linked); on 22 October 2026 the browser drew under Xvfb on Linux, a display with no graphics processor (`sandboxing.md` section 4). Not tested on a macOS or Windows machine without one.
 
 ---
 
@@ -1038,6 +1041,7 @@ Requirements 13.1 to 13.13 are unchanged from the earlier design, and are stated
 - **Source:** Decision 37; the engine's decisions E.84 to E.86.
 - **Verification:** Decoder tests: a page's sound is sent when its page is opened and faded when it is left; a live sound streams and fades two seconds after its last block.
 - **State:** Met on macOS.
+- *Amended 23 October 2026:* met on macOS, Windows and Linux: its tests are not tied to a platform and run in the Linux gate, and page sound played through all three desktops (requirement 16.6).
 
 ### Requirement 16.2: Sound is read only in the decoder
 - **Statement:** Audio packets must be read, reassembled, stored and decoded only in the decoder process. The trusted core must not parse them, and the sound helper must receive only 16-bit samples and voice operations the trusted core checked (decision 55).
@@ -1111,7 +1115,7 @@ Adopted on 20 October 2026 (decision 41) from [`hyperlinks.md`](hyperlinks.md), 
 ### Requirement 17.1: No teletext underline
 - **Statement:** Teletext's underline attribute is not drawn on any page shown by NeoTeletext; separated mosaics are drawn as before.
 - **Reason:** An underline must mean only a link.
-- **Source:** Decision 41; `hyperlinks.md`.
+- **Source:** Decisions 41 and 42; `hyperlinks.md`.
 - **Verification:** Test: a Level 2.5 page with underlined text and separated mosaics.
 - **State:** Met: the decoder renders with the engine's `underline` option off (decision E.88). Test: `the_pages_own_underline_is_not_drawn`, which fails without the change.
 
@@ -1119,7 +1123,7 @@ Adopted on 20 October 2026 (decision 41) from [`hyperlinks.md`](hyperlinks.md), 
 - **Statement:** Links are drawn only by the interface, over the page image, in one style the page cannot change (`hyperlinks.md` section 9.2), and only when a teletext dot is at least one and a half device pixels.
   *Amended 20 October 2026:* two device pixels, as adopted, showed no links on a page shown at its own size on an ordinary screen (`hyperlinks.md` section 19).
 - **Reason:** A page must not be able to draw the browser's link.
-- **Source:** Decision 41; `hyperlinks.md`.
+- **Source:** Decisions 41, 42 and 43; `hyperlinks.md`.
 - **Verification:** Test of the drawing at several scales; review.
 - **State:** Met: the interface draws a hairline at screen resolution with a contrasting edge, only over the image the links belong to. Tests: `links_are_drawn_only_when_a_dot_is_one_and_a_half_device_pixels`, `the_underline_is_along_the_bottom_of_the_cells_and_finer_than_a_dot`, `links_are_drawn_only_over_their_own_image`; seen on macOS on 20 October 2026.
 
@@ -1251,7 +1255,7 @@ The input system's requirements for NeoTeletext are in `~/devel/neoteletext-comm
 - **State:** Met: the engine's `cursor::from_body` in the trusted core, checked again by the interface's reader; tests `echo_stays_in_its_width_is_masked_and_clears_on_acknowledgement_or_time`, `the_cursor_is_drawn_only_while_typing`, `the_acknowledgement_clears_echo_and_measures_the_round_trip`, `typing_round_trips_and_a_bad_cursor_or_mode_is_refused`; the fuzz target `input_records`.
 
 #### REQ-INT-135: Latency
-- **State:** Met on macOS, by `keys_round_trip_and_pages_reach_the_screen_within_budget`, which now opens the session with HELLO and WELCOME and types text: on 21 October 2026, release build, key to the channel's pushed page median 0.22 ms, worst 0.42 ms; render 0.90 ms, encoding 1.73 ms and the interface's decoding 0.17 ms (medians), the three together at worst 3.19 ms. Not yet run on Windows or Linux with version 2.
+- **State:** Met on macOS, by `keys_round_trip_and_pages_reach_the_screen_within_budget`, which now opens the session with HELLO and WELCOME and types text: on 21 October 2026, release build, key to the channel's pushed page median 0.22 ms, worst 0.42 ms; render 0.90 ms, encoding 1.73 ms and the interface's decoding 0.17 ms (medians), the three together at worst 3.19 ms. It runs in the full gate's Linux stage; its Linux figures are not recorded, and it has not been run on Windows.
 
 #### REQ-INT-136: Mouse, paste and composition
 - **State:** Met in tests. Clicks, moves and the wheel go only in a mouse mode, over the page, the browser's modifier keeping a click the browser's; the preedit goes as COMPOSE in that mode; the input method is enabled while keys go; the browser's paste shortcut (Command-V on macOS, Control-Shift-V elsewhere) sends the clipboard's text, through `arboard` (decision 49), as one PASTE: tests `a_click_is_the_hosts_only_in_a_mouse_mode`, `the_wheel_and_moves_go_only_when_asked_for`, `paste_is_one_intent_and_composition_only_in_its_mode`, `the_mouse_goes_only_when_the_page_or_channel_asks`. The clipboard itself and the preedit are untested with a real clipboard and input method.
@@ -1345,7 +1349,7 @@ From `settings-home-console-proxy.md` and its security analysis (decision 51).
 - **Reason:** Many networks reach the web only through a proxy; a fallback would leak what the user chose to send through it.
 - **Source:** Decision 51.
 - **Verification:** Tests against a local HTTP proxy and a local SOCKS5 proxy, of success, refusal and silence.
-- **State:** Met: `a_connection_goes_through_an_http_proxy`, `a_connection_goes_through_a_socks5_proxy`, `a_refusal_fails_the_connection`, `a_silent_proxy_fails_in_time` against proxies on this computer; by hand on macOS on 21 October 2026 through a local HTTP proxy, the fetch and push connections were tunnels, and with the proxy stopped the strip said "The proxy refused the connection to 127.0.0.1" and nothing went direct. The phone keyboard takes `--proxy` (`the_keyboard_reads_its_relay_pin_and_proxy`); its relay through a proxy is untested. Since 22 October 2026 (decision 53) a connection, its tunnel and its handshake are opened on a thread of their own and the agent's connect limit bounds them, so a silent proxy no longer holds the fetcher's loop (`a_silent_proxy_fails_in_time_and_holds_nothing_up`, which failed on the earlier code).
+- **State:** Met: `a_connection_goes_through_an_http_proxy`, `a_connection_goes_through_a_socks5_proxy`, `a_refusal_fails_the_connection`, `a_silent_proxy_fails_in_time_and_holds_nothing_up` against proxies on this computer; by hand on macOS on 21 October 2026 through a local HTTP proxy, the fetch and push connections were tunnels, and with the proxy stopped the strip said "The proxy refused the connection to 127.0.0.1" and nothing went direct. The phone keyboard takes `--proxy` (`the_keyboard_reads_its_relay_pin_and_proxy`); its relay through a proxy is untested. Since 22 October 2026 (decision 53) a connection, its tunnel and its handshake are opened on a thread of their own and the agent's connect limit bounds them, so a silent proxy no longer holds the fetcher's loop (`a_silent_proxy_fails_in_time_and_holds_nothing_up`, which failed on the earlier code).
 
 ### Requirement 19.11: The local network through a proxy
 - **Statement:** With a proxy, an address written as a local IP address, `localhost` and names under `.local` and `.internal` must be refused unless allowed (requirement 5.10), before anything is sent to the proxy.
@@ -1517,6 +1521,7 @@ Withdrawn on 23 October 2026 (decision 65): history follows Chrome (decision 64)
 - **Verification:** Tests: each kind of change writes the file; private tabs are never in it; a write stopped before its rename leaves the last one.
 - **State:** Met: `the_session_is_kept_after_every_change` (a mute, a page drawing with its title, the window only once still, a private tab never), `the_session_is_kept_and_restored`, `the_session_round_trips_through_its_file` (mode 0600), `a_long_list_is_kept_around_its_place`; a temporary file left before its rename is ignored (`the_session_round_trips_through_its_file`). By hand on 22 October 2026: on macOS the browser killed with `SIGKILL` left `session.txt` with both tabs, without the private tab, and the window's place; on Linux and Windows likewise (requirement 20.22).
 - *Amended 23 October 2026 (decision 64):* each entry keeps the time the tab last came to it, and the recently closed tabs are kept too (requirement 20.9); the file is version 2, and a version 1 file is not read, so the session of a build before is not restored once. State: met, `the_session_round_trips_through_its_file`.
+- *Amended 23 October 2026 (decision 72):* every window is kept, each with its place, size, active tab and tabs, at most 16 windows and 64 tabs; the closed tabs of a window that closed whole carry its number; the file is version 3, and a version 2 file is not read. State: met, `every_window_is_kept_and_restored`, `a_closed_window_reopens_whole`.
 
 ### Requirement 20.22: The session is restored at start
 - **Statement:** With "Restore previous session" on, the browser must start with the kept session's window, tabs, lists and active tab, the command line's addresses opening as further tabs, the last of them active; with it off or with no session, as before.
@@ -1524,6 +1529,7 @@ Withdrawn on 23 October 2026 (decision 65): history follows Chrome (decision 64)
 - **Source:** Decision 59.
 - **Verification:** Tests of the restore, with and without the setting and with command-line addresses; a demonstration on each desktop.
 - **State:** Met in tests: `the_tabs_at_start` (as it was; addresses after it, the last active; off, as before; nothing kept, the home address), `the_session_is_kept_and_restored`. By hand on macOS on 22 October 2026: the next start had both tabs, the second active, and the window at the place and size written into the file (300, 200, 1100 by 700); with restoring off, one tab at the home address. On Linux (X11 under Xvfb, foundintelquiet4060) and on Windows (the virtual machine's desktop), the same day: a browser killed with both tabs open kept them in `session.txt` (0600 on Linux), and the next start restored them with the window at the place and size written into the file (`xwininfo` 1100×700+200+100; `GetWindowRect` 150, 120, 1100 by 700).
+- *Amended 23 October 2026 (decision 72):* every kept window is restored, each where it was. State: met in tests, `every_window_is_kept_and_restored`; by hand on macOS, two windows restored at their places (`multiple-windows.md` section 8).
 
 ### Requirement 20.23: The session file is read strictly
 - **Statement:** `session.txt` must be read as `history-and-bookmarks.md` section 15.4 defines it, every field within its bound and rule; what breaks a rule is dropped and logged.
@@ -1532,6 +1538,7 @@ Withdrawn on 23 October 2026 (decision 65): history follows Chrome (decision 64)
 - **Verification:** Test of each rule; the fuzz target `session_file`.
 - **State:** Met: `the_file_is_read_strictly` (session; the exact lines and tabs dropped); the fuzz target `session_file` (every bound, round trip; 2.6 million runs from a seeded file, no fault). A restored address passes the address rules again (`Session::restore`).
 - *Amended 23 October 2026 (decision 64):* version 2: an entry's time must be a whole number of seconds from 1970 or later, and a `closed` line begins a closed tab as `tab` begins a tab. State: met, `the_file_is_read_strictly`.
+- *Amended 23 October 2026 (decision 72):* version 3: a `window` line begins each window (`history-and-bookmarks.md` section 15.4). State: met, `the_file_is_read_strictly`.
 
 ### Requirement 20.24: Restoring is a setting
 - **Statement:** The settings must include "Restore previous session", on by default, kept in `settings.txt` and changed in the settings panel.
@@ -1642,7 +1649,7 @@ From `page-controls.md` (decision 67, taken while the owner was away, on the own
 - **Reason:** The coloured keys are teletext's own navigation; the engine has them (its REQ-NAV-003).
 - **Source:** Decision 67.
 - **Verification:** Tests of the decoder (targets from a link line), the trusted core (following, another service, a key leading nowhere) and the interface (the keys).
-- **State:** Met, 23 October 2026: `fastext_comes_from_the_link_line_and_needs_row_24`, `fastext_keys_follow_as_links_do`, `the_viewers_keys_ask_for_the_controls`. The receiver-drawn row 24 of a page with `LN` lines (the engine's REQ-NAV-011) waits on the engine moving its drawing where the decoder can use it.
+- **State:** Met, 23 October 2026: `fastext_comes_from_the_link_line_and_needs_row_24`, `fastext_keys_follow_as_links_do`, `the_viewers_keys_ask_for_the_controls`. Since 23 October 2026 the decoder draws the receiver's row 24 of a page with `LN` lines (the engine's REQ-NAV-011, with its `links::receiver_links`, E.108), a link to another service blank (`link_lines_draw_the_receivers_row_24`).
 
 ### Requirement 22.2: The keys act only while their row is shown
 - **Statement:** A coloured key or Index must do nothing on an image of the page whose row 24 was blank or boxed away, as the engine's viewer decides it (its REQ-SEC-024), and a key must be checked against the image the user was shown, as a click is (requirement 12.3).

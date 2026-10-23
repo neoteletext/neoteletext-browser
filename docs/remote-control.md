@@ -18,7 +18,7 @@ A teletext set is driven from a remote: digits, the four coloured keys and Index
 
 Docked or floating is chosen by a button on its title row; the state and a floating panel's place are kept in `settings.txt` by the trusted core (the interface stores nothing, requirement 7.9) and restored at the next start.
 
-**Why inside the window, not a window of its own.** A window of its own can be covered or imitated by another program, and floating windows behave differently on every desktop (requirement 11.1's reasoning). Inside the browser's window the remote is drawn by the same interface process as the rest, with the same rules. When the browser has more than one window (the to-do's item on multiple windows), each window has its own remote.
+**Why inside the window, not a window of its own.** A window of its own can be covered or imitated by another program, and floating windows behave differently on every desktop (requirement 11.1's reasoning). Inside the browser's window the remote is drawn by the same interface process as the rest, with the same rules. Each window has its own remote, at the one place kept for them all (`multiple-windows.md` section 1, decision 72).
 
 ## 3. What it holds
 

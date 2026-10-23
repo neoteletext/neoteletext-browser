@@ -123,7 +123,7 @@ The engine already parses both. Their targets are those of the engine's TTI Link
 
 ### 6.3 Fastext
 
-The coloured keys (X/27/0 and TTI `LN`) are links too. They follow the same path to the core, and their prompts are drawn by the receiver as decision E.36 requires, not underlined. Building them belongs with requirement 12.4. This document only makes sure they use the same link table and the same rules for following.
+The coloured keys (X/27/0 and TTI `LN`) are links too. They follow the same path to the core, and their prompts are drawn by the receiver as decision E.36 requires, not underlined. Built on 23 October 2026 with requirement 12.4 (`page-controls.md`, decision 67). This document only makes sure they use the same link table and the same rules for following.
 
 ### 6.4 The channel descriptor
 
@@ -412,7 +412,7 @@ Built on 20 October 2026, phases 1 and 2, behind the `links` cargo feature (on b
 8. **Linux hands over with `xdg-open`** until a D-Bus crate for the XDG Desktop Portal is approved (decision 10). Windows uses `ShellExecuteW`, which opened an address in Edge in the Windows 11 VM; `xdg-open` has not been run by hand on Linux.
 9. **Not built:**
    - offering the system's web browser when a teletext address turns out not to be teletext (section 7.1): neither the fetcher nor the decoder reports that a channel's content was refused as not teletext, and that report has to be designed first;
-   - Fastext (section 6.3; requirement 12.4);
+   - Fastext (section 6.3; requirement 12.4), built on 23 October 2026 by decision 67 (`page-controls.md`);
    - links in the accessibility tree: the browser has none yet (requirement 12.9).
 10. **The history records page-started visits** (requirement 8.2), but no rule reads the record yet.
 

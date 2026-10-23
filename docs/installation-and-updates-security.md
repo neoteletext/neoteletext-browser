@@ -42,7 +42,7 @@ The updater decides what code the user runs next. Everything else in `security-a
 - **The threshold of root keys stolen together.** Two of three hardware keys held by different people. **Low.**
 - **The first download.** Users who never check the Linux signature trust the download page's TLS alone, as for any software. **Low to medium**, the industry's norm.
 - **`tough`'s 136 crates** (section 8.2 of the design). They run in a confined process that holds no platform key, so a fault there alone ships nothing (threat 4). Their supply chain is checked by `cargo deny`, as every dependency is. **Low.**
-- **The macOS trusted core stays unconfined** until the XPC design. **Medium**, as `security-analysis.md` section 16 rank 3 already records.
+- **The macOS trusted core is confined** behind the broker on every platform since decision 56, which refused the XPC design; what stays unconfined is the broker and the launcher (`security-analysis.md` section 16 rank 3).
 - **A fault in the launcher (threat 7).** It is small, and section 13's tests try every failure point. **Low.**
 - **The timestamp key online.** It can only keep users on the current release for 7 days. **Low.**
 

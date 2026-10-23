@@ -405,7 +405,7 @@ The decoder process is now the engine. What each process does with it:
 
 ### 12.3 Web channels and push (15 October 2026)
 
-A channel is a folder on a web server, as the engine's `docs/channels.md` defines it: `channel.json` names the push feed, `contents.txt` lists every page with its title under section headings, and each page is `NNN.tti`. NeoTeletext now opens such channels.
+A channel is a folder on a web server, as the engine's `docs/spec/requirements/web.md` defines it: `channel.json` names the push feed, `contents.txt` lists every page with its title under section headings, and each page is `NNN.tti`. NeoTeletext now opens such channels.
 
 | Part | What it does |
 |---|---|
@@ -419,6 +419,8 @@ To run it: `neoteletext-site build target/sites <recordings>...`, `neoteletext-s
 
 **Not yet built:** TLS for `https` channels, and WebSocket push; following page links and Fastext from a click on a cell; sub-pages beyond the latest; the engine's contents files and bank names; reveal and the engine's viewer for page entry; rendering only when a flashing page changes, instead of twelve times a second.
 
+*Since built:* Transport Layer Security and WebSocket push (decisions 41 and 45), page links and Fastext (decisions 43 and 67), sub-pages and reveal (decision 67), flash drawn only when it changes (decision 47), the menu (decision 57), paste into a page (decision 49), Linux and Windows builds with their sandboxes (decisions 52 and 58).
+
 ### 12.4 The wheel and the overview (16 October 2026)
 
 - **A mouse wheel's notch moves one zoomed page.** Measured with a probe window on macOS 15.6: a slow notch arrives as a single event of 0.1 lines (`scrollingDeltaY`; its raw line count is 1), and quick notches are sped up, 0.1, 0.9 and 2.8 within 80 milliseconds. At 21 pixels a line and 20 pixels a page, a slow notch moved 2.1 pixels, and about ten were needed for one page. Feeds that show one item at a time, as the fullPage.js library does, count only the wheel's direction and ignore it until the step's animation ends. Now any notch moves one page, and at most one page per 220-millisecond slide; trackpads, which report pixels, keep the distance rule.
@@ -426,6 +428,8 @@ To run it: `neoteletext-site build target/sites <recordings>...`, `neoteletext-s
 - **A page in the overview pops up at its native size,** 480 by 500, above its cell, with the pointer a hand over every cell whose page has arrived. The page is added to the pages reported visible, so its decoder renders it whichever bank it is in. It never covers the tab strip or the trusted strip: on a short window it shrinks to fit below them.
 
 **Not yet built (window):** redrawing only the parts of the window that changed (the overview's dots now redraw everything); the menu's contents; showing why an address was refused; paste and copy in the address field (needs a clipboard library); the text being composed by an input method; hover previews; screen readers; a compact layout for small microcontroller displays; a build for a microcontroller target (the target is not installed on this machine); Linux, Windows, iOS and Android; the system call filter for the interface process on Linux.
+
+*Since built:* drawing only what changed (section 12.7) and the menu (decision 57).
 
 
 1. **Proof N1: Masonry with `vello_cpu`.** The same tab, with Masonry at a pinned source commit drawing through `vello_cpu`; measure size, idle use and frame time, and try `TextInput` as the address field with an input method and a screen reader.
