@@ -28,6 +28,14 @@ impl Browser {
         canvas.fill(bar, 0.0, BLACK);
         canvas.fill(Rect::new(0.0, bar.y1 - HAIRLINE, width, bar.y1), 0.0, RULE);
         let top = bar.y0 + TOOL_INSET;
+        self.draw_tool_buttons(canvas, width, top);
+
+        self.draw_address_field(canvas, top);
+    }
+
+    /// The toolbar's buttons, `top` down: Back, Forward, Reload and Home
+    /// at the left; the gear, mute-all and the menu at the right.
+    fn draw_tool_buttons<C: Canvas + ?Sized>(&mut self, canvas: &mut C, width: f64, top: f64) {
         let tool = |x: f64| Rect::new(x, top, x + TOOL_SIZE, top + TOOL_SIZE);
         self.regions.back = tool(MARGIN);
         self.regions.forward = tool(MARGIN + TOOL_SIZE);
@@ -64,7 +72,12 @@ impl Browser {
             let y = middle + offset - MENU_BAR_HEIGHT / 2.0;
             canvas.fill(Rect::new(centre_x - MENU_BAR_WIDTH / 2.0, y, centre_x + MENU_BAR_WIDTH / 2.0, y + MENU_BAR_HEIGHT), 0.0, WHITE);
         }
+    }
 
+    /// The address field between Home and the gear, `top` down: the
+    /// strip's question, or the security prefix, the star, the badges,
+    /// and the address, a link's destination or the trusted core's notice.
+    fn draw_address_field<C: Canvas + ?Sized>(&mut self, canvas: &mut C, top: f64) {
         let field = Rect::new(self.regions.home.x1 + MARGIN * 2.0, top, self.regions.gear.x0 - MARGIN * 2.0, top + TOOL_SIZE);
         self.regions.field = field;
         canvas.fill(field, 0.0, FIELD);
