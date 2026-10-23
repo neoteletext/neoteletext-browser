@@ -84,3 +84,18 @@ fn a_phones_keys_have_no_modifiers() {
     assert_eq!(phone_parts(false, "A").and_then(|parts| parts.text), None, "no text on release");
     assert_eq!(phone_parts(true, "NoSuchKey"), None);
 }
+
+/// Decision 99: the keys the trusted core passes on while no page is open
+/// for typing, protocol's list, are exactly those the page view acts on,
+/// among every W3C name and every character a phone may send.
+#[cfg(feature = "phone-keyboard")]
+#[test]
+fn the_cores_page_keys_are_the_page_views() {
+    use interface_core::browser::phone_page_key;
+    use protocol::keyboard::{PAGE_NAVIGATION_KEYS, navigates_pages};
+    let characters: Vec<String> = (0..=0x2FF_u32).filter_map(char::from_u32).map(String::from).collect();
+    for name in neoteletext_input::names::KEY_NAMES.iter().copied().chain(characters.iter().map(String::as_str)) {
+        assert_eq!(phone_page_key(name).is_some(), navigates_pages(name), "{name:?}");
+    }
+    assert!(PAGE_NAVIGATION_KEYS.iter().all(|name| phone_page_key(name).is_some()));
+}

@@ -2,11 +2,12 @@
 
 use std::io::{self, BufReader, BufWriter, Write};
 use std::process::ExitCode;
-use std::sync::mpsc;
+use std::sync::{Arc, Mutex, mpsc};
 use std::time::Instant;
 
 use neoteletext_input::session::Limiter;
 use neoteletext_qrkeyboard::config::{Layout, ScreenConfig};
+use neoteletext_qrkeyboard::net::Waker;
 use neoteletext_qrkeyboard::qr::{Correction, Matrix};
 use neoteletext_qrkeyboard::screen::{Event, Screen};
 use neoteletext_web::proxy::Proxy;
@@ -44,26 +45,35 @@ fn run(relay: &str, pin: bool, proxy: Option<Proxy>) -> Result<(), String> {
     let mut output = BufWriter::new(io::stdout().lock());
     let send = |output: &mut BufWriter<io::StdoutLock<'_>>, message: &FromKeyboard| write_to_core(output, message).map_err(|error| error.to_string());
     send(&mut output, &FromKeyboard::State(PhoneState::Preparing))?;
+    // The trusted core's Finish, or the end of its pipe, is watched from
+    // the start (finding F-26): reaching the relay can take as long as the
+    // relay likes, and closing the pipe must end this process meanwhile,
+    // so the core never waits on it. Once the screen exists the watcher
+    // wakes its wait (the engine's E.106) and the loop ends the session;
+    // before then there is no session, and the process ends at once.
+    let (finish, finished) = mpsc::channel();
+    let waker: Arc<Mutex<Option<Waker>>> = Arc::new(Mutex::new(None));
+    let watched = Arc::clone(&waker);
+    std::thread::spawn(move || {
+        let mut input = BufReader::new(io::stdin().lock());
+        let finish_asked = matches!(read_to_keyboard(&mut input), Ok(Some(ToKeyboard::Finish)));
+        let _ = finish.send(finish_asked);
+        match watched.lock().ok().and_then(|mut slot| slot.take()) {
+            Some(waker) => waker.wake(),
+            None => std::process::exit(0),
+        }
+    });
     let config = ScreenConfig { name: NAME.into(), layout: Layout::Terminal, pin, rejoin_seconds: Some(REJOIN_SECONDS) };
     let mut screen = match Screen::create(relay, config, proxy) {
         Ok(screen) => screen,
         Err(error) => {
             send(&mut output, &FromKeyboard::State(PhoneState::Finished))?;
-            return Err(format!("no phone keyboard: {error}"));
+            return Err(format!("no phone keyboard: {}", reason(&error)));
         }
     };
+    *waker.lock().map_err(|_| "the input watcher stopped")? = Some(screen.waker());
     let matrix = Matrix::new(&screen.join().url, Correction::Medium).map_err(|error| error.to_string())?;
     send(&mut output, &FromKeyboard::Join { qr: qr(&matrix), pin: screen.join().pin.clone() })?;
-    // The trusted core's Finish, or the end of its pipe, which wakes the
-    // screen's wait (the engine's E.106): nothing waits by the clock.
-    let (finish, finished) = mpsc::channel();
-    let waker = screen.waker();
-    std::thread::spawn(move || {
-        let mut input = BufReader::new(io::stdin().lock());
-        let finish_asked = matches!(read_to_keyboard(&mut input), Ok(Some(ToKeyboard::Finish)));
-        let _ = finish.send(finish_asked);
-        waker.wake();
-    });
     let started = Instant::now();
     let mut limiter = Limiter::new();
     loop {
@@ -78,7 +88,7 @@ fn run(relay: &str, pin: bool, proxy: Option<Proxy>) -> Result<(), String> {
         }
         // What the last events produced goes before waiting.
         output.flush().map_err(|error| error.to_string())?;
-        let events = screen.wait(None).map_err(|error| error.to_string())?;
+        let events = screen.wait(None).map_err(|error| reason(&error))?;
         for event in events {
             let message = match event {
                 Event::Scan => FromKeyboard::State(PhoneState::Scan),
@@ -125,6 +135,21 @@ fn run(relay: &str, pin: bool, proxy: Option<Proxy>) -> Result<(), String> {
         }
     }
 }
+
+/// Why the relay failed, as this process prints it on its one line, which
+/// the trusted core logs. A TLS failure is one fixed sentence (finding
+/// F-40): the TLS library's text can carry the names a presented
+/// certificate holds, which a hostile network chooses.
+fn reason(error: &neoteletext_qrkeyboard::Error) -> String {
+    match error {
+        neoteletext_qrkeyboard::Error::Tls(_) => TLS_REFUSED.to_owned(),
+        other => other.to_string(),
+    }
+}
+
+/// What a TLS failure with the relay is reported as: a certificate that
+/// does not verify is the usual cause, and a hard stop (requirement 7.11).
+const TLS_REFUSED: &str = "TLS with the relay failed: its certificate was refused or the connection broke";
 
 /// What the trusted core started the keyboard with: `[relay] [--pin]
 /// [--proxy URL]`. The proxy is given only at the start, as a fetcher's is
@@ -174,6 +199,17 @@ mod tests {
 
     fn read(given: &[&str]) -> Result<Arguments, String> {
         arguments(given.iter().map(|&argument| argument.to_owned()))
+    }
+
+    /// Finding F-40: a TLS failure is printed as a fixed sentence, never
+    /// with the names a presented certificate carries.
+    #[test]
+    fn a_tls_failure_names_nothing_from_the_certificate() {
+        use neoteletext_qrkeyboard::Error;
+        let presented = Error::Tls("invalid peer certificate: NotValidForName: \"attacker.example\", \"Evil Corp CA\"".into());
+        let said = reason(&presented);
+        assert!(!said.contains("attacker.example") && !said.contains("Evil Corp"), "{said}");
+        assert_eq!(reason(&Error::Status(503)), "the relay answered 503", "other failures say what they said");
     }
 
     /// Requirement 19.12: the proxy comes only as an argument at the start.

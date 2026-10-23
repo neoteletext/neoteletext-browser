@@ -753,6 +753,7 @@ Withdrawn on 23 October 2026 (decision 66): no font is fetched; every page is dr
 - **Source:** Decision 4.
 - **Verification:** Test.
 - **State:** Met, with tests: `protocol::clean` on the sending side and a check on the receiving side; the address editor never inserts hidden characters.
+- *Amended 24 October 2026 (finding F-36):* the hidden set is every format character (Unicode general category Cf, the tag characters among them), the line and paragraph separators, and the other default-ignorable characters (the combining grapheme joiner, the Hangul fillers, the variation selectors), where it had been the controls, the bidirectional controls and the zero-width characters alone; and a run of combining marks of the combining blocks is cut at `MAX_COMBINING_RUN`, four. State: met, by `every_invisible_character_is_hidden` (interface-core) and `a_run_of_combining_marks_is_cut` (protocol), both failing on the earlier code. A script's own combining marks (Devanagari's, Hebrew's) are not counted, since that needs Unicode's tables, which no crate of the protocol carries.
 
 ### Requirement 11.6: Reload
 - **Statement:** The strip must show a Reload button between Forward and Home; it, Command-R on macOS and Control-R elsewhere must open the active tab's channel afresh, with a new decoder and fetcher reading its pages again, at the tab's place in its history, which must not change. Reload is strip input carrying nothing; the trusted core decides what is opened.
@@ -1192,6 +1193,7 @@ Adopted on 20 October 2026 (decision 41) from [`hyperlinks.md`](hyperlinks.md), 
 - **Source:** Decision 41; `hyperlinks.md`.
 - **Verification:** Test with `file:`, custom schemes, paths, a leading `-` and over-long addresses; the "nothing else opens" test of `hyperlinks-security.md` section 15.
 - **State:** Partly met. macOS: `/usr/bin/open -u`, by hand on 20 October 2026 (an `https` address opened in the default browser and was logged). Linux: `xdg-open`; the XDG Desktop Portal awaits the approval of a D-Bus crate (hyperlink decision 10). Windows: `ShellExecuteW`, by hand on 20 October 2026 in the Windows 11 VM's desktop (`an_address_opens_in_the_default_browser`: Edge opened the address); every test passed there with links compiled in and out. Tests: `only_plain_https_and_http_addresses_are_handed_over`, `nothing_but_a_confirmation_hands_a_web_page_over`, `the_web_is_handed_over_only_with_the_focus_and_at_most_every_two_seconds`.
+- *Amended 24 October 2026 (decision 100, finding F-41):* an address holding `'`, `;`, `$`, `(`, `)`, `!` or `` ` `` is refused by the opener and never handed over. State: met in `web_opener::acceptable`, by `only_plain_https_and_http_addresses_are_handed_over`, which failed on the earlier check with `https://a.example/x;$(id)`; the trusted core's own address rule (`links::web_address`) still accepts those characters, so such a link is asked about and then refused at the hand-off, until the core's rule refuses them too. On Windows, by hand: a link from a page still opens.
 
 ### Requirement 17.10: Links by keyboard
 - **Statement:** Links can be reached and followed with the keyboard, and are in the accessibility tree.
@@ -1285,6 +1287,7 @@ The input system's requirements for NeoTeletext are in `~/devel/neoteletext-comm
 
 #### REQ-INT-138: The phone keyboard
 - **State:** As requirement 18.9 stood, with the phone's keys now the protocol's: text as text, named keys their functional codes, no modifiers (test `a_phones_keys_have_no_modifiers`); the keyboard process counts 120 input units a second, a character of text each. The panel has not yet paired with a real phone.
+- *Amended 24 October 2026 (decision 99, finding F-20):* while no page is open for typing, a phone key moves between pages and does nothing else: the trusted core passes on only the page-navigation keys, protocol's `PAGE_NAVIGATION_KEYS` (the digits, the four arrows and the four colour keys), and the interface gives a phone key to the page view alone, never to a text field, the strip's question or a panel, dropping it while one of those has the keys. State: the interface's half is met, by `a_phones_keys_never_reach_the_address_field`, `a_phones_keys_never_reach_a_panel`, `a_phones_keys_never_answer_the_strips_question`, `a_phones_page_keys_move_between_pages` and `only_the_page_navigation_keys_are_the_page_views` (interface-core), each of the first four failing on the earlier routing, and `the_cores_page_keys_are_the_page_views` (the interface), which holds protocol's list and the page view's to one set; the trusted core's filter is not yet built.
 
 #### REQ-INT-139: Compiled out
 - **State:** Met: the commit gate lints the workspace with every optional area out, and with hyperlinks, typing, and both, alone.

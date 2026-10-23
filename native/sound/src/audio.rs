@@ -154,7 +154,11 @@ pub fn set_sound(mixers: &Mutex<Mixers>, sound: bool, volume: u8) {
     }
 }
 
-/// Applies one voice operation of `channel` from the trusted core.
+/// Applies one voice operation of `channel` from the trusted core. Only a
+/// definition or a live sound makes the channel's mixer (finding F-55):
+/// any other operation on a channel without one does nothing, so the
+/// trusted core's stream cannot grow the mixers, which the audio thread
+/// walks for every buffer, with channels that never sound.
 pub fn apply(mixers: &Mutex<Mixers>, channel: u32, audio: Audio) {
     let mut mixers = mixers.lock().unwrap_or_else(PoisonError::into_inner);
     let rate = mixers.rate_hz;
@@ -169,22 +173,25 @@ pub fn apply(mixers: &Mutex<Mixers>, channel: u32, audio: Audio) {
             drop(gone);
             return;
         }
+        // Kept apart from the mixer, so a mute given before the channel's
+        // first sound holds when its mixer is made.
         Audio::Mute(muted) => {
             if muted {
                 mixers.muted.insert(channel);
             } else {
                 mixers.muted.remove(&channel);
             }
+            mixers.master(channel);
+            return;
         }
         _ => {}
     }
-    if let std::collections::btree_map::Entry::Vacant(vacant) = mixers.channels.entry(channel) {
+    if matches!(audio, Audio::Define { .. } | Audio::Stream { .. })
+        && let std::collections::btree_map::Entry::Vacant(vacant) = mixers.channels.entry(channel)
+    {
+        // A new mixer holds no sound yet, so it allocates nothing.
         vacant.insert(Mixer::new(rate));
         mixers.master(channel);
-    }
-    if matches!(audio, Audio::Mute(_)) {
-        mixers.master(channel);
-        return;
     }
     let Some(mixer) = mixers.channels.get_mut(&channel) else { return };
     match audio {

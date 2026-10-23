@@ -199,3 +199,35 @@ fn a_tone_plays_through_the_default_output_device() {
     assert_eq!(speaker.mixers.lock().unwrap().sounding(), BTreeSet::new(), "finished: the device consumed the whole second");
     speaker.set_playing(false);
 }
+
+/// Finding F-55: only a definition or a live sound makes a channel's
+/// mixer; any other operation on a channel without one changes nothing,
+/// and a mute given first still holds when the mixer is made.
+#[test]
+fn an_operation_on_an_unknown_channel_makes_no_mixer() {
+    let mixers = Mutex::new(Mixers::new(8_000));
+    for (channel, operation) in [
+        Audio::Samples { sound: SOUND, first: 0, pcm: vec![1; 8] },
+        Audio::Forget(SOUND),
+        Audio::Start { channel: 0, sound: SOUND, gain: 100, fade_ms: 0, looped: true, duck_percent: 100, after_current: false },
+        Audio::Stop { channel: 0, fade_ms: 0 },
+        Audio::Gain { channel: 0, gain: 50, fade_ms: 0 },
+        Audio::StreamSamples { sound: SOUND, pcm: vec![1; 8] },
+        Audio::Mute(true),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        apply(&mixers, u32::try_from(channel).unwrap(), operation);
+    }
+    assert_eq!(mixers.lock().unwrap().channels.keys().collect::<Vec<_>>(), Vec::<&u32>::new(), "no mixer made");
+    // Channel 6 was muted before it had a mixer: it is silent once it plays.
+    play(&mixers, 6, 8_000);
+    apply(&mixers, 7, Audio::Stream { sound: SOUND, rate_hz: 8_000 });
+    assert_eq!(mixers.lock().unwrap().channels.keys().copied().collect::<Vec<_>>(), [6, 7]);
+    let mut data = vec![0_i16; 400];
+    let mut scratch = vec![0_i16; 400];
+    render(&mixers, &mut data, 1, &mut scratch);
+    // After the master's ramp, as in the test of muted tabs above.
+    assert!(data[300..].iter().all(|&sample| sample == 0), "the mute held: {:?}", &data[300..310]);
+}

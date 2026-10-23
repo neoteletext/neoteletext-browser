@@ -1,7 +1,6 @@
 //! The phone keyboard (`interaction.md` section 9): its panel's state and
-//! the paired phone's keys, which act as the window's own.
-
-use interface_core::browser::{Key as BrowserKey, Modifiers};
+//! the paired phone's keys, which type into a page open for typing
+//! and otherwise only move between pages (decision 99).
 
 use super::App;
 
@@ -22,42 +21,21 @@ impl App {
         self.view.browser.set_phone(PhoneUiView { status, qr: view.qr.map(|qr| (qr.size, qr.bits)), pin: view.pin });
     }
 
-    /// A key of the paired phone: it acts as a key of the window's own
-    /// keyboard, with no modifier (REQ-INT-138).
+    /// A key of the paired phone, with no modifier (REQ-INT-138): while a
+    /// page is open for typing it is the page's, as a key of the window's
+    /// own keyboard; otherwise it moves between pages and nothing else,
+    /// never reaching a field, the strip's question or a panel (decision
+    /// 99).
     pub(super) fn phone_key(&mut self, key: protocol::keyboard::PhoneKey) -> bool {
         use protocol::keyboard::PhoneKey;
         let now = self.now();
         let typing = self.view.browser.typing_target().is_some();
         match key {
             PhoneKey::Text(text) if typing => self.view.browser.terminal_text(&text, now),
-            PhoneKey::Text(text) => self.view.browser.key(BrowserKey::Text(&text), Modifiers::default(), now),
-            PhoneKey::Key { down, name } => {
-                let mut characters = name.chars();
-                let single = match (characters.next(), characters.next()) {
-                    (Some(character), None) => Some(character),
-                    _ => None,
-                };
-                if typing {
-                    return crate::keys::phone_parts(down, &name)
-                        .is_some_and(|parts| self.view.browser.terminal_key(parts.action, parts.key, parts.mods, parts.text.as_deref(), parts.base, now));
-                }
-                if !down {
-                    return false;
-                }
-                let browser_key = match name.as_str() {
-                    "Enter" => BrowserKey::Enter,
-                    "Escape" | "BrowserBack" | "Exit" => BrowserKey::Escape,
-                    "Backspace" => BrowserKey::Backspace,
-                    "Tab" => BrowserKey::Tab,
-                    "ArrowLeft" => BrowserKey::Left,
-                    "ArrowRight" => BrowserKey::Right,
-                    "ArrowUp" | "ChannelUp" => BrowserKey::Up,
-                    "ArrowDown" | "ChannelDown" => BrowserKey::Down,
-                    _ if single.is_some() => BrowserKey::Text(&name),
-                    _ => return false,
-                };
-                self.view.browser.key(browser_key, Modifiers::default(), now)
-            }
+            PhoneKey::Text(text) => self.view.browser.phone_text(&text, now),
+            PhoneKey::Key { down, name } if typing => crate::keys::phone_parts(down, &name)
+                .is_some_and(|parts| self.view.browser.terminal_key(parts.action, parts.key, parts.mods, parts.text.as_deref(), parts.base, now)),
+            PhoneKey::Key { down, name } => self.view.browser.phone_key(down, &name, now),
         }
     }
 }
