@@ -202,6 +202,13 @@ impl Core {
     pub(super) fn window_intent(&mut self, intent: &ToCore) -> Result<bool, String> {
         match *intent {
             ToCore::From(window) => {
+                // The strip's question is the window's that asked it: once
+                // intents come from another, it is forgotten, so no answer
+                // from there follows it (finding F-65).
+                #[cfg(feature = "links")]
+                if window != self.session.window && self.links.forget_prompt() {
+                    self.link(protocol::links::Message::Prompt(None))?;
+                }
                 self.from_closed = !self.switch_window(window);
                 if !self.from_closed {
                     self.refresh_if_stale()?;
@@ -293,6 +300,39 @@ mod tests {
         assert_eq!(test.core.session.geometry, None);
         test.core.switch_window(second);
         assert_eq!(test.core.session.geometry, Some(place));
+    }
+
+    /// Finding F-65: the strip's question belongs to the window that asked
+    /// it: once intents come from another window, a confirmation follows
+    /// nothing there. Before, window A's question confirmed from window B
+    /// handed B's tab on.
+    #[cfg(feature = "links")]
+    #[test]
+    fn a_question_is_answered_only_in_its_own_window() {
+        use interface_core::canvas::PageKey;
+        use neoteletext::links::{Channel, DWELL_MILLISECONDS, Follow};
+        use protocol::links::{Candidate, Fastext, Found, Spot};
+        let mut test = Test::new("question-window");
+        test.core.session.open("https://news.invalid/teletext/").unwrap();
+        let first = test.core.session.window;
+        let channel = test.core.session.tabs[0].channel.id;
+        let key = PageKey { channel, page: 0x100 };
+        let address = test.core.session.tabs[0].address().unwrap().clone();
+        let web = Candidate { row: 5, column: 0, length: 7, double: false, light: false, target: Found::Declared("web:https://www.example.invalid/".into()) };
+        test.core.links.opened(Some(key));
+        test.core.links.found(key, vec![web], Vec::new(), Fastext::default());
+        test.core.links.image(key, 1, &Channel { id: channel, address: &address, exists: &|_| true }, 0);
+        let spot = Spot { key, version: 1, column: 1, row: 5 };
+        test.core.links.point(Some(spot));
+        let Ok(Follow::Ask(prompt)) = test.core.links.click(spot, Some(channel), DWELL_MILLISECONDS) else { panic!("asked") };
+        let second = test.core.session.new_window(false).unwrap();
+        test.core.session.open("https://sport.invalid/teletext/").unwrap();
+        test.core.switch_window(first);
+        test.core.intent(ToCore::From(second)).unwrap();
+        // Past the question's half second.
+        std::thread::sleep(std::time::Duration::from_millis(neoteletext::links::PROMPT_DELAY_MILLISECONDS + DWELL_MILLISECONDS + 100));
+        assert_eq!(test.core.intent(ToCore::Confirm(prompt.id)), Ok(true), "nothing handed on: with no broker, a hand-off fails");
+        assert_eq!(test.core.links.prompt(), None, "the question went with its window");
     }
 
     /// Requirements 20.21 and 20.22: the session is written after every
