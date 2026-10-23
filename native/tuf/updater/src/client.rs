@@ -157,6 +157,8 @@ impl Config {
     /// lengths, to at most its bound.
     pub(super) async fn fetch(&self, repository: &Repository, version: Version, path: &str, length: Option<u64>) -> Result<Vec<u8>, String> {
         let name = TargetName::new(target_name(version, self.platform, path)).map_err(|error| error.to_string())?;
+        let decompressed = length.map_or(MAX_MANIFEST, |length| usize::try_from(length).unwrap_or(usize::MAX));
+        self.https.expect_target(update::gzip::max_compressed(decompressed));
         let stream = repository.read_target(&name).await.map_err(|error| chain(&error))?.ok_or_else(|| format!("the repository names no {}", name.raw()))?;
         let compressed = stream.into_vec().await.map_err(|error| chain(&error))?;
         match length {
@@ -187,4 +189,17 @@ fn chain(error: &dyn std::error::Error) -> String {
         source = cause.source();
     }
     text
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The transport's bound on metadata is `tough`'s largest.
+    #[test]
+    fn the_metadata_bound_is_toughs() {
+        let limits = limits();
+        assert_eq!(Some(crate::transport::MAX_METADATA), usize::try_from(limits.max_targets_size).ok());
+        assert!(limits.max_root_size <= limits.max_targets_size && limits.max_timestamp_size <= limits.max_targets_size);
+    }
 }
