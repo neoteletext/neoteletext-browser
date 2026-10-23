@@ -37,11 +37,6 @@
     clippy::unimplemented
 )]
 
-#[cfg(windows)]
-use std::io;
-#[cfg(windows)]
-use std::path::Path;
-
 pub mod broker;
 mod environment;
 #[cfg(target_os = "linux")]
@@ -62,23 +57,5 @@ pub use process::{Input, Output, Process};
 pub use role::{Report, Role};
 pub use spawn::{Spawn, apply, spawn};
 pub use time::{LocalTime, MAX_OFFSET, local_time};
-
-/// Windows: grants `ALL APPLICATION PACKAGES` read and run on `folder` and
-/// everything in it, as Program Files grants it, so the containers can
-/// start the browser's programs from the user's own folder; the
-/// installer's step (`installation-and-updates.md` section 4.2). No
-/// administrator: the user owns the folder.
-///
-/// # Errors
-/// When the folder's access list cannot be changed.
 #[cfg(windows)]
-pub fn grant_packages_read(folder: &Path) -> io::Result<()> {
-    windows::grant_packages_read(folder)
-}
-
-/// Windows: removes the browser's `AppContainer` profiles, for the
-/// uninstaller (requirement 13.20).
-#[cfg(windows)]
-pub fn remove_containers() {
-    windows::remove_containers();
-}
+pub use windows::{grant_packages_read, remove_containers};
