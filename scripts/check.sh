@@ -199,6 +199,20 @@ check_fuzz() {
     done
 }
 
+# A release script refuses a test identity unless told it is a test
+# (finding F-24). publish.sh, given no destination, copies nothing
+# anywhere; with the variable set and no --test it must refuse before it
+# reads its arguments, so the arguments here name nothing.
+check_release_identity() {
+    step "release scripts: a test identity is refused without --test"
+    local said
+    if said="$(NEOTELETEXT_RELEASE_IDENTITY=/x bash scripts/release/publish.sh r root t s ts -- 2>&1 </dev/null)"; then
+        fail "publish.sh ran with a test identity and no --test"
+    fi
+    [[ "$said" == *"names a test identity"* ]] || fail "publish.sh failed with a test identity, but not by refusing it:
+$said"
+}
+
 full_gate() {
     # The commit being pushed is the one checked: the pre-push hook passes
     # the pushed commits, and the tree must be clean at HEAD.
@@ -224,6 +238,7 @@ $loose"
     step "native: no unused dependencies"
     (cd native && cargo machete)
     (cd native/tuf && cargo machete)
+    check_release_identity
     step "native/tuf: release tests"
     (cd native/tuf && cargo nextest run --workspace --release --hide-progress-bar --status-level fail --final-status-level fail)
     check_fuzz
