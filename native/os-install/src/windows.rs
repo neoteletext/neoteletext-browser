@@ -4,10 +4,6 @@
 //! box the uninstaller asks with (requirement 13.20).
 
 #![allow(unsafe_code, reason = "the Win32 trust, certificate, registry and message box calls (requirement 10.12, as amended for this crate)")]
-#![allow(
-    clippy::undocumented_unsafe_blocks,
-    reason = "each call's safety is argued once, at the module's head: every pointer passed is to memory this module owns for the call's length, and every handle is one this module opened and closes once"
-)]
 
 use std::ffi::OsStr;
 use std::os::windows::ffi::OsStrExt as _;
@@ -54,11 +50,14 @@ fn size_of_u32<T>() -> u32 {
 
 pub fn ask(title: &str, question: &str) -> bool {
     let (title, question) = (wide(title), wide(question));
+    // SAFETY: both strings are zero-terminated UTF-16 (`wide`) and live
+    // until the call returns; a null owner window is allowed.
     unsafe { MessageBoxW(0, question.as_ptr(), title.as_ptr(), MB_YESNO | MB_ICONQUESTION) == IDYES }
 }
 
 pub fn tell(title: &str, message: &str) {
     let (title, message) = (wide(title), wide(message));
+    // SAFETY: as in `ask`: zero-terminated strings that outlive the call.
     unsafe { MessageBoxW(0, message.as_ptr(), title.as_ptr(), MB_OK | MB_ICONINFORMATION) };
 }
 
@@ -71,6 +70,9 @@ pub fn signer_key(path: &Path) -> Result<[u8; update::SHA256_BYTES], String> {
     let name = wide(path);
     let mut file =
         WINTRUST_FILE_INFO { cbStruct: size_of_u32::<WINTRUST_FILE_INFO>(), pcwszFilePath: name.as_ptr(), hFile: 0, pgKnownSubject: ptr::null_mut() };
+    // SAFETY: `WINTRUST_DATA` is a C structure of integers, pointers and a
+    // union of pointers, for each of which all zero bytes is a valid value
+    // (null, or 0), as `WinVerifyTrust`'s documentation has callers start.
     let mut data: WINTRUST_DATA = unsafe { std::mem::zeroed() };
     data.cbStruct = size_of_u32::<WINTRUST_DATA>();
     data.dwUIChoice = WTD_UI_NONE;
@@ -82,9 +84,14 @@ pub fn signer_key(path: &Path) -> Result<[u8; update::SHA256_BYTES], String> {
     data.Anonymous = WINTRUST_DATA_0 { pFile: &raw mut file };
     data.dwStateAction = WTD_STATEACTION_VERIFY;
     let mut action = WINTRUST_ACTION_GENERIC_VERIFY_V2;
+    // SAFETY: `action` and `data` are this function's own and live across
+    // the call; `data.Anonymous.pFile` points at `file`, whose path `name`
+    // is zero-terminated and alive; the state it opens is closed below.
     let status = unsafe { WinVerifyTrust(0, &raw mut action, ptr::from_mut(&mut data).cast()) };
     let key = if status == 0 { pinned_key(data.hWVTStateData) } else { Err(format!("its Authenticode signature is not valid (0x{status:08x})")) };
     data.dwStateAction = WTD_STATEACTION_CLOSE;
+    // SAFETY: the same structures, still alive, with `WTD_STATEACTION_CLOSE`,
+    // which frees the state the verifying call opened, once.
     unsafe { WinVerifyTrust(0, &raw mut action, ptr::from_mut(&mut data).cast()) };
     key
 }
@@ -92,26 +99,42 @@ pub fn signer_key(path: &Path) -> Result<[u8; update::SHA256_BYTES], String> {
 /// The SHA-256 of the DER `SubjectPublicKeyInfo` of the first signer's
 /// certificate in a verified state.
 fn pinned_key(state: HANDLE) -> Result<[u8; update::SHA256_BYTES], String> {
+    // SAFETY: `state` is the open state of a successful `WinVerifyTrust`,
+    // not yet closed; the call only reads it, and null is checked.
     let provider = unsafe { WTHelperProvDataFromStateData(state) };
     if provider.is_null() {
         return Err(String::from("no signer"));
     }
+    // SAFETY: `provider` is non-null and belongs to the open state; signer
+    // 0, not a counter-signer; null is checked.
     let signer = unsafe { WTHelperGetProvSignerFromChain(provider, 0, 0, 0) };
     if signer.is_null() {
         return Err(String::from("no signer"));
     }
+    // SAFETY: `signer` is non-null and points into the open state, which
+    // outlives this function's reads.
     let (count, chain) = unsafe { ((*signer).csCertChain, (*signer).pasCertChain) };
     if count == 0 || chain.is_null() {
         return Err(String::from("no signer certificate"));
     }
     // The chain's first certificate is the signer's own.
+    // SAFETY: `chain` is non-null and holds `count` (at least one)
+    // entries, owned by the open state.
     let certificate = unsafe { (*chain).pCert };
+    // SAFETY: read only when `certificate` is non-null (`||` stops first);
+    // it is a certificate context of the open state.
     if certificate.is_null() || unsafe { (*certificate).pCertInfo }.is_null() {
         return Err(String::from("no signer certificate"));
     }
+    // SAFETY: both pointers were checked non-null above; only the field's
+    // address is taken, no reference made.
     let info = unsafe { &raw const (*(*certificate).pCertInfo).SubjectPublicKeyInfo };
     let mut encoded: *mut u8 = ptr::null_mut();
     let mut length = 0_u32;
+    // SAFETY: `info` points at a public key structure of the open state;
+    // with `CRYPT_ENCODE_ALLOC_FLAG` the call allocates the output and
+    // writes its address to `encoded` and its length to `length`, both
+    // this function's own; the output is freed with `LocalFree` below.
     let made = unsafe {
         CryptEncodeObjectEx(
             X509_ASN_ENCODING,
@@ -126,8 +149,14 @@ fn pinned_key(state: HANDLE) -> Result<[u8; update::SHA256_BYTES], String> {
     if made == 0 || encoded.is_null() {
         return Err(String::from("the signer's key cannot be read"));
     }
+    // SAFETY: `encoded` is non-null and the call wrote `length` bytes
+    // there, which stay allocated until the `LocalFree` below, after the
+    // slice's last use.
     let bytes = unsafe { std::slice::from_raw_parts(encoded, usize::try_from(length).unwrap_or(0)) };
     let key = update::sha256(bytes);
+    // SAFETY: `encoded` was allocated by `CryptEncodeObjectEx` with
+    // `CRYPT_ENCODE_ALLOC_FLAG`, which `LocalFree` frees, once; `bytes` is
+    // not used after.
     unsafe { LocalFree(encoded.cast()) };
     Ok(key)
 }
@@ -196,6 +225,8 @@ struct Key(HKEY);
 
 impl Drop for Key {
     fn drop(&mut self) {
+        // SAFETY: the key was opened by `RegCreateKeyExW` and is closed once,
+        // here, when its only owner is dropped.
         unsafe { RegCloseKey(self.0) };
     }
 }
@@ -203,6 +234,9 @@ impl Drop for Key {
 fn set_text(key: &Key, name: &str, value: &str) -> Result<(), String> {
     let (name, value) = (wide(name), wide(value));
     let bytes = u32::try_from(value.len().saturating_mul(2)).map_err(|_| String::from("a value too long"))?;
+    // SAFETY: the key is open; `name` and `value` are zero-terminated
+    // UTF-16 that outlive the call, and `bytes` is `value`'s length in
+    // bytes, its terminator included, as `REG_SZ` asks.
     let written = unsafe { RegSetValueExW(key.0, name.as_ptr(), 0, REG_SZ, value.as_ptr().cast(), bytes) };
     if written == 0 { Ok(()) } else { Err(format!("the registry refused a value ({written})")) }
 }
@@ -210,6 +244,8 @@ fn set_text(key: &Key, name: &str, value: &str) -> Result<(), String> {
 fn set_number(key: &Key, name: &str, value: u32) -> Result<(), String> {
     let name = wide(name);
     let bytes = value.to_le_bytes();
+    // SAFETY: the key is open; `name` is zero-terminated; `bytes` holds the
+    // four bytes of a `REG_DWORD`, the length given.
     let written = unsafe { RegSetValueExW(key.0, name.as_ptr(), 0, REG_DWORD, bytes.as_ptr(), size_of_u32::<u32>()) };
     if written == 0 { Ok(()) } else { Err(format!("the registry refused a value ({written})")) }
 }
@@ -223,6 +259,9 @@ fn set_number(key: &Key, name: &str, value: u32) -> Result<(), String> {
 pub fn uninstall_entry(entry: &UninstallEntry<'_>) -> Result<(), String> {
     let path = wide(UNINSTALL_KEY);
     let mut key: HKEY = 0;
+    // SAFETY: `path` is zero-terminated and alive; the class, security
+    // attributes and disposition may be null; the opened key is written to
+    // `key`, this function's own, and closed once by `Key`'s drop.
     let made = unsafe {
         RegCreateKeyExW(HKEY_CURRENT_USER, path.as_ptr(), 0, ptr::null(), REG_OPTION_NON_VOLATILE, KEY_WRITE, ptr::null(), &raw mut key, ptr::null_mut())
     };
@@ -249,6 +288,8 @@ pub fn uninstall_entry(entry: &UninstallEntry<'_>) -> Result<(), String> {
 /// When the registry refuses.
 pub fn remove_uninstall_entry() -> Result<(), String> {
     let path = wide(UNINSTALL_KEY);
+    // SAFETY: a predefined key and a zero-terminated path that outlives the
+    // call.
     let removed = unsafe { RegDeleteTreeW(HKEY_CURRENT_USER, path.as_ptr()) };
     if removed == 0 || removed == ERROR_FILE_NOT_FOUND { Ok(()) } else { Err(format!("the registry refused to remove the uninstall entry ({removed})")) }
 }
