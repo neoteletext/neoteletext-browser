@@ -23,28 +23,28 @@ mod address;
 mod banks;
 mod bookmarks;
 mod bookmarks_bar;
+mod certificate_refused;
 mod console_panel;
-mod controls_ui;
-mod cookies_ui;
+mod cookies_tab;
 #[cfg(test)]
 mod fixture;
 mod focus;
 mod frames;
 mod glyphs;
 mod history;
-mod keys;
 #[cfg(feature = "links")]
-mod link_ui;
+mod hyperlinks;
+mod keys;
 mod menu;
 mod output;
 mod overview;
+mod page_controls;
 mod page_list;
 mod pages;
 #[cfg(feature = "phone-keyboard")]
-mod phone_ui;
+mod phone;
 mod pointer;
 mod popups;
-mod refused_ui;
 mod regions;
 mod remote;
 mod settings_panel;
@@ -53,7 +53,7 @@ mod star;
 mod suggestions;
 mod tab_lists;
 mod tab_strip;
-mod tips_ui;
+mod tips;
 mod toolbar;
 #[cfg(feature = "interaction")]
 mod typing;
@@ -63,7 +63,7 @@ mod window;
 pub use keys::{Key, Modifiers};
 pub use output::{Output, WindowAction};
 #[cfg(feature = "phone-keyboard")]
-pub use phone_ui::{PhoneStatus, PhoneUiView};
+pub use phone::{PhoneStatus, PhoneUiView};
 pub use pointer::Cursor;
 pub use shown::{CertificateProblem, Frame, StripState, TabInfo};
 #[cfg(feature = "interaction")]
@@ -118,15 +118,15 @@ pub struct Browser {
     /// The history panel (requirement 20.4).
     history: history::HistoryUi,
     /// The cookies panel (requirement 21.6).
-    cookies: cookies_ui::CookiesUi,
+    cookies: cookies_tab::CookiesUi,
     /// What each control is, shown when the pointer rests on it.
-    tips: tips_ui::TipsUi,
+    tips: tips::TipsUi,
     /// The open page's controls (decision 67).
-    page_controls: controls_ui::ControlsUi,
+    page_controls: page_controls::ControlsUi,
     /// The remote control (decision 68).
     remote: remote::RemoteUi,
     /// The certificate-error screen's buttons (decision 83).
-    refused: refused_ui::RefusedUi,
+    refused: certificate_refused::RefusedUi,
     /// The tab strip's overflow and dragging (decision 69).
     tab_strip: tab_strip::TabsUi,
     /// The bookmarks manager (requirement 20.17).
@@ -145,13 +145,13 @@ pub struct Browser {
     press_new_tab: bool,
     /// Hyperlinks (`hyperlinks.md`).
     #[cfg(feature = "links")]
-    links: link_ui::LinkUi,
+    links: hyperlinks::LinkUi,
     /// Typing into a page (`interaction.md`).
     #[cfg(feature = "interaction")]
     typing: typing::TerminalUi,
     /// The phone keyboard (INPUT.md section 10).
     #[cfg(feature = "phone-keyboard")]
-    phone: phone_ui::PhoneUi,
+    phone: phone::PhoneUi,
 }
 
 impl Browser {
@@ -186,11 +186,11 @@ impl Browser {
             settings: settings_panel::SettingsUi::default(),
             console: console_panel::ConsoleUi::default(),
             history: history::HistoryUi::default(),
-            cookies: cookies_ui::CookiesUi::default(),
-            tips: tips_ui::TipsUi::default(),
-            page_controls: controls_ui::ControlsUi::default(),
+            cookies: cookies_tab::CookiesUi::default(),
+            tips: tips::TipsUi::default(),
+            page_controls: page_controls::ControlsUi::default(),
             remote: remote::RemoteUi::default(),
-            refused: refused_ui::RefusedUi::default(),
+            refused: certificate_refused::RefusedUi::default(),
             tab_strip: tab_strip::TabsUi::default(),
             bookmarks: bookmarks::BookmarksUi::default(),
             star: star::StarUi::default(),
@@ -200,11 +200,11 @@ impl Browser {
             suggestions: suggestions::SuggestionsUi::default(),
             press_new_tab: false,
             #[cfg(feature = "links")]
-            links: link_ui::LinkUi::default(),
+            links: hyperlinks::LinkUi::default(),
             #[cfg(feature = "interaction")]
             typing: typing::TerminalUi::default(),
             #[cfg(feature = "phone-keyboard")]
-            phone: phone_ui::PhoneUi::default(),
+            phone: phone::PhoneUi::default(),
         }
     }
 

@@ -3,7 +3,7 @@
 //! of the overview, opened by Command-Option-I on macOS and Control-Shift-I
 //! elsewhere, with a tab each for the active channel's network exchanges,
 //! packets, pages and notices, and one for managing cookies
-//! (`cookies_ui.rs`). What it shows is the trusted core's cleaned text,
+//! (`cookies_tab.rs`). What it shows is the trusted core's cleaned text,
 //! drawn as text and never interpreted. It can pause, which stops it
 //! scrolling, and clear.
 
