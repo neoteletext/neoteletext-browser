@@ -14,6 +14,7 @@ use crate::browser::Browser;
 use crate::browser::widgets::{button, field, panel, panel_rect};
 use crate::canvas::Canvas;
 use crate::geometry::Rect;
+use crate::library::HistoryView;
 use crate::text::{border, centred, left_centred, right_centred};
 use crate::theme::{ADDRESS, BUTTON, CAPTION, DIM, HEADING, MUTED, ROW_STATUS, ROW_TITLE, RULE, RULE_SOFT, SELECTED, WHITE};
 
@@ -28,7 +29,6 @@ impl Browser {
     }
 
     /// The panel, over the window below the strip, while it is open.
-    #[allow(clippy::too_many_lines, reason = "one part of the panel after another, in drawing order")]
     pub(in crate::browser) fn draw_history_panel<C: Canvas + ?Sized>(&mut self, canvas: &mut C) {
         let mut controls = Controls::default();
         if !self.history.open {
@@ -46,7 +46,23 @@ impl Browser {
         let view = self.history.view.clone().unwrap_or_default();
         let mut y = heading.y1 + GAP;
 
-        // The search, and "Clear history…".
+        self.draw_history_search(canvas, &mut controls, Rect::new(left, y, right, y + CONTROL_HEIGHT));
+        y += CONTROL_HEIGHT + GAP;
+        y = self.draw_history_clearing(canvas, &mut controls, Rect::new(left, y, right, y + CONTROL_HEIGHT));
+        y = draw_closed_tabs(canvas, &view, &mut controls, Rect::new(left, y, right, y + CONTROL_HEIGHT));
+
+        let footer = area.y1 - PADDING - CONTROL_HEIGHT;
+        controls.list = Rect::new(left, y, right, footer - GAP);
+        self.draw_history_rows(canvas, &view, &mut controls);
+        self.draw_history_row_menu(canvas, &view, &mut controls, area);
+
+        draw_footer(canvas, &view, &controls, Rect::new(left, footer, right, footer + CONTROL_HEIGHT));
+        self.history.controls = controls;
+    }
+
+    /// The search, and "Clear history…", along `line`.
+    fn draw_history_search<C: Canvas + ?Sized>(&self, canvas: &mut C, controls: &mut Controls, line: Rect) {
+        let (left, right, y) = (line.x0, line.x1, line.y0);
         controls.clear = Rect::new(right - WIDE_BUTTON, y, right, y + CONTROL_HEIGHT);
         button(canvas, controls.clear, "Clear history\u{2026}", self.history.clearing);
         controls.search = Rect::new(left, y, controls.clear.x0 - GAP, y + CONTROL_HEIGHT);
@@ -54,9 +70,12 @@ impl Browser {
         if self.history.query.text().is_empty() && !self.history.focused {
             left_centred(canvas, controls.search, GAP, "Search history", ROW_STATUS, DIM);
         }
-        y += CONTROL_HEIGHT + GAP;
+    }
 
-        // The clearing choices, or what to do with the rows selected.
+    /// The clearing choices, or what to do with the rows selected, from
+    /// `line` down. Returns where the next part starts.
+    fn draw_history_clearing<C: Canvas + ?Sized>(&self, canvas: &mut C, controls: &mut Controls, line: Rect) -> f64 {
+        let (left, right, mut y) = (line.x0, line.x1, line.y0);
         if self.history.clearing {
             left_centred(canvas, Rect::new(left, y, left + RANGE_BUTTON, y + CONTROL_HEIGHT), 0.0, "Clear", CAPTION, MUTED);
             controls.with_history = Rect::new(left + RANGE_BUTTON, y, left + RANGE_BUTTON * 2.0, y + CONTROL_HEIGHT);
@@ -79,29 +98,12 @@ impl Browser {
             button(canvas, controls.remove_selected, &format!("Remove selected ({})", self.history.selected.len()), false);
             y += CONTROL_HEIGHT + GAP;
         }
+        y
+    }
 
-        // Recently closed tabs.
-        if !view.closed.is_empty() {
-            let line = Rect::new(left, y, right, y + CONTROL_HEIGHT);
-            left_centred(canvas, line, 0.0, "Recently closed", CAPTION, MUTED);
-            let mut x = left + WIDE_BUTTON;
-            for closed in view.closed.iter().take(CLOSED_SHOWN) {
-                let rect = Rect::new(x, y, (x + CLOSED_WIDTH).min(right), y + CONTROL_HEIGHT);
-                canvas.push_clip(rect);
-                button(canvas, rect, &closed.title, false);
-                canvas.pop_clip();
-                controls.closed.push((closed.number, rect));
-                x = rect.x1 + GAP;
-                if x >= right {
-                    break;
-                }
-            }
-            y += CONTROL_HEIGHT + GAP;
-        }
-
-        // The rows, under their days' headings.
-        let footer = area.y1 - PADDING - CONTROL_HEIGHT;
-        controls.list = Rect::new(left, y, right, footer - GAP);
+    /// The rows, under their days' headings, in `controls.list`.
+    fn draw_history_rows<C: Canvas + ?Sized>(&self, canvas: &mut C, view: &HistoryView, controls: &mut Controls) {
+        let (left, right, mut y) = (controls.list.x0, controls.list.x1, controls.list.y0);
         canvas.push_clip(controls.list);
         if view.rows.is_empty() {
             let empty = if view.query.is_empty() { "No history" } else { "Nothing in history matches" };
@@ -154,8 +156,10 @@ impl Browser {
             y += ROW_HEIGHT;
         }
         canvas.pop_clip();
+    }
 
-        // The open row's menu, below its button and inside the panel.
+    /// The open row's menu, below its button and inside the panel's `area`.
+    fn draw_history_row_menu<C: Canvas + ?Sized>(&mut self, canvas: &mut C, view: &HistoryView, controls: &mut Controls, area: Rect) {
         if let Some(&(number, _, button_rect, _)) = controls.rows.iter().find(|(number, ..)| Some(*number) == self.history.menu) {
             let bookmarked = view.rows.iter().any(|row| row.number == number && row.bookmarked);
             let actions = RowAction::of(bookmarked);
@@ -179,18 +183,44 @@ impl Browser {
         } else {
             self.history.menu = None;
         }
+    }
+}
 
-        // Where the rows are among all, and the trusted core's word.
-        let footer = Rect::new(left, footer, right, footer + CONTROL_HEIGHT);
-        if view.total > 0 {
-            let last = (usize::try_from(view.first).unwrap_or(0) + controls.rows.len()).min(usize::try_from(view.total).unwrap_or(0));
-            right_centred(canvas, footer, 0.0, &format!("{} to {last} of {}", view.first + 1, view.total), ROW_STATUS, MUTED);
-        }
-        if !view.notice.is_empty() {
-            canvas.push_clip(Rect::new(left, footer.y0, f64::midpoint(left, right) + WIDE_BUTTON, footer.y1));
-            left_centred(canvas, footer, 0.0, &view.notice, ROW_STATUS, MUTED);
+/// Recently closed tabs, along `line`, if there are any. Returns where the
+/// next part starts.
+fn draw_closed_tabs<C: Canvas + ?Sized>(canvas: &mut C, view: &HistoryView, controls: &mut Controls, line: Rect) -> f64 {
+    let (left, right, mut y) = (line.x0, line.x1, line.y0);
+    if !view.closed.is_empty() {
+        let line = Rect::new(left, y, right, y + CONTROL_HEIGHT);
+        left_centred(canvas, line, 0.0, "Recently closed", CAPTION, MUTED);
+        let mut x = left + WIDE_BUTTON;
+        for closed in view.closed.iter().take(CLOSED_SHOWN) {
+            let rect = Rect::new(x, y, (x + CLOSED_WIDTH).min(right), y + CONTROL_HEIGHT);
+            canvas.push_clip(rect);
+            button(canvas, rect, &closed.title, false);
             canvas.pop_clip();
+            controls.closed.push((closed.number, rect));
+            x = rect.x1 + GAP;
+            if x >= right {
+                break;
+            }
         }
-        self.history.controls = controls;
+        y += CONTROL_HEIGHT + GAP;
+    }
+    y
+}
+
+/// Where the rows are among all, and the trusted core's word, along
+/// `footer`.
+fn draw_footer<C: Canvas + ?Sized>(canvas: &mut C, view: &HistoryView, controls: &Controls, footer: Rect) {
+    let (left, right) = (footer.x0, footer.x1);
+    if view.total > 0 {
+        let last = (usize::try_from(view.first).unwrap_or(0) + controls.rows.len()).min(usize::try_from(view.total).unwrap_or(0));
+        right_centred(canvas, footer, 0.0, &format!("{} to {last} of {}", view.first + 1, view.total), ROW_STATUS, MUTED);
+    }
+    if !view.notice.is_empty() {
+        canvas.push_clip(Rect::new(left, footer.y0, f64::midpoint(left, right) + WIDE_BUTTON, footer.y1));
+        left_centred(canvas, footer, 0.0, &view.notice, ROW_STATUS, MUTED);
+        canvas.pop_clip();
     }
 }
