@@ -48,9 +48,16 @@ const CHILD: &str = "LAUNCHER_TEST_FAULT_CHILD";
 /// key; elsewhere a check of the test broker's appended signature, since
 /// the real check (`codesign`, Authenticode) is the platform's and is
 /// exercised end to end with test certificates.
-struct TestSigner;
+struct TestSigner {
+    /// The release key, which signs the Windows manifest (decision 92).
+    release: [u8; 32],
+}
 
 impl Signer for TestSigner {
+    fn release_key(&self) -> Option<&[u8; 32]> {
+        Some(&self.release)
+    }
+
     fn check(&self, folder: &Path, _manifest: &Manifest) -> Result<(), String> {
         let broker = fs::read(folder.join(platform().program_path(MARKED_PROGRAM))).map_err(|error| error.to_string())?;
         if broker.windows(SIGNED.len()).any(|window| window == SIGNED) { Ok(()) } else { Err(String::from("not signed by the test signer")) }
@@ -95,7 +102,7 @@ impl Fixture {
     fn launcher(&self, deadline: Duration) -> Launcher {
         let signer: Box<dyn Signer> = match platform().family() {
             Family::Linux => Box::new(LinuxSigner { key: Some(self.pair.public_key().as_ref().try_into().unwrap()) }),
-            Family::Macos | Family::Windows => Box::new(TestSigner),
+            Family::Macos | Family::Windows => Box::new(TestSigner { release: self.pair.public_key().as_ref().try_into().unwrap() }),
         };
         let own = match platform().family() {
             Family::Linux => self.layout.launcher_folder().join("neoteletext"),
@@ -136,7 +143,7 @@ impl Fixture {
         entries.sort_by(|a, b| a.path.cmp(&b.path));
         let manifest = Manifest { version, platform, files: entries }.to_text();
         fs::write(folder.join(MANIFEST), &manifest).unwrap();
-        if platform.family() == Family::Linux {
+        if platform.signs_manifest() {
             fs::write(folder.join(MANIFEST_SIGNATURE), self.pair.sign(manifest.as_bytes()).as_ref()).unwrap();
         }
     }

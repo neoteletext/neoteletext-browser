@@ -107,7 +107,7 @@ fn run() -> Result<(), String> {
     }
     let version = version.ok_or("the payload holds no version")?;
     // The launcher's own check, with the signer it pins (section 5).
-    let signer = os_install::WindowsSigner { key: release_identity::WINDOWS_SIGNER };
+    let signer = os_install::WindowsSigner { key: release_identity::WINDOWS_SIGNER, release: release_identity::RELEASE_KEY };
     let staged = staging.join(version.to_string());
     update::accept::accept(&staged, platform, &signer).map_err(|why| format!("the release is refused: {why}"))?;
     for program in [PAYLOAD_STUB, PAYLOAD_LAUNCHER] {

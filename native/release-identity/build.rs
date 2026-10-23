@@ -75,7 +75,13 @@ fn main() {
         "/// The Update Framework's first trusted root metadata.\npub const TUF_ROOT: Option<&[u8]> = {};",
         optional_bytes(file(&folder, "root.json"))
     );
-    let _ = writeln!(out, "/// The Linux release key.\npub const LINUX_RELEASE_KEY: Option<[u8; 32]> = {};", optional_key(key(&folder, "linux-release.pub")));
+    // The file keeps the name it had when the key signed Linux's files
+    // alone; it signs the Windows manifest too (decision 92).
+    let _ = writeln!(
+        out,
+        "/// The release key: Linux's files and the Linux and Windows manifests.\npub const RELEASE_KEY: Option<[u8; 32]> = {};",
+        optional_key(key(&folder, "linux-release.pub"))
+    );
     let requirement = text(&folder, "macos-requirement").map_or_else(|| String::from("None"), |requirement| format!("Some(r#\"{requirement}\"#)"));
     let _ = writeln!(out, "/// The macOS designated requirement.\npub const MACOS_REQUIREMENT: Option<&str> = {requirement};");
     let _ = writeln!(

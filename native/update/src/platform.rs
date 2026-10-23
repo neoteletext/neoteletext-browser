@@ -33,7 +33,8 @@ pub const SIGNATURE_SUFFIX: &str = ".sig";
 pub const APPARMOR_PROFILE: &str = "neoteletext.apparmor";
 /// The release's own list of its files, in every version's folder.
 pub const MANIFEST: &str = "manifest";
-/// The Linux release key's signature of the manifest.
+/// The release key's signature of the manifest, on Linux and Windows
+/// (decision 92).
 pub const MANIFEST_SIGNATURE: &str = "manifest.sig";
 /// The most files a version has on any platform.
 pub const MAX_FILES: usize = 32;
@@ -119,6 +120,16 @@ impl Platform {
             Self::WindowsX86_64 => Family::Windows,
             Self::LinuxX86_64 => Family::Linux,
         }
+    }
+
+    /// Whether a version's manifest is signed by the release key
+    /// (`manifest.sig`): on Linux, which has no platform signature, and on
+    /// Windows, whose Authenticode signs each program but not the set of
+    /// them (decision 92); not on macOS, whose bundle's seal covers every
+    /// file.
+    #[must_use]
+    pub const fn signs_manifest(self) -> bool {
+        matches!(self.family(), Family::Linux | Family::Windows)
     }
 
     /// A program's file name on this platform.

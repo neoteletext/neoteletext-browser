@@ -95,7 +95,9 @@ function Release($version, $how = "test") {
     $built = "$work\built\$version"
     & "$tools\neoteletext-release.exe" layout windows-x86_64 $version "$work\programs-$version" $built
     if ($how -eq "test") { Sign (Get-ChildItem "$built\*.exe" | ForEach-Object { $_.FullName }) }
-    & "$tools\neoteletext-release.exe" manifest $built windows-x86_64 $version
+    # The manifest, signed by the release key (decision 92), signed or not
+    # by Authenticode.
+    & "$tools\neoteletext-release.exe" sign-windows $built $version (Key linux-release)
     if ($how -eq "test") {
         & "$tools\neoteletext-release.exe" check $built windows-x86_64
         if ($LASTEXITCODE -ne 0) { Fail "the launcher's check of $version" }

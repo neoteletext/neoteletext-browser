@@ -87,10 +87,10 @@ pub struct Ended {
 pub fn pinned_signer(platform: Platform) -> Box<dyn Signer> {
     let keys = release_identity::keys();
     match platform.family() {
-        Family::Linux => Box::new(update::accept::LinuxSigner { key: keys.linux_release }),
+        Family::Linux => Box::new(update::accept::LinuxSigner { key: keys.release }),
         Family::Macos => Box::new(update::accept::MacosSigner { requirement: keys.macos_requirement }),
         #[cfg(windows)]
-        Family::Windows => Box::new(os_install::WindowsSigner { key: keys.windows_signer }),
+        Family::Windows => Box::new(os_install::WindowsSigner { key: keys.windows_signer, release: keys.release }),
         #[cfg(not(windows))]
         Family::Windows => Box::new(update::accept::LinuxSigner { key: None }),
     }

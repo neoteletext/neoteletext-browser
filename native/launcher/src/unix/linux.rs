@@ -188,6 +188,10 @@ mod tests {
     }
 
     impl Signer for ChangedAfterAcceptance {
+        fn release_key(&self) -> Option<&[u8; 32]> {
+            self.signer.release_key()
+        }
+
         fn check(&self, folder: &Path, manifest: &Manifest) -> Result<(), String> {
             self.signer.check(folder, manifest)?;
             std::fs::write(&self.source, b"changed after acceptance").map_err(|error| error.to_string())

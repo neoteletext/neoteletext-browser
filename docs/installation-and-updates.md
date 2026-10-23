@@ -208,7 +208,7 @@ A version runs only if two independent checks pass:
 1. **The Update Framework, in the updater.** It covers freshness, rollback protection, key rotation, and a network attacker or a compromised host. Its keys are the root (three hardware keys, threshold two), the targets key (offline), and the snapshot and timestamp keys (section 9).
 2. **A pinned signer, in the launcher**, at acceptance, before a version is first started:
    - **macOS:** the bundle's code signature is valid, and its designated requirement names the project's Team ID, which is built into the launcher.
-   - **Windows:** every executable's Authenticode signature is valid (`WinVerifyTrust`), and the signer's certificate is the project's, pinned by its public key.
+   - **Windows:** the manifest's detached Ed25519 signature (`manifest.sig`) verifies against the release key built into the launcher, checked first and by the code Linux uses, so programs each signed for a different release cannot be put together under a new version's number (decision 92); then every executable's Authenticode signature is valid (`WinVerifyTrust`), and the signer's certificate is the project's, pinned by its public key.
    - **Linux:** every file's detached Ed25519 signature verifies against the release public key built into the launcher.
 
 A compromised updater, which is the process that parses network data, cannot get a version run: it holds no platform signing key. A stolen platform signing key cannot ship an update either: the updater stages nothing the targets metadata does not name. Shipping malware needs both, from two places. The launcher also checks that the version it accepts is newer than `current` and not marked bad. On macOS and Windows that version is read from inside the signed files; on Linux it is in the signed manifest. The only rollback is the launcher's own, to `previous`.
@@ -290,7 +290,7 @@ A script per step, run by the owner, as the gates are (no continuous integration
    - Linux in the C library 2.28 container on `foundintelquiet4060`.
 2. **Platform-sign:**
    - macOS: `codesign` with the hardened runtime, `notarytool submit --wait`, `stapler staple`.
-   - Windows: `signtool` with the hardware module.
+   - Windows: `signtool` with the hardware module, then the release key signs the manifest (`neoteletext-release sign-windows`, decision 92).
    - Linux: the Ed25519 release key signs each file and the manifest.
 3. **Check what the launcher will check:** run each platform's acceptance check (section 5) on the signed files, and the launcher-unchanged check (section 7).
 4. **Sign the release:** the targets key adds the files (gzip-compressed) and the manifests to the targets metadata, then snapshot and timestamp are signed. The keys are plugged in for this step only.

@@ -10,12 +10,12 @@ mod generated {
     include!(concat!(env!("OUT_DIR"), "/identity.rs"));
 }
 
-pub use generated::{HOST, LINUX_RELEASE_KEY, MACOS_REQUIREMENT, NAME, PORT, TLS_ROOT, TUF_ROOT, WINDOWS_SIGNER};
+pub use generated::{HOST, MACOS_REQUIREMENT, NAME, PORT, RELEASE_KEY, TLS_ROOT, TUF_ROOT, WINDOWS_SIGNER};
 
 /// The signers the launcher and the installer pin.
 #[must_use]
 pub fn keys() -> update::accept::Keys {
-    update::accept::Keys { linux_release: LINUX_RELEASE_KEY, macos_requirement: MACOS_REQUIREMENT.map(str::to_owned), windows_signer: WINDOWS_SIGNER }
+    update::accept::Keys { release: RELEASE_KEY, macos_requirement: MACOS_REQUIREMENT.map(str::to_owned), windows_signer: WINDOWS_SIGNER }
 }
 
 #[cfg(test)]

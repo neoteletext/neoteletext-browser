@@ -120,11 +120,15 @@ fn pinned_key(state: HANDLE) -> Result<[u8; update::SHA256_BYTES], String> {
 }
 
 /// Windows's check (section 5): every program of the version carries a
-/// valid Authenticode signature by the pinned signer.
+/// valid Authenticode signature by the pinned signer, after
+/// `update::accept::accept` has checked the manifest's signature by the
+/// release key (decision 92).
 #[derive(Debug)]
 pub struct WindowsSigner {
     /// SHA-256 of the pinned signer's public key.
     pub key: Option<[u8; update::SHA256_BYTES]>,
+    /// The pinned release key, which signs the manifest.
+    pub release: Option<[u8; update::signature::PUBLIC_KEY_BYTES]>,
 }
 
 impl WindowsSigner {
@@ -140,6 +144,10 @@ impl WindowsSigner {
 }
 
 impl Signer for WindowsSigner {
+    fn release_key(&self) -> Option<&[u8; update::signature::PUBLIC_KEY_BYTES]> {
+        self.release.as_ref()
+    }
+
     fn check(&self, folder: &Path, _manifest: &Manifest) -> Result<(), String> {
         for program in PROGRAMS {
             self.check_program(&folder.join(Platform::WindowsX86_64.program_file(program)))?;

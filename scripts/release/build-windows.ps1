@@ -1,11 +1,13 @@
 # Release steps 1 and 2 on Windows (installation-and-updates.md sections
 # 4.2 and 10), in the virtual machine, from the exported tree's native\
 # folder: builds the release, signs every program with the code-signing
-# certificate in its hardware module, lays out, lists and checks the
-# version as the launcher will, and builds and signs NeoTeletext-Setup.exe
-# carrying it.
-#   powershell -File ..\scripts\release\build-windows.ps1 <version> <out> <certificate SHA-1 thumbprint> <timestamp server>
-param([string]$Version, [string]$Out, [string]$Thumbprint, [string]$TimestampServer)
+# certificate in its hardware module, lays out and lists the version and
+# signs its manifest with the release key (decision 92), checks it as the
+# launcher will, and builds and signs NeoTeletext-Setup.exe carrying it.
+#   powershell -File ..\scripts\release\build-windows.ps1 <version> <out> <certificate SHA-1 thumbprint> <timestamp server> <release key>
+# The release key is the release tool's source: command:<public key>:<program>
+# for the hardware key, as sign-linux.sh takes it.
+param([string]$Version, [string]$Out, [string]$Thumbprint, [string]$TimestampServer, [string]$ReleaseKey)
 $ErrorActionPreference = "Stop"
 $signtool = (Get-ChildItem -Recurse -Filter signtool.exe "C:\Program Files (x86)\Windows Kits\10\bin" | Where-Object { $_.FullName -like "*\x64\*" } | Select-Object -First 1).FullName
 function Sign($files) {
@@ -28,7 +30,8 @@ Copy-Item "tuf\target\release\neoteletext-updater.exe" "$Out\programs\"
 $folder = "$Out\windows-x86_64\$Version"
 & $release layout windows-x86_64 $Version "$Out\programs" $folder
 Sign (Get-ChildItem "$folder\*.exe" | ForEach-Object { $_.FullName })
-& $release manifest $folder windows-x86_64 $Version
+& $release sign-windows $folder $Version $ReleaseKey
+if ($LASTEXITCODE -ne 0) { throw "the manifest's signature" }
 & $release check $folder windows-x86_64
 if ($LASTEXITCODE -ne 0) { throw "the launcher's check" }
 $payload = "$Out\payload"

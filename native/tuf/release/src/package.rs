@@ -144,6 +144,20 @@ pub fn sign_linux(folder: &Path, version: Version, key: &Source) -> Result<(), S
     files::write_synced(&folder.join(MANIFEST_SIGNATURE), &key.sign(&text)?, false).map_err(|error| error.to_string())
 }
 
+/// Release step 2 on Windows, after `signtool` has signed every program:
+/// the manifest written, listing the signed programs, and signed by the
+/// release key (`manifest.sig`, decision 92), as Linux's is.
+///
+/// # Errors
+/// When the folder is not a Windows version, or the key cannot sign.
+pub fn sign_windows(folder: &Path, version: Version, key: &Source) -> Result<(), String> {
+    let platform = Platform::WindowsX86_64;
+    let _ = std::fs::remove_file(folder.join(MANIFEST_SIGNATURE));
+    manifest(folder, platform, version)?;
+    let text = std::fs::read(folder.join(MANIFEST)).map_err(|error| error.to_string())?;
+    files::write_synced(&folder.join(MANIFEST_SIGNATURE), &key.sign(&text)?, false).map_err(|error| error.to_string())
+}
+
 /// A file's detached signature beside it, as `<file>.sig`: the Linux
 /// tarball's, which the download page says how to check with OpenSSL.
 ///
@@ -172,10 +186,10 @@ pub fn check(folder: &Path, platform: Platform, last_launcher: Option<&Path>, la
     }
     let keys = release_identity::keys();
     let signer: Box<dyn update::accept::Signer> = match platform.family() {
-        Family::Linux => Box::new(update::accept::LinuxSigner { key: keys.linux_release }),
+        Family::Linux => Box::new(update::accept::LinuxSigner { key: keys.release }),
         Family::Macos => Box::new(update::accept::MacosSigner { requirement: keys.macos_requirement }),
         #[cfg(windows)]
-        Family::Windows => Box::new(os_install::WindowsSigner { key: keys.windows_signer }),
+        Family::Windows => Box::new(os_install::WindowsSigner { key: keys.windows_signer, release: keys.release }),
         #[cfg(not(windows))]
         Family::Windows => return Err(String::from("a Windows release is checked on Windows")),
     };

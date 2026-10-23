@@ -5,6 +5,7 @@
 //! neoteletext-release layout <platform> <version> <programs> <out>
 //! neoteletext-release manifest <folder> <platform> <version>
 //! neoteletext-release sign-linux <folder> <version> <key>
+//! neoteletext-release sign-windows <folder> <version> <key>
 //! neoteletext-release sign-file <file> <key>
 //! neoteletext-release check <folder> <platform> [--last-launcher <file>] [--launcher-release]
 //! neoteletext-release targets <folder> <platform> <out>

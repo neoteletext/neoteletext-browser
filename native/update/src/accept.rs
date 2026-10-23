@@ -6,13 +6,16 @@
 //!
 //! - **macOS:** the bundle's code signature is valid and satisfies the
 //!   pinned designated requirement (`codesign --verify --deep --strict`).
-//! - **Windows:** every program's Authenticode signature is valid and its
-//!   signer's public key is the pinned one (`os-install`).
+//! - **Windows:** the manifest's detached Ed25519 signature verifies
+//!   against the pinned release key, checked first (decision 92); then
+//!   every program's Authenticode signature is valid and its signer's
+//!   public key is the pinned one (`os-install`).
 //! - **Linux:** the manifest's and every file's detached Ed25519 signature
 //!   verifies against the pinned release key.
 //!
-//! The version accepted is read from inside what the platform signed: on
-//! Linux the signed manifest, elsewhere the mark in the broker's bytes.
+//! The version accepted is read from inside what was signed: on Linux the
+//! signed manifest, elsewhere the mark in the broker's bytes, which on
+//! Windows must also be the signed manifest's.
 
 use std::path::Path;
 use std::process::{Command, Stdio};
@@ -27,8 +30,9 @@ use crate::version::Version;
 /// The signers a launcher pins, built into it from the release's identity.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Keys {
-    /// Linux: the release key.
-    pub linux_release: Option<[u8; PUBLIC_KEY_BYTES]>,
+    /// The release key (section 4.3's Linux release key): it signs every
+    /// Linux file and the Linux and Windows manifests (decision 92).
+    pub release: Option<[u8; PUBLIC_KEY_BYTES]>,
     /// macOS: the designated requirement every bundle must satisfy, such as
     /// `anchor apple generic and certificate leaf[subject.OU] = "<team>"`.
     pub macos_requirement: Option<String>,
@@ -38,6 +42,11 @@ pub struct Keys {
 
 /// The platform's own check of a version's folder, by its pinned signer.
 pub trait Signer {
+    /// The pinned release key, which signs the manifest on a platform whose
+    /// manifest is signed (`Platform::signs_manifest`), if this build
+    /// carries one.
+    fn release_key(&self) -> Option<&[u8; PUBLIC_KEY_BYTES]>;
+
     /// Whether the platform's signature of every file in `folder`, which
     /// `manifest` describes, is the pinned signer's.
     ///
@@ -54,10 +63,18 @@ fn max_file() -> usize {
 /// The files a complete version's folder holds beyond its release files.
 fn own_files(platform: Platform) -> Vec<String> {
     let mut own = vec![MANIFEST.to_owned()];
-    if platform.family() == Family::Linux {
+    if platform.signs_manifest() {
         own.push(MANIFEST_SIGNATURE.to_owned());
     }
     own
+}
+
+/// Whether `path` in `folder` carries the release key's detached signature
+/// beside it, `<path>.sig` or, for the manifest, `manifest.sig`.
+fn signed_by(folder: &Path, path: &str, signature_path: &str, key: &[u8; PUBLIC_KEY_BYTES]) -> Result<(), String> {
+    let bytes = files::read_bounded(&folder.join(path), max_file()).map_err(|error| format!("{path}: {error}"))?;
+    let signature = files::read_bounded(&folder.join(signature_path), SIGNATURE_BYTES).map_err(|error| format!("{signature_path}: {error}"))?;
+    if signature::verify(key, &bytes, &signature) { Ok(()) } else { Err(format!("{path} is not signed by the release key")) }
 }
 
 /// The manifest in `folder`, if the folder holds exactly the files it
@@ -117,7 +134,7 @@ pub fn copy_release(from: &Path, to: &Path, platform: Platform) -> Result<(), St
     };
     std::fs::create_dir(to).map_err(|error| format!("{}: {error}", to.display()))?;
     written(MANIFEST, &manifest_bytes, false)?;
-    if own_files(platform).iter().any(|own| own == MANIFEST_SIGNATURE) {
+    if platform.signs_manifest() {
         let signature =
             files::read_regular(&from.join(MANIFEST_SIGNATURE), SIGNATURE_BYTES as u64).map_err(|error| format!("{MANIFEST_SIGNATURE}: {error}"))?;
         written(MANIFEST_SIGNATURE, &signature, false)?;
@@ -153,9 +170,15 @@ fn max_manifest() -> u64 {
 /// Why it is refused.
 pub fn accept(folder: &Path, platform: Platform, signer: &dyn Signer) -> Result<Version, String> {
     let manifest = complete(folder, platform)?;
+    if platform.signs_manifest() {
+        let key = signer.release_key().ok_or("this build carries no release key, so it accepts no version")?;
+        signed_by(folder, MANIFEST, MANIFEST_SIGNATURE, key)?;
+    }
     signer.check(folder, &manifest)?;
     let version = match platform.family() {
         Family::Linux => manifest.version,
+        // On Windows the manifest is signed too, and the mark must say what
+        // it says.
         Family::Macos | Family::Windows => {
             let program = folder.join(platform.program_path(MARKED_PROGRAM));
             let bytes = files::read_bounded(&program, max_file()).map_err(|error| format!("{MARKED_PROGRAM}: {error}"))?;
@@ -173,8 +196,9 @@ pub fn accept(folder: &Path, platform: Platform, signer: &dyn Signer) -> Result<
     Ok(version)
 }
 
-/// Linux's check: the release key's detached signatures of the manifest
-/// and of every file (section 4.3).
+/// Linux's check: the release key's detached signatures of every file
+/// (section 4.3); [`accept`] checks the manifest's first, with the same
+/// key.
 #[derive(Debug)]
 pub struct LinuxSigner {
     /// The pinned release key.
@@ -182,17 +206,14 @@ pub struct LinuxSigner {
 }
 
 impl Signer for LinuxSigner {
+    fn release_key(&self) -> Option<&[u8; PUBLIC_KEY_BYTES]> {
+        self.key.as_ref()
+    }
+
     fn check(&self, folder: &Path, manifest: &Manifest) -> Result<(), String> {
         let key = self.key.as_ref().ok_or("this build carries no release key, so it accepts no version")?;
-        let signed = |path: &str| -> Result<(), String> {
-            let bytes = files::read_bounded(&folder.join(path), max_file()).map_err(|error| format!("{path}: {error}"))?;
-            let signature = files::read_bounded(&folder.join(format!("{path}{SIGNATURE_SUFFIX}")), SIGNATURE_BYTES)
-                .map_err(|error| format!("{path}{SIGNATURE_SUFFIX}: {error}"))?;
-            if signature::verify(key, &bytes, &signature) { Ok(()) } else { Err(format!("{path} is not signed by the release key")) }
-        };
-        signed(MANIFEST)?;
         for entry in manifest.files.iter().filter(|entry| !entry.path.ends_with(SIGNATURE_SUFFIX)) {
-            signed(&entry.path)?;
+            signed_by(folder, &entry.path, &format!("{}{SIGNATURE_SUFFIX}", entry.path), key)?;
         }
         Ok(())
     }
@@ -211,6 +232,10 @@ pub struct MacosSigner {
 const CODESIGN: &str = "/usr/bin/codesign";
 
 impl Signer for MacosSigner {
+    fn release_key(&self) -> Option<&[u8; PUBLIC_KEY_BYTES]> {
+        None
+    }
+
     fn check(&self, folder: &Path, _manifest: &Manifest) -> Result<(), String> {
         let requirement = self.requirement.as_deref().ok_or("this build carries no signer requirement, so it accepts no version")?;
         let bundle = folder.join(BUNDLE);
@@ -257,6 +282,11 @@ pub(crate) mod tests {
         let manifest = Manifest { version, platform, files: entries }.to_text();
         fs::write(folder.join(MANIFEST), &manifest).unwrap();
         fs::write(folder.join(MANIFEST_SIGNATURE), pair.sign(manifest.as_bytes()).as_ref()).unwrap();
+    }
+
+    /// The test's Windows signer, its release key `pair`'s.
+    fn windows_signer(pair: &Ed25519KeyPair) -> Authenticode {
+        Authenticode { release: pair.public_key().as_ref().try_into().unwrap() }
     }
 
     pub(crate) fn key_pair() -> Ed25519KeyPair {
@@ -312,6 +342,68 @@ pub(crate) mod tests {
         linux_version(&misnamed, version, &pair);
         assert!(accept(&misnamed, Platform::LinuxX86_64, &signer).unwrap_err().contains("name"));
         assert!(accept(&good, Platform::WindowsX86_64, &signer).is_err(), "another platform's release");
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    /// Windows's programs, each "signed" for the release it came from, and
+    /// the release key.
+    struct Authenticode {
+        release: [u8; PUBLIC_KEY_BYTES],
+    }
+
+    impl Signer for Authenticode {
+        fn release_key(&self) -> Option<&[u8; PUBLIC_KEY_BYTES]> {
+            Some(&self.release)
+        }
+
+        fn check(&self, _folder: &Path, _manifest: &Manifest) -> Result<(), String> {
+            Ok(())
+        }
+    }
+
+    /// A Windows version in `folder` whose manifest says `version`, its
+    /// broker marked `version` and every other program taken from
+    /// `programs_of`; its manifest signed by `pair` when one is given.
+    fn windows_version(folder: &Path, version: Version, programs_of: Version, pair: Option<&Ed25519KeyPair>) {
+        let platform = Platform::WindowsX86_64;
+        fs::create_dir_all(folder).unwrap();
+        let mut entries = Vec::new();
+        for file in platform.files() {
+            let bytes = if file.path == platform.program_path(MARKED_PROGRAM) {
+                format!("the broker {}", crate::version_mark!("VERSION").replace("VERSION", &version.to_string())).into_bytes()
+            } else {
+                format!("{} of {programs_of}", file.path).into_bytes()
+            };
+            fs::write(folder.join(&file.path), &bytes).unwrap();
+            entries.push(Entry { path: file.path, length: u64::try_from(bytes.len()).unwrap(), sha256: crate::sha256(&bytes) });
+        }
+        entries.sort_by(|a, b| a.path.cmp(&b.path));
+        let manifest = Manifest { version, platform, files: entries }.to_text();
+        fs::write(folder.join(MANIFEST), &manifest).unwrap();
+        if let Some(pair) = pair {
+            fs::write(folder.join(MANIFEST_SIGNATURE), pair.sign(manifest.as_bytes()).as_ref()).unwrap();
+        }
+    }
+
+    /// Decision 92 (finding F-07): the Windows manifest is signed by the
+    /// release key and checked before Authenticode, so programs each
+    /// genuinely signed, but for older releases, cannot be put together
+    /// under a new version's number.
+    #[test]
+    fn a_windows_manifest_must_be_signed_by_the_release_key() {
+        let root = scratch("windows");
+        let pair = key_pair();
+        let signer = windows_signer(&pair);
+        let (old, older, new) = (Version::new(0, 2, 0), Version::new(0, 3, 0), Version::new(0, 4, 0));
+        let unsigned = root.join("unsigned").join("0.4.0");
+        windows_version(&unsigned, new, old, None);
+        assert!(accept(&unsigned, Platform::WindowsX86_64, &signer).is_err(), "no manifest.sig");
+        let mixed = root.join("mixed").join("0.4.0");
+        windows_version(&mixed, new, older, Some(&key_pair()));
+        assert!(accept(&mixed, Platform::WindowsX86_64, &signer).is_err(), "signed by another key");
+        let genuine = root.join("genuine").join("0.4.0");
+        windows_version(&genuine, new, new, Some(&pair));
+        assert_eq!(accept(&genuine, Platform::WindowsX86_64, &signer), Ok(new));
         fs::remove_dir_all(&root).unwrap();
     }
 
