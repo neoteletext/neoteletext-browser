@@ -48,7 +48,9 @@ fn key(folder: &Path, name: &str) -> Option<String> {
 fn main() {
     println!("cargo:rerun-if-env-changed={VARIABLE}");
     let manifest = PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("Cargo sets CARGO_MANIFEST_DIR"));
-    let (folder, name) = match std::env::var_os(VARIABLE) {
+    // An empty variable is no identity named, so the production one, as a
+    // release script that passes the variable on unset makes it (F-24).
+    let (folder, name) = match std::env::var_os(VARIABLE).filter(|folder| !folder.is_empty()) {
         Some(folder) => {
             let folder = PathBuf::from(folder);
             let name = format!("test identity {}", folder.display());
@@ -63,6 +65,11 @@ fn main() {
     let optional_key = |key: Option<String>| key.map_or_else(|| String::from("None"), |key| format!("Some({key})"));
     let mut out = String::new();
     let _ = writeln!(out, "/// Which identity this build carries.\npub const NAME: &str = r\"{name}\";");
+    let kind = if name == "production" { "production" } else { "test" };
+    let _ = writeln!(
+        out,
+        "/// The identity mark (`update::identity_mark!`) a program carries in its bytes, read by the release tool's `check`.\npub const IDENTITY_MARK: &str = \"\\u{{1}}neoteletext-identity\\u{{1}}{kind}\\u{{1}}\";"
+    );
     let _ = writeln!(out, "/// The update host (decisions 17 and 25).\npub const HOST: &str = \"{host}\";");
     let _ = writeln!(out, "/// Its port.\npub const PORT: u16 = {port};");
     let _ = writeln!(

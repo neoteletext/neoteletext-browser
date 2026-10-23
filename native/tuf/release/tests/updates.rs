@@ -383,6 +383,23 @@ fn a_windows_release_is_staged_with_its_signed_manifest() {
     assert!(update::accept::accept(&staged, windows, &Authenticode { release }).is_err(), "a signature changed by one bit");
 }
 
+/// Finding F-24: the release tool's `check` reads the identity a release's
+/// launcher was built with, and refuses one built with a test identity,
+/// whose test keys anyone holding them could sign updates with, unless
+/// `--test-identity` says it is a test.
+#[test]
+fn a_release_built_with_a_test_identity_is_refused_unless_a_test() {
+    let folder = scratch("test-identity-check");
+    let platform = Platform::this().unwrap();
+    let launcher = folder.join(platform.program_path("neoteletext-launcher"));
+    std::fs::create_dir_all(launcher.parent().unwrap()).unwrap();
+    std::fs::write(&launcher, "a launcher \u{1}neoteletext-identity\u{1}test\u{1} built for a test").unwrap();
+    let said = release_fails(&["check", &text(&folder), platform.name()]);
+    assert!(said.contains("test identity"), "{said}");
+    let said = release_fails(&["check", &text(&folder), platform.name(), "--test-identity"]);
+    assert!(!said.contains("test identity"), "a test may: {said}");
+}
+
 /// The launcher-unchanged check (section 7): a launcher that differs from
 /// the last launcher release's is refused unless the release says it is
 /// one.

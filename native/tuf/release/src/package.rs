@@ -123,6 +123,7 @@ pub fn manifest(folder: &Path, platform: Platform, version: Version) -> Result<M
 /// When a file cannot be read or the key cannot sign.
 pub fn sign_linux(folder: &Path, version: Version, key: &Source) -> Result<(), String> {
     let platform = Platform::LinuxX86_64;
+    refuse_file_key_for_production(folder, platform, key)?;
     for file in platform.files().into_iter().filter(|file| !file.path.ends_with(SIGNATURE_SUFFIX)) {
         let path = folder.join(&file.path);
         let bytes = std::fs::read(&path).map_err(|error| format!("{}: {error}", path.display()))?;
@@ -143,6 +144,7 @@ pub fn sign_linux(folder: &Path, version: Version, key: &Source) -> Result<(), S
 /// When the folder is not a Windows version, or the key cannot sign.
 pub fn sign_windows(folder: &Path, version: Version, key: &Source) -> Result<(), String> {
     let platform = Platform::WindowsX86_64;
+    refuse_file_key_for_production(folder, platform, key)?;
     let _ = std::fs::remove_file(folder.join(MANIFEST_SIGNATURE));
     manifest(folder, platform, version)?;
     let text = std::fs::read(folder.join(MANIFEST)).map_err(|error| error.to_string())?;
@@ -160,6 +162,31 @@ pub fn sign_file(path: &Path, key: &Source) -> Result<(), String> {
     std::fs::write(files::with_suffix(path, SIGNATURE_SUFFIX), signature).map_err(|error| error.to_string())
 }
 
+/// The identity the release's launcher in `folder` was built with, by its
+/// identity mark (finding F-24).
+///
+/// # Errors
+/// When the launcher cannot be read or carries no one identity mark.
+pub fn launcher_identity(folder: &Path, platform: Platform) -> Result<&'static str, String> {
+    let launcher = folder.join(platform.program_path(update::platform::LAUNCHER_PROGRAM));
+    let bytes = files::read_bounded(&launcher, usize::try_from(update::manifest::MAX_FILE_BYTES).unwrap_or(usize::MAX))
+        .map_err(|error| format!("{}: {error}", launcher.display()))?;
+    update::mark::find_identity(&bytes).map_err(|refused| format!("{}: {refused}", launcher.display()))
+}
+
+/// A production release's keys are hardware keys (`command:`): a key in a
+/// file, a test's, is refused for one (finding F-24).
+///
+/// # Errors
+/// When `folder`'s launcher was built with the production identity and
+/// `key` is a file.
+pub fn refuse_file_key_for_production(folder: &Path, platform: Platform, key: &Source) -> Result<(), String> {
+    if matches!(key, Source::File(_)) && launcher_identity(folder, platform).is_ok_and(|identity| identity == update::mark::PRODUCTION) {
+        return Err(String::from("a production release is signed with its hardware key (command:), never a key in a file"));
+    }
+    Ok(())
+}
+
 /// Section 10, step 3: the launcher's own acceptance check on the signed
 /// version, with the signers this build pins, and the check that the
 /// launcher is unchanged against the last launcher release's unless this
@@ -167,13 +194,19 @@ pub fn sign_file(path: &Path, key: &Source) -> Result<(), String> {
 ///
 /// # Errors
 /// Why the launcher would refuse it.
-pub fn check(folder: &Path, platform: Platform, last_launcher: Option<&Path>, launcher_release: bool) -> Result<Version, String> {
+pub fn check(folder: &Path, platform: Platform, last_launcher: Option<&Path>, launcher_release: bool, test_identity: bool) -> Result<Version, String> {
     if let Some(last) = last_launcher {
         let ours = std::fs::read(folder.join(platform.program_path(update::platform::LAUNCHER_PROGRAM))).map_err(|error| error.to_string())?;
         let theirs = std::fs::read(last).map_err(|error| format!("{}: {error}", last.display()))?;
         if ours != theirs && !launcher_release {
             return Err(String::from("the launcher differs from the last launcher release's; a launcher release says so (--launcher-release)"));
         }
+    }
+    let identity = launcher_identity(folder, platform)?;
+    if identity != update::mark::PRODUCTION && !test_identity {
+        return Err(String::from(
+            "the release's launcher was built with a test identity, which trusts test keys; build it without NEOTELETEXT_RELEASE_IDENTITY, or say --test-identity for a test",
+        ));
     }
     let keys = release_identity::keys();
     let signer: Box<dyn update::accept::Signer> = match platform.family() {

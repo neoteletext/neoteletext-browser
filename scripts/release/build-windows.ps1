@@ -4,11 +4,16 @@
 # certificate in its hardware module, lays out and lists the version and
 # signs its manifest with the release key (decision 92), checks it as the
 # launcher will, and builds and signs NeoTeletext-Setup.exe carrying it.
-#   powershell -File ..\scripts\release\build-windows.ps1 <version> <out> <certificate SHA-1 thumbprint> <timestamp server> <release key>
+#   powershell -File ..\scripts\release\build-windows.ps1 <version> <out> <certificate SHA-1 thumbprint> <timestamp server> <release key> [-Test]
 # The release key is the release tool's source: command:<public key>:<program>
 # for the hardware key, as sign-linux.sh takes it.
-param([string]$Version, [string]$Out, [string]$Thumbprint, [string]$TimestampServer, [string]$ReleaseKey)
+param([string]$Version, [string]$Out, [string]$Thumbprint, [string]$TimestampServer, [string]$ReleaseKey, [switch]$Test)
 $ErrorActionPreference = "Stop"
+# A test identity trusts test keys: the production identity unless -Test
+# says this is a test (finding F-24).
+if ($env:NEOTELETEXT_RELEASE_IDENTITY -and -not $Test) { throw "NEOTELETEXT_RELEASE_IDENTITY names a test identity; give -Test for a test release" }
+$testFlags = @()
+if ($Test) { $testFlags = @("--test-identity") }
 $signtool = (Get-ChildItem -Recurse -Filter signtool.exe "C:\Program Files (x86)\Windows Kits\10\bin" | Where-Object { $_.FullName -like "*\x64\*" } | Select-Object -First 1).FullName
 function Sign($files) {
     & $signtool sign /fd SHA256 /sha1 $Thumbprint /tr $TimestampServer /td SHA256 @files
@@ -32,7 +37,7 @@ $folder = "$Out\windows-x86_64\$Version"
 Sign (Get-ChildItem "$folder\*.exe" | ForEach-Object { $_.FullName })
 & $release sign-windows $folder $Version $ReleaseKey
 if ($LASTEXITCODE -ne 0) { throw "the manifest's signature" }
-& $release check $folder windows-x86_64
+& $release check $folder windows-x86_64 @testFlags
 if ($LASTEXITCODE -ne 0) { throw "the launcher's check" }
 $payload = "$Out\payload"
 New-Item -ItemType Directory -Force $payload | Out-Null

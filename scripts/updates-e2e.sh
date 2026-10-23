@@ -133,7 +133,7 @@ release() {
         "$tools/neoteletext-release" sign-linux "$built" "$version" "$signer"
     fi
     if [[ "$how" == test ]]; then
-        "$tools/neoteletext-release" check "$built" "$platform"
+        "$tools/neoteletext-release" check "$built" "$platform" --test-identity
     fi
     rm -rf "$work/targets-$version"
     "$tools/neoteletext-release" targets "$built" "$platform" "$work/targets-$version"

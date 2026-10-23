@@ -292,7 +292,7 @@ A script per step, run by the owner, as the gates are (no continuous integration
    - macOS: `codesign` with the hardened runtime, `notarytool submit --wait`, `stapler staple`.
    - Windows: `signtool` with the hardware module, then the release key signs the manifest (`neoteletext-release sign-windows`, decision 92).
    - Linux: the Ed25519 release key signs each file and the manifest.
-3. **Check what the launcher will check:** run each platform's acceptance check (section 5) on the signed files, and the launcher-unchanged check (section 7).
+3. **Check what the launcher will check:** run each platform's acceptance check (section 5) on the signed files, and the launcher-unchanged check (section 7). The check also reads the identity the launcher was built with, from its identity mark (`release_identity::IDENTITY_MARK`), and refuses a test identity unless `--test-identity` says this is a test; every release script refuses to run while `NEOTELETEXT_RELEASE_IDENTITY` is set unless its first argument is `--test` (`-Test` on Windows), an empty variable is no identity, `sign-linux`, `sign-windows`, `publish.sh` and `timestamp.sh` refuse a key in a file (`file:`) for a production release, and `publish.sh` runs the check on every platform's version first (finding F-24).
 4. **Sign the release:** the targets key adds the files (gzip-compressed) and the manifests to the targets metadata, then snapshot and timestamp are signed. The keys are plugged in for this step only.
 5. **Upload:** targets first, then the snapshot, then the timestamp, so a client never sees metadata naming files that are not there yet.
 6. **Record:** the release's version, hashes and the signing step's log, in `docs/releases.md`.

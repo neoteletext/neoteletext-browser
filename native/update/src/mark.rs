@@ -21,8 +21,25 @@ macro_rules! version_mark {
     };
 }
 
+/// The identity mark around the name of the release identity a program
+/// was built with (`release_identity::IDENTITY_MARK`, finding F-24):
+/// [`PRODUCTION`] or [`TEST`].
+#[macro_export]
+macro_rules! identity_mark {
+    ($identity:expr) => {
+        concat!("\u{1}neoteletext-identity\u{1}", $identity, "\u{1}")
+    };
+}
+
+/// The production identity's name in an identity mark.
+pub const PRODUCTION: &str = "production";
+/// A test identity's name in an identity mark.
+pub const TEST: &str = "test";
+
 /// The mark's start, reversed (see the module's head).
 const START_REVERSED: &[u8] = b"\x01noisrev-txeteletoen\x01";
+/// The identity mark's start, reversed likewise.
+const IDENTITY_START_REVERSED: &[u8] = b"\x01ytitnedi-txeteletoen\x01";
 /// The byte that ends the version.
 const END: u8 = 0x01;
 
@@ -38,6 +55,30 @@ impl std::fmt::Display for Refused {
 
 fn start() -> Vec<u8> {
     START_REVERSED.iter().rev().copied().collect()
+}
+
+/// The identity marked in `program`'s bytes: exactly one identity mark,
+/// naming [`PRODUCTION`] or [`TEST`].
+///
+/// # Errors
+/// When there is no identity mark, more than one, or one naming neither.
+pub fn find_identity(program: &[u8]) -> Result<&'static str, Refused> {
+    let start: Vec<u8> = IDENTITY_START_REVERSED.iter().rev().copied().collect();
+    let mut found = None;
+    let mut from = 0_usize;
+    while let Some(at) = program.get(from..).and_then(|rest| rest.windows(start.len()).position(|window| window == start.as_slice())) {
+        let begin = from.saturating_add(at).saturating_add(start.len());
+        let tail = program.get(begin..).unwrap_or_default();
+        let identity = [PRODUCTION, TEST]
+            .into_iter()
+            .find(|name| tail.get(..name.len()) == Some(name.as_bytes()) && tail.get(name.len()) == Some(&END))
+            .ok_or(Refused("an identity mark naming no identity"))?;
+        if found.replace(identity).is_some() {
+            return Err(Refused("more than one identity mark"));
+        }
+        from = begin;
+    }
+    found.ok_or(Refused("no identity mark"))
 }
 
 /// The version marked in `program`'s bytes: exactly one mark, with a
@@ -96,5 +137,16 @@ mod tests {
         assert!(mark.as_bytes().starts_with(&start()), "the reader looks for what the macro writes");
         // The reader's own bytes hold no mark: its copy is reversed.
         assert!(!START_REVERSED.windows(start().len()).any(|window| window == start().as_slice()));
+    }
+
+    #[test]
+    fn exactly_one_identity_mark_names_the_identity() {
+        assert_eq!(find_identity(identity_mark!("production").as_bytes()), Ok(PRODUCTION));
+        assert_eq!(find_identity([b"...".as_slice(), identity_mark!("test").as_bytes(), b"..."].concat().as_slice()), Ok(TEST));
+        assert_eq!(find_identity(b"no mark"), Err(Refused("no identity mark")));
+        assert_eq!(find_identity(identity_mark!("productio").as_bytes()), Err(Refused("an identity mark naming no identity")));
+        let twice = [identity_mark!("test"), identity_mark!("test")].concat();
+        assert_eq!(find_identity(twice.as_bytes()), Err(Refused("more than one identity mark")));
+        assert_eq!(find(identity_mark!("test").as_bytes()), Err(Refused("no version mark")), "the two marks are apart");
     }
 }

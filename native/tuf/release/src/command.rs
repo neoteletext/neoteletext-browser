@@ -63,8 +63,8 @@ pub(crate) fn run(arguments: &[String]) -> Result<(), String> {
         "sign-file" => package::sign_file(&path(rest.first())?, &Source::parse(rest.get(1).ok_or("a key is needed")?)?),
         "check" => {
             let last = options(rest, "--last-launcher").first().map(PathBuf::from);
-            let version =
-                package::check(&path(rest.first())?, platform(rest.get(1))?, last.as_deref(), rest.iter().any(|argument| argument == "--launcher-release"))?;
+            let flag = |name: &str| rest.iter().any(|argument| argument == name);
+            let version = package::check(&path(rest.first())?, platform(rest.get(1))?, last.as_deref(), flag("--launcher-release"), flag("--test-identity"))?;
             println!("{version}: the launcher accepts it (identity: {})", release_identity::NAME);
             Ok(())
         }

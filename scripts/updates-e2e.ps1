@@ -99,7 +99,7 @@ function Release($version, $how = "test") {
     # by Authenticode.
     & "$tools\neoteletext-release.exe" sign-windows $built $version (Key linux-release)
     if ($how -eq "test") {
-        & "$tools\neoteletext-release.exe" check $built windows-x86_64
+        & "$tools\neoteletext-release.exe" check $built windows-x86_64 --test-identity
         if ($LASTEXITCODE -ne 0) { Fail "the launcher's check of $version" }
     }
     & "$tools\neoteletext-release.exe" targets $built windows-x86_64 "$work\targets-$version"

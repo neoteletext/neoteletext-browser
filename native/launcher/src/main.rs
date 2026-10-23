@@ -19,7 +19,13 @@
 use std::ffi::OsString;
 use std::process::ExitCode;
 
+/// The identity this launcher was built with, in its bytes, where the
+/// release tool's `check` reads it (finding F-24).
+static IDENTITY_MARK: &str = release_identity::IDENTITY_MARK;
+
 fn main() -> ExitCode {
+    // Read, so the linker keeps the mark.
+    let _ = std::hint::black_box(IDENTITY_MARK);
     let arguments: Vec<OsString> = std::env::args_os().skip(1).collect();
     let result = launcher::run(&arguments);
     match result {
