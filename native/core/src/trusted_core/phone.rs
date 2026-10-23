@@ -11,32 +11,6 @@ use protocol::{ToInterface, clean};
 use super::processes::{end, relay, spawn};
 use super::{Core, Event};
 
-/// The phone keys passed on while no page is open for typing (decision
-/// 99): the digits, the four arrows and the four Fastext colour keys, by
-/// their W3C names as the phone's layout sends them.
-// Owed: the protocol crate is to hold this list beside the layout (the
-// security fix plan's WP-5); this is then to use it by name.
-const PAGE_NAVIGATION_KEYS: [&str; 18] = [
-    "0",
-    "1",
-    "2",
-    "3",
-    "4",
-    "5",
-    "6",
-    "7",
-    "8",
-    "9",
-    "ArrowUp",
-    "ArrowDown",
-    "ArrowLeft",
-    "ArrowRight",
-    "ColorF0Red",
-    "ColorF1Green",
-    "ColorF2Yellow",
-    "ColorF3Blue",
-];
-
 /// How long a keyboard process the panel closed has to end by itself, as
 /// its input closing tells it to, before it is killed: time to tell the
 /// relay it leaves, which a held connection cannot hold up longer.
@@ -142,12 +116,18 @@ impl Core {
             // between pages: the interface's code is not trusted to keep
             // the rest from a field, a prompt or a panel (decision 99).
             FromKeyboard::Key { down, name }
-                if self.phone_view.state == PhoneState::Connected && (self.typing.page_takes_keys() || PAGE_NAVIGATION_KEYS.contains(&name.as_str())) =>
+                if self.phone_view.state == PhoneState::Connected && (self.typing.page_takes_keys() || protocol::keyboard::navigates_pages(&name)) =>
             {
                 self.send(&ToInterface::PhoneKey(PhoneKey::Key { down, name }))
             }
             FromKeyboard::Text(text) if self.phone_view.state == PhoneState::Connected && self.typing.page_takes_keys() => {
                 self.send(&ToInterface::PhoneKey(PhoneKey::Text(clean(&text, protocol::keyboard::MAX_PHONE_TEXT))))
+            }
+            // Outside one, a text's digits alone, which choose a page: the
+            // phone's layout sends digits as text (decision 99).
+            FromKeyboard::Text(text) if self.phone_view.state == PhoneState::Connected => {
+                let digits: String = text.chars().filter(char::is_ascii_digit).take(protocol::keyboard::MAX_PHONE_TEXT).collect();
+                if digits.is_empty() { Ok(()) } else { self.send(&ToInterface::PhoneKey(PhoneKey::Text(digits))) }
             }
             FromKeyboard::Key { .. } | FromKeyboard::Text(_) => Ok(()),
         }
@@ -251,6 +231,18 @@ mod tests {
     fn this_build_takes_another_relay_only_if_a_debug_build() {
         let local = Some(String::from("http://127.0.0.1:8090"));
         assert_eq!(super::relay_override(local, cfg!(debug_assertions)).is_some(), cfg!(debug_assertions));
+    }
+
+    /// Decision 99: the phone's layout sends digits as text, so the digits
+    /// of a text pass outside a typing page, to choose a page, and nothing
+    /// else of it does.
+    #[test]
+    fn a_phones_digits_typed_as_text_choose_a_page() {
+        let mut test = Test::new("phone-digits");
+        test.core.phone_view.state = PhoneState::Connected;
+        test.core.phone_said(0, FromKeyboard::Text("3a0b2".into())).unwrap();
+        test.core.phone_said(0, FromKeyboard::Text("example.com".into())).unwrap();
+        assert_eq!(given(&mut test), [PhoneKey::Text("302".into())]);
     }
 
     fn key(name: &str) -> FromKeyboard {
