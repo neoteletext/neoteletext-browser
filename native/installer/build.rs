@@ -24,7 +24,20 @@ fn files(base: &Path, folder: &Path, out: &mut Vec<(String, PathBuf)>) {
     }
 }
 
+/// `LOAD_LIBRARY_SEARCH_SYSTEM32`, as the MSVC linker's
+/// `/DEPENDENTLOADFLAG` takes it (Microsoft's linker documentation;
+/// `LoadLibraryExW`'s flags in `libloaderapi.h`): the installer's imported
+/// libraries, `wintrust.dll` and `crypt32.dll` among them, are loaded from
+/// System32 alone, never from the Downloads folder it is run from, where a
+/// planted one would otherwise be loaded first (finding F-25, CWE-427).
+const SEARCH_SYSTEM32: &str = "0x800";
+
 fn main() {
+    let windows = std::env::var("CARGO_CFG_TARGET_OS").is_ok_and(|os| os == "windows");
+    let msvc = std::env::var("CARGO_CFG_TARGET_ENV").is_ok_and(|env| env == "msvc");
+    if windows && msvc {
+        println!("cargo:rustc-link-arg-bins=/DEPENDENTLOADFLAG:{SEARCH_SYSTEM32}");
+    }
     println!("cargo:rerun-if-env-changed={VARIABLE}");
     let mut out = String::from("/// The release's files, by their paths in the payload.\npub const FILES: &[(&str, &[u8])] = &[\n");
     if let Some(folder) = std::env::var_os(VARIABLE) {
@@ -35,7 +48,9 @@ fn main() {
         found.sort();
         for (name, path) in found {
             println!("cargo:rerun-if-changed={}", path.display());
-            let _ = writeln!(out, "    (\"{name}\", include_bytes!(r\"{}\")),", path.display());
+            // Written as string literals by `{:?}`, which escapes them, so no
+            // file's name can end the literal (finding F-89).
+            let _ = writeln!(out, "    ({name:?}, include_bytes!({:?})),", path.to_str().expect("a payload path that is text"));
         }
     }
     out.push_str("];\n");

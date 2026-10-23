@@ -3,11 +3,20 @@
 # the release at the current commit for both architectures, lays out each
 # architecture's bundle for the updates, and a universal bundle for the
 # disk image.
-#   scripts/release/build-macos.sh <version> <out>
+#   scripts/release/build-macos.sh [--test] <version> <out>
 # The production identity is built in unless NEOTELETEXT_RELEASE_IDENTITY
 # names a test one. The full gate must have passed at this commit.
 set -euo pipefail
 cd "$(dirname "$0")/../.."
+# A test identity trusts test keys, which sign for anyone who holds them:
+# a release script runs with the production identity unless its first
+# argument, --test, says this is a test (finding F-24).
+test_flags=()
+if [[ "${1:-}" == "--test" ]]; then test_flags=(--test-identity); shift; fi
+if [[ -n "${NEOTELETEXT_RELEASE_IDENTITY:-}" && ${#test_flags[@]} -eq 0 ]]; then
+    echo "$(basename "$0"): NEOTELETEXT_RELEASE_IDENTITY names a test identity; give --test first for a test release" >&2
+    exit 1
+fi
 version="${1:?a version}"
 out="${2:?an output folder}"
 [[ -z "$(git status --porcelain --untracked-files=no)" ]] || { echo "build-macos: the tree has changes; a release is built from a commit" >&2; exit 1; }

@@ -59,11 +59,12 @@ pub(crate) fn run(arguments: &[String]) -> Result<(), String> {
         "layout" => package::layout(platform(rest.first())?, version(rest.get(1))?, &path(rest.get(2))?, &path(rest.get(3))?),
         "manifest" => package::manifest(&path(rest.first())?, platform(rest.get(1))?, version(rest.get(2))?).map(|_| ()),
         "sign-linux" => package::sign_linux(&path(rest.first())?, version(rest.get(1))?, &Source::parse(rest.get(2).ok_or("a key is needed")?)?),
+        "sign-windows" => package::sign_windows(&path(rest.first())?, version(rest.get(1))?, &Source::parse(rest.get(2).ok_or("a key is needed")?)?),
         "sign-file" => package::sign_file(&path(rest.first())?, &Source::parse(rest.get(1).ok_or("a key is needed")?)?),
         "check" => {
             let last = options(rest, "--last-launcher").first().map(PathBuf::from);
-            let version =
-                package::check(&path(rest.first())?, platform(rest.get(1))?, last.as_deref(), rest.iter().any(|argument| argument == "--launcher-release"))?;
+            let flag = |name: &str| rest.iter().any(|argument| argument == name);
+            let version = package::check(&path(rest.first())?, platform(rest.get(1))?, last.as_deref(), flag("--launcher-release"), flag("--test-identity"))?;
             println!("{version}: the launcher accepts it (identity: {})", release_identity::NAME);
             Ok(())
         }

@@ -57,22 +57,13 @@ fn info_plist(version: Version) -> String {
 }
 
 /// The `AppArmor` profile every Linux version carries (`sandboxing.md`
-/// section 8.3; `installation-and-updates.md` section 14): on a system
-/// that restricts unprivileged user namespaces, it lets the browser's own
-/// programs, where a per-user installation keeps them, make the empty
-/// network namespace their sandbox needs, and changes nothing else.
-pub const APPARMOR: &str = "# NeoTeletext: its programs may make a user namespace, for the empty
-# network namespace of their sandbox (docs/sandboxing.md section 8).
-# Installed by an administrator once; it covers every later version.
-abi <abi/4.0>,
-include <tunables/global>
-
-profile neoteletext @{HOME}/.local/share/neoteletext/versions/*/neoteletext{,-*} flags=(unconfined) {
-  userns,
-
-  include if exists <local/neoteletext>
+/// section 8.3; `installation-and-updates.md` section 14), for the default
+/// installation's root: the four programs that make namespaces, there
+/// alone (decision 95). `neoteletext --install` writes and prints one for
+/// the root it installs in.
+fn apparmor() -> String {
+    update::platform::apparmor_profile(update::platform::APPARMOR_DEFAULT_ROOT)
 }
-";
 
 /// Lays out version `version` for `platform` in `out`, a new folder, from
 /// the built programs in `programs`.
@@ -97,7 +88,7 @@ pub fn layout(platform: Platform, version: Version, programs: &Path, out: &Path)
             let plist = out.join(BUNDLE).join("Contents/Info.plist");
             files::write_synced(&plist, info_plist(version).as_bytes(), false).map_err(|error| error.to_string())?;
         }
-        Family::Linux => files::write_synced(&out.join(APPARMOR_PROFILE), APPARMOR.as_bytes(), false).map_err(|error| error.to_string())?,
+        Family::Linux => files::write_synced(&out.join(APPARMOR_PROFILE), apparmor().as_bytes(), false).map_err(|error| error.to_string())?,
         Family::Windows => {}
     }
     Ok(())
@@ -132,12 +123,28 @@ pub fn manifest(folder: &Path, platform: Platform, version: Version) -> Result<M
 /// When a file cannot be read or the key cannot sign.
 pub fn sign_linux(folder: &Path, version: Version, key: &Source) -> Result<(), String> {
     let platform = Platform::LinuxX86_64;
+    refuse_file_key_for_production(folder, platform, key)?;
     for file in platform.files().into_iter().filter(|file| !file.path.ends_with(SIGNATURE_SUFFIX)) {
         let path = folder.join(&file.path);
         let bytes = std::fs::read(&path).map_err(|error| format!("{}: {error}", path.display()))?;
         let signature = key.sign(&bytes)?;
         files::write_synced(&folder.join(format!("{}{SIGNATURE_SUFFIX}", file.path)), &signature, false).map_err(|error| error.to_string())?;
     }
+    let _ = std::fs::remove_file(folder.join(MANIFEST_SIGNATURE));
+    manifest(folder, platform, version)?;
+    let text = std::fs::read(folder.join(MANIFEST)).map_err(|error| error.to_string())?;
+    files::write_synced(&folder.join(MANIFEST_SIGNATURE), &key.sign(&text)?, false).map_err(|error| error.to_string())
+}
+
+/// Release step 2 on Windows, after `signtool` has signed every program:
+/// the manifest written, listing the signed programs, and signed by the
+/// release key (`manifest.sig`, decision 92), as Linux's is.
+///
+/// # Errors
+/// When the folder is not a Windows version, or the key cannot sign.
+pub fn sign_windows(folder: &Path, version: Version, key: &Source) -> Result<(), String> {
+    let platform = Platform::WindowsX86_64;
+    refuse_file_key_for_production(folder, platform, key)?;
     let _ = std::fs::remove_file(folder.join(MANIFEST_SIGNATURE));
     manifest(folder, platform, version)?;
     let text = std::fs::read(folder.join(MANIFEST)).map_err(|error| error.to_string())?;
@@ -155,6 +162,31 @@ pub fn sign_file(path: &Path, key: &Source) -> Result<(), String> {
     std::fs::write(files::with_suffix(path, SIGNATURE_SUFFIX), signature).map_err(|error| error.to_string())
 }
 
+/// The identity the release's launcher in `folder` was built with, by its
+/// identity mark (finding F-24).
+///
+/// # Errors
+/// When the launcher cannot be read or carries no one identity mark.
+pub fn launcher_identity(folder: &Path, platform: Platform) -> Result<&'static str, String> {
+    let launcher = folder.join(platform.program_path(update::platform::LAUNCHER_PROGRAM));
+    let bytes = files::read_bounded(&launcher, usize::try_from(update::manifest::MAX_FILE_BYTES).unwrap_or(usize::MAX))
+        .map_err(|error| format!("{}: {error}", launcher.display()))?;
+    update::mark::find_identity(&bytes).map_err(|refused| format!("{}: {refused}", launcher.display()))
+}
+
+/// A production release's keys are hardware keys (`command:`): a key in a
+/// file, a test's, is refused for one (finding F-24).
+///
+/// # Errors
+/// When `folder`'s launcher was built with the production identity and
+/// `key` is a file.
+pub fn refuse_file_key_for_production(folder: &Path, platform: Platform, key: &Source) -> Result<(), String> {
+    if matches!(key, Source::File(_)) && launcher_identity(folder, platform).is_ok_and(|identity| identity == update::mark::PRODUCTION) {
+        return Err(String::from("a production release is signed with its hardware key (command:), never a key in a file"));
+    }
+    Ok(())
+}
+
 /// Section 10, step 3: the launcher's own acceptance check on the signed
 /// version, with the signers this build pins, and the check that the
 /// launcher is unchanged against the last launcher release's unless this
@@ -162,7 +194,7 @@ pub fn sign_file(path: &Path, key: &Source) -> Result<(), String> {
 ///
 /// # Errors
 /// Why the launcher would refuse it.
-pub fn check(folder: &Path, platform: Platform, last_launcher: Option<&Path>, launcher_release: bool) -> Result<Version, String> {
+pub fn check(folder: &Path, platform: Platform, last_launcher: Option<&Path>, launcher_release: bool, test_identity: bool) -> Result<Version, String> {
     if let Some(last) = last_launcher {
         let ours = std::fs::read(folder.join(platform.program_path(update::platform::LAUNCHER_PROGRAM))).map_err(|error| error.to_string())?;
         let theirs = std::fs::read(last).map_err(|error| format!("{}: {error}", last.display()))?;
@@ -170,12 +202,18 @@ pub fn check(folder: &Path, platform: Platform, last_launcher: Option<&Path>, la
             return Err(String::from("the launcher differs from the last launcher release's; a launcher release says so (--launcher-release)"));
         }
     }
+    let identity = launcher_identity(folder, platform)?;
+    if identity != update::mark::PRODUCTION && !test_identity {
+        return Err(String::from(
+            "the release's launcher was built with a test identity, which trusts test keys; build it without NEOTELETEXT_RELEASE_IDENTITY, or say --test-identity for a test",
+        ));
+    }
     let keys = release_identity::keys();
     let signer: Box<dyn update::accept::Signer> = match platform.family() {
-        Family::Linux => Box::new(update::accept::LinuxSigner { key: keys.linux_release }),
+        Family::Linux => Box::new(update::accept::LinuxSigner { key: keys.release }),
         Family::Macos => Box::new(update::accept::MacosSigner { requirement: keys.macos_requirement }),
         #[cfg(windows)]
-        Family::Windows => Box::new(os_install::WindowsSigner { key: keys.windows_signer }),
+        Family::Windows => Box::new(os_install::WindowsSigner { key: keys.windows_signer, release: keys.release }),
         #[cfg(not(windows))]
         Family::Windows => return Err(String::from("a Windows release is checked on Windows")),
     };
@@ -200,4 +238,23 @@ pub fn targets(folder: &Path, platform: Platform, out: &Path) -> Result<(), Stri
         std::fs::write(&target, update::gzip::compress(&bytes)).map_err(|error| format!("{}: {error}", target.display()))?;
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Decision 95 (finding F-23): the profile every Linux release carries
+    /// lets only the four programs that make namespaces make them, at the
+    /// default installation's path, and says so.
+    #[test]
+    fn the_release_profile_names_only_the_programs_that_make_namespaces() {
+        let profile = apparmor();
+        assert!(
+            profile.contains("\"@{HOME}/.local/share/neoteletext/versions/*/{neoteletext,neoteletext-decoder,neoteletext-interface,neoteletext-sound}\""),
+            "{profile}"
+        );
+        assert!(!profile.contains("neoteletext{,-*}"), "no pattern for every program: {profile}");
+        assert_eq!(profile.matches("userns").count(), 2, "one rule, and the sentence saying what it allows: {profile}");
+    }
 }

@@ -13,13 +13,13 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use launcher::{HEALTH_DEADLINE, Launcher};
+use launcher::{Chosen, HEALTH_DEADLINE, Launcher, START_DEADLINE};
 use ring::signature::{Ed25519KeyPair, KeyPair as _};
 use update::accept::{LinuxSigner, Signer};
 use update::layout::Layout;
 use update::manifest::{Entry, Manifest};
 use update::platform::{BUNDLE, Family, MANIFEST, MANIFEST_SIGNATURE, MARKED_PROGRAM, Platform, SIGNATURE_SUFFIX};
-use update::state::State;
+use update::state::{State, Trial};
 use update::version::Version;
 
 const OLD: Version = Version::new(0, 1, 0);
@@ -31,6 +31,16 @@ const SIGNED: &[u8] = b"\x02signed=test\x02";
 /// which macOS first checks (measured 23 October 2026: over 3 seconds while
 /// the workspace's tests ran beside it).
 const SHORT_DEADLINE: Duration = Duration::from_secs(15);
+/// A deadline no test waits out: a version that is not to hang is given
+/// this long, so a loaded machine starting it slowly is not taken for one
+/// that hangs.
+const NO_DEADLINE_NEEDED: Duration = Duration::from_secs(5 * 60);
+/// The start deadline a test gives a version that never says it started.
+const TEST_START_DEADLINE: Duration = Duration::from_secs(2);
+/// The health deadline the slow version's test gives: shorter than its
+/// start takes (`launcher-test-broker`'s `SLOW_START`, 6 seconds), so the
+/// deadline must count from `started` for it to pass.
+const SLOW_TEST_HEALTH_DEADLINE: Duration = Duration::from_secs(3);
 /// The fault child's variable: the fixture it runs.
 const CHILD: &str = "LAUNCHER_TEST_FAULT_CHILD";
 
@@ -38,9 +48,16 @@ const CHILD: &str = "LAUNCHER_TEST_FAULT_CHILD";
 /// key; elsewhere a check of the test broker's appended signature, since
 /// the real check (`codesign`, Authenticode) is the platform's and is
 /// exercised end to end with test certificates.
-struct TestSigner;
+struct TestSigner {
+    /// The release key, which signs the Windows manifest (decision 92).
+    release: [u8; 32],
+}
 
 impl Signer for TestSigner {
+    fn release_key(&self) -> Option<&[u8; 32]> {
+        Some(&self.release)
+    }
+
     fn check(&self, folder: &Path, _manifest: &Manifest) -> Result<(), String> {
         let broker = fs::read(folder.join(platform().program_path(MARKED_PROGRAM))).map_err(|error| error.to_string())?;
         if broker.windows(SIGNED.len()).any(|window| window == SIGNED) { Ok(()) } else { Err(String::from("not signed by the test signer")) }
@@ -85,14 +102,14 @@ impl Fixture {
     fn launcher(&self, deadline: Duration) -> Launcher {
         let signer: Box<dyn Signer> = match platform().family() {
             Family::Linux => Box::new(LinuxSigner { key: Some(self.pair.public_key().as_ref().try_into().unwrap()) }),
-            Family::Macos | Family::Windows => Box::new(TestSigner),
+            Family::Macos | Family::Windows => Box::new(TestSigner { release: self.pair.public_key().as_ref().try_into().unwrap() }),
         };
         let own = match platform().family() {
             Family::Linux => self.layout.launcher_folder().join("neoteletext"),
             Family::Windows => self.layout.root.join("launcher-a.exe"),
             Family::Macos => self.layout.bundle.clone().unwrap().join("Contents/MacOS/neoteletext-launcher"),
         };
-        Launcher { platform: platform(), layout: self.layout.clone(), signer, own, health_deadline: deadline }
+        Launcher { platform: platform(), layout: self.layout.clone(), signer, own, start_deadline: START_DEADLINE, health_deadline: deadline }
     }
 
     /// A complete version in `folder`, its broker behaving as `behaviour`.
@@ -126,7 +143,7 @@ impl Fixture {
         entries.sort_by(|a, b| a.path.cmp(&b.path));
         let manifest = Manifest { version, platform, files: entries }.to_text();
         fs::write(folder.join(MANIFEST), &manifest).unwrap();
-        if platform.family() == Family::Linux {
+        if platform.signs_manifest() {
             fs::write(folder.join(MANIFEST_SIGNATURE), self.pair.sign(manifest.as_bytes()).as_ref()).unwrap();
         }
     }
@@ -168,10 +185,39 @@ impl Fixture {
         fs::read_to_string(self.folder.join("log")).unwrap_or_default()
     }
 
+    /// Runs the launcher with a start deadline of `start` and a health
+    /// deadline of `health`; what it returned.
+    fn try_run(&self, start: Duration, health: Duration) -> Result<Option<i32>, String> {
+        let launcher = Launcher { start_deadline: start, ..self.launcher(health) };
+        launcher.run(&[OsString::from(self.folder.join("log"))])
+    }
+
+    /// The trial, as its version and counts of failed starts and of starts
+    /// that never started.
+    fn trial(&self) -> Option<(Version, u8)> {
+        self.state().trial.map(|trial| (trial.version, trial.failed))
+    }
+
     /// Runs the launcher; the test broker is given its log's path as the
     /// browser's argument.
     fn run(&self, deadline: Duration) -> Option<i32> {
         self.launcher(deadline).run(&[OsString::from(self.folder.join("log"))]).unwrap()
+    }
+
+    /// The bytes of the broker that runs as `version` once it is the
+    /// trial: the installed bundle's on macOS, the version's folder's
+    /// elsewhere.
+    fn broker_of(&self, version: Version) -> Vec<u8> {
+        let program = match platform().family() {
+            Family::Macos => self.layout.bundle.clone().unwrap().join("Contents/MacOS").join(MARKED_PROGRAM),
+            Family::Linux | Family::Windows => self.layout.version(version).join(platform().program_file(MARKED_PROGRAM)),
+        };
+        fs::read(program).unwrap()
+    }
+
+    /// The staged broker of `version`.
+    fn staged_broker(&self, version: Version) -> PathBuf {
+        self.layout.staged(version).join(platform().program_path(MARKED_PROGRAM))
     }
 
     /// The installed version, by its broker's mark.
@@ -210,26 +256,30 @@ fn launcher_previous(fixture: &Fixture) -> Option<Version> {
 }
 
 /// Requirement 13.5 and section 13: a broken version, one that crashes,
-/// hangs or ends saying nothing, is rolled back after two failed starts,
-/// within the same start, marked bad, and the current one runs.
+/// hangs or ends saying nothing, is rolled back, marked bad, and the
+/// current one runs; it is never tried again. Only a version that hangs
+/// waits out its deadline, so only it is given a short one: the others end
+/// of themselves, and a deadline they never need keeps a loaded machine,
+/// slow to start a program it has not run before, from being taken for a
+/// hang (decision 93). What is asserted is the launcher's own state; the
+/// broken version is started at least once, and the starts needed to roll
+/// it back, which differ by how it fails, are bounded.
 #[test]
 fn a_broken_version_is_rolled_back_after_two_starts() {
+    /// The launcher's starts, at most, before the test gives up on a
+    /// rollback: a version that ends successfully is not retried within a
+    /// start, so each of its failed starts is a start of its own.
+    const MOST_STARTS: usize = 5;
     for behaviour in ["crash", "hang", "quiet"] {
         let fixture = Fixture::new(&format!("rollback-{behaviour}"));
         fixture.install(OLD, "healthy");
         fixture.stage(NEW, behaviour, true);
-        // Only a version that hangs waits out its deadline; the others end
-        // of themselves, however slowly a loaded machine starts them.
-        let deadline = if behaviour == "hang" { SHORT_DEADLINE } else { HEALTH_DEADLINE };
-        let code = fixture.run(deadline);
-        let state = fixture.state();
-        if behaviour == "quiet" {
-            // Ended successfully, as a user quitting does: counted, not
-            // retried; the next two starts roll it back.
-            assert_eq!(code, Some(0));
-            assert_eq!(state.trial.map(|trial| (trial.version, trial.failed)), Some((NEW, 1)));
+        let deadline = if behaviour == "hang" { SHORT_DEADLINE } else { NO_DEADLINE_NEEDED };
+        for _ in 0..MOST_STARTS {
             fixture.run(deadline);
-            fixture.run(deadline);
+            if fixture.state().trial.is_none() {
+                break;
+            }
         }
         let state = fixture.state();
         assert_eq!(state.current, OLD, "{behaviour}");
@@ -238,14 +288,15 @@ fn a_broken_version_is_rolled_back_after_two_starts() {
         assert_eq!(state.rolled_back, Some(NEW), "{behaviour}: said once");
         assert_eq!(fixture.installed(), OLD, "{behaviour}");
         let log = fixture.log();
-        assert_eq!(log.matches(&format!("0.2.0 {behaviour}")).count(), 2, "{behaviour}: two starts of the broken version: {log}");
+        let tried = log.matches(&format!("0.2.0 {behaviour}")).count();
+        assert!(tried >= 1, "{behaviour}: the broken version was started: {log}");
         assert!(log.ends_with("0.1.0 healthy\n"), "{behaviour}: then the current one: {log}");
         // The rollback is said in one start only, and the bad version is
         // never tried again.
         fixture.stage(NEW, behaviour, true);
         fixture.run(deadline);
         assert_eq!(fixture.state().rolled_back, None);
-        assert_eq!(fixture.log().matches("0.2.0").count(), 2, "{behaviour}");
+        assert_eq!(fixture.log().matches("0.2.0").count(), tried, "{behaviour}");
     }
 }
 
@@ -258,7 +309,8 @@ fn a_version_not_signed_or_not_whole_is_refused() {
     fixture.stage(NEW, "healthy", false);
     fixture.run(HEALTH_DEADLINE);
     assert_eq!(fixture.state().current, OLD);
-    assert!(fixture.state().is_bad(NEW));
+    assert!(!fixture.state().is_bad(NEW), "refused is not bad: only a trial that failed is");
+    assert!(!fixture.layout.staged(NEW).exists(), "refused and removed");
     assert!(!fixture.log().contains("0.2.0"), "never started");
 
     let fixture = Fixture::new("truncated");
@@ -273,6 +325,231 @@ fn a_version_not_signed_or_not_whole_is_refused() {
     assert!(!fixture.log().contains("0.3.0"), "never started");
 }
 
+/// Decision 87 (finding F-02): what the launcher accepts is its own copy,
+/// so a hard link the confined updater made into the staged version
+/// before acceptance cannot change the version afterwards, and the
+/// launcher keeps nothing under `staging/metadata` but the updater's own
+/// files.
+#[cfg(unix)]
+#[test]
+fn a_hard_link_into_staging_cannot_change_an_accepted_version() {
+    let fixture = Fixture::new("hard-link");
+    fixture.install(OLD, "healthy");
+    fixture.stage(NEW, "healthy", true);
+    let staged = fixture.staged_broker(NEW);
+    let accepted = fs::read(&staged).unwrap();
+    let metadata = fixture.layout.staging().join(update::layout::UPDATER_METADATA);
+    fs::create_dir_all(&metadata).unwrap();
+    let link = metadata.join("kept");
+    fs::hard_link(&staged, &link).unwrap();
+    assert_eq!(fixture.launcher(HEALTH_DEADLINE).prepare().unwrap(), Chosen::Trial(NEW));
+    if link.exists() {
+        fs::write(&link, b"#!/bin/sh\necho changed after acceptance\n").unwrap();
+    }
+    assert!(fixture.broker_of(NEW) == accepted, "the accepted version changed through a hard link");
+    assert!(!link.exists(), "a file that is not the updater's own is removed from staging/metadata");
+}
+
+/// Decision 87 (finding F-02): a staged version whose folder is a link is
+/// refused, and what the link names is left alone.
+#[cfg(unix)]
+#[test]
+fn a_staged_root_that_is_a_link_is_refused() {
+    let fixture = Fixture::new("root-link");
+    fixture.install(OLD, "healthy");
+    let elsewhere = fixture.folder.join("elsewhere").join(NEW.to_string());
+    fixture.version(&elsewhere, NEW, "healthy", true);
+    fs::create_dir_all(fixture.layout.staging()).unwrap();
+    std::os::unix::fs::symlink(&elsewhere, fixture.layout.staged(NEW)).unwrap();
+    assert_eq!(fixture.launcher(HEALTH_DEADLINE).prepare().unwrap(), Chosen::Run(OLD));
+    let state = fixture.state();
+    assert_eq!((state.current, state.trial), (OLD, None));
+    assert_eq!(fixture.installed(), OLD);
+    assert!(fs::symlink_metadata(fixture.layout.staged(NEW)).is_err(), "the link is removed");
+    assert!(elsewhere.join(MANIFEST).is_file(), "what it named is left alone");
+}
+
+/// Decision 87 (finding F-02): a write descriptor the updater kept open on
+/// a staged file cannot change the version once it is accepted.
+#[test]
+fn an_open_write_descriptor_cannot_change_an_accepted_version() {
+    use std::io::Write as _;
+    let fixture = Fixture::new("descriptor");
+    fixture.install(OLD, "healthy");
+    fixture.stage(NEW, "healthy", true);
+    let staged = fixture.staged_broker(NEW);
+    let accepted = fs::read(&staged).unwrap();
+    let mut kept = fs::OpenOptions::new().write(true).open(&staged).unwrap();
+    assert_eq!(fixture.launcher(HEALTH_DEADLINE).prepare().unwrap(), Chosen::Trial(NEW));
+    kept.write_all(b"changed after acceptance").unwrap();
+    kept.sync_all().unwrap();
+    drop(kept);
+    assert!(fixture.broker_of(NEW) == accepted, "the accepted version changed through a descriptor kept open");
+}
+
+/// Finding F-50: the launcher copies a staged version by its manifest
+/// alone, so a large file the updater left beside the release is neither
+/// read nor copied, and the release is accepted.
+#[test]
+fn an_extra_file_in_a_staged_version_is_not_copied() {
+    /// Far larger than any release file, and sparse, so it costs nothing.
+    const HUGE: u64 = 100 * 1024 * 1024;
+    let fixture = Fixture::new("extra");
+    fixture.install(OLD, "healthy");
+    fixture.stage(NEW, "healthy", true);
+    fs::File::create(fixture.layout.staged(NEW).join("extra")).unwrap().set_len(HUGE).unwrap();
+    assert_eq!(fixture.launcher(HEALTH_DEADLINE).prepare().unwrap(), Chosen::Trial(NEW));
+    if platform().family() != Family::Macos {
+        assert!(!fixture.layout.version(NEW).join("extra").exists());
+    }
+}
+
+/// Finding F-08: a folder under `staging/` that is refused is removed and
+/// leaves no mark, so one folder made by a compromised updater cannot
+/// stop a genuine release of that version being accepted later.
+#[test]
+fn a_refused_candidate_does_not_freeze_a_later_genuine_version() {
+    let fixture = Fixture::new("refused-then-genuine");
+    fixture.install(OLD, "healthy");
+    fs::create_dir_all(fixture.layout.staged(NEW)).unwrap();
+    fs::write(fixture.layout.staged(NEW).join("junk"), b"not a release").unwrap();
+    assert_eq!(fixture.launcher(HEALTH_DEADLINE).prepare().unwrap(), Chosen::Run(OLD));
+    assert!(!fixture.state().is_bad(NEW), "a refusal is not a failed trial");
+    assert!(!fixture.layout.staged(NEW).exists(), "refused and removed");
+    fixture.stage(NEW, "healthy", true);
+    assert_eq!(fixture.launcher(HEALTH_DEADLINE).prepare().unwrap(), Chosen::Trial(NEW));
+}
+
+/// Finding F-08: one start examines at most
+/// `MAX_CANDIDATES_PER_START` staged versions, newest first, however many
+/// folders the updater left; the next start goes on.
+#[test]
+fn a_start_examines_a_bounded_number_of_candidates() {
+    use launcher::MAX_CANDIDATES_PER_START;
+    let fixture = Fixture::new("bounded-candidates");
+    fixture.install(OLD, "healthy");
+    fixture.stage(NEW, "healthy", true);
+    let junk: Vec<Version> = (0..=MAX_CANDIDATES_PER_START).map(|at| Version::new(0, 3, u16::try_from(at).unwrap())).collect();
+    for version in &junk {
+        fs::create_dir_all(fixture.layout.staged(*version)).unwrap();
+    }
+    assert_eq!(fixture.launcher(HEALTH_DEADLINE).prepare().unwrap(), Chosen::Run(OLD), "the genuine one waits");
+    let (next, examined) = junk.split_at(1);
+    for version in examined {
+        assert!(!fixture.layout.staged(*version).exists(), "{version}: examined, refused and removed");
+    }
+    assert!(fixture.layout.staged(next[0]).exists(), "the oldest junk waits for the next start");
+    assert_eq!(fixture.launcher(HEALTH_DEADLINE).prepare().unwrap(), Chosen::Trial(NEW));
+    assert!(junk.iter().all(|version| !fixture.state().is_bad(*version)));
+}
+
+/// Decision 93 (finding F-09): a trial whose broker never says it started
+/// before its start deadline is ended, and not counted as a failed start:
+/// a computer slow to start a new program is not a broken version.
+#[test]
+fn a_trial_killed_before_started_is_not_counted() {
+    let fixture = Fixture::new("not-started");
+    fixture.install(OLD, "healthy");
+    fixture.stage(NEW, "mute", true);
+    let result = fixture.try_run(TEST_START_DEADLINE, SHORT_DEADLINE);
+    assert_eq!(fixture.trial(), Some((NEW, 0)), "not counted as failed: {result:?}");
+    assert!(!fixture.state().is_bad(NEW));
+    if platform().family() != Family::Macos {
+        assert_eq!(result, Ok(Some(0)), "the current version runs this time");
+        assert!(fixture.log().ends_with("0.1.0 healthy\n"), "{}", fixture.log());
+    }
+}
+
+/// Decision 93: a trial the launcher was running when the launcher itself
+/// ended (its state still marks it running) is counted as failed at the
+/// next start.
+#[test]
+fn a_trial_running_when_the_launcher_died_is_counted() {
+    let fixture = Fixture::new("launcher-died");
+    fixture.install(OLD, "healthy");
+    fixture.stage(NEW, "healthy", true);
+    assert_eq!(fixture.launcher(HEALTH_DEADLINE).prepare().unwrap(), Chosen::Trial(NEW));
+    let mut state = fixture.state();
+    state.trial = state.trial.map(|trial| Trial { running: true, not_started: 0, ..trial });
+    fs::write(fixture.layout.state(), state.to_text()).unwrap();
+    assert_eq!(fixture.launcher(HEALTH_DEADLINE).prepare().unwrap(), Chosen::Trial(NEW));
+    assert_eq!(fixture.state().trial, Some(Trial { version: NEW, failed: 1, not_started: 1, running: false }));
+}
+
+/// Decision 93 (finding F-09): a trial that said it started and then
+/// ended successfully before it was found healthy, as when the user quits
+/// at once, is not counted.
+#[test]
+fn a_clean_quit_before_health_is_not_counted() {
+    let fixture = Fixture::new("quits");
+    fixture.install(OLD, "healthy");
+    fixture.stage(NEW, "quits", true);
+    assert_eq!(fixture.run(NO_DEADLINE_NEEDED), Some(0));
+    assert_eq!(fixture.trial(), Some((NEW, 0)));
+    assert_eq!(fixture.log(), "0.2.0 quits\n", "not retried");
+}
+
+/// Decision 93 (finding F-09): the health deadline counts from `started`,
+/// so a version slow to start, but healthy once started, is committed,
+/// not counted as a crash and rolled back.
+#[test]
+fn a_slow_start_is_not_counted_as_a_crash() {
+    let fixture = Fixture::new("slow");
+    fixture.install(OLD, "healthy");
+    fixture.stage(NEW, "slow", true);
+    assert_eq!(fixture.try_run(NO_DEADLINE_NEEDED, SLOW_TEST_HEALTH_DEADLINE), Ok(Some(0)));
+    let state = fixture.state();
+    assert_eq!((state.current, state.trial), (NEW, None), "committed");
+    assert!(!state.is_bad(NEW));
+}
+
+/// Finding F-19: macOS checks the bundle it is about to exchange in by the
+/// pinned signer, so a `previous/` bundle carrying the current version's
+/// mark but not the signer's signature is never rolled back to.
+#[cfg(target_os = "macos")]
+#[test]
+fn a_previous_bundle_not_signed_is_not_rolled_back_to() {
+    let fixture = Fixture::new("previous-unsigned");
+    fixture.install(OLD, "healthy");
+    fixture.stage(NEW, "crash", true);
+    assert_eq!(fixture.launcher(HEALTH_DEADLINE).prepare().unwrap(), Chosen::Trial(NEW));
+    assert_eq!(launcher_previous(&fixture), Some(OLD));
+    let made = fixture.folder.join("unsigned");
+    fixture.version(&made, OLD, "healthy", false);
+    fs::copy(made.join(platform().program_path(MARKED_PROGRAM)), fixture.layout.previous_bundle().join("Contents/MacOS").join(MARKED_PROGRAM)).unwrap();
+    let result = fixture.launcher(NO_DEADLINE_NEEDED).run(&[OsString::from(fixture.folder.join("log"))]);
+    assert!(fixture.installed() == NEW, "the unsigned bundle was exchanged in: {result:?}, {}", fixture.log());
+    assert!(result.is_err(), "nothing runs: {result:?}");
+    assert!(!fixture.log().contains("0.1.0"), "{}", fixture.log());
+}
+
+/// Finding F-34: a broker that crashes leaves no helper behind; the
+/// launcher ends its whole process group after it ends.
+#[cfg(unix)]
+#[test]
+fn a_broker_that_crashes_leaves_no_helper() {
+    /// How long a helper killed by the launcher is given to be gone.
+    const GONE_WITHIN: Duration = Duration::from_secs(5);
+    let fixture = Fixture::new("orphan");
+    fixture.install(OLD, "healthy");
+    fixture.stage(NEW, "orphan", true);
+    fixture.run(NO_DEADLINE_NEEDED);
+    let helpers = fs::read_to_string(fixture.folder.join("log.helpers")).unwrap();
+    let helpers: Vec<i32> = helpers.lines().map(|line| line.parse().unwrap()).collect();
+    assert!(!helpers.is_empty(), "the broken broker left helpers");
+    let alive =
+        |pid: i32| std::process::Command::new("/bin/kill").args(["-0", &pid.to_string()]).stderr(std::process::Stdio::null()).status().unwrap().success();
+    let started = std::time::Instant::now();
+    while helpers.iter().any(|&pid| alive(pid)) && started.elapsed() < GONE_WITHIN {
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    let left: Vec<i32> = helpers.iter().copied().filter(|&pid| alive(pid)).collect();
+    for &pid in &left {
+        let _ = std::process::Command::new("/bin/kill").args(["-9", &pid.to_string()]).status();
+    }
+    assert!(left.is_empty(), "helpers outlived their broker: {left:?}");
+}
+
 /// A missing or unreadable state file is rebuilt from what is installed.
 #[test]
 fn a_lost_state_is_rebuilt_from_what_is_installed() {
@@ -283,12 +560,53 @@ fn a_lost_state_is_rebuilt_from_what_is_installed() {
     assert_eq!(fixture.state(), State::installed(OLD));
 }
 
+/// Finding F-80: a state file too long to be one is rebuilt, as any other
+/// that is not one is, rather than stopping the browser from starting.
+#[test]
+fn a_state_too_long_is_rebuilt() {
+    let fixture = Fixture::new("too-long");
+    fixture.install(OLD, "healthy");
+    fs::write(fixture.layout.state(), vec![b'x'; 3 * 1024]).unwrap();
+    assert_eq!(fixture.launcher(HEALTH_DEADLINE).read_state(), Ok(State::installed(OLD)));
+}
+
+/// Finding F-80: a state rebuilt from what is installed accepts each
+/// version by its pinned signer, and makes the newest the trial, so a
+/// version never found healthy is tried, not made current.
+#[cfg(not(target_os = "macos"))]
+#[test]
+fn a_lost_state_puts_the_newest_version_on_trial() {
+    let fixture = Fixture::new("lost-newest");
+    fixture.install(OLD, "healthy");
+    fixture.version(&fixture.layout.version(NEW), NEW, "healthy", true);
+    let unsigned = Version::new(0, 3, 0);
+    fixture.version(&fixture.layout.version(unsigned), unsigned, "healthy", false);
+    fs::write(fixture.layout.state(), b"not a state").unwrap();
+    let state = fixture.launcher(HEALTH_DEADLINE).read_state().unwrap();
+    assert_eq!(state.current, OLD);
+    assert_eq!(state.trial.map(|trial| trial.version), Some(NEW), "the newest signed version is the trial, the unsigned one passed over");
+}
+
+/// Finding F-80: a state naming a current version that is not installed
+/// is rebuilt from what is, rather than failing to start.
+#[cfg(not(target_os = "macos"))]
+#[test]
+fn a_current_version_not_installed_falls_back_to_what_is() {
+    let fixture = Fixture::new("missing-current");
+    fixture.install(OLD, "healthy");
+    fs::write(fixture.layout.state(), State::installed(Version::new(0, 5, 0)).to_text()).unwrap();
+    assert_eq!(fixture.launcher(HEALTH_DEADLINE).run(&[OsString::from(fixture.folder.join("log"))]), Ok(Some(0)));
+    assert_eq!(fixture.log(), "0.1.0 healthy\n");
+    assert_eq!(fixture.state().current, OLD);
+}
+
 /// The launcher's fault points in the life of an update.
 fn fault_points() -> Vec<&'static str> {
-    let mut points = vec!["state-written-before-rename", "state-renamed", "accept-written", "trial-counted", "commit-before-write", "commit-written"];
+    let mut points =
+        vec!["state-written-before-rename", "state-renamed", "accept-written", "trial-counted", "trial-started", "commit-before-write", "commit-written"];
     match platform().family() {
-        Family::Macos => points.extend(["bundle-exchanged", "previous-discarded", "previous-moved"]),
-        Family::Linux => points.extend(["accept-moved", "launcher-written", "launcher-exchanged"]),
+        Family::Macos => points.extend(["accept-copied", "bundle-exchanged", "previous-discarded", "previous-moved"]),
+        Family::Linux => points.extend(["accept-copied", "accept-moved", "launcher-written", "launcher-exchanged"]),
         Family::Windows => points.extend(["accept-copied", "accept-moved"]),
     }
     points

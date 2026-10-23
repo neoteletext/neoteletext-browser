@@ -8,16 +8,11 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use update::accept::Signer;
-use update::layout::Layout;
+use update::layout::{HEALTH_DEADLINE, Layout, START_DEADLINE};
 use update::platform::{Family, Platform};
 use update::version::Version;
 
 use crate::start;
-
-/// How long a trial version's trusted core has to find it healthy
-/// (section 3.2: 30 seconds), with room for the broker and the core to
-/// start before the core's own count begins.
-pub const HEALTH_DEADLINE: Duration = Duration::from_secs(30 + 15);
 
 /// A launcher of one installation.
 pub struct Launcher {
@@ -30,7 +25,10 @@ pub struct Launcher {
     /// The launcher's own program: a launcher release replaces it when the
     /// version's differs (section 7).
     pub own: PathBuf,
-    /// How long a trial has to be found healthy.
+    /// How long a trial's broker has to say it started.
+    pub start_deadline: Duration,
+    /// How long a trial has, once its broker said it started, to be found
+    /// healthy.
     pub health_deadline: Duration,
 }
 
@@ -59,11 +57,25 @@ impl Chosen {
     }
 }
 
+/// The deadline that ended a trial's start (decision 93).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Deadline {
+    /// Its broker did not say it started in time.
+    Start,
+    /// It said it started, and was not found healthy in time.
+    Health,
+}
+
 /// How a start ended.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Ended {
+    /// The broker said it started (or that it was healthy, which says it
+    /// too).
+    pub started: bool,
     /// The trusted core found the version healthy.
     pub healthy: bool,
+    /// The deadline that ended it, if one did.
+    pub deadline: Option<Deadline>,
     /// The broker ended successfully.
     pub success: bool,
     /// Its exit code, where it has one.
@@ -75,10 +87,10 @@ pub struct Ended {
 pub fn pinned_signer(platform: Platform) -> Box<dyn Signer> {
     let keys = release_identity::keys();
     match platform.family() {
-        Family::Linux => Box::new(update::accept::LinuxSigner { key: keys.linux_release }),
+        Family::Linux => Box::new(update::accept::LinuxSigner { key: keys.release }),
         Family::Macos => Box::new(update::accept::MacosSigner { requirement: keys.macos_requirement }),
         #[cfg(windows)]
-        Family::Windows => Box::new(os_install::WindowsSigner { key: keys.windows_signer }),
+        Family::Windows => Box::new(os_install::WindowsSigner { key: keys.windows_signer, release: keys.release }),
         #[cfg(not(windows))]
         Family::Windows => Box::new(update::accept::LinuxSigner { key: None }),
     }
@@ -98,7 +110,7 @@ impl Launcher {
         let platform = Platform::this().ok_or("there are no releases for this platform")?;
         let own = std::env::current_exe().map_err(|error| format!("cannot find this program: {error}"))?;
         let layout = Layout::of_launcher(platform.family(), &own).ok_or("this program is not in an installation")?;
-        Ok(Self { platform, layout, signer: pinned_signer(platform), own, health_deadline: HEALTH_DEADLINE })
+        Ok(Self { platform, layout, signer: pinned_signer(platform), own, start_deadline: START_DEADLINE, health_deadline: HEALTH_DEADLINE })
     }
 
     /// Runs the browser: chooses a version, starts it, commits it when
@@ -128,12 +140,34 @@ impl Launcher {
             };
             let ended = start::start(self, chosen, arguments)?;
             drop(lock);
-            if matches!(chosen, Chosen::Trial(_)) && !ended.healthy && !ended.success {
-                eprintln!("neoteletext: version {} did not start; trying again", chosen.version());
-                continue;
+            if let Chosen::Trial(version) = chosen
+                && !ended.healthy
+            {
+                if ended.deadline == Some(Deadline::Start) {
+                    return self.run_current(version, arguments);
+                }
+                if !ended.success {
+                    eprintln!("neoteletext: version {version} did not start; trying again");
+                    continue;
+                }
             }
             return Ok(ended.code);
         }
+    }
+
+    /// After a trial missed its start deadline, the current version runs
+    /// for this start, and the trial is tried again at the next (decision
+    /// 93). On macOS the installed bundle is the trial's until a rollback
+    /// exchanges it back, so there this start ends instead.
+    fn run_current(&self, trial: Version, arguments: &[OsString]) -> Result<Option<i32>, String> {
+        if self.platform.family() == Family::Macos {
+            return Err(format!("version {trial} did not start in time; start NeoTeletext again"));
+        }
+        let lock = self.open_lock()?;
+        lock.lock_shared().map_err(|error| io_text(&self.layout.lock(), &error))?;
+        let current = self.read_state()?.current;
+        eprintln!("neoteletext: running version {current} this time; {trial} is tried again at the next start");
+        Ok(start::start(self, Chosen::Run(current), arguments)?.code)
     }
 
     pub(crate) fn open_lock(&self) -> Result<File, String> {

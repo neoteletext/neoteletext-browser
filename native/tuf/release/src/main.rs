@@ -5,8 +5,9 @@
 //! neoteletext-release layout <platform> <version> <programs> <out>
 //! neoteletext-release manifest <folder> <platform> <version>
 //! neoteletext-release sign-linux <folder> <version> <key>
+//! neoteletext-release sign-windows <folder> <version> <key>
 //! neoteletext-release sign-file <file> <key>
-//! neoteletext-release check <folder> <platform> [--last-launcher <file>] [--launcher-release]
+//! neoteletext-release check <folder> <platform> [--last-launcher <file>] [--launcher-release] [--test-identity]
 //! neoteletext-release targets <folder> <platform> <out>
 //! neoteletext-release root <out> <version> --root <key>... --targets <key> --snapshot <key> --timestamp <key> [--old-root <key>]...
 //! neoteletext-release publish <repository> <root.json> <targets> --targets <key> --snapshot <key> --timestamp <key>

@@ -10,12 +10,12 @@ mod generated {
     include!(concat!(env!("OUT_DIR"), "/identity.rs"));
 }
 
-pub use generated::{HOST, LINUX_RELEASE_KEY, MACOS_REQUIREMENT, NAME, PORT, TLS_ROOT, TUF_ROOT, WINDOWS_SIGNER};
+pub use generated::{HOST, IDENTITY_MARK, MACOS_REQUIREMENT, NAME, PORT, RELEASE_KEY, TLS_ROOT, TUF_ROOT, WINDOWS_SIGNER};
 
 /// The signers the launcher and the installer pin.
 #[must_use]
 pub fn keys() -> update::accept::Keys {
-    update::accept::Keys { linux_release: LINUX_RELEASE_KEY, macos_requirement: MACOS_REQUIREMENT.map(str::to_owned), windows_signer: WINDOWS_SIGNER }
+    update::accept::Keys { release: RELEASE_KEY, macos_requirement: MACOS_REQUIREMENT.map(str::to_owned), windows_signer: WINDOWS_SIGNER }
 }
 
 #[cfg(test)]
@@ -24,6 +24,13 @@ mod tests {
 
     /// The production identity names the update host of decision 25 on
     /// the port of TLS; its keys come at the key ceremony.
+    /// The identity mark is the one `update` reads, and names this build's.
+    #[test]
+    fn the_identity_mark_is_what_the_release_tool_reads() {
+        let kind = if NAME == "production" { update::mark::PRODUCTION } else { update::mark::TEST };
+        assert_eq!(update::mark::find_identity(IDENTITY_MARK.as_bytes()), Ok(kind));
+    }
+
     #[test]
     fn the_production_identity_names_the_update_host() {
         if NAME == "production" {
