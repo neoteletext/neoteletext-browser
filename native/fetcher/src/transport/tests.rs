@@ -56,7 +56,7 @@ fn proxy(proxying: Proxying) -> (Proxy, std::thread::JoinHandle<Vec<u8>>) {
             }
             // Holds the connection and says nothing, for longer than the
             // connection may take.
-            Proxying::Silent => std::thread::sleep(CONNECT_TIMEOUT + Duration::from_secs(2)),
+            Proxying::Silent => std::thread::sleep(CONNECT_DEADLINE + Duration::from_secs(2)),
         }
         let mut echo = [0_u8; 64];
         if let Ok(count) = socket.read(&mut echo) {
@@ -87,7 +87,7 @@ fn settled(tcp: &mut Tcp, connection: ConnectionId) -> LinkState {
     let started = Instant::now();
     loop {
         match tcp.state(connection) {
-            LinkState::Connecting if started.elapsed() < CONNECT_TIMEOUT + Duration::from_secs(1) => std::thread::sleep(Duration::from_millis(1)),
+            LinkState::Connecting if started.elapsed() < CONNECT_DEADLINE + Duration::from_secs(1) => std::thread::sleep(Duration::from_millis(1)),
             state => return state,
         }
     }
@@ -225,7 +225,7 @@ fn a_silent_proxy_fails_in_time_and_holds_nothing_up() {
     assert!(matches!(tcp.state(ConnectionId::Fetch), LinkState::Connecting));
     assert_eq!(tcp.receive(ConnectionId::Fetch, &mut [0; 8]), Ok(Received::Nothing), "nothing yet, and no waiting");
     assert!(matches!(settled(&mut tcp, ConnectionId::Fetch), LinkState::Failed));
-    assert!(started.elapsed() < CONNECT_TIMEOUT + Duration::from_secs(1), "{:?}", started.elapsed());
+    assert!(started.elapsed() < CONNECT_DEADLINE + Duration::from_secs(1), "{:?}", started.elapsed());
     assert!(tcp.take_proxy_failure());
     drop(server.join());
 }
@@ -290,4 +290,82 @@ fn a_name_resolving_to_this_computer_opens_no_connection() {
     tcp.connect(ConnectionId::Fetch, "localhost", port, Security::Plain).unwrap();
     assert!(matches!(settled(&mut tcp, ConnectionId::Fetch), LinkState::Open(IpAddress::V4([127, 0, 0, 1]))));
     assert!(!tcp.take_local_refusal());
+}
+
+/// How often the dripping proxy sends its next byte: well inside the
+/// connect limit, so a timeout per read never fires.
+const DRIP: Duration = Duration::from_millis(500);
+
+/// A proxy on this computer that takes the request for a tunnel, then
+/// answers one byte at a time, never finishing, until the connect limit
+/// and more have passed or the browser's end of the connection closes;
+/// it returns how long after accepting it saw that end, if it did.
+fn dripping_proxy() -> (Proxy, std::thread::JoinHandle<Option<Duration>>) {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let handle = std::thread::spawn(move || {
+        let (mut socket, _) = listener.accept().unwrap();
+        let accepted = Instant::now();
+        socket.set_read_timeout(Some(DRIP)).unwrap();
+        let mut byte = [0_u8; 1];
+        let mut asked = Vec::new();
+        while !asked.ends_with(b"\r\n\r\n") && socket.read(&mut byte).unwrap() == 1 {
+            asked.push(byte[0]);
+        }
+        let answer = b"HTTP/1.1 200 Connection established, slowly".iter().cycle();
+        for &next in answer {
+            if accepted.elapsed() > CONNECT_DEADLINE + Duration::from_secs(3) || socket.write_all(&[next]).is_err() {
+                return None;
+            }
+            match socket.read(&mut byte) {
+                Ok(0) => return Some(accepted.elapsed()),
+                Ok(_) => {}
+                Err(error) if matches!(error.kind(), IoErrorKind::WouldBlock | IoErrorKind::TimedOut) => {}
+                Err(_) => return Some(accepted.elapsed()),
+            }
+        }
+        None
+    });
+    (Proxy::parse(&format!("http://127.0.0.1:{port}")).unwrap(), handle)
+}
+
+/// Finding F-63: the whole opening of a connection is held to one
+/// deadline, the engine's connect limit, however its server or proxy
+/// spaces its bytes. Before this, every read had the limit afresh, so a
+/// proxy answering a byte at a time held the connection's thread, its
+/// socket and its buffer for as long as it went on.
+#[test]
+fn a_proxy_answering_a_byte_at_a_time_fails_within_the_deadline() {
+    let (proxy, server) = dripping_proxy();
+    let mut tcp = tcp(proxy);
+    let started = Instant::now();
+    tcp.connect(ConnectionId::Fetch, "news.example", 80, Security::Plain).unwrap();
+    assert!(matches!(settled(&mut tcp, ConnectionId::Fetch), LinkState::Failed), "still opening after {:?}", started.elapsed());
+    assert!(started.elapsed() < CONNECT_DEADLINE + Duration::from_secs(1), "{:?}", started.elapsed());
+    assert!(tcp.take_proxy_failure());
+    drop(server.join());
+}
+
+/// Finding F-63: closing a connection that is still opening shuts its
+/// socket, so its thread ends at once rather than when the opening
+/// would have ended. Before this, `close` reached only an open
+/// connection, and the thread went on with the server or proxy.
+#[test]
+fn closing_a_connection_while_it_opens_ends_its_thread() {
+    let (proxy, server) = dripping_proxy();
+    let wake: Wake = Arc::new(|| {});
+    let mut tcp = Tcp::new(Arc::clone(&wake), Some(proxy), NO_LOCAL);
+    tcp.connect(ConnectionId::Fetch, "news.example", 80, Security::Plain).unwrap();
+    // Long enough for the request for a tunnel to be sent and answered in part.
+    std::thread::sleep(DRIP * 2);
+    assert!(matches!(tcp.state(ConnectionId::Fetch), LinkState::Connecting));
+    let closed = Instant::now();
+    tcp.close(ConnectionId::Fetch);
+    // The thread holds its own handle to the wake until it ends.
+    while Arc::strong_count(&wake) > 2 && closed.elapsed() < Duration::from_secs(2) {
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    assert_eq!(Arc::strong_count(&wake), 2, "the connection's thread ended: {:?} after the close", closed.elapsed());
+    assert!(closed.elapsed() < Duration::from_secs(1), "{:?}", closed.elapsed());
+    assert!(server.join().unwrap().is_some(), "the proxy saw the connection end");
 }
