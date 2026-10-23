@@ -78,29 +78,27 @@ mod linux {
         }
     }
 
-    pub fn main() {
-        match std::env::var(PROBE).unwrap_or_default().as_str() {
-            // A broker: it starts a helper, and lives until it is ended.
-            "parent" => {
-                let mut helper = Command::new(std::env::current_exe().unwrap()).env(PROBE, "helper").spawn().unwrap();
-                std::thread::sleep(LINGER);
-                let _ = helper.kill();
-                let _ = helper.wait();
-                return;
-            }
-            // Its helper, confined: says who it is, and lives on.
-            "helper" => {
-                if let Err(error) = confine::apply(Role::Decoder, None) {
-                    println!("PROBE refused: {error}");
-                    return;
-                }
-                println!("PROBE helper={}", std::process::id());
-                std::thread::sleep(LINGER);
-                return;
-            }
-            _ => {}
+    /// A broker: it starts a helper, and lives until it is ended.
+    fn parent() {
+        let mut helper = Command::new(std::env::current_exe().unwrap()).env(PROBE, "helper").spawn().unwrap();
+        std::thread::sleep(LINGER);
+        let _ = helper.kill();
+        let _ = helper.wait();
+    }
+
+    /// Its helper, confined: says who it is, and lives on.
+    fn helper() {
+        if let Err(error) = confine::apply(Role::Decoder, None) {
+            println!("PROBE refused: {error}");
+            return;
         }
-        let role = match std::env::var(PROBE).unwrap_or_default().as_str() {
+        println!("PROBE helper={}", std::process::id());
+        std::thread::sleep(LINGER);
+    }
+
+    /// The role `probe` names, the interface's for any other.
+    fn role(probe: &str) -> Role {
+        match probe {
             "decoder" => Role::Decoder,
             "decoder-without-namespaces" => {
                 forbid_namespaces();
@@ -110,7 +108,17 @@ mod linux {
             "updater" => Role::Updater { port: UPDATER_PORT },
             "sound" => Role::Sound,
             _ => Role::Interface,
-        };
+        }
+    }
+
+    pub fn main() {
+        let probe = std::env::var(PROBE).unwrap_or_default();
+        match probe.as_str() {
+            "parent" => return parent(),
+            "helper" => return helper(),
+            _ => {}
+        }
+        let role = role(&probe);
         let writable = std::env::var_os(WRITABLE).map(PathBuf::from);
         // What is read of this process before it is confined, as a helper
         // reading its own state would.
