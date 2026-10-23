@@ -10,6 +10,7 @@ use std::path::{Path, PathBuf};
 use interface_core::settings::{MAX_REMOTE_PLACE, RemoteMode, RemotePlace};
 
 use crate::address;
+use crate::private_file::{Read, read_text};
 
 /// The first line of the file: its format and version.
 const VERSION_LINE: &str = "neoteletext-settings 1";
@@ -247,17 +248,11 @@ impl Settings {
         // This format's own file, copied from the newest older format's
         // the first time (`installation-and-updates.md` section 3.3).
         let (path, _) = update::profile::prepare(folder, PROFILE, FORMAT)?;
-        match std::fs::metadata(&path) {
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok((Self::default(), Vec::new())),
-            Err(error) => return Err(error),
-            Ok(metadata) if metadata.len() > u64::try_from(MAX_FILE).unwrap_or(u64::MAX) => {
-                return Ok((Self::default(), vec![format!("the settings file is longer than {MAX_FILE} bytes; defaults used")]));
-            }
-            Ok(_) => {}
+        match read_text(&path, MAX_FILE)? {
+            Read::Missing => Ok((Self::default(), Vec::new())),
+            Read::TooLong => Ok((Self::default(), vec![format!("the settings file is longer than {MAX_FILE} bytes; defaults used")])),
+            Read::Text(text) => Ok(Self::read(&text)),
         }
-        let bytes = std::fs::read(&path)?;
-        let text = String::from_utf8_lossy(&bytes);
-        Ok(Self::read(&text))
     }
 
     /// Writes the file in `folder` whole: to a temporary file, then renamed

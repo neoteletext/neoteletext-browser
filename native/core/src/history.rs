@@ -9,7 +9,7 @@ use std::path::Path;
 
 use crate::address;
 use crate::calendar::{SECONDS_PER_DAY, day_text, local_day, read_day};
-use crate::private_file::{private_options, write_whole};
+use crate::private_file::{Read, private_options, read_text, write_whole};
 
 /// The first line of the file: its format and version.
 const VERSION_LINE: &str = "neoteletext-history 1";
@@ -316,16 +316,11 @@ impl History {
     /// When the file exists but cannot be read.
     pub fn load(folder: &Path) -> std::io::Result<(Self, Vec<String>)> {
         let path = folder.join(FILE_NAME);
-        match std::fs::metadata(&path) {
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok((Self::default(), Vec::new())),
-            Err(error) => return Err(error),
-            Ok(metadata) if metadata.len() > u64::try_from(MAX_FILE).unwrap_or(u64::MAX) => {
-                return Ok((Self::default(), vec![format!("the history file is longer than {MAX_FILE} bytes; none read")]));
-            }
-            Ok(_) => {}
+        match read_text(&path, MAX_FILE)? {
+            Read::Missing => Ok((Self::default(), Vec::new())),
+            Read::TooLong => Ok((Self::default(), vec![format!("the history file is longer than {MAX_FILE} bytes; none read")])),
+            Read::Text(text) => Ok(Self::read(&text)),
         }
-        let bytes = std::fs::read(&path)?;
-        Ok(Self::read(&String::from_utf8_lossy(&bytes)))
     }
 
     /// Writes `history.txt` in `folder` whole: to a temporary file, then

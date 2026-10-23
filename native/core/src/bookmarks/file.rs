@@ -5,7 +5,7 @@
 use std::collections::BTreeMap;
 use std::path::Path;
 
-use crate::private_file::write_whole;
+use crate::private_file::{Read, read_text, write_whole};
 
 use super::{BAR, Bookmarks, Item, MAX_DEPTH, MAX_ITEMS, MAX_NAME, OTHER, ROOT, SEPARATOR, bookmark_address};
 
@@ -130,16 +130,11 @@ impl Bookmarks {
     /// When the file exists but cannot be read.
     pub fn load(folder: &Path) -> std::io::Result<(Self, Vec<String>)> {
         let path = folder.join(FILE_NAME);
-        match std::fs::metadata(&path) {
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok((Self::default(), Vec::new())),
-            Err(error) => return Err(error),
-            Ok(metadata) if metadata.len() > u64::try_from(MAX_FILE).unwrap_or(u64::MAX) => {
-                return Ok((Self::default(), vec![format!("the bookmarks file is longer than {MAX_FILE} bytes; none read")]));
-            }
-            Ok(_) => {}
+        match read_text(&path, MAX_FILE)? {
+            Read::Missing => Ok((Self::default(), Vec::new())),
+            Read::TooLong => Ok((Self::default(), vec![format!("the bookmarks file is longer than {MAX_FILE} bytes; none read")])),
+            Read::Text(text) => Ok(Self::read(&text)),
         }
-        let bytes = std::fs::read(&path)?;
-        Ok(Self::read(&String::from_utf8_lossy(&bytes)))
     }
 
     /// Writes `bookmarks.txt` in `folder` whole, readable by the user alone.

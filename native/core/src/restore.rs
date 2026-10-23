@@ -10,7 +10,7 @@ use std::path::Path;
 
 use interface_core::library::{MAX_CLOSED, MAX_TAB_ENTRIES, WindowGeometry};
 
-use crate::private_file::write_whole;
+use crate::private_file::{Read, read_text, write_whole};
 
 const VERSION_LINE: &str = "neoteletext-session 3";
 const FILE_NAME: &str = "session.txt";
@@ -304,17 +304,14 @@ impl Saved {
     /// When the file exists but cannot be read.
     pub fn load(folder: &Path) -> std::io::Result<(Option<Self>, Vec<String>)> {
         let path = folder.join(FILE_NAME);
-        match std::fs::metadata(&path) {
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok((None, Vec::new())),
-            Err(error) => return Err(error),
-            Ok(metadata) if metadata.len() > u64::try_from(MAX_FILE).unwrap_or(u64::MAX) => {
-                return Ok((None, vec![format!("the session file is longer than {MAX_FILE} bytes; none read")]));
+        match read_text(&path, MAX_FILE)? {
+            Read::Missing => Ok((None, Vec::new())),
+            Read::TooLong => Ok((None, vec![format!("the session file is longer than {MAX_FILE} bytes; none read")])),
+            Read::Text(text) => {
+                let (saved, dropped) = Self::read(&text);
+                Ok((Some(saved), dropped))
             }
-            Ok(_) => {}
         }
-        let bytes = std::fs::read(&path)?;
-        let (saved, dropped) = Self::read(&String::from_utf8_lossy(&bytes));
-        Ok((Some(saved), dropped))
     }
 
     /// Writes `text` as `session.txt` in `folder` whole, readable by the
