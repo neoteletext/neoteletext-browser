@@ -260,6 +260,19 @@ impl Core {
             HistoryRequest::Query { text, first } => {
                 self.library.history_panel = Some((clean(&text, protocol::library::MAX_QUERY), usize::try_from(first).unwrap_or(usize::MAX)));
             }
+            // Chrome's "Remove bookmark": every bookmark of the row's address.
+            HistoryRequest::RemoveBookmark(number) => {
+                let Some((_, address)) = self.library.history_numbers.get(number).cloned() else { return self.send_history() };
+                let mut removed = 0_usize;
+                while let Some(id) = self.session.bookmarks.find(&address) {
+                    if self.session.bookmarks.remove(id).is_none() {
+                        break;
+                    }
+                    removed = removed.saturating_add(1);
+                }
+                self.library.history_notice = notice(if removed == 1 { "Bookmark removed" } else { "Bookmarks removed" });
+                self.bookmarks_changed()?;
+            }
             // Chrome's "More from this site": the panel searches the row's host.
             HistoryRequest::MoreFromSite(number) => {
                 let host =
@@ -366,6 +379,7 @@ impl Core {
                 page,
                 title: clean(&row.title, MAX_NAME.max(protocol::MAX_PAGE_TITLE)),
                 address: shown_address(&row.address),
+                bookmarked: self.session.bookmarks.find(&row.address).is_some(),
             });
             if let Some(shown) = rows.last_mut() {
                 shown.number = self.library.history_numbers.number((row.day, row.address.clone()));
@@ -976,6 +990,24 @@ mod tests {
         test.core.history_request(HistoryRequest::Clear(ClearRange::All)).unwrap();
         let cleared = test.last_history();
         assert!(cleared.rows.is_empty() && cleared.closed.is_empty(), "everything, and the closed tabs");
+    }
+
+    /// Decision 64: a bookmarked row says so, and Chrome's "Remove bookmark"
+    /// on it removes every bookmark of its address.
+    #[test]
+    fn a_rows_bookmarks_are_removed_from_its_menu() {
+        let mut test = Test::new("unbookmark");
+        test.visit("news.invalid");
+        let address = test.core.library.history.query("")[0].address.clone();
+        let other = test.core.session.bookmarks.folders()[0].0;
+        test.core.session.bookmarks.add(other, "News", &address).unwrap();
+        test.core.session.bookmarks.add(other, "News again", &address).unwrap();
+        test.core.history_request(HistoryRequest::Panel(true)).unwrap();
+        let view = test.last_history();
+        assert!(view.rows[0].bookmarked);
+        test.core.history_request(HistoryRequest::RemoveBookmark(view.rows[0].number)).unwrap();
+        assert_eq!(test.core.session.bookmarks.find(&address), None, "both gone");
+        assert!(!test.last_history().rows[0].bookmarked);
     }
 
     /// Requirement 20.11: bookmarks first, then history; inline only from typed.

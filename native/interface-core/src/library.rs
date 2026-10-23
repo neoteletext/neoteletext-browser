@@ -62,6 +62,9 @@ pub struct HistoryRow {
     /// The address as the address rules print it, cut to
     /// [`MAX_SHOWN_ADDRESS`].
     pub address: String,
+    /// The address is bookmarked: its menu offers to remove the bookmark,
+    /// as Chrome's does (decision 64).
+    pub bookmarked: bool,
 }
 
 /// A recently closed tab, as the panel and menu list it.
@@ -130,6 +133,9 @@ pub enum HistoryRequest {
     Remove(Vec<u32>),
     /// Search for this row's host, as Chrome's "More from this site".
     MoreFromSite(u32),
+    /// Remove the bookmarks of this row's address, as Chrome's "Remove
+    /// bookmark".
+    RemoveBookmark(u32),
     /// Remove the rows of a time.
     Clear(ClearRange),
     /// Remove the cookies made in a time (requirement 21.8).

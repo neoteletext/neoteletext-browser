@@ -375,6 +375,23 @@ mod tests {
         assert!(!browser.console_open());
     }
 
+    /// Requirement 19.8 (decision 63): choosing the Cookies tab asks for
+    /// the cookies' rows; choosing another stops them.
+    #[test]
+    fn the_cookies_tab_asks_for_rows_and_another_stops_them() {
+        let mut browser = open();
+        texts(&mut browser);
+        let cookies = browser.console.tabs.iter().find(|(tab, _)| *tab == Tab::Cookies).unwrap().1;
+        press(&mut browser, cookies);
+        assert_eq!(browser.take_outputs(), [Output::Cookies(crate::cookies::CookiesRequest::Panel(true))]);
+        assert!(browser.cookies_open());
+        texts(&mut browser);
+        let network = browser.console.tabs[0].1;
+        press(&mut browser, network);
+        assert_eq!(browser.take_outputs(), [Output::Cookies(crate::cookies::CookiesRequest::Panel(false))]);
+        assert!(!browser.cookies_open());
+    }
+
     #[test]
     fn its_shortcut_on_each_platform() {
         let mut browser = Browser::new(Frame { left_inset: 0.0, window_buttons: true });

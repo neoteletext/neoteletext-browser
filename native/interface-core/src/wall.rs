@@ -504,6 +504,13 @@ impl Wall {
         self.open
     }
 
+    /// A zoomed page's close button, as last drawn; nothing while no page
+    /// is zoomed.
+    #[must_use]
+    pub fn close_button(&self) -> Rect {
+        if self.zoom_in { self.close } else { Rect::ZERO }
+    }
+
     /// The page size's smaller and larger buttons, as last drawn.
     #[must_use]
     pub const fn size_buttons(&self) -> (Rect, Rect) {

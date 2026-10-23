@@ -80,7 +80,7 @@ A panel of the trusted strip, as the settings panel is (`settings-home-console-p
 - **A search field** at the top. The trusted core searches each row's address, channel title and page title for the text, ignoring case.
 - **The rows, newest first, under a heading for each day:** "Today: Wednesday 22 October 2026", "Yesterday: …", then each date. Each row shows the time (`14:05`), the channel's title, the page number and the page's title, and below them the address as the address rules print it (section 9).
 - **Choosing a row** opens its address in the active tab as a navigation the user starts (requirement 8.2); Command-click or a middle click, and Control-click away from macOS, opens it in a new tab.
-- **Each row has a menu** (decision 64, as Chrome's): "More from this site", which searches `host:` and the row's host, and "Remove from history"; rows can be selected with their check boxes for "Remove selected".
+- **Each row has a menu** (decision 64, as Chrome's): "More from this site", which searches `host:` and the row's host, "Remove from history", and "Remove bookmark" when the address is bookmarked; rows can be selected with their check boxes for "Remove selected".
 - *"Forget this channel" was withdrawn by decision 65:* Chrome has no such command; "More from this site" finds a site's rows, which can then be selected and removed.
 - **"Clear history…"** opens the clearing choices (section 2.5).
 - **Recently closed** tabs head the panel when there are any (section 2.8).
@@ -521,7 +521,7 @@ The owner asked on 23 October 2026 that history follow Chrome. Each rule below w
 | The address shown, entered again or linked to | A reload: no new entry (`chrome.history` "reload: … pressing Enter in the address bar"; `ShouldTreatNavigationAsReload`) | A new entry and a visit | A reload |
 | Back and Forward | A visit, counted, never typed (`PageTransitionIsNewNavigation`) | The same | Same |
 | What history shows | One row per address per day, the latest visit (`REMOVE_DUPLICATES_PER_DAY`) | One row per address per day | Same |
-| A row's menu | "More from this site" (`host:` search), "Remove from history", "Remove bookmark" when bookmarked (`history_list.html.ts`) | A remove button; "Forget this channel" for selected rows | The menu with the first two; "Remove bookmark" not built |
+| A row's menu | "More from this site" (`host:` search), "Remove from history", "Remove bookmark" when bookmarked (`history_list.html.ts`) | A remove button; "Forget this channel" for selected rows | The same three |
 | Clearing ranges | Last 15 minutes, hour, 24 hours, 7 days, 4 weeks, all time (`browsing_data::TimePeriod`) | Without 15 minutes | With it |
 | Removing history and the tabs | The entries of that time, or of addresses wholly removed, leave every tab's list but its current entry, and the closed tabs; a closed tab whose current entry goes is dropped; incognito untouched (`browsing_data::RemoveNavigationEntries`, `TabRestoreServiceHelper::DeleteFromTab`) | Not touched | As Chrome; each entry now keeps the time the tab came to it |
 | Recently closed tabs | 25 (`TabRestoreServiceHelper::kMaxEntries`), kept between runs (`TabRestoreServiceImpl::LoadTabsFromLastSession`) | 25, in memory | 25, kept in `session.txt` |

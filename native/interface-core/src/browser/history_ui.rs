@@ -71,20 +71,26 @@ struct Controls {
 }
 
 /// What a row's menu offers, as Chrome's history page does: "More from
-/// this site" and "Remove from history" (its `history_list.html.ts`).
+/// this site", "Remove from history", and "Remove bookmark" when the
+/// address is bookmarked (its `history_list.html.ts`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum RowAction {
     MoreFromSite,
     Remove,
+    RemoveBookmark,
 }
 
 impl RowAction {
-    const ALL: [Self; 2] = [Self::MoreFromSite, Self::Remove];
+    /// The menu of a row, bookmarked or not.
+    const fn of(bookmarked: bool) -> &'static [Self] {
+        if bookmarked { &[Self::MoreFromSite, Self::Remove, Self::RemoveBookmark] } else { &[Self::MoreFromSite, Self::Remove] }
+    }
 
     const fn words(self) -> &'static str {
         match self {
             Self::MoreFromSite => "More from this site",
             Self::Remove => "Remove from history",
+            Self::RemoveBookmark => "Remove bookmark",
         }
     }
 }
@@ -283,6 +289,7 @@ impl Browser {
             match controls.menu.iter().find(|(_, rect)| rect.contains(point)).map(|(action, _)| *action) {
                 Some(RowAction::MoreFromSite) => self.outputs.push(Output::History(HistoryRequest::MoreFromSite(number))),
                 Some(RowAction::Remove) => self.outputs.push(Output::History(HistoryRequest::Remove(alloc::vec![number]))),
+                Some(RowAction::RemoveBookmark) => self.outputs.push(Output::History(HistoryRequest::RemoveBookmark(number))),
                 None => {}
             }
             return true;
@@ -469,15 +476,17 @@ impl Browser {
         canvas.pop_clip();
 
         // The open row's menu, below its button and inside the panel.
-        if let Some(&(_, _, button_rect, _)) = controls.rows.iter().find(|(number, ..)| Some(*number) == self.history.menu) {
-            #[allow(clippy::cast_precision_loss, reason = "two items")]
-            let height = ROW_HEIGHT * RowAction::ALL.len() as f64;
+        if let Some(&(number, _, button_rect, _)) = controls.rows.iter().find(|(number, ..)| Some(*number) == self.history.menu) {
+            let bookmarked = view.rows.iter().any(|row| row.number == number && row.bookmarked);
+            let actions = RowAction::of(bookmarked);
+            #[allow(clippy::cast_precision_loss, reason = "three items at most")]
+            let height = ROW_HEIGHT * actions.len() as f64;
             let top = if button_rect.y1 + height > area.y1 { button_rect.y0 - height } else { button_rect.y1 };
             let menu_area = Rect::new(button_rect.x1 - MENU_WIDTH, top, button_rect.x1, top + height);
             canvas.fill(menu_area, 0.0, BUTTON);
             border(canvas, menu_area, 1.0, RULE);
-            for (index, action) in RowAction::ALL.into_iter().enumerate() {
-                #[allow(clippy::cast_precision_loss, reason = "two items")]
+            for (index, &action) in actions.iter().enumerate() {
+                #[allow(clippy::cast_precision_loss, reason = "three items at most")]
                 let item_top = menu_area.y0 + ROW_HEIGHT * index as f64;
                 let item = Rect::new(menu_area.x0, item_top, menu_area.x1, item_top + ROW_HEIGHT);
                 if item.contains(self.pointer) {
@@ -522,6 +531,8 @@ mod tests {
             page: Some(0x302),
             title: "WEATHER".into(),
             address: address.into(),
+            // The first row's address is bookmarked.
+            bookmarked: number == 7,
         }
     }
 
@@ -579,9 +590,21 @@ mod tests {
     fn rows_are_removed_by_number() {
         let mut browser = open();
         let (number, _, menu, _) = browser.history.controls.rows[0];
+        // A row not bookmarked has no third item.
+        let other = browser.history.controls.rows[1];
+        browser.history_press(middle(other.2), false);
+        browser.draw(&mut Recorder::new(), 1440.0, 900.0, 0);
+        assert_eq!(browser.history.controls.menu.len(), 2);
+        // A press inside the panel but on no item closes the menu.
+        browser.history_press(middle(other.2), false);
+        assert!(browser.take_outputs().is_empty() && browser.history.menu.is_none());
         browser.pointer_moved(middle(menu).x, middle(menu).y, 0);
-        // The row's menu, as Chrome's: more from this site, or remove.
-        for (index, expected) in [(0, HistoryRequest::MoreFromSite(number)), (1, HistoryRequest::Remove(alloc::vec![number]))] {
+        // The row's menu, as Chrome's: more from this site, remove, and,
+        // its address being bookmarked, remove the bookmark.
+        assert_eq!(number, 7, "the bookmarked row");
+        for (index, expected) in
+            [(0, HistoryRequest::MoreFromSite(number)), (1, HistoryRequest::Remove(alloc::vec![number])), (2, HistoryRequest::RemoveBookmark(number))]
+        {
             browser.history_press(middle(menu), false);
             browser.draw(&mut Recorder::new(), 1440.0, 900.0, 0);
             let item = browser.history.controls.menu[index].1;

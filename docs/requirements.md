@@ -757,7 +757,7 @@ Withdrawn on 23 October 2026 (decision 66): no font is fetched (decision 66): ev
 - **Source:** Decisions 33 and 35.
 - **Verification:** Test.
 - **State:** Partly met: tabs, close and new tab. Drag to reorder, overflow and session restore are not built.
-- *Amended 23 October 2026 (decision 63):* a press of the middle button on a tab must close it, as the tab's close button does. State: built (`Browser::middle_pressed`), its test owed (`TECH-DEBT.md`). Session restore has been built since 22 October 2026 (requirement 20.22).
+- *Amended 23 October 2026 (decision 63):* a press of the middle button on a tab must close it, as the tab's close button does. State: built, `the_middle_button_closes_the_tab_under_it`. Session restore has been built since 22 October 2026 (requirement 20.22).
 - *Amended 23 October 2026 (decision 69):* dragging to reorder and overflow are built (requirements 12.13 to 12.15); a tab dragged between windows waits on multiple windows (requirement 12.8).
 
 ### Requirement 12.2: Page walls and transitions
@@ -1325,7 +1325,7 @@ Adopted and built on 22 October 2026 by decision 57, while the owner was away, a
 - **Source:** Decision 57.
 - **Verification:** Interface and trusted-core tests.
 - **State:** Met in tests: `the_panel_shows_rows_and_opens_them_by_number`, `the_search_and_the_wheel_ask_for_rows`; by hand on macOS, Command-Y opened it with the day's heading and the row's time, title and address. A row opens in a new tab with Shift-click (section 14).
-- *Amended 23 October 2026 (decision 64):* each row has Chrome's menu, "More from this site", which makes the search `host:` and the row's host, and "Remove from history", in place of its remove button; a search beginning `host:` answers the rows of that host alone, in any case. State: met, `rows_are_removed_by_number` (the menu's two items), `history_is_removed_as_asked` (`host:`).
+- *Amended 23 October 2026 (decision 64):* each row has Chrome's menu, "More from this site", which makes the search `host:` and the row's host, "Remove from history", and "Remove bookmark", which removes every bookmark of the address, when it is bookmarked (`a_rows_bookmarks_are_removed_from_its_menu`), in place of its remove button; a search beginning `host:` answers the rows of that host alone, in any case. State: met, `rows_are_removed_by_number` (the menu's two items), `history_is_removed_as_asked` (`host:`).
 
 ### Requirement 20.5: The interface sees only history on screen
 - **Statement:** The trusted core must send the history panel at most 100 rows at a time, each with a number for that view, and must act on the interface's requests to open or remove rows only by those numbers.

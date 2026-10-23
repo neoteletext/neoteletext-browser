@@ -1,0 +1,13 @@
+# The test runner's settings for the workspace.
+
+# The latency test measures how soon the fetcher wakes for a channel's
+# answer: 0.3 ms when woken by the bytes, 6.3 ms when it polled every 5 ms,
+# against a budget of 2 ms (core/tests/latency.rs). On a loaded machine the
+# scheduler's own delay blurs that, and it failed with medians of 2.05 and
+# 3.22 ms while the load average was 30 and more (23 October 2026), passing
+# alone at other moments. So it runs with no other test beside it, and is
+# tried again twice: polling would fail all three times.
+[[profile.default.overrides]]
+filter = 'test(keys_round_trip_and_pages_reach_the_screen_within_budget)'
+threads-required = "num-test-threads"
+retries = 2

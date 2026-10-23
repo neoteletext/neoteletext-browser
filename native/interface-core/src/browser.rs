@@ -2413,6 +2413,44 @@ mod tests {
         }
     }
 
+    /// Requirements 11.2 and 11.6 (decision 63): Back, Forward, Reload and
+    /// Home in that order in one row; Reload by its button and by
+    /// Command-R, Control-R away from macOS, which the interface takes on
+    /// every platform as the command key.
+    #[test]
+    fn reload_sits_between_forward_and_home_and_has_its_keys() {
+        let (mut browser, mut canvas) = browser();
+        browser.take_outputs();
+        let regions = &browser.regions;
+        let row = [regions.back, regions.forward, regions.reload, regions.home];
+        for pair in row.windows(2) {
+            assert!(pair[1].x0 >= pair[0].x1 && (pair[1].y0 - pair[0].y0).abs() < f64::EPSILON, "{pair:?}");
+        }
+        let reload = browser.regions.reload;
+        press_at(&mut browser, &mut canvas, reload);
+        assert_eq!(browser.take_outputs(), [Output::Reload]);
+        browser.key(Key::Text("r"), Modifiers { command: true, ..Modifiers::default() }, 0);
+        assert_eq!(browser.take_outputs(), [Output::Reload]);
+        browser.key(Key::Text("r"), Modifiers::default(), 0);
+        assert_eq!(browser.take_outputs(), [], "r alone is no shortcut");
+    }
+
+    /// Requirement 12.1 (decision 63): the middle button closes the tab it
+    /// is on, and does nothing elsewhere.
+    #[test]
+    fn the_middle_button_closes_the_tab_under_it() {
+        let (mut browser, mut canvas) = browser();
+        browser.draw(&mut canvas, WIDTH, HEIGHT, 0);
+        browser.take_outputs();
+        let second = browser.regions.tabs[1].tab;
+        browser.pointer_moved(f64::midpoint(second.x0, second.x1), f64::midpoint(second.y0, second.y1), 0);
+        assert!(browser.middle_pressed());
+        assert_eq!(browser.take_outputs(), [Output::CloseTab(1)]);
+        browser.pointer_moved(WIDTH / 2.0, HEIGHT / 2.0, 0);
+        assert!(!browser.middle_pressed());
+        assert_eq!(browser.take_outputs(), [], "not on a tab: nothing");
+    }
+
     /// Requirement 19.6: the Home button after Forward, Command-Shift-H on
     /// macOS and Alt-Home elsewhere.
     #[test]

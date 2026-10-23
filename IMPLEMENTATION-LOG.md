@@ -16,4 +16,7 @@ The questions met while implementing without the owner, and the answer taken, as
 | 8 | Which key shows the remote? | Command-Shift-R (Control-Shift-R elsewhere). | Command-R is Reload; the shifted letter keeps the remote beside it and clashes with nothing the browser takes. |
 | 9 | Overflow: which tabs stay on the strip? | The first that fit, the active one taking the last place when it would not; the rest wrap into the panel in order. | The tab being shown must always be in view; Chrome keeps it in view too. |
 | 10 | Does the panel cover the toolbar? | Yes, while the pointer is on the strip or the panel, as the menu's list does. | The owner asked for a panel joined underneath; it is the interface's own, which no page can draw or press. |
+| 11 | The latency test fails on a loaded machine: loosen its budget, or run it alone? | Run it alone (nextest `threads-required` for it) and retry it twice (`native/.config/nextest.toml`). | The 2 ms budget is what tells a woken fetcher (0.3 ms) from a polling one (6.3 ms); loosening it would let polling pass, while polling fails every retry. |
+| 12 | The review of tips: which controls lacked one? | Only a zoomed page's close button; given "Back to all the pages (Escape)". | Every other icon, symbol or cut text had one by then. |
+| 13 | The three `zbus` advisories: has the Linux keyring client moved to `zbus` 6? | No (`secret-service` 5.2.0 is the newest, on `zbus` 5): the narrow exceptions stay, the item waits. | Nothing to do until the client moves. |
 

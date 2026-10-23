@@ -199,6 +199,10 @@ impl Browser {
         }
         let toggle = if self.overview_folded { "Open the overview of every page" } else { "Fold the overview away" };
         tips.push((self.regions.overview_toggle, String::from(toggle)));
+        let close = self.wall.close_button();
+        if close != Rect::ZERO {
+            tips.push((close, String::from("Back to all the pages (Escape)")));
+        }
         let (smaller, larger) = self.wall.size_buttons();
         tips.push((smaller, String::from("Smaller pages: more on the wall")));
         tips.push((larger, String::from("Larger pages: fewer on the wall")));
