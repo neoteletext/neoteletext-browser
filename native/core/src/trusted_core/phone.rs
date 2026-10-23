@@ -8,7 +8,7 @@ use neoteletext::outbox::Outbox;
 use protocol::console::Level;
 use protocol::{ToInterface, clean};
 
-use super::processes::{relay, spawn};
+use super::processes::{end, relay, spawn};
 use super::{Core, Event};
 
 /// A relay other than qrkeyboard's own, for testing against one run
@@ -98,8 +98,7 @@ impl Core {
             self.log(Level::Error, None, &format!("the phone keyboard stopped: {reason}"));
         }
         if let Some((mut child, _)) = self.phone.take() {
-            let _ = child.kill();
-            let _ = child.wait();
+            end(&mut child);
         }
         self.phone_view = protocol::keyboard::PhoneView { state: protocol::keyboard::PhoneState::Finished, qr: None, pin: None };
         self.send_phone()

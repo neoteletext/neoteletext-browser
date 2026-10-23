@@ -19,6 +19,7 @@ use update::wire::{FromUpdater, ToUpdater, read_from_updater, write_to_updater};
 use neoteletext::settings as stored;
 use protocol::{ToCore, ToInterface, clean};
 
+use super::processes::end;
 use super::{Core, Event};
 
 /// How often the updater looks while the browser runs (section 3.4).
@@ -183,8 +184,7 @@ impl Updates {
     pub fn stop(&mut self) {
         if let Some((mut child, input)) = self.updater.take() {
             drop(input);
-            let _ = child.kill();
-            let _ = child.wait();
+            end(&mut child);
         }
         self.next_check = None;
     }

@@ -64,8 +64,14 @@ pub(super) fn spawn(broker: &Arc<Broker>, program: Program, arguments: &[String]
 pub(super) fn stop_decoder(mut decoder: Decoder) {
     let _ = write_to_decoder(&mut decoder.input, &ToDecoder::Close);
     drop(decoder.input);
-    let _ = decoder.child.kill();
-    let _ = decoder.child.wait();
+    end(&mut decoder.child);
+}
+
+/// Ends a helper: killed, then waited for, so that none is left running or
+/// unreaped; what either says is of no use to a helper being given up.
+pub(super) fn end(helper: &mut Helper) {
+    let _ = helper.kill();
+    let _ = helper.wait();
 }
 
 /// Starts a decoder for `channel`, whose messages arrive as events.
@@ -111,8 +117,7 @@ pub(super) fn start_bookmark_reader(broker: &Arc<Broker>, file: Vec<u8>, events:
             }
         };
         let read = exchange();
-        let _ = child.kill();
-        let _ = child.wait();
+        end(&mut child);
         let _ = events.send(Event::BookmarksRead(read));
     });
     Ok(())

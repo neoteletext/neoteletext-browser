@@ -8,7 +8,7 @@ use protocol::console::Level;
 use protocol::decoder::{FIRST_STORE_PAGES, MAX_STORE_PAGES, ToDecoder, write_to_decoder};
 
 use super::Core;
-use super::processes::{Reach, start_decoder, start_fetcher, stop_decoder};
+use super::processes::{Reach, end, start_decoder, start_fetcher, stop_decoder};
 
 impl Core {
     pub(super) fn tell(&mut self, channel: u32, message: ToDecoder) {
@@ -121,13 +121,12 @@ impl Core {
         Ok(())
     }
 
-    fn stop_fetcher(&mut self, id: u32) {
+    pub(super) fn stop_fetcher(&mut self, id: u32) {
         if let Some(mut fetcher) = self.fetchers.remove(&id) {
             // Closing its input ends a fetcher.
             drop(fetcher.child.stdin.take());
             drop(fetcher.input.take());
-            let _ = fetcher.child.kill();
-            let _ = fetcher.child.wait();
+            end(&mut fetcher.child);
         }
     }
 
@@ -147,8 +146,7 @@ impl Core {
             self.console.log(Some(channel), Level::Error, at, &format!("decoder: stopped: {reason}"));
         }
         if let Some(mut decoder) = self.decoders.remove(&channel) {
-            let _ = decoder.child.kill();
-            let _ = decoder.child.wait();
+            end(&mut decoder.child);
         }
         let sends = self.hearing.channel_gone(channel);
         self.deliver(sends);

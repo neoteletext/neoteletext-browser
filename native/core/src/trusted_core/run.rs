@@ -12,7 +12,7 @@ use protocol::console::Level;
 use protocol::sound::{FromSound, ToSound, write_to_sound};
 use protocol::{ToInterface, write_to_interface};
 
-use super::processes::{read_interface, spawn, stop_decoder};
+use super::processes::{end, read_interface, spawn, stop_decoder};
 use super::startup::{load_bookmarks, load_history, load_session, load_settings, open_at_start};
 use super::{Core, Event};
 use crate::session::Session;
@@ -165,11 +165,8 @@ pub(crate) fn run(broker: &Arc<Broker>, given: impl Iterator<Item = String>, con
     // A move not yet kept, and cookies not yet written or to remove.
     core.keep_window();
     core.cookies_at_exit();
-    for (_, mut fetcher) in std::mem::take(&mut core.fetchers) {
-        drop(fetcher.child.stdin.take());
-        drop(fetcher.input.take());
-        let _ = fetcher.child.kill();
-        let _ = fetcher.child.wait();
+    for id in core.fetchers.keys().copied().collect::<Vec<_>>() {
+        core.stop_fetcher(id);
     }
     for (_, decoder) in std::mem::take(&mut core.decoders) {
         stop_decoder(decoder);
@@ -178,8 +175,7 @@ pub(crate) fn run(broker: &Arc<Broker>, given: impl Iterator<Item = String>, con
         let _ = write_to_sound(&mut input, &ToSound::Close);
         let _ = input.flush();
         drop(input);
-        let _ = helper.kill();
-        let _ = helper.wait();
+        end(&mut helper);
     }
     let _ = write_to_interface(&mut core.to_interface, &ToInterface::Close);
     let _ = core.to_interface.flush();
