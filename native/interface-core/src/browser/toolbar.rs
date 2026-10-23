@@ -11,7 +11,7 @@ use crate::geometry::{Point, Rect};
 use crate::theme::{ADDRESS, BLACK, BUTTON, DIM, FIELD, FIELD_INK, INSECURE, PRIVATE, ROW_STATUS, RULE, SECURE, SELECTED, STAR_ON, WHITE};
 use crate::ui::{HAIRLINE, border, left_centred};
 
-use crate::browser::STRIP_HEIGHT;
+use crate::browser::tab_strip::STRIP_HEIGHT;
 
 pub(super) const TOOLBAR_TOP: f64 = STRIP_HEIGHT;
 pub(super) const TOOLBAR_HEIGHT: f64 = 54.0;

@@ -10,8 +10,9 @@ use alloc::format;
 use alloc::string::String;
 use alloc::vec::Vec;
 
-use super::{Browser, PAGES_PER_BANK, page_number};
+use super::Browser;
 use crate::canvas::Canvas;
+use crate::channel::{PAGES_PER_BANK, page_number};
 use crate::geometry::{Point, Rect};
 use crate::theme::{BUTTON, ROW_TITLE, RULE, WHITE};
 use crate::ui::{border, left_centred};
