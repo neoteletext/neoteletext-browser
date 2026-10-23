@@ -114,6 +114,7 @@
 - **Source:** Decisions 18, 33, 55 and 56.
 - **Verification:** Test: the running application's process list matches this set.
 - **State:** Met for the processes built (broker, trusted core, fetcher, decoder, interface, sound helper, phone keyboard): on 22 October 2026, on macOS, every helper and the core ran as the broker's children (`sandboxing.md` section 7.5). The test of the process list is not written; `the_trusted_core_starts_confined_and_reaches_its_own_code` starts the core through the broker.
+- *Amended 23 October 2026 (decision 66):* there is no font helper: fonts from channels are not supported.
 
 ### Requirement 3.2: The trusted core contains no web engine and no format reader
 - **Statement:** The trusted core must not link or load a web engine, a script engine or any reader of network or teletext formats. It must receive only typed, bounded results from the other processes.
@@ -136,12 +137,9 @@
 - **Verification:** Test on each platform: the decoder's attempts to open a file or a network connection fail.
 - **State:** Met on macOS and Linux, 22 October 2026 (`sandboxing.md`, decision 52): on macOS its profile starts from "deny everything" and allows its pipes alone; on Linux it confines itself with an empty network namespace (where unprivileged user namespaces are allowed), Landlock with nothing readable and a seccomp filter with no sockets, no programs and no files, tested by the crate's probe (it can open no file, start no program, connect nowhere, write nothing). On Windows a less privileged AppContainer with no capabilities, in a job object with the mitigation policies and the Win32k filter. Whether it also runs inside `wasmi` is open decision 2.
 
-### Requirement 3.5: The font helper has no rights
-- **Statement:** Fonts fetched from the network must be read by a confined font helper with no network access, no file access and no secrets. Its output must be checked by the trusted core (hash and table shape) and checked again by the decoder before use.
-- **Reason:** A font file is untrusted input in its own format.
-- **Source:** Decision 14; `neoteletext/docs/font-security.md`.
-- **Verification:** Test: a malformed font is rejected; a font table whose shape is wrong is rejected by both checks.
-- **State:** Not met: fonts are not fetched yet.
+### Requirement 3.5: Withdrawn: The font helper has no rights
+Withdrawn on 23 October 2026 (decision 66): the browser does not support fonts from channels (the owner, 23 October 2026), so no font is fetched and there is no font helper.
+- **Was:** Fonts fetched from the network must be read by a confined font helper with no network access, no file access and no secrets. Its output must be checked by the trusted core (hash and table shape) and checked again by the decoder before use.
 
 ### Requirement 3.6: The interface process holds no secrets and decides nothing
 - **Statement:** The interface process must never receive cookies, credentials, history or bookmarks beyond what is on screen, or any setting value that affects security other than as the text the trusted strip shows, on which it acts in no way (amended 21 October 2026, decision 51). It must have **no network on every platform**, and no file access beyond its own resources and fonts. It must make no decision: it shows the state the trusted core sends and passes on what the user did.
@@ -273,6 +271,7 @@
 - **Source:** Decisions 12 and 14.
 - **Verification:** Test: every request the fetcher makes carries one of these roles.
 - **State:** Met: the engine's user agent requests only these. The test is not written.
+- *Amended 23 October 2026 (decision 66):* "font" is no longer a role: a font a channel names is never fetched, and pages are drawn in the engine's own fonts.
 
 ### Requirement 5.2: A response is read only in its role
 - **Statement:** A response must be read only by the reader for the role it was requested in.
@@ -309,12 +308,9 @@
 - **Verification:** Test.
 - **State:** Not met: discovery is not built.
 
-### Requirement 5.7: Fonts are fetched only when named
-- **Statement:** A font must be fetched only when a page or channel names it, and used only after the checks of requirement 3.5. Teletext fonts from the network must never reach the interface process.
-- **Reason:** Fonts are untrusted input.
-- **Source:** Decision 14.
-- **Verification:** Test.
-- **State:** Not met: fonts are not fetched yet.
+### Requirement 5.7: Withdrawn: Fonts are fetched only when named
+Withdrawn on 23 October 2026 (decision 66): no font is fetched (decision 66): every page is drawn in the engine's own fonts.
+- **Was:** A font must be fetched only when a page or channel names it, and used only after the checks of requirement 3.5. Teletext fonts from the network must never reach the interface process.
 
 ### Requirement 5.8: Transports
 - **Statement:** The fetcher must support the HyperText Transfer Protocol version 1.1 with and without Transport Layer Security, WebSocket, Server-Sent Events and the zxnet live feed. It must not support the push mechanism of the HyperText Transfer Protocol version 2.

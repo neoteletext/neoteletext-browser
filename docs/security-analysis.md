@@ -105,7 +105,7 @@ update subdomain ──[8]──► updater ──► versions directory ──�
 | 9. Trusted core and sound helper | Checked voice operations and samples, and the sound settings, in; which channels sound, out | The sound helper's report untrusted |
 | 10. Trusted core to broker | Requests to start one of the browser's helpers, end or wait for one, read a file channel, open a web address | Untrusted: the broker parses them within bounds and decides every role itself |
 
-Boundary 4 of the earlier design, the font helper, returns when fonts are fetched (requirement 3.5). Boundary 7, the strip in a separate host, is folded into boundary 6.
+Boundary 4 of the earlier design, the font helper, is gone: no font is fetched from a channel (decision 66). Boundary 7, the strip in a separate host, is folded into boundary 6.
 
 ---
 
@@ -164,7 +164,7 @@ Boundary 4 of the earlier design, the font helper, returns when fonts are fetche
 
 ### 5.4 Boundary 4: fonts
 
-Not present yet: no font is fetched. When fonts are, they are read by a confined font helper and checked twice, as the earlier design set out (requirement 3.5).
+Removed by decision 66: no font is fetched from a channel, so there is no font file to read and no font helper. Pages are drawn in the engine's own fonts, which ship with the browser.
 
 ### 5.5 Boundary 5: the trusted core into the interface process
 

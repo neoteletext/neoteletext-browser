@@ -66,7 +66,7 @@ Each decision was made by the owner on the date given. Requirements in `requirem
 | Decision 11 | 15 October 2026 | Two tabs on the same channel share cookies and a decoder. | **Kept** |
 | Decision 12 | 15 October 2026 | Only teletext resources are loaded, over the HyperText Transfer Protocol and WebSocket, with the standard server push technologies. | **Kept** |
 | Decision 13 | 15 October 2026 | The declared media type is never used to accept or reject a resource; the content decides. | **Kept** |
-| Decision 14 | 15 October 2026 | Channel descriptors, contents files, fonts and HyperText Markup Language discovery are supported. | **Kept** |
+| Decision 14 | 15 October 2026 | Channel descriptors, contents files, fonts and HyperText Markup Language discovery are supported. | **Kept**, except fonts: amended by decision 66, no font is fetched from a channel |
 | Decision 15 | 15 October 2026 | An update mechanism with no scope for failure or for leaving the application unusable. | **Kept** |
 | Decision 16 | 15 October 2026 | Update metadata uses The Update Framework, with threshold signatures and expiring metadata. | **Kept** |
 | Decision 17 | 15 October 2026 | Updates are hosted on a dedicated subdomain. | **Kept** |
@@ -113,6 +113,7 @@ Each decision was made by the owner on the date given. Requirements in `requirem
 | Decision 63 | 23 October 2026 | **The window's controls, as the owner asked on 23 October 2026**: "middle mouse button must close a tab. cookie management should be in the developer tools. icons need a reload button right left reload home", then "we need popups to explain/identify UI elements". 1. A press of the middle button on a tab closes it (requirement 12.1). 2. Cookie management is a tab of the developer console, Cookies, after Network, Packets, Pages and Notices; the menu's "Cookies and site data" is removed, and the settings panel's "Manage…" opens the console at that tab; it still never shows a cookie's name or value (requirements 12.7, 19.8, 21.6). 3. The strip's buttons are Back (its arrow pointing left), Forward (pointing right), Reload and Home; Reload, Command-R on macOS and Control-R elsewhere open the active tab's channel afresh, with a new decoder and fetcher, where the tab is in its history, which does not change (requirements 11.2, 11.6). 4. Every control drawn as an icon, a symbol or text that may be cut short has a tip naming it, saying what it does and giving its shortcut, shown when the pointer rests on it for half a second (requirement 12.12). Taken without asking, for the owner to confirm: "right left" read as the two arrows in the usual order; "Manage…" kept as a way into the console; a reload recorded in history as a visit, as Back is; the half-second wait. | Built 23 October 2026 in rapid iteration and seen on macOS; its tests and reviews owed (`TECH-DEBT.md`). The owner answered the four choices the same day: the order Back, Forward, Reload, Home confirmed ("left/right/reload/home"); "Manage…" and the half-second wait confirmed; a reload "must behave same as firefox/chrome in this specific regard": it moves the address's last visit and counts no visit, as both count none (requirement 20.1, amended) |
 | Decision 64 | 23 October 2026 | **History follows Chrome's rules**, on the owner's instruction "model the history rules on chrome", each read from Chrome's source (`history-and-bookmarks.md` section 16): 1. a reload, the address shown entered again, or a link to it, adds no entry and counts no visit or typed visit, but moves the last visit; 2. the Back and Forward lists hold 12 entries, then up to 5 chapter stops where the host changes, then "Show all history"; a tab keeps 50 entries; 3. removing history removes the matching entries from the tabs' lists, never the one a tab is at, and from the closed tabs; 4. the closed tabs are kept between runs; 5. clearing offers the last 15 minutes; 6. a history row's menu offers "More from this site" (a `host:` search) and "Remove from history". Kept where Chrome has nothing to model: the history file's bounds. "Remember history" and "Forget this channel", which Chrome lacks, and the host for chapter stops went to the owner (decision 65). Requirements 11.6, 20.4, 20.6, 20.9, 20.10, 20.21 and 20.23 amended. | Built 23 October 2026; the session file is version 2, so a session saved by an earlier build is not restored once; Chrome's "Remove bookmark" in a row's menu not built |
 | Decision 65 | 23 October 2026 | **What Chrome lacks goes, and chapter stops change at each host**, the owner's answers to decision 64's questions ("1 no 2 no 3 you decide"): 1. "Remember history" is removed: every page of an ordinary tab is recorded, and a private tab is the way to keep none (requirement 20.7 withdrawn); 2. "Forget this channel" is removed: "More from this site" finds a site's rows to select and remove (requirement 20.6 amended); 3. left to the implementer: chapter stops keep changing at each host, since shipping the Public Suffix List for one menu adds data to keep current for no gain in safety (`cookies.md` section 1.1, `history-and-bookmarks.md` section 16). The protocol's codes for the two (setting change 8, history request 5) are not reused. | Built 23 October 2026 |
+| Decision 66 | 23 October 2026 | **No fonts from channels**, on the owner's word: "completely remove this, we will not be supporting alternate fonts". Every page is drawn in the engine's own fonts; a font a channel names is never fetched; there is no font helper and no font role. Requirements 3.5 and 5.7 withdrawn, 3.1 and 5.1 amended; the engine's own requirements on channel fonts are the engine's to decide (its own process). | Done 23 October 2026 |
 
 ---
 
@@ -134,7 +135,7 @@ Each decision was made by the owner on the date given. Requirements in `requirem
 | **Fetcher** | The process that holds one web channel's network connections and reads its network formats through the engine's web module. |
 | **Decoder** | The process that recognises, decodes and renders one channel's teletext. It has no network and no secrets. |
 | **Frame** | One rendered page: palette indices plus its palette, produced by the decoder. |
-| **Resource role** | The purpose for which a resource was requested: teletext data, channel descriptor, contents file, font, or discovery. A response is read only by the reader for the role it was requested for. |
+| **Resource role** | The purpose for which a resource was requested: teletext data, channel descriptor, contents file, or discovery (a font was one until decision 66). A response is read only by the reader for the role it was requested for. |
 | **Site-change screen** | The screen shown in the trusted strip when a tab is about to leave its channel for another because of something a page did. |
 
 ---
@@ -214,7 +215,7 @@ Decision 18's shape, with the interface process in place of the web-engine windo
 │                           │  │                                  │  │ secrets                              │
 └───────────────────────────┘  └──────────────────────────────────┘  └──────────────────────────────────────┘
        also: the sound helper (checked voice operations in, which channels sound out) and, while open, the phone keyboard
-       still to come: updater and launcher (section 12); a font helper when fonts are fetched (requirement 3.5)
+       still to come: updater and launcher (section 12)
 ```
 
 | Process | Holds | May access | If compromised, the attacker gains |
@@ -331,7 +332,6 @@ The application loads only resources that are part of a teletext service (decisi
 | **Teletext data**: page files, bundles, the other formats of `neoteletext-formats`, and pushed pages | Content detection and the format readers | Decoder | Arrivals, updates and frames |
 | **Channel descriptor** (`channel.json`) | The engine's descriptor reader | Fetcher | Nothing yet: the fetcher uses it to find the contents file and the push feed |
 | **Contents file** (`contents.txt`) | The engine's contents reader | Fetcher | A bounded, typed list of sections and pages |
-| **Font** | The engine's strict font reader | A confined font helper, not built | — |
 | **Discovery** (HyperText Markup Language) | The engine's discovery reader | Fetcher, not built | — |
 
 Discovery has its own security analysis in `neoteletext/docs/web-discovery-security.md`. Its results are never loaded directly: each is a page-initiated navigation through the site-change rules.
@@ -610,7 +610,7 @@ Still to come: the launcher and updater (section 12).
 - Any sandbox on Android or iOS; a Windows interface that cannot read the user's files.
 - Sharing one decoder between tabs on the same channel (decision 11).
 - The grace period for closed tabs; the live-feed threshold; refresh schedules.
-- Fonts from channels and the font helper; discovery.
+- Discovery.
 - Screen readers, the menu bar and its shortcuts, the clipboard, multiple windows, reduced motion.
 - The hostile interface harness.
 - The updater and launcher.
