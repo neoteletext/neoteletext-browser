@@ -16,7 +16,7 @@ use std::path::Path;
 
 use update::fault;
 use update::files;
-use update::manifest::MAX_FILE_BYTES;
+use update::manifest::{MAX_FILE_BYTES, Manifest};
 use update::platform::{BUNDLE, MANIFEST, MARKED_PROGRAM};
 use update::state::State;
 use update::version::Version;
@@ -59,6 +59,16 @@ pub fn reconcile(launcher: &Launcher, state: &mut State) -> Result<bool, String>
     let accepted = launcher.layout.accepted(wanted).join(BUNDLE);
     let source = [previous, accepted].into_iter().find(|candidate| version_of(candidate).ok() == Some(wanted));
     if let Some(source) = source {
+        // The bundle about to run is checked by the pinned signer first:
+        // `previous/` has been out of the launcher's sight since it was
+        // moved there (finding F-19). Refused, nothing is exchanged and
+        // nothing runs; the state keeps what it says.
+        let folder = source.parent().ok_or("a bundle with no folder")?;
+        let manifest = Manifest { version: wanted, platform: launcher.platform, files: Vec::new() };
+        if let Err(why) = launcher.signer.check(folder, &manifest) {
+            eprintln!("neoteletext: the bundle of version {wanted} at {} is refused, and not exchanged in: {why}", source.display());
+            return Err(format!("version {wanted}, to be run, is not signed by the pinned signer; install NeoTeletext again"));
+        }
         files::exchange(&source, &installed_bundle)
             .map_err(|error| format!("cannot exchange {} with {}: {error}", source.display(), installed_bundle.display()))?;
         fault::point("bundle-exchanged");

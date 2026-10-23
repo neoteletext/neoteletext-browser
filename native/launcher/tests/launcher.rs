@@ -503,6 +503,26 @@ fn a_slow_start_is_not_counted_as_a_crash() {
     assert!(!state.is_bad(NEW));
 }
 
+/// Finding F-19: macOS checks the bundle it is about to exchange in by the
+/// pinned signer, so a `previous/` bundle carrying the current version's
+/// mark but not the signer's signature is never rolled back to.
+#[cfg(target_os = "macos")]
+#[test]
+fn a_previous_bundle_not_signed_is_not_rolled_back_to() {
+    let fixture = Fixture::new("previous-unsigned");
+    fixture.install(OLD, "healthy");
+    fixture.stage(NEW, "crash", true);
+    assert_eq!(fixture.launcher(HEALTH_DEADLINE).prepare().unwrap(), Chosen::Trial(NEW));
+    assert_eq!(launcher_previous(&fixture), Some(OLD));
+    let made = fixture.folder.join("unsigned");
+    fixture.version(&made, OLD, "healthy", false);
+    fs::copy(made.join(platform().program_path(MARKED_PROGRAM)), fixture.layout.previous_bundle().join("Contents/MacOS").join(MARKED_PROGRAM)).unwrap();
+    let result = fixture.launcher(NO_DEADLINE_NEEDED).run(&[OsString::from(fixture.folder.join("log"))]);
+    assert!(fixture.installed() == NEW, "the unsigned bundle was exchanged in: {result:?}, {}", fixture.log());
+    assert!(result.is_err(), "nothing runs: {result:?}");
+    assert!(!fixture.log().contains("0.1.0"), "{}", fixture.log());
+}
+
 /// A missing or unreadable state file is rebuilt from what is installed.
 #[test]
 fn a_lost_state_is_rebuilt_from_what_is_installed() {
