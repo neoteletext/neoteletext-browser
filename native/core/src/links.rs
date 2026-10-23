@@ -184,7 +184,7 @@ impl Links {
                 None => Destination::Page(target.page),
                 Some(place) => {
                     let address = descriptor?.by_place.get(usize::from(place))?.as_ref()?;
-                    Destination::Channel(address.with_page(target.page))
+                    Destination::Channel(address.with_page(target.page)?)
                 }
             };
             Some((destination, target.subcode))
@@ -420,7 +420,7 @@ impl Links {
                     Target::Page(page) => Destination::Page(*page),
                     Target::Service { name, page } => {
                         let (_, address) = descriptor.services.iter().find(|(known, _)| known == name).ok_or(Refusal::NotALink)?;
-                        Destination::Channel(address.with_page(*page))
+                        Destination::Channel(address.with_page(*page).ok_or(Refusal::NotALink)?)
                     }
                     Target::Channel(address) => Destination::Channel(address.clone()),
                     Target::Web(_) => return Err(Refusal::NotALink),

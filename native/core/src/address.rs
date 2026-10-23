@@ -36,11 +36,13 @@ impl Address {
         self.text.split_once(FRAGMENT).map_or(self.text.as_str(), |(channel, _)| channel)
     }
 
-    /// The same channel at `page`: its address with `#` and the page number.
+    /// The same channel at `page`: its address with `#` and the page number,
+    /// or none when that would be longer than an address may be (finding
+    /// F-78).
     #[must_use]
-    pub fn with_page(&self, page: u16) -> Self {
+    pub fn with_page(&self, page: u16) -> Option<Self> {
         let text = if self.file.is_some() { self.text.clone() } else { format!("{}{FRAGMENT}{page:03X}", self.channel_text()) };
-        Self { text, page: Some(page), subpage: None, ..self.clone() }
+        (text.len() <= protocol::MAX_ADDRESS).then(|| Self { text, page: Some(page), subpage: None, ..self.clone() })
     }
 
     /// Whether this is the browser's own start page (requirement 19.7).
@@ -114,7 +116,14 @@ fn parse_file(typed: &str) -> Option<Result<Address, String>> {
         }
         let path = PathBuf::from(&path);
         let name = path.file_name().and_then(|name| name.to_str()).unwrap_or("/").to_owned();
-        Ok(Address { text: format!("{FILE_SCHEME}{}", path_to_url(&path)), host: name, encrypted: false, file: Some(path), page: None, subpage: None })
+        within_bound(Address {
+            text: format!("{FILE_SCHEME}{}", path_to_url(&path)),
+            host: name,
+            encrypted: false,
+            file: Some(path),
+            page: None,
+            subpage: None,
+        })
     };
     Some(check())
 }
@@ -204,7 +213,18 @@ pub fn parse(typed: &str) -> Result<Address, String> {
     let page = path.split_once(FRAGMENT).and_then(|(_, fragment)| fragment_page(fragment));
     let subpage = path.split_once(FRAGMENT).and_then(|(_, fragment)| fragment_subpage(fragment));
     let port = port.map(|port| format!(":{port}")).unwrap_or_default();
-    Ok(Address { text: format!("{scheme}{SCHEME_SEPARATOR}{host}{port}{path}"), host, encrypted, file: None, page, subpage })
+    within_bound(Address { text: format!("{scheme}{SCHEME_SEPARATOR}{host}{port}{path}"), host, encrypted, file: None, page, subpage })
+}
+
+/// The address, when written in full, with its scheme and slash, it is no
+/// longer than an address may be: every one opened can then be kept in
+/// history, bookmarks and the session, which refuse a longer line
+/// (finding F-78).
+fn within_bound(address: Address) -> Result<Address, String> {
+    if address.text.len() > protocol::MAX_ADDRESS {
+        return Err(format!("Addresses are limited to {} characters", protocol::MAX_ADDRESS));
+    }
+    Ok(address)
 }
 
 #[cfg(test)]

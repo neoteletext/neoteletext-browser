@@ -116,7 +116,7 @@ impl Descriptor {
             Target::Page(page) => Some(Destination::Page(*page)),
             Target::Service { name, page } => {
                 let (_, address) = self.services.iter().find(|(known, _)| known == name)?;
-                Some(Destination::Channel(address.with_page(*page)))
+                Some(Destination::Channel(address.with_page(*page)?))
             }
             Target::Channel(address) => Some(channel.own_page(address).map_or_else(|| Destination::Channel(address.clone()), Destination::Page)),
             Target::Web(address) => Some(Destination::Web(address.clone())),
