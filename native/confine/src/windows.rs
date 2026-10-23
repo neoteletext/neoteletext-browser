@@ -5,25 +5,24 @@
 //! - **A job object** with kill-on-close, one process at most and the UI
 //!   restrictions the role allows: the helper dies with the trusted core
 //!   and can start nothing.
-//! - **A restricted token at low integrity**, with the administrators'
-//!   group for deny only and every privilege removed: it cannot write to
-//!   the user's files, registry or other processes.
 //! - **Process mitigation policies:** DEP, ASLR, control-flow guard,
 //!   strict handle checks, no extension points, no remote or
 //!   low-integrity images, no dynamic code (Rust needs none), no child
 //!   processes; and for a helper with no window, the Win32k system-call
 //!   filter, so it cannot reach the window system at all.
-//! - **An `AppContainer`** for every process but the interface: the
-//!   decoder and the trusted core in a less privileged one with no
-//!   capabilities, the sound helper with none, the fetcher and keyboard
-//!   with the internet client capability (and the private network one
-//!   when the user allowed local addresses). The program's folder must
-//!   grant read to `ALL APPLICATION PACKAGES`, which an installation under
-//!   Program Files does and the installer sets elsewhere; when the
-//!   `AppContainer` cannot be made or started, the process is not started
-//!   at all (decision 58: security is never downgraded).
-//! - **The interface** has the restricted token at low integrity in place
-//!   of a container, by design: it needs the desktop.
+//! - **An `AppContainer`** for every process: the decoder and the trusted
+//!   core in a less privileged one with no capabilities, the interface
+//!   and the sound helper with none (decision 90: the interface's window
+//!   and desktop are reached from a container, and it reaches no network
+//!   and none of the user's files), the fetcher and keyboard with the
+//!   internet client capability (and the private network one when the
+//!   user allowed local addresses). A container's token is at low
+//!   integrity, so it writes nothing of the user's either. The program's
+//!   folder must grant read to `ALL APPLICATION PACKAGES`, which an
+//!   installation under Program Files does and the installer sets
+//!   elsewhere; when the `AppContainer` cannot be made or started, the
+//!   process is not started at all (decision 58: security is never
+//!   downgraded).
 //!
 //! Only the two pipe handles are inherited, by the handle list; the
 //! environment is the one the trusted core chose, and nothing else.
@@ -54,7 +53,6 @@ mod handles;
 mod job;
 mod process;
 mod time;
-mod token;
 
 pub(crate) use channel::Channel;
 pub use process::Inner;
@@ -103,35 +101,26 @@ pub(crate) fn spawn(spawn: &Spawn<'_>) -> io::Result<Process> {
     }
     let job = job(spawn.role)?;
     let mut report = Report { layers: vec![String::from("job object"), String::from("mitigation policies"), String::from("no child processes")] };
-    let information = if spawn.role == Role::Interface {
-        // The interface's sandbox by design, not a fallback: it needs the
-        // desktop, which a container cannot reach.
-        let information = start(spawn, &inherited, their_stdin.0, their_stdout.0, None)?;
-        report.layers.push(String::from("restricted token at low integrity"));
-        information
-    } else {
-        // Every other role runs in its container or not at all
-        // (decision 58).
-        let sid = container(spawn.role).map_err(|error| io::Error::new(error.kind(), format!("cannot make its AppContainer: {error}")))?;
-        let mut capabilities = Vec::new();
-        // A container cannot be told a port: the updater's host is pinned by
-        // TLS (`installation-and-updates.md` section 8.1).
-        if matches!(spawn.role, Role::Network | Role::Updater { .. }) {
-            capabilities.push(Sid::parse(INTERNET_CLIENT_SID)?);
-            if spawn.local_network {
-                capabilities.push(Sid::parse(PRIVATE_NETWORK_SID)?);
-            }
+    // Every role runs in its container or not at all (decision 58); the
+    // interface too, with no capabilities (decision 90).
+    let sid = container(spawn.role).map_err(|error| io::Error::new(error.kind(), format!("cannot make its AppContainer: {error}")))?;
+    let mut capabilities = Vec::new();
+    // A container cannot be told a port: the updater's host is pinned by
+    // TLS (`installation-and-updates.md` section 8.1).
+    if matches!(spawn.role, Role::Network | Role::Updater { .. }) {
+        capabilities.push(Sid::parse(INTERNET_CLIENT_SID)?);
+        if spawn.local_network {
+            capabilities.push(Sid::parse(PRIVATE_NETWORK_SID)?);
         }
-        if matches!(spawn.role, Role::Core | Role::Updater { .. })
-            && let Some(folder) = spawn.writable
-        {
-            grant(folder, &sid)?;
-        }
-        let information = start(spawn, &inherited, their_stdin.0, their_stdout.0, Some((&sid, &capabilities)))
-            .map_err(|error| io::Error::new(error.kind(), format!("cannot start in its AppContainer: {error}")))?;
-        report.layers.push(String::from(if matches!(spawn.role, Role::Decoder | Role::Core) { "less privileged AppContainer" } else { "AppContainer" }));
-        information
-    };
+    }
+    if matches!(spawn.role, Role::Core | Role::Updater { .. })
+        && let Some(folder) = spawn.writable
+    {
+        grant(folder, &sid)?;
+    }
+    let information = start(spawn, &inherited, their_stdin.0, their_stdout.0, &sid, &capabilities)
+        .map_err(|error| io::Error::new(error.kind(), format!("cannot start in its AppContainer: {error}")))?;
+    report.layers.push(String::from(if matches!(spawn.role, Role::Decoder | Role::Core) { "less privileged AppContainer" } else { "AppContainer" }));
     let process = Owned(information.hProcess);
     let thread = Owned(information.hThread);
     // Into the job before it runs a single instruction.

@@ -22,7 +22,7 @@ The property of decision 20: a compromised helper, by a fault in a reader of unt
 | The trusted core's container fails to start | Windows | No core and no browser (decision 58). |
 | A DLL the broker needs breaks the core's start under the Win32k filter | Windows | `shell32.dll` is delay-loaded in `neoteletext.exe` (`core/build.rs`); `the_trusted_core_starts_confined_and_reaches_its_own_code` starts the core confined on every platform. |
 | The helper outlives a crashed trusted core | Windows | The job's kill-on-close; the core's end closes the job. On Unix the helper ends at its pipe's end. |
-| The restricted token still reads the user's files | Windows | Low integrity denies writes, not reads; reads are denied by the AppContainer, which the decoder and fetcher have and the interface, which needs the desktop, does not. The interface's file reads are the remaining gap on Windows. |
+| A helper reads the user's files or reaches the network at low integrity | Windows | Low integrity denies writes, not reads or Winsock; reads and the network are denied by the AppContainer, which every helper has since decision 90, the interface with no capabilities (`sandboxing.md` section 9.2). Before, the interface ran under a restricted token alone and could read the user's files and send them out. Built; to be verified in the virtual machine: `the_interface_reaches_no_network_and_no_user_file`, and the window working in its container. |
 | `sandbox-exec` is deprecated and goes away | macOS | Still present on macOS 15; packaging must keep each process under a profile of its own (requirement 3.8). |
 | The environment carries the user's secrets or tokens to a helper | All | `env_clear` with an allow-list: nothing for a decoder, fetcher or keyboard beyond what Windows needs to start a process; the window system's variables for the interface. |
 | The report lies, because a compromised helper prints it | All | The report is for the user's information; nothing decides on it. |
@@ -30,7 +30,7 @@ The property of decision 20: a compromised helper, by a fault in a reader of unt
 ## 3. What each platform's sandbox does not stop
 
 - **Linux:** a fault in the kernel; for the interface and the sound helper, a fault in the display server or the sound server they still reach, and a local socket outside `/run`, `/tmp` and the runtime folder, which none of the usual services keep.
-- **Windows:** the interface's reads of the user's files at low integrity; a fault in the kernel or in a service the token may still reach.
+- **Windows:** a fault in the kernel or in a service a container may still reach; for the interface, until it is verified in the virtual machine, whether its window works in its container (decision 90).
 - **macOS:** whatever `system.sb` allows every process, which Apple maintains.
 - **All:** a fault in the broker's parser, the one process not confined (`security-analysis.md` section 5.8); a compromised trusted core still holds the browser's state and draws nothing but can mislead through what it sends the interface (`security-analysis.md` rank 4).
 
@@ -46,4 +46,4 @@ Windows adds no crate; `windows-sys` 0.52 is already a dependency of `web-opener
 
 ## 5. Remaining risk
 
-Low on macOS and Linux for the helpers and the trusted core; low for the broker, small and parsing only the core's bounded requests; **medium for the interface on Windows** (file reads).
+Low on macOS and Linux for the helpers and the trusted core; low for the broker, small and parsing only the core's bounded requests; low for the interface on Windows once decision 90's container is verified by hand there; until then it is built but unverified.

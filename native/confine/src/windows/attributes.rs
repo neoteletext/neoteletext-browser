@@ -1,6 +1,6 @@
 //! A confined start: the attribute list (inherited handles, mitigation
-//! policies, no child processes, a container's capabilities) and the
-//! `CreateProcess` call that takes it.
+//! policies, no child processes, the container and its capabilities) and
+//! the `CreateProcess` call that takes it.
 
 #![expect(unsafe_code, reason = "the Win32 calls that create a confined process (requirement 10.12, decision 52)")]
 
@@ -11,7 +11,7 @@ use windows_sys::Win32::Foundation::HANDLE;
 use windows_sys::Win32::Security::{SECURITY_CAPABILITIES, SID_AND_ATTRIBUTES};
 use windows_sys::Win32::System::SystemServices::SE_GROUP_ENABLED;
 use windows_sys::Win32::System::Threading::{
-    CREATE_SUSPENDED, CREATE_UNICODE_ENVIRONMENT, CreateProcessAsUserW, CreateProcessW, DeleteProcThreadAttributeList, EXTENDED_STARTUPINFO_PRESENT,
+    CREATE_SUSPENDED, CREATE_UNICODE_ENVIRONMENT, CreateProcessW, DeleteProcThreadAttributeList, EXTENDED_STARTUPINFO_PRESENT,
     InitializeProcThreadAttributeList, LPPROC_THREAD_ATTRIBUTE_LIST, PROC_THREAD_ATTRIBUTE_ALL_APPLICATION_PACKAGES_POLICY,
     PROC_THREAD_ATTRIBUTE_CHILD_PROCESS_POLICY, PROC_THREAD_ATTRIBUTE_HANDLE_LIST, PROC_THREAD_ATTRIBUTE_MITIGATION_POLICY,
     PROC_THREAD_ATTRIBUTE_SECURITY_CAPABILITIES, PROCESS_INFORMATION, STARTF_USESTDHANDLES, STARTUPINFOEXW, UpdateProcThreadAttribute,
@@ -20,7 +20,6 @@ use windows_sys::Win32::System::WindowsProgramming::{PROCESS_CREATION_ALL_APPLIC
 
 use super::handles::{ContainerSid, Sid, last_error, wide};
 use super::process::{command_line, environment_block};
-use super::token::restricted_token;
 use crate::{Role, Spawn};
 
 /// The process mitigation policies, as `winbase.h` defines them for the
@@ -45,7 +44,8 @@ mod mitigation {
 const ATTRIBUTES: u32 = 5;
 
 /// The attribute list of a start: inherited handles, mitigation policies,
-/// no child processes, and for a container its capabilities.
+/// no child processes, the container and its capabilities, and for a less
+/// privileged container its opt-out of `ALL APPLICATION PACKAGES`.
 struct Attributes {
     list: LPPROC_THREAD_ATTRIBUTE_LIST,
     _storage: Vec<u8>,
@@ -80,18 +80,16 @@ fn add_attribute_at(attributes: &Attributes, which: usize, value: *const std::ff
     Ok(())
 }
 
-/// Starts the helper in a container (`capabilities` given) or with the
-/// restricted token.
-#[allow(clippy::too_many_lines, reason = "one start, each attribute in turn")]
+/// Starts the helper in its container `sid`, with `capabilities`.
 pub(super) fn start(
     spawn: &Spawn<'_>,
     inherited: &[HANDLE],
     stdin: HANDLE,
     stdout: HANDLE,
-    container: Option<(&ContainerSid, &[Sid])>,
+    sid: &ContainerSid,
+    capability_sids: &[Sid],
 ) -> io::Result<PROCESS_INFORMATION> {
-    let count = if container.is_some() { ATTRIBUTES } else { ATTRIBUTES.saturating_sub(2) };
-    let attributes = attributes(count)?;
+    let attributes = attributes(ATTRIBUTES)?;
     // Only the pipes reach the helper, whatever else the core has open.
     add_attribute_at(&attributes, PROC_THREAD_ATTRIBUTE_HANDLE_LIST as usize, inherited.as_ptr().cast(), size_of_val(inherited))?;
     let mut policy = mitigation::DEP_ENABLE
@@ -114,20 +112,19 @@ pub(super) fn start(
     add_attribute(&attributes, PROC_THREAD_ATTRIBUTE_MITIGATION_POLICY as usize, &policy, size_of_val(&policy))?;
     let no_children: u32 = PROCESS_CREATION_CHILD_PROCESS_RESTRICTED;
     add_attribute(&attributes, PROC_THREAD_ATTRIBUTE_CHILD_PROCESS_POLICY as usize, &no_children, size_of::<u32>())?;
-    let capabilities: Vec<SID_AND_ATTRIBUTES>;
-    let mut security = SECURITY_CAPABILITIES { AppContainerSid: ptr::null_mut(), Capabilities: ptr::null_mut(), CapabilityCount: 0, Reserved: 0 };
+    // Enabled is what a capability carries.
+    let enabled = u32::try_from(SE_GROUP_ENABLED).unwrap_or(0);
+    let capabilities: Vec<SID_AND_ATTRIBUTES> = capability_sids.iter().map(|sid| SID_AND_ATTRIBUTES { Sid: sid.0, Attributes: enabled }).collect();
+    let security = SECURITY_CAPABILITIES {
+        AppContainerSid: sid.0,
+        Capabilities: capabilities.as_ptr().cast_mut(),
+        CapabilityCount: u32::try_from(capabilities.len()).unwrap_or(0),
+        Reserved: 0,
+    };
+    add_attribute(&attributes, PROC_THREAD_ATTRIBUTE_SECURITY_CAPABILITIES as usize, &security, size_of::<SECURITY_CAPABILITIES>())?;
     let opt_out: u32 = PROCESS_CREATION_ALL_APPLICATION_PACKAGES_OPT_OUT;
-    if let Some((sid, capability_sids)) = container {
-        // Enabled is what a capability carries.
-        let enabled = u32::try_from(SE_GROUP_ENABLED).unwrap_or(0);
-        capabilities = capability_sids.iter().map(|sid| SID_AND_ATTRIBUTES { Sid: sid.0, Attributes: enabled }).collect();
-        security.AppContainerSid = sid.0;
-        security.Capabilities = capabilities.as_ptr().cast_mut();
-        security.CapabilityCount = u32::try_from(capabilities.len()).unwrap_or(0);
-        add_attribute(&attributes, PROC_THREAD_ATTRIBUTE_SECURITY_CAPABILITIES as usize, &security, size_of::<SECURITY_CAPABILITIES>())?;
-        if matches!(spawn.role, Role::Decoder | Role::Core) {
-            add_attribute(&attributes, PROC_THREAD_ATTRIBUTE_ALL_APPLICATION_PACKAGES_POLICY as usize, &opt_out, size_of::<u32>())?;
-        }
+    if matches!(spawn.role, Role::Decoder | Role::Core) {
+        add_attribute(&attributes, PROC_THREAD_ATTRIBUTE_ALL_APPLICATION_PACKAGES_POLICY as usize, &opt_out, size_of::<u32>())?;
     }
     let mut startup: STARTUPINFOEXW = unsafe { std::mem::zeroed() };
     startup.StartupInfo.cb = u32::try_from(size_of::<STARTUPINFOEXW>()).unwrap_or(0);
@@ -141,38 +138,19 @@ pub(super) fn start(
     let mut environment = environment_block(spawn.environment);
     let flags = EXTENDED_STARTUPINFO_PRESENT | CREATE_SUSPENDED | CREATE_UNICODE_ENVIRONMENT;
     let mut information: PROCESS_INFORMATION = unsafe { std::mem::zeroed() };
-    let started = if container.is_some() {
-        unsafe {
-            CreateProcessW(
-                program.as_ptr(),
-                line.as_mut_ptr(),
-                ptr::null(),
-                ptr::null(),
-                1,
-                flags,
-                environment.as_mut_ptr().cast(),
-                ptr::null(),
-                &raw const startup.StartupInfo,
-                &raw mut information,
-            )
-        }
-    } else {
-        let token = restricted_token()?;
-        unsafe {
-            CreateProcessAsUserW(
-                token.0,
-                program.as_ptr(),
-                line.as_mut_ptr(),
-                ptr::null(),
-                ptr::null(),
-                1,
-                flags,
-                environment.as_mut_ptr().cast(),
-                ptr::null(),
-                &raw const startup.StartupInfo,
-                &raw mut information,
-            )
-        }
+    let started = unsafe {
+        CreateProcessW(
+            program.as_ptr(),
+            line.as_mut_ptr(),
+            ptr::null(),
+            ptr::null(),
+            1,
+            flags,
+            environment.as_mut_ptr().cast(),
+            ptr::null(),
+            &raw const startup.StartupInfo,
+            &raw mut information,
+        )
     };
     if started == 0 {
         return Err(last_error());
