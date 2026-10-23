@@ -751,6 +751,7 @@ Withdrawn on 23 October 2026 (decision 66): no font is fetched; every page is dr
 - **Source:** Decision 4.
 - **Verification:** Test.
 - **State:** Met, with tests: `protocol::clean` on the sending side and a check on the receiving side; the address editor never inserts hidden characters.
+- *Amended 24 October 2026 (finding F-36):* the hidden set is every format character (Unicode general category Cf, the tag characters among them), the line and paragraph separators, and the other default-ignorable characters (the combining grapheme joiner, the Hangul fillers, the variation selectors), where it had been the controls, the bidirectional controls and the zero-width characters alone; and a run of combining marks of the combining blocks is cut at `MAX_COMBINING_RUN`, four. State: met, by `every_invisible_character_is_hidden` (interface-core) and `a_run_of_combining_marks_is_cut` (protocol), both failing on the earlier code. A script's own combining marks (Devanagari's, Hebrew's) are not counted, since that needs Unicode's tables, which no crate of the protocol carries.
 
 ### Requirement 11.6: Reload
 - **Statement:** The strip must show a Reload button between Forward and Home; it, Command-R on macOS and Control-R elsewhere must open the active tab's channel afresh, with a new decoder and fetcher reading its pages again, at the tab's place in its history, which must not change. Reload is strip input carrying nothing; the trusted core decides what is opened.
