@@ -29,6 +29,7 @@ pub mod history;
 #[cfg(feature = "links")]
 pub mod links;
 pub mod outbox;
+mod private_file;
 pub mod restore;
 pub mod settings;
 pub mod sleep;

@@ -7,7 +7,7 @@ use protocol::decoder::BookmarkEntry;
 use std::collections::BTreeMap;
 use std::path::Path;
 
-use crate::history::write_whole;
+use crate::private_file::write_whole;
 use crate::settings::checked_address;
 
 /// The first line of the file: its format and version.

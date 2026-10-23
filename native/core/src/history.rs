@@ -9,6 +9,7 @@ use std::path::Path;
 
 use crate::address;
 use crate::calendar::{SECONDS_PER_DAY, day_text, local_day, read_day};
+use crate::private_file::{private_options, write_whole};
 
 /// The first line of the file: its format and version.
 const VERSION_LINE: &str = "neoteletext-history 1";
@@ -449,30 +450,6 @@ pub const DAY: i64 = SECONDS_PER_DAY;
 pub const WEEK: i64 = SECONDS_PER_DAY * 7;
 /// Its last 4 weeks.
 pub const FOUR_WEEKS: i64 = SECONDS_PER_DAY * 28;
-
-/// Options for a file the user alone may read and write (section 2.3).
-pub(crate) fn private_options() -> std::fs::OpenOptions {
-    let mut options = std::fs::OpenOptions::new();
-    options.write(true);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt as _;
-        options.mode(0o600);
-    }
-    options
-}
-
-/// Writes `bytes` to `name` in `folder` whole, through `temporary`.
-pub(crate) fn write_whole(folder: &Path, name: &str, temporary: &str, bytes: impl AsRef<[u8]>) -> std::io::Result<()> {
-    use std::io::Write as _;
-    std::fs::create_dir_all(folder)?;
-    let temporary = folder.join(temporary);
-    let mut file = private_options().create(true).truncate(true).open(&temporary)?;
-    file.write_all(bytes.as_ref())?;
-    file.sync_all()?;
-    drop(file);
-    std::fs::rename(&temporary, folder.join(name))
-}
 
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::indexing_slicing, clippy::arithmetic_side_effects, reason = "a test")]

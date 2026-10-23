@@ -491,7 +491,7 @@ pub fn open(key: &[u8; KEY_BYTES], sealed: &[u8]) -> Option<Vec<u8>> {
 /// When the file cannot be sealed or written.
 pub fn save(folder: &std::path::Path, key: &[u8; KEY_BYTES], store: &Store, now: u64) -> std::io::Result<()> {
     let sealed = seal(key, &store.export(now)).ok_or_else(|| std::io::Error::other("the cookies could not be sealed"))?;
-    crate::history::write_whole(folder, FILE_NAME, TEMPORARY_NAME, sealed)
+    crate::private_file::write_whole(folder, FILE_NAME, TEMPORARY_NAME, sealed)
 }
 
 /// Reads `cookies.bin` in `folder`, sealed as it is; none when there is no

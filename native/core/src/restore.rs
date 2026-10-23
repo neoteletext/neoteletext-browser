@@ -10,7 +10,7 @@ use std::path::Path;
 
 use interface_core::library::{MAX_CLOSED, MAX_TAB_ENTRIES, WindowGeometry};
 
-use crate::history::write_whole;
+use crate::private_file::write_whole;
 
 const VERSION_LINE: &str = "neoteletext-session 3";
 const FILE_NAME: &str = "session.txt";
