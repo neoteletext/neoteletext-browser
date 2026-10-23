@@ -384,6 +384,10 @@ impl App {
                     let Ok(index) = u8::try_from(index) else { continue };
                     if matches!(output, Output::SelectTab(_)) { ToCore::SelectTab(index) } else { ToCore::CloseTab(index) }
                 }
+                Output::MoveTab { from, to } => {
+                    let (Ok(from), Ok(to)) = (u8::try_from(from), u8::try_from(to)) else { continue };
+                    ToCore::MoveTab { from, to }
+                }
                 Output::NewTab => ToCore::NewTab,
                 Output::Navigate(address) => ToCore::Navigate(address),
                 Output::Back => ToCore::Back,

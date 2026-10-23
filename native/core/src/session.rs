@@ -645,6 +645,27 @@ impl Session {
 
     /// Closes tab `index`, keeping it to reopen unless it is private;
     /// returns its channel so its decoder can be closed.
+    /// Moves the tab at `from` to `to`, the others closing up, the active
+    /// tab staying active (`tab-strip.md` section 2, decision 69). Returns
+    /// whether anything moved.
+    pub fn move_tab(&mut self, from: usize, to: usize) -> bool {
+        if from == to || from >= self.tabs.len() || to >= self.tabs.len() {
+            return false;
+        }
+        let tab = self.tabs.remove(from);
+        self.tabs.insert(to, tab);
+        self.active = if self.active == from {
+            to
+        } else if from < self.active && self.active <= to {
+            self.active.saturating_sub(1)
+        } else if to <= self.active && self.active < from {
+            self.active.saturating_add(1)
+        } else {
+            self.active
+        };
+        true
+    }
+
     pub fn close(&mut self, index: usize) -> Option<u32> {
         if index >= self.tabs.len() {
             return None;
@@ -1009,6 +1030,26 @@ mod tests {
         assert_eq!(closed.history.iter().map(|visit| visit.at).collect::<Vec<_>>(), [1_000, 1_000]);
         restored.reopen(None).unwrap();
         assert_eq!(restored.active_tab().and_then(Tab::address).map(|address| address.host.as_str()), Some("c.invalid"));
+    }
+
+    /// Decision 69: a tab moves; the active tab stays active wherever it
+    /// goes and wherever the others go round it.
+    #[test]
+    fn tabs_move_and_the_active_one_stays_active() {
+        let mut session = Session::new(Bookmarks::default());
+        for host in ["a", "b", "c", "d"] {
+            session.open(&format!("{host}.invalid")).unwrap();
+        }
+        let hosts = |session: &Session| session.tabs.iter().map(|tab| tab.address().unwrap().host.clone()).collect::<Vec<_>>();
+        session.active = 1;
+        assert!(session.move_tab(3, 0));
+        assert_eq!(hosts(&session), ["d.invalid", "a.invalid", "b.invalid", "c.invalid"]);
+        assert_eq!(session.active, 2, "b moved right with the others");
+        assert!(session.move_tab(2, 3));
+        assert_eq!((hosts(&session)[3].as_str(), session.active), ("b.invalid", 3), "the active tab itself");
+        assert!(session.move_tab(0, 2));
+        assert_eq!(session.active, 3, "a tab passing from before it to before it: unchanged");
+        assert!(!session.move_tab(1, 1) && !session.move_tab(0, 9), "nowhere to go");
     }
 
     /// Requirement 11.6: a reload gives the tab a new channel at the same

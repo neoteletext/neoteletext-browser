@@ -14,4 +14,6 @@ The questions met while implementing without the owner, and the answer taken, as
 | 6 | The to-do said the remote's design would be shown to the owner before building; the owner then asked for everything built while away. | Designed (`remote-control.md`) and built; for the owner to confirm (decision 68). | The later instruction governs; the design is recorded for review. |
 | 7 | Should the floating remote be a window of its own? | No: a panel inside the browser's window, held below the strip. | A separate window can be covered or imitated by another program (requirement 11.1's reasoning); with multiple windows each window gets its own remote. |
 | 8 | Which key shows the remote? | Command-Shift-R (Control-Shift-R elsewhere). | Command-R is Reload; the shifted letter keeps the remote beside it and clashes with nothing the browser takes. |
+| 9 | Overflow: which tabs stay on the strip? | The first that fit, the active one taking the last place when it would not; the rest wrap into the panel in order. | The tab being shown must always be in view; Chrome keeps it in view too. |
+| 10 | Does the panel cover the toolbar? | Yes, while the pointer is on the strip or the panel, as the menu's list does. | The owner asked for a panel joined underneath; it is the interface's own, which no page can draw or press. |
 

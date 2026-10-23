@@ -116,6 +116,7 @@ impl Browser {
             self.strip_tips(&mut tips);
             self.bar_tips(&mut tips);
             self.remote_tips(&mut tips);
+            self.tabs_tips(&mut tips);
             if self.settings_open() {
                 self.settings_tips(&mut tips);
             } else if self.history_open() {
@@ -152,8 +153,8 @@ impl Browser {
     /// The tab strip's and the toolbar's controls.
     fn strip_tips(&self, tips: &mut Vec<(Rect, String)>) {
         let regions = &self.regions;
-        for (index, region) in regions.tabs.iter().enumerate() {
-            if let Some(tab) = self.tabs.get(index) {
+        for region in &regions.tabs {
+            if let Some(tab) = self.tabs.get(region.index) {
                 let private = if tab.private { " (private tab)" } else { "" };
                 tips.push((region.tab, format!("{}{private}", tab.title)));
                 if let Some(speaker) = region.speaker {

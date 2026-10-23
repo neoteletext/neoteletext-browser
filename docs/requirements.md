@@ -758,6 +758,7 @@ Withdrawn on 23 October 2026 (decision 66): no font is fetched (decision 66): ev
 - **Verification:** Test.
 - **State:** Partly met: tabs, close and new tab. Drag to reorder, overflow and session restore are not built.
 - *Amended 23 October 2026 (decision 63):* a press of the middle button on a tab must close it, as the tab's close button does. State: built (`Browser::middle_pressed`), its test owed (`TECH-DEBT.md`). Session restore has been built since 22 October 2026 (requirement 20.22).
+- *Amended 23 October 2026 (decision 69):* dragging to reorder and overflow are built (requirements 12.13 to 12.15); a tab dragged between windows waits on multiple windows (requirement 12.8).
 
 ### Requirement 12.2: Page walls and transitions
 - **Statement:** The interface must show the window of decision 35 (banks, page list, page area, overview), with its transitions, and must respect the platform's reduced-motion preference.
@@ -838,6 +839,27 @@ Withdrawn on 23 October 2026 (decision 66): no font is fetched (decision 66): ev
 - **Source:** Decision 63.
 - **Verification:** Interface tests: a tip shows after the rest and not before, with each platform's shortcut, and goes on a press and on leaving; a review that every icon, symbol and cut text has one.
 - **State:** Built 23 October 2026, with tests `a_tip_shows_after_a_rest_and_goes_on_a_press` and `tips_name_each_platforms_shortcut`; seen on macOS. Tips cover the tab strip (each tab's title, its close and sound buttons, new tab, the window buttons elsewhere than macOS), the toolbar (Back, Forward, Reload, Home, the address field, the star, mute all, settings, the menu), the bookmarks bar's chips, the banks, the page size's buttons, the overview's fold, the console's tabs and buttons, the cookies' buttons, and the close, remove and volume buttons of the settings, history and bookmarks panels and the phone keyboard's. The review of every control is owed (`TECH-DEBT.md`).
+
+### Requirement 12.13: Tabs are reordered by dragging
+- **Statement:** A tab pressed and moved more than 4 points must be dragged, a mark showing where it will go, and released must move there, by strip input the trusted core carries out, keeping the active tab active and saving the session; released where it started, or after Escape, nothing changes.
+- **Reason:** Every browser lets the user order tabs (requirement 12.1).
+- **Source:** Decision 69.
+- **Verification:** Tests of the interface and the trusted core.
+- **State:** Met, 23 October 2026: `a_dragged_tab_moves_where_it_is_let_go`, `tabs_move_and_the_active_one_stays_active`; driven by tests only, since posted pointer events do not reach the window.
+
+### Requirement 12.14: Tabs that do not fit wrap into a panel under the strip
+- **Statement:** When the tabs do not fit at their smallest width, the strip must show those that fit, always with the active tab, and a count of the rest; while the pointer is on the strip or the panel, or after the count is pressed, a panel joined to the strip's underside must show the rest wrapped in rows, each one chosen, closed, muted and dragged as on the strip.
+- **Reason:** The owner's request; before, a tab that did not fit could not be reached.
+- **Source:** Decision 69.
+- **Verification:** Interface tests; seen on macOS.
+- **State:** Met: `the_active_tab_is_always_shown`, `overflowing_tabs_wrap_into_a_panel_under_the_strip`; the count and the active tab's place seen on macOS with 25 tabs; the panel's opening by the pointer driven by tests only.
+
+### Requirement 12.15: Keys choose tabs
+- **Statement:** Command-1 to 8 must choose the first eight tabs and Command-9 the last, and Command-Option-Left and Right the tab before and after, round the ends (Control and Alt away from macOS), whether the tab is shown on the strip or not.
+- **Reason:** Chrome's keys, and the only way by keyboard to a tab in the panel.
+- **Source:** Decision 69.
+- **Verification:** Test.
+- **State:** Met: `tab_keys_choose_tabs`.
 
 ---
 

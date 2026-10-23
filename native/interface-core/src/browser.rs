@@ -20,7 +20,7 @@ use crate::geometry::{Point, Rect};
 use crate::theme::{
     ADDRESS, AXIS, BANK_COLOURS, BANK_COUNT, BANK_NAME, BANK_RANGE, BLACK, BUTTON, CELL_AVAILABLE, CELL_EMPTY, CELL_PULSE, COLUMN_HEAD, Colour, DIM, FIELD,
     FIELD_INK, FIELD_SELECTION, GLYPH, GREEN, HEADING, INSECURE, LEGEND, MUTED, PANEL, PRIVATE, RED, ROW_NUMBER, ROW_STATUS, ROW_TITLE, RULE, RULE_SOFT,
-    SECURE, SELECTED, STAR_ON, TAB_COLOURS, TAB_TITLE, UPDATED, WHITE, WINDOW, YELLOW, mix,
+    SECURE, SELECTED, STAR_ON, TAB_COLOURS, UPDATED, WHITE, WINDOW, YELLOW, mix,
 };
 use crate::ui::{HAIRLINE, border, centred, label, left_centred, outline, right_centred};
 use crate::wall::{CellClick, UPDATE_GLOW_MILLISECONDS, UPDATE_MARK_MILLISECONDS, Wall, WallPage, glow, since};
@@ -36,6 +36,7 @@ mod popup_ui;
 mod remote_ui;
 mod settings_ui;
 mod star_ui;
+mod tabs_ui;
 #[cfg(feature = "interaction")]
 mod terminal_ui;
 mod tips_ui;
@@ -279,6 +280,13 @@ pub enum Output {
     Reload,
     /// Strip input: a key of the open page's controls (decision 67).
     PageControl(crate::controls::PageControl),
+    /// Strip input: move a tab from one place to another (decision 69).
+    MoveTab {
+        /// Its place now.
+        from: usize,
+        /// Its place after.
+        to: usize,
+    },
     /// Strip input: what the history panel asks for (requirement 20.4).
     History(crate::library::HistoryRequest),
     /// Strip input: what the cookies panel asks for (requirement 21.6).
@@ -416,6 +424,8 @@ pub struct Modifiers {
 /// Where a tab and its buttons were last drawn.
 #[derive(Clone, Copy, Debug)]
 struct TabRegion {
+    /// The tab's place among the tabs.
+    index: usize,
     tab: Rect,
     close: Rect,
     /// The sound button, shown while the tab plays sound or is muted.
@@ -513,6 +523,8 @@ pub struct Browser {
     page_controls: controls_ui::ControlsUi,
     /// The remote control (decision 68).
     remote: remote_ui::RemoteUi,
+    /// The tab strip's overflow and dragging (decision 69).
+    tab_strip: tabs_ui::TabsUi,
     /// The bookmarks manager (requirement 20.17).
     bookmarks: bookmarks_ui::BookmarksUi,
     /// The star's popover (requirement 20.16).
@@ -570,6 +582,7 @@ impl Browser {
             tips: tips_ui::TipsUi::default(),
             page_controls: controls_ui::ControlsUi::default(),
             remote: remote_ui::RemoteUi::default(),
+            tab_strip: tabs_ui::TabsUi::default(),
             bookmarks: bookmarks_ui::BookmarksUi::default(),
             star: star_ui::StarUi::default(),
             bar: star_ui::BarUi::default(),
@@ -854,7 +867,8 @@ impl Browser {
         #[cfg(not(feature = "links"))]
         let linked = false;
         let tipped = self.tips_moved(now);
-        dragged || hovered || preview_changed || linked || tipped
+        let tabbed = self.tabs_moved(self.pointer);
+        dragged || hovered || preview_changed || linked || tipped || tabbed
     }
 
     /// The overview's cell under `point`, when its page has arrived.
@@ -894,6 +908,7 @@ impl Browser {
     /// The main button was released.
     pub fn pointer_released(&mut self) {
         self.remote_released();
+        self.tabs_released();
         self.release_back_or_forward();
         let new_tab = self.press_new_tab;
         self.bookmarks_released(new_tab);
@@ -911,7 +926,7 @@ impl Browser {
         self.press_new_tab = extend;
         // The drop-downs and the star's popover are over everything; the
         // panels over everything below the strip.
-        if self.popups_press(self.pointer, extend) || self.star_press(self.pointer) {
+        if self.popups_press(self.pointer, extend) || self.tabs_press(self.pointer) || self.star_press(self.pointer) {
             return true;
         }
         if self.history_press(self.pointer, extend) || self.bookmarks_press(self.pointer) {
@@ -948,17 +963,6 @@ impl Browser {
         }
         self.stop_editing();
         let regions = &self.regions;
-        if let Some(index) = regions.tabs.iter().position(|region| region.tab.contains(point)) {
-            let region = regions.tabs[index];
-            self.outputs.push(if region.close.contains(point) {
-                Output::CloseTab(index)
-            } else if region.speaker.is_some_and(|speaker| speaker.contains(point)) {
-                Output::MuteTab(index)
-            } else {
-                Output::SelectTab(index)
-            });
-            return true;
-        }
         // Back and Forward act when released, or open their lists when held.
         for (rect, forward, enabled) in [(regions.back, false, self.strip.back), (regions.forward, true, self.strip.forward)] {
             if rect.contains(point) {
@@ -1073,8 +1077,8 @@ impl Browser {
     /// current browser.
     pub fn middle_pressed(&mut self) -> bool {
         self.tips_pressed();
-        let Some(index) = self.regions.tabs.iter().position(|region| region.tab.contains(self.pointer)) else { return false };
-        self.outputs.push(Output::CloseTab(index));
+        let Some(region) = self.regions.tabs.iter().rev().find(|region| region.tab.contains(self.pointer)) else { return false };
+        self.outputs.push(Output::CloseTab(region.index));
         true
     }
 
@@ -1133,7 +1137,7 @@ impl Browser {
             self.outputs.push(Output::Home);
             return true;
         }
-        if key == Key::Escape && self.close_popup() {
+        if key == Key::Escape && (self.close_popup() || self.tabs_cancel()) {
             return true;
         }
         if let Some(changed) = self.star_key(key, modifiers.shift) {
@@ -1210,7 +1214,25 @@ impl Browser {
             self.clear_history_choices();
             return true;
         }
+        // The tab before or after, shown or not (decision 69): Command-Option
+        // and an arrow, Control-Alt elsewhere.
+        if modifiers.alt && matches!(key, Key::Left | Key::Right) {
+            let count = self.tabs.len();
+            if count > 0 {
+                let next = if key == Key::Right { self.active.saturating_add(1) % count } else { self.active.checked_sub(1).unwrap_or(count - 1) };
+                self.outputs.push(Output::SelectTab(next));
+            }
+            return true;
+        }
         let Key::Text(text) = key else { return false };
+        // Command-1 to 8 choose those tabs, Command-9 the last, as in Chrome.
+        if let Some(digit) = text.chars().next().and_then(|first| first.to_digit(10)).filter(|digit| (1..=9).contains(digit) && text.len() == 1) {
+            let index = if digit == 9 { self.tabs.len().checked_sub(1) } else { usize::try_from(digit - 1).ok().filter(|index| *index < self.tabs.len()) };
+            if let Some(index) = index {
+                self.outputs.push(Output::SelectTab(index));
+            }
+            return true;
+        }
         match text.to_ascii_lowercase().as_str() {
             "l" => self.start_editing(),
             "a" if self.settings_editing() => return self.settings_select_all(),
@@ -1408,6 +1430,7 @@ impl Browser {
         self.draw_history_panel(canvas);
         self.draw_bookmarks_panel(canvas, now);
         self.draw_star_popover(canvas);
+        self.draw_tab_overflow(canvas, width);
         self.draw_popups(canvas);
         self.draw_page_controls(canvas);
         self.draw_tips(canvas, width, height);
@@ -1432,48 +1455,7 @@ impl Browser {
             draw_window_buttons(canvas, &self.regions);
         }
         let left = self.frame.left_inset + STRIP_MARGIN;
-        #[allow(clippy::cast_precision_loss, reason = "a few tabs")]
-        let count = self.tabs.len().max(1) as f64;
-        let room = right - left - NEW_TAB - TAB_GAP * 2.0;
-        let tab_width = ((room - TAB_GAP * (count - 1.0)) / count).clamp(TAB_MIN_WIDTH, TAB_MAX_WIDTH);
-        let mut x = left;
-        for (index, tab) in self.tabs.iter().enumerate() {
-            if x + tab_width > right - NEW_TAB {
-                break;
-            }
-            let active = index == self.active;
-            let rect = Rect::new(x, if active { TAB_TOP } else { TAB_TOP_INACTIVE }, x + tab_width, STRIP_HEIGHT);
-            let (fill, ink) = TAB_COLOURS[usize::from(tab.colour) % TAB_COLOURS.len()];
-            canvas.fill(rect, 0.0, fill);
-            if active {
-                border(canvas, Rect::new(rect.x0, rect.y0, rect.x1, rect.y1 + BANK_BORDER), BANK_BORDER - 1.0, WHITE);
-            }
-            let close = Rect::new(rect.x1 - TAB_CLOSE - TAB_GAP * 2.0, rect.y0, rect.x1 - TAB_GAP, rect.y1);
-            let speaker = (tab.muted || self.sounding.contains(&tab.channel)).then(|| Rect::new(close.x0 - TAB_SPEAKER, rect.y0, close.x0, rect.y1));
-            canvas.push_clip(Rect::new(rect.x0, rect.y0, speaker.map_or(close.x0, |speaker| speaker.x0), rect.y1));
-            // A private tab's mark, before its title (requirement 20.8).
-            let inset = if tab.private {
-                let middle = f64::midpoint(rect.y0, rect.y1);
-                let mark =
-                    Rect::new(rect.x0 + TAB_TEXT_INSET, middle - PRIVATE_MARK / 2.0, rect.x0 + TAB_TEXT_INSET + PRIVATE_MARK, middle + PRIVATE_MARK / 2.0);
-                canvas.fill(mark, PRIVATE_MARK / 2.0, PRIVATE);
-                TAB_TEXT_INSET + PRIVATE_MARK + TAB_GAP * 2.0
-            } else {
-                TAB_TEXT_INSET
-            };
-            left_centred(canvas, rect, inset, &tab.title, TAB_TITLE, ink);
-            canvas.pop_clip();
-            if let Some(speaker) = speaker {
-                speaker_glyph(canvas, speaker, tab.muted, ink);
-            }
-            centred(canvas, close, "×", GLYPH, ink);
-            self.regions.tabs.push(TabRegion { tab: rect, close, speaker });
-            x = rect.x1 + TAB_GAP;
-        }
-        self.regions.new_tab = Rect::new(x + TAB_GAP, TAB_TOP_INACTIVE, x + TAB_GAP + NEW_TAB, STRIP_HEIGHT - TAB_GAP);
-        canvas.fill(self.regions.new_tab, 0.0, BUTTON);
-        outline(canvas, self.regions.new_tab, RULE);
-        centred(canvas, self.regions.new_tab, "+", GLYPH, WHITE);
+        self.draw_tabs(canvas, left, right);
         self.regions.strip = Rect::new(0.0, 0.0, width, STRIP_HEIGHT);
     }
 

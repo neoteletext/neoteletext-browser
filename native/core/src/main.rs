@@ -715,15 +715,7 @@ impl Core {
             // user's own navigation (requirement 19.7).
             ToCore::Opened(Some(key)) if self.session.start_page_bookmark(key.channel, key.page).is_some() => self.open_start_page_bookmark(key)?,
             ToCore::Opened(key) => self.opened(key)?,
-            ToCore::MuteTab(index) => {
-                if self.session.toggle_mute(usize::from(index)) {
-                    self.send_tabs()?;
-                }
-            }
-            ToCore::MuteAll(muted) => {
-                self.session.mute_all(muted);
-                self.send_tabs()?;
-            }
+            ToCore::MuteTab(_) | ToCore::MuteAll(_) | ToCore::MoveTab { .. } => self.tab_intent(&intent)?,
             ToCore::Navigate(typed) => {
                 if let Err(reason) = self.session.navigate(&typed, true) {
                     eprintln!("neoteletext: {reason}");
@@ -784,6 +776,21 @@ impl Core {
             Ok(()) => self.kept_session = text,
             Err(error) => eprintln!("neoteletext: the session could not be kept in {}: {error}", folder.display()),
         }
+    }
+
+    /// A tab's sound, every tab's, and a tab moved along the strip
+    /// (decision 69): the tabs are sent again when they changed.
+    fn tab_intent(&mut self, intent: &ToCore) -> Result<(), String> {
+        let changed = match *intent {
+            ToCore::MuteTab(index) => self.session.toggle_mute(usize::from(index)),
+            ToCore::MuteAll(muted) => {
+                self.session.mute_all(muted);
+                true
+            }
+            ToCore::MoveTab { from, to } => self.session.move_tab(usize::from(from), usize::from(to)),
+            _ => false,
+        };
+        if changed { self.send_tabs() } else { Ok(()) }
     }
 
     /// Reload, and the open page's controls (decision 67).

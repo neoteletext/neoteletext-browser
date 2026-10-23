@@ -154,6 +154,7 @@ const KIND_WINDOW: u8 = 69;
 const KIND_COOKIES: u8 = 70;
 const KIND_RELOAD: u8 = 71;
 const KIND_PAGE_CONTROL: u8 = 72;
+const KIND_MOVE_TAB: u8 = 73;
 
 // The strip's flags.
 const ENCRYPTED: u8 = 1;
@@ -283,6 +284,14 @@ pub enum ToCore {
     SelectTab(u8),
     /// Close the tab at this index.
     CloseTab(u8),
+    /// Strip input: move the tab at the first place to the second, as a
+    /// drag along the strip asks (`tab-strip.md`, decision 69).
+    MoveTab {
+        /// Its place now.
+        from: u8,
+        /// Its place after.
+        to: u8,
+    },
     /// Open a new tab.
     NewTab,
     /// The page the user opened, zoomed on the wall, or none: its sounds
@@ -915,6 +924,13 @@ pub fn write_to_core(out: &mut dyn Write, message: &ToCore) -> Result<(), Protoc
             payload.push(*index);
             KIND_CLOSE_TAB
         }
+        ToCore::MoveTab { from, to } => {
+            if usize::from(*from) >= MAX_TABS || usize::from(*to) >= MAX_TABS {
+                return Err(ProtocolError::BadValue("tab place"));
+            }
+            payload.extend_from_slice(&[*from, *to]);
+            KIND_MOVE_TAB
+        }
         ToCore::NewTab => KIND_NEW_TAB,
         ToCore::Opened(key) => {
             if let Some(key) = key {
@@ -1071,6 +1087,13 @@ pub fn read_from_interface(input: &mut dyn Read) -> Result<Option<ToCore>, Proto
         }
         KIND_SELECT_TAB => ToCore::SelectTab(fields.u8()?),
         KIND_CLOSE_TAB => ToCore::CloseTab(fields.u8()?),
+        KIND_MOVE_TAB => {
+            let (from, to) = (fields.u8()?, fields.u8()?);
+            if usize::from(from) >= MAX_TABS || usize::from(to) >= MAX_TABS {
+                return Err(ProtocolError::BadValue("tab place"));
+            }
+            ToCore::MoveTab { from, to }
+        }
         KIND_NEW_TAB => ToCore::NewTab,
         KIND_OPENED => ToCore::Opened(if payload.is_empty() { None } else { Some(fields.key()?) }),
         KIND_MUTE_TAB => ToCore::MuteTab(fields.u8()?),
@@ -1239,6 +1262,7 @@ mod tests {
             ToCore::Cell { key: KEY, version: 7, column: 39, row: 24 },
             ToCore::SelectTab(3),
             ToCore::CloseTab(0),
+            ToCore::MoveTab { from: 3, to: 0 },
             ToCore::NewTab,
             ToCore::Navigate("sport.invalid".into()),
             ToCore::Back,
