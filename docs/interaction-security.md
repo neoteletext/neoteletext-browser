@@ -96,9 +96,9 @@ phone ──▶ relay ──▶ neoteletext-keyboard ── PhoneKey
 
 | Threat | Mitigation |
 |---|---|
-| A compromised keyboard process types anything | It is a compromised local keyboard: no more than a hostile person at the keys |
+| A compromised keyboard process types anything | Into a page open for typing, it is a compromised local keyboard: no more than a hostile person at the keys. Outside one, the trusted core passes on only the keys that move between pages, the digits, the four arrows and the four Fastext colour keys, and no text, so it cannot type an address, change a setting, or Tab to a button and confirm a hand-off or a site change; the core's filter decides, not the interface's code (decision 99, finding F-20; `a_phone_outside_a_typing_page_only_moves_between_pages`) |
 | Modifiers from the phone pressing shortcuts | A phone key carries no modifier; a message claiming one is dropped |
-| Phone keys into the address field | Only after the viewer put the caret there with the pointer (decision 7) |
+| Phone keys into the address field | Not at all outside a page open for typing (decision 99): Enter, Tab, Escape, Backspace, letters and text are dropped by the trusted core; the interface is also to give phone keys to the page view alone, never to a field, a prompt or a panel (the security fix plan's WP-5) |
 | A flood | 120 a second at the relay, the process and the core; key-ups kept |
 
 ## 5. Spoofing

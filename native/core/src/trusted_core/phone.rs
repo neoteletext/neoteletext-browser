@@ -11,6 +11,32 @@ use protocol::{ToInterface, clean};
 use super::processes::{end, relay, spawn};
 use super::{Core, Event};
 
+/// The phone keys passed on while no page is open for typing (decision
+/// 99): the digits, the four arrows and the four Fastext colour keys, by
+/// their W3C names as the phone's layout sends them.
+// Owed: the protocol crate is to hold this list beside the layout (the
+// security fix plan's WP-5); this is then to use it by name.
+const PAGE_NAVIGATION_KEYS: [&str; 18] = [
+    "0",
+    "1",
+    "2",
+    "3",
+    "4",
+    "5",
+    "6",
+    "7",
+    "8",
+    "9",
+    "ArrowUp",
+    "ArrowDown",
+    "ArrowLeft",
+    "ArrowRight",
+    "ColorF0Red",
+    "ColorF1Green",
+    "ColorF2Yellow",
+    "ColorF3Blue",
+];
+
 /// A relay other than qrkeyboard's own, for testing against one run
 /// locally.
 const RELAY_VARIABLE: &str = "NEOTELETEXT_QRKEYBOARD_RELAY";
@@ -83,10 +109,15 @@ impl Core {
                 }
                 self.send_phone()
             }
-            FromKeyboard::Key { down, name } if self.phone_view.state == PhoneState::Connected => {
+            // Outside a page open for typing, only the keys that move
+            // between pages: the interface's code is not trusted to keep
+            // the rest from a field, a prompt or a panel (decision 99).
+            FromKeyboard::Key { down, name }
+                if self.phone_view.state == PhoneState::Connected && (self.typing.page_takes_keys() || PAGE_NAVIGATION_KEYS.contains(&name.as_str())) =>
+            {
                 self.send(&ToInterface::PhoneKey(PhoneKey::Key { down, name }))
             }
-            FromKeyboard::Text(text) if self.phone_view.state == PhoneState::Connected => {
+            FromKeyboard::Text(text) if self.phone_view.state == PhoneState::Connected && self.typing.page_takes_keys() => {
                 self.send(&ToInterface::PhoneKey(PhoneKey::Text(clean(&text, protocol::keyboard::MAX_PHONE_TEXT))))
             }
             FromKeyboard::Key { .. } | FromKeyboard::Text(_) => Ok(()),
@@ -102,5 +133,43 @@ impl Core {
         }
         self.phone_view = protocol::keyboard::PhoneView { state: protocol::keyboard::PhoneState::Finished, qr: None, pin: None };
         self.send_phone()
+    }
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used, reason = "a test")]
+mod tests {
+    use super::super::test_support::Test;
+    use protocol::ToInterface;
+    use protocol::keyboard::{FromKeyboard, PhoneKey, PhoneState};
+
+    fn key(name: &str) -> FromKeyboard {
+        FromKeyboard::Key { down: true, name: name.into() }
+    }
+
+    /// The phone keys the interface was given.
+    fn given(test: &mut Test) -> Vec<PhoneKey> {
+        test.sent().into_iter().filter_map(|message| if let ToInterface::PhoneKey(key) = message { Some(key) } else { None }).collect()
+    }
+
+    /// Decision 99 (finding F-20): with no page open for typing, a paired
+    /// phone moves between pages and does nothing else: its digits,
+    /// arrows and colour keys reach the interface; Tab, Enter, Escape,
+    /// Backspace, letters and text do not, so it cannot reach a field, a
+    /// prompt or a panel of the browser's own.
+    #[test]
+    fn a_phone_outside_a_typing_page_only_moves_between_pages() {
+        let mut test = Test::new("phone-keys");
+        test.core.phone_view.state = PhoneState::Connected;
+        for name in ["Tab", "Enter", "Escape", "Backspace", "a", "Z"] {
+            test.core.phone_said(key(name)).unwrap();
+        }
+        test.core.phone_said(FromKeyboard::Text("example.com".into())).unwrap();
+        assert_eq!(given(&mut test), Vec::new(), "nothing but page navigation");
+        for name in ["1", "0", "ArrowUp", "ArrowLeft", "ColorF0Red", "ColorF3Blue"] {
+            test.core.phone_said(key(name)).unwrap();
+        }
+        let names: Vec<String> = given(&mut test).into_iter().map(|key| if let PhoneKey::Key { name, .. } = key { name } else { String::new() }).collect();
+        assert_eq!(names, ["1", "0", "ArrowUp", "ArrowLeft", "ColorF0Red", "ColorF3Blue"]);
     }
 }

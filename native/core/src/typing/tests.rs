@@ -67,6 +67,21 @@ fn a_channel_that_does_not_answer_is_refused_and_the_strip_says_so() {
     assert_eq!(items(&typing.control(PAGE.channel, &welcome(PAGE_CAP), 10_001)), [] as [String; 0], "too late");
 }
 
+/// Decision 99: a page takes a phone's keys only while it is open for
+/// typing.
+#[test]
+fn a_page_takes_keys_only_while_open_for_typing() {
+    let mut typing = Typing::default();
+    assert!(!typing.page_takes_keys(), "nothing open");
+    typing.input(PAGE.channel, true, false, 0);
+    typing.opened(Some(PAGE.channel), Some(PAGE), 0);
+    assert!(!typing.page_takes_keys(), "not yet welcomed");
+    assert!(ready(PAGE_CAP).page_takes_keys());
+    let mut away = ready(PAGE_CAP);
+    away.opened(Some(PAGE.channel), None, 0);
+    assert!(!away.page_takes_keys(), "the page closed");
+}
+
 /// REQ-INT-130: input goes only under every condition.
 #[test]
 fn input_goes_only_under_every_condition() {
