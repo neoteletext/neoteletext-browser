@@ -26,6 +26,16 @@ const ROOT_VERSION: &str = update::layout::UPDATER_ROOT_VERSION;
 /// The longest that file is: a root version, at most `u64::MAX`'s 20
 /// decimal digits, and its line's end.
 const MAX_ROOT_VERSION: usize = 21;
+/// How far ahead of the clock `tough`'s record of the latest time it saw
+/// may be and still be kept (finding F-49): a computer's clock put right
+/// by up to a day is the clock being behind, said as such until it
+/// catches up; a record further ahead was made by a clock that was wrong,
+/// and is dropped, so one jump forward does not stop updates for good.
+/// The protection it gave, against the clock set back to make expired
+/// metadata current, needs a clock set back by more than a day and a
+/// host serving that old metadata, and the launcher's pinned signer still
+/// stands behind it (section 5 of the design).
+const CLOCK_STEP_ALLOWED_SECONDS: i64 = 24 * 60 * 60;
 /// How many times a release file that fails its checks is fetched before
 /// the download waits for the next check (section 3.1, step 2).
 pub const MAX_ATTEMPTS: u32 = 3;
@@ -94,13 +104,30 @@ impl Config {
     pub(super) async fn load(&self) -> Result<Repository, String> {
         std::fs::create_dir_all(self.metadata()).map_err(|error| format!("{}: {error}", self.metadata().display()))?;
         let base = |folder: &str| url::Url::parse(&format!("https://{}:{}/{folder}/", self.host, self.port)).map_err(|error| error.to_string());
-        let repository = RepositoryLoader::new(&self.root, base("metadata")?, base("targets")?)
-            .transport(self.https.clone())
-            .datastore(self.metadata())
-            .limits(limits())
-            .load()
-            .await
-            .map_err(|error| format!("the update repository is refused: {}", chain(&error)))?;
+        let loader = || {
+            Ok::<_, String>(
+                RepositoryLoader::new(&self.root, base("metadata")?, base("targets")?)
+                    .transport(self.https.clone())
+                    .datastore(self.metadata())
+                    .limits(limits()),
+            )
+        };
+        let repository = match loader()?.load().await {
+            Err(tough::error::Error::SystemTimeSteppedBackward { sys_time, latest_known_time, .. }) => {
+                let ahead = latest_known_time.as_second().saturating_sub(sys_time.as_second());
+                if ahead <= CLOCK_STEP_ALLOWED_SECONDS {
+                    return Err(format!(
+                        "this computer's clock ({sys_time}) is behind the time of an earlier check ({latest_known_time}); updates resume when it is right"
+                    ));
+                }
+                let known = self.metadata().join(update::layout::UPDATER_KNOWN_TIME);
+                eprintln!("neoteletext-updater: the time recorded at an earlier check ({latest_known_time}) is ahead of the clock by more than a day, and is forgotten");
+                std::fs::remove_file(&known).map_err(|error| format!("{}: {error}", known.display()))?;
+                loader()?.load().await
+            }
+            other => other,
+        }
+        .map_err(|error| format!("the update repository is refused: {}", chain(&error)))?;
         let reached = repository.root().signed.version.get();
         match self.root_floor() {
             Some(floor) if reached < floor => {

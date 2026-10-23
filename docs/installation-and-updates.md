@@ -259,6 +259,8 @@ The recommendation keeps decision 24. The second check of section 5 is what make
 
 **The root's floor** (decision 91): `tough` verifies the chain of roots from the root built into the updater at every check, so a host that stopped serving the newer root files would take the updater back to keys a rotation retired. The updater therefore keeps the highest root version it has reached in `staging/metadata/root-version`, refuses a root below it ("the update host offered an older root"), and raises it after each check. The built-in root stays the trust anchor: the floor only refuses going back. Requirement 13.8's protection against rollback thus covers the root's versions as well as the other roles'.
 
+**The clock** (finding F-49): `tough` keeps the latest time it has seen (`staging/metadata/latest_known_time.json`) and refuses to go on when the clock is behind it, so a clock that once jumped forward and was put right left "Updates unavailable" for good. The updater now says that case in its own words ("this computer's clock … is behind the time of an earlier check"), and forgets a recorded time more than a day ahead of the clock, which a wrong clock made, and checks again.
+
 ## 9. The repository
 
 ### 9.1 Roles and keys

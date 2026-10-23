@@ -48,7 +48,11 @@ pub const UPDATER_ROOT_VERSION: &str = "root-version";
 /// removes anything else there, so nothing the confined updater leaves in
 /// its folder outlives a start (decision 87).
 pub const UPDATER_METADATA_FILES: [&str; 7] =
-    ["root.json", "timestamp.json", "snapshot.json", "targets.json", "latest_known_time.json", UPDATER_CHECKED, UPDATER_ROOT_VERSION];
+    ["root.json", "timestamp.json", "snapshot.json", "targets.json", UPDATER_KNOWN_TIME, UPDATER_CHECKED, UPDATER_ROOT_VERSION];
+/// The file in the updater's folder where `tough` keeps the latest time
+/// it has seen, so the clock set back cannot make expired metadata
+/// current again (its datastore's `system_time`).
+pub const UPDATER_KNOWN_TIME: &str = "latest_known_time.json";
 /// What the broker writes to the launcher once the trusted core found
 /// the version healthy (section 3.2).
 pub const HEALTHY_LINE: &str = "healthy\n";

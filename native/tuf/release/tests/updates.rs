@@ -400,6 +400,25 @@ fn a_release_built_with_a_test_identity_is_refused_unless_a_test() {
     assert!(!said.contains("test identity"), "a test may: {said}");
 }
 
+/// Finding F-49: one jump of the clock forward, put right later, does not
+/// leave updates unavailable for good. The client's record of the latest
+/// time it saw is dropped when it is more than a day ahead of now; a
+/// record a little ahead is said as the clock being behind, apart from
+/// other failures.
+#[test]
+fn a_clock_that_jumped_forward_does_not_stop_updates() {
+    let fixture = Fixture::new("clock");
+    let client = fixture.client("staging");
+    assert!(block(client.check()).is_ok());
+    let known = client.staging.join("metadata/latest_known_time.json");
+    std::fs::write(&known, "\"2100-01-01T00:00:00Z\"").unwrap();
+    assert_eq!(block(client.check()), Ok(Some(VERSION)), "a record decades ahead is dropped");
+    let soon = jiff::Timestamp::now().checked_add(jiff::SignedDuration::from_hours(1)).unwrap();
+    std::fs::write(&known, format!("\"{soon}\"")).unwrap();
+    let refused = block(client.check()).unwrap_err();
+    assert!(refused.contains("clock"), "{refused}");
+}
+
 /// The launcher-unchanged check (section 7): a launcher that differs from
 /// the last launcher release's is refused unless the release says it is
 /// one.
