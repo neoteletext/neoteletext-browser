@@ -70,7 +70,6 @@ impl Browser {
     }
 
     /// A press of the main button, with `extend` when Shift is held.
-    #[allow(clippy::too_many_lines, reason = "one hit-test per part of the window, in drawing order")]
     pub fn pointer_pressed<C: Canvas + ?Sized>(&mut self, canvas: &mut C, extend: bool, now: u64) -> bool {
         self.tips_pressed();
         // A press means the button was let go since the last: a drag whose
@@ -78,35 +77,55 @@ impl Browser {
         self.tabs_cancel();
         // Shift opens what a press opens in a new tab.
         self.press_new_tab = extend;
+        if let Some(taken) = self.press_overlays(extend, now) {
+            return taken;
+        }
+        if let Some(taken) = self.press_strip(canvas, extend, now) {
+            return taken;
+        }
+        self.press_body(now).unwrap_or(false)
+    }
+
+    /// A press on what lies over the window: the drop-downs, the tab
+    /// strip, the star's popover, the panels, the strip's question, the
+    /// certificate-error screen and the remote. `None` when it was on none.
+    fn press_overlays(&mut self, extend: bool, now: u64) -> Option<bool> {
         // The drop-downs and the star's popover are over everything; the
         // panels over everything below the strip.
         if self.popups_press(self.pointer, extend) || self.tabs_press(self.pointer) || self.star_press(self.pointer) {
-            return true;
+            return Some(true);
         }
         if self.history_press(self.pointer, extend) || self.bookmarks_press(self.pointer) {
-            return true;
+            return Some(true);
         }
         if self.settings_press(self.pointer) {
-            return true;
+            return Some(true);
         }
         if self.console_press(self.pointer) {
-            return true;
+            return Some(true);
         }
         #[cfg(feature = "phone-keyboard")]
         if self.phone_press(self.pointer) {
-            return true;
+            return Some(true);
         }
         // The strip's question, drawn over the address field.
         #[cfg(feature = "links")]
         if self.link_press(now) {
-            return true;
+            return Some(true);
         }
         if self.refused_press(self.pointer) {
-            return true;
+            return Some(true);
         }
         if self.remote_press(self.pointer, now) {
-            return true;
+            return Some(true);
         }
+        None
+    }
+
+    /// A press on the trusted strip: the address field, Back and Forward,
+    /// the gear, the menu, the fixed buttons, the bookmarks bar and the
+    /// empty strip, which drags the window. `None` when it was on none.
+    fn press_strip<C: Canvas + ?Sized>(&mut self, canvas: &mut C, extend: bool, now: u64) -> Option<bool> {
         let point = self.pointer;
         let regions = &self.regions;
         if regions.field.contains(point) {
@@ -116,7 +135,7 @@ impl Browser {
             } else {
                 self.start_editing();
             }
-            return true;
+            return Some(true);
         }
         self.stop_editing();
         let regions = &self.regions;
@@ -126,16 +145,16 @@ impl Browser {
                 if enabled {
                     self.hold_back_or_forward(forward, now);
                 }
-                return true;
+                return Some(true);
             }
         }
         if regions.gear.contains(point) {
             self.toggle_settings();
-            return true;
+            return Some(true);
         }
         if regions.menu.contains(point) {
             self.toggle_menu();
-            return true;
+            return Some(true);
         }
         let mute_all = Output::MuteAll(!self.all_muted());
         let action = [
@@ -152,29 +171,38 @@ impl Browser {
         .find(|(rect, _)| rect.contains(point));
         if let Some((_, output)) = action {
             self.outputs.push(output);
-            return true;
+            return Some(true);
         }
         if self.bar_press(point, extend) {
-            return true;
+            return Some(true);
         }
         let regions = &self.regions;
         if regions.strip.contains(point) {
             self.outputs.push(Output::Window(WindowAction::Drag));
-            return false;
+            return Some(false);
         }
+        None
+    }
+
+    /// A press below the strip: the banks, the list, the overview, the
+    /// page's controls, the wall's controls and a page or its cell.
+    /// `None` when it was on none.
+    fn press_body(&mut self, now: u64) -> Option<bool> {
+        let point = self.pointer;
+        let regions = &self.regions;
         if let Some(bank) = regions.banks.iter().position(|rect| rect.contains(point)) {
             self.choose_bank(bank);
-            return true;
+            return Some(true);
         }
         if regions.list.contains(point) {
             if let Some(&(_, index)) = regions.rows.iter().find(|(rect, _)| rect.contains(point)) {
                 self.select_page(index, true);
             }
-            return true;
+            return Some(true);
         }
         if regions.overview_toggle.contains(point) {
             self.toggle_overview();
-            return true;
+            return Some(true);
         }
         if regions.cells.contains(point) {
             if let Some(index) = self.cell_index(point)
@@ -182,13 +210,13 @@ impl Browser {
             {
                 self.select_page(index, true);
             }
-            return true;
+            return Some(true);
         }
         if self.controls_press(point) {
-            return true;
+            return Some(true);
         }
         if self.wall.pointer_pressed(point, now) {
-            return true;
+            return Some(true);
         }
         if let Some(click) = self.wall.cell_at(point) {
             if let Some(index) = page_index(click.key.page) {
@@ -203,7 +231,7 @@ impl Browser {
             // section 6.5, REQ-INT-115).
             #[cfg(feature = "interaction")]
             if self.wall.zoomed().is_some() && self.click_is_hosts() {
-                return self.terminal_button(neoteletext_input::event::MouseAction::Press, 0);
+                return Some(self.terminal_button(neoteletext_input::event::MouseAction::Press, 0));
             }
             if self.wall.zoomed().is_some() {
                 let version = self.versions.get(&click.key).copied().unwrap_or_default();
@@ -211,9 +239,9 @@ impl Browser {
             } else {
                 self.wall.zoom(click.key, now);
             }
-            return true;
+            return Some(true);
         }
-        false
+        None
     }
 
     /// A mouse wheel turned by `lines`, as the platform reports a wheel
