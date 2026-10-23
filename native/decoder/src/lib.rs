@@ -28,6 +28,7 @@ use std::time::Instant as Clock;
 #[cfg(feature = "links")]
 pub mod links;
 pub mod netscape;
+pub mod process;
 
 /// The most log lines held between two takes: a page carries at most the
 /// engine's `MAX_LOG_LINES_PER_PAGE`, and a feed a few pages; past this a
