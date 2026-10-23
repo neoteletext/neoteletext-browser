@@ -40,8 +40,8 @@ impl Painter {
         self.context.render(&mut self.target, &mut self.resources);
         let (full, part) = (usize::from(self.width), usize::from(width));
         for (row, pixels) in (usize::from(damage.y0)..).zip(self.target.data().chunks_exact(part.max(1))) {
-            let start = row * full + usize::from(damage.x0);
-            let Some(words) = self.words.get_mut(start..start + part) else { break };
+            let start = row.checked_mul(full).and_then(|start| start.checked_add(usize::from(damage.x0)));
+            let Some(words) = start.and_then(|start| self.words.get_mut(start..start.checked_add(part)?)) else { break };
             // Every pixel drawn is opaque, so the premultiplied colour is
             // the colour itself.
             for (word, pixel) in words.iter_mut().zip(pixels) {
@@ -52,7 +52,7 @@ impl Painter {
 
     /// Logical pixels to the damaged box's device pixels.
     pub(crate) fn base(&self) -> Affine {
-        Affine::translate((-self.origin.0, -self.origin.1)) * Affine::scale(self.scale)
+        Affine::translate((-self.origin.0, -self.origin.1)).pre_scale(self.scale)
     }
 }
 

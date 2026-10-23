@@ -89,7 +89,7 @@ impl DeviceBox {
     /// Pixels.
     #[must_use]
     pub fn area(self) -> u32 {
-        u32::from(self.width()) * u32::from(self.height())
+        u32::from(self.width()).saturating_mul(u32::from(self.height()))
     }
 
     /// The smallest box holding both.
@@ -181,8 +181,8 @@ impl Painter {
         let (old, new) = (&self.last, frame);
         let same = |before: &Recorded, after: &Recorded| before.command == after.command && old.rects(before.clip) == new.rects(after.clip);
         let (prefix, suffix) = common_ends(&old.calls, &new.calls, same);
-        let before = &old.calls[prefix..old.calls.len() - suffix];
-        let after = &new.calls[prefix..new.calls.len() - suffix];
+        let before = old.calls.get(prefix..old.calls.len().saturating_sub(suffix)).unwrap_or_default();
+        let after = new.calls.get(prefix..new.calls.len().saturating_sub(suffix)).unwrap_or_default();
         let mut damage = Damage::default();
         if before.len() == after.len() {
             // Call by call: where the two are the same, the same is drawn at
@@ -231,7 +231,8 @@ pub(crate) fn changed_dots(held: &Pixmap, rgba: &[u8]) -> DeviceBox {
     let (dots, _) = rgba.as_chunks::<RGBA_BYTES>();
     for (index, (pixel, &[red, green, blue, _])) in held.data().iter().zip(dots).enumerate() {
         if [pixel.r, pixel.g, pixel.b] != [red, green, blue] {
-            let (Ok(x), Ok(y)) = (u16::try_from(index % width), u16::try_from(index / width)) else { continue };
+            let (Some(column), Some(row)) = (index.checked_rem(width), index.checked_div(width)) else { continue };
+            let (Ok(x), Ok(y)) = (u16::try_from(column), u16::try_from(row)) else { continue };
             found = found.union(DeviceBox { x0: x, y0: y, x1: x.saturating_add(1), y1: y.saturating_add(1) });
         }
     }

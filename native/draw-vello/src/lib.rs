@@ -9,6 +9,21 @@
 //! only the box of device pixels that holds every call that changed is
 //! drawn again (`damage`).
 
+// No panicking constructs: it draws the pages and the text the trusted
+// core sends, in the interface's process (finding F-105). The same list is
+// in each crate that reads input from outside its process; scripts/check.sh
+// checks that they agree.
+#![deny(
+    clippy::indexing_slicing,
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::arithmetic_side_effects,
+    clippy::unreachable,
+    clippy::todo,
+    clippy::unimplemented
+)]
+
 mod damage;
 mod pages;
 mod raster;
@@ -160,7 +175,7 @@ impl Painter {
         if !same {
             self.width = width;
             self.height = height;
-            self.words = vec![0; usize::from(width) * usize::from(height)];
+            self.words = vec![0; usize::from(width).saturating_mul(usize::from(height))];
             self.whole = true;
         }
         self.scale = scale;
@@ -202,16 +217,17 @@ impl Painter {
     /// `age` of one), or all of it.
     pub fn copy_to(&self, words: &mut [u32], damage: &Damage, age: u8) {
         if age != 1 || words.len() != self.words.len() {
-            let all = words.len().min(self.words.len());
-            words[..all].copy_from_slice(&self.words[..all]);
+            words.iter_mut().zip(&self.words).for_each(|(word, &drawn)| *word = drawn);
             return;
         }
         let width = usize::from(self.width);
         for area in damage.boxes() {
             for row in area.y0..area.y1 {
-                let start = usize::from(row) * width + usize::from(area.x0);
-                let end = start + usize::from(area.width());
-                words[start..end].copy_from_slice(&self.words[start..end]);
+                let Some(start) = usize::from(row).checked_mul(width).and_then(|start| start.checked_add(usize::from(area.x0))) else { continue };
+                let range = start..start.saturating_add(usize::from(area.width()));
+                if let (Some(to), Some(from)) = (words.get_mut(range.clone()), self.words.get(range)) {
+                    to.copy_from_slice(from);
+                }
             }
         }
     }
