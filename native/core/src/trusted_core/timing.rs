@@ -61,6 +61,9 @@ impl Core {
         if let Some(due) = self.updates.due() {
             next = next.map(|at| at.min(due));
         }
+        if let Some(due) = self.frames_due_at() {
+            next = next.map(|at| at.min(due));
+        }
         next
     }
 
@@ -86,6 +89,9 @@ impl Core {
         }
         if self.updates.due().is_some_and(|due| now >= due) {
             self.updates.tick(self.broker.as_deref(), now);
+        }
+        if self.frames_due_at().is_some_and(|due| now >= due) {
+            self.send_due_frames(now)?;
         }
         Ok(())
     }

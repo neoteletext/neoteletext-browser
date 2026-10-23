@@ -20,6 +20,31 @@ pub(super) struct Shown {
 }
 
 impl Core {
+    /// When a frame held in any window falls due (finding F-11).
+    pub(super) fn frames_due_at(&self) -> Option<std::time::Instant> {
+        std::iter::once(&self.frames).chain(self.shown_elsewhere.values().map(|shown| &shown.frames)).filter_map(frames::Frames::next_due).min()
+    }
+
+    /// Sends every window's held frames whose interval is up, each in its
+    /// own window.
+    pub(super) fn send_due_frames(&mut self, now: std::time::Instant) -> Result<(), String> {
+        let here = self.session.window;
+        let windows: Vec<u32> = std::iter::once(here)
+            .chain(self.shown_elsewhere.iter().filter(|(_, shown)| shown.frames.next_due().is_some_and(|due| due <= now)).map(|(id, _)| *id))
+            .collect();
+        let mut result = Ok(());
+        for window in windows {
+            self.switch_window(window);
+            for (key, version, image) in self.frames.due(now) {
+                result = result.and_then(|()| self.send_frame(key, version, image));
+            }
+        }
+        self.switch_window(here);
+        result.and_then(|()| self.send_controls())
+    }
+}
+
+impl Core {
     /// Makes window `id` the one at hand, with what it shows; false when
     /// there is no such window.
     pub(super) fn switch_window(&mut self, id: u32) -> bool {
