@@ -96,9 +96,9 @@ phone ──▶ relay ──▶ neoteletext-keyboard ── PhoneKey
 
 | Threat | Mitigation |
 |---|---|
-| A compromised keyboard process types anything | It is a compromised local keyboard: no more than a hostile person at the keys |
+| A compromised keyboard process types anything | Into a page open for typing it is a compromised local keyboard: no more than a hostile person at the keys. Outside one it only moves between pages (decision 99): the trusted core passes on only the page-navigation keys, and the interface gives them to the page view alone |
 | Modifiers from the phone pressing shortcuts | A phone key carries no modifier; a message claiming one is dropped |
-| Phone keys into the address field | Only after the viewer put the caret there with the pointer (decision 7) |
+| Phone keys into the address field, a panel, or the strip's question (finding F-20: typing an address, changing the proxy, or moving to Go and confirming a hand-off or a change of site) | Never: the core's filter holds a phone to the digits, the arrows and the colour keys outside a page open for typing, and does not depend on the interface's code (decision 20); the interface drops phone keys while a field is edited, the question is asked, or a panel, popover or list is open. Not taken: refusing a confirmation within a delay after a phone key, which a keyboard that waits defeats |
 | A flood | 120 a second at the relay, the process and the core; key-ups kept |
 
 ## 5. Spoofing
@@ -134,5 +134,5 @@ Typing tells the channel the viewer's keys and the pages they open, which is wha
 
 - **A cursor record may show another page of the same channel** (`interaction.md` section 17 item 7). It cannot leave the channel, fetch, or act while keys do not go to the channel; the viewer's own choice of page overrides it. A hostile channel can move the viewer among its own pages, which it could already do by pushing what it likes into the page open. Rank 5's spoofing risk is unchanged.
 - **The fetcher reads input messages only**, one message kind, whole items of the input stream checked by the engine's reader before the agent writes it, which itself drops anything over 4 096 bytes or for a channel that does not declare input (INPUT.md, REQ-INT-133). Fuzzed as `fetcher_commands`.
-- **Phone keys travel core to interface,** which acts on them as its own keys; the interface's messages back are the same intents a keyboard makes, checked by the trusted core as always. A phone key has no modifier by construction: the keyboard process's message has no field for one. Fuzzed as `phone_keys` and, for the keyboard process's readers, `relay_messages`.
+- **Phone keys travel core to interface,** which acts on them as its own keys while a page is open for typing, and otherwise gives only the page-navigation keys to the page view (decision 99, finding F-20, 24 October 2026); the interface's messages back are the same intents a keyboard makes, checked by the trusted core as always. A phone key has no modifier by construction: the keyboard process's message has no field for one. Fuzzed as `phone_keys` and, for the keyboard process's readers, `relay_messages`.
 - **Remaining risk 1 is narrowed:** TLS (`rustls`) is built, so a channel on `wss://` types encrypted; a plain `ws://` channel still shows "Not secure".

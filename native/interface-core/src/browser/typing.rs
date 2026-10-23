@@ -158,7 +158,7 @@ impl Browser {
 
     /// Whether a panel, popover or list of the strip is open, which then
     /// takes the keys rather than the page's channel.
-    fn strip_has_keys(&self) -> bool {
+    pub(super) fn strip_has_keys(&self) -> bool {
         self.settings_open()
             || self.history_open()
             || self.cookies_editing()

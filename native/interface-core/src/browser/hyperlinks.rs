@@ -41,7 +41,7 @@ pub(super) struct LinkUi {
     /// The strip's question, and when it was asked.
     prompt: Option<(Prompt, u64)>,
     /// The question's button the keyboard is on, once the user moved there.
-    prompt_focus: Option<PromptButton>,
+    pub(super) prompt_focus: Option<PromptButton>,
     /// The open page's link the keyboard is on.
     focus: Option<usize>,
     /// The open page's link under the pointer.
@@ -74,6 +74,13 @@ impl Browser {
     pub fn set_prompt(&mut self, prompt: Option<Prompt>, now: u64) {
         self.links.prompt = prompt.map(|prompt| (prompt, now));
         self.links.prompt_focus = None;
+    }
+
+    /// Whether the strip asks its question now, when the phone's keys
+    /// are dropped (decision 99).
+    #[cfg(feature = "phone-keyboard")]
+    pub(super) fn prompt_shown(&self) -> bool {
+        self.links.prompt.is_some()
     }
 
     /// The page numbers the active channel's descriptor links elsewhere.

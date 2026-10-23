@@ -43,6 +43,8 @@ mod page_list;
 mod pages;
 #[cfg(feature = "phone-keyboard")]
 mod phone;
+#[cfg(feature = "phone-keyboard")]
+mod phone_keys;
 mod pointer;
 mod popups;
 mod regions;
@@ -64,6 +66,8 @@ pub use keys::{Key, Modifiers};
 pub use output::{Output, WindowAction};
 #[cfg(feature = "phone-keyboard")]
 pub use phone::{PhoneStatus, PhoneUiView};
+#[cfg(feature = "phone-keyboard")]
+pub use phone_keys::{PhonePageKey, phone_page_key};
 pub use pointer::Cursor;
 pub use shown::{CertificateProblem, Frame, StripState, TabInfo};
 #[cfg(feature = "interaction")]
