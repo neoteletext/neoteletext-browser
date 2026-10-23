@@ -244,6 +244,15 @@ mod tests {
         assert_eq!(super::relay_override(Some(String::from("--proxy")), true), None, "only an address");
     }
 
+    /// Finding F-64, as this build is: run with `--release`, it shows that
+    /// a release build takes no relay override, and so grants its keyboard
+    /// no local network; in a debug build, that it does, for tests.
+    #[test]
+    fn this_build_takes_another_relay_only_if_a_debug_build() {
+        let local = Some(String::from("http://127.0.0.1:8090"));
+        assert_eq!(super::relay_override(local, cfg!(debug_assertions)).is_some(), cfg!(debug_assertions));
+    }
+
     fn key(name: &str) -> FromKeyboard {
         FromKeyboard::Key { down: true, name: name.into() }
     }
