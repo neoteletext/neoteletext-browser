@@ -103,7 +103,7 @@ fn every_other_target_is_refused() {
 fn a_web_address_is_rebuilt_from_its_parts() {
     assert_eq!(web_address("HTTPS://WWW.Example.Invalid").as_deref(), Some("https://www.example.invalid/"));
     assert_eq!(web_address("http://example.invalid:8080?q=1#top").as_deref(), Some("http://example.invalid:8080/?q=1#top"));
-    assert_eq!(web_address("https://example.invalid/a%20b/c?x=1&y=(2)").as_deref(), Some("https://example.invalid/a%20b/c?x=1&y=(2)"));
+    assert_eq!(web_address("https://example.invalid/a%20b/c?x=1&y=2").as_deref(), Some("https://example.invalid/a%20b/c?x=1&y=2"));
     for text in ["https://example.invalid/ x", "https://example.invalid/\"x", "https://example.invalid/é", "https://example.invalid:/", "https://.invalid/"] {
         assert_eq!(web_address(text), None, "{text:?}");
     }
@@ -394,4 +394,19 @@ fn a_channel_owns_page_files_only_in_its_folder() {
     assert_eq!(owned(&folder, &inside), Some(Destination::Page(0x302)));
     assert_eq!(owned(&folder, &sibling), Some(Destination::Channel(sibling.clone())), "a sibling of the folder");
     assert_eq!(owned(&bare, &sibling), Some(Destination::Channel(sibling.clone())), "a name that only begins as the channel's");
+}
+
+/// Finding F-41 (decision 100), the core's side: a web address holding a
+/// character a shell gives meaning to is refused here, as the web opener
+/// refuses it, so every web target the core parses is one the opener
+/// accepts.
+#[test]
+fn a_web_address_the_opener_would_refuse_is_not_a_target() {
+    for address in ["https://a.example/x;$(id)", "https://a.example/it's", "https://a.example/(x)", "https://a.example/hey!", "https://a.example/a;b"] {
+        assert_eq!(web_address(address), None, "{address}");
+        assert_eq!(parse_target(&format!("web:{address}")), None, "{address}");
+    }
+    let plain = "https://a.example/news/story?id=3&page=2#top";
+    assert_eq!(web_address(plain).as_deref(), Some(plain));
+    assert!(web_opener::acceptable(plain));
 }
