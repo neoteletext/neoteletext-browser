@@ -23,6 +23,9 @@ pub(super) struct Decoder {
     /// Which of the channel's decoders this is: one put to sleep may still
     /// report after the next has started, and is then not listened to.
     pub(super) generation: u64,
+    /// It has said something: an end before then is a failure to start,
+    /// counted against the version (finding F-12).
+    pub(super) heard: bool,
 }
 
 pub(super) struct Fetcher {
@@ -32,6 +35,8 @@ pub(super) struct Fetcher {
     /// What a fetcher is given: input messages (REQ-INT-133), and the
     /// answers to its cookie questions (decision 62).
     pub(super) input: Option<Outbox>,
+    /// As [`Decoder::heard`].
+    pub(super) heard: bool,
 }
 
 /// Where a new fetcher may connect: the local addresses allowed, from the
@@ -86,7 +91,7 @@ pub(super) fn start_decoder(broker: &Arc<Broker>, channel: u32, generation: u64,
         move |message| Event::Decoded(channel, generation, message),
         move |end| Event::DecoderEnded(channel, generation, end),
     );
-    Ok(Decoder { child, input, generation })
+    Ok(Decoder { child, input, generation, heard: false })
 }
 
 /// Starts a decoder to read another browser's bookmark file (decision
@@ -154,7 +159,7 @@ pub(super) fn start_fetcher(
         move |end| Event::FetcherEnded(channel, generation, end),
     );
     let input = child.stdin.take().map(Outbox::new);
-    Ok(Fetcher { child, generation, input })
+    Ok(Fetcher { child, generation, input, heard: false })
 }
 
 pub(super) fn read_interface(child: &mut Helper, events: Sender<Event>) -> Result<(), String> {

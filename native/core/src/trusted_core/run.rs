@@ -27,27 +27,18 @@ fn handle(core: &mut Core, event: Event) -> Result<bool, String> {
             return go;
         }
         Event::Decoded(channel, generation, message) => {
+            core.decoder_heard(channel, generation);
             if core.decoders.get(&channel).map(|decoder| decoder.generation) == Some(generation) {
                 core.in_window_of(channel, |core| core.decoded(channel, message))?;
             }
         }
         Event::Fetched(channel, generation, message) => {
+            core.fetcher_heard(channel, generation);
             if core.fetchers.get(&channel).map(|fetcher| fetcher.generation) == Some(generation) {
                 core.in_window_of(channel, |core| core.fetched(channel, message))?;
             }
         }
-        Event::FetcherEnded(channel, generation, reason) => {
-            if core.fetchers.get(&channel).map(|fetcher| fetcher.generation) == Some(generation) {
-                core.log(
-                    Level::Error,
-                    None,
-                    &format!("the fetcher for channel {channel} stopped{}", reason.map(|reason| format!(": {reason}")).unwrap_or_default()),
-                );
-                if let Some(mut fetcher) = core.fetchers.remove(&channel) {
-                    let _ = fetcher.child.wait();
-                }
-            }
-        }
+        Event::FetcherEnded(channel, generation, reason) => core.fetcher_ended(channel, generation, reason),
         Event::Intent(intent) => {
             // What the intent changes in a tab's list is stamped with now.
             core.session.now = neoteletext::calendar::utc_now();
