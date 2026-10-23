@@ -25,6 +25,7 @@ pub mod input;
 pub mod library;
 #[cfg(feature = "links")]
 pub mod links;
+mod session;
 pub mod settings;
 pub mod size;
 #[cfg(test)]
