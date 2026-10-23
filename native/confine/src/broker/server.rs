@@ -8,8 +8,6 @@ use std::path::{Path, PathBuf};
 
 use super::wire::{Exit, Reply, Request, decode_request, encode_reply};
 use super::{COOKIE_KEY_BYTES, Channel, MAX_HELPERS, MAX_REPLY, MAX_REQUEST, MAX_UPDATE_STATE, Program, UpdaterGrant};
-#[cfg(windows)]
-use super::{HEADER_BYTES, KIND_SPAWNED, wire::frame};
 use crate::{Process, Report, Role, Spawn};
 
 /// What the broker does for the core that is not starting helpers.
@@ -70,7 +68,7 @@ pub fn start_core(program: &Path, arguments: &[OsString], writable: &Path, envir
         #[cfg(not(target_os = "macos"))]
         let report = Report { layers: vec![String::from("confines itself at its start")] };
         let process = Process::new(None, None, child, report.clone());
-        Ok(Core { process, channel: Channel { stream: ours }, report })
+        Ok(Core { process, channel: Channel::new(ours), report })
     }
     #[cfg(windows)]
     {
@@ -78,7 +76,7 @@ pub fn start_core(program: &Path, arguments: &[OsString], writable: &Path, envir
         let writer = process.stdin.take().ok_or_else(|| io::Error::other("the core has no input"))?;
         let reader = process.stdout.take().ok_or_else(|| io::Error::other("the core has no output"))?;
         let report = process.report.clone();
-        Ok(Core { process, channel: Channel { reader, writer }, report })
+        Ok(Core { process, channel: Channel::new(reader, writer), report })
     }
 }
 
@@ -198,22 +196,5 @@ fn start_helper(programs: &Path, program: Program, local_network: bool, argument
 /// Sends the core a started helper's number, with its two pipes.
 fn send_spawned(core: &mut Core, id: u32, report: &str, stdin: &crate::Input, stdout: &crate::Output) -> io::Result<()> {
     let bytes = encode_reply(&Reply::Spawned { id, report: report.to_owned() })?;
-    #[cfg(unix)]
-    {
-        use std::os::fd::AsRawFd as _;
-        crate::unix::send(&core.channel.stream, &bytes, &[stdin.as_raw_fd(), stdout.as_raw_fd()])
-        // Our copies close here; the core holds its own.
-    }
-    #[cfg(windows)]
-    {
-        // The handles are duplicated into the core and their values sent
-        // after the reply's fields; the frame's length counts them.
-        let into = core.process.raw_process();
-        let values = [crate::windows::duplicate_into(stdin, into)?, crate::windows::duplicate_into(stdout, into)?];
-        let mut payload = bytes.get(HEADER_BYTES..).unwrap_or_default().to_vec();
-        for value in values {
-            payload.extend_from_slice(&value.to_be_bytes());
-        }
-        core.channel.write(&frame(KIND_SPAWNED, &payload)?)
-    }
+    core.channel.send_spawned(&bytes, stdin, stdout, &core.process)
 }

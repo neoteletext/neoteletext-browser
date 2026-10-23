@@ -48,6 +48,7 @@ use crate::{Process, Report, Role, Spawn};
 
 mod acl;
 mod attributes;
+mod channel;
 mod container;
 mod handles;
 mod job;
@@ -55,7 +56,7 @@ mod process;
 mod time;
 mod token;
 
-pub(crate) use handles::{duplicate_into, file_from_handle_value};
+pub(crate) use channel::Channel;
 pub use process::Inner;
 pub(crate) use time::local_offset;
 

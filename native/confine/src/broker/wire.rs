@@ -142,7 +142,7 @@ impl<'a> Fields<'a> {
     }
 }
 
-pub(super) fn frame(kind: u8, payload: &[u8]) -> io::Result<Vec<u8>> {
+pub(crate) fn frame(kind: u8, payload: &[u8]) -> io::Result<Vec<u8>> {
     let length = u32::try_from(payload.len()).map_err(|_| io::ErrorKind::InvalidInput)?;
     let mut bytes = Vec::with_capacity(HEADER_BYTES.saturating_add(payload.len()));
     bytes.push(kind);
@@ -312,7 +312,7 @@ pub fn decode_reply(kind: u8, payload: Vec<u8>) -> io::Result<Reply> {
 }
 
 /// A frame's header: its kind, and its length if within `max`.
-pub(super) fn header(bytes: [u8; HEADER_BYTES], max: usize) -> io::Result<(u8, usize)> {
+pub(crate) fn header(bytes: [u8; HEADER_BYTES], max: usize) -> io::Result<(u8, usize)> {
     let [kind, a, b, c, d] = bytes;
     let length = u32::from_be_bytes([a, b, c, d]) as usize;
     if length > max {

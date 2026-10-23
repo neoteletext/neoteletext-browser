@@ -4,19 +4,11 @@
 use std::fmt;
 use std::fs::File;
 use std::io;
-#[cfg(unix)]
-use std::io::Read;
 use std::path::Path;
 use std::sync::{Arc, Mutex, PoisonError};
 
-#[cfg(unix)]
-use super::HEADER_BYTES;
-#[cfg(windows)]
-use super::KIND_SPAWNED;
-#[cfg(unix)]
-use super::wire::header;
 use super::wire::{Exit, Reply, Request, decode_reply, encode_request};
-use super::{COOKIE_KEY_BYTES, Channel, MAX_REPLY, MAX_UPDATE_STATE, Program};
+use super::{COOKIE_KEY_BYTES, Channel, MAX_UPDATE_STATE, Program};
 use crate::{LocalTime, Process, Report};
 
 /// The core's connection to its broker.
@@ -53,13 +45,7 @@ impl Helper {
     /// A helper started in this process with [`crate::spawn`], for tests.
     #[must_use]
     pub fn local(mut process: Process) -> Self {
-        #[cfg(unix)]
-        let (stdin, stdout) = (
-            process.stdin.take().map(|pipe| File::from(std::os::fd::OwnedFd::from(pipe))),
-            process.stdout.take().map(|pipe| File::from(std::os::fd::OwnedFd::from(pipe))),
-        );
-        #[cfg(windows)]
-        let (stdin, stdout) = (process.stdin.take(), process.stdout.take());
+        let (stdin, stdout) = process.take_files();
         let report = process.report.clone();
         Self { stdin, stdout, report, how: How::Local(process) }
     }
@@ -102,22 +88,7 @@ impl Broker {
     /// # Errors
     /// When this process was not started by a broker.
     pub fn from_parent() -> io::Result<Arc<Self>> {
-        #[cfg(unix)]
-        {
-            use std::os::fd::AsFd as _;
-            let descriptor = io::stdin().as_fd().try_clone_to_owned()?;
-            let stream = std::os::unix::net::UnixStream::from(descriptor);
-            // Standard input that is not a socket was not set up by a broker.
-            stream.peer_addr().map_err(|_| io::Error::other("this program is started by the browser's broker, not directly"))?;
-            Ok(Arc::new(Self { channel: Mutex::new(Channel { stream }) }))
-        }
-        #[cfg(windows)]
-        {
-            use std::os::windows::io::AsHandle as _;
-            let reader = File::from(io::stdin().as_handle().try_clone_to_owned()?);
-            let writer = File::from(io::stdout().as_handle().try_clone_to_owned()?);
-            Ok(Arc::new(Self { channel: Mutex::new(Channel { reader, writer }) }))
-        }
+        Ok(Arc::new(Self { channel: Mutex::new(Channel::from_stdin()?) }))
     }
 
     /// Sends one request and reads its reply, with the pipes that came
@@ -126,34 +97,8 @@ impl Broker {
         let bytes = encode_request(request)?;
         let mut channel = self.channel.lock().unwrap_or_else(PoisonError::into_inner);
         channel.write(&bytes)?;
-        #[cfg(unix)]
-        {
-            let mut head = [0_u8; HEADER_BYTES];
-            let descriptors = crate::unix::receive(&channel.stream, &mut head)?;
-            let (kind, length) = header(head, MAX_REPLY)?;
-            let mut payload = Vec::with_capacity(length);
-            (&channel.stream).take(length as u64).read_to_end(&mut payload)?;
-            if payload.len() != length {
-                return Err(io::ErrorKind::UnexpectedEof.into());
-            }
-            let reply = decode_reply(kind, payload)?;
-            Ok((reply, descriptors.into_iter().map(File::from).collect()))
-        }
-        #[cfg(windows)]
-        {
-            let (kind, mut payload) = channel.read_frame(MAX_REPLY)?;
-            let mut pipes = Vec::new();
-            if kind == KIND_SPAWNED {
-                // Two handle values the broker duplicated into this process
-                // follow the reply's own fields.
-                let tail = payload.len().saturating_sub(16);
-                let values: Vec<u8> = payload.split_off(tail);
-                for chunk in values.as_chunks::<8>().0 {
-                    pipes.push(crate::windows::file_from_handle_value(u64::from_be_bytes(*chunk))?);
-                }
-            }
-            Ok((decode_reply(kind, payload)?, pipes))
-        }
+        let (kind, payload, pipes) = channel.receive_reply()?;
+        Ok((decode_reply(kind, payload)?, pipes))
     }
 
     /// Starts `program` with `arguments`.

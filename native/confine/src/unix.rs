@@ -6,8 +6,10 @@
 //! time zone's offset, which the standard library does not offer, from
 //! the C library's own `localtime_r`.
 
+mod channel;
 mod descriptors;
 mod time;
 
+pub(crate) use channel::Channel;
 pub(crate) use descriptors::{receive, send};
 pub(crate) use time::local_offset;

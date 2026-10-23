@@ -59,6 +59,19 @@ impl Process {
         self.inner.wait()
     }
 
+    /// The pipes as files, taken: for a helper started in this process,
+    /// whose pipes the core reads and writes as it does a brokered one's.
+    pub(crate) fn take_files(&mut self) -> (Option<std::fs::File>, Option<std::fs::File>) {
+        #[cfg(unix)]
+        let (stdin, stdout) = (
+            self.stdin.take().map(|pipe| std::fs::File::from(std::os::fd::OwnedFd::from(pipe))),
+            self.stdout.take().map(|pipe| std::fs::File::from(std::os::fd::OwnedFd::from(pipe))),
+        );
+        #[cfg(windows)]
+        let (stdin, stdout) = (self.stdin.take(), self.stdout.take());
+        (stdin, stdout)
+    }
+
     /// The process, for duplicating handles into it (decision 56).
     #[cfg(windows)]
     pub(crate) fn raw_process(&self) -> windows_sys::Win32::Foundation::HANDLE {

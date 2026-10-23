@@ -17,12 +17,13 @@
 //! broker duplicates the helper's pipe handles into the core's process
 //! and sends their values.
 
-#[cfg(windows)]
-use std::fs::File;
-use std::io::{self, Read, Write};
 use std::path::PathBuf;
 
 use crate::Role;
+#[cfg(unix)]
+use crate::unix::Channel;
+#[cfg(windows)]
+use crate::windows::Channel;
 
 mod client;
 mod server;
@@ -30,7 +31,9 @@ mod wire;
 
 pub use client::{Broker, Helper};
 pub use server::{Core, Handlers, serve, start_core};
-use wire::header;
+#[cfg(windows)]
+pub(crate) use wire::frame;
+pub(crate) use wire::header;
 pub use wire::{Exit, Reply, Request, decode_reply, decode_request, encode_reply, encode_request};
 
 /// The most helpers alive at once: far more than tabs (`protocol::MAX_TABS`
@@ -47,7 +50,7 @@ pub const MAX_REPLY: usize = 64 * 1024 * 1024 + 64 * 1024;
 /// A request is never more than its arguments.
 const MAX_REQUEST: usize = MAX_ARGUMENTS * (MAX_TEXT + 2) + 16;
 /// A frame's kind byte and big-endian length.
-const HEADER_BYTES: usize = 5;
+pub(crate) const HEADER_BYTES: usize = 5;
 
 const KIND_SPAWN: u8 = 1;
 const KIND_KILL: u8 = 2;
@@ -58,7 +61,7 @@ const KIND_LOCAL_TIME: u8 = 6;
 const KIND_COOKIE_KEY: u8 = 7;
 const KIND_HEALTHY: u8 = 8;
 const KIND_UPDATE_STATE: u8 = 9;
-const KIND_SPAWNED: u8 = 11;
+pub(crate) const KIND_SPAWNED: u8 = 11;
 const KIND_DONE: u8 = 12;
 const KIND_EXITED: u8 = 13;
 const KIND_SOURCE: u8 = 14;
@@ -158,42 +161,5 @@ impl Program {
 
     fn from_code(code: u8) -> Option<Self> {
         Self::ALL.into_iter().find(|program| program.code() == code)
-    }
-}
-
-/// One end of the broker's channel.
-struct Channel {
-    #[cfg(unix)]
-    stream: std::os::unix::net::UnixStream,
-    #[cfg(windows)]
-    reader: File,
-    #[cfg(windows)]
-    writer: File,
-}
-
-impl Channel {
-    fn read_frame(&mut self, max: usize) -> io::Result<(u8, Vec<u8>)> {
-        let mut bytes = [0_u8; HEADER_BYTES];
-        #[cfg(unix)]
-        let reader = &mut self.stream;
-        #[cfg(windows)]
-        let reader = &mut self.reader;
-        reader.read_exact(&mut bytes)?;
-        let (kind, length) = header(bytes, max)?;
-        let mut payload = Vec::with_capacity(length);
-        reader.take(length as u64).read_to_end(&mut payload)?;
-        if payload.len() != length {
-            return Err(io::ErrorKind::UnexpectedEof.into());
-        }
-        Ok((kind, payload))
-    }
-
-    fn write(&mut self, bytes: &[u8]) -> io::Result<()> {
-        #[cfg(unix)]
-        let writer = &mut self.stream;
-        #[cfg(windows)]
-        let writer = &mut self.writer;
-        writer.write_all(bytes)?;
-        writer.flush()
     }
 }
