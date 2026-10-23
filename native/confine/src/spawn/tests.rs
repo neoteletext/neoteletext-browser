@@ -132,7 +132,7 @@ fn the_interface_reaches_no_network_and_no_user_file() {
         spawn(&Spawn { program: &program, arguments: &arguments, role: Role::Interface, environment: &environment, local_network: false, writable: None })
             .unwrap();
     let output = process.stdout.take().unwrap();
-    let line = BufReader::new(output).lines().map_while(Result::ok).find(|line| line.starts_with("REACH")).unwrap_or_default();
+    let line = BufReader::new(output).lines().map_while(Result::ok).filter(|line| line.starts_with("REACH")).last().unwrap_or_default();
     let _ = process.wait();
     let _ = std::fs::remove_file(&file);
     drop(listener);
@@ -140,4 +140,46 @@ fn the_interface_reaches_no_network_and_no_user_file() {
         assert!(line.contains(expected), "{expected}: {line} ({})", process.report);
     }
     assert!(process.report.layers.iter().any(|layer| layer == "AppContainer"), "{}", process.report);
+}
+
+/// What a spawned copy of this test binary connects to as a fetcher: a
+/// listener's port on this computer.
+#[cfg(target_os = "macos")]
+const LOOPBACK_PORT: &str = "NEOTELETEXT_CONFINE_LOOPBACK_PORT";
+
+/// The loopback probe: run by `a_fetcher_reaches_this_computer_only_when_allowed`,
+/// never on its own.
+#[cfg(target_os = "macos")]
+#[test]
+fn loopback_probe() {
+    let Some(port) = std::env::var_os(LOOPBACK_PORT) else { return };
+    let address = format!("127.0.0.1:{}", port.to_string_lossy());
+    let reached = std::net::TcpStream::connect(address).map_or("refused", |_| "connected");
+    println!("LOOPBACK {reached}");
+}
+
+/// Decision 89 (finding F-05): on macOS a fetcher's profile refuses this
+/// computer's addresses unless the user allowed the local network
+/// (requirement 5.10), so a compromised fetcher cannot reach the services
+/// on loopback. Before, it connected either way.
+#[cfg(target_os = "macos")]
+#[test]
+fn a_fetcher_reaches_this_computer_only_when_allowed() {
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port().to_string();
+    let program = std::env::current_exe().unwrap();
+    let arguments = [OsString::from("--exact"), OsString::from("spawn::tests::loopback_probe"), OsString::from("--nocapture")];
+    let mut environment = environment(Role::Network);
+    environment.push((OsString::from(LOOPBACK_PORT), OsString::from(&port)));
+    let reached = |local_network: bool| {
+        let mut process =
+            spawn(&Spawn { program: &program, arguments: &arguments, role: Role::Network, environment: &environment, local_network, writable: None }).unwrap();
+        // Read to the end, so the probe's last lines find a reader.
+        let line =
+            BufReader::new(process.stdout.take().unwrap()).lines().map_while(Result::ok).filter(|line| line.starts_with("LOOPBACK")).last().unwrap_or_default();
+        let _ = process.wait();
+        line
+    };
+    assert_eq!(reached(false), "LOOPBACK refused");
+    assert_eq!(reached(true), "LOOPBACK connected");
 }

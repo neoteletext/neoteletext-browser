@@ -339,6 +339,7 @@ Withdrawn on 23 October 2026 (decision 66): no font is fetched; every page is dr
 - **Source:** Architecture; `neoteletext` requirement REQ-SEC-006.
 - **Verification:** Test for each range.
 - **State:** Met: refused by the engine's user agent unless allowed, with `--allow-local` or in the settings panel (requirement 19.3); through a proxy, by requirement 19.11.
+- *Residual, 24 October 2026 (decision 89):* the engine's check is the fetcher's own, so a compromised fetcher or phone keyboard is held off this computer by its sandbox on macOS (the profile refuses `localhost` unless the channel may reach the local network; test `a_fetcher_reaches_this_computer_only_when_allowed`) and on Windows (an AppContainer reaches loopback only with an exemption, which none has), but not off the local network beyond it on macOS, nor off either on Linux. Connecting in the broker is the planned design that closes it.
 
 ### Requirement 5.11: Compression is bounded
 - **Statement:** The fetcher must undo compression with a fixed maximum decompressed size, the engine's constant.

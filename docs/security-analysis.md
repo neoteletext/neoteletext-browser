@@ -134,6 +134,8 @@ Boundary 4 of the earlier design, the font helper, is gone: no font is fetched f
 - **Can:** send false pages and contents for its own channel, which that channel's server, or a network attacker on a plain connection, could do anyway.
 - **Cannot, on every platform** (decisions 52 and 58): read any file but the system's name-resolution files, start a program, or reach any service but the resolver's: on macOS its profile starts from "deny everything" (section 13); on Linux, Landlock with the resolver's directories alone and a system-call filter allowing only the internet families' sockets and routing netlink, no local socket (decision 86); on Windows an AppContainer with the internet client capability, in a job (`sandboxing.md`).
 
+- **Local network (decision 89):** the refusal of this computer and the local network (requirement 5.10) is the engine's check, inside the fetcher. A compromised fetcher or phone keyboard is kept off this computer's addresses by its macOS profile, which refuses `localhost` unless the user allowed the local network, and on Windows by its AppContainer; it is not kept off the local network beyond this computer on macOS (the profile language cannot name private ranges), nor off either on Linux. Connecting in the broker and passing the socket to the fetcher is the planned design; it needs its own design and security analysis.
+
 **Remaining risk:** low.
 
 ### 5.2 Boundary 2: the fetcher into the trusted core

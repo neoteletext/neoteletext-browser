@@ -44,21 +44,34 @@ const SYSTEM_READS: &str = "(deny network*)
 (allow file-read* (subpath \"/System\") (subpath \"/Library\") (subpath \"/usr\") (subpath \"/private/var/db\") (subpath \"/private/var/folders\") (subpath \"/private/etc\") (subpath \"/dev\"))
 ";
 
+/// A fetcher's refusal of this computer's addresses, when the user has not
+/// allowed the local network (decision 89, requirement 5.10): it comes after
+/// the profile's allowing of TCP, and the later rule wins. The profile
+/// language names `localhost` but no private ranges, so the local network
+/// beyond this computer is left to the fetcher's own check.
+const NO_LOOPBACK: &str = "(deny network-outbound (remote ip \"localhost:*\"))\n";
+
 /// The profile for `program` as `role` says; `writable` is the core's
-/// settings folder.
-fn profile(program: &Path, role: Role, writable: Option<&Path>) -> String {
+/// settings folder, and `local_network` whether a fetcher may reach this
+/// computer.
+fn profile(program: &Path, role: Role, writable: Option<&Path>, local_network: bool) -> String {
     let mut profile = preamble(program);
     match role {
         Role::Decoder => profile.push_str("(deny network*)\n"),
         // Names are resolved through mDNSResponder's socket and
         // opendirectoryd's libinfo, with the hosts file.
-        Role::Network => profile.push_str(
-            "(system-network)
+        Role::Network => {
+            profile.push_str(
+                "(system-network)
 (allow network-outbound (remote tcp \"*:*\") (literal \"/private/var/run/mDNSResponder\"))
 (allow mach-lookup (global-name \"com.apple.system.opendirectoryd.libinfo\") (global-name \"com.apple.system.DirectoryService.libinfo_v1\"))
 (allow file-read* (literal \"/private/etc/hosts\") (literal \"/private/etc/resolv.conf\") (literal \"/private/var/run/resolv.conf\"))
 ",
-        ),
+            );
+            if !local_network {
+                profile.push_str(NO_LOOPBACK);
+            }
+        }
         // Found by running the interface under candidate profiles (21
         // October 2026): it needs to read the system's folders and the
         // metadata of any path (the root's symbolic links), and the
@@ -151,7 +164,7 @@ pub(crate) fn apply() -> Report {
 /// The command that runs the helper under its profile.
 pub(crate) fn command(spawn: &Spawn<'_>) -> Command {
     let mut command = Command::new("/usr/bin/sandbox-exec");
-    command.arg("-p").arg(profile(spawn.program, spawn.role, spawn.writable)).arg(spawn.program).args(spawn.arguments);
+    command.arg("-p").arg(profile(spawn.program, spawn.role, spawn.writable, spawn.local_network)).arg(spawn.program).args(spawn.arguments);
     command
 }
 
@@ -165,21 +178,21 @@ mod tests {
     fn profiles_start_from_nothing_and_give_the_network_only_to_fetchers() {
         let program = Path::new("/Applications/NeoTeletext.app/Contents/MacOS/neoteletext-decoder");
         for role in [Role::Decoder, Role::Network, Role::Interface, Role::Core, Role::Sound] {
-            let profile = profile(program, role, None);
+            let profile = profile(program, role, None, false);
             assert!(profile.starts_with("(version 1)\n(deny default)\n(import \"system.sb\")\n"), "{role:?}");
             assert!(profile.contains("(allow process-exec (literal \"/Applications/NeoTeletext.app/Contents/MacOS/neoteletext-decoder\"))"));
             assert_eq!(profile.contains("(deny network*)"), role != Role::Network, "{role:?}");
             assert_eq!(profile.contains("(system-network)"), role == Role::Network, "{role:?}");
             assert!(!profile.contains("(allow default)"));
         }
-        assert!(!profile(program, Role::Decoder, None).contains("mach-lookup"), "a decoder looks nothing up");
-        assert!(!profile(program, Role::Core, None).contains("mach-lookup"), "nor does the core");
-        assert!(!profile(program, Role::Interface, None).contains("audio"), "sound is the sound helper's");
+        assert!(!profile(program, Role::Decoder, None, false).contains("mach-lookup"), "a decoder looks nothing up");
+        assert!(!profile(program, Role::Core, None, false).contains("mach-lookup"), "nor does the core");
+        assert!(!profile(program, Role::Interface, None, false).contains("audio"), "sound is the sound helper's");
         assert!(
-            profile(program, Role::Interface, None).contains("(global-name \"com.apple.windowmanager.server\")"),
+            profile(program, Role::Interface, None, false).contains("(global-name \"com.apple.windowmanager.server\")"),
             "without it the window never reaches the screen"
         );
-        let core = profile(program, Role::Core, Some(Path::new("/Users/someone/Library/Application Support/NeoTeletext")));
+        let core = profile(program, Role::Core, Some(Path::new("/Users/someone/Library/Application Support/NeoTeletext")), false);
         assert!(core.contains("(allow file-read* file-write* (subpath \"/Users/someone/Library/Application Support/NeoTeletext\"))"));
     }
 
@@ -189,7 +202,7 @@ mod tests {
     fn the_updater_reaches_one_port_and_writes_only_its_staging_folder() {
         let program = Path::new("/Applications/NeoTeletext.app/Contents/MacOS/neoteletext-updater");
         let staging = Path::new("/Users/someone/Library/Application Support/NeoTeletext Updates/staging");
-        let updater = profile(program, Role::Updater { port: 443 }, Some(staging));
+        let updater = profile(program, Role::Updater { port: 443 }, Some(staging), false);
         assert!(updater.starts_with("(version 1)\n(deny default)\n"));
         assert!(updater.contains("(remote tcp \"*:443\")"));
         assert!(!updater.contains("*:*"), "no other port");
