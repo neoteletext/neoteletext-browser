@@ -117,10 +117,18 @@ mod linux {
         let netlink_audit = socket(libc::AF_NETLINK, libc::SOCK_RAW, libc::NETLINK_AUDIT);
         let resolve = ("localhost", 0).to_socket_addrs().map_or_else(|error| format!("failed ({error})"), |_| String::from("resolved"));
         let steal = probe::take_descriptor(&own_process, STANDARD_INPUT).map_or("refused", |()| "took");
+        #[cfg(target_arch = "x86_64")]
+        let x32 = match probe::x32_getpid() {
+            Ok(_) => String::from("ran"),
+            Err(error) if error.kind() == ErrorKind::PermissionDenied => String::from("refused"),
+            Err(error) => format!("failed ({error})"),
+        };
+        #[cfg(not(target_arch = "x86_64"))]
+        let x32 = "none";
         println!(
             "PROBE report={report}; file={file}; program={program}; tcp={tcp}; write={write}; other-port={other_port}; own-folder={own}; \
              bus={bus}; display={display}; sound={sound}; user-bus={user_bus}; system-bus={system_bus}; netlink-route={netlink_route}; \
-             netlink-audit={netlink_audit}; resolve={resolve}; steal={steal}"
+             netlink-audit={netlink_audit}; resolve={resolve}; steal={steal}; x32={x32}"
         );
     }
 }

@@ -56,3 +56,16 @@ pub fn take_descriptor(process: &OwnedFd, target: RawFd) -> io::Result<()> {
     // what it returns is owned and closed here.
     owned(unsafe { libc::syscall(libc::SYS_pidfd_getfd, process.as_raw_fd(), target, 0) }).map(drop)
 }
+
+/// `getpid` by its x32 number, as code that slips past a filter checking
+/// x86-64's numbers would call `execve`.
+///
+/// # Errors
+/// As the system call: ENOSYS where the kernel has no x32, EPERM where
+/// the sandbox refuses it.
+#[cfg(target_arch = "x86_64")]
+pub fn x32_getpid() -> io::Result<libc::c_long> {
+    let number = libc::c_long::from(super::seccomp::X32_SYSCALL_BIT) | libc::SYS_getpid;
+    // SAFETY: getpid takes no arguments, by whichever number.
+    checked(unsafe { libc::syscall(number) })
+}

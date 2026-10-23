@@ -146,3 +146,17 @@ fn no_helper_takes_another_process_descriptor() {
         assert!(line.contains("steal=refused"), "{role}: {line}");
     }
 }
+
+/// Finding F-21: the filter's deny-list holds under the x32 ABI's numbers
+/// too, which seccompiler's architecture check alone lets through, since
+/// x32 shares x86-64's architecture value. Before, `getpid` by its x32
+/// number ran where the kernel has x32 and failed with ENOSYS where it has
+/// not, so `execve` by its x32 number would have run where it has.
+#[cfg(target_arch = "x86_64")]
+#[test]
+fn no_role_calls_by_the_x32_numbers() {
+    for role in ["decoder", "network", "interface", "sound", "updater"] {
+        let line = probe(role, &[]);
+        assert!(line.contains("x32=refused"), "{role}: {line}");
+    }
+}
