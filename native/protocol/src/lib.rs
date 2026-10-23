@@ -92,6 +92,10 @@ const KIND_PHONE: u8 = 41;
 const KIND_PHONE_KEY: u8 = 42;
 const KIND_SETTINGS: u8 = 43;
 const KIND_CONSOLE_UPDATE: u8 = 44;
+// Windows (`multiple-windows.md`, decision 72).
+const KIND_TARGET: u8 = 46;
+const KIND_OPEN_WINDOW: u8 = 47;
+const KIND_CLOSE_WINDOW_VIEW: u8 = 49;
 // Interface to trusted core: intents.
 const KIND_VISIBLE: u8 = 16;
 const KIND_CELL: u8 = 17;
@@ -155,6 +159,15 @@ const KIND_COOKIES: u8 = 70;
 const KIND_RELOAD: u8 = 71;
 const KIND_PAGE_CONTROL: u8 = 72;
 const KIND_MOVE_TAB: u8 = 73;
+const KIND_FROM: u8 = 74;
+const KIND_NEW_WINDOW: u8 = 75;
+const KIND_TAB_TO_WINDOW: u8 = 76;
+const KIND_CLOSE_WINDOW: u8 = 77;
+/// A window's number on the wire, for a new window: no window has it.
+pub const NEW_WINDOW: u32 = 0;
+/// The first window's number: the window the interface opens at start, and
+/// the one messages are for until a `Target` names another.
+pub const FIRST_WINDOW: u32 = 1;
 
 // The strip's flags.
 const ENCRYPTED: u8 = 1;
@@ -258,6 +271,18 @@ pub enum ToInterface {
     /// Where the remote control is, as kept (`remote-control.md`, decision
     /// 68).
     Remote(settings::RemotePlace),
+    /// The messages that follow are for this window, until the next
+    /// (`multiple-windows.md`); before the first, for the first window.
+    Target(u32),
+    /// Open a window of this number, at this place if kept.
+    OpenWindow {
+        /// Its number, never [`NEW_WINDOW`].
+        window: u32,
+        /// Its place and size, when kept.
+        geometry: Option<library::WindowGeometry>,
+    },
+    /// Close the window of this number: its tabs are gone.
+    CloseWindow(u32),
     /// The browser is closing: the interface ends.
     Close,
 }
@@ -392,6 +417,27 @@ pub enum ToCore {
     Cookies(cookies::CookiesRequest),
     /// Strip input: a key of the open page's controls (decision 67).
     PageControl(interface_core::controls::PageControl),
+    /// The intents that follow are from this window, until the next
+    /// (`multiple-windows.md`).
+    From(u32),
+    /// Strip input: open a new window, private or not.
+    NewWindow {
+        /// A private window.
+        private: bool,
+    },
+    /// Strip input: move the tab at this place of the window the intent is
+    /// from into another window, before the tab at `index` there; to a new
+    /// window when `window` is [`NEW_WINDOW`].
+    TabToWindow {
+        /// Its place now.
+        tab: u8,
+        /// The window it moves to.
+        window: u32,
+        /// Its place there.
+        index: u8,
+    },
+    /// Strip input: close the window the intent is from, and its tabs.
+    CloseWindow,
 }
 
 /// Why a message could not be read or written.
@@ -531,6 +577,40 @@ fn push_keys(payload: &mut Vec<u8>, keys: &[PageKey]) -> Result<(), ProtocolErro
         push_key(payload, key);
     }
     Ok(())
+}
+
+/// One of the window intents (`multiple-windows.md`).
+fn window_intent(kind: u8, fields: &mut Fields<'_>) -> Result<ToCore, ProtocolError> {
+    Ok(match kind {
+        KIND_FROM => ToCore::From(window_number(fields)?),
+        KIND_NEW_WINDOW => ToCore::NewWindow { private: flag_byte(fields)? },
+        KIND_TAB_TO_WINDOW => {
+            let tab = fields.u8()?;
+            let window = fields.u32()?;
+            let index = fields.u8()?;
+            if usize::from(tab) >= MAX_TABS || usize::from(index) > MAX_TABS {
+                return Err(ProtocolError::BadValue("tab place"));
+            }
+            ToCore::TabToWindow { tab, window, index }
+        }
+        KIND_CLOSE_WINDOW => ToCore::CloseWindow,
+        other => return Err(ProtocolError::UnknownKind(other)),
+    })
+}
+
+/// A window's number, never [`NEW_WINDOW`].
+fn window_number(fields: &mut Fields<'_>) -> Result<u32, ProtocolError> {
+    let window = fields.u32()?;
+    if window == NEW_WINDOW { Err(ProtocolError::BadValue("window number")) } else { Ok(window) }
+}
+
+/// A byte that is 0 or 1.
+fn flag_byte(fields: &mut Fields<'_>) -> Result<bool, ProtocolError> {
+    match fields.u8()? {
+        0 => Ok(false),
+        1 => Ok(true),
+        _ => Err(ProtocolError::BadValue("flag")),
+    }
 }
 
 /// Reads fields from a payload, failing on any short read.
@@ -762,6 +842,24 @@ pub fn write_to_interface(out: &mut dyn Write, message: &ToInterface) -> Result<
             settings::push_remote(&mut payload, *place)?;
             KIND_REMOTE
         }
+        ToInterface::Target(window) => {
+            payload.extend_from_slice(&window.to_be_bytes());
+            KIND_TARGET
+        }
+        ToInterface::OpenWindow { window, geometry } => {
+            if *window == NEW_WINDOW {
+                return Err(ProtocolError::BadValue("window number"));
+            }
+            payload.extend_from_slice(&window.to_be_bytes());
+            if let Some(geometry) = geometry {
+                library::push_window(&mut payload, geometry)?;
+            }
+            KIND_OPEN_WINDOW
+        }
+        ToInterface::CloseWindow(window) => {
+            payload.extend_from_slice(&window.to_be_bytes());
+            KIND_CLOSE_WINDOW_VIEW
+        }
         ToInterface::Close => KIND_CLOSE,
     };
     write_frame(out, kind, &payload)
@@ -891,6 +989,13 @@ pub fn read_from_core(input: &mut dyn Read) -> Result<Option<ToInterface>, Proto
         KIND_COOKIES_VIEW => ToInterface::Cookies(cookies::read_view(&mut fields)?),
         KIND_PAGE_CONTROLS => ToInterface::PageControls(controls::read_controls(&mut fields)?),
         KIND_REMOTE => ToInterface::Remote(settings::read_remote(&mut fields)?),
+        KIND_TARGET => ToInterface::Target(window_number(&mut fields)?),
+        KIND_OPEN_WINDOW => {
+            let window = window_number(&mut fields)?;
+            let geometry = if fields.is_empty() { None } else { Some(library::read_window(&mut fields)?) };
+            ToInterface::OpenWindow { window, geometry }
+        }
+        KIND_CLOSE_WINDOW_VIEW => ToInterface::CloseWindow(window_number(&mut fields)?),
         KIND_CLOSE => ToInterface::Close,
         other => return Err(ProtocolError::UnknownKind(other)),
     };
@@ -959,6 +1064,27 @@ pub fn write_to_core(out: &mut dyn Write, message: &ToCore) -> Result<(), Protoc
             controls::push_control(&mut payload, *control);
             KIND_PAGE_CONTROL
         }
+        ToCore::From(window) => {
+            if *window == NEW_WINDOW {
+                return Err(ProtocolError::BadValue("window number"));
+            }
+            payload.extend_from_slice(&window.to_be_bytes());
+            KIND_FROM
+        }
+        ToCore::NewWindow { private } => {
+            payload.push(u8::from(*private));
+            KIND_NEW_WINDOW
+        }
+        ToCore::TabToWindow { tab, window, index } => {
+            if usize::from(*tab) >= MAX_TABS || usize::from(*index) > MAX_TABS {
+                return Err(ProtocolError::BadValue("tab place"));
+            }
+            payload.push(*tab);
+            payload.extend_from_slice(&window.to_be_bytes());
+            payload.push(*index);
+            KIND_TAB_TO_WINDOW
+        }
+        ToCore::CloseWindow => KIND_CLOSE_WINDOW,
         ToCore::ChangeSetting(change) => {
             settings::push_change(&mut payload, change)?;
             KIND_CHANGE_SETTING
@@ -1109,6 +1235,7 @@ pub fn read_from_interface(input: &mut dyn Read) -> Result<Option<ToCore>, Proto
         KIND_HOME => ToCore::Home,
         KIND_RELOAD => ToCore::Reload,
         KIND_PAGE_CONTROL => ToCore::PageControl(controls::read_control(&mut fields)?),
+        KIND_FROM | KIND_NEW_WINDOW | KIND_TAB_TO_WINDOW | KIND_CLOSE_WINDOW => window_intent(kind, &mut fields)?,
         KIND_CHANGE_SETTING => ToCore::ChangeSetting(settings::read_change(&mut fields)?),
         KIND_CONSOLE => ToCore::Console(match fields.u8()? {
             0 => false,
@@ -1201,6 +1328,20 @@ mod tests {
         channel
     }
 
+    /// Decision 72: window 0 is a new window's, never one's own; a tab's
+    /// places are held to the strip's bound.
+    #[test]
+    fn window_messages_are_held_to_their_bounds() {
+        assert!(write_to_core(&mut Vec::new(), &ToCore::From(NEW_WINDOW)).is_err());
+        assert!(write_to_interface(&mut Vec::new(), &ToInterface::OpenWindow { window: NEW_WINDOW, geometry: None }).is_err());
+        assert!(write_to_core(&mut Vec::new(), &ToCore::TabToWindow { tab: 64, window: 1, index: 0 }).is_err());
+        let refused = |bytes: &[u8]| read_from_interface(&mut &bytes[..]).is_err();
+        assert!(refused(&[KIND_FROM, 0, 0, 0, 4, 0, 0, 0, 0]), "From window 0");
+        assert!(refused(&[KIND_NEW_WINDOW, 0, 0, 0, 1, 2]), "a flag of 2");
+        assert!(refused(&[KIND_TAB_TO_WINDOW, 0, 0, 0, 6, 0, 0, 0, 0, 1, 65]), "a place past the strip");
+        let refused = |bytes: &[u8]| read_from_core(&mut &bytes[..]).is_err();
+        assert!(refused(&[KIND_TARGET, 0, 0, 0, 4, 0, 0, 0, 0]), "Target window 0");
+    }
     #[test]
     fn every_kind_round_trips() {
         for message in [
@@ -1240,6 +1381,10 @@ mod tests {
             }),
             ToInterface::PageControls(interface_core::controls::PageControls::default()),
             ToInterface::Remote(settings::RemotePlace { mode: settings::RemoteMode::Floating, x: 800, y: 120 }),
+            ToInterface::Target(2),
+            ToInterface::OpenWindow { window: 3, geometry: None },
+            ToInterface::OpenWindow { window: 4, geometry: Some(library::WindowGeometry { x: -40, y: 30, width: 900, height: 700, maximised: false }) },
+            ToInterface::CloseWindow(3),
             ToInterface::History(library::HistoryView { query: "news".into(), total: 0, ..library::HistoryView::default() }),
             ToInterface::Suggestions(library::Suggestions { text: "n".into(), inline: "news.example".into(), rows: Vec::new() }),
             ToInterface::TabList(library::TabList { forward: true, entries: Vec::new(), chapters: Vec::new() }),
@@ -1263,6 +1408,12 @@ mod tests {
             ToCore::SelectTab(3),
             ToCore::CloseTab(0),
             ToCore::MoveTab { from: 3, to: 0 },
+            ToCore::From(2),
+            ToCore::NewWindow { private: false },
+            ToCore::NewWindow { private: true },
+            ToCore::TabToWindow { tab: 1, window: NEW_WINDOW, index: 0 },
+            ToCore::TabToWindow { tab: 0, window: 7, index: 64 },
+            ToCore::CloseWindow,
             ToCore::NewTab,
             ToCore::Navigate("sport.invalid".into()),
             ToCore::Back,

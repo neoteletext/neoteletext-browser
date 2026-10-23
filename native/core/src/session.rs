@@ -14,7 +14,7 @@ use protocol::fetcher::Entry;
 use protocol::{MAX_ADDRESS, MAX_BANK_NAME, MAX_IDENTITY, MAX_PAGE_TITLE, MAX_TAB_TITLE, MAX_TITLE, clean};
 
 use crate::source::Source;
-use interface_core::library::{MAX_CHAPTER_STOPS, MAX_CLOSED, MAX_TAB_ENTRIES, MAX_TAB_LIST, WindowGeometry};
+use interface_core::library::{MAX_CHAPTER_STOPS, MAX_CLOSED, MAX_TAB_ENTRIES, MAX_TAB_LIST, MAX_WINDOWS, WindowGeometry};
 use neoteletext::address::{Address, START_PAGE, parse};
 use neoteletext::bookmarks::Bookmarks;
 use neoteletext::restore::{self, Saved};
@@ -186,6 +186,20 @@ pub struct ClosedTab {
     pub muted: bool,
     /// Its title, for the panel and the menu.
     pub title: String,
+    /// The window it closed with, whose closed tabs share this number and
+    /// reopen together, as Chrome keeps a closed window; 0 when it closed
+    /// alone (`multiple-windows.md`).
+    pub window: u32,
+}
+
+/// A window set aside while another is at hand (`multiple-windows.md`):
+/// its tabs, which is active, its place, and whether it is private.
+pub struct Window {
+    pub id: u32,
+    pub tabs: Vec<Tab>,
+    pub active: usize,
+    pub geometry: Option<WindowGeometry>,
+    pub private: bool,
 }
 
 /// Where going back or forward took the tab.
@@ -253,13 +267,31 @@ impl Tab {
     }
 }
 
+/// The first window's number, as the interface numbers it; numbers are
+/// never `protocol::NEW_WINDOW`.
+pub const FIRST_WINDOW: u32 = protocol::FIRST_WINDOW;
+/// The most tabs open, in all windows: what one window's strip may list,
+/// and what the session file keeps.
+pub const MAX_TABS: usize = protocol::MAX_TABS;
+
 /// How a file channel's bytes are read: by the broker in the browser
 /// (decision 56), from the disk in tests.
 pub type Reader = Box<dyn Fn(&Path) -> Result<Source, String>>;
 
 pub struct Session {
+    /// The tabs of the window at hand, and which is active.
     pub tabs: Vec<Tab>,
     pub active: usize,
+    /// The window at hand: the one whose tabs `tabs` are, which the
+    /// interface's last intent came from or the event at hand is for.
+    pub window: u32,
+    /// Its place and size, as the interface last reported them.
+    pub geometry: Option<WindowGeometry>,
+    /// It is a private window: every tab opened in it is private.
+    pub private_window: bool,
+    /// The other windows, set aside.
+    pub others: Vec<Window>,
+    next_window: u32,
     /// The bookmarks (requirement 20.15).
     pub bookmarks: Bookmarks,
     /// Tabs closed, the most recent first, at most [`MAX_CLOSED`]
@@ -320,7 +352,21 @@ impl Session {
     /// A session that reads file channels with `reader`.
     #[must_use]
     pub fn with_reader(bookmarks: Bookmarks, reader: Reader) -> Self {
-        Self { tabs: Vec::new(), active: 0, bookmarks, closed: VecDeque::new(), next_closed: 1, next_channel: 1, reader, now: 0 }
+        Self {
+            tabs: Vec::new(),
+            active: 0,
+            window: FIRST_WINDOW,
+            geometry: None,
+            private_window: false,
+            others: Vec::new(),
+            next_window: FIRST_WINDOW.saturating_add(1),
+            bookmarks,
+            closed: VecDeque::new(),
+            next_closed: 1,
+            next_channel: 1,
+            reader,
+            now: 0,
+        }
     }
 
     fn channel_for(&mut self, address: &Address) -> ChannelState {
@@ -371,6 +417,8 @@ impl Session {
     }
 
     fn open_tab(&mut self, typed: &str, private: bool) -> Result<&ChannelState, String> {
+        self.room_for_a_tab()?;
+        let private = private || self.private_window;
         let address = parse(typed)?;
         let channel = self.channel_for(&address);
         self.active = self.tabs.len();
@@ -537,32 +585,209 @@ impl Session {
             None => (!self.closed.is_empty()).then_some(0),
         }
         .ok_or("No closed tab to reopen")?;
-        let closed = self.closed.remove(index).ok_or("No closed tab to reopen")?;
+        let window = self.closed.get(index).map_or(0, |closed| closed.window);
+        if window == 0 {
+            self.room_for_a_tab()?;
+            let closed = self.closed.remove(index).ok_or("No closed tab to reopen")?;
+            return self.reopen_tab(closed);
+        }
+        // A closed window: its tabs together, in a window of their own.
+        let mut tabs: Vec<ClosedTab> = Vec::new();
+        let mut kept = VecDeque::new();
+        for closed in core::mem::take(&mut self.closed) {
+            if closed.window == window { tabs.push(closed) } else { kept.push_back(closed) }
+        }
+        self.closed = kept;
+        // They were kept the most recent first, the window's last tab first.
+        tabs.reverse();
+        let room = MAX_TABS.saturating_sub(self.tab_count());
+        if room == 0 || self.window_count() >= MAX_WINDOWS {
+            return Err(String::from("No room for another window"));
+        }
+        self.new_window(false)?;
+        for closed in tabs.into_iter().take(room) {
+            self.reopen_tab(closed)?;
+        }
+        self.active = 0;
+        Ok(())
+    }
+
+    fn reopen_tab(&mut self, closed: ClosedTab) -> Result<(), String> {
         let address = closed.history.get(closed.position).map(|visit| visit.address.clone()).ok_or("No closed tab to reopen")?;
         let channel = self.channel_for(&address);
         self.active = self.tabs.len();
         let pending = Some(Pending { typed: false, drawn: false, reload: false });
-        self.tabs.push(Tab { history: closed.history, position: closed.position, channel, muted: closed.muted, private: false, pending });
+        let private = self.private_window;
+        self.tabs.push(Tab { history: closed.history, position: closed.position, channel, muted: closed.muted, private, pending });
         Ok(())
+    }
+
+    /// Whether another tab may open: the session holds at most
+    /// [`MAX_TABS`] in all its windows.
+    ///
+    /// # Errors
+    /// When it is full.
+    pub fn room_for_a_tab(&self) -> Result<(), String> {
+        if self.tab_count() >= MAX_TABS { Err(format!("At most {MAX_TABS} tabs are open at once")) } else { Ok(()) }
+    }
+
+    /// How many tabs are open, in every window.
+    #[must_use]
+    pub fn tab_count(&self) -> usize {
+        self.others.iter().map(|window| window.tabs.len()).sum::<usize>().saturating_add(self.tabs.len())
+    }
+
+    /// How many windows are open.
+    #[must_use]
+    pub fn window_count(&self) -> usize {
+        self.others.len().saturating_add(1)
+    }
+
+    /// Every window's number, in the order they opened.
+    #[must_use]
+    pub fn window_ids(&self) -> Vec<u32> {
+        let mut ids: Vec<u32> = self.others.iter().map(|window| window.id).chain([self.window]).collect();
+        ids.sort_unstable();
+        ids
+    }
+
+    /// The window holding `channel`'s tab.
+    #[must_use]
+    pub fn window_of(&self, channel: u32) -> Option<u32> {
+        if self.tabs.iter().any(|tab| tab.channel.id == channel) {
+            return Some(self.window);
+        }
+        self.others.iter().find(|window| window.tabs.iter().any(|tab| tab.channel.id == channel)).map(|window| window.id)
+    }
+
+    /// Every tab, in every window.
+    pub fn all_tabs(&self) -> impl Iterator<Item = &Tab> {
+        self.tabs.iter().chain(self.others.iter().flat_map(|window| window.tabs.iter()))
+    }
+
+    /// Every tab, in every window, to change.
+    pub fn all_tabs_mut(&mut self) -> impl Iterator<Item = &mut Tab> {
+        self.tabs.iter_mut().chain(self.others.iter_mut().flat_map(|window| window.tabs.iter_mut()))
+    }
+
+    /// Makes window `id` the one at hand; false when there is none.
+    pub fn switch_to(&mut self, id: u32) -> bool {
+        if id == self.window {
+            return true;
+        }
+        let Some(index) = self.others.iter().position(|window| window.id == id) else { return false };
+        let mut other = self.others.swap_remove(index);
+        core::mem::swap(&mut self.tabs, &mut other.tabs);
+        core::mem::swap(&mut self.active, &mut other.active);
+        core::mem::swap(&mut self.geometry, &mut other.geometry);
+        core::mem::swap(&mut self.private_window, &mut other.private);
+        other.id = core::mem::replace(&mut self.window, id);
+        self.others.push(other);
+        true
+    }
+
+    /// Sets the window at hand aside and makes a new one, with no tab yet,
+    /// the one at hand; returns its number.
+    ///
+    /// # Errors
+    /// When [`MAX_WINDOWS`] are open.
+    pub fn new_window(&mut self, private: bool) -> Result<u32, String> {
+        if self.window_count() >= MAX_WINDOWS {
+            return Err(format!("At most {MAX_WINDOWS} windows are open at once"));
+        }
+        let id = self.next_window;
+        self.next_window = self.next_window.wrapping_add(1).max(FIRST_WINDOW);
+        let parked = Window {
+            id: core::mem::replace(&mut self.window, id),
+            tabs: core::mem::take(&mut self.tabs),
+            active: core::mem::take(&mut self.active),
+            geometry: self.geometry.take(),
+            private: core::mem::replace(&mut self.private_window, private),
+        };
+        self.others.push(parked);
+        Ok(id)
+    }
+
+    /// Closes the window at hand, its tabs kept together to reopen as a
+    /// window unless private, and makes the most recent other window the
+    /// one at hand. Returns the closed tabs' channels; none, and nothing
+    /// closed, when it is the only window.
+    pub fn close_window(&mut self) -> Vec<u32> {
+        let Some(next) = self.others.last().map(|window| window.id) else { return Vec::new() };
+        let window = self.window;
+        let tabs = core::mem::take(&mut self.tabs);
+        let channels = tabs.iter().map(|tab| tab.channel.id).collect();
+        for tab in tabs {
+            self.keep_closed(tab, window);
+        }
+        self.active = 0;
+        self.switch_to(next);
+        self.others.retain(|other| other.id != window);
+        channels
+    }
+
+    /// Takes the tab at `index` out of the window at hand, as a close does,
+    /// to put in another window; none when there is no such tab.
+    pub fn take_tab(&mut self, index: usize) -> Option<Tab> {
+        if index >= self.tabs.len() {
+            return None;
+        }
+        let tab = self.tabs.remove(index);
+        if self.active >= self.tabs.len() || index < self.active {
+            self.active = self.active.saturating_sub(1);
+        }
+        Some(tab)
+    }
+
+    /// Puts `tab` into the window at hand at `index`, or its end, as its
+    /// active tab.
+    pub fn put_tab(&mut self, tab: Tab, index: usize) {
+        let index = index.min(self.tabs.len());
+        self.tabs.insert(index, tab);
+        self.active = index;
+    }
+
+    /// Keeps a closed tab to reopen, unless it is private.
+    fn keep_closed(&mut self, tab: Tab, window: u32) {
+        if tab.private {
+            return;
+        }
+        let title = clean(tab.address().map_or("", |address| address.host.as_str()), MAX_TAB_TITLE);
+        let id = self.next_closed;
+        self.next_closed = self.next_closed.wrapping_add(1).max(1);
+        self.closed.push_front(ClosedTab { id, history: tab.history, position: tab.position, muted: tab.muted, title, window });
+        self.closed.truncate(MAX_CLOSED);
     }
 
     /// The session to keep (`history-and-bookmarks.md` section 15.1): every
     /// tab but private ones, each list cut to the entries nearest its place,
     /// and the active tab's place among them.
     #[must_use]
-    pub fn saved(&self, window: Option<WindowGeometry>) -> Saved {
+    pub fn saved(&self) -> Saved {
         let entry = |visit: &Visit| restore::Entry {
             by_page: visit.by_page,
             at: visit.at,
             address: visit.address.text.clone(),
             title: clean(&visit.title, restore::MAX_TITLE),
         };
-        let kept: Vec<(usize, &Tab)> = self.tabs.iter().enumerate().filter(|(_, tab)| !tab.private).take(restore::MAX_TABS).collect();
-        let tabs = kept.iter().map(|(_, tab)| restore::Tab::trimmed(tab.muted, tab.position, tab.history.iter().map(entry).collect())).collect();
-        // A private active tab: the kept tab before it, or the first.
-        let active = kept.iter().filter(|(index, _)| *index <= self.active).count().saturating_sub(1);
-        let closed = self.closed.iter().map(|tab| restore::Tab::trimmed(tab.muted, tab.position, tab.history.iter().map(entry).collect())).collect();
-        Saved { window, active, tabs, closed }
+        let window = |geometry: Option<WindowGeometry>, tabs: &[Tab], active: usize| {
+            let kept: Vec<(usize, &Tab)> = tabs.iter().enumerate().filter(|(_, tab)| !tab.private).collect();
+            // A private active tab: the kept tab before it, or the first.
+            let active = kept.iter().filter(|(index, _)| *index <= active).count().saturating_sub(1);
+            let tabs = kept.iter().map(|(_, tab)| restore::Tab::trimmed(tab.muted, tab.position, tab.history.iter().map(entry).collect())).collect();
+            restore::Window { geometry, active, tabs }
+        };
+        // The windows in the order they opened, the one at hand among them.
+        let mut windows: Vec<(u32, restore::Window)> = self.others.iter().map(|other| (other.id, window(other.geometry, &other.tabs, other.active))).collect();
+        windows.push((self.window, window(self.geometry, &self.tabs, self.active)));
+        windows.sort_by_key(|(id, _)| *id);
+        let windows = windows.into_iter().map(|(_, window)| window).filter(|window| !window.tabs.is_empty()).collect();
+        let closed = self
+            .closed
+            .iter()
+            .map(|tab| restore::Tab { window: tab.window, ..restore::Tab::trimmed(tab.muted, tab.position, tab.history.iter().map(entry).collect()) })
+            .collect();
+        Saved { windows, closed }
     }
 
     /// Opens the kept session's tabs after any open, each at its place in
@@ -570,21 +795,41 @@ impl Session {
     /// makes its active tab active (section 15.3). A tab whose address the
     /// address rules now refuse is not opened. Returns how many opened.
     pub fn restore(&mut self, saved: &Saved) -> usize {
-        let first = self.tabs.len();
-        let mut active = None;
-        for (index, kept) in saved.tabs.iter().enumerate().take(restore::MAX_TABS.saturating_sub(first)) {
-            let Some(history) = kept_history(kept) else { continue };
-            let Some(address) = history.get(kept.position).map(|visit| visit.address.clone()) else { continue };
-            let channel = self.channel_for(&address);
-            if index == saved.active {
-                active = Some(self.tabs.len());
+        let before = self.tab_count();
+        // The first window's tabs join the window at hand; each other kept
+        // window opens as a window of its own, and the first stays at hand.
+        let at_hand = self.window;
+        for (index, kept_window) in saved.windows.iter().enumerate() {
+            if index > 0 && (self.tab_count() >= MAX_TABS || self.new_window(false).is_err()) {
+                break;
             }
-            let pending = Some(Pending { typed: false, drawn: false, reload: false });
-            self.tabs.push(Tab { history, position: kept.position, channel, muted: kept.muted, private: false, pending });
+            if index > 0 || self.geometry.is_none() {
+                self.geometry = kept_window.geometry;
+            }
+            let first = self.tabs.len();
+            let mut active = None;
+            for (place, kept) in kept_window.tabs.iter().enumerate() {
+                if self.tab_count() >= MAX_TABS {
+                    break;
+                }
+                let Some(history) = kept_history(kept) else { continue };
+                let Some(address) = history.get(kept.position).map(|visit| visit.address.clone()) else { continue };
+                let channel = self.channel_for(&address);
+                if place == kept_window.active {
+                    active = Some(self.tabs.len());
+                }
+                let pending = Some(Pending { typed: false, drawn: false, reload: false });
+                self.tabs.push(Tab { history, position: kept.position, channel, muted: kept.muted, private: false, pending });
+            }
+            if let Some(active) = active.or_else(|| (self.tabs.len() > first).then_some(first)) {
+                self.active = active;
+            }
+            // A kept window none of whose tabs could open is not opened.
+            if index > 0 && self.tabs.is_empty() {
+                self.close_window();
+            }
         }
-        if let Some(active) = active.or_else(|| (self.tabs.len() > first).then_some(first)) {
-            self.active = active;
-        }
+        self.switch_to(at_hand);
         // The recently closed tabs, after any closed since start.
         for kept in &saved.closed {
             if self.closed.len() >= MAX_CLOSED {
@@ -594,9 +839,9 @@ impl Session {
             let title = clean(history.get(kept.position).map_or("", |visit| visit.address.host.as_str()), MAX_TAB_TITLE);
             let id = self.next_closed;
             self.next_closed = self.next_closed.wrapping_add(1).max(1);
-            self.closed.push_back(ClosedTab { id, history, position: kept.position, muted: kept.muted, title });
+            self.closed.push_back(ClosedTab { id, history, position: kept.position, muted: kept.muted, title, window: kept.window });
         }
-        self.tabs.len().saturating_sub(first)
+        self.tab_count().saturating_sub(before)
     }
 
     /// Removes the entries `gone` names from the tabs' lists and the closed
@@ -606,7 +851,7 @@ impl Session {
     /// private tab is not touched. Returns whether any list changed.
     pub fn remove_entries(&mut self, gone: impl Fn(&Visit) -> bool) -> bool {
         let mut changed = false;
-        for tab in self.tabs.iter_mut().filter(|tab| !tab.private) {
+        for tab in self.all_tabs_mut().filter(|tab| !tab.private) {
             let (before, at) = (tab.history.len(), tab.position);
             let (history, position) = without(core::mem::take(&mut tab.history), at, |index, visit| index != at && gone(visit));
             tab.history = history;
@@ -636,9 +881,9 @@ impl Session {
         true
     }
 
-    /// Mutes every tab, or unmutes every tab.
+    /// Mutes every tab of every window, or unmutes every tab.
     pub fn mute_all(&mut self, muted: bool) {
-        for tab in &mut self.tabs {
+        for tab in self.all_tabs_mut() {
             tab.muted = muted;
         }
     }
@@ -670,18 +915,10 @@ impl Session {
         if index >= self.tabs.len() {
             return None;
         }
-        let tab = self.tabs.remove(index);
-        if self.active >= self.tabs.len() || index < self.active {
-            self.active = self.active.saturating_sub(1);
-        }
-        if !tab.private {
-            let title = clean(tab.address().map_or("", |address| address.host.as_str()), MAX_TAB_TITLE);
-            let id = self.next_closed;
-            self.next_closed = self.next_closed.wrapping_add(1).max(1);
-            self.closed.push_front(ClosedTab { id, history: tab.history, position: tab.position, muted: tab.muted, title });
-            self.closed.truncate(MAX_CLOSED);
-        }
-        Some(tab.channel.id)
+        let tab = self.take_tab(index)?;
+        let channel = tab.channel.id;
+        self.keep_closed(tab, 0);
+        Some(channel)
     }
 
     #[must_use]
@@ -882,16 +1119,18 @@ mod tests {
         session.toggle_mute(2);
         session.tabs[0].history[0].title = "NEWS".into();
         let window = Some(WindowGeometry { x: 5, y: 6, width: 700, height: 500, maximised: true });
-        let saved = session.saved(window);
-        assert_eq!(saved.window, window);
-        let lists: Vec<Vec<&str>> = saved.tabs.iter().map(|tab| tab.entries.iter().map(|entry| entry.address.as_str()).collect()).collect();
+        session.geometry = window;
+        let saved = session.saved();
+        let kept = &saved.windows[0];
+        assert_eq!(kept.geometry, window);
+        let lists: Vec<Vec<&str>> = kept.tabs.iter().map(|tab| tab.entries.iter().map(|entry| entry.address.as_str()).collect()).collect();
         assert_eq!(lists, [vec!["https://news.invalid/", "https://sport.invalid/"], vec!["https://weather.invalid/"]]);
-        assert_eq!((saved.tabs[0].position, saved.tabs[0].entries[0].title.as_str()), (0, "NEWS"));
-        assert_eq!((saved.active, saved.tabs[1].muted), (1, true));
+        assert_eq!((kept.tabs[0].position, kept.tabs[0].entries[0].title.as_str()), (0, "NEWS"));
+        assert_eq!((kept.active, kept.tabs[1].muted), (1, true));
 
         let mut restored = Session::new(Bookmarks::default());
         assert_eq!(restored.restore(&saved), 2);
-        assert_eq!(restored.saved(window), saved, "restored as it was");
+        assert_eq!(restored.saved(), saved, "restored as it was");
         assert_eq!(restored.active, 1);
         assert!(restored.tabs.iter().all(|tab| tab.pending == Some(Pending { typed: false, drawn: false, reload: false })));
         restored.active = 0;
@@ -899,10 +1138,10 @@ mod tests {
         assert_eq!(restored.strip().identity, "sport.invalid");
 
         session.active = 1;
-        assert_eq!(session.saved(None).active, 0, "a private active tab keeps the one before it");
+        assert_eq!(session.saved().windows[0].active, 0, "a private active tab keeps the one before it");
         session.close(2);
         session.close(0);
-        assert!(session.saved(None).tabs.is_empty(), "only a private tab: none kept");
+        assert!(session.saved().windows.is_empty(), "only a private tab: none kept");
     }
 
     /// Requirement 20.10: the lists one way, the nearest first, and going
@@ -1021,7 +1260,7 @@ mod tests {
         session.open("b.invalid").unwrap();
         session.navigate("c.invalid", false).unwrap();
         session.close(1);
-        let saved = session.saved(None);
+        let saved = session.saved();
         assert_eq!(saved.closed.len(), 1);
         let mut restored = Session::new(Bookmarks::default());
         restored.restore(&Saved::read(&saved.text()).0);
@@ -1112,6 +1351,102 @@ mod tests {
         session.navigate("news.invalid", true).unwrap();
         let id = session.tabs[0].channel.id;
         assert_eq!(session.start_page_bookmark(id, 0x201), None, "only on the start page");
+    }
+
+    /// `multiple-windows.md`: each window keeps its own tabs and active
+    /// tab; switching sets one aside and brings the other back.
+    #[test]
+    fn windows_keep_their_own_tabs() {
+        let mut session = Session::new(Bookmarks::default());
+        session.open("a.invalid").unwrap();
+        session.open("b.invalid").unwrap();
+        session.active = 0;
+        let first = session.window;
+        let second = session.new_window(false).unwrap();
+        assert!(session.tabs.is_empty() && session.window == second && session.window_count() == 2);
+        session.open("c.invalid").unwrap();
+        let c = session.tabs[0].channel.id;
+        assert_eq!(session.window_of(c), Some(second));
+        assert!(session.switch_to(first));
+        assert_eq!((session.tabs.len(), session.active), (2, 0), "the first window as it was");
+        assert_eq!(session.window_of(c), Some(second));
+        assert_eq!(session.all_tabs().count(), 3);
+        assert!(!session.switch_to(99), "no such window");
+        assert_eq!(session.window_ids(), [first, second]);
+        // A private window's tabs are private.
+        let private = session.new_window(true).unwrap();
+        session.open("d.invalid").unwrap();
+        assert!(session.tabs[0].private);
+        session.switch_to(first);
+        session.open("e.invalid").unwrap();
+        assert!(!session.tabs[2].private, "only in the private window");
+        assert_eq!(session.window_ids(), [first, second, private]);
+    }
+
+    /// A tab moves between windows; a window closes with its tabs, which
+    /// reopen together in a window of their own, as Chrome reopens a closed
+    /// window.
+    #[test]
+    fn a_closed_window_reopens_whole() {
+        let mut session = Session::new(Bookmarks::default());
+        session.open("a.invalid").unwrap();
+        let first = session.window;
+        let second = session.new_window(false).unwrap();
+        session.open("b.invalid").unwrap();
+        session.open("c.invalid").unwrap();
+        let moved = session.take_tab(1).unwrap();
+        session.switch_to(first);
+        session.put_tab(moved, 0);
+        assert_eq!(session.active_tab().and_then(Tab::address).map(|address| address.host.as_str()), Some("c.invalid"));
+        session.switch_to(second);
+        session.open("d.invalid").unwrap();
+        assert!(session.close_window().len() == 2 && session.window == first && session.window_count() == 1);
+        let groups: Vec<(&str, bool)> = session.closed.iter().map(|closed| (closed.title.as_str(), closed.window == second)).collect();
+        assert_eq!(groups, [("d.invalid", true), ("b.invalid", true)]);
+        assert!(session.close_window().is_empty(), "the last window does not close");
+        session.reopen(None).unwrap();
+        assert_eq!(session.window_count(), 2);
+        let hosts: Vec<&str> = session.tabs.iter().map(|tab| tab.address().unwrap().host.as_str()).collect();
+        assert_eq!(hosts, ["b.invalid", "d.invalid"], "in their order, in a new window");
+        assert!(session.closed.is_empty());
+    }
+
+    /// Every window is kept with the session, and restored as windows.
+    #[test]
+    fn every_window_is_kept_and_restored() {
+        let mut session = Session::new(Bookmarks::default());
+        session.open("a.invalid").unwrap();
+        session.geometry = Some(WindowGeometry { x: 0, y: 0, width: 800, height: 600, maximised: false });
+        session.new_window(false).unwrap();
+        session.open("b.invalid").unwrap();
+        session.open("c.invalid").unwrap();
+        session.active = 0;
+        session.geometry = Some(WindowGeometry { x: 900, y: 0, width: 700, height: 500, maximised: false });
+        session.new_window(true).unwrap();
+        session.open("secret.invalid").unwrap();
+        let saved = session.saved();
+        assert_eq!(saved.windows.len(), 2, "a private window is not kept");
+        let mut restored = Session::new(Bookmarks::default());
+        assert_eq!(restored.restore(&Saved::read(&saved.text()).0), 3);
+        assert_eq!(restored.window_count(), 2);
+        assert_eq!(restored.saved(), saved);
+        assert_eq!(restored.tabs.len(), 1, "the first window is the one at hand");
+    }
+
+    /// The session holds at most `MAX_TABS` tabs in all its windows.
+    #[test]
+    fn tabs_are_bounded_across_windows() {
+        let mut session = Session::new(Bookmarks::default());
+        for _ in 0..MAX_TABS / 2 {
+            session.open("a.invalid").unwrap();
+        }
+        session.new_window(false).unwrap();
+        for _ in 0..MAX_TABS / 2 {
+            session.open("b.invalid").unwrap();
+        }
+        assert!(session.open("c.invalid").is_err());
+        assert!(session.room_for_a_tab().is_err());
+        assert_eq!(session.tab_count(), MAX_TABS);
     }
 
     fn start_page_index(page: u16) -> usize {

@@ -83,7 +83,7 @@ pub(crate) const fn mode_view(mode: Mode) -> protocol::settings::CookieMode {
 impl Core {
     /// The channel a fetcher serves, and whether its tab is private.
     fn fetcher_channel(&self, channel: u32) -> Option<(Channel, bool)> {
-        let tab = self.session.tabs.iter().find(|tab| tab.channel.id == channel)?;
+        let tab = self.session.all_tabs().find(|tab| tab.channel.id == channel)?;
         Some((Channel::of(tab.address()?.channel_text())?, tab.private))
     }
 
@@ -246,10 +246,10 @@ impl Core {
         }
     }
 
-    /// The last private tab closed: the private cookies go (requirement
-    /// 21.3).
+    /// The last private tab closed, in every window: the private cookies
+    /// go (requirement 21.3).
     pub(crate) fn private_cookies_closed(&mut self) {
-        if !self.session.tabs.iter().any(|tab| tab.private) {
+        if !self.session.all_tabs().any(|tab| tab.private) {
             self.cookies.store.close_private();
         }
     }

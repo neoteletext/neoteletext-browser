@@ -1,6 +1,6 @@
 //! The session (`history-and-bookmarks.md` section 15, requirements 20.21
-//! to 20.23): the window's place and size, every tab but private ones and
-//! the recently closed tabs, each with its back-and-forward list and each
+//! to 20.23): each window's place and size and its tabs but private ones
+//! (`multiple-windows.md`), and the recently closed tabs, each with its back-and-forward list and each
 //! entry's time, kept in `session.txt` after every change so that it can
 //! always be restored, as Chrome keeps its session and its closed tabs
 //! (`TabRestoreServiceImpl`); read strictly, since another program can
@@ -12,12 +12,15 @@ use interface_core::library::{MAX_CLOSED, MAX_TAB_ENTRIES, WindowGeometry};
 
 use crate::history::write_whole;
 
-const VERSION_LINE: &str = "neoteletext-session 2";
+const VERSION_LINE: &str = "neoteletext-session 3";
 const FILE_NAME: &str = "session.txt";
 const TEMPORARY_NAME: &str = "session.txt.new";
 const SEPARATOR: char = '\t';
-/// The most tabs kept: as many as the window has (`protocol::MAX_TABS`).
+/// The most tabs kept, in all windows: as many as the session holds
+/// (`protocol::MAX_TABS`).
 pub const MAX_TABS: usize = protocol::MAX_TABS;
+/// The most windows kept.
+pub const MAX_WINDOWS: usize = interface_core::library::MAX_WINDOWS;
 /// The most entries kept of a tab's back-and-forward list, those nearest
 /// its place (section 15.1): all a tab holds.
 pub const MAX_ENTRIES: usize = MAX_TAB_ENTRIES;
@@ -25,16 +28,19 @@ pub const MAX_ENTRIES: usize = MAX_TAB_ENTRIES;
 pub const MAX_TITLE: usize = protocol::MAX_TITLE;
 /// The longest digits of an entry's time, `i64::MAX`.
 const MAX_TIME_DIGITS: usize = 19;
+/// The longest digits of a closed tab's window, `u32::MAX`.
+const MAX_WINDOW_DIGITS: usize = 10;
 /// The longest line: `entry`, a flag, a time, an address and a title.
 const MAX_LINE: usize = "entry".len() + 1 + 1 + 1 + MAX_TIME_DIGITS + 1 + protocol::MAX_ADDRESS + 1 + MAX_TITLE;
 /// The largest file read: every tab and closed tab with every entry at the
-/// longest line, with room for the window, active and tab lines, rounded
+/// longest line, with room for the windows' and the tabs' lines, rounded
 /// up to 16 MiB, as the history file's bound.
 pub const MAX_FILE: usize = 16 * 1024 * 1024;
 const _: () = assert!(
-    (MAX_TABS + MAX_CLOSED) * (MAX_ENTRIES + 1) * (MAX_LINE + 1) + 1024 < MAX_FILE,
-    "the file bound holds every tab and closed tab at the longest lines"
+    (MAX_TABS + MAX_CLOSED) * (MAX_ENTRIES + 1) * (MAX_LINE + 1) + MAX_WINDOWS * 2 * 64 < MAX_FILE,
+    "the file bound holds every tab and closed tab at the longest lines, and every window's lines"
 );
+const _: () = assert!(MAX_WINDOW_DIGITS + "closed".len() + 6 < MAX_LINE, "a closed tab's line is within the longest");
 
 /// One entry of a kept tab's list.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -58,17 +64,28 @@ pub struct Tab {
     pub position: usize,
     /// Its back-and-forward list, oldest first.
     pub entries: Vec<Entry>,
+    /// A closed tab's window: the closed tabs of one window share a number,
+    /// and reopen together; 0 for a tab closed alone, and for an open tab.
+    pub window: u32,
+}
+
+/// A kept window.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Window {
+    /// Its place and size, when the interface has reported them.
+    pub geometry: Option<WindowGeometry>,
+    /// The active tab's place among its tabs.
+    pub active: usize,
+    /// Its tabs, in the strip's order.
+    pub tabs: Vec<Tab>,
 }
 
 /// The kept session.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Saved {
-    /// The window's place and size, when the interface has reported them.
-    pub window: Option<WindowGeometry>,
-    /// The active tab's place.
-    pub active: usize,
-    /// The kept tabs, in the strip's order.
-    pub tabs: Vec<Tab>,
+    /// The windows, each with at least one tab, at most [`MAX_WINDOWS`],
+    /// with at most [`MAX_TABS`] tabs among them.
+    pub windows: Vec<Window>,
     /// The recently closed tabs, the most recent first, at most
     /// [`MAX_CLOSED`].
     pub closed: Vec<Tab>,
@@ -81,7 +98,15 @@ impl Tab {
         let first = position.saturating_sub(MAX_ENTRIES / 2).min(entries.len().saturating_sub(MAX_ENTRIES));
         let entries: Vec<Entry> = entries.into_iter().skip(first).take(MAX_ENTRIES).collect();
         let position = position.saturating_sub(first).min(entries.len().saturating_sub(1));
-        Self { muted, position, entries }
+        Self { muted, position, entries, window: 0 }
+    }
+}
+
+impl Saved {
+    /// How many tabs the windows hold.
+    #[must_use]
+    pub fn tab_count(&self) -> usize {
+        self.windows.iter().map(|window| window.tabs.len()).sum()
     }
 }
 
@@ -95,6 +120,38 @@ fn flag(text: &str) -> Option<bool> {
 
 fn digit(flag: bool) -> &'static str {
     if flag { "1" } else { "0" }
+}
+
+/// A `window` line's fields after its name: none, for a window whose place
+/// was never reported, or its place and size.
+fn window_line(fields: &[&str]) -> Result<Option<WindowGeometry>, ()> {
+    match fields {
+        [] => Ok(None),
+        [x, y, width, height, maximised] => {
+            let geometry = (|| {
+                Some(WindowGeometry {
+                    x: x.parse().ok()?,
+                    y: y.parse().ok()?,
+                    width: width.parse().ok()?,
+                    height: height.parse().ok()?,
+                    maximised: flag(maximised)?,
+                })
+            })();
+            geometry.filter(WindowGeometry::is_plausible).map(Some).ok_or(())
+        }
+        _ => Err(()),
+    }
+}
+
+/// A `tab` or `closed` line's fields after its name: muted, place, and for
+/// a closed tab of a window, the window's number.
+fn tab_line(closed: bool, fields: &[&str]) -> Option<Tab> {
+    let (muted, position, window) = match fields {
+        [muted, position] => (muted, position, 0),
+        [muted, position, window] if closed && window.len() <= MAX_WINDOW_DIGITS => (muted, position, window.parse().ok()?),
+        _ => return None,
+    };
+    Some(Tab { muted: flag(muted)?, position: position.parse().ok()?, entries: Vec::new(), window })
 }
 
 /// An address a kept entry may hold: one the address rules accept, the
@@ -127,14 +184,13 @@ impl Saved {
         let mut tab: Option<(Tab, bool, bool)> = None;
         let finish = |saved: &mut Self, tab: Option<(Tab, bool, bool)>, dropped: &mut Vec<String>| {
             let Some((tab, broken, closed)) = tab else { return };
-            let (list, most) = if closed { (&mut saved.closed, MAX_CLOSED) } else { (&mut saved.tabs, MAX_TABS) };
-            if broken || tab.entries.is_empty() || tab.position >= tab.entries.len() || list.len() >= most {
-                dropped.push("a tab of the session file dropped".to_owned());
-            } else {
-                list.push(tab);
+            let full = if closed { saved.closed.len() >= MAX_CLOSED } else { saved.tab_count() >= MAX_TABS };
+            let list = if closed { Some(&mut saved.closed) } else { saved.windows.last_mut().map(|window| &mut window.tabs) };
+            match list {
+                Some(list) if !broken && !tab.entries.is_empty() && tab.position < tab.entries.len() && !full => list.push(tab),
+                _ => dropped.push("a tab of the session file dropped".to_owned()),
             }
         };
-        let mut active = 0;
         for (index, line) in lines.enumerate() {
             if line.is_empty() {
                 continue;
@@ -142,35 +198,32 @@ impl Saved {
             let fields: Vec<&str> = line.split(SEPARATOR).collect();
             let fine = line.len() <= MAX_LINE
                 && match fields.as_slice() {
-                    ["window", x, y, width, height, maximised] => {
-                        let window = (|| {
-                            Some(WindowGeometry {
-                                x: x.parse().ok()?,
-                                y: y.parse().ok()?,
-                                width: width.parse().ok()?,
-                                height: height.parse().ok()?,
-                                maximised: flag(maximised)?,
-                            })
-                        })();
-                        match window.filter(WindowGeometry::is_plausible) {
-                            Some(window) if saved.window.is_none() => {
-                                saved.window = Some(window);
+                    // A window begins, with its place and size when known.
+                    ["window", rest @ ..] => {
+                        finish(&mut saved, tab.take(), &mut dropped);
+                        match window_line(rest) {
+                            Ok(geometry) if saved.windows.len() < MAX_WINDOWS => {
+                                saved.windows.push(Window { geometry, active: 0, tabs: Vec::new() });
                                 true
                             }
+                            // Its tabs join the window before, if any.
                             _ => false,
                         }
                     }
-                    ["active", place] => place.parse().map(|place| active = place).is_ok(),
-                    [kind @ ("tab" | "closed"), muted, position] => {
+                    ["active", place] => match (place.parse::<usize>(), saved.windows.last_mut()) {
+                        (Ok(place), Some(window)) => {
+                            window.active = place;
+                            true
+                        }
+                        _ => false,
+                    },
+                    [kind @ ("tab" | "closed"), rest @ ..] => {
                         finish(&mut saved, tab.take(), &mut dropped);
                         let closed = *kind == "closed";
-                        if let (Some(muted), Ok(position)) = (flag(muted), position.parse::<usize>()) {
-                            tab = Some((Tab { muted, position, entries: Vec::new() }, false, closed));
-                            true
-                        } else {
-                            tab = Some((Tab { muted: false, position: 0, entries: Vec::new() }, true, closed));
-                            false
-                        }
+                        let read = tab_line(closed, rest);
+                        let fine = read.is_some();
+                        tab = Some((read.unwrap_or(Tab { muted: false, position: 0, entries: Vec::new(), window: 0 }), !fine, closed));
+                        fine
                     }
                     ["entry", by_page, at, address, title] => {
                         let entry = (|| {
@@ -197,7 +250,14 @@ impl Saved {
             }
         }
         finish(&mut saved, tab.take(), &mut dropped);
-        saved.active = if active < saved.tabs.len() { active } else { 0 };
+        // A window with no tab left is not one; an active place beyond its
+        // tabs is the first.
+        saved.windows.retain(|window| !window.tabs.is_empty());
+        for window in &mut saved.windows {
+            if window.active >= window.tabs.len() {
+                window.active = 0;
+            }
+        }
         (saved, dropped)
     }
 
@@ -205,17 +265,33 @@ impl Saved {
     #[must_use]
     pub fn text(&self) -> String {
         let mut lines = vec![VERSION_LINE.to_owned()];
-        if let Some(window) = self.window {
-            lines.push(format!("window\t{}\t{}\t{}\t{}\t{}", window.x, window.y, window.width, window.height, digit(window.maximised)));
-        }
-        lines.push(format!("active\t{}", self.active));
-        let tabs = self.tabs.iter().take(MAX_TABS).map(|tab| ("tab", tab));
-        let closed = self.closed.iter().take(MAX_CLOSED).map(|tab| ("closed", tab));
-        for (kind, tab) in tabs.chain(closed) {
-            lines.push(format!("{kind}\t{}\t{}", digit(tab.muted), tab.position));
+        let push_tab = |lines: &mut Vec<String>, kind: &str, tab: &Tab| {
+            if kind == "closed" && tab.window != 0 {
+                lines.push(format!("{kind}\t{}\t{}\t{}", digit(tab.muted), tab.position, tab.window));
+            } else {
+                lines.push(format!("{kind}\t{}\t{}", digit(tab.muted), tab.position));
+            }
             for entry in tab.entries.iter().take(MAX_ENTRIES) {
                 lines.push(format!("entry\t{}\t{}\t{}\t{}", digit(entry.by_page), entry.at, entry.address, entry.title));
             }
+        };
+        let mut kept = 0_usize;
+        for window in self.windows.iter().filter(|window| !window.tabs.is_empty()).take(MAX_WINDOWS) {
+            if kept >= MAX_TABS {
+                break;
+            }
+            lines.push(match window.geometry {
+                Some(geometry) => format!("window\t{}\t{}\t{}\t{}\t{}", geometry.x, geometry.y, geometry.width, geometry.height, digit(geometry.maximised)),
+                None => "window".to_owned(),
+            });
+            lines.push(format!("active\t{}", window.active));
+            for tab in window.tabs.iter().take(MAX_TABS.saturating_sub(kept)) {
+                push_tab(&mut lines, "tab", tab);
+                kept = kept.saturating_add(1);
+            }
+        }
+        for tab in self.closed.iter().take(MAX_CLOSED) {
+            push_tab(&mut lines, "closed", tab);
         }
         let mut text = lines.join("\n");
         text.push('\n');
@@ -260,19 +336,28 @@ mod tests {
         Entry { by_page: false, at: 1_792_656_300, address: address.into(), title: "News".into() }
     }
 
+    fn tab(muted: bool, position: usize, entries: Vec<Entry>) -> Tab {
+        Tab { muted, position, entries, window: 0 }
+    }
+
     fn saved() -> Saved {
         Saved {
-            window: Some(WindowGeometry { x: -120, y: 80, width: 1440, height: 900, maximised: false }),
-            active: 1,
-            tabs: vec![
-                Tab {
-                    muted: false,
-                    position: 1,
-                    entries: vec![entry("https://news.example/teletext/"), Entry { by_page: true, ..entry("https://news.example/teletext/#302") }],
+            windows: vec![
+                Window {
+                    geometry: Some(WindowGeometry { x: -120, y: 80, width: 1440, height: 900, maximised: false }),
+                    active: 1,
+                    tabs: vec![
+                        tab(false, 1, vec![entry("https://news.example/teletext/"), Entry { by_page: true, ..entry("https://news.example/teletext/#302") }]),
+                        tab(true, 0, vec![entry(crate::address::START_PAGE)]),
+                    ],
                 },
-                Tab { muted: true, position: 0, entries: vec![entry(crate::address::START_PAGE)] },
+                Window { geometry: None, active: 0, tabs: vec![tab(false, 0, vec![entry("https://weather.example/")])] },
             ],
-            closed: vec![Tab { muted: false, position: 0, entries: vec![Entry { at: 0, ..entry("https://sport.example/") }] }],
+            closed: vec![
+                tab(false, 0, vec![Entry { at: 0, ..entry("https://sport.example/") }]),
+                Tab { window: 7, ..tab(false, 0, vec![entry("https://tv.example/")]) },
+                Tab { window: 7, ..tab(true, 0, vec![entry("https://radio.example/")]) },
+            ],
         }
     }
 
@@ -306,7 +391,6 @@ mod tests {
             VERSION_LINE,
             "window\t10\t20\t0\t900\t0",
             "window\t10\t20\t1440\t900\t0",
-            "window\t11\t21\t1440\t900\t0",
             "active\t7",
             "tab\t0\t0",
             "entry\t0\t5\thttps://a.example/\tA",
@@ -325,18 +409,47 @@ mod tests {
             "entry\t0\t-1\thttps://g.example/\tG",
             "closed\t0\t0",
             "entry\t0\t9\thttps://h.example/\tH",
+            "closed\t0\t0\t3",
+            "entry\t0\t9\thttps://i.example/\tI",
+            "tab\t0\t0\t3",
+            "entry\t0\t9\thttps://j.example/\tJ",
+            "window",
+            "active\t0",
+            "window\tx",
         ]
         .join("\n");
         let (saved, dropped) = Saved::read(&text);
-        let addresses: Vec<&str> = saved.tabs.iter().map(|tab| tab.entries[0].address.as_str()).collect();
+        // The last window had no tab and is not one.
+        let [window] = saved.windows.as_slice() else { panic!("one window: {:?}", saved.windows) };
+        let addresses: Vec<&str> = window.tabs.iter().map(|tab| tab.entries[0].address.as_str()).collect();
         assert_eq!(addresses, ["https://a.example/", "https://f.example/"]);
-        assert_eq!(saved.window, Some(WindowGeometry { x: 10, y: 20, width: 1440, height: 900, maximised: false }));
-        assert_eq!(saved.active, 0, "seven is beyond the tabs");
+        assert_eq!(window.geometry, Some(WindowGeometry { x: 10, y: 20, width: 1440, height: 900, maximised: false }));
+        assert_eq!(window.active, 0, "seven is beyond the tabs");
         let line = |n: usize| format!("line {n} of the session file dropped");
         let tab = "a tab of the session file dropped".to_owned();
-        let closed: Vec<(&str, i64)> = saved.closed.iter().map(|tab| (tab.entries[0].address.as_str(), tab.entries[0].at)).collect();
-        assert_eq!(closed, [("https://h.example/", 9)], "a time before 1970 breaks its tab");
-        assert_eq!(dropped, [line(2), line(4), line(8), tab.clone(), tab.clone(), line(13), tab.clone(), line(15), tab.clone(), line(18), line(20), tab]);
+        let closed: Vec<(&str, i64, u32)> = saved.closed.iter().map(|tab| (tab.entries[0].address.as_str(), tab.entries[0].at, tab.window)).collect();
+        assert_eq!(closed, [("https://h.example/", 9, 0), ("https://i.example/", 9, 3)], "a time before 1970 breaks its tab");
+        // An open tab has no window number; a window line with one field is
+        // broken.
+        assert_eq!(
+            dropped,
+            [
+                line(2),
+                line(7),
+                tab.clone(),
+                tab.clone(),
+                line(12),
+                tab.clone(),
+                line(14),
+                tab.clone(),
+                line(17),
+                line(19),
+                tab.clone(),
+                line(24),
+                tab,
+                line(28)
+            ]
+        );
         assert_eq!(Saved::read("no version\ntab\t0\t0").0, Saved::default());
         let (saved, dropped) = Saved::read("neoteletext-session 1\ntab\t0\t0\nentry\t0\thttps://a.example/\tA");
         assert_eq!((saved, dropped.len()), (Saved::default(), 1), "the first version is not read");

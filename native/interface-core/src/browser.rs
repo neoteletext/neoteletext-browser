@@ -317,6 +317,25 @@ pub enum Output {
     },
     /// Strip input: open a private tab (requirement 20.8).
     NewPrivateTab,
+    /// Strip input: open a new window, private or not
+    /// (`multiple-windows.md`).
+    NewWindow {
+        /// A private window.
+        private: bool,
+    },
+    /// Strip input: a tab dragged off the strip and let go at this point
+    /// of the window, in whole logical pixels, which may be outside it:
+    /// into the window there, or a new one.
+    TabOut {
+        /// The tab's place.
+        index: usize,
+        /// Where it was let go, right of the window's left edge.
+        x: i32,
+        /// And below its top.
+        y: i32,
+    },
+    /// Strip input: move the active tab into a new window.
+    TabToNewWindow,
     /// Strip input: a change the settings panel asks for (requirement 19.3).
     Setting(crate::settings::SettingChange),
     /// The developer console opened or closed (requirement 19.8).
@@ -928,6 +947,9 @@ impl Browser {
     #[allow(clippy::too_many_lines, reason = "one hit-test per part of the window, in drawing order")]
     pub fn pointer_pressed<C: Canvas + ?Sized>(&mut self, canvas: &mut C, extend: bool, now: u64) -> bool {
         self.tips_pressed();
+        // A press means the button was let go since the last: a drag whose
+        // release never came, as one let go outside every window, is over.
+        self.tabs_cancel();
         // Shift opens what a press opens in a new tab.
         self.press_new_tab = extend;
         // The drop-downs and the star's popover are over everything; the
@@ -1302,6 +1324,7 @@ impl Browser {
             "t" if modifiers.shift => self.outputs.push(Output::History(crate::library::HistoryRequest::Reopen(None))),
             "n" if modifiers.shift => self.outputs.push(Output::NewPrivateTab),
             "t" => self.outputs.push(Output::NewTab),
+            "n" => self.outputs.push(Output::NewWindow { private: false }),
             "w" => self.outputs.push(Output::CloseTab(self.active)),
             "[" if self.strip.back => self.outputs.push(Output::Back),
             "]" if self.strip.forward => self.outputs.push(Output::Forward),

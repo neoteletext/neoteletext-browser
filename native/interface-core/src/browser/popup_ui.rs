@@ -26,7 +26,10 @@ const HOLD_MILLISECONDS: u64 = 500;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Item {
     NewTab,
+    NewWindow,
     NewPrivateTab,
+    NewPrivateWindow,
+    TabToNewWindow,
     Reopen,
     History,
     Bookmarks,
@@ -42,7 +45,10 @@ enum Item {
 impl Item {
     const ALL: &[Self] = &[
         Self::NewTab,
+        Self::NewWindow,
         Self::NewPrivateTab,
+        Self::NewPrivateWindow,
+        Self::TabToNewWindow,
         Self::Reopen,
         Self::History,
         Self::Bookmarks,
@@ -60,7 +66,10 @@ impl Item {
     fn words(self, bar_shown: bool) -> (&'static str, &'static str, &'static str) {
         match self {
             Self::NewTab => ("New tab", "Cmd+T", "Ctrl+T"),
+            Self::NewWindow => ("New window", "Cmd+N", "Ctrl+N"),
             Self::NewPrivateTab => ("New private tab", "Shift+Cmd+N", "Ctrl+Shift+N"),
+            Self::NewPrivateWindow => ("New private window", "", ""),
+            Self::TabToNewWindow => ("Move tab to new window", "", ""),
             Self::Reopen => ("Reopen closed tab", "Shift+Cmd+T", "Ctrl+Shift+T"),
             Self::History => ("History", "Cmd+Y", "Ctrl+H"),
             Self::Bookmarks => ("Bookmarks", "Option+Cmd+B", "Ctrl+Shift+O"),
@@ -117,7 +126,10 @@ impl Browser {
         };
         match item {
             Item::NewTab => self.outputs.push(Output::NewTab),
+            Item::NewWindow => self.outputs.push(Output::NewWindow { private: false }),
             Item::NewPrivateTab => self.outputs.push(Output::NewPrivateTab),
+            Item::NewPrivateWindow => self.outputs.push(Output::NewWindow { private: true }),
+            Item::TabToNewWindow => self.outputs.push(Output::TabToNewWindow),
             Item::Reopen => self.outputs.push(Output::History(HistoryRequest::Reopen(None))),
             Item::History => self.set_history_open(true),
             Item::Bookmarks => {

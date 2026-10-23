@@ -468,7 +468,7 @@ The **session**: the state of the window and every tab in it, as it is now.
 | Each tab, in order | Its back-and-forward list (each entry's address, whether a page started it, and its title), its place in that list, and its mute | At most 64 tabs (`protocol::MAX_TABS`); at most 50 entries a tab, those nearest its place |
 | The active tab | Its place among the tabs | |
 
-**Private tabs are never kept** (requirement 20.8): a session restored has none of them, and closing the browser with only private tabs open keeps no tab. The browser has one window today; the format has one window line so that a second needs a new version of it, not a guess.
+**Private tabs are never kept** (requirement 20.8): a session restored has none of them, and closing the browser with only private tabs open keeps no tab. Since decision 72 every window is kept, each with its place, its tabs and its active tab (`multiple-windows.md`).
 
 ### 15.2 Always current
 
@@ -494,6 +494,8 @@ entry	0	1792656000	neoteletext:home	NeoTeletext
 closed	0	0
 entry	0	1792655000	https://sport.example/	sport.example
 ```
+
+*Version 3, decision 72:* a `window` line begins each window, with its place and size, or alone when the interface never reported them; its `active` line and its tabs follow it. A `closed` line may carry a third field, the number of the window it closed with: the closed tabs of one window reopen together. At most 16 windows and 64 tabs among them. A version 2 file is not read.
 
 *Version 2, decision 64:* each entry carries the time the tab last came to it, in seconds since 1970 (UTC), so that clearing history by time reaches the tabs' lists; `closed` lines, after the tabs, hold the recently closed tabs, most recent first, at most 25. A version 1 file is not read.
 

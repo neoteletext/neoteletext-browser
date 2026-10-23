@@ -126,6 +126,14 @@ enum Event {
     BookmarksRead(Result<(Vec<BookmarkEntry>, u32), String>),
 }
 
+/// What a window shows of its active channel, kept while it is set aside.
+#[derive(Default)]
+struct Shown {
+    frames: frames::Frames,
+    showing: Option<u32>,
+    pages: Vec<u16>,
+}
+
 struct Decoder {
     child: Helper,
     input: Outbox,
@@ -351,11 +359,23 @@ struct Core {
     /// History, and the panels of history and bookmarks
     /// (`history-and-bookmarks.md`).
     library: library::Library,
-    /// The window's place and size kept with the session, and one the
-    /// interface reported since, kept once the window is still: a drag is
-    /// one write (`history-and-bookmarks.md` section 15.2).
-    window: Option<WindowGeometry>,
-    window_moved: Option<(WindowGeometry, std::time::Instant)>,
+    /// A window's place and size the interface reported, kept with the
+    /// session once the window is still: a drag is one write
+    /// (`history-and-bookmarks.md` section 15.2).
+    window_moved: Option<(u32, WindowGeometry, std::time::Instant)>,
+    /// The window the interface was last told the messages are for
+    /// (`multiple-windows.md`).
+    targeted: u32,
+    /// What each window set aside shows: the frames sent, the channel told
+    /// which pages are shown, and those pages.
+    shown_elsewhere: BTreeMap<u32, Shown>,
+    /// Windows whose views of what every window shares (the star, the
+    /// bar, the settings, the remote) changed while they were set aside:
+    /// sent again when next at hand.
+    stale: std::collections::BTreeSet<u32>,
+    /// The interface's intents name a window that is not open, as one just
+    /// closed: they are not acted on until it names one that is.
+    from_closed: bool,
     /// Every cookie, and the cookies panel (`cookies.md`).
     cookies: cookie_control::Cookies,
     /// The open page's controls (`page-controls.md`, decision 67).
@@ -442,8 +462,171 @@ impl Core {
         Ok(())
     }
 
+    /// Sends `message` to the window at hand, telling the interface first
+    /// when the window changed (`multiple-windows.md`).
     fn send(&mut self, message: &ToInterface) -> Result<(), String> {
+        let window = self.session.window;
+        if window != self.targeted {
+            self.send_untargeted(&ToInterface::Target(window))?;
+            self.targeted = window;
+        }
+        self.send_untargeted(message)
+    }
+
+    /// Sends a message that is no window's: one that opens or closes a
+    /// window.
+    fn send_untargeted(&mut self, message: &ToInterface) -> Result<(), String> {
         write_to_interface(&mut self.to_interface, message).map_err(|error| format!("cannot write to the interface: {error}"))
+    }
+
+    /// Makes window `id` the one at hand, with what it shows; false when
+    /// there is no such window.
+    fn switch_window(&mut self, id: u32) -> bool {
+        let from = self.session.window;
+        if id == from {
+            return true;
+        }
+        if !self.session.switch_to(id) {
+            return false;
+        }
+        self.park_shown(from);
+        let next = self.shown_elsewhere.remove(&id).unwrap_or_default();
+        self.frames = next.frames;
+        self.showing = next.showing;
+        self.shown_pages = next.pages;
+        true
+    }
+
+    /// Sets aside what the window at hand, `id`, shows.
+    fn park_shown(&mut self, id: u32) {
+        let shown = Shown { frames: std::mem::take(&mut self.frames), showing: self.showing.take(), pages: std::mem::take(&mut self.shown_pages) };
+        self.shown_elsewhere.insert(id, shown);
+    }
+
+    /// Does `work` in the window holding `channel`'s tab, then returns to
+    /// the window at hand: what a channel says is for its own window.
+    fn in_window_of<T>(&mut self, channel: u32, work: impl FnOnce(&mut Self) -> Result<T, String>) -> Result<T, String> {
+        let here = self.session.window;
+        let there = self.session.window_of(channel).unwrap_or(here);
+        self.switch_window(there);
+        let result = work(self);
+        self.switch_window(here);
+        result
+    }
+
+    /// Every other window's shared views are out of date.
+    pub(crate) fn others_stale(&mut self) {
+        let here = self.session.window;
+        self.stale.extend(self.session.window_ids().into_iter().filter(|id| *id != here));
+    }
+
+    /// The window at hand's shared views, if they went out of date while it
+    /// was set aside.
+    fn refresh_if_stale(&mut self) -> Result<(), String> {
+        if !self.stale.remove(&self.session.window) {
+            return Ok(());
+        }
+        self.send(&ToInterface::Strip(self.strip()))?;
+        self.send_bar()?;
+        self.send_settings()?;
+        self.send(&ToInterface::Remote(self.settings.remote))
+    }
+
+    /// Opens a new window, private or not, with the home address in it,
+    /// and makes it the one at hand.
+    fn open_window(&mut self, private: bool) -> Result<(), String> {
+        if let Err(reason) = self.session.room_for_a_tab() {
+            return self.say(reason);
+        }
+        let from = self.session.window;
+        let window = match self.session.new_window(private) {
+            Ok(window) => window,
+            Err(reason) => return self.say(reason),
+        };
+        self.park_shown(from);
+        self.send_untargeted(&ToInterface::OpenWindow { window, geometry: None })?;
+        let home = self.settings.home.clone();
+        open_home(&mut self.session, &home)?;
+        self.send_window_whole()
+    }
+
+    /// Everything a window shows, for a window just opened.
+    fn send_window_whole(&mut self) -> Result<(), String> {
+        self.stale.remove(&self.session.window);
+        self.send_settings()?;
+        self.send_all()?;
+        self.send_bar()?;
+        self.send(&ToInterface::Remote(self.settings.remote))
+    }
+
+    /// Closes the window at hand and its tabs; false when it was the last,
+    /// and the browser ends.
+    fn close_window(&mut self) -> Result<bool, String> {
+        if self.session.window_count() <= 1 {
+            return Ok(false);
+        }
+        let closing = self.session.window;
+        if let Some(previous) = self.showing.take() {
+            self.tell(previous, ToDecoder::Showing(Vec::new()));
+        }
+        self.session.close_window();
+        let next = self.shown_elsewhere.remove(&self.session.window).unwrap_or_default();
+        self.frames = next.frames;
+        self.showing = next.showing;
+        self.shown_pages = next.pages;
+        self.shown_elsewhere.remove(&closing);
+        self.stale.remove(&closing);
+        self.send_untargeted(&ToInterface::CloseWindow(closing))?;
+        if self.targeted == closing {
+            // The next message names its window again.
+            self.targeted = protocol::NEW_WINDOW;
+        }
+        self.match_decoders()?;
+        self.send_history()?;
+        Ok(true)
+    }
+
+    /// Moves the tab at `tab` of the window at hand into window `window`, or
+    /// a new one, before its tab at `index` (`multiple-windows.md`); the
+    /// window it leaves closes when it has no tab left.
+    fn tab_to_window(&mut self, tab: usize, window: u32, index: usize) -> Result<(), String> {
+        let from = self.session.window;
+        if window == from {
+            return Ok(());
+        }
+        let into_new = window == protocol::NEW_WINDOW;
+        if !into_new && !self.session.window_ids().contains(&window) {
+            return Ok(());
+        }
+        if into_new && self.session.window_count() >= interface_core::library::MAX_WINDOWS {
+            return self.say(format!("At most {} windows are open at once", interface_core::library::MAX_WINDOWS));
+        }
+        if let Some(previous) = self.showing.take() {
+            self.tell(previous, ToDecoder::Showing(Vec::new()));
+        }
+        let Some(moved) = self.session.take_tab(tab) else { return Ok(()) };
+        let left_empty = self.session.tabs.is_empty();
+        if into_new {
+            let private = self.session.private_window;
+            let new = self.session.new_window(private)?;
+            self.park_shown(from);
+            self.send_untargeted(&ToInterface::OpenWindow { window: new, geometry: None })?;
+            self.session.put_tab(moved, 0);
+            self.send_window_whole()?;
+        } else {
+            self.switch_window(window);
+            self.session.put_tab(moved, index);
+            self.send_all()?;
+        }
+        let there = self.session.window;
+        self.switch_window(from);
+        if left_empty {
+            self.close_window()?;
+        } else {
+            self.send_all()?;
+        }
+        self.switch_window(there);
+        Ok(())
     }
 
     /// Delivers what the hearing rules decided.
@@ -478,8 +661,14 @@ impl Core {
         if let Some(channel) = active {
             self.sleep.seen(channel, now);
         }
+        // Every window's active channel is in view, and stays awake.
+        for window in &self.session.others {
+            if let Some(tab) = window.tabs.get(window.active) {
+                self.sleep.seen(tab.channel.id, now);
+            }
+        }
         let channels: Vec<(u32, Option<String>, Option<String>)> =
-            self.session.tabs.iter().map(|tab| (tab.channel.id, tab.channel.problem.clone(), tab.channel.web.clone())).collect();
+            self.session.all_tabs().map(|tab| (tab.channel.id, tab.channel.problem.clone(), tab.channel.web.clone())).collect();
         for (id, problem, web) in &channels {
             let awake = self.sleep.awake(*id, active, now);
             if awake && !self.decoders.contains_key(id) {
@@ -689,7 +878,7 @@ impl Core {
     /// Tells the interface each tab's channel's mute, where it changed: a
     /// muted tab's new channel starts muted.
     fn send_mutes(&mut self) {
-        let tabs: Vec<(u32, bool)> = self.session.tabs.iter().map(|tab| (tab.channel.id, tab.muted)).collect();
+        let tabs: Vec<(u32, bool)> = self.session.all_tabs().map(|tab| (tab.channel.id, tab.muted)).collect();
         let sends = tabs.into_iter().filter_map(|(channel, muted)| self.hearing.mute(channel, muted)).collect();
         self.deliver(sends);
     }
@@ -707,9 +896,16 @@ impl Core {
         self.session.active_tab().map(|tab| tab.channel.id)
     }
 
-    /// Returns false when the window should close.
+    /// Returns false when the browser should end.
     fn intent(&mut self, intent: ToCore) -> Result<bool, String> {
+        if matches!(intent, ToCore::From(_) | ToCore::NewWindow { .. } | ToCore::TabToWindow { .. } | ToCore::CloseWindow) {
+            return self.window_intent(&intent);
+        }
+        if self.from_closed {
+            return Ok(true);
+        }
         match intent {
+            ToCore::From(_) | ToCore::NewWindow { .. } | ToCore::TabToWindow { .. } | ToCore::CloseWindow => {}
             ToCore::Visible(visible) => {
                 let Some(channel) = self.active_channel() else { return Ok(true) };
                 // Only the active channel's pages can be asked for.
@@ -743,16 +939,22 @@ impl Core {
             }
             ToCore::CloseTab(index) => {
                 self.session.close(usize::from(index));
+                // A window's last tab closes the window; the last window's,
+                // the browser.
                 if self.session.tabs.is_empty() {
-                    return Ok(false);
+                    return self.close_window();
                 }
                 self.send_all()?;
                 self.send_history()?;
             }
             ToCore::NewTab => {
-                let home = self.settings.home.clone();
-                open_home(&mut self.session, &home)?;
-                self.send_all()?;
+                if let Err(reason) = self.session.room_for_a_tab() {
+                    self.say(reason)?;
+                } else {
+                    let home = self.settings.home.clone();
+                    open_home(&mut self.session, &home)?;
+                    self.send_all()?;
+                }
             }
             // The start page's bookmark pages open their bookmarks, as the
             // user's own navigation (requirement 19.7).
@@ -781,7 +983,10 @@ impl Core {
             | ToCore::TabList(_)
             | ToCore::GoTo { .. }
             | ToCore::NewPrivateTab => self.library_intent(intent)?,
-            ToCore::Window(window) => self.window_moved = std::time::Instant::now().checked_add(WINDOW_STILL).map(|still| (window, still)),
+            ToCore::Window(window) => {
+                let at_hand = self.session.window;
+                self.window_moved = std::time::Instant::now().checked_add(WINDOW_STILL).map(|still| (at_hand, window, still));
+            }
             ToCore::Cookies(request) => self.cookies_request(request)?,
             #[cfg(feature = "links")]
             ToCore::Point(_) | ToCore::Typed { .. } | ToCore::Confirm(_) | ToCore::Cancel(_) => self.link_intent(&intent)?,
@@ -799,10 +1004,39 @@ impl Core {
         Ok(true)
     }
 
-    /// Keeps the window's place the interface last reported.
+    /// The window intents (`multiple-windows.md`); false when the browser
+    /// should end.
+    fn window_intent(&mut self, intent: &ToCore) -> Result<bool, String> {
+        match *intent {
+            ToCore::From(window) => {
+                self.from_closed = !self.switch_window(window);
+                if !self.from_closed {
+                    self.refresh_if_stale()?;
+                }
+                return Ok(true);
+            }
+            _ if self.from_closed => return Ok(true),
+            ToCore::NewWindow { private } => self.open_window(private)?,
+            ToCore::TabToWindow { tab, window, index } => self.tab_to_window(usize::from(tab), window, usize::from(index))?,
+            ToCore::CloseWindow => {
+                let open = self.close_window()?;
+                self.keep_session();
+                return Ok(open);
+            }
+            _ => {}
+        }
+        self.keep_session();
+        Ok(true)
+    }
+
+    /// Keeps the place the interface last reported of a window.
     fn keep_window(&mut self) {
-        if let Some((window, _)) = self.window_moved.take() {
-            self.window = Some(window);
+        if let Some((id, geometry, _)) = self.window_moved.take() {
+            let here = self.session.window;
+            if self.switch_window(id) {
+                self.session.geometry = Some(geometry);
+                self.switch_window(here);
+            }
             self.keep_session();
         }
     }
@@ -811,7 +1045,7 @@ impl Core {
     /// (requirement 20.21); a failure is logged.
     fn keep_session(&mut self) {
         let Some(folder) = &self.settings_folder else { return };
-        let text = self.session.saved(self.window).text();
+        let text = self.session.saved().text();
         if text == self.kept_session {
             return;
         }
@@ -888,7 +1122,7 @@ impl Core {
     /// is on screen (decision 22).
     fn load(&mut self) {
         let mut messages = Vec::new();
-        for tab in &mut self.session.tabs {
+        for tab in self.session.all_tabs_mut() {
             // A sleeping channel's file waits where it is: what was read is
             // kept, and the rest is read when it wakes.
             if !self.decoders.contains_key(&tab.channel.id) {
@@ -1146,7 +1380,7 @@ impl Core {
         }
         self.to_interface.flush().map_err(|error| format!("cannot write to the interface: {error}"))?;
         // A replaced decoder starts again at once if its tab is awake.
-        if self.decoders.len() < self.session.tabs.len() {
+        if self.decoders.len() < self.session.tab_count() {
             self.match_decoders()?;
         }
         Ok(())
@@ -1156,7 +1390,7 @@ impl Core {
     /// channel's file still being fed, a channel being waited on to take
     /// keys, or the console open to be sent what comes.
     fn loading_wanted(&self) -> bool {
-        let feeding = self.session.tabs.iter().any(|tab| self.decoders.contains_key(&tab.channel.id) && tab.channel.source.has_more());
+        let feeding = self.session.all_tabs().any(|tab| self.decoders.contains_key(&tab.channel.id) && tab.channel.source.has_more());
         #[cfg(feature = "interaction")]
         let typing = self.typing.waiting();
         #[cfg(not(feature = "interaction"))]
@@ -1175,7 +1409,7 @@ impl Core {
         if let Some((_, until)) = &self.notice {
             next = next.map(|at| at.min(*until));
         }
-        if let Some((_, still)) = self.window_moved {
+        if let Some((_, _, still)) = self.window_moved {
             next = next.map(|at| at.min(still));
         }
         if let Some(due) = self.cookies.due {
@@ -1198,7 +1432,7 @@ impl Core {
             self.next_sleep_check = now.checked_add(SLEEP_CHECK).unwrap_or(now);
             self.match_decoders()?;
         }
-        if self.window_moved.is_some_and(|(_, still)| now >= still) {
+        if self.window_moved.is_some_and(|(_, _, still)| now >= still) {
             self.keep_window();
         }
         if self.cookies.due.is_some_and(|due| now >= due) {
@@ -1217,9 +1451,16 @@ impl Core {
 
     /// Which channels sound, as the sound helper said: a sounding tab stays
     /// awake (decision 47) and shows its speaker.
-    fn sounding(&mut self, channels: Vec<u32>) -> Result<(), String> {
-        self.sleep.set_sounding(&channels);
-        self.send(&ToInterface::Sounding(channels))
+    fn sounding(&mut self, channels: &[u32]) -> Result<(), String> {
+        self.sleep.set_sounding(channels);
+        // Every window marks its own tabs among them.
+        let here = self.session.window;
+        for window in self.session.window_ids() {
+            self.switch_window(window);
+            self.send(&ToInterface::Sounding(channels.to_vec()))?;
+        }
+        self.switch_window(here);
+        Ok(())
     }
 
     /// The broker, which a test's core has none of.
@@ -1307,6 +1548,7 @@ impl Core {
             Ok(security) => {
                 self.refusal = None;
                 self.save_settings();
+                self.others_stale();
                 if let Some(mode) = cookies {
                     self.cookie_mode_changed(mode);
                 }
@@ -1561,7 +1803,7 @@ impl Core {
     /// Runs `decide` with the link table and channel `id` as links see it.
     fn with_channel<T>(&mut self, id: u32, decide: impl FnOnce(&mut Links, &LinkChannel<'_>) -> T) -> Option<T> {
         let Self { session, links, .. } = self;
-        let tab = session.tabs.iter().find(|tab| tab.channel.id == id)?;
+        let tab = session.all_tabs().find(|tab| tab.channel.id == id)?;
         let address = tab.address()?;
         let exists = |page: u16| tab.channel.has_page(page);
         Some(decide(links, &LinkChannel { id, address, exists: &exists }))
@@ -1734,8 +1976,11 @@ impl Core {
             to_interface,
             sound: None,
             library: library::Library::default(),
-            window: None,
             window_moved: None,
+            targeted: session::FIRST_WINDOW,
+            shown_elsewhere: BTreeMap::new(),
+            stale: std::collections::BTreeSet::new(),
+            from_closed: false,
             cookies: cookie_control::Cookies::default(),
             controls: page_controls::State::default(),
             kept_session: String::new(),
@@ -1815,12 +2060,12 @@ fn handle(core: &mut Core, event: Event) -> Result<bool, String> {
     match event {
         Event::Decoded(channel, generation, message) => {
             if core.decoders.get(&channel).map(|decoder| decoder.generation) == Some(generation) {
-                core.decoded(channel, message)?;
+                core.in_window_of(channel, |core| core.decoded(channel, message))?;
             }
         }
         Event::Fetched(channel, generation, message) => {
             if core.fetchers.get(&channel).map(|fetcher| fetcher.generation) == Some(generation) {
-                core.fetched(channel, message)?;
+                core.in_window_of(channel, |core| core.fetched(channel, message))?;
             }
         }
         Event::FetcherEnded(channel, generation, reason) => {
@@ -1840,16 +2085,19 @@ fn handle(core: &mut Core, event: Event) -> Result<bool, String> {
             core.session.now = neoteletext::calendar::utc_now();
             return core.intent(intent);
         }
-        Event::DecoderEnded(channel, generation, reason) => core.decoder_ended(channel, generation, reason),
+        Event::DecoderEnded(channel, generation, reason) => core.in_window_of(channel, |core| {
+            core.decoder_ended(channel, generation, reason);
+            Ok(())
+        })?,
         #[cfg(feature = "phone-keyboard")]
         Event::Phone(message) => core.phone_said(message)?,
         #[cfg(feature = "phone-keyboard")]
         Event::PhoneEnded(reason) => core.phone_ended(reason)?,
-        Event::Sound(FromSound::Sounding(channels)) => core.sounding(channels)?,
+        Event::Sound(FromSound::Sounding(channels)) => core.sounding(&channels)?,
         Event::SoundEnded(reason) => {
             core.log(Level::Error, None, &format!("no sound: the sound helper ended{}", reason.map(|reason| format!(": {reason}")).unwrap_or_default()));
             core.sound = None;
-            core.sounding(Vec::new())?;
+            core.sounding(&[])?;
         }
         Event::BookmarksRead(read) => core.bookmarks_read(read)?,
         Event::InterfaceEnded(None) => return Ok(false),
@@ -1882,7 +2130,7 @@ fn run(broker: &Arc<Broker>, given: impl Iterator<Item = String>, confined: &str
     // The window's place first: the interface opens its window with the
     // first message it is sent (section 15.3).
     let mut to_interface = Outbox::new(interface.stdin.take().ok_or("the interface has no input")?);
-    let window = saved.as_ref().and_then(|saved| saved.window);
+    let window = saved.as_ref().and_then(|saved| saved.windows.first()).and_then(|window| window.geometry);
     if let Some(window) = window {
         write_to_interface(&mut to_interface, &ToInterface::Window(window)).map_err(|error| format!("cannot write to the interface: {error}"))?;
         to_interface.flush().map_err(|error| format!("cannot write to the interface: {error}"))?;
@@ -1898,14 +2146,18 @@ fn run(broker: &Arc<Broker>, given: impl Iterator<Item = String>, confined: &str
     for (level, text) in log {
         core.log(level, None, &text);
     }
-    core.window = window;
     core.cookies_at_start();
     core.keep_session();
     core.start_sound();
-    core.send_settings()?;
-    core.send_all()?;
-    core.send_bar()?;
-    core.send(&ToInterface::Remote(core.settings.remote))?;
+    core.send_window_whole()?;
+    // The other windows the session kept, each opened and sent whole.
+    let first = core.session.window;
+    for (id, geometry) in core.session.others.iter().map(|window| (window.id, window.geometry)).collect::<Vec<_>>() {
+        core.send_untargeted(&ToInterface::OpenWindow { window: id, geometry })?;
+        core.switch_window(id);
+        core.send_window_whole()?;
+    }
+    core.switch_window(first);
     core.flush()?;
 
     let result = loop {
@@ -2072,7 +2324,7 @@ mod program_tests {
         kept.open("news.invalid").unwrap();
         kept.open("sport.invalid").unwrap();
         kept.active = 0;
-        let saved = kept.saved(None);
+        let saved = kept.saved();
         let given = ["weather.invalid".to_owned(), "tv.invalid".to_owned()];
 
         let mut session = Session::new(Bookmarks::default());

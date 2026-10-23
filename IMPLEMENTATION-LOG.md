@@ -30,4 +30,9 @@ The questions met while implementing without the owner, and the answer taken, as
 | 22 | Write the Netscape format on export too? | No. | The to-do asked for reading; this browser's bookmarks are channels, which another browser would open only as web pages. |
 | 23 | Which presses open in a new tab besides Shift-click? | Command-click (Control-click elsewhere) and the middle button, on history rows, the manager's bookmarks, the bar and its lists and suggestions only. | As Chrome does; on anything else they do nothing, so a middle press can never press a button. |
 | 24 | What does "Move…" list? | The folders the manager's tree lists, from its scroll place, but the item itself. | The tree is the list the user already scrolls; a folder moved into its own contents is refused by the trusted core with a notice. |
+| 25 | One interface process for every window, or one for each? | One for every window. | On macOS a process with windows is an application with a Dock icon of its own; a second process of the same code adds no boundary (`multiple-windows.md` section 2). |
+| 26 | Add a window to every message, or say it once? | Two context messages, `Target` and `From`, before a run of messages for or from another window; no other message changes. | Every message kind stays as it was; the trusted core's and the interface's code keeps its window-local tab places by setting the other windows aside. |
+| 27 | Bound the tabs? | 64 in all windows, 16 windows; past them a notice. | The trusted core had no bound: a 65th tab could not have been sent to the interface, and the session file's bound assumes 64. |
+| 28 | Command-Shift-N: a private tab, or a private window as in Chrome? | Stays a private tab (decision 57); New private window is in the menu without a key. | No key changes meaning while the owner is away. |
+| 29 | A window closed by closing its last tab: kept as a window? | As that tab, closed alone. | There is nothing of a window to keep but the tab. |
 

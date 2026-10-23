@@ -20,6 +20,10 @@ use crate::ui::{HAIRLINE, border, centred, left_centred, outline};
 /// How far a tab must move with the button held before it is dragged, not
 /// chosen: about a finger's tremble.
 const DRAG_THRESHOLD: f64 = 4.0;
+/// How far below the strip a dragged tab is let go before it leaves the
+/// window rather than staying on the strip: a little slack for a hand that
+/// drifts while dragging along it.
+const TEAR_DISTANCE: f64 = 24.0;
 /// The count of tabs that do not fit: "+12".
 const COUNT_WIDTH: f64 = 40.0;
 /// A row of the overflow panel: a tab's height and the gap below it.
@@ -56,6 +60,14 @@ pub(super) struct TabsUi {
     /// Those tabs, the strip's tab width, and its left and right ends, for
     /// the panel drawn at the end of the frame.
     rest: (Vec<usize>, f64, f64, f64),
+}
+
+/// A coordinate in whole pixels, held within `i32`.
+fn whole(value: f64) -> i32 {
+    let rounded = libm::round(value).clamp(f64::from(i32::MIN), f64::from(i32::MAX));
+    #[expect(clippy::cast_possible_truncation, reason = "rounded and held within i32 above")]
+    let whole = rounded as i32;
+    whole
 }
 
 /// Which tabs the strip shows, in order, and which wrap into the panel: the
@@ -238,9 +250,29 @@ impl Browser {
     /// The button was released: a dragged tab goes where it was let go.
     pub(super) fn tabs_released(&mut self) {
         let Some(drag) = self.tab_strip.drag.take() else { return };
+        // Let go off the strip and the panel, below them or outside the
+        // window: the tab leaves this window (`multiple-windows.md`).
+        let point = self.pointer;
+        let strip = Rect::new(0.0, 0.0, self.regions.strip.x1, STRIP_HEIGHT + TEAR_DISTANCE);
+        if drag.moving && !strip.contains(point) && !self.tab_strip.panel.contains(point) {
+            self.outputs.push(Output::TabOut { index: drag.index, x: whole(point.x), y: whole(point.y) });
+            return;
+        }
         if drag.moving && drag.target != drag.index {
             self.outputs.push(Output::MoveTab { from: drag.index, to: drag.target });
         }
+    }
+
+    /// Where a tab let go at `point` of this window, in logical pixels,
+    /// would go on its strip: before the tab there, or at the end; none
+    /// off the strip.
+    #[must_use]
+    pub fn tab_place_at(&self, point: Point) -> Option<usize> {
+        if !self.regions.strip.contains(point) {
+            return None;
+        }
+        let shown = self.regions.tabs.iter().find(|region| region.tab.contains(point)).map(|region| region.index);
+        Some(shown.unwrap_or(self.tabs.len()))
     }
 
     /// Escape while dragging: the tab stays where it was.
@@ -333,6 +365,36 @@ mod tests {
         browser.key(Key::Escape, Modifiers::default(), 0);
         browser.pointer_released();
         assert_eq!(browser.take_outputs(), [Output::SelectTab(0)], "Escape: it stays");
+    }
+
+    /// `multiple-windows.md`: a tab dragged off the strip, below it or out
+    /// of the window, leaves; let go just below the strip, it stays on it.
+    /// Another window says where on its strip a tab let go would go.
+    #[test]
+    fn a_tab_dragged_off_the_strip_leaves_the_window() {
+        let mut browser = browser_with(4, 0);
+        let first = browser.regions.tabs[0].tab;
+        browser.pointer_moved(middle(first).x, middle(first).y, 0);
+        browser.pointer_pressed(&mut Recorder::new(), false, 0);
+        browser.pointer_moved(middle(first).x + 30.0, 300.0, 0);
+        browser.pointer_released();
+        assert_eq!(browser.take_outputs(), [Output::SelectTab(0), Output::TabOut { index: 0, x: whole(middle(first).x + 30.0), y: 300 }]);
+        browser.pointer_moved(middle(first).x, middle(first).y, 0);
+        browser.pointer_pressed(&mut Recorder::new(), false, 0);
+        browser.pointer_moved(-200.0, -50.0, 0);
+        browser.pointer_released();
+        assert_eq!(browser.take_outputs(), [Output::SelectTab(0), Output::TabOut { index: 0, x: -200, y: -50 }], "out of the window");
+        browser.pointer_moved(middle(first).x, middle(first).y, 0);
+        browser.pointer_pressed(&mut Recorder::new(), false, 0);
+        browser.pointer_moved(middle(first).x + 30.0, STRIP_HEIGHT + TEAR_DISTANCE / 2.0, 0);
+        browser.pointer_released();
+        assert_eq!(browser.take_outputs(), [Output::SelectTab(0)], "within the slack: still the strip's");
+        let third = browser.regions.tabs[2].tab;
+        assert_eq!(browser.tab_place_at(middle(third)), Some(2));
+        assert_eq!(browser.tab_place_at(Point::new(third.x1 + 600.0, middle(third).y)), Some(4), "past the last tab: the end");
+        assert_eq!(browser.tab_place_at(Point::new(middle(third).x, 400.0)), None);
+        browser.key(Key::Text("n"), Modifiers { command: true, ..Modifiers::default() }, 0);
+        assert_eq!(browser.take_outputs(), [Output::NewWindow { private: false }]);
     }
 
     /// The tab keys of decision 69.

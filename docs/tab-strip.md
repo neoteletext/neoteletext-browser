@@ -15,7 +15,7 @@ Tabs shrink to 90 points; past that the strip stopped drawing them. A tab that d
 - **A press on a tab** chooses it, as before. Moved more than 4 points with the button held, it is **dragged**: it follows the pointer along the strip, and a line between two tabs shows where it will go. Released, it moves there; released where it started, or with Escape, nothing changes.
 - **The order is the trusted core's** (requirement 12.1): the interface asks to move tab *a* to place *b* as strip input; the trusted core moves it, keeps the active tab active, saves the session (requirement 20.21), and sends the tabs back. The interface never orders tabs itself.
 - **Close and mute buttons** on a tab do not start a drag.
-- **Between windows** (the to-do's item on multiple windows): a tab dragged out of the strip and released below it opens a window of its own; released on another window's strip it joins that window. Built with multiple windows (decision 70).
+- **Between windows** (the to-do's item on multiple windows): a tab dragged out of the strip and released below it opens a window of its own; released on another window's strip it joins that window. Built with multiple windows (decision 72, `multiple-windows.md`).
 
 ## 3. Overflow
 

@@ -27,6 +27,10 @@ pub const MAX_STEPS: usize = MAX_TAB_ENTRIES - 1;
 const _: () = assert!(MAX_STEPS <= u8::MAX as usize, "a step count is one byte");
 /// The most recently closed tabs kept (section 2.8).
 pub const MAX_CLOSED: usize = 25;
+/// The most windows open at once (`multiple-windows.md`): more than anyone
+/// arranges on a desktop, and few enough that every window's lines fit the
+/// session file.
+pub const MAX_WINDOWS: usize = 16;
 /// The longest search text.
 pub const MAX_QUERY: usize = 256;
 /// The longest name of a bookmark or folder, and a channel's title.

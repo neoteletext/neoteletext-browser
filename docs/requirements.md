@@ -812,7 +812,7 @@ Withdrawn on 23 October 2026 (decision 66): no font is fetched (decision 66): ev
 - **Reason:** Windows share one trusted state.
 - **Source:** Architecture.
 - **Verification:** Test.
-- **State:** Not met: one window only.
+- **State:** Met (23 October 2026, decision 72, `multiple-windows.md`): one interface process draws every window, each with its own strip from what the trusted core sent for it; a tab moves between windows only as strip input the trusted core carries out (`TabToWindow`); a channel's frames go only to its tab's window (`Target`). Tests: `windows_keep_their_own_tabs`, `a_closed_window_reopens_whole`, `every_window_is_kept_and_restored`, `tabs_are_bounded_across_windows`, `messages_and_intents_name_their_window`, `a_tab_dragged_off_the_strip_leaves_the_window`, `window_messages_are_held_to_their_bounds`; by hand on macOS, a second window opened, closed and was restored.
 
 ### Requirement 12.9: Accessibility
 - **Statement:** The window must be usable with a screen reader on every desktop, through AccessKit or the platform's own interface, with each page labelled with its cleaned text.
