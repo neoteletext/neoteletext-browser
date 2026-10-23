@@ -55,6 +55,7 @@ struct Attributes {
 
 impl Drop for Attributes {
     fn drop(&mut self) {
+        // SAFETY: the list was initialised by `attributes` in storage this value still owns.
         unsafe { DeleteProcThreadAttributeList(self.list) };
     }
 }
@@ -62,9 +63,13 @@ impl Drop for Attributes {
 fn attributes(count: u32) -> io::Result<Attributes> {
     let mut size = 0_usize;
     // The first call says how much room the list needs.
+    // SAFETY: a null list asks only for the size, written to a live local; the call fails
+    // by design, so its result is not read.
     unsafe { InitializeProcThreadAttributeList(ptr::null_mut(), count, 0, &raw mut size) };
     let mut storage = vec![0_u64; size.div_ceil(size_of::<u64>())];
     let list: LPPROC_THREAD_ATTRIBUTE_LIST = storage.as_mut_ptr().cast();
+    // SAFETY: `list` points at storage of at least `size` bytes, aligned for its fields,
+    // which outlives it in `Attributes`.
     if unsafe { InitializeProcThreadAttributeList(list, count, 0, &raw mut size) } == 0 {
         return Err(last_error());
     }
@@ -76,6 +81,8 @@ fn add_attribute<T>(attributes: &Attributes, which: usize, value: &T, bytes: usi
 }
 
 fn add_attribute_at(attributes: &Attributes, which: usize, value: *const std::ffi::c_void, bytes: usize) -> io::Result<()> {
+    // SAFETY: the list is initialised; `value` points at `bytes` bytes the caller keeps
+    // alive until CreateProcessW has read them (locals of `start`).
     if unsafe { UpdateProcThreadAttribute(attributes.list, 0, which, value.cast_mut(), bytes, ptr::null_mut(), ptr::null()) } == 0 {
         return Err(last_error());
     }
@@ -128,6 +135,7 @@ pub(super) fn start(
     if matches!(spawn.role, Role::Decoder | Role::Core) {
         add_attribute(&attributes, PROC_THREAD_ATTRIBUTE_ALL_APPLICATION_PACKAGES_POLICY as usize, &opt_out, size_of::<u32>())?;
     }
+    // SAFETY: an all-zero STARTUPINFOEXW is a valid value of a plain C struct.
     let mut startup: STARTUPINFOEXW = unsafe { std::mem::zeroed() };
     startup.StartupInfo.cb = u32::try_from(size_of::<STARTUPINFOEXW>()).unwrap_or(0);
     startup.StartupInfo.dwFlags = STARTF_USESTDHANDLES;
@@ -139,7 +147,11 @@ pub(super) fn start(
     let mut line = command_line(spawn.program.as_os_str(), spawn.arguments);
     let mut environment = environment_block(spawn.environment);
     let flags = EXTENDED_STARTUPINFO_PRESENT | CREATE_SUSPENDED | CREATE_UNICODE_ENVIRONMENT;
+    // SAFETY: likewise PROCESS_INFORMATION, which the call writes.
     let mut information: PROCESS_INFORMATION = unsafe { std::mem::zeroed() };
+    // SAFETY: every pointer is to a live local of this function (the program and the
+    // mutable command line and environment block, NUL-terminated) or to the
+    // startup information and its attribute list, all alive for the call.
     let started = unsafe {
         CreateProcessW(
             program.as_ptr(),

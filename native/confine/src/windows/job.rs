@@ -18,15 +18,19 @@ use crate::Role;
 
 /// The job the helper runs in.
 pub(super) fn job(role: Role) -> io::Result<Owned> {
+    // SAFETY: no security attributes and no name: both null, as allowed.
     let job = unsafe { CreateJobObjectW(ptr::null(), ptr::null()) };
     if job == 0 {
         return Err(last_error());
     }
     let job = Owned(job);
+    // SAFETY: an all-zero JOBOBJECT_EXTENDED_LIMIT_INFORMATION is a valid value of a plain
+    // C struct.
     let mut limits: JOBOBJECT_EXTENDED_LIMIT_INFORMATION = unsafe { std::mem::zeroed() };
     limits.BasicLimitInformation.LimitFlags =
         JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE | JOB_OBJECT_LIMIT_ACTIVE_PROCESS | JOB_OBJECT_LIMIT_DIE_ON_UNHANDLED_EXCEPTION;
     limits.BasicLimitInformation.ActiveProcessLimit = 1;
+    // SAFETY: the job is owned here; the limits are a live local of the size given.
     if unsafe {
         SetInformationJobObject(
             job.0,
@@ -46,6 +50,7 @@ pub(super) fn job(role: Role) -> io::Result<Owned> {
         restrictions |= JOB_OBJECT_UILIMIT_DESKTOP | JOB_OBJECT_UILIMIT_HANDLES | JOB_OBJECT_UILIMIT_READCLIPBOARD | JOB_OBJECT_UILIMIT_WRITECLIPBOARD;
     }
     let ui = JOBOBJECT_BASIC_UI_RESTRICTIONS { UIRestrictionsClass: restrictions };
+    // SAFETY: as above, for the UI restrictions.
     if unsafe {
         SetInformationJobObject(
             job.0,

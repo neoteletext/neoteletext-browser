@@ -19,6 +19,7 @@ pub(crate) fn local_offset() -> io::Result<i32> {
     // SAFETY: an all-zero TIME_ZONE_INFORMATION is a valid value of a plain
     // C struct, and the call writes into the one it is given.
     let mut information: TIME_ZONE_INFORMATION = unsafe { std::mem::zeroed() };
+    // SAFETY: the call writes into the live local it is given.
     let zone = unsafe { GetTimeZoneInformation(&raw mut information) };
     let bias = match zone {
         TIME_ZONE_ID_INVALID => return Err(last_error()),

@@ -33,14 +33,17 @@ impl Inner {
     }
 
     pub fn kill(&mut self) -> io::Result<()> {
+        // SAFETY: the process handle this value owns.
         if unsafe { TerminateProcess(self.process, 1) } == 0 { Err(io::Error::last_os_error()) } else { Ok(()) }
     }
 
     pub fn wait(&mut self) -> io::Result<ExitStatus> {
+        // SAFETY: the process handle this value owns.
         if unsafe { WaitForSingleObject(self.process, INFINITE) } != WAIT_OBJECT_0 {
             return Err(io::Error::last_os_error());
         }
         let mut code = 0_u32;
+        // SAFETY: the process handle this value owns; the code is written to a live local.
         if unsafe { GetExitCodeProcess(self.process, &raw mut code) } == 0 {
             return Err(io::Error::last_os_error());
         }
@@ -51,6 +54,7 @@ impl Inner {
 impl Drop for Inner {
     /// Closing the job ends the helper, if it still runs.
     fn drop(&mut self) {
+        // SAFETY: both handles are owned by this value and closed once, here.
         unsafe {
             CloseHandle(self.process);
             CloseHandle(self.job);

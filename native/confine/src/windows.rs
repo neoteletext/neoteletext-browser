@@ -28,10 +28,6 @@
 //! environment is the one the trusted core chose, and nothing else.
 
 #![expect(unsafe_code, reason = "the Win32 calls that create a confined process (requirement 10.12, decision 52)")]
-#![allow(
-    clippy::undocumented_unsafe_blocks,
-    reason = "each call's safety is argued once, at the module's head: every handle and pointer passed is one this module made and still owns"
-)]
 
 use std::fs::File;
 use std::io;
@@ -94,6 +90,8 @@ pub(crate) fn spawn(spawn: &Spawn<'_>) -> io::Result<Process> {
     let (our_stdout, their_stdout) = pipe()?;
     keep_ours(our_stdin.0)?;
     keep_ours(our_stdout.0)?;
+    // SAFETY: GetStdHandle takes a constant and returns a handle this process already
+    // has, or none; it is only compared and passed on, never closed.
     let stderr = unsafe { GetStdHandle(STD_ERROR_HANDLE) };
     let mut inherited = vec![their_stdin.0, their_stdout.0];
     if stderr != 0 && stderr != INVALID_HANDLE_VALUE {
@@ -124,20 +122,28 @@ pub(crate) fn spawn(spawn: &Spawn<'_>) -> io::Result<Process> {
     let process = Owned(information.hProcess);
     let thread = Owned(information.hThread);
     // Into the job before it runs a single instruction.
+    // SAFETY: the job and the process are handles this function made and owns, alive to
+    // the end of it.
     if unsafe { AssignProcessToJobObject(job.0, process.0) } == 0 {
         let error = last_error();
+        // SAFETY: the suspended process this function started, its handle still owned here.
         unsafe { TerminateProcess(process.0, 1) };
         return Err(error);
     }
+    // SAFETY: the process's first thread, started suspended, its handle owned here.
     if unsafe { ResumeThread(thread.0) } == u32::MAX {
         let error = last_error();
+        // SAFETY: as above.
         unsafe { TerminateProcess(process.0, 1) };
         return Err(error);
     }
     drop(thread);
     drop(their_stdin);
     drop(their_stdout);
+    // SAFETY: our end of the input pipe, made by `pipe` and owned only by `our_stdin`,
+    // forgotten below so the file becomes its one owner.
     let stdin = unsafe { File::from_raw_handle(our_stdin.0 as _) };
+    // SAFETY: likewise our end of the output pipe.
     let stdout = unsafe { File::from_raw_handle(our_stdout.0 as _) };
     std::mem::forget(our_stdin);
     std::mem::forget(our_stdout);
