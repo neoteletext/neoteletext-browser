@@ -691,7 +691,7 @@ pub fn spawn(spawn: &Spawn<'_>) -> io::Result<Process> {
     let inner = Inner { process: process.0, job: job.0 };
     std::mem::forget(process);
     std::mem::forget(job);
-    Ok(Process { stdin: Some(stdin), stdout: Some(stdout), inner, report })
+    Ok(Process::new(Some(stdin), Some(stdout), inner, report))
 }
 
 #[cfg(test)]

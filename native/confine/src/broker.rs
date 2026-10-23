@@ -797,7 +797,7 @@ pub fn start_core(program: &Path, arguments: &[OsString], writable: &Path, envir
         let report = Report { layers: vec![String::from("sandbox-exec")] };
         #[cfg(not(target_os = "macos"))]
         let report = Report { layers: vec![String::from("confines itself at its start")] };
-        let process = Process { stdin: None, stdout: None, inner: child, report: report.clone() };
+        let process = Process::new(None, None, child, report.clone());
         Ok(Core { process, channel: Channel { stream: ours }, report })
     }
     #[cfg(windows)]
@@ -936,7 +936,7 @@ fn send_spawned(core: &mut Core, id: u32, report: &str, stdin: &crate::Input, st
     {
         // The handles are duplicated into the core and their values sent
         // after the reply's fields; the frame's length counts them.
-        let into = core.process.inner.raw_process();
+        let into = core.process.raw_process();
         let values = [crate::windows::duplicate_into(stdin, into)?, crate::windows::duplicate_into(stdout, into)?];
         let mut payload = bytes.get(HEADER_BYTES..).unwrap_or_default().to_vec();
         for value in values {
