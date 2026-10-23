@@ -89,7 +89,7 @@ impl Https {
     }
 
     /// A TCP connection to the host, or to the proxy and through it.
-    fn connect(&self) -> Result<TcpStream, String> {
+    fn connect(&self) -> Result<Tunnel, String> {
         let (host, port) = match &self.proxy {
             Some(proxy) => (proxy.host.as_str(), proxy.port),
             None => (self.host.as_str(), self.port),
@@ -101,10 +101,14 @@ impl Https {
                 Ok(mut stream) => {
                     stream.set_read_timeout(Some(TIMEOUT)).map_err(|error| error.to_string())?;
                     stream.set_write_timeout(Some(TIMEOUT)).map_err(|error| error.to_string())?;
-                    if let Some(proxy) = &self.proxy {
-                        proxy.open_tunnel(&mut stream, &self.host, self.port)?;
-                    }
-                    return Ok(stream);
+                    // The host's first bytes may come in the same reads as
+                    // the proxy's answer; the engine returns them, and they
+                    // are read first (finding F-87).
+                    let early = match &self.proxy {
+                        Some(proxy) => proxy.open_tunnel(&mut stream, &self.host, self.port)?,
+                        None => Vec::new(),
+                    };
+                    return Ok(Tunnel { early, at: 0, stream });
                 }
                 Err(error) => last = format!("cannot connect to {address}: {error}"),
             }
@@ -213,10 +217,42 @@ pub fn read_response(stream: &mut impl Read, limit: usize, deadline: Instant) ->
     }
 }
 
+/// The connection to the update host, directly or through the proxy, with
+/// the host's bytes that came with the proxy's answer, read first.
+struct Tunnel {
+    early: Vec<u8>,
+    at: usize,
+    stream: TcpStream,
+}
+
+impl Read for Tunnel {
+    fn read(&mut self, buffer: &mut [u8]) -> std::io::Result<usize> {
+        let early = self.early.get(self.at..).unwrap_or_default();
+        if early.is_empty() {
+            return self.stream.read(buffer);
+        }
+        let n = early.len().min(buffer.len());
+        let (to, _) = buffer.split_at_mut(n);
+        to.copy_from_slice(early.get(..n).unwrap_or_default());
+        self.at = self.at.saturating_add(n);
+        Ok(n)
+    }
+}
+
+impl Write for Tunnel {
+    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+        self.stream.write(bytes)
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        self.stream.flush()
+    }
+}
+
 /// A connection read no later than its deadline: each read waits at most
 /// what is left of it.
 struct Timed<'a> {
-    stream: &'a mut rustls::StreamOwned<rustls::ClientConnection, TcpStream>,
+    stream: &'a mut rustls::StreamOwned<rustls::ClientConnection, Tunnel>,
     deadline: Instant,
 }
 
@@ -226,7 +262,7 @@ impl Read for Timed<'_> {
         if left.is_zero() {
             return Err(std::io::Error::new(std::io::ErrorKind::TimedOut, "the request's deadline passed"));
         }
-        self.stream.sock.set_read_timeout(Some(left.min(TIMEOUT)))?;
+        self.stream.sock.stream.set_read_timeout(Some(left.min(TIMEOUT)))?;
         self.stream.read(buffer)
     }
 }
@@ -349,5 +385,29 @@ mod tests {
         assert!(read_response(&mut error.as_slice(), MAX_BODY, far()).is_err());
         let huge = format!("HTTP/1.1 200 OK\r\nContent-Length: {}\r\n\r\n", MAX_BODY + 1).into_bytes();
         assert!(read_response(&mut huge.as_slice(), MAX_BODY, far()).is_err(), "beyond the bound");
+    }
+
+    /// Finding F-87: the host's first bytes, arriving with the proxy's
+    /// answer to `CONNECT`, are read first through the tunnel, not lost.
+    #[test]
+    fn the_bytes_after_a_proxys_answer_are_kept() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let proxy = std::thread::spawn(move || {
+            let (mut client, _) = listener.accept().unwrap();
+            let mut request = Vec::new();
+            let mut byte = [0_u8; 1];
+            while !request.ends_with(b"\r\n\r\n") {
+                client.read_exact(&mut byte).unwrap();
+                request.push(byte[0]);
+            }
+            client.write_all(b"HTTP/1.1 200 Connection established\r\n\r\nEARLY").unwrap();
+        });
+        let https = Https::new("update.example", HTTPS_PORT, None, Some(Proxy::parse(&format!("http://127.0.0.1:{port}")).unwrap())).unwrap();
+        let mut tunnel = https.connect().unwrap();
+        proxy.join().unwrap();
+        let mut first = Vec::new();
+        tunnel.read_to_end(&mut first).unwrap();
+        assert_eq!(first, b"EARLY");
     }
 }
