@@ -49,9 +49,9 @@ fn handle(core: &mut Core, event: Event) -> Result<bool, String> {
             Ok(())
         })?,
         #[cfg(feature = "phone-keyboard")]
-        Event::Phone(message) => core.phone_said(message)?,
+        Event::Phone(generation, message) => core.phone_said(generation, message)?,
         #[cfg(feature = "phone-keyboard")]
-        Event::PhoneEnded(reason) => core.phone_ended(reason)?,
+        Event::PhoneEnded(generation, reason) => core.phone_ended(generation, reason)?,
         Event::Sound(FromSound::Sounding(channels)) => core.sounding(&channels)?,
         Event::SoundEnded(reason) => {
             core.log(Level::Error, None, &format!("no sound: the sound helper ended{}", reason.map(|reason| format!(": {reason}")).unwrap_or_default()));

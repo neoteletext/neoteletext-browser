@@ -37,6 +37,11 @@ const PAGE_NAVIGATION_KEYS: [&str; 18] = [
     "ColorF3Blue",
 ];
 
+/// How long a keyboard process the panel closed has to end by itself, as
+/// its input closing tells it to, before it is killed: time to tell the
+/// relay it leaves, which a held connection cannot hold up longer.
+pub(super) const PHONE_END_GRACE: std::time::Duration = std::time::Duration::from_secs(2);
+
 /// A relay other than qrkeyboard's own, for testing against one run
 /// locally.
 const RELAY_VARIABLE: &str = "NEOTELETEXT_QRKEYBOARD_RELAY";
@@ -53,11 +58,18 @@ impl Core {
         use protocol::keyboard::PhoneState;
         if !open {
             if self.phone_view.state != PhoneState::Connected
-                && let Some((mut child, input)) = self.phone.take()
+                && let Some((child, input)) = self.phone.take()
             {
                 // Its input closing ends it, and the relay hears it leave.
+                // It is not waited for here: one held connecting to a relay
+                // would hold every tab (finding F-26). Its end is reaped
+                // when its pipe closes, or it is killed once its grace is up.
                 drop(input);
-                let _ = child.wait();
+                if let Some((mut earlier, _, _)) = self.phone_ending.take() {
+                    end(&mut earlier);
+                }
+                let grace = std::time::Instant::now().checked_add(PHONE_END_GRACE).unwrap_or_else(std::time::Instant::now);
+                self.phone_ending = Some((child, self.phone_generation, grace));
                 self.phone_view = protocol::keyboard::PhoneView { state: PhoneState::Finished, qr: None, pin: None };
                 self.send_phone()?;
             }
@@ -83,7 +95,15 @@ impl Core {
         let output = child.stdout.take().ok_or("the phone keyboard has no output")?;
         let input = Outbox::new(child.stdin.take().ok_or("the phone keyboard has no input")?);
         let events = self.events.clone();
-        relay(output, protocol::keyboard::read_from_keyboard, events, Event::Phone, Event::PhoneEnded);
+        self.phone_generation = self.phone_generation.wrapping_add(1);
+        let generation = self.phone_generation;
+        relay(
+            output,
+            protocol::keyboard::read_from_keyboard,
+            events,
+            move |message| Event::Phone(generation, message),
+            move |end| Event::PhoneEnded(generation, end),
+        );
         self.note(Level::Info, None, &format!("phone keyboard: confined: {}", child.report));
         self.phone = Some((child, input));
         self.phone_view = protocol::keyboard::PhoneView { state: PhoneState::Preparing, qr: None, pin: None };
@@ -92,8 +112,12 @@ impl Core {
 
     /// What the keyboard process said: its QR and state for the panel, and
     /// the phone's keys, only while it is paired.
-    pub(super) fn phone_said(&mut self, message: protocol::keyboard::FromKeyboard) -> Result<(), String> {
+    pub(super) fn phone_said(&mut self, generation: u64, message: protocol::keyboard::FromKeyboard) -> Result<(), String> {
         use protocol::keyboard::{FromKeyboard, PhoneKey, PhoneState};
+        // A keyboard process the panel closed has nothing more to say.
+        if generation != self.phone_generation || self.phone_ending.as_ref().is_some_and(|(_, ending, _)| *ending == generation) {
+            return Ok(());
+        }
         match message {
             FromKeyboard::Join { qr, pin } => {
                 self.phone_view.qr = Some(qr);
@@ -124,7 +148,29 @@ impl Core {
         }
     }
 
-    pub(super) fn phone_ended(&mut self, reason: Option<String>) -> Result<(), String> {
+    /// When a keyboard process the panel closed is to be killed.
+    pub(super) fn phone_ending_until(&self) -> Option<std::time::Instant> {
+        self.phone_ending.as_ref().map(|(_, _, until)| *until)
+    }
+
+    /// Kills a keyboard process the panel closed that has not ended in its
+    /// grace: killed, it ends at once, so it is reaped without a wait.
+    pub(super) fn phone_tick(&mut self, now: std::time::Instant) {
+        if let Some((mut child, _, _)) = self.phone_ending.take_if(|(_, _, until)| now >= *until) {
+            end(&mut child);
+        }
+    }
+
+    pub(super) fn phone_ended(&mut self, generation: u64, reason: Option<String>) -> Result<(), String> {
+        // One the panel closed is reaped: it has ended, so this does not
+        // wait (finding F-26).
+        if let Some((mut child, _, _)) = self.phone_ending.take_if(|(_, ending, _)| *ending == generation) {
+            end(&mut child);
+            return Ok(());
+        }
+        if generation != self.phone_generation {
+            return Ok(());
+        }
         if let Some(reason) = reason {
             self.log(Level::Error, None, &format!("the phone keyboard stopped: {reason}"));
         }
@@ -142,6 +188,45 @@ mod tests {
     use super::super::test_support::Test;
     use protocol::ToInterface;
     use protocol::keyboard::{FromKeyboard, PhoneKey, PhoneState};
+
+    /// A keyboard of a test that ignores its input closing: it sleeps for
+    /// `seconds`.
+    #[cfg(unix)]
+    fn deaf_keyboard(seconds: &str) -> confine::broker::Helper {
+        let program = std::path::PathBuf::from("/bin/sleep");
+        let arguments = [std::ffi::OsString::from(seconds)];
+        confine::broker::Helper::local(
+            confine::spawn(&confine::Spawn {
+                program: &program,
+                arguments: &arguments,
+                role: confine::Role::Network,
+                environment: &[],
+                local_network: false,
+                writable: None,
+            })
+            .unwrap(),
+        )
+    }
+
+    /// Finding F-26: closing the panel never waits on the keyboard process
+    /// on the trusted core's thread, however long it takes to go, as one
+    /// held connecting to a relay does; it is killed once its grace is up.
+    #[cfg(unix)]
+    #[test]
+    fn closing_the_panel_never_waits_on_the_keyboard() {
+        let mut test = Test::new("phone-close");
+        let mut child = deaf_keyboard("5");
+        let input = neoteletext::outbox::Outbox::new(child.stdin.take().unwrap());
+        test.core.phone = Some((child, input));
+        test.core.phone_view.state = PhoneState::Preparing;
+        let started = std::time::Instant::now();
+        test.core.phone_panel(false).unwrap();
+        assert!(started.elapsed() < std::time::Duration::from_millis(100), "the panel closed at once: {:?}", started.elapsed());
+        assert_eq!(test.core.phone_view.state, PhoneState::Finished);
+        test.core.phone_tick(std::time::Instant::now() + super::PHONE_END_GRACE);
+        assert!(test.core.phone_ending.is_none(), "killed and reaped once its grace was up");
+        assert!(started.elapsed() < std::time::Duration::from_secs(2), "killed, not waited for: {:?}", started.elapsed());
+    }
 
     fn key(name: &str) -> FromKeyboard {
         FromKeyboard::Key { down: true, name: name.into() }
@@ -162,12 +247,12 @@ mod tests {
         let mut test = Test::new("phone-keys");
         test.core.phone_view.state = PhoneState::Connected;
         for name in ["Tab", "Enter", "Escape", "Backspace", "a", "Z"] {
-            test.core.phone_said(key(name)).unwrap();
+            test.core.phone_said(0, key(name)).unwrap();
         }
-        test.core.phone_said(FromKeyboard::Text("example.com".into())).unwrap();
+        test.core.phone_said(0, FromKeyboard::Text("example.com".into())).unwrap();
         assert_eq!(given(&mut test), Vec::new(), "nothing but page navigation");
         for name in ["1", "0", "ArrowUp", "ArrowLeft", "ColorF0Red", "ColorF3Blue"] {
-            test.core.phone_said(key(name)).unwrap();
+            test.core.phone_said(0, key(name)).unwrap();
         }
         let names: Vec<String> = given(&mut test).into_iter().map(|key| if let PhoneKey::Key { name, .. } = key { name } else { String::new() }).collect();
         assert_eq!(names, ["1", "0", "ArrowUp", "ArrowLeft", "ColorF0Red", "ColorF3Blue"]);

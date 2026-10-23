@@ -89,11 +89,12 @@ enum Event {
     Intent(ToCore),
     InterfaceEnded(Option<String>),
     /// The phone keyboard process said something, untrusted.
+    /// Of the keyboard process started as the generation given.
     #[cfg(feature = "phone-keyboard")]
-    Phone(protocol::keyboard::FromKeyboard),
-    /// The phone keyboard process ended.
+    Phone(u64, protocol::keyboard::FromKeyboard),
+    /// The phone keyboard process of that generation ended.
     #[cfg(feature = "phone-keyboard")]
-    PhoneEnded(Option<String>),
+    PhoneEnded(u64, Option<String>),
     /// The sound helper said something, untrusted (decision 55).
     Sound(FromSound),
     /// The sound helper ended: the browser runs silent.
@@ -158,6 +159,13 @@ struct Core {
     /// The phone keyboard process, while one runs.
     #[cfg(feature = "phone-keyboard")]
     phone: Option<(Helper, Outbox)>,
+    /// Which keyboard process [`Core::phone`] is: its events carry it.
+    #[cfg(feature = "phone-keyboard")]
+    phone_generation: u64,
+    /// A keyboard process the panel closed, its generation, and when it is
+    /// killed if it has not ended (finding F-26).
+    #[cfg(feature = "phone-keyboard")]
+    phone_ending: Option<(Helper, u64, std::time::Instant)>,
     /// What the interface shows of it.
     #[cfg(feature = "phone-keyboard")]
     phone_view: protocol::keyboard::PhoneView,
@@ -277,6 +285,10 @@ impl Core {
             opened: None,
             #[cfg(feature = "phone-keyboard")]
             phone: None,
+            #[cfg(feature = "phone-keyboard")]
+            phone_generation: 0,
+            #[cfg(feature = "phone-keyboard")]
+            phone_ending: None,
             #[cfg(feature = "phone-keyboard")]
             phone_view: protocol::keyboard::PhoneView { state: protocol::keyboard::PhoneState::Finished, qr: None, pin: None },
             to_interface,
