@@ -76,16 +76,7 @@ fn handle(core: &mut Core, event: Event) -> Result<bool, String> {
 pub(crate) fn run(broker: &Arc<Broker>, given: impl Iterator<Item = String>, confined: &str) -> Result<(), String> {
     // What happens before the trusted core is made, for its Log tab.
     let mut log = vec![(Level::Info, format!("trusted core: confined: {confined}"))];
-    let mut addresses = Vec::new();
-    let mut allow_local = Vec::new();
-    let mut arguments = given;
-    while let Some(argument) = arguments.next() {
-        if argument == "--allow-local" {
-            allow_local.push(arguments.next().ok_or("--allow-local needs an address")?);
-        } else {
-            addresses.push(argument);
-        }
-    }
+    let (addresses, allow_local) = arguments(given)?;
     let mut interface = spawn(broker, Program::Interface, &[], false)?;
     log.push((Level::Info, format!("interface: confined: {}", interface.report)));
     let (events, incoming) = mpsc::channel();
@@ -131,7 +122,34 @@ pub(crate) fn run(broker: &Arc<Broker>, given: impl Iterator<Item = String>, con
     core.switch_window(first);
     core.flush()?;
 
-    let result = loop {
+    let result = event_loop(&mut core, &incoming);
+    shut_down(core);
+    if result.is_err() {
+        let _ = interface.kill();
+    }
+    let status = interface.wait().map_err(|error| format!("cannot wait for the interface: {error}"))?;
+    ended(result, &status)
+}
+
+/// The browser's own arguments: the addresses to open, and each local
+/// address `--allow-local` lets a fetcher reach.
+fn arguments(given: impl Iterator<Item = String>) -> Result<(Vec<String>, Vec<String>), String> {
+    let mut addresses = Vec::new();
+    let mut allow_local = Vec::new();
+    let mut arguments = given;
+    while let Some(argument) = arguments.next() {
+        if argument == "--allow-local" {
+            allow_local.push(arguments.next().ok_or("--allow-local needs an address")?);
+        } else {
+            addresses.push(argument);
+        }
+    }
+    Ok((addresses, allow_local))
+}
+
+/// Handles each event, and the timed work, until the browser is to end.
+fn event_loop(core: &mut Core, incoming: &mpsc::Receiver<Event>) -> Result<(), String> {
+    loop {
         // An event, or the time for timed work, whichever is first.
         let event = match core.next_wake() {
             Some(at) => match incoming.recv_timeout(at.saturating_duration_since(std::time::Instant::now())) {
@@ -152,14 +170,18 @@ pub(crate) fn run(broker: &Arc<Broker>, given: impl Iterator<Item = String>, con
         };
         // Timed work falls due while events are handled too: a feed that
         // just started, a notice that expired, the sleep check.
-        match handle(&mut core, event).and_then(|go| core.tick().and_then(|()| core.flush()).map(|()| go)) {
+        match handle(core, event).and_then(|go| core.tick().and_then(|()| core.flush()).map(|()| go)) {
             Ok(true) => {}
             Ok(false) => break Ok(()),
             Err(error) => break Err(error),
         }
-    };
+    }
+}
 
-    // A move not yet kept, and cookies not yet written or to remove.
+/// Ends every helper but the interface, which is told to close: a move not
+/// yet kept, and cookies not yet written or to remove, are kept first. The
+/// core goes with it, before the interface is waited for.
+fn shut_down(mut core: Core) {
     core.keep_window();
     core.cookies_at_exit();
     for id in core.fetchers.keys().copied().collect::<Vec<_>>() {
@@ -176,12 +198,6 @@ pub(crate) fn run(broker: &Arc<Broker>, given: impl Iterator<Item = String>, con
     }
     let _ = write_to_interface(&mut core.to_interface, &ToInterface::Close);
     let _ = core.to_interface.flush();
-    drop(core);
-    if result.is_err() {
-        let _ = interface.kill();
-    }
-    let status = interface.wait().map_err(|error| format!("cannot wait for the interface: {error}"))?;
-    ended(result, &status)
 }
 
 /// The browser's outcome once the interface has ended: an interface that
