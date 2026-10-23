@@ -69,7 +69,6 @@ impl Browser {
     }
 
     /// The manager, over the window below the strip, while it is open.
-    #[allow(clippy::too_many_lines, reason = "one part of the manager after another, in drawing order")]
     pub(in crate::browser) fn draw_bookmarks_panel<C: Canvas + ?Sized>(&mut self, canvas: &mut C, now: u64) {
         let mut controls = Controls::default();
         if !self.bookmarks.open {
@@ -87,7 +86,30 @@ impl Browser {
         let view = self.bookmarks.view.clone().unwrap_or_default();
         let mut y = heading.y1 + GAP;
 
-        // The search, and the toolbar.
+        self.draw_bookmarks_toolbar(canvas, &mut controls, Rect::new(left, y, right, y + CONTROL_HEIGHT));
+        y += CONTROL_HEIGHT + GAP;
+        let footer = area.y1 - PADDING - CONTROL_HEIGHT;
+
+        controls.tree = Rect::new(left, y, left + TREE_WIDTH, footer - GAP);
+        self.draw_bookmarks_tree(canvas, &view, &mut controls);
+
+        let contents_left = controls.tree.x1 + GAP;
+        let path_line = Rect::new(contents_left, y, right, y + CONTROL_HEIGHT);
+        draw_path(canvas, &view, &mut controls, path_line);
+        let row_y = self.draw_bookmarks_form(canvas, &mut controls, Rect::new(contents_left, path_line.y1, right, footer));
+
+        controls.contents = Rect::new(contents_left, row_y, right, footer - GAP);
+        self.draw_bookmarks_contents(canvas, &view, &mut controls);
+        let within = Rect::new(left, controls.contents.y0, right, footer);
+        self.draw_chooser(canvas, &view, &mut controls, within);
+
+        self.draw_bookmarks_footer(canvas, &view, &mut controls, Rect::new(left, footer, right, footer + CONTROL_HEIGHT), now);
+        self.bookmarks.controls = controls;
+    }
+
+    /// The search, and the toolbar, along `line`.
+    fn draw_bookmarks_toolbar<C: Canvas + ?Sized>(&self, canvas: &mut C, controls: &mut Controls, line: Rect) {
+        let (left, right, y) = (line.x0, line.x1, line.y0);
         let mut x = right;
         for (rect, word) in [
             (&mut controls.export, "Export"),
@@ -105,11 +127,11 @@ impl Browser {
         if self.bookmarks.query.text().is_empty() && self.bookmarks.focus != Some(Field::Query) {
             left_centred(canvas, controls.search, GAP, "Search bookmarks", ROW_STATUS, DIM);
         }
-        y += CONTROL_HEIGHT + GAP;
-        let footer = area.y1 - PADDING - CONTROL_HEIGHT;
+    }
 
-        // The folder tree.
-        controls.tree = Rect::new(left, y, left + TREE_WIDTH, footer - GAP);
+    /// The folder tree, in `controls.tree`.
+    fn draw_bookmarks_tree<C: Canvas + ?Sized>(&self, canvas: &mut C, view: &BookmarksView, controls: &mut Controls) {
+        let (left, y) = (controls.tree.x0, controls.tree.y0);
         canvas.fill(Rect::new(controls.tree.x1 + GAP / 2.0 - 0.5, y, controls.tree.x1 + GAP / 2.0 + 0.5, controls.tree.y1), 0.0, RULE);
         let open_folder = view.path.last().map(|folder| folder.name.clone());
         canvas.push_clip(controls.tree);
@@ -132,26 +154,12 @@ impl Browser {
             row_y += ROW_HEIGHT;
         }
         canvas.pop_clip();
+    }
 
-        // The open folder's path, or the search's word.
-        let contents_left = controls.tree.x1 + GAP;
-        let path_line = Rect::new(contents_left, y, right, y + CONTROL_HEIGHT);
-        if view.query.is_empty() {
-            let mut x = contents_left;
-            for (index, folder) in view.path.iter().enumerate() {
-                let word = if index == 0 { folder.name.clone() } else { format!("/ {}", folder.name) };
-                let width = canvas.text_width(&word, CAPTION) + GAP;
-                let rect = Rect::new(x, y, x + width, y + CONTROL_HEIGHT);
-                left_centred(canvas, rect, 0.0, &word, CAPTION, WHITE);
-                controls.folders.push((folder.number, rect));
-                x = rect.x1;
-            }
-        } else {
-            left_centred(canvas, path_line, 0.0, &format!("Bookmarks that match \u{201C}{}\u{201D}", view.query), CAPTION, WHITE);
-        }
-        let mut row_y = path_line.y1;
-
-        // The form: a new bookmark, a new folder, an import, an edit.
+    /// The form at the top of `room`: a new bookmark, a new folder, an
+    /// import, an edit. Returns where the contents start below it.
+    fn draw_bookmarks_form<C: Canvas + ?Sized>(&self, canvas: &mut C, controls: &mut Controls, room: Rect) -> f64 {
+        let (contents_left, right, mut row_y) = (room.x0, room.x1, room.y0);
         if let Some(form) = self.bookmarks.form {
             let two = matches!(form, Form::Add | Form::Edit(_));
             let (name_label, address_label) = match form {
@@ -188,9 +196,13 @@ impl Browser {
             }
             row_y += CONTROL_HEIGHT + GAP;
         }
+        row_y
+    }
 
-        // The open folder's contents, or the search's results.
-        controls.contents = Rect::new(contents_left, row_y, right, footer - GAP);
+    /// The open folder's contents, or the search's results, in
+    /// `controls.contents`, each row with its buttons.
+    fn draw_bookmarks_contents<C: Canvas + ?Sized>(&self, canvas: &mut C, view: &BookmarksView, controls: &mut Controls) {
+        let (contents_left, right, mut row_y) = (controls.contents.x0, controls.contents.x1, controls.contents.y0);
         canvas.push_clip(controls.contents);
         if view.items.is_empty() {
             let empty = if view.query.is_empty() { "This folder is empty" } else { "No bookmark matches" };
@@ -239,11 +251,11 @@ impl Browser {
             row_y += ROW_HEIGHT;
         }
         canvas.pop_clip();
-        let within = Rect::new(left, controls.contents.y0, right, footer);
-        self.draw_chooser(canvas, &view, &mut controls, within);
+    }
 
-        // Undo, for a while, and the trusted core's word.
-        let footer = Rect::new(left, footer, right, footer + CONTROL_HEIGHT);
+    /// Undo, for a while, and the trusted core's word, along `footer`.
+    fn draw_bookmarks_footer<C: Canvas + ?Sized>(&self, canvas: &mut C, view: &BookmarksView, controls: &mut Controls, footer: Rect, now: u64) {
+        let (left, right) = (footer.x0, footer.x1);
         if self.bookmarks_undo_shown(now) {
             let text = self.bookmarks.undo_since.as_ref().map(|(_, text)| text.clone()).unwrap_or_default();
             controls.undo = Rect::new(right - BUTTON_WIDTH * 0.7, footer.y0, right, footer.y1);
@@ -256,6 +268,23 @@ impl Browser {
             left_centred(canvas, footer, 0.0, &view.notice, ROW_STATUS, MUTED);
             canvas.pop_clip();
         }
-        self.bookmarks.controls = controls;
+    }
+}
+
+/// The open folder's path, or the search's word, along `path_line`.
+fn draw_path<C: Canvas + ?Sized>(canvas: &mut C, view: &BookmarksView, controls: &mut Controls, path_line: Rect) {
+    let (contents_left, y) = (path_line.x0, path_line.y0);
+    if view.query.is_empty() {
+        let mut x = contents_left;
+        for (index, folder) in view.path.iter().enumerate() {
+            let word = if index == 0 { folder.name.clone() } else { format!("/ {}", folder.name) };
+            let width = canvas.text_width(&word, CAPTION) + GAP;
+            let rect = Rect::new(x, y, x + width, y + CONTROL_HEIGHT);
+            left_centred(canvas, rect, 0.0, &word, CAPTION, WHITE);
+            controls.folders.push((folder.number, rect));
+            x = rect.x1;
+        }
+    } else {
+        left_centred(canvas, path_line, 0.0, &format!("Bookmarks that match \u{201C}{}\u{201D}", view.query), CAPTION, WHITE);
     }
 }
