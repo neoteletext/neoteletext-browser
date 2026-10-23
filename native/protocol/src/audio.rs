@@ -185,7 +185,7 @@ pub(crate) fn push(payload: &mut Vec<u8>, audio: &Audio, sender: Sender) -> Resu
         Audio::Mute(muted) => payload.extend_from_slice(&[OP_MUTE, u8::from(*muted)]),
     }
     // What would be refused on arrival is refused on sending.
-    read(&mut Fields { bytes: payload }, sender).map(|_| ())
+    read(&mut Fields::new(payload), sender).map(|_| ())
 }
 
 /// Reads an audio payload from `sender`, checking every bound.
@@ -203,7 +203,7 @@ pub(crate) fn read(fields: &mut Fields<'_>, sender: Sender) -> Result<Audio, Pro
         OP_SAMPLES => {
             let sound = sound(fields)?;
             let first = fields.u32()?;
-            let bytes = fields.take(fields.bytes.len())?;
+            let bytes = fields.take(fields.remaining())?;
             let (pairs, odd) = bytes.as_chunks::<2>();
             if !odd.is_empty() || pairs.is_empty() || pairs.len() > MAX_MESSAGE_SAMPLES {
                 return Err(ProtocolError::BadValue("samples"));
@@ -235,7 +235,7 @@ pub(crate) fn read(fields: &mut Fields<'_>, sender: Sender) -> Result<Audio, Pro
         OP_STREAM => Audio::Stream { sound: sound(fields)?, rate_hz: rate(fields)? },
         OP_STREAM_SAMPLES => {
             let sound = sound(fields)?;
-            let bytes = fields.take(fields.bytes.len())?;
+            let bytes = fields.take(fields.remaining())?;
             let (pairs, odd) = bytes.as_chunks::<2>();
             if !odd.is_empty() || pairs.is_empty() || pairs.len() > MAX_MESSAGE_SAMPLES {
                 return Err(ProtocolError::BadValue("samples"));

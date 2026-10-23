@@ -623,7 +623,7 @@ mod tests {
     ) {
         let mut payload = Vec::new();
         push(&mut payload, value).unwrap();
-        let mut fields = Fields { bytes: &payload };
+        let mut fields = Fields::new(&payload);
         assert_eq!(&read(&mut fields).unwrap(), value);
         fields.end().unwrap();
     }
@@ -714,7 +714,7 @@ mod tests {
         for request in [BarRequest::Show(true), BarRequest::Folder(None), BarRequest::Folder(Some(4)), BarRequest::Open { number: 1, new_tab: true }] {
             let mut payload = Vec::new();
             push_bar_request(&mut payload, &request);
-            assert_eq!(read_bar_request(&mut Fields { bytes: &payload }).unwrap(), request);
+            assert_eq!(read_bar_request(&mut Fields::new(&payload)).unwrap(), request);
         }
     }
 
@@ -732,14 +732,14 @@ mod tests {
         view.rows[0].page = Some(0x0FF);
         assert!(push_history_view(&mut Vec::new(), &view).is_err());
         assert!(push_folder(&mut Vec::new(), &folder(1, u8::try_from(MAX_FOLDER_DEPTH + 1).unwrap())).is_err());
-        assert!(read_history_request(&mut Fields { bytes: &[HISTORY_CLEAR, 7] }).is_err(), "no seventh range");
-        assert!(read_history_request(&mut Fields { bytes: &[99] }).is_err());
-        assert!(read_bookmark_request(&mut Fields { bytes: &[99] }).is_err());
-        assert!(read_star_request(&mut Fields { bytes: &[99] }).is_err());
-        assert!(read_bar_request(&mut Fields { bytes: &[BAR_SHOW, 2] }).is_err());
+        assert!(read_history_request(&mut Fields::new(&[HISTORY_CLEAR, 7])).is_err(), "no seventh range");
+        assert!(read_history_request(&mut Fields::new(&[99])).is_err());
+        assert!(read_bookmark_request(&mut Fields::new(&[99])).is_err());
+        assert!(read_star_request(&mut Fields::new(&[99])).is_err());
+        assert!(read_bar_request(&mut Fields::new(&[BAR_SHOW, 2])).is_err());
         let too_many = u16::try_from(MAX_VIEW_ROWS + 1).unwrap().to_be_bytes();
-        assert!(read_history_request(&mut Fields { bytes: &[HISTORY_REMOVE, too_many[0], too_many[1]] }).is_err());
-        assert!(read_tab_list(&mut Fields { bytes: &[0, 0, 1, 0, 0, 0] }).is_err(), "an entry no steps away");
+        assert!(read_history_request(&mut Fields::new(&[HISTORY_REMOVE, too_many[0], too_many[1]])).is_err());
+        assert!(read_tab_list(&mut Fields::new(&[0, 0, 1, 0, 0, 0])).is_err(), "an entry no steps away");
     }
 
     /// Section 2.4: a whole view of the longest rows fits one message.

@@ -131,7 +131,7 @@ mod tests {
         let view = CookiesView { query: "news".into(), first: 0, total: 2, rows: vec![row(1), row(2)], count: 3, bytes: 120, notice: "Deleted".into() };
         let mut payload = Vec::new();
         push_view(&mut payload, &view).unwrap();
-        assert_eq!(read_view(&mut Fields { bytes: &payload }).unwrap(), view);
+        assert_eq!(read_view(&mut Fields::new(&payload)).unwrap(), view);
         for request in [
             CookiesRequest::Panel(true),
             CookiesRequest::Query { text: "x".into(), first: 100 },
@@ -141,7 +141,7 @@ mod tests {
         ] {
             let mut payload = Vec::new();
             push_request(&mut payload, &request).unwrap();
-            assert_eq!(read_request(&mut Fields { bytes: &payload }).unwrap(), request);
+            assert_eq!(read_request(&mut Fields::new(&payload)).unwrap(), request);
         }
         let label = "x".repeat(MAX_LABEL);
         let rows =

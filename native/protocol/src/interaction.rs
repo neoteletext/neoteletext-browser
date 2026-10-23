@@ -402,7 +402,7 @@ mod tests {
         let input = InputIntent { key: KEY, local: 9, intent };
         let mut payload = Vec::new();
         push_input(&mut payload, &input)?;
-        let back = read_input(&mut Fields { bytes: &payload })?;
+        let back = read_input(&mut Fields::new(&payload))?;
         assert_eq!(back, input);
         Ok(back)
     }
@@ -451,7 +451,7 @@ mod tests {
         for tail in [vec![9_u8], vec![TAG_KEY, 0, KEY_CHARACTER, 0, 0, 0xD8, 0, 0, 0, 0xFF, 0xFF, 0xFF, 0xFF]] {
             let mut bytes = payload.clone();
             bytes.extend_from_slice(&tail);
-            assert!(read_input(&mut Fields { bytes: &bytes }).is_err(), "{tail:?}");
+            assert!(read_input(&mut Fields::new(&bytes)).is_err(), "{tail:?}");
         }
     }
 
@@ -484,11 +484,11 @@ mod tests {
         };
         let mut payload = Vec::new();
         push_typing(&mut payload, &typing).unwrap();
-        assert_eq!(read_typing(&mut Fields { bytes: &payload }).unwrap(), typing);
+        assert_eq!(read_typing(&mut Fields::new(&payload)).unwrap(), typing);
         let refused = Typing { on: false, refused: true, cursor: None, show: None, ..typing.clone() };
         let mut payload = Vec::new();
         push_typing(&mut payload, &refused).unwrap();
-        assert_eq!(read_typing(&mut Fields { bytes: &payload }).unwrap(), refused);
+        assert_eq!(read_typing(&mut Fields::new(&payload)).unwrap(), refused);
         let bad = Typing { cursor: Some(CursorState { row: 24, column: 0, width: 0, flags: 0 }), ..typing.clone() };
         assert!(push_typing(&mut Vec::new(), &bad).is_err());
         assert!(push_typing(&mut Vec::new(), &Typing { modes: 256, ..typing }).is_err());

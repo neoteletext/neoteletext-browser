@@ -11,7 +11,7 @@ pub use interface_core::browser::CertificateProblem;
 
 use interface_core::channel::page_index;
 
-use super::{Fields, MAX_ADDRESS, MAX_PAGE_TITLE, MAX_PAYLOAD, ProtocolError, push_raw_text, read_frame, write_frame};
+use super::{Fields, MAX_ADDRESS, MAX_PAGE_TITLE, MAX_PAYLOAD, ProtocolError, push_raw_text, raw_text, read_frame, write_frame};
 
 /// The engine's contents file limits (`neoteletext-web` `contents`): at
 /// most 1000 lines, so at most 1000 entries, and 800 pages.
@@ -267,7 +267,7 @@ pub fn write_to_fetcher(out: &mut dyn Write, message: &ToFetcher) -> Result<(), 
 /// On input errors, any other kind, and anything out of bounds.
 pub fn read_to_fetcher(input: &mut dyn Read) -> Result<Option<ToFetcher>, ProtocolError> {
     let Some((kind, payload)) = read_frame(input)? else { return Ok(None) };
-    let mut fields = Fields { bytes: &payload };
+    let mut fields = Fields::new(&payload);
     let message = match kind {
         #[cfg(feature = "interaction")]
         KIND_SEND => {
@@ -276,7 +276,7 @@ pub fn read_to_fetcher(input: &mut dyn Read) -> Result<Option<ToFetcher>, Protoc
         }
         KIND_COOKIE_ANSWER => {
             let id = fields.u32()?;
-            let header = fields.take(fields.bytes.len())?;
+            let header = fields.take(fields.remaining())?;
             if header.len() > MAX_COOKIE_HEADER {
                 return Err(ProtocolError::BadValue("cookie header too long"));
             }
@@ -295,14 +295,6 @@ pub fn read_to_fetcher(input: &mut dyn Read) -> Result<Option<ToFetcher>, Protoc
     };
     fields.end()?;
     Ok(Some(message))
-}
-
-fn raw_text(fields: &mut Fields<'_>, limit: usize) -> Result<String, ProtocolError> {
-    let length = usize::from(fields.u16()?);
-    if length > limit {
-        return Err(ProtocolError::BadValue("text too long"));
-    }
-    Ok(String::from_utf8_lossy(fields.take(length)?).into_owned())
 }
 
 /// # Errors
@@ -431,8 +423,8 @@ fn read_cookie_message(kind: u8, fields: &mut Fields<'_>) -> Result<FromFetcher,
     Ok(match kind {
         KIND_COOKIE_QUESTION => {
             let id = fields.u32()?;
-            let host = raw_text(fields, MAX_ADDRESS)?;
-            let path = raw_text(fields, MAX_ADDRESS)?;
+            let host = raw_text(fields, MAX_ADDRESS, "text too long")?;
+            let path = raw_text(fields, MAX_ADDRESS, "text too long")?;
             let secure = match fields.u8()? {
                 0 => false,
                 1 => true,
@@ -448,23 +440,23 @@ fn read_cookie_message(kind: u8, fields: &mut Fields<'_>) -> Result<FromFetcher,
         }
         KIND_REACHED_QUESTION => {
             let id = fields.u32()?;
-            FromFetcher::ReachedQuestion { id, host: raw_text(fields, MAX_ADDRESS)? }
+            FromFetcher::ReachedQuestion { id, host: raw_text(fields, MAX_ADDRESS, "text too long")? }
         }
         KIND_COOKIE_SET => {
-            let host = raw_text(fields, MAX_ADDRESS)?;
-            let path = raw_text(fields, MAX_ADDRESS)?;
+            let host = raw_text(fields, MAX_ADDRESS, "text too long")?;
+            let path = raw_text(fields, MAX_ADDRESS, "text too long")?;
             let flags = fields.u8()?;
             if flags > 3 {
                 return Err(ProtocolError::BadValue("cookie flags"));
             }
-            let scope = if flags & 1 != 0 { Some(raw_text(fields, MAX_ADDRESS)?) } else { None };
-            let line = fields.take(fields.bytes.len())?;
+            let scope = if flags & 1 != 0 { Some(raw_text(fields, MAX_ADDRESS, "text too long")?) } else { None };
+            let line = fields.take(fields.remaining())?;
             if line.len() > MAX_SET_COOKIE {
                 return Err(ProtocolError::BadValue("Set-Cookie too long"));
             }
             FromFetcher::CookieSet { host, path, scope, secure: flags & 2 != 0, line: line.to_vec() }
         }
-        KIND_CLEAR_SITE_DATA => FromFetcher::ClearSiteData(raw_text(fields, MAX_ADDRESS)?),
+        KIND_CLEAR_SITE_DATA => FromFetcher::ClearSiteData(raw_text(fields, MAX_ADDRESS, "text too long")?),
         _ => return Err(ProtocolError::UnknownKind(kind)),
     })
 }
@@ -476,7 +468,7 @@ fn read_cookie_message(kind: u8, fields: &mut Fields<'_>) -> Result<FromFetcher,
 /// malformed or out of bounds.
 pub fn read_from_fetcher(input: &mut dyn Read) -> Result<Option<FromFetcher>, ProtocolError> {
     let Some((kind, payload)) = read_frame(input)? else { return Ok(None) };
-    let mut fields = Fields { bytes: &payload };
+    let mut fields = Fields::new(&payload);
     let message = match kind {
         KIND_CONTENTS => {
             let count = usize::from(fields.u16()?);
@@ -485,11 +477,11 @@ pub fn read_from_fetcher(input: &mut dyn Read) -> Result<Option<FromFetcher>, Pr
             }
             let entries = (0..count)
                 .map(|_| match fields.u8()? {
-                    ENTRY_SECTION => Ok(Entry::Section(raw_text(&mut fields, MAX_PAGE_TITLE)?)),
+                    ENTRY_SECTION => Ok(Entry::Section(raw_text(&mut fields, MAX_PAGE_TITLE, "text too long")?)),
                     ENTRY_PAGE => {
                         let page = fields.u16()?;
                         page_index(page).ok_or(ProtocolError::BadValue("page number"))?;
-                        Ok(Entry::Page { page, title: raw_text(&mut fields, MAX_PAGE_TITLE)? })
+                        Ok(Entry::Page { page, title: raw_text(&mut fields, MAX_PAGE_TITLE, "text too long")? })
                     }
                     _ => Err(ProtocolError::BadValue("contents entry")),
                 })
@@ -505,9 +497,9 @@ pub fn read_from_fetcher(input: &mut dyn Read) -> Result<Option<FromFetcher>, Pr
                 ORIGIN_PUSHED_PACKETS => Origin::PushedPackets,
                 _ => return Err(ProtocolError::BadValue("page origin")),
             };
-            FromFetcher::Page { origin, bytes: fields.take(fields.bytes.len())?.to_vec() }
+            FromFetcher::Page { origin, bytes: fields.take(fields.remaining())?.to_vec() }
         }
-        KIND_NOTICE => FromFetcher::Notice(raw_text(&mut fields, MAX_NOTICE)?),
+        KIND_NOTICE => FromFetcher::Notice(raw_text(&mut fields, MAX_NOTICE, "text too long")?),
         #[cfg(feature = "links")]
         KIND_LINKS => {
             let (aliases, services) = crate::links::read_channel_links(&mut fields)?;
@@ -527,11 +519,11 @@ pub fn read_from_fetcher(input: &mut dyn Read) -> Result<Option<FromFetcher>, Pr
             _ => return Err(ProtocolError::BadValue("pushing")),
         }),
         KIND_EXCHANGE => {
-            let method = raw_text(&mut fields, MAX_METHOD)?;
+            let method = raw_text(&mut fields, MAX_METHOD, "text too long")?;
             if method.is_empty() || !method.bytes().all(|byte| byte.is_ascii_uppercase()) {
                 return Err(ProtocolError::BadValue("method"));
             }
-            let url = raw_text(&mut fields, MAX_EXCHANGE_URL)?;
+            let url = raw_text(&mut fields, MAX_EXCHANGE_URL, "text too long")?;
             let status = fields.u16()?;
             if !STATUS_CODES.contains(&status) {
                 return Err(ProtocolError::BadValue("status"));

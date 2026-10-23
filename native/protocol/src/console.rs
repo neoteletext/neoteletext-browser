@@ -83,7 +83,7 @@ mod tests {
         };
         let mut payload = Vec::new();
         push_update(&mut payload, &update).unwrap();
-        assert_eq!(read_update(&mut Fields { bytes: &payload }).unwrap(), update);
+        assert_eq!(read_update(&mut Fields::new(&payload)).unwrap(), update);
         let many = ConsoleUpdate { entries: vec![update.entries[0].clone(); MAX_ENTRIES + 1], ..update.clone() };
         assert!(push_update(&mut Vec::new(), &many).is_err());
         let hidden = ConsoleUpdate { entries: vec![ConsoleEntry { text: "a\u{200b}b".into(), ..update.entries[0].clone() }], ..update };

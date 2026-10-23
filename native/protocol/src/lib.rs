@@ -27,6 +27,7 @@ pub mod cookies;
 pub mod decoder;
 mod error;
 pub mod fetcher;
+mod fields;
 pub mod frame;
 mod framing;
 #[cfg(feature = "interaction")]
@@ -38,19 +39,20 @@ pub mod library;
 pub mod links;
 pub mod settings;
 pub mod sound;
+mod text;
 
 pub use bounds::*;
 pub use error::ProtocolError;
+pub(crate) use fields::{Fields, KEY_BYTES, push_key, push_keys, push_text, read_flag};
 pub(crate) use framing::{read_frame, tail, write_frame};
+pub use text::clean;
+pub(crate) use text::{push_raw_text, raw_text};
 
 use std::io::{Read, Write};
 
 use interface_core::browser::{CertificateProblem, StripState, TabInfo};
 use interface_core::canvas::{COLUMNS, PageKey, ROWS};
 use interface_core::channel::{BANKS, Channel, PAGES, PageInfo, Status, page_index};
-/// Controls, and the invisible characters that reorder or hide text, are
-/// never shown from untrusted text (requirement 11.5).
-use interface_core::editor::hidden;
 use interface_core::theme::TAB_COLOURS;
 
 // Trusted core to interface.
@@ -161,7 +163,6 @@ const TAB_MUTED: u8 = 1;
 const TAB_PRIVATE: u8 = 2;
 const TAB_FLAGS: u8 = TAB_MUTED | TAB_PRIVATE;
 
-const KEY_BYTES: usize = 6;
 const FRAME_FIXED_BYTES: usize = KEY_BYTES + 4;
 const CELL_BYTES: usize = KEY_BYTES + 4 + 2;
 
@@ -426,60 +427,6 @@ pub enum ToCore {
     CloseWindow,
 }
 
-/// Untrusted text made safe to show: hidden characters removed, then cut
-/// to at most `max_bytes` on a character boundary.
-#[must_use]
-pub fn clean(text: &str, max_bytes: usize) -> String {
-    let mut out = String::with_capacity(text.len().min(max_bytes));
-    for character in text.chars().filter(|&character| !hidden(character)) {
-        if out.len().saturating_add(character.len_utf8()) > max_bytes {
-            break;
-        }
-        out.push(character);
-    }
-    out
-}
-
-/// Untrusted text sent on for the trusted core to clean: cut to at most
-/// `limit` bytes on a character boundary, with a two-byte length before it.
-pub(crate) fn push_raw_text(payload: &mut Vec<u8>, text: &str, limit: usize) {
-    let end = (0..=text.len().min(limit)).rev().find(|&end| text.is_char_boundary(end)).unwrap_or(0);
-    let cut = text.get(..end).unwrap_or_default();
-    payload.extend_from_slice(&u16::try_from(cut.len()).unwrap_or(0).to_be_bytes());
-    payload.extend_from_slice(cut.as_bytes());
-}
-
-fn is_clean(text: &str, max_bytes: usize) -> bool {
-    text.len() <= max_bytes && !text.chars().any(hidden)
-}
-
-fn push_key(payload: &mut Vec<u8>, key: PageKey) {
-    payload.extend_from_slice(&key.channel.to_be_bytes());
-    payload.extend_from_slice(&key.page.to_be_bytes());
-}
-
-fn push_text(payload: &mut Vec<u8>, text: &str, max_bytes: usize) -> Result<(), ProtocolError> {
-    if !is_clean(text, max_bytes) {
-        return Err(ProtocolError::BadValue("text not cleaned"));
-    }
-    let length = u16::try_from(text.len()).map_err(|_| ProtocolError::BadValue("text length"))?;
-    payload.extend_from_slice(&length.to_be_bytes());
-    payload.extend_from_slice(text.as_bytes());
-    Ok(())
-}
-
-fn push_keys(payload: &mut Vec<u8>, keys: &[PageKey]) -> Result<(), ProtocolError> {
-    if keys.len() > MAX_PAGES {
-        return Err(ProtocolError::BadValue("too many pages"));
-    }
-    let count = u16::try_from(keys.len()).map_err(|_| ProtocolError::BadValue("too many pages"))?;
-    payload.extend_from_slice(&count.to_be_bytes());
-    for &key in keys {
-        push_key(payload, key);
-    }
-    Ok(())
-}
-
 /// One of the intents of updates (`installation-and-updates.md` section
 /// 3.2), which carry nothing.
 fn update_intent(kind: u8) -> ToCore {
@@ -490,7 +437,7 @@ fn update_intent(kind: u8) -> ToCore {
 fn window_intent(kind: u8, fields: &mut Fields<'_>) -> Result<ToCore, ProtocolError> {
     Ok(match kind {
         KIND_FROM => ToCore::From(window_number(fields)?),
-        KIND_NEW_WINDOW => ToCore::NewWindow { private: flag_byte(fields)? },
+        KIND_NEW_WINDOW => ToCore::NewWindow { private: read_flag(fields)? },
         KIND_TAB_TO_WINDOW => {
             let tab = fields.u8()?;
             let window = fields.u32()?;
@@ -523,93 +470,6 @@ pub fn problem_of(code: u8) -> Option<CertificateProblem> {
 fn window_number(fields: &mut Fields<'_>) -> Result<u32, ProtocolError> {
     let window = fields.u32()?;
     if window == NEW_WINDOW { Err(ProtocolError::BadValue("window number")) } else { Ok(window) }
-}
-
-/// A byte that is 0 or 1.
-fn flag_byte(fields: &mut Fields<'_>) -> Result<bool, ProtocolError> {
-    match fields.u8()? {
-        0 => Ok(false),
-        1 => Ok(true),
-        _ => Err(ProtocolError::BadValue("flag")),
-    }
-}
-
-/// Reads fields from a payload, failing on any short read.
-struct Fields<'a> {
-    bytes: &'a [u8],
-}
-
-impl<'a> Fields<'a> {
-    fn take(&mut self, count: usize) -> Result<&'a [u8], ProtocolError> {
-        if self.bytes.len() < count {
-            return Err(ProtocolError::BadValue("payload ends early"));
-        }
-        let (taken, rest) = self.bytes.split_at(count);
-        self.bytes = rest;
-        Ok(taken)
-    }
-
-    fn is_empty(&self) -> bool {
-        self.bytes.is_empty()
-    }
-
-    fn array<const N: usize>(&mut self) -> Result<[u8; N], ProtocolError> {
-        self.take(N)?.try_into().map_err(|_| ProtocolError::BadValue("payload ends early"))
-    }
-
-    fn u8(&mut self) -> Result<u8, ProtocolError> {
-        Ok(u8::from_be_bytes(self.array()?))
-    }
-
-    fn u16(&mut self) -> Result<u16, ProtocolError> {
-        Ok(u16::from_be_bytes(self.array()?))
-    }
-
-    fn u32(&mut self) -> Result<u32, ProtocolError> {
-        Ok(u32::from_be_bytes(self.array()?))
-    }
-
-    fn key(&mut self) -> Result<PageKey, ProtocolError> {
-        let channel = self.u32()?;
-        let page = self.u16()?;
-        if !(FIRST_PAGE..=LAST_PAGE).contains(&page) {
-            return Err(ProtocolError::BadValue("page number"));
-        }
-        Ok(PageKey { channel, page })
-    }
-
-    fn keys(&mut self) -> Result<Vec<PageKey>, ProtocolError> {
-        let count = usize::from(self.u16()?);
-        if count > MAX_PAGES {
-            return Err(ProtocolError::BadValue("too many pages"));
-        }
-        (0..count).map(|_| self.key()).collect()
-    }
-
-    fn text(&mut self, max_bytes: usize) -> Result<String, ProtocolError> {
-        let length = usize::from(self.u16()?);
-        if length > max_bytes {
-            return Err(ProtocolError::BadValue("text too long"));
-        }
-        let text = std::str::from_utf8(self.take(length)?).map_err(|_| ProtocolError::BadValue("text not UTF-8"))?;
-        if !is_clean(text, max_bytes) {
-            return Err(ProtocolError::BadValue("text not cleaned"));
-        }
-        Ok(text.to_owned())
-    }
-
-    fn end(&self) -> Result<(), ProtocolError> {
-        if self.bytes.is_empty() { Ok(()) } else { Err(ProtocolError::BadValue("payload longer than its fields")) }
-    }
-}
-
-/// A one-byte flag: 0 or 1, nothing else.
-fn read_flag(fields: &mut Fields<'_>) -> Result<bool, ProtocolError> {
-    match fields.u8()? {
-        0 => Ok(false),
-        1 => Ok(true),
-        _ => Err(ProtocolError::BadValue("flag")),
-    }
 }
 
 /// Writes a message to the interface.
@@ -799,7 +659,7 @@ pub fn write_to_interface(out: &mut dyn Write, message: &ToInterface) -> Result<
 #[allow(clippy::too_many_lines, reason = "one arm for each kind of message, in the order of the kinds")]
 pub fn read_from_core(input: &mut dyn Read) -> Result<Option<ToInterface>, ProtocolError> {
     let Some((kind, payload)) = read_frame(input)? else { return Ok(None) };
-    let mut fields = Fields { bytes: &payload };
+    let mut fields = Fields::new(&payload);
     let message = match kind {
         KIND_TABS => {
             let active = usize::from(fields.u8()?);
@@ -1129,7 +989,7 @@ pub fn write_to_core(out: &mut dyn Write, message: &ToCore) -> Result<(), Protoc
 /// that is malformed or out of bounds.
 pub fn read_from_interface(input: &mut dyn Read) -> Result<Option<ToCore>, ProtocolError> {
     let Some((kind, payload)) = read_frame(input)? else { return Ok(None) };
-    let mut fields = Fields { bytes: &payload };
+    let mut fields = Fields::new(&payload);
     let message = match kind {
         KIND_VISIBLE => ToCore::Visible(fields.keys()?),
         KIND_CELL => {
@@ -1171,14 +1031,14 @@ pub fn read_from_interface(input: &mut dyn Read) -> Result<Option<ToCore>, Proto
         KIND_FROM | KIND_NEW_WINDOW | KIND_TAB_TO_WINDOW | KIND_CLOSE_WINDOW => window_intent(kind, &mut fields)?,
         KIND_DRAWN | KIND_INSTALL_UPDATE => update_intent(kind),
         KIND_CHANGE_SETTING => ToCore::ChangeSetting(settings::read_change(&mut fields)?),
-        KIND_CONSOLE => ToCore::Console(flag_byte(&mut fields)?),
+        KIND_CONSOLE => ToCore::Console(read_flag(&mut fields)?),
         #[cfg(feature = "links")]
         KIND_POINT => ToCore::Point(if payload.is_empty() { None } else { Some(links::read_spot(&mut fields)?) }),
         #[cfg(feature = "links")]
         KIND_TYPED => {
             let number = fields.u16()?;
             page_index(number).ok_or(ProtocolError::BadValue("page number"))?;
-            let opened = if fields.bytes.is_empty() { None } else { Some((fields.key()?, fields.u32()?)) };
+            let opened = if fields.is_empty() { None } else { Some((fields.key()?, fields.u32()?)) };
             ToCore::Typed { number, opened }
         }
         #[cfg(feature = "interaction")]

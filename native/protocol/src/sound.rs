@@ -75,7 +75,7 @@ pub fn write_to_sound(out: &mut dyn Write, message: &ToSound) -> Result<(), Prot
 /// On input errors and any malformed or out-of-bounds message.
 pub fn read_to_sound(input: &mut dyn Read) -> Result<Option<ToSound>, ProtocolError> {
     let Some((kind, payload)) = read_frame(input)? else { return Ok(None) };
-    let mut fields = Fields { bytes: &payload };
+    let mut fields = Fields::new(&payload);
     let message = match kind {
         KIND_AUDIO => ToSound::Audio { channel: fields.u32()?, audio: audio::read(&mut fields, Sender::Core)? },
         KIND_SETTINGS => {
@@ -122,7 +122,7 @@ pub fn write_from_sound(out: &mut dyn Write, message: &FromSound) -> Result<(), 
 /// On input errors and any malformed or out-of-bounds message.
 pub fn read_from_sound(input: &mut dyn Read) -> Result<Option<FromSound>, ProtocolError> {
     let Some((kind, payload)) = read_frame(input)? else { return Ok(None) };
-    let mut fields = Fields { bytes: &payload };
+    let mut fields = Fields::new(&payload);
     let message = match kind {
         KIND_SOUNDING => {
             let mut channels = Vec::new();

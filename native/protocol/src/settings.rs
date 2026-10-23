@@ -273,7 +273,7 @@ mod tests {
     fn the_view_and_every_change_round_trip() {
         let mut payload = Vec::new();
         push_view(&mut payload, &view()).unwrap();
-        assert_eq!(read_view(&mut Fields { bytes: &payload }).unwrap(), view());
+        assert_eq!(read_view(&mut Fields::new(&payload)).unwrap(), view());
         for change in [
             SettingChange::Home("news.example".into()),
             SettingChange::HomeIsThisPage,
@@ -291,7 +291,7 @@ mod tests {
         ] {
             let mut payload = Vec::new();
             push_change(&mut payload, &change).unwrap();
-            assert_eq!(read_change(&mut Fields { bytes: &payload }).unwrap(), change);
+            assert_eq!(read_change(&mut Fields::new(&payload)).unwrap(), change);
         }
     }
 
@@ -301,11 +301,11 @@ mod tests {
         assert!(push_view(&mut Vec::new(), &SettingsView { local: vec!["10.0.0.1".into(); MAX_LOCAL + 1], ..view() }).is_err());
         assert!(push_view(&mut Vec::new(), &SettingsView { home: "a\u{202e}b".into(), ..view() }).is_err(), "hidden characters");
         assert!(push_change(&mut Vec::new(), &SettingChange::Volume(101)).is_err());
-        assert!(read_change(&mut Fields { bytes: &[CHANGE_VOLUME, 101] }).is_err());
-        assert!(read_change(&mut Fields { bytes: &[9] }).is_err());
-        assert!(read_change(&mut Fields { bytes: &[CHANGE_SOUND, 2] }).is_err());
-        assert!(read_change(&mut Fields { bytes: &[CHANGE_PROXY, 3] }).is_err());
-        assert!(read_change(&mut Fields { bytes: &[CHANGE_CHECK_UPDATES, 2] }).is_err());
+        assert!(read_change(&mut Fields::new(&[CHANGE_VOLUME, 101])).is_err());
+        assert!(read_change(&mut Fields::new(&[9])).is_err());
+        assert!(read_change(&mut Fields::new(&[CHANGE_SOUND, 2])).is_err());
+        assert!(read_change(&mut Fields::new(&[CHANGE_PROXY, 3])).is_err());
+        assert!(read_change(&mut Fields::new(&[CHANGE_CHECK_UPDATES, 2])).is_err());
     }
 
     #[test]
@@ -313,7 +313,7 @@ mod tests {
         let view = UpdateView { version: "0.1.0".into(), status: "NeoTeletext 0.2.0 is available".into(), offer: Some("0.2.0".into()), checking: true };
         let mut payload = Vec::new();
         push_update(&mut payload, &view).unwrap();
-        assert_eq!(read_update(&mut Fields { bytes: &payload }).unwrap(), view);
+        assert_eq!(read_update(&mut Fields::new(&payload)).unwrap(), view);
         assert!(push_update(&mut Vec::new(), &UpdateView { status: "x".repeat(MAX_UPDATE_STATUS + 1), ..view.clone() }).is_err());
         assert!(push_update(&mut Vec::new(), &UpdateView { status: "a\u{202e}b".into(), ..view }).is_err(), "hidden characters");
     }

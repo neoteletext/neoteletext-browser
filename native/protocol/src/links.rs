@@ -9,7 +9,7 @@ use interface_core::canvas::{COLUMNS, PageKey, ROWS};
 use interface_core::channel::page_index;
 pub use interface_core::links::{LinkKind, LinkRun, PageLinks, Pointing, Prompt, PromptKind};
 
-use super::{Fields, MAX_ADDRESS, ProtocolError, push_key, push_text};
+use super::{Fields, MAX_ADDRESS, ProtocolError, push_key, push_text, raw_text};
 
 /// The most links a page has: beyond this the trusted core gives it none
 /// (`hyperlinks.md` section 8.2).
@@ -118,7 +118,7 @@ pub(crate) fn is_message(kind: u8) -> bool {
 
 /// Reads a link message from the trusted core of `kind`.
 pub(crate) fn read_message(kind: u8, fields: &mut Fields<'_>) -> Result<Message, ProtocolError> {
-    let empty = fields.bytes.is_empty();
+    let empty = fields.is_empty();
     Ok(match kind {
         KIND_PAGE_LINKS => {
             let (key, links) = read_page_links(fields)?;
@@ -209,16 +209,6 @@ fn push_whole(payload: &mut Vec<u8>, text: &str, limit: usize) -> Result<(), Pro
     payload.extend_from_slice(&u16::try_from(text.len()).map_err(|_| ProtocolError::BadValue("link target too long"))?.to_be_bytes());
     payload.extend_from_slice(text.as_bytes());
     Ok(())
-}
-
-fn raw_text(fields: &mut Fields<'_>, limit: usize) -> Result<String, ProtocolError> {
-    let length = usize::from(fields.u16()?);
-    if length > limit {
-        return Err(ProtocolError::BadValue("text too long"));
-    }
-    // Invalid UTF-8 is replaced, never trusted; the trusted core's parser
-    // refuses what remains if it is not a target.
-    Ok(String::from_utf8_lossy(fields.take(length)?).into_owned())
 }
 
 fn count(value: usize, limit: usize, what: &'static str) -> Result<u8, ProtocolError> {
@@ -382,14 +372,14 @@ pub(crate) fn read_found(fields: &mut Fields<'_>) -> Result<(Vec<Candidate>, Vec
             let (double, light) = read_flags(fields)?;
             let target = match fields.u8()? {
                 FOUND_NUMBER => Found::Number(display_page(fields)?),
-                FOUND_DECLARED => Found::Declared(raw_text(fields, MAX_TARGET)?),
+                FOUND_DECLARED => Found::Declared(raw_text(fields, MAX_TARGET, "text too long")?),
                 _ => return Err(ProtocolError::BadValue("link target kind")),
             };
             Ok::<_, ProtocolError>(Candidate { row, column, length, double, light, target })
         })
         .collect::<Result<_, _>>()?;
     let numbers = (0..read_count(fields, MAX_NUMBER_LINKS, "too many number links")?)
-        .map(|_| Ok::<_, ProtocolError>(NumberLink { number: display_page(fields)?, target: raw_text(fields, MAX_TARGET)? }))
+        .map(|_| Ok::<_, ProtocolError>(NumberLink { number: display_page(fields)?, target: raw_text(fields, MAX_TARGET, "text too long")? }))
         .collect::<Result<_, _>>()?;
     Ok((candidates, numbers))
 }
@@ -411,10 +401,15 @@ pub(crate) fn push_channel_links(payload: &mut Vec<u8>, aliases: &[Alias], servi
 
 pub(crate) fn read_channel_links(fields: &mut Fields<'_>) -> Result<(Vec<Alias>, Vec<Service>), ProtocolError> {
     let aliases = (0..read_count(fields, MAX_ALIASES, "too many aliases")?)
-        .map(|_| Ok::<_, ProtocolError>(Alias { page: display_page(fields)?, target: raw_text(fields, MAX_ADDRESS)? }))
+        .map(|_| Ok::<_, ProtocolError>(Alias { page: display_page(fields)?, target: raw_text(fields, MAX_ADDRESS, "text too long")? }))
         .collect::<Result<_, _>>()?;
     let services = (0..read_count(fields, MAX_SERVICES, "too many services")?)
-        .map(|_| Ok::<_, ProtocolError>(Service { name: raw_text(fields, MAX_SERVICE_NAME)?, address: raw_text(fields, MAX_ADDRESS)? }))
+        .map(|_| {
+            Ok::<_, ProtocolError>(Service {
+                name: raw_text(fields, MAX_SERVICE_NAME, "text too long")?,
+                address: raw_text(fields, MAX_ADDRESS, "text too long")?,
+            })
+        })
         .collect::<Result<_, _>>()?;
     Ok((aliases, services))
 }

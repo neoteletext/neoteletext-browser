@@ -9,7 +9,7 @@ use std::io::{Read, Write};
 use interface_core::canvas::{PAGE_HEIGHT, PAGE_WIDTH};
 use interface_core::channel::{PAGES, page_index};
 
-use super::{Fields, MAX_PAGE_TITLE, ProtocolError, push_raw_text, push_text, read_frame, write_frame};
+use super::{Fields, MAX_PAGE_TITLE, ProtocolError, push_raw_text, push_text, raw_text, read_frame, write_frame};
 
 /// The most bytes of a channel's data in one message.
 pub const MAX_CHUNK: usize = 64 * 1024;
@@ -339,7 +339,7 @@ pub fn write_to_decoder(out: &mut dyn Write, message: &ToDecoder) -> Result<(), 
 /// any payload that is malformed or out of bounds.
 pub fn read_from_core(input: &mut dyn Read) -> Result<Option<ToDecoder>, ProtocolError> {
     let Some((kind, payload)) = read_frame(input)? else { return Ok(None) };
-    let mut fields = Fields { bytes: &payload };
+    let mut fields = Fields::new(&payload);
     let message = match kind {
         // The payload is the data: it is moved, not copied.
         KIND_DATA => {
@@ -363,7 +363,7 @@ pub fn read_from_core(input: &mut dyn Read) -> Result<Option<ToDecoder>, Protoco
             if flags > 3 {
                 return Err(ProtocolError::BadValue("whole form"));
             }
-            let length = fields.bytes.len();
+            let length = fields.remaining();
             if length > MAX_WHOLE {
                 return Err(ProtocolError::TooLong(length));
             }
@@ -502,7 +502,7 @@ pub fn write_to_core(out: &mut dyn Write, message: &FromDecoder) -> Result<(), P
 /// malformed or out of bounds.
 pub fn read_from_decoder(input: &mut dyn Read) -> Result<Option<FromDecoder>, ProtocolError> {
     let Some((kind, payload)) = read_frame(input)? else { return Ok(None) };
-    let mut fields = Fields { bytes: &payload };
+    let mut fields = Fields::new(&payload);
     let message = match kind {
         KIND_ARRIVED => {
             let page = display_page(&mut fields)?;
@@ -562,7 +562,7 @@ pub fn read_from_decoder(input: &mut dyn Read) -> Result<Option<FromDecoder>, Pr
         KIND_CURSOR => FromDecoder::Cursor { body: fields.array()? },
         #[cfg(feature = "interaction")]
         KIND_INPUT_CONTROL => {
-            let length = fields.bytes.len();
+            let length = fields.remaining();
             if length > neoteletext_input::control::MAX_BODY {
                 return Err(ProtocolError::TooLong(length));
             }
@@ -589,16 +589,6 @@ pub fn read_from_decoder(input: &mut dyn Read) -> Result<Option<FromDecoder>, Pr
     };
     fields.end()?;
     Ok(Some(message))
-}
-
-/// Text a decoder found, of at most `limit` bytes: invalid UTF-8 is
-/// replaced, never trusted, and the trusted core cleans what remains.
-fn raw_text(fields: &mut Fields<'_>, limit: usize, too_long: &'static str) -> Result<String, ProtocolError> {
-    let length = usize::from(fields.u16()?);
-    if length > limit {
-        return Err(ProtocolError::BadValue(too_long));
-    }
-    Ok(String::from_utf8_lossy(fields.take(length)?).into_owned())
 }
 
 // Kept for symmetry with the interface's messages: text the trusted core

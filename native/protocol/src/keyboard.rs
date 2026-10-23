@@ -182,7 +182,7 @@ pub fn write_to_core(out: &mut dyn Write, message: &FromKeyboard) -> Result<(), 
 /// over [`MAX_PHONE_TEXT`].
 pub fn read_from_keyboard(input: &mut dyn Read) -> Result<Option<FromKeyboard>, ProtocolError> {
     let Some((kind, payload)) = read_frame(input)? else { return Ok(None) };
-    let mut fields = Fields { bytes: &payload };
+    let mut fields = Fields::new(&payload);
     let message = match kind {
         KIND_JOIN => {
             let size = usize::from(fields.u8()?);
@@ -190,7 +190,7 @@ pub fn read_from_keyboard(input: &mut dyn Read) -> Result<Option<FromKeyboard>, 
                 return Err(ProtocolError::BadValue("QR"));
             }
             let bits = fields.take(bytes_of(size))?.to_vec();
-            let pin = if fields.bytes.is_empty() { None } else { Some(fields.text(MAX_PIN)?) };
+            let pin = if fields.is_empty() { None } else { Some(fields.text(MAX_PIN)?) };
             if pin.as_ref().is_some_and(|pin| !pin.chars().all(|character| character.is_ascii_digit())) {
                 return Err(ProtocolError::BadValue("PIN"));
             }
@@ -206,12 +206,12 @@ pub fn read_from_keyboard(input: &mut dyn Read) -> Result<Option<FromKeyboard>, 
                 1 => true,
                 _ => return Err(ProtocolError::BadValue("phone key")),
             };
-            let name = std::str::from_utf8(fields.take(fields.bytes.len())?).map_err(|_| ProtocolError::BadValue("phone key"))?.to_owned();
+            let name = std::str::from_utf8(fields.take(fields.remaining())?).map_err(|_| ProtocolError::BadValue("phone key"))?.to_owned();
             clean_name(&name)?;
             FromKeyboard::Key { down, name }
         }
         KIND_TEXT => {
-            let text = std::str::from_utf8(fields.take(fields.bytes.len())?).map_err(|_| ProtocolError::BadValue("phone text"))?;
+            let text = std::str::from_utf8(fields.take(fields.remaining())?).map_err(|_| ProtocolError::BadValue("phone text"))?;
             if text.len() > MAX_PHONE_TEXT || text.chars().any(char::is_control) {
                 return Err(ProtocolError::BadValue("phone text"));
             }
