@@ -201,11 +201,7 @@ pub fn read_from_keyboard(input: &mut dyn Read) -> Result<Option<FromKeyboard>, 
             FromKeyboard::State(PhoneState::from_code(code, left).ok_or(ProtocolError::BadValue("phone state"))?)
         }
         KIND_KEY => {
-            let down = match fields.u8()? {
-                0 => false,
-                1 => true,
-                _ => return Err(ProtocolError::BadValue("phone key")),
-            };
+            let down = fields.flag("phone key")?;
             let name = std::str::from_utf8(fields.take(fields.remaining())?).map_err(|_| ProtocolError::BadValue("phone key"))?.to_owned();
             clean_name(&name)?;
             FromKeyboard::Key { down, name }

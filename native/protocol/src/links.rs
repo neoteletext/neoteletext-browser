@@ -9,7 +9,7 @@ use interface_core::canvas::{COLUMNS, PageKey, ROWS};
 use interface_core::channel::page_index;
 pub use interface_core::links::{LinkKind, LinkRun, PageLinks, Pointing, Prompt, PromptKind};
 
-use super::{Fields, MAX_ADDRESS, ProtocolError, push_key, push_text, raw_text};
+use super::{Fields, MAX_ADDRESS, ProtocolError, push_count_u8, push_key, push_text, raw_text};
 
 /// The most links a page has: beyond this the trusted core gives it none
 /// (`hyperlinks.md` section 8.2).
@@ -211,21 +211,6 @@ fn push_whole(payload: &mut Vec<u8>, text: &str, limit: usize) -> Result<(), Pro
     Ok(())
 }
 
-fn count(value: usize, limit: usize, what: &'static str) -> Result<u8, ProtocolError> {
-    if value > limit {
-        return Err(ProtocolError::BadValue(what));
-    }
-    u8::try_from(value).map_err(|_| ProtocolError::BadValue(what))
-}
-
-fn read_count(fields: &mut Fields<'_>, limit: usize, what: &'static str) -> Result<usize, ProtocolError> {
-    let value = usize::from(fields.u8()?);
-    if value > limit {
-        return Err(ProtocolError::BadValue(what));
-    }
-    Ok(value)
-}
-
 /// A run of cells inside the page: on one of its 25 rows, within its 40
 /// columns, at least one cell long.
 fn place(fields: &mut Fields<'_>) -> Result<(u8, u8, u8), ProtocolError> {
@@ -247,12 +232,6 @@ fn read_flags(fields: &mut Fields<'_>) -> Result<(bool, bool), ProtocolError> {
         return Err(ProtocolError::BadValue("link flags"));
     }
     Ok((flags & DOUBLE != 0, flags & LIGHT != 0))
-}
-
-fn display_page(fields: &mut Fields<'_>) -> Result<u16, ProtocolError> {
-    let page = fields.u16()?;
-    page_index(page).ok_or(ProtocolError::BadValue("page number"))?;
-    Ok(page)
 }
 
 pub use interface_core::controls::ANY_SUBCODE;
@@ -311,11 +290,7 @@ pub(crate) fn push_fastext(payload: &mut Vec<u8>, fastext: &Fastext) -> Result<(
 }
 
 pub(crate) fn read_fastext(fields: &mut Fields<'_>) -> Result<Fastext, ProtocolError> {
-    let row24 = match fields.u8()? {
-        0 => false,
-        1 => true,
-        _ => return Err(ProtocolError::BadValue("Fastext row 24")),
-    };
+    let row24 = fields.flag("Fastext row 24")?;
     let mut keys = [None; 5];
     for key in &mut keys {
         let flags = fields.u8()?;
@@ -325,7 +300,7 @@ pub(crate) fn read_fastext(fields: &mut Fields<'_>) -> Result<Fastext, ProtocolE
         if flags & !FASTEXT_FLAGS != 0 || flags & FASTEXT_PAGE == 0 {
             return Err(ProtocolError::BadValue("Fastext flags"));
         }
-        let page = display_page(fields)?;
+        let page = fields.display_page()?;
         let subcode = if flags & FASTEXT_SUBCODE == 0 {
             None
         } else {
@@ -343,7 +318,7 @@ pub(crate) fn read_fastext(fields: &mut Fields<'_>) -> Result<Fastext, ProtocolE
 
 /// The decoder's links of one page.
 pub(crate) fn push_found(payload: &mut Vec<u8>, candidates: &[Candidate], numbers: &[NumberLink]) -> Result<(), ProtocolError> {
-    payload.push(count(candidates.len(), MAX_RUNS, "too many links")?);
+    push_count_u8(payload, candidates.len(), MAX_RUNS, "too many links")?;
     for candidate in candidates {
         payload.extend_from_slice(&[candidate.row, candidate.column, candidate.length, flags(candidate.double, candidate.light)]);
         match &candidate.target {
@@ -357,7 +332,7 @@ pub(crate) fn push_found(payload: &mut Vec<u8>, candidates: &[Candidate], number
             }
         }
     }
-    payload.push(count(numbers.len(), MAX_NUMBER_LINKS, "too many number links")?);
+    push_count_u8(payload, numbers.len(), MAX_NUMBER_LINKS, "too many number links")?;
     for link in numbers {
         payload.extend_from_slice(&link.number.to_be_bytes());
         push_whole(payload, &link.target, MAX_TARGET)?;
@@ -366,32 +341,32 @@ pub(crate) fn push_found(payload: &mut Vec<u8>, candidates: &[Candidate], number
 }
 
 pub(crate) fn read_found(fields: &mut Fields<'_>) -> Result<(Vec<Candidate>, Vec<NumberLink>), ProtocolError> {
-    let candidates = (0..read_count(fields, MAX_RUNS, "too many links")?)
+    let candidates = (0..fields.count_u8(MAX_RUNS, "too many links")?)
         .map(|_| {
             let (row, column, length) = place(fields)?;
             let (double, light) = read_flags(fields)?;
             let target = match fields.u8()? {
-                FOUND_NUMBER => Found::Number(display_page(fields)?),
+                FOUND_NUMBER => Found::Number(fields.display_page()?),
                 FOUND_DECLARED => Found::Declared(raw_text(fields, MAX_TARGET, "text too long")?),
                 _ => return Err(ProtocolError::BadValue("link target kind")),
             };
             Ok::<_, ProtocolError>(Candidate { row, column, length, double, light, target })
         })
         .collect::<Result<_, _>>()?;
-    let numbers = (0..read_count(fields, MAX_NUMBER_LINKS, "too many number links")?)
-        .map(|_| Ok::<_, ProtocolError>(NumberLink { number: display_page(fields)?, target: raw_text(fields, MAX_TARGET, "text too long")? }))
+    let numbers = (0..fields.count_u8(MAX_NUMBER_LINKS, "too many number links")?)
+        .map(|_| Ok::<_, ProtocolError>(NumberLink { number: fields.display_page()?, target: raw_text(fields, MAX_TARGET, "text too long")? }))
         .collect::<Result<_, _>>()?;
     Ok((candidates, numbers))
 }
 
 /// The fetcher's links of its channel.
 pub(crate) fn push_channel_links(payload: &mut Vec<u8>, aliases: &[Alias], services: &[Service]) -> Result<(), ProtocolError> {
-    payload.push(count(aliases.len(), MAX_ALIASES, "too many aliases")?);
+    push_count_u8(payload, aliases.len(), MAX_ALIASES, "too many aliases")?;
     for alias in aliases {
         payload.extend_from_slice(&alias.page.to_be_bytes());
         push_whole(payload, &alias.target, MAX_ADDRESS)?;
     }
-    payload.push(count(services.len(), MAX_SERVICES, "too many services")?);
+    push_count_u8(payload, services.len(), MAX_SERVICES, "too many services")?;
     for service in services {
         push_whole(payload, &service.name, MAX_SERVICE_NAME)?;
         push_whole(payload, &service.address, MAX_ADDRESS)?;
@@ -400,10 +375,10 @@ pub(crate) fn push_channel_links(payload: &mut Vec<u8>, aliases: &[Alias], servi
 }
 
 pub(crate) fn read_channel_links(fields: &mut Fields<'_>) -> Result<(Vec<Alias>, Vec<Service>), ProtocolError> {
-    let aliases = (0..read_count(fields, MAX_ALIASES, "too many aliases")?)
-        .map(|_| Ok::<_, ProtocolError>(Alias { page: display_page(fields)?, target: raw_text(fields, MAX_ADDRESS, "text too long")? }))
+    let aliases = (0..fields.count_u8(MAX_ALIASES, "too many aliases")?)
+        .map(|_| Ok::<_, ProtocolError>(Alias { page: fields.display_page()?, target: raw_text(fields, MAX_ADDRESS, "text too long")? }))
         .collect::<Result<_, _>>()?;
-    let services = (0..read_count(fields, MAX_SERVICES, "too many services")?)
+    let services = (0..fields.count_u8(MAX_SERVICES, "too many services")?)
         .map(|_| {
             Ok::<_, ProtocolError>(Service {
                 name: raw_text(fields, MAX_SERVICE_NAME, "text too long")?,
@@ -418,7 +393,7 @@ pub(crate) fn read_channel_links(fields: &mut Fields<'_>) -> Result<(Vec<Alias>,
 fn push_page_links(payload: &mut Vec<u8>, key: PageKey, links: &PageLinks) -> Result<(), ProtocolError> {
     push_key(payload, key);
     payload.extend_from_slice(&links.version.to_be_bytes());
-    payload.push(count(links.runs.len(), MAX_RUNS, "too many links")?);
+    push_count_u8(payload, links.runs.len(), MAX_RUNS, "too many links")?;
     for run in &links.runs {
         payload.extend_from_slice(&[run.row, run.column, run.length, flags(run.double, run.light), run.kind as u8]);
     }
@@ -428,7 +403,7 @@ fn push_page_links(payload: &mut Vec<u8>, key: PageKey, links: &PageLinks) -> Re
 fn read_page_links(fields: &mut Fields<'_>) -> Result<(PageKey, PageLinks), ProtocolError> {
     let key = fields.key()?;
     let version = fields.u32()?;
-    let runs = (0..read_count(fields, MAX_RUNS, "too many links")?)
+    let runs = (0..fields.count_u8(MAX_RUNS, "too many links")?)
         .map(|_| {
             let (row, column, length) = place(fields)?;
             let (double, light) = read_flags(fields)?;
@@ -441,7 +416,7 @@ fn read_page_links(fields: &mut Fields<'_>) -> Result<(PageKey, PageLinks), Prot
 
 /// Page numbers, each a display page.
 fn push_numbers(payload: &mut Vec<u8>, numbers: &[u16]) -> Result<(), ProtocolError> {
-    payload.push(count(numbers.len(), MAX_REMAPPED, "too many page numbers")?);
+    push_count_u8(payload, numbers.len(), MAX_REMAPPED, "too many page numbers")?;
     for number in numbers {
         page_index(*number).ok_or(ProtocolError::BadValue("page number"))?;
         payload.extend_from_slice(&number.to_be_bytes());
@@ -450,7 +425,7 @@ fn push_numbers(payload: &mut Vec<u8>, numbers: &[u16]) -> Result<(), ProtocolEr
 }
 
 fn read_numbers(fields: &mut Fields<'_>) -> Result<Vec<u16>, ProtocolError> {
-    (0..read_count(fields, MAX_REMAPPED, "too many page numbers")?).map(|_| display_page(fields)).collect()
+    (0..fields.count_u8(MAX_REMAPPED, "too many page numbers")?).map(|_| fields.display_page()).collect()
 }
 
 /// What the strip shows of a link, or nothing.

@@ -343,10 +343,7 @@ fn check_cursor(page: u16, state: Option<CursorState>) -> Result<(), ProtocolErr
 
 pub(crate) fn read_typing(fields: &mut Fields<'_>) -> Result<Typing, ProtocolError> {
     let channel = fields.u32()?;
-    let page = fields.u16()?;
-    if interface_core::channel::page_index(page).is_none() {
-        return Err(ProtocolError::BadValue("page number"));
-    }
+    let page = fields.display_page()?;
     let flags = fields.u8()?;
     if flags & !ALL_FLAGS != 0 {
         return Err(ProtocolError::BadValue("typing flags"));
@@ -360,13 +357,7 @@ pub(crate) fn read_typing(fields: &mut Fields<'_>) -> Result<Typing, ProtocolErr
     check_cursor(page, cursor)?;
     let acked = fields.u32()?;
     let round_trip = fields.u16()?;
-    let show = if flags & FLAG_SHOW != 0 {
-        let show = fields.u16()?;
-        interface_core::channel::page_index(show).ok_or(ProtocolError::BadValue("page number"))?;
-        Some(show)
-    } else {
-        None
-    };
+    let show = if flags & FLAG_SHOW != 0 { Some(fields.display_page()?) } else { None };
     Ok(Typing {
         channel,
         page,

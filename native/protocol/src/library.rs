@@ -4,7 +4,7 @@
 //! the interface makes, which are strip input. A row is named only by the
 //! number its view gave it (requirement 20.5).
 
-use super::{Fields, MAX_ADDRESS, MAX_PAGE_TITLE, ProtocolError, push_text};
+use super::{Fields, MAX_ADDRESS, MAX_PAGE_TITLE, ProtocolError, push_count, push_flag, push_text};
 use interface_core::channel::page_index;
 
 pub use interface_core::library::{
@@ -51,31 +51,6 @@ const BAR_OPEN: u8 = 3;
 /// No page: a page number is never 0.
 const NO_PAGE: u16 = 0;
 
-fn push_flag(payload: &mut Vec<u8>, flag: bool) {
-    payload.push(u8::from(flag));
-}
-
-fn read_flag(fields: &mut Fields<'_>) -> Result<bool, ProtocolError> {
-    match fields.u8()? {
-        0 => Ok(false),
-        1 => Ok(true),
-        _ => Err(ProtocolError::BadValue("flag")),
-    }
-}
-
-fn push_count(payload: &mut Vec<u8>, count: usize, max: usize) -> Result<(), ProtocolError> {
-    if count > max {
-        return Err(ProtocolError::BadValue("too many rows"));
-    }
-    payload.extend_from_slice(&u16::try_from(count).map_err(|_| ProtocolError::BadValue("too many rows"))?.to_be_bytes());
-    Ok(())
-}
-
-fn read_count(fields: &mut Fields<'_>, max: usize) -> Result<usize, ProtocolError> {
-    let count = usize::from(fields.u16()?);
-    if count > max { Err(ProtocolError::BadValue("too many rows")) } else { Ok(count) }
-}
-
 fn push_page(payload: &mut Vec<u8>, page: Option<u16>) -> Result<(), ProtocolError> {
     match page {
         Some(page) if page_index(page).is_some() => payload.extend_from_slice(&page.to_be_bytes()),
@@ -94,7 +69,7 @@ fn read_page(fields: &mut Fields<'_>) -> Result<Option<u16>, ProtocolError> {
 }
 
 fn push_numbers(payload: &mut Vec<u8>, numbers: &[u32]) -> Result<(), ProtocolError> {
-    push_count(payload, numbers.len(), MAX_VIEW_ROWS)?;
+    push_count(payload, numbers.len(), MAX_VIEW_ROWS, "too many rows")?;
     for number in numbers {
         payload.extend_from_slice(&number.to_be_bytes());
     }
@@ -102,7 +77,7 @@ fn push_numbers(payload: &mut Vec<u8>, numbers: &[u32]) -> Result<(), ProtocolEr
 }
 
 fn read_numbers(fields: &mut Fields<'_>) -> Result<Vec<u32>, ProtocolError> {
-    let count = read_count(fields, MAX_VIEW_ROWS)?;
+    let count = fields.count_u16(MAX_VIEW_ROWS, "too many rows")?;
     (0..count).map(|_| fields.u32()).collect()
 }
 
@@ -125,12 +100,12 @@ fn read_folder(fields: &mut Fields<'_>) -> Result<FolderRow, ProtocolError> {
 }
 
 fn push_folders(payload: &mut Vec<u8>, folders: &[FolderRow], max: usize) -> Result<(), ProtocolError> {
-    push_count(payload, folders.len(), max)?;
+    push_count(payload, folders.len(), max, "too many rows")?;
     folders.iter().try_for_each(|folder| push_folder(payload, folder))
 }
 
 fn read_folders(fields: &mut Fields<'_>, max: usize) -> Result<Vec<FolderRow>, ProtocolError> {
-    let count = read_count(fields, max)?;
+    let count = fields.count_u16(max, "too many rows")?;
     (0..count).map(|_| read_folder(fields)).collect()
 }
 
@@ -145,7 +120,7 @@ fn push_item(payload: &mut Vec<u8>, item: &ItemRow) -> Result<(), ProtocolError>
 fn read_item(fields: &mut Fields<'_>) -> Result<ItemRow, ProtocolError> {
     Ok(ItemRow {
         number: fields.u32()?,
-        folder: read_flag(fields)?,
+        folder: fields.flag("flag")?,
         name: fields.text(MAX_NAME)?,
         address: fields.text(MAX_SHOWN_ADDRESS)?,
         place: fields.text(MAX_LABEL)?,
@@ -153,12 +128,12 @@ fn read_item(fields: &mut Fields<'_>) -> Result<ItemRow, ProtocolError> {
 }
 
 fn push_items(payload: &mut Vec<u8>, items: &[ItemRow]) -> Result<(), ProtocolError> {
-    push_count(payload, items.len(), MAX_VIEW_ROWS)?;
+    push_count(payload, items.len(), MAX_VIEW_ROWS, "too many rows")?;
     items.iter().try_for_each(|item| push_item(payload, item))
 }
 
 fn read_items(fields: &mut Fields<'_>) -> Result<Vec<ItemRow>, ProtocolError> {
-    let count = read_count(fields, MAX_VIEW_ROWS)?;
+    let count = fields.count_u16(MAX_VIEW_ROWS, "too many rows")?;
     (0..count).map(|_| read_item(fields)).collect()
 }
 
@@ -168,7 +143,7 @@ fn push_optional(payload: &mut Vec<u8>, text: Option<&str>, max: usize) -> Resul
 }
 
 fn read_optional(fields: &mut Fields<'_>, max: usize) -> Result<Option<String>, ProtocolError> {
-    if read_flag(fields)? { Ok(Some(fields.text(max)?)) } else { Ok(None) }
+    if fields.flag("flag")? { Ok(Some(fields.text(max)?)) } else { Ok(None) }
 }
 
 fn push_range(range: ClearRange) -> u8 {
@@ -198,7 +173,7 @@ pub(crate) fn push_history_view(payload: &mut Vec<u8>, view: &HistoryView) -> Re
     push_text(payload, &view.query, MAX_QUERY)?;
     payload.extend_from_slice(&view.first.to_be_bytes());
     payload.extend_from_slice(&view.total.to_be_bytes());
-    push_count(payload, view.rows.len(), MAX_VIEW_ROWS)?;
+    push_count(payload, view.rows.len(), MAX_VIEW_ROWS, "too many rows")?;
     for row in &view.rows {
         payload.extend_from_slice(&row.number.to_be_bytes());
         push_optional(payload, row.heading.as_deref(), MAX_LABEL)?;
@@ -209,7 +184,7 @@ pub(crate) fn push_history_view(payload: &mut Vec<u8>, view: &HistoryView) -> Re
         push_text(payload, &row.address, MAX_SHOWN_ADDRESS)?;
         push_flag(payload, row.bookmarked);
     }
-    push_count(payload, view.closed.len(), MAX_CLOSED)?;
+    push_count(payload, view.closed.len(), MAX_CLOSED, "too many rows")?;
     for closed in &view.closed {
         payload.extend_from_slice(&closed.number.to_be_bytes());
         push_text(payload, &closed.title, MAX_NAME)?;
@@ -221,7 +196,7 @@ pub(crate) fn read_history_view(fields: &mut Fields<'_>) -> Result<HistoryView, 
     let query = fields.text(MAX_QUERY)?;
     let first = fields.u32()?;
     let total = fields.u32()?;
-    let count = read_count(fields, MAX_VIEW_ROWS)?;
+    let count = fields.count_u16(MAX_VIEW_ROWS, "too many rows")?;
     let rows = (0..count)
         .map(|_| {
             Ok(HistoryRow {
@@ -232,11 +207,11 @@ pub(crate) fn read_history_view(fields: &mut Fields<'_>) -> Result<HistoryView, 
                 page: read_page(fields)?,
                 title: fields.text(MAX_PAGE_TITLE.max(MAX_NAME))?,
                 address: fields.text(MAX_SHOWN_ADDRESS)?,
-                bookmarked: read_flag(fields)?,
+                bookmarked: fields.flag("flag")?,
             })
         })
         .collect::<Result<_, ProtocolError>>()?;
-    let count = read_count(fields, MAX_CLOSED)?;
+    let count = fields.count_u16(MAX_CLOSED, "too many rows")?;
     let closed = (0..count).map(|_| Ok(ClosedTab { number: fields.u32()?, title: fields.text(MAX_NAME)? })).collect::<Result<_, ProtocolError>>()?;
     Ok(HistoryView { query, first, total, rows, closed, notice: fields.text(MAX_NOTICE)? })
 }
@@ -283,9 +258,9 @@ pub(crate) fn push_history_request(payload: &mut Vec<u8>, request: &HistoryReque
 
 pub(crate) fn read_history_request(fields: &mut Fields<'_>) -> Result<HistoryRequest, ProtocolError> {
     Ok(match fields.u8()? {
-        HISTORY_PANEL => HistoryRequest::Panel(read_flag(fields)?),
+        HISTORY_PANEL => HistoryRequest::Panel(fields.flag("flag")?),
         HISTORY_QUERY => HistoryRequest::Query { text: fields.text(MAX_QUERY)?, first: fields.u32()? },
-        HISTORY_OPEN => HistoryRequest::Open { number: fields.u32()?, new_tab: read_flag(fields)? },
+        HISTORY_OPEN => HistoryRequest::Open { number: fields.u32()?, new_tab: fields.flag("flag")? },
         HISTORY_REMOVE => HistoryRequest::Remove(read_numbers(fields)?),
         HISTORY_MORE_FROM_SITE => HistoryRequest::MoreFromSite(fields.u32()?),
         HISTORY_REMOVE_BOOKMARK => HistoryRequest::RemoveBookmark(fields.u32()?),
@@ -299,7 +274,7 @@ pub(crate) fn read_history_request(fields: &mut Fields<'_>) -> Result<HistoryReq
 pub(crate) fn push_suggestions(payload: &mut Vec<u8>, suggestions: &Suggestions) -> Result<(), ProtocolError> {
     push_text(payload, &suggestions.text, MAX_ADDRESS)?;
     push_text(payload, &suggestions.inline, MAX_ADDRESS)?;
-    push_count(payload, suggestions.rows.len(), MAX_SUGGESTIONS)?;
+    push_count(payload, suggestions.rows.len(), MAX_SUGGESTIONS, "too many rows")?;
     for row in &suggestions.rows {
         payload.extend_from_slice(&row.number.to_be_bytes());
         push_text(payload, &row.address, MAX_SHOWN_ADDRESS)?;
@@ -312,10 +287,10 @@ pub(crate) fn push_suggestions(payload: &mut Vec<u8>, suggestions: &Suggestions)
 pub(crate) fn read_suggestions(fields: &mut Fields<'_>) -> Result<Suggestions, ProtocolError> {
     let text = fields.text(MAX_ADDRESS)?;
     let inline = fields.text(MAX_ADDRESS)?;
-    let count = read_count(fields, MAX_SUGGESTIONS)?;
+    let count = fields.count_u16(MAX_SUGGESTIONS, "too many rows")?;
     let rows = (0..count)
         .map(|_| {
-            Ok(Suggestion { number: fields.u32()?, address: fields.text(MAX_SHOWN_ADDRESS)?, title: fields.text(MAX_NAME)?, bookmarked: read_flag(fields)? })
+            Ok(Suggestion { number: fields.u32()?, address: fields.text(MAX_SHOWN_ADDRESS)?, title: fields.text(MAX_NAME)?, bookmarked: fields.flag("flag")? })
         })
         .collect::<Result<_, ProtocolError>>()?;
     Ok(Suggestions { text, inline, rows })
@@ -324,7 +299,7 @@ pub(crate) fn read_suggestions(fields: &mut Fields<'_>) -> Result<Suggestions, P
 pub(crate) fn push_tab_list(payload: &mut Vec<u8>, list: &TabList) -> Result<(), ProtocolError> {
     push_flag(payload, list.forward);
     for (entries, most) in [(&list.entries, MAX_TAB_LIST), (&list.chapters, MAX_CHAPTER_STOPS)] {
-        push_count(payload, entries.len(), most)?;
+        push_count(payload, entries.len(), most, "too many rows")?;
         for entry in entries {
             if entry.steps == 0 || usize::from(entry.steps) > MAX_STEPS {
                 return Err(ProtocolError::BadValue("steps"));
@@ -339,9 +314,9 @@ pub(crate) fn push_tab_list(payload: &mut Vec<u8>, list: &TabList) -> Result<(),
 }
 
 pub(crate) fn read_tab_list(fields: &mut Fields<'_>) -> Result<TabList, ProtocolError> {
-    let forward = read_flag(fields)?;
+    let forward = fields.flag("flag")?;
     let mut read = |most: usize| -> Result<Vec<TabEntry>, ProtocolError> {
-        let count = read_count(fields, most)?;
+        let count = fields.count_u16(most, "too many rows")?;
         (0..count)
             .map(|_| {
                 let steps = read_steps(fields)?;
@@ -450,11 +425,11 @@ pub(crate) fn push_bookmark_request(payload: &mut Vec<u8>, request: &BookmarkReq
 
 pub(crate) fn read_bookmark_request(fields: &mut Fields<'_>) -> Result<BookmarkRequest, ProtocolError> {
     Ok(match fields.u8()? {
-        BOOKMARKS_PANEL => BookmarkRequest::Panel(read_flag(fields)?),
+        BOOKMARKS_PANEL => BookmarkRequest::Panel(fields.flag("flag")?),
         BOOKMARKS_FOLDER => BookmarkRequest::Folder(fields.u32()?),
         BOOKMARKS_SCROLL => BookmarkRequest::Scroll { folders_first: fields.u32()?, items_first: fields.u32()? },
         BOOKMARKS_QUERY => BookmarkRequest::Query(fields.text(MAX_QUERY)?),
-        BOOKMARKS_OPEN => BookmarkRequest::Open { number: fields.u32()?, new_tab: read_flag(fields)? },
+        BOOKMARKS_OPEN => BookmarkRequest::Open { number: fields.u32()?, new_tab: fields.flag("flag")? },
         BOOKMARKS_EDIT => BookmarkRequest::Edit { number: fields.u32()?, name: fields.text(MAX_NAME)?, address: fields.text(MAX_ADDRESS)? },
         BOOKMARKS_MOVE => BookmarkRequest::Move { number: fields.u32()?, folder: fields.u32()?, index: fields.u32()? },
         BOOKMARKS_NEW_FOLDER => BookmarkRequest::NewFolder(fields.text(MAX_NAME)?),
@@ -479,11 +454,11 @@ pub(crate) fn push_star_view(payload: &mut Vec<u8>, view: &StarView) -> Result<(
 
 pub(crate) fn read_star_view(fields: &mut Fields<'_>) -> Result<StarView, ProtocolError> {
     Ok(StarView {
-        open: read_flag(fields)?,
+        open: fields.flag("flag")?,
         name: fields.text(MAX_NAME)?,
         folder: fields.u32()?,
         folders: read_folders(fields, MAX_VIEW_ROWS)?,
-        page: read_flag(fields)?,
+        page: fields.flag("flag")?,
     })
 }
 
@@ -523,9 +498,9 @@ pub(crate) fn push_bar_view(payload: &mut Vec<u8>, view: &BarView) -> Result<(),
 }
 
 pub(crate) fn read_bar_view(fields: &mut Fields<'_>) -> Result<BarView, ProtocolError> {
-    let shown = read_flag(fields)?;
+    let shown = fields.flag("flag")?;
     let items = read_items(fields)?;
-    let open = if read_flag(fields)? { Some((fields.u32()?, read_items(fields)?)) } else { None };
+    let open = if fields.flag("flag")? { Some((fields.u32()?, read_items(fields)?)) } else { None };
     Ok(BarView { shown, items, open })
 }
 
@@ -551,9 +526,9 @@ pub(crate) fn push_bar_request(payload: &mut Vec<u8>, request: &BarRequest) {
 
 pub(crate) fn read_bar_request(fields: &mut Fields<'_>) -> Result<BarRequest, ProtocolError> {
     Ok(match fields.u8()? {
-        BAR_SHOW => BarRequest::Show(read_flag(fields)?),
+        BAR_SHOW => BarRequest::Show(fields.flag("flag")?),
         BAR_FOLDER => BarRequest::Folder(if fields.is_empty() { None } else { Some(fields.u32()?) }),
-        BAR_OPEN => BarRequest::Open { number: fields.u32()?, new_tab: read_flag(fields)? },
+        BAR_OPEN => BarRequest::Open { number: fields.u32()?, new_tab: fields.flag("flag")? },
         _ => return Err(ProtocolError::BadValue("bar request")),
     })
 }
@@ -572,7 +547,7 @@ pub(crate) fn push_window(payload: &mut Vec<u8>, window: &WindowGeometry) -> Res
 
 pub(crate) fn read_window(fields: &mut Fields<'_>) -> Result<WindowGeometry, ProtocolError> {
     let signed = |fields: &mut Fields<'_>| fields.array::<4>().map(i32::from_be_bytes);
-    let window = WindowGeometry { x: signed(fields)?, y: signed(fields)?, width: fields.u32()?, height: fields.u32()?, maximised: read_flag(fields)? };
+    let window = WindowGeometry { x: signed(fields)?, y: signed(fields)?, width: fields.u32()?, height: fields.u32()?, maximised: fields.flag("flag")? };
     if window.is_plausible() { Ok(window) } else { Err(ProtocolError::BadValue("window")) }
 }
 

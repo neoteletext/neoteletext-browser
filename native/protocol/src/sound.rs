@@ -79,11 +79,7 @@ pub fn read_to_sound(input: &mut dyn Read) -> Result<Option<ToSound>, ProtocolEr
     let message = match kind {
         KIND_AUDIO => ToSound::Audio { channel: fields.u32()?, audio: audio::read(&mut fields, Sender::Core)? },
         KIND_SETTINGS => {
-            let sound = match fields.u8()? {
-                0 => false,
-                1 => true,
-                _ => return Err(ProtocolError::BadValue("sound")),
-            };
+            let sound = fields.flag("sound")?;
             let volume = fields.u8()?;
             if volume > MAX_VOLUME {
                 return Err(ProtocolError::BadValue("volume"));

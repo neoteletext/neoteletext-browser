@@ -9,9 +9,7 @@ use std::io::{Read, Write};
 
 pub use interface_core::browser::CertificateProblem;
 
-use interface_core::channel::page_index;
-
-use super::{Fields, MAX_ADDRESS, MAX_PAGE_TITLE, MAX_PAYLOAD, ProtocolError, push_raw_text, raw_text, read_frame, write_frame};
+use super::{Fields, MAX_ADDRESS, MAX_PAGE_TITLE, MAX_PAYLOAD, ProtocolError, push_count, push_raw_text, raw_text, read_frame, write_frame};
 
 /// The engine's contents file limits (`neoteletext-web` `contents`): at
 /// most 1000 lines, so at most 1000 entries, and 800 pages.
@@ -284,11 +282,7 @@ pub fn read_to_fetcher(input: &mut dyn Read) -> Result<Option<ToFetcher>, Protoc
         }
         KIND_REACHED_ANSWER => {
             let id = fields.u32()?;
-            let reached = match fields.u8()? {
-                0 => false,
-                1 => true,
-                _ => return Err(ProtocolError::BadValue("reached")),
-            };
+            let reached = fields.flag("reached")?;
             ToFetcher::ReachedAnswer { id, reached }
         }
         other => return Err(ProtocolError::UnknownKind(other)),
@@ -303,10 +297,7 @@ pub fn write_to_core(out: &mut dyn Write, message: &FromFetcher) -> Result<(), P
     let mut payload = Vec::new();
     let kind = match message {
         FromFetcher::Contents(entries) => {
-            if entries.len() > MAX_ENTRIES {
-                return Err(ProtocolError::BadValue("too many entries"));
-            }
-            payload.extend_from_slice(&u16::try_from(entries.len()).unwrap_or(0).to_be_bytes());
+            push_count(&mut payload, entries.len(), MAX_ENTRIES, "too many entries")?;
             for entry in entries {
                 match entry {
                     Entry::Section(title) => {
@@ -425,11 +416,7 @@ fn read_cookie_message(kind: u8, fields: &mut Fields<'_>) -> Result<FromFetcher,
             let id = fields.u32()?;
             let host = raw_text(fields, MAX_ADDRESS, "text too long")?;
             let path = raw_text(fields, MAX_ADDRESS, "text too long")?;
-            let secure = match fields.u8()? {
-                0 => false,
-                1 => true,
-                _ => return Err(ProtocolError::BadValue("secure")),
-            };
+            let secure = fields.flag("secure")?;
             let site = match fields.u8()? {
                 SITE_SAME => CookieSite::SameService,
                 SITE_NAVIGATION => CookieSite::CrossServiceNavigation,
@@ -471,16 +458,12 @@ pub fn read_from_fetcher(input: &mut dyn Read) -> Result<Option<FromFetcher>, Pr
     let mut fields = Fields::new(&payload);
     let message = match kind {
         KIND_CONTENTS => {
-            let count = usize::from(fields.u16()?);
-            if count > MAX_ENTRIES {
-                return Err(ProtocolError::BadValue("too many entries"));
-            }
+            let count = fields.count_u16(MAX_ENTRIES, "too many entries")?;
             let entries = (0..count)
                 .map(|_| match fields.u8()? {
                     ENTRY_SECTION => Ok(Entry::Section(raw_text(&mut fields, MAX_PAGE_TITLE, "text too long")?)),
                     ENTRY_PAGE => {
-                        let page = fields.u16()?;
-                        page_index(page).ok_or(ProtocolError::BadValue("page number"))?;
+                        let page = fields.display_page()?;
                         Ok(Entry::Page { page, title: raw_text(&mut fields, MAX_PAGE_TITLE, "text too long")? })
                     }
                     _ => Err(ProtocolError::BadValue("contents entry")),
@@ -513,11 +496,7 @@ pub fn read_from_fetcher(input: &mut dyn Read) -> Result<Option<FromFetcher>, Pr
             }
             FromFetcher::Input { open: flags & 1 != 0, secure: flags & 2 != 0 }
         }
-        KIND_PUSHING => FromFetcher::Pushing(match fields.u8()? {
-            0 => false,
-            1 => true,
-            _ => return Err(ProtocolError::BadValue("pushing")),
-        }),
+        KIND_PUSHING => FromFetcher::Pushing(fields.flag("pushing")?),
         KIND_EXCHANGE => {
             let method = raw_text(&mut fields, MAX_METHOD, "text too long")?;
             if method.is_empty() || !method.bytes().all(|byte| byte.is_ascii_uppercase()) {

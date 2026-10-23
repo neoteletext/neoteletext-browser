@@ -4,7 +4,7 @@
 //! the trusted core checks. The interface receives a security setting only
 //! as this text, and acts on none (requirement 3.6).
 
-use super::{Fields, MAX_ADDRESS, ProtocolError, push_text};
+use super::{Fields, MAX_ADDRESS, ProtocolError, push_count_u8, push_flag, push_text};
 
 /// The most local addresses allowed (`settings-home-console-proxy.md`
 /// section 1.1).
@@ -108,18 +108,6 @@ fn read_proxy(fields: &mut Fields<'_>) -> Result<ProxyView, ProtocolError> {
     })
 }
 
-fn push_flag(payload: &mut Vec<u8>, flag: bool) {
-    payload.push(u8::from(flag));
-}
-
-fn read_flag(fields: &mut Fields<'_>) -> Result<bool, ProtocolError> {
-    match fields.u8()? {
-        0 => Ok(false),
-        1 => Ok(true),
-        _ => Err(ProtocolError::BadValue("flag")),
-    }
-}
-
 fn read_volume(fields: &mut Fields<'_>) -> Result<u8, ProtocolError> {
     let volume = fields.u8()?;
     if volume > MAX_VOLUME { Err(ProtocolError::BadValue("volume")) } else { Ok(volume) }
@@ -133,7 +121,7 @@ pub(crate) fn push_view(payload: &mut Vec<u8>, view: &SettingsView) -> Result<()
     push_flag(payload, view.sound);
     payload.push(view.volume);
     push_proxy(payload, &view.proxy)?;
-    payload.push(u8::try_from(view.local.len()).map_err(|_| ProtocolError::BadValue("settings"))?);
+    push_count_u8(payload, view.local.len(), MAX_LOCAL, "settings")?;
     for address in &view.local {
         push_text(payload, address, MAX_LOCAL_TEXT)?;
     }
@@ -151,17 +139,14 @@ pub(crate) fn push_view(payload: &mut Vec<u8>, view: &SettingsView) -> Result<()
 
 pub(crate) fn read_view(fields: &mut Fields<'_>) -> Result<SettingsView, ProtocolError> {
     let home = fields.text(MAX_ADDRESS)?;
-    let sound = read_flag(fields)?;
+    let sound = fields.flag("flag")?;
     let volume = read_volume(fields)?;
     let proxy = read_proxy(fields)?;
-    let count = usize::from(fields.u8()?);
-    if count > MAX_LOCAL {
-        return Err(ProtocolError::BadValue("too many local addresses"));
-    }
+    let count = fields.count_u8(MAX_LOCAL, "too many local addresses")?;
     let local = (0..count).map(|_| fields.text(MAX_LOCAL_TEXT)).collect::<Result<Vec<_>, _>>()?;
-    let restore_session = read_flag(fields)?;
+    let restore_session = fields.flag("flag")?;
     let cookies = read_mode(fields)?;
-    let refusal = if read_flag(fields)? { Some(fields.text(MAX_REFUSAL)?) } else { None };
+    let refusal = if fields.flag("flag")? { Some(fields.text(MAX_REFUSAL)?) } else { None };
     Ok(SettingsView { home, sound, volume, proxy, local, restore_session, cookies, refusal })
 }
 
@@ -230,8 +215,8 @@ pub(crate) fn push_update(payload: &mut Vec<u8>, view: &UpdateView) -> Result<()
 pub(crate) fn read_update(fields: &mut Fields<'_>) -> Result<UpdateView, ProtocolError> {
     let version = fields.text(MAX_VERSION)?;
     let status = fields.text(MAX_UPDATE_STATUS)?;
-    let offer = if read_flag(fields)? { Some(fields.text(MAX_VERSION)?) } else { None };
-    let checking = read_flag(fields)?;
+    let offer = if fields.flag("flag")? { Some(fields.text(MAX_VERSION)?) } else { None };
+    let checking = fields.flag("flag")?;
     Ok(UpdateView { version, status, offer, checking })
 }
 
@@ -239,15 +224,15 @@ pub(crate) fn read_change(fields: &mut Fields<'_>) -> Result<SettingChange, Prot
     Ok(match fields.u8()? {
         CHANGE_HOME => SettingChange::Home(fields.text(MAX_ADDRESS)?),
         CHANGE_HOME_IS_THIS_PAGE => SettingChange::HomeIsThisPage,
-        CHANGE_SOUND => SettingChange::Sound(read_flag(fields)?),
+        CHANGE_SOUND => SettingChange::Sound(fields.flag("flag")?),
         CHANGE_VOLUME => SettingChange::Volume(read_volume(fields)?),
         CHANGE_PROXY => SettingChange::Proxy(read_proxy(fields)?),
         CHANGE_ADD_LOCAL => SettingChange::AddLocal(fields.text(MAX_LOCAL_TEXT)?),
         CHANGE_REMOVE_LOCAL => SettingChange::RemoveLocal(fields.u8()?),
-        CHANGE_RESTORE_SESSION => SettingChange::RestoreSession(read_flag(fields)?),
+        CHANGE_RESTORE_SESSION => SettingChange::RestoreSession(fields.flag("flag")?),
         CHANGE_COOKIES => SettingChange::Cookies(read_mode(fields)?),
         CHANGE_REMOTE => SettingChange::Remote(read_remote(fields)?),
-        CHANGE_CHECK_UPDATES => SettingChange::CheckUpdates(read_flag(fields)?),
+        CHANGE_CHECK_UPDATES => SettingChange::CheckUpdates(fields.flag("flag")?),
         _ => return Err(ProtocolError::BadValue("setting change")),
     })
 }

@@ -243,11 +243,7 @@ pub(crate) fn read(fields: &mut Fields<'_>, sender: Sender) -> Result<Audio, Pro
             Audio::StreamSamples { sound, pcm: pairs.iter().map(|pair| i16::from_le_bytes(*pair)).collect() }
         }
         OP_RESET if sender == Sender::Core => Audio::Reset,
-        OP_MUTE if sender == Sender::Core => Audio::Mute(match fields.u8()? {
-            0 => false,
-            1 => true,
-            _ => return Err(ProtocolError::BadValue("mute")),
-        }),
+        OP_MUTE if sender == Sender::Core => Audio::Mute(fields.flag("mute")?),
         _ => return Err(ProtocolError::BadValue("audio operation")),
     };
     fields.end()?;

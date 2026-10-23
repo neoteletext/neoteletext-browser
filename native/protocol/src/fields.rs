@@ -4,6 +4,7 @@
 //! list of keys).
 
 use interface_core::canvas::PageKey;
+use interface_core::channel::page_index;
 
 use crate::text::is_clean;
 use crate::{FIRST_PAGE, LAST_PAGE, MAX_PAGES, ProtocolError};
@@ -64,11 +65,37 @@ impl<'a> Fields<'a> {
     }
 
     pub(crate) fn keys(&mut self) -> Result<Vec<PageKey>, ProtocolError> {
-        let count = usize::from(self.u16()?);
-        if count > MAX_PAGES {
-            return Err(ProtocolError::BadValue("too many pages"));
-        }
+        let count = self.count_u16(MAX_PAGES, "too many pages")?;
         (0..count).map(|_| self.key()).collect()
+    }
+
+    /// A display page number, 100 to 8FF.
+    pub(crate) fn display_page(&mut self) -> Result<u16, ProtocolError> {
+        let page = self.u16()?;
+        page_index(page).ok_or(ProtocolError::BadValue("page number"))?;
+        Ok(page)
+    }
+
+    /// A one-byte flag: 0 or 1, nothing else; `reason` names what was
+    /// neither.
+    pub(crate) fn flag(&mut self, reason: &'static str) -> Result<bool, ProtocolError> {
+        match self.u8()? {
+            0 => Ok(false),
+            1 => Ok(true),
+            _ => Err(ProtocolError::BadValue(reason)),
+        }
+    }
+
+    /// A one-byte count of at most `max`.
+    pub(crate) fn count_u8(&mut self, max: usize, reason: &'static str) -> Result<usize, ProtocolError> {
+        let count = usize::from(self.u8()?);
+        if count > max { Err(ProtocolError::BadValue(reason)) } else { Ok(count) }
+    }
+
+    /// A two-byte count of at most `max`.
+    pub(crate) fn count_u16(&mut self, max: usize, reason: &'static str) -> Result<usize, ProtocolError> {
+        let count = usize::from(self.u16()?);
+        if count > max { Err(ProtocolError::BadValue(reason)) } else { Ok(count) }
     }
 
     pub(crate) fn text(&mut self, max_bytes: usize) -> Result<String, ProtocolError> {
@@ -88,15 +115,6 @@ impl<'a> Fields<'a> {
     }
 }
 
-/// A one-byte flag: 0 or 1, nothing else.
-pub(crate) fn read_flag(fields: &mut Fields<'_>) -> Result<bool, ProtocolError> {
-    match fields.u8()? {
-        0 => Ok(false),
-        1 => Ok(true),
-        _ => Err(ProtocolError::BadValue("flag")),
-    }
-}
-
 pub(crate) fn push_key(payload: &mut Vec<u8>, key: PageKey) {
     payload.extend_from_slice(&key.channel.to_be_bytes());
     payload.extend_from_slice(&key.page.to_be_bytes());
@@ -113,13 +131,32 @@ pub(crate) fn push_text(payload: &mut Vec<u8>, text: &str, max_bytes: usize) -> 
 }
 
 pub(crate) fn push_keys(payload: &mut Vec<u8>, keys: &[PageKey]) -> Result<(), ProtocolError> {
-    if keys.len() > MAX_PAGES {
-        return Err(ProtocolError::BadValue("too many pages"));
-    }
-    let count = u16::try_from(keys.len()).map_err(|_| ProtocolError::BadValue("too many pages"))?;
-    payload.extend_from_slice(&count.to_be_bytes());
+    push_count(payload, keys.len(), MAX_PAGES, "too many pages")?;
     for &key in keys {
         push_key(payload, key);
     }
+    Ok(())
+}
+
+/// A one-byte flag.
+pub(crate) fn push_flag(payload: &mut Vec<u8>, flag: bool) {
+    payload.push(u8::from(flag));
+}
+
+/// A two-byte count of at most `max`.
+pub(crate) fn push_count(payload: &mut Vec<u8>, count: usize, max: usize, reason: &'static str) -> Result<(), ProtocolError> {
+    if count > max {
+        return Err(ProtocolError::BadValue(reason));
+    }
+    payload.extend_from_slice(&u16::try_from(count).map_err(|_| ProtocolError::BadValue(reason))?.to_be_bytes());
+    Ok(())
+}
+
+/// A one-byte count of at most `max`.
+pub(crate) fn push_count_u8(payload: &mut Vec<u8>, count: usize, max: usize, reason: &'static str) -> Result<(), ProtocolError> {
+    if count > max {
+        return Err(ProtocolError::BadValue(reason));
+    }
+    payload.push(u8::try_from(count).map_err(|_| ProtocolError::BadValue(reason))?);
     Ok(())
 }

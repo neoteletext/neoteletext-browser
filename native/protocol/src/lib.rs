@@ -43,7 +43,7 @@ mod text;
 
 pub use bounds::*;
 pub use error::ProtocolError;
-pub(crate) use fields::{Fields, KEY_BYTES, push_key, push_keys, push_text, read_flag};
+pub(crate) use fields::{Fields, KEY_BYTES, push_count, push_count_u8, push_flag, push_key, push_keys, push_text};
 pub(crate) use framing::{read_frame, tail, write_frame};
 pub use text::clean;
 pub(crate) use text::{push_raw_text, raw_text};
@@ -437,7 +437,7 @@ fn update_intent(kind: u8) -> ToCore {
 fn window_intent(kind: u8, fields: &mut Fields<'_>) -> Result<ToCore, ProtocolError> {
     Ok(match kind {
         KIND_FROM => ToCore::From(window_number(fields)?),
-        KIND_NEW_WINDOW => ToCore::NewWindow { private: read_flag(fields)? },
+        KIND_NEW_WINDOW => ToCore::NewWindow { private: fields.flag("flag")? },
         KIND_TAB_TO_WINDOW => {
             let tab = fields.u8()?;
             let window = fields.u32()?;
@@ -730,14 +730,12 @@ pub fn read_from_core(input: &mut dyn Read) -> Result<Option<ToInterface>, Proto
         }
         KIND_PAGE => {
             let channel = fields.u32()?;
-            let page = fields.u16()?;
-            page_index(page).ok_or(ProtocolError::BadValue("page number"))?;
+            let page = fields.display_page()?;
             ToInterface::Page { channel, page, title: fields.text(MAX_PAGE_TITLE)? }
         }
         KIND_UPDATED => {
             let channel = fields.u32()?;
-            let page = fields.u16()?;
-            page_index(page).ok_or(ProtocolError::BadValue("page number"))?;
+            let page = fields.display_page()?;
             ToInterface::Updated { channel, page }
         }
         KIND_FRAME => {
@@ -1016,11 +1014,7 @@ pub fn read_from_interface(input: &mut dyn Read) -> Result<Option<ToCore>, Proto
         KIND_NEW_TAB => ToCore::NewTab,
         KIND_OPENED => ToCore::Opened(if payload.is_empty() { None } else { Some(fields.key()?) }),
         KIND_MUTE_TAB => ToCore::MuteTab(fields.u8()?),
-        KIND_MUTE_ALL => ToCore::MuteAll(match fields.u8()? {
-            0 => false,
-            1 => true,
-            _ => return Err(ProtocolError::BadValue("mute")),
-        }),
+        KIND_MUTE_ALL => ToCore::MuteAll(fields.flag("mute")?),
         KIND_NAVIGATE => ToCore::Navigate(fields.text(MAX_ADDRESS)?),
         KIND_BACK => ToCore::Back,
         KIND_FORWARD => ToCore::Forward,
@@ -1031,38 +1025,25 @@ pub fn read_from_interface(input: &mut dyn Read) -> Result<Option<ToCore>, Proto
         KIND_FROM | KIND_NEW_WINDOW | KIND_TAB_TO_WINDOW | KIND_CLOSE_WINDOW => window_intent(kind, &mut fields)?,
         KIND_DRAWN | KIND_INSTALL_UPDATE => update_intent(kind),
         KIND_CHANGE_SETTING => ToCore::ChangeSetting(settings::read_change(&mut fields)?),
-        KIND_CONSOLE => ToCore::Console(read_flag(&mut fields)?),
+        KIND_CONSOLE => ToCore::Console(fields.flag("flag")?),
         #[cfg(feature = "links")]
         KIND_POINT => ToCore::Point(if payload.is_empty() { None } else { Some(links::read_spot(&mut fields)?) }),
         #[cfg(feature = "links")]
         KIND_TYPED => {
-            let number = fields.u16()?;
-            page_index(number).ok_or(ProtocolError::BadValue("page number"))?;
+            let number = fields.display_page()?;
             let opened = if fields.is_empty() { None } else { Some((fields.key()?, fields.u32()?)) };
             ToCore::Typed { number, opened }
         }
         #[cfg(feature = "interaction")]
         KIND_INPUT => ToCore::Input(interaction::read_input(&mut fields)?),
         #[cfg(feature = "phone-keyboard")]
-        KIND_PHONE_PANEL => ToCore::PhonePanel(match fields.u8()? {
-            0 => false,
-            1 => true,
-            _ => return Err(ProtocolError::BadValue("phone panel")),
-        }),
+        KIND_PHONE_PANEL => ToCore::PhonePanel(fields.flag("phone panel")?),
         #[cfg(feature = "phone-keyboard")]
         KIND_PHONE_FINISH => ToCore::PhoneFinish,
         #[cfg(any(feature = "links", feature = "interaction"))]
-        KIND_FOCUSED => ToCore::Focused(match fields.u8()? {
-            0 => false,
-            1 => true,
-            _ => return Err(ProtocolError::BadValue("focus")),
-        }),
+        KIND_FOCUSED => ToCore::Focused(fields.flag("focus")?),
         #[cfg(feature = "interaction")]
-        KIND_EDITING => ToCore::Editing(match fields.u8()? {
-            0 => false,
-            1 => true,
-            _ => return Err(ProtocolError::BadValue("editing")),
-        }),
+        KIND_EDITING => ToCore::Editing(fields.flag("editing")?),
         #[cfg(feature = "links")]
         KIND_CONFIRM => ToCore::Confirm(fields.u32()?),
         #[cfg(feature = "links")]
@@ -1072,10 +1053,10 @@ pub fn read_from_interface(input: &mut dyn Read) -> Result<Option<ToCore>, Proto
         KIND_STAR => ToCore::Star(library::read_star_request(&mut fields)?),
         KIND_BAR => ToCore::Bar(library::read_bar_request(&mut fields)?),
         KIND_SUGGEST => ToCore::Suggest(fields.text(MAX_ADDRESS)?),
-        KIND_SUGGESTION => ToCore::Suggestion { number: fields.u32()?, new_tab: read_flag(&mut fields)? },
-        KIND_TAB_LIST => ToCore::TabList(read_flag(&mut fields)?),
+        KIND_SUGGESTION => ToCore::Suggestion { number: fields.u32()?, new_tab: fields.flag("flag")? },
+        KIND_TAB_LIST => ToCore::TabList(fields.flag("flag")?),
         KIND_GO_TO => {
-            let forward = read_flag(&mut fields)?;
+            let forward = fields.flag("flag")?;
             ToCore::GoTo { forward, steps: library::read_steps(&mut fields)? }
         }
         KIND_NEW_PRIVATE_TAB => ToCore::NewPrivateTab,

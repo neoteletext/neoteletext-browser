@@ -9,7 +9,7 @@ use std::io::{Read, Write};
 use interface_core::canvas::{PAGE_HEIGHT, PAGE_WIDTH};
 use interface_core::channel::{PAGES, page_index};
 
-use super::{Fields, MAX_PAGE_TITLE, ProtocolError, push_raw_text, push_text, raw_text, read_frame, write_frame};
+use super::{Fields, MAX_PAGE_TITLE, ProtocolError, push_count, push_count_u8, push_raw_text, push_text, raw_text, read_frame, write_frame};
 
 /// The most bytes of a channel's data in one message.
 pub const MAX_CHUNK: usize = 64 * 1024;
@@ -265,12 +265,6 @@ pub fn is_netscape_bookmarks(bytes: &[u8]) -> bool {
     bytes.get(start..).and_then(|rest| rest.get(..NETSCAPE_DOCTYPE.len())).is_some_and(|first| first.eq_ignore_ascii_case(NETSCAPE_DOCTYPE.as_bytes()))
 }
 
-fn display_page(fields: &mut Fields<'_>) -> Result<u16, ProtocolError> {
-    let page = fields.u16()?;
-    page_index(page).ok_or(ProtocolError::BadValue("page number"))?;
-    Ok(page)
-}
-
 /// # Errors
 /// When writing fails or the message breaks a bound.
 pub fn write_to_decoder(out: &mut dyn Write, message: &ToDecoder) -> Result<(), ProtocolError> {
@@ -286,10 +280,7 @@ pub fn write_to_decoder(out: &mut dyn Write, message: &ToDecoder) -> Result<(), 
         }
         ToDecoder::End => KIND_END,
         ToDecoder::Showing(pages) => {
-            if pages.len() > PAGES {
-                return Err(ProtocolError::BadValue("too many pages"));
-            }
-            payload.extend_from_slice(&u16::try_from(pages.len()).map_err(|_| ProtocolError::BadValue("too many pages"))?.to_be_bytes());
+            push_count(&mut payload, pages.len(), PAGES, "too many pages")?;
             for page in pages {
                 payload.extend_from_slice(&page.to_be_bytes());
             }
@@ -350,14 +341,11 @@ pub fn read_from_core(input: &mut dyn Read) -> Result<Option<ToDecoder>, Protoco
         }
         KIND_END => ToDecoder::End,
         KIND_SHOWING => {
-            let count = usize::from(fields.u16()?);
-            if count > PAGES {
-                return Err(ProtocolError::BadValue("too many pages"));
-            }
-            ToDecoder::Showing((0..count).map(|_| display_page(&mut fields)).collect::<Result<_, _>>()?)
+            let count = fields.count_u16(PAGES, "too many pages")?;
+            ToDecoder::Showing((0..count).map(|_| fields.display_page()).collect::<Result<_, _>>()?)
         }
         KIND_CLOSE => ToDecoder::Close,
-        KIND_OPENED => ToDecoder::Opened(if payload.is_empty() { None } else { Some(display_page(&mut fields)?) }),
+        KIND_OPENED => ToDecoder::Opened(if payload.is_empty() { None } else { Some(fields.display_page()?) }),
         KIND_WHOLE => {
             let flags = fields.u8()?;
             if flags > 3 {
@@ -370,7 +358,7 @@ pub fn read_from_core(input: &mut dyn Read) -> Result<Option<ToDecoder>, Protoco
             return Ok(Some(ToDecoder::Whole { packets: flags & 1 != 0, pushed: flags & 2 != 0, bytes: crate::tail(payload, WHOLE_FLAGS_BYTES) }));
         }
         KIND_VIEW => {
-            let page = display_page(&mut fields)?;
+            let page = fields.display_page()?;
             let flags = fields.u8()?;
             if flags & !VIEW_FLAGS != 0 {
                 return Err(ProtocolError::BadValue("view flags"));
@@ -449,7 +437,7 @@ pub fn write_to_core(out: &mut dyn Write, message: &FromDecoder) -> Result<(), P
                 return Err(ProtocolError::BadValue("sub-pages"));
             }
             payload.extend_from_slice(&page.to_be_bytes());
-            payload.push(u8::try_from(subcodes.len()).map_err(|_| ProtocolError::BadValue("sub-pages"))?);
+            push_count_u8(&mut payload, subcodes.len(), interface_core::controls::MAX_SUBPAGES, "sub-pages")?;
             for subcode in subcodes {
                 payload.extend_from_slice(&subcode.to_be_bytes());
             }
@@ -505,11 +493,11 @@ pub fn read_from_decoder(input: &mut dyn Read) -> Result<Option<FromDecoder>, Pr
     let mut fields = Fields::new(&payload);
     let message = match kind {
         KIND_ARRIVED => {
-            let page = display_page(&mut fields)?;
+            let page = fields.display_page()?;
             FromDecoder::Arrived { page, title: raw_text(&mut fields, MAX_PAGE_TITLE, "title too long")? }
         }
         KIND_FRAME => {
-            let page = display_page(&mut fields)?;
+            let page = fields.display_page()?;
             let colours = usize::from(fields.u8()?);
             if colours == 0 || colours > MAX_COLOURS {
                 return Err(ProtocolError::BadValue("palette size"));
@@ -528,26 +516,19 @@ pub fn read_from_decoder(input: &mut dyn Read) -> Result<Option<FromDecoder>, Pr
             let offset = payload.len().saturating_sub(PAGE_DOTS);
             return Ok(Some(FromDecoder::Frame { page, palette, screen, indices: crate::tail(payload, offset) }));
         }
-        KIND_UPDATED => FromDecoder::Updated { page: display_page(&mut fields)? },
+        KIND_UPDATED => FromDecoder::Updated { page: fields.display_page()? },
         KIND_AUDIO => FromDecoder::Audio(crate::audio::read(&mut fields, crate::audio::Sender::Decoder)?),
         #[cfg(feature = "links")]
         KIND_LINKS => {
-            let page = display_page(&mut fields)?;
-            let with_image = match fields.u8()? {
-                0 => false,
-                1 => true,
-                _ => return Err(ProtocolError::BadValue("with image")),
-            };
+            let page = fields.display_page()?;
+            let with_image = fields.flag("with image")?;
             let (candidates, numbers) = crate::links::read_found(&mut fields)?;
             let fastext = crate::links::read_fastext(&mut fields)?;
             FromDecoder::Links { page, with_image, candidates, numbers, fastext }
         }
         KIND_SUBPAGES => {
-            let page = display_page(&mut fields)?;
-            let count = usize::from(fields.u8()?);
-            if count > interface_core::controls::MAX_SUBPAGES {
-                return Err(ProtocolError::BadValue("too many sub-pages"));
-            }
+            let page = fields.display_page()?;
+            let count = fields.count_u8(interface_core::controls::MAX_SUBPAGES, "too many sub-pages")?;
             let mut subcode = || -> Result<u16, ProtocolError> {
                 let subcode = fields.u16()?;
                 // A page may carry 3F7F itself, as many broadcast pages do.
