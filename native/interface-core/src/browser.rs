@@ -30,7 +30,7 @@ mod fixture;
 mod focus;
 mod frames;
 mod glyphs;
-mod history_ui;
+mod history;
 mod keys;
 #[cfg(feature = "links")]
 mod link_ui;
@@ -112,7 +112,7 @@ pub struct Browser {
     /// The developer console (requirement 19.8).
     console: console_ui::ConsoleUi,
     /// The history panel (requirement 20.4).
-    history: history_ui::HistoryUi,
+    history: history::HistoryUi,
     /// The cookies panel (requirement 21.6).
     cookies: cookies_ui::CookiesUi,
     /// What each control is, shown when the pointer rests on it.
@@ -177,7 +177,7 @@ impl Browser {
             body: Rect::ZERO,
             settings: settings_ui::SettingsUi::default(),
             console: console_ui::ConsoleUi::default(),
-            history: history_ui::HistoryUi::default(),
+            history: history::HistoryUi::default(),
             cookies: cookies_ui::CookiesUi::default(),
             tips: tips_ui::TipsUi::default(),
             page_controls: controls_ui::ControlsUi::default(),
