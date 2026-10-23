@@ -46,6 +46,9 @@ pub(crate) fn apply(role: Role, writable: Option<&Path>) -> Result<Report, Strin
         runtime::private_runtime(role).map_err(|error| format!("cannot make its own /run and /tmp: {error}"))?;
         report.layers.push(String::from("private /run and /tmp"));
     }
+    // After the namespaces, whose change of credentials could otherwise
+    // clear it.
+    namespace::end_with_parent().map_err(|error| format!("cannot end with its parent: {error}"))?;
     landlock::landlock(role, writable).map_err(|error| format!("cannot apply Landlock: {error}"))?;
     report.layers.push(String::from("Landlock"));
     let arch = seccomp::architecture().ok_or("no system-call filter exists for this architecture")?;

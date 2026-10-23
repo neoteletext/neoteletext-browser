@@ -174,3 +174,25 @@ fn no_role_types_into_its_terminal() {
         assert!(line.contains("terminal=refused"), "{role}: {line}");
     }
 }
+
+/// Finding F-34: a confined helper ends when its parent, the broker, does,
+/// however the broker ended. Before, a helper whose broker was killed
+/// lived on, reparented.
+#[test]
+fn a_helper_ends_with_its_broker() {
+    use std::io::BufRead as _;
+    /// How long the helper has to end once its broker is killed: the
+    /// kernel sends the signal as the parent exits.
+    const ENDS_WITHIN: std::time::Duration = std::time::Duration::from_secs(5);
+    let mut broker =
+        Command::new(env!("CARGO_BIN_EXE_confine-probe")).env("NEOTELETEXT_CONFINE_PROBE", "parent").stdout(std::process::Stdio::piped()).spawn().unwrap();
+    let line = std::io::BufReader::new(broker.stdout.take().unwrap()).lines().map_while(Result::ok).find(|line| line.starts_with("PROBE")).unwrap_or_default();
+    let helper: u32 = line.strip_prefix("PROBE helper=").and_then(|pid| pid.parse().ok()).unwrap_or_else(|| panic!("no helper: {line}"));
+    broker.kill().unwrap();
+    broker.wait().unwrap();
+    let ended = confine::probe::ends_within(helper, ENDS_WITHIN);
+    if !ended {
+        let _ = Command::new("kill").arg("-KILL").arg(helper.to_string()).status();
+    }
+    assert!(ended, "the helper {helper} outlived its broker");
+}

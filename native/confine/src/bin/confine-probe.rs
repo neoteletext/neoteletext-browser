@@ -40,6 +40,9 @@ mod linux {
     const SYSTEM_BUS: &str = "/run/dbus/system_bus_socket";
     /// Where systemd's logind keeps a user's runtime folder (`pam_systemd(8)`).
     const USER_RUNTIME: &str = "/run/user";
+    /// The longest a probe that stands for a broker, or a helper of it,
+    /// lives: far longer than the test that ends it takes.
+    const LINGER: Duration = Duration::from_secs(30);
     /// A descriptor every process has: its standard input.
     const STANDARD_INPUT: i32 = 0;
 
@@ -76,6 +79,27 @@ mod linux {
     }
 
     pub fn main() {
+        match std::env::var(PROBE).unwrap_or_default().as_str() {
+            // A broker: it starts a helper, and lives until it is ended.
+            "parent" => {
+                let mut helper = Command::new(std::env::current_exe().unwrap()).env(PROBE, "helper").spawn().unwrap();
+                std::thread::sleep(LINGER);
+                let _ = helper.kill();
+                let _ = helper.wait();
+                return;
+            }
+            // Its helper, confined: says who it is, and lives on.
+            "helper" => {
+                if let Err(error) = confine::apply(Role::Decoder, None) {
+                    println!("PROBE refused: {error}");
+                    return;
+                }
+                println!("PROBE helper={}", std::process::id());
+                std::thread::sleep(LINGER);
+                return;
+            }
+            _ => {}
+        }
         let role = match std::env::var(PROBE).unwrap_or_default().as_str() {
             "decoder" => Role::Decoder,
             "decoder-without-namespaces" => {

@@ -112,3 +112,21 @@ pub fn type_into(terminal: &std::fs::File) -> io::Result<()> {
     // local.
     checked(libc::c_long::from(unsafe { libc::ioctl(terminal.as_raw_fd(), libc::TIOCSTI, &raw const byte) })).map(drop)
 }
+
+/// Whether the process `pid` ends within `ceiling`, by a descriptor
+/// referring to it (`pidfd_open(2)`, readable when it has ended), so the
+/// test returns as soon as it does. A process already gone has ended.
+#[must_use]
+pub fn ends_within(pid: u32, ceiling: std::time::Duration) -> bool {
+    use std::os::fd::AsRawFd as _;
+    // SAFETY: pidfd_open takes a process number and flags, integers only.
+    let Ok(process) = owned(unsafe { libc::syscall(libc::SYS_pidfd_open, libc::c_long::from(pid), 0) }) else {
+        return true;
+    };
+    let mut watched = libc::pollfd { fd: process.as_raw_fd(), events: libc::POLLIN, revents: 0 };
+    let milliseconds = libc::c_int::try_from(ceiling.as_millis()).unwrap_or(libc::c_int::MAX);
+    // SAFETY: poll reads and writes the one pollfd it is given, alive for
+    // the call.
+    let ready = unsafe { libc::poll(&raw mut watched, 1, milliseconds) };
+    ready > 0
+}
