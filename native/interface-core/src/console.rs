@@ -8,6 +8,9 @@ use alloc::vec::Vec;
 /// The most entries a tab keeps for a channel (requirement 19.8).
 pub const KEPT: usize = 1000;
 
+/// The longest entry: a packet's hexadecimal and text with its address.
+pub const MAX_ENTRY: usize = 240;
+
 /// The console's tabs.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum ConsoleTab {
@@ -17,13 +20,42 @@ pub enum ConsoleTab {
     Packets,
     /// The pages the decoder holds.
     Pages,
-    /// Notices, refusals and warnings.
-    Notices,
+    /// The browser's log, as a web browser's console: each process's
+    /// notices, refusals, warnings and errors, and how each was confined
+    /// (decision 70; it was the Notices tab).
+    Log,
+}
+
+/// How much a log line matters, as a web browser's console sorts them.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum Level {
+    /// Something failed.
+    Error,
+    /// Something was refused or may not work.
+    Warning,
+    /// What happened.
+    #[default]
+    Info,
+}
+
+impl Level {
+    /// Every level, the most serious first.
+    pub const ALL: [Self; 3] = [Self::Error, Self::Warning, Self::Info];
+
+    /// Its label.
+    #[must_use]
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Error => "Errors",
+            Self::Warning => "Warnings",
+            Self::Info => "Info",
+        }
+    }
 }
 
 impl ConsoleTab {
     /// Every tab, in the order the console shows them.
-    pub const ALL: [Self; 4] = [Self::Network, Self::Packets, Self::Pages, Self::Notices];
+    pub const ALL: [Self; 4] = [Self::Network, Self::Packets, Self::Pages, Self::Log];
 
     /// Its label.
     #[must_use]
@@ -32,7 +64,7 @@ impl ConsoleTab {
             Self::Network => "Network",
             Self::Packets => "Packets",
             Self::Pages => "Pages",
-            Self::Notices => "Notices",
+            Self::Log => "Log",
         }
     }
 
@@ -43,7 +75,7 @@ impl ConsoleTab {
             Self::Network => 0,
             Self::Packets => 1,
             Self::Pages => 2,
-            Self::Notices => 3,
+            Self::Log => 3,
         }
     }
 }
@@ -53,6 +85,8 @@ impl ConsoleTab {
 pub struct ConsoleEntry {
     /// Its tab.
     pub tab: ConsoleTab,
+    /// How much it matters: information in every tab but the log.
+    pub level: Level,
     /// Milliseconds since the trusted core started.
     pub at_ms: u64,
     /// What it says, cleaned text.

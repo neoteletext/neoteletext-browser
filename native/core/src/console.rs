@@ -11,7 +11,7 @@ use std::fmt::Write as _;
 use neoteletext_core::consts::{DATA_BYTES, PACKET_BYTES};
 use neoteletext_core::packet::{Decoded, Packet, decode, decode_address};
 use protocol::clean;
-use protocol::console::{ConsoleEntry, ConsoleTab, ConsoleUpdate, KEPT, MAX_ENTRIES, MAX_ENTRY};
+use protocol::console::{ConsoleEntry, ConsoleTab, ConsoleUpdate, KEPT, Level, MAX_ENTRIES, MAX_ENTRY};
 
 /// Microseconds in a millisecond, for an exchange's time.
 const MICROSECONDS_PER_MILLISECOND: u64 = 1000;
@@ -33,6 +33,10 @@ struct Log {
 #[derive(Default)]
 pub struct Console {
     channels: BTreeMap<u32, Log>,
+    /// The browser's own log lines, about no one channel: how each process
+    /// was confined, the settings, the cookie file's key. Every channel's
+    /// Log tab shows them among its own (decision 70).
+    browser: VecDeque<(u64, ConsoleEntry)>,
     /// The number the next entry takes.
     next: u64,
     open: bool,
@@ -50,12 +54,27 @@ fn slot(tab: ConsoleTab) -> usize {
 impl Console {
     /// Keeps an entry for `channel`'s `tab`, cleaned and cut to an entry.
     pub fn add(&mut self, channel: u32, tab: ConsoleTab, at_ms: u64, text: &str) {
-        let entry = ConsoleEntry { tab, at_ms, text: clean(text, MAX_ENTRY) };
+        self.keep(Some(channel), tab, Level::Info, at_ms, text);
+    }
+
+    /// Keeps a log line of `channel`, or of the browser when none, at
+    /// `level` (decision 70).
+    pub fn log(&mut self, channel: Option<u32>, level: Level, at_ms: u64, text: &str) {
+        self.keep(channel, ConsoleTab::Log, level, at_ms, text);
+    }
+
+    fn keep(&mut self, channel: Option<u32>, tab: ConsoleTab, level: Level, at_ms: u64, text: &str) {
+        let entry = ConsoleEntry { tab, level, at_ms, text: clean(text, MAX_ENTRY) };
         let number = self.next;
         self.next = self.next.saturating_add(1);
         self.changed = true;
-        let log = self.channels.entry(channel).or_default();
-        let Some(entries) = log.tabs.get_mut(slot(tab)) else { return };
+        let entries = match channel {
+            Some(channel) => {
+                let Some(entries) = self.channels.entry(channel).or_default().tabs.get_mut(slot(tab)) else { return };
+                entries
+            }
+            None => &mut self.browser,
+        };
         if entries.len() >= KEPT {
             entries.pop_front();
         }
@@ -107,11 +126,9 @@ impl Console {
             return Vec::new();
         }
         self.changed = false;
-        let mut entries: Vec<&(u64, ConsoleEntry)> = self
-            .channels
-            .get(&channel)
-            .map(|log| log.tabs.iter().flatten().filter(|(number, _)| after.is_none_or(|last| *number > last)).collect())
-            .unwrap_or_default();
+        let new = |(number, _): &&(u64, ConsoleEntry)| after.is_none_or(|last| *number > last);
+        let mut entries: Vec<&(u64, ConsoleEntry)> = self.channels.get(&channel).map(|log| log.tabs.iter().flatten().filter(new).collect()).unwrap_or_default();
+        entries.extend(self.browser.iter().filter(new));
         entries.sort_by_key(|(number, _)| *number);
         let last = entries.last().map(|(number, _)| *number).or(after).unwrap_or(0);
         self.sent = Some((channel, last));
@@ -208,7 +225,7 @@ mod tests {
     fn each_tab_keeps_its_newest_1000() {
         let mut console = Console::default();
         for n in 0..1005 {
-            console.add(1, ConsoleTab::Notices, n, &format!("notice {n}"));
+            console.log(Some(1), Level::Warning, n, &format!("notice {n}"));
         }
         console.add(1, ConsoleTab::Network, 9, "GET");
         console.set_open(true);
@@ -245,10 +262,26 @@ mod tests {
         assert_eq!(console.updates(Some(1)), []);
     }
 
+    /// Decision 70: a line of the browser's own log shows in every
+    /// channel's Log tab, among the channel's own, in order.
+    #[test]
+    fn the_browsers_lines_show_in_every_channels_log() {
+        let mut console = Console::default();
+        console.set_open(true);
+        console.log(Some(1), Level::Warning, 1, "fetcher: 404");
+        console.log(None, Level::Info, 2, "decoder: confined: sandbox-exec");
+        let texts =
+            |updates: Vec<ConsoleUpdate>| updates.into_iter().flat_map(|update| update.entries).map(|entry| (entry.level, entry.text)).collect::<Vec<_>>();
+        assert_eq!(texts(console.updates(Some(1))), [(Level::Warning, "fetcher: 404".into()), (Level::Info, "decoder: confined: sandbox-exec".into())]);
+        assert_eq!(texts(console.updates(Some(2))), [(Level::Info, "decoder: confined: sandbox-exec".into())], "another channel has the browser's line too");
+        console.log(None, Level::Error, 3, "sound helper: ended");
+        assert_eq!(texts(console.updates(Some(2))), [(Level::Error, "sound helper: ended".into())], "only what is new");
+    }
+
     #[test]
     fn hidden_characters_are_cleaned() {
         let mut console = Console::default();
-        console.add(1, ConsoleTab::Notices, 0, &format!("a\u{202E}b{}", "x".repeat(400)));
+        console.log(Some(1), Level::Warning, 0, &format!("a\u{202E}b{}", "x".repeat(400)));
         console.set_open(true);
         let text = &console.updates(Some(1))[0].entries[0].text;
         assert!(text.starts_with("ab") && text.len() <= MAX_ENTRY);

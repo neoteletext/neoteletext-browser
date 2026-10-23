@@ -16,6 +16,7 @@ use protocol::{ToInterface, clean};
 
 use crate::Core;
 use crate::library::Numbers;
+use protocol::console::Level;
 
 /// How long after a change the cookies are written: a burst of changes is
 /// one write (`cookies.md` section 6).
@@ -130,7 +131,7 @@ impl Core {
                     // (requirement 19.8).
                     Err(refused) => {
                         let at = self.now();
-                        self.console.add(channel, protocol::console::ConsoleTab::Notices, at, &format!("a cookie was refused: {refused:?}"));
+                        self.console.log(Some(channel), Level::Warning, at, &format!("a cookie was refused: {refused:?}"));
                     }
                 }
             }
@@ -139,7 +140,7 @@ impl Core {
                     self.cookies.store.clear_site(private, &owner, &host);
                     self.cookies_changed();
                     let at = self.now();
-                    self.console.add(channel, protocol::console::ConsoleTab::Notices, at, "the channel cleared its cookies (Clear-Site-Data)");
+                    self.console.log(Some(channel), Level::Info, at, "the channel cleared its cookies (Clear-Site-Data)");
                 }
             }
             _ => {}
@@ -164,7 +165,7 @@ impl Core {
         }
         match kept::save(&folder, &key, &self.cookies.store, now_unix()) {
             Ok(()) => self.cookies.store.written(),
-            Err(error) => eprintln!("neoteletext: the cookies could not be kept in {}: {error}", folder.display()),
+            Err(error) => self.log(Level::Error, None, &format!("the cookies could not be kept in {}: {error}", folder.display())),
         }
     }
 
@@ -177,7 +178,7 @@ impl Core {
         match self.settings.cookies {
             Mode::Close => {
                 if let Err(error) = kept::remove(&folder) {
-                    eprintln!("neoteletext: the kept cookies could not be removed: {error}");
+                    self.log(Level::Error, None, &format!("the kept cookies could not be removed: {error}"));
                 }
             }
             Mode::Block => {}
@@ -189,7 +190,7 @@ impl Core {
         let key = match self.broker.as_ref().map(|broker| broker.cookie_key()) {
             Some(Ok(key)) => key,
             Some(Err(reason)) => {
-                eprintln!("neoteletext: cookies are kept for this run only: {reason}");
+                self.log(Level::Warning, None, &format!("cookies are kept for this run only: {reason}"));
                 self.cookies.for_this_run = Some(format!("Cookies are kept for this run only: {reason}"));
                 return;
             }
@@ -201,12 +202,12 @@ impl Core {
             Ok(Some(sealed)) => match kept::open(&key, &sealed) {
                 Some(text) => {
                     for dropped in self.cookies.store.import(&text, now_unix()) {
-                        eprintln!("neoteletext: {dropped}");
+                        self.log(Level::Warning, None, &dropped);
                     }
                 }
-                None => eprintln!("neoteletext: the kept cookies could not be opened with the key the secret store holds; they are replaced"),
+                None => self.log(Level::Error, None, "the kept cookies could not be opened with the key the secret store holds; they are replaced"),
             },
-            Err(error) => eprintln!("neoteletext: the kept cookies could not be read: {error}"),
+            Err(error) => self.log(Level::Error, None, &format!("the kept cookies could not be read: {error}")),
         }
     }
 
@@ -218,7 +219,7 @@ impl Core {
                 if let Some(folder) = &self.settings_folder
                     && let Err(error) = kept::remove(folder)
                 {
-                    eprintln!("neoteletext: the cookies could not be removed: {error}");
+                    self.log(Level::Error, None, &format!("the cookies could not be removed: {error}"));
                 }
             }
             Mode::Block => {}
@@ -238,7 +239,7 @@ impl Core {
             }
             Mode::Close => {
                 if let Err(error) = kept::remove(&folder) {
-                    eprintln!("neoteletext: the kept cookies could not be removed: {error}");
+                    self.log(Level::Error, None, &format!("the kept cookies could not be removed: {error}"));
                 }
             }
             Mode::Block => {}

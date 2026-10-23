@@ -19,6 +19,7 @@ use protocol::{MAX_TITLE, clean};
 use protocol::{ToCore, ToInterface};
 
 use crate::Core;
+use protocol::console::Level;
 
 /// What separates a folder's names in a search result's place.
 const PLACE_SEPARATOR: &str = " / ";
@@ -128,7 +129,7 @@ impl Core {
             ToCore::NewPrivateTab => {
                 let home = self.settings.home.clone();
                 if let Err(reason) = self.session.open_private(&home) {
-                    eprintln!("neoteletext: {home}: {reason}");
+                    self.log(Level::Warning, None, &format!("{home}: {reason}"));
                     self.session.open_private(neoteletext::address::START_PAGE)?;
                 }
                 self.send_all()
@@ -193,7 +194,7 @@ impl Core {
             && let Some(folder) = self.settings_folder.clone()
         {
             if let Err(error) = History::append(&folder, &line) {
-                eprintln!("neoteletext: history could not be written in {}: {error}", folder.display());
+                self.log(Level::Error, None, &format!("history could not be written in {}: {error}", folder.display()));
             }
             if self.library.history.wants_compacting() {
                 self.save_history();
@@ -217,7 +218,7 @@ impl Core {
     fn save_history(&mut self) {
         let Some(folder) = self.settings_folder.clone() else { return };
         if let Err(error) = self.library.history.save(&folder) {
-            eprintln!("neoteletext: history could not be written in {}: {error}", folder.display());
+            self.log(Level::Error, None, &format!("history could not be written in {}: {error}", folder.display()));
         }
     }
 
@@ -225,7 +226,7 @@ impl Core {
     fn save_bookmarks(&mut self) {
         let Some(folder) = self.settings_folder.clone() else { return };
         if let Err(error) = self.session.bookmarks.save(&folder) {
-            eprintln!("neoteletext: the bookmarks could not be written in {}: {error}", folder.display());
+            self.log(Level::Error, None, &format!("the bookmarks could not be written in {}: {error}", folder.display()));
             self.library.manager_notice = notice("The bookmarks could not be saved");
         }
     }
@@ -235,7 +236,7 @@ impl Core {
     fn open_address(&mut self, address: &str, new_tab: bool) -> Result<(), String> {
         let opened = if new_tab { self.session.open(address).map(|_| ()) } else { self.session.navigate(address, false) };
         if let Err(reason) = opened {
-            eprintln!("neoteletext: {address}: {reason}");
+            self.log(Level::Warning, None, &format!("{address}: {reason}"));
         }
         self.send_all()
     }

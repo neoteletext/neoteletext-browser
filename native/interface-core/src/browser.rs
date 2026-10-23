@@ -815,7 +815,13 @@ impl Browser {
     /// takes the keys rather than the page's channel.
     #[cfg(feature = "interaction")]
     fn strip_has_keys(&self) -> bool {
-        self.settings_open() || self.history_open() || self.cookies_editing() || self.bookmarks_open() || self.star_open() || self.popup_open()
+        self.settings_open()
+            || self.history_open()
+            || self.cookies_editing()
+            || self.console_searching()
+            || self.bookmarks_open()
+            || self.star_open()
+            || self.popup_open()
     }
 
     /// Closes every panel of the strip, before another opens: one at a time.
@@ -1149,6 +1155,9 @@ impl Browser {
         if let Some(changed) = self.cookies_key(key, modifiers.shift) {
             return changed;
         }
+        if let Some(changed) = self.console_key(key, modifiers.shift) {
+            return changed;
+        }
         if let Some(changed) = self.bookmarks_key(key, modifiers.shift) {
             return changed;
         }
@@ -1238,6 +1247,7 @@ impl Browser {
             "a" if self.settings_editing() => return self.settings_select_all(),
             "a" if self.history_editing() => return self.history_select_all(),
             "a" if self.cookies_editing() => return self.cookies_select_all(),
+            "a" if self.console_searching() => return self.console_select_all(),
             "a" if self.bookmarks_editing() => return self.bookmarks_select_all(),
             "a" if self.star_editing() => return self.star_select_all(),
             "a" if self.editing => self.editor.select_all(),

@@ -50,7 +50,7 @@ use std::time::Duration;
 
 use interface_core::canvas::PageKey;
 use interface_core::library::WindowGeometry;
-use protocol::console::ConsoleTab;
+use protocol::console::{ConsoleTab, Level};
 use protocol::decoder::{FIRST_STORE_PAGES, FromDecoder, MAX_CHUNK, MAX_STORE_PAGES, MAX_WHOLE, ToDecoder, read_from_decoder, write_to_decoder};
 use protocol::fetcher::{FromFetcher, MAX_NOTICE, Origin, read_from_fetcher};
 use protocol::settings::{ProxyView, SettingChange, SettingsView};
@@ -443,7 +443,7 @@ impl Core {
             let awake = self.sleep.awake(*id, active, now);
             if awake && !self.decoders.contains_key(id) {
                 if let Some(problem) = problem {
-                    eprintln!("neoteletext: {problem}");
+                    self.log(Level::Warning, None, problem);
                 }
                 self.generation = self.generation.wrapping_add(1);
                 let pages = self.store_pages.get(id).copied().unwrap_or(FIRST_STORE_PAGES);
@@ -451,6 +451,7 @@ impl Core {
                 for message in self.sleep.kept(*id) {
                     let _ = write_to_decoder(&mut decoder.input, message);
                 }
+                self.note(Level::Info, Some(*id), &format!("decoder: confined: {}", decoder.child.report));
                 self.decoders.insert(*id, decoder);
             } else if !awake && self.decoders.contains_key(id) {
                 self.put_to_sleep(*id);
@@ -464,6 +465,7 @@ impl Core {
                 self.generation = self.generation.wrapping_add(1);
                 let reach = Reach::of(&self.allow_local, &self.settings);
                 let fetcher = start_fetcher(self.broker()?, address, &reach, *id, self.generation, self.events.clone())?;
+                self.note(Level::Info, Some(*id), &format!("fetcher: confined: {}", fetcher.child.report));
                 self.fetchers.insert(*id, fetcher);
             }
         }
@@ -558,18 +560,18 @@ impl Core {
                     self.tell(channel, ToDecoder::Whole { packets, pushed, bytes });
                 }
             }
-            FromFetcher::Notice(text) => eprintln!("neoteletext: channel {channel}: {}", clean(&text, MAX_NOTICE)),
+            FromFetcher::Notice(text) => self.log(Level::Warning, Some(channel), &format!("channel {channel}: {}", clean(&text, MAX_NOTICE))),
             // Said in the trusted core's own words, of the channel's host as
             // the strip shows it: a fetcher cannot write the strip.
             FromFetcher::ProxyFailed => {
                 let host = self.session.tabs.iter().find(|tab| tab.channel.id == channel).and_then(|tab| tab.address()).map(|address| address.host.clone());
                 if let Some(host) = host {
                     let text = format!("The proxy refused the connection to {host}");
-                    self.console.add(channel, ConsoleTab::Notices, self.now(), &text);
+                    self.console.log(Some(channel), Level::Warning, self.now(), &text);
                     if self.active_channel() == Some(channel) {
                         self.say(text)?;
                     } else {
-                        eprintln!("neoteletext: {text}");
+                        self.log(Level::Warning, Some(channel), &text);
                     }
                 }
             }
@@ -690,7 +692,7 @@ impl Core {
                     self.follow(followed, "a click")?;
                 }
                 #[cfg(not(feature = "links"))]
-                eprintln!("neoteletext: cell {column},{row} of image {version} of page {:03X} on channel {}", key.page, key.channel);
+                self.log(Level::Warning, None, &format!("cell {column},{row} of image {version} of page {:03X} on channel {}", key.page, key.channel));
             }
             ToCore::SelectTab(index) => {
                 if usize::from(index) < self.session.tabs.len() {
@@ -718,7 +720,7 @@ impl Core {
             ToCore::MuteTab(_) | ToCore::MuteAll(_) | ToCore::MoveTab { .. } => self.tab_intent(&intent)?,
             ToCore::Navigate(typed) => {
                 if let Err(reason) = self.session.navigate(&typed, true) {
-                    eprintln!("neoteletext: {reason}");
+                    self.log(Level::Warning, None, &reason);
                 }
                 self.send_all()?;
             }
@@ -774,7 +776,7 @@ impl Core {
         }
         match Saved::save(folder, &text) {
             Ok(()) => self.kept_session = text,
-            Err(error) => eprintln!("neoteletext: the session could not be kept in {}: {error}", folder.display()),
+            Err(error) => self.log(Level::Error, None, &format!("the session could not be kept in {}: {error}", folder.display())),
         }
     }
 
@@ -871,9 +873,9 @@ impl Core {
             return;
         }
         if let Some(reason) = reason {
-            eprintln!("neoteletext: the decoder for channel {channel} stopped: {reason}");
+            self.log(Level::Error, Some(channel), &format!("the decoder for channel {channel} stopped: {reason}"));
             let at = self.now();
-            self.console.add(channel, ConsoleTab::Notices, at, &format!("the decoder stopped: {reason}"));
+            self.console.log(Some(channel), Level::Error, at, &format!("decoder: stopped: {reason}"));
         }
         if let Some(mut decoder) = self.decoders.remove(&channel) {
             let _ = decoder.child.kill();
@@ -983,7 +985,7 @@ impl Core {
             ToCore::Home => {
                 let home = self.settings.home.clone();
                 if let Err(reason) = self.session.navigate(&home, false) {
-                    eprintln!("neoteletext: {home}: {reason}");
+                    self.log(Level::Warning, None, &format!("{home}: {reason}"));
                 }
                 self.send_all()
             }
@@ -1001,14 +1003,14 @@ impl Core {
         if let Some(bookmark) = self.session.start_page_bookmark(key.channel, key.page)
             && let Err(reason) = self.session.open_from_start_page(&bookmark)
         {
-            eprintln!("neoteletext: {reason}");
+            self.log(Level::Warning, None, &reason);
         }
         self.send_all()
     }
 
     /// Says `text` in the strip for a while, and in the log.
     fn say(&mut self, text: String) -> Result<(), String> {
-        eprintln!("neoteletext: {text}");
+        self.log(Level::Warning, None, &text);
         let now = std::time::Instant::now();
         self.notice = Some((text, now.checked_add(NOTICE_TIME).unwrap_or(now)));
         self.send(&ToInterface::Strip(self.strip()))
@@ -1045,12 +1047,25 @@ impl Core {
             FromFetcher::Exchange { method, url, status, bytes, elapsed_us } => {
                 self.console.add(channel, ConsoleTab::Network, at, &exchange_text(method, url, *status, *bytes, *elapsed_us));
             }
-            FromFetcher::Notice(text) => self.console.add(channel, ConsoleTab::Notices, at, text),
+            FromFetcher::Notice(text) => self.console.log(Some(channel), Level::Warning, at, &format!("fetcher: {text}")),
             _ => {}
         }
     }
 
     /// Sends the open tab's new console entries, while the console is open.
+    /// A line of the browser's log: written to standard error, as always,
+    /// and kept for the console's Log tab, of `channel` or of the browser
+    /// (decision 70).
+    pub(crate) fn log(&mut self, level: Level, channel: Option<u32>, text: &str) {
+        eprintln!("neoteletext: {text}");
+        self.console.log(channel, level, self.now(), text);
+    }
+
+    /// A line for the Log tab alone, already written to standard error.
+    fn note(&mut self, level: Level, channel: Option<u32>, text: &str) {
+        self.console.log(channel, level, self.now(), text);
+    }
+
     fn send_console(&mut self) -> Result<(), String> {
         for update in self.console.updates(self.active_channel()) {
             self.send(&ToInterface::Console(update))?;
@@ -1065,7 +1080,7 @@ impl Core {
     fn flush(&mut self) -> Result<(), String> {
         let stuck: Vec<u32> = self.decoders.iter_mut().filter_map(|(&id, decoder)| decoder.input.flush().is_err().then_some(id)).collect();
         for id in stuck {
-            eprintln!("neoteletext: the decoder for channel {id} stopped reading and is replaced");
+            self.log(Level::Error, None, &format!("the decoder for channel {id} stopped reading and is replaced"));
             self.put_to_sleep(id);
         }
         for fetcher in self.fetchers.values_mut() {
@@ -1080,7 +1095,7 @@ impl Core {
         if let Some((_, input)) = self.sound.as_mut()
             && input.flush().is_err()
         {
-            eprintln!("neoteletext: no sound: the sound helper stopped reading");
+            self.log(Level::Error, None, "no sound: the sound helper stopped reading");
             self.sound = None;
         }
         self.to_interface.flush().map_err(|error| format!("cannot write to the interface: {error}"))?;
@@ -1174,7 +1189,7 @@ impl Core {
         let mut child = match spawn(&broker, Program::Sound, &[], false) {
             Ok(child) => child,
             Err(error) => {
-                eprintln!("neoteletext: no sound: {error}");
+                self.log(Level::Error, None, &format!("no sound: {error}"));
                 return;
             }
         };
@@ -1195,6 +1210,7 @@ impl Core {
             };
             let _ = events.send(Event::SoundEnded(end));
         });
+        self.note(Level::Info, None, &format!("sound helper: confined: {}", child.report));
         self.sound = Some((child, Outbox::new(input)));
         let message = ToSound::Settings { sound: self.settings.sound, volume: self.settings.volume };
         self.tell_sound(&message);
@@ -1228,7 +1244,7 @@ impl Core {
     fn save_settings(&mut self) {
         let Some(folder) = &self.settings_folder else { return };
         if let Err(error) = self.settings.save(folder) {
-            eprintln!("neoteletext: the settings could not be saved in {}: {error}", folder.display());
+            self.log(Level::Error, None, &format!("the settings could not be saved in {}: {error}", folder.display()));
             self.refusal = Some("The settings could not be saved".into());
         }
     }
@@ -1440,6 +1456,7 @@ impl Core {
             };
             let _ = events.send(Event::PhoneEnded(end));
         });
+        self.note(Level::Info, None, &format!("phone keyboard: confined: {}", child.report));
         self.phone = Some((child, input));
         self.phone_view = protocol::keyboard::PhoneView { state: PhoneState::Preparing, qr: None, pin: None };
         self.send_phone()
@@ -1476,7 +1493,7 @@ impl Core {
 
     fn phone_ended(&mut self, reason: Option<String>) -> Result<(), String> {
         if let Some(reason) = reason {
-            eprintln!("neoteletext: the phone keyboard stopped: {reason}");
+            self.log(Level::Error, None, &format!("the phone keyboard stopped: {reason}"));
         }
         if let Some((mut child, _)) = self.phone.take() {
             let _ = child.kill();
@@ -1581,7 +1598,7 @@ impl Core {
         match followed {
             Err(Refusal::NotALink) => Ok(()),
             Err(refusal) => {
-                eprintln!("neoteletext: {what} was not followed: {refusal:?}");
+                self.log(Level::Warning, None, &format!("{what} was not followed: {refusal:?}"));
                 Ok(())
             }
             Ok(Follow::Page(page)) => {
@@ -1615,11 +1632,11 @@ impl Core {
         let at = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |since| since.as_secs());
         match self.broker()?.open_web(address) {
             Ok(()) => {
-                eprintln!("neoteletext: handed {address} to the web browser, from {from}, at {at} seconds past 1970");
+                self.log(Level::Info, None, &format!("handed {address} to the web browser, from {from}, at {at} seconds past 1970"));
                 Ok(())
             }
             Err(error) => {
-                eprintln!("neoteletext: {address}: {error}");
+                self.log(Level::Warning, None, &format!("{address}: {error}"));
                 self.link(LinkMessage::Pointing(Some(Pointing { kind: LinkKind::Web, text: "Could not open your web browser".into() })))
             }
         }
@@ -1682,18 +1699,16 @@ impl Core {
 
 /// The settings kept between runs, and where (requirement 19.1); lines
 /// dropped by their rules are logged (requirement 19.2).
-fn load_settings() -> (Settings, Option<PathBuf>) {
+fn load_settings(log: &mut Vec<(Level, String)>) -> (Settings, Option<PathBuf>) {
     let folder = stored::folder();
     let settings = match &folder {
         Some(folder) => match Settings::load(folder) {
             Ok((settings, dropped)) => {
-                for line in dropped {
-                    eprintln!("neoteletext: {line}");
-                }
+                log.extend(dropped.into_iter().map(|line| (Level::Warning, line)));
                 settings
             }
             Err(error) => {
-                eprintln!("neoteletext: the settings in {} could not be read: {error}", folder.display());
+                log.push((Level::Error, format!("the settings in {} could not be read: {error}", folder.display())));
                 Settings::default()
             }
         },
@@ -1704,17 +1719,15 @@ fn load_settings() -> (Settings, Option<PathBuf>) {
 
 /// The bookmarks kept between runs (requirement 20.19); lines dropped by
 /// their rules are logged (requirement 20.20).
-fn load_bookmarks(folder: Option<&Path>) -> Bookmarks {
+fn load_bookmarks(folder: Option<&Path>, log: &mut Vec<(Level, String)>) -> Bookmarks {
     let Some(folder) = folder else { return Bookmarks::default() };
     match Bookmarks::load(folder) {
         Ok((bookmarks, dropped)) => {
-            for line in dropped {
-                eprintln!("neoteletext: {line}");
-            }
+            log.extend(dropped.into_iter().map(|line| (Level::Warning, line)));
             bookmarks
         }
         Err(error) => {
-            eprintln!("neoteletext: the bookmarks in {} could not be read: {error}", folder.display());
+            log.push((Level::Error, format!("the bookmarks in {} could not be read: {error}", folder.display())));
             Bookmarks::default()
         }
     }
@@ -1722,17 +1735,15 @@ fn load_bookmarks(folder: Option<&Path>) -> Bookmarks {
 
 /// History kept between runs (requirement 20.2); lines dropped by their
 /// rules are logged (requirement 20.3).
-fn load_history(folder: Option<&Path>) -> History {
+fn load_history(folder: Option<&Path>, log: &mut Vec<(Level, String)>) -> History {
     let Some(folder) = folder else { return History::default() };
     match History::load(folder) {
         Ok((history, dropped)) => {
-            for line in dropped {
-                eprintln!("neoteletext: {line}");
-            }
+            log.extend(dropped.into_iter().map(|line| (Level::Warning, line)));
             history
         }
         Err(error) => {
-            eprintln!("neoteletext: the history in {} could not be read: {error}", folder.display());
+            log.push((Level::Error, format!("the history in {} could not be read: {error}", folder.display())));
             History::default()
         }
     }
@@ -1740,16 +1751,14 @@ fn load_history(folder: Option<&Path>) -> History {
 
 /// The session kept from the last run (`history-and-bookmarks.md` section
 /// 15); lines dropped by their rules are logged (requirement 20.23).
-fn load_session(folder: Option<&Path>) -> Option<Saved> {
+fn load_session(folder: Option<&Path>, log: &mut Vec<(Level, String)>) -> Option<Saved> {
     match Saved::load(folder?) {
         Ok((saved, dropped)) => {
-            for line in dropped {
-                eprintln!("neoteletext: {line}");
-            }
+            log.extend(dropped.into_iter().map(|line| (Level::Warning, line)));
             saved
         }
         Err(error) => {
-            eprintln!("neoteletext: the last session could not be read: {error}");
+            log.push((Level::Error, format!("the last session could not be read: {error}")));
             None
         }
     }
@@ -1770,7 +1779,11 @@ fn handle(core: &mut Core, event: Event) -> Result<bool, String> {
         }
         Event::FetcherEnded(channel, generation, reason) => {
             if core.fetchers.get(&channel).map(|fetcher| fetcher.generation) == Some(generation) {
-                eprintln!("neoteletext: the fetcher for channel {channel} stopped{}", reason.map(|reason| format!(": {reason}")).unwrap_or_default());
+                core.log(
+                    Level::Error,
+                    None,
+                    &format!("the fetcher for channel {channel} stopped{}", reason.map(|reason| format!(": {reason}")).unwrap_or_default()),
+                );
                 if let Some(mut fetcher) = core.fetchers.remove(&channel) {
                     let _ = fetcher.child.wait();
                 }
@@ -1788,7 +1801,7 @@ fn handle(core: &mut Core, event: Event) -> Result<bool, String> {
         Event::PhoneEnded(reason) => core.phone_ended(reason)?,
         Event::Sound(FromSound::Sounding(channels)) => core.sounding(channels)?,
         Event::SoundEnded(reason) => {
-            eprintln!("neoteletext: no sound: the sound helper ended{}", reason.map(|reason| format!(": {reason}")).unwrap_or_default());
+            core.log(Level::Error, None, &format!("no sound: the sound helper ended{}", reason.map(|reason| format!(": {reason}")).unwrap_or_default()));
             core.sound = None;
             core.sounding(Vec::new())?;
         }
@@ -1798,7 +1811,9 @@ fn handle(core: &mut Core, event: Event) -> Result<bool, String> {
     Ok(true)
 }
 
-fn run(broker: &Arc<Broker>, given: impl Iterator<Item = String>) -> Result<(), String> {
+fn run(broker: &Arc<Broker>, given: impl Iterator<Item = String>, confined: &str) -> Result<(), String> {
+    // What happens before the trusted core is made, for its Log tab.
+    let mut log = vec![(Level::Info, format!("trusted core: confined: {confined}"))];
     let mut addresses = Vec::new();
     let mut allow_local = Vec::new();
     let mut arguments = given;
@@ -1810,12 +1825,13 @@ fn run(broker: &Arc<Broker>, given: impl Iterator<Item = String>) -> Result<(), 
         }
     }
     let mut interface = spawn(broker, Program::Interface, &[], false)?;
+    log.push((Level::Info, format!("interface: confined: {}", interface.report)));
     let (events, incoming) = mpsc::channel();
     read_interface(&mut interface, events.clone())?;
 
-    let (settings, settings_folder) = load_settings();
-    let bookmarks = load_bookmarks(settings_folder.as_deref());
-    let saved = load_session(settings_folder.as_deref()).filter(|_| settings.restore);
+    let (settings, settings_folder) = load_settings(&mut log);
+    let bookmarks = load_bookmarks(settings_folder.as_deref(), &mut log);
+    let saved = load_session(settings_folder.as_deref(), &mut log).filter(|_| settings.restore);
     // The window's place first: the interface opens its window with the
     // first message it is sent (section 15.3).
     let mut to_interface = Outbox::new(interface.stdin.take().ok_or("the interface has no input")?);
@@ -1829,9 +1845,12 @@ fn run(broker: &Arc<Broker>, given: impl Iterator<Item = String>) -> Result<(), 
     let reader = Arc::clone(broker);
     let mut session = Session::with_reader(bookmarks, Box::new(move |path: &Path| reader.read_source(path).map(source::Source::from_bytes)));
     open_at_start(&mut session, saved.as_ref(), &addresses, &settings.home)?;
-    let history = load_history(settings_folder.as_deref());
+    let history = load_history(settings_folder.as_deref(), &mut log);
     let mut core = Core::new(session, allow_local, (settings, settings_folder), events, to_interface, Some(Arc::clone(broker)));
     core.library.history = history;
+    for (level, text) in log {
+        core.log(level, None, &text);
+    }
     core.window = window;
     core.cookies_at_start();
     core.keep_session();
@@ -1921,7 +1940,7 @@ fn core() -> Result<(), String> {
     let report = confine::apply(Role::Core, stored::folder().as_deref())?;
     eprintln!("neoteletext: the trusted core is confined: {report}");
     let broker = Broker::from_parent().map_err(|error| error.to_string())?;
-    run(&broker, std::env::args().skip(2))
+    run(&broker, std::env::args().skip(2), &report.to_string())
 }
 
 /// What the cookie file's key is kept under in the platform's secret store

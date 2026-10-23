@@ -11,12 +11,21 @@ use alloc::collections::VecDeque;
 use alloc::format;
 use alloc::vec::Vec;
 
-use super::{Browser, Output};
+use super::widgets::field;
+use super::{Browser, Key, Output};
 use crate::canvas::{Canvas, Style};
-use crate::console::{ConsoleEntry, ConsoleTab, ConsoleUpdate, KEPT};
+use crate::console::{ConsoleEntry, ConsoleTab, ConsoleUpdate, KEPT, Level};
+use crate::editor::Editor;
 use crate::geometry::{Point, Rect};
-use crate::theme::{BUTTON, DIM, HEADING, MUTED, PANEL, ROW_STATUS, ROW_TITLE, RULE, SELECTED, WHITE};
+use crate::theme::{BUTTON, DIM, HEADING, MUTED, PANEL, RED, ROW_STATUS, ROW_TITLE, RULE, SELECTED, WHITE, YELLOW};
 use crate::ui::{border, centred, left_centred, outline};
+
+/// The Log tab's level buttons and its search, as a web browser's console
+/// has them (decision 70).
+const LEVEL_WIDTH: f64 = 86.0;
+const SEARCH_WIDTH: f64 = 220.0;
+/// The longest search: a log line's length.
+const MAX_SEARCH: usize = crate::console::MAX_ENTRY;
 
 /// The console's height, in place of the overview.
 pub(super) const CONSOLE_HEIGHT: f64 = 260.0;
@@ -34,7 +43,6 @@ const MILLISECONDS_PER_SECOND: u64 = 1000;
 const ENTRY: Style = Style { size: 12.0, monospace: true, bold: false, caps: false };
 
 /// The console's state in the browser.
-#[derive(Debug, Default)]
 pub(super) struct ConsoleUi {
     open: bool,
     /// The channel the entries are of.
@@ -51,6 +59,51 @@ pub(super) struct ConsoleUi {
     pause: Rect,
     clear: Rect,
     close: Rect,
+    /// The Log tab's levels not shown, in [`Level::ALL`]'s order.
+    hidden: [bool; 3],
+    /// Its search, and whether it takes the keys.
+    search: Editor,
+    searching: bool,
+    levels: Vec<(Level, Rect)>,
+    search_field: Rect,
+}
+
+impl Default for ConsoleUi {
+    fn default() -> Self {
+        Self {
+            open: false,
+            channel: None,
+            entries: Default::default(),
+            held: Vec::new(),
+            paused: false,
+            tab: Tab::default(),
+            back: 0,
+            area: Rect::ZERO,
+            tabs: Vec::new(),
+            pause: Rect::ZERO,
+            clear: Rect::ZERO,
+            close: Rect::ZERO,
+            hidden: [false; 3],
+            search: Editor::new(MAX_SEARCH),
+            searching: false,
+            levels: Vec::new(),
+            search_field: Rect::ZERO,
+        }
+    }
+}
+
+/// A level's place in [`Level::ALL`].
+fn level_index(level: Level) -> usize {
+    Level::ALL.iter().position(|each| *each == level).unwrap_or(0)
+}
+
+/// A log line's colour: errors red, warnings yellow, as a web browser's.
+const fn level_colour(level: Level) -> crate::theme::Colour {
+    match level {
+        Level::Error => RED,
+        Level::Warning => YELLOW,
+        Level::Info => WHITE,
+    }
 }
 
 /// The tab shown: one of the trusted core's entries, or the cookies.
@@ -83,12 +136,22 @@ impl ConsoleUi {
         entries.push_back(entry);
     }
 
-    /// The entries of the tab shown; none on the cookies' tab.
-    fn shown(&self) -> Option<&VecDeque<ConsoleEntry>> {
-        match self.tab {
-            Tab::Entries(tab) => self.entries.get(tab.index()),
-            Tab::Cookies => None,
+    /// The entries of the tab shown, those the Log tab's levels and search
+    /// let through; none on the cookies' tab.
+    fn shown(&self) -> Option<Vec<&ConsoleEntry>> {
+        let Tab::Entries(tab) = self.tab else { return None };
+        let entries = self.entries.get(tab.index())?;
+        if tab != ConsoleTab::Log {
+            return Some(entries.iter().collect());
         }
+        let search = self.search.text().to_lowercase();
+        Some(
+            entries
+                .iter()
+                .filter(|entry| !self.hidden.get(level_index(entry.level)).copied().unwrap_or(false))
+                .filter(|entry| search.is_empty() || entry.text.to_lowercase().contains(&search))
+                .collect(),
+        )
     }
 }
 
@@ -160,6 +223,22 @@ impl Browser {
         if !self.console.open || !self.console.area.contains(point) {
             return false;
         }
+        // The log's levels and search (decision 70).
+        if let Some(&(level, _)) = self.console.levels.iter().find(|(_, rect)| rect.contains(point)) {
+            if let Some(hidden) = self.console.hidden.get_mut(level_index(level)) {
+                *hidden = !*hidden;
+            }
+            self.console.back = 0;
+            return true;
+        }
+        if self.console.search_field.contains(point) {
+            if !self.console.searching {
+                self.console.searching = true;
+                self.outputs.push(Output::TextInput(true));
+            }
+            return true;
+        }
+        self.stop_console_search();
         if let Some(&(tab, _)) = self.console.tabs.iter().find(|(_, rect)| rect.contains(point)) {
             self.choose_console_tab(tab);
         } else if self.console.close.contains(point) {
@@ -176,6 +255,47 @@ impl Browser {
         true
     }
 
+    fn stop_console_search(&mut self) {
+        if self.console.searching {
+            self.console.searching = false;
+            self.outputs.push(Output::TextInput(false));
+        }
+    }
+
+    /// Whether the log's search takes the keys.
+    pub(super) fn console_searching(&self) -> bool {
+        self.console.open && self.console.searching
+    }
+
+    /// Command-A in the log's search.
+    pub(super) fn console_select_all(&mut self) -> bool {
+        if !self.console_searching() {
+            return false;
+        }
+        self.console.search.select_all();
+        true
+    }
+
+    /// A key while the log's search takes them; `None` when it does not.
+    pub(super) fn console_key(&mut self, key: Key<'_>, shift: bool) -> Option<bool> {
+        if !self.console_searching() {
+            return None;
+        }
+        let search = &mut self.console.search;
+        match key {
+            Key::Text(text) => search.insert(text),
+            Key::Backspace => search.backspace(),
+            Key::Delete => search.delete(),
+            Key::Left => search.left(shift),
+            Key::Right => search.right(shift),
+            Key::Home | Key::Up => search.home(shift),
+            Key::End | Key::Down => search.end(shift),
+            Key::Escape | Key::Tab | Key::Enter => self.stop_console_search(),
+        }
+        self.console.back = 0;
+        Some(true)
+    }
+
     /// The wheel over the console scrolls its entries; returns whether it
     /// was over it.
     pub(super) fn console_scroll(&mut self, distance: f64) -> bool {
@@ -184,7 +304,7 @@ impl Browser {
         }
         #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss, reason = "a few lines of wheel")]
         let lines = libm::ceil(distance.abs() / LINE) as usize;
-        let most = self.console.shown().map_or(0, VecDeque::len);
+        let most = self.console.shown().map_or(0, |entries| entries.len());
         self.console.back = if distance < 0.0 { self.console.back.saturating_add(lines).min(most) } else { self.console.back.saturating_sub(lines) };
         true
     }
@@ -199,7 +319,7 @@ impl Browser {
                 Tab::Entries(ConsoleTab::Network) => "Each exchange with the channel's server, and the push connection's events",
                 Tab::Entries(ConsoleTab::Packets) => "Each teletext packet received",
                 Tab::Entries(ConsoleTab::Pages) => "The pages the decoder holds",
-                Tab::Entries(ConsoleTab::Notices) => "Notices, refusals and warnings",
+                Tab::Entries(ConsoleTab::Log) => "The browser's log: each process's errors, warnings and notices, and how it was confined",
                 Tab::Cookies => "Cookies kept for each site and channel: delete or block them",
             };
             tips.push((rect, words.into()));
@@ -260,9 +380,36 @@ impl Browser {
         }
         let leftmost = if entries_shown { self.console.pause.x0 } else { self.console.close.x0 };
         let title = Rect::new(x + GAP, bar.y0, leftmost - GAP, bar.y1);
-        canvas.push_clip(title);
-        left_centred(canvas, title, 0.0, "Console", HEADING, MUTED);
-        canvas.pop_clip();
+        self.console.levels.clear();
+        self.console.search_field = Rect::ZERO;
+        if self.console.tab == Tab::Entries(ConsoleTab::Log) {
+            // The log's levels, each shown or not, and its search.
+            let mut left = title.x0;
+            for level in Level::ALL {
+                let rect = Rect::new(left, bar.y0, left + LEVEL_WIDTH, bar.y1);
+                if rect.x1 > title.x1 {
+                    break;
+                }
+                let shown = !self.console.hidden.get(level_index(level)).copied().unwrap_or(false);
+                canvas.fill(rect, RADIUS, if shown { SELECTED } else { BUTTON });
+                border(canvas, rect, 1.0, RULE);
+                centred(canvas, rect, level.label(), ROW_STATUS, if shown { WHITE } else { DIM });
+                self.console.levels.push((level, rect));
+                left = rect.x1 + GAP;
+            }
+            let search = Rect::new(left, bar.y0, (left + SEARCH_WIDTH).min(title.x1), bar.y1);
+            if search.width() > GAP * 4.0 {
+                field(canvas, search, &self.console.search, self.console.searching);
+                if self.console.search.text().is_empty() && !self.console.searching {
+                    left_centred(canvas, search, GAP, "Search the log", ROW_STATUS, DIM);
+                }
+                self.console.search_field = search;
+            }
+        } else {
+            canvas.push_clip(title);
+            left_centred(canvas, title, 0.0, "Console", HEADING, MUTED);
+            canvas.pop_clip();
+        }
 
         let list = Rect::new(area.x0 + PADDING, bar.y1 + GAP, area.x1 - PADDING, area.y1 - GAP);
         let Some(entries) = self.console.shown() else {
@@ -277,13 +424,13 @@ impl Browser {
         if entries.is_empty() {
             left_centred(canvas, Rect::new(list.x0, list.y0, list.x1, list.y0 + LINE), 0.0, "Nothing yet", ENTRY, DIM);
         }
-        for (row, entry) in entries.range(start..end).enumerate() {
+        for (row, entry) in entries.get(start..end).unwrap_or_default().iter().enumerate() {
             #[allow(clippy::cast_precision_loss, reason = "a panel's lines")]
             let top = list.y0 + row as f64 * LINE;
             let line = Rect::new(list.x0, top, list.x1, top + LINE);
             let time = format!("{}.{:03} s", entry.at_ms / MILLISECONDS_PER_SECOND, entry.at_ms % MILLISECONDS_PER_SECOND);
             left_centred(canvas, line, 0.0, &time, ENTRY, MUTED);
-            left_centred(canvas, line, TIME_WIDTH, &entry.text, ENTRY, WHITE);
+            left_centred(canvas, line, TIME_WIDTH, &entry.text, ENTRY, level_colour(entry.level));
         }
         canvas.pop_clip();
     }
@@ -296,7 +443,47 @@ mod tests {
     use crate::test_canvas::Recorder;
 
     fn entry(tab: ConsoleTab, text: &str) -> ConsoleEntry {
-        ConsoleEntry { tab, at_ms: 1_250, text: text.into() }
+        ConsoleEntry { tab, level: Level::Info, at_ms: 1_250, text: text.into() }
+    }
+
+    fn log(level: Level, text: &str) -> ConsoleEntry {
+        ConsoleEntry { tab: ConsoleTab::Log, level, at_ms: 2_000, text: text.into() }
+    }
+
+    /// Decision 70: the Log tab shows each line in its level's colour, and
+    /// its level buttons and search choose which lines show.
+    #[test]
+    fn the_log_filters_by_level_and_search() {
+        let mut browser = open();
+        browser.console_update(ConsoleUpdate {
+            channel: 1,
+            replace: true,
+            entries: alloc::vec![
+                log(Level::Error, "decoder: stopped: broken pipe"),
+                log(Level::Warning, "fetcher: 404 for 205.tti"),
+                log(Level::Info, "fetcher: confined: sandbox-exec"),
+            ],
+        });
+        texts(&mut browser);
+        let tab = browser.console.tabs.iter().find(|(tab, _)| *tab == Tab::Entries(ConsoleTab::Log)).unwrap().1;
+        press(&mut browser, tab);
+        let mut canvas = Recorder::new();
+        browser.draw(&mut canvas, 1440.0, 900.0, 0);
+        let colour_of = |canvas: &Recorder, text: &str| canvas.coloured_text(text);
+        assert_eq!(colour_of(&canvas, "decoder: stopped: broken pipe"), Some(RED));
+        assert_eq!(colour_of(&canvas, "fetcher: 404 for 205.tti"), Some(YELLOW));
+        let info = browser.console.levels.iter().find(|(level, _)| *level == Level::Info).unwrap().1;
+        press(&mut browser, info);
+        let shown = texts(&mut browser);
+        assert!(!shown.contains(&"fetcher: confined: sandbox-exec".into()) && shown.contains(&"fetcher: 404 for 205.tti".into()), "information hidden");
+        let search = browser.console.search_field;
+        press(&mut browser, search);
+        assert_eq!(browser.take_outputs(), [Output::TextInput(true)]);
+        browser.key(Key::Text("DECODER"), Modifiers::default(), 0);
+        let shown = texts(&mut browser);
+        assert!(shown.contains(&"decoder: stopped: broken pipe".into()) && !shown.contains(&"fetcher: 404 for 205.tti".into()), "searched, in any case");
+        browser.key(Key::Escape, Modifiers::default(), 0);
+        assert_eq!(browser.take_outputs(), [Output::TextInput(false)]);
     }
 
     fn texts(browser: &mut Browser) -> Vec<alloc::string::String> {
@@ -329,7 +516,7 @@ mod tests {
                 entry(ConsoleTab::Network, "GET https://a.example/100.tti 200 512 bytes 12 ms"),
                 entry(ConsoleTab::Packets, "pushed M1 R05  Hello  48 65"),
                 entry(ConsoleTab::Pages, "page 100 arrived: News"),
-                entry(ConsoleTab::Notices, hostile),
+                entry(ConsoleTab::Log, hostile),
             ],
         });
         let shown = texts(&mut browser);

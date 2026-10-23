@@ -5,10 +5,7 @@
 
 use super::{Fields, ProtocolError, push_text};
 
-pub use interface_core::console::{ConsoleEntry, ConsoleTab, ConsoleUpdate, KEPT};
-
-/// The longest entry: a packet's hexadecimal and text with its address.
-pub const MAX_ENTRY: usize = 240;
+pub use interface_core::console::{ConsoleEntry, ConsoleTab, ConsoleUpdate, KEPT, Level, MAX_ENTRY};
 /// The most entries a message carries.
 pub const MAX_ENTRIES: usize = 200;
 
@@ -20,6 +17,18 @@ fn tab_from_byte(byte: u8) -> Result<ConsoleTab, ProtocolError> {
     ConsoleTab::ALL.into_iter().find(|&tab| tab_byte(tab) == byte).ok_or(ProtocolError::BadValue("console tab"))
 }
 
+fn level_byte(level: Level) -> u8 {
+    match level {
+        Level::Error => 0,
+        Level::Warning => 1,
+        Level::Info => 2,
+    }
+}
+
+fn level_from_byte(byte: u8) -> Result<Level, ProtocolError> {
+    Level::ALL.into_iter().find(|&level| level_byte(level) == byte).ok_or(ProtocolError::BadValue("log level"))
+}
+
 pub(crate) fn push_update(payload: &mut Vec<u8>, update: &ConsoleUpdate) -> Result<(), ProtocolError> {
     if update.entries.len() > MAX_ENTRIES {
         return Err(ProtocolError::BadValue("too many console entries"));
@@ -28,7 +37,7 @@ pub(crate) fn push_update(payload: &mut Vec<u8>, update: &ConsoleUpdate) -> Resu
     payload.push(u8::from(update.replace));
     payload.extend_from_slice(&u16::try_from(update.entries.len()).unwrap_or(0).to_be_bytes());
     for entry in &update.entries {
-        payload.push(tab_byte(entry.tab));
+        payload.extend_from_slice(&[tab_byte(entry.tab), level_byte(entry.level)]);
         payload.extend_from_slice(&entry.at_ms.to_be_bytes());
         push_text(payload, &entry.text, MAX_ENTRY)?;
     }
@@ -49,8 +58,9 @@ pub(crate) fn read_update(fields: &mut Fields<'_>) -> Result<ConsoleUpdate, Prot
     let entries = (0..count)
         .map(|_| {
             let tab = tab_from_byte(fields.u8()?)?;
+            let level = level_from_byte(fields.u8()?)?;
             let at_ms = u64::from_be_bytes(fields.array()?);
-            Ok(ConsoleEntry { tab, at_ms, text: fields.text(MAX_ENTRY)? })
+            Ok(ConsoleEntry { tab, level, at_ms, text: fields.text(MAX_ENTRY)? })
         })
         .collect::<Result<Vec<_>, ProtocolError>>()?;
     Ok(ConsoleUpdate { channel, replace, entries })
@@ -65,7 +75,11 @@ mod tests {
         let update = ConsoleUpdate {
             channel: 3,
             replace: true,
-            entries: ConsoleTab::ALL.iter().map(|&tab| ConsoleEntry { tab, at_ms: 1_234, text: tab.label().into() }).collect(),
+            entries: ConsoleTab::ALL
+                .iter()
+                .zip(Level::ALL.iter().cycle())
+                .map(|(&tab, &level)| ConsoleEntry { tab, level, at_ms: 1_234, text: tab.label().into() })
+                .collect(),
         };
         let mut payload = Vec::new();
         push_update(&mut payload, &update).unwrap();

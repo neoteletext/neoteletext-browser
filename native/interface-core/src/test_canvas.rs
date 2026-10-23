@@ -11,12 +11,19 @@ pub struct Recorder {
     pub pages: Vec<(PageKey, Rect)>,
     pub texts: Vec<(Rect, alloc::string::String)>,
     pub fills: Vec<(Rect, Colour)>,
+    /// Each text's colour, in the order drawn.
+    pub inks: Vec<(alloc::string::String, Colour)>,
     pub scale: f64,
 }
 
 impl Recorder {
     pub fn new() -> Self {
-        Self { pages: Vec::new(), texts: Vec::new(), fills: Vec::new(), scale: 2.0 }
+        Self { pages: Vec::new(), texts: Vec::new(), fills: Vec::new(), inks: Vec::new(), scale: 2.0 }
+    }
+
+    /// The colour `text` was last drawn in, if it was.
+    pub fn coloured_text(&self, text: &str) -> Option<Colour> {
+        self.inks.iter().rev().find(|(drawn, _)| drawn == text).map(|(_, colour)| *colour)
     }
 }
 
@@ -39,8 +46,9 @@ impl Canvas for Recorder {
     fn screen(&mut self, _: PageKey) -> Option<Colour> {
         Some(crate::theme::BLACK)
     }
-    fn text(&mut self, rect: Rect, text: &str, _: Style, _: Colour) {
+    fn text(&mut self, rect: Rect, text: &str, _: Style, colour: Colour) {
         self.texts.push((rect, text.into()));
+        self.inks.push((text.into(), colour));
     }
     #[allow(clippy::cast_precision_loss, reason = "short strings")]
     fn text_width(&mut self, text: &str, style: Style) -> f64 {

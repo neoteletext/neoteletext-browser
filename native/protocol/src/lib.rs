@@ -1249,7 +1249,7 @@ mod tests {
             ToInterface::Console(console::ConsoleUpdate {
                 channel: 2,
                 replace: false,
-                entries: vec![console::ConsoleEntry { tab: console::ConsoleTab::Notices, at_ms: 5, text: "x".into() }],
+                entries: vec![console::ConsoleEntry { tab: console::ConsoleTab::Log, level: console::Level::Warning, at_ms: 5, text: "x".into() }],
             }),
             ToInterface::Close,
         ] {
