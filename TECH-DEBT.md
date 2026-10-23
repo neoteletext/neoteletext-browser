@@ -45,7 +45,7 @@ The design of installation and updates on every desktop is `docs/installation-an
 ### Its own feature
 
 - **Requirement 3.9's harness with running helpers:** the harness built on 23 October 2026 drives the trusted core alone; showing that no file or network is reached, and that requests are identical to a quiet run (requirement 4.7), needs a decoder and fetcher running against a test server.
-- **Damage-limited drawing in the interface:** a frame on macOS is draw 3 ms, render 4 ms, present 6 ms, and the present is CoreGraphics copying softbuffer's fresh buffer, which needs unsafe code or another presentation library to change.
+- **Presenting on macOS copies the whole window:** damage-limited drawing was built on 23 October 2026 (`native-interface-design.md` section 12.7), and cut the cost of building and rendering a frame by more than half; the present, about 4 ms of a 5 ms frame, is softbuffer handing Core Animation a fresh copy of the whole window, which ignores the damage and needs unsafe code or another presentation library to change.
 
 
 ## From the owner's requests of 23 October 2026 (decisions 63 to 65)

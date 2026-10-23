@@ -145,6 +145,10 @@ struct Graphics {
     surface: Surface<Rc<Window>, Rc<Window>>,
     /// Kept for the surface's lifetime.
     _context: Context<Rc<Window>>,
+    /// The interface asked for the next redraw. One it did not ask for is
+    /// the system's, as when the window is uncovered, and every pixel is
+    /// drawn and presented again.
+    asked: bool,
 }
 
 /// What the trusted core first said, which the window waits for.
@@ -284,8 +288,9 @@ impl App {
         dock_menu::set(tabs);
     }
 
-    fn request_redraw(&self) {
-        if let Some(graphics) = &self.graphics {
+    fn request_redraw(&mut self) {
+        if let Some(graphics) = &mut self.graphics {
+            graphics.asked = true;
             graphics.window.request_redraw();
         }
     }
@@ -313,23 +318,47 @@ impl App {
         }
         self.last_frame = now;
         self.dirty = false;
+        if !std::mem::take(&mut graphics.asked) {
+            self.painter.redraw_whole();
+        }
         let started = Instant::now();
         self.painter.begin(width, height, graphics.window.scale_factor());
         let logical = (f64::from(width) / self.painter.scale, f64::from(height) / self.painter.scale);
         self.browser.draw(&mut self.painter, logical.0, logical.1, now);
+        // Only what changed since the last frame is drawn; a frame that
+        // changed nothing is not presented, and the window keeps the last.
+        let damage = self.painter.render();
+        if damage.is_empty() {
+            if self.trace_frames {
+                eprintln!("neoteletext-interface: frame at {now} ms: drawn {:?}, unchanged", started.elapsed());
+            }
+            self.act(event_loop);
+            return;
+        }
         let drawn = started.elapsed();
         let Ok(mut buffer) = graphics.surface.buffer_mut() else { return };
-        self.painter.finish(&mut buffer);
-        let rendered = started.elapsed();
+        let age = buffer.age();
+        self.painter.copy_to(&mut buffer, &damage, age);
+        let copied = started.elapsed();
         graphics.window.pre_present_notify();
-        let _ = buffer.present();
+        let rects: Vec<softbuffer::Rect> = damage
+            .boxes()
+            .iter()
+            .filter_map(|area| {
+                let (width, height) = (NonZeroU32::new(u32::from(area.width()))?, NonZeroU32::new(u32::from(area.height()))?);
+                Some(softbuffer::Rect { x: u32::from(area.x0), y: u32::from(area.y0), width, height })
+            })
+            .collect();
+        let _ = buffer.present_with_damage(&rects);
         if self.trace_frames {
             let presented = started.elapsed();
+            let pixels: u32 = damage.boxes().iter().map(|area| area.area()).sum();
             eprintln!(
-                "neoteletext-interface: frame at {now} ms: drawn {:?}, rendered {:?}, presented {:?}, {width}x{height}",
+                "neoteletext-interface: frame at {now} ms: drawn {:?}, rendered {:?}, presented {:?}, {width}x{height}, damage {} boxes, {pixels} pixels, age {age}",
                 drawn,
-                rendered.saturating_sub(drawn),
-                presented.saturating_sub(rendered)
+                copied.saturating_sub(drawn),
+                presented.saturating_sub(copied),
+                damage.boxes().len()
             );
         }
         self.act(event_loop);
@@ -712,6 +741,12 @@ impl ApplicationHandler<Incoming> for App {
         if matches!(event, WindowEvent::Moved(_) | WindowEvent::Resized(_)) {
             self.report_window(event_loop);
         }
+        // Resized or uncovered, the window may have lost what was
+        // presented: every pixel is drawn again.
+        if matches!(event, WindowEvent::Resized(_) | WindowEvent::ScaleFactorChanged { .. } | WindowEvent::Occluded(false)) {
+            self.painter.redraw_whole();
+            self.request_redraw();
+        }
         self.window_input(event_loop, window_id, event);
     }
 
@@ -818,7 +853,7 @@ impl App {
             event_loop.exit();
             return;
         };
-        self.graphics = Some(Graphics { window, surface, _context: context });
+        self.graphics = Some(Graphics { window, surface, _context: context, asked: false });
         self.show_tabs();
         self.report_window(event_loop);
     }
