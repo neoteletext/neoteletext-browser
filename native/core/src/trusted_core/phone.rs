@@ -46,6 +46,14 @@ pub(super) const PHONE_END_GRACE: std::time::Duration = std::time::Duration::fro
 /// locally.
 const RELAY_VARIABLE: &str = "NEOTELETEXT_QRKEYBOARD_RELAY";
 
+/// The relay a test names in [`RELAY_VARIABLE`], honoured only in a debug
+/// build (decision 100, finding F-64): a release build pairs only through
+/// qrkeyboard's own relay, and its keyboard process has no local network.
+/// Only an address is passed on: anything else would be read as a flag.
+fn relay_override(named: Option<String>, debug: bool) -> Option<String> {
+    named.filter(|relay| debug && (relay.starts_with("https://") || relay.starts_with("http://")))
+}
+
 impl Core {
     fn send_phone(&mut self) -> Result<(), String> {
         let view = self.phone_view.clone();
@@ -79,19 +87,16 @@ impl Core {
             return self.send_phone();
         }
         let mut arguments = Vec::new();
-        // Without one, the keyboard process uses qrkeyboard's own relay. Only
-        // an address is passed on: anything else would be read as a flag.
-        if let Ok(relay) = std::env::var(RELAY_VARIABLE)
-            && (relay.starts_with("https://") || relay.starts_with("http://"))
-        {
-            arguments.push(relay);
-        }
+        // Without one, the keyboard process uses qrkeyboard's own relay.
+        let test_relay = relay_override(std::env::var(RELAY_VARIABLE).ok(), cfg!(debug_assertions));
+        arguments.extend(test_relay.clone());
         // The proxy, given only at its start (requirement 19.12).
         if let Some(proxy) = &self.settings.proxy {
             arguments.push(String::from("--proxy"));
             arguments.push(proxy.url());
         }
-        let mut child = spawn(self.broker()?, Program::Keyboard, &arguments, true)?;
+        // The local network only for a test's own relay (decision 100).
+        let mut child = spawn(self.broker()?, Program::Keyboard, &arguments, test_relay.is_some())?;
         let output = child.stdout.take().ok_or("the phone keyboard has no output")?;
         let input = Outbox::new(child.stdin.take().ok_or("the phone keyboard has no input")?);
         let events = self.events.clone();
@@ -226,6 +231,17 @@ mod tests {
         test.core.phone_tick(std::time::Instant::now() + super::PHONE_END_GRACE);
         assert!(test.core.phone_ending.is_none(), "killed and reaped once its grace was up");
         assert!(started.elapsed() < std::time::Duration::from_secs(2), "killed, not waited for: {:?}", started.elapsed());
+    }
+
+    /// Finding F-64: a release build honours no relay override, so its
+    /// keyboard process gets no local network; a debug build, for tests,
+    /// does.
+    #[test]
+    fn only_a_debug_build_takes_another_relay() {
+        let local = Some(String::from("http://127.0.0.1:8090"));
+        assert_eq!(super::relay_override(local.clone(), false), None);
+        assert_eq!(super::relay_override(local.clone(), true), local);
+        assert_eq!(super::relay_override(Some(String::from("--proxy")), true), None, "only an address");
     }
 
     fn key(name: &str) -> FromKeyboard {
