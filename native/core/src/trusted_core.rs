@@ -137,6 +137,12 @@ struct Core {
     generation: u64,
     /// The store size of each channel's decoder, when grown past the first.
     store_pages: BTreeMap<u32, usize>,
+    /// When each channel's decoder was last replaced for stopping reading,
+    /// within the window that counts (finding F-30).
+    restarts: BTreeMap<u32, std::collections::VecDeque<std::time::Instant>>,
+    /// Channels whose decoder was replaced too often: none is started for
+    /// them until the tab is reloaded, which makes a new channel.
+    given_up: std::collections::BTreeSet<u32>,
     /// The pages last told shown to the decoder of [`Core::showing`].
     shown_pages: Vec<u16>,
     /// The links of the pages on screen (`hyperlinks.md`).
@@ -273,6 +279,8 @@ impl Core {
             sleep: Sleep::default(),
             generation: 0,
             store_pages: BTreeMap::new(),
+            restarts: BTreeMap::new(),
+            given_up: std::collections::BTreeSet::new(),
             shown_pages: Vec::new(),
             #[cfg(feature = "links")]
             links: Links::default(),
