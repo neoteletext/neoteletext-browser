@@ -951,11 +951,11 @@ Requirements 13.1 to 13.13 are unchanged from the earlier design, and are stated
 - **State:** Met, 23 October 2026: `the_updater_reaches_one_port_and_writes_only_its_staging_folder` on Linux (Landlock's port rule and the fetcher's socket families) and as a profile on macOS; on Windows an `AppContainer` with the internet client capability, which cannot be told a port, the host pinned by TLS; the updater confined end to end on each desktop (section 15 of the design).
 
 ### Requirement 13.19: The health check decides
-- **Statement:** A trial version must be committed only when, within 30 seconds of its start, its window's first frame has reached the screen, its settings were read or found absent, and no decoder ended in error; one that is not healthy within 45 seconds must be ended with every process it started, and counted as a failed start.
+- **Statement:** A trial version must be committed only when, within 30 seconds of its start, its window's first frame has reached the screen, its settings were read or found absent, and no decoder ended in error. Its broker must say `started` within 5 minutes and be healthy within 47 seconds of that; one that misses either deadline must be ended with every process it started. A start that missed the health deadline or ended badly after `started` is a failed start; one that never said `started` is counted apart (three roll back); a clean quit before health is not counted.
 - **Reason:** The check is what the user would notice: a window that draws, with sandboxes that hold (`installation-and-updates.md` section 3.2).
-- **Source:** Decision 54; decision 80.
+- **Source:** Decision 54; decision 80; decision 93.
 - **Verification:** Test.
-- **State:** Met, 23 October 2026: `a_version_is_healthy_only_when_it_drew_read_its_settings_and_lost_no_helper`, and the launcher's rollback of a version that hangs or crashes.
+- **State:** Met, 23 October 2026: `a_version_is_healthy_only_when_it_drew_read_its_settings_and_lost_no_helper`, and the launcher's rollback of a version that hangs or crashes. Decision 93's launcher side met, 24 October 2026: `a_trial_killed_before_started_is_not_counted`, `a_clean_quit_before_health_is_not_counted`, `a_slow_start_is_not_counted_as_a_crash`, `a_trial_running_when_the_launcher_died_is_counted`, `a_trial_round_trips_and_format_1_is_read`; not met until the broker writes `started` (`update::layout::STARTED_LINE`) before it starts the core, and the core takes `HEALTH_WINDOW` and `HEALTH_SETTLE` from `update::layout`, both in `native/core` (until then `healthy` alone says the broker started, so a broker that crashes before it is healthy counts as one that never started).
 
 ### Requirement 13.20: Uninstall
 - **Statement:** Removing the browser must remove its programs, its update files and its menu entries, and must ask before removing the user's settings, bookmarks, history and cookies.

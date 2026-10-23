@@ -13,6 +13,7 @@
 //! and only the updater the staging folder (section 14 of the design).
 
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 use crate::platform::{BUNDLE, Family};
 use crate::version::Version;
@@ -47,6 +48,38 @@ pub const UPDATER_METADATA_FILES: [&str; 6] = ["root.json", "timestamp.json", "s
 /// What the broker writes to the launcher once the trusted core found
 /// the version healthy (section 3.2).
 pub const HEALTHY_LINE: &str = "healthy\n";
+/// What the broker writes to the launcher just before it starts the
+/// trusted core (decision 93): the program has started, past whatever the
+/// system checks of a program it has not run before, and the deadline to
+/// be healthy begins.
+pub const STARTED_LINE: &str = "started\n";
+/// The time a version has to show it is healthy, from the trusted core's
+/// own start (section 3.2): the core's window, defined here once for the
+/// core and the launcher (decision 93).
+pub const HEALTH_WINDOW: Duration = Duration::from_secs(30);
+/// How long after its first frame a version's helpers are given to fail
+/// before it is found healthy: a helper that cannot confine itself ends at
+/// once.
+pub const HEALTH_SETTLE: Duration = Duration::from_secs(2);
+/// The launcher's room beyond the core's window and settling, from the
+/// broker's `started` to the core's own start: the broker starts the
+/// trusted core confined (a sandbox applied, the core's pipes made) and
+/// the core reads its settings before its window opens. The 15 seconds of
+/// decision 80, which counted from the broker's spawn.
+pub const HEALTH_MARGIN: Duration = Duration::from_secs(15);
+/// How long a trial has, from its broker's `started`, to be found
+/// healthy (decision 93).
+pub const HEALTH_DEADLINE: Duration = HEALTH_WINDOW.saturating_add(HEALTH_SETTLE).saturating_add(HEALTH_MARGIN);
+const _: () = assert!(
+    HEALTH_DEADLINE.as_secs() > HEALTH_WINDOW.as_secs().saturating_add(HEALTH_SETTLE.as_secs()),
+    "the launcher waits longer than the core's window and settling"
+);
+/// How long a trial's broker has to say it started (decision 93): a
+/// program's first start waits on the system's own checks of it (macOS's
+/// assessment of a program it has not run before, measured at over 3
+/// seconds on a loaded machine; an antivirus scan on Windows), which have
+/// no bound of their own; 5 minutes, the security review's bound.
+pub const START_DEADLINE: Duration = Duration::from_secs(5 * 60);
 
 /// The user's settings folder (requirement 19.1), which the trusted core
 /// keeps and the uninstaller offers to remove (requirement 13.20):

@@ -7,12 +7,12 @@ use std::path::Path;
 use update::fault;
 use update::files;
 use update::platform::Family;
-use update::state::{FAILED_STARTS_TO_ROLL_BACK, State, Trial};
+use update::state::{FAILED_STARTS_TO_ROLL_BACK, NOT_STARTED_TO_ROLL_BACK, State, Trial};
 use update::version::Version;
 
 #[cfg(target_os = "macos")]
 use crate::macos;
-use crate::{Chosen, Launcher, io_text, launcher_release};
+use crate::{Chosen, Ended, Launcher, io_text, launcher_release};
 
 /// What a version is called under `versions/` while it is copied in: no
 /// version's name, so `tidy` removes one left by a launcher stopped part
@@ -41,10 +41,23 @@ impl Launcher {
         {
             changed |= macos::reconcile(self, &mut state)?;
         }
-        if let Some(trial) = state.trial
-            && trial.failed >= FAILED_STARTS_TO_ROLL_BACK
+        // A trial still marked running: the launcher running it ended
+        // before it did, and its start is counted as failed (decision 93).
+        if let Some(trial) = state.trial.as_mut()
+            && trial.running
         {
-            eprintln!("neoteletext: version {} failed to start {} times and is rolled back to {}", trial.version, trial.failed, state.current);
+            trial.failed = trial.failed.saturating_add(1);
+            trial.running = false;
+            changed = true;
+        }
+        if let Some(trial) = state.trial
+            && (trial.failed >= FAILED_STARTS_TO_ROLL_BACK || trial.not_started >= NOT_STARTED_TO_ROLL_BACK)
+        {
+            if trial.failed >= FAILED_STARTS_TO_ROLL_BACK {
+                eprintln!("neoteletext: version {} failed to start {} times and is rolled back to {}", trial.version, trial.failed, state.current);
+            } else {
+                eprintln!("neoteletext: version {} did not start {} times and is rolled back to {}", trial.version, trial.not_started, state.current);
+            }
             state.trial = None;
             state.mark_bad(trial.version);
             state.rolled_back = Some(trial.version);
@@ -81,7 +94,9 @@ impl Launcher {
         }
         self.tidy(&state);
         if let Some(trial) = &mut state.trial {
-            trial.failed = trial.failed.saturating_add(1);
+            // Counted before it is made, as a start that has not started;
+            // its broker's `started` clears it.
+            trial.not_started = trial.not_started.saturating_add(1);
             let version = trial.version;
             self.write_state(&state)?;
             fault::point("trial-counted");
@@ -128,7 +143,7 @@ impl Launcher {
                 let accepted = self.layout.accepted(version);
                 std::fs::create_dir_all(self.layout.accepting()).map_err(|error| io_text(&self.layout.accepting(), &error))?;
                 self.copy_and_accept(&staged, &accepted, version)?;
-                state.trial = Some(Trial { version, failed: 0 });
+                state.trial = Some(Trial::new(version));
                 self.write_state(state)?;
                 fault::point("accept-written");
                 // The staged copy goes now; one left behind is tidied.
@@ -157,7 +172,7 @@ impl Launcher {
                         return Err(format!("{} says {accepted}", installed.display()));
                     }
                 }
-                state.trial = Some(Trial { version, failed: 0 });
+                state.trial = Some(Trial::new(version));
                 self.write_state(state)?;
                 fault::point("accept-written");
                 Ok(())
@@ -182,6 +197,38 @@ impl Launcher {
             return Err(format!("the copy of {version} says {copied}"));
         }
         Ok(())
+    }
+
+    /// A trial's broker said it started (decision 93): its starts that
+    /// never started are forgotten, and it is marked running, so that if
+    /// the launcher ends before it does, the next start counts it.
+    ///
+    /// # Errors
+    /// When the state cannot be read or written.
+    pub(crate) fn trial_started(&self, version: Version) -> Result<(), String> {
+        let mut state = self.read_state()?;
+        let Some(trial) = state.trial.as_mut().filter(|trial| trial.version == version) else { return Ok(()) };
+        trial.not_started = 0;
+        trial.running = true;
+        self.write_state(&state)?;
+        fault::point("trial-started");
+        Ok(())
+    }
+
+    /// A trial that said it started ended without being found healthy: a
+    /// failed start, unless it ended successfully before any deadline, as
+    /// it does when the user quits before its health is known (decision 93).
+    ///
+    /// # Errors
+    /// When the state cannot be read or written.
+    pub(crate) fn trial_ended(&self, version: Version, ended: &Ended) -> Result<(), String> {
+        let mut state = self.read_state()?;
+        let Some(trial) = state.trial.as_mut().filter(|trial| trial.version == version) else { return Ok(()) };
+        if !(ended.success && ended.deadline.is_none()) {
+            trial.failed = trial.failed.saturating_add(1);
+        }
+        trial.running = false;
+        self.write_state(&state)
     }
 
     /// Step 5: the trial `version` was found healthy; it becomes current,

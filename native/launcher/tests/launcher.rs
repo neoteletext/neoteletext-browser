@@ -13,13 +13,13 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use launcher::{Chosen, HEALTH_DEADLINE, Launcher};
+use launcher::{Chosen, HEALTH_DEADLINE, Launcher, START_DEADLINE};
 use ring::signature::{Ed25519KeyPair, KeyPair as _};
 use update::accept::{LinuxSigner, Signer};
 use update::layout::Layout;
 use update::manifest::{Entry, Manifest};
 use update::platform::{BUNDLE, Family, MANIFEST, MANIFEST_SIGNATURE, MARKED_PROGRAM, Platform, SIGNATURE_SUFFIX};
-use update::state::State;
+use update::state::{State, Trial};
 use update::version::Version;
 
 const OLD: Version = Version::new(0, 1, 0);
@@ -35,6 +35,12 @@ const SHORT_DEADLINE: Duration = Duration::from_secs(15);
 /// this long, so a loaded machine starting it slowly is not taken for one
 /// that hangs.
 const NO_DEADLINE_NEEDED: Duration = Duration::from_secs(5 * 60);
+/// The start deadline a test gives a version that never says it started.
+const TEST_START_DEADLINE: Duration = Duration::from_secs(2);
+/// The health deadline the slow version's test gives: shorter than its
+/// start takes (`launcher-test-broker`'s `SLOW_START`, 6 seconds), so the
+/// deadline must count from `started` for it to pass.
+const SLOW_TEST_HEALTH_DEADLINE: Duration = Duration::from_secs(3);
 /// The fault child's variable: the fixture it runs.
 const CHILD: &str = "LAUNCHER_TEST_FAULT_CHILD";
 
@@ -96,7 +102,7 @@ impl Fixture {
             Family::Windows => self.layout.root.join("launcher-a.exe"),
             Family::Macos => self.layout.bundle.clone().unwrap().join("Contents/MacOS/neoteletext-launcher"),
         };
-        Launcher { platform: platform(), layout: self.layout.clone(), signer, own, health_deadline: deadline }
+        Launcher { platform: platform(), layout: self.layout.clone(), signer, own, start_deadline: START_DEADLINE, health_deadline: deadline }
     }
 
     /// A complete version in `folder`, its broker behaving as `behaviour`.
@@ -170,6 +176,19 @@ impl Fixture {
 
     fn log(&self) -> String {
         fs::read_to_string(self.folder.join("log")).unwrap_or_default()
+    }
+
+    /// Runs the launcher with a start deadline of `start` and a health
+    /// deadline of `health`; what it returned.
+    fn try_run(&self, start: Duration, health: Duration) -> Result<Option<i32>, String> {
+        let launcher = Launcher { start_deadline: start, ..self.launcher(health) };
+        launcher.run(&[OsString::from(self.folder.join("log"))])
+    }
+
+    /// The trial, as its version and counts of failed starts and of starts
+    /// that never started.
+    fn trial(&self) -> Option<(Version, u8)> {
+        self.state().trial.map(|trial| (trial.version, trial.failed))
     }
 
     /// Runs the launcher; the test broker is given its log's path as the
@@ -417,6 +436,66 @@ fn a_start_examines_a_bounded_number_of_candidates() {
     assert!(junk.iter().all(|version| !fixture.state().is_bad(*version)));
 }
 
+/// Decision 93 (finding F-09): a trial whose broker never says it started
+/// before its start deadline is ended, and not counted as a failed start:
+/// a computer slow to start a new program is not a broken version.
+#[test]
+fn a_trial_killed_before_started_is_not_counted() {
+    let fixture = Fixture::new("not-started");
+    fixture.install(OLD, "healthy");
+    fixture.stage(NEW, "mute", true);
+    let result = fixture.try_run(TEST_START_DEADLINE, SHORT_DEADLINE);
+    assert_eq!(fixture.trial(), Some((NEW, 0)), "not counted as failed: {result:?}");
+    assert!(!fixture.state().is_bad(NEW));
+    if platform().family() != Family::Macos {
+        assert_eq!(result, Ok(Some(0)), "the current version runs this time");
+        assert!(fixture.log().ends_with("0.1.0 healthy\n"), "{}", fixture.log());
+    }
+}
+
+/// Decision 93: a trial the launcher was running when the launcher itself
+/// ended (its state still marks it running) is counted as failed at the
+/// next start.
+#[test]
+fn a_trial_running_when_the_launcher_died_is_counted() {
+    let fixture = Fixture::new("launcher-died");
+    fixture.install(OLD, "healthy");
+    fixture.stage(NEW, "healthy", true);
+    assert_eq!(fixture.launcher(HEALTH_DEADLINE).prepare().unwrap(), Chosen::Trial(NEW));
+    let mut state = fixture.state();
+    state.trial = state.trial.map(|trial| Trial { running: true, not_started: 0, ..trial });
+    fs::write(fixture.layout.state(), state.to_text()).unwrap();
+    assert_eq!(fixture.launcher(HEALTH_DEADLINE).prepare().unwrap(), Chosen::Trial(NEW));
+    assert_eq!(fixture.state().trial, Some(Trial { version: NEW, failed: 1, not_started: 1, running: false }));
+}
+
+/// Decision 93 (finding F-09): a trial that said it started and then
+/// ended successfully before it was found healthy, as when the user quits
+/// at once, is not counted.
+#[test]
+fn a_clean_quit_before_health_is_not_counted() {
+    let fixture = Fixture::new("quits");
+    fixture.install(OLD, "healthy");
+    fixture.stage(NEW, "quits", true);
+    assert_eq!(fixture.run(NO_DEADLINE_NEEDED), Some(0));
+    assert_eq!(fixture.trial(), Some((NEW, 0)));
+    assert_eq!(fixture.log(), "0.2.0 quits\n", "not retried");
+}
+
+/// Decision 93 (finding F-09): the health deadline counts from `started`,
+/// so a version slow to start, but healthy once started, is committed,
+/// not counted as a crash and rolled back.
+#[test]
+fn a_slow_start_is_not_counted_as_a_crash() {
+    let fixture = Fixture::new("slow");
+    fixture.install(OLD, "healthy");
+    fixture.stage(NEW, "slow", true);
+    assert_eq!(fixture.try_run(NO_DEADLINE_NEEDED, SLOW_TEST_HEALTH_DEADLINE), Ok(Some(0)));
+    let state = fixture.state();
+    assert_eq!((state.current, state.trial), (NEW, None), "committed");
+    assert!(!state.is_bad(NEW));
+}
+
 /// A missing or unreadable state file is rebuilt from what is installed.
 #[test]
 fn a_lost_state_is_rebuilt_from_what_is_installed() {
@@ -429,7 +508,8 @@ fn a_lost_state_is_rebuilt_from_what_is_installed() {
 
 /// The launcher's fault points in the life of an update.
 fn fault_points() -> Vec<&'static str> {
-    let mut points = vec!["state-written-before-rename", "state-renamed", "accept-written", "trial-counted", "commit-before-write", "commit-written"];
+    let mut points =
+        vec!["state-written-before-rename", "state-renamed", "accept-written", "trial-counted", "trial-started", "commit-before-write", "commit-written"];
     match platform().family() {
         Family::Macos => points.extend(["accept-copied", "bundle-exchanged", "previous-discarded", "previous-moved"]),
         Family::Linux => points.extend(["accept-copied", "accept-moved", "launcher-written", "launcher-exchanged"]),

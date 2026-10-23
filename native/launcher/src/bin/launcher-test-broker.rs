@@ -4,10 +4,13 @@
 //! behaviour, `\x02behaviour=<word>\x02`, either appended to its bytes or,
 //! by `--make`, written in place into a slot it carries (a macOS program
 //! cannot grow: `codesign` refuses bytes after its last segment). It does
-//! what the word says: `healthy` reports health and ends; `crash` ends at
-//! once with a failure; `hang` never reports; `quiet` ends successfully
-//! without reporting. Each run appends its version and behaviour to the
-//! file its first argument names.
+//! what the word says, after saying it started as the broker does before
+//! it starts the trusted core: `healthy` reports health and ends; `crash`
+//! ends at once with a failure; `hang` never reports; `quits` ends
+//! successfully, as a user quitting does; `slow` starts only after
+//! [`SLOW_START`], then reports health. Two never say they started: `quiet`
+//! ends successfully, `mute` hangs. Each run appends its version and
+//! behaviour to the file its first argument names.
 
 use std::io::Write as _;
 use std::time::Duration;
@@ -24,6 +27,10 @@ const MARK_START_REVERSED: &[u8] = b"\x01noisrev-txeteletoen\x01";
 const MARK_END: u8 = 0x01;
 /// How long a hanging version hangs: longer than any test waits.
 const HANG: Duration = Duration::from_secs(3600);
+/// How long a slow version takes to start: longer than the short health
+/// deadline the launcher's test gives it, far shorter than its start
+/// deadline.
+const SLOW_START: Duration = Duration::from_secs(6);
 /// The slot `--make` fills: its length is the most a mark and a behaviour
 /// may take, and its text is what `--make` finds.
 const SLOT_BYTES: usize = 64;
@@ -85,17 +92,30 @@ fn main() -> std::process::ExitCode {
     {
         let _ = writeln!(file, "{version} {behaviour}");
     }
+    let say = |line: &str| {
+        print!("{line}");
+        let _ = std::io::stdout().flush();
+    };
     match behaviour.as_str() {
-        "healthy" => {
-            print!("{}", update::layout::HEALTHY_LINE);
-            let _ = std::io::stdout().flush();
+        "quiet" => return std::process::ExitCode::SUCCESS,
+        "mute" => {
+            std::thread::sleep(HANG);
+            return std::process::ExitCode::SUCCESS;
+        }
+        "slow" => std::thread::sleep(SLOW_START),
+        _ => {}
+    }
+    say(update::layout::STARTED_LINE);
+    match behaviour.as_str() {
+        "healthy" | "slow" => {
+            say(update::layout::HEALTHY_LINE);
             std::process::ExitCode::SUCCESS
         }
         "hang" => {
             std::thread::sleep(HANG);
             std::process::ExitCode::SUCCESS
         }
-        "quiet" => std::process::ExitCode::SUCCESS,
+        "quits" => std::process::ExitCode::SUCCESS,
         _ => std::process::ExitCode::from(3),
     }
 }
