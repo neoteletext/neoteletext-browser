@@ -4,6 +4,7 @@
 //! history" went with decision 65): one text file, read strictly and written
 //! whole. The bookmarks are in a file of their own (`bookmarks.rs`).
 
+use crate::dropped::Dropped;
 use std::net::IpAddr;
 use std::path::{Path, PathBuf};
 
@@ -13,7 +14,7 @@ use crate::address;
 use crate::private_file::{Read, read_text};
 
 /// The first line of the file: its format and version.
-const VERSION_LINE: &str = "neoteletext-settings 1";
+pub(crate) const VERSION_LINE: &str = "neoteletext-settings 1";
 /// The longest value: an address as long as the address field allows.
 pub const MAX_VALUE: usize = protocol::MAX_ADDRESS;
 /// The name of a local address's line.
@@ -138,16 +139,16 @@ impl Settings {
     /// Reads the file's text (section 1.2): lines that break a rule are
     /// dropped and described in the second value, for the log.
     #[must_use]
-    pub fn read(text: &str) -> (Self, Vec<String>) {
+    pub fn read(text: &str) -> (Self, Dropped) {
         let mut settings = Self::default();
-        let mut dropped = Vec::new();
+        let mut dropped = Dropped::default();
         if text.len() > MAX_FILE {
-            dropped.push(format!("the settings file is longer than {MAX_FILE} bytes; defaults used"));
+            dropped.push(|| format!("the settings file is longer than {MAX_FILE} bytes; defaults used"));
             return (settings, dropped);
         }
         let mut lines = text.lines();
         if lines.next() != Some(VERSION_LINE) {
-            dropped.push("the settings file has no version line; defaults used".to_owned());
+            dropped.push(|| "the settings file has no version line; defaults used".to_owned());
             return (settings, dropped);
         }
         for (index, line) in lines.enumerate() {
@@ -156,7 +157,7 @@ impl Settings {
                 continue;
             }
             if line.len() > MAX_LINE || !settings.take(line) {
-                dropped.push(format!("line {number} of the settings file dropped"));
+                dropped.push(|| format!("line {number} of the settings file dropped"));
             }
         }
         (settings, dropped)
@@ -244,13 +245,13 @@ impl Settings {
     ///
     /// # Errors
     /// When the file exists but cannot be read.
-    pub fn load(folder: &Path) -> std::io::Result<(Self, Vec<String>)> {
+    pub fn load(folder: &Path) -> std::io::Result<(Self, Dropped)> {
         // This format's own file, copied from the newest older format's
         // the first time (`installation-and-updates.md` section 3.3).
         let (path, _) = update::profile::prepare(folder, PROFILE, FORMAT)?;
         match read_text(&path, MAX_FILE)? {
-            Read::Missing => Ok((Self::default(), Vec::new())),
-            Read::TooLong => Ok((Self::default(), vec![format!("the settings file is longer than {MAX_FILE} bytes; defaults used")])),
+            Read::Missing => Ok((Self::default(), Dropped::default())),
+            Read::TooLong => Ok((Self::default(), Dropped::one(format!("the settings file is longer than {MAX_FILE} bytes; defaults used")))),
             Read::Text(text) => Ok(Self::read(&text)),
         }
     }

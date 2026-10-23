@@ -471,6 +471,8 @@ impl Bookmarks {
 }
 
 mod file;
+#[cfg(test)]
+pub(crate) use file::VERSION_LINE;
 pub use file::{MAX_FILE, is_bookmarks_file};
 
 #[cfg(test)]

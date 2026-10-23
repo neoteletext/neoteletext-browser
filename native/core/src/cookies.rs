@@ -11,6 +11,7 @@
 //! jar's per-host limit is then the per-channel limit, and no cookie can
 //! pass between channels, schemes or ports (requirement 21.11).
 
+use crate::dropped::Dropped;
 use std::collections::{BTreeMap, BTreeSet};
 
 use neoteletext_web::bytes::Writer;
@@ -34,7 +35,7 @@ const MAX_CHANNELS: usize = TOTAL;
 const MAX_HEADER: usize = protocol::fetcher::MAX_COOKIE_HEADER;
 const _: () = assert!(MAX_HEADER == neoteletext_web::consts::DEFAULT_REQUEST_LIMIT, "the engine's room for a request");
 const _: () = assert!(protocol::fetcher::MAX_SET_COOKIE == neoteletext_web::consts::DEFAULT_HEADER_LIMIT, "the engine's limit on a response's headers");
-const FILE_VERSION: &str = "neoteletext-cookie-file 1";
+pub(crate) const FILE_VERSION: &str = "neoteletext-cookie-file 1";
 const TAG_PREFIX: &str = "c";
 /// Room for building a jar of this size: its records and arena, which a
 /// thread of the default size could not hold while the box is made.
@@ -387,19 +388,19 @@ impl Store {
     /// cookie passed through the engine's rules again; a cookie of a channel
     /// the file does not name, or a blocked one, is dropped. Returns what
     /// was dropped, to log.
-    pub fn import(&mut self, text: &[u8], now: u64) -> Vec<String> {
-        let mut dropped = Vec::new();
+    pub fn import(&mut self, text: &[u8], now: u64) -> Dropped {
+        let mut dropped = Dropped::default();
         if text.len() > MAX_FILE {
-            dropped.push(format!("the cookie file is longer than {MAX_FILE} bytes; none read"));
+            dropped.push(|| format!("the cookie file is longer than {MAX_FILE} bytes; none read"));
             return dropped;
         }
         let Some(rest) = text.strip_prefix(format!("{FILE_VERSION}\n").as_bytes()) else {
-            dropped.push("the cookie file has no version line; none read".to_owned());
+            dropped.push(|| "the cookie file has no version line; none read".to_owned());
             return dropped;
         };
         let Some(split) = rest.windows(2).position(|pair| pair == b"\n\n").map(|at| at.saturating_add(1)).or((rest.first() == Some(&b'\n')).then_some(0))
         else {
-            dropped.push("the cookie file has no end to its channels; none read".to_owned());
+            dropped.push(|| "the cookie file has no end to its channels; none read".to_owned());
             return dropped;
         };
         let (table, saved) = rest.split_at(split);
@@ -417,12 +418,12 @@ impl Store {
                 Some(channel) => {
                     named.insert((*fields.get(1).unwrap_or(&"")).to_owned(), channel);
                 }
-                None => dropped.push("a channel line of the cookie file dropped".to_owned()),
+                None => dropped.push(|| "a channel line of the cookie file dropped".to_owned()),
             }
         }
         let blocked = self.blocked.clone();
         let Some(jar) = self.jar(false) else {
-            dropped.push("no memory for cookies; none read".to_owned());
+            dropped.push(|| "no memory for cookies; none read".to_owned());
             return dropped;
         };
         jar.import(saved, now);
@@ -431,7 +432,7 @@ impl Store {
         let strays = jar
             .remove_where(&|cookie| std::str::from_utf8(cookie.host).ok().and_then(|tag| named.get(tag)).is_none_or(|channel| blocked.contains(&channel.key)));
         if strays > 0 {
-            dropped.push(format!("{strays} cookies of no channel, or a blocked one, dropped"));
+            dropped.push(|| format!("{strays} cookies of no channel, or a blocked one, dropped"));
         }
         for (tag, channel) in named {
             let number = tag.strip_prefix(TAG_PREFIX).and_then(|digits| digits.parse::<u64>().ok()).unwrap_or(0);

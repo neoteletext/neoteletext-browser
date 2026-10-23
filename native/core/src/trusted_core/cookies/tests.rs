@@ -138,7 +138,7 @@ fn kept_cookies_are_written_sealed_and_removed_on_close() {
     let sealed = kept::load(&test.folder).unwrap().unwrap();
     let opened = kept::open(&key, &sealed).unwrap();
     let mut restored = Store::new();
-    assert_eq!(restored.import(&opened, now_unix()), Vec::<String>::new());
+    assert!(restored.import(&opened, now_unix()).is_empty());
     assert_eq!(restored.listed()[0].count, 1, "the session cookie is not written");
     test.core.cookie_mode_changed(protocol::settings::CookieMode::Close);
     assert_eq!(kept::load(&test.folder).unwrap(), None, "on close: no file");

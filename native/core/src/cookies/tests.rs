@@ -137,7 +137,7 @@ fn the_file_keeps_persistent_cookies_of_named_channels() {
     assert!(shown.starts_with("neoteletext-cookie-file 1\nchannel\tc1\thttps://news.example/teletext/\n\n"), "{shown}");
     assert!(!shown.contains("session") && !shown.contains("private"), "{shown}");
     let mut restored = Store::new();
-    assert_eq!(restored.import(&text, NOW + 10), Vec::<String>::new());
+    assert!(restored.import(&text, NOW + 10).is_empty());
     assert_eq!(header(&mut restored, false, &news, "/teletext/"), "keep=1");
     // Another channel made in the next run gets a tag of its own.
     let other = Channel::of("https://other.example/tt/").unwrap();
@@ -153,11 +153,11 @@ fn the_file_keeps_persistent_cookies_of_named_channels() {
     assert_eq!(header(&mut strict, false, &news, "/teletext/"), "keep=1");
     let unnamed = String::from_utf8_lossy(&text).replace("channel\tc1\thttps://news.example/teletext/\n", "");
     let mut stray = Store::new();
-    assert_eq!(stray.import(unnamed.as_bytes(), NOW), ["1 cookies of no channel, or a blocked one, dropped"]);
+    assert_eq!(stray.import(unnamed.as_bytes(), NOW).lines(), ["1 cookies of no channel, or a blocked one, dropped"]);
     assert_eq!(stray.listed(), []);
     assert_eq!(Store::new().import(b"garbage", NOW).len(), 1);
     // A store that never kept a cookie writes a file it can read.
-    assert_eq!(Store::new().import(&Store::new().export(NOW), NOW), Vec::<String>::new());
+    assert!(Store::new().import(&Store::new().export(NOW), NOW).is_empty());
 }
 
 /// Requirement 21.4: the file on the disk is sealed: no cookie in the
@@ -176,7 +176,7 @@ fn the_file_is_sealed() {
     assert!(!sealed.windows(b"secret-value".len()).any(|window| window == b"secret-value"), "no cookie in the clear");
     assert!(!sealed.windows(b"news.example".len()).any(|window| window == b"news.example"), "no channel in the clear");
     let mut restored = Store::new();
-    assert_eq!(restored.import(&open(&key, &sealed).unwrap(), NOW), Vec::<String>::new());
+    assert!(restored.import(&open(&key, &sealed).unwrap(), NOW).is_empty());
     assert_eq!(header(&mut restored, false, &news, "/teletext/"), "secret-value=42");
     assert_eq!(open(&[8_u8; KEY_BYTES], &sealed), None, "another key");
     let mut changed = sealed.clone();

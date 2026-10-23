@@ -35,6 +35,7 @@ pub mod budget;
 pub mod calendar;
 pub mod console;
 pub mod cookies;
+pub mod dropped;
 pub mod frames;
 pub mod hearing;
 pub mod history;
