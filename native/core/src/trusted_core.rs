@@ -47,8 +47,6 @@ use protocol::links::{LinkKind, Message as LinkMessage, Pointing, Spot};
 use crate::session::{Session, Went};
 use crate::source::Next;
 
-pub(crate) use updates::{launcher_state, tell_launcher_healthy, updater_grant};
-
 #[cfg(feature = "phone-keyboard")]
 /// A relay other than qrkeyboard's own, for testing against one run
 /// locally.

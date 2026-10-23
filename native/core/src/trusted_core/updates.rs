@@ -4,10 +4,6 @@
 //! once the user accepts, and finds a version healthy (section 3.2). It
 //! parses none of the updater's formats: only its messages, each bounded
 //! (`update::wire`), and the launcher's state, read strictly.
-//!
-//! The broker's side is here too: it tells the launcher the version is
-//! healthy, reads the launcher's state for the core, and gives the
-//! updater its staging folder and its one port.
 
 use std::fmt::Write as _;
 use std::io::{BufReader, Write};
@@ -15,10 +11,8 @@ use std::sync::Arc;
 use std::sync::mpsc::Sender;
 use std::time::{Duration, Instant};
 
-use confine::broker::{Broker, Helper, Program, UpdaterGrant};
-use update::layout::{HEALTHY_LINE, LAUNCHED_VARIABLE, Layout};
-use update::platform::Platform;
-use update::state::{MAX_STATE, State};
+use confine::broker::{Broker, Helper, Program};
+use update::state::State;
 use update::version::Version;
 use update::wire::{FromUpdater, ToUpdater, read_from_updater, write_to_updater};
 
@@ -35,55 +29,6 @@ pub const HEALTH_SETTLE: Duration = Duration::from_secs(2);
 /// After this long without a successful check, the panel says "Updates
 /// unavailable" (section 9.3): the timestamp's life.
 pub const UNAVAILABLE_AFTER: i64 = update::wire::TIMESTAMP_DAYS * 24 * 60 * 60;
-
-// ---- The broker's side ----
-
-/// The installation this broker belongs to, when a launcher started it.
-fn installation() -> Option<Layout> {
-    std::env::var_os(LAUNCHED_VARIABLE)?;
-    let program = std::env::current_exe().ok()?;
-    Layout::of_program(Platform::this()?.family(), &program)
-}
-
-/// Tells the launcher, on the broker's standard output, that the version
-/// is healthy (section 3.2).
-///
-/// # Errors
-/// When no launcher started the browser, or the pipe fails.
-pub fn tell_launcher_healthy() -> Result<(), String> {
-    installation().ok_or("no launcher started this browser")?;
-    let mut output = std::io::stdout().lock();
-    output.write_all(HEALTHY_LINE.as_bytes()).and_then(|()| output.flush()).map_err(|error| format!("cannot tell the launcher: {error}"))
-}
-
-/// The launcher's state file's bytes, for the core.
-///
-/// # Errors
-/// When no launcher started the browser, or the file cannot be read.
-pub fn launcher_state() -> Result<Vec<u8>, String> {
-    let layout = installation().ok_or("no launcher started this browser")?;
-    update::files::read_bounded(&layout.state(), MAX_STATE).map_err(|error| format!("the launcher's state: {error}"))
-}
-
-/// The updater's staging folder and port, by the broker's own rules:
-/// where this installation keeps it, and the update host's port or the
-/// port of the proxy the core names (`--proxy URL`).
-///
-/// # Errors
-/// When no launcher installed the browser, or the proxy is not one.
-pub fn updater_grant(arguments: &[String]) -> Result<UpdaterGrant, String> {
-    let layout = installation().ok_or("no launcher installed this browser, so it does not update itself")?;
-    let staging = layout.staging();
-    std::fs::create_dir_all(&staging).map_err(|error| format!("{}: {error}", staging.display()))?;
-    let port = match arguments {
-        [] => release_identity::PORT,
-        [flag, proxy] if flag == "--proxy" => neoteletext_web::proxy::parse_proxy(proxy).ok_or("the proxy is not one")?.port,
-        _ => return Err(String::from("the updater takes a proxy and nothing else")),
-    };
-    Ok(UpdaterGrant { staging, port })
-}
-
-// ---- The core's side ----
 
 /// What the core knows of a version's health (section 3.2).
 #[derive(Debug)]

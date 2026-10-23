@@ -11,8 +11,8 @@
 //! their own (`outbox`); the session file, `session.txt` (`restore`); the
 //! settings and `settings.txt` (`settings`); sleeping tabs (`sleep`); the
 //! start page (`start_page`); and typing into a page (`typing`). The
-//! trusted core itself and the broker are the binary, `main.rs` and its
-//! modules.
+//! trusted core itself and the broker are the binary: `main.rs`,
+//! `broker.rs` and `trusted_core.rs`.
 
 // No panicking constructs: this crate reads input from outside the
 // process. The same list is in each such crate; scripts/check.sh checks
