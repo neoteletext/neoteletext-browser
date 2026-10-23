@@ -136,13 +136,25 @@ pub fn receive(stream: &UnixStream, buffer: &mut [u8]) -> io::Result<Vec<OwnedFd
     Ok(descriptors)
 }
 
+// POSIX `<time.h>` (IEEE Std 1003.1-2017): sets the C library's time zone
+// from `TZ`, or the system's default. The `libc` crate declares it only for
+// Windows.
+unsafe extern "C" {
+    fn tzset();
+}
+
 /// The local time zone's offset from UTC at `utc` seconds since 1970, in
 /// seconds, as the C library's `localtime_r` gives it (`tm_gmtoff`). The C
-/// library reads the zone itself: glibc once, at the first call; macOS at
-/// each.
+/// library reads the zone itself; `localtime_r` need not read it again
+/// (POSIX), and glibc's does not, so `tzset` asks it to first: glibc then
+/// reads `TZ`, or `/etc/localtime` again when it changed, and a change of
+/// zone while the browser runs is seen at once.
 #[allow(clippy::useless_conversion, reason = "time_t is 64 bits on the platforms built for, and 32 on some others")]
 pub fn local_offset(utc: i64) -> io::Result<i32> {
     let time: libc::time_t = utc.try_into().map_err(|_| io::Error::from(io::ErrorKind::InvalidInput))?;
+    // SAFETY: `tzset` takes no arguments and only sets the C library's own
+    // zone state, which `localtime_r` then reads.
+    unsafe { tzset() };
     // SAFETY: an all-zero `tm` is a valid value of a plain C struct.
     let mut local: libc::tm = unsafe { std::mem::zeroed() };
     // SAFETY: both pointers are to live values of the types the call takes,
@@ -167,6 +179,37 @@ mod tests {
         let time = crate::local_time().unwrap();
         assert!(time.is_plausible(), "{time:?}");
         assert!(time.utc > 1_700_000_000, "a clock after 2023: {time:?}");
+    }
+
+    /// A child of this test's process, with its own environment: set to run
+    /// the body of `a_change_of_zone_is_seen_at_once`.
+    const ZONE_CHILD: &str = "NEOTELETEXT_ZONE_CHILD";
+
+    /// `history-and-bookmarks.md` section 14, item 1: a change of zone while
+    /// the browser runs is seen at the next reading, not at the next start.
+    /// The zone is changed in a child process that runs this test alone, so
+    /// no other thread reads the environment while it changes.
+    #[test]
+    fn a_change_of_zone_is_seen_at_once() {
+        // 1 October 2026: India keeps no summer time.
+        const UTC: i64 = 1_790_812_800;
+        const INDIA: i32 = 5 * 3600 + 30 * 60;
+        if std::env::var_os(ZONE_CHILD).is_some() {
+            assert_eq!(local_offset(UTC).unwrap(), 0, "TZ=UTC0");
+            // SAFETY: this process runs this one test on one thread, and
+            // nothing else of it reads the environment while it changes.
+            unsafe { std::env::set_var("TZ", "IST-5:30") };
+            assert_eq!(local_offset(UTC).unwrap(), INDIA, "the new zone, read at once");
+            return;
+        }
+        let test = std::env::current_exe().unwrap();
+        let status = std::process::Command::new(test)
+            .args(["unix::tests::a_change_of_zone_is_seen_at_once", "--exact", "--test-threads=1"])
+            .env(ZONE_CHILD, "1")
+            .env("TZ", "UTC0")
+            .status()
+            .unwrap();
+        assert!(status.success(), "the child saw the zone change: {status}");
     }
 
     #[test]
