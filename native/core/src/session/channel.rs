@@ -33,6 +33,9 @@ pub struct ChannelState {
     /// Its certificate was refused, and why, until its contents next arrive
     /// (`certificate-errors.md`, decision 83).
     pub refused: Option<CertificateProblem>,
+    /// A restored file not yet read: it is read when its tab is first
+    /// shown (finding F-53).
+    unread: Option<std::path::PathBuf>,
 }
 
 impl ChannelState {
@@ -57,6 +60,30 @@ impl ChannelState {
         Self::with(id, address, source, web, problem)
     }
 
+    /// A file channel whose file is read only when [`ChannelState::read_now`]
+    /// is called, as its tab is first shown (finding F-53).
+    pub(super) fn unread(id: u32, address: &Address) -> Self {
+        let mut channel = Self::with(id, address, Source::empty(), None, None);
+        channel.unread.clone_from(&address.file);
+        channel
+    }
+
+    /// Reads the file left unread, once; why it has no data, when it
+    /// could not be read.
+    pub(super) fn read_now(&mut self, reader: &Reader) -> Option<String> {
+        let path = self.unread.take()?;
+        match reader(&path) {
+            Ok(source) => {
+                self.source = source;
+                None
+            }
+            Err(problem) => {
+                self.problem = Some(problem.clone());
+                Some(problem)
+            }
+        }
+    }
+
     fn with(id: u32, address: &Address, source: Source, web: Option<String>, problem: Option<String>) -> Self {
         Self {
             id,
@@ -68,6 +95,7 @@ impl ChannelState {
             web,
             problem,
             refused: None,
+            unread: None,
         }
     }
 

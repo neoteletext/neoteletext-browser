@@ -53,8 +53,10 @@ impl Core {
         for (id, problem, web) in &channels {
             let awake = self.sleep.awake(*id, active, now);
             if awake && !self.decoders.contains_key(id) && !self.given_up.contains(id) {
-                if let Some(problem) = problem {
-                    self.log(Level::Warning, None, problem);
+                // A restored file is read as its tab is first shown
+                // (finding F-53).
+                if let Some(problem) = problem.clone().or_else(|| self.session.read_unread(*id)) {
+                    self.log(Level::Warning, None, &problem);
                 }
                 self.generation = self.generation.wrapping_add(1);
                 let pages = self.store_pages.get(id).copied().unwrap_or(FIRST_STORE_PAGES);

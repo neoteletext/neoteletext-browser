@@ -167,3 +167,16 @@ fn an_import_goes_into_its_own_folder() {
     assert_eq!(bookmarks.item(imported).unwrap().name, IMPORTED_NAME);
     assert_eq!(bookmarks.children(imported).len(), 2);
 }
+
+/// Finding F-53: another browser's bookmark of a file on this computer is
+/// left out of an import: a file the user never chose here is not opened.
+#[test]
+fn an_imported_file_bookmark_is_left_out() {
+    let entries = [
+        BookmarkEntry::Link { name: "Notes".into(), address: "file:///Users/someone/notes.t42".into() },
+        BookmarkEntry::Link { name: "Path".into(), address: "/Users/someone/notes.t42".into() },
+        BookmarkEntry::Link { name: "News".into(), address: "https://news.example/teletext/".into() },
+    ];
+    let (read, refused) = Bookmarks::from_entries(&entries);
+    assert_eq!((read.len(), refused), (1, 2));
+}

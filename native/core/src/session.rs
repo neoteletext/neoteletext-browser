@@ -100,6 +100,26 @@ impl Session {
         ChannelState::new(id, address, &self.bookmarks, &self.reader)
     }
 
+    /// A channel for a restored tab: a file is read only when its tab is
+    /// first shown ([`Session::read_unread`]), not every restored file
+    /// through the broker at start (finding F-53).
+    fn channel_later(&mut self, address: &Address) -> ChannelState {
+        if address.file.is_none() {
+            return self.channel_for(address);
+        }
+        let id = self.next_channel;
+        self.next_channel = self.next_channel.wrapping_add(1).max(1);
+        ChannelState::unread(id, address)
+    }
+
+    /// Reads the file of `channel`'s tab if it was left unread at start;
+    /// why it has no data, when it could not be read.
+    pub fn read_unread(&mut self, channel: u32) -> Option<String> {
+        let reader = &self.reader;
+        let tab = self.tabs.iter_mut().chain(self.others.iter_mut().flat_map(|window| window.tabs.iter_mut())).find(|tab| tab.channel.id == channel)?;
+        tab.channel.read_now(reader)
+    }
+
     /// The bookmark the active tab's start page opens at `page`, if the
     /// tab shows the start page (requirement 19.7).
     #[must_use]

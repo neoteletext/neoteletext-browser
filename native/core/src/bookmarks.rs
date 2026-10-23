@@ -459,8 +459,11 @@ impl Bookmarks {
                         folders.pop();
                     }
                 }
+                // A file on this computer another browser kept is not
+                // taken: the user never chose it here (finding F-53).
                 BookmarkEntry::Link { name, address } => {
-                    if bookmarks.add(here, name, address).is_err() {
+                    let file = crate::address::parse(address).is_ok_and(|parsed| parsed.file.is_some());
+                    if file || bookmarks.add(here, name, address).is_err() {
                         refused = refused.saturating_add(1);
                     }
                 }
