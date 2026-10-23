@@ -560,6 +560,46 @@ fn a_lost_state_is_rebuilt_from_what_is_installed() {
     assert_eq!(fixture.state(), State::installed(OLD));
 }
 
+/// Finding F-80: a state file too long to be one is rebuilt, as any other
+/// that is not one is, rather than stopping the browser from starting.
+#[test]
+fn a_state_too_long_is_rebuilt() {
+    let fixture = Fixture::new("too-long");
+    fixture.install(OLD, "healthy");
+    fs::write(fixture.layout.state(), vec![b'x'; 3 * 1024]).unwrap();
+    assert_eq!(fixture.launcher(HEALTH_DEADLINE).read_state(), Ok(State::installed(OLD)));
+}
+
+/// Finding F-80: a state rebuilt from what is installed accepts each
+/// version by its pinned signer, and makes the newest the trial, so a
+/// version never found healthy is tried, not made current.
+#[cfg(not(target_os = "macos"))]
+#[test]
+fn a_lost_state_puts_the_newest_version_on_trial() {
+    let fixture = Fixture::new("lost-newest");
+    fixture.install(OLD, "healthy");
+    fixture.version(&fixture.layout.version(NEW), NEW, "healthy", true);
+    let unsigned = Version::new(0, 3, 0);
+    fixture.version(&fixture.layout.version(unsigned), unsigned, "healthy", false);
+    fs::write(fixture.layout.state(), b"not a state").unwrap();
+    let state = fixture.launcher(HEALTH_DEADLINE).read_state().unwrap();
+    assert_eq!(state.current, OLD);
+    assert_eq!(state.trial.map(|trial| trial.version), Some(NEW), "the newest signed version is the trial, the unsigned one passed over");
+}
+
+/// Finding F-80: a state naming a current version that is not installed
+/// is rebuilt from what is, rather than failing to start.
+#[cfg(not(target_os = "macos"))]
+#[test]
+fn a_current_version_not_installed_falls_back_to_what_is() {
+    let fixture = Fixture::new("missing-current");
+    fixture.install(OLD, "healthy");
+    fs::write(fixture.layout.state(), State::installed(Version::new(0, 5, 0)).to_text()).unwrap();
+    assert_eq!(fixture.launcher(HEALTH_DEADLINE).run(&[OsString::from(fixture.folder.join("log"))]), Ok(Some(0)));
+    assert_eq!(fixture.log(), "0.1.0 healthy\n");
+    assert_eq!(fixture.state().current, OLD);
+}
+
 /// The launcher's fault points in the life of an update.
 fn fault_points() -> Vec<&'static str> {
     let mut points =
