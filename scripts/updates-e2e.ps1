@@ -95,9 +95,11 @@ function Release($version, $how = "test") {
     $built = "$work\built\$version"
     & "$tools\neoteletext-release.exe" layout windows-x86_64 $version "$work\programs-$version" $built
     if ($how -eq "test") { Sign (Get-ChildItem "$built\*.exe" | ForEach-Object { $_.FullName }) }
-    & "$tools\neoteletext-release.exe" manifest $built windows-x86_64 $version
+    # The manifest, signed by the release key (decision 92), signed or not
+    # by Authenticode.
+    & "$tools\neoteletext-release.exe" sign-windows $built $version (Key linux-release)
     if ($how -eq "test") {
-        & "$tools\neoteletext-release.exe" check $built windows-x86_64
+        & "$tools\neoteletext-release.exe" check $built windows-x86_64 --test-identity
         if ($LASTEXITCODE -ne 0) { Fail "the launcher's check of $version" }
     }
     & "$tools\neoteletext-release.exe" targets $built windows-x86_64 "$work\targets-$version"
@@ -206,7 +208,11 @@ Release "0.1.3" "unsigned"
 Step "4. 0.1.3, not signed"
 & "$work\tools\debug\updater-drive.exe" "$root\versions\0.1.1\neoteletext-updater.exe" stage 0.1.3 2>&1 | Out-Null
 In-Desktop "$root\NeoTeletext.exe" 30
-Expect-State "4. refused and marked bad" "bad 0.1.3"
+# Refused, removed, and not marked bad: "bad" is a trial that failed
+# (finding F-08).
+if ((State) -match [regex]::Escape("bad 0.1.3")) { Fail "4. a refused version was marked bad" }
+if (Test-Path "$root\staging\0.1.3") { Fail "4. the refused version was not removed" }
+Ok "4. refused and removed, not marked bad"
 Expect-State "4. the current version still runs" "current 0.1.1"
 
 # 5. Removal, as the uninstaller's copy does it once the questions are

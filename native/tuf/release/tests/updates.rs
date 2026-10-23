@@ -15,7 +15,7 @@ use std::io::{BufRead as _, BufReader};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 
-use update::platform::{BUNDLE, Family, PROGRAMS, Platform};
+use update::platform::{BUNDLE, Family, MANIFEST_SIGNATURE, MARKED_PROGRAM, PROGRAMS, Platform};
 use update::version::Version;
 use updater::{Config, Https};
 
@@ -100,13 +100,22 @@ impl Fixture {
 
     /// Lays out, signs, lists, compresses and publishes `version`.
     fn publish(&self, version: Version, extra: &[&str]) {
-        let platform = Platform::this().unwrap();
-        let programs = self.folder.join(format!("programs-{version}"));
+        self.publish_for(Platform::this().unwrap(), version, extra);
+    }
+
+    /// Lays out, signs, lists, compresses and publishes `version` for
+    /// `platform`; its broker carries the version's mark.
+    fn publish_for(&self, platform: Platform, version: Version, extra: &[&str]) {
+        let programs = self.folder.join(format!("programs-{platform}-{version}"));
         std::fs::create_dir_all(&programs).unwrap();
         for program in PROGRAMS {
-            std::fs::write(programs.join(platform.program_file(program)), format!("{program} {version}")).unwrap();
+            let mut bytes = format!("{program} {version}");
+            if program == MARKED_PROGRAM {
+                bytes.push_str(&update::version_mark!("VERSION").replace("VERSION", &version.to_string()));
+            }
+            std::fs::write(programs.join(platform.program_file(program)), bytes).unwrap();
         }
-        let built = self.folder.join(format!("built/{version}"));
+        let built = self.folder.join(format!("built/{platform}/{version}"));
         release(&["layout", platform.name(), &version.to_string(), &text(&programs), &text(&built)]);
         match platform.family() {
             Family::Linux => release(&["sign-linux", &text(&built), &version.to_string(), &key(self, "linux-release")]),
@@ -118,9 +127,9 @@ impl Fixture {
                 std::fs::write(seal, "<plist/>").unwrap();
                 release(&["manifest", &text(&built), platform.name(), &version.to_string()]);
             }
-            Family::Windows => release(&["manifest", &text(&built), platform.name(), &version.to_string()]),
+            Family::Windows => release(&["sign-windows", &text(&built), &version.to_string(), &key(self, "linux-release")]),
         }
-        let targets = self.folder.join(format!("targets-{version}"));
+        let targets = self.folder.join(format!("targets-{platform}-{version}"));
         let _ = std::fs::remove_dir_all(&targets);
         release(&["targets", &text(&built), platform.name(), &text(&targets)]);
         let mut arguments = vec![
@@ -309,6 +318,105 @@ fn a_root_is_rotated_only_by_a_threshold_of_old_and_new_keys() {
     arguments.extend([String::from("--old-root"), key(&fixture, "root-1"), String::from("--old-root"), key(&fixture, "root-2")]);
     release(&arguments.iter().map(String::as_str).collect::<Vec<_>>());
     assert_eq!(block(client.check()), Ok(Some(VERSION)), "rotated");
+}
+
+/// Decision 91 (finding F-06): the updater keeps the highest root version
+/// it has reached, so once it has reached root 2, a host that stops
+/// serving `2.root.json` cannot roll it back to root 1's keys, which a
+/// rotation retired.
+#[test]
+fn a_root_older_than_one_reached_is_refused() {
+    let fixture = Fixture::new("root-floor");
+    let client = fixture.client("staging");
+    assert!(block(client.check()).is_ok());
+    let mut arguments = vec![String::from("root"), text(&fixture.metadata().join("2.root.json")), String::from("2")];
+    for name in ["root-1", "root-2"] {
+        arguments.extend([String::from("--root"), key(&fixture, name)]);
+    }
+    let third = Command::new(env!("CARGO_BIN_EXE_neoteletext-release")).args(["public", &key(&fixture, "root-3")]).output().unwrap();
+    arguments.extend([String::from("--root"), format!("public:{}", String::from_utf8(third.stdout).unwrap().trim())]);
+    for role in ["targets", "snapshot", "timestamp"] {
+        arguments.extend([format!("--{role}"), key(&fixture, role)]);
+    }
+    release(&arguments.iter().map(String::as_str).collect::<Vec<_>>());
+    assert_eq!(block(client.check()), Ok(Some(VERSION)), "root 2 reached");
+    std::fs::remove_file(fixture.metadata().join("2.root.json")).unwrap();
+    let refused = block(client.check()).unwrap_err();
+    assert!(refused.contains("older root"), "{refused}");
+}
+
+/// Windows's programs, each "signed" by Authenticode, and the release key
+/// the test identity built in.
+struct Authenticode {
+    release: [u8; 32],
+}
+
+impl update::accept::Signer for Authenticode {
+    fn release_key(&self) -> Option<&[u8; 32]> {
+        Some(&self.release)
+    }
+
+    fn check(&self, _folder: &Path, _manifest: &update::manifest::Manifest) -> Result<(), String> {
+        Ok(())
+    }
+}
+
+/// Decision 92 (finding F-07): the release tool signs a Windows release's
+/// manifest with the release key, the updater stages the signature with
+/// the release, and the launcher's check verifies it, on any desktop: the
+/// file format the three share.
+#[test]
+fn a_windows_release_is_staged_with_its_signed_manifest() {
+    let fixture = Fixture::new("windows-manifest");
+    let windows = Platform::WindowsX86_64;
+    let version = Version::new(0, 3, 0);
+    fixture.publish_for(windows, version, &[]);
+    let client = Config { platform: windows, ..fixture.client("staging") };
+    block(client.download(version)).unwrap();
+    let staged = client.staging.join(version.to_string());
+    assert!(staged.join(MANIFEST_SIGNATURE).is_file(), "the signature is staged");
+    let release = update::from_hex::<32>(std::fs::read_to_string(fixture.identity.join("linux-release.pub")).unwrap().trim()).unwrap();
+    assert_eq!(update::accept::accept(&staged, windows, &Authenticode { release }), Ok(version));
+    let mut signature = std::fs::read(staged.join(MANIFEST_SIGNATURE)).unwrap();
+    signature[0] ^= 1;
+    std::fs::write(staged.join(MANIFEST_SIGNATURE), signature).unwrap();
+    assert!(update::accept::accept(&staged, windows, &Authenticode { release }).is_err(), "a signature changed by one bit");
+}
+
+/// Finding F-24: the release tool's `check` reads the identity a release's
+/// launcher was built with, and refuses one built with a test identity,
+/// whose test keys anyone holding them could sign updates with, unless
+/// `--test-identity` says it is a test.
+#[test]
+fn a_release_built_with_a_test_identity_is_refused_unless_a_test() {
+    let folder = scratch("test-identity-check");
+    let platform = Platform::this().unwrap();
+    let launcher = folder.join(platform.program_path("neoteletext-launcher"));
+    std::fs::create_dir_all(launcher.parent().unwrap()).unwrap();
+    std::fs::write(&launcher, "a launcher \u{1}neoteletext-identity\u{1}test\u{1} built for a test").unwrap();
+    let said = release_fails(&["check", &text(&folder), platform.name()]);
+    assert!(said.contains("test identity"), "{said}");
+    let said = release_fails(&["check", &text(&folder), platform.name(), "--test-identity"]);
+    assert!(!said.contains("test identity"), "a test may: {said}");
+}
+
+/// Finding F-49: one jump of the clock forward, put right later, does not
+/// leave updates unavailable for good. The client's record of the latest
+/// time it saw is dropped when it is more than a day ahead of now; a
+/// record a little ahead is said as the clock being behind, apart from
+/// other failures.
+#[test]
+fn a_clock_that_jumped_forward_does_not_stop_updates() {
+    let fixture = Fixture::new("clock");
+    let client = fixture.client("staging");
+    assert!(block(client.check()).is_ok());
+    let known = client.staging.join("metadata/latest_known_time.json");
+    std::fs::write(&known, "\"2100-01-01T00:00:00Z\"").unwrap();
+    assert_eq!(block(client.check()), Ok(Some(VERSION)), "a record decades ahead is dropped");
+    let soon = jiff::Timestamp::now().checked_add(jiff::SignedDuration::from_hours(1)).unwrap();
+    std::fs::write(&known, format!("\"{soon}\"")).unwrap();
+    let refused = block(client.check()).unwrap_err();
+    assert!(refused.contains("clock"), "{refused}");
 }
 
 /// The launcher-unchanged check (section 7): a launcher that differs from

@@ -67,6 +67,24 @@ fn isize_field(length: usize) -> u32 {
     u32::try_from(low).unwrap_or(u32::MAX)
 }
 
+/// The most bytes [`compress`] makes of `length` bytes: DEFLATE's worst
+/// case is stored blocks, each behind 5 bytes of header (RFC 1951 section
+/// 3.2.4), with one more block to end, inside the member's header and
+/// trailer (RFC 1952 section 2.3). `miniz_oxide` stores at most its 32 KiB
+/// window in a block (measured: 300,000 bytes that do not compress made
+/// 300,068); the bound counts a block for every 16 KiB, so it holds for
+/// any encoder whose blocks are that long or longer. The updater bounds a
+/// release file's download by it (finding F-81).
+#[must_use]
+pub fn max_compressed(length: usize) -> usize {
+    /// Half `miniz_oxide`'s window: the shortest stored block counted.
+    const STORED_BLOCK: usize = 16 * 1024;
+    /// The block's header bits, padded to a byte, then LEN and NLEN.
+    const STORED_HEADER: usize = 5;
+    let blocks = (length / STORED_BLOCK).saturating_add(2);
+    HEADER_BYTES.saturating_add(TRAILER_BYTES).saturating_add(length).saturating_add(blocks.saturating_mul(STORED_HEADER))
+}
+
 /// Why compressed bytes were refused.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Refused(pub &'static str);
@@ -147,6 +165,25 @@ pub fn decompress_at_most(member: &[u8], max: usize) -> Result<Vec<u8>, Refused>
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::indexing_slicing, clippy::arithmetic_side_effects, reason = "a test")]
 mod tests {
+
+    /// Bytes that do not compress at all are within the bound.
+    #[test]
+    fn what_compress_makes_is_within_its_bound() {
+        let mut state = 0x2545_f491_u32;
+        let noise: Vec<u8> = (0..300_000)
+            .map(|_| {
+                // xorshift32 (Marsaglia, 2003): bytes no compressor shrinks.
+                state ^= state << 13;
+                state ^= state >> 17;
+                state ^= state << 5;
+                state.to_le_bytes()[0]
+            })
+            .collect();
+        for length in [0, 1, 16_383, 32_768, 65_535, 65_536, 200_001, noise.len()] {
+            assert!(compress(&noise[..length]).len() <= max_compressed(length), "{length}: {} > {}", compress(&noise[..length]).len(), max_compressed(length));
+        }
+    }
+
     use super::*;
 
     #[test]

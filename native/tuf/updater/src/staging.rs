@@ -7,7 +7,7 @@ use std::path::Path;
 use update::fault;
 use update::files;
 use update::manifest::Manifest;
-use update::platform::{Family, MANIFEST, MANIFEST_SIGNATURE};
+use update::platform::{MANIFEST, MANIFEST_SIGNATURE};
 use update::signature::SIGNATURE_BYTES;
 use update::version::Version;
 
@@ -45,7 +45,7 @@ impl Config {
         let partial = files::with_suffix(&staged, PARTIAL);
         std::fs::create_dir_all(&partial).map_err(|error| format!("{}: {error}", partial.display()))?;
         files::write_synced(&partial.join(MANIFEST), &manifest_bytes, false).map_err(|error| format!("{MANIFEST}: {error}"))?;
-        if self.platform.family() == Family::Linux {
+        if self.platform.signs_manifest() {
             let signature = self.fetch(&repository, version, MANIFEST_SIGNATURE, Some(u64::try_from(SIGNATURE_BYTES).unwrap_or(0))).await?;
             files::write_synced(&partial.join(MANIFEST_SIGNATURE), &signature, false).map_err(|error| format!("{MANIFEST_SIGNATURE}: {error}"))?;
         }
