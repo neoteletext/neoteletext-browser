@@ -201,3 +201,17 @@ fn an_undo_too_deep_is_refused() {
     assert!(dropped.is_empty(), "{dropped:?}");
     assert_eq!(read.len(), bookmarks.len());
 }
+
+/// Finding F-104: the file a read writes is the file it reads back: its
+/// lines are numbered in the order they are written, as reading numbers
+/// them. The `bookmarks_file` fuzz target's 52-byte input: a folder read
+/// second but placed in the bar was written first with the larger number.
+#[test]
+fn the_file_written_reads_back_the_same() {
+    let found = "neoteletext-bookmarks 1\nfolder\t22\t2\t.\nfolder\t222\t1\tt";
+    let (read, _) = Bookmarks::read(found);
+    let written = read.text();
+    let (again, dropped) = Bookmarks::read(&written);
+    assert!(dropped.is_empty(), "{dropped:?}");
+    assert_eq!(again.text(), written);
+}

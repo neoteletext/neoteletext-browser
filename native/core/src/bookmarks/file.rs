@@ -119,11 +119,24 @@ impl Bookmarks {
     pub fn text(&self) -> String {
         let mut text = String::from(VERSION_LINE);
         text.push('\n');
-        for id in self.walk() {
+        // Numbered in the order written, as `read` numbers what it reads,
+        // so that the file read back is written the same (finding F-104).
+        let order = self.walk();
+        let mut numbers: BTreeMap<u32, u32> = BTreeMap::from([(ROOT, ROOT), (BAR, BAR), (OTHER, OTHER)]);
+        let mut next = OTHER.saturating_add(1);
+        for &id in &order {
+            numbers.entry(id).or_insert_with(|| {
+                let number = next;
+                next = next.saturating_add(1);
+                number
+            });
+        }
+        for id in order {
             let Some(item) = self.items.get(&id) else { continue };
+            let (number, parent) = (numbers.get(&id).copied().unwrap_or(id), numbers.get(&item.parent).copied().unwrap_or(item.parent));
             let line = match &item.address {
-                Some(address) => format!("bookmark{SEPARATOR}{id}{SEPARATOR}{}{SEPARATOR}{}{SEPARATOR}{address}", item.parent, item.name),
-                None => format!("folder{SEPARATOR}{id}{SEPARATOR}{}{SEPARATOR}{}", item.parent, item.name),
+                Some(address) => format!("bookmark{SEPARATOR}{number}{SEPARATOR}{parent}{SEPARATOR}{}{SEPARATOR}{address}", item.name),
+                None => format!("folder{SEPARATOR}{number}{SEPARATOR}{parent}{SEPARATOR}{}", item.name),
             };
             text.push_str(&line);
             text.push('\n');
