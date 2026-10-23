@@ -296,6 +296,12 @@ pub(crate) fn read_view(fields: &mut Fields<'_>) -> Result<PhoneView, ProtocolEr
     Ok(PhoneView { state, qr, pin })
 }
 
+// A phone key's tag on the interface's pipe: a key of the layout up or
+// down, or text.
+const PHONE_KEY_UP: u8 = 0;
+const PHONE_KEY_DOWN: u8 = 1;
+const PHONE_TEXT: u8 = 2;
+
 /// A phone's key for the interface, which acts on it as on a key of its
 /// own keyboard, with no modifier.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -315,11 +321,11 @@ pub(crate) fn push_phone_key(payload: &mut Vec<u8>, key: &PhoneKey) -> Result<()
     match key {
         PhoneKey::Key { down, name } => {
             clean_name(name)?;
-            payload.push(u8::from(*down));
+            payload.push(if *down { PHONE_KEY_DOWN } else { PHONE_KEY_UP });
             push_text(payload, name, MAX_KEY_NAME)
         }
         PhoneKey::Text(text) => {
-            payload.push(2);
+            payload.push(PHONE_TEXT);
             push_text(payload, text, MAX_PHONE_TEXT)
         }
     }
@@ -327,12 +333,12 @@ pub(crate) fn push_phone_key(payload: &mut Vec<u8>, key: &PhoneKey) -> Result<()
 
 pub(crate) fn read_phone_key(fields: &mut Fields<'_>) -> Result<PhoneKey, ProtocolError> {
     Ok(match fields.u8()? {
-        kind @ (0 | 1) => {
+        kind @ (PHONE_KEY_UP | PHONE_KEY_DOWN) => {
             let name = fields.text(MAX_KEY_NAME)?;
             clean_name(&name)?;
-            PhoneKey::Key { down: kind == 1, name }
+            PhoneKey::Key { down: kind == PHONE_KEY_DOWN, name }
         }
-        2 => PhoneKey::Text(fields.text(MAX_PHONE_TEXT)?),
+        PHONE_TEXT => PhoneKey::Text(fields.text(MAX_PHONE_TEXT)?),
         _ => return Err(ProtocolError::BadValue("phone key")),
     })
 }

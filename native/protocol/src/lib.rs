@@ -1,5 +1,6 @@
-//! Messages between the trusted core and the interface process
-//! (`architecture.md` section 6.4). The framing is the engine's: one kind
+//! Messages between the browser's processes (`architecture.md` section
+//! 6.4): the trusted core and the interface, a decoder, a fetcher, the
+//! keyboard and the sound helper. The framing is the engine's: one kind
 //! byte, a 32-bit big-endian payload length, then the payload. Every length is bounded
 //! before anything is allocated, every payload is parsed strictly to its
 //! exact length, and each side accepts only the kinds meant for it, so the
