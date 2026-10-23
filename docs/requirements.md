@@ -739,11 +739,11 @@ Withdrawn on 23 October 2026 (decision 66): no font is fetched; every page is dr
 - **State:** Partly met: the host is emphasised; addresses with a user name or hidden characters are refused; internationalised hosts are refused until they can be shown safely. Why an address was refused is written to the log, not shown in the strip.
 
 ### Requirement 11.4: Always visible
-- **Statement:** The trusted strip must be visible in every layout, including the zoomed page. Where a full-screen layout hides it, it must reappear on any interaction.
-- **Reason:** A hidden indicator protects nothing.
-- **Source:** Decisions 4 and 24.
-- **Verification:** Review of every layout.
-- **State:** Met: no layout hides it; there is no full-screen layout yet.
+- **Statement:** The trusted strip must be visible in every layout, including the zoomed page, except the page-only full screen (requirement 12.16). There it must come back with the pointer at the top edge and with any key the browser keeps for itself, full screen must end before anything leaves the channel, and while keys go to a channel a trusted badge outside the page must say so.
+- **Reason:** A hidden indicator protects nothing; in the page-only full screen nothing the strip guards can happen without it.
+- **Source:** Decisions 4, 24 and 85.
+- **Verification:** Review of every layout; test of the full screen's rules.
+- **State:** Met for every layout built; the full screen is designed, not built (amended 23 October 2026).
 
 ### Requirement 11.5: Untrusted text is cleaned before display
 - **Statement:** Text from pages and channels (titles, section names, notices, addresses) must have control characters, bidirectional controls and zero-width characters removed and be cut to a fixed length before it is shown anywhere.
@@ -873,6 +873,13 @@ Withdrawn on 23 October 2026 (decision 66): no font is fetched; every page is dr
 - **Source:** Decision 69.
 - **Verification:** Test.
 - **State:** Met: `tab_keys_choose_tabs`.
+
+### Requirement 12.16: The teletext page alone, full screen
+- **Statement:** A window with an open page must be able to show that page alone, filling the display at its own proportions, in the page's screen colour around it, with no strip, tabs or panels, entered by the system's full-screen key (Control-Command-F on macOS, F11 elsewhere), the menu and a double click on the page, and left by Escape while keys do not go to a channel, by the full-screen key at any time, and whenever anything needs the window. Page keys, Fastext, same-channel links, sound and typing into a channel must work inside it.
+- **Reason:** Teletext is read as a television shows it; the owner asked for the page only.
+- **Source:** Decision 85 (`full-screen.md`).
+- **Verification:** Test; by hand on each desktop.
+- **State:** Not met: designed 23 October 2026, not built.
 
 ---
 

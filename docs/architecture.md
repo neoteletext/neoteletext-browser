@@ -138,6 +138,7 @@ Taken on 23 October 2026 while the owner was away, as the owner had instructed (
 | Decision 81 | 23 October 2026 | **Updates in the browser:** "Check for updates" (`updates on` in `settings.txt`, on by default); the settings panel shows the version, the trusted core's line about updates and "Install <version>"; the strip says the offer once as a notice; nothing is downloaded until Install is pressed; "Updates unavailable" after the timestamp's 7 days without a successful check; the updater goes through the user's proxy. Taken while the owner was away. | Owner to confirm |
 | Decision 82 | 23 October 2026 | **Removal** (requirement 13.20): `--uninstall` on the terminal on Linux and macOS (and on macOS a bundle moved to the Bin, which leaves the settings, as macOS does), asking before the settings go; on Windows from Settings › Apps, asking with message boxes, a copy of the launcher in `%TEMP%` doing the removal and staying there. Taken while the owner was away. | Owner to confirm |
 | Decision 83 | 23 October 2026 | **The certificate-error screen** (`certificate-errors.md`), on the owner's request: a channel refused because of its certificate shows, in its page area, the host as the strip shows it, what failed in the trusted core's words, that there is no way past, and Try again, Go back and Close tab; the strip reads "Certificate refused". The fetcher reports only the kind of failure, from its TLS library's error. Requirement 7.13 added. | Built 23 October 2026 |
+| Decision 85 | 23 October 2026 | **Full screen, the page only** (`full-screen.md`), on the owner's request: the open page alone fills the display at its own proportions in its screen colour; no strip, which returns with the pointer at the top edge and the browser's own keys; entered by the system's full-screen key, the menu or a double click, left by Escape, the key again, or anything needing the window, including leaving the channel; a trusted badge in the margin while keys go to a channel. Requirement 11.4 amended, 12.16 added. | Designed 23 October 2026, not built |
 
 ---
 
@@ -699,6 +700,7 @@ neoteletext-browser/
 - The console's Log, each line with its level and process, and the channel's own `LG` lines (decision 70); bookmarks imported from other browsers' Netscape files, and "Move…" (decision 71); multiple windows, with tabs moved and torn off between them (decision 72), 23 October 2026.
 - Requirement 3.9's hostile interface harness against the trusted core (`native/core/src/hostile_tests.rs`), run by the commit gate.
 - Installation and updates on every desktop (`installation-and-updates.md`, decisions 54 and 73 to 82, 23 October 2026): the launcher, the confined updater with `tough`, the Windows stub and installer, Linux's `--install`, removal, the release tool, and the core's offer, setting and health check, proved end to end with test keys on macOS, Windows and Linux.
+- The certificate-error screen (`certificate-errors.md`, decision 83, 23 October 2026).
 
 **Not built:**
 
@@ -707,6 +709,7 @@ neoteletext-browser/
 - Sharing one decoder between tabs on the same channel (decision 11).
 - The grace period for closed tabs; the live-feed threshold; refresh schedules.
 - Discovery.
+- Full screen of the page alone (`full-screen.md`, decision 85, designed 23 October 2026).
 - Screen readers, the menu bar, copying to the clipboard and pasting into the address field, reduced motion.
 - The hostile interface harness with running helpers (the harness against the trusted core alone is built).
 - A release signed by the owner's keys: the certificates, the hardware keys, the update host and the key ceremony are the owner's (`PENDINGTASKSFORANDREW.md`); the Linux release build on the C library 2.28; an icon of the browser's own.

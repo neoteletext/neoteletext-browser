@@ -251,7 +251,7 @@ The earlier design's main concession was the system webview: many millions of li
 - The address, identity, encryption state and the site-change screen are shown only in the trusted strip, which is drawn outside the page area and which no page image is ever drawn over (requirements 11.1 and 11.2).
 - **Every page image is kept below the strip,** including the zoomed page and the overview's popup of a page at its native size, which shrinks on a short window rather than cover the strip (observed in this codebase's tests).
 - A click on a page means only "this cell" (requirement 12.3).
-- The strip stays visible in every layout (requirement 11.4).
+- The strip stays visible in every layout but the page-only full screen, which ends before anything leaves the channel and brings the strip back at the top edge (requirement 11.4, `full-screen-security.md`).
 - Every new layout is reviewed for spoofing (requirement 14.5, no review recorded yet).
 
 **Remaining risk:** medium. This is where safety depends on discipline in visual design: an interface built for animation is exactly where a security indicator could be hidden or imitated.
