@@ -101,9 +101,9 @@ impl Core {
             }
             BookmarkRequest::Undo => {
                 if let Some(removed) = self.library.undo.take()
-                    && !self.session.bookmarks.restore(removed)
+                    && let Err(reason) = self.session.bookmarks.restore(removed)
                 {
-                    self.library.manager_notice = notice("It cannot be put back: its folder is gone");
+                    self.library.manager_notice = notice(&reason);
                 }
             }
             BookmarkRequest::Sort => {

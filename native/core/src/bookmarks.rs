@@ -49,6 +49,17 @@ impl Item {
     }
 }
 
+impl Removed {
+    /// How many folders deep the removed folder `id`'s contents go below it.
+    fn height(&self, id: u32) -> usize {
+        let folder = |child: &u32| self.items.iter().any(|item| item.id == *child && item.is_folder());
+        self.children
+            .iter()
+            .find(|(at, _)| *at == id)
+            .map_or(0, |(_, contents)| contents.iter().filter(|child| folder(child)).map(|&child| self.height(child).saturating_add(1)).max().unwrap_or(0))
+    }
+}
+
 /// What a removal took, to put back with Undo.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Removed {
@@ -332,12 +343,24 @@ impl Bookmarks {
         Some(Removed { items: taken, children, index, name: item.name })
     }
 
-    /// Puts back what a removal took, where it was, if its folder is still there.
-    pub fn restore(&mut self, removed: Removed) -> bool {
-        let Some(first) = removed.items.first() else { return false };
+    /// Puts back what a removal took, where it was, if its folder is still
+    /// there, there is room, and its folders would be no deeper than
+    /// folders may go, its folder having perhaps moved deeper since
+    /// (finding F-79).
+    ///
+    /// # Errors
+    /// Why it cannot be put back.
+    pub fn restore(&mut self, removed: Removed) -> Result<(), String> {
+        let Some(first) = removed.items.first() else { return Err("There is nothing to put back".into()) };
         let parent = first.parent;
-        if !self.items.get(&parent).is_some_and(Item::is_folder) || self.items.len().saturating_add(removed.items.len()) > MAX_ITEMS.saturating_add(2) {
-            return false;
+        if !self.items.get(&parent).is_some_and(Item::is_folder) {
+            return Err("It cannot be put back: its folder is gone".into());
+        }
+        if self.items.len().saturating_add(removed.items.len()) > MAX_ITEMS.saturating_add(2) {
+            return Err(format!("There are at most {MAX_ITEMS} bookmarks"));
+        }
+        if first.is_folder() && self.depth(parent).saturating_add(1).saturating_add(removed.height(first.id)) > MAX_DEPTH {
+            return Err(format!("It cannot be put back: folders are at most {MAX_DEPTH} deep"));
         }
         let id = first.id;
         for item in removed.items {
@@ -348,7 +371,7 @@ impl Bookmarks {
         }
         let siblings = self.children.entry(parent).or_default();
         siblings.insert(removed.index.min(siblings.len()), id);
-        true
+        Ok(())
     }
 
     /// Moves an item into `folder`, before its item at `index` (at the end

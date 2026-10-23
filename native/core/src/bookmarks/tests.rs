@@ -79,7 +79,7 @@ fn bookmarks_are_managed() {
     let removed = bookmarks.remove(weather).unwrap();
     assert_eq!(removed.name, "Weather");
     assert!(bookmarks.item(page).is_none(), "its contents went with it");
-    assert!(bookmarks.restore(removed));
+    assert_eq!(bookmarks.restore(removed), Ok(()));
     assert_eq!(bookmarks.path(page), [OTHER, weather]);
     assert!(bookmarks.remove(BAR).is_none());
     assert!(bookmarks.move_to(weather, weather, 0).is_err(), "not into itself");
@@ -179,4 +179,25 @@ fn an_imported_file_bookmark_is_left_out() {
     ];
     let (read, refused) = Bookmarks::from_entries(&entries);
     assert_eq!((read.len(), refused), (1, 2));
+}
+
+/// Finding F-79: an undo that would put a removed folder deeper than
+/// folders may go, its folder having moved deeper since, is refused, and
+/// the file stays readable whole.
+#[test]
+fn an_undo_too_deep_is_refused() {
+    let mut bookmarks = Bookmarks::default();
+    let mut deepest = OTHER;
+    for _ in 1..MAX_DEPTH {
+        deepest = bookmarks.add_folder(deepest, "deep").unwrap();
+    }
+    let outer = bookmarks.add_folder(OTHER, "outer").unwrap();
+    let removed_folder = bookmarks.add_folder(outer, "removed").unwrap();
+    bookmarks.add_folder(removed_folder, "inside").unwrap();
+    let removed = bookmarks.remove(removed_folder).unwrap();
+    bookmarks.move_to(outer, deepest, 0).unwrap();
+    assert_eq!(bookmarks.restore(removed), Err(format!("It cannot be put back: folders are at most {MAX_DEPTH} deep")));
+    let (read, dropped) = Bookmarks::read(&bookmarks.text());
+    assert!(dropped.is_empty(), "{dropped:?}");
+    assert_eq!(read.len(), bookmarks.len());
 }
