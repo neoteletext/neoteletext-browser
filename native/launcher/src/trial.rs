@@ -18,6 +18,12 @@ use crate::{Chosen, Launcher, io_text, launcher_release};
 /// version's name, so `tidy` removes one left by a launcher stopped part
 /// way.
 pub(crate) const COPYING_SUFFIX: &str = ".copying";
+/// The most staged versions one start examines: each examination copies
+/// and hashes up to a whole version, the newest that passes wins and the
+/// older ones are then tidied, so a staging folder full of folders the
+/// updater made costs a start no more than this many versions' copies
+/// (finding F-08). The next start examines the next ones.
+pub const MAX_CANDIDATES_PER_START: usize = 3;
 
 impl Launcher {
     /// Steps 1 to 4, holding the lock alone: what this start runs.
@@ -51,17 +57,21 @@ impl Launcher {
             }
         }
         if state.trial.is_none() {
-            for candidate in self.candidates(&state) {
+            for candidate in self.candidates(&state).into_iter().take(MAX_CANDIDATES_PER_START) {
                 match self.accept(candidate, &mut state) {
                     Ok(()) => {
                         changed = false;
                         break;
                     }
                     Err(why) => {
-                        eprintln!("neoteletext: version {candidate} is refused: {why}");
-                        state.mark_bad(candidate);
+                        // Not marked bad: "bad" is a trial that failed. A
+                        // folder anyone can make under `staging/` must not
+                        // stop that version ever being accepted, nor push a
+                        // version that failed out of the bad list (finding
+                        // F-08). The updater may stage it again; it is
+                        // refused again if it is still not the release.
+                        eprintln!("neoteletext: version {candidate} is refused and removed: {why}");
                         let _ = files::remove_tree(&self.layout.staged(candidate));
-                        changed = true;
                     }
                 }
             }

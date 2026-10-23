@@ -206,7 +206,11 @@ Release "0.1.3" "unsigned"
 Step "4. 0.1.3, not signed"
 & "$work\tools\debug\updater-drive.exe" "$root\versions\0.1.1\neoteletext-updater.exe" stage 0.1.3 2>&1 | Out-Null
 In-Desktop "$root\NeoTeletext.exe" 30
-Expect-State "4. refused and marked bad" "bad 0.1.3"
+# Refused, removed, and not marked bad: "bad" is a trial that failed
+# (finding F-08).
+if ((State) -match [regex]::Escape("bad 0.1.3")) { Fail "4. a refused version was marked bad" }
+if (Test-Path "$root\staging\0.1.3") { Fail "4. the refused version was not removed" }
+Ok "4. refused and removed, not marked bad"
 Expect-State "4. the current version still runs" "current 0.1.1"
 
 # 5. Removal, as the uninstaller's copy does it once the questions are

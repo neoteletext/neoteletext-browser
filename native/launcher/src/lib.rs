@@ -10,7 +10,8 @@
 //!    bad, and the current version, never touched, runs (step 6).
 //! 3. With no trial, the newest staged version newer than the current one
 //!    and not bad is accepted: complete, signed by the pinned signer, of
-//!    the version its files say (section 5); it becomes the trial.
+//!    the version its files say (section 5); it becomes the trial. One that
+//!    is refused is removed, not marked bad.
 //! 4. A trial's failed starts are counted before it starts (step 5).
 //!
 //! It then starts the broker of the version chosen, sharing the lock, so
@@ -50,3 +51,4 @@ pub(crate) use launcher::io_text;
 pub use launcher::{Chosen, Ended, HEALTH_DEADLINE, Launcher, pinned_signer};
 #[cfg(target_os = "macos")]
 pub use macos::{must_move, offer_move};
+pub use trial::MAX_CANDIDATES_PER_START;

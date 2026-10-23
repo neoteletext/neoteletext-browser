@@ -283,7 +283,11 @@ step "4. 0.1.3, not signed by the pinned signer"
 drive stage 0.1.3 >/dev/null
 start "$work/run-4.log"
 grep -q 'version 0.1.3 is refused' "$work/run-4.log" || { cat "$work/run-4.log"; fail "0.1.3 was not refused"; }
-expect_state "4. refused and marked bad" "bad 0.1.3"
+# Refused, removed, and not marked bad: "bad" is a trial that failed
+# (finding F-08).
+! grep -q "bad 0.1.3" "$state_file" || fail "4. a refused version was marked bad"
+[[ ! -e "$updates/staging/0.1.3" ]] || fail "4. the refused version was not removed"
+echo "ok: 4. refused and removed, not marked bad"
 expect_state "4. the current version still runs" "current 0.1.1"
 
 # 5. Expired metadata.

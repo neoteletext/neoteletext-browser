@@ -283,7 +283,8 @@ fn a_version_not_signed_or_not_whole_is_refused() {
     fixture.stage(NEW, "healthy", false);
     fixture.run(HEALTH_DEADLINE);
     assert_eq!(fixture.state().current, OLD);
-    assert!(fixture.state().is_bad(NEW));
+    assert!(!fixture.state().is_bad(NEW), "refused is not bad: only a trial that failed is");
+    assert!(!fixture.layout.staged(NEW).exists(), "refused and removed");
     assert!(!fixture.log().contains("0.2.0"), "never started");
 
     let fixture = Fixture::new("truncated");
@@ -375,6 +376,45 @@ fn an_extra_file_in_a_staged_version_is_not_copied() {
     if platform().family() != Family::Macos {
         assert!(!fixture.layout.version(NEW).join("extra").exists());
     }
+}
+
+/// Finding F-08: a folder under `staging/` that is refused is removed and
+/// leaves no mark, so one folder made by a compromised updater cannot
+/// stop a genuine release of that version being accepted later.
+#[test]
+fn a_refused_candidate_does_not_freeze_a_later_genuine_version() {
+    let fixture = Fixture::new("refused-then-genuine");
+    fixture.install(OLD, "healthy");
+    fs::create_dir_all(fixture.layout.staged(NEW)).unwrap();
+    fs::write(fixture.layout.staged(NEW).join("junk"), b"not a release").unwrap();
+    assert_eq!(fixture.launcher(HEALTH_DEADLINE).prepare().unwrap(), Chosen::Run(OLD));
+    assert!(!fixture.state().is_bad(NEW), "a refusal is not a failed trial");
+    assert!(!fixture.layout.staged(NEW).exists(), "refused and removed");
+    fixture.stage(NEW, "healthy", true);
+    assert_eq!(fixture.launcher(HEALTH_DEADLINE).prepare().unwrap(), Chosen::Trial(NEW));
+}
+
+/// Finding F-08: one start examines at most
+/// `MAX_CANDIDATES_PER_START` staged versions, newest first, however many
+/// folders the updater left; the next start goes on.
+#[test]
+fn a_start_examines_a_bounded_number_of_candidates() {
+    use launcher::MAX_CANDIDATES_PER_START;
+    let fixture = Fixture::new("bounded-candidates");
+    fixture.install(OLD, "healthy");
+    fixture.stage(NEW, "healthy", true);
+    let junk: Vec<Version> = (0..=MAX_CANDIDATES_PER_START).map(|at| Version::new(0, 3, u16::try_from(at).unwrap())).collect();
+    for version in &junk {
+        fs::create_dir_all(fixture.layout.staged(*version)).unwrap();
+    }
+    assert_eq!(fixture.launcher(HEALTH_DEADLINE).prepare().unwrap(), Chosen::Run(OLD), "the genuine one waits");
+    let (next, examined) = junk.split_at(1);
+    for version in examined {
+        assert!(!fixture.layout.staged(*version).exists(), "{version}: examined, refused and removed");
+    }
+    assert!(fixture.layout.staged(next[0]).exists(), "the oldest junk waits for the next start");
+    assert_eq!(fixture.launcher(HEALTH_DEADLINE).prepare().unwrap(), Chosen::Trial(NEW));
+    assert!(junk.iter().all(|version| !fixture.state().is_bad(*version)));
 }
 
 /// A missing or unreadable state file is rebuilt from what is installed.
