@@ -25,10 +25,25 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::time::Instant as Clock;
 
+mod changes;
+mod flash;
+#[cfg(feature = "interaction")]
+mod input_records;
 #[cfg(feature = "links")]
 pub mod links;
 pub mod netscape;
 pub mod process;
+pub mod sample;
+mod title;
+mod voice_sink;
+
+pub use changes::Changed;
+use changes::Changes;
+pub use flash::{FlashRates, Flashing};
+#[cfg(feature = "interaction")]
+pub use input_records::InputRecords;
+use title::title;
+use voice_sink::Outbox;
 
 /// The most log lines held between two takes: a page carries at most the
 /// engine's `MAX_LOG_LINES_PER_PAGE`, and a feed a few pages; past this a
@@ -68,17 +83,16 @@ const _: () = assert!(interface_core::controls::MAX_SUBPAGES == neoteletext_core
 
 use interface_core::canvas::{PAGE_HEIGHT, PAGE_WIDTH};
 use interface_core::channel::{PAGES, page_index};
-use neoteletext_audio::port::{SoundFormat, SoundId, Start, VoiceSink};
 use neoteletext_audio::receiver::Receiver;
-use neoteletext_core::acq::{Decoder, EnhancementPacket, EnhancementStore, EnhancementSubPage, Event, StoredPage};
-use neoteletext_core::charset::{CharRef, CharSet, G2Set, to_unicode};
+use neoteletext_core::acq::{Decoder, EnhancementPacket, EnhancementStore, EnhancementSubPage, StoredPage};
+use neoteletext_core::charset::{CharRef, CharSet, G2Set};
 use neoteletext_core::compose::compose_level;
 use neoteletext_core::config::Config;
-use neoteletext_core::consts::{COLUMNS, FLASH_CYCLE_US, FLASH_UNITS, G2_RIGHT_GUILLEMET, ROWS};
+use neoteletext_core::consts::{COLUMNS, G2_RIGHT_GUILLEMET, ROWS};
 use neoteletext_core::consts::{ENHANCEMENT_PACKETS_LEVEL_35, MAGAZINES, MOT_PACKETS, PAGE_COMPLETION_TIMEOUT_US};
 use neoteletext_core::fsm::PageState;
 use neoteletext_core::glyphs::GlyphSet;
-use neoteletext_core::level1::{DisplayOptions, FlashRate, Glyph, Grid, build_grid};
+use neoteletext_core::level1::{DisplayOptions, Glyph, Grid, build_grid};
 #[cfg(feature = "links")]
 use neoteletext_core::nav::PageLinks;
 use neoteletext_core::packet::{Packet, PacketMeta};
@@ -89,7 +103,7 @@ use neoteletext_formats::detect::{AutoConfig, AutoReader, Format};
 use neoteletext_formats::item::Reader;
 use neoteletext_formats::t42::T42Variant;
 use neoteletext_image::palette::{Rgba, colour_map_palette};
-use protocol::audio::{Audio, MAX_MESSAGE_SAMPLES, Sound};
+use protocol::audio::Audio;
 use protocol::decoder::{FIRST_STORE_PAGES, MAX_STORE_PAGES, View};
 use std::cell::RefCell;
 
@@ -107,14 +121,6 @@ const ALL_ROWS: u32 = u32::MAX;
 /// What shows through transparent areas: black, as on a television.
 const PICTURE: Rgba = Rgba::opaque(0, 0, 0);
 const PAGE_DOTS: usize = PAGE_WIDTH as usize * PAGE_HEIGHT as usize;
-/// A title is the first text row with at least this many letters or digits.
-const TITLE_MINIMUM: usize = 3;
-/// A row is a picture, not a title, when more than a quarter of its drawn
-/// cells are mosaics.
-const MOSAIC_SHARE: usize = 3;
-/// Row 0 is the header; text rows are 1 to 23, row 24 the Fastext row.
-const FIRST_TEXT_ROW: usize = 1;
-const LAST_TEXT_ROW: usize = 23;
 #[cfg(feature = "links")]
 const FASTEXT_ROW: usize = 24;
 
@@ -235,19 +241,6 @@ pub struct Engine {
     /// sent, for the trusted core to check (INPUT.md section 7).
     #[cfg(feature = "interaction")]
     input: InputRecords,
-}
-
-/// The channel's records for its input, untrusted, in their order of
-/// arrival within each kind.
-#[cfg(feature = "interaction")]
-#[derive(Debug, Default, PartialEq, Eq)]
-pub struct InputRecords {
-    /// Cursor records' bodies (REQ-INT-005, REQ-INT-110), from packets and
-    /// `CU` lines.
-    pub cursors: Vec<[u8; neoteletext_input::cursor::BODY]>,
-    /// Control messages' bodies (REQ-INT-111), from packets, and a page's
-    /// `IM` line as `PAGE_MODES` (REQ-INT-114).
-    pub controls: Vec<Vec<u8>>,
 }
 
 impl Default for Engine {
@@ -728,131 +721,6 @@ fn fastext(stored: &StoredPage, grid: &Grid) -> protocol::links::Fastext {
     protocol::links::Fastext { keys: [target(red), target(green), target(yellow), target(cyan), target(links.index)], row24 }
 }
 
-/// What the engine's events said changed.
-#[derive(Default)]
-struct Changes {
-    touched: BTreeSet<u16>,
-    completed: BTreeSet<u16>,
-    /// Pages and sub-pages whose reception started.
-    started: BTreeSet<(u16, u16)>,
-    everything: bool,
-}
-
-impl Changes {
-    fn note(&mut self, event: &Event) {
-        match event {
-            Event::PageStarted(key) => {
-                self.touched.insert(key.address.mpp());
-                self.started.insert((key.address.mpp(), key.subcode.value()));
-            }
-            Event::PageErased(key) | Event::UpdateIndicator(key) | Event::PageUpdated { key, .. } => {
-                self.touched.insert(key.address.mpp());
-            }
-            Event::PageCompleted(key) => {
-                self.touched.insert(key.address.mpp());
-                self.completed.insert(key.address.mpp());
-            }
-            // Data every page of a magazine, or any page, may draw from.
-            Event::MagazineData(_) | Event::EnhancementPageChanged(_) => self.everything = true,
-            _ => {}
-        }
-    }
-}
-
-/// What changed since [`Engine::take_changed`] was last called.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct Changed {
-    /// The display pages whose reception moved.
-    pub pages: BTreeSet<u16>,
-    /// Every page may draw differently.
-    pub everything: bool,
-}
-
-/// The flash rates of the engine's decision E.48, in the order of
-/// [`FlashRates`]' bits.
-const RATES: [FlashRate; 4] = [FlashRate::Slow, FlashRate::FastPhase1, FlashRate::FastPhase2, FlashRate::FastPhase3];
-
-/// The set of flash rates a page's cells use: one bit for each of
-/// [`RATES`].
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct FlashRates(u8);
-
-impl FlashRates {
-    /// The rates of `cells`.
-    pub fn of(cells: impl Iterator<Item = FlashRate>) -> Self {
-        Self(cells.fold(0, |used, rate| used | RATES.iter().position(|&each| each == rate).map_or(0, |index| 1_u8 << index)))
-    }
-
-    fn is_empty(self) -> bool {
-        self.0 == 0
-    }
-
-    fn union(self, other: Self) -> Self {
-        Self(self.0 | other.0)
-    }
-
-    /// Whether any of these rates is in a different phase in `drawn` and
-    /// `now`: whether a page drawn in `drawn` looks different at `now`.
-    fn differ(self, drawn: FlashPhase, now: FlashPhase) -> bool {
-        RATES.iter().enumerate().any(|(index, &rate)| self.0 & (1_u8 << index) != 0 && drawn.is_on(rate) != now.is_on(rate))
-    }
-}
-
-/// The shown pages with flashing cells, each with the flash phase it was
-/// last drawn in and the rates it uses: the decoder wakes for flash only
-/// when one of them is shown, and only when a rate one of them uses
-/// changes phase, and draws a page again only when a rate it uses did
-/// (requirement 9.7). A page with slow flash alone is drawn twice a
-/// second, not seven times.
-#[derive(Debug, Default)]
-pub struct Flashing {
-    pages: BTreeMap<u16, (FlashPhase, FlashRates)>,
-}
-
-impl Flashing {
-    /// Records how `page` was last drawn.
-    pub fn drawn(&mut self, page: u16, rendered: &Rendered) {
-        match rendered.flash {
-            Some(flash) => self.pages.insert(page, flash),
-            None => self.pages.remove(&page),
-        };
-    }
-
-    /// Keeps only the pages still shown.
-    pub fn retain(&mut self, shown: &[u16]) {
-        self.pages.retain(|page, _| shown.contains(page));
-    }
-
-    /// The flashing pages that look different at `now_us` from how they
-    /// were drawn.
-    #[must_use]
-    pub fn due(&self, now_us: u64) -> Vec<u16> {
-        let phase = FlashPhase::at(Instant(now_us));
-        self.pages.iter().filter(|&(_, &(drawn, rates))| rates.differ(drawn, phase)).map(|(&page, _)| page).collect()
-    }
-
-    /// When a rate some shown page uses next changes phase, if any shown
-    /// page flashes: the start of that one of the twelve units of the
-    /// one-second cycle (the engine's decision E.48).
-    #[must_use]
-    pub fn next_us(&self, now_us: u64) -> Option<u64> {
-        let used = self.pages.values().fold(FlashRates::default(), |used, &(_, rates)| used.union(rates));
-        if used.is_empty() {
-            return None;
-        }
-        let units = u64::from(FLASH_UNITS);
-        let cycle = now_us.checked_div(FLASH_CYCLE_US).unwrap_or(0).saturating_mul(FLASH_CYCLE_US);
-        let within = now_us.saturating_sub(cycle);
-        let unit = within.saturating_mul(units).checked_div(FLASH_CYCLE_US).unwrap_or(0);
-        let phase = FlashPhase::at_unit(u8::try_from(unit).unwrap_or(0));
-        // The first later unit whose phase differs for a rate in use; every
-        // rate changes within a cycle, so one is found.
-        let ahead = (1..=units).find(|&ahead| used.differ(phase, FlashPhase::at_unit(u8::try_from(unit.saturating_add(ahead)).unwrap_or(0)))).unwrap_or(1);
-        let next = unit.saturating_add(ahead).saturating_mul(FLASH_CYCLE_US).div_ceil(units);
-        Some(cycle.saturating_add(next))
-    }
-}
-
 /// The page number a header packet starts, as teletext writes it.
 fn header_page(packet: &Packet) -> Option<u16> {
     match neoteletext_core::packet::decode(packet) {
@@ -913,62 +781,6 @@ impl PageLines<'_> {
     }
 }
 
-/// The voice sink of a decoder: each operation becomes a message for the
-/// trusted core.
-struct Outbox<'a>(&'a mut Vec<Audio>);
-
-fn sound(id: SoundId) -> Sound {
-    Sound { handle: id.handle, generation: id.generation }
-}
-
-impl VoiceSink for Outbox<'_> {
-    fn define(&mut self, id: SoundId, format: SoundFormat) {
-        self.0.push(Audio::Define { sound: sound(id), rate_hz: format.rate_hz, samples: format.samples });
-    }
-
-    fn samples(&mut self, id: SoundId, first: u32, pcm: &[i16]) {
-        let mut start = first;
-        for piece in pcm.chunks(MAX_MESSAGE_SAMPLES) {
-            self.0.push(Audio::Samples { sound: sound(id), first: start, pcm: piece.to_vec() });
-            start = start.saturating_add(u32::try_from(piece.len()).unwrap_or(u32::MAX));
-        }
-    }
-
-    fn forget(&mut self, id: SoundId) {
-        self.0.push(Audio::Forget(sound(id)));
-    }
-
-    fn stream(&mut self, id: SoundId, rate_hz: u32) {
-        self.0.push(Audio::Stream { sound: sound(id), rate_hz });
-    }
-
-    fn stream_samples(&mut self, id: SoundId, pcm: &[i16]) {
-        for piece in pcm.chunks(MAX_MESSAGE_SAMPLES) {
-            self.0.push(Audio::StreamSamples { sound: sound(id), pcm: piece.to_vec() });
-        }
-    }
-
-    fn start(&mut self, channel: u8, start: Start) {
-        self.0.push(Audio::Start {
-            channel,
-            sound: sound(start.sound),
-            gain: start.gain,
-            fade_ms: start.fade_ms,
-            looped: start.looped,
-            duck_percent: start.duck_percent,
-            after_current: start.after_current,
-        });
-    }
-
-    fn stop(&mut self, channel: u8, fade_ms: u16) {
-        self.0.push(Audio::Stop { channel, fade_ms });
-    }
-
-    fn gain(&mut self, channel: u8, gain: u8, fade_ms: u16) {
-        self.0.push(Audio::Gain { channel, gain, fade_ms });
-    }
-}
-
 /// A digest of a page's rows: two versions with the same digest show the
 /// same text and mosaics.
 fn digest(page: &StoredPage) -> u64 {
@@ -978,43 +790,12 @@ fn digest(page: &StoredPage) -> u64 {
     hasher.finish()
 }
 
-/// The first text row with a few letters or digits: a title for the page
-/// list. The engine's grid says which cells are text, as opposed to
-/// mosaics, and its character sets give each text cell's character, with
-/// the page's national characters. Concealed text is left out.
-fn title(grid: &Grid) -> String {
-    for row in FIRST_TEXT_ROW..=LAST_TEXT_ROW {
-        // A row drawn mostly in mosaics is a picture: the capitals in it
-        // are graphics too, shown as letters by the blast-through rule.
-        let glyphs = (0..COLUMNS).filter_map(|column| grid.cell(row, column).map(|cell| cell.glyph));
-        let (mosaics, letters) = glyphs.fold((0_usize, 0_usize), |(mosaics, letters), glyph| match glyph {
-            Glyph::Mosaic { .. } => (mosaics.saturating_add(1), letters),
-            Glyph::Char(_) => (mosaics, letters.saturating_add(1)),
-            Glyph::Space => (mosaics, letters),
-        });
-        if mosaics.saturating_mul(MOSAIC_SHARE) > letters {
-            continue;
-        }
-        let text: String = (0..COLUMNS)
-            .map(|column| match grid.cell(row, column) {
-                Some(cell) if !cell.conceal => match cell.glyph {
-                    Glyph::Char(character) => to_unicode(character).base,
-                    Glyph::Space | Glyph::Mosaic { .. } => ' ',
-                },
-                _ => ' ',
-            })
-            .collect();
-        let words: Vec<&str> = text.split_whitespace().collect();
-        if words.iter().flat_map(|word| word.chars()).filter(|character| character.is_alphanumeric()).count() >= TITLE_MINIMUM {
-            return words.join(" ");
-        }
-    }
-    String::new()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use neoteletext_core::charset::to_unicode;
+    use neoteletext_core::consts::{FLASH_CYCLE_US, FLASH_UNITS};
+    use protocol::audio::Sound;
     use std::fmt::Write as _;
 
     /// Two pages in TTI, the engine's page file format: page 100 with a
@@ -1513,61 +1294,5 @@ LT,5,0,7,web:https://www.example.invalid/\nLK,101,https://sport.invalid/\n";
         engine.finish();
         assert_eq!(engine.feed(b""), [] as [(u16, String); 0]);
         assert_eq!(engine.finish(), [] as [(u16, String); 0]);
-    }
-}
-
-/// Sample page files for examples and tests: TTI, the engine's page file
-/// format, with a coloured title, a few lines of text and a band of
-/// mosaics on each page.
-pub mod sample {
-    use std::fmt::Write;
-
-    /// Alpha colour codes 1 to 7 (EN 300 706 Table 26), written as TTI's
-    /// escape followed by the code plus 0x40.
-    const COLOURS: [char; 6] = ['A', 'B', 'C', 'D', 'E', 'F'];
-    /// Mosaic colour codes 0x11 to 0x17, and a run of solid mosaic blocks.
-    const MOSAICS: [char; 6] = ['Q', 'R', 'S', 'T', 'U', 'V'];
-    const SOLID_BLOCKS: &str = "\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f";
-
-    /// One TTI page per number in `pages`, titled `titles[i % len]`.
-    #[must_use]
-    pub fn tti(pages: &[u16], titles: &[&str]) -> Vec<u8> {
-        let mut out = String::new();
-        // With no titles, every page is untitled.
-        let titles = titles.iter().copied().cycle().chain(core::iter::repeat(""));
-        for (((&page, colour), mosaic), title) in pages.iter().zip(COLOURS.iter().cycle()).zip(MOSAICS.iter().cycle().skip(1)).zip(titles) {
-            let _ = write!(
-                out,
-                "PN,{page:03X}00\nSC,0000\nPS,8000\nOL,1,\x1b{colour}\x1b\x4d{title}\nOL,4,\x1bGPage {page:03X} of the sample channel\nOL,6,\x1bFThe teletext engine decoded and drew this.\nOL,10,\x1b{mosaic}{SOLID_BLOCKS}\nOL,11,\x1b{mosaic}{SOLID_BLOCKS}\n\n"
-            );
-        }
-        out.into_bytes()
-    }
-}
-
-#[cfg(feature = "interaction")]
-impl InputRecords {
-    /// A cursor or control record's packet: its body kept when it reads.
-    fn take_packet(&mut self, packet: &Packet) {
-        use neoteletext_input::control;
-        if let Some(Ok(cursor)) = neoteletext_input::cursor::from_packet(packet) {
-            self.cursors.push(cursor.body());
-            return;
-        }
-        let mut buffer = [0_u8; control::FRAGMENT_DATA];
-        if let Some(Ok(message)) = control::from_packet(packet, &mut buffer) {
-            self.control(&message);
-        }
-    }
-
-    fn page_modes(&mut self, page: u16, modes: u32) {
-        self.control(&neoteletext_input::control::Control::PageModes { page, modes });
-    }
-
-    fn control(&mut self, message: &neoteletext_input::control::Control<'_>) {
-        let mut body = [0_u8; neoteletext_input::control::MAX_BODY];
-        if let Ok(length) = neoteletext_input::control::write_body(message, &mut body) {
-            self.controls.push(body.get(..length).unwrap_or(&[]).to_vec());
-        }
     }
 }
