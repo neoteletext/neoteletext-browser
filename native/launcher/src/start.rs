@@ -13,7 +13,7 @@ use std::sync::mpsc;
 use update::layout::{HEALTHY_LINE, LAUNCHED_VARIABLE};
 use update::platform::MARKED_PROGRAM;
 
-use crate::{Chosen, Ended, Launcher, install};
+use crate::{Chosen, Ended, Launcher, launcher_release};
 
 /// The longest line the broker's output is read in.
 const MAX_LINE: u64 = 64;
@@ -71,7 +71,7 @@ pub fn start(launcher: &Launcher, chosen: Chosen, arguments: &[OsString]) -> Res
             // keeping of the old launcher (section 7).
             let healthy = heard.recv().is_ok();
             if healthy {
-                install::forget_old_launcher(launcher);
+                launcher_release::forget_old_launcher(launcher);
             }
             healthy
         }

@@ -15,7 +15,7 @@ use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use crate::{Role, Spawn};
+use crate::{Report, Role, Spawn};
 
 /// Every profile's start: nothing, then Apple's baseline, then the
 /// program itself and the null device for what is not wanted.
@@ -143,8 +143,13 @@ fn profile(program: &Path, role: Role, writable: Option<&Path>) -> String {
     profile
 }
 
+/// A process's own side: the broker confined it at its start.
+pub(crate) fn apply() -> Report {
+    Report { layers: vec![String::from("sandbox-exec, by its parent")] }
+}
+
 /// The command that runs the helper under its profile.
-pub fn command(spawn: &Spawn<'_>) -> Command {
+pub(crate) fn command(spawn: &Spawn<'_>) -> Command {
     let mut command = Command::new("/usr/bin/sandbox-exec");
     command.arg("-p").arg(profile(spawn.program, spawn.role, spawn.writable)).arg(spawn.program).args(spawn.arguments);
     command
