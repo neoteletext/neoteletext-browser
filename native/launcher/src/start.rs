@@ -22,8 +22,8 @@ use crate::{Chosen, Deadline, Ended, Launcher, launcher_release};
 
 /// The longest line the broker's output is read in.
 const MAX_LINE: u64 = 64;
-/// How often a broker that closed its output but has not ended is looked
-/// at, while its deadline runs.
+/// How often a trial's broker is looked at to see whether it has ended,
+/// while its deadline runs.
 const EXIT_POLL: Duration = Duration::from_millis(50);
 
 /// A line of the broker's that means something.
@@ -92,13 +92,13 @@ pub fn start(launcher: &Launcher, chosen: Chosen, arguments: &[OsString]) -> Res
         Chosen::Run(_) => {
             // A committed version: its health ends a launcher release's
             // keeping of the old launcher (section 7).
-            ended.healthy = heard.iter().any(|line| line == Heard::Healthy);
+            ended.healthy = matches!(wait_for(&heard, &mut child, None, |line| line == Heard::Healthy), Waited::Heard(_));
             if ended.healthy {
                 launcher_release::forget_old_launcher(launcher);
             }
         }
     }
-    let status = child.wait().map_err(|error| format!("cannot wait for the broker: {error}"))?;
+    let status = wait_whole(&mut child).map_err(|error| format!("cannot wait for the broker: {error}"))?;
     ended.success = status.success();
     ended.code = status.code();
     if let Chosen::Trial(version) = chosen
@@ -120,24 +120,33 @@ enum Waited {
     Deadline,
 }
 
-/// Waits until `by` for a line `wanted` accepts. A broker that closes its
-/// output is still held to `by`: it may close it and go on running.
+/// Waits until `by` for a line `wanted` accepts, or for the broker to
+/// end. Its end is looked at every [`EXIT_POLL`], not only when its output
+/// closes: a helper it started holds the output open after it ends, and a
+/// broker may close it and go on running (finding F-34).
 fn wait_for(heard: &mpsc::Receiver<Heard>, child: &mut Child, by: Option<Instant>, wanted: impl Fn(Heard) -> bool) -> Waited {
+    let mut closed = false;
     loop {
         let left = by.map_or(Duration::MAX, |by| by.saturating_duration_since(Instant::now()));
-        match heard.recv_timeout(left) {
-            Ok(line) if wanted(line) => return Waited::Heard(line),
-            Ok(_) => {}
-            Err(mpsc::RecvTimeoutError::Timeout) => return Waited::Deadline,
-            Err(mpsc::RecvTimeoutError::Disconnected) => loop {
-                if child.try_wait().ok().flatten().is_some() {
-                    return Waited::Ended;
+        let line = if closed {
+            std::thread::sleep(left.min(EXIT_POLL));
+            None
+        } else {
+            match heard.recv_timeout(left.min(EXIT_POLL)) {
+                Ok(line) => Some(line),
+                Err(mpsc::RecvTimeoutError::Timeout) => None,
+                Err(mpsc::RecvTimeoutError::Disconnected) => {
+                    closed = true;
+                    None
                 }
-                if by.is_some_and(|by| Instant::now() >= by) {
-                    return Waited::Deadline;
-                }
-                std::thread::sleep(EXIT_POLL);
-            },
+            }
+        };
+        match line {
+            Some(line) if wanted(line) => return Waited::Heard(line),
+            None if child.try_wait().ok().flatten().is_some() => return Waited::Ended,
+            None if by.is_some_and(|by| Instant::now() >= by) => return Waited::Deadline,
+            // A line not wanted, or nothing yet.
+            _ => {}
         }
     }
 }
@@ -174,6 +183,26 @@ fn hear(output: impl std::io::Read, said: &mpsc::Sender<Heard>) {
             }
         }
     }
+}
+
+/// Waits for the broker to end, then ends whatever is left in its process
+/// group (finding F-34): a broker that crashed leaves its helpers running
+/// with nothing to end them. The group is ended while the broker is ended
+/// but not yet reaped, so its number, the group's, cannot meanwhile have
+/// been given to another process. On Windows each helper's job ends with
+/// the broker, which holds it (`sandboxing.md` section 3).
+fn wait_whole(child: &mut Child) -> std::io::Result<std::process::ExitStatus> {
+    #[cfg(unix)]
+    if let Some(group) = rustix::process::Pid::from_raw(i32::try_from(child.id()).unwrap_or(0)) {
+        use rustix::process::{WaitId, WaitIdOptions, waitid};
+        while let Err(error) = waitid(WaitId::Pid(group), WaitIdOptions::EXITED | WaitIdOptions::NOWAIT) {
+            if error != rustix::io::Errno::INTR {
+                break;
+            }
+        }
+        let _ = rustix::process::kill_process_group(group, rustix::process::Signal::KILL);
+    }
+    child.wait()
 }
 
 /// Ends the broker and every process it started: its process group on

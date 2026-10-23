@@ -523,6 +523,33 @@ fn a_previous_bundle_not_signed_is_not_rolled_back_to() {
     assert!(!fixture.log().contains("0.1.0"), "{}", fixture.log());
 }
 
+/// Finding F-34: a broker that crashes leaves no helper behind; the
+/// launcher ends its whole process group after it ends.
+#[cfg(unix)]
+#[test]
+fn a_broker_that_crashes_leaves_no_helper() {
+    /// How long a helper killed by the launcher is given to be gone.
+    const GONE_WITHIN: Duration = Duration::from_secs(5);
+    let fixture = Fixture::new("orphan");
+    fixture.install(OLD, "healthy");
+    fixture.stage(NEW, "orphan", true);
+    fixture.run(NO_DEADLINE_NEEDED);
+    let helpers = fs::read_to_string(fixture.folder.join("log.helpers")).unwrap();
+    let helpers: Vec<i32> = helpers.lines().map(|line| line.parse().unwrap()).collect();
+    assert!(!helpers.is_empty(), "the broken broker left helpers");
+    let alive =
+        |pid: i32| std::process::Command::new("/bin/kill").args(["-0", &pid.to_string()]).stderr(std::process::Stdio::null()).status().unwrap().success();
+    let started = std::time::Instant::now();
+    while helpers.iter().any(|&pid| alive(pid)) && started.elapsed() < GONE_WITHIN {
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    let left: Vec<i32> = helpers.iter().copied().filter(|&pid| alive(pid)).collect();
+    for &pid in &left {
+        let _ = std::process::Command::new("/bin/kill").args(["-9", &pid.to_string()]).status();
+    }
+    assert!(left.is_empty(), "helpers outlived their broker: {left:?}");
+}
+
 /// A missing or unreadable state file is rebuilt from what is installed.
 #[test]
 fn a_lost_state_is_rebuilt_from_what_is_installed() {
