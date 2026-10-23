@@ -1,8 +1,9 @@
+use crate::browser::fixture::{blank_browser, middle};
 use alloc::string::String;
 use alloc::vec::Vec;
 
 use crate::browser::{Browser, Frame, Key, Modifiers, Output};
-use crate::geometry::{Point, Rect};
+use crate::geometry::Point;
 use crate::library::{ClearRange, ClosedTab, HistoryRequest, HistoryRow, HistoryView};
 use crate::test_canvas::Recorder;
 
@@ -32,17 +33,12 @@ fn view() -> HistoryView {
 }
 
 fn open() -> Browser {
-    let mut browser = Browser::new(Frame { left_inset: 0.0, window_buttons: false });
-    browser.draw(&mut Recorder::new(), 1440.0, 900.0, 0);
+    let mut browser = blank_browser();
     browser.key(Key::Text("y"), Modifiers { command: true, ..Modifiers::default() }, 0);
     browser.set_history(view());
     browser.draw(&mut Recorder::new(), 1440.0, 900.0, 0);
     browser.take_outputs();
     browser
-}
-
-fn middle(rect: Rect) -> Point {
-    Point::new(f64::midpoint(rect.x0, rect.x1), f64::midpoint(rect.y0, rect.y1))
 }
 
 /// Requirement 20.4: the panel opens by its key, shows the day's heading,

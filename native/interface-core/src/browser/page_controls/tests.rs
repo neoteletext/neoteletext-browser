@@ -1,4 +1,5 @@
 use super::*;
+use crate::browser::fixture::middle;
 use crate::browser::{Frame, Modifiers, StripState, TabInfo};
 use crate::canvas::PageKey;
 use crate::channel::{Channel, PAGES, PageInfo, Status};
@@ -64,7 +65,6 @@ fn the_sub_page_control_steps_and_returns_to_the_latest() {
     let mut canvas = Recorder::new();
     browser.draw(&mut canvas, WIDTH, HEIGHT, OPEN);
     assert!(canvas.texts.iter().any(|(_, text)| text == "2/4"), "the second of four");
-    let middle = |rect: Rect| Point::new(f64::midpoint(rect.x0, rect.x1), f64::midpoint(rect.y0, rect.y1));
     let ui = &browser.page_controls;
     let (previous, count, next) = (ui.previous, ui.count, ui.next);
     for (rect, control) in [(previous, PageControl::SubPage(false)), (next, PageControl::SubPage(true)), (count, PageControl::Latest)] {

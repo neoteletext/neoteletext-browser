@@ -131,6 +131,7 @@ impl Browser {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::browser::fixture::middle;
     use crate::browser::{CertificateProblem, Frame, StripState};
     use crate::test_canvas::Recorder;
 
@@ -146,10 +147,6 @@ mod tests {
         let mut canvas = Recorder::new();
         browser.draw(&mut canvas, 1440.0, 900.0, 0);
         (browser, canvas)
-    }
-
-    fn middle(rect: Rect) -> Point {
-        Point::new(f64::midpoint(rect.x0, rect.x1), f64::midpoint(rect.y0, rect.y1))
     }
 
     /// Requirement 7.13: the screen names the host the user asked for and

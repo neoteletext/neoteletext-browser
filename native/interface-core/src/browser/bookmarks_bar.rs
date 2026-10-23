@@ -184,24 +184,15 @@ impl Browser {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::browser::{Frame, Key, Modifiers};
+    use crate::browser::fixture::{blank_browser, middle};
+    use crate::browser::{Key, Modifiers};
     use crate::test_canvas::Recorder;
-
-    fn middle(rect: Rect) -> Point {
-        Point::new(f64::midpoint(rect.x0, rect.x1), f64::midpoint(rect.y0, rect.y1))
-    }
-
-    fn browser() -> Browser {
-        let mut browser = Browser::new(Frame { left_inset: 0.0, window_buttons: false });
-        browser.draw(&mut Recorder::new(), 1440.0, 900.0, 0);
-        browser
-    }
 
     /// The middle button opens a bar bookmark in a new tab; on a folder's
     /// chip it opens nothing.
     #[test]
     fn the_middle_button_opens_a_bar_bookmark_in_a_new_tab() {
-        let mut browser = browser();
+        let mut browser = blank_browser();
         let items = alloc::vec![
             ItemRow { number: 1, folder: false, name: "News".into(), address: "https://news.example/".into(), place: String::new() },
             ItemRow { number: 2, folder: true, name: "Weather".into(), address: String::new(), place: String::new() },
@@ -220,7 +211,7 @@ mod tests {
     /// Command-Shift-B asks to show or hide it.
     #[test]
     fn the_bar_opens_its_bookmarks() {
-        let mut browser = browser();
+        let mut browser = blank_browser();
         browser.key(Key::Text("b"), Modifiers { command: true, shift: true, ..Modifiers::default() }, 0);
         assert_eq!(browser.take_outputs(), [Output::Bar(BarRequest::Show(true))]);
         let items = alloc::vec![

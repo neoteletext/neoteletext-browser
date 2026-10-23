@@ -1,4 +1,5 @@
 use super::*;
+use crate::browser::fixture::middle;
 use alloc::format;
 use alloc::vec;
 
@@ -14,10 +15,6 @@ fn browser_with(count: usize, active: usize) -> Browser {
     browser.set_tabs(tabs.collect(), active);
     browser.draw(&mut Recorder::new(), 1440.0, 900.0, 0);
     browser
-}
-
-fn middle(rect: Rect) -> Point {
-    Point::new(f64::midpoint(rect.x0, rect.x1), f64::midpoint(rect.y0, rect.y1))
 }
 
 /// Decision 69: the tabs that fit, the active one always among them,

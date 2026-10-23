@@ -1,5 +1,6 @@
 use super::*;
-use crate::browser::{Frame, Modifiers};
+use crate::browser::Modifiers;
+use crate::browser::fixture::{blank_browser, middle};
 use crate::cookies::CookieRow;
 use crate::test_canvas::Recorder;
 
@@ -20,18 +21,13 @@ fn view() -> CookiesView {
 }
 
 fn open() -> Browser {
-    let mut browser = Browser::new(Frame { left_inset: 0.0, window_buttons: false });
-    browser.draw(&mut Recorder::new(), 1440.0, 900.0, 0);
+    let mut browser = blank_browser();
     browser.manage_cookies();
     assert_eq!(browser.take_outputs(), [Output::Console(true), Output::Cookies(CookiesRequest::Panel(true))], "the console opens at its cookies");
     browser.set_cookies(view());
     browser.draw(&mut Recorder::new(), 1440.0, 900.0, 0);
     browser.take_outputs();
     browser
-}
-
-fn middle(rect: Rect) -> Point {
-    Point::new(f64::midpoint(rect.x0, rect.x1), f64::midpoint(rect.y0, rect.y1))
 }
 
 /// Requirement 21.6: the panel lists sites and channels with their

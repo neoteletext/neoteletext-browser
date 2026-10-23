@@ -49,8 +49,15 @@ pub(super) fn press_at(browser: &mut Browser, canvas: &mut Recorder, rect: Rect)
     browser.pointer_pressed(canvas, false, 0);
 }
 
+/// A browser with no tabs and an empty channel, drawn once at the
+/// window's size, as most panels' tests start.
+pub(super) fn blank_browser() -> Browser {
+    let mut browser = Browser::new(Frame { left_inset: 0.0, window_buttons: false });
+    browser.draw(&mut Recorder::new(), WIDTH, HEIGHT, 0);
+    browser
+}
+
 /// The middle of `rect`.
-#[expect(dead_code, reason = "the panels' tests take it when their own copies go")]
 pub(super) fn middle(rect: Rect) -> Point {
     Point::new(f64::midpoint(rect.x0, rect.x1), f64::midpoint(rect.y0, rect.y1))
 }

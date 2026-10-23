@@ -1,4 +1,5 @@
 use super::*;
+use crate::browser::fixture::middle;
 
 use crate::browser::{Browser, Frame, Key, Modifiers, Output};
 use crate::controls::{FastextKey, PageControl};
@@ -8,10 +9,6 @@ use crate::test_canvas::Recorder;
 
 const WIDTH: f64 = 1440.0;
 const HEIGHT: f64 = 900.0;
-
-fn middle(rect: Rect) -> Point {
-    Point::new(f64::midpoint(rect.x0, rect.x1), f64::midpoint(rect.y0, rect.y1))
-}
 
 fn rect_of(browser: &Browser, wanted: Button) -> Rect {
     browser.remote.buttons.iter().find(|(button, _)| *button == wanted).unwrap().1

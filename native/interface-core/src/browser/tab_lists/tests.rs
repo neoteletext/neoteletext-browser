@@ -1,11 +1,8 @@
 use super::*;
+use crate::browser::fixture::middle;
 use crate::browser::{Frame, StripState};
 use crate::library::TabEntry;
 use crate::test_canvas::Recorder;
-
-fn middle(rect: Rect) -> Point {
-    Point::new(f64::midpoint(rect.x0, rect.x1), f64::midpoint(rect.y0, rect.y1))
-}
 
 fn browser() -> Browser {
     let mut browser = Browser::new(Frame { left_inset: 0.0, window_buttons: false });

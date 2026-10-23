@@ -1,23 +1,14 @@
 use super::*;
-use crate::browser::{Frame, Modifiers};
+use crate::browser::Modifiers;
+use crate::browser::fixture::{blank_browser, middle};
 use crate::library::FolderRow;
 use crate::test_canvas::Recorder;
-
-fn middle(rect: Rect) -> Point {
-    Point::new(f64::midpoint(rect.x0, rect.x1), f64::midpoint(rect.y0, rect.y1))
-}
-
-fn browser() -> Browser {
-    let mut browser = Browser::new(Frame { left_inset: 0.0, window_buttons: false });
-    browser.draw(&mut Recorder::new(), 1440.0, 900.0, 0);
-    browser
-}
 
 /// Requirement 20.16: the star asks; the popover renames, moves, keeps
 /// the whole channel, removes, and closes as Done when pressed outside.
 #[test]
 fn the_popover_asks_for_each_change() {
-    let mut browser = browser();
+    let mut browser = blank_browser();
     browser.key(Key::Text("d"), Modifiers { command: true, ..Modifiers::default() }, 0);
     assert_eq!(browser.take_outputs(), [Output::Bookmark]);
     let folders =
