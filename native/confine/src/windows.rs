@@ -85,7 +85,7 @@ pub fn remove_containers() {
 }
 
 /// Starts a helper confined as its role says.
-pub fn spawn(spawn: &Spawn<'_>) -> io::Result<Process> {
+pub(crate) fn spawn(spawn: &Spawn<'_>) -> io::Result<Process> {
     let (their_stdin, our_stdin) = pipe()?;
     let (our_stdout, their_stdout) = pipe()?;
     keep_ours(our_stdin.0)?;
@@ -150,4 +150,13 @@ pub fn spawn(spawn: &Spawn<'_>) -> io::Result<Process> {
     std::mem::forget(process);
     std::mem::forget(job);
     Ok(Process::new(Some(stdin), Some(stdout), inner, report))
+}
+
+/// Starts the trusted core confined, its standard input and output the
+/// broker's two pipes to it.
+pub(crate) fn start_core(spawn: &Spawn<'_>) -> io::Result<(Process, Channel)> {
+    let mut process = self::spawn(spawn)?;
+    let writer = process.stdin.take().ok_or_else(|| io::Error::other("the core has no input"))?;
+    let reader = process.stdout.take().ok_or_else(|| io::Error::other("the core has no output"))?;
+    Ok((process, Channel::new(reader, writer)))
 }

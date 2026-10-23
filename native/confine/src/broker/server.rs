@@ -8,6 +8,10 @@ use std::path::{Path, PathBuf};
 
 use super::wire::{Exit, Reply, Request, decode_request, encode_reply};
 use super::{COOKIE_KEY_BYTES, Channel, MAX_HELPERS, MAX_REPLY, MAX_REQUEST, MAX_UPDATE_STATE, Program, UpdaterGrant};
+#[cfg(unix)]
+use crate::unix as platform;
+#[cfg(windows)]
+use crate::windows as platform;
 use crate::{Process, Report, Role, Spawn};
 
 /// What the broker does for the core that is not starting helpers.
@@ -45,39 +49,10 @@ pub struct Core {
 /// # Errors
 /// When it cannot be started confined.
 pub fn start_core(program: &Path, arguments: &[OsString], writable: &Path, environment: &[(OsString, OsString)]) -> io::Result<Core> {
-    #[cfg(unix)]
-    {
-        use std::process::Stdio;
-        let (ours, theirs) = std::os::unix::net::UnixStream::pair()?;
-        #[cfg(target_os = "macos")]
-        let mut command = crate::macos::command(&Spawn { program, arguments, role: Role::Core, environment, local_network: false, writable: Some(writable) });
-        #[cfg(not(target_os = "macos"))]
-        let mut command = {
-            let _ = writable;
-            let mut command = std::process::Command::new(program);
-            command.args(arguments);
-            command
-        };
-        command.env_clear();
-        for (name, value) in environment {
-            command.env(name, value);
-        }
-        let child = command.stdin(Stdio::from(std::os::fd::OwnedFd::from(theirs))).stdout(Stdio::null()).stderr(Stdio::inherit()).spawn()?;
-        #[cfg(target_os = "macos")]
-        let report = Report { layers: vec![String::from("sandbox-exec")] };
-        #[cfg(not(target_os = "macos"))]
-        let report = Report { layers: vec![String::from("confines itself at its start")] };
-        let process = Process::new(None, None, child, report.clone());
-        Ok(Core { process, channel: Channel::new(ours), report })
-    }
-    #[cfg(windows)]
-    {
-        let mut process = crate::windows::spawn(&Spawn { program, arguments, role: Role::Core, environment, local_network: false, writable: Some(writable) })?;
-        let writer = process.stdin.take().ok_or_else(|| io::Error::other("the core has no input"))?;
-        let reader = process.stdout.take().ok_or_else(|| io::Error::other("the core has no output"))?;
-        let report = process.report.clone();
-        Ok(Core { process, channel: Channel::new(reader, writer), report })
-    }
+    let (process, channel) =
+        platform::start_core(&Spawn { program, arguments, role: Role::Core, environment, local_network: false, writable: Some(writable) })?;
+    let report = process.report.clone();
+    Ok(Core { process, channel, report })
 }
 
 /// The helpers the broker started, by number.

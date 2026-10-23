@@ -5,6 +5,10 @@ use std::ffi::OsString;
 use std::io;
 use std::path::Path;
 
+#[cfg(unix)]
+use crate::unix as platform;
+#[cfg(windows)]
+use crate::windows as platform;
 use crate::{Process, Report, Role};
 
 /// How the trusted core starts a helper.
@@ -63,32 +67,7 @@ pub fn apply(role: Role, writable: Option<&Path>) -> Result<Report, String> {
 /// # Errors
 /// When the helper cannot be started, confined.
 pub fn spawn(spawn: &Spawn<'_>) -> io::Result<Process> {
-    #[cfg(windows)]
-    {
-        crate::windows::spawn(spawn)
-    }
-    #[cfg(not(windows))]
-    {
-        use std::process::Stdio;
-        #[cfg(target_os = "macos")]
-        let mut command = crate::macos::command(spawn);
-        #[cfg(not(target_os = "macos"))]
-        let mut command = {
-            let mut command = std::process::Command::new(spawn.program);
-            command.args(spawn.arguments);
-            command
-        };
-        command.env_clear();
-        for (name, value) in spawn.environment {
-            command.env(name, value);
-        }
-        let mut child = command.stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::inherit()).spawn()?;
-        #[cfg(target_os = "macos")]
-        let report = Report { layers: vec![String::from("sandbox-exec")] };
-        #[cfg(not(target_os = "macos"))]
-        let report = Report { layers: vec![String::from("confines itself at its start")] };
-        Ok(Process::new(child.stdin.take(), child.stdout.take(), child, report))
-    }
+    platform::spawn(spawn)
 }
 
 #[cfg(test)]
