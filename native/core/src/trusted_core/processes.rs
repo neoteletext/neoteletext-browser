@@ -103,9 +103,10 @@ pub(super) fn start_bookmark_reader(broker: &Arc<Broker>, file: Vec<u8>, events:
 }
 
 /// How long the bookmark reader has to read a file and say what it holds
-/// before it is killed (finding F-85): its largest file, 24 MiB
-/// (`MAX_BOOKMARK_FILE`), read in well under a second here; ten seconds
-/// leave room for a slow computer.
+/// before it is killed (finding F-85). Its largest file is 24 MiB
+/// (`MAX_BOOKMARK_FILE`); its reading time is not measured, and ten
+/// seconds is chosen as far above what a bounded, single-pass reader of
+/// that much should need.
 const BOOKMARK_READ_DEADLINE: std::time::Duration = std::time::Duration::from_secs(10);
 
 /// Gives the bookmark reader `child` the file, and sends what it reports,
