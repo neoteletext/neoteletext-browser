@@ -16,7 +16,10 @@ use update::state::State;
 use update::version::Version;
 use update::wire::{FromUpdater, ToUpdater, read_from_updater, write_to_updater};
 
-use super::Event;
+use neoteletext::settings as stored;
+use protocol::{ToCore, ToInterface, clean};
+
+use super::{Core, Event};
 
 /// How often the updater looks while the browser runs (section 3.4).
 pub const CHECK_INTERVAL: Duration = Duration::from_secs(24 * 60 * 60);
@@ -335,6 +338,45 @@ impl Updates {
             text.push_str("Checking for updates");
         }
         text
+    }
+}
+
+impl Core {
+    /// Updates as the settings panel shows them (section 3.4 of the
+    /// installation design), and the strip's offer, said once.
+    pub(super) fn send_update(&mut self) -> Result<(), String> {
+        if self.updates.strip
+            && let Some(version) = self.updates.offer()
+        {
+            self.updates.later();
+            self.say(format!("NeoTeletext {version} is available: Install it in Settings"))?;
+        }
+        let status = self.updates.status(self.settings.check_updates, neoteletext::calendar::utc_now());
+        let view = interface_core::settings::UpdateView {
+            version: self.updates.running().map(|version| version.to_string()).unwrap_or_default(),
+            status: clean(&status, protocol::settings::MAX_UPDATE_STATUS),
+            offer: self.updates.offer().map(|version| version.to_string()),
+            checking: self.settings.check_updates,
+        };
+        self.send(&ToInterface::Update(view))
+    }
+
+    /// The window's first frame, a part of the version's health, or the
+    /// user's acceptance of the version offered (sections 3.2 and 3.4).
+    pub(super) fn update_intent(&mut self, intent: &ToCore) -> Result<(), String> {
+        if matches!(intent, ToCore::InstallUpdate) {
+            self.updates.install();
+            return self.send_update();
+        }
+        self.updates.drawn();
+        Ok(())
+    }
+
+    /// Starts the updater when the settings let it check (section 3.4).
+    pub(super) fn start_updater(&mut self) {
+        let Ok(broker) = self.broker().cloned() else { return };
+        let proxy = self.settings.proxy.as_ref().map(stored::Proxy::url);
+        self.updates.start(&broker, self.settings.check_updates, proxy.as_deref(), &self.events);
     }
 }
 

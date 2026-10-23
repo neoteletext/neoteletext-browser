@@ -593,7 +593,7 @@ impl Core {
             // Another browser's file: read by a decoder, never here
             // (requirement 3.2, decision 71).
             Ok(bytes) if bytes.len() <= neoteletext::bookmarks::MAX_FILE && protocol::decoder::is_netscape_bookmarks(&bytes) => {
-                match self.broker().and_then(|broker| super::start_bookmark_reader(broker, bytes, self.events.clone())) {
+                match self.broker().and_then(|broker| super::processes::start_bookmark_reader(broker, bytes, self.events.clone())) {
                     Ok(()) => notice("Reading another browser's bookmarks…"),
                     Err(reason) => notice(&format!("Not imported: {reason}")),
                 }
