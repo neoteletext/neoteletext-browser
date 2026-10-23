@@ -1233,6 +1233,7 @@ impl Core {
     fn change_setting(&mut self, change: SettingChange) -> Result<(), String> {
         let current = self.session.active_tab().and_then(|tab| tab.address()).map(|address| address.channel_text().to_owned());
         let cookies = if let SettingChange::Cookies(mode) = change { Some(mode) } else { None };
+        let remote = matches!(change, SettingChange::Remote(_));
         match checked_change(&mut self.settings, change, current.as_deref()) {
             Ok(security) => {
                 self.refusal = None;
@@ -1242,6 +1243,9 @@ impl Core {
                 }
                 if let Some(text) = security {
                     self.say(text)?;
+                }
+                if remote {
+                    self.send(&ToInterface::Remote(self.settings.remote))?;
                 }
             }
             Err(reason) => self.refusal = Some(reason),
@@ -1311,6 +1315,12 @@ fn checked_change(settings: &mut Settings, change: SettingChange, current: Optio
             }
             let address = settings.local.remove(index);
             Ok(Some(format!("{address} on the local network no longer allowed")))
+        }
+        // Where the remote control is: the window's arrangement, said
+        // nowhere (decision 68).
+        SettingChange::Remote(place) => {
+            settings.remote = place;
+            Ok(None)
         }
         // Restoring the last session is the user's privacy, not a security
         // setting the strip says (requirement 20.24).
@@ -1822,6 +1832,7 @@ fn run(broker: &Arc<Broker>, given: impl Iterator<Item = String>) -> Result<(), 
     core.send_settings()?;
     core.send_all()?;
     core.send_bar()?;
+    core.send(&ToInterface::Remote(core.settings.remote))?;
     core.flush()?;
 
     let result = loop {

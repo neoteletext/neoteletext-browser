@@ -80,6 +80,7 @@ enum Library {
     Star(interface_core::library::StarView),
     Bar(interface_core::library::BarView),
     PageControls(interface_core::controls::PageControls),
+    Remote(interface_core::settings::RemotePlace),
 }
 
 /// What the reader thread hands to the window's thread.
@@ -880,6 +881,7 @@ impl App {
                 Library::History(view) => self.browser.set_history(view),
                 Library::Cookies(view) => self.browser.set_cookies(view),
                 Library::PageControls(controls) => self.browser.set_page_controls(controls),
+                Library::Remote(place) => self.browser.set_remote(place),
                 Library::Suggestions(suggestions) => self.browser.set_suggestions(suggestions),
                 Library::TabList(list) => self.browser.set_tab_list(list),
                 Library::Bookmarks(view) => self.browser.set_bookmarks(view, now),
@@ -1091,6 +1093,7 @@ fn read_core(proxy: &EventLoopProxy<Incoming>) {
             Ok(Some(ToInterface::Bar(view))) => Incoming::Library(Library::Bar(view)),
             Ok(Some(ToInterface::Window(window))) => Incoming::Window(window),
             Ok(Some(ToInterface::PageControls(controls))) => Incoming::Library(Library::PageControls(controls)),
+            Ok(Some(ToInterface::Remote(place))) => Incoming::Library(Library::Remote(place)),
             Ok(Some(ToInterface::Close) | None) => break None,
             Err(error) => break Some(format!("bad message from the trusted core: {error}")),
         };

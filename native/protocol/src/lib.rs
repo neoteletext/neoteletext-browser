@@ -140,6 +140,7 @@ const KIND_WINDOW_VIEW: u8 = 56;
 // The cookies panel (`cookies.md` section 9).
 const KIND_COOKIES_VIEW: u8 = 57;
 const KIND_PAGE_CONTROLS: u8 = 58;
+const KIND_REMOTE: u8 = 59;
 const KIND_HISTORY: u8 = 60;
 const KIND_BOOKMARKS: u8 = 61;
 const KIND_STAR: u8 = 62;
@@ -253,6 +254,9 @@ pub enum ToInterface {
     Cookies(cookies::CookiesView),
     /// The open page's controls (`page-controls.md`, decision 67).
     PageControls(interface_core::controls::PageControls),
+    /// Where the remote control is, as kept (`remote-control.md`, decision
+    /// 68).
+    Remote(settings::RemotePlace),
     /// The browser is closing: the interface ends.
     Close,
 }
@@ -745,6 +749,10 @@ pub fn write_to_interface(out: &mut dyn Write, message: &ToInterface) -> Result<
             controls::push_controls(&mut payload, view)?;
             KIND_PAGE_CONTROLS
         }
+        ToInterface::Remote(place) => {
+            settings::push_remote(&mut payload, *place)?;
+            KIND_REMOTE
+        }
         ToInterface::Close => KIND_CLOSE,
     };
     write_frame(out, kind, &payload)
@@ -873,6 +881,7 @@ pub fn read_from_core(input: &mut dyn Read) -> Result<Option<ToInterface>, Proto
         KIND_WINDOW_VIEW => ToInterface::Window(library::read_window(&mut fields)?),
         KIND_COOKIES_VIEW => ToInterface::Cookies(cookies::read_view(&mut fields)?),
         KIND_PAGE_CONTROLS => ToInterface::PageControls(controls::read_controls(&mut fields)?),
+        KIND_REMOTE => ToInterface::Remote(settings::read_remote(&mut fields)?),
         KIND_CLOSE => ToInterface::Close,
         other => return Err(ProtocolError::UnknownKind(other)),
     };
@@ -1207,6 +1216,7 @@ mod tests {
                 subcode: 3,
             }),
             ToInterface::PageControls(interface_core::controls::PageControls::default()),
+            ToInterface::Remote(settings::RemotePlace { mode: settings::RemoteMode::Floating, x: 800, y: 120 }),
             ToInterface::History(library::HistoryView { query: "news".into(), total: 0, ..library::HistoryView::default() }),
             ToInterface::Suggestions(library::Suggestions { text: "n".into(), inline: "news.example".into(), rows: Vec::new() }),
             ToInterface::TabList(library::TabList { forward: true, entries: Vec::new(), chapters: Vec::new() }),

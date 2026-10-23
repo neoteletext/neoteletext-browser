@@ -18,7 +18,7 @@ pub const MAX_VOLUME: u8 = 100;
 /// The longest refusal the panel says.
 pub const MAX_REFUSAL: usize = 160;
 
-pub use interface_core::settings::{CookieMode, ProxyView, SettingChange, SettingsView};
+pub use interface_core::settings::{CookieMode, MAX_REMOTE_PLACE, ProxyView, RemoteMode, RemotePlace, SettingChange, SettingsView};
 
 const PROXY_NONE: u8 = 0;
 const PROXY_HTTP: u8 = 1;
@@ -33,6 +33,39 @@ const CHANGE_REMOVE_LOCAL: u8 = 7;
 // 8 was "Remember history", removed by decision 65; never reused.
 const CHANGE_RESTORE_SESSION: u8 = 9;
 const CHANGE_COOKIES: u8 = 10;
+const CHANGE_REMOTE: u8 = 11;
+const REMOTE_HIDDEN: u8 = 0;
+const REMOTE_DOCKED: u8 = 1;
+const REMOTE_FLOATING: u8 = 2;
+
+/// The remote control's place (decision 68).
+pub(crate) fn push_remote(payload: &mut Vec<u8>, place: RemotePlace) -> Result<(), ProtocolError> {
+    if place.x > MAX_REMOTE_PLACE || place.y > MAX_REMOTE_PLACE {
+        return Err(ProtocolError::BadValue("remote place"));
+    }
+    payload.push(match place.mode {
+        RemoteMode::Hidden => REMOTE_HIDDEN,
+        RemoteMode::Docked => REMOTE_DOCKED,
+        RemoteMode::Floating => REMOTE_FLOATING,
+    });
+    payload.extend_from_slice(&place.x.to_be_bytes());
+    payload.extend_from_slice(&place.y.to_be_bytes());
+    Ok(())
+}
+
+pub(crate) fn read_remote(fields: &mut Fields<'_>) -> Result<RemotePlace, ProtocolError> {
+    let mode = match fields.u8()? {
+        REMOTE_HIDDEN => RemoteMode::Hidden,
+        REMOTE_DOCKED => RemoteMode::Docked,
+        REMOTE_FLOATING => RemoteMode::Floating,
+        _ => return Err(ProtocolError::BadValue("remote mode")),
+    };
+    let (x, y) = (fields.u16()?, fields.u16()?);
+    if x > MAX_REMOTE_PLACE || y > MAX_REMOTE_PLACE {
+        return Err(ProtocolError::BadValue("remote place"));
+    }
+    Ok(RemotePlace { mode, x, y })
+}
 
 fn push_mode(mode: CookieMode) -> u8 {
     match mode {
@@ -160,6 +193,10 @@ pub(crate) fn push_change(payload: &mut Vec<u8>, change: &SettingChange) -> Resu
             push_flag(payload, *on);
         }
         SettingChange::Cookies(mode) => payload.extend_from_slice(&[CHANGE_COOKIES, push_mode(*mode)]),
+        SettingChange::Remote(place) => {
+            payload.push(CHANGE_REMOTE);
+            push_remote(payload, *place)?;
+        }
     }
     Ok(())
 }
@@ -175,6 +212,7 @@ pub(crate) fn read_change(fields: &mut Fields<'_>) -> Result<SettingChange, Prot
         CHANGE_REMOVE_LOCAL => SettingChange::RemoveLocal(fields.u8()?),
         CHANGE_RESTORE_SESSION => SettingChange::RestoreSession(read_flag(fields)?),
         CHANGE_COOKIES => SettingChange::Cookies(read_mode(fields)?),
+        CHANGE_REMOTE => SettingChange::Remote(read_remote(fields)?),
         _ => return Err(ProtocolError::BadValue("setting change")),
     })
 }
@@ -212,6 +250,8 @@ mod tests {
             SettingChange::RemoveLocal(0),
             SettingChange::RestoreSession(false),
             SettingChange::Cookies(CookieMode::Block),
+            SettingChange::Remote(RemotePlace { mode: RemoteMode::Floating, x: 900, y: 140 }),
+            SettingChange::Remote(RemotePlace { mode: RemoteMode::Docked, x: 0, y: 0 }),
         ] {
             let mut payload = Vec::new();
             push_change(&mut payload, &change).unwrap();

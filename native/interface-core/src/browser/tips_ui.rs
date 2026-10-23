@@ -115,6 +115,7 @@ impl Browser {
         if !self.popup_open() {
             self.strip_tips(&mut tips);
             self.bar_tips(&mut tips);
+            self.remote_tips(&mut tips);
             if self.settings_open() {
                 self.settings_tips(&mut tips);
             } else if self.history_open() {

@@ -33,6 +33,7 @@ mod history_ui;
 #[cfg(feature = "links")]
 mod link_ui;
 mod popup_ui;
+mod remote_ui;
 mod settings_ui;
 mod star_ui;
 #[cfg(feature = "interaction")]
@@ -510,6 +511,8 @@ pub struct Browser {
     tips: tips_ui::TipsUi,
     /// The open page's controls (decision 67).
     page_controls: controls_ui::ControlsUi,
+    /// The remote control (decision 68).
+    remote: remote_ui::RemoteUi,
     /// The bookmarks manager (requirement 20.17).
     bookmarks: bookmarks_ui::BookmarksUi,
     /// The star's popover (requirement 20.16).
@@ -566,6 +569,7 @@ impl Browser {
             cookies: cookies_ui::CookiesUi::default(),
             tips: tips_ui::TipsUi::default(),
             page_controls: controls_ui::ControlsUi::default(),
+            remote: remote_ui::RemoteUi::default(),
             bookmarks: bookmarks_ui::BookmarksUi::default(),
             star: star_ui::StarUi::default(),
             bar: star_ui::BarUi::default(),
@@ -704,7 +708,7 @@ impl Browser {
         let rings = !self.overview_folded && !self.console.open();
         // A held Back or Forward opens its list at its time; Undo ends.
         let deadline = self.hold_deadline(now).into_iter().chain(self.bookmarks_deadline(now)).chain(self.tips_deadline(now)).min();
-        if self.wall.animating(now) {
+        if self.wall.animating(now) || self.remote_animating(now) {
             Some(SMOOTH_FRAME_MILLISECONDS)
         } else if deadline.is_some() {
             deadline
@@ -835,6 +839,9 @@ impl Browser {
     /// the window needs drawing again.
     pub fn pointer_moved(&mut self, x: f64, y: f64, now: u64) -> bool {
         self.pointer = Point::new(x, y);
+        if self.remote_moved(self.pointer) {
+            return true;
+        }
         let dragged = self.wall.pointer_moved(self.pointer, now);
         let hovered = self.wall.hover(self.pointer, now);
         let previewed = self.overview_page(self.pointer);
@@ -886,6 +893,7 @@ impl Browser {
 
     /// The main button was released.
     pub fn pointer_released(&mut self) {
+        self.remote_released();
         self.release_back_or_forward();
         let new_tab = self.press_new_tab;
         self.bookmarks_released(new_tab);
@@ -922,6 +930,9 @@ impl Browser {
         // The strip's question, drawn over the address field.
         #[cfg(feature = "links")]
         if self.link_press(now) {
+            return true;
+        }
+        if self.remote_press(self.pointer, now) {
             return true;
         }
         let point = self.pointer;
@@ -1156,29 +1167,35 @@ impl Browser {
             Key::Right => self.wall.step(1, now),
             Key::Up | Key::Down => self.step_page(key == Key::Down, now),
             Key::Text(text) => {
-                // Three digits choose a page, as on a television.
                 for digit in text.chars().filter(char::is_ascii_digit) {
-                    self.digits.push(digit);
-                    if self.digits.len() == DECIMAL_DIGITS {
-                        let page = u16::from_str_radix(&self.digits, 16).ok();
-                        self.digits.clear();
-                        // A number the open page or the channel links
-                        // elsewhere goes to the trusted core.
-                        #[cfg(feature = "links")]
-                        if page.is_some_and(|page| self.link_typed(page)) {
-                            continue;
-                        }
-                        if let Some(index) = page.and_then(page_index)
-                            && matches!(self.channel.pages.get(index), Some(Some(_)))
-                        {
-                            self.select_page(index, true);
-                        }
-                    }
+                    self.type_digit(digit);
                 }
             }
             _ => return false,
         }
         true
+    }
+
+    /// A digit, from the keyboard or the remote: three choose a page, as on
+    /// a television.
+    fn type_digit(&mut self, digit: char) {
+        self.digits.push(digit);
+        if self.digits.len() < DECIMAL_DIGITS {
+            return;
+        }
+        let page = u16::from_str_radix(&self.digits, 16).ok();
+        self.digits.clear();
+        // A number the open page or the channel links elsewhere goes to the
+        // trusted core.
+        #[cfg(feature = "links")]
+        if page.is_some_and(|page| self.link_typed(page)) {
+            return;
+        }
+        if let Some(index) = page.and_then(page_index)
+            && matches!(self.channel.pages.get(index), Some(Some(_)))
+        {
+            self.select_page(index, true);
+        }
     }
 
     fn shortcut(&mut self, key: Key<'_>, modifiers: Modifiers, now: u64) -> bool {
@@ -1209,6 +1226,8 @@ impl Browser {
             "," => self.toggle_settings(),
             "h" if modifiers.shift => self.outputs.push(Output::Home),
             // Reload: Command-R on macOS, Control-R elsewhere.
+            // The remote control (decision 68): Command-Shift-R.
+            "r" if modifiers.shift => self.toggle_remote(now),
             "r" => self.outputs.push(Output::Reload),
             "i" if modifiers.alt || modifiers.shift => self.toggle_console(),
             // History, bookmarks and private tabs (`history-and-bookmarks.md`
@@ -1323,7 +1342,9 @@ impl Browser {
         canvas.fill(Rect::new(0.0, 0.0, width, height), 0.0, WINDOW);
         // The bookmarks bar, when shown, is a row of the strip above the body.
         let body_top = BODY_TOP + if self.bar_shown() { star_ui::BAR_HEIGHT } else { 0.0 };
-        self.body = Rect::new(MARGIN, body_top, width - MARGIN, height - MARGIN);
+        // The docked remote narrows the content (decision 68).
+        let right = width - MARGIN - self.remote_docked_width(now);
+        self.body = Rect::new(MARGIN, body_top, right, height - MARGIN);
         // The console docks where the overview is.
         let overview_height = if self.console.open() {
             console_ui::CONSOLE_HEIGHT
@@ -1332,11 +1353,11 @@ impl Browser {
         } else {
             OVERVIEW_HEIGHT
         };
-        let overview = Rect::new(MARGIN, height - MARGIN - overview_height, width - MARGIN, height - MARGIN);
+        let overview = Rect::new(MARGIN, height - MARGIN - overview_height, right, height - MARGIN);
         let body_bottom = overview.y0 - MARGIN;
         let banks = Rect::new(MARGIN, body_top, MARGIN + BANKS_WIDTH, body_bottom);
         let list = Rect::new(banks.x1 + MARGIN, body_top, banks.x1 + MARGIN + LIST_WIDTH, body_bottom);
-        let zoom = Rect::new(list.x1 + MARGIN, body_top, width - MARGIN, body_bottom);
+        let zoom = Rect::new(list.x1 + MARGIN, body_top, right, body_bottom);
 
         // The titles are borrowed from the channel while the wall draws:
         // the fields are borrowed apart.
@@ -1380,6 +1401,7 @@ impl Browser {
         self.draw_bar(canvas, TOOLBAR_TOP + TOOLBAR_HEIGHT, width);
         self.draw_tab_strip(canvas, width);
         self.draw_preview(canvas, width);
+        self.draw_remote(canvas, width, height, body_top, now);
         #[cfg(feature = "phone-keyboard")]
         self.draw_phone_panel(canvas);
         self.draw_settings_panel(canvas);

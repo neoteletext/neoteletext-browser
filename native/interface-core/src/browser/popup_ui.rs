@@ -35,6 +35,7 @@ enum Item {
     #[cfg(feature = "phone-keyboard")]
     Phone,
     Console,
+    Remote,
     Settings,
 }
 
@@ -50,6 +51,7 @@ impl Item {
         #[cfg(feature = "phone-keyboard")]
         Self::Phone,
         Self::Console,
+        Self::Remote,
         Self::Settings,
     ];
 
@@ -68,6 +70,7 @@ impl Item {
             #[cfg(feature = "phone-keyboard")]
             Self::Phone => ("Phone keyboard", "", ""),
             Self::Console => ("Developer console", "Option+Cmd+I", "Ctrl+Shift+I"),
+            Self::Remote => ("Remote control", "Shift+Cmd+R", "Ctrl+Shift+R"),
             Self::Settings => ("Settings", "Cmd+,", "Ctrl+,"),
         }
     }
@@ -127,6 +130,7 @@ impl Browser {
             #[cfg(feature = "phone-keyboard")]
             Item::Phone => self.toggle_phone_panel(),
             Item::Console => self.toggle_console(),
+            Item::Remote => self.toggle_remote(self.remote_time()),
             Item::Settings => {
                 if !self.settings_open() {
                     self.toggle_settings();

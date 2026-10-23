@@ -1580,3 +1580,37 @@ From `page-controls.md` (decision 67, taken while the owner was away, on the own
 - **Source:** Decision 67.
 - **Verification:** Protocol tests of both messages' bounds; review.
 - **State:** Met: `page_controls_keep_their_bounds`, `every_kind_round_trips` (both messages).
+
+---
+
+## 23. The remote control
+
+From `remote-control.md` (decision 68, taken while the owner was away).
+
+### Requirement 23.1: A remote with every page control
+- **Statement:** The window must offer a remote control holding the page number being entered or shown, the number pad, page up and down, Fastext's four coloured keys and Index, the sub-page steps and count, and Reveal, Hold and Mix, each lit only while it applies (requirements 22.1 to 22.5), each with its tip (requirement 12.12).
+- **Reason:** The page controls are keys otherwise hidden from a mouse user, as a set's buttons are on its remote.
+- **Source:** Decision 68.
+- **Verification:** Interface tests; seen on macOS.
+- **State:** Met, 23 October 2026: `the_remotes_keys_are_the_existing_inputs`; seen docked on macOS.
+
+### Requirement 23.2: Docked, floating or away
+- **Statement:** The remote must dock along the window's right edge, the content narrowing and the remote sliding in and out over 200 milliseconds, or float over the page area, moved by its title row; Command-Shift-R on macOS and Control-Shift-R elsewhere, the menu and a handle at the right edge must show and hide it.
+- **Reason:** The owner's request: "a sidebar that can pop in and out of the right hand side or undocked to float".
+- **Source:** Decision 68.
+- **Verification:** Interface tests.
+- **State:** Met: `the_remote_docks_slides_and_goes_away`, `a_floating_remote_moves_and_stays_below_the_strip`.
+
+### Requirement 23.3: The remote never covers the trusted strip
+- **Statement:** A floating remote must be kept inside the window and below the trusted strip and the bookmarks bar, however it is dragged and however the window is sized.
+- **Reason:** The strip must always be visible (requirement 11.4).
+- **Source:** Decision 68.
+- **Verification:** Test.
+- **State:** Met: `a_floating_remote_moves_and_stays_below_the_strip`.
+
+### Requirement 23.4: Its place is kept by the trusted core
+- **Statement:** Whether the remote is hidden, docked or floating, and a floating remote's corner, must be kept in `settings.txt` as a `remote` line, read strictly (each number at most 16 384), and restored at the next start; the interface stores nothing (requirement 7.9).
+- **Reason:** A remote put somewhere should be there next time.
+- **Source:** Decision 68.
+- **Verification:** Tests of the settings file and the protocol.
+- **State:** Met: `the_remotes_place_is_read_strictly`, `settings_round_trip_through_their_file`, `the_view_and_every_change_round_trip`, `every_kind_round_trips`.

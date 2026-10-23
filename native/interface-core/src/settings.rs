@@ -70,6 +70,37 @@ pub enum SettingChange {
     RestoreSession(bool),
     /// What is kept of cookies (requirement 21.7).
     Cookies(CookieMode),
+    /// Where the remote control is (`remote-control.md`, decision 68).
+    Remote(RemotePlace),
+}
+
+/// The furthest a floating remote's corner may be from the window's, in
+/// logical points: beyond any display today (an 8K display is 7 680 wide
+/// at its natural scale), and a bound on what the settings file holds.
+pub const MAX_REMOTE_PLACE: u16 = 16_384;
+
+/// Where the remote control is (`remote-control.md` section 2).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum RemoteMode {
+    /// Put away: only its handle shows.
+    #[default]
+    Hidden,
+    /// Along the window's right edge.
+    Docked,
+    /// Over the page area, where the user put it.
+    Floating,
+}
+
+/// The remote control's place: its mode, and a floating remote's top left
+/// corner in logical points, at most [`MAX_REMOTE_PLACE`].
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct RemotePlace {
+    /// Hidden, docked or floating.
+    pub mode: RemoteMode,
+    /// The floating remote's left edge.
+    pub x: u16,
+    /// Its top edge.
+    pub y: u16,
 }
 
 /// What is kept of cookies (`cookies.md` section 4.2).

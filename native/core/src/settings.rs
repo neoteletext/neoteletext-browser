@@ -7,6 +7,8 @@
 use std::net::IpAddr;
 use std::path::{Path, PathBuf};
 
+use interface_core::settings::{MAX_REMOTE_PLACE, RemoteMode, RemotePlace};
+
 use crate::address;
 
 /// The first line of the file: its format and version.
@@ -110,6 +112,8 @@ pub struct Settings {
     pub cookies: crate::cookies::Mode,
     /// The channels whose cookies are blocked, by their identity.
     pub cookie_block: Vec<String>,
+    /// Where the remote control is (`remote-control.md`, decision 68).
+    pub remote: RemotePlace,
 }
 
 impl Default for Settings {
@@ -124,7 +128,29 @@ impl Default for Settings {
             restore: true,
             cookies: crate::cookies::Mode::Keep,
             cookie_block: Vec::new(),
+            remote: RemotePlace::default(),
         }
+    }
+}
+
+/// The remote control's line: `hidden`, `docked`, or `floating` with its
+/// corner, each number at most [`MAX_REMOTE_PLACE`].
+fn read_remote(value: &str) -> Option<RemotePlace> {
+    let mut words = value.split(' ');
+    let place = match (words.next()?, words.next(), words.next()) {
+        ("hidden", None, None) => RemotePlace { mode: RemoteMode::Hidden, x: 0, y: 0 },
+        ("docked", None, None) => RemotePlace { mode: RemoteMode::Docked, x: 0, y: 0 },
+        ("floating", Some(x), Some(y)) => RemotePlace { mode: RemoteMode::Floating, x: x.parse().ok()?, y: y.parse().ok()? },
+        _ => return None,
+    };
+    (words.next().is_none() && place.x <= MAX_REMOTE_PLACE && place.y <= MAX_REMOTE_PLACE).then_some(place)
+}
+
+fn remote_line(place: RemotePlace) -> String {
+    match place.mode {
+        RemoteMode::Hidden => "remote hidden".to_owned(),
+        RemoteMode::Docked => "remote docked".to_owned(),
+        RemoteMode::Floating => format!("remote floating {} {}", place.x, place.y),
     }
 }
 
@@ -188,6 +214,7 @@ impl Settings {
             "home" => checked_address(value).map(|home| self.home = home).is_some(),
             "sound" => switch(value).map(|on| self.sound = on).is_some(),
             "bar" => switch(value).map(|on| self.bar = on).is_some(),
+            "remote" => read_remote(value).map(|place| self.remote = place).is_some(),
             "restore" => switch(value).map(|on| self.restore = on).is_some(),
             "cookies" => match value {
                 "keep" => Some(crate::cookies::Mode::Keep),
@@ -236,6 +263,7 @@ impl Settings {
         lines.extend(self.local.iter().map(|address| format!("{ALLOW_LOCAL} {address}")));
         lines.push(format!("bar {}", if self.bar { "on" } else { "off" }));
         lines.push(format!("restore {}", if self.restore { "on" } else { "off" }));
+        lines.push(remote_line(self.remote));
         lines.push(format!(
             "cookies {}",
             match self.cookies {
@@ -332,10 +360,23 @@ mod tests {
             restore: false,
             cookies: crate::cookies::Mode::Close,
             cookie_block: vec!["https://news.example/teletext/".into()],
+            remote: RemotePlace { mode: RemoteMode::Floating, x: 900, y: 140 },
         };
         let (read, dropped) = Settings::read(&settings.text());
         assert_eq!((read, dropped), (settings, Vec::<String>::new()));
         assert_eq!(Settings::read("").0, Settings::default());
+    }
+
+    /// Decision 68: the remote's line, read strictly.
+    #[test]
+    fn the_remotes_place_is_read_strictly() {
+        let place = |line: &str| Settings::read(&format!("{VERSION_LINE}\nremote {line}\n"));
+        assert_eq!(place("docked").0.remote, RemotePlace { mode: RemoteMode::Docked, x: 0, y: 0 });
+        assert_eq!(place("floating 10 20").0.remote, RemotePlace { mode: RemoteMode::Floating, x: 10, y: 20 });
+        for wrong in ["floating 10", "floating 10 20 30", "docked 1 2", "floating 99999 1", "sideways", "floating -1 4"] {
+            let (read, dropped) = place(wrong);
+            assert_eq!((read.remote, dropped.len()), (RemotePlace::default(), 1), "{wrong}");
+        }
     }
 
     /// Requirement 19.2: each rule; a broken line is dropped and the rest
