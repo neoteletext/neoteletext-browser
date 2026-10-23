@@ -223,3 +223,78 @@ impl Core {
         }
     }
 }
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::indexing_slicing, reason = "a test")]
+mod tests {
+    use super::super::WINDOW_STILL;
+    use super::super::test_support::Test;
+    use super::*;
+    use interface_core::library::WindowGeometry;
+
+    /// `multiple-windows.md`: a message for another window than the last
+    /// is preceded by its window's number; intents act on the window they
+    /// say they are from, and are not acted on from a window not open.
+    #[test]
+    fn messages_and_intents_name_their_window() {
+        let mut test = Test::new("windows");
+        test.core.session.open("news.invalid").unwrap();
+        let first = test.core.session.window;
+        let second = test.core.session.new_window(false).unwrap();
+        test.core.session.open("sport.invalid").unwrap();
+        test.sent();
+        test.core.send(&ToInterface::Strip(test.core.strip())).unwrap();
+        test.core.send(&ToInterface::Strip(test.core.strip())).unwrap();
+        let sent = test.sent();
+        assert_eq!(sent.iter().filter(|message| matches!(message, ToInterface::Target(_))).count(), 1, "once, while the window stays");
+        assert_eq!(sent[0], ToInterface::Target(second));
+        test.core.intent(ToCore::From(first)).unwrap();
+        test.core.intent(ToCore::MuteTab(0)).unwrap();
+        assert!(test.core.session.tabs[0].muted && test.core.session.window == first);
+        let sent = test.sent();
+        assert_eq!(sent.first(), Some(&ToInterface::Target(first)));
+        assert!(sent.iter().any(|message| matches!(message, ToInterface::Tabs { tabs, .. } if tabs.len() == 1 && tabs[0].muted)));
+        test.core.intent(ToCore::From(99)).unwrap();
+        test.core.intent(ToCore::MuteTab(0)).unwrap();
+        assert!(test.core.session.tabs[0].muted, "from no open window: not acted on");
+        test.core.intent(ToCore::From(second)).unwrap();
+        test.core.intent(ToCore::MuteTab(0)).unwrap();
+        assert!(test.core.session.window == second && test.core.session.tabs[0].muted);
+        // A window's place is kept with that window.
+        let place = WindowGeometry { x: 700, y: 10, width: 640, height: 480, maximised: false };
+        test.core.intent(ToCore::Window(place)).unwrap();
+        test.core.intent(ToCore::From(first)).unwrap();
+        test.core.keep_window();
+        assert_eq!(test.core.session.geometry, None);
+        test.core.switch_window(second);
+        assert_eq!(test.core.session.geometry, Some(place));
+    }
+
+    /// Requirements 20.21 and 20.22: the session is written after every
+    /// change of the tabs, with a visit's title once its page draws, and
+    /// the window's place once the window is still.
+    #[test]
+    fn the_session_is_kept_after_every_change() {
+        let mut test = Test::new("session");
+        let kept = |test: &Test| Saved::load(&test.folder).unwrap().0.unwrap_or_default();
+        test.core.session.open("news.invalid").unwrap();
+        test.core.intent(ToCore::MuteTab(0)).unwrap();
+        let saved = kept(&test);
+        let tabs = &saved.windows[0].tabs;
+        assert_eq!((tabs.len(), tabs[0].muted, tabs[0].entries[0].title.as_str()), (1, true, ""));
+        let channel = test.core.session.tabs[0].channel.id;
+        test.core.record_pending(channel).unwrap();
+        assert_eq!(kept(&test).windows[0].tabs[0].entries[0].title, "news.invalid", "the title once the page drew");
+        let window = WindowGeometry { x: 40, y: 50, width: 1200, height: 800, maximised: false };
+        test.core.intent(ToCore::Window(window)).unwrap();
+        assert_eq!(kept(&test).windows[0].geometry, None, "not while the window may still be moving");
+        assert!(test.core.next_wake().is_some_and(|at| at <= std::time::Instant::now() + WINDOW_STILL));
+        test.core.keep_window();
+        assert_eq!(kept(&test).windows[0].geometry, Some(window));
+        test.core.session.open_private("secret.invalid").unwrap();
+        // Choosing a tab starts its decoder, which needs the broker.
+        test.core.session.active = 1;
+        test.core.keep_session();
+        assert_eq!(kept(&test).tab_count(), 1, "a private tab is never kept");
+    }
+}

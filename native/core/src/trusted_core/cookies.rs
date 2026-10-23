@@ -15,7 +15,7 @@ use protocol::fetcher::{CookieSite, FromFetcher, ToFetcher, write_to_fetcher};
 use protocol::{ToInterface, clean};
 
 use super::Core;
-use super::library::Numbers;
+use super::numbers::Numbers;
 use protocol::console::Level;
 
 /// How long after a change the cookies are written: a burst of changes is
@@ -399,92 +399,8 @@ impl Core {
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::indexing_slicing, clippy::arithmetic_side_effects, reason = "a test")]
 mod tests {
+    use super::super::test_support::Test;
     use super::*;
-    use crate::session::Session;
-    use neoteletext::bookmarks::Bookmarks;
-    use neoteletext::outbox::Outbox;
-    use neoteletext::settings::Settings;
-    use protocol::read_from_core;
-    use std::io::Write;
-    use std::sync::mpsc;
-
-    /// What the core writes to the interface.
-    struct Sink(mpsc::Sender<Vec<u8>>);
-
-    impl Write for Sink {
-        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
-            let _ = self.0.send(bytes.to_vec());
-            Ok(bytes.len())
-        }
-
-        fn flush(&mut self) -> std::io::Result<()> {
-            Ok(())
-        }
-    }
-
-    struct Test {
-        core: Core,
-        written: mpsc::Receiver<Vec<u8>>,
-        folder: std::path::PathBuf,
-    }
-
-    impl Test {
-        fn new(name: &str) -> Self {
-            let folder = std::env::temp_dir().join(format!("neoteletext-cookie-control-{name}-{}", std::process::id()));
-            let _ = std::fs::remove_dir_all(&folder);
-            std::fs::create_dir_all(&folder).unwrap();
-            let (sender, written) = mpsc::channel();
-            let (events, _incoming) = mpsc::channel();
-            let core =
-                Core::new(Session::new(Bookmarks::default()), Vec::new(), (Settings::default(), Some(folder.clone())), events, Outbox::new(Sink(sender)), None);
-            Self { core, written, folder }
-        }
-
-        fn last_view(&mut self) -> CookiesView {
-            self.core.to_interface.flush().unwrap();
-            let mut bytes = Vec::new();
-            // The outbox writes on a thread of its own.
-            while let Ok(chunk) = self.written.recv_timeout(Duration::from_millis(200)) {
-                bytes.extend(chunk);
-            }
-            let mut input = bytes.as_slice();
-            let mut last = None;
-            while let Some(message) = read_from_core(&mut input).unwrap() {
-                if let ToInterface::Cookies(view) = message {
-                    last = Some(view);
-                }
-            }
-            last.unwrap()
-        }
-
-        /// A tab on `address`, private or not; its channel's number.
-        fn tab(&mut self, address: &str, private: bool) -> u32 {
-            if private {
-                self.core.session.open_private(address).unwrap();
-            } else {
-                self.core.session.open(address).unwrap();
-            }
-            self.core.session.tabs.last().unwrap().channel.id
-        }
-
-        fn set(&mut self, channel: u32, host: &str, line: &str) {
-            let message = FromFetcher::CookieSet { host: host.into(), path: "/teletext/".into(), scope: None, secure: true, line: line.as_bytes().to_vec() };
-            assert_eq!(self.core.cookie_reply(channel, message).unwrap(), None);
-        }
-
-        fn ask(&mut self, channel: u32, host: &str) -> String {
-            let question =
-                FromFetcher::CookieQuestion { id: 9, host: host.into(), path: "/teletext/100.tti".into(), secure: true, site: CookieSite::SameService };
-            let Some(ToFetcher::CookieAnswer { id: 9, header }) = self.core.cookie_reply(channel, question).unwrap() else { panic!("no answer") };
-            String::from_utf8(header).unwrap()
-        }
-    }
-
-    impl Drop for Test {
-        fn drop(&mut self) {
-            let _ = std::fs::remove_dir_all(&self.folder);
-        }
-    }
 
     /// Requirements 21.1, 21.2 and 21.3: a fetcher is answered with its own
     /// channel's cookies alone; tabs on a channel share them; private tabs

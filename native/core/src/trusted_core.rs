@@ -14,6 +14,7 @@ mod intents;
 mod library;
 #[cfg(feature = "links")]
 mod links;
+mod numbers;
 mod page_controls;
 #[cfg(feature = "phone-keyboard")]
 mod phone;
