@@ -45,7 +45,7 @@ mod pointer;
 mod popups;
 mod refused_ui;
 mod regions;
-mod remote_ui;
+mod remote;
 mod settings_panel;
 mod shown;
 mod star_ui;
@@ -123,7 +123,7 @@ pub struct Browser {
     /// The open page's controls (decision 67).
     page_controls: controls_ui::ControlsUi,
     /// The remote control (decision 68).
-    remote: remote_ui::RemoteUi,
+    remote: remote::RemoteUi,
     /// The certificate-error screen's buttons (decision 83).
     refused: refused_ui::RefusedUi,
     /// The tab strip's overflow and dragging (decision 69).
@@ -188,7 +188,7 @@ impl Browser {
             cookies: cookies_ui::CookiesUi::default(),
             tips: tips_ui::TipsUi::default(),
             page_controls: controls_ui::ControlsUi::default(),
-            remote: remote_ui::RemoteUi::default(),
+            remote: remote::RemoteUi::default(),
             refused: refused_ui::RefusedUi::default(),
             tab_strip: tab_strip::TabsUi::default(),
             bookmarks: bookmarks::BookmarksUi::default(),
