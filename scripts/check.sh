@@ -199,6 +199,34 @@ check_fuzz() {
     done
 }
 
+# The browser builds the engine with its lints capped, so the engine's own
+# forbid(unsafe_code) is held only by the engine's gate (finding F-88):
+# the source at the pinned commit is read here, and the word `unsafe` in
+# any line's code, outside its comment, fails the gate.
+check_engine_safe() {
+    step "the engine at its pinned commit has no unsafe code"
+    local engine revision found line code hits="" status=0
+    engine="$(sed -n 's/^neoteletext-[a-z-]* = { git = "file:\/\/\([^"]*\)".*/\1/p' native/Cargo.toml | sort -u)"
+    revision="$(sed -n 's/^neoteletext-[a-z-]* = { git = "file:[^"]*", rev = "\([0-9a-f]*\)".*/\1/p' native/Cargo.toml | sort -u)"
+    [[ -n "$engine" && "$engine" != *$'\n'* ]] || fail "native/Cargo.toml must name one engine repository, found: ${engine:-none}"
+    [[ -n "$revision" && "$revision" != *$'\n'* ]] || fail "native/Cargo.toml must name one engine commit, found: ${revision:-none}"
+    git -C "$engine" cat-file -e "$revision^{commit}" || fail "the engine repository $engine has no commit $revision"
+    found="$(git -C "$engine" grep --line-number -I --word-regexp -e unsafe "$revision" -- '*.rs')" || status=$?
+    # 1 is no line found.
+    ((status <= 1)) || fail "reading the engine at $revision failed"
+    # git grep names each line as commit:path:line:text.
+    while IFS= read -r line; do
+        [[ -n "$line" ]] || continue
+        code="${line#*:*:*:}"
+        code="${code%%//*}"
+        if [[ "$code" =~ (^|[^A-Za-z0-9_])unsafe([^A-Za-z0-9_]|$) ]]; then
+            hits="$hits${line#*:}"$'\n'
+        fi
+    done <<<"$found"
+    [[ -z "$hits" ]] || fail "the engine at $revision has unsafe code:
+$hits"
+}
+
 # A release script refuses a test identity unless told it is a test
 # (finding F-24). publish.sh, given no destination, copies nothing
 # anywhere; with the variable set and no --test it must refuse before it
@@ -226,6 +254,7 @@ full_gate() {
 $loose"
 
     check_native
+    check_engine_safe
     step "native: documentation tests"
     (cd native && cargo test --quiet --workspace --doc)
     step "native: release tests"
