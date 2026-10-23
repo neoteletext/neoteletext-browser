@@ -7,6 +7,7 @@
 use std::io::{Read, Write};
 
 use super::{Fields, ProtocolError, push_text, read_frame, write_frame};
+use crate::text::is_clean;
 
 /// The largest QR code: version 40 is 177 modules a side (ISO/IEC 18004
 /// Table 1).
@@ -28,6 +29,13 @@ pub const MAX_PIN: usize = 8;
 fn bytes_of(size: usize) -> usize {
     size.saturating_mul(size).div_ceil(8)
 }
+
+// The interface pipe's kinds of the phone keyboard (`interface/kinds.rs`
+// lists every kind of that pipe): strip input, then the trusted core's.
+pub(crate) const KIND_PHONE_PANEL: u8 = 28;
+pub(crate) const KIND_PHONE_FINISH: u8 = 29;
+pub(crate) const KIND_PHONE: u8 = 41;
+pub(crate) const KIND_PHONE_KEY: u8 = 42;
 
 const KIND_JOIN: u8 = 112;
 const KIND_STATE: u8 = 113;
@@ -131,8 +139,47 @@ pub enum ToKeyboard {
     Finish,
 }
 
+/// The phone keys that move between pages, by their W3C
+/// `KeyboardEvent.key` names: the digits, the four arrows, and the four
+/// colour keys of the phone's layout (qrkeyboard's terminal layout, which
+/// the keyboard process asks for). While no page is open for typing the
+/// trusted core passes on only these, and the interface gives them to the
+/// page view alone (decision 99, finding F-20), so a compromised keyboard
+/// process can choose pages and do nothing else to the browser.
+pub const PAGE_NAVIGATION_KEYS: [&str; 18] = [
+    "0",
+    "1",
+    "2",
+    "3",
+    "4",
+    "5",
+    "6",
+    "7",
+    "8",
+    "9",
+    "ArrowLeft",
+    "ArrowRight",
+    "ArrowUp",
+    "ArrowDown",
+    "ColorF0Red",
+    "ColorF1Green",
+    "ColorF2Yellow",
+    "ColorF3Blue",
+];
+
+/// Whether a phone key moves between pages: one of
+/// [`PAGE_NAVIGATION_KEYS`].
+#[must_use]
+pub fn navigates_pages(name: &str) -> bool {
+    PAGE_NAVIGATION_KEYS.contains(&name)
+}
+
+/// A key name is refused where the interface's pipe would refuse it: a
+/// control or any other hidden character ([`is_clean`]), so a hostile
+/// keyboard process ends only its own pipe, never the trusted core's write
+/// to the interface (finding F-28).
 fn clean_name(name: &str) -> Result<(), ProtocolError> {
-    let ok = !name.is_empty() && name.len() <= MAX_KEY_NAME && name.chars().all(|character| !character.is_control());
+    let ok = !name.is_empty() && is_clean(name, MAX_KEY_NAME);
     if ok { Ok(()) } else { Err(ProtocolError::BadValue("phone key")) }
 }
 
@@ -182,7 +229,7 @@ pub fn write_to_core(out: &mut dyn Write, message: &FromKeyboard) -> Result<(), 
 /// over [`MAX_PHONE_TEXT`].
 pub fn read_from_keyboard(input: &mut dyn Read) -> Result<Option<FromKeyboard>, ProtocolError> {
     let Some((kind, payload)) = read_frame(input)? else { return Ok(None) };
-    let mut fields = Fields { bytes: &payload };
+    let mut fields = Fields::new(&payload);
     let message = match kind {
         KIND_JOIN => {
             let size = usize::from(fields.u8()?);
@@ -190,7 +237,7 @@ pub fn read_from_keyboard(input: &mut dyn Read) -> Result<Option<FromKeyboard>, 
                 return Err(ProtocolError::BadValue("QR"));
             }
             let bits = fields.take(bytes_of(size))?.to_vec();
-            let pin = if fields.bytes.is_empty() { None } else { Some(fields.text(MAX_PIN)?) };
+            let pin = if fields.is_empty() { None } else { Some(fields.text(MAX_PIN)?) };
             if pin.as_ref().is_some_and(|pin| !pin.chars().all(|character| character.is_ascii_digit())) {
                 return Err(ProtocolError::BadValue("PIN"));
             }
@@ -201,17 +248,13 @@ pub fn read_from_keyboard(input: &mut dyn Read) -> Result<Option<FromKeyboard>, 
             FromKeyboard::State(PhoneState::from_code(code, left).ok_or(ProtocolError::BadValue("phone state"))?)
         }
         KIND_KEY => {
-            let down = match fields.u8()? {
-                0 => false,
-                1 => true,
-                _ => return Err(ProtocolError::BadValue("phone key")),
-            };
-            let name = std::str::from_utf8(fields.take(fields.bytes.len())?).map_err(|_| ProtocolError::BadValue("phone key"))?.to_owned();
+            let down = fields.flag("phone key")?;
+            let name = std::str::from_utf8(fields.take(fields.remaining())?).map_err(|_| ProtocolError::BadValue("phone key"))?.to_owned();
             clean_name(&name)?;
             FromKeyboard::Key { down, name }
         }
         KIND_TEXT => {
-            let text = std::str::from_utf8(fields.take(fields.bytes.len())?).map_err(|_| ProtocolError::BadValue("phone text"))?;
+            let text = std::str::from_utf8(fields.take(fields.remaining())?).map_err(|_| ProtocolError::BadValue("phone text"))?;
             if text.len() > MAX_PHONE_TEXT || text.chars().any(char::is_control) {
                 return Err(ProtocolError::BadValue("phone text"));
             }
@@ -293,6 +336,12 @@ pub(crate) fn read_view(fields: &mut Fields<'_>) -> Result<PhoneView, ProtocolEr
     Ok(PhoneView { state, qr, pin })
 }
 
+// A phone key's tag on the interface's pipe: a key of the layout up or
+// down, or text.
+const PHONE_KEY_UP: u8 = 0;
+const PHONE_KEY_DOWN: u8 = 1;
+const PHONE_TEXT: u8 = 2;
+
 /// A phone's key for the interface, which acts on it as on a key of its
 /// own keyboard, with no modifier.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -312,11 +361,11 @@ pub(crate) fn push_phone_key(payload: &mut Vec<u8>, key: &PhoneKey) -> Result<()
     match key {
         PhoneKey::Key { down, name } => {
             clean_name(name)?;
-            payload.push(u8::from(*down));
+            payload.push(if *down { PHONE_KEY_DOWN } else { PHONE_KEY_UP });
             push_text(payload, name, MAX_KEY_NAME)
         }
         PhoneKey::Text(text) => {
-            payload.push(2);
+            payload.push(PHONE_TEXT);
             push_text(payload, text, MAX_PHONE_TEXT)
         }
     }
@@ -324,12 +373,12 @@ pub(crate) fn push_phone_key(payload: &mut Vec<u8>, key: &PhoneKey) -> Result<()
 
 pub(crate) fn read_phone_key(fields: &mut Fields<'_>) -> Result<PhoneKey, ProtocolError> {
     Ok(match fields.u8()? {
-        kind @ (0 | 1) => {
+        kind @ (PHONE_KEY_UP | PHONE_KEY_DOWN) => {
             let name = fields.text(MAX_KEY_NAME)?;
             clean_name(&name)?;
-            PhoneKey::Key { down: kind == 1, name }
+            PhoneKey::Key { down: kind == PHONE_KEY_DOWN, name }
         }
-        2 => PhoneKey::Text(fields.text(MAX_PHONE_TEXT)?),
+        PHONE_TEXT => PhoneKey::Text(fields.text(MAX_PHONE_TEXT)?),
         _ => return Err(ProtocolError::BadValue("phone key")),
     })
 }
@@ -370,11 +419,33 @@ mod tests {
         };
         assert!(frame(KIND_KEY, b"\x01Esc\x1b").is_err(), "a control in a name");
         assert!(frame(KIND_KEY, &[1; 40]).is_err(), "a long name");
+        // Finding F-28: a name the interface's pipe would refuse is refused
+        // here, so only the keyboard's pipe ends, never the browser.
+        for hidden in ["a\u{200B}", "\u{202E}Enter", "\u{FEFF}", "1\u{2066}"] {
+            let mut payload = vec![1];
+            payload.extend_from_slice(hidden.as_bytes());
+            assert!(frame(KIND_KEY, &payload).is_err(), "{hidden:?}");
+            let key = PhoneKey::Key { down: true, name: hidden.into() };
+            assert!(push_phone_key(&mut Vec::new(), &key).is_err(), "{hidden:?}");
+        }
         assert!(frame(KIND_TEXT, &[b'a'; MAX_PHONE_TEXT + 1]).is_err());
         assert!(frame(KIND_JOIN, &[200]).is_err(), "a QR too big");
         assert!(frame(KIND_STATE, &[9, 0]).is_err());
         assert!(frame(KIND_FINISH, &[]).is_err(), "only the core sends Finish");
         assert!(matches!(frame(81, &[0]), Err(ProtocolError::UnknownKind(81))), "a fetcher's kind");
+    }
+
+    /// Decision 99: the keys that move between pages are names a phone
+    /// may send, and Enter, Tab, Escape, Backspace and letters are not
+    /// among them.
+    #[test]
+    fn the_page_navigation_keys_are_digits_arrows_and_colours() {
+        for name in PAGE_NAVIGATION_KEYS {
+            assert!(clean_name(name).is_ok() && navigates_pages(name), "{name}");
+        }
+        for name in ["Enter", "Tab", "Escape", "Backspace", "Delete", "a", "Z", "ChannelUp", "BrowserBack", "Exit", "", "11"] {
+            assert!(!navigates_pages(name), "{name}");
+        }
     }
 
     #[test]

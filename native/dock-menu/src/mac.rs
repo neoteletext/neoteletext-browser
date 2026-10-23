@@ -188,7 +188,7 @@ pub fn install_menu_bar(choose: impl Fn(&'static MenuItem) + 'static) {
             match entry {
                 Entry::Item(item) => {
                     submenu.addItem(&menu_bar_item(mtm, item, tag, &target));
-                    tag += 1;
+                    tag = tag.saturating_add(1);
                 }
                 Entry::Separator => submenu.addItem(&NSMenuItem::separatorItem(mtm)),
             }

@@ -3,7 +3,14 @@
 //! kept and compared with the last frame's; only the box that holds every
 //! call that differs is drawn again.
 
+use crate::record::{Command, Frame, Recorded};
+use crate::{Painter, RGBA_BYTES};
+use interface_core::canvas::{PAGE_HEIGHT, PAGE_WIDTH};
 use interface_core::geometry::Rect;
+use vello_cpu::Pixmap;
+
+#[cfg(test)]
+mod tests;
 
 /// Device pixels a shape's edge is taken to reach past its geometry, for
 /// the rounding of transforms: `floor` and `ceil` already take in every
@@ -167,67 +174,66 @@ pub fn common_ends<T>(old: &[T], new: &[T], same: impl Fn(&T, &T) -> bool) -> (u
     (prefix, suffix)
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    const SURFACE: DeviceBox = DeviceBox::whole(100, 50);
-
-    #[test]
-    fn a_rect_covers_every_pixel_it_touches_and_a_margin() {
-        let rect = Rect { x0: 10.25, y0: 4.5, x1: 20.75, y1: 5.0 };
-        assert_eq!(DeviceBox::covering(rect, 2.0, SURFACE), DeviceBox { x0: 19, y0: 8, x1: 43, y1: 11 });
-    }
-
-    #[test]
-    fn a_rect_is_held_inside_the_surface() {
-        let rect = Rect { x0: -30.0, y0: -1.0, x1: 400.0, y1: 20.0 };
-        assert_eq!(DeviceBox::covering(rect, 1.0, SURFACE), DeviceBox { x0: 0, y0: 0, x1: 100, y1: 21 });
-        let outside = Rect { x0: 200.0, y0: 0.0, x1: 300.0, y1: 10.0 };
-        assert!(DeviceBox::covering(outside, 1.0, SURFACE).is_empty());
-    }
-
-    #[test]
-    fn an_empty_box_adds_nothing_to_a_union() {
-        let one = DeviceBox { x0: 5, y0: 5, x1: 6, y1: 7 };
-        assert_eq!(one.union(DeviceBox::default()), one);
-        assert_eq!(DeviceBox::default().union(one), one);
-        assert_eq!(one.union(DeviceBox { x0: 1, y0: 9, x1: 2, y1: 10 }), DeviceBox { x0: 1, y0: 5, x1: 6, y1: 10 });
-        assert!(!one.meets(DeviceBox { x0: 6, y0: 5, x1: 8, y1: 7 }), "boxes that only touch share no pixel");
-    }
-
-    #[test]
-    fn damage_joins_boxes_that_meet_and_keeps_apart_those_that_do_not() {
+impl Painter {
+    /// The boxes holding every call of `frame` that differs from the last
+    /// frame's.
+    pub(crate) fn damage(&self, frame: &Frame) -> Damage {
+        let (old, new) = (&self.last, frame);
+        let same = |before: &Recorded, after: &Recorded| before.command == after.command && old.rects(before.clip) == new.rects(after.clip);
+        let (prefix, suffix) = common_ends(&old.calls, &new.calls, same);
+        let before = &old.calls[prefix..old.calls.len() - suffix];
+        let after = &new.calls[prefix..new.calls.len() - suffix];
         let mut damage = Damage::default();
-        damage.add(DeviceBox { x0: 0, y0: 0, x1: 4, y1: 4 });
-        damage.add(DeviceBox { x0: 50, y0: 0, x1: 54, y1: 4 });
-        damage.add(DeviceBox::default());
-        assert_eq!(damage.boxes().len(), 2);
-        // Meets both: all three become one.
-        damage.add(DeviceBox { x0: 2, y0: 1, x1: 52, y1: 2 });
-        assert_eq!(damage.boxes(), [DeviceBox { x0: 0, y0: 0, x1: 54, y1: 4 }]);
-    }
-
-    #[test]
-    fn past_the_most_boxes_the_nearest_are_joined() {
-        let mut damage = Damage::default();
-        let far = u16::try_from(MAX_BOXES).unwrap() * 10;
-        for step in 0..=u16::try_from(MAX_BOXES).unwrap() {
-            damage.add(DeviceBox { x0: step * 10, y0: 0, x1: step * 10 + 2, y1: 2 });
+        if before.len() == after.len() {
+            // Call by call: where the two are the same, the same is drawn at
+            // that place in both frames, as in the common ends.
+            for (was, now) in before.iter().zip(after).filter(|(was, now)| !same(was, now)) {
+                if let Some(dots) = self.narrowed(old, was, new, now) {
+                    damage.add(dots);
+                } else {
+                    damage.add(was.bounds);
+                    damage.add(now.bounds);
+                }
+            }
+        } else {
+            for call in before.iter().chain(after) {
+                damage.add(call.bounds);
+            }
         }
-        assert_eq!(damage.boxes().len(), MAX_BOXES);
-        let covered: u32 = damage.boxes().iter().map(|area| area.area()).sum();
-        assert!(covered < 2 * 2 * u32::try_from(MAX_BOXES).unwrap() + 12 * 2, "only two neighbours joined: {covered}");
-        assert!(damage.boxes().iter().any(|area| area.x1 == far + 2), "the last box is kept");
+        damage
     }
 
-    #[test]
-    fn the_calls_that_changed_lie_between_the_common_ends() {
-        let same = |a: &u8, b: &u8| a == b;
-        assert_eq!(common_ends(&[1, 2, 3, 4], &[1, 2, 3, 4], same), (4, 0));
-        assert_eq!(common_ends(&[1, 2, 3, 4], &[1, 9, 3, 4], same), (1, 2));
-        assert_eq!(common_ends(&[1, 2, 4], &[1, 2, 3, 4], same), (2, 1));
-        assert_eq!(common_ends(&[1, 1], &[1, 1, 1], same), (2, 0), "the ends never overlap");
-        assert_eq!(common_ends(&[], &[5], same), (0, 0));
+    /// For a page whose image alone changed, where it is drawn, inside the
+    /// same clips, the pixels of the dots that changed.
+    fn narrowed(&self, old: &Frame, was: &Recorded, new: &Frame, now: &Recorded) -> Option<DeviceBox> {
+        let (Command::Page { key, area, .. }, Command::Page { key: key_now, area: area_now, .. }) = (&was.command, &now.command) else { return None };
+        if key != key_now || area != area_now || old.rects(was.clip) != new.rects(now.clip) {
+            return None;
+        }
+        let dots = self.changed.get(key)?;
+        let (across, down) = (area.width() / f64::from(PAGE_WIDTH), area.height() / f64::from(PAGE_HEIGHT));
+        let changed = Rect {
+            x0: area.x0 + f64::from(dots.x0) * across,
+            y0: area.y0 + f64::from(dots.y0) * down,
+            x1: area.x0 + f64::from(dots.x1) * across,
+            y1: area.y0 + f64::from(dots.y1) * down,
+        };
+        let clip = new.clips.get(now.clip).map_or_else(DeviceBox::default, |(_, area)| *area);
+        Some(DeviceBox::covering(changed, self.scale, self.surface()).intersect(clip))
     }
+}
+
+/// The box of dots whose colour differs between a held image and a new
+/// one's red, green, blue and alpha bytes.
+pub(crate) fn changed_dots(held: &Pixmap, rgba: &[u8]) -> DeviceBox {
+    let mut found = DeviceBox::default();
+    let width = usize::from(PAGE_WIDTH);
+    let (dots, _) = rgba.as_chunks::<RGBA_BYTES>();
+    for (index, (pixel, &[red, green, blue, _])) in held.data().iter().zip(dots).enumerate() {
+        if [pixel.r, pixel.g, pixel.b] != [red, green, blue] {
+            let (Ok(x), Ok(y)) = (u16::try_from(index % width), u16::try_from(index / width)) else { continue };
+            found = found.union(DeviceBox { x0: x, y0: y, x1: x.saturating_add(1), y1: y.saturating_add(1) });
+        }
+    }
+    found
 }

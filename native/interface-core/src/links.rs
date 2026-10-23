@@ -10,8 +10,8 @@ use alloc::vec::Vec;
 
 use crate::canvas::{COLUMNS, Canvas, PAGE_HEIGHT, ROWS};
 use crate::geometry::Rect;
+use crate::text::border;
 use crate::theme::{BLACK, LINK, WHITE};
-use crate::ui::border;
 
 /// The lines of the page image one teletext dot takes: a cell of 12 by 10
 /// dots drawn in 20 lines (EN 300 706 clause 2, the engine's 12-by-20

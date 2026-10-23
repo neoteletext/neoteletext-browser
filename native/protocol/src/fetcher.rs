@@ -9,9 +9,22 @@ use std::io::{Read, Write};
 
 pub use interface_core::browser::CertificateProblem;
 
-use interface_core::channel::page_index;
+use crate::{Fields, MAX_ADDRESS, MAX_PAGE_TITLE, MAX_PAYLOAD, ProtocolError, push_count, push_raw_text, raw_text, read_frame, write_frame};
+#[cfg(feature = "links")]
+use kinds::KIND_LINKS;
+use kinds::{
+    KIND_CERTIFICATE_REFUSED, KIND_CLEAR_SITE_DATA, KIND_CONTENTS, KIND_COOKIE_ANSWER, KIND_COOKIE_QUESTION, KIND_COOKIE_SET, KIND_EXCHANGE, KIND_NOTICE,
+    KIND_PAGE, KIND_PROXY_FAILED, KIND_PUSHING, KIND_REACHED_ANSWER, KIND_REACHED_QUESTION,
+};
+#[cfg(feature = "interaction")]
+use kinds::{KIND_INPUT, KIND_SEND};
 
-use super::{Fields, MAX_ADDRESS, MAX_PAGE_TITLE, MAX_PAYLOAD, ProtocolError, push_raw_text, read_frame, write_frame};
+mod cookies;
+mod kinds;
+#[cfg(test)]
+mod tests;
+
+pub use cookies::{CookieSite, MAX_COOKIE_HEADER, MAX_SET_COOKIE};
 
 /// The engine's contents file limits (`neoteletext-web` `contents`): at
 /// most 1000 lines, so at most 1000 entries, and 800 pages.
@@ -24,52 +37,8 @@ pub const MAX_METHOD: usize = 8;
 /// The longest address an exchange reports: the engine's `MAX_URL_LENGTH`,
 /// which is the address field's limit too.
 pub const MAX_EXCHANGE_URL: usize = MAX_ADDRESS;
-/// The longest `Set-Cookie` value a fetcher passes on: the engine's limit
-/// on one response's headers (`neoteletext-web` `DEFAULT_HEADER_LIMIT`,
-/// which the trusted core asserts it equals), since one header cannot be
-/// longer than all of them.
-pub const MAX_SET_COOKIE: usize = 16 * 1024;
-/// The longest `Cookie` header the trusted core answers with: the engine's
-/// room for one whole request (`DEFAULT_REQUEST_LIMIT`, asserted likewise).
-pub const MAX_COOKIE_HEADER: usize = 16 * 1024;
 /// HTTP status codes are three digits from 100 (RFC 9110 section 15).
 const STATUS_CODES: core::ops::RangeInclusive<u16> = 100..=599;
-
-const KIND_CONTENTS: u8 = 80;
-const KIND_PAGE: u8 = 81;
-const KIND_NOTICE: u8 = 82;
-#[cfg(feature = "links")]
-const KIND_LINKS: u8 = 83;
-#[cfg(feature = "interaction")]
-const KIND_INPUT: u8 = 84;
-const KIND_PUSHING: u8 = 85;
-const KIND_EXCHANGE: u8 = 86;
-const KIND_PROXY_FAILED: u8 = 87;
-const KIND_COOKIE_QUESTION: u8 = 88;
-const KIND_REACHED_QUESTION: u8 = 89;
-const KIND_COOKIE_SET: u8 = 90;
-const KIND_CLEAR_SITE_DATA: u8 = 91;
-const KIND_CERTIFICATE_REFUSED: u8 = 92;
-#[cfg(feature = "interaction")]
-const KIND_SEND: u8 = 96;
-const KIND_COOKIE_ANSWER: u8 = 97;
-const KIND_REACHED_ANSWER: u8 = 98;
-
-/// The kind of request a `Cookie` header is asked for (the engine's
-/// `cookie::Site`, REQ-WEB-006).
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum CookieSite {
-    /// A request within the channel.
-    SameService,
-    /// A top-level navigation into the channel from another.
-    CrossServiceNavigation,
-    /// A form sent to another origin.
-    CrossOriginForm,
-}
-
-const SITE_SAME: u8 = 0;
-const SITE_NAVIGATION: u8 = 1;
-const SITE_FORM: u8 = 2;
 
 const ENTRY_SECTION: u8 = 1;
 const ENTRY_PAGE: u8 = 2;
@@ -245,18 +214,10 @@ pub fn write_to_fetcher(out: &mut dyn Write, message: &ToFetcher) -> Result<(), 
             crate::interaction::check_message(record)?;
             write_frame(out, KIND_SEND, record)
         }
-        ToFetcher::CookieAnswer { id, header } => {
-            if header.len() > MAX_COOKIE_HEADER {
-                return Err(ProtocolError::BadValue("cookie header too long"));
-            }
-            let mut payload = id.to_be_bytes().to_vec();
-            payload.extend_from_slice(header);
-            write_frame(out, KIND_COOKIE_ANSWER, &payload)
-        }
-        ToFetcher::ReachedAnswer { id, reached } => {
-            let mut payload = id.to_be_bytes().to_vec();
-            payload.push(u8::from(*reached));
-            write_frame(out, KIND_REACHED_ANSWER, &payload)
+        ToFetcher::CookieAnswer { .. } | ToFetcher::ReachedAnswer { .. } => {
+            let mut payload = Vec::new();
+            let kind = cookies::push_answer(&mut payload, message)?;
+            write_frame(out, kind, &payload)
         }
     }
 }
@@ -267,42 +228,18 @@ pub fn write_to_fetcher(out: &mut dyn Write, message: &ToFetcher) -> Result<(), 
 /// On input errors, any other kind, and anything out of bounds.
 pub fn read_to_fetcher(input: &mut dyn Read) -> Result<Option<ToFetcher>, ProtocolError> {
     let Some((kind, payload)) = read_frame(input)? else { return Ok(None) };
-    let mut fields = Fields { bytes: &payload };
+    let mut fields = Fields::new(&payload);
     let message = match kind {
         #[cfg(feature = "interaction")]
         KIND_SEND => {
             crate::interaction::check_message(&payload)?;
             return Ok(Some(ToFetcher::Send(payload)));
         }
-        KIND_COOKIE_ANSWER => {
-            let id = fields.u32()?;
-            let header = fields.take(fields.bytes.len())?;
-            if header.len() > MAX_COOKIE_HEADER {
-                return Err(ProtocolError::BadValue("cookie header too long"));
-            }
-            ToFetcher::CookieAnswer { id, header: header.to_vec() }
-        }
-        KIND_REACHED_ANSWER => {
-            let id = fields.u32()?;
-            let reached = match fields.u8()? {
-                0 => false,
-                1 => true,
-                _ => return Err(ProtocolError::BadValue("reached")),
-            };
-            ToFetcher::ReachedAnswer { id, reached }
-        }
+        KIND_COOKIE_ANSWER | KIND_REACHED_ANSWER => cookies::read_answer(kind, &mut fields)?,
         other => return Err(ProtocolError::UnknownKind(other)),
     };
     fields.end()?;
     Ok(Some(message))
-}
-
-fn raw_text(fields: &mut Fields<'_>, limit: usize) -> Result<String, ProtocolError> {
-    let length = usize::from(fields.u16()?);
-    if length > limit {
-        return Err(ProtocolError::BadValue("text too long"));
-    }
-    Ok(String::from_utf8_lossy(fields.take(length)?).into_owned())
 }
 
 /// # Errors
@@ -311,10 +248,7 @@ pub fn write_to_core(out: &mut dyn Write, message: &FromFetcher) -> Result<(), P
     let mut payload = Vec::new();
     let kind = match message {
         FromFetcher::Contents(entries) => {
-            if entries.len() > MAX_ENTRIES {
-                return Err(ProtocolError::BadValue("too many entries"));
-            }
-            payload.extend_from_slice(&u16::try_from(entries.len()).unwrap_or(0).to_be_bytes());
+            push_count(&mut payload, entries.len(), MAX_ENTRIES, "too many entries")?;
             for entry in entries {
                 match entry {
                     Entry::Section(title) => {
@@ -379,94 +313,10 @@ pub fn write_to_core(out: &mut dyn Write, message: &FromFetcher) -> Result<(), P
             KIND_CERTIFICATE_REFUSED
         }
         FromFetcher::CookieQuestion { .. } | FromFetcher::ReachedQuestion { .. } | FromFetcher::CookieSet { .. } | FromFetcher::ClearSiteData(_) => {
-            push_cookie_message(&mut payload, message)?
+            cookies::push_cookie_message(&mut payload, message)?
         }
     };
     write_frame(out, kind, &payload)
-}
-
-/// The payload of a cookie message (`cookies.md` section 9), and its kind.
-fn push_cookie_message(payload: &mut Vec<u8>, message: &FromFetcher) -> Result<u8, ProtocolError> {
-    Ok(match message {
-        FromFetcher::CookieQuestion { id, host, path, secure, site } => {
-            payload.extend_from_slice(&id.to_be_bytes());
-            push_raw_text(payload, host, MAX_ADDRESS);
-            push_raw_text(payload, path, MAX_ADDRESS);
-            payload.push(u8::from(*secure));
-            payload.push(match site {
-                CookieSite::SameService => SITE_SAME,
-                CookieSite::CrossServiceNavigation => SITE_NAVIGATION,
-                CookieSite::CrossOriginForm => SITE_FORM,
-            });
-            KIND_COOKIE_QUESTION
-        }
-        FromFetcher::ReachedQuestion { id, host } => {
-            payload.extend_from_slice(&id.to_be_bytes());
-            push_raw_text(payload, host, MAX_ADDRESS);
-            KIND_REACHED_QUESTION
-        }
-        FromFetcher::CookieSet { host, path, scope, secure, line } => {
-            if line.len() > MAX_SET_COOKIE {
-                return Err(ProtocolError::BadValue("Set-Cookie too long"));
-            }
-            push_raw_text(payload, host, MAX_ADDRESS);
-            push_raw_text(payload, path, MAX_ADDRESS);
-            payload.push(u8::from(scope.is_some()) | (u8::from(*secure) << 1));
-            if let Some(scope) = scope {
-                push_raw_text(payload, scope, MAX_ADDRESS);
-            }
-            payload.extend_from_slice(line);
-            KIND_COOKIE_SET
-        }
-        FromFetcher::ClearSiteData(host) => {
-            push_raw_text(payload, host, MAX_ADDRESS);
-            KIND_CLEAR_SITE_DATA
-        }
-        _ => return Err(ProtocolError::BadValue("not a cookie message")),
-    })
-}
-
-/// Reads a cookie message of `kind`.
-fn read_cookie_message(kind: u8, fields: &mut Fields<'_>) -> Result<FromFetcher, ProtocolError> {
-    Ok(match kind {
-        KIND_COOKIE_QUESTION => {
-            let id = fields.u32()?;
-            let host = raw_text(fields, MAX_ADDRESS)?;
-            let path = raw_text(fields, MAX_ADDRESS)?;
-            let secure = match fields.u8()? {
-                0 => false,
-                1 => true,
-                _ => return Err(ProtocolError::BadValue("secure")),
-            };
-            let site = match fields.u8()? {
-                SITE_SAME => CookieSite::SameService,
-                SITE_NAVIGATION => CookieSite::CrossServiceNavigation,
-                SITE_FORM => CookieSite::CrossOriginForm,
-                _ => return Err(ProtocolError::BadValue("site")),
-            };
-            FromFetcher::CookieQuestion { id, host, path, secure, site }
-        }
-        KIND_REACHED_QUESTION => {
-            let id = fields.u32()?;
-            FromFetcher::ReachedQuestion { id, host: raw_text(fields, MAX_ADDRESS)? }
-        }
-        KIND_COOKIE_SET => {
-            let host = raw_text(fields, MAX_ADDRESS)?;
-            let path = raw_text(fields, MAX_ADDRESS)?;
-            let flags = fields.u8()?;
-            if flags > 3 {
-                return Err(ProtocolError::BadValue("cookie flags"));
-            }
-            let scope = if flags & 1 != 0 { Some(raw_text(fields, MAX_ADDRESS)?) } else { None };
-            let line = fields.take(fields.bytes.len())?;
-            if line.len() > MAX_SET_COOKIE {
-                return Err(ProtocolError::BadValue("Set-Cookie too long"));
-            }
-            FromFetcher::CookieSet { host, path, scope, secure: flags & 2 != 0, line: line.to_vec() }
-        }
-        KIND_CLEAR_SITE_DATA => FromFetcher::ClearSiteData(raw_text(fields, MAX_ADDRESS)?),
-        _ => return Err(ProtocolError::UnknownKind(kind)),
-    })
 }
 
 /// Reads one message from a fetcher, or `None` at a clean end.
@@ -476,20 +326,16 @@ fn read_cookie_message(kind: u8, fields: &mut Fields<'_>) -> Result<FromFetcher,
 /// malformed or out of bounds.
 pub fn read_from_fetcher(input: &mut dyn Read) -> Result<Option<FromFetcher>, ProtocolError> {
     let Some((kind, payload)) = read_frame(input)? else { return Ok(None) };
-    let mut fields = Fields { bytes: &payload };
+    let mut fields = Fields::new(&payload);
     let message = match kind {
         KIND_CONTENTS => {
-            let count = usize::from(fields.u16()?);
-            if count > MAX_ENTRIES {
-                return Err(ProtocolError::BadValue("too many entries"));
-            }
+            let count = fields.count_u16(MAX_ENTRIES, "too many entries")?;
             let entries = (0..count)
                 .map(|_| match fields.u8()? {
-                    ENTRY_SECTION => Ok(Entry::Section(raw_text(&mut fields, MAX_PAGE_TITLE)?)),
+                    ENTRY_SECTION => Ok(Entry::Section(raw_text(&mut fields, MAX_PAGE_TITLE, "text too long")?)),
                     ENTRY_PAGE => {
-                        let page = fields.u16()?;
-                        page_index(page).ok_or(ProtocolError::BadValue("page number"))?;
-                        Ok(Entry::Page { page, title: raw_text(&mut fields, MAX_PAGE_TITLE)? })
+                        let page = fields.display_page()?;
+                        Ok(Entry::Page { page, title: raw_text(&mut fields, MAX_PAGE_TITLE, "text too long")? })
                     }
                     _ => Err(ProtocolError::BadValue("contents entry")),
                 })
@@ -505,9 +351,9 @@ pub fn read_from_fetcher(input: &mut dyn Read) -> Result<Option<FromFetcher>, Pr
                 ORIGIN_PUSHED_PACKETS => Origin::PushedPackets,
                 _ => return Err(ProtocolError::BadValue("page origin")),
             };
-            FromFetcher::Page { origin, bytes: fields.take(fields.bytes.len())?.to_vec() }
+            FromFetcher::Page { origin, bytes: fields.take(fields.remaining())?.to_vec() }
         }
-        KIND_NOTICE => FromFetcher::Notice(raw_text(&mut fields, MAX_NOTICE)?),
+        KIND_NOTICE => FromFetcher::Notice(raw_text(&mut fields, MAX_NOTICE, "text too long")?),
         #[cfg(feature = "links")]
         KIND_LINKS => {
             let (aliases, services) = crate::links::read_channel_links(&mut fields)?;
@@ -521,17 +367,13 @@ pub fn read_from_fetcher(input: &mut dyn Read) -> Result<Option<FromFetcher>, Pr
             }
             FromFetcher::Input { open: flags & 1 != 0, secure: flags & 2 != 0 }
         }
-        KIND_PUSHING => FromFetcher::Pushing(match fields.u8()? {
-            0 => false,
-            1 => true,
-            _ => return Err(ProtocolError::BadValue("pushing")),
-        }),
+        KIND_PUSHING => FromFetcher::Pushing(fields.flag("pushing")?),
         KIND_EXCHANGE => {
-            let method = raw_text(&mut fields, MAX_METHOD)?;
+            let method = raw_text(&mut fields, MAX_METHOD, "text too long")?;
             if method.is_empty() || !method.bytes().all(|byte| byte.is_ascii_uppercase()) {
                 return Err(ProtocolError::BadValue("method"));
             }
-            let url = raw_text(&mut fields, MAX_EXCHANGE_URL)?;
+            let url = raw_text(&mut fields, MAX_EXCHANGE_URL, "text too long")?;
             let status = fields.u16()?;
             if !STATUS_CODES.contains(&status) {
                 return Err(ProtocolError::BadValue("status"));
@@ -542,104 +384,9 @@ pub fn read_from_fetcher(input: &mut dyn Read) -> Result<Option<FromFetcher>, Pr
         }
         KIND_PROXY_FAILED => FromFetcher::ProxyFailed,
         KIND_CERTIFICATE_REFUSED => FromFetcher::CertificateRefused(crate::problem_of(fields.u8()?).ok_or(ProtocolError::BadValue("certificate problem"))?),
-        KIND_COOKIE_QUESTION | KIND_REACHED_QUESTION | KIND_COOKIE_SET | KIND_CLEAR_SITE_DATA => read_cookie_message(kind, &mut fields)?,
+        KIND_COOKIE_QUESTION | KIND_REACHED_QUESTION | KIND_COOKIE_SET | KIND_CLEAR_SITE_DATA => cookies::read_cookie_message(kind, &mut fields)?,
         other => return Err(ProtocolError::UnknownKind(other)),
     };
     fields.end()?;
     Ok(Some(message))
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn every_kind_round_trips() {
-        for message in [
-            FromFetcher::Contents(vec![Entry::Section("News".into()), Entry::Page { page: 0x101, title: "Headlines".into() }]),
-            FromFetcher::Page { origin: Origin::PushedPage, bytes: b"PN,10100\\nOL,1,Hello\\n".to_vec() },
-            FromFetcher::Page { origin: Origin::PushedPackets, bytes: vec![0; 42] },
-            FromFetcher::Page { origin: Origin::Fetched, bytes: vec![1, 2, 3] },
-            FromFetcher::Page { origin: Origin::FetchedPage, bytes: b"PN,10000\\n".to_vec() },
-            FromFetcher::Page { origin: Origin::FetchedPackets, bytes: vec![0; 84] },
-            FromFetcher::Notice("Opened".into()),
-            FromFetcher::Pushing(true),
-            FromFetcher::Exchange { method: "GET".into(), url: "https://a.example/100.tti".into(), status: 200, bytes: 512, elapsed_us: 1_234 },
-            FromFetcher::ProxyFailed,
-            FromFetcher::CertificateRefused(CertificateProblem::Expired),
-            FromFetcher::CertificateRefused(CertificateProblem::Handshake),
-            FromFetcher::CookieQuestion { id: 7, host: "a.example".into(), path: "/tt/100.tti".into(), secure: true, site: CookieSite::SameService },
-            FromFetcher::CookieQuestion { id: 8, host: "b.example".into(), path: "/".into(), secure: false, site: CookieSite::CrossOriginForm },
-            FromFetcher::ReachedQuestion { id: 9, host: "a.example".into() },
-            FromFetcher::CookieSet { host: "a.example".into(), path: "/tt/".into(), scope: Some("/tt/".into()), secure: true, line: b"id=1; Secure".to_vec() },
-            FromFetcher::CookieSet { host: "a.example".into(), path: "/p".into(), scope: None, secure: false, line: b"x=2".to_vec() },
-            FromFetcher::ClearSiteData("a.example".into()),
-        ] {
-            let mut bytes = Vec::new();
-            write_to_core(&mut bytes, &message).unwrap();
-            assert_eq!(read_from_fetcher(&mut bytes.as_slice()).unwrap().unwrap(), message);
-        }
-        for message in [
-            ToFetcher::CookieAnswer { id: 7, header: b"id=1".to_vec() },
-            ToFetcher::CookieAnswer { id: 8, header: Vec::new() },
-            ToFetcher::ReachedAnswer { id: 9, reached: true },
-        ] {
-            let mut bytes = Vec::new();
-            write_to_fetcher(&mut bytes, &message).unwrap();
-            assert_eq!(read_to_fetcher(&mut bytes.as_slice()).unwrap().unwrap(), message);
-        }
-    }
-
-    /// Decision 62: cookie messages within their bounds only.
-    #[test]
-    fn cookie_messages_are_bounded() {
-        let long = FromFetcher::CookieSet { host: "a.example".into(), path: "/".into(), scope: None, secure: true, line: vec![b'x'; MAX_SET_COOKIE + 1] };
-        assert!(write_to_core(&mut Vec::new(), &long).is_err());
-        let mut bytes = vec![KIND_COOKIE_SET];
-        let mut payload = vec![0, 1, b'a', 0, 1, b'/', 0];
-        payload.extend(std::iter::repeat_n(b'x', MAX_SET_COOKIE + 1));
-        bytes.extend_from_slice(&u32::try_from(payload.len()).unwrap().to_be_bytes());
-        bytes.extend(payload);
-        assert!(matches!(read_from_fetcher(&mut bytes.as_slice()), Err(ProtocolError::BadValue("Set-Cookie too long"))));
-        let bad_site = [KIND_COOKIE_QUESTION, 0, 0, 0, 12, 0, 0, 0, 1, 0, 1, b'a', 0, 1, b'/', 0, 3];
-        assert!(matches!(read_from_fetcher(&mut bad_site.as_slice()), Err(ProtocolError::BadValue("site"))));
-        let answer = ToFetcher::CookieAnswer { id: 1, header: vec![b'x'; MAX_COOKIE_HEADER + 1] };
-        assert!(write_to_fetcher(&mut Vec::new(), &answer).is_err());
-        // A fetcher may not send the trusted core's answers.
-        let mut bytes = Vec::new();
-        write_to_fetcher(&mut bytes, &ToFetcher::ReachedAnswer { id: 1, reached: false }).unwrap();
-        assert!(matches!(read_from_fetcher(&mut bytes.as_slice()), Err(ProtocolError::UnknownKind(KIND_REACHED_ANSWER))));
-    }
-
-    #[test]
-    fn malformed_contents_are_refused() {
-        // A hexadecimal page number.
-        let bytes = [KIND_CONTENTS, 0, 0, 0, 7, 0, 1, ENTRY_PAGE, 0x1A, 0x00, 0, 0];
-        assert!(matches!(read_from_fetcher(&mut bytes.as_slice()), Err(ProtocolError::BadValue("page number"))));
-        // An unknown entry kind.
-        let bytes = [KIND_CONTENTS, 0, 0, 0, 3, 0, 1, 9];
-        assert!(matches!(read_from_fetcher(&mut bytes.as_slice()), Err(ProtocolError::BadValue("contents entry"))));
-        // An exchange's status out of range, and a method that is not one.
-        let exchange = |method: &[u8], status: u16| {
-            let mut payload = vec![0, u8::try_from(method.len()).unwrap()];
-            payload.extend_from_slice(method);
-            payload.extend_from_slice(&[0, 1, b'/']);
-            payload.extend_from_slice(&status.to_be_bytes());
-            payload.extend_from_slice(&[0; 16]);
-            let mut bytes = vec![KIND_EXCHANGE, 0, 0, 0, u8::try_from(payload.len()).unwrap()];
-            bytes.extend(payload);
-            read_from_fetcher(&mut bytes.as_slice())
-        };
-        assert!(exchange(b"GET", 200).is_ok());
-        assert!(matches!(exchange(b"GET", 99), Err(ProtocolError::BadValue("status"))));
-        assert!(matches!(exchange(b"GET", 600), Err(ProtocolError::BadValue("status"))));
-        assert!(matches!(exchange(b"get\n", 200), Err(ProtocolError::BadValue("method"))));
-        assert!(matches!(exchange(b"", 200), Err(ProtocolError::BadValue("method"))));
-        assert!(matches!(exchange(b"VERYLONGMETHOD", 200), Err(ProtocolError::BadValue("text too long"))));
-        let bytes = [KIND_PROXY_FAILED, 0, 0, 0, 1, 0];
-        assert!(read_from_fetcher(&mut bytes.as_slice()).is_err(), "nothing after it");
-        // A fetcher sending a decoder's kind.
-        let bytes = [65, 0, 0, 0, 0];
-        assert!(matches!(read_from_fetcher(&mut bytes.as_slice()), Err(ProtocolError::UnknownKind(65))));
-    }
 }

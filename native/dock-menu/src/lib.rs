@@ -13,6 +13,21 @@
 //! calls, which are `unsafe`: this is the only crate of the browser
 //! allowed them. Elsewhere it does nothing.
 
+// No panicking constructs: the tab titles it lists come from pages, and
+// AppKit calls back into it on the interface's main thread, where a panic
+// cannot unwind (finding F-37). The same list is in each crate that reads
+// input from outside its process; scripts/check.sh checks that they agree.
+#![deny(
+    clippy::indexing_slicing,
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::arithmetic_side_effects,
+    clippy::unreachable,
+    clippy::todo,
+    clippy::unimplemented
+)]
+
 /// One tab as the Dock menu lists it.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct DockTab {

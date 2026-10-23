@@ -7,6 +7,10 @@ license.workspace = true
 rust-version.workspace = true
 publish.workspace = true
 
+[lib]
+name = "fetcher"
+path = "src/lib.rs"
+
 # Passing on the descriptor's aliases and named services (`hyperlinks.md`
 # section 6.4).
 [features]

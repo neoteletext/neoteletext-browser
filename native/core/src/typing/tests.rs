@@ -224,10 +224,14 @@ fn the_acknowledgement_clears_echo_and_measures_the_round_trip() {
 fn no_input_code_logs() {
     let sources = [
         ("core/src/typing.rs", include_str!("../typing.rs")),
-        ("interface-core/src/browser/terminal_ui.rs", include_str!("../../../interface-core/src/browser/terminal_ui.rs")),
+        ("core/src/trusted_core/typing.rs", include_str!("../trusted_core/typing.rs")),
+        ("interface-core/src/browser/typing.rs", include_str!("../../../interface-core/src/browser/typing.rs")),
+        ("interface-core/src/browser/typing/draw.rs", include_str!("../../../interface-core/src/browser/typing/draw.rs")),
         ("interface-core/src/input.rs", include_str!("../../../interface-core/src/input.rs")),
         ("interface/src/keys.rs", include_str!("../../../interface/src/keys.rs")),
         ("protocol/src/interaction.rs", include_str!("../../../protocol/src/interaction.rs")),
+        ("protocol/src/interaction/intent.rs", include_str!("../../../protocol/src/interaction/intent.rs")),
+        ("protocol/src/interaction/typing.rs", include_str!("../../../protocol/src/interaction/typing.rs")),
     ];
     // The keyboard process prints one thing: why it stopped, which is
     // the relay's or the pipe's error, never a key.

@@ -25,11 +25,12 @@ pub mod input;
 pub mod library;
 #[cfg(feature = "links")]
 pub mod links;
+mod session;
 pub mod settings;
 pub mod size;
 #[cfg(test)]
 mod test_canvas;
+pub mod text;
 pub mod theme;
 pub mod tween;
-pub mod ui;
 pub mod wall;

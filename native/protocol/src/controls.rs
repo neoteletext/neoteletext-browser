@@ -76,13 +76,7 @@ pub(crate) fn read_controls(fields: &mut Fields<'_>) -> Result<PageControls, Pro
     if flags & !FLAGS != 0 {
         return Err(ProtocolError::BadValue("control flags"));
     }
-    let page = if flags & OPEN == 0 {
-        None
-    } else {
-        let page = fields.u16()?;
-        page_index(page).ok_or(ProtocolError::BadValue("page number"))?;
-        Some(page)
-    };
+    let page = if flags & OPEN == 0 { None } else { Some(fields.display_page()?) };
     let keys = fields.u8()?;
     if usize::from(keys) >> FastextKey::ALL.len() != 0 {
         return Err(ProtocolError::BadValue("Fastext keys"));

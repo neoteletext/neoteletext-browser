@@ -8,6 +8,8 @@
 use alloc::string::String;
 use alloc::vec::Vec;
 
+pub use crate::session::{MAX_COORDINATE, MAX_WINDOW_SIZE, MAX_WINDOWS, WindowGeometry};
+
 /// The most rows of history, bookmarks or folders in one view: the rows on
 /// screen at the tallest window, and a margin (section 2.4).
 pub const MAX_VIEW_ROWS: usize = 100;
@@ -27,10 +29,6 @@ pub const MAX_STEPS: usize = MAX_TAB_ENTRIES - 1;
 const _: () = assert!(MAX_STEPS <= u8::MAX as usize, "a step count is one byte");
 /// The most recently closed tabs kept (section 2.8).
 pub const MAX_CLOSED: usize = 25;
-/// The most windows open at once (`multiple-windows.md`): more than anyone
-/// arranges on a desktop, and few enough that every window's lines fit the
-/// session file.
-pub const MAX_WINDOWS: usize = 16;
 /// The longest search text.
 pub const MAX_QUERY: usize = 256;
 /// The longest name of a bookmark or folder, and a channel's title.
@@ -371,37 +369,4 @@ pub enum BarRequest {
         /// In a new tab.
         new_tab: bool,
     },
-}
-
-/// The furthest a window's corner is kept from the origin, in logical
-/// points (`history-and-bookmarks.md` section 15.1).
-pub const MAX_COORDINATE: i32 = 32_768;
-/// The largest window kept, in logical points.
-pub const MAX_WINDOW_SIZE: u32 = 32_768;
-
-/// The window's place and size, in logical points, as the session keeps
-/// it (requirement 20.21).
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct WindowGeometry {
-    /// Its outer left edge.
-    pub x: i32,
-    /// Its outer top edge.
-    pub y: i32,
-    /// Its inner width.
-    pub width: u32,
-    /// Its inner height.
-    pub height: u32,
-    /// Maximised.
-    pub maximised: bool,
-}
-
-impl WindowGeometry {
-    /// Whether every field is within its bound.
-    #[must_use]
-    pub fn is_plausible(&self) -> bool {
-        (-MAX_COORDINATE..=MAX_COORDINATE).contains(&self.x)
-            && (-MAX_COORDINATE..=MAX_COORDINATE).contains(&self.y)
-            && (1..=MAX_WINDOW_SIZE).contains(&self.width)
-            && (1..=MAX_WINDOW_SIZE).contains(&self.height)
-    }
 }

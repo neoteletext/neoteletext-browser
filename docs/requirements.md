@@ -150,7 +150,7 @@ Withdrawn on 23 October 2026 (decision 66): the browser does not support fonts f
 - **Reason:** An attacker who took over the interface must find nothing of value.
 - **Source:** Decisions 4, 18 and 33.
 - **Verification:** Test on each platform: network and file access fail from the interface process; review of every message type sent to it.
-- **State:** Partly met. No secret is ever sent to it (review of `protocol`). On macOS its profile starts from "deny everything" and allows the system's folders and the window, font, text-input, pasteboard, notification, preference, sound and Dock services, with no network and no programs; on Linux it confines itself with an empty network namespace where allowed, Landlock (fonts, preferences and the system's directories readable) and a seccomp filter (local-domain sockets only, no programs); on Windows a restricted token at low integrity in a job object with the mitigation policies, which does not stop reads of the user's files. Its environment is cut to the window system's on every platform (22 October 2026, `sandboxing.md`).
+- **State:** Partly met. No secret is ever sent to it (review of `protocol`). On macOS its profile starts from "deny everything" and allows the system's folders and the window, font, text-input, pasteboard, notification, preference, sound and Dock services, with no network and no programs; on Linux it confines itself with an empty network namespace where allowed, Landlock (fonts, preferences and the system's directories readable) and a seccomp filter (local-domain sockets only, no programs); on Windows an AppContainer with no capabilities in a job object with the mitigation policies, so no network and none of the user's files (decision 90, 24 October 2026; before, a restricted token at low integrity, which stopped neither; built, verified by hand in the virtual machine still owed: `the_interface_reaches_no_network_and_no_user_file`). Its environment is cut to the window system's on every platform (22 October 2026, `sandboxing.md`).
 - *Amended 22 October 2026 (decision 57):* "beyond what is on screen" is exact for history and bookmarks: the interface receives them only as the views of `history-and-bookmarks.md` section 4, at most 100 rows at a time, and names a row only by its view's number (requirement 20.5).
 
 ### Requirement 3.7: Operating-system sandboxes
@@ -339,6 +339,7 @@ Withdrawn on 23 October 2026 (decision 66): no font is fetched; every page is dr
 - **Source:** Architecture; `neoteletext` requirement REQ-SEC-006.
 - **Verification:** Test for each range.
 - **State:** Met: refused by the engine's user agent unless allowed, with `--allow-local` or in the settings panel (requirement 19.3); through a proxy, by requirement 19.11.
+- *Residual, 24 October 2026 (decision 89):* the engine's check is the fetcher's own, so a compromised fetcher or phone keyboard is held off this computer by its sandbox on macOS (the profile refuses `localhost` unless the channel may reach the local network; test `a_fetcher_reaches_this_computer_only_when_allowed`) and on Windows (an AppContainer reaches loopback only with an exemption, which none has), but not off the local network beyond it on macOS, nor off either on Linux. Connecting in the broker is the planned design that closes it.
 
 ### Requirement 5.11: Compression is bounded
 - **Statement:** The fetcher must undo compression with a fixed maximum decompressed size, the engine's constant.
@@ -494,7 +495,7 @@ Withdrawn on 23 October 2026 (decision 66): no font is fetched; every page is dr
 - **Reason:** The interface process is untrusted and must not accumulate anything of value.
 - **Source:** Decisions 4 and 33.
 - **Verification:** Test: the interface process writes no file.
-- **State:** Partly met: it writes no file (denied by its sandbox; on Windows its restricted token at low integrity denies writes to the user's files) and holds no cookies; it drops the image of every page its layout no longer shows each time it reports what is visible (`retain_pages` in `native/interface/src/main.rs`), so it holds only the shown channel's pages. Neither is tested.
+- **State:** Partly met: it writes no file (denied by its sandbox; on Windows its AppContainer, at low integrity, denies writes to the user's files, decision 90) and holds no cookies; it drops the image of every page its layout no longer shows each time it reports what is visible (`retain_pages` in `native/interface/src/main.rs`), so it holds only the shown channel's pages. Neither is tested.
 
 ### Requirement 7.10: Forms
 - **Statement:** A page's form must be sent only to its declared destination, through the fetcher. A form whose destination is another channel must go through the site-change screen, with that channel's `SameSite` cookies withheld. No form value may be filled in automatically.
@@ -705,6 +706,7 @@ Withdrawn on 23 October 2026 (decision 66): no font is fetched; every page is dr
 - **Verification:** Check: the workspace lints forbid `unsafe_code`; `dock-menu` denies it and allows it only in `src/mac.rs`, `web-opener` only in `src/windows.rs`, and `confine` only in `src/linux.rs`, `src/unix.rs` and `src/windows.rs`, each with Clippy's `undocumented_unsafe_blocks`.
 - **State:** Met; amended 22 October 2026 (decisions 52 and 56) for `confine`.
 - *Amended 23 October 2026 (decision 75):* a fourth exception, the `os-install` crate, whose macOS module calls CoreFoundation's alert for the launcher, which has no window, and whose Windows module calls `WinVerifyTrust` and reads the signer's certificate, writes and removes the per-user uninstall entry, and shows a message box (`installation-and-updates.md` sections 4 and 5). It denies `unsafe_code` everywhere else and allows it only in `src/macos.rs` and `src/windows.rs`. `confine`'s Windows module also grants `ALL APPLICATION PACKAGES` read on the programs' folder and removes the containers' profiles. The launcher, the updater, the installer, the stub and the release tool forbid unsafe code; the folder exchange is `rustix`'s safe interface.
+- *Amended 24 October 2026 (decision 86):* `confine`'s Linux module (`src/linux/`) also mounts the interface's and the sound helper's own `/run` and `/tmp` (`mount`, `open_tree`, `move_mount`, in `runtime.rs`), and holds the sandbox tests' probes (`probe.rs`: the system calls a confined helper must be refused, which nothing shipped calls). Each leaf module that holds unsafe code says so with its own `#![expect(unsafe_code, reason)]`.
 
 ### Requirement 10.13: The interface process ends on a broken message
 - **Statement:** The interface process must end at the first malformed message from the trusted core, rather than try to continue.
@@ -752,6 +754,7 @@ Withdrawn on 23 October 2026 (decision 66): no font is fetched; every page is dr
 - **Source:** Decision 4.
 - **Verification:** Test.
 - **State:** Met, with tests: `protocol::clean` on the sending side and a check on the receiving side; the address editor never inserts hidden characters.
+- *Amended 24 October 2026 (finding F-36):* the hidden set is every format character (Unicode general category Cf, the tag characters among them), the line and paragraph separators, and the other default-ignorable characters (the combining grapheme joiner, the Hangul fillers, the variation selectors), where it had been the controls, the bidirectional controls and the zero-width characters alone; and a run of combining marks of the combining blocks is cut at `MAX_COMBINING_RUN`, four. State: met, by `every_invisible_character_is_hidden` (interface-core) and `a_run_of_combining_marks_is_cut` (protocol), both failing on the earlier code. A script's own combining marks (Devanagari's, Hebrew's) are not counted, since that needs Unicode's tables, which no crate of the protocol carries.
 
 ### Requirement 11.6: Reload
 - **Statement:** The strip must show a Reload button between Forward and Home; it, Command-R on macOS and Control-R elsewhere must open the active tab's channel afresh, with a new decoder and fetcher reading its pages again, at the tab's place in its history, which must not change. Reload is strip input carrying nothing; the trusted core decides what is opened.
@@ -1191,6 +1194,7 @@ Adopted on 20 October 2026 (decision 41) from [`hyperlinks.md`](hyperlinks.md), 
 - **Source:** Decision 41; `hyperlinks.md`.
 - **Verification:** Test with `file:`, custom schemes, paths, a leading `-` and over-long addresses; the "nothing else opens" test of `hyperlinks-security.md` section 15.
 - **State:** Partly met. macOS: `/usr/bin/open -u`, by hand on 20 October 2026 (an `https` address opened in the default browser and was logged). Linux: `xdg-open`; the XDG Desktop Portal awaits the approval of a D-Bus crate (hyperlink decision 10). Windows: `ShellExecuteW`, by hand on 20 October 2026 in the Windows 11 VM's desktop (`an_address_opens_in_the_default_browser`: Edge opened the address); every test passed there with links compiled in and out. Tests: `only_plain_https_and_http_addresses_are_handed_over`, `nothing_but_a_confirmation_hands_a_web_page_over`, `the_web_is_handed_over_only_with_the_focus_and_at_most_every_two_seconds`.
+- *Amended 24 October 2026 (decision 100, finding F-41):* an address holding `'`, `;`, `$`, `(`, `)`, `!` or `` ` `` is refused by the opener and never handed over. State: met in `web_opener::acceptable`, by `only_plain_https_and_http_addresses_are_handed_over`, which failed on the earlier check with `https://a.example/x;$(id)`; the trusted core's own address rule (`links::web_address`) still accepts those characters, so such a link is asked about and then refused at the hand-off, until the core's rule refuses them too. On Windows, by hand: a link from a page still opens.
 
 ### Requirement 17.10: Links by keyboard
 - **Statement:** Links can be reached and followed with the keyboard, and are in the accessibility tree.
@@ -1284,6 +1288,7 @@ The input system's requirements for NeoTeletext are in `~/devel/neoteletext-comm
 
 #### REQ-INT-138: The phone keyboard
 - **State:** As requirement 18.9 stood, with the phone's keys now the protocol's: text as text, named keys their functional codes, no modifiers (test `a_phones_keys_have_no_modifiers`); the keyboard process counts 120 input units a second, a character of text each. The panel has not yet paired with a real phone.
+- *Amended 24 October 2026 (decision 99, finding F-20):* while no page is open for typing, a phone key moves between pages and does nothing else: the trusted core passes on only the page-navigation keys, protocol's `PAGE_NAVIGATION_KEYS` (the digits, the four arrows and the four colour keys), and the interface gives a phone key to the page view alone, never to a text field, the strip's question or a panel, dropping it while one of those has the keys. State: the interface's half is met, by `a_phones_keys_never_reach_the_address_field`, `a_phones_keys_never_reach_a_panel`, `a_phones_keys_never_answer_the_strips_question`, `a_phones_page_keys_move_between_pages` and `only_the_page_navigation_keys_are_the_page_views` (interface-core), each of the first four failing on the earlier routing, and `the_cores_page_keys_are_the_page_views` (the interface), which holds protocol's list and the page view's to one set; the trusted core's filter is not yet built.
 
 #### REQ-INT-139: Compiled out
 - **State:** Met: the commit gate lints the workspace with every optional area out, and with hyperlinks, typing, and both, alone.

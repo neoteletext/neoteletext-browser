@@ -185,7 +185,7 @@ Everything else is refused in the core before the opener is considered: `file:`,
 | Windows | `ShellExecuteW(NULL, L"open", address, NULL, NULL, SW_SHOWNORMAL)` | For an `https` or `http` address Windows resolves the user's default browser. Needs `unsafe` or a wrapper crate; as decision 39 confined the Dock menu's `unsafe` to one crate, this is confined to an `opener` crate of its own |
 | Linux | **The XDG Desktop Portal first:** `org.freedesktop.portal.OpenURI.OpenURI` over the session bus, which is the interface made for sandboxed applications to open addresses, and which Flatpak and Snap already require (finding 6). Otherwise `xdg-open <address>` | `xdg-open` is a shell script that honours `$BROWSER` and dispatches to desktop-specific openers; it has had argument-handling faults over the years. The portal takes the address as a D-Bus string with no shell anywhere |
 
-On every platform the address is one argument; no command line is assembled from text.
+On every platform the address is one argument; no command line is assembled from text. *Amended 24 October 2026 (decision 100, finding F-41):* the opener also refuses an address holding a character a shell gives a meaning, `'`, `;`, `$`, `(`, `)`, `!` or `` ` ``, rather than encoding it: no opener today passes the address through a shell, but `xdg-open` is a shell script that runs `$BROWSER`, and an address that means nothing to a shell cannot be mistaken by one. Such an address is not handed over at all (test `only_plain_https_and_http_addresses_are_handed_over`).
 
 ### 9.3 What the opener does with it is out of our hands
 
@@ -222,7 +222,7 @@ Everything in `security-analysis.md` section 7 applies. What links add:
 
 - **Prompts cannot wedge the window:** one at a time, replaceable, cancelled by Escape, never modal to the strip's other controls.
 - **A link flood** (32 runs changing every frame) costs the core bounded work per frame and the interface a few hundred line draws.
-- **An opener that hangs** (a broken `xdg-open`) must not hang the core: the opener is spawned and not waited for, with its standard streams closed.
+- **An opener that hangs** (a broken `xdg-open`) must not hang the core: the opener is spawned and not waited for, with its standard streams closed. On macOS and Linux it is also started in a process group of its own (24 October 2026), so that a web browser it starts, which `xdg-open` may leave as its descendant, is never in the broker's group, which the launcher kills whole after a broker crash (finding F-34); test `the_opener_is_in_a_process_group_of_its_own`.
 - **A broken portal** on Linux falls back to `xdg-open`; a missing opener is reported in the strip as "Could not open your web browser".
 
 **Remaining risk:** low.
