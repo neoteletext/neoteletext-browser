@@ -49,10 +49,10 @@ mod settings_panel;
 mod shown;
 mod star_ui;
 mod tab_strip;
-#[cfg(feature = "interaction")]
-mod terminal_ui;
 mod tips_ui;
 mod toolbar;
+#[cfg(feature = "interaction")]
+mod typing;
 mod widgets;
 mod window;
 
@@ -63,7 +63,7 @@ pub use phone_ui::{PhoneStatus, PhoneUiView};
 pub use pointer::Cursor;
 pub use shown::{CertificateProblem, Frame, StripState, TabInfo};
 #[cfg(feature = "interaction")]
-pub use terminal_ui::{CursorView, TypingView};
+pub use typing::{CursorView, TypingView};
 
 /// The address field's limit, as the trusted core's address rules.
 pub const MAX_ADDRESS: usize = 2048;
@@ -140,7 +140,7 @@ pub struct Browser {
     links: link_ui::LinkUi,
     /// Typing into a page (`interaction.md`).
     #[cfg(feature = "interaction")]
-    terminal: terminal_ui::TerminalUi,
+    typing: typing::TerminalUi,
     /// The phone keyboard (INPUT.md section 10).
     #[cfg(feature = "phone-keyboard")]
     phone: phone_ui::PhoneUi,
@@ -192,7 +192,7 @@ impl Browser {
             #[cfg(feature = "links")]
             links: link_ui::LinkUi::default(),
             #[cfg(feature = "interaction")]
-            terminal: terminal_ui::TerminalUi::default(),
+            typing: typing::TerminalUi::default(),
             #[cfg(feature = "phone-keyboard")]
             phone: phone_ui::PhoneUi::default(),
         }

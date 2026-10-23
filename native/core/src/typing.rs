@@ -646,7 +646,9 @@ mod tests {
     fn no_input_code_logs() {
         let sources = [
             ("core/src/typing.rs", include_str!("typing.rs")),
-            ("interface-core/src/browser/terminal_ui.rs", include_str!("../../interface-core/src/browser/terminal_ui.rs")),
+            ("interface-core/src/browser/typing.rs", include_str!("../../interface-core/src/browser/typing.rs")),
+            ("interface-core/src/browser/typing/draw.rs", include_str!("../../interface-core/src/browser/typing/draw.rs")),
+            ("interface-core/src/browser/typing/tests.rs", include_str!("../../interface-core/src/browser/typing/tests.rs")),
             ("interface-core/src/input.rs", include_str!("../../interface-core/src/input.rs")),
             ("interface/src/keys.rs", include_str!("../../interface/src/keys.rs")),
             ("protocol/src/interaction.rs", include_str!("../../protocol/src/interaction.rs")),
