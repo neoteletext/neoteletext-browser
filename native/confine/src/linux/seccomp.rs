@@ -86,45 +86,14 @@ pub(super) fn seccomp(role: Role, arch: TargetArch) -> Result<(), String> {
     for syscall in [libc::SYS_fork, libc::SYS_vfork, libc::SYS_iopl, libc::SYS_ioperm] {
         rules.insert(number(syscall), always());
     }
+    rules.insert(number(libc::SYS_ioctl), terminal()?);
     // A new process, but not a new thread: clone without CLONE_THREAD.
     let thread_flag = u64::try_from(libc::CLONE_THREAD).map_err(|_| "CLONE_THREAD")?;
     let not_a_thread =
         SeccompRule::new(vec![SeccompCondition::new(0, SeccompCmpArgLen::Qword, SeccompCmpOp::MaskedEq(thread_flag), 0).map_err(|error| error.to_string())?])
             .map_err(|error| error.to_string())?;
     rules.insert(number(libc::SYS_clone), vec![not_a_thread]);
-    // Sockets: none for a decoder; for the others, a socket of a family
-    // the role has no use for is refused (every condition of one rule
-    // must hold, so one rule says "none of these families").
-    let allowed = families(role);
-    if allowed.is_empty() {
-        for syscall in [libc::SYS_socket, libc::SYS_socketpair, libc::SYS_connect, libc::SYS_bind, libc::SYS_listen, libc::SYS_accept4] {
-            rules.insert(number(syscall), always());
-        }
-    } else {
-        let conditions = allowed
-            .iter()
-            .map(|&family| SeccompCondition::new(0, SeccompCmpArgLen::Dword, SeccompCmpOp::Ne, family))
-            .collect::<Result<Vec<_>, _>>()
-            .map_err(|error| error.to_string())?;
-        let other_family = SeccompRule::new(conditions).map_err(|error| error.to_string())?;
-        let mut socket = vec![other_family];
-        // Of netlink, routing alone, which the resolver asks for the
-        // host's address families (decision 86); the rules of one call are
-        // alternatives, so this refuses every other netlink protocol.
-        let netlink = libc::AF_NETLINK as u64;
-        if allowed.contains(&netlink) {
-            let route = u64::try_from(libc::NETLINK_ROUTE).map_err(|_| "NETLINK_ROUTE")?;
-            let other_netlink = SeccompRule::new(vec![
-                SeccompCondition::new(0, SeccompCmpArgLen::Dword, SeccompCmpOp::Eq, netlink).map_err(|error| error.to_string())?,
-                SeccompCondition::new(2, SeccompCmpArgLen::Dword, SeccompCmpOp::Ne, route).map_err(|error| error.to_string())?,
-            ])
-            .map_err(|error| error.to_string())?;
-            socket.push(other_netlink);
-        }
-        rules.insert(number(libc::SYS_socket), socket);
-        rules.insert(number(libc::SYS_listen), always());
-        rules.insert(number(libc::SYS_accept4), always());
-    }
+    sockets(role, &mut rules)?;
     let refused = u32::try_from(libc::EPERM).map_err(|_| "EPERM")?;
     let filter = SeccompFilter::new(rules, SeccompAction::Allow, SeccompAction::Errno(refused), arch).map_err(|error| error.to_string())?;
     let program: BpfProgram = filter.try_into().map_err(|error: seccompiler::BackendError| error.to_string())?;
@@ -141,6 +110,59 @@ pub(super) fn seccomp(role: Role, arch: TargetArch) -> Result<(), String> {
     #[cfg(target_arch = "x86_64")]
     seccompiler::apply_filter(&no_x32(refused)?).map_err(|error| error.to_string())?;
     Ok(())
+}
+
+/// Sockets: none for a decoder or the trusted core; for the others, a
+/// socket of a family the role has no use for is refused.
+fn sockets(role: Role, rules: &mut BTreeMap<i64, Vec<SeccompRule>>) -> Result<(), String> {
+    let allowed = families(role);
+    if allowed.is_empty() {
+        for syscall in [libc::SYS_socket, libc::SYS_socketpair, libc::SYS_connect, libc::SYS_bind, libc::SYS_listen, libc::SYS_accept4] {
+            rules.insert(number(syscall), always());
+        }
+        return Ok(());
+    }
+    // Every condition of one rule must hold, so one rule says "none of
+    // these families".
+    let other_family: Vec<(u8, SeccompCmpOp, u64)> = allowed.iter().map(|&family| (0, SeccompCmpOp::Ne, family)).collect();
+    let mut socket = vec![rule(&other_family)?];
+    // Of netlink, routing alone, which the resolver asks for the host's
+    // address families (decision 86); the rules of one call are
+    // alternatives, so this refuses every other netlink protocol.
+    let netlink = libc::AF_NETLINK as u64;
+    if allowed.contains(&netlink) {
+        let route = u64::try_from(libc::NETLINK_ROUTE).map_err(|_| "NETLINK_ROUTE")?;
+        socket.push(rule(&[(0, SeccompCmpOp::Eq, netlink), (2, SeccompCmpOp::Ne, route)])?);
+    }
+    rules.insert(number(libc::SYS_socket), socket);
+    rules.insert(number(libc::SYS_listen), always());
+    rules.insert(number(libc::SYS_accept4), always());
+    Ok(())
+}
+
+/// One rule: every condition, each on a 32-bit argument, must hold.
+fn rule(conditions: &[(u8, SeccompCmpOp, u64)]) -> Result<SeccompRule, String> {
+    let conditions = conditions
+        .iter()
+        .map(|(argument, operation, value)| SeccompCondition::new(*argument, SeccompCmpArgLen::Dword, operation.clone(), *value))
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|error| error.to_string())?;
+    SeccompRule::new(conditions).map_err(|error| error.to_string())
+}
+
+/// No typing into a terminal (finding F-22): a helper started from a
+/// terminal shares it as standard error, and `TIOCSTI` queues input for
+/// the user's shell, as `TIOCLINUX` does on a virtual console. Landlock's
+/// device rule does not cover a descriptor opened before it.
+fn terminal() -> Result<Vec<SeccompRule>, String> {
+    [libc::TIOCSTI, libc::TIOCLINUX]
+        .into_iter()
+        .map(|request| {
+            #[allow(clippy::useless_conversion, reason = "an ioctl request is a c_ulong with glibc and a c_int with musl")]
+            let request = u64::try_from(request).map_err(|_| "a terminal request")?;
+            rule(&[(1, SeccompCmpOp::Eq, request)])
+        })
+        .collect()
 }
 
 /// `AUDIT_ARCH_X86_64` (`include/uapi/linux/audit.h`: `EM_X86_64 |

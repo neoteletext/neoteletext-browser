@@ -93,6 +93,7 @@ mod linux {
         let uid = std::fs::metadata("/proc/self").map(|own| own.uid()).unwrap();
         let runtime = std::env::var_os("XDG_RUNTIME_DIR").map(PathBuf::from).unwrap_or_default();
         let own_process = probe::own_process().unwrap();
+        let (_terminal_main, terminal) = probe::controlling_terminal().unwrap();
         let report = match confine::apply(role, writable.as_deref()) {
             Ok(report) => report,
             Err(error) => {
@@ -125,10 +126,15 @@ mod linux {
         };
         #[cfg(not(target_arch = "x86_64"))]
         let x32 = "none";
+        let typed = match probe::type_into(&terminal) {
+            Ok(()) => String::from("typed"),
+            Err(error) if error.kind() == ErrorKind::PermissionDenied => String::from("refused"),
+            Err(error) => format!("failed ({error})"),
+        };
         println!(
             "PROBE report={report}; file={file}; program={program}; tcp={tcp}; write={write}; other-port={other_port}; own-folder={own}; \
              bus={bus}; display={display}; sound={sound}; user-bus={user_bus}; system-bus={system_bus}; netlink-route={netlink_route}; \
-             netlink-audit={netlink_audit}; resolve={resolve}; steal={steal}; x32={x32}"
+             netlink-audit={netlink_audit}; resolve={resolve}; steal={steal}; x32={x32}; terminal={typed}"
         );
     }
 }

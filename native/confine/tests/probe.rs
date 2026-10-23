@@ -160,3 +160,17 @@ fn no_role_calls_by_the_x32_numbers() {
         assert!(line.contains("x32=refused"), "{role}: {line}");
     }
 }
+
+/// Finding F-22: no role may type into the terminal it was started from
+/// (`TIOCSTI`, or `TIOCLINUX` on a virtual console), which would queue a
+/// command for the user's shell. Before, the probe typed into its
+/// controlling terminal where the kernel allows it
+/// (`dev.tty.legacy_tiocsti = 1`), and where it does not, the kernel's own
+/// refusal (EIO) was all there was.
+#[test]
+fn no_role_types_into_its_terminal() {
+    for role in ["decoder", "network", "interface", "sound", "updater"] {
+        let line = probe(role, &[]);
+        assert!(line.contains("terminal=refused"), "{role}: {line}");
+    }
+}

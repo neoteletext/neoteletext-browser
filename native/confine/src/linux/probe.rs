@@ -8,6 +8,7 @@
 
 use std::io;
 use std::os::fd::{FromRawFd as _, OwnedFd, RawFd};
+use std::os::unix::ffi::OsStrExt as _;
 
 /// A result of a system call that returns -1 and sets `errno` on failure.
 fn checked(result: libc::c_long) -> io::Result<libc::c_long> {
@@ -68,4 +69,46 @@ pub fn x32_getpid() -> io::Result<libc::c_long> {
     let number = libc::c_long::from(super::seccomp::X32_SYSCALL_BIT) | libc::SYS_getpid;
     // SAFETY: getpid takes no arguments, by whichever number.
     checked(unsafe { libc::syscall(number) })
+}
+
+/// A pseudo-terminal made this process's controlling terminal, as a
+/// helper started from a terminal has it as its standard error: its main
+/// side, and the terminal itself.
+///
+/// # Errors
+/// When the pseudo-terminal cannot be made or made controlling.
+pub fn controlling_terminal() -> io::Result<(OwnedFd, std::fs::File)> {
+    use std::os::fd::AsRawFd as _;
+    // SAFETY: posix_openpt takes flags only.
+    let main = owned(libc::c_long::from(unsafe { libc::posix_openpt(libc::O_RDWR | libc::O_NOCTTY | libc::O_CLOEXEC) }))?;
+    // SAFETY: grantpt and unlockpt take the descriptor just made.
+    checked(libc::c_long::from(unsafe { libc::grantpt(main.as_raw_fd()) }))?;
+    // SAFETY: as above.
+    checked(libc::c_long::from(unsafe { libc::unlockpt(main.as_raw_fd()) }))?;
+    let mut name = [0_u8; libc::PATH_MAX as usize];
+    // SAFETY: ptsname_r writes at most the buffer's length, NUL-terminated.
+    let result = unsafe { libc::ptsname_r(main.as_raw_fd(), name.as_mut_ptr().cast(), name.len()) };
+    if result != 0 {
+        return Err(io::Error::from_raw_os_error(result));
+    }
+    let name = std::ffi::CStr::from_bytes_until_nul(&name).map_err(|_| io::Error::from(io::ErrorKind::InvalidData))?;
+    let terminal = std::fs::OpenOptions::new().read(true).write(true).open(std::ffi::OsStr::from_bytes(name.to_bytes()))?;
+    // SAFETY: setsid takes no arguments.
+    checked(libc::c_long::from(unsafe { libc::setsid() }))?;
+    // SAFETY: TIOCSCTTY takes an integer argument.
+    checked(libc::c_long::from(unsafe { libc::ioctl(terminal.as_raw_fd(), libc::TIOCSCTTY, 0) }))?;
+    Ok((main, terminal))
+}
+
+/// Queues a byte as if typed at `terminal` (`TIOCSTI`), as a helper
+/// would type a command into the user's shell.
+///
+/// # Errors
+/// As `ioctl(2)`.
+pub fn type_into(terminal: &std::fs::File) -> io::Result<()> {
+    use std::os::fd::AsRawFd as _;
+    let byte = b'x';
+    // SAFETY: TIOCSTI reads one byte from the pointer, which is to a live
+    // local.
+    checked(libc::c_long::from(unsafe { libc::ioctl(terminal.as_raw_fd(), libc::TIOCSTI, &raw const byte) })).map(drop)
 }
