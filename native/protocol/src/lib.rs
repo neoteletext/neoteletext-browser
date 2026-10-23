@@ -20,12 +20,15 @@
 )]
 
 pub mod audio;
+mod bounds;
 pub mod console;
 mod controls;
 pub mod cookies;
 pub mod decoder;
+mod error;
 pub mod fetcher;
 pub mod frame;
+mod framing;
 #[cfg(feature = "interaction")]
 pub mod interaction;
 #[cfg(feature = "phone-keyboard")]
@@ -36,7 +39,11 @@ pub mod links;
 pub mod settings;
 pub mod sound;
 
-use std::io::{self, Read, Write};
+pub use bounds::*;
+pub use error::ProtocolError;
+pub(crate) use framing::{read_frame, tail, write_frame};
+
+use std::io::{Read, Write};
 
 use interface_core::browser::{CertificateProblem, StripState, TabInfo};
 use interface_core::canvas::{COLUMNS, PageKey, ROWS};
@@ -45,35 +52,6 @@ use interface_core::channel::{BANKS, Channel, PAGES, PageInfo, Status, page_inde
 /// never shown from untrusted text (requirement 11.5).
 use interface_core::editor::hidden;
 use interface_core::theme::TAB_COLOURS;
-
-/// The largest payload accepted, as the engine's pipe (`MAX_FRAME`).
-pub const MAX_PAYLOAD: usize = 256 * 1024;
-/// A channel has at most 2,048 page numbers: eight magazines of 256
-/// (EN 300 706 clause 7.1.2).
-pub const MAX_PAGES: usize = 8 * 256;
-/// Lowest and highest teletext page numbers, magazine 8 written as 8.
-pub const FIRST_PAGE: u16 = 0x100;
-/// The highest teletext page number.
-pub const LAST_PAGE: u16 = 0x8FF;
-/// Bounds on the strip's and the view's text, in bytes of UTF-8: a
-/// channel's title.
-pub const MAX_TITLE: usize = 256;
-/// A channel's identity, its host name.
-pub const MAX_IDENTITY: usize = 256;
-/// The longest notice the strip says, as "The proxy refused the
-/// connection to" and a host of at most 253 bytes.
-pub const MAX_STRIP_NOTICE: usize = 320;
-/// The address bar's limit, as the trusted core's address rules.
-pub const MAX_ADDRESS: usize = interface_core::browser::MAX_ADDRESS;
-/// A page title: one row of a teletext page is 40 characters, and each
-/// takes at most four bytes of UTF-8.
-pub const MAX_PAGE_TITLE: usize = 40 * 4;
-/// A bank's name.
-pub const MAX_BANK_NAME: usize = 64;
-/// A tab's title.
-pub const MAX_TAB_TITLE: usize = 128;
-/// More tabs than any window shows.
-pub const MAX_TABS: usize = 64;
 
 // Trusted core to interface.
 const KIND_STRIP: u8 = 2;
@@ -163,11 +141,6 @@ const KIND_FROM: u8 = 74;
 const KIND_NEW_WINDOW: u8 = 75;
 const KIND_TAB_TO_WINDOW: u8 = 76;
 const KIND_CLOSE_WINDOW: u8 = 77;
-/// A window's number on the wire, for a new window: no window has it.
-pub const NEW_WINDOW: u32 = 0;
-/// The first window's number: the window the interface opens at start, and
-/// the one messages are for until a `Target` names another.
-pub const FIRST_WINDOW: u32 = 1;
 // Updates (`installation-and-updates.md` sections 3.2 and 3.4), far from
 // the others, so kinds added beside these elsewhere do not meet them.
 const KIND_UPDATE_VIEW: u8 = 120;
@@ -188,7 +161,6 @@ const TAB_MUTED: u8 = 1;
 const TAB_PRIVATE: u8 = 2;
 const TAB_FLAGS: u8 = TAB_MUTED | TAB_PRIVATE;
 
-const HEADER_BYTES: usize = 5;
 const KEY_BYTES: usize = 6;
 const FRAME_FIXED_BYTES: usize = KEY_BYTES + 4;
 const CELL_BYTES: usize = KEY_BYTES + 4 + 2;
@@ -454,46 +426,6 @@ pub enum ToCore {
     CloseWindow,
 }
 
-/// Why a message could not be read or written.
-#[derive(Debug)]
-pub enum ProtocolError {
-    /// The pipe failed.
-    Io(io::Error),
-    /// A payload longer than [`MAX_PAYLOAD`].
-    TooLong(usize),
-    /// A kind this side does not accept.
-    UnknownKind(u8),
-    /// A payload of the wrong length for its kind.
-    BadLength {
-        /// The message kind.
-        kind: u8,
-        /// The payload's length.
-        length: usize,
-    },
-    /// A field out of bounds or malformed, and which.
-    BadValue(&'static str),
-}
-
-impl std::fmt::Display for ProtocolError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Io(error) => write!(f, "pipe input or output failed: {error}"),
-            Self::TooLong(length) => write!(f, "payload of {length} bytes exceeds {MAX_PAYLOAD}"),
-            Self::UnknownKind(kind) => write!(f, "message kind {kind} is not accepted here"),
-            Self::BadLength { kind, length } => write!(f, "message kind {kind} cannot be {length} bytes"),
-            Self::BadValue(what) => write!(f, "invalid value: {what}"),
-        }
-    }
-}
-
-impl std::error::Error for ProtocolError {}
-
-impl From<io::Error> for ProtocolError {
-    fn from(error: io::Error) -> Self {
-        Self::Io(error)
-    }
-}
-
 /// Untrusted text made safe to show: hidden characters removed, then cut
 /// to at most `max_bytes` on a character boundary.
 #[must_use]
@@ -519,51 +451,6 @@ pub(crate) fn push_raw_text(payload: &mut Vec<u8>, text: &str, limit: usize) {
 
 fn is_clean(text: &str, max_bytes: usize) -> bool {
     text.len() <= max_bytes && !text.chars().any(hidden)
-}
-
-fn write_frame(out: &mut dyn Write, kind: u8, payload: &[u8]) -> Result<(), ProtocolError> {
-    if payload.len() > MAX_PAYLOAD {
-        return Err(ProtocolError::TooLong(payload.len()));
-    }
-    let length = u32::try_from(payload.len()).map_err(|_| ProtocolError::TooLong(payload.len()))?;
-    let mut header = [0_u8; HEADER_BYTES];
-    header[0] = kind;
-    header[1..].copy_from_slice(&length.to_be_bytes());
-    // Not flushed here: a process flushes once it has handled an event,
-    // before it waits for the next, so the messages of one event go in one
-    // write rather than one each.
-    out.write_all(&header)?;
-    out.write_all(payload)?;
-    Ok(())
-}
-
-fn read_frame(input: &mut dyn Read) -> Result<Option<(u8, Vec<u8>)>, ProtocolError> {
-    let mut header = [0_u8; HEADER_BYTES];
-    match input.read_exact(&mut header) {
-        Ok(()) => {}
-        Err(error) if error.kind() == io::ErrorKind::UnexpectedEof => return Ok(None),
-        Err(error) => return Err(error.into()),
-    }
-    let length = u32::from_be_bytes([header[1], header[2], header[3], header[4]]) as usize;
-    if length > MAX_PAYLOAD {
-        return Err(ProtocolError::TooLong(length));
-    }
-    // Read into room reserved for it, not into a payload zeroed first: a
-    // page frame is 240 KB, and zeroing it was most of the cost of reading
-    // one.
-    let mut payload = Vec::with_capacity(length);
-    input.take(u64::try_from(length).map_err(|_| ProtocolError::TooLong(length))?).read_to_end(&mut payload)?;
-    if payload.len() != length {
-        return Err(io::Error::from(io::ErrorKind::UnexpectedEof).into());
-    }
-    Ok(Some((header[0], payload)))
-}
-
-/// `payload` from `offset` on, as its own vector, moved rather than
-/// copied: the payload's room is kept and its bytes shifted down.
-pub(crate) fn tail(mut payload: Vec<u8>, offset: usize) -> Vec<u8> {
-    payload.drain(..offset.min(payload.len()));
-    payload
 }
 
 fn push_key(payload: &mut Vec<u8>, key: PageKey) {
