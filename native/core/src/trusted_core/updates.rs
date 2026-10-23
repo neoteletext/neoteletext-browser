@@ -4,10 +4,6 @@
 //! once the user accepts, and finds a version healthy (section 3.2). It
 //! parses none of the updater's formats: only its messages, each bounded
 //! (`update::wire`), and the launcher's state, read strictly.
-//!
-//! The broker's side is here too: it tells the launcher the version is
-//! healthy, reads the launcher's state for the core, and gives the
-//! updater its staging folder and its one port.
 
 use std::fmt::Write as _;
 use std::io::{BufReader, Write};
@@ -15,14 +11,16 @@ use std::sync::Arc;
 use std::sync::mpsc::Sender;
 use std::time::{Duration, Instant};
 
-use confine::broker::{Broker, Helper, Program, UpdaterGrant};
-use update::layout::{HEALTHY_LINE, LAUNCHED_VARIABLE, Layout};
-use update::platform::Platform;
-use update::state::{MAX_STATE, State};
+use confine::broker::{Broker, Helper, Program};
+use update::state::State;
 use update::version::Version;
 use update::wire::{FromUpdater, ToUpdater, read_from_updater, write_to_updater};
 
-use crate::Event;
+use neoteletext::settings as stored;
+use protocol::{ToCore, ToInterface, clean};
+
+use super::processes::end;
+use super::{Core, Event};
 
 /// How often the updater looks while the browser runs (section 3.4).
 pub const CHECK_INTERVAL: Duration = Duration::from_secs(24 * 60 * 60);
@@ -35,55 +33,6 @@ pub const HEALTH_SETTLE: Duration = Duration::from_secs(2);
 /// After this long without a successful check, the panel says "Updates
 /// unavailable" (section 9.3): the timestamp's life.
 pub const UNAVAILABLE_AFTER: i64 = update::wire::TIMESTAMP_DAYS * 24 * 60 * 60;
-
-// ---- The broker's side ----
-
-/// The installation this broker belongs to, when a launcher started it.
-fn installation() -> Option<Layout> {
-    std::env::var_os(LAUNCHED_VARIABLE)?;
-    let program = std::env::current_exe().ok()?;
-    Layout::of_program(Platform::this()?.family(), &program)
-}
-
-/// Tells the launcher, on the broker's standard output, that the version
-/// is healthy (section 3.2).
-///
-/// # Errors
-/// When no launcher started the browser, or the pipe fails.
-pub fn tell_launcher_healthy() -> Result<(), String> {
-    installation().ok_or("no launcher started this browser")?;
-    let mut output = std::io::stdout().lock();
-    output.write_all(HEALTHY_LINE.as_bytes()).and_then(|()| output.flush()).map_err(|error| format!("cannot tell the launcher: {error}"))
-}
-
-/// The launcher's state file's bytes, for the core.
-///
-/// # Errors
-/// When no launcher started the browser, or the file cannot be read.
-pub fn launcher_state() -> Result<Vec<u8>, String> {
-    let layout = installation().ok_or("no launcher started this browser")?;
-    update::files::read_bounded(&layout.state(), MAX_STATE).map_err(|error| format!("the launcher's state: {error}"))
-}
-
-/// The updater's staging folder and port, by the broker's own rules:
-/// where this installation keeps it, and the update host's port or the
-/// port of the proxy the core names (`--proxy URL`).
-///
-/// # Errors
-/// When no launcher installed the browser, or the proxy is not one.
-pub fn updater_grant(arguments: &[String]) -> Result<UpdaterGrant, String> {
-    let layout = installation().ok_or("no launcher installed this browser, so it does not update itself")?;
-    let staging = layout.staging();
-    std::fs::create_dir_all(&staging).map_err(|error| format!("{}: {error}", staging.display()))?;
-    let port = match arguments {
-        [] => release_identity::PORT,
-        [flag, proxy] if flag == "--proxy" => neoteletext_web::proxy::parse_proxy(proxy).ok_or("the proxy is not one")?.port,
-        _ => return Err(String::from("the updater takes a proxy and nothing else")),
-    };
-    Ok(UpdaterGrant { staging, port })
-}
-
-// ---- The core's side ----
 
 /// What the core knows of a version's health (section 3.2).
 #[derive(Debug)]
@@ -235,8 +184,7 @@ impl Updates {
     pub fn stop(&mut self) {
         if let Some((mut child, input)) = self.updater.take() {
             drop(input);
-            let _ = child.kill();
-            let _ = child.wait();
+            end(&mut child);
         }
         self.next_check = None;
     }
@@ -393,88 +341,44 @@ impl Updates {
     }
 }
 
-#[cfg(test)]
-#[allow(clippy::unwrap_used, reason = "a test")]
-mod tests {
-    use super::*;
-
-    /// A browser the launcher started, of a build with update keys.
-    fn launched(version: Version) -> Updates {
-        Updates { keyed: true, ..Updates::new(Some(State::installed(version)), None, true) }
-    }
-
-    /// Section 3.4: a newer version is offered once in the strip, nothing
-    /// is downloaded until the user accepts, and a bad one is never offered.
-    #[test]
-    fn a_newer_version_is_offered_once_and_downloaded_only_when_accepted() {
-        let mut updates = launched(Version::new(0, 1, 0));
-        updates.said(FromUpdater::Latest { version: Some(Version::new(0, 2, 0)), checked: 100 });
-        assert!(updates.strip, "offered in the strip");
-        assert_eq!(updates.offer(), Some(Version::new(0, 2, 0)));
-        assert_eq!(updates.downloading, None, "nothing downloaded before the user accepts");
-        updates.later();
-        assert!(!updates.strip);
-        updates.said(FromUpdater::Latest { version: Some(Version::new(0, 2, 0)), checked: 200 });
-        assert!(!updates.strip, "offered once");
-        assert_eq!(updates.status(true, 200), "NeoTeletext 0.2.0 is available", "the panel keeps offering it");
-        updates.install();
-        assert_eq!(updates.downloading, Some(Version::new(0, 2, 0)));
-        updates.said(FromUpdater::Staged(Version::new(0, 2, 0)));
-        assert_eq!(updates.status(true, 200), "NeoTeletext 0.2.0 starts at the next start");
-        assert_eq!(updates.offer(), None);
-
-        let mut state = State::installed(Version::new(0, 1, 0));
-        state.mark_bad(Version::new(0, 2, 0));
-        let mut updates = Updates { keyed: true, ..Updates::new(Some(state), None, true) };
-        updates.said(FromUpdater::Latest { version: Some(Version::new(0, 2, 0)), checked: 100 });
-        assert_eq!(updates.offer(), None, "a version rolled back is never offered");
-        assert!(!updates.strip);
-        updates.said(FromUpdater::Latest { version: Some(Version::new(0, 1, 0)), checked: 100 });
-        assert_eq!(updates.offer(), None, "nor an older or the same version");
-    }
-
-    /// Section 3.4: "Updates unavailable" after 7 days without a successful
-    /// check, never sooner; and the panel's other states.
-    #[test]
-    fn updates_are_unavailable_only_after_seven_days() {
-        let unkeyed = Updates::new(Some(State::installed(Version::new(0, 1, 0))), None, true);
-        if !unkeyed.keyed {
-            assert!(unkeyed.status(true, 0).contains("no update keys"));
+impl Core {
+    /// Updates as the settings panel shows them (section 3.4 of the
+    /// installation design), and the strip's offer, said once.
+    pub(super) fn send_update(&mut self) -> Result<(), String> {
+        if self.updates.strip
+            && let Some(version) = self.updates.offer()
+        {
+            self.updates.later();
+            self.say(format!("NeoTeletext {version} is available: Install it in Settings"))?;
         }
-        let mut updates = launched(Version::new(0, 1, 0));
-        updates.said(FromUpdater::Latest { version: None, checked: 1_000 });
-        assert_eq!(updates.status(true, 1_000), "NeoTeletext is up to date");
-        updates.said(FromUpdater::Failed { reason: String::from("the timestamp has expired"), last_success: Some(1_000) });
-        assert!(updates.status(true, 1_000 + UNAVAILABLE_AFTER).starts_with("Could not check"), "not yet");
-        assert_eq!(updates.status(true, 1_001 + UNAVAILABLE_AFTER), "Updates unavailable");
-        assert_eq!(updates.status(false, 1_001 + UNAVAILABLE_AFTER), "Not checking for updates");
+        let status = self.updates.status(self.settings.check_updates, neoteletext::calendar::utc_now());
+        let view = interface_core::settings::UpdateView {
+            version: self.updates.running().map(|version| version.to_string()).unwrap_or_default(),
+            status: clean(&status, protocol::settings::MAX_UPDATE_STATUS),
+            offer: self.updates.offer().map(|version| version.to_string()),
+            checking: self.settings.check_updates,
+        };
+        self.send(&ToInterface::Update(view))
     }
 
-    /// Section 3.2: healthy once the window has drawn within 30 seconds,
-    /// the settings were read and no helper failed, after a moment to fail.
-    #[test]
-    fn a_version_is_healthy_only_when_it_drew_read_its_settings_and_lost_no_helper() {
-        let mut updates = launched(Version::new(0, 1, 0));
-        let now = Instant::now();
-        assert!(!updates.health.healthy(now), "nothing drawn");
-        updates.drawn();
-        assert!(!updates.health.healthy(now), "not settled");
-        assert!(updates.health.healthy(now + HEALTH_SETTLE + Duration::from_millis(1)));
-        updates.helper_failed("the decoder for channel 1 stopped: cannot apply Landlock");
-        assert!(!updates.health.healthy(now + HEALTH_SETTLE * 2), "a helper that did not confine");
-        let mut unread = Updates::new(Some(State::installed(Version::new(0, 1, 0))), None, false);
-        unread.drawn();
-        assert!(!unread.health.healthy(now + HEALTH_SETTLE * 2), "settings unreadable");
-        let mut late = launched(Version::new(0, 1, 0));
-        late.health.started = now.checked_sub(HEALTH_WINDOW * 2).unwrap();
-        late.drawn();
-        assert!(!late.health.healthy(Instant::now() + HEALTH_SETTLE * 2), "drawn too late");
+    /// The window's first frame, a part of the version's health, or the
+    /// user's acceptance of the version offered (sections 3.2 and 3.4).
+    pub(super) fn update_intent(&mut self, intent: &ToCore) -> Result<(), String> {
+        if matches!(intent, ToCore::InstallUpdate) {
+            self.updates.install();
+            return self.send_update();
+        }
+        self.updates.drawn();
+        Ok(())
     }
 
-    #[test]
-    fn a_browser_not_installed_does_not_update() {
-        let updates = Updates::default();
-        assert_eq!(updates.running(), None);
-        assert!(updates.status(true, 0).contains("not installed"));
+    /// Starts the updater when the settings let it check (section 3.4).
+    pub(super) fn start_updater(&mut self) {
+        let Ok(broker) = self.broker().cloned() else { return };
+        let proxy = self.settings.proxy.as_ref().map(stored::Proxy::url);
+        self.updates.start(&broker, self.settings.check_updates, proxy.as_deref(), &self.events);
     }
 }
+
+#[cfg(test)]
+mod tests;

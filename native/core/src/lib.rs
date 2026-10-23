@@ -1,8 +1,18 @@
-//! The trusted core's parser of typed addresses, a library so that it can
-//! be fuzzed on its own, its rules for what is heard, its frame encoder
-//! (measured by the latency test), its typing rules, its hyperlinks, its
-//! settings, its start page and its console's entries; the trusted core
-//! itself is `main.rs`.
+//! The trusted core's library: every part of it that is pure logic or a
+//! kept file's format, so that each can be tested, and the parsers of
+//! outside input fuzzed, on its own. Nothing here starts a process or
+//! names the trusted core. The modules: what the address field may open
+//! (`address`); the bookmarks and `bookmarks.txt` (`bookmarks`);
+//! civil-calendar arithmetic (`calendar`); the developer console's entries
+//! (`console`); the cookie store and its sealed file (`cookies`); which
+//! frames are sent (`frames`, measured by the latency test); what of each
+//! channel's sound is heard (`hearing`); history and `history.txt`
+//! (`history`); hyperlinks (`links`); the pipes written by threads of
+//! their own (`outbox`); the session file, `session.txt` (`restore`); the
+//! settings and `settings.txt` (`settings`); sleeping tabs (`sleep`); the
+//! start page (`start_page`); and typing into a page (`typing`). The
+//! trusted core itself and the broker are the binary: `main.rs`,
+//! `broker.rs` and `trusted_core.rs`.
 
 // No panicking constructs: this crate reads input from outside the
 // process. The same list is in each such crate; scripts/check.sh checks
@@ -29,6 +39,7 @@ pub mod history;
 #[cfg(feature = "links")]
 pub mod links;
 pub mod outbox;
+mod private_file;
 pub mod restore;
 pub mod settings;
 pub mod sleep;

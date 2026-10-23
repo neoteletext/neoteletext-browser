@@ -10,7 +10,7 @@ use interface_core::controls::{MAX_SUBPAGES, PageControl, PageControls};
 use protocol::ToInterface;
 use protocol::decoder::{ToDecoder, View};
 
-use crate::Core;
+use super::Core;
 
 /// What the trusted core keeps of the open page's controls.
 #[derive(Default)]

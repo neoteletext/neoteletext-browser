@@ -9,6 +9,7 @@ use std::path::Path;
 
 use crate::address;
 use crate::calendar::{SECONDS_PER_DAY, day_text, local_day, read_day};
+use crate::private_file::{Read, private_options, read_text, write_whole};
 
 /// The first line of the file: its format and version.
 const VERSION_LINE: &str = "neoteletext-history 1";
@@ -34,8 +35,6 @@ const FIELDS: usize = 8;
 const SEPARATOR: char = '\t';
 /// The most a zone is ahead of or behind UTC.
 const MAX_OFFSET: i32 = confine::MAX_OFFSET;
-/// The schemes an inline completion leaves out when the text typed has none.
-const SCHEMES: [&str; 2] = ["https://", "http://"];
 
 /// One row: one address on one local day.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -125,11 +124,6 @@ impl Row {
             title: clean_exactly(title, MAX_PAGE_TITLE.max(MAX_CHANNEL_TITLE))?,
         };
         (row.typed <= row.visits && local_day(row.last, row.offset) == row.day).then_some(row)
-    }
-
-    /// The address without its scheme, for completion and channel matching.
-    fn bare(&self) -> &str {
-        SCHEMES.iter().find_map(|scheme| self.address.strip_prefix(scheme)).unwrap_or(&self.address)
     }
 }
 
@@ -280,25 +274,6 @@ impl History {
         self.file_lines > self.rows.len().saturating_mul(2)
     }
 
-    /// The rows that answer `query`, newest first: those whose address,
-    /// channel title or page title holds it, ignoring case.
-    #[must_use]
-    pub fn query(&self, query: &str) -> Vec<&Row> {
-        let query = query.to_lowercase();
-        // `host:` names one host, as Chrome's history search does.
-        let host = query.strip_prefix(HOST_SEARCH).map(str::trim);
-        let mut rows: Vec<&Row> = self
-            .rows
-            .iter()
-            .filter(|row| match host {
-                Some(host) => address::parse(&row.address).is_ok_and(|address| address.host.eq_ignore_ascii_case(host)),
-                None => query.is_empty() || [&row.address, &row.channel, &row.title].iter().any(|text| text.to_lowercase().contains(&query)),
-            })
-            .collect();
-        rows.sort_by(|a, b| b.last.cmp(&a.last).then_with(|| a.address.cmp(&b.address)));
-        rows
-    }
-
     /// Removes the rows of these days and addresses; returns the addresses
     /// of the rows that went.
     pub fn remove(&mut self, keys: &[(i64, String)]) -> Vec<String> {
@@ -318,12 +293,6 @@ impl History {
         addresses
     }
 
-    /// Whether any day has a row of `address`.
-    #[must_use]
-    pub fn has_address(&self, address: &str) -> bool {
-        self.rows.iter().any(|row| row.address == address)
-    }
-
     /// Removes the rows `range` covers; returns how many went.
     pub fn clear(&mut self, range: Range) -> usize {
         let before = self.rows.len();
@@ -333,48 +302,6 @@ impl History {
         }
         self.reindex();
         before.saturating_sub(self.rows.len())
-    }
-
-    /// The address to complete the field with as `typed` is typed: the most
-    /// recent address the user typed before that starts with it, ignoring
-    /// case, and without its scheme when `typed` has none (section 2.10).
-    #[must_use]
-    pub fn completion(&self, typed: &str) -> Option<String> {
-        if typed.is_empty() {
-            return None;
-        }
-        let lower = typed.to_lowercase();
-        let with_scheme = SCHEMES.iter().any(|scheme| lower.starts_with(scheme) || scheme.starts_with(lower.as_str()));
-        self.rows
-            .iter()
-            .filter(|row| row.typed > 0)
-            .filter_map(|row| {
-                let candidate = if with_scheme { row.address.as_str() } else { row.bare() };
-                candidate.to_lowercase().starts_with(&lower).then_some((row.last, candidate))
-            })
-            .max_by_key(|(last, _)| *last)
-            .map(|(_, candidate)| format!("{typed}{}", candidate.get(typed.len()..).unwrap_or_default()))
-    }
-
-    /// The rows that answer `typed` for suggestions: one per address, the
-    /// most visited first, then the most recent (section 2.10).
-    #[must_use]
-    pub fn suggest(&self, typed: &str, max: usize) -> Vec<Row> {
-        if typed.is_empty() {
-            return Vec::new();
-        }
-        let mut by_address: BTreeMap<&str, Row> = BTreeMap::new();
-        for row in self.query(typed) {
-            let entry = by_address.entry(row.address.as_str()).or_insert_with(|| Row { visits: 0, ..row.clone() });
-            entry.visits = entry.visits.saturating_add(row.visits);
-            if row.last > entry.last {
-                entry.last = row.last;
-            }
-        }
-        let mut rows: Vec<Row> = by_address.into_values().collect();
-        rows.sort_by(|a, b| b.visits.cmp(&a.visits).then_with(|| b.last.cmp(&a.last)));
-        rows.truncate(max);
-        rows
     }
 
     /// The row of a day and address.
@@ -389,16 +316,11 @@ impl History {
     /// When the file exists but cannot be read.
     pub fn load(folder: &Path) -> std::io::Result<(Self, Vec<String>)> {
         let path = folder.join(FILE_NAME);
-        match std::fs::metadata(&path) {
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok((Self::default(), Vec::new())),
-            Err(error) => return Err(error),
-            Ok(metadata) if metadata.len() > u64::try_from(MAX_FILE).unwrap_or(u64::MAX) => {
-                return Ok((Self::default(), vec![format!("the history file is longer than {MAX_FILE} bytes; none read")]));
-            }
-            Ok(_) => {}
+        match read_text(&path, MAX_FILE)? {
+            Read::Missing => Ok((Self::default(), Vec::new())),
+            Read::TooLong => Ok((Self::default(), vec![format!("the history file is longer than {MAX_FILE} bytes; none read")])),
+            Read::Text(text) => Ok(Self::read(&text)),
         }
-        let bytes = std::fs::read(&path)?;
-        Ok(Self::read(&String::from_utf8_lossy(&bytes)))
     }
 
     /// Writes `history.txt` in `folder` whole: to a temporary file, then
@@ -435,10 +357,6 @@ impl History {
     }
 }
 
-/// The search that names one host, as Chrome's history page writes "More
-/// from this site" (`history_list.ts`: `'host:' + domain`).
-pub const HOST_SEARCH: &str = "host:";
-
 /// "Clear history"'s last 15 minutes, in seconds (section 2.5).
 pub const FIFTEEN_MINUTES: i64 = 15 * 60;
 /// Its last hour.
@@ -450,200 +368,8 @@ pub const WEEK: i64 = SECONDS_PER_DAY * 7;
 /// Its last 4 weeks.
 pub const FOUR_WEEKS: i64 = SECONDS_PER_DAY * 28;
 
-/// Options for a file the user alone may read and write (section 2.3).
-pub(crate) fn private_options() -> std::fs::OpenOptions {
-    let mut options = std::fs::OpenOptions::new();
-    options.write(true);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt as _;
-        options.mode(0o600);
-    }
-    options
-}
-
-/// Writes `bytes` to `name` in `folder` whole, through `temporary`.
-pub(crate) fn write_whole(folder: &Path, name: &str, temporary: &str, bytes: impl AsRef<[u8]>) -> std::io::Result<()> {
-    use std::io::Write as _;
-    std::fs::create_dir_all(folder)?;
-    let temporary = folder.join(temporary);
-    let mut file = private_options().create(true).truncate(true).open(&temporary)?;
-    file.write_all(bytes.as_ref())?;
-    file.sync_all()?;
-    drop(file);
-    std::fs::rename(&temporary, folder.join(name))
-}
+mod search;
+pub use search::HOST_SEARCH;
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used, clippy::indexing_slicing, clippy::arithmetic_side_effects, reason = "a test")]
-mod tests {
-    use super::*;
-
-    /// 2026-10-22 03:05 UTC: 14:05 in Sydney.
-    const NOW: i64 = 20_748 * SECONDS_PER_DAY + 3 * 3_600 + 5 * 60;
-    const SYDNEY: i32 = 11 * 3_600;
-
-    fn visit(address: &str, typed: bool) -> Visit {
-        Visit { address: address.into(), channel: "News Example".into(), title: "WEATHER".into(), typed, reload: false }
-    }
-
-    /// Decision 63: a reload moves the row's last visit and counts no
-    /// visit; on a day with no visit yet it makes the day's row, with none
-    /// counted, as Chrome and Firefox record a reload without counting it.
-    #[test]
-    fn a_reload_moves_the_last_visit_and_counts_none() {
-        let mut history = History::default();
-        history.record(&visit("https://news.example/", true), NOW, 0);
-        let reload = Visit { reload: true, ..visit("https://news.example/", true) };
-        history.record(&reload, NOW + 60, 0);
-        let today = &history.query("")[0];
-        assert_eq!((today.visits, today.typed, today.last), (1, 1, NOW + 60));
-        history.record(&reload, NOW + SECONDS_PER_DAY, 0);
-        let rows = history.query("");
-        assert_eq!(rows.len(), 2, "the next day has its row");
-        assert_eq!((rows[0].visits, rows[0].typed, rows[0].last), (0, 0, NOW + SECONDS_PER_DAY));
-    }
-
-    fn scratch(name: &str) -> std::path::PathBuf {
-        let folder = std::env::temp_dir().join(format!("neoteletext-{name}-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&folder);
-        std::fs::create_dir_all(&folder).unwrap();
-        folder
-    }
-
-    /// Requirement 20.1: one row per address per day, its visits counted,
-    /// its typed visits apart; the browser's own page is not kept.
-    #[test]
-    fn a_page_is_one_row_a_day() {
-        let mut history = History::default();
-        assert!(history.record(&visit("https://news.example/teletext/#302", true), NOW, SYDNEY).is_some());
-        history.record(&visit("https://news.example/teletext/#302", false), NOW + 60, SYDNEY);
-        history.record(&visit("https://news.example/teletext/#302", false), NOW + SECONDS_PER_DAY, SYDNEY);
-        assert_eq!(history.record(&visit("neoteletext:home", true), NOW, SYDNEY), None);
-        assert_eq!(history.record(&visit("not an address", true), NOW, SYDNEY), None);
-        assert_eq!(history.len(), 2);
-        let today = history.row(20_748, "https://news.example/teletext/#302").unwrap();
-        assert_eq!((today.visits, today.typed, today.last), (2, 1, NOW + 60));
-    }
-
-    /// Requirement 20.2: written, appended, read back; the last line of a
-    /// row stands; a file of many lines wants compacting.
-    #[test]
-    fn history_round_trips_through_its_file() {
-        let folder = scratch("history-round-trip");
-        let mut history = History::default();
-        for minute in 0..3 {
-            let line = history.record(&visit("https://news.example/teletext/", minute == 0), NOW + minute * 60, SYDNEY).unwrap();
-            History::append(&folder, &line).unwrap();
-        }
-        let (read, dropped) = History::load(&folder).unwrap();
-        assert!(dropped.is_empty(), "{dropped:?}");
-        assert_eq!(read.query(""), history.query(""));
-        assert!(read.wants_compacting(), "three lines for one row");
-        let mut read = read;
-        read.save(&folder).unwrap();
-        let text = std::fs::read_to_string(folder.join(FILE_NAME)).unwrap();
-        assert_eq!(text.lines().count(), 2, "{text}");
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt as _;
-            assert_eq!(std::fs::metadata(folder.join(FILE_NAME)).unwrap().permissions().mode() & 0o777, 0o600);
-        }
-    }
-
-    /// Requirement 20.3: each rule; a broken line is dropped and the rest
-    /// stand.
-    #[test]
-    fn the_file_is_read_strictly() {
-        let good = Row {
-            day: 20_748,
-            last: NOW,
-            offset: SYDNEY,
-            visits: 2,
-            typed: 1,
-            address: "https://news.example/teletext/#302".into(),
-            channel: "News".into(),
-            title: "WEATHER".into(),
-        };
-        let line = good.line();
-        let broken = [
-            line.replace("2026-10-22", "2026-02-30"),
-            line.replace(&NOW.to_string(), "-5"),
-            line.replace(&SYDNEY.to_string(), "90000"),
-            line.replacen("\t2\t", "\t0\t", 1),
-            line.replacen("\t2\t1\t", "\t1\t2\t", 1),
-            line.replace("https://news.example/teletext/#302", "neoteletext:home"),
-            line.replace("https://news.example/teletext/#302", "https://news.example/a b"),
-            line.replace("WEATHER", "WEA\u{202E}THER"),
-            format!("{line}\textra"),
-            line.replace("2026-10-22", "2026-10-21"),
-            String::new(),
-        ];
-        let mut text = format!("{VERSION_LINE}\n{line}\n");
-        for line in &broken {
-            text.push_str(line);
-            text.push('\n');
-        }
-        let (history, dropped) = History::read(&text);
-        assert_eq!(history.query(""), vec![&good]);
-        assert_eq!(dropped.len(), broken.len(), "{dropped:?}");
-        assert!(History::read("no version\n").0.is_empty());
-        assert!(History::read(&"x".repeat(MAX_FILE + 1)).0.is_empty());
-    }
-
-    /// Requirement 20.2: 90 days kept, today among them; at most
-    /// `MAX_ROWS`, the oldest going first.
-    #[test]
-    fn history_is_kept_ninety_days_and_bounded() {
-        let mut history = History::default();
-        history.record(&visit("https://old.example/", false), NOW - 90 * SECONDS_PER_DAY, 0);
-        history.record(&visit("https://kept.example/", false), NOW - 89 * SECONDS_PER_DAY, 0);
-        assert!(history.expire(local_day(NOW, 0)));
-        let addresses: Vec<&str> = history.query("").iter().map(|row| row.address.as_str()).collect();
-        assert_eq!(addresses, ["https://kept.example/"]);
-        let mut history = History::default();
-        for n in 0..=MAX_ROWS {
-            history.record(&visit(&format!("https://p{n}.example/"), false), NOW + i64::try_from(n).unwrap(), 0);
-        }
-        history.expire(local_day(NOW, 0));
-        assert_eq!(history.len(), MAX_ROWS);
-        assert!(history.row(local_day(NOW, 0), "https://p0.example/").is_none(), "the oldest went");
-    }
-
-    /// Requirement 20.6: a row, a channel, a range, everything.
-    #[test]
-    fn history_is_removed_as_asked() {
-        let mut history = History::default();
-        history.record(&visit("https://news.example/teletext/#100", false), NOW - 2 * HOUR, 0);
-        history.record(&visit("https://news.example/teletext/#302", false), NOW - 30 * 60, 0);
-        history.record(&visit("https://sport.example/", false), NOW - 10, 0);
-        assert_eq!(history.clear(History::since(NOW, HOUR)), 2);
-        assert_eq!(history.remove(&[(local_day(NOW, 0), "https://news.example/teletext/#100".into())]), ["https://news.example/teletext/#100"]);
-        assert!(history.is_empty());
-        history.record(&visit("https://sport.example/", false), NOW, 0);
-        assert_eq!(history.query("host:SPORT.example").len(), 1, "host: names one host, in any case");
-        assert!(history.query("host:example").is_empty(), "the whole host");
-        assert!(history.has_address("https://sport.example/"));
-        assert_eq!(history.remove(&[(local_day(NOW, 0), "https://sport.example/".into())]), ["https://sport.example/"]);
-        assert!(!history.has_address("https://sport.example/"));
-        history.record(&visit("https://sport.example/", false), NOW, 0);
-        assert_eq!(history.clear(Range::All), 1);
-    }
-
-    /// Requirement 20.11: inline completion only from addresses typed;
-    /// suggestions from every visit, the most visited first.
-    #[test]
-    fn completion_comes_only_from_what_was_typed() {
-        let mut history = History::default();
-        history.record(&visit("https://news.example/teletext/", false), NOW, 0);
-        assert_eq!(history.completion("new"), None, "a link followed never completes the field");
-        history.record(&visit("https://news.example/teletext/", true), NOW, 0);
-        assert_eq!(history.completion("New").as_deref(), Some("News.example/teletext/"));
-        assert_eq!(history.completion("https://n").as_deref(), Some("https://news.example/teletext/"));
-        assert_eq!(history.completion("sport"), None);
-        history.record(&visit("https://newer.example/", false), NOW + 5, 0);
-        let suggested: Vec<String> = history.suggest("new", 8).into_iter().map(|row| row.address).collect();
-        assert_eq!(suggested, ["https://news.example/teletext/", "https://newer.example/"]);
-        assert_eq!(history.suggest("", 8), Vec::new());
-    }
-}
+mod tests;
