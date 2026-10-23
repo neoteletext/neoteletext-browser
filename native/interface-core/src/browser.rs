@@ -13,31 +13,37 @@ use alloc::format;
 use alloc::string::String;
 use alloc::vec::Vec;
 
+use crate::browser::address::FIELD_PADDING;
+use crate::browser::frames::{PULSE_MILLISECONDS, PULSE_SCALE};
 use crate::browser::glyphs::{LOCK_WIDTH, WINDOW_GLYPH, WINDOW_GLYPH_THICKNESS, arrow, chevron, gear, house, padlock, reload_glyph, speaker_glyph, star};
 use crate::browser::regions::Regions;
 use crate::canvas::{Canvas, PAGE_HEIGHT, PAGE_WIDTH, PageKey, SCREEN_SCALE, draw_page_on_screen};
-use crate::channel::{BANKS, Channel, PAGES, PAGES_PER_BANK, PageInfo, Status, page_index, page_number};
+use crate::channel::{BANKS, Channel, PAGES, PAGES_PER_BANK, Status, page_index, page_number};
 use crate::editor::Editor;
 use crate::geometry::{Point, Rect};
 use crate::theme::{
-    ADDRESS, AXIS, BANK_COLOURS, BANK_COUNT, BANK_NAME, BANK_RANGE, BLACK, BUTTON, CELL_AVAILABLE, CELL_EMPTY, CELL_PULSE, COLUMN_HEAD, Colour, DIM, FIELD,
-    FIELD_INK, FIELD_SELECTION, GREEN, HEADING, INSECURE, LEGEND, MUTED, PANEL, PRIVATE, RED, ROW_NUMBER, ROW_STATUS, ROW_TITLE, RULE, RULE_SOFT, SECURE,
-    SELECTED, STAR_ON, UPDATED, WHITE, WINDOW, YELLOW, mix,
+    ADDRESS, AXIS, BANK_COLOURS, BANK_COUNT, BANK_NAME, BANK_RANGE, BLACK, BUTTON, CELL_AVAILABLE, CELL_EMPTY, CELL_PULSE, COLUMN_HEAD, DIM, FIELD, FIELD_INK,
+    GREEN, HEADING, INSECURE, LEGEND, MUTED, PANEL, PRIVATE, RED, ROW_NUMBER, ROW_STATUS, ROW_TITLE, RULE, RULE_SOFT, SECURE, SELECTED, STAR_ON, UPDATED,
+    WHITE, WINDOW, YELLOW, mix,
 };
 use crate::ui::{HAIRLINE, border, centred, label, left_centred, outline, right_centred};
-use crate::wall::{CellClick, UPDATE_GLOW_MILLISECONDS, UPDATE_MARK_MILLISECONDS, Wall, WallPage, glow, since};
+use crate::wall::{CellClick, Wall, WallPage, glow, since};
 
+mod address;
 mod bookmarks_ui;
 mod console_ui;
 mod controls_ui;
 mod cookies_ui;
 #[cfg(test)]
 mod fixture;
+mod focus;
+mod frames;
 mod glyphs;
 mod history_ui;
 #[cfg(feature = "links")]
 mod link_ui;
 mod output;
+mod pages;
 #[cfg(feature = "phone-keyboard")]
 mod phone_ui;
 mod popup_ui;
@@ -86,9 +92,7 @@ const TOOLBAR_TOP: f64 = STRIP_HEIGHT;
 const TOOLBAR_HEIGHT: f64 = 54.0;
 const TOOL_SIZE: f64 = 44.0;
 const TOOL_INSET: f64 = 5.0;
-const FIELD_PADDING: f64 = 12.0;
 const LOCK_GAP: f64 = 12.0;
-const CARET_WIDTH: f64 = 2.0;
 const MENU_BAR_WIDTH: f64 = 22.0;
 const MENU_BAR_HEIGHT: f64 = 3.0;
 const MENU_BAR_GAP: f64 = 7.0;
@@ -119,15 +123,6 @@ const CELL_GAP: f64 = 2.0;
 const LEGEND_SWATCH: f64 = 10.0;
 const LEGEND_GAP: f64 = 6.0;
 const LEGEND_SPACING: f64 = 18.0;
-/// How long the dot marking a newly received page lasts.
-const PULSE_MILLISECONDS: u64 = 900;
-/// The dot starts this many times a cell's size and shrinks to nothing.
-const PULSE_SCALE: f64 = 2.2;
-const PULSE_LIMIT: usize = PAGES;
-/// One refresh of a 60 hertz display.
-const SMOOTH_FRAME_MILLISECONDS: u64 = 16;
-/// Once a second, for the age marks of recent updates.
-const MARK_FRAME_MILLISECONDS: u64 = 1_000;
 /// An updated row flashes this far towards amber at first.
 const ROW_FLASH: f64 = 0.6;
 /// The overview's update ring: 1.2 seconds, growing to five cells wide,
@@ -137,8 +132,6 @@ const UPDATE_RING_SCALE: f64 = 4.0;
 const UPDATE_RING_WIDTH: f64 = 2.0;
 /// The update dot leaves a quarter of the cell all round.
 const UPDATE_DOT_INSET: f64 = 0.25;
-/// Ten frames a second: each dot shrinks away in nine steps.
-const PULSE_FRAME_MILLISECONDS: u64 = 100;
 /// The button at the overview's top right that folds it into the footer
 /// and opens it again, with its chevron.
 const TOGGLE_SIZE: f64 = 28.0;
@@ -150,8 +143,6 @@ const PREVIEW_SHADOW_DARKNESS: f32 = 0.6;
 
 /// Scrolling by one wheel line.
 pub const LINE_HEIGHT: f64 = 21.0;
-const DECIMAL_DIGITS: usize = 3;
-
 /// A key the browser handles, as the host translates it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Key<'a> {
@@ -372,55 +363,6 @@ impl Browser {
         self.strip = strip;
     }
 
-    /// A channel's banks and pages. A different channel starts at its
-    /// first bank; the same channel again keeps the choice.
-    pub fn set_channel(&mut self, channel: Channel) {
-        if channel.channel != self.channel.channel {
-            self.versions.clear();
-            self.bank = 0;
-            self.selected = None;
-            self.list_scroll = 0.0;
-            self.wall.to_top();
-            self.pulses.clear();
-            self.updates.clear();
-        }
-        self.channel = channel;
-    }
-
-    /// A page that has just arrived, with its title: it appears in the
-    /// banks, the list, the page area and the overview, with the
-    /// overview's dot.
-    pub fn add_page(&mut self, channel: u32, page: u16, title: String, now: u64) {
-        if channel != self.channel.channel {
-            return;
-        }
-        let Some(index) = page_index(page) else { return };
-        let Some(slot) = self.channel.pages.get_mut(index) else { return };
-        let new = !matches!(slot, Some(info) if info.status == Status::Loaded);
-        // A folded overview keeps no animation; opened, it draws the page
-        // as it is.
-        if new && !self.overview_folded && self.pulses.len() < PULSE_LIMIT {
-            self.pulses.push((index, now));
-        }
-        *slot = Some(PageInfo { title, status: Status::Loaded });
-        #[cfg(feature = "links")]
-        self.show_pending(channel, page, now);
-    }
-
-    /// A page has a new version: it glows, and is marked with its age.
-    pub fn page_updated(&mut self, channel: u32, page: u16, now: u64) {
-        if channel != self.channel.channel {
-            return;
-        }
-        let Some(index) = page_index(page) else { return };
-        self.updates.retain(|&(updated, _)| updated != index);
-        self.updates.push((index, now));
-    }
-
-    fn updated_at(&self, index: usize) -> Option<u64> {
-        self.updates.iter().find(|&&(updated, _)| updated == index).map(|&(_, at)| at)
-    }
-
     /// The page area.
     #[must_use]
     pub fn wall(&self) -> &Wall {
@@ -435,157 +377,6 @@ impl Browser {
     /// Everything the user did since the last call.
     pub fn take_outputs(&mut self) -> Vec<Output> {
         core::mem::take(&mut self.outputs)
-    }
-
-    /// Whether anything is moving at `now`, so the host should keep drawing.
-    #[must_use]
-    pub fn animating(&self, now: u64) -> bool {
-        self.frame_interval(now).is_some()
-    }
-
-    /// How often to draw while something moves, in milliseconds: every
-    /// display refresh for the page area's transitions, and ten times a
-    /// second for the overview's dots, which need no more.
-    #[must_use]
-    pub fn frame_interval(&self, now: u64) -> Option<u64> {
-        // An update glows and is marked with its age where its page is
-        // drawn: on the wall and in the list, which show the bank. The
-        // overview's ring bursts for every page, while the overview shows.
-        let in_bank = |index: usize| index / PAGES_PER_BANK == self.bank;
-        let since_update =
-            |limit: u64, everywhere: bool| self.updates.iter().any(|&(index, at)| (everywhere || in_bank(index)) && now.saturating_sub(at) < limit);
-        let rings = !self.overview_folded && !self.console.open();
-        // A held Back or Forward opens its list at its time; Undo ends.
-        let deadline = self.hold_deadline(now).into_iter().chain(self.bookmarks_deadline(now)).chain(self.tips_deadline(now)).min();
-        if self.wall.animating(now) || self.remote_animating(now) {
-            Some(SMOOTH_FRAME_MILLISECONDS)
-        } else if deadline.is_some() {
-            deadline
-        } else if self.pulses.iter().any(|&(_, start)| now.saturating_sub(start) < PULSE_MILLISECONDS)
-            || since_update(UPDATE_GLOW_MILLISECONDS, false)
-            || (rings && since_update(UPDATE_RING_MILLISECONDS, true))
-        {
-            Some(PULSE_FRAME_MILLISECONDS)
-        } else if since_update(UPDATE_MARK_MILLISECONDS, false) {
-            // The "Updated 12s" marks count whole seconds.
-            Some(MARK_FRAME_MILLISECONDS)
-        } else {
-            #[cfg(feature = "interaction")]
-            return self.terminal_frame_interval();
-            #[cfg(not(feature = "interaction"))]
-            None
-        }
-    }
-
-    /// Advances what waits on time; returns whether anything changed.
-    pub fn settle(&mut self, now: u64) -> bool {
-        let before = self.pulses.len();
-        self.pulses.retain(|&(_, start)| now.saturating_sub(start) < PULSE_MILLISECONDS);
-        let updates = self.updates.len();
-        self.updates.retain(|&(_, at)| now.saturating_sub(at) < UPDATE_MARK_MILLISECONDS);
-        #[cfg(feature = "interaction")]
-        let echoes = self.settle_echoes(now);
-        #[cfg(not(feature = "interaction"))]
-        let echoes = false;
-        let held = self.settle_hold(now);
-        let tipped = self.tips_settle(now);
-        self.pulses.len() != before || self.updates.len() != updates || echoes || held || tipped
-    }
-
-    fn page_key(&self, index: usize) -> Option<PageKey> {
-        page_number(index).map(|page| PageKey { channel: self.channel.channel, page })
-    }
-
-    fn select_page(&mut self, index: usize, reveal: bool) {
-        let bank = index / PAGES_PER_BANK;
-        if bank != self.bank {
-            self.choose_bank(bank);
-        }
-        self.selected = Some(index);
-        if reveal && let Some(key) = self.page_key(index) {
-            self.wall.reveal(key);
-            // A zoomed area shows the newly chosen page instead.
-            if self.wall.zoomed().is_some() {
-                self.wall.switch_zoom(key);
-            }
-        }
-        self.reveal_row(index);
-    }
-
-    fn choose_bank(&mut self, bank: usize) {
-        self.bank = bank;
-        self.selected = None;
-        self.list_scroll = 0.0;
-        self.wall.to_top();
-    }
-
-    /// Scrolls the list so that page `index`'s row is in view.
-    fn reveal_row(&mut self, index: usize) {
-        let position = self.bank_pages().iter().position(|&candidate| candidate == index);
-        let Some(position) = position else { return };
-        #[allow(clippy::cast_precision_loss, reason = "at most 100 rows")]
-        let top = position as f64 * ROW_HEIGHT;
-        let view = self.regions.list.height();
-        if top < self.list_scroll {
-            self.list_scroll = top;
-        } else if top + ROW_HEIGHT > self.list_scroll + view {
-            self.list_scroll = top + ROW_HEIGHT - view;
-        }
-    }
-
-    /// The indices of the chosen bank's pages.
-    fn bank_pages(&self) -> Vec<usize> {
-        let first = self.bank * PAGES_PER_BANK;
-        (first..first + PAGES_PER_BANK).filter(|&index| matches!(self.channel.pages.get(index), Some(Some(_)))).collect()
-    }
-
-    fn stop_editing(&mut self) {
-        self.close_suggestions();
-        if self.editing {
-            self.editing = false;
-            self.outputs.push(Output::TextInput(false));
-        }
-    }
-
-    /// Whether a panel, popover or list of the strip is open, which then
-    /// takes the keys rather than the page's channel.
-    #[cfg(feature = "interaction")]
-    fn strip_has_keys(&self) -> bool {
-        self.settings_open()
-            || self.history_open()
-            || self.cookies_editing()
-            || self.console_searching()
-            || self.bookmarks_open()
-            || self.star_open()
-            || self.popup_open()
-    }
-
-    /// Closes every panel of the strip, before another opens: one at a time.
-    fn close_panels(&mut self) {
-        if self.star_open() {
-            self.star_done();
-        }
-        if self.settings_open() {
-            self.toggle_settings();
-        }
-        if self.history_open() {
-            self.set_history_open(false);
-        }
-        if self.bookmarks_open() {
-            self.toggle_bookmarks();
-        }
-    }
-
-    fn start_editing(&mut self) {
-        if self.settings_open() {
-            self.toggle_settings();
-        }
-        if !self.editing {
-            self.editing = true;
-            self.editor.set(&self.strip.address);
-            self.field_scroll = 0.0;
-            self.outputs.push(Output::TextInput(true));
-        }
     }
 
     // ---- Input ----
@@ -617,14 +408,6 @@ impl Browser {
     fn overview_page(&self, point: Point) -> Option<usize> {
         let index = self.cell_index(point)?;
         matches!(self.channel.pages.get(index), Some(Some(info)) if info.status == Status::Loaded).then_some(index)
-    }
-
-    /// The page the user has opened, whose sounds play (the engine's
-    /// REQ-AUD-012): the zoomed page, or else the page chosen by number or
-    /// in the list, as a television goes to the page whose number is typed.
-    #[must_use]
-    pub fn opened(&self) -> Option<PageKey> {
-        self.wall.zoomed().or_else(|| self.selected.and_then(|index| self.page_key(index)))
     }
 
     /// The pointer's shape where it is: a hand over a page a click would
@@ -962,28 +745,6 @@ impl Browser {
         true
     }
 
-    /// A digit, from the keyboard or the remote: three choose a page, as on
-    /// a television.
-    fn type_digit(&mut self, digit: char) {
-        self.digits.push(digit);
-        if self.digits.len() < DECIMAL_DIGITS {
-            return;
-        }
-        let page = u16::from_str_radix(&self.digits, 16).ok();
-        self.digits.clear();
-        // A number the open page or the channel links elsewhere goes to the
-        // trusted core.
-        #[cfg(feature = "links")]
-        if page.is_some_and(|page| self.link_typed(page)) {
-            return;
-        }
-        if let Some(index) = page.and_then(page_index)
-            && matches!(self.channel.pages.get(index), Some(Some(_)))
-        {
-            self.select_page(index, true);
-        }
-    }
-
     fn shortcut(&mut self, key: Key<'_>, modifiers: Modifiers, now: u64) -> bool {
         // The browser's Escape: leaves a page whose channel has every
         // other key (INPUT.md section 9.1).
@@ -1050,132 +811,6 @@ impl Browser {
             _ => return false,
         }
         true
-    }
-
-    /// The text field that has the keys: a panel's, in the order their
-    /// keys are taken, or the address field.
-    fn focused_field(&mut self) -> Option<&mut Editor> {
-        if self.star_editing() {
-            return self.star_field();
-        }
-        if self.history_editing() {
-            return self.history_field();
-        }
-        if self.cookies_editing() {
-            return self.cookies_field();
-        }
-        if self.console_searching() {
-            return self.console_field();
-        }
-        if self.bookmarks_editing() {
-            return self.bookmarks_field();
-        }
-        if self.settings_editing() {
-            return self.settings_field();
-        }
-        self.editing.then_some(&mut self.editor)
-    }
-
-    /// The selected text of the field with the keys, for Copy (decision
-    /// 84); `None` when no field has them or nothing is selected.
-    #[must_use]
-    pub fn selected_text(&mut self) -> Option<String> {
-        let field = self.focused_field()?;
-        let (start, end) = field.selection();
-        field.text().get(start..end).filter(|text| !text.is_empty()).map(String::from)
-    }
-
-    /// Cut: the selected text, as [`Browser::selected_text`], deleted from
-    /// its field as Backspace deletes it, so the field's own rules hold.
-    pub fn cut(&mut self, now: u64) -> Option<String> {
-        let text = self.selected_text()?;
-        self.key(Key::Backspace, Modifiers::default(), now);
-        Some(text)
-    }
-
-    /// Paste: `text` typed into the field with the keys, as typing it
-    /// would, so its hidden characters are dropped and its length bounded.
-    /// Nothing happens when no field has the keys. Returns whether the
-    /// window needs drawing again.
-    pub fn paste_text(&mut self, text: &str, now: u64) -> bool {
-        if self.focused_field().is_none() {
-            return false;
-        }
-        self.key(Key::Text(text), Modifiers::default(), now)
-    }
-
-    fn edit(&mut self, key: Key<'_>, shift: bool) -> bool {
-        let before = String::from(self.editor.text());
-        match key {
-            Key::Text(text) => self.editor.insert(text),
-            Key::Enter => {
-                let chosen = self.take_chosen_suggestion();
-                let address = String::from(self.editor.text().trim());
-                self.stop_editing();
-                if let Some(number) = chosen {
-                    self.outputs.push(Output::Suggestion { number, new_tab: false });
-                } else if !address.is_empty() {
-                    self.outputs.push(Output::Navigate(address));
-                }
-                return true;
-            }
-            Key::Escape => self.stop_editing(),
-            Key::Tab => return false,
-            Key::Backspace => self.editor.backspace(),
-            Key::Delete => self.editor.delete(),
-            Key::Left => self.editor.left(shift),
-            Key::Right => self.editor.right(shift),
-            Key::Up | Key::Down if self.choose_suggestion(key == Key::Down) => {}
-            Key::Home | Key::Up => self.editor.home(shift),
-            Key::End | Key::Down => self.editor.end(shift),
-        }
-        // What is typed asks for suggestions (requirement 20.11).
-        if self.editing && self.editor.text() != before {
-            // Typed over a selection is not a deletion; Backspace and Delete are.
-            self.edited(matches!(key, Key::Backspace | Key::Delete));
-        }
-        true
-    }
-
-    /// The list and the overview follow the zoomed page.
-    fn follow_zoom(&mut self) {
-        if let Some(index) = self.wall.zoomed().and_then(|key| page_index(key.page)) {
-            self.selected = Some(index);
-            self.reveal_row(index);
-        }
-    }
-
-    fn step_page(&mut self, forward: bool, now: u64) {
-        if self.wall.zoomed().is_some() {
-            if self.wall.step_zoom(if forward { 1 } else { -1 }, now).is_some() {
-                self.follow_zoom();
-            }
-            return;
-        }
-        let pages = self.bank_pages();
-        let position = self.selected.and_then(|selected| pages.iter().position(|&index| index == selected));
-        let next = match (position, forward) {
-            (None, _) => pages.first(),
-            (Some(position), true) => pages.get(position + 1),
-            (Some(position), false) => position.checked_sub(1).and_then(|previous| pages.get(previous)),
-        };
-        if let Some(&index) = next {
-            self.select_page(index, true);
-        }
-    }
-
-    /// The byte offset in the address nearest to `x`.
-    fn offset_at<C: Canvas + ?Sized>(&self, canvas: &mut C, x: f64) -> usize {
-        let text = self.editor.text();
-        let target = x - self.regions.field_text.x0 + self.field_scroll;
-        let mut best = (0, f64::MAX);
-        for (offset, _) in text.char_indices().chain(core::iter::once((text.len(), ' '))) {
-            let distance = (canvas.text_width(&text[..offset], ADDRESS) - target).abs();
-            if distance < best.1 {
-                best = (offset, distance);
-            }
-        }
-        best.0
     }
 
     fn cell_index(&self, point: Point) -> Option<usize> {
@@ -1402,50 +1037,6 @@ impl Browser {
         if !pointing && !noticed {
             self.draw_address(canvas, text);
         }
-    }
-
-    fn draw_address<C: Canvas + ?Sized>(&mut self, canvas: &mut C, area: Rect) {
-        let line = canvas.line_height(ADDRESS);
-        let y = (area.y0 + area.y1 - line) / 2.0;
-        canvas.push_clip(area);
-        if self.editing {
-            let text = self.editor.text();
-            let caret = canvas.text_width(&text[..self.editor.caret()], ADDRESS);
-            // Keep the caret in view.
-            let room = area.width() - CARET_WIDTH;
-            if caret - self.field_scroll > room {
-                self.field_scroll = caret - room;
-            } else if caret < self.field_scroll {
-                self.field_scroll = caret;
-            }
-            let x = area.x0 - self.field_scroll;
-            let (start, end) = self.editor.selection();
-            if start != end {
-                let from = canvas.text_width(&text[..start], ADDRESS);
-                let to = canvas.text_width(&text[..end], ADDRESS);
-                canvas.fill(Rect::new(x + from, y, x + to, y + line), 0.0, FIELD_SELECTION);
-            }
-            canvas.text(Rect::new(x, y, area.x1 + self.field_scroll, y + line), text, ADDRESS, FIELD_INK);
-            canvas.fill(Rect::new(x + caret, y, x + caret + CARET_WIDTH, y + line), 0.0, FIELD_INK);
-        } else {
-            // The address as the trusted core formatted it, its host in
-            // full ink and the rest muted, as browsers show it.
-            let address = &self.strip.address;
-            let identity_at = address.find(self.strip.identity.as_str()).filter(|_| !self.strip.identity.is_empty());
-            let mut x = area.x0;
-            let parts: [(&str, Colour); 3] = match identity_at {
-                Some(start) => {
-                    let end = start + self.strip.identity.len();
-                    [(&address[..start], DIM), (&address[start..end], FIELD_INK), (&address[end..], DIM)]
-                }
-                None => [(address.as_str(), FIELD_INK), ("", DIM), ("", DIM)],
-            };
-            for (part, colour) in parts {
-                canvas.text(Rect::new(x, y, area.x1, y + line), part, ADDRESS, colour);
-                x += canvas.text_width(part, ADDRESS);
-            }
-        }
-        canvas.pop_clip();
     }
 
     fn draw_banks<C: Canvas + ?Sized>(&mut self, canvas: &mut C, panel: Rect) {
@@ -1843,64 +1434,6 @@ mod tests {
     }
 
     #[test]
-    fn typing_an_address_navigates() {
-        let (mut browser, mut canvas) = browser();
-        browser.take_outputs();
-        let field = browser.regions.field;
-        press_at(&mut browser, &mut canvas, field);
-        browser.key(Key::Text("sport.invalid"), Modifiers::default(), 0);
-        browser.key(Key::Enter, Modifiers::default(), 0);
-        // What is typed asks for suggestions on the way (requirement 20.11).
-        assert_eq!(
-            browser.take_outputs(),
-            [Output::TextInput(true), Output::Suggest("sport.invalid".into()), Output::TextInput(false), Output::Navigate("sport.invalid".into())]
-        );
-    }
-
-    #[test]
-    fn three_digits_choose_a_page_and_a_received_page_pulses() {
-        let (mut browser, _) = browser();
-        browser.key(Key::Text("4"), Modifiers::default(), 0);
-        browser.key(Key::Text("01"), Modifiers::default(), 0);
-        assert_eq!(browser.bank, 3);
-        assert_eq!(browser.selected, page_index(0x401));
-        // Page 402 is not in the test channel: it arrives now.
-        browser.add_page(7, 0x402, "New".into(), 100);
-        assert!(browser.animating(500));
-        assert!(!browser.animating(100 + PULSE_MILLISECONDS));
-        assert_eq!(browser.channel.counts().1, 1);
-    }
-
-    /// An update glows and is marked with its age where its page is drawn,
-    /// the wall and the list, which show one bank: a page of another bank
-    /// asks for frames only while its ring bursts in the overview. Before
-    /// this, any update anywhere drew the whole window ten times a second
-    /// for three seconds and once a second for a minute.
-    #[test]
-    fn an_update_in_another_bank_asks_for_frames_only_while_its_ring_bursts() {
-        let (mut browser, _) = browser();
-        assert_eq!(browser.bank, 0);
-        browser.page_updated(7, 0x401, 100);
-        assert_eq!(browser.frame_interval(200), Some(PULSE_FRAME_MILLISECONDS), "the ring in the overview");
-        assert_eq!(browser.frame_interval(100 + UPDATE_RING_MILLISECONDS), None, "nothing of it is on screen");
-        browser.page_updated(7, 0x101, 100);
-        assert_eq!(browser.frame_interval(100 + UPDATE_RING_MILLISECONDS), Some(PULSE_FRAME_MILLISECONDS), "the glow on the wall");
-        assert_eq!(browser.frame_interval(100 + UPDATE_GLOW_MILLISECONDS), Some(MARK_FRAME_MILLISECONDS), "the age mark on the wall");
-        assert_eq!(browser.frame_interval(100 + UPDATE_MARK_MILLISECONDS), None, "the mark has gone");
-    }
-
-    #[test]
-    fn the_opened_page_is_the_zoomed_one_or_else_the_one_chosen() {
-        let (mut browser, mut canvas) = browser();
-        assert_eq!(browser.opened(), None);
-        browser.key(Key::Text("401"), Modifiers::default(), 0);
-        assert_eq!(browser.opened(), Some(PageKey { channel: 7, page: 0x401 }));
-        let (key, rect) = browser.wall().shown().next().unwrap();
-        press_at(&mut browser, &mut canvas, rect);
-        assert_eq!(browser.opened(), Some(key), "a zoomed page wins");
-    }
-
-    #[test]
     fn a_click_on_a_page_zooms_it_and_escape_returns() {
         let (mut browser, mut canvas) = browser();
         let (key, rect) = browser.wall().shown().next().unwrap();
@@ -2110,30 +1643,6 @@ mod tests {
         browser.draw(&mut canvas, WIDTH, HEIGHT, 0);
         let texts: Vec<&str> = canvas.texts.iter().map(|(_, text)| text.as_str()).collect();
         assert!(texts.contains(&"NeoTeletext") && !texts.contains(&"Not secure"), "{texts:?}");
-    }
-
-    /// Requirement 12.11 (decision 84): the field with the keys copies, cuts
-    /// and takes a paste as typing, hidden characters dropped; with no field
-    /// focused, nothing is copied and a paste goes nowhere, not to the page.
-    #[test]
-    fn the_focused_field_copies_cuts_and_pastes() {
-        let (mut browser, _) = browser();
-        browser.set_strip(StripState { address: "https://news.example/".into(), ..browser.strip.clone() });
-        browser.take_outputs();
-        assert_eq!(browser.selected_text(), None);
-        assert!(!browser.paste_text("101", 0) && browser.digits.is_empty(), "no field: the page's number keys are not typed");
-        let command = Modifiers { command: true, ..Modifiers::default() };
-        browser.key(Key::Text("l"), command, 0);
-        assert_eq!(browser.selected_text().as_deref(), Some("https://news.example/"), "Open Location selects the address");
-        browser.key(Key::End, Modifiers::default(), 0);
-        assert_eq!(browser.selected_text(), None, "nothing selected");
-        assert!(browser.paste_text("1\u{202E}0\n0", 0));
-        assert_eq!(browser.editor.text(), "https://news.example/100", "hidden characters dropped");
-        browser.key(Key::Text("a"), command, 0);
-        assert_eq!(browser.cut(0).as_deref(), Some("https://news.example/100"));
-        assert_eq!(browser.editor.text(), "", "cut removes it");
-        browser.key(Key::Escape, Modifiers::default(), 0);
-        assert!(!browser.key(Key::Text("a"), command, 0), "select all with no field is no shortcut");
     }
 
     /// Shift-Command-W, Control-Shift-W away from macOS, closes the window

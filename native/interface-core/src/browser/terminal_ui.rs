@@ -163,6 +163,18 @@ impl Browser {
         (self.opened() == Some(key) && !self.editing && !self.strip_has_keys()).then_some(key)
     }
 
+    /// Whether a panel, popover or list of the strip is open, which then
+    /// takes the keys rather than the page's channel.
+    fn strip_has_keys(&self) -> bool {
+        self.settings_open()
+            || self.history_open()
+            || self.cookies_editing()
+            || self.console_searching()
+            || self.bookmarks_open()
+            || self.star_open()
+            || self.popup_open()
+    }
+
     /// The modes in force on the page keys go to, 0 when none.
     fn typing_modes(&self) -> u32 {
         self.typing_target().and(self.terminal.typing).map_or(0, |typing| typing.modes)
