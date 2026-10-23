@@ -67,6 +67,13 @@ const KIND_BOOKMARK_FOLDER: u8 = 73;
 const KIND_BOOKMARK_FOLDER_END: u8 = 74;
 const KIND_BOOKMARK_LINK: u8 = 75;
 const KIND_BOOKMARKS_READ: u8 = 76;
+const KIND_CHANNEL_LOG: u8 = 77;
+/// The longest text of a channel's log line: the engine's
+/// `neoteletext_formats::log::MAX_LOG_TEXT_BYTES`, which the decoder
+/// asserts this equals.
+pub const MAX_CHANNEL_LOG: usize = 200;
+/// A log line's page when it followed none.
+const NO_PAGE: u16 = 0;
 /// A view's flags: reveal, hold, mix, and a sub-page chosen.
 const VIEW_REVEAL: u8 = 1;
 const VIEW_HOLD: u8 = 2;
@@ -163,6 +170,17 @@ pub enum FromDecoder {
     /// Something found in a bookmark file the decoder was given to read
     /// (decision 71).
     Bookmark(BookmarkEntry),
+    /// A log line the channel wrote for its author (the engine's
+    /// REQ-INP-026, an `LG` line of a TTI page): untrusted, for the
+    /// console's Log tab only (decision 70).
+    ChannelLog {
+        /// Its level.
+        level: interface_core::console::Level,
+        /// The page it was written on, when it followed a page's number.
+        page: Option<u16>,
+        /// Its text, at most [`MAX_CHANNEL_LOG`] bytes.
+        text: String,
+    },
     /// The bookmark file is read: what was found has been sent, and this
     /// many bookmarks and folders were left out.
     BookmarksRead {
@@ -466,6 +484,12 @@ pub fn write_to_core(out: &mut dyn Write, message: &FromDecoder) -> Result<(), P
             payload.extend_from_slice(&skipped.to_be_bytes());
             KIND_BOOKMARKS_READ
         }
+        FromDecoder::ChannelLog { level, page, text } => {
+            payload.push(crate::console::level_byte(*level));
+            payload.extend_from_slice(&page.unwrap_or(NO_PAGE).to_be_bytes());
+            push_raw_text(&mut payload, text, MAX_CHANNEL_LOG);
+            KIND_CHANNEL_LOG
+        }
     };
     write_frame(out, kind, &payload)
 }
@@ -553,6 +577,14 @@ pub fn read_from_decoder(input: &mut dyn Read) -> Result<Option<FromDecoder>, Pr
             FromDecoder::Bookmark(BookmarkEntry::Link { name, address })
         }
         KIND_BOOKMARKS_READ => FromDecoder::BookmarksRead { skipped: fields.u32()? },
+        KIND_CHANNEL_LOG => {
+            let level = crate::console::level_from_byte(fields.u8()?)?;
+            let page = match fields.u16()? {
+                NO_PAGE => None,
+                page => Some(page_index(page).map(|_| page).ok_or(ProtocolError::BadValue("page number"))?),
+            };
+            FromDecoder::ChannelLog { level, page, text: raw_text(&mut fields, MAX_CHANNEL_LOG, "log line too long")? }
+        }
         other => return Err(ProtocolError::UnknownKind(other)),
     };
     fields.end()?;
@@ -620,6 +652,8 @@ mod tests {
             FromDecoder::Bookmark(BookmarkEntry::FolderEnd),
             FromDecoder::Bookmark(BookmarkEntry::Link { name: "Teefax".into(), address: "https://teastop.co.uk/teefax/".into() }),
             FromDecoder::BookmarksRead { skipped: 3 },
+            FromDecoder::ChannelLog { level: interface_core::console::Level::Warning, page: Some(0x1A0 - 0xA0), text: "Weather feed late".into() },
+            FromDecoder::ChannelLog { level: interface_core::console::Level::Info, page: None, text: "Started".into() },
         ] {
             let mut bytes = Vec::new();
             write_to_core(&mut bytes, &message).unwrap();

@@ -16,7 +16,7 @@ A teletext set's remote has four coloured keys, an Index key, Reveal, Hold, Mix 
 - **The keys.** As the engine's own viewer: `r`, `g`, `y`, `c` or F1 to F4, and `i` for Index, while a page is open and no channel takes the keys. The remote control will carry them too.
 - **Only while their row is shown** (REQ-SEC-024). A page can draw anything in its rows, but the coloured key's promise is row 24: a key works only while row 24 has something drawn and the page is not boxed away, as the engine's viewer decides it. The decoder reports this with the links.
 - **Where a key leads.** A page of the channel, with its sub-page if the link names one, opens at once. A page of another service the channel's descriptor lists goes through the site-change screen in the strip, as every link that leaves a channel does (requirement 8.4). A link naming a web address is not followed by a key: it is shown on its page and followed by a click, as a page's other links are.
-- **The link row of a TTI page** (REQ-NAV-011): a page whose links come from `LN` lines has its row 24 drawn by the receiver from the links' labels; the engine moves that drawing where the browser's decoder can use it (the engine's item of 23 October 2026). Until it does, such a page shows the row it carries.
+- **The link row of a TTI page** (REQ-NAV-011): a page whose links come from `LN` lines has its row 24 drawn by the receiver from the links' labels; the decoder draws it with the engine's `links::receiver_links` (the engine's E.108): each key's label in its colour, and a link to another service, which this browser does not follow, blank, where the row the page file carries shows it in white with "»" (`link_lines_draw_the_receivers_row_24`).
 
 ## 3. Reveal, hold and mix
 
@@ -59,5 +59,5 @@ Built on 23 October 2026.
 3. **The sub-page control** shows the count with a turning mark while the latest is shown as it arrives, and "2/4" once one is chosen; pressing the count returns to the latest.
 4. **The address field** does not show the sub-page chosen, and Back and history keep the page, not the sub-page: an address naming a sub-page opens there, which is what was asked. Departure from section 4, for the owner to confirm.
 5. **A sub-code of 3F7F** is a page's own sub-code on many broadcasts, so a list may hold it; a link or a choice never names it, since it means "any".
-6. **The engine's bound of 64 sub-pages** is private in the engine and restated here (`MAX_SUBPAGES`) until the engine exports it, as requirement 2.4 wants; asked of the engine.
+6. **The engine's bound of 64 sub-pages** is the engine's `viewer::MAX_LISTED_SUBPAGES` since its commit 0d05d1f; the decoder lists by it, and the interface core, which does not depend on the engine, restates it with an assertion in the decoder that the two agree (requirement 2.4).
 7. **The receiver-drawn row 24** of a page with `LN` lines (the engine's REQ-NAV-011) needs the engine to move that drawing out of `neoteletext-app`; asked of the engine. The keys work meanwhile, since the engine writes X/27/0 from the lines; such a page shows the row it carries.

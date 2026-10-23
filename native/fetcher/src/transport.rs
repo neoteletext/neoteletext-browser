@@ -131,18 +131,20 @@ impl Tcp {
 }
 
 /// A socket to `host` and `port`: direct, or a tunnel the proxy opened,
-/// trying each address the name resolves to in turn. The proxy's own
-/// address may be local: the user chose it.
-fn reach(proxy: Option<&Proxy>, host: &str, port: u16) -> Option<(TcpStream, IpAddr)> {
+/// trying each address the name resolves to in turn, and the host's first
+/// bytes when the proxy's answer came with them (the engine's E.102). The
+/// proxy's own address may be local: the user chose it.
+fn reach(proxy: Option<&Proxy>, host: &str, port: u16) -> Option<(TcpStream, IpAddr, Vec<u8>)> {
     let (to_host, to_port) = proxy.map_or((host, port), |proxy| (proxy.host.as_str(), proxy.port));
     for target in (to_host, to_port).to_socket_addrs().ok()? {
         let Ok(mut socket) = TcpStream::connect_timeout(&target, CONNECT_TIMEOUT) else { continue };
         socket.set_read_timeout(Some(CONNECT_TIMEOUT)).ok()?;
         socket.set_write_timeout(Some(CONNECT_TIMEOUT)).ok()?;
-        if let Some(proxy) = proxy {
-            proxy.open_tunnel(&mut socket, host, port).ok()?;
-        }
-        return Some((socket, target.ip()));
+        let early = match proxy {
+            Some(proxy) => proxy.open_tunnel(&mut socket, host, port).ok()?,
+            None => Vec::new(),
+        };
+        return Some((socket, target.ip(), early));
     }
     None
 }
@@ -153,15 +155,28 @@ fn open(tls: &Arc<rustls::ClientConfig>, proxy: Option<&Proxy>, wake: &Wake, hos
     fn own<E>(_: E) -> Failure {
         Failure { proxy: false }
     }
-    let (mut socket, ip) = reach(proxy, host, port).ok_or(Failure { proxy: proxy.is_some() })?;
+    let (mut socket, ip, early) = reach(proxy, host, port).ok_or(Failure { proxy: proxy.is_some() })?;
     // An input message goes in its own packet at once (`interaction.md`
     // section 10).
     socket.set_nodelay(true).map_err(own)?;
+    // The host's bytes that came with the proxy's answer come first: a
+    // plain connection's data, or a TLS server's records.
+    let mut pending = VecDeque::new();
     let tls = match security {
-        Security::Plain => None,
+        Security::Plain => {
+            pending.extend(early);
+            None
+        }
         Security::Tls => {
             let name = rustls::pki_types::ServerName::try_from(host.to_owned()).map_err(own)?;
             let mut connection = rustls::ClientConnection::new(Arc::clone(tls), name).map_err(own)?;
+            let mut early = early.as_slice();
+            while !early.is_empty() {
+                if connection.read_tls(&mut early).map_err(own)? == 0 {
+                    break;
+                }
+                connection.process_new_packets().map_err(own)?;
+            }
             // A certificate that fails is a hard stop (requirement 7.11).
             while connection.is_handshaking() {
                 connection.complete_io(&mut socket).map_err(own)?;
@@ -177,7 +192,7 @@ fn open(tls: &Arc<rustls::ClientConfig>, proxy: Option<&Proxy>, wake: &Wake, hos
     let (chunks, incoming) = mpsc::sync_channel(READS_AHEAD);
     let wake = Arc::clone(wake);
     std::thread::spawn(move || read_socket(reader, &chunks, &*wake));
-    Ok(Connection { socket, tls, incoming, pending: VecDeque::new(), peer: address(ip) })
+    Ok(Connection { socket, tls, incoming, pending, peer: address(ip) })
 }
 
 /// The reader thread: passes on what the socket gives until it ends, or
@@ -344,6 +359,8 @@ mod tests {
     #[derive(Clone, Copy)]
     enum Proxying {
         HttpAllows,
+        /// Allows, and the host's first bytes come in the same write.
+        HttpAllowsWithBytes,
         HttpRefuses,
         SocksAllows,
         SocksRefuses,
@@ -361,14 +378,14 @@ mod tests {
             let mut asked = Vec::new();
             let mut byte = [0_u8; 1];
             match proxying {
-                Proxying::HttpAllows | Proxying::HttpRefuses => {
+                Proxying::HttpAllows | Proxying::HttpAllowsWithBytes | Proxying::HttpRefuses => {
                     while !asked.ends_with(b"\r\n\r\n") && socket.read(&mut byte).unwrap() == 1 {
                         asked.push(byte[0]);
                     }
-                    let answer: &[u8] = if matches!(proxying, Proxying::HttpAllows) {
-                        b"HTTP/1.1 200 Connection established\r\n\r\n"
-                    } else {
-                        b"HTTP/1.1 403 Forbidden\r\n\r\n"
+                    let answer: &[u8] = match proxying {
+                        Proxying::HttpAllows => b"HTTP/1.1 200 Connection established\r\n\r\n",
+                        Proxying::HttpAllowsWithBytes => b"HTTP/1.1 200 Connection established\r\n\r\nfirst",
+                        _ => b"HTTP/1.1 403 Forbidden\r\n\r\n",
                     };
                     socket.write_all(answer).unwrap();
                 }
@@ -442,6 +459,20 @@ mod tests {
         let asked = String::from_utf8(server.join().unwrap()).unwrap();
         assert!(asked.starts_with("CONNECT news.example:80 HTTP/1.1\r\n"), "{asked}");
         assert!(matches!(tcp.state(ConnectionId::Fetch), LinkState::Open(IpAddress::V4([127, 0, 0, 1]))), "the peer is the proxy");
+    }
+
+    /// The engine's E.102: the host's bytes that arrive with the proxy's
+    /// answer are the connection's first, not lost.
+    #[test]
+    fn the_hosts_first_bytes_after_the_proxys_answer_are_kept() {
+        let (proxy, server) = proxy(Proxying::HttpAllowsWithBytes);
+        let mut tcp = tcp(proxy);
+        tcp.connect(ConnectionId::Fetch, "news.example", 80, Security::Plain).unwrap();
+        assert!(matches!(settled(&mut tcp, ConnectionId::Fetch), LinkState::Open(_)));
+        assert_eq!(echoed(&mut tcp), b"first");
+        tcp.send(ConnectionId::Fetch, b"then").unwrap();
+        assert_eq!(echoed(&mut tcp), b"then");
+        server.join().unwrap();
     }
 
     /// Requirement 19.10: a SOCKS5 proxy, no authentication, given the

@@ -3,7 +3,7 @@
 use std::io::{self, BufReader, BufWriter, Write};
 use std::process::ExitCode;
 use std::sync::mpsc;
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 use neoteletext_input::session::Limiter;
 use neoteletext_qrkeyboard::config::{Layout, ScreenConfig};
@@ -17,8 +17,6 @@ const NAME: &str = "NeoTeletext";
 /// A dropped phone keeps the browser for at most this long (requirement
 /// 18.9), not qrkeyboard's default five minutes.
 const REJOIN_SECONDS: u32 = 30;
-/// How long one wait on the relay lasts: short, so Finish acts at once.
-const POLL: Duration = Duration::from_millis(50);
 
 /// The QR's modules, one bit each.
 fn qr(matrix: &Matrix) -> Qr {
@@ -56,12 +54,15 @@ fn run(relay: &str, pin: bool, proxy: Option<Proxy>) -> Result<(), String> {
     };
     let matrix = Matrix::new(&screen.join().url, Correction::Medium).map_err(|error| error.to_string())?;
     send(&mut output, &FromKeyboard::Join { qr: qr(&matrix), pin: screen.join().pin.clone() })?;
-    // The trusted core's Finish, or the end of its pipe.
+    // The trusted core's Finish, or the end of its pipe, which wakes the
+    // screen's wait (the engine's E.106): nothing waits by the clock.
     let (finish, finished) = mpsc::channel();
+    let waker = screen.waker();
     std::thread::spawn(move || {
         let mut input = BufReader::new(io::stdin().lock());
         let finish_asked = matches!(read_to_keyboard(&mut input), Ok(Some(ToKeyboard::Finish)));
         let _ = finish.send(finish_asked);
+        waker.wake();
     });
     let started = Instant::now();
     let mut limiter = Limiter::new();
@@ -77,7 +78,7 @@ fn run(relay: &str, pin: bool, proxy: Option<Proxy>) -> Result<(), String> {
         }
         // What the last events produced goes before waiting.
         output.flush().map_err(|error| error.to_string())?;
-        let events = screen.poll(POLL).map_err(|error| error.to_string())?;
+        let events = screen.wait(None).map_err(|error| error.to_string())?;
         for event in events {
             let message = match event {
                 Event::Scan => FromKeyboard::State(PhoneState::Scan),

@@ -9,8 +9,9 @@
 /// sub-page.
 pub const ANY_SUBCODE: u16 = 0x3F7F;
 
-/// The most sub-pages listed for a page, as the engine's viewer lists them
-/// (`neoteletext_core::viewer`'s bound of 64).
+/// The most sub-pages listed for a page: the engine's
+/// `neoteletext_core::viewer::MAX_LISTED_SUBPAGES`, which this crate does
+/// not depend on; the decoder asserts the two agree.
 pub const MAX_SUBPAGES: usize = 64;
 
 /// Fastext's keys: the four coloured keys and Index (the engine's

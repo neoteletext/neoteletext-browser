@@ -1072,7 +1072,7 @@ fn phone(relay: &str, events: &mpsc::Sender<PhoneEvent>) {
         return;
     }
     loop {
-        let Ok(happened) = screen.poll(Duration::from_millis(200)) else { return };
+        let Ok(happened) = screen.wait(Some(Duration::from_millis(200))) else { return };
         for event in happened {
             let sent = match event {
                 ScreenEvent::Connected => events.send(PhoneEvent::State("Phone connected: type on it.".into())),

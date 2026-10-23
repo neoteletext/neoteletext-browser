@@ -35,4 +35,7 @@ The questions met while implementing without the owner, and the answer taken, as
 | 27 | Bound the tabs? | 64 in all windows, 16 windows; past them a notice. | The trusted core had no bound: a 65th tab could not have been sent to the interface, and the session file's bound assumes 64. |
 | 28 | Command-Shift-N: a private tab, or a private window as in Chrome? | Stays a private tab (decision 57); New private window is in the menu without a key. | No key changes meaning while the owner is away. |
 | 29 | A window closed by closing its last tab: kept as a window? | As that tab, closed alone. | There is nothing of a window to keep but the tab. |
+| 30 | The engine's commits of 23 October 2026 (E.106 to E.111): pin them before the engine's full gate has passed? | Pinned and built against here; the full gate is run before anything is pushed. | The browser's own gate runs every engine path it uses; nothing is pushed. |
+| 31 | Row 24 of a page with `LN` lines: the row the page file carries, or the receiver's? | The receiver's, from the engine's `receiver_links`, with no linked service. | The carried row shows another service's label in white with "»"; this browser follows no other service, so that key does nothing, and the receiver's row blanks it (REQ-NAV-011). |
+| 32 | Device Bound Session Credentials (E.110): enable them? | Not yet. | They need a platform key store on each desktop, which means new libraries (`security-framework`, `windows`, `secret-service` or `oo7` with `p256`), each the owner's to approve by name. |
 

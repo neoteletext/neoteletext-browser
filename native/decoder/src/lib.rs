@@ -29,15 +29,51 @@ use std::time::Instant as Clock;
 pub mod links;
 pub mod netscape;
 
+/// The most log lines held between two takes: a page carries at most the
+/// engine's `MAX_LOG_LINES_PER_PAGE`, and a feed a few pages; past this a
+/// channel that writes many is cut, not kept.
+const MAX_LOGS_HELD: usize = 64;
+const _: () = assert!(protocol::decoder::MAX_CHANNEL_LOG == neoteletext_formats::log::MAX_LOG_TEXT_BYTES, "a log line's bound is the engine's");
+
+/// A log line the channel wrote for its author.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ChannelLog {
+    /// Its level.
+    pub level: interface_core::console::Level,
+    /// The page it followed, as `0xMPP`.
+    pub page: Option<u16>,
+    /// Its text, checked by the engine.
+    pub text: String,
+}
+
+/// Keeps a log line read, within [`MAX_LOGS_HELD`].
+fn keep_log(logs: &mut Vec<ChannelLog>, line: &neoteletext_formats::log::LogLine<'_>, page: Option<PageAddress>) {
+    use neoteletext_formats::log::LogLevel;
+    if logs.len() >= MAX_LOGS_HELD {
+        return;
+    }
+    let level = match line.level {
+        LogLevel::Error => interface_core::console::Level::Error,
+        LogLevel::Warning => interface_core::console::Level::Warning,
+        LogLevel::Information => interface_core::console::Level::Info,
+    };
+    logs.push(ChannelLog { level, page: page.map(PageAddress::mpp), text: line.text.to_owned() });
+}
+
+// The interface core, which does not depend on the engine, restates the
+// engine's bound on the sub-pages listed; the two must agree (requirement
+// 2.4).
+const _: () = assert!(interface_core::controls::MAX_SUBPAGES == neoteletext_core::viewer::MAX_LISTED_SUBPAGES, "the engine's sub-page bound");
+
 use interface_core::canvas::{PAGE_HEIGHT, PAGE_WIDTH};
 use interface_core::channel::{PAGES, page_index};
 use neoteletext_audio::port::{SoundFormat, SoundId, Start, VoiceSink};
 use neoteletext_audio::receiver::Receiver;
 use neoteletext_core::acq::{Decoder, EnhancementPacket, EnhancementStore, EnhancementSubPage, Event, StoredPage};
-use neoteletext_core::charset::to_unicode;
+use neoteletext_core::charset::{CharRef, CharSet, G2Set, to_unicode};
 use neoteletext_core::compose::compose_level;
 use neoteletext_core::config::Config;
-use neoteletext_core::consts::{COLUMNS, FLASH_CYCLE_US, FLASH_UNITS, ROWS};
+use neoteletext_core::consts::{COLUMNS, FLASH_CYCLE_US, FLASH_UNITS, G2_RIGHT_GUILLEMET, ROWS};
 use neoteletext_core::consts::{ENHANCEMENT_PACKETS_LEVEL_35, MAGAZINES, MOT_PACKETS, PAGE_COMPLETION_TIMEOUT_US};
 use neoteletext_core::fsm::PageState;
 use neoteletext_core::glyphs::GlyphSet;
@@ -45,7 +81,7 @@ use neoteletext_core::level1::{DisplayOptions, FlashRate, Glyph, Grid, build_gri
 #[cfg(feature = "links")]
 use neoteletext_core::nav::PageLinks;
 use neoteletext_core::packet::{Packet, PacketMeta};
-use neoteletext_core::render::{FlashPhase, IndexBuffer, IndexFormat, RenderOptions, render_screen};
+use neoteletext_core::render::{ChangeTracker, FlashPhase, IndexBuffer, IndexFormat, RenderOptions, render_screen};
 use neoteletext_core::types::{Instant, PageAddress, SubCode};
 use neoteletext_formats::Item;
 use neoteletext_formats::detect::{AutoConfig, AutoReader, Format};
@@ -54,6 +90,7 @@ use neoteletext_formats::t42::T42Variant;
 use neoteletext_image::palette::{Rgba, colour_map_palette};
 use protocol::audio::{Audio, MAX_MESSAGE_SAMPLES, Sound};
 use protocol::decoder::{FIRST_STORE_PAGES, MAX_STORE_PAGES, View};
+use std::cell::RefCell;
 
 /// Packets kept for enhancement pages: the Level 3.5 total of EN 300 706
 /// Annex E.8 plus the eight Magazine Organization Tables, as the engine's
@@ -167,6 +204,9 @@ pub struct Engine {
     started_pages: BTreeSet<(u16, u16)>,
     /// The full store was reported.
     full_told: bool,
+    /// The channel's log lines read since they were last taken, at most
+    /// [`MAX_LOGS_HELD`] (the engine's REQ-INP-026).
+    logs: Vec<ChannelLog>,
     /// Pages whose content was compared to tell whether it changed: the
     /// tests count them.
     #[cfg(test)]
@@ -178,6 +218,13 @@ pub struct Engine {
     /// The `LT` and `LK` lines of every page file read.
     #[cfg(feature = "links")]
     lines: links::Lines,
+    /// The row 24 the receiver draws for each page file with `LN` lines,
+    /// by page and sub-code (REQ-NAV-011, the engine's E.108).
+    receiver_rows: BTreeMap<(u16, u16), ReceiverRow>,
+    /// Which rows of each page drawn changed since it was last drawn (the
+    /// engine's REQ-RND-019 and REQ-RND-032): a flash phase redraws only
+    /// the rows that look different in it (the engine's E.107).
+    trackers: RefCell<BTreeMap<u16, ChangeTracker>>,
     /// How the pages the user changed are drawn: reveal, hold, mix and a
     /// sub-page (`page-controls.md`, decision 67).
     views: BTreeMap<u16, View>,
@@ -247,12 +294,15 @@ impl Engine {
             store_pages,
             started_pages: BTreeSet::new(),
             full_told: false,
+            logs: Vec::new(),
             #[cfg(test)]
             digests: 0,
             audio: Receiver::new(arena),
             sounds: Vec::new(),
             #[cfg(feature = "links")]
             lines: links::Lines::default(),
+            receiver_rows: BTreeMap::new(),
+            trackers: RefCell::new(BTreeMap::new()),
             views: BTreeMap::new(),
             held: BTreeMap::new(),
             #[cfg(feature = "interaction")]
@@ -291,7 +341,7 @@ impl Engine {
     /// [`interface_core::controls::MAX_SUBPAGES`].
     fn subcodes(&self, page: u16) -> Vec<u16> {
         let Some(address) = PageAddress::from_mpp(page) else { return Vec::new() };
-        let mut codes = [SubCode::ANY; interface_core::controls::MAX_SUBPAGES];
+        let mut codes = [SubCode::ANY; neoteletext_core::viewer::MAX_LISTED_SUBPAGES];
         let count = self.decoder.store().subcodes(address, &mut codes);
         codes.iter().take(count).map(|code| code.value()).collect()
     }
@@ -354,12 +404,15 @@ impl Engine {
             lines: &mut self.lines,
             #[cfg(feature = "interaction")]
             input: &mut self.input,
+            receiver_rows: &mut self.receiver_rows,
             unused: core::marker::PhantomData,
         };
+        let logs = &mut self.logs;
         self.reader.feed(bytes, &mut |item| match item {
             Item::Packet { packet, meta } => packets.push((packet, meta)),
             // A page file's link and cursor lines are kept beside its packets.
             Item::Page(page) => pages.read(page),
+            Item::Log { line, page, .. } => keep_log(logs, &line, page),
             _ => {}
         });
         self.drop_pushed(&mut packets);
@@ -378,12 +431,15 @@ impl Engine {
             lines: &mut self.lines,
             #[cfg(feature = "interaction")]
             input: &mut self.input,
+            receiver_rows: &mut self.receiver_rows,
             unused: core::marker::PhantomData,
         };
         let reader = if packets { &mut self.pushed_packets } else { &mut self.pushed_pages };
+        let logs = &mut self.logs;
         let mut take = |item: Item<'_>| match item {
             Item::Packet { packet, meta } => items.push((packet, meta)),
             Item::Page(page) => pages.read(page),
+            Item::Log { line, page, .. } => keep_log(logs, &line, page),
             _ => {}
         };
         reader.feed(bytes, &mut take);
@@ -442,6 +498,11 @@ impl Engine {
         Changed { pages: changes.touched, everything: changes.everything }
     }
 
+    /// The channel's log lines read since the last call.
+    pub fn take_logs(&mut self) -> Vec<ChannelLog> {
+        core::mem::take(&mut self.logs)
+    }
+
     /// True once, when as many pages and sub-pages have been received as
     /// the store has room for: the oldest are being forgotten, and the
     /// decoder should be started again with more room.
@@ -481,11 +542,14 @@ impl Engine {
             lines: &mut self.lines,
             #[cfg(feature = "interaction")]
             input: &mut self.input,
+            receiver_rows: &mut self.receiver_rows,
             unused: core::marker::PhantomData,
         };
+        let logs = &mut self.logs;
         self.reader.finish(&mut |item| match item {
             Item::Packet { packet, meta } => packets.push((packet, meta)),
             Item::Page(page) => pages.read(page),
+            Item::Log { line, page, .. } => keep_log(logs, &line, page),
             _ => {}
         });
         self.drop_pushed(&mut packets);
@@ -559,11 +623,19 @@ impl Engine {
         };
         let config = self.decoder.config();
         let magazine = self.decoder.magazine_data(address.magazine);
-        let options = DisplayOptions { mix: view.mix, ..DisplayOptions::default() };
+        let receiver = self.receiver_rows.get(&(page, stored.key.subcode.value()));
+        let options = DisplayOptions { mix: view.mix, row24: receiver.map(|row| row.codes), ..DisplayOptions::default() };
         let mut grid = Grid::EMPTY;
         build_grid(&mut grid, Some(stored), &magazine, config, &options);
         let lookup = self.decoder.enhancement_lookup();
         let _ = compose_level(&mut grid, stored, &magazine, &lookup, config, &options);
+        // The "»" marks, as the engine's viewer places them: Latin G2's
+        // right guillemet where the codes hold `>`.
+        for &column in receiver.map_or(&[][..], |row| row.marks.as_slice()) {
+            if let Some(cell) = grid.cell_mut(ROWS.saturating_sub(1), column) {
+                cell.glyph = Glyph::Char(CharRef::new(CharSet::G2(G2Set::Latin), G2_RIGHT_GUILLEMET));
+            }
+        }
         Some((grid, stored))
     }
 
@@ -588,7 +660,17 @@ impl Engine {
     /// from an earlier frame: a flashing page is rendered seven times a
     /// second, and need not take 240 KB afresh each time.
     #[must_use]
-    pub fn render_into(&self, page: u16, now_us: u64, mut indices: Vec<u8>) -> Option<Rendered> {
+    pub fn render_into(&self, page: u16, now_us: u64, indices: Vec<u8>) -> Option<Rendered> {
+        self.render_over(page, now_us, None, indices)
+    }
+
+    /// [`Engine::render_into`], drawn over `last`, the page's last frame,
+    /// when there is one: only the rows that changed since it are drawn
+    /// again (the engine's E.107). The page's change tracker follows every
+    /// frame drawn, so `last` must be the last frame drawn of it, or one
+    /// the same.
+    #[must_use]
+    pub fn render_over(&self, page: u16, now_us: u64, last: Option<&[u8]>, mut indices: Vec<u8>) -> Option<Rendered> {
         page_index(page)?;
         let (grid, stored) = self.grid(page)?;
         let subcode = stored.key.subcode.value();
@@ -596,10 +678,17 @@ impl Engine {
         let config = self.decoder.config();
         let phase = FlashPhase::at(Instant(now_us));
         let render = RenderOptions::resolved(config, reveal, phase).with_underline(false);
+        let changed = self.trackers.borrow_mut().entry(page).or_default().changed_rows(&grid, render);
         indices.clear();
-        indices.resize(PAGE_DOTS, 0);
+        let rows = if let Some(last) = last.filter(|last| last.len() == PAGE_DOTS) {
+            indices.extend_from_slice(last);
+            changed
+        } else {
+            indices.resize(PAGE_DOTS, 0);
+            ALL_ROWS
+        };
         let mut buffer = IndexBuffer { format: IndexFormat::Bits8, data: &mut indices, stride: usize::from(PAGE_WIDTH) };
-        render_screen(&grid, ALL_ROWS, &GLYPHS, render, &mut buffer).ok()?;
+        render_screen(&grid, rows, &GLYPHS, render, &mut buffer).ok()?;
         let palette: Vec<[u8; 3]> = colour_map_palette(&grid.colour_map, PICTURE).iter().map(|colour| [colour.r, colour.g, colour.b]).collect();
         #[cfg(feature = "links")]
         let links = {
@@ -773,9 +862,18 @@ fn header_page(packet: &Packet) -> Option<u16> {
 
 /// What a page file says beyond its packets: its link lines and its
 /// cursor line, kept as each page is read.
+/// A row 24 drawn by the receiver from a page's `LN` lines: its codes, and
+/// the columns where "»" marks a link that leaves the service.
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct ReceiverRow {
+    codes: [u8; COLUMNS],
+    marks: Vec<usize>,
+}
+
 struct PageLines<'a> {
     #[cfg(feature = "links")]
     lines: &'a mut links::Lines,
+    receiver_rows: &'a mut BTreeMap<(u16, u16), ReceiverRow>,
     #[cfg(feature = "interaction")]
     input: &'a mut InputRecords,
     unused: core::marker::PhantomData<&'a ()>,
@@ -786,6 +884,18 @@ impl PageLines<'_> {
     fn read(&mut self, page: &neoteletext_formats::page::PageFile) {
         #[cfg(feature = "links")]
         self.lines.read(page);
+        // The engine's receiver row: the browser follows no linked service
+        // (decision E.88), so a link to another service is null.
+        let key = (page.address.mpp(), page.subcode.value());
+        match neoteletext_formats::links::receiver_links(page, &[] as &[&str], false) {
+            Some(receiver) => {
+                let marks = receiver.row.marks.as_slice().iter().map(|&column| usize::from(column)).collect();
+                self.receiver_rows.insert(key, ReceiverRow { codes: receiver.row.codes, marks });
+            }
+            None => {
+                self.receiver_rows.remove(&key);
+            }
+        }
         // REQ-INT-006: a `CU` line is the page's cursor record.
         #[cfg(feature = "interaction")]
         if let Some(line) = page.cursor {
@@ -904,6 +1014,7 @@ fn title(grid: &Grid) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fmt::Write as _;
 
     /// Two pages in TTI, the engine's page file format: page 100 with a
     /// coloured title, and page 101.
@@ -914,6 +1025,74 @@ mod tests {
         engine.feed(tti);
         engine.finish();
         engine
+    }
+
+    /// The engine's REQ-INP-026 and decision 70: a page's `LG` lines reach
+    /// the trusted core with their level and page, and no more than are
+    /// held at once.
+    #[test]
+    fn a_channels_log_lines_are_taken_with_their_page() {
+        let mut engine = Engine::new();
+        let mut file = String::from("LG,I,Channel started\nPN,10000\nSC,0000\nPS,8000\nLG,W,Weather feed late\nOL,1,Headlines\n");
+        for line in 0..MAX_LOGS_HELD {
+            let _ = write!(file, "PN,2{:02}00\nLG,E,Line {line}\nOL,1,Page\n", line % 90);
+        }
+        engine.feed(file.as_bytes());
+        engine.finish();
+        let logs = engine.take_logs();
+        assert_eq!(logs.len(), MAX_LOGS_HELD, "held to the bound");
+        assert_eq!(logs[0], ChannelLog { level: interface_core::console::Level::Info, page: None, text: "Channel started".into() });
+        assert_eq!(logs[1], ChannelLog { level: interface_core::console::Level::Warning, page: Some(0x100), text: "Weather feed late".into() });
+        assert!(engine.take_logs().is_empty(), "taken once");
+    }
+
+    /// REQ-NAV-011 and the engine's E.108: a page file whose `LN` lines
+    /// give its keys, and no row 24 of its own, shows the receiver's row 24
+    /// with each key's label, so its keys act (REQ-SEC-024); a link to
+    /// another service is null and its key does nothing.
+    #[cfg(feature = "links")]
+    #[test]
+    fn link_lines_draw_the_receivers_row_24() {
+        let engine = engine_with(b"PN,10000\nSC,0000\nPS,8000\nOL,1,INDEX\nLN,R,200,Headlines\nLN,G,sport:300,Sport\nLN,I,100,\n");
+        let (grid, _) = engine.grid(0x100).unwrap();
+        let row: String = grid.cells[ROWS - 1]
+            .iter()
+            .map(|cell| match cell.glyph {
+                Glyph::Char(character) => to_unicode(character).base,
+                _ => ' ',
+            })
+            .collect();
+        // The broadcast row, which the page file's encoding carries, shows
+        // another service's label in white; the receiver's blanks it.
+        assert!(row.contains("Headlines") && !row.contains("Sport"), "the receiver's row 24: {row:?}");
+        let rendered = engine.render_at(0x100, 0).unwrap();
+        assert!(rendered.links.fastext.row24, "the keys act");
+        assert!(rendered.links.fastext.keys[0].is_some() && rendered.links.fastext.keys[1].is_none(), "red leads to 200; green's other service is null");
+    }
+
+    /// The engine's E.107: a page drawn over its last frame, only its
+    /// changed rows again, is the page drawn whole, through every flash
+    /// phase and a new version of the page.
+    #[test]
+    fn a_frame_drawn_over_the_last_is_the_frame_drawn_whole() {
+        let mut engine = engine_with(b"PN,10000\nSC,0000\nPS,8000\nOL,1,HEADLINES\nOL,5,\x1bHFLASHING\nOL,9,\x1bA\x1bHRED FLASH\nOL,12,STEADY\n");
+        let mut last = engine.render_at(0x100, 0).unwrap().indices;
+        let step = FLASH_CYCLE_US / u64::from(FLASH_UNITS);
+        let mut redrawn = 0_usize;
+        for unit in 1..=u64::from(FLASH_UNITS) * 2 {
+            let now = unit * step;
+            let over = engine.render_over(0x100, now, Some(&last), Vec::new()).unwrap();
+            let whole = engine.render_into(0x100, now, Vec::new()).unwrap();
+            assert!(over.indices == whole.indices, "phase at {now} µs");
+            redrawn += usize::from(over.indices != last);
+            // `render_into` moved the tracker on to the same frame.
+            last = whole.indices;
+        }
+        assert!(redrawn > 0, "the page flashed");
+        engine.feed(b"PN,10000\nSC,0000\nPS,8000\nOL,1,HEADLINES\nOL,5,\x1bHFLASHING\nOL,12,CHANGED\n");
+        engine.finish();
+        let over = engine.render_over(0x100, 0, Some(&last), Vec::new()).unwrap();
+        assert!(over.indices == engine.render_into(0x100, 0, Vec::new()).unwrap().indices, "a new version");
     }
 
     /// Decision 67, REQ-L1-010: concealed text is drawn only while

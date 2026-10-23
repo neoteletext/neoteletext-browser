@@ -17,7 +17,7 @@ fn tab_from_byte(byte: u8) -> Result<ConsoleTab, ProtocolError> {
     ConsoleTab::ALL.into_iter().find(|&tab| tab_byte(tab) == byte).ok_or(ProtocolError::BadValue("console tab"))
 }
 
-fn level_byte(level: Level) -> u8 {
+pub(crate) fn level_byte(level: Level) -> u8 {
     match level {
         Level::Error => 0,
         Level::Warning => 1,
@@ -25,7 +25,7 @@ fn level_byte(level: Level) -> u8 {
     }
 }
 
-fn level_from_byte(byte: u8) -> Result<Level, ProtocolError> {
+pub(crate) fn level_from_byte(byte: u8) -> Result<Level, ProtocolError> {
     Level::ALL.into_iter().find(|&level| level_byte(level) == byte).ok_or(ProtocolError::BadValue("log level"))
 }
 

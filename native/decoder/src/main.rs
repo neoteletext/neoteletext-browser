@@ -178,6 +178,9 @@ fn run(store_pages: usize) -> Result<(), ProtocolError> {
         for page in engine.take_updated() {
             write_to_core(&mut output, &FromDecoder::Updated { page })?;
         }
+        for log in engine.take_logs() {
+            write_to_core(&mut output, &FromDecoder::ChannelLog { level: log.level, page: log.page, text: log.text })?;
+        }
         // A shown page drawn again only when its reception moved, or data
         // every page may draw from changed.
         let changed = engine.take_changed();
@@ -202,8 +205,10 @@ fn draw(
     output: &mut Output<'_>,
 ) -> Result<(), ProtocolError> {
     for &page in pages {
-        // Rendered into the room kept from the last frame not sent.
-        let Some(rendered) = engine.render_into(page, now_us, core::mem::take(spare)) else { continue };
+        // Rendered into the room kept from the last frame not sent, over
+        // the page's last frame sent: only the rows that changed since.
+        let last = sent.get(&page).map(|last| last.indices.as_slice());
+        let Some(rendered) = engine.render_over(page, now_us, last, core::mem::take(spare)) else { continue };
         flashing.drawn(page, &rendered);
         let before = sent.get(&page);
         if before == Some(&rendered) {

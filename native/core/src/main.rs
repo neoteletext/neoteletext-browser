@@ -1166,6 +1166,17 @@ impl Core {
             FromDecoder::StoreFull => self.grow_decoder(channel)?,
             // Only a decoder started to read bookmarks reports them; from a
             // channel's they change nothing.
+            // The channel's own log, for its author: in its Log tab only,
+            // cleaned and marked as the channel's (decision 70).
+            FromDecoder::ChannelLog { level, page, text } => {
+                let text = clean(&text, protocol::decoder::MAX_CHANNEL_LOG);
+                let line = match page {
+                    Some(page) => format!("channel, page {page:03X}: {text}"),
+                    None => format!("channel: {text}"),
+                };
+                let at = self.now();
+                self.console.log(Some(channel), level, at, &line);
+            }
             FromDecoder::Bookmark(_) | FromDecoder::BookmarksRead { .. } => {
                 self.log(Level::Warning, Some(channel), "the channel's decoder reported bookmarks, which it may not; ignored");
             }
