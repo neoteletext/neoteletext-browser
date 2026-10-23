@@ -14,7 +14,7 @@ path = "src/main.rs"
 # A static HTTPS host for the updater's tests, never shipped.
 [[bin]]
 name = "neoteletext-test-host"
-path = "src/host.rs"
+path = "src/bin/test_host.rs"
 
 [dependencies]
 update.workspace = true
