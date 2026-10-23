@@ -52,6 +52,16 @@ impl Browser {
         canvas.fill(area, 0.0, PANEL);
         outline(canvas, area, RULE);
         let bar = Rect::new(area.x0 + PADDING, area.y0 + GAP, area.x1 - PADDING, area.y0 + GAP + BAR_HEIGHT);
+        self.draw_console_bar(canvas, bar);
+
+        let list = Rect::new(area.x0 + PADDING, bar.y1 + GAP, area.x1 - PADDING, area.y1 - GAP);
+        self.draw_console_entries(canvas, list);
+    }
+
+    /// The tab bar along `bar`: a tab for each of the console's tabs, the
+    /// close, Pause and Clear buttons, and the Log tab's levels and search
+    /// or the console's name.
+    fn draw_console_bar<C: Canvas + ?Sized>(&mut self, canvas: &mut C, bar: Rect) {
         let mut x = bar.x0;
         for tab in TABS {
             let rect = Rect::new(x, bar.y0, x + TAB_WIDTH, bar.y1);
@@ -118,8 +128,11 @@ impl Browser {
             left_centred(canvas, title, 0.0, "Console", HEADING, MUTED);
             canvas.pop_clip();
         }
+    }
 
-        let list = Rect::new(area.x0 + PADDING, bar.y1 + GAP, area.x1 - PADDING, area.y1 - GAP);
+    /// The tab's entries in `list`, the newest at the foot, or the
+    /// cookies' tab.
+    fn draw_console_entries<C: Canvas + ?Sized>(&mut self, canvas: &mut C, list: Rect) {
         let Some(entries) = self.console.shown() else {
             self.draw_cookies(canvas, list);
             return;
