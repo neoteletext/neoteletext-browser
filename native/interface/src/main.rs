@@ -35,6 +35,7 @@ use draw_vello::{Family, Painter};
 use interface_core::browser::{Browser, Cursor, Frame, Key as BrowserKey, Modifiers, Output, StripState, TabInfo, WindowAction};
 use interface_core::canvas::PageKey;
 use interface_core::channel::Channel;
+use interface_core::controls::FastextKey;
 use interface_core::library::WindowGeometry;
 use protocol::frame::{self, FrameError};
 use protocol::{ToCore, ToInterface, read_from_core, write_to_core};
@@ -78,6 +79,7 @@ enum Library {
     Bookmarks(interface_core::library::BookmarksView),
     Star(interface_core::library::StarView),
     Bar(interface_core::library::BarView),
+    PageControls(interface_core::controls::PageControls),
 }
 
 /// What the reader thread hands to the window's thread.
@@ -388,6 +390,7 @@ impl App {
                 Output::Bookmark => ToCore::Bookmark,
                 Output::Home => ToCore::Home,
                 Output::Reload => ToCore::Reload,
+                Output::PageControl(control) => ToCore::PageControl(control),
                 Output::History(request) => ToCore::History(request),
                 Output::Cookies(request) => ToCore::Cookies(request),
                 Output::Bookmarks(request) => ToCore::Bookmarks(request),
@@ -661,6 +664,17 @@ impl App {
             Key::Named(NamedKey::End) => Some(BrowserKey::End),
             _ => None,
         };
+        // F1 to F4: the coloured keys, as in the engine's viewer.
+        let colour = match key {
+            Key::Named(NamedKey::F1) => Some(FastextKey::Red),
+            Key::Named(NamedKey::F2) => Some(FastextKey::Green),
+            Key::Named(NamedKey::F3) => Some(FastextKey::Yellow),
+            Key::Named(NamedKey::F4) => Some(FastextKey::Cyan),
+            _ => None,
+        };
+        if let Some(colour) = colour {
+            return self.browser.fastext_key(colour);
+        }
         if let Some(named) = named {
             return self.browser.key(named, modifiers, now);
         }
@@ -865,6 +879,7 @@ impl App {
             Incoming::Library(view) => match view {
                 Library::History(view) => self.browser.set_history(view),
                 Library::Cookies(view) => self.browser.set_cookies(view),
+                Library::PageControls(controls) => self.browser.set_page_controls(controls),
                 Library::Suggestions(suggestions) => self.browser.set_suggestions(suggestions),
                 Library::TabList(list) => self.browser.set_tab_list(list),
                 Library::Bookmarks(view) => self.browser.set_bookmarks(view, now),
@@ -1075,6 +1090,7 @@ fn read_core(proxy: &EventLoopProxy<Incoming>) {
             Ok(Some(ToInterface::Star(view))) => Incoming::Library(Library::Star(view)),
             Ok(Some(ToInterface::Bar(view))) => Incoming::Library(Library::Bar(view)),
             Ok(Some(ToInterface::Window(window))) => Incoming::Window(window),
+            Ok(Some(ToInterface::PageControls(controls))) => Incoming::Library(Library::PageControls(controls)),
             Ok(Some(ToInterface::Close) | None) => break None,
             Err(error) => break Some(format!("bad message from the trusted core: {error}")),
         };

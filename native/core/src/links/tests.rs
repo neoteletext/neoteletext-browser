@@ -33,7 +33,7 @@ fn spot(version: u32, column: u8, row: u8) -> Spot {
 fn links_with(candidates: Vec<Candidate>, numbers: Vec<NumberLink>) -> Links {
     let mut links = Links::default();
     links.opened(Some(OPEN));
-    links.found(OPEN, candidates, numbers);
+    links.found(OPEN, candidates, numbers, Fastext::default());
     let address = home();
     links.image(OPEN, 1, &Channel { id: CHANNEL, address: &address, exists: &existing }, START);
     links
@@ -177,6 +177,7 @@ fn a_pages_number_links_and_the_channels_aliases_remap_numbers() {
             NumberLink { number: 0x302, target: "https://sport.invalid/".into() },
             NumberLink { number: 0x303, target: "web:https://www.example.invalid/".into() },
         ],
+        Fastext::default(),
     );
     let address = home();
     let page = links.image(OPEN, 1, &Channel { id: CHANNEL, address: &address, exists: &existing }, START);
@@ -207,7 +208,7 @@ fn a_link_that_changes_under_the_pointer_is_not_followed() {
     // changes the link's target without changing its image.
     let mut links = links_with(vec![number(5, 10, 0x302)], Vec::new());
     links.point(Some(spot(1, 11, 5)));
-    links.found(OPEN, vec![declared(5, 10, 3, "web:https://evil.invalid/")], Vec::new());
+    links.found(OPEN, vec![declared(5, 10, 3, "web:https://evil.invalid/")], Vec::new(), Fastext::default());
     let address = home();
     let switched = START + 2 * DWELL_MILLISECONDS;
     let changed = links.redecide(OPEN, &Channel { id: CHANNEL, address: &address, exists: &existing }, switched);
@@ -285,7 +286,7 @@ fn a_typed_number_follows_the_pages_link_or_the_channels_alias() {
         &[Alias { page: 0x500, target: "sport:302".into() }],
         &[Service { name: "sport".into(), address: "https://sport.invalid/".into() }],
     );
-    links.found(OPEN, Vec::new(), vec![NumberLink { number: 0x302, target: "401".into() }]);
+    links.found(OPEN, Vec::new(), vec![NumberLink { number: 0x302, target: "401".into() }], Fastext::default());
     let address = home();
     links.image(OPEN, 1, &Channel { id: CHANNEL, address: &address, exists: &existing }, START);
     let active = Some(CHANNEL);
@@ -321,7 +322,7 @@ fn nothing_but_a_confirmation_hands_a_web_page_over() {
     let channel = Channel { id: CHANNEL, address: &address, exists: &existing };
     let mut seen = Vec::new();
     links.descriptor(CHANNEL, &[Alias { page: 0x501, target: web.into() }], &[]);
-    links.found(OPEN, vec![declared(7, 0, 7, web)], Vec::new());
+    links.found(OPEN, vec![declared(7, 0, 7, web)], Vec::new(), Fastext::default());
     seen.push(links.image(OPEN, 2, &channel, LATER).runs.len());
     links.redecide(OPEN, &channel, LATER);
     links.point(Some(spot(2, 1, 7)));
@@ -340,4 +341,35 @@ fn nothing_but_a_confirmation_hands_a_web_page_over() {
     assert!(links.cancel(prompt.id));
     assert!(matches!(links.confirm(prompt.id, LATER * 3), Err(Refusal::NoPrompt)), "a declined question confirms nothing");
     assert_eq!(seen, [1]);
+}
+
+/// Decision 67, the engine's REQ-NAV-003 and REQ-SEC-024: a coloured key
+/// follows its page of this channel at once, with the sub-page it names;
+/// a service the descriptor lists, by its place, goes through the strip's
+/// question; a key does nothing while row 24 was not shown.
+#[test]
+fn fastext_keys_follow_as_links_do() {
+    use protocol::links::FastextTarget;
+    let target = |page, subcode, service| Some(FastextTarget { page, subcode, service });
+    let keys = [target(0x200, Some(3), None), target(0x300, None, Some(1)), None, target(0x400, None, Some(7)), target(0x100, None, None)];
+    let mut links = Links::default();
+    links.opened(Some(OPEN));
+    links.descriptor(
+        CHANNEL,
+        &[],
+        &[Service { name: "news".into(), address: "https://news.invalid/".into() }, Service { name: "sport".into(), address: "https://sport.invalid/".into() }],
+    );
+    links.found(OPEN, Vec::new(), Vec::new(), Fastext { keys, row24: true });
+    let address = home();
+    links.image(OPEN, 1, &Channel { id: CHANNEL, address: &address, exists: &existing }, START);
+    assert_eq!(links.fastext_keys(OPEN), [true, true, false, false, true], "the unknown seventh service leads nowhere");
+    assert_eq!(links.fastext(FastextKey::Red, Some(CHANNEL), START), Ok((Follow::Page(0x200), Some(3))));
+    let Ok((Follow::Ask(prompt), None)) = links.fastext(FastextKey::Green, Some(CHANNEL), START) else { panic!("another channel is asked about") };
+    assert_eq!(prompt.kind, PromptKind::Leave);
+    assert_eq!(links.fastext(FastextKey::Yellow, Some(CHANNEL), START), Err(Refusal::NotALink));
+    assert_eq!(links.fastext(FastextKey::Red, Some(CHANNEL + 1), START), Err(Refusal::NotOpen), "only the active channel's open page");
+    links.found(OPEN, Vec::new(), Vec::new(), Fastext { keys, row24: false });
+    links.image(OPEN, 2, &Channel { id: CHANNEL, address: &address, exists: &existing }, START);
+    assert_eq!(links.fastext_keys(OPEN), [false; 5]);
+    assert_eq!(links.fastext(FastextKey::Red, Some(CHANNEL), START), Err(Refusal::NotALink), "row 24 hidden: no key acts");
 }

@@ -16,6 +16,7 @@ pub mod browser;
 pub mod canvas;
 pub mod channel;
 pub mod console;
+pub mod controls;
 pub mod cookies;
 pub mod editor;
 pub mod geometry;

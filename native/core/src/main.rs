@@ -34,6 +34,7 @@
 
 mod cookie_control;
 mod library;
+mod page_controls;
 mod session;
 mod source;
 
@@ -316,6 +317,8 @@ struct Core {
     window_moved: Option<(WindowGeometry, std::time::Instant)>,
     /// Every cookie, and the cookies panel (`cookies.md`).
     cookies: cookie_control::Cookies,
+    /// The open page's controls (`page-controls.md`, decision 67).
+    controls: page_controls::State,
     /// The session's text last written, so an unchanged one is not.
     kept_session: String,
 }
@@ -629,6 +632,14 @@ impl Core {
         #[cfg(feature = "links")]
         self.send_links_afresh()?;
         self.send_mutes();
+        // An address that names a sub-page opens its page there (decision 67).
+        if let Some(tab) = self.session.active_tab()
+            && let Some(address) = tab.address()
+            && let Some(page) = address.page
+        {
+            let key = PageKey { channel: tab.channel.id, page };
+            self.open_at_subpage(key, address.subpage);
+        }
         Ok(())
     }
 
@@ -663,6 +674,7 @@ impl Core {
                 let pages = visible.iter().map(|key| key.page).collect();
                 #[cfg(feature = "links")]
                 self.links.retain(&visible);
+                self.keep_subpages(&visible);
                 self.frames.set_visible(visible);
                 self.shown_pages.clone_from(&pages);
                 self.tell(channel, ToDecoder::Showing(pages));
@@ -702,18 +714,7 @@ impl Core {
             // The start page's bookmark pages open their bookmarks, as the
             // user's own navigation (requirement 19.7).
             ToCore::Opened(Some(key)) if self.session.start_page_bookmark(key.channel, key.page).is_some() => self.open_start_page_bookmark(key)?,
-            ToCore::Opened(key) => {
-                #[cfg(feature = "interaction")]
-                {
-                    self.opened = key;
-                    let sends = self.typing.opened(self.active_channel(), key, self.now());
-                    self.deliver_typing(sends)?;
-                }
-                #[cfg(feature = "links")]
-                self.links.opened(key);
-                let sends = self.hearing.open(self.active_channel(), key);
-                self.deliver(sends);
-            }
+            ToCore::Opened(key) => self.opened(key)?,
             ToCore::MuteTab(index) => {
                 if self.session.toggle_mute(usize::from(index)) {
                     self.send_tabs()?;
@@ -733,7 +734,7 @@ impl Core {
                 let went = self.session.go(matches!(intent, ToCore::Forward));
                 self.went(went)?;
             }
-            ToCore::Reload => self.reload()?,
+            ToCore::Reload | ToCore::PageControl(_) => self.page_intent(&intent)?,
             ToCore::Bookmark => self.star()?,
             ToCore::Home | ToCore::ChangeSetting(_) | ToCore::Console(_) => self.settings_intent(intent)?,
             ToCore::History(_)
@@ -783,6 +784,31 @@ impl Core {
             Ok(()) => self.kept_session = text,
             Err(error) => eprintln!("neoteletext: the session could not be kept in {}: {error}", folder.display()),
         }
+    }
+
+    /// Reload, and the open page's controls (decision 67).
+    fn page_intent(&mut self, intent: &ToCore) -> Result<(), String> {
+        match intent {
+            ToCore::Reload => self.reload(),
+            ToCore::PageControl(control) => self.page_control(*control),
+            _ => Ok(()),
+        }
+    }
+
+    /// The page open in the active tab changed: its keys, its links, its
+    /// sounds and its controls follow it.
+    fn opened(&mut self, key: Option<PageKey>) -> Result<(), String> {
+        #[cfg(feature = "interaction")]
+        {
+            self.opened = key;
+            let sends = self.typing.opened(self.active_channel(), key, self.now());
+            self.deliver_typing(sends)?;
+        }
+        #[cfg(feature = "links")]
+        self.links.opened(key);
+        let sends = self.hearing.open(self.active_channel(), key);
+        self.deliver(sends);
+        self.page_opened(key)
     }
 
     /// Reload: the active tab's channel opens afresh (requirement 11.2).
@@ -896,15 +922,19 @@ impl Core {
                     #[cfg(not(feature = "links"))]
                     None => {}
                 }
+                // Its Fastext keys may lead elsewhere now.
+                self.send_controls()?;
             }
             #[cfg(feature = "links")]
-            FromDecoder::Links { page, with_image, candidates, numbers } => {
+            FromDecoder::Links { page, with_image, candidates, numbers, fastext } => {
                 let key = PageKey { channel, page };
-                self.links.found(key, candidates, numbers);
+                self.links.found(key, candidates, numbers, fastext);
                 if !with_image {
                     self.redecide(key)?;
+                    self.send_controls()?;
                 }
             }
+            FromDecoder::SubPages { page, subcodes, shown } => self.subpages(PageKey { channel, page }, subcodes, shown)?,
             #[cfg(feature = "interaction")]
             FromDecoder::Cursor { body } => {
                 let sends = self.typing.cursor(channel, body, self.now());
@@ -1627,6 +1657,7 @@ impl Core {
             window: None,
             window_moved: None,
             cookies: cookie_control::Cookies::default(),
+            controls: page_controls::State::default(),
             kept_session: String::new(),
         }
     }

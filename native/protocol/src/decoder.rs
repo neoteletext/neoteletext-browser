@@ -37,6 +37,7 @@ const KIND_SHOWING: u8 = 50;
 const KIND_CLOSE: u8 = 52;
 const KIND_OPENED: u8 = 53;
 const KIND_WHOLE: u8 = 54;
+const KIND_VIEW: u8 = 55;
 // Decoder to trusted core.
 const KIND_ARRIVED: u8 = 64;
 const KIND_FRAME: u8 = 65;
@@ -49,6 +50,29 @@ const KIND_CURSOR: u8 = 69;
 const KIND_STORE_FULL: u8 = 70;
 #[cfg(feature = "interaction")]
 const KIND_INPUT_CONTROL: u8 = 71;
+const KIND_SUBPAGES: u8 = 72;
+/// A view's flags: reveal, hold, mix, and a sub-page chosen.
+const VIEW_REVEAL: u8 = 1;
+const VIEW_HOLD: u8 = 2;
+const VIEW_MIX: u8 = 4;
+const VIEW_SUBPAGE: u8 = 8;
+const VIEW_FLAGS: u8 = VIEW_REVEAL | VIEW_HOLD | VIEW_MIX | VIEW_SUBPAGE;
+
+/// How the open page is to be drawn (`page-controls.md`, decision 67):
+/// concealed text shown, held, mixed, and which sub-page.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct View {
+    /// The page.
+    pub page: u16,
+    /// Concealed text shown (the engine's REQ-L1-010).
+    pub reveal: bool,
+    /// Not changed by what arrives (REQ-NAV-006).
+    pub hold: bool,
+    /// Cell backgrounds transparent (REQ-L1-020).
+    pub mix: bool,
+    /// This sub-page, or none for the latest as it arrives (REQ-NAV-005).
+    pub subpage: Option<u16>,
+}
 
 /// The pages and sub-pages a decoder first has room for: about 0.7 MB of
 /// store, enough for most channels; a decoder that fills it is started
@@ -84,6 +108,9 @@ pub enum ToDecoder {
         /// The bytes.
         bytes: Vec<u8>,
     },
+    /// How a page is drawn: its reveal, hold, mix and sub-page. A page with
+    /// no view is drawn as it arrives.
+    View(View),
 }
 
 /// From a decoder to the trusted core.
@@ -134,6 +161,18 @@ pub enum FromDecoder {
         candidates: Vec<crate::links::Candidate>,
         /// Its `LK` lines.
         numbers: Vec<crate::links::NumberLink>,
+        /// Its coloured keys and Index, from packet X/27/0.
+        fastext: crate::links::Fastext,
+    },
+    /// The sub-pages of a page on screen, in ascending order, and the one
+    /// drawn, whenever they change (REQ-NAV-005).
+    SubPages {
+        /// The page number.
+        page: u16,
+        /// Their sub-codes, at most `interface_core::controls::MAX_SUBPAGES`.
+        subcodes: Vec<u16>,
+        /// The sub-code of the one drawn.
+        shown: u16,
     },
     /// A cursor record the channel sent for a page, from a pushed packet or
     /// a page's `CU` line: untrusted, its body as sent, for the trusted
@@ -203,6 +242,22 @@ pub fn write_to_decoder(out: &mut dyn Write, message: &ToDecoder) -> Result<(), 
             payload.extend_from_slice(bytes);
             KIND_WHOLE
         }
+        ToDecoder::View(view) => {
+            page_index(view.page).ok_or(ProtocolError::BadValue("page number"))?;
+            let flags = if view.reveal { VIEW_REVEAL } else { 0 }
+                | if view.hold { VIEW_HOLD } else { 0 }
+                | if view.mix { VIEW_MIX } else { 0 }
+                | if view.subpage.is_some() { VIEW_SUBPAGE } else { 0 };
+            payload.extend_from_slice(&view.page.to_be_bytes());
+            payload.push(flags);
+            if let Some(subpage) = view.subpage {
+                if subpage >= interface_core::controls::ANY_SUBCODE {
+                    return Err(ProtocolError::BadValue("sub-code"));
+                }
+                payload.extend_from_slice(&subpage.to_be_bytes());
+            }
+            KIND_VIEW
+        }
     };
     write_frame(out, kind, &payload)
 }
@@ -243,6 +298,23 @@ pub fn read_from_core(input: &mut dyn Read) -> Result<Option<ToDecoder>, Protoco
                 return Err(ProtocolError::TooLong(length));
             }
             return Ok(Some(ToDecoder::Whole { packets: flags & 1 != 0, pushed: flags & 2 != 0, bytes: crate::tail(payload, WHOLE_FLAGS_BYTES) }));
+        }
+        KIND_VIEW => {
+            let page = display_page(&mut fields)?;
+            let flags = fields.u8()?;
+            if flags & !VIEW_FLAGS != 0 {
+                return Err(ProtocolError::BadValue("view flags"));
+            }
+            let subpage = if flags & VIEW_SUBPAGE == 0 {
+                None
+            } else {
+                let subpage = fields.u16()?;
+                if subpage >= interface_core::controls::ANY_SUBCODE {
+                    return Err(ProtocolError::BadValue("sub-code"));
+                }
+                Some(subpage)
+            };
+            ToDecoder::View(View { page, reveal: flags & VIEW_REVEAL != 0, hold: flags & VIEW_HOLD != 0, mix: flags & VIEW_MIX != 0, subpage })
         }
         other => return Err(ProtocolError::UnknownKind(other)),
     };
@@ -293,11 +365,26 @@ pub fn write_to_core(out: &mut dyn Write, message: &FromDecoder) -> Result<(), P
             KIND_AUDIO
         }
         #[cfg(feature = "links")]
-        FromDecoder::Links { page, with_image, candidates, numbers } => {
+        FromDecoder::Links { page, with_image, candidates, numbers, fastext } => {
             payload.extend_from_slice(&page.to_be_bytes());
             payload.push(u8::from(*with_image));
             crate::links::push_found(&mut payload, candidates, numbers)?;
+            crate::links::push_fastext(&mut payload, fastext)?;
             KIND_LINKS
+        }
+        FromDecoder::SubPages { page, subcodes, shown } => {
+            if subcodes.len() > interface_core::controls::MAX_SUBPAGES
+                || subcodes.iter().chain([shown]).any(|subcode| *subcode > interface_core::controls::ANY_SUBCODE)
+            {
+                return Err(ProtocolError::BadValue("sub-pages"));
+            }
+            payload.extend_from_slice(&page.to_be_bytes());
+            payload.push(u8::try_from(subcodes.len()).map_err(|_| ProtocolError::BadValue("sub-pages"))?);
+            for subcode in subcodes {
+                payload.extend_from_slice(&subcode.to_be_bytes());
+            }
+            payload.extend_from_slice(&shown.to_be_bytes());
+            KIND_SUBPAGES
         }
         #[cfg(feature = "interaction")]
         FromDecoder::Cursor { body } => {
@@ -369,7 +456,23 @@ pub fn read_from_decoder(input: &mut dyn Read) -> Result<Option<FromDecoder>, Pr
                 _ => return Err(ProtocolError::BadValue("with image")),
             };
             let (candidates, numbers) = crate::links::read_found(&mut fields)?;
-            FromDecoder::Links { page, with_image, candidates, numbers }
+            let fastext = crate::links::read_fastext(&mut fields)?;
+            FromDecoder::Links { page, with_image, candidates, numbers, fastext }
+        }
+        KIND_SUBPAGES => {
+            let page = display_page(&mut fields)?;
+            let count = usize::from(fields.u8()?);
+            if count > interface_core::controls::MAX_SUBPAGES {
+                return Err(ProtocolError::BadValue("too many sub-pages"));
+            }
+            let mut subcode = || -> Result<u16, ProtocolError> {
+                let subcode = fields.u16()?;
+                // A page may carry 3F7F itself, as many broadcast pages do.
+                if subcode > interface_core::controls::ANY_SUBCODE { Err(ProtocolError::BadValue("sub-code")) } else { Ok(subcode) }
+            };
+            let subcodes = (0..count).map(|_| subcode()).collect::<Result<Vec<_>, _>>()?;
+            let shown = subcode()?;
+            FromDecoder::SubPages { page, subcodes, shown }
         }
         // Only its length here: the trusted core checks the fields.
         #[cfg(feature = "interaction")]
@@ -420,6 +523,8 @@ mod tests {
             ToDecoder::End,
             ToDecoder::Showing(vec![0x100, 0x899]),
             ToDecoder::Close,
+            ToDecoder::View(View { page: 0x302, reveal: true, hold: false, mix: true, subpage: Some(2) }),
+            ToDecoder::View(View { page: 0x100, ..View::default() }),
         ] {
             let mut bytes = Vec::new();
             write_to_decoder(&mut bytes, &message).unwrap();
@@ -432,6 +537,8 @@ mod tests {
             FromDecoder::Updated { page: 0x302 },
             FromDecoder::StoreFull,
             FromDecoder::Frame { page: 0x123, palette: vec![[0, 0, 0], [255, 255, 255]], screen: 1, indices },
+            FromDecoder::SubPages { page: 0x302, subcodes: vec![1, 2, 3], shown: 2 },
+            FromDecoder::SubPages { page: 0x100, subcodes: vec![interface_core::controls::ANY_SUBCODE], shown: interface_core::controls::ANY_SUBCODE },
         ] {
             let mut bytes = Vec::new();
             write_to_core(&mut bytes, &message).unwrap();
@@ -454,6 +561,36 @@ mod tests {
         bytes.extend_from_slice(&u32::try_from(neoteletext_input::control::MAX_BODY + 1).unwrap().to_be_bytes());
         bytes.extend(std::iter::repeat_n(0, neoteletext_input::control::MAX_BODY + 1));
         assert!(read_from_decoder(&mut bytes.as_slice()).is_err());
+    }
+
+    /// Decision 67: a view names a real sub-page, never "any"; a sub-page
+    /// list is bounded; Fastext's targets round-trip and their bounds hold.
+    #[test]
+    fn page_controls_keep_their_bounds() {
+        let any = View { page: 0x100, subpage: Some(interface_core::controls::ANY_SUBCODE), ..View::default() };
+        assert!(write_to_decoder(&mut Vec::new(), &ToDecoder::View(any)).is_err());
+        let mut bytes = Vec::new();
+        write_to_decoder(&mut bytes, &ToDecoder::View(View { page: 0x100, ..View::default() })).unwrap();
+        bytes[5] = 0x10;
+        assert!(read_from_core(&mut bytes.as_slice()).is_err(), "an unknown view flag");
+        let many = FromDecoder::SubPages { page: 0x100, subcodes: vec![1; interface_core::controls::MAX_SUBPAGES + 1], shown: 1 };
+        assert!(write_to_core(&mut Vec::new(), &many).is_err());
+        #[cfg(feature = "links")]
+        {
+            use crate::links::{Fastext, FastextTarget};
+            let target = |page, subcode, service| Some(FastextTarget { page, subcode, service });
+            let fastext = Fastext {
+                keys: [target(0x200, None, None), None, target(0x302, Some(4), None), target(0x101, None, Some(1)), target(0x100, None, None)],
+                row24: true,
+            };
+            let message = FromDecoder::Links { page: 0x100, with_image: true, candidates: Vec::new(), numbers: Vec::new(), fastext };
+            let mut bytes = Vec::new();
+            write_to_core(&mut bytes, &message).unwrap();
+            assert_eq!(read_from_decoder(&mut bytes.as_slice()).unwrap().unwrap(), message);
+            let wrong = Fastext { keys: [target(0x0FF, None, None), None, None, None, None], row24: false };
+            let wrong = FromDecoder::Links { page: 0x100, with_image: true, candidates: Vec::new(), numbers: Vec::new(), fastext: wrong };
+            assert!(write_to_core(&mut Vec::new(), &wrong).is_err(), "not a display page");
+        }
     }
 
     #[test]

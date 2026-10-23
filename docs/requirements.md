@@ -1532,3 +1532,51 @@ Withdrawn on 23 October 2026 (decision 65): history follows Chrome (decision 64)
 - **Source:** Decision 62.
 - **Verification:** Test.
 - **State:** Met: `a_channels_cookies_stay_in_the_channel` (another folder, scheme or port has none); the engine reads `Set-Cookie` alone of the cookie headers and ignores unknown attributes and `Domain` (its REQ-WEB-006 tests).
+
+---
+
+## 22. Fastext, reveal, hold, mix and sub-pages
+
+From `page-controls.md` (decision 67, taken while the owner was away, on the owner's instruction "implement fastext, reveal, subpages").
+
+### Requirement 22.1: Fastext
+- **Statement:** While a page is open, its four coloured keys and Index must be followable by `r`, `g`, `y`, `c` (or F1 to F4) and `i`, as the engine's viewer takes them, the targets read by the engine from the page's packet X/27/0, which it writes from a TTI page's `FL` and `LN` lines too; a page of the channel must open at once, at the sub-page the link names; a page of a service the channel's descriptor lists must be asked about in the strip first (requirement 8.4).
+- **Reason:** The coloured keys are teletext's own navigation; the engine has them (its REQ-NAV-003).
+- **Source:** Decision 67.
+- **Verification:** Tests of the decoder (targets from a link line), the trusted core (following, another service, a key leading nowhere) and the interface (the keys).
+- **State:** Met, 23 October 2026: `fastext_comes_from_the_link_line_and_needs_row_24`, `fastext_keys_follow_as_links_do`, `the_viewers_keys_ask_for_the_controls`. The receiver-drawn row 24 of a page with `LN` lines (the engine's REQ-NAV-011) waits on the engine moving its drawing where the decoder can use it.
+
+### Requirement 22.2: The keys act only while their row is shown
+- **Statement:** A coloured key or Index must do nothing on an image of the page whose row 24 was blank or boxed away, as the engine's viewer decides it (its REQ-SEC-024), and a key must be checked against the image the user was shown, as a click is (requirement 12.3).
+- **Reason:** A page could otherwise hide where its keys lead.
+- **Source:** Decision 67.
+- **Verification:** Test.
+- **State:** Met: `fastext_keys_follow_as_links_do` (row 24 hidden: no key acts), `fastext_comes_from_the_link_line_and_needs_row_24`.
+
+### Requirement 22.3: Reveal
+- **Statement:** `?` must show the open page's concealed text and hide it again (the engine's REQ-L1-010), as strip input; it must lapse when another page is opened.
+- **Reason:** Quiz answers and punchlines are concealed until the viewer asks.
+- **Source:** Decision 67.
+- **Verification:** Tests: a concealed row drawn only while revealed; the view forgotten with the page.
+- **State:** Met: `reveal_and_mix_change_the_page_drawn`, `a_view_belongs_to_its_open_page`.
+
+### Requirement 22.4: Hold and mix
+- **Statement:** `H` must hold the open page at the version it shows, a new version or sub-page not drawn until it is let go (REQ-NAV-006); `m` must draw its cells' backgrounds transparent (REQ-L1-020); both lapse when another page is opened.
+- **Reason:** A rotating or changing page cannot be read otherwise; subtitle and newsflash pages are made for mix.
+- **Source:** Decision 67.
+- **Verification:** Decoder tests.
+- **State:** Met: `a_held_page_keeps_its_version`, `reveal_and_mix_change_the_page_drawn`.
+
+### Requirement 22.5: Sub-pages
+- **Statement:** Every sub-page the engine's store keeps must be listed for a page on screen, at most 64 (the engine viewer's bound); the latest must be drawn as it arrives unless the user chooses one, by Left and Right while the page is open or by the control on the page, which shows how many there are and which is shown, and returns to the latest when pressed; an address naming a sub-page (`#302:0002`) must open its page there.
+- **Reason:** Rotating pages hold most of a service's text; only the latest was ever shown.
+- **Source:** Decision 67.
+- **Verification:** Tests of the decoder, the trusted core's stepping, the address and the interface's control.
+- **State:** Met: `sub_pages_are_listed_and_one_can_be_chosen`, `sub_pages_step_round`, `a_fragment_names_a_page_of_the_channel_and_is_never_fetched` (the sub-page kept), `the_sub_page_control_steps_and_returns_to_the_latest`. The engine's bound of 64 is restated until the engine exports it (requirement 2.4).
+
+### Requirement 22.6: The controls are the trusted core's to keep
+- **Statement:** The interface must learn of the open page's controls only which keys lead somewhere, which of reveal, hold and mix are on, and how many sub-pages there are and which is shown; every control must reach the trusted core as strip input, which alone tells the decoder.
+- **Reason:** As every other strip input (requirement 11.1); the interface decides nothing.
+- **Source:** Decision 67.
+- **Verification:** Protocol tests of both messages' bounds; review.
+- **State:** Met: `page_controls_keep_their_bounds`, `every_kind_round_trips` (both messages).

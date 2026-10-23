@@ -119,6 +119,15 @@ fn run(store_pages: usize) -> Result<(), ProtocolError> {
                 send_sounds(&mut engine, &mut output)?;
                 continue;
             }
+            // The open page's reveal, hold, mix or sub-page changed: drawn
+            // again at once if on screen.
+            ToDecoder::View(view) => {
+                engine.set_view(view);
+                if showing.contains(&view.page) {
+                    draw(&engine, &[view.page], now, &mut sent, &mut spare, &mut flashing, &mut output)?;
+                }
+                continue;
+            }
         };
         send_sounds(&mut engine, &mut output)?;
         for (page, title) in &arrived {
@@ -164,7 +173,12 @@ fn draw(
         #[cfg(feature = "links")]
         if before.map(|before| &before.links) != Some(&rendered.links) {
             let links = rendered.links.clone();
-            write_to_core(output, &FromDecoder::Links { page, with_image: new_image, candidates: links.candidates, numbers: links.numbers })?;
+            let message = FromDecoder::Links { page, with_image: new_image, candidates: links.candidates, numbers: links.numbers, fastext: links.fastext };
+            write_to_core(output, &message)?;
+        }
+        if before.map(|before| &before.subpages) != Some(&rendered.subpages) {
+            let (subcodes, shown) = rendered.subpages.clone();
+            write_to_core(output, &FromDecoder::SubPages { page, subcodes, shown })?;
         }
         if new_image {
             write_frame_to_core(output, page, &rendered.palette, rendered.screen, &rendered.indices)?;

@@ -41,6 +41,8 @@ use neoteletext_core::consts::{ENHANCEMENT_PACKETS_LEVEL_35, MAGAZINES, MOT_PACK
 use neoteletext_core::fsm::PageState;
 use neoteletext_core::glyphs::GlyphSet;
 use neoteletext_core::level1::{DisplayOptions, FlashRate, Glyph, Grid, build_grid};
+#[cfg(feature = "links")]
+use neoteletext_core::nav::PageLinks;
 use neoteletext_core::packet::{Packet, PacketMeta};
 use neoteletext_core::render::{FlashPhase, IndexBuffer, IndexFormat, RenderOptions, render_screen};
 use neoteletext_core::types::{Instant, PageAddress, SubCode};
@@ -50,7 +52,7 @@ use neoteletext_formats::item::Reader;
 use neoteletext_formats::t42::T42Variant;
 use neoteletext_image::palette::{Rgba, colour_map_palette};
 use protocol::audio::{Audio, MAX_MESSAGE_SAMPLES, Sound};
-use protocol::decoder::{FIRST_STORE_PAGES, MAX_STORE_PAGES};
+use protocol::decoder::{FIRST_STORE_PAGES, MAX_STORE_PAGES, View};
 
 /// Packets kept for enhancement pages: the Level 3.5 total of EN 300 706
 /// Annex E.8 plus the eight Magazine Organization Tables, as the engine's
@@ -74,6 +76,8 @@ const MOSAIC_SHARE: usize = 3;
 /// Row 0 is the header; text rows are 1 to 23, row 24 the Fastext row.
 const FIRST_TEXT_ROW: usize = 1;
 const LAST_TEXT_ROW: usize = 23;
+#[cfg(feature = "links")]
+const FASTEXT_ROW: usize = 24;
 
 static GLYPHS: GlyphSet<'static> = GlyphSet::bedstead();
 
@@ -113,6 +117,9 @@ pub struct Rendered {
     /// The links found in the page (`hyperlinks.md` section 6).
     #[cfg(feature = "links")]
     pub links: Found,
+    /// The page's sub-codes in ascending order, and the one drawn (the
+    /// engine's REQ-NAV-005).
+    pub subpages: (Vec<u16>, u16),
 }
 
 /// The links of a page as the decoder finds them, untrusted.
@@ -123,6 +130,9 @@ pub struct Found {
     pub candidates: Vec<protocol::links::Candidate>,
     /// Its `LK` lines.
     pub numbers: Vec<protocol::links::NumberLink>,
+    /// Its coloured keys and Index, from packet X/27/0, and whether row 24
+    /// is shown (`page-controls.md` section 2).
+    pub fastext: protocol::links::Fastext,
 }
 
 /// The teletext engine for one channel: it reads the channel's bytes,
@@ -167,6 +177,11 @@ pub struct Engine {
     /// The `LT` and `LK` lines of every page file read.
     #[cfg(feature = "links")]
     lines: links::Lines,
+    /// How the pages the user changed are drawn: reveal, hold, mix and a
+    /// sub-page (`page-controls.md`, decision 67).
+    views: BTreeMap<u16, View>,
+    /// Held pages, as they stood when held (the engine's REQ-NAV-006).
+    held: BTreeMap<u16, Box<StoredPage>>,
     /// The channel's records for its input found since the last call, as
     /// sent, for the trusted core to check (INPUT.md section 7).
     #[cfg(feature = "interaction")]
@@ -237,9 +252,47 @@ impl Engine {
             sounds: Vec::new(),
             #[cfg(feature = "links")]
             lines: links::Lines::default(),
+            views: BTreeMap::new(),
+            held: BTreeMap::new(),
             #[cfg(feature = "interaction")]
             input: InputRecords::default(),
         }
+    }
+
+    /// How `page` is drawn from now on: a page held keeps the version it
+    /// shows now (`page-controls.md` section 3, decision 67).
+    pub fn set_view(&mut self, view: View) {
+        let page = view.page;
+        if !view.hold {
+            self.held.remove(&page);
+        } else if !self.held.contains_key(&page) || self.views.get(&page).map(|before| before.subpage) != Some(view.subpage) {
+            let showing = self.stored(page, view.subpage).copied();
+            if let Some(stored) = showing {
+                self.held.insert(page, Box::new(stored));
+            }
+        }
+        if view == (View { page, ..View::default() }) {
+            self.views.remove(&page);
+        } else {
+            self.views.insert(page, view);
+        }
+    }
+
+    /// The stored sub-page of `page` to draw: the one chosen, while the
+    /// store has it, else the latest.
+    fn stored(&self, page: u16, subpage: Option<u16>) -> Option<&StoredPage> {
+        let address = PageAddress::from_mpp(page)?;
+        let store = self.decoder.store();
+        subpage.and_then(|subpage| store.get(address, SubCode::new(subpage))).or_else(|| store.get(address, SubCode::ANY))
+    }
+
+    /// The sub-codes stored for `page`, in ascending order, at most
+    /// [`interface_core::controls::MAX_SUBPAGES`].
+    fn subcodes(&self, page: u16) -> Vec<u16> {
+        let Some(address) = PageAddress::from_mpp(page) else { return Vec::new() };
+        let mut codes = [SubCode::ANY; interface_core::controls::MAX_SUBPAGES];
+        let count = self.decoder.store().subcodes(address, &mut codes);
+        codes.iter().take(count).map(|code| code.value()).collect()
     }
 
     /// The voice operations produced since the last call, once each.
@@ -494,19 +547,23 @@ impl Engine {
         pages
     }
 
-    /// The page's grid, as the engine composes it for display, and the
-    /// sub-code of the sub-page shown.
-    fn grid(&self, page: u16) -> Option<(Grid, u16)> {
+    /// The page's grid, as the engine composes it for display in its view
+    /// (`page-controls.md`), and the stored sub-page it shows.
+    fn grid(&self, page: u16) -> Option<(Grid, &StoredPage)> {
         let address = PageAddress::from_mpp(page)?;
-        let stored = self.decoder.store().get(address, SubCode::ANY)?;
+        let view = self.views.get(&page).copied().unwrap_or_default();
+        let stored = match self.held.get(&page) {
+            Some(held) => held,
+            None => self.stored(page, view.subpage)?,
+        };
         let config = self.decoder.config();
         let magazine = self.decoder.magazine_data(address.magazine);
-        let options = DisplayOptions::default();
+        let options = DisplayOptions { mix: view.mix, ..DisplayOptions::default() };
         let mut grid = Grid::EMPTY;
         build_grid(&mut grid, Some(stored), &magazine, config, &options);
         let lookup = self.decoder.enhancement_lookup();
         let _ = compose_level(&mut grid, stored, &magazine, &lookup, config, &options);
-        Some((grid, stored.key.subcode.value()))
+        Some((grid, stored))
     }
 
     /// Renders the latest sub-page of `page` at the engine's flash phase
@@ -532,11 +589,12 @@ impl Engine {
     #[must_use]
     pub fn render_into(&self, page: u16, now_us: u64, mut indices: Vec<u8>) -> Option<Rendered> {
         page_index(page)?;
-        #[cfg_attr(not(feature = "links"), allow(unused_variables, reason = "the sub-code finds a page's link lines"))]
-        let (grid, subcode) = self.grid(page)?;
+        let (grid, stored) = self.grid(page)?;
+        let subcode = stored.key.subcode.value();
+        let reveal = self.views.get(&page).is_some_and(|view| view.reveal);
         let config = self.decoder.config();
         let phase = FlashPhase::at(Instant(now_us));
-        let render = RenderOptions::resolved(config, false, phase).with_underline(false);
+        let render = RenderOptions::resolved(config, reveal, phase).with_underline(false);
         indices.clear();
         indices.resize(PAGE_DOTS, 0);
         let mut buffer = IndexBuffer { format: IndexFormat::Bits8, data: &mut indices, stride: usize::from(PAGE_WIDTH) };
@@ -545,7 +603,7 @@ impl Engine {
         #[cfg(feature = "links")]
         let links = {
             let (candidates, numbers) = links::find(&grid, &palette, self.lines.get(page, subcode));
-            Found { candidates, numbers }
+            Found { candidates, numbers, fastext: fastext(stored, &grid) }
         };
         let rates = FlashRates::of(grid.cells.iter().flatten().filter(|cell| cell.flash).map(|cell| cell.attributes.flash_rate()));
         Some(Rendered {
@@ -555,8 +613,28 @@ impl Engine {
             flash: (!rates.is_empty()).then_some((phase, rates)),
             #[cfg(feature = "links")]
             links,
+            subpages: (self.subcodes(page), subcode),
         })
     }
+}
+
+/// A page's Fastext from its packet X/27/0, which the engine writes from a
+/// TTI page's link lines too (the engine's REQ-NAV-003), and whether its
+/// row 24 is shown as the engine's viewer decides it: drawn, and not boxed
+/// away (REQ-SEC-024).
+#[cfg(feature = "links")]
+fn fastext(stored: &StoredPage, grid: &Grid) -> protocol::links::Fastext {
+    let links = PageLinks::from_page(stored);
+    let target = |link: Option<neoteletext_core::nav::LinkTarget>| {
+        let link = link?;
+        let page = link.address.mpp();
+        page_index(page)?;
+        let subcode = (!link.subcode.is_any()).then(|| link.subcode.value());
+        Some(protocol::links::FastextTarget { page, subcode, service: link.service })
+    };
+    let [red, green, yellow, cyan] = links.keys;
+    let row24 = !grid.boxed_mode && grid.cells.get(FASTEXT_ROW).is_some_and(|row| row.iter().any(|cell| !cell.glyph.is_blank()));
+    protocol::links::Fastext { keys: [target(red), target(green), target(yellow), target(cyan), target(links.index)], row24 }
 }
 
 /// What the engine's events said changed.
@@ -829,6 +907,74 @@ mod tests {
     /// Two pages in TTI, the engine's page file format: page 100 with a
     /// coloured title, and page 101.
     const TTI: &[u8] = b"PN,10000\nSC,0000\nPS,8000\nOL,0,        HEADER\nOL,1,\x1b\x41RED HEADLINES\nOL,3,\x1b\x47News of the day\n\nPN,10100\nSC,0000\nPS,8000\nOL,1,Sport results\n";
+
+    fn engine_with(tti: &[u8]) -> Engine {
+        let mut engine = Engine::new();
+        engine.feed(tti);
+        engine.finish();
+        engine
+    }
+
+    /// Decision 67, REQ-L1-010: concealed text is drawn only while
+    /// revealed; mix changes the page's backgrounds.
+    #[test]
+    fn reveal_and_mix_change_the_page_drawn() {
+        // Row 1: a blue background (alpha blue 0x04, then new background
+        // 0x1D, which takes the foreground's colour), white text (0x07),
+        // concealed (0x18). Each code is written ESC and the code plus 40 in
+        // TTI.
+        let mut engine = engine_with(b"PN,10000\nSC,0000\nPS,8000\nOL,1,\x1bD\x1b]\x1bG\x1bXSECRET ANSWER\n");
+        let hidden = engine.render_at(0x100, 0).unwrap();
+        engine.set_view(View { page: 0x100, reveal: true, ..View::default() });
+        let shown = engine.render_at(0x100, 0).unwrap();
+        assert_ne!(hidden.indices, shown.indices, "revealed text is drawn");
+        engine.set_view(View { page: 0x100, mix: true, ..View::default() });
+        assert_ne!(engine.render_at(0x100, 0).unwrap().indices, hidden.indices, "mix clears the blue background");
+        engine.set_view(View { page: 0x100, ..View::default() });
+        assert_eq!(engine.render_at(0x100, 0).unwrap().indices, hidden.indices, "as before, the view forgotten");
+        assert!(engine.views.is_empty());
+    }
+
+    /// REQ-NAV-005: every sub-page is kept and listed; the latest is drawn
+    /// unless one is chosen.
+    #[test]
+    fn sub_pages_are_listed_and_one_can_be_chosen() {
+        let mut engine = engine_with(b"PN,10001\nSC,0001\nPS,8000\nOL,1,FIRST\n\nPN,10002\nSC,0002\nPS,8000\nOL,1,SECOND\n");
+        let latest = engine.render_at(0x100, 0).unwrap();
+        assert_eq!(latest.subpages, (vec![1, 2], 2), "the latest received is drawn");
+        engine.set_view(View { page: 0x100, subpage: Some(1), ..View::default() });
+        let first = engine.render_at(0x100, 0).unwrap();
+        assert_eq!(first.subpages, (vec![1, 2], 1));
+        assert_ne!(first.indices, latest.indices);
+        engine.set_view(View { page: 0x100, subpage: Some(9), ..View::default() });
+        assert_eq!(engine.render_at(0x100, 0).unwrap().subpages.1, 2, "one not stored: the latest");
+    }
+
+    /// REQ-NAV-006: a held page keeps the version it showed until let go.
+    #[test]
+    fn a_held_page_keeps_its_version() {
+        let mut engine = engine_with(b"PN,10000\nSC,0000\nPS,8000\nOL,1,MORNING\n");
+        let morning = engine.render_at(0x100, 0).unwrap();
+        engine.set_view(View { page: 0x100, hold: true, ..View::default() });
+        engine.feed_whole(false, true, b"PN,10000\nSC,0000\nPS,8000\nOL,1,EVENING\n");
+        assert_eq!(engine.render_at(0x100, 0).unwrap().indices, morning.indices, "held");
+        engine.set_view(View { page: 0x100, ..View::default() });
+        assert_ne!(engine.render_at(0x100, 0).unwrap().indices, morning.indices, "let go, the new version");
+    }
+
+    /// REQ-NAV-003 and REQ-SEC-024: a TTI page's FL line becomes its
+    /// coloured keys and Index, which act only while row 24 is drawn.
+    #[cfg(feature = "links")]
+    #[test]
+    fn fastext_comes_from_the_link_line_and_needs_row_24() {
+        let with_row = engine_with(b"PN,10000\nSC,0000\nPS,8000\nOL,1,INDEX\nOL,24,\x1bAnews \x1bBsport\nFL,200,300,8ff,400,8ff,101\n");
+        let fastext = with_row.render_at(0x100, 0).unwrap().links.fastext;
+        let page = |fastext: &protocol::links::Fastext, key: usize| fastext.keys[key].map(|target| target.page);
+        assert_eq!([0, 1, 2, 3, 4].map(|key| page(&fastext, key)), [Some(0x200), Some(0x300), None, Some(0x400), Some(0x101)]);
+        assert!(fastext.row24);
+        let without_row = engine_with(b"PN,10000\nSC,0000\nPS,8000\nOL,1,INDEX\nFL,200,300,8ff,400,8ff,101\n");
+        assert!(!without_row.render_at(0x100, 0).unwrap().links.fastext.row24, "no row 24: the keys do nothing");
+    }
 
     #[test]
     fn pages_arrive_with_titles_and_render_in_teletext_colours() {

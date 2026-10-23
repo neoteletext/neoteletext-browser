@@ -201,6 +201,7 @@ impl Browser {
         tips.push((smaller, String::from("Smaller pages: more on the wall")));
         tips.push((larger, String::from("Larger pages: fewer on the wall")));
         self.console_tips(tips);
+        self.controls_tips(tips);
         #[cfg(feature = "phone-keyboard")]
         self.phone_tips(tips);
     }

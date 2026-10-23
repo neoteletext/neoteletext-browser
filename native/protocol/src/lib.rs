@@ -21,6 +21,7 @@
 
 pub mod audio;
 pub mod console;
+mod controls;
 pub mod cookies;
 pub mod decoder;
 pub mod fetcher;
@@ -138,6 +139,7 @@ const KIND_BAR_VIEW: u8 = 55;
 const KIND_WINDOW_VIEW: u8 = 56;
 // The cookies panel (`cookies.md` section 9).
 const KIND_COOKIES_VIEW: u8 = 57;
+const KIND_PAGE_CONTROLS: u8 = 58;
 const KIND_HISTORY: u8 = 60;
 const KIND_BOOKMARKS: u8 = 61;
 const KIND_STAR: u8 = 62;
@@ -150,6 +152,7 @@ const KIND_NEW_PRIVATE_TAB: u8 = 68;
 const KIND_WINDOW: u8 = 69;
 const KIND_COOKIES: u8 = 70;
 const KIND_RELOAD: u8 = 71;
+const KIND_PAGE_CONTROL: u8 = 72;
 
 // The strip's flags.
 const ENCRYPTED: u8 = 1;
@@ -248,6 +251,8 @@ pub enum ToInterface {
     Window(library::WindowGeometry),
     /// The cookies panel (requirement 21.6).
     Cookies(cookies::CookiesView),
+    /// The open page's controls (`page-controls.md`, decision 67).
+    PageControls(interface_core::controls::PageControls),
     /// The browser is closing: the interface ends.
     Close,
 }
@@ -372,6 +377,8 @@ pub enum ToCore {
     Window(library::WindowGeometry),
     /// Strip input from the cookies panel (requirement 21.6).
     Cookies(cookies::CookiesRequest),
+    /// Strip input: a key of the open page's controls (decision 67).
+    PageControl(interface_core::controls::PageControl),
 }
 
 /// Why a message could not be read or written.
@@ -734,6 +741,10 @@ pub fn write_to_interface(out: &mut dyn Write, message: &ToInterface) -> Result<
             cookies::push_view(&mut payload, view)?;
             KIND_COOKIES_VIEW
         }
+        ToInterface::PageControls(view) => {
+            controls::push_controls(&mut payload, view)?;
+            KIND_PAGE_CONTROLS
+        }
         ToInterface::Close => KIND_CLOSE,
     };
     write_frame(out, kind, &payload)
@@ -861,6 +872,7 @@ pub fn read_from_core(input: &mut dyn Read) -> Result<Option<ToInterface>, Proto
         KIND_BAR_VIEW => ToInterface::Bar(library::read_bar_view(&mut fields)?),
         KIND_WINDOW_VIEW => ToInterface::Window(library::read_window(&mut fields)?),
         KIND_COOKIES_VIEW => ToInterface::Cookies(cookies::read_view(&mut fields)?),
+        KIND_PAGE_CONTROLS => ToInterface::PageControls(controls::read_controls(&mut fields)?),
         KIND_CLOSE => ToInterface::Close,
         other => return Err(ProtocolError::UnknownKind(other)),
     };
@@ -918,6 +930,10 @@ pub fn write_to_core(out: &mut dyn Write, message: &ToCore) -> Result<(), Protoc
         ToCore::Bookmark => KIND_BOOKMARK,
         ToCore::Home => KIND_HOME,
         ToCore::Reload => KIND_RELOAD,
+        ToCore::PageControl(control) => {
+            controls::push_control(&mut payload, *control);
+            KIND_PAGE_CONTROL
+        }
         ToCore::ChangeSetting(change) => {
             settings::push_change(&mut payload, change)?;
             KIND_CHANGE_SETTING
@@ -1060,6 +1076,7 @@ pub fn read_from_interface(input: &mut dyn Read) -> Result<Option<ToCore>, Proto
         KIND_BOOKMARK => ToCore::Bookmark,
         KIND_HOME => ToCore::Home,
         KIND_RELOAD => ToCore::Reload,
+        KIND_PAGE_CONTROL => ToCore::PageControl(controls::read_control(&mut fields)?),
         KIND_CHANGE_SETTING => ToCore::ChangeSetting(settings::read_change(&mut fields)?),
         KIND_CONSOLE => ToCore::Console(match fields.u8()? {
             0 => false,
@@ -1179,6 +1196,17 @@ mod tests {
                 refusal: None,
             }),
             ToInterface::Cookies(cookies::CookiesView { query: "news".into(), total: 0, ..cookies::CookiesView::default() }),
+            ToInterface::PageControls(interface_core::controls::PageControls {
+                page: Some(0x302),
+                fastext: [true, false, true, false, true],
+                reveal: true,
+                hold: false,
+                mix: true,
+                subpages: 4,
+                chosen: Some(2),
+                subcode: 3,
+            }),
+            ToInterface::PageControls(interface_core::controls::PageControls::default()),
             ToInterface::History(library::HistoryView { query: "news".into(), total: 0, ..library::HistoryView::default() }),
             ToInterface::Suggestions(library::Suggestions { text: "n".into(), inline: "news.example".into(), rows: Vec::new() }),
             ToInterface::TabList(library::TabList { forward: true, entries: Vec::new(), chapters: Vec::new() }),
@@ -1208,6 +1236,9 @@ mod tests {
             ToCore::Bookmark,
             ToCore::Home,
             ToCore::Reload,
+            ToCore::PageControl(interface_core::controls::PageControl::Fastext(interface_core::controls::FastextKey::Index)),
+            ToCore::PageControl(interface_core::controls::PageControl::SubPage(false)),
+            ToCore::PageControl(interface_core::controls::PageControl::Latest),
             ToCore::ChangeSetting(settings::SettingChange::Volume(40)),
             ToCore::Console(true),
             ToCore::History(library::HistoryRequest::Clear(library::ClearRange::All)),

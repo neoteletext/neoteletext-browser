@@ -27,6 +27,7 @@ use crate::wall::{CellClick, UPDATE_GLOW_MILLISECONDS, UPDATE_MARK_MILLISECONDS,
 
 mod bookmarks_ui;
 mod console_ui;
+mod controls_ui;
 mod cookies_ui;
 mod history_ui;
 #[cfg(feature = "links")]
@@ -275,6 +276,8 @@ pub enum Output {
     Home,
     /// Strip input: open the tab's channel afresh (requirement 11.2).
     Reload,
+    /// Strip input: a key of the open page's controls (decision 67).
+    PageControl(crate::controls::PageControl),
     /// Strip input: what the history panel asks for (requirement 20.4).
     History(crate::library::HistoryRequest),
     /// Strip input: what the cookies panel asks for (requirement 21.6).
@@ -505,6 +508,8 @@ pub struct Browser {
     cookies: cookies_ui::CookiesUi,
     /// What each control is, shown when the pointer rests on it.
     tips: tips_ui::TipsUi,
+    /// The open page's controls (decision 67).
+    page_controls: controls_ui::ControlsUi,
     /// The bookmarks manager (requirement 20.17).
     bookmarks: bookmarks_ui::BookmarksUi,
     /// The star's popover (requirement 20.16).
@@ -560,6 +565,7 @@ impl Browser {
             history: history_ui::HistoryUi::default(),
             cookies: cookies_ui::CookiesUi::default(),
             tips: tips_ui::TipsUi::default(),
+            page_controls: controls_ui::ControlsUi::default(),
             bookmarks: bookmarks_ui::BookmarksUi::default(),
             star: star_ui::StarUi::default(),
             bar: star_ui::BarUi::default(),
@@ -1006,6 +1012,9 @@ impl Browser {
             }
             return true;
         }
+        if self.controls_press(point) {
+            return true;
+        }
         if self.wall.pointer_pressed(point, now) {
             return true;
         }
@@ -1136,6 +1145,9 @@ impl Browser {
         }
         #[cfg(feature = "links")]
         if let Some(changed) = self.link_key(key, modifiers, now) {
+            return changed;
+        }
+        if let Some(changed) = self.control_key(key) {
             return changed;
         }
         match key {
@@ -1375,6 +1387,7 @@ impl Browser {
         self.draw_bookmarks_panel(canvas, now);
         self.draw_star_popover(canvas);
         self.draw_popups(canvas);
+        self.draw_page_controls(canvas);
         self.draw_tips(canvas, width, height);
         // Pages may have moved under a still pointer: by scrolling, a new
         // size or a zoom.

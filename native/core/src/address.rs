@@ -21,6 +21,9 @@ pub struct Address {
     /// does (`hyperlinks.md` section 7.3): a page of the channel, never
     /// sent in a request.
     pub page: Option<u16>,
+    /// The sub-page it names after the page, as `#302:0001` does: the page
+    /// opens at it (`page-controls.md` section 4, decision 67).
+    pub subpage: Option<u16>,
 }
 
 impl Address {
@@ -37,7 +40,7 @@ impl Address {
     #[must_use]
     pub fn with_page(&self, page: u16) -> Self {
         let text = if self.file.is_some() { self.text.clone() } else { format!("{}{FRAGMENT}{page:03X}", self.channel_text()) };
-        Self { text, page: Some(page), ..self.clone() }
+        Self { text, page: Some(page), subpage: None, ..self.clone() }
     }
 
     /// Whether this is the browser's own start page (requirement 19.7).
@@ -65,8 +68,17 @@ const PAGE_DIGITS: usize = 3;
 const SUBPAGE_DIGITS: usize = 4;
 const HEXADECIMAL: u32 = 16;
 
+/// The sub-page a fragment names after its page, when it names one: four
+/// hexadecimal digits below 3F7F, which means any sub-page.
+#[must_use]
+pub fn fragment_subpage(fragment: &str) -> Option<u16> {
+    fragment_page(fragment)?;
+    let (_, subpage) = fragment.split_once(':')?;
+    u16::from_str_radix(subpage, HEXADECIMAL).ok().filter(|subpage| *subpage < interface_core::controls::ANY_SUBCODE)
+}
+
 /// The page a fragment names: three hexadecimal digits of a display page,
-/// optionally followed by `:` and four of a sub-page, which is not kept.
+/// optionally followed by `:` and four of a sub-page.
 #[must_use]
 pub fn fragment_page(fragment: &str) -> Option<u16> {
     let (page, subpage) = fragment.split_once(':').map_or((fragment, None), |(page, subpage)| (page, Some(subpage)));
@@ -102,7 +114,7 @@ fn parse_file(typed: &str) -> Option<Result<Address, String>> {
         }
         let path = PathBuf::from(&path);
         let name = path.file_name().and_then(|name| name.to_str()).unwrap_or("/").to_owned();
-        Ok(Address { text: format!("{FILE_SCHEME}{}", path_to_url(&path)), host: name, encrypted: false, file: Some(path), page: None })
+        Ok(Address { text: format!("{FILE_SCHEME}{}", path_to_url(&path)), host: name, encrypted: false, file: Some(path), page: None, subpage: None })
     };
     Some(check())
 }
@@ -134,8 +146,9 @@ fn parse_built_in(typed: &str) -> Result<Address, String> {
         return Err("The only neoteletext: address is neoteletext:home".into());
     }
     let page = fragment.and_then(fragment_page);
+    let subpage = fragment.and_then(fragment_subpage);
     let text = page.map_or_else(|| START_PAGE.to_owned(), |page| format!("{START_PAGE}{FRAGMENT}{page:03X}"));
-    Ok(Address { text, host: crate::start_page::NAME.to_owned(), encrypted: false, file: None, page })
+    Ok(Address { text, host: crate::start_page::NAME.to_owned(), encrypted: false, file: None, page, subpage })
 }
 
 /// Turns what was typed into an address, or says why it cannot be opened.
@@ -189,8 +202,9 @@ pub fn parse(typed: &str) -> Result<Address, String> {
     }
     let path = if path.is_empty() || path.starts_with(['?', FRAGMENT]) { format!("/{path}") } else { path.to_owned() };
     let page = path.split_once(FRAGMENT).and_then(|(_, fragment)| fragment_page(fragment));
+    let subpage = path.split_once(FRAGMENT).and_then(|(_, fragment)| fragment_subpage(fragment));
     let port = port.map(|port| format!(":{port}")).unwrap_or_default();
-    Ok(Address { text: format!("{scheme}{SCHEME_SEPARATOR}{host}{port}{path}"), host, encrypted, file: None, page })
+    Ok(Address { text: format!("{scheme}{SCHEME_SEPARATOR}{host}{port}{path}"), host, encrypted, file: None, page, subpage })
 }
 
 #[cfg(test)]
@@ -245,7 +259,10 @@ mod tests {
         assert_eq!(address.page, Some(0x302));
         assert_eq!(address.text, "https://weather.invalid/teletext/#302");
         assert_eq!(address.channel_text(), "https://weather.invalid/teletext/");
-        assert_eq!(parse("weather.invalid/#302:0001").unwrap().page, Some(0x302), "a sub-page is allowed and not kept");
+        let with_subpage = parse("weather.invalid/#302:0001").unwrap();
+        assert_eq!((with_subpage.page, with_subpage.subpage), (Some(0x302), Some(1)), "decision 67: the sub-page is kept");
+        assert_eq!(parse("weather.invalid/#302:3F7F").unwrap().subpage, None, "3F7F means any");
+        assert_eq!(parse("weather.invalid/#302").unwrap().subpage, None);
         assert_eq!(parse("weather.invalid#302").unwrap().text, "https://weather.invalid/#302");
         for fragment in ["#1A0", "#30", "#3022", "#302:1", "#section", "#902"] {
             let address = parse(&format!("weather.invalid/{fragment}")).unwrap();
