@@ -29,6 +29,13 @@ fn bytes_of(size: usize) -> usize {
     size.saturating_mul(size).div_ceil(8)
 }
 
+// The interface pipe's kinds of the phone keyboard (`interface/kinds.rs`
+// lists every kind of that pipe): strip input, then the trusted core's.
+pub(crate) const KIND_PHONE_PANEL: u8 = 28;
+pub(crate) const KIND_PHONE_FINISH: u8 = 29;
+pub(crate) const KIND_PHONE: u8 = 41;
+pub(crate) const KIND_PHONE_KEY: u8 = 42;
+
 const KIND_JOIN: u8 = 112;
 const KIND_STATE: u8 = 113;
 const KIND_KEY: u8 = 114;
@@ -182,7 +189,7 @@ pub fn write_to_core(out: &mut dyn Write, message: &FromKeyboard) -> Result<(), 
 /// over [`MAX_PHONE_TEXT`].
 pub fn read_from_keyboard(input: &mut dyn Read) -> Result<Option<FromKeyboard>, ProtocolError> {
     let Some((kind, payload)) = read_frame(input)? else { return Ok(None) };
-    let mut fields = Fields { bytes: &payload };
+    let mut fields = Fields::new(&payload);
     let message = match kind {
         KIND_JOIN => {
             let size = usize::from(fields.u8()?);
@@ -190,7 +197,7 @@ pub fn read_from_keyboard(input: &mut dyn Read) -> Result<Option<FromKeyboard>, 
                 return Err(ProtocolError::BadValue("QR"));
             }
             let bits = fields.take(bytes_of(size))?.to_vec();
-            let pin = if fields.bytes.is_empty() { None } else { Some(fields.text(MAX_PIN)?) };
+            let pin = if fields.is_empty() { None } else { Some(fields.text(MAX_PIN)?) };
             if pin.as_ref().is_some_and(|pin| !pin.chars().all(|character| character.is_ascii_digit())) {
                 return Err(ProtocolError::BadValue("PIN"));
             }
@@ -201,17 +208,13 @@ pub fn read_from_keyboard(input: &mut dyn Read) -> Result<Option<FromKeyboard>, 
             FromKeyboard::State(PhoneState::from_code(code, left).ok_or(ProtocolError::BadValue("phone state"))?)
         }
         KIND_KEY => {
-            let down = match fields.u8()? {
-                0 => false,
-                1 => true,
-                _ => return Err(ProtocolError::BadValue("phone key")),
-            };
-            let name = std::str::from_utf8(fields.take(fields.bytes.len())?).map_err(|_| ProtocolError::BadValue("phone key"))?.to_owned();
+            let down = fields.flag("phone key")?;
+            let name = std::str::from_utf8(fields.take(fields.remaining())?).map_err(|_| ProtocolError::BadValue("phone key"))?.to_owned();
             clean_name(&name)?;
             FromKeyboard::Key { down, name }
         }
         KIND_TEXT => {
-            let text = std::str::from_utf8(fields.take(fields.bytes.len())?).map_err(|_| ProtocolError::BadValue("phone text"))?;
+            let text = std::str::from_utf8(fields.take(fields.remaining())?).map_err(|_| ProtocolError::BadValue("phone text"))?;
             if text.len() > MAX_PHONE_TEXT || text.chars().any(char::is_control) {
                 return Err(ProtocolError::BadValue("phone text"));
             }
@@ -293,6 +296,12 @@ pub(crate) fn read_view(fields: &mut Fields<'_>) -> Result<PhoneView, ProtocolEr
     Ok(PhoneView { state, qr, pin })
 }
 
+// A phone key's tag on the interface's pipe: a key of the layout up or
+// down, or text.
+const PHONE_KEY_UP: u8 = 0;
+const PHONE_KEY_DOWN: u8 = 1;
+const PHONE_TEXT: u8 = 2;
+
 /// A phone's key for the interface, which acts on it as on a key of its
 /// own keyboard, with no modifier.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -312,11 +321,11 @@ pub(crate) fn push_phone_key(payload: &mut Vec<u8>, key: &PhoneKey) -> Result<()
     match key {
         PhoneKey::Key { down, name } => {
             clean_name(name)?;
-            payload.push(u8::from(*down));
+            payload.push(if *down { PHONE_KEY_DOWN } else { PHONE_KEY_UP });
             push_text(payload, name, MAX_KEY_NAME)
         }
         PhoneKey::Text(text) => {
-            payload.push(2);
+            payload.push(PHONE_TEXT);
             push_text(payload, text, MAX_PHONE_TEXT)
         }
     }
@@ -324,12 +333,12 @@ pub(crate) fn push_phone_key(payload: &mut Vec<u8>, key: &PhoneKey) -> Result<()
 
 pub(crate) fn read_phone_key(fields: &mut Fields<'_>) -> Result<PhoneKey, ProtocolError> {
     Ok(match fields.u8()? {
-        kind @ (0 | 1) => {
+        kind @ (PHONE_KEY_UP | PHONE_KEY_DOWN) => {
             let name = fields.text(MAX_KEY_NAME)?;
             clean_name(&name)?;
-            PhoneKey::Key { down: kind == 1, name }
+            PhoneKey::Key { down: kind == PHONE_KEY_DOWN, name }
         }
-        2 => PhoneKey::Text(fields.text(MAX_PHONE_TEXT)?),
+        PHONE_TEXT => PhoneKey::Text(fields.text(MAX_PHONE_TEXT)?),
         _ => return Err(ProtocolError::BadValue("phone key")),
     })
 }

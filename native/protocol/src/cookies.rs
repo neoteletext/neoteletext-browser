@@ -3,7 +3,7 @@
 //! message, carries no cookie's name or value (requirement 21.6), and the
 //! requests act by the view's numbers alone.
 
-use super::{Fields, ProtocolError, push_text};
+use super::{Fields, ProtocolError, push_count, push_text};
 
 pub use interface_core::cookies::{CookieRow, CookiesRequest, CookiesView, MAX_LABEL, MAX_NOTICE, MAX_QUERY, MAX_USED, MAX_VIEW_ROWS};
 
@@ -13,22 +13,16 @@ const DELETE: u8 = 3;
 const BLOCK: u8 = 4;
 const DELETE_ALL: u8 = 5;
 
-fn flag(fields: &mut Fields<'_>) -> Result<bool, ProtocolError> {
-    match fields.u8()? {
-        0 => Ok(false),
-        1 => Ok(true),
-        _ => Err(ProtocolError::BadValue("flag")),
-    }
-}
-
 pub(crate) fn push_view(payload: &mut Vec<u8>, view: &CookiesView) -> Result<(), ProtocolError> {
+    // Checked before any field, so that too many rows is the error
+    // whatever else is wrong.
     if view.rows.len() > MAX_VIEW_ROWS {
         return Err(ProtocolError::BadValue("too many rows"));
     }
     push_text(payload, &view.query, MAX_QUERY)?;
     payload.extend_from_slice(&view.first.to_be_bytes());
     payload.extend_from_slice(&view.total.to_be_bytes());
-    payload.extend_from_slice(&u16::try_from(view.rows.len()).unwrap_or(0).to_be_bytes());
+    push_count(payload, view.rows.len(), MAX_VIEW_ROWS, "too many rows")?;
     for row in &view.rows {
         payload.extend_from_slice(&row.number.to_be_bytes());
         payload.push(u8::from(row.site) | (u8::from(row.blocked) << 1));
@@ -46,10 +40,7 @@ pub(crate) fn read_view(fields: &mut Fields<'_>) -> Result<CookiesView, Protocol
     let query = fields.text(MAX_QUERY)?;
     let first = fields.u32()?;
     let total = fields.u32()?;
-    let rows = usize::from(fields.u16()?);
-    if rows > MAX_VIEW_ROWS {
-        return Err(ProtocolError::BadValue("too many rows"));
-    }
+    let rows = fields.count_u16(MAX_VIEW_ROWS, "too many rows")?;
     let rows = (0..rows)
         .map(|_| {
             let number = fields.u32()?;
@@ -97,10 +88,10 @@ pub(crate) fn push_request(payload: &mut Vec<u8>, request: &CookiesRequest) -> R
 
 pub(crate) fn read_request(fields: &mut Fields<'_>) -> Result<CookiesRequest, ProtocolError> {
     Ok(match fields.u8()? {
-        PANEL => CookiesRequest::Panel(flag(fields)?),
+        PANEL => CookiesRequest::Panel(fields.flag("flag")?),
         QUERY => CookiesRequest::Query { text: fields.text(MAX_QUERY)?, first: fields.u32()? },
         DELETE => CookiesRequest::Delete(fields.u32()?),
-        BLOCK => CookiesRequest::Block { number: fields.u32()?, blocked: flag(fields)? },
+        BLOCK => CookiesRequest::Block { number: fields.u32()?, blocked: fields.flag("flag")? },
         DELETE_ALL => CookiesRequest::DeleteAll,
         _ => return Err(ProtocolError::BadValue("cookies request")),
     })
@@ -131,7 +122,7 @@ mod tests {
         let view = CookiesView { query: "news".into(), first: 0, total: 2, rows: vec![row(1), row(2)], count: 3, bytes: 120, notice: "Deleted".into() };
         let mut payload = Vec::new();
         push_view(&mut payload, &view).unwrap();
-        assert_eq!(read_view(&mut Fields { bytes: &payload }).unwrap(), view);
+        assert_eq!(read_view(&mut Fields::new(&payload)).unwrap(), view);
         for request in [
             CookiesRequest::Panel(true),
             CookiesRequest::Query { text: "x".into(), first: 100 },
@@ -141,7 +132,7 @@ mod tests {
         ] {
             let mut payload = Vec::new();
             push_request(&mut payload, &request).unwrap();
-            assert_eq!(read_request(&mut Fields { bytes: &payload }).unwrap(), request);
+            assert_eq!(read_request(&mut Fields::new(&payload)).unwrap(), request);
         }
         let label = "x".repeat(MAX_LABEL);
         let rows =

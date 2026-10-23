@@ -1,5 +1,5 @@
-//! The sound helper's mixer and output device (decision 55), apart from
-//! its program so its tests can drive them.
+//! The sound helper's mixer, output device and loop (decision 55), apart
+//! from its program so its tests can drive them.
 
 #![deny(
     clippy::indexing_slicing,
@@ -13,3 +13,4 @@
 )]
 
 pub mod audio;
+pub mod process;
