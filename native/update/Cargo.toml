@@ -1,0 +1,25 @@
+[package]
+name = "update"
+description = "What the launcher, the updater, the installer and the release tool share (installation-and-updates.md): versions, the platforms' release files, the release manifest, the launcher's state file, the gzip reader, the release signatures, the version mark, the core's messages to the updater and the safe file operations of a switch"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+# Ed25519 for the Linux release signatures and SHA-256 for every release
+# file (installation-and-updates.md section 5).
+ring.workspace = true
+# The release files' compression (section 6): gzip's DEFLATE, read with
+# a bound on what it writes.
+miniz_oxide.workspace = true
+
+# The atomic exchange of two folders, `renameatx_np` with `RENAME_SWAP`
+# on macOS and `renameat2` with `RENAME_EXCHANGE` on Linux (requirement
+# 13.7), through a safe interface.
+[target.'cfg(unix)'.dependencies]
+rustix.workspace = true
+
+[lints]
+workspace = true

@@ -19,6 +19,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "366ffbaa4442f4684d91e2cd7c5ea7c4ed8add41959a31447066e279e432b618"
 
 [[package]]
+name = "adler2"
+version = "2.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "320119579fcad9c21884f5c4861d16174d0e06250625266f50fe6898340abefa"
+
+[[package]]
 name = "aead"
 version = "0.5.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1755,6 +1761,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c3c8dda44ff03a2f238717214da50f65d5a53b45cd213a7370424ffdb6fae815"
 
 [[package]]
+name = "miniz_oxide"
+version = "0.9.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b63fbc4a50860e98e7b2aa7804ded1db5cbc3aff9193adaff57a6931bf7c4b4c"
+dependencies = [
+ "adler2",
+]
+
+[[package]]
 name = "ndk"
 version = "0.9.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1896,6 +1911,17 @@ dependencies = [
  "neoteletext-qrkeyboard",
  "neoteletext-web",
  "protocol",
+]
+
+[[package]]
+name = "neoteletext-launcher"
+version = "0.1.0"
+dependencies = [
+ "os-install",
+ "release-identity",
+ "ring",
+ "rustix 1.1.5",
+ "update",
 ]
 
 [[package]]
@@ -2429,6 +2455,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "os-install"
+version = "0.1.0"
+dependencies = [
+ "update",
+ "windows-sys 0.52.0",
+]
+
+[[package]]
 name = "owned_ttf_parser"
 version = "0.25.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2799,6 +2833,13 @@ name = "regex-syntax"
 version = "0.8.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d6f6ff9a378485b298a5286656da665ba74413d36db0979633275d2e708145d4"
+
+[[package]]
+name = "release-identity"
+version = "0.1.0"
+dependencies = [
+ "update",
+]
 
 [[package]]
 name = "ring"
@@ -3473,6 +3514,15 @@ name = "untrusted"
 version = "0.9.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8ecb6da28b8a351d773b68d5825ac39017e680750f980f3a1a85cd8dd28a47c1"
+
+[[package]]
+name = "update"
+version = "0.1.0"
+dependencies = [
+ "miniz_oxide",
+ "ring",
+ "rustix 1.1.5",
+]
 
 [[package]]
 name = "utf8_iter"
