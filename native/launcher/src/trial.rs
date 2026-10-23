@@ -7,17 +7,23 @@ use std::path::Path;
 use update::fault;
 use update::files;
 use update::platform::Family;
-use update::state::{FAILED_STARTS_TO_ROLL_BACK, State, Trial};
+use update::state::{FAILED_STARTS_TO_ROLL_BACK, NOT_STARTED_TO_ROLL_BACK, State, Trial};
 use update::version::Version;
 
 #[cfg(target_os = "macos")]
 use crate::macos;
-use crate::{Chosen, Launcher, io_text, launcher_release};
+use crate::{Chosen, Ended, Launcher, io_text, launcher_release};
 
-/// What a Windows version is called under `versions\` while it is copied
-/// in: no version's name, so `tidy` removes one left by a launcher
-/// stopped part way.
-const COPYING_SUFFIX: &str = ".copying";
+/// What a version is called under `versions/` while it is copied in: no
+/// version's name, so `tidy` removes one left by a launcher stopped part
+/// way.
+pub(crate) const COPYING_SUFFIX: &str = ".copying";
+/// The most staged versions one start examines: each examination copies
+/// and hashes up to a whole version, the newest that passes wins and the
+/// older ones are then tidied, so a staging folder full of folders the
+/// updater made costs a start no more than this many versions' copies
+/// (finding F-08). The next start examines the next ones.
+pub const MAX_CANDIDATES_PER_START: usize = 3;
 
 impl Launcher {
     /// Steps 1 to 4, holding the lock alone: what this start runs.
@@ -35,10 +41,23 @@ impl Launcher {
         {
             changed |= macos::reconcile(self, &mut state)?;
         }
-        if let Some(trial) = state.trial
-            && trial.failed >= FAILED_STARTS_TO_ROLL_BACK
+        // A trial still marked running: the launcher running it ended
+        // before it did, and its start is counted as failed (decision 93).
+        if let Some(trial) = state.trial.as_mut()
+            && trial.running
         {
-            eprintln!("neoteletext: version {} failed to start {} times and is rolled back to {}", trial.version, trial.failed, state.current);
+            trial.failed = trial.failed.saturating_add(1);
+            trial.running = false;
+            changed = true;
+        }
+        if let Some(trial) = state.trial
+            && (trial.failed >= FAILED_STARTS_TO_ROLL_BACK || trial.not_started >= NOT_STARTED_TO_ROLL_BACK)
+        {
+            if trial.failed >= FAILED_STARTS_TO_ROLL_BACK {
+                eprintln!("neoteletext: version {} failed to start {} times and is rolled back to {}", trial.version, trial.failed, state.current);
+            } else {
+                eprintln!("neoteletext: version {} did not start {} times and is rolled back to {}", trial.version, trial.not_started, state.current);
+            }
             state.trial = None;
             state.mark_bad(trial.version);
             state.rolled_back = Some(trial.version);
@@ -51,17 +70,21 @@ impl Launcher {
             }
         }
         if state.trial.is_none() {
-            for candidate in self.candidates(&state) {
+            for candidate in self.candidates(&state).into_iter().take(MAX_CANDIDATES_PER_START) {
                 match self.accept(candidate, &mut state) {
                     Ok(()) => {
                         changed = false;
                         break;
                     }
                     Err(why) => {
-                        eprintln!("neoteletext: version {candidate} is refused: {why}");
-                        state.mark_bad(candidate);
+                        // Not marked bad: "bad" is a trial that failed. A
+                        // folder anyone can make under `staging/` must not
+                        // stop that version ever being accepted, nor push a
+                        // version that failed out of the bad list (finding
+                        // F-08). The updater may stage it again; it is
+                        // refused again if it is still not the release.
+                        eprintln!("neoteletext: version {candidate} is refused and removed: {why}");
                         let _ = files::remove_tree(&self.layout.staged(candidate));
-                        changed = true;
                     }
                 }
             }
@@ -71,7 +94,9 @@ impl Launcher {
         }
         self.tidy(&state);
         if let Some(trial) = &mut state.trial {
-            trial.failed = trial.failed.saturating_add(1);
+            // Counted before it is made, as a start that has not started;
+            // its broker's `started` clears it.
+            trial.not_started = trial.not_started.saturating_add(1);
             let version = trial.version;
             self.write_state(&state)?;
             fault::point("trial-counted");
@@ -100,36 +125,54 @@ impl Launcher {
         found
     }
 
-    /// Step 3: accepts `version` and makes it the trial.
+    /// Step 3: accepts `version` and makes it the trial. What is accepted
+    /// is the launcher's own copy of what the updater staged, made where
+    /// only the launcher writes and checked there, never the staged files
+    /// themselves: the confined updater could otherwise change a version
+    /// after its check, through a hard link, a descriptor it kept open, or
+    /// a staged folder that is a link (decision 87).
     fn accept(&self, version: Version, state: &mut State) -> Result<(), String> {
         let staged = self.layout.staged(version);
+        let staged_there = match std::fs::symlink_metadata(&staged) {
+            Ok(metadata) if metadata.file_type().is_symlink() => return Err(String::from("the staged version is a link")),
+            Ok(_) => true,
+            Err(_) => false,
+        };
         match self.platform.family() {
             Family::Macos => {
-                let accepted = update::accept::accept(&staged, self.platform, self.signer.as_ref())?;
-                debug_assert_eq!(accepted, version, "accept checks the folder's name");
-                state.trial = Some(Trial { version, failed: 0 });
+                let accepted = self.layout.accepted(version);
+                std::fs::create_dir_all(self.layout.accepting()).map_err(|error| io_text(&self.layout.accepting(), &error))?;
+                self.copy_and_accept(&staged, &accepted, version)?;
+                state.trial = Some(Trial::new(version));
                 self.write_state(state)?;
                 fault::point("accept-written");
+                // The staged copy goes now; one left behind is tidied.
+                let _ = files::remove_tree(&staged);
                 #[cfg(target_os = "macos")]
                 macos::reconcile(self, state)?;
                 Ok(())
             }
             Family::Windows | Family::Linux => {
                 let installed = self.layout.version(version);
-                let from = if staged.is_dir() { staged } else { installed.clone() };
-                update::accept::accept(&from, self.platform, self.signer.as_ref())?;
-                if from != installed {
+                if staged_there {
                     std::fs::create_dir_all(self.layout.versions()).map_err(|error| io_text(&self.layout.versions(), &error))?;
                     files::remove_tree(&installed).map_err(|error| io_text(&installed, &error))?;
-                    if self.platform.family() == Family::Windows {
-                        self.copy_in(&from, &installed, version)?;
-                    } else {
-                        std::fs::rename(&from, &installed).map_err(|error| io_text(&from, &error))?;
-                    }
+                    let copying = self.layout.versions().join(format!("{version}{COPYING_SUFFIX}"));
+                    self.copy_and_accept(&staged, &copying, version)?;
+                    std::fs::rename(&copying, &installed).map_err(|error| io_text(&copying, &error))?;
                     files::sync_folder(&self.layout.versions()).map_err(|error| io_text(&self.layout.versions(), &error))?;
+                    // The staged copy goes now; one left behind is tidied.
+                    let _ = files::remove_tree(&staged);
                     fault::point("accept-moved");
+                } else {
+                    // Copied and renamed in by a start that ended before it
+                    // wrote the state: the launcher's own copy, checked again.
+                    let accepted = update::accept::accept(&installed, self.platform, self.signer.as_ref())?;
+                    if accepted != version {
+                        return Err(format!("{} says {accepted}", installed.display()));
+                    }
                 }
-                state.trial = Some(Trial { version, failed: 0 });
+                state.trial = Some(Trial::new(version));
                 self.write_state(state)?;
                 fault::point("accept-written");
                 Ok(())
@@ -137,28 +180,55 @@ impl Launcher {
         }
     }
 
-    /// Windows: the staged `version` copied into `installed` by the
-    /// launcher, not renamed, and checked again there. What the updater
-    /// wrote carries its container's full control and the low integrity
-    /// label of every file an `AppContainer` writes; renamed, a version
-    /// would keep both, so the updater could change it after it was
-    /// checked, and the mitigation that refuses low integrity programs
-    /// would refuse its helpers (measured end to end: "Access is denied").
-    /// A copy is the launcher's, under `versions\`'s access list. A copy
-    /// cut short is under a name that is no version, which `tidy` removes.
-    fn copy_in(&self, staged: &Path, installed: &Path, version: Version) -> Result<(), String> {
-        let copying = self.layout.versions().join(format!("{version}{COPYING_SUFFIX}"));
-        files::remove_tree(&copying).map_err(|error| io_text(&copying, &error))?;
-        files::copy_tree(staged, &copying).map_err(|error| io_text(&copying, &error))?;
+    /// The staged `version` copied by the launcher into `copy`, a folder
+    /// only the launcher writes, and accepted there. On Windows a copy is
+    /// also what makes a version the launcher's: what the updater wrote
+    /// carries its container's full control and the low integrity label of
+    /// every file an `AppContainer` writes, and the mitigation that refuses
+    /// low integrity programs would refuse its helpers (measured end to
+    /// end: "Access is denied"). A copy cut short is never what the state
+    /// names, and is made again or tidied.
+    fn copy_and_accept(&self, staged: &Path, copy: &Path, version: Version) -> Result<(), String> {
+        files::remove_tree(copy).map_err(|error| io_text(copy, &error))?;
+        update::accept::copy_release(staged, copy, self.platform)?;
         fault::point("accept-copied");
-        let copied = update::accept::accept(&copying, self.platform, self.signer.as_ref())?;
+        let copied = update::accept::accept(copy, self.platform, self.signer.as_ref())?;
         if copied != version {
             return Err(format!("the copy of {version} says {copied}"));
         }
-        std::fs::rename(&copying, installed).map_err(|error| io_text(&copying, &error))?;
-        // The staged copy goes now; one left behind is tidied.
-        let _ = files::remove_tree(staged);
         Ok(())
+    }
+
+    /// A trial's broker said it started (decision 93): its starts that
+    /// never started are forgotten, and it is marked running, so that if
+    /// the launcher ends before it does, the next start counts it.
+    ///
+    /// # Errors
+    /// When the state cannot be read or written.
+    pub(crate) fn trial_started(&self, version: Version) -> Result<(), String> {
+        let mut state = self.read_state()?;
+        let Some(trial) = state.trial.as_mut().filter(|trial| trial.version == version) else { return Ok(()) };
+        trial.not_started = 0;
+        trial.running = true;
+        self.write_state(&state)?;
+        fault::point("trial-started");
+        Ok(())
+    }
+
+    /// A trial that said it started ended without being found healthy: a
+    /// failed start, unless it ended successfully before any deadline, as
+    /// it does when the user quits before its health is known (decision 93).
+    ///
+    /// # Errors
+    /// When the state cannot be read or written.
+    pub(crate) fn trial_ended(&self, version: Version, ended: &Ended) -> Result<(), String> {
+        let mut state = self.read_state()?;
+        let Some(trial) = state.trial.as_mut().filter(|trial| trial.version == version) else { return Ok(()) };
+        if !(ended.success && ended.deadline.is_none()) {
+            trial.failed = trial.failed.saturating_add(1);
+        }
+        trial.running = false;
+        self.write_state(&state)
     }
 
     /// Step 5: the trial `version` was found healthy; it becomes current,

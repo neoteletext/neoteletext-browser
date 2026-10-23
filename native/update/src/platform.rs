@@ -31,9 +31,60 @@ pub const SIGNATURE_SUFFIX: &str = ".sig";
 /// The Linux `AppArmor` profile a version carries (`sandboxing.md` section
 /// 8.3, decision 77).
 pub const APPARMOR_PROFILE: &str = "neoteletext.apparmor";
+/// The programs whose sandbox makes a user namespace on Linux (`confine`'s
+/// roles that make a namespace: the broker and trusted core, the decoder,
+/// the interface and the sound helper), the only ones the `AppArmor`
+/// profile names (decision 95). The fetcher, the keyboard and the updater
+/// keep the network and make none.
+pub const NAMESPACE_PROGRAMS: [&str; 4] = ["neoteletext", "neoteletext-decoder", "neoteletext-interface", "neoteletext-sound"];
+/// The installation's root a release's own profile names: the default,
+/// `~/.local/share/neoteletext`, in `AppArmor`'s variables.
+pub const APPARMOR_DEFAULT_ROOT: &str = "@{HOME}/.local/share/neoteletext";
+
+/// The `AppArmor` profile for an installation whose root is `root`, an
+/// absolute path or [`APPARMOR_DEFAULT_ROOT`], already checked by
+/// [`apparmor_root`] (`sandboxing.md` section 8.3, decision 95): on a
+/// system that restricts unprivileged user namespaces, it lets the
+/// [`NAMESPACE_PROGRAMS`] of every version there make one, and changes
+/// nothing else.
+#[must_use]
+pub fn apparmor_profile(root: &str) -> String {
+    format!(
+        "# NeoTeletext: four of its programs may make a user namespace, for the
+# namespaces of their sandbox (docs/sandboxing.md section 8).
+# It allows userns, and nothing else, to any program at these four paths,
+# which the user who installed NeoTeletext can write.
+# Installed by an administrator once; it covers every later version.
+abi <abi/4.0>,
+include <tunables/global>
+
+profile neoteletext \"{root}/versions/*/{{{}}}\" flags=(unconfined) {{
+  userns,
+
+  include if exists <local/neoteletext>
+}}
+",
+        NAMESPACE_PROGRAMS.join(",")
+    )
+}
+
+/// `path` as the installation's root in an `AppArmor` profile, if it is
+/// absolute text holding none of the characters `AppArmor` treats as a
+/// pattern, a quote or an escape (its `apparmor.d` manual's globbing
+/// section: `* ? [ ] { } ^ , \\ "`), nor a control character or a line's
+/// end, so the profile names exactly that folder.
+#[must_use]
+pub fn apparmor_root(path: &std::path::Path) -> Option<String> {
+    let text = path.to_str()?;
+    let plain = text.starts_with('/')
+        && !text.ends_with('/')
+        && text.chars().all(|c| !c.is_control() && !matches!(c, '*' | '?' | '[' | ']' | '{' | '}' | '^' | ',' | '\\' | '"' | '@'));
+    plain.then(|| text.to_owned())
+}
 /// The release's own list of its files, in every version's folder.
 pub const MANIFEST: &str = "manifest";
-/// The Linux release key's signature of the manifest.
+/// The release key's signature of the manifest, on Linux and Windows
+/// (decision 92).
 pub const MANIFEST_SIGNATURE: &str = "manifest.sig";
 /// The most files a version has on any platform.
 pub const MAX_FILES: usize = 32;
@@ -121,6 +172,16 @@ impl Platform {
         }
     }
 
+    /// Whether a version's manifest is signed by the release key
+    /// (`manifest.sig`): on Linux, which has no platform signature, and on
+    /// Windows, whose Authenticode signs each program but not the set of
+    /// them (decision 92); not on macOS, whose bundle's seal covers every
+    /// file.
+    #[must_use]
+    pub const fn signs_manifest(self) -> bool {
+        matches!(self.family(), Family::Linux | Family::Windows)
+    }
+
     /// A program's file name on this platform.
     #[must_use]
     pub fn program_file(self, program: &str) -> String {
@@ -182,6 +243,25 @@ impl fmt::Display for Platform {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Decision 95: the profile names the four programs that make
+    /// namespaces under the root given, and a root that would be a
+    /// pattern is refused.
+    #[test]
+    fn the_apparmor_profile_names_four_programs_under_the_real_root() {
+        let profile = apparmor_profile("/home/a b/.local/share/neoteletext");
+        assert!(
+            profile.contains("\nprofile neoteletext \"/home/a b/.local/share/neoteletext/versions/*/{neoteletext,neoteletext-decoder,neoteletext-interface,neoteletext-sound}\" flags=(unconfined) {\n  userns,\n"),
+            "{profile}"
+        );
+        for program in NAMESPACE_PROGRAMS {
+            assert!(PROGRAMS.contains(&program), "{program}");
+        }
+        assert_eq!(apparmor_root(std::path::Path::new("/home/a b/.local/share/neoteletext")).as_deref(), Some("/home/a b/.local/share/neoteletext"));
+        for refused in ["relative", "/home/*", "/home/{a,b}", "/home/a\"", "/home/a\\b", "/home/a\nb", "/home/@{HOME}", "/home/a/"] {
+            assert_eq!(apparmor_root(std::path::Path::new(refused)), None, "{refused:?}");
+        }
+    }
 
     #[test]
     fn every_platform_has_its_programs_and_no_path_escapes() {

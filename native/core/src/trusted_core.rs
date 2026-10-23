@@ -78,6 +78,10 @@ const SLEEP_CHECK: Duration = Duration::from_secs(60);
 const WINDOW_STILL: Duration = Duration::from_secs(1);
 
 enum Event {
+    /// A helper's message, with its bytes taken from the helper's budget,
+    /// given back when the ticket is dropped once it is handled (finding
+    /// F-10).
+    Budgeted(Box<Event>, neoteletext::budget::Ticket),
     Decoded(u32, u64, FromDecoder),
     Fetched(u32, u64, FromFetcher),
     FetcherEnded(u32, u64, Option<String>),
@@ -85,11 +89,12 @@ enum Event {
     Intent(ToCore),
     InterfaceEnded(Option<String>),
     /// The phone keyboard process said something, untrusted.
+    /// Of the keyboard process started as the generation given.
     #[cfg(feature = "phone-keyboard")]
-    Phone(protocol::keyboard::FromKeyboard),
-    /// The phone keyboard process ended.
+    Phone(u64, protocol::keyboard::FromKeyboard),
+    /// The phone keyboard process of that generation ended.
     #[cfg(feature = "phone-keyboard")]
-    PhoneEnded(Option<String>),
+    PhoneEnded(u64, Option<String>),
     /// The sound helper said something, untrusted (decision 55).
     Sound(FromSound),
     /// The sound helper ended: the browser runs silent.
@@ -132,6 +137,12 @@ struct Core {
     generation: u64,
     /// The store size of each channel's decoder, when grown past the first.
     store_pages: BTreeMap<u32, usize>,
+    /// When each channel's decoder was last replaced for stopping reading,
+    /// within the window that counts (finding F-30).
+    restarts: BTreeMap<u32, std::collections::VecDeque<std::time::Instant>>,
+    /// Channels whose decoder was replaced too often: none is started for
+    /// them until the tab is reloaded, which makes a new channel.
+    given_up: std::collections::BTreeSet<u32>,
     /// The pages last told shown to the decoder of [`Core::showing`].
     shown_pages: Vec<u16>,
     /// The links of the pages on screen (`hyperlinks.md`).
@@ -154,6 +165,13 @@ struct Core {
     /// The phone keyboard process, while one runs.
     #[cfg(feature = "phone-keyboard")]
     phone: Option<(Helper, Outbox)>,
+    /// Which keyboard process [`Core::phone`] is: its events carry it.
+    #[cfg(feature = "phone-keyboard")]
+    phone_generation: u64,
+    /// A keyboard process the panel closed, its generation, and when it is
+    /// killed if it has not ended (finding F-26).
+    #[cfg(feature = "phone-keyboard")]
+    phone_ending: Option<(Helper, u64, std::time::Instant)>,
     /// What the interface shows of it.
     #[cfg(feature = "phone-keyboard")]
     phone_view: protocol::keyboard::PhoneView,
@@ -261,6 +279,8 @@ impl Core {
             sleep: Sleep::default(),
             generation: 0,
             store_pages: BTreeMap::new(),
+            restarts: BTreeMap::new(),
+            given_up: std::collections::BTreeSet::new(),
             shown_pages: Vec::new(),
             #[cfg(feature = "links")]
             links: Links::default(),
@@ -273,6 +293,10 @@ impl Core {
             opened: None,
             #[cfg(feature = "phone-keyboard")]
             phone: None,
+            #[cfg(feature = "phone-keyboard")]
+            phone_generation: 0,
+            #[cfg(feature = "phone-keyboard")]
+            phone_ending: None,
             #[cfg(feature = "phone-keyboard")]
             phone_view: protocol::keyboard::PhoneView { state: protocol::keyboard::PhoneState::Finished, qr: None, pin: None },
             to_interface,

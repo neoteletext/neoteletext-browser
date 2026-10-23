@@ -88,7 +88,9 @@ impl Channel<'_> {
         if other == folder {
             return Some(address.page.unwrap_or(INITIAL_PAGE));
         }
-        let file = other.strip_prefix(folder)?;
+        // A page file is in the folder: after its `/`, so a channel at
+        // `/a` does not own `/a302.tti` (finding F-86).
+        let file = other.strip_prefix(folder).filter(|_| folder.ends_with('/'))?;
         let number = PAGE_FILES.iter().find_map(|extension| file.strip_suffix(extension))?;
         // Page files are named in decimal digits: `302.tti` is page 302.
         page(number).filter(|_| number.bytes().all(|byte| byte.is_ascii_digit()))
@@ -116,7 +118,7 @@ impl Descriptor {
             Target::Page(page) => Some(Destination::Page(*page)),
             Target::Service { name, page } => {
                 let (_, address) = self.services.iter().find(|(known, _)| known == name)?;
-                Some(Destination::Channel(address.with_page(*page)))
+                Some(Destination::Channel(address.with_page(*page)?))
             }
             Target::Channel(address) => Some(channel.own_page(address).map_or_else(|| Destination::Channel(address.clone()), Destination::Page)),
             Target::Web(address) => Some(Destination::Web(address.clone())),

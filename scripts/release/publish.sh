@@ -5,11 +5,20 @@
 # timestamp are signed; then the repository is copied to the update host,
 # the targets first, then the metadata, so a client never sees metadata
 # naming files that are not there yet.
-#   scripts/release/publish.sh <repository> <root.json> <targets key> <snapshot key> <timestamp key> [<rsync destination>] -- <platform>:<version folder>...
+#   scripts/release/publish.sh [--test] <repository> <root.json> <targets key> <snapshot key> <timestamp key> [<rsync destination>] -- <platform>:<version folder>...
 # Keys are the release tool's sources; the hardware keys are plugged in
 # for this step only. Without a destination nothing is copied anywhere.
 set -euo pipefail
 cd "$(dirname "$0")/../.."
+# A test identity trusts test keys, which sign for anyone who holds them:
+# a release script runs with the production identity unless its first
+# argument, --test, says this is a test (finding F-24).
+test_flags=()
+if [[ "${1:-}" == "--test" ]]; then test_flags=(--test-identity); shift; fi
+if [[ -n "${NEOTELETEXT_RELEASE_IDENTITY:-}" && ${#test_flags[@]} -eq 0 ]]; then
+    echo "$(basename "$0"): NEOTELETEXT_RELEASE_IDENTITY names a test identity; give --test first for a test release" >&2
+    exit 1
+fi
 repository="${1:?the repository folder}"
 root="${2:?the root metadata}"
 targets_key="${3:?the targets key}"
@@ -20,6 +29,17 @@ destination=""
 if [[ "${1:-}" != "--" ]]; then destination="${1:-}"; shift; fi
 [[ "${1:-}" == "--" ]] && shift
 release_tool="${NEOTELETEXT_RELEASE_TOOL:-native/tuf/target/release/neoteletext-release}"
+# A production release is signed with hardware keys (command:), never keys
+# in files, which are a test's; and every platform's version passes the
+# launcher's check, its identity among it, before anything is published.
+if [[ ${#test_flags[@]} -eq 0 ]]; then
+    for key in "$targets_key" "$snapshot_key" "$timestamp_key"; do
+        [[ "$key" != file:* ]] || { echo "publish: $key is a key in a file; a production release uses its hardware keys" >&2; exit 1; }
+    done
+fi
+for item in "$@"; do
+    "$release_tool" check "${item#*:}" "${item%%:*}" ${test_flags[@]+"${test_flags[@]}"}
+done
 staging="$(mktemp -d "${TMPDIR:-tmp}/neoteletext-targets.XXXXXX")"
 for item in "$@"; do
     platform="${item%%:*}"

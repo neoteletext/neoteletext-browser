@@ -1,0 +1,3 @@
+neoteletext-bookmarks 1
+folder	22	2	.
+folder	222	1	t

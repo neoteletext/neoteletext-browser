@@ -5,7 +5,7 @@ use std::io;
 
 use update::files;
 use update::platform::Family;
-use update::state::{MAX_STATE, State};
+use update::state::{MAX_STATE, State, Trial};
 use update::version::Version;
 
 #[cfg(target_os = "macos")]
@@ -22,16 +22,32 @@ impl Launcher {
         let path = self.layout.state();
         match files::read_bounded(&path, MAX_STATE) {
             Ok(bytes) => match State::parse(&bytes) {
-                Ok(state) => return Ok(state),
+                Ok(state) if self.installed(&state) => return Ok(state),
+                Ok(state) => eprintln!("neoteletext: the state names version {}, which is not installed; rebuilding it from what is", state.current),
                 Err(refused) => eprintln!("neoteletext: the state file is not one ({refused}); rebuilding it from what is installed"),
             },
             Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+            // Longer than any state: not one either (finding F-80).
+            Err(error) if error.kind() == io::ErrorKind::InvalidData => {
+                eprintln!("neoteletext: the state file is not one ({error}); rebuilding it from what is installed");
+            }
             Err(error) => return Err(io_text(&path, &error)),
         }
         self.recovered()
     }
 
-    /// A state naming the newest complete version installed.
+    /// Whether the current version `state` names is installed: on Windows
+    /// and Linux, its folder is there; on macOS the bundle says which it is
+    /// and `macos::reconcile` makes it so.
+    fn installed(&self, state: &State) -> bool {
+        self.platform.family() == Family::Macos || self.layout.version(state.current).is_dir()
+    }
+
+    /// A state rebuilt from what is installed, each version accepted again
+    /// by the pinned signer (finding F-80): the newest becomes the trial,
+    /// since nothing says it was ever found healthy, with the next newer
+    /// one current; a version alone is current. On macOS the installed
+    /// bundle, which the system checks at each start, is current.
     fn recovered(&self) -> Result<State, String> {
         if self.platform.family() == Family::Macos {
             #[cfg(target_os = "macos")]
@@ -42,12 +58,15 @@ impl Launcher {
             .filter_map(|entry| entry.ok()?.file_name().to_str().and_then(Version::parse))
             .collect();
         found.sort_unstable();
-        found
+        let mut accepted = found
             .into_iter()
             .rev()
-            .find(|version| update::accept::complete(&self.layout.version(*version), self.platform).is_ok())
-            .map(State::installed)
-            .ok_or_else(|| String::from("no complete version is installed"))
+            .filter(|version| update::accept::accept(&self.layout.version(*version), self.platform, self.signer.as_ref()).is_ok_and(|said| said == *version));
+        let newest = accepted.next().ok_or_else(|| String::from("no complete version is installed"))?;
+        Ok(match accepted.next() {
+            Some(older) => State { trial: Some(Trial::new(newest)), ..State::installed(older) },
+            None => State::installed(newest),
+        })
     }
 
     /// Writes the state whole (requirement 13.4).

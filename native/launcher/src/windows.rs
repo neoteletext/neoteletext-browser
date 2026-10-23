@@ -46,7 +46,7 @@ pub fn launcher_release(launcher: &Launcher, bytes: &[u8]) -> Result<(), String>
     let new = files::with_suffix(&target, files::NEW_SUFFIX);
     files::write_synced(&new, bytes, true).map_err(|error| io_text(&new, &error))?;
     fault::point("launcher-written");
-    let signer = os_install::WindowsSigner { key: release_identity::WINDOWS_SIGNER };
+    let signer = os_install::WindowsSigner { key: release_identity::WINDOWS_SIGNER, release: release_identity::RELEASE_KEY };
     if let Err(why) = signer.check_program(&new) {
         let _ = std::fs::remove_file(&new);
         return Err(format!("the new launcher is refused: {why}"));

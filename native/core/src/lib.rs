@@ -2,7 +2,8 @@
 //! kept file's format, so that each can be tested, and the parsers of
 //! outside input fuzzed, on its own. Nothing here starts a process or
 //! names the trusted core. The modules: what the address field may open
-//! (`address`); the bookmarks and `bookmarks.txt` (`bookmarks`);
+//! (`address`); the bookmarks and `bookmarks.txt` (`bookmarks`); the
+//! bytes a helper's messages may wait in (`budget`);
 //! civil-calendar arithmetic (`calendar`); the developer console's entries
 //! (`console`); the cookie store and its sealed file (`cookies`); which
 //! frames are sent (`frames`, measured by the latency test); what of each
@@ -30,9 +31,11 @@
 
 pub mod address;
 pub mod bookmarks;
+pub mod budget;
 pub mod calendar;
 pub mod console;
 pub mod cookies;
+pub mod dropped;
 pub mod frames;
 pub mod hearing;
 pub mod history;
@@ -40,6 +43,7 @@ pub mod history;
 pub mod links;
 pub mod outbox;
 mod private_file;
+pub use private_file::make_folder;
 pub mod restore;
 pub mod settings;
 pub mod sleep;

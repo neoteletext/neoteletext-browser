@@ -935,7 +935,9 @@ dependencies = [
  "confine",
  "interface-core",
  "keyring",
+ "libc",
  "neoteletext-core",
+ "neoteletext-formats",
  "neoteletext-input",
  "neoteletext-web",
  "protocol",
@@ -944,6 +946,7 @@ dependencies = [
  "unicode-normalization",
  "update",
  "web-opener",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]

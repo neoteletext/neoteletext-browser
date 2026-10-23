@@ -37,7 +37,7 @@ impl Session {
     /// Returns the address the strip now shows.
     pub fn show_page(&mut self, page: u16) -> Option<&Address> {
         let tab = self.tabs.get_mut(self.active)?;
-        let address = tab.address()?.with_page(page);
+        let address = tab.address()?.with_page(page)?;
         // A link to the page shown is a reload, which the caller makes.
         if tab.address().is_some_and(|shown| shown.text == address.text) {
             return None;

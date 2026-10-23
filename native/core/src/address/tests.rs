@@ -59,7 +59,7 @@ fn a_fragment_names_a_page_of_the_channel_and_is_never_fetched() {
         let address = parse(&format!("weather.invalid/{fragment}")).unwrap();
         assert_eq!(address.page, None, "{fragment} is not a display page");
     }
-    let at = address.with_page(0x100);
+    let at = address.with_page(0x100).unwrap();
     assert_eq!((at.text.as_str(), at.page), ("https://weather.invalid/teletext/#100", Some(0x100)));
     assert!(at.same_channel(&address) && !at.same_channel(&parse("weather.invalid/other/").unwrap()));
 }
@@ -95,4 +95,26 @@ fn misleading_and_unsupported_addresses_are_refused() {
     ] {
         assert!(parse(typed).is_err(), "{typed:?} should be refused");
     }
+}
+
+/// Finding F-78: an address is never longer than `MAX_ADDRESS` once
+/// written in full, with its scheme, its slash and a page, so every one
+/// opened can be kept in history, bookmarks and the session, which refuse
+/// a longer line. Before, a 2045 to 2048-byte address became longer and
+/// lost its visit, its star and its restored tab.
+#[test]
+fn an_address_is_within_its_bound_written_in_full() {
+    let max = protocol::MAX_ADDRESS;
+    for length in max - 12..=max {
+        let typed = format!("a.example/{}", "x".repeat(length - "a.example/".len()));
+        if let Ok(address) = parse(&typed) {
+            assert!(address.text.len() <= max, "{length} typed, {} written", address.text.len());
+            if let Some(paged) = address.with_page(0x302) {
+                assert!(paged.text.len() <= max, "{length} typed, {} with a page", paged.text.len());
+            }
+        }
+    }
+    let longest = parse(&format!("https://a.example/{}", "x".repeat(max - "https://a.example/".len()))).unwrap();
+    assert_eq!(longest.text.len(), max);
+    assert!(longest.with_page(0x302).is_none(), "no room for the page");
 }

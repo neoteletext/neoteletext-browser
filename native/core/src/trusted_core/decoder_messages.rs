@@ -55,18 +55,10 @@ impl Core {
             }
             FromDecoder::Frame { page, palette, screen, indices } => {
                 let key = PageKey { channel, page };
-                match self.frames.accept(key, palette, screen, indices) {
-                    Some((version, image)) => {
-                        // The image's links first, so the interface has them
-                        // when the image arrives (`hyperlinks.md` section 8.1).
-                        #[cfg(feature = "links")]
-                        self.links_of_image(key, version)?;
-                        self.send(&ToInterface::Frame { key, version, image })?;
-                        // The page drew: its tab's visit is recorded
-                        // (requirement 20.1).
-                        self.record_pending(channel)?;
-                    }
-                    // The same image again: only its links may have changed.
+                match self.frames.accept(key, palette, screen, indices, std::time::Instant::now()) {
+                    Some((version, image)) => self.send_frame(key, version, image)?,
+                    // The same image again, or one held until its page's
+                    // interval is up: only its links may have changed.
                     #[cfg(feature = "links")]
                     None => self.redecide(key)?,
                     #[cfg(not(feature = "links"))]
@@ -102,5 +94,16 @@ impl Core {
             }
         }
         Ok(())
+    }
+
+    /// Sends a page's frame to the interface (`architecture.md` section 10).
+    pub(super) fn send_frame(&mut self, key: PageKey, version: u32, image: Vec<u8>) -> Result<(), String> {
+        // The image's links first, so the interface has them when the
+        // image arrives (`hyperlinks.md` section 8.1).
+        #[cfg(feature = "links")]
+        self.links_of_image(key, version)?;
+        self.send(&ToInterface::Frame { key, version, image })?;
+        // The page drew: its tab's visit is recorded (requirement 20.1).
+        self.record_pending(key.channel)
     }
 }

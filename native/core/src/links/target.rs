@@ -124,8 +124,9 @@ fn uri_character(byte: u8) -> bool {
 /// A web address, rebuilt from its parsed parts so that what is handed on
 /// is exactly what was checked (`hyperlinks.md` section 12): `https` or
 /// `http`, a host of letters, digits, hyphens and dots, a numeric port,
-/// then only the characters RFC 3986 allows, every `%` starting an escape.
-/// Anything else is refused, never repaired.
+/// then only the characters RFC 3986 allows, every `%` starting an escape,
+/// and none the web opener refuses. Anything else is refused, never
+/// repaired.
 #[must_use]
 pub fn web_address(text: &str) -> Option<String> {
     if text.len() > MAX_WEB {
@@ -155,5 +156,8 @@ pub fn web_address(text: &str) -> Option<String> {
     let port = port.map(|port| format!(":{port}")).unwrap_or_default();
     let tail = if tail.is_empty() || tail.starts_with(['?', '#']) { format!("/{tail}") } else { tail.to_owned() };
     let rebuilt = format!("{scheme}{SCHEME_SEPARATOR}{host}{port}{tail}");
-    (rebuilt.len() <= MAX_WEB).then_some(rebuilt)
+    // Only what the web opener will hand on: none of the characters a
+    // shell gives meaning to, which RFC 3986 allows (decision 100, finding
+    // F-41). One rule, the opener's, so the two cannot differ.
+    (rebuilt.len() <= MAX_WEB && web_opener::acceptable(&rebuilt)).then_some(rebuilt)
 }

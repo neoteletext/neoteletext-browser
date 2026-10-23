@@ -496,3 +496,34 @@ fn tabs_are_bounded_across_windows() {
 fn start_page_index(page: u16) -> usize {
     page_index(page).unwrap()
 }
+
+/// Finding F-53: restored file tabs are not read at start, through the
+/// broker, all at once: a file tab is read when it is first shown.
+#[test]
+fn a_restored_file_tab_is_read_only_when_first_shown() {
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    const FILE_TABS: usize = 64;
+    let mut session = Session::new(Bookmarks::default());
+    for number in 0..FILE_TABS {
+        session.open(&format!("/recordings/{number}.t42")).unwrap();
+    }
+    let saved = session.saved();
+    let reads = Arc::new(AtomicUsize::new(0));
+    let counted = Arc::clone(&reads);
+    let mut restored = Session::with_reader(
+        Bookmarks::default(),
+        Box::new(move |_: &Path| {
+            counted.fetch_add(1, Ordering::Relaxed);
+            Ok(Source::from_bytes(b"PN,10000\n".to_vec()))
+        }),
+    );
+    assert_eq!(restored.restore(&Saved::read(&saved.text()).0), FILE_TABS);
+    assert_eq!(reads.load(Ordering::Relaxed), 0, "no file read at start");
+    let channel = restored.tabs[3].channel.id;
+    assert_eq!(restored.read_unread(channel), None);
+    assert_eq!(reads.load(Ordering::Relaxed), 1, "the one shown");
+    assert_eq!(restored.read_unread(channel), None);
+    assert_eq!(reads.load(Ordering::Relaxed), 1, "read once");
+    assert!(restored.tabs[3].channel.source.has_more());
+}

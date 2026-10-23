@@ -10,6 +10,10 @@ use protocol::{ToCore, ToInterface, clean};
 
 use super::Core;
 
+/// What the strip says, and the log keeps, when the user turns update
+/// checks off (finding F-68): a security setting, said as the others are.
+const UPDATES_OFF: &str = "Updates are off: this browser will not learn of security fixes";
+
 impl Core {
     /// The strip's intents of the settings: Home, a change the panel asks
     /// for, and the console.
@@ -191,7 +195,7 @@ fn checked_change(settings: &mut Settings, change: SettingChange, current: Optio
         // section 3.4).
         SettingChange::CheckUpdates(on) => {
             settings.check_updates = on;
-            Ok(None)
+            Ok((!on).then(|| UPDATES_OFF.to_owned()))
         }
     }
 }
@@ -238,5 +242,16 @@ mod tests {
         assert_eq!(settings.local.len(), stored::MAX_LOCAL - 1);
         assert!(!settings.local.contains(&"192.168.1.20".parse().unwrap()));
         assert_eq!(checked_change(&mut settings, SettingChange::HomeIsThisPage, None), Err("No channel is open".into()));
+    }
+
+    /// Finding F-68: turning update checks off is a security setting's
+    /// change, said in the strip and logged; turning them on is not.
+    #[test]
+    fn turning_update_checks_off_is_said() {
+        let mut settings = Settings::default();
+        let said = checked_change(&mut settings, SettingChange::CheckUpdates(false), None).unwrap();
+        assert_eq!(said.as_deref(), Some(UPDATES_OFF));
+        assert!(!settings.check_updates);
+        assert_eq!(checked_change(&mut settings, SettingChange::CheckUpdates(true), None), Ok(None));
     }
 }

@@ -4,10 +4,13 @@
 //! are made at the byte level and read by the protocol's own reader, as
 //! the core reads the interface's pipe, so whatever the reader lets
 //! through is what the core must stand against. After each one the harness
-//! checks that no intent but strip input moved a tab to another channel or
-//! changed a setting (requirement 4.5); at the end, that nothing sent to
-//! the interface carried a cookie (requirement 3.6), and that the core
-//! never panicked.
+//! checks that no intent but strip input moved a tab to another channel,
+//! in any window, or changed a setting or the bookmarks (requirement 4.5),
+//! and that no page intent asked to start a helper or hand a page to the
+//! web browser; at the end, that nothing sent to the interface carried a
+//! cookie (requirement 3.6), and that the core never panicked. It runs
+//! with bookmarks, the start page, and a second, private window (finding
+//! F-98).
 //!
 //! The interface's process is not replaced here: the broker starts it, and
 //! a way to start another would be a way into a release build. The core is
@@ -114,8 +117,10 @@ fn shapes(random: &mut Random) -> Vec<(u8, usize)> {
     found
 }
 
-/// Messages a real interface sends, encoded, to be replayed and mutated.
-fn samples() -> Vec<Vec<u8>> {
+/// Messages a real interface sends, encoded, to be replayed and mutated;
+/// `start_page` is a bookmark page of the start page's tab, and `private`
+/// the private window.
+fn samples(start_page: PageKey, private: u32) -> Vec<Vec<u8>> {
     #[cfg_attr(not(feature = "links"), expect(unused_mut, reason = "only the links samples are added to it"))]
     let mut messages = vec![
         ToCore::NewTab,
@@ -136,6 +141,9 @@ fn samples() -> Vec<Vec<u8>> {
         ToCore::PageControl(PageControl::Fastext(FastextKey::Red)),
         ToCore::PageControl(PageControl::Reveal),
         ToCore::PageControl(PageControl::SubPage(true)),
+        ToCore::Opened(Some(start_page)),
+        ToCore::TabToWindow { tab: 0, window: private, index: 0 },
+        ToCore::From(private),
     ];
     #[cfg(feature = "links")]
     messages.extend([ToCore::Point(None), ToCore::Typed { number: 0x200, opened: None }, ToCore::Confirm(1), ToCore::Cancel(1)]);
@@ -153,7 +161,9 @@ fn samples() -> Vec<Vec<u8>> {
 /// contents, a real message with a byte changed or another kind, or bytes
 /// at random, sometimes with a length that lies.
 fn frame(random: &mut Random, shapes: &[(u8, usize)], samples: &[Vec<u8>]) -> Vec<u8> {
-    match random.below(4) {
+    match random.below(5) {
+        // A real message as it is, as a compromised interface would send.
+        4 => samples[random.below(samples.len())].clone(),
         0 | 1 => {
             let (kind, length) = shapes[random.below(shapes.len())];
             framed(kind, length, &payload(random, length))
@@ -190,10 +200,15 @@ fn is_page_intent(intent: &ToCore) -> bool {
     }
 }
 
-/// Each tab's channel, as the strip names it.
-fn channels(session: &Session) -> Vec<String> {
-    session.tabs.iter().map(|tab| tab.address().map(|address| address.channel_text().to_owned()).unwrap_or_default()).collect()
+/// Each tab's channel in every window, as the strip names it, with
+/// whether it is private.
+fn channels(session: &Session) -> Vec<(String, bool)> {
+    session.all_tabs().map(|tab| (tab.address().map(|address| address.channel_text().to_owned()).unwrap_or_default(), tab.private)).collect()
 }
+
+/// What this core without a broker answers when asked to start a helper
+/// or hand a page to the web browser: a page intent must never ask.
+const NO_BROKER: &str = "no broker: this trusted core starts nothing";
 
 #[test]
 fn the_core_stands_against_a_hostile_interface() {
@@ -204,8 +219,19 @@ fn the_core_stands_against_a_hostile_interface() {
     let (events, _incoming) = mpsc::channel();
     let mut core =
         Core::new(Session::new(Bookmarks::default()), Vec::new(), (Settings::default(), Some(folder.clone())), events, Outbox::new(Sink(sender)), None);
+    // Bookmarks, and the start page that lists them, with its bookmark
+    // pages that a page intent must not open by itself (finding F-67).
+    core.session.bookmarks.add(neoteletext::bookmarks::BAR, "Weather", "https://weather.invalid/teletext/").unwrap();
     core.session.open("https://news.invalid/teletext/").unwrap();
     core.session.open("https://sport.invalid/teletext/").unwrap();
+    core.session.open(neoteletext::address::START_PAGE).unwrap();
+    let start_page = PageKey { channel: core.session.tabs[2].channel.id, page: 0x201 };
+    // A second window, private, whose tab a page intent must not move or
+    // reach (findings F-65, F-83, F-84, F-98).
+    let first = core.session.window;
+    let private = core.session.new_window(true).unwrap();
+    core.session.open_private("https://secret.invalid/teletext/").unwrap();
+    core.switch_window(first);
     // A cookie in the first channel's jar, which the interface must never see.
     let channel = core.session.tabs[0].channel.id;
     let set = FromFetcher::CookieSet {
@@ -220,9 +246,20 @@ fn the_core_stands_against_a_hostile_interface() {
     let page = PageKey { channel, page: 0x100 };
     core.intent(ToCore::Visible(vec![page])).unwrap();
 
+    // First the real messages a compromised interface would send at once:
+    // a start-page bookmark opened by a page intent, and a tab moved into
+    // the private window.
+    for intent in [ToCore::Opened(Some(start_page)), ToCore::TabToWindow { tab: 0, window: private, index: 0 }] {
+        let described = format!("{intent:?}");
+        let before = (channels(&core.session), core.session.bookmarks.text());
+        let result = core.intent(intent);
+        assert_ne!(result, Err(String::from(NO_BROKER)), "{described} asked to start a helper or hand a page on");
+        assert_eq!((channels(&core.session), core.session.bookmarks.text()), before, "{described} moved a tab");
+    }
+
     let mut random = Random(0x5EED_0309_2026);
     let shapes = shapes(&mut random);
-    let samples = samples();
+    let samples = samples(start_page, private);
     assert!(shapes.len() > 30, "the reader accepted only {} shapes", shapes.len());
     let (mut taken, mut refused) = (0_usize, 0_usize);
     for round in 0..ROUNDS {
@@ -237,10 +274,14 @@ fn the_core_stands_against_a_hostile_interface() {
         taken += 1;
         let page_intent = is_page_intent(&intent);
         let described = format!("{intent:?}");
-        let before = (channels(&core.session), core.settings.clone());
+        let before = (channels(&core.session), core.settings.clone(), core.session.bookmarks.text());
         // An error is the browser ending, as for a write that failed; a
         // panic is the fault the harness is for.
-        if !matches!(core.intent(intent), Ok(true)) {
+        let result = core.intent(intent);
+        if page_intent {
+            assert_ne!(result, Err(String::from(NO_BROKER)), "round {round}: a page intent asked to start a helper or hand a page on: {described}");
+        }
+        if !matches!(result, Ok(true)) {
             // The last tab closed: the browser would end. Open another and
             // go on, as a new start would.
             if core.session.tabs.is_empty() {
@@ -249,7 +290,11 @@ fn the_core_stands_against_a_hostile_interface() {
             continue;
         }
         if page_intent {
-            assert_eq!((channels(&core.session), core.settings.clone()), before, "round {round}: a page intent moved a tab or changed a setting: {described}");
+            assert_eq!(
+                (channels(&core.session), core.settings.clone(), core.session.bookmarks.text()),
+                before,
+                "round {round}: a page intent moved a tab, changed a setting or the bookmarks: {described}"
+            );
         }
     }
     core.to_interface.flush().unwrap();

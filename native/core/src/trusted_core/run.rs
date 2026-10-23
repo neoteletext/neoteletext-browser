@@ -20,28 +20,25 @@ use crate::session::Session;
 /// Handles one event; `Ok(false)` once the browser is to end.
 fn handle(core: &mut Core, event: Event) -> Result<bool, String> {
     match event {
+        // Handled, then its bytes given back to its helper's budget.
+        Event::Budgeted(event, ticket) => {
+            let go = handle(core, *event);
+            drop(ticket);
+            return go;
+        }
         Event::Decoded(channel, generation, message) => {
+            core.decoder_heard(channel, generation);
             if core.decoders.get(&channel).map(|decoder| decoder.generation) == Some(generation) {
                 core.in_window_of(channel, |core| core.decoded(channel, message))?;
             }
         }
         Event::Fetched(channel, generation, message) => {
+            core.fetcher_heard(channel, generation);
             if core.fetchers.get(&channel).map(|fetcher| fetcher.generation) == Some(generation) {
                 core.in_window_of(channel, |core| core.fetched(channel, message))?;
             }
         }
-        Event::FetcherEnded(channel, generation, reason) => {
-            if core.fetchers.get(&channel).map(|fetcher| fetcher.generation) == Some(generation) {
-                core.log(
-                    Level::Error,
-                    None,
-                    &format!("the fetcher for channel {channel} stopped{}", reason.map(|reason| format!(": {reason}")).unwrap_or_default()),
-                );
-                if let Some(mut fetcher) = core.fetchers.remove(&channel) {
-                    let _ = fetcher.child.wait();
-                }
-            }
-        }
+        Event::FetcherEnded(channel, generation, reason) => core.fetcher_ended(channel, generation, reason),
         Event::Intent(intent) => {
             // What the intent changes in a tab's list is stamped with now.
             core.session.now = neoteletext::calendar::utc_now();
@@ -52,9 +49,9 @@ fn handle(core: &mut Core, event: Event) -> Result<bool, String> {
             Ok(())
         })?,
         #[cfg(feature = "phone-keyboard")]
-        Event::Phone(message) => core.phone_said(message)?,
+        Event::Phone(generation, message) => core.phone_said(generation, message)?,
         #[cfg(feature = "phone-keyboard")]
-        Event::PhoneEnded(reason) => core.phone_ended(reason)?,
+        Event::PhoneEnded(generation, reason) => core.phone_ended(generation, reason)?,
         Event::Sound(FromSound::Sounding(channels)) => core.sounding(&channels)?,
         Event::SoundEnded(reason) => {
             core.log(Level::Error, None, &format!("no sound: the sound helper ended{}", reason.map(|reason| format!(": {reason}")).unwrap_or_default()));

@@ -6,13 +6,14 @@
 //! (`TabRestoreServiceImpl`); read strictly, since another program can
 //! write the file.
 
+use crate::dropped::Dropped;
 use std::path::Path;
 
 use interface_core::library::{MAX_CLOSED, MAX_TAB_ENTRIES, WindowGeometry};
 
 use crate::private_file::{Read, read_text, write_whole};
 
-const VERSION_LINE: &str = "neoteletext-session 3";
+pub(crate) const VERSION_LINE: &str = "neoteletext-session 3";
 const FILE_NAME: &str = "session.txt";
 const TEMPORARY_NAME: &str = "session.txt.new";
 const SEPARATOR: char = '\t';
@@ -165,30 +166,30 @@ impl Saved {
     /// Reads the file's text (section 15.4): what breaks a rule is dropped,
     /// a tab with its entries, and described in the second value.
     #[must_use]
-    pub fn read(text: &str) -> (Self, Vec<String>) {
+    pub fn read(text: &str) -> (Self, Dropped) {
         let mut saved = Self::default();
-        let mut dropped = Vec::new();
+        let mut dropped = Dropped::default();
         if text.len() > MAX_FILE {
-            dropped.push(format!("the session file is longer than {MAX_FILE} bytes; none read"));
+            dropped.push(|| format!("the session file is longer than {MAX_FILE} bytes; none read"));
             return (saved, dropped);
         }
         let mut lines = text.lines();
         if lines.next() != Some(VERSION_LINE) {
             if !text.is_empty() {
-                dropped.push(format!("the session file's first line is not \"{VERSION_LINE}\"; none read"));
+                dropped.push(|| format!("the session file's first line is not \"{VERSION_LINE}\"; none read"));
             }
             return (saved, dropped);
         }
         // A tab or closed tab being read, dropped whole when any line of it
         // breaks a rule: the tab, whether broken, whether closed.
         let mut tab: Option<(Tab, bool, bool)> = None;
-        let finish = |saved: &mut Self, tab: Option<(Tab, bool, bool)>, dropped: &mut Vec<String>| {
+        let finish = |saved: &mut Self, tab: Option<(Tab, bool, bool)>, dropped: &mut Dropped| {
             let Some((tab, broken, closed)) = tab else { return };
             let full = if closed { saved.closed.len() >= MAX_CLOSED } else { saved.tab_count() >= MAX_TABS };
             let list = if closed { Some(&mut saved.closed) } else { saved.windows.last_mut().map(|window| &mut window.tabs) };
             match list {
                 Some(list) if !broken && !tab.entries.is_empty() && tab.position < tab.entries.len() && !full => list.push(tab),
-                _ => dropped.push("a tab of the session file dropped".to_owned()),
+                _ => dropped.push(|| "a tab of the session file dropped".to_owned()),
             }
         };
         for (index, line) in lines.enumerate() {
@@ -246,7 +247,7 @@ impl Saved {
                     _ => false,
                 };
             if !fine {
-                dropped.push(format!("line {} of the session file dropped", index.saturating_add(2)));
+                dropped.push(|| format!("line {} of the session file dropped", index.saturating_add(2)));
             }
         }
         finish(&mut saved, tab.take(), &mut dropped);
@@ -302,11 +303,11 @@ impl Saved {
     ///
     /// # Errors
     /// When the file exists but cannot be read.
-    pub fn load(folder: &Path) -> std::io::Result<(Option<Self>, Vec<String>)> {
+    pub fn load(folder: &Path) -> std::io::Result<(Option<Self>, Dropped)> {
         let path = folder.join(FILE_NAME);
         match read_text(&path, MAX_FILE)? {
-            Read::Missing => Ok((None, Vec::new())),
-            Read::TooLong => Ok((None, vec![format!("the session file is longer than {MAX_FILE} bytes; none read")])),
+            Read::Missing => Ok((None, Dropped::default())),
+            Read::TooLong => Ok((None, Dropped::one(format!("the session file is longer than {MAX_FILE} bytes; none read")))),
             Read::Text(text) => {
                 let (saved, dropped) = Self::read(&text);
                 Ok((Some(saved), dropped))

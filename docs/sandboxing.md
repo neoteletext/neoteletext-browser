@@ -94,8 +94,8 @@ The core's requests:
 |---|---|---|
 | Spawn a program | Starts one of the browser's own helpers (`Program`: decoder, fetcher, interface, phone keyboard, sound helper, updater), beside itself, confined by the role that program has; passes the core its two pipes | The core names a program, never a path or a role; at most `MAX_HELPERS` (512) alive; at most `MAX_ARGUMENTS` (64) arguments of at most `MAX_TEXT` (4,096) bytes, which each helper checks as before |
 | Kill, wait | Ends or waits for a helper the core started, by the number the broker gave it | Only the broker's own numbers |
-| Read | Reads a file channel's bytes by the browser's channel rules (`source.rs`) and returns them | Refused under the user's secret folders (`.ssh`, `.gnupg`, `.aws`, the keychains and the like), however the path is named; at most 64 MB and 4,096 files (`MAX_REPLY`) |
-| Open the web | Hands a checked address to the system's browser through `web-opener` | `web-opener`'s checks, as before (requirement 17.9) |
+| Read | Reads a file channel's bytes by the browser's channel rules (`source.rs`) and returns them | Only teletext the engine's `detect` recognises, or an import's bookmarks file by its first line; refused beneath any dot-entry of the home folder, the platform's folders of applications' data and the browser's own folders; opened without following a link and checked by its descriptor; every refusal one sentence (decision 88); at most 64 MB and 4,096 files (`MAX_REPLY`) |
+| Open the web | Hands a checked address to the system's browser through `web-opener` | `web-opener`'s checks, as before (requirement 17.9); at most one every two seconds, the core's own interval between hand-offs (decision 88) |
 | Local time | Answers the time and the local zone's offset, read by the system's own rules (`history-and-bookmarks.md` section 14 item 1) | No payload |
 | Cookie key | Reads the cookie file's key from the platform's secret store (`cookies.md` section 10) | No payload |
 | Healthy | Tells the launcher the version is healthy (`installation-and-updates.md` section 3.2) | No payload |
@@ -103,7 +103,7 @@ The core's requests:
 
 The channel is a local-domain socket pair on macOS and Linux, the core's standard input, which carries each helper's pipes as descriptors (`SCM_RIGHTS`, `confine/src/unix.rs`). On Windows it is two pipes, and the broker duplicates the helper's pipe handles into the core's process with `DuplicateHandle` and sends their values. Every message is a kind byte, a length and a payload, read within its bound; a request the broker cannot parse ends the core. The broker's decoders are fuzzed (`broker_requests`, `broker_replies`).
 
-A compromised core gains nothing it did not have: it can start only the browser's helpers, each confined as always; read only what a file channel could already name, minus the secret folders; and open only what a link could already open.
+A compromised core gains nothing it did not have: it can start only the browser's helpers, each confined as always; read only teletext a file channel could already name, outside the dot-folders, applications' data and the browser's own folders, and never through a link it made (decision 88); and open only what a link could already open.
 
 ### 7.3 The trusted core's confinement
 

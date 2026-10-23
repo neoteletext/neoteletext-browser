@@ -18,7 +18,8 @@ fuzz_target!(|data: &[u8]| {
     assert!(listed.iter().map(|channel| channel.count).sum::<usize>() <= TOTAL);
     let written = store.export(NOW);
     let mut again = Store::new();
-    assert_eq!(again.import(&written, NOW), Vec::<String>::new());
+    let dropped = again.import(&written, NOW);
+    assert!(dropped.is_empty(), "{dropped:?}");
     assert_eq!(
         again.listed().iter().map(|channel| (&channel.key, channel.count)).collect::<Vec<_>>(),
         listed.iter().map(|channel| (&channel.key, channel.count)).collect::<Vec<_>>()

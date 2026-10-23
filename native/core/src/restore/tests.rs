@@ -2,6 +2,7 @@
 #![allow(clippy::unwrap_used, clippy::indexing_slicing, clippy::arithmetic_side_effects, reason = "a test")]
 
 use super::*;
+use crate::dropped::Dropped;
 
 fn entry(address: &str) -> Entry {
     Entry { by_page: false, at: 1_792_656_300, address: address.into(), title: "News".into() }
@@ -37,10 +38,10 @@ fn saved() -> Saved {
 #[test]
 fn the_session_round_trips_through_its_file() {
     let saved = saved();
-    assert_eq!(Saved::read(&saved.text()), (saved.clone(), Vec::new()));
+    assert_eq!(Saved::read(&saved.text()), (saved.clone(), Dropped::default()));
     let folder = std::env::temp_dir().join(format!("neoteletext-session-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&folder);
-    assert_eq!(Saved::load(&folder).unwrap(), (None, Vec::new()), "no file: none");
+    assert_eq!(Saved::load(&folder).unwrap(), (None, Dropped::default()), "no file: none");
     Saved::save(&folder, &saved.text()).unwrap();
     assert_eq!(Saved::load(&folder).unwrap().0, Some(saved.clone()));
     // A temporary file left by a crash before the rename is ignored.
@@ -103,7 +104,7 @@ fn the_file_is_read_strictly() {
     // An open tab has no window number; a window line with one field is
     // broken.
     assert_eq!(
-        dropped,
+        dropped.lines(),
         [line(2), line(7), tab.clone(), tab.clone(), line(12), tab.clone(), line(14), tab.clone(), line(17), line(19), tab.clone(), line(24), tab, line(28)]
     );
     assert_eq!(Saved::read("no version\ntab\t0\t0").0, Saved::default());

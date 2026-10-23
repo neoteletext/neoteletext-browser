@@ -225,6 +225,14 @@ impl Typing {
         self.tell(channel, now_ms, sends);
     }
 
+    /// Whether a page is open for typing: the active tab's open page's
+    /// channel takes input now (section 9.1). Only then do a phone's keys
+    /// go beyond page navigation (decision 99).
+    #[must_use]
+    pub fn page_takes_keys(&self) -> bool {
+        self.opened.is_some_and(|opened| self.on(opened.channel))
+    }
+
     /// The viewer opened `opened` in the active tab, whose channel is
     /// `active`, or switched tabs.
     pub fn opened(&mut self, active: Option<u32>, opened: Option<PageKey>, now_ms: u64) -> Vec<Send> {
