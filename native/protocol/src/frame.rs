@@ -26,7 +26,8 @@ use interface_core::canvas::{PAGE_HEIGHT, PAGE_WIDTH};
 pub const MAX_COLOURS: usize = 32;
 /// The dots of a page, 480 by 500.
 pub const PAGE_DOTS: usize = PAGE_WIDTH as usize * PAGE_HEIGHT as usize;
-const RGB_BYTES: usize = 3;
+/// Red, green and blue: the bytes of one palette entry.
+pub(crate) const RGB_BYTES: usize = 3;
 const FORM_RAW: u8 = 0;
 const FORM_RUNS: u8 = 1;
 const FORM_CHANGES: u8 = 2;
