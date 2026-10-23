@@ -31,7 +31,6 @@ impl Core {
 
     /// What the bookmarks manager asks for (requirement 20.17).
     pub(crate) fn bookmark_request(&mut self, request: BookmarkRequest) -> Result<(), String> {
-        let item_of = |core: &Self, number: u32| core.library.manager_numbers.get(number).copied().filter(|id| core.session.bookmarks.item(*id).is_some());
         match request {
             BookmarkRequest::Panel(true) => {
                 self.library.manager = Some(Manager { folder: BAR, query: String::new(), folders_first: 0, items_first: 0 });
@@ -42,40 +41,24 @@ impl Core {
                 self.library.manager_numbers.fresh();
                 return Ok(());
             }
-            BookmarkRequest::Folder(number) => {
-                if let (Some(id), Some(manager)) = (item_of(self, number), self.library.manager.as_mut())
-                    && self.session.bookmarks.item(id).is_some_and(neoteletext::bookmarks::Item::is_folder)
-                {
-                    *manager = Manager { folder: id, query: String::new(), folders_first: manager.folders_first, items_first: 0 };
-                }
-            }
-            BookmarkRequest::Scroll { folders_first, items_first } => {
-                if let Some(manager) = self.library.manager.as_mut() {
-                    manager.folders_first = usize::try_from(folders_first).unwrap_or(usize::MAX);
-                    manager.items_first = usize::try_from(items_first).unwrap_or(usize::MAX);
-                }
-            }
-            BookmarkRequest::Query(text) => {
-                if let Some(manager) = self.library.manager.as_mut() {
-                    manager.query = clean(&text, protocol::library::MAX_QUERY);
-                    manager.items_first = 0;
-                }
-            }
+            BookmarkRequest::Folder(number) => self.open_manager_folder(number),
+            BookmarkRequest::Scroll { folders_first, items_first } => self.scroll_manager(folders_first, items_first),
+            BookmarkRequest::Query(text) => self.search_manager(&text),
             BookmarkRequest::Open { number, new_tab } => {
-                let address = item_of(self, number).and_then(|id| self.session.bookmarks.item(id)).and_then(|item| item.address.clone());
+                let address = self.manager_item(number).and_then(|id| self.session.bookmarks.item(id)).and_then(|item| item.address.clone());
                 if let Some(address) = address {
                     return self.open_address(&address, new_tab);
                 }
             }
             BookmarkRequest::Edit { number, name, address } => {
-                if let Some(id) = item_of(self, number)
+                if let Some(id) = self.manager_item(number)
                     && let Err(reason) = self.session.bookmarks.edit(id, &name, &address)
                 {
                     self.library.manager_notice = notice(&reason);
                 }
             }
             BookmarkRequest::Move { number, folder, index } => {
-                if let (Some(id), Some(folder)) = (item_of(self, number), item_of(self, folder))
+                if let (Some(id), Some(folder)) = (self.manager_item(number), self.manager_item(folder))
                     && let Err(reason) = self.session.bookmarks.move_to(id, folder, usize::try_from(index).unwrap_or(usize::MAX))
                 {
                     self.library.manager_notice = notice(&reason);
@@ -94,7 +77,7 @@ impl Core {
                 }
             }
             BookmarkRequest::Remove(number) => {
-                if let Some(removed) = item_of(self, number).and_then(|id| self.session.bookmarks.remove(id)) {
+                if let Some(removed) = self.manager_item(number).and_then(|id| self.session.bookmarks.remove(id)) {
                     self.library.manager_notice.clear();
                     self.library.undo = Some(removed);
                 }
@@ -114,6 +97,37 @@ impl Core {
             BookmarkRequest::Export => self.export_bookmarks(),
         }
         self.bookmarks_changed()
+    }
+
+    /// The bookmark or folder of the manager's row `number`, if it is
+    /// still there.
+    fn manager_item(&self, number: u32) -> Option<u32> {
+        self.library.manager_numbers.get(number).copied().filter(|id| self.session.bookmarks.item(*id).is_some())
+    }
+
+    /// The manager opens the folder of its row `number`.
+    fn open_manager_folder(&mut self, number: u32) {
+        if let (Some(id), Some(manager)) = (self.manager_item(number), self.library.manager.as_mut())
+            && self.session.bookmarks.item(id).is_some_and(neoteletext::bookmarks::Item::is_folder)
+        {
+            *manager = Manager { folder: id, query: String::new(), folders_first: manager.folders_first, items_first: 0 };
+        }
+    }
+
+    /// The manager's lists scrolled to their first rows.
+    fn scroll_manager(&mut self, folders_first: u32, items_first: u32) {
+        if let Some(manager) = self.library.manager.as_mut() {
+            manager.folders_first = usize::try_from(folders_first).unwrap_or(usize::MAX);
+            manager.items_first = usize::try_from(items_first).unwrap_or(usize::MAX);
+        }
+    }
+
+    /// The manager searches for `text`.
+    fn search_manager(&mut self, text: &str) {
+        if let Some(manager) = self.library.manager.as_mut() {
+            manager.query = clean(text, protocol::library::MAX_QUERY);
+            manager.items_first = 0;
+        }
     }
 
     /// Reads bookmarks in this browser's format from a file the user named,
