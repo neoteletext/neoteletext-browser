@@ -22,6 +22,7 @@ use crate::wall::Wall;
 mod address;
 mod banks;
 mod bookmarks;
+mod bookmarks_bar;
 mod console_panel;
 mod controls_ui;
 mod cookies_ui;
@@ -48,7 +49,7 @@ mod regions;
 mod remote;
 mod settings_panel;
 mod shown;
-mod star_ui;
+mod star;
 mod suggestions;
 mod tab_lists;
 mod tab_strip;
@@ -131,9 +132,9 @@ pub struct Browser {
     /// The bookmarks manager (requirement 20.17).
     bookmarks: bookmarks::BookmarksUi,
     /// The star's popover (requirement 20.16).
-    star: star_ui::StarUi,
+    star: star::StarUi,
     /// The bookmarks bar (requirement 20.18).
-    bar: star_ui::BarUi,
+    bar: bookmarks_bar::BarUi,
     /// The menu button's menu.
     menu: menu::MenuUi,
     /// Back's and Forward's lists.
@@ -192,8 +193,8 @@ impl Browser {
             refused: refused_ui::RefusedUi::default(),
             tab_strip: tab_strip::TabsUi::default(),
             bookmarks: bookmarks::BookmarksUi::default(),
-            star: star_ui::StarUi::default(),
-            bar: star_ui::BarUi::default(),
+            star: star::StarUi::default(),
+            bar: bookmarks_bar::BarUi::default(),
             menu: menu::MenuUi::default(),
             tab_lists: tab_lists::TabListUi::default(),
             suggestions: suggestions::SuggestionsUi::default(),
