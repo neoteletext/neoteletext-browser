@@ -185,7 +185,7 @@ Everything else is refused in the core before the opener is considered: `file:`,
 | Windows | `ShellExecuteW(NULL, L"open", address, NULL, NULL, SW_SHOWNORMAL)` | For an `https` or `http` address Windows resolves the user's default browser. Needs `unsafe` or a wrapper crate; as decision 39 confined the Dock menu's `unsafe` to one crate, this is confined to an `opener` crate of its own |
 | Linux | **The XDG Desktop Portal first:** `org.freedesktop.portal.OpenURI.OpenURI` over the session bus, which is the interface made for sandboxed applications to open addresses, and which Flatpak and Snap already require (finding 6). Otherwise `xdg-open <address>` | `xdg-open` is a shell script that honours `$BROWSER` and dispatches to desktop-specific openers; it has had argument-handling faults over the years. The portal takes the address as a D-Bus string with no shell anywhere |
 
-On every platform the address is one argument; no command line is assembled from text.
+On every platform the address is one argument; no command line is assembled from text. *Amended 24 October 2026 (decision 100, finding F-41):* the opener also refuses an address holding a character a shell gives a meaning, `'`, `;`, `$`, `(`, `)`, `!` or `` ` ``, rather than encoding it: no opener today passes the address through a shell, but `xdg-open` is a shell script that runs `$BROWSER`, and an address that means nothing to a shell cannot be mistaken by one. Such an address is not handed over at all (test `only_plain_https_and_http_addresses_are_handed_over`).
 
 ### 9.3 What the opener does with it is out of our hands
 

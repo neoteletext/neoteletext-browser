@@ -36,7 +36,7 @@ const SCHEMES: [&str; 2] = ["https://", "http://"];
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum OpenError {
     /// Not an `https` or `http` address, or holding a character no
-    /// address holds.
+    /// address holds or a shell gives a meaning.
     Refused,
     /// The system's opener could not be started, or refused it.
     Failed(String),
@@ -53,13 +53,21 @@ impl std::fmt::Display for OpenError {
 
 impl std::error::Error for OpenError {}
 
+/// Characters no address handed over may hold: those RFC 3986 never
+/// allows unencoded (quotes, backslash, angle brackets, braces, bar,
+/// caret, grave), and the sub-delimiters a shell gives a meaning, `'`,
+/// `;`, `$`, `(`, `)` and `!` (decision 100, finding F-41). Today's
+/// openers take the address as one argument with no shell, but `xdg-open`
+/// is a shell script that runs `$BROWSER`, so an address that means
+/// nothing to a shell is refused rather than encoded.
+const REFUSED: &[u8] = b"\"\\<>`{}|^';$()!";
+
 /// Whether `address` may be handed over: `https` or `http`, printable
-/// ASCII with no spaces, quotes or backslashes. The trusted core has
+/// ASCII with no spaces and none of [`REFUSED`]. The trusted core has
 /// already rebuilt it from its parsed parts; this is a second wall.
 #[must_use]
 pub fn acceptable(address: &str) -> bool {
-    SCHEMES.iter().any(|scheme| address.starts_with(scheme))
-        && address.bytes().all(|byte| byte.is_ascii_graphic() && !matches!(byte, b'"' | b'\\' | b'<' | b'>' | b'`' | b'{' | b'}' | b'|' | b'^'))
+    SCHEMES.iter().any(|scheme| address.starts_with(scheme)) && address.bytes().all(|byte| byte.is_ascii_graphic() && !REFUSED.contains(&byte))
 }
 
 /// Opens `address` in the system's web browser. Returns once the opener is
@@ -130,6 +138,15 @@ mod tests {
             "https://example.invalid/\n",
             "\\\\server\\share",
             "/usr/bin/true",
+            // Decision 100 (finding F-41): the characters a shell gives a
+            // meaning, should an opener ever pass the address through one.
+            "https://a.example/x;$(id)",
+            "https://a.example/it's",
+            "https://a.example/x;y",
+            "https://a.example/$HOME",
+            "https://a.example/(x)",
+            "https://a.example/wow!",
+            "https://a.example/`id`",
         ] {
             assert!(!acceptable(address), "{address:?} must be refused");
             assert_eq!(open(address), Err(OpenError::Refused), "{address:?} never reaches an opener");
