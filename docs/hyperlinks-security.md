@@ -222,7 +222,7 @@ Everything in `security-analysis.md` section 7 applies. What links add:
 
 - **Prompts cannot wedge the window:** one at a time, replaceable, cancelled by Escape, never modal to the strip's other controls.
 - **A link flood** (32 runs changing every frame) costs the core bounded work per frame and the interface a few hundred line draws.
-- **An opener that hangs** (a broken `xdg-open`) must not hang the core: the opener is spawned and not waited for, with its standard streams closed.
+- **An opener that hangs** (a broken `xdg-open`) must not hang the core: the opener is spawned and not waited for, with its standard streams closed. On macOS and Linux it is also started in a process group of its own (24 October 2026), so that a web browser it starts, which `xdg-open` may leave as its descendant, is never in the broker's group, which the launcher kills whole after a broker crash (finding F-34); test `the_opener_is_in_a_process_group_of_its_own`.
 - **A broken portal** on Linux falls back to `xdg-open`; a missing opener is reported in the strip as "Could not open your web browser".
 
 **Remaining risk:** low.
