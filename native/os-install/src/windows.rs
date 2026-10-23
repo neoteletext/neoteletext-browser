@@ -20,6 +20,7 @@ use windows_sys::Win32::Security::WinTrust::{
     WINTRUST_ACTION_GENERIC_VERIFY_V2, WINTRUST_DATA, WINTRUST_DATA_0, WINTRUST_FILE_INFO, WTD_CHOICE_FILE, WTD_REVOKE_NONE, WTD_STATEACTION_CLOSE,
     WTD_STATEACTION_VERIFY, WTD_UI_NONE, WTHelperGetProvSignerFromChain, WTHelperProvDataFromStateData, WinVerifyTrust,
 };
+use windows_sys::Win32::System::LibraryLoader::{LOAD_LIBRARY_SEARCH_SYSTEM32, SetDefaultDllDirectories};
 use windows_sys::Win32::System::Registry::{
     HKEY, HKEY_CURRENT_USER, KEY_WRITE, REG_DWORD, REG_OPTION_NON_VOLATILE, REG_SZ, RegCloseKey, RegCreateKeyExW, RegDeleteTreeW, RegSetValueExW,
 };
@@ -28,6 +29,18 @@ use windows_sys::Win32::UI::WindowsAndMessaging::{IDYES, MB_ICONINFORMATION, MB_
 use update::accept::Signer;
 use update::manifest::Manifest;
 use update::platform::{PROGRAMS, Platform};
+
+/// Restricts this process's library search to System32 (finding F-25). It
+/// cannot fail on Windows 8 and later; if it did, the process would go on
+/// as before, and the linker's `/DEPENDENTLOADFLAG` still covers what it
+/// imports.
+pub fn restrict_dll_search() {
+    // SAFETY: the call takes one flag value and no pointer.
+    let restricted = unsafe { SetDefaultDllDirectories(LOAD_LIBRARY_SEARCH_SYSTEM32) };
+    if restricted == 0 {
+        eprintln!("neoteletext: the library search could not be restricted to System32");
+    }
+}
 
 /// `text` as a zero-terminated UTF-16 string.
 fn wide(text: impl AsRef<OsStr>) -> Vec<u16> {

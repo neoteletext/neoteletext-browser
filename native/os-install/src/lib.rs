@@ -32,6 +32,16 @@ mod windows;
 #[cfg(windows)]
 pub use windows::{UninstallEntry, WindowsSigner, remove_uninstall_entry, signer_key, uninstall_entry};
 
+/// Windows: from here on, this process loads a library only from System32
+/// (`SetDefaultDllDirectories`), so none is taken from the folder it was
+/// started from or the current folder (finding F-25); the first statement
+/// of the installer's and the launcher's `main`. Elsewhere it does
+/// nothing: macOS and Linux load libraries by the paths the program names.
+pub fn restrict_dll_search() {
+    #[cfg(windows)]
+    windows::restrict_dll_search();
+}
+
 /// Asks the user `question` under `title`, with the buttons `yes` and
 /// `no`; whether they chose `yes`. Where the system has no dialog for a
 /// program without a window (Linux), the answer is no: Linux asks on its

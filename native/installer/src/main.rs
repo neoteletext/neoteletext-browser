@@ -35,6 +35,8 @@ const PAYLOAD_STUB: &str = "NeoTeletext.exe";
 const PAYLOAD_LAUNCHER: &str = "launcher.exe";
 
 fn main() -> ExitCode {
+    #[cfg(windows)]
+    os_install::restrict_dll_search();
     match run() {
         Ok(()) => ExitCode::SUCCESS,
         Err(error) => {
