@@ -18,34 +18,11 @@ impl Core {
             // channel's they change nothing.
             // The channel's own log, for its author: in its Log tab only,
             // cleaned and marked as the channel's (decision 70).
-            FromDecoder::ChannelLog { level, page, text } => {
-                let text = clean(&text, protocol::decoder::MAX_CHANNEL_LOG);
-                let line = match page {
-                    Some(page) => format!("channel, page {page:03X}: {text}"),
-                    None => format!("channel: {text}"),
-                };
-                let at = self.now();
-                self.console.log(Some(channel), level, at, &line);
-            }
+            FromDecoder::ChannelLog { level, page, text } => self.channel_log(channel, level, page, &text),
             FromDecoder::Bookmark(_) | FromDecoder::BookmarksRead { .. } => {
                 self.log(Level::Warning, Some(channel), "the channel's decoder reported bookmarks, which it may not; ignored");
             }
-            FromDecoder::Arrived { page, title } => {
-                let Some(tab) = self.session.tabs.iter_mut().find(|tab| tab.channel.id == channel) else { return Ok(()) };
-                let title = tab.channel.arrived(page, &title);
-                if let Some(title) = &title {
-                    let at = self.now();
-                    self.console.add(channel, ConsoleTab::Pages, at, &format!("page {page:03X} arrived: {title}"));
-                }
-                if let Some(title) = title
-                    && active == Some(channel)
-                {
-                    self.send(&ToInterface::Page { channel, page, title })?;
-                    // A number on a page shown becomes a link once its page exists.
-                    #[cfg(feature = "links")]
-                    self.redecide_channel(channel)?;
-                }
-            }
+            FromDecoder::Arrived { page, title } => self.arrived(channel, page, &title)?,
             FromDecoder::Updated { page } => {
                 let at = self.now();
                 self.console.add(channel, ConsoleTab::Pages, at, &format!("page {page:03X} changed"));
@@ -53,20 +30,7 @@ impl Core {
                     self.send(&ToInterface::Updated { channel, page })?;
                 }
             }
-            FromDecoder::Frame { page, palette, screen, indices } => {
-                let key = PageKey { channel, page };
-                match self.frames.accept(key, palette, screen, indices, std::time::Instant::now()) {
-                    Some((version, image)) => self.send_frame(key, version, image)?,
-                    // The same image again, or one held until its page's
-                    // interval is up: only its links may have changed.
-                    #[cfg(feature = "links")]
-                    None => self.redecide(key)?,
-                    #[cfg(not(feature = "links"))]
-                    None => {}
-                }
-                // Its Fastext keys may lead elsewhere now.
-                self.send_controls()?;
-            }
+            FromDecoder::Frame { page, palette, screen, indices } => self.frame(PageKey { channel, page }, palette, screen, indices)?,
             #[cfg(feature = "links")]
             FromDecoder::Links { page, with_image, candidates, numbers, fastext } => {
                 let key = PageKey { channel, page };
@@ -94,6 +58,53 @@ impl Core {
             }
         }
         Ok(())
+    }
+
+    /// A line of the channel's log, at `level`, of `page` if it names one.
+    fn channel_log(&mut self, channel: u32, level: Level, page: Option<u16>, text: &str) {
+        let text = clean(text, protocol::decoder::MAX_CHANNEL_LOG);
+        let line = match page {
+            Some(page) => format!("channel, page {page:03X}: {text}"),
+            None => format!("channel: {text}"),
+        };
+        let at = self.now();
+        self.console.log(Some(channel), level, at, &line);
+    }
+
+    /// A page of `channel` arrived, with its title: said in the console,
+    /// and to the interface when the channel is the active one.
+    fn arrived(&mut self, channel: u32, page: u16, title: &str) -> Result<(), String> {
+        let active = self.active_channel();
+        let Some(tab) = self.session.tabs.iter_mut().find(|tab| tab.channel.id == channel) else { return Ok(()) };
+        let title = tab.channel.arrived(page, title);
+        if let Some(title) = &title {
+            let at = self.now();
+            self.console.add(channel, ConsoleTab::Pages, at, &format!("page {page:03X} arrived: {title}"));
+        }
+        if let Some(title) = title
+            && active == Some(channel)
+        {
+            self.send(&ToInterface::Page { channel, page, title })?;
+            // A number on a page shown becomes a link once its page exists.
+            #[cfg(feature = "links")]
+            self.redecide_channel(channel)?;
+        }
+        Ok(())
+    }
+
+    /// A page's image: sent when it is new and its page's interval is up.
+    fn frame(&mut self, key: PageKey, palette: Vec<[u8; 3]>, screen: u8, indices: Vec<u8>) -> Result<(), String> {
+        match self.frames.accept(key, palette, screen, indices, std::time::Instant::now()) {
+            Some((version, image)) => self.send_frame(key, version, image)?,
+            // The same image again, or one held until its page's
+            // interval is up: only its links may have changed.
+            #[cfg(feature = "links")]
+            None => self.redecide(key)?,
+            #[cfg(not(feature = "links"))]
+            None => {}
+        }
+        // Its Fastext keys may lead elsewhere now.
+        self.send_controls()
     }
 
     /// Sends a page's frame to the interface (`architecture.md` section 10).
