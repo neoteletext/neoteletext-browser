@@ -205,3 +205,7 @@ Every path a macOS profile names, the program, the writable folder and the inter
 
 The trusted core's module comment, which still said the core is not confined, is corrected (finding F-94): the core is confined behind a broker (decision 56).
 
+
+### 9.11 Linux: a helper signals only itself (decision 94, finding F-60)
+
+Every helper runs as the user, in the user's own user namespace or none, so `kill`, `tkill` and `tgkill` reached every process of the user's: a compromised decoder could stop its broker or kill the user's editor. seccomp now lets `kill`, `tgkill`, `rt_sigqueueinfo` and `rt_tgsigqueueinfo` name only the helper's own process, its number read before the filter, since no process can be started after it; `tkill`, `pidfd_open` and `pidfd_send_signal` are refused whole. The kernel floor stays Landlock 5 on Linux 6.10: Landlock 6's signal scoping (Linux 6.12) would do the same, and requiring it is the owner's choice. Test: `a_helper_signals_only_itself` (`confine/tests/probe.rs`): `kill(getppid(), 0)` is refused in every role and a signal the probe raises for itself still reaches its handler; on the code before the parent was signalled.

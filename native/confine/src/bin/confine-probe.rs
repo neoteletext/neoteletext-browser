@@ -150,6 +150,12 @@ mod linux {
         };
         #[cfg(not(target_arch = "x86_64"))]
         let x32 = "none";
+        let signal = match probe::signal_parent() {
+            Ok(()) => String::from("sent"),
+            Err(error) if error.kind() == ErrorKind::PermissionDenied => String::from("refused"),
+            Err(error) => format!("failed ({error})"),
+        };
+        let own_signal = probe::raise_own().map_or_else(|error| format!("failed ({error})"), |handled| String::from(if handled { "handled" } else { "lost" }));
         let typed = match probe::type_into(&terminal) {
             Ok(()) => String::from("typed"),
             Err(error) if error.kind() == ErrorKind::PermissionDenied => String::from("refused"),
@@ -158,7 +164,7 @@ mod linux {
         println!(
             "PROBE report={report}; file={file}; program={program}; tcp={tcp}; write={write}; other-port={other_port}; own-folder={own}; \
              bus={bus}; display={display}; sound={sound}; user-bus={user_bus}; system-bus={system_bus}; netlink-route={netlink_route}; \
-             netlink-audit={netlink_audit}; resolve={resolve}; steal={steal}; x32={x32}; terminal={typed}"
+             netlink-audit={netlink_audit}; resolve={resolve}; steal={steal}; x32={x32}; terminal={typed}; signal-parent={signal}; own-signal={own_signal}"
         );
     }
 }

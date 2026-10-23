@@ -87,6 +87,7 @@ pub(super) fn seccomp(role: Role, arch: TargetArch) -> Result<(), String> {
         rules.insert(number(syscall), always());
     }
     rules.insert(number(libc::SYS_ioctl), terminal()?);
+    signals(&mut rules)?;
     // A new process, but not a new thread: clone without CLONE_THREAD.
     let thread_flag = u64::try_from(libc::CLONE_THREAD).map_err(|_| "CLONE_THREAD")?;
     let not_a_thread =
@@ -137,6 +138,25 @@ fn sockets(role: Role, rules: &mut BTreeMap<i64, Vec<SeccompRule>>) -> Result<()
     rules.insert(number(libc::SYS_socket), socket);
     rules.insert(number(libc::SYS_listen), always());
     rules.insert(number(libc::SYS_accept4), always());
+    Ok(())
+}
+
+/// Signals only to the helper itself (decision 94, finding F-60): the
+/// user's other processes, the broker among them, run as the same user, so
+/// without this a compromised helper could stop the broker or kill the
+/// user's editor. The calls that name a process by its number may name
+/// only this one, read now, before the filter, since no process can be
+/// started after it; `tkill` names a thread of any process and the pidfd
+/// calls a process by a descriptor, so they are refused whole. Landlock
+/// 6's signal scoping would do it, but needs Linux 6.12 (decision 94).
+fn signals(rules: &mut BTreeMap<i64, Vec<SeccompRule>>) -> Result<(), String> {
+    let own = u64::from(std::process::id());
+    for syscall in [libc::SYS_kill, libc::SYS_tgkill, libc::SYS_rt_sigqueueinfo, libc::SYS_rt_tgsigqueueinfo] {
+        rules.insert(number(syscall), vec![rule(&[(0, SeccompCmpOp::Ne, own)])?]);
+    }
+    for syscall in [libc::SYS_tkill, libc::SYS_pidfd_open, libc::SYS_pidfd_send_signal] {
+        rules.insert(number(syscall), always());
+    }
     Ok(())
 }
 

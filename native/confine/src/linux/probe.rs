@@ -130,3 +130,38 @@ pub fn ends_within(pid: u32, ceiling: std::time::Duration) -> bool {
     let ready = unsafe { libc::poll(&raw mut watched, 1, milliseconds) };
     ready > 0
 }
+
+/// Whether this process's own signal arrived, set by its handler.
+static RAISED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// The handler of the signal [`raise_own`] sends.
+extern "C" fn raised(_: libc::c_int) {
+    RAISED.store(true, std::sync::atomic::Ordering::SeqCst);
+}
+
+/// Asks whether the parent may be signalled (`kill(getppid(), 0)`), as a
+/// helper stopping its broker or another of the user's programs would.
+///
+/// # Errors
+/// As `kill(2)`.
+pub fn signal_parent() -> io::Result<()> {
+    // SAFETY: getppid and kill take integers only; signal 0 sends nothing.
+    checked(libc::c_long::from(unsafe { libc::kill(libc::getppid(), 0) })).map(drop)
+}
+
+/// Sends this process a signal of its own (`SIGUSR1`, by `raise(3)`, as
+/// the C library's `abort` sends its own): whether its handler ran.
+///
+/// # Errors
+/// As `signal(2)` and `raise(3)`.
+pub fn raise_own() -> io::Result<bool> {
+    let handler = raised as extern "C" fn(libc::c_int);
+    // SAFETY: the handler only stores to an atomic, which a signal handler
+    // may do.
+    if unsafe { libc::signal(libc::SIGUSR1, handler as libc::sighandler_t) } == libc::SIG_ERR {
+        return Err(io::Error::last_os_error());
+    }
+    // SAFETY: raise takes a signal number.
+    checked(libc::c_long::from(unsafe { libc::raise(libc::SIGUSR1) }))?;
+    Ok(RAISED.load(std::sync::atomic::Ordering::SeqCst))
+}

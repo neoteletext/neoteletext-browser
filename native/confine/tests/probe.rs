@@ -196,3 +196,17 @@ fn a_helper_ends_with_its_broker() {
     }
     assert!(ended, "the helper {helper} outlived its broker");
 }
+
+/// Decision 94 (finding F-60): a helper may signal only itself, not its
+/// broker or any other of the user's programs; its own signals, which the
+/// C library's `abort` sends, still arrive. Before, a decoder could stop
+/// its broker.
+#[test]
+fn a_helper_signals_only_itself() {
+    for role in ["decoder", "network", "interface", "sound", "updater"] {
+        let line = probe(role, &[]);
+        for expected in ["signal-parent=refused", "own-signal=handled"] {
+            assert!(line.contains(expected), "{role}: {expected}: {line}");
+        }
+    }
+}
