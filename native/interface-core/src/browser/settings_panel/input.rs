@@ -36,8 +36,10 @@ impl Browser {
             Key::Tab => {
                 let at = Field::ALL.iter().position(|&each| each == field).unwrap_or(0);
                 let count = Field::ALL.len();
-                let next = if shift { (at + count - 1) % count } else { (at + 1) % count };
-                self.focus_settings(Field::ALL[next]);
+                let next = if shift { at.checked_sub(1).unwrap_or(count.saturating_sub(1)) } else { at.saturating_add(1).checked_rem(count).unwrap_or(0) };
+                if let Some(&next) = Field::ALL.get(next) {
+                    self.focus_settings(next);
+                }
             }
         }
         Some(true)

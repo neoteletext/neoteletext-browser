@@ -62,8 +62,8 @@ impl Browser {
         let Some(count) = self.suggestions.suggestions.as_ref().map(|suggestions| suggestions.rows.len()).filter(|count| *count > 0) else { return false };
         self.suggestions.chosen = match (self.suggestions.chosen, down) {
             (None, true) => Some(0),
-            (None, false) => Some(count - 1),
-            (Some(at), true) => (at + 1 < count).then_some(at + 1),
+            (None, false) => Some(count.saturating_sub(1)),
+            (Some(at), true) => at.checked_add(1).filter(|&next| next < count),
             (Some(at), false) => at.checked_sub(1),
         };
         true

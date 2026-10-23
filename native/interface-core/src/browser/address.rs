@@ -72,7 +72,8 @@ impl Browser {
         let target = x - self.regions.field_text.x0 + self.field_scroll;
         let mut best = (0, f64::MAX);
         for (offset, _) in text.char_indices().chain(core::iter::once((text.len(), ' '))) {
-            let distance = (canvas.text_width(&text[..offset], ADDRESS) - target).abs();
+            let before = text.get(..offset).unwrap_or_default();
+            let distance = (canvas.text_width(before, ADDRESS) - target).abs();
             if distance < best.1 {
                 best = (offset, distance);
             }
@@ -86,7 +87,7 @@ impl Browser {
         canvas.push_clip(area);
         if self.editing {
             let text = self.editor.text();
-            let caret = canvas.text_width(&text[..self.editor.caret()], ADDRESS);
+            let caret = canvas.text_width(text.get(..self.editor.caret()).unwrap_or_default(), ADDRESS);
             // Keep the caret in view.
             let room = area.width() - CARET_WIDTH;
             if caret - self.field_scroll > room {
@@ -97,8 +98,8 @@ impl Browser {
             let x = area.x0 - self.field_scroll;
             let (start, end) = self.editor.selection();
             if start != end {
-                let from = canvas.text_width(&text[..start], ADDRESS);
-                let to = canvas.text_width(&text[..end], ADDRESS);
+                let from = canvas.text_width(text.get(..start).unwrap_or_default(), ADDRESS);
+                let to = canvas.text_width(text.get(..end).unwrap_or_default(), ADDRESS);
                 canvas.fill(Rect::new(x + from, y, x + to, y + line), 0.0, FIELD_SELECTION);
             }
             canvas.text(Rect::new(x, y, area.x1 + self.field_scroll, y + line), text, ADDRESS, FIELD_INK);
@@ -109,13 +110,13 @@ impl Browser {
             let address = &self.strip.address;
             let identity_at = address.find(self.strip.identity.as_str()).filter(|_| !self.strip.identity.is_empty());
             let mut x = area.x0;
-            let parts: [(&str, Colour); 3] = match identity_at {
-                Some(start) => {
-                    let end = start + self.strip.identity.len();
-                    [(&address[..start], DIM), (&address[start..end], FIELD_INK), (&address[end..], DIM)]
-                }
-                None => [(address.as_str(), FIELD_INK), ("", DIM), ("", DIM)],
-            };
+            let parts: [(&str, Colour); 3] = identity_at
+                .and_then(|start| {
+                    let (before, rest) = address.split_at_checked(start)?;
+                    let (identity, after) = rest.split_at_checked(self.strip.identity.len())?;
+                    Some([(before, DIM), (identity, FIELD_INK), (after, DIM)])
+                })
+                .unwrap_or([(address.as_str(), FIELD_INK), ("", DIM), ("", DIM)]);
             for (part, colour) in parts {
                 canvas.text(Rect::new(x, y, area.x1, y + line), part, ADDRESS, colour);
                 x += canvas.text_width(part, ADDRESS);

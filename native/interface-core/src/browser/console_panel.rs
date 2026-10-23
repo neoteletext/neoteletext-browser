@@ -26,6 +26,9 @@ const LEVEL_WIDTH: f64 = 86.0;
 const SEARCH_WIDTH: f64 = 220.0;
 /// The longest search: a log line's length.
 const MAX_SEARCH: usize = crate::console::MAX_ENTRY;
+/// The entries held while the console is paused: at most a tab's worth of
+/// each tab.
+const HELD: usize = KEPT * ConsoleTab::ALL.len();
 
 /// The console's height, in place of the overview.
 pub(in crate::browser) const CONSOLE_HEIGHT: f64 = 260.0;
@@ -167,8 +170,7 @@ impl Browser {
         }
         for entry in update.entries {
             if console.paused {
-                // At most a tab's worth of each tab waits.
-                if console.held.len() < KEPT * ConsoleTab::ALL.len() {
+                if console.held.len() < HELD {
                     console.held.push(entry);
                 }
             } else {

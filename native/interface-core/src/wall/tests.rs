@@ -11,7 +11,7 @@ use crate::test_canvas::Recorder;
 const PANEL: Rect = Rect::new(0.0, 0.0, 1000.0, 700.0);
 
 fn pages(count: u16) -> Vec<WallPage<'static>> {
-    (0..count).map(|offset| WallPage { key: PageKey { channel: 1, page: 0x100 + offset }, title: "Title", updated: None }).collect()
+    (0..count).map(|offset| WallPage { key: PageKey { channel: 1, page: 0x100_u16.saturating_add(offset) }, title: "Title", updated: None }).collect()
 }
 
 #[test]

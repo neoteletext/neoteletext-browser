@@ -59,16 +59,16 @@ impl Wall {
             && let Some(index) = pages.iter().position(|page| page.key == key)
         {
             #[allow(clippy::cast_precision_loss, reason = "small counts")]
-            let top = (index / columns) as f64 * pitch;
+            let top = index.checked_div(columns).unwrap_or(0) as f64 * pitch;
             self.bring_into_view(top, top + card_height);
         }
         let top = area.y0 + WALL_PADDING - self.scroll;
         let centre_x = f64::midpoint(area.x0, area.x1);
         for (index, page) in pages.iter().enumerate() {
-            let (row, column) = (index / columns, index % columns);
-            let in_row = columns.min(pages.len() - row * columns);
+            let (row, column) = (index.checked_div(columns).unwrap_or(0), index.checked_rem(columns).unwrap_or(0));
+            let in_row = columns.min(pages.len().saturating_sub(row.saturating_mul(columns)));
             #[allow(clippy::cast_precision_loss, reason = "small counts")]
-            let row_width = in_row as f64 * card_width + (in_row - 1) as f64 * COLUMN_GAP;
+            let row_width = in_row as f64 * card_width + in_row.saturating_sub(1) as f64 * COLUMN_GAP;
             #[allow(clippy::cast_precision_loss, reason = "small counts")]
             let left = centre_x - row_width / 2.0 + column as f64 * (card_width + COLUMN_GAP);
             #[allow(clippy::cast_precision_loss, reason = "small counts")]

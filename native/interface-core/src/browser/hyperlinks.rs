@@ -239,7 +239,7 @@ impl Browser {
                 let next = match (self.links.focus, modifiers.shift) {
                     (None, false) => 0,
                     (None, true) => count.saturating_sub(1),
-                    (Some(at), false) => at.saturating_add(1) % count,
+                    (Some(at), false) => at.saturating_add(1).checked_rem(count).unwrap_or(0),
                     (Some(at), true) => at.checked_sub(1).unwrap_or(count.saturating_sub(1)),
                 };
                 self.links.focus = Some(next);

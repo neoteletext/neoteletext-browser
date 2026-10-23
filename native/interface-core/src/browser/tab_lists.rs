@@ -96,7 +96,7 @@ impl Browser {
         let Some(list) = self.tab_lists.tab_list.clone() else { return };
         let anchor = if list.forward { self.regions.forward } else { self.regions.back };
         // The chapter stops, when there are any, after a rule of their own.
-        let rows = list.entries.len() + list.chapters.len() + 1;
+        let rows = list.entries.len().saturating_add(list.chapters.len()).saturating_add(1);
         #[allow(clippy::cast_precision_loss, reason = "at most eighteen rows")]
         let height = ROW * rows as f64;
         let area = Rect::new(anchor.x0, anchor.y1 + HAIRLINE, anchor.x0 + LIST_WIDTH, anchor.y1 + HAIRLINE + height);

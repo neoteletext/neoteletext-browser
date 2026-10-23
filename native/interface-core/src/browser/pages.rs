@@ -8,7 +8,7 @@ use alloc::vec::Vec;
 use crate::browser::Browser;
 use crate::browser::frames::PULSE_LIMIT;
 use crate::canvas::PageKey;
-use crate::channel::{Channel, PAGES_PER_BANK, PageInfo, Status, page_index, page_number};
+use crate::channel::{Channel, PAGES_PER_BANK, PageInfo, Status, bank_indices, page_index, page_number};
 
 use crate::browser::page_list::ROW_HEIGHT;
 
@@ -107,8 +107,7 @@ impl Browser {
 
     /// The indices of the chosen bank's pages.
     pub(super) fn bank_pages(&self) -> Vec<usize> {
-        let first = self.bank * PAGES_PER_BANK;
-        (first..first + PAGES_PER_BANK).filter(|&index| matches!(self.channel.pages.get(index), Some(Some(_)))).collect()
+        bank_indices(self.bank).filter(|&index| matches!(self.channel.pages.get(index), Some(Some(_)))).collect()
     }
 
     /// The page the user has opened, whose sounds play (the engine's
@@ -160,7 +159,7 @@ impl Browser {
         let position = self.selected.and_then(|selected| pages.iter().position(|&index| index == selected));
         let next = match (position, forward) {
             (None, _) => pages.first(),
-            (Some(position), true) => pages.get(position + 1),
+            (Some(position), true) => position.checked_add(1).and_then(|following| pages.get(following)),
             (Some(position), false) => position.checked_sub(1).and_then(|previous| pages.get(previous)),
         };
         if let Some(&index) = next {

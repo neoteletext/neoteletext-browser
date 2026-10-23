@@ -9,7 +9,7 @@ use crate::browser::console_panel::CONSOLE_HEIGHT;
 use crate::browser::toolbar::{TOOLBAR_HEIGHT, TOOLBAR_TOP};
 use crate::browser::{Browser, Output};
 use crate::canvas::{Canvas, PageKey};
-use crate::channel::{PAGES_PER_BANK, page_number};
+use crate::channel::{bank_indices, page_number};
 use crate::geometry::Rect;
 use crate::theme::WINDOW;
 use crate::wall::WallPage;
@@ -48,9 +48,8 @@ impl Browser {
 
         // The titles are borrowed from the channel while the wall draws:
         // the fields are borrowed apart.
-        let first = self.bank * PAGES_PER_BANK;
         let (channel, updates) = (&self.channel, &self.updates);
-        let pages: Vec<WallPage<'_>> = (first..first + PAGES_PER_BANK)
+        let pages: Vec<WallPage<'_>> = bank_indices(self.bank)
             .filter_map(|index| {
                 let info = channel.pages.get(index)?.as_ref()?;
                 let key = PageKey { channel: channel.channel, page: page_number(index)? };

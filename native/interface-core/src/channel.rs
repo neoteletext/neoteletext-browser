@@ -7,6 +7,7 @@
 use alloc::string::String;
 use alloc::vec;
 use alloc::vec::Vec;
+use core::ops::Range;
 
 /// Banks of pages: one per magazine, 1 to 8.
 pub const BANKS: usize = 8;
@@ -50,7 +51,7 @@ pub fn page_number(index: usize) -> Option<u16> {
     let bank = index / 100;
     let tens = index % 100 / DECIMAL;
     let ones = index % DECIMAL;
-    Some((bank + 1) << MAGAZINE_SHIFT | tens << TENS_SHIFT | ones)
+    Some(bank.saturating_add(1) << MAGAZINE_SHIFT | tens << TENS_SHIFT | ones)
 }
 
 /// The index 0 to 799 of a display page number, or `None` for a number
@@ -63,7 +64,15 @@ pub fn page_index(page: u16) -> Option<usize> {
     if !(1..=8).contains(&magazine) || tens >= DECIMAL || ones >= DECIMAL {
         return None;
     }
-    Some(usize::from((magazine - 1) * 100 + tens * DECIMAL + ones))
+    let within = usize::from(tens).saturating_mul(usize::from(DECIMAL)).saturating_add(usize::from(ones));
+    Some(bank_indices(usize::from(magazine.saturating_sub(1))).start.saturating_add(within))
+}
+
+/// The indices of bank `bank`'s pages (0 to 7, magazines 1 to 8).
+#[must_use]
+pub fn bank_indices(bank: usize) -> Range<usize> {
+    let first = bank.saturating_mul(PAGES_PER_BANK);
+    first..first.saturating_add(PAGES_PER_BANK)
 }
 
 /// One page of a channel.
@@ -106,7 +115,7 @@ impl Channel {
     /// How many pages bank `bank` has.
     #[must_use]
     pub fn bank_count(&self, bank: usize) -> usize {
-        self.pages.iter().skip(bank * PAGES_PER_BANK).take(PAGES_PER_BANK).flatten().count()
+        self.pages.get(bank_indices(bank)).map_or(0, |pages| pages.iter().flatten().count())
     }
 }
 

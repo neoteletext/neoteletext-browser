@@ -10,7 +10,7 @@ use crate::browser::frames::{PULSE_MILLISECONDS, PULSE_SCALE};
 use crate::browser::glyphs::chevron;
 use crate::browser::window::{HEADING_HEIGHT, MARGIN, PADDING};
 use crate::canvas::{Canvas, PAGE_HEIGHT, PAGE_WIDTH, SCREEN_SCALE, draw_page_on_screen};
-use crate::channel::{BANKS, PAGES, PAGES_PER_BANK, Status, page_index};
+use crate::channel::{BANKS, PAGES, PAGES_PER_BANK, Status, bank_indices, page_index};
 use crate::geometry::{Point, Rect};
 use crate::text::{border, centred, left_centred, outline};
 use crate::theme::{
@@ -64,7 +64,7 @@ impl Browser {
         let (width, height) = (cells.width() / PAGES_PER_BANK as f64, cells.height() / BANKS as f64);
         #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss, reason = "the point is inside the grid")]
         let (column, row) = (((point.x - cells.x0) / width) as usize, ((point.y - cells.y0) / height) as usize);
-        (column < PAGES_PER_BANK && row < BANKS).then_some(row * PAGES_PER_BANK + column)
+        (column < PAGES_PER_BANK && row < BANKS).then(|| bank_indices(row).start.saturating_add(column))
     }
 
     /// The overview's legend and page counts in `heading`, right-aligned to
@@ -144,12 +144,11 @@ impl Browser {
             #[allow(clippy::cast_precision_loss, reason = "eight banks")]
             let top = cells.y0 + bank as f64 * height;
             let axis = Rect::new(panel.x0 + PADDING, top, cells.x0, top + height);
-            left_centred(canvas, axis, 0.0, &format!("{}00", bank + 1), AXIS, if bank == self.bank { WHITE } else { MUTED });
+            left_centred(canvas, axis, 0.0, &format!("{}00", bank.saturating_add(1)), AXIS, if bank == self.bank { WHITE } else { MUTED });
             if bank == self.bank {
                 canvas.fill(Rect::new(axis.x0 - PADDING / 2.0, top + CELL_GAP, axis.x0 - PADDING / 2.0 + CELL_GAP, top + height - CELL_GAP), 0.0, WHITE);
             }
-            for column in 0..PAGES_PER_BANK {
-                let index = bank * PAGES_PER_BANK + column;
+            for (column, index) in bank_indices(bank).enumerate() {
                 #[allow(clippy::cast_precision_loss, reason = "small counts")]
                 let left = cells.x0 + column as f64 * width;
                 let cell = Rect::new(left, top, left + width - CELL_GAP, top + height - CELL_GAP);
