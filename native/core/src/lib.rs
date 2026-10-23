@@ -43,6 +43,7 @@ pub mod history;
 pub mod links;
 pub mod outbox;
 mod private_file;
+pub use private_file::make_folder;
 pub mod restore;
 pub mod settings;
 pub mod sleep;

@@ -40,7 +40,7 @@ pub(crate) fn broker() -> Result<(), String> {
     let program = std::env::current_exe().map_err(|error| format!("cannot find this program: {error}"))?;
     let programs = program.parent().ok_or("this program has no directory")?.to_path_buf();
     let settings = stored::folder().ok_or("there is no folder for the settings")?;
-    std::fs::create_dir_all(&settings).map_err(|error| format!("{}: {error}", settings.display()))?;
+    neoteletext::make_folder(&settings).map_err(|error| format!("{}: {error}", settings.display()))?;
     let mut arguments = vec![OsString::from(CORE_FLAG)];
     arguments.extend(std::env::args_os().skip(1));
     let environment = confine::environment(Role::Core);

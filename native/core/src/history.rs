@@ -10,6 +10,8 @@ use std::path::Path;
 
 use crate::address;
 use crate::calendar::{SECONDS_PER_DAY, day_text, local_day, read_day};
+#[cfg(unix)]
+use crate::private_file::keep_private;
 use crate::private_file::{Read, private_options, read_text, write_whole};
 
 /// The first line of the file: its format and version.
@@ -348,6 +350,10 @@ impl History {
         let path = folder.join(FILE_NAME);
         let new = !path.exists();
         let mut file = private_options().append(true).create(true).open(&path)?;
+        #[cfg(unix)]
+        if !new {
+            keep_private(&path)?;
+        }
         if new {
             writeln!(file, "{VERSION_LINE}")?;
         }

@@ -263,22 +263,8 @@ impl Settings {
     /// # Errors
     /// When the folder cannot be made or the file written or renamed.
     pub fn save(&self, folder: &Path) -> std::io::Result<()> {
-        use std::io::Write as _;
-        std::fs::create_dir_all(folder)?;
-        let temporary = folder.join(TEMPORARY_NAME);
-        let mut options = std::fs::OpenOptions::new();
-        options.write(true).create(true).truncate(true);
         // The user's bookmarks and proxy are theirs alone.
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::OpenOptionsExt as _;
-            options.mode(0o600);
-        }
-        let mut file = options.open(&temporary)?;
-        file.write_all(self.text().as_bytes())?;
-        file.sync_all()?;
-        drop(file);
-        std::fs::rename(&temporary, folder.join(FILE_NAME))
+        crate::private_file::write_whole(folder, FILE_NAME, TEMPORARY_NAME, self.text())
     }
 }
 
