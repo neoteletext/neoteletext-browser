@@ -71,7 +71,7 @@ Built while the owner was away; the questions and answers are `IMPLEMENTATION-LO
 
 ## Found by the document review of 23 October 2026
 
-- **Source comments name other browsers:** 52 comments in 12 files name Chrome, Chromium or Firefox, mostly as the source of a rule or constant the owner asked to follow (decisions 64 and 65); the rule is that a source is credited in `CREDITS.md` (done: Chromium) and not named in code. Each comment is to be reworded to cite its design section instead, with care, since each also says where a number came from.
+- **Source comments name other browsers:** 52 comments in 12 files name Chrome, Chromium or Firefox, mostly as the source of a rule or constant the owner asked to follow (decisions 64 and 65); no code of theirs was used, so `CREDITS.md` names neither, and the rule is that code does not name them. Each comment is to be reworded to cite its design section instead, with care, since each also says where a number came from.
 - **Requirement 3.2 and the trusted core's engine crates:** the trusted core reads `Set-Cookie` lines with the engine's cookie jar (`neoteletext-web`), which the requirement's check would refuse; the Statement or the check needs the owner's word (requirement 3.2's State).
 - **Requirement 5.13:** a redirect that leaves the channel is refused by the engine's agent but never offered through the site-change screen: its `RedirectToOtherChannel` event is not passed on.
 
