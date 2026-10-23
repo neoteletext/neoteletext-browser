@@ -10,6 +10,13 @@
 //! arrive, so the loop sleeps until something happens and never waits on
 //! one socket while another has data (REQ-INT-135).
 //!
+//! A server on this computer or the local network is reached only when
+//! the channel's arguments name its address (the engine's REQ-SEC-006):
+//! each address a name resolves to is checked by the engine's rule before
+//! any connection to it is made, so such a server never sees the
+//! handshake, or a TLS hello naming a host of the channel's choosing.
+//! The engine checks the peer again once the connection is open.
+//!
 //! With a proxy (requirement 19.10), every connection is a tunnel the
 //! proxy opens, asked for by the engine's encoding before TLS starts, so
 //! TLS runs end to end; a proxy that refuses fails the connection, and
@@ -23,6 +30,7 @@ use std::sync::mpsc::{self, Receiver, SyncSender, TryRecvError};
 use std::time::Duration;
 
 use embedded_io::ErrorKind;
+use neoteletext_web::consts::ALLOWED_LOCAL;
 use neoteletext_web::port::{ConnectionId, LinkState, Received, Security, Transport};
 use neoteletext_web::proxy::Proxy;
 use neoteletext_web::url::IpAddress;
@@ -45,6 +53,18 @@ const READS_AHEAD: usize = 4;
 /// Wakes the fetcher's loop.
 pub type Wake = Arc<dyn Fn() + Send + Sync>;
 
+/// The addresses on this computer or the local network the channel may
+/// reach: the agent's own list (`Config::allowed_local`), so both refuse
+/// the same.
+pub type AllowedLocal = [Option<IpAddress>; ALLOWED_LOCAL];
+
+/// Whether `ip` may not be connected to: the engine's rule (REQ-SEC-006),
+/// as its agent applies it to a peer.
+fn refused_local(ip: IpAddr, allowed: &AllowedLocal) -> bool {
+    let ip = address(ip);
+    ip.is_blocked() && !allowed.contains(&Some(ip))
+}
+
 /// The address the operating system resolved, as the engine writes one.
 pub fn address(ip: IpAddr) -> IpAddress {
     match ip {
@@ -66,11 +86,13 @@ struct Connection {
 }
 
 /// A connection did not open; the port is not told why (the engine's
-/// agent treats every failure alike), only whether the proxy is to blame
-/// and whether the certificate was refused (`certificate-errors.md`).
+/// agent treats every failure alike), only whether the proxy is to blame,
+/// whether the certificate was refused (`certificate-errors.md`), and
+/// whether an address was refused as local.
 struct Failure {
     proxy: bool,
     certificate: Option<CertificateProblem>,
+    local: bool,
 }
 
 /// The kind of a failed secure handshake, from the TLS library's error
@@ -111,14 +133,23 @@ pub struct Tcp {
     proxy_failed: bool,
     /// A certificate was refused since this was last asked, and why.
     refused: Option<CertificateProblem>,
+    /// The local addresses that may be reached directly.
+    allowed_local: AllowedLocal,
+    /// An address was refused as local since this was last asked.
+    local_refused: bool,
 }
 
 impl Tcp {
-    pub fn new(wake: Wake, proxy: Option<Proxy>) -> Self {
+    pub fn new(wake: Wake, proxy: Option<Proxy>, allowed_local: AllowedLocal) -> Self {
         // ring is the one provider built in, so the builder installs it.
         let roots = rustls::RootCertStore::from_iter(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
         let tls = rustls::ClientConfig::builder().with_root_certificates(roots).with_no_client_auth();
-        Self { fetch: None, push: None, live: None, tls: Arc::new(tls), wake, proxy, proxy_failed: false, refused: None }
+        Self { fetch: None, push: None, live: None, tls: Arc::new(tls), wake, proxy, proxy_failed: false, refused: None, allowed_local, local_refused: false }
+    }
+
+    /// Whether an address was refused as local since this was last asked.
+    pub fn take_local_refusal(&mut self) -> bool {
+        std::mem::take(&mut self.local_refused)
     }
 
     /// Whether the proxy failed a connection since this was last asked.
@@ -144,6 +175,7 @@ impl Tcp {
     fn settle(&mut self, connection: ConnectionId) -> &mut Option<Link> {
         let mut proxy_failed = false;
         let mut refused = None;
+        let mut local_refused = false;
         let slot = self.connection(connection);
         if let Some(Link::Connecting(outcome)) = slot {
             match outcome.try_recv() {
@@ -151,6 +183,7 @@ impl Tcp {
                 Ok(Err(failure)) => {
                     proxy_failed = failure.proxy;
                     refused = failure.certificate;
+                    local_refused = failure.local;
                     *slot = Some(Link::Failed);
                 }
                 Err(TryRecvError::Empty) => {}
@@ -159,40 +192,59 @@ impl Tcp {
         }
         self.proxy_failed |= proxy_failed;
         self.refused = refused.or(self.refused);
+        self.local_refused |= local_refused;
         self.connection(connection)
     }
 }
 
 /// A socket to `host` and `port`: direct, or a tunnel the proxy opened,
 /// trying each address the name resolves to in turn, and the host's first
-/// bytes when the proxy's answer came with them (the engine's E.102). The
-/// proxy's own address may be local: the user chose it.
-fn reach(proxy: Option<&Proxy>, host: &str, port: u16) -> Option<(TcpStream, IpAddr, Vec<u8>)> {
+/// bytes when the proxy's answer came with them (the engine's E.102).
+/// Direct, an address on this computer or the local network is skipped
+/// unless allowed (finding F-62). The proxy's own address may be local:
+/// the user chose it; the names it resolves are its own, and the agent
+/// refuses local ones before asking it (the engine's REQ-WEB-032).
+fn reach(proxy: Option<&Proxy>, allowed: &AllowedLocal, host: &str, port: u16) -> Result<(TcpStream, IpAddr, Vec<u8>), Failure> {
+    let mut failure = Failure { proxy: proxy.is_some(), certificate: None, local: false };
     let (to_host, to_port) = proxy.map_or((host, port), |proxy| (proxy.host.as_str(), proxy.port));
-    for target in (to_host, to_port).to_socket_addrs().ok()? {
+    let Ok(targets) = (to_host, to_port).to_socket_addrs() else { return Err(failure) };
+    for target in targets {
+        if proxy.is_none() && refused_local(target.ip(), allowed) {
+            failure.local = true;
+            continue;
+        }
         let Ok(mut socket) = TcpStream::connect_timeout(&target, CONNECT_TIMEOUT) else { continue };
-        socket.set_read_timeout(Some(CONNECT_TIMEOUT)).ok()?;
-        socket.set_write_timeout(Some(CONNECT_TIMEOUT)).ok()?;
+        if socket.set_read_timeout(Some(CONNECT_TIMEOUT)).is_err() || socket.set_write_timeout(Some(CONNECT_TIMEOUT)).is_err() {
+            return Err(failure);
+        }
         let early = match proxy {
-            Some(proxy) => proxy.open_tunnel(&mut socket, host, port).ok()?,
+            Some(proxy) => proxy.open_tunnel(&mut socket, host, port).map_err(|_| Failure { proxy: true, certificate: None, local: false })?,
             None => Vec::new(),
         };
-        return Some((socket, target.ip(), early));
+        return Ok((socket, target.ip(), early));
     }
-    None
+    Err(failure)
 }
 
 /// Opens a connection, blocking: on the connection's own thread.
-fn open(tls: &Arc<rustls::ClientConfig>, proxy: Option<&Proxy>, wake: &Wake, host: &str, port: u16, security: Security) -> Result<Connection, Failure> {
-    // Any failure on the way to the proxy is the proxy's.
+fn open(
+    tls: &Arc<rustls::ClientConfig>,
+    proxy: Option<&Proxy>,
+    allowed: &AllowedLocal,
+    wake: &Wake,
+    host: &str,
+    port: u16,
+    security: Security,
+) -> Result<Connection, Failure> {
+    // A failure once the socket is reached is not the proxy's.
     fn own<E>(_: E) -> Failure {
-        Failure { proxy: false, certificate: None }
+        Failure { proxy: false, certificate: None, local: false }
     }
     // A failure of the secure handshake, and why.
     fn refused(error: &std::io::Error) -> Failure {
-        Failure { proxy: false, certificate: Some(certificate_problem(error)) }
+        Failure { proxy: false, certificate: Some(certificate_problem(error)), local: false }
     }
-    let (mut socket, ip, early) = reach(proxy, host, port).ok_or(Failure { proxy: proxy.is_some(), certificate: None })?;
+    let (mut socket, ip, early) = reach(proxy, allowed, host, port)?;
     // An input message goes in its own packet at once (`interaction.md`
     // section 10).
     socket.set_nodelay(true).map_err(own)?;
@@ -332,9 +384,9 @@ impl Transport for Tcp {
     fn connect(&mut self, connection: ConnectionId, host: &str, port: u16, security: Security) -> Result<(), ErrorKind> {
         self.close(connection);
         let (done, outcome) = mpsc::sync_channel(1);
-        let (tls, proxy, wake, host) = (Arc::clone(&self.tls), self.proxy.clone(), Arc::clone(&self.wake), host.to_owned());
+        let (tls, proxy, allowed, wake, host) = (Arc::clone(&self.tls), self.proxy.clone(), self.allowed_local, Arc::clone(&self.wake), host.to_owned());
         std::thread::spawn(move || {
-            let opened = open(&tls, proxy.as_ref(), &wake, &host, port, security);
+            let opened = open(&tls, proxy.as_ref(), &allowed, &wake, &host, port, security);
             // The connection was closed while opening: the socket goes,
             // and its reader thread with it.
             if let Err(mpsc::SendError(Ok(open))) = done.send(opened) {

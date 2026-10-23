@@ -67,8 +67,18 @@ fn proxy(proxying: Proxying) -> (Proxy, std::thread::JoinHandle<Vec<u8>>) {
     (Proxy::parse(&format!("{kind}://127.0.0.1:{port}")).unwrap(), handle)
 }
 
+/// No local address may be reached directly.
+const NO_LOCAL: AllowedLocal = [None; ALLOWED_LOCAL];
+
+/// The test servers' address, allowed as a channel's arguments allow one.
+fn this_computer() -> AllowedLocal {
+    let mut allowed = NO_LOCAL;
+    allowed[0] = Some(IpAddress::V4([127, 0, 0, 1]));
+    allowed
+}
+
 fn tcp(proxy: Proxy) -> Tcp {
-    Tcp::new(Arc::new(|| {}), Some(proxy))
+    Tcp::new(Arc::new(|| {}), Some(proxy), NO_LOCAL)
 }
 
 /// The connection's state once it is no longer opening, within the
@@ -139,7 +149,7 @@ fn a_failed_handshake_is_reported_once() {
         let (mut socket, _) = listener.accept().unwrap();
         let _ = socket.write_all(b"HTTP/1.1 400 Bad Request\r\n\r\nnot a TLS server");
     });
-    let mut tcp = Tcp::new(Arc::new(|| {}), None);
+    let mut tcp = Tcp::new(Arc::new(|| {}), None, this_computer());
     tcp.connect(ConnectionId::Fetch, "127.0.0.1", port, Security::Tls).unwrap();
     assert!(matches!(settled(&mut tcp, ConnectionId::Fetch), LinkState::Failed));
     assert_eq!(tcp.take_certificate_refusal(), Some(CertificateProblem::Handshake));
@@ -227,7 +237,7 @@ fn a_silent_proxy_fails_in_time_and_holds_nothing_up() {
 #[test]
 #[ignore = "needs the internet"]
 fn a_tls_connection_opens_on_its_thread_and_answers() {
-    let mut tcp = Tcp::new(Arc::new(|| {}), None);
+    let mut tcp = Tcp::new(Arc::new(|| {}), None, NO_LOCAL);
     tcp.connect(ConnectionId::Fetch, "example.com", 443, Security::Tls).unwrap();
     assert!(matches!(tcp.state(ConnectionId::Fetch), LinkState::Connecting | LinkState::Open(_)));
     assert!(matches!(settled(&mut tcp, ConnectionId::Fetch), LinkState::Open(_)));
@@ -255,4 +265,29 @@ fn a_connection_closed_while_opening_is_let_go() {
     tcp.close(ConnectionId::Fetch);
     assert!(matches!(tcp.state(ConnectionId::Fetch), LinkState::Closed));
     assert!(!tcp.take_proxy_failure(), "a closed connection's failure is nobody's");
+}
+
+/// Finding F-62 (REQ-SEC-006): a name that resolves to this computer
+/// opens no connection at all, so a server reached by such a name never
+/// sees the handshake or a TLS hello naming whatever host the channel
+/// chose; the engine's own check of the peer came only after both. A
+/// local address named in the arguments is reached as before.
+#[test]
+fn a_name_resolving_to_this_computer_opens_no_connection() {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    listener.set_nonblocking(true).unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let mut tcp = Tcp::new(Arc::new(|| {}), None, NO_LOCAL);
+    tcp.connect(ConnectionId::Fetch, "localhost", port, Security::Tls).unwrap();
+    assert!(matches!(settled(&mut tcp, ConnectionId::Fetch), LinkState::Failed));
+    assert!(matches!(listener.accept(), Err(error) if error.kind() == IoErrorKind::WouldBlock), "no connection reached the server");
+    assert!(tcp.take_local_refusal(), "the refusal is told");
+    assert!(!tcp.take_local_refusal(), "once");
+    assert!(!tcp.take_proxy_failure());
+    assert_eq!(tcp.take_certificate_refusal(), None, "no handshake was tried");
+
+    let mut tcp = Tcp::new(Arc::new(|| {}), None, this_computer());
+    tcp.connect(ConnectionId::Fetch, "localhost", port, Security::Plain).unwrap();
+    assert!(matches!(settled(&mut tcp, ConnectionId::Fetch), LinkState::Open(IpAddress::V4([127, 0, 0, 1]))));
+    assert!(!tcp.take_local_refusal());
 }

@@ -33,6 +33,9 @@ use crate::transport::{Tcp, address};
 pub(crate) const COOKIE_SLOTS: usize = 0;
 pub(crate) const COOKIE_BYTES: usize = 0;
 const _: () = assert!(size_of::<cookies::UnusedJar>() == size_of::<neoteletext_web::cookie::CookieJar<COOKIE_SLOTS, COOKIE_BYTES>>());
+/// What the console is told when a name led only to addresses the channel
+/// may not reach.
+const LOCAL_REFUSED: &str = "Blocked: the server's name leads to this computer or the local network, which this channel may not reach";
 /// Bytes passed to the agent at a time.
 const READ_CHUNK: usize = 16 * 1024;
 // An exchange reports an address the engine accepted, so the protocol's
@@ -174,6 +177,9 @@ pub fn run(channel: &str, allowed: &[IpAddr], proxy: Option<Proxy>) -> Result<()
     for (slot, &ip) in config.allowed_local.iter_mut().zip(allowed.iter().take(ALLOWED_LOCAL)) {
         *slot = Some(address(ip));
     }
+    // The transport refuses the same local addresses before connecting
+    // (finding F-62).
+    let allowed_local = config.allowed_local;
     let random = Random { state: RandomState::new(), counter: 0 };
     let (wakes, woken) = mpsc::channel::<Wake>();
     // The trusted core's answers to the cookie questions, read by the same
@@ -188,6 +194,7 @@ pub fn run(channel: &str, allowed: &[IpAddr], proxy: Option<Proxy>) -> Result<()
             let _ = network.send(Wake::Network);
         }),
         proxy,
+        allowed_local,
     ));
     let start = Clock::now();
     let clock = || Instant(u64::try_from(start.elapsed().as_micros()).unwrap_or(u64::MAX));
@@ -249,12 +256,7 @@ pub fn run(channel: &str, allowed: &[IpAddr], proxy: Option<Proxy>) -> Result<()
                 Action::Tell(message) => send(&output, message)?,
             }
         }
-        if pump.transport.take_proxy_failure() {
-            write_to_core(&mut *output.borrow_mut(), &FromFetcher::ProxyFailed).map_err(|error| error.to_string())?;
-        }
-        if let Some(problem) = pump.transport.take_certificate_refusal() {
-            write_to_core(&mut *output.borrow_mut(), &FromFetcher::CertificateRefused(problem)).map_err(|error| error.to_string())?;
-        }
+        tell_failures(&mut pump.transport, &output)?;
         // One page at a time, in the contents file's order; the agent
         // spaces the requests at the engine's rate.
         if !waiting && let Some(page) = queue.pop_front() {
@@ -286,6 +288,24 @@ pub fn run(channel: &str, allowed: &[IpAddr], proxy: Option<Proxy>) -> Result<()
             }
         }
     }
+}
+
+/// Tells the trusted core what the transport refused since it was last
+/// asked: a proxy's failure, a certificate, a local address.
+fn tell_failures(transport: &mut Tcp, output: &cookies::Output) -> Result<(), String> {
+    let send = |message: FromFetcher| write_to_core(&mut *output.borrow_mut(), &message).map_err(|error| error.to_string());
+    if transport.take_proxy_failure() {
+        send(FromFetcher::ProxyFailed)?;
+    }
+    if let Some(problem) = transport.take_certificate_refusal() {
+        send(FromFetcher::CertificateRefused(problem))?;
+    }
+    // The agent hears only that the connection failed; the console hears
+    // why, as it heard the engine's own refusal of a local peer.
+    if transport.take_local_refusal() {
+        send(FromFetcher::Notice(LOCAL_REFUSED.to_owned()))?;
+    }
+    Ok(())
 }
 
 /// Reads the trusted core's messages until its pipe closes or breaks the
