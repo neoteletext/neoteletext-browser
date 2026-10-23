@@ -24,6 +24,10 @@ os-install.workspace = true
 [target.'cfg(unix)'.dependencies]
 rustix = { workspace = true, features = ["process"] }
 
+# Windows: the uninstaller removes the helpers' AppContainer profiles.
+[target.'cfg(windows)'.dependencies]
+confine.workspace = true
+
 [dev-dependencies]
 ring.workspace = true
 

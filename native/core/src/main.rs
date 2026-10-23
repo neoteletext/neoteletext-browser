@@ -1950,6 +1950,10 @@ fn ended(result: Result<(), String>, interface: &Exit) -> Result<(), String> {
 /// with it (decision 56).
 const CORE_FLAG: &str = "--core";
 
+/// This release's version, in the program's own bytes, where the launcher
+/// reads it from the signed file (`installation-and-updates.md` section 5).
+static VERSION_MARK: &str = update::version_mark!(env!("NEOTELETEXT_VERSION"));
+
 /// Folders under the home folder whose files are the user's secrets: the
 /// broker never reads a file channel there for the core, however it is
 /// named (decision 56).
@@ -2011,7 +2015,8 @@ fn broker() -> Result<(), String> {
     arguments.extend(std::env::args_os().skip(1));
     let environment = confine::environment(Role::Core);
     let core = confine::broker::start_core(&program, &arguments, &settings, &environment).map_err(|error| format!("cannot start the trusted core: {error}"))?;
-    eprintln!("neoteletext: the trusted core started confined: {}", core.report);
+    let version = update::mark::own(VERSION_MARK).map_err(|refused| format!("this program's version: {refused}"))?;
+    eprintln!("neoteletext: version {version}; the trusted core started confined: {}", core.report);
     #[cfg(feature = "links")]
     let open_web = |address: &str| web_opener::open(address).map_err(|error| error.to_string());
     // With links compiled out the core never asks; if it does, it is refused.
@@ -2124,6 +2129,14 @@ mod program_tests {
         assert_eq!(reach.allow_local, ["192.168.0.9", "10.0.0.2"]);
         assert_eq!(reach.proxy.as_deref(), Some("http://p.example:3128"));
         assert_eq!(Reach::of(&[], &Settings::default()).proxy, None);
+    }
+
+    /// `installation-and-updates.md` section 5: the broker's bytes carry
+    /// its version, which the launcher finds there.
+    #[test]
+    fn the_broker_carries_its_version() {
+        let version = update::mark::own(VERSION_MARK).unwrap();
+        assert_eq!(Some(version), update::version::Version::parse(env!("NEOTELETEXT_VERSION")));
     }
 
     #[test]

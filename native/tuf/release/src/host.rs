@@ -57,17 +57,32 @@ fn run() -> Result<(), String> {
         .with_single_cert(chain, key)
         .map_err(|error| error.to_string())?;
     let config = Arc::new(config);
-    let listener = TcpListener::bind(address).map_err(|error| format!("{address}: {error}"))?;
+    // Every address the name has, so a client trying `localhost`'s IPv6
+    // address first is answered there and not left to time out.
+    let addresses: Vec<std::net::SocketAddr> =
+        std::net::ToSocketAddrs::to_socket_addrs(address.as_str()).map_err(|error| format!("{address}: {error}"))?.collect();
+    let listeners = addresses.iter().map(|each| TcpListener::bind(each).map_err(|error| format!("{each}: {error}"))).collect::<Result<Vec<_>, _>>()?;
     println!("listening on {address}");
     let _ = std::io::stdout().flush();
     let root = PathBuf::from(folder);
-    for stream in listener.incoming().filter_map(Result::ok) {
-        let (config, root) = (Arc::clone(&config), root.clone());
-        std::thread::spawn(move || {
-            if let Err(error) = serve(stream, config, &root) {
-                eprintln!("neoteletext-test-host: {error}");
-            }
-        });
+    let threads: Vec<_> = listeners
+        .into_iter()
+        .map(|listener| {
+            let (config, root) = (Arc::clone(&config), root.clone());
+            std::thread::spawn(move || {
+                for stream in listener.incoming().filter_map(Result::ok) {
+                    let (config, root) = (Arc::clone(&config), root.clone());
+                    std::thread::spawn(move || {
+                        if let Err(error) = serve(stream, config, &root) {
+                            eprintln!("neoteletext-test-host: {error}");
+                        }
+                    });
+                }
+            })
+        })
+        .collect();
+    for thread in threads {
+        let _ = thread.join();
     }
     Ok(())
 }

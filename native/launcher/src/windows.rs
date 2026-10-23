@@ -22,7 +22,7 @@ pub fn launcher_copy(root: &Path, choice: u8) -> PathBuf {
 }
 
 /// The two copies' letters.
-pub const CHOICES: [u8; 2] = [b'a', b'b'];
+pub const CHOICES: [u8; 2] = *b"ab";
 
 /// The Start menu shortcut, in the user's own Start menu.
 #[must_use]
@@ -33,6 +33,10 @@ pub fn shortcut() -> Option<PathBuf> {
 /// Section 7: the running launcher writes the other copy, flushes it,
 /// checks its signature, and switches the one-byte choice; the copy it
 /// replaces stays until the next launcher release.
+///
+/// # Errors
+/// When the new copy cannot be written, is not signed by the pinned
+/// signer, or the choice cannot be switched; the old launcher stays.
 pub fn launcher_release(launcher: &Launcher, bytes: &[u8]) -> Result<(), String> {
     let root = &launcher.layout.root;
     let choice_path = root.join(WINDOWS_LAUNCHER_CHOICE);
@@ -124,6 +128,7 @@ pub fn uninstall_from(root: &Path, and_settings: bool) -> Result<(), String> {
         let _ = std::fs::remove_file(shortcut);
     }
     os_install::remove_uninstall_entry()?;
+    confine::remove_containers();
     if and_settings && let Some(settings) = settings_folder() {
         files::remove_tree(&settings).map_err(|error| io_text(&settings, &error))?;
     }

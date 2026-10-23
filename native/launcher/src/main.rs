@@ -19,7 +19,7 @@
 use std::ffi::OsString;
 use std::process::ExitCode;
 
-use launcher::{Launcher, install};
+use launcher::Launcher;
 
 fn main() -> ExitCode {
     let arguments: Vec<OsString> = std::env::args_os().skip(1).collect();
@@ -39,7 +39,7 @@ fn run(arguments: &[OsString]) -> Result<Option<i32>, String> {
     if first == Some("--install") {
         let own = std::env::current_exe().map_err(|error| format!("cannot find this program: {error}"))?;
         #[cfg(target_os = "linux")]
-        return install::install_linux(&own).map(|()| None);
+        return launcher::unix::install_linux(&own).map(|()| None);
         #[cfg(not(target_os = "linux"))]
         {
             let _ = own;
@@ -57,7 +57,7 @@ fn run(arguments: &[OsString]) -> Result<Option<i32>, String> {
         #[cfg(windows)]
         return launcher::windows::uninstall(&launcher).map(|()| None);
         #[cfg(not(windows))]
-        return install::uninstall(&launcher).map(|()| None);
+        return launcher::unix::uninstall(&launcher).map(|()| None);
     }
     #[cfg(target_os = "macos")]
     if let Some(bundle) = &launcher.layout.bundle

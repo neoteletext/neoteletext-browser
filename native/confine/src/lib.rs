@@ -151,6 +151,13 @@ pub fn grant_packages_read(folder: &Path) -> io::Result<()> {
     windows::grant_packages_read(folder)
 }
 
+/// Windows: removes the browser's `AppContainer` profiles, for the
+/// uninstaller (requirement 13.20).
+#[cfg(windows)]
+pub fn remove_containers() {
+    windows::remove_containers();
+}
+
 /// The most a time zone is ahead of or behind UTC, in seconds: 18 hours,
 /// the bound of ISO 8601's offsets and of every zone in use.
 pub const MAX_OFFSET: i32 = 18 * 60 * 60;
@@ -264,13 +271,14 @@ const ENVIRONMENT_SOUND: &[&str] =
 /// keyboard's relay for tests, and the update host for tests.
 const ENVIRONMENT_CORE: &[&str] = &["HOME", "USERPROFILE", "APPDATA", "LOCALAPPDATA", "XDG_CONFIG_HOME", "NEOTELETEXT_QRKEYBOARD_RELAY"];
 
-/// What the updater needs: in a debug build, the fault point a test asks
-/// for (`installation-and-updates.md` section 13); a release build reads
-/// none.
+/// What the updater needs: the home folder, under which macOS keeps its
+/// staging folder (`installation-and-updates.md` section 4.1), and in a
+/// debug build the fault point a test asks for (section 13); a release
+/// build reads none.
 #[cfg(debug_assertions)]
-const ENVIRONMENT_UPDATER: &[&str] = &["NEOTELETEXT_FAULT"];
+const ENVIRONMENT_UPDATER: &[&str] = &["HOME", "NEOTELETEXT_FAULT"];
 #[cfg(not(debug_assertions))]
-const ENVIRONMENT_UPDATER: &[&str] = &[];
+const ENVIRONMENT_UPDATER: &[&str] = &["HOME"];
 
 /// The environment a process of `role` is given, taken from this
 /// process's: only what it needs, nothing else.

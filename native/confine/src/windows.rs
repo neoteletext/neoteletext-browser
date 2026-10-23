@@ -52,7 +52,7 @@ use windows_sys::Win32::Security::Authorization::{
     ConvertStringSidToSidW, EXPLICIT_ACCESS_W, GRANT_ACCESS, GetNamedSecurityInfoW, NO_MULTIPLE_TRUSTEE, SE_FILE_OBJECT, SetEntriesInAclW,
     SetNamedSecurityInfoW, TRUSTEE_IS_SID, TRUSTEE_IS_WELL_KNOWN_GROUP, TRUSTEE_W,
 };
-use windows_sys::Win32::Security::Isolation::{CreateAppContainerProfile, DeriveAppContainerSidFromAppContainerName};
+use windows_sys::Win32::Security::Isolation::{CreateAppContainerProfile, DeleteAppContainerProfile, DeriveAppContainerSidFromAppContainerName};
 use windows_sys::Win32::Security::{
     ACL, CreateRestrictedToken, DACL_SECURITY_INFORMATION, DISABLE_MAX_PRIVILEGE, FreeSid, PSECURITY_DESCRIPTOR, SECURITY_ATTRIBUTES, SECURITY_CAPABILITIES,
     SID_AND_ATTRIBUTES, SetTokenInformation, TOKEN_ADJUST_DEFAULT, TOKEN_ASSIGN_PRIMARY, TOKEN_DUPLICATE, TOKEN_MANDATORY_LABEL, TOKEN_QUERY,
@@ -114,9 +114,20 @@ const CONTAINER_NETWORK: &str = "NeoTeletext.Fetcher";
 const CONTAINER_CORE: &str = "NeoTeletext.Core";
 const CONTAINER_SOUND: &str = "NeoTeletext.Sound";
 const CONTAINER_UPDATER: &str = "NeoTeletext.Updater";
-/// Every container's name, for the installer to make them and the
-/// uninstaller to remove them.
-pub const CONTAINERS: [&str; 5] = [CONTAINER_DECODER, CONTAINER_NETWORK, CONTAINER_CORE, CONTAINER_SOUND, CONTAINER_UPDATER];
+/// Every container's name, for the uninstaller to remove them.
+const CONTAINERS: [&str; 5] = [CONTAINER_DECODER, CONTAINER_NETWORK, CONTAINER_CORE, CONTAINER_SOUND, CONTAINER_UPDATER];
+
+/// Removes the browser's `AppContainer` profiles, which the first start of
+/// each helper made for the user (requirement 13.20). A profile that is
+/// not there is no error.
+pub fn remove_containers() {
+    for name in CONTAINERS {
+        let name = wide(name);
+        // The name is NUL-terminated and outlives the call; its result is
+        // not needed, since a profile not there is not an error here.
+        let _ = unsafe { DeleteAppContainerProfile(name.as_ptr()) };
+    }
+}
 /// `ALL APPLICATION PACKAGES` (`SECURITY_BUILTIN_PACKAGE_ANY_PACKAGE`).
 const ALL_APPLICATION_PACKAGES_SID: &str = "S-1-15-2-1";
 /// Read and run, for the program folder (`GENERIC_READ | GENERIC_EXECUTE`).

@@ -1,0 +1,20 @@
+[package]
+name = "neoteletext-installer"
+description = "The Windows installer, NeoTeletext-Setup.exe (installation-and-updates.md section 4.2): per user, no administrator; it checks the release it carries by the pinned signer, copies the stub, a launcher and the first version, grants the containers read on the programs, writes the state, the Start menu shortcut and the uninstall entry"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+update.workspace = true
+release-identity.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+os-install.workspace = true
+confine.workspace = true
+launcher.workspace = true
+
+[lints]
+workspace = true

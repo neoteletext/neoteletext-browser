@@ -37,6 +37,21 @@ fn a_fetcher_has_the_network_and_nothing_else() {
     assert!(line.contains("tcp=no listener") || line.contains("tcp=connected"), "the network is open: {line}");
 }
 
+/// `installation-and-updates.md` section 8.1: the updater reaches its one
+/// port and no other, writes its staging folder and nothing else, and
+/// starts nothing.
+#[test]
+fn the_updater_reaches_one_port_and_writes_only_its_staging_folder() {
+    let staging = std::path::Path::new(env!("CARGO_TARGET_TMPDIR")).join("probe-staging");
+    std::fs::create_dir_all(&staging).unwrap();
+    let line = probe("updater", &[("NEOTELETEXT_CONFINE_PROBE_WRITABLE", staging.to_str().unwrap())]);
+    assert!(line.starts_with("PROBE report=Landlock, seccomp;"), "{line}");
+    assert!(line.contains("tcp=no listener") || line.contains("tcp=connected"), "its port is open: {line}");
+    for expected in ["other-port=refused", "program=refused", "write=refused", "own-folder=wrote"] {
+        assert!(line.contains(expected), "{expected}: {line}");
+    }
+}
+
 /// Decision 58: a helper that cannot have its network namespace, as on a
 /// distribution that forbids user namespaces, is not run without it.
 /// Before, it ran and reported "without a network namespace".

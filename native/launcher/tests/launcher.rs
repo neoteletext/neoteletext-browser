@@ -289,7 +289,7 @@ fn fault_points() -> Vec<&'static str> {
     match platform().family() {
         Family::Macos => points.extend(["bundle-exchanged", "previous-discarded", "previous-moved"]),
         Family::Linux => points.extend(["accept-moved", "launcher-written", "launcher-exchanged"]),
-        Family::Windows => points.extend(["accept-moved"]),
+        Family::Windows => points.extend(["accept-copied", "accept-moved"]),
     }
     points
 }

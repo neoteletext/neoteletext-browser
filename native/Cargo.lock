@@ -1890,6 +1890,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "neoteletext-installer"
+version = "0.1.0"
+dependencies = [
+ "confine",
+ "neoteletext-launcher",
+ "os-install",
+ "release-identity",
+ "update",
+]
+
+[[package]]
 name = "neoteletext-interface"
 version = "0.1.0"
 dependencies = [
@@ -1919,6 +1930,7 @@ dependencies = [
 name = "neoteletext-launcher"
 version = "0.1.0"
 dependencies = [
+ "confine",
  "os-install",
  "release-identity",
  "ring",
@@ -1963,6 +1975,14 @@ dependencies = [
  "cpal",
  "neoteletext-audio-mix",
  "protocol",
+]
+
+[[package]]
+name = "neoteletext-stub"
+version = "0.1.0"
+dependencies = [
+ "neoteletext-launcher",
+ "update",
 ]
 
 [[package]]

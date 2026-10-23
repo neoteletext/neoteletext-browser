@@ -77,7 +77,7 @@ pub fn updater_grant(arguments: &[String]) -> Result<UpdaterGrant, String> {
     std::fs::create_dir_all(&staging).map_err(|error| format!("{}: {error}", staging.display()))?;
     let port = match arguments {
         [] => release_identity::PORT,
-        [flag, proxy] if flag == "--proxy" => neoteletext_web::proxy::Proxy::parse(proxy)?.port,
+        [flag, proxy] if flag == "--proxy" => neoteletext_web::proxy::parse_proxy(proxy).ok_or("the proxy is not one")?.port,
         _ => return Err(String::from("the updater takes a proxy and nothing else")),
     };
     Ok(UpdaterGrant { staging, port })

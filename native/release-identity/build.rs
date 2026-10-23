@@ -24,7 +24,9 @@ fn text(folder: &Path, name: &str) -> Option<String> {
     println!("cargo:rerun-if-changed={}", path.display());
     let text = std::fs::read_to_string(&path).ok()?;
     let text = text.strip_suffix('\n').unwrap_or(&text);
-    assert!(!text.contains('\n') && !text.contains('"') && !text.contains('\\'), "{} must be one plain line", path.display());
+    // One line, written into a raw string: a designated requirement quotes
+    // its values (`certificate leaf = H"..."`).
+    assert!(!text.contains('\n') && !text.contains("\"#"), "{} must be one line", path.display());
     Some(text.to_owned())
 }
 
@@ -74,7 +76,7 @@ fn main() {
         optional_bytes(file(&folder, "root.json"))
     );
     let _ = writeln!(out, "/// The Linux release key.\npub const LINUX_RELEASE_KEY: Option<[u8; 32]> = {};", optional_key(key(&folder, "linux-release.pub")));
-    let requirement = text(&folder, "macos-requirement").map_or_else(|| String::from("None"), |requirement| format!("Some(\"{requirement}\")"));
+    let requirement = text(&folder, "macos-requirement").map_or_else(|| String::from("None"), |requirement| format!("Some(r#\"{requirement}\"#)"));
     let _ = writeln!(out, "/// The macOS designated requirement.\npub const MACOS_REQUIREMENT: Option<&str> = {requirement};");
     let _ = writeln!(
         out,

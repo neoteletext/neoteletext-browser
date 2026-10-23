@@ -35,6 +35,8 @@ pub mod install;
 #[cfg(target_os = "macos")]
 mod macos;
 mod start;
+#[cfg(unix)]
+pub mod unix;
 #[cfg(windows)]
 pub mod windows;
 
@@ -59,6 +61,11 @@ use update::version::Version;
 /// (section 3.2: 30 seconds), with room for the broker and the core to
 /// start before the core's own count begins.
 pub const HEALTH_DEADLINE: Duration = Duration::from_secs(30 + 15);
+
+/// What a Windows version is called under `versions\` while it is copied
+/// in: no version's name, so `tidy` removes one left by a launcher
+/// stopped part way.
+const COPYING_SUFFIX: &str = ".copying";
 
 /// A launcher of one installation.
 pub struct Launcher {
@@ -328,7 +335,11 @@ impl Launcher {
                 if from != installed {
                     std::fs::create_dir_all(self.layout.versions()).map_err(|error| io_text(&self.layout.versions(), &error))?;
                     files::remove_tree(&installed).map_err(|error| io_text(&installed, &error))?;
-                    std::fs::rename(&from, &installed).map_err(|error| io_text(&from, &error))?;
+                    if self.platform.family() == Family::Windows {
+                        self.copy_in(&from, &installed, version)?;
+                    } else {
+                        std::fs::rename(&from, &installed).map_err(|error| io_text(&from, &error))?;
+                    }
                     files::sync_folder(&self.layout.versions()).map_err(|error| io_text(&self.layout.versions(), &error))?;
                     fault::point("accept-moved");
                 }
@@ -338,6 +349,30 @@ impl Launcher {
                 Ok(())
             }
         }
+    }
+
+    /// Windows: the staged `version` copied into `installed` by the
+    /// launcher, not renamed, and checked again there. What the updater
+    /// wrote carries its container's full control and the low integrity
+    /// label of every file an `AppContainer` writes; renamed, a version
+    /// would keep both, so the updater could change it after it was
+    /// checked, and the mitigation that refuses low integrity programs
+    /// would refuse its helpers (measured end to end: "Access is denied").
+    /// A copy is the launcher's, under `versions\`'s access list. A copy
+    /// cut short is under a name that is no version, which `tidy` removes.
+    fn copy_in(&self, staged: &Path, installed: &Path, version: Version) -> Result<(), String> {
+        let copying = self.layout.versions().join(format!("{version}{COPYING_SUFFIX}"));
+        files::remove_tree(&copying).map_err(|error| io_text(&copying, &error))?;
+        files::copy_tree(staged, &copying).map_err(|error| io_text(&copying, &error))?;
+        fault::point("accept-copied");
+        let copied = update::accept::accept(&copying, self.platform, self.signer.as_ref())?;
+        if copied != version {
+            return Err(format!("the copy of {version} says {copied}"));
+        }
+        std::fs::rename(&copying, installed).map_err(|error| io_text(&copying, &error))?;
+        // The staged copy goes now; one left behind is tidied.
+        let _ = files::remove_tree(staged);
+        Ok(())
     }
 
     /// Step 7 (section 3.1): removes what no state names, leaving for next

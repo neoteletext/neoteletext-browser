@@ -61,7 +61,7 @@ impl Drop for Host {
 
 fn serve(repository: &Path, identity: &Path, port: u16) -> Host {
     let mut child = Command::new(env!("CARGO_BIN_EXE_neoteletext-test-host"))
-        .args([text(repository), text(&identity.join("host.pem")), text(&identity.join("host.key.pem")), format!("127.0.0.1:{port}")])
+        .args([text(repository), text(&identity.join("host.pem")), text(&identity.join("host.key.pem")), format!("localhost:{port}")])
         .stdout(Stdio::piped())
         .spawn()
         .unwrap();
