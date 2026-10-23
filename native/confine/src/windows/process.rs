@@ -33,14 +33,17 @@ impl Inner {
     }
 
     pub fn kill(&mut self) -> io::Result<()> {
+        // SAFETY: the process handle this value owns.
         if unsafe { TerminateProcess(self.process, 1) } == 0 { Err(io::Error::last_os_error()) } else { Ok(()) }
     }
 
     pub fn wait(&mut self) -> io::Result<ExitStatus> {
+        // SAFETY: the process handle this value owns.
         if unsafe { WaitForSingleObject(self.process, INFINITE) } != WAIT_OBJECT_0 {
             return Err(io::Error::last_os_error());
         }
         let mut code = 0_u32;
+        // SAFETY: the process handle this value owns; the code is written to a live local.
         if unsafe { GetExitCodeProcess(self.process, &raw mut code) } == 0 {
             return Err(io::Error::last_os_error());
         }
@@ -51,6 +54,7 @@ impl Inner {
 impl Drop for Inner {
     /// Closing the job ends the helper, if it still runs.
     fn drop(&mut self) {
+        // SAFETY: both handles are owned by this value and closed once, here.
         unsafe {
             CloseHandle(self.process);
             CloseHandle(self.job);
@@ -94,13 +98,18 @@ pub(super) fn command_line(program: &OsStr, arguments: &[OsString]) -> Vec<u16> 
 }
 
 /// The environment block: `NAME=value` strings, each zero-terminated,
-/// then one more zero.
+/// then one more zero. An empty block is two zeros (finding F-58):
+/// `CreateProcess` reads up to the first two zeros in a row, so one alone
+/// would have it read past the block.
 pub(super) fn environment_block(environment: &[(OsString, OsString)]) -> Vec<u16> {
     let mut block = Vec::new();
     for (name, value) in environment {
         block.extend(name.encode_wide());
         block.push(u16::from(b'='));
         block.extend(value.encode_wide());
+        block.push(0);
+    }
+    if environment.is_empty() {
         block.push(0);
     }
     block.push(0);
@@ -126,5 +135,12 @@ mod tests {
         let block = environment_block(&[(OsString::from("A"), OsString::from("1"))]);
         assert_eq!(String::from_utf16_lossy(&block[..3]), "A=1");
         assert_eq!(&block[3..], &[0, 0]);
+    }
+
+    /// Finding F-58: an empty environment is two zeros, not one, which
+    /// `CreateProcess` would read past.
+    #[test]
+    fn an_empty_environment_block_is_two_zeros() {
+        assert_eq!(environment_block(&[]), [0, 0]);
     }
 }

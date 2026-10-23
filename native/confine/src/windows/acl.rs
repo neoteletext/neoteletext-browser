@@ -46,6 +46,8 @@ fn grant_to(folder: &Path, sid: PSID, permissions: u32) -> io::Result<()> {
     let path = wide(folder);
     let mut old: *mut ACL = ptr::null_mut();
     let mut descriptor: PSECURITY_DESCRIPTOR = ptr::null_mut();
+    // SAFETY: the path is NUL-terminated and alive; the call writes the ACL pointer and
+    // its owning descriptor into live locals, freed below.
     let read = unsafe {
         GetNamedSecurityInfoW(
             path.as_ptr(),
@@ -74,14 +76,20 @@ fn grant_to(folder: &Path, sid: PSID, permissions: u32) -> io::Result<()> {
         },
     };
     let mut new: *mut ACL = ptr::null_mut();
+    // SAFETY: `access` and `old` are alive (`old` owned by `descriptor`); the merged list
+    // is written to a live local, freed below.
     let merged = unsafe { SetEntriesInAclW(1, &raw const access, old, &raw mut new) };
     let written = if merged == 0 {
+        // SAFETY: the path is NUL-terminated and alive, and `new` the list SetEntriesInAclW
+        // just made.
         unsafe {
             SetNamedSecurityInfoW(path.as_ptr().cast_mut(), SE_FILE_OBJECT, DACL_SECURITY_INFORMATION, ptr::null_mut(), ptr::null_mut(), new, ptr::null())
         }
     } else {
         merged
     };
+    // SAFETY: each pointer was allocated by the call that wrote it (or is null), and is
+    // freed once, here.
     unsafe {
         LocalFree(new.cast());
         LocalFree(descriptor.cast());

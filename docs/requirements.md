@@ -150,7 +150,7 @@ Withdrawn on 23 October 2026 (decision 66): the browser does not support fonts f
 - **Reason:** An attacker who took over the interface must find nothing of value.
 - **Source:** Decisions 4, 18 and 33.
 - **Verification:** Test on each platform: network and file access fail from the interface process; review of every message type sent to it.
-- **State:** Partly met. No secret is ever sent to it (review of `protocol`). On macOS its profile starts from "deny everything" and allows the system's folders and the window, font, text-input, pasteboard, notification, preference, sound and Dock services, with no network and no programs; on Linux it confines itself with an empty network namespace where allowed, Landlock (fonts, preferences and the system's directories readable) and a seccomp filter (local-domain sockets only, no programs); on Windows a restricted token at low integrity in a job object with the mitigation policies, which does not stop reads of the user's files. Its environment is cut to the window system's on every platform (22 October 2026, `sandboxing.md`).
+- **State:** Partly met. No secret is ever sent to it (review of `protocol`). On macOS its profile starts from "deny everything" and allows the system's folders and the window, font, text-input, pasteboard, notification, preference, sound and Dock services, with no network and no programs; on Linux it confines itself with an empty network namespace where allowed, Landlock (fonts, preferences and the system's directories readable) and a seccomp filter (local-domain sockets only, no programs); on Windows an AppContainer with no capabilities in a job object with the mitigation policies, so no network and none of the user's files (decision 90, 24 October 2026; before, a restricted token at low integrity, which stopped neither; built, verified by hand in the virtual machine still owed: `the_interface_reaches_no_network_and_no_user_file`). Its environment is cut to the window system's on every platform (22 October 2026, `sandboxing.md`).
 - *Amended 22 October 2026 (decision 57):* "beyond what is on screen" is exact for history and bookmarks: the interface receives them only as the views of `history-and-bookmarks.md` section 4, at most 100 rows at a time, and names a row only by its view's number (requirement 20.5).
 
 ### Requirement 3.7: Operating-system sandboxes
@@ -339,6 +339,7 @@ Withdrawn on 23 October 2026 (decision 66): no font is fetched; every page is dr
 - **Source:** Architecture; `neoteletext` requirement REQ-SEC-006.
 - **Verification:** Test for each range.
 - **State:** Met: refused by the engine's user agent unless allowed, with `--allow-local` or in the settings panel (requirement 19.3); through a proxy, by requirement 19.11.
+- *Residual, 24 October 2026 (decision 89):* the engine's check is the fetcher's own, so a compromised fetcher or phone keyboard is held off this computer by its sandbox on macOS (the profile refuses `localhost` unless the channel may reach the local network; test `a_fetcher_reaches_this_computer_only_when_allowed`) and on Windows (an AppContainer reaches loopback only with an exemption, which none has), but not off the local network beyond it on macOS, nor off either on Linux. Connecting in the broker is the planned design that closes it.
 
 ### Requirement 5.11: Compression is bounded
 - **Statement:** The fetcher must undo compression with a fixed maximum decompressed size, the engine's constant.
@@ -494,7 +495,7 @@ Withdrawn on 23 October 2026 (decision 66): no font is fetched; every page is dr
 - **Reason:** The interface process is untrusted and must not accumulate anything of value.
 - **Source:** Decisions 4 and 33.
 - **Verification:** Test: the interface process writes no file.
-- **State:** Partly met: it writes no file (denied by its sandbox; on Windows its restricted token at low integrity denies writes to the user's files) and holds no cookies; it drops the image of every page its layout no longer shows each time it reports what is visible (`retain_pages` in `native/interface/src/main.rs`), so it holds only the shown channel's pages. Neither is tested.
+- **State:** Partly met: it writes no file (denied by its sandbox; on Windows its AppContainer, at low integrity, denies writes to the user's files, decision 90) and holds no cookies; it drops the image of every page its layout no longer shows each time it reports what is visible (`retain_pages` in `native/interface/src/main.rs`), so it holds only the shown channel's pages. Neither is tested.
 
 ### Requirement 7.10: Forms
 - **Statement:** A page's form must be sent only to its declared destination, through the fetcher. A form whose destination is another channel must go through the site-change screen, with that channel's `SameSite` cookies withheld. No form value may be filled in automatically.
@@ -704,6 +705,7 @@ Withdrawn on 23 October 2026 (decision 66): no font is fetched; every page is dr
 - **Verification:** Check: the workspace lints forbid `unsafe_code`; `dock-menu` denies it and allows it only in `src/mac.rs`, `web-opener` only in `src/windows.rs`, and `confine` only in `src/linux.rs`, `src/unix.rs` and `src/windows.rs`, each with Clippy's `undocumented_unsafe_blocks`.
 - **State:** Met; amended 22 October 2026 (decisions 52 and 56) for `confine`.
 - *Amended 23 October 2026 (decision 75):* a fourth exception, the `os-install` crate, whose macOS module calls CoreFoundation's alert for the launcher, which has no window, and whose Windows module calls `WinVerifyTrust` and reads the signer's certificate, writes and removes the per-user uninstall entry, and shows a message box (`installation-and-updates.md` sections 4 and 5). It denies `unsafe_code` everywhere else and allows it only in `src/macos.rs` and `src/windows.rs`. `confine`'s Windows module also grants `ALL APPLICATION PACKAGES` read on the programs' folder and removes the containers' profiles. The launcher, the updater, the installer, the stub and the release tool forbid unsafe code; the folder exchange is `rustix`'s safe interface.
+- *Amended 24 October 2026 (decision 86):* `confine`'s Linux module (`src/linux/`) also mounts the interface's and the sound helper's own `/run` and `/tmp` (`mount`, `open_tree`, `move_mount`, in `runtime.rs`), and holds the sandbox tests' probes (`probe.rs`: the system calls a confined helper must be refused, which nothing shipped calls). Each leaf module that holds unsafe code says so with its own `#![expect(unsafe_code, reason)]`.
 
 ### Requirement 10.13: The interface process ends on a broken message
 - **Statement:** The interface process must end at the first malformed message from the trusted core, rather than try to continue.

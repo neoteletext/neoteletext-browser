@@ -21,8 +21,10 @@ const CONTAINER_NETWORK: &str = "NeoTeletext.Fetcher";
 const CONTAINER_CORE: &str = "NeoTeletext.Core";
 const CONTAINER_SOUND: &str = "NeoTeletext.Sound";
 const CONTAINER_UPDATER: &str = "NeoTeletext.Updater";
+/// The interface's, with no capabilities (decision 90).
+const CONTAINER_INTERFACE: &str = "NeoTeletext.Interface";
 /// Every container's name, for the uninstaller to remove them.
-const CONTAINERS: [&str; 5] = [CONTAINER_DECODER, CONTAINER_NETWORK, CONTAINER_CORE, CONTAINER_SOUND, CONTAINER_UPDATER];
+const CONTAINERS: [&str; 6] = [CONTAINER_DECODER, CONTAINER_NETWORK, CONTAINER_CORE, CONTAINER_SOUND, CONTAINER_UPDATER, CONTAINER_INTERFACE];
 
 /// Removes the browser's `AppContainer` profiles, which the first start of
 /// each helper made for the user (requirement 13.20). A profile that is
@@ -32,6 +34,8 @@ pub(super) fn remove_containers() {
         let name = wide(name);
         // The name is NUL-terminated and outlives the call; its result is
         // not needed, since a profile not there is not an error here.
+        // SAFETY: the name is NUL-terminated and outlives the call; its result is not needed,
+        // since a profile not there is not an error here.
         let _ = unsafe { DeleteAppContainerProfile(name.as_ptr()) };
     }
 }
@@ -43,16 +47,21 @@ pub(super) fn container(role: Role) -> io::Result<ContainerSid> {
         Role::Core => CONTAINER_CORE,
         Role::Sound => CONTAINER_SOUND,
         Role::Updater { .. } => CONTAINER_UPDATER,
-        Role::Network | Role::Interface => CONTAINER_NETWORK,
+        Role::Network => CONTAINER_NETWORK,
+        Role::Interface => CONTAINER_INTERFACE,
     });
     let display = wide("NeoTeletext");
     let description = wide("A helper process of the NeoTeletext browser");
     let mut sid: PSID = ptr::null_mut();
+    // SAFETY: the names are NUL-terminated and alive; no capabilities are passed; the SID
+    // is written to a live local and owned by `ContainerSid`.
     let made = unsafe { CreateAppContainerProfile(name.as_ptr(), display.as_ptr(), description.as_ptr(), ptr::null(), 0, &raw mut sid) };
     if made >= 0 {
         return Ok(ContainerSid(sid));
     }
     // It exists from an earlier run.
+    // SAFETY: the name is NUL-terminated and alive; the SID is written to a live local and
+    // owned by `ContainerSid`.
     if unsafe { DeriveAppContainerSidFromAppContainerName(name.as_ptr(), &raw mut sid) } < 0 {
         return Err(io::Error::other("cannot make or find the AppContainer profile"));
     }

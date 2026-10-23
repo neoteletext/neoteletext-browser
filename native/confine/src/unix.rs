@@ -23,22 +23,25 @@ pub(crate) use time::local_offset;
 
 /// The command that runs a helper: under its profile on macOS; as it is
 /// on Linux, where it confines itself at its start.
-fn command(spawn: &Spawn<'_>) -> Command {
+// On macOS the profile is built from `getconf` and can fail; on Linux
+// the command is just the program, so nothing here fails.
+#[cfg_attr(not(target_os = "macos"), allow(clippy::unnecessary_wraps, reason = "fallible on macOS, where the profile is read from getconf"))]
+fn command(spawn: &Spawn<'_>) -> io::Result<Command> {
     #[cfg(target_os = "macos")]
-    let command = crate::macos::command(spawn);
+    let command = crate::macos::command(spawn).map_err(io::Error::other)?;
     #[cfg(not(target_os = "macos"))]
     let command = {
         let mut command = Command::new(spawn.program);
         command.args(spawn.arguments);
         command
     };
-    command
+    Ok(command)
 }
 
 /// Starts a helper, confined as its role says, with its pipes; standard
 /// error is the trusted core's own.
 pub(crate) fn spawn(spawn: &Spawn<'_>) -> io::Result<Process> {
-    let mut command = command(spawn);
+    let mut command = command(spawn)?;
     command.env_clear();
     for (name, value) in spawn.environment {
         command.env(name, value);
@@ -55,7 +58,7 @@ pub(crate) fn spawn(spawn: &Spawn<'_>) -> io::Result<Process> {
 /// socket to it.
 pub(crate) fn start_core(spawn: &Spawn<'_>) -> io::Result<(Process, Channel)> {
     let (ours, theirs) = UnixStream::pair()?;
-    let mut command = command(spawn);
+    let mut command = command(spawn)?;
     command.env_clear();
     for (name, value) in spawn.environment {
         command.env(name, value);

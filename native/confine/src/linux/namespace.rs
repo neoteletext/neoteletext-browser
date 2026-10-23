@@ -1,7 +1,8 @@
 //! The first two layers: no new privileges, and an empty network
-//! namespace.
+//! namespace, with a mount namespace of the helper's own; and the helper's
+//! end with its parent's.
 
-#![expect(unsafe_code, reason = "the C library calls for the network namespace and no-new-privileges (requirement 10.12)")]
+#![expect(unsafe_code, reason = "the C library calls for the namespaces and no-new-privileges (requirement 10.12)")]
 
 /// No new privileges: nothing started from here on can gain any, and
 /// Landlock and seccomp require it.
@@ -14,6 +15,8 @@ pub(super) fn no_new_privileges() -> Result<(), String> {
 
 /// An empty network namespace, if the kernel lets an unprivileged process
 /// make one: the process is then alone on a network with nothing on it.
+/// A mount namespace of its own comes with it, in which the interface and
+/// the sound helper cover the system's sockets (decision 86, `runtime`).
 /// The user namespace that makes that possible maps the user to
 /// themselves, so the sound server and the display still see who is
 /// connecting; unmapped, the process would be "nobody" to them, and
@@ -23,7 +26,7 @@ pub(super) fn network_namespace() -> Result<(), String> {
     let (uid, gid) = unsafe { (libc::getuid(), libc::getgid()) };
     // SAFETY: unshare takes flags only; the process has one thread here,
     // which CLONE_NEWUSER requires.
-    let result = unsafe { libc::unshare(libc::CLONE_NEWUSER | libc::CLONE_NEWNET) };
+    let result = unsafe { libc::unshare(libc::CLONE_NEWUSER | libc::CLONE_NEWNET | libc::CLONE_NEWNS) };
     if result != 0 {
         return Err(std::io::Error::last_os_error().to_string());
     }
@@ -33,4 +36,23 @@ pub(super) fn network_namespace() -> Result<(), String> {
     std::fs::write("/proc/self/uid_map", format!("{uid} {uid} 1")).map_err(|error| format!("uid_map: {error}"))?;
     std::fs::write("/proc/self/gid_map", format!("{gid} {gid} 1")).map_err(|error| format!("gid_map: {error}"))?;
     Ok(())
+}
+
+/// The helper is killed when its parent, the broker, ends, however it
+/// ends (finding F-34): otherwise a helper of a broker that crashed lives
+/// on, reparented, with its sandbox but with no one to end it. The signal
+/// is sent when the thread that started the helper ends; the broker
+/// starts every helper from its one serving thread. A parent that ended
+/// before the signal was set would leave the helper reparented already,
+/// so the parent is read before and after: a change means it ended.
+pub(super) fn end_with_parent() -> Result<(), String> {
+    // SAFETY: getppid takes no arguments.
+    let parent = unsafe { libc::getppid() };
+    // SAFETY: prctl with PR_SET_PDEATHSIG takes integer arguments only.
+    let result = unsafe { libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGKILL, 0, 0, 0) };
+    if result != 0 {
+        return Err(std::io::Error::last_os_error().to_string());
+    }
+    // SAFETY: as above.
+    if unsafe { libc::getppid() } == parent { Ok(()) } else { Err(String::from("its parent ended before it was confined")) }
 }
