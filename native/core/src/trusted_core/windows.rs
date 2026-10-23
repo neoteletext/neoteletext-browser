@@ -166,6 +166,12 @@ impl Core {
         if !into_new && !self.session.window_ids().contains(&window) {
             return Ok(());
         }
+        // A tab keeps to its kind of window: a private tab's cookies,
+        // history and session are kept apart from an ordinary one's
+        // (finding F-83).
+        if !into_new && self.session.others.iter().find(|other| other.id == window).is_some_and(|other| other.private != self.session.private_window) {
+            return self.say(String::from("A tab cannot move between a private window and another"));
+        }
         if into_new && self.session.window_count() >= interface_core::library::MAX_WINDOWS {
             return self.say(format!("At most {} windows are open at once", interface_core::library::MAX_WINDOWS));
         }
@@ -333,6 +339,30 @@ mod tests {
         std::thread::sleep(std::time::Duration::from_millis(neoteletext::links::PROMPT_DELAY_MILLISECONDS + DWELL_MILLISECONDS + 100));
         assert_eq!(test.core.intent(ToCore::Confirm(prompt.id)), Ok(true), "nothing handed on: with no broker, a hand-off fails");
         assert_eq!(test.core.links.prompt(), None, "the question went with its window");
+    }
+
+    /// Finding F-83: a tab does not move between a private window and an
+    /// ordinary one, either way: its cookies, history and kept session
+    /// are its window's kind's.
+    #[test]
+    fn a_tab_stays_in_its_kind_of_window() {
+        let mut test = Test::new("tab-kind");
+        test.core.session.open("https://news.invalid/teletext/").unwrap();
+        test.core.session.open("https://sport.invalid/teletext/").unwrap();
+        let ordinary = test.core.session.window;
+        let private = test.core.session.new_window(true).unwrap();
+        test.core.session.open("https://weather.invalid/teletext/").unwrap();
+        test.core.switch_window(ordinary);
+        test.core.intent(ToCore::From(ordinary)).unwrap();
+        // A move made would start the moved tab's helpers, which this
+        // core, with no broker, cannot: only where the tabs are is looked at.
+        let _ = test.core.intent(ToCore::TabToWindow { tab: 0, window: private, index: 0 });
+        test.core.switch_window(ordinary);
+        assert_eq!(test.core.session.tabs.len(), 2, "the ordinary tab stayed");
+        test.core.intent(ToCore::From(private)).unwrap();
+        let _ = test.core.intent(ToCore::TabToWindow { tab: 0, window: ordinary, index: 0 });
+        test.core.switch_window(private);
+        assert_eq!(test.core.session.tabs.len(), 1, "the private tab stayed");
     }
 
     /// Requirements 20.21 and 20.22: the session is written after every
