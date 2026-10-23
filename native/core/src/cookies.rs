@@ -406,14 +406,24 @@ impl Store {
         let (table, saved) = rest.split_at(split);
         let saved = saved.strip_prefix(b"\n").unwrap_or(saved);
         let mut named: BTreeMap<String, Channel> = BTreeMap::new();
+        // A channel is named once, under a tag this store does not use: a
+        // key under a second tag would keep cookies its deletion and its
+        // block do not reach, and a tag in use would merge two channels'
+        // cookies (finding F-33). The second's cookies are then strays.
+        let mut keys: BTreeSet<String> = self.tags.keys().cloned().collect();
         for line in String::from_utf8_lossy(table).lines().filter(|line| !line.is_empty()) {
             let fields: Vec<&str> = line.split('\t').collect();
             let channel = match fields.as_slice() {
-                ["channel", tag, key] if named.len() < MAX_CHANNELS && is_tag(tag) && !named.contains_key(*tag) => {
+                ["channel", tag, key]
+                    if named.len() < MAX_CHANNELS && is_tag(tag) && !named.contains_key(*tag) && !self.channels.contains_key(*tag) && !keys.contains(*key) =>
+                {
                     Channel::of(key).filter(|channel| channel.key == *key)
                 }
                 _ => None,
             };
+            if let Some(channel) = &channel {
+                keys.insert(channel.key.clone());
+            }
             match channel {
                 Some(channel) => {
                     named.insert((*fields.get(1).unwrap_or(&"")).to_owned(), channel);
