@@ -2,6 +2,7 @@
 //! follows it by its own rules.
 
 use interface_core::canvas::PageKey;
+use neoteletext::calendar::utc_now;
 use neoteletext::links::{Channel as LinkChannel, Follow, Links, Refusal};
 use protocol::console::Level;
 use protocol::links::{LinkKind, Message as LinkMessage, Pointing};
@@ -131,7 +132,7 @@ impl Core {
     /// it came from and the time (requirement 17.9).
     fn hand_off(&mut self, address: &str) -> Result<(), String> {
         let from = self.links.opened_page().map(|key| format!("page {:03X} of channel {}", key.page, key.channel)).unwrap_or_default();
-        let at = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |since| since.as_secs());
+        let at = u64::try_from(utc_now()).unwrap_or(0);
         match self.broker()?.open_web(address) {
             Ok(()) => {
                 self.log(Level::Info, None, &format!("handed {address} to the web browser, from {from}, at {at} seconds past 1970"));

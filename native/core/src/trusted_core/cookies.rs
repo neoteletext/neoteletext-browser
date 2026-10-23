@@ -8,6 +8,7 @@
 use std::collections::BTreeSet;
 use std::time::{Duration, Instant};
 
+use neoteletext::calendar::utc_now;
 use neoteletext::cookies::{self as kept, Channel, Mode, Refused, Store};
 use neoteletext_web::cookie::Site;
 use panel::Row;
@@ -42,7 +43,7 @@ pub(crate) struct Cookies {
 }
 
 fn now_unix() -> u64 {
-    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |since| since.as_secs())
+    u64::try_from(utc_now()).unwrap_or(0)
 }
 
 const fn site(site: CookieSite) -> Site {

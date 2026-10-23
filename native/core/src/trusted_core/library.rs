@@ -7,7 +7,7 @@
 
 use confine::LocalTime;
 use neoteletext::bookmarks::Removed;
-use neoteletext::calendar::local_day;
+use neoteletext::calendar::{local_day, utc_now};
 use neoteletext::history::{History, Visit};
 use protocol::ToCore;
 use protocol::clean;
@@ -102,7 +102,7 @@ impl Core {
     /// The time and the local zone's offset, from the broker; a test's core,
     /// with none, has UTC.
     pub(crate) fn local_time(&self) -> LocalTime {
-        let utc = || std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).ok().and_then(|since| i64::try_from(since.as_secs()).ok()).unwrap_or(0);
+        let utc = utc_now;
         match self.broker.as_ref().map(|broker| broker.local_time()) {
             Some(Ok(time)) => time,
             Some(Err(reason)) => {
