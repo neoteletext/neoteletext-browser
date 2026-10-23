@@ -1,0 +1,17 @@
+[package]
+name = "neoteletext-stub"
+description = "The Windows stub, NeoTeletext.exe (installation-and-updates.md section 4.2): it reads the one-byte launcher choice and starts launcher-a.exe or launcher-b.exe; it is never replaced, so Start, the taskbar and the uninstaller always find the browser"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+# Only to check, in a test, that the stub names what the launcher writes:
+# the stub itself depends on nothing, so it stays small.
+[dev-dependencies]
+update.workspace = true
+launcher.workspace = true
+
+[lints]
+workspace = true

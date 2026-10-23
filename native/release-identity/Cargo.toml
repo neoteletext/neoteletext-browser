@@ -1,0 +1,14 @@
+[package]
+name = "release-identity"
+description = "The release's identity, built in at build time: the update host and The Update Framework's first root for the updater, and the platform signers the launcher and the installer pin"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+update.workspace = true
+
+[lints]
+workspace = true

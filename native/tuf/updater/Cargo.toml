@@ -1,0 +1,32 @@
+[package]
+name = "neoteletext-updater"
+description = "The updater (installation-and-updates.md section 3): a confined helper of the trusted core that verifies The Update Framework's metadata of the update host, says what the newest version is, and on the user's acceptance downloads, checks and stages it; it switches nothing"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[lib]
+name = "updater"
+
+[[bin]]
+name = "neoteletext-updater"
+path = "src/main.rs"
+
+[dependencies]
+update.workspace = true
+release-identity.workspace = true
+confine.workspace = true
+tough.workspace = true
+tokio.workspace = true
+async-trait.workspace = true
+futures.workspace = true
+bytes.workspace = true
+url.workspace = true
+rustls.workspace = true
+webpki-roots.workspace = true
+neoteletext-web.workspace = true
+
+[lints]
+workspace = true

@@ -72,6 +72,8 @@ pub enum SettingChange {
     Cookies(CookieMode),
     /// Where the remote control is (`remote-control.md`, decision 68).
     Remote(RemotePlace),
+    /// Check for updates, or not (`installation-and-updates.md` section 3.4).
+    CheckUpdates(bool),
 }
 
 /// The furthest a floating remote's corner may be from the window's, in
@@ -101,6 +103,20 @@ pub struct RemotePlace {
     pub x: u16,
     /// Its top edge.
     pub y: u16,
+}
+
+/// Updates, as the settings panel shows them (`installation-and-updates.md`
+/// section 3.4), in the trusted core's words.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct UpdateView {
+    /// The version running, or empty when the browser was not installed.
+    pub version: String,
+    /// What the trusted core says of updates.
+    pub status: String,
+    /// The version the user may install, when there is one.
+    pub offer: Option<String>,
+    /// The browser checks for updates.
+    pub checking: bool,
 }
 
 /// What is kept of cookies (`cookies.md` section 4.2).

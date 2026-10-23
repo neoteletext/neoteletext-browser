@@ -123,6 +123,8 @@ enum Incoming {
     Sounding(BTreeSet<u32>),
     /// The settings, for the panel of the trusted strip.
     Settings(interface_core::settings::SettingsView),
+    /// Updates, for the settings panel.
+    Update(interface_core::settings::UpdateView),
     /// New entries for the developer console.
     Console(interface_core::console::ConsoleUpdate),
     /// History, bookmarks and their panels (`history-and-bookmarks.md`).
@@ -253,6 +255,9 @@ struct App {
     exit: Option<String>,
     /// Reports each frame and what it cost, for measuring the drawing.
     trace_frames: bool,
+    /// When the first frame of any window reached the screen, in
+    /// milliseconds from `start`; the trusted core is told it once.
+    first_frame: Option<u64>,
     /// The window opens once the event loop has resumed and the trusted
     /// core's first message has come, which is the window's kept place when
     /// a session is restored (`history-and-bookmarks.md` section 15.3).
@@ -489,7 +494,14 @@ impl App {
                 Some(softbuffer::Rect { x: u32::from(area.x0), y: u32::from(area.y0), width, height })
             })
             .collect();
-        let _ = buffer.present_with_damage(&rects);
+        let presented = buffer.present_with_damage(&rects).is_ok();
+        // The first frame on the screen is a part of the version's health
+        // (`installation-and-updates.md` section 3.2), said once.
+        if presented && self.first_frame.is_none() {
+            self.first_frame = Some(now);
+            self.send(event_loop, &ToCore::Drawn);
+            let _ = self.output.flush();
+        }
         if self.trace_frames {
             let presented = started.elapsed();
             let pixels: u32 = damage.boxes().iter().map(|area| area.area()).sum();
@@ -585,6 +597,7 @@ impl App {
                     message
                 }
                 Output::Setting(change) => ToCore::ChangeSetting(change),
+                Output::InstallUpdate => ToCore::InstallUpdate,
                 Output::Console(open) => ToCore::Console(open),
                 Output::MuteTab(index) => {
                     let Ok(index) = u8::try_from(index) else { continue };
@@ -1115,6 +1128,7 @@ impl App {
             }
             Incoming::Strip(strip) => self.view.browser.set_strip(strip),
             Incoming::Settings(view) => self.view.browser.set_settings(view),
+            Incoming::Update(view) => self.view.browser.set_update(view),
             Incoming::Console(update) => self.view.browser.console_update(update),
             Incoming::Library(view) => match view {
                 Library::History(view) => self.view.browser.set_history(view),
@@ -1327,6 +1341,7 @@ fn read_core(proxy: &EventLoopProxy<Incoming>) {
             #[cfg(feature = "phone-keyboard")]
             Ok(Some(ToInterface::PhoneKey(key))) => Incoming::PhoneKey(key),
             Ok(Some(ToInterface::Settings(view))) => Incoming::Settings(view),
+            Ok(Some(ToInterface::Update(view))) => Incoming::Update(view),
             Ok(Some(ToInterface::Console(update))) => Incoming::Console(update),
             Ok(Some(ToInterface::History(view))) => Incoming::Library(Library::History(view)),
             Ok(Some(ToInterface::Cookies(view))) => Incoming::Library(Library::Cookies(view)),
@@ -1390,6 +1405,7 @@ fn main() -> std::process::ExitCode {
         exit: None,
         // NEOTELETEXT_FRAME_TRACE reports every frame drawn and its cost.
         trace_frames: std::env::var_os("NEOTELETEXT_FRAME_TRACE").is_some(),
+        first_frame: None,
         resumed: false,
         heard: Heard::Nothing,
     };

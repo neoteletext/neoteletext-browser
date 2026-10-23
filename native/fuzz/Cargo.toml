@@ -19,6 +19,7 @@ decoder = { path = "../decoder", package = "neoteletext-decoder" }
 neoteletext = { path = "../core" }
 web-opener = { path = "../web-opener" }
 confine = { path = "../confine" }
+update = { path = "../update" }
 neoteletext-qrkeyboard = { git = "file:///Users/andrewstuart/devel/neoteletext-engine", rev = "d9ca77f8aef30fff162e6727282f2a583798e03e" }
 neoteletext-input = { git = "file:///Users/andrewstuart/devel/neoteletext-engine", rev = "d9ca77f8aef30fff162e6727282f2a583798e03e" }
 
@@ -191,6 +192,41 @@ bench = false
 [[bin]]
 name = "netscape_file"
 path = "fuzz_targets/netscape_file.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "release_manifest"
+path = "fuzz_targets/release_manifest.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "launcher_state"
+path = "fuzz_targets/launcher_state.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "gzip_member"
+path = "fuzz_targets/gzip_member.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "updater_messages"
+path = "fuzz_targets/updater_messages.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "version_mark"
+path = "fuzz_targets/version_mark.rs"
 test = false
 doc = false
 bench = false

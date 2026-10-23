@@ -3,9 +3,9 @@
 # drawing back ends, the interface process and the trusted core.
 [workspace]
 resolver = "3"
-members = ["interface-core", "draw-vello", "draw-embedded", "protocol", "interface", "core", "decoder", "fetcher", "site", "dock-menu", "web-opener", "keyboard", "confine", "sound"]
+members = ["interface-core", "draw-vello", "draw-embedded", "protocol", "interface", "core", "decoder", "fetcher", "site", "dock-menu", "web-opener", "keyboard", "confine", "sound", "update", "release-identity", "launcher", "os-install", "stub", "installer"]
 # Built with a nightly compiler of its own (scripts/tools.sh).
-exclude = ["fuzz"]
+exclude = ["fuzz", "tuf"]
 
 [workspace.package]
 license = "MIT"
@@ -28,6 +28,16 @@ dock-menu = { path = "dock-menu", default-features = false }
 web-opener = { path = "web-opener", default-features = false }
 # The processes' sandboxes on every platform (decision 52).
 confine = { path = "confine", default-features = false }
+# What the launcher, the updater, the installer and the release tool
+# share (installation-and-updates.md).
+update = { path = "update" }
+# The release's identity, built in (installation-and-updates.md section 14).
+release-identity = { path = "release-identity" }
+# The calls installing and launching need that only an unsafe interface
+# offers (requirement 10.12, as amended for it).
+os-install = { path = "os-install" }
+# The launcher's logic, for the Windows installer.
+launcher = { path = "launcher", package = "neoteletext-launcher" }
 decoder = { path = "decoder", package = "neoteletext-decoder", default-features = false }
 # The teletext engine, maintained in its own repository (design section
 # 4.0), pinned to one commit. Its repository is local until that commit is
@@ -89,6 +99,15 @@ ring = { version = "=0.17.14", default-features = false }
 # (`cookies.md` section 7, decision 62), read by the broker alone.
 keyring = { version = "=4.2.0" }
 webpki-roots = "=1.0.10"
+# MIT, Zlib or Apache-2.0: the release files' DEFLATE, read with a bound
+# on what it writes (installation-and-updates.md section 6). The PNG
+# reader that brought it into the browser left with decision 61.
+miniz_oxide = { version = "=0.9.1", default-features = false, features = ["with-alloc"] }
+# Apache-2.0 WITH LLVM-exception, Apache-2.0 or MIT, already under winit
+# and tempfile: the atomic exchange of two folders (`renameatx_np` with
+# `RENAME_SWAP`, `renameat2` with `RENAME_EXCHANGE`, requirement 13.7)
+# through a safe interface.
+rustix = { version = "=1.1.5", default-features = false, features = ["std", "fs"] }
 # MIT or Apache-2.0: typed text sent in Unicode Normalization Form C
 # (INPUT.md section 5.7 rule 3, REQ-INT-116; decision 49).
 unicode-normalization = "=0.1.25"
@@ -118,3 +137,9 @@ opt-level = 3
 
 [profile.release]
 strip = true
+
+# The Windows stub is never replaced, and is to stay under 200 KB
+# (installation-and-updates.md section 4.2): built for size.
+[profile.release.package.neoteletext-stub]
+opt-level = "z"
+codegen-units = 1

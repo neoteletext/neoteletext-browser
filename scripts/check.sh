@@ -38,7 +38,9 @@ $out_of_date"
 # same no-panic lint list at its root.
 readonly NO_PANIC_ROOTS=(native/protocol/src/lib.rs native/decoder/src/lib.rs native/decoder/src/main.rs native/fetcher/src/main.rs
     native/core/src/lib.rs native/core/src/main.rs native/interface/src/lib.rs native/interface/src/main.rs native/web-opener/src/lib.rs
-    native/keyboard/src/main.rs native/sound/src/lib.rs native/sound/src/main.rs native/confine/src/lib.rs)
+    native/keyboard/src/main.rs native/sound/src/lib.rs native/sound/src/main.rs native/confine/src/lib.rs
+    native/update/src/lib.rs native/launcher/src/lib.rs native/launcher/src/main.rs native/os-install/src/lib.rs native/installer/src/main.rs
+    native/tuf/updater/src/lib.rs native/tuf/updater/src/main.rs native/tuf/release/src/main.rs native/tuf/release/src/host.rs)
 
 check_no_panic_lists() {
     step "the no-panic lint list is the same in every crate that reads outside input"
@@ -79,6 +81,20 @@ check_native() {
     done
     step "native: tests"
     (cd native && cargo nextest run --workspace --hide-progress-bar --status-level fail --final-status-level fail)
+    check_tuf
+}
+
+# The updater's workspace (native/tuf: the updater and the release tool,
+# with `tough`), apart so its dependencies' features never reach the
+# browser's crates (installation-and-updates.md section 14).
+check_tuf() {
+    step "native/tuf: lockfiles up to date, formatting"
+    (cd native/tuf && cargo metadata --quiet --locked --format-version 1 >/dev/null && cargo fmt --check)
+    (cd native/tuf/fuzz && cargo metadata --quiet --locked --format-version 1 >/dev/null)
+    step "native/tuf: Clippy, warnings as errors"
+    (cd native/tuf && cargo clippy --quiet --workspace --all-targets -- -D warnings)
+    step "native/tuf: tests"
+    (cd native/tuf && cargo nextest run --workspace --hide-progress-bar --status-level fail --final-status-level fail)
 }
 
 # The packages that have each optional area, as `package/area` features.
@@ -130,7 +146,8 @@ check_linux() {
     step "Linux on $linux_host: native, Clippy and tests"
     ssh -o BatchMode=yes -o ConnectTimeout=10 "$linux_host" true || fail "$linux_host is unreachable; the full gate needs it"
     rsync -a --delete --exclude target --exclude tools --exclude .git \
-        --exclude native/fuzz/corpus --exclude native/fuzz/artifacts ./ "$linux_host:neoteletext-browser-check/"
+        --exclude native/fuzz/corpus --exclude native/fuzz/artifacts --exclude native/tuf/fuzz/corpus --exclude native/tuf/fuzz/artifacts \
+        ./ "$linux_host:neoteletext-browser-check/"
     # The engine is a git dependency on a repository on this machine; its
     # history goes to the host, and git there reads it in place of this
     # machine's path, for these commands only.
@@ -145,25 +162,31 @@ check_linux() {
         export CARGO_NET_GIT_FETCH_WITH_CLI=true GIT_CONFIG_COUNT=1
         export GIT_CONFIG_KEY_0=url.file://\$HOME/neoteletext-browser-check-engine.git.insteadOf GIT_CONFIG_VALUE_0=$engine
         (cd native && cargo clippy --quiet --workspace --all-targets -- -D warnings && cargo test --quiet --workspace \\
-            && cargo clippy --quiet --workspace --all-targets --no-default-features -- -D warnings)"
+            && cargo clippy --quiet --workspace --all-targets --no-default-features -- -D warnings)
+        (cd native/tuf && cargo clippy --quiet --workspace --all-targets -- -D warnings && cargo test --quiet --workspace)"
 }
 
 check_fuzz() {
-    step "native fuzzing: Clippy, then $fuzz_seconds seconds a target after its regressions"
-    (
-        cd native/fuzz
-        cargo "+$FUZZ_NIGHTLY" clippy --quiet --all-targets -- -D warnings
-        local target log
-        for target in $(cargo "+$FUZZ_NIGHTLY" fuzz list); do
-            mkdir -p "corpus/$target" "regressions/$target"
-            log="target/fuzz-$target.log"
-            mkdir -p target
-            cargo "+$FUZZ_NIGHTLY" fuzz run "$target" "corpus/$target" "regressions/$target" -- \
-                -max_total_time="$fuzz_seconds" -timeout=10 -rss_limit_mb=2048 >"$log" 2>&1 ||
-                { tail -40 "$log"; fail "fuzz target $target found a fault; its input is in native/fuzz/artifacts/$target/"; }
-            printf '%s: %s\n' "$target" "$(grep '^Done' "$log")"
-        done
-    )
+    # The browser's fuzz targets, and the updater workspace's (The Update
+    # Framework's metadata through `tough`, the update host's responses).
+    local folder
+    for folder in native/fuzz native/tuf/fuzz; do
+        step "$folder: Clippy, then $fuzz_seconds seconds a target after its regressions"
+        (
+            cd "$folder"
+            cargo "+$FUZZ_NIGHTLY" clippy --quiet --all-targets -- -D warnings
+            local target log
+            for target in $(cargo "+$FUZZ_NIGHTLY" fuzz list); do
+                mkdir -p "corpus/$target" "regressions/$target"
+                log="target/fuzz-$target.log"
+                mkdir -p target
+                cargo "+$FUZZ_NIGHTLY" fuzz run "$target" "corpus/$target" "regressions/$target" -- \
+                    -max_total_time="$fuzz_seconds" -timeout=10 -rss_limit_mb=2048 >"$log" 2>&1 ||
+                    { tail -40 "$log"; fail "fuzz target $target found a fault; its input is in $folder/artifacts/$target/"; }
+                printf '%s: %s\n' "$target" "$(grep '^Done' "$log")"
+            done
+        )
+    done
 }
 
 full_gate() {
@@ -187,8 +210,12 @@ $loose"
     (cd native && cargo nextest run --workspace --no-default-features --hide-progress-bar --status-level fail --final-status-level fail)
     step "native: licences, advisories and sources"
     (cd native && cargo deny check)
+    (cd native/tuf && cargo deny check)
     step "native: no unused dependencies"
     (cd native && cargo machete)
+    (cd native/tuf && cargo machete)
+    step "native/tuf: release tests"
+    (cd native/tuf && cargo nextest run --workspace --release --hide-progress-bar --status-level fail --final-status-level fail)
     check_fuzz
 
     check_linux

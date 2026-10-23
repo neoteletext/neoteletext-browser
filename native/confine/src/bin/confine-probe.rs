@@ -25,6 +25,11 @@ mod linux {
     const PROBE: &str = "NEOTELETEXT_CONFINE_PROBE";
     /// How long a connection may take to be refused or not answered.
     const CONNECT_WAIT: Duration = Duration::from_millis(200);
+    /// The folder a role that writes one may write.
+    const WRITABLE: &str = "NEOTELETEXT_CONFINE_PROBE_WRITABLE";
+    /// The updater's one port in the probe: the port the probe's first
+    /// connection tries (9, discard), so the second (10) is another.
+    const UPDATER_PORT: u16 = 9;
 
     /// As a distribution that forbids unprivileged user namespaces does:
     /// `unshare` is refused.
@@ -46,9 +51,11 @@ mod linux {
                 Role::Decoder
             }
             "network" => Role::Network,
+            "updater" => Role::Updater { port: UPDATER_PORT },
             _ => Role::Interface,
         };
-        let report = match confine::apply(role, None) {
+        let writable = std::env::var_os(WRITABLE).map(std::path::PathBuf::from);
+        let report = match confine::apply(role, writable.as_deref()) {
             Ok(report) => report,
             Err(error) => {
                 println!("PROBE refused: {error}");
@@ -60,6 +67,9 @@ mod linux {
         let tcp = std::net::TcpStream::connect_timeout(&"127.0.0.1:9".parse().unwrap(), CONNECT_WAIT)
             .map_or_else(|error| if error.kind() == std::io::ErrorKind::PermissionDenied { "refused" } else { "no listener" }, |_| "connected");
         let write = std::fs::write("/tmp/neoteletext-confine-probe", b"x").map_or("refused", |()| "wrote");
-        println!("PROBE report={report}; file={file}; program={program}; tcp={tcp}; write={write}");
+        let other_port = std::net::TcpStream::connect_timeout(&"127.0.0.1:10".parse().unwrap(), CONNECT_WAIT)
+            .map_or_else(|error| if error.kind() == std::io::ErrorKind::PermissionDenied { "refused" } else { "no listener" }, |_| "connected");
+        let own = writable.map_or("none", |folder| std::fs::write(folder.join("probe"), b"x").map_or("refused", |()| "wrote"));
+        println!("PROBE report={report}; file={file}; program={program}; tcp={tcp}; write={write}; other-port={other_port}; own-folder={own}");
     }
 }

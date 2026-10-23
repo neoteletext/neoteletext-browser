@@ -18,7 +18,7 @@ pub const MAX_VOLUME: u8 = 100;
 /// The longest refusal the panel says.
 pub const MAX_REFUSAL: usize = 160;
 
-pub use interface_core::settings::{CookieMode, MAX_REMOTE_PLACE, ProxyView, RemoteMode, RemotePlace, SettingChange, SettingsView};
+pub use interface_core::settings::{CookieMode, MAX_REMOTE_PLACE, ProxyView, RemoteMode, RemotePlace, SettingChange, SettingsView, UpdateView};
 
 const PROXY_NONE: u8 = 0;
 const PROXY_HTTP: u8 = 1;
@@ -66,6 +66,9 @@ pub(crate) fn read_remote(fields: &mut Fields<'_>) -> Result<RemotePlace, Protoc
     }
     Ok(RemotePlace { mode, x, y })
 }
+// Far from the others, so changes added beside this one elsewhere do not
+// meet it (installation-and-updates.md section 3.4).
+const CHANGE_CHECK_UPDATES: u8 = 40;
 
 fn push_mode(mode: CookieMode) -> u8 {
     match mode {
@@ -197,8 +200,39 @@ pub(crate) fn push_change(payload: &mut Vec<u8>, change: &SettingChange) -> Resu
             payload.push(CHANGE_REMOTE);
             push_remote(payload, *place)?;
         }
+        SettingChange::CheckUpdates(on) => {
+            payload.push(CHANGE_CHECK_UPDATES);
+            push_flag(payload, *on);
+        }
     }
     Ok(())
+}
+
+/// The longest status line of updates the panel says.
+pub const MAX_UPDATE_STATUS: usize = 200;
+/// The longest version as text.
+pub const MAX_VERSION: usize = 17;
+
+pub(crate) fn push_update(payload: &mut Vec<u8>, view: &UpdateView) -> Result<(), ProtocolError> {
+    push_text(payload, &view.version, MAX_VERSION)?;
+    push_text(payload, &view.status, MAX_UPDATE_STATUS)?;
+    match &view.offer {
+        Some(offer) => {
+            push_flag(payload, true);
+            push_text(payload, offer, MAX_VERSION)?;
+        }
+        None => push_flag(payload, false),
+    }
+    push_flag(payload, view.checking);
+    Ok(())
+}
+
+pub(crate) fn read_update(fields: &mut Fields<'_>) -> Result<UpdateView, ProtocolError> {
+    let version = fields.text(MAX_VERSION)?;
+    let status = fields.text(MAX_UPDATE_STATUS)?;
+    let offer = if read_flag(fields)? { Some(fields.text(MAX_VERSION)?) } else { None };
+    let checking = read_flag(fields)?;
+    Ok(UpdateView { version, status, offer, checking })
 }
 
 pub(crate) fn read_change(fields: &mut Fields<'_>) -> Result<SettingChange, ProtocolError> {
@@ -213,6 +247,7 @@ pub(crate) fn read_change(fields: &mut Fields<'_>) -> Result<SettingChange, Prot
         CHANGE_RESTORE_SESSION => SettingChange::RestoreSession(read_flag(fields)?),
         CHANGE_COOKIES => SettingChange::Cookies(read_mode(fields)?),
         CHANGE_REMOTE => SettingChange::Remote(read_remote(fields)?),
+        CHANGE_CHECK_UPDATES => SettingChange::CheckUpdates(read_flag(fields)?),
         _ => return Err(ProtocolError::BadValue("setting change")),
     })
 }
@@ -252,6 +287,7 @@ mod tests {
             SettingChange::Cookies(CookieMode::Block),
             SettingChange::Remote(RemotePlace { mode: RemoteMode::Floating, x: 900, y: 140 }),
             SettingChange::Remote(RemotePlace { mode: RemoteMode::Docked, x: 0, y: 0 }),
+            SettingChange::CheckUpdates(false),
         ] {
             let mut payload = Vec::new();
             push_change(&mut payload, &change).unwrap();
@@ -269,5 +305,16 @@ mod tests {
         assert!(read_change(&mut Fields { bytes: &[9] }).is_err());
         assert!(read_change(&mut Fields { bytes: &[CHANGE_SOUND, 2] }).is_err());
         assert!(read_change(&mut Fields { bytes: &[CHANGE_PROXY, 3] }).is_err());
+        assert!(read_change(&mut Fields { bytes: &[CHANGE_CHECK_UPDATES, 2] }).is_err());
+    }
+
+    #[test]
+    fn the_update_view_round_trips_within_its_bounds() {
+        let view = UpdateView { version: "0.1.0".into(), status: "NeoTeletext 0.2.0 is available".into(), offer: Some("0.2.0".into()), checking: true };
+        let mut payload = Vec::new();
+        push_update(&mut payload, &view).unwrap();
+        assert_eq!(read_update(&mut Fields { bytes: &payload }).unwrap(), view);
+        assert!(push_update(&mut Vec::new(), &UpdateView { status: "x".repeat(MAX_UPDATE_STATUS + 1), ..view.clone() }).is_err());
+        assert!(push_update(&mut Vec::new(), &UpdateView { status: "a\u{202e}b".into(), ..view }).is_err(), "hidden characters");
     }
 }

@@ -14,14 +14,14 @@ use super::{Browser, Key, Output};
 use crate::canvas::Canvas;
 use crate::editor::Editor;
 use crate::geometry::{Point, Rect};
-use crate::settings::{CookieMode, ProxyView, SettingChange, SettingsView};
+use crate::settings::{CookieMode, ProxyView, SettingChange, SettingsView, UpdateView};
 use crate::theme::{BUTTON, HEADING, INSECURE, MUTED, ROW_STATUS, ROW_TITLE, RULE, WHITE};
 use crate::ui::{border, centred, left_centred};
 
 const PANEL_WIDTH: f64 = 600.0;
-/// Room for its heading, nine rows, two rows of chips and the trusted
+/// Room for its heading, eleven rows, two rows of chips and the trusted
 /// core's word.
-const PANEL_HEIGHT: f64 = 648.0;
+const PANEL_HEIGHT: f64 = 648.0 + 2.0 * ROW + GAP + ROW_GAP;
 const PADDING: f64 = 20.0;
 const HEADING_HEIGHT: f64 = 34.0;
 const ROW: f64 = 32.0;
@@ -88,11 +88,16 @@ struct Controls {
     restore_off: Rect,
     cookie_modes: Vec<(CookieMode, Rect)>,
     manage_cookies: Rect,
+    updates_on: Rect,
+    updates_off: Rect,
+    install: Rect,
 }
 
 /// The panel's state in the browser.
 pub(super) struct SettingsUi {
     view: Option<SettingsView>,
+    /// Updates, as the trusted core says them.
+    update: Option<UpdateView>,
     open: bool,
     focus: Option<Field>,
     home: Editor,
@@ -108,6 +113,7 @@ impl Default for SettingsUi {
     fn default() -> Self {
         Self {
             view: None,
+            update: None,
             open: false,
             focus: None,
             home: Editor::new(HOME_LIMIT),
@@ -178,6 +184,12 @@ impl Browser {
     pub fn set_settings(&mut self, view: SettingsView) {
         self.settings.view = Some(view);
         self.settings.refresh();
+    }
+
+    /// Updates as the trusted core sent them (`installation-and-updates.md`
+    /// section 3.4).
+    pub fn set_update(&mut self, view: UpdateView) {
+        self.settings.update = Some(view);
     }
 
     /// Whether the settings panel is open.
@@ -306,6 +318,13 @@ impl Browser {
         } else if controls.manage_cookies.contains(point) {
             self.manage_cookies();
             return true;
+        } else if controls.install.contains(point) {
+            self.outputs.push(Output::InstallUpdate);
+            return true;
+        } else if controls.updates_on.contains(point) {
+            Some(SettingChange::CheckUpdates(true))
+        } else if controls.updates_off.contains(point) {
+            Some(SettingChange::CheckUpdates(false))
         } else if controls.sound_on.contains(point) {
             Some(SettingChange::Sound(true))
         } else if controls.sound_off.contains(point) {
@@ -438,6 +457,28 @@ impl Browser {
         button(canvas, controls.manage_cookies, "Manage\u{2026}", false);
         y += ROW + ROW_GAP;
 
+        // Updates: checking on or off, the version, the trusted core's word
+        // on updates and, when there is one to install, Install
+        // (`installation-and-updates.md` section 3.4).
+        if let Some(update) = self.settings.update.clone() {
+            left_centred(canvas, row(y), 0.0, "Updates", ROW_TITLE, WHITE);
+            controls.updates_on = Rect::new(field_left, y, field_left + BUTTON_WIDTH * 1.2, y + ROW);
+            controls.updates_off = Rect::new(controls.updates_on.x1 + GAP, y, controls.updates_on.x1 + GAP + BUTTON_WIDTH * 1.2, y + ROW);
+            button(canvas, controls.updates_on, "Check", update.checking);
+            button(canvas, controls.updates_off, "Don\u{2019}t", !update.checking);
+            if let Some(offer) = &update.offer {
+                controls.install = Rect::new(right - WIDE_BUTTON, y, right, y + ROW);
+                button(canvas, controls.install, &format!("Install {offer}"), false);
+            }
+            y += ROW + GAP;
+            let line = Rect::new(field_left, y, right, y + ROW);
+            let said = if update.version.is_empty() { update.status.clone() } else { format!("Version {} \u{00B7} {}", update.version, update.status) };
+            canvas.push_clip(line);
+            left_centred(canvas, line, 0.0, &said, ROW_STATUS, MUTED);
+            canvas.pop_clip();
+            y += ROW + ROW_GAP;
+        }
+
         // The local addresses allowed: a field to add one, then each.
         left_centred(canvas, row(y), 0.0, "Local network", ROW_TITLE, WHITE);
         controls.add = Rect::new(right - BUTTON_WIDTH, y, right, y + ROW);
@@ -521,6 +562,32 @@ mod tests {
 
     fn typed(browser: &mut Browser, text: &str) {
         browser.key(Key::Text(text), Modifiers::default(), 0);
+    }
+
+    /// `installation-and-updates.md` section 3.4: the panel says the
+    /// version and the trusted core's word, offers Install only when the
+    /// trusted core offers a version, and asks for checking on or off.
+    #[test]
+    fn the_panel_offers_an_update_only_when_the_trusted_core_does() {
+        let mut browser = open();
+        assert_eq!(browser.settings.controls.updates_on, Rect::ZERO, "no updates row before the trusted core says");
+        browser.set_update(UpdateView { version: "0.1.0".into(), status: "NeoTeletext is up to date".into(), offer: None, checking: true });
+        browser.draw(&mut Recorder::new(), 1440.0, 900.0, 0);
+        assert_eq!(browser.settings.controls.install, Rect::ZERO, "nothing to install");
+        let off = browser.settings.controls.updates_off;
+        assert_eq!(press(&mut browser, off), [Output::Setting(SettingChange::CheckUpdates(false))]);
+        browser.set_update(UpdateView {
+            version: "0.1.0".into(),
+            status: "NeoTeletext 0.2.0 is available".into(),
+            offer: Some("0.2.0".into()),
+            checking: true,
+        });
+        browser.draw(&mut Recorder::new(), 1440.0, 900.0, 0);
+        let install = browser.settings.controls.install;
+        assert_ne!(install, Rect::ZERO);
+        assert_eq!(press(&mut browser, install), [Output::InstallUpdate]);
+        let on = browser.settings.controls.updates_on;
+        assert_eq!(press(&mut browser, on), [Output::Setting(SettingChange::CheckUpdates(true))]);
     }
 
     /// Requirement 19.3: each control asks the trusted core for its change.

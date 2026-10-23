@@ -1,0 +1,42 @@
+[package]
+name = "os-install"
+description = "The operating system calls installing and launching need and only an unsafe interface offers: a question to the user (CoreFoundation's alert on macOS, MessageBoxW on Windows), and on Windows Authenticode's check with the signer's key pinned, and the per-user uninstall entry in the registry"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+update.workspace = true
+
+# Windows: the bindings already in the tree for winit, web-opener and
+# confine, so no crate is added; the features enable the trust, the
+# certificate, the registry and the message box calls.
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "=0.52.0", features = [
+    "Win32_Foundation",
+    "Win32_Security",
+    "Win32_Security_Cryptography",
+    "Win32_Security_Cryptography_Catalog",
+    "Win32_Security_Cryptography_Sip",
+    "Win32_Security_WinTrust",
+    "Win32_System_Registry",
+    "Win32_UI_WindowsAndMessaging",
+] }
+
+# As dock-menu's, web-opener's and confine's: unsafe code is denied, not
+# forbidden, and allowed only in the macOS and Windows modules, each
+# block with its reason (requirement 10.12, as amended for this crate).
+[lints.rust]
+unsafe_code = "deny"
+missing_docs = "warn"
+unused_qualifications = "warn"
+
+[lints.clippy]
+pedantic = { level = "warn", priority = -1 }
+allow_attributes_without_reason = "warn"
+dbg_macro = "warn"
+todo = "warn"
+unimplemented = "warn"
+undocumented_unsafe_blocks = "warn"

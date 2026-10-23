@@ -1,0 +1,66 @@
+# The Update Framework's side of updates (installation-and-updates.md
+# sections 8.2 and 10): the confined updater, which verifies the
+# repository with `tough` and stages a release, and the release tool,
+# which signs one. A workspace of its own, as the fuzz targets are: `tough`
+# brings `tokio`, `aws-lc-rs` and their kin (136 crates, design section
+# 2), whose features would otherwise reach the browser's own crates
+# through Cargo's feature unification (rustls with a second cryptography
+# provider, for one), and whose build would weigh on every gate of the
+# browser's. Its lockfile is its own.
+[workspace]
+resolver = "3"
+members = ["updater", "release"]
+# Built with the fuzzing nightly compiler, as native/fuzz is.
+exclude = ["fuzz"]
+
+[workspace.package]
+license = "MIT"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.90"
+publish = false
+
+[workspace.dependencies]
+update = { path = "../update" }
+release-identity = { path = "../release-identity" }
+confine = { path = "../confine", default-features = false }
+# MIT or Apache-2.0: The Update Framework's client and repository editor,
+# maintained by Amazon for Bottlerocket (decisions 16 and 24, requirement
+# 13.8). No default features: no HTTP client of its own; the updater
+# gives it the browser's transport.
+tough = { version = "=0.24.0", default-features = false }
+# MIT: the runtime `tough` needs, on the one thread that calls it.
+tokio = { version = "=1.54.1", default-features = false, features = ["rt"] }
+# MIT or Apache-2.0, already under `tough`: its transport is an async
+# trait, a stream of bytes.
+async-trait = "=0.1.92"
+futures = { version = "=0.3.34", default-features = false, features = ["std"] }
+bytes = "=1.12.1"
+url = "=2.5.8"
+# TLS to the update host (decision 41's `rustls`), with the provider
+# `tough` already brings (`aws-lc-rs`), and Mozilla's roots.
+rustls = { version = "=0.23.46", default-features = false, features = ["std", "aws_lc_rs", "tls12"] }
+webpki-roots = "=1.0.10"
+# The engine's HTTP reader and proxy handshake (requirement 2.1), at the
+# browser's pin.
+neoteletext-web = { git = "file:///Users/andrewstuart/devel/neoteletext-engine", rev = "d9ca77f8aef30fff162e6727282f2a583798e03e", default-features = false, features = ["std"] }
+# The release tool's own keys and signatures: Ed25519, as the browser's.
+ring = { version = "=0.17.14", default-features = false }
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+missing_docs = "warn"
+unused_qualifications = "warn"
+
+[workspace.lints.clippy]
+pedantic = { level = "warn", priority = -1 }
+allow_attributes_without_reason = "warn"
+dbg_macro = "warn"
+todo = "warn"
+unimplemented = "warn"
+
+[profile.dev.package."*"]
+opt-level = 3
+
+[profile.release]
+strip = true

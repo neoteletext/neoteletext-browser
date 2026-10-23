@@ -19,7 +19,9 @@
 //! namespaces, or an architecture with no filter, gets an error and no
 //! process, never a process with less.
 
-use landlock::{ABI, Access, AccessFs, AccessNet, CompatLevel, Compatible, PathBeneath, PathFd, Ruleset, RulesetAttr, RulesetCreatedAttr, RulesetStatus};
+use landlock::{
+    ABI, Access, AccessFs, AccessNet, CompatLevel, Compatible, NetPort, PathBeneath, PathFd, Ruleset, RulesetAttr, RulesetCreatedAttr, RulesetStatus,
+};
 use seccompiler::{BpfProgram, SeccompAction, SeccompCmpArgLen, SeccompCmpOp, SeccompCondition, SeccompFilter, SeccompRule, TargetArch};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -51,7 +53,7 @@ fn families(role: Role) -> &'static [u64] {
         // The resolver uses netlink to ask which address families the
         // host has, and local-domain sockets for the name service cache;
         // neither reaches beyond the host.
-        Role::Network => &[libc::AF_INET as u64, libc::AF_INET6 as u64, libc::AF_NETLINK as u64, libc::AF_UNIX as u64],
+        Role::Network | Role::Updater { .. } => &[libc::AF_INET as u64, libc::AF_INET6 as u64, libc::AF_NETLINK as u64, libc::AF_UNIX as u64],
         // The display, the sound server and the input method are
         // local-domain sockets.
         Role::Interface | Role::Sound => &[libc::AF_UNIX as u64],
@@ -97,7 +99,7 @@ fn network_namespace() -> Result<(), String> {
 fn readable(role: Role) -> Vec<PathBuf> {
     let mut paths: Vec<PathBuf> = match role {
         Role::Decoder | Role::Core => Vec::new(),
-        Role::Network => RESOLVER_PATHS.iter().map(PathBuf::from).collect(),
+        Role::Network | Role::Updater { .. } => RESOLVER_PATHS.iter().map(PathBuf::from).collect(),
         Role::Sound => {
             let mut paths: Vec<PathBuf> = SOUND_PATHS.iter().map(PathBuf::from).collect();
             if let Some(home) = std::env::var_os("HOME").map(PathBuf::from).filter(|home| home.is_absolute()) {
@@ -138,8 +140,9 @@ fn read_access(path: &Path, abi: ABI) -> landlock::BitFlags<AccessFs> {
 }
 
 /// Landlock: the readable paths, the sound devices for the sound helper,
-/// the core's settings folder written, and no TCP for a role without the
-/// network, every one of them enforced or none (decision 58).
+/// the core's settings folder or the updater's staging folder written, no
+/// TCP for a role without the network and one port for the updater, every
+/// one of them enforced or none (decision 58).
 fn landlock(role: Role, writable: Option<&Path>) -> Result<(), String> {
     let abi = LANDLOCK_ABI;
     let mut ruleset =
@@ -154,13 +157,18 @@ fn landlock(role: Role, writable: Option<&Path>) -> Result<(), String> {
     }
     let written = match role {
         Role::Sound => Some(Path::new(SOUND_DEVICES)),
-        Role::Core => writable,
+        Role::Core | Role::Updater { .. } => writable,
         Role::Decoder | Role::Network | Role::Interface => None,
     };
     if let Some(folder) = written
         && let Ok(fd) = PathFd::new(folder)
     {
         created = created.add_rule(PathBeneath::new(fd, AccessFs::from_all(abi))).map_err(|error| error.to_string())?;
+    }
+    // The updater connects to its one port, and binds none (section 8.1
+    // of the installation design).
+    if let Role::Updater { port } = role {
+        created = created.add_rule(NetPort::new(port, AccessNet::ConnectTcp)).map_err(|error| error.to_string())?;
     }
     let status = created.restrict_self().map_err(|error| error.to_string())?;
     enforced(&status.ruleset)
@@ -297,7 +305,7 @@ fn seccomp(role: Role, arch: TargetArch) -> Result<(), String> {
 pub fn apply(role: Role, writable: Option<&Path>) -> Result<Report, String> {
     let mut report = Report::default();
     no_new_privileges().map_err(|error| format!("cannot refuse new privileges: {error}"))?;
-    if role != Role::Network {
+    if !matches!(role, Role::Network | Role::Updater { .. }) {
         network_namespace().map_err(|error| format!("cannot make an empty network namespace: {error}"))?;
         report.layers.push(String::from("network namespace"));
     }

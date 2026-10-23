@@ -3,6 +3,12 @@
 version = 4
 
 [[package]]
+name = "adler2"
+version = "2.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "320119579fcad9c21884f5c4861d16174d0e06250625266f50fe6898340abefa"
+
+[[package]]
 name = "aead"
 version = "0.5.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -914,6 +920,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "miniz_oxide"
+version = "0.9.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b63fbc4a50860e98e7b2aa7804ded1db5cbc3aff9193adaff57a6931bf7c4b4c"
+dependencies = [
+ "adler2",
+]
+
+[[package]]
 name = "neoteletext"
 version = "0.1.0"
 dependencies = [
@@ -924,8 +939,10 @@ dependencies = [
  "neoteletext-input 0.1.0 (git+file:///Users/andrewstuart/devel/neoteletext-engine?rev=00c90eaf88f521a29961405173b62e7009a440e9)",
  "neoteletext-web 0.1.0 (git+file:///Users/andrewstuart/devel/neoteletext-engine?rev=00c90eaf88f521a29961405173b62e7009a440e9)",
  "protocol",
+ "release-identity",
  "ring",
  "unicode-normalization",
+ "update",
  "web-opener",
 ]
 
@@ -989,6 +1006,7 @@ dependencies = [
  "neoteletext-input 0.1.0 (git+file:///Users/andrewstuart/devel/neoteletext-engine?rev=d9ca77f8aef30fff162e6727282f2a583798e03e)",
  "neoteletext-qrkeyboard",
  "protocol",
+ "update",
  "web-opener",
 ]
 
@@ -1300,6 +1318,13 @@ name = "regex-syntax"
 version = "0.8.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d6f6ff9a378485b298a5286656da665ba74413d36db0979633275d2e708145d4"
+
+[[package]]
+name = "release-identity"
+version = "0.1.0"
+dependencies = [
+ "update",
+]
 
 [[package]]
 name = "ring"
@@ -1693,6 +1718,15 @@ name = "untrusted"
 version = "0.9.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8ecb6da28b8a351d773b68d5825ac39017e680750f980f3a1a85cd8dd28a47c1"
+
+[[package]]
+name = "update"
+version = "0.1.0"
+dependencies = [
+ "miniz_oxide",
+ "ring",
+ "rustix",
+]
 
 [[package]]
 name = "uuid"

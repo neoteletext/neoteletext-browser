@@ -168,6 +168,11 @@ pub const NEW_WINDOW: u32 = 0;
 /// The first window's number: the window the interface opens at start, and
 /// the one messages are for until a `Target` names another.
 pub const FIRST_WINDOW: u32 = 1;
+// Updates (`installation-and-updates.md` sections 3.2 and 3.4), far from
+// the others, so kinds added beside these elsewhere do not meet them.
+const KIND_UPDATE_VIEW: u8 = 120;
+const KIND_DRAWN: u8 = 121;
+const KIND_INSTALL_UPDATE: u8 = 122;
 
 // The strip's flags.
 const ENCRYPTED: u8 = 1;
@@ -247,6 +252,9 @@ pub enum ToInterface {
     /// The settings, for the panel of the trusted strip (requirement
     /// 19.3) and the mixer's sound and volume (requirement 19.4).
     Settings(settings::SettingsView),
+    /// Updates, for the settings panel (`installation-and-updates.md`
+    /// section 3.4).
+    Update(settings::UpdateView),
     /// New entries for the developer console (requirement 19.9).
     Console(console::ConsoleUpdate),
     /// The history panel's rows (requirement 20.4).
@@ -373,6 +381,12 @@ pub enum ToCore {
     /// Strip input: a change the settings panel asks for (requirement
     /// 19.3).
     ChangeSetting(settings::SettingChange),
+    /// The window drew its first frame: a part of the version's health
+    /// (`installation-and-updates.md` section 3.2).
+    Drawn,
+    /// Strip input: install the version the settings panel offers
+    /// (section 3.4).
+    InstallUpdate,
     /// The developer console opened or closed (requirement 19.8).
     Console(bool),
     /// Strip input: yes to the strip's question of this number.
@@ -577,6 +591,12 @@ fn push_keys(payload: &mut Vec<u8>, keys: &[PageKey]) -> Result<(), ProtocolErro
         push_key(payload, key);
     }
     Ok(())
+}
+
+/// One of the intents of updates (`installation-and-updates.md` section
+/// 3.2), which carry nothing.
+fn update_intent(kind: u8) -> ToCore {
+    if kind == KIND_DRAWN { ToCore::Drawn } else { ToCore::InstallUpdate }
 }
 
 /// One of the window intents (`multiple-windows.md`).
@@ -798,6 +818,10 @@ pub fn write_to_interface(out: &mut dyn Write, message: &ToInterface) -> Result<
             settings::push_view(&mut payload, view)?;
             KIND_SETTINGS
         }
+        ToInterface::Update(view) => {
+            settings::push_update(&mut payload, view)?;
+            KIND_UPDATE_VIEW
+        }
         ToInterface::Console(update) => {
             console::push_update(&mut payload, update)?;
             KIND_CONSOLE_UPDATE
@@ -978,6 +1002,7 @@ pub fn read_from_core(input: &mut dyn Read) -> Result<Option<ToInterface>, Proto
         #[cfg(feature = "phone-keyboard")]
         KIND_PHONE_KEY => ToInterface::PhoneKey(keyboard::read_phone_key(&mut fields)?),
         KIND_SETTINGS => ToInterface::Settings(settings::read_view(&mut fields)?),
+        KIND_UPDATE_VIEW => ToInterface::Update(settings::read_update(&mut fields)?),
         KIND_CONSOLE_UPDATE => ToInterface::Console(console::read_update(&mut fields)?),
         KIND_HISTORY_VIEW => ToInterface::History(library::read_history_view(&mut fields)?),
         KIND_SUGGESTIONS => ToInterface::Suggestions(library::read_suggestions(&mut fields)?),
@@ -1085,6 +1110,8 @@ pub fn write_to_core(out: &mut dyn Write, message: &ToCore) -> Result<(), Protoc
             KIND_TAB_TO_WINDOW
         }
         ToCore::CloseWindow => KIND_CLOSE_WINDOW,
+        ToCore::Drawn => KIND_DRAWN,
+        ToCore::InstallUpdate => KIND_INSTALL_UPDATE,
         ToCore::ChangeSetting(change) => {
             settings::push_change(&mut payload, change)?;
             KIND_CHANGE_SETTING
@@ -1236,12 +1263,9 @@ pub fn read_from_interface(input: &mut dyn Read) -> Result<Option<ToCore>, Proto
         KIND_RELOAD => ToCore::Reload,
         KIND_PAGE_CONTROL => ToCore::PageControl(controls::read_control(&mut fields)?),
         KIND_FROM | KIND_NEW_WINDOW | KIND_TAB_TO_WINDOW | KIND_CLOSE_WINDOW => window_intent(kind, &mut fields)?,
+        KIND_DRAWN | KIND_INSTALL_UPDATE => update_intent(kind),
         KIND_CHANGE_SETTING => ToCore::ChangeSetting(settings::read_change(&mut fields)?),
-        KIND_CONSOLE => ToCore::Console(match fields.u8()? {
-            0 => false,
-            1 => true,
-            _ => return Err(ProtocolError::BadValue("flag")),
-        }),
+        KIND_CONSOLE => ToCore::Console(flag_byte(&mut fields)?),
         #[cfg(feature = "links")]
         KIND_POINT => ToCore::Point(if payload.is_empty() { None } else { Some(links::read_spot(&mut fields)?) }),
         #[cfg(feature = "links")]
@@ -1342,8 +1366,9 @@ mod tests {
         let refused = |bytes: &[u8]| read_from_core(&mut &bytes[..]).is_err();
         assert!(refused(&[KIND_TARGET, 0, 0, 0, 4, 0, 0, 0, 0]), "Target window 0");
     }
+
     #[test]
-    fn every_kind_round_trips() {
+    fn every_message_to_the_interface_round_trips() {
         for message in [
             ToInterface::Sounding(vec![3, 7]),
             ToInterface::Tabs {
@@ -1368,6 +1393,7 @@ mod tests {
                 cookies: settings::CookieMode::Close,
                 refusal: None,
             }),
+            ToInterface::Update(settings::UpdateView { version: "0.1.0".into(), status: "NeoTeletext is up to date".into(), offer: None, checking: true }),
             ToInterface::Cookies(cookies::CookiesView { query: "news".into(), total: 0, ..cookies::CookiesView::default() }),
             ToInterface::PageControls(interface_core::controls::PageControls {
                 page: Some(0x302),
@@ -1402,6 +1428,10 @@ mod tests {
             write_to_interface(&mut bytes, &message).unwrap();
             assert_eq!(read_from_core(&mut bytes.as_slice()).unwrap().unwrap(), message);
         }
+    }
+
+    #[test]
+    fn every_intent_round_trips() {
         for message in [
             ToCore::Visible(vec![KEY]),
             ToCore::Cell { key: KEY, version: 7, column: 39, row: 24 },
@@ -1424,6 +1454,8 @@ mod tests {
             ToCore::PageControl(interface_core::controls::PageControl::Fastext(interface_core::controls::FastextKey::Index)),
             ToCore::PageControl(interface_core::controls::PageControl::SubPage(false)),
             ToCore::PageControl(interface_core::controls::PageControl::Latest),
+            ToCore::Drawn,
+            ToCore::InstallUpdate,
             ToCore::ChangeSetting(settings::SettingChange::Volume(40)),
             ToCore::Console(true),
             ToCore::History(library::HistoryRequest::Clear(library::ClearRange::All)),

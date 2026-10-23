@@ -69,6 +69,13 @@ pub enum Role {
     Core,
     /// The sound helper: the sound output and nothing else (decision 55).
     Sound,
+    /// The updater (`installation-and-updates.md` section 8.1): TCP to one
+    /// port, the update host's or the user's proxy's, with the system's
+    /// name resolution, and its staging folder written; nothing else.
+    Updater {
+        /// The one port it may connect to.
+        port: u16,
+    },
 }
 
 impl Role {
@@ -81,6 +88,7 @@ impl Role {
             Self::Interface => "interface",
             Self::Core => "trusted core",
             Self::Sound => "sound",
+            Self::Updater { .. } => "updater",
         }
     }
 }
@@ -128,6 +136,26 @@ pub fn apply(role: Role, writable: Option<&Path>) -> Result<Report, String> {
         let _ = (role, writable);
         Err(String::from("this platform has no sandbox for the browser, so nothing is run on it"))
     }
+}
+
+/// Windows: grants `ALL APPLICATION PACKAGES` read and run on `folder` and
+/// everything in it, as Program Files grants it, so the containers can
+/// start the browser's programs from the user's own folder; the
+/// installer's step (`installation-and-updates.md` section 4.2). No
+/// administrator: the user owns the folder.
+///
+/// # Errors
+/// When the folder's access list cannot be changed.
+#[cfg(windows)]
+pub fn grant_packages_read(folder: &Path) -> io::Result<()> {
+    windows::grant_packages_read(folder)
+}
+
+/// Windows: removes the browser's `AppContainer` profiles, for the
+/// uninstaller (requirement 13.20).
+#[cfg(windows)]
+pub fn remove_containers() {
+    windows::remove_containers();
 }
 
 /// The most a time zone is ahead of or behind UTC, in seconds: 18 hours,
@@ -243,6 +271,15 @@ const ENVIRONMENT_SOUND: &[&str] =
 /// keyboard's relay for tests, and the update host for tests.
 const ENVIRONMENT_CORE: &[&str] = &["HOME", "USERPROFILE", "APPDATA", "LOCALAPPDATA", "XDG_CONFIG_HOME", "NEOTELETEXT_QRKEYBOARD_RELAY"];
 
+/// What the updater needs: the home folder, under which macOS keeps its
+/// staging folder (`installation-and-updates.md` section 4.1), and in a
+/// debug build the fault point a test asks for (section 13); a release
+/// build reads none.
+#[cfg(debug_assertions)]
+const ENVIRONMENT_UPDATER: &[&str] = &["HOME", "NEOTELETEXT_FAULT"];
+#[cfg(not(debug_assertions))]
+const ENVIRONMENT_UPDATER: &[&str] = &["HOME"];
+
 /// The environment a process of `role` is given, taken from this
 /// process's: only what it needs, nothing else.
 #[must_use]
@@ -251,6 +288,7 @@ pub fn environment(role: Role) -> Vec<(OsString, OsString)> {
         Role::Interface => ENVIRONMENT_WINDOW,
         Role::Sound => ENVIRONMENT_SOUND,
         Role::Core => ENVIRONMENT_CORE,
+        Role::Updater { .. } => ENVIRONMENT_UPDATER,
         Role::Decoder | Role::Network => &[],
     };
     let mut names: Vec<&str> = ENVIRONMENT_NEEDED.iter().chain(extra).copied().collect();

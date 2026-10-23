@@ -110,6 +110,22 @@ fn profile(program: &Path, role: Role, writable: Option<&Path>) -> String {
 ",
             );
         }
+        // The updater: names resolved as a fetcher resolves them, TCP to
+        // its one port, and its staging folder (`installation-and-updates.md`
+        // section 8.1). `sandbox-exec` names a port, not a host; TLS pins
+        // the host.
+        Role::Updater { port } => {
+            let _ = writeln!(
+                profile,
+                "(system-network)
+(allow network-outbound (remote tcp \"*:{port}\") (literal \"/private/var/run/mDNSResponder\"))
+(allow mach-lookup (global-name \"com.apple.system.opendirectoryd.libinfo\") (global-name \"com.apple.system.DirectoryService.libinfo_v1\"))
+(allow file-read* (literal \"/private/etc/hosts\") (literal \"/private/etc/resolv.conf\") (literal \"/private/var/run/resolv.conf\"))"
+            );
+            if let Some(folder) = writable {
+                let _ = writeln!(profile, "(allow file-read* file-write* (subpath \"{}\"))", folder.display());
+            }
+        }
         // The trusted core: its settings folder, read and written, and
         // nothing else (decision 56).
         Role::Core => {
@@ -160,5 +176,21 @@ mod tests {
         );
         let core = profile(program, Role::Core, Some(Path::new("/Users/someone/Library/Application Support/NeoTeletext")));
         assert!(core.contains("(allow file-read* file-write* (subpath \"/Users/someone/Library/Application Support/NeoTeletext\"))"));
+    }
+
+    /// Section 8.1 of the installation design: the updater reaches one
+    /// port and writes its staging folder alone.
+    #[test]
+    fn the_updater_reaches_one_port_and_writes_only_its_staging_folder() {
+        let program = Path::new("/Applications/NeoTeletext.app/Contents/MacOS/neoteletext-updater");
+        let staging = Path::new("/Users/someone/Library/Application Support/NeoTeletext Updates/staging");
+        let updater = profile(program, Role::Updater { port: 443 }, Some(staging));
+        assert!(updater.starts_with("(version 1)\n(deny default)\n"));
+        assert!(updater.contains("(remote tcp \"*:443\")"));
+        assert!(!updater.contains("*:*"), "no other port");
+        assert!(!updater.contains("(deny network*)"));
+        assert_eq!(updater.matches("file-write*").count(), 1, "one folder written: {updater}");
+        assert!(updater.contains(&format!("(allow file-read* file-write* (subpath \"{}\"))", staging.display())));
+        assert!(!updater.contains("process-fork") && !updater.contains("(allow process-exec*"), "it starts nothing");
     }
 }
