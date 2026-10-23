@@ -45,7 +45,7 @@ mod popup_ui;
 mod refused_ui;
 mod regions;
 mod remote_ui;
-mod settings_ui;
+mod settings_panel;
 mod shown;
 mod star_ui;
 mod tab_strip;
@@ -108,7 +108,7 @@ pub struct Browser {
     /// The window below the strip, where the settings panel is centred.
     body: Rect,
     /// The settings panel (requirement 19.3).
-    settings: settings_ui::SettingsUi,
+    settings: settings_panel::SettingsUi,
     /// The developer console (requirement 19.8).
     console: console_ui::ConsoleUi,
     /// The history panel (requirement 20.4).
@@ -175,7 +175,7 @@ impl Browser {
             regions: Regions::default(),
             outputs: Vec::new(),
             body: Rect::ZERO,
-            settings: settings_ui::SettingsUi::default(),
+            settings: settings_panel::SettingsUi::default(),
             console: console_ui::ConsoleUi::default(),
             history: history::HistoryUi::default(),
             cookies: cookies_ui::CookiesUi::default(),
