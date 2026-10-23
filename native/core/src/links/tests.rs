@@ -376,3 +376,22 @@ fn fastext_keys_follow_as_links_do() {
     assert_eq!(links.fastext_keys(OPEN), [false; 5]);
     assert_eq!(links.fastext(FastextKey::Red, Some(CHANNEL), START), Err(Refusal::NotALink), "row 24 hidden: no key acts");
 }
+
+/// Finding F-86: a channel owns a page file only inside its own folder,
+/// after its `/`, so a channel opened at `/a` does not own `/a302.tti`.
+/// The review thought it a false positive; it held for a channel address
+/// with no `/` at its end.
+#[test]
+fn a_channel_owns_page_files_only_in_its_folder() {
+    let folder = address::parse("https://news.invalid/a/").unwrap();
+    assert!(folder.channel_text().ends_with('/'));
+    let bare = address::parse("https://news.invalid/a").unwrap();
+    let sibling = address::parse("https://news.invalid/a302.tti").unwrap();
+    let inside = address::parse("https://news.invalid/a/302.tti").unwrap();
+    let owned = |channel: &Address, target: &Address| {
+        Descriptor::default().resolve(&Target::Channel(target.clone()), &Channel { id: CHANNEL, address: channel, exists: &existing })
+    };
+    assert_eq!(owned(&folder, &inside), Some(Destination::Page(0x302)));
+    assert_eq!(owned(&folder, &sibling), Some(Destination::Channel(sibling.clone())), "a sibling of the folder");
+    assert_eq!(owned(&bare, &sibling), Some(Destination::Channel(sibling.clone())), "a name that only begins as the channel's");
+}
