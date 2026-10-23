@@ -206,6 +206,11 @@ impl Core {
     /// The page open in the active tab changed: its keys, its links, its
     /// sounds and its controls follow it.
     fn opened(&mut self, key: Option<PageKey>) -> Result<(), String> {
+        // Only a page of the active tab's channel opens: a key of another
+        // tab's would let the page controls and typing reach its decoder
+        // (finding F-66).
+        let active = self.active_channel();
+        let key = key.filter(|key| Some(key.channel) == active);
         #[cfg(feature = "interaction")]
         {
             self.opened = key;
