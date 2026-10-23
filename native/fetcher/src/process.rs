@@ -36,6 +36,15 @@ const _: () = assert!(size_of::<cookies::UnusedJar>() == size_of::<neoteletext_w
 /// What the console is told when a name led only to addresses the channel
 /// may not reach.
 const LOCAL_REFUSED: &str = "Blocked: the server's name leads to this computer or the local network, which this channel may not reach";
+/// The longest body the agent takes for a page, a bundle or a form's
+/// answer: what one page message to the trusted core carries, its payload
+/// being the origin byte and then the bytes (`write_to_core` refuses
+/// more, and refusing ends this fetcher; finding F-74).
+const PAGE_LIMIT: usize = protocol::MAX_PAYLOAD - 1;
+// The agent's body buffer holds it, so it is the limit the agent keeps.
+const _: () = assert!(PAGE_LIMIT <= neoteletext_web::consts::DEFAULT_PAGE_LIMIT);
+// A pushed message goes to the trusted core as a page message too.
+const _: () = assert!(neoteletext_web::consts::DEFAULT_PUSH_LIMIT <= PAGE_LIMIT);
 /// Bytes passed to the agent at a time.
 const READ_CHUNK: usize = 16 * 1024;
 // An exchange reports an address the engine accepted, so the protocol's
@@ -162,6 +171,17 @@ fn contents_entries(bytes: &[u8]) -> (Vec<Entry>, Vec<PageAddress>) {
     (entries, pages)
 }
 
+/// The agent's settings for a channel that may reach the local addresses
+/// `allowed`, through a proxy when `proxied`.
+fn agent_config(allowed: &[IpAddr], proxied: bool) -> Config {
+    // Proxied, local names are refused before the proxy is asked (REQ-WEB-032).
+    let mut config = Config { tls_available: true, redirects_within_channel: true, product: product(), proxied, page_limit: PAGE_LIMIT, ..Config::default() };
+    for (slot, &ip) in config.allowed_local.iter_mut().zip(allowed.iter().take(ALLOWED_LOCAL)) {
+        *slot = Some(address(ip));
+    }
+    config
+}
+
 /// Holds the channel `channel`'s connections until the trusted core closes
 /// standard input: the engine's agent opens it, fetches its contents file
 /// and every page it lists, and holds its push connection; what arrives
@@ -172,11 +192,7 @@ fn contents_entries(bytes: &[u8]) -> (Vec<Entry>, Vec<PageAddress>) {
 /// When writing to the trusted core fails.
 pub fn run(channel: &str, allowed: &[IpAddr], proxy: Option<Proxy>) -> Result<(), String> {
     let mut storage = Box::new(Storage::default());
-    // Proxied, local names are refused before the proxy is asked (REQ-WEB-032).
-    let mut config = Config { tls_available: true, redirects_within_channel: true, product: product(), proxied: proxy.is_some(), ..Config::default() };
-    for (slot, &ip) in config.allowed_local.iter_mut().zip(allowed.iter().take(ALLOWED_LOCAL)) {
-        *slot = Some(address(ip));
-    }
+    let config = agent_config(allowed, proxy.is_some());
     // The transport refuses the same local addresses before connecting
     // (finding F-62).
     let allowed_local = config.allowed_local;
@@ -329,6 +345,21 @@ fn read_commands(commands: &mpsc::Sender<Wake>, answers: &mpsc::Sender<ToFetcher
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Finding F-74: the largest page, bundle or form answer the agent
+    /// accepts is one message to the trusted core. Before this the agent
+    /// took a body of its default limit, 262,144 bytes, which with the
+    /// origin byte is one byte too many for a message, so writing it
+    /// failed and ended the channel's fetcher.
+    #[test]
+    fn the_largest_page_the_agent_accepts_reaches_the_core() {
+        let config = agent_config(&[], false);
+        let page = FromFetcher::Page { origin: Origin::FetchedPage, bytes: vec![b'x'; config.page_limit] };
+        let mut written = Vec::new();
+        write_to_core(&mut written, &page).unwrap();
+        let read = protocol::fetcher::read_from_fetcher(&mut written.as_slice()).unwrap();
+        assert!(matches!(read, Some(FromFetcher::Page { bytes, .. }) if bytes.len() == config.page_limit));
+    }
 
     /// Decision 62: the agent the fetcher builds asks its store for each
     /// request's cookies, which it does only with the engine's `cookies`
