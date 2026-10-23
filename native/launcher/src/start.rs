@@ -36,20 +36,7 @@ pub fn start(launcher: &Launcher, chosen: Chosen, arguments: &[OsString]) -> Res
     let mut child = command.spawn().map_err(|error| format!("cannot start {}: {error}", program.display()))?;
     let output = child.stdout.take().ok_or("the broker has no output")?;
     let (said, heard) = mpsc::channel();
-    std::thread::spawn(move || {
-        let mut reader = BufReader::new(output);
-        let mut line = String::new();
-        loop {
-            line.clear();
-            match std::io::Read::take(&mut reader, MAX_LINE).read_line(&mut line) {
-                Ok(0) | Err(_) => break,
-                Ok(_) if line == HEALTHY_LINE => {
-                    let _ = said.send(());
-                }
-                Ok(_) => {}
-            }
-        }
-    });
+    std::thread::spawn(move || hear(output, &said));
     let healthy = match chosen {
         Chosen::Trial(version) => {
             match heard.recv_timeout(launcher.health_deadline) {
@@ -80,6 +67,31 @@ pub fn start(launcher: &Launcher, chosen: Chosen, arguments: &[OsString]) -> Res
     Ok(Ended { healthy, success: status.success(), code: status.code() })
 }
 
+/// Reads the broker's output until it closes, and says each time it
+/// writes the line that means it is healthy. Lines are read as bytes, at
+/// most [`MAX_LINE`] at a time, and one counts only when the read before
+/// it ended a line: a longer line, read in pieces, is never taken for the
+/// line its last piece looks like (finding F-47), and a line that is not
+/// text is passed over rather than ending the hearing.
+fn hear(output: impl std::io::Read, said: &mpsc::Sender<()>) {
+    let mut reader = BufReader::new(output);
+    let mut line = Vec::new();
+    let mut at_start = true;
+    loop {
+        line.clear();
+        match std::io::Read::take(&mut reader, MAX_LINE).read_until(b'\n', &mut line) {
+            Ok(0) | Err(_) => break,
+            Ok(_) => {
+                let whole = at_start && line.ends_with(b"\n");
+                at_start = line.ends_with(b"\n");
+                if whole && line == HEALTHY_LINE.as_bytes() {
+                    let _ = said.send(());
+                }
+            }
+        }
+    }
+}
+
 /// Ends the broker and every process it started: its process group on
 /// macOS and Linux; on Windows each helper's job ends with the broker,
 /// which holds it (`sandboxing.md` section 3).
@@ -91,4 +103,34 @@ fn end_whole(child: &mut Child) {
         }
     }
     let _ = child.kill();
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// What `hear` says of `output`.
+    fn heard(output: &[u8]) -> usize {
+        let (said, heard) = mpsc::channel();
+        hear(output, &said);
+        drop(said);
+        heard.iter().count()
+    }
+
+    /// Finding F-47: a line is heard only whole. `healthy` after other
+    /// bytes on the same line, however many, is not the line `healthy`;
+    /// nor does a line that is not text stop the hearing.
+    #[test]
+    fn a_line_is_heard_only_whole() {
+        assert_eq!(heard(HEALTHY_LINE.as_bytes()), 1);
+        let filler = usize::try_from(MAX_LINE).unwrap_or(0);
+        for before in [1, filler.saturating_sub(1), filler, filler.saturating_mul(3)] {
+            let mut output = vec![b'x'; before];
+            output.extend_from_slice(HEALTHY_LINE.as_bytes());
+            assert_eq!(heard(&output), 0, "{before} bytes, then healthy, on one line");
+        }
+        let mut output = b"\xff\xfe not text\n".to_vec();
+        output.extend_from_slice(HEALTHY_LINE.as_bytes());
+        assert_eq!(heard(&output), 1, "after a line that is not text");
+    }
 }
