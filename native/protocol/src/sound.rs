@@ -7,8 +7,9 @@
 use std::io::{Read, Write};
 
 use super::audio::{self, Audio, Sender};
+use super::interface::{push_channels, read_channels};
 use super::settings::MAX_VOLUME;
-use super::{Fields, MAX_TABS, ProtocolError, read_frame, write_frame};
+use super::{Fields, ProtocolError, read_frame, write_frame};
 
 const KIND_AUDIO: u8 = 1;
 const KIND_SETTINGS: u8 = 2;
@@ -99,12 +100,7 @@ pub fn write_from_sound(out: &mut dyn Write, message: &FromSound) -> Result<(), 
     let mut payload = Vec::new();
     let kind = match message {
         FromSound::Sounding(channels) => {
-            if channels.len() > MAX_TABS {
-                return Err(ProtocolError::BadValue("too many channels"));
-            }
-            for channel in channels {
-                payload.extend_from_slice(&channel.to_be_bytes());
-            }
+            push_channels(&mut payload, channels)?;
             KIND_SOUNDING
         }
     };
@@ -120,16 +116,7 @@ pub fn read_from_sound(input: &mut dyn Read) -> Result<Option<FromSound>, Protoc
     let Some((kind, payload)) = read_frame(input)? else { return Ok(None) };
     let mut fields = Fields::new(&payload);
     let message = match kind {
-        KIND_SOUNDING => {
-            let mut channels = Vec::new();
-            while !fields.is_empty() {
-                if channels.len() == MAX_TABS {
-                    return Err(ProtocolError::BadValue("too many channels"));
-                }
-                channels.push(fields.u32()?);
-            }
-            FromSound::Sounding(channels)
-        }
+        KIND_SOUNDING => FromSound::Sounding(read_channels(&mut fields)?),
         other => return Err(ProtocolError::UnknownKind(other)),
     };
     fields.end()?;
@@ -140,6 +127,7 @@ pub fn read_from_sound(input: &mut dyn Read) -> Result<Option<FromSound>, Protoc
 #[allow(clippy::unwrap_used, reason = "a test")]
 mod tests {
     use super::*;
+    use crate::MAX_TABS;
     use crate::audio::Sound;
 
     #[test]
