@@ -20,6 +20,12 @@ use crate::session::Session;
 /// Handles one event; `Ok(false)` once the browser is to end.
 fn handle(core: &mut Core, event: Event) -> Result<bool, String> {
     match event {
+        // Handled, then its bytes given back to its helper's budget.
+        Event::Budgeted(event, ticket) => {
+            let go = handle(core, *event);
+            drop(ticket);
+            return go;
+        }
         Event::Decoded(channel, generation, message) => {
             if core.decoders.get(&channel).map(|decoder| decoder.generation) == Some(generation) {
                 core.in_window_of(channel, |core| core.decoded(channel, message))?;

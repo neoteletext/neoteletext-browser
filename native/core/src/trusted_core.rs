@@ -78,6 +78,10 @@ const SLEEP_CHECK: Duration = Duration::from_secs(60);
 const WINDOW_STILL: Duration = Duration::from_secs(1);
 
 enum Event {
+    /// A helper's message, with its bytes taken from the helper's budget,
+    /// given back when the ticket is dropped once it is handled (finding
+    /// F-10).
+    Budgeted(Box<Event>, neoteletext::budget::Ticket),
     Decoded(u32, u64, FromDecoder),
     Fetched(u32, u64, FromFetcher),
     FetcherEnded(u32, u64, Option<String>),

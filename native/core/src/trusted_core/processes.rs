@@ -2,13 +2,13 @@
 //! (decision 56): a decoder, a fetcher, the bookmark reader, the
 //! interface's pipe, and where a fetcher may connect.
 
-use std::fs::File;
 use std::io::{BufReader, Read};
 use std::sync::Arc;
 use std::sync::mpsc::Sender;
 use std::thread;
 
 use confine::broker::{Broker, Helper, Program};
+use neoteletext::budget::Budget;
 use neoteletext::outbox::Outbox;
 use neoteletext::settings::{self as stored, Settings};
 use protocol::decoder::{BookmarkEntry, FromDecoder, MAX_BOOKMARK_ENTRIES, MAX_CHUNK, ToDecoder, read_from_decoder, write_to_decoder};
@@ -163,23 +163,44 @@ pub(super) fn read_interface(child: &mut Helper, events: Sender<Event>) -> Resul
     Ok(())
 }
 
+/// A reader that counts the bytes read through it: a message's length on
+/// the pipe, what its budget is charged.
+struct Counting<R> {
+    inner: R,
+    bytes: usize,
+}
+
+impl<R: Read> Read for Counting<R> {
+    fn read(&mut self, buffer: &mut [u8]) -> std::io::Result<usize> {
+        let read = self.inner.read(buffer)?;
+        self.bytes = self.bytes.saturating_add(read);
+        Ok(read)
+    }
+}
+
 /// Reads a helper's messages on a thread of its own, each sent to the
 /// trusted core's thread as the event `said` makes of it, until the pipe
 /// ends or breaks the protocol, which is sent as the event `ended` makes
-/// of why; it stops early once the trusted core has gone.
+/// of why; it stops early once the trusted core has gone. Each message's
+/// bytes are taken from the helper's own budget before it is sent, and
+/// given back once the core has handled it, so a helper that writes
+/// faster than the core handles stalls on its own pipe (finding F-10).
 pub(super) fn relay<M: 'static>(
-    output: File,
+    output: impl Read + Send + 'static,
     read: fn(&mut dyn Read) -> Result<Option<M>, ProtocolError>,
     events: Sender<Event>,
     said: impl Fn(M) -> Event + Send + 'static,
     ended: impl FnOnce(Option<String>) -> Event + Send + 'static,
 ) {
     thread::spawn(move || {
-        let mut output = BufReader::new(output);
+        let budget = Budget::default();
+        let mut output = Counting { inner: BufReader::new(output), bytes: 0 };
         let end = loop {
+            let before = output.bytes;
             match read(&mut output) {
                 Ok(Some(message)) => {
-                    if events.send(said(message)).is_err() {
+                    let ticket = budget.take(output.bytes.saturating_sub(before));
+                    if events.send(Event::Budgeted(Box::new(said(message)), ticket)).is_err() {
                         return;
                     }
                 }
@@ -194,6 +215,49 @@ pub(super) fn relay<M: 'static>(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::io::Write as _;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::mpsc;
+    use std::time::Duration;
+
+    /// The dots of a page image (`FromDecoder::Frame`).
+    const FRAME_DOTS: usize = 480 * 500;
+    /// How long the trusted core handles nothing in the flood test.
+    const HOLD: Duration = Duration::from_secs(1);
+    /// Where a flood is stopped when nothing holds it: four times the
+    /// budget, far past what the bound lets through.
+    const FLOOD_CAP: usize = 4 * neoteletext::outbox::MAX_QUEUED_BYTES;
+    /// What a pipe and the reader's buffer hold beyond the budget: Linux's
+    /// largest pipe without privileges (`/proc/sys/fs/pipe-max-size`, 1 MiB)
+    /// is more than macOS's 64 KiB and the reader's 8 KiB together.
+    const PIPE_AND_READER_BUFFERS: usize = 1024 * 1024;
+
+    /// Finding F-10: a helper that writes faster than the trusted core
+    /// handles its messages is held at its budget, on its own pipe, so the
+    /// core's queue of its messages does not grow without bound.
+    #[test]
+    fn a_helper_that_floods_the_core_is_held_at_its_budget() {
+        let (reader, mut writer) = std::io::pipe().unwrap();
+        let (events, incoming) = mpsc::channel();
+        relay(reader, read_from_decoder, events, |message| Event::Decoded(1, 0, message), |end| Event::DecoderEnded(1, 0, end));
+        let mut frame = Vec::new();
+        protocol::decoder::write_frame_to_core(&mut frame, 0x100, &[[0, 0, 0]], 0, &vec![0; FRAME_DOTS]).unwrap();
+        let frame_bytes = frame.len();
+        let written = Arc::new(AtomicUsize::new(0));
+        let theirs = Arc::clone(&written);
+        let flood = thread::spawn(move || {
+            while theirs.load(Ordering::Relaxed) < FLOOD_CAP && writer.write_all(&frame).is_ok() {
+                theirs.fetch_add(frame.len(), Ordering::Relaxed);
+            }
+        });
+        thread::sleep(HOLD);
+        let held_at = written.load(Ordering::Relaxed);
+        // The core takes its events, then goes: the helper's writes end.
+        drop(incoming);
+        flood.join().unwrap();
+        let most = neoteletext::outbox::MAX_QUEUED_BYTES + PIPE_AND_READER_BUFFERS + frame_bytes;
+        assert!(held_at <= most, "the helper wrote {held_at} bytes while the core handled nothing; at most {most}");
+    }
 
     /// Requirement 19.12: a fetcher is started with the proxy and local
     /// addresses of the settings.
