@@ -48,7 +48,9 @@ pub(crate) fn broker() -> Result<(), String> {
     let version = update::mark::own(VERSION_MARK).map_err(|refused| format!("this program's version: {refused}"))?;
     eprintln!("neoteletext: version {version}; the trusted core started confined: {}", core.report);
     #[cfg(feature = "links")]
-    let open_web = |address: &str| web_opener::open(address).map_err(|error| error.to_string());
+    let last_opened = std::cell::Cell::new(None);
+    #[cfg(feature = "links")]
+    let open_web = |address: &str| paced(&last_opened, std::time::Instant::now(), || web_opener::open(address).map_err(|error| error.to_string()));
     // With links compiled out the core never asks; if it does, it is refused.
     #[cfg(not(feature = "links"))]
     let open_web = |_: &str| Err(String::from("links are compiled out"));
@@ -162,9 +164,47 @@ fn updater_grant(arguments: &[String]) -> Result<UpdaterGrant, String> {
     Ok(UpdaterGrant { staging, port })
 }
 
+/// The least time between two web pages the broker opens for the core:
+/// the interval the core keeps between hand-offs (requirement 17.9), one
+/// constant for both (decision 88, finding F-61).
+#[cfg(feature = "links")]
+const OPEN_WEB_INTERVAL: std::time::Duration = std::time::Duration::from_millis(neoteletext::links::HANDOFF_INTERVAL_MILLISECONDS);
+
+/// Opens a web page with `open` unless one was opened, at `last`, within
+/// [`OPEN_WEB_INTERVAL`] of `now`: a compromised core cannot use the
+/// system's web browser as a channel out faster than a link could.
+#[cfg(feature = "links")]
+fn paced(last: &std::cell::Cell<Option<std::time::Instant>>, now: std::time::Instant, open: impl FnOnce() -> Result<(), String>) -> Result<(), String> {
+    if last.get().is_some_and(|last| now.saturating_duration_since(last) < OPEN_WEB_INTERVAL) {
+        return Err(String::from("web pages are opened at most once every two seconds"));
+    }
+    last.set(Some(now));
+    open()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Finding F-61: the broker opens a web page at most once in the
+    /// interval the core keeps between hand-offs, whatever the core asks.
+    #[cfg(feature = "links")]
+    #[test]
+    fn the_broker_opens_the_web_at_most_once_an_interval() {
+        let last = std::cell::Cell::new(None);
+        let opened = std::cell::Cell::new(0);
+        let open = || {
+            opened.set(opened.get() + 1);
+            Ok(())
+        };
+        let start = std::time::Instant::now();
+        assert_eq!(paced(&last, start, open), Ok(()));
+        let soon = start + std::time::Duration::from_secs(1);
+        assert!(paced(&last, soon, open).is_err(), "a second request a second later is refused");
+        let later = start + std::time::Duration::from_millis(neoteletext::links::HANDOFF_INTERVAL_MILLISECONDS);
+        assert_eq!(paced(&last, later, open), Ok(()), "one an interval later is opened");
+        assert_eq!(opened.get(), 2);
+    }
     use confine::broker::Program;
 
     /// `installation-and-updates.md` section 5: the broker's bytes carry
