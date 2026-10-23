@@ -15,6 +15,13 @@ impl Core {
         self.console.log(channel, level, self.now(), text);
     }
 
+    /// Where a line about what the active tab did belongs: a private
+    /// tab's channel, so that it shows only in its own window's console,
+    /// or the browser-wide lines for an ordinary tab (finding F-84).
+    pub(super) fn log_place(&self) -> Option<u32> {
+        self.session.active_tab().filter(|tab| tab.private).map(|tab| tab.channel.id)
+    }
+
     /// A line for the Log tab alone, already written to standard error.
     pub(super) fn note(&mut self, level: Level, channel: Option<u32>, text: &str) {
         self.console.log(channel, level, self.now(), text);

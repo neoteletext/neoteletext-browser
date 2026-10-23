@@ -365,6 +365,23 @@ mod tests {
         assert_eq!(test.core.session.tabs.len(), 1, "the private tab stayed");
     }
 
+    /// Finding F-84: what a private tab does is logged in its own console,
+    /// never in the browser-wide lines every window's console shows.
+    #[test]
+    fn a_private_tabs_log_lines_stay_in_its_window() {
+        let mut test = Test::new("private-log");
+        test.core.session.open("https://news.invalid/teletext/").unwrap();
+        let ordinary = test.core.session.window;
+        test.core.session.new_window(true).unwrap();
+        test.core.session.open_private("https://secret.invalid/teletext/").unwrap();
+        let _ = test.core.intent(ToCore::Navigate("ftp://secret-typed.invalid/".into()));
+        test.core.switch_window(ordinary);
+        test.core.console.set_open(true);
+        let shown: Vec<String> =
+            test.core.console.updates(test.core.active_channel()).into_iter().flat_map(|update| update.entries).map(|entry| entry.text).collect();
+        assert!(!shown.iter().any(|text| text.contains("ftp")), "{shown:?}");
+    }
+
     /// Requirements 20.21 and 20.22: the session is written after every
     /// change of the tabs, with a visit's title once its page draws, and
     /// the window's place once the window is still.

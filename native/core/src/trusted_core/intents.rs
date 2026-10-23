@@ -138,7 +138,7 @@ impl Core {
             ToCore::MuteTab(_) | ToCore::MuteAll(_) | ToCore::MoveTab { .. } => self.tab_intent(&intent)?,
             ToCore::Navigate(typed) => {
                 if let Err(reason) = self.session.navigate(&typed, true) {
-                    self.log(Level::Warning, None, &reason);
+                    self.log(Level::Warning, self.log_place(), &reason);
                 }
                 self.send_all()?;
             }
