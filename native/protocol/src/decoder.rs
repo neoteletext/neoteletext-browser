@@ -207,6 +207,9 @@ pub fn write_to_decoder(out: &mut dyn Write, message: &ToDecoder) -> Result<(), 
         ToDecoder::Showing(pages) => {
             push_count(&mut payload, pages.len(), PAGES, "too many pages")?;
             for page in pages {
+                // Only display pages, as the decoder reads them: any other
+                // is refused there, and the decoder restarts (finding F-29).
+                page_index(*page).ok_or(ProtocolError::BadValue("page number"))?;
                 payload.extend_from_slice(&page.to_be_bytes());
             }
             KIND_SHOWING

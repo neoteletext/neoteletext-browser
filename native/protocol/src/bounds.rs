@@ -7,10 +7,6 @@ pub const MAX_PAYLOAD: usize = 256 * 1024;
 /// A channel has at most 2,048 page numbers: eight magazines of 256
 /// (EN 300 706 clause 7.1.2).
 pub const MAX_PAGES: usize = 8 * 256;
-/// Lowest and highest teletext page numbers, magazine 8 written as 8.
-pub const FIRST_PAGE: u16 = 0x100;
-/// The highest teletext page number.
-pub const LAST_PAGE: u16 = 0x8FF;
 /// Bounds on the strip's and the view's text, in bytes of UTF-8: a
 /// channel's title.
 pub const MAX_TITLE: usize = 256;

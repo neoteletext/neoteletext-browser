@@ -7,7 +7,7 @@ use interface_core::canvas::PageKey;
 use interface_core::channel::page_index;
 
 use crate::text::is_clean;
-use crate::{FIRST_PAGE, LAST_PAGE, MAX_PAGES, ProtocolError};
+use crate::{MAX_PAGES, ProtocolError};
 
 pub(crate) const KEY_BYTES: usize = 6;
 
@@ -55,12 +55,12 @@ impl<'a> Fields<'a> {
         Ok(u32::from_be_bytes(self.array()?))
     }
 
+    /// A page of a channel: its number a display page, as
+    /// [`Fields::display_page`], since a decoder refuses any other and
+    /// would restart for it (finding F-29).
     pub(crate) fn key(&mut self) -> Result<PageKey, ProtocolError> {
         let channel = self.u32()?;
-        let page = self.u16()?;
-        if !(FIRST_PAGE..=LAST_PAGE).contains(&page) {
-            return Err(ProtocolError::BadValue("page number"));
-        }
+        let page = self.display_page()?;
         Ok(PageKey { channel, page })
     }
 

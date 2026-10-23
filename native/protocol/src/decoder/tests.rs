@@ -150,3 +150,13 @@ fn a_decoder_cannot_send_what_it_may_not() {
     bytes = vec![KIND_ARRIVED, 0, 0, 0, 4, 0x01, 0x00, 0xFF, 0xFF];
     assert!(matches!(read_from_decoder(&mut bytes.as_slice()), Err(ProtocolError::BadValue("title too long"))));
 }
+
+/// Finding F-29: the trusted core never writes a decoder a page it would
+/// refuse, nor more pages than a channel has.
+#[test]
+fn showing_holds_display_pages_and_no_more_than_a_channel_has() {
+    let write = |pages: Vec<u16>| write_to_decoder(&mut Vec::new(), &ToDecoder::Showing(pages));
+    assert!(write(vec![0x100, 0x899]).is_ok());
+    assert!(write(vec![0x100, 0x1A0]).is_err(), "a hexadecimal page");
+    assert!(write(vec![0x100; PAGES + 1]).is_err(), "too many");
+}
