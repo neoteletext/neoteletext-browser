@@ -27,7 +27,7 @@ use crate::{Report, Role, Spawn};
 /// The profile's parameters: `sandbox-exec -D NAME=value` for each, named
 /// in the profile as `(param "NAME")`. A path goes here, never into the
 /// profile's text (finding F-51).
-#[derive(Default)]
+#[derive(Default, Debug)]
 struct Parameters {
     values: Vec<(String, PathBuf)>,
 }
@@ -47,12 +47,38 @@ fn home() -> Option<PathBuf> {
     std::env::var_os("HOME").map(PathBuf::from).filter(|home| home.is_absolute())
 }
 
-/// The system's folders and the metadata of any path, which the
-/// window system's and Core Audio's libraries read.
-const SYSTEM_READS: &str = "(deny network*)
+/// The user's per-process cache and temporary folders under
+/// `/private/var/folders`, where the font registry's and other caches the
+/// window system reads live, read from `getconf` (finding F-52): the whole
+/// of `/private/var/folders` held every application's per-user caches, far
+/// more than this browser needs. A folder that cannot be read is an error,
+/// since the profile would otherwise be built wrong (decision 58).
+fn darwin_user_folders() -> Result<[PathBuf; 2], String> {
+    let read = |name: &str| -> Result<PathBuf, String> {
+        let output = Command::new("/usr/bin/getconf").arg(name).output().map_err(|error| format!("getconf {name}: {error}"))?;
+        if !output.status.success() {
+            return Err(format!("getconf {name} failed"));
+        }
+        let path = PathBuf::from(String::from_utf8_lossy(&output.stdout).trim());
+        if path.is_absolute() { Ok(path) } else { Err(format!("getconf {name} gave no path")) }
+    };
+    Ok([read("DARWIN_USER_CACHE_DIR")?, read("DARWIN_USER_TEMP_DIR")?])
+}
+
+/// The system's folders and the metadata of any path, which the window
+/// system's and Core Audio's libraries read, with the two user folders
+/// named as parameters (finding F-52).
+fn system_reads(parameters: &mut Parameters) -> Result<String, String> {
+    let [cache, temp] = darwin_user_folders()?;
+    let cache = parameters.path("USER_CACHE", &cache);
+    let temp = parameters.path("USER_TEMP", &temp);
+    Ok(format!(
+        "(deny network*)
 (allow file-read-metadata)
-(allow file-read* (subpath \"/System\") (subpath \"/Library\") (subpath \"/usr\") (subpath \"/private/var/db\") (subpath \"/private/var/folders\") (subpath \"/private/etc\") (subpath \"/dev\"))
-";
+(allow file-read* (subpath \"/System\") (subpath \"/Library\") (subpath \"/usr\") (subpath \"/private/var/db\") (subpath {cache}) (subpath {temp}) (subpath \"/private/etc\") (subpath \"/dev\"))
+"
+    ))
+}
 
 /// Every profile's start: nothing, then Apple's baseline, then the
 /// program itself, named as the parameter `PROGRAM`, and the null device
@@ -72,7 +98,7 @@ fn preamble(program: &str) -> String {
 /// The profile for `program` as `role` says, with the parameters its paths
 /// are passed as; `writable` is the core's settings folder, and
 /// `local_network` whether a fetcher may reach this computer.
-fn profile(program: &Path, role: Role, writable: Option<&Path>, local_network: bool) -> (String, Parameters) {
+fn profile(program: &Path, role: Role, writable: Option<&Path>, local_network: bool) -> Result<(String, Parameters), String> {
     let mut parameters = Parameters::default();
     let mut profile = preamble(&parameters.path("PROGRAM", program));
     match role {
@@ -100,7 +126,7 @@ fn profile(program: &Path, role: Role, writable: Option<&Path>, local_network: b
         // (found 23 October 2026, macOS 15.6) the window is made and drawn
         // but never put on the screen.
         Role::Interface => {
-            profile.push_str(SYSTEM_READS);
+            profile.push_str(&system_reads(&mut parameters)?);
             profile.push_str(INTERFACE_SERVICES);
             if let Some(home) = home() {
                 for (name, folder) in INTERFACE_HOME {
@@ -113,7 +139,7 @@ fn profile(program: &Path, role: Role, writable: Option<&Path>, local_network: b
         // used before decision 55 (found 21 October 2026: without them it
         // ran silent), and the system's folders for its plug-ins.
         Role::Sound => {
-            profile.push_str(SYSTEM_READS);
+            profile.push_str(&system_reads(&mut parameters)?);
             profile.push_str(SOUND_SERVICES);
         }
         // The updater: names resolved as a fetcher resolves them, TCP to
@@ -133,7 +159,7 @@ fn profile(program: &Path, role: Role, writable: Option<&Path>, local_network: b
             writable_folder(&mut profile, &mut parameters, writable);
         }
     }
-    (profile, parameters)
+    Ok((profile, parameters))
 }
 
 /// Allows read and write under `folder`, named as a parameter.
@@ -205,8 +231,8 @@ pub(crate) fn apply() -> Report {
 
 /// The command that runs the helper under its profile, each path a `-D`
 /// parameter (finding F-51).
-pub(crate) fn command(spawn: &Spawn<'_>) -> Command {
-    let (profile, parameters) = profile(spawn.program, spawn.role, spawn.writable, spawn.local_network);
+pub(crate) fn command(spawn: &Spawn<'_>) -> Result<Command, String> {
+    let (profile, parameters) = profile(spawn.program, spawn.role, spawn.writable, spawn.local_network)?;
     let mut command = Command::new("/usr/bin/sandbox-exec");
     command.arg("-p").arg(profile);
     for (name, value) in parameters.values {
@@ -215,7 +241,7 @@ pub(crate) fn command(spawn: &Spawn<'_>) -> Command {
         command.arg("-D").arg(argument);
     }
     command.arg(spawn.program).args(spawn.arguments);
-    command
+    Ok(command)
 }
 
 #[cfg(test)]
@@ -228,7 +254,7 @@ mod tests {
     fn profiles_start_from_nothing_and_give_the_network_only_to_fetchers() {
         let program = Path::new("/Applications/NeoTeletext.app/Contents/MacOS/neoteletext-decoder");
         for role in [Role::Decoder, Role::Network, Role::Interface, Role::Core, Role::Sound] {
-            let (profile, parameters) = profile(program, role, None, false);
+            let (profile, parameters) = profile(program, role, None, false).unwrap();
             assert!(profile.starts_with("(version 1)\n(deny default)\n(import \"system.sb\")\n"), "{role:?}");
             assert!(profile.contains("(allow process-exec (literal (param \"PROGRAM\")))"), "{role:?}");
             assert_eq!(parameters.values.first().map(|(name, path)| (name.as_str(), path.as_path())), Some(("PROGRAM", program)), "{role:?}");
@@ -236,14 +262,14 @@ mod tests {
             assert_eq!(profile.contains("(system-network)"), role == Role::Network, "{role:?}");
             assert!(!profile.contains("(allow default)"));
         }
-        assert!(!profile(program, Role::Decoder, None, false).0.contains("mach-lookup"), "a decoder looks nothing up");
-        assert!(!profile(program, Role::Core, None, false).0.contains("mach-lookup"), "nor does the core");
-        assert!(!profile(program, Role::Interface, None, false).0.contains("audio"), "sound is the sound helper's");
+        assert!(!profile(program, Role::Decoder, None, false).unwrap().0.contains("mach-lookup"), "a decoder looks nothing up");
+        assert!(!profile(program, Role::Core, None, false).unwrap().0.contains("mach-lookup"), "nor does the core");
+        assert!(!profile(program, Role::Interface, None, false).unwrap().0.contains("audio"), "sound is the sound helper's");
         assert!(
-            profile(program, Role::Interface, None, false).0.contains("(global-name \"com.apple.windowmanager.server\")"),
+            profile(program, Role::Interface, None, false).unwrap().0.contains("(global-name \"com.apple.windowmanager.server\")"),
             "without it the window never reaches the screen"
         );
-        let (core, parameters) = profile(program, Role::Core, Some(Path::new("/Users/someone/Library/Application Support/NeoTeletext")), false);
+        let (core, parameters) = profile(program, Role::Core, Some(Path::new("/Users/someone/Library/Application Support/NeoTeletext")), false).unwrap();
         assert!(core.contains("(allow file-read* file-write* (subpath (param \"WRITABLE\")))"));
         assert_eq!(
             parameters.values.iter().find(|(name, _)| name == "WRITABLE").map(|(_, path)| path.as_path()),
@@ -257,10 +283,28 @@ mod tests {
     #[test]
     fn a_crafted_path_stays_a_parameter() {
         let program = Path::new("/tmp/x\")(allow default)(\"/neoteletext-decoder");
-        let (profile, parameters) = profile(program, Role::Decoder, None, false);
+        let (profile, parameters) = profile(program, Role::Decoder, None, false).unwrap();
         assert!(!profile.contains("allow default"), "the path reached the profile: {profile}");
         assert!(profile.contains("(literal (param \"PROGRAM\"))"));
         assert_eq!(parameters.values.first().map(|(_, path)| path.as_path()), Some(program));
+    }
+
+    /// Finding F-52: the interface and the sound helper read only this
+    /// program's own cache and temporary folders under
+    /// `/private/var/folders`, named as parameters, not all of it, where
+    /// every application's per-user caches live.
+    #[test]
+    fn the_system_reads_name_only_this_user_s_folders() {
+        let program = Path::new("/Applications/NeoTeletext.app/Contents/MacOS/neoteletext-interface");
+        for role in [Role::Interface, Role::Sound] {
+            let (profile, parameters) = profile(program, role, None, false).unwrap();
+            assert!(!profile.contains("(subpath \"/private/var/folders\")"), "{role:?} still reads all of /private/var/folders: {profile}");
+            assert!(profile.contains("(subpath (param \"USER_CACHE\")) (subpath (param \"USER_TEMP\"))"), "{role:?}: {profile}");
+            for name in ["USER_CACHE", "USER_TEMP"] {
+                let path = parameters.values.iter().find(|(parameter, _)| parameter == name).map(|(_, path)| path);
+                assert!(path.is_some_and(|path| path.is_absolute()), "{role:?} {name}: {parameters:?}");
+            }
+        }
     }
 
     /// Section 8.1 of the installation design: the updater reaches one
@@ -269,7 +313,7 @@ mod tests {
     fn the_updater_reaches_one_port_and_writes_only_its_staging_folder() {
         let program = Path::new("/Applications/NeoTeletext.app/Contents/MacOS/neoteletext-updater");
         let staging = Path::new("/Users/someone/Library/Application Support/NeoTeletext Updates/staging");
-        let (updater, parameters) = profile(program, Role::Updater { port: 443 }, Some(staging), false);
+        let (updater, parameters) = profile(program, Role::Updater { port: 443 }, Some(staging), false).unwrap();
         assert!(updater.starts_with("(version 1)\n(deny default)\n"));
         assert!(updater.contains("(remote tcp \"*:443\")"));
         assert!(!updater.contains("*:*"), "no other port");
@@ -286,7 +330,7 @@ mod tests {
     #[test]
     fn the_fetcher_denies_loopback_only_when_the_local_network_is_not_allowed() {
         let program = Path::new("/Applications/NeoTeletext.app/Contents/MacOS/neoteletext-fetcher");
-        assert!(profile(program, Role::Network, None, false).0.contains("(deny network-outbound (remote ip \"localhost:*\"))"));
-        assert!(!profile(program, Role::Network, None, true).0.contains("localhost"));
+        assert!(profile(program, Role::Network, None, false).unwrap().0.contains("(deny network-outbound (remote ip \"localhost:*\"))"));
+        assert!(!profile(program, Role::Network, None, true).unwrap().0.contains("localhost"));
     }
 }
