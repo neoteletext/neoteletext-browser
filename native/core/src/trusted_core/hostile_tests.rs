@@ -344,9 +344,17 @@ fn sent_without_the_cookie(written: &mpsc::Receiver<Vec<u8>>) -> usize {
 }
 
 /// The file channels the harness opens: the stand-in broker reads any
-/// path, and marks its page with the path (`watch`).
+/// path, and marks its page with the path (`watch`). A file address is an
+/// absolute path, which on Windows begins with a drive: there,
+/// "/hostile-harness/..." is read as a host name.
+#[cfg(not(windows))]
 const FILE_CHANNEL: &str = "/hostile-harness/news.tti";
+#[cfg(not(windows))]
 const PRIVATE_FILE_CHANNEL: &str = "/hostile-harness/private.tti";
+#[cfg(windows)]
+const FILE_CHANNEL: &str = r"C:\hostile-harness\news.tti";
+#[cfg(windows)]
+const PRIVATE_FILE_CHANNEL: &str = r"C:\hostile-harness\private.tti";
 
 /// Finding F-98's hand-off, before the rounds: a web link's question in
 /// the strip is not answered by page intents, and, confirmed, hands its
@@ -445,11 +453,15 @@ fn the_core_stands_against_a_hostile_interface() {
         assert_eq!((channels(&core.session), core.session.bookmarks.text()), before, "{described} moved a tab");
     }
     // Every channel's helpers, started as a tab is chosen, as the user
-    // would; what they are told is checked at the end.
-    let generation = core.generation;
-    core.intent(ToCore::SelectTab(2)).unwrap();
-    core.tick().and_then(|()| core.flush()).unwrap();
-    watch.note_channels(&core, generation);
+    // would; what they are told is checked at the end. Without the
+    // stand-in broker, as on Windows, nothing can start them.
+    #[cfg(unix)]
+    {
+        let generation = core.generation;
+        core.intent(ToCore::SelectTab(2)).unwrap();
+        core.tick().and_then(|()| core.flush()).unwrap();
+        watch.note_channels(&core, generation);
+    }
 
     let (taken, refused) = hostile_rounds(&mut core, &mut watch, start_page, private);
     core.to_interface.flush().unwrap();

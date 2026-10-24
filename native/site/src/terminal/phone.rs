@@ -57,7 +57,10 @@ impl Session {
             match event {
                 PhoneEvent::Join(rows, pin) => {
                     phone.rows = rows;
-                    phone.state = pin.map_or_else(|| "Scan with your phone camera to type here.".to_owned(), |pin| format!("Scan, then enter PIN {pin}"));
+                    // Without a PIN the phone is connected by its first key
+                    // (the engine's decision E.116 item 3); a row holds 39
+                    // characters after its colour.
+                    phone.state = pin.map_or_else(|| "Scan with your phone, then press a key.".to_owned(), |pin| format!("Scan, then enter PIN {pin}"));
                 }
                 PhoneEvent::State(state) => phone.state = state,
                 PhoneEvent::Text(text) => phone.typed.push_str(&text),

@@ -45,6 +45,11 @@ pub struct PhoneUiView {
 
 /// The one line every QR panel shows (INPUT.md section 10).
 pub const WARNING: &str = "Scan with your phone camera to type here. Anyone who can see this code can type.";
+/// Without a PIN, what connects the scanned phone (decision 101): its
+/// first key, the first frame that proves it holds the QR's key (the
+/// engine's decision E.116 item 3). Closing the panel before then ends the
+/// session, as it does before any phone is connected.
+pub const PRESS_A_KEY: &str = "Then press a key on the phone to connect.";
 const PANEL_WIDTH: f64 = 460.0;
 const PANEL_HEIGHT: f64 = 560.0;
 const PANEL_PADDING: f64 = 20.0;
@@ -172,6 +177,10 @@ impl Browser {
             left_centred(canvas, Rect::new(panel.x0 + PANEL_PADDING, y, panel.x1, y + LINE), 0.0, &format!("PIN: {pin}"), HEADING, TYPING);
             y += LINE * 1.5;
         }
+        if status == PhoneStatus::Scan && view.as_ref().is_some_and(|view| view.pin.is_none()) {
+            left_centred(canvas, Rect::new(panel.x0 + PANEL_PADDING, y, panel.x1, y + LINE), 0.0, PRESS_A_KEY, ROW_STATUS, TYPING);
+            y += LINE * 1.5;
+        }
         if let PhoneStatus::PinFailed(left) = status {
             left_centred(
                 canvas,
@@ -259,5 +268,23 @@ mod tests {
         let mut canvas = Recorder::new();
         browser.draw(&mut canvas, 1440.0, 900.0, 0);
         assert!(canvas.texts.iter().any(|(_, text)| text == "Phone connected"));
+    }
+
+    /// Decision 101: without a PIN the phone is connected only by its first
+    /// key (the engine's decision E.116 item 3, finding F-71), so the panel
+    /// says to press one; with a PIN, entering it connects the phone.
+    #[test]
+    fn without_a_pin_the_panel_says_to_press_a_key_on_the_phone() {
+        let said = |pin: Option<&str>, status: PhoneStatus| {
+            let mut browser = Browser::new(Frame { left_inset: 0.0, window_buttons: false });
+            browser.toggle_phone_panel();
+            browser.set_phone(PhoneUiView { status, qr: Some((21, alloc::vec![0xFF; 56])), pin: pin.map(String::from) });
+            let mut canvas = Recorder::new();
+            browser.draw(&mut canvas, 1440.0, 900.0, 0);
+            canvas.texts.iter().any(|(_, text)| text == PRESS_A_KEY)
+        };
+        assert!(said(None, PhoneStatus::Scan), "no PIN: press a key");
+        assert!(!said(Some("1234"), PhoneStatus::Scan), "a PIN connects it");
+        assert!(!said(None, PhoneStatus::Connected), "already connected");
     }
 }
