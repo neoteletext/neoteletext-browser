@@ -28,13 +28,13 @@ fn handle(core: &mut Core, event: Event) -> Result<bool, String> {
         }
         Event::Decoded(channel, generation, message) => {
             core.decoder_heard(channel, generation);
-            if core.decoders.get(&channel).map(|decoder| decoder.generation) == Some(generation) {
+            if core.decoders.get(&channel).map(super::processes::Decoder::generation) == Some(generation) {
                 core.in_window_of(channel, |core| core.decoded(channel, message))?;
             }
         }
         Event::Fetched(channel, generation, message) => {
             core.fetcher_heard(channel, generation);
-            if core.fetchers.get(&channel).map(|fetcher| fetcher.generation) == Some(generation) {
+            if core.fetchers.get(&channel).map(super::processes::Fetcher::generation) == Some(generation) {
                 core.in_window_of(channel, |core| core.fetched(channel, message))?;
             }
         }
