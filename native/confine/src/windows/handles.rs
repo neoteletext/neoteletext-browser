@@ -19,7 +19,19 @@ use windows_sys::Win32::System::Pipes::CreatePipe;
 use windows_sys::Win32::System::Threading::GetCurrentProcess;
 
 /// A handle closed when dropped.
-pub(super) struct Owned(pub(super) HANDLE);
+pub(super) struct Owned(HANDLE);
+
+impl Owned {
+    /// Owns `handle`, to close it when dropped.
+    pub(super) fn new(handle: HANDLE) -> Self {
+        Self(handle)
+    }
+
+    /// The handle, still owned by this value.
+    pub(super) fn raw(&self) -> HANDLE {
+        self.0
+    }
+}
 
 impl Drop for Owned {
     fn drop(&mut self) {
@@ -31,9 +43,14 @@ impl Drop for Owned {
 }
 
 /// A SID from its text, freed when dropped.
-pub(super) struct Sid(pub(super) PSID);
+pub(super) struct Sid(PSID);
 
 impl Sid {
+    /// The SID, still owned by this value.
+    pub(super) fn raw(&self) -> PSID {
+        self.0
+    }
+
     pub(super) fn parse(text: &str) -> io::Result<Self> {
         let mut sid: PSID = ptr::null_mut();
         // SAFETY: the text is NUL-terminated and alive for the call; the SID is written to a
@@ -53,7 +70,19 @@ impl Drop for Sid {
 }
 
 /// A SID of an `AppContainer`, freed with `FreeSid`.
-pub(super) struct ContainerSid(pub(super) PSID);
+pub(super) struct ContainerSid(PSID);
+
+impl ContainerSid {
+    /// Owns `sid`, which the container calls allocated.
+    pub(super) fn new(sid: PSID) -> Self {
+        Self(sid)
+    }
+
+    /// The SID, still owned by this value.
+    pub(super) fn raw(&self) -> PSID {
+        self.0
+    }
+}
 
 impl Drop for ContainerSid {
     fn drop(&mut self) {

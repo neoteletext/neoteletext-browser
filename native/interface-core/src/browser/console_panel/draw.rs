@@ -1,6 +1,7 @@
 //! The console drawn: its tabs and buttons, the Log tab's levels and
 //! search, the cookies' tab or the entries; and its tips.
 
+use alloc::collections::VecDeque;
 use alloc::format;
 use alloc::vec::Vec;
 
@@ -69,7 +70,7 @@ impl Browser {
             canvas.fill(rect, RADIUS, if chosen { SELECTED } else { BUTTON });
             border(canvas, rect, 1.0, if chosen { SELECTED } else { RULE });
             let label = match tab {
-                Tab::Entries(tab) => format!("{} {}", tab.label(), self.console.entries[tab.index()].len()),
+                Tab::Entries(tab) => format!("{} {}", tab.label(), self.console.entries.get(tab.index()).map_or(0, VecDeque::len)),
                 Tab::Cookies => "Cookies".into(),
             };
             centred(canvas, rect, &label, ROW_STATUS, WHITE);

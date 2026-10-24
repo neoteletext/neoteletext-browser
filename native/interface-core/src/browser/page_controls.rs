@@ -26,7 +26,7 @@ const RADIUS: f64 = 4.0;
 /// (back to the latest), the step on.
 #[derive(Debug, Default)]
 pub(super) struct ControlsUi {
-    pub(super) controls: PageControls,
+    controls: PageControls,
     previous: Rect,
     count: Rect,
     next: Rect,

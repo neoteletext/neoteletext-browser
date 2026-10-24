@@ -93,31 +93,30 @@ pub enum Message {
     },
 }
 
-/// Writes a message to the interface's payload; returns its kind.
-pub(crate) fn push_message(payload: &mut Vec<u8>, message: &Message) -> Result<u8, ProtocolError> {
-    Ok(match message {
-        Message::Page { key, links } => {
-            push_page_links(payload, *key, links)?;
-            KIND_PAGE_LINKS
-        }
-        Message::Pointing(pointing) => {
-            push_pointing(payload, pointing.as_ref())?;
-            KIND_POINTING
-        }
-        Message::Prompt(prompt) => {
-            push_prompt(payload, prompt.as_ref())?;
-            KIND_PROMPT
-        }
-        Message::Show(key) => {
-            push_key(payload, *key);
-            KIND_SHOW
-        }
+/// The kind a message to the interface is sent as.
+pub(crate) fn message_kind(message: &Message) -> u8 {
+    match message {
+        Message::Page { .. } => KIND_PAGE_LINKS,
+        Message::Pointing(_) => KIND_POINTING,
+        Message::Prompt(_) => KIND_PROMPT,
+        Message::Show(_) => KIND_SHOW,
+        Message::Aliases { .. } => KIND_ALIASES,
+    }
+}
+
+/// Writes a message to the interface's payload.
+pub(crate) fn push_message(payload: &mut Vec<u8>, message: &Message) -> Result<(), ProtocolError> {
+    match message {
+        Message::Page { key, links } => push_page_links(payload, *key, links)?,
+        Message::Pointing(pointing) => push_pointing(payload, pointing.as_ref())?,
+        Message::Prompt(prompt) => push_prompt(payload, prompt.as_ref())?,
+        Message::Show(key) => push_key(payload, *key),
         Message::Aliases { channel, numbers } => {
             payload.extend_from_slice(&channel.to_be_bytes());
             push_numbers(payload, numbers)?;
-            KIND_ALIASES
         }
-    })
+    }
+    Ok(())
 }
 
 /// Whether `kind` is a link message from the trusted core.

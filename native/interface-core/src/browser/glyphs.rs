@@ -7,6 +7,7 @@ use alloc::vec::Vec;
 
 use crate::canvas::Canvas;
 use crate::geometry::{Point, Rect};
+use crate::text::cross;
 use crate::theme::{BUTTON, Colour, FIELD};
 
 pub(super) const WINDOW_GLYPH: f64 = 14.0;
@@ -87,8 +88,8 @@ pub(super) fn arrow<C: Canvas + ?Sized>(canvas: &mut C, rect: Rect, pointing_lef
     canvas.fill(shaft, 0.0, colour);
     for direction in [1.0, -1.0] {
         let back = Point::new(tip.x - sign * ARROW_HEAD, tip.y + direction * ARROW_HEAD);
-        let thick = Point::new(sign * ARROW_THICKNESS * 0.7, 0.0);
-        canvas.polygon(&[tip, back, back + thick, tip + thick], colour);
+        let thick = sign * ARROW_THICKNESS * 0.7;
+        canvas.polygon(&[tip, back, Point::new(back.x + thick, back.y), Point::new(tip.x + thick, tip.y)], colour);
     }
 }
 
@@ -114,14 +115,7 @@ pub(super) fn speaker_glyph<C: Canvas + ?Sized>(canvas: &mut C, rect: Rect, mute
     let right = centre.x + half / 4.0;
     if muted {
         // A cross to the right of the cone, two bars corner to corner.
-        let cross = Point::new(right + half / 2.0, centre.y);
-        let reach = half / 2.0;
-        let normal = SPEAKER_LINE / 2.0 / core::f64::consts::SQRT_2;
-        for direction in [1.0, -1.0] {
-            let along = Point::new(reach, reach * direction);
-            let across = Point::new(-normal * direction, normal);
-            canvas.polygon(&[cross - along + across, cross + along + across, cross + along - across, cross - along - across], colour);
-        }
+        cross(canvas, Point::new(right + half / 2.0, centre.y), half / 2.0, SPEAKER_LINE, colour);
     } else {
         // Two waves, drawn as bars rising with their distance.
         for (offset, height) in [(0.0, half / 2.0), (half / 2.0, half)] {

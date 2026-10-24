@@ -130,21 +130,21 @@ impl Editor {
     pub fn insert(&mut self, text: &str) {
         self.delete_selection();
         for character in text.chars().filter(|&character| !hidden(character)) {
-            if self.text.len() + character.len_utf8() > self.limit {
+            if self.text.len().saturating_add(character.len_utf8()) > self.limit {
                 break;
             }
             self.text.insert(self.caret, character);
-            self.caret += character.len_utf8();
+            self.caret = self.caret.saturating_add(character.len_utf8());
         }
         self.anchor = self.caret;
     }
 
     fn previous(&self, at: usize) -> usize {
-        self.text[..at].char_indices().next_back().map_or(0, |(index, _)| index)
+        self.text.get(..at).and_then(|before| before.char_indices().next_back()).map_or(0, |(index, _)| index)
     }
 
     fn next(&self, at: usize) -> usize {
-        self.text[at..].chars().next().map_or(at, |character| at + character.len_utf8())
+        self.text.get(at..).and_then(|after| after.chars().next()).map_or(at, |character| at.saturating_add(character.len_utf8()))
     }
 
     /// Deletes the selection, or else the character before the caret.
@@ -204,7 +204,7 @@ impl Editor {
     pub fn place(&mut self, at: usize, extend: bool) {
         let mut at = at.min(self.text.len());
         while !self.text.is_char_boundary(at) {
-            at -= 1;
+            at = at.saturating_sub(1);
         }
         self.caret = at;
         if !extend {

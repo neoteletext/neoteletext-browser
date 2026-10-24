@@ -16,8 +16,15 @@ use crate::process::{COOKIE_BYTES, COOKIE_SLOTS};
 /// Randomness for the agent (WebSocket masks), from the operating system's
 /// per-process random keys, which `RandomState` draws.
 pub(crate) struct Random {
-    pub(crate) state: RandomState,
-    pub(crate) counter: u64,
+    state: RandomState,
+    counter: u64,
+}
+
+impl Random {
+    /// Randomness from this process's own keys, its counter at the start.
+    pub(crate) fn new() -> Self {
+        Self { state: RandomState::new(), counter: 0 }
+    }
 }
 
 impl neoteletext_web::port::RandomSource for Random {

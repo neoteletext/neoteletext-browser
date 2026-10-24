@@ -215,8 +215,8 @@ fn draw_closed_tabs<C: Canvas + ?Sized>(canvas: &mut C, view: &HistoryView, cont
 fn draw_footer<C: Canvas + ?Sized>(canvas: &mut C, view: &HistoryView, controls: &Controls, footer: Rect) {
     let (left, right) = (footer.x0, footer.x1);
     if view.total > 0 {
-        let last = (usize::try_from(view.first).unwrap_or(0) + controls.rows.len()).min(usize::try_from(view.total).unwrap_or(0));
-        right_centred(canvas, footer, 0.0, &format!("{} to {last} of {}", view.first + 1, view.total), ROW_STATUS, MUTED);
+        let last = usize::try_from(view.first).unwrap_or(0).saturating_add(controls.rows.len()).min(usize::try_from(view.total).unwrap_or(0));
+        right_centred(canvas, footer, 0.0, &format!("{} to {last} of {}", view.first.saturating_add(1), view.total), ROW_STATUS, MUTED);
     }
     if !view.notice.is_empty() {
         canvas.push_clip(Rect::new(left, footer.y0, f64::midpoint(left, right) + WIDE_BUTTON, footer.y1));

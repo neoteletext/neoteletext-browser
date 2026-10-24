@@ -121,7 +121,9 @@ impl Browser {
         if modifiers.alt && matches!(key, Key::Left | Key::Right) {
             let count = self.tabs.len();
             if count > 0 {
-                let next = if key == Key::Right { self.active.saturating_add(1) % count } else { self.active.checked_sub(1).unwrap_or(count - 1) };
+                let last = count.saturating_sub(1);
+                let next =
+                    if key == Key::Right { self.active.saturating_add(1).checked_rem(count).unwrap_or(0) } else { self.active.checked_sub(1).unwrap_or(last) };
                 self.outputs.push(Output::SelectTab(next));
             }
             return true;
@@ -129,7 +131,11 @@ impl Browser {
         let Key::Text(text) = key else { return false };
         // Command-1 to 8 choose those tabs, Command-9 the last, as in Chrome.
         if let Some(digit) = text.chars().next().and_then(|first| first.to_digit(10)).filter(|digit| (1..=9).contains(digit) && text.len() == 1) {
-            let index = if digit == 9 { self.tabs.len().checked_sub(1) } else { usize::try_from(digit - 1).ok().filter(|index| *index < self.tabs.len()) };
+            let index = if digit == 9 {
+                self.tabs.len().checked_sub(1)
+            } else {
+                digit.checked_sub(1).and_then(|index| usize::try_from(index).ok()).filter(|index| *index < self.tabs.len())
+            };
             if let Some(index) = index {
                 self.outputs.push(Output::SelectTab(index));
             }

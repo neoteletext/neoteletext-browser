@@ -44,7 +44,8 @@ impl Browser {
             let swatch = Rect::new(rect.x0 + PADDING, rect.y0 + SWATCH_INSET, rect.x0 + PADDING + SWATCH_WIDTH, rect.y1 - SWATCH_INSET);
             canvas.fill(swatch, 0.0, colour);
             let text_left = swatch.x1 + PADDING;
-            let range = format!("{}00-{}99", bank + 1, bank + 1);
+            let magazine = bank.saturating_add(1);
+            let range = format!("{magazine}00-{magazine}99");
             let name = self.channel.banks.get(bank).map_or("", String::as_str);
             let range_height = canvas.line_height(BANK_RANGE);
             let name_height = canvas.line_height(BANK_NAME);

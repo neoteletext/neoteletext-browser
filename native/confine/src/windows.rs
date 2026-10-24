@@ -88,12 +88,12 @@ pub(crate) fn apply() -> Report {
 pub(crate) fn spawn(spawn: &Spawn<'_>) -> io::Result<Process> {
     let (their_stdin, our_stdin) = pipe()?;
     let (our_stdout, their_stdout) = pipe()?;
-    keep_ours(our_stdin.0)?;
-    keep_ours(our_stdout.0)?;
+    keep_ours(our_stdin.raw())?;
+    keep_ours(our_stdout.raw())?;
     // SAFETY: GetStdHandle takes a constant and returns a handle this process already
     // has, or none; it is only compared and passed on, never closed.
     let stderr = unsafe { GetStdHandle(STD_ERROR_HANDLE) };
-    let mut inherited = vec![their_stdin.0, their_stdout.0];
+    let mut inherited = vec![their_stdin.raw(), their_stdout.raw()];
     if stderr != 0 && stderr != INVALID_HANDLE_VALUE {
         inherited.push(stderr);
     }
@@ -116,25 +116,25 @@ pub(crate) fn spawn(spawn: &Spawn<'_>) -> io::Result<Process> {
     {
         grant(folder, &sid)?;
     }
-    let information = start(spawn, &inherited, their_stdin.0, their_stdout.0, &sid, &capabilities)
+    let information = start(spawn, &inherited, their_stdin.raw(), their_stdout.raw(), &sid, &capabilities)
         .map_err(|error| io::Error::new(error.kind(), format!("cannot start in its AppContainer: {error}")))?;
     report.layers.push(String::from(if matches!(spawn.role, Role::Decoder | Role::Core) { "less privileged AppContainer" } else { "AppContainer" }));
-    let process = Owned(information.hProcess);
-    let thread = Owned(information.hThread);
+    let process = Owned::new(information.hProcess);
+    let thread = Owned::new(information.hThread);
     // Into the job before it runs a single instruction.
     // SAFETY: the job and the process are handles this function made and owns, alive to
     // the end of it.
-    if unsafe { AssignProcessToJobObject(job.0, process.0) } == 0 {
+    if unsafe { AssignProcessToJobObject(job.raw(), process.raw()) } == 0 {
         let error = last_error();
         // SAFETY: the suspended process this function started, its handle still owned here.
-        unsafe { TerminateProcess(process.0, 1) };
+        unsafe { TerminateProcess(process.raw(), 1) };
         return Err(error);
     }
     // SAFETY: the process's first thread, started suspended, its handle owned here.
-    if unsafe { ResumeThread(thread.0) } == u32::MAX {
+    if unsafe { ResumeThread(thread.raw()) } == u32::MAX {
         let error = last_error();
         // SAFETY: as above.
-        unsafe { TerminateProcess(process.0, 1) };
+        unsafe { TerminateProcess(process.raw(), 1) };
         return Err(error);
     }
     drop(thread);
@@ -142,12 +142,12 @@ pub(crate) fn spawn(spawn: &Spawn<'_>) -> io::Result<Process> {
     drop(their_stdout);
     // SAFETY: our end of the input pipe, made by `pipe` and owned only by `our_stdin`,
     // forgotten below so the file becomes its one owner.
-    let stdin = unsafe { File::from_raw_handle(our_stdin.0 as _) };
+    let stdin = unsafe { File::from_raw_handle(our_stdin.raw() as _) };
     // SAFETY: likewise our end of the output pipe.
-    let stdout = unsafe { File::from_raw_handle(our_stdout.0 as _) };
+    let stdout = unsafe { File::from_raw_handle(our_stdout.raw() as _) };
     std::mem::forget(our_stdin);
     std::mem::forget(our_stdout);
-    let inner = Inner::new(process.0, job.0);
+    let inner = Inner::new(process.raw(), job.raw());
     std::mem::forget(process);
     std::mem::forget(job);
     Ok(Process::new(Some(stdin), Some(stdout), inner, report))

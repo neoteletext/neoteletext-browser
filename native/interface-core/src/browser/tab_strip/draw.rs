@@ -14,7 +14,7 @@ use crate::browser::glyphs::{WINDOW_GLYPH, WINDOW_GLYPH_THICKNESS, speaker_glyph
 use crate::browser::regions::{Regions, TabRegion};
 use crate::canvas::Canvas;
 use crate::geometry::{Point, Rect};
-use crate::text::{HAIRLINE, border, centred, left_centred, outline};
+use crate::text::{HAIRLINE, border, centred, cross, left_centred, outline};
 use crate::theme::{BLACK, BUTTON, GLYPH, GREEN, PRIVATE, RED, ROW_STATUS, RULE, SELECTED, TAB_COLOURS, TAB_TITLE, WHITE, YELLOW};
 
 impl Browser {
@@ -82,8 +82,8 @@ impl Browser {
     fn draw_tab<C: Canvas + ?Sized>(&self, canvas: &mut C, index: usize, slot: Rect) -> TabRegion {
         let active = index == self.active;
         let rect = Rect::new(slot.x0, slot.y0 + if active { TAB_TOP } else { TAB_TOP_INACTIVE }, slot.x1, slot.y1);
-        let Some(tab) = self.tabs.get(index) else { return TabRegion { index, tab: rect, close: Rect::ZERO, speaker: None } };
-        let (fill, ink) = TAB_COLOURS[usize::from(tab.colour) % TAB_COLOURS.len()];
+        let coloured = self.tabs.get(index).and_then(|tab| Some((tab, *TAB_COLOURS.iter().cycle().nth(usize::from(tab.colour))?)));
+        let Some((tab, (fill, ink))) = coloured else { return TabRegion { index, tab: rect, close: Rect::ZERO, speaker: None } };
         canvas.fill(rect, 0.0, fill);
         if active {
             border(canvas, Rect::new(rect.x0, rect.y0, rect.x1, rect.y1 + BANK_BORDER), BANK_BORDER - 1.0, WHITE);
@@ -126,7 +126,7 @@ impl Browser {
             canvas.fill(Rect::new(0.0, panel.y1 - HAIRLINE, width, panel.y1), 0.0, RULE);
             for (place, &index) in rest.iter().enumerate() {
                 #[allow(clippy::cast_precision_loss, reason = "a few tabs")]
-                let (row, column) = ((place / per_row) as f64, (place % per_row) as f64);
+                let (row, column) = (place.checked_div(per_row).unwrap_or(0) as f64, place.checked_rem(per_row).unwrap_or(0) as f64);
                 let x = left + column * (tab_width + TAB_GAP);
                 let top = STRIP_HEIGHT + row * PANEL_ROW - TAB_TOP_INACTIVE + TAB_GAP;
                 let region = self.draw_tab(canvas, index, Rect::new(x, top, x + tab_width, top + STRIP_HEIGHT));
@@ -162,11 +162,5 @@ fn draw_window_buttons<C: Canvas + ?Sized>(canvas: &mut C, regions: &Regions) {
     let maximise = centre(regions.maximise);
     border(canvas, Rect::new(maximise.x - half, maximise.y - half, maximise.x + half, maximise.y + half), thick, BLACK);
     // The close cross: two bars, each a thin parallelogram from corner to corner.
-    let close = centre(regions.close);
-    let normal = thick / 2.0 / core::f64::consts::SQRT_2;
-    for direction in [1.0, -1.0] {
-        let along = Point::new(half, half * direction);
-        let across = Point::new(-normal * direction, normal);
-        canvas.polygon(&[close - along + across, close + along + across, close + along - across, close - along - across], BLACK);
-    }
+    cross(canvas, centre(regions.close), half, thick, BLACK);
 }

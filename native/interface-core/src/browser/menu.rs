@@ -80,9 +80,21 @@ impl Item {
 /// The menu's state in the browser.
 #[derive(Debug, Default)]
 pub(super) struct MenuUi {
-    pub(super) menu_open: bool,
+    menu_open: bool,
     menu: Vec<(Item, Rect)>,
     menu_area: Rect,
+}
+
+impl MenuUi {
+    /// Whether the menu is open.
+    pub(super) fn is_open(&self) -> bool {
+        self.menu_open
+    }
+
+    /// Closes the menu; whether it was open.
+    pub(super) fn close(&mut self) -> bool {
+        core::mem::take(&mut self.menu_open)
+    }
 }
 
 impl Browser {

@@ -12,7 +12,7 @@ use alloc::vec::Vec;
 
 use super::Browser;
 use crate::canvas::Canvas;
-use crate::channel::{PAGES_PER_BANK, page_number};
+use crate::channel::{bank_indices, page_number};
 use crate::geometry::{Point, Rect};
 use crate::text::{border, left_centred};
 use crate::theme::{BUTTON, ROW_TITLE, RULE, WHITE};
@@ -31,8 +31,8 @@ const EDGE: f64 = 4.0;
 /// A control's tip as last drawn.
 #[derive(Clone, Debug, PartialEq)]
 pub(super) struct Tip {
-    pub(super) rect: Rect,
-    pub(super) text: String,
+    rect: Rect,
+    text: String,
 }
 
 /// The tips' state in the browser.
@@ -192,8 +192,9 @@ impl Browser {
     /// The window below the strip: the banks, the overview and the console.
     fn body_tips(&self, tips: &mut Vec<(Rect, String)>) {
         for (bank, rect) in self.regions.banks.iter().enumerate() {
-            let first = page_number(bank * PAGES_PER_BANK);
-            let last = page_number((bank + 1) * PAGES_PER_BANK - 1);
+            let indices = bank_indices(bank);
+            let first = page_number(indices.start);
+            let last = indices.last().and_then(page_number);
             if let (Some(first), Some(last)) = (first, last) {
                 tips.push((*rect, format!("Show pages {first} to {last}")));
             }

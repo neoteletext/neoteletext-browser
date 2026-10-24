@@ -6,6 +6,7 @@ use interface_core::canvas::{Canvas, PageKey, Style};
 use interface_core::geometry::Rect;
 use interface_core::theme::Colour;
 
+use crate::pages::PageImage;
 use crate::text::INK_OVERHANG;
 use crate::{DeviceBox, Painter};
 
@@ -51,28 +52,56 @@ pub(crate) enum Command {
 /// pixels it can change.
 #[derive(Debug)]
 pub(crate) struct Recorded {
-    pub(crate) command: Command,
+    command: Command,
     /// The clips around it, an index into [`Frame::clips`].
-    pub(crate) clip: usize,
+    clip: usize,
     /// The pixels it can change: its shape's, inside its clips. A clip's
     /// own are its rect's, since what it holds changes only there.
-    pub(crate) bounds: DeviceBox,
+    bounds: DeviceBox,
+}
+
+impl Recorded {
+    /// The call.
+    pub(crate) fn command(&self) -> &Command {
+        &self.command
+    }
+
+    /// The clips around it, an index into the frame's sets of clips.
+    pub(crate) fn clip(&self) -> usize {
+        self.clip
+    }
+
+    /// The pixels it can change.
+    pub(crate) fn bounds(&self) -> DeviceBox {
+        self.bounds
+    }
 }
 
 /// A frame's calls.
 #[derive(Debug, Default)]
 pub(crate) struct Frame {
-    pub(crate) calls: Vec<Recorded>,
+    calls: Vec<Recorded>,
     /// Every set of clips a call was drawn inside, outermost first, and the
     /// pixels they leave; the first is none, the whole surface.
-    pub(crate) clips: Vec<(Vec<Rect>, DeviceBox)>,
+    clips: Vec<(Vec<Rect>, DeviceBox)>,
     /// While drawing, the clips now around a call, as indices into `clips`.
-    pub(crate) stack: Vec<usize>,
+    stack: Vec<usize>,
 }
 
 impl Frame {
     pub(crate) fn new(surface: DeviceBox) -> Self {
         Self { calls: Vec::new(), clips: vec![(Vec::new(), surface)], stack: vec![0] }
+    }
+
+    /// The frame's calls, in the order drawn.
+    pub(crate) fn calls(&self) -> &[Recorded] {
+        &self.calls
+    }
+
+    /// The pixels the set of clips `clip` leaves, none for a set there is
+    /// not.
+    pub(crate) fn clip_pixels(&self, clip: usize) -> DeviceBox {
+        self.clips.get(clip).map_or_else(DeviceBox::default, |(_, area)| *area)
     }
 
     fn top(&self) -> usize {
@@ -154,12 +183,12 @@ impl Canvas for Painter {
     }
 
     fn screen(&mut self, key: PageKey) -> Option<Colour> {
-        self.pages.get(&key).map(|page| page.screen)
+        self.pages.get(&key).map(PageImage::screen)
     }
 
     fn page(&mut self, key: PageKey, area: Rect) -> bool {
         let Some(page) = self.pages.get(&key) else { return false };
-        let image = page.number;
+        let image = page.number();
         self.record(Command::Page { key, area, image }, area);
         true
     }

@@ -41,7 +41,7 @@ pub(super) struct LinkUi {
     /// The strip's question, and when it was asked.
     prompt: Option<(Prompt, u64)>,
     /// The question's button the keyboard is on, once the user moved there.
-    pub(super) prompt_focus: Option<PromptButton>,
+    prompt_focus: Option<PromptButton>,
     /// The open page's link the keyboard is on.
     focus: Option<usize>,
     /// The open page's link under the pointer.
@@ -53,6 +53,14 @@ pub(super) struct LinkUi {
     /// The question's buttons, where last drawn.
     go: Rect,
     cancel: Rect,
+}
+
+impl LinkUi {
+    /// The question's button the keyboard is on.
+    #[cfg(all(test, feature = "phone-keyboard"))]
+    pub(super) fn prompt_focus(&self) -> Option<PromptButton> {
+        self.prompt_focus
+    }
 }
 
 impl Browser {
@@ -239,7 +247,7 @@ impl Browser {
                 let next = match (self.links.focus, modifiers.shift) {
                     (None, false) => 0,
                     (None, true) => count.saturating_sub(1),
-                    (Some(at), false) => at.saturating_add(1) % count,
+                    (Some(at), false) => at.saturating_add(1).checked_rem(count).unwrap_or(0),
                     (Some(at), true) => at.checked_sub(1).unwrap_or(count.saturating_sub(1)),
                 };
                 self.links.focus = Some(next);

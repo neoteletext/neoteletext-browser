@@ -1,6 +1,6 @@
 //! The trusted core's messages to the interface: written by the trusted
-//! core, read by the interface, one arm for each kind in the order of the
-//! kinds.
+//! core, read by the interface, each match one arm for each kind in the
+//! order of the kinds.
 
 use std::io::{Read, Write};
 
@@ -25,122 +25,87 @@ use crate::{Fields, ProtocolError, console, controls, cookies, library, read_fra
 /// # Errors
 /// When writing fails, or the message breaks a bound or carries text that
 /// was not cleaned.
-#[allow(clippy::too_many_lines, reason = "one arm for each kind of message, in the order of the kinds")]
 pub fn write_to_interface(out: &mut dyn Write, message: &ToInterface) -> Result<(), ProtocolError> {
     let mut payload = Vec::new();
-    let kind = match message {
-        ToInterface::Tabs { tabs, active } => {
-            push_tabs(&mut payload, tabs, *active)?;
-            KIND_TABS
-        }
-        ToInterface::Strip(strip) => {
-            push_strip(&mut payload, strip)?;
-            KIND_STRIP
-        }
-        ToInterface::Channel(channel) => {
-            push_channel(&mut payload, channel)?;
-            KIND_CHANNEL
-        }
-        ToInterface::Page { channel, page, title } => {
-            push_page(&mut payload, *channel, *page, title)?;
-            KIND_PAGE
-        }
-        ToInterface::Updated { channel, page } => {
-            push_updated(&mut payload, *channel, *page);
-            KIND_UPDATED
-        }
-        ToInterface::Frame { key, version, image } => {
-            push_frame(&mut payload, *key, *version, image);
-            KIND_FRAME
-        }
-        ToInterface::Sounding(channels) => {
-            push_channels(&mut payload, channels)?;
-            KIND_TAB_SOUNDING
-        }
+    push_fields(&mut payload, message)?;
+    write_frame(out, kind_of(message), &payload)
+}
+
+/// The kind each message is sent as, in the order of the kinds.
+fn kind_of(message: &ToInterface) -> u8 {
+    match message {
+        ToInterface::Tabs { .. } => KIND_TABS,
+        ToInterface::Strip(_) => KIND_STRIP,
+        ToInterface::Channel(_) => KIND_CHANNEL,
+        ToInterface::Page { .. } => KIND_PAGE,
+        ToInterface::Updated { .. } => KIND_UPDATED,
+        ToInterface::Frame { .. } => KIND_FRAME,
+        ToInterface::Sounding(_) => KIND_TAB_SOUNDING,
         #[cfg(feature = "links")]
-        ToInterface::Link(message) => crate::links::push_message(&mut payload, message)?,
+        ToInterface::Link(message) => crate::links::message_kind(message),
         #[cfg(feature = "interaction")]
-        ToInterface::Typing(typing) => {
-            crate::interaction::push_typing(&mut payload, typing)?;
-            KIND_TYPING
-        }
+        ToInterface::Typing(_) => KIND_TYPING,
         #[cfg(feature = "phone-keyboard")]
-        ToInterface::Phone(view) => {
-            crate::keyboard::push_view(&mut payload, view)?;
-            KIND_PHONE
-        }
+        ToInterface::Phone(_) => KIND_PHONE,
         #[cfg(feature = "phone-keyboard")]
-        ToInterface::PhoneKey(key) => {
-            crate::keyboard::push_phone_key(&mut payload, key)?;
-            KIND_PHONE_KEY
-        }
-        ToInterface::Settings(view) => {
-            settings::push_view(&mut payload, view)?;
-            KIND_SETTINGS
-        }
-        ToInterface::Update(view) => {
-            settings::push_update(&mut payload, view)?;
-            KIND_UPDATE_VIEW
-        }
-        ToInterface::Console(update) => {
-            console::push_update(&mut payload, update)?;
-            KIND_CONSOLE_UPDATE
-        }
-        ToInterface::History(view) => {
-            library::push_history_view(&mut payload, view)?;
-            KIND_HISTORY_VIEW
-        }
-        ToInterface::Suggestions(suggestions) => {
-            library::push_suggestions(&mut payload, suggestions)?;
-            KIND_SUGGESTIONS
-        }
-        ToInterface::TabList(list) => {
-            library::push_tab_list(&mut payload, list)?;
-            KIND_TAB_LIST_VIEW
-        }
-        ToInterface::Bookmarks(view) => {
-            library::push_bookmarks_view(&mut payload, view)?;
-            KIND_BOOKMARKS_VIEW
-        }
-        ToInterface::Star(view) => {
-            library::push_star_view(&mut payload, view)?;
-            KIND_STAR_VIEW
-        }
-        ToInterface::Bar(view) => {
-            library::push_bar_view(&mut payload, view)?;
-            KIND_BAR_VIEW
-        }
-        ToInterface::Window(window) => {
-            library::push_window(&mut payload, window)?;
-            KIND_WINDOW_VIEW
-        }
-        ToInterface::Cookies(view) => {
-            cookies::push_view(&mut payload, view)?;
-            KIND_COOKIES_VIEW
-        }
-        ToInterface::PageControls(view) => {
-            controls::push_controls(&mut payload, view)?;
-            KIND_PAGE_CONTROLS
-        }
-        ToInterface::Remote(place) => {
-            settings::push_remote(&mut payload, *place)?;
-            KIND_REMOTE
-        }
-        ToInterface::Target(window) => {
-            payload.extend_from_slice(&window.to_be_bytes());
-            KIND_TARGET
-        }
-        ToInterface::OpenWindow { window, geometry } => {
-            push_open_window(&mut payload, *window, geometry.as_ref())?;
-            KIND_OPEN_WINDOW
-        }
-        ToInterface::CloseWindow(window) => {
-            payload.extend_from_slice(&window.to_be_bytes());
-            KIND_CLOSE_WINDOW_VIEW
-        }
+        ToInterface::PhoneKey(_) => KIND_PHONE_KEY,
+        ToInterface::Settings(_) => KIND_SETTINGS,
+        ToInterface::Update(_) => KIND_UPDATE_VIEW,
+        ToInterface::Console(_) => KIND_CONSOLE_UPDATE,
+        ToInterface::History(_) => KIND_HISTORY_VIEW,
+        ToInterface::Suggestions(_) => KIND_SUGGESTIONS,
+        ToInterface::TabList(_) => KIND_TAB_LIST_VIEW,
+        ToInterface::Bookmarks(_) => KIND_BOOKMARKS_VIEW,
+        ToInterface::Star(_) => KIND_STAR_VIEW,
+        ToInterface::Bar(_) => KIND_BAR_VIEW,
+        ToInterface::Window(_) => KIND_WINDOW_VIEW,
+        ToInterface::Cookies(_) => KIND_COOKIES_VIEW,
+        ToInterface::PageControls(_) => KIND_PAGE_CONTROLS,
+        ToInterface::Remote(_) => KIND_REMOTE,
+        ToInterface::Target(_) => KIND_TARGET,
+        ToInterface::OpenWindow { .. } => KIND_OPEN_WINDOW,
+        ToInterface::CloseWindow(_) => KIND_CLOSE_WINDOW_VIEW,
         ToInterface::Close => KIND_CLOSE,
-    };
-    write_frame(out, kind, &payload)
+    }
+}
+
+/// Writes a message's fields, in the order of the kinds.
+fn push_fields(payload: &mut Vec<u8>, message: &ToInterface) -> Result<(), ProtocolError> {
+    match message {
+        ToInterface::Tabs { tabs, active } => push_tabs(payload, tabs, *active)?,
+        ToInterface::Strip(strip) => push_strip(payload, strip)?,
+        ToInterface::Channel(channel) => push_channel(payload, channel)?,
+        ToInterface::Page { channel, page, title } => push_page(payload, *channel, *page, title)?,
+        ToInterface::Updated { channel, page } => push_updated(payload, *channel, *page),
+        ToInterface::Frame { key, version, image } => push_frame(payload, *key, *version, image),
+        ToInterface::Sounding(channels) => push_channels(payload, channels)?,
+        #[cfg(feature = "links")]
+        ToInterface::Link(message) => crate::links::push_message(payload, message)?,
+        #[cfg(feature = "interaction")]
+        ToInterface::Typing(typing) => crate::interaction::push_typing(payload, typing)?,
+        #[cfg(feature = "phone-keyboard")]
+        ToInterface::Phone(view) => crate::keyboard::push_view(payload, view)?,
+        #[cfg(feature = "phone-keyboard")]
+        ToInterface::PhoneKey(key) => crate::keyboard::push_phone_key(payload, key)?,
+        ToInterface::Settings(view) => settings::push_view(payload, view)?,
+        ToInterface::Update(view) => settings::push_update(payload, view)?,
+        ToInterface::Console(update) => console::push_update(payload, update)?,
+        ToInterface::History(view) => library::push_history_view(payload, view)?,
+        ToInterface::Suggestions(suggestions) => library::push_suggestions(payload, suggestions)?,
+        ToInterface::TabList(list) => library::push_tab_list(payload, list)?,
+        ToInterface::Bookmarks(view) => library::push_bookmarks_view(payload, view)?,
+        ToInterface::Star(view) => library::push_star_view(payload, view)?,
+        ToInterface::Bar(view) => library::push_bar_view(payload, view)?,
+        ToInterface::Window(window) => library::push_window(payload, window)?,
+        ToInterface::Cookies(view) => cookies::push_view(payload, view)?,
+        ToInterface::PageControls(view) => controls::push_controls(payload, view)?,
+        ToInterface::Remote(place) => settings::push_remote(payload, *place)?,
+        ToInterface::Target(window) => payload.extend_from_slice(&window.to_be_bytes()),
+        ToInterface::OpenWindow { window, geometry } => push_open_window(payload, *window, geometry.as_ref())?,
+        ToInterface::CloseWindow(window) => payload.extend_from_slice(&window.to_be_bytes()),
+        ToInterface::Close => {}
+    }
+    Ok(())
 }
 
 /// Reads one message from the trusted core, or `None` at a clean end.

@@ -1,8 +1,10 @@
 //! The interface's intents to the trusted core: written by the interface,
-//! read by the trusted core, one arm for each kind in the order of the
-//! kinds. Only strip input, a separate set of kinds, can navigate.
+//! read by the trusted core, each match one arm for each kind in the order
+//! of the kinds. Only strip input, a separate set of kinds, can navigate.
 
 use std::io::{Read, Write};
+
+use interface_core::canvas::PageKey;
 
 use super::ToCore;
 #[cfg(any(feature = "links", feature = "interaction"))]
@@ -27,178 +29,164 @@ use crate::{Fields, MAX_ADDRESS, MAX_TABS, ProtocolError, controls, cookies, lib
 ///
 /// # Errors
 /// When writing fails or the message breaks a bound.
-#[allow(clippy::too_many_lines, reason = "one arm for each kind of message, in the order of the kinds")]
 pub fn write_to_core(out: &mut dyn Write, message: &ToCore) -> Result<(), ProtocolError> {
     let mut payload = Vec::new();
-    let kind = match message {
-        ToCore::Visible(keys) => {
-            push_keys(&mut payload, keys)?;
-            KIND_VISIBLE
-        }
-        ToCore::Cell { key, version, column, row } => {
-            push_cell(&mut payload, *key, *version, *column, *row);
-            KIND_CELL
-        }
-        ToCore::SelectTab(index) => {
-            payload.push(*index);
-            KIND_SELECT_TAB
-        }
-        ToCore::CloseTab(index) => {
-            payload.push(*index);
-            KIND_CLOSE_TAB
-        }
-        ToCore::MoveTab { from, to } => {
-            if usize::from(*from) >= MAX_TABS || usize::from(*to) >= MAX_TABS {
-                return Err(ProtocolError::BadValue("tab place"));
-            }
-            payload.extend_from_slice(&[*from, *to]);
-            KIND_MOVE_TAB
-        }
+    push_fields(&mut payload, message)?;
+    write_frame(out, kind_of(message), &payload)
+}
+
+/// The kind each intent is sent as, in the order of the kinds.
+fn kind_of(message: &ToCore) -> u8 {
+    match message {
+        ToCore::Visible(_) => KIND_VISIBLE,
+        ToCore::Cell { .. } => KIND_CELL,
+        ToCore::SelectTab(_) => KIND_SELECT_TAB,
+        ToCore::CloseTab(_) => KIND_CLOSE_TAB,
+        ToCore::MoveTab { .. } => KIND_MOVE_TAB,
         ToCore::NewTab => KIND_NEW_TAB,
-        ToCore::Opened(key) => {
-            if let Some(key) = key {
-                push_key(&mut payload, *key);
-            }
-            KIND_OPENED
-        }
-        ToCore::MuteTab(index) => {
-            payload.push(*index);
-            KIND_MUTE_TAB
-        }
-        ToCore::MuteAll(muted) => {
-            payload.push(u8::from(*muted));
-            KIND_MUTE_ALL
-        }
-        ToCore::Navigate(address) => {
-            push_text(&mut payload, address, MAX_ADDRESS)?;
-            KIND_NAVIGATE
-        }
+        ToCore::Opened(_) => KIND_OPENED,
+        ToCore::MuteTab(_) => KIND_MUTE_TAB,
+        ToCore::MuteAll(_) => KIND_MUTE_ALL,
+        ToCore::Navigate(_) => KIND_NAVIGATE,
         ToCore::Back => KIND_BACK,
         ToCore::Forward => KIND_FORWARD,
         ToCore::Bookmark => KIND_BOOKMARK,
         ToCore::Home => KIND_HOME,
         ToCore::Reload => KIND_RELOAD,
-        ToCore::PageControl(control) => {
-            controls::push_control(&mut payload, *control);
-            KIND_PAGE_CONTROL
-        }
-        ToCore::From(window) => {
-            push_window_number(&mut payload, *window)?;
-            KIND_FROM
-        }
-        ToCore::NewWindow { private } => {
-            payload.push(u8::from(*private));
-            KIND_NEW_WINDOW
-        }
-        ToCore::TabToWindow { tab, window, index } => {
-            push_tab_to_window(&mut payload, *tab, *window, *index)?;
-            KIND_TAB_TO_WINDOW
-        }
+        ToCore::PageControl(_) => KIND_PAGE_CONTROL,
+        ToCore::From(_) => KIND_FROM,
+        ToCore::NewWindow { .. } => KIND_NEW_WINDOW,
+        ToCore::TabToWindow { .. } => KIND_TAB_TO_WINDOW,
         ToCore::CloseWindow => KIND_CLOSE_WINDOW,
         ToCore::Drawn => KIND_DRAWN,
         ToCore::InstallUpdate => KIND_INSTALL_UPDATE,
-        ToCore::ChangeSetting(change) => {
-            settings::push_change(&mut payload, change)?;
-            KIND_CHANGE_SETTING
-        }
-        ToCore::Console(open) => {
-            payload.push(u8::from(*open));
-            KIND_CONSOLE
-        }
+        ToCore::ChangeSetting(_) => KIND_CHANGE_SETTING,
+        ToCore::Console(_) => KIND_CONSOLE,
         #[cfg(feature = "links")]
-        ToCore::Point(spot) => {
-            crate::links::push_spot(&mut payload, spot.as_ref());
-            KIND_POINT
-        }
+        ToCore::Point(_) => KIND_POINT,
         #[cfg(feature = "links")]
-        ToCore::Typed { number, opened } => {
-            interface_core::channel::page_index(*number).ok_or(ProtocolError::BadValue("page number"))?;
-            payload.extend_from_slice(&number.to_be_bytes());
-            if let Some((key, version)) = opened {
-                push_key(&mut payload, *key);
-                payload.extend_from_slice(&version.to_be_bytes());
-            }
-            KIND_TYPED
-        }
+        ToCore::Typed { .. } => KIND_TYPED,
         #[cfg(any(feature = "links", feature = "interaction"))]
-        ToCore::Focused(focused) => {
-            payload.push(u8::from(*focused));
-            KIND_FOCUSED
-        }
+        ToCore::Focused(_) => KIND_FOCUSED,
         #[cfg(feature = "interaction")]
-        ToCore::Editing(editing) => {
-            payload.push(u8::from(*editing));
-            KIND_EDITING
-        }
+        ToCore::Editing(_) => KIND_EDITING,
         #[cfg(feature = "interaction")]
-        ToCore::Input(intent) => {
-            crate::interaction::push_input(&mut payload, intent)?;
-            KIND_INPUT
-        }
+        ToCore::Input(_) => KIND_INPUT,
         #[cfg(feature = "phone-keyboard")]
-        ToCore::PhonePanel(open) => {
-            payload.push(u8::from(*open));
-            KIND_PHONE_PANEL
-        }
+        ToCore::PhonePanel(_) => KIND_PHONE_PANEL,
         #[cfg(feature = "phone-keyboard")]
         ToCore::PhoneFinish => KIND_PHONE_FINISH,
         #[cfg(feature = "links")]
-        ToCore::Confirm(id) => {
-            payload.extend_from_slice(&id.to_be_bytes());
-            KIND_CONFIRM
-        }
+        ToCore::Confirm(_) => KIND_CONFIRM,
         #[cfg(feature = "links")]
-        ToCore::Cancel(id) => {
-            payload.extend_from_slice(&id.to_be_bytes());
-            KIND_CANCEL
-        }
-        ToCore::History(request) => {
-            library::push_history_request(&mut payload, request)?;
-            KIND_HISTORY
-        }
-        ToCore::Bookmarks(request) => {
-            library::push_bookmark_request(&mut payload, request)?;
-            KIND_BOOKMARKS
-        }
-        ToCore::Star(request) => {
-            library::push_star_request(&mut payload, request)?;
-            KIND_STAR
-        }
-        ToCore::Bar(request) => {
-            library::push_bar_request(&mut payload, request);
-            KIND_BAR
-        }
-        ToCore::Suggest(text) => {
-            push_text(&mut payload, text, MAX_ADDRESS)?;
-            KIND_SUGGEST
-        }
-        ToCore::Suggestion { number, new_tab } => {
-            payload.extend_from_slice(&number.to_be_bytes());
-            payload.push(u8::from(*new_tab));
-            KIND_SUGGESTION
-        }
-        ToCore::TabList(forward) => {
-            payload.push(u8::from(*forward));
-            KIND_TAB_LIST
-        }
-        ToCore::GoTo { forward, steps } => {
-            if *steps == 0 || usize::from(*steps) > library::MAX_STEPS {
-                return Err(ProtocolError::BadValue("steps"));
-            }
-            payload.extend_from_slice(&[u8::from(*forward), *steps]);
-            KIND_GO_TO
-        }
+        ToCore::Cancel(_) => KIND_CANCEL,
+        ToCore::History(_) => KIND_HISTORY,
+        ToCore::Bookmarks(_) => KIND_BOOKMARKS,
+        ToCore::Star(_) => KIND_STAR,
+        ToCore::Bar(_) => KIND_BAR,
+        ToCore::Suggest(_) => KIND_SUGGEST,
+        ToCore::Suggestion { .. } => KIND_SUGGESTION,
+        ToCore::TabList(_) => KIND_TAB_LIST,
+        ToCore::GoTo { .. } => KIND_GO_TO,
         ToCore::NewPrivateTab => KIND_NEW_PRIVATE_TAB,
-        ToCore::Window(window) => {
-            library::push_window(&mut payload, window)?;
-            KIND_WINDOW
-        }
-        ToCore::Cookies(request) => {
-            cookies::push_request(&mut payload, request)?;
-            KIND_COOKIES
-        }
-    };
-    write_frame(out, kind, &payload)
+        ToCore::Window(_) => KIND_WINDOW,
+        ToCore::Cookies(_) => KIND_COOKIES,
+    }
+}
+
+/// Writes an intent's fields, in the order of the kinds; an intent that
+/// carries nothing writes nothing.
+fn push_fields(payload: &mut Vec<u8>, message: &ToCore) -> Result<(), ProtocolError> {
+    match message {
+        ToCore::Visible(keys) => push_keys(payload, keys)?,
+        ToCore::Cell { key, version, column, row } => push_cell(payload, *key, *version, *column, *row),
+        ToCore::SelectTab(index) | ToCore::CloseTab(index) => payload.push(*index),
+        ToCore::MoveTab { from, to } => push_move_tab(payload, *from, *to)?,
+        ToCore::Opened(key) => push_opened(payload, *key),
+        ToCore::MuteTab(index) => payload.push(*index),
+        ToCore::MuteAll(muted) => payload.push(u8::from(*muted)),
+        ToCore::Navigate(address) => push_text(payload, address, MAX_ADDRESS)?,
+        ToCore::NewTab | ToCore::Back | ToCore::Forward | ToCore::Bookmark | ToCore::Home | ToCore::Reload => {}
+        ToCore::PageControl(control) => controls::push_control(payload, *control),
+        ToCore::From(window) => push_window_number(payload, *window)?,
+        ToCore::NewWindow { private } => payload.push(u8::from(*private)),
+        ToCore::TabToWindow { tab, window, index } => push_tab_to_window(payload, *tab, *window, *index)?,
+        ToCore::CloseWindow | ToCore::Drawn | ToCore::InstallUpdate => {}
+        ToCore::ChangeSetting(change) => settings::push_change(payload, change)?,
+        ToCore::Console(open) => payload.push(u8::from(*open)),
+        #[cfg(feature = "links")]
+        ToCore::Point(spot) => crate::links::push_spot(payload, spot.as_ref()),
+        #[cfg(feature = "links")]
+        ToCore::Typed { number, opened } => push_typed(payload, *number, *opened)?,
+        #[cfg(any(feature = "links", feature = "interaction"))]
+        ToCore::Focused(focused) => payload.push(u8::from(*focused)),
+        #[cfg(feature = "interaction")]
+        ToCore::Editing(editing) => payload.push(u8::from(*editing)),
+        #[cfg(feature = "interaction")]
+        ToCore::Input(intent) => crate::interaction::push_input(payload, intent)?,
+        #[cfg(feature = "phone-keyboard")]
+        ToCore::PhonePanel(open) => payload.push(u8::from(*open)),
+        #[cfg(feature = "phone-keyboard")]
+        ToCore::PhoneFinish => {}
+        #[cfg(feature = "links")]
+        ToCore::Confirm(id) | ToCore::Cancel(id) => payload.extend_from_slice(&id.to_be_bytes()),
+        ToCore::History(request) => library::push_history_request(payload, request)?,
+        ToCore::Bookmarks(request) => library::push_bookmark_request(payload, request)?,
+        ToCore::Star(request) => library::push_star_request(payload, request)?,
+        ToCore::Bar(request) => library::push_bar_request(payload, request),
+        ToCore::Suggest(text) => push_text(payload, text, MAX_ADDRESS)?,
+        ToCore::Suggestion { number, new_tab } => push_suggestion(payload, *number, *new_tab),
+        ToCore::TabList(forward) => payload.push(u8::from(*forward)),
+        ToCore::GoTo { forward, steps } => push_go_to(payload, *forward, *steps)?,
+        ToCore::NewPrivateTab => {}
+        ToCore::Window(window) => library::push_window(payload, window)?,
+        ToCore::Cookies(request) => cookies::push_request(payload, request)?,
+    }
+    Ok(())
+}
+
+/// A tab's move from one place to another, both inside the strip.
+fn push_move_tab(payload: &mut Vec<u8>, from: u8, to: u8) -> Result<(), ProtocolError> {
+    if usize::from(from) >= MAX_TABS || usize::from(to) >= MAX_TABS {
+        return Err(ProtocolError::BadValue("tab place"));
+    }
+    payload.extend_from_slice(&[from, to]);
+    Ok(())
+}
+
+/// The page opened, if one is.
+fn push_opened(payload: &mut Vec<u8>, key: Option<PageKey>) {
+    if let Some(key) = key {
+        push_key(payload, key);
+    }
+}
+
+/// A page number typed, a display page, with the page it was typed on.
+#[cfg(feature = "links")]
+fn push_typed(payload: &mut Vec<u8>, number: u16, opened: Option<(PageKey, u32)>) -> Result<(), ProtocolError> {
+    interface_core::channel::page_index(number).ok_or(ProtocolError::BadValue("page number"))?;
+    payload.extend_from_slice(&number.to_be_bytes());
+    if let Some((key, version)) = opened {
+        push_key(payload, key);
+        payload.extend_from_slice(&version.to_be_bytes());
+    }
+    Ok(())
+}
+
+/// A suggestion chosen, by its number, and whether in a new tab.
+fn push_suggestion(payload: &mut Vec<u8>, number: u32, new_tab: bool) {
+    payload.extend_from_slice(&number.to_be_bytes());
+    payload.push(u8::from(new_tab));
+}
+
+/// Steps back or forward through a tab's history, at least one and at
+/// most the list's length.
+fn push_go_to(payload: &mut Vec<u8>, forward: bool, steps: u8) -> Result<(), ProtocolError> {
+    if steps == 0 || usize::from(steps) > library::MAX_STEPS {
+        return Err(ProtocolError::BadValue("steps"));
+    }
+    payload.extend_from_slice(&[u8::from(forward), steps]);
+    Ok(())
 }
 
 /// Reads one intent from the interface, or `None` at a clean end.

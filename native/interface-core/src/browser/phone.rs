@@ -211,15 +211,15 @@ fn panel_rect(area: Rect) -> Rect {
 /// The code dark on white, with its quiet zone, as a phone's camera reads it.
 fn draw_qr<C: Canvas + ?Sized>(canvas: &mut C, area: Rect, size: usize, bits: &[u8]) {
     canvas.fill(area, 0.0, WHITE);
-    let modules = size + 2 * QUIET_ZONE;
+    let modules = size.saturating_add(2 * QUIET_ZONE);
     #[allow(clippy::cast_precision_loss, reason = "a QR is at most 185 modules with its quiet zone")]
     let module = area.width() / modules as f64;
     for y in 0..size {
         for x in 0..size {
-            let index = y * size + x;
+            let index = y.saturating_mul(size).saturating_add(x);
             if bits.get(index / 8).is_some_and(|byte| byte & (0x80 >> (index % 8)) != 0) {
                 #[allow(clippy::cast_precision_loss, reason = "as above")]
-                let (left, top) = (area.x0 + module * (x + QUIET_ZONE) as f64, area.y0 + module * (y + QUIET_ZONE) as f64);
+                let (left, top) = (area.x0 + module * x.saturating_add(QUIET_ZONE) as f64, area.y0 + module * y.saturating_add(QUIET_ZONE) as f64);
                 canvas.fill(Rect::new(left, top, left + module, top + module), 0.0, BLACK);
             }
         }

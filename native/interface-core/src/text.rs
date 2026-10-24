@@ -55,3 +55,17 @@ pub fn border<C: Canvas + ?Sized>(canvas: &mut C, rect: Rect, width: f64, colour
     canvas.fill(Rect::new(rect.x0, rect.y0, rect.x0 + width, rect.y1), 0.0, colour);
     canvas.fill(Rect::new(rect.x1 - width, rect.y0, rect.x1, rect.y1), 0.0, colour);
 }
+
+/// A cross centred on `centre`: two bars corner to corner, each
+/// `thickness` wide and reaching `half` from the centre on each axis, as
+/// the close and mute glyphs draw it.
+pub fn cross<C: Canvas + ?Sized>(canvas: &mut C, centre: Point, half: f64, thickness: f64, colour: Colour) {
+    let normal = thickness / 2.0 / core::f64::consts::SQRT_2;
+    for direction in [1.0, -1.0] {
+        let along = Point::new(half, half * direction);
+        let across = Point::new(-normal * direction, normal);
+        // A corner, `along` and `across` taken forwards (1) or back (-1).
+        let corner = |forward: f64, out: f64| Point::new(centre.x + forward * along.x + out * across.x, centre.y + forward * along.y + out * across.y);
+        canvas.polygon(&[corner(-1.0, 1.0), corner(1.0, 1.0), corner(1.0, -1.0), corner(-1.0, -1.0)], colour);
+    }
+}

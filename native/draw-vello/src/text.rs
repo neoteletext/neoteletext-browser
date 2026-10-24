@@ -6,7 +6,7 @@ use interface_core::geometry::Rect;
 use interface_core::theme::Colour;
 use parley::{FontFamilyName, FontWeight, GenericFamily, Layout, PositionedLayoutItem, StyleProperty};
 use vello_cpu::Glyph;
-use vello_cpu::kurbo::{Affine, Shape};
+use vello_cpu::kurbo::{Shape, Vec2};
 
 use crate::{Painter, TOLERANCE, colour, rect};
 
@@ -95,7 +95,7 @@ impl Painter {
         let Some(layout) = layouts_made.get(&style_key(style)).and_then(|texts| texts.get(text)) else { return };
         context.set_transform(base);
         context.push_clip_layer(&rect(area).to_path(TOLERANCE));
-        let transform = base * Affine::translate((area.x0, area.y0));
+        let transform = base.pre_translate(Vec2::new(area.x0, area.y0));
         context.set_paint(colour(paint));
         let mut coordinates: Vec<i16> = Vec::new();
         for line in layout.lines() {

@@ -26,6 +26,9 @@ const LEVEL_WIDTH: f64 = 86.0;
 const SEARCH_WIDTH: f64 = 220.0;
 /// The longest search: a log line's length.
 const MAX_SEARCH: usize = crate::console::MAX_ENTRY;
+/// The entries held while the console is paused: at most a tab's worth of
+/// each tab.
+const HELD: usize = KEPT * ConsoleTab::ALL.len();
 
 /// The console's height, in place of the overview.
 pub(in crate::browser) const CONSOLE_HEIGHT: f64 = 260.0;
@@ -54,7 +57,7 @@ pub(super) struct ConsoleUi {
     tab: Tab,
     /// Lines scrolled back from the newest.
     back: usize,
-    pub(in crate::browser) area: Rect,
+    area: Rect,
     tabs: Vec<(Tab, Rect)>,
     pause: Rect,
     clear: Rect,
@@ -128,6 +131,12 @@ impl ConsoleUi {
         self.open
     }
 
+    /// Where the console was last drawn.
+    #[cfg(test)]
+    pub(in crate::browser) const fn area(&self) -> Rect {
+        self.area
+    }
+
     fn keep(&mut self, entry: ConsoleEntry) {
         let Some(entries) = self.entries.get_mut(entry.tab.index()) else { return };
         if entries.len() >= KEPT {
@@ -167,8 +176,7 @@ impl Browser {
         }
         for entry in update.entries {
             if console.paused {
-                // At most a tab's worth of each tab waits.
-                if console.held.len() < KEPT * ConsoleTab::ALL.len() {
+                if console.held.len() < HELD {
                     console.held.push(entry);
                 }
             } else {

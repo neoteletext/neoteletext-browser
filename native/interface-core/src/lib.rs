@@ -9,6 +9,21 @@
 //! host passes the time in milliseconds.
 
 #![no_std]
+// No panicking constructs: the window draws what the trusted core sends
+// (titles, addresses, views of the library, a phone's code), and the
+// interface's own list does not reach this library (finding F-105). The
+// same list is in each crate that reads input from outside its process;
+// scripts/check.sh checks that they agree.
+#![deny(
+    clippy::indexing_slicing,
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::arithmetic_side_effects,
+    clippy::unreachable,
+    clippy::todo,
+    clippy::unimplemented
+)]
 
 extern crate alloc;
 

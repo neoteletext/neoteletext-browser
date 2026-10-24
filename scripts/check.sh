@@ -37,7 +37,8 @@ $out_of_date"
 # The crates that read input from outside their process, each with the
 # same no-panic lint list at its root.
 readonly NO_PANIC_ROOTS=(native/protocol/src/lib.rs native/decoder/src/lib.rs native/decoder/src/main.rs native/fetcher/src/main.rs native/fetcher/src/lib.rs
-    native/core/src/lib.rs native/core/src/main.rs native/interface/src/lib.rs native/interface/src/main.rs native/web-opener/src/lib.rs
+    native/core/src/lib.rs native/core/src/main.rs native/interface/src/lib.rs native/interface/src/main.rs native/interface-core/src/lib.rs native/draw-vello/src/lib.rs native/draw-embedded/src/lib.rs
+    native/web-opener/src/lib.rs native/dock-menu/src/lib.rs
     native/keyboard/src/main.rs native/sound/src/lib.rs native/sound/src/main.rs native/confine/src/lib.rs
     native/update/src/lib.rs native/launcher/src/lib.rs native/launcher/src/main.rs native/os-install/src/lib.rs native/installer/src/main.rs
     native/tuf/updater/src/lib.rs native/tuf/updater/src/main.rs native/tuf/release/src/main.rs native/tuf/release/src/bin/test_host.rs)
@@ -198,6 +199,48 @@ check_fuzz() {
     done
 }
 
+# The browser builds the engine with its lints capped, so the engine's own
+# forbid(unsafe_code) is held only by the engine's gate (finding F-88):
+# the source at the pinned commit is read here, and the word `unsafe` in
+# any line's code, outside its comment, fails the gate.
+check_engine_safe() {
+    step "the engine at its pinned commit has no unsafe code"
+    local engine revision found line code hits="" status=0
+    engine="$(sed -n 's/^neoteletext-[a-z-]* = { git = "file:\/\/\([^"]*\)".*/\1/p' native/Cargo.toml | sort -u)"
+    revision="$(sed -n 's/^neoteletext-[a-z-]* = { git = "file:[^"]*", rev = "\([0-9a-f]*\)".*/\1/p' native/Cargo.toml | sort -u)"
+    [[ -n "$engine" && "$engine" != *$'\n'* ]] || fail "native/Cargo.toml must name one engine repository, found: ${engine:-none}"
+    [[ -n "$revision" && "$revision" != *$'\n'* ]] || fail "native/Cargo.toml must name one engine commit, found: ${revision:-none}"
+    git -C "$engine" cat-file -e "$revision^{commit}" || fail "the engine repository $engine has no commit $revision"
+    found="$(git -C "$engine" grep --line-number -I --word-regexp -e unsafe "$revision" -- '*.rs')" || status=$?
+    # 1 is no line found.
+    ((status <= 1)) || fail "reading the engine at $revision failed"
+    # git grep names each line as commit:path:line:text.
+    while IFS= read -r line; do
+        [[ -n "$line" ]] || continue
+        code="${line#*:*:*:}"
+        code="${code%%//*}"
+        if [[ "$code" =~ (^|[^A-Za-z0-9_])unsafe([^A-Za-z0-9_]|$) ]]; then
+            hits="$hits${line#*:}"$'\n'
+        fi
+    done <<<"$found"
+    [[ -z "$hits" ]] || fail "the engine at $revision has unsafe code:
+$hits"
+}
+
+# A release script refuses a test identity unless told it is a test
+# (finding F-24). publish.sh, given no destination, copies nothing
+# anywhere; with the variable set and no --test it must refuse before it
+# reads its arguments, so the arguments here name nothing.
+check_release_identity() {
+    step "release scripts: a test identity is refused without --test"
+    local said
+    if said="$(NEOTELETEXT_RELEASE_IDENTITY=/x bash scripts/release/publish.sh r root t s ts -- 2>&1 </dev/null)"; then
+        fail "publish.sh ran with a test identity and no --test"
+    fi
+    [[ "$said" == *"names a test identity"* ]] || fail "publish.sh failed with a test identity, but not by refusing it:
+$said"
+}
+
 full_gate() {
     # The commit being pushed is the one checked: the pre-push hook passes
     # the pushed commits, and the tree must be clean at HEAD.
@@ -211,6 +254,7 @@ full_gate() {
 $loose"
 
     check_native
+    check_engine_safe
     step "native: documentation tests"
     (cd native && cargo test --quiet --workspace --doc)
     step "native: release tests"
@@ -223,6 +267,7 @@ $loose"
     step "native: no unused dependencies"
     (cd native && cargo machete)
     (cd native/tuf && cargo machete)
+    check_release_identity
     step "native/tuf: release tests"
     (cd native/tuf && cargo nextest run --workspace --release --hide-progress-bar --status-level fail --final-status-level fail)
     check_fuzz

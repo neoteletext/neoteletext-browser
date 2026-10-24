@@ -35,11 +35,16 @@ pub(super) const COLUMNS: usize = 40;
 
 /// A row of a page: 7-bit codes, at most 40.
 #[derive(Clone, Default)]
-pub(super) struct Row(pub(super) Vec<u8>);
+pub(super) struct Row(Vec<u8>);
 
 impl Row {
     pub(super) fn new() -> Self {
         Self(Vec::new())
+    }
+
+    /// A row of these codes.
+    pub(super) fn from_codes(codes: Vec<u8>) -> Self {
+        Self(codes)
     }
 
     pub(super) fn code(mut self, code: u8) -> Self {
@@ -74,13 +79,13 @@ pub(super) const USED: u32 = PAGE_CAP | CURSOR_CAP | ECHO_CAP | ALL_KEYS | KEY_R
 pub(super) struct Page {
     number: u16,
     rows: BTreeMap<u8, Row>,
-    pub(super) cursor: Option<(u8, u8, u8, u8)>,
+    cursor: Option<(u8, u8, u8, u8)>,
     /// The input count acted on (INPUT.md section 7.1).
-    pub(super) acked: u16,
+    acked: u16,
     /// The page's own input modes while it is open (REQ-INT-114).
     modes: u32,
     /// `LT` lines: a run of text that is a link.
-    pub(super) links: Vec<String>,
+    links: Vec<String>,
 }
 
 impl Page {
@@ -90,6 +95,22 @@ impl Page {
         // Row 1 is double height, so row 2 is its lower half.
         page.row(1, Row::new().code(ALPHA_BLUE).code(NEW_BACKGROUND).code(ALPHA_YELLOW).code(DOUBLE_HEIGHT).text(&title.to_uppercase()));
         page
+    }
+
+    /// The cursor record: its row, column, the field's width and its
+    /// flags.
+    pub(super) fn set_cursor(&mut self, cursor: (u8, u8, u8, u8)) {
+        self.cursor = Some(cursor);
+    }
+
+    /// The input count acted on.
+    pub(super) fn set_acked(&mut self, acked: u16) {
+        self.acked = acked;
+    }
+
+    /// An `LT` line, a run of text that is a link.
+    pub(super) fn link(&mut self, line: String) {
+        self.links.push(line);
     }
 
     pub(super) fn row(&mut self, number: u8, row: Row) {

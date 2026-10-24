@@ -58,7 +58,7 @@ fn frame(painter: &mut Painter, browser: &mut Browser, now: u64) -> (Vec<DeviceB
     painter.begin(WIDTH, HEIGHT, 1.0);
     browser.draw(painter, f64::from(WIDTH), f64::from(HEIGHT), now);
     let damage = painter.render();
-    let mut words = vec![0; usize::from(WIDTH) * usize::from(HEIGHT)];
+    let mut words = vec![0; usize::from(WIDTH).saturating_mul(usize::from(HEIGHT))];
     painter.copy_to(&mut words, &damage, 0);
     (damage.boxes().to_vec(), words)
 }

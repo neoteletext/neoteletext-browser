@@ -38,12 +38,12 @@ impl Browser {
         #[allow(clippy::cast_possible_truncation, reason = "a text size of a few dozen pixels")]
         let style = Style { size: (cell_height * ECHO_TEXT_SHARE) as f32, monospace: true, bold: false, caps: false };
         for (index, echo) in self.typing.echoes.iter().enumerate() {
-            let rect = cell(usize::from(cursor.column) + index);
+            let rect = cell(usize::from(cursor.column).saturating_add(index));
             canvas.fill(rect, 0.0, TYPING_FIELD);
             let mut text = [0_u8; 4];
             left_centred(canvas, rect, 0.0, echo.character.encode_utf8(&mut text), style, TYPING);
         }
-        let column = (usize::from(cursor.column) + self.typing.echoes.len()).min(usize::from(COLUMNS) - 1);
+        let column = usize::from(cursor.column).saturating_add(self.typing.echoes.len()).min(usize::from(COLUMNS).saturating_sub(1));
         let visible = (now.saturating_sub(self.typing.moved) / BLINK_MILLISECONDS).is_multiple_of(2);
         if visible {
             let rect = cell(column);

@@ -237,9 +237,9 @@ impl Browser {
         let words_area = Rect::new(controls.search.x1 + GAP, y, controls.delete_all.x0 - GAP, y + CONTROL_HEIGHT);
         let mut words = format!("{} cookies, {}", view.count, size(view.bytes));
         if view.total > 0 {
-            let shown = usize::try_from(view.first).unwrap_or(0) + view.rows.len();
+            let shown = usize::try_from(view.first).unwrap_or(0).saturating_add(view.rows.len());
             let last = shown.min(usize::try_from(view.total).unwrap_or(0));
-            words = format!("{words} \u{00B7} rows {} to {last} of {}", view.first + 1, view.total);
+            words = format!("{words} \u{00B7} rows {} to {last} of {}", view.first.saturating_add(1), view.total);
         }
         canvas.push_clip(words_area);
         right_centred(canvas, words_area, 0.0, &words, ROW_STATUS, MUTED);
