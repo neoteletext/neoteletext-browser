@@ -18,6 +18,11 @@ tough = { version = "=0.24.0", default-features = false }
 serde_json = "=1.0.154"
 neoteletext-updater = { path = "../updater" }
 
+# Imported by its library name, `updater` (its `[lib]`), which cargo-machete
+# does not match to the package name.
+[package.metadata.cargo-machete]
+ignored = ["neoteletext-updater"]
+
 [workspace]
 members = ["."]
 
