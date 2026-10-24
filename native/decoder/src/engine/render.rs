@@ -3,6 +3,7 @@
 //! rendered by the engine's row renderer; the pages exported; and a page's
 //! Fastext.
 
+use super::feed::ReceiverRow;
 use super::{ALL_ROWS, Engine, Exported, GLYPHS, PAGE_DOTS, PICTURE, Rendered};
 #[cfg(feature = "links")]
 use super::{FASTEXT_ROW, Found};
@@ -97,14 +98,14 @@ impl Engine {
         let config = self.decoder.config();
         let magazine = self.decoder.magazine_data(address.magazine);
         let receiver = self.receiver_rows.get(&(page, stored.key.subcode.value()));
-        let options = DisplayOptions { mix: view.mix, row24: receiver.map(|row| row.codes), ..DisplayOptions::default() };
+        let options = DisplayOptions { mix: view.mix, row24: receiver.map(ReceiverRow::codes), ..DisplayOptions::default() };
         let mut grid = Grid::EMPTY;
         build_grid(&mut grid, Some(stored), &magazine, config, &options);
         let lookup = self.decoder.enhancement_lookup();
         let _ = compose_level(&mut grid, stored, &magazine, &lookup, config, &options);
         // The "»" marks, as the engine's viewer places them: Latin G2's
         // right guillemet where the codes hold `>`.
-        for &column in receiver.map_or(&[][..], |row| row.marks.as_slice()) {
+        for &column in receiver.map_or(&[][..], ReceiverRow::marks) {
             if let Some(cell) = grid.cell_mut(ROWS.saturating_sub(1), column) {
                 cell.glyph = Glyph::Char(CharRef::new(CharSet::G2(G2Set::Latin), G2_RIGHT_GUILLEMET));
             }

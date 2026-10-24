@@ -9,11 +9,11 @@ use neoteletext_core::acq::Event;
 /// What the engine's events said changed.
 #[derive(Default)]
 pub(crate) struct Changes {
-    pub(crate) touched: BTreeSet<u16>,
-    pub(crate) completed: BTreeSet<u16>,
+    touched: BTreeSet<u16>,
+    completed: BTreeSet<u16>,
     /// Pages and sub-pages whose reception started.
-    pub(crate) started: BTreeSet<(u16, u16)>,
-    pub(crate) everything: bool,
+    started: BTreeSet<(u16, u16)>,
+    everything: bool,
 }
 
 impl Changes {
@@ -34,6 +34,20 @@ impl Changes {
             Event::MagazineData(_) | Event::EnhancementPageChanged(_) => self.everything = true,
             _ => {}
         }
+    }
+
+    /// Takes the pages and sub-pages whose reception started, and what
+    /// changed for the pages shown. The completed pages stay: their
+    /// arrivals are still to be worked out.
+    pub(crate) fn take_changed(&mut self) -> (BTreeSet<(u16, u16)>, Changed) {
+        let started = core::mem::take(&mut self.started);
+        let changed = Changed { pages: core::mem::take(&mut self.touched), everything: core::mem::take(&mut self.everything) };
+        (started, changed)
+    }
+
+    /// Takes the pages whose reception completed.
+    pub(crate) fn take_completed(&mut self) -> BTreeSet<u16> {
+        core::mem::take(&mut self.completed)
     }
 }
 
