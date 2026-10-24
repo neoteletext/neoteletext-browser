@@ -6,7 +6,7 @@
 //! (`update::wire`), and the launcher's state, read strictly.
 
 use std::fmt::Write as _;
-use std::io::{BufReader, Write};
+use std::io::{Read, Write};
 use std::sync::Arc;
 use std::sync::mpsc::Sender;
 use std::time::{Duration, Instant};
@@ -19,7 +19,7 @@ use update::wire::{FromUpdater, ToUpdater, read_from_updater, write_to_updater};
 use neoteletext::settings as stored;
 use protocol::{ToCore, ToInterface, clean};
 
-use super::processes::end;
+use super::processes::{end, relay};
 use super::{Core, Event};
 
 /// How often the updater looks while the browser runs (section 3.4).
@@ -161,22 +161,7 @@ impl Updates {
             }
         };
         let (Some(output), Some(input)) = (child.stdout.take(), child.stdin.take()) else { return };
-        let events = events.clone();
-        std::thread::spawn(move || {
-            let mut output = BufReader::new(output);
-            let end = loop {
-                match read_from_updater(&mut output) {
-                    Ok(message) => {
-                        if events.send(Event::Updater(message)).is_err() {
-                            return;
-                        }
-                    }
-                    Err(error) if error.kind() == std::io::ErrorKind::UnexpectedEof => break None,
-                    Err(error) => break Some(error.to_string()),
-                }
-            };
-            let _ = events.send(Event::UpdaterEnded(end));
-        });
+        listen(output, events.clone());
         self.updater = Some((child, Box::new(input)));
         self.check();
     }
@@ -380,6 +365,24 @@ impl Core {
         let Ok(broker) = self.broker().cloned() else { return };
         let proxy = self.settings.proxy.as_ref().map(stored::Proxy::url);
         self.updates.start(&broker, self.settings.check_updates, proxy.as_deref(), &self.events);
+    }
+}
+
+/// Reads the updater's messages on a thread of its own, through the
+/// relay every helper's messages take, so each is held to the updater's
+/// own budget until the core has handled it (finding F-10).
+fn listen(output: impl Read + Send + 'static, events: Sender<Event>) {
+    relay(output, read_updater, events, Event::Updater, Event::UpdaterEnded);
+}
+
+/// One of the updater's messages, as the relay reads a helper's: none
+/// once its pipe has ended, at a message's start or within one, as the
+/// updater's end was read before.
+fn read_updater(mut input: &mut dyn Read) -> std::io::Result<Option<FromUpdater>> {
+    match read_from_updater(&mut input) {
+        Ok(message) => Ok(Some(message)),
+        Err(error) if error.kind() == std::io::ErrorKind::UnexpectedEof => Ok(None),
+        Err(error) => Err(error),
     }
 }
 

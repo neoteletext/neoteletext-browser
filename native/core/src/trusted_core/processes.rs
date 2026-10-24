@@ -297,9 +297,9 @@ impl<R: Read> Read for Counting<R> {
 /// bytes are taken from the helper's own budget before it is sent, and
 /// given back once the core has handled it, so a helper that writes
 /// faster than the core handles stalls on its own pipe (finding F-10).
-pub(super) fn relay<M: 'static>(
+pub(super) fn relay<M: 'static, E: std::fmt::Display + 'static>(
     output: impl Read + Send + 'static,
-    read: fn(&mut dyn Read) -> Result<Option<M>, ProtocolError>,
+    read: fn(&mut dyn Read) -> Result<Option<M>, E>,
     events: Sender<Event>,
     said: impl Fn(M) -> Event + Send + 'static,
     ended: impl FnOnce(Option<String>) -> Event + Send + 'static,

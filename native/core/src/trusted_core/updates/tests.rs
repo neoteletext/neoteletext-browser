@@ -105,3 +105,46 @@ fn a_browser_not_installed_does_not_update() {
     assert_eq!(updates.running(), None);
     assert!(updates.status(true, 0).contains("not installed"));
 }
+
+/// Finding F-10: the updater, as every other helper, is held at its own
+/// budget when it writes faster than the trusted core handles its
+/// messages, on its own pipe, so the core's queue of its messages does not
+/// grow without bound.
+#[test]
+fn an_updater_that_floods_the_core_is_held_at_its_budget() {
+    use std::io::Write as _;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    /// How long the trusted core handles nothing.
+    const HOLD: Duration = Duration::from_secs(1);
+    /// Where a flood is stopped when nothing holds it: four times the
+    /// budget, far past what the bound lets through.
+    const FLOOD_CAP: usize = 4 * neoteletext::budget::MAX_WAITING_BYTES;
+    /// What a pipe and the reader's buffer hold beyond the budget: Linux's
+    /// largest pipe without privileges (`/proc/sys/fs/pipe-max-size`, 1
+    /// MiB) is more than macOS's 64 KiB and the reader's 8 KiB together.
+    const PIPE_AND_READER_BUFFERS: usize = 1024 * 1024;
+    let (reader, mut writer) = std::io::pipe().unwrap();
+    let (events, incoming) = std::sync::mpsc::channel();
+    listen(reader, events);
+    // The updater's longest message, so the flood is as many bytes as it
+    // can be for its messages.
+    let mut message = Vec::new();
+    let reason = "x".repeat(update::wire::MAX_REASON);
+    update::wire::write_from_updater(&mut message, &FromUpdater::Failed { reason, last_success: Some(i64::MAX) }).unwrap();
+    let message_bytes = message.len();
+    let written = Arc::new(AtomicUsize::new(0));
+    let theirs = Arc::clone(&written);
+    let flood = std::thread::spawn(move || {
+        while theirs.load(Ordering::Relaxed) < FLOOD_CAP && writer.write_all(&message).is_ok() {
+            theirs.fetch_add(message.len(), Ordering::Relaxed);
+        }
+    });
+    std::thread::sleep(HOLD);
+    let held_at = written.load(Ordering::Relaxed);
+    // The core goes: its queued messages are given back, and the updater's
+    // writes end.
+    drop(incoming);
+    flood.join().unwrap();
+    let most = neoteletext::budget::MAX_WAITING_BYTES + PIPE_AND_READER_BUFFERS + message_bytes;
+    assert!(held_at <= most, "the updater wrote {held_at} bytes while the core handled nothing; at most {most}");
+}
