@@ -503,6 +503,64 @@ fn a_slow_start_is_not_counted_as_a_crash() {
     assert!(!state.is_bad(NEW));
 }
 
+/// A start that tries a broken trial again keeps the installation's lock
+/// to itself, however many other references to its lock there are. On
+/// macOS a program being started holds every descriptor its parent had
+/// open until the system has checked it: a lock stayed held up to 147 ms
+/// after it was closed, in a third of tries with programs never run before
+/// (measured 24 October 2026), and a start that closed its lock and opened
+/// it again then found it held, by its own closed descriptor, and ran the
+/// trial as if another start had chosen it, uncounted (one run in 64 of
+/// this file). Here a duplicate of the start's first lock descriptor,
+/// made through `/dev/fd` as a program being started has one, is held
+/// throughout.
+#[cfg(target_os = "macos")]
+#[test]
+fn a_start_trying_again_keeps_its_lock() {
+    use std::os::unix::fs::MetadataExt as _;
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    /// How often the lock is looked for.
+    const LOOK: Duration = Duration::from_millis(1);
+    let fixture = Fixture::new("try-again");
+    fixture.install(OLD, "healthy");
+    fixture.stage(NEW, "crash", true);
+    let (stop, lock) = (Arc::new(AtomicBool::new(false)), fixture.layout.lock());
+    let holder = {
+        let stop = Arc::clone(&stop);
+        std::thread::spawn(move || {
+            let lock = loop {
+                if let Ok(metadata) = fs::metadata(&lock) {
+                    break metadata.ino();
+                }
+                std::thread::sleep(LOOK);
+            };
+            let mut held = None;
+            while held.is_none() && !stop.load(Ordering::Relaxed) {
+                // Opening /dev/fd/N on macOS duplicates descriptor N
+                // (fdesc(5)); its device is fdesc's, its inode the file's.
+                held = fs::read_dir("/dev/fd")
+                    .unwrap()
+                    .filter_map(Result::ok)
+                    .filter(|entry| fs::metadata(entry.path()).is_ok_and(|metadata| metadata.ino() == lock))
+                    .find_map(|entry| fs::File::open(entry.path()).ok());
+                std::thread::sleep(LOOK);
+            }
+            while !stop.load(Ordering::Relaxed) {
+                std::thread::sleep(LOOK);
+            }
+            held.is_some()
+        })
+    };
+    let result = fixture.launcher(NO_DEADLINE_NEEDED).run(&[OsString::from(fixture.folder.join("log"))]);
+    stop.store(true, Ordering::Relaxed);
+    assert!(holder.join().unwrap(), "a duplicate of the lock was held");
+    let state = fixture.state();
+    assert_eq!((state.current, state.trial), (OLD, None), "rolled back in this start: {result:?}, {state:?}");
+    assert!(state.is_bad(NEW));
+    assert_eq!(fixture.log(), "0.2.0 crash\n0.2.0 crash\n0.1.0 healthy\n");
+}
+
 /// Finding F-19: macOS checks the bundle it is about to exchange in by the
 /// pinned signer, so a `previous/` bundle carrying the current version's
 /// mark but not the signer's signature is never rolled back to.
