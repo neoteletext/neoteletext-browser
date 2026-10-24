@@ -24,8 +24,11 @@
 //!   process is not started at all (decision 58: security is never
 //!   downgraded).
 //!
-//! Only the two pipe handles are inherited, by the handle list; the
-//! environment is the one the trusted core chose, and nothing else.
+//! Only the pipe handles are inherited, by the handle list; the
+//! environment is the one the trusted core chose, and nothing else. A
+//! helper starts detached from any console, its standard error a pipe
+//! the broker relays (`relay`), so it cannot type into the console the
+//! browser was started from (decision 100 item 1, finding F-22).
 
 #![expect(unsafe_code, reason = "the Win32 calls that create a confined process (requirement 10.12, decision 52)")]
 
@@ -48,6 +51,7 @@ mod container;
 mod handles;
 mod job;
 mod process;
+mod relay;
 mod time;
 
 pub(crate) use channel::Channel;
@@ -59,6 +63,7 @@ use attributes::start;
 use container::{INTERNET_CLIENT_SID, PRIVATE_NETWORK_SID, container};
 use handles::{ContainerSid, Owned, Sid, keep_ours, last_error, pipe};
 use job::job;
+use relay::relay;
 
 /// Grants `ALL APPLICATION PACKAGES` read and run on `folder` and
 /// everything in it, as Program Files grants it, so the containers can
@@ -99,11 +104,20 @@ fn spawn_in(spawn: &Spawn<'_>, sid: &ContainerSid) -> io::Result<Process> {
     keep_ours(our_stdin.raw())?;
     keep_ours(our_stdout.raw())?;
     // SAFETY: GetStdHandle takes a constant and returns a handle this process already
-    // has, or none; it is only compared and passed on, never closed.
+    // has, or none; it is only compared, never closed.
     let stderr = unsafe { GetStdHandle(STD_ERROR_HANDLE) };
+    // The helper's standard error is a pipe the broker relays, never the
+    // broker's own, which may be a console (decision 100 item 1).
+    let errors = if stderr != 0 && stderr != INVALID_HANDLE_VALUE {
+        let (ours, theirs) = pipe()?;
+        keep_ours(ours.raw())?;
+        Some((ours, theirs))
+    } else {
+        None
+    };
     let mut inherited = vec![their_stdin.raw(), their_stdout.raw()];
-    if stderr != 0 && stderr != INVALID_HANDLE_VALUE {
-        inherited.push(stderr);
+    if let Some((_, theirs)) = &errors {
+        inherited.push(theirs.raw());
     }
     let job = job(spawn.role)?;
     let mut report = Report { layers: vec![String::from("job object"), String::from("mitigation policies"), String::from("no child processes")] };
@@ -145,6 +159,14 @@ fn spawn_in(spawn: &Spawn<'_>, sid: &ContainerSid) -> io::Result<Process> {
     drop(thread);
     drop(their_stdin);
     drop(their_stdout);
+    if let Some((ours, theirs)) = errors {
+        drop(theirs);
+        // SAFETY: our end of the standard error pipe, made by `pipe` and owned only by
+        // `ours`, forgotten below so the file becomes its one owner.
+        let pipe = unsafe { File::from_raw_handle(ours.raw() as _) };
+        std::mem::forget(ours);
+        relay(pipe)?;
+    }
     // SAFETY: our end of the input pipe, made by `pipe` and owned only by `our_stdin`,
     // forgotten below so the file becomes its one owner.
     let stdin = unsafe { File::from_raw_handle(our_stdin.raw() as _) };
@@ -168,53 +190,4 @@ pub(crate) fn start_core(spawn: &Spawn<'_>) -> io::Result<(Process, Channel)> {
 }
 
 #[cfg(test)]
-mod tests {
-    use std::ffi::OsString;
-
-    use super::*;
-    use crate::environment;
-
-    /// A profile of this test's own, made and removed by it.
-    const TEST_PROFILE: &str = "NeoTeletext.ConfineTest";
-    /// How many times the profile is made afresh.
-    const ROUNDS: usize = 5;
-    /// How many helpers start at once in each new profile.
-    const AT_ONCE: usize = 8;
-
-    /// Helpers started at once by threads of one process, in a profile
-    /// none of them has made yet, all start: no thread starts a process in
-    /// a profile another is still making. Before, a decoder started while
-    /// another thread made the profile failed with "the system cannot find
-    /// the file specified".
-    #[test]
-    fn helpers_started_at_once_in_a_new_profile_all_start() {
-        let program = std::env::current_exe().unwrap();
-        for round in 0..ROUNDS {
-            container::remove(TEST_PROFILE);
-            let starts: Vec<_> = (0..AT_ONCE)
-                .map(|_| {
-                    let program = program.clone();
-                    std::thread::spawn(move || -> io::Result<()> {
-                        let sid = container::profile(TEST_PROFILE)?;
-                        // A name no test has: the copy runs nothing and ends.
-                        let arguments = [OsString::from("--exact"), OsString::from("no test has this name")];
-                        let environment = environment(Role::Decoder);
-                        let spawn = Spawn {
-                            program: &program,
-                            arguments: &arguments,
-                            role: Role::Decoder,
-                            environment: &environment,
-                            local_network: false,
-                            writable: None,
-                        };
-                        let mut process = spawn_in(&spawn, &sid)?;
-                        process.wait().map(drop)
-                    })
-                })
-                .collect();
-            let failed: Vec<String> = starts.into_iter().filter_map(|start| start.join().unwrap().err()).map(|error| error.to_string()).collect();
-            container::remove(TEST_PROFILE);
-            assert!(failed.is_empty(), "round {round}: {} of {AT_ONCE} did not start: {failed:?}", failed.len());
-        }
-    }
-}
+mod tests;

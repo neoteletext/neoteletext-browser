@@ -11,7 +11,7 @@ use windows_sys::Win32::Foundation::HANDLE;
 use windows_sys::Win32::Security::{SECURITY_CAPABILITIES, SID_AND_ATTRIBUTES};
 use windows_sys::Win32::System::SystemServices::SE_GROUP_ENABLED;
 use windows_sys::Win32::System::Threading::{
-    CREATE_SUSPENDED, CREATE_UNICODE_ENVIRONMENT, CreateProcessW, DeleteProcThreadAttributeList, EXTENDED_STARTUPINFO_PRESENT,
+    CREATE_SUSPENDED, CREATE_UNICODE_ENVIRONMENT, CreateProcessW, DETACHED_PROCESS, DeleteProcThreadAttributeList, EXTENDED_STARTUPINFO_PRESENT,
     InitializeProcThreadAttributeList, LPPROC_THREAD_ATTRIBUTE_LIST, PROC_THREAD_ATTRIBUTE_ALL_APPLICATION_PACKAGES_POLICY,
     PROC_THREAD_ATTRIBUTE_CHILD_PROCESS_POLICY, PROC_THREAD_ATTRIBUTE_HANDLE_LIST, PROC_THREAD_ATTRIBUTE_MITIGATION_POLICY,
     PROC_THREAD_ATTRIBUTE_SECURITY_CAPABILITIES, PROCESS_INFORMATION, STARTF_USESTDHANDLES, STARTUPINFOEXW, UpdateProcThreadAttribute,
@@ -146,7 +146,13 @@ pub(super) fn start(
     let program = wide(spawn.program);
     let mut line = command_line(spawn.program.as_os_str(), spawn.arguments);
     let mut environment = environment_block(spawn.environment);
-    let flags = EXTENDED_STARTUPINFO_PRESENT | CREATE_SUSPENDED | CREATE_UNICODE_ENVIRONMENT;
+    // Detached from the broker's console, if it has one: a helper with a
+    // console could write its input, as if typed into the shell that
+    // started the browser (decision 100 item 1, finding F-22). Not
+    // `CREATE_NO_WINDOW`, which gives the helper a console of its own: its
+    // host process is a child the helper may not have, and every role
+    // failed to start with 0xC0000142 (measured 24 October 2026).
+    let flags = EXTENDED_STARTUPINFO_PRESENT | CREATE_SUSPENDED | CREATE_UNICODE_ENVIRONMENT | DETACHED_PROCESS;
     // SAFETY: likewise PROCESS_INFORMATION, which the call writes.
     let mut information: PROCESS_INFORMATION = unsafe { std::mem::zeroed() };
     // SAFETY: every pointer is to a live local of this function (the program and the
