@@ -127,7 +127,7 @@ Beyond a bound the least recently used cookie goes first, expired ones before al
 
 ## 7. Encryption at rest
 
-The file is sealed with an authenticated cipher (XChaCha20-Poly1305 or AES-256-GCM, one of them, per the library chosen) under a 256-bit key that the browser makes once and keeps in the platform's secret store, read through the broker (the trusted core is confined and reaches no secret store itself):
+The file is sealed with ChaCha20-Poly1305 (`ring`'s, section 13 item 7), with a random 96-bit nonce drawn for each write and the file's first line, which names the cipher, authenticated with it, under a 256-bit key that the browser makes once and keeps in the platform's secret store, read through the broker (the trusted core is confined and reaches no secret store itself):
 
 | Platform | Secret store |
 |---|---|
@@ -137,7 +137,9 @@ The file is sealed with an authenticated cipher (XChaCha20-Poly1305 or AES-256-G
 
 **What it protects against:** a copy of the file alone (a backup, another user who can read the folder by mistake, a disk read offline). **What it does not:** a program running as the user, which can ask the secret store as the browser does; no browser can stop that without the elevated service Chrome uses on Windows, and even that is reported bypassed. This is what every major browser offers, and why section 6 never writes session cookies.
 
-**The libraries are the owner's to choose** (the baseline instructions: library choice is an architectural decision): the cipher, and a crate for each secret store or our own calls through the `windows` crate already in the tree and `security-framework` on macOS. Section 13 item 7 recommends.
+**The libraries are the owner's to choose** (the baseline instructions: library choice is an architectural decision): the cipher, and a crate for each secret store or our own calls through the `windows` crate already in the tree and `security-framework` on macOS. Section 13 item 7 recommends; building chose `ring` and `keyring`, for the owner to confirm.
+
+**The key in memory** is held by the trusted core for its life, copied where it is used, and not wiped at exit (decision 98): wiping it needs volatile writes, which are unsafe code the core may not hold (requirement 10.12), or the `zeroize` crate, a dependency not approved; and whoever can read the core's memory has its cookies already.
 
 ## 8. `Clear-Site-Data`
 
@@ -158,7 +160,7 @@ The interface's requests act only by view numbers, refreshed with every view, as
 
 ## 10. The trusted core's confinement
 
-Nothing new: the cookie file is in the settings folder, which the trusted core already writes. The key comes from the broker, by a new request, `CookieKey`, answered with the key or a refusal; the broker reads the secret store, which needs its own access the trusted core does not have (on Linux, the session bus; on macOS, the Keychain). The key never leaves the trusted core; it is wiped from memory at exit.
+Nothing new: the cookie file is in the settings folder, which the trusted core already writes. The key comes from the broker, by a new request, `CookieKey`, answered with the key or a refusal; the broker reads the secret store, which needs its own access the trusted core does not have (on Linux, the session bus; on macOS, the Keychain). The key never leaves the trusted core; it is held there for the core's life and not wiped at exit (section 7, decision 98).
 
 ## 11. Tests and checks this design asks for
 
