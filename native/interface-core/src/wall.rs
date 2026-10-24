@@ -11,7 +11,8 @@ use crate::geometry::{Point, Rect};
 use crate::size::{DEFAULT_WIDTH, Layout, MAX_WIDTH, layout_for_width};
 use crate::tween::{EASE_OUT, STANDARD, Tween};
 use crate::wall::hover::HOVER_MILLISECONDS;
-use crate::wall::zoom::{SLIDE_MILLISECONDS, ZOOM_MILLISECONDS};
+use crate::wall::zoom::SLIDE_MILLISECONDS;
+pub(crate) use crate::wall::zoom::ZOOM_MILLISECONDS;
 
 mod draw;
 mod grid;
@@ -120,6 +121,9 @@ pub struct Wall {
     /// The page zoomed in full and at rest, and where it was drawn: links
     /// are shown and followed only there (`hyperlinks.md` section 10.1).
     open: Option<(PageKey, Rect)>,
+    /// The last frame drew something part of the way through a move, so
+    /// the frame that ends it is still owed, however late it is asked for.
+    drawn_moving: bool,
 }
 
 impl Default for Wall {
@@ -160,6 +164,7 @@ impl Wall {
             area: Rect::ZERO,
             drawn: Vec::new(),
             open: None,
+            drawn_moving: false,
         }
     }
 
@@ -282,9 +287,15 @@ impl Wall {
         layout_for_width(self.width)
     }
 
-    /// Whether anything on the wall is moving at `now`.
+    /// Whether anything on the wall is moving at `now`, or the last frame
+    /// drew it part of the way and the frame that ends the move is owed.
     #[must_use]
     pub fn animating(&self, now: u64) -> bool {
+        self.drawn_moving || self.moving(now)
+    }
+
+    /// Whether anything on the wall is on its way at `now`.
+    fn moving(&self, now: u64) -> bool {
         self.shown_width.moving(now) || self.zoom.moving(now) || self.slide.moving(now) || self.hover.moving(now) || self.leave.moving(now)
     }
 }

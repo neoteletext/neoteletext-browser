@@ -62,7 +62,8 @@ pub fn apply(role: Role, writable: Option<&Path>) -> Result<Report, String> {
 }
 
 /// Starts a helper, confined as its role says, with its pipes; standard
-/// error is the trusted core's own.
+/// error is its parent's own, on Windows through a pipe the parent relays
+/// (decision 100 item 1).
 ///
 /// # Errors
 /// When the helper cannot be started, confined.

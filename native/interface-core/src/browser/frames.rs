@@ -79,7 +79,8 @@ impl Browser {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::browser::fixture::browser;
+    use crate::browser::fixture::{HEIGHT, WIDTH, browser};
+    use crate::wall::ZOOM_MILLISECONDS;
 
     /// An update glows and is marked with its age where its page is drawn,
     /// the wall and the list, which show one bank: a page of another bank
@@ -97,5 +98,27 @@ mod tests {
         assert_eq!(browser.frame_interval(100 + UPDATE_RING_MILLISECONDS), Some(PULSE_FRAME_MILLISECONDS), "the glow on the wall");
         assert_eq!(browser.frame_interval(100 + UPDATE_GLOW_MILLISECONDS), Some(MARK_FRAME_MILLISECONDS), "the age mark on the wall");
         assert_eq!(browser.frame_interval(100 + UPDATE_MARK_MILLISECONDS), None, "the mark has gone");
+    }
+
+    /// The frame that ends a zoom is drawn even when the zoom's time ran
+    /// out between two frames. Before, the host was asked for frames only
+    /// while the zoom moved at the moment it asked, so a frame drawn just
+    /// short of the end was the last: the page stayed a step short of
+    /// open over the dimmed wall, its links neither shown nor followed,
+    /// until something else drew the window (seen in the Windows virtual
+    /// machine, where a click on a page's link was refused as unshown).
+    #[test]
+    fn a_zoom_drawn_short_of_its_end_asks_for_the_frame_that_ends_it() {
+        let (mut browser, mut canvas) = browser();
+        let (key, _) = browser.wall().shown().next().unwrap();
+        browser.wall_mut().zoom(key, 0);
+        let short = ZOOM_MILLISECONDS - SMOOTH_FRAME_MILLISECONDS / 2;
+        browser.draw(&mut canvas, WIDTH, HEIGHT, short);
+        assert_eq!(browser.wall().open(), None, "short of the end, the page is not open");
+        let next = short + SMOOTH_FRAME_MILLISECONDS;
+        assert_eq!(browser.frame_interval(next), Some(SMOOTH_FRAME_MILLISECONDS), "the zoom's last frame is still to be drawn");
+        browser.draw(&mut canvas, WIDTH, HEIGHT, next);
+        assert_eq!(browser.wall().open().map(|(open, _)| open), Some(key), "the page is open");
+        assert_eq!(browser.frame_interval(next), None, "at rest");
     }
 }

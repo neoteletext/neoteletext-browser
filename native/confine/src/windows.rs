@@ -24,8 +24,11 @@
 //!   process is not started at all (decision 58: security is never
 //!   downgraded).
 //!
-//! Only the two pipe handles are inherited, by the handle list; the
-//! environment is the one the trusted core chose, and nothing else.
+//! Only the pipe handles are inherited, by the handle list; the
+//! environment is the one the trusted core chose, and nothing else. A
+//! helper starts detached from any console, its standard error a pipe
+//! the broker relays (`relay`), so it cannot type into the console the
+//! browser was started from (decision 100 item 1, finding F-22).
 
 #![expect(unsafe_code, reason = "the Win32 calls that create a confined process (requirement 10.12, decision 52)")]
 
@@ -48,6 +51,7 @@ mod container;
 mod handles;
 mod job;
 mod process;
+mod relay;
 mod time;
 
 pub(crate) use channel::Channel;
@@ -57,8 +61,9 @@ pub(crate) use time::local_offset;
 use acl::grant;
 use attributes::start;
 use container::{INTERNET_CLIENT_SID, PRIVATE_NETWORK_SID, container};
-use handles::{Owned, Sid, keep_ours, last_error, pipe};
+use handles::{ContainerSid, Owned, Sid, keep_ours, last_error, pipe};
 use job::job;
+use relay::relay;
 
 /// Grants `ALL APPLICATION PACKAGES` read and run on `folder` and
 /// everything in it, as Program Files grants it, so the containers can
@@ -86,22 +91,36 @@ pub(crate) fn apply() -> Report {
 
 /// Starts a helper confined as its role says.
 pub(crate) fn spawn(spawn: &Spawn<'_>) -> io::Result<Process> {
+    // Every role runs in its container or not at all (decision 58); the
+    // interface too, with no capabilities (decision 90).
+    let sid = container(spawn.role).map_err(|error| io::Error::new(error.kind(), format!("cannot make its AppContainer: {error}")))?;
+    spawn_in(spawn, &sid)
+}
+
+/// Starts a helper confined as its role says, in the container `sid`.
+fn spawn_in(spawn: &Spawn<'_>, sid: &ContainerSid) -> io::Result<Process> {
     let (their_stdin, our_stdin) = pipe()?;
     let (our_stdout, their_stdout) = pipe()?;
     keep_ours(our_stdin.raw())?;
     keep_ours(our_stdout.raw())?;
     // SAFETY: GetStdHandle takes a constant and returns a handle this process already
-    // has, or none; it is only compared and passed on, never closed.
+    // has, or none; it is only compared, never closed.
     let stderr = unsafe { GetStdHandle(STD_ERROR_HANDLE) };
+    // The helper's standard error is a pipe the broker relays, never the
+    // broker's own, which may be a console (decision 100 item 1).
+    let errors = if stderr != 0 && stderr != INVALID_HANDLE_VALUE {
+        let (ours, theirs) = pipe()?;
+        keep_ours(ours.raw())?;
+        Some((ours, theirs))
+    } else {
+        None
+    };
     let mut inherited = vec![their_stdin.raw(), their_stdout.raw()];
-    if stderr != 0 && stderr != INVALID_HANDLE_VALUE {
-        inherited.push(stderr);
+    if let Some((_, theirs)) = &errors {
+        inherited.push(theirs.raw());
     }
     let job = job(spawn.role)?;
     let mut report = Report { layers: vec![String::from("job object"), String::from("mitigation policies"), String::from("no child processes")] };
-    // Every role runs in its container or not at all (decision 58); the
-    // interface too, with no capabilities (decision 90).
-    let sid = container(spawn.role).map_err(|error| io::Error::new(error.kind(), format!("cannot make its AppContainer: {error}")))?;
     let mut capabilities = Vec::new();
     // A container cannot be told a port: the updater's host is pinned by
     // TLS (`installation-and-updates.md` section 8.1).
@@ -114,9 +133,9 @@ pub(crate) fn spawn(spawn: &Spawn<'_>) -> io::Result<Process> {
     if matches!(spawn.role, Role::Core | Role::Updater { .. })
         && let Some(folder) = spawn.writable
     {
-        grant(folder, &sid)?;
+        grant(folder, sid)?;
     }
-    let information = start(spawn, &inherited, their_stdin.raw(), their_stdout.raw(), &sid, &capabilities)
+    let information = start(spawn, &inherited, their_stdin.raw(), their_stdout.raw(), sid, &capabilities)
         .map_err(|error| io::Error::new(error.kind(), format!("cannot start in its AppContainer: {error}")))?;
     report.layers.push(String::from(if matches!(spawn.role, Role::Decoder | Role::Core) { "less privileged AppContainer" } else { "AppContainer" }));
     let process = Owned::new(information.hProcess);
@@ -140,6 +159,14 @@ pub(crate) fn spawn(spawn: &Spawn<'_>) -> io::Result<Process> {
     drop(thread);
     drop(their_stdin);
     drop(their_stdout);
+    if let Some((ours, theirs)) = errors {
+        drop(theirs);
+        // SAFETY: our end of the standard error pipe, made by `pipe` and owned only by
+        // `ours`, forgotten below so the file becomes its one owner.
+        let pipe = unsafe { File::from_raw_handle(ours.raw() as _) };
+        std::mem::forget(ours);
+        relay(pipe)?;
+    }
     // SAFETY: our end of the input pipe, made by `pipe` and owned only by `our_stdin`,
     // forgotten below so the file becomes its one owner.
     let stdin = unsafe { File::from_raw_handle(our_stdin.raw() as _) };
@@ -161,3 +188,6 @@ pub(crate) fn start_core(spawn: &Spawn<'_>) -> io::Result<(Process, Channel)> {
     let reader = process.stdout.take().ok_or_else(|| io::Error::other("the core has no output"))?;
     Ok((process, Channel::new(reader, writer)))
 }
+
+#[cfg(test)]
+mod tests;
