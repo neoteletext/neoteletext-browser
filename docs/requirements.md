@@ -106,7 +106,7 @@
 - **Reason:** The engine is maintained in its own repository, by its own process (decision 36).
 - **Source:** Decision 36.
 - **Verification:** Check: every `neoteletext` dependency in every workspace names the same `rev`.
-- **State:** Met, 23 October 2026: `native/Cargo.toml`, the updater's workspace (`native/tuf/Cargo.toml`) and the fuzz workspace (`native/fuzz/Cargo.toml`) name the engine's `fb2dd8a`, and `scripts/check.sh` fails unless every workspace names one engine commit (`check_engine_pin`). The pinned commit is in the engine's local repository.
+- **State:** Met, 24 October 2026: `native/Cargo.toml`, the updater's workspace (`native/tuf/Cargo.toml`) and the fuzz workspace (`native/fuzz/Cargo.toml`) name the engine's `5311f98`, and `scripts/check.sh` fails unless every workspace names one engine commit (`check_engine_pin`). The pinned commit is in the engine's local repository.
 
 ---
 
@@ -1381,7 +1381,7 @@ From `settings-home-console-proxy.md` and its security analysis (decision 51).
 - **Source:** Decision 51; `settings-home-console-proxy-security.md` section 3.
 - **Verification:** Test of each refused form.
 - **State:** Met by the engine's agent, which the fetcher runs with `proxied` set: the engine's `local_hosts_are_seen_before_the_proxy` (each refused form) and `through_a_proxy_local_names_are_refused_and_the_proxy_may_be_local` (the agent refuses before connecting), REQ-WEB-032.
-- *Amended 24 October 2026 (the engine's decision E.113, finding F-17):* names of one label and names under `.home.arpa`, `.lan`, `.corp`, `.intranet`, `.private` and `.localdomain` are refused too, compared without regard to case; through a proxy the rule is by name, and a public name that resolves to a local address stays a residual (`security-analysis.md` section 5.1). State: not met until the engine is re-pinned at a commit with E.113; the browser's pin, `fb2dd8a`, refuses the earlier list only.
+- *Amended 24 October 2026 (the engine's decision E.113, finding F-17):* names of one label and names under `.home.arpa`, `.lan`, `.corp`, `.intranet`, `.private` and `.localdomain` are refused too, compared without regard to case; through a proxy the rule is by name, and a public name that resolves to a local address stays a residual (`security-analysis.md` section 5.1). State: met since the re-pin of 24 October 2026 at `5311f98`, which has E.113: the engine's `single_label_and_private_use_names_are_local_through_a_proxy` (each added form, in either case) and `through_a_proxy_local_names_are_refused_and_the_proxy_may_be_local` (the agent refuses before connecting).
 
 ### Requirement 19.12: The fetcher takes its proxy only when started
 - **Statement:** The trusted core must give a fetcher its proxy as a command-line argument when it starts it, and a change of the proxy must take effect for fetchers started after it; no message may change where a running fetcher connects (requirement 4.7).
