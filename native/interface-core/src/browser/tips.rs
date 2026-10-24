@@ -31,8 +31,8 @@ const EDGE: f64 = 4.0;
 /// A control's tip as last drawn.
 #[derive(Clone, Debug, PartialEq)]
 pub(super) struct Tip {
-    pub(super) rect: Rect,
-    pub(super) text: String,
+    rect: Rect,
+    text: String,
 }
 
 /// The tips' state in the browser.

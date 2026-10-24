@@ -130,6 +130,6 @@ mod tests {
         assert_eq!(browser.regions.overview, Rect::ZERO, "no overview");
         let texts: Vec<&str> = canvas.texts.iter().map(|(_, text)| text.as_str()).collect();
         assert!(texts.contains(&"Network 0") && texts.contains(&"Pause"), "{texts:?}");
-        assert!(browser.console.area.y1 <= HEIGHT && browser.console.area.y0 > BODY_TOP);
+        assert!(browser.console.area().y1 <= HEIGHT && browser.console.area().y0 > BODY_TOP);
     }
 }

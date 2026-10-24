@@ -19,13 +19,25 @@ const HOLD_MILLISECONDS: u64 = 500;
 /// Back's and Forward's lists' state in the browser.
 #[derive(Debug, Default)]
 pub(super) struct TabListUi {
-    pub(super) tab_list: Option<TabList>,
+    tab_list: Option<TabList>,
     /// A list's entries drawn: steps, rect; and "Show all history".
     entries: Vec<(u8, Rect)>,
     show_all: Rect,
     list_area: Rect,
     /// Back or Forward held: which, since when, and whether its list opened.
     held: Option<(bool, u64, bool)>,
+}
+
+impl TabListUi {
+    /// Whether Back's or Forward's list is open.
+    pub(super) fn is_open(&self) -> bool {
+        self.tab_list.is_some()
+    }
+
+    /// Closes the list; whether one was open.
+    pub(super) fn close(&mut self) -> bool {
+        self.tab_list.take().is_some()
+    }
 }
 
 impl Browser {

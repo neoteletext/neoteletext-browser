@@ -146,7 +146,7 @@ fn a_phones_keys_never_answer_the_strips_question() {
     browser.phone_key(true, "Escape", later);
     press_everything(&mut browser, "1", later);
     assert_eq!(browser.take_outputs(), [], "no Confirm, no Cancel");
-    assert_eq!(browser.links.prompt_focus, None, "the question's focus did not move");
+    assert_eq!(browser.links.prompt_focus(), None, "the question's focus did not move");
     // The window's own keyboard still answers it.
     browser.key(Key::Tab, Modifiers::default(), later);
     browser.key(Key::Enter, Modifiers::default(), later);

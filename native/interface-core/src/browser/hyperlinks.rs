@@ -41,7 +41,7 @@ pub(super) struct LinkUi {
     /// The strip's question, and when it was asked.
     prompt: Option<(Prompt, u64)>,
     /// The question's button the keyboard is on, once the user moved there.
-    pub(super) prompt_focus: Option<PromptButton>,
+    prompt_focus: Option<PromptButton>,
     /// The open page's link the keyboard is on.
     focus: Option<usize>,
     /// The open page's link under the pointer.
@@ -53,6 +53,14 @@ pub(super) struct LinkUi {
     /// The question's buttons, where last drawn.
     go: Rect,
     cancel: Rect,
+}
+
+impl LinkUi {
+    /// The question's button the keyboard is on.
+    #[cfg(all(test, feature = "phone-keyboard"))]
+    pub(super) fn prompt_focus(&self) -> Option<PromptButton> {
+        self.prompt_focus
+    }
 }
 
 impl Browser {

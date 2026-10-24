@@ -57,7 +57,7 @@ pub(super) struct ConsoleUi {
     tab: Tab,
     /// Lines scrolled back from the newest.
     back: usize,
-    pub(in crate::browser) area: Rect,
+    area: Rect,
     tabs: Vec<(Tab, Rect)>,
     pause: Rect,
     clear: Rect,
@@ -129,6 +129,12 @@ const TABS: [Tab; ConsoleTab::ALL.len() + 1] =
 impl ConsoleUi {
     pub(in crate::browser) const fn open(&self) -> bool {
         self.open
+    }
+
+    /// Where the console was last drawn.
+    #[cfg(test)]
+    pub(in crate::browser) const fn area(&self) -> Rect {
+        self.area
     }
 
     fn keep(&mut self, entry: ConsoleEntry) {
