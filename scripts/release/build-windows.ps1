@@ -13,8 +13,12 @@ $ErrorActionPreference = "Stop"
 # says this is a test (finding F-24).
 if ($env:NEOTELETEXT_RELEASE_IDENTITY -and -not $Test) { throw "NEOTELETEXT_RELEASE_IDENTITY names a test identity; give -Test for a test release" }
 $testFlags = @()
-# A release is built from a commit (finding F-73).
-if (git status --porcelain --untracked-files=no) { throw "the tree has changes; a release is built from a commit" }
+# A release is built from a commit (finding F-73): the tree is a git
+# checkout, and unchanged. Outside one, git status fails and says nothing
+# on its output, which alone would read as unchanged.
+$changes = git status --porcelain --untracked-files=no
+if ($LASTEXITCODE -ne 0) { throw "the tree is not a git checkout; a release is built from a commit" }
+if ($changes) { throw "the tree has changes; a release is built from a commit" }
 if ($Test) { $testFlags = @("--test-identity") }
 $signtool = (Get-ChildItem -Recurse -Filter signtool.exe "C:\Program Files (x86)\Windows Kits\10\bin" | Where-Object { $_.FullName -like "*\x64\*" } | Select-Object -First 1).FullName
 function Sign($files) {
