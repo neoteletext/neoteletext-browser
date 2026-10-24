@@ -35,7 +35,10 @@ impl Core {
     }
 
     /// The panel opened or closed. Opening starts the keyboard process if
-    /// none runs; closing it before a phone is paired ends it.
+    /// none runs; closing it before a phone is connected ends it. Without
+    /// a PIN a phone is connected by its first key, not by the scan (the
+    /// engine's decision E.116 item 3), so the panel says to press one
+    /// (decision 101).
     pub(super) fn phone_panel(&mut self, open: bool) -> Result<(), String> {
         use protocol::keyboard::PhoneState;
         if !open {
@@ -243,6 +246,21 @@ mod tests {
         test.core.phone_said(0, FromKeyboard::Text("3a0b2".into())).unwrap();
         test.core.phone_said(0, FromKeyboard::Text("example.com".into())).unwrap();
         assert_eq!(given(&mut test), [PhoneKey::Text("302".into())]);
+    }
+
+    /// The engine's decision E.116 item 3 (finding F-71): without a PIN the
+    /// phone is reported connected with its first key, which the keyboard
+    /// process sends just after the state, so that key reaches the
+    /// interface; nothing the phone sends before the state does.
+    #[test]
+    fn a_phones_first_key_arrives_with_its_connection() {
+        let mut test = Test::new("phone-first-key");
+        test.core.phone_view.state = PhoneState::Scan;
+        test.core.phone_said(0, key("2")).unwrap();
+        test.core.phone_said(0, FromKeyboard::State(PhoneState::Connected)).unwrap();
+        test.core.phone_said(0, key("1")).unwrap();
+        assert_eq!(given(&mut test), [PhoneKey::Key { down: true, name: "1".into() }]);
+        assert_eq!((test.core.phone_view.qr.as_ref(), test.core.phone_view.pin.as_ref()), (None, None), "the QR is not shown again");
     }
 
     fn key(name: &str) -> FromKeyboard {
