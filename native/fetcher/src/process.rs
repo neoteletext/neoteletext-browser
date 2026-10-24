@@ -5,7 +5,6 @@
 
 use std::cell::RefCell;
 use std::collections::VecDeque;
-use std::collections::hash_map::RandomState;
 use std::io::{self, BufWriter, Write};
 use std::net::IpAddr;
 use std::rc::Rc;
@@ -196,7 +195,7 @@ pub fn run(channel: &str, allowed: &[IpAddr], proxy: Option<Proxy>) -> Result<()
     // The transport refuses the same local addresses before connecting
     // (finding F-62).
     let allowed_local = config.allowed_local;
-    let random = Random { state: RandomState::new(), counter: 0 };
+    let random = Random::new();
     let (wakes, woken) = mpsc::channel::<Wake>();
     // The trusted core's answers to the cookie questions, read by the same
     // thread that reads its input messages.
@@ -433,7 +432,7 @@ mod tests {
         let mut storage = Box::new(Storage::default());
         let mut asked = Asked::default();
         let config = Config { tls_available: true, redirects_within_channel: true, ..Config::default() };
-        let random = Random { state: RandomState::new(), counter: 0 };
+        let random = Random::new();
         let mut agent: Box<UserAgent<'_, Random, COOKIE_SLOTS, COOKIE_BYTES>> =
             Box::new(UserAgent::with_cookies(config, storage.buffers(), random, &mut asked));
         let mut actions = Vec::new();
