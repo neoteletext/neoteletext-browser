@@ -126,6 +126,7 @@ Boundary 4 of the earlier design, the font helper, is gone: no font is fetched f
 - The engine's limits on size, time and redirects, and on decompressed size (requirements 5.11 and 5.12).
 - The local network refused unless the user names an address (requirement 5.10).
 - One fetcher per channel (requirement 3.12).
+- A certificate is checked against Mozilla's roots, compiled in (`webpki-roots`), never the system's store, and revocation is not checked: a certificate revoked but not yet expired is accepted (finding F-95; `certificate-errors.md` section 3).
 - A connection, its proxy tunnel and its TLS handshake are opened on a thread of their own and the engine's connect limit bounds the whole, so a slow or silent server or proxy holds up nothing else the fetcher does (decision 53).
 
 **If a fetcher is compromised.**
