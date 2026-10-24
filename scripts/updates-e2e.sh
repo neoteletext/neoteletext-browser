@@ -197,7 +197,10 @@ start() {
             waited=$((waited + 1))
         done
     fi
-    pkill -f "$installed" 2>/dev/null || true
+    # Only what runs from the installation: xvfb-run's own command line
+    # names the launcher too, and ended before it has ended its Xvfb, it
+    # leaves the display server running for good.
+    pkill -f "^$installed" 2>/dev/null || true
     wait "$launched" 2>/dev/null || true
 }
 
@@ -219,7 +222,7 @@ drive() {
     env -i HOME="$home" PATH=/usr/bin:/bin "$tools/updater-drive" "$(updater_of)" "$@"
 }
 
-trap 'pkill -f "$installed" 2>/dev/null || true; [[ -n "${host:-}" ]] && kill "$host" 2>/dev/null || true' EXIT
+trap 'pkill -f "^$installed" 2>/dev/null || true; [[ -n "${host:-}" ]] && kill "$host" 2>/dev/null || true' EXIT
 
 # 1. The first install.
 build 0.1.0
