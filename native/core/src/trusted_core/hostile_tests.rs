@@ -454,12 +454,17 @@ fn the_core_stands_against_a_hostile_interface() {
     }
     // Every channel's helpers, started as a tab is chosen, as the user
     // would; what they are told is checked at the end. Without the
-    // stand-in broker, as on Windows, nothing can start them.
+    // stand-in broker, as on Windows, nothing can start them. What they
+    // asked of the broker is checked here, as theirs: left for the first
+    // round to take, it was laid to that round's intent.
     #[cfg(unix)]
     {
         let generation = core.generation;
+        let described = "SelectTab(2), before the rounds";
         core.intent(ToCore::SelectTab(2)).unwrap();
+        watch.check_intent(&core, false, false, described);
         core.tick().and_then(|()| core.flush()).unwrap();
+        watch.check_timed(&core, described);
         watch.note_channels(&core, generation);
     }
 
