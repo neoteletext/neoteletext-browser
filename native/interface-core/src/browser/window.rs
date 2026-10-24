@@ -9,7 +9,7 @@ use crate::browser::console_panel::CONSOLE_HEIGHT;
 use crate::browser::toolbar::{TOOLBAR_HEIGHT, TOOLBAR_TOP};
 use crate::browser::{Browser, Output};
 use crate::canvas::{Canvas, PageKey};
-use crate::channel::{PAGES_PER_BANK, page_number};
+use crate::channel::{bank_indices, page_number};
 use crate::geometry::Rect;
 use crate::theme::WINDOW;
 use crate::wall::WallPage;
@@ -45,12 +45,42 @@ impl Browser {
         let banks = Rect::new(MARGIN, body_top, MARGIN + BANKS_WIDTH, body_bottom);
         let list = Rect::new(banks.x1 + MARGIN, body_top, banks.x1 + MARGIN + LIST_WIDTH, body_bottom);
         let zoom = Rect::new(list.x1 + MARGIN, body_top, right, body_bottom);
+        self.draw_pages(canvas, zoom, now);
+        self.draw_banks(canvas, banks);
+        self.draw_list(canvas, list, now);
+        if self.console.open() {
+            self.draw_console(canvas, overview);
+        } else {
+            self.draw_overview(canvas, overview, now);
+        }
+        self.draw_toolbar(canvas, width);
+        self.draw_bar(canvas, TOOLBAR_TOP + TOOLBAR_HEIGHT, width);
+        self.draw_tab_strip(canvas, width);
+        self.draw_preview(canvas, width);
+        self.draw_remote(canvas, width, height, body_top, now);
+        #[cfg(feature = "phone-keyboard")]
+        self.draw_phone_panel(canvas);
+        self.draw_settings_panel(canvas);
+        self.draw_history_panel(canvas);
+        self.draw_bookmarks_panel(canvas, now);
+        self.draw_star_popover(canvas);
+        self.draw_tab_overflow(canvas, width);
+        self.draw_popups(canvas);
+        self.draw_page_controls(canvas);
+        self.draw_tips(canvas, width, height);
+        // Pages may have moved under a still pointer: by scrolling, a new
+        // size or a zoom.
+        self.wall.hover(self.pointer, now);
+    }
 
+    /// The chosen bank's pages on the wall in `zoom`, with what is drawn
+    /// over them; and the pages on screen, told to the trusted core when
+    /// they changed.
+    fn draw_pages<C: Canvas + ?Sized>(&mut self, canvas: &mut C, zoom: Rect, now: u64) {
         // The titles are borrowed from the channel while the wall draws:
         // the fields are borrowed apart.
-        let first = self.bank * PAGES_PER_BANK;
         let (channel, updates) = (&self.channel, &self.updates);
-        let pages: Vec<WallPage<'_>> = (first..first + PAGES_PER_BANK)
+        let pages: Vec<WallPage<'_>> = bank_indices(self.bank)
             .filter_map(|index| {
                 let info = channel.pages.get(index)?.as_ref()?;
                 let key = PageKey { channel: channel.channel, page: page_number(index)? };
@@ -79,31 +109,6 @@ impl Browser {
             self.visible.clone_from(&visible);
             self.outputs.push(Output::Visible(visible));
         }
-        self.draw_banks(canvas, banks);
-        self.draw_list(canvas, list, now);
-        if self.console.open() {
-            self.draw_console(canvas, overview);
-        } else {
-            self.draw_overview(canvas, overview, now);
-        }
-        self.draw_toolbar(canvas, width);
-        self.draw_bar(canvas, TOOLBAR_TOP + TOOLBAR_HEIGHT, width);
-        self.draw_tab_strip(canvas, width);
-        self.draw_preview(canvas, width);
-        self.draw_remote(canvas, width, height, body_top, now);
-        #[cfg(feature = "phone-keyboard")]
-        self.draw_phone_panel(canvas);
-        self.draw_settings_panel(canvas);
-        self.draw_history_panel(canvas);
-        self.draw_bookmarks_panel(canvas, now);
-        self.draw_star_popover(canvas);
-        self.draw_tab_overflow(canvas, width);
-        self.draw_popups(canvas);
-        self.draw_page_controls(canvas);
-        self.draw_tips(canvas, width, height);
-        // Pages may have moved under a still pointer: by scrolling, a new
-        // size or a zoom.
-        self.wall.hover(self.pointer, now);
     }
 }
 
@@ -125,6 +130,6 @@ mod tests {
         assert_eq!(browser.regions.overview, Rect::ZERO, "no overview");
         let texts: Vec<&str> = canvas.texts.iter().map(|(_, text)| text.as_str()).collect();
         assert!(texts.contains(&"Network 0") && texts.contains(&"Pause"), "{texts:?}");
-        assert!(browser.console.area.y1 <= HEIGHT && browser.console.area.y0 > BODY_TOP);
+        assert!(browser.console.area().y1 <= HEIGHT && browser.console.area().y0 > BODY_TOP);
     }
 }

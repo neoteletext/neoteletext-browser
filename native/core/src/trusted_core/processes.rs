@@ -2,7 +2,7 @@
 //! (decision 56): a decoder, a fetcher, the bookmark reader, the
 //! interface's pipe, and where a fetcher may connect.
 
-use std::io::{BufReader, Read};
+use std::io::{BufReader, Read, Write};
 use std::sync::Arc;
 use std::sync::mpsc::Sender;
 use std::thread;
@@ -18,25 +18,114 @@ use protocol::{ProtocolError, read_from_interface};
 use super::Event;
 
 pub(super) struct Decoder {
-    pub(super) child: Helper,
-    pub(super) input: Outbox,
+    child: Helper,
+    input: Outbox,
     /// Which of the channel's decoders this is: one put to sleep may still
     /// report after the next has started, and is then not listened to.
-    pub(super) generation: u64,
+    generation: u64,
     /// It has said something: an end before then is a failure to start,
     /// counted against the version (finding F-12).
-    pub(super) heard: bool,
+    heard: bool,
 }
 
 pub(super) struct Fetcher {
-    pub(super) child: Helper,
+    child: Helper,
     /// As [`Decoder::generation`].
-    pub(super) generation: u64,
+    generation: u64,
     /// What a fetcher is given: input messages (REQ-INT-133), and the
     /// answers to its cookie questions (decision 62).
-    pub(super) input: Option<Outbox>,
+    input: Option<Outbox>,
     /// As [`Decoder::heard`].
-    pub(super) heard: bool,
+    heard: bool,
+}
+
+impl Decoder {
+    /// The decoder `child`, of `generation`, written to through `input`,
+    /// which has said nothing yet.
+    pub(super) fn new(child: Helper, input: Outbox, generation: u64) -> Self {
+        Self { child, input, generation, heard: false }
+    }
+
+    /// Which of the channel's decoders this is.
+    pub(super) fn generation(&self) -> u64 {
+        self.generation
+    }
+
+    /// Whether it has said something.
+    pub(super) fn heard(&self) -> bool {
+        self.heard
+    }
+
+    /// It said something.
+    pub(super) fn hear(&mut self) {
+        self.heard = true;
+    }
+
+    /// How it was confined.
+    pub(super) fn report(&self) -> &confine::Report {
+        &self.child.report
+    }
+
+    /// Writes `message` to its input, to be sent at the next flush.
+    pub(super) fn tell(&mut self, message: &ToDecoder) -> Result<(), ProtocolError> {
+        write_to_decoder(&mut self.input, message)
+    }
+
+    /// Sends what it was told; an error once it has stopped reading.
+    pub(super) fn flush(&mut self) -> std::io::Result<()> {
+        self.input.flush()
+    }
+
+    /// Ends it at once, told nothing: it broke its protocol or ended.
+    pub(super) fn end(mut self) {
+        end(&mut self.child);
+    }
+}
+
+impl Fetcher {
+    /// The fetcher `child`, of `generation`, given `input` if it has one,
+    /// which has said nothing yet.
+    pub(super) fn new(child: Helper, generation: u64, input: Option<Outbox>) -> Self {
+        Self { child, generation, input, heard: false }
+    }
+
+    /// As [`Decoder::generation`].
+    pub(super) fn generation(&self) -> u64 {
+        self.generation
+    }
+
+    /// As [`Decoder::heard`].
+    pub(super) fn heard(&self) -> bool {
+        self.heard
+    }
+
+    /// It said something.
+    pub(super) fn hear(&mut self) {
+        self.heard = true;
+    }
+
+    /// How it was confined.
+    pub(super) fn report(&self) -> &confine::Report {
+        &self.child.report
+    }
+
+    /// Its input: input messages and the answers to its cookie questions.
+    pub(super) fn input(&mut self) -> Option<&mut Outbox> {
+        self.input.as_mut()
+    }
+
+    /// Ends it: closing its input ends a fetcher, which is then killed and
+    /// waited for.
+    pub(super) fn stop(mut self) {
+        drop(self.child.stdin.take());
+        drop(self.input.take());
+        end(&mut self.child);
+    }
+
+    /// Waits for it once it has ended by itself; what it says is of no use.
+    pub(super) fn reap(mut self) {
+        let _ = self.child.wait();
+    }
 }
 
 /// Where a new fetcher may connect: the local addresses allowed, from the
@@ -91,7 +180,7 @@ pub(super) fn start_decoder(broker: &Arc<Broker>, channel: u32, generation: u64,
         move |message| Event::Decoded(channel, generation, message),
         move |end| Event::DecoderEnded(channel, generation, end),
     );
-    Ok(Decoder { child, input, generation, heard: false })
+    Ok(Decoder::new(child, input, generation))
 }
 
 /// Starts a decoder to read another browser's bookmark file (decision
@@ -177,7 +266,7 @@ pub(super) fn start_fetcher(
         move |end| Event::FetcherEnded(channel, generation, end),
     );
     let input = child.stdin.take().map(Outbox::new);
-    Ok(Fetcher { child, generation, input, heard: false })
+    Ok(Fetcher::new(child, generation, input))
 }
 
 pub(super) fn read_interface(child: &mut Helper, events: Sender<Event>) -> Result<(), String> {
@@ -208,9 +297,9 @@ impl<R: Read> Read for Counting<R> {
 /// bytes are taken from the helper's own budget before it is sent, and
 /// given back once the core has handled it, so a helper that writes
 /// faster than the core handles stalls on its own pipe (finding F-10).
-pub(super) fn relay<M: 'static>(
+pub(super) fn relay<M: 'static, E: std::fmt::Display + 'static>(
     output: impl Read + Send + 'static,
-    read: fn(&mut dyn Read) -> Result<Option<M>, ProtocolError>,
+    read: fn(&mut dyn Read) -> Result<Option<M>, E>,
     events: Sender<Event>,
     said: impl Fn(M) -> Event + Send + 'static,
     ended: impl FnOnce(Option<String>) -> Event + Send + 'static,
@@ -238,7 +327,6 @@ pub(super) fn relay<M: 'static>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::io::Write as _;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::mpsc;
     use std::time::Duration;

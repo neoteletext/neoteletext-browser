@@ -5,7 +5,7 @@ use interface_core::canvas::{PAGE_HEIGHT, PAGE_WIDTH, PageKey};
 use interface_core::geometry::Rect;
 use interface_core::theme::Colour;
 use std::sync::Arc;
-use vello_cpu::kurbo::{self, Affine};
+use vello_cpu::kurbo::{self, Vec2};
 use vello_cpu::peniko::{ImageAlphaType, ImageQuality, ImageSampler};
 use vello_cpu::{Image, ImageSource, PixelMetadata, Pixmap};
 
@@ -14,12 +14,24 @@ use crate::{DeviceBox, OPAQUE, PAGE_DOTS, PageError, Painter, RGBA_BYTES};
 
 /// A page's image as the painter holds it.
 pub(crate) struct PageImage {
-    pub(crate) image: Image,
-    pub(crate) pixmap: Arc<Pixmap>,
+    image: Image,
+    pixmap: Arc<Pixmap>,
     /// The colour of the screen around it.
-    pub(crate) screen: Colour,
+    screen: Colour,
     /// Which image it is: a new one is a new number.
-    pub(crate) number: u64,
+    number: u64,
+}
+
+impl PageImage {
+    /// The colour of the screen around it.
+    pub(crate) fn screen(&self) -> Colour {
+        self.screen
+    }
+
+    /// Which image it is.
+    pub(crate) fn number(&self) -> u64 {
+        self.number
+    }
 }
 
 /// Teletext is blocks: nearest-neighbour sampling keeps them sharp.
@@ -77,9 +89,9 @@ impl Painter {
     pub(crate) fn draw_page(&mut self, key: PageKey, area: Rect) {
         let Some(page) = self.pages.get(&key) else { return };
         let (width, height) = (f64::from(PAGE_WIDTH), f64::from(PAGE_HEIGHT));
-        let placement = Affine::translate((area.x0, area.y0)) * Affine::scale_non_uniform(area.width() / width, area.height() / height);
         let image = page.image.clone();
-        self.context.set_transform(self.base() * placement);
+        let placement = self.base().pre_translate(Vec2::new(area.x0, area.y0)).pre_scale_non_uniform(area.width() / width, area.height() / height);
+        self.context.set_transform(placement);
         self.context.set_paint(image);
         self.context.fill_rect(&kurbo::Rect::new(0.0, 0.0, width, height));
     }

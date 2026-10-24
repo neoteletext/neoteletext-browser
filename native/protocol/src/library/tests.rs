@@ -53,9 +53,9 @@ fn round_trip<T: PartialEq + std::fmt::Debug>(
     fields.end().unwrap();
 }
 
-/// Every view and request survives the pipe.
+/// Every view survives the pipe.
 #[test]
-fn every_view_and_request_round_trips() {
+fn every_view_round_trips() {
     round_trip(&history(), push_history_view, read_history_view);
     round_trip(
         &Suggestions {
@@ -93,6 +93,12 @@ fn every_view_and_request_round_trips() {
     );
     round_trip(&StarView { open: true, name: "News".into(), folder: 2, folders: vec![folder(1, 0), folder(2, 0)], page: true }, push_star_view, read_star_view);
     round_trip(&BarView { shown: true, items: vec![item(1)], open: Some((2, vec![item(3)])) }, push_bar_view, read_bar_view);
+}
+
+/// Every request survives the pipe, and a window's place out of bounds is
+/// refused.
+#[test]
+fn every_request_round_trips() {
     for request in [
         HistoryRequest::Panel(true),
         HistoryRequest::Query { text: "x".into(), first: 100 },

@@ -83,35 +83,10 @@ impl Core {
             ToCore::From(_) | ToCore::NewWindow { .. } | ToCore::TabToWindow { .. } | ToCore::CloseWindow => {}
             ToCore::Visible(visible) => {
                 let Some(channel) = self.active_channel() else { return Ok(true) };
-                // Only the active channel's pages can be asked for.
-                let visible: Vec<PageKey> = visible.into_iter().filter(|key| key.channel == channel).collect();
-                let pages = visible.iter().map(|key| key.page).collect();
-                #[cfg(feature = "links")]
-                self.links.retain(&visible);
-                self.keep_subpages(&visible);
-                self.frames.set_visible(visible);
-                self.shown_pages.clone_from(&pages);
-                self.tell(channel, ToDecoder::Showing(pages));
-                self.showing = Some(channel);
+                self.visible(channel, visible);
             }
-            ToCore::Cell { key, version, column, row } => {
-                // A click means only "this cell"; the trusted core decides
-                // whether a link is there (requirement 12.3).
-                #[cfg(feature = "links")]
-                {
-                    let (now, active) = (self.now(), self.active_channel());
-                    let followed = self.links.click(Spot { key, version, column, row }, active, now);
-                    self.follow(followed, "a click")?;
-                }
-                #[cfg(not(feature = "links"))]
-                self.log(Level::Warning, None, &format!("cell {column},{row} of image {version} of page {:03X} on channel {}", key.page, key.channel));
-            }
-            ToCore::SelectTab(index) => {
-                if usize::from(index) < self.session.tabs.len() {
-                    self.session.active = usize::from(index);
-                    self.send_all()?;
-                }
-            }
+            ToCore::Cell { key, version, column, row } => self.cell(key, version, column, row)?,
+            ToCore::SelectTab(index) => self.select_tab(usize::from(index))?,
             ToCore::CloseTab(index) => {
                 self.session.close(usize::from(index));
                 // A window's last tab closes the window; the last window's,
@@ -122,26 +97,13 @@ impl Core {
                 self.send_all()?;
                 self.send_history()?;
             }
-            ToCore::NewTab => {
-                if let Err(reason) = self.session.room_for_a_tab() {
-                    self.say(reason)?;
-                } else {
-                    let home = self.settings.home.clone();
-                    open_home(&mut self.session, &home)?;
-                    self.send_all()?;
-                }
-            }
+            ToCore::NewTab => self.new_tab()?,
             // The start page's bookmark pages open their bookmarks, as the
             // user's own navigation (requirement 19.7).
             ToCore::Opened(Some(key)) if self.session.start_page_bookmark(key.channel, key.page).is_some() => self.open_start_page_bookmark(key)?,
             ToCore::Opened(key) => self.opened(key)?,
             ToCore::MuteTab(_) | ToCore::MuteAll(_) | ToCore::MoveTab { .. } => self.tab_intent(&intent)?,
-            ToCore::Navigate(typed) => {
-                if let Err(reason) = self.session.navigate(&typed, true) {
-                    self.log(Level::Warning, self.log_place(), &reason);
-                }
-                self.send_all()?;
-            }
+            ToCore::Navigate(typed) => self.navigate(&typed)?,
             ToCore::Back | ToCore::Forward => {
                 let went = self.session.go(matches!(intent, ToCore::Forward));
                 self.went(went)?;
@@ -158,10 +120,7 @@ impl Core {
             | ToCore::TabList(_)
             | ToCore::GoTo { .. }
             | ToCore::NewPrivateTab => self.library_intent(intent)?,
-            ToCore::Window(window) => {
-                let at_hand = self.session.window;
-                self.window_moved = std::time::Instant::now().checked_add(WINDOW_STILL).map(|still| (at_hand, window, still));
-            }
+            ToCore::Window(window) => self.window_reported(window),
             ToCore::Cookies(request) => self.cookies_request(request)?,
             #[cfg(feature = "links")]
             ToCore::Point(_) | ToCore::Typed { .. } | ToCore::Confirm(_) | ToCore::Cancel(_) => self.link_intent(&intent)?,
@@ -177,6 +136,70 @@ impl Core {
         self.private_cookies_closed();
         self.keep_session();
         Ok(true)
+    }
+
+    /// The pages the interface shows of `channel`, the active one: only
+    /// the active channel's pages can be asked for.
+    fn visible(&mut self, channel: u32, visible: Vec<PageKey>) {
+        let visible: Vec<PageKey> = visible.into_iter().filter(|key| key.channel == channel).collect();
+        let pages = visible.iter().map(|key| key.page).collect();
+        #[cfg(feature = "links")]
+        self.links.retain(&visible);
+        self.keep_subpages(&visible);
+        self.frames.set_visible(visible);
+        self.shown_pages.clone_from(&pages);
+        self.tell(channel, ToDecoder::Showing(pages));
+        self.showing = Some(channel);
+    }
+
+    /// A click means only "this cell"; the trusted core decides whether a
+    /// link is there (requirement 12.3).
+    #[cfg_attr(not(feature = "links"), allow(clippy::unnecessary_wraps, reason = "only following a link can fail here"))]
+    fn cell(&mut self, key: PageKey, version: u32, column: u8, row: u8) -> Result<(), String> {
+        #[cfg(feature = "links")]
+        {
+            let (now, active) = (self.now(), self.active_channel());
+            let followed = self.links.click(Spot { key, version, column, row }, active, now);
+            self.follow(followed, "a click")?;
+        }
+        #[cfg(not(feature = "links"))]
+        self.log(Level::Warning, None, &format!("cell {column},{row} of image {version} of page {:03X} on channel {}", key.page, key.channel));
+        Ok(())
+    }
+
+    /// Tab `index` becomes the active one, if there is such a tab.
+    fn select_tab(&mut self, index: usize) -> Result<(), String> {
+        if index < self.session.tabs.len() {
+            self.session.active = index;
+            self.send_all()?;
+        }
+        Ok(())
+    }
+
+    /// A new tab at the home page, if there is room for one.
+    fn new_tab(&mut self) -> Result<(), String> {
+        if let Err(reason) = self.session.room_for_a_tab() {
+            self.say(reason)?;
+        } else {
+            let home = self.settings.home.clone();
+            open_home(&mut self.session, &home)?;
+            self.send_all()?;
+        }
+        Ok(())
+    }
+
+    /// An address typed in the address field opened in the active tab.
+    fn navigate(&mut self, typed: &str) -> Result<(), String> {
+        if let Err(reason) = self.session.navigate(typed, true) {
+            self.log(Level::Warning, self.log_place(), &reason);
+        }
+        self.send_all()
+    }
+
+    /// The window's place and size, kept once it has stayed still.
+    fn window_reported(&mut self, window: protocol::library::WindowGeometry) {
+        let at_hand = self.session.window;
+        self.window_moved = std::time::Instant::now().checked_add(WINDOW_STILL).map(|still| (at_hand, window, still));
     }
 
     /// A tab's sound, every tab's, and a tab moved along the strip

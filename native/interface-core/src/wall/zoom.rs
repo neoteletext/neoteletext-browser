@@ -8,7 +8,7 @@ use super::grid::{CAPTION_GAP, CAPTION_HEIGHT, CAPTION_NUMBER_WIDTH, FRAME, PAGE
 use super::{Wall, WallPage};
 use crate::canvas::{Canvas, PageKey};
 use crate::geometry::{Point, Rect};
-use crate::text::{label, outline};
+use crate::text::{cross, label, outline};
 use crate::theme::{BUTTON, CAPTION, CAPTION_TITLE, MUTED, PANEL, RULE, WHITE};
 use crate::tween::{STANDARD, Tween};
 
@@ -169,8 +169,7 @@ impl Wall {
     pub(super) fn draw_zoomed<C: Canvas + ?Sized>(&mut self, canvas: &mut C, pages: &[WallPage<'_>], key: PageKey, now: u64) -> f64 {
         self.scroll = self.scroll.max(0.0);
         let area = self.area;
-        let Some(current) = pages.iter().position(|page| page.key == key) else { return 0.0 };
-        let page = &pages[current];
+        let Some((current, page)) = pages.iter().enumerate().find(|(_, page)| page.key == key) else { return 0.0 };
         let rect = self.zoomed_rect();
         // The zoomed page and its neighbours on a vertical strip, offset by
         // the slide, which eases to rest with the page exactly in place.
@@ -207,12 +206,6 @@ impl Wall {
         canvas.fill(self.close, 0.0, BUTTON);
         outline(canvas, self.close, WHITE);
         let centre = Point::new(f64::midpoint(self.close.x0, self.close.x1), f64::midpoint(self.close.y0, self.close.y1));
-        let half = CLOSE_GLYPH / 2.0;
-        let normal = CLOSE_THICKNESS / 2.0 / core::f64::consts::SQRT_2;
-        for direction in [1.0, -1.0] {
-            let along = Point::new(half, half * direction);
-            let across = Point::new(-normal * direction, normal);
-            canvas.polygon(&[centre - along + across, centre + along + across, centre + along - across, centre - along - across], WHITE);
-        }
+        cross(canvas, centre, CLOSE_GLYPH / 2.0, CLOSE_THICKNESS, WHITE);
     }
 }

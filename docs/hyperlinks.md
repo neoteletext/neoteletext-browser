@@ -64,7 +64,7 @@
 ## 3. Where things stand
 
 **The engine** (`~/devel/neoteletext-engine`):
-- **Underline.** Teletext's underline is the Level 2.5 and 3.5 display attribute, set by the enhancement packets (X/26): bit 6 of `CellAttributes` (`crates/neoteletext-core/src/level1.rs`, `underline()`). For G1 mosaics the same bit means "separated". The renderer draws it as the last dot line of a G0 or G2 character (`render.rs`, `styled_line`; REQ-RND-035). Nothing else sets it: TTI, edit.tf and the text writer have no underline syntax.
+- **Underline.** Teletext's underline is the Level 2.5 and 3.5 display attribute, set by the enhancement packets (X/26): bit 6 of `CellAttributes` (`CellAttributes::underline` in the engine's `neoteletext-core`). For G1 mosaics the same bit means "separated". The renderer draws it as the last dot line of a G0 or G2 character (the renderer's `styled_line`; REQ-RND-035). Nothing else sets it: TTI, edit.tf and the text writer have no underline syntax.
 - **Links.** Decision E.36 makes the Fastext coloured keys the engine's links, with the prompts in row 24 drawn by the receiver, and rejects link markers drawn by the page. Decision E.64 added two TTI lines:
   - `LK`, a page number the page shows, linked to a target;
   - `LT`, a run of text, linked to a target. "The page draws the text itself; a receiver may show it as a link."
@@ -73,7 +73,7 @@
 
 **The browser:**
 - **Drawing.** The decoder renders each page with the engine's `render_screen` into a 480 × 500 indexed image. The trusted core checks it and sends it on as a page image (an indexed PNG until decision 61). The interface draws it with `Canvas::page`, and already draws browser-owned things over pages in `Wall::draw_page`: the hover frame, the zoom outline, the close button, and the update glow.
-- **Clicks.** A click is converted to a cell (`Wall::cell_at`) and sent as `ToCore::Cell { key, column, row }`. The core only logs it (`core/src/main.rs`).
+- **Clicks.** A click is converted to a cell (`Wall::cell_at`) and sent as `ToCore::Cell { key, version, column, row }`. The trusted core decides it (`core/src/trusted_core/intents.rs`, `ToCore::Cell`) and follows a link it finds there (`core/src/trusted_core/links.rs`), by the library's link rules (`core/src/links.rs`).
 - **Navigation.** Navigation exists only from the strip (requirements 4.5 and 11.1). Page-started navigations, the site-change screen and Fastext are not built (requirements 8.2, 8.4, 8.5 and 12.4).
 - **Underline.** The browser has no underline code of its own.
 

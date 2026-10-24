@@ -203,8 +203,10 @@ impl Core {
     }
 }
 
+mod bar;
 mod bookmarks;
 mod history;
+mod star;
 
 #[cfg(test)]
 mod tests;

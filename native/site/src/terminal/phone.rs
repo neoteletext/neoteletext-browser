@@ -11,9 +11,26 @@ use super::Session;
 /// The phone keyboard of page 600: the screen side in its own thread.
 pub(super) struct Phone {
     events: mpsc::Receiver<PhoneEvent>,
-    pub(super) rows: Vec<Vec<u8>>,
-    pub(super) state: String,
-    pub(super) typed: String,
+    rows: Vec<Vec<u8>>,
+    state: String,
+    typed: String,
+}
+
+impl Phone {
+    /// The QR as mosaic rows, once the relay gave the instance.
+    pub(super) fn rows(&self) -> &[Vec<u8>] {
+        &self.rows
+    }
+
+    /// What the page says of the phone.
+    pub(super) fn state(&self) -> &str {
+        &self.state
+    }
+
+    /// What the phone typed, its last characters.
+    pub(super) fn typed(&self) -> &str {
+        &self.typed
+    }
 }
 
 enum PhoneEvent {

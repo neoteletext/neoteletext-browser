@@ -80,7 +80,7 @@ pub(super) fn profile(name: &str) -> io::Result<ContainerSid> {
     // is written to a live local and owned by `ContainerSid`.
     let made = unsafe { CreateAppContainerProfile(name.as_ptr(), display.as_ptr(), description.as_ptr(), ptr::null(), 0, &raw mut sid) };
     if made >= 0 {
-        return Ok(ContainerSid(sid));
+        return Ok(ContainerSid::new(sid));
     }
     // It exists from an earlier run.
     // SAFETY: the name is NUL-terminated and alive; the SID is written to a live local and
@@ -88,5 +88,5 @@ pub(super) fn profile(name: &str) -> io::Result<ContainerSid> {
     if unsafe { DeriveAppContainerSidFromAppContainerName(name.as_ptr(), &raw mut sid) } < 0 {
         return Err(io::Error::other("cannot make or find the AppContainer profile"));
     }
-    Ok(ContainerSid(sid))
+    Ok(ContainerSid::new(sid))
 }

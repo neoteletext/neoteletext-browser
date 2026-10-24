@@ -26,7 +26,7 @@ impl Browser {
         let heading = Rect::new(panel.x0, panel.y0, panel.x1, panel.y0 + HEADING_HEIGHT);
         canvas.fill(heading, 0.0, SELECTED);
         let pages = self.bank_pages();
-        let first = self.bank + 1;
+        let first = self.bank.saturating_add(1);
         let name = self.channel.banks.get(self.bank).map_or("", String::as_str);
         let title = if name.is_empty() {
             format!("Pages {first}00-{first}99 ({})", pages.len())

@@ -12,6 +12,7 @@
 #![cfg_attr(windows, windows_subsystem = "windows")]
 #![deny(
     clippy::indexing_slicing,
+    clippy::string_slice,
     clippy::unwrap_used,
     clippy::expect_used,
     clippy::panic,
@@ -60,12 +61,10 @@ fn run() -> Result<(), String> {
 
 #[cfg(windows)]
 fn run() -> Result<(), String> {
-    use std::path::Path;
     use update::files;
-    use update::layout::{Layout, WINDOWS_LAUNCHER_CHOICE, WINDOWS_STUB};
+    use update::layout::{Layout, WINDOWS_STUB};
     use update::platform::{Family, Platform};
     use update::state::State;
-    use update::version::Version;
 
     let platform = Platform::WindowsX86_64;
     if payload::FILES.is_empty() {
@@ -78,15 +77,41 @@ fn run() -> Result<(), String> {
         std::process::Command::new(&stub).spawn().map_err(|error| format!("{}: {error}", stub.display()))?;
         return Ok(());
     }
-    let io = |path: &Path, error: std::io::Error| format!("{}: {error}", path.display());
+    std::fs::create_dir_all(layout.versions()).map_err(|error| io(&layout.versions(), &error))?;
+    let staging = layout.root.join("installing");
+    files::remove_tree(&staging).map_err(|error| io(&staging, &error))?;
+    let version = unpack(&staging)?;
+    // The launcher's own check, with the signer it pins (section 5).
+    let signer = os_install::WindowsSigner { key: release_identity::WINDOWS_SIGNER, release: release_identity::RELEASE_KEY };
+    let staged = staging.join(version.to_string());
+    update::accept::accept(&staged, platform, &signer).map_err(|why| format!("the release is refused: {why}"))?;
+    for program in [PAYLOAD_STUB, PAYLOAD_LAUNCHER] {
+        signer.check_program(&staging.join(program))?;
+    }
+    move_into_place(&layout, &staging, &stub, version)?;
+    // The containers start the programs only from a folder that grants
+    // them read, as Program Files does (`sandboxing.md` section 8.2).
+    confine::grant_packages_read(&layout.versions()).map_err(|error| io(&layout.versions(), &error))?;
+    files::write_atomically(&layout.state(), State::installed(version).to_text().as_bytes()).map_err(|error| io(&layout.state(), &error))?;
+    register_with_windows(&layout, &stub, version)?;
+    std::process::Command::new(&stub).spawn().map_err(|error| io(&stub, &error))?;
+    Ok(())
+}
+
+/// Writes the payload into `staging`: the stub and the launcher at its
+/// top, the version's files under the version's folder; the payload must
+/// hold exactly one version, which is returned.
+#[cfg(windows)]
+fn unpack(staging: &std::path::Path) -> Result<update::version::Version, String> {
+    use std::path::Path;
+    use update::files;
+    use update::version::Version;
+
     let mut version: Option<Version> = None;
     let partial_name = |path: &str| -> Option<(Version, String)> {
         let (folder, rest) = path.split_once('/')?;
         Some((Version::parse(folder)?, rest.to_owned()))
     };
-    std::fs::create_dir_all(layout.versions()).map_err(|error| io(&layout.versions(), error))?;
-    let staging = layout.root.join("installing");
-    files::remove_tree(&staging).map_err(|error| io(&staging, error))?;
     for &(name, bytes) in payload::FILES {
         let (target, executable) = match name {
             PAYLOAD_STUB | PAYLOAD_LAUNCHER => (staging.join(name), true),
@@ -103,35 +128,50 @@ fn run() -> Result<(), String> {
             }
         };
         if let Some(folder) = target.parent() {
-            std::fs::create_dir_all(folder).map_err(|error| io(folder, error))?;
+            std::fs::create_dir_all(folder).map_err(|error| io(folder, &error))?;
         }
-        files::write_synced(&target, bytes, executable).map_err(|error| io(&target, error))?;
+        files::write_synced(&target, bytes, executable).map_err(|error| io(&target, &error))?;
     }
     let version = version.ok_or("the payload holds no version")?;
-    // The launcher's own check, with the signer it pins (section 5).
-    let signer = os_install::WindowsSigner { key: release_identity::WINDOWS_SIGNER, release: release_identity::RELEASE_KEY };
+    Ok(version)
+}
+
+/// Moves the accepted version, the launcher and the stub from `staging`
+/// into the installation, removes `staging`, and names launcher `a` the
+/// one to run.
+#[cfg(windows)]
+fn move_into_place(
+    layout: &update::layout::Layout,
+    staging: &std::path::Path,
+    stub: &std::path::Path,
+    version: update::version::Version,
+) -> Result<(), String> {
+    use update::files;
+    use update::layout::WINDOWS_LAUNCHER_CHOICE;
+
     let staged = staging.join(version.to_string());
-    update::accept::accept(&staged, platform, &signer).map_err(|why| format!("the release is refused: {why}"))?;
-    for program in [PAYLOAD_STUB, PAYLOAD_LAUNCHER] {
-        signer.check_program(&staging.join(program))?;
-    }
     let installed = layout.version(version);
-    files::remove_tree(&installed).map_err(|error| io(&installed, error))?;
-    std::fs::rename(&staged, &installed).map_err(|error| io(&installed, error))?;
+    files::remove_tree(&installed).map_err(|error| io(&installed, &error))?;
+    std::fs::rename(&staged, &installed).map_err(|error| io(&installed, &error))?;
     let launcher = launcher::windows::launcher_copy(&layout.root, b'a');
-    std::fs::rename(staging.join(PAYLOAD_LAUNCHER), &launcher).map_err(|error| io(&launcher, error))?;
-    std::fs::rename(staging.join(PAYLOAD_STUB), &stub).map_err(|error| io(&stub, error))?;
-    files::remove_tree(&staging).map_err(|error| io(&staging, error))?;
-    files::write_atomically(&layout.root.join(WINDOWS_LAUNCHER_CHOICE), b"a").map_err(|error| io(&layout.root, error))?;
-    // The containers start the programs only from a folder that grants
-    // them read, as Program Files does (`sandboxing.md` section 8.2).
-    confine::grant_packages_read(&layout.versions()).map_err(|error| io(&layout.versions(), error))?;
-    files::write_atomically(&layout.state(), State::installed(version).to_text().as_bytes()).map_err(|error| io(&layout.state(), error))?;
+    std::fs::rename(staging.join(PAYLOAD_LAUNCHER), &launcher).map_err(|error| io(&launcher, &error))?;
+    std::fs::rename(staging.join(PAYLOAD_STUB), stub).map_err(|error| io(stub, &error))?;
+    files::remove_tree(staging).map_err(|error| io(staging, &error))?;
+    files::write_atomically(&layout.root.join(WINDOWS_LAUNCHER_CHOICE), b"a").map_err(|error| io(&layout.root, &error))?;
+    Ok(())
+}
+
+/// Writes the Start menu shortcut and the uninstall entry Settings › Apps
+/// removes the browser by.
+#[cfg(windows)]
+fn register_with_windows(layout: &update::layout::Layout, stub: &std::path::Path, version: update::version::Version) -> Result<(), String> {
+    use update::files;
+
     if let Some(link) = launcher::windows::shortcut() {
         if let Some(folder) = link.parent() {
-            std::fs::create_dir_all(folder).map_err(|error| io(folder, error))?;
+            std::fs::create_dir_all(folder).map_err(|error| io(folder, &error))?;
         }
-        files::write_atomically(&link, &shortcut::shortcut(&stub, &layout.root, "NeoTeletext")).map_err(|error| io(&link, error))?;
+        files::write_atomically(&link, &shortcut::shortcut(stub, &layout.root, "NeoTeletext")).map_err(|error| io(&link, &error))?;
     }
     let size = folder_size(&layout.root) / BYTES_PER_KIB;
     let uninstall = format!("\"{}\" --uninstall", stub.display());
@@ -141,11 +181,15 @@ fn run() -> Result<(), String> {
         publisher: "NeoTeletext",
         location: &layout.root,
         uninstall: &uninstall,
-        icon: &stub,
+        icon: stub,
         size_kib: u32::try_from(size).unwrap_or(u32::MAX),
-    })?;
-    std::process::Command::new(&stub).spawn().map_err(|error| io(&stub, error))?;
-    Ok(())
+    })
+}
+
+/// A failed file operation's message: the path, then the error.
+#[cfg(windows)]
+fn io(path: &std::path::Path, error: &std::io::Error) -> String {
+    format!("{}: {error}", path.display())
 }
 
 /// Bytes in a kibibyte, the uninstall entry's unit.

@@ -251,14 +251,14 @@ impl Engine {
     /// The user opened `page`, or none: its sounds play while it is open
     /// (the engine's REQ-AUD-012).
     pub fn open_page(&mut self, page: Option<u16>) {
-        self.audio.open_page(page, &mut Outbox(&mut self.sounds));
+        self.audio.open_page(page, &mut Outbox::new(&mut self.sounds));
     }
 
     /// The time, in milliseconds from any start: a live sound with no new
     /// block for two seconds fades out (the engine's REQ-AUD-014). Called
     /// before each piece of data and at each tick.
     pub fn tick_audio(&mut self, now_ms: u64) {
-        self.audio.tick(now_ms, &mut Outbox(&mut self.sounds));
+        self.audio.tick(now_ms, &mut Outbox::new(&mut self.sounds));
     }
 
     /// The channel's records for its input found since the last call, once
@@ -273,11 +273,9 @@ impl Engine {
     /// use changed (a magazine's or an enhancement page's), when every
     /// shown page is to be drawn again.
     pub fn take_changed(&mut self) -> Changed {
-        let changes = core::mem::take(&mut self.changes);
-        self.started_pages.extend(changes.started.iter().copied());
-        // Arrivals are still to be worked out from the completed pages.
-        self.changes.completed = changes.completed;
-        Changed { pages: changes.touched, everything: changes.everything }
+        let (started, changed) = self.changes.take_changed();
+        self.started_pages.extend(started);
+        changed
     }
 
     /// The channel's log lines read since the last call.

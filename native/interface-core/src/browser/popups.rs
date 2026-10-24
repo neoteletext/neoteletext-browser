@@ -29,15 +29,11 @@ impl Browser {
 
     /// Whether the menu or a Back or Forward list is open.
     pub(super) fn popup_open(&self) -> bool {
-        self.menu.menu_open || self.tab_lists.tab_list.is_some()
+        self.menu.is_open() || self.tab_lists.is_open()
     }
 
     /// Whether a drop-down is open to close with Escape; closes it.
     pub(super) fn close_popup(&mut self) -> bool {
-        if self.menu.menu_open {
-            self.menu.menu_open = false;
-            return true;
-        }
-        self.tab_lists.tab_list.take().is_some()
+        self.menu.close() || self.tab_lists.close()
     }
 }

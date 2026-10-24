@@ -30,14 +30,14 @@ const INHERIT_TO_ALL: u32 = 0x3;
 /// it: the trusted core's settings (decision 56), the updater's staging
 /// folder.
 pub(super) fn grant(folder: &Path, sid: &ContainerSid) -> io::Result<()> {
-    grant_to(folder, sid.0, GENERIC_ALL)
+    grant_to(folder, sid.raw(), GENERIC_ALL)
 }
 
 /// Grants `ALL APPLICATION PACKAGES` read and run on `folder` and
 /// everything in it (`installation-and-updates.md` section 4.2).
 pub(super) fn grant_packages_read(folder: &Path) -> io::Result<()> {
     let packages = Sid::parse(ALL_APPLICATION_PACKAGES_SID)?;
-    grant_to(folder, packages.0, GENERIC_READ_EXECUTE)
+    grant_to(folder, packages.raw(), GENERIC_READ_EXECUTE)
 }
 
 /// Adds to `folder`'s access list an entry granting `sid` `permissions`,

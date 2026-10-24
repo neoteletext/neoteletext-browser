@@ -3,7 +3,7 @@
 //! its requests: it reads file channels for it, only teletext and never
 //! from the user's dot-folders, applications' data or the browser's own
 //! folders (decision 88); opens web pages; holds the cookie file's key; tells the
-//! launcher the version is healthy, reads the launcher's state for the
+//! launcher it started (decision 93) and that the version is healthy, reads the launcher's state for the
 //! core, and gives the updater its staging folder and its one port
 //! (`installation-and-updates.md` sections 3 and 5).
 
@@ -14,7 +14,7 @@ use std::path::{Path, PathBuf};
 use confine::Role;
 use confine::broker::{Handlers, UpdaterGrant};
 use neoteletext::settings as stored;
-use update::layout::{HEALTHY_LINE, LAUNCHED_VARIABLE, Layout};
+use update::layout::{HEALTHY_LINE, LAUNCHED_VARIABLE, Layout, STARTED_LINE};
 use update::platform::Platform;
 use update::state::MAX_STATE;
 
@@ -37,6 +37,7 @@ const KEY_ACCOUNT: &str = "cookies.bin";
 /// process not confined. It starts the trusted core confined, then serves
 /// its requests until it ends.
 pub(crate) fn broker() -> Result<(), String> {
+    tell_launcher_started();
     let program = std::env::current_exe().map_err(|error| format!("cannot find this program: {error}"))?;
     let programs = program.parent().ok_or("this program has no directory")?.to_path_buf();
     let settings = stored::folder().ok_or("there is no folder for the settings")?;
@@ -137,6 +138,22 @@ fn tell_launcher_healthy() -> Result<(), String> {
     output.write_all(HEALTHY_LINE.as_bytes()).and_then(|()| output.flush()).map_err(|error| format!("cannot tell the launcher: {error}"))
 }
 
+/// Tells the launcher, on the broker's standard output, that the program
+/// has started, before the trusted core is (decision 93): its health
+/// deadline begins. Only when a launcher started the browser; a failed
+/// write is ignored, and the launcher's start deadline then ends the
+/// trial.
+fn tell_launcher_started() {
+    if installation().is_some() {
+        let _ = write_started(&mut std::io::stdout().lock());
+    }
+}
+
+/// Writes the started line to `output`, as the healthy line is written.
+fn write_started(output: &mut impl Write) -> std::io::Result<()> {
+    output.write_all(STARTED_LINE.as_bytes()).and_then(|()| output.flush())
+}
+
 /// The launcher's state file's bytes, for the core.
 ///
 /// # Errors
@@ -206,6 +223,17 @@ mod tests {
         assert_eq!(opened.get(), 2);
     }
     use confine::broker::Program;
+
+    /// Decision 93: the broker tells the launcher it started with the line
+    /// the launcher waits for, whole and flushed.
+    #[test]
+    fn the_broker_says_started_with_the_launchers_line() {
+        let mut output = std::io::BufWriter::new(Vec::new());
+        write_started(&mut output).unwrap();
+        assert_eq!(output.buffer(), b"", "flushed");
+        assert_eq!(output.get_ref().as_slice(), STARTED_LINE.as_bytes());
+        assert_eq!(STARTED_LINE, "started\n");
+    }
 
     /// `installation-and-updates.md` section 5: the broker's bytes carry
     /// its version, which the launcher finds there.

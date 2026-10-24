@@ -116,8 +116,7 @@ fn a_web_address_is_rebuilt_from_its_parts() {
 fn targets_are_classified_from_the_target_alone() {
     let address = home();
     let channel = Channel { id: CHANNEL, address: &address, exists: &existing };
-    let mut descriptor = Descriptor::default();
-    descriptor.services.push(("sport".into(), address::parse("https://sport.invalid/").unwrap()));
+    let descriptor = Descriptor::new(Vec::new(), vec![("sport".into(), address::parse("https://sport.invalid/").unwrap())], Vec::new());
     let decide = |text: &str| descriptor.resolve(&parse_target(text).unwrap(), &channel);
     assert_eq!(decide("302"), Some(Destination::Page(0x302)));
     assert_eq!(decide("https://news.invalid/teletext/302.tti"), Some(Destination::Page(0x302)), "a page file of this channel");

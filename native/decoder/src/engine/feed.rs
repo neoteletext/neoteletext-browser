@@ -54,7 +54,7 @@ impl Engine {
             }
             // The audio profile's packets go to its receiver; the decoder
             // ignores packet 31 anyway (the engine's REQ-PKT-008).
-            if self.audio.push_packet(packet, &mut Outbox(&mut self.sounds)) {
+            if self.audio.push_packet(packet, &mut Outbox::new(&mut self.sounds)) {
                 continue;
             }
             self.clock = match meta.timestamp_us {
@@ -187,7 +187,7 @@ impl Engine {
         let mut fresh = Vec::new();
         // Only pages whose reception completed can have arrived or changed:
         // the engine's events say which, so the store is not searched.
-        for number in core::mem::take(&mut self.changes.completed) {
+        for number in self.changes.take_completed() {
             let Some(index) = page_index(number) else { continue };
             let Some(address) = PageAddress::from_mpp(number) else { continue };
             let Some(page) = self.decoder.store().get(address, SubCode::ANY) else { continue };
@@ -228,8 +228,20 @@ fn header_page(packet: &Packet) -> Option<u16> {
 /// the columns where "»" marks a link that leaves the service.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) struct ReceiverRow {
-    pub(super) codes: [u8; COLUMNS],
-    pub(super) marks: Vec<usize>,
+    codes: [u8; COLUMNS],
+    marks: Vec<usize>,
+}
+
+impl ReceiverRow {
+    /// The row's codes.
+    pub(super) fn codes(&self) -> [u8; COLUMNS] {
+        self.codes
+    }
+
+    /// The columns of its "»" marks.
+    pub(super) fn marks(&self) -> &[usize] {
+        &self.marks
+    }
 }
 
 struct PageLines<'a> {

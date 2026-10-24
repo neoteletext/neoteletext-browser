@@ -113,7 +113,6 @@ impl Core {
 /// returns what the strip says of a change of a security setting, or why
 /// the change was refused. `current` is the open channel's address.
 fn checked_change(settings: &mut Settings, change: SettingChange, current: Option<&str>) -> Result<Option<String>, String> {
-    const NOT_LOCAL: &str = "Not an address on this computer or the local network";
     match change {
         SettingChange::Home(typed) => {
             let address = neoteletext::address::parse(&typed)?;
@@ -137,39 +136,9 @@ fn checked_change(settings: &mut Settings, change: SettingChange, current: Optio
             let was = settings.proxy.take();
             Ok(was.map(|_| "No proxy: channels opened from now connect directly".to_owned()))
         }
-        SettingChange::Proxy(view) => {
-            let (kind, host, port) = match &view {
-                ProxyView::Http { host, port } => ("http", host, *port),
-                ProxyView::Socks5 { host, port } => ("socks5", host, *port),
-                ProxyView::None => return Ok(None),
-            };
-            let proxy = stored::Proxy::from_parts(kind, host.trim(), port).ok_or("Not a proxy: a host and a port from 1 to 65535")?;
-            let text = format!("Proxy {}: channels opened from now go through it", proxy.url());
-            settings.proxy = Some(proxy);
-            Ok(Some(text))
-        }
-        SettingChange::AddLocal(typed) => {
-            let address: std::net::IpAddr = typed.trim().parse().map_err(|_| NOT_LOCAL)?;
-            if !stored::is_local(address) {
-                return Err(NOT_LOCAL.into());
-            }
-            if settings.local.contains(&address) {
-                return Err(format!("{address} is allowed already"));
-            }
-            if settings.local.len() >= stored::MAX_LOCAL {
-                return Err(format!("At most {} local addresses can be allowed", stored::MAX_LOCAL));
-            }
-            settings.local.push(address);
-            Ok(Some(format!("{address} on the local network allowed for channels opened from now")))
-        }
-        SettingChange::RemoveLocal(index) => {
-            let index = usize::from(index);
-            if index >= settings.local.len() {
-                return Err("No such address".into());
-            }
-            let address = settings.local.remove(index);
-            Ok(Some(format!("{address} on the local network no longer allowed")))
-        }
+        SettingChange::Proxy(view) => proxy_change(settings, &view),
+        SettingChange::AddLocal(typed) => add_local(settings, &typed),
+        SettingChange::RemoveLocal(index) => remove_local(settings, usize::from(index)),
         // Where the remote control is: the window's arrangement, said
         // nowhere (decision 68).
         SettingChange::Remote(place) => {
@@ -198,6 +167,47 @@ fn checked_change(settings: &mut Settings, change: SettingChange, current: Optio
             Ok((!on).then(|| UPDATES_OFF.to_owned()))
         }
     }
+}
+
+/// A proxy set: what the strip says of it, or why it is refused.
+fn proxy_change(settings: &mut Settings, view: &ProxyView) -> Result<Option<String>, String> {
+    let (kind, host, port) = match view {
+        ProxyView::Http { host, port } => ("http", host, *port),
+        ProxyView::Socks5 { host, port } => ("socks5", host, *port),
+        ProxyView::None => return Ok(None),
+    };
+    let proxy = stored::Proxy::from_parts(kind, host.trim(), port).ok_or("Not a proxy: a host and a port from 1 to 65535")?;
+    let text = format!("Proxy {}: channels opened from now go through it", proxy.url());
+    settings.proxy = Some(proxy);
+    Ok(Some(text))
+}
+
+/// A local address allowed, as `typed`: what the strip says of it, or why
+/// it is refused.
+fn add_local(settings: &mut Settings, typed: &str) -> Result<Option<String>, String> {
+    const NOT_LOCAL: &str = "Not an address on this computer or the local network";
+    let address: std::net::IpAddr = typed.trim().parse().map_err(|_| NOT_LOCAL)?;
+    if !stored::is_local(address) {
+        return Err(NOT_LOCAL.into());
+    }
+    if settings.local.contains(&address) {
+        return Err(format!("{address} is allowed already"));
+    }
+    if settings.local.len() >= stored::MAX_LOCAL {
+        return Err(format!("At most {} local addresses can be allowed", stored::MAX_LOCAL));
+    }
+    settings.local.push(address);
+    Ok(Some(format!("{address} on the local network allowed for channels opened from now")))
+}
+
+/// The local address at `index` no longer allowed: what the strip says of
+/// it, or why there is none.
+fn remove_local(settings: &mut Settings, index: usize) -> Result<Option<String>, String> {
+    if index >= settings.local.len() {
+        return Err("No such address".into());
+    }
+    let address = settings.local.remove(index);
+    Ok(Some(format!("{address} on the local network no longer allowed")))
 }
 
 #[cfg(test)]

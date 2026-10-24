@@ -170,6 +170,41 @@ pub struct Built {
     pub live: Vec<u16>,
 }
 
+/// Writes a live page's alternative versions for the server to rotate
+/// through: the samples whose titles fit its subject's `words`, then
+/// `others`, at most [`LIVE_VERSIONS`].
+fn write_live_versions<'a>(
+    write: &dyn Fn(&str, &str) -> Result<(), String>,
+    page: u16,
+    pool: &'a [Sample],
+    words: &[&str],
+    others: impl Iterator<Item = &'a Sample>,
+) -> Result<(), String> {
+    let versions: Vec<&Sample> =
+        pool.iter().filter(|candidate| words.iter().any(|word| candidate.title.to_uppercase().contains(word))).chain(others).take(LIVE_VERSIONS).collect();
+    for (version, candidate) in versions.iter().enumerate() {
+        write(&format!("live/{page:03X}-{version}.tti"), &tti(page, &sample_rows(candidate)))?;
+    }
+    Ok(())
+}
+
+/// Writes the contents file, each section with its pages, and the
+/// channel's descriptor, whose push feed is at `push`.
+fn write_contents(write: &dyn Fn(&str, &str) -> Result<(), String>, sections: &[(String, Vec<(u16, String)>)], push: &str) -> Result<(), String> {
+    let mut contents = format!("# {NAME}: every page from 100 to 899\n");
+    for (section, entries) in sections {
+        let _ = writeln!(contents, "s\t{section}");
+        for (page, title) in entries {
+            let _ = writeln!(contents, "p\t{page:03X}\t{title}");
+        }
+    }
+    write("contents.txt", &contents)?;
+    write(
+        "channel.json",
+        &format!("{{\n  \"name\": \"{NAME}\",\n  \"initial_page\": \"100\",\n  \"push\": {{ \"address\": \"{push}\", \"method\": \"sse\" }}\n}}\n"),
+    )
+}
+
 /// Builds the channel into `out`, whose push feed is at `push`.
 ///
 /// # Errors
@@ -201,7 +236,6 @@ pub fn build(out: &Path, push: &str, sources: &[PathBuf]) -> Result<Built, Strin
 
     fs::create_dir_all(out.join("live")).map_err(|error| format!("{}: {error}", out.display()))?;
     let write = |name: &str, text: &str| fs::write(out.join(name), text).map_err(|error| format!("{name}: {error}"));
-    let mut contents = format!("# {NAME}: every page from 100 to 899\n");
     let mut sections: Vec<(String, Vec<(u16, String)>)> = Vec::new();
     let mut live = Vec::new();
     for (bank, section) in SECTIONS.iter().enumerate() {
@@ -221,16 +255,8 @@ pub fn build(out: &Path, push: &str, sources: &[PathBuf]) -> Result<Built, Strin
             let title = contents_title(&sample.title);
             write(&format!("{page:03X}.tti"), &tti(page, &sample_rows(sample)))?;
             if let Some((_, words)) = rule {
-                // Alternative versions for the server to rotate through.
-                let versions: Vec<&Sample> = pool
-                    .iter()
-                    .filter(|candidate| words.iter().any(|word| candidate.title.to_uppercase().contains(word)))
-                    .chain(by_hundred.get(&magazine).into_iter().flatten().copied())
-                    .take(LIVE_VERSIONS)
-                    .collect();
-                for (version, candidate) in versions.iter().enumerate() {
-                    write(&format!("live/{page:03X}-{version}.tti"), &tti(page, &sample_rows(candidate)))?;
-                }
+                let others = by_hundred.get(&magazine).into_iter().flatten().copied();
+                write_live_versions(&write, page, &pool, words, others)?;
                 live.push(page);
             }
             entries.push((page, title));
@@ -248,17 +274,7 @@ pub fn build(out: &Path, push: &str, sources: &[PathBuf]) -> Result<Built, Strin
         entries.insert(0, (first, if first == 0x100 { String::from("Front page") } else { format!("{section} index") }));
         sections.push(((*section).to_owned(), entries));
     }
-    for (section, entries) in &sections {
-        let _ = writeln!(contents, "s\t{section}");
-        for (page, title) in entries {
-            let _ = writeln!(contents, "p\t{page:03X}\t{title}");
-        }
-    }
-    write("contents.txt", &contents)?;
-    write(
-        "channel.json",
-        &format!("{{\n  \"name\": \"{NAME}\",\n  \"initial_page\": \"100\",\n  \"push\": {{ \"address\": \"{push}\", \"method\": \"sse\" }}\n}}\n"),
-    )?;
+    write_contents(&write, &sections, push)?;
     let pages = sections.iter().map(|(_, entries)| entries.len()).sum();
     Ok(Built { pages, live })
 }

@@ -8,7 +8,7 @@ use std::collections::VecDeque;
 use std::path::Path;
 
 use interface_core::browser::{StripState, TabInfo};
-use interface_core::library::{MAX_CHAPTER_STOPS, MAX_CLOSED, MAX_TAB_LIST, MAX_WINDOWS, WindowGeometry};
+use interface_core::library::WindowGeometry;
 use interface_core::theme::TAB_COLOURS;
 use protocol::{MAX_ADDRESS, MAX_IDENTITY, MAX_TAB_TITLE, clean};
 
@@ -18,8 +18,10 @@ use neoteletext::bookmarks::Bookmarks;
 use neoteletext::start_page;
 
 mod channel;
+mod closed;
 #[cfg(feature = "links")]
 mod links;
+mod navigation;
 mod saved;
 mod tab;
 mod windows;
@@ -55,7 +57,8 @@ pub struct Session {
     next_window: u32,
     /// The bookmarks (requirement 20.15).
     pub bookmarks: Bookmarks,
-    /// Tabs closed, the most recent first, at most [`MAX_CLOSED`]
+    /// Tabs closed, the most recent first, at most
+    /// [`MAX_CLOSED`](interface_core::library::MAX_CLOSED)
     /// (requirement 20.9).
     pub closed: VecDeque<ClosedTab>,
     next_closed: u32,
@@ -173,169 +176,6 @@ impl Session {
         self.tabs.last().map(|tab| &tab.channel).ok_or_else(|| "no tab is open".into())
     }
 
-    /// Opens `typed` in the active tab, after its current address in
-    /// history; `in_field` when the user typed it in the address field.
-    ///
-    /// # Errors
-    /// When the address cannot be opened, or there is no tab.
-    pub fn navigate(&mut self, typed: &str, in_field: bool) -> Result<(), String> {
-        let address = parse(typed)?;
-        // The address shown, entered again, is a reload, as in Chrome
-        // (`chrome.history`'s "reload" transition: "pressing Enter in the
-        // address bar").
-        if self.is_shown(&address) {
-            self.reload();
-            return Ok(());
-        }
-        self.visit(address, false, in_field)
-    }
-
-    /// Whether `address` is the one the active tab shows.
-    #[must_use]
-    pub fn is_shown(&self, address: &Address) -> bool {
-        self.active_tab().and_then(Tab::address).is_some_and(|shown| shown.text == address.text)
-    }
-
-    fn visit(&mut self, address: Address, by_page: bool, typed: bool) -> Result<(), String> {
-        let channel = self.channel_for(&address);
-        let now = self.now;
-        let tab = self.tabs.get_mut(self.active).ok_or("no tab is open")?;
-        tab.push(Visit::new(address, by_page, now));
-        tab.channel = channel;
-        tab.pending = Some(Pending { typed, drawn: false, reload: false });
-        Ok(())
-    }
-
-    /// Opens the active tab's channel afresh where the tab is in its
-    /// history: a new decoder and fetcher, its pages read again (requirement
-    /// 11.2). The history is as it was. False when no tab is open.
-    pub fn reload(&mut self) -> bool {
-        let Some(address) = self.active_tab().and_then(Tab::address).cloned() else { return false };
-        let channel = self.channel_for(&address);
-        let now = self.now;
-        let Some(tab) = self.tabs.get_mut(self.active) else { return false };
-        tab.channel = channel;
-        if let Some(visit) = tab.history.get_mut(tab.position) {
-            visit.at = now;
-        }
-        tab.pending = Some(Pending { typed: false, drawn: false, reload: true });
-        true
-    }
-
-    /// Moves the active tab back or forward in its history. Another page of
-    /// the same channel keeps the channel open.
-    pub fn go(&mut self, forward: bool) -> Went {
-        self.go_to(forward, 1)
-    }
-
-    /// Moves the active tab `steps` back or forward in its history, as
-    /// Back or Forward pressed that many times (requirement 20.10).
-    pub fn go_to(&mut self, forward: bool, steps: usize) -> Went {
-        let Some(tab) = self.tabs.get(self.active) else { return Went::Nowhere };
-        let position = if forward { tab.position.checked_add(steps) } else { tab.position.checked_sub(steps) };
-        let Some(position) = position.filter(|_| steps > 0) else { return Went::Nowhere };
-        let Some(visit) = tab.history.get(position).cloned() else { return Went::Nowhere };
-        let same = tab.address().is_some_and(|current| current.same_channel(&visit.address));
-        let channel = (!same).then(|| self.channel_for(&visit.address));
-        let now = self.now;
-        let Some(tab) = self.tabs.get_mut(self.active) else { return Went::Nowhere };
-        tab.position = position;
-        if let Some(visit) = tab.history.get_mut(position) {
-            visit.at = now;
-        }
-        tab.pending = Some(Pending { typed: false, drawn: same, reload: false });
-        match channel {
-            Some(channel) => {
-                tab.channel = channel;
-                Went::Channel
-            }
-            None => Went::Page(visit.address.page),
-        }
-    }
-
-    /// The active tab's entries one way, the nearest first, at most
-    /// [`MAX_TAB_LIST`] (requirement 20.10).
-    #[must_use]
-    pub fn tab_list(&self, forward: bool) -> Vec<(usize, &Visit)> {
-        let Some(tab) = self.active_tab() else { return Vec::new() };
-        (1..=MAX_TAB_LIST)
-            .map_while(|steps| {
-                let position = if forward { tab.position.checked_add(steps) } else { tab.position.checked_sub(steps) }?;
-                tab.history.get(position).map(|visit| (steps, visit))
-            })
-            .collect()
-    }
-
-    /// After a full list, at most [`MAX_CHAPTER_STOPS`] entries beyond it
-    /// where the host changes, with their steps, as Chrome's
-    /// `BackForwardMenuModel::GetChapterStopCount` and `FindChapterStop`.
-    #[must_use]
-    pub fn chapter_stops(&self, forward: bool) -> Vec<(usize, &Visit)> {
-        let Some(tab) = self.active_tab() else { return Vec::new() };
-        if self.tab_list(forward).len() < MAX_TAB_LIST {
-            return Vec::new();
-        }
-        let start = if forward { tab.position.checked_add(MAX_TAB_LIST) } else { tab.position.checked_sub(MAX_TAB_LIST) };
-        let mut stops = Vec::new();
-        let mut at = start;
-        while stops.len() < MAX_CHAPTER_STOPS {
-            let Some(stop) = at.and_then(|at| tab.next_chapter_stop(at, forward)) else { break };
-            if let Some(visit) = tab.history.get(stop) {
-                stops.push((stop.abs_diff(tab.position), visit));
-            }
-            at = Some(stop);
-        }
-        stops
-    }
-
-    /// Reopens a closed tab, the most recent or the one numbered `id`,
-    /// where it was in its history, as the active tab (requirement 20.9).
-    ///
-    /// # Errors
-    /// When there is none to reopen.
-    pub fn reopen(&mut self, id: Option<u32>) -> Result<(), String> {
-        let index = match id {
-            Some(id) => self.closed.iter().position(|closed| closed.id == id),
-            None => (!self.closed.is_empty()).then_some(0),
-        }
-        .ok_or("No closed tab to reopen")?;
-        let window = self.closed.get(index).map_or(0, |closed| closed.window);
-        if window == 0 {
-            self.room_for_a_tab()?;
-            let closed = self.closed.remove(index).ok_or("No closed tab to reopen")?;
-            return self.reopen_tab(closed);
-        }
-        // A closed window: its tabs together, in a window of their own.
-        let mut tabs: Vec<ClosedTab> = Vec::new();
-        let mut kept = VecDeque::new();
-        for closed in core::mem::take(&mut self.closed) {
-            if closed.window == window { tabs.push(closed) } else { kept.push_back(closed) }
-        }
-        self.closed = kept;
-        // They were kept the most recent first, the window's last tab first.
-        tabs.reverse();
-        let room = MAX_TABS.saturating_sub(self.tab_count());
-        if room == 0 || self.window_count() >= MAX_WINDOWS {
-            return Err(String::from("No room for another window"));
-        }
-        self.new_window(false)?;
-        for closed in tabs.into_iter().take(room) {
-            self.reopen_tab(closed)?;
-        }
-        self.active = 0;
-        Ok(())
-    }
-
-    fn reopen_tab(&mut self, closed: ClosedTab) -> Result<(), String> {
-        let address = closed.history.get(closed.position).map(|visit| visit.address.clone()).ok_or("No closed tab to reopen")?;
-        let channel = self.channel_for(&address);
-        self.active = self.tabs.len();
-        let pending = Some(Pending { typed: false, drawn: false, reload: false });
-        let private = self.private_window;
-        self.tabs.push(Tab { history: closed.history, position: closed.position, channel, muted: closed.muted, private, pending });
-        Ok(())
-    }
-
     /// Whether another tab may open: the session holds at most
     /// [`MAX_TABS`] in all its windows.
     ///
@@ -349,18 +189,6 @@ impl Session {
     #[must_use]
     pub fn tab_count(&self) -> usize {
         self.others.iter().map(|window| window.tabs.len()).sum::<usize>().saturating_add(self.tabs.len())
-    }
-
-    /// Keeps a closed tab to reopen, unless it is private.
-    fn keep_closed(&mut self, tab: Tab, window: u32) {
-        if tab.private {
-            return;
-        }
-        let title = clean(tab.address().map_or("", |address| address.host.as_str()), MAX_TAB_TITLE);
-        let id = self.next_closed;
-        self.next_closed = self.next_closed.wrapping_add(1).max(1);
-        self.closed.push_front(ClosedTab { id, history: tab.history, position: tab.position, muted: tab.muted, title, window });
-        self.closed.truncate(MAX_CLOSED);
     }
 
     /// Mutes tab `index`, or unmutes it. Returns whether there is such a tab.

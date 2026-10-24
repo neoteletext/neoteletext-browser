@@ -33,18 +33,7 @@ impl Core {
                 self.library.history_panel = Some((clean(&text, protocol::library::MAX_QUERY), usize::try_from(first).unwrap_or(usize::MAX)));
             }
             // Chrome's "Remove bookmark": every bookmark of the row's address.
-            HistoryRequest::RemoveBookmark(number) => {
-                let Some((_, address)) = self.library.history_numbers.get(number).cloned() else { return self.send_history() };
-                let mut removed = 0_usize;
-                while let Some(id) = self.session.bookmarks.find(&address) {
-                    if self.session.bookmarks.remove(id).is_none() {
-                        break;
-                    }
-                    removed = removed.saturating_add(1);
-                }
-                self.library.history_notice = notice(if removed == 1 { "Bookmark removed" } else { "Bookmarks removed" });
-                self.bookmarks_changed()?;
-            }
+            HistoryRequest::RemoveBookmark(number) => self.remove_row_bookmarks(number)?,
             // Chrome's "More from this site": the panel searches the row's host.
             HistoryRequest::MoreFromSite(number) => {
                 let host =
@@ -65,56 +54,83 @@ impl Core {
                 self.save_history();
                 self.library.history_notice = notice(&format!("{} removed from history", removed.len()));
             }
-            HistoryRequest::Clear(range) => {
-                let now = self.local_time().utc;
-                let range = match range {
-                    ClearRange::FifteenMinutes => History::since(now, FIFTEEN_MINUTES),
-                    ClearRange::Hour => History::since(now, HOUR),
-                    ClearRange::Day => History::since(now, DAY),
-                    ClearRange::Week => History::since(now, WEEK),
-                    ClearRange::FourWeeks => History::since(now, FOUR_WEEKS),
-                    ClearRange::All => Range::All,
-                };
-                let removed = self.library.history.clear(range);
-                // The tabs' and closed tabs' entries of that time go too.
-                let changed = match range {
-                    Range::All => self.session.remove_entries(|_| true),
-                    Range::Since(since) => self.session.remove_entries(|visit| visit.at >= since),
-                };
-                if changed {
-                    self.send(&ToInterface::Strip(self.strip()))?;
-                }
-                self.save_history();
-                self.library.history_notice = notice(&format!("History cleared: {removed} removed"));
-            }
-            HistoryRequest::ClearCookies(range) => {
-                let now = self.local_time().utc;
-                let since = match range {
-                    ClearRange::FifteenMinutes => Some(now.saturating_sub(FIFTEEN_MINUTES)),
-                    ClearRange::Hour => Some(now.saturating_sub(HOUR)),
-                    ClearRange::Day => Some(now.saturating_sub(DAY)),
-                    ClearRange::Week => Some(now.saturating_sub(WEEK)),
-                    ClearRange::FourWeeks => Some(now.saturating_sub(FOUR_WEEKS)),
-                    ClearRange::All => None,
-                };
-                let removed = self.clear_cookies_since(since);
-                self.library.history_notice = notice(&format!("Cookies cleared: {removed} removed"));
-                self.send_cookies()?;
-            }
-            HistoryRequest::Reopen(number) => {
-                let id = match number {
-                    Some(number) => match self.library.closed_numbers.get(number) {
-                        Some(&id) => Some(id),
-                        None => return self.send_history(),
-                    },
-                    None => None,
-                };
-                if self.session.reopen(id).is_ok() {
-                    self.send_all()?;
-                }
-            }
+            HistoryRequest::Clear(range) => self.clear_history(range)?,
+            HistoryRequest::ClearCookies(range) => self.clear_cookies_in(range)?,
+            HistoryRequest::Reopen(number) => self.reopen_closed_tab(number)?,
         }
         self.send_history()
+    }
+
+    /// Chrome's "Remove bookmark": every bookmark of the row's address.
+    fn remove_row_bookmarks(&mut self, number: u32) -> Result<(), String> {
+        let Some((_, address)) = self.library.history_numbers.get(number).cloned() else { return Ok(()) };
+        let mut removed = 0_usize;
+        while let Some(id) = self.session.bookmarks.find(&address) {
+            if self.session.bookmarks.remove(id).is_none() {
+                break;
+            }
+            removed = removed.saturating_add(1);
+        }
+        self.library.history_notice = notice(if removed == 1 { "Bookmark removed" } else { "Bookmarks removed" });
+        self.bookmarks_changed()
+    }
+
+    /// History of the time `range` cleared, with the tabs' and closed tabs'
+    /// entries of that time.
+    fn clear_history(&mut self, range: ClearRange) -> Result<(), String> {
+        let now = self.local_time().utc;
+        let range = match range {
+            ClearRange::FifteenMinutes => History::since(now, FIFTEEN_MINUTES),
+            ClearRange::Hour => History::since(now, HOUR),
+            ClearRange::Day => History::since(now, DAY),
+            ClearRange::Week => History::since(now, WEEK),
+            ClearRange::FourWeeks => History::since(now, FOUR_WEEKS),
+            ClearRange::All => Range::All,
+        };
+        let removed = self.library.history.clear(range);
+        // The tabs' and closed tabs' entries of that time go too.
+        let changed = match range {
+            Range::All => self.session.remove_entries(|_| true),
+            Range::Since(since) => self.session.remove_entries(|visit| visit.at >= since),
+        };
+        if changed {
+            self.send(&ToInterface::Strip(self.strip()))?;
+        }
+        self.save_history();
+        self.library.history_notice = notice(&format!("History cleared: {removed} removed"));
+        Ok(())
+    }
+
+    /// The cookies set in the time `range` cleared.
+    fn clear_cookies_in(&mut self, range: ClearRange) -> Result<(), String> {
+        let now = self.local_time().utc;
+        let since = match range {
+            ClearRange::FifteenMinutes => Some(now.saturating_sub(FIFTEEN_MINUTES)),
+            ClearRange::Hour => Some(now.saturating_sub(HOUR)),
+            ClearRange::Day => Some(now.saturating_sub(DAY)),
+            ClearRange::Week => Some(now.saturating_sub(WEEK)),
+            ClearRange::FourWeeks => Some(now.saturating_sub(FOUR_WEEKS)),
+            ClearRange::All => None,
+        };
+        let removed = self.clear_cookies_since(since);
+        self.library.history_notice = notice(&format!("Cookies cleared: {removed} removed"));
+        self.send_cookies()
+    }
+
+    /// A closed tab reopened: the most recent, or the row `number`, if
+    /// the view has it.
+    fn reopen_closed_tab(&mut self, number: Option<u32>) -> Result<(), String> {
+        let id = match number {
+            Some(number) => match self.library.closed_numbers.get(number) {
+                Some(&id) => Some(id),
+                None => return Ok(()),
+            },
+            None => None,
+        };
+        if self.session.reopen(id).is_ok() {
+            self.send_all()?;
+        }
+        Ok(())
     }
 
     /// The history panel's view, while it is open.

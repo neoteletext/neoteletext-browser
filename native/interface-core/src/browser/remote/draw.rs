@@ -135,7 +135,7 @@ impl Browser {
                 Button::Control(PageControl::Fastext(key)) => {
                     let name = key.name().to_lowercase();
                     let letter = name.chars().next().unwrap_or(' ');
-                    format!("The page's {name} link ({letter}, or F{})", key.index() + 1)
+                    format!("The page's {name} link ({letter}, or F{})", key.index().saturating_add(1))
                 }
                 Button::Control(PageControl::Reveal) => String::from("Show concealed text, or hide it again (?)"),
                 Button::Control(PageControl::Hold) => String::from("Hold the page as it is (Shift+H)"),
@@ -181,7 +181,7 @@ fn draw_pad<C: Canvas + ?Sized>(canvas: &mut C, buttons: &mut Vec<(Button, Rect)
     let key_width = (right - left - GAP * 2.0) / 3.0;
     for (index, digit) in PAD.iter().enumerate() {
         // 0 sits below the 8, alone on its row.
-        let (row, column) = if index == PAD.len() - 1 { (3, 1) } else { (index / PAD_COLUMNS, index % PAD_COLUMNS) };
+        let (row, column) = if index == PAD.len().saturating_sub(1) { (3, 1) } else { (index / PAD_COLUMNS, index % PAD_COLUMNS) };
         #[allow(clippy::cast_precision_loss, reason = "a few keys")]
         let (x, top) = (left + column as f64 * (key_width + GAP), y + row as f64 * (KEY_HEIGHT + GAP));
         let rect = Rect::new(x, top, x + key_width, top + KEY_HEIGHT);

@@ -33,21 +33,7 @@ impl Core {
     pub(super) fn fetched(&mut self, channel: u32, message: FromFetcher) -> Result<(), String> {
         self.console_fetched(channel, &message);
         match message {
-            FromFetcher::Contents(entries) => {
-                let Some(tab) = self.session.tabs.iter_mut().find(|tab| tab.channel.id == channel) else { return Ok(()) };
-                tab.channel.set_contents(&entries);
-                // A connection succeeded: the certificate-error screen goes.
-                let was_refused = tab.channel.refused.take().is_some();
-                if was_refused && self.active_channel() == Some(channel) {
-                    self.send(&ToInterface::Strip(self.strip()))?;
-                }
-                if self.active_channel() == Some(channel) {
-                    let view = self.session.active_tab().map(|tab| tab.channel.view());
-                    if let Some(view) = view {
-                        self.send(&ToInterface::Channel(view))?;
-                    }
-                }
-            }
+            FromFetcher::Contents(entries) => self.contents(channel, &entries)?,
             FromFetcher::Page { origin: Origin::Fetched, bytes } => {
                 // Untouched, a piece at a time; each page file ends its last
                 // line, so the next one starts cleanly.
@@ -70,18 +56,7 @@ impl Core {
             // Said in the trusted core's own words, of the channel's host as
             // the strip shows it: a fetcher cannot write the strip.
             FromFetcher::CertificateRefused(problem) => self.certificate_refused(channel, problem)?,
-            FromFetcher::ProxyFailed => {
-                let host = self.session.tabs.iter().find(|tab| tab.channel.id == channel).and_then(|tab| tab.address()).map(|address| address.host.clone());
-                if let Some(host) = host {
-                    let text = format!("The proxy refused the connection to {host}");
-                    self.console.log(Some(channel), Level::Warning, self.now(), &text);
-                    if self.active_channel() == Some(channel) {
-                        self.say(text)?;
-                    } else {
-                        self.log(Level::Warning, Some(channel), &text);
-                    }
-                }
-            }
+            FromFetcher::ProxyFailed => self.proxy_failed(channel)?,
             FromFetcher::Exchange { .. } => {}
             message @ (FromFetcher::CookieQuestion { .. }
             | FromFetcher::ReachedQuestion { .. }
@@ -108,6 +83,40 @@ impl Core {
                     self.link(LinkMessage::Aliases { channel, numbers: self.links.aliases(channel) })?;
                 }
                 self.redecide_channel(channel)?;
+            }
+        }
+        Ok(())
+    }
+
+    /// A channel's contents arrived: a connection succeeded.
+    fn contents(&mut self, channel: u32, entries: &[protocol::fetcher::Entry]) -> Result<(), String> {
+        let Some(tab) = self.session.tabs.iter_mut().find(|tab| tab.channel.id == channel) else { return Ok(()) };
+        tab.channel.set_contents(entries);
+        // A connection succeeded: the certificate-error screen goes.
+        let was_refused = tab.channel.refused.take().is_some();
+        if was_refused && self.active_channel() == Some(channel) {
+            self.send(&ToInterface::Strip(self.strip()))?;
+        }
+        if self.active_channel() == Some(channel) {
+            let view = self.session.active_tab().map(|tab| tab.channel.view());
+            if let Some(view) = view {
+                self.send(&ToInterface::Channel(view))?;
+            }
+        }
+        Ok(())
+    }
+
+    /// The proxy refused a connection of `channel`: said in the strip when
+    /// it is the active channel, logged when not.
+    fn proxy_failed(&mut self, channel: u32) -> Result<(), String> {
+        let host = self.session.tabs.iter().find(|tab| tab.channel.id == channel).and_then(|tab| tab.address()).map(|address| address.host.clone());
+        if let Some(host) = host {
+            let text = format!("The proxy refused the connection to {host}");
+            self.console.log(Some(channel), Level::Warning, self.now(), &text);
+            if self.active_channel() == Some(channel) {
+                self.say(text)?;
+            } else {
+                self.log(Level::Warning, Some(channel), &text);
             }
         }
         Ok(())

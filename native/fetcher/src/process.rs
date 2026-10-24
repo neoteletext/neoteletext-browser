@@ -5,7 +5,6 @@
 
 use std::cell::RefCell;
 use std::collections::VecDeque;
-use std::collections::hash_map::RandomState;
 use std::io::{self, BufWriter, Write};
 use std::net::IpAddr;
 use std::rc::Rc;
@@ -26,7 +25,7 @@ use protocol::fetcher::{Entry, FromFetcher, Origin, ToFetcher, read_to_fetcher, 
 use crate::agent::descriptor_links;
 use crate::agent::{Random, product};
 use crate::cookies;
-use crate::transport::{Tcp, address};
+use crate::transport::{AllowedLocal, Tcp, address};
 
 /// The agent's own cookie jar holds nothing: the trusted core keeps the
 /// cookies (decision 62).
@@ -196,22 +195,15 @@ pub fn run(channel: &str, allowed: &[IpAddr], proxy: Option<Proxy>) -> Result<()
     // The transport refuses the same local addresses before connecting
     // (finding F-62).
     let allowed_local = config.allowed_local;
-    let random = Random { state: RandomState::new(), counter: 0 };
+    let random = Random::new();
     let (wakes, woken) = mpsc::channel::<Wake>();
     // The trusted core's answers to the cookie questions, read by the same
     // thread that reads its input messages.
     let (answers, answered) = mpsc::channel();
     let output: cookies::Output = Rc::new(RefCell::new(BufWriter::new(io::stdout())));
     let mut store = cookies::CoreCookies::new(Rc::clone(&output), answered);
-    let mut agent: Box<UserAgent<'_, Random, COOKIE_SLOTS, COOKIE_BYTES>> = Box::new(UserAgent::with_cookies(config, storage.buffers(), random, &mut store));
-    let network = wakes.clone();
-    let mut pump = Pump::new(Tcp::new(
-        Arc::new(move || {
-            let _ = network.send(Wake::Network);
-        }),
-        proxy,
-        allowed_local,
-    ));
+    let mut agent: Box<Agent<'_>> = Box::new(UserAgent::with_cookies(config, storage.buffers(), random, &mut store));
+    let mut pump = sockets(wakes.clone(), proxy, allowed_local);
     let start = Clock::now();
     let clock = || Instant(u64::try_from(start.elapsed().as_micros()).unwrap_or(u64::MAX));
     let mut buffer = vec![0_u8; READ_CHUNK];
@@ -232,44 +224,29 @@ pub fn run(channel: &str, allowed: &[IpAddr], proxy: Option<Proxy>) -> Result<()
     loop {
         let mut busy = !actions.is_empty();
         for action in std::mem::take(&mut actions) {
-            let send = |output: &cookies::Output, message: FromFetcher| write_to_core(&mut *output.borrow_mut(), &message).map_err(|error| error.to_string());
             match action {
                 Action::Connect { connection, host, port, security } => pump.execute(NetOutput::Connect { connection, host: &host, port, security }),
                 Action::Send(connection, bytes) => pump.execute(NetOutput::Send(connection, &bytes)),
                 Action::Close(connection) => pump.execute(NetOutput::Close(connection)),
                 Action::Timer(at) => next_tick = Some(next_tick.map_or(at, |current| current.min(at))),
-                Action::Bytes { origin, bytes } => send(&output, FromFetcher::Page { origin, bytes })?,
+                Action::Bytes { origin, bytes } => send(&output, &FromFetcher::Page { origin, bytes })?,
                 Action::Ready => {
                     // The descriptor's links, for the trusted core to decide
                     // (`hyperlinks.md` section 6.4).
                     #[cfg(feature = "links")]
                     if let Some(links) = descriptor_links(&agent) {
-                        send(&output, links)?;
+                        send(&output, &links)?;
                     }
-                    // The whole channel: its contents file, then every page it
-                    // lists; and the push connection, for all its pages.
-                    agent.handle(clock(), Input::FetchContents, &mut |out| collect(out, &mut actions));
-                    agent.handle(clock(), Input::Subscribe(Subscription::All), &mut |out| collect(out, &mut actions));
+                    ask_for_channel(&mut agent, &clock, &mut actions);
                 }
                 Action::Contents(bytes) => {
                     let (entries, pages) = contents_entries(&bytes);
-                    send(&output, FromFetcher::Contents(entries))?;
+                    send(&output, &FromFetcher::Contents(entries))?;
                     queue.extend(pages);
                 }
                 Action::Answered => waiting = false,
-                // Keys may go to the channel while its WebSocket is open, if
-                // its descriptor says it takes them (`interaction.md`).
-                Action::Push(open) => {
-                    // The trusted core keeps a sleeping tab's fetcher while
-                    // it holds a push connection (decision 47).
-                    send(&output, FromFetcher::Pushing(open))?;
-                    #[cfg(feature = "interaction")]
-                    if let Some(descriptor) = agent.descriptor().filter(|descriptor| descriptor.input()) {
-                        let secure = descriptor.push().is_some_and(|(url, _)| url.is_secure());
-                        send(&output, FromFetcher::Input { open, secure })?;
-                    }
-                }
-                Action::Tell(message) => send(&output, message)?,
+                Action::Push(open) => push_changed(&agent, &output, open)?,
+                Action::Tell(message) => send(&output, &message)?,
             }
         }
         tell_failures(&mut pump.transport, &output)?;
@@ -280,12 +257,7 @@ pub fn run(channel: &str, allowed: &[IpAddr], proxy: Option<Proxy>) -> Result<()
             busy = true;
             agent.handle(clock(), Input::FetchPage { page, subcode: None }, &mut |out| collect(out, &mut actions));
         }
-        for connection in [ConnectionId::Fetch, ConnectionId::Push] {
-            if let Some(input) = pump.poll(connection, &mut buffer) {
-                busy = true;
-                agent.handle(clock(), Input::Net(input), &mut |out| collect(out, &mut actions));
-            }
-        }
+        busy |= poll_sockets(&mut pump, &mut buffer, &mut agent, &clock, &mut actions);
         if next_tick.is_some_and(|at| at <= clock()) {
             next_tick = None;
             busy = true;
@@ -304,6 +276,64 @@ pub fn run(channel: &str, allowed: &[IpAddr], proxy: Option<Proxy>) -> Result<()
             }
         }
     }
+}
+
+/// The agent with the cookie jar it keeps: none of its own.
+type Agent<'a> = UserAgent<'a, Random, COOKIE_SLOTS, COOKIE_BYTES>;
+
+/// The sockets, through `proxy` when there is one, refusing the local
+/// addresses but `allowed_local`; each wakes the loop when it has bytes
+/// or has ended.
+fn sockets(wakes: mpsc::Sender<Wake>, proxy: Option<Proxy>, allowed_local: AllowedLocal) -> Pump<Tcp> {
+    Pump::new(Tcp::new(
+        Arc::new(move || {
+            let _ = wakes.send(Wake::Network);
+        }),
+        proxy,
+        allowed_local,
+    ))
+}
+
+/// Writes `message` to the trusted core.
+fn send(output: &cookies::Output, message: &FromFetcher) -> Result<(), String> {
+    write_to_core(&mut *output.borrow_mut(), message).map_err(|error| error.to_string())
+}
+
+/// Gives the agent what each socket read or how it ended; true when one
+/// had something.
+fn poll_sockets(pump: &mut Pump<Tcp>, buffer: &mut [u8], agent: &mut Agent<'_>, clock: &dyn Fn() -> Instant, actions: &mut Vec<Action>) -> bool {
+    let mut busy = false;
+    for connection in [ConnectionId::Fetch, ConnectionId::Push] {
+        if let Some(input) = pump.poll(connection, buffer) {
+            busy = true;
+            agent.handle(clock(), Input::Net(input), &mut |out| collect(out, actions));
+        }
+    }
+    busy
+}
+
+/// Asks for the whole channel: its contents file, then every page it
+/// lists; and the push connection, for all its pages.
+fn ask_for_channel(agent: &mut Agent<'_>, clock: &dyn Fn() -> Instant, actions: &mut Vec<Action>) {
+    agent.handle(clock(), Input::FetchContents, &mut |out| collect(out, actions));
+    agent.handle(clock(), Input::Subscribe(Subscription::All), &mut |out| collect(out, actions));
+}
+
+/// The push connection opened or closed. Keys may go to the channel while
+/// its WebSocket is open, if its descriptor says it takes them
+/// (`interaction.md`).
+fn push_changed(agent: &Agent<'_>, output: &cookies::Output, open: bool) -> Result<(), String> {
+    // The trusted core keeps a sleeping tab's fetcher while it holds a
+    // push connection (decision 47).
+    send(output, &FromFetcher::Pushing(open))?;
+    #[cfg(feature = "interaction")]
+    if let Some(descriptor) = agent.descriptor().filter(|descriptor| descriptor.input()) {
+        let secure = descriptor.push().is_some_and(|(url, _)| url.is_secure());
+        send(output, &FromFetcher::Input { open, secure })?;
+    }
+    #[cfg(not(feature = "interaction"))]
+    let _ = agent;
+    Ok(())
 }
 
 /// Tells the trusted core what the transport refused since it was last
@@ -402,7 +432,7 @@ mod tests {
         let mut storage = Box::new(Storage::default());
         let mut asked = Asked::default();
         let config = Config { tls_available: true, redirects_within_channel: true, ..Config::default() };
-        let random = Random { state: RandomState::new(), counter: 0 };
+        let random = Random::new();
         let mut agent: Box<UserAgent<'_, Random, COOKIE_SLOTS, COOKIE_BYTES>> =
             Box::new(UserAgent::with_cookies(config, storage.buffers(), random, &mut asked));
         let mut actions = Vec::new();

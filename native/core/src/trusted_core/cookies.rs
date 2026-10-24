@@ -80,7 +80,7 @@ impl Core {
 
     /// Answers a fetcher at once: it waits for the answer.
     fn answer(&mut self, channel: u32, message: &ToFetcher) {
-        if let Some(input) = self.fetchers.get_mut(&channel).and_then(|fetcher| fetcher.input.as_mut()) {
+        if let Some(input) = self.fetchers.get_mut(&channel).and_then(super::processes::Fetcher::input) {
             let _ = write_to_fetcher(input, message);
             let _ = std::io::Write::flush(input);
         }

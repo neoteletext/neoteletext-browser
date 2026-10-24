@@ -6,7 +6,14 @@ use protocol::audio::{Audio, MAX_MESSAGE_SAMPLES, Sound};
 
 /// The voice sink of a decoder: each operation becomes a message for the
 /// trusted core.
-pub(crate) struct Outbox<'a>(pub(crate) &'a mut Vec<Audio>);
+pub(crate) struct Outbox<'a>(&'a mut Vec<Audio>);
+
+impl<'a> Outbox<'a> {
+    /// The sink that adds each operation's message to `sounds`.
+    pub(crate) fn new(sounds: &'a mut Vec<Audio>) -> Self {
+        Self(sounds)
+    }
+}
 
 fn sound(id: SoundId) -> Sound {
     Sound { handle: id.handle, generation: id.generation }

@@ -3,6 +3,7 @@
 
 use super::file::VERSION_LINE;
 use super::*;
+use protocol::decoder::BookmarkEntry;
 
 fn tree() -> (Bookmarks, u32, u32, u32) {
     let mut bookmarks = Bookmarks::default();

@@ -7,6 +7,20 @@
 //! stop colours.
 
 #![no_std]
+// No panicking constructs: it draws the pages and the text the trusted
+// core sends (finding F-105). The same list is in each crate that reads
+// input from outside its process; scripts/check.sh checks that they agree.
+#![deny(
+    clippy::indexing_slicing,
+    clippy::string_slice,
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::arithmetic_side_effects,
+    clippy::unreachable,
+    clippy::todo,
+    clippy::unimplemented
+)]
 
 extern crate alloc;
 
@@ -69,7 +83,7 @@ fn to_i32(value: f64) -> i32 {
 }
 
 fn rectangle(area: Rect) -> Rectangle {
-    Rectangle::with_corners(Point::new(to_i32(area.x0), to_i32(area.y0)), Point::new(to_i32(area.x1) - 1, to_i32(area.y1) - 1))
+    Rectangle::with_corners(Point::new(to_i32(area.x0), to_i32(area.y0)), Point::new(to_i32(area.x1).saturating_sub(1), to_i32(area.y1).saturating_sub(1)))
 }
 
 fn rgb(colour: Colour) -> Rgb888 {
@@ -156,8 +170,8 @@ where
         let Some(&first) = points.first() else { return };
         let clip = self.clip();
         let mut target = self.target.clipped(&clip);
-        for pair in points[1..].windows(2) {
-            let _ = Triangle::new(point(first), point(pair[0]), point(pair[1])).into_styled(style).draw(&mut target);
+        for (&second, &third) in points.iter().skip(1).zip(points.iter().skip(2)) {
+            let _ = Triangle::new(point(first), point(second), point(third)).into_styled(style).draw(&mut target);
         }
     }
 
@@ -177,7 +191,7 @@ where
     fn gradient(&mut self, area: Rect, _radius: f64, stops: &[(f32, Colour)]) {
         // Each stop's colour from its offset to the next stop's.
         for (index, &(offset, colour)) in stops.iter().enumerate() {
-            let end = stops.get(index + 1).map_or(1.0, |&(next, _)| next);
+            let end = stops.get(index.saturating_add(1)).map_or(1.0, |&(next, _)| next);
             let left = area.x0 + area.width() * f64::from(offset);
             let right = area.x0 + area.width() * f64::from(end);
             self.fill(Rect::new(left, area.y0, right.max(left + 1.0), area.y1), 0.0, colour);
@@ -196,15 +210,18 @@ where
         if width == 0 || height == 0 || area.size.width == 0 || area.size.height == 0 {
             return true;
         }
-        // Nearest-neighbour: each display pixel takes the dot under its corner.
+        // Nearest-neighbour: each display pixel takes the dot under its
+        // corner. The page was checked whole when it was set; the screen
+        // colour stands in for a dot that is not there.
+        let screen = D::Color::from(rgb(page.screen));
         let colours = area.points().map(|at| {
-            let local = at - destination.top_left;
+            let (left, top) = (at.x.saturating_sub(destination.top_left.x), at.y.saturating_sub(destination.top_left.y));
             #[allow(clippy::cast_sign_loss, reason = "points inside the destination are at or after its top-left")]
-            let (x, y) = (local.x as u32, local.y as u32);
-            let column = x * u32::from(PAGE_WIDTH) / width;
-            let row = y * u32::from(PAGE_HEIGHT) / height;
-            let index = page.indices[row as usize * usize::from(PAGE_WIDTH) + column as usize];
-            D::Color::from(page.palette[usize::from(index)])
+            let (x, y) = (left as u32, top as u32);
+            let column = x.saturating_mul(u32::from(PAGE_WIDTH)).checked_div(width).unwrap_or(0);
+            let row = y.saturating_mul(u32::from(PAGE_HEIGHT)).checked_div(height).unwrap_or(0);
+            let dot = (row as usize).saturating_mul(usize::from(PAGE_WIDTH)).saturating_add(column as usize);
+            page.indices.get(dot).and_then(|&index| page.palette.get(usize::from(index))).map_or(screen, |&colour| D::Color::from(colour))
         });
         let _ = self.target.fill_contiguous(&area, colours);
         true
@@ -221,10 +238,10 @@ where
 
     fn text_width(&mut self, text: &str, style: Style) -> f64 {
         let font = font(style);
-        let advance = font.character_size.width + font.character_spacing;
+        let advance = font.character_size.width.saturating_add(font.character_spacing);
         #[allow(clippy::cast_possible_truncation, reason = "interface strings are short")]
         let characters = text.chars().count() as u32;
-        f64::from(characters * advance)
+        f64::from(characters.saturating_mul(advance))
     }
 
     fn line_height(&mut self, style: Style) -> f64 {

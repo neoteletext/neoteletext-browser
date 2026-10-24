@@ -6,7 +6,7 @@
 //! (`update::wire`), and the launcher's state, read strictly.
 
 use std::fmt::Write as _;
-use std::io::{BufReader, Write};
+use std::io::{Read, Write};
 use std::sync::Arc;
 use std::sync::mpsc::Sender;
 use std::time::{Duration, Instant};
@@ -19,17 +19,16 @@ use update::wire::{FromUpdater, ToUpdater, read_from_updater, write_to_updater};
 use neoteletext::settings as stored;
 use protocol::{ToCore, ToInterface, clean};
 
-use super::processes::end;
+use super::processes::{end, relay};
 use super::{Core, Event};
 
 /// How often the updater looks while the browser runs (section 3.4).
 pub const CHECK_INTERVAL: Duration = Duration::from_secs(24 * 60 * 60);
-/// The time a version has to show it is healthy (section 3.2).
-pub const HEALTH_WINDOW: Duration = Duration::from_secs(30);
-/// How long after its first frame a version's helpers are given to fail
-/// before it is found healthy: a helper that cannot confine itself ends
-/// at once.
-pub const HEALTH_SETTLE: Duration = Duration::from_secs(2);
+/// The time a version has to show it is healthy (section 3.2), and how
+/// long after its first frame its helpers are given to fail: defined once
+/// in `update::layout` for the core and the launcher, whose health
+/// deadline is made of them (decision 93).
+pub use update::layout::{HEALTH_SETTLE, HEALTH_WINDOW};
 /// After this long without a successful check, the panel says "Updates
 /// unavailable" (section 9.3): the timestamp's life.
 pub const UNAVAILABLE_AFTER: i64 = update::wire::TIMESTAMP_DAYS * 24 * 60 * 60;
@@ -77,6 +76,8 @@ pub struct Updates {
     pub state_refused: Option<String>,
     updater: Option<(Helper, Box<dyn Write + Send>)>,
     latest: Option<Version>,
+    /// When the core received the updater's last report of a successful
+    /// check, on its own clock, in seconds since 1970 (UTC).
     last_success: Option<i64>,
     failure: Option<String>,
     downloading: Option<Version>,
@@ -160,22 +161,7 @@ impl Updates {
             }
         };
         let (Some(output), Some(input)) = (child.stdout.take(), child.stdin.take()) else { return };
-        let events = events.clone();
-        std::thread::spawn(move || {
-            let mut output = BufReader::new(output);
-            let end = loop {
-                match read_from_updater(&mut output) {
-                    Ok(message) => {
-                        if events.send(Event::Updater(message)).is_err() {
-                            return;
-                        }
-                    }
-                    Err(error) if error.kind() == std::io::ErrorKind::UnexpectedEof => break None,
-                    Err(error) => break Some(error.to_string()),
-                }
-            };
-            let _ = events.send(Event::UpdaterEnded(end));
-        });
+        listen(output, events.clone());
         self.updater = Some((child, Box::new(input)));
         self.check();
     }
@@ -202,12 +188,15 @@ impl Updates {
         self.next_check = Instant::now().checked_add(CHECK_INTERVAL);
     }
 
-    /// The updater said something, untrusted. Whether the view changed.
-    pub fn said(&mut self, message: FromUpdater) -> bool {
+    /// The updater said something, untrusted, received at `received` on
+    /// the core's clock (seconds since 1970, UTC). Whether the view changed.
+    /// The age of a check is the core's own: the times the updater reports
+    /// are on its clock, and are not used (finding F-93).
+    pub fn said(&mut self, message: FromUpdater, received: i64) -> bool {
         match message {
-            FromUpdater::Latest { version, checked } => {
+            FromUpdater::Latest { version, checked: _ } => {
                 self.latest = version;
-                self.last_success = Some(checked);
+                self.last_success = Some(received);
                 self.failure = None;
                 if let Some(newer) = self.offer()
                     && self.offered != Some(newer)
@@ -223,9 +212,8 @@ impl Updates {
                     self.strip = false;
                 }
             }
-            FromUpdater::Failed { reason, last_success } => {
+            FromUpdater::Failed { reason, last_success: _ } => {
                 self.downloading = None;
-                self.last_success = last_success.or(self.last_success);
                 self.failure = Some(reason);
             }
         }
@@ -377,6 +365,24 @@ impl Core {
         let Ok(broker) = self.broker().cloned() else { return };
         let proxy = self.settings.proxy.as_ref().map(stored::Proxy::url);
         self.updates.start(&broker, self.settings.check_updates, proxy.as_deref(), &self.events);
+    }
+}
+
+/// Reads the updater's messages on a thread of its own, through the
+/// relay every helper's messages take, so each is held to the updater's
+/// own budget until the core has handled it (finding F-10).
+fn listen(output: impl Read + Send + 'static, events: Sender<Event>) {
+    relay(output, read_updater, events, Event::Updater, Event::UpdaterEnded);
+}
+
+/// One of the updater's messages, as the relay reads a helper's: none
+/// once its pipe has ended, at a message's start or within one, as the
+/// updater's end was read before.
+fn read_updater(mut input: &mut dyn Read) -> std::io::Result<Option<FromUpdater>> {
+    match read_from_updater(&mut input) {
+        Ok(message) => Ok(Some(message)),
+        Err(error) if error.kind() == std::io::ErrorKind::UnexpectedEof => Ok(None),
+        Err(error) => Err(error),
     }
 }
 

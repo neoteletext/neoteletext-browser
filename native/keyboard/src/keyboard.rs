@@ -41,28 +41,59 @@ fn clock(started: Instant) -> u32 {
     u32::try_from(started.elapsed().as_millis() & u128::from(u32::MAX)).unwrap_or(0)
 }
 
-fn run(relay: &str, pin: bool, proxy: Option<Proxy>) -> Result<(), String> {
-    let mut output = BufWriter::new(io::stdout().lock());
-    let send = |output: &mut BufWriter<io::StdoutLock<'_>>, message: &FromKeyboard| write_to_core(output, message).map_err(|error| error.to_string());
-    send(&mut output, &FromKeyboard::State(PhoneState::Preparing))?;
-    // The trusted core's Finish, or the end of its pipe, is watched from
-    // the start (finding F-26): reaching the relay can take as long as the
-    // relay likes, and closing the pipe must end this process meanwhile,
-    // so the core never waits on it. Once the screen exists the watcher
-    // wakes its wait (the engine's E.106) and the loop ends the session;
-    // before then there is no session, and the process ends at once.
+/// Writes `message` to the trusted core.
+fn send(output: &mut BufWriter<io::StdoutLock<'_>>, message: &FromKeyboard) -> Result<(), String> {
+    write_to_core(output, message).map_err(|error| error.to_string())
+}
+
+/// Watches the trusted core's pipe for its Finish, or its end: whether
+/// Finish was asked is sent on the channel returned.
+///
+/// It is watched from the start (finding F-26): reaching the relay can
+/// take as long as the relay likes, and closing the pipe must end this
+/// process meanwhile, so the core never waits on it. Once the screen
+/// exists, `waker` holds its waker: the watcher wakes its wait (the
+/// engine's E.106) and the loop ends the session; before then there is
+/// no session, and the process ends at once.
+fn watch_input(waker: Arc<Mutex<Option<Waker>>>) -> mpsc::Receiver<bool> {
     let (finish, finished) = mpsc::channel();
-    let waker: Arc<Mutex<Option<Waker>>> = Arc::new(Mutex::new(None));
-    let watched = Arc::clone(&waker);
     std::thread::spawn(move || {
         let mut input = BufReader::new(io::stdin().lock());
         let finish_asked = matches!(read_to_keyboard(&mut input), Ok(Some(ToKeyboard::Finish)));
         let _ = finish.send(finish_asked);
-        match watched.lock().ok().and_then(|mut slot| slot.take()) {
+        match waker.lock().ok().and_then(|mut slot| slot.take()) {
             Some(waker) => waker.wake(),
             None => std::process::exit(0),
         }
     });
+    finished
+}
+
+/// The phone's text as it goes to the channel: cut to what a message
+/// carries at a character's boundary, without control characters, and
+/// only as far as the rate allows, a character of text a unit.
+fn printable(text: &str, limiter: &mut Limiter, started: Instant) -> String {
+    let end = (0..=text.len().min(MAX_PHONE_TEXT)).rev().find(|&end| text.is_char_boundary(end)).unwrap_or(0);
+    text.get(..end).unwrap_or_default().chars().filter(|character| !character.is_control()).take_while(|_| limiter.allow(clock(started), false)).collect()
+}
+
+/// A bulk key, such as Backspace, is that many presses, within the rate.
+fn press(output: &mut BufWriter<io::StdoutLock<'_>>, key: &str, count: usize, limiter: &mut Limiter, started: Instant) -> Result<(), String> {
+    for _ in 0..count {
+        if !limiter.allow(clock(started), false) {
+            break;
+        }
+        send(output, &FromKeyboard::Key { down: true, name: key.to_owned() })?;
+        send(output, &FromKeyboard::Key { down: false, name: key.to_owned() })?;
+    }
+    Ok(())
+}
+
+fn run(relay: &str, pin: bool, proxy: Option<Proxy>) -> Result<(), String> {
+    let mut output = BufWriter::new(io::stdout().lock());
+    send(&mut output, &FromKeyboard::State(PhoneState::Preparing))?;
+    let waker: Arc<Mutex<Option<Waker>>> = Arc::new(Mutex::new(None));
+    let finished = watch_input(Arc::clone(&waker));
     let config = ScreenConfig { name: NAME.into(), layout: Layout::Terminal, pin, rejoin_seconds: Some(REJOIN_SECONDS) };
     let mut screen = match Screen::create(relay, config, proxy) {
         Ok(screen) => screen,
@@ -105,28 +136,14 @@ fn run(relay: &str, pin: bool, proxy: Option<Proxy>) -> Result<(), String> {
                 Event::Down(name) if limiter.allow(clock(started), false) => FromKeyboard::Key { down: true, name },
                 Event::Up(name) if limiter.allow(clock(started), true) => FromKeyboard::Key { down: false, name },
                 Event::Text(text) => {
-                    let end = (0..=text.len().min(MAX_PHONE_TEXT)).rev().find(|&end| text.is_char_boundary(end)).unwrap_or(0);
-                    let printable: String = text
-                        .get(..end)
-                        .unwrap_or_default()
-                        .chars()
-                        .filter(|character| !character.is_control())
-                        .take_while(|_| limiter.allow(clock(started), false))
-                        .collect();
+                    let printable = printable(&text, &mut limiter, started);
                     if printable.is_empty() {
                         continue;
                     }
                     FromKeyboard::Text(printable)
                 }
                 Event::Special { key, count } => {
-                    // A bulk Backspace is that many presses, within the rate.
-                    for _ in 0..count {
-                        if !limiter.allow(clock(started), false) {
-                            break;
-                        }
-                        send(&mut output, &FromKeyboard::Key { down: true, name: key.to_owned() })?;
-                        send(&mut output, &FromKeyboard::Key { down: false, name: key.to_owned() })?;
-                    }
+                    press(&mut output, key, count, &mut limiter, started)?;
                     continue;
                 }
                 Event::Down(_) | Event::Up(_) => continue,
