@@ -6,12 +6,18 @@
 //! The mixers are shared between the thread that reads the trusted core and
 //! the device's audio thread behind a mutex. The reader holds it only to
 //! apply one operation; the audio thread holds it only to render one
-//! buffer, which never allocates or frees. The longest an operation holds
-//! it is defining the largest sound, 0.37 ms on 21 October 2026, against
-//! a device buffer of about 10 ms. The audio thread waits for the lock
-//! rather than skipping a buffer: a skipped buffer is a click, and the
-//! wait is bounded by that measurement. What the reader frees (a channel's
-//! whole mixer) it frees after letting go.
+//! buffer, which never allocates or frees. The reader allocates a sound's
+//! samples, or a live sound's ring, before it takes the lock and gives the
+//! buffer to the mixer whole (finding F-55): allocating the largest sound,
+//! two minutes at 48 kHz, under the lock held the audio thread up for as
+//! long as the allocator took: at worst 2.0 ms of 20 tries, against
+//! 25 µs to apply the definition given its buffer (release build, macOS,
+//! 24 October 2026), and a device buffer is about 10 ms. Under the lock
+//! the mixer may still grow its small table of sounds, and frees a sound
+//! that one of the same key replaces or that was forgotten. The audio
+//! thread waits for the lock rather than skipping a buffer: a skipped
+//! buffer is a click. What the reader frees itself (a channel's whole
+//! mixer, a ring the mixer refused) it frees after letting go.
 //!
 //! The device runs only while a channel sounds. Whichever thread finds
 //! that the channels went from silent to sounding or back wakes a watcher
@@ -154,60 +160,110 @@ pub fn set_sound(mixers: &Mutex<Mixers>, sound: bool, volume: u8) {
     }
 }
 
-/// Applies one voice operation of `channel` from the trusted core. Only a
-/// definition or a live sound makes the channel's mixer (finding F-55):
-/// any other operation on a channel without one does nothing, so the
-/// trusted core's stream cannot grow the mixers, which the audio thread
-/// walks for every buffer, with channels that never sound.
+/// Applies one voice operation of `channel` from the trusted core: its
+/// buffer is allocated before the lock is taken, and what it leaves to
+/// free is freed after the lock is let go (finding F-55).
 pub fn apply(mixers: &Mutex<Mixers>, channel: u32, audio: Audio) {
-    let mut mixers = mixers.lock().unwrap_or_else(PoisonError::into_inner);
-    let rate = mixers.rate_hz;
-    match audio {
-        // The channel is gone. Its mixer, with every sound it held, is
-        // freed once the audio thread can have the lock again.
-        Audio::Reset => {
-            let gone = mixers.channels.remove(&channel);
-            mixers.muted.remove(&channel);
-            mixers.note_activity();
-            drop(mixers);
-            drop(gone);
-            return;
+    let operation = Operation::prepare(audio);
+    let mut locked = mixers.lock().unwrap_or_else(PoisonError::into_inner);
+    let Leftover { mixer, buffer } = locked.apply(channel, operation);
+    drop(locked);
+    drop(mixer);
+    drop(buffer);
+}
+
+/// A voice operation from the trusted core with the buffer it gives the
+/// mixer, allocated before the lock is taken.
+enum Operation {
+    /// [`Audio::Define`], with its silent samples.
+    Define { sound: Sound, rate_hz: u32, samples: Vec<i16> },
+    /// [`Audio::Stream`], with its ring.
+    Stream { sound: Sound, rate_hz: u32, ring: Vec<i16> },
+    /// Every other operation, which needs no buffer.
+    Other(Audio),
+}
+
+impl Operation {
+    /// Allocates the buffer `audio` needs: a definition's length is
+    /// bounded by the protocol (`MAX_SOUND_SAMPLES`), and a ring is the
+    /// length the mixer takes.
+    fn prepare(audio: Audio) -> Self {
+        match audio {
+            Audio::Define { sound, rate_hz, samples } => Self::Define { sound, rate_hz, samples: vec![0; usize::try_from(samples).unwrap_or(0)] },
+            Audio::Stream { sound, rate_hz } => Self::Stream { sound, rate_hz, ring: vec![0; Mixer::stream_ring(rate_hz)] },
+            other => Self::Other(other),
         }
-        // Kept apart from the mixer, so a mute given before the channel's
-        // first sound holds when its mixer is made.
-        Audio::Mute(muted) => {
-            if muted {
-                mixers.muted.insert(channel);
-            } else {
-                mixers.muted.remove(&channel);
+    }
+}
+
+/// What an operation leaves to be freed once the lock is let go.
+#[derive(Default)]
+struct Leftover {
+    /// A channel's mixer, with every sound it held.
+    mixer: Option<Mixer>,
+    /// A ring the mixer refused.
+    buffer: Option<Vec<i16>>,
+}
+
+impl Mixers {
+    /// Applies one voice operation of `channel`, with the lock held. Only
+    /// a definition or a live sound makes the channel's mixer (finding
+    /// F-55): any other operation on a channel without one does nothing,
+    /// so the trusted core's stream cannot grow the mixers, which the
+    /// audio thread walks for every buffer, with channels that never
+    /// sound.
+    #[must_use]
+    fn apply(&mut self, channel: u32, operation: Operation) -> Leftover {
+        match operation {
+            // The channel is gone. Its mixer, with every sound it held, is
+            // freed once the audio thread can have the lock again.
+            Operation::Other(Audio::Reset) => {
+                let mixer = self.channels.remove(&channel);
+                self.muted.remove(&channel);
+                self.note_activity();
+                return Leftover { mixer, buffer: None };
             }
-            mixers.master(channel);
-            return;
+            // Kept apart from the mixer, so a mute given before the
+            // channel's first sound holds when its mixer is made.
+            Operation::Other(Audio::Mute(muted)) => {
+                if muted {
+                    self.muted.insert(channel);
+                } else {
+                    self.muted.remove(&channel);
+                }
+                self.master(channel);
+                return Leftover::default();
+            }
+            Operation::Define { .. } | Operation::Stream { .. } => {
+                if let std::collections::btree_map::Entry::Vacant(vacant) = self.channels.entry(channel) {
+                    // A new mixer holds no sound yet, so it allocates nothing.
+                    vacant.insert(Mixer::new(self.rate_hz));
+                    self.master(channel);
+                }
+            }
+            Operation::Other(_) => {}
         }
-        _ => {}
-    }
-    if matches!(audio, Audio::Define { .. } | Audio::Stream { .. })
-        && let std::collections::btree_map::Entry::Vacant(vacant) = mixers.channels.entry(channel)
-    {
-        // A new mixer holds no sound yet, so it allocates nothing.
-        vacant.insert(Mixer::new(rate));
-        mixers.master(channel);
-    }
-    let Some(mixer) = mixers.channels.get_mut(&channel) else { return };
-    match audio {
-        Audio::Define { sound, rate_hz, samples } => mixer.define(key(sound), rate_hz, usize::try_from(samples).unwrap_or(0)),
-        Audio::Samples { sound, first, pcm } => mixer.samples(key(sound), usize::try_from(first).unwrap_or(usize::MAX), &pcm),
-        Audio::Forget(sound) => mixer.forget(key(sound)),
-        Audio::Start { channel, sound, gain, fade_ms, looped, duck_percent, after_current } => {
-            mixer.start(usize::from(channel), Start { key: key(sound), gain, fade_ms, looped, duck_percent, after_current });
+        let Some(mixer) = self.channels.get_mut(&channel) else { return Leftover::default() };
+        let mut leftover = Leftover::default();
+        match operation {
+            Operation::Define { sound, rate_hz, samples } => mixer.define_with(key(sound), rate_hz, samples),
+            Operation::Stream { sound, rate_hz, ring } => leftover.buffer = mixer.stream_with(key(sound), rate_hz, ring).err(),
+            Operation::Other(audio) => match audio {
+                Audio::Samples { sound, first, pcm } => mixer.samples(key(sound), usize::try_from(first).unwrap_or(usize::MAX), &pcm),
+                Audio::Forget(sound) => mixer.forget(key(sound)),
+                Audio::Start { channel, sound, gain, fade_ms, looped, duck_percent, after_current } => {
+                    mixer.start(usize::from(channel), Start { key: key(sound), gain, fade_ms, looped, duck_percent, after_current });
+                }
+                Audio::Stop { channel, fade_ms } => mixer.stop(usize::from(channel), fade_ms),
+                Audio::Gain { channel, gain, fade_ms } => mixer.gain(usize::from(channel), gain, fade_ms),
+                Audio::StreamSamples { sound, pcm } => mixer.stream_samples(key(sound), &pcm),
+                // Prepared with their buffers, or applied above.
+                Audio::Define { .. } | Audio::Stream { .. } | Audio::Mute(_) | Audio::Reset => {}
+            },
         }
-        Audio::Stop { channel, fade_ms } => mixer.stop(usize::from(channel), fade_ms),
-        Audio::Gain { channel, gain, fade_ms } => mixer.gain(usize::from(channel), gain, fade_ms),
-        Audio::Stream { sound, rate_hz } => mixer.stream(key(sound), rate_hz),
-        Audio::StreamSamples { sound, pcm } => mixer.stream_samples(key(sound), &pcm),
-        Audio::Mute(_) | Audio::Reset => {}
+        // A sound starts here, on the reader's thread, while the device
+        // may be stopped.
+        self.note_activity();
+        leftover
     }
-    // A sound starts here, on the reader's thread, while the device may
-    // be stopped.
-    mixers.note_activity();
 }

@@ -231,3 +231,50 @@ fn an_operation_on_an_unknown_channel_makes_no_mixer() {
     // After the master's ramp, as in the test of muted tabs above.
     assert!(data[300..].iter().all(|&sample| sample == 0), "the mute held: {:?}", &data[300..310]);
 }
+
+/// Finding F-55: a sound's buffer is allocated before the lock is taken
+/// and the mixer keeps the one it is given. Given a buffer already
+/// holding a level and no samples, the sound plays that level, which it
+/// could not if the mixer had allocated a silent buffer of its own.
+#[test]
+fn a_sound_plays_the_buffer_allocated_before_the_lock() {
+    let mut mixers = Mixers::new(8_000);
+    let leftover = mixers.apply(1, Operation::Define { sound: SOUND, rate_hz: 8_000, samples: vec![8_000; 4_000] });
+    assert!(leftover.mixer.is_none() && leftover.buffer.is_none(), "the buffer was taken");
+    let start = Audio::Start { channel: 0, sound: SOUND, gain: 100, fade_ms: 5, looped: false, duck_percent: 100, after_current: false };
+    let _ = mixers.apply(1, Operation::Other(start));
+    let mut data = vec![0_i16; 400];
+    mixers.render(&mut data, &mut [0; 400]);
+    // After the 5 ms ramp, 40 samples at 8 kHz.
+    assert!((7_900..=8_100).contains(&data[300]), "{}", data[300]);
+}
+
+/// The buffers prepared outside the lock: a definition's of its length,
+/// a live sound's of the ring the mixer takes, and none for the others.
+#[test]
+fn a_definition_and_a_live_sound_are_given_their_buffers_before_the_lock() {
+    let Operation::Define { samples, .. } = Operation::prepare(Audio::Define { sound: SOUND, rate_hz: 8_000, samples: 4_000 }) else {
+        panic!("a definition is prepared as one")
+    };
+    assert_eq!(samples.len(), 4_000);
+    // The rate the tests above play at, and the device's usual one.
+    for rate_hz in [8_000, 48_000] {
+        let Operation::Stream { ring, .. } = Operation::prepare(Audio::Stream { sound: SOUND, rate_hz }) else { panic!("a live sound is prepared as one") };
+        assert_eq!(ring.len(), Mixer::stream_ring(rate_hz), "at {rate_hz} Hz");
+    }
+    assert!(matches!(Operation::prepare(Audio::Forget(SOUND)), Operation::Other(Audio::Forget(_))));
+}
+
+/// A ring the mixer refuses is handed back, to be freed after the lock
+/// is let go, and no live sound is made.
+#[test]
+fn a_refused_ring_is_handed_back_to_be_freed_outside_the_lock() {
+    let mut mixers = Mixers::new(8_000);
+    let wrong = Mixer::stream_ring(8_000) + 1;
+    let leftover = mixers.apply(3, Operation::Stream { sound: SOUND, rate_hz: 8_000, ring: vec![0; wrong] });
+    assert_eq!(leftover.buffer.map(|ring| ring.len()), Some(wrong));
+    let start = Audio::Start { channel: 0, sound: SOUND, gain: 100, fade_ms: 5, looped: false, duck_percent: 100, after_current: false };
+    let _ = mixers.apply(3, Operation::Other(start));
+    let _ = mixers.apply(3, Operation::Other(Audio::StreamSamples { sound: SOUND, pcm: vec![6_000; 4_000] }));
+    assert_eq!(mixers.sounding(), BTreeSet::new(), "no live sound to play");
+}
