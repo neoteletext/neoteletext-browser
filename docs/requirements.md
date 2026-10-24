@@ -1380,6 +1380,7 @@ From `settings-home-console-proxy.md` and its security analysis (decision 51).
 - **Source:** Decision 51; `settings-home-console-proxy-security.md` section 3.
 - **Verification:** Test of each refused form.
 - **State:** Met by the engine's agent, which the fetcher runs with `proxied` set: the engine's `local_hosts_are_seen_before_the_proxy` (each refused form) and `through_a_proxy_local_names_are_refused_and_the_proxy_may_be_local` (the agent refuses before connecting), REQ-WEB-032.
+- *Amended 24 October 2026 (the engine's decision E.113, finding F-17):* names of one label and names under `.home.arpa`, `.lan`, `.corp`, `.intranet`, `.private` and `.localdomain` are refused too, compared without regard to case; through a proxy the rule is by name, and a public name that resolves to a local address stays a residual (`security-analysis.md` section 5.1). State: not met until the engine is re-pinned at a commit with E.113; the browser's pin, `fb2dd8a`, refuses the earlier list only.
 
 ### Requirement 19.12: The fetcher takes its proxy only when started
 - **Statement:** The trusted core must give a fetcher its proxy as a command-line argument when it starts it, and a change of the proxy must take effect for fetchers started after it; no message may change where a running fetcher connects (requirement 4.7).
