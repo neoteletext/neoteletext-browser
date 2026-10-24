@@ -106,7 +106,7 @@
 - **Reason:** The engine is maintained in its own repository, by its own process (decision 36).
 - **Source:** Decision 36.
 - **Verification:** Check: every `neoteletext` dependency in every workspace names the same `rev`.
-- **State:** Met, 24 October 2026: `native/Cargo.toml`, the updater's workspace (`native/tuf/Cargo.toml`) and the fuzz workspace (`native/fuzz/Cargo.toml`) name the engine's `5311f98`, and `scripts/check.sh` fails unless every workspace names one engine commit (`check_engine_pin`). The pinned commit is in the engine's local repository. At that pin, on 24 October 2026: on macOS the commit gate's checks (formatting, Clippy with every feature set, 551 tests, the updater's 19) and the engine checked for unsafe code; on Linux (`foundintelquiet4060`) Clippy with default features and none, and 560 tests and the updater's 19; in the Windows virtual machine Clippy with default features and none in both workspaces, and the release tests, 526 with default features, 426 with none, and the updater's 18, once the hostile harness ran there without a broker.
+- **State:** Met, 24 October 2026: `native/Cargo.toml`, the updater's workspace (`native/tuf/Cargo.toml`) and the fuzz workspace (`native/fuzz/Cargo.toml`) name the engine's `c997514`, and `scripts/check.sh` fails unless every workspace names one engine commit (`check_engine_pin`). The pinned commit is in the engine's local repository. At that pin, on 24 October 2026: the full gate (`scripts/check.sh full`) on macOS and on Linux (`foundintelquiet4060`); in the Windows virtual machine Clippy with default features and none in both workspaces, and the release tests, 526 with default features, 426 with none, and the updater's 18.
 
 ---
 

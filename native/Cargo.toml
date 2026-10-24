@@ -45,25 +45,25 @@ decoder = { path = "decoder", package = "neoteletext-decoder", default-features 
 # engine's "modern-classic" profile (its decision E.71) with the Colour
 # Map of Levels 2.5 and 3.5, which that profile leaves out: decision 6 is
 # 32 colours, and decision 60 restores them.
-neoteletext-core = { git = "file:///Users/andrewstuart/devel/neoteletext-engine", rev = "5311f986a1d31c4654287241b124c280812c97e7", default-features = false, features = ["modern-classic", "level35-32colors"] }
-neoteletext-formats = { git = "file:///Users/andrewstuart/devel/neoteletext-engine", rev = "5311f986a1d31c4654287241b124c280812c97e7", default-features = false, features = ["tti", "transport", "sliced"] }
+neoteletext-core = { git = "file:///Users/andrewstuart/devel/neoteletext-engine", rev = "c997514d2dbf04b9de5265cdfb967b35caa13340", default-features = false, features = ["modern-classic", "level35-32colors"] }
+neoteletext-formats = { git = "file:///Users/andrewstuart/devel/neoteletext-engine", rev = "c997514d2dbf04b9de5265cdfb967b35caa13340", default-features = false, features = ["tti", "transport", "sliced"] }
 # The engine's web module: HTTP, channels, contents files and push, with no
 # network input or output of its own.
-neoteletext-web = { git = "file:///Users/andrewstuart/devel/neoteletext-engine", rev = "5311f986a1d31c4654287241b124c280812c97e7", default-features = false, features = ["push", "cookies"] }
+neoteletext-web = { git = "file:///Users/andrewstuart/devel/neoteletext-engine", rev = "c997514d2dbf04b9de5265cdfb967b35caa13340", default-features = false, features = ["push", "cookies"] }
 # The engine's network port is these traits (its decision E.38); the
 # version the engine uses.
 embedded-io = { version = "=0.7.1", default-features = false }
-neoteletext-image = { git = "file:///Users/andrewstuart/devel/neoteletext-engine", rev = "5311f986a1d31c4654287241b124c280812c97e7", features = ["std"] }
+neoteletext-image = { git = "file:///Users/andrewstuart/devel/neoteletext-engine", rev = "c997514d2dbf04b9de5265cdfb967b35caa13340", features = ["std"] }
 # The engine's audio profile (its area AUD): the receiver, and the mixer the
 # interface plays through.
-neoteletext-audio = { git = "file:///Users/andrewstuart/devel/neoteletext-engine", rev = "5311f986a1d31c4654287241b124c280812c97e7", default-features = false, features = ["idl", "ima"] }
+neoteletext-audio = { git = "file:///Users/andrewstuart/devel/neoteletext-engine", rev = "c997514d2dbf04b9de5265cdfb967b35caa13340", default-features = false, features = ["idl", "ima"] }
 # The engine's qrkeyboard client (its decision E.93): the phone keyboard
 # process's pairing and encryption, and the terminal channel's phone page.
-neoteletext-qrkeyboard = { git = "file:///Users/andrewstuart/devel/neoteletext-engine", rev = "5311f986a1d31c4654287241b124c280812c97e7" }
+neoteletext-qrkeyboard = { git = "file:///Users/andrewstuart/devel/neoteletext-engine", rev = "c997514d2dbf04b9de5265cdfb967b35caa13340" }
 # The engine's input profile (its area INT): key records and the cursor
 # record (`interaction.md`).
-neoteletext-input = { git = "file:///Users/andrewstuart/devel/neoteletext-engine", rev = "5311f986a1d31c4654287241b124c280812c97e7", default-features = false }
-neoteletext-audio-mix = { git = "file:///Users/andrewstuart/devel/neoteletext-engine", rev = "5311f986a1d31c4654287241b124c280812c97e7" }
+neoteletext-input = { git = "file:///Users/andrewstuart/devel/neoteletext-engine", rev = "c997514d2dbf04b9de5265cdfb967b35caa13340", default-features = false }
+neoteletext-audio-mix = { git = "file:///Users/andrewstuart/devel/neoteletext-engine", rev = "c997514d2dbf04b9de5265cdfb967b35caa13340" }
 # Apache-2.0: the operating systems' audio output (Core Audio on macOS),
 # without unsafe code of ours (decision 37).
 cpal = "=0.18.2"
