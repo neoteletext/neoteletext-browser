@@ -14,12 +14,24 @@ use crate::{DeviceBox, OPAQUE, PAGE_DOTS, PageError, Painter, RGBA_BYTES};
 
 /// A page's image as the painter holds it.
 pub(crate) struct PageImage {
-    pub(crate) image: Image,
-    pub(crate) pixmap: Arc<Pixmap>,
+    image: Image,
+    pixmap: Arc<Pixmap>,
     /// The colour of the screen around it.
-    pub(crate) screen: Colour,
+    screen: Colour,
     /// Which image it is: a new one is a new number.
-    pub(crate) number: u64,
+    number: u64,
+}
+
+impl PageImage {
+    /// The colour of the screen around it.
+    pub(crate) fn screen(&self) -> Colour {
+        self.screen
+    }
+
+    /// Which image it is.
+    pub(crate) fn number(&self) -> u64 {
+        self.number
+    }
 }
 
 /// Teletext is blocks: nearest-neighbour sampling keeps them sharp.

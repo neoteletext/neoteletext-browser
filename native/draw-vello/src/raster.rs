@@ -23,11 +23,11 @@ impl Painter {
             self.target = Pixmap::new(width, height);
         }
         self.origin = (f64::from(damage.x0), f64::from(damage.y0));
-        for call in &frame.calls {
-            match &call.command {
+        for call in frame.calls() {
+            match call.command() {
                 Command::PushClip(area) => self.draw_push_clip(*area),
                 Command::PopClip => self.context.pop_layer(),
-                _ if !call.bounds.meets(damage) => {}
+                _ if !call.bounds().meets(damage) => {}
                 Command::Fill { area, radius, paint } => self.draw_fill(*area, *radius, *paint),
                 Command::Polygon { points, paint } => self.draw_polygon(points, *paint),
                 Command::Dim { area, amount } => self.draw_dim(*area, *amount),

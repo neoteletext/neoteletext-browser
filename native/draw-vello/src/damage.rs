@@ -179,10 +179,10 @@ impl Painter {
     /// frame's.
     pub(crate) fn damage(&self, frame: &Frame) -> Damage {
         let (old, new) = (&self.last, frame);
-        let same = |before: &Recorded, after: &Recorded| before.command == after.command && old.rects(before.clip) == new.rects(after.clip);
-        let (prefix, suffix) = common_ends(&old.calls, &new.calls, same);
-        let before = old.calls.get(prefix..old.calls.len().saturating_sub(suffix)).unwrap_or_default();
-        let after = new.calls.get(prefix..new.calls.len().saturating_sub(suffix)).unwrap_or_default();
+        let same = |before: &Recorded, after: &Recorded| before.command() == after.command() && old.rects(before.clip()) == new.rects(after.clip());
+        let (prefix, suffix) = common_ends(old.calls(), new.calls(), same);
+        let before = old.calls().get(prefix..old.calls().len().saturating_sub(suffix)).unwrap_or_default();
+        let after = new.calls().get(prefix..new.calls().len().saturating_sub(suffix)).unwrap_or_default();
         let mut damage = Damage::default();
         if before.len() == after.len() {
             // Call by call: where the two are the same, the same is drawn at
@@ -191,13 +191,13 @@ impl Painter {
                 if let Some(dots) = self.narrowed(old, was, new, now) {
                     damage.add(dots);
                 } else {
-                    damage.add(was.bounds);
-                    damage.add(now.bounds);
+                    damage.add(was.bounds());
+                    damage.add(now.bounds());
                 }
             }
         } else {
             for call in before.iter().chain(after) {
-                damage.add(call.bounds);
+                damage.add(call.bounds());
             }
         }
         damage
@@ -206,8 +206,8 @@ impl Painter {
     /// For a page whose image alone changed, where it is drawn, inside the
     /// same clips, the pixels of the dots that changed.
     fn narrowed(&self, old: &Frame, was: &Recorded, new: &Frame, now: &Recorded) -> Option<DeviceBox> {
-        let (Command::Page { key, area, .. }, Command::Page { key: key_now, area: area_now, .. }) = (&was.command, &now.command) else { return None };
-        if key != key_now || area != area_now || old.rects(was.clip) != new.rects(now.clip) {
+        let (Command::Page { key, area, .. }, Command::Page { key: key_now, area: area_now, .. }) = (was.command(), now.command()) else { return None };
+        if key != key_now || area != area_now || old.rects(was.clip()) != new.rects(now.clip()) {
             return None;
         }
         let dots = self.changed.get(key)?;
@@ -218,7 +218,7 @@ impl Painter {
             x1: area.x0 + f64::from(dots.x1) * across,
             y1: area.y0 + f64::from(dots.y1) * down,
         };
-        let clip = new.clips.get(now.clip).map_or_else(DeviceBox::default, |(_, area)| *area);
+        let clip = new.clip_pixels(now.clip());
         Some(DeviceBox::covering(changed, self.scale, self.surface()).intersect(clip))
     }
 }
