@@ -112,7 +112,6 @@ impl Browser {
 
     /// A press on the manager; returns whether it was the manager's. An
     /// item pressed is opened or moved when the button is released.
-    #[allow(clippy::too_many_lines, reason = "one hit-test per control, in drawing order")]
     pub(in crate::browser) fn bookmarks_press(&mut self, point: Point) -> bool {
         if !self.bookmarks.open {
             return false;
