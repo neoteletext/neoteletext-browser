@@ -13,8 +13,8 @@ use crate::{Fields, MAX_PAGE_TITLE, ProtocolError, push_count, push_count_u8, pu
 #[cfg(feature = "links")]
 use kinds::KIND_LINKS;
 use kinds::{
-    KIND_ARRIVED, KIND_AUDIO, KIND_BOOKMARK_FOLDER, KIND_BOOKMARK_FOLDER_END, KIND_BOOKMARK_LINK, KIND_BOOKMARKS_READ, KIND_CHANNEL_LOG, KIND_CLOSE, KIND_DATA,
-    KIND_END, KIND_FRAME, KIND_OPENED, KIND_SHOWING, KIND_STORE_FULL, KIND_SUBPAGES, KIND_UPDATED, KIND_VIEW, KIND_WHOLE,
+    KIND_ARRIVED, KIND_AUDIO, KIND_BOOKMARK_FOLDER, KIND_BOOKMARK_FOLDER_END, KIND_BOOKMARK_LINK, KIND_BOOKMARKS_READ, KIND_CHANNEL_LOG, KIND_CLOSE,
+    KIND_CONFINED, KIND_DATA, KIND_END, KIND_FRAME, KIND_OPENED, KIND_SHOWING, KIND_STORE_FULL, KIND_SUBPAGES, KIND_UPDATED, KIND_VIEW, KIND_WHOLE,
 };
 #[cfg(feature = "interaction")]
 use kinds::{KIND_CURSOR, KIND_INPUT_CONTROL};
@@ -91,6 +91,10 @@ pub enum ToDecoder {
 /// From a decoder to the trusted core.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum FromDecoder {
+    /// It is confined and running: a channel's decoder says this first,
+    /// before it reads anything, so the trusted core can tell one that
+    /// could not start from one a channel's data ended (finding F-12).
+    Confined,
     /// A page has been received completely for the first time, with a
     /// title taken from its text, not yet cleaned.
     Arrived {
@@ -336,6 +340,7 @@ pub fn write_to_core(out: &mut dyn Write, message: &FromDecoder) -> Result<(), P
             payload.extend_from_slice(body);
             KIND_INPUT_CONTROL
         }
+        FromDecoder::Confined => KIND_CONFINED,
         FromDecoder::StoreFull => KIND_STORE_FULL,
         FromDecoder::Bookmark(entry) => bookmarks::push_entry(&mut payload, entry),
         FromDecoder::BookmarksRead { skipped } => {
@@ -405,6 +410,7 @@ pub fn read_from_decoder(input: &mut dyn Read) -> Result<Option<FromDecoder>, Pr
             }
             FromDecoder::InputControl { body: fields.take(length)?.to_vec() }
         }
+        KIND_CONFINED => FromDecoder::Confined,
         KIND_STORE_FULL => FromDecoder::StoreFull,
         KIND_BOOKMARK_FOLDER | KIND_BOOKMARK_FOLDER_END | KIND_BOOKMARK_LINK => FromDecoder::Bookmark(bookmarks::read_entry(kind, &mut fields)?),
         KIND_BOOKMARKS_READ => FromDecoder::BookmarksRead { skipped: fields.u32()? },

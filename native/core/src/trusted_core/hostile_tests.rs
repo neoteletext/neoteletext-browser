@@ -9,8 +9,26 @@
 //! and that no page intent asked to start a helper or hand a page to the
 //! web browser; at the end, that nothing sent to the interface carried a
 //! cookie (requirement 3.6), and that the core never panicked. It runs
-//! with bookmarks, the start page, and a second, private window (finding
-//! F-98).
+//! with bookmarks, the start page, file channels, and a second, private
+//! window (finding F-98).
+//!
+//! On macOS and Linux the core runs against a stand-in for the broker
+//! (`confine::broker::stand_in`, a test's feature only), as it does when
+//! the browser runs, and each event is followed by the core's timed work
+//! and its flush, as in its event loop. The stand-in keeps every request
+//! and everything the core writes to each helper, so the harness also
+//! checks, after every intent, that a page intent asked the broker for
+//! nothing (no helper, no file, no hand-off); that no intent started a
+//! helper outside the browser's roles or with arguments the core does not
+//! give (an interface or sound helper, a decoder's store outside its
+//! bounds, a fetcher for a channel no tab holds, the local network not
+//! asked for); that only a confirmation in the strip handed an address to
+//! the web browser; and that every decoder and fetcher the core holds is
+//! for a tab's channel. At the end it reads what the core sent each
+//! helper with the helper's own reader: every message must be one the
+//! helper accepts (no page or sub-page outside a decoder's store), and no
+//! decoder may be given another channel's bytes, a private tab's among
+//! them.
 //!
 //! The interface's process is not replaced here: the broker starts it, and
 //! a way to start another would be a way into a release build. The core is
@@ -18,6 +36,11 @@
 
 use std::io::Write;
 use std::sync::mpsc;
+
+#[cfg(unix)]
+mod watch;
+#[cfg(unix)]
+use watch::{Watch, check_helpers};
 
 use interface_core::canvas::PageKey;
 use interface_core::controls::{FastextKey, PageControl};
@@ -200,11 +223,44 @@ fn is_page_intent(intent: &ToCore) -> bool {
     }
 }
 
+/// A confirmation in the strip: the one intent that may hand an address to
+/// the web browser (requirement 8.6).
+fn is_confirmation(intent: &ToCore) -> bool {
+    #[cfg(feature = "links")]
+    return matches!(intent, ToCore::Confirm(_));
+    #[cfg(not(feature = "links"))]
+    {
+        let _ = intent;
+        false
+    }
+}
+
 /// Each tab's channel in every window, as the strip names it, with
 /// whether it is private.
 fn channels(session: &Session) -> Vec<(String, bool)> {
     session.all_tabs().map(|tab| (tab.address().map(|address| address.channel_text().to_owned()).unwrap_or_default(), tab.private)).collect()
 }
+
+/// On Windows the core has no stand-in broker (it passes pipes the
+/// Windows way, which `confine` has no stand-in of): nothing is watched,
+/// and a page intent's asking is caught by [`NO_BROKER`] alone.
+#[cfg(not(unix))]
+struct Watch;
+
+#[cfg(not(unix))]
+#[allow(clippy::unused_self, reason = "the same calls as the stand-in's watch, which does something with each")]
+impl Watch {
+    fn start() -> (Option<std::sync::Arc<confine::broker::Broker>>, Self) {
+        (None, Self)
+    }
+    fn take(&mut self) {}
+    fn check_intent(&mut self, _: &Core, _: bool, _: bool, _: &str) {}
+    fn check_timed(&mut self, _: &Core, _: &str) {}
+    fn note_channels(&mut self, _: &Core, _: u64) {}
+}
+
+#[cfg(not(unix))]
+fn check_helpers(_: &Core, _: &str) {}
 
 /// What this core without a broker answers when asked to start a helper
 /// or hand a page to the web browser: a page intent must never ask.
@@ -214,7 +270,7 @@ const NO_BROKER: &str = "no broker: this trusted core starts nothing";
 /// the interface's pipe and acted on, checked after each; how many the
 /// reader took and how many it refused.
 #[allow(clippy::arithmetic_side_effects, reason = "a test's counts")]
-fn hostile_rounds(core: &mut Core, start_page: PageKey, private: u32) -> (usize, usize) {
+fn hostile_rounds(core: &mut Core, watch: &mut Watch, start_page: PageKey, private: u32) -> (usize, usize) {
     let mut random = Random(0x5EED_0309_2026);
     let shapes = shapes(&mut random);
     let samples = samples(start_page, private);
@@ -231,14 +287,23 @@ fn hostile_rounds(core: &mut Core, start_page: PageKey, private: u32) -> (usize,
         };
         taken += 1;
         let page_intent = is_page_intent(&intent);
-        let described = format!("{intent:?}");
+        let confirmation = is_confirmation(&intent);
+        let described = format!("round {round}: {intent:?}");
         let before = (channels(&core.session), core.settings.clone(), core.session.bookmarks.text());
+        let generation = core.generation;
         // An error is the browser ending, as for a write that failed; a
         // panic is the fault the harness is for.
         let result = core.intent(intent);
         if page_intent {
-            assert_ne!(result, Err(String::from(NO_BROKER)), "round {round}: a page intent asked to start a helper or hand a page on: {described}");
+            assert_ne!(result, Err(String::from(NO_BROKER)), "a page intent asked to start a helper or hand a page on: {described}");
         }
+        watch.check_intent(core, page_intent, confirmation, &described);
+        // The event loop's timed work and flush follow every event.
+        if matches!(result, Ok(true)) {
+            let _ = core.tick().and_then(|()| core.flush());
+            watch.check_timed(core, &described);
+        }
+        watch.note_channels(core, generation);
         if !matches!(result, Ok(true)) {
             // The last tab closed: the browser would end. Open another and
             // go on, as a new start would.
@@ -251,9 +316,10 @@ fn hostile_rounds(core: &mut Core, start_page: PageKey, private: u32) -> (usize,
             assert_eq!(
                 (channels(&core.session), core.settings.clone(), core.session.bookmarks.text()),
                 before,
-                "round {round}: a page intent moved a tab, changed a setting or the bookmarks: {described}"
+                "a page intent moved a tab, changed a setting or the bookmarks: {described}"
             );
         }
+        check_helpers(core, &described);
     }
     (taken, refused)
 }
@@ -277,27 +343,77 @@ fn sent_without_the_cookie(written: &mpsc::Receiver<Vec<u8>>) -> usize {
     messages
 }
 
+/// The file channels the harness opens: the stand-in broker reads any
+/// path, and marks its page with the path (`watch`).
+const FILE_CHANNEL: &str = "/hostile-harness/news.tti";
+const PRIVATE_FILE_CHANNEL: &str = "/hostile-harness/private.tti";
+
+/// Finding F-98's hand-off, before the rounds: a web link's question in
+/// the strip is not answered by page intents, and, confirmed, hands its
+/// address on through the broker once, as the stand-in sees; so the
+/// rounds' check that nothing else does is one that would see it.
+#[cfg(all(unix, feature = "links"))]
+fn a_confirmed_web_link_is_handed_on(core: &mut Core, watch: &mut Watch) {
+    use neoteletext::links::{Channel, DWELL_MILLISECONDS, Follow, PROMPT_DELAY_MILLISECONDS};
+    use protocol::links::{Candidate, Fastext, Found, Spot};
+    const WEB: &str = "https://www.example.invalid/";
+    let tab = core.session.active_tab().unwrap();
+    let (channel, address) = (tab.channel.id, tab.address().unwrap().clone());
+    let key = PageKey { channel, page: 0x100 };
+    let web = Candidate { row: 5, column: 0, length: 7, double: false, light: false, target: Found::Declared(format!("web:{WEB}")) };
+    core.links.opened(Some(key));
+    core.links.found(key, vec![web], Vec::new(), Fastext::default());
+    core.links.image(key, 1, &Channel { id: channel, address: &address, exists: &|_| true }, 0);
+    let spot = Spot { key, version: 1, column: 1, row: 5 };
+    core.links.point(Some(spot));
+    let Ok(Follow::Ask(prompt)) = core.links.click(spot, Some(channel), DWELL_MILLISECONDS) else { panic!("a web link asks first") };
+    // Past the question's half second, measured from the core's start.
+    std::thread::sleep(std::time::Duration::from_millis(PROMPT_DELAY_MILLISECONDS + DWELL_MILLISECONDS + 100));
+    watch.take();
+    // Page intents while the question stands hand nothing on.
+    for intent in [ToCore::Point(Some(spot)), ToCore::Visible(vec![key]), ToCore::Point(None)] {
+        let described = format!("{intent:?}, with a web link's question in the strip");
+        assert_eq!(core.intent(intent), Ok(true));
+        watch.check_intent(core, true, false, &described);
+    }
+    assert_eq!(core.intent(ToCore::Confirm(prompt.id)), Ok(true));
+    let handed: Vec<_> = watch.take().into_iter().filter(|request| matches!(request, confine::broker::Request::OpenWeb(_))).collect();
+    assert_eq!(handed, [confine::broker::Request::OpenWeb(WEB.into())], "the confirmed link, handed on once");
+}
+
 #[test]
+#[allow(clippy::arithmetic_side_effects, reason = "a test's counts")]
 fn the_core_stands_against_a_hostile_interface() {
     let folder = std::env::temp_dir().join(format!("neoteletext-hostile-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&folder);
     std::fs::create_dir_all(&folder).unwrap();
     let (sender, written) = mpsc::channel();
     let (events, _incoming) = mpsc::channel();
-    let mut core =
-        Core::new(Session::new(Bookmarks::default()), Vec::new(), (Settings::default(), Some(folder.clone())), events, Outbox::new(Sink(sender)), None);
+    let (broker, mut watch) = Watch::start();
+    // File channels are read through the broker, as `run` has them read.
+    let session = match &broker {
+        Some(broker) => {
+            let reader = std::sync::Arc::clone(broker);
+            Session::with_reader(Bookmarks::default(), Box::new(move |path: &std::path::Path| reader.read_source(path).map(crate::source::Source::from_bytes)))
+        }
+        None => Session::new(Bookmarks::default()),
+    };
+    let mut core = Core::new(session, Vec::new(), (Settings::default(), Some(folder.clone())), events, Outbox::new(Sink(sender)), broker);
     // Bookmarks, and the start page that lists them, with its bookmark
     // pages that a page intent must not open by itself (finding F-67).
     core.session.bookmarks.add(neoteletext::bookmarks::BAR, "Weather", "https://weather.invalid/teletext/").unwrap();
     core.session.open("https://news.invalid/teletext/").unwrap();
     core.session.open("https://sport.invalid/teletext/").unwrap();
+    core.session.open(FILE_CHANNEL).unwrap();
     core.session.open(neoteletext::address::START_PAGE).unwrap();
-    let start_page = PageKey { channel: core.session.tabs[2].channel.id, page: 0x201 };
+    let start_page = PageKey { channel: core.session.tabs[3].channel.id, page: 0x201 };
     // A second window, private, whose tab a page intent must not move or
-    // reach (findings F-65, F-83, F-84, F-98).
+    // reach (findings F-65, F-83, F-84, F-98), with a file channel whose
+    // bytes no other channel's decoder may be given.
     let first = core.session.window;
     let private = core.session.new_window(true).unwrap();
     core.session.open_private("https://secret.invalid/teletext/").unwrap();
+    core.session.open_private(PRIVATE_FILE_CHANNEL).unwrap();
     core.switch_window(first);
     // A cookie in the first channel's jar, which the interface must never see.
     let channel = core.session.tabs[0].channel.id;
@@ -312,23 +428,46 @@ fn the_core_stands_against_a_hostile_interface() {
     // Pages on screen, so that cells, links and frames have somewhere to be.
     let page = PageKey { channel, page: 0x100 };
     core.intent(ToCore::Visible(vec![page])).unwrap();
+    #[cfg(all(unix, feature = "links"))]
+    a_confirmed_web_link_is_handed_on(&mut core, &mut watch);
 
     // First the real messages a compromised interface would send at once:
     // a start-page bookmark opened by a page intent, and a tab moved into
     // the private window.
+    watch.take();
     for intent in [ToCore::Opened(Some(start_page)), ToCore::TabToWindow { tab: 0, window: private, index: 0 }] {
+        let page_intent = is_page_intent(&intent);
         let described = format!("{intent:?}");
         let before = (channels(&core.session), core.session.bookmarks.text());
         let result = core.intent(intent);
         assert_ne!(result, Err(String::from(NO_BROKER)), "{described} asked to start a helper or hand a page on");
+        watch.check_intent(&core, page_intent, false, &described);
         assert_eq!((channels(&core.session), core.session.bookmarks.text()), before, "{described} moved a tab");
     }
+    // Every channel's helpers, started as a tab is chosen, as the user
+    // would; what they are told is checked at the end.
+    let generation = core.generation;
+    core.intent(ToCore::SelectTab(2)).unwrap();
+    core.tick().and_then(|()| core.flush()).unwrap();
+    watch.note_channels(&core, generation);
 
-    let (taken, refused) = hostile_rounds(&mut core, start_page, private);
+    let (taken, refused) = hostile_rounds(&mut core, &mut watch, start_page, private);
     core.to_interface.flush().unwrap();
     drop(core);
     let messages = sent_without_the_cookie(&written);
     // The harness reached the core often, not only the reader.
     assert!(taken > ROUNDS / 5 && refused > 0 && messages > 0, "accepted {taken}, refused {refused}, sent {messages}");
+    #[cfg(unix)]
+    {
+        // The broker was reached: helpers started, files read, and what the
+        // helpers were sent, read by their own readers, with a file
+        // channel's decoder given its own file.
+        let (starts, reads) = (watch.starts, watch.reads);
+        let to_helpers = watch.finish();
+        assert!(
+            starts > 10 && reads > 0 && to_helpers.decoders > 5 && to_helpers.own_files > 0 && to_helpers.messages > 50,
+            "started {starts}, read {reads}, sent {to_helpers:?}"
+        );
+    }
     let _ = std::fs::remove_dir_all(&folder);
 }

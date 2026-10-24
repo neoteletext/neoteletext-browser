@@ -7,6 +7,12 @@ license.workspace = true
 rust-version.workspace = true
 publish.workspace = true
 
+[features]
+# A stand-in for the broker (`broker::stand_in`), for the trusted core's
+# tests only (finding F-98): turned on as a dev-dependency's feature, so
+# no shipped program holds it.
+test-support = []
+
 # Linux (decision 52): Landlock's and seccomp's system calls through the
 # crates the engine's own `neottx` sandbox uses (its decision E.33). Both
 # are safe APIs; the unsafe code of this crate on Linux is two calls of

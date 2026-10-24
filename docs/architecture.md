@@ -322,6 +322,7 @@ Every process speaks the same framing, the engine's: one kind byte, a 32-bit big
 
 | Message | Meaning |
 |---|---|
+| Confined | Its first message, before it reads anything: it is confined and running; one that ends before saying it fails an update's trial (finding F-12) |
 | Arrived | A page was received completely for the first time: its number and a title from its first text row |
 | Updated | A page already held arrived again with different rows |
 | Frame | A rendered page: 480 by 500 palette indices and a palette of at most 32 colours, every index checked against the palette on arrival |
@@ -338,6 +339,7 @@ Every process speaks the same framing, the engine's: one kind byte, a 32-bit big
 
 | Message | Meaning |
 |---|---|
+| Confined | Its first message, before it opens its channel: as a decoder's |
 | Contents | The channel's contents file as the engine read it: section headings and page entries with titles, at most 1,000 entries |
 | Page | A page's bytes, fetched or pushed, passed to the decoder unread |
 | Notice | A short report, such as an unreachable address, cleaned and shown in the trusted core's log |
@@ -783,7 +785,7 @@ Unsafe code is allowed only in the modules requirement 10.12 names, each saying 
 - History following Chrome's rules (`history-and-bookmarks.md` section 16, decision 64, 23 October 2026): reloads counted as Chrome counts them, lists of 12 with chapter stops, removal reaching the tabs' lists, closed tabs kept between runs, the last 15 minutes, a row's menu.
 - Fastext, reveal, hold, mix and sub-pages (`page-controls.md`, decision 67), with the receiver's row 24 of pages with `LN` lines; the remote control (`remote-control.md`, decision 68); and dragging tabs and their overflow (`tab-strip.md`, decision 69), 23 October 2026.
 - The console's Log, each line with its level and process, and the channel's own `LG` lines (decision 70); bookmarks imported from other browsers' Netscape files, and "Move…" (decision 71); multiple windows, with tabs moved and torn off between them (decision 72), 23 October 2026.
-- Requirement 3.9's hostile interface harness against the trusted core (`native/core/src/trusted_core/hostile_tests.rs`), run by the commit gate, with bookmarks, the start page and a second, private window since 24 October 2026 (finding F-98).
+- Requirement 3.9's hostile interface harness against the trusted core (`native/core/src/trusted_core/hostile_tests.rs`), run by the commit gate, with bookmarks, the start page and a second, private window; on macOS and Linux against a stand-in broker whose requests and helpers' input it checks (finding F-98).
 - Installation and updates on every desktop (`installation-and-updates.md`, decisions 54 and 73 to 82, 23 October 2026): the launcher, the confined updater with `tough`, the Windows stub and installer, Linux's `--install`, removal, the release tool, and the core's offer, setting and health check, proved end to end with test keys on macOS, Windows and Linux.
 - The certificate-error screen (`certificate-errors.md`, decision 83, 23 October 2026).
 - The menu bar on macOS, and cut, copy and paste in every text field on every desktop (`menu-bar.md`, decision 84, 23 October 2026).
@@ -799,7 +801,7 @@ Unsafe code is allowed only in the modules requirement 10.12 names, each saying 
 - Discovery.
 - Full screen of the page alone (`full-screen.md`, decision 85, designed 23 October 2026).
 - Screen readers, the input method's text shown while it is composed, reduced motion.
-- The hostile interface harness with running helpers (the harness against the trusted core alone is built).
+- The hostile interface harness with the real helpers running (it runs against the trusted core with a stand-in broker and stand-in helpers).
 - A release signed by the owner's keys: the certificates, the hardware keys, the update host and the key ceremony are the owner's (`PENDINGTASKSFORANDREW.md`); the Linux release build on the C library 2.28; an icon of the browser's own.
 - Builds on phones and microcontroller targets.
 

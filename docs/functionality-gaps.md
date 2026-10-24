@@ -64,7 +64,7 @@
 
 | Feature | State | Where |
 |---|---|---|
-| The hostile interface harness | Partly: against the trusted core alone; not with running helpers | Requirement 3.9 |
+| The hostile interface harness | Partly: against the trusted core, with a stand-in broker and helpers on macOS and Linux; not with the real helpers | Requirement 3.9 |
 | A review of spoofing in every layout | Not done | Requirement 14.5 |
 | A check of the engine's guarantees | Not done | Requirement 2.3 |
 | The grace period for closed tabs, the live-feed threshold, refresh schedules | Not built | — |

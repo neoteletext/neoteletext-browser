@@ -16,6 +16,7 @@ pub(super) const KIND_REACHED_QUESTION: u8 = 89;
 pub(super) const KIND_COOKIE_SET: u8 = 90;
 pub(super) const KIND_CLEAR_SITE_DATA: u8 = 91;
 pub(super) const KIND_CERTIFICATE_REFUSED: u8 = 92;
+pub(super) const KIND_CONFINED: u8 = 93;
 #[cfg(feature = "interaction")]
 pub(super) const KIND_SEND: u8 = 96;
 pub(super) const KIND_COOKIE_ANSWER: u8 = 97;

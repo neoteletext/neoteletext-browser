@@ -33,6 +33,12 @@ impl Core {
     pub(super) fn fetched(&mut self, channel: u32, message: FromFetcher) -> Result<(), String> {
         self.console_fetched(channel, &message);
         match message {
+            // As a decoder's (`decoded`).
+            FromFetcher::Confined => {
+                if let Some(fetcher) = self.fetchers.get_mut(&channel) {
+                    fetcher.hear();
+                }
+            }
             FromFetcher::Contents(entries) => self.contents(channel, &entries)?,
             FromFetcher::Page { origin: Origin::Fetched, bytes } => {
                 // Untouched, a piece at a time; each page file ends its last

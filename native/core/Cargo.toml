@@ -49,6 +49,9 @@ windows-sys = { version = "=0.52.0", features = ["Win32_Storage_FileSystem"] }
 # render, this crate's encoding and the interface's decoding.
 [dev-dependencies]
 decoder.workspace = true
+# The stand-in broker the hostile-interface harness starts the core
+# against (finding F-98).
+confine = { workspace = true, features = ["test-support"] }
 
 [lints]
 workspace = true

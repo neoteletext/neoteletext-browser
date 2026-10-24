@@ -13,8 +13,8 @@ use crate::{Fields, MAX_ADDRESS, MAX_PAGE_TITLE, MAX_PAYLOAD, ProtocolError, pus
 #[cfg(feature = "links")]
 use kinds::KIND_LINKS;
 use kinds::{
-    KIND_CERTIFICATE_REFUSED, KIND_CLEAR_SITE_DATA, KIND_CONTENTS, KIND_COOKIE_ANSWER, KIND_COOKIE_QUESTION, KIND_COOKIE_SET, KIND_EXCHANGE, KIND_NOTICE,
-    KIND_PAGE, KIND_PROXY_FAILED, KIND_PUSHING, KIND_REACHED_ANSWER, KIND_REACHED_QUESTION,
+    KIND_CERTIFICATE_REFUSED, KIND_CLEAR_SITE_DATA, KIND_CONFINED, KIND_CONTENTS, KIND_COOKIE_ANSWER, KIND_COOKIE_QUESTION, KIND_COOKIE_SET, KIND_EXCHANGE,
+    KIND_NOTICE, KIND_PAGE, KIND_PROXY_FAILED, KIND_PUSHING, KIND_REACHED_ANSWER, KIND_REACHED_QUESTION,
 };
 #[cfg(feature = "interaction")]
 use kinds::{KIND_INPUT, KIND_SEND};
@@ -84,6 +84,10 @@ pub enum Entry {
 /// From a fetcher to the trusted core. A fetcher is untrusted.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum FromFetcher {
+    /// It is confined and running: a fetcher says this first, before it
+    /// opens its channel, so the trusted core can tell one that could not
+    /// start from one a channel's server ended (finding F-12).
+    Confined,
     /// The channel's contents file, read.
     Contents(Vec<Entry>),
     /// Page bytes, TTI or T42, as fetched or pushed.
@@ -307,6 +311,7 @@ pub fn write_to_core(out: &mut dyn Write, message: &FromFetcher) -> Result<(), P
             payload.extend_from_slice(&elapsed_us.to_be_bytes());
             KIND_EXCHANGE
         }
+        FromFetcher::Confined => KIND_CONFINED,
         FromFetcher::ProxyFailed => KIND_PROXY_FAILED,
         FromFetcher::CertificateRefused(problem) => {
             payload.push(crate::problem_code(*problem));
@@ -382,6 +387,7 @@ pub fn read_from_fetcher(input: &mut dyn Read) -> Result<Option<FromFetcher>, Pr
             let elapsed_us = u64::from_be_bytes(fields.array()?);
             FromFetcher::Exchange { method, url, status, bytes, elapsed_us }
         }
+        KIND_CONFINED => FromFetcher::Confined,
         KIND_PROXY_FAILED => FromFetcher::ProxyFailed,
         KIND_CERTIFICATE_REFUSED => FromFetcher::CertificateRefused(crate::problem_of(fields.u8()?).ok_or(ProtocolError::BadValue("certificate problem"))?),
         KIND_COOKIE_QUESTION | KIND_REACHED_QUESTION | KIND_COOKIE_SET | KIND_CLEAR_SITE_DATA => cookies::read_cookie_message(kind, &mut fields)?,
