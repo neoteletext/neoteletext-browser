@@ -350,7 +350,13 @@ fn hostile_rounds(core: &mut Core, watch: &mut Watch, start_page: PageKey, priva
                 core.session.open("https://news.invalid/teletext/").unwrap();
                 let described = format!("{described}, then a new start");
                 let generation = core.generation;
-                core.send_window_whole().unwrap();
+                match core.send_window_whole() {
+                    Ok(()) => {}
+                    // Without the stand-in broker, as on Windows, the new
+                    // tab's helpers cannot be started.
+                    Err(error) if cfg!(not(unix)) && error == NO_BROKER => {}
+                    Err(error) => panic!("{described}: {error}"),
+                }
                 watch.check_timed(core, &described);
                 watch.note_channels(core, generation);
                 check_helpers(core, &described);
