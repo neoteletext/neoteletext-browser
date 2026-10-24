@@ -27,8 +27,8 @@
 use std::collections::VecDeque;
 use std::io::{ErrorKind as IoErrorKind, Read, Write};
 use std::net::{IpAddr, Shutdown, SocketAddr, TcpStream, ToSocketAddrs};
+use std::sync::Arc;
 use std::sync::mpsc::{self, Receiver, SyncSender, TryRecvError};
-use std::sync::{Arc, Mutex, PoisonError};
 use std::time::{Duration, Instant};
 
 use embedded_io::ErrorKind;
@@ -38,8 +38,9 @@ use neoteletext_web::proxy::Proxy;
 use neoteletext_web::url::IpAddress;
 use protocol::fetcher::CertificateProblem;
 
-#[cfg(test)]
-mod tests;
+mod cancel;
+
+use cancel::{Cancel, hold, shut};
 
 /// How long a connection may take to open, from the name's resolution to
 /// the end of its proxy's tunnel and TLS handshake: the engine's connect
@@ -113,44 +114,6 @@ fn certificate_problem(error: &std::io::Error) -> CertificateProblem {
             _ => CertificateProblem::Invalid,
         },
         _ => CertificateProblem::Handshake,
-    }
-}
-
-/// What `close` reaches of a connection still opening: whether it was
-/// closed, and the socket its thread is on, to shut.
-#[derive(Default)]
-struct Opening {
-    closed: bool,
-    socket: Option<TcpStream>,
-}
-
-/// A connection's opening, shared by its thread and the loop.
-type Cancel = Arc<Mutex<Opening>>;
-
-/// The opening as it stands; a thread that panicked holding it changed
-/// nothing that matters here.
-fn opening(cancel: &Cancel) -> std::sync::MutexGuard<'_, Opening> {
-    cancel.lock().unwrap_or_else(PoisonError::into_inner)
-}
-
-/// Gives `close` a handle to `socket`; false when the connection was
-/// closed already, and the socket is to be let go.
-fn hold(cancel: &Cancel, socket: &TcpStream) -> bool {
-    let mut opening = opening(cancel);
-    if opening.closed {
-        return false;
-    }
-    opening.socket = socket.try_clone().ok();
-    opening.socket.is_some()
-}
-
-/// Shuts a connection still opening: its thread's next read or write, or
-/// the one it is blocked in, fails, and the thread ends.
-fn shut(cancel: &Cancel) {
-    let mut opening = opening(cancel);
-    opening.closed = true;
-    if let Some(socket) = opening.socket.take() {
-        let _ = socket.shutdown(Shutdown::Both);
     }
 }
 
@@ -562,3 +525,6 @@ impl Transport for Tcp {
         }
     }
 }
+
+#[cfg(test)]
+mod tests;
