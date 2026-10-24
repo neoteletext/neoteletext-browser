@@ -85,7 +85,8 @@ phone ──▶ relay ──▶ neoteletext-keyboard ── PhoneKey
 | Threat | Mitigation |
 |---|---|
 | The keyboard process attacked through what it parses: relay JSON, frames, ciphertext, decrypted JSON | Its own process, sandboxed with the network only; no files, pages or cookies; the no-panic list; its readers fuzzed; it holds only the instance's token and the pairing keys |
-| A hostile relay reads keys | It cannot: AES-256-GCM end to end from a secret it never sees |
+| A passive relay or network observer reads keys | It cannot: AES-256-GCM end to end from a secret it never sees |
+| The relay's operator, or whoever compromises its server, reads the PIN and the keys (finding F-18) | Not prevented: the relay serves the phone's page, the code that encrypts, so it can serve code that sends the PIN and the keys elsewhere. Bounded by section F: a hostile phone is a hostile local keyboard with no modifiers, which outside a page open for typing only moves between pages. Serving the phone's page apart from the relay would close it, and qrkeyboard.com is not this repository's server (decision 96) |
 | A hostile relay relabels the phone's keys or renames the screen | qrkeyboard's configuration hash in the QR, computed as its SDK computes it |
 | Replay or reordering by the relay | Counter nonces accepted once and in order; fresh salts per connection |
 | **Whoever photographs the QR has the keyboard** | The QR appears only from the panel, with its one-line warning; a PIN is offered; one phone; Finish in the strip; a dropped phone holds the screen 30 s, not qrkeyboard's default 5 minutes |
@@ -118,6 +119,7 @@ Typing tells the channel the viewer's keys and the pages they open, which is wha
 | 3 | The keyboard process taken through what it parses | Low | Medium: a compromised local keyboard | Sandbox; no panics; fuzzing |
 | 4 | A QR photographed from a public screen | Medium on a public screen | Medium: a stranger types | PIN; one phone; 30 s; Finish; the warning |
 | 5 | A page imitates the cursor, the echo or the strip's words | Medium | Low: nothing happens without the strip | The strip; the hairline; the provisional face |
+| 6 | The relay's operator, or a compromise of its server, serves the phone code that reads the PIN and the keys (finding F-18) | Low | Medium: the keys typed on the phone, and a hostile keyboard | Section F's bounds; the PIN; one phone; decision 96 |
 
 ## 8. Checks that keep these properties
 
