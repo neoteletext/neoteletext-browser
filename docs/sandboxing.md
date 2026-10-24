@@ -5,7 +5,7 @@
 | **Status** | Built 22 October 2026 on the owner's instruction ("do both"), after the options of 21 October 2026; decision 52 below records it, for the owner to confirm. The sound helper (decision 55) and the trusted core behind a broker (decision 56, section 7) built the same day on the owner's instruction ("DO THIS PROPERLY NOW NOT LATER"). Decision 58, the same day, rescinded decision 52's "degrade and report": every layer is required (section 8). |
 | **Requirements** | 3.1 (the processes), 3.3, 3.4, 3.6, 3.7 (each process confined, from "deny everything"), 3.8 (the trusted core confined), 10.12 (where unsafe code may be), 16.6 (silent without a sound device). |
 | **Security analysis** | [`sandboxing-security.md`](sandboxing-security.md); [`security-analysis.md`](security-analysis.md) section 13 holds the per-platform summary. |
-| **Code** | `native/confine`: `spawn`, the parent's side, and `apply`, a process's own side; `macos.rs`, `linux.rs`, `windows.rs`; `broker.rs`, the broker and the core's end of it, and `unix.rs`, passing descriptors on Unix. `native/core/build.rs` (section 7.4). |
+| **Code** | `native/confine`: `spawn.rs`, `spawn`, the parent's side, and `apply`, a process's own side; `macos.rs`, and the folders `linux/`, `unix/` and `windows/`, a module for each layer or call; `broker.rs` with `broker/`, the broker's wire format, its serving side and the core's end of it; `unix/descriptors.rs`, passing descriptors on macOS and Linux. `native/core/build.rs` (section 7.4). |
 
 ## 1. What is wanted
 
@@ -101,7 +101,7 @@ The core's requests:
 | Healthy | Tells the launcher the version is healthy (`installation-and-updates.md` section 3.2) | No payload |
 | Update state | Returns the launcher's state file, or refuses when no launcher started the broker | At most 4 KiB, read strictly |
 
-The channel is a local-domain socket pair on macOS and Linux, the core's standard input, which carries each helper's pipes as descriptors (`SCM_RIGHTS`, `confine/src/unix.rs`). On Windows it is two pipes, and the broker duplicates the helper's pipe handles into the core's process with `DuplicateHandle` and sends their values. Every message is a kind byte, a length and a payload, read within its bound; a request the broker cannot parse ends the core. The broker's decoders are fuzzed (`broker_requests`, `broker_replies`).
+The channel is a local-domain socket pair on macOS and Linux, the core's standard input, which carries each helper's pipes as descriptors (`SCM_RIGHTS`, `confine/src/unix/descriptors.rs`, over the channel of `confine/src/unix/channel.rs`). On Windows it is two pipes, and the broker duplicates the helper's pipe handles into the core's process with `DuplicateHandle` and sends their values. Every message is a kind byte, a length and a payload, read within its bound; a request the broker cannot parse ends the core. The broker's decoders are fuzzed (`broker_requests`, `broker_replies`).
 
 A compromised core gains nothing it did not have: it can start only the browser's helpers, each confined as always; read only teletext a file channel could already name, outside the dot-folders, applications' data and the browser's own folders, and never through a link it made (decision 88); and open only what a link could already open.
 
@@ -158,7 +158,7 @@ Decision 54 installs per user, with no administrator, on every desktop. On Linux
 
 - `a_helper_without_its_namespace_does_not_run` (`confine/tests/probe.rs`): a decoder whose `unshare` is refused, as on a distribution that forbids user namespaces, must refuse to run. On the code before, it ran "without a network namespace".
 - `a_file_to_read_keeps_landlock_whole`: the interface with a file to read gets every Landlock right enforced. On the code before, "Landlock (in part)".
-- `a_helper_whose_container_cannot_be_made_is_not_started` (`confine/src/lib.rs`, Windows): a decoder whose container cannot be made, without the user's profile folders in its environment, must not start. On the code before, it started with the restricted token alone; and `a_helper_gets_only_the_environment_it_is_given` had been passing that way, without its container, unseen. It is now given a decoder's real environment.
+- `a_helper_whose_container_cannot_be_made_is_not_started` (`confine/src/spawn/tests.rs`, Windows): a decoder whose container cannot be made, without the user's profile folders in its environment, must not start. On the code before, it started with the restricted token alone; and `a_helper_gets_only_the_environment_it_is_given` had been passing that way, without its container, unseen. It is now given a decoder's real environment.
 - The probes now run as a program of their own, `confine-probe`, with one thread, as a helper is when it confines itself: a test harness's threads make the kernel refuse a new user namespace, which the code before had silently reported as missing, so its own probe tests had run without the namespace.
 
 ## 9. The security review of 24 October 2026
