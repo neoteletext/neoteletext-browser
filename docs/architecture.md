@@ -646,51 +646,113 @@ With no web engine the application is far smaller: the interface process is abou
 
 ## 14. Code layout
 
+A module's tests are a `tests.rs` in the module's own folder (`session/tests.rs` for `session.rs`), or a `tests/` folder there where they need more than one file; tests that start processes are in the crate's own `tests/`.
+
 ```
 neoteletext-browser/
   native/                   the application (a Cargo workspace)
-    interface-core/         the window's state, layout, animation and input; no standard library; the
-                            history panel, bookmarks manager, star's popover, bookmarks bar, menu,
-                            Back and Forward lists and suggestions (browser/*_ui.rs, library.rs)
-    draw-vello/             the drawing back end for desktops and phones: vello_cpu and Parley, with the fonts
+    interface-core/         the window's state, layout, animation and input; no standard library
+      src/                  the drawing interface (canvas.rs), geometry, the address field's editor, the
+                            theme, tweens, page sizes, small text helpers, and the views the trusted core
+                            sends: channel, console, controls, cookies, library, links, session, settings
+      src/browser/          the window, a file for each part: the tab strip (+ tab_strip/, dragging and
+                            drawing), the toolbar, the address field, its suggestions, Back and Forward's
+                            lists, the menu, drop-downs, the banks, the page list, the overview, the page
+                            controls, hyperlinks, typing (+ typing/draw.rs), the phone and its keys, the
+                            certificate-error screen, tips, keys, focus, the pointer (+ pointer/press.rs),
+                            frame timing, and regions, where each part was drawn, for hit-testing
+      src/browser/<panel>/  the strip's panels, each a file with a folder of its drawing and its input:
+                            bookmarks/, history/, settings_panel/, console_panel/ (its Cookies tab is
+                            cookies_tab.rs), remote/; the star's popover and the bookmarks bar beside them
+      src/wall/             the page area: the grid, the page under the pointer, the zoom, update marks,
+                            the page-size control, and its drawing
+    draw-vello/             the drawing back end for desktops and phones: vello_cpu and Parley, with the
+                            fonts; a frame's recorded calls, its damage, rasterising, text and page images
     draw-embedded/          the drawing back end for microcontrollers: embedded-graphics
-    protocol/               every message between processes: framing, bounds, kinds, text cleaning
-    confine/                the processes' sandboxes: sandbox-exec profiles on macOS, Landlock, a network
-                            namespace and seccomp on Linux, a job object, restricted token, mitigation
-                            policies and AppContainer on Windows (sandboxing.md); broker.rs, the broker
-                            and the trusted core's end of it, and unix.rs, pipes passed as descriptors
-    core/                   the broker and the trusted core (neoteletext, and neoteletext --core): tabs,
-                            history, addresses, routing, frames, and hearing.rs, which channel is heard
-                            and the checks on its sound; history.rs, bookmarks.rs and calendar.rs, kept
-                            history and bookmarks and their files, and library.rs, their panels' views
-                            and requests (history-and-bookmarks.md); build.rs delay-loads shell32.dll on
-                            Windows
-    decoder/                the decoder (neoteletext-decoder): the engine as the decoder uses it
-    fetcher/                the fetcher (neoteletext-fetcher): the engine's user agent over the network
-    interface/              the interface process (neoteletext-interface): winit, softbuffer, the image reader
-    keyboard/               the phone keyboard process (neoteletext-keyboard): qrkeyboard's relay, pairing and keys
-    dock-menu/              the Dock menu on macOS (decision 39); unsafe code in src/mac.rs alone
-    web-opener/             hands a checked web address to the system's web browser (hyperlinks.md section 12)
-    sound/                  the sound helper (neoteletext-sound): audio.rs, the mixers and the output device
-    site/                   a development tool, not shipped (neoteletext-site): builds and serves a test channel
-    update/                 what the launcher, the updater, the installer and the release tool share: versions,
-                            the platforms' release files, the manifest, the launcher's state, gzip, the release
-                            key's signatures, the version mark, the updater's messages, safe writes, acceptance
+    protocol/               every message between processes: framing, fields, bounds, kinds, text cleaning,
+                            page images (frame.rs), and a module for each pipe and feature: sound, audio,
+                            the phone keyboard (keyboard.rs), settings, the console, controls, cookies
+      src/interface/        the trusted core and the interface: kinds, tabs, pages, the strip, windows,
+                            and each direction's reader and writer (to_core.rs, to_interface.rs)
+      src/decoder/          the decoder's pipe: kinds, rendered frames, the open page's view, bookmark files
+      src/fetcher/          the fetcher's pipe: kinds and the cookie messages
+      src/library/          history, bookmarks and the address field's and Back and Forward's lists
+      src/links/            what a decoder finds, Fastext, and what the interface is told of links
+      src/interaction/      typing: the viewer's intents and the typing state
+    confine/                the processes' sandboxes (sandboxing.md): spawn.rs, a parent's side and a
+                            process's own (apply), the roles, each role's environment, a started
+                            helper, the local time; macos.rs, the sandbox-exec profiles, each path a
+                            parameter
+      src/broker/           the broker's wire format, its serving side and the trusted core's side
+      src/linux/            the namespaces, Landlock, seccomp, the paths each role may read, the private
+                            /run and /tmp of the interface and the sound helper, and the tests' probes
+      src/unix/             the broker's channel on macOS and Linux, descriptors passed, the local zone
+      src/windows/          AppContainer profiles, the job, the attribute list, access lists, handles, a
+                            confined process and its environment block, the broker's channel, the zone
+    core/                   the broker and the trusted core (neoteletext, and neoteletext --core); build.rs
+                            delay-loads shell32.dll on Windows
+      src/                  the library (lib.rs), each part pure logic or a kept file's format: addresses,
+                            bookmarks (+ bookmarks/: the file, changes, import), the helpers' budget, the
+                            calendar, the console's entries, cookies (+ cookies/file.rs, the sealed file),
+                            dropped lines, frames, hearing, history (+ history/search.rs), links (+ links/:
+                            targets, destinations, the strip's questions, following), the outbox, private
+                            files, the session file (restore.rs), settings (+ settings/proxy.rs), sleep,
+                            the start page, typing (+ typing/records.rs); and the binary: main.rs, the
+                            entry alone, broker.rs, the unconfined broker, source.rs, a file channel's bytes
+      src/session/          the tabs and windows: a tab, its history and navigation, its channel, closed
+                            tabs, windows set aside, the session saved, and what links ask of it
+      src/trusted_core/     Core and its events, a file for each concern: the helper processes, channels,
+                            timing, windows, intents, decoder and fetcher messages, the strip, the console,
+                            settings, sound, updates, the phone, links, typing, start-up, the run, panel
+                            numbers, page controls, library/ (history, bookmarks, the star, the bar),
+                            cookies (+ cookies/panel.rs); hostile_tests.rs, the hostile interface harness
+    decoder/                the decoder (neoteletext-decoder): its process (process.rs) and the engine as
+                            it uses it (engine.rs, + engine/: feed, render), changes, flash, input records,
+                            links, titles, the voice sink, and the Netscape bookmark reader (netscape.rs)
+    fetcher/                the fetcher (neoteletext-fetcher): its arguments, its loop (process.rs), the
+                            engine's agent's own parts, its cookies, and the transport over the network
+    interface/              the interface process (neoteletext-interface): the system window, the reader
+                            thread, keys, and app.rs with app/: frames, input, the input method, typing,
+                            the phone, the clipboard and menus, windows, what the core said, outputs
+    keyboard/               the phone keyboard process (neoteletext-keyboard): qrkeyboard's relay, pairing
+                            and keys
+    dock-menu/              the Dock menu and the menu bar on macOS (decisions 39 and 84); unsafe code in
+                            src/mac.rs alone
+    web-opener/             hands a checked web address to the system's web browser (hyperlinks.md section
+                            12); unsafe code in src/windows.rs alone
+    sound/                  the sound helper (neoteletext-sound): its loop, the mixers (audio.rs) and the
+                            output device (audio/device.rs)
+    site/                   a development tool, not shipped (neoteletext-site): builds and serves a test
+                            channel; the podcast (+ podcast/wave.rs)
+      src/terminal/         the reference channel that takes input: the server, pages, the session (+
+                            session/audio.rs), the phone keyboard's page, the game, sounds, TTI
+    update/                 what the launcher, the updater, the installer and the release tool share:
+                            versions, the platforms' release files, the manifest, the launcher's state,
+                            gzip, the release key's signatures, the version mark, the updater's messages,
+                            the installed layout, safe writes, acceptance, profiles, fault points
     release-identity/       the release's identity, built in at build time (production/, or a test identity)
-    launcher/               the launcher (neoteletext-launcher): versions, trials, rollback, the broker's start,
-                            Linux's --install and every desktop's --uninstall
-    os-install/             the unsafe calls installing needs: CoreFoundation's alert, WinVerifyTrust, the registry
+    launcher/               the launcher (neoteletext-launcher): its state, a start's trial (trial.rs),
+                            starting the broker (start.rs), tidying, a launcher release, the command line,
+                            macOS's bundle (+ macos/translocation.rs), Windows, and on the terminal
+                            --install and --uninstall (unix.rs, + unix/linux.rs)
+    os-install/             the unsafe calls installing needs: CoreFoundation's alert (src/macos.rs);
+                            WinVerifyTrust, the registry, a message box and the DLL search (src/windows.rs)
     stub/                   the Windows stub, NeoTeletext.exe, which starts launcher-a.exe or launcher-b.exe
-    installer/              the Windows installer, NeoTeletext-Setup.exe, carrying its release
-    tuf/                    a workspace of its own: updater/ (neoteletext-updater, confined, with tough) and
-                            release/ (the release tool and a test HTTPS host), and their fuzz targets
-    fuzz/                   fuzz targets for every reader of input from outside a process (nightly, outside the workspace)
+    installer/              the Windows installer, NeoTeletext-Setup.exe, carrying its release; the Start
+                            menu shortcut (shortcut.rs)
+    tuf/                    a workspace of its own: updater/ (neoteletext-updater, confined, with tough:
+                            the client, the transport, staging, the helper) and release/ (the release tool
+                            and a test HTTPS host), and their fuzz targets
+    fuzz/                   fuzz targets for every reader of input from outside a process, and regressions/,
+                            the inputs that once failed (nightly, outside the workspace)
   docs/                     this document, the requirements, the security analysis, the design record
   scripts/check.sh          the one check script: "commit" before each commit, "full" before each push
   scripts/try.sh            the edit loop: Clippy on every save, or one crate's Clippy and tests
   scripts/tools.sh          the pinned development tools, installed into the ignored tools/
   rust-toolchain.toml       the pinned compiler
 ```
+
+Unsafe code is allowed only in the modules requirement 10.12 names, each saying so with its own `#![expect(unsafe_code, reason)]` or `#![allow(unsafe_code, reason)]`: in `confine`, `src/windows.rs` and every leaf of `src/windows/` but `channel.rs`, `src/linux/namespace.rs`, `runtime.rs` and `probe.rs`, and `src/unix/descriptors.rs` and `time.rs`; `os-install`'s `src/macos.rs` and `src/windows.rs`; `dock-menu`'s `src/mac.rs`; and `web-opener`'s `src/windows.rs`.
 
 `scripts/updates-e2e.sh` and `scripts/updates-e2e.ps1` are the end-to-end tests of installation and updates, run by hand; `scripts/release/` holds the release procedure's steps (`installation-and-updates.md` section 10).
 
