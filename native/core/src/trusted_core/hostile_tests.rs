@@ -8,7 +8,9 @@
 //! in any window, or changed a setting or the bookmarks (requirement 4.5),
 //! and that no page intent asked to start a helper or hand a page to the
 //! web browser; at the end, that nothing sent to the interface carried a
-//! cookie (requirement 3.6), and that the core never panicked. It runs
+//! cookie (requirement 3.6), that the core never panicked, and that it
+//! acted on most of what its reader took, rather than ignoring it as for
+//! a window not open, so that the checks saw the core at work. It runs
 //! with bookmarks, the start page, file channels, and a second, private
 //! window (finding F-98).
 //!
@@ -69,6 +71,31 @@ const MAX_MADE: usize = 96;
 const TRIES: usize = 12;
 /// The mask that makes a byte small: 0 to 3.
 const SMALL: u8 = 3;
+/// One round in this many names a window that is open, as a real
+/// interface does before a message for a window other than the last one
+/// named. Without them the first `From` that names no open window, which
+/// the rounds make often, leaves the core ignoring every later intent but
+/// a window's (`from_closed`), and the rounds reached little but the
+/// reader: in the build with no optional feature, on 24 October 2026, the
+/// core acted on 788 of the 12,412 intents taken, all but 69 of them a
+/// `From`. One in 16 has the core act on most intents in every feature
+/// shape.
+const OPEN_WINDOW_EVERY: usize = 16;
+/// The core must act on more than this fraction's share, one in two, of
+/// the intents the reader takes. Measured on 24 October 2026 in the six
+/// feature shapes the gates build (default, none, links, interaction,
+/// phone-keyboard, links with interaction), with the harness's seed and
+/// three to five others each: 77 % to 86 %; without the rounds that name
+/// an open window, 6 %.
+const REACHED_FLOOR_DIVISOR: usize = 2;
+/// The least the rounds must have the broker do, in helpers started,
+/// decoders whose input was checked and messages read by the helpers' own
+/// readers: one for every hundred rounds. The least measured in those runs
+/// was 2,262 helpers started, 1,559 decoders and 1,727 messages, five
+/// times this or more; before the rounds named open windows, the build
+/// with no optional feature reached 31, 24 and 29 to 33.
+#[cfg(unix)]
+const BROKER_FLOOR: usize = ROUNDS / 100;
 
 struct Sink(mpsc::Sender<Vec<u8>>);
 
@@ -170,14 +197,14 @@ fn samples(start_page: PageKey, private: u32) -> Vec<Vec<u8>> {
     ];
     #[cfg(feature = "links")]
     messages.extend([ToCore::Point(None), ToCore::Typed { number: 0x200, opened: None }, ToCore::Confirm(1), ToCore::Cancel(1)]);
-    messages
-        .iter()
-        .map(|message| {
-            let mut bytes = Vec::new();
-            write_to_core(&mut bytes, message).unwrap();
-            bytes
-        })
-        .collect()
+    messages.iter().map(encoded).collect()
+}
+
+/// A message as the interface's pipe carries it.
+fn encoded(message: &ToCore) -> Vec<u8> {
+    let mut bytes = Vec::new();
+    write_to_core(&mut bytes, message).unwrap();
+    bytes
 }
 
 /// One frame as the interface's pipe carries it: a learnt shape with new
@@ -268,16 +295,22 @@ const NO_BROKER: &str = "no broker: this trusted core starts nothing";
 
 /// The [`ROUNDS`] of messages made at random, each read as the core reads
 /// the interface's pipe and acted on, checked after each; how many the
-/// reader took and how many it refused.
+/// reader took, how many it refused, and how many of those it took the
+/// core acted on, rather than ignored as for a window not open.
 #[allow(clippy::arithmetic_side_effects, reason = "a test's counts")]
-fn hostile_rounds(core: &mut Core, watch: &mut Watch, start_page: PageKey, private: u32) -> (usize, usize) {
+fn hostile_rounds(core: &mut Core, watch: &mut Watch, start_page: PageKey, private: u32) -> (usize, usize, usize) {
     let mut random = Random(0x5EED_0309_2026);
     let shapes = shapes(&mut random);
     let samples = samples(start_page, private);
     assert!(shapes.len() > 30, "the reader accepted only {} shapes", shapes.len());
-    let (mut taken, mut refused) = (0_usize, 0_usize);
+    let (mut taken, mut refused, mut reached) = (0_usize, 0_usize, 0_usize);
     for round in 0..ROUNDS {
-        let bytes = frame(&mut random, &shapes, &samples);
+        let bytes = if random.below(OPEN_WINDOW_EVERY) == 0 {
+            let windows = core.session.window_ids();
+            encoded(&ToCore::From(windows[random.below(windows.len())]))
+        } else {
+            frame(&mut random, &shapes, &samples)
+        };
         let mut input = bytes.as_slice();
         // A malformed message ends the interface's reader, and the browser
         // with it (requirement 4.3): refused, not acted on.
@@ -286,6 +319,10 @@ fn hostile_rounds(core: &mut Core, watch: &mut Watch, start_page: PageKey, priva
             continue;
         };
         taken += 1;
+        // While the window named is not open, only a `From` is acted on.
+        if !core.from_closed || matches!(intent, ToCore::From(_)) {
+            reached += 1;
+        }
         let page_intent = is_page_intent(&intent);
         let confirmation = is_confirmation(&intent);
         let described = format!("round {round}: {intent:?}");
@@ -305,10 +342,18 @@ fn hostile_rounds(core: &mut Core, watch: &mut Watch, start_page: PageKey, priva
         }
         watch.note_channels(core, generation);
         if !matches!(result, Ok(true)) {
-            // The last tab closed: the browser would end. Open another and
-            // go on, as a new start would.
+            // The last tab closed: the browser would end, and its helpers
+            // with it (`run`'s `shut_down`). Open another and go on, as a
+            // new start would: the window sent whole, which ends the last
+            // run's helpers and starts the new tab's.
             if core.session.tabs.is_empty() {
                 core.session.open("https://news.invalid/teletext/").unwrap();
+                let described = format!("{described}, then a new start");
+                let generation = core.generation;
+                core.send_window_whole().unwrap();
+                watch.check_timed(core, &described);
+                watch.note_channels(core, generation);
+                check_helpers(core, &described);
             }
             continue;
         }
@@ -321,7 +366,7 @@ fn hostile_rounds(core: &mut Core, watch: &mut Watch, start_page: PageKey, priva
         }
         check_helpers(core, &described);
     }
-    (taken, refused)
+    (taken, refused, reached)
 }
 
 /// Every message the core sent the interface, once the core has gone,
@@ -454,21 +499,30 @@ fn the_core_stands_against_a_hostile_interface() {
     }
     // Every channel's helpers, started as a tab is chosen, as the user
     // would; what they are told is checked at the end. Without the
-    // stand-in broker, as on Windows, nothing can start them.
+    // stand-in broker, as on Windows, nothing can start them. What they
+    // asked of the broker is checked here, as theirs: left for the first
+    // round to take, it was laid to that round's intent.
     #[cfg(unix)]
     {
         let generation = core.generation;
+        let described = "SelectTab(2), before the rounds";
         core.intent(ToCore::SelectTab(2)).unwrap();
+        watch.check_intent(&core, false, false, described);
         core.tick().and_then(|()| core.flush()).unwrap();
+        watch.check_timed(&core, described);
         watch.note_channels(&core, generation);
     }
 
-    let (taken, refused) = hostile_rounds(&mut core, &mut watch, start_page, private);
+    let (taken, refused, reached) = hostile_rounds(&mut core, &mut watch, start_page, private);
     core.to_interface.flush().unwrap();
     drop(core);
     let messages = sent_without_the_cookie(&written);
-    // The harness reached the core often, not only the reader.
-    assert!(taken > ROUNDS / 5 && refused > 0 && messages > 0, "accepted {taken}, refused {refused}, sent {messages}");
+    // The harness reached the core often, not only the reader: the core
+    // acted on most of what the reader took.
+    assert!(
+        taken > ROUNDS / 5 && refused > 0 && messages > 0 && reached > taken / REACHED_FLOOR_DIVISOR,
+        "accepted {taken}, refused {refused}, acted on {reached}, sent {messages}"
+    );
     #[cfg(unix)]
     {
         // The broker was reached: helpers started, files read, and what the
@@ -477,7 +531,7 @@ fn the_core_stands_against_a_hostile_interface() {
         let (starts, reads) = (watch.starts, watch.reads);
         let to_helpers = watch.finish();
         assert!(
-            starts > 10 && reads > 0 && to_helpers.decoders > 5 && to_helpers.own_files > 0 && to_helpers.messages > 50,
+            starts > BROKER_FLOOR && reads > 0 && to_helpers.decoders > BROKER_FLOOR && to_helpers.own_files > 0 && to_helpers.messages > BROKER_FLOOR,
             "started {starts}, read {reads}, sent {to_helpers:?}"
         );
     }
