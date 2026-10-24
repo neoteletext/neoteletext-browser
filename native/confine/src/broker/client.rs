@@ -91,6 +91,13 @@ impl Broker {
         Ok(Arc::new(Self { channel: Mutex::new(Channel::from_stdin()?) }))
     }
 
+    /// The core's side of `channel`, whose other end a test's stand-in
+    /// broker serves (`stand_in`).
+    #[cfg(all(unix, feature = "test-support"))]
+    pub(crate) fn over(channel: Channel) -> Arc<Self> {
+        Arc::new(Self { channel: Mutex::new(channel) })
+    }
+
     /// Sends one request and reads its reply, with the pipes that came
     /// with it.
     fn ask(&self, request: &Request) -> io::Result<(Reply, Vec<File>)> {

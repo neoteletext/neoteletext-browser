@@ -27,6 +27,9 @@ use crate::windows::Channel;
 
 mod client;
 mod server;
+// A stand-in for tests of the trusted core (finding F-98), never shipped.
+#[cfg(all(unix, feature = "test-support"))]
+pub mod stand_in;
 mod wire;
 
 pub use client::{Broker, Helper};
