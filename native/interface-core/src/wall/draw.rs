@@ -75,6 +75,7 @@ impl Wall {
         }
         self.draw_controls(canvas, panel);
         outline(canvas, panel, RULE);
+        self.drawn_moving = self.moving(now);
     }
 
     /// Draws a page with its screen around it; returns where its image is.

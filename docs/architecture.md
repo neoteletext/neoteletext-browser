@@ -582,7 +582,7 @@ The window is decision 35's, drawn by the interface process from the interface c
         └── embedded-graphics + bitmap fonts               microcontrollers, features cut
 ```
 
-- **Redrawing is on demand:** only on input, a change of state, or while something animates; and frames are asked for only for what is drawn (decision 53): an update to a page of another bank starts no frames beyond the overview's ring. The sound device runs only while a channel sounds, so an idle browser costs the audio thread nothing.
+- **Redrawing is on demand:** only on input, a change of state, or while something animates, up to the frame that ends it: a frame drawn part of the way through a zoom or the remote's slide owes the next, however late the host asks (`a_zoom_drawn_short_of_its_end_asks_for_the_frame_that_ends_it`, `a_slide_drawn_short_of_its_end_asks_for_the_frame_that_ends_it`); and frames are asked for only for what is drawn (decision 53): an update to a page of another bank starts no frames beyond the overview's ring. The sound device runs only while a channel sounds, so an idle browser costs the audio thread nothing.
 - **Widgets are our own** (design section 4.3, option B): the address field's editor is in the interface core, so it works without the standard library; text is laid out by Parley. Masonry, the alternative, is not proven (open decision 4).
 - **Text** is Roboto, shipped with the application under the SIL Open Font License 1.1, in small capitals: every letter a capital, letters written in lower case drawn 80% as large. Open Sans is shipped too, for comparison.
 

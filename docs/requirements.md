@@ -1176,6 +1176,7 @@ Adopted on 20 October 2026 (decision 41) from [`hyperlinks.md`](hyperlinks.md), 
 - **Source:** Decision 41; `hyperlinks.md`.
 - **Verification:** Test; review.
 - **State:** Met. Tests: `the_pointer_on_a_link_is_reported_once_per_link_with_its_shape`, `a_new_image_under_the_pointer_is_reported_again`, `the_strip_shows_where_a_link_leads_in_place_of_the_address`; by hand on macOS on 20 October 2026.
+- *Amended 24 October 2026:* in the Windows virtual machine a zoomed page stayed a frame short of open whenever the zoom's time ran out between two frames, so its links were neither shown nor followed ("a click was not followed: Unshown"); the window now draws the frame that ends an animation (`a_zoom_drawn_short_of_its_end_asks_for_the_frame_that_ends_it`, which failed on the code before). By hand in the virtual machine with the pointer moved over a page's web link: the strip showed `https://example.com/ (opens in your web browser)`, a click asked, and Open handed it to Edge. On Windows the pointer over a link that leaves stays an arrow: `winit` maps `CursorIcon::Alias` to the arrow there.
 
 ### Requirement 17.7: A click follows what the user saw
 - **Statement:** A click follows only the link of the frame it was made on, whose target equals the one the strip is showing, unchanged for at least 500 milliseconds.

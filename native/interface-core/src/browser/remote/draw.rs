@@ -25,7 +25,7 @@ impl Browser {
     /// bookmarks bar, which it never covers (requirement 11.4).
     pub(in crate::browser) fn draw_remote<C: Canvas + ?Sized>(&mut self, canvas: &mut C, width: f64, height: f64, top: f64, now: u64) {
         self.remote.drawn_at = now;
-        if !self.remote_animating(now) {
+        if !self.remote_sliding(now) {
             self.remote.slide = None;
         }
         self.remote.buttons.clear();
