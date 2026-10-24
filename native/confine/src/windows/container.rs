@@ -4,6 +4,7 @@
 
 use std::io;
 use std::ptr;
+use std::sync::{Mutex, PoisonError};
 
 use windows_sys::Win32::Foundation::PSID;
 use windows_sys::Win32::Security::Isolation::{CreateAppContainerProfile, DeleteAppContainerProfile, DeriveAppContainerSidFromAppContainerName};
@@ -31,25 +32,47 @@ const CONTAINERS: [&str; 6] = [CONTAINER_DECODER, CONTAINER_NETWORK, CONTAINER_C
 /// not there is no error.
 pub(super) fn remove_containers() {
     for name in CONTAINERS {
-        let name = wide(name);
-        // The name is NUL-terminated and outlives the call; its result is
-        // not needed, since a profile not there is not an error here.
-        // SAFETY: the name is NUL-terminated and outlives the call; its result is not needed,
-        // since a profile not there is not an error here.
-        let _ = unsafe { DeleteAppContainerProfile(name.as_ptr()) };
+        remove(name);
     }
 }
 
+/// Removes one `AppContainer` profile; one that is not there is no error.
+pub(super) fn remove(name: &str) {
+    let name = wide(name);
+    // SAFETY: the name is NUL-terminated and outlives the call; its result is not needed,
+    // since a profile not there is not an error here.
+    let _ = unsafe { DeleteAppContainerProfile(name.as_ptr()) };
+}
+
+/// Held while a profile is made or found. `CreateAppContainerProfile`
+/// answers "already exists" to a second caller while a first is still
+/// making the profile, and a process started in it then fails with "the
+/// system cannot find the file specified". Measured in the Windows 11
+/// virtual machine, 24 October 2026, eight threads each making the same
+/// new profile and starting a decoder in it: without the lock, starts
+/// failed in 7 of 20 rounds (and in one of three runs of this crate's tests
+/// with no profiles yet, two tests starting decoders at once); with it, in
+/// none of 40.
+static MAKING: Mutex<()> = Mutex::new(());
+
 /// The `AppContainer`'s SID for a role, its profile made on first use.
 pub(super) fn container(role: Role) -> io::Result<ContainerSid> {
-    let name = wide(match role {
+    profile(match role {
         Role::Decoder => CONTAINER_DECODER,
         Role::Core => CONTAINER_CORE,
         Role::Sound => CONTAINER_SOUND,
         Role::Updater { .. } => CONTAINER_UPDATER,
         Role::Network => CONTAINER_NETWORK,
         Role::Interface => CONTAINER_INTERFACE,
-    });
+    })
+}
+
+/// The SID of the `AppContainer` profile `name`, the profile made when it
+/// is not there, and whole before any process of this one starts in it.
+pub(super) fn profile(name: &str) -> io::Result<ContainerSid> {
+    // Nothing the lock guards can be left half done by a panic.
+    let _making = MAKING.lock().unwrap_or_else(PoisonError::into_inner);
+    let name = wide(name);
     let display = wide("NeoTeletext");
     let description = wide("A helper process of the NeoTeletext browser");
     let mut sid: PSID = ptr::null_mut();

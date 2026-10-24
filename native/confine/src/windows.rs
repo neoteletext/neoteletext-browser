@@ -57,7 +57,7 @@ pub(crate) use time::local_offset;
 use acl::grant;
 use attributes::start;
 use container::{INTERNET_CLIENT_SID, PRIVATE_NETWORK_SID, container};
-use handles::{Owned, Sid, keep_ours, last_error, pipe};
+use handles::{ContainerSid, Owned, Sid, keep_ours, last_error, pipe};
 use job::job;
 
 /// Grants `ALL APPLICATION PACKAGES` read and run on `folder` and
@@ -86,6 +86,14 @@ pub(crate) fn apply() -> Report {
 
 /// Starts a helper confined as its role says.
 pub(crate) fn spawn(spawn: &Spawn<'_>) -> io::Result<Process> {
+    // Every role runs in its container or not at all (decision 58); the
+    // interface too, with no capabilities (decision 90).
+    let sid = container(spawn.role).map_err(|error| io::Error::new(error.kind(), format!("cannot make its AppContainer: {error}")))?;
+    spawn_in(spawn, &sid)
+}
+
+/// Starts a helper confined as its role says, in the container `sid`.
+fn spawn_in(spawn: &Spawn<'_>, sid: &ContainerSid) -> io::Result<Process> {
     let (their_stdin, our_stdin) = pipe()?;
     let (our_stdout, their_stdout) = pipe()?;
     keep_ours(our_stdin.0)?;
@@ -99,9 +107,6 @@ pub(crate) fn spawn(spawn: &Spawn<'_>) -> io::Result<Process> {
     }
     let job = job(spawn.role)?;
     let mut report = Report { layers: vec![String::from("job object"), String::from("mitigation policies"), String::from("no child processes")] };
-    // Every role runs in its container or not at all (decision 58); the
-    // interface too, with no capabilities (decision 90).
-    let sid = container(spawn.role).map_err(|error| io::Error::new(error.kind(), format!("cannot make its AppContainer: {error}")))?;
     let mut capabilities = Vec::new();
     // A container cannot be told a port: the updater's host is pinned by
     // TLS (`installation-and-updates.md` section 8.1).
@@ -114,9 +119,9 @@ pub(crate) fn spawn(spawn: &Spawn<'_>) -> io::Result<Process> {
     if matches!(spawn.role, Role::Core | Role::Updater { .. })
         && let Some(folder) = spawn.writable
     {
-        grant(folder, &sid)?;
+        grant(folder, sid)?;
     }
-    let information = start(spawn, &inherited, their_stdin.0, their_stdout.0, &sid, &capabilities)
+    let information = start(spawn, &inherited, their_stdin.0, their_stdout.0, sid, &capabilities)
         .map_err(|error| io::Error::new(error.kind(), format!("cannot start in its AppContainer: {error}")))?;
     report.layers.push(String::from(if matches!(spawn.role, Role::Decoder | Role::Core) { "less privileged AppContainer" } else { "AppContainer" }));
     let process = Owned(information.hProcess);
@@ -160,4 +165,56 @@ pub(crate) fn start_core(spawn: &Spawn<'_>) -> io::Result<(Process, Channel)> {
     let writer = process.stdin.take().ok_or_else(|| io::Error::other("the core has no input"))?;
     let reader = process.stdout.take().ok_or_else(|| io::Error::other("the core has no output"))?;
     Ok((process, Channel::new(reader, writer)))
+}
+
+#[cfg(test)]
+mod tests {
+    use std::ffi::OsString;
+
+    use super::*;
+    use crate::environment;
+
+    /// A profile of this test's own, made and removed by it.
+    const TEST_PROFILE: &str = "NeoTeletext.ConfineTest";
+    /// How many times the profile is made afresh.
+    const ROUNDS: usize = 5;
+    /// How many helpers start at once in each new profile.
+    const AT_ONCE: usize = 8;
+
+    /// Helpers started at once by threads of one process, in a profile
+    /// none of them has made yet, all start: no thread starts a process in
+    /// a profile another is still making. Before, a decoder started while
+    /// another thread made the profile failed with "the system cannot find
+    /// the file specified".
+    #[test]
+    fn helpers_started_at_once_in_a_new_profile_all_start() {
+        let program = std::env::current_exe().unwrap();
+        for round in 0..ROUNDS {
+            container::remove(TEST_PROFILE);
+            let starts: Vec<_> = (0..AT_ONCE)
+                .map(|_| {
+                    let program = program.clone();
+                    std::thread::spawn(move || -> io::Result<()> {
+                        let sid = container::profile(TEST_PROFILE)?;
+                        // A name no test has: the copy runs nothing and ends.
+                        let arguments = [OsString::from("--exact"), OsString::from("no test has this name")];
+                        let environment = environment(Role::Decoder);
+                        let spawn = Spawn {
+                            program: &program,
+                            arguments: &arguments,
+                            role: Role::Decoder,
+                            environment: &environment,
+                            local_network: false,
+                            writable: None,
+                        };
+                        let mut process = spawn_in(&spawn, &sid)?;
+                        process.wait().map(drop)
+                    })
+                })
+                .collect();
+            let failed: Vec<String> = starts.into_iter().filter_map(|start| start.join().unwrap().err()).map(|error| error.to_string()).collect();
+            container::remove(TEST_PROFILE);
+            assert!(failed.is_empty(), "round {round}: {} of {AT_ONCE} did not start: {failed:?}", failed.len());
+        }
+    }
 }
