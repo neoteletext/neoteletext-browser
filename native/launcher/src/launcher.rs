@@ -121,8 +121,14 @@ impl Launcher {
     /// # Errors
     /// When nothing can be started.
     pub fn run(&self, arguments: &[OsString]) -> Result<Option<i32>, String> {
+        // One descriptor for the whole start, unlocked rather than closed
+        // between tries: on macOS a program being started holds every
+        // descriptor its parent had open until the system has checked it,
+        // so a lock closed and opened again could be found still held by
+        // its own closed descriptor, and a trial tried again run as
+        // another start's choice, uncounted.
+        let lock = self.open_lock()?;
         loop {
-            let lock = self.open_lock()?;
             let chosen = match lock.try_lock() {
                 Ok(()) => {
                     let chosen = self.prepare()?;
@@ -139,12 +145,12 @@ impl Launcher {
                 Err(TryLockError::Error(error)) => return Err(io_text(&self.layout.lock(), &error)),
             };
             let ended = start::start(self, chosen, arguments)?;
-            drop(lock);
+            lock.unlock().map_err(|error| io_text(&self.layout.lock(), &error))?;
             if let Chosen::Trial(version) = chosen
                 && !ended.healthy
             {
                 if ended.deadline == Some(Deadline::Start) {
-                    return self.run_current(version, arguments);
+                    return self.run_current(&lock, version, arguments);
                 }
                 if !ended.success {
                     eprintln!("neoteletext: version {version} did not start; trying again");
@@ -159,11 +165,10 @@ impl Launcher {
     /// for this start, and the trial is tried again at the next (decision
     /// 93). On macOS the installed bundle is the trial's until a rollback
     /// exchanges it back, so there this start ends instead.
-    fn run_current(&self, trial: Version, arguments: &[OsString]) -> Result<Option<i32>, String> {
+    fn run_current(&self, lock: &File, trial: Version, arguments: &[OsString]) -> Result<Option<i32>, String> {
         if self.platform.family() == Family::Macos {
             return Err(format!("version {trial} did not start in time; start NeoTeletext again"));
         }
-        let lock = self.open_lock()?;
         lock.lock_shared().map_err(|error| io_text(&self.layout.lock(), &error))?;
         let current = self.read_state()?.current;
         eprintln!("neoteletext: running version {current} this time; {trial} is tried again at the next start");
