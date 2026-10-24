@@ -40,7 +40,9 @@ The fetcher learns the kind from its TLS library's error (`rustls`, decision 41)
 | Invalid | any other `InvalidCertificate` | Its certificate is not valid. |
 | Handshake | any other error of the secure handshake | The secure connection to it could not be made. |
 
-A connection that fails before the handshake, or a proxy that refuses (requirement 19.10), is not a certificate failure and does not show the screen.
+A connection that fails before the handshake, or a proxy that refuses (requirement 19.10), is not a certificate failure and does not show the screen. A handshake that runs out of the connection's one deadline (finding F-63) is reported as Handshake, as a broken one is; telling the two apart is not built.
+
+**What is not checked** (finding F-95): the roots are Mozilla's, compiled in (`webpki-roots`); the system's own store is not read, so a root the user or their organisation added is not trusted, and nothing asks whether a certificate was revoked (no revocation list, no OCSP, no stapled answer). `Revoked` is kept for the day revocation is checked; as built it cannot occur. A certificate revoked but not expired is accepted.
 
 ## 4. When it goes
 

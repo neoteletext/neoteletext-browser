@@ -252,7 +252,7 @@ History groups by the user's local day, so the trusted core needs the local time
 
 The confined trusted core must be able to learn the zone, which changes its confinement in one place each:
 - **macOS:** Apple's baseline (`system.sb`), which the core's profile imports, already allows the time-zone files.
-- **Linux:** the core's Landlock rules let it read nothing outside its settings folder (`confine/src/linux.rs`, `readable`), so `/etc/localtime` and `/usr/share/zoneinfo` must be added, read only, and `TZ` to the core's environment (`confine::environment(Role::Core)`).
+- **Linux:** the core's Landlock rules let it read nothing outside its settings folder (`confine/src/linux/paths.rs`, `readable`), so `/etc/localtime` and `/usr/share/zoneinfo` must be added, read only, and `TZ` to the core's environment (`confine::environment(Role::Core)`).
 - **Windows:** the zone's name comes from a system call the container allows; the zone's rules come from a copy of the time-zone database built into the program, as Windows has none in the form the crate reads.
 
 Each is to be confirmed by running the confined core, as `the_trusted_core_starts_confined_and_reaches_its_own_code` does.
