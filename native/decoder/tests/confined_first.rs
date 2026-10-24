@@ -2,19 +2,20 @@
 //! confined before it reads anything (finding F-12): the trusted core
 //! counts a decoder that ends before this as one that could not start,
 //! against an update's trial, and one that ends after it as a channel's.
+//!
+//! Nothing here is timed. A deadline from the start would also time the
+//! system admitting a newly built program: on macOS, Gatekeeper scans each
+//! new program once before its first instruction runs, one scan at a time
+//! for the whole computer, and a decoder queued behind the workspace's new
+//! test programs sat at its first instruction for more than ten seconds
+//! (24 October 2026), which says nothing of the decoder.
 
 use std::ffi::OsString;
 use std::io::BufReader;
 use std::path::Path;
-use std::sync::mpsc;
-use std::time::Duration;
 
 use confine::{Role, Spawn};
 use protocol::decoder::{FIRST_STORE_PAGES, FromDecoder, read_from_decoder};
-
-/// Far longer than a confined process takes to start and write one
-/// message, which is milliseconds.
-const FIRST_MESSAGE_DEADLINE: Duration = Duration::from_secs(10);
 
 #[test]
 fn a_decoder_says_it_is_confined_before_it_reads_anything() {
@@ -24,16 +25,14 @@ fn a_decoder_says_it_is_confined_before_it_reads_anything() {
     let mut process =
         confine::spawn(&Spawn { program, arguments: &arguments, role: Role::Decoder, environment: &environment, local_network: false, writable: None })
             .unwrap();
-    // Its input is held open and given nothing: no channel data.
-    let input = process.stdin.take().unwrap();
+    // Its input ends at once, with no channel data: a decoder that read
+    // before saying it is confined finds the end and ends having said
+    // nothing, so its first message is read until it comes or the decoder
+    // ends, with no deadline.
+    drop(process.stdin.take());
     let output = process.stdout.take().unwrap();
-    let (said, first) = mpsc::channel();
-    std::thread::spawn(move || {
-        let _ = said.send(read_from_decoder(&mut BufReader::new(output)).map_err(|error| error.to_string()));
-    });
-    let first = first.recv_timeout(FIRST_MESSAGE_DEADLINE);
-    drop(input);
+    let first = read_from_decoder(&mut BufReader::new(output)).map_err(|error| error.to_string());
     let _ = process.kill();
     let _ = process.wait();
-    assert_eq!(first, Ok(Ok(Some(FromDecoder::Confined))), "its first message, with no data given");
+    assert_eq!(first, Ok(Some(FromDecoder::Confined)), "its first message, with no data given");
 }

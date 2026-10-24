@@ -89,6 +89,11 @@ check_native() {
         step "native: Clippy with only: $area"
         (cd native && cargo clippy --quiet --workspace --all-targets --no-default-features --features "$(feature_list $area)" -- -D warnings)
     done
+    # The phone keyboard alone (it brings typing with it): an unused test
+    # import in that shape once slipped past the shapes above.
+    step "native: Clippy with only: phone-keyboard"
+    (cd native && cargo clippy --quiet -p interface-core -p protocol -p neoteletext -p neoteletext-interface -p neoteletext-keyboard --all-targets \
+        --no-default-features --features "interface-core/phone-keyboard,protocol/phone-keyboard,neoteletext/phone-keyboard,neoteletext-interface/phone-keyboard,neoteletext-keyboard/phone-keyboard" -- -D warnings)
     step "native: tests"
     (cd native && cargo nextest run --workspace --hide-progress-bar --status-level fail --final-status-level fail)
     check_tuf
