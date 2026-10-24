@@ -184,7 +184,7 @@ impl Links {
             let destination = match target.service {
                 None => Destination::Page(target.page),
                 Some(place) => {
-                    let address = descriptor?.by_place.get(usize::from(place))?.as_ref()?;
+                    let address = descriptor?.service_at(usize::from(place))?;
                     Destination::Channel(address.with_page(target.page)?)
                 }
             };
@@ -220,13 +220,13 @@ impl Links {
         let aliases = aliases.iter().filter_map(|alias| Some((alias.page, parse_target(&alias.target).filter(|target| !matches!(target, Target::Web(_)))?)));
         let by_place: Vec<Option<Address>> = services.iter().map(|service| channel_address(&service.address)).collect();
         let services = services.iter().filter_map(|service| Some((name(&service.name)?, channel_address(&service.address)?)));
-        self.descriptors.insert(channel, Descriptor { aliases: aliases.take(protocol::links::MAX_ALIASES).collect(), services: services.collect(), by_place });
+        self.descriptors.insert(channel, Descriptor::new(aliases.take(protocol::links::MAX_ALIASES).collect(), services.collect(), by_place));
     }
 
     /// The page numbers a channel's descriptor links elsewhere.
     #[must_use]
     pub fn aliases(&self, channel: u32) -> Vec<u16> {
-        self.descriptors.get(&channel).map(|descriptor| descriptor.aliases.iter().map(|(page, _)| *page).collect()).unwrap_or_default()
+        self.descriptors.get(&channel).map(|descriptor| descriptor.alias_pages().collect()).unwrap_or_default()
     }
 
     /// Decides the links of a page from what the decoder found, the page's
@@ -253,7 +253,7 @@ impl Links {
                 .iter()
                 .find(|(linked, _)| *linked == number)
                 .map(|(_, destination)| destination.clone())
-                .or_else(|| descriptor.aliases.iter().find(|(page, _)| *page == number).and_then(|(_, target)| descriptor.resolve(target, channel)))
+                .or_else(|| descriptor.alias(number).and_then(|target| descriptor.resolve(target, channel)))
         };
         let mut runs: Vec<(LinkRun, Destination)> = Vec::new();
         // Declared links first, so that they win where they overlap a number.

@@ -91,13 +91,13 @@ impl Links {
         } else {
             {
                 let descriptor = self.descriptors.get(&channel).ok_or(Refusal::NotALink)?;
-                let (_, target) = descriptor.aliases.iter().find(|(page, _)| *page == number).ok_or(Refusal::NotALink)?;
+                let target = descriptor.alias(number).ok_or(Refusal::NotALink)?;
                 // An alias's own channel is checked when its links are
                 // decided; here only another channel or this one's page.
                 match target {
                     Target::Page(page) => Destination::Page(*page),
                     Target::Service { name, page } => {
-                        let (_, address) = descriptor.services.iter().find(|(known, _)| known == name).ok_or(Refusal::NotALink)?;
+                        let address = descriptor.service(name).ok_or(Refusal::NotALink)?;
                         Destination::Channel(address.with_page(*page).ok_or(Refusal::NotALink)?)
                     }
                     Target::Channel(address) => Destination::Channel(address.clone()),
