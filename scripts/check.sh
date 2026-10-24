@@ -202,7 +202,9 @@ check_fuzz() {
 # The browser builds the engine with its lints capped, so the engine's own
 # forbid(unsafe_code) is held only by the engine's gate (finding F-88):
 # the source at the pinned commit is read here, and the word `unsafe` in
-# any line's code, outside its comment, fails the gate.
+# any line's code, outside its string literals and its comment, fails the
+# gate. A string is a word the code looks for, as the engine's own
+# source checks look for "unsafe", not code that is unsafe.
 check_engine_safe() {
     step "the engine at its pinned commit has no unsafe code"
     local engine revision found line code hits="" status=0
@@ -218,6 +220,8 @@ check_engine_safe() {
     while IFS= read -r line; do
         [[ -n "$line" ]] || continue
         code="${line#*:*:*:}"
+        # A character literal of a quote first, so it cannot open a string.
+        code="$(sed -E -e "s/'\\\\?\"'//g" -e 's/"([^"\\]|\\.)*"//g' <<<"$code")"
         code="${code%%//*}"
         if [[ "$code" =~ (^|[^A-Za-z0-9_])unsafe([^A-Za-z0-9_]|$) ]]; then
             hits="$hits${line#*:}"$'\n'
