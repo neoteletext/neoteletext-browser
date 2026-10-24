@@ -7,6 +7,7 @@ use std::time::Duration;
 
 use neoteletext_input::modes::{CURSOR_CAP, MOUSE_BUTTONS, PAGE_CAP};
 
+use crate::podcast::Episode;
 use crate::terminal::invaders::INVADER_TOP;
 use crate::terminal::pages::contents_file;
 use neoteletext_input::event::{Mouse, Point, read_message, write};

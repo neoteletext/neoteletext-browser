@@ -3,8 +3,6 @@
 
 use std::fmt::Write as _;
 
-use neoteletext_audio::Codec;
-use neoteletext_audio::encode::{Command, Sound, packets};
 use neoteletext_input::control::{Control, packet_of};
 use neoteletext_input::digits::decimal_digit;
 use neoteletext_input::event::{ALT, Action, CONTROL, Event, Item, Key, KeyCode, MouseAction, SHIFT, units};
@@ -12,13 +10,10 @@ use neoteletext_input::keys;
 
 use super::invaders::{FIELD_LEFT, FIELD_RIGHT, Invaders, SHIP_ROW};
 use super::pages::{Field, index};
-use super::sounds::{
-    AUDIO_CHANNELS, AUDIO_SERVICE, BELL_HANDLE, CLICK_HANDLE, FIRE_HANDLE, FIRST_HANDLE, HIT_HANDLE, LOSE_HANDLE, NOTE_BLOCK, NOTE_FADE_MS, NOTE_GAIN,
-    NOTE_RATE, PIANO, WIN_HANDLE, library,
-};
+use super::sounds::{AUDIO_CHANNELS, AUDIO_SERVICE, BELL_HANDLE, CLICK_HANDLE, FIRE_HANDLE, FIRST_HANDLE, HIT_HANDLE, LOSE_HANDLE, PIANO, WIN_HANDLE};
 use super::tti::{ALPHA_CYAN, ALPHA_MAGENTA, ALPHA_WHITE, ALPHA_YELLOW, Page, Row, USED};
 use super::{PAGES, Session, Settings};
-use crate::podcast::{self, Episode, Player};
+use crate::podcast::{self, Player};
 
 /// What a session sends.
 pub(super) enum Push {
@@ -308,67 +303,6 @@ impl Session {
         Vec::new()
     }
 
-    /// Every sound of the channel, as packets, one message a sound: the
-    /// piano's notes and the game's effects.
-    fn sounds(&mut self) -> Vec<Push> {
-        library()
-            .into_iter()
-            .filter_map(|(handle, pcm)| {
-                let sound = Sound::new(handle, 1, Codec::ImaAdpcm, NOTE_RATE, NOTE_BLOCK, &pcm).ok()?;
-                let mut records = vec![sound.object_record().ok()?];
-                records.extend(sound.data_records());
-                let (packets, next) = packets(AUDIO_SERVICE, self.record_id, &records);
-                self.record_id = next;
-                Some(Push::Packets(packets.iter().flat_map(|packet| packet.bytes).collect()))
-            })
-            .collect()
-    }
-
-    /// The command that plays a sound, on the next of the effects' channels.
-    fn play(&mut self, handle: u8) -> Push {
-        let channel = self.next_channel;
-        self.next_channel = (self.next_channel + 1) % AUDIO_CHANNELS;
-        let sequence = &mut self.audio_sequence[usize::from(channel)];
-        *sequence = sequence.wrapping_add(1);
-        let command = Command {
-            channel,
-            sequence: *sequence,
-            operation: 1,
-            handle,
-            generation: 1,
-            gain: NOTE_GAIN,
-            fade_ms: NOTE_FADE_MS,
-            flags: 0,
-            duck: 0,
-            page: None,
-        };
-        let (packets, next) = packets(AUDIO_SERVICE, self.record_id, &[command.record()]);
-        self.record_id = next;
-        Push::Packets(packets.iter().flat_map(|packet| packet.bytes).collect())
-    }
-
-    /// Does `action` to this viewer's podcast: what it sends, pushed.
-    fn listen(&mut self, action: impl FnOnce(&mut Player, &Episode, &mut u8) -> Vec<u8>) -> Vec<Push> {
-        let Some((episode, player)) = &mut self.podcast else { return Vec::new() };
-        let bytes = action(player, episode, &mut self.record_id);
-        if bytes.is_empty() { Vec::new() } else { vec![Push::Packets(bytes)] }
-    }
-
-    /// The podcast's next blocks, wherever the viewer is, and page 700
-    /// again each second and when it stops, while it is open.
-    pub(super) fn podcast_frame(&mut self) -> Vec<Push> {
-        let mut pushes = self.listen(Player::stream);
-        if self.page == 0x700
-            && let Some((episode, player)) = &self.podcast
-        {
-            let now = (episode.seconds(player.position(episode)), player.playing());
-            if self.shown.replace(now) != Some(now) {
-                pushes.push(Push::Page(self.render().tti()));
-            }
-        }
-        pushes
-    }
-
     /// One frame of the game: its sounds, then its page.
     pub(super) fn frame(&mut self) -> Vec<Push> {
         let happened = self.invaders.tick();
@@ -407,5 +341,6 @@ fn describe(key: &Key<'_>) -> String {
     text
 }
 
+mod audio;
 #[cfg(test)]
 mod tests;
