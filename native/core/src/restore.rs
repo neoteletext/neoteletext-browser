@@ -155,6 +155,30 @@ fn tab_line(closed: bool, fields: &[&str]) -> Option<Tab> {
     Some(Tab { muted: flag(muted)?, position: position.parse().ok()?, entries: Vec::new(), window })
 }
 
+/// An `entry` line's fields after its name: whether a link on a page
+/// started it, its time, its address and its title.
+fn entry_line(by_page: &str, at: &str, address: &str, title: &str) -> Option<Entry> {
+    let title = (protocol::clean(title, MAX_TITLE) == title).then(|| title.to_owned())?;
+    let at = at.parse::<i64>().ok().filter(|at| *at >= 0)?;
+    Some(Entry { by_page: flag(by_page)?, at, address: kept_address(address)?, title })
+}
+
+/// An entry read, added to the tab being read, `tab`, if it has room; an
+/// entry that broke a rule breaks its tab. Whether the line was kept.
+fn add_entry(tab: &mut Option<(Tab, bool, bool)>, entry: Option<Entry>) -> bool {
+    match (tab, entry) {
+        (Some((tab, _, _)), Some(entry)) if tab.entries.len() < MAX_ENTRIES => {
+            tab.entries.push(entry);
+            true
+        }
+        (Some((_, broken, _)), _) => {
+            *broken = true;
+            false
+        }
+        (None, _) => false,
+    }
+}
+
 /// An address a kept entry may hold: one the address rules accept, the
 /// start page among them, in their form, with no separator.
 fn kept_address(text: &str) -> Option<String> {
@@ -183,15 +207,6 @@ impl Saved {
         // A tab or closed tab being read, dropped whole when any line of it
         // breaks a rule: the tab, whether broken, whether closed.
         let mut tab: Option<(Tab, bool, bool)> = None;
-        let finish = |saved: &mut Self, tab: Option<(Tab, bool, bool)>, dropped: &mut Dropped| {
-            let Some((tab, broken, closed)) = tab else { return };
-            let full = if closed { saved.closed.len() >= MAX_CLOSED } else { saved.tab_count() >= MAX_TABS };
-            let list = if closed { Some(&mut saved.closed) } else { saved.windows.last_mut().map(|window| &mut window.tabs) };
-            match list {
-                Some(list) if !broken && !tab.entries.is_empty() && tab.position < tab.entries.len() && !full => list.push(tab),
-                _ => dropped.push(|| "a tab of the session file dropped".to_owned()),
-            }
-        };
         for (index, line) in lines.enumerate() {
             if line.is_empty() {
                 continue;
@@ -201,15 +216,8 @@ impl Saved {
                 && match fields.as_slice() {
                     // A window begins, with its place and size when known.
                     ["window", rest @ ..] => {
-                        finish(&mut saved, tab.take(), &mut dropped);
-                        match window_line(rest) {
-                            Ok(geometry) if saved.windows.len() < MAX_WINDOWS => {
-                                saved.windows.push(Window { geometry, active: 0, tabs: Vec::new() });
-                                true
-                            }
-                            // Its tabs join the window before, if any.
-                            _ => false,
-                        }
+                        saved.finish(tab.take(), &mut dropped);
+                        saved.window_begun(rest)
                     }
                     ["active", place] => match (place.parse::<usize>(), saved.windows.last_mut()) {
                         (Ok(place), Some(window)) => {
@@ -219,38 +227,21 @@ impl Saved {
                         _ => false,
                     },
                     [kind @ ("tab" | "closed"), rest @ ..] => {
-                        finish(&mut saved, tab.take(), &mut dropped);
+                        saved.finish(tab.take(), &mut dropped);
                         let closed = *kind == "closed";
                         let read = tab_line(closed, rest);
                         let fine = read.is_some();
                         tab = Some((read.unwrap_or(Tab { muted: false, position: 0, entries: Vec::new(), window: 0 }), !fine, closed));
                         fine
                     }
-                    ["entry", by_page, at, address, title] => {
-                        let entry = (|| {
-                            let title = (protocol::clean(title, MAX_TITLE) == *title).then(|| (*title).to_owned())?;
-                            let at = at.parse::<i64>().ok().filter(|at| *at >= 0)?;
-                            Some(Entry { by_page: flag(by_page)?, at, address: kept_address(address)?, title })
-                        })();
-                        match (&mut tab, entry) {
-                            (Some((tab, _, _)), Some(entry)) if tab.entries.len() < MAX_ENTRIES => {
-                                tab.entries.push(entry);
-                                true
-                            }
-                            (Some((_, broken, _)), _) => {
-                                *broken = true;
-                                false
-                            }
-                            (None, _) => false,
-                        }
-                    }
+                    ["entry", by_page, at, address, title] => add_entry(&mut tab, entry_line(by_page, at, address, title)),
                     _ => false,
                 };
             if !fine {
                 dropped.push(|| format!("line {} of the session file dropped", index.saturating_add(2)));
             }
         }
-        finish(&mut saved, tab.take(), &mut dropped);
+        saved.finish(tab.take(), &mut dropped);
         // A window with no tab left is not one; an active place beyond its
         // tabs is the first.
         saved.windows.retain(|window| !window.tabs.is_empty());
@@ -260,6 +251,32 @@ impl Saved {
             }
         }
         (saved, dropped)
+    }
+
+    /// A tab or closed tab read, `tab`, kept where it belongs: dropped whole
+    /// when any line of it broke a rule, it has no entry, its place is
+    /// beyond its entries, or its list is full.
+    fn finish(&mut self, tab: Option<(Tab, bool, bool)>, dropped: &mut Dropped) {
+        let Some((tab, broken, closed)) = tab else { return };
+        let full = if closed { self.closed.len() >= MAX_CLOSED } else { self.tab_count() >= MAX_TABS };
+        let list = if closed { Some(&mut self.closed) } else { self.windows.last_mut().map(|window| &mut window.tabs) };
+        match list {
+            Some(list) if !broken && !tab.entries.is_empty() && tab.position < tab.entries.len() && !full => list.push(tab),
+            _ => dropped.push(|| "a tab of the session file dropped".to_owned()),
+        }
+    }
+
+    /// A `window` line: a window begins, with its place and size when
+    /// known; whether the line was kept.
+    fn window_begun(&mut self, fields: &[&str]) -> bool {
+        match window_line(fields) {
+            Ok(geometry) if self.windows.len() < MAX_WINDOWS => {
+                self.windows.push(Window { geometry, active: 0, tabs: Vec::new() });
+                true
+            }
+            // Its tabs join the window before, if any.
+            _ => false,
+        }
     }
 
     /// The file's text.

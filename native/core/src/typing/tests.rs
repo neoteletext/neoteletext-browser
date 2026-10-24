@@ -1,7 +1,8 @@
 //! Tests of typing into a page (`interaction.md`, INPUT.md).
 
 use super::*;
-use neoteletext_input::control::PAGE_MODES;
+use neoteletext_input::control::{Control, PAGE_MODES};
+use neoteletext_input::cursor;
 use neoteletext_input::event::{KeyCode, MouseAction, Point, read_message};
 use neoteletext_input::modes::{KEY_RELEASE, MOUSE_BUTTONS};
 use neoteletext_input::{VERSION, WELCOME_TIMEOUT_MS};

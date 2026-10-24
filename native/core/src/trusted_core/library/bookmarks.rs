@@ -1,12 +1,13 @@
-//! The bookmarks manager, the star, the bar and the bookmarks' files
-//! (`history-and-bookmarks.md` section 3, requirements 20.15 to 20.20).
+//! The bookmarks manager and the bookmarks' files (`history-and-bookmarks.md`
+//! section 3, requirements 20.15, 20.17, 20.19 and 20.20); the star is
+//! `star.rs`'s, the bar `bar.rs`'s.
 
 use neoteletext::bookmarks::{BAR, Bookmarks, OTHER};
 use neoteletext::calendar::{day_text, local_day};
 use protocol::ToInterface;
+use protocol::clean;
 use protocol::decoder::BookmarkEntry;
-use protocol::library::{BarRequest, BarView, BookmarkRequest, BookmarksView, FolderRow, ItemRow, MAX_LABEL, MAX_NAME, MAX_VIEW_ROWS, StarRequest, StarView};
-use protocol::{MAX_TITLE, clean};
+use protocol::library::{BookmarkRequest, BookmarksView, FolderRow, ItemRow, MAX_LABEL, MAX_NAME, MAX_VIEW_ROWS};
 
 use super::super::Core;
 use super::super::processes::start_bookmark_reader;
@@ -31,7 +32,6 @@ impl Core {
 
     /// What the bookmarks manager asks for (requirement 20.17).
     pub(crate) fn bookmark_request(&mut self, request: BookmarkRequest) -> Result<(), String> {
-        let item_of = |core: &Self, number: u32| core.library.manager_numbers.get(number).copied().filter(|id| core.session.bookmarks.item(*id).is_some());
         match request {
             BookmarkRequest::Panel(true) => {
                 self.library.manager = Some(Manager { folder: BAR, query: String::new(), folders_first: 0, items_first: 0 });
@@ -42,40 +42,24 @@ impl Core {
                 self.library.manager_numbers.fresh();
                 return Ok(());
             }
-            BookmarkRequest::Folder(number) => {
-                if let (Some(id), Some(manager)) = (item_of(self, number), self.library.manager.as_mut())
-                    && self.session.bookmarks.item(id).is_some_and(neoteletext::bookmarks::Item::is_folder)
-                {
-                    *manager = Manager { folder: id, query: String::new(), folders_first: manager.folders_first, items_first: 0 };
-                }
-            }
-            BookmarkRequest::Scroll { folders_first, items_first } => {
-                if let Some(manager) = self.library.manager.as_mut() {
-                    manager.folders_first = usize::try_from(folders_first).unwrap_or(usize::MAX);
-                    manager.items_first = usize::try_from(items_first).unwrap_or(usize::MAX);
-                }
-            }
-            BookmarkRequest::Query(text) => {
-                if let Some(manager) = self.library.manager.as_mut() {
-                    manager.query = clean(&text, protocol::library::MAX_QUERY);
-                    manager.items_first = 0;
-                }
-            }
+            BookmarkRequest::Folder(number) => self.open_manager_folder(number),
+            BookmarkRequest::Scroll { folders_first, items_first } => self.scroll_manager(folders_first, items_first),
+            BookmarkRequest::Query(text) => self.search_manager(&text),
             BookmarkRequest::Open { number, new_tab } => {
-                let address = item_of(self, number).and_then(|id| self.session.bookmarks.item(id)).and_then(|item| item.address.clone());
+                let address = self.manager_item(number).and_then(|id| self.session.bookmarks.item(id)).and_then(|item| item.address.clone());
                 if let Some(address) = address {
                     return self.open_address(&address, new_tab);
                 }
             }
             BookmarkRequest::Edit { number, name, address } => {
-                if let Some(id) = item_of(self, number)
+                if let Some(id) = self.manager_item(number)
                     && let Err(reason) = self.session.bookmarks.edit(id, &name, &address)
                 {
                     self.library.manager_notice = notice(&reason);
                 }
             }
             BookmarkRequest::Move { number, folder, index } => {
-                if let (Some(id), Some(folder)) = (item_of(self, number), item_of(self, folder))
+                if let (Some(id), Some(folder)) = (self.manager_item(number), self.manager_item(folder))
                     && let Err(reason) = self.session.bookmarks.move_to(id, folder, usize::try_from(index).unwrap_or(usize::MAX))
                 {
                     self.library.manager_notice = notice(&reason);
@@ -94,7 +78,7 @@ impl Core {
                 }
             }
             BookmarkRequest::Remove(number) => {
-                if let Some(removed) = item_of(self, number).and_then(|id| self.session.bookmarks.remove(id)) {
+                if let Some(removed) = self.manager_item(number).and_then(|id| self.session.bookmarks.remove(id)) {
                     self.library.manager_notice.clear();
                     self.library.undo = Some(removed);
                 }
@@ -114,6 +98,37 @@ impl Core {
             BookmarkRequest::Export => self.export_bookmarks(),
         }
         self.bookmarks_changed()
+    }
+
+    /// The bookmark or folder of the manager's row `number`, if it is
+    /// still there.
+    fn manager_item(&self, number: u32) -> Option<u32> {
+        self.library.manager_numbers.get(number).copied().filter(|id| self.session.bookmarks.item(*id).is_some())
+    }
+
+    /// The manager opens the folder of its row `number`.
+    fn open_manager_folder(&mut self, number: u32) {
+        if let (Some(id), Some(manager)) = (self.manager_item(number), self.library.manager.as_mut())
+            && self.session.bookmarks.item(id).is_some_and(neoteletext::bookmarks::Item::is_folder)
+        {
+            *manager = Manager { folder: id, query: String::new(), folders_first: manager.folders_first, items_first: 0 };
+        }
+    }
+
+    /// The manager's lists scrolled to their first rows.
+    fn scroll_manager(&mut self, folders_first: u32, items_first: u32) {
+        if let Some(manager) = self.library.manager.as_mut() {
+            manager.folders_first = usize::try_from(folders_first).unwrap_or(usize::MAX);
+            manager.items_first = usize::try_from(items_first).unwrap_or(usize::MAX);
+        }
+    }
+
+    /// The manager searches for `text`.
+    fn search_manager(&mut self, text: &str) {
+        if let Some(manager) = self.library.manager.as_mut() {
+            manager.query = clean(text, protocol::library::MAX_QUERY);
+            manager.items_first = 0;
+        }
     }
 
     /// Reads bookmarks in this browser's format from a file the user named,
@@ -261,139 +276,5 @@ impl Core {
             notice: self.library.manager_notice.clone(),
         };
         self.send(&ToInterface::Bookmarks(view))
-    }
-
-    /// The star, or its shortcut (requirement 20.16): the address the strip
-    /// shows is bookmarked, or its bookmark shown, in the popover.
-    pub(crate) fn star(&mut self) -> Result<(), String> {
-        let Some(tab) = self.session.active_tab() else { return Ok(()) };
-        let Some(address) = tab.address().cloned() else { return Ok(()) };
-        if let Some(id) = self.session.bookmarks.find(&address.text) {
-            self.library.star = Some(id);
-            return self.send_star();
-        }
-        let page = address.page.and_then(|page| tab.channel.page_title(page).map(|title| format!("{page:03X} {title}")));
-        let name = match page {
-            Some(page) => format!("{} {page}", tab.channel.title),
-            None => tab.channel.title.clone(),
-        };
-        let folder = self.library.last_folder.filter(|folder| self.session.bookmarks.item(*folder).is_some()).unwrap_or(OTHER);
-        match self.session.bookmarks.add(folder, &clean(&name, MAX_TITLE), &address.text) {
-            Ok(id) => {
-                self.library.star = Some(id);
-                self.bookmarks_changed()
-            }
-            Err(reason) => self.say(reason),
-        }
-    }
-
-    /// What the star's popover asks for.
-    pub(crate) fn star_request(&mut self, request: StarRequest) -> Result<(), String> {
-        let Some(id) = self.library.star.filter(|id| self.session.bookmarks.item(*id).is_some()) else {
-            self.library.star = None;
-            return self.send_star();
-        };
-        match request {
-            StarRequest::Edit { name, folder } => {
-                let _ = self.session.bookmarks.edit(id, &name, "");
-                if let Some(&folder) = self.library.star_numbers.get(folder)
-                    && self.session.bookmarks.item(id).is_some_and(|item| item.parent != folder)
-                    && self.session.bookmarks.move_to(id, folder, usize::MAX).is_ok()
-                {
-                    self.library.last_folder = Some(folder);
-                }
-            }
-            StarRequest::WholeChannel => {
-                let channel = self
-                    .session
-                    .bookmarks
-                    .item(id)
-                    .and_then(|item| item.address.as_deref())
-                    .and_then(|address| neoteletext::address::parse(address).ok())
-                    .map(|address| address.channel_text().to_owned());
-                let name = self.session.bookmarks.item(id).map(|item| item.name.clone()).unwrap_or_default();
-                if let Some(channel) = channel {
-                    let _ = self.session.bookmarks.edit(id, &name, &channel);
-                }
-            }
-            StarRequest::Remove => {
-                let _ = self.session.bookmarks.remove(id);
-                self.library.star = None;
-            }
-            StarRequest::Done => self.library.star = None,
-        }
-        self.bookmarks_changed()
-    }
-
-    /// The star's popover.
-    pub(crate) fn send_star(&mut self) -> Result<(), String> {
-        self.library.star_numbers.fresh();
-        let item = self.library.star.and_then(|id| self.session.bookmarks.item(id)).cloned();
-        let Some(item) = item else {
-            self.library.star = None;
-            return self.send(&ToInterface::Star(StarView::default()));
-        };
-        let folders: Vec<FolderRow> = self
-            .session
-            .bookmarks
-            .folders()
-            .into_iter()
-            .take(MAX_VIEW_ROWS)
-            .filter_map(|(id, depth)| {
-                let name = clean(&self.session.bookmarks.item(id)?.name, MAX_NAME);
-                Some(FolderRow { number: self.library.star_numbers.number(id), name, depth: depth_of(depth) })
-            })
-            .collect();
-        let folder = folders.iter().find(|row| self.library.star_numbers.get(row.number) == Some(&item.parent)).map_or(0, |row| row.number);
-        let page = item.address.as_deref().and_then(|address| neoteletext::address::parse(address).ok()).is_some_and(|address| address.page.is_some());
-        self.send(&ToInterface::Star(StarView { open: true, name: clean(&item.name, MAX_NAME), folder, folders, page }))
-    }
-
-    /// What the bookmarks bar asks for (requirement 20.18).
-    pub(crate) fn bar_request(&mut self, request: &BarRequest) -> Result<(), String> {
-        match *request {
-            BarRequest::Show(shown) => {
-                self.settings.bar = shown;
-                self.save_settings();
-            }
-            BarRequest::Folder(number) => {
-                self.library.bar_open = number.and_then(|number| self.library.bar_numbers.get(number).copied());
-            }
-            BarRequest::Open { number, new_tab } => {
-                let address = self.library.bar_numbers.get(number).and_then(|id| self.session.bookmarks.item(*id)).and_then(|item| item.address.clone());
-                self.library.bar_open = None;
-                if let Some(address) = address {
-                    self.send_bar()?;
-                    return self.open_address(&address, new_tab);
-                }
-            }
-        }
-        self.send_bar()
-    }
-
-    fn bar_row(&mut self, id: u32) -> Option<ItemRow> {
-        let item = self.session.bookmarks.item(id)?.clone();
-        Some(ItemRow {
-            number: self.library.bar_numbers.number(id),
-            folder: item.is_folder(),
-            name: clean(&item.name, MAX_NAME),
-            address: item.address.as_deref().map(shown_address).unwrap_or_default(),
-            place: String::new(),
-        })
-    }
-
-    /// The bookmarks bar.
-    pub(crate) fn send_bar(&mut self) -> Result<(), String> {
-        self.library.bar_numbers.fresh();
-        let shown = self.settings.bar;
-        let ids: Vec<u32> = if shown { self.session.bookmarks.children(BAR).iter().take(MAX_VIEW_ROWS).copied().collect() } else { Vec::new() };
-        let items = ids.into_iter().filter_map(|id| self.bar_row(id)).collect();
-        let open_folder = self.library.bar_open.filter(|id| shown && self.session.bookmarks.item(*id).is_some_and(neoteletext::bookmarks::Item::is_folder));
-        let open = open_folder.map(|folder| {
-            let ids: Vec<u32> = self.session.bookmarks.children(folder).iter().take(MAX_VIEW_ROWS).copied().collect();
-            let number = self.library.bar_numbers.number(folder);
-            (number, ids.into_iter().filter_map(|id| self.bar_row(id)).collect())
-        });
-        self.send(&ToInterface::Bar(BarView { shown, items, open }))
     }
 }

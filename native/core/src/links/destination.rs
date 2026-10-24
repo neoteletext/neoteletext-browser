@@ -100,15 +100,42 @@ impl Channel<'_> {
 /// The aliases and named services of a channel's descriptor, parsed.
 #[derive(Clone, Debug, Default)]
 pub(super) struct Descriptor {
-    pub(super) aliases: Vec<(u16, Target)>,
-    pub(super) services: Vec<(String, Address)>,
+    aliases: Vec<(u16, Target)>,
+    services: Vec<(String, Address)>,
     /// Every service in the descriptor's own order, as a Fastext link names
     /// one by its place (the engine's `LinkTarget::service`); one whose
     /// address is refused leads nowhere.
-    pub(super) by_place: Vec<Option<Address>>,
+    by_place: Vec<Option<Address>>,
 }
 
 impl Descriptor {
+    /// A descriptor's `aliases` and named `services`, and every service by
+    /// its place, `by_place`.
+    pub(super) fn new(aliases: Vec<(u16, Target)>, services: Vec<(String, Address)>, by_place: Vec<Option<Address>>) -> Self {
+        Self { aliases, services, by_place }
+    }
+
+    /// The target page `number` is an alias of.
+    pub(super) fn alias(&self, number: u16) -> Option<&Target> {
+        self.aliases.iter().find(|(page, _)| *page == number).map(|(_, target)| target)
+    }
+
+    /// The page numbers that are aliases, in the descriptor's order.
+    pub(super) fn alias_pages(&self) -> impl Iterator<Item = u16> + '_ {
+        self.aliases.iter().map(|(page, _)| *page)
+    }
+
+    /// The address of the service named `name`.
+    pub(super) fn service(&self, name: &str) -> Option<&Address> {
+        self.services.iter().find(|(known, _)| known == name).map(|(_, address)| address)
+    }
+
+    /// The address of the service at `place` in the descriptor's own
+    /// order, if it was not refused.
+    pub(super) fn service_at(&self, place: usize) -> Option<&Address> {
+        self.by_place.get(place)?.as_ref()
+    }
+
     /// Where `target` leads from `channel`. A target that names an unknown
     /// service leads nowhere (TTI Link Extension rule E.2.2); a named
     /// service is another channel, at its own address

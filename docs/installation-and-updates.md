@@ -98,7 +98,7 @@ The profile is `settings.txt`, which carries its format version on its first lin
 
 - **Updates are suggested, never imposed** (the owner's answer to section 12, item 9). The updater checks at start and every 24 hours. When a newer version exists the strip offers it once ("NeoTeletext 0.3 is available: Install"), and the settings panel keeps offering it. Nothing is downloaded or staged until the user accepts. It then starts at the next start, and the browser is never restarted under the user.
 - **A setting, "Check for updates", on by default.** "Off" stops the updater from starting at all. The settings panel then shows "Not checking for updates", and expired metadata is never seen.
-- **Expired or unreachable metadata** shows "Updates unavailable" in the settings panel after 7 days without a successful check (section 9.3), never as a dialog.
+- **Expired or unreachable metadata** shows "Updates unavailable" in the settings panel after 7 days without a successful check (section 9.3), never as a dialog. The 7 days are on the trusted core's clock, from when it received the updater's last report of a successful check; the times the updater reports are on its own clock and are not used (finding F-93), so a check that fails before any has succeeded in this run shows "Updates unavailable" at once.
 - **The version and its state** (current, previous, "rolled back from 0.3") are on the start page's help pages and in the settings panel.
 
 ## 4. Per platform
