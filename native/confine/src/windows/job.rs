@@ -23,7 +23,7 @@ pub(super) fn job(role: Role) -> io::Result<Owned> {
     if job == 0 {
         return Err(last_error());
     }
-    let job = Owned(job);
+    let job = Owned::new(job);
     // SAFETY: an all-zero JOBOBJECT_EXTENDED_LIMIT_INFORMATION is a valid value of a plain
     // C struct.
     let mut limits: JOBOBJECT_EXTENDED_LIMIT_INFORMATION = unsafe { std::mem::zeroed() };
@@ -33,7 +33,7 @@ pub(super) fn job(role: Role) -> io::Result<Owned> {
     // SAFETY: the job is owned here; the limits are a live local of the size given.
     if unsafe {
         SetInformationJobObject(
-            job.0,
+            job.raw(),
             JobObjectExtendedLimitInformation,
             ptr::from_ref(&limits).cast(),
             u32::try_from(size_of::<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>()).unwrap_or(0),
@@ -53,7 +53,7 @@ pub(super) fn job(role: Role) -> io::Result<Owned> {
     // SAFETY: as above, for the UI restrictions.
     if unsafe {
         SetInformationJobObject(
-            job.0,
+            job.raw(),
             JobObjectBasicUIRestrictions,
             ptr::from_ref(&ui).cast(),
             u32::try_from(size_of::<JOBOBJECT_BASIC_UI_RESTRICTIONS>()).unwrap_or(0),

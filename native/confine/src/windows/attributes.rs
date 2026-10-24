@@ -123,9 +123,9 @@ pub(super) fn start(
     add_attribute(&attributes, PROC_THREAD_ATTRIBUTE_CHILD_PROCESS_POLICY as usize, &no_children, size_of::<u32>())?;
     // Enabled is what a capability carries.
     let enabled = u32::try_from(SE_GROUP_ENABLED).unwrap_or(0);
-    let capabilities: Vec<SID_AND_ATTRIBUTES> = capability_sids.iter().map(|sid| SID_AND_ATTRIBUTES { Sid: sid.0, Attributes: enabled }).collect();
+    let capabilities: Vec<SID_AND_ATTRIBUTES> = capability_sids.iter().map(|sid| SID_AND_ATTRIBUTES { Sid: sid.raw(), Attributes: enabled }).collect();
     let security = SECURITY_CAPABILITIES {
-        AppContainerSid: sid.0,
+        AppContainerSid: sid.raw(),
         Capabilities: capabilities.as_ptr().cast_mut(),
         CapabilityCount: u32::try_from(capabilities.len()).unwrap_or(0),
         Reserved: 0,
