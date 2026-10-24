@@ -4,7 +4,6 @@ use crate::browser::{Modifiers, Output, PhoneStatus, PhoneUiView};
 use crate::canvas::PageKey;
 use crate::channel::page_index;
 use crate::controls::{FastextKey, PageControl, PageControls};
-use crate::test_canvas::Recorder;
 use alloc::string::String;
 use alloc::vec::Vec;
 
@@ -137,6 +136,7 @@ fn only_the_page_navigation_keys_are_the_page_views() {
 fn a_phones_keys_never_answer_the_strips_question() {
     use crate::browser::hyperlinks::PROMPT_DELAY_MILLISECONDS;
     use crate::links::{Prompt, PromptKind};
+    use crate::test_canvas::Recorder;
     let (mut browser, _) = opened();
     browser.set_prompt(Some(Prompt { id: 3, kind: PromptKind::Web, destination: "https://www.example.invalid/".into(), secure: true }), OPEN);
     browser.draw(&mut Recorder::new(), WIDTH, HEIGHT, OPEN);
