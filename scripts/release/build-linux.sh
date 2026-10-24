@@ -23,7 +23,10 @@ if [[ -n "${NEOTELETEXT_RELEASE_IDENTITY:-}" && ${#test_flags[@]} -eq 0 ]]; then
 fi
 version="${1:?a version}"
 out="${2:?an output folder}"
-[[ -z "$(git status --porcelain --untracked-files=no)" ]] || { echo "build-linux: the tree has changes; a release is built from a commit" >&2; exit 1; }
+# Outside a git checkout, git status fails and prints nothing, which alone
+# would read as an unchanged tree.
+changes=$(git status --porcelain --untracked-files=no) || { echo "build-linux: the tree is not a git checkout; a release is built from a commit" >&2; exit 1; }
+[[ -z "$changes" ]] || { echo "build-linux: the tree has changes; a release is built from a commit" >&2; exit 1; }
 # AlmaLinux 8's image as pulled on 24 October 2026 (`podman image inspect`).
 image="docker.io/library/almalinux:8@sha256:e6d31b01fca10ed4f914e84e1139c3a40d6acf3d8346224a32f3e5649b1a3f7d"
 # Its repositories' versions on that day (`dnf repoquery --latest-limit 1`).

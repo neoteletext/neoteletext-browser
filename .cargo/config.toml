@@ -1,0 +1,12 @@
+# Both workspaces, `native` and `native/tuf`, read this from the folders
+# above them.
+#
+# The Windows programs link the C runtime statically. With the dependent
+# load flag the installer, the stub and the launcher take (0x800,
+# System32 alone, finding F-25), every library a program imports must be
+# in System32, and the Visual C++ runtime, VCRUNTIME140.dll, is there only
+# on a computer that installed it: the installer would not start on one
+# that never did. Statically linked, no program imports VCRUNTIME140.dll
+# or the universal C runtime's api-ms-win-crt libraries.
+[target.'cfg(all(windows, target_env = "msvc"))']
+rustflags = ["-C", "target-feature=+crt-static"]

@@ -19,7 +19,10 @@ if [[ -n "${NEOTELETEXT_RELEASE_IDENTITY:-}" && ${#test_flags[@]} -eq 0 ]]; then
 fi
 version="${1:?a version}"
 out="${2:?an output folder}"
-[[ -z "$(git status --porcelain --untracked-files=no)" ]] || { echo "build-macos: the tree has changes; a release is built from a commit" >&2; exit 1; }
+# Outside a git checkout, git status fails and prints nothing, which alone
+# would read as an unchanged tree.
+changes=$(git status --porcelain --untracked-files=no) || { echo "build-macos: the tree is not a git checkout; a release is built from a commit" >&2; exit 1; }
+[[ -z "$changes" ]] || { echo "build-macos: the tree has changes; a release is built from a commit" >&2; exit 1; }
 programs=(neoteletext neoteletext-decoder neoteletext-fetcher neoteletext-interface neoteletext-keyboard neoteletext-sound neoteletext-launcher)
 mkdir -p "$out"
 cargo build --quiet --manifest-path native/tuf/Cargo.toml --release -p neoteletext-release

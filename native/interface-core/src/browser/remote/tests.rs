@@ -35,6 +35,23 @@ fn the_remote_docks_slides_and_goes_away() {
     assert_eq!(browser.take_outputs(), [Output::Setting(SettingChange::Remote(RemotePlace { mode: RemoteMode::Hidden, x: 0, y: 0 }))]);
 }
 
+/// The frame that ends the remote's slide is drawn even when the slide's
+/// time ran out between two frames: one drawn part of the way owes the
+/// next. Before, a frame drawn just short of the end was the last, and the
+/// body stayed a little short of narrowed until something else drew it.
+#[test]
+fn a_slide_drawn_short_of_its_end_asks_for_the_frame_that_ends_it() {
+    let mut browser = Browser::new(Frame { left_inset: 0.0, window_buttons: false });
+    browser.draw(&mut Recorder::new(), WIDTH, HEIGHT, 0);
+    browser.key(Key::Text("r"), Modifiers { command: true, shift: true, ..Modifiers::default() }, 0);
+    let short = SLIDE_MILLISECONDS - 1;
+    browser.draw(&mut Recorder::new(), WIDTH, HEIGHT, short);
+    let after = SLIDE_MILLISECONDS + 1;
+    assert!(browser.remote_animating(after), "the slide's last frame is still to be drawn");
+    browser.draw(&mut Recorder::new(), WIDTH, HEIGHT, after);
+    assert!(!browser.remote_animating(after), "at rest");
+}
+
 /// Its keys are the inputs that already exist: digits choose a page,
 /// the page keys step, the controls go to the trusted core.
 #[test]

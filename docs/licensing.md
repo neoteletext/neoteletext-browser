@@ -59,5 +59,5 @@ Measured on 20 October 2026 from `cargo metadata --all-features` and from the bu
   - `libbrotli`: MIT
 
   X11 and Wayland libraries (MIT) are opened at run time by `winit`.
-- **Windows:** Windows's own libraries and Microsoft's Visual C++ runtime (`VCRUNTIME140.dll`), whose licence allows any program to use it and to redistribute it.
+- **Windows:** Windows's own libraries. Microsoft's C runtime is linked into each program from the build tools' static libraries (`libvcruntime`, `libucrt`, `libcmt`; `.cargo/config.toml`), so no program needs `VCRUNTIME140.dll` or the universal C runtime's libraries, and none is shipped; the owner to confirm this use against the build tools' licence terms.
 - **macOS:** the system frameworks and libraries (AppKit, Core Audio, `libSystem`, `libiconv` and others), part of macOS and never shipped.

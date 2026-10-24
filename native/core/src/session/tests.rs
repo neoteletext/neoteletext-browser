@@ -505,8 +505,11 @@ fn a_restored_file_tab_is_read_only_when_first_shown() {
     use std::sync::atomic::{AtomicUsize, Ordering};
     const FILE_TABS: usize = 64;
     let mut session = Session::new(Bookmarks::default());
+    // A file address is an absolute path, which on Windows begins with a
+    // drive: there, "/recordings/..." is read as a host name.
+    let folder = if cfg!(windows) { r"C:\recordings\" } else { "/recordings/" };
     for number in 0..FILE_TABS {
-        session.open(&format!("/recordings/{number}.t42")).unwrap();
+        session.open(&format!("{folder}{number}.t42")).unwrap();
     }
     let saved = session.saved();
     let reads = Arc::new(AtomicUsize::new(0));

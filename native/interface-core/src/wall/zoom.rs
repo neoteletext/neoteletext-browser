@@ -15,7 +15,7 @@ use crate::tween::{STANDARD, Tween};
 /// The zoom from the wall and back: Material 3's medium duration of 300
 /// milliseconds on its standard curve, `cubic-bezier(0.2, 0, 0, 1)`
 /// (material-components-android `docs/theming/Motion.md`).
-pub(super) const ZOOM_MILLISECONDS: u64 = 300;
+pub(crate) const ZOOM_MILLISECONDS: u64 = 300;
 /// How dark the wall becomes behind a zoomed page.
 const ZOOM_DIM: f64 = 0.75;
 /// While zoomed, a trackpad moves one page for every 20 pixels it would

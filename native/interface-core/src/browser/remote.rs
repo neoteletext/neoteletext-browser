@@ -120,8 +120,15 @@ impl Browser {
         self.remote.place.mode != RemoteMode::Hidden
     }
 
-    /// While the docked remote slides, frames at the display's pace.
-    pub(in crate::browser) fn remote_animating(&self, now: u64) -> bool {
+    /// While the docked remote slides, frames at the display's pace, up
+    /// to the frame that draws it at rest, which ends the slide: a frame
+    /// drawn part of the way owes the next, however late it is asked for.
+    pub(in crate::browser) fn remote_animating(&self, _now: u64) -> bool {
+        self.remote.slide.is_some()
+    }
+
+    /// Whether the docked remote is still on its way at `now`.
+    fn remote_sliding(&self, now: u64) -> bool {
         self.remote.slide.is_some_and(|(_, start)| now.saturating_sub(start) < SLIDE_MILLISECONDS)
     }
 
