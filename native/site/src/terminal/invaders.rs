@@ -126,14 +126,14 @@ impl Invaders {
             let mut cells = line;
             cells[0] = colour;
             if let Ok(row) = u8::try_from(row) {
-                page.row(row, Row(cells));
+                page.row(row, Row::from_codes(cells));
             }
         }
         if let Some(won) = self.over {
             page.row(12, Row::new().at(10).code(if won { ALPHA_GREEN } else { ALPHA_RED }).code(DOUBLE_HEIGHT).text(if won { "YOU WIN" } else { "GAME OVER" }));
             page.row(14, Row::new().at(10).code(ALPHA_WHITE).text("Enter plays again"));
         }
-        page.acked = acked;
+        page.set_acked(acked);
         page
     }
 }

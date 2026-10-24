@@ -51,9 +51,9 @@ impl Session {
         let field = &self.fields[self.focus];
         let length = u8::try_from(field.text.chars().count()).unwrap_or(field.width).min(field.width);
         if length < field.width {
-            page.cursor = Some((field.row, field.column + length, field.width - length, ECHO | if field.masked { MASKED } else { 0 }));
+            page.set_cursor((field.row, field.column + length, field.width - length, ECHO | if field.masked { MASKED } else { 0 }));
         } else {
-            page.cursor = Some((field.row, field.column + length - 1, 0, 0));
+            page.set_cursor((field.row, field.column + length - 1, 0, 0));
         }
         page
     }
@@ -84,7 +84,7 @@ impl Session {
         page.row(3, Row::new().code(ALPHA_WHITE).text("Page numbers are links: 100 200 300"));
         page.row(4, Row::new().code(ALPHA_WHITE).text("Command-click one to follow it."));
         page.row(6, Row::new().code(ALPHA_CYAN).text("The teletext engine on the web"));
-        page.links.push("LT,6,1,30,web:https://example.com/".to_owned());
+        page.link("LT,6,1,30,web:https://example.com/".to_owned());
         page.row(7, Row::new().code(ALPHA_WHITE).text("(Command-click opens your web browser)"));
         page.row(10, Row::new().code(ALPHA_YELLOW).text("A plain click is this channel's:"));
         let clicked = self.click.map_or_else(|| "Click anywhere on the page.".to_owned(), |(column, row)| format!("You clicked column {column}, row {row}."));
@@ -99,16 +99,16 @@ impl Session {
             page.row(4, Row::new().code(ALPHA_WHITE).text(why));
             return page;
         };
-        for (index, row) in phone.rows.iter().enumerate() {
+        for (index, row) in phone.rows().iter().enumerate() {
             if let Ok(number) = u8::try_from(3 + index) {
                 if number > 20 {
                     break;
                 }
-                page.row(number, Row(row.clone()));
+                page.row(number, Row::from_codes(row.clone()));
             }
         }
-        page.row(22, Row::new().code(ALPHA_WHITE).text(&phone.state));
-        page.row(21, Row::new().code(ALPHA_GREEN).text(&format!("Phone typed: {}", phone.typed)));
+        page.row(22, Row::new().code(ALPHA_WHITE).text(phone.state()));
+        page.row(21, Row::new().code(ALPHA_GREEN).text(&format!("Phone typed: {}", phone.typed())));
         page
     }
 

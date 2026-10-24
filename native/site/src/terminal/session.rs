@@ -75,7 +75,7 @@ impl Session {
         } else if !self.last_key.is_empty() {
             page.row(23, Row::new().code(ALPHA_CYAN).text(&format!("Last key: {}", self.last_key)));
         }
-        page.acked = self.acked;
+        page.set_acked(self.acked);
         page
     }
 
