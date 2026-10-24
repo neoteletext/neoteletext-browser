@@ -1,7 +1,7 @@
 //! Tests of the bookmarks and their file (requirements 20.15 to 20.20).
 #![allow(clippy::unwrap_used, clippy::indexing_slicing, clippy::arithmetic_side_effects, reason = "a test")]
 
-use super::file::{FILE_NAME, VERSION_LINE};
+use super::file::VERSION_LINE;
 use super::*;
 use protocol::decoder::BookmarkEntry;
 
@@ -115,6 +115,7 @@ fn bookmarks_round_trip_through_their_file() {
     assert!(first.ends_with("bookmarks-export-2026-10-22.txt") && second.ends_with("bookmarks-export-2026-10-22-2.txt"));
     #[cfg(unix)]
     {
+        use super::file::FILE_NAME;
         use std::os::unix::fs::PermissionsExt as _;
         assert_eq!(std::fs::metadata(folder.join(FILE_NAME)).unwrap().permissions().mode() & 0o777, 0o600);
     }
