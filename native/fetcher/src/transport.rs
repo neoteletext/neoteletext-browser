@@ -25,10 +25,10 @@
 //! nothing goes direct instead.
 
 use std::collections::VecDeque;
-use std::io::{ErrorKind as IoErrorKind, Read, Write};
+use std::io::Write;
 use std::net::{IpAddr, Shutdown, TcpStream};
 use std::sync::Arc;
-use std::sync::mpsc::{self, Receiver, SyncSender, TryRecvError};
+use std::sync::mpsc::{self, Receiver, TryRecvError};
 use std::time::{Duration, Instant};
 
 use embedded_io::ErrorKind;
@@ -39,9 +39,11 @@ use neoteletext_web::url::IpAddress;
 use protocol::fetcher::CertificateProblem;
 
 mod cancel;
+mod connection;
 mod opening;
 
 use cancel::{Cancel, shut};
+use connection::write_records;
 
 /// How long a connection may take to open, from the name's resolution to
 /// the end of its proxy's tunnel and TLS handshake: the engine's connect
@@ -207,96 +209,6 @@ struct Opener {
     /// When the whole opening must be done by: `CONNECT_DEADLINE` from
     /// its start.
     until: Instant,
-}
-
-/// The reader thread: passes on what the socket gives until it ends, or
-/// until the connection is closed and nothing takes the bytes.
-fn read_socket(mut socket: TcpStream, chunks: &SyncSender<Vec<u8>>, wake: &(dyn Fn() + Send + Sync)) {
-    let mut buffer = vec![0_u8; SOCKET_READ];
-    loop {
-        let count = match socket.read(&mut buffer) {
-            Ok(0) => break,
-            Ok(count) => count,
-            Err(error) if error.kind() == IoErrorKind::Interrupted => continue,
-            Err(_) => break,
-        };
-        let Some(bytes) = buffer.get(..count) else { break };
-        if chunks.send(bytes.to_vec()).is_err() {
-            return;
-        }
-        wake();
-    }
-    // The loop sees the end as the channel's: this thread's sender is the
-    // only one.
-    wake();
-}
-
-/// Whether bytes from the reader thread are pending.
-enum Refill {
-    Ready,
-    Waiting,
-    Ended,
-}
-
-/// Takes the reader thread's next bytes when none are pending.
-fn refill(pending: &mut VecDeque<u8>, incoming: &Receiver<Vec<u8>>) -> Refill {
-    if !pending.is_empty() {
-        return Refill::Ready;
-    }
-    match incoming.try_recv() {
-        Ok(bytes) => {
-            pending.extend(bytes);
-            Refill::Ready
-        }
-        Err(TryRecvError::Empty) => Refill::Waiting,
-        Err(TryRecvError::Disconnected) => Refill::Ended,
-    }
-}
-
-impl Connection {
-    fn receive(&mut self, buffer: &mut [u8]) -> Received {
-        let Self { socket, tls, incoming, pending, .. } = self;
-        let Some(tls) = tls.as_deref_mut() else {
-            return match refill(pending, incoming) {
-                Refill::Waiting => Received::Nothing,
-                Refill::Ended => Received::Closed,
-                Refill::Ready => pending.read(buffer).map_or(Received::Closed, Received::Data),
-            };
-        };
-        loop {
-            match tls.reader().read(buffer) {
-                // The server's close_notify.
-                Ok(0) => return Received::Closed,
-                Ok(count) => return Received::Data(count),
-                Err(error) if error.kind() == IoErrorKind::WouldBlock => {}
-                Err(_) => return Received::Closed,
-            }
-            // Nothing decrypted waits: more records, if the socket has any.
-            match refill(pending, incoming) {
-                Refill::Ready => {}
-                Refill::Waiting => return Received::Nothing,
-                Refill::Ended => return Received::Closed,
-            }
-            // `pending` is not empty, which to rustls would be the end; a
-            // read that takes nothing from it would never finish.
-            if !matches!(tls.read_tls(pending), Ok(taken) if taken > 0) || tls.process_new_packets().is_err() {
-                return Received::Closed;
-            }
-            // An alert or a key update may need an answer.
-            if write_records(tls, socket).is_err() {
-                return Received::Closed;
-            }
-        }
-    }
-}
-
-/// Writes whatever records rustls has ready, blocking, within the write
-/// limit.
-fn write_records(tls: &mut rustls::ClientConnection, mut socket: &TcpStream) -> std::io::Result<()> {
-    while tls.wants_write() {
-        tls.write_tls(&mut socket)?;
-    }
-    socket.flush()
 }
 
 impl embedded_io::ErrorType for Tcp {

@@ -3,6 +3,7 @@
 #![allow(clippy::unwrap_used, clippy::indexing_slicing, clippy::panic, clippy::arithmetic_side_effects, reason = "a test")]
 
 use super::*;
+use std::io::{ErrorKind as IoErrorKind, Read};
 use std::net::TcpListener;
 use std::time::Instant;
 

@@ -13,7 +13,8 @@ use std::time::{Duration, Instant};
 use neoteletext_web::port::Security;
 
 use super::cancel::hold;
-use super::{AllowedLocal, Connection, Failure, Opener, READS_AHEAD, WRITE_TIMEOUT, address, certificate_problem, read_socket};
+use super::connection::read_socket;
+use super::{AllowedLocal, Connection, Failure, Opener, READS_AHEAD, WRITE_TIMEOUT, address, certificate_problem};
 
 /// A socket whose every read and write must finish by one moment: each
 /// is given only the time left, so no number of slow ones together takes
