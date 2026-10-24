@@ -23,8 +23,8 @@ pub(super) struct Decoder {
     /// Which of the channel's decoders this is: one put to sleep may still
     /// report after the next has started, and is then not listened to.
     generation: u64,
-    /// It has said something: an end before then is a failure to start,
-    /// counted against the version (finding F-12).
+    /// It has said it is confined, its first message: an end before then
+    /// is a failure to start, counted against the version (finding F-12).
     heard: bool,
 }
 
@@ -51,12 +51,12 @@ impl Decoder {
         self.generation
     }
 
-    /// Whether it has said something.
+    /// Whether it has said it is confined.
     pub(super) fn heard(&self) -> bool {
         self.heard
     }
 
-    /// It said something.
+    /// It said it is confined.
     pub(super) fn hear(&mut self) {
         self.heard = true;
     }
@@ -99,7 +99,7 @@ impl Fetcher {
         self.heard
     }
 
-    /// It said something.
+    /// It said it is confined.
     pub(super) fn hear(&mut self) {
         self.heard = true;
     }

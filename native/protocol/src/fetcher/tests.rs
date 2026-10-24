@@ -16,6 +16,7 @@ fn every_kind_round_trips() {
         FromFetcher::Notice("Opened".into()),
         FromFetcher::Pushing(true),
         FromFetcher::Exchange { method: "GET".into(), url: "https://a.example/100.tti".into(), status: 200, bytes: 512, elapsed_us: 1_234 },
+        FromFetcher::Confined,
         FromFetcher::ProxyFailed,
         FromFetcher::CertificateRefused(CertificateProblem::Expired),
         FromFetcher::CertificateRefused(CertificateProblem::Handshake),

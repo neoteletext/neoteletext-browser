@@ -13,6 +13,14 @@ impl Core {
     pub(super) fn decoded(&mut self, channel: u32, message: FromDecoder) -> Result<(), String> {
         let active = self.active_channel();
         match message {
+            // Its first message: an end from now on is not a failure to
+            // start (finding F-12). Only the channel's current decoder's
+            // messages reach here.
+            FromDecoder::Confined => {
+                if let Some(decoder) = self.decoders.get_mut(&channel) {
+                    decoder.hear();
+                }
+            }
             FromDecoder::StoreFull => self.grow_decoder(channel)?,
             // Only a decoder started to read bookmarks reports them; from a
             // channel's they change nothing.

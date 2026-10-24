@@ -185,11 +185,18 @@ fn agent_config(allowed: &[IpAddr], proxied: bool) -> Config {
 /// standard input: the engine's agent opens it, fetches its contents file
 /// and every page it lists, and holds its push connection; what arrives
 /// goes to the trusted core on standard output. A server on this computer
-/// or the local network is reached only when `allowed` names it.
+/// or the local network is reached only when `allowed` names it. Its
+/// first message says it is confined, as `main.rs` has made it.
 ///
 /// # Errors
 /// When writing to the trusted core fails.
 pub fn run(channel: &str, allowed: &[IpAddr], proxy: Option<Proxy>) -> Result<(), String> {
+    // Before anything of the channel, so the trusted core can tell a
+    // fetcher that could not start from one its server ended (finding
+    // F-12).
+    let output: cookies::Output = Rc::new(RefCell::new(BufWriter::new(io::stdout())));
+    send(&output, &FromFetcher::Confined)?;
+    output.borrow_mut().flush().map_err(|error| error.to_string())?;
     let mut storage = Box::new(Storage::default());
     let config = agent_config(allowed, proxy.is_some());
     // The transport refuses the same local addresses before connecting
@@ -200,7 +207,6 @@ pub fn run(channel: &str, allowed: &[IpAddr], proxy: Option<Proxy>) -> Result<()
     // The trusted core's answers to the cookie questions, read by the same
     // thread that reads its input messages.
     let (answers, answered) = mpsc::channel();
-    let output: cookies::Output = Rc::new(RefCell::new(BufWriter::new(io::stdout())));
     let mut store = cookies::CoreCookies::new(Rc::clone(&output), answered);
     let mut agent: Box<Agent<'_>> = Box::new(UserAgent::with_cookies(config, storage.buffers(), random, &mut store));
     let mut pump = sockets(wakes.clone(), proxy, allowed_local);

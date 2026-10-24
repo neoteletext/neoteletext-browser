@@ -322,6 +322,7 @@ Every process speaks the same framing, the engine's: one kind byte, a 32-bit big
 
 | Message | Meaning |
 |---|---|
+| Confined | Its first message, before it reads anything: it is confined and running; one that ends before saying it fails an update's trial (finding F-12) |
 | Arrived | A page was received completely for the first time: its number and a title from its first text row |
 | Updated | A page already held arrived again with different rows |
 | Frame | A rendered page: 480 by 500 palette indices and a palette of at most 32 colours, every index checked against the palette on arrival |
@@ -338,6 +339,7 @@ Every process speaks the same framing, the engine's: one kind byte, a 32-bit big
 
 | Message | Meaning |
 |---|---|
+| Confined | Its first message, before it opens its channel: as a decoder's |
 | Contents | The channel's contents file as the engine read it: section headings and page entries with titles, at most 1,000 entries |
 | Page | A page's bytes, fetched or pushed, passed to the decoder unread |
 | Notice | A short report, such as an unreachable address, cleaned and shown in the trusted core's log |

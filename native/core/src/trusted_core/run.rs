@@ -27,13 +27,11 @@ fn handle(core: &mut Core, event: Event) -> Result<bool, String> {
             return go;
         }
         Event::Decoded(channel, generation, message) => {
-            core.decoder_heard(channel, generation);
             if core.decoders.get(&channel).map(super::processes::Decoder::generation) == Some(generation) {
                 core.in_window_of(channel, |core| core.decoded(channel, message))?;
             }
         }
         Event::Fetched(channel, generation, message) => {
-            core.fetcher_heard(channel, generation);
             if core.fetchers.get(&channel).map(super::processes::Fetcher::generation) == Some(generation) {
                 core.in_window_of(channel, |core| core.fetched(channel, message))?;
             }
@@ -226,5 +224,51 @@ mod tests {
         let failed = Exit::from(std::process::ExitStatus::from_raw(1 << EXIT_CODE_SHIFT));
         assert!(ended(Ok(()), &failed).is_err());
         assert_eq!(ended(Err("first".into()), &crashed), Err("first".into()), "the first error is the one reported");
+    }
+
+    /// Finding F-12: a helper is heard once it says it is confined, its
+    /// first message, so one that ends after that, before its channel
+    /// gave it a page or an answer, is not counted against the version; a
+    /// helper that ends without having said so is, whatever else it said.
+    #[test]
+    fn a_helper_is_heard_once_it_says_it_is_confined() {
+        use super::super::processes::{Decoder, Fetcher};
+        use super::super::test_support::{healthy_once_settled, stand_in, test_core};
+        use confine::Role;
+        use protocol::decoder::FromDecoder;
+        use protocol::fetcher::FromFetcher;
+
+        let decoder = |core: &mut Core| {
+            let mut child = stand_in("/usr/bin/false", &[], Role::Decoder);
+            let input = Outbox::new(child.stdin.take().unwrap());
+            core.decoders.insert(1, Decoder::new(child, input, 1));
+        };
+        let fetcher = |core: &mut Core| {
+            core.fetchers.insert(1, Fetcher::new(stand_in("/usr/bin/false", &[], Role::Network), 1, None));
+        };
+
+        let mut core = test_core();
+        decoder(&mut core);
+        handle(&mut core, Event::Decoded(1, 1, FromDecoder::Confined)).unwrap();
+        handle(&mut core, Event::DecoderEnded(1, 1, None)).unwrap();
+        assert!(healthy_once_settled(&mut core), "a decoder that ended after it was confined is not counted");
+
+        let mut core = test_core();
+        decoder(&mut core);
+        handle(&mut core, Event::Decoded(1, 1, FromDecoder::Updated { page: 0x100 })).unwrap();
+        handle(&mut core, Event::DecoderEnded(1, 1, None)).unwrap();
+        assert!(!healthy_once_settled(&mut core), "a decoder that never said it was confined failed the version");
+
+        let mut core = test_core();
+        fetcher(&mut core);
+        handle(&mut core, Event::Fetched(1, 1, FromFetcher::Confined)).unwrap();
+        handle(&mut core, Event::FetcherEnded(1, 1, None)).unwrap();
+        assert!(healthy_once_settled(&mut core), "a fetcher that ended after it was confined is not counted");
+
+        let mut core = test_core();
+        fetcher(&mut core);
+        handle(&mut core, Event::Fetched(1, 1, FromFetcher::Notice("unreachable".into()))).unwrap();
+        handle(&mut core, Event::FetcherEnded(1, 1, None)).unwrap();
+        assert!(!healthy_once_settled(&mut core), "a fetcher that never said it was confined failed the version");
     }
 }

@@ -78,12 +78,18 @@ pub fn read_bookmarks() -> Result<(), ProtocolError> {
 
 /// A channel's decoder, with a store of `store_pages`: it reads the
 /// channel's bytes and requests from the trusted core and sends back which
-/// pages arrived and the pages shown, until the channel closes.
+/// pages arrived and the pages shown, until the channel closes. Its first
+/// message says it is confined, as `main.rs` has made it.
 ///
 /// # Errors
 /// When the pipe fails or a message from the trusted core is malformed.
 pub fn run(store_pages: usize) -> Result<(), ProtocolError> {
     let mut output = BufWriter::new(io::stdout().lock());
+    // Before it reads anything, so the trusted core can tell a decoder
+    // that could not start from one its channel's data ended (finding
+    // F-12).
+    write_to_core(&mut output, &FromDecoder::Confined)?;
+    output.flush()?;
     let mut engine = Engine::with_store(store_pages);
     let mut showing: Vec<u16> = Vec::new();
     // The last frame sent of each page shown, so an unchanged page is

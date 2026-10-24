@@ -23,6 +23,23 @@ pub(super) fn test_core() -> Core {
     Core::new(Session::new(Bookmarks::default()), Vec::new(), (Settings::default(), None), events, Outbox::new(Vec::new()), None)
 }
 
+/// A helper of a test, confined as `role`: `program` with `arguments`.
+#[cfg(unix)]
+pub(super) fn stand_in(program: &str, arguments: &[&str], role: confine::Role) -> confine::broker::Helper {
+    let program = std::path::PathBuf::from(program);
+    let arguments: Vec<std::ffi::OsString> = arguments.iter().map(std::ffi::OsString::from).collect();
+    confine::broker::Helper::local(
+        confine::spawn(&confine::Spawn { program: &program, arguments: &arguments, role, environment: &[], local_network: false, writable: None }).unwrap(),
+    )
+}
+
+/// Whether the version is healthy once its window has drawn and settled.
+#[cfg(unix)]
+pub(super) fn healthy_once_settled(core: &mut Core) -> bool {
+    core.updates.drawn();
+    core.updates.health.healthy(std::time::Instant::now().checked_add(super::updates::HEALTH_SETTLE).unwrap())
+}
+
 /// What the core writes to the interface, a chunk at a time.
 pub(super) struct Sink(mpsc::Sender<Vec<u8>>);
 

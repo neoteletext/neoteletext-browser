@@ -40,6 +40,7 @@ fn every_kind_round_trips() {
     for message in [
         FromDecoder::Arrived { page: 0x100, title: "Headlines".into() },
         FromDecoder::Updated { page: 0x302 },
+        FromDecoder::Confined,
         FromDecoder::StoreFull,
         FromDecoder::Frame { page: 0x123, palette: vec![[0, 0, 0], [255, 255, 255]], screen: 1, indices },
         FromDecoder::SubPages { page: 0x302, subcodes: vec![1, 2, 3], shown: 2 },

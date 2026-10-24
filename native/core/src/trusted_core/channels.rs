@@ -154,17 +154,19 @@ impl Core {
             let at = self.now();
             self.console.log(Some(channel), Level::Error, at, &format!("decoder: stopped: {reason}"));
         } else if !heard {
-            self.log(Level::Error, Some(channel), &format!("the decoder for channel {channel} stopped before it first spoke"));
+            self.log(Level::Error, Some(channel), &format!("the decoder for channel {channel} stopped before it said it was confined"));
         }
-        // A decoder that breaks its protocol, or ends before it first
-        // speaks, as one that cannot confine itself does, even with its
-        // pipe closed cleanly, makes the version unhealthy (section 3.2 of
-        // the installation design, finding F-12). The core's own ends of a
-        // decoder were discarded above by its generation.
+        // A decoder that breaks its protocol, or ends before it says it is
+        // confined, its first message, as one that cannot confine itself
+        // does, even with its pipe closed cleanly, makes the version
+        // unhealthy (section 3.2 of the installation design, finding
+        // F-12). One that ends after that, before its channel gave it a
+        // page, is not counted. The core's own ends of a decoder were
+        // discarded above by its generation.
         if reason.is_some() || !heard {
             self.updates.helper_failed(&format!(
                 "the decoder stopped{}",
-                reason.map_or_else(|| String::from(" before it first spoke"), |reason| format!(": {reason}"))
+                reason.map_or_else(|| String::from(" before it said it was confined"), |reason| format!(": {reason}"))
             ));
         }
         if let Some(decoder) = self.decoders.remove(&channel) {
@@ -174,32 +176,18 @@ impl Core {
         self.deliver(sends);
     }
 
-    /// The decoder of `channel` at `generation` said something.
-    pub(super) fn decoder_heard(&mut self, channel: u32, generation: u64) {
-        if let Some(decoder) = self.decoders.get_mut(&channel).filter(|decoder| decoder.generation() == generation) {
-            decoder.hear();
-        }
-    }
-
-    /// The fetcher of `channel` at `generation` said something.
-    pub(super) fn fetcher_heard(&mut self, channel: u32, generation: u64) {
-        if let Some(fetcher) = self.fetchers.get_mut(&channel).filter(|fetcher| fetcher.generation() == generation) {
-            fetcher.hear();
-        }
-    }
-
-    /// A fetcher ended. One the core did not end, that ended before it
-    /// first spoke, as one that cannot confine itself does, fails the
-    /// version (finding F-12); one that ends after speaking is not
-    /// counted, so a hostile server that crashes it cannot force a
-    /// rollback.
+    /// A fetcher ended. One the core did not end, that ended before it said
+    /// it was confined, its first message, as one that cannot confine
+    /// itself does, fails the version (finding F-12); one that ends after
+    /// that is not counted, even before its channel answered, so a hostile
+    /// server that crashes it cannot force a rollback.
     pub(super) fn fetcher_ended(&mut self, channel: u32, generation: u64, reason: Option<String>) {
         if self.fetchers.get(&channel).map(Fetcher::generation) == Some(generation) {
             let stopped = format!("the fetcher for channel {channel} stopped{}", reason.map(|reason| format!(": {reason}")).unwrap_or_default());
             self.log(Level::Error, None, &stopped);
             if let Some(fetcher) = self.fetchers.remove(&channel) {
                 if !fetcher.heard() {
-                    self.updates.helper_failed(&format!("{stopped} before it first spoke"));
+                    self.updates.helper_failed(&format!("{stopped} before it said it was confined"));
                 }
                 fetcher.reap();
             }
@@ -259,8 +247,7 @@ impl Core {
 #[cfg(all(test, unix))]
 #[allow(clippy::unwrap_used, clippy::arithmetic_side_effects, reason = "a test")]
 mod tests {
-    use super::super::Core;
-    use super::super::test_support::test_core;
+    use super::super::test_support::{healthy_once_settled, stand_in, test_core};
     use super::*;
     use confine::Role;
     use confine::broker::Helper;
@@ -304,42 +291,26 @@ mod tests {
         assert!(started.elapsed() < Duration::from_secs(5), "never waited on it: {:?}", started.elapsed());
     }
 
-    /// A helper of a test, confined as `role`: `program` with `arguments`.
-    fn stand_in(program: &str, arguments: &[&str], role: Role) -> Helper {
-        let program = PathBuf::from(program);
-        let arguments: Vec<OsString> = arguments.iter().map(OsString::from).collect();
-        Helper::local(
-            confine::spawn(&confine::Spawn { program: &program, arguments: &arguments, role, environment: &[], local_network: false, writable: None }).unwrap(),
-        )
-    }
-
-    /// Whether the version is healthy once its window has drawn and
-    /// settled.
-    fn healthy_once_settled(core: &mut Core) -> bool {
-        core.updates.drawn();
-        core.updates.health.healthy(std::time::Instant::now() + super::super::updates::HEALTH_SETTLE)
-    }
-
-    /// Finding F-12: a decoder that ends before it first speaks, as one
-    /// that cannot confine itself does, marks the version unhealthy, even
-    /// when its pipe closed cleanly; one that ends after speaking, as a
+    /// Finding F-12: a decoder that ends before it says it is confined, as
+    /// one that cannot confine itself does, marks the version unhealthy,
+    /// even when its pipe closed cleanly; one that ends after that, as a
     /// hostile channel's could, is not counted.
     #[test]
-    fn a_decoder_that_ends_before_it_speaks_fails_the_version() {
+    fn a_decoder_that_ends_before_it_is_confined_fails_the_version() {
         let mut core = test_core();
         let mut child = stand_in("/usr/bin/false", &[], Role::Decoder);
         let input = Outbox::new(child.stdin.take().unwrap());
         core.decoders.insert(1, Decoder::new(child, input, 1));
         core.decoder_ended(1, 1, None);
-        assert!(!healthy_once_settled(&mut core), "a decoder that never spoke failed the version");
+        assert!(!healthy_once_settled(&mut core), "a decoder that never said it was confined failed the version");
 
         let mut core = test_core();
         let mut child = stand_in("/usr/bin/false", &[], Role::Decoder);
         let input = Outbox::new(child.stdin.take().unwrap());
         core.decoders.insert(1, Decoder::new(child, input, 1));
-        core.decoder_heard(1, 1);
+        core.decoded(1, protocol::decoder::FromDecoder::Confined).unwrap();
         core.decoder_ended(1, 1, None);
-        assert!(healthy_once_settled(&mut core), "a decoder that spoke first is not counted");
+        assert!(healthy_once_settled(&mut core), "a decoder that said it was confined is not counted");
     }
 
     /// Finding F-30: a channel whose decoder stops reading more than
@@ -370,15 +341,15 @@ mod tests {
         assert_eq!(core.match_decoders(), Ok(()), "no decoder is started for a channel given up");
     }
 
-    /// Finding F-12: a fetcher that ends before it first speaks, unasked,
-    /// marks the version unhealthy.
+    /// Finding F-12: a fetcher that ends before it says it is confined,
+    /// unasked, marks the version unhealthy.
     #[test]
-    fn a_fetcher_that_ends_before_it_speaks_fails_the_version() {
+    fn a_fetcher_that_ends_before_it_is_confined_fails_the_version() {
         let mut core = test_core();
         let child = stand_in("/usr/bin/false", &[], Role::Network);
         core.fetchers.insert(1, Fetcher::new(child, 1, None));
         core.fetcher_ended(1, 1, None);
         assert!(!core.fetchers.contains_key(&1));
-        assert!(!healthy_once_settled(&mut core), "a fetcher that never spoke failed the version");
+        assert!(!healthy_once_settled(&mut core), "a fetcher that never said it was confined failed the version");
     }
 }
