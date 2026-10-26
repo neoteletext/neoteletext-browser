@@ -74,7 +74,7 @@ fn handle(core: &mut Core, event: Event) -> Result<bool, String> {
 pub(crate) fn run(broker: &Arc<Broker>, given: impl Iterator<Item = String>, confined: &str) -> Result<(), String> {
     // What happens before the trusted core is made, for its Log tab.
     let mut log = vec![(Level::Info, format!("trusted core: confined: {confined}"))];
-    let (addresses, allow_local) = arguments(given)?;
+    let CommandLine { addresses, allow_local, no_keychain } = arguments(given)?;
     let mut interface = spawn(broker, Program::Interface, &[], false)?;
     log.push((Level::Info, format!("interface: confined: {}", interface.report)));
     let (events, incoming) = mpsc::channel();
@@ -102,6 +102,7 @@ pub(crate) fn run(broker: &Arc<Broker>, given: impl Iterator<Item = String>, con
     for (level, text) in log {
         core.log(level, None, &text);
     }
+    core.cookies.no_keychain = no_keychain;
     core.cookies_at_start();
     core.keep_session();
     core.start_sound();
@@ -129,20 +130,35 @@ pub(crate) fn run(broker: &Arc<Broker>, given: impl Iterator<Item = String>, con
     ended(result, &status)
 }
 
-/// The browser's own arguments: the addresses to open, and each local
-/// address `--allow-local` lets a fetcher reach.
-fn arguments(given: impl Iterator<Item = String>) -> Result<(Vec<String>, Vec<String>), String> {
-    let mut addresses = Vec::new();
-    let mut allow_local = Vec::new();
+/// The flag that leaves the platform's secret store alone: cookies are
+/// kept for the run only, and the cookie file is neither read nor written
+/// (decision 113).
+pub(crate) const NO_KEYCHAIN: &str = "--no-keychain";
+
+/// The browser's own arguments.
+#[derive(Debug, PartialEq, Eq)]
+struct CommandLine {
+    /// The addresses to open.
+    addresses: Vec<String>,
+    /// Each local address `--allow-local` lets a fetcher reach.
+    allow_local: Vec<String>,
+    /// [`NO_KEYCHAIN`] was given.
+    no_keychain: bool,
+}
+
+fn arguments(given: impl Iterator<Item = String>) -> Result<CommandLine, String> {
+    let mut command_line = CommandLine { addresses: Vec::new(), allow_local: Vec::new(), no_keychain: false };
     let mut arguments = given;
     while let Some(argument) = arguments.next() {
         if argument == "--allow-local" {
-            allow_local.push(arguments.next().ok_or("--allow-local needs an address")?);
+            command_line.allow_local.push(arguments.next().ok_or("--allow-local needs an address")?);
+        } else if argument == NO_KEYCHAIN {
+            command_line.no_keychain = true;
         } else {
-            addresses.push(argument);
+            command_line.addresses.push(argument);
         }
     }
-    Ok((addresses, allow_local))
+    Ok(command_line)
 }
 
 /// Handles each event, and the timed work, until the browser is to end.
@@ -272,3 +288,7 @@ mod tests {
         assert!(!healthy_once_settled(&mut core), "a fetcher that never said it was confined failed the version");
     }
 }
+
+/// The command line's tests run on every platform; those above need Unix's wait statuses.
+#[cfg(test)]
+mod command_line_tests;

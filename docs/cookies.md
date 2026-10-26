@@ -141,6 +141,10 @@ The file is sealed with ChaCha20-Poly1305 (`ring`'s, section 13 item 7), with a 
 
 **The key in memory** is held by the trusted core for its life, copied where it is used, and not wiped at exit (decision 98): wiping it needs volatile writes, which are unsafe code the core may not hold (requirement 10.12), or the `zeroize` crate, a dependency not approved; and whoever can read the core's memory has its cookies already.
 
+### 7.1 Started without the keychain (decision 113)
+
+The macOS Keychain lets only the program that made an item read it without asking, and a rebuilt program, signed afresh, is another program to it: a browser built for testing is asked about at every start ("neoteletext wants to use your confidential information stored in "NeoTeletext cookie file" in your keychain"). `--no-keychain` on the command line keeps cookies for the run only: the trusted core never asks the broker for the key, so no secret store is touched on any platform; the cookie file is neither read nor written and stays for the next ordinary start; and the cookies panel says "Cookies are kept for this run only: started with --no-keychain". Nothing is written unsealed, so it lowers nothing (decision 58).
+
 ## 8. `Clear-Site-Data`
 
 A response from the channel over `https` with `Clear-Site-Data` naming `"cookies"` or `"*"` empties **that channel's jar**, and nothing else: not the origin's other channels, which are other people on a shared host (REQ-WEB-026), and not over plain HTTP, where a network attacker could send it. The fetcher passes the header to the trusted core as it passes `Set-Cookie`. `"cache"` and `"storage"` have nothing to clear yet beyond what the engine's cache already discards.

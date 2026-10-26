@@ -17,6 +17,7 @@ use protocol::fetcher::{CookieSite, FromFetcher, ToFetcher, write_to_fetcher};
 
 use super::Core;
 use super::numbers::Numbers;
+use super::run::NO_KEYCHAIN;
 
 /// How long after a change the cookies are written: a burst of changes is
 /// one write (`cookies.md` section 6).
@@ -31,6 +32,9 @@ pub(crate) struct Cookies {
     key: Option<[u8; kept::KEY_BYTES]>,
     /// Why cookies are kept for this run only, when they are.
     pub(crate) for_this_run: Option<String>,
+    /// Started with `--no-keychain` (decision 113): the broker is never
+    /// asked for the key, so the platform's secret store is not touched.
+    pub(crate) no_keychain: bool,
     /// When the changed cookies are next written.
     pub(crate) due: Option<Instant>,
     numbers: Numbers<Row>,
@@ -181,6 +185,13 @@ impl Core {
     }
 
     fn open_cookie_file(&mut self, folder: &std::path::Path) {
+        // Without a key nothing is read or written (requirement 21.4): the
+        // kept cookies stay as they are for the next ordinary start.
+        if self.cookies.no_keychain {
+            self.log(Level::Info, None, &format!("cookies are kept for this run only: started with {NO_KEYCHAIN}"));
+            self.cookies.for_this_run = Some(format!("Cookies are kept for this run only: started with {NO_KEYCHAIN}"));
+            return;
+        }
         let key = match self.broker.as_ref().map(|broker| broker.cookie_key()) {
             Some(Ok(key)) => key,
             Some(Err(reason)) => {

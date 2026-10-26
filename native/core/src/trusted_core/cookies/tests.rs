@@ -112,6 +112,29 @@ fn without_the_key_nothing_is_written() {
     assert_eq!(kept::load(&test.folder).unwrap(), None);
 }
 
+/// Decision 113: started with `--no-keychain`, the core never asks the
+/// broker for the key, says cookies are kept for the run only, and leaves
+/// the kept cookies' file as it was for the next ordinary start.
+#[test]
+fn with_no_keychain_the_key_is_not_asked_and_the_file_is_left_alone() {
+    let mut test = Test::new("no-keychain");
+    let file = test.folder.join(kept::FILE_NAME);
+    let before = b"sealed cookies of an ordinary start".to_vec();
+    std::fs::write(&file, &before).unwrap();
+    test.core.settings.cookies = Mode::Keep;
+    test.core.cookies.no_keychain = true;
+    test.core.cookies_at_start();
+    assert_eq!(test.core.cookies.key, None, "no key was had");
+    let notice = test.core.cookies.for_this_run.clone().unwrap_or_default();
+    assert!(notice.contains(NO_KEYCHAIN), "the panel says why: {notice}");
+    let news = test.tab("https://news.example/teletext/", false);
+    test.set(news, "news.example", "keep=1; Max-Age=3600");
+    assert_eq!(test.ask(news, "news.example"), "keep=1", "cookies work for the run");
+    test.core.keep_cookies();
+    test.core.cookies_at_exit();
+    assert_eq!(std::fs::read(&file).unwrap(), before, "the file is neither read into the run nor replaced");
+}
+
 /// Requirement 21.8: the history panel's clearing of cookies removes those
 /// made in its range.
 #[test]
