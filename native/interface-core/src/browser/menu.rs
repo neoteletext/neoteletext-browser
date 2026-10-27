@@ -26,11 +26,13 @@ enum Item {
     History,
     Bookmarks,
     Bar,
+    Overview,
     BookmarkPage,
     #[cfg(feature = "phone-keyboard")]
     Phone,
     Console,
     Remote,
+    FullScreen,
     Settings,
 }
 
@@ -45,17 +47,19 @@ impl Item {
         Self::History,
         Self::Bookmarks,
         Self::Bar,
+        Self::Overview,
         Self::BookmarkPage,
         #[cfg(feature = "phone-keyboard")]
         Self::Phone,
         Self::Console,
         Self::Remote,
+        Self::FullScreen,
         Self::Settings,
     ];
 
     /// Its words, and its shortcut on macOS and elsewhere, in words: the
     /// browser's fonts have no key symbols.
-    fn words(self, bar_shown: bool) -> (&'static str, &'static str, &'static str) {
+    fn words(self, bar_shown: bool, overview_shown: bool) -> (&'static str, &'static str, &'static str) {
         match self {
             Self::NewTab => ("New tab", "Cmd+T", "Ctrl+T"),
             Self::NewWindow => ("New window", "Cmd+N", "Ctrl+N"),
@@ -67,11 +71,15 @@ impl Item {
             Self::Bookmarks => ("Bookmarks", "Option+Cmd+B", "Ctrl+Shift+O"),
             Self::Bar if bar_shown => ("Hide bookmarks bar", "Shift+Cmd+B", "Ctrl+Shift+B"),
             Self::Bar => ("Show bookmarks bar", "Shift+Cmd+B", "Ctrl+Shift+B"),
+            Self::Overview if overview_shown => ("Hide overview of all pages", "Shift+Cmd+E", "Ctrl+Shift+E"),
+            Self::Overview => ("Show overview of all pages", "Shift+Cmd+E", "Ctrl+Shift+E"),
             Self::BookmarkPage => ("Bookmark this page", "Cmd+D", "Ctrl+D"),
             #[cfg(feature = "phone-keyboard")]
             Self::Phone => ("Phone keyboard", "", ""),
             Self::Console => ("Developer console", "Option+Cmd+I", "Ctrl+Shift+I"),
             Self::Remote => ("Remote control", "Shift+Cmd+R", "Ctrl+Shift+R"),
+            // The page alone (decision 85), by the system's own key.
+            Self::FullScreen => ("Full screen", "Ctrl+Cmd+F", "F11"),
             Self::Settings => ("Settings", "Cmd+,", "Ctrl+,"),
         }
     }
@@ -127,11 +135,17 @@ impl Browser {
                 }
             }
             Item::Bar => self.outputs.push(Output::Bar(BarRequest::Show(!self.bar_shown()))),
+            Item::Overview => self.toggle_overview_shown(),
             Item::BookmarkPage => self.outputs.push(Output::Bookmark),
             #[cfg(feature = "phone-keyboard")]
             Item::Phone => self.toggle_phone_panel(),
             Item::Console => self.toggle_console(),
             Item::Remote => self.toggle_remote(self.remote_time()),
+            Item::FullScreen => {
+                // The last frame's time: a menu's press is not given the clock.
+                let now = self.remote_time();
+                self.toggle_full_screen(now);
+            }
             Item::Settings => {
                 if !self.settings_open() {
                     self.toggle_settings();
@@ -160,7 +174,7 @@ impl Browser {
                 canvas.fill(rect, 0.0, SELECTED);
             }
             // macOS's window buttons are its own: the browser draws none there.
-            let (words, mac, elsewhere) = item.words(bar_shown);
+            let (words, mac, elsewhere) = item.words(bar_shown, self.overview_shown());
             let shortcut = if self.frame.window_buttons { elsewhere } else { mac };
             left_centred(canvas, rect, GAP * 2.0, words, ROW_TITLE, WHITE);
             right_centred(canvas, rect, SHORTCUT_GAP, shortcut, ROW_STATUS, MUTED);

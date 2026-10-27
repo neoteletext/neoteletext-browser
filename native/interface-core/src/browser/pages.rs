@@ -42,7 +42,7 @@ impl Browser {
         let new = !matches!(slot, Some(info) if info.status == Status::Loaded);
         // A folded overview keeps no animation; opened, it draws the page
         // as it is.
-        if new && !self.overview_folded && self.pulses.len() < PULSE_LIMIT {
+        if new && !self.overview.folded && self.pulses.len() < PULSE_LIMIT {
             self.pulses.push((index, now));
         }
         *slot = Some(PageInfo { title, status: Status::Loaded });
@@ -155,6 +155,12 @@ impl Browser {
             }
             return;
         }
+        self.step_list(forward);
+    }
+
+    /// Chooses the page before or after the chosen one in the list, or the
+    /// first when none is chosen; a zoomed area shows it instead.
+    pub(super) fn step_list(&mut self, forward: bool) {
         let pages = self.bank_pages();
         let position = self.selected.and_then(|selected| pages.iter().position(|&index| index == selected));
         let next = match (position, forward) {

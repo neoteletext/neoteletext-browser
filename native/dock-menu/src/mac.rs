@@ -8,10 +8,15 @@ use std::ffi::CStr;
 use objc2::rc::Retained;
 use objc2::runtime::{AnyObject, Sel};
 use objc2::{ClassType, DeclaredClass, declare_class, ffi, msg_send_id, mutability, sel};
-use objc2_app_kit::{NSApplication, NSControlStateValueOn, NSEventModifierFlags, NSLeftArrowFunctionKey, NSMenu, NSMenuItem, NSRightArrowFunctionKey};
-use objc2_foundation::{MainThreadMarker, NSInteger, NSObject, NSObjectProtocol, NSString};
+use objc2_app_kit::{
+    NSAboutPanelOptionApplicationName, NSAboutPanelOptionApplicationVersion, NSApplication, NSControlStateValueOn, NSEventModifierFlags,
+    NSLeftArrowFunctionKey, NSMenu, NSMenuItem, NSRightArrowFunctionKey,
+};
+use objc2_foundation::{MainThreadMarker, NSDictionary, NSInteger, NSObject, NSObjectProtocol, NSString};
 
-use crate::{Choice, DockTab, Entry, MENU_BAR, MenuAction, MenuItem, Shortcut, ShortcutKey, SystemAction, menu_item, mute_all_item, tab_title};
+use crate::{
+    Choice, DockTab, Entry, MENU_BAR, MenuAction, MenuItem, Shortcut, ShortcutKey, SystemAction, full_screen_title, menu_item, mute_all_item, tab_title,
+};
 
 /// The tag of the mute-all item; a tab's item is tagged with its index.
 const MUTE_ALL_TAG: NSInteger = -1;
@@ -36,12 +41,21 @@ struct MenuBar {
     choose: Box<dyn Fn(&'static MenuItem)>,
     #[expect(dead_code, reason = "held only so that it lives: a menu item does not retain its target")]
     target: Retained<Target>,
+    /// The full-screen item, retitled as the page goes full screen and back.
+    full_screen: Option<Retained<NSMenuItem>>,
 }
 
 thread_local! {
     static STATE: RefCell<Option<State>> = const { RefCell::new(None) };
     static MENU_BAR_STATE: RefCell<Option<MenuBar>> = const { RefCell::new(None) };
+    /// The version the About panel shows, as the trusted core reports it.
+    static VERSION: RefCell<String> = const { RefCell::new(String::new()) };
+    static COPYRIGHT: RefCell<String> = const { RefCell::new(String::new()) };
 }
+
+/// The application's name in the About panel: a program built but not
+/// installed has no bundle to name it, and would show its file's name.
+const APPLICATION_NAME: &str = "NeoTeletext";
 
 declare_class!(
     /// The menu items' target: it hears which item was chosen.
@@ -71,6 +85,11 @@ declare_class!(
             // SAFETY: reading a menu item's tag has no requirements.
             let tag = unsafe { item.tag() };
             menu_bar_chosen(tag);
+        }
+
+        #[method(about:)]
+        fn about(&self, _item: &NSMenuItem) {
+            show_about();
         }
     }
 );
@@ -106,6 +125,49 @@ fn menu_bar_chosen(tag: NSInteger) {
     });
 }
 
+/// The About panel, naming the browser, the version the trusted core
+/// reported and the copyright notice; the version is left out until it has.
+fn show_about() {
+    let Some(mtm) = MainThreadMarker::new() else { return };
+    let version = VERSION.with(|version| version.borrow().clone());
+    let copyright = COPYRIGHT.with(|copyright| copyright.borrow().clone());
+    let name: Retained<AnyObject> = Retained::into_super(Retained::into_super(NSString::from_str(APPLICATION_NAME)));
+    let mut keys = vec![];
+    let mut values = vec![name];
+    // SAFETY: the option keys are AppKit's constant strings, alive for the
+    // process's life.
+    unsafe { keys.push(NSAboutPanelOptionApplicationName) };
+    if !version.is_empty() {
+        // SAFETY: as above.
+        unsafe { keys.push(NSAboutPanelOptionApplicationVersion) };
+        values.push(Retained::into_super(Retained::into_super(NSString::from_str(&version))));
+    }
+    // AppKit names no constant for the copyright; its documented key is the
+    // string "Copyright" (`orderFrontStandardAboutPanelWithOptions:`).
+    let copyright_key = NSString::from_str("Copyright");
+    if !copyright.is_empty() {
+        keys.push(&copyright_key);
+        values.push(Retained::into_super(Retained::into_super(NSString::from_str(&copyright))));
+    }
+    let options = NSDictionary::from_vec(&keys, values);
+    // SAFETY: the standard About panel with a dictionary of its own option
+    // keys and string values, on the main thread.
+    unsafe { NSApplication::sharedApplication(mtm).orderFrontStandardAboutPanelWithOptions(&options) };
+}
+
+/// The version and the copyright notice the About panel shows from now on.
+pub fn set_about(version: &str, copyright: &str) {
+    for (cell, text) in [(&VERSION, version), (&COPYRIGHT, copyright)] {
+        cell.with(|held| {
+            if let Ok(mut held) = held.try_borrow_mut()
+                && *held != text
+            {
+                text.clone_into(&mut held);
+            }
+        });
+    }
+}
+
 /// A new target for menu items, on the main thread.
 fn new_target(mtm: MainThreadMarker) -> Retained<Target> {
     let this = mtm.alloc::<Target>().set_ivars(());
@@ -116,7 +178,7 @@ fn new_target(mtm: MainThreadMarker) -> Retained<Target> {
 /// The system's own action for `action`, sent along the responder chain.
 fn system_selector(action: SystemAction) -> Sel {
     match action {
-        SystemAction::About => sel!(orderFrontStandardAboutPanel:),
+        SystemAction::About => sel!(about:),
         SystemAction::Hide => sel!(hide:),
         SystemAction::HideOthers => sel!(hideOtherApplications:),
         SystemAction::ShowAll => sel!(unhideAllApplications:),
@@ -140,6 +202,9 @@ fn key_equivalent(shortcut: Shortcut) -> (String, NSEventModifierFlags) {
     if shortcut.alt {
         flags |= NSEventModifierFlags::NSEventModifierFlagOption;
     }
+    if shortcut.control {
+        flags |= NSEventModifierFlags::NSEventModifierFlagControl;
+    }
     (key, flags)
 }
 
@@ -151,14 +216,16 @@ fn menu_bar_item(mtm: MainThreadMarker, item: &MenuItem, tag: NSInteger, target:
         _ => sel!(chooseMenuBarItem:),
     };
     // SAFETY: a new item with a fixed title, an action and a key from the
-    // crate's own table. The system's items have no target, so they go
-    // along the responder chain to the window or the application, which
-    // answer them; the others go to the target, held in `MENU_BAR_STATE`
-    // for the process's life.
+    // crate's own table. The system's items but About have no target, so
+    // they go along the responder chain to the window or the application,
+    // which answer them; About and the others go to the target, held in
+    // `MENU_BAR_STATE` for the process's life.
     unsafe {
         let menu_item = NSMenuItem::initWithTitle_action_keyEquivalent(mtm.alloc(), &NSString::from_str(item.title), Some(action), &NSString::from_str(&key));
         menu_item.setKeyEquivalentModifierMask(flags);
-        if !matches!(item.action, MenuAction::System(_)) {
+        if item.action == MenuAction::System(SystemAction::About) {
+            menu_item.setTarget(Some(target));
+        } else if !matches!(item.action, MenuAction::System(_)) {
             menu_item.setTarget(Some(target));
             menu_item.setTag(tag);
         }
@@ -179,6 +246,7 @@ pub fn install_menu_bar(choose: impl Fn(&'static MenuItem) + 'static) {
     let target = new_target(mtm);
     let bar = NSMenu::new(mtm);
     let mut tag: NSInteger = 0;
+    let mut full_screen = None;
     let app = NSApplication::sharedApplication(mtm);
     for menu in MENU_BAR {
         let title = NSString::from_str(menu.title);
@@ -187,7 +255,11 @@ pub fn install_menu_bar(choose: impl Fn(&'static MenuItem) + 'static) {
         for entry in menu.entries {
             match entry {
                 Entry::Item(item) => {
-                    submenu.addItem(&menu_bar_item(mtm, item, tag, &target));
+                    let menu_item = menu_bar_item(mtm, item, tag, &target);
+                    submenu.addItem(&menu_item);
+                    if item.action == MenuAction::FullScreen {
+                        full_screen = Some(menu_item);
+                    }
                     tag = tag.saturating_add(1);
                 }
                 Entry::Separator => submenu.addItem(&NSMenuItem::separatorItem(mtm)),
@@ -203,7 +275,20 @@ pub fn install_menu_bar(choose: impl Fn(&'static MenuItem) + 'static) {
         }
     }
     app.setMainMenu(Some(&bar));
-    MENU_BAR_STATE.with(|cell| *cell.borrow_mut() = Some(MenuBar { choose: Box::new(choose), target }));
+    MENU_BAR_STATE.with(|cell| *cell.borrow_mut() = Some(MenuBar { choose: Box::new(choose), target, full_screen }));
+}
+
+/// The full-screen item names the way out while the page is full screen,
+/// and the way in otherwise. Call it on the main thread.
+pub fn set_full_screen(full_screen: bool) {
+    MENU_BAR_STATE.with(|state| {
+        let Ok(state) = state.try_borrow() else { return };
+        if let Some(item) = state.as_ref().and_then(|bar| bar.full_screen.as_ref()) {
+            // SAFETY: a fixed title from the crate's own table, on the
+            // main thread, given to an item the menu bar holds.
+            unsafe { item.setTitle(&NSString::from_str(full_screen_title(full_screen))) };
+        }
+    });
 }
 
 /// Rebuilds the menu's items from the tabs.

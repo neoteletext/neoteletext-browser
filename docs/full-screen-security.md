@@ -1,6 +1,6 @@
 # NeoTeletext: full screen, security analysis
 
-The design is `full-screen.md` (decision 85). This analysis follows `security-analysis.md`'s form. It is written before building, and is to be checked against what is built.
+The design is `full-screen.md` (decision 85). This analysis follows `security-analysis.md`'s form. It was written before building; checked against what was built on 25 October 2026 (section 5).
 
 ## 1. What changes
 
@@ -23,3 +23,7 @@ The amendment keeps 11.4's purpose: the strip may be hidden only in the page-onl
 ## 4. Remaining risk
 
 Low, the same as a television's teletext: what is seen is the channel's page, and leaving the channel needs the real strip.
+
+## 5. Checked against what was built
+
+25 October 2026. Each row of section 2 holds as built: what needs the window is checked at every frame in one place (`full-screen.md` section 10 item 2), so the strip's question for a link that leaves the channel ends full screen before the user can answer it; the full-screen key is taken before a channel's keys (F11) or by the menu bar (Control-Command-F), so a channel never sees it; the notice and the badge are drawn in the margin, outside the page's image; and a press in full screen reaches only the page, as a cell, or the real strip when it is down. The tests are requirement 12.16's.

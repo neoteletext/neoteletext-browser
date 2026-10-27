@@ -107,6 +107,7 @@ impl Core {
             let view = self.session.active_tab().map(|tab| tab.channel.view());
             if let Some(view) = view {
                 self.send(&ToInterface::Channel(view))?;
+                self.send_subpages()?;
             }
         }
         Ok(())

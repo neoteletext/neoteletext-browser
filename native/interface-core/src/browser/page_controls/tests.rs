@@ -14,7 +14,7 @@ const OPEN: u64 = 1_000;
 /// them with `subpages` sub-pages.
 fn opened(subpages: u8) -> (Browser, PageKey) {
     let mut browser = Browser::new(Frame { left_inset: 0.0, window_buttons: false });
-    browser.set_tabs(vec![TabInfo { title: "one".into(), colour: 0, channel: 7, muted: false, private: false }], 0);
+    browser.set_tabs(vec![TabInfo { title: "one".into(), colour: 0, channel: 7, muted: false, private: false, address: "https://example.invalid/".into() }], 0);
     browser.set_strip(StripState { address: "https://news.invalid/".into(), identity: "news.invalid".into(), ..StripState::default() });
     let mut channel = Channel::empty();
     channel.channel = 7;

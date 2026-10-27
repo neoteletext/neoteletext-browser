@@ -2,6 +2,7 @@
 //! order they lie over each other: what lies over the window, the trusted
 //! strip, then the body below it.
 
+use crate::browser::list_focus::ListFocus;
 use crate::browser::{Browser, Output, WindowAction};
 use crate::canvas::Canvas;
 use crate::channel::page_index;
@@ -14,8 +15,16 @@ impl Browser {
         // A press means the button was let go since the last: a drag whose
         // release never came, as one let go outside every window, is over.
         self.tabs_cancel();
+        // A press anywhere takes the keys from a list; one on a list gives
+        // them to it again.
+        self.list_focus = None;
         // Shift opens what a press opens in a new tab.
         self.press_new_tab = extend;
+        // In full screen a press is the page's, unless the strip is down
+        // and it is there (decision 85).
+        if self.full_screen() && !self.full_screen_press_is_strip(now) {
+            return self.press_body(now).unwrap_or(false);
+        }
         if let Some(taken) = self.press_overlays(extend, now) {
             return taken;
         }
@@ -123,17 +132,22 @@ impl Browser {
         None
     }
 
-    /// A press below the strip: the banks, the list, the overview, the
+    /// A press below the strip: the divider, the banks, the list, the overview, the
     /// page's controls, the wall's controls and a page or its cell.
     /// `None` when it was on none.
     fn press_body(&mut self, now: u64) -> Option<bool> {
         let point = self.pointer;
+        if self.divider_press(point) || self.subpages_press(point, now) {
+            return Some(true);
+        }
         let regions = &self.regions;
         if let Some(bank) = regions.banks.iter().position(|rect| rect.contains(point)) {
             self.choose_bank(bank);
+            self.list_focus = Some(ListFocus::Magazines);
             return Some(true);
         }
         if regions.list.contains(point) {
+            self.list_focus = Some(ListFocus::Pages);
             if let Some(&(_, index)) = regions.rows.iter().find(|(rect, _)| rect.contains(point)) {
                 self.select_page(index, true);
             }
@@ -171,6 +185,11 @@ impl Browser {
             #[cfg(feature = "interaction")]
             if self.wall.zoomed().is_some() && self.click_is_hosts() {
                 return Some(self.terminal_button(neoteletext_input::event::MouseAction::Press, 0));
+            }
+            // A double click on the open page: the page alone, full
+            // screen (decision 85).
+            if self.wall.zoomed().is_some() && !self.full_screen() && self.double_click(point, now) {
+                return Some(self.toggle_full_screen(now));
             }
             if self.wall.zoomed().is_some() {
                 let version = self.versions.get(&click.key).copied().unwrap_or_default();

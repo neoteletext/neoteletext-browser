@@ -28,7 +28,7 @@ Each item does exactly what its key or button does: the menu bar sends the inter
 | **NeoTeletext** | About NeoTeletext; Settings… (Command-,); Hide NeoTeletext (Command-H), Hide Others (Option-Command-H), Show All; Quit NeoTeletext (Command-Q) |
 | **File** | New Tab (Command-T), New Window (Command-N), New Private Tab (Shift-Command-N), New Private Window; Open Location (Command-L); Reopen Closed Tab (Shift-Command-T); Close Tab (Command-W), Close Window (Shift-Command-W) |
 | **Edit** | Cut (Command-X), Copy (Command-C), Paste (Command-V), Select All (Command-A) |
-| **View** | Reload (Command-R); Show or Hide the Bookmarks Bar (Shift-Command-B); Remote Control (Shift-Command-R); Developer Console (Option-Command-I) |
+| **View** | Reload (Command-R); Enter Full Screen (Control-Command-F), the page alone (decision 85), titled Exit Full Screen while the page is full screen; Show or Hide the Bookmarks Bar (Shift-Command-B); Remote Control (Shift-Command-R); Developer Console (Option-Command-I) |
 | **History** | Back (Command-[), Forward (Command-]), Home (Shift-Command-H); Show All History (Command-Y) |
 | **Bookmarks** | Bookmark This Page (Command-D), Bookmark Manager (Option-Command-B) |
 | **Window** | Minimise (Command-M), Zoom; Show Previous Tab (Option-Command-Left), Show Next Tab (Option-Command-Right); Move Tab to New Window; then the open windows, which the system lists |
@@ -68,4 +68,4 @@ Built on 23 October 2026.
 2. **Copy and paste reach every field through the interface core:** the field with the keys is asked for its selection; a paste is typed into it, so each field's own rules hold.
 3. **The menu takes its keys first:** `AppKit` gives a Command key to the menu bar before the window sees it, so a key with a menu item does its work once. Measured by hand on macOS with keys posted to the interface: Command-N opened one window; Command-M, which only the menu answers, minimised it; Paste typed the clipboard once.
 4. **The clipboard is held open** once used: on Linux what was copied is served only while it is.
-5. **About NeoTeletext** stays in the application menu, as winit's default menu had it.
+5. **About NeoTeletext** stays in the application menu, as winit's default menu had it. Since 25 October 2026 it shows the name NeoTeletext and the version the trusted core reports, the installed one or, for a browser built and not installed, the one it was built as, through `orderFrontStandardAboutPanelWithOptions:`; before, it stopped the interface: its sandbox kept `AppKit` from finding the program's bundle (`sandboxing.md` section 6 item 5). Every item with the browser's action is checked to have a key the interface core takes (`every_menu_item_s_key_is_taken`); the system's items (Hide, Hide Others, Show All, Quit, Minimise, Zoom) are `AppKit`'s own and are checked by hand.

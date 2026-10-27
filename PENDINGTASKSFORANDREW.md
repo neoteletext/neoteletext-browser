@@ -82,3 +82,14 @@ What only Andrew can do: accounts, money, keys, people, machines, and checks tha
 37. **macOS, by hand:** whether the interface can open a web address through LaunchServices under its profile (an `LSOpenCFURLRef` probe, finding F-52). The interface needs `launchservicesd` to draw its window, so the service stays; the probe says whether that is also a way out.
 38. **Confirm decision 101, the phone panel without a PIN** (finding F-71, built at the re-pin at `5311f98`): "Phone connected" comes at the phone's first key, not at the scan, so the panel keeps its QR code until then, and closing it after a scan but before a key ends the session. Taken while you were away: below the QR the panel says "Then press a key on the phone to connect.", and the reference channel's page 600 says "Scan with your phone, then press a key." Not yet tried with a real phone.
 39. **Confirm the engine's decisions E.117 and E.118 and its log rows 91 and 92**, taken while you were away and in the browser from the re-pin at `c997514`: a stored page keeps the page function of its X/28/3, so a DRCS page is never shown as text (E.117); `p256` moved from 0.13 to 0.14 because advisory RUSTSEC-2026-0387 found constant-time faults in the `crypto-bigint` 0.5.5 it brought in, which the phone pairing's secret scalars pass through (E.118, the same library at its next release); a zoomed page's leftover output lines 480 to 499 show the upper half of row 12 (zoomed to the top) or of row 24 (to the bottom), which the engine's REQ-L1-020 does not say (row 91); and the Index key, when a page's Index link names another service, goes to this service's initial page rather than following the link (row 92).
+40. **Confirm decisions 102 and 103, and look at what was built on 25 October 2026 at your asking**:
+    - tabs are now one width, 230 points, the width they had when few were open, so five fit a 1,440-point window before the count shows (102);
+    - the overflow panel opens after the pointer rests 300 milliseconds on the tabs, keeps the tabs in place while it is open, and is raised as a dialog: one grey surface with the strip, a blue edge at its foot, a shadow and the window below dimmed to 55% (102);
+    - a tab's tip shows its address under its title (103).
+
+    The full screen of decision 85 is built. By hand on macOS, please try it:
+    - View > Enter Full Screen or Control-Command-F;
+    - a double click on an open page;
+    - Escape;
+    - the strip at the top edge;
+    - About NeoTeletext, which crashed before and should now show "Version 0.1.0".

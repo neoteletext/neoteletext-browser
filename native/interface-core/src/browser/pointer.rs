@@ -16,6 +16,10 @@ pub enum Cursor {
     Hand,
     /// Over a link that leaves the channel: the shape of a shortcut.
     External,
+    /// Over the divider between the page list and the page area.
+    ResizeColumn,
+    /// Over the divider between the pages and their sub-pages.
+    ResizeRow,
 }
 
 impl Browser {
@@ -23,7 +27,11 @@ impl Browser {
     /// the window needs drawing again.
     pub fn pointer_moved(&mut self, x: f64, y: f64, now: u64) -> bool {
         self.pointer = Point::new(x, y);
-        if self.remote_moved(self.pointer) {
+        if self.remote_moved(self.pointer) || self.divider_moved(self.pointer) {
+            return true;
+        }
+        let subpaged = self.subpages_moved(self.pointer);
+        if subpaged && self.over_subpage_divider() {
             return true;
         }
         let dragged = self.wall.pointer_moved(self.pointer, now);
@@ -38,26 +46,52 @@ impl Browser {
         #[cfg(not(feature = "links"))]
         let linked = false;
         let tipped = self.tips_moved(now);
-        let tabbed = self.tabs_moved(self.pointer);
-        dragged || hovered || preview_changed || linked || tipped || tabbed
+        let tabbed = self.tabs_moved(self.pointer, now);
+        let listed = self.lists_hovered();
+        let full_screen = self.full_screen_moved(self.pointer, self.body.width(), now);
+        dragged || hovered || preview_changed || linked || tipped || tabbed || full_screen || listed || subpaged
     }
 
-    /// The pointer's shape where it is: a hand over a page a click would
-    /// zoom or choose and over the overview's fold button, the arrow
-    /// elsewhere.
+    /// The pointer's shape where it is: the column-resize shape over the
+    /// divider, a hand over a page a click would zoom or choose and over
+    /// the overview's fold button, the arrow elsewhere.
     #[must_use]
     pub fn cursor(&self) -> Cursor {
+        if self.over_divider() {
+            return Cursor::ResizeColumn;
+        }
+        if self.over_subpage_divider() {
+            return Cursor::ResizeRow;
+        }
+        if self.subpages.hovered.is_some() {
+            return Cursor::Hand;
+        }
         #[cfg(feature = "links")]
         if let Some(cursor) = self.link_cursor() {
             return cursor;
         }
-        let over_toggle = self.regions.overview_toggle.contains(self.pointer);
+        let over_toggle = self.regions.overview_toggle.contains(self.pointer) || self.hovered_row.is_some() || self.hovered_bank.is_some();
         if self.wall.over_page() || self.previewed.is_some() || over_toggle { Cursor::Hand } else { Cursor::Arrow }
+    }
+
+    /// The page row and the magazine under the pointer, highlighted and
+    /// shown with the hand, as a click on them chooses; returns whether
+    /// either changed.
+    fn lists_hovered(&mut self) -> bool {
+        let point = self.pointer;
+        let row = self.regions.list.contains(point).then(|| self.regions.rows.iter().find(|(rect, _)| rect.contains(point)).map(|&(_, index)| index)).flatten();
+        let bank = self.regions.banks.iter().position(|rect| rect.contains(point));
+        let changed = row != self.hovered_row || bank != self.hovered_bank;
+        self.hovered_row = row;
+        self.hovered_bank = bank;
+        changed
     }
 
     /// The main button was released.
     pub fn pointer_released(&mut self) {
         self.remote_released();
+        self.divider_released();
+        self.subpages_released();
         self.tabs_released();
         self.release_back_or_forward();
         let new_tab = self.press_new_tab;
@@ -158,6 +192,10 @@ impl Browser {
         }
         if self.regions.list.contains(self.pointer) {
             self.list_scroll = (self.list_scroll + distance).max(0.0);
+            return true;
+        }
+        if self.regions.subpage_list.contains(self.pointer) {
+            self.subpages.scroll = (self.subpages.scroll + distance).max(0.0);
             return true;
         }
         if self.wall.contains(self.pointer) {

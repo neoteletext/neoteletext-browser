@@ -47,7 +47,9 @@ fn the_panel_offers_an_update_only_when_the_trusted_core_does() {
     let mut browser = open();
     assert_eq!(browser.settings.controls.updates_on, Rect::ZERO, "no updates row before the trusted core says");
     browser.set_update(UpdateView { version: "0.1.0".into(), status: "NeoTeletext is up to date".into(), offer: None, checking: true });
-    browser.draw(&mut Recorder::new(), 1440.0, 900.0, 0);
+    let mut canvas = Recorder::new();
+    browser.draw(&mut canvas, 1440.0, 900.0, 0);
+    assert!(canvas.texts.iter().any(|(_, text)| text == crate::COPYRIGHT), "the copyright under the version, as an About panel says it");
     assert_eq!(browser.settings.controls.install, Rect::ZERO, "nothing to install");
     let off = browser.settings.controls.updates_off;
     assert_eq!(press(&mut browser, off), [Output::Setting(SettingChange::CheckUpdates(false))]);

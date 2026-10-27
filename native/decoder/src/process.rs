@@ -92,6 +92,8 @@ pub fn run(store_pages: usize) -> Result<(), ProtocolError> {
     output.flush()?;
     let mut engine = Engine::with_store(store_pages);
     let mut showing: Vec<u16> = Vec::new();
+    // The clock the pages on screen were last drawn with.
+    let mut shown_clock = None;
     // The last frame sent of each page shown, so an unchanged page is
     // never sent again.
     let mut sent: BTreeMap<u16, Rendered> = BTreeMap::new();
@@ -156,12 +158,16 @@ pub fn run(store_pages: usize) -> Result<(), ProtocolError> {
         };
         report(&mut engine, &arrived, &mut output)?;
         // A shown page drawn again only when its reception moved, or data
-        // every page may draw from changed.
+        // every page may draw from changed, or the clock every page shows
+        // moved on (the engine's decision E.121).
         let changed = engine.take_changed();
         if engine.take_store_full() {
             write_to_core(&mut output, &FromDecoder::StoreFull)?;
         }
-        let pages: Vec<u16> = showing.iter().copied().filter(|page| changed.everything || changed.pages.contains(page)).collect();
+        let clock = engine.latest_clock();
+        let ticked = clock != shown_clock;
+        shown_clock = clock;
+        let pages: Vec<u16> = showing.iter().copied().filter(|page| ticked || changed.everything || changed.pages.contains(page)).collect();
         draw(&engine, &pages, now, &mut sent, &mut spare, &mut flashing, &mut output)?;
     }
 }
@@ -217,8 +223,14 @@ fn report(engine: &mut Engine, arrived: &[(u16, String)], output: &mut Output<'_
     for (page, title) in arrived {
         write_to_core(output, &FromDecoder::Arrived { page: *page, title: title.clone() })?;
     }
-    for page in engine.take_updated() {
+    let updated = engine.take_updated();
+    for &page in &updated {
         write_to_core(output, &FromDecoder::Updated { page })?;
+    }
+    // The sub-pages of the pages that came, for the page list.
+    let pages: Vec<u16> = arrived.iter().map(|(page, _)| *page).chain(updated).collect();
+    for (page, titles) in engine.subpage_changes(&pages) {
+        write_to_core(output, &FromDecoder::SubPageTitles { page, titles })?;
     }
     for log in engine.take_logs() {
         write_to_core(output, &FromDecoder::ChannelLog { level: log.level, page: log.page, text: log.text })?;

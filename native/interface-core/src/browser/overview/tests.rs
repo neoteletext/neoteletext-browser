@@ -1,8 +1,9 @@
 use super::*;
 use crate::browser::fixture::{HEIGHT, WIDTH, browser, cell_centre, press_at};
 use crate::browser::window::{BODY_TOP, OVERVIEW_HEIGHT};
-use crate::browser::{Cursor, Output};
+use crate::browser::{Cursor, Key, Modifiers, Output};
 use crate::canvas::PageKey;
+use crate::test_canvas::Recorder;
 
 #[test]
 fn a_click_on_the_overview_selects_its_page() {
@@ -91,4 +92,23 @@ fn the_pointer_is_a_hand_over_the_overview_fold_button() {
         press_at(&mut browser, &mut canvas, toggle);
         browser.draw(&mut canvas, WIDTH, HEIGHT, 0);
     }
+}
+
+/// Decision 109: the View menu's overview, by Shift-Command-E or the
+/// browser's own menu, comes off the window and gives the pages its room.
+#[test]
+fn the_overview_can_be_hidden_and_shown_again() {
+    let (mut browser, mut canvas) = browser();
+    let list_bottom = browser.regions.list.y1;
+    browser.key(Key::Text("E"), Modifiers { command: true, shift: true, ..Modifiers::default() }, 0);
+    assert!(!browser.overview_shown());
+    browser.draw(&mut canvas, WIDTH, HEIGHT, 0);
+    assert!(browser.regions.list.y1 > list_bottom + OVERVIEW_HEIGHT, "the pages take its room");
+    browser.toggle_menu();
+    let mut canvas = Recorder::new();
+    browser.draw(&mut canvas, WIDTH, HEIGHT, 0);
+    assert!(canvas.texts.iter().any(|(_, text)| text == "Show overview of all pages"), "the menu offers it back");
+    browser.key(Key::Text("e"), Modifiers { command: true, shift: true, ..Modifiers::default() }, 0);
+    browser.draw(&mut canvas, WIDTH, HEIGHT, 0);
+    assert!((browser.regions.list.y1 - list_bottom).abs() < 1e-9, "shown again where it was");
 }

@@ -28,6 +28,10 @@
 
 extern crate alloc;
 
+/// The notice the About panel and the settings show, on the owner's word
+/// (25 October 2026): who holds the copyright, and how to reach him.
+pub const COPYRIGHT: &str = "Copyright \u{00A9} 2026 Andrew Stuart, andrew.stuart@supercoders.com.au";
+
 pub mod browser;
 pub mod canvas;
 pub mod channel;

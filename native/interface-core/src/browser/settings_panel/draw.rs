@@ -124,6 +124,12 @@ impl Browser {
             canvas.push_clip(line);
             left_centred(canvas, line, 0.0, &said, ROW_STATUS, MUTED);
             canvas.pop_clip();
+            y += ROW + GAP;
+            // Where there is no About panel of the system's, this is it.
+            let line = Rect::new(field_left, y, right, y + ROW);
+            canvas.push_clip(line);
+            left_centred(canvas, line, 0.0, crate::COPYRIGHT, ROW_STATUS, MUTED);
+            canvas.pop_clip();
             y += ROW + ROW_GAP;
         }
         y

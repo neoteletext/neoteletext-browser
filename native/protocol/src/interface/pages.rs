@@ -110,3 +110,41 @@ pub(super) fn read_cell(fields: &mut Fields<'_>) -> Result<(PageKey, u32, u8, u8
     }
     Ok((key, version, column, row))
 }
+
+/// One page's sub-pages with their titles: its channel, number, and each
+/// sub-page's sub-code and title.
+pub(super) fn push_subpages(payload: &mut Vec<u8>, channel: u32, page: u16, subpages: &[(u16, String)]) -> Result<(), ProtocolError> {
+    if subpages.len() > interface_core::controls::MAX_SUBPAGES || subpages.iter().any(|(subcode, _)| *subcode > interface_core::controls::ANY_SUBCODE) {
+        return Err(ProtocolError::BadValue("sub-pages"));
+    }
+    payload.extend_from_slice(&channel.to_be_bytes());
+    payload.extend_from_slice(&page.to_be_bytes());
+    payload.push(u8::try_from(subpages.len()).map_err(|_| ProtocolError::BadValue("sub-pages"))?);
+    for (subcode, title) in subpages {
+        payload.extend_from_slice(&subcode.to_be_bytes());
+        push_text(payload, title, MAX_PAGE_TITLE)?;
+    }
+    Ok(())
+}
+
+/// A page's sub-pages, each sub-code with its title.
+pub(super) type SubPageList = Vec<(u16, String)>;
+
+/// Reads [`push_subpages`]: the channel, the page and its sub-pages.
+pub(super) fn read_subpages(fields: &mut Fields<'_>) -> Result<(u32, u16, SubPageList), ProtocolError> {
+    let channel = fields.u32()?;
+    let page = fields.display_page()?;
+    let count = usize::from(fields.u8()?);
+    if count > interface_core::controls::MAX_SUBPAGES {
+        return Err(ProtocolError::BadValue("too many sub-pages"));
+    }
+    let mut subpages = Vec::with_capacity(count);
+    for _ in 0..count {
+        let subcode = fields.u16()?;
+        if subcode > interface_core::controls::ANY_SUBCODE {
+            return Err(ProtocolError::BadValue("sub-code"));
+        }
+        subpages.push((subcode, fields.text(MAX_PAGE_TITLE)?));
+    }
+    Ok((channel, page, subpages))
+}

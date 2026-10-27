@@ -249,9 +249,17 @@ impl Session {
             .iter()
             .map(|tab| {
                 let host = tab.address().map_or("", |address| address.host.as_str());
+                let address = tab.address().map_or("", |address| address.text.as_str());
                 // A tab's colour follows its site, so a site keeps its colour.
                 let colour = host.bytes().fold(0_u8, u8::wrapping_add).checked_rem(u8::try_from(TAB_COLOURS.len()).unwrap_or(1)).unwrap_or(0);
-                TabInfo { title: clean(host, MAX_TAB_TITLE), colour, channel: tab.channel.id, muted: tab.muted, private: tab.private }
+                TabInfo {
+                    title: clean(host, MAX_TAB_TITLE),
+                    colour,
+                    channel: tab.channel.id,
+                    muted: tab.muted,
+                    private: tab.private,
+                    address: clean(address, MAX_ADDRESS),
+                }
             })
             .collect()
     }

@@ -262,6 +262,8 @@ Withdrawn on 23 October 2026 (decision 66): the browser does not support fonts f
 - **Verification:** Test with the hostile interface harness: across every intent kind and key, with arbitrary values and timing, the requests reaching a test server are identical to a run with no interface activity.
 - **State:** Met by construction: the fetcher takes from the trusted core only input messages (REQ-INT-133; requirement 18.4 before 21 October 2026), which name no address, page or connection and go only to the channel's own push WebSocket; the interface's visibility reports reach only the decoder's rendering. The test is not written. Channels with only separate page files are not supported yet.
 - **Amended 20 October 2026 (decision 44):** the one further exception is requirement 18.4's key records, bounded, on the channel's own WebSocket, while a page of a channel that declares input is open.
+- *Amended 25 October 2026 (decision 104):* decision 22 is rescinded and pages are to be fetched while visible or focused; this requirement's reason, that a hostile interface must not steer requests (decision 20), still stands, and the design of decision 104 must say how it is kept.
+
 
 ### Requirement 4.8: Untrusted text is cleaned on both sides
 - **Statement:** Every piece of text in a message that came from outside the application must be cleaned (requirement 11.5) by its sender and checked again by its receiver, which refuses text that still holds a hidden character.
@@ -378,6 +380,8 @@ Withdrawn on 23 October 2026 (decision 66): no font is fetched; every page is dr
 - **Source:** Decision 22.
 - **Verification:** Test: the request sequence is identical whatever pages are viewed.
 - **State:** Met for channels with a contents file, by the engine's user agent (measured: 218 of 800 pages in 45 seconds, one request each 0.2 seconds). File channels are fed at the same pace whatever is on screen. The test is not written.
+- *Superseded 25 October 2026 (decision 104, which rescinds decision 22):* pages are to be fetched while they are visible or have focus; this requirement holds for what is built until that is designed.
+
 
 ### Requirement 5.16: Refreshing on a fixed schedule
 - **Statement:** A channel's pages must be refreshed only by its declared schedule, a fixed default, or its push feed, never according to which page is shown.
@@ -385,6 +389,8 @@ Withdrawn on 23 October 2026 (decision 66): no font is fetched; every page is dr
 - **Source:** Decision 22.
 - **Verification:** Test.
 - **State:** Partly met: push is the only refresh, and it does not follow viewing. Schedules are not built.
+- *Superseded 25 October 2026 (decision 104, which rescinds decision 22):* pages are to be fetched while they are visible or have focus; this requirement holds for what is built until that is designed.
+
 
 ### Requirement 5.17: A closed tab's channel keeps refreshing for a grace period
 - **Statement:** When the last tab on a channel closes, that channel must keep refreshing for a fixed grace period, the engine's constant, before its fetcher and decoder stop.
@@ -749,7 +755,7 @@ Withdrawn on 23 October 2026 (decision 66): no font is fetched; every page is dr
 - **Reason:** A hidden indicator protects nothing; in the page-only full screen nothing the strip guards can happen without it.
 - **Source:** Decisions 4, 24 and 85.
 - **Verification:** Review of every layout; test of the full screen's rules.
-- **State:** Met for every layout built; the full screen is designed, not built (amended 23 October 2026).
+- **State:** Met for every layout, the full screen's rules by the tests of requirement 12.16 (25 October 2026); by hand on each desktop owed (amended 23 October 2026).
 
 ### Requirement 11.5: Untrusted text is cleaned before display
 - **Statement:** Text from pages and channels (titles, section names, notices, addresses) must have control characters, bidirectional controls and zero-width characters removed and be cut to a fixed length before it is shown anywhere.
@@ -800,6 +806,8 @@ Withdrawn on 23 October 2026 (decision 66): no font is fetched; every page is dr
 - **Source:** Decision 22.
 - **Verification:** Test each key.
 - **State:** Met, 23 October 2026: three digits choose a page of the channel, or follow the open page's `LK` line or the channel's alias (test: `a_number_the_page_or_channel_links_goes_to_the_trusted_core`), Up and Down step through pages, and Fastext, reveal, hold and mix are built (requirements 22.1 to 22.4, decision 67: `the_viewers_keys_ask_for_the_controls`, `fastext_keys_follow_as_links_do`, `reveal_and_mix_change_the_page_drawn`, `a_held_page_keeps_its_version`).
+- *Amended 25 October 2026 (decision 104):* a key's selecting only among pages already held rests on decision 22, now rescinded; it holds for what is built until decision 104's fetching is designed.
+
 
 ### Requirement 12.5: Menus and shortcuts
 - **Statement:** On macOS the application must provide a native menu bar (NeoTeletext, File, Edit, View, History, Bookmarks, Window) carrying the browser's shortcuts; on Windows and Linux, where browsers show none, the menu button's menu is its counterpart. Menu items and buttons must send the same intents.
@@ -855,11 +863,12 @@ Withdrawn on 23 October 2026 (decision 66): no font is fetched; every page is dr
 - **State:** Partly met, 23 October 2026 (decision 84): cut, copy, paste and select all in every field, through the Edit menu on macOS and the browser's modifier with X, C, V and A everywhere (`the_focused_field_copies_cuts_and_pastes`); by hand on macOS, through the interface's sandbox, each once. Composed text is inserted when committed, but not shown while it is composed.
 
 ### Requirement 12.12: Tips
-- **Statement:** Every control the window draws as an icon, a symbol or text that may be cut short must have a tip: a label naming it, saying what it does, and giving its shortcut on the platform where it has one. A tip must show when the pointer has rested on its control for half a second, beside the pointer and inside the window, over everything else; a press must put it away until the pointer leaves the control, and leaving must put it away. Tips must be the interface's own words, except a tab's title and a bookmark's name, which must be shown as the cleaned text they are (requirement 11.5). While a panel or list is open over the window, only its tips and the strip's must show.
+- **Statement:** Every control the window draws as an icon, a symbol or text that may be cut short must have a tip: a label naming it, saying what it does, and giving its shortcut on the platform where it has one. A tip must show when the pointer has rested on its control for half a second, beside the pointer and inside the window, over everything else; a press must put it away until the pointer leaves the control, and leaving must put it away. Tips must be the interface's own words, except a tab's title and address and a bookmark's name, which must be shown as the cleaned text they are (requirement 11.5); a tab's tip must show its title and, on a line under it, its address. While a panel or list is open over the window, only its tips and the strip's must show.
 - **Reason:** An icon alone does not say what it does, and the shortcuts are otherwise found only in the menu.
-- **Source:** Decision 63.
+- **Source:** Decisions 63 and 103.
 - **Verification:** Interface tests: a tip shows after the rest and not before, with each platform's shortcut, and goes on a press and on leaving; a review that every icon, symbol and cut text has one.
 - **State:** Built 23 October 2026, with tests `a_tip_shows_after_a_rest_and_goes_on_a_press` and `tips_name_each_platforms_shortcut`; seen on macOS. Tips cover the tab strip (each tab's title, its close and sound buttons, new tab, the window buttons elsewhere than macOS), the toolbar (Back, Forward, Reload, Home, the address field, the star, mute all, settings, the menu), the bookmarks bar's chips, the banks, the page size's buttons, the overview's fold, the console's tabs and buttons, the cookies' buttons, and the close, remove and volume buttons of the settings, history and bookmarks panels and the phone keyboard's. The review of every control was done on 23 October 2026 and gave the open page's close button its tip (`a0efff5`).
+- *Amended 25 October 2026 (decision 103):* a tab's tip shows its address under its title (`a_tab_s_tip_shows_its_address`).
 
 ### Requirement 12.13: Tabs are reordered by dragging
 - **Statement:** A tab pressed and moved more than 4 points must be dragged, a mark showing where it will go, and released must move there, by strip input the trusted core carries out, keeping the active tab active and saving the session; released where it started, or after Escape, nothing changes.
@@ -869,11 +878,12 @@ Withdrawn on 23 October 2026 (decision 66): no font is fetched; every page is dr
 - **State:** Met, 23 October 2026: `a_dragged_tab_moves_where_it_is_let_go`, `tabs_move_and_the_active_one_stays_active`; driven by tests only, since posted pointer events do not reach the window.
 
 ### Requirement 12.14: Tabs that do not fit wrap into a panel under the strip
-- **Statement:** When the tabs do not fit at their smallest width, the strip must show those that fit, always with the active tab, and a count of the rest; while the pointer is on the strip or the panel, or after the count is pressed, a panel joined to the strip's underside must show the rest wrapped in rows, each one chosen, closed, muted and dragged as on the strip.
-- **Reason:** The owner's request; before, a tab that did not fit could not be reached.
-- **Source:** Decision 69.
+- **Statement:** Every tab must be the same width however many there are, and when the tabs do not fit the strip must show those that fit, always with the active tab, and a count of the rest; once the pointer has rested on the tabs for 300 milliseconds, or at once when the count is pressed, a panel joined to the strip's underside must show the rest wrapped in rows, each one chosen, closed, muted and dragged as on the strip; while it is open the tabs must keep their places, and it must stand apart from the window as a dialog does, the window below dimmed. A press on the count while it is open must shut it, and it must shut when the pointer leaves the strip and the panel.
+- **Reason:** The owner's request; before, a tab that did not fit could not be reached. A tab that shrank as others came moved under the pointer; a panel that opened as the pointer crossed the strip lay over the toolbar in its way and took the address field's click.
+- **Source:** Decisions 69 and 102.
 - **Verification:** Interface tests; seen on macOS.
-- **State:** Met: `the_active_tab_is_always_shown`, `overflowing_tabs_wrap_into_a_panel_under_the_strip`; the count and the active tab's place seen on macOS with 25 tabs; the panel's opening by the pointer driven by tests only.
+- **State:** Met, 25 October 2026: `the_active_tab_is_always_shown`, `overflowing_tabs_wrap_into_a_panel_under_the_strip`, `tabs_keep_one_width`, `a_pointer_crossing_the_strip_does_not_open_the_panel`, `the_count_opens_and_shuts_the_panel`, `the_open_panel_stands_out_from_the_window`, each but the first failing on the code before; the count and the active tab's place seen on macOS with 25 tabs (23 October 2026); the panel's opening by the pointer and its look are driven by tests only.
+- *Amended 25 October 2026 (decision 102):* tabs of one width, the panel's wait, its held places, the count's shutting it and its look.
 
 ### Requirement 12.15: Keys choose tabs
 - **Statement:** Command-1 to 8 must choose the first eight tabs and Command-9 the last, and Command-Option-Left and Right the tab before and after, round the ends (Control and Alt away from macOS), whether the tab is shown on the strip or not.
@@ -887,7 +897,7 @@ Withdrawn on 23 October 2026 (decision 66): no font is fetched; every page is dr
 - **Reason:** Teletext is read as a television shows it; the owner asked for the page only.
 - **Source:** Decision 85 (`full-screen.md`).
 - **Verification:** Test; by hand on each desktop.
-- **State:** Not met: designed 23 October 2026, not built.
+- **State:** Built 25 October 2026 with tests `full_screen_shows_the_open_page_alone`, `escape_leaves_full_screen_with_the_page_open`, `what_needs_the_window_ends_full_screen`, `the_strip_comes_down_from_the_top_edge`, `a_press_in_full_screen_is_the_page_s`, `a_double_click_on_the_open_page_enters_full_screen` and `the_pointer_hides_when_still`; by hand on each desktop owed: the window's own full screen (macOS's space, borderless elsewhere), Control-Command-F and F11, the system's ending of it, and the strip at the top edge beside macOS's menu bar.
 
 ---
 
@@ -1708,6 +1718,7 @@ From `page-controls.md` (decision 67, taken while the owner was away, on the own
 - **Source:** Decision 67.
 - **Verification:** Tests of the decoder, the trusted core's stepping, the address and the interface's control.
 - **State:** Met: `sub_pages_are_listed_and_one_can_be_chosen`, `sub_pages_step_round`, `a_fragment_names_a_page_of_the_channel_and_is_never_fetched` (the sub-page kept), `the_sub_page_control_steps_and_returns_to_the_latest`. The engine's bound, `viewer::MAX_LISTED_SUBPAGES`, is used by name in the decoder and asserted equal to the interface core's (requirement 2.4).
+- *Amended 26 October 2026 (decision 112):* the statement's "at most 64 (the engine viewer's bound)" becomes "up to 8,190, the standard's maximum, from the engine's `neoteletext_core::limits`", and a sub-page passes the wire only when it is shown or next to the one shown. State for the amendment: Not met: the bound is still 64 and every sub-page of a pushed page arrives.
 
 ### Requirement 22.6: The controls are the trusted core's to keep
 - **Statement:** The interface must learn of the open page's controls only which keys lead somewhere, which of reveal, hold and mix are on, and how many sub-pages there are and which is shown; every control must reach the trusted core as strip input, which alone tells the decoder.

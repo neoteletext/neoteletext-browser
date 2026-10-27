@@ -14,6 +14,7 @@ const CONTROL_MIX: u8 = 4;
 const CONTROL_NEXT: u8 = 5;
 const CONTROL_PREVIOUS: u8 = 6;
 const CONTROL_LATEST: u8 = 7;
+const CONTROL_SUBPAGE_OF: u8 = 8;
 
 /// The controls' flags: a page open, reveal, hold, mix, a sub-page chosen.
 const OPEN: u8 = 1;
@@ -32,6 +33,11 @@ pub(crate) fn push_control(payload: &mut Vec<u8>, control: PageControl) {
         PageControl::SubPage(true) => payload.push(CONTROL_NEXT),
         PageControl::SubPage(false) => payload.push(CONTROL_PREVIOUS),
         PageControl::Latest => payload.push(CONTROL_LATEST),
+        PageControl::SubPageOf { page, subcode } => {
+            payload.push(CONTROL_SUBPAGE_OF);
+            payload.extend_from_slice(&page.to_be_bytes());
+            payload.extend_from_slice(&subcode.to_be_bytes());
+        }
     }
 }
 
@@ -44,6 +50,14 @@ pub(crate) fn read_control(fields: &mut Fields<'_>) -> Result<PageControl, Proto
         CONTROL_NEXT => PageControl::SubPage(true),
         CONTROL_PREVIOUS => PageControl::SubPage(false),
         CONTROL_LATEST => PageControl::Latest,
+        CONTROL_SUBPAGE_OF => {
+            let page = fields.display_page()?;
+            let subcode = fields.u16()?;
+            if subcode > interface_core::controls::ANY_SUBCODE {
+                return Err(ProtocolError::BadValue("sub-code"));
+            }
+            PageControl::SubPageOf { page, subcode }
+        }
         _ => return Err(ProtocolError::BadValue("page control")),
     })
 }

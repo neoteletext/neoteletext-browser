@@ -109,7 +109,7 @@ pub struct RemotePlace {
 /// section 3.4), in the trusted core's words.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct UpdateView {
-    /// The version running, or empty when the browser was not installed.
+    /// The version running: the installed one, or the one built.
     pub version: String,
     /// What the trusted core says of updates.
     pub status: String,

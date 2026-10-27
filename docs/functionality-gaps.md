@@ -17,7 +17,7 @@
 | The channel's date, time and name in the header (SVC-002, SVC-005) | Not built | — |
 | The channel's initial page; every channel opens at 100 | Not built | — |
 | A subtitle or newsflash mode, the page boxed over nothing | Not built | — |
-| Full screen of the page alone | Designed, not built | Decision 85, `full-screen.md`, requirement 12.16 |
+| Full screen of the page alone | Built 25 October 2026; by hand on each desktop owed | Decision 85, `full-screen.md`, requirement 12.16 |
 
 ## 2. Finding and using channels
 

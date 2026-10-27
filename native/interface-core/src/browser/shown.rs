@@ -29,6 +29,9 @@ pub struct TabInfo {
     pub muted: bool,
     /// A private tab, which records no history (requirement 20.8).
     pub private: bool,
+    /// The tab's address, as the trusted core wrote it, which its tip
+    /// shows (decision 103).
+    pub address: String,
 }
 
 /// What the trusted strip shows. The trusted core decides all of it; the

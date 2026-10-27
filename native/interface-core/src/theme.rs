@@ -39,6 +39,9 @@ pub const PANEL: Colour = rgb(0x00, 0x00, 0x00);
 pub const RULE: Colour = rgb(0x3a, 0x3c, 0x42);
 /// The lighter lines between rows and around unselected banks.
 pub const RULE_SOFT: Colour = rgb(0x24, 0x26, 0x2b);
+/// A surface raised above the window, as a dialog is: the tab strip and
+/// its overflow panel while the panel is open (decision 102).
+pub const RAISED: Colour = rgb(0x2a, 0x2d, 0x35);
 /// Secondary text: page titles in captions, column heads, the legend.
 pub const MUTED: Colour = rgb(0xa8, 0xab, 0xb3);
 /// A control that cannot be used now, such as Back with no history.
@@ -104,6 +107,18 @@ pub const TYPING_FIELD: Colour = rgb(0x20, 0x18, 0x08);
 /// A private tab's word and mark (requirement 20.8): a colour no other part of
 /// the strip uses.
 pub const PRIVATE: Colour = rgb(0xb0, 0x6c, 0xff);
+
+/// The ink that reads on `background`: black on a light colour, white on a
+/// dark one, by its relative luminance (ITU-R BT.709's weights, as WCAG
+/// 2.1 section 1.4.3 measures it, without the gamma step, which is enough
+/// to tell the bank colours apart).
+#[must_use]
+pub fn ink_on(background: Colour) -> Colour {
+    /// Half of full brightness: lighter than this takes black.
+    const LIGHT: f64 = 127.5;
+    let luminance = 0.2126 * f64::from(background.red) + 0.7152 * f64::from(background.green) + 0.0722 * f64::from(background.blue);
+    if luminance > LIGHT { BLACK } else { WHITE }
+}
 
 /// `from` moved towards `to` by `amount`, 0 to 1: for highlights that
 /// fade, with no transparency needed.

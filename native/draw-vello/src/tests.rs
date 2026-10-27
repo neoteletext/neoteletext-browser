@@ -48,7 +48,10 @@ fn browser(painter: &mut Painter, pages: &[Sample]) -> Browser {
         painter.set_page(PageKey { channel: CHANNEL, page: sample.page }, &sample.palette, sample.screen, &sample.indices).unwrap();
     }
     let mut browser = Browser::new(WindowFrame { left_inset: 0.0, window_buttons: true });
-    browser.set_tabs(vec![TabInfo { title: "sample".into(), colour: 0, channel: CHANNEL, muted: false, private: false }], 0);
+    browser.set_tabs(
+        vec![TabInfo { title: "sample".into(), colour: 0, channel: CHANNEL, muted: false, private: false, address: "https://example.invalid/".into() }],
+        0,
+    );
     browser.set_channel(channel);
     browser
 }

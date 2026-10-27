@@ -101,3 +101,7 @@ The source was reorganised by concept (`~/devel/neoteletext-common/structure/`, 
 ## To do, on the owner's word, not yet started
 
 - **The documents were brought up to date on 23 October 2026** by a review of every requirement's State and of the other documents against the code; what it found open is in the section above. Not reviewed: the engine's own documents that describe the browser (the engine's process).
+
+## The standard's maxima and sub-pages on the wire (26 October 2026)
+
+Owed by decision 112: every item of `neoteletext-common/STANDARD-LIMITS.md` section 7 that names this repository, in its order; none is started. The owner's questions are its section 6.

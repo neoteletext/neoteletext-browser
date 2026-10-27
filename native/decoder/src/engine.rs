@@ -131,6 +131,9 @@ pub struct Engine {
     /// The pages the channel has pushed: a fetched copy of one is older
     /// than what the channel pushed, and is dropped.
     pushed: BTreeSet<u16>,
+    /// Each page's sub-pages with their titles as last told to the trusted
+    /// core, for the page list.
+    subpages_said: BTreeMap<u16, Vec<(u16, String)>>,
     /// For each magazine, whether its page now arriving in fetched data is
     /// one the channel pushed, whose packets are dropped.
     skipping: [bool; MAGAZINES],
@@ -218,6 +221,7 @@ impl Engine {
             pushed_pages,
             pushed_packets,
             pushed: BTreeSet::new(),
+            subpages_said: BTreeMap::new(),
             skipping: [false; MAGAZINES],
             clock: 0,
             reported: vec![None; PAGES],

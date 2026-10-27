@@ -79,14 +79,15 @@ fn every_message_to_the_interface_round_trips() {
         ToInterface::Sounding(vec![3, 7]),
         ToInterface::Tabs {
             tabs: vec![
-                TabInfo { title: "news".into(), colour: 1, channel: 3, muted: false, private: false },
-                TabInfo { title: "sport".into(), colour: 7, channel: 9, muted: true, private: true },
+                TabInfo { title: "news".into(), colour: 1, channel: 3, muted: false, private: false, address: "https://news.invalid/channel".into() },
+                TabInfo { title: "sport".into(), colour: 7, channel: 9, muted: true, private: true, address: String::new() },
             ],
             active: 1,
         },
         ToInterface::Strip(strip()),
         ToInterface::Channel(channel()),
         ToInterface::Page { channel: 9, page: 0x899, title: "Clock".into() },
+        ToInterface::SubPages { channel: 9, page: 0x210, subpages: vec![(1, "Story 1/2".into()), (2, "Comments".into())] },
         ToInterface::Updated { channel: 9, page: 0x302 },
         ToInterface::Frame { key: KEY, version: 3, image: vec![1, 2, 3] },
         ToInterface::Settings(settings::SettingsView {
@@ -160,6 +161,7 @@ fn every_intent_round_trips() {
         ToCore::PageControl(interface_core::controls::PageControl::Fastext(interface_core::controls::FastextKey::Index)),
         ToCore::PageControl(interface_core::controls::PageControl::SubPage(false)),
         ToCore::PageControl(interface_core::controls::PageControl::Latest),
+        ToCore::PageControl(interface_core::controls::PageControl::SubPageOf { page: 0x210, subcode: 3 }),
         ToCore::Drawn,
         ToCore::InstallUpdate,
         ToCore::ChangeSetting(settings::SettingChange::Volume(40)),

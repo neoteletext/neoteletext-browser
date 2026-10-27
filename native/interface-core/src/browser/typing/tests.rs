@@ -148,21 +148,29 @@ fn a_click_is_the_hosts_only_in_a_mouse_mode() {
     );
     assert!(!outputs.iter().any(|output| matches!(output, Output::Cell(_))));
     browser.set_browser_modifier(true);
-    browser.pointer_pressed(&mut canvas, false, 10_000);
+    browser.pointer_pressed(&mut canvas, false, 11_000);
     let outputs = browser.take_outputs();
     assert!(outputs.iter().any(|output| matches!(output, Output::Cell(_))), "the modifier keeps a link's click");
     assert_eq!(intents(&outputs), [] as [Intent; 0]);
 }
 
+/// Decision 107: the wheel over the page is the channel's in any mode;
+/// beside the page, or with the browser's modifier, the browser's.
 #[test]
-fn the_wheel_and_moves_go_only_when_asked_for() {
+fn the_wheel_goes_over_the_page_and_moves_only_when_asked_for() {
     let mut browser = browser();
     browser.set_typing(typing(None, 0), 0);
     pointer_at(&mut browser, 3.0, 3.0);
-    assert_eq!(browser.terminal_wheel(0.0, 1.0), None, "the browser scrolls");
-    browser.set_typing(TypingView { modes: MOUSE_BUTTONS, ..typing(None, 0) }, 0);
-    assert_eq!(browser.terminal_wheel(0.0, 1.0), Some(false));
+    assert_eq!(browser.terminal_wheel(0.0, 1.0), Some(false), "no mode needed");
     assert!(matches!(intents(&browser.take_outputs()).as_slice(), [Intent::Wheel { dx: 0, dy: 120, .. }]));
+    browser.set_browser_modifier(true);
+    assert_eq!(browser.terminal_wheel(0.0, 1.0), None, "the modifier keeps it the browser's");
+    browser.set_browser_modifier(false);
+    pointer_at(&mut browser, -2.0, 3.0);
+    assert_eq!(browser.terminal_wheel(0.0, 1.0), None, "beside the page the browser scrolls");
+    pointer_at(&mut browser, 3.0, 3.0);
+    browser.take_outputs();
+    browser.set_typing(TypingView { modes: MOUSE_BUTTONS, ..typing(None, 0) }, 0);
     pointer_at(&mut browser, 4.0, 3.0);
     assert_eq!(intents(&browser.take_outputs()), [] as [Intent; 0], "no moves in MOUSE_BUTTONS");
     browser.set_typing(TypingView { modes: MOUSE_ALL, ..typing(None, 0) }, 0);

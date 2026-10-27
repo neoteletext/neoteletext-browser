@@ -84,9 +84,8 @@ impl Browser {
         self.links.prompt_focus = None;
     }
 
-    /// Whether the strip asks its question now, when the phone's keys
-    /// are dropped (decision 99).
-    #[cfg(feature = "phone-keyboard")]
+    /// Whether the strip asks its question now: the phone's keys are then
+    /// dropped (decision 99), and full screen ends (decision 85).
     pub(super) fn prompt_shown(&self) -> bool {
         self.links.prompt.is_some()
     }

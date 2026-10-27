@@ -128,7 +128,9 @@ impl Browser {
         }
         for &(button, rect) in &self.remote.buttons {
             let words = match button {
-                Button::Digit(_) => continue,
+                // The digits are named on their keys; the remote has no
+                // button for a sub-page of the list.
+                Button::Digit(_) | Button::Control(PageControl::SubPageOf { .. }) => continue,
                 Button::PageUp => String::from("The page before (Up)"),
                 Button::PageDown => String::from("The next page (Down)"),
                 Button::Control(PageControl::Fastext(FastextKey::Index)) => String::from("The page's Index link (i)"),

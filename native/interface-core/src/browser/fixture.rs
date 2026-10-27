@@ -26,8 +26,8 @@ pub(super) fn browser() -> (Browser, Recorder) {
     let mut browser = Browser::new(Frame { left_inset: 0.0, window_buttons: true });
     browser.set_tabs(
         alloc::vec![
-            TabInfo { title: "one".into(), colour: 0, channel: 7, muted: false, private: false },
-            TabInfo { title: "two".into(), colour: 1, channel: 8, muted: false, private: false }
+            TabInfo { title: "one".into(), colour: 0, channel: 7, muted: false, private: false, address: "https://example.invalid/".into() },
+            TabInfo { title: "two".into(), colour: 1, channel: 8, muted: false, private: false, address: "https://example.invalid/".into() }
         ],
         0,
     );

@@ -54,6 +54,16 @@ pub enum ToInterface {
         /// Its title, cleaned.
         title: String,
     },
+    /// A page's sub-pages, each with its title, cleaned, in ascending order;
+    /// none when it has one again: the page list lists them.
+    SubPages {
+        /// The channel.
+        channel: u32,
+        /// The page number.
+        page: u16,
+        /// Each sub-page's sub-code and title.
+        subpages: Vec<(u16, String)>,
+    },
     /// A page has a new version: the interface shows that it changed.
     Updated {
         /// The channel.

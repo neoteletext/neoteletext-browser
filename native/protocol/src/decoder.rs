@@ -14,7 +14,8 @@ use crate::{Fields, MAX_PAGE_TITLE, ProtocolError, push_count, push_count_u8, pu
 use kinds::KIND_LINKS;
 use kinds::{
     KIND_ARRIVED, KIND_AUDIO, KIND_BOOKMARK_FOLDER, KIND_BOOKMARK_FOLDER_END, KIND_BOOKMARK_LINK, KIND_BOOKMARKS_READ, KIND_CHANNEL_LOG, KIND_CLOSE,
-    KIND_CONFINED, KIND_DATA, KIND_END, KIND_FRAME, KIND_OPENED, KIND_SHOWING, KIND_STORE_FULL, KIND_SUBPAGES, KIND_UPDATED, KIND_VIEW, KIND_WHOLE,
+    KIND_CONFINED, KIND_DATA, KIND_END, KIND_FRAME, KIND_OPENED, KIND_SHOWING, KIND_STORE_FULL, KIND_SUBPAGE_TITLES, KIND_SUBPAGES, KIND_UPDATED, KIND_VIEW,
+    KIND_WHOLE,
 };
 #[cfg(feature = "interaction")]
 use kinds::{KIND_CURSOR, KIND_INPUT_CONTROL};
@@ -173,6 +174,16 @@ pub enum FromDecoder {
         /// The sub-code of the one drawn.
         shown: u16,
     },
+    /// The sub-pages of any page that has more than one, each with a title
+    /// from its text, not yet cleaned, whenever they change: for the page
+    /// list's sub-pages. None means it has one sub-page again.
+    SubPageTitles {
+        /// The page number.
+        page: u16,
+        /// Each sub-page's sub-code and title, in ascending order, at most
+        /// `interface_core::controls::MAX_SUBPAGES`.
+        titles: Vec<(u16, String)>,
+    },
     /// A cursor record the channel sent for a page, from a pushed packet or
     /// a page's `CU` line: untrusted, its body as sent, for the trusted
     /// core to check (INPUT.md section 7.1).
@@ -313,6 +324,18 @@ pub fn write_to_core(out: &mut dyn Write, message: &FromDecoder) -> Result<(), P
             crate::links::push_fastext(&mut payload, fastext)?;
             KIND_LINKS
         }
+        FromDecoder::SubPageTitles { page, titles } => {
+            if titles.iter().any(|(subcode, _)| *subcode > interface_core::controls::ANY_SUBCODE) {
+                return Err(ProtocolError::BadValue("sub-pages"));
+            }
+            payload.extend_from_slice(&page.to_be_bytes());
+            push_count_u8(&mut payload, titles.len(), interface_core::controls::MAX_SUBPAGES, "sub-pages")?;
+            for (subcode, title) in titles {
+                payload.extend_from_slice(&subcode.to_be_bytes());
+                push_raw_text(&mut payload, title, MAX_PAGE_TITLE);
+            }
+            KIND_SUBPAGE_TITLES
+        }
         FromDecoder::SubPages { page, subcodes, shown } => {
             if subcodes.len() > interface_core::controls::MAX_SUBPAGES
                 || subcodes.iter().chain([shown]).any(|subcode| *subcode > interface_core::controls::ANY_SUBCODE)
@@ -386,6 +409,19 @@ pub fn read_from_decoder(input: &mut dyn Read) -> Result<Option<FromDecoder>, Pr
             let (candidates, numbers) = crate::links::read_found(&mut fields)?;
             let fastext = crate::links::read_fastext(&mut fields)?;
             FromDecoder::Links { page, with_image, candidates, numbers, fastext }
+        }
+        KIND_SUBPAGE_TITLES => {
+            let page = fields.display_page()?;
+            let count = fields.count_u8(interface_core::controls::MAX_SUBPAGES, "too many sub-pages")?;
+            let mut titles = Vec::with_capacity(count);
+            for _ in 0..count {
+                let subcode = fields.u16()?;
+                if subcode > interface_core::controls::ANY_SUBCODE {
+                    return Err(ProtocolError::BadValue("sub-code"));
+                }
+                titles.push((subcode, raw_text(&mut fields, MAX_PAGE_TITLE, "title too long")?));
+            }
+            FromDecoder::SubPageTitles { page, titles }
         }
         KIND_SUBPAGES => {
             let page = fields.display_page()?;

@@ -37,9 +37,16 @@ impl Browser {
         let in_bank = |index: usize| index / PAGES_PER_BANK == self.bank;
         let since_update =
             |limit: u64, everywhere: bool| self.updates.iter().any(|&(index, at)| (everywhere || in_bank(index)) && now.saturating_sub(at) < limit);
-        let rings = !self.overview_folded && !self.console.open();
+        let rings = !self.overview.folded && !self.console.open();
         // A held Back or Forward opens its list at its time; Undo ends.
-        let deadline = self.hold_deadline(now).into_iter().chain(self.bookmarks_deadline(now)).chain(self.tips_deadline(now)).min();
+        let deadline = self
+            .hold_deadline(now)
+            .into_iter()
+            .chain(self.bookmarks_deadline(now))
+            .chain(self.tips_deadline(now))
+            .chain(self.tabs_deadline(now))
+            .chain(self.full_screen_deadline(now))
+            .min();
         if self.wall.animating(now) || self.remote_animating(now) {
             Some(SMOOTH_FRAME_MILLISECONDS)
         } else if deadline.is_some() {
@@ -72,7 +79,9 @@ impl Browser {
         let echoes = false;
         let held = self.settle_hold(now);
         let tipped = self.tips_settle(now);
-        self.pulses.len() != before || self.updates.len() != updates || echoes || held || tipped
+        let paneled = self.tabs_settle(now);
+        let full_screen = self.full_screen_settle(now);
+        self.pulses.len() != before || self.updates.len() != updates || echoes || held || tipped || paneled || full_screen
     }
 }
 

@@ -9,7 +9,7 @@ use super::{Wall, WallPage};
 use crate::canvas::{Canvas, PAGE_HEIGHT, PAGE_WIDTH, PageKey};
 use crate::geometry::{Point, Rect};
 use crate::size::grid_width;
-use crate::text::{border, label, outline};
+use crate::text::{border, fitted_text, label, outline};
 use crate::theme::{CAPTION, CAPTION_TITLE, MUTED, ROW_NUMBER, ROW_TITLE, RULE, RULE_SOFT, SELECTED, WHITE};
 use crate::theme::{UPDATED, mix};
 
@@ -105,7 +105,7 @@ impl Wall {
                 title_end -= width + CAPTION_GAP;
                 label(canvas, Point::new(caption.x + card_width - width, caption.y), &age, CAPTION, UPDATED);
             }
-            canvas.text(Rect::new(title_at.x, title_at.y, title_end, title_at.y + CAPTION_HEIGHT), page.title, CAPTION_TITLE, MUTED);
+            fitted_text(canvas, Rect::new(title_at.x, title_at.y, title_end, title_at.y + CAPTION_HEIGHT), page.title, CAPTION_TITLE, MUTED);
         }
         content
     }
@@ -146,7 +146,7 @@ impl Wall {
             let text_left = rect.x1 + LIST_GAP;
             let middle = rect.y0 + page_height / 2.0;
             label(canvas, Point::new(text_left, middle - LIST_TITLE_RISE), &format!("{:03X}", page.key.page), ROW_NUMBER, WHITE);
-            canvas.text(Rect::new(text_left, middle + LIST_DETAIL_DROP, right, row.y1), page.title, ROW_TITLE, MUTED);
+            fitted_text(canvas, Rect::new(text_left, middle + LIST_DETAIL_DROP, right, row.y1), page.title, ROW_TITLE, MUTED);
         }
         #[allow(clippy::cast_precision_loss, reason = "small counts")]
         let height = row_height * pages.len() as f64;

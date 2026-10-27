@@ -38,6 +38,7 @@ impl Core {
         if let Some(tab) = self.session.active_tab() {
             let channel = tab.channel.view();
             self.send(&ToInterface::Channel(channel))?;
+            self.send_subpages()?;
         }
         self.send_console()?;
         #[cfg(feature = "links")]

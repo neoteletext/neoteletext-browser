@@ -3,10 +3,11 @@
 //! button, and the overflow panel and a dragged tab over everything.
 
 use alloc::format;
+use alloc::vec::Vec;
 
 use super::{
-    COUNT_WIDTH, MARKER_WIDTH, NEW_TAB, PANEL_ROW, PRIVATE_MARK, STRIP_HEIGHT, STRIP_MARGIN, TAB_CLOSE, TAB_GAP, TAB_MAX_WIDTH, TAB_MIN_WIDTH, TAB_SPEAKER,
-    TAB_TEXT_INSET, TAB_TOP, TAB_TOP_INACTIVE, WINDOW_BUTTON_GAP, WINDOW_BUTTON_HEIGHT, WINDOW_BUTTON_WIDTH, arrangement,
+    COUNT_WIDTH, MARKER_WIDTH, NEW_TAB, PANEL_DIM, PANEL_EDGE, PANEL_ROW, PRIVATE_MARK, SHADOW, SHADOW_BAND, STRIP_HEIGHT, STRIP_MARGIN, TAB_CLOSE, TAB_GAP,
+    TAB_SPEAKER, TAB_TEXT_INSET, TAB_TOP, TAB_TOP_INACTIVE, TAB_WIDTH, WINDOW_BUTTON_GAP, WINDOW_BUTTON_HEIGHT, WINDOW_BUTTON_WIDTH, arrangement, rest_of,
 };
 use crate::browser::Browser;
 use crate::browser::banks::BANK_BORDER;
@@ -15,11 +16,12 @@ use crate::browser::regions::{Regions, TabRegion};
 use crate::canvas::Canvas;
 use crate::geometry::{Point, Rect};
 use crate::text::{HAIRLINE, border, centred, cross, left_centred, outline};
-use crate::theme::{BLACK, BUTTON, GLYPH, GREEN, PRIVATE, RED, ROW_STATUS, RULE, SELECTED, TAB_COLOURS, TAB_TITLE, WHITE, YELLOW};
+use crate::theme::{BLACK, BUTTON, GLYPH, GREEN, PRIVATE, RAISED, RED, ROW_STATUS, RULE, SELECTED, TAB_COLOURS, TAB_TITLE, WHITE, YELLOW};
 
 impl Browser {
     pub(in crate::browser) fn draw_tab_strip<C: Canvas + ?Sized>(&mut self, canvas: &mut C, width: f64) {
-        canvas.fill(Rect::new(0.0, 0.0, width, STRIP_HEIGHT), 0.0, BLACK);
+        // Raised with its open overflow panel, as a dialog is (decision 102).
+        canvas.fill(Rect::new(0.0, 0.0, width, STRIP_HEIGHT), 0.0, if self.tab_strip.open { RAISED } else { BLACK });
         let mut right = width - STRIP_MARGIN;
         if self.frame.window_buttons {
             let top = (STRIP_HEIGHT - WINDOW_BUTTON_HEIGHT) / 2.0;
@@ -44,17 +46,18 @@ impl Browser {
         let room = right - left - NEW_TAB - TAB_GAP * 2.0;
         #[allow(clippy::cast_precision_loss, reason = "a few tabs")]
         let count = self.tabs.len().max(1) as f64;
-        let all_fit = count * (TAB_MIN_WIDTH + TAB_GAP) - TAB_GAP <= room;
-        let (tab_width, fit) = if all_fit {
-            (((room - TAB_GAP * (count - 1.0)) / count).clamp(TAB_MIN_WIDTH, TAB_MAX_WIDTH), self.tabs.len())
+        let fit = if count * (TAB_WIDTH + TAB_GAP) - TAB_GAP <= room {
+            self.tabs.len()
         } else {
             // Each tab and its gap, with the count's room kept.
             #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss, reason = "a count of tabs, at least one")]
-            let fit = libm::floor((room - COUNT_WIDTH) / (TAB_MIN_WIDTH + TAB_GAP)).max(1.0) as usize;
-            (TAB_MIN_WIDTH, fit)
+            let fit = libm::floor((room - COUNT_WIDTH) / (TAB_WIDTH + TAB_GAP)).max(1.0) as usize;
+            fit
         };
-        let (shown, rest) = arrangement(self.tabs.len(), self.active, fit);
+        let tab_width = TAB_WIDTH;
+        let (shown, rest) = self.tabs_arranged(fit);
         self.tab_strip.overflowing = !rest.is_empty();
+        self.tab_strip.held = self.tab_strip.open.then(|| (shown.clone(), self.tabs.len()));
         let mut x = left;
         for &index in &shown {
             let region = self.draw_tab(canvas, index, Rect::new(x, 0.0, x + tab_width, STRIP_HEIGHT));
@@ -70,11 +73,27 @@ impl Browser {
             self.tab_strip.count = count;
             x = count.x1 + TAB_GAP;
         }
+        self.tab_strip.tabs_area = Rect::new(left, 0.0, x, STRIP_HEIGHT);
         self.regions.new_tab = Rect::new(x + TAB_GAP, TAB_TOP_INACTIVE, x + TAB_GAP + NEW_TAB, STRIP_HEIGHT - TAB_GAP);
         canvas.fill(self.regions.new_tab, 0.0, BUTTON);
         outline(canvas, self.regions.new_tab, RULE);
         centred(canvas, self.regions.new_tab, "+", GLYPH, WHITE);
         self.tab_strip.rest = (rest, tab_width, left, right);
+    }
+
+    /// Which tabs the strip shows and which wrap into the panel: while the
+    /// panel is open, the tabs it opened with, so nothing moves under the
+    /// pointer, unless tabs came or went; otherwise the first that fit,
+    /// with the active one.
+    fn tabs_arranged(&self, fit: usize) -> (Vec<usize>, Vec<usize>) {
+        let count = self.tabs.len();
+        if let Some((shown, held_count)) = self.tab_strip.held.as_ref().filter(|_| self.tab_strip.open)
+            && *held_count == count
+            && shown.len() == fit.min(count)
+        {
+            return (shown.clone(), rest_of(count, shown));
+        }
+        arrangement(count, self.active, fit)
     }
 
     /// One tab in its slot: the active one standing taller, with its sound
@@ -109,10 +128,12 @@ impl Browser {
         TabRegion { index, tab: rect, close, speaker }
     }
 
-    /// The overflow panel, joined under the strip, while the pointer is on
-    /// either; and a dragged tab where the pointer has it. Drawn over the
-    /// toolbar and the page area, as the menu's list is.
-    pub(in crate::browser) fn draw_tab_overflow<C: Canvas + ?Sized>(&mut self, canvas: &mut C, width: f64) {
+    /// The overflow panel, joined under the strip, while it is open; and a
+    /// dragged tab where the pointer has it. Drawn over the toolbar and the
+    /// page area, as the menu's list is, raised as a dialog is: the window
+    /// below dimmed, the strip and the panel one surface, a blue edge at
+    /// its foot and a shadow below (decision 102).
+    pub(in crate::browser) fn draw_tab_overflow<C: Canvas + ?Sized>(&mut self, canvas: &mut C, width: f64, height: f64) {
         self.tab_strip.panel = Rect::ZERO;
         let (rest, tab_width, left, right) = core::mem::take(&mut self.tab_strip.rest);
         if self.tab_strip.open && !rest.is_empty() {
@@ -121,9 +142,15 @@ impl Browser {
             let rows = rest.len().div_ceil(per_row);
             #[allow(clippy::cast_precision_loss, reason = "a few rows")]
             let panel = Rect::new(0.0, STRIP_HEIGHT - HAIRLINE, width, STRIP_HEIGHT + rows as f64 * PANEL_ROW + TAB_GAP);
-            // The strip's own colour, with no seam: the strip grown down.
-            canvas.fill(panel, 0.0, BLACK);
-            canvas.fill(Rect::new(0.0, panel.y1 - HAIRLINE, width, panel.y1), 0.0, RULE);
+            canvas.dim(Rect::new(0.0, panel.y1, width, height), PANEL_DIM);
+            let mut band_top = panel.y1;
+            for amount in SHADOW {
+                canvas.dim(Rect::new(0.0, band_top, width, band_top + SHADOW_BAND), amount);
+                band_top += SHADOW_BAND;
+            }
+            // The strip's own surface, with no seam: the strip grown down.
+            canvas.fill(panel, 0.0, RAISED);
+            canvas.fill(Rect::new(0.0, panel.y1 - PANEL_EDGE, width, panel.y1), 0.0, SELECTED);
             for (place, &index) in rest.iter().enumerate() {
                 #[allow(clippy::cast_precision_loss, reason = "a few tabs")]
                 let (row, column) = (place.checked_div(per_row).unwrap_or(0) as f64, place.checked_rem(per_row).unwrap_or(0) as f64);

@@ -341,7 +341,9 @@ impl Core {
         }
         let status = self.updates.status(self.settings.check_updates, neoteletext::calendar::utc_now());
         let view = interface_core::settings::UpdateView {
-            version: self.updates.running().map(|version| version.to_string()).unwrap_or_default(),
+            // A browser not installed by the launcher runs the version it
+            // was built as.
+            version: self.updates.running().map_or_else(|| String::from(env!("NEOTELETEXT_VERSION")), |version| version.to_string()),
             status: clean(&status, protocol::settings::MAX_UPDATE_STATUS),
             offer: self.updates.offer().map(|version| version.to_string()),
             checking: self.settings.check_updates,

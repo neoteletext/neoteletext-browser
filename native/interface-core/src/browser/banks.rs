@@ -9,8 +9,8 @@ use crate::browser::window::{HEADING_HEIGHT, PADDING};
 use crate::canvas::Canvas;
 use crate::channel::BANKS;
 use crate::geometry::{Point, Rect};
-use crate::text::{HAIRLINE, border, label, left_centred, outline, right_centred};
-use crate::theme::{BANK_COLOURS, BANK_COUNT, BANK_NAME, BANK_RANGE, BUTTON, HEADING, MUTED, PANEL, RULE, RULE_SOFT, WHITE};
+use crate::text::{HAIRLINE, border, fitted_text, label, left_centred, outline, right_centred};
+use crate::theme::{BANK_COLOURS, BANK_COUNT, BANK_NAME, BANK_RANGE, BUTTON, HEADING, MUTED, PANEL, RAISED, RULE, RULE_SOFT, WHITE};
 
 const BANK_GAP: f64 = 6.0;
 const BANK_MAX_HEIGHT: f64 = 60.0;
@@ -25,7 +25,7 @@ impl Browser {
         canvas.fill(panel, 0.0, PANEL);
         outline(canvas, panel, RULE);
         let heading = Rect::new(panel.x0, panel.y0, panel.x1, panel.y0 + HEADING_HEIGHT);
-        left_centred(canvas, heading, PADDING, "Page banks", HEADING, WHITE);
+        left_centred(canvas, heading, PADDING, "Channel magazines", HEADING, WHITE);
         canvas.fill(Rect::new(panel.x0, heading.y1 - HAIRLINE, panel.x1, heading.y1), 0.0, RULE);
         #[allow(clippy::cast_precision_loss, reason = "eight banks")]
         let height = ((panel.height() - HEADING_HEIGHT - BANK_GAP) / BANKS as f64 - BANK_GAP).min(BANK_MAX_HEIGHT);
@@ -34,7 +34,18 @@ impl Browser {
             let top = heading.y1 + BANK_GAP + bank as f64 * (height + BANK_GAP);
             let rect = Rect::new(panel.x0 + BANK_GAP, top, panel.x1 - BANK_GAP, top + height);
             let chosen = bank == self.bank;
-            canvas.fill(rect, 0.0, if chosen { BUTTON } else { PANEL });
+            let hovered = self.hovered_bank == Some(bank);
+            canvas.fill(
+                rect,
+                0.0,
+                if chosen {
+                    BUTTON
+                } else if hovered {
+                    RAISED
+                } else {
+                    PANEL
+                },
+            );
             if chosen {
                 border(canvas, rect, BANK_BORDER, colour);
             } else {
@@ -51,7 +62,7 @@ impl Browser {
             let name_height = canvas.line_height(BANK_NAME);
             let top = middle - f64::midpoint(range_height, name_height) - BANK_RANGE_RISE;
             label(canvas, Point::new(text_left, top), &range, BANK_RANGE, colour);
-            canvas.text(Rect::new(text_left, top + range_height, rect.x1 - PADDING, top + range_height + name_height), name, BANK_NAME, colour);
+            fitted_text(canvas, Rect::new(text_left, top + range_height, rect.x1 - PADDING, top + range_height + name_height), name, BANK_NAME, colour);
             right_centred(
                 canvas,
                 Rect::new(rect.x0, rect.y0, rect.x1, rect.y0 + range_height + PADDING),

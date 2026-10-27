@@ -26,7 +26,7 @@ const RADIUS: f64 = 4.0;
 /// (back to the latest), the step on.
 #[derive(Debug, Default)]
 pub(super) struct ControlsUi {
-    controls: PageControls,
+    pub(super) controls: PageControls,
     previous: Rect,
     count: Rect,
     next: Rect,
@@ -42,6 +42,14 @@ impl Browser {
     #[must_use]
     pub fn page_controls(&self) -> PageControls {
         self.page_controls.controls
+    }
+
+    /// The controls are not on the screen, as in full screen: none takes a
+    /// press.
+    pub(super) fn controls_forget(&mut self) {
+        for button in [&mut self.page_controls.previous, &mut self.page_controls.count, &mut self.page_controls.next] {
+            *button = Rect::ZERO;
+        }
     }
 
     /// Asks for `control` on the open page.

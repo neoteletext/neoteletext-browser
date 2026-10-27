@@ -50,6 +50,17 @@ pub struct Modifiers {
 impl Browser {
     /// Returns whether the window needs drawing again.
     pub fn key(&mut self, key: Key<'_>, modifiers: Modifiers, now: u64) -> bool {
+        // In full screen a key the browser keeps shows the strip as it
+        // acts, and Escape leaves (decision 85); a channel's keys never
+        // come here.
+        if self.full_screen() {
+            if modifiers.command {
+                self.full_screen_key(now);
+            } else if key == Key::Escape {
+                self.leave_full_screen();
+                return true;
+            }
+        }
         if modifiers.command {
             return self.shortcut(key, modifiers, now);
         }
@@ -87,6 +98,9 @@ impl Browser {
             return changed;
         }
         if let Some(changed) = self.control_key(key) {
+            return changed;
+        }
+        if let Some(changed) = self.list_key(key, now) {
             return changed;
         }
         match key {
@@ -171,6 +185,8 @@ impl Browser {
             "o" if modifiers.shift => self.toggle_bookmarks(),
             "b" if modifiers.alt => self.toggle_bookmarks(),
             "b" if modifiers.shift => self.toggle_bar(),
+            // The overview of every page, shown or hidden (decision 109).
+            "e" if modifiers.shift => self.toggle_overview_shown(),
             "t" if modifiers.shift => self.outputs.push(Output::History(crate::library::HistoryRequest::Reopen(None))),
             "n" if modifiers.shift => self.outputs.push(Output::NewPrivateTab),
             "t" => self.outputs.push(Output::NewTab),

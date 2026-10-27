@@ -4,7 +4,8 @@
 //! icon, a symbol or text that may be cut short, with its tip; a press
 //! puts the tip away until the pointer leaves the control. The tips are
 //! the interface's own words, never a channel's text, except a tab's and
-//! a bookmark's title, drawn as the text it is.
+//! a bookmark's title, drawn as the text it is. A tab's tip has a second
+//! line, its address (decision 103).
 
 use alloc::format;
 use alloc::string::String;
@@ -15,7 +16,7 @@ use crate::canvas::Canvas;
 use crate::channel::{bank_indices, page_number};
 use crate::geometry::{Point, Rect};
 use crate::text::{border, left_centred};
-use crate::theme::{BUTTON, ROW_TITLE, RULE, WHITE};
+use crate::theme::{BUTTON, MUTED, ROW_TITLE, RULE, WHITE};
 
 /// How long the pointer rests on a control before its tip shows: about
 /// what macOS and the common browsers wait.
@@ -27,6 +28,11 @@ const HEIGHT: f64 = 26.0;
 const RADIUS: f64 = 4.0;
 /// The tip keeps this far inside the window's edges.
 const EDGE: f64 = 4.0;
+/// Each line after a tip's first, as a tab's address under its title.
+const LINE_STEP: f64 = 20.0;
+/// Between a tip's lines, which never come from a channel: the trusted
+/// core's text has no line breaks once cleaned.
+const LINE_BREAK: char = '\n';
 
 /// A control's tip as last drawn.
 #[derive(Clone, Debug, PartialEq)]
@@ -101,6 +107,13 @@ impl Browser {
         false
     }
 
+    /// No control is on the screen, as in full screen: no tip shows.
+    pub(super) fn tips_forget(&mut self) {
+        self.tips.drawn.clear();
+        self.tips.hovered = None;
+        self.tips.shown = false;
+    }
+
     /// The tip shown now, if any.
     #[cfg(test)]
     pub(super) fn tip_shown(&self) -> Option<&str> {
@@ -137,17 +150,25 @@ impl Browser {
             self.tips.shown = false;
         }
         let Some((tip, _)) = self.tips.hovered.as_ref().filter(|_| self.tips.shown) else { return };
-        let text_width = canvas.text_width(&tip.text, ROW_TITLE);
+        let text_width = tip.text.split(LINE_BREAK).map(|line| canvas.text_width(line, ROW_TITLE)).fold(0.0, f64::max);
+        #[allow(clippy::cast_precision_loss, reason = "a tip's two lines")]
+        let extra_lines = tip.text.matches(LINE_BREAK).count() as f64;
+        let box_height = HEIGHT + LINE_STEP * extra_lines;
         let box_width = (text_width + PADDING * 2.0).min(width - EDGE * 2.0);
         let x = (self.pointer.x - box_width / 2.0).clamp(EDGE, (width - EDGE - box_width).max(EDGE));
         // Below the pointer, or above it at the window's foot.
         let below = self.pointer.y + BELOW_POINTER;
-        let y = if below + HEIGHT > height - EDGE { tip.rect.y0 - EDGE - HEIGHT } else { below };
-        let area = Rect::new(x, y, x + box_width, y + HEIGHT);
+        let y = if below + box_height > height - EDGE { tip.rect.y0 - EDGE - box_height } else { below };
+        let area = Rect::new(x, y, x + box_width, y + box_height);
         canvas.fill(area, RADIUS, BUTTON);
         border(canvas, area, 1.0, RULE);
         canvas.push_clip(area);
-        left_centred(canvas, area, PADDING, &tip.text, ROW_TITLE, WHITE);
+        let mut line_top = y;
+        for (number, line) in tip.text.split(LINE_BREAK).enumerate() {
+            let line_area = Rect::new(x, line_top, x + box_width, line_top + if number == 0 { HEIGHT } else { LINE_STEP });
+            left_centred(canvas, line_area, PADDING, line, ROW_TITLE, if number == 0 { WHITE } else { MUTED });
+            line_top = line_area.y1;
+        }
         canvas.pop_clip();
     }
 
@@ -157,7 +178,10 @@ impl Browser {
         for region in &regions.tabs {
             if let Some(tab) = self.tabs.get(region.index) {
                 let private = if tab.private { " (private tab)" } else { "" };
-                tips.push((region.tab, format!("{}{private}", tab.title)));
+                // The title is the host; the address says where in it the
+                // tab is (decision 103).
+                let address = if tab.address.is_empty() { String::new() } else { format!("{LINE_BREAK}{}", tab.address) };
+                tips.push((region.tab, format!("{}{private}{address}", tab.title)));
                 if let Some(speaker) = region.speaker {
                     tips.push((speaker, String::from(if tab.muted { "Unmute this tab" } else { "Mute this tab" })));
                 }
@@ -199,7 +223,7 @@ impl Browser {
                 tips.push((*rect, format!("Show pages {first} to {last}")));
             }
         }
-        let toggle = if self.overview_folded { "Open the overview of every page" } else { "Fold the overview away" };
+        let toggle = if self.overview.folded { "Open the overview of every page" } else { "Fold the overview away" };
         tips.push((self.regions.overview_toggle, String::from(toggle)));
         let close = self.wall.close_button();
         if close != Rect::ZERO {

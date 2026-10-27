@@ -40,6 +40,15 @@ pub enum Incoming {
     Strip(StripState),
     /// The active tab's channel.
     Channel(Channel),
+    /// A page's sub-pages and their titles, none when it has one again.
+    SubPages {
+        /// The channel.
+        channel: u32,
+        /// The page.
+        page: u16,
+        /// Each sub-page's sub-code and title.
+        subpages: Vec<(u16, String)>,
+    },
     /// A page arrived, or its status changed.
     Arrived {
         /// The channel.

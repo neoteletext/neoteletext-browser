@@ -70,6 +70,21 @@ fn a_page_is_recorded_once_with_its_title_cleaned() {
     assert_eq!(channel.view().counts(), (1, 1));
 }
 
+/// Decision 111: a page's sub-pages are kept with their titles cleaned,
+/// and told again only when they change.
+#[test]
+fn a_pages_sub_pages_are_kept_and_told_when_they_change() {
+    let mut session = Session::new(Bookmarks::default());
+    session.open("news.invalid").unwrap();
+    let channel = &mut session.tabs[0].channel;
+    let titles = vec![(1, String::from("One\u{202E}")), (2, String::from("Two"))];
+    assert_eq!(channel.set_subpages(0x210, &titles), Some(vec![(1, String::from("One")), (2, String::from("Two"))]));
+    assert_eq!(channel.set_subpages(0x210, &titles), None, "the same again");
+    assert_eq!(channel.set_subpages(0x210, &[]), Some(Vec::new()), "one sub-page again");
+    assert_eq!(channel.set_subpages(0x210, &[]), None);
+    assert_eq!(channel.set_subpages(0x1A0, &titles), None, "not a page");
+}
+
 #[test]
 fn the_contents_file_lists_pages_and_names_sections() {
     let mut session = Session::new(Bookmarks::default());

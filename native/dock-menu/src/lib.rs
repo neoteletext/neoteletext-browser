@@ -71,7 +71,7 @@ pub fn mute_all_item(tabs: &[DockTab]) -> (&'static str, Choice) {
 }
 
 /// A menu bar item's key: the browser's modifier (Command), this key, and
-/// Shift or Option as named.
+/// Shift, Option or Control as named.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Shortcut {
     /// The key.
@@ -80,6 +80,8 @@ pub struct Shortcut {
     pub shift: bool,
     /// Option is held with it.
     pub alt: bool,
+    /// Control is held with it: the system's full-screen key alone.
+    pub control: bool,
 }
 
 /// The key of a [`Shortcut`].
@@ -102,6 +104,9 @@ pub enum MenuAction {
     NewPrivateWindow,
     /// The open tab moved to a window of its own, which has no key.
     TabToNewWindow,
+    /// The open page alone, full screen, or back (decision 85): its key is
+    /// the system's, which the interface core does not know.
+    FullScreen,
     /// An edit of the text field with the keys.
     Edit(EditAction),
     /// The system's own, which never reaches the browser.
@@ -172,15 +177,15 @@ pub struct Menu {
 }
 
 const fn command(key: &'static str) -> Shortcut {
-    Shortcut { key: ShortcutKey::Text(key), shift: false, alt: false }
+    Shortcut { key: ShortcutKey::Text(key), shift: false, alt: false, control: false }
 }
 
 const fn shift_command(key: &'static str) -> Shortcut {
-    Shortcut { key: ShortcutKey::Text(key), shift: true, alt: false }
+    Shortcut { key: ShortcutKey::Text(key), shift: true, alt: false, control: false }
 }
 
 const fn option_command(key: ShortcutKey) -> Shortcut {
-    Shortcut { key, shift: false, alt: true }
+    Shortcut { key, shift: false, alt: true, control: false }
 }
 
 const fn browser(title: &'static str, shortcut: Shortcut) -> Entry {
@@ -193,6 +198,13 @@ const fn system(title: &'static str, shortcut: Option<Shortcut>, action: SystemA
 
 const fn edit(title: &'static str, key: &'static str, action: EditAction) -> Entry {
     Entry::Item(MenuItem { title, shortcut: Some(command(key)), action: MenuAction::Edit(action) })
+}
+
+/// The full-screen item's title: what choosing it does, as every Mac
+/// application words it.
+#[must_use]
+pub const fn full_screen_title(full_screen: bool) -> &'static str {
+    if full_screen { "Exit Full Screen" } else { "Enter Full Screen" }
 }
 
 /// The menu bar on macOS (`menu-bar.md` section 2, decision 84). Each
@@ -245,7 +257,15 @@ pub const MENU_BAR: &[Menu] = &[
         entries: &[
             browser("Reload", command("r")),
             Entry::Separator,
+            // The system's full-screen key, Control-Command-F (decision 85).
+            Entry::Item(MenuItem {
+                title: full_screen_title(false),
+                shortcut: Some(Shortcut { key: ShortcutKey::Text("f"), shift: false, alt: false, control: true }),
+                action: MenuAction::FullScreen,
+            }),
+            Entry::Separator,
             browser("Bookmarks Bar", shift_command("b")),
+            browser("Overview of All Pages", shift_command("e")),
             browser("Remote Control", shift_command("r")),
             browser("Developer Console", option_command(ShortcutKey::Text("i"))),
         ],
@@ -300,7 +320,7 @@ pub fn menu_item(number: usize) -> Option<&'static MenuItem> {
 #[cfg(target_os = "macos")]
 mod mac;
 #[cfg(target_os = "macos")]
-pub use mac::{install, install_menu_bar, set};
+pub use mac::{install, install_menu_bar, set, set_about, set_full_screen};
 
 /// Elsewhere there is no menu bar: the menu button's menu is its
 /// counterpart (`menu-bar.md` section 1).
@@ -314,6 +334,14 @@ pub fn install(_choose: impl Fn(Choice) + 'static) {}
 /// Elsewhere there is no Dock.
 #[cfg(not(target_os = "macos"))]
 pub fn set(_tabs: Vec<DockTab>) {}
+
+/// Elsewhere the About panel is not the system's: the settings show both.
+#[cfg(not(target_os = "macos"))]
+pub fn set_about(_version: &str, _copyright: &str) {}
+
+/// Elsewhere there is no menu bar.
+#[cfg(not(target_os = "macos"))]
+pub fn set_full_screen(_full_screen: bool) {}
 
 #[cfg(test)]
 mod tests {
@@ -359,6 +387,16 @@ mod tests {
         assert_eq!(menu_item(menu_items().count()), None);
         let close = menu_items().position(|item| item.title == "Close Window").and_then(menu_item);
         assert_eq!(close.and_then(|item| item.shortcut), Some(shift_command("w")));
+    }
+
+    /// The full-screen item starts as the way in, and the window's one
+    /// item is the one the title is changed on.
+    #[test]
+    fn the_full_screen_item_names_the_way_in_and_out() {
+        assert_eq!(full_screen_title(false), "Enter Full Screen");
+        assert_eq!(full_screen_title(true), "Exit Full Screen");
+        let full: Vec<&str> = menu_items().filter(|item| item.action == MenuAction::FullScreen).map(|item| item.title).collect();
+        assert_eq!(full, [full_screen_title(false)]);
     }
 
     #[test]

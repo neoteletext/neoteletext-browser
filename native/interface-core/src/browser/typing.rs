@@ -11,7 +11,7 @@ use alloc::vec::Vec;
 
 use neoteletext_input::cursor::{ECHO, MASKED};
 use neoteletext_input::event::{ALT, Action, CONTROL, HYPER, KeyCode, META, MouseAction, Point, SUPER, printable};
-use neoteletext_input::modes::{COMPOSE, MOUSE_ALL, MOUSE_BUTTONS, MOUSE_DRAG, MOUSE_MODES};
+use neoteletext_input::modes::{COMPOSE, MOUSE_ALL, MOUSE_DRAG, MOUSE_MODES};
 use neoteletext_input::{MAX_COMPOSE, MAX_PASTE};
 
 use crate::browser::{Browser, Output};
@@ -153,7 +153,8 @@ impl Browser {
         let key = PageKey { channel: typing.channel, page: typing.page };
         // While a panel, popover or list of the strip is open, the keys are
         // the strip's (`history-and-bookmarks.md` section 2.4).
-        (self.opened() == Some(key) && !self.editing && !self.strip_has_keys()).then_some(key)
+        // While a list at the left has them too.
+        (self.opened() == Some(key) && !self.editing && !self.strip_has_keys() && self.list_focus.is_none()).then_some(key)
     }
 
     /// Whether a panel, popover or list of the strip is open, which then
@@ -305,11 +306,12 @@ impl Browser {
         }
     }
 
-    /// The wheel, in lines, over the open page: the channel's when it asked
-    /// for `MOUSE_BUTTONS` (INPUT.md section 9.1); `None` when it is the
-    /// browser's, to scroll.
+    /// The wheel, in lines, over the open page: the channel's in any mode
+    /// while keys go to it (INPUT.md sections 6.5 and 9.1, decision 107);
+    /// `None` when it is the browser's, to scroll: beside the page, or with
+    /// the browser's modifier held.
     pub fn terminal_wheel(&mut self, across: f64, down: f64) -> Option<bool> {
-        if self.typing_modes() & MOUSE_BUTTONS == 0 || self.typing.browser_modifier {
+        if self.typing.browser_modifier {
             return None;
         }
         let target = self.typing_target()?;

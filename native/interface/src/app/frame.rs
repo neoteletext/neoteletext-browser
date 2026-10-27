@@ -95,8 +95,16 @@ impl App {
         self.act(event_loop);
     }
 
-    /// Sets the window's pointer shape to the browser's, when it changed.
+    /// Sets the window's pointer shape to the browser's, when it changed,
+    /// and hides it as full screen does a still one.
     pub(super) fn update_cursor(&mut self) {
+        let hidden = self.view.browser.pointer_hidden(self.now());
+        if hidden != self.view.pointer_hidden {
+            self.view.pointer_hidden = hidden;
+            if let Some(graphics) = &self.view.graphics {
+                graphics.window.set_cursor_visible(!hidden);
+            }
+        }
         let cursor = self.view.browser.cursor();
         if cursor == self.view.pointer_shape {
             return;
@@ -108,6 +116,8 @@ impl App {
                 Cursor::Hand => CursorIcon::Pointer,
                 // A link that leaves the channel: the shape of a shortcut.
                 Cursor::External => CursorIcon::Alias,
+                Cursor::ResizeColumn => CursorIcon::ColResize,
+                Cursor::ResizeRow => CursorIcon::RowResize,
             });
         }
     }

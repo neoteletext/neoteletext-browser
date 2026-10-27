@@ -80,6 +80,28 @@ fn system_reads(parameters: &mut Parameters) -> Result<String, String> {
     ))
 }
 
+/// The listings of the folders the interface's program lies in, and in
+/// `NeoTeletext.app` the bundle's `Info.plist`, where the version is.
+/// `AppKit` finds the main bundle by listing them; without them it has no
+/// path, and the standard About panel stops the interface on an assertion
+/// in `NSImage` (found 25 October 2026, macOS 15.6). A folder's listing
+/// gives its names, not what its files hold.
+fn own_bundle_reads(parameters: &mut Parameters, program: &Path) -> String {
+    let Some(folder) = program.parent() else { return String::new() };
+    let contents = folder.parent().filter(|contents| folder.ends_with("MacOS") && contents.ends_with("Contents"));
+    let bundle = contents.and_then(Path::parent).filter(|bundle| bundle.extension().is_some_and(|extension| extension == "app"));
+    match (contents, bundle) {
+        (Some(contents), Some(bundle)) => {
+            let folder = parameters.path("BUNDLE_PROGRAMS", folder);
+            let information = parameters.path("BUNDLE_INFORMATION", &contents.join("Info.plist"));
+            let contents = parameters.path("BUNDLE_CONTENTS", contents);
+            let bundle = parameters.path("BUNDLE", bundle);
+            format!("(allow file-read* (literal {bundle}) (literal {contents}) (literal {folder}) (literal {information}))\n")
+        }
+        _ => format!("(allow file-read* (literal {}))\n", parameters.path("PROGRAM_FOLDER", folder)),
+    }
+}
+
 /// Every profile's start: nothing, then Apple's baseline, then the
 /// program itself, named as the parameter `PROGRAM`, and the null device
 /// for what is not wanted.
@@ -127,6 +149,7 @@ fn profile(program: &Path, role: Role, writable: Option<&Path>, local_network: b
         // but never put on the screen.
         Role::Interface => {
             profile.push_str(&system_reads(&mut parameters)?);
+            profile.push_str(&own_bundle_reads(&mut parameters, program));
             profile.push_str(INTERFACE_SERVICES);
             if let Some(home) = home() {
                 for (name, folder) in INTERFACE_HOME {
@@ -304,6 +327,36 @@ mod tests {
                 let path = parameters.values.iter().find(|(parameter, _)| parameter == name).map(|(_, path)| path);
                 assert!(path.is_some_and(|path| path.is_absolute()), "{role:?} {name}: {parameters:?}");
             }
+        }
+    }
+
+    /// The interface lists the folders it lies in, and reads its bundle's
+    /// `Info.plist`, and nothing else of them: without the listings the
+    /// About panel stopped it on an assertion. No other role has them.
+    #[test]
+    fn the_interface_lists_its_own_folders_for_its_bundle() {
+        let read = |parameters: &Parameters, name: &str| parameters.values.iter().find(|(parameter, _)| parameter == name).map(|(_, path)| path.clone());
+        let bundled = Path::new("/Applications/NeoTeletext.app/Contents/MacOS/neoteletext-interface");
+        let (rules, parameters) = profile(bundled, Role::Interface, None, false).unwrap();
+        assert!(
+            rules.contains(
+                "(allow file-read* (literal (param \"BUNDLE\")) (literal (param \"BUNDLE_CONTENTS\")) (literal (param \"BUNDLE_PROGRAMS\")) (literal (param \"BUNDLE_INFORMATION\")))"
+            ),
+            "{rules}"
+        );
+        assert_eq!(read(&parameters, "BUNDLE"), Some(PathBuf::from("/Applications/NeoTeletext.app")));
+        assert_eq!(read(&parameters, "BUNDLE_CONTENTS"), Some(PathBuf::from("/Applications/NeoTeletext.app/Contents")));
+        assert_eq!(read(&parameters, "BUNDLE_PROGRAMS"), Some(PathBuf::from("/Applications/NeoTeletext.app/Contents/MacOS")));
+        assert_eq!(read(&parameters, "BUNDLE_INFORMATION"), Some(PathBuf::from("/Applications/NeoTeletext.app/Contents/Info.plist")));
+        assert!(!rules.contains("(subpath (param \"BUNDLE"), "listings, not the bundle's files");
+        let built = Path::new("/Users/someone/neoteletext-browser/native/target/release/neoteletext-interface");
+        let (rules, parameters) = profile(built, Role::Interface, None, false).unwrap();
+        assert!(rules.contains("(allow file-read* (literal (param \"PROGRAM_FOLDER\")))"), "{rules}");
+        assert_eq!(read(&parameters, "PROGRAM_FOLDER"), Some(PathBuf::from("/Users/someone/neoteletext-browser/native/target/release")));
+        assert!(!rules.contains("BUNDLE"), "not a bundle: {rules}");
+        for role in [Role::Decoder, Role::Network, Role::Core, Role::Sound] {
+            let (rules, _) = profile(bundled, role, None, false).unwrap();
+            assert!(!rules.contains("BUNDLE") && !rules.contains("PROGRAM_FOLDER"), "{role:?}");
         }
     }
 

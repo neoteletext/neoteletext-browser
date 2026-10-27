@@ -30,3 +30,4 @@ pub(super) const KIND_BOOKMARK_LINK: u8 = 75;
 pub(super) const KIND_BOOKMARKS_READ: u8 = 76;
 pub(super) const KIND_CHANNEL_LOG: u8 = 77;
 pub(super) const KIND_CONFINED: u8 = 78;
+pub(super) const KIND_SUBPAGE_TITLES: u8 = 79;

@@ -44,6 +44,8 @@ fn every_kind_round_trips() {
         FromDecoder::StoreFull,
         FromDecoder::Frame { page: 0x123, palette: vec![[0, 0, 0], [255, 255, 255]], screen: 1, indices },
         FromDecoder::SubPages { page: 0x302, subcodes: vec![1, 2, 3], shown: 2 },
+        FromDecoder::SubPageTitles { page: 0x210, titles: vec![(1, "Story 1/3".into()), (2, "Story 2/3".into()), (3, "Comments".into())] },
+        FromDecoder::SubPageTitles { page: 0x210, titles: Vec::new() },
         FromDecoder::SubPages { page: 0x100, subcodes: vec![interface_core::controls::ANY_SUBCODE], shown: interface_core::controls::ANY_SUBCODE },
         FromDecoder::Bookmark(BookmarkEntry::Folder("Bookmarks bar".into())),
         FromDecoder::Bookmark(BookmarkEntry::FolderEnd),

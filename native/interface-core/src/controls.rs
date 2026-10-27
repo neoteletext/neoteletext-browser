@@ -80,6 +80,14 @@ pub enum PageControl {
     SubPage(bool),
     /// Back to the latest sub-page as it arrives.
     Latest,
+    /// Open `page` at the sub-page `subcode`, chosen from the page list's
+    /// sub-pages: at once if it is open, else when it opens.
+    SubPageOf {
+        /// The page.
+        page: u16,
+        /// The sub-page's sub-code.
+        subcode: u16,
+    },
 }
 
 /// The open page's controls, as the trusted core sends them.

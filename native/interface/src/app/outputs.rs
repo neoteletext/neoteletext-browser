@@ -11,6 +11,7 @@ use super::App;
 impl App {
     /// Sends on or carries out what the user did.
     pub(super) fn act(&mut self, event_loop: &ActiveEventLoop) {
+        self.sync_full_screen();
         self.update_cursor();
         for output in self.view.browser.take_outputs() {
             if let Some(message) = self.intent(event_loop, output) {

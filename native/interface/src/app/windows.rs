@@ -11,7 +11,7 @@ use protocol::ToCore;
 use softbuffer::{Context, Surface};
 use winit::dpi::LogicalPosition;
 use winit::event_loop::ActiveEventLoop;
-use winit::window::ResizeDirection;
+use winit::window::{Fullscreen, ResizeDirection};
 
 use crate::window::{FRAME, RESIZE_MARGIN, TORN_OFFSET, WINDOW_TITLE, attributes, geometry, on_a_display};
 
@@ -130,6 +130,48 @@ impl App {
             WindowAction::Minimise => window.set_minimized(true),
             WindowAction::Maximise => window.set_maximized(!window.is_maximized()),
             WindowAction::Close => {}
+        }
+    }
+
+    /// The window follows the browser into full screen, the page alone,
+    /// and out (decision 85): borderless on its display, on macOS a
+    /// full-screen space of its own. A window full screen already, by the
+    /// system's green button, stays so when the page's full screen ends.
+    pub(super) fn sync_full_screen(&mut self) {
+        let wanted = self.view.browser.full_screen();
+        if wanted == self.view.page_full_screen.is_some() {
+            return;
+        }
+        let Some(graphics) = &self.view.graphics else { return };
+        let window = &graphics.window;
+        if wanted {
+            let already = window.fullscreen().is_some();
+            if !already {
+                window.set_fullscreen(Some(Fullscreen::Borderless(None)));
+            }
+            self.view.page_full_screen = Some((already, already));
+        } else {
+            if self.view.page_full_screen.is_some_and(|(already, _)| !already) {
+                window.set_fullscreen(None);
+            }
+            self.view.page_full_screen = None;
+        }
+        dock_menu::set_full_screen(wanted);
+    }
+
+    /// The window changed size: in the page's full screen, the system's
+    /// leaving it (its key, Mission Control, a display unplugged) ends it.
+    pub(super) fn full_screen_resized(&mut self) {
+        let Some((already, seen)) = self.view.page_full_screen else { return };
+        let Some(graphics) = &self.view.graphics else { return };
+        let full = graphics.window.fullscreen().is_some();
+        if full {
+            self.view.page_full_screen = Some((already, true));
+        } else if seen {
+            self.view.page_full_screen = None;
+            self.view.browser.leave_full_screen();
+            dock_menu::set_full_screen(false);
+            self.request_redraw();
         }
     }
 

@@ -75,6 +75,11 @@ pub(super) struct PhoneUi {
 }
 
 impl Browser {
+    /// Whether the panel shows.
+    pub(super) fn phone_open(&self) -> bool {
+        self.phone.open
+    }
+
     /// The panel's close button, while it is open.
     pub(super) fn phone_tips(&self, tips: &mut Vec<(Rect, String)>) {
         if self.phone.open {

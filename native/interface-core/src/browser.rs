@@ -26,15 +26,18 @@ mod bookmarks_bar;
 mod certificate_refused;
 mod console_panel;
 mod cookies_tab;
+mod divider;
 #[cfg(test)]
 mod fixture;
 mod focus;
 mod frames;
+mod full_screen;
 mod glyphs;
 mod history;
 #[cfg(feature = "links")]
 mod hyperlinks;
 mod keys;
+mod list_focus;
 mod menu;
 mod output;
 mod overview;
@@ -52,6 +55,7 @@ mod remote;
 mod settings_panel;
 mod shown;
 mod star;
+mod subpage_list;
 mod suggestions;
 mod tab_lists;
 mod tab_strip;
@@ -79,6 +83,15 @@ pub const MAX_ADDRESS: usize = 2048;
 /// Scrolling by one wheel line.
 pub const LINE_HEIGHT: f64 = 21.0;
 
+/// The overview of every page as the viewer has it.
+#[derive(Clone, Copy, Debug, Default)]
+struct OverviewState {
+    /// Folded to its heading.
+    folded: bool,
+    /// Taken off the window from the View menu (decision 109).
+    hidden: bool,
+}
+
 /// The whole browser window: tabs, trusted strip, banks, page list, page
 /// area and overview. It draws through a [`crate::canvas::Canvas`] and reports what the
 /// user did as [`Output`]s; it holds no state the trusted core owns.
@@ -103,7 +116,19 @@ pub struct Browser {
     updates: Vec<(usize, u64)>,
     /// The overview folded into the footer: it then draws nothing but its
     /// heading and keeps no animation.
-    overview_folded: bool,
+    overview: OverviewState,
+    /// The page row the pointer is over, by page index, if any.
+    hovered_row: Option<usize>,
+    /// The magazine the pointer is over, if any.
+    hovered_bank: Option<usize>,
+    /// The sub-pages under the page list (decision 111).
+    subpages: subpage_list::SubPages,
+    /// The list at the left that has the keys, if one has.
+    list_focus: Option<list_focus::ListFocus>,
+    /// The page list's width, as the divider was pulled.
+    list_width: f64,
+    /// Where the divider was gripped, from its left edge, while it is pulled.
+    divider_grip: Option<f64>,
     /// The overview's page under the pointer, shown at its native size.
     previewed: Option<usize>,
     pointer: Point,
@@ -133,6 +158,8 @@ pub struct Browser {
     refused: certificate_refused::RefusedUi,
     /// The tab strip's overflow and dragging (decision 69).
     tab_strip: tab_strip::TabsUi,
+    /// Full screen, the page only (decision 85).
+    full_screen: full_screen::FullScreenUi,
     /// The bookmarks manager (requirement 20.17).
     bookmarks: bookmarks::BookmarksUi,
     /// The star's popover (requirement 20.16).
@@ -179,7 +206,13 @@ impl Browser {
             digits: String::new(),
             pulses: Vec::new(),
             updates: Vec::new(),
-            overview_folded: false,
+            overview: OverviewState::default(),
+            hovered_row: None,
+            hovered_bank: None,
+            subpages: subpage_list::SubPages::default(),
+            list_focus: None,
+            list_width: divider::LIST_WIDTH,
+            divider_grip: None,
             previewed: None,
             pointer: Point::ORIGIN,
             visible: Vec::new(),
@@ -196,6 +229,7 @@ impl Browser {
             remote: remote::RemoteUi::default(),
             refused: certificate_refused::RefusedUi::default(),
             tab_strip: tab_strip::TabsUi::default(),
+            full_screen: full_screen::FullScreenUi::default(),
             bookmarks: bookmarks::BookmarksUi::default(),
             star: star::StarUi::default(),
             bar: bookmarks_bar::BarUi::default(),

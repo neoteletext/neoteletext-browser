@@ -3,7 +3,7 @@
 | | |
 |---|---|
 | **Asked** | By the owner on 23 October 2026: "design and spec a fullscreen mode which makes the current teletext screen ONLY fullscreen". |
-| **Decision** | 85 (`architecture.md` section 2). Designed and specified; not built. |
+| **Decision** | 85 (`architecture.md` section 2). Designed 23 October 2026, built 25 October 2026 (section 10). |
 | **Amends** | Requirement 11.4 (the trusted strip always visible). **Adds** requirement 12.16. |
 | **Security analysis** | `full-screen-security.md`. |
 
@@ -24,7 +24,7 @@ Only a window with an open page can enter full screen. With the wall showing, th
 | How | macOS | Windows and Linux |
 |---|---|---|
 | Key | Control-Command-F, the system's own | F11, the system's own |
-| Menu | View > Enter Full Screen (decision 84's menu bar) | The menu button's menu: Full screen |
+| Menu | View > Enter Full Screen (decision 84's menu bar), titled Exit Full Screen while the page is full screen | The menu button's menu: Full screen |
 | Pointer | A double click on the open page | The same |
 | The window's green button | Enters the system's full screen of the whole window, as it does now; it is not this mode | — |
 
@@ -79,3 +79,16 @@ Requirement 11.4 amended and requirement 12.16 added.
 
 1. **The keys** follow each system's own full-screen key so that a viewer's habit works; the double click is the pointer's way in. The owner may prefer a single teletext key, such as `f`, as well.
 2. **macOS's full-screen space** shows the menu bar when the pointer reaches the top edge; the strip's half-second wait at the edge keeps the two from fighting, and is to be measured when built.
+
+## 10. What building settled
+
+Built on 25 October 2026, on the owner's asking to "implement the full screen for the current teletext pages as discussed earlier".
+
+1. **Where it lives**, as section 7 said: the interface core's `browser::full_screen` draws the page alone (`Wall::draw_full_screen`), the notice, the badge and the strip on demand, and decides every rule of sections 3 to 5; the interface process makes the window follow (`App::sync_full_screen`). No message to the trusted core changed.
+2. **What needs the window is checked at every frame:** the page closed or gone from the wall, another tab or channel, the number of tabs, the remote shown or hidden, any panel, list or popover of the strip, the console, the phone keyboard's panel, the strip's question and a certificate refused. One check in one place, so a new panel cannot be missed by one path.
+3. **A press in full screen is the page's** unless the strip is down and the press is in it: what the window's layout drew last is forgotten, so nothing unseen takes a press.
+4. **The keys:** on macOS, View > Enter Full Screen in the menu bar, with Control-Command-F; elsewhere F11, taken before a channel's keys, and the menu button's "Full screen". A double click on the open page enters it; a press on a link is the link's and never counts toward one. The double click is two presses within 500 milliseconds and 4 points, Windows' default; the platforms do not tell the interface theirs.
+5. **A window already full screen**, by macOS's green button, stays so when the page's full screen ends; the window's place and size are not reported to the trusted core while the page is full screen, so the session keeps the window's.
+6. **The notice** is in the left margin's top when the margin is wide enough, else centred above the page; the typing badge is at the right margin's top, or under the page.
+7. **The strip on demand** is the tab strip, the toolbar and the bookmarks bar when it is shown.
+8. **Not settled by tests, owed by hand on each desktop:** the window's own full screen (macOS's space, borderless elsewhere), Control-Command-F and F11, the system's ending of it (seen as the window leaving full screen after it was seen in it), the View menu's item retitled Exit Full Screen and back, the pointer hidden, and the strip's half-second wait beside macOS's menu bar at the top edge (section 9 item 2). Whether macOS adds its own "Enter Full Screen" item to a menu when it is opened is to be looked at: a test application's menus held none a second after launch.

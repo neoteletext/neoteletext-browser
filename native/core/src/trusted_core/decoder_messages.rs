@@ -49,6 +49,14 @@ impl Core {
                 }
             }
             FromDecoder::SubPages { page, subcodes, shown } => self.subpages(PageKey { channel, page }, subcodes, shown)?,
+            FromDecoder::SubPageTitles { page, titles } => {
+                let changed = self.session.tabs.iter_mut().find(|tab| tab.channel.id == channel).and_then(|tab| tab.channel.set_subpages(page, &titles));
+                if let Some(subpages) = changed
+                    && active == Some(channel)
+                {
+                    self.send(&ToInterface::SubPages { channel, page, subpages })?;
+                }
+            }
             #[cfg(feature = "interaction")]
             FromDecoder::Cursor { body } => {
                 let sends = self.typing.cursor(channel, body, self.now());
@@ -64,6 +72,18 @@ impl Core {
                     self.tell_sound(&message);
                 }
             }
+        }
+        Ok(())
+    }
+
+    /// The active channel's sub-pages, each page's, after the channel itself
+    /// was sent: the interface keeps them beside it.
+    pub(crate) fn send_subpages(&mut self) -> Result<(), String> {
+        let Some(tab) = self.session.active_tab() else { return Ok(()) };
+        let channel = tab.channel.id;
+        let all: Vec<(u16, Vec<(u16, String)>)> = tab.channel.subpages.iter().map(|(page, list)| (*page, list.clone())).collect();
+        for (page, subpages) in all {
+            self.send(&ToInterface::SubPages { channel, page, subpages })?;
         }
         Ok(())
     }

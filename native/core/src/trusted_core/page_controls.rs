@@ -89,6 +89,20 @@ impl Core {
 
     /// Strip input: a key of the open page's controls.
     pub(crate) fn page_control(&mut self, control: PageControl) -> Result<(), String> {
+        // A sub-page chosen from the page list: shown at once on the page
+        // open, or when its page opens.
+        if let PageControl::SubPageOf { page, subcode } = control {
+            let Some(channel) = self.active_channel() else { return Ok(()) };
+            let target = PageKey { channel, page };
+            if self.controls.open != Some(target) {
+                self.open_at_subpage(target, Some(subcode));
+                return Ok(());
+            }
+            let view = View { subpage: Some(subcode), ..self.controls.view_of(target) };
+            self.controls.view = Some(view);
+            self.tell(channel, ToDecoder::View(view));
+            return self.send_controls();
+        }
         let Some(key) = self.controls.open else { return Ok(()) };
         let mut view = self.controls.view_of(key);
         match control {
@@ -111,6 +125,7 @@ impl Core {
                 view.subpage = Some(next);
             }
             PageControl::Latest => view.subpage = None,
+            PageControl::SubPageOf { .. } => return Ok(()),
         }
         self.controls.view = Some(view);
         self.tell(key.channel, ToDecoder::View(view));

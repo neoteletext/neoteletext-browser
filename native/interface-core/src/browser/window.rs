@@ -6,6 +6,7 @@ use alloc::vec::Vec;
 
 use crate::browser::bookmarks_bar::BAR_HEIGHT;
 use crate::browser::console_panel::CONSOLE_HEIGHT;
+use crate::browser::list_focus::ListFocus;
 use crate::browser::toolbar::{TOOLBAR_HEIGHT, TOOLBAR_TOP};
 use crate::browser::{Browser, Output};
 use crate::canvas::{Canvas, PageKey};
@@ -17,7 +18,6 @@ use crate::wall::WallPage;
 pub(super) const BODY_TOP: f64 = TOOLBAR_TOP + TOOLBAR_HEIGHT + MARGIN;
 pub(super) const MARGIN: f64 = 8.0;
 const BANKS_WIDTH: f64 = 212.0;
-const LIST_WIDTH: f64 = 260.0;
 pub(super) const OVERVIEW_HEIGHT: f64 = 176.0;
 pub(super) const HEADING_HEIGHT: f64 = 40.0;
 pub(super) const PADDING: f64 = 12.0;
@@ -26,31 +26,42 @@ impl Browser {
     /// Draws the whole window; `width` and `height` are logical pixels.
     pub fn draw<C: Canvas + ?Sized>(&mut self, canvas: &mut C, width: f64, height: f64, now: u64) {
         self.regions.clear();
+        // The page alone (decision 85), unless something needs the window.
+        if self.draw_full_screen(canvas, width, height, now) {
+            return;
+        }
         canvas.fill(Rect::new(0.0, 0.0, width, height), 0.0, WINDOW);
         // The bookmarks bar, when shown, is a row of the strip above the body.
         let body_top = BODY_TOP + if self.bar_shown() { BAR_HEIGHT } else { 0.0 };
         // The docked remote narrows the content (decision 68).
         let right = width - MARGIN - self.remote_docked_width(now);
         self.body = Rect::new(MARGIN, body_top, right, height - MARGIN);
-        // The console docks where the overview is.
+        // The console docks where the overview is; the overview hidden
+        // from the View menu gives its room to the pages.
         let overview_height = if self.console.open() {
             CONSOLE_HEIGHT
-        } else if self.overview_folded {
+        } else if self.overview.hidden {
+            0.0
+        } else if self.overview.folded {
             HEADING_HEIGHT
         } else {
             OVERVIEW_HEIGHT
         };
         let overview = Rect::new(MARGIN, height - MARGIN - overview_height, right, height - MARGIN);
-        let body_bottom = overview.y0 - MARGIN;
+        let body_bottom = if overview_height > 0.0 { overview.y0 - MARGIN } else { overview.y0 };
         let banks = Rect::new(MARGIN, body_top, MARGIN + BANKS_WIDTH, body_bottom);
-        let list = Rect::new(banks.x1 + MARGIN, body_top, banks.x1 + MARGIN + LIST_WIDTH, body_bottom);
+        let list_width = self.list_width(banks.x1 + MARGIN, right);
+        let list = Rect::new(banks.x1 + MARGIN, body_top, banks.x1 + MARGIN + list_width, body_bottom);
+        self.place_divider(list);
         let zoom = Rect::new(list.x1 + MARGIN, body_top, right, body_bottom);
         self.draw_pages(canvas, zoom, now);
         self.draw_banks(canvas, banks);
+        self.draw_list_focus(canvas, banks, ListFocus::Magazines);
         self.draw_list(canvas, list, now);
+        self.draw_list_focus(canvas, list, ListFocus::Pages);
         if self.console.open() {
             self.draw_console(canvas, overview);
-        } else {
+        } else if !self.overview.hidden {
             self.draw_overview(canvas, overview, now);
         }
         self.draw_toolbar(canvas, width);
@@ -64,7 +75,7 @@ impl Browser {
         self.draw_history_panel(canvas);
         self.draw_bookmarks_panel(canvas, now);
         self.draw_star_popover(canvas);
-        self.draw_tab_overflow(canvas, width);
+        self.draw_tab_overflow(canvas, width, height);
         self.draw_popups(canvas);
         self.draw_page_controls(canvas);
         self.draw_tips(canvas, width, height);
@@ -97,6 +108,11 @@ impl Browser {
         self.draw_terminal(canvas, now);
         // A refused certificate: its screen in place of the pages.
         self.draw_refusal(canvas, zoom);
+        self.report_visible();
+    }
+
+    /// The pages on screen, told to the trusted core when they changed.
+    pub(super) fn report_visible(&mut self) {
         let mut visible = self.wall.visible();
         // The overview's previewed page is on screen too, so the trusted
         // core has it rendered, whichever bank it is in.

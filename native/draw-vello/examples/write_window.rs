@@ -43,7 +43,14 @@ fn browser(painter: &mut Painter) -> Result<Browser, String> {
     let tabs = TABS
         .iter()
         .zip(0_u8..)
-        .map(|(&host, colour)| TabInfo { title: host.into(), colour, channel: u32::from(colour), muted: false, private: false })
+        .map(|(&host, colour)| TabInfo {
+            title: host.into(),
+            colour,
+            channel: u32::from(colour),
+            muted: false,
+            private: false,
+            address: "https://example.invalid/".into(),
+        })
         .collect();
     browser.set_tabs(tabs, 2);
     browser.set_strip(StripState { address: "file:///samples/sample.tti".into(), identity: "sample.tti".into(), local: true, ..StripState::default() });

@@ -315,6 +315,63 @@ fn a_live_sound_streams_and_fades_two_seconds_after_its_last_block() {
     assert_eq!(engine.take_sounds(), [Audio::Stop { channel: 0, fade_ms: neoteletext_audio::LIVE_STALL_FADE_MS }, Audio::Forget(sound)]);
 }
 
+/// Decision 114: an Opus sound (the engine's codec 2, decision E.124) is
+/// decoded in the decoder process and given to the sound helper as samples
+/// at 48 kHz, stored and live alike.
+#[test]
+fn opus_sounds_are_decoded_into_samples_for_the_sound_helper() {
+    use neoteletext_audio::encode::{Command, Sound as Writer, packets};
+    // A constant-rate 16 kbit/s packet is 40 bytes. These are CELT-only
+    // full-band 20 ms frames (RFC 6716 configuration 31) from a seed: no
+    // recording is kept in the repository.
+    const PACKET: u16 = 40;
+    const CELT_FULL_BAND_20_MS: u8 = 31 << 3;
+    let mut state: u32 = 9;
+    let made: Vec<u8> = (0..10)
+        .flat_map(|_| {
+            let mut packet = vec![CELT_FULL_BAND_20_MS];
+            packet.extend((1..PACKET).map(|_| {
+                state ^= state << 13;
+                state ^= state >> 17;
+                state ^= state << 5;
+                state.to_le_bytes()[0]
+            }));
+            packet
+        })
+        .collect();
+    let stored = Writer::opus(7, 1, PACKET, &made, 9_000).unwrap();
+    let play = Command { channel: 2, sequence: 1, operation: 1, handle: 7, generation: 1, gain: 90, fade_ms: 0, flags: 0, duck: 0, page: None };
+    let mut records = vec![stored.object_record().unwrap()];
+    records.extend(stored.data_records());
+    records.push(play.record());
+    let mut engine = Engine::new();
+    engine.feed(&packets(0, 0, &records).0.iter().flat_map(|packet| packet.bytes).collect::<Vec<u8>>());
+    engine.finish();
+    let sounds = engine.take_sounds();
+    let sound = Sound { handle: 7, generation: 1 };
+    assert_eq!(sounds.first(), Some(&Audio::Define { sound, rate_hz: 48_000, samples: 9_000 }), "{sounds:?}");
+    let samples: usize = sounds.iter().map(|audio| if let Audio::Samples { pcm, .. } = audio { pcm.len() } else { 0 }).sum();
+    assert_eq!(samples, 9_000, "every sample, the last frame cut to the sound's end");
+    assert!(sounds.iter().any(|audio| matches!(audio, Audio::Samples { pcm, .. } if pcm.iter().any(|&sample| sample != 0))), "decoded, not silence");
+
+    let live = Writer::live(8, 1, neoteletext_audio::Codec::Opus, 48_000, PACKET).unwrap();
+    let play = Command { channel: 0, sequence: 1, operation: 1, handle: 8, generation: 1, gain: 90, fade_ms: 0, flags: 0, duck: 0, page: None };
+    let mut records = vec![live.object_record().unwrap(), play.record()];
+    for index in 0..4_u16 {
+        let at = usize::from(index) * usize::from(PACKET);
+        records.extend(live.packet_records(index, &made[at..at + usize::from(PACKET)]).unwrap());
+    }
+    let mut engine = Engine::new();
+    engine.tick_audio(1_000);
+    engine.feed(&packets(0, 0, &records).0.iter().flat_map(|packet| packet.bytes).collect::<Vec<u8>>());
+    engine.finish();
+    let sounds = engine.take_sounds();
+    let sound = Sound { handle: 8, generation: 1 };
+    assert_eq!(sounds.first(), Some(&Audio::Stream { sound, rate_hz: 48_000 }), "{sounds:?}");
+    let streamed: usize = sounds.iter().map(|audio| if let Audio::StreamSamples { pcm, .. } = audio { pcm.len() } else { 0 }).sum();
+    assert_eq!(streamed, 4 * 960, "four 20 ms frames");
+}
+
 /// Decision 42: in NeoTeletext only links are underlined, so the page's
 /// own underline (a Level 2.5 Display Attribute) is not drawn.
 #[test]
@@ -511,4 +568,54 @@ fn arrivals_are_reported_once() {
     engine.finish();
     assert_eq!(engine.feed(b""), [] as [(u16, String); 0]);
     assert_eq!(engine.finish(), [] as [(u16, String); 0]);
+}
+
+/// The engine's decisions E.10 and E.121: row 0 shows, as a set does, "P"
+/// and the page's number in the receiver's columns, and the clock of the
+/// latest header of any magazine, such as a channel's time-filling header,
+/// on a page that has not changed.
+#[test]
+fn row_0_shows_the_page_number_and_keeps_the_latest_clock() {
+    use neoteletext_core::consts::{C11_SERIAL, PAGE_TIME_FILLING};
+    use neoteletext_core::ecc::with_odd_parity;
+    use neoteletext_core::packet::encode;
+    use neoteletext_core::types::{ControlBits, Magazine, PageNumber};
+    let row_0 = |engine: &Engine| -> String {
+        let (grid, _) = engine.grid(0x100).unwrap();
+        grid.cells[0]
+            .iter()
+            .map(|cell| match cell.glyph {
+                Glyph::Char(character) => to_unicode(character).base,
+                _ => ' ',
+            })
+            .collect()
+    };
+    let mut engine = engine_with(TTI);
+    assert!(row_0(&engine).starts_with("P100"), "{:?}", row_0(&engine));
+    let mut display = [with_odd_parity(b' '); 32];
+    for (slot, &byte) in display.iter_mut().skip(24).zip(b"23:15/42") {
+        *slot = with_odd_parity(byte);
+    }
+    let filling = encode::header(Magazine::from_bits(1), PageNumber(PAGE_TIME_FILLING), SubCode::new(0), ControlBits(C11_SERIAL), &display);
+    engine.feed_whole(true, true, &filling.bytes);
+    let shown = row_0(&engine);
+    assert!(shown.ends_with("23:15/42"), "{shown:?}");
+    assert!(shown.contains("HEADER"), "the page's own header stays: {shown:?}");
+}
+
+/// Decision 111: a page the channel pushes whole with several sub-pages
+/// opens at its first, and its sub-pages are told to the trusted core with
+/// a title from each one's text, once, and again only when they change.
+#[test]
+fn a_pushed_page_opens_at_its_first_sub_page_and_lists_its_sub_pages() {
+    let tti = b"PN,21001\nSC,0001\nPS,8000\nOL,1,Story one\n\nPN,21002\nSC,0002\nPS,8000\nOL,1,Story two\n\nPN,21003\nSC,0003\nPS,8000\nOL,1,The comments\n";
+    let mut engine = Engine::new();
+    engine.feed_whole(false, true, tti);
+    let (_, stored) = engine.grid(0x210).unwrap();
+    assert_eq!(stored.key.subcode.value(), 1, "the first sub-page, not the last to arrive");
+    let said = engine.subpage_changes(&[0x210]);
+    assert_eq!(said, [(0x210, vec![(1, String::from("Story one")), (2, String::from("Story two")), (3, String::from("The comments"))])]);
+    assert_eq!(engine.subpage_changes(&[0x210]), [], "said once");
+    engine.set_view(View { page: 0x210, subpage: Some(3), ..View::default() });
+    assert_eq!(engine.grid(0x210).unwrap().1.key.subcode.value(), 3, "one chosen is drawn");
 }

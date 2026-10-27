@@ -49,8 +49,22 @@ impl Browser {
     }
 
     /// Folds the overview into the footer, or opens it again.
+    /// The View menu's overview: shown, or hidden with its room given to
+    /// the pages (decision 109).
+    pub fn toggle_overview_shown(&mut self) {
+        self.overview.hidden = !self.overview.hidden;
+        self.pulses.clear();
+        self.previewed = None;
+    }
+
+    /// Whether the overview is shown at all, folded or not.
+    #[must_use]
+    pub fn overview_shown(&self) -> bool {
+        !self.overview.hidden
+    }
+
     pub(super) fn toggle_overview(&mut self) {
-        self.overview_folded = !self.overview_folded;
+        self.overview.folded = !self.overview.folded;
         self.pulses.clear();
         self.previewed = None;
     }
@@ -112,8 +126,8 @@ impl Browser {
         canvas.fill(toggle, 0.0, BUTTON);
         outline(canvas, toggle, RULE);
         // Down folds it away; up brings it back.
-        chevron(canvas, toggle, !self.overview_folded, WHITE);
-        if self.overview_folded {
+        chevron(canvas, toggle, !self.overview.folded, WHITE);
+        if self.overview.folded {
             return;
         }
         self.draw_legend(canvas, heading, toggle.x0);

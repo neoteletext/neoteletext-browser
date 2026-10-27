@@ -96,6 +96,13 @@ struct View {
     /// before the window was maximised, which it returns to.
     reported: Option<WindowGeometry>,
     normal: Option<WindowGeometry>,
+    /// The window shows the page alone (decision 85): whether it was full
+    /// screen already, the system's own, which leaving keeps; and whether
+    /// the system has been seen to make it full screen since, so that its
+    /// leaving is the system's ending of it.
+    page_full_screen: Option<(bool, bool)>,
+    /// The pointer is hidden, as full screen hides a still one.
+    pointer_hidden: bool,
 }
 
 impl View {
@@ -115,6 +122,8 @@ impl View {
             held: HashMap::new(),
             reported: None,
             normal: None,
+            page_full_screen: None,
+            pointer_hidden: false,
         }
     }
 }
@@ -263,7 +272,11 @@ impl ApplicationHandler<Incoming> for App {
             self.focused = id;
             self.show_tabs();
         }
-        if matches!(event, WindowEvent::Moved(_) | WindowEvent::Resized(_)) {
+        if matches!(event, WindowEvent::Resized(_)) {
+            self.full_screen_resized();
+        }
+        // Full screen's size is not the window's, to keep.
+        if matches!(event, WindowEvent::Moved(_) | WindowEvent::Resized(_)) && self.view.page_full_screen.is_none() {
             self.report_window(event_loop);
         }
         // Resized or uncovered, the window may have lost what was

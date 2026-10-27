@@ -7,10 +7,12 @@ use std::io::{Read, Write};
 use super::ToInterface;
 use super::kinds::{
     KIND_BAR_VIEW, KIND_BOOKMARKS_VIEW, KIND_CHANNEL, KIND_CLOSE, KIND_CLOSE_WINDOW_VIEW, KIND_CONSOLE_UPDATE, KIND_COOKIES_VIEW, KIND_FRAME,
-    KIND_HISTORY_VIEW, KIND_OPEN_WINDOW, KIND_PAGE, KIND_PAGE_CONTROLS, KIND_REMOTE, KIND_SETTINGS, KIND_STAR_VIEW, KIND_STRIP, KIND_SUGGESTIONS,
-    KIND_TAB_LIST_VIEW, KIND_TAB_SOUNDING, KIND_TABS, KIND_TARGET, KIND_UPDATE_VIEW, KIND_UPDATED, KIND_WINDOW_VIEW,
+    KIND_HISTORY_VIEW, KIND_OPEN_WINDOW, KIND_PAGE, KIND_PAGE_CONTROLS, KIND_REMOTE, KIND_SETTINGS, KIND_STAR_VIEW, KIND_STRIP, KIND_SUBPAGES,
+    KIND_SUGGESTIONS, KIND_TAB_LIST_VIEW, KIND_TAB_SOUNDING, KIND_TABS, KIND_TARGET, KIND_UPDATE_VIEW, KIND_UPDATED, KIND_WINDOW_VIEW,
 };
-use super::pages::{FRAME_FIXED_BYTES, push_channel, push_frame, push_page, push_updated, read_channel, read_frame_head, read_page, read_updated};
+use super::pages::{
+    FRAME_FIXED_BYTES, push_channel, push_frame, push_page, push_subpages, push_updated, read_channel, read_frame_head, read_page, read_subpages, read_updated,
+};
 use super::strip::{push_strip, read_strip};
 use super::tabs::{push_channels, push_tabs, read_channels, read_tabs};
 use super::windows::{push_open_window, read_open_window, window_number};
@@ -38,6 +40,7 @@ fn kind_of(message: &ToInterface) -> u8 {
         ToInterface::Strip(_) => KIND_STRIP,
         ToInterface::Channel(_) => KIND_CHANNEL,
         ToInterface::Page { .. } => KIND_PAGE,
+        ToInterface::SubPages { .. } => KIND_SUBPAGES,
         ToInterface::Updated { .. } => KIND_UPDATED,
         ToInterface::Frame { .. } => KIND_FRAME,
         ToInterface::Sounding(_) => KIND_TAB_SOUNDING,
@@ -76,6 +79,7 @@ fn push_fields(payload: &mut Vec<u8>, message: &ToInterface) -> Result<(), Proto
         ToInterface::Strip(strip) => push_strip(payload, strip)?,
         ToInterface::Channel(channel) => push_channel(payload, channel)?,
         ToInterface::Page { channel, page, title } => push_page(payload, *channel, *page, title)?,
+        ToInterface::SubPages { channel, page, subpages } => push_subpages(payload, *channel, *page, subpages)?,
         ToInterface::Updated { channel, page } => push_updated(payload, *channel, *page),
         ToInterface::Frame { key, version, image } => push_frame(payload, *key, *version, image),
         ToInterface::Sounding(channels) => push_channels(payload, channels)?,
@@ -126,6 +130,10 @@ pub fn read_from_core(input: &mut dyn Read) -> Result<Option<ToInterface>, Proto
         KIND_PAGE => {
             let (channel, page, title) = read_page(&mut fields)?;
             ToInterface::Page { channel, page, title }
+        }
+        KIND_SUBPAGES => {
+            let (channel, page, subpages) = read_subpages(&mut fields)?;
+            ToInterface::SubPages { channel, page, subpages }
         }
         KIND_UPDATED => {
             let (channel, page) = read_updated(&mut fields)?;

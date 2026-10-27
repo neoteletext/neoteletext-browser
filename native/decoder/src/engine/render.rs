@@ -17,7 +17,7 @@ use interface_core::channel::page_index;
 use neoteletext_core::acq::StoredPage;
 use neoteletext_core::charset::{CharRef, CharSet, G2Set};
 use neoteletext_core::compose::compose_level;
-use neoteletext_core::consts::{G2_RIGHT_GUILLEMET, ROWS};
+use neoteletext_core::consts::{CLOCK_BYTES, G2_RIGHT_GUILLEMET, ROWS, SPACE, STATUS_COLUMNS};
 use neoteletext_core::fsm::PageState;
 use neoteletext_core::level1::{DisplayOptions, Glyph, Grid, build_grid};
 #[cfg(feature = "links")]
@@ -52,7 +52,48 @@ impl Engine {
     fn stored(&self, page: u16, subpage: Option<u16>) -> Option<&StoredPage> {
         let address = PageAddress::from_mpp(page)?;
         let store = self.decoder.store();
+        // With none chosen, a page the channel pushed opens at its first
+        // sub-page: it arrives whole, every sub-page at once, so the last
+        // to arrive is no newer than the first, unlike a broadcast's
+        // carousel, whose latest is shown.
+        let subpage = subpage.or_else(|| self.pushed.contains(&page).then(|| self.subcodes(page).first().copied()).flatten());
         subpage.and_then(|subpage| store.get(address, SubCode::new(subpage))).or_else(|| store.get(address, SubCode::ANY))
+    }
+
+    /// The sub-pages of `pages` that differ from what was last said of them:
+    /// each page's list, empty when it has one sub-page again.
+    pub(crate) fn subpage_changes(&mut self, pages: &[u16]) -> Vec<(u16, Vec<(u16, String)>)> {
+        let mut changes = Vec::new();
+        for &page in pages {
+            let titles = self.subpage_titles(page);
+            let said = self.subpages_said.get(&page);
+            if said.map_or(!titles.is_empty(), |said| *said != titles) {
+                if titles.is_empty() {
+                    self.subpages_said.remove(&page);
+                } else {
+                    self.subpages_said.insert(page, titles.clone());
+                }
+                changes.push((page, titles));
+            }
+        }
+        changes
+    }
+
+    /// Each stored sub-page of `page` with a title from its text, in
+    /// ascending order, for the page list's sub-pages; none when it has
+    /// one or none (REQ-NAV-005).
+    pub(crate) fn subpage_titles(&self, page: u16) -> Vec<(u16, String)> {
+        let subcodes = self.subcodes(page);
+        if subcodes.len() < 2 {
+            return Vec::new();
+        }
+        subcodes
+            .into_iter()
+            .filter_map(|subcode| {
+                let stored = self.stored(page, Some(subcode))?;
+                Some((subcode, title(&self.compose(page, stored, View { page, subpage: Some(subcode), ..View::default() }))))
+            })
+            .collect()
     }
 
     /// The sub-codes stored for `page`, in ascending order, at most
@@ -89,16 +130,30 @@ impl Engine {
     /// The page's grid, as the engine composes it for display in its view
     /// (`page-controls.md`), and the stored sub-page it shows.
     pub(super) fn grid(&self, page: u16) -> Option<(Grid, &StoredPage)> {
-        let address = PageAddress::from_mpp(page)?;
         let view = self.views.get(&page).copied().unwrap_or_default();
         let stored = match self.held.get(&page) {
             Some(held) => held,
             None => self.stored(page, view.subpage)?,
         };
+        Some((self.compose(page, stored, view), stored))
+    }
+
+    /// The grid of `stored`, a sub-page of `page`, as `view` draws it.
+    fn compose(&self, page: u16, stored: &StoredPage, view: View) -> Grid {
+        let address = stored.key.address;
         let config = self.decoder.config();
         let magazine = self.decoder.magazine_data(address.magazine);
         let receiver = self.receiver_rows.get(&(page, stored.key.subcode.value()));
-        let options = DisplayOptions { mix: view.mix, row24: receiver.map(ReceiverRow::codes), ..DisplayOptions::default() };
+        // Row 0 as a set shows it: the receiver's status, "P" and the page
+        // number, and the latest clock of any header (the engine's
+        // decisions E.10, E.11 and E.121).
+        let options = DisplayOptions {
+            status: self.status_area(page, view.subpage.map(|_| stored.key.subcode.value())),
+            clock: self.latest_clock(),
+            mix: view.mix,
+            row24: receiver.map(ReceiverRow::codes),
+            ..DisplayOptions::default()
+        };
         let mut grid = Grid::EMPTY;
         build_grid(&mut grid, Some(stored), &magazine, config, &options);
         let lookup = self.decoder.enhancement_lookup();
@@ -110,7 +165,32 @@ impl Engine {
                 cell.glyph = Glyph::Char(CharRef::new(CharSet::G2(G2Set::Latin), G2_RIGHT_GUILLEMET));
             }
         }
-        Some((grid, stored))
+        grid
+    }
+
+    /// Row 0's columns 0 to 6, as the SAA5246A writes them and the engine's
+    /// viewer does (decision E.10): "P" and the page's number, and with a
+    /// sub-page chosen, "/" and its place among those stored.
+    fn status_area(&self, page: u16, chosen: Option<u16>) -> [u8; STATUS_COLUMNS] {
+        let mut status = [SPACE; STATUS_COLUMNS];
+        let text = match chosen {
+            Some(subcode) => {
+                let place = self.subcodes(page).iter().position(|&code| code == subcode).map_or(0, |index| index.saturating_add(1));
+                format!("P{page:03X}/{place:02}")
+            }
+            None => format!("P{page:03X}"),
+        };
+        for (slot, byte) in status.iter_mut().zip(text.bytes()) {
+            *slot = byte;
+        }
+        status
+    }
+
+    /// The clock of the latest header received, once one has come and while
+    /// rolling is on (decision E.121); none, and a page keeps its own.
+    pub(crate) fn latest_clock(&self) -> Option<[u8; CLOCK_BYTES]> {
+        let clock = *self.decoder.clock();
+        (self.decoder.config().rolling_header && clock.iter().any(|&byte| byte != SPACE)).then_some(clock)
     }
 
     /// Renders the latest sub-page of `page` at the engine's flash phase

@@ -20,6 +20,7 @@ pub fn read_core(proxy: &EventLoopProxy<Incoming>) {
             Ok(Some(ToInterface::Strip(strip))) => Incoming::Strip(strip),
             Ok(Some(ToInterface::Channel(channel))) => Incoming::Channel(channel),
             Ok(Some(ToInterface::Page { channel, page, title })) => Incoming::Arrived { channel, page, title },
+            Ok(Some(ToInterface::SubPages { channel, page, subpages })) => Incoming::SubPages { channel, page, subpages },
             Ok(Some(ToInterface::Updated { channel, page })) => Incoming::Updated { channel, page },
             Ok(Some(ToInterface::Frame { key, version, image })) => Incoming::Page { key, version, image },
             Ok(Some(ToInterface::Sounding(channels))) => Incoming::Sounding(channels.into_iter().collect()),

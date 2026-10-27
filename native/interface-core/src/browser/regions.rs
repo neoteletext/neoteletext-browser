@@ -38,7 +38,11 @@ pub(super) struct Regions {
     pub(super) menu: Rect,
     pub(super) banks: Vec<Rect>,
     pub(super) list: Rect,
+    pub(super) divider: Rect,
     pub(super) rows: Vec<(Rect, usize)>,
+    pub(super) subpage_divider: Rect,
+    pub(super) subpage_list: Rect,
+    pub(super) subrows: Vec<(Rect, u16)>,
     pub(super) overview: Rect,
     pub(super) overview_toggle: Rect,
     pub(super) cells: Rect,
@@ -51,9 +55,11 @@ impl Regions {
         let mut tabs = core::mem::take(&mut self.tabs);
         let mut banks = core::mem::take(&mut self.banks);
         let mut rows = core::mem::take(&mut self.rows);
+        let mut subrows = core::mem::take(&mut self.subrows);
         tabs.clear();
         banks.clear();
         rows.clear();
-        *self = Self { tabs, banks, rows, ..Self::default() };
+        subrows.clear();
+        *self = Self { tabs, banks, rows, subrows, ..Self::default() };
     }
 }

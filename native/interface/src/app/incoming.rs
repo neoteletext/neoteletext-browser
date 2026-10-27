@@ -29,11 +29,16 @@ impl App {
             }
             Incoming::Strip(strip) => self.view.browser.set_strip(strip),
             Incoming::Settings(view) => self.view.browser.set_settings(view),
-            Incoming::Update(view) => self.view.browser.set_update(view),
+            Incoming::Update(view) => {
+                // The About panel shows the version the trusted core reports.
+                dock_menu::set_about(&view.version, interface_core::COPYRIGHT);
+                self.view.browser.set_update(view);
+            }
             Incoming::Console(update) => self.view.browser.console_update(update),
             Incoming::Library(view) => self.library(view, now),
             Incoming::Channel(channel) => self.view.browser.set_channel(channel),
             Incoming::Arrived { channel, page, title } => self.view.browser.add_page(channel, page, title, now),
+            Incoming::SubPages { channel, page, subpages } => self.view.browser.set_subpages(channel, page, subpages),
             Incoming::Updated { channel, page } => self.page_updated(channel, page, now),
             Incoming::Page { key, version, image } => self.page_frame(event_loop, key, version, &image, now),
             #[cfg(feature = "phone-keyboard")]

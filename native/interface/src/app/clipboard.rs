@@ -1,7 +1,7 @@
 //! The clipboard and the menus: the fields' cut, copy and paste, the menu
 //! bar's items, and the Dock menu's choices.
 
-use dock_menu::{Choice, EditAction, MenuAction, MenuItem, ShortcutKey};
+use dock_menu::{Choice, EditAction, MenuAction, MenuItem, Shortcut, ShortcutKey};
 use interface_core::browser::{Key as BrowserKey, Modifiers};
 use protocol::ToCore;
 use winit::event_loop::ActiveEventLoop;
@@ -17,6 +17,17 @@ pub(super) fn clipboard_key(character: &str) -> Option<EditAction> {
         "v" => Some(EditAction::Paste),
         _ => None,
     }
+}
+
+/// The key, with the browser's modifier, that a menu bar item with the
+/// browser's action gives the interface core.
+fn menu_key(shortcut: Shortcut) -> (BrowserKey<'static>, Modifiers) {
+    let key = match shortcut.key {
+        ShortcutKey::Text(text) => BrowserKey::Text(text),
+        ShortcutKey::Left => BrowserKey::Left,
+        ShortcutKey::Right => BrowserKey::Right,
+    };
+    (key, Modifiers { command: true, shift: shortcut.shift, alt: shortcut.alt, repeat: false })
 }
 
 /// The most of the clipboard any taker uses: a paste to a channel, a
@@ -98,12 +109,7 @@ impl App {
         match item.action {
             MenuAction::Browser => {
                 let Some(shortcut) = item.shortcut else { return false };
-                let key = match shortcut.key {
-                    ShortcutKey::Text(text) => BrowserKey::Text(text),
-                    ShortcutKey::Left => BrowserKey::Left,
-                    ShortcutKey::Right => BrowserKey::Right,
-                };
-                let modifiers = Modifiers { command: true, shift: shortcut.shift, alt: shortcut.alt, repeat: false };
+                let (key, modifiers) = menu_key(shortcut);
                 let now = self.now();
                 self.view.browser.key(key, modifiers, now)
             }
@@ -116,6 +122,10 @@ impl App {
                     self.send(event_loop, &message);
                 }
                 false
+            }
+            MenuAction::FullScreen => {
+                let now = self.now();
+                self.view.browser.toggle_full_screen(now)
             }
             MenuAction::Edit(action) => self.edit_field(action),
             // The system answers its own items; they never come here.
@@ -150,5 +160,30 @@ mod tests {
         assert!(cut.chars().all(|character| character == 'é'), "cut on a character boundary");
         assert!(cut.capacity() <= MAX_CLIPBOARD, "the rest is let go");
         assert_eq!(bounded("short".into()), "short");
+    }
+
+    /// Every menu bar item with the browser's action does what its key
+    /// does: the interface core takes the key, in a window with two tabs,
+    /// history either way and an open page. A key the core does not know
+    /// would make the item do nothing.
+    #[test]
+    fn every_menu_item_s_key_is_taken() {
+        use interface_core::browser::{Browser, StripState, TabInfo};
+        let window = || {
+            let mut browser = Browser::new(crate::window::FRAME);
+            let tab = |title: &str| TabInfo { title: title.into(), colour: 0, channel: 1, muted: false, private: false, address: String::new() };
+            browser.set_tabs(vec![tab("one"), tab("two")], 0);
+            browser.set_strip(StripState { back: true, forward: true, ..StripState::default() });
+            browser
+        };
+        let mut checked = 0;
+        for item in dock_menu::menu_items().filter(|item| item.action == MenuAction::Browser) {
+            let shortcut = item.shortcut.expect("a browser item has a key");
+            let (key, modifiers) = menu_key(shortcut);
+            let mut browser = window();
+            assert!(browser.key(key, modifiers, 0), "{} ({shortcut:?}) is not taken", item.title);
+            checked += 1;
+        }
+        assert!(checked >= 20, "the menu bar's browser items: {checked}");
     }
 }

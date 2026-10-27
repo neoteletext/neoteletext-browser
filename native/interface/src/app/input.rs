@@ -130,6 +130,15 @@ impl App {
             // A secondary click: Back's or Forward's list (requirement 20.10).
             WindowEvent::MouseInput { state: ElementState::Pressed, button: MouseButton::Right, .. } => self.secondary_pressed(event_loop),
             WindowEvent::MouseWheel { delta, .. } => self.wheel(event_loop, delta, now),
+            // The system's full-screen key away from macOS, F11, which a
+            // channel never receives (decision 85); macOS's, Control-Command-F,
+            // is the menu bar's.
+            #[cfg(not(target_os = "macos"))]
+            WindowEvent::KeyboardInput { ref event, .. }
+                if event.state == ElementState::Pressed && !event.repeat && event.logical_key == Key::Named(NamedKey::F11) =>
+            {
+                self.view.browser.toggle_full_screen(now)
+            }
             #[cfg(feature = "interaction")]
             WindowEvent::KeyboardInput { ref event, .. } if self.view.browser.typing_target().is_some() && !self.browser_modifier() => {
                 self.channel_key(event_loop, event)

@@ -68,8 +68,8 @@ fn main() -> std::io::Result<()> {
     let mut browser = Browser::new(Frame { left_inset: 0.0, window_buttons: false });
     browser.set_tabs(
         vec![
-            TabInfo { title: "news.invalid".into(), colour: 0, channel: 1, muted: false, private: false },
-            TabInfo { title: "sport.invalid".into(), colour: 1, channel: 2, muted: false, private: false },
+            TabInfo { title: "news.invalid".into(), colour: 0, channel: 1, muted: false, private: false, address: "https://example.invalid/".into() },
+            TabInfo { title: "sport.invalid".into(), colour: 1, channel: 2, muted: false, private: false, address: "https://example.invalid/".into() },
         ],
         0,
     );

@@ -8,8 +8,8 @@ use super::grid::{CAPTION_GAP, CAPTION_HEIGHT, CAPTION_NUMBER_WIDTH, FRAME, PAGE
 use super::{Wall, WallPage};
 use crate::canvas::{Canvas, PageKey};
 use crate::geometry::{Point, Rect};
-use crate::text::{cross, label, outline};
-use crate::theme::{BUTTON, CAPTION, CAPTION_TITLE, MUTED, PANEL, RULE, WHITE};
+use crate::text::{cross, fitted_text, label, outline};
+use crate::theme::{BLACK, BUTTON, CAPTION, CAPTION_TITLE, MUTED, PANEL, RULE, WHITE};
 use crate::tween::{STANDARD, Tween};
 
 /// The zoom from the wall and back: Material 3's medium duration of 300
@@ -171,8 +171,27 @@ impl Wall {
         let area = self.area;
         let Some((current, page)) = pages.iter().enumerate().find(|(_, page)| page.key == key) else { return 0.0 };
         let rect = self.zoomed_rect();
-        // The zoomed page and its neighbours on a vertical strip, offset by
-        // the slide, which eases to rest with the page exactly in place.
+        self.draw_sliding(canvas, pages, current, rect, true, now);
+        // The caption line stays put on its own background; pages slide
+        // beneath it.
+        canvas.fill(Rect::new(area.x0, area.y0, area.x1, rect.y0 - FRAME), 0.0, PANEL);
+        let caption = Point::new(rect.x0, area.y0 + WALL_PADDING);
+        label(canvas, caption, &format!("{:03X}", key.page), CAPTION, WHITE);
+        fitted_text(
+            canvas,
+            Rect::new(caption.x + CAPTION_NUMBER_WIDTH, caption.y + 1.0, rect.x1, caption.y + CAPTION_HEIGHT),
+            page.title,
+            CAPTION_TITLE,
+            MUTED,
+        );
+        area.height() - WALL_PADDING * 2.0
+    }
+
+    /// The zoomed page and its neighbours on a vertical strip, the page at
+    /// `rect`, offset by the slide, which eases to rest with the page
+    /// exactly in place; each framed when `framed`.
+    fn draw_sliding<C: Canvas + ?Sized>(&mut self, canvas: &mut C, pages: &[WallPage<'_>], current: usize, rect: Rect, framed: bool, now: u64) {
+        let area = self.area;
         let slide = f64::from(self.slide.value(now));
         // A full area apart, so at rest no neighbour shows.
         let pitch = area.height();
@@ -187,15 +206,41 @@ impl Wall {
             if neighbour == 0 && slide.abs() < f64::from(f32::EPSILON) {
                 self.open = Some((other.key, image));
             }
-            outline(canvas, Rect::new(shifted.x0 - FRAME, shifted.y0 - FRAME, shifted.x1 + FRAME, shifted.y1 + FRAME), RULE);
+            if framed {
+                outline(canvas, Rect::new(shifted.x0 - FRAME, shifted.y0 - FRAME, shifted.x1 + FRAME, shifted.y1 + FRAME), RULE);
+            }
         }
-        // The caption line stays put on its own background; pages slide
-        // beneath it.
-        canvas.fill(Rect::new(area.x0, area.y0, area.x1, rect.y0 - FRAME), 0.0, PANEL);
-        let caption = Point::new(rect.x0, area.y0 + WALL_PADDING);
-        label(canvas, caption, &format!("{:03X}", key.page), CAPTION, WHITE);
-        canvas.text(Rect::new(caption.x + CAPTION_NUMBER_WIDTH, caption.y + 1.0, rect.x1, caption.y + CAPTION_HEIGHT), page.title, CAPTION_TITLE, MUTED);
-        area.height() - WALL_PADDING * 2.0
+    }
+
+    /// The open page alone in `area`, the largest it fits at its own
+    /// proportions, centred, in its screen colour, with none of the wall's
+    /// controls (decision 85); the next pages slide in as in the window.
+    /// Returns where the page is drawn with its screen, or none when no
+    /// page is open or it has left the wall.
+    pub fn draw_full_screen<C: Canvas + ?Sized>(&mut self, canvas: &mut C, area: Rect, pages: &[WallPage<'_>], now: u64) -> Option<Rect> {
+        self.area = area;
+        self.page_keys = pages.iter().map(|page| page.key).collect();
+        self.drawn.clear();
+        self.open = None;
+        // The wall's controls are not drawn, so none of them takes a press.
+        for control in [&mut self.close, &mut self.bar, &mut self.minus, &mut self.plus, &mut self.bar_zone] {
+            *control = Rect::ZERO;
+        }
+        let key = self.zoomed.filter(|_| self.zoom_in)?;
+        let Some(current) = pages.iter().position(|page| page.key == key) else {
+            self.to_top();
+            return None;
+        };
+        let width = area.width().min(area.height() / PAGE_ASPECT).max(0.0);
+        let (left, top) = (f64::midpoint(area.x0, area.x1) - width / 2.0, f64::midpoint(area.y0, area.y1) - width * PAGE_ASPECT / 2.0);
+        let rect = Rect::new(left, top, left + width, top + width * PAGE_ASPECT);
+        // Around the page, its screen colour, as the page area draws it.
+        let screen = canvas.screen(key).unwrap_or(BLACK);
+        canvas.fill(area, 0.0, screen);
+        canvas.push_clip(area);
+        self.draw_sliding(canvas, pages, current, rect, false, now);
+        canvas.pop_clip();
+        Some(rect)
     }
 
     /// The close button of a zoomed page, at the area's top right.

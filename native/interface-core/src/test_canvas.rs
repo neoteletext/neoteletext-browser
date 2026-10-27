@@ -11,6 +11,8 @@ pub struct Recorder {
     pub pages: Vec<(PageKey, Rect)>,
     pub texts: Vec<(Rect, alloc::string::String)>,
     pub fills: Vec<(Rect, Colour)>,
+    /// Each darkening and how much, in the order drawn.
+    pub dims: Vec<(Rect, f32)>,
     /// Each text's colour, in the order drawn.
     pub inks: Vec<(alloc::string::String, Colour)>,
     pub scale: f64,
@@ -18,7 +20,7 @@ pub struct Recorder {
 
 impl Recorder {
     pub fn new() -> Self {
-        Self { pages: Vec::new(), texts: Vec::new(), fills: Vec::new(), inks: Vec::new(), scale: 2.0 }
+        Self { pages: Vec::new(), texts: Vec::new(), fills: Vec::new(), dims: Vec::new(), inks: Vec::new(), scale: 2.0 }
     }
 
     /// The colour `text` was last drawn in, if it was.
@@ -34,7 +36,9 @@ impl Canvas for Recorder {
     fn device_scale(&self) -> f64 {
         self.scale
     }
-    fn dim(&mut self, _: Rect, _: f32) {}
+    fn dim(&mut self, rect: Rect, amount: f32) {
+        self.dims.push((rect, amount));
+    }
     fn polygon(&mut self, _: &[Point], _: Colour) {}
     fn push_clip(&mut self, _: Rect) {}
     fn pop_clip(&mut self) {}

@@ -314,7 +314,7 @@ Built 23 October 2026 (decisions 54 and 73 to 82): `installation-and-updates.md`
 
 ## 12. Privacy
 
-- **Fetching never depends on viewing** (decision 22): a channel's server cannot see which of its pages a viewer reads (requirements 4.7 and 5.15).
+- **Fetching never depends on viewing** (decision 22): a channel's server cannot see which of its pages a viewer reads (requirements 4.7 and 5.15). *Rescinded 25 October 2026 by decision 104:* pages are to be fetched while visible or focused, so a channel's server will learn which of its pages are on screen; true of what is built until that is designed.
 - **Cookies are host-only and channel-only,** held by the trusted core and sent only with their own channel's requests; there is no third-party context (requirements 7.6, 7.7 and 21.1). Persistent cookies are kept between runs only sealed, never a session or private one; the cookies panel deletes them by channel, site or all, the settings keep them, delete them when the browser closes or block them, and history's clearing takes them by time (requirements 21.4 to 21.8).
 - **No `Referer` header, and a minimal user agent** (requirement 5.14).
 - **The interface process stores nothing** (requirement 7.9).
