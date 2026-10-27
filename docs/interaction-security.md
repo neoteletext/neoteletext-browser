@@ -139,3 +139,8 @@ Typing tells the channel the viewer's keys and the pages they open, which is wha
 - **The fetcher reads input messages only**, one message kind, whole items of the input stream checked by the engine's reader before the agent writes it, which itself drops anything over 4 096 bytes or for a channel that does not declare input (INPUT.md, REQ-INT-133). Fuzzed as `fetcher_commands`.
 - **Phone keys travel core to interface,** which acts on them as its own keys while a page is open for typing, and otherwise gives only the page-navigation keys to the page view (decision 99, finding F-20, 24 October 2026); the interface's messages back are the same intents a keyboard makes, checked by the trusted core as always. A phone key has no modifier by construction: the keyboard process's message has no field for one. Fuzzed as `phone_keys` and, for the keyboard process's readers, `relay_messages`.
 - **Remaining risk 1 is narrowed:** TLS (`rustls`) is built, so a channel on `wss://` types encrypted; a plain `ws://` channel still shows "Not secure".
+
+## 10. Controls (decision 117)
+
+Controls (INPUT.md section 7.3) change nothing about where input goes: a click on one is the MOUSE event the channel's mouse mode already asks for, at its cell, and a page without a mouse mode shows none. What they add, the control rectangles from the decoder and the look the interface asks for, is analysed in `hyperlinks-security.md` section 16. The pointer's movement stays the viewer's: the browser draws the looks itself and sends the channel nothing for them, so a page lights under the pointer without asking for MOUSE_ALL, which the kit's own hover used to need.
+

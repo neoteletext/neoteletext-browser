@@ -123,6 +123,11 @@ pub enum Output {
     /// no link: the trusted strip shows where it leads.
     #[cfg(feature = "links")]
     Point(Option<crate::links::LinkCell>),
+    /// The control or link under the pointer, and whether a button is
+    /// held on it, or none: its look, which the trusted core has the
+    /// decoder draw (INPUT.md section 9.7).
+    #[cfg(feature = "links")]
+    Lit(Option<crate::links::Lit>),
     /// A page number typed that the open page or the channel links
     /// elsewhere.
     #[cfg(feature = "links")]

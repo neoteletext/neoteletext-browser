@@ -54,7 +54,6 @@ const fn site(site: CookieSite) -> Site {
     match site {
         CookieSite::SameService => Site::SameService,
         CookieSite::CrossServiceNavigation => Site::CrossServiceNavigation,
-        CookieSite::CrossOriginForm => Site::CrossOriginForm,
     }
 }
 

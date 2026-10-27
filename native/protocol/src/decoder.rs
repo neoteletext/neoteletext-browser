@@ -10,8 +10,6 @@ use interface_core::channel::{PAGES, page_index};
 
 use crate::frame::PAGE_DOTS;
 use crate::{Fields, MAX_PAGE_TITLE, ProtocolError, push_count, push_count_u8, push_raw_text, raw_text, read_frame, write_frame};
-#[cfg(feature = "links")]
-use kinds::KIND_LINKS;
 use kinds::{
     KIND_ARRIVED, KIND_AUDIO, KIND_BOOKMARK_FOLDER, KIND_BOOKMARK_FOLDER_END, KIND_BOOKMARK_LINK, KIND_BOOKMARKS_READ, KIND_CHANNEL_LOG, KIND_CLOSE,
     KIND_CONFINED, KIND_DATA, KIND_END, KIND_FRAME, KIND_OPENED, KIND_SHOWING, KIND_STORE_FULL, KIND_SUBPAGE_TITLES, KIND_SUBPAGES, KIND_UPDATED, KIND_VIEW,
@@ -19,6 +17,8 @@ use kinds::{
 };
 #[cfg(feature = "interaction")]
 use kinds::{KIND_CURSOR, KIND_INPUT_CONTROL};
+#[cfg(feature = "links")]
+use kinds::{KIND_LINKS, KIND_LOOK};
 
 mod bookmarks;
 mod frame;
@@ -87,6 +87,16 @@ pub enum ToDecoder {
     /// How a page is drawn: its reveal, hold, mix and sub-page. A page with
     /// no view is drawn as it arrives.
     View(View),
+    /// The look of one area of a page under the pointer, hovered or
+    /// pressed, or none (INPUT.md section 9.7, the engine's decision
+    /// E.127): drawn on the page's own cells.
+    #[cfg(feature = "links")]
+    Look {
+        /// The page.
+        page: u16,
+        /// The area and whether it is pressed.
+        look: Option<(crate::links::Area, bool)>,
+    },
 }
 
 /// From a decoder to the trusted core.
@@ -161,6 +171,8 @@ pub enum FromDecoder {
         candidates: Vec<crate::links::Candidate>,
         /// Its `LK` lines.
         numbers: Vec<crate::links::NumberLink>,
+        /// Its controls (INPUT.md section 7.3), as the engine found them.
+        controls: Vec<crate::links::Area>,
         /// Its coloured keys and Index, from packet X/27/0.
         fastext: crate::links::Fastext,
     },
@@ -250,6 +262,16 @@ pub fn write_to_decoder(out: &mut dyn Write, message: &ToDecoder) -> Result<(), 
             view::push_view(&mut payload, view)?;
             KIND_VIEW
         }
+        #[cfg(feature = "links")]
+        ToDecoder::Look { page, look } => {
+            page_index(*page).ok_or(ProtocolError::BadValue("page number"))?;
+            payload.extend_from_slice(&page.to_be_bytes());
+            if let Some((area, pressed)) = look {
+                crate::links::push_area(&mut payload, *area);
+                payload.push(u8::from(*pressed));
+            }
+            KIND_LOOK
+        }
     };
     write_frame(out, kind, &payload)
 }
@@ -289,6 +311,12 @@ pub fn read_from_core(input: &mut dyn Read) -> Result<Option<ToDecoder>, Protoco
             return Ok(Some(ToDecoder::Whole { packets: flags & 1 != 0, pushed: flags & 2 != 0, bytes: crate::tail(payload, WHOLE_FLAGS_BYTES) }));
         }
         KIND_VIEW => ToDecoder::View(view::read_view(&mut fields)?),
+        #[cfg(feature = "links")]
+        KIND_LOOK => {
+            let page = fields.display_page()?;
+            let look = if fields.is_empty() { None } else { Some((crate::links::read_area(&mut fields)?, fields.flag("pressed")?)) };
+            ToDecoder::Look { page, look }
+        }
         other => return Err(ProtocolError::UnknownKind(other)),
     };
     fields.end()?;
@@ -317,10 +345,10 @@ pub fn write_to_core(out: &mut dyn Write, message: &FromDecoder) -> Result<(), P
             KIND_AUDIO
         }
         #[cfg(feature = "links")]
-        FromDecoder::Links { page, with_image, candidates, numbers, fastext } => {
+        FromDecoder::Links { page, with_image, candidates, numbers, controls, fastext } => {
             payload.extend_from_slice(&page.to_be_bytes());
             payload.push(u8::from(*with_image));
-            crate::links::push_found(&mut payload, candidates, numbers)?;
+            crate::links::push_found(&mut payload, candidates, numbers, controls)?;
             crate::links::push_fastext(&mut payload, fastext)?;
             KIND_LINKS
         }
@@ -406,9 +434,9 @@ pub fn read_from_decoder(input: &mut dyn Read) -> Result<Option<FromDecoder>, Pr
         KIND_LINKS => {
             let page = fields.display_page()?;
             let with_image = fields.flag("with image")?;
-            let (candidates, numbers) = crate::links::read_found(&mut fields)?;
+            let (candidates, numbers, controls) = crate::links::read_found(&mut fields)?;
             let fastext = crate::links::read_fastext(&mut fields)?;
-            FromDecoder::Links { page, with_image, candidates, numbers, fastext }
+            FromDecoder::Links { page, with_image, candidates, numbers, controls, fastext }
         }
         KIND_SUBPAGE_TITLES => {
             let page = fields.display_page()?;

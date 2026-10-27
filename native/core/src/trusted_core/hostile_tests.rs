@@ -421,7 +421,7 @@ fn a_confirmed_web_link_is_handed_on(core: &mut Core, watch: &mut Watch) {
     let key = PageKey { channel, page: 0x100 };
     let web = Candidate { row: 5, column: 0, length: 7, double: false, light: false, target: format!("web:{WEB}") };
     core.links.opened(Some(key));
-    core.links.found(key, vec![web], Vec::new(), Fastext::default());
+    core.links.found(key, vec![web], Vec::new(), Vec::new(), Fastext::default());
     core.links.image(key, 1, &Channel { id: channel, address: &address }, 0);
     let spot = Spot { key, version: 1, column: 1, row: 5 };
     core.links.point(Some(spot));

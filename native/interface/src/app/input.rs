@@ -26,8 +26,13 @@ impl App {
         #[cfg(feature = "interaction")]
         {
             let lines = |pixels: f64| pixels / scale / interface_core::browser::LINE_HEIGHT;
+            if self.trace_frames {
+                eprintln!("neoteletext-interface: at {now} ms: wheel {delta:?}");
+            }
             let channels = match delta {
-                MouseScrollDelta::LineDelta(x, y) => self.view.browser.terminal_wheel(f64::from(x), -f64::from(y)),
+                MouseScrollDelta::LineDelta(x, y) => {
+                    self.view.browser.terminal_wheel(interface_core::browser::notched(f64::from(x)), -interface_core::browser::notched(f64::from(y)))
+                }
                 MouseScrollDelta::PixelDelta(position) => self.view.browser.terminal_wheel(lines(position.x), lines(-position.y)),
             };
             if let Some(changed) = channels {
@@ -117,7 +122,13 @@ impl App {
             // keyboard focus (requirement 17.9).
             #[cfg(any(feature = "links", feature = "interaction"))]
             WindowEvent::Focused(focused) => self.sent(event_loop, &ToCore::Focused(focused)),
-            WindowEvent::CursorMoved { position, .. } => self.cursor_moved(position.x, position.y, now),
+            // What the move asked for, as the look under the pointer, goes
+            // at once: it draws nothing here, so no redraw would send it.
+            WindowEvent::CursorMoved { position, .. } => {
+                let changed = self.cursor_moved(position.x, position.y, now);
+                self.act(event_loop);
+                changed
+            }
             // Leaving the window puts the pointer nowhere: what pops out
             // under it settles back.
             WindowEvent::CursorLeft { .. } => {

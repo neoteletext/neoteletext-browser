@@ -42,6 +42,17 @@ const COMMANDS: u8 = CONTROL | ALT | SUPER | HYPER | META;
 const BACKSPACE: u32 = 4;
 /// The wheel's unit: 1/120th of a line (INPUT.md section 5.4).
 const WHEEL_UNITS_PER_LINE: f64 = 120.0;
+/// Turns of a wheel that moves in notches, in lines, as a channel gets
+/// them: at least a whole line a notch (INPUT.md section 5.4). macOS
+/// reports a slow notch as a tenth of a line, which a list that moves a
+/// line at a time would need ten notches to show; a faster notch, past a
+/// line, keeps its acceleration. A trackpad's pixels are not notches and
+/// are not changed.
+#[must_use]
+pub fn notched(lines: f64) -> f64 {
+    if lines != 0.0 && lines.abs() < 1.0 { lines.signum() } else { lines }
+}
+
 /// Mouse buttons tracked as held, as section 5.4's `button` numbers them.
 const BUTTONS: u8 = 8;
 
@@ -134,6 +145,9 @@ impl Browser {
             state.moved = now;
         }
         state.typing = Some(typing);
+        // Whether a click goes to the channel decides what lights.
+        #[cfg(feature = "links")]
+        self.relight();
         // The host went to another of its pages: it is shown, as a
         // terminal shows what its host sends. Only a page of the same
         // channel, listed, while keys go to it.

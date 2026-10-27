@@ -13,7 +13,7 @@ use std::collections::{BTreeMap, VecDeque};
 
 use interface_core::canvas::{COLUMNS, PageKey};
 use interface_core::controls::FastextKey;
-use protocol::links::{Alias, Candidate, Fastext, LinkRun, MAX_REMAPPED, MAX_RUNS, NumberLink, PageLinks, Prompt, Service, Spot};
+use protocol::links::{Alias, Area, Candidate, Fastext, LinkRun, Lit, MAX_CONTROLS, MAX_REMAPPED, MAX_RUNS, NumberLink, PageLinks, Prompt, Service, Spot};
 
 use crate::address::Address;
 
@@ -57,6 +57,8 @@ struct Image {
     links: Vec<Link>,
     /// Page numbers the page links elsewhere (`LK` lines), decided.
     numbers: Vec<(u16, Destination)>,
+    /// Its controls, checked (INPUT.md section 7.3).
+    controls: Vec<Area>,
     /// Fastext's keys, decided, each with the sub-page it names; none when
     /// row 24 was not shown with this image (the engine's REQ-SEC-024).
     fastext: [Option<(Destination, Option<u16>)>; 5],
@@ -64,16 +66,17 @@ struct Image {
 
 #[derive(Default)]
 struct PageState {
-    /// What the decoder last found in the page.
-    found: (Vec<Candidate>, Vec<NumberLink>),
+    /// What the decoder last found in the page: its `LT` runs, its `LK`
+    /// lines and its controls.
+    found: (Vec<Candidate>, Vec<NumberLink>, Vec<Area>),
     /// The page's Fastext as the decoder last found it.
     fastext: Fastext,
     /// The latest images first.
     images: VecDeque<Image>,
 }
 
-/// A page's links and its `LK` lines, decided.
-type Decided = (Vec<(LinkRun, Destination)>, Vec<(u16, Destination)>);
+/// A page's links, its `LK` lines and its controls, decided.
+type Decided = (Vec<(LinkRun, Destination)>, Vec<(u16, Destination)>, Vec<Area>);
 
 /// What a click, a typed number or a confirmation leads to.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -126,6 +129,8 @@ pub struct Links {
     unfocused: bool,
     /// The page open in the active tab.
     opened: Option<PageKey>,
+    /// The area drawn in its look under the pointer (INPUT.md section 9.7).
+    lit: Option<Lit>,
 }
 
 impl Links {
@@ -163,11 +168,42 @@ impl Links {
         self.unfocused = !focused;
     }
 
-    /// The links the decoder found in a page, for its next image.
-    pub fn found(&mut self, key: PageKey, candidates: Vec<Candidate>, numbers: Vec<NumberLink>, fastext: Fastext) {
+    /// The links and controls the decoder found in a page, for its next
+    /// image.
+    pub fn found(&mut self, key: PageKey, candidates: Vec<Candidate>, numbers: Vec<NumberLink>, controls: Vec<Area>, fastext: Fastext) {
         let state = self.pages.entry(key).or_default();
-        state.found = (candidates, numbers);
+        state.found = (candidates, numbers, controls);
         state.fastext = fastext;
+    }
+
+    /// The look the interface asks for under the pointer, checked: only an
+    /// area that is a link or a control of the latest image of the page
+    /// open in the active tab (INPUT.md section 9.7, requirement 17.13).
+    /// Returns what each page's decoder is to draw now: the area lit
+    /// before, put out, and the area lit now.
+    pub fn light(&mut self, wanted: Option<Lit>) -> Vec<(PageKey, Option<(Area, bool)>)> {
+        let wanted = wanted.filter(|lit| Some(lit.key) == self.opened && self.lights(lit.key, lit.area));
+        if wanted == self.lit {
+            return Vec::new();
+        }
+        let mut draw = Vec::new();
+        if let Some(before) = self.lit.filter(|before| wanted.is_none_or(|wanted| wanted.key != before.key)) {
+            draw.push((before.key, None));
+        }
+        if let Some(lit) = wanted {
+            draw.push((lit.key, Some((lit.area, lit.pressed))));
+        }
+        self.lit = wanted;
+        draw
+    }
+
+    /// Whether `area` is a link's cells or a control of the latest image of
+    /// `key`.
+    fn lights(&self, key: PageKey, area: Area) -> bool {
+        self.pages
+            .get(&key)
+            .and_then(|state| state.images.front())
+            .is_some_and(|image| image.controls.contains(&area) || image.links.iter().any(|link| link.run.area() == area))
     }
 
     /// Decides a page's Fastext (`page-controls.md` section 2): a page of
@@ -237,8 +273,8 @@ impl Links {
     fn decide(&self, key: PageKey, channel: &Channel<'_>) -> Decided {
         let empty = Descriptor::default();
         let descriptor = self.descriptors.get(&key.channel).unwrap_or(&empty);
-        let Some(state) = self.pages.get(&key) else { return (Vec::new(), Vec::new()) };
-        let (candidates, numbers) = &state.found;
+        let Some(state) = self.pages.get(&key) else { return (Vec::new(), Vec::new(), Vec::new()) };
+        let (candidates, numbers, controls) = &state.found;
         // A page's `LK` lines; a web page is never the target of a typed
         // number (the engine's decision E.88).
         let numbers: Vec<(u16, Destination)> = numbers
@@ -272,17 +308,18 @@ impl Links {
         }
         runs.truncate(MAX_RUNS);
         runs.sort_by_key(|(run, _)| (run.row, run.column));
-        (runs, numbers)
+        let controls = decide_controls(controls, &runs);
+        (runs, numbers, controls)
     }
 
     /// A new image of a page was sent: its links are decided afresh, for the
     /// interface to draw over that image.
     pub fn image(&mut self, key: PageKey, version: u32, channel: &Channel<'_>, now: u64) -> PageLinks {
-        let (runs, numbers) = self.decide(key, channel);
+        let (runs, numbers, controls) = self.decide(key, channel);
         let fastext = self.decide_fastext(key);
         let state = self.pages.entry(key).or_default();
         let links = carry_since(state.images.front(), runs, now);
-        state.images.push_front(Image { version, links, numbers, fastext });
+        state.images.push_front(Image { version, links, numbers, controls, fastext });
         state.images.truncate(KEPT_IMAGES);
         self.page_links(key, key.channel)
     }
@@ -291,15 +328,16 @@ impl Links {
     /// channel's pages or descriptor changed: the latest image's links are
     /// decided again. Returns them when they changed.
     pub fn redecide(&mut self, key: PageKey, channel: &Channel<'_>, now: u64) -> Option<PageLinks> {
-        let (runs, numbers) = self.decide(key, channel);
+        let (runs, numbers, controls) = self.decide(key, channel);
         let fastext = self.decide_fastext(key);
         let image = self.pages.get_mut(&key)?.images.front_mut()?;
         let links = carry_since(Some(image), runs, now);
-        if links == image.links && numbers == image.numbers && fastext == image.fastext {
+        if links == image.links && numbers == image.numbers && controls == image.controls && fastext == image.fastext {
             return None;
         }
         image.links = links;
         image.numbers = numbers;
+        image.controls = controls;
         image.fastext = fastext;
         Some(self.page_links(key, key.channel))
     }
@@ -317,8 +355,38 @@ impl Links {
         remapped.sort_unstable();
         remapped.dedup();
         remapped.truncate(MAX_REMAPPED);
-        PageLinks { version: image.version, runs: image.links.iter().map(|link| link.run).collect(), remapped }
+        PageLinks { version: image.version, runs: image.links.iter().map(|link| link.run).collect(), controls: image.controls.clone(), remapped }
     }
+}
+
+/// A page's controls as the decoder found them, checked again (INPUT.md
+/// section 7.3, REQ-INT-118): inside rows 1 to 23 and the 40 columns, at
+/// least one cell each way, on no cell of a link or of an earlier control,
+/// at most `MAX_CONTROLS`.
+fn decide_controls(found: &[Area], runs: &[(LinkRun, Destination)]) -> Vec<Area> {
+    let mut controls: Vec<Area> = Vec::new();
+    for &area in found {
+        let last_row = u16::from(area.row).saturating_add(u16::from(area.height)).saturating_sub(1);
+        let across = u16::from(area.column).saturating_add(u16::from(area.width));
+        if area.row < FIRST_LINK_ROW || last_row > u16::from(LAST_LINK_ROW) || area.width == 0 || area.height == 0 || across > COLUMNS {
+            continue;
+        }
+        if controls.iter().any(|other| areas_overlap(*other, area)) || runs.iter().any(|(run, _)| areas_overlap(run.area(), area)) {
+            continue;
+        }
+        controls.push(area);
+    }
+    controls.truncate(MAX_CONTROLS);
+    controls
+}
+
+/// Whether two areas share a cell.
+fn areas_overlap(one: Area, other: Area) -> bool {
+    let end = |start: u8, size: u8| start.saturating_add(size);
+    one.row < end(other.row, other.height)
+        && other.row < end(one.row, one.height)
+        && one.column < end(other.column, other.width)
+        && other.column < end(one.column, one.width)
 }
 
 /// Whether two runs share a cell.

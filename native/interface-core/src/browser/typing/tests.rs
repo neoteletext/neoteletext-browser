@@ -230,3 +230,15 @@ fn the_cursor_is_drawn_only_while_typing() {
     browser.draw_terminal(&mut canvas, 0);
     assert!(canvas.fills.len() > before, "a bar is drawn");
 }
+
+/// INPUT.md section 5.4: a wheel's notch is at least a whole line, in
+/// either direction, so one slow notch moves a list a line; a faster
+/// notch keeps its acceleration, and no turn stays no turn.
+#[test]
+fn a_wheel_notch_is_at_least_a_line() {
+    use crate::browser::notched;
+    assert!((notched(0.1) - 1.0).abs() < f64::EPSILON, "a slow notch on macOS");
+    assert!((notched(-0.1) + 1.0).abs() < f64::EPSILON);
+    assert!((notched(2.5) - 2.5).abs() < f64::EPSILON, "a fast one keeps its acceleration");
+    assert!(notched(0.0).abs() < f64::EPSILON);
+}

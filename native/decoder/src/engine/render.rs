@@ -18,6 +18,8 @@ use neoteletext_core::acq::StoredPage;
 use neoteletext_core::charset::{CharRef, CharSet, G2Set};
 use neoteletext_core::compose::compose_level;
 use neoteletext_core::consts::{CLOCK_BYTES, G2_RIGHT_GUILLEMET, ROWS, SPACE, STATUS_COLUMNS};
+#[cfg(feature = "links")]
+use neoteletext_core::controls::{Control, Look, apply_look};
 use neoteletext_core::fsm::PageState;
 use neoteletext_core::level1::{DisplayOptions, Glyph, Grid, build_grid};
 #[cfg(feature = "links")]
@@ -27,7 +29,21 @@ use neoteletext_core::types::{Instant, PageAddress, SubCode};
 use neoteletext_image::palette::colour_map_palette;
 use protocol::decoder::View;
 
+// The protocol bounds a page's controls by the engine's own bound.
+#[cfg(feature = "links")]
+const _: () = assert!(protocol::links::MAX_CONTROLS == neoteletext_core::controls::MAX_CONTROLS);
+
 impl Engine {
+    /// The look of an area of `page` under the pointer, or none: the page
+    /// is drawn with it until it changes (INPUT.md section 9.7).
+    #[cfg(feature = "links")]
+    pub fn set_look(&mut self, page: u16, look: Option<(protocol::links::Area, bool)>) {
+        match look {
+            Some(look) => self.looks.insert(page, look),
+            None => self.looks.remove(&page),
+        };
+    }
+
     /// How `page` is drawn from now on: a page held keeps the version it
     /// shows now (`page-controls.md` section 3, decision 67).
     pub fn set_view(&mut self, view: View) {
@@ -226,7 +242,15 @@ impl Engine {
     #[must_use]
     pub fn render_over(&self, page: u16, now_us: u64, last: Option<&[u8]>, mut indices: Vec<u8>) -> Option<Rendered> {
         page_index(page)?;
-        let (grid, stored) = self.grid(page)?;
+        #[cfg_attr(not(feature = "links"), expect(unused_mut, reason = "only the look under the pointer changes the grid, and it comes with links"))]
+        let (mut grid, stored) = self.grid(page)?;
+        // The look under the pointer, on the page's own cells, before the
+        // rows that changed are found: the engine's decision E.127.
+        #[cfg(feature = "links")]
+        if let Some(&(area, pressed)) = self.looks.get(&page) {
+            let area = Control { row: area.row, column: area.column, width: area.width, height: area.height };
+            apply_look(&mut grid, area, if pressed { Look::Pressed } else { Look::Hover });
+        }
         let subcode = stored.key.subcode.value();
         let reveal = self.views.get(&page).is_some_and(|view| view.reveal);
         let config = self.decoder.config();
@@ -247,7 +271,7 @@ impl Engine {
         #[cfg(feature = "links")]
         let links = {
             let (candidates, numbers) = links::find(&grid, &palette, self.lines.get(page, subcode));
-            Found { candidates, numbers, fastext: fastext(stored, &grid) }
+            Found { candidates, numbers, controls: controls(stored), fastext: fastext(stored, &grid) }
         };
         let rates = FlashRates::of(grid.cells.iter().flatten().filter(|cell| cell.flash).map(|cell| cell.attributes.flash_rate()));
         Some(Rendered {
@@ -260,6 +284,18 @@ impl Engine {
             subpages: (self.subcodes(page), subcode),
         })
     }
+}
+
+/// A page's controls, as the engine finds them in its local enhancement
+/// data (INPUT.md section 7.3); the trusted core checks them again.
+#[cfg(feature = "links")]
+fn controls(stored: &StoredPage) -> Vec<protocol::links::Area> {
+    neoteletext_core::controls::controls(stored)
+        .list
+        .as_slice()
+        .iter()
+        .map(|control| protocol::links::Area { row: control.row, column: control.column, width: control.width, height: control.height })
+        .collect()
 }
 
 /// A page's Fastext from its packet X/27/0, which the engine writes from a

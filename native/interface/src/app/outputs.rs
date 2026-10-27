@@ -14,6 +14,14 @@ impl App {
         self.sync_full_screen();
         self.update_cursor();
         for output in self.view.browser.take_outputs() {
+            // The look asked for under the pointer, beside the frames that
+            // draw it: the round trip a hover takes.
+            #[cfg(feature = "links")]
+            if self.trace_frames
+                && let Output::Lit(lit) = &output
+            {
+                eprintln!("neoteletext-interface: at {} ms: look asked for: {lit:?}", self.now());
+            }
             if let Some(message) = self.intent(event_loop, output) {
                 self.send(event_loop, &message);
             }
@@ -36,6 +44,8 @@ impl App {
             Output::Point(cell) => {
                 ToCore::Point(cell.map(|cell| protocol::links::Spot { key: cell.key, version: cell.version, column: cell.column, row: cell.row }))
             }
+            #[cfg(feature = "links")]
+            Output::Lit(lit) => ToCore::Lit(lit),
             #[cfg(feature = "links")]
             Output::Typed { number, opened } => ToCore::Typed { number, opened },
             #[cfg(feature = "links")]

@@ -124,7 +124,7 @@ impl Core {
             ToCore::Window(window) => self.window_reported(window),
             ToCore::Cookies(request) => self.cookies_request(request)?,
             #[cfg(feature = "links")]
-            ToCore::Point(_) | ToCore::Typed { .. } | ToCore::Confirm(_) | ToCore::Cancel(_) => self.link_intent(&intent)?,
+            ToCore::Point(_) | ToCore::Lit(_) | ToCore::Typed { .. } | ToCore::Confirm(_) | ToCore::Cancel(_) => self.link_intent(&intent)?,
             #[cfg(any(feature = "links", feature = "interaction"))]
             ToCore::Focused(focused) => self.focused(focused)?,
             #[cfg(feature = "interaction")]
@@ -242,7 +242,11 @@ impl Core {
             self.deliver_typing(sends)?;
         }
         #[cfg(feature = "links")]
-        self.links.opened(key);
+        {
+            self.links.opened(key);
+            // A look on a page no longer open is put out.
+            self.light(None);
+        }
         let sends = self.hearing.open(self.active_channel(), key);
         self.deliver(sends);
         self.page_opened(key)

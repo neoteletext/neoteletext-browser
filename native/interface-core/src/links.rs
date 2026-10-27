@@ -99,6 +99,49 @@ impl LinkRun {
     }
 }
 
+impl LinkRun {
+    /// Its cells as an area, for its look under the pointer.
+    #[must_use]
+    pub fn area(&self) -> Area {
+        Area { row: self.row, column: self.column, width: self.length, height: if self.double { 2 } else { 1 } }
+    }
+}
+
+/// A rectangle of a page's cells: a control (INPUT.md section 7.3, the
+/// engine's decision E.127), or a link's cells, which take a look under
+/// the pointer.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Area {
+    /// The top row, 1 to 23.
+    pub row: u8,
+    /// The first column.
+    pub column: u8,
+    /// Cells across, at least one.
+    pub width: u8,
+    /// Rows down, at least one.
+    pub height: u8,
+}
+
+impl Area {
+    /// Whether the cell at `column`, `row` is in it.
+    #[must_use]
+    pub fn contains(&self, column: u8, row: u8) -> bool {
+        (self.row..self.row.saturating_add(self.height)).contains(&row) && (self.column..self.column.saturating_add(self.width)).contains(&column)
+    }
+}
+
+/// The look the control or link under the pointer takes (INPUT.md section
+/// 9.7): the decoder draws it on the page's own cells.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Lit {
+    /// The page.
+    pub key: crate::canvas::PageKey,
+    /// The cells: a control or a link of the page's latest image.
+    pub area: Area,
+    /// A button is held down on it: pressed rather than hovered.
+    pub pressed: bool,
+}
+
 /// The links of one image of a page.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct PageLinks {
@@ -106,6 +149,9 @@ pub struct PageLinks {
     pub version: u32,
     /// Each link, in reading order.
     pub runs: Vec<LinkRun>,
+    /// The page's controls (INPUT.md section 7.3), checked: cells a click
+    /// on which goes to the channel in a mouse mode.
+    pub controls: Vec<Area>,
     /// Page numbers that, typed while the page is open, follow a link
     /// rather than going to that page (`LK` lines and the channel's
     /// aliases).
@@ -117,6 +163,12 @@ impl PageLinks {
     #[must_use]
     pub fn run_at(&self, column: u8, row: u8) -> Option<usize> {
         self.runs.iter().position(|run| run.contains(column, row))
+    }
+
+    /// The control at `column`, `row`.
+    #[must_use]
+    pub fn control_at(&self, column: u8, row: u8) -> Option<Area> {
+        self.controls.iter().copied().find(|control| control.contains(column, row))
     }
 }
 

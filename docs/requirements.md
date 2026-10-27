@@ -106,7 +106,7 @@
 - **Reason:** The engine is maintained in its own repository, by its own process (decision 36).
 - **Source:** Decision 36.
 - **Verification:** Check: every `neoteletext` dependency in every workspace names the same `rev`.
-- **State:** Met, 24 October 2026: `native/Cargo.toml`, the updater's workspace (`native/tuf/Cargo.toml`) and the fuzz workspace (`native/fuzz/Cargo.toml`) name the engine's `c997514`, and `scripts/check.sh` fails unless every workspace names one engine commit (`check_engine_pin`). The pinned commit is in the engine's local repository. At that pin, on 24 October 2026: the full gate (`scripts/check.sh full`) on macOS and on Linux (`foundintelquiet4060`); in the Windows virtual machine Clippy with default features and none in both workspaces, and the release tests, 526 with default features, 426 with none, and the updater's 18.
+- **State:** Met, 27 October 2026: `native/Cargo.toml`, the updater's workspace (`native/tuf/Cargo.toml`) and the fuzz workspace (`native/fuzz/Cargo.toml`) name the engine's `c0cdc6a`, and `scripts/check.sh` fails unless every workspace names one engine commit (`check_engine_pin`). The pinned commit is in the engine's local repository. At `c0cdc6a` the build, Clippy and the tests of what the re-pin touched pass; the full gate is owed. At the earlier pin `c997514`, on 24 October 2026: the full gate (`scripts/check.sh full`) on macOS and on Linux (`foundintelquiet4060`); in the Windows virtual machine Clippy with default features and none in both workspaces, and the release tests, 526 with default features, 426 with none, and the updater's 18.
 
 ---
 
@@ -1232,6 +1232,13 @@ Adopted on 20 October 2026 (decision 41) from [`hyperlinks.md`](hyperlinks.md), 
 - **Source:** Decision 41; `hyperlinks.md`.
 - **Verification:** The fuzz target `link_target` in the full gate; the lint.
 - **State:** Met: the fuzz target `link_target` (seven million runs in its first 30 seconds, no fault) runs in the full gate, and the core's library carries the no-panic lint list.
+
+### Requirement 17.13: Controls, and the look under the pointer
+- **Statement:** The browser shows a page's controls, declared by the control triplet (INPUT.md section 7.3), only while a mouse mode is in force for the open page, with the hand pointer over them. It gives the control under the pointer in a mouse mode, or the link under it otherwise, the hover look, each colour of its cells moved to the same entry of the adjacent CLUT, and while the main button that went down on it is held, the pressed look, those colours with foreground and background exchanged. The trusted core draws a look only on a control or link of the latest image of the page open in the active tab, checks every control again (rows 1 to 23, the 40 columns, on no link's cell or another control's, at most `MAX_CONTROLS`), and sends the channel nothing for either look.
+- **Reason:** The owner's words for decision 117: "the front end both changes the color and shows the mouse pointer as hand/finger". The looks are Level 2.5's own colour operations on the page's cells, so a page chooses them; drawn by the browser, they need no round trip to the channel and no per-viewer copy of a page.
+- **Source:** Decision 117; INPUT.md sections 7.3 and 9.7, REQ-INT-117 to REQ-INT-119; the engine's decision E.127.
+- **Verification:** The engine's tests of the triplet and the looks (`controls::tests`); the decoder's `a_pages_controls_are_found_and_their_look_drawn_on_their_cells`; the trusted core's `controls_are_checked_again` and `a_look_is_only_for_a_control_or_link_of_the_open_page`; the interface's `a_link_lights_under_the_pointer_and_a_control_only_in_a_mouse_mode` and `a_control_lights_and_shows_the_hand_in_a_mouse_mode`; the protocol's round trips and refusals; by hand on page 128 of the Hackaday channel.
+- **State:** Built 27 October 2026. By hand on page 128 of the local Hackaday channel: a round row under the pointer drawn in the hover look (white to CLUT 1's half-intensity grey). The pressed look and the hand were not captured by hand; the tests cover them.
 
 ## 18. Push, typing and the cursor
 

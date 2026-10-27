@@ -621,3 +621,48 @@ fn a_pushed_page_opens_at_its_first_sub_page_and_lists_its_sub_pages() {
     engine.set_view(View { page: 0x210, subpage: Some(3), ..View::default() });
     assert_eq!(engine.grid(0x210).unwrap().1.key.subcode.value(), 3, "one chosen is drawn");
 }
+
+/// INPUT.md sections 7.3 and 9.7 (the engine's decision E.127): the
+/// controls a page declares in its packets X/26 are found, and a look
+/// changes the control's cells and no others: hover to the adjacent CLUT,
+/// pressed exchanging foreground and background too.
+#[cfg(feature = "links")]
+#[test]
+fn a_pages_controls_are_found_and_their_look_drawn_on_their_cells() {
+    use neoteletext_formats::author::DisplayPage;
+    use protocol::links::Area;
+    // Colour Map indices: CLUT 0's cyan and blue, and the adjacent CLUT's
+    // offset (the engine's `ADJACENT_CLUT_FLIP`).
+    const CYAN: u8 = 6;
+    const BLUE: u8 = 4;
+    const FLIP: u8 = neoteletext_core::consts::ADJACENT_CLUT_FLIP;
+    let mut page = DisplayPage::new(PageAddress::from_mpp(0x128).unwrap(), SubCode::new(0));
+    // A cyan band from column 2: Alpha Cyan, New Background, Alpha Blue.
+    page.text(20, 1, b"\x06\x1d\x04 PLAY \x1c").unwrap();
+    page.local().position(20, 0).unwrap().control(2, 8, false).unwrap().control(20, 9, false).unwrap();
+    let mut bytes = Vec::new();
+    neoteletext_formats::write::write_tti(&[&page.build().unwrap()], &mut bytes).unwrap();
+    let mut engine = Engine::new();
+    engine.feed(&bytes);
+    engine.finish();
+    let plain = engine.render(0x128).unwrap();
+    let button = Area { row: 20, column: 2, width: 8, height: 1 };
+    assert_eq!(plain.links.controls, [button, Area { row: 20, column: 20, width: 9, height: 1 }]);
+    let width = usize::from(PAGE_WIDTH);
+    let (cell_width, cell_height) = (usize::from(interface_core::canvas::CELL_WIDTH), usize::from(interface_core::canvas::CELL_HEIGHT));
+    // A dot of the band's background in column 3, and one beside the band.
+    let at = |rendered: &Rendered, column: usize| rendered.indices[20 * cell_height * width + column * cell_width];
+    assert_eq!(at(&plain, 3), CYAN);
+    engine.set_look(0x128, Some((button, false)));
+    let hovered = engine.render(0x128).unwrap();
+    assert_eq!(at(&hovered, 3), CYAN | FLIP, "the band in CLUT 1");
+    assert_eq!(at(&hovered, 12), at(&plain, 12), "past the band");
+    assert_eq!(hovered.links, plain.links, "the look changes no link or control");
+    engine.set_look(0x128, Some((button, true)));
+    let pressed = engine.render(0x128).unwrap();
+    // Column 4: Alpha Blue is set-after, so its own cell is still cyan.
+    assert_eq!(at(&pressed, 4), BLUE | FLIP, "the band in the label's colour, from CLUT 1");
+    assert_eq!(at(&pressed, 3), CYAN | FLIP, "the attribute's cell, whose foreground is cyan");
+    engine.set_look(0x128, None);
+    assert_eq!(engine.render(0x128).unwrap().indices, plain.indices);
+}

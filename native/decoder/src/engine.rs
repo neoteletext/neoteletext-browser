@@ -114,6 +114,9 @@ pub struct Found {
     pub candidates: Vec<protocol::links::Candidate>,
     /// Its `LK` lines.
     pub numbers: Vec<protocol::links::NumberLink>,
+    /// Its controls, as the engine finds them in its packets X/26
+    /// (INPUT.md section 7.3, the engine's decision E.127).
+    pub controls: Vec<protocol::links::Area>,
     /// Its coloured keys and Index, from packet X/27/0, and whether row 24
     /// is shown (`page-controls.md` section 2).
     pub fastext: protocol::links::Fastext,
@@ -179,6 +182,10 @@ pub struct Engine {
     views: BTreeMap<u16, View>,
     /// Held pages, as they stood when held (the engine's REQ-NAV-006).
     held: BTreeMap<u16, Box<StoredPage>>,
+    /// The area of a page under the pointer and whether it is pressed:
+    /// drawn in its look (INPUT.md section 9.7).
+    #[cfg(feature = "links")]
+    looks: BTreeMap<u16, (protocol::links::Area, bool)>,
     /// The channel's records for its input found since the last call, as
     /// sent, for the trusted core to check (INPUT.md section 7).
     #[cfg(feature = "interaction")]
@@ -242,6 +249,8 @@ impl Engine {
             trackers: RefCell::new(BTreeMap::new()),
             views: BTreeMap::new(),
             held: BTreeMap::new(),
+            #[cfg(feature = "links")]
+            looks: BTreeMap::new(),
             #[cfg(feature = "interaction")]
             input: InputRecords::default(),
         }

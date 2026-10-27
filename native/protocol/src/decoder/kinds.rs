@@ -11,6 +11,10 @@ pub(super) const KIND_CLOSE: u8 = 52;
 pub(super) const KIND_OPENED: u8 = 53;
 pub(super) const KIND_WHOLE: u8 = 54;
 pub(super) const KIND_VIEW: u8 = 55;
+// The look under the pointer, far from the others: 56 to 63 were never
+// used, and the next free kind of the whole protocol is taken.
+#[cfg(feature = "links")]
+pub(super) const KIND_LOOK: u8 = 99;
 // Decoder to trusted core.
 pub(super) const KIND_ARRIVED: u8 = 64;
 pub(super) const KIND_FRAME: u8 = 65;

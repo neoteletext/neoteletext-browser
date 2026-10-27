@@ -13,7 +13,7 @@ use super::{Browser, Cursor, Key, Modifiers, Output};
 use crate::canvas::{Canvas, PageKey};
 use crate::channel::page_index;
 use crate::geometry::Rect;
-use crate::links::{self, LinkCell, LinkKind, PageLinks, Pointing, Prompt, PromptButton, PromptKind};
+use crate::links::{self, Area, LinkCell, LinkKind, Lit, PageLinks, Pointing, Prompt, PromptButton, PromptKind};
 use crate::text::{border, centred, left_centred};
 use crate::theme::{ADDRESS, BUTTON, FIELD_INK, INSECURE, LINK, LINK_INK, ROW_STATUS, ROW_TITLE, RULE, WHITE};
 use crate::wall::{CellClick, cell_in};
@@ -53,6 +53,10 @@ pub(super) struct LinkUi {
     /// The question's buttons, where last drawn.
     go: Rect,
     cancel: Rect,
+    /// The look last asked for under the pointer (INPUT.md section 9.7).
+    lit: Option<Lit>,
+    /// The area the main button went down on, while it is held.
+    pressing: Option<Area>,
 }
 
 impl LinkUi {
@@ -142,6 +146,54 @@ impl Browser {
         Some(LinkCell { key, version: links.version, column: run.column, row: run.row })
     }
 
+    /// The control or link under the pointer, by the latest links of the
+    /// open page, whichever image they came with: a look the decoder draws
+    /// makes a new image with the same links, and the look must not go out
+    /// while they follow it. A control while a click goes to the channel,
+    /// a link otherwise (INPUT.md section 9.7).
+    fn area_under_pointer(&self) -> Option<(PageKey, Area)> {
+        let (key, rect) = self.wall.open()?;
+        let links = self.links.pages.get(&key)?;
+        let (column, row) = cell_in(rect, self.pointer)?;
+        let area = if self.clicks_are_hosts() {
+            links.control_at(column, row)
+        } else {
+            links.runs.iter().find(|run| run.contains(column, row)).map(links::LinkRun::area)
+        };
+        Some((key, area?))
+    }
+
+    /// Whether a click on the open page goes to its channel.
+    #[cfg_attr(not(feature = "interaction"), expect(clippy::unused_self, reason = "without typing no click is the channel's; one method serves both builds"))]
+    fn clicks_are_hosts(&self) -> bool {
+        #[cfg(feature = "interaction")]
+        return self.click_is_hosts();
+        #[cfg(not(feature = "interaction"))]
+        false
+    }
+
+    /// Asks for the look under the pointer when it changed: hover, or
+    /// pressed while the button that went down on the same area is held.
+    pub(super) fn relight(&mut self) {
+        let wanted = self.area_under_pointer().map(|(key, area)| Lit { key, area, pressed: self.links.pressing == Some(area) });
+        if wanted != self.links.lit {
+            self.links.lit = wanted;
+            self.outputs.push(Output::Lit(wanted));
+        }
+    }
+
+    /// The main button went down: the area under it is pressed.
+    pub(super) fn links_pressed(&mut self) {
+        self.links.pressing = self.area_under_pointer().map(|(_, area)| area);
+        self.relight();
+    }
+
+    /// The main button came up.
+    pub(super) fn links_released(&mut self) {
+        self.links.pressing = None;
+        self.relight();
+    }
+
     /// Tells the trusted core where the pointer or the focus is, when that
     /// changed, or when the image under it changed, so the strip always
     /// shows the destination of the image on screen. Returns whether the
@@ -165,6 +217,7 @@ impl Browser {
             self.links.sent = cell;
             self.outputs.push(Output::Point(cell));
         }
+        self.relight();
         changed || !same_link
     }
 
@@ -174,8 +227,12 @@ impl Browser {
     }
 
     /// The pointer's shape over a link: a hand for a page of this channel,
-    /// the shape of a shortcut for one that leaves.
+    /// the shape of a shortcut for one that leaves; and a hand over a
+    /// control while a click goes to the channel (INPUT.md section 9.7).
     pub(super) fn link_cursor(&self) -> Option<Cursor> {
+        if self.clicks_are_hosts() {
+            return self.area_under_pointer().map(|_| Cursor::Hand);
+        }
         let (_, _, links) = self.open_links()?;
         let run = links.runs.get(self.links.hovered?)?;
         Some(if run.kind.leaves() { Cursor::External } else { Cursor::Hand })

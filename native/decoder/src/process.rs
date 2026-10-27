@@ -155,6 +155,20 @@ pub fn run(store_pages: usize) -> Result<(), ProtocolError> {
                 }
                 continue;
             }
+            // The look under the pointer changed: drawn again at once.
+            #[cfg(feature = "links")]
+            ToDecoder::Look { page, look } => {
+                engine.set_look(page, look);
+                if showing.contains(&page) {
+                    draw(&engine, &[page], now, &mut sent, &mut spare, &mut flashing, &mut output)?;
+                }
+                continue;
+            }
+            // Built without links, the decoder draws no look; the message
+            // exists when another crate of the build turned links on.
+            #[cfg(not(feature = "links"))]
+            #[allow(unreachable_patterns, reason = "reachable only when the protocol has links and this crate does not")]
+            _ => continue,
         };
         report(&mut engine, &arrived, &mut output)?;
         // A shown page drawn again only when its reception moved, or data
@@ -266,7 +280,14 @@ fn draw(
         #[cfg(feature = "links")]
         if before.map(|before| &before.links) != Some(&rendered.links) {
             let links = rendered.links.clone();
-            let message = FromDecoder::Links { page, with_image: new_image, candidates: links.candidates, numbers: links.numbers, fastext: links.fastext };
+            let message = FromDecoder::Links {
+                page,
+                with_image: new_image,
+                candidates: links.candidates,
+                numbers: links.numbers,
+                controls: links.controls,
+                fastext: links.fastext,
+            };
             write_to_core(output, &message)?;
         }
         if before.map(|before| &before.subpages) != Some(&rendered.subpages) {

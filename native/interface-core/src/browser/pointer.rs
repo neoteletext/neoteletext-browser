@@ -98,6 +98,8 @@ impl Browser {
         let new_tab = self.press_new_tab;
         self.bookmarks_released(new_tab);
         self.wall.pointer_released();
+        #[cfg(feature = "links")]
+        self.links_released();
         // A button the channel saw pressed is released to it.
         #[cfg(feature = "interaction")]
         self.terminal_button(neoteletext_input::event::MouseAction::Release, 0);

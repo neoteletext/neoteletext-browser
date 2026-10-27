@@ -20,6 +20,9 @@ impl Browser {
         self.list_focus = None;
         // Shift opens what a press opens in a new tab.
         self.press_new_tab = extend;
+        // A control or link under the press takes its pressed look.
+        #[cfg(feature = "links")]
+        self.links_pressed();
         // In full screen a press is the page's, unless the strip is down
         // and it is there (decision 85).
         if self.full_screen() && !self.full_screen_press_is_strip(now) {

@@ -190,6 +190,11 @@ pub enum ToCore {
     /// link, or none: the trusted strip shows where it leads.
     #[cfg(feature = "links")]
     Point(Option<links::Spot>),
+    /// The control or link under the pointer and whether a button is held
+    /// on it, or none: its look (INPUT.md section 9.7). Nothing goes to the
+    /// channel for it.
+    #[cfg(feature = "links")]
+    Lit(Option<links::Lit>),
     /// A page number typed that the open page or the channel links
     /// elsewhere.
     #[cfg(feature = "links")]

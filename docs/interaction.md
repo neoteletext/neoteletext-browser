@@ -17,6 +17,15 @@ REQ-WEB-005 stands, with two additions and one change:
 
 The WebSocket is the transport because every host has one. When WebTransport (HTTP/3, QUIC) is as common, it is the transport to move to: unreliable datagrams for key records and pushed rows, no head-of-line blocking, and a connection that survives a change of network, which is what `mosh` built for the terminal. Nothing in the records would change.
 
+## 5. Controls (decision 117)
+
+A page that takes the mouse declares its controls, the cells it answers itself, with the control triplet of INPUT.md section 7.3, and the browser shows them as INPUT.md section 9.7 says: the hand over them while a mouse mode is in force, and the hover and pressed looks of `hyperlinks.md` section 9.3. A click on a control is the MOUSE event the mode already sends; a control changes nothing about where a click goes. The TypeScript kit's buttons, list rows and other press targets declare themselves, and its own hover, drawn by the channel, is removed.
+
+In the browser:
+- **The decoder** reads a page's controls with the engine's `controls::controls`, from the local enhancement data of the sub-page it draws, and sends them with its links (`FromDecoder::Links`), untrusted.
+- **The trusted core** checks them again (requirement 17.13) and gives them to the interface with the page's links (`PageLinks.controls`).
+- **The interface** shows the hand over a control only while a click on the open page goes to the channel, and asks for the look under the pointer.
+
 ---
 
 *The sections below are history: version 1, as built on 20 October 2026.*

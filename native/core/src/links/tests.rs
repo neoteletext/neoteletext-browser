@@ -28,7 +28,7 @@ fn spot(version: u32, column: u8, row: u8) -> Spot {
 fn links_with(candidates: Vec<Candidate>, numbers: Vec<NumberLink>) -> Links {
     let mut links = Links::default();
     links.opened(Some(OPEN));
-    links.found(OPEN, candidates, numbers, Fastext::default());
+    links.found(OPEN, candidates, numbers, Vec::new(), Fastext::default());
     let address = home();
     links.image(OPEN, 1, &Channel { id: CHANNEL, address: &address }, START);
     links
@@ -170,6 +170,7 @@ fn a_pages_number_links_and_the_channels_aliases_remap_typed_numbers_and_make_no
             NumberLink { number: 0x302, target: "https://sport.invalid/".into() },
             NumberLink { number: 0x303, target: "web:https://www.example.invalid/".into() },
         ],
+        Vec::new(),
         Fastext::default(),
     );
     let address = home();
@@ -201,7 +202,7 @@ fn a_link_that_changes_under_the_pointer_is_not_followed() {
     // changes the link's target without changing its image.
     let mut links = links_with(vec![declared(5, 10, 3, "302")], Vec::new());
     links.point(Some(spot(1, 11, 5)));
-    links.found(OPEN, vec![declared(5, 10, 3, "web:https://evil.invalid/")], Vec::new(), Fastext::default());
+    links.found(OPEN, vec![declared(5, 10, 3, "web:https://evil.invalid/")], Vec::new(), Vec::new(), Fastext::default());
     let address = home();
     let switched = START + 2 * DWELL_MILLISECONDS;
     let changed = links.redecide(OPEN, &Channel { id: CHANNEL, address: &address }, switched);
@@ -279,7 +280,7 @@ fn a_typed_number_follows_the_pages_link_or_the_channels_alias() {
         &[Alias { page: 0x500, target: "sport:302".into() }],
         &[Service { name: "sport".into(), address: "https://sport.invalid/".into() }],
     );
-    links.found(OPEN, Vec::new(), vec![NumberLink { number: 0x302, target: "401".into() }], Fastext::default());
+    links.found(OPEN, Vec::new(), vec![NumberLink { number: 0x302, target: "401".into() }], Vec::new(), Fastext::default());
     let address = home();
     links.image(OPEN, 1, &Channel { id: CHANNEL, address: &address }, START);
     let active = Some(CHANNEL);
@@ -315,7 +316,7 @@ fn nothing_but_a_confirmation_hands_a_web_page_over() {
     let channel = Channel { id: CHANNEL, address: &address };
     let mut seen = Vec::new();
     links.descriptor(CHANNEL, &[Alias { page: 0x501, target: web.into() }], &[]);
-    links.found(OPEN, vec![declared(7, 0, 7, web)], Vec::new(), Fastext::default());
+    links.found(OPEN, vec![declared(7, 0, 7, web)], Vec::new(), Vec::new(), Fastext::default());
     seen.push(links.image(OPEN, 2, &channel, LATER).runs.len());
     links.redecide(OPEN, &channel, LATER);
     links.point(Some(spot(2, 1, 7)));
@@ -352,7 +353,7 @@ fn fastext_keys_follow_as_links_do() {
         &[],
         &[Service { name: "news".into(), address: "https://news.invalid/".into() }, Service { name: "sport".into(), address: "https://sport.invalid/".into() }],
     );
-    links.found(OPEN, Vec::new(), Vec::new(), Fastext { keys, row24: true });
+    links.found(OPEN, Vec::new(), Vec::new(), Vec::new(), Fastext { keys, row24: true });
     let address = home();
     links.image(OPEN, 1, &Channel { id: CHANNEL, address: &address }, START);
     assert_eq!(links.fastext_keys(OPEN), [true, true, false, false, true], "the unknown seventh service leads nowhere");
@@ -361,7 +362,7 @@ fn fastext_keys_follow_as_links_do() {
     assert_eq!(prompt.kind, PromptKind::Leave);
     assert_eq!(links.fastext(FastextKey::Yellow, Some(CHANNEL), START), Err(Refusal::NotALink));
     assert_eq!(links.fastext(FastextKey::Red, Some(CHANNEL + 1), START), Err(Refusal::NotOpen), "only the active channel's open page");
-    links.found(OPEN, Vec::new(), Vec::new(), Fastext { keys, row24: false });
+    links.found(OPEN, Vec::new(), Vec::new(), Vec::new(), Fastext { keys, row24: false });
     links.image(OPEN, 2, &Channel { id: CHANNEL, address: &address }, START);
     assert_eq!(links.fastext_keys(OPEN), [false; 5]);
     assert_eq!(links.fastext(FastextKey::Red, Some(CHANNEL), START), Err(Refusal::NotALink), "row 24 hidden: no key acts");
@@ -398,4 +399,62 @@ fn a_web_address_the_opener_would_refuse_is_not_a_target() {
     let plain = "https://a.example/news/story?id=3&page=2#top";
     assert_eq!(web_address(plain).as_deref(), Some(plain));
     assert!(web_opener::acceptable(plain));
+}
+
+fn area(row: u8, column: u8, width: u8, height: u8) -> Area {
+    Area { row, column, width, height }
+}
+
+/// Links with page 100 open, whose image 1 has these controls and one
+/// link to page 302 on row 10.
+fn controls_with(controls: Vec<Area>) -> Links {
+    let mut links = Links::default();
+    links.opened(Some(OPEN));
+    links.found(OPEN, vec![declared(10, 0, 5, "302")], Vec::new(), controls, Fastext::default());
+    let address = home();
+    links.image(OPEN, 1, &Channel { id: CHANNEL, address: &address }, START);
+    links
+}
+
+/// REQ-INT-118 and INPUT.md section 7.3: the decoder's controls are
+/// checked again: rows 1 to 23, the 40 columns, a cell at least, on no
+/// link's cell or an earlier control's, at most `MAX_CONTROLS`.
+#[test]
+fn controls_are_checked_again() {
+    let found = vec![
+        area(20, 1, 9, 1),
+        area(20, 10, 9, 1),
+        area(5, 2, 30, 3),
+        area(20, 5, 9, 1), // over the first
+        area(10, 3, 5, 1), // over the link on row 10
+        area(0, 0, 5, 1),  // the header
+        area(23, 0, 5, 2), // into the Fastext row
+        area(4, 35, 6, 1), // past column 39
+        area(6, 0, 0, 1),  // no width
+    ];
+    assert_eq!(controls_with(found).page_links(OPEN, CHANNEL).controls, [area(20, 1, 9, 1), area(20, 10, 9, 1), area(5, 2, 30, 3)]);
+    let many: Vec<Area> = (0..40u8).map(|at| area(1 + at % 23, 2 * (at / 23), 1, 1)).collect();
+    assert_eq!(controls_with(many).page_links(OPEN, CHANNEL).controls.len(), MAX_CONTROLS);
+}
+
+/// REQ-INT-119 and requirement 17.13: a look is drawn only on a control
+/// or a link of the latest image of the open page; another page's, or
+/// cells that are neither, are refused; moving to another page puts the
+/// look out on the first.
+#[test]
+fn a_look_is_only_for_a_control_or_link_of_the_open_page() {
+    let mut links = controls_with(vec![area(20, 1, 9, 1)]);
+    let lit = |key, area, pressed| Some(Lit { key, area, pressed });
+    assert_eq!(links.light(lit(OPEN, area(20, 1, 9, 1), false)), [(OPEN, Some((area(20, 1, 9, 1), false)))]);
+    assert_eq!(links.light(lit(OPEN, area(20, 1, 9, 1), false)), [], "nothing new to draw");
+    assert_eq!(links.light(lit(OPEN, area(20, 1, 9, 1), true)), [(OPEN, Some((area(20, 1, 9, 1), true)))]);
+    assert_eq!(links.light(lit(OPEN, area(10, 0, 5, 1), false)), [(OPEN, Some((area(10, 0, 5, 1), false)))], "the link's cells");
+    // Cells that are no control: the look goes out.
+    assert_eq!(links.light(lit(OPEN, area(20, 1, 8, 1), false)), [(OPEN, None)]);
+    assert_eq!(links.light(lit(OPEN, area(20, 1, 9, 1), false)).len(), 1);
+    let other = PageKey { channel: CHANNEL, page: 0x200 };
+    assert_eq!(links.light(lit(other, area(20, 1, 9, 1), false)), [(OPEN, None)], "a page not open");
+    assert_eq!(links.light(lit(OPEN, area(20, 1, 9, 1), false)).len(), 1);
+    links.opened(Some(other));
+    assert_eq!(links.light(None), [(OPEN, None)], "the page closed");
 }

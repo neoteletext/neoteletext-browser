@@ -264,3 +264,22 @@ To add to the gates when the feature is built:
 - **Refusal tests for the hand-off:** `file:`, `data:`, `javascript:`, six custom schemes, a UNC path, a bare path, `-` prefixed, 2,049 bytes, a user name, a backslash, a percent-encoded host, an internationalised host.
 - **Review** of the strip in every layout with a prompt shown, against the spoofing list (requirement 14.5).
 - **A log test** that every hand-off is recorded with page key, target and time.
+
+## 16. Controls and the look under the pointer (decision 117)
+
+Decision 117 adds a page's controls (INPUT.md section 7.3) to what crosses boundaries B and C, and the look under the pointer to boundaries D and back to the decoder.
+
+| Boundary | What crosses | Threat | Mitigation |
+|---|---|---|---|
+| A | Control triplets in X/26 | Malformed or excessive triplets | Read by the engine's bounded, panic-free `controls::controls`: rows 1 to 23, widths 1 to 40, no overlaps, at most 32; the rest dropped and counted |
+| B | `FromDecoder::Links.controls` | A compromised decoder sends controls outside the page, overlapping, or many | The reader refuses an area outside the page or more than `MAX_CONTROLS`; the trusted core checks every control again and drops one over a link's cells or another control (requirement 17.13) |
+| C | `PageLinks.controls` | The interface learns more than it needs | Only rectangles; a control has no target and no text |
+| D | `ToCore::Lit { key, area, pressed }` | A compromised interface asks for looks on any cells, to make a page look pressed, or floods | A look is drawn only on a control or link of the latest image of the page open in the active tab; a repeat changes nothing; each look costs the decoder one render of one page, as a reveal does |
+| Core to decoder | `ToDecoder::Look { page, look }` | A look leaks between pages or stays on | One look at a time; the trusted core puts it out when it moves to another page and when the page open changes |
+
+**Spoofing.** A page can dress a control as a link, or the reverse, as it can draw anything; neither gains power. A control's click is the MOUSE event the mouse mode already sends, and a link's destination is shown only by the trusted strip, never for a control. A look is drawn from the page's own colours, so it can never imitate the browser's own drawing.
+
+**Privacy.** The look is drawn in the browser; the channel is sent nothing for it (REQ-INT-119).
+
+**Remaining risk:** low.
+

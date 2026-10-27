@@ -6,8 +6,8 @@
 use interface_core::canvas::PageKey;
 use interface_core::channel::page_index;
 
-use super::found::{flags, place, read_flags};
-use super::{LinkKind, LinkRun, MAX_DESTINATION, MAX_REMAPPED, MAX_RUNS, PageLinks, Pointing, Prompt, PromptKind};
+use super::found::{flags, place, push_area, read_area, read_flags};
+use super::{LinkKind, LinkRun, MAX_CONTROLS, MAX_DESTINATION, MAX_REMAPPED, MAX_RUNS, PageLinks, Pointing, Prompt, PromptKind};
 use crate::{Fields, ProtocolError, push_count_u8, push_key, push_text};
 
 // A prompt's flags.
@@ -20,6 +20,10 @@ pub(super) fn push_page_links(payload: &mut Vec<u8>, key: PageKey, links: &PageL
     push_count_u8(payload, links.runs.len(), MAX_RUNS, "too many links")?;
     for run in &links.runs {
         payload.extend_from_slice(&[run.row, run.column, run.length, flags(run.double, run.light), run.kind as u8]);
+    }
+    push_count_u8(payload, links.controls.len(), MAX_CONTROLS, "too many controls")?;
+    for control in &links.controls {
+        push_area(payload, *control);
     }
     push_numbers(payload, &links.remapped)
 }
@@ -35,7 +39,8 @@ pub(super) fn read_page_links(fields: &mut Fields<'_>) -> Result<(PageKey, PageL
             Ok::<_, ProtocolError>(LinkRun { row, column, length, double, light, kind })
         })
         .collect::<Result<_, _>>()?;
-    Ok((key, PageLinks { version, runs, remapped: read_numbers(fields)? }))
+    let controls = (0..fields.count_u8(MAX_CONTROLS, "too many controls")?).map(|_| read_area(fields)).collect::<Result<_, _>>()?;
+    Ok((key, PageLinks { version, runs, controls, remapped: read_numbers(fields)? }))
 }
 
 /// Page numbers, each a display page.

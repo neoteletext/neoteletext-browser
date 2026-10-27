@@ -5,6 +5,7 @@ use interface_core::canvas::PageKey;
 use neoteletext::calendar::utc_now;
 use neoteletext::links::{Channel as LinkChannel, Follow, Links, Refusal};
 use protocol::console::Level;
+use protocol::decoder::ToDecoder;
 use protocol::links::{LinkKind, Message as LinkMessage, Pointing};
 use protocol::{ToCore, ToInterface};
 
@@ -80,6 +81,7 @@ impl Core {
                 let pointing = self.links.point(*spot);
                 self.link(LinkMessage::Pointing(pointing))?;
             }
+            ToCore::Lit(lit) => self.light(*lit),
             ToCore::Typed { number, opened } => {
                 let followed = self.links.typed(*number, *opened, self.active_channel(), now);
                 self.follow(followed, "a typed page number")?;
@@ -93,6 +95,14 @@ impl Core {
             _ => {}
         }
         Ok(())
+    }
+
+    /// Has each page's decoder draw the look under the pointer the
+    /// interface asked for, once checked (INPUT.md section 9.7).
+    pub(super) fn light(&mut self, lit: Option<protocol::links::Lit>) {
+        for (key, look) in self.links.light(lit) {
+            self.tell(key.channel, ToDecoder::Look { page: key.page, look });
+        }
     }
 
     /// Carries out what a click, a typed number or a confirmation led to.

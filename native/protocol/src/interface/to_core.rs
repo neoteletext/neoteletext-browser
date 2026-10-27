@@ -22,7 +22,7 @@ use crate::interaction::{KIND_EDITING, KIND_INPUT};
 #[cfg(feature = "phone-keyboard")]
 use crate::keyboard::{KIND_PHONE_FINISH, KIND_PHONE_PANEL};
 #[cfg(feature = "links")]
-use crate::links::{KIND_CANCEL, KIND_CONFIRM, KIND_POINT, KIND_TYPED};
+use crate::links::{KIND_CANCEL, KIND_CONFIRM, KIND_LIT, KIND_POINT, KIND_TYPED};
 use crate::{Fields, MAX_ADDRESS, MAX_TABS, ProtocolError, controls, cookies, library, push_key, push_keys, push_text, read_frame, settings, write_frame};
 
 /// Writes a message to the trusted core.
@@ -64,6 +64,8 @@ fn kind_of(message: &ToCore) -> u8 {
         ToCore::Console(_) => KIND_CONSOLE,
         #[cfg(feature = "links")]
         ToCore::Point(_) => KIND_POINT,
+        #[cfg(feature = "links")]
+        ToCore::Lit(_) => KIND_LIT,
         #[cfg(feature = "links")]
         ToCore::Typed { .. } => KIND_TYPED,
         #[cfg(any(feature = "links", feature = "interaction"))]
@@ -116,6 +118,8 @@ fn push_fields(payload: &mut Vec<u8>, message: &ToCore) -> Result<(), ProtocolEr
         ToCore::Console(open) => payload.push(u8::from(*open)),
         #[cfg(feature = "links")]
         ToCore::Point(spot) => crate::links::push_spot(payload, spot.as_ref()),
+        #[cfg(feature = "links")]
+        ToCore::Lit(lit) => crate::links::push_lit(payload, lit.as_ref()),
         #[cfg(feature = "links")]
         ToCore::Typed { number, opened } => push_typed(payload, *number, *opened)?,
         #[cfg(any(feature = "links", feature = "interaction"))]
@@ -232,6 +236,8 @@ pub fn read_from_interface(input: &mut dyn Read) -> Result<Option<ToCore>, Proto
         KIND_CONSOLE => ToCore::Console(fields.flag("flag")?),
         #[cfg(feature = "links")]
         KIND_POINT => ToCore::Point(if payload.is_empty() { None } else { Some(crate::links::read_spot(&mut fields)?) }),
+        #[cfg(feature = "links")]
+        KIND_LIT => ToCore::Lit(if payload.is_empty() { None } else { Some(crate::links::read_lit(&mut fields)?) }),
         #[cfg(feature = "links")]
         KIND_TYPED => {
             let number = fields.display_page()?;

@@ -19,9 +19,9 @@ use interface::{push_numbers, push_page_links, push_pointing, push_prompt, read_
 pub use fastext::{Fastext, FastextTarget};
 pub(crate) use fastext::{push_fastext, read_fastext};
 pub use found::{Alias, Candidate, NumberLink, Service};
-pub(crate) use found::{push_channel_links, push_found, read_channel_links, read_found};
+pub(crate) use found::{push_area, push_channel_links, push_found, read_area, read_channel_links, read_found};
 pub use interface_core::controls::ANY_SUBCODE;
-pub use interface_core::links::{LinkKind, LinkRun, PageLinks, Pointing, Prompt, PromptKind};
+pub use interface_core::links::{Area, LinkKind, LinkRun, Lit, PageLinks, Pointing, Prompt, PromptKind};
 
 /// The most `LT` and `LK` lines a page keeps (the engine's `TEXT_LINKS`
 /// and `NUMBER_LINKS`, TTI Link Extension section E.1).
@@ -43,6 +43,9 @@ pub const MAX_ALIASES: usize = 16;
 pub const MAX_SERVICES: usize = 16;
 /// A named service's short name (the engine's `MAX_SHORT_NAME`).
 pub const MAX_SERVICE_NAME: usize = 32;
+/// The most controls a page has (the engine's `MAX_CONTROLS`, decision
+/// E.127; INPUT.md section 7.3).
+pub const MAX_CONTROLS: usize = 32;
 /// Page numbers a page remaps: its `LK` lines and the channel's aliases.
 pub const MAX_REMAPPED: usize = MAX_NUMBER_LINKS + MAX_ALIASES;
 /// A destination as the trusted strip shows it: an address and a few
@@ -55,6 +58,8 @@ pub(crate) const KIND_POINT: u8 = 24;
 pub(crate) const KIND_TYPED: u8 = 25;
 pub(crate) const KIND_CONFIRM: u8 = 36;
 pub(crate) const KIND_CANCEL: u8 = 37;
+// The look under the pointer (INPUT.md section 9.7).
+pub(crate) const KIND_LIT: u8 = 95;
 // Trusted core to interface.
 const KIND_PAGE_LINKS: u8 = 11;
 const KIND_POINTING: u8 = 12;
@@ -169,4 +174,20 @@ pub(crate) fn read_spot(fields: &mut Fields<'_>) -> Result<Spot, ProtocolError> 
         return Err(ProtocolError::BadValue("cell outside the page"));
     }
     Ok(Spot { key, version, column, row })
+}
+
+/// The look under the pointer, or none.
+pub(crate) fn push_lit(payload: &mut Vec<u8>, lit: Option<&Lit>) {
+    if let Some(lit) = lit {
+        push_key(payload, lit.key);
+        push_area(payload, lit.area);
+        payload.push(u8::from(lit.pressed));
+    }
+}
+
+pub(crate) fn read_lit(fields: &mut Fields<'_>) -> Result<Lit, ProtocolError> {
+    let key = fields.key()?;
+    let area = read_area(fields)?;
+    let pressed = fields.flag("pressed")?;
+    Ok(Lit { key, area, pressed })
 }

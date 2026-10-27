@@ -21,7 +21,7 @@ fn every_kind_round_trips() {
         FromFetcher::CertificateRefused(CertificateProblem::Expired),
         FromFetcher::CertificateRefused(CertificateProblem::Handshake),
         FromFetcher::CookieQuestion { id: 7, host: "a.example".into(), path: "/tt/100.tti".into(), secure: true, site: CookieSite::SameService },
-        FromFetcher::CookieQuestion { id: 8, host: "b.example".into(), path: "/".into(), secure: false, site: CookieSite::CrossOriginForm },
+        FromFetcher::CookieQuestion { id: 8, host: "b.example".into(), path: "/".into(), secure: false, site: CookieSite::CrossServiceNavigation },
         FromFetcher::ReachedQuestion { id: 9, host: "a.example".into() },
         FromFetcher::CookieSet { host: "a.example".into(), path: "/tt/".into(), scope: Some("/tt/".into()), secure: true, line: b"id=1; Secure".to_vec() },
         FromFetcher::CookieSet { host: "a.example".into(), path: "/p".into(), scope: None, secure: false, line: b"x=2".to_vec() },

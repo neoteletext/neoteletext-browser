@@ -27,7 +27,7 @@ fn run(row: u8, column: u8, length: u8, kind: LinkKind) -> LinkRun {
 }
 
 fn page_links(version: u32) -> PageLinks {
-    PageLinks { version, runs: vec![run(5, 10, 3, LinkKind::Page), run(7, 0, 12, LinkKind::Web)], remapped: vec![0x302] }
+    PageLinks { version, runs: vec![run(5, 10, 3, LinkKind::Page), run(7, 0, 12, LinkKind::Web)], controls: Vec::new(), remapped: vec![0x302] }
 }
 
 /// A browser with its first page zoomed and open, its image at `VERSION`.
@@ -208,4 +208,71 @@ fn a_page_the_trusted_core_opens_is_zoomed_now_or_when_it_arrives() {
     assert_eq!(browser.wall().zoomed(), Some(listed));
     browser.add_page(7, 0x303, "Arrived".into(), OPEN);
     assert_eq!(browser.wall().zoomed(), Some(missing));
+}
+
+fn lits(browser: &mut Browser) -> Vec<Option<Lit>> {
+    browser.take_outputs().into_iter().filter_map(|output| if let Output::Lit(lit) = output { Some(lit) } else { None }).collect()
+}
+
+/// INPUT.md section 9.7: off a mouse mode, a link under the pointer takes
+/// the hover look and a press its pressed look; a control takes neither,
+/// nor the hand, since a click on it would not reach the channel.
+#[test]
+fn a_link_lights_under_the_pointer_and_a_control_only_in_a_mouse_mode() {
+    let (mut browser, mut canvas, key, rect) = opened();
+    let control = Area { row: 20, column: 1, width: 9, height: 1 };
+    browser.set_links(key, PageLinks { controls: vec![control], ..page_links(VERSION) });
+    browser.take_outputs();
+    move_to(&mut browser, centre(rect, 11, 5));
+    let link = Area { row: 5, column: 10, width: 3, height: 1 };
+    assert_eq!(lits(&mut browser), [Some(Lit { key, area: link, pressed: false })]);
+    browser.pointer_pressed(&mut canvas, false, OPEN);
+    assert!(lits(&mut browser).contains(&Some(Lit { key, area: link, pressed: true })));
+    browser.pointer_released();
+    assert_eq!(lits(&mut browser), [Some(Lit { key, area: link, pressed: false })]);
+    move_to(&mut browser, centre(rect, 4, 20));
+    assert_eq!(lits(&mut browser), [None], "a control without a mouse mode");
+    assert_eq!(browser.cursor(), Cursor::Arrow);
+}
+
+/// INPUT.md section 9.7: in a mouse mode, a control shows the hand and
+/// lights, hovered and then pressed while the button is held on it, and
+/// a new image with the same links keeps the look rather than putting it
+/// out while its links follow.
+#[cfg(feature = "interaction")]
+#[test]
+fn a_control_lights_and_shows_the_hand_in_a_mouse_mode() {
+    use crate::browser::typing::TypingView;
+    use neoteletext_input::modes::MOUSE_BUTTONS;
+    let (mut browser, mut canvas, key, rect) = opened();
+    let control = Area { row: 20, column: 1, width: 9, height: 2 };
+    browser.set_links(key, PageLinks { controls: vec![control], ..page_links(VERSION) });
+    let typing = TypingView {
+        channel: key.channel,
+        page: key.page,
+        on: true,
+        secure: false,
+        refused: false,
+        modes: MOUSE_BUTTONS,
+        cursor: None,
+        acked: 0,
+        round_trip_ms: None,
+        show: None,
+    };
+    browser.set_typing(typing, OPEN);
+    browser.take_outputs();
+    move_to(&mut browser, centre(rect, 9, 21));
+    assert_eq!(lits(&mut browser), [Some(Lit { key, area: control, pressed: false })], "the second row of the rectangle");
+    assert_eq!(browser.cursor(), Cursor::Hand);
+    browser.pointer_pressed(&mut canvas, false, OPEN);
+    assert!(lits(&mut browser).contains(&Some(Lit { key, area: control, pressed: true })));
+    // The look's own image arrives, its links after it.
+    browser.frame_version(key, VERSION + 1);
+    move_to(&mut browser, centre(rect, 2, 20));
+    assert_eq!(lits(&mut browser), [], "still pressed, on the same control");
+    browser.pointer_released();
+    assert_eq!(lits(&mut browser), [Some(Lit { key, area: control, pressed: false })]);
+    move_to(&mut browser, centre(rect, 11, 5));
+    assert_eq!(lits(&mut browser), [None], "a link's click is the channel's in a mouse mode");
+    assert_eq!(browser.cursor(), Cursor::Arrow);
 }

@@ -77,7 +77,7 @@ pub use phone_keys::{PhonePageKey, phone_page_key};
 pub use pointer::Cursor;
 pub use shown::{CertificateProblem, Frame, StripState, TabInfo};
 #[cfg(feature = "interaction")]
-pub use typing::{CursorView, TypingView};
+pub use typing::{CursorView, TypingView, notched};
 
 /// The address field's limit, as the trusted core's address rules.
 pub const MAX_ADDRESS: usize = 2048;

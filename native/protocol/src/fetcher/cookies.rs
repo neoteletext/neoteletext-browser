@@ -24,13 +24,12 @@ pub enum CookieSite {
     SameService,
     /// A top-level navigation into the channel from another.
     CrossServiceNavigation,
-    /// A form sent to another origin.
-    CrossOriginForm,
 }
 
 const SITE_SAME: u8 = 0;
 const SITE_NAVIGATION: u8 = 1;
-const SITE_FORM: u8 = 2;
+// 2 was a form sent to another origin, withdrawn with the engine's forms
+// (its decision E.126); it is refused, and not reused.
 
 /// The payload of a cookie message (`cookies.md` section 9), and its kind.
 pub(super) fn push_cookie_message(payload: &mut Vec<u8>, message: &FromFetcher) -> Result<u8, ProtocolError> {
@@ -43,7 +42,6 @@ pub(super) fn push_cookie_message(payload: &mut Vec<u8>, message: &FromFetcher) 
             payload.push(match site {
                 CookieSite::SameService => SITE_SAME,
                 CookieSite::CrossServiceNavigation => SITE_NAVIGATION,
-                CookieSite::CrossOriginForm => SITE_FORM,
             });
             KIND_COOKIE_QUESTION
         }
@@ -84,7 +82,6 @@ pub(super) fn read_cookie_message(kind: u8, fields: &mut Fields<'_>) -> Result<F
             let site = match fields.u8()? {
                 SITE_SAME => CookieSite::SameService,
                 SITE_NAVIGATION => CookieSite::CrossServiceNavigation,
-                SITE_FORM => CookieSite::CrossOriginForm,
                 _ => return Err(ProtocolError::BadValue("site")),
             };
             FromFetcher::CookieQuestion { id, host, path, secure, site }

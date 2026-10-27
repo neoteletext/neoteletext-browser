@@ -117,12 +117,12 @@ fn page_controls_keep_their_bounds() {
             keys: [target(0x200, None, None), None, target(0x302, Some(4), None), target(0x101, None, Some(1)), target(0x100, None, None)],
             row24: true,
         };
-        let message = FromDecoder::Links { page: 0x100, with_image: true, candidates: Vec::new(), numbers: Vec::new(), fastext };
+        let message = FromDecoder::Links { page: 0x100, with_image: true, candidates: Vec::new(), numbers: Vec::new(), controls: Vec::new(), fastext };
         let mut bytes = Vec::new();
         write_to_core(&mut bytes, &message).unwrap();
         assert_eq!(read_from_decoder(&mut bytes.as_slice()).unwrap().unwrap(), message);
         let wrong = Fastext { keys: [target(0x0FF, None, None), None, None, None, None], row24: false };
-        let wrong = FromDecoder::Links { page: 0x100, with_image: true, candidates: Vec::new(), numbers: Vec::new(), fastext: wrong };
+        let wrong = FromDecoder::Links { page: 0x100, with_image: true, candidates: Vec::new(), numbers: Vec::new(), controls: Vec::new(), fastext: wrong };
         assert!(write_to_core(&mut Vec::new(), &wrong).is_err(), "not a display page");
     }
 }

@@ -16,7 +16,12 @@ fn run(row: u8, kind: LinkKind) -> LinkRun {
 }
 
 fn page_links() -> PageLinks {
-    PageLinks { version: 9, runs: vec![run(3, LinkKind::Page), run(4, LinkKind::Channel), run(6, LinkKind::Web)], remapped: vec![0x302, 0x500] }
+    PageLinks {
+        version: 9,
+        runs: vec![run(3, LinkKind::Page), run(4, LinkKind::Channel), run(6, LinkKind::Web)],
+        controls: vec![Area { row: 10, column: 2, width: 9, height: 2 }],
+        remapped: vec![0x302, 0x500],
+    }
 }
 
 #[test]
@@ -44,6 +49,8 @@ fn every_link_message_round_trips() {
         ToCore::Focused(false),
         ToCore::Confirm(3),
         ToCore::Cancel(3),
+        ToCore::Lit(Some(Lit { key: KEY, area: Area { row: 20, column: 11, width: 9, height: 1 }, pressed: true })),
+        ToCore::Lit(None),
     ] {
         let mut bytes = Vec::new();
         write_to_core(&mut bytes, &message).unwrap();
@@ -57,6 +64,7 @@ fn every_link_message_round_trips() {
             Candidate { row: 7, column: 0, length: 12, double: false, light: true, target: "web:https://www.example.invalid/".into() },
         ],
         numbers: vec![NumberLink { number: 0x302, target: "sport:302".into() }],
+        controls: vec![Area { row: 20, column: 1, width: 9, height: 1 }, Area { row: 5, column: 2, width: 30, height: 3 }],
         fastext: Fastext::default(),
     };
     let mut bytes = Vec::new();
@@ -75,7 +83,8 @@ fn every_link_message_round_trips() {
 fn one_run(place: [u8; 3], flags: u8, kind: u8) -> Vec<u8> {
     let mut payload = vec![0, 0, 0, 7, 0x01, 0x23, 0, 0, 0, 9, 1];
     payload.extend_from_slice(&place);
-    payload.extend_from_slice(&[flags, kind, 0]);
+    // No controls, no page numbers remapped.
+    payload.extend_from_slice(&[flags, kind, 0, 0]);
     let mut bytes = vec![KIND_PAGE_LINKS];
     bytes.extend_from_slice(&u32::try_from(payload.len()).unwrap().to_be_bytes());
     bytes.extend_from_slice(&payload);
@@ -119,6 +128,7 @@ fn a_target_too_long_is_refused_never_cut() {
         with_image: false,
         candidates: vec![Candidate { row: 5, column: 0, length: 3, double: false, light: false, target }],
         numbers: Vec::new(),
+        controls: Vec::new(),
         fastext: Fastext::default(),
     };
     assert!(matches!(decoder_writes(&mut Vec::new(), &found), Err(ProtocolError::BadValue("link target too long"))));
@@ -149,4 +159,40 @@ fn a_typed_number_must_be_a_display_page() {
     assert!(write_to_core(&mut Vec::new(), &ToCore::Typed { number: 0x1A0, opened: None }).is_err());
     let bytes = [25, 0, 0, 0, 2, 0x09, 0x00];
     assert!(matches!(read_from_interface(&mut bytes.as_slice()), Err(ProtocolError::BadValue("page number"))));
+}
+
+/// INPUT.md section 7.3: an area is inside the page, at least a cell
+/// each way, on every pipe that carries one; and a page's controls are
+/// bounded by the engine's `MAX_CONTROLS`.
+#[test]
+fn an_area_outside_the_page_or_too_many_controls_are_refused() {
+    use crate::Fields;
+    for (bytes, inside) in
+        [([24, 0, 40, 1], true), ([1, 31, 9, 2], true), ([1, 32, 9, 1], false), ([24, 0, 1, 2], false), ([5, 0, 0, 1], false), ([5, 0, 1, 0], false)]
+    {
+        assert_eq!(read_area(&mut Fields::new(&bytes)).is_ok(), inside, "{bytes:?}");
+    }
+    let found = FromDecoder::Links {
+        page: 0x100,
+        with_image: false,
+        candidates: Vec::new(),
+        numbers: Vec::new(),
+        controls: vec![Area { row: 1, column: 0, width: 1, height: 1 }; MAX_CONTROLS + 1],
+        fastext: Fastext::default(),
+    };
+    assert!(matches!(decoder_writes(&mut Vec::new(), &found), Err(ProtocolError::BadValue("too many controls"))));
+}
+
+/// INPUT.md section 9.7: the decoder is told the look of one area of a
+/// page, or that there is none.
+#[test]
+fn the_look_round_trips_to_the_decoder() {
+    use crate::decoder::{ToDecoder, read_from_core as decoder_reads, write_to_decoder};
+    for message in
+        [ToDecoder::Look { page: 0x128, look: Some((Area { row: 20, column: 1, width: 9, height: 1 }, false)) }, ToDecoder::Look { page: 0x128, look: None }]
+    {
+        let mut bytes = Vec::new();
+        write_to_decoder(&mut bytes, &message).unwrap();
+        assert_eq!(decoder_reads(&mut bytes.as_slice()).unwrap().unwrap(), message);
+    }
 }
