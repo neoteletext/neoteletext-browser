@@ -2,19 +2,9 @@
 //! following a link to another channel or to a page of this one, and
 //! whether a channel has a page.
 
-use interface_core::channel::page_index;
-
 use neoteletext::address::Address;
 
-use super::{ChannelState, Pending, Session, Visit};
-
-impl ChannelState {
-    /// Whether the channel has `page`: listed in its contents, or arrived.
-    #[must_use]
-    pub fn has_page(&self, page: u16) -> bool {
-        page_index(page).is_some_and(|index| self.titles.get(index).is_some_and(Option::is_some) || self.loaded.get(index).is_some_and(|loaded| *loaded))
-    }
-}
+use super::{Pending, Session, Visit};
 
 impl Session {
     /// Opens another channel in the active tab because a link on a page led

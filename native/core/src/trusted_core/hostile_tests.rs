@@ -414,15 +414,15 @@ const PRIVATE_FILE_CHANNEL: &str = r"C:\hostile-harness\private.tti";
 #[cfg(all(unix, feature = "links"))]
 fn a_confirmed_web_link_is_handed_on(core: &mut Core, watch: &mut Watch) {
     use neoteletext::links::{Channel, DWELL_MILLISECONDS, Follow, PROMPT_DELAY_MILLISECONDS};
-    use protocol::links::{Candidate, Fastext, Found, Spot};
+    use protocol::links::{Candidate, Fastext, Spot};
     const WEB: &str = "https://www.example.invalid/";
     let tab = core.session.active_tab().unwrap();
     let (channel, address) = (tab.channel.id, tab.address().unwrap().clone());
     let key = PageKey { channel, page: 0x100 };
-    let web = Candidate { row: 5, column: 0, length: 7, double: false, light: false, target: Found::Declared(format!("web:{WEB}")) };
+    let web = Candidate { row: 5, column: 0, length: 7, double: false, light: false, target: format!("web:{WEB}") };
     core.links.opened(Some(key));
     core.links.found(key, vec![web], Vec::new(), Fastext::default());
-    core.links.image(key, 1, &Channel { id: channel, address: &address, exists: &|_| true }, 0);
+    core.links.image(key, 1, &Channel { id: channel, address: &address }, 0);
     let spot = Spot { key, version: 1, column: 1, row: 5 };
     core.links.point(Some(spot));
     let Ok(Follow::Ask(prompt)) = core.links.click(spot, Some(channel), DWELL_MILLISECONDS) else { panic!("a web link asks first") };

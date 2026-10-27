@@ -78,7 +78,7 @@ Boundaries B, C and D exist today for frames and clicks; links add new message k
 
 ## 5. Boundary A: the page into the decoder
 
-**What crosses.** TTI `LT`, `LK` and `LN` lines (parsed by the engine in `neoteletext-formats`), X/27/0 Fastext packets, the decoded grid (for page numbers found in text), and the descriptor's `services` and `aliases` (parsed by the engine in `neoteletext-web`, in the fetcher).
+**What crosses.** TTI `LT`, `LK` and `LN` lines (parsed by the engine in `neoteletext-formats`), X/27/0 Fastext packets, the decoded grid (only to find the cells of an `LT` run; page numbers are no longer found in text, decision 116), and the descriptor's `services` and `aliases` (parsed by the engine in `neoteletext-web`, in the fetcher).
 
 **Threats and mitigations.**
 

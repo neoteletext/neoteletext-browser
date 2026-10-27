@@ -15,16 +15,8 @@ fn home() -> Address {
     address::parse("https://news.invalid/teletext/").unwrap()
 }
 
-fn existing(page: u16) -> bool {
-    page != 0x199
-}
-
-fn number(row: u8, column: u8, page: u16) -> Candidate {
-    Candidate { row, column, length: 3, double: false, light: false, target: Found::Number(page) }
-}
-
 fn declared(row: u8, column: u8, length: u8, target: &str) -> Candidate {
-    Candidate { row, column, length, double: false, light: false, target: Found::Declared(target.into()) }
+    Candidate { row, column, length, double: false, light: false, target: target.into() }
 }
 
 fn spot(version: u32, column: u8, row: u8) -> Spot {
@@ -38,7 +30,7 @@ fn links_with(candidates: Vec<Candidate>, numbers: Vec<NumberLink>) -> Links {
     links.opened(Some(OPEN));
     links.found(OPEN, candidates, numbers, Fastext::default());
     let address = home();
-    links.image(OPEN, 1, &Channel { id: CHANNEL, address: &address, exists: &existing }, START);
+    links.image(OPEN, 1, &Channel { id: CHANNEL, address: &address }, START);
     links
 }
 
@@ -115,7 +107,7 @@ fn a_web_address_is_rebuilt_from_its_parts() {
 #[test]
 fn targets_are_classified_from_the_target_alone() {
     let address = home();
-    let channel = Channel { id: CHANNEL, address: &address, exists: &existing };
+    let channel = Channel { id: CHANNEL, address: &address };
     let descriptor = Descriptor::new(Vec::new(), vec![("sport".into(), address::parse("https://sport.invalid/").unwrap())], Vec::new());
     let decide = |text: &str| descriptor.resolve(&parse_target(text).unwrap(), &channel);
     assert_eq!(decide("302"), Some(Destination::Page(0x302)));
@@ -137,7 +129,7 @@ fn targets_are_classified_from_the_target_alone() {
 fn a_file_channels_links_to_the_web_leave_it() {
     // An absolute path on this platform.
     let file = address::parse(if cfg!(windows) { r"C:\teletext\recording.t42" } else { "/teletext/recording.t42" }).unwrap();
-    let channel = Channel { id: CHANNEL, address: &file, exists: &existing };
+    let channel = Channel { id: CHANNEL, address: &file };
     let descriptor = Descriptor::default();
     assert_eq!(descriptor.resolve(&Target::Page(0x302), &channel), Some(Destination::Page(0x302)));
     let target = parse_target("https://news.invalid/teletext/302.tti").unwrap();
@@ -148,15 +140,14 @@ fn a_file_channels_links_to_the_web_leave_it() {
 fn links_are_checked_and_decided() {
     let links = links_with(
         vec![
-            number(0, 10, 0x302),
-            number(24, 10, 0x302),
-            number(3, 10, 0x199),
-            number(5, 10, 0x302),
+            declared(0, 10, 3, "302"),
+            declared(24, 10, 3, "302"),
+            declared(5, 10, 3, "302"),
             declared(7, 0, 12, "web:https://www.example.invalid/"),
             declared(9, 0, 5, "nonsense target"),
             declared(11, 4, 10, "https://weather.invalid/"),
-            // A number inside a declared run: the declared link wins.
-            number(11, 8, 0x303),
+            // A run inside an earlier one: the earlier wins.
+            declared(11, 8, 3, "303"),
         ],
         Vec::new(),
     );
@@ -164,7 +155,7 @@ fn links_are_checked_and_decided() {
 }
 
 #[test]
-fn a_pages_number_links_and_the_channels_aliases_remap_numbers() {
+fn a_pages_number_links_and_the_channels_aliases_remap_typed_numbers_and_make_no_runs() {
     let mut links = Links::default();
     links.opened(Some(OPEN));
     links.descriptor(
@@ -174,7 +165,7 @@ fn a_pages_number_links_and_the_channels_aliases_remap_numbers() {
     );
     links.found(
         OPEN,
-        vec![number(5, 10, 0x302), number(6, 10, 0x500)],
+        Vec::new(),
         vec![
             NumberLink { number: 0x302, target: "https://sport.invalid/".into() },
             NumberLink { number: 0x303, target: "web:https://www.example.invalid/".into() },
@@ -182,14 +173,14 @@ fn a_pages_number_links_and_the_channels_aliases_remap_numbers() {
         Fastext::default(),
     );
     let address = home();
-    let page = links.image(OPEN, 1, &Channel { id: CHANNEL, address: &address, exists: &existing }, START);
-    assert_eq!(page.runs.iter().map(|run| run.kind).collect::<Vec<_>>(), [LinkKind::Channel, LinkKind::Channel], "302 follows its LK line, 500 its alias");
-    assert_eq!(page.remapped, [0x302, 0x500], "a web page is never the target of a typed number");
+    let page = links.image(OPEN, 1, &Channel { id: CHANNEL, address: &address }, START);
+    assert!(page.runs.is_empty(), "an LK line changes what typing the number does; it draws no link (decision 116)");
+    assert_eq!(page.remapped, [0x302, 0x500], "302 follows its LK line, 500 its alias; a web page is never the target of a typed number");
 }
 
 #[test]
 fn a_click_follows_only_the_link_the_strip_shows_once_it_has_settled() {
-    let mut links = links_with(vec![number(5, 10, 0x302), declared(7, 0, 4, "303")], Vec::new());
+    let mut links = links_with(vec![declared(5, 10, 3, "302"), declared(7, 0, 4, "303")], Vec::new());
     let active = Some(CHANNEL);
     assert_eq!(links.click(spot(1, 11, 5), active, LATER), Err(Refusal::Unshown), "the strip shows nothing yet");
     let shown = links.point(Some(spot(1, 11, 5))).unwrap();
@@ -208,12 +199,12 @@ fn a_click_follows_only_the_link_the_strip_shows_once_it_has_settled() {
 fn a_link_that_changes_under_the_pointer_is_not_followed() {
     // Bait and switch (`hyperlinks-security.md` section 8.1): the page
     // changes the link's target without changing its image.
-    let mut links = links_with(vec![number(5, 10, 0x302)], Vec::new());
+    let mut links = links_with(vec![declared(5, 10, 3, "302")], Vec::new());
     links.point(Some(spot(1, 11, 5)));
     links.found(OPEN, vec![declared(5, 10, 3, "web:https://evil.invalid/")], Vec::new(), Fastext::default());
     let address = home();
     let switched = START + 2 * DWELL_MILLISECONDS;
-    let changed = links.redecide(OPEN, &Channel { id: CHANNEL, address: &address, exists: &existing }, switched);
+    let changed = links.redecide(OPEN, &Channel { id: CHANNEL, address: &address }, switched);
     assert_eq!(changed.map(|page| page.runs[0].kind), Some(LinkKind::Web));
     // The strip follows the change at once.
     let repointed = links.repoint().expect("the destination changed");
@@ -224,15 +215,15 @@ fn a_link_that_changes_under_the_pointer_is_not_followed() {
 
 #[test]
 fn an_unchanged_link_keeps_its_age_across_new_images() {
-    let mut links = links_with(vec![number(5, 10, 0x302)], Vec::new());
+    let mut links = links_with(vec![declared(5, 10, 3, "302")], Vec::new());
     let address = home();
     // A flash redraws the page: a new image, the same link.
-    links.image(OPEN, 2, &Channel { id: CHANNEL, address: &address, exists: &existing }, LATER - 1);
+    links.image(OPEN, 2, &Channel { id: CHANNEL, address: &address }, LATER - 1);
     links.point(Some(spot(2, 11, 5)));
     assert_eq!(links.click(spot(2, 11, 5), Some(CHANNEL), LATER), Ok(Follow::Page(0x302)));
     // The first image is still known; a fifth image pushes it out.
     for version in 3..=5 {
-        links.image(OPEN, version, &Channel { id: CHANNEL, address: &address, exists: &existing }, LATER);
+        links.image(OPEN, version, &Channel { id: CHANNEL, address: &address }, LATER);
     }
     assert_eq!(links.click(spot(1, 11, 5), Some(CHANNEL), LATER), Err(Refusal::Stale));
 }
@@ -290,7 +281,7 @@ fn a_typed_number_follows_the_pages_link_or_the_channels_alias() {
     );
     links.found(OPEN, Vec::new(), vec![NumberLink { number: 0x302, target: "401".into() }], Fastext::default());
     let address = home();
-    links.image(OPEN, 1, &Channel { id: CHANNEL, address: &address, exists: &existing }, START);
+    links.image(OPEN, 1, &Channel { id: CHANNEL, address: &address }, START);
     let active = Some(CHANNEL);
     assert_eq!(links.typed(0x302, Some((OPEN, 1)), active, START), Ok(Follow::Page(0x401)));
     let Ok(Follow::Ask(prompt)) = links.typed(0x500, None, active, START) else { panic!() };
@@ -309,7 +300,7 @@ fn a_descriptor_alias_to_the_web_is_dropped() {
 
 #[test]
 fn a_channel_that_closes_takes_its_links() {
-    let mut links = links_with(vec![number(5, 10, 0x302)], Vec::new());
+    let mut links = links_with(vec![declared(5, 10, 3, "302")], Vec::new());
     links.channel_gone(CHANNEL);
     assert_eq!(links.pages_of(CHANNEL), [] as [PageKey; 0]);
 }
@@ -319,9 +310,9 @@ fn nothing_but_a_confirmation_hands_a_web_page_over() {
     // `hyperlinks-security.md` section 9.4: every other way in, driven with
     // web links present, never reaches the system's web browser.
     let web = "web:https://www.example.invalid/";
-    let mut links = links_with(vec![declared(7, 0, 7, web), number(5, 10, 0x302)], vec![NumberLink { number: 0x302, target: web.into() }]);
+    let mut links = links_with(vec![declared(7, 0, 7, web), declared(5, 10, 3, "302")], vec![NumberLink { number: 0x302, target: web.into() }]);
     let address = home();
-    let channel = Channel { id: CHANNEL, address: &address, exists: &existing };
+    let channel = Channel { id: CHANNEL, address: &address };
     let mut seen = Vec::new();
     links.descriptor(CHANNEL, &[Alias { page: 0x501, target: web.into() }], &[]);
     links.found(OPEN, vec![declared(7, 0, 7, web)], Vec::new(), Fastext::default());
@@ -363,7 +354,7 @@ fn fastext_keys_follow_as_links_do() {
     );
     links.found(OPEN, Vec::new(), Vec::new(), Fastext { keys, row24: true });
     let address = home();
-    links.image(OPEN, 1, &Channel { id: CHANNEL, address: &address, exists: &existing }, START);
+    links.image(OPEN, 1, &Channel { id: CHANNEL, address: &address }, START);
     assert_eq!(links.fastext_keys(OPEN), [true, true, false, false, true], "the unknown seventh service leads nowhere");
     assert_eq!(links.fastext(FastextKey::Red, Some(CHANNEL), START), Ok((Follow::Page(0x200), Some(3))));
     let Ok((Follow::Ask(prompt), None)) = links.fastext(FastextKey::Green, Some(CHANNEL), START) else { panic!("another channel is asked about") };
@@ -371,7 +362,7 @@ fn fastext_keys_follow_as_links_do() {
     assert_eq!(links.fastext(FastextKey::Yellow, Some(CHANNEL), START), Err(Refusal::NotALink));
     assert_eq!(links.fastext(FastextKey::Red, Some(CHANNEL + 1), START), Err(Refusal::NotOpen), "only the active channel's open page");
     links.found(OPEN, Vec::new(), Vec::new(), Fastext { keys, row24: false });
-    links.image(OPEN, 2, &Channel { id: CHANNEL, address: &address, exists: &existing }, START);
+    links.image(OPEN, 2, &Channel { id: CHANNEL, address: &address }, START);
     assert_eq!(links.fastext_keys(OPEN), [false; 5]);
     assert_eq!(links.fastext(FastextKey::Red, Some(CHANNEL), START), Err(Refusal::NotALink), "row 24 hidden: no key acts");
 }
@@ -387,9 +378,8 @@ fn a_channel_owns_page_files_only_in_its_folder() {
     let bare = address::parse("https://news.invalid/a").unwrap();
     let sibling = address::parse("https://news.invalid/a302.tti").unwrap();
     let inside = address::parse("https://news.invalid/a/302.tti").unwrap();
-    let owned = |channel: &Address, target: &Address| {
-        Descriptor::default().resolve(&Target::Channel(target.clone()), &Channel { id: CHANNEL, address: channel, exists: &existing })
-    };
+    let owned =
+        |channel: &Address, target: &Address| Descriptor::default().resolve(&Target::Channel(target.clone()), &Channel { id: CHANNEL, address: channel });
     assert_eq!(owned(&folder, &inside), Some(Destination::Page(0x302)));
     assert_eq!(owned(&folder, &sibling), Some(Destination::Channel(sibling.clone())), "a sibling of the folder");
     assert_eq!(owned(&bare, &sibling), Some(Destination::Channel(sibling.clone())), "a name that only begins as the channel's");

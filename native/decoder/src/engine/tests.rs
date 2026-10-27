@@ -402,11 +402,12 @@ fn the_pages_own_underline_is_not_drawn() {
 }
 
 /// `hyperlinks.md` section 6: the page numbers in a page's text and its
-/// `LT` and `LK` lines are found, for the trusted core to decide.
+/// `LT` and `LK` lines are found, for the trusted core to decide; a page
+/// number printed in the text ("Sport 101") is not a link (decision 116).
 #[cfg(feature = "links")]
 #[test]
-fn a_pages_links_are_found_in_its_text_and_its_link_lines() {
-    use protocol::links::{Candidate, Found, NumberLink};
+fn a_pages_links_are_its_link_lines_never_a_number_in_its_text() {
+    use protocol::links::{Candidate, NumberLink};
     let page = b"PN,10000\nSC,0000\nPS,8000\nOL,1,News index\nOL,3,Sport 101\nOL,5,Weather here\n\
 LT,5,0,7,web:https://www.example.invalid/\nLK,101,https://sport.invalid/\n";
     let mut engine = Engine::new();
@@ -416,7 +417,8 @@ LT,5,0,7,web:https://www.example.invalid/\nLK,101,https://sport.invalid/\n";
     let at = |candidate: &Candidate| (candidate.row, candidate.column, candidate.length, candidate.target.clone());
     assert_eq!(
         links.candidates.iter().map(at).collect::<Vec<_>>(),
-        [(5, 0, 7, Found::Declared("web:https://www.example.invalid/".into())), (3, 6, 3, Found::Number(0x101))]
+        [(5, 0, 7, String::from("web:https://www.example.invalid/"))],
+        "the LT run alone: 101 printed on row 3 is text"
     );
     assert_eq!(links.numbers, [NumberLink { number: 0x101, target: "https://sport.invalid/".into() }]);
     // A run over blank cells is trimmed to the text it covers.
@@ -424,7 +426,7 @@ LT,5,0,7,web:https://www.example.invalid/\nLK,101,https://sport.invalid/\n";
     engine.feed(b"PN,10000\nSC,0000\nPS,8000\nOL,5,   Weather\nLT,5,0,20,302\nLT,7,0,10,303\n");
     engine.finish();
     let links = engine.render(0x100).unwrap().links;
-    assert_eq!(links.candidates.iter().map(at).collect::<Vec<_>>(), [(5, 3, 7, Found::Declared("302".into()))], "row 7 is blank");
+    assert_eq!(links.candidates.iter().map(at).collect::<Vec<_>>(), [(5, 3, 7, String::from("302"))], "row 7 is blank");
 }
 
 /// `interaction.md` section 10: a pushed page shows when its message

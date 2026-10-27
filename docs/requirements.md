@@ -1167,12 +1167,13 @@ Adopted on 20 October 2026 (decision 41) from [`hyperlinks.md`](hyperlinks.md), 
 - **Verification:** Test with out-of-range, overlapping, excessive and invalid links.
 - **State:** Met: the trusted core checks rows, bounds, overlaps and targets, and the interface receives places and kinds only. Tests: `links_are_checked_and_decided`, `malformed_links_are_refused`, `a_target_too_long_is_refused_never_cut`.
 
-### Requirement 17.4: Page numbers in the text are links
+### Requirement 17.4: Page numbers in the text are links (withdrawn)
 - **Statement:** Page numbers in the text are links when, and only when, the rules of `hyperlinks.md` section 6.1 hold.
 - **Reason:** Navigation teletext readers already expect, without false links.
 - **Source:** Decision 41; `hyperlinks.md`.
 - **Verification:** Test of each rule, including currency, times, ranges and absent pages.
 - **State:** Met, with the refinements of `hyperlinks.md` section 19. Tests: `page_numbers_stand_alone`, `a_pages_links_are_found_in_its_text_and_its_link_lines`.
+- *Withdrawn 27 October 2026 (decision 116):* page numbers in a page's text are not links. Only what a page declares is a link: its Fastext links, its `LT` runs, and its `LK` numbers, which change what typing a number does and draw nothing. The finding code and its tests are removed; `a_pages_links_are_its_link_lines_never_a_number_in_its_text` checks that "Sport 101" on a page is text, and a page's links are at most its eight `LT` runs.
 
 ### Requirement 17.5: Links are classified from their targets
 - **Statement:** Every link, from a page, a Fastext packet or the descriptor's aliases and services, is classified from its target alone, before any request, as `hyperlinks.md` section 7.1 requires; a named service is another channel.

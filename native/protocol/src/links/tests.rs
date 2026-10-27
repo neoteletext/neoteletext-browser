@@ -3,7 +3,6 @@
 
 use interface_core::canvas::PageKey;
 
-use super::found::FOUND_DECLARED;
 use super::*;
 use crate::ProtocolError;
 use crate::decoder::{FromDecoder, read_from_decoder, write_to_core as decoder_writes};
@@ -54,8 +53,8 @@ fn every_link_message_round_trips() {
         page: 0x100,
         with_image: true,
         candidates: vec![
-            Candidate { row: 5, column: 10, length: 3, double: true, light: false, target: Found::Number(0x302) },
-            Candidate { row: 7, column: 0, length: 12, double: false, light: true, target: Found::Declared("web:https://www.example.invalid/".into()) },
+            Candidate { row: 5, column: 10, length: 3, double: true, light: false, target: "302".into() },
+            Candidate { row: 7, column: 0, length: 12, double: false, light: true, target: "web:https://www.example.invalid/".into() },
         ],
         numbers: vec![NumberLink { number: 0x302, target: "sport:302".into() }],
         fastext: Fastext::default(),
@@ -118,13 +117,13 @@ fn a_target_too_long_is_refused_never_cut() {
     let found = FromDecoder::Links {
         page: 0x100,
         with_image: false,
-        candidates: vec![Candidate { row: 5, column: 0, length: 3, double: false, light: false, target: Found::Declared(target) }],
+        candidates: vec![Candidate { row: 5, column: 0, length: 3, double: false, light: false, target }],
         numbers: Vec::new(),
         fastext: Fastext::default(),
     };
     assert!(matches!(decoder_writes(&mut Vec::new(), &found), Err(ProtocolError::BadValue("link target too long"))));
     // Written by hand, a reader refuses it too.
-    let mut payload = vec![0x01, 0x00, 0, 1, 5, 0, 3, 0, FOUND_DECLARED];
+    let mut payload = vec![0x01, 0x00, 0, 1, 5, 0, 3, 0];
     payload.extend_from_slice(&u16::try_from(MAX_TARGET + 1).unwrap().to_be_bytes());
     payload.extend(std::iter::repeat_n(b'a', MAX_TARGET + 1));
     payload.push(0);

@@ -18,20 +18,18 @@ use interface::{push_numbers, push_page_links, push_pointing, push_prompt, read_
 
 pub use fastext::{Fastext, FastextTarget};
 pub(crate) use fastext::{push_fastext, read_fastext};
-pub use found::{Alias, Candidate, Found, NumberLink, Service};
+pub use found::{Alias, Candidate, NumberLink, Service};
 pub(crate) use found::{push_channel_links, push_found, read_channel_links, read_found};
 pub use interface_core::controls::ANY_SUBCODE;
 pub use interface_core::links::{LinkKind, LinkRun, PageLinks, Pointing, Prompt, PromptKind};
 
-/// The most links a page has: beyond this the trusted core gives it none
-/// (`hyperlinks.md` section 8.2).
-pub const MAX_RUNS: usize = 32;
-/// The most page numbers found in one page's text (`hyperlinks.md`
-/// section 6.1).
-pub const MAX_FOUND: usize = 24;
 /// The most `LT` and `LK` lines a page keeps (the engine's `TEXT_LINKS`
 /// and `NUMBER_LINKS`, TTI Link Extension section E.1).
 pub const MAX_TEXT_LINKS: usize = 8;
+/// The most links a page has: its `LT` lines, the only links drawn on a
+/// page since page numbers in its text stopped being found (decision 116);
+/// beyond this the trusted core gives it none (`hyperlinks.md` section 8.2).
+pub const MAX_RUNS: usize = MAX_TEXT_LINKS;
 /// The most `LK` lines a page keeps.
 pub const MAX_NUMBER_LINKS: usize = 8;
 /// A target as a page file writes it: at most 256 bytes (the engine's

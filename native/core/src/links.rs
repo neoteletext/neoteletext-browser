@@ -13,7 +13,7 @@ use std::collections::{BTreeMap, VecDeque};
 
 use interface_core::canvas::{COLUMNS, PageKey};
 use interface_core::controls::FastextKey;
-use protocol::links::{Alias, Candidate, Fastext, Found, LinkRun, MAX_REMAPPED, MAX_RUNS, NumberLink, PageLinks, Prompt, Service, Spot};
+use protocol::links::{Alias, Candidate, Fastext, LinkRun, MAX_REMAPPED, MAX_RUNS, NumberLink, PageLinks, Prompt, Service, Spot};
 
 use crate::address::Address;
 
@@ -248,27 +248,15 @@ impl Links {
                 Some((link.number, descriptor.resolve(&target, channel)?))
             })
             .collect();
-        let numbered = |number: u16| {
-            numbers
-                .iter()
-                .find(|(linked, _)| *linked == number)
-                .map(|(_, destination)| destination.clone())
-                .or_else(|| descriptor.alias(number).and_then(|target| descriptor.resolve(target, channel)))
-        };
         let mut runs: Vec<(LinkRun, Destination)> = Vec::new();
-        // Declared links first, so that they win where they overlap a number.
-        let declared = candidates.iter().filter(|candidate| matches!(candidate.target, Found::Declared(_)));
-        let found = candidates.iter().filter(|candidate| matches!(candidate.target, Found::Number(_)));
-        for candidate in declared.chain(found) {
+        // Only what the page declares is a link (decision 116): a page
+        // number in its text is just text.
+        for candidate in candidates {
             let ends = u16::from(candidate.column).saturating_add(u16::from(candidate.length)) <= COLUMNS;
             if !(FIRST_LINK_ROW..=LAST_LINK_ROW).contains(&candidate.row) || candidate.length == 0 || !ends {
                 continue;
             }
-            let destination = match &candidate.target {
-                Found::Number(number) => numbered(*number).or_else(|| (channel.exists)(*number).then_some(Destination::Page(*number))),
-                Found::Declared(text) => parse_target(text).and_then(|target| descriptor.resolve(&target, channel)),
-            };
-            let Some(destination) = destination else { continue };
+            let Some(destination) = parse_target(&candidate.target).and_then(|target| descriptor.resolve(&target, channel)) else { continue };
             let run = LinkRun {
                 row: candidate.row,
                 column: candidate.column,

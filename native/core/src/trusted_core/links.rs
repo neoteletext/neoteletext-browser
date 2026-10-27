@@ -20,8 +20,7 @@ impl Core {
         let Self { session, links, .. } = self;
         let tab = session.all_tabs().find(|tab| tab.channel.id == id)?;
         let address = tab.address()?;
-        let exists = |page: u16| tab.channel.has_page(page);
-        Some(decide(links, &LinkChannel { id, address, exists: &exists }))
+        Some(decide(links, &LinkChannel { id, address }))
     }
 
     /// A new image of a page was sent: its links, for the interface.

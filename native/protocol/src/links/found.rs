@@ -12,20 +12,7 @@ use crate::{Fields, MAX_ADDRESS, ProtocolError, push_count_u8, raw_text};
 const DOUBLE: u8 = 1;
 const LIGHT: u8 = 2;
 const RUN_FLAGS: u8 = DOUBLE | LIGHT;
-// A found link's target on the wire.
-const FOUND_NUMBER: u8 = 1;
-pub(super) const FOUND_DECLARED: u8 = 2;
-
-/// Where a link the decoder found leads, before the trusted core decides.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum Found {
-    /// A page number printed in the page's text (`hyperlinks.md` section 6.1).
-    Number(u16),
-    /// A target the page declares (`LT`), as written.
-    Declared(String),
-}
-
-/// A link the decoder found in a page, untrusted.
+/// A link a page declares (`LT`), where the decoder found its cells, untrusted.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Candidate {
     /// The row.
@@ -38,8 +25,9 @@ pub struct Candidate {
     pub double: bool,
     /// The cells' background is light.
     pub light: bool,
-    /// Where it leads.
-    pub target: Found,
+    /// Where it leads, as the page wrote it: the trusted core decides
+    /// what it means. Only a declared link is one (decision 116).
+    pub target: String,
 }
 
 /// An `LK` line: a page number the page links elsewhere, as written.
@@ -109,16 +97,7 @@ pub(crate) fn push_found(payload: &mut Vec<u8>, candidates: &[Candidate], number
     push_count_u8(payload, candidates.len(), MAX_RUNS, "too many links")?;
     for candidate in candidates {
         payload.extend_from_slice(&[candidate.row, candidate.column, candidate.length, flags(candidate.double, candidate.light)]);
-        match &candidate.target {
-            Found::Number(page) => {
-                payload.push(FOUND_NUMBER);
-                payload.extend_from_slice(&page.to_be_bytes());
-            }
-            Found::Declared(target) => {
-                payload.push(FOUND_DECLARED);
-                push_whole(payload, target, MAX_TARGET)?;
-            }
-        }
+        push_whole(payload, &candidate.target, MAX_TARGET)?;
     }
     push_count_u8(payload, numbers.len(), MAX_NUMBER_LINKS, "too many number links")?;
     for link in numbers {
@@ -133,11 +112,7 @@ pub(crate) fn read_found(fields: &mut Fields<'_>) -> Result<(Vec<Candidate>, Vec
         .map(|_| {
             let (row, column, length) = place(fields)?;
             let (double, light) = read_flags(fields)?;
-            let target = match fields.u8()? {
-                FOUND_NUMBER => Found::Number(fields.display_page()?),
-                FOUND_DECLARED => Found::Declared(raw_text(fields, MAX_TARGET, "text too long")?),
-                _ => return Err(ProtocolError::BadValue("link target kind")),
-            };
+            let target = raw_text(fields, MAX_TARGET, "text too long")?;
             Ok::<_, ProtocolError>(Candidate { row, column, length, double, light, target })
         })
         .collect::<Result<_, _>>()?;

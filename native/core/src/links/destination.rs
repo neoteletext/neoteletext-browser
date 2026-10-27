@@ -72,8 +72,6 @@ pub struct Channel<'a> {
     pub id: u32,
     /// Its address: a web channel's folder, or a file.
     pub address: &'a Address,
-    /// Whether it has a page: listed in its contents, or arrived.
-    pub exists: &'a dyn Fn(u16) -> bool,
 }
 
 impl Channel<'_> {

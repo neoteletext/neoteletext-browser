@@ -102,9 +102,11 @@ A compromised decoder can do everything a page can, and can also invent links. I
 
 ## 6. Where links come from
 
-### 6.1 Page numbers in the text, found by the browser
+### 6.1 Page numbers in the text, found by the browser (withdrawn)
 
-A page number printed on a page, such as "Sport 140" or "see p302", becomes a link to that page in the same channel. It is found in the decoded grid, not in the image:
+*Withdrawn on 27 October 2026 (decision 116):* the browser no longer finds page numbers in a page's text. Only what a page declares is a link: its Fastext links (X/27/0 or `LN`), its `LT` runs, and its `LK` numbers for typing. A number printed in the text is text; a page that wants it clickable declares it with an `LT` line. The rules below are kept as the record of what was built and removed.
+
+A page number printed on a page, such as "Sport 140" or "see p302", became a link to that page in the same channel. It was found in the decoded grid, not in the image:
 - three characters, the first 1 to 8, the others 0 to 9, standing alone: no letter or digit immediately before or after;
 - in rows 1 to 23 (row 0 is the header, with its own page number and clock; row 24 is the Fastext row);
 - in G0 text, shown, not concealed, in any size;
@@ -143,7 +145,7 @@ The trusted core classifies each target when it accepts the link, from the targe
 
 | Target | Kind | What following it does |
 |---|---|---|
-| `mpp` or `mpp:ssss`, a found page number, or a page file in the current channel's own folder | **This channel** | Opens the page at once |
+| `mpp` or `mpp:ssss`, or a page file in the current channel's own folder | **This channel** | Opens the page at once |
 | `name:mpp`, a service named in the descriptor's `services`, or a descriptor alias to one | **Another channel.** Each named service is its own descriptor, at its own origin and folder, which the engine makes a channel of its own | The site-change screen (requirement 8.4), naming the service's channel |
 | An address of a teletext channel or page file (`http` or `https`, as the TTI Link Extension's section E.1 defines), from an `LT`, `LK` or `LN` line or a descriptor alias | **Another channel** | The site-change screen (requirement 8.4); then the channel opens as a typed address would (content decides, requirement 6.2) |
 | `web:` and an `https` or `http` address (section 7.2) | **The web** | The web-browser prompt in the strip (section 12), then the system's web browser |
@@ -338,7 +340,7 @@ To be added to `requirements.md` as section 17 once adopted.
 
 1. **Links in the channel.**
    - The engine's `underline` render option (or clearing the bit in the decoder in the meantime).
-   - Page numbers found in the text.
+   - Page numbers found in the text (withdrawn by decision 116).
    - The messages of section 8.1, the core's checks and its table of links per frame.
    - The underline drawn, the destination in the strip, the pointer and the keyboard.
    - Following links within the channel.
@@ -359,7 +361,7 @@ All taken by the owner on 20 October 2026 (decision 41), each as recommended.
 | Number | Question | Decided |
 |---|---|---|
 | 1 | May a link lead to another channel, amending requirement 4.5 as section 13 says? | Yes, through the site-change screen |
-| 2 | Are page numbers in the text links automatically (section 6.1)? | Yes, only for pages that exist, in phase 1 |
+| 2 | Are page numbers in the text links automatically (section 6.1)? | Yes, only for pages that exist, in phase 1. *Reversed 27 October 2026 (decision 116): no; only declared links.* |
 | 3 | The exact blue, and the contrasting edge | A blue near the web's link blue, edged white or black by contrast; chosen on screen |
 | 4 | Links on the small pages of the wall, or only on the open page? | Only on the open page; a click on a small page zooms it |
 | 5 | The `web:` target form in the engine's TTI Link Extension | Adopt it; there is no other way to tell a channel's folder from a web page |

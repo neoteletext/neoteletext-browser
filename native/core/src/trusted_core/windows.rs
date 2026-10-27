@@ -317,17 +317,17 @@ mod tests {
     fn a_question_is_answered_only_in_its_own_window() {
         use interface_core::canvas::PageKey;
         use neoteletext::links::{Channel, DWELL_MILLISECONDS, Follow};
-        use protocol::links::{Candidate, Fastext, Found, Spot};
+        use protocol::links::{Candidate, Fastext, Spot};
         let mut test = Test::new("question-window");
         test.core.session.open("https://news.invalid/teletext/").unwrap();
         let first = test.core.session.window;
         let channel = test.core.session.tabs[0].channel.id;
         let key = PageKey { channel, page: 0x100 };
         let address = test.core.session.tabs[0].address().unwrap().clone();
-        let web = Candidate { row: 5, column: 0, length: 7, double: false, light: false, target: Found::Declared("web:https://www.example.invalid/".into()) };
+        let web = Candidate { row: 5, column: 0, length: 7, double: false, light: false, target: "web:https://www.example.invalid/".into() };
         test.core.links.opened(Some(key));
         test.core.links.found(key, vec![web], Vec::new(), Fastext::default());
-        test.core.links.image(key, 1, &Channel { id: channel, address: &address, exists: &|_| true }, 0);
+        test.core.links.image(key, 1, &Channel { id: channel, address: &address }, 0);
         let spot = Spot { key, version: 1, column: 1, row: 5 };
         test.core.links.point(Some(spot));
         let Ok(Follow::Ask(prompt)) = test.core.links.click(spot, Some(channel), DWELL_MILLISECONDS) else { panic!("asked") };
