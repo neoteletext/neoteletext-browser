@@ -1,15 +1,17 @@
 //! The console drawn: its tabs and buttons, the Log tab's levels and
-//! search, the cookies' tab or the entries; and its tips.
+//! search, the cookies' tab or the entries, none of them while it is
+//! minimised to its tab bar; and its tips.
 
 use alloc::collections::VecDeque;
 use alloc::format;
 use alloc::vec::Vec;
 
 use super::{
-    BAR_HEIGHT, BUTTON_WIDTH, CLOSE_WIDTH, ENTRY, GAP, LEVEL_WIDTH, LINE, MILLISECONDS_PER_SECOND, PADDING, RADIUS, SEARCH_WIDTH, TAB_WIDTH, TABS, TIME_WIDTH,
-    Tab, level_colour, level_index,
+    BAR_HEIGHT, BUTTON_WIDTH, ENTRY, GAP, LEVEL_WIDTH, LINE, MILLISECONDS_PER_SECOND, PADDING, RADIUS, SEARCH_WIDTH, TAB_WIDTH, TABS, TIME_WIDTH, Tab,
+    WINDOW_BUTTON_WIDTH, level_colour, level_index,
 };
 use crate::browser::Browser;
+use crate::browser::glyphs::{chevron, close_glyph, maximise_glyph};
 use crate::browser::widgets::field;
 use crate::canvas::Canvas;
 use crate::console::{ConsoleTab, Level};
@@ -37,7 +39,12 @@ impl Browser {
             };
             tips.push((rect, words.into()));
         }
-        let close = format!("Close the console ({})", self.keys_named("Option+Cmd+I", "Ctrl+Shift+I"));
+        let minimise = if self.console.minimised() { "Restore the console's height" } else { "Minimise the console to its tabs" };
+        tips.push((self.console.minimise, minimise.into()));
+        let maximise = if self.console.maximised() { "Restore the console's height" } else { "Maximise the console: all the room the pages can spare" };
+        tips.push((self.console.maximise, maximise.into()));
+        let close =
+            format!("Close the console; {} opens it again ({})", self.keys_named("the View menu", "the menu"), self.keys_named("Option+Cmd+I", "Ctrl+Shift+I"));
         tips.push((self.console.close, close));
         if self.console.tab == Tab::Cookies {
             self.cookies_tips(tips);
@@ -58,14 +65,17 @@ impl Browser {
         outline(canvas, area, RULE);
         let bar = Rect::new(area.x0 + PADDING, area.y0 + GAP, area.x1 - PADDING, area.y0 + GAP + BAR_HEIGHT);
         self.draw_console_bar(canvas, bar);
+        if self.console.minimised() {
+            return;
+        }
 
         let list = Rect::new(area.x0 + PADDING, bar.y1 + GAP, area.x1 - PADDING, area.y1 - GAP);
         self.draw_console_entries(canvas, list);
     }
 
     /// The tab bar along `bar`: a tab for each of the console's tabs, the
-    /// close, Pause and Clear buttons, and the Log tab's levels and search
-    /// or the console's name.
+    /// minimise, maximise and close buttons, Pause and Clear, and the Log
+    /// tab's levels and search or the console's name.
     fn draw_console_bar<C: Canvas + ?Sized>(&mut self, canvas: &mut C, bar: Rect) {
         let mut x = bar.x0;
         for tab in TABS {
@@ -82,27 +92,26 @@ impl Browser {
             self.console.tabs.push((tab, rect));
             x = rect.x1 + GAP;
         }
-        self.console.close = Rect::new(bar.x1 - CLOSE_WIDTH, bar.y0, bar.x1, bar.y1);
+        self.draw_console_window_buttons(canvas, bar);
         // Pause and Clear are the entries'; the cookies' tab has its own controls, the figures none.
         let entries_shown = matches!(self.console.tab, Tab::Entries(_));
         let (clear, pause) = if entries_shown {
-            let clear = Rect::new(self.console.close.x0 - GAP - BUTTON_WIDTH, bar.y0, self.console.close.x0 - GAP, bar.y1);
+            let clear = Rect::new(self.console.minimise.x0 - GAP - BUTTON_WIDTH, bar.y0, self.console.minimise.x0 - GAP, bar.y1);
             (clear, Rect::new(clear.x0 - GAP - BUTTON_WIDTH, bar.y0, clear.x0 - GAP, bar.y1))
         } else {
             (Rect::default(), Rect::default())
         };
         (self.console.clear, self.console.pause) = (clear, pause);
-        let mut buttons = alloc::vec![(self.console.close, "\u{00D7}", false)];
         if entries_shown {
-            buttons.push((self.console.pause, if self.console.paused { "Resume" } else { "Pause" }, self.console.paused));
-            buttons.push((self.console.clear, "Clear", false));
+            for (rect, word, chosen) in
+                [(self.console.pause, if self.console.paused { "Resume" } else { "Pause" }, self.console.paused), (self.console.clear, "Clear", false)]
+            {
+                canvas.fill(rect, RADIUS, if chosen { SELECTED } else { BUTTON });
+                border(canvas, rect, 1.0, RULE);
+                centred(canvas, rect, word, ROW_TITLE, WHITE);
+            }
         }
-        for (rect, word, chosen) in buttons {
-            canvas.fill(rect, RADIUS, if chosen { SELECTED } else { BUTTON });
-            border(canvas, rect, 1.0, RULE);
-            centred(canvas, rect, word, ROW_TITLE, WHITE);
-        }
-        let leftmost = if entries_shown { self.console.pause.x0 } else { self.console.close.x0 };
+        let leftmost = if entries_shown { self.console.pause.x0 } else { self.console.minimise.x0 };
         let title = Rect::new(x + GAP, bar.y0, leftmost - GAP, bar.y1);
         self.console.levels.clear();
         self.console.search_field = Rect::ZERO;
@@ -134,6 +143,24 @@ impl Browser {
             left_centred(canvas, title, 0.0, "Console", HEADING, MUTED);
             canvas.pop_clip();
         }
+    }
+
+    /// Minimise, maximise and close at the right of `bar`, as a window's
+    /// buttons lie, drawn with the overview's glyphs: minimise's chevron
+    /// points up once it is minimised, as the overview's fold does, and
+    /// maximise's square becomes the restore glyph once it is maximised.
+    fn draw_console_window_buttons<C: Canvas + ?Sized>(&mut self, canvas: &mut C, bar: Rect) {
+        let close = Rect::new(bar.x1 - WINDOW_BUTTON_WIDTH, bar.y0, bar.x1, bar.y1);
+        let maximise = Rect::new(close.x0 - GAP - WINDOW_BUTTON_WIDTH, bar.y0, close.x0 - GAP, bar.y1);
+        let minimise = Rect::new(maximise.x0 - GAP - WINDOW_BUTTON_WIDTH, bar.y0, maximise.x0 - GAP, bar.y1);
+        (self.console.minimise, self.console.maximise, self.console.close) = (minimise, maximise, close);
+        for rect in [minimise, maximise, close] {
+            canvas.fill(rect, RADIUS, BUTTON);
+            border(canvas, rect, 1.0, RULE);
+        }
+        chevron(canvas, minimise, !self.console.minimised(), WHITE);
+        maximise_glyph(canvas, maximise, self.console.maximised(), BUTTON, WHITE);
+        close_glyph(canvas, close, WHITE);
     }
 
     /// The tab's entries in `list`, the newest at the foot, or the

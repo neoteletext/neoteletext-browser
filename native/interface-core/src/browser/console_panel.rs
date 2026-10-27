@@ -6,7 +6,9 @@
 //! (`cookies_tab.rs`), and a Stats tab of what the active channel has sent
 //! and received. What it shows is the trusted core's cleaned text, drawn
 //! as text and never interpreted. It can pause, which stops it scrolling,
-//! and clear; its grabber makes it taller or shorter (`resize.rs`).
+//! and clear; its grabber makes it taller or shorter, and its minimise and
+//! maximise buttons fold it to its tab bar or give it all the room the
+//! pages can spare (`resize.rs`, decision 120, browser issue #3).
 
 use alloc::collections::VecDeque;
 use alloc::vec::Vec;
@@ -37,7 +39,8 @@ const CONSOLE_HEIGHT: f64 = 260.0;
 const BAR_HEIGHT: f64 = 34.0;
 const TAB_WIDTH: f64 = 120.0;
 const BUTTON_WIDTH: f64 = 84.0;
-const CLOSE_WIDTH: f64 = 34.0;
+/// Minimise, maximise and close: squares as tall as the bar.
+const WINDOW_BUTTON_WIDTH: f64 = BAR_HEIGHT;
 const GAP: f64 = 6.0;
 const PADDING: f64 = 10.0;
 const LINE: f64 = 17.0;
@@ -63,6 +66,8 @@ pub(super) struct ConsoleUi {
     tabs: Vec<(Tab, Rect)>,
     pause: Rect,
     clear: Rect,
+    minimise: Rect,
+    maximise: Rect,
     close: Rect,
     /// The Log tab's levels not shown, in [`Level::ALL`]'s order.
     hidden: [bool; 3],
@@ -75,6 +80,8 @@ pub(super) struct ConsoleUi {
     stats: Vec<Stat>,
     /// Its height as the grabber left it (`resize.rs`).
     height: f64,
+    /// Minimised or maximised by its buttons, or at that height.
+    sizing: Sizing,
     /// Where the grabber is held, from the console's top edge, while it is pulled.
     grip: Option<f64>,
 }
@@ -93,6 +100,8 @@ impl Default for ConsoleUi {
             tabs: Vec::new(),
             pause: Rect::ZERO,
             clear: Rect::ZERO,
+            minimise: Rect::ZERO,
+            maximise: Rect::ZERO,
             close: Rect::ZERO,
             hidden: [false; 3],
             search: Editor::new(MAX_SEARCH),
@@ -101,9 +110,21 @@ impl Default for ConsoleUi {
             search_field: Rect::ZERO,
             stats: Vec::new(),
             height: CONSOLE_HEIGHT,
+            sizing: Sizing::Pulled,
             grip: None,
         }
     }
+}
+
+/// The console's height: as the grabber left it, folded to its tab bar by
+/// its minimise button, or as tall as the pages allow by its maximise
+/// button. Pressed again, either button restores the grabber's height,
+/// which neither changes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Sizing {
+    Pulled,
+    Minimised,
+    Maximised,
 }
 
 /// A level's place in [`Level::ALL`].
@@ -153,6 +174,12 @@ impl ConsoleUi {
     #[cfg(test)]
     pub(in crate::browser) const fn area(&self) -> Rect {
         self.area
+    }
+
+    /// Where its minimise, maximise and close buttons were last drawn.
+    #[cfg(test)]
+    pub(in crate::browser) const fn window_buttons(&self) -> [Rect; 3] {
+        [self.minimise, self.maximise, self.close]
     }
 
     fn keep(&mut self, entry: ConsoleEntry) {

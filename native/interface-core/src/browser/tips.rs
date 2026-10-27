@@ -294,6 +294,37 @@ mod tests {
         assert_eq!(browser.tip_shown(), Some("Close the overview; the View menu shows it again (Shift+Cmd+E)"));
     }
 
+    /// Decision 120: the console's minimise, maximise and close buttons
+    /// say what they do, each saying it restores once pressed, and close
+    /// names the menu and the shortcut that open the console again.
+    #[test]
+    fn the_consoles_window_buttons_have_their_tips() {
+        let mut browser = Browser::new(Frame { left_inset: 0.0, window_buttons: false });
+        browser.toggle_console();
+        draw(&mut browser, 0);
+        let mut now = 1_000;
+        let mut tip_of = |browser: &mut Browser, button: fn(&Browser) -> Rect| {
+            browser.pointer_moved(-1.0, -1.0, now);
+            draw(browser, now);
+            let rect = button(browser);
+            rest_on(browser, rect, now);
+            now += TIP_DELAY_MILLISECONDS;
+            assert!(browser.tips_settle(now));
+            String::from(browser.tip_shown().unwrap_or_default())
+        };
+        let minimise: fn(&Browser) -> Rect = |browser| browser.console.window_buttons()[0];
+        let maximise: fn(&Browser) -> Rect = |browser| browser.console.window_buttons()[1];
+        let close: fn(&Browser) -> Rect = |browser| browser.console.window_buttons()[2];
+        assert_eq!(tip_of(&mut browser, minimise), "Minimise the console to its tabs");
+        assert_eq!(tip_of(&mut browser, maximise), "Maximise the console: all the room the pages can spare");
+        assert_eq!(tip_of(&mut browser, close), "Close the console; the View menu opens it again (Option+Cmd+I)");
+        for (button, before) in [(minimise, "Minimise the console to its tabs"), (maximise, "Maximise the console: all the room the pages can spare")] {
+            assert_eq!(tip_of(&mut browser, button), before);
+            browser.pointer_pressed(&mut Recorder::new(), false, 0);
+            assert_eq!(tip_of(&mut browser, button), "Restore the console's height");
+        }
+    }
+
     /// Elsewhere than macOS, the shortcuts are Control's.
     #[test]
     fn tips_name_each_platforms_shortcut() {
@@ -301,6 +332,19 @@ mod tests {
         draw(&mut browser, 0);
         let texts: Vec<String> = browser.tips.drawn.iter().map(|tip| tip.text.clone()).collect();
         for expected in ["Reload: open this channel afresh (Ctrl+R)", "Home: open the home page (Alt+Home)", "Settings (Ctrl+,)", "Minimise"] {
+            assert!(texts.iter().any(|text| text == expected), "{expected} in {texts:?}");
+        }
+    }
+
+    /// Decision 120: elsewhere than macOS, the console's close button names
+    /// the browser's menu and Control's shortcut.
+    #[test]
+    fn the_consoles_close_tip_names_each_platforms_shortcut() {
+        let mut browser = Browser::new(Frame { left_inset: 0.0, window_buttons: true });
+        browser.toggle_console();
+        draw(&mut browser, 0);
+        let texts: Vec<String> = browser.tips.drawn.iter().map(|tip| tip.text.clone()).collect();
+        for expected in ["Close the console; the menu opens it again (Ctrl+Shift+I)", "Minimise the console to its tabs"] {
             assert!(texts.iter().any(|text| text == expected), "{expected} in {texts:?}");
         }
     }

@@ -1,3 +1,4 @@
+use super::resize::{MIN_PAGES_HEIGHT, MINIMISED_HEIGHT};
 use super::*;
 use alloc::format;
 use alloc::vec::Vec;
@@ -214,4 +215,115 @@ fn the_stats_tab_shows_the_figures_it_was_sent() {
         assert!(shown.iter().any(|shown| shown == text), "{text} in {shown:?}");
     }
     assert!(!shown.iter().any(|shown| shown == "Pause" || shown == "Clear"), "{shown:?}");
+}
+
+/// Decision 120 (browser issue #3): the minimise button, left of maximise
+/// and close, folds the console to its tab bar, as the overview folds to
+/// its heading, and gives the pages its room; pressed again, it restores
+/// the height the console had.
+#[test]
+fn the_minimise_button_folds_the_console_to_its_tabs_and_restores_it() {
+    let mut browser = open();
+    texts(&mut browser);
+    let before = browser.console.area;
+    let list_bottom = browser.regions.list.y1;
+    let (minimise, maximise, close) = (browser.console.minimise, browser.console.maximise, browser.console.close);
+    assert!(minimise.x1 < maximise.x0 && maximise.x1 < close.x0, "minimise, maximise, close: {minimise:?} {maximise:?} {close:?}");
+    press(&mut browser, minimise);
+    let shown = texts(&mut browser);
+    let area = browser.console.area;
+    assert!((area.height() - (GAP + BAR_HEIGHT + GAP)).abs() < 1e-9, "its tab bar alone: {area:?}");
+    assert!((area.y1 - before.y1).abs() < 1e-9, "its bottom stays");
+    assert!(shown.contains(&"Network 0".into()) && !shown.contains(&"Nothing yet".into()), "its tabs and no entries: {shown:?}");
+    assert!((browser.regions.list.y1 - (list_bottom + before.height() - area.height())).abs() < 1e-9, "the pages take its room");
+    let minimise = browser.console.minimise;
+    press(&mut browser, minimise);
+    texts(&mut browser);
+    assert_eq!(browser.console.area, before, "restored");
+}
+
+/// Decision 120: the maximise button gives the console the body's height
+/// less the pages' minimum; minimised from there and maximised again, it
+/// is as tall again, and pressed once more it restores the height it had.
+#[test]
+fn the_maximise_button_gives_the_console_all_the_pages_can_spare_and_restores_it() {
+    let mut browser = open();
+    texts(&mut browser);
+    let before = browser.console.area;
+    let maximise = browser.console.maximise;
+    press(&mut browser, maximise);
+    texts(&mut browser);
+    let tallest = browser.console.area;
+    assert!((tallest.y0 - (browser.body.y0 + MIN_PAGES_HEIGHT)).abs() < 1e-9, "the body less the pages' minimum: {tallest:?}");
+    assert!((tallest.y1 - before.y1).abs() < 1e-9, "its bottom stays");
+    let minimise = browser.console.minimise;
+    press(&mut browser, minimise);
+    texts(&mut browser);
+    assert!((browser.console.area.height() - MINIMISED_HEIGHT).abs() < 1e-9, "minimised from maximised");
+    let maximise = browser.console.maximise;
+    press(&mut browser, maximise);
+    texts(&mut browser);
+    assert_eq!(browser.console.area, tallest, "maximised from minimised");
+    let maximise = browser.console.maximise;
+    press(&mut browser, maximise);
+    texts(&mut browser);
+    assert_eq!(browser.console.area, before, "restored");
+}
+
+/// Decision 120: the pointer is a hand over the console's minimise,
+/// maximise and close buttons, as over the overview's.
+#[test]
+fn the_hand_shows_over_the_consoles_window_buttons() {
+    let mut browser = open();
+    texts(&mut browser);
+    for button in [browser.console.minimise, browser.console.maximise, browser.console.close] {
+        browser.pointer_moved(f64::midpoint(button.x0, button.x1), f64::midpoint(button.y0, button.y1), 0);
+        assert_eq!(browser.cursor(), crate::browser::pointer::Cursor::Hand, "{button:?}");
+    }
+}
+
+/// Decision 120: the grabber, pulled, leaves a minimised or a maximised
+/// console from the height it shows; pressed and let go without a pull,
+/// it leaves either as it was. The buttons then restore the pulled height.
+#[test]
+fn the_grabber_leaves_minimised_and_maximised() {
+    fn pull(browser: &mut Browser, by: Option<f64>) {
+        let grabber = browser.regions.console_grabber;
+        let (x, y) = (f64::midpoint(grabber.x0, grabber.x1), f64::midpoint(grabber.y0, grabber.y1));
+        browser.pointer_moved(x, y, 0);
+        browser.pointer_pressed(&mut Recorder::new(), false, 0);
+        if let Some(by) = by {
+            browser.pointer_moved(x, y + by, 0);
+        }
+        browser.pointer_released();
+        texts(browser);
+    }
+    let mut browser = open();
+    texts(&mut browser);
+    let minimise = browser.console.minimise;
+    press(&mut browser, minimise);
+    texts(&mut browser);
+    pull(&mut browser, None);
+    assert!(browser.console.minimised(), "a press alone leaves it minimised");
+    pull(&mut browser, Some(-100.0));
+    assert!(!browser.console.minimised());
+    assert!((browser.console.area.height() - (MINIMISED_HEIGHT + 100.0)).abs() < 1e-9, "100 above its tab bar: {:?}", browser.console.area);
+
+    let maximise = browser.console.maximise;
+    press(&mut browser, maximise);
+    texts(&mut browser);
+    let tallest = browser.console.area.height();
+    pull(&mut browser, None);
+    assert!(browser.console.maximised(), "a press alone leaves it maximised");
+    pull(&mut browser, Some(100.0));
+    assert!(!browser.console.maximised());
+    assert!((browser.console.area.height() - (tallest - 100.0)).abs() < 1e-9, "100 below the tallest: {:?}", browser.console.area);
+
+    let pulled = browser.console.area;
+    for _ in 0..2 {
+        let maximise = browser.console.maximise;
+        press(&mut browser, maximise);
+        texts(&mut browser);
+    }
+    assert_eq!(browser.console.area, pulled, "maximise restores the height pulled");
 }

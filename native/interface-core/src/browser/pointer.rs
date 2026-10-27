@@ -53,8 +53,9 @@ impl Browser {
     }
 
     /// The pointer's shape where it is: the column-resize shape over the
-    /// divider, a hand over a page a click would zoom or choose and over
-    /// the overview's fold button, the arrow elsewhere.
+    /// divider, a hand over a page a click would zoom or choose, over the
+    /// overview's fold and close buttons and over the console's minimise,
+    /// maximise and close buttons, the arrow elsewhere.
     #[must_use]
     pub fn cursor(&self) -> Cursor {
         if self.over_divider() {
@@ -72,6 +73,7 @@ impl Browser {
         }
         let over_toggle = self.regions.overview_toggle.contains(self.pointer)
             || self.regions.overview_close.contains(self.pointer)
+            || self.console.over_window_button(self.pointer)
             || self.hovered_row.is_some()
             || self.hovered_bank.is_some();
         if self.wall.over_page() || self.previewed.is_some() || over_toggle { Cursor::Hand } else { Cursor::Arrow }

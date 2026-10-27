@@ -1,13 +1,14 @@
 //! The vector glyphs the window draws itself, so that no icon font is
-//! needed: the overview's chevron, Back's and Forward's arrows, the
-//! speaker, the padlock, the house, the reload arrow, the gear and the
-//! star, each with the measurements it is drawn from.
+//! needed: the overview's chevron, the panels' close cross and the
+//! console's maximise and restore squares, Back's and Forward's arrows,
+//! the speaker, the padlock, the house, the reload arrow, the gear and
+//! the star, each with the measurements it is drawn from.
 
 use alloc::vec::Vec;
 
 use crate::canvas::Canvas;
 use crate::geometry::{Point, Rect};
-use crate::text::cross;
+use crate::text::{border, cross};
 use crate::theme::{BUTTON, Colour, FIELD};
 
 pub(super) const WINDOW_GLYPH: f64 = 14.0;
@@ -53,6 +54,17 @@ pub(super) const GEAR_HUB: f64 = 3.5;
 pub(super) const CHEVRON_WIDTH: f64 = 12.0;
 pub(super) const CHEVRON_HEIGHT: f64 = 6.0;
 pub(super) const CHEVRON_THICKNESS: f64 = 2.5;
+/// A docked panel's close cross, as wide as the chevron beside it,
+/// reaching half the glyph each way, as the zoomed page's does.
+pub(super) const CLOSE_GLYPH: f64 = CHEVRON_WIDTH;
+pub(super) const CLOSE_THICKNESS: f64 = CHEVRON_THICKNESS;
+/// The console's maximise square, as wide as the chevron and the cross
+/// beside it, its lines thinner than theirs since a square's edges are
+/// straight; restored, a second square sits behind it this far up and to
+/// the right, as the common desktops draw their restore button.
+pub(super) const MAXIMISE_GLYPH: f64 = CHEVRON_WIDTH;
+pub(super) const MAXIMISE_THICKNESS: f64 = 2.0;
+pub(super) const RESTORE_OFFSET: f64 = 3.0;
 
 /// A chevron in `rect`, pointing down or up.
 pub(super) fn chevron<C: Canvas + ?Sized>(canvas: &mut C, rect: Rect, down: bool, colour: Colour) {
@@ -71,6 +83,29 @@ pub(super) fn chevron<C: Canvas + ?Sized>(canvas: &mut C, rect: Rect, down: bool
         ],
         colour,
     );
+}
+
+/// A docked panel's close cross, centred in `rect`.
+pub(super) fn close_glyph<C: Canvas + ?Sized>(canvas: &mut C, rect: Rect, colour: Colour) {
+    cross(canvas, Point::new(f64::midpoint(rect.x0, rect.x1), f64::midpoint(rect.y0, rect.y1)), CLOSE_GLYPH / 2.0, CLOSE_THICKNESS, colour);
+}
+
+/// The maximise square centred in `rect`, or, once maximised, the restore
+/// glyph: a smaller square in front of another, the front one filled
+/// with the button's `background` so it hides the back one's corner.
+pub(super) fn maximise_glyph<C: Canvas + ?Sized>(canvas: &mut C, rect: Rect, maximised: bool, background: Colour, colour: Colour) {
+    let centre = Point::new(f64::midpoint(rect.x0, rect.x1), f64::midpoint(rect.y0, rect.y1));
+    let half = MAXIMISE_GLYPH / 2.0;
+    let square = Rect::new(centre.x - half, centre.y - half, centre.x + half, centre.y + half);
+    if !maximised {
+        border(canvas, square, MAXIMISE_THICKNESS, colour);
+        return;
+    }
+    let back = Rect::new(square.x0 + RESTORE_OFFSET, square.y0, square.x1, square.y1 - RESTORE_OFFSET);
+    let front = Rect::new(square.x0, square.y0 + RESTORE_OFFSET, square.x1 - RESTORE_OFFSET, square.y1);
+    border(canvas, back, MAXIMISE_THICKNESS, colour);
+    canvas.fill(front, 0.0, background);
+    border(canvas, front, MAXIMISE_THICKNESS, colour);
 }
 
 /// A left- or right-pointing arrow centred in `rect`.

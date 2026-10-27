@@ -8,12 +8,12 @@ use alloc::format;
 
 use crate::browser::Browser;
 use crate::browser::frames::{PULSE_MILLISECONDS, PULSE_SCALE};
-use crate::browser::glyphs::chevron;
+use crate::browser::glyphs::{chevron, close_glyph};
 use crate::browser::window::{HEADING_HEIGHT, MARGIN, PADDING};
 use crate::canvas::{Canvas, PAGE_HEIGHT, PAGE_WIDTH, SCREEN_SCALE, draw_page_on_screen};
 use crate::channel::{BANKS, PAGES, PAGES_PER_BANK, Status, bank_indices, page_index};
 use crate::geometry::{Point, Rect};
-use crate::text::{border, centred, cross, left_centred, outline};
+use crate::text::{border, centred, left_centred, outline};
 use crate::theme::{
     AXIS, BANK_COLOURS, BLACK, BUTTON, CELL_AVAILABLE, CELL_EMPTY, CELL_PULSE, HEADING, LEGEND, MUTED, PANEL, RULE, SELECTED, UPDATED, WHITE, YELLOW, mix,
 };
@@ -36,11 +36,8 @@ const UPDATE_DOT_INSET: f64 = 0.25;
 /// The button at the overview's top right that folds it into the footer
 /// and opens it again, with its chevron.
 const TOGGLE_SIZE: f64 = 28.0;
-/// The close button beside it, the same size, with this gap between them;
-/// its cross reaches half the glyph each way, as the zoomed page's does.
+/// The close button beside it, the same size, with this gap between them.
 const CLOSE_GAP: f64 = 6.0;
-const CLOSE_GLYPH: f64 = 12.0;
-const CLOSE_THICKNESS: f64 = 2.5;
 /// A page under the pointer in the overview pops up at its native size,
 /// this far above its cell, with a shadow offset as the wall's hover.
 const PREVIEW_GAP: f64 = 8.0;
@@ -137,7 +134,7 @@ impl Browser {
         chevron(canvas, toggle, !self.overview.folded, WHITE);
         canvas.fill(close, 0.0, BUTTON);
         outline(canvas, close, RULE);
-        cross(canvas, Point::new(f64::midpoint(close.x0, close.x1), f64::midpoint(close.y0, close.y1)), CLOSE_GLYPH / 2.0, CLOSE_THICKNESS, WHITE);
+        close_glyph(canvas, close, WHITE);
         if self.overview.folded {
             return;
         }

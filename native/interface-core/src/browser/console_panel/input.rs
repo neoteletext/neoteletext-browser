@@ -32,6 +32,10 @@ impl Browser {
         self.stop_console_search();
         if let Some(&(tab, _)) = self.console.tabs.iter().find(|(_, rect)| rect.contains(point)) {
             self.choose_console_tab(tab);
+        } else if self.console.minimise.contains(point) {
+            self.console.toggle_minimised();
+        } else if self.console.maximise.contains(point) {
+            self.console.toggle_maximised();
         } else if self.console.close.contains(point) {
             self.toggle_console();
         } else if self.console.tab == Tab::Cookies {
@@ -88,6 +92,10 @@ impl Browser {
     pub(in crate::browser) fn console_scroll(&mut self, distance: f64) -> bool {
         if !self.console.open || !self.console.area.contains(self.pointer) {
             return false;
+        }
+        // Minimised, its entries are not shown to scroll.
+        if self.console.minimised() {
+            return true;
         }
         #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss, reason = "a few lines of wheel")]
         let lines = libm::ceil(distance.abs() / LINE) as usize;

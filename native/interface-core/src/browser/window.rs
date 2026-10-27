@@ -35,8 +35,9 @@ impl Browser {
         // The docked remote narrows the content (decision 68).
         let right = width - MARGIN - self.remote_docked_width(now);
         self.body = Rect::new(MARGIN, body_top, right, height - MARGIN);
-        // The console docks where the overview is; the overview hidden
-        // from the View menu gives its room to the pages.
+        // The console docks where the overview is, minimised to its tab
+        // bar or maximised to all the pages can spare (decision 120); the
+        // overview hidden from the View menu gives its room to the pages.
         let overview_height = if self.console.open() {
             self.console_height(body_top, height - MARGIN)
         } else if self.overview.hidden {
