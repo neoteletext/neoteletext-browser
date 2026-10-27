@@ -17,9 +17,9 @@ use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
 use interface_core::canvas::PageKey;
+use neoteletext_input::caps::PAGE_CAP;
 use neoteletext_input::control::{Control, FRAGMENT_DATA, from_packet};
 use neoteletext_input::event::{Event, Item};
-use neoteletext_input::modes::PAGE_CAP;
 use neoteletext_input::session::Session;
 use protocol::fetcher::{FromFetcher, Origin, ToFetcher, read_from_fetcher, write_to_fetcher};
 
@@ -70,7 +70,7 @@ fn programs() -> (PathBuf, PathBuf) {
 /// `item` as the receiver's session encodes it.
 fn message(session: &mut Session, item: &Item<'_>) -> Vec<u8> {
     let mut out = [0; neoteletext_input::MAX_MESSAGE];
-    let length = session.send(item, Some(PAGE), 0, &mut out).unwrap();
+    let length = session.send(item, 0, &mut out).unwrap();
     assert!(length > 0, "{item:?} went");
     out[..length].to_vec()
 }

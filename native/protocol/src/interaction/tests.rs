@@ -37,6 +37,7 @@ fn every_intent_round_trips() {
         Intent::Wheel { dx: 0, dy: -120, at: at(0, 0) },
         Intent::Paste("line one\nline two\t".into()),
         Intent::Compose { cursor: 1, text: "にほ".into() },
+        Intent::Hover { leave: true, column: 2, row: 20 },
         Intent::Compose { cursor: 0, text: String::new() },
     ] {
         round_trip(intent).unwrap();
@@ -83,14 +84,13 @@ fn editing_round_trips_and_only_as_a_flag() {
 }
 
 #[test]
-fn typing_round_trips_and_a_bad_cursor_or_mode_is_refused() {
+fn typing_round_trips_and_a_bad_cursor_is_refused() {
     let typing = Typing {
         channel: 3,
         page: 0x200,
         on: true,
         secure: false,
         refused: false,
-        modes: neoteletext_input::modes::MOUSE_BUTTONS,
         cursor: Some(CursorState { row: 5, column: 6, width: 10, flags: cursor::ECHO }),
         acked: 40,
         round_trip_ms: Some(12),
@@ -105,7 +105,6 @@ fn typing_round_trips_and_a_bad_cursor_or_mode_is_refused() {
     assert_eq!(read_typing(&mut Fields::new(&payload)).unwrap(), refused);
     let bad = Typing { cursor: Some(CursorState { row: 24, column: 0, width: 0, flags: 0 }), ..typing.clone() };
     assert!(push_typing(&mut Vec::new(), &bad).is_err());
-    assert!(push_typing(&mut Vec::new(), &Typing { modes: 256, ..typing }).is_err());
 }
 
 /// REQ-INT-133: the fetcher takes whole items of the stream, at most

@@ -233,12 +233,12 @@ The browser is never patched (requirement 2.5); the option goes through the engi
 
 ### 9.3 The look under the pointer (decision 117)
 
-Besides its underline, a link under the pointer is drawn **hovered**, and while the main button that went down on it is held, **pressed**. A page's controls (INPUT.md section 7.3: buttons and list rows, declared by its control triplets) take the same looks, and the hand pointer, in place of links while a mouse mode is in force, since a click then goes to the channel.
+Besides its underline, a link under the pointer is drawn **hovered**, and while the main button that went down on it is held, **pressed**. A page's controls (INPUT.md section 7.3: buttons and list rows, declared by its control triplets) take the same looks, and the hand pointer, in place of links while keys go to the page's channel, since a click then goes to it.
 
 - **Hover:** each colour of the cells moves to the same entry of the adjacent CLUT (index exclusive-or 8: CLUT 0 with 1, 2 with 3), the pairing of Table 29's colour flash. With Table 30's colours that is the half-intensity colour; a page that wants other hover colours defines CLUTs 2 and 3 (X/28/0 Format 1) and draws its links and controls from them.
 - **Pressed:** the hover colours with foreground and background exchanged, as Invert Colour exchanges them; a cell already inverted is turned back.
 - **Who draws it:** the interface finds the area under the pointer from the open page's latest links, whichever image they came with, and asks the trusted core (`ToCore::Lit`). The trusted core checks the area is a link or a control of the latest image of the page open in the active tab, and tells the page's decoder (`ToDecoder::Look`), which draws the look on the page's own cells with the engine's `controls::apply_look` before the rows that changed are found. The look's new image comes with the same links, so the look does not go out while they follow it.
-- **Nothing leaves:** the channel is sent nothing for a look; it learns of the pointer only what its mouse mode asks.
+- **Nothing leaves:** the channel is sent nothing for a look; the moves it receives are the input protocol's own (INPUT.md section 6.3), not the look's.
 
 ## 10. Using links
 

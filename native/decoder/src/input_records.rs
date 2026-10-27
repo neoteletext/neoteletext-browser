@@ -11,8 +11,7 @@ pub struct InputRecords {
     /// Cursor records' bodies (REQ-INT-005, REQ-INT-110), from packets and
     /// `CU` lines.
     pub cursors: Vec<[u8; neoteletext_input::cursor::BODY]>,
-    /// Control messages' bodies (REQ-INT-111), from packets, and a page's
-    /// `IM` line as `PAGE_MODES` (REQ-INT-114).
+    /// Control messages' bodies (REQ-INT-111), from packets.
     pub controls: Vec<Vec<u8>>,
 }
 
@@ -28,10 +27,6 @@ impl InputRecords {
         if let Some(Ok(message)) = control::from_packet(packet, &mut buffer) {
             self.control(&message);
         }
-    }
-
-    pub(crate) fn page_modes(&mut self, page: u16, modes: u32) {
-        self.control(&neoteletext_input::control::Control::PageModes { page, modes });
     }
 
     fn control(&mut self, message: &neoteletext_input::control::Control<'_>) {

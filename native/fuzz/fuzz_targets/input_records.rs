@@ -41,7 +41,6 @@ fuzz_target!(|data: &[u8]| {
                     assert!((1..=23).contains(&cursor.row) && cursor.column < 40);
                     assert!(usize::from(cursor.column) + usize::from(cursor.width) <= 40);
                 }
-                assert_eq!(state.modes & !neoteletext_input::modes::ALL_MODES, 0);
             }
         }
     }

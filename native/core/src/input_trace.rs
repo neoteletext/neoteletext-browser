@@ -84,6 +84,7 @@ fn describe(item: &Item<'_>) -> String {
         Event::Compose { text, .. } => format!("COMPOSE {} chars", text.chars().count()),
         Event::Hello { version, .. } => format!("HELLO v{version}"),
         Event::Page(page) => format!("PAGE {page:03X}"),
+        Event::Hover { leave, column, row } => format!("HOVER {} {column},{row}", if *leave { "leave" } else { "enter" }),
         Event::Extension { kind, .. } => format!("EXTENSION {kind:#04x}"),
     }
 }

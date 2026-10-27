@@ -173,6 +173,9 @@ pub enum FromDecoder {
         numbers: Vec<crate::links::NumberLink>,
         /// Its controls (INPUT.md section 7.3), as the engine found them.
         controls: Vec<crate::links::Area>,
+        /// Its pointer areas (INPUT.md section 7.4); the whole page is one
+        /// area of every row and column.
+        pointer_areas: Vec<crate::links::Area>,
         /// Its coloured keys and Index, from packet X/27/0.
         fastext: crate::links::Fastext,
     },
@@ -345,10 +348,10 @@ pub fn write_to_core(out: &mut dyn Write, message: &FromDecoder) -> Result<(), P
             KIND_AUDIO
         }
         #[cfg(feature = "links")]
-        FromDecoder::Links { page, with_image, candidates, numbers, controls, fastext } => {
+        FromDecoder::Links { page, with_image, candidates, numbers, controls, pointer_areas, fastext } => {
             payload.extend_from_slice(&page.to_be_bytes());
             payload.push(u8::from(*with_image));
-            crate::links::push_found(&mut payload, candidates, numbers, controls)?;
+            crate::links::push_found(&mut payload, (candidates, numbers, controls, pointer_areas))?;
             crate::links::push_fastext(&mut payload, fastext)?;
             KIND_LINKS
         }
@@ -434,9 +437,9 @@ pub fn read_from_decoder(input: &mut dyn Read) -> Result<Option<FromDecoder>, Pr
         KIND_LINKS => {
             let page = fields.display_page()?;
             let with_image = fields.flag("with image")?;
-            let (candidates, numbers, controls) = crate::links::read_found(&mut fields)?;
+            let (candidates, numbers, controls, pointer_areas) = crate::links::read_found(&mut fields)?;
             let fastext = crate::links::read_fastext(&mut fields)?;
-            FromDecoder::Links { page, with_image, candidates, numbers, controls, fastext }
+            FromDecoder::Links { page, with_image, candidates, numbers, controls, pointer_areas, fastext }
         }
         KIND_SUBPAGE_TITLES => {
             let page = fields.display_page()?;

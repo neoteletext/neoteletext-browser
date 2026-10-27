@@ -3,7 +3,7 @@
 //! the typing state back, and the encoded input messages the trusted core
 //! gives a fetcher. The interface never encodes the protocol
 //! (REQ-INT-132): an intent is the browser's own message, which the
-//! trusted core checks whole, applies the session's modes to and encodes.
+//! trusted core checks whole and encodes.
 
 mod intent;
 #[cfg(test)]
@@ -50,13 +50,13 @@ fn check(intent: &Intent) -> Result<(), ProtocolError> {
     let longest = match intent {
         Intent::Text(text) | Intent::Paste(text) | Intent::Compose { text, .. } => text.len(),
         Intent::Key { text, .. } => text.as_ref().map_or(0, String::len),
-        Intent::Mouse { .. } | Intent::Wheel { .. } => 0,
+        Intent::Mouse { .. } | Intent::Wheel { .. } | Intent::Hover { .. } => 0,
     };
     let bound = match intent {
         Intent::Text(_) | Intent::Paste(_) => MAX_PASTE,
         Intent::Key { .. } => MAX_KEY_TEXT,
         Intent::Compose { .. } => MAX_COMPOSE,
-        Intent::Mouse { .. } | Intent::Wheel { .. } => 0,
+        Intent::Mouse { .. } | Intent::Wheel { .. } | Intent::Hover { .. } => 0,
     };
     if longest > bound || matches!(intent, Intent::Text(text) if text.is_empty()) {
         return Err(ProtocolError::BadValue("intent"));
@@ -104,9 +104,6 @@ pub struct Typing {
     /// The channel did not answer HELLO in time, or refused: it takes no
     /// input, and the strip says so.
     pub refused: bool,
-    /// The input modes in force on the open page (INPUT.md section 6.3):
-    /// whether clicks, the wheel, releases and composition go.
-    pub modes: u32,
     /// The cursor the channel placed on this page, if any.
     pub cursor: Option<CursorState>,
     /// The interface's number of the last intent the channel acted on.

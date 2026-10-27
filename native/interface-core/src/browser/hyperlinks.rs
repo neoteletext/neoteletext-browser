@@ -57,6 +57,8 @@ pub(super) struct LinkUi {
     lit: Option<Lit>,
     /// The area the main button went down on, while it is held.
     pressing: Option<Area>,
+    /// The control the channel was last told the pointer is on (HOVER).
+    hovered_control: Option<(PageKey, Area)>,
 }
 
 impl LinkUi {
@@ -163,6 +165,16 @@ impl Browser {
         Some((key, area?))
     }
 
+    /// Whether the pointer is in a pointer area of the open page, by its
+    /// latest links (INPUT.md section 7.4): a move with no button held then
+    /// goes to the channel. Only typing sends moves.
+    #[cfg(feature = "interaction")]
+    pub(super) fn in_pointer_area(&self) -> bool {
+        let Some((key, rect)) = self.wall.open() else { return false };
+        let Some((column, row)) = cell_in(rect, self.pointer) else { return false };
+        self.links.pages.get(&key).is_some_and(|links| links.in_pointer_area(column, row))
+    }
+
     /// Whether a click on the open page goes to its channel.
     #[cfg_attr(not(feature = "interaction"), expect(clippy::unused_self, reason = "without typing no click is the channel's; one method serves both builds"))]
     fn clicks_are_hosts(&self) -> bool {
@@ -175,10 +187,27 @@ impl Browser {
     /// Asks for the look under the pointer when it changed: hover, or
     /// pressed while the button that went down on the same area is held.
     pub(super) fn relight(&mut self) {
-        let wanted = self.area_under_pointer().map(|(key, area)| Lit { key, area, pressed: self.links.pressing == Some(area) });
+        let under = self.area_under_pointer();
+        let wanted = under.map(|(key, area)| Lit { key, area, pressed: self.links.pressing == Some(area) });
         if wanted != self.links.lit {
             self.links.lit = wanted;
             self.outputs.push(Output::Lit(wanted));
+        }
+        // The channel is told as the pointer enters and leaves its controls
+        // (INPUT.md section 5.4's HOVER): only while a click is its, when
+        // what is under the pointer is a control.
+        let control = under.filter(|_| self.clicks_are_hosts());
+        if control != self.links.hovered_control {
+            #[cfg(feature = "interaction")]
+            {
+                if let Some((key, area)) = self.links.hovered_control {
+                    self.terminal_hover(key, area.column, area.row, true);
+                }
+                if let Some((key, area)) = control {
+                    self.terminal_hover(key, area.column, area.row, false);
+                }
+            }
+            self.links.hovered_control = control;
         }
     }
 

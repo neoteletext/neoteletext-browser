@@ -142,5 +142,9 @@ Typing tells the channel the viewer's keys and the pages they open, which is wha
 
 ## 10. Controls (decision 117)
 
-Controls (INPUT.md section 7.3) change nothing about where input goes: a click on one is the MOUSE event the channel's mouse mode already asks for, at its cell, and a page without a mouse mode shows none. What they add, the control rectangles from the decoder and the look the interface asks for, is analysed in `hyperlinks-security.md` section 16. The pointer's movement stays the viewer's: the browser draws the looks itself and sends the channel nothing for them, so a page lights under the pointer without asking for MOUSE_ALL, which the kit's own hover used to need.
+Controls (INPUT.md section 7.3) change nothing about where input goes: a click on one is the MOUSE event every click over the page sends, at its cell, and while keys do not go to the channel a page shows none. What they add, the control rectangles from the decoder and the look the interface asks for, is analysed in `hyperlinks-security.md` section 16. The browser draws the looks itself and sends the channel nothing for them.
+
+## 11. No input modes (decision 118)
+
+Since decision 118 a channel learns every press and release of the pointer over its own page while keys go to it, with the cell and the dot; its drags; and its plain moves only within the pointer areas its page declares (INPUT.md section 7.4), which the trusted core checks itself, so a compromised interface cannot widen them. It learns nothing of the pointer anywhere else: not over the browser's own parts, another tab, or a page whose channel keys do not go to. Moves are sent only when the dot changes and are not counted against the rate of REQ-INT-109, so a moving pointer can never crowd out a key. Every key now goes as KEY with its text, releases included; what a channel learns of typing rhythm is unchanged, since it already received every key.
 

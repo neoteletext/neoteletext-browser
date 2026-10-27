@@ -5,8 +5,8 @@
 use std::collections::BTreeMap;
 use std::fmt::Write as _;
 
+use neoteletext_input::caps::{CURSOR_CAP, ECHO_CAP, PAGE_CAP};
 use neoteletext_input::cursor::NO_CURSOR;
-use neoteletext_input::modes::{ALL_KEYS, BASE_KEY, CURSOR_CAP, ECHO_CAP, KEY_RELEASE, MOUSE_BUTTONS, PAGE_CAP};
 
 // EN 300 706 Table 26: the spacing attributes used here.
 pub(super) const ALPHA_RED: u8 = 0x01;
@@ -71,26 +71,23 @@ impl Row {
 }
 
 /// What the channel uses of what a receiver offers (INPUT.md section 6.2):
-/// pages, the cursor and echo, and the modes its pages ask for.
-pub(super) const USED: u32 = PAGE_CAP | CURSOR_CAP | ECHO_CAP | ALL_KEYS | KEY_RELEASE | BASE_KEY | MOUSE_BUTTONS;
+/// pages, the cursor and echo.
+pub(super) const USED: u32 = PAGE_CAP | CURSOR_CAP | ECHO_CAP;
 
-/// A page as TTI: its rows, its cursor record as a `CU` line and the
-/// input modes it asks for as an `IM` line.
+/// A page as TTI: its rows and its cursor record as a `CU` line.
 pub(super) struct Page {
     number: u16,
     rows: BTreeMap<u8, Row>,
     cursor: Option<(u8, u8, u8, u8)>,
     /// The input count acted on (INPUT.md section 7.1).
     acked: u16,
-    /// The page's own input modes while it is open (REQ-INT-114).
-    modes: u32,
     /// `LT` lines: a run of text that is a link.
     links: Vec<String>,
 }
 
 impl Page {
     pub(super) fn new(number: u16, title: &str) -> Self {
-        let mut page = Self { number, rows: BTreeMap::new(), cursor: None, acked: 0, modes: page_modes(number), links: Vec::new() };
+        let mut page = Self { number, rows: BTreeMap::new(), cursor: None, acked: 0, links: Vec::new() };
         page.row(0, Row::new().at(8).code(ALPHA_YELLOW).text(&format!("NEOTELETEXT TERMINAL {number:03X}")));
         // Row 1 is double height, so row 2 is its lower half.
         page.row(1, Row::new().code(ALPHA_BLUE).code(NEW_BACKGROUND).code(ALPHA_YELLOW).code(DOUBLE_HEIGHT).text(&title.to_uppercase()));
@@ -140,21 +137,6 @@ impl Page {
         // with no cursor still acknowledges the keys, for the round trip.
         let (row, column, width, flags) = self.cursor.unwrap_or((NO_CURSOR, 0, 0, 0));
         let _ = write!(out, "CU,{row},{column},{width},{flags},{}\r\n", self.acked);
-        if self.modes != 0 {
-            let _ = write!(out, "IM,{}\r\n", self.modes);
-        }
         out
-    }
-}
-
-/// The input modes each page asks for (INPUT.md section 6.4): the game
-/// its arrows' releases; the piano every key, its releases and where it
-/// is, so A to K play on any layout; the links page a click.
-fn page_modes(number: u16) -> u32 {
-    match number {
-        0x300 => KEY_RELEASE,
-        0x400 => ALL_KEYS | KEY_RELEASE | BASE_KEY,
-        0x500 => MOUSE_BUTTONS,
-        _ => 0,
     }
 }

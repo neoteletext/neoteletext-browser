@@ -14,9 +14,9 @@ use std::borrow::Cow;
 use std::collections::{BTreeMap, VecDeque};
 
 use interface_core::canvas::PageKey;
+use neoteletext_input::caps::{CURSOR_CAP, ECHO_CAP, PAGE_CAP};
 use neoteletext_input::cursor::Cursor;
-use neoteletext_input::event::{self, ALT, Action, CONTROL, Event, HYPER, Item, META, SUPER};
-use neoteletext_input::modes::{ALL_KEYS, ALL_MODES, CURSOR_CAP, ECHO_CAP, PAGE_CAP};
+use neoteletext_input::event::{self, Event, Item};
 use neoteletext_input::session::{Session, State};
 use neoteletext_input::{MAX_MESSAGE, MAX_ROWS};
 use protocol::interaction::{CursorState, InputIntent, Intent, Typing as TypingState};
@@ -25,10 +25,8 @@ use protocol::interaction::{CursorState, InputIntent, Intent, Typing as TypingSt
 /// for echo, and never what they were (REQ-INT-137).
 pub const MAX_UNACKNOWLEDGED: usize = neoteletext_input::session::REMEMBERED;
 /// What NeoTeletext offers in HELLO (INPUT.md section 6.2): it shows pages,
-/// draws the cursor and echo, and can send every mode.
-const OFFERED: u32 = PAGE_CAP | CURSOR_CAP | ECHO_CAP | ALL_MODES;
-/// The modifiers that make a key a command rather than text (section 5.3).
-const COMMANDS: u8 = CONTROL | ALT | SUPER | HYPER | META;
+/// and draws the cursor and echo.
+const OFFERED: u32 = PAGE_CAP | CURSOR_CAP | ECHO_CAP;
 /// A teletext page's text area, in cells (section 5.4's RESIZE): 40
 /// columns; the drawn size goes as 0, unknown, as it changes with the
 /// window.
@@ -86,11 +84,11 @@ impl Channel {
         }
     }
 
-    /// Encodes `item` under the session's modes on `open` and gives it to
-    /// the channel's fetcher; the input count after it, if it went.
-    fn send(&mut self, channel: u32, item: &Item<'_>, open: Option<u16>, now_ms: u64, sends: &mut Vec<Send>) -> Option<u16> {
+    /// Encodes `item` and gives it to the channel's fetcher; the input
+    /// count after it, if it went.
+    fn send(&mut self, channel: u32, item: &Item<'_>, now_ms: u64, sends: &mut Vec<Send>) -> Option<u16> {
         let mut out = [0_u8; MAX_MESSAGE];
-        match self.session.send(item, open, clock(now_ms), &mut out) {
+        match self.session.send(item, clock(now_ms), &mut out) {
             Ok(length @ 1..) => {
                 sends.push(Send::Fetcher(channel, out.get(..length).unwrap_or(&[]).to_vec()));
                 Some(self.session.count())
@@ -171,7 +169,6 @@ impl Typing {
             on,
             secure: state.is_some_and(|state| state.secure),
             refused: state.is_some_and(|state| state.open && state.session.state() == State::Refused),
-            modes: state.filter(|_| on).map_or(0, |state| state.session.modes_on(Some(opened.page))),
             cursor: cursor.filter(|_| on),
             acked: state.map_or(0, |state| state.acked_local),
             round_trip_ms: state.and_then(|state| state.round_trip_ms),
@@ -199,15 +196,15 @@ impl Typing {
         }
         if state.focus_told != Some(focus) && !focus {
             state.focus_told = Some(focus);
-            state.send(channel, &Item::Event(Event::FocusOut), None, now_ms, sends);
+            state.send(channel, &Item::Event(Event::FocusOut), now_ms, sends);
         }
         if state.told != Some(page) {
             state.told = Some(page);
-            state.send(channel, &Item::Event(Event::Page(page)), Some(page), now_ms, sends);
+            state.send(channel, &Item::Event(Event::Page(page)), now_ms, sends);
         }
         if state.focus_told != Some(focus) && focus {
             state.focus_told = Some(focus);
-            state.send(channel, &Item::Event(Event::FocusIn), None, now_ms, sends);
+            state.send(channel, &Item::Event(Event::FocusIn), now_ms, sends);
         }
     }
 
@@ -220,7 +217,7 @@ impl Typing {
         }
         state.started = true;
         let resize = Event::Resize { columns: PAGE_COLUMNS, rows: MAX_ROWS, width: 0, height: 0 };
-        state.send(channel, &Item::Event(resize), None, now_ms, sends);
+        state.send(channel, &Item::Event(resize), now_ms, sends);
         self.tell(channel, now_ms, sends);
     }
 
@@ -260,7 +257,6 @@ impl Typing {
                 on: false,
                 secure: false,
                 refused: false,
-                modes: 0,
                 cursor: None,
                 acked: 0,
                 round_trip_ms: None,
@@ -325,7 +321,7 @@ impl Typing {
 
     /// An intent from the interface (or the phone, through it): encoded
     /// and sent on only under every condition of REQ-INT-130, under the
-    /// session's modes and rate; otherwise dropped.
+    /// session's rate; otherwise dropped.
     pub fn input_intent(&mut self, input: &InputIntent, now_ms: u64) -> Vec<Send> {
         let mut sends = Vec::new();
         let channel = input.key.channel;
@@ -333,29 +329,22 @@ impl Typing {
             return sends;
         }
         let Some(state) = self.channels.get_mut(&channel) else { return sends };
-        let open = Some(input.key.page);
-        let all_keys = state.session.modes_on(open) & ALL_KEYS != 0;
         // Text goes in Normalization Form C (section 5.7 rule 3,
         // REQ-INT-116), a KEY's text too; a paste goes as it was copied.
         let normalized = match &input.intent {
             Intent::Text(text) | Intent::Key { text: Some(text), .. } => nfc(text),
             _ => Cow::Borrowed(""),
         };
+        // Every key goes as KEY, carrying its text (INPUT.md section 6.3);
+        // raw text is only what does not come from a key.
         let item = match &input.intent {
-            // A key that types text, with no command modifier, is the text
-            // (section 5.3), unless the channel asked for every key.
-            Intent::Key { action: Action::Press | Action::Repeat, text: Some(text), mods, .. }
-                if !all_keys && mods & COMMANDS == 0 && text.chars().all(event::printable) =>
-            {
-                Item::Text(&normalized)
-            }
             Intent::Text(_) => Item::Text(&normalized),
             Intent::Key { action, key, mods, text: Some(_), base } => {
                 Item::Event(Event::Key(event::Key { action: *action, key: *key, mods: *mods, text: Some(&normalized), base: *base }))
             }
             intent => intent.item(),
         };
-        if let Some(count) = state.send(channel, &item, open, now_ms, &mut sends) {
+        if let Some(count) = state.send(channel, &item, now_ms, &mut sends) {
             state.sent.push_back((count, input.local));
             if state.sent.len() > MAX_UNACKNOWLEDGED {
                 state.sent.pop_front();

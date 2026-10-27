@@ -277,7 +277,7 @@ Decision 117 adds a page's controls (INPUT.md section 7.3) to what crosses bound
 | D | `ToCore::Lit { key, area, pressed }` | A compromised interface asks for looks on any cells, to make a page look pressed, or floods | A look is drawn only on a control or link of the latest image of the page open in the active tab; a repeat changes nothing; each look costs the decoder one render of one page, as a reveal does |
 | Core to decoder | `ToDecoder::Look { page, look }` | A look leaks between pages or stays on | One look at a time; the trusted core puts it out when it moves to another page and when the page open changes |
 
-**Spoofing.** A page can dress a control as a link, or the reverse, as it can draw anything; neither gains power. A control's click is the MOUSE event the mouse mode already sends, and a link's destination is shown only by the trusted strip, never for a control. A look is drawn from the page's own colours, so it can never imitate the browser's own drawing.
+**Spoofing.** A page can dress a control as a link, or the reverse, as it can draw anything; neither gains power. A control's click is the MOUSE event every click over the page already sends, and a link's destination is shown only by the trusted strip, never for a control. A look is drawn from the page's own colours, so it can never imitate the browser's own drawing.
 
 **Privacy.** The look is drawn in the browser; the channel is sent nothing for it (REQ-INT-119).
 

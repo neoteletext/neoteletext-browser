@@ -41,9 +41,9 @@ impl Core {
             }
             FromDecoder::Frame { page, palette, screen, indices } => self.frame(PageKey { channel, page }, palette, screen, indices)?,
             #[cfg(feature = "links")]
-            FromDecoder::Links { page, with_image, candidates, numbers, controls, fastext } => {
+            FromDecoder::Links { page, with_image, candidates, numbers, controls, pointer_areas, fastext } => {
                 let key = PageKey { channel, page };
-                self.links.found(key, candidates, numbers, controls, fastext);
+                self.links.found(key, candidates, numbers, (controls, pointer_areas), fastext);
                 if !with_image {
                     self.redecide(key)?;
                     self.send_controls()?;

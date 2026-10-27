@@ -277,12 +277,6 @@ impl PageLines<'_> {
             let [a0, a1] = line.acked.to_be_bytes();
             self.input.cursors.push([p0, p1, a0, a1, line.row, line.column, line.width, line.flags]);
         }
-        // REQ-INT-114: an `IM` line is the page's own modes, as a
-        // PAGE_MODES record of the channel's would say them.
-        #[cfg(feature = "interaction")]
-        if let Some(line) = page.input_modes {
-            self.input.page_modes(page.address.mpp(), line.modes);
-        }
     }
 }
 

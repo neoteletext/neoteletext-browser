@@ -13,6 +13,24 @@ impl Core {
     pub(super) fn input_intent(&mut self, intent: ToCore) -> Result<(), String> {
         match intent {
             ToCore::Input(intent) => {
+                // A move with no button held goes only in a pointer area of
+                // the page's latest image (INPUT.md section 7.4): the
+                // interface asks, the trusted core decides.
+                #[cfg(feature = "links")]
+                if let protocol::interaction::Intent::Mouse { action: neoteletext_input::event::MouseAction::Move, button: 0, at } = &intent.intent {
+                    let cell = (u8::try_from(at.column).unwrap_or(u8::MAX), u8::try_from(at.row).unwrap_or(u8::MAX));
+                    if !self.links.may_move(intent.key, cell.0, cell.1) {
+                        return Ok(());
+                    }
+                }
+                // A HOVER names a control of the page's latest image, or
+                // goes nowhere (REQ-INT-121).
+                #[cfg(feature = "links")]
+                if let protocol::interaction::Intent::Hover { column, row, .. } = &intent.intent
+                    && !self.links.is_control_at(intent.key, *column, *row)
+                {
+                    return Ok(());
+                }
                 let sends = self.typing.input_intent(&intent, self.now());
                 self.deliver_typing(sends)?;
             }

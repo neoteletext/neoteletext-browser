@@ -4,7 +4,6 @@ use alloc::vec::Vec;
 
 use neoteletext_input::cursor::{ECHO, MASKED};
 use neoteletext_input::event::{Action, CONTROL, KeyCode, MouseAction, Point};
-use neoteletext_input::modes::{COMPOSE, MOUSE_ALL, MOUSE_BUTTONS, MOUSE_PIXELS};
 
 use crate::browser::{Browser, Frame, Output};
 use crate::canvas::PageKey;
@@ -29,7 +28,7 @@ fn browser() -> Browser {
 }
 
 fn typing(cursor: Option<CursorView>, acked: u32) -> TypingView {
-    TypingView { channel: KEY.channel, page: KEY.page, on: true, secure: false, refused: false, modes: 0, cursor, acked, round_trip_ms: None, show: None }
+    TypingView { channel: KEY.channel, page: KEY.page, on: true, secure: false, refused: false, cursor, acked, round_trip_ms: None, show: None }
 }
 
 fn intents(outputs: &[Output]) -> Vec<Intent> {
@@ -118,20 +117,16 @@ fn echo_stays_in_its_width_is_masked_and_clears_on_acknowledgement_or_time() {
     assert!(browser.typing.echoes.is_empty());
 }
 
-/// REQ-INT-115, REQ-INT-136: a plain click is the host's only in a
-/// mouse mode; otherwise, and with the browser's modifier always, it
-/// is the browser's, to follow a link.
+/// REQ-INT-115, REQ-INT-136 (decision E.125): a plain click on a page
+/// that takes input is the host's, with no request; with the browser's
+/// modifier it is the browser's, to follow a link.
 #[test]
-fn a_click_is_the_hosts_only_in_a_mouse_mode() {
+fn a_click_is_the_hosts_unless_the_modifier_is_held() {
     let mut browser = browser();
     let mut canvas = Recorder::new();
     browser.set_typing(typing(None, 0), 0);
     pointer_at(&mut browser, 10.5, 5.5);
-    browser.pointer_pressed(&mut canvas, false, 10_000);
-    let outputs = browser.take_outputs();
-    assert_eq!(intents(&outputs), [] as [Intent; 0], "no mouse mode: the browser's click");
-    assert!(outputs.iter().any(|output| matches!(output, Output::Cell(_))), "a link's click");
-    browser.set_typing(TypingView { modes: MOUSE_BUTTONS | MOUSE_PIXELS, ..typing(None, 0) }, 0);
+    assert_eq!(intents(&browser.take_outputs()), [] as [Intent; 0], "no move without a button or a pointer area");
     browser.pointer_pressed(&mut canvas, false, 10_000);
     browser.pointer_released();
     let outputs = browser.take_outputs();
@@ -154,13 +149,15 @@ fn a_click_is_the_hosts_only_in_a_mouse_mode() {
     assert_eq!(intents(&outputs), [] as [Intent; 0]);
 }
 
-/// Decision 107: the wheel over the page is the channel's in any mode;
-/// beside the page, or with the browser's modifier, the browser's.
+/// Decision 107 and INPUT.md section 6.3: the wheel and the pointer's
+/// moves over the page are the channel's; beside the page, or with the
+/// browser's modifier, the wheel is the browser's.
 #[test]
-fn the_wheel_goes_over_the_page_and_moves_only_when_asked_for() {
+fn the_wheel_and_moves_go_over_the_page() {
     let mut browser = browser();
     browser.set_typing(typing(None, 0), 0);
     pointer_at(&mut browser, 3.0, 3.0);
+    browser.take_outputs();
     assert_eq!(browser.terminal_wheel(0.0, 1.0), Some(false), "no mode needed");
     assert!(matches!(intents(&browser.take_outputs()).as_slice(), [Intent::Wheel { dx: 0, dy: 120, .. }]));
     browser.set_browser_modifier(true);
@@ -170,22 +167,37 @@ fn the_wheel_goes_over_the_page_and_moves_only_when_asked_for() {
     assert_eq!(browser.terminal_wheel(0.0, 1.0), None, "beside the page the browser scrolls");
     pointer_at(&mut browser, 3.0, 3.0);
     browser.take_outputs();
-    browser.set_typing(TypingView { modes: MOUSE_BUTTONS, ..typing(None, 0) }, 0);
-    pointer_at(&mut browser, 4.0, 3.0);
-    assert_eq!(intents(&browser.take_outputs()), [] as [Intent; 0], "no moves in MOUSE_BUTTONS");
-    browser.set_typing(TypingView { modes: MOUSE_ALL, ..typing(None, 0) }, 0);
     pointer_at(&mut browser, 5.0, 3.0);
-    assert!(matches!(intents(&browser.take_outputs()).as_slice(), [Intent::Mouse { action: MouseAction::Move, button: 0, .. }]));
+    assert_eq!(intents(&browser.take_outputs()), [] as [Intent; 0], "no move with no button outside a pointer area");
+}
+
+/// INPUT.md section 7.4 (decision E.128): a move with no button held goes
+/// only within a pointer area of the open page; a drag goes anywhere on it.
+#[cfg(feature = "links")]
+#[test]
+fn a_move_goes_in_a_pointer_area_and_a_drag_anywhere() {
+    use crate::links::{Area, PageLinks};
+    let mut browser = browser();
+    browser.set_typing(typing(None, 0), 0);
+    let area = Area { row: 10, column: 0, width: 20, height: 2 };
+    browser.set_links(KEY, PageLinks { pointer_areas: alloc::vec![area], ..PageLinks::default() });
+    pointer_at(&mut browser, 5.5, 10.5);
+    assert!(matches!(intents(&browser.take_outputs()).as_slice(), [Intent::Mouse { action: MouseAction::Move, button: 0, .. }]), "in the area");
+    pointer_at(&mut browser, 25.5, 10.5);
+    assert_eq!(intents(&browser.take_outputs()), [] as [Intent; 0], "beside it");
+    let mut canvas = Recorder::new();
+    browser.pointer_pressed(&mut canvas, false, 10_000);
+    browser.take_outputs();
+    pointer_at(&mut browser, 30.5, 3.5);
+    assert!(matches!(intents(&browser.take_outputs()).as_slice(), [Intent::Mouse { action: MouseAction::Move, button: 1, .. }]), "a drag goes anywhere");
 }
 
 #[test]
-fn paste_is_one_intent_and_composition_only_in_its_mode() {
+fn paste_and_composition_each_go_as_one_intent() {
     let mut browser = browser();
     browser.set_typing(typing(None, 0), 0);
     assert!(browser.terminal_paste("line\nline"));
-    assert!(!browser.terminal_compose(1, "に"), "not in COMPOSE");
-    browser.set_typing(TypingView { modes: COMPOSE, ..typing(None, 0) }, 0);
-    assert!(browser.terminal_compose(9, "に"));
+    assert!(browser.terminal_compose(9, "に"), "composition goes whenever keys go");
     let sent = intents(&browser.take_outputs());
     assert_eq!(sent, [Intent::Paste("line\nline".into()), Intent::Compose { cursor: 1, text: "に".into() }], "the offset kept within the text");
 }

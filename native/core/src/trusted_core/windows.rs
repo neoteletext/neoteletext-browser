@@ -326,7 +326,7 @@ mod tests {
         let address = test.core.session.tabs[0].address().unwrap().clone();
         let web = Candidate { row: 5, column: 0, length: 7, double: false, light: false, target: "web:https://www.example.invalid/".into() };
         test.core.links.opened(Some(key));
-        test.core.links.found(key, vec![web], Vec::new(), Vec::new(), Fastext::default());
+        test.core.links.found(key, vec![web], Vec::new(), (Vec::new(), Vec::new()), Fastext::default());
         test.core.links.image(key, 1, &Channel { id: channel, address: &address }, 0);
         let spot = Spot { key, version: 1, column: 1, row: 5 };
         test.core.links.point(Some(spot));

@@ -15,6 +15,7 @@ const TAG_MOUSE: u8 = 3;
 const TAG_WHEEL: u8 = 4;
 const TAG_PASTE: u8 = 5;
 const TAG_COMPOSE: u8 = 6;
+const TAG_HOVER: u8 = 7;
 /// A key's kind: a character or a functional code.
 pub(super) const KEY_CHARACTER: u8 = 0;
 const KEY_FUNCTIONAL: u8 = 1;
@@ -147,6 +148,7 @@ fn push_intent(payload: &mut Vec<u8>, intent: &Intent) -> Result<(), ProtocolErr
             payload.extend_from_slice(&cursor.to_be_bytes());
             push_string(payload, text)?;
         }
+        Intent::Hover { leave, column, row } => payload.extend_from_slice(&[TAG_HOVER, u8::from(*leave), *column, *row]),
     }
     Ok(())
 }
@@ -191,6 +193,10 @@ fn read_intent(fields: &mut Fields<'_>) -> Result<Intent, ProtocolError> {
         TAG_COMPOSE => {
             let cursor = fields.u32()?;
             Intent::Compose { cursor, text: read_string(fields, MAX_COMPOSE)? }
+        }
+        TAG_HOVER => {
+            let leave = fields.flag("leave")?;
+            Intent::Hover { leave, column: fields.u8()?, row: fields.u8()? }
         }
         _ => return Err(ProtocolError::BadValue("intent")),
     };

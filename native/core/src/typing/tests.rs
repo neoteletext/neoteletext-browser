@@ -1,13 +1,16 @@
 //! Tests of typing into a page (`interaction.md`, INPUT.md).
 
 use super::*;
-use neoteletext_input::control::{Control, PAGE_MODES};
+use neoteletext_input::caps::PAGE_CAP;
+use neoteletext_input::control::Control;
 use neoteletext_input::cursor;
-use neoteletext_input::event::{KeyCode, MouseAction, Point, read_message};
-use neoteletext_input::modes::{KEY_RELEASE, MOUSE_BUTTONS};
+use neoteletext_input::event::{Action, CONTROL, KeyCode, MouseAction, Point, read_message};
 use neoteletext_input::{VERSION, WELCOME_TIMEOUT_MS};
 
 const PAGE: PageKey = PageKey { channel: 7, page: 0x200 };
+/// The key `a` as the channel reads it: a KEY carrying its text (INPUT.md
+/// section 6.3).
+const KEY_A: &str = "Event(Key(Key { action: Press, key: Character('a'), mods: 0, text: Some(\"a\"), base: None }))";
 
 fn key(character: char, local: u32) -> InputIntent {
     let intent = Intent::Key { action: Action::Press, key: KeyCode::Character(character), mods: 0, text: Some(character.to_string()), base: None };
@@ -54,7 +57,7 @@ fn a_session_starts_with_hello_and_waits_for_welcome() {
         ["Event(Resize { columns: 40, rows: 25, width: 0, height: 0 })".to_owned(), "Event(Page(512))".to_owned(), "Event(FocusIn)".to_owned(),]
     );
     assert!(welcomed.iter().any(|send| matches!(send, Send::Interface(state) if state.on && state.secure)));
-    assert_eq!(items(&typing.input_intent(&key('a', 1), 6)), ["Text(\"a\")"]);
+    assert_eq!(items(&typing.input_intent(&key('a', 1), 6)), [KEY_A]);
 }
 
 #[test]
@@ -96,7 +99,7 @@ fn input_goes_only_under_every_condition() {
     typing.opened(Some(8), None, 0);
     assert_eq!(items(&typing.input_intent(&key('a', 1), 0)), [] as [String; 0], "another tab");
     typing.opened(Some(PAGE.channel), Some(PAGE), 0);
-    assert_eq!(items(&typing.input_intent(&key('a', 1), 0)), ["Text(\"a\")"]);
+    assert_eq!(items(&typing.input_intent(&key('a', 1), 0)), [KEY_A]);
     let away = typing.focused(false, 0);
     assert_eq!(items(&away), ["Event(FocusOut)"]);
     assert_eq!(items(&typing.input_intent(&key('b', 2), 0)), [] as [String; 0], "the window has no focus");
@@ -133,7 +136,7 @@ fn editing_the_address_takes_the_keys_from_the_page_and_says_so() {
 /// REQ-INT-106: a reconnection is a new session.
 #[test]
 fn a_new_connection_is_a_new_session() {
-    let mut typing = ready(PAGE_CAP | MOUSE_BUTTONS);
+    let mut typing = ready(PAGE_CAP);
     typing.input(PAGE.channel, false, false, 1);
     let again = typing.input(PAGE.channel, true, true, 2);
     assert_eq!(items(&again).len(), 1);
@@ -141,32 +144,26 @@ fn a_new_connection_is_a_new_session() {
     assert_eq!(items(&typing.input_intent(&key('a', 1), 3)), [] as [String; 0], "waiting for WELCOME again");
 }
 
-/// Section 5.3: a key that types text is text; with a command
-/// modifier, or in `ALL_KEYS`, it is a KEY.
+/// INPUT.md section 6.3 (decision E.125): every key goes as KEY with its
+/// text, a command modifier's key with none, and every release.
 #[test]
-fn text_goes_as_text_and_commands_as_keys() {
-    let mut typing = ready(PAGE_CAP | ALL_KEYS);
-    let control_c = Intent::Key { action: Action::Press, key: KeyCode::Character('c'), mods: CONTROL, text: Some("c".into()), base: None };
+fn every_key_goes_as_a_key_with_its_text() {
+    let mut typing = ready(PAGE_CAP);
+    let control_c = Intent::Key { action: Action::Press, key: KeyCode::Character('c'), mods: CONTROL, text: None, base: None };
     let sends = typing.input_intent(&InputIntent { key: PAGE, local: 1, intent: control_c }, 0);
     assert_eq!(items(&sends), ["Event(Key(Key { action: Press, key: Character('c'), mods: 4, text: None, base: None }))"]);
-    let release = Intent::Key { action: Action::Release, key: KeyCode::Character('c'), mods: 0, text: None, base: None };
-    assert_eq!(items(&typing.input_intent(&InputIntent { key: PAGE, local: 2, intent: release }, 0)), [] as [String; 0], "no KEY_RELEASE");
-    typing.control(PAGE.channel, &[0xFF, 0x02, u8::try_from(ALL_KEYS).unwrap()], 0);
-    assert_eq!(
-        items(&typing.input_intent(&key('a', 3), 0)),
-        ["Event(Key(Key { action: Press, key: Character('a'), mods: 0, text: Some(\"a\"), base: None }))"],
-        "every key a KEY in ALL_KEYS"
-    );
+    assert_eq!(items(&typing.input_intent(&key('a', 2), 0)), [KEY_A]);
+    let release = Intent::Key { action: Action::Release, key: KeyCode::Character('a'), mods: 0, text: None, base: None };
+    assert_eq!(items(&typing.input_intent(&InputIntent { key: PAGE, local: 3, intent: release }, 0)).len(), 1, "a release");
 }
 
 /// REQ-INT-116 rule 3: a decomposed `e` and combining accent go as
 /// U+00E9, as text and as a KEY's text.
 #[test]
 fn text_goes_in_normalization_form_c() {
-    let mut typing = ready(PAGE_CAP | ALL_KEYS);
+    let mut typing = ready(PAGE_CAP);
     let text = InputIntent { key: PAGE, local: 1, intent: Intent::Text("e\u{301}".into()) };
     assert_eq!(items(&typing.input_intent(&text, 0)), ["Text(\"\u{e9}\")"]);
-    typing.control(PAGE.channel, &[0xFF, 0x02, u8::try_from(ALL_KEYS).unwrap()], 0);
     let key = Intent::Key { action: Action::Press, key: KeyCode::Character('e'), mods: 0, text: Some("e\u{301}".into()), base: None };
     let sent = items(&typing.input_intent(&InputIntent { key: PAGE, local: 2, intent: key }, 0));
     assert_eq!(sent, ["Event(Key(Key { action: Press, key: Character('e'), mods: 0, text: Some(\"\u{e9}\"), base: None }))"]);
@@ -174,24 +171,20 @@ fn text_goes_in_normalization_form_c() {
     assert_eq!(items(&typing.input_intent(&paste, 0)), [r#"Event(Paste("e\u{301}"))"#], "a paste as copied");
 }
 
-/// REQ-INT-115: the mouse goes only in a mouse mode, and the page's own
-/// modes come with the page (REQ-INT-114).
+/// REQ-INT-115 (decision E.125): a click goes with no request, and a
+/// withdrawn `PAGE_MODES` record changes nothing.
 #[test]
-fn the_mouse_goes_only_when_the_page_or_channel_asks() {
-    let mut typing = ready(PAGE_CAP | MOUSE_BUTTONS | KEY_RELEASE);
+fn the_mouse_always_goes() {
+    let mut typing = ready(PAGE_CAP);
     let click = InputIntent {
         key: PAGE,
         local: 1,
-        intent: Intent::Mouse { action: MouseAction::Press, button: 0, at: Point { column: 10, row: 5, pixels: None, mods: 0 } },
+        intent: Intent::Mouse { action: MouseAction::Press, button: 0, at: Point { column: 10, row: 5, pixels: Some((125, 110)), mods: 0 } },
     };
-    assert_eq!(items(&typing.input_intent(&click, 0)), [] as [String; 0]);
-    let page_modes = [0xFF, PAGE_MODES, 0x80, 0x04, u8::try_from(MOUSE_BUTTONS).unwrap()];
-    let told = typing.control(PAGE.channel, &page_modes, 0);
-    assert!(matches!(told.last(), Some(Send::Interface(state)) if state.modes == MOUSE_BUTTONS), "the interface knows");
-    assert_eq!(
-        items(&typing.input_intent(&click, 0)),
-        ["Event(Mouse(Mouse { action: Press, button: 0, at: Point { column: 10, row: 5, pixels: None, mods: 0 } }))"]
-    );
+    let expected = ["Event(Mouse(Mouse { action: Press, button: 0, at: Point { column: 10, row: 5, pixels: Some((125, 110)), mods: 0 } }))"];
+    assert_eq!(items(&typing.input_intent(&click, 0)), expected);
+    typing.control(PAGE.channel, &[0xFF, 0x04, 0x80, 0x04, 0x08], 0);
+    assert_eq!(items(&typing.input_intent(&click, 0)), expected, "an older channel's PAGE_MODES");
 }
 
 /// REQ-INT-110: the acknowledgement is the input count; it clears

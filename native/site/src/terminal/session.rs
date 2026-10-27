@@ -252,8 +252,8 @@ impl Session {
                 let name = self.fields[0].text.trim().to_owned();
                 self.greeting = if name.is_empty() { "Type your name first.".to_owned() } else { format!("Hello, {name}!") };
             }
-            // A KEY with text, when every key is asked for.
-            (_, _, Some(_)) if !control && !repeat => {
+            // A key's text types, held keys repeating it (INPUT.md section 6.3).
+            (_, _, Some(_)) if !control => {
                 let mut pushes = Vec::new();
                 for typed in key.text.unwrap_or_default().chars() {
                     pushes.extend(self.character(typed));

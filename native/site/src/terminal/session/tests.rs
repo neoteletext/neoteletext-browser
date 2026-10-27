@@ -5,7 +5,7 @@ use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
 
-use neoteletext_input::modes::{CURSOR_CAP, MOUSE_BUTTONS, PAGE_CAP};
+use neoteletext_input::caps::{CURSOR_CAP, PAGE_CAP};
 
 use crate::podcast::Episode;
 use crate::terminal::invaders::INVADER_TOP;
@@ -49,13 +49,13 @@ fn feed(session: &mut Session, messages: &[Vec<u8>]) -> Vec<Push> {
 #[test]
 fn hello_is_answered_with_welcome() {
     let mut session = Session::new(Settings::default());
-    let offered = PAGE_CAP | CURSOR_CAP | MOUSE_BUTTONS | neoteletext_input::modes::COMPOSE;
+    let offered = PAGE_CAP | CURSOR_CAP | 0x88; // and two retired mode bits
     let pushes = feed(&mut session, &[encoded(&Item::Event(Event::Hello { version: 2, caps: offered, agent: None }))]);
     let [Push::Packets(bytes)] = pushes.as_slice() else { panic!("one packet") };
     let packet = neoteletext_core::packet::Packet { bytes: bytes.as_slice().try_into().unwrap() };
     let mut buffer = [0; neoteletext_input::control::FRAGMENT_DATA];
     let welcome = neoteletext_input::control::from_packet(&packet, &mut buffer);
-    assert_eq!(welcome, Some(Ok(Control::Welcome { version: 2, caps: PAGE_CAP | CURSOR_CAP | MOUSE_BUTTONS })));
+    assert_eq!(welcome, Some(Ok(Control::Welcome { version: 2, caps: PAGE_CAP | CURSOR_CAP })));
     assert!(feed(&mut session, &[encoded(&Item::Event(Event::Hello { version: 1, caps: 0, agent: None }))]).is_empty(), "another version");
 }
 
@@ -79,14 +79,14 @@ fn focus_out_releases_the_held_arrow() {
     assert!(!session.invaders.left, "no release was sent, and none was needed");
 }
 
-/// REQ-INT-114: pages ask for their own modes in `IM` lines.
+/// Decision E.125: no page asks for input modes.
 #[test]
-fn pages_ask_for_their_modes() {
+fn no_page_has_an_im_line() {
     let mut session = Session::new(Settings::default());
-    feed(&mut session, &[page(0x500)]);
-    assert!(session.render().tti().contains(&format!("IM,{MOUSE_BUTTONS}\r\n")));
-    feed(&mut session, &[page(0x200)]);
-    assert!(!session.render().tti().contains("IM,"), "the typing page needs none");
+    for page_number in [0x200, 0x300, 0x400, 0x500] {
+        feed(&mut session, &[page(page_number)]);
+        assert!(!session.render().tti().contains("IM,"), "{page_number:X}");
+    }
 }
 
 #[test]

@@ -54,6 +54,16 @@ pub enum Intent {
         /// The preedit.
         text: String,
     },
+    /// The pointer entered or left a control of the page (INPUT.md section
+    /// 5.4's HOVER): the control's first cell.
+    Hover {
+        /// It left, rather than entered.
+        leave: bool,
+        /// The control's first column.
+        column: u8,
+        /// The control's top row.
+        row: u8,
+    },
 }
 
 impl Intent {
@@ -69,6 +79,7 @@ impl Intent {
             Self::Wheel { dx, dy, at } => Event::Wheel(event::Wheel { dx: *dx, dy: *dy, at: *at }),
             Self::Paste(text) => Event::Paste(text),
             Self::Compose { cursor, text } => Event::Compose { cursor: *cursor, text },
+            Self::Hover { leave, column, row } => Event::Hover { leave: *leave, column: u32::from(*column), row: u32::from(*row) },
         })
     }
 }

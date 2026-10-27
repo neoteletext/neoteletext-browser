@@ -11,7 +11,6 @@ use alloc::vec::Vec;
 
 use neoteletext_input::cursor::{ECHO, MASKED};
 use neoteletext_input::event::{ALT, Action, CONTROL, HYPER, KeyCode, META, MouseAction, Point, SUPER, printable};
-use neoteletext_input::modes::{COMPOSE, MOUSE_ALL, MOUSE_DRAG, MOUSE_MODES};
 use neoteletext_input::{MAX_COMPOSE, MAX_PASTE};
 
 use crate::browser::{Browser, Output};
@@ -82,9 +81,6 @@ pub struct TypingView {
     pub secure: bool,
     /// The channel did not answer, or refused: it takes no input.
     pub refused: bool,
-    /// The input modes in force on the page: whether the mouse, the wheel
-    /// and composition are the channel's.
-    pub modes: u32,
     /// The cursor, if the channel placed one on this page.
     pub cursor: Option<CursorView>,
     /// The number of the last intent the channel acted on.
@@ -138,7 +134,7 @@ impl Browser {
         if !typing.on || typing.cursor.is_none_or(|cursor| cursor.flags & ECHO == 0) {
             state.echoes.clear();
         }
-        if typing.modes & MOUSE_MODES == 0 {
+        if !typing.on {
             state.buttons = 0;
         }
         if moved {
@@ -183,16 +179,11 @@ impl Browser {
             || self.popup_open()
     }
 
-    /// The modes in force on the page keys go to, 0 when none.
-    fn typing_modes(&self) -> u32 {
-        self.typing_target().and(self.typing.typing).map_or(0, |typing| typing.modes)
-    }
-
     /// Whether the input method's preedit goes to the channel (INPUT.md
-    /// section 9.1): while keys go and the channel asked for COMPOSE.
+    /// sections 6.3 and 9.1): whenever keys go to it.
     #[must_use]
     pub fn composes_for_channel(&self) -> bool {
-        self.typing_modes() & COMPOSE != 0
+        self.typing_target().is_some()
     }
 
     /// The browser's own modifier is held or released.
@@ -212,11 +203,12 @@ impl Browser {
         Some(Point { column: u32::from(column), row: u32::from(row), pixels, mods: 0 })
     }
 
-    /// Whether the mouse is the channel's: a mouse mode in force, the
-    /// pointer over the open page, and not the browser's modifier, which
-    /// always keeps a click the browser's (REQ-INT-115, REQ-INT-136).
+    /// Whether the mouse is the channel's: keys go to it, the pointer is
+    /// over the open page, and not with the browser's modifier, which
+    /// always keeps a click the browser's (INPUT.md section 6.3,
+    /// REQ-INT-115, REQ-INT-136).
     fn mouse_is_hosts(&self) -> bool {
-        self.typing_modes() & MOUSE_MODES != 0 && !self.typing.browser_modifier && self.pointer_on_page().is_some()
+        self.typing_target().is_some() && !self.typing.browser_modifier && self.pointer_on_page().is_some()
     }
 
     /// Whether a click on the open page is the host's.
@@ -279,8 +271,8 @@ impl Browser {
         true
     }
 
-    /// The input method's preedit, `cursor` a code-point offset into it, in
-    /// the COMPOSE mode; an empty preedit ends composition.
+    /// The input method's preedit, `cursor` a code-point offset into it; an
+    /// empty preedit ends composition.
     pub fn terminal_compose(&mut self, cursor: u32, text: &str) -> bool {
         let Some(target) = self.typing_target().filter(|_| self.composes_for_channel()) else { return false };
         let text = cut(text, MAX_COMPOSE);
@@ -308,20 +300,34 @@ impl Browser {
         true
     }
 
-    /// The pointer moved over the open page: a move for the channel in
-    /// `MOUSE_ALL`, or in `MOUSE_DRAG` while a button is held.
+    /// The pointer moved over the open page: a move for the channel while a
+    /// button is held, or in a pointer area of the page (INPUT.md sections
+    /// 6.3 and 7.4); the session sends it only when the dot under the
+    /// pointer changed.
     pub(in crate::browser) fn terminal_moved(&mut self) {
-        let modes = self.typing_modes();
-        let wanted = modes & MOUSE_ALL != 0 || modes & MOUSE_DRAG != 0 && self.typing.buttons != 0;
         let (Some(target), Some(at)) = (self.typing_target(), self.pointer_on_page()) else { return };
+        #[cfg(feature = "links")]
+        let wanted = self.typing.buttons != 0 || self.in_pointer_area();
+        #[cfg(not(feature = "links"))]
+        let wanted = self.typing.buttons != 0;
         if wanted && !self.typing.browser_modifier {
             let buttons = self.typing.buttons;
             self.send(target, Intent::Mouse { action: MouseAction::Move, button: buttons, at });
         }
     }
 
-    /// The wheel, in lines, over the open page: the channel's in any mode
-    /// while keys go to it (INPUT.md sections 6.5 and 9.1, decision 107);
+    /// The pointer entered or left the control whose first cell is
+    /// `column`, `row` on the page `key` (INPUT.md section 5.4's HOVER);
+    /// told only while keys go to that page. Only links know the controls.
+    #[cfg(feature = "links")]
+    pub(in crate::browser) fn terminal_hover(&mut self, key: PageKey, column: u8, row: u8, leave: bool) {
+        if self.typing_target() == Some(key) {
+            self.send(key, Intent::Hover { leave, column, row });
+        }
+    }
+
+    /// The wheel, in lines, over the open page: the channel's while keys go
+    /// to it (INPUT.md sections 6.3 and 9.1, decision 107);
     /// `None` when it is the browser's, to scroll: beside the page, or with
     /// the browser's modifier held.
     pub fn terminal_wheel(&mut self, across: f64, down: f64) -> Option<bool> {

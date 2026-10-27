@@ -1,5 +1,5 @@
 //! The typing state on the wire (REQ-INT-131): whether keys go to the
-//! open page's channel, its input modes, and its cursor, checked by the
+//! open page's channel, and its cursor, checked by the
 //! engine's own rules on each side.
 
 use neoteletext_input::cursor;
@@ -27,10 +27,6 @@ pub(crate) fn push_typing(payload: &mut Vec<u8>, typing: &Typing) -> Result<(), 
             | flag(typing.show.is_some(), FLAG_SHOW)
             | flag(typing.refused, FLAG_REFUSED),
     );
-    if typing.modes & !neoteletext_input::modes::ALL_MODES != 0 {
-        return Err(ProtocolError::BadValue("modes"));
-    }
-    payload.extend_from_slice(&typing.modes.to_be_bytes());
     let place = typing.cursor.unwrap_or(CursorState { row: cursor::NO_CURSOR, column: 0, width: 0, flags: 0 });
     check_cursor(typing.page, typing.cursor)?;
     payload.extend_from_slice(&[place.row, place.column, place.width, place.flags]);
@@ -62,10 +58,6 @@ pub(crate) fn read_typing(fields: &mut Fields<'_>) -> Result<Typing, ProtocolErr
     if flags & !ALL_FLAGS != 0 {
         return Err(ProtocolError::BadValue("typing flags"));
     }
-    let modes = fields.u32()?;
-    if modes & !neoteletext_input::modes::ALL_MODES != 0 {
-        return Err(ProtocolError::BadValue("modes"));
-    }
     let place = CursorState { row: fields.u8()?, column: fields.u8()?, width: fields.u8()?, flags: fields.u8()? };
     let cursor = (flags & FLAG_CURSOR != 0).then_some(place);
     check_cursor(page, cursor)?;
@@ -78,7 +70,6 @@ pub(crate) fn read_typing(fields: &mut Fields<'_>) -> Result<Typing, ProtocolErr
         on: flags & FLAG_ON != 0,
         secure: flags & FLAG_SECURE != 0,
         refused: flags & FLAG_REFUSED != 0,
-        modes,
         cursor,
         acked,
         round_trip_ms: (flags & FLAG_ROUND_TRIP != 0).then_some(round_trip),

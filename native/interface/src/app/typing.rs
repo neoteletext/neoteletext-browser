@@ -72,7 +72,6 @@ impl App {
             on: typing.on,
             secure: typing.secure,
             refused: typing.refused,
-            modes: typing.modes,
             cursor,
             acked: typing.acked,
             round_trip_ms: typing.round_trip_ms,
