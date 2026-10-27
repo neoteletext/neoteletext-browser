@@ -3,22 +3,24 @@
 //! of the overview, opened by Command-Option-I on macOS and Control-Shift-I
 //! elsewhere, with a tab each for the active channel's network exchanges,
 //! packets, pages and notices, and one for managing cookies
-//! (`cookies_tab.rs`). What it shows is the trusted core's cleaned text,
-//! drawn as text and never interpreted. It can pause, which stops it
-//! scrolling, and clear.
+//! (`cookies_tab.rs`), and a Stats tab of what the active channel has sent
+//! and received. What it shows is the trusted core's cleaned text, drawn
+//! as text and never interpreted. It can pause, which stops it scrolling,
+//! and clear; its grabber makes it taller or shorter (`resize.rs`).
 
 use alloc::collections::VecDeque;
 use alloc::vec::Vec;
 
 use crate::browser::{Browser, Output};
 use crate::canvas::Style;
-use crate::console::{ConsoleEntry, ConsoleTab, ConsoleUpdate, KEPT, Level};
+use crate::console::{ConsoleEntry, ConsoleTab, ConsoleUpdate, KEPT, Level, Stat};
 use crate::editor::Editor;
 use crate::geometry::Rect;
 use crate::theme::{RED, WHITE, YELLOW};
 
 mod draw;
 mod input;
+mod resize;
 
 /// The Log tab's level buttons and its search, as a web browser's console
 /// has them (decision 70).
@@ -30,8 +32,8 @@ const MAX_SEARCH: usize = crate::console::MAX_ENTRY;
 /// each tab.
 const HELD: usize = KEPT * ConsoleTab::ALL.len();
 
-/// The console's height, in place of the overview.
-pub(in crate::browser) const CONSOLE_HEIGHT: f64 = 260.0;
+/// The console's height, in place of the overview, until its grabber is pulled.
+const CONSOLE_HEIGHT: f64 = 260.0;
 const BAR_HEIGHT: f64 = 34.0;
 const TAB_WIDTH: f64 = 120.0;
 const BUTTON_WIDTH: f64 = 84.0;
@@ -69,6 +71,12 @@ pub(super) struct ConsoleUi {
     searching: bool,
     levels: Vec<(Level, Rect)>,
     search_field: Rect,
+    /// The Stats tab's figures, as the trusted core last sent them.
+    stats: Vec<Stat>,
+    /// Its height as the grabber left it (`resize.rs`).
+    height: f64,
+    /// Where the grabber is held, from the console's top edge, while it is pulled.
+    grip: Option<f64>,
 }
 
 impl Default for ConsoleUi {
@@ -91,6 +99,9 @@ impl Default for ConsoleUi {
             searching: false,
             levels: Vec::new(),
             search_field: Rect::ZERO,
+            stats: Vec::new(),
+            height: CONSOLE_HEIGHT,
+            grip: None,
         }
     }
 }
@@ -109,10 +120,11 @@ const fn level_colour(level: Level) -> crate::theme::Colour {
     }
 }
 
-/// The tab shown: one of the trusted core's entries, or the cookies.
+/// The tab shown: one of the trusted core's entries, the figures, or the cookies.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum Tab {
     Entries(ConsoleTab),
+    Stats,
     Cookies,
 }
 
@@ -123,8 +135,14 @@ impl Default for Tab {
 }
 
 /// Every tab, in the order the console shows them.
-const TABS: [Tab; ConsoleTab::ALL.len() + 1] =
-    [Tab::Entries(ConsoleTab::ALL[0]), Tab::Entries(ConsoleTab::ALL[1]), Tab::Entries(ConsoleTab::ALL[2]), Tab::Entries(ConsoleTab::ALL[3]), Tab::Cookies];
+const TABS: [Tab; ConsoleTab::ALL.len() + 2] = [
+    Tab::Entries(ConsoleTab::ALL[0]),
+    Tab::Entries(ConsoleTab::ALL[1]),
+    Tab::Entries(ConsoleTab::ALL[2]),
+    Tab::Entries(ConsoleTab::ALL[3]),
+    Tab::Stats,
+    Tab::Cookies,
+];
 
 impl ConsoleUi {
     pub(in crate::browser) const fn open(&self) -> bool {
@@ -146,7 +164,7 @@ impl ConsoleUi {
     }
 
     /// The entries of the tab shown, those the Log tab's levels and search
-    /// let through; none on the cookies' tab.
+    /// let through; none on the Stats or the cookies' tab.
     fn shown(&self) -> Option<Vec<&ConsoleEntry>> {
         let Tab::Entries(tab) = self.tab else { return None };
         let entries = self.entries.get(tab.index())?;
@@ -172,7 +190,11 @@ impl Browser {
             console.channel = Some(update.channel);
             console.entries.iter_mut().for_each(VecDeque::clear);
             console.held.clear();
+            console.stats.clear();
             console.back = 0;
+        }
+        if let Some(stats) = update.stats {
+            console.stats = stats;
         }
         for entry in update.entries {
             if console.paused {

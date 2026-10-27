@@ -3,7 +3,7 @@ use alloc::format;
 use alloc::vec::Vec;
 
 use crate::browser::{Browser, Frame, Key, Modifiers, Output};
-use crate::console::{ConsoleEntry, ConsoleTab, ConsoleUpdate, KEPT, Level};
+use crate::console::{ConsoleEntry, ConsoleTab, ConsoleUpdate, KEPT, Level, Stat};
 use crate::geometry::Rect;
 use crate::test_canvas::Recorder;
 use crate::theme::{RED, YELLOW};
@@ -22,6 +22,7 @@ fn log(level: Level, text: &str) -> ConsoleEntry {
 fn the_log_filters_by_level_and_search() {
     let mut browser = open();
     browser.console_update(ConsoleUpdate {
+        stats: None,
         channel: 1,
         replace: true,
         entries: alloc::vec![
@@ -76,6 +77,7 @@ fn each_tab_shows_its_entries() {
     let mut browser = open();
     let hostile = "<script>alert(1)</script> \u{1b}[31m";
     browser.console_update(ConsoleUpdate {
+        stats: None,
         channel: 1,
         replace: true,
         entries: alloc::vec![
@@ -102,7 +104,7 @@ fn each_tab_shows_its_entries() {
 fn pause_holds_and_clear_empties() {
     let mut browser = open();
     texts(&mut browser);
-    let update = |text: &str| ConsoleUpdate { channel: 1, replace: false, entries: alloc::vec![entry(ConsoleTab::Network, text)] };
+    let update = |text: &str| ConsoleUpdate { stats: None, channel: 1, replace: false, entries: alloc::vec![entry(ConsoleTab::Network, text)] };
     browser.console_update(update("first"));
     let pause = browser.console.pause;
     press(&mut browser, pause);
@@ -115,11 +117,11 @@ fn pause_holds_and_clear_empties() {
     press(&mut browser, clear);
     assert!(texts(&mut browser).contains(&"Nothing yet".into()));
     browser.console_update(update("third"));
-    browser.console_update(ConsoleUpdate { channel: 2, replace: true, entries: alloc::vec![entry(ConsoleTab::Network, "other")] });
+    browser.console_update(ConsoleUpdate { stats: None, channel: 2, replace: true, entries: alloc::vec![entry(ConsoleTab::Network, "other")] });
     let shown = texts(&mut browser);
     assert!(shown.contains(&"other".into()) && !shown.contains(&"third".into()));
     for n in 0..KEPT + 5 {
-        browser.console_update(ConsoleUpdate { channel: 2, replace: false, entries: alloc::vec![entry(ConsoleTab::Pages, &format!("{n}"))] });
+        browser.console_update(ConsoleUpdate { stats: None, channel: 2, replace: false, entries: alloc::vec![entry(ConsoleTab::Pages, &format!("{n}"))] });
     }
     assert_eq!(browser.console.entries[ConsoleTab::Pages.index()].len(), KEPT);
     let close = browser.console.close;
@@ -152,4 +154,64 @@ fn its_shortcut_on_each_platform() {
     assert_eq!(browser.take_outputs(), [Output::Console(true)], "Control-Shift-I");
     browser.key(Key::Text("i"), Modifiers { command: true, alt: true, ..Modifiers::default() }, 0);
     assert_eq!(browser.take_outputs(), [Output::Console(false)], "Command-Option-I");
+}
+
+/// The owner, 27 October 2026: the console is resized with a horizontal
+/// grabber. Pulled up it grows, pulled down it shrinks, never past its
+/// bounds, and the pointer takes the row-resize shape over it.
+#[test]
+fn the_grabber_pulls_the_console_taller_and_shorter_within_its_bounds() {
+    let mut browser = open();
+    texts(&mut browser);
+    let before = browser.console.area;
+    let grabber = browser.regions.console_grabber;
+    let middle = f64::midpoint(grabber.x0, grabber.x1);
+    browser.pointer_moved(middle, f64::midpoint(grabber.y0, grabber.y1), 0);
+    assert_eq!(browser.cursor(), crate::browser::pointer::Cursor::ResizeRow);
+    browser.pointer_pressed(&mut Recorder::new(), false, 0);
+    browser.pointer_moved(middle, f64::midpoint(grabber.y0, grabber.y1) - 100.0, 0);
+    browser.pointer_released();
+    texts(&mut browser);
+    assert!((browser.console.area.height() - (before.height() + 100.0)).abs() < 1.0, "100 taller: {:?} from {:?}", browser.console.area, before);
+    assert_eq!(browser.console.area.y1, before.y1, "its bottom stays");
+
+    // Pulled far down, it keeps its tab bar and a few lines; far up, it leaves the pages their room.
+    for (pull, shortest) in [(10_000.0, true), (-10_000.0, false)] {
+        let grabber = browser.regions.console_grabber;
+        browser.pointer_moved(middle, f64::midpoint(grabber.y0, grabber.y1), 0);
+        browser.pointer_pressed(&mut Recorder::new(), false, 0);
+        browser.pointer_moved(middle, f64::midpoint(grabber.y0, grabber.y1) + pull, 0);
+        browser.pointer_released();
+        texts(&mut browser);
+        let height = browser.console.area.height();
+        if shortest {
+            assert!(height >= BAR_HEIGHT + 4.0 * LINE && height < before.height(), "{height}");
+        } else {
+            assert!(browser.console.area.y0 > 240.0, "the pages keep their room: {:?}", browser.console.area);
+        }
+    }
+}
+
+/// The owner, 27 October 2026: the Stats tab shows the figures the trusted
+/// core sent, each label and its value, keeps them while an update brings
+/// none, and has no Pause or Clear.
+#[test]
+fn the_stats_tab_shows_the_figures_it_was_sent() {
+    let mut browser = open();
+    let stat = |label: &str, value: &str| Stat { label: label.into(), value: value.into() };
+    browser.console_update(ConsoleUpdate {
+        stats: Some(alloc::vec![stat("Bytes received", "2,126 bytes"), stat("Input events sent", "17")]),
+        channel: 1,
+        replace: true,
+        entries: Vec::new(),
+    });
+    browser.console_update(ConsoleUpdate { stats: None, channel: 1, replace: false, entries: alloc::vec![entry(ConsoleTab::Network, "push: connected")] });
+    texts(&mut browser);
+    let tab = browser.console.tabs.iter().find(|(tab, _)| *tab == Tab::Stats).unwrap().1;
+    press(&mut browser, tab);
+    let shown = texts(&mut browser);
+    for text in ["Bytes received", "2,126 bytes", "Input events sent", "17"] {
+        assert!(shown.iter().any(|shown| shown == text), "{text} in {shown:?}");
+    }
+    assert!(!shown.iter().any(|shown| shown == "Pause" || shown == "Clear"), "{shown:?}");
 }

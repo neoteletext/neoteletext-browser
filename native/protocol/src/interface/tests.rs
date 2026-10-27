@@ -125,6 +125,7 @@ fn every_message_to_the_interface_round_trips() {
         ToInterface::Star(library::StarView { open: true, ..library::StarView::default() }),
         ToInterface::Bar(library::BarView { shown: true, ..library::BarView::default() }),
         ToInterface::Console(console::ConsoleUpdate {
+            stats: None,
             channel: 2,
             replace: false,
             entries: vec![console::ConsoleEntry { tab: console::ConsoleTab::Log, level: console::Level::Warning, at_ms: 5, text: "x".into() }],

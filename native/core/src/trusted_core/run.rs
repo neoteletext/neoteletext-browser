@@ -74,7 +74,7 @@ fn handle(core: &mut Core, event: Event) -> Result<bool, String> {
 pub(crate) fn run(broker: &Arc<Broker>, given: impl Iterator<Item = String>, confined: &str) -> Result<(), String> {
     // What happens before the trusted core is made, for its Log tab.
     let mut log = vec![(Level::Info, format!("trusted core: confined: {confined}"))];
-    let CommandLine { addresses, allow_local, no_keychain } = arguments(given)?;
+    let CommandLine { addresses, allow_local, no_keychain, input_trace } = arguments(given)?;
     let mut interface = spawn(broker, Program::Interface, &[], false)?;
     log.push((Level::Info, format!("interface: confined: {}", interface.report)));
     let (events, incoming) = mpsc::channel();
@@ -103,6 +103,12 @@ pub(crate) fn run(broker: &Arc<Broker>, given: impl Iterator<Item = String>, con
         core.log(level, None, &text);
     }
     core.cookies.no_keychain = no_keychain;
+    #[cfg(feature = "interaction")]
+    if input_trace {
+        core.input_trace = Some(neoteletext::input_trace::InputTrace::default());
+    }
+    #[cfg(not(feature = "interaction"))]
+    let _ = input_trace;
     core.cookies_at_start();
     core.keep_session();
     core.start_sound();
@@ -135,6 +141,10 @@ pub(crate) fn run(broker: &Arc<Broker>, given: impl Iterator<Item = String>, con
 /// (decision 113).
 pub(crate) const NO_KEYCHAIN: &str = "--no-keychain";
 
+/// The flag that shows each input event sent to a channel on the open
+/// page's row 0, with a count of the same event running (`input_trace.rs`).
+pub(crate) const INPUT_TRACE: &str = "--input-trace";
+
 /// The browser's own arguments.
 #[derive(Debug, PartialEq, Eq)]
 struct CommandLine {
@@ -144,16 +154,20 @@ struct CommandLine {
     allow_local: Vec<String>,
     /// [`NO_KEYCHAIN`] was given.
     no_keychain: bool,
+    /// [`INPUT_TRACE`] was given.
+    input_trace: bool,
 }
 
 fn arguments(given: impl Iterator<Item = String>) -> Result<CommandLine, String> {
-    let mut command_line = CommandLine { addresses: Vec::new(), allow_local: Vec::new(), no_keychain: false };
+    let mut command_line = CommandLine { addresses: Vec::new(), allow_local: Vec::new(), no_keychain: false, input_trace: false };
     let mut arguments = given;
     while let Some(argument) = arguments.next() {
         if argument == "--allow-local" {
             command_line.allow_local.push(arguments.next().ok_or("--allow-local needs an address")?);
         } else if argument == NO_KEYCHAIN {
             command_line.no_keychain = true;
+        } else if argument == INPUT_TRACE {
+            command_line.input_trace = true;
         } else {
             command_line.addresses.push(argument);
         }

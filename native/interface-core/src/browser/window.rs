@@ -5,7 +5,6 @@
 use alloc::vec::Vec;
 
 use crate::browser::bookmarks_bar::BAR_HEIGHT;
-use crate::browser::console_panel::CONSOLE_HEIGHT;
 use crate::browser::list_focus::ListFocus;
 use crate::browser::toolbar::{TOOLBAR_HEIGHT, TOOLBAR_TOP};
 use crate::browser::{Browser, Output};
@@ -39,7 +38,7 @@ impl Browser {
         // The console docks where the overview is; the overview hidden
         // from the View menu gives its room to the pages.
         let overview_height = if self.console.open() {
-            CONSOLE_HEIGHT
+            self.console_height(body_top, height - MARGIN)
         } else if self.overview.hidden {
             0.0
         } else if self.overview.folded {
@@ -61,6 +60,7 @@ impl Browser {
         self.draw_list_focus(canvas, list, ListFocus::Pages);
         if self.console.open() {
             self.draw_console(canvas, overview);
+            self.draw_console_grabber(canvas, overview);
         } else if !self.overview.hidden {
             self.draw_overview(canvas, overview, now);
         }
@@ -106,6 +106,8 @@ impl Browser {
         self.draw_links(canvas);
         #[cfg(feature = "interaction")]
         self.draw_terminal(canvas, now);
+        #[cfg(feature = "interaction")]
+        self.draw_input_trace(canvas);
         // A refused certificate: its screen in place of the pages.
         self.draw_refusal(canvas, zoom);
         self.report_visible();

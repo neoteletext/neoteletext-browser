@@ -36,6 +36,8 @@ mod glyphs;
 mod history;
 #[cfg(feature = "links")]
 mod hyperlinks;
+#[cfg(feature = "interaction")]
+mod input_trace;
 mod keys;
 mod list_focus;
 mod menu;
@@ -180,6 +182,9 @@ pub struct Browser {
     /// Typing into a page (`interaction.md`).
     #[cfg(feature = "interaction")]
     typing: typing::TerminalUi,
+    /// The last input event sent, with `--input-trace` (`input_trace.rs`).
+    #[cfg(feature = "interaction")]
+    input_trace: Option<crate::trace::TraceLine>,
     /// The phone keyboard (INPUT.md section 10).
     #[cfg(feature = "phone-keyboard")]
     phone: phone::PhoneUi,
@@ -241,6 +246,8 @@ impl Browser {
             links: hyperlinks::LinkUi::default(),
             #[cfg(feature = "interaction")]
             typing: typing::TerminalUi::default(),
+            #[cfg(feature = "interaction")]
+            input_trace: None,
             #[cfg(feature = "phone-keyboard")]
             phone: phone::PhoneUi::default(),
         }

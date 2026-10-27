@@ -93,6 +93,18 @@ pub struct ConsoleEntry {
     pub text: String,
 }
 
+/// One figure of the Stats tab: what is counted, and how much.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Stat {
+    /// What is counted, cleaned text.
+    pub label: String,
+    /// How much, written out, cleaned text.
+    pub value: String,
+}
+
+/// The most figures the Stats tab shows.
+pub const MAX_STATS: usize = 24;
+
 /// New entries for a channel's tabs.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ConsoleUpdate {
@@ -102,4 +114,7 @@ pub struct ConsoleUpdate {
     pub replace: bool,
     /// The entries, oldest first.
     pub entries: Vec<ConsoleEntry>,
+    /// The channel's figures for the Stats tab, in place of those shown;
+    /// `None` when they have not changed.
+    pub stats: Option<Vec<Stat>>,
 }

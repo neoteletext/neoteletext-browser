@@ -5,7 +5,7 @@
 
 use super::{Fields, ProtocolError, push_count, push_text};
 
-pub use interface_core::console::{ConsoleEntry, ConsoleTab, ConsoleUpdate, KEPT, Level, MAX_ENTRY};
+pub use interface_core::console::{ConsoleEntry, ConsoleTab, ConsoleUpdate, KEPT, Level, MAX_ENTRY, MAX_STATS, Stat};
 /// The most entries a message carries.
 pub const MAX_ENTRIES: usize = 200;
 
@@ -38,6 +38,14 @@ pub(crate) fn push_update(payload: &mut Vec<u8>, update: &ConsoleUpdate) -> Resu
         payload.extend_from_slice(&entry.at_ms.to_be_bytes());
         push_text(payload, &entry.text, MAX_ENTRY)?;
     }
+    payload.push(u8::from(update.stats.is_some()));
+    if let Some(stats) = &update.stats {
+        push_count(payload, stats.len(), MAX_STATS, "too many figures")?;
+        for stat in stats {
+            push_text(payload, &stat.label, MAX_ENTRY)?;
+            push_text(payload, &stat.value, MAX_ENTRY)?;
+        }
+    }
     Ok(())
 }
 
@@ -53,7 +61,13 @@ pub(crate) fn read_update(fields: &mut Fields<'_>) -> Result<ConsoleUpdate, Prot
             Ok(ConsoleEntry { tab, level, at_ms, text: fields.text(MAX_ENTRY)? })
         })
         .collect::<Result<Vec<_>, ProtocolError>>()?;
-    Ok(ConsoleUpdate { channel, replace, entries })
+    let stats = if fields.flag("flag")? {
+        let count = fields.count_u16(MAX_STATS, "too many figures")?;
+        Some((0..count).map(|_| Ok(Stat { label: fields.text(MAX_ENTRY)?, value: fields.text(MAX_ENTRY)? })).collect::<Result<Vec<_>, ProtocolError>>()?)
+    } else {
+        None
+    };
+    Ok(ConsoleUpdate { channel, replace, entries, stats })
 }
 
 #[cfg(test)]
@@ -65,6 +79,7 @@ mod tests {
         let update = ConsoleUpdate {
             channel: 3,
             replace: true,
+            stats: Some(vec![Stat { label: "Bytes received".into(), value: "1,024".into() }]),
             entries: ConsoleTab::ALL
                 .iter()
                 .zip(Level::ALL.iter().cycle())

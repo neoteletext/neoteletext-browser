@@ -81,6 +81,9 @@ pub enum Incoming {
     /// Whether keys go to the open page's channel.
     #[cfg(feature = "interaction")]
     Typing(protocol::interaction::Typing),
+    /// The last input event sent, with the trusted core's `--input-trace`.
+    #[cfg(feature = "interaction")]
+    InputTrace(protocol::interaction::TraceLine),
     /// The phone keyboard's panel and state.
     #[cfg(feature = "phone-keyboard")]
     Phone(protocol::keyboard::PhoneView),

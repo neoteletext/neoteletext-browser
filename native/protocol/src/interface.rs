@@ -91,6 +91,10 @@ pub enum ToInterface {
     /// (`interaction.md` section 11).
     #[cfg(feature = "interaction")]
     Typing(interaction::Typing),
+    /// The last input event sent to a channel, with the trusted core's
+    /// `--input-trace`, for the open page's row 0.
+    #[cfg(feature = "interaction")]
+    InputTrace(interaction::TraceLine),
     /// The phone keyboard's panel and state (INPUT.md section 10).
     #[cfg(feature = "phone-keyboard")]
     Phone(keyboard::PhoneView),

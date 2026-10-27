@@ -283,6 +283,8 @@ impl Browser {
         self.draw_links(canvas);
         #[cfg(feature = "interaction")]
         self.draw_terminal(canvas, now);
+        #[cfg(feature = "interaction")]
+        self.draw_input_trace(canvas);
         self.report_visible();
         let Some(page) = page else {
             // The page left the wall: the window comes back next frame.

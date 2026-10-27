@@ -117,3 +117,15 @@ fn a_message_for_the_fetcher_is_whole_and_bounded() {
     assert!(check_message(b"\xFF\x00").is_err(), "a reserved type");
     assert!(check_message(&[b'a'; MAX_MESSAGE + 1]).is_err());
 }
+
+/// The input trace's line (the owner, 27 October 2026) round trips, its
+/// text within a row and cleaned.
+#[test]
+fn a_trace_line_round_trips_within_a_row() {
+    let line = TraceLine { text: "MOUSE move b0 12,5".into(), repeats: 17, sent: 1_234 };
+    let mut payload = Vec::new();
+    push_trace(&mut payload, &line).unwrap();
+    assert_eq!(read_trace(&mut Fields::new(&payload)).unwrap(), line);
+    assert!(push_trace(&mut Vec::new(), &TraceLine { text: "x".repeat(MAX_TRACE + 1), ..line.clone() }).is_err());
+    assert!(push_trace(&mut Vec::new(), &TraceLine { text: "a\u{202e}b".into(), ..line }).is_err(), "only cleaned text");
+}

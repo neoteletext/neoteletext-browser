@@ -17,7 +17,7 @@ use super::strip::{push_strip, read_strip};
 use super::tabs::{push_channels, push_tabs, read_channels, read_tabs};
 use super::windows::{push_open_window, read_open_window, window_number};
 #[cfg(feature = "interaction")]
-use crate::interaction::KIND_TYPING;
+use crate::interaction::{KIND_INPUT_TRACE, KIND_TYPING};
 #[cfg(feature = "phone-keyboard")]
 use crate::keyboard::{KIND_PHONE, KIND_PHONE_KEY};
 use crate::{Fields, ProtocolError, console, controls, cookies, library, read_frame, settings, tail, write_frame};
@@ -48,6 +48,8 @@ fn kind_of(message: &ToInterface) -> u8 {
         ToInterface::Link(message) => crate::links::message_kind(message),
         #[cfg(feature = "interaction")]
         ToInterface::Typing(_) => KIND_TYPING,
+        #[cfg(feature = "interaction")]
+        ToInterface::InputTrace(_) => KIND_INPUT_TRACE,
         #[cfg(feature = "phone-keyboard")]
         ToInterface::Phone(_) => KIND_PHONE,
         #[cfg(feature = "phone-keyboard")]
@@ -87,6 +89,8 @@ fn push_fields(payload: &mut Vec<u8>, message: &ToInterface) -> Result<(), Proto
         ToInterface::Link(message) => crate::links::push_message(payload, message)?,
         #[cfg(feature = "interaction")]
         ToInterface::Typing(typing) => crate::interaction::push_typing(payload, typing)?,
+        #[cfg(feature = "interaction")]
+        ToInterface::InputTrace(line) => crate::interaction::push_trace(payload, line)?,
         #[cfg(feature = "phone-keyboard")]
         ToInterface::Phone(view) => crate::keyboard::push_view(payload, view)?,
         #[cfg(feature = "phone-keyboard")]
@@ -152,6 +156,8 @@ pub fn read_from_core(input: &mut dyn Read) -> Result<Option<ToInterface>, Proto
         kind if crate::links::is_message(kind) => ToInterface::Link(crate::links::read_message(kind, &mut fields)?),
         #[cfg(feature = "interaction")]
         KIND_TYPING => ToInterface::Typing(crate::interaction::read_typing(&mut fields)?),
+        #[cfg(feature = "interaction")]
+        KIND_INPUT_TRACE => ToInterface::InputTrace(crate::interaction::read_trace(&mut fields)?),
         #[cfg(feature = "phone-keyboard")]
         KIND_PHONE => ToInterface::Phone(crate::keyboard::read_view(&mut fields)?),
         #[cfg(feature = "phone-keyboard")]

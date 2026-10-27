@@ -102,3 +102,43 @@ fn hidden_characters_are_cleaned() {
     assert!(text.starts_with("ab") && text.len() <= MAX_ENTRY);
     assert_eq!(exchange_text("GET", "https://a.example/100.tti", 200, 512, 12_345), "GET https://a.example/100.tti 200 512 bytes 12 ms");
 }
+
+/// The owner, 27 October 2026: a Stats tab of what a channel sent and
+/// received. Pushes, fetches, packets, the audio channel's packets as the
+/// engine tells them, input sent and pages are counted from the start, and
+/// the figures go with the first update and again only when they change.
+#[test]
+fn the_stats_count_what_came_and_went_and_go_when_they_change() {
+    use neoteletext_core::consts::{IDL_CHANNEL_INDEPENDENT_AUDIO, IDL_DESIGNATION};
+    let mut console = Console::default();
+    let mut audio = vec![hamming84_encode(IDL_CHANNEL_INDEPENDENT_AUDIO), hamming84_encode(IDL_DESIGNATION)];
+    audio.resize(PACKET_BYTES, 0);
+    let mut pushed = packet(1, b"one");
+    pushed.extend(packet(2, b"two"));
+    pushed.extend(&audio);
+    console.received(4, true, true, &pushed);
+    console.fetched(4, 2_000);
+    console.connected(4);
+    console.sent(4, 9);
+    console.page(4, true);
+    console.page(4, false);
+    console.page(4, false);
+    let counts = console.counted(4);
+    assert_eq!((counts.pushes, counts.pushed_bytes, counts.packets, counts.audio_packets), (1, 3 * PACKET_BYTES as u64, 3, 1));
+    assert_eq!((counts.fetches, counts.fetched_bytes, counts.events_sent, counts.bytes_sent), (1, 2_000, 1, 9));
+    assert_eq!((counts.pages_arrived, counts.pages_changed, counts.connections), (1, 2, 1));
+
+    console.set_open(true);
+    let updates = console.updates(Some(4));
+    let stats = updates.last().unwrap().stats.clone().unwrap();
+    let value = |label: &str| stats.iter().find(|stat| stat.label == label).map(|stat| stat.value.clone()).unwrap();
+    assert_eq!(value("Bytes received"), format!("{} bytes", grouped(2_000 + 3 * PACKET_BYTES as u64)));
+    assert_eq!(value("Audio received"), format!("{PACKET_BYTES} bytes in 1 packets"));
+    assert_eq!(value("Input events sent"), "1");
+    assert!(console.updates(Some(4)).is_empty(), "nothing new, nothing sent");
+    console.sent(4, 7);
+    let updates = console.updates(Some(4));
+    assert_eq!(updates.len(), 1, "changed figures go alone");
+    assert!(updates[0].entries.is_empty() && updates[0].stats.is_some());
+    assert_eq!(grouped(1_234_567), "1,234,567");
+}

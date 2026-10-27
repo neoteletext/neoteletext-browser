@@ -200,6 +200,10 @@ struct Core {
     from_closed: bool,
     /// Every cookie, and the cookies panel (`cookies.md`).
     cookies: cookies::Cookies,
+    /// Each input event sent described on the open page's row 0, with
+    /// `--input-trace`; `None` without it.
+    #[cfg(feature = "interaction")]
+    input_trace: Option<neoteletext::input_trace::InputTrace>,
     /// The open page's controls (`page-controls.md`, decision 67).
     controls: page_controls::State,
     /// The session's text last written, so an unchanged one is not.
@@ -308,6 +312,8 @@ impl Core {
             stale: std::collections::BTreeSet::new(),
             from_closed: false,
             cookies: cookies::Cookies::default(),
+            #[cfg(feature = "interaction")]
+            input_trace: None,
             controls: page_controls::State::default(),
             kept_session: String::new(),
             updates: updates::Updates::default(),

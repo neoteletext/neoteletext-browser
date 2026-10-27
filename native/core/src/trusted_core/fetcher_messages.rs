@@ -137,6 +137,7 @@ impl Core {
             FromFetcher::Page { origin, bytes } => {
                 let pushed = matches!(origin, Origin::PushedPackets | Origin::PushedPage);
                 let packets = matches!(origin, Origin::PushedPackets | Origin::FetchedPackets);
+                self.console.received(channel, pushed, packets, bytes);
                 if packets {
                     self.console.packets(channel, at, pushed, bytes);
                 }
@@ -146,9 +147,13 @@ impl Core {
                 }
             }
             FromFetcher::Pushing(open) => {
+                if *open {
+                    self.console.connected(channel);
+                }
                 self.console.add(channel, ConsoleTab::Network, at, if *open { "push: connected" } else { "push: lost" });
             }
             FromFetcher::Exchange { method, url, status, bytes, elapsed_us } => {
+                self.console.fetched(channel, *bytes);
                 self.console.add(channel, ConsoleTab::Network, at, &exchange_text(method, url, *status, *bytes, *elapsed_us));
             }
             FromFetcher::Notice(text) => self.console.log(Some(channel), Level::Warning, at, &format!("fetcher: {text}")),

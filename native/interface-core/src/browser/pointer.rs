@@ -27,7 +27,7 @@ impl Browser {
     /// the window needs drawing again.
     pub fn pointer_moved(&mut self, x: f64, y: f64, now: u64) -> bool {
         self.pointer = Point::new(x, y);
-        if self.remote_moved(self.pointer) || self.divider_moved(self.pointer) {
+        if self.remote_moved(self.pointer) || self.divider_moved(self.pointer) || self.console_grabber_moved(self.pointer) {
             return true;
         }
         let subpaged = self.subpages_moved(self.pointer);
@@ -60,7 +60,7 @@ impl Browser {
         if self.over_divider() {
             return Cursor::ResizeColumn;
         }
-        if self.over_subpage_divider() {
+        if self.over_subpage_divider() || self.over_console_grabber() {
             return Cursor::ResizeRow;
         }
         if self.subpages.hovered.is_some() {
@@ -91,6 +91,7 @@ impl Browser {
     pub fn pointer_released(&mut self) {
         self.remote_released();
         self.divider_released();
+        self.console_grabber_released();
         self.subpages_released();
         self.tabs_released();
         self.release_back_or_forward();

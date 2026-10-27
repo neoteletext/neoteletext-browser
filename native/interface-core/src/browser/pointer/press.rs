@@ -49,7 +49,7 @@ impl Browser {
         if self.settings_press(self.pointer) {
             return Some(true);
         }
-        if self.console_press(self.pointer) {
+        if self.console_grabber_press(self.pointer) || self.console_press(self.pointer) {
             return Some(true);
         }
         #[cfg(feature = "phone-keyboard")]

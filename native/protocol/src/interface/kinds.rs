@@ -21,6 +21,7 @@
 //! | 40 | `KIND_TYPING` | `interaction.rs` |
 //! | 41 | `KIND_PHONE` | `keyboard.rs` |
 //! | 42 | `KIND_PHONE_KEY` | `keyboard.rs` |
+//! | 94 | `KIND_INPUT_TRACE` | `interaction.rs` |
 
 // Trusted core to interface.
 pub(crate) const KIND_STRIP: u8 = 2;

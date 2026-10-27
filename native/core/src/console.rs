@@ -11,7 +11,7 @@ use std::fmt::Write as _;
 use neoteletext_core::consts::{DATA_BYTES, PACKET_BYTES};
 use neoteletext_core::packet::{Decoded, Packet, decode, decode_address};
 use protocol::clean;
-use protocol::console::{ConsoleEntry, ConsoleTab, ConsoleUpdate, KEPT, Level, MAX_ENTRIES, MAX_ENTRY};
+use protocol::console::{ConsoleEntry, ConsoleTab, ConsoleUpdate, KEPT, Level, MAX_ENTRIES, MAX_ENTRY, Stat};
 
 /// Microseconds in a millisecond, for an exchange's time.
 const MICROSECONDS_PER_MILLISECOND: u64 = 1000;
@@ -23,10 +23,75 @@ const UNPRINTABLE: char = '.';
 const SEVEN_BITS: u8 = 0x7F;
 
 /// One channel's entries: each console tab's newest, with the number of
-/// each, in the order they came.
+/// each, in the order they came; and what the Stats tab counts.
 #[derive(Default)]
 struct Log {
     tabs: [VecDeque<(u64, ConsoleEntry)>; ConsoleTab::ALL.len()],
+    counts: Counts,
+}
+
+/// What the Stats tab counts of a channel since it opened (the owner, 27
+/// October 2026): what came, by push and by fetch, its packets and their
+/// sound, what was sent back, and the pages.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Counts {
+    connections: u64,
+    pushes: u64,
+    pushed_bytes: u64,
+    fetches: u64,
+    fetched_bytes: u64,
+    packets: u64,
+    /// Packets of the audio profile's data channel that carry sound.
+    audio_packets: u64,
+    /// Packets of that channel that carry the channel's cursor and control records.
+    input_packets: u64,
+    events_sent: u64,
+    bytes_sent: u64,
+    pages_arrived: u64,
+    pages_changed: u64,
+}
+
+/// Digits between the commas of a large number.
+const GROUP: usize = 3;
+
+/// `value` with its thousands apart, as "1,234,567".
+fn grouped(value: u64) -> String {
+    let digits = value.to_string();
+    let mut out = String::new();
+    for (index, digit) in digits.chars().enumerate() {
+        if index > 0 && digits.len().saturating_sub(index).is_multiple_of(GROUP) {
+            out.push(',');
+        }
+        out.push(digit);
+    }
+    out
+}
+
+/// A count of bytes, as the Stats tab writes it.
+fn bytes_text(bytes: u64) -> String {
+    format!("{} bytes", grouped(bytes))
+}
+
+impl Counts {
+    /// The Stats tab's figures.
+    #[must_use]
+    pub fn stats(&self) -> Vec<Stat> {
+        let packet_bytes = |packets: u64| packets.saturating_mul(PACKET_BYTES as u64);
+        let stat = |label: &str, value: String| Stat { label: label.into(), value };
+        vec![
+            stat("Bytes received", bytes_text(self.pushed_bytes.saturating_add(self.fetched_bytes))),
+            stat("  by push (WebSocket)", format!("{} in {} messages", bytes_text(self.pushed_bytes), grouped(self.pushes))),
+            stat("  by fetch (HTTP)", format!("{} in {} requests", bytes_text(self.fetched_bytes), grouped(self.fetches))),
+            stat("Packets received", grouped(self.packets)),
+            stat("Audio received", format!("{} in {} packets", bytes_text(packet_bytes(self.audio_packets)), grouped(self.audio_packets))),
+            stat("Cursor records received", format!("{} in {} packets", bytes_text(packet_bytes(self.input_packets)), grouped(self.input_packets))),
+            stat("Input events sent", grouped(self.events_sent)),
+            stat("Bytes sent (input)", bytes_text(self.bytes_sent)),
+            stat("Pages arrived", grouped(self.pages_arrived)),
+            stat("Page changes", grouped(self.pages_changed)),
+            stat("Push connections", grouped(self.connections)),
+        ]
+    }
 }
 
 /// The console's entries for every open channel.
@@ -45,6 +110,8 @@ pub struct Console {
     /// Whether anything came or went since the last send: without it, a
     /// send has nothing to look for.
     changed: bool,
+    /// Whether a channel's counts changed since the last send.
+    counted: bool,
 }
 
 fn slot(tab: ConsoleTab) -> usize {
@@ -93,6 +160,78 @@ impl Console {
         }
     }
 
+    /// `channel`'s counts, to change.
+    fn counts(&mut self, channel: u32) -> &mut Counts {
+        self.counted = true;
+        &mut self.channels.entry(channel).or_default().counts
+    }
+
+    /// `channel`'s counts as they are.
+    #[must_use]
+    pub fn counted(&self, channel: u32) -> Counts {
+        self.channels.get(&channel).map(|log| log.counts).unwrap_or_default()
+    }
+
+    /// Counts what a push brought: its bytes, and when they are packets,
+    /// each packet, and those of the audio profile's data channel by what
+    /// they carry, as the engine tells them (`idl::is_audio`, INPUT.md
+    /// section 7).
+    pub fn received(&mut self, channel: u32, pushed: bool, packets: bool, bytes: &[u8]) {
+        let counts = self.counts(channel);
+        let length = u64::try_from(bytes.len()).unwrap_or(u64::MAX);
+        if pushed {
+            counts.pushes = counts.pushes.saturating_add(1);
+            counts.pushed_bytes = counts.pushed_bytes.saturating_add(length);
+        }
+        if !packets {
+            return;
+        }
+        let (whole, _) = bytes.as_chunks::<PACKET_BYTES>();
+        for bytes in whole {
+            counts.packets = counts.packets.saturating_add(1);
+            let packet = Packet { bytes: *bytes };
+            if !neoteletext_audio::idl::is_audio(&packet) {
+                continue;
+            }
+            #[cfg(feature = "interaction")]
+            if neoteletext_input::is_input_packet(&packet) {
+                counts.input_packets = counts.input_packets.saturating_add(1);
+                continue;
+            }
+            counts.audio_packets = counts.audio_packets.saturating_add(1);
+        }
+    }
+
+    /// Counts an exchange the fetcher made and the bytes it brought.
+    pub fn fetched(&mut self, channel: u32, bytes: u64) {
+        let counts = self.counts(channel);
+        counts.fetches = counts.fetches.saturating_add(1);
+        counts.fetched_bytes = counts.fetched_bytes.saturating_add(bytes);
+    }
+
+    /// Counts the push connection opening.
+    pub fn connected(&mut self, channel: u32) {
+        let counts = self.counts(channel);
+        counts.connections = counts.connections.saturating_add(1);
+    }
+
+    /// Counts an input event sent to the channel, and its bytes.
+    pub fn sent(&mut self, channel: u32, bytes: usize) {
+        let counts = self.counts(channel);
+        counts.events_sent = counts.events_sent.saturating_add(1);
+        counts.bytes_sent = counts.bytes_sent.saturating_add(u64::try_from(bytes).unwrap_or(u64::MAX));
+    }
+
+    /// Counts a page that arrived, or one that changed.
+    pub fn page(&mut self, channel: u32, arrived: bool) {
+        let counts = self.counts(channel);
+        if arrived {
+            counts.pages_arrived = counts.pages_arrived.saturating_add(1);
+        } else {
+            counts.pages_changed = counts.pages_changed.saturating_add(1);
+        }
+    }
+
     /// The channel is gone: its entries go.
     pub fn forget(&mut self, channel: u32) {
         self.channels.remove(&channel);
@@ -122,10 +261,12 @@ impl Console {
             Some((sent, last)) if sent == channel => (false, Some(last)),
             _ => (true, None),
         };
-        if !replace && !self.changed {
+        if !replace && !self.changed && !self.counted {
             return Vec::new();
         }
+        let stats = (replace || self.counted).then(|| self.counted(channel).stats());
         self.changed = false;
+        self.counted = false;
         let new = |(number, _): &&(u64, ConsoleEntry)| after.is_none_or(|last| *number > last);
         let mut entries: Vec<&(u64, ConsoleEntry)> = self.channels.get(&channel).map(|log| log.tabs.iter().flatten().filter(new).collect()).unwrap_or_default();
         entries.extend(self.browser.iter().filter(new));
@@ -135,11 +276,20 @@ impl Console {
         let mut updates: Vec<ConsoleUpdate> = entries
             .chunks(MAX_ENTRIES)
             .enumerate()
-            .map(|(index, chunk)| ConsoleUpdate { channel, replace: replace && index == 0, entries: chunk.iter().map(|(_, entry)| entry.clone()).collect() })
+            .map(|(index, chunk)| ConsoleUpdate {
+                channel,
+                replace: replace && index == 0,
+                entries: chunk.iter().map(|(_, entry)| entry.clone()).collect(),
+                stats: None,
+            })
             .collect();
-        // A channel newly shown with nothing yet still clears what was shown.
-        if replace && updates.is_empty() {
-            updates.push(ConsoleUpdate { channel, replace: true, entries: Vec::new() });
+        // A channel newly shown with nothing yet still clears what was
+        // shown; figures that changed go even when no entry came.
+        if updates.is_empty() && (replace || stats.is_some()) {
+            updates.push(ConsoleUpdate { channel, replace, entries: Vec::new(), stats: None });
+        }
+        if let Some(last) = updates.last_mut() {
+            last.stats = stats;
         }
         updates
     }

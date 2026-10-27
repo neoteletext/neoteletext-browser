@@ -33,6 +33,7 @@ impl Core {
             FromDecoder::Arrived { page, title } => self.arrived(channel, page, &title)?,
             FromDecoder::Updated { page } => {
                 let at = self.now();
+                self.console.page(channel, false);
                 self.console.add(channel, ConsoleTab::Pages, at, &format!("page {page:03X} changed"));
                 if active == Some(channel) {
                     self.send(&ToInterface::Updated { channel, page })?;
@@ -107,6 +108,7 @@ impl Core {
         let title = tab.channel.arrived(page, title);
         if let Some(title) = &title {
             let at = self.now();
+            self.console.page(channel, true);
             self.console.add(channel, ConsoleTab::Pages, at, &format!("page {page:03X} arrived: {title}"));
         }
         if let Some(title) = title

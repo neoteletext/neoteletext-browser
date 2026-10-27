@@ -25,6 +25,24 @@ pub(crate) use typing::{push_typing, read_typing};
 pub(crate) const KIND_INPUT: u8 = 27;
 pub(crate) const KIND_EDITING: u8 = 30;
 pub(crate) const KIND_TYPING: u8 = 40;
+pub(crate) const KIND_INPUT_TRACE: u8 = 94;
+
+pub use interface_core::trace::{MAX_TRACE, TraceLine};
+
+/// A trace line, its text cleaned and within [`MAX_TRACE`].
+pub(crate) fn push_trace(payload: &mut Vec<u8>, line: &TraceLine) -> Result<(), ProtocolError> {
+    crate::push_text(payload, &line.text, MAX_TRACE)?;
+    payload.extend_from_slice(&line.repeats.to_be_bytes());
+    payload.extend_from_slice(&line.sent.to_be_bytes());
+    Ok(())
+}
+
+pub(crate) fn read_trace(fields: &mut crate::Fields<'_>) -> Result<TraceLine, ProtocolError> {
+    let text = fields.text(MAX_TRACE)?;
+    let repeats = fields.u32()?;
+    let sent = u64::from_be_bytes(fields.array()?);
+    Ok(TraceLine { text, repeats, sent })
+}
 
 /// Whether an intent is within the protocol's bounds: what the engine's
 /// writer writes and its reader reads back (REQ-INT-102, REQ-INT-103).

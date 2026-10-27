@@ -23,6 +23,7 @@ neoteletext-input = { workspace = true, optional = true }
 unicode-normalization = { workspace = true, optional = true }
 interface-core.workspace = true
 protocol.workspace = true
+neoteletext-audio.workspace = true
 neoteletext-core.workspace = true
 # The engine's reading of a proxy's address (settings, decision 51).
 neoteletext-web.workspace = true

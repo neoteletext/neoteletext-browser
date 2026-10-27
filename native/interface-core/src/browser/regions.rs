@@ -39,6 +39,8 @@ pub(super) struct Regions {
     pub(super) banks: Vec<Rect>,
     pub(super) list: Rect,
     pub(super) divider: Rect,
+    /// The console's grabber, over the gap above it.
+    pub(super) console_grabber: Rect,
     pub(super) rows: Vec<(Rect, usize)>,
     pub(super) subpage_divider: Rect,
     pub(super) subpage_list: Rect,

@@ -52,5 +52,7 @@ pub mod size;
 mod test_canvas;
 pub mod text;
 pub mod theme;
+#[cfg(feature = "interaction")]
+pub mod trace;
 pub mod tween;
 pub mod wall;

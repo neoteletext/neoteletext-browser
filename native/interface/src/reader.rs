@@ -28,6 +28,8 @@ pub fn read_core(proxy: &EventLoopProxy<Incoming>) {
             Ok(Some(ToInterface::Link(message))) => Incoming::Link(message),
             #[cfg(feature = "interaction")]
             Ok(Some(ToInterface::Typing(typing))) => Incoming::Typing(typing),
+            #[cfg(feature = "interaction")]
+            Ok(Some(ToInterface::InputTrace(line))) => Incoming::InputTrace(line),
             #[cfg(feature = "phone-keyboard")]
             Ok(Some(ToInterface::Phone(view))) => Incoming::Phone(view),
             #[cfg(feature = "phone-keyboard")]

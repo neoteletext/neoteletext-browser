@@ -40,6 +40,8 @@ pub mod dropped;
 pub mod frames;
 pub mod hearing;
 pub mod history;
+#[cfg(feature = "interaction")]
+pub mod input_trace;
 #[cfg(feature = "links")]
 pub mod links;
 pub mod outbox;

@@ -41,10 +41,18 @@ impl Core {
         for send in sends {
             match send {
                 neoteletext::typing::Send::Fetcher(channel, record) => {
+                    // The trace reads the message as it goes (`input_trace.rs`).
+                    let line = self.input_trace.as_mut().map(|trace| trace.note(&record));
                     let Some(input) = self.fetchers.get_mut(&channel).and_then(super::processes::Fetcher::input) else { continue };
+                    let length = record.len();
                     // A fetcher that cannot be written to has stopped; its
                     // reader reports that, and the socket's state follows.
-                    let _ = write_to_fetcher(input, &ToFetcher::Send(record));
+                    if write_to_fetcher(input, &ToFetcher::Send(record)).is_ok() {
+                        self.console.sent(channel, length);
+                        if let Some(line) = line {
+                            self.send(&ToInterface::InputTrace(line))?;
+                        }
+                    }
                 }
                 neoteletext::typing::Send::Interface(state) => self.send(&ToInterface::Typing(state))?,
             }

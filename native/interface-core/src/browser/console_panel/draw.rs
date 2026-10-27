@@ -17,6 +17,9 @@ use crate::geometry::Rect;
 use crate::text::{border, centred, left_centred, outline};
 use crate::theme::{BUTTON, DIM, HEADING, MUTED, PANEL, ROW_STATUS, ROW_TITLE, RULE, SELECTED, WHITE};
 
+/// The Stats tab's column of what is counted: its longest label in the entries' face.
+const STAT_LABEL_WIDTH: f64 = 230.0;
+
 impl Browser {
     /// The console's tabs and buttons, and the cookies' controls.
     pub(in crate::browser) fn console_tips(&self, tips: &mut Vec<(Rect, alloc::string::String)>) {
@@ -29,6 +32,7 @@ impl Browser {
                 Tab::Entries(ConsoleTab::Packets) => "Each teletext packet received",
                 Tab::Entries(ConsoleTab::Pages) => "The pages the decoder holds",
                 Tab::Entries(ConsoleTab::Log) => "The browser's log: each process's errors, warnings and notices, and how it was confined",
+                Tab::Stats => "What this channel has sent and received since it opened: bytes, packets, sound, input events and pages",
                 Tab::Cookies => "Cookies kept for each site and channel: delete or block them",
             };
             tips.push((rect, words.into()));
@@ -37,7 +41,7 @@ impl Browser {
         tips.push((self.console.close, close));
         if self.console.tab == Tab::Cookies {
             self.cookies_tips(tips);
-        } else {
+        } else if self.console.tab != Tab::Stats {
             tips.push((
                 self.console.pause,
                 if self.console.paused { "Scroll again, with what arrived meanwhile" } else { "Stop scrolling; what arrives waits" }.into(),
@@ -71,6 +75,7 @@ impl Browser {
             border(canvas, rect, 1.0, if chosen { SELECTED } else { RULE });
             let label = match tab {
                 Tab::Entries(tab) => format!("{} {}", tab.label(), self.console.entries.get(tab.index()).map_or(0, VecDeque::len)),
+                Tab::Stats => "Stats".into(),
                 Tab::Cookies => "Cookies".into(),
             };
             centred(canvas, rect, &label, ROW_STATUS, WHITE);
@@ -78,8 +83,8 @@ impl Browser {
             x = rect.x1 + GAP;
         }
         self.console.close = Rect::new(bar.x1 - CLOSE_WIDTH, bar.y0, bar.x1, bar.y1);
-        // Pause and Clear are the entries'; the cookies' tab has its own controls.
-        let entries_shown = self.console.tab != Tab::Cookies;
+        // Pause and Clear are the entries'; the cookies' tab has its own controls, the figures none.
+        let entries_shown = matches!(self.console.tab, Tab::Entries(_));
         let (clear, pause) = if entries_shown {
             let clear = Rect::new(self.console.close.x0 - GAP - BUTTON_WIDTH, bar.y0, self.console.close.x0 - GAP, bar.y1);
             (clear, Rect::new(clear.x0 - GAP - BUTTON_WIDTH, bar.y0, clear.x0 - GAP, bar.y1))
@@ -134,6 +139,10 @@ impl Browser {
     /// The tab's entries in `list`, the newest at the foot, or the
     /// cookies' tab.
     fn draw_console_entries<C: Canvas + ?Sized>(&mut self, canvas: &mut C, list: Rect) {
+        if self.console.tab == Tab::Stats {
+            self.draw_console_stats(canvas, list);
+            return;
+        }
         let Some(entries) = self.console.shown() else {
             self.draw_cookies(canvas, list);
             return;
@@ -153,6 +162,22 @@ impl Browser {
             let time = format!("{}.{:03} s", entry.at_ms / MILLISECONDS_PER_SECOND, entry.at_ms % MILLISECONDS_PER_SECOND);
             left_centred(canvas, line, 0.0, &time, ENTRY, MUTED);
             left_centred(canvas, line, TIME_WIDTH, &entry.text, ENTRY, level_colour(entry.level));
+        }
+        canvas.pop_clip();
+    }
+
+    /// The Stats tab: each figure on a line, what is counted and then how much.
+    fn draw_console_stats<C: Canvas + ?Sized>(&self, canvas: &mut C, list: Rect) {
+        canvas.push_clip(list);
+        if self.console.stats.is_empty() {
+            left_centred(canvas, Rect::new(list.x0, list.y0, list.x1, list.y0 + LINE), 0.0, "Nothing yet", ENTRY, DIM);
+        }
+        for (row, stat) in self.console.stats.iter().enumerate() {
+            #[allow(clippy::cast_precision_loss, reason = "a panel's lines")]
+            let top = list.y0 + row as f64 * LINE;
+            let line = Rect::new(list.x0, top, list.x1, top + LINE);
+            left_centred(canvas, line, 0.0, &stat.label, ENTRY, MUTED);
+            left_centred(canvas, line, STAT_LABEL_WIDTH, &stat.value, ENTRY, WHITE);
         }
         canvas.pop_clip();
     }
