@@ -47,6 +47,8 @@ pub(super) struct Regions {
     pub(super) subrows: Vec<(Rect, u16)>,
     pub(super) overview: Rect,
     pub(super) overview_toggle: Rect,
+    /// The overview's close button, which hides it as the View menu does.
+    pub(super) overview_close: Rect,
     pub(super) cells: Rect,
 }
 

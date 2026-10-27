@@ -160,6 +160,10 @@ impl Browser {
             self.toggle_overview();
             return Some(true);
         }
+        if regions.overview_close.contains(point) {
+            self.toggle_overview_shown();
+            return Some(true);
+        }
         if regions.cells.contains(point) {
             if let Some(index) = self.cell_index(point)
                 && matches!(self.channel.pages.get(index), Some(Some(_)))

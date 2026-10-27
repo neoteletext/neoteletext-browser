@@ -1,7 +1,8 @@
 //! The overview of all 800 pages along the bottom: a cell per page in
 //! its bank's colour, the legend, the rings and dots of updates and
-//! arrivals, the page under the pointer popped up at its native size, and
-//! the button that folds it into the footer.
+//! arrivals, the page under the pointer popped up at its native size, the
+//! button that folds it into the footer, and the button that closes it as
+//! the View menu's item hides it (decision 109, browser issue #2).
 
 use alloc::format;
 
@@ -12,7 +13,7 @@ use crate::browser::window::{HEADING_HEIGHT, MARGIN, PADDING};
 use crate::canvas::{Canvas, PAGE_HEIGHT, PAGE_WIDTH, SCREEN_SCALE, draw_page_on_screen};
 use crate::channel::{BANKS, PAGES, PAGES_PER_BANK, Status, bank_indices, page_index};
 use crate::geometry::{Point, Rect};
-use crate::text::{border, centred, left_centred, outline};
+use crate::text::{border, centred, cross, left_centred, outline};
 use crate::theme::{
     AXIS, BANK_COLOURS, BLACK, BUTTON, CELL_AVAILABLE, CELL_EMPTY, CELL_PULSE, HEADING, LEGEND, MUTED, PANEL, RULE, SELECTED, UPDATED, WHITE, YELLOW, mix,
 };
@@ -35,6 +36,11 @@ const UPDATE_DOT_INSET: f64 = 0.25;
 /// The button at the overview's top right that folds it into the footer
 /// and opens it again, with its chevron.
 const TOGGLE_SIZE: f64 = 28.0;
+/// The close button beside it, the same size, with this gap between them;
+/// its cross reaches half the glyph each way, as the zoomed page's does.
+const CLOSE_GAP: f64 = 6.0;
+const CLOSE_GLYPH: f64 = 12.0;
+const CLOSE_THICKNESS: f64 = 2.5;
 /// A page under the pointer in the overview pops up at its native size,
 /// this far above its cell, with a shadow offset as the wall's hover.
 const PREVIEW_GAP: f64 = 8.0;
@@ -121,16 +127,21 @@ impl Browser {
         left_centred(canvas, heading, PADDING, &format!("All {PAGES} pages · overview"), HEADING, WHITE);
         let middle = f64::midpoint(heading.y0, heading.y1);
         let toggle = Rect::new(heading.x1 - PADDING - TOGGLE_SIZE, middle - TOGGLE_SIZE / 2.0, heading.x1 - PADDING, middle + TOGGLE_SIZE / 2.0);
+        let close = Rect::new(toggle.x0 - CLOSE_GAP - TOGGLE_SIZE, toggle.y0, toggle.x0 - CLOSE_GAP, toggle.y1);
         self.regions.overview = panel;
         self.regions.overview_toggle = toggle;
+        self.regions.overview_close = close;
         canvas.fill(toggle, 0.0, BUTTON);
         outline(canvas, toggle, RULE);
         // Down folds it away; up brings it back.
         chevron(canvas, toggle, !self.overview.folded, WHITE);
+        canvas.fill(close, 0.0, BUTTON);
+        outline(canvas, close, RULE);
+        cross(canvas, Point::new(f64::midpoint(close.x0, close.x1), f64::midpoint(close.y0, close.y1)), CLOSE_GLYPH / 2.0, CLOSE_THICKNESS, WHITE);
         if self.overview.folded {
             return;
         }
-        self.draw_legend(canvas, heading, toggle.x0);
+        self.draw_legend(canvas, heading, close.x0);
 
         let cells = Rect::new(panel.x0 + PADDING + AXIS_WIDTH, heading.y1, panel.x1 - PADDING, panel.y1 - PADDING);
         self.regions.cells = cells;

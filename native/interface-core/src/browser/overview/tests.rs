@@ -112,3 +112,24 @@ fn the_overview_can_be_hidden_and_shown_again() {
     browser.draw(&mut canvas, WIDTH, HEIGHT, 0);
     assert!((browser.regions.list.y1 - list_bottom).abs() < 1e-9, "shown again where it was");
 }
+
+/// Browser issue #2: the overview's close button, beside its fold button,
+/// hides it as the View menu's item does, with the hand over it and a tip
+/// that names the menu's shortcut; the menu brings it back.
+#[test]
+fn the_overview_close_button_hides_it_as_the_view_menu_does() {
+    let (mut browser, mut canvas) = browser();
+    let list_bottom = browser.regions.list.y1;
+    let close = browser.regions.overview_close;
+    assert!(close.x1 < browser.regions.overview_toggle.x0, "left of the fold button");
+    browser.pointer_moved(f64::midpoint(close.x0, close.x1), f64::midpoint(close.y0, close.y1), 0);
+    assert_eq!(browser.cursor(), Cursor::Hand);
+    press_at(&mut browser, &mut canvas, close);
+    assert!(!browser.overview_shown());
+    browser.draw(&mut canvas, WIDTH, HEIGHT, 0);
+    assert!(browser.regions.list.y1 > list_bottom + OVERVIEW_HEIGHT, "the pages take its room");
+    assert_eq!(browser.regions.overview_close, Rect::ZERO, "no button left behind");
+    browser.key(Key::Text("e"), Modifiers { command: true, shift: true, ..Modifiers::default() }, 0);
+    browser.draw(&mut canvas, WIDTH, HEIGHT, 0);
+    assert!((browser.regions.list.y1 - list_bottom).abs() < 1e-9, "shown again where it was");
+}

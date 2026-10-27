@@ -225,6 +225,8 @@ impl Browser {
         }
         let toggle = if self.overview.folded { "Open the overview of every page" } else { "Fold the overview away" };
         tips.push((self.regions.overview_toggle, String::from(toggle)));
+        let close = format!("Close the overview; the View menu shows it again ({})", self.keys_named("Shift+Cmd+E", "Ctrl+Shift+E"));
+        tips.push((self.regions.overview_close, close));
         let close = self.wall.close_button();
         if close != Rect::ZERO {
             tips.push((close, String::from("Back to all the pages (Escape)")));
@@ -278,6 +280,18 @@ mod tests {
         assert_eq!(browser.tip_shown(), Some("Home: open the home page (Shift+Cmd+H)"));
         assert!(browser.pointer_moved(-1.0, -1.0, 2_600), "leaving the window takes it away");
         assert!(browser.tip_shown().is_none());
+    }
+
+    /// The overview's close button says what it does and how the View
+    /// menu brings it back (browser issue #2).
+    #[test]
+    fn the_overview_close_button_has_its_tip() {
+        let mut browser = Browser::new(Frame { left_inset: 0.0, window_buttons: false });
+        draw(&mut browser, 0);
+        let close = browser.regions.overview_close;
+        rest_on(&mut browser, close, 1_000);
+        assert!(browser.tips_settle(1_500));
+        assert_eq!(browser.tip_shown(), Some("Close the overview; the View menu shows it again (Shift+Cmd+E)"));
     }
 
     /// Elsewhere than macOS, the shortcuts are Control's.

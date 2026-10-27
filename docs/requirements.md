@@ -899,6 +899,13 @@ Withdrawn on 23 October 2026 (decision 66): no font is fetched; every page is dr
 - **Verification:** Test; by hand on each desktop.
 - **State:** Built 25 October 2026 with tests `full_screen_shows_the_open_page_alone`, `escape_leaves_full_screen_with_the_page_open`, `what_needs_the_window_ends_full_screen`, `the_strip_comes_down_from_the_top_edge`, `a_press_in_full_screen_is_the_page_s`, `a_double_click_on_the_open_page_enters_full_screen` and `the_pointer_hides_when_still`; by hand on each desktop owed: the window's own full screen (macOS's space, borderless elsewhere), Control-Command-F and F11, the system's ending of it, and the strip at the top edge beside macOS's menu bar.
 
+### Requirement 12.17: The overview can be closed
+- **Statement:** The overview of all pages must have a close button beside its fold button that hides it as the View menu's item does, its room given to the pages, with the hand pointer over it and a tip naming the menu's shortcut; the View menu must show it again where it was.
+- **Reason:** The owner asked for a close button that does what the View menu's show and hide does (browser issue #2).
+- **Source:** Decision 109; the owner, 27 October 2026.
+- **Verification:** Test; by hand on each desktop.
+- **State:** Built 28 October 2026 with tests `the_overview_close_button_hides_it_as_the_view_menu_does` and `the_overview_close_button_has_its_tip`; by hand on macOS owed.
+
 ---
 
 ## 13. The application update mechanism

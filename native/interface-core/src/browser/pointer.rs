@@ -70,7 +70,10 @@ impl Browser {
         if let Some(cursor) = self.link_cursor() {
             return cursor;
         }
-        let over_toggle = self.regions.overview_toggle.contains(self.pointer) || self.hovered_row.is_some() || self.hovered_bank.is_some();
+        let over_toggle = self.regions.overview_toggle.contains(self.pointer)
+            || self.regions.overview_close.contains(self.pointer)
+            || self.hovered_row.is_some()
+            || self.hovered_bank.is_some();
         if self.wall.over_page() || self.previewed.is_some() || over_toggle { Cursor::Hand } else { Cursor::Arrow }
     }
 
