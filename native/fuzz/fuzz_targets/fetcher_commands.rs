@@ -16,7 +16,9 @@ fuzz_target!(|data: &[u8]| {
                 assert!(neoteletext_input::event::read_message(&message, &mut |_| {}).is_ok());
             }
             ToFetcher::CookieAnswer { header, .. } => assert!(header.len() <= MAX_COOKIE_HEADER),
-            ToFetcher::ReachedAnswer { .. } => {}
+            // A yes or no; a page; a page and a sub-code: each checked by
+            // the reader this runs.
+            ToFetcher::ReachedAnswer { .. } | ToFetcher::FetchSubPages { .. } | ToFetcher::FetchSubPage { .. } => {}
         }
     }
 });
