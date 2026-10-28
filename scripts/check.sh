@@ -280,8 +280,11 @@ check_engine_safe() {
     revision="$(sed -n 's/^neoteletext-[a-z-]* = { git = "file:[^"]*", rev = "\([0-9a-f]*\)".*/\1/p' native/Cargo.toml | sort -u)"
     [[ -n "$engine" && "$engine" != *$'\n'* ]] || fail "native/Cargo.toml must name one engine repository, found: ${engine:-none}"
     [[ -n "$revision" && "$revision" != *$'\n'* ]] || fail "native/Cargo.toml must name one engine commit, found: ${revision:-none}"
-    git -C "$engine" cat-file -e "$revision^{commit}" || fail "the engine repository $engine has no commit $revision"
-    found="$(git -C "$engine" grep --line-number -I --word-regexp -e unsafe "$revision" -- '*.rs')" || status=$?
+    # A hook runs with git's GIT_DIR set to this repository, absolute in a
+    # worktree, which git -C would follow instead of the engine's.
+    engine_git() { env -u GIT_DIR -u GIT_WORK_TREE -u GIT_INDEX_FILE git -C "$engine" "$@"; }
+    engine_git cat-file -e "$revision^{commit}" || fail "the engine repository $engine has no commit $revision"
+    found="$(engine_git grep --line-number -I --word-regexp -e unsafe "$revision" -- '*.rs')" || status=$?
     # 1 is no line found.
     ((status <= 1)) || fail "reading the engine at $revision failed"
     # git grep names each line as commit:path:line:text.
