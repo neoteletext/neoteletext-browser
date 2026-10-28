@@ -1,12 +1,38 @@
 //! What the user did, from the interface core's outputs, sent on to the
 //! trusted core as intents and strip input, or carried out here.
 
+use std::io::{self, BufWriter, Write};
+
 use interface_core::browser::Output;
 use interface_core::canvas::PageKey;
-use protocol::ToCore;
+use protocol::{ProtocolError, ToCore, write_to_core};
 use winit::event_loop::ActiveEventLoop;
 
 use super::App;
+
+/// The pipe to the trusted core: what handling one event sends is written
+/// together once the event has been handled (decision 53), and so before
+/// the next event, which may be the frame it asked for, is handled
+/// (REQ-RCH-003).
+pub(super) struct CorePipe<W: Write> {
+    writer: BufWriter<W>,
+}
+
+impl<W: Write> CorePipe<W> {
+    pub(super) fn new(writer: W) -> Self {
+        Self { writer: BufWriter::new(writer) }
+    }
+
+    /// Adds `message` to what this event sends.
+    pub(super) fn send(&mut self, message: &ToCore) -> Result<(), ProtocolError> {
+        write_to_core(&mut self.writer, message)
+    }
+
+    /// The event has been handled: what it sent goes now.
+    pub(super) fn handled(&mut self) -> io::Result<()> {
+        self.writer.flush()
+    }
+}
 
 impl App {
     /// Sends on or carries out what the user did.
@@ -116,5 +142,48 @@ impl App {
         self.send(event_loop, &ToCore::Editing(allowed));
         #[cfg(not(feature = "interaction"))]
         let _ = event_loop;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::cell::RefCell;
+    use std::rc::Rc;
+
+    /// What reached the trusted core's end of the pipe.
+    #[derive(Clone, Default)]
+    struct Sink(Rc<RefCell<Vec<u8>>>);
+
+    impl Write for Sink {
+        fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+            self.0.borrow_mut().extend_from_slice(bytes);
+            Ok(bytes.len())
+        }
+
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+    }
+
+    /// REQ-RCH-003: a click on a page, and the strip's change it makes,
+    /// are written to the trusted core together once the click's event has
+    /// been handled, before the frame it asked for is drawn, which winit on
+    /// macOS does before the loop waits.
+    #[test]
+    fn an_input_reaches_the_core_before_the_frame_it_asks_for() {
+        let sink = Sink::default();
+        let mut pipe = CorePipe::new(sink.clone());
+        let click = ToCore::Cell { key: PageKey { channel: 1, page: 0x100 }, version: 3, column: 5, row: 20 };
+        let opened = ToCore::Opened(Some(PageKey { channel: 1, page: 0x100 }));
+        let mut expected = Vec::new();
+        for message in [&click, &opened] {
+            pipe.send(message).unwrap();
+            write_to_core(&mut expected, message).unwrap();
+        }
+        assert!(sink.0.borrow().is_empty(), "one event's messages are written together");
+        pipe.handled().unwrap();
+        // The event loop now handles the redraw the click asked for.
+        assert_eq!(*sink.0.borrow(), expected, "the click left before the frame is drawn");
     }
 }

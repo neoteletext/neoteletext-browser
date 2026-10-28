@@ -3,6 +3,7 @@
 //! the order they lie over each other.
 
 use crate::browser::{Browser, LINE_HEIGHT, Output};
+use crate::canvas::PageKey;
 use crate::geometry::Point;
 
 mod press;
@@ -50,6 +51,13 @@ impl Browser {
         let listed = self.lists_hovered();
         let full_screen = self.full_screen_moved(self.pointer, self.body.width(), now);
         dragged || hovered || preview_changed || linked || tipped || tabbed || full_screen || listed || subpaged
+    }
+
+    /// The page under the pointer, open or on the wall: its frames are
+    /// drawn as they arrive (REQ-RCH-001).
+    #[must_use]
+    pub fn pointed_page(&self) -> Option<PageKey> {
+        self.wall.cell_at(self.pointer).map(|click| click.key)
     }
 
     /// The pointer's shape where it is: the column-resize shape over the
@@ -107,7 +115,7 @@ impl Browser {
         self.links_released();
         // A button the channel saw pressed is released to it.
         #[cfg(feature = "interaction")]
-        self.terminal_button(neoteletext_input::event::MouseAction::Release, 0);
+        self.terminal_button(neoteletext_input::event::MouseAction::Release, crate::input::mouse_button::LEFT);
     }
 
     /// A mouse wheel turned by `lines`, as the platform reports a wheel
@@ -125,14 +133,23 @@ impl Browser {
     }
 
     /// A press of the middle button: on a tab, the tab closes, and on what
-    /// opens a channel, it opens in a new tab, as in every current browser.
+    /// opens a channel, it opens in a new tab, as in every current browser;
+    /// over a page whose channel takes the mouse, it is the channel's
+    /// (REQ-RCH-005, decision 122).
     pub fn middle_pressed(&mut self) -> bool {
         self.tips_pressed();
         if let Some(region) = self.regions.tabs.iter().rev().find(|region| region.tab.contains(self.pointer)) {
             self.outputs.push(Output::CloseTab(region.index));
             return true;
         }
-        self.open_in_new_tab()
+        if self.open_in_new_tab() {
+            return true;
+        }
+        #[cfg(feature = "interaction")]
+        if self.other_button_pressed(crate::input::mouse_button::MIDDLE) {
+            return true;
+        }
+        false
     }
 
     /// A press of the main button with Command (Control elsewhere): what
@@ -165,7 +182,8 @@ impl Browser {
     }
 
     /// A secondary click: on Back or Forward, its list is asked for
-    /// (requirement 20.10).
+    /// (requirement 20.10); over a page whose channel takes the mouse, it
+    /// is the channel's (REQ-RCH-005, decision 122).
     pub fn secondary_pressed(&mut self) -> bool {
         for (rect, forward, enabled) in [(self.regions.back, false, self.strip.back), (self.regions.forward, true, self.strip.forward)] {
             if rect.contains(self.pointer) {
@@ -175,8 +193,16 @@ impl Browser {
                 return true;
             }
         }
-        // Anywhere else, an open list closes.
-        self.close_popup()
+        // Anywhere else, an open list closes; while one is open the keys,
+        // and so the mouse, are not the channel's.
+        if self.close_popup() {
+            return true;
+        }
+        #[cfg(feature = "interaction")]
+        if self.other_button_pressed(crate::input::mouse_button::RIGHT) {
+            return true;
+        }
+        false
     }
 
     /// Scrolls whatever is under the pointer.

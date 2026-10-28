@@ -1,8 +1,21 @@
 //! Frames: drawing the window at hand and presenting only what changed,
 //! a page image read against the one held, the pointer's shape, and the
-//! pace of frames.
+//! pace of frames (`pace.rs`).
+//!
+//! Presentation keeps at most one frame queued on every platform
+//! (requirement 18.14, REQ-RCH-004): drawing is on the processor
+//! (`vello_cpu`), with no swap chain, and softbuffer 0.4.8 presents
+//! synchronously. On macOS it sets the layer's contents to the frame in a
+//! Core Animation transaction, which the next refresh shows, a newer frame
+//! replacing one not yet shown; on Wayland it attaches one of two shared
+//! memory buffers and commits, waiting before drawing into the other until
+//! the compositor has released it, and winit, told before each present,
+//! asks for the next redraw only once the compositor's frame callback has
+//! come; on X11 its next frame waits for the server to finish the last
+//! shared-memory `PutImage`, or goes in the request itself without shared
+//! memory, which the server handles in order; on Windows `BitBlt` copies it into the window at once, for
+//! the compositor to show at its next refresh.
 
-use std::io::Write;
 use std::num::NonZeroU32;
 use std::time::{Duration, Instant};
 
@@ -16,10 +29,12 @@ use winit::window::CursorIcon;
 use super::App;
 
 /// The shortest time between frames that only show what the trusted core
-/// sent: ten a second.
+/// sent, counted from the last frame that changed the window: ten a
+/// second. A frame of the page under the pointer is drawn as it arrives.
 const CHANGE_FRAME_MILLISECONDS: u64 = 100;
-/// One frame of a 60 hertz display: what a channel being typed into
-/// pushes is drawn at the next (`interaction.md` section 10).
+/// One frame of a 60 hertz display: what else the trusted core sends while
+/// a channel is typed into is drawn at the next (`interaction.md` section
+/// 10); the channel's page itself is drawn as its frames arrive.
 #[cfg(feature = "interaction")]
 const TYPING_FRAME_MILLISECONDS: u64 = 16;
 
@@ -40,8 +55,6 @@ impl App {
         if graphics.surface.resize(surface_width, surface_height).is_err() {
             return;
         }
-        self.view.last_frame = now;
-        self.view.dirty = false;
         if !std::mem::take(&mut graphics.asked) {
             self.view.painter.redraw_whole();
         }
@@ -52,6 +65,9 @@ impl App {
         // Only what changed since the last frame is drawn; a frame that
         // changed nothing is not presented, and the window keeps the last.
         let damage = self.view.painter.render();
+        // A frame that changed nothing delays no frame after it
+        // (REQ-RCH-001).
+        self.view.pace.drawn(now, !damage.is_empty());
         if damage.is_empty() {
             if self.trace_frames {
                 eprintln!("neoteletext-interface: frame at {now} ms: drawn {:?}, unchanged", started.elapsed());
@@ -79,7 +95,7 @@ impl App {
         if presented && self.first_frame.is_none() {
             self.first_frame = Some(now);
             self.send(event_loop, &ToCore::Drawn);
-            let _ = self.output.flush();
+            let _ = self.output.handled();
         }
         if self.trace_frames {
             let presented = started.elapsed();
@@ -130,31 +146,36 @@ impl App {
         if self.view.browser.settle(now) {
             // What settling asked for, as a held Back's list, goes now.
             self.act(event_loop);
-            if let Err(error) = self.output.flush() {
-                self.exit = Some(format!("cannot write to the trusted core: {error}"));
-                event_loop.exit();
+            if !self.flush(event_loop) {
                 return None;
             }
             self.request_redraw();
         }
-        // While keys go to a channel, what it pushes is drawn at the
+        // While keys go to a channel, what else changes is drawn at the
         // display's rate (`interaction.md` section 10).
         #[cfg(feature = "interaction")]
         let change = if self.view.browser.typing_target().is_some() { TYPING_FRAME_MILLISECONDS } else { CHANGE_FRAME_MILLISECONDS };
         #[cfg(not(feature = "interaction"))]
         let change = CHANGE_FRAME_MILLISECONDS;
-        let interval = match (self.view.browser.frame_interval(now), self.view.dirty) {
-            (Some(interval), true) => Some(interval.min(change)),
-            (Some(interval), false) => Some(interval),
-            (None, true) => Some(change),
-            (None, false) => None,
-        }?;
         // Frames at the pace the browser asks for, rather than as fast as
         // the processor allows.
-        if now.saturating_sub(self.view.last_frame) >= interval {
+        let next = self.view.pace.next(now, self.view.browser.frame_interval(now), change);
+        if next.draw {
             self.request_redraw();
         }
-        self.start.checked_add(Duration::from_millis(self.view.last_frame.saturating_add(interval)))
+        self.start.checked_add(Duration::from_millis(next.wake?))
+    }
+
+    /// Whether a frame of `key` is one the viewer waits for, drawn as it
+    /// arrives (REQ-RCH-001): the page keys go to, or the page under the
+    /// pointer, a control's or link's look or a channel's answer to a
+    /// click.
+    pub(super) fn awaited(&self, key: PageKey) -> bool {
+        #[cfg(feature = "interaction")]
+        if self.view.browser.typing_target() == Some(key) {
+            return true;
+        }
+        self.view.browser.pointed_page() == Some(key)
     }
 
     /// Reads a page's frame against the one held and shows it; false when

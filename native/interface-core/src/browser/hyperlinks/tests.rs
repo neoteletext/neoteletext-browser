@@ -267,9 +267,11 @@ fn a_control_lights_and_shows_the_hand_while_keys_go() {
     assert_eq!(lits(&mut browser), [], "still pressed, on the same control");
     browser.pointer_released();
     assert_eq!(lits(&mut browser), [Some(Lit { key, area: control, pressed: false })]);
+    browser.set_links(key, PageLinks { controls: vec![control], pointer_areas: Vec::new(), ..page_links(VERSION + 1) });
     move_to(&mut browser, centre(rect, 11, 5));
-    assert_eq!(lits(&mut browser), [None], "a link's click is the channel's while keys go");
-    assert_eq!(browser.cursor(), Cursor::Arrow);
+    let link = Area { row: 5, column: 10, width: 3, height: 1 };
+    assert_eq!(lits(&mut browser), [Some(Lit { key, area: link, pressed: false })], "a link is the browser's while keys go (decision 122)");
+    assert_eq!(browser.cursor(), Cursor::Hand);
 }
 
 /// INPUT.md section 5.4 (decision E.129): while keys go to the channel it is

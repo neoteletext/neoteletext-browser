@@ -32,6 +32,11 @@ impl Core {
                     return Ok(());
                 }
                 let sends = self.typing.input_intent(&intent, self.now());
+                // What went is answered by the page's next frame, which
+                // its interval does not hold (REQ-RCH-002).
+                if sends.iter().any(|send| matches!(send, neoteletext::typing::Send::Fetcher(..))) {
+                    self.frames.input(intent.key);
+                }
                 self.deliver_typing(sends)?;
             }
             ToCore::Editing(editing) => {

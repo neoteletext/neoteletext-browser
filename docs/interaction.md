@@ -33,7 +33,7 @@ In the browser:
 ## 16. Tests
 
 - **Push:** each transport delivers a page and a row; a dead socket is found by the missing pong and reconnected with the subscription and a resume record.
-- **Links on an input channel:** declared links are underlined as everywhere (page numbers in the text are no longer links, decision 116); a plain click on a link is reported to the host as a cell and follows nothing; Command-click follows it and is not reported; Tab goes to the host and focuses no link.
+- **Links on an input channel:** declared links are underlined as everywhere (page numbers in the text are no longer links, decision 116); a plain click on a link follows it and is not reported, as on any page, and no button pressed on a link reaches the host (decision 122, the owner's revision of decision 118 on 28 October 2026: "links must be acted upon by the client browser"); a click on a control, or on any cell off a link, is the host's; Tab goes to the host and focuses no link.
 - **Resume:** after a dropped socket the resume record goes first and the host's re-push of the open page is drawn.
 - **Typing:** keys go only under every condition of 18.2; every key goes, Escape, Enter, Control-C, the F-keys, digits and colour keys included; the strip's keys, a background tab's keys and the browser's shortcuts never go; closing the page stops them and releases a held key; on a channel without input three digits still choose a page locally.
 - **Page selection:** against `neoteletext-site terminal`, `*302#` opens page 302, `#` the next, `*#` the one before, and `302` alone opens 302 where the page has no field.

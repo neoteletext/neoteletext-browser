@@ -7,6 +7,21 @@ use alloc::string::String;
 
 use neoteletext_input::event::{self, Action, Event, Item, KeyCode, MouseAction, Point};
 
+/// The mouse's buttons as MOUSE numbers them on a press and a release
+/// (INPUT.md section 5.4); on a move, bit `n` is button `n` held.
+pub mod mouse_button {
+    /// The main button.
+    pub const LEFT: u8 = 0;
+    /// The middle button, or a press of the wheel.
+    pub const MIDDLE: u8 = 1;
+    /// The secondary button.
+    pub const RIGHT: u8 = 2;
+    /// The thumb button that goes back.
+    pub const BACK: u8 = 3;
+    /// The thumb button that goes forward.
+    pub const FORWARD: u8 = 4;
+}
+
 /// One thing the viewer did on the open page, for the trusted core to send
 /// on if the page's channel takes it (REQ-INT-130).
 #[derive(Clone, Debug, PartialEq, Eq)]

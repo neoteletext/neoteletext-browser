@@ -141,6 +141,17 @@ impl Browser {
         Some((index, LinkCell { key, version: links.version, column, row }))
     }
 
+    /// Whether the pointer is on a link of the open page, by its latest
+    /// links, as its look is: a click there is the browser's on every page
+    /// (decision 122). A look's image keeps its page's links, which may
+    /// come after it.
+    #[cfg(feature = "interaction")]
+    pub(super) fn pointer_on_link(&self) -> bool {
+        let Some((key, rect)) = self.wall.open() else { return false };
+        let Some((column, row)) = cell_in(rect, self.pointer) else { return false };
+        self.links.pages.get(&key).is_some_and(|links| links.run_at(column, row).is_some())
+    }
+
     /// The cell the keyboard's focus is on: the focused link's first.
     fn focused_cell(&self) -> Option<LinkCell> {
         let (key, _, links) = self.open_links()?;
@@ -152,7 +163,9 @@ impl Browser {
     /// open page, whichever image they came with: a look the decoder draws
     /// makes a new image with the same links, and the look must not go out
     /// while they follow it. A control while a click goes to the channel,
-    /// a link otherwise (INPUT.md section 9.7).
+    /// a link otherwise: on a page that takes input a link is the
+    /// browser's, and lights as on any page (INPUT.md section 9.7,
+    /// decision 122).
     fn area_under_pointer(&self) -> Option<(PageKey, Area)> {
         let (key, rect) = self.wall.open()?;
         let links = self.links.pages.get(&key)?;
@@ -256,8 +269,9 @@ impl Browser {
     }
 
     /// The pointer's shape over a link: a hand for a page of this channel,
-    /// the shape of a shortcut for one that leaves; and a hand over a
-    /// control while a click goes to the channel (INPUT.md section 9.7).
+    /// the shape of a shortcut for one that leaves, on every page; and a
+    /// hand over a control while a click goes to the channel (INPUT.md
+    /// section 9.7).
     pub(super) fn link_cursor(&self) -> Option<Cursor> {
         if self.clicks_are_hosts() {
             return self.area_under_pointer().map(|_| Cursor::Hand);

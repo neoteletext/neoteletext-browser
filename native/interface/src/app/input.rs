@@ -140,6 +140,10 @@ impl App {
             WindowEvent::MouseInput { state: ElementState::Pressed, button: MouseButton::Middle, .. } => self.middle_pressed(event_loop),
             // A secondary click: Back's or Forward's list (requirement 20.10).
             WindowEvent::MouseInput { state: ElementState::Pressed, button: MouseButton::Right, .. } => self.secondary_pressed(event_loop),
+            // The thumb buttons, and every other button let go: the
+            // channel's over its page (REQ-RCH-005).
+            #[cfg(feature = "interaction")]
+            WindowEvent::MouseInput { state, button, .. } => self.other_button(event_loop, state, button),
             WindowEvent::MouseWheel { delta, .. } => self.wheel(event_loop, delta, now),
             // The system's full-screen key away from macOS, F11, which a
             // channel never receives (decision 85); macOS's, Control-Command-F,
@@ -186,8 +190,33 @@ impl App {
         {
             let held = self.browser_modifier();
             self.view.browser.set_browser_modifier(held);
+            // The mouse's events carry the modifiers held, as a key's do
+            // (INPUT.md section 5.4, REQ-RCH-005).
+            self.view.browser.set_mouse_modifiers(crate::keys::modifiers(modifiers));
         }
         false
+    }
+
+    /// A press of the back or forward button, or a button other than the
+    /// main one let go: the channel's while the mouse is (REQ-RCH-005).
+    #[cfg(feature = "interaction")]
+    fn other_button(&mut self, event_loop: &ActiveEventLoop, state: ElementState, button: MouseButton) -> bool {
+        use interface_core::input::mouse_button::{BACK, FORWARD, MIDDLE, RIGHT};
+        let number = match button {
+            MouseButton::Middle => MIDDLE,
+            MouseButton::Right => RIGHT,
+            MouseButton::Back => BACK,
+            MouseButton::Forward => FORWARD,
+            // The main button has its own handling; the others' numbers
+            // differ from system to system, so they do not go.
+            MouseButton::Left | MouseButton::Other(_) => return false,
+        };
+        let changed = match state {
+            ElementState::Pressed => self.view.browser.other_button_pressed(number),
+            ElementState::Released => self.view.browser.other_button_released(number),
+        };
+        self.act(event_loop);
+        changed
     }
 
     /// The pointer moved to `x`, `y` in physical pixels.

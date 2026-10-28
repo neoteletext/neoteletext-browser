@@ -3,7 +3,7 @@
 //! does, sent on as intents and strip input.
 
 use std::collections::{BTreeMap, HashMap};
-use std::io::{self, BufWriter, Write};
+use std::io;
 use std::rc::Rc;
 use std::time::Instant;
 
@@ -11,7 +11,7 @@ use draw_vello::{Family, Painter};
 use interface_core::browser::{Browser, Cursor, TabInfo};
 use interface_core::canvas::PageKey;
 use interface_core::library::WindowGeometry;
-use protocol::{ToCore, write_to_core};
+use protocol::ToCore;
 use softbuffer::{Context, Surface};
 use winit::application::ApplicationHandler;
 use winit::event::WindowEvent;
@@ -28,6 +28,7 @@ mod ime;
 mod incoming;
 mod input;
 mod outputs;
+mod pace;
 #[cfg(feature = "phone-keyboard")]
 mod phone;
 #[cfg(feature = "interaction")]
@@ -72,10 +73,8 @@ struct View {
     painter: Painter,
     /// The pointer, in logical pixels.
     cursor: (f64, f64),
-    /// When the last frame was drawn, in milliseconds from `start`.
-    last_frame: u64,
-    /// Whether the trusted core changed something not yet drawn.
-    dirty: bool,
+    /// What the window has drawn and has still to draw.
+    pace: pace::Pace,
     /// The pointer shape last set on the window.
     pointer_shape: Cursor,
     /// The page last reported as opened.
@@ -112,8 +111,7 @@ impl View {
             browser: Browser::new(FRAME),
             painter: Painter::new(Family::Roboto),
             cursor: (0.0, 0.0),
-            last_frame: 0,
-            dirty: false,
+            pace: pace::Pace::default(),
             pointer_shape: Cursor::Arrow,
             opened: None,
             tabs: Vec::new(),
@@ -150,7 +148,7 @@ pub struct App {
     /// the window it left: that window opens there, at that size.
     torn_at: Option<WindowGeometry>,
     modifiers: ModifiersState,
-    output: BufWriter<io::Stdout>,
+    output: outputs::CorePipe<io::Stdout>,
     exit: Option<String>,
     /// Reports each frame and what it cost, for measuring the drawing.
     trace_frames: bool,
@@ -184,7 +182,7 @@ impl App {
             focused: protocol::FIRST_WINDOW,
             torn_at: None,
             modifiers: ModifiersState::empty(),
-            output: BufWriter::new(io::stdout()),
+            output: outputs::CorePipe::new(io::stdout()),
             exit: None,
             trace_frames,
             first_frame: None,
@@ -201,7 +199,7 @@ impl App {
         if self.exit.is_some() {
             return self.exit;
         }
-        let _ = self.output.flush();
+        let _ = self.output.handled();
         None
     }
 
@@ -218,13 +216,27 @@ impl App {
     fn send(&mut self, event_loop: &ActiveEventLoop, message: &ToCore) {
         let from = (self.window != self.from).then_some(ToCore::From(self.window));
         for message in from.iter().chain([message]) {
-            if let Err(error) = write_to_core(&mut self.output, message) {
+            if let Err(error) = self.output.send(message) {
                 self.exit = Some(format!("cannot write to the trusted core: {error}"));
                 event_loop.exit();
                 return;
             }
         }
         self.from = self.window;
+    }
+
+    /// Writes what is buffered for the trusted core, once an event has
+    /// been handled (decision 53: once per event, not per message); false,
+    /// with the loop ending, when it cannot be written.
+    fn flush(&mut self, event_loop: &ActiveEventLoop) -> bool {
+        match self.output.handled() {
+            Ok(()) => true,
+            Err(error) => {
+                self.exit = Some(format!("cannot write to the trusted core: {error}"));
+                event_loop.exit();
+                false
+            }
+        }
     }
 
     /// Every window's number, the one at hand among them.
@@ -262,6 +274,9 @@ impl ApplicationHandler<Incoming> for App {
                 }
             }
         }
+        // What it sent, a phone's key or a menu's choice, goes before any
+        // frame it asked for is drawn (REQ-RCH-003).
+        self.flush(event_loop);
     }
 
     fn window_event(&mut self, event_loop: &ActiveEventLoop, window_id: WindowId, event: WindowEvent) {
@@ -286,6 +301,10 @@ impl ApplicationHandler<Incoming> for App {
             self.request_redraw();
         }
         self.window_input(event_loop, window_id, event);
+        // The input goes to the trusted core as soon as it has been
+        // handled, before the frame it asked for is drawn: winit on macOS
+        // draws the frames asked for before `about_to_wait` (REQ-RCH-003).
+        self.flush(event_loop);
     }
 
     fn device_event(&mut self, _event_loop: &ActiveEventLoop, _device: winit::event::DeviceId, _event: winit::event::DeviceEvent) {}
@@ -294,9 +313,7 @@ impl ApplicationHandler<Incoming> for App {
     /// event.
     fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
         // What the events produced goes to the trusted core before waiting.
-        if let Err(error) = self.output.flush() {
-            self.exit = Some(format!("cannot write to the trusted core: {error}"));
-            event_loop.exit();
+        if !self.flush(event_loop) {
             return;
         }
         // Each window paces its own frames; the loop wakes for the first due.

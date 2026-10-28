@@ -71,7 +71,7 @@ impl App {
         }
         // Drawn with the next paced frame: pages load and flash many times
         // a second, and one frame shows all that arrived since the last.
-        self.view.dirty = true;
+        self.view.pace.changed();
     }
 
     /// The window's tabs, and which is active.
@@ -121,6 +121,12 @@ impl App {
         }
         if self.show_frame(event_loop, key, version, image) {
             self.act(event_loop);
+            // The page the viewer types into or points at is drawn as its
+            // frame arrives, however soon after the last (REQ-RCH-001).
+            if self.awaited(key) {
+                self.view.pace.awaited();
+                self.request_redraw();
+            }
         }
     }
 

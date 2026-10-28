@@ -101,6 +101,9 @@ impl Core {
     /// interface asked for, once checked (INPUT.md section 9.7).
     pub(super) fn light(&mut self, lit: Option<protocol::links::Lit>) {
         for (key, look) in self.links.light(lit) {
+            // The frame that draws it is the look's, which the page's
+            // interval does not count (REQ-RCH-002).
+            self.frames.looked(key, look.map(|(area, _)| area));
             self.tell(key.channel, ToDecoder::Look { page: key.page, look });
         }
     }

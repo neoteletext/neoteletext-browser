@@ -185,13 +185,14 @@ impl Browser {
             }
             // A page on the wall zooms to fill the area; on a zoomed page a
             // click is on one of its cells, where links will be followed.
-            // On a page whose channel or page asked for the mouse a plain
-            // click is the host's, as a terminal with mouse reporting gives
-            // it; the browser's modifier keeps it the browser's (INPUT.md
-            // section 6.5, REQ-INT-115).
+            // On a page that takes input a plain click is the host's, as a
+            // terminal with mouse reporting gives it, but on a link the page
+            // declares, which the browser follows on every page (decision
+            // 122); the browser's modifier keeps any click the browser's
+            // (INPUT.md section 9.1, REQ-INT-115).
             #[cfg(feature = "interaction")]
             if self.wall.zoomed().is_some() && self.click_is_hosts() {
-                return Some(self.terminal_button(neoteletext_input::event::MouseAction::Press, 0));
+                return Some(self.terminal_button(neoteletext_input::event::MouseAction::Press, crate::input::mouse_button::LEFT));
             }
             // A double click on the open page: the page alone, full
             // screen (decision 85).

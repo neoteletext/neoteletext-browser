@@ -187,6 +187,30 @@ fn the_mouse_always_goes() {
     assert_eq!(items(&typing.input_intent(&click, 0)), expected, "an older channel's PAGE_MODES");
 }
 
+/// REQ-RCH-005: every button and the modifiers go as INPUT.md section 5.4
+/// lays MOUSE out: `0xFF`, the type, the flags (the action, bit 2 for the
+/// dot, bit 3 for the modifiers), the button, the cell, the dot and the
+/// modifiers, each press and its release.
+#[test]
+fn every_button_and_modifier_goes_as_input_md_lays_it_out() {
+    use interface_core::input::mouse_button::{BACK, FORWARD, LEFT, MIDDLE, RIGHT};
+    use neoteletext_input::event::{ALT, SHIFT};
+    /// MOUSE's flags: a release, the dot present, the modifiers present.
+    const RELEASE: u8 = 1;
+    const DOT: u8 = 1 << 2;
+    const MODS: u8 = 1 << 3;
+    let mut typing = ready(PAGE_CAP);
+    let at = Point { column: 10, row: 5, pixels: Some((125, 110)), mods: SHIFT | ALT | CONTROL };
+    for button in [LEFT, MIDDLE, RIGHT, BACK, FORWARD] {
+        for (action, flags) in [(MouseAction::Press, DOT | MODS), (MouseAction::Release, RELEASE | DOT | MODS)] {
+            let intent = InputIntent { key: PAGE, local: 1, intent: Intent::Mouse { action, button, at } };
+            let sent: Vec<Vec<u8>> =
+                typing.input_intent(&intent, 0).into_iter().filter_map(|send| if let Send::Fetcher(_, bytes) = send { Some(bytes) } else { None }).collect();
+            assert_eq!(sent, [vec![0xFF, 0x02, flags, button, 10, 5, 125, 110, SHIFT | ALT | CONTROL]], "button {button}, {action:?}");
+        }
+    }
+}
+
 /// REQ-INT-110: the acknowledgement is the input count; it clears
 /// echo by the interface's numbers and gives the round trip
 /// (REQ-INT-137).

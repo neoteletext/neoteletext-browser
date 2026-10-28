@@ -118,8 +118,8 @@ fn echo_stays_in_its_width_is_masked_and_clears_on_acknowledgement_or_time() {
 }
 
 /// REQ-INT-115, REQ-INT-136 (decision E.125): a plain click on a page
-/// that takes input is the host's, with no request; with the browser's
-/// modifier it is the browser's, to follow a link.
+/// that takes input, off its links, is the host's, with no request; with
+/// the browser's modifier it is the browser's.
 #[test]
 fn a_click_is_the_hosts_unless_the_modifier_is_held() {
     let mut browser = browser();
@@ -147,6 +147,111 @@ fn a_click_is_the_hosts_unless_the_modifier_is_held() {
     let outputs = browser.take_outputs();
     assert!(outputs.iter().any(|output| matches!(output, Output::Cell(_))), "the modifier keeps a link's click");
     assert_eq!(intents(&outputs), [] as [Intent; 0]);
+}
+
+/// REQ-RCH-005: the middle, right, back and forward buttons go over the
+/// page, pressed and released, as the main button does, and every one of
+/// the mouse's events carries the modifiers held; a release whose press
+/// did not go does not go, and with the browser's modifier no button goes.
+/// Before, only the main button went, and the modifiers were always 0.
+#[test]
+fn every_button_and_modifier_goes_over_the_page() {
+    use crate::input::mouse_button::{BACK, FORWARD, LEFT, MIDDLE, RIGHT};
+    use neoteletext_input::event::{ALT, SHIFT};
+    let mut browser = browser();
+    let mut canvas = Recorder::new();
+    browser.set_typing(typing(None, 0), 0);
+    pointer_at(&mut browser, 10.5, 5.5);
+    browser.take_outputs();
+    browser.set_mouse_modifiers(SHIFT | CONTROL);
+    browser.pointer_pressed(&mut canvas, false, 10_000);
+    browser.pointer_released();
+    assert!(browser.middle_pressed(), "the middle button");
+    assert!(browser.other_button_released(MIDDLE));
+    assert!(browser.secondary_pressed(), "the right button");
+    assert!(browser.other_button_released(RIGHT));
+    for button in [BACK, FORWARD] {
+        assert!(browser.other_button_pressed(button), "button {button}");
+        assert!(browser.other_button_released(button), "button {button}");
+    }
+    let sent = intents(&browser.take_outputs());
+    let mut buttons = Vec::new();
+    for intent in &sent {
+        let Intent::Mouse { action, button, at } = intent else { panic!("only the buttons: {sent:?}") };
+        assert_eq!(at.mods, SHIFT | CONTROL, "the modifiers held: {intent:?}");
+        assert_eq!((at.column, at.row), (10, 5));
+        buttons.push((*action, *button));
+    }
+    let expected: Vec<(MouseAction, u8)> =
+        [LEFT, MIDDLE, RIGHT, BACK, FORWARD].into_iter().flat_map(|button| [(MouseAction::Press, button), (MouseAction::Release, button)]).collect();
+    assert_eq!(buttons, expected);
+    assert!(!browser.other_button_released(BACK), "no press went");
+    browser.set_mouse_modifiers(ALT);
+    browser.terminal_wheel(0.0, 1.0);
+    assert!(matches!(intents(&browser.take_outputs()).as_slice(), [Intent::Wheel { at: Point { mods: ALT, .. }, .. }]), "the wheel's modifiers");
+    browser.set_browser_modifier(true);
+    assert!(!browser.other_button_pressed(BACK));
+    assert!(!browser.middle_pressed());
+    assert!(!browser.secondary_pressed());
+    assert_eq!(intents(&browser.take_outputs()), [] as [Intent; 0], "the browser's modifier keeps every button the browser's");
+}
+
+/// Decision 122, the owner's revision of decision 118 on 28 October 2026
+/// ("links must be acted upon by the client browser"): on a page that
+/// takes input a link the page declares is the browser's. A plain click on
+/// it follows it and a middle click is the browser's, as on any page, and
+/// neither sends the channel a press or a release; a click on a control,
+/// or on a cell beside the link, still goes to the channel. Before, the
+/// plain click and the middle click on the link went to the channel.
+#[cfg(feature = "links")]
+#[test]
+fn a_link_on_a_page_that_takes_input_is_the_browsers() {
+    use crate::input::mouse_button::{LEFT, MIDDLE};
+    use crate::links::{Area, LinkKind, LinkRun, PageLinks};
+    let mut browser = browser();
+    let mut canvas = Recorder::new();
+    browser.set_typing(typing(None, 0), 0);
+    let link = LinkRun { row: 5, column: 10, length: 3, double: false, light: false, kind: LinkKind::Page };
+    let control = Area { row: 20, column: 1, width: 9, height: 1 };
+    browser.set_links(KEY, PageLinks { runs: alloc::vec![link], controls: alloc::vec![control], ..PageLinks::default() });
+    pointer_at(&mut browser, 11.5, 5.5);
+    browser.take_outputs();
+    browser.pointer_pressed(&mut canvas, false, 10_000);
+    browser.pointer_released();
+    let outputs = browser.take_outputs();
+    assert!(outputs.iter().any(|output| matches!(output, Output::Cell(click) if (click.column, click.row) == (11, 5))), "a plain click follows the link");
+    assert_eq!(intents(&outputs), [] as [Intent; 0], "no press or release of the click reaches the channel");
+    browser.middle_pressed();
+    browser.other_button_released(MIDDLE);
+    assert_eq!(intents(&browser.take_outputs()), [] as [Intent; 0], "nor of the middle button");
+    for (column, row, what) in [(13.5, 5.5, "beside the link"), (4.5, 20.5, "on a control")] {
+        pointer_at(&mut browser, column, row);
+        browser.take_outputs();
+        browser.pointer_pressed(&mut canvas, false, 20_000);
+        browser.pointer_released();
+        let sent = intents(&browser.take_outputs());
+        assert!(
+            matches!(
+                sent.as_slice(),
+                [Intent::Mouse { action: MouseAction::Press, button: LEFT, .. }, Intent::Mouse { action: MouseAction::Release, button: LEFT, .. }]
+            ),
+            "a click {what} is the channel's: {sent:?}"
+        );
+        assert!(browser.middle_pressed(), "a middle click {what} is the channel's");
+        assert!(browser.other_button_released(MIDDLE));
+        browser.take_outputs();
+    }
+}
+
+/// REQ-RCH-001: the interface knows the page under the pointer, whose
+/// frames it draws as they arrive.
+#[test]
+fn the_page_under_the_pointer_is_known() {
+    let mut browser = browser();
+    pointer_at(&mut browser, 3.0, 3.0);
+    assert_eq!(browser.pointed_page(), Some(KEY));
+    pointer_at(&mut browser, -2.0, 3.0);
+    assert_eq!(browser.pointed_page(), None, "beside the page");
 }
 
 /// Decision 107 and INPUT.md section 6.3: the wheel and the pointer's

@@ -16,7 +16,7 @@ use neoteletext_input::{MAX_COMPOSE, MAX_PASTE};
 use crate::browser::{Browser, Output};
 use crate::canvas::{PAGE_HEIGHT, PAGE_WIDTH, PageKey};
 use crate::channel::page_index;
-use crate::input::Intent;
+use crate::input::{Intent, mouse_button};
 use crate::wall::cell_in;
 
 mod draw;
@@ -52,8 +52,11 @@ pub fn notched(lines: f64) -> f64 {
     if lines != 0.0 && lines.abs() < 1.0 { lines.signum() } else { lines }
 }
 
-/// Mouse buttons tracked as held, as section 5.4's `button` numbers them.
+/// Mouse buttons tracked as held, as section 5.4's `button` numbers them:
+/// a move's mask of the buttons held is a byte.
 const BUTTONS: u8 = 8;
+// Every button the browser sends is tracked.
+const _: () = assert!(mouse_button::FORWARD < BUTTONS);
 
 /// The cursor a channel placed, as the trusted core checked it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -114,6 +117,9 @@ pub(super) struct TerminalUi {
     moved: u64,
     /// The mouse buttons held on the page, bit `n` for button `n`.
     buttons: u8,
+    /// The modifiers held, as section 5.5 numbers them, which go with
+    /// every press, release, move and wheel turn (REQ-RCH-005).
+    mods: u8,
 }
 
 /// The longest prefix of `text` of at most `limit` bytes, whole characters.
@@ -191,6 +197,12 @@ impl Browser {
         self.typing.browser_modifier = held;
     }
 
+    /// The modifiers held now, as INPUT.md section 5.5 numbers them: the
+    /// mouse's events carry them (section 5.4, REQ-RCH-005).
+    pub fn set_mouse_modifiers(&mut self, mods: u8) {
+        self.typing.mods = mods;
+    }
+
     /// Where the pointer is on the open page, while it is over it: the cell
     /// and the page image's pixel.
     fn pointer_on_page(&self) -> Option<Point> {
@@ -200,7 +212,7 @@ impl Browser {
         let y = (self.pointer.y - rect.y0) / rect.height() * f64::from(PAGE_HEIGHT);
         #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss, reason = "within the page raster, as cell_in checked")]
         let pixels = Some((x as u32, y as u32));
-        Some(Point { column: u32::from(column), row: u32::from(row), pixels, mods: 0 })
+        Some(Point { column: u32::from(column), row: u32::from(row), pixels, mods: self.typing.mods })
     }
 
     /// Whether the mouse is the channel's: keys go to it, the pointer is
@@ -211,8 +223,17 @@ impl Browser {
         self.typing_target().is_some() && !self.typing.browser_modifier && self.pointer_on_page().is_some()
     }
 
-    /// Whether a click on the open page is the host's.
+    /// Whether a click on the open page is the host's: the mouse is, and
+    /// the pointer is not on a link the page declares, which is the
+    /// browser's on every page, so a plain click follows it and no press
+    /// or release of any button on it reaches the channel (the owner's
+    /// revision of 28 October 2026, decision 122: "links must be acted
+    /// upon by the client browser"). A control is not a link.
     pub(in crate::browser) fn click_is_hosts(&self) -> bool {
+        #[cfg(feature = "links")]
+        if self.pointer_on_link() {
+            return false;
+        }
         self.mouse_is_hosts()
     }
 
@@ -281,12 +302,27 @@ impl Browser {
         true
     }
 
-    /// The main button pressed or released on the open page while the
-    /// mouse is the channel's (REQ-INT-115).
+    /// A button other than the main one pressed over the open page:
+    /// middle, right, back or forward, as MOUSE numbers them. It is the
+    /// channel's while the mouse is (REQ-RCH-005), once the browser's own
+    /// uses of the button, none of them over the page, have not taken it.
+    /// Returns whether it went.
+    pub fn other_button_pressed(&mut self, button: u8) -> bool {
+        button != mouse_button::LEFT && self.terminal_button(MouseAction::Press, button)
+    }
+
+    /// A button other than the main one let go: released to the channel
+    /// when it saw the press.
+    pub fn other_button_released(&mut self, button: u8) -> bool {
+        button != mouse_button::LEFT && self.terminal_button(MouseAction::Release, button)
+    }
+
+    /// A button pressed or released on the open page while the mouse is
+    /// the channel's (REQ-INT-115, REQ-RCH-005).
     pub(in crate::browser) fn terminal_button(&mut self, action: MouseAction, button: u8) -> bool {
         let Some(target) = self.typing_target() else { return false };
         let Some(at) = self.pointer_on_page() else { return false };
-        if action == MouseAction::Press && !self.mouse_is_hosts() {
+        if action == MouseAction::Press && !self.click_is_hosts() {
             return false;
         }
         let bit = 1_u8.checked_shl(u32::from(button)).filter(|_| button < BUTTONS).unwrap_or(0);
