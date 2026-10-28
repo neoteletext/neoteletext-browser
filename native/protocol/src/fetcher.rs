@@ -9,12 +9,15 @@ use std::io::{Read, Write};
 
 pub use interface_core::browser::CertificateProblem;
 
+use crate::subpages::SubPageRows;
 use crate::{Fields, MAX_ADDRESS, MAX_PAGE_TITLE, MAX_PAYLOAD, ProtocolError, push_count, push_raw_text, raw_text, read_frame, write_frame};
+use interface_core::channel::page_index;
 #[cfg(feature = "links")]
 use kinds::KIND_LINKS;
 use kinds::{
     KIND_CERTIFICATE_REFUSED, KIND_CLEAR_SITE_DATA, KIND_CONFINED, KIND_CONTENTS, KIND_COOKIE_ANSWER, KIND_COOKIE_QUESTION, KIND_COOKIE_SET, KIND_EXCHANGE,
-    KIND_NOTICE, KIND_PAGE, KIND_PROXY_FAILED, KIND_PUSHING, KIND_REACHED_ANSWER, KIND_REACHED_QUESTION,
+    KIND_FETCH_SUBPAGE, KIND_FETCH_SUBPAGES, KIND_NOTICE, KIND_PAGE, KIND_PROXY_FAILED, KIND_PUSHING, KIND_REACHED_ANSWER, KIND_REACHED_QUESTION,
+    KIND_SUBPAGES, KIND_SUBPAGES_MISSING,
 };
 #[cfg(feature = "interaction")]
 use kinds::{KIND_INPUT, KIND_SEND};
@@ -37,6 +40,16 @@ pub const MAX_METHOD: usize = 8;
 /// The longest address an exchange reports: the engine's `MAX_URL_LENGTH`,
 /// which is the address field's limit too.
 pub const MAX_EXCHANGE_URL: usize = MAX_ADDRESS;
+/// The entries of a page's catalogue of sub-pages one message carries: a
+/// catalogue of the standard's 8,190 is eight messages, each well within
+/// a payload with every title at its longest (decision 112 item 3).
+pub const CATALOGUE_PART: usize = 1024;
+/// A catalogue entry at its longest: its sub-code, its title's length and
+/// the title.
+const CATALOGUE_ENTRY_BYTES: usize = 2 + 2 + MAX_PAGE_TITLE;
+/// A catalogue message's page and its three counts.
+const CATALOGUE_HEAD_BYTES: usize = 2 + 2 + 2 + 2;
+const _: () = assert!(CATALOGUE_HEAD_BYTES + CATALOGUE_PART * CATALOGUE_ENTRY_BYTES <= MAX_PAYLOAD, "a catalogue part fits one message");
 /// HTTP status codes are three digits from 100 (RFC 9110 section 15).
 const STATUS_CODES: core::ops::RangeInclusive<u16> = 100..=599;
 
@@ -182,10 +195,28 @@ pub enum FromFetcher {
     /// A response from `host` over an encrypted connection said
     /// `Clear-Site-Data: "cookies"` (`cookies.md` section 8).
     ClearSiteData(String),
+    /// Part of a page's catalogue of sub-pages, `NNN.sub`, as the engine's
+    /// reader read it (REQ-WEB-034): the catalogue's count, the place of
+    /// the part's first entry and at most [`CATALOGUE_PART`] entries, each
+    /// a sub-code and its title, not yet cleaned, in the page's order. The
+    /// parts of one catalogue come in order, the first at place 0.
+    SubPages {
+        /// The page.
+        page: u16,
+        /// The count, the first entry's place and the entries.
+        part: SubPageRows,
+    },
+    /// The page has no catalogue (404 or 410): its sub-pages, if any, are
+    /// in its page file.
+    SubPagesMissing {
+        /// The page.
+        page: u16,
+    },
 }
 
 /// From the trusted core to a fetcher: input messages (requirement 4.7
-/// and its one exception, 18.4), and the answers to its cookie questions.
+/// and its one exception, 18.4), the answers to its cookie questions, and
+/// the catalogues and sub-pages the user's page needs (decision 112).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ToFetcher {
     /// One input message for the channel's push WebSocket: whole items of
@@ -207,6 +238,22 @@ pub enum ToFetcher {
         /// Reached securely, with a cookie still live.
         reached: bool,
     },
+    /// Fetch a page's catalogue of sub-pages, `NNN.sub` (the engine's
+    /// `Input::FetchSubPages`, REQ-WEB-034), conditionally when it was
+    /// fetched before.
+    FetchSubPages {
+        /// The page.
+        page: u16,
+    },
+    /// Fetch one sub-page: its own file, `NNN-SSSS.t42`, once the page's
+    /// catalogue has answered, else the page's file (the engine's
+    /// `Input::FetchPage` with a sub-code, REQ-WEB-019).
+    FetchSubPage {
+        /// The page.
+        page: u16,
+        /// The sub-page, any of the thirteen bits' values but 3F7F.
+        subcode: u16,
+    },
 }
 
 /// # Errors
@@ -222,6 +269,19 @@ pub fn write_to_fetcher(out: &mut dyn Write, message: &ToFetcher) -> Result<(), 
             let mut payload = Vec::new();
             let kind = cookies::push_answer(&mut payload, message)?;
             write_frame(out, kind, &payload)
+        }
+        ToFetcher::FetchSubPages { page } => {
+            page_index(*page).ok_or(ProtocolError::BadValue("page number"))?;
+            write_frame(out, KIND_FETCH_SUBPAGES, &page.to_be_bytes())
+        }
+        ToFetcher::FetchSubPage { page, subcode } => {
+            page_index(*page).ok_or(ProtocolError::BadValue("page number"))?;
+            if !crate::decoder::names_one_subpage(*subcode) {
+                return Err(ProtocolError::BadValue("sub-code"));
+            }
+            let mut payload = page.to_be_bytes().to_vec();
+            payload.extend_from_slice(&subcode.to_be_bytes());
+            write_frame(out, KIND_FETCH_SUBPAGE, &payload)
         }
     }
 }
@@ -240,6 +300,15 @@ pub fn read_to_fetcher(input: &mut dyn Read) -> Result<Option<ToFetcher>, Protoc
             return Ok(Some(ToFetcher::Send(payload)));
         }
         KIND_COOKIE_ANSWER | KIND_REACHED_ANSWER => cookies::read_answer(kind, &mut fields)?,
+        KIND_FETCH_SUBPAGES => ToFetcher::FetchSubPages { page: fields.display_page()? },
+        KIND_FETCH_SUBPAGE => {
+            let page = fields.display_page()?;
+            let subcode = fields.u16()?;
+            if !crate::decoder::names_one_subpage(subcode) {
+                return Err(ProtocolError::BadValue("sub-code"));
+            }
+            ToFetcher::FetchSubPage { page, subcode }
+        }
         other => return Err(ProtocolError::UnknownKind(other)),
     };
     fields.end()?;
@@ -320,6 +389,20 @@ pub fn write_to_core(out: &mut dyn Write, message: &FromFetcher) -> Result<(), P
         FromFetcher::CookieQuestion { .. } | FromFetcher::ReachedQuestion { .. } | FromFetcher::CookieSet { .. } | FromFetcher::ClearSiteData(_) => {
             cookies::push_cookie_message(&mut payload, message)?
         }
+        FromFetcher::SubPages { page, part } => {
+            page_index(*page).ok_or(ProtocolError::BadValue("page number"))?;
+            payload.extend_from_slice(&page.to_be_bytes());
+            crate::subpages::push_rows(&mut payload, part, CATALOGUE_PART, |payload, title| {
+                push_raw_text(payload, title, MAX_PAGE_TITLE);
+                Ok(())
+            })?;
+            KIND_SUBPAGES
+        }
+        FromFetcher::SubPagesMissing { page } => {
+            page_index(*page).ok_or(ProtocolError::BadValue("page number"))?;
+            payload.extend_from_slice(&page.to_be_bytes());
+            KIND_SUBPAGES_MISSING
+        }
     };
     write_frame(out, kind, &payload)
 }
@@ -391,6 +474,12 @@ pub fn read_from_fetcher(input: &mut dyn Read) -> Result<Option<FromFetcher>, Pr
         KIND_PROXY_FAILED => FromFetcher::ProxyFailed,
         KIND_CERTIFICATE_REFUSED => FromFetcher::CertificateRefused(crate::problem_of(fields.u8()?).ok_or(ProtocolError::BadValue("certificate problem"))?),
         KIND_COOKIE_QUESTION | KIND_REACHED_QUESTION | KIND_COOKIE_SET | KIND_CLEAR_SITE_DATA => cookies::read_cookie_message(kind, &mut fields)?,
+        KIND_SUBPAGES => {
+            let page = fields.display_page()?;
+            let part = crate::subpages::read_rows(&mut fields, CATALOGUE_PART, |fields| raw_text(fields, MAX_PAGE_TITLE, "title too long"))?;
+            FromFetcher::SubPages { page, part }
+        }
+        KIND_SUBPAGES_MISSING => FromFetcher::SubPagesMissing { page: fields.display_page()? },
         other => return Err(ProtocolError::UnknownKind(other)),
     };
     fields.end()?;

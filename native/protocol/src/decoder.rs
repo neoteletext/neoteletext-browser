@@ -9,11 +9,13 @@ use std::io::{Read, Write};
 use interface_core::channel::{PAGES, page_index};
 
 use crate::frame::PAGE_DOTS;
-use crate::{Fields, MAX_PAGE_TITLE, ProtocolError, push_count, push_count_u8, push_raw_text, raw_text, read_frame, write_frame};
+use crate::subpages::{SubPageRange, SubPageRows, SubPageStep};
+use crate::{Fields, MAX_PAGE_TITLE, ProtocolError, push_count, push_raw_text, raw_text, read_frame, write_frame};
+use interface_core::controls::SUBPAGE_ROWS;
 use kinds::{
-    KIND_ARRIVED, KIND_AUDIO, KIND_BOOKMARK_FOLDER, KIND_BOOKMARK_FOLDER_END, KIND_BOOKMARK_LINK, KIND_BOOKMARKS_READ, KIND_CHANNEL_LOG, KIND_CLOSE,
-    KIND_CONFINED, KIND_DATA, KIND_END, KIND_FRAME, KIND_OPENED, KIND_SHOWING, KIND_STORE_FULL, KIND_SUBPAGE_TITLES, KIND_SUBPAGES, KIND_UPDATED, KIND_VIEW,
-    KIND_WHOLE,
+    KIND_ARRIVED, KIND_ASK_SUBPAGE_ROWS, KIND_AUDIO, KIND_BOOKMARK_FOLDER, KIND_BOOKMARK_FOLDER_END, KIND_BOOKMARK_LINK, KIND_BOOKMARKS_READ, KIND_CHANNEL_LOG,
+    KIND_CLOSE, KIND_CONFINED, KIND_DATA, KIND_END, KIND_FRAME, KIND_OPENED, KIND_SHOWING, KIND_STORE_FULL, KIND_SUBPAGE_COUNT, KIND_SUBPAGE_ROWS,
+    KIND_SUBPAGES, KIND_UPDATED, KIND_VIEW, KIND_WHOLE,
 };
 #[cfg(feature = "interaction")]
 use kinds::{KIND_CURSOR, KIND_INPUT_CONTROL};
@@ -34,6 +36,7 @@ pub use bookmarks::{BookmarkEntry, MAX_BOOKMARK_ENTRIES, MAX_BOOKMARK_FILE, MAX_
 pub use crate::frame::MAX_COLOURS;
 pub use frame::write_frame_to_core;
 pub use view::View;
+pub(crate) use view::names_one_subpage;
 
 /// The most bytes of a channel's data in one message.
 pub const MAX_CHUNK: usize = 64 * 1024;
@@ -52,7 +55,10 @@ const NO_PAGE: u16 = 0;
 
 /// The pages and sub-pages a decoder first has room for: about 0.7 MB of
 /// store, enough for most channels; a decoder that fills it is started
-/// again with twice the room (decision 47).
+/// again with twice the room (decision 47). A budget, not a maximum: the
+/// store is a cache, the least recently received sub-page forgotten first
+/// (the engine's REQ-ACQ-005), and a channel may have every page and
+/// sub-page the standard allows (decision 112 item 2).
 pub const FIRST_STORE_PAGES: usize = 256;
 /// The most a decoder's store holds, as the engine's own sessions keep
 /// (`neoteletext-app`'s `DEFAULT_PAGES`): 10.5 MB.
@@ -87,6 +93,15 @@ pub enum ToDecoder {
     /// How a page is drawn: its reveal, hold, mix and sub-page. A page with
     /// no view is drawn as it arrives.
     View(View),
+    /// The rows of a page's stored sub-pages the sub-page list asks for,
+    /// with their titles (decision 112 item 3): answered by
+    /// [`FromDecoder::SubPageRows`].
+    SubPageRows {
+        /// The page.
+        page: u16,
+        /// The rows, at most [`interface_core::controls::SUBPAGE_ROWS`].
+        range: SubPageRange,
+    },
     /// The look of one area of a page under the pointer, hovered or
     /// pressed, or none (INPUT.md section 9.7, the engine's decision
     /// E.127): drawn on the page's own cells.
@@ -179,25 +194,31 @@ pub enum FromDecoder {
         /// Its coloured keys and Index, from packet X/27/0.
         fastext: crate::links::Fastext,
     },
-    /// The sub-pages of a page on screen, in ascending order, and the one
-    /// drawn, whenever they change (REQ-NAV-005).
+    /// The sub-pages of a page on screen from the one drawn, whenever they
+    /// change (REQ-NAV-005): how many, which is drawn, its place and its
+    /// neighbours, never the list (decision 112 item 4).
     SubPages {
         /// The page number.
         page: u16,
-        /// Their sub-codes, at most `interface_core::controls::MAX_SUBPAGES`.
-        subcodes: Vec<u16>,
-        /// The sub-code of the one drawn.
-        shown: u16,
+        /// The count, the one drawn, its place and neighbours.
+        step: SubPageStep,
     },
-    /// The sub-pages of any page that has more than one, each with a title
-    /// from its text, not yet cleaned, whenever they change: for the page
-    /// list's sub-pages. None means it has one sub-page again.
-    SubPageTitles {
+    /// How many sub-pages a page has stored, whenever it changes: for the
+    /// page list's mark (decision 111). 0 or 1 means it has none.
+    SubPageCount {
         /// The page number.
         page: u16,
-        /// Each sub-page's sub-code and title, in ascending order, at most
-        /// `interface_core::controls::MAX_SUBPAGES`.
-        titles: Vec<(u16, String)>,
+        /// How many, at most the standard's 8,190.
+        count: u16,
+    },
+    /// The rows of a page's stored sub-pages asked for, in ascending order,
+    /// each with a title from its text, not yet cleaned.
+    SubPageRows {
+        /// The page number.
+        page: u16,
+        /// The page's count, the first row's place and the rows, at most
+        /// [`interface_core::controls::SUBPAGE_ROWS`].
+        rows: SubPageRows,
     },
     /// A cursor record the channel sent for a page, from a pushed packet or
     /// a page's `CU` line: untrusted, its body as sent, for the trusted
@@ -265,6 +286,12 @@ pub fn write_to_decoder(out: &mut dyn Write, message: &ToDecoder) -> Result<(), 
             view::push_view(&mut payload, view)?;
             KIND_VIEW
         }
+        ToDecoder::SubPageRows { page, range } => {
+            page_index(*page).ok_or(ProtocolError::BadValue("page number"))?;
+            payload.extend_from_slice(&page.to_be_bytes());
+            crate::subpages::push_range(&mut payload, *range, SUBPAGE_ROWS)?;
+            KIND_ASK_SUBPAGE_ROWS
+        }
         #[cfg(feature = "links")]
         ToDecoder::Look { page, look } => {
             page_index(*page).ok_or(ProtocolError::BadValue("page number"))?;
@@ -314,6 +341,10 @@ pub fn read_from_core(input: &mut dyn Read) -> Result<Option<ToDecoder>, Protoco
             return Ok(Some(ToDecoder::Whole { packets: flags & 1 != 0, pushed: flags & 2 != 0, bytes: crate::tail(payload, WHOLE_FLAGS_BYTES) }));
         }
         KIND_VIEW => ToDecoder::View(view::read_view(&mut fields)?),
+        KIND_ASK_SUBPAGE_ROWS => {
+            let page = fields.display_page()?;
+            ToDecoder::SubPageRows { page, range: crate::subpages::read_range(&mut fields, SUBPAGE_ROWS)? }
+        }
         #[cfg(feature = "links")]
         KIND_LOOK => {
             let page = fields.display_page()?;
@@ -355,31 +386,31 @@ pub fn write_to_core(out: &mut dyn Write, message: &FromDecoder) -> Result<(), P
             crate::links::push_fastext(&mut payload, fastext)?;
             KIND_LINKS
         }
-        FromDecoder::SubPageTitles { page, titles } => {
-            if titles.iter().any(|(subcode, _)| *subcode > interface_core::controls::ANY_SUBCODE) {
-                return Err(ProtocolError::BadValue("sub-pages"));
-            }
+        FromDecoder::SubPages { page, step } => {
+            page_index(*page).ok_or(ProtocolError::BadValue("page number"))?;
             payload.extend_from_slice(&page.to_be_bytes());
-            push_count_u8(&mut payload, titles.len(), interface_core::controls::MAX_SUBPAGES, "sub-pages")?;
-            for (subcode, title) in titles {
-                payload.extend_from_slice(&subcode.to_be_bytes());
-                push_raw_text(&mut payload, title, MAX_PAGE_TITLE);
-            }
-            KIND_SUBPAGE_TITLES
-        }
-        FromDecoder::SubPages { page, subcodes, shown } => {
-            if subcodes.len() > interface_core::controls::MAX_SUBPAGES
-                || subcodes.iter().chain([shown]).any(|subcode| *subcode > interface_core::controls::ANY_SUBCODE)
-            {
-                return Err(ProtocolError::BadValue("sub-pages"));
-            }
-            payload.extend_from_slice(&page.to_be_bytes());
-            push_count_u8(&mut payload, subcodes.len(), interface_core::controls::MAX_SUBPAGES, "sub-pages")?;
-            for subcode in subcodes {
-                payload.extend_from_slice(&subcode.to_be_bytes());
-            }
-            payload.extend_from_slice(&shown.to_be_bytes());
+            crate::subpages::push_step(&mut payload, step)?;
             KIND_SUBPAGES
+        }
+        FromDecoder::SubPageCount { page, count } => {
+            page_index(*page).ok_or(ProtocolError::BadValue("page number"))?;
+            if usize::from(*count) > neoteletext_core::limits::MAX_SUBPAGES {
+                return Err(ProtocolError::BadValue("too many sub-pages"));
+            }
+            payload.extend_from_slice(&page.to_be_bytes());
+            payload.extend_from_slice(&count.to_be_bytes());
+            KIND_SUBPAGE_COUNT
+        }
+        FromDecoder::SubPageRows { page, rows } => {
+            page_index(*page).ok_or(ProtocolError::BadValue("page number"))?;
+            payload.extend_from_slice(&page.to_be_bytes());
+            // The decoder's titles are untrusted: cut to length here and
+            // cleaned by the trusted core.
+            crate::subpages::push_rows(&mut payload, rows, SUBPAGE_ROWS, |payload, title| {
+                push_raw_text(payload, title, MAX_PAGE_TITLE);
+                Ok(())
+            })?;
+            KIND_SUBPAGE_ROWS
         }
         #[cfg(feature = "interaction")]
         FromDecoder::Cursor { body } => {
@@ -441,30 +472,18 @@ pub fn read_from_decoder(input: &mut dyn Read) -> Result<Option<FromDecoder>, Pr
             let fastext = crate::links::read_fastext(&mut fields)?;
             FromDecoder::Links { page, with_image, candidates, numbers, controls, pointer_areas, fastext }
         }
-        KIND_SUBPAGE_TITLES => {
-            let page = fields.display_page()?;
-            let count = fields.count_u8(interface_core::controls::MAX_SUBPAGES, "too many sub-pages")?;
-            let mut titles = Vec::with_capacity(count);
-            for _ in 0..count {
-                let subcode = fields.u16()?;
-                if subcode > interface_core::controls::ANY_SUBCODE {
-                    return Err(ProtocolError::BadValue("sub-code"));
-                }
-                titles.push((subcode, raw_text(&mut fields, MAX_PAGE_TITLE, "title too long")?));
-            }
-            FromDecoder::SubPageTitles { page, titles }
-        }
         KIND_SUBPAGES => {
             let page = fields.display_page()?;
-            let count = fields.count_u8(interface_core::controls::MAX_SUBPAGES, "too many sub-pages")?;
-            let mut subcode = || -> Result<u16, ProtocolError> {
-                let subcode = fields.u16()?;
-                // A page may carry 3F7F itself, as many broadcast pages do.
-                if subcode > interface_core::controls::ANY_SUBCODE { Err(ProtocolError::BadValue("sub-code")) } else { Ok(subcode) }
-            };
-            let subcodes = (0..count).map(|_| subcode()).collect::<Result<Vec<_>, _>>()?;
-            let shown = subcode()?;
-            FromDecoder::SubPages { page, subcodes, shown }
+            FromDecoder::SubPages { page, step: crate::subpages::read_step(&mut fields)? }
+        }
+        KIND_SUBPAGE_COUNT => {
+            let page = fields.display_page()?;
+            FromDecoder::SubPageCount { page, count: crate::subpages::read_count(&mut fields)? }
+        }
+        KIND_SUBPAGE_ROWS => {
+            let page = fields.display_page()?;
+            let rows = crate::subpages::read_rows(&mut fields, SUBPAGE_ROWS, |fields| raw_text(fields, MAX_PAGE_TITLE, "title too long"))?;
+            FromDecoder::SubPageRows { page, rows }
         }
         // Only its length here: the trusted core checks the fields.
         #[cfg(feature = "interaction")]

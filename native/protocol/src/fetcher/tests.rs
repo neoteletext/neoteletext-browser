@@ -26,6 +26,11 @@ fn every_kind_round_trips() {
         FromFetcher::CookieSet { host: "a.example".into(), path: "/tt/".into(), scope: Some("/tt/".into()), secure: true, line: b"id=1; Secure".to_vec() },
         FromFetcher::CookieSet { host: "a.example".into(), path: "/p".into(), scope: None, secure: false, line: b"x=2".to_vec() },
         FromFetcher::ClearSiteData("a.example".into()),
+        FromFetcher::SubPages {
+            page: 0x210,
+            part: SubPageRows { count: 8_190, first: 7_168, rows: vec![(0x3F7E, "The last".into()), (0x0001, String::new())] },
+        },
+        FromFetcher::SubPagesMissing { page: 0x210 },
     ] {
         let mut bytes = Vec::new();
         write_to_core(&mut bytes, &message).unwrap();
@@ -35,6 +40,8 @@ fn every_kind_round_trips() {
         ToFetcher::CookieAnswer { id: 7, header: b"id=1".to_vec() },
         ToFetcher::CookieAnswer { id: 8, header: Vec::new() },
         ToFetcher::ReachedAnswer { id: 9, reached: true },
+        ToFetcher::FetchSubPages { page: 0x210 },
+        ToFetcher::FetchSubPage { page: 0x210, subcode: 0x3F7E },
     ] {
         let mut bytes = Vec::new();
         write_to_fetcher(&mut bytes, &message).unwrap();
@@ -93,4 +100,28 @@ fn malformed_contents_are_refused() {
     // A fetcher sending a decoder's kind.
     let bytes = [65, 0, 0, 0, 0];
     assert!(matches!(read_from_fetcher(&mut bytes.as_slice()), Err(ProtocolError::UnknownKind(65))));
+}
+
+/// Decision 112: a catalogue comes in parts of at most
+/// [`CATALOGUE_PART`] entries, within the standard's 8,190 sub-pages a
+/// page; a sub-page fetched is one sub-page, never 3F7F, "any".
+#[test]
+fn catalogues_and_sub_pages_keep_their_bounds() {
+    let title = "T".repeat(40);
+    let full = SubPageRows { count: 8_190, first: 0, rows: vec![(0x0101, title); CATALOGUE_PART] };
+    let mut bytes = Vec::new();
+    write_to_core(&mut bytes, &FromFetcher::SubPages { page: 0x210, part: full.clone() }).unwrap();
+    assert!(bytes.len() <= MAX_PAYLOAD, "a whole part with every title at its longest is one message");
+    let over = SubPageRows { rows: vec![(0x0101, String::new()); CATALOGUE_PART + 1], ..full.clone() };
+    assert!(write_to_core(&mut Vec::new(), &FromFetcher::SubPages { page: 0x210, part: over }).is_err());
+    let past = SubPageRows { count: 8_191, ..full };
+    assert!(write_to_core(&mut Vec::new(), &FromFetcher::SubPages { page: 0x210, part: past }).is_err());
+    assert!(write_to_fetcher(&mut Vec::new(), &ToFetcher::FetchSubPage { page: 0x210, subcode: 0x3F7F }).is_err(), "3F7F names no sub-page");
+    assert!(write_to_fetcher(&mut Vec::new(), &ToFetcher::FetchSubPage { page: 0x210, subcode: 0x0080 }).is_err(), "not a sub-code");
+    let forged = [KIND_FETCH_SUBPAGE, 0, 0, 0, 4, 0x02, 0x10, 0x3F, 0x7F];
+    assert!(read_to_fetcher(&mut forged.as_slice()).is_err());
+    // Neither side takes the other's.
+    let mut bytes = Vec::new();
+    write_to_fetcher(&mut bytes, &ToFetcher::FetchSubPages { page: 0x210 }).unwrap();
+    assert!(read_from_fetcher(&mut bytes.as_slice()).is_err());
 }

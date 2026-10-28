@@ -3,7 +3,7 @@
 
 use interface_core::channel::page_index;
 
-use super::ANY_SUBCODE;
+use crate::decoder::names_one_subpage;
 use crate::{Fields, ProtocolError};
 
 /// Where one of Fastext's keys leads, as the decoder reads it from the
@@ -43,7 +43,7 @@ pub(crate) fn push_fastext(payload: &mut Vec<u8>, fastext: &Fastext) -> Result<(
             continue;
         };
         page_index(target.page).ok_or(ProtocolError::BadValue("Fastext page"))?;
-        if target.subcode.is_some_and(|subcode| subcode >= ANY_SUBCODE) {
+        if target.subcode.is_some_and(|subcode| !names_one_subpage(subcode)) {
             return Err(ProtocolError::BadValue("Fastext sub-code"));
         }
         let flags = FASTEXT_PAGE | if target.subcode.is_some() { FASTEXT_SUBCODE } else { 0 } | if target.service.is_some() { FASTEXT_SERVICE } else { 0 };
@@ -75,7 +75,7 @@ pub(crate) fn read_fastext(fields: &mut Fields<'_>) -> Result<Fastext, ProtocolE
             None
         } else {
             let subcode = fields.u16()?;
-            if subcode >= ANY_SUBCODE {
+            if !names_one_subpage(subcode) {
                 return Err(ProtocolError::BadValue("Fastext sub-code"));
             }
             Some(subcode)

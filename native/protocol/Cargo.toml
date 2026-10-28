@@ -24,6 +24,9 @@ neoteletext-input = { workspace = true, optional = true }
 interface-core.workspace = true
 # The audio profile's bounds: channels, gains, fades, rates.
 neoteletext-audio.workspace = true
+# The standard's page and sub-page numbers (`limits`) that bound the
+# messages' sub-pages (decision 112).
+neoteletext-core.workspace = true
 
 [lints]
 workspace = true

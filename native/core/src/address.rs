@@ -71,12 +71,16 @@ const SUBPAGE_DIGITS: usize = 4;
 const HEXADECIMAL: u32 = 16;
 
 /// The sub-page a fragment names after its page, when it names one: four
-/// hexadecimal digits below 3F7F, which means any sub-page.
+/// hexadecimal digits of a sub-code, not 3F7F, which means any sub-page.
 #[must_use]
 pub fn fragment_subpage(fragment: &str) -> Option<u16> {
     fragment_page(fragment)?;
     let (_, subpage) = fragment.split_once(':')?;
-    u16::from_str_radix(subpage, HEXADECIMAL).ok().filter(|subpage| *subpage < interface_core::controls::ANY_SUBCODE)
+    // Any of the thirteen bits' values but 3F7F, which names no sub-page
+    // (the engine's REQ-NUM-002, REQ-NUM-006 and REQ-NUM-009).
+    u16::from_str_radix(subpage, HEXADECIMAL)
+        .ok()
+        .filter(|&subpage| neoteletext_core::limits::is_sub_code(subpage) && subpage != neoteletext_core::limits::SUBCODE_ANY)
 }
 
 /// The page a fragment names: three hexadecimal digits of a display page,

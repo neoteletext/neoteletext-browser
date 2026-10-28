@@ -3,7 +3,8 @@
 //! which are on, and the user's key for one of them, as strip input.
 
 use interface_core::channel::page_index;
-use interface_core::controls::{FastextKey, MAX_SUBPAGES, PageControl, PageControls};
+use interface_core::controls::{FastextKey, PageControl, PageControls};
+use neoteletext_core::limits::{MAX_SUBPAGES, is_sub_code};
 
 use super::{Fields, ProtocolError};
 
@@ -53,7 +54,9 @@ pub(crate) fn read_control(fields: &mut Fields<'_>) -> Result<PageControl, Proto
         CONTROL_SUBPAGE_OF => {
             let page = fields.display_page()?;
             let subcode = fields.u16()?;
-            if subcode > interface_core::controls::ANY_SUBCODE {
+            // Any of the thirteen bits' values, none outside them (the
+            // engine's REQ-NUM-002 and REQ-NUM-006).
+            if !is_sub_code(subcode) {
                 return Err(ProtocolError::BadValue("sub-code"));
             }
             PageControl::SubPageOf { page, subcode }
@@ -63,7 +66,7 @@ pub(crate) fn read_control(fields: &mut Fields<'_>) -> Result<PageControl, Proto
 }
 
 pub(crate) fn push_controls(payload: &mut Vec<u8>, controls: &PageControls) -> Result<(), ProtocolError> {
-    if usize::from(controls.subpages) > MAX_SUBPAGES || controls.chosen.is_some_and(|chosen| chosen >= controls.subpages) {
+    if usize::from(controls.subpages) > MAX_SUBPAGES || controls.chosen.is_some_and(|chosen| chosen >= controls.subpages) || !is_sub_code(controls.subcode) {
         return Err(ProtocolError::BadValue("sub-pages"));
     }
     let flags = if controls.page.is_some() { OPEN } else { 0 }
@@ -77,9 +80,10 @@ pub(crate) fn push_controls(payload: &mut Vec<u8>, controls: &PageControls) -> R
         payload.extend_from_slice(&page.to_be_bytes());
     }
     let keys = controls.fastext.iter().enumerate().fold(0_u8, |bits, (index, on)| if *on { bits | (1 << index) } else { bits });
-    payload.extend_from_slice(&[keys, controls.subpages]);
+    payload.push(keys);
+    payload.extend_from_slice(&controls.subpages.to_be_bytes());
     if let Some(chosen) = controls.chosen {
-        payload.push(chosen);
+        payload.extend_from_slice(&chosen.to_be_bytes());
     }
     payload.extend_from_slice(&controls.subcode.to_be_bytes());
     Ok(())
@@ -95,20 +99,23 @@ pub(crate) fn read_controls(fields: &mut Fields<'_>) -> Result<PageControls, Pro
     if usize::from(keys) >> FastextKey::ALL.len() != 0 {
         return Err(ProtocolError::BadValue("Fastext keys"));
     }
-    let subpages = fields.u8()?;
+    let subpages = fields.u16()?;
     if usize::from(subpages) > MAX_SUBPAGES {
         return Err(ProtocolError::BadValue("sub-pages"));
     }
     let chosen = if flags & CHOSEN == 0 {
         None
     } else {
-        let chosen = fields.u8()?;
+        let chosen = fields.u16()?;
         if chosen >= subpages {
             return Err(ProtocolError::BadValue("sub-page chosen"));
         }
         Some(chosen)
     };
     let subcode = fields.u16()?;
+    if !is_sub_code(subcode) {
+        return Err(ProtocolError::BadValue("sub-code"));
+    }
     Ok(PageControls {
         page,
         fastext: core::array::from_fn(|index| keys & (1 << index) != 0),

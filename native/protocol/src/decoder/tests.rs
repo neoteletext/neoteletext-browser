@@ -7,6 +7,7 @@ use super::kinds::{KIND_ARRIVED, KIND_BOOKMARK_FOLDER, KIND_END, KIND_FRAME};
 use super::*;
 use crate::frame::PAGE_DOTS;
 use crate::{MAX_PAGE_TITLE, ProtocolError};
+use neoteletext_core::limits::SUBCODE_ANY;
 
 #[test]
 fn a_long_title_is_cut_on_a_character_boundary() {
@@ -30,6 +31,7 @@ fn every_kind_round_trips() {
         ToDecoder::Close,
         ToDecoder::View(View { page: 0x302, reveal: true, hold: false, mix: true, subpage: Some(2) }),
         ToDecoder::View(View { page: 0x100, ..View::default() }),
+        ToDecoder::SubPageRows { page: 0x210, range: SubPageRange { first: 8_126, count: 64 } },
     ] {
         let mut bytes = Vec::new();
         write_to_decoder(&mut bytes, &message).unwrap();
@@ -43,10 +45,11 @@ fn every_kind_round_trips() {
         FromDecoder::Confined,
         FromDecoder::StoreFull,
         FromDecoder::Frame { page: 0x123, palette: vec![[0, 0, 0], [255, 255, 255]], screen: 1, indices },
-        FromDecoder::SubPages { page: 0x302, subcodes: vec![1, 2, 3], shown: 2 },
-        FromDecoder::SubPageTitles { page: 0x210, titles: vec![(1, "Story 1/3".into()), (2, "Story 2/3".into()), (3, "Comments".into())] },
-        FromDecoder::SubPageTitles { page: 0x210, titles: Vec::new() },
-        FromDecoder::SubPages { page: 0x100, subcodes: vec![interface_core::controls::ANY_SUBCODE], shown: interface_core::controls::ANY_SUBCODE },
+        FromDecoder::SubPages { page: 0x302, step: SubPageStep { count: 3, shown: 2, place: Some(1), previous: Some(1), next: Some(3) } },
+        FromDecoder::SubPageCount { page: 0x210, count: 8_190 },
+        FromDecoder::SubPageCount { page: 0x210, count: 0 },
+        FromDecoder::SubPageRows { page: 0x210, rows: SubPageRows { count: 3, first: 1, rows: vec![(2, "Story 2/3".into()), (3, "Comments".into())] } },
+        FromDecoder::SubPages { page: 0x100, step: SubPageStep { count: 1, shown: SUBCODE_ANY, place: Some(0), previous: None, next: None } },
         FromDecoder::Bookmark(BookmarkEntry::Folder("Bookmarks bar".into())),
         FromDecoder::Bookmark(BookmarkEntry::FolderEnd),
         FromDecoder::Bookmark(BookmarkEntry::Link { name: "Teefax".into(), address: "https://teastop.co.uk/teefax/".into() }),
@@ -101,14 +104,21 @@ fn an_input_control_body_round_trips_within_its_bound() {
 /// list is bounded; Fastext's targets round-trip and their bounds hold.
 #[test]
 fn page_controls_keep_their_bounds() {
-    let any = View { page: 0x100, subpage: Some(interface_core::controls::ANY_SUBCODE), ..View::default() };
+    let any = View { page: 0x100, subpage: Some(SUBCODE_ANY), ..View::default() };
     assert!(write_to_decoder(&mut Vec::new(), &ToDecoder::View(any)).is_err());
     let mut bytes = Vec::new();
     write_to_decoder(&mut bytes, &ToDecoder::View(View { page: 0x100, ..View::default() })).unwrap();
     bytes[5] = 0x10;
     assert!(read_from_core(&mut bytes.as_slice()).is_err(), "an unknown view flag");
-    let many = FromDecoder::SubPages { page: 0x100, subcodes: vec![1; interface_core::controls::MAX_SUBPAGES + 1], shown: 1 };
+    // Decision 112: the standard's 8,190, never more, and rows within the
+    // budget a message carries.
+    let most = u16::try_from(neoteletext_core::limits::MAX_SUBPAGES).unwrap();
+    assert!(write_to_core(&mut Vec::new(), &FromDecoder::SubPageCount { page: 0x100, count: most }).is_ok());
+    assert!(write_to_core(&mut Vec::new(), &FromDecoder::SubPageCount { page: 0x100, count: most + 1 }).is_err());
+    let many = FromDecoder::SubPages { page: 0x100, step: SubPageStep { count: most + 1, shown: 1, ..SubPageStep::default() } };
     assert!(write_to_core(&mut Vec::new(), &many).is_err());
+    let rows = SubPageRows { count: most, first: 0, rows: vec![(1, String::new()); SUBPAGE_ROWS + 1] };
+    assert!(write_to_core(&mut Vec::new(), &FromDecoder::SubPageRows { page: 0x100, rows }).is_err());
     #[cfg(feature = "links")]
     {
         use crate::links::{Fastext, FastextTarget};

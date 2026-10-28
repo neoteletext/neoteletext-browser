@@ -70,19 +70,18 @@ fn a_page_is_recorded_once_with_its_title_cleaned() {
     assert_eq!(channel.view().counts(), (1, 1));
 }
 
-/// Decision 111: a page's sub-pages are kept with their titles cleaned,
-/// and told again only when they change.
+/// Decision 111 and decision 112 item 4: a page's count of sub-pages is
+/// kept, to the standard's 8,190, and told again only when it changes.
 #[test]
 fn a_pages_sub_pages_are_kept_and_told_when_they_change() {
     let mut session = Session::new(Bookmarks::default());
     session.open("news.invalid").unwrap();
-    let channel = &mut session.tabs[0].channel;
-    let titles = vec![(1, String::from("One\u{202E}")), (2, String::from("Two"))];
-    assert_eq!(channel.set_subpages(0x210, &titles), Some(vec![(1, String::from("One")), (2, String::from("Two"))]));
-    assert_eq!(channel.set_subpages(0x210, &titles), None, "the same again");
-    assert_eq!(channel.set_subpages(0x210, &[]), Some(Vec::new()), "one sub-page again");
-    assert_eq!(channel.set_subpages(0x210, &[]), None);
-    assert_eq!(channel.set_subpages(0x1A0, &titles), None, "not a page");
+    let subpages = &mut session.tabs[0].channel.subpages;
+    assert_eq!(subpages.stored(0x210, 2), Some(2));
+    assert_eq!(subpages.stored(0x210, 2), None, "the same again");
+    assert_eq!(subpages.stored(0x210, 1), Some(0), "one sub-page again");
+    assert_eq!(subpages.stored(0x210, 1), None);
+    assert_eq!(subpages.stored(0x210, u16::MAX), Some(8_190), "never past the standard's maximum");
 }
 
 #[test]

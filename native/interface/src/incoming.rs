@@ -40,14 +40,23 @@ pub enum Incoming {
     Strip(StripState),
     /// The active tab's channel.
     Channel(Channel),
-    /// A page's sub-pages and their titles, none when it has one again.
-    SubPages {
+    /// How many sub-pages a page has, 0 when it has one again.
+    SubPageCount {
         /// The channel.
         channel: u32,
         /// The page.
         page: u16,
-        /// Each sub-page's sub-code and title.
-        subpages: Vec<(u16, String)>,
+        /// How many.
+        count: u16,
+    },
+    /// Rows of a page's sub-pages the sub-page list asked for.
+    SubPageRows {
+        /// The channel.
+        channel: u32,
+        /// The page.
+        page: u16,
+        /// The page's count, the first row's place and the rows.
+        rows: protocol::subpages::SubPageRows,
     },
     /// A page arrived, or its status changed.
     Arrived {

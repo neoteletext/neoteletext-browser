@@ -149,6 +149,7 @@ Boundary 4 of the earlier design, the font helper, is gone: no font is fetched f
 - Page bytes are cut into pieces and passed to the channel's decoder unread (requirement 5.3).
 - A malformed message stops the fetcher (requirement 4.3).
 - Only the trusted core decides which decoder a fetcher's bytes reach: its own channel's.
+- **A page's catalogue of sub-pages** (decision 121; the engine's REQ-WEB-034) is read in the fetcher, by the engine's bounded and fuzzed reader, never in the trusted core, and crosses as parts of at most 1,024 entries, each a sub-code of the thirteen bits and a title of at most a row, within the standard's 8,190 a page (`FromFetcher::SubPages`). The trusted core takes the parts only in order, from the first, drops a catalogue whose part does not follow, cleans every title, and holds at most 16 catalogues a channel, the least recently used forgotten first, so a fetcher cannot make it hold more than about 21 MB of catalogues a channel (16 of 8,190 entries, each title at most 160 bytes). A compromised fetcher **can** list any sub-codes and titles for its own channel's pages, which its server could; it **cannot** make the trusted core fetch anything (the trusted core asks, section 5.6), or reach another channel's sub-pages.
 
 **Remaining risk:** low. It depends on the protocol's readers being correct, which is why they must be fuzzed (requirement 4.6, met: `fetcher_messages`).
 
@@ -200,6 +201,7 @@ Removed by decision 66: no font is fetched from a channel, so there is no font f
 **Mitigations.**
 - **Page intents carry no address.** They can report visible pages, click a cell, select, close, open or move tabs and windows, and send input to the open page's channel when it takes input (requirement 4.5, decision 48).
 - **Visible pages affect only rendering,** never fetching: the fetcher takes from the trusted core only input messages for the channel's own push WebSocket and the answers to its cookie questions, none of which names an address, page or connection, so nothing the interface does can cause, delay or reorder a request (requirement 4.7). This closes the covert channel between channels that the earlier design found (`prototypes/docs/security-analysis.md` section 5.6) for every channel fetched from a contents file or a bundle, and for files.
+- **Sub-pages are fetched only for the page open** (decision 121, requirement 4.7 as amended): while a page of the active tab's channel is open and is one of a set, the trusted core asks that channel's fetcher for the page's catalogue once each time it opens, and for the sub-page shown and the one either side of it, each once while the page is open; it names the page and a sub-code it checked, never an address, and nothing reaches another channel's fetcher. A compromised interface that opens pages and chooses sub-pages so decides some of the active channel's requests, and could signal through them to that channel's server; it can already do so more widely by navigating the tab, which it may, and the agent spaces the requests at its own rate. The sub-page list's rows are answered from what the trusted core or the decoder holds, never fetched.
 - **Visible pages of another channel are filtered out** by the trusted core (requirement 4.4).
 - Every message is bounded and checked; a malformed one ends the application (requirements 4.2 and 4.3).
 
@@ -315,6 +317,7 @@ Built 23 October 2026 (decisions 54 and 73 to 82): `installation-and-updates.md`
 ## 12. Privacy
 
 - **Fetching never depends on viewing** (decision 22): a channel's server cannot see which of its pages a viewer reads (requirements 4.7 and 5.15). *Rescinded 25 October 2026 by decision 104:* pages are to be fetched while visible or focused, so a channel's server will learn which of its pages are on screen; true of what is built until that is designed.
+- **A channel served as files learns which sub-page is read** (decision 112 item 5, built by decision 121): the sub-page shown and the one either side of it are fetched from their own files when the page is open, as the page's own file is; a channel that publishes no catalogue learns nothing more.
 - **Cookies are host-only and channel-only,** held by the trusted core and sent only with their own channel's requests; there is no third-party context (requirements 7.6, 7.7 and 21.1). Persistent cookies are kept between runs only sealed, never a session or private one; the cookies panel deletes them by channel, site or all, the settings keep them, delete them when the browser closes or block them, and history's clearing takes them by time (requirements 21.4 to 21.8).
 - **No `Referer` header, and a minimal user agent** (requirement 5.14).
 - **The interface process stores nothing** (requirement 7.9).

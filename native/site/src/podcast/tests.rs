@@ -98,7 +98,10 @@ fn the_receiver_hears_the_stream_from_its_first_block() {
     let lead = usize::try_from(LEAD_MS * u64::from(RATE) / MILLISECONDS_PER_SECOND).unwrap();
     let block = usize::try_from(Codec::ImaAdpcm.samples_per_block(IMA_BLOCK_LARGE)).unwrap();
     assert!(player.sent <= lead && player.sent + block > lead, "{} of {lead}", player.sent);
-    assert_eq!(sink.samples, player.sent);
+    // The last block's final 5 ms are held back until the next arrives, to
+    // be faded out if it never does (the engine's decision E.131 item 4).
+    let held = usize::try_from(u64::from(neoteletext_audio::MIN_FADE_MS) * u64::from(RATE) / MILLISECONDS_PER_SECOND).unwrap();
+    assert_eq!(sink.samples + held, player.sent);
     let paused = player.toggle(&episode, &mut record_id);
     hear(&mut receiver, &mut sink, &paused);
     assert!(!player.playing());

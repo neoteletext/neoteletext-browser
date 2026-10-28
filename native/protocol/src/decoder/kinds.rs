@@ -34,4 +34,9 @@ pub(super) const KIND_BOOKMARK_LINK: u8 = 75;
 pub(super) const KIND_BOOKMARKS_READ: u8 = 76;
 pub(super) const KIND_CHANNEL_LOG: u8 = 77;
 pub(super) const KIND_CONFINED: u8 = 78;
-pub(super) const KIND_SUBPAGE_TITLES: u8 = 79;
+// 79 was every sub-page's title, withdrawn on 28 October 2026 (decision
+// 112): titles go by range. The number is not reused.
+pub(super) const KIND_SUBPAGE_COUNT: u8 = 102;
+pub(super) const KIND_SUBPAGE_ROWS: u8 = 103;
+// Trusted core to decoder: the rows of a page's sub-pages asked for.
+pub(super) const KIND_ASK_SUBPAGE_ROWS: u8 = 104;

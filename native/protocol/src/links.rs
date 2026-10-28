@@ -20,7 +20,6 @@ pub use fastext::{Fastext, FastextTarget};
 pub(crate) use fastext::{push_fastext, read_fastext};
 pub use found::{Alias, Candidate, NumberLink, Service};
 pub(crate) use found::{push_area, push_channel_links, push_found, read_area, read_channel_links, read_found};
-pub use interface_core::controls::ANY_SUBCODE;
 pub use interface_core::links::{Area, LinkKind, LinkRun, Lit, PageLinks, Pointing, Prompt, PromptKind};
 
 /// The most `LT` and `LK` lines a page keeps (the engine's `TEXT_LINKS`

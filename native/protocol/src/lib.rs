@@ -42,6 +42,7 @@ pub mod library;
 pub mod links;
 pub mod settings;
 pub mod sound;
+pub mod subpages;
 mod text;
 
 pub use bounds::*;

@@ -48,6 +48,17 @@ pub enum Output {
     Reload,
     /// Strip input: a key of the open page's controls (decision 67).
     PageControl(crate::controls::PageControl),
+    /// The sub-page list asks for the rows of `page` from place `first`,
+    /// `count` of them, at most [`crate::controls::SUBPAGE_ROWS`]: those
+    /// it scrolled into view (decision 112 item 3).
+    SubPageRows {
+        /// The page.
+        page: u16,
+        /// The first row's place, from 0.
+        first: u16,
+        /// How many.
+        count: u16,
+    },
     /// Strip input: move a tab from one place to another (decision 69).
     MoveTab {
         /// Its place now.

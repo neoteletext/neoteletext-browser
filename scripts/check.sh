@@ -66,8 +66,53 @@ check_engine_pin() {
     [[ -n "$revs" && "$revs" != *$'\n'* ]] || fail "the workspaces must name one engine commit, found: ${revs:-none}"
 }
 
+# The programs a release script builds together, as it names them: the
+# macOS and Linux scripts' shell lists and the Windows script's array.
+release_programs() {
+    case "$1" in
+    *.ps1) sed -n 's/^\$programs = @(\(.*\))$/\1/p' "$1" | tr -d '",' ;;
+    *build-macos.sh) sed -n 's/^programs=(\(.*\))$/\1/p' "$1" ;;
+    *build-linux.sh) sed -n 's/^programs="\(.*\)"$/\1/p' "$1" ;;
+    esac
+}
+
+# The features of the engine's audio crate in a build of `$@`'s packages
+# with no tests, as Cargo resolves them: a development dependency's
+# features (the decoder's tests write sounds with `encode`, which brings
+# `ima`) stay out of such a build, as `-e normal,build` reproduces.
+audio_features() {
+    (cd native && cargo tree --quiet --locked -e normal,build --target all "$@" --prefix none -f '{p}|{f}') | sed -n 's/^neoteletext-audio [^|]*|//p' | sed 's/ (\*)$//' | sort -u
+}
+
+# Decision 121, the owner's instruction of 28 October 2026 and the engine's
+# decision E.131: PCM16 and IMA ADPCM are compiled out of the desktop
+# builds (Windows, macOS, Linux). Every release script's programs, built
+# together as the script builds them, and the Windows installer, built on
+# its own, have the engine's audio crate with neither codec.
+check_desktop_codecs() {
+    step "the shipped programs are built without PCM16 and IMA ADPCM"
+    local script programs program features
+    local -a arguments
+    for script in scripts/release/build-macos.sh scripts/release/build-linux.sh scripts/release/build-windows.ps1; do
+        programs="$(release_programs "$script")"
+        [[ -n "$programs" ]] || fail "no list of programs found in $script"
+        arguments=()
+        for program in $programs; do arguments+=(-p "$program"); done
+        features="$(audio_features "${arguments[@]}")"
+        [[ -n "$features" ]] || fail "$script's programs do not build neoteletext-audio, so its codecs cannot be checked"
+        if grep -Eq '(^|,)(ima|pcm16)(,|$)' <<<"$features"; then
+            fail "$script's programs build neoteletext-audio with PCM16 or IMA ADPCM ($features); the desktop builds have neither"
+        fi
+    done
+    features="$(audio_features -p neoteletext-installer)"
+    if grep -Eq '(^|,)(ima|pcm16)(,|$)' <<<"$features"; then
+        fail "the Windows installer builds neoteletext-audio with PCM16 or IMA ADPCM ($features)"
+    fi
+}
+
 check_native() {
     check_engine_pin
+    check_desktop_codecs
     # The fuzz crate has a lockfile of its own, which a dependency change
     # in the workspace can leave stale.
     step "native: lockfiles up to date"

@@ -4,15 +4,19 @@
 //! the open page has and which are on; the interface asks for each as
 //! strip input.
 
-/// The highest sub-code a page can carry: EN 300 706 clause 9.3.1.3's
-/// S4, S3, S2 and S1 at their most, 3F7F, which a link uses to mean any
-/// sub-page.
-pub const ANY_SUBCODE: u16 = 0x3F7F;
+use neoteletext_core::limits::MAX_SUBPAGES;
 
-/// The most sub-pages listed for a page: the engine's
-/// `neoteletext_core::viewer::MAX_LISTED_SUBPAGES`, which this crate does
-/// not depend on; the decoder asserts the two agree.
-pub const MAX_SUBPAGES: usize = 64;
+/// The sub-page rows a message carries at most, with their titles: at 27
+/// points a row, 64 fill a list 1,728 points high, more than a 4K screen's
+/// height at its usual scale, so a list of the standard's 8,190 sub-pages
+/// fetches only the rows in view (decision 112 item 3; `STANDARD-LIMITS.md`
+/// question 4 suggests 64). A budget, not a maximum: the rest are reached
+/// by asking for the next rows.
+pub const SUBPAGE_ROWS: usize = 64;
+
+/// The most sub-pages counted, as a 16-bit count (decision 112 item 4).
+const _: () = assert!(MAX_SUBPAGES < u16::MAX as usize, "a sub-page count is 16-bit");
+const _: () = assert!(SUBPAGE_ROWS <= MAX_SUBPAGES, "a range of rows is within a page");
 
 /// Fastext's keys: the four coloured keys and Index (the engine's
 /// REQ-NAV-003).
@@ -104,11 +108,12 @@ pub struct PageControls {
     pub hold: bool,
     /// Mix is on.
     pub mix: bool,
-    /// How many sub-pages the page has: 0 or 1 when it does not rotate.
-    pub subpages: u8,
+    /// How many sub-pages the page has: 0 or 1 when it does not rotate; at
+    /// most the standard's 8,190 (`neoteletext_core::limits::MAX_SUBPAGES`).
+    pub subpages: u16,
     /// The place of the sub-page shown among them, from 0, when one was
     /// chosen; none while the latest is shown as it arrives.
-    pub chosen: Option<u8>,
+    pub chosen: Option<u16>,
     /// The sub-code of the sub-page shown, for the address and the tips.
     pub subcode: u16,
 }

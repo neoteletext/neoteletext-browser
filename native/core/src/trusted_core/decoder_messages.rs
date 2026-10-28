@@ -49,13 +49,25 @@ impl Core {
                     self.send_controls()?;
                 }
             }
-            FromDecoder::SubPages { page, subcodes, shown } => self.subpages(PageKey { channel, page }, subcodes, shown)?,
-            FromDecoder::SubPageTitles { page, titles } => {
-                let changed = self.session.tabs.iter_mut().find(|tab| tab.channel.id == channel).and_then(|tab| tab.channel.set_subpages(page, &titles));
-                if let Some(subpages) = changed
+            FromDecoder::SubPages { page, step } => self.subpages(PageKey { channel, page }, step)?,
+            FromDecoder::SubPageCount { page, count } => {
+                let changed = self.channel_subpages(channel).and_then(|subpages| subpages.stored(page, count));
+                if let Some(count) = changed
                     && active == Some(channel)
                 {
-                    self.send(&ToInterface::SubPages { channel, page, subpages })?;
+                    self.send(&ToInterface::SubPageCount { channel, page, count })?;
+                }
+            }
+            // The rows the sub-page list asked for, from what the decoder
+            // holds: shown unless the page's catalogue, which lists every
+            // sub-page, has come meanwhile.
+            FromDecoder::SubPageRows { page, mut rows } => {
+                let catalogued = self.channel_subpages(channel).is_some_and(|subpages| subpages.catalogue(page).is_some());
+                if active == Some(channel) && !catalogued {
+                    for (_, title) in &mut rows.rows {
+                        *title = clean(title, protocol::MAX_PAGE_TITLE);
+                    }
+                    self.send(&ToInterface::SubPageRows { channel, page, rows })?;
                 }
             }
             #[cfg(feature = "interaction")]
@@ -77,14 +89,14 @@ impl Core {
         Ok(())
     }
 
-    /// The active channel's sub-pages, each page's, after the channel itself
-    /// was sent: the interface keeps them beside it.
+    /// The active channel's pages with sub-pages, each with its count,
+    /// after the channel itself was sent: the interface keeps them beside
+    /// it, and asks for their rows as it lists them.
     pub(crate) fn send_subpages(&mut self) -> Result<(), String> {
         let Some(tab) = self.session.active_tab() else { return Ok(()) };
         let channel = tab.channel.id;
-        let all: Vec<(u16, Vec<(u16, String)>)> = tab.channel.subpages.iter().map(|(page, list)| (*page, list.clone())).collect();
-        for (page, subpages) in all {
-            self.send(&ToInterface::SubPages { channel, page, subpages })?;
+        for (page, count) in tab.channel.subpages.counts() {
+            self.send(&ToInterface::SubPageCount { channel, page, count })?;
         }
         Ok(())
     }

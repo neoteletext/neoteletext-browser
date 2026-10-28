@@ -53,6 +53,12 @@ fn a_fragment_names_a_page_of_the_channel_and_is_never_fetched() {
     let with_subpage = parse("weather.invalid/#302:0001").unwrap();
     assert_eq!((with_subpage.page, with_subpage.subpage), (Some(0x302), Some(1)), "decision 67: the sub-page is kept");
     assert_eq!(parse("weather.invalid/#302:3F7F").unwrap().subpage, None, "3F7F means any");
+    // Decision 119 (the engine's REQ-NUM-002 and REQ-NUM-006): every value
+    // of the thirteen bits names a sub-page, and nothing outside them.
+    assert_eq!(parse("weather.invalid/#302:3F7E").unwrap().subpage, Some(0x3F7E));
+    assert_eq!(parse("weather.invalid/#302:0A5C").unwrap().subpage, Some(0x0A5C));
+    assert_eq!(parse("weather.invalid/#302:0080").unwrap().subpage, None, "bit 7 is control bit C4's, not the sub-code's");
+    assert_eq!(parse("weather.invalid/#302:1F80").unwrap().subpage, None);
     assert_eq!(parse("weather.invalid/#302").unwrap().subpage, None);
     assert_eq!(parse("weather.invalid#302").unwrap().text, "https://weather.invalid/#302");
     for fragment in ["#1A0", "#30", "#3022", "#302:1", "#section", "#902"] {

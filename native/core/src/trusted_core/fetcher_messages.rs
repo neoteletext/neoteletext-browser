@@ -82,6 +82,11 @@ impl Core {
                 let sends = self.typing.input(channel, open, secure, self.now());
                 self.deliver_typing(sends)?;
             }
+            FromFetcher::SubPages { page, part } => self.catalogue_part(channel, page, part)?,
+            FromFetcher::SubPagesMissing { page } => {
+                let changed = self.channel_subpages(channel).and_then(|subpages| subpages.missing(page));
+                self.subpage_count_changed(channel, page, changed)?;
+            }
             #[cfg(feature = "links")]
             FromFetcher::Links { aliases, services } => {
                 self.links.descriptor(channel, &aliases, &services);
@@ -90,6 +95,43 @@ impl Core {
                 }
                 self.redecide_channel(channel)?;
             }
+        }
+        Ok(())
+    }
+
+    /// Part of a page's catalogue of sub-pages (the engine's REQ-WEB-034):
+    /// held once whole, its count told to the interface, and the open page
+    /// stepped through it from now on. One out of order is refused, said
+    /// in the log, and the page listed from what its decoder holds.
+    fn catalogue_part(&mut self, channel: u32, page: u16, part: protocol::subpages::SubPageRows) -> Result<(), String> {
+        let Some(subpages) = self.channel_subpages(channel) else { return Ok(()) };
+        match subpages.part(page, part) {
+            Ok(None) => Ok(()),
+            Ok(Some(count)) => {
+                self.send_subpage_count(channel, page, count)?;
+                self.catalogue_arrived(interface_core::canvas::PageKey { channel, page })
+            }
+            Err(neoteletext::subpages::Refused::OutOfOrder) => {
+                subpages.unanswered(page);
+                self.log(Level::Warning, Some(channel), &format!("channel {channel}: the catalogue of page {page:03X} came out of order; ignored"));
+                Ok(())
+            }
+        }
+    }
+
+    /// A page's count of sub-pages to show, when it changed: to the
+    /// interface while its channel is the active one.
+    fn subpage_count_changed(&mut self, channel: u32, page: u16, changed: Option<u16>) -> Result<(), String> {
+        match changed {
+            Some(count) => self.send_subpage_count(channel, page, count),
+            None => Ok(()),
+        }
+    }
+
+    /// Tells the interface of a page's count, while its channel is active.
+    fn send_subpage_count(&mut self, channel: u32, page: u16, count: u16) -> Result<(), String> {
+        if self.active_channel() == Some(channel) {
+            self.send(&ToInterface::SubPageCount { channel, page, count })?;
         }
         Ok(())
     }

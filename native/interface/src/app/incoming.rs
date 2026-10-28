@@ -40,7 +40,8 @@ impl App {
             Incoming::Library(view) => self.library(view, now),
             Incoming::Channel(channel) => self.view.browser.set_channel(channel),
             Incoming::Arrived { channel, page, title } => self.view.browser.add_page(channel, page, title, now),
-            Incoming::SubPages { channel, page, subpages } => self.view.browser.set_subpages(channel, page, subpages),
+            Incoming::SubPageCount { channel, page, count } => self.view.browser.set_subpage_count(channel, page, count),
+            Incoming::SubPageRows { channel, page, rows } => self.view.browser.set_subpage_rows(channel, page, rows.count, rows.first, rows.rows),
             Incoming::Updated { channel, page } => self.page_updated(channel, page, now),
             Incoming::Page { key, version, image } => self.page_frame(event_loop, key, version, &image, now),
             #[cfg(feature = "phone-keyboard")]

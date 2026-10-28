@@ -22,12 +22,26 @@ use neoteletext_core::consts::{CLOCK_BYTES, G2_RIGHT_GUILLEMET, ROWS, SPACE, STA
 use neoteletext_core::controls::{Control, Look, apply_look};
 use neoteletext_core::fsm::PageState;
 use neoteletext_core::level1::{DisplayOptions, Glyph, Grid, build_grid};
+use neoteletext_core::limits::DECIMAL_DIGIT_MAX;
 #[cfg(feature = "links")]
 use neoteletext_core::nav::PageLinks;
 use neoteletext_core::render::{FlashPhase, IndexBuffer, IndexFormat, RenderOptions, render_screen};
 use neoteletext_core::types::{Instant, PageAddress, SubCode};
 use neoteletext_image::palette::colour_map_palette;
 use protocol::decoder::View;
+use protocol::subpages::{SubPageRange, SubPageRows, SubPageStep};
+
+/// The base of a place's digits in row 0.
+const DECIMAL_BASE: usize = DECIMAL_DIGIT_MAX as usize + 1;
+/// The highest place row 0 shows as "P100/nn".
+const TWO_DIGIT_PLACE: usize = DECIMAL_BASE * DECIMAL_BASE - 1;
+/// The highest place shown as "100/nnn", the "P" given up for a digit.
+const THREE_DIGIT_PLACE: usize = DECIMAL_BASE * DECIMAL_BASE * DECIMAL_BASE - 1;
+/// Shown for a place of four digits, which seven columns cannot hold
+/// beside the page number, as the engine's viewer shows it
+/// (`STANDARD-LIMITS.md` question 2, open): the place is in the browser's
+/// own controls.
+const PLACE_TOO_WIDE: &str = "+++";
 
 // The protocol bounds a page's controls by the engine's own bound.
 #[cfg(feature = "links")]
@@ -74,53 +88,82 @@ impl Engine {
         // sub-page: it arrives whole, every sub-page at once, so the last
         // to arrive is no newer than the first, unlike a broadcast's
         // carousel, whose latest is shown.
-        let subpage = subpage.or_else(|| self.pushed.contains(&page).then(|| self.subcodes(page).first().copied()).flatten());
-        subpage.and_then(|subpage| store.get(address, SubCode::new(subpage))).or_else(|| store.get(address, SubCode::ANY))
+        let subpage = subpage.map(SubCode::new).or_else(|| self.pushed.contains(&page).then(|| store.first_subpage(address)).flatten());
+        subpage.and_then(|subpage| store.get(address, subpage)).or_else(|| store.get(address, SubCode::ANY))
     }
 
-    /// The sub-pages of `pages` that differ from what was last said of them:
-    /// each page's list, empty when it has one sub-page again.
-    pub(crate) fn subpage_changes(&mut self, pages: &[u16]) -> Vec<(u16, Vec<(u16, String)>)> {
+    /// The pages of `pages` whose count of stored sub-pages differs from
+    /// what was last said of them, each with its count: 0 once it has one
+    /// again (decision 111).
+    pub(crate) fn subpage_changes(&mut self, pages: &[u16]) -> Vec<(u16, u16)> {
         let mut changes = Vec::new();
         for &page in pages {
-            let titles = self.subpage_titles(page);
-            let said = self.subpages_said.get(&page);
-            if said.map_or(!titles.is_empty(), |said| *said != titles) {
-                if titles.is_empty() {
-                    self.subpages_said.remove(&page);
+            let count = self.subpage_count(page);
+            let listed = if count < 2 { 0 } else { count };
+            if self.counts_said.get(&page).copied().unwrap_or(0) != listed {
+                if listed == 0 {
+                    self.counts_said.remove(&page);
                 } else {
-                    self.subpages_said.insert(page, titles.clone());
+                    self.counts_said.insert(page, listed);
                 }
-                changes.push((page, titles));
+                changes.push((page, listed));
             }
         }
         changes
     }
 
-    /// Each stored sub-page of `page` with a title from its text, in
-    /// ascending order, for the page list's sub-pages; none when it has
-    /// one or none (REQ-NAV-005).
-    pub(crate) fn subpage_titles(&self, page: u16) -> Vec<(u16, String)> {
-        let subcodes = self.subcodes(page);
-        if subcodes.len() < 2 {
-            return Vec::new();
-        }
-        subcodes
-            .into_iter()
-            .filter_map(|subcode| {
-                let stored = self.stored(page, Some(subcode))?;
-                Some((subcode, title(&self.compose(page, stored, View { page, subpage: Some(subcode), ..View::default() }))))
-            })
-            .collect()
+    /// How many sub-pages of `page` the store lists (REQ-NAV-005): a page's
+    /// display sub-pages, never a data page's sub-codes (the engine's
+    /// REQ-NUM-022 and REQ-NUM-024), counted to the standard's 8,190.
+    fn subpage_count(&self, page: u16) -> u16 {
+        let Some(address) = PageAddress::from_mpp(page) else { return 0 };
+        u16::try_from(self.decoder.store().subpage_count(address).min(neoteletext_core::limits::MAX_SUBPAGES)).unwrap_or(0)
     }
 
-    /// The sub-codes stored for `page`, in ascending order, at most
-    /// [`interface_core::controls::MAX_SUBPAGES`].
-    fn subcodes(&self, page: u16) -> Vec<u16> {
-        let Some(address) = PageAddress::from_mpp(page) else { return Vec::new() };
-        let mut codes = [SubCode::ANY; neoteletext_core::viewer::MAX_LISTED_SUBPAGES];
-        let count = self.decoder.store().subcodes(address, &mut codes);
-        codes.iter().take(count).map(|code| code.value()).collect()
+    /// The rows `range` asks for of `page`'s stored sub-pages, in ascending
+    /// order, each with a title from its text (decision 111): stepped
+    /// through the store, so nothing is held but the rows asked for
+    /// (decision 112 item 3).
+    pub(crate) fn subpage_rows(&self, page: u16, range: SubPageRange) -> SubPageRows {
+        let count = self.subpage_count(page);
+        let Some(address) = PageAddress::from_mpp(page) else { return SubPageRows::default() };
+        let first = range.first.min(count);
+        let rows = self
+            .decoder
+            .store()
+            .subcodes(address)
+            .skip(usize::from(first))
+            .take(usize::from(range.count))
+            .map(|subcode| {
+                let subcode = subcode.value();
+                let title = self
+                    .stored(page, Some(subcode))
+                    .map(|stored| title(&self.compose(page, stored, View { page, subpage: Some(subcode), ..View::default() })))
+                    .unwrap_or_default();
+                (subcode, title)
+            })
+            .collect();
+        SubPageRows { count, first, rows }
+    }
+
+    /// The sub-pages of `page` from `shown`, the one drawn: how many, its
+    /// place and the sub-pages either side of it, round the list as a
+    /// set's sub-page keys go (REQ-NAV-005), each found by stepping
+    /// through the store (decision 112 item 4).
+    fn subpage_step(&self, page: u16, shown: u16) -> SubPageStep {
+        let count = self.subpage_count(page);
+        let Some(address) = PageAddress::from_mpp(page) else { return SubPageStep { shown, ..SubPageStep::default() } };
+        let store = self.decoder.store();
+        let at = SubCode::new(shown);
+        let place = store.subpage_place(address, at).and_then(|place| u16::try_from(place.saturating_sub(1)).ok()).filter(|&place| place < count);
+        let (previous, next) = if count < 2 {
+            (None, None)
+        } else {
+            let previous = store.previous_subpage(address, at).or_else(|| store.last_subpage(address));
+            let next = store.next_subpage(address, at).or_else(|| store.first_subpage(address));
+            (previous.map(SubCode::value), next.map(SubCode::value))
+        };
+        SubPageStep { count, shown, place, previous, next }
     }
 
     /// Every display page received completely, each with its 25 rows of
@@ -193,8 +236,17 @@ impl Engine {
         let mut status = [SPACE; STATUS_COLUMNS];
         let text = match chosen {
             Some(subcode) => {
-                let place = self.subcodes(page).iter().position(|&code| code == subcode).map_or(0, |index| index.saturating_add(1));
-                format!("P{page:03X}/{place:02}")
+                // Counted by the store, as the engine's viewer counts it: a
+                // place of three digits gives up the "P", one of four does
+                // not fit seven columns (decision E.10).
+                let place = PageAddress::from_mpp(page).and_then(|address| self.decoder.store().subpage_place(address, SubCode::new(subcode))).unwrap_or(0);
+                if place <= TWO_DIGIT_PLACE {
+                    format!("P{page:03X}/{place:02}")
+                } else if place <= THREE_DIGIT_PLACE {
+                    format!("{page:03X}/{place:03}")
+                } else {
+                    format!("{page:03X}/{PLACE_TOO_WIDE}")
+                }
             }
             None => format!("P{page:03X}"),
         };
@@ -284,7 +336,7 @@ impl Engine {
             flash: (!rates.is_empty()).then_some((phase, rates)),
             #[cfg(feature = "links")]
             links,
-            subpages: (self.subcodes(page), subcode),
+            subpages: self.subpage_step(page, subcode),
         })
     }
 }

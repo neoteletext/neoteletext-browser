@@ -134,7 +134,7 @@ impl Browser {
             centred(canvas, next, "\u{203A}", ROW_TITLE, WHITE);
             // "2/4" while one is chosen; a mark while the latest rotates in.
             let words = match controls.chosen {
-                Some(place) => format!("{}/{}", u16::from(place) + 1, controls.subpages),
+                Some(place) => format!("{}/{}", place.saturating_add(1), controls.subpages),
                 None => format!("{} \u{21BB}", controls.subpages),
             };
             centred(canvas, count, &words, ROW_TITLE, WHITE);

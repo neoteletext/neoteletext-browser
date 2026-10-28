@@ -73,6 +73,32 @@ fn window_messages_are_held_to_their_bounds() {
     assert!(refused(&[KIND_TARGET, 0, 0, 0, 4, 0, 0, 0, 0]), "Target window 0");
 }
 
+/// Decision 112 item 4: the open page's sub-page count and place are
+/// 16-bit, to the standard's 8,190 sub-pages a page; 8,191 is refused
+/// both ways, and so is a sub-page list's count or a range past it.
+#[test]
+fn sub_page_counts_and_places_reach_the_standards_maximum() {
+    use interface_core::controls::PageControls;
+    let most = PageControls { page: Some(0x302), subpages: 8_190, chosen: Some(8_189), subcode: 0x3F7E, ..PageControls::default() };
+    let mut bytes = Vec::new();
+    write_to_interface(&mut bytes, &ToInterface::PageControls(most)).unwrap();
+    assert_eq!(read_from_core(&mut bytes.as_slice()).unwrap(), Some(ToInterface::PageControls(most)));
+    assert!(write_to_interface(&mut Vec::new(), &ToInterface::PageControls(PageControls { subpages: 8_191, chosen: None, ..most })).is_err());
+    // The count follows the kind, the length, the flags, the page and the
+    // Fastext keys.
+    let count = 1 + 4 + 1 + 2 + 1;
+    bytes[count..count + 2].copy_from_slice(&8_191_u16.to_be_bytes());
+    assert!(matches!(read_from_core(&mut bytes.as_slice()), Err(ProtocolError::BadValue("sub-pages"))));
+    assert!(write_to_interface(&mut Vec::new(), &ToInterface::SubPageCount { channel: 1, page: 0x210, count: 8_191 }).is_err());
+    let mut bytes = Vec::new();
+    write_to_interface(&mut bytes, &ToInterface::SubPageCount { channel: 1, page: 0x210, count: 8_190 }).unwrap();
+    let count = 1 + 4 + 4 + 2;
+    bytes[count..count + 2].copy_from_slice(&8_191_u16.to_be_bytes());
+    assert!(read_from_core(&mut bytes.as_slice()).is_err(), "a count of 8,191 read");
+    let range = crate::subpages::SubPageRange { first: 0, count: 65 };
+    assert!(write_to_core(&mut Vec::new(), &ToCore::SubPageRows { page: 0x210, range }).is_err(), "more rows than a message carries");
+}
+
 #[test]
 fn every_message_to_the_interface_round_trips() {
     for message in [
@@ -87,7 +113,12 @@ fn every_message_to_the_interface_round_trips() {
         ToInterface::Strip(strip()),
         ToInterface::Channel(channel()),
         ToInterface::Page { channel: 9, page: 0x899, title: "Clock".into() },
-        ToInterface::SubPages { channel: 9, page: 0x210, subpages: vec![(1, "Story 1/2".into()), (2, "Comments".into())] },
+        ToInterface::SubPageCount { channel: 9, page: 0x210, count: 8_190 },
+        ToInterface::SubPageRows {
+            channel: 9,
+            page: 0x210,
+            rows: crate::subpages::SubPageRows { count: 8_190, first: 8_188, rows: vec![(0x3F7D, "Story 1/2".into()), (0x3F7E, "Comments".into())] },
+        },
         ToInterface::Updated { channel: 9, page: 0x302 },
         ToInterface::Frame { key: KEY, version: 3, image: vec![1, 2, 3] },
         ToInterface::Settings(settings::SettingsView {
@@ -108,9 +139,9 @@ fn every_message_to_the_interface_round_trips() {
             reveal: true,
             hold: false,
             mix: true,
-            subpages: 4,
-            chosen: Some(2),
-            subcode: 3,
+            subpages: 8_190,
+            chosen: Some(8_189),
+            subcode: 0x3F7E,
         }),
         ToInterface::PageControls(interface_core::controls::PageControls::default()),
         ToInterface::Remote(settings::RemotePlace { mode: settings::RemoteMode::Floating, x: 800, y: 120 }),
@@ -163,6 +194,7 @@ fn every_intent_round_trips() {
         ToCore::PageControl(interface_core::controls::PageControl::SubPage(false)),
         ToCore::PageControl(interface_core::controls::PageControl::Latest),
         ToCore::PageControl(interface_core::controls::PageControl::SubPageOf { page: 0x210, subcode: 3 }),
+        ToCore::SubPageRows { page: 0x210, range: crate::subpages::SubPageRange { first: 8_000, count: 64 } },
         ToCore::Drawn,
         ToCore::InstallUpdate,
         ToCore::ChangeSetting(settings::SettingChange::Volume(40)),

@@ -45,8 +45,3 @@ pub use flash::{FlashRates, Flashing};
 pub use input_records::InputRecords;
 
 const _: () = assert!(protocol::decoder::MAX_CHANNEL_LOG == neoteletext_formats::log::MAX_LOG_TEXT_BYTES, "a log line's bound is the engine's");
-
-// The interface core, which does not depend on the engine, restates the
-// engine's bound on the sub-pages listed; the two must agree (requirement
-// 2.4).
-const _: () = assert!(interface_core::controls::MAX_SUBPAGES == neoteletext_core::viewer::MAX_LISTED_SUBPAGES, "the engine's sub-page bound");

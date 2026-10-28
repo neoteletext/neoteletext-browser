@@ -10,9 +10,9 @@ use super::ToCore;
 #[cfg(any(feature = "links", feature = "interaction"))]
 use super::kinds::KIND_FOCUSED;
 use super::kinds::{
-    KIND_BACK, KIND_BAR, KIND_BOOKMARK, KIND_BOOKMARKS, KIND_CELL, KIND_CHANGE_SETTING, KIND_CLOSE_TAB, KIND_CLOSE_WINDOW, KIND_CONSOLE, KIND_COOKIES,
-    KIND_DRAWN, KIND_FORWARD, KIND_FROM, KIND_GO_TO, KIND_HISTORY, KIND_HOME, KIND_INSTALL_UPDATE, KIND_MOVE_TAB, KIND_MUTE_ALL, KIND_MUTE_TAB, KIND_NAVIGATE,
-    KIND_NEW_PRIVATE_TAB, KIND_NEW_TAB, KIND_NEW_WINDOW, KIND_OPENED, KIND_PAGE_CONTROL, KIND_RELOAD, KIND_SELECT_TAB, KIND_STAR, KIND_SUGGEST,
+    KIND_ASK_SUBPAGE_ROWS, KIND_BACK, KIND_BAR, KIND_BOOKMARK, KIND_BOOKMARKS, KIND_CELL, KIND_CHANGE_SETTING, KIND_CLOSE_TAB, KIND_CLOSE_WINDOW, KIND_CONSOLE,
+    KIND_COOKIES, KIND_DRAWN, KIND_FORWARD, KIND_FROM, KIND_GO_TO, KIND_HISTORY, KIND_HOME, KIND_INSTALL_UPDATE, KIND_MOVE_TAB, KIND_MUTE_ALL, KIND_MUTE_TAB,
+    KIND_NAVIGATE, KIND_NEW_PRIVATE_TAB, KIND_NEW_TAB, KIND_NEW_WINDOW, KIND_OPENED, KIND_PAGE_CONTROL, KIND_RELOAD, KIND_SELECT_TAB, KIND_STAR, KIND_SUGGEST,
     KIND_SUGGESTION, KIND_TAB_LIST, KIND_TAB_TO_WINDOW, KIND_VISIBLE, KIND_WINDOW,
 };
 use super::pages::{CELL_BYTES, push_cell, read_cell};
@@ -54,6 +54,7 @@ fn kind_of(message: &ToCore) -> u8 {
         ToCore::Home => KIND_HOME,
         ToCore::Reload => KIND_RELOAD,
         ToCore::PageControl(_) => KIND_PAGE_CONTROL,
+        ToCore::SubPageRows { .. } => KIND_ASK_SUBPAGE_ROWS,
         ToCore::From(_) => KIND_FROM,
         ToCore::NewWindow { .. } => KIND_NEW_WINDOW,
         ToCore::TabToWindow { .. } => KIND_TAB_TO_WINDOW,
@@ -110,6 +111,11 @@ fn push_fields(payload: &mut Vec<u8>, message: &ToCore) -> Result<(), ProtocolEr
         ToCore::Navigate(address) => push_text(payload, address, MAX_ADDRESS)?,
         ToCore::NewTab | ToCore::Back | ToCore::Forward | ToCore::Bookmark | ToCore::Home | ToCore::Reload => {}
         ToCore::PageControl(control) => controls::push_control(payload, *control),
+        ToCore::SubPageRows { page, range } => {
+            interface_core::channel::page_index(*page).ok_or(ProtocolError::BadValue("page number"))?;
+            payload.extend_from_slice(&page.to_be_bytes());
+            crate::subpages::push_range(payload, *range, interface_core::controls::SUBPAGE_ROWS)?;
+        }
         ToCore::From(window) => push_window_number(payload, *window)?,
         ToCore::NewWindow { private } => payload.push(u8::from(*private)),
         ToCore::TabToWindow { tab, window, index } => push_tab_to_window(payload, *tab, *window, *index)?,
@@ -230,6 +236,10 @@ pub fn read_from_interface(input: &mut dyn Read) -> Result<Option<ToCore>, Proto
         KIND_HOME => ToCore::Home,
         KIND_RELOAD => ToCore::Reload,
         KIND_PAGE_CONTROL => ToCore::PageControl(controls::read_control(&mut fields)?),
+        KIND_ASK_SUBPAGE_ROWS => {
+            let page = fields.display_page()?;
+            ToCore::SubPageRows { page, range: crate::subpages::read_range(&mut fields, interface_core::controls::SUBPAGE_ROWS)? }
+        }
         KIND_FROM | KIND_NEW_WINDOW | KIND_TAB_TO_WINDOW | KIND_CLOSE_WINDOW => window_intent(kind, &mut fields)?,
         KIND_DRAWN | KIND_INSTALL_UPDATE => update_intent(kind),
         KIND_CHANGE_SETTING => ToCore::ChangeSetting(settings::read_change(&mut fields)?),

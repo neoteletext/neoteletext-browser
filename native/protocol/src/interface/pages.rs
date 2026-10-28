@@ -4,7 +4,9 @@
 
 use interface_core::canvas::{COLUMNS, PageKey, ROWS};
 use interface_core::channel::{BANKS, Channel, PAGES, PageInfo, Status, page_index};
+use interface_core::controls::SUBPAGE_ROWS;
 
+use crate::subpages::SubPageRows;
 use crate::{Fields, KEY_BYTES, MAX_BANK_NAME, MAX_PAGE_TITLE, MAX_TITLE, ProtocolError, push_key, push_text};
 
 pub(super) const FRAME_FIXED_BYTES: usize = KEY_BYTES + 4;
@@ -111,40 +113,37 @@ pub(super) fn read_cell(fields: &mut Fields<'_>) -> Result<(PageKey, u32, u8, u8
     Ok((key, version, column, row))
 }
 
-/// One page's sub-pages with their titles: its channel, number, and each
-/// sub-page's sub-code and title.
-pub(super) fn push_subpages(payload: &mut Vec<u8>, channel: u32, page: u16, subpages: &[(u16, String)]) -> Result<(), ProtocolError> {
-    if subpages.len() > interface_core::controls::MAX_SUBPAGES || subpages.iter().any(|(subcode, _)| *subcode > interface_core::controls::ANY_SUBCODE) {
-        return Err(ProtocolError::BadValue("sub-pages"));
+/// How many sub-pages a page has: its channel, number and count.
+pub(super) fn push_subpage_count(payload: &mut Vec<u8>, channel: u32, page: u16, count: u16) -> Result<(), ProtocolError> {
+    if usize::from(count) > neoteletext_core::limits::MAX_SUBPAGES {
+        return Err(ProtocolError::BadValue("too many sub-pages"));
     }
     payload.extend_from_slice(&channel.to_be_bytes());
     payload.extend_from_slice(&page.to_be_bytes());
-    payload.push(u8::try_from(subpages.len()).map_err(|_| ProtocolError::BadValue("sub-pages"))?);
-    for (subcode, title) in subpages {
-        payload.extend_from_slice(&subcode.to_be_bytes());
-        push_text(payload, title, MAX_PAGE_TITLE)?;
-    }
+    payload.extend_from_slice(&count.to_be_bytes());
     Ok(())
 }
 
-/// A page's sub-pages, each sub-code with its title.
-pub(super) type SubPageList = Vec<(u16, String)>;
-
-/// Reads [`push_subpages`]: the channel, the page and its sub-pages.
-pub(super) fn read_subpages(fields: &mut Fields<'_>) -> Result<(u32, u16, SubPageList), ProtocolError> {
+/// Reads [`push_subpage_count`].
+pub(super) fn read_subpage_count(fields: &mut Fields<'_>) -> Result<(u32, u16, u16), ProtocolError> {
     let channel = fields.u32()?;
     let page = fields.display_page()?;
-    let count = usize::from(fields.u8()?);
-    if count > interface_core::controls::MAX_SUBPAGES {
-        return Err(ProtocolError::BadValue("too many sub-pages"));
-    }
-    let mut subpages = Vec::with_capacity(count);
-    for _ in 0..count {
-        let subcode = fields.u16()?;
-        if subcode > interface_core::controls::ANY_SUBCODE {
-            return Err(ProtocolError::BadValue("sub-code"));
-        }
-        subpages.push((subcode, fields.text(MAX_PAGE_TITLE)?));
-    }
-    Ok((channel, page, subpages))
+    Ok((channel, page, crate::subpages::read_count(fields)?))
+}
+
+/// A run of a page's sub-pages: its channel, number and rows, each title
+/// cleaned.
+pub(super) fn push_subpage_rows(payload: &mut Vec<u8>, channel: u32, page: u16, rows: &SubPageRows) -> Result<(), ProtocolError> {
+    page_index(page).ok_or(ProtocolError::BadValue("page number"))?;
+    payload.extend_from_slice(&channel.to_be_bytes());
+    payload.extend_from_slice(&page.to_be_bytes());
+    crate::subpages::push_rows(payload, rows, SUBPAGE_ROWS, |payload, title| push_text(payload, title, MAX_PAGE_TITLE))
+}
+
+/// Reads [`push_subpage_rows`].
+pub(super) fn read_subpage_rows(fields: &mut Fields<'_>) -> Result<(u32, u16, SubPageRows), ProtocolError> {
+    let channel = fields.u32()?;
+    let page = fields.display_page()?;
+    let rows = crate::subpages::read_rows(fields, SUBPAGE_ROWS, |fields| fields.text(MAX_PAGE_TITLE))?;
+    Ok((channel, page, rows))
 }

@@ -191,6 +191,10 @@ fn samples(start_page: PageKey, private: u32) -> Vec<Vec<u8>> {
         ToCore::PageControl(PageControl::Fastext(FastextKey::Red)),
         ToCore::PageControl(PageControl::Reveal),
         ToCore::PageControl(PageControl::SubPage(true)),
+        // A page of the standard's 8,190 sub-pages (decision 119): its
+        // last sub-page chosen, and its last rows asked for.
+        ToCore::PageControl(PageControl::SubPageOf { page: 0x210, subcode: 0x3F7E }),
+        ToCore::SubPageRows { page: 0x210, range: protocol::subpages::SubPageRange { first: 8_126, count: 64 } },
         ToCore::Opened(Some(start_page)),
         ToCore::TabToWindow { tab: 0, window: private, index: 0 },
         ToCore::From(private),

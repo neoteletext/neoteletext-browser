@@ -166,7 +166,7 @@ fn subpage_words(controls: &PageControls, steps: bool) -> String {
         return String::from("Sub-pages");
     }
     match controls.chosen {
-        Some(place) => format!("{}/{}", u16::from(place) + 1, controls.subpages),
+        Some(place) => format!("{}/{}", place.saturating_add(1), controls.subpages),
         None => format!("{} \u{21BB}", controls.subpages),
     }
 }

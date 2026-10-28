@@ -19,6 +19,10 @@ phone-keyboard = ["interaction"]
 
 [dependencies]
 neoteletext-input = { workspace = true, optional = true }
+# The standard's page and sub-page numbers, `neoteletext_core::limits`,
+# with the engine's default features off: nothing of the decoder comes
+# with them (decision 112, the engine's REQ-NUM-031).
+neoteletext-core.workspace = true
 libm.workspace = true
 
 [lints]

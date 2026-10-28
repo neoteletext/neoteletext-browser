@@ -22,7 +22,7 @@ What this browser has today: each tab keeps its back-and-forward list in memory 
 - **A page is a place.** An address names a channel and, after `#`, a page: `https://news.example/teletext/#302` is the weather. A user moves through dozens of pages a minute by typing three digits, so history keeps a page once a day, not once a visit (section 2.1), as Chrome's history page shows a page once a day however often it was visited.
 - **Pages change while they are shown.** A pushed update, a new subpage or a clock is not a visit; only a navigation is.
 - **Titles come from the channel.** A channel's title and a page's title are written by the channel's author, so they are hostile text (section 9 and the security analysis).
-- **A channel holds at most 800 pages**, which bounds how much history one channel can make in a day.
+- **A channel holds at most 800 pages**, which bounds how much history one channel can make in a day. *To change (decisions 112 and 119):* a channel may hold every page number that may carry a page, 2,022, and the bound on history becomes the one a channel's 2,022 pages give.
 
 ### 1.2 Not in this design
 

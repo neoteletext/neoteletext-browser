@@ -12,14 +12,16 @@ use std::sync::Arc;
 use std::sync::mpsc::{self, RecvTimeoutError};
 use std::time::{Duration, Instant as Clock};
 
-use neoteletext_core::types::{Instant, PageAddress};
+use neoteletext_core::types::{Instant, PageAddress, SubCode};
 use neoteletext_web::agent::{Config, Event, Input, Output, Source, Storage, Subscription, UserAgent};
 use neoteletext_web::consts::ALLOWED_LOCAL;
 use neoteletext_web::contents::{self, Entry as ContentsEntry};
 use neoteletext_web::http::MediaType;
 use neoteletext_web::port::{ConnectionId, NetOutput, Pump, Security};
 use neoteletext_web::proxy::Proxy;
-use protocol::fetcher::{Entry, FromFetcher, Origin, ToFetcher, read_to_fetcher, write_to_core};
+use neoteletext_web::subpages;
+use protocol::fetcher::{CATALOGUE_PART, Entry, FromFetcher, Origin, ToFetcher, read_to_fetcher, write_to_core};
+use protocol::subpages::SubPageRows;
 
 #[cfg(feature = "links")]
 use crate::agent::descriptor_links;
@@ -46,6 +48,14 @@ const _: () = assert!(PAGE_LIMIT <= neoteletext_web::consts::DEFAULT_PAGE_LIMIT)
 const _: () = assert!(neoteletext_web::consts::DEFAULT_PUSH_LIMIT <= PAGE_LIMIT);
 /// Bytes passed to the agent at a time.
 const READ_CHUNK: usize = 16 * 1024;
+/// The catalogues of sub-pages kept as read, so that one the agent says
+/// is current (304, or fresh by its lifetime) is sent again without a
+/// request: as many as the trusted core holds a channel.
+const CATALOGUES_KEPT: usize = 16;
+// A catalogue's entries are the engine's, within the standard's maximum,
+// and its titles a row's, within a page title's bound on the wire.
+const _: () = assert!(subpages::MAX_ENTRIES == neoteletext_core::limits::MAX_SUBPAGES);
+const _: () = assert!(subpages::MAX_TITLE * 4 <= protocol::MAX_PAGE_TITLE);
 // An exchange reports an address the engine accepted, so the protocol's
 // bound must hold the engine's longest.
 const _: () = assert!(protocol::fetcher::MAX_EXCHANGE_URL >= neoteletext_web::consts::MAX_URL_LENGTH);
@@ -72,6 +82,9 @@ enum Wake {
     /// An input message from the trusted core, sent at once.
     #[cfg(feature = "interaction")]
     Record(Vec<u8>),
+    /// The trusted core asks for a page's catalogue of sub-pages, or for
+    /// one sub-page (decision 112).
+    Fetch(ToFetcher),
     /// A socket has bytes, or has ended.
     Network,
     /// The trusted core closed standard input.
@@ -95,6 +108,10 @@ enum Action {
     },
     Ready,
     Contents(Vec<u8>),
+    /// A page's catalogue of sub-pages, as fetched.
+    SubPages(PageAddress, Vec<u8>),
+    /// A page's catalogue is current: the one kept is sent again.
+    SubPagesCurrent(PageAddress),
     /// The page asked for has been answered, one way or another.
     Answered,
     /// A message for the trusted core as it is: a notice, or an exchange
@@ -133,6 +150,9 @@ fn collect(output: Output<'_>, actions: &mut Vec<Action>) {
         Output::Timer { at } => Action::Timer(at),
         Output::Event(Event::ServiceReady { .. }) => Action::Ready,
         Output::Event(Event::Contents(bytes)) => Action::Contents(bytes.to_vec()),
+        Output::Event(Event::SubPages { page, bytes }) => Action::SubPages(page, bytes.to_vec()),
+        Output::Event(Event::SubPagesCurrent { page }) => Action::SubPagesCurrent(page),
+        Output::Event(Event::SubPagesMissing { page }) => Action::Tell(FromFetcher::SubPagesMissing { page: page.mpp() }),
         Output::Event(Event::PageCurrent { .. } | Event::PageNotInService { .. } | Event::FetchFailed { .. }) => Action::Answered,
         Output::Event(Event::PushConnected(_)) => Action::Push(true),
         Output::Event(Event::Exchanged { method, url, status, bytes, elapsed_us }) => Action::Tell(FromFetcher::Exchange {
@@ -168,6 +188,52 @@ fn contents_entries(bytes: &[u8]) -> (Vec<Entry>, Vec<PageAddress>) {
         }
     }
     (entries, pages)
+}
+
+/// A page's catalogue of sub-pages, read by the engine's bounded reader
+/// (REQ-WEB-034), as the parts the trusted core takes: every entry the
+/// reader keeps, at most the standard's 8,190, in the page's order, at
+/// most [`CATALOGUE_PART`] a part. A catalogue refused whole, or with no
+/// entry, is one part of none.
+fn catalogue_parts(bytes: &[u8]) -> Vec<SubPageRows> {
+    let entries: Vec<(u16, String)> = match subpages::read(bytes) {
+        Ok(entries) => entries.flatten().map(|entry| (entry.subcode.value(), entry.title.unwrap_or_default().to_owned())).collect(),
+        Err(_) => Vec::new(),
+    };
+    let count = u16::try_from(entries.len().min(subpages::MAX_ENTRIES)).unwrap_or(0);
+    if entries.is_empty() {
+        return vec![SubPageRows::default()];
+    }
+    entries.chunks(CATALOGUE_PART).zip((0_u16..).step_by(CATALOGUE_PART)).map(|(rows, first)| SubPageRows { count, first, rows: rows.to_vec() }).collect()
+}
+
+/// The catalogues of sub-pages last read, the most recent last.
+#[derive(Default)]
+struct Catalogues(VecDeque<(PageAddress, Vec<u8>)>);
+
+impl Catalogues {
+    /// Keeps `bytes` as `page`'s catalogue, forgetting the oldest past
+    /// [`CATALOGUES_KEPT`].
+    fn keep(&mut self, page: PageAddress, bytes: Vec<u8>) {
+        self.0.retain(|(kept, _)| *kept != page);
+        self.0.push_back((page, bytes));
+        if self.0.len() > CATALOGUES_KEPT {
+            self.0.pop_front();
+        }
+    }
+
+    /// The catalogue kept of `page`.
+    fn get(&self, page: PageAddress) -> Option<&[u8]> {
+        self.0.iter().find(|(kept, _)| *kept == page).map(|(_, bytes)| bytes.as_slice())
+    }
+}
+
+/// Sends `page`'s catalogue to the trusted core in parts.
+fn send_catalogue(output: &cookies::Output, page: PageAddress, bytes: &[u8]) -> Result<(), String> {
+    for part in catalogue_parts(bytes) {
+        send(output, &FromFetcher::SubPages { page: page.mpp(), part })?;
+    }
+    Ok(())
 }
 
 /// The agent's settings for a channel that may reach the local addresses
@@ -216,6 +282,7 @@ pub fn run(channel: &str, allowed: &[IpAddr], proxy: Option<Proxy>) -> Result<()
     let mut next_tick: Option<Instant> = None;
     let mut queue: VecDeque<PageAddress> = VecDeque::new();
     let mut waiting = false;
+    let mut catalogues = Catalogues::default();
 
     // The trusted core closes standard input to end the fetcher. Before
     // then it sends only input messages (REQ-INT-133); anything else
@@ -250,6 +317,18 @@ pub fn run(channel: &str, allowed: &[IpAddr], proxy: Option<Proxy>) -> Result<()
                     send(&output, &FromFetcher::Contents(entries))?;
                     queue.extend(pages);
                 }
+                Action::SubPages(page, bytes) => {
+                    send_catalogue(&output, page, &bytes)?;
+                    catalogues.keep(page, bytes);
+                }
+                // A catalogue no longer kept, though the agent holds its
+                // validators, is not sent: the page is listed from what
+                // its decoder holds until the catalogue next changes.
+                Action::SubPagesCurrent(page) => {
+                    if let Some(bytes) = catalogues.get(page) {
+                        send_catalogue(&output, page, bytes)?;
+                    }
+                }
                 Action::Answered => waiting = false,
                 Action::Push(open) => push_changed(&agent, &output, open)?,
                 Action::Tell(message) => send(&output, &message)?,
@@ -276,6 +355,7 @@ pub fn run(channel: &str, allowed: &[IpAddr], proxy: Option<Proxy>) -> Result<()
             match wake {
                 #[cfg(feature = "interaction")]
                 Wake::Record(record) => agent.handle(clock(), Input::Send(&record), &mut |out| collect(out, &mut actions)),
+                Wake::Fetch(asked) => fetch(&mut agent, &clock, &asked, &mut actions),
                 // The sockets are looked at on the next turn.
                 Wake::Network => {}
                 Wake::Ended => return Ok(()),
@@ -360,10 +440,23 @@ fn tell_failures(transport: &mut Tcp, output: &cookies::Output) -> Result<(), St
     Ok(())
 }
 
+/// What the trusted core asked of the channel, given to the agent: the
+/// trusted core checked the page and the sub-code (decision 112), and the
+/// agent queues and spaces the requests at its own rate.
+fn fetch(agent: &mut Agent<'_>, clock: &dyn Fn() -> Instant, asked: &ToFetcher, actions: &mut Vec<Action>) {
+    let input = match *asked {
+        ToFetcher::FetchSubPages { page } => PageAddress::from_mpp(page).map(|page| Input::FetchSubPages { page }),
+        ToFetcher::FetchSubPage { page, subcode } => PageAddress::from_mpp(page).map(|page| Input::FetchPage { page, subcode: Some(SubCode::new(subcode)) }),
+        _ => None,
+    };
+    if let Some(input) = input {
+        agent.handle(clock(), input, &mut |out| collect(out, actions));
+    }
+}
+
 /// Reads the trusted core's messages until its pipe closes or breaks the
-/// protocol: input messages wake the loop, and cookie answers go to the
-/// store waiting for them.
-#[cfg_attr(not(feature = "interaction"), allow(unused_variables, reason = "without typing no input message wakes the loop"))]
+/// protocol: input messages and requests wake the loop, and cookie answers
+/// go to the store waiting for them.
 fn read_commands(commands: &mpsc::Sender<Wake>, answers: &mpsc::Sender<ToFetcher>) {
     let mut input = io::BufReader::new(io::stdin().lock());
     while let Ok(Some(message)) = read_to_fetcher(&mut input) {
@@ -371,6 +464,7 @@ fn read_commands(commands: &mpsc::Sender<Wake>, answers: &mpsc::Sender<ToFetcher
             #[cfg(feature = "interaction")]
             ToFetcher::Send(record) => commands.send(Wake::Record(record)).is_ok(),
             answer @ (ToFetcher::CookieAnswer { .. } | ToFetcher::ReachedAnswer { .. }) => answers.send(answer).is_ok(),
+            asked @ (ToFetcher::FetchSubPages { .. } | ToFetcher::FetchSubPage { .. }) => commands.send(Wake::Fetch(asked)).is_ok(),
         };
         if !delivered {
             return;
@@ -395,6 +489,40 @@ mod tests {
         write_to_core(&mut written, &page).unwrap();
         let read = protocol::fetcher::read_from_fetcher(&mut written.as_slice()).unwrap();
         assert!(matches!(read, Some(FromFetcher::Page { bytes, .. }) if bytes.len() == config.page_limit));
+    }
+
+    /// Decision 119 and decision 112 item 3 (the engine's REQ-WEB-034): a
+    /// catalogue of the standard's 8,190 sub-pages reaches the trusted core
+    /// whole, in order, in parts each one message; one the engine's reader
+    /// refuses whole goes as a catalogue of none.
+    #[test]
+    fn a_catalogue_of_8190_sub_pages_goes_in_parts() {
+        use neoteletext_core::limits::{MAX_SUBPAGES, from_rank};
+        use std::fmt::Write as _;
+        let most = u16::try_from(MAX_SUBPAGES).unwrap();
+        let mut file = String::new();
+        for rank in 1..=most {
+            let subcode = from_rank(rank);
+            let _ = write!(file, "{subcode:04X}\t{rank:016x}\tStory {rank}\r\n");
+        }
+        let parts = catalogue_parts(file.as_bytes());
+        assert_eq!(parts.len(), MAX_SUBPAGES.div_ceil(CATALOGUE_PART));
+        let mut next = 0_u16;
+        for part in &parts {
+            assert_eq!((part.count, part.first), (most, next), "in order");
+            let mut written = Vec::new();
+            write_to_core(&mut written, &FromFetcher::SubPages { page: 0x210, part: part.clone() }).unwrap();
+            next += u16::try_from(part.rows.len()).unwrap();
+        }
+        assert_eq!(next, most, "every entry");
+        assert_eq!(parts[0].rows[0], (from_rank(1), String::from("Story 1")));
+        assert_eq!(catalogue_parts(&vec![b'x'; subpages::MAX_BYTES + 1]), [SubPageRows::default()], "refused whole");
+        let mut kept = Catalogues::default();
+        for page in 0..=u16::try_from(CATALOGUES_KEPT).unwrap() {
+            kept.keep(PageAddress::from_mpp(0x100 + page).unwrap(), vec![1]);
+        }
+        assert!(kept.get(PageAddress::from_mpp(0x100).unwrap()).is_none(), "the oldest forgotten");
+        assert!(kept.get(PageAddress::from_mpp(0x101).unwrap()).is_some());
     }
 
     /// Decision 62: the agent the fetcher builds asks its store for each

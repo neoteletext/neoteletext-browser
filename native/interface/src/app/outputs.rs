@@ -69,6 +69,7 @@ impl App {
             Output::Home => ToCore::Home,
             Output::Reload => ToCore::Reload,
             Output::PageControl(control) => ToCore::PageControl(control),
+            Output::SubPageRows { page, first, count } => ToCore::SubPageRows { page, range: protocol::subpages::SubPageRange { first, count } },
             Output::History(request) => ToCore::History(request),
             Output::Cookies(request) => ToCore::Cookies(request),
             Output::Bookmarks(request) => ToCore::Bookmarks(request),

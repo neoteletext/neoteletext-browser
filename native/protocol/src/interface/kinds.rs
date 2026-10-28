@@ -91,6 +91,10 @@ pub(crate) const KIND_NEW_WINDOW: u8 = 75;
 pub(crate) const KIND_TAB_TO_WINDOW: u8 = 76;
 pub(crate) const KIND_CLOSE_WINDOW: u8 = 77;
 pub(crate) const KIND_SUBPAGES: u8 = 78;
+// A page's sub-pages by range (decision 112 item 3), in the first numbers
+// free across every pipe.
+pub(crate) const KIND_SUBPAGE_ROWS: u8 = 100;
+pub(crate) const KIND_ASK_SUBPAGE_ROWS: u8 = 101;
 // Updates (`installation-and-updates.md` sections 3.2 and 3.4), far from
 // the others, so kinds added beside these elsewhere do not meet them.
 pub(crate) const KIND_UPDATE_VIEW: u8 = 120;

@@ -101,9 +101,9 @@ pub struct Rendered {
     /// The links found in the page (`hyperlinks.md` section 6).
     #[cfg(feature = "links")]
     pub links: Found,
-    /// The page's sub-codes in ascending order, and the one drawn (the
-    /// engine's REQ-NAV-005).
-    pub subpages: (Vec<u16>, u16),
+    /// The page's sub-pages from the one drawn: their count, its place and
+    /// its neighbours (the engine's REQ-NAV-005).
+    pub subpages: protocol::subpages::SubPageStep,
 }
 
 /// The links of a page as the decoder finds them, untrusted.
@@ -137,9 +137,9 @@ pub struct Engine {
     /// The pages the channel has pushed: a fetched copy of one is older
     /// than what the channel pushed, and is dropped.
     pushed: BTreeSet<u16>,
-    /// Each page's sub-pages with their titles as last told to the trusted
-    /// core, for the page list.
-    subpages_said: BTreeMap<u16, Vec<(u16, String)>>,
+    /// Each page's count of sub-pages as last told to the trusted core, for
+    /// the page list: only those with two or more.
+    counts_said: BTreeMap<u16, u16>,
     /// For each magazine, whether its page now arriving in fetched data is
     /// one the channel pushed, whose packets are dropped.
     skipping: [bool; MAGAZINES],
@@ -231,7 +231,7 @@ impl Engine {
             pushed_pages,
             pushed_packets,
             pushed: BTreeSet::new(),
-            subpages_said: BTreeMap::new(),
+            counts_said: BTreeMap::new(),
             skipping: [false; MAGAZINES],
             clock: 0,
             reported: vec![None; PAGES],

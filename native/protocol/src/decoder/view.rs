@@ -37,7 +37,7 @@ pub(super) fn push_view(payload: &mut Vec<u8>, view: &View) -> Result<(), Protoc
     payload.extend_from_slice(&view.page.to_be_bytes());
     payload.push(flags);
     if let Some(subpage) = view.subpage {
-        if subpage >= interface_core::controls::ANY_SUBCODE {
+        if !names_one_subpage(subpage) {
             return Err(ProtocolError::BadValue("sub-code"));
         }
         payload.extend_from_slice(&subpage.to_be_bytes());
@@ -55,10 +55,17 @@ pub(super) fn read_view(fields: &mut Fields<'_>) -> Result<View, ProtocolError> 
         None
     } else {
         let subpage = fields.u16()?;
-        if subpage >= interface_core::controls::ANY_SUBCODE {
+        if !names_one_subpage(subpage) {
             return Err(ProtocolError::BadValue("sub-code"));
         }
         Some(subpage)
     };
     Ok(View { page, reveal: flags & VIEW_REVEAL != 0, hold: flags & VIEW_HOLD != 0, mix: flags & VIEW_MIX != 0, subpage })
+}
+
+/// True for a sub-code that names one sub-page: any of the thirteen bits'
+/// values but 3F7F, which means any sub-page and so names none (EN 300
+/// 706 clause 9.6.1; the engine's REQ-NUM-002 and REQ-NUM-009).
+pub(crate) fn names_one_subpage(subcode: u16) -> bool {
+    neoteletext_core::limits::is_sub_code(subcode) && subcode != neoteletext_core::limits::SUBCODE_ANY
 }

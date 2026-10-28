@@ -12,7 +12,7 @@ const OPEN: u64 = 1_000;
 
 /// A browser with a page open, its controls as the trusted core sent
 /// them with `subpages` sub-pages.
-fn opened(subpages: u8) -> (Browser, PageKey) {
+fn opened(subpages: u16) -> (Browser, PageKey) {
     let mut browser = Browser::new(Frame { left_inset: 0.0, window_buttons: false });
     browser.set_tabs(vec![TabInfo { title: "one".into(), colour: 0, channel: 7, muted: false, private: false, address: "https://example.invalid/".into() }], 0);
     browser.set_strip(StripState { address: "https://news.invalid/".into(), identity: "news.invalid".into(), ..StripState::default() });
@@ -74,4 +74,15 @@ fn the_sub_page_control_steps_and_returns_to_the_latest() {
     let (mut single, _) = opened(1);
     single.draw(&mut Recorder::new(), WIDTH, HEIGHT, OPEN);
     assert_eq!(single.page_controls.count, Rect::ZERO, "no control on a page of one sub-page");
+}
+
+/// Decision 112 item 4: the sub-page control counts and places to the
+/// standard's 8,190 sub-pages, where it once stopped at 255.
+#[test]
+fn the_sub_page_control_shows_places_to_the_standards_maximum() {
+    let (mut browser, key) = opened(8_190);
+    browser.set_page_controls(PageControls { page: Some(key.page), subpages: 8_190, chosen: Some(8_189), ..PageControls::default() });
+    let mut canvas = Recorder::new();
+    browser.draw(&mut canvas, WIDTH, HEIGHT, OPEN);
+    assert!(canvas.texts.iter().any(|(_, text)| text == "8190/8190"), "the last of 8,190");
 }

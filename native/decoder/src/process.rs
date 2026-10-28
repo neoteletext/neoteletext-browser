@@ -155,6 +155,11 @@ pub fn run(store_pages: usize) -> Result<(), ProtocolError> {
                 }
                 continue;
             }
+            // The sub-page list scrolled rows of a page into view.
+            ToDecoder::SubPageRows { page, range } => {
+                write_to_core(&mut output, &FromDecoder::SubPageRows { page, rows: engine.subpage_rows(page, range) })?;
+                continue;
+            }
             // The look under the pointer changed: drawn again at once.
             #[cfg(feature = "links")]
             ToDecoder::Look { page, look } => {
@@ -243,8 +248,8 @@ fn report(engine: &mut Engine, arrived: &[(u16, String)], output: &mut Output<'_
     }
     // The sub-pages of the pages that came, for the page list.
     let pages: Vec<u16> = arrived.iter().map(|(page, _)| *page).chain(updated).collect();
-    for (page, titles) in engine.subpage_changes(&pages) {
-        write_to_core(output, &FromDecoder::SubPageTitles { page, titles })?;
+    for (page, count) in engine.subpage_changes(&pages) {
+        write_to_core(output, &FromDecoder::SubPageCount { page, count })?;
     }
     for log in engine.take_logs() {
         write_to_core(output, &FromDecoder::ChannelLog { level: log.level, page: log.page, text: log.text })?;
@@ -291,9 +296,8 @@ fn draw(
             };
             write_to_core(output, &message)?;
         }
-        if before.map(|before| &before.subpages) != Some(&rendered.subpages) {
-            let (subcodes, shown) = rendered.subpages.clone();
-            write_to_core(output, &FromDecoder::SubPages { page, subcodes, shown })?;
+        if before.map(|before| before.subpages) != Some(rendered.subpages) {
+            write_to_core(output, &FromDecoder::SubPages { page, step: rendered.subpages })?;
         }
         if new_image {
             write_frame_to_core(output, page, &rendered.palette, rendered.screen, &rendered.indices)?;

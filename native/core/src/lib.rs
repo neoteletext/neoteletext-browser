@@ -51,5 +51,6 @@ pub mod restore;
 pub mod settings;
 pub mod sleep;
 pub mod start_page;
+pub mod subpages;
 #[cfg(feature = "interaction")]
 pub mod typing;

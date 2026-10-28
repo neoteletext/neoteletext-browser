@@ -54,15 +54,27 @@ pub enum ToInterface {
         /// Its title, cleaned.
         title: String,
     },
-    /// A page's sub-pages, each with its title, cleaned, in ascending order;
-    /// none when it has one again: the page list lists them.
-    SubPages {
+    /// How many sub-pages a page has, 0 when it has one again: the page
+    /// list marks it, and lists its sub-pages by range (decisions 111 and
+    /// 112).
+    SubPageCount {
         /// The channel.
         channel: u32,
         /// The page number.
         page: u16,
-        /// Each sub-page's sub-code and title.
-        subpages: Vec<(u16, String)>,
+        /// How many, at most the standard's 8,190.
+        count: u16,
+    },
+    /// The rows of a page's sub-pages the interface asked for
+    /// ([`ToCore::SubPageRows`]), in the page's order, each title cleaned.
+    SubPageRows {
+        /// The channel.
+        channel: u32,
+        /// The page number.
+        page: u16,
+        /// The page's count, the first row's place and the rows, at most
+        /// [`interface_core::controls::SUBPAGE_ROWS`].
+        rows: crate::subpages::SubPageRows,
     },
     /// A page has a new version: the interface shows that it changed.
     Updated {
@@ -288,6 +300,15 @@ pub enum ToCore {
     Cookies(cookies::CookiesRequest),
     /// Strip input: a key of the open page's controls (decision 67).
     PageControl(interface_core::controls::PageControl),
+    /// The sub-page list asks for the rows of a page of the active
+    /// channel it scrolled into view (decision 112 item 3): answered by
+    /// [`ToInterface::SubPageRows`].
+    SubPageRows {
+        /// The page number.
+        page: u16,
+        /// The rows, at most [`interface_core::controls::SUBPAGE_ROWS`].
+        range: crate::subpages::SubPageRange,
+    },
     /// The intents that follow are from this window, until the next
     /// (`multiple-windows.md`).
     From(u32),

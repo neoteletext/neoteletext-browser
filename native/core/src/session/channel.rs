@@ -25,9 +25,9 @@ pub struct ChannelState {
     pub titles: Vec<Option<String>>,
     /// The pages that have arrived.
     pub loaded: Vec<bool>,
-    /// The sub-pages of each page that has more than one, by page number,
-    /// each sub-code with its cleaned title, as its decoder last said.
-    pub subpages: std::collections::BTreeMap<u16, Vec<(u16, String)>>,
+    /// Each page's count of sub-pages as its decoder last said, and the
+    /// catalogues of sub-pages its fetcher read (decisions 111 and 112).
+    pub subpages: neoteletext::subpages::SubPages,
     pub source: Source,
     /// The channel's web address, for its fetcher.
     pub web: Option<String>,
@@ -94,7 +94,7 @@ impl ChannelState {
             banks: vec![String::new(); BANKS],
             titles: vec![None; PAGES],
             loaded: vec![false; PAGES],
-            subpages: std::collections::BTreeMap::new(),
+            subpages: neoteletext::subpages::SubPages::default(),
             source,
             web,
             problem,
@@ -142,17 +142,6 @@ impl ChannelState {
         *loaded = true;
         let title = self.titles.get_mut(index)?.get_or_insert_with(|| clean(title, MAX_PAGE_TITLE)).clone();
         Some(title)
-    }
-
-    /// Records `page`'s sub-pages as its decoder reports them, their titles
-    /// cleaned; returns them when they changed, an empty list when the page
-    /// has one sub-page again.
-    pub fn set_subpages(&mut self, page: u16, titles: &[(u16, String)]) -> Option<Vec<(u16, String)>> {
-        page_index(page)?;
-        let cleaned: Vec<(u16, String)> =
-            titles.iter().take(interface_core::controls::MAX_SUBPAGES).map(|(subcode, title)| (*subcode, clean(title, MAX_PAGE_TITLE))).collect();
-        let old = if cleaned.is_empty() { self.subpages.remove(&page) } else { self.subpages.insert(page, cleaned.clone()) };
-        (old.as_ref() != Some(&cleaned) && !(old.is_none() && cleaned.is_empty())).then_some(cleaned)
     }
 
     /// The channel as the interface shows it.

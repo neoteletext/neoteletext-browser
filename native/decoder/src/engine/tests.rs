@@ -13,6 +13,7 @@ use neoteletext_core::types::{PageAddress, SubCode};
 use neoteletext_formats::Item;
 use neoteletext_formats::item::Reader;
 use protocol::audio::Sound;
+use protocol::subpages::{SubPageRange, SubPageRows, SubPageStep};
 use std::fmt::Write as _;
 
 /// Two pages in TTI, the engine's page file format: page 100 with a
@@ -120,13 +121,54 @@ fn reveal_and_mix_change_the_page_drawn() {
 fn sub_pages_are_listed_and_one_can_be_chosen() {
     let mut engine = engine_with(b"PN,10001\nSC,0001\nPS,8000\nOL,1,FIRST\n\nPN,10002\nSC,0002\nPS,8000\nOL,1,SECOND\n");
     let latest = engine.render_at(0x100, 0).unwrap();
-    assert_eq!(latest.subpages, (vec![1, 2], 2), "the latest received is drawn");
+    let step = |shown, place, other| SubPageStep { count: 2, shown, place: Some(place), previous: Some(other), next: Some(other) };
+    assert_eq!(latest.subpages, step(2, 1, 1), "the latest received is drawn, the first either side of it");
     engine.set_view(View { page: 0x100, subpage: Some(1), ..View::default() });
     let first = engine.render_at(0x100, 0).unwrap();
-    assert_eq!(first.subpages, (vec![1, 2], 1));
+    assert_eq!(first.subpages, step(1, 0, 2));
     assert_ne!(first.indices, latest.indices);
     engine.set_view(View { page: 0x100, subpage: Some(9), ..View::default() });
-    assert_eq!(engine.render_at(0x100, 0).unwrap().subpages.1, 2, "one not stored: the latest");
+    assert_eq!(engine.render_at(0x100, 0).unwrap().subpages.shown, 2, "one not stored: the latest");
+}
+
+/// Decision 119 (the engine's REQ-NUM-020 and REQ-NUM-030): a page of
+/// more sub-pages than the 64 the browser once listed is counted, stepped
+/// and listed by range in full, and row 0 shows a place of three digits
+/// as the engine's viewer does, "100/201".
+#[test]
+fn every_sub_page_of_a_page_is_counted_stepped_and_listed() {
+    use neoteletext_core::limits::sub_code_of;
+    const COUNT: u16 = 300;
+    let mut tti = String::new();
+    for place in 1..=COUNT {
+        let subcode = sub_code_of(place, COUNT).unwrap();
+        let _ = write!(tti, "PN,100{:02}\nSC,{subcode:04X}\nPS,8000\nOL,1,Story {place}\n\n", place % 100);
+    }
+    let mut engine = Engine::with_store(usize::from(COUNT) * 2);
+    engine.feed(tti.as_bytes());
+    engine.finish();
+    assert_eq!(engine.subpage_changes(&[0x100]), [(0x100, COUNT)]);
+    let chosen = sub_code_of(201, COUNT).unwrap();
+    engine.set_view(View { page: 0x100, subpage: Some(chosen), ..View::default() });
+    let drawn = engine.render_at(0x100, 0).unwrap().subpages;
+    let expected = SubPageStep {
+        count: COUNT,
+        shown: chosen,
+        place: Some(200),
+        previous: Some(sub_code_of(200, COUNT).unwrap()),
+        next: Some(sub_code_of(202, COUNT).unwrap()),
+    };
+    assert_eq!(drawn, expected);
+    let (grid, _) = engine.grid(0x100).unwrap();
+    let status: String =
+        grid.cells[0].iter().take(7).map(|cell| if let Glyph::Char(character) = cell.glyph { to_unicode(character).base } else { ' ' }).collect();
+    assert_eq!(status, "100/201", "a place of three digits gives up the P");
+    let last = sub_code_of(COUNT, COUNT).unwrap();
+    engine.set_view(View { page: 0x100, subpage: Some(last), ..View::default() });
+    assert_eq!(engine.render_at(0x100, 0).unwrap().subpages.next, Some(sub_code_of(1, COUNT).unwrap()), "round from the last to the first");
+    let rows = engine.subpage_rows(0x100, SubPageRange { first: COUNT - 2, count: 64 });
+    assert_eq!(rows.first, COUNT - 2);
+    assert_eq!(rows.rows, [(sub_code_of(COUNT - 1, COUNT).unwrap(), format!("Story {}", COUNT - 1)), (last, format!("Story {COUNT}"))]);
 }
 
 /// REQ-NAV-006: a held page keeps the version it showed until let go.
@@ -200,7 +242,7 @@ fn a_page_redefines_its_colour_map() {
             *slot = with_odd_parity(code);
         }
         [
-            encode::header(address.magazine, address.page, SubCode::new(0), ControlBits(0), &[with_odd_parity(b' '); 32]),
+            encode::header(address.magazine, address.page, SubCode::new(0), ControlBits(0), &[with_odd_parity(b' '); 32]).unwrap(),
             encode::page_enhancement(address.magazine, designation, PageFormat { function: 0, coding: 0 }, fields),
             encode::row(address.magazine, 1, &text),
         ]
@@ -259,12 +301,36 @@ fn a_new_version_of_a_page_is_reported_as_updated() {
     assert_eq!(engine.take_updated(), [0x101]);
 }
 
-/// The audio packets of a 2 000-sample PCM sound at 8 kHz that plays on
-/// `page`, channel 1, written by the engine's encoder.
+/// A constant-rate 16 kbit/s Opus packet is 40 bytes (decision E.124).
+const OPUS_PACKET: u16 = 40;
+/// Samples of one 20 ms Opus frame at 48 kHz.
+const OPUS_FRAME_SAMPLES: usize = 960;
+
+/// `count` CELT-only full-band 20 ms Opus frames (RFC 6716 configuration
+/// 31) from a seed: no recording is kept in the repository.
+fn opus_frames(count: usize) -> Vec<u8> {
+    const CELT_FULL_BAND_20_MS: u8 = 31 << 3;
+    let mut state: u32 = 9;
+    (0..count)
+        .flat_map(|_| {
+            let mut packet = vec![CELT_FULL_BAND_20_MS];
+            packet.extend((1..OPUS_PACKET).map(|_| {
+                state ^= state << 13;
+                state ^= state >> 17;
+                state ^= state << 5;
+                state.to_le_bytes()[0]
+            }));
+            packet
+        })
+        .collect()
+}
+
+/// The audio packets of a 9 000-sample Opus sound that plays on `page`,
+/// channel 1, written by the engine's encoder: the codec the desktop
+/// builds decode (the engine's decision E.131).
 fn sound_stream(page: u16) -> Vec<u8> {
     use neoteletext_audio::encode::{Command, Sound, packets};
-    let pcm: Vec<i16> = (0..2000).map(|n| i16::try_from(n % 64).unwrap().saturating_mul(100)).collect();
-    let sound = Sound::new(5, 1, neoteletext_audio::Codec::Pcm16, 8_000, 1000, &pcm).unwrap();
+    let sound = Sound::opus(5, 1, OPUS_PACKET, &opus_frames(10), 9_000).unwrap();
     let mut records = vec![sound.object_record().unwrap()];
     records.extend(sound.data_records());
     let play = Command { channel: 1, sequence: 1, operation: 1, handle: 5, generation: 1, gain: 70, fade_ms: 20, flags: 0, duck: 0, page: Some(page) };
@@ -281,9 +347,9 @@ fn a_page_sound_is_sent_when_its_page_is_opened() {
     engine.open_page(Some(0x100));
     let sounds = engine.take_sounds();
     let sound = Sound { handle: 5, generation: 1 };
-    assert_eq!(sounds.first(), Some(&Audio::Define { sound, rate_hz: 8_000, samples: 2000 }));
+    assert_eq!(sounds.first(), Some(&Audio::Define { sound, rate_hz: 48_000, samples: 9_000 }));
     let samples: usize = sounds.iter().map(|audio| if let Audio::Samples { pcm, .. } = audio { pcm.len() } else { 0 }).sum();
-    assert_eq!(samples, 2000);
+    assert_eq!(samples, 9_000);
     assert!(matches!(sounds.last(), Some(Audio::Start { channel: 1, gain: 70, fade_ms: 20, .. })));
     // Leaving the page fades it out.
     engine.open_page(Some(0x101));
@@ -293,11 +359,12 @@ fn a_page_sound_is_sent_when_its_page_is_opened() {
 #[test]
 fn a_live_sound_streams_and_fades_two_seconds_after_its_last_block() {
     use neoteletext_audio::encode::{Command, Sound as Writer, packets};
-    let live = Writer::live(6, 1, neoteletext_audio::Codec::Pcm16, 8_000, 100).unwrap();
+    let live = Writer::live(6, 1, neoteletext_audio::Codec::Opus, 48_000, OPUS_PACKET).unwrap();
     let play = Command { channel: 0, sequence: 1, operation: 1, handle: 6, generation: 1, gain: 50, fade_ms: 0, flags: 0, duck: 0, page: None };
     let mut records = vec![live.object_record().unwrap(), play.record()];
-    for index in 0..4 {
-        records.extend(live.live_records(index, &[100; 50]));
+    let frames = opus_frames(4);
+    for (index, frame) in (0_u16..).zip(frames.chunks(usize::from(OPUS_PACKET))) {
+        records.extend(live.packet_records(index, frame).unwrap());
     }
     let bytes: Vec<u8> = packets(0, 0, &records).0.iter().flat_map(|packet| packet.bytes).collect();
     let mut engine = Engine::new();
@@ -306,13 +373,36 @@ fn a_live_sound_streams_and_fades_two_seconds_after_its_last_block() {
     engine.finish();
     let sounds = engine.take_sounds();
     let sound = Sound { handle: 6, generation: 1 };
-    assert_eq!(sounds.first(), Some(&Audio::Stream { sound, rate_hz: 8_000 }), "{sounds:?}");
+    assert_eq!(sounds.first(), Some(&Audio::Stream { sound, rate_hz: 48_000 }), "{sounds:?}");
     assert!(sounds.iter().any(|audio| matches!(audio, Audio::Start { channel: 0, .. })));
-    assert!(sounds.iter().any(|audio| matches!(audio, Audio::StreamSamples { pcm, .. } if pcm.len() == 50)));
+    assert!(sounds.iter().any(|audio| matches!(audio, Audio::StreamSamples { pcm, .. } if pcm.len() == OPUS_FRAME_SAMPLES)));
     engine.tick_audio(2_999);
     assert_eq!(engine.take_sounds(), [] as [Audio; 0]);
     engine.tick_audio(3_000);
     assert_eq!(engine.take_sounds(), [Audio::Stop { channel: 0, fade_ms: neoteletext_audio::LIVE_STALL_FADE_MS }, Audio::Forget(sound)]);
+}
+
+/// The engine's decision E.131 and the owner's instruction of 28 October
+/// 2026: PCM16 is compiled out of the desktop builds, so a PCM16 sound is
+/// not decoded and nothing of it reaches the sound helper; it is kept in
+/// the engine for microcontroller ports. (IMA ADPCM is compiled out too,
+/// but these tests write sounds with the engine's encoder, which brings
+/// IMA ADPCM's decoder with it; `scripts/check.sh` proves the shipped
+/// programs are built without either.)
+#[test]
+fn a_pcm16_sound_is_not_decoded_in_a_desktop_build() {
+    use neoteletext_audio::encode::{Command, Sound as Writer, packets};
+    let pcm: Vec<i16> = (0..2000).map(|n| i16::try_from(n % 64).unwrap().saturating_mul(100)).collect();
+    let sound = Writer::new(5, 1, neoteletext_audio::Codec::Pcm16, 8_000, 1000, &pcm).unwrap();
+    let mut records = vec![sound.object_record().unwrap()];
+    records.extend(sound.data_records());
+    let play = Command { channel: 1, sequence: 1, operation: 1, handle: 5, generation: 1, gain: 70, fade_ms: 20, flags: 0, duck: 0, page: None };
+    records.push(play.record());
+    let mut engine = Engine::new();
+    engine.feed(&packets(0, 0, &records).0.iter().flat_map(|packet| packet.bytes).collect::<Vec<u8>>());
+    engine.finish();
+    let sounds = engine.take_sounds();
+    assert!(!sounds.iter().any(|audio| matches!(audio, Audio::Define { .. } | Audio::Samples { .. } | Audio::Start { .. })), "{sounds:?}");
 }
 
 /// Decision 114: an Opus sound (the engine's codec 2, decision E.124) is
@@ -321,24 +411,8 @@ fn a_live_sound_streams_and_fades_two_seconds_after_its_last_block() {
 #[test]
 fn opus_sounds_are_decoded_into_samples_for_the_sound_helper() {
     use neoteletext_audio::encode::{Command, Sound as Writer, packets};
-    // A constant-rate 16 kbit/s packet is 40 bytes. These are CELT-only
-    // full-band 20 ms frames (RFC 6716 configuration 31) from a seed: no
-    // recording is kept in the repository.
-    const PACKET: u16 = 40;
-    const CELT_FULL_BAND_20_MS: u8 = 31 << 3;
-    let mut state: u32 = 9;
-    let made: Vec<u8> = (0..10)
-        .flat_map(|_| {
-            let mut packet = vec![CELT_FULL_BAND_20_MS];
-            packet.extend((1..PACKET).map(|_| {
-                state ^= state << 13;
-                state ^= state >> 17;
-                state ^= state << 5;
-                state.to_le_bytes()[0]
-            }));
-            packet
-        })
-        .collect();
+    const PACKET: u16 = OPUS_PACKET;
+    let made = opus_frames(10);
     let stored = Writer::opus(7, 1, PACKET, &made, 9_000).unwrap();
     let play = Command { channel: 2, sequence: 1, operation: 1, handle: 7, generation: 1, gain: 90, fade_ms: 0, flags: 0, duck: 0, page: None };
     let mut records = vec![stored.object_record().unwrap()];
@@ -369,7 +443,7 @@ fn opus_sounds_are_decoded_into_samples_for_the_sound_helper() {
     let sound = Sound { handle: 8, generation: 1 };
     assert_eq!(sounds.first(), Some(&Audio::Stream { sound, rate_hz: 48_000 }), "{sounds:?}");
     let streamed: usize = sounds.iter().map(|audio| if let Audio::StreamSamples { pcm, .. } = audio { pcm.len() } else { 0 }).sum();
-    assert_eq!(streamed, 4 * 960, "four 20 ms frames");
+    assert_eq!(streamed, 4 * OPUS_FRAME_SAMPLES, "four 20 ms frames");
 }
 
 /// Decision 42: in NeoTeletext only links are underlined, so the page's
@@ -598,7 +672,7 @@ fn row_0_shows_the_page_number_and_keeps_the_latest_clock() {
     for (slot, &byte) in display.iter_mut().skip(24).zip(b"23:15/42") {
         *slot = with_odd_parity(byte);
     }
-    let filling = encode::header(Magazine::from_bits(1), PageNumber(PAGE_TIME_FILLING), SubCode::new(0), ControlBits(C11_SERIAL), &display);
+    let filling = encode::header(Magazine::from_bits(1), PageNumber(PAGE_TIME_FILLING), SubCode::new(0), ControlBits(C11_SERIAL), &display).unwrap();
     engine.feed_whole(true, true, &filling.bytes);
     let shown = row_0(&engine);
     assert!(shown.ends_with("23:15/42"), "{shown:?}");
@@ -606,8 +680,9 @@ fn row_0_shows_the_page_number_and_keeps_the_latest_clock() {
 }
 
 /// Decision 111: a page the channel pushes whole with several sub-pages
-/// opens at its first, and its sub-pages are told to the trusted core with
-/// a title from each one's text, once, and again only when they change.
+/// opens at its first; its count is told to the trusted core once, and
+/// again only when it changes, and its titles by range when asked
+/// (decision 112).
 #[test]
 fn a_pushed_page_opens_at_its_first_sub_page_and_lists_its_sub_pages() {
     let tti = b"PN,21001\nSC,0001\nPS,8000\nOL,1,Story one\n\nPN,21002\nSC,0002\nPS,8000\nOL,1,Story two\n\nPN,21003\nSC,0003\nPS,8000\nOL,1,The comments\n";
@@ -615,9 +690,10 @@ fn a_pushed_page_opens_at_its_first_sub_page_and_lists_its_sub_pages() {
     engine.feed_whole(false, true, tti);
     let (_, stored) = engine.grid(0x210).unwrap();
     assert_eq!(stored.key.subcode.value(), 1, "the first sub-page, not the last to arrive");
-    let said = engine.subpage_changes(&[0x210]);
-    assert_eq!(said, [(0x210, vec![(1, String::from("Story one")), (2, String::from("Story two")), (3, String::from("The comments"))])]);
+    assert_eq!(engine.subpage_changes(&[0x210]), [(0x210, 3)], "its count");
     assert_eq!(engine.subpage_changes(&[0x210]), [], "said once");
+    let rows = engine.subpage_rows(0x210, SubPageRange { first: 1, count: 64 });
+    assert_eq!(rows, SubPageRows { count: 3, first: 1, rows: vec![(2, String::from("Story two")), (3, String::from("The comments"))] }, "titles by range");
     engine.set_view(View { page: 0x210, subpage: Some(3), ..View::default() });
     assert_eq!(engine.grid(0x210).unwrap().1.key.subcode.value(), 3, "one chosen is drawn");
 }

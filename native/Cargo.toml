@@ -41,29 +41,35 @@ launcher = { path = "launcher", package = "neoteletext-launcher" }
 decoder = { path = "decoder", package = "neoteletext-decoder", default-features = false }
 # The teletext engine, maintained in its own repository (design section
 # 4.0), pinned to one commit. Its repository is local until that commit is
-# published; Cargo reads the commit, never the engine's working tree. The
-# engine's "modern-classic" profile (its decision E.71) with the Colour
-# Map of Levels 2.5 and 3.5, which that profile leaves out: decision 6 is
-# 32 colours, and decision 60 restores them.
-neoteletext-core = { git = "file:///Users/andrewstuart/devel/neoteletext-engine", rev = "dcb2a3ba2d1091c787057a69aa360f15d6e0b18e", default-features = false, features = ["modern-classic", "level35-32colors"] }
-neoteletext-formats = { git = "file:///Users/andrewstuart/devel/neoteletext-engine", rev = "dcb2a3ba2d1091c787057a69aa360f15d6e0b18e", default-features = false, features = ["tti", "transport", "sliced"] }
+# published; Cargo reads the commit, never the engine's working tree.
+# With no features, the core is the standard's numbers (`limits`) and the
+# packet types alone, which the interface core and the protocol take
+# (decision 112); the decoder names the profile it renders with.
+neoteletext-core = { git = "file:///Users/andrewstuart/devel/neoteletext-engine", rev = "e09a589aeb19ed50b5ebbcff0b92c67b70a5dc5d", default-features = false }
+neoteletext-formats = { git = "file:///Users/andrewstuart/devel/neoteletext-engine", rev = "e09a589aeb19ed50b5ebbcff0b92c67b70a5dc5d", default-features = false, features = ["tti", "transport", "sliced"] }
 # The engine's web module: HTTP, channels, contents files and push, with no
 # network input or output of its own.
-neoteletext-web = { git = "file:///Users/andrewstuart/devel/neoteletext-engine", rev = "dcb2a3ba2d1091c787057a69aa360f15d6e0b18e", default-features = false, features = ["push", "cookies"] }
+neoteletext-web = { git = "file:///Users/andrewstuart/devel/neoteletext-engine", rev = "e09a589aeb19ed50b5ebbcff0b92c67b70a5dc5d", default-features = false, features = ["push", "cookies"] }
 # The engine's network port is these traits (its decision E.38); the
 # version the engine uses.
 embedded-io = { version = "=0.7.1", default-features = false }
-neoteletext-image = { git = "file:///Users/andrewstuart/devel/neoteletext-engine", rev = "dcb2a3ba2d1091c787057a69aa360f15d6e0b18e", features = ["std"] }
+neoteletext-image = { git = "file:///Users/andrewstuart/devel/neoteletext-engine", rev = "e09a589aeb19ed50b5ebbcff0b92c67b70a5dc5d", features = ["std"] }
 # The engine's audio profile (its area AUD): the receiver, and the mixer the
-# interface plays through.
-neoteletext-audio = { git = "file:///Users/andrewstuart/devel/neoteletext-engine", rev = "dcb2a3ba2d1091c787057a69aa360f15d6e0b18e", default-features = false, features = ["idl", "ima", "opus"] }
+# interface plays through. Opus alone of its codecs (the engine's decision
+# E.131): PCM16 (`pcm16`) and IMA ADPCM (`ima`) are compiled out of the
+# desktop builds (Windows, macOS, Linux) by the owner's instruction of 28
+# October 2026, and kept in the engine for microcontroller ports. Only the
+# reference channel and the decoder's tests write sounds (`encode`, which
+# brings `ima` with it); neither is shipped, and `scripts/check.sh` proves
+# the shipped programs build without either codec (decision 121).
+neoteletext-audio = { git = "file:///Users/andrewstuart/devel/neoteletext-engine", rev = "e09a589aeb19ed50b5ebbcff0b92c67b70a5dc5d", default-features = false, features = ["idl", "opus"] }
 # The engine's qrkeyboard client (its decision E.93): the phone keyboard
 # process's pairing and encryption, and the terminal channel's phone page.
-neoteletext-qrkeyboard = { git = "file:///Users/andrewstuart/devel/neoteletext-engine", rev = "dcb2a3ba2d1091c787057a69aa360f15d6e0b18e" }
+neoteletext-qrkeyboard = { git = "file:///Users/andrewstuart/devel/neoteletext-engine", rev = "e09a589aeb19ed50b5ebbcff0b92c67b70a5dc5d" }
 # The engine's input profile (its area INT): key records and the cursor
 # record (`interaction.md`).
-neoteletext-input = { git = "file:///Users/andrewstuart/devel/neoteletext-engine", rev = "dcb2a3ba2d1091c787057a69aa360f15d6e0b18e", default-features = false }
-neoteletext-audio-mix = { git = "file:///Users/andrewstuart/devel/neoteletext-engine", rev = "dcb2a3ba2d1091c787057a69aa360f15d6e0b18e" }
+neoteletext-input = { git = "file:///Users/andrewstuart/devel/neoteletext-engine", rev = "e09a589aeb19ed50b5ebbcff0b92c67b70a5dc5d", default-features = false }
+neoteletext-audio-mix = { git = "file:///Users/andrewstuart/devel/neoteletext-engine", rev = "e09a589aeb19ed50b5ebbcff0b92c67b70a5dc5d" }
 # Apache-2.0: the operating systems' audio output (Core Audio on macOS),
 # without unsafe code of ours (decision 37).
 cpal = "=0.18.2"

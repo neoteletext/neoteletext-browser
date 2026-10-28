@@ -91,7 +91,7 @@ impl Browser {
             left_centred(canvas, row, PADDING, &number, ROW_NUMBER, WHITE);
             let mut title_end = row.x1 - PADDING;
             // A page with sub-pages is marked with how many it has.
-            if let Some(count) = self.subpages_of(index).map(<[_]>::len) {
+            if let Some(count) = self.subpage_count(index) {
                 title_end -= subpage_mark(canvas, row, title_end, count) + PADDING;
             }
             if let Some(age) = since(updated, now) {
@@ -115,7 +115,7 @@ impl Browser {
 
 /// The mark of a page with sub-pages, ending at `right` in `row`: two
 /// offset outlines, a stack of pages, and how many it has. Returns its width.
-fn subpage_mark<C: Canvas + ?Sized>(canvas: &mut C, row: Rect, right: f64, count: usize) -> f64 {
+fn subpage_mark<C: Canvas + ?Sized>(canvas: &mut C, row: Rect, right: f64, count: u16) -> f64 {
     /// A card of the stack, and how far the one behind sits up and right.
     const CARD: f64 = 9.0;
     const OFFSET: f64 = 3.0;

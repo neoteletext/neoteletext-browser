@@ -711,7 +711,7 @@ dependencies = [
 [[package]]
 name = "neoteletext-core"
 version = "0.1.0"
-source = "git+file:///Users/andrewstuart/devel/neoteletext-engine?rev=dcb2a3ba2d1091c787057a69aa360f15d6e0b18e#dcb2a3ba2d1091c787057a69aa360f15d6e0b18e"
+source = "git+file:///Users/andrewstuart/devel/neoteletext-engine?rev=e09a589aeb19ed50b5ebbcff0b92c67b70a5dc5d#e09a589aeb19ed50b5ebbcff0b92c67b70a5dc5d"
 
 [[package]]
 name = "neoteletext-release"
@@ -754,7 +754,7 @@ dependencies = [
 [[package]]
 name = "neoteletext-web"
 version = "0.1.0"
-source = "git+file:///Users/andrewstuart/devel/neoteletext-engine?rev=dcb2a3ba2d1091c787057a69aa360f15d6e0b18e#dcb2a3ba2d1091c787057a69aa360f15d6e0b18e"
+source = "git+file:///Users/andrewstuart/devel/neoteletext-engine?rev=e09a589aeb19ed50b5ebbcff0b92c67b70a5dc5d#e09a589aeb19ed50b5ebbcff0b92c67b70a5dc5d"
 dependencies = [
  "embedded-io",
  "neoteletext-core",
