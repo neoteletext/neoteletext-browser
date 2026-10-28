@@ -1,5 +1,5 @@
 //! The history panel's input: the keys of its search, the wheel, the row
-//! under a press, and presses on its controls, rows and row menu.
+//! under a press, and presses on its edges, controls, rows and row menu.
 
 use alloc::string::String;
 use alloc::vec::Vec;
@@ -72,9 +72,19 @@ impl Browser {
 
     /// A press on the panel; returns whether it was the panel's. With
     /// `new_tab`, a row opens in a new tab.
+    /// Whether `point` is on the open history panel.
+    pub(in crate::browser) fn over_history(&self, point: Point) -> bool {
+        self.history.open && self.history.controls.panel.contains(point)
+    }
+
     pub(in crate::browser) fn history_press(&mut self, point: Point, new_tab: bool) -> bool {
         if !self.history.open {
             return false;
+        }
+        // An edge's grip reaches a little outside the panel.
+        if self.history_edge_press(point) {
+            self.history.menu = None;
+            return true;
         }
         let controls = &self.history.controls;
         if !controls.panel.contains(point) {

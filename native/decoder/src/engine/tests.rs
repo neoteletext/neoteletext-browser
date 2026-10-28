@@ -563,10 +563,10 @@ fn the_channels_input_records_are_passed_on() {
     let input = engine.take_input();
     assert_eq!(input.cursors, [[0x05, 0x00, 0, 7, 255, 0, 0, 0]]);
     assert_eq!(input.controls, [] as [Vec<u8>; 0], "the withdrawn IM line is nothing");
-    let welcome = packet_of(&Control::Welcome { version: 2, caps: PAGE_CAP }, 0, 1).unwrap();
+    let welcome = packet_of(&Control::Welcome { version: 2, caps: PAGE_CAP, resume: None }, 0, 1).unwrap();
     engine.feed_whole(true, true, &welcome.bytes);
     let input = engine.take_input();
-    assert_eq!(input.controls.iter().map(|body| read_body(body).unwrap()).collect::<Vec<_>>(), [Control::Welcome { version: 2, caps: PAGE_CAP }]);
+    assert_eq!(input.controls.iter().map(|body| read_body(body).unwrap()).collect::<Vec<_>>(), [Control::Welcome { version: 2, caps: PAGE_CAP, resume: None }]);
     assert_eq!(input.cursors, [] as [[u8; neoteletext_input::cursor::BODY]; 0]);
     assert_eq!(engine.take_input(), InputRecords::default(), "once each");
     engine.feed_whole(false, true, b"PN,50100\r\nOL,1,None\r\n");
@@ -715,7 +715,7 @@ fn a_pages_controls_are_found_and_their_look_drawn_on_their_cells() {
     let mut page = DisplayPage::new(PageAddress::from_mpp(0x128).unwrap(), SubCode::new(0));
     // A cyan band from column 2: Alpha Cyan, New Background, Alpha Blue.
     page.text(20, 1, b"\x06\x1d\x04 PLAY \x1c").unwrap();
-    page.local().position(20, 0).unwrap().control(2, 8, false).unwrap().control(20, 9, false).unwrap().pointer_area(0, 40, false).unwrap();
+    page.local().position(20, 0).unwrap().control(2, 8, false).unwrap().control(20, 9, false).unwrap();
     let mut bytes = Vec::new();
     neoteletext_formats::write::write_tti(&[&page.build().unwrap()], &mut bytes).unwrap();
     let mut engine = Engine::new();
@@ -724,7 +724,6 @@ fn a_pages_controls_are_found_and_their_look_drawn_on_their_cells() {
     let plain = engine.render(0x128).unwrap();
     let button = Area { row: 20, column: 2, width: 8, height: 1 };
     assert_eq!(plain.links.controls, [button, Area { row: 20, column: 20, width: 9, height: 1 }]);
-    assert_eq!(plain.links.pointer_areas, [Area { row: 20, column: 0, width: 40, height: 1 }], "the row as a pointer area");
     let width = usize::from(PAGE_WIDTH);
     let (cell_width, cell_height) = (usize::from(interface_core::canvas::CELL_WIDTH), usize::from(interface_core::canvas::CELL_HEIGHT));
     // A dot of the band's background in column 3, and one beside the band.

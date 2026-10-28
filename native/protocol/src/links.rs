@@ -45,9 +45,6 @@ pub const MAX_SERVICE_NAME: usize = 32;
 /// The most controls a page has (the engine's `MAX_CONTROLS`, decision
 /// E.127; INPUT.md section 7.3).
 pub const MAX_CONTROLS: usize = 32;
-/// The most pointer areas a page has (the engine's `MAX_POINTER_AREAS`,
-/// decision E.128; INPUT.md section 7.4).
-pub const MAX_POINTER_AREAS: usize = 8;
 /// Page numbers a page remaps: its `LK` lines and the channel's aliases.
 pub const MAX_REMAPPED: usize = MAX_NUMBER_LINKS + MAX_ALIASES;
 /// A destination as the trusted strip shows it: an address and a few

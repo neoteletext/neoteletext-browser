@@ -64,6 +64,10 @@ impl Core {
         if let Some(due) = self.frames_due_at() {
             next = next.map(|at| at.min(due));
         }
+        #[cfg(feature = "interaction")]
+        if let Some(due) = self.moves_due_at() {
+            next = next.map(|at| at.min(due));
+        }
         #[cfg(feature = "phone-keyboard")]
         if let Some(due) = self.phone_ending_until() {
             next = next.map(|at| at.min(due));
@@ -97,6 +101,10 @@ impl Core {
         if self.frames_due_at().is_some_and(|due| now >= due) {
             self.send_due_frames(now)?;
         }
+        #[cfg(feature = "interaction")]
+        if self.moves_due_at().is_some_and(|due| now >= due) {
+            self.send_due_moves()?;
+        }
         #[cfg(feature = "phone-keyboard")]
         self.phone_tick(now);
         Ok(())
@@ -108,7 +116,7 @@ impl Core {
     fn typing_tick(&mut self) -> Result<(), String> {
         #[cfg(feature = "interaction")]
         {
-            let sends = self.typing.tick(self.now());
+            let sends = self.typing.tick(self.now_us());
             self.deliver_typing(sends)?;
         }
         Ok(())

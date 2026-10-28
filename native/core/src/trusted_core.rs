@@ -218,6 +218,14 @@ impl Core {
         u64::try_from(self.started.elapsed().as_millis()).unwrap_or(u64::MAX)
     }
 
+    /// Microseconds since the trusted core started: typing's clock, since
+    /// the pointer's period of 1000/60 ms is no whole number of
+    /// milliseconds (`neoteletext_input::pace`).
+    #[cfg(feature = "interaction")]
+    fn now_us(&self) -> u64 {
+        u64::try_from(self.started.elapsed().as_micros()).unwrap_or(u64::MAX)
+    }
+
     /// Sends `message` to the window at hand, telling the interface first
     /// when the window changed (`multiple-windows.md`).
     fn send(&mut self, message: &ToInterface) -> Result<(), String> {

@@ -105,3 +105,10 @@ The source was reorganised by concept (`~/devel/neoteletext-common/structure/`, 
 ## The standard's maxima and sub-pages on the wire (26 October 2026)
 
 Owed by decision 112: every item of `neoteletext-common/STANDARD-LIMITS.md` section 7 that names this repository, in its order; none is started. The owner's questions are its section 6.
+
+## The icon (decision 124, 28 October 2026)
+
+- **By hand on macOS:** a release bundle laid out and signed (`scripts/updates-e2e.sh` lays one out): its icon in the Finder, the Dock and the About panel; the browser run from `cargo run`, outside a bundle: the Dock's icon, which `dock-menu`'s `set_icon` sets from the confined interface (built and linted, not run).
+- **By hand in the Windows virtual machine:** the programs built with their resource (the stub, `NeoTeletext-Setup.exe`, the launcher, `neoteletext.exe`, the interface): Explorer, the Start menu shortcut, Settings › Apps, the taskbar and the window's title bar.
+- **By hand on a Linux desktop:** `--install`'s icons in the menu, the window's icon under X11 and Wayland (its class `neoteletext`), and `--uninstall` removing them.
+- **The owner's word:** a hand-drawn 16 by 16, since the art's letters cannot be read at 16 by nearest neighbour.

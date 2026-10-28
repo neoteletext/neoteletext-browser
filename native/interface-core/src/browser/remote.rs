@@ -139,6 +139,11 @@ impl Browser {
     }
 
     /// A press on the remote or its handle; returns whether it was there.
+    /// Whether `point` is on the remote or its handle.
+    pub(in crate::browser) fn over_remote(&self, point: Point) -> bool {
+        self.remote.handle.contains(point) || self.remote.panel.contains(point)
+    }
+
     pub(in crate::browser) fn remote_press(&mut self, point: Point, now: u64) -> bool {
         if self.remote.handle.contains(point) {
             self.toggle_remote(now);

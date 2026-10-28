@@ -31,10 +31,17 @@ impl App {
         let now = self.now();
         let typing = self.view.browser.typing_target().is_some();
         match key {
-            PhoneKey::Text(text) if typing => self.view.browser.terminal_text(&text, now),
+            PhoneKey::Text(text) if typing => {
+                self.view.browser.terminal_text(&text);
+                false
+            }
             PhoneKey::Text(text) => self.view.browser.phone_text(&text, now),
-            PhoneKey::Key { down, name } if typing => crate::keys::phone_parts(down, &name)
-                .is_some_and(|parts| self.view.browser.terminal_key(parts.action, parts.key, parts.mods, parts.text.as_deref(), parts.base, now)),
+            PhoneKey::Key { down, name } if typing => {
+                if let Some(parts) = crate::keys::phone_parts(down, &name) {
+                    self.view.browser.terminal_key(parts.action, parts.key, parts.mods, parts.text.as_deref(), parts.base);
+                }
+                false
+            }
             PhoneKey::Key { down, name } => self.view.browser.phone_key(down, &name, now),
         }
     }

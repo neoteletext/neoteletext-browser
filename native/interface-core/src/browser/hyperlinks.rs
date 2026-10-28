@@ -147,9 +147,17 @@ impl Browser {
     /// come after it.
     #[cfg(feature = "interaction")]
     pub(super) fn pointer_on_link(&self) -> bool {
-        let Some((key, rect)) = self.wall.open() else { return false };
-        let Some((column, row)) = cell_in(rect, self.pointer) else { return false };
-        self.links.pages.get(&key).is_some_and(|links| links.run_at(column, row).is_some())
+        self.link_at(self.pointer).is_some()
+    }
+
+    /// The link of the open page at `point`, by its latest links, as its
+    /// page and its place in reading order: a contact that begins on one is
+    /// the browser's (REQ-RCH-048).
+    #[cfg(feature = "interaction")]
+    pub(super) fn link_at(&self, point: crate::geometry::Point) -> Option<(PageKey, usize)> {
+        let (key, rect) = self.wall.open()?;
+        let (column, row) = cell_in(rect, point)?;
+        self.links.pages.get(&key)?.run_at(column, row).map(|index| (key, index))
     }
 
     /// The cell the keyboard's focus is on: the focused link's first.
@@ -176,16 +184,6 @@ impl Browser {
             links.runs.iter().find(|run| run.contains(column, row)).map(links::LinkRun::area)
         };
         Some((key, area?))
-    }
-
-    /// Whether the pointer is in a pointer area of the open page, by its
-    /// latest links (INPUT.md section 7.4): a move with no button held then
-    /// goes to the channel. Only typing sends moves.
-    #[cfg(feature = "interaction")]
-    pub(super) fn in_pointer_area(&self) -> bool {
-        let Some((key, rect)) = self.wall.open() else { return false };
-        let Some((column, row)) = cell_in(rect, self.pointer) else { return false };
-        self.links.pages.get(&key).is_some_and(|links| links.in_pointer_area(column, row))
     }
 
     /// Whether a click on the open page goes to its channel.

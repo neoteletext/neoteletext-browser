@@ -28,3 +28,10 @@ pub(super) const KIND_SUBPAGES: u8 = 105;
 pub(super) const KIND_SUBPAGES_MISSING: u8 = 106;
 pub(super) const KIND_FETCH_SUBPAGES: u8 = 107;
 pub(super) const KIND_FETCH_SUBPAGE: u8 = 108;
+// The push connection's round trip, measured by WebSocket ping and pong
+// while keys go to the channel (`RETURN-CHANNEL.md` REQ-RCH-016), in the
+// next numbers free across every pipe.
+#[cfg(feature = "interaction")]
+pub(super) const KIND_MEASURE_ROUND_TRIP: u8 = 109;
+#[cfg(feature = "interaction")]
+pub(super) const KIND_ROUND_TRIP: u8 = 110;

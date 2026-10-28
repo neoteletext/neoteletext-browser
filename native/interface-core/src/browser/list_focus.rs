@@ -1,11 +1,14 @@
-//! The keys of the lists at the left: a click on the channel's magazines
-//! or on the page list gives that list the keys, and Up and Down then move
-//! through it, even on a page whose channel takes the keys, until a click
-//! anywhere else or Escape gives them back.
+//! The keys of the lists at the left: on the wall of pages, a click on the
+//! channel's magazines or on the page list gives that list the keys, and
+//! Up and Down then move through it, even on a page whose channel takes
+//! the keys, until a click anywhere else or Escape gives them back. With
+//! the page alone, a magazine or a page clicked opens a page, which has
+//! the keys (decision 126).
 
 use crate::browser::{Browser, Key};
 use crate::canvas::Canvas;
 use crate::channel::BANKS;
+use crate::controls::PageControl;
 use crate::geometry::Rect;
 use crate::text::border;
 use crate::theme::LINK;
@@ -21,6 +24,9 @@ pub(super) enum ListFocus {
     /// The chosen magazine's pages: Up and Down choose the page before or
     /// after, and Enter opens it.
     Pages,
+    /// The open page's sub-pages: Up and Down show the sub-page before or
+    /// after.
+    SubPages,
 }
 
 impl Browser {
@@ -37,6 +43,11 @@ impl Browser {
                 }
             }
             (ListFocus::Pages, Key::Up | Key::Down) => self.step_list(key == Key::Down),
+            (ListFocus::SubPages, Key::Up | Key::Down) => {
+                if self.controls_open() && self.page_controls.controls.subpages > 1 {
+                    self.ask_control(PageControl::SubPage(key == Key::Down));
+                }
+            }
             (ListFocus::Pages, Key::Enter) => {
                 let key = self.selected.and_then(|index| self.page_key(index))?;
                 self.wall.zoom(key, now);

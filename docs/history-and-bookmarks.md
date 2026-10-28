@@ -84,6 +84,8 @@ A panel of the trusted strip, as the settings panel is (`settings-home-console-p
 - *"Forget this channel" was withdrawn by decision 65:* Chrome has no such command; "More from this site" finds a site's rows, which can then be selected and removed.
 - **"Clear history…"** opens the clearing choices (section 2.5).
 - **Recently closed** tabs head the panel when there are any (section 2.8).
+- **Its width** is pulled by either side edge, the panel staying centred, between 468 points and the window less 40 points each side, and kept for the rest of the run (decision 127).
+- **Resting the pointer on a row** shows its full address, as the trusted core sent it, in a tip after the browser's tip delay; it goes when the pointer leaves the row (decision 127).
 
 The trusted core sends the panel **at most 100 rows at a time**, the rows on screen and a margin (more than a screen holds at the tallest window), and the next rows when the user scrolls to them (requirement 3.6: nothing beyond what is on screen). Each row in a view carries a number the trusted core gave it for that view; the interface asks to open or remove a row by that number, never by an address, so it cannot open or remove what it was not shown.
 

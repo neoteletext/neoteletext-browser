@@ -28,7 +28,7 @@ Each item does exactly what its key or button does: the menu bar sends the inter
 | **NeoTeletext** | About NeoTeletext; Settings… (Command-,); Hide NeoTeletext (Command-H), Hide Others (Option-Command-H), Show All; Quit NeoTeletext (Command-Q) |
 | **File** | New Tab (Command-T), New Window (Command-N), New Private Tab (Shift-Command-N), New Private Window; Open Location (Command-L); Reopen Closed Tab (Shift-Command-T); Close Tab (Command-W), Close Window (Shift-Command-W) |
 | **Edit** | Cut (Command-X), Copy (Command-C), Paste (Command-V), Select All (Command-A) |
-| **View** | Reload (Command-R); Enter Full Screen (Control-Command-F), the page alone (decision 85), titled Exit Full Screen while the page is full screen; Show or Hide the Bookmarks Bar (Shift-Command-B); Remote Control (Shift-Command-R); Developer Console (Option-Command-I) |
+| **View** | Reload (Command-R); Enter Full Screen (Control-Command-F), the page alone (decision 85), titled Exit Full Screen while the page is full screen; Show or Hide the Bookmarks Bar (Shift-Command-B); Remote Control (Shift-Command-R); Developer Console (Option-Command-I); Wall of Pages (Command-G), the wall or the page alone (decision 126) |
 | **History** | Back (Command-[), Forward (Command-]), Home (Shift-Command-H); Show All History (Command-Y) |
 | **Bookmarks** | Bookmark This Page (Command-D), Bookmark Manager (Option-Command-B) |
 | **Window** | Minimise (Command-M), Zoom; Show Previous Tab (Option-Command-Left), Show Next Tab (Option-Command-Right); Move Tab to New Window; then the open windows, which the system lists |

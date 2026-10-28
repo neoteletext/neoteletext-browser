@@ -10,7 +10,7 @@
 
 use std::fmt::Write as _;
 
-use neoteletext_input::event::{Action, Event, Item, KeyCode, MouseAction, read_message};
+use neoteletext_input::event::{Action, Device, Event, Item, KeyCode, MouseAction, read_message};
 use neoteletext_input::keys;
 use protocol::clean;
 use protocol::interaction::{MAX_TRACE, TraceLine};
@@ -69,13 +69,15 @@ fn describe(item: &Item<'_>) -> String {
             text
         }
         Event::Mouse(mouse) => {
-            let action = match mouse.action {
-                MouseAction::Press => "press",
-                MouseAction::Release => "release",
-                MouseAction::Move => "move",
+            let device = match mouse.device {
+                Device::Mouse => "",
+                Device::Touch => " touch",
+                Device::Pen => " pen",
             };
-            format!("MOUSE {action} b{} {},{}", mouse.button, mouse.at.column, mouse.at.row)
+            format!("MOUSE {}{device} b{} {},{}", pointer_action(mouse.action), mouse.button, mouse.at.column, mouse.at.row)
         }
+        Event::Touch(touch) => format!("TOUCH {} {} {},{}", pointer_action(touch.action), touch.id, touch.column, touch.row),
+        Event::Resume(_) => String::from("RESUME"),
         Event::Wheel(wheel) => format!("WHEEL {},{} {},{}", wheel.dx, wheel.dy, wheel.at.column, wheel.at.row),
         Event::Paste(text) => format!("PASTE {} chars", text.chars().count()),
         Event::FocusIn => String::from("FOCUS_IN"),
@@ -86,6 +88,16 @@ fn describe(item: &Item<'_>) -> String {
         Event::Page(page) => format!("PAGE {page:03X}"),
         Event::Hover { leave, column, row } => format!("HOVER {} {column},{row}", if *leave { "leave" } else { "enter" }),
         Event::Extension { kind, .. } => format!("EXTENSION {kind:#04x}"),
+    }
+}
+
+/// A pointer's action as the trace names it (INPUT.md section 5.4).
+fn pointer_action(action: MouseAction) -> &'static str {
+    match action {
+        MouseAction::Press => "press",
+        MouseAction::Release => "release",
+        MouseAction::Move => "move",
+        MouseAction::Gone => "gone",
     }
 }
 
@@ -106,7 +118,7 @@ mod tests {
     fn the_trace_counts_the_same_event_and_never_shows_typing() {
         let mut trace = InputTrace::default();
         let at = Point { column: 12, row: 5, pixels: None, mods: 0 };
-        let moved = message(&Item::Event(Event::Mouse(Mouse { action: MouseAction::Move, button: 0, at })));
+        let moved = message(&Item::Event(Event::Mouse(Mouse { action: MouseAction::Move, button: 0, at, device: Device::Mouse })));
         assert_eq!(trace.note(&moved), TraceLine { text: "MOUSE move b0 12,5".into(), repeats: 1, sent: 1 });
         assert_eq!(trace.note(&moved).repeats, 2);
         assert_eq!(trace.note(&moved).repeats, 3);

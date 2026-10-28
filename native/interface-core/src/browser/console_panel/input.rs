@@ -10,6 +10,11 @@ use crate::geometry::Point;
 
 impl Browser {
     /// A press on the console; returns whether it was the console's.
+    /// Whether `point` is on the open console.
+    pub(in crate::browser) fn over_console(&self, point: Point) -> bool {
+        self.console.open && self.console.area.contains(point)
+    }
+
     pub(in crate::browser) fn console_press(&mut self, point: Point) -> bool {
         if !self.console.open || !self.console.area.contains(point) {
             return false;

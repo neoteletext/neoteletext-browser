@@ -46,6 +46,11 @@ impl Browser {
     }
 
     /// A press on the panel; returns whether it was the panel's.
+    /// Whether `point` is on the open settings panel.
+    pub(in crate::browser) fn over_settings(&self, point: Point) -> bool {
+        self.settings.open && panel_rect(self.settings_area(), PANEL_WIDTH, PANEL_HEIGHT).contains(point)
+    }
+
     pub(in crate::browser) fn settings_press(&mut self, point: Point) -> bool {
         if !self.settings.open {
             return false;

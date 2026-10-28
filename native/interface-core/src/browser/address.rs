@@ -4,9 +4,10 @@
 
 use alloc::string::String;
 
+use crate::browser::full_screen::{DOUBLE_CLICK_DISTANCE, DOUBLE_CLICK_MILLISECONDS};
 use crate::browser::{Browser, Key, Output};
 use crate::canvas::Canvas;
-use crate::geometry::Rect;
+use crate::geometry::{Point, Rect};
 use crate::theme::{ADDRESS, Colour, DIM, FIELD_INK, FIELD_SELECTION};
 
 pub(super) const FIELD_PADDING: f64 = 12.0;
@@ -27,6 +28,7 @@ impl Browser {
 
     pub(super) fn stop_editing(&mut self) {
         self.close_suggestions();
+        self.release_field();
         if self.editing {
             self.editing = false;
             self.outputs.push(Output::TextInput(false));
@@ -66,6 +68,47 @@ impl Browser {
         true
     }
 
+    /// A press in the address field: the first gives it the focus with
+    /// all selected, as browsers do; a later one places the caret, or with
+    /// Shift extends the selection; a double click selects the word; and
+    /// holding the button and moving selects from the press to the pointer.
+    pub(super) fn press_field<C: Canvas + ?Sized>(&mut self, canvas: &mut C, point: Point, extend: bool, now: u64) {
+        let double = self.field_last_press.is_some_and(|(at, when)| {
+            now.saturating_sub(when) <= DOUBLE_CLICK_MILLISECONDS && libm::hypot(point.x - at.x, point.y - at.y) <= DOUBLE_CLICK_DISTANCE
+        });
+        self.field_last_press = if double { None } else { Some((point, now)) };
+        self.field_drag_to = None;
+        if !self.editing {
+            self.start_editing();
+            self.field_press = Some(self.offset_at(canvas, point.x));
+            return;
+        }
+        let at = self.offset_at(canvas, point.x);
+        if double {
+            self.editor.select_word(at);
+            self.field_press = None;
+            return;
+        }
+        self.editor.place(at, extend);
+        self.field_press = Some(self.editor.anchor());
+    }
+
+    /// The pointer moved with the button held after a press in the field:
+    /// the selection follows it at the next draw. Returns whether it did.
+    pub(super) fn drag_field(&mut self, x: f64) -> bool {
+        if self.field_press.is_none() || !self.editing {
+            return false;
+        }
+        self.field_drag_to = Some(x);
+        true
+    }
+
+    /// The main button was released: no drag in the field any more.
+    pub(super) fn release_field(&mut self) {
+        self.field_press = None;
+        self.field_drag_to = None;
+    }
+
     /// The byte offset in the address nearest to `x`.
     pub(super) fn offset_at<C: Canvas + ?Sized>(&self, canvas: &mut C, x: f64) -> usize {
         let text = self.editor.text();
@@ -86,6 +129,11 @@ impl Browser {
         let y = (area.y0 + area.y1 - line) / 2.0;
         canvas.push_clip(area);
         if self.editing {
+            if let (Some(anchor), Some(x)) = (self.field_press, self.field_drag_to.take()) {
+                let at = self.offset_at(canvas, x);
+                self.editor.place(anchor, false);
+                self.editor.place(at, true);
+            }
             let text = self.editor.text();
             let caret = canvas.text_width(text.get(..self.editor.caret()).unwrap_or_default(), ADDRESS);
             // Keep the caret in view.

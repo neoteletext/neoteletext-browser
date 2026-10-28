@@ -24,7 +24,7 @@ impl Core {
         #[cfg(feature = "interaction")]
         {
             self.opened = None;
-            let sends = self.typing.opened(self.active_channel(), None, self.now());
+            let sends = self.typing.opened(self.active_channel(), None, self.now_us());
             self.deliver_typing(sends)?;
         }
         self.frames = frames::Frames::default();
@@ -239,7 +239,7 @@ impl Core {
         #[cfg(feature = "interaction")]
         {
             self.opened = key;
-            let sends = self.typing.opened(self.active_channel(), key, self.now());
+            let sends = self.typing.opened(self.active_channel(), key, self.now_us());
             self.deliver_typing(sends)?;
         }
         #[cfg(feature = "links")]
@@ -303,7 +303,7 @@ impl Core {
         self.links.focused(focused);
         #[cfg(feature = "interaction")]
         {
-            let sends = self.typing.focused(focused, self.now());
+            let sends = self.typing.focused(focused, self.now_us());
             self.deliver_typing(sends)?;
         }
         Ok(())

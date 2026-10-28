@@ -31,15 +31,14 @@ impl App {
 
     /// A key while keys go to a channel: every key but the browser's own
     /// goes, pressed, repeating and released, as the trusted core's
-    /// session asks for them (INPUT.md section 9.1). Returns whether the
-    /// key was the channel's.
-    pub(super) fn terminal_key(&mut self, event: &winit::event::KeyEvent) -> Option<bool> {
+    /// session asks for them (INPUT.md section 9.1). Nothing is drawn for
+    /// it: the channel draws what it makes of the key.
+    pub(super) fn terminal_key(&mut self, event: &winit::event::KeyEvent) {
         use neoteletext_input::event::Action;
         use winit::platform::modifier_supplement::KeyEventExtModifierSupplement;
         if self.view.browser.typing_target().is_none() || self.browser_modifier() {
-            return None;
+            return;
         }
-        let now = self.now();
         let action = match (event.state, event.repeat) {
             (ElementState::Pressed, false) => Action::Press,
             (ElementState::Pressed, true) => Action::Repeat,
@@ -47,25 +46,20 @@ impl App {
         };
         let unmodified = event.key_without_modifiers();
         let parts = crate::keys::parts(action, &event.logical_key, &unmodified, event.physical_key, event.text.as_deref(), self.modifiers);
-        let changed = match parts {
-            Some(parts) => self.view.browser.terminal_key(parts.action, parts.key, parts.mods, parts.text.as_deref(), parts.base, now),
+        match parts {
+            Some(parts) => self.view.browser.terminal_key(parts.action, parts.key, parts.mods, parts.text.as_deref(), parts.base),
             // A key that types several characters: they go as text.
-            None => match (&event.text, action) {
-                (Some(text), Action::Press) => self.view.browser.terminal_text(text, now),
-                _ => false,
-            },
-        };
-        Some(changed)
+            None => {
+                if let (Some(text), Action::Press) = (&event.text, action) {
+                    self.view.browser.terminal_text(text);
+                }
+            }
+        }
     }
 
     /// Whether keys go to the open page's channel, as the trusted core says.
     pub(super) fn show_typing(&mut self, typing: &protocol::interaction::Typing, now: u64) {
-        let cursor = typing.cursor.map(|cursor| interface_core::browser::CursorView {
-            row: cursor.row,
-            column: cursor.column,
-            width: cursor.width,
-            flags: cursor.flags,
-        });
+        let cursor = typing.cursor.map(|cursor| interface_core::browser::CursorView { row: cursor.row, column: cursor.column, flags: cursor.flags });
         let view = interface_core::browser::TypingView {
             channel: typing.channel,
             page: typing.page,
@@ -73,8 +67,7 @@ impl App {
             secure: typing.secure,
             refused: typing.refused,
             cursor,
-            acked: typing.acked,
-            round_trip_ms: typing.round_trip_ms,
+            round_trip_us: typing.round_trip_us,
             show: typing.show,
         };
         self.view.browser.set_typing(view, now);

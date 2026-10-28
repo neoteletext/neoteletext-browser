@@ -14,6 +14,7 @@ use neoteletext_web::port::Security;
 
 use super::cancel::hold;
 use super::connection::read_socket;
+use super::writer::Outgoing;
 use super::{AllowedLocal, Connection, Failure, Opener, READS_AHEAD, WRITE_TIMEOUT, address, certificate_problem};
 
 /// A socket whose every read and write must finish by one moment: each
@@ -138,10 +139,11 @@ impl Opener {
         socket.set_read_timeout(None).map_err(own)?;
         socket.set_write_timeout(Some(WRITE_TIMEOUT)).map_err(own)?;
         let reader = socket.try_clone().map_err(own)?;
+        let outgoing = Outgoing::start(socket.try_clone().map_err(own)?, Arc::clone(&self.wake));
         let (chunks, incoming) = mpsc::sync_channel(READS_AHEAD);
         let wake = Arc::clone(&self.wake);
         std::thread::spawn(move || read_socket(reader, &chunks, &*wake));
-        Ok(Connection { socket, tls, incoming, pending, peer: address(ip) })
+        Ok(Connection { socket, tls, incoming, pending, outgoing, peer: address(ip) })
     }
 }
 

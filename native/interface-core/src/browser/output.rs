@@ -160,8 +160,6 @@ pub enum Output {
     Terminal {
         /// The open page.
         key: PageKey,
-        /// The browser's number of the intent, for its echo.
-        local: u32,
         /// What the viewer did.
         intent: crate::input::Intent,
     },

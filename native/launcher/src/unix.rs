@@ -17,7 +17,7 @@ use crate::{Launcher, io_text};
 mod linux;
 
 pub use linux::install_linux;
-use linux::{APPARMOR_TARGET, desktop_entry, path_link};
+use linux::{APPARMOR_TARGET, desktop_entry, icon_files, path_link};
 
 /// Asks on the terminal; whether the answer was yes.
 fn confirm(question: &str) -> bool {
@@ -42,7 +42,7 @@ impl<R: std::io::BufRead> TakeLine for R {
 }
 
 /// macOS and Linux: `--uninstall` on the terminal removes the program, its
-/// menu entry and its update files, and asks before removing the settings,
+/// menu entry, its icons and its update files, and asks before removing the settings,
 /// bookmarks, history and cookies (requirement 13.20).
 ///
 /// # Errors
@@ -96,6 +96,9 @@ fn remove(launcher: &Launcher, ask: &dyn Fn(&str) -> bool) -> Result<(), String>
         }
         if let Some(entry) = desktop_entry() {
             let _ = std::fs::remove_file(entry);
+        }
+        for icon in icon_files() {
+            let _ = std::fs::remove_file(icon);
         }
     }
     if let Some(bundle) = &layout.bundle {

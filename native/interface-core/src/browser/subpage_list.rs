@@ -1,7 +1,9 @@
 //! The sub-pages of the chosen page, under the page list (decision 111):
 //! when any page of the magazine has sub-pages, the list is two, the pages
 //! above and the chosen page's sub-pages below, with a divider between
-//! them that can be pulled; a click on a sub-page opens its page there.
+//! them that can be pulled; a click on a sub-page opens its page there,
+//! and gives the sub-pages the keys, Up and Down stepping through them as
+//! they step through the pages of the page list.
 //!
 //! The lower list is virtual (decision 112 item 4): it knows each page's
 //! count, draws a row for every place to the standard's 8,190, and holds
@@ -13,6 +15,7 @@ use alloc::format;
 use alloc::string::String;
 use alloc::vec::Vec;
 
+use crate::browser::list_focus::ListFocus;
 use crate::browser::page_list::ROW_HEIGHT;
 use crate::browser::window::PADDING;
 use crate::browser::{Browser, Output};
@@ -79,11 +82,14 @@ pub(super) struct SubPages {
     pub(super) scroll: f64,
     /// The sub-page row under the pointer, by its sub-code.
     pub(super) hovered: Option<u16>,
+    /// The chosen place the list last scrolled to while it had the keys,
+    /// so a step brings the new one into view and the wheel stays free.
+    revealed: Option<u16>,
 }
 
 impl Default for SubPages {
     fn default() -> Self {
-        Self { counts: BTreeMap::new(), channel: 0, held: None, asked: None, share: PAGES_SHARE, grip: None, scroll: 0.0, hovered: None }
+        Self { counts: BTreeMap::new(), channel: 0, held: None, asked: None, share: PAGES_SHARE, grip: None, scroll: 0.0, hovered: None, revealed: None }
     }
 }
 
@@ -177,6 +183,19 @@ impl Browser {
         // The sub-page drawn, when this is the page open and one is chosen.
         let controls = &self.page_controls.controls;
         let chosen = (controls.page == Some(page)).then_some(controls.chosen).flatten();
+        // Stepped with the keys, the list follows the sub-page chosen, as
+        // the page list follows the page.
+        if self.list_focus == Some(ListFocus::SubPages) && chosen != self.subpages.revealed {
+            self.subpages.revealed = chosen;
+            if let Some(place) = chosen {
+                let top = f64::from(place) * ROW_HEIGHT;
+                if top < self.subpages.scroll {
+                    self.subpages.scroll = top;
+                } else if top + ROW_HEIGHT > self.subpages.scroll + rows.height() {
+                    self.subpages.scroll = top + ROW_HEIGHT - rows.height();
+                }
+            }
+        }
         let content = f64::from(count) * ROW_HEIGHT;
         self.subpages.scroll = self.subpages.scroll.min((content - rows.height()).max(0.0));
         let in_view = self.places_in_view(rows.height(), count);
@@ -240,6 +259,9 @@ impl Browser {
         if !self.regions.subpage_list.contains(point) {
             return false;
         }
+        // The sub-pages then have the keys: Up and Down step through them.
+        self.list_focus = Some(ListFocus::SubPages);
+        self.subpages.revealed = None;
         let Some(&(_, subcode)) = self.regions.subrows.iter().find(|(rect, _)| rect.contains(point)) else { return true };
         let Some(index) = self.selected else { return true };
         let (Some(page), Some(key)) = (crate::channel::page_number(index), self.page_key(index)) else { return true };

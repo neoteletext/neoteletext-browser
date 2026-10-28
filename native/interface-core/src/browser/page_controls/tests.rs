@@ -1,9 +1,9 @@
 use super::*;
-use crate::browser::fixture::middle;
 use crate::browser::{Frame, Modifiers, StripState, TabInfo};
 use crate::canvas::PageKey;
 use crate::channel::{Channel, PAGES, PageInfo, Status};
 use crate::test_canvas::Recorder;
+use alloc::format;
 use alloc::vec;
 
 const WIDTH: f64 = 1440.0;
@@ -54,35 +54,4 @@ fn the_viewers_keys_ask_for_the_controls() {
     let (mut single, _) = opened(1);
     single.key(Key::Right, Modifiers::default(), OPEN);
     assert!(single.take_outputs().is_empty(), "one sub-page: the arrow sizes the pages as before");
-}
-
-/// The sub-page control shows on a page with sub-pages, and its parts
-/// ask for a step or the latest.
-#[test]
-fn the_sub_page_control_steps_and_returns_to_the_latest() {
-    let (mut browser, key) = opened(4);
-    browser.set_page_controls(PageControls { page: Some(key.page), subpages: 4, chosen: Some(1), ..PageControls::default() });
-    let mut canvas = Recorder::new();
-    browser.draw(&mut canvas, WIDTH, HEIGHT, OPEN);
-    assert!(canvas.texts.iter().any(|(_, text)| text == "2/4"), "the second of four");
-    let ui = &browser.page_controls;
-    let (previous, count, next) = (ui.previous, ui.count, ui.next);
-    for (rect, control) in [(previous, PageControl::SubPage(false)), (next, PageControl::SubPage(true)), (count, PageControl::Latest)] {
-        assert!(browser.controls_press(middle(rect)));
-        assert_eq!(browser.take_outputs(), [Output::PageControl(control)]);
-    }
-    let (mut single, _) = opened(1);
-    single.draw(&mut Recorder::new(), WIDTH, HEIGHT, OPEN);
-    assert_eq!(single.page_controls.count, Rect::ZERO, "no control on a page of one sub-page");
-}
-
-/// Decision 112 item 4: the sub-page control counts and places to the
-/// standard's 8,190 sub-pages, where it once stopped at 255.
-#[test]
-fn the_sub_page_control_shows_places_to_the_standards_maximum() {
-    let (mut browser, key) = opened(8_190);
-    browser.set_page_controls(PageControls { page: Some(key.page), subpages: 8_190, chosen: Some(8_189), ..PageControls::default() });
-    let mut canvas = Recorder::new();
-    browser.draw(&mut canvas, WIDTH, HEIGHT, OPEN);
-    assert!(canvas.texts.iter().any(|(_, text)| text == "8190/8190"), "the last of 8,190");
 }

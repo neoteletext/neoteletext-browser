@@ -1,15 +1,16 @@
 //! An open connection's bytes: the reader thread that blocks on its
 //! socket and wakes the loop when bytes arrive (REQ-INT-135), what the
-//! loop takes from it, plain or through TLS, and the TLS records written
-//! back.
+//! loop takes from it, plain or through TLS, and the TLS records given to
+//! the writer thread.
 
 use std::collections::VecDeque;
-use std::io::{ErrorKind as IoErrorKind, Read, Write};
+use std::io::{ErrorKind as IoErrorKind, Read};
 use std::net::TcpStream;
 use std::sync::mpsc::{Receiver, SyncSender, TryRecvError};
 
 use neoteletext_web::port::Received;
 
+use super::writer::Outgoing;
 use super::{Connection, SOCKET_READ};
 
 /// Whether bytes from the reader thread are pending.
@@ -21,7 +22,7 @@ enum Refill {
 
 impl Connection {
     pub(super) fn receive(&mut self, buffer: &mut [u8]) -> Received {
-        let Self { socket, tls, incoming, pending, .. } = self;
+        let Self { tls, incoming, pending, outgoing, .. } = self;
         let Some(tls) = tls.as_deref_mut() else {
             return match refill(pending, incoming) {
                 Refill::Waiting => Received::Nothing,
@@ -49,7 +50,7 @@ impl Connection {
                 return Received::Closed;
             }
             // An alert or a key update may need an answer.
-            if write_records(tls, socket).is_err() {
+            if !give_records(tls, outgoing) {
                 return Received::Closed;
             }
         }
@@ -93,11 +94,16 @@ fn refill(pending: &mut VecDeque<u8>, incoming: &Receiver<Vec<u8>>) -> Refill {
     }
 }
 
-/// Writes whatever records rustls has ready, blocking, within the write
-/// limit.
-pub(super) fn write_records(tls: &mut rustls::ClientConnection, mut socket: &TcpStream) -> std::io::Result<()> {
+/// Gives the writer thread whatever records rustls has ready, as one
+/// piece, so the messages sent together leave in one write (REQ-RCH-010);
+/// false when the thread does not take them.
+pub(super) fn give_records(tls: &mut rustls::ClientConnection, outgoing: &Outgoing) -> bool {
+    let mut records = Vec::new();
     while tls.wants_write() {
-        tls.write_tls(&mut socket)?;
+        // Writing to memory does not fail.
+        if tls.write_tls(&mut records).is_err() {
+            return false;
+        }
     }
-    socket.flush()
+    records.is_empty() || outgoing.give(records)
 }

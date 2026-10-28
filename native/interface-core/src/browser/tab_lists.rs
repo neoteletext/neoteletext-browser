@@ -86,6 +86,11 @@ impl Browser {
         self.tab_lists.tab_list = Some(list);
     }
 
+    /// Whether `point` is on the open Back or Forward list.
+    pub(super) fn over_tab_list(&self, point: Point) -> bool {
+        self.tab_lists.tab_list.is_some() && self.tab_lists.list_area.contains(point)
+    }
+
     /// A press while a list is open: an entry goes there; "Show all
     /// history" opens the panel; anywhere else closes it.
     pub(super) fn tab_list_press(&mut self, point: Point) -> bool {

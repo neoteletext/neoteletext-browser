@@ -5,7 +5,7 @@
 use neoteletext_input::event::{Action, KeyCode, MouseAction, Point};
 use neoteletext_input::{MAX_COLUMNS, MAX_COMPOSE, MAX_KEY_TEXT, MAX_PASTE, MAX_ROWS};
 
-use super::{InputIntent, Intent, check};
+use super::{InputIntent, Intent, TouchPhase, check};
 use crate::{Fields, ProtocolError};
 
 /// The intents' tags.
@@ -16,6 +16,8 @@ const TAG_WHEEL: u8 = 4;
 const TAG_PASTE: u8 = 5;
 const TAG_COMPOSE: u8 = 6;
 const TAG_HOVER: u8 = 7;
+const TAG_TOUCH: u8 = 8;
+const TAG_GONE: u8 = 9;
 /// A key's kind: a character or a functional code.
 pub(super) const KEY_CHARACTER: u8 = 0;
 const KEY_FUNCTIONAL: u8 = 1;
@@ -42,12 +44,34 @@ fn read_action(byte: u8) -> Result<Action, ProtocolError> {
     })
 }
 
-fn mouse_byte(action: MouseAction) -> u8 {
-    match action {
+/// An intent's mouse action: gone is never one, as only the trusted core
+/// writes it (`check` refuses it first).
+fn mouse_byte(action: MouseAction) -> Result<u8, ProtocolError> {
+    Ok(match action {
         MouseAction::Press => 0,
         MouseAction::Release => 1,
         MouseAction::Move => 2,
+        MouseAction::Gone => return Err(ProtocolError::BadValue("mouse action")),
+    })
+}
+
+fn touch_byte(phase: TouchPhase) -> u8 {
+    match phase {
+        TouchPhase::Began => 0,
+        TouchPhase::Moved => 1,
+        TouchPhase::Ended => 2,
+        TouchPhase::Cancelled => 3,
     }
+}
+
+fn read_touch(byte: u8) -> Result<TouchPhase, ProtocolError> {
+    Ok(match byte {
+        0 => TouchPhase::Began,
+        1 => TouchPhase::Moved,
+        2 => TouchPhase::Ended,
+        3 => TouchPhase::Cancelled,
+        _ => return Err(ProtocolError::BadValue("touch phase")),
+    })
 }
 
 fn read_mouse(byte: u8) -> Result<MouseAction, ProtocolError> {
@@ -130,7 +154,13 @@ fn push_intent(payload: &mut Vec<u8>, intent: &Intent) -> Result<(), ProtocolErr
             push_string(payload, text)?;
         }
         Intent::Mouse { action, button, at } => {
-            payload.extend_from_slice(&[TAG_MOUSE, mouse_byte(*action), *button]);
+            payload.extend_from_slice(&[TAG_MOUSE, mouse_byte(*action)?, *button]);
+            push_point(payload, *at);
+        }
+        Intent::Gone => payload.push(TAG_GONE),
+        Intent::Touch { phase, contact, at } => {
+            payload.extend_from_slice(&[TAG_TOUCH, touch_byte(*phase)]);
+            payload.extend_from_slice(&contact.to_be_bytes());
             push_point(payload, *at);
         }
         Intent::Wheel { dx, dy, at } => {
@@ -198,6 +228,12 @@ fn read_intent(fields: &mut Fields<'_>) -> Result<Intent, ProtocolError> {
             let leave = fields.flag("leave")?;
             Intent::Hover { leave, column: fields.u8()?, row: fields.u8()? }
         }
+        TAG_GONE => Intent::Gone,
+        TAG_TOUCH => {
+            let phase = read_touch(fields.u8()?)?;
+            let contact = u64::from_be_bytes(fields.array()?);
+            Intent::Touch { phase, contact, at: read_point(fields)? }
+        }
         _ => return Err(ProtocolError::BadValue("intent")),
     };
     check(&intent)?;
@@ -207,13 +243,11 @@ fn read_intent(fields: &mut Fields<'_>) -> Result<Intent, ProtocolError> {
 pub(crate) fn push_input(payload: &mut Vec<u8>, input: &InputIntent) -> Result<(), ProtocolError> {
     check(&input.intent)?;
     crate::push_key(payload, input.key);
-    payload.extend_from_slice(&input.local.to_be_bytes());
     push_intent(payload, &input.intent)
 }
 
 pub(crate) fn read_input(fields: &mut Fields<'_>) -> Result<InputIntent, ProtocolError> {
     let key = fields.key()?;
-    let local = fields.u32()?;
     let intent = read_intent(fields)?;
-    Ok(InputIntent { key, local, intent })
+    Ok(InputIntent { key, intent })
 }

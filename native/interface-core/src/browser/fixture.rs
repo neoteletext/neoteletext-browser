@@ -39,6 +39,9 @@ pub(super) fn browser() -> (Browser, Recorder) {
         ..StripState::default()
     });
     browser.set_channel(channel());
+    // The tests of the window are of the wall of pages; a new window
+    // shows the page alone (decision 126).
+    browser.wall.toggle_single(0);
     let mut canvas = Recorder::new();
     browser.draw(&mut canvas, WIDTH, HEIGHT, 0);
     (browser, canvas)

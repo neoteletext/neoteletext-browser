@@ -1,14 +1,15 @@
 //! The history panel drawn: the search and Clear history, the clearing
 //! choices or Remove selected, the recently closed tabs, the rows under
-//! their days' headings, a row's menu and the footer; and its tips.
+//! their days' headings, a row's menu, the footer and the edges' grips;
+//! and its tips, a row's its full address (decision 127).
 
 use alloc::format;
 use alloc::string::String;
 use alloc::vec::Vec;
 
 use super::{
-    CHECK_SIZE, CLOSED_SHOWN, CLOSED_WIDTH, CONTROL_HEIGHT, Controls, DAY_HEIGHT, GAP, HEADING_HEIGHT, MENU_WIDTH, PADDING, PANEL_HEIGHT, PANEL_WIDTH,
-    RANGE_BUTTON, RANGES, ROW_HEIGHT, RowAction, SMALL_BUTTON, TIME_WIDTH, WIDE_BUTTON,
+    CHECK_SIZE, CLOSED_SHOWN, CLOSED_WIDTH, CONTROL_HEIGHT, Controls, DAY_HEIGHT, GAP, HEADING_HEIGHT, MENU_WIDTH, PADDING, PANEL_HEIGHT, RANGE_BUTTON, RANGES,
+    ROW_HEIGHT, RowAction, SMALL_BUTTON, TIME_WIDTH, WIDE_BUTTON,
 };
 use crate::browser::Browser;
 use crate::browser::widgets::{button, field, panel, panel_rect};
@@ -26,6 +27,18 @@ impl Browser {
         for &(_, _, menu, _) in &controls.rows {
             tips.push((menu, "More from this site, or remove from history".into()));
         }
+        // A row's title and address are cut to the panel's width; resting
+        // on the row shows the whole address the trusted core sent, unless
+        // the row's menu is open over the rows.
+        if self.history.menu.is_some() {
+            return;
+        }
+        let Some(view) = &self.history.view else { return };
+        for &(number, check, menu, row) in &controls.rows {
+            if let Some(shown) = view.rows.iter().find(|shown| shown.number == number && !shown.address.is_empty()) {
+                tips.push((Rect::new(check.x1, row.y0, menu.x0, row.y1), shown.address.clone()));
+            }
+        }
     }
 
     /// The panel, over the window below the strip, while it is open.
@@ -35,7 +48,7 @@ impl Browser {
             self.history.controls = controls;
             return;
         }
-        let area = panel_rect(self.body, PANEL_WIDTH, PANEL_HEIGHT);
+        let area = panel_rect(self.body, self.history_width(self.body), PANEL_HEIGHT);
         panel(canvas, area);
         controls.panel = area;
         let (left, right) = (area.x0 + PADDING, area.x1 - PADDING);
@@ -58,6 +71,7 @@ impl Browser {
 
         draw_footer(canvas, &view, &controls, Rect::new(left, footer, right, footer + CONTROL_HEIGHT));
         self.history.controls = controls;
+        self.draw_history_edges(canvas, area);
     }
 
     /// The search, and "Clear history…", along `line`.
@@ -83,14 +97,24 @@ impl Browser {
             controls.with_cookies = Rect::new(controls.with_history.x1 + GAP, y, controls.with_history.x1 + GAP + RANGE_BUTTON, y + CONTROL_HEIGHT);
             button(canvas, controls.with_cookies, "Cookies", self.history.clears.cookies);
             y += CONTROL_HEIGHT + GAP;
+            // The ranges and Cancel, onto further lines in a panel too
+            // narrow for them on one (decision 127).
             let mut x = left;
+            let mut place = |y: &mut f64| {
+                if x > left && x + RANGE_BUTTON > right {
+                    x = left;
+                    *y += CONTROL_HEIGHT + GAP;
+                }
+                let rect = Rect::new(x, *y, x + RANGE_BUTTON, *y + CONTROL_HEIGHT);
+                x = rect.x1 + GAP;
+                rect
+            };
             for (range, word) in RANGES {
-                let rect = Rect::new(x, y, x + RANGE_BUTTON, y + CONTROL_HEIGHT);
+                let rect = place(&mut y);
                 button(canvas, rect, word, false);
                 controls.ranges.push((range, rect));
-                x = rect.x1 + GAP;
             }
-            controls.cancel = Rect::new(x, y, (x + RANGE_BUTTON).min(right), y + CONTROL_HEIGHT);
+            controls.cancel = place(&mut y);
             button(canvas, controls.cancel, "Cancel", false);
             y += CONTROL_HEIGHT + GAP;
         } else if !self.history.selected.is_empty() {

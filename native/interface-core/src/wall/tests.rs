@@ -10,13 +10,21 @@ use crate::test_canvas::Recorder;
 
 const PANEL: Rect = Rect::new(0.0, 0.0, 1000.0, 700.0);
 
+/// A wall showing the wall of pages, which these tests are of; a new one
+/// shows the page alone (decision 126).
+fn on_wall() -> Wall {
+    let mut wall = Wall::new();
+    wall.view = View::Wall;
+    wall
+}
+
 fn pages(count: u16) -> Vec<WallPage<'static>> {
     (0..count).map(|offset| WallPage { key: PageKey { channel: 1, page: 0x100_u16.saturating_add(offset) }, title: "Title", updated: None }).collect()
 }
 
 #[test]
 fn only_pages_on_screen_are_visible() {
-    let mut wall = Wall::new();
+    let mut wall = on_wall();
     let mut canvas = Recorder::new();
     wall.draw(&mut canvas, PANEL, &pages(24), None, 0);
     let visible = wall.visible();
@@ -26,7 +34,7 @@ fn only_pages_on_screen_are_visible() {
 
 #[test]
 fn a_revealed_page_is_drawn() {
-    let mut wall = Wall::new();
+    let mut wall = on_wall();
     let mut canvas = Recorder::new();
     let pages = pages(24);
     wall.draw(&mut canvas, PANEL, &pages, None, 0);
@@ -39,7 +47,7 @@ fn a_revealed_page_is_drawn() {
 
 #[test]
 fn a_click_finds_its_cell() {
-    let mut wall = Wall::new();
+    let mut wall = on_wall();
     let mut canvas = Recorder::new();
     wall.draw(&mut canvas, PANEL, &pages(24), None, 0);
     let (key, rect) = canvas.pages.iter().copied().find(|(key, _)| key.page == 0x101).unwrap();
@@ -65,7 +73,7 @@ fn draw_at(wall: &mut Wall, pages: &[WallPage<'_>], now: u64) -> Recorder {
 
 #[test]
 fn a_zoomed_page_grows_from_its_place_to_fill_the_area() {
-    let mut wall = Wall::new();
+    let mut wall = on_wall();
     let pages = pages(24);
     // The second page: on screen, in the first row.
     let key = pages[1].key;
@@ -85,7 +93,7 @@ fn a_zoomed_page_grows_from_its_place_to_fill_the_area() {
 
 #[test]
 fn the_close_button_zooms_back_to_the_wall() {
-    let mut wall = Wall::new();
+    let mut wall = on_wall();
     let pages = pages(24);
     // The second page: on screen, in the first row.
     let key = pages[1].key;
@@ -106,7 +114,7 @@ fn the_close_button_zooms_back_to_the_wall() {
 
 #[test]
 fn escape_part_way_reverses_without_a_jump() {
-    let mut wall = Wall::new();
+    let mut wall = on_wall();
     let pages = pages(24);
     // The second page: on screen, in the first row.
     let key = pages[1].key;
@@ -123,7 +131,7 @@ fn escape_part_way_reverses_without_a_jump() {
 
 #[test]
 fn a_hovered_page_pops_out_and_settles_back() {
-    let mut wall = Wall::new();
+    let mut wall = on_wall();
     let pages = pages(24);
     let key = pages[1].key;
     let slot = last_rect(&draw_at(&mut wall, &pages, 0), key);
@@ -143,7 +151,7 @@ fn a_hovered_page_pops_out_and_settles_back() {
 
 #[test]
 fn the_slider_end_is_the_zoomed_state() {
-    let mut wall = Wall::new();
+    let mut wall = on_wall();
     let pages = pages(24);
     draw_at(&mut wall, &pages, 0);
     // Wheeled all the way right: the first page on screen zooms.
@@ -156,7 +164,7 @@ fn the_slider_end_is_the_zoomed_state() {
 
 #[test]
 fn a_click_zoom_moves_the_thumb_to_the_end_and_escape_puts_it_back() {
-    let mut wall = Wall::new();
+    let mut wall = on_wall();
     let pages = pages(24);
     draw_at(&mut wall, &pages, 0);
     let before = wall.width;
@@ -168,7 +176,7 @@ fn a_click_zoom_moves_the_thumb_to_the_end_and_escape_puts_it_back() {
 
 #[test]
 fn the_wheel_steps_through_pages_and_each_snaps_into_place() {
-    let mut wall = Wall::new();
+    let mut wall = on_wall();
     let pages = pages(24);
     draw_at(&mut wall, &pages, 0);
     wall.zoom(pages[1].key, 0);
@@ -198,7 +206,7 @@ fn the_wheel_steps_through_pages_and_each_snaps_into_place() {
 fn every_notch_of_a_mouse_wheel_moves_a_page() {
     // A slow notch on macOS, as measured: a tenth of a line.
     const SLOW_NOTCH: f64 = 0.1;
-    let mut wall = Wall::new();
+    let mut wall = on_wall();
     let pages = pages(24);
     draw_at(&mut wall, &pages, 0);
     wall.zoom(pages[1].key, 0);
@@ -215,7 +223,7 @@ fn every_notch_of_a_mouse_wheel_moves_a_page() {
 
 #[test]
 fn a_step_during_a_slide_carries_on_without_a_jump() {
-    let mut wall = Wall::new();
+    let mut wall = on_wall();
     let pages = pages(24);
     draw_at(&mut wall, &pages, 0);
     wall.zoom(pages[1].key, 0);
@@ -229,7 +237,7 @@ fn a_step_during_a_slide_carries_on_without_a_jump() {
 
 #[test]
 fn a_zoomed_page_that_leaves_the_wall_ends_the_zoom() {
-    let mut wall = Wall::new();
+    let mut wall = on_wall();
     wall.zoom(PageKey { channel: 9, page: 0x500 }, 0);
     draw_at(&mut wall, &pages(4), 0);
     assert_eq!(wall.zoomed(), None);
@@ -237,7 +245,7 @@ fn a_zoomed_page_that_leaves_the_wall_ends_the_zoom() {
 
 #[test]
 fn the_buttons_step_the_page_size() {
-    let mut wall = Wall::new();
+    let mut wall = on_wall();
     let mut canvas = Recorder::new();
     wall.draw(&mut canvas, PANEL, &pages(4), None, 0);
     let before = wall.width;

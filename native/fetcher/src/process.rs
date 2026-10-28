@@ -1,11 +1,12 @@
 //! The fetcher's loop: the agent's output turned into actions on the
 //! sockets and messages for the trusted core, one page at a time in the
 //! contents file's order, and the trusted core's messages read on a
-//! thread of their own.
+//! thread of their own. The input messages of one moment reach the agent
+//! together, so they leave in one write (REQ-RCH-010).
 
 use std::cell::RefCell;
 use std::collections::VecDeque;
-use std::io::{self, BufWriter, Write};
+use std::io::{self, BufWriter, Read, Write};
 use std::net::IpAddr;
 use std::rc::Rc;
 use std::sync::Arc;
@@ -13,6 +14,8 @@ use std::sync::mpsc::{self, RecvTimeoutError};
 use std::time::{Duration, Instant as Clock};
 
 use neoteletext_core::types::{Instant, PageAddress, SubCode};
+#[cfg(feature = "interaction")]
+use neoteletext_web::agent::InputMessage;
 use neoteletext_web::agent::{Config, Event, Input, Output, Source, Storage, Subscription, UserAgent};
 use neoteletext_web::consts::ALLOWED_LOCAL;
 use neoteletext_web::contents::{self, Entry as ContentsEntry};
@@ -59,6 +62,18 @@ const _: () = assert!(subpages::MAX_TITLE * 4 <= protocol::MAX_PAGE_TITLE);
 // An exchange reports an address the engine accepted, so the protocol's
 // bound must hold the engine's longest.
 const _: () = assert!(protocol::fetcher::MAX_EXCHANGE_URL >= neoteletext_web::consts::MAX_URL_LENGTH);
+// A move the trusted core tags is of a contact the agent holds a slot for,
+// and fits it (REQ-RCH-035).
+#[cfg(feature = "interaction")]
+const _: () = assert!(neoteletext_input::MAX_CONTACTS == neoteletext_web::consts::PUSH_MOVE_SLOTS);
+#[cfg(feature = "interaction")]
+const _: () = assert!(neoteletext_input::event::MAX_MOVE_BYTES <= neoteletext_web::consts::PUSH_MOVE_MAX);
+/// The input messages of one moment handed to the loop at most together:
+/// a move of every contact and one other event, the most the trusted core
+/// writes at one moment (REQ-RCH-010, REQ-RCH-033). More are handed on in
+/// groups of this many, still in order.
+#[cfg(feature = "interaction")]
+const MOMENT_MESSAGES: usize = neoteletext_web::consts::PUSH_MOVE_SLOTS + 1;
 
 /// The wake that ends the loop's wait: none at once while the loop is
 /// busy; otherwise the first to come, an input message the moment it
@@ -79,9 +94,14 @@ fn wait_for_wake(woken: &mpsc::Receiver<Wake>, busy: bool, next_tick: Option<Ins
 /// What ends the loop's wait: it sleeps until one comes, or until the
 /// agent's next timer (REQ-INT-135).
 enum Wake {
-    /// An input message from the trusted core, sent at once.
+    /// The input messages of one moment from the trusted core, in order,
+    /// sent at once and together.
     #[cfg(feature = "interaction")]
-    Record(Vec<u8>),
+    Records(Vec<Record>),
+    /// The trusted core turns the round trip's measurement on or off
+    /// (REQ-RCH-016).
+    #[cfg(feature = "interaction")]
+    RoundTrip(bool),
     /// The trusted core asks for a page's catalogue of sub-pages, or for
     /// one sub-page (decision 112).
     Fetch(ToFetcher),
@@ -89,6 +109,15 @@ enum Wake {
     Network,
     /// The trusted core closed standard input.
     Ended,
+}
+
+/// One input message from the trusted core, checked by the protocol's
+/// reader: its bytes, and the contact whose move it is, alone.
+#[cfg(feature = "interaction")]
+#[derive(Debug, PartialEq, Eq)]
+struct Record {
+    bytes: Vec<u8>,
+    move_of: Option<u8>,
 }
 
 /// What the agent asked for, owned, to act on after its call returns.
@@ -164,10 +193,17 @@ fn collect(output: Output<'_>, actions: &mut Vec<Action>) {
         }),
         // A lost connection waits before the next; a bad message that
         // keeps the connection says it is retried at once, and is not one.
-        Output::Event(Event::PushLost { retry_in_us, .. }) if retry_in_us > 0 => Action::Push(false),
+        Output::Event(Event::PushLost { retry_in_us, problem }) if retry_in_us > 0 => {
+            // Why the push connection went is otherwise never seen.
+            eprintln!("neoteletext-fetcher: the push connection was lost ({problem:?}); trying again in {retry_in_us} µs");
+            Action::Push(false)
+        }
         // An input message not sent: nothing is told, as nothing was asked.
         #[cfg(feature = "interaction")]
         Output::Event(Event::InputDropped) => return,
+        // The push WebSocket's round trip, for the strip (REQ-RCH-016).
+        #[cfg(feature = "interaction")]
+        Output::Event(Event::RoundTrip { microseconds }) => Action::Tell(FromFetcher::RoundTrip { microseconds }),
         Output::Event(event) => Action::Tell(FromFetcher::Notice(format!("{event:?}"))),
         _ => return,
     });
@@ -288,7 +324,7 @@ pub fn run(channel: &str, allowed: &[IpAddr], proxy: Option<Proxy>) -> Result<()
     // then it sends only input messages (REQ-INT-133); anything else
     // ends the fetcher too.
     std::thread::spawn(move || {
-        read_commands(&wakes, &answers);
+        read_commands(&mut io::BufReader::new(io::stdin().lock()), &wakes, &answers);
         let _ = wakes.send(Wake::Ended);
     });
 
@@ -351,10 +387,18 @@ pub fn run(channel: &str, allowed: &[IpAddr], proxy: Option<Proxy>) -> Result<()
         // What this turn produced goes before waiting.
         output.borrow_mut().flush().map_err(|error| error.to_string())?;
         let first = wait_for_wake(&woken, busy, next_tick, clock());
-        for wake in first.into_iter().chain(std::iter::from_fn(|| woken.try_recv().ok())) {
+        // Every wake already here, so the input messages read at the same
+        // moment are known to follow one another (REQ-RCH-010).
+        let mut woke: VecDeque<Wake> = first.into_iter().chain(std::iter::from_fn(|| woken.try_recv().ok())).collect();
+        while let Some(wake) = woke.pop_front() {
             match wake {
                 #[cfg(feature = "interaction")]
-                Wake::Record(record) => agent.handle(clock(), Input::Send(&record), &mut |out| collect(out, &mut actions)),
+                Wake::Records(records) => {
+                    let more_after = matches!(woke.front(), Some(Wake::Records(_)));
+                    give_records(&records, more_after, &mut |input| agent.handle(clock(), input, &mut |out| collect(out, &mut actions)));
+                }
+                #[cfg(feature = "interaction")]
+                Wake::RoundTrip(on) => agent.handle(clock(), Input::MeasureRoundTrip(on), &mut |out| collect(out, &mut actions)),
                 Wake::Fetch(asked) => fetch(&mut agent, &clock, &asked, &mut actions),
                 // The sockets are looked at on the next turn.
                 Wake::Network => {}
@@ -454,15 +498,50 @@ fn fetch(agent: &mut Agent<'_>, clock: &dyn Fn() -> Instant, asked: &ToFetcher, 
     }
 }
 
+/// Gives the agent the input messages of one moment, in order: each but
+/// the last says more follow, and the last too when `more_after`, another
+/// moment's being already here, so the agent writes them all in one send
+/// (REQ-RCH-010). Nothing waits for a message that is not here: the agent
+/// writes what it holds when the last is handled.
+#[cfg(feature = "interaction")]
+fn give_records(records: &[Record], more_after: bool, handle: &mut dyn FnMut(Input<'_>)) {
+    let last = records.len().saturating_sub(1);
+    for (index, record) in records.iter().enumerate() {
+        let more = index < last || more_after;
+        handle(Input::Send(InputMessage { bytes: &record.bytes, move_of: record.move_of, more }));
+    }
+}
+
+/// Hands the loop the input messages of a moment read so far, if any;
+/// false when the loop has gone.
+#[cfg(feature = "interaction")]
+fn hand_moment(commands: &mpsc::Sender<Wake>, moment: &mut Vec<Record>) -> bool {
+    moment.is_empty() || commands.send(Wake::Records(std::mem::take(moment))).is_ok()
+}
+
 /// Reads the trusted core's messages until its pipe closes or breaks the
 /// protocol: input messages and requests wake the loop, and cookie answers
-/// go to the store waiting for them.
-fn read_commands(commands: &mpsc::Sender<Wake>, answers: &mpsc::Sender<ToFetcher>) {
-    let mut input = io::BufReader::new(io::stdin().lock());
-    while let Ok(Some(message)) = read_to_fetcher(&mut input) {
+/// go to the store waiting for them. An input message the trusted core
+/// says more follow at once waits here for them (REQ-RCH-010): it writes
+/// a moment's messages in one write, so they are already on the pipe; any
+/// other message, the bound [`MOMENT_MESSAGES`] or the pipe's end hands on
+/// what was read.
+fn read_commands(input: &mut dyn Read, commands: &mpsc::Sender<Wake>, answers: &mpsc::Sender<ToFetcher>) {
+    #[cfg(feature = "interaction")]
+    let mut moment: Vec<Record> = Vec::new();
+    while let Ok(Some(message)) = read_to_fetcher(input) {
+        #[cfg(feature = "interaction")]
+        if !matches!(message, ToFetcher::Send { .. }) && !hand_moment(commands, &mut moment) {
+            return;
+        }
         let delivered = match message {
             #[cfg(feature = "interaction")]
-            ToFetcher::Send(record) => commands.send(Wake::Record(record)).is_ok(),
+            ToFetcher::Send { bytes, move_of, more } => {
+                moment.push(Record { bytes, move_of });
+                (more && moment.len() < MOMENT_MESSAGES) || hand_moment(commands, &mut moment)
+            }
+            #[cfg(feature = "interaction")]
+            ToFetcher::MeasureRoundTrip(on) => commands.send(Wake::RoundTrip(on)).is_ok(),
             answer @ (ToFetcher::CookieAnswer { .. } | ToFetcher::ReachedAnswer { .. }) => answers.send(answer).is_ok(),
             asked @ (ToFetcher::FetchSubPages { .. } | ToFetcher::FetchSubPage { .. }) => commands.send(Wake::Fetch(asked)).is_ok(),
         };
@@ -470,6 +549,8 @@ fn read_commands(commands: &mpsc::Sender<Wake>, answers: &mpsc::Sender<ToFetcher
             return;
         }
     }
+    #[cfg(feature = "interaction")]
+    hand_moment(commands, &mut moment);
 }
 
 #[cfg(test)]
@@ -575,5 +656,186 @@ mod tests {
         agent.handle(Instant(0), Input::Net(connected), &mut |out| collect(out, &mut actions));
         drop(agent);
         assert_eq!(asked.0, ["a.example/tt/channel.json"]);
+    }
+
+    /// A public address for the test's channel, which the agent may reach.
+    #[cfg(feature = "interaction")]
+    const PUBLIC: neoteletext_web::url::IpAddress = neoteletext_web::url::IpAddress::V4([93, 184, 216, 34]);
+
+    /// A MOUSE move to the dot `x`, and a KEY press of `a`, as the
+    /// engine's writer writes them; the agent does not read them.
+    #[cfg(feature = "interaction")]
+    fn mouse_move(x: u8) -> Vec<u8> {
+        vec![0xFF, 0x02, 0x06, 0x00, 0x01, 0x05, x, 0x64]
+    }
+    #[cfg(feature = "interaction")]
+    const KEY: [u8; 6] = [0xFF, 0x01, 0x10, b'a', 1, b'a'];
+
+    /// The frames of one send on the push WebSocket, unmasked: opcode and
+    /// payload each (RFC 6455 section 5.2; short frames only).
+    #[cfg(feature = "interaction")]
+    #[allow(clippy::arithmetic_side_effects, reason = "a test's frames, short and well formed")]
+    fn client_frames(mut bytes: &[u8]) -> Vec<(u8, Vec<u8>)> {
+        let mut frames = Vec::new();
+        while !bytes.is_empty() {
+            let (length, offset) = match bytes[1] & 0x7F {
+                126 => (usize::from(u16::from_be_bytes([bytes[2], bytes[3]])), 4),
+                length => (usize::from(length), 2),
+            };
+            let mask = &bytes[offset..offset + 4];
+            let payload = bytes[offset + 4..offset + 4 + length].iter().zip(mask.iter().cycle()).map(|(byte, key)| byte ^ key).collect();
+            frames.push((bytes[0] & 0x0F, payload));
+            bytes = &bytes[offset + 4 + length..];
+        }
+        frames
+    }
+
+    /// What the agent sent on the push connection, each send as its
+    /// frames, taken from `actions`.
+    #[cfg(feature = "interaction")]
+    fn push_sends(actions: &mut Vec<Action>) -> Vec<Vec<(u8, Vec<u8>)>> {
+        std::mem::take(actions)
+            .into_iter()
+            .filter_map(|action| match action {
+                Action::Send(ConnectionId::Push, bytes) => Some(client_frames(&bytes)),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// Opens the channel `http://tt.example/tt/`, which takes
+    /// input, and its push WebSocket, as the loop would from what its
+    /// sockets give, at `now` microseconds and on.
+    #[cfg(feature = "interaction")]
+    fn open_push(agent: &mut Agent<'_>, now: u64) {
+        use neoteletext_web::port::NetInput;
+        let mut actions = Vec::new();
+        let handle = |agent: &mut Agent<'_>, input: Input<'_>, actions: &mut Vec<Action>| agent.handle(Instant(now), input, &mut |out| collect(out, actions));
+        handle(agent, Input::OpenChannel("http://tt.example/tt/"), &mut actions);
+        handle(agent, Input::Net(NetInput::Connected(ConnectionId::Fetch, PUBLIC)), &mut actions);
+        let body = br#"{"name":"Test","push":{"address":"ws://tt.example/tt/push","method":"websocket","input":true}}"#;
+        let mut response = format!("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n", body.len()).into_bytes();
+        response.extend_from_slice(body);
+        handle(agent, Input::Net(NetInput::Received(ConnectionId::Fetch, &response)), &mut actions);
+        assert!(actions.iter().any(|action| matches!(action, Action::Ready)), "the channel is ready");
+        ask_for_channel(agent, &|| Instant(now), &mut actions);
+        assert!(actions.iter().any(|action| matches!(action, Action::Connect { connection: ConnectionId::Push, .. })), "the push connection opens");
+        handle(agent, Input::Net(NetInput::Connected(ConnectionId::Push, PUBLIC)), &mut actions);
+        let request = actions
+            .iter()
+            .rev()
+            .find_map(|action| match action {
+                Action::Send(ConnectionId::Push, bytes) => Some(String::from_utf8_lossy(bytes).into_owned()),
+                _ => None,
+            })
+            .expect("the upgrade request");
+        let key = request.lines().find_map(|line| line.strip_prefix("Sec-WebSocket-Key: ")).expect("a key").trim().to_owned();
+        let accept = neoteletext_web::ws::accept_for(key.as_bytes());
+        let upgrade = format!(
+            "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: {}\r\n\r\n",
+            std::str::from_utf8(&accept).unwrap()
+        );
+        handle(agent, Input::Net(NetInput::Received(ConnectionId::Push, upgrade.as_bytes())), &mut actions);
+        assert!(actions.iter().any(|action| matches!(action, Action::Push(true))), "the push WebSocket is open");
+    }
+
+    /// The agent the fetcher builds, over `storage`.
+    #[cfg(feature = "interaction")]
+    fn agent(storage: &mut Storage) -> Agent<'_> {
+        UserAgent::new(agent_config(&[], false), storage.buffers(), Random::new())
+    }
+
+    /// The wakes `read_commands` hands the loop for `messages` on the pipe.
+    #[cfg(feature = "interaction")]
+    fn wakes_for(messages: &[ToFetcher]) -> Vec<Wake> {
+        let mut pipe = Vec::new();
+        for message in messages {
+            protocol::fetcher::write_to_fetcher(&mut pipe, message).unwrap();
+        }
+        let (commands, woken) = mpsc::channel();
+        let (answers, _) = mpsc::channel();
+        read_commands(&mut pipe.as_slice(), &commands, &answers);
+        drop(commands);
+        woken.into_iter().collect()
+    }
+
+    /// The bytes and contacts of a wake of input messages.
+    #[cfg(feature = "interaction")]
+    fn records(wake: &Wake) -> Vec<(Vec<u8>, Option<u8>)> {
+        match wake {
+            Wake::Records(records) => records.iter().map(|record| (record.bytes.clone(), record.move_of)).collect(),
+            _ => panic!("not input messages"),
+        }
+    }
+
+    /// REQ-RCH-010 (requirement 18.30): the input messages the trusted
+    /// core writes at one moment reach the loop together, in order, and
+    /// leave in one write; a message alone goes at once; any other message
+    /// or the pipe's end hands on what was read; a moment is bounded.
+    #[cfg(feature = "interaction")]
+    #[test]
+    fn the_messages_of_one_moment_reach_the_agent_together_and_leave_in_one_write() {
+        let send = |bytes: &[u8], move_of: Option<u8>, more: bool| ToFetcher::Send { bytes: bytes.to_vec(), move_of, more };
+        let wakes = wakes_for(&[
+            send(&mouse_move(1), Some(0), true),
+            send(&KEY, None, false),
+            send(&KEY, None, false),
+            send(&KEY, None, true),
+            ToFetcher::MeasureRoundTrip(true),
+            send(&mouse_move(2), Some(0), true),
+        ]);
+        assert_eq!(wakes.len(), 5);
+        assert_eq!(records(&wakes[0]), [(mouse_move(1), Some(0)), (KEY.to_vec(), None)], "one moment, in order");
+        assert_eq!(records(&wakes[1]), [(KEY.to_vec(), None)], "a message alone, at once");
+        assert_eq!(records(&wakes[2]), [(KEY.to_vec(), None)], "another message hands on the moment");
+        assert!(matches!(wakes[3], Wake::RoundTrip(true)));
+        assert_eq!(records(&wakes[4]), [(mouse_move(2), Some(0))], "the pipe's end hands on the moment");
+        let many: Vec<ToFetcher> = (0..=MOMENT_MESSAGES).map(|_| send(&KEY, None, true)).collect();
+        let wakes = wakes_for(&many);
+        assert_eq!(wakes.iter().map(|wake| records(wake).len()).collect::<Vec<_>>(), [MOMENT_MESSAGES, 1], "bounded");
+
+        let mut storage = Box::new(Storage::default());
+        let mut agent = agent(&mut storage);
+        open_push(&mut agent, 0);
+        let mut actions = Vec::new();
+        let mut handle = |input: Input<'_>| agent.handle(Instant(0), input, &mut |out| collect(out, &mut actions));
+        let moment = [Record { bytes: mouse_move(1), move_of: Some(0) }, Record { bytes: KEY.to_vec(), move_of: None }];
+        give_records(&moment, false, &mut handle);
+        give_records(&[Record { bytes: KEY.to_vec(), move_of: None }], true, &mut handle);
+        give_records(&[Record { bytes: mouse_move(3), move_of: Some(0) }], false, &mut handle);
+        give_records(&[Record { bytes: KEY.to_vec(), move_of: None }], false, &mut handle);
+        let binary = |bytes: &[u8]| (neoteletext_web::consts::OPCODE_BINARY, bytes.to_vec());
+        assert_eq!(
+            push_sends(&mut actions),
+            [vec![binary(&mouse_move(1)), binary(&KEY)], vec![binary(&KEY), binary(&mouse_move(3))], vec![binary(&KEY)]],
+            "a moment in one send, in order; one already here joins it; a lone message at once"
+        );
+    }
+
+    /// REQ-RCH-016 (requirement 18.32): asked to, the agent measures the
+    /// push WebSocket's round trip by a ping of one byte, and its pong goes
+    /// to the trusted core as the round trip, in microseconds.
+    #[cfg(feature = "interaction")]
+    #[test]
+    fn the_round_trip_is_measured_and_told_to_the_core() {
+        let mut storage = Box::new(Storage::default());
+        let mut agent = agent(&mut storage);
+        open_push(&mut agent, 0);
+        let mut actions = Vec::new();
+        agent.handle(Instant(1_000), Input::MeasureRoundTrip(true), &mut |out| collect(out, &mut actions));
+        agent.handle(Instant(1_000), Input::Tick, &mut |out| collect(out, &mut actions));
+        let ping = push_sends(&mut actions).concat().into_iter().find(|(opcode, _)| *opcode == neoteletext_web::consts::OPCODE_PING).expect("a ping");
+        assert_eq!(ping.1.len(), 1, "one byte, told from the heartbeat's");
+        let answer = [0x80 | neoteletext_web::consts::OPCODE_PONG, 1, ping.1[0]];
+        let answered = neoteletext_web::port::NetInput::Received(ConnectionId::Push, &answer);
+        agent.handle(Instant(32_250), Input::Net(answered), &mut |out| collect(out, &mut actions));
+        let told: Vec<FromFetcher> = actions
+            .into_iter()
+            .filter_map(|action| match action {
+                Action::Tell(message @ FromFetcher::RoundTrip { .. }) => Some(message),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(told, [FromFetcher::RoundTrip { microseconds: 31_250 }]);
     }
 }

@@ -89,6 +89,11 @@ impl Browser {
     }
 
     /// A press on a suggestion: it opens, as the user's own navigation.
+    /// Whether `point` is on the address field's open suggestions.
+    pub(super) fn over_suggestions(&self, point: Point) -> bool {
+        self.suggestions.suggestions.is_some() && self.suggestions.suggestions_area.contains(point)
+    }
+
     pub(super) fn suggestion_press(&mut self, point: Point, new_tab: bool) -> bool {
         if self.suggestions.suggestions.is_none() || !self.suggestions.suggestions_area.contains(point) {
             return false;

@@ -81,6 +81,11 @@ fn message(session: &mut Session, item: &Item<'_>) -> Vec<u8> {
 /// its cookie questions as the trusted core does, one message at a time.
 type Input = std::sync::Arc<std::sync::Mutex<BufWriter<std::process::ChildStdin>>>;
 
+/// An input message alone: not a move, nothing more of its moment.
+fn alone(bytes: Vec<u8>) -> ToFetcher {
+    ToFetcher::Send { bytes, move_of: None, more: false }
+}
+
 fn send(input: &Input, message: &ToFetcher) {
     let mut input = input.lock().unwrap();
     write_to_fetcher(&mut *input, message).unwrap();
@@ -90,19 +95,19 @@ fn send(input: &Input, message: &ToFetcher) {
 fn open_session(input: &Input, received: &mpsc::Receiver<(Instant, FromFetcher)>, deadline: Instant) -> Session {
     let mut session = Session::new(PAGE_CAP);
     let mut hello = [0; neoteletext_input::MAX_MESSAGE];
-    let length = neoteletext_input::event::write(&Item::Event(session.open(0, None)), &mut hello).unwrap();
-    send(input, &ToFetcher::Send(hello[..length].to_vec()));
+    let length = session.open(0, None, &mut hello).unwrap();
+    send(input, &alone(hello[..length].to_vec()));
     loop {
         match received.recv_timeout(deadline.saturating_duration_since(Instant::now())) {
             Ok((_, FromFetcher::Page { origin: Origin::PushedPackets, bytes })) => {
                 let mut buffer = [0; FRAGMENT_DATA];
                 let welcome =
                     bytes.as_chunks::<42>().0.iter().find_map(|bytes| match from_packet(&neoteletext_core::packet::Packet { bytes: *bytes }, &mut buffer) {
-                        Some(Ok(Control::Welcome { version, caps })) => Some((version, caps)),
+                        Some(Ok(Control::Welcome { version, caps, resume })) => Some((version, caps, resume)),
                         _ => None,
                     });
-                if let Some((version, caps)) = welcome {
-                    session.welcome(version, caps).unwrap();
+                if let Some((version, caps, resume)) = welcome {
+                    session.welcome(version, caps, resume).unwrap();
                     return session;
                 }
             }
@@ -168,7 +173,7 @@ fn keys_round_trip_and_pages_reach_the_screen_within_budget() {
         }
     }
     let mut session = open_session(&input, &received, deadline);
-    send(&input, &ToFetcher::Send(message(&mut session, &Item::Event(Event::Page(PAGE)))));
+    send(&input, &alone(message(&mut session, &Item::Event(Event::Page(PAGE)))));
     next_push(Instant::now() + LIMIT);
 
     let mut engine = decoder::Engine::new();
@@ -182,7 +187,7 @@ fn keys_round_trip_and_pages_reach_the_screen_within_budget() {
         let character = char::from(b'a' + u8::try_from(index % 26).unwrap());
         let typed = message(&mut session, &Item::Text(character.encode_utf8(&mut [0; 4])));
         let sent = Instant::now();
-        send(&input, &ToFetcher::Send(typed));
+        send(&input, &alone(typed));
         let (arrived, bytes) = next_push(sent + LIMIT);
         round_trips.push(arrived - sent);
         let started = Instant::now();

@@ -13,9 +13,7 @@ use std::collections::{BTreeMap, VecDeque};
 
 use interface_core::canvas::{COLUMNS, PageKey};
 use interface_core::controls::FastextKey;
-use protocol::links::{
-    Alias, Area, Candidate, Fastext, LinkRun, Lit, MAX_CONTROLS, MAX_POINTER_AREAS, MAX_REMAPPED, MAX_RUNS, NumberLink, PageLinks, Prompt, Service, Spot,
-};
+use protocol::links::{Alias, Area, Candidate, Fastext, LinkRun, Lit, MAX_CONTROLS, MAX_REMAPPED, MAX_RUNS, NumberLink, PageLinks, Prompt, Service, Spot};
 
 use crate::address::Address;
 
@@ -61,8 +59,6 @@ struct Image {
     numbers: Vec<(u16, Destination)>,
     /// Its controls, checked (INPUT.md section 7.3).
     controls: Vec<Area>,
-    /// Its pointer areas, checked (INPUT.md section 7.4).
-    pointer_areas: Vec<Area>,
     /// Fastext's keys, decided, each with the sub-page it names; none when
     /// row 24 was not shown with this image (the engine's REQ-SEC-024).
     fastext: [Option<(Destination, Option<u16>)>; 5],
@@ -71,17 +67,16 @@ struct Image {
 #[derive(Default)]
 struct PageState {
     /// What the decoder last found in the page: its `LT` runs, its `LK`
-    /// lines, its controls and its pointer areas.
-    found: (Vec<Candidate>, Vec<NumberLink>, Vec<Area>, Vec<Area>),
+    /// lines and its controls.
+    found: (Vec<Candidate>, Vec<NumberLink>, Vec<Area>),
     /// The page's Fastext as the decoder last found it.
     fastext: Fastext,
     /// The latest images first.
     images: VecDeque<Image>,
 }
 
-/// A page's links, its `LK` lines, its controls and its pointer areas,
-/// decided.
-type Decided = (Vec<(LinkRun, Destination)>, Vec<(u16, Destination)>, Vec<Area>, Vec<Area>);
+/// A page's links, its `LK` lines and its controls, decided.
+type Decided = (Vec<(LinkRun, Destination)>, Vec<(u16, Destination)>, Vec<Area>);
 
 /// What a click, a typed number or a confirmation leads to.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -175,9 +170,9 @@ impl Links {
 
     /// The links and controls the decoder found in a page, for its next
     /// image.
-    pub fn found(&mut self, key: PageKey, candidates: Vec<Candidate>, numbers: Vec<NumberLink>, areas: (Vec<Area>, Vec<Area>), fastext: Fastext) {
+    pub fn found(&mut self, key: PageKey, candidates: Vec<Candidate>, numbers: Vec<NumberLink>, controls: Vec<Area>, fastext: Fastext) {
         let state = self.pages.entry(key).or_default();
-        state.found = (candidates, numbers, areas.0, areas.1);
+        state.found = (candidates, numbers, controls);
         state.fastext = fastext;
     }
 
@@ -200,19 +195,6 @@ impl Links {
         }
         self.lit = wanted;
         draw
-    }
-
-    /// Whether a move with no button held at `column`, `row` of the page
-    /// open in the active tab may go to its channel: the cell is in a
-    /// pointer area of its latest image (INPUT.md section 7.4).
-    #[must_use]
-    pub fn may_move(&self, key: PageKey, column: u8, row: u8) -> bool {
-        Some(key) == self.opened
-            && self
-                .pages
-                .get(&key)
-                .and_then(|state| state.images.front())
-                .is_some_and(|image| image.pointer_areas.iter().any(|area| area.contains(column, row)))
     }
 
     /// Whether `column`, `row` is the first cell of a control of the latest
@@ -304,8 +286,8 @@ impl Links {
     fn decide(&self, key: PageKey, channel: &Channel<'_>) -> Decided {
         let empty = Descriptor::default();
         let descriptor = self.descriptors.get(&key.channel).unwrap_or(&empty);
-        let Some(state) = self.pages.get(&key) else { return (Vec::new(), Vec::new(), Vec::new(), Vec::new()) };
-        let (candidates, numbers, controls, pointer_areas) = &state.found;
+        let Some(state) = self.pages.get(&key) else { return (Vec::new(), Vec::new(), Vec::new()) };
+        let (candidates, numbers, controls) = &state.found;
         // A page's `LK` lines; a web page is never the target of a typed
         // number (the engine's decision E.88).
         let numbers: Vec<(u16, Destination)> = numbers
@@ -340,17 +322,17 @@ impl Links {
         runs.truncate(MAX_RUNS);
         runs.sort_by_key(|(run, _)| (run.row, run.column));
         let controls = decide_controls(controls, &runs);
-        (runs, numbers, controls, decide_pointer_areas(pointer_areas))
+        (runs, numbers, controls)
     }
 
     /// A new image of a page was sent: its links are decided afresh, for the
     /// interface to draw over that image.
     pub fn image(&mut self, key: PageKey, version: u32, channel: &Channel<'_>, now: u64) -> PageLinks {
-        let (runs, numbers, controls, pointer_areas) = self.decide(key, channel);
+        let (runs, numbers, controls) = self.decide(key, channel);
         let fastext = self.decide_fastext(key);
         let state = self.pages.entry(key).or_default();
         let links = carry_since(state.images.front(), runs, now);
-        state.images.push_front(Image { version, links, numbers, controls, pointer_areas, fastext });
+        state.images.push_front(Image { version, links, numbers, controls, fastext });
         state.images.truncate(KEPT_IMAGES);
         self.page_links(key, key.channel)
     }
@@ -359,17 +341,16 @@ impl Links {
     /// channel's pages or descriptor changed: the latest image's links are
     /// decided again. Returns them when they changed.
     pub fn redecide(&mut self, key: PageKey, channel: &Channel<'_>, now: u64) -> Option<PageLinks> {
-        let (runs, numbers, controls, pointer_areas) = self.decide(key, channel);
+        let (runs, numbers, controls) = self.decide(key, channel);
         let fastext = self.decide_fastext(key);
         let image = self.pages.get_mut(&key)?.images.front_mut()?;
         let links = carry_since(Some(image), runs, now);
-        if links == image.links && numbers == image.numbers && controls == image.controls && pointer_areas == image.pointer_areas && fastext == image.fastext {
+        if links == image.links && numbers == image.numbers && controls == image.controls && fastext == image.fastext {
             return None;
         }
         image.links = links;
         image.numbers = numbers;
         image.controls = controls;
-        image.pointer_areas = pointer_areas;
         image.fastext = fastext;
         Some(self.page_links(key, key.channel))
     }
@@ -387,13 +368,7 @@ impl Links {
         remapped.sort_unstable();
         remapped.dedup();
         remapped.truncate(MAX_REMAPPED);
-        PageLinks {
-            version: image.version,
-            runs: image.links.iter().map(|link| link.run).collect(),
-            controls: image.controls.clone(),
-            pointer_areas: image.pointer_areas.clone(),
-            remapped,
-        }
+        PageLinks { version: image.version, runs: image.links.iter().map(|link| link.run).collect(), controls: image.controls.clone(), remapped }
     }
 }
 
@@ -416,29 +391,6 @@ fn decide_controls(found: &[Area], runs: &[(LinkRun, Destination)]) -> Vec<Area>
     }
     controls.truncate(MAX_CONTROLS);
     controls
-}
-
-/// A page's pointer areas as the decoder found them, checked again
-/// (INPUT.md section 7.4, REQ-INT-120): the whole page, or within rows 1 to
-/// 23 and the 40 columns, at least a cell each way, at most
-/// `MAX_POINTER_AREAS`. They may overlap.
-fn decide_pointer_areas(found: &[Area]) -> Vec<Area> {
-    let whole =
-        Area { row: 0, column: 0, width: u8::try_from(COLUMNS).unwrap_or(u8::MAX), height: u8::try_from(interface_core::canvas::ROWS).unwrap_or(u8::MAX) };
-    if found.contains(&whole) {
-        return vec![whole];
-    }
-    let mut areas: Vec<Area> = found
-        .iter()
-        .copied()
-        .filter(|area| {
-            let last_row = u16::from(area.row).saturating_add(u16::from(area.height)).saturating_sub(1);
-            let across = u16::from(area.column).saturating_add(u16::from(area.width));
-            area.row >= FIRST_LINK_ROW && last_row <= u16::from(LAST_LINK_ROW) && area.width > 0 && area.height > 0 && across <= COLUMNS
-        })
-        .collect();
-    areas.truncate(MAX_POINTER_AREAS);
-    areas
 }
 
 /// Whether two areas share a cell.

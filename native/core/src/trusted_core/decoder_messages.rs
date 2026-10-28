@@ -41,9 +41,9 @@ impl Core {
             }
             FromDecoder::Frame { page, palette, screen, indices } => self.frame(PageKey { channel, page }, palette, screen, indices)?,
             #[cfg(feature = "links")]
-            FromDecoder::Links { page, with_image, candidates, numbers, controls, pointer_areas, fastext } => {
+            FromDecoder::Links { page, with_image, candidates, numbers, controls, fastext } => {
                 let key = PageKey { channel, page };
-                self.links.found(key, candidates, numbers, (controls, pointer_areas), fastext);
+                self.links.found(key, candidates, numbers, controls, fastext);
                 if !with_image {
                     self.redecide(key)?;
                     self.send_controls()?;
@@ -72,12 +72,12 @@ impl Core {
             }
             #[cfg(feature = "interaction")]
             FromDecoder::Cursor { body } => {
-                let sends = self.typing.cursor(channel, body, self.now());
+                let sends = self.typing.cursor(channel, body);
                 self.deliver_typing(sends)?;
             }
             #[cfg(feature = "interaction")]
             FromDecoder::InputControl { body } => {
-                let sends = self.typing.control(channel, &body, self.now());
+                let sends = self.typing.control(channel, &body, self.now_us());
                 self.deliver_typing(sends)?;
             }
             FromDecoder::Audio(audio) => {

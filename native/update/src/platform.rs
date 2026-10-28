@@ -37,6 +37,23 @@ pub const APPARMOR_PROFILE: &str = "neoteletext.apparmor";
 /// profile names (decision 95). The fetcher, the keyboard and the updater
 /// keep the network and make none.
 pub const NAMESPACE_PROGRAMS: [&str; 4] = ["neoteletext", "neoteletext-decoder", "neoteletext-interface", "neoteletext-sound"];
+/// The bundle's icon file, in `Contents/Resources`, which its `Info.plist`
+/// names (`CFBundleIconFile`, decision 124).
+pub const MACOS_ICON: &str = "NeoTeletext.icns";
+/// The sides of the browser's icon a Linux version carries, a file each,
+/// which `--install` copies into the user's `hicolor` icon theme (the
+/// freedesktop.org Icon Theme Specification; decision 124): sizes its
+/// default theme has folders for and desktops' menus, panels and launchers
+/// ask for, each made from the art by nearest neighbour, so a desktop
+/// scales the art itself as little as it can.
+pub const LINUX_ICON_SIZES: [u32; 7] = [16, 24, 32, 48, 64, 128, 256];
+
+/// The release file of the Linux icon `side` pixels square.
+#[must_use]
+pub fn linux_icon(side: u32) -> String {
+    format!("neoteletext-{side}.png")
+}
+
 /// The installation's root a release's own profile names: the default,
 /// `~/.local/share/neoteletext`, in `AppArmor`'s variables.
 pub const APPARMOR_DEFAULT_ROOT: &str = "@{HOME}/.local/share/neoteletext";
@@ -86,8 +103,9 @@ pub const MANIFEST: &str = "manifest";
 /// The release key's signature of the manifest, on Linux and Windows
 /// (decision 92).
 pub const MANIFEST_SIGNATURE: &str = "manifest.sig";
-/// The most files a version has on any platform.
-pub const MAX_FILES: usize = 32;
+/// The most files a version has on any platform: Linux's 32 since its
+/// icons (decision 124), with room for more.
+pub const MAX_FILES: usize = 48;
 
 /// A desktop and its processor.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -211,6 +229,7 @@ impl Platform {
         match self.family() {
             Family::Macos => {
                 files.push(data(&format!("{BUNDLE}/Contents/Info.plist"), true));
+                files.push(data(&format!("{BUNDLE}/Contents/Resources/{MACOS_ICON}"), true));
                 files.push(data(&format!("{BUNDLE}/Contents/_CodeSignature/CodeResources"), true));
                 // The notarisation ticket, stapled (section 4.1); a test
                 // build signed without Apple has none.
@@ -219,6 +238,7 @@ impl Platform {
             Family::Windows => {}
             Family::Linux => {
                 files.push(data(APPARMOR_PROFILE, true));
+                files.extend(LINUX_ICON_SIZES.iter().map(|side| data(&linux_icon(*side), true)));
                 let signed: Vec<String> = files.iter().map(|file| format!("{}{SIGNATURE_SUFFIX}", file.path)).collect();
                 files.extend(signed.iter().map(|path| data(path, true)));
             }
@@ -287,5 +307,27 @@ mod tests {
         assert!(Platform::LinuxX86_64.file("neoteletext.sig").is_some_and(|file| file.required && !file.executable));
         assert!(Platform::LinuxX86_64.file("../neoteletext").is_none());
         assert!(Platform::MacosArm64.file("NeoTeletext.app/Contents/CodeResources").is_some_and(|file| !file.required));
+    }
+
+    /// Decision 124: every version carries the browser's icon as a
+    /// required data file, signed on Linux as every file is; no icon
+    /// file is a program, and Windows carries it inside its programs.
+    #[test]
+    fn every_version_carries_the_icon() {
+        for platform in [Platform::MacosArm64, Platform::MacosX86_64] {
+            let icon = platform.file("NeoTeletext.app/Contents/Resources/NeoTeletext.icns");
+            assert!(icon.is_some_and(|file| file.required && !file.executable), "{platform}");
+        }
+        let linux = Platform::LinuxX86_64;
+        let expected: Vec<String> = [16, 24, 32, 48, 64, 128, 256].iter().map(|side| format!("neoteletext-{side}.png")).collect();
+        for path in &expected {
+            assert!(linux.file(path).is_some_and(|file| file.required && !file.executable), "{path}");
+            assert!(linux.file(&format!("{path}.sig")).is_some_and(|file| file.required), "{path}'s signature");
+        }
+        let mut pngs: Vec<String> =
+            linux.files().into_iter().map(|file| file.path).filter(|path| path.contains(".png") && !path.ends_with(SIGNATURE_SUFFIX)).collect();
+        pngs.sort_by_key(|path| path.trim_start_matches("neoteletext-").trim_end_matches(".png").parse::<u32>().unwrap_or(0));
+        assert_eq!(pngs, expected, "the icons and nothing else");
+        assert!(Platform::WindowsX86_64.files().iter().all(|file| file.executable), "Windows: programs alone");
     }
 }

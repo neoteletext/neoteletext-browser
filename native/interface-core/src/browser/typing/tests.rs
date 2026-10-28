@@ -1,8 +1,6 @@
 use super::*;
-use alloc::string::String;
 use alloc::vec::Vec;
 
-use neoteletext_input::cursor::{ECHO, MASKED};
 use neoteletext_input::event::{Action, CONTROL, KeyCode, MouseAction, Point};
 
 use crate::browser::{Browser, Frame, Output};
@@ -27,18 +25,18 @@ fn browser() -> Browser {
     browser
 }
 
-fn typing(cursor: Option<CursorView>, acked: u32) -> TypingView {
-    TypingView { channel: KEY.channel, page: KEY.page, on: true, secure: false, refused: false, cursor, acked, round_trip_ms: None, show: None }
+fn typing(cursor: Option<CursorView>) -> TypingView {
+    TypingView { channel: KEY.channel, page: KEY.page, on: true, secure: false, refused: false, cursor, round_trip_us: None, show: None }
 }
 
 fn intents(outputs: &[Output]) -> Vec<Intent> {
     outputs.iter().filter_map(|output| if let Output::Terminal { intent, .. } = output { Some(intent.clone()) } else { None }).collect()
 }
 
-fn press(browser: &mut Browser, character: char, mods: u8) -> bool {
+fn press(browser: &mut Browser, character: char, mods: u8) {
     let mut text = [0_u8; 4];
     let text = character.encode_utf8(&mut text);
-    browser.terminal_key(Action::Press, KeyCode::Character(character), mods, Some(text), None, 0)
+    browser.terminal_key(Action::Press, KeyCode::Character(character), mods, Some(text), None);
 }
 
 fn pointer_at(browser: &mut Browser, column: f64, row: f64) {
@@ -52,17 +50,17 @@ fn pointer_at(browser: &mut Browser, column: f64, row: f64) {
 #[test]
 fn keys_go_only_while_the_core_says_so() {
     let mut browser = browser();
-    assert!(!press(&mut browser, 'a', 0));
+    press(&mut browser, 'a', 0);
     assert_eq!(intents(&browser.take_outputs()), [] as [Intent; 0], "the core has not said");
-    browser.set_typing(typing(None, 0), 0);
+    browser.set_typing(typing(None), 0);
     assert_eq!(browser.typing_target(), Some(KEY));
     press(&mut browser, 'a', 0);
-    browser.terminal_key(Action::Release, KeyCode::Character('a'), 0, None, None, 0);
+    browser.terminal_key(Action::Release, KeyCode::Character('a'), 0, None, None);
     let sent = intents(&browser.take_outputs());
     assert_eq!(sent.len(), 2);
     assert!(matches!(&sent[0], Intent::Key { action: Action::Press, key: KeyCode::Character('a'), text: Some(text), .. } if text == "a"));
     assert!(matches!(&sent[1], Intent::Key { action: Action::Release, .. }));
-    browser.set_typing(TypingView { on: false, ..typing(None, 0) }, 0);
+    browser.set_typing(TypingView { on: false, ..typing(None) }, 0);
     press(&mut browser, 'b', 0);
     assert_eq!(intents(&browser.take_outputs()), [] as [Intent; 0], "typing is off");
 }
@@ -73,7 +71,7 @@ fn keys_go_only_while_the_core_says_so() {
 #[test]
 fn the_strips_panels_take_the_keys_from_the_channel() {
     let mut browser = browser();
-    browser.set_typing(typing(None, 0), 0);
+    browser.set_typing(typing(None), 0);
     assert_eq!(browser.typing_target(), Some(KEY));
     browser.set_star(crate::library::StarView { open: true, ..crate::library::StarView::default() });
     assert_eq!(browser.typing_target(), None, "the star's popover");
@@ -87,36 +85,6 @@ fn the_strips_panels_take_the_keys_from_the_channel() {
     assert_eq!(browser.typing_target(), Some(KEY));
 }
 
-/// REQ-INT-134: echo of the viewer's own printable keys, within the
-/// width, masked when asked, gone on acknowledgement or after 2 s.
-#[test]
-fn echo_stays_in_its_width_is_masked_and_clears_on_acknowledgement_or_time() {
-    let mut browser = browser();
-    let cursor = CursorView { row: 5, column: 10, width: 3, flags: ECHO };
-    browser.set_typing(typing(Some(cursor), 0), 0);
-    for character in "abcd".chars() {
-        press(&mut browser, character, 0);
-    }
-    let echoed: String = browser.typing.echoes.iter().map(|echo| echo.character).collect();
-    assert_eq!(echoed, "abc", "never past the width");
-    browser.terminal_key(Action::Press, KeyCode::Functional(BACKSPACE), 0, None, None, 0);
-    assert_eq!(browser.typing.echoes.len(), 2);
-    press(&mut browser, 'x', CONTROL);
-    assert_eq!(browser.typing.echoes.len(), 2, "Control-x is a command, not text");
-    // The first key's acknowledgement removes its echo.
-    browser.set_typing(typing(Some(cursor), 1), 10);
-    assert_eq!(browser.typing.echoes.len(), 1);
-    assert!(browser.settle_echoes(ECHO_LIFETIME_MILLISECONDS));
-    assert!(browser.typing.echoes.is_empty());
-    browser.set_typing(typing(Some(CursorView { flags: ECHO | MASKED, ..cursor }), 99), 0);
-    browser.terminal_text("pw", 0);
-    assert!(browser.typing.echoes.iter().all(|echo| echo.character == MASK));
-    // Without echo, nothing shows.
-    browser.set_typing(typing(Some(CursorView { flags: 0, ..cursor }), 99), 0);
-    press(&mut browser, 'q', 0);
-    assert!(browser.typing.echoes.is_empty());
-}
-
 /// REQ-INT-115, REQ-INT-136 (decision E.125): a plain click on a page
 /// that takes input, off its links, is the host's, with no request; with
 /// the browser's modifier it is the browser's.
@@ -124,9 +92,9 @@ fn echo_stays_in_its_width_is_masked_and_clears_on_acknowledgement_or_time() {
 fn a_click_is_the_hosts_unless_the_modifier_is_held() {
     let mut browser = browser();
     let mut canvas = Recorder::new();
-    browser.set_typing(typing(None, 0), 0);
+    browser.set_typing(typing(None), 0);
     pointer_at(&mut browser, 10.5, 5.5);
-    assert_eq!(intents(&browser.take_outputs()), [] as [Intent; 0], "no move without a button or a pointer area");
+    assert!(matches!(intents(&browser.take_outputs()).as_slice(), [Intent::Mouse { action: MouseAction::Move, button: 0, .. }]), "a move, no button held");
     browser.pointer_pressed(&mut canvas, false, 10_000);
     browser.pointer_released();
     let outputs = browser.take_outputs();
@@ -160,7 +128,7 @@ fn every_button_and_modifier_goes_over_the_page() {
     use neoteletext_input::event::{ALT, SHIFT};
     let mut browser = browser();
     let mut canvas = Recorder::new();
-    browser.set_typing(typing(None, 0), 0);
+    browser.set_typing(typing(None), 0);
     pointer_at(&mut browser, 10.5, 5.5);
     browser.take_outputs();
     browser.set_mouse_modifiers(SHIFT | CONTROL);
@@ -210,7 +178,7 @@ fn a_link_on_a_page_that_takes_input_is_the_browsers() {
     use crate::links::{Area, LinkKind, LinkRun, PageLinks};
     let mut browser = browser();
     let mut canvas = Recorder::new();
-    browser.set_typing(typing(None, 0), 0);
+    browser.set_typing(typing(None), 0);
     let link = LinkRun { row: 5, column: 10, length: 3, double: false, light: false, kind: LinkKind::Page };
     let control = Area { row: 20, column: 1, width: 9, height: 1 };
     browser.set_links(KEY, PageLinks { runs: alloc::vec![link], controls: alloc::vec![control], ..PageLinks::default() });
@@ -260,7 +228,7 @@ fn the_page_under_the_pointer_is_known() {
 #[test]
 fn the_wheel_and_moves_go_over_the_page() {
     let mut browser = browser();
-    browser.set_typing(typing(None, 0), 0);
+    browser.set_typing(typing(None), 0);
     pointer_at(&mut browser, 3.0, 3.0);
     browser.take_outputs();
     assert_eq!(browser.terminal_wheel(0.0, 1.0), Some(false), "no mode needed");
@@ -273,34 +241,116 @@ fn the_wheel_and_moves_go_over_the_page() {
     pointer_at(&mut browser, 3.0, 3.0);
     browser.take_outputs();
     pointer_at(&mut browser, 5.0, 3.0);
-    assert_eq!(intents(&browser.take_outputs()), [] as [Intent; 0], "no move with no button outside a pointer area");
+    assert!(matches!(intents(&browser.take_outputs()).as_slice(), [Intent::Mouse { action: MouseAction::Move, button: 0, .. }]), "every move");
 }
 
-/// INPUT.md section 7.4 (decision E.128): a move with no button held goes
-/// only within a pointer area of the open page; a drag goes anywhere on it.
-#[cfg(feature = "links")]
+/// REQ-RCH-030, REQ-RCH-034 (`interaction.md` section 6): every change of
+/// the dot over the open page goes as a move, buttons held or not, with
+/// the dot inside its cell; the same dot does not go again; leaving the
+/// page, onto its border or out of the window, is gone, once; a drag let
+/// go off the page ends with gone, and its release does not go. On the
+/// code before, a move with no button outside a pointer area did not go,
+/// and nothing told the channel the pointer had left.
 #[test]
-fn a_move_goes_in_a_pointer_area_and_a_drag_anywhere() {
-    use crate::links::{Area, PageLinks};
+fn every_move_goes_and_leaving_the_page_is_gone() {
     let mut browser = browser();
-    browser.set_typing(typing(None, 0), 0);
-    let area = Area { row: 10, column: 0, width: 20, height: 2 };
-    browser.set_links(KEY, PageLinks { pointer_areas: alloc::vec![area], ..PageLinks::default() });
+    browser.set_typing(typing(None), 0);
     pointer_at(&mut browser, 5.5, 10.5);
-    assert!(matches!(intents(&browser.take_outputs()).as_slice(), [Intent::Mouse { action: MouseAction::Move, button: 0, .. }]), "in the area");
+    let sent = intents(&browser.take_outputs());
+    let [Intent::Mouse { action: MouseAction::Move, button: 0, at }] = sent.as_slice() else { panic!("{sent:?}") };
+    let (x, y) = at.pixels.unwrap();
+    assert_eq!((x.checked_div(12), y.checked_div(20), at.column, at.row), (Some(5), Some(10), 5, 10), "the dot inside its cell");
+    pointer_at(&mut browser, 5.5, 10.5);
+    assert_eq!(intents(&browser.take_outputs()), [] as [Intent; 0], "the same dot");
     pointer_at(&mut browser, 25.5, 10.5);
-    assert_eq!(intents(&browser.take_outputs()), [] as [Intent; 0], "beside it");
+    assert!(matches!(intents(&browser.take_outputs()).as_slice(), [Intent::Mouse { action: MouseAction::Move, button: 0, .. }]), "anywhere");
     let mut canvas = Recorder::new();
     browser.pointer_pressed(&mut canvas, false, 10_000);
     browser.take_outputs();
     pointer_at(&mut browser, 30.5, 3.5);
-    assert!(matches!(intents(&browser.take_outputs()).as_slice(), [Intent::Mouse { action: MouseAction::Move, button: 1, .. }]), "a drag goes anywhere");
+    assert!(matches!(intents(&browser.take_outputs()).as_slice(), [Intent::Mouse { action: MouseAction::Move, button: 1, .. }]), "a drag");
+    pointer_at(&mut browser, -2.0, 3.5);
+    assert_eq!(intents(&browser.take_outputs()), [Intent::Gone], "off the page: gone");
+    pointer_at(&mut browser, -3.0, 3.5);
+    assert_eq!(intents(&browser.take_outputs()), [] as [Intent; 0], "gone once");
+    browser.pointer_released();
+    assert_eq!(intents(&browser.take_outputs()), [] as [Intent; 0], "the drag let go off the page: gone released it");
+    // Out of the window, as the interface reports winit's `CursorLeft`.
+    pointer_at(&mut browser, 3.5, 3.5);
+    browser.take_outputs();
+    browser.pointer_moved(-1.0, -1.0, 20_000);
+    assert_eq!(intents(&browser.take_outputs()), [Intent::Gone]);
+}
+
+/// The page's middle, at `column`, `row`, in logical pixels.
+fn spot(browser: &Browser, column: f64, row: f64) -> (f64, f64) {
+    let (_, page) = browser.wall.open().unwrap();
+    (page.x0 + page.width() * (column / 40.0), page.y0 + page.height() * (row / 25.0))
+}
+
+/// REQ-RCH-041 to REQ-RCH-046: while keys go to the page's channel a
+/// contact on the page goes as an intent for the trusted core to number,
+/// each change of its dot a move; one that leaves the page is cancelled;
+/// a lift is a lift; while keys do not go, no contact is taken. On the
+/// code before, the browser took no contact at all.
+#[test]
+fn a_contact_on_the_page_goes_to_the_channel() {
+    use crate::input::TouchPhase;
+    let mut browser = browser();
+    let (x, y) = spot(&browser, 4.5, 4.5);
+    assert!(!browser.touch(TouchPhase::Began, 7, x, y), "keys do not go: not taken");
+    browser.set_typing(typing(None), 0);
+    assert!(browser.touch(TouchPhase::Began, 7, x, y));
+    assert!(browser.touch(TouchPhase::Moved, 7, x, y));
+    let (x2, y2) = spot(&browser, 6.5, 4.5);
+    assert!(browser.touch(TouchPhase::Moved, 7, x2, y2));
+    assert!(browser.touch(TouchPhase::Ended, 7, x2, y2));
+    let sent = intents(&browser.take_outputs());
+    let phases: Vec<_> =
+        sent.iter().map(|intent| if let Intent::Touch { phase, contact: 7, at } = intent { (*phase, at.column) } else { panic!("{sent:?}") }).collect();
+    assert_eq!(phases, [(TouchPhase::Began, 4), (TouchPhase::Moved, 6), (TouchPhase::Ended, 6)], "the same dot not again");
+    assert!(browser.touch(TouchPhase::Began, 8, x, y));
+    assert!(browser.touch(TouchPhase::Moved, 8, -5.0, y), "off the page");
+    assert!(!browser.touch(TouchPhase::Moved, 8, x, y), "no longer the channel's");
+    let sent = intents(&browser.take_outputs());
+    assert!(
+        matches!(sent.as_slice(), [Intent::Touch { phase: TouchPhase::Began, .. }, Intent::Touch { phase: TouchPhase::Cancelled, contact: 8, .. }]),
+        "{sent:?}"
+    );
+}
+
+/// REQ-RCH-048 (decision 122): a contact that begins on a link the page
+/// declares is the browser's: nothing goes to the channel, and lifting it
+/// on the link follows the link; lifting it elsewhere follows nothing.
+#[cfg(feature = "links")]
+#[test]
+fn a_contact_on_a_link_follows_it_and_never_reaches_the_channel() {
+    use crate::input::TouchPhase;
+    use crate::links::{LinkKind, LinkRun, PageLinks};
+    let mut browser = browser();
+    browser.set_typing(typing(None), 0);
+    let link = LinkRun { row: 5, column: 10, length: 3, double: false, light: false, kind: LinkKind::Page };
+    browser.set_links(KEY, PageLinks { runs: alloc::vec![link], ..PageLinks::default() });
+    browser.take_outputs();
+    let (x, y) = spot(&browser, 11.5, 5.5);
+    assert!(browser.touch(TouchPhase::Began, 3, x, y));
+    assert!(browser.touch(TouchPhase::Moved, 3, x + 1.0, y));
+    assert!(browser.touch(TouchPhase::Ended, 3, x, y));
+    let outputs = browser.take_outputs();
+    assert_eq!(intents(&outputs), [] as [Intent; 0], "the channel is never told");
+    assert!(outputs.iter().any(|output| matches!(output, Output::Cell(click) if (click.column, click.row) == (11, 5))), "followed on the lift");
+    let (away_x, away_y) = spot(&browser, 30.5, 15.5);
+    browser.touch(TouchPhase::Began, 4, x, y);
+    browser.touch(TouchPhase::Ended, 4, away_x, away_y);
+    let outputs = browser.take_outputs();
+    assert!(!outputs.iter().any(|output| matches!(output, Output::Cell(_))), "lifted off the link: nothing followed");
+    assert_eq!(intents(&outputs), [] as [Intent; 0]);
 }
 
 #[test]
 fn paste_and_composition_each_go_as_one_intent() {
     let mut browser = browser();
-    browser.set_typing(typing(None, 0), 0);
+    browser.set_typing(typing(None), 0);
     assert!(browser.terminal_paste("line\nline"));
     assert!(browser.terminal_compose(9, "に"), "composition goes whenever keys go");
     let sent = intents(&browser.take_outputs());
@@ -310,8 +360,8 @@ fn paste_and_composition_each_go_as_one_intent() {
 #[test]
 fn long_text_goes_as_one_intent_within_the_paste_bound() {
     let mut browser = browser();
-    browser.set_typing(typing(None, 0), 0);
-    browser.terminal_text(&"é".repeat(2_100), 0);
+    browser.set_typing(typing(None), 0);
+    browser.terminal_text(&"é".repeat(2_100));
     let sent = intents(&browser.take_outputs());
     assert!(matches!(sent.as_slice(), [Intent::Text(text)] if text.len() == 4_000), "cut at a character within 4 000 bytes");
 }
@@ -328,12 +378,15 @@ fn the_strip_says_where_keys_go() {
     };
     let mut browser = browser();
     assert_eq!(badge(&browser), "", "nothing while keys do not go");
-    browser.set_typing(TypingView { round_trip_ms: Some(3), ..typing(None, 0) }, 0);
+    browser.set_typing(TypingView { round_trip_us: Some(3_250), ..typing(None) }, 0);
     let said = badge(&browser);
-    assert!(said.contains("Keys go to") && said.contains("3 ms") && said.contains("Not secure"), "{said}");
-    browser.set_typing(TypingView { secure: true, ..typing(None, 0) }, 0);
+    assert!(said.contains("Keys go to") && said.contains("3.2 ms") && said.contains("Not secure"), "{said}");
+    // REQ-RCH-016: a ping over a near path, a fraction of a millisecond.
+    browser.set_typing(TypingView { round_trip_us: Some(190), ..typing(None) }, 0);
+    assert!(badge(&browser).contains("0.1 ms"), "{}", badge(&browser));
+    browser.set_typing(TypingView { secure: true, ..typing(None) }, 0);
     assert!(!badge(&browser).contains("Not secure"));
-    browser.set_typing(TypingView { on: false, refused: true, ..typing(None, 0) }, 0);
+    browser.set_typing(TypingView { on: false, refused: true, ..typing(None) }, 0);
     assert!(badge(&browser).contains("did not answer"), "{}", badge(&browser));
 }
 
@@ -343,7 +396,7 @@ fn the_cursor_is_drawn_only_while_typing() {
     let mut canvas = Recorder::new();
     browser.draw_terminal(&mut canvas, 0);
     let before = canvas.fills.len();
-    browser.set_typing(typing(Some(CursorView { row: 3, column: 0, width: 0, flags: 0 }), 0), 0);
+    browser.set_typing(typing(Some(CursorView { row: 3, column: 0, flags: 0 })), 0);
     browser.draw_terminal(&mut canvas, 0);
     assert!(canvas.fills.len() > before, "a bar is drawn");
 }

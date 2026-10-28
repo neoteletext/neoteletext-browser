@@ -40,7 +40,7 @@ readonly NO_PANIC_ROOTS=(native/protocol/src/lib.rs native/decoder/src/lib.rs na
     native/core/src/lib.rs native/core/src/main.rs native/interface/src/lib.rs native/interface/src/main.rs native/interface-core/src/lib.rs native/draw-vello/src/lib.rs native/draw-embedded/src/lib.rs
     native/web-opener/src/lib.rs native/dock-menu/src/lib.rs
     native/keyboard/src/main.rs native/sound/src/lib.rs native/sound/src/main.rs native/confine/src/lib.rs
-    native/update/src/lib.rs native/launcher/src/lib.rs native/launcher/src/main.rs native/os-install/src/lib.rs native/installer/src/main.rs
+    native/update/src/lib.rs native/icon/src/lib.rs native/launcher/src/lib.rs native/launcher/src/main.rs native/os-install/src/lib.rs native/installer/src/main.rs
     native/tuf/updater/src/lib.rs native/tuf/updater/src/main.rs native/tuf/release/src/main.rs native/tuf/release/src/bin/test_host.rs)
 
 check_no_panic_lists() {
@@ -62,7 +62,7 @@ check_no_panic_lists() {
 check_engine_pin() {
     step "the engine is pinned at one commit in every workspace"
     local revs
-    revs="$(sed -n 's/^neoteletext-[a-z-]* = { git = "file:[^"]*", rev = "\([0-9a-f]*\)".*/\1/p' native/Cargo.toml native/tuf/Cargo.toml native/fuzz/Cargo.toml | sort -u)"
+    revs="$(sed -n 's/^neoteletext-[a-z-]* = { git = "[^"]*", rev = "\([0-9a-f]*\)".*/\1/p' native/Cargo.toml native/tuf/Cargo.toml native/fuzz/Cargo.toml | sort -u)"
     [[ -n "$revs" && "$revs" != *$'\n'* ]] || fail "the workspaces must name one engine commit, found: ${revs:-none}"
 }
 
@@ -226,19 +226,10 @@ check_linux() {
     rsync -a --delete --exclude target --exclude tools --exclude .git \
         --exclude native/fuzz/corpus --exclude native/fuzz/artifacts --exclude native/tuf/fuzz/corpus --exclude native/tuf/fuzz/artifacts \
         ./ "$linux_host:neoteletext-browser-check/"
-    # The engine is a git dependency on a repository on this machine; its
-    # history goes to the host, and git there reads it in place of this
-    # machine's path, for these commands only.
-    local engine
-    engine="$(sed -n 's/^neoteletext-[a-z]* = { git = "\(file:[^"]*\)".*/\1/p' native/Cargo.toml | sort -u)"
-    [[ -n "$engine" && "$engine" != *$'\n'* ]] || fail "native/Cargo.toml must name one engine repository, found: ${engine:-none}"
-    rsync -a --delete "${engine#file://}/.git/" "$linux_host:neoteletext-browser-check-engine.git/"
-    # rustup installs the toolchain rust-toolchain.toml pins if the host
-    # does not have it yet.
-    # shellcheck disable=SC2029 # the engine is expanded here on purpose
+    # The host fetches the engine from its published repository, as Cargo
+    # does here. rustup installs the toolchain rust-toolchain.toml pins if
+    # the host does not have it yet.
     ssh "$linux_host" "set -e; . ~/.cargo/env; cd neoteletext-browser-check; rustup toolchain install
-        export CARGO_NET_GIT_FETCH_WITH_CLI=true GIT_CONFIG_COUNT=1
-        export GIT_CONFIG_KEY_0=url.file://\$HOME/neoteletext-browser-check-engine.git.insteadOf GIT_CONFIG_VALUE_0=$engine
         (cd native && cargo clippy --quiet --workspace --all-targets -- -D warnings && cargo test --quiet --workspace \\
             && cargo clippy --quiet --workspace --all-targets --no-default-features -- -D warnings)
         (cd native/tuf && cargo clippy --quiet --workspace --all-targets -- -D warnings && cargo test --quiet --workspace)"
@@ -276,14 +267,19 @@ check_fuzz() {
 check_engine_safe() {
     step "the engine at its pinned commit has no unsafe code"
     local engine revision found line code hits="" status=0
-    engine="$(sed -n 's/^neoteletext-[a-z-]* = { git = "file:\/\/\([^"]*\)".*/\1/p' native/Cargo.toml | sort -u)"
-    revision="$(sed -n 's/^neoteletext-[a-z-]* = { git = "file:[^"]*", rev = "\([0-9a-f]*\)".*/\1/p' native/Cargo.toml | sort -u)"
+    engine="$(sed -n 's/^neoteletext-[a-z-]* = { git = "\([^"]*\)".*/\1/p' native/Cargo.toml | sort -u)"
+    revision="$(sed -n 's/^neoteletext-[a-z-]* = { git = "[^"]*", rev = "\([0-9a-f]*\)".*/\1/p' native/Cargo.toml | sort -u)"
     [[ -n "$engine" && "$engine" != *$'\n'* ]] || fail "native/Cargo.toml must name one engine repository, found: ${engine:-none}"
     [[ -n "$revision" && "$revision" != *$'\n'* ]] || fail "native/Cargo.toml must name one engine commit, found: ${revision:-none}"
-    # A hook runs with git's GIT_DIR set to this repository, absolute in a
-    # worktree, which git -C would follow instead of the engine's.
-    engine_git() { env -u GIT_DIR -u GIT_WORK_TREE -u GIT_INDEX_FILE git -C "$engine" "$@"; }
-    engine_git cat-file -e "$revision^{commit}" || fail "the engine repository $engine has no commit $revision"
+    # The source read is the commit as the repository Cargo builds from
+    # publishes it, fetched into a copy the gate keeps between runs. A hook
+    # runs with git's GIT_DIR set to this repository, absolute in a
+    # worktree, which git would follow instead of the copy's.
+    local copy="native/target/engine.git"
+    engine_git() { env -u GIT_DIR -u GIT_WORK_TREE -u GIT_INDEX_FILE git --git-dir "$copy" "$@"; }
+    [[ -d "$copy" ]] || env -u GIT_DIR -u GIT_WORK_TREE -u GIT_INDEX_FILE git init --quiet --bare "$copy"
+    engine_git cat-file -e "$revision^{commit}" 2>/dev/null || engine_git fetch --quiet "$engine" "$revision" ||
+        fail "the engine repository $engine has no commit $revision"
     found="$(engine_git grep --line-number -I --word-regexp -e unsafe "$revision" -- '*.rs')" || status=$?
     # 1 is no line found.
     ((status <= 1)) || fail "reading the engine at $revision failed"

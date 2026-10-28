@@ -275,7 +275,8 @@ impl PageLines<'_> {
         if let Some(line) = page.cursor {
             let [p0, p1] = page.address.mpp().to_be_bytes();
             let [a0, a1] = line.acked.to_be_bytes();
-            self.input.cursors.push([p0, p1, a0, a1, line.row, line.column, line.width, line.flags]);
+            // Byte 6 is reserved, written 0 (the engine's decision E.134).
+            self.input.cursors.push([p0, p1, a0, a1, line.row, line.column, 0, line.flags]);
         }
     }
 }

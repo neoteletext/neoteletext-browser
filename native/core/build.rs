@@ -10,6 +10,10 @@
 //! launcher reads from the signed program (`installation-and-updates.md`
 //! section 5): the workspace's version, or for a test of an update the one
 //! `NEOTELETEXT_RELEASE_VERSION` names at build time.
+//!
+//! The program carries the browser's icon (decision 124): the art as a
+//! resource file (`icon::windows`), which the MSVC linker takes as an
+//! input, so Explorer, the Start menu and the taskbar show it.
 
 fn main() {
     println!("cargo::rerun-if-env-changed=NEOTELETEXT_RELEASE_VERSION");
@@ -22,5 +26,10 @@ fn main() {
         println!("cargo::rustc-link-arg-bin=neoteletext=/DELAYLOAD:shell32.dll");
         // The delay-load helper the linker's /DELAYLOAD calls on.
         println!("cargo::rustc-link-arg-bin=neoteletext=delayimp.lib");
+        // The program's icon (decision 124): the art as a resource file,
+        // which the MSVC linker takes as an input.
+        let out = std::env::var_os("OUT_DIR").expect("Cargo sets OUT_DIR");
+        let resource = icon::windows::write_resource_file(std::path::Path::new(&out)).expect("the icon's resource file is written");
+        println!("cargo::rustc-link-arg-bin=neoteletext={}", resource.display());
     }
 }

@@ -141,6 +141,17 @@ pub(crate) fn run(broker: &Arc<Broker>, given: impl Iterator<Item = String>, con
 /// (decision 113).
 pub(crate) const NO_KEYCHAIN: &str = "--no-keychain";
 
+/// The flag that uses the platform's secret store where it is off by
+/// default: the cookie file's key is read from it, or made there.
+pub(crate) const KEYCHAIN: &str = "--keychain";
+
+/// Whether the secret store is used when neither flag is given. Off on
+/// macOS until NeoTeletext is signed with Apple's Developer ID (the owner,
+/// 28 October 2026): a build signed ad hoc is a new program to the
+/// Keychain at every build, which asks for the login password at each
+/// start. On; elsewhere.
+pub(crate) const KEYCHAIN_BY_DEFAULT: bool = !cfg!(target_os = "macos");
+
 /// The flag that shows each input event sent to a channel on the open
 /// page's row 0, with a count of the same event running (`input_trace.rs`).
 pub(crate) const INPUT_TRACE: &str = "--input-trace";
@@ -152,20 +163,23 @@ struct CommandLine {
     addresses: Vec<String>,
     /// Each local address `--allow-local` lets a fetcher reach.
     allow_local: Vec<String>,
-    /// [`NO_KEYCHAIN`] was given.
+    /// The secret store is left alone: [`NO_KEYCHAIN`] was given, or
+    /// [`KEYCHAIN_BY_DEFAULT`] is off and [`KEYCHAIN`] was not.
     no_keychain: bool,
     /// [`INPUT_TRACE`] was given.
     input_trace: bool,
 }
 
 fn arguments(given: impl Iterator<Item = String>) -> Result<CommandLine, String> {
-    let mut command_line = CommandLine { addresses: Vec::new(), allow_local: Vec::new(), no_keychain: false, input_trace: false };
+    let mut command_line = CommandLine { addresses: Vec::new(), allow_local: Vec::new(), no_keychain: !KEYCHAIN_BY_DEFAULT, input_trace: false };
     let mut arguments = given;
     while let Some(argument) = arguments.next() {
         if argument == "--allow-local" {
             command_line.allow_local.push(arguments.next().ok_or("--allow-local needs an address")?);
         } else if argument == NO_KEYCHAIN {
             command_line.no_keychain = true;
+        } else if argument == KEYCHAIN {
+            command_line.no_keychain = false;
         } else if argument == INPUT_TRACE {
             command_line.input_trace = true;
         } else {

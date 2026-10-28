@@ -199,7 +199,7 @@ impl Browser {
     /// A ring bursting out of each page just updated, growing and fading.
     fn draw_rings<C: Canvas + ?Sized>(&self, canvas: &mut C, cells: Rect, size: (f64, f64), now: u64) {
         let (width, height) = size;
-        for &(index, at) in &self.updates {
+        for &(index, at) in &self.rings {
             let elapsed = now.saturating_sub(at);
             if elapsed >= UPDATE_RING_MILLISECONDS {
                 continue;

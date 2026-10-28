@@ -425,7 +425,7 @@ fn a_confirmed_web_link_is_handed_on(core: &mut Core, watch: &mut Watch) {
     let key = PageKey { channel, page: 0x100 };
     let web = Candidate { row: 5, column: 0, length: 7, double: false, light: false, target: format!("web:{WEB}") };
     core.links.opened(Some(key));
-    core.links.found(key, vec![web], Vec::new(), (Vec::new(), Vec::new()), Fastext::default());
+    core.links.found(key, vec![web], Vec::new(), Vec::new(), Fastext::default());
     core.links.image(key, 1, &Channel { id: channel, address: &address }, 0);
     let spot = Spot { key, version: 1, column: 1, row: 5 };
     core.links.point(Some(spot));
@@ -546,4 +546,38 @@ fn the_core_stands_against_a_hostile_interface() {
         );
     }
     let _ = std::fs::remove_dir_all(&folder);
+}
+
+/// REQ-INT-127 (decision 125): a hostile interface's move, wheel or contact
+/// whose dot lies outside its cell, or outside the 480 by 500 page image,
+/// is refused by the trusted core's reader of the interface's pipe, which
+/// closes the interface; the same intent with its dot inside its cell is
+/// read. On the code before, every such dot was taken.
+#[cfg(feature = "interaction")]
+#[test]
+fn a_dot_outside_its_cell_is_refused_from_the_interface() {
+    use neoteletext_input::event::{MouseAction, Point};
+    use protocol::interaction::{InputIntent, Intent, TouchPhase};
+    /// The last bytes of a position on the pipe: its dot, across then down,
+    /// and its modifiers.
+    const DOT_AND_MODS: usize = 4 + 4 + 1;
+    let at = Point { column: 10, row: 5, pixels: Some((125, 110)), mods: 0 };
+    let key = PageKey { channel: 1, page: 0x100 };
+    for intent in [
+        Intent::Mouse { action: MouseAction::Move, button: 0, at },
+        Intent::Wheel { dx: 0, dy: 120, at },
+        Intent::Touch { phase: TouchPhase::Began, contact: 3, at },
+    ] {
+        let good = encoded(&ToCore::Input(InputIntent { key, intent }));
+        assert!(matches!(read_from_interface(&mut good.as_slice()), Ok(Some(ToCore::Input(_)))));
+        let across = good.len().checked_sub(DOT_AND_MODS).unwrap();
+        let down = across.checked_add(4).unwrap();
+        let end = down.checked_add(4).unwrap();
+        for (x, y) in [(132_u32, 110_u32), (125, 120), (480, 110), (125, 500), (u32::MAX, 0)] {
+            let mut bad = good.clone();
+            bad[across..down].copy_from_slice(&x.to_be_bytes());
+            bad[down..end].copy_from_slice(&y.to_be_bytes());
+            assert!(read_from_interface(&mut bad.as_slice()).is_err(), "the dot ({x}, {y}) in cell (10, 5)");
+        }
+    }
 }

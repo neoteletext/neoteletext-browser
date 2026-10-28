@@ -200,6 +200,26 @@ impl Editor {
         }
     }
 
+    /// The end of the selection the caret is not at.
+    #[must_use]
+    pub fn anchor(&self) -> usize {
+        self.anchor
+    }
+
+    /// Selects the word around `at`: the run of letters, digits and
+    /// underscores it is in or next to, as a double click selects it; the
+    /// punctuation of an address (`/`, `.`, `:`) ends a word.
+    pub fn select_word(&mut self, at: usize) {
+        let at = at.min(self.text.len());
+        let is_word = |character: char| character.is_alphanumeric() || character == '_';
+        let before = self.text.get(..at).unwrap_or_default();
+        let after = self.text.get(at..).unwrap_or_default();
+        let start = before.char_indices().rev().take_while(|&(_, character)| is_word(character)).last().map_or(at, |(offset, _)| offset);
+        let end = at.saturating_add(after.char_indices().find(|&(_, character)| !is_word(character)).map_or(after.len(), |(offset, _)| offset));
+        self.anchor = start;
+        self.caret = end;
+    }
+
     /// Puts the caret at `at`, rounded down to a character boundary.
     pub fn place(&mut self, at: usize, extend: bool) {
         let mut at = at.min(self.text.len());

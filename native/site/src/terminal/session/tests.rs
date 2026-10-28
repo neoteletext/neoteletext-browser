@@ -55,7 +55,7 @@ fn hello_is_answered_with_welcome() {
     let packet = neoteletext_core::packet::Packet { bytes: bytes.as_slice().try_into().unwrap() };
     let mut buffer = [0; neoteletext_input::control::FRAGMENT_DATA];
     let welcome = neoteletext_input::control::from_packet(&packet, &mut buffer);
-    assert_eq!(welcome, Some(Ok(Control::Welcome { version: 2, caps: PAGE_CAP | CURSOR_CAP })));
+    assert_eq!(welcome, Some(Ok(Control::Welcome { version: 2, caps: PAGE_CAP | CURSOR_CAP, resume: None })));
     assert!(feed(&mut session, &[encoded(&Item::Event(Event::Hello { version: 1, caps: 0, agent: None }))]).is_empty(), "another version");
 }
 
@@ -106,15 +106,15 @@ fn pages_are_chosen_as_on_prestel() {
 }
 
 #[test]
-fn typing_echoes_and_acknowledges() {
+fn typing_places_the_cursor_and_acknowledges() {
     let mut session = Session::new(Settings::default());
     let pushes = feed(&mut session, &[page(0x200), press('A'), press('n'), named("Enter")]);
     let Some(Push::Page(last)) = pushes.last() else { panic!() };
     assert!(last.contains("Hello, An!"), "{last}");
-    assert!(last.contains("CU,5,15,18,1,4"), "the cursor after the name, echo on, acknowledging an input count of 4: {last}");
+    assert!(last.contains("CU,5,15,0,0,4"), "the cursor after the name, no echo, acknowledging an input count of 4: {last}");
     feed(&mut session, &[named("Tab"), press('x')]);
     let page = session.render().tti();
-    assert!(page.contains("CU,8,14,11,3,"), "the secret field is masked: {page}");
+    assert!(page.contains("CU,8,14,0,0,"), "the secret field's cursor, no echo: {page}");
 }
 
 /// The channels the receiver started sounds on.
@@ -266,6 +266,12 @@ fn the_page_says_when_the_keys_went_elsewhere() {
 fn a_click_is_the_hosts() {
     let mut session = Session::new(Settings::default());
     let at = Point { column: 7, row: 11, pixels: None, mods: 0 };
-    feed(&mut session, &[page(0x500), encoded(&Item::Event(Event::Mouse(Mouse { action: MouseAction::Press, button: 0, at })))]);
+    feed(
+        &mut session,
+        &[
+            page(0x500),
+            encoded(&Item::Event(Event::Mouse(Mouse { action: MouseAction::Press, button: 0, at, device: neoteletext_input::event::Device::Mouse }))),
+        ],
+    );
     assert!(session.render().tti().contains("You clicked column 7, row 11."));
 }

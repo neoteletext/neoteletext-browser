@@ -133,6 +133,11 @@ impl Browser {
 
     /// A press while the popover is open; a press outside it is Done, as a
     /// browser's bookmark bubble closes, keeping what it shows.
+    /// Whether `point` is on the star's open popover.
+    pub(super) fn over_star(&self, point: Point) -> bool {
+        self.star.view.open && self.star.controls.area.contains(point)
+    }
+
     pub(super) fn star_press(&mut self, point: Point) -> bool {
         if !self.star.view.open {
             return false;

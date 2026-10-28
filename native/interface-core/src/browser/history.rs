@@ -2,7 +2,9 @@
 //! section 2.4, requirement 20.4): opened by Command-Y or Control-H and from
 //! the menu; it shows the rows the trusted core sent and asks for each
 //! search, opening and removal by the rows' numbers, as strip input
-//! (requirement 20.5). It keeps no history of its own.
+//! (requirement 20.5). It keeps no history of its own. Its side edges
+//! pulled make it wider or narrower (`resize.rs`), and a row rested on
+//! shows its full address in a tip (decision 127).
 
 use alloc::collections::BTreeSet;
 use alloc::string::String;
@@ -15,7 +17,9 @@ use crate::library::{ClearRange, HistoryRequest, HistoryView, MAX_QUERY};
 
 mod draw;
 mod input;
+mod resize;
 
+/// The panel's width until an edge is pulled.
 const PANEL_WIDTH: f64 = 820.0;
 const PANEL_HEIGHT: f64 = 680.0;
 const PADDING: f64 = 20.0;
@@ -105,6 +109,12 @@ pub(super) struct HistoryUi {
     controls: Controls,
     /// The row whose menu is open.
     menu: Option<u32>,
+    /// Its width as an edge left it (`resize.rs`).
+    width: f64,
+    /// Each side edge's grip, as last drawn.
+    edges: [(resize::Edge, Rect); 2],
+    /// The edge held while it is pulled.
+    grip: Option<resize::Grip>,
 }
 
 /// What clearing clears: history, as it did; cookies, when chosen
@@ -127,6 +137,9 @@ impl Default for HistoryUi {
             clears: Clears { history: true, cookies: false },
             controls: Controls::default(),
             menu: None,
+            width: PANEL_WIDTH,
+            edges: [(resize::Edge::Left, Rect::ZERO), (resize::Edge::Right, Rect::ZERO)],
+            grip: None,
         }
     }
 }
@@ -172,6 +185,7 @@ impl Browser {
         }
         self.history.open = open;
         self.history.clearing = false;
+        self.history.forget_edges();
         self.history.selected.clear();
         self.unfocus_history();
         if open {

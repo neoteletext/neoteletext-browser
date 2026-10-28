@@ -31,5 +31,13 @@ winit.workspace = true
 softbuffer.workspace = true
 dock-menu.workspace = true
 
+# The icon of the program on Windows, and of its windows (decision 124).
+[build-dependencies]
+icon.workspace = true
+
+# Only to check, in a test, that the windows' icon is the art.
+[dev-dependencies]
+icon.workspace = true
+
 [lints]
 workspace = true

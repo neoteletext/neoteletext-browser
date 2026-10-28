@@ -4,8 +4,6 @@
 
 use std::fmt::Write as _;
 
-use neoteletext_input::cursor::{ECHO, MASKED};
-
 use super::sounds::PIANO;
 use super::tti::{
     ALPHA_CYAN, ALPHA_GREEN, ALPHA_MAGENTA, ALPHA_WHITE, ALPHA_YELLOW, BLACK_BACKGROUND, COLUMNS, DOUBLE_HEIGHT, MOSAIC_BLUE, MOSAIC_CYAN, MOSAIC_RED,
@@ -45,15 +43,14 @@ impl Session {
         }
         page.row(11, Row::new().code(ALPHA_GREEN).text(&self.greeting));
         page.row(14, Row::new().code(ALPHA_WHITE).text("Tab moves between fields; Enter sends."));
-        page.row(15, Row::new().code(ALPHA_WHITE).text("Letters show at once, provisionally, then"));
-        page.row(16, Row::new().code(ALPHA_WHITE).text("as the channel draws them: local echo."));
+        page.row(15, Row::new().code(ALPHA_WHITE).text("Letters show as the channel draws them."));
         page.row(18, Row::new().code(ALPHA_MAGENTA).text("*100# for the index, Esc clears."));
         let field = &self.fields[self.focus];
         let length = u8::try_from(field.text.chars().count()).unwrap_or(field.width).min(field.width);
         if length < field.width {
-            page.set_cursor((field.row, field.column + length, field.width - length, ECHO | if field.masked { MASKED } else { 0 }));
+            page.set_cursor((field.row, field.column + length));
         } else {
-            page.set_cursor((field.row, field.column + length - 1, 0, 0));
+            page.set_cursor((field.row, field.column + length - 1));
         }
         page
     }

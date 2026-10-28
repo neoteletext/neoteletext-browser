@@ -266,6 +266,8 @@ pub const MENU_BAR: &[Menu] = &[
             Entry::Separator,
             browser("Bookmarks Bar", shift_command("b")),
             browser("Overview of All Pages", shift_command("e")),
+            // The wall of pages or the page alone (decision 126).
+            browser("Wall of Pages", command("g")),
             browser("Remote Control", shift_command("r")),
             browser("Developer Console", option_command(ShortcutKey::Text("i"))),
         ],
@@ -320,7 +322,7 @@ pub fn menu_item(number: usize) -> Option<&'static MenuItem> {
 #[cfg(target_os = "macos")]
 mod mac;
 #[cfg(target_os = "macos")]
-pub use mac::{install, install_menu_bar, set, set_about, set_full_screen};
+pub use mac::{install, install_menu_bar, set, set_about, set_full_screen, set_icon};
 
 /// Elsewhere there is no menu bar: the menu button's menu is its
 /// counterpart (`menu-bar.md` section 1).
@@ -342,6 +344,10 @@ pub fn set_about(_version: &str, _copyright: &str) {}
 /// Elsewhere there is no menu bar.
 #[cfg(not(target_os = "macos"))]
 pub fn set_full_screen(_full_screen: bool) {}
+
+/// Elsewhere there is no Dock.
+#[cfg(not(target_os = "macos"))]
+pub fn set_icon(_png: &[u8]) {}
 
 #[cfg(test)]
 mod tests {

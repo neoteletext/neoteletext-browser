@@ -371,3 +371,156 @@ fn closing_a_connection_while_it_opens_ends_its_thread() {
     assert!(closed.elapsed() < Duration::from_secs(1), "{:?}", closed.elapsed());
     assert!(server.join().unwrap().is_some(), "the proxy saw the connection end");
 }
+
+/// REQ-RCH-035 (requirement 18.31): a socket the network does not drain
+/// never holds the loop up; once what it has not written reaches the
+/// engine's bound the agent is told, and told again, the loop woken, when
+/// it falls under; nothing given is lost or reordered.
+#[test]
+fn a_stalled_socket_is_told_behind_then_drained_and_holds_nothing_up() {
+    use neoteletext_web::consts::PUSH_UNSENT_BOUND;
+    use neoteletext_web::port::{NetInput, NetOutput, Pump};
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    // Far more than any operating system buffers on a connection to
+    // itself, so a socket that never stalls fails the test.
+    const MOST: usize = 256 * 1024 * 1024;
+    const CHUNK: usize = 16 * 1024;
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let (drain, stalled) = std::sync::mpsc::channel::<()>();
+    let server = std::thread::spawn(move || {
+        let (mut socket, _) = listener.accept().unwrap();
+        stalled.recv().unwrap();
+        let mut received = Vec::new();
+        let _ = socket.read_to_end(&mut received);
+        received
+    });
+    let wakes = Arc::new(AtomicUsize::new(0));
+    let counted = Arc::clone(&wakes);
+    let mut pump = Pump::new(Tcp::new(
+        Arc::new(move || {
+            counted.fetch_add(1, Ordering::SeqCst);
+        }),
+        None,
+        this_computer(),
+    ));
+    pump.execute(NetOutput::Connect { connection: ConnectionId::Push, host: "127.0.0.1", port, security: Security::Plain });
+    let mut buffer = [0_u8; 64];
+    let started = Instant::now();
+    while !matches!(pump.poll(ConnectionId::Push, &mut buffer), Some(NetInput::Connected(..))) {
+        assert!(started.elapsed() < CONNECT_DEADLINE, "connects");
+        std::thread::sleep(Duration::from_millis(1));
+    }
+    // The server reads nothing: the sends fill the operating system's
+    // buffers, then wait in the writer thread, and none holds the loop.
+    let mut sent = Vec::new();
+    let mut piece = 0_u8;
+    while pump.transport.unsent(ConnectionId::Push) <= 2 * CHUNK {
+        assert!(sent.len() < MOST, "the socket never stalled");
+        piece = piece.wrapping_add(1);
+        let chunk = vec![piece; CHUNK];
+        let before = Instant::now();
+        pump.execute(NetOutput::Send(ConnectionId::Push, &chunk));
+        assert!(before.elapsed() < Duration::from_millis(500), "a send never waits on the network");
+        sent.extend_from_slice(&chunk);
+    }
+    match pump.poll(ConnectionId::Push, &mut buffer) {
+        Some(NetInput::Unsent(ConnectionId::Push, unsent)) => assert!(unsent >= PUSH_UNSENT_BOUND, "{unsent}"),
+        _ => panic!("the agent is told the socket is behind"),
+    }
+    assert!(pump.poll(ConnectionId::Push, &mut buffer).is_none(), "and told once");
+    let woken = wakes.load(Ordering::SeqCst);
+    drain.send(()).unwrap();
+    let started = Instant::now();
+    loop {
+        if let Some(NetInput::Unsent(ConnectionId::Push, unsent)) = pump.poll(ConnectionId::Push, &mut buffer) {
+            assert!(unsent < PUSH_UNSENT_BOUND, "{unsent}");
+            break;
+        }
+        assert!(started.elapsed() < Duration::from_secs(10), "the socket drains");
+        std::thread::sleep(Duration::from_millis(1));
+    }
+    assert!(wakes.load(Ordering::SeqCst) > woken, "the loop is woken when it falls under the bound");
+    while pump.transport.unsent(ConnectionId::Push) > 0 {
+        assert!(started.elapsed() < Duration::from_secs(10), "everything is written");
+        std::thread::sleep(Duration::from_millis(1));
+    }
+    pump.execute(NetOutput::Close(ConnectionId::Push));
+    assert!(server.join().unwrap() == sent, "every byte, in order");
+}
+
+/// REQ-RCH-014 (requirement 18.33): every connection shares one TLS
+/// configuration, so a reconnection to a server resumes the last session
+/// with it, and no early data is sent, though the server would take it.
+#[test]
+fn a_reconnection_resumes_the_tls_session_and_sends_no_early_data() {
+    const CONNECTIONS: usize = 2;
+    use rustls::pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer};
+    // A certificate for `localhost` made for this test alone, valid to
+    // 2126, and its key.
+    let certificate = CertificateDer::from(include_bytes!("testdata/localhost-certificate.der").to_vec());
+    let key = PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(include_bytes!("testdata/localhost-key.der").to_vec()));
+    let mut server_config = rustls::ServerConfig::builder().with_no_client_auth().with_single_cert(vec![certificate.clone()], key).unwrap();
+    server_config.max_early_data_size = 16 * 1024;
+    let server_config = Arc::new(server_config);
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let server = std::thread::spawn(move || {
+        (0..CONNECTIONS)
+            .map(|_| {
+                let (mut socket, _) = listener.accept().unwrap();
+                let mut connection = rustls::ServerConnection::new(Arc::clone(&server_config)).unwrap();
+                while connection.is_handshaking() {
+                    connection.complete_io(&mut socket).unwrap();
+                }
+                let early = connection.early_data().is_some();
+                // The client's first message comes after its Finished, so
+                // once it is read the session tickets go before the answer
+                // (TLS 1.3's server may otherwise answer before them).
+                let mut asked = [0_u8; 4];
+                let mut taken = 0;
+                while taken < asked.len() {
+                    connection.complete_io(&mut socket).unwrap();
+                    taken += connection
+                        .reader()
+                        .read(&mut asked[taken..])
+                        .or_else(|error| if error.kind() == IoErrorKind::WouldBlock { Ok(0) } else { Err(error) })
+                        .unwrap();
+                }
+                assert_eq!(&asked, b"ping");
+                connection.writer().write_all(b"hello").unwrap();
+                while connection.wants_write() {
+                    connection.complete_io(&mut socket).unwrap();
+                }
+                // Until the client closes.
+                let mut rest = [0_u8; 64];
+                let _ = socket.read(&mut rest);
+                (connection.handshake_kind(), early)
+            })
+            .collect::<Vec<_>>()
+    });
+    let mut roots = rustls::RootCertStore::empty();
+    roots.add(certificate).unwrap();
+    let mut tcp = Tcp::with_roots(roots, Arc::new(|| {}), None, this_computer());
+    assert!(!tcp.tls.enable_early_data, "no 0-RTT: an input message could be replayed");
+    for _ in 0..CONNECTIONS {
+        tcp.connect(ConnectionId::Push, "localhost", port, Security::Tls).unwrap();
+        assert!(matches!(settled(&mut tcp, ConnectionId::Push), LinkState::Open(_)));
+        tcp.send(ConnectionId::Push, b"ping").unwrap();
+        // The answer is read, and with it the server's session tickets.
+        let started = Instant::now();
+        let mut buffer = [0_u8; 64];
+        loop {
+            match tcp.receive(ConnectionId::Push, &mut buffer).unwrap() {
+                Received::Data(count) => {
+                    assert_eq!(&buffer[..count], b"hello");
+                    break;
+                }
+                Received::Nothing if started.elapsed() < Duration::from_secs(5) => std::thread::sleep(Duration::from_millis(1)),
+                other => panic!("no answer: {other:?}"),
+            }
+        }
+        tcp.close(ConnectionId::Push);
+    }
+    assert_eq!(server.join().unwrap(), [(Some(rustls::HandshakeKind::Full), false), (Some(rustls::HandshakeKind::Resumed), false)]);
+}

@@ -7,7 +7,7 @@
 use libfuzzer_sys::fuzz_target;
 use neoteletext::typing::{Send, Typing};
 use neoteletext_input::control::MAX_BODY;
-use neoteletext_input::cursor::BODY;
+use neoteletext_input::cursor::{BLOCK, BODY};
 
 /// WELCOME, version 2, with every capability NeoTeletext offers but the
 /// agent: pages, the cursor, echo and every mode, 459 007, whose varint
@@ -27,7 +27,7 @@ fuzz_target!(|data: &[u8]| {
         let sends = if kind & 1 == 0 {
             let Some((body, after)) = after.split_first_chunk::<BODY>() else { return };
             rest = after;
-            typing.cursor(7, *body, now)
+            typing.cursor(7, *body)
         } else {
             let length = usize::from(kind >> 1).min(MAX_BODY).min(after.len());
             let (body, after) = after.split_at(length);
@@ -39,7 +39,8 @@ fuzz_target!(|data: &[u8]| {
                 // Only what the engine's rules allow reaches the interface.
                 if let Some(cursor) = state.cursor {
                     assert!((1..=23).contains(&cursor.row) && cursor.column < 40);
-                    assert!(usize::from(cursor.column) + usize::from(cursor.width) <= 40);
+                    // The browser echoes nothing: no flag but block is told.
+                    assert_eq!(cursor.flags & !BLOCK, 0);
                 }
             }
         }

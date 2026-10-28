@@ -212,6 +212,7 @@ const INTERFACE_SERVICES: &str = "(allow mach-lookup
   (global-name \"com.apple.CARenderServer\")
   (global-name \"com.apple.CoreDisplay.master\")
   (global-name \"com.apple.coreservices.launchservicesd\")
+  (global-name \"com.apple.coreservices.appleevents\")
   (global-name \"com.apple.lsd.mapdb\")
   (global-name \"com.apple.FontObjectsServer\")
   (global-name \"com.apple.fonts\")

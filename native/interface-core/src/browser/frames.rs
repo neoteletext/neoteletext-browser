@@ -73,15 +73,12 @@ impl Browser {
         self.pulses.retain(|&(_, start)| now.saturating_sub(start) < PULSE_MILLISECONDS);
         let updates = self.updates.len();
         self.updates.retain(|&(_, at)| now.saturating_sub(at) < UPDATE_MARK_MILLISECONDS);
-        #[cfg(feature = "interaction")]
-        let echoes = self.settle_echoes(now);
-        #[cfg(not(feature = "interaction"))]
-        let echoes = false;
+        self.rings.retain(|&(_, at)| now.saturating_sub(at) < UPDATE_RING_MILLISECONDS);
         let held = self.settle_hold(now);
         let tipped = self.tips_settle(now);
         let paneled = self.tabs_settle(now);
         let full_screen = self.full_screen_settle(now);
-        self.pulses.len() != before || self.updates.len() != updates || echoes || held || tipped || paneled || full_screen
+        self.pulses.len() != before || self.updates.len() != updates || held || tipped || paneled || full_screen
     }
 }
 

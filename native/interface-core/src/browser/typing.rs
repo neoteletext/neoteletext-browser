@@ -1,44 +1,32 @@
 //! Typing into a page (`neoteletext-common/INPUT.md` section 9): while
 //! the page open is a page of a channel that takes input, the viewer's
 //! keys are the channel's, as a terminal's are its host's, and the mouse
-//! too when the channel or the page asks for it. The browser draws the
-//! channel's cursor, the viewer's provisional echo, and in the strip who
-//! is listening. The trusted core decides whether input goes and encodes
-//! it; this only gives it intents (REQ-INT-132).
+//! and the contacts of a touch screen on the page too. The browser draws
+//! the channel's cursor, and in the strip who is listening; what is typed
+//! shows only as the channel draws it. The trusted core decides whether input goes, paces
+//! the pointer and encodes it; this only gives it intents (REQ-INT-132,
+//! `RETURN-CHANNEL.md` REQ-RCH-036).
 
 use alloc::string::String;
 use alloc::vec::Vec;
 
-use neoteletext_input::cursor::{ECHO, MASKED};
-use neoteletext_input::event::{ALT, Action, CONTROL, HYPER, KeyCode, META, MouseAction, Point, SUPER, printable};
+use neoteletext_input::event::{Action, KeyCode, MouseAction, Point, printable};
 use neoteletext_input::{MAX_COMPOSE, MAX_PASTE};
 
 use crate::browser::{Browser, Output};
-use crate::canvas::{PAGE_HEIGHT, PAGE_WIDTH, PageKey};
+use crate::canvas::{CELL_HEIGHT, CELL_WIDTH, PAGE_HEIGHT, PAGE_WIDTH, PageKey};
 use crate::channel::page_index;
-use crate::input::{Intent, mouse_button};
+use crate::input::{Intent, TouchPhase, mouse_button};
 use crate::wall::cell_in;
 
 mod draw;
 
-/// An echo is given up after this long with no acknowledgement
-/// (INPUT.md section 9.3).
-pub const ECHO_LIFETIME_MILLISECONDS: u64 = 2_000;
 /// The cursor blinks at this half period, as common terminals do.
 pub const BLINK_MILLISECONDS: u64 = 530;
 /// A bar cursor's width as a share of a cell.
 const BAR_SHARE: f64 = 0.15;
 /// A block cursor's outline as a share of a cell's width.
 const BLOCK_LINE_SHARE: f64 = 0.12;
-/// The echo's text as a share of a cell's height.
-const ECHO_TEXT_SHARE: f64 = 0.8;
-/// What masked echo shows.
-const MASK: char = '*';
-/// The modifiers that make a key a command, not text (INPUT.md section
-/// 5.3): its echo would be wrong.
-const COMMANDS: u8 = CONTROL | ALT | SUPER | HYPER | META;
-/// The functional code of Backspace (INPUT.md section 5.6).
-const BACKSPACE: u32 = 4;
 /// The wheel's unit: 1/120th of a line (INPUT.md section 5.4).
 const WHEEL_UNITS_PER_LINE: f64 = 120.0;
 /// Turns of a wheel that moves in notches, in lines, as a channel gets
@@ -65,9 +53,7 @@ pub struct CursorView {
     pub row: u8,
     /// 0 to 39.
     pub column: u8,
-    /// How many cells echo may run from the column.
-    pub width: u8,
-    /// Echo, masked and block, as the engine's cursor record says.
+    /// Block, as the engine's cursor record says.
     pub flags: u8,
 }
 
@@ -86,30 +72,18 @@ pub struct TypingView {
     pub refused: bool,
     /// The cursor, if the channel placed one on this page.
     pub cursor: Option<CursorView>,
-    /// The number of the last intent the channel acted on.
-    pub acked: u32,
-    /// The last round trip, in milliseconds.
-    pub round_trip_ms: Option<u16>,
+    /// The push connection's last round trip, in microseconds
+    /// (REQ-RCH-016).
+    pub round_trip_us: Option<u32>,
     /// Another page of the channel its host went to (REQ-INT-113): the
     /// browser shows it.
     pub show: Option<u16>,
-}
-
-/// A character shown before the channel confirmed it.
-#[derive(Clone, Copy, Debug)]
-struct Echo {
-    local: u32,
-    character: char,
-    at: u64,
 }
 
 /// The browser's typing state.
 #[derive(Debug, Default)]
 pub(super) struct TerminalUi {
     typing: Option<TypingView>,
-    /// Numbers the viewer's intents, counting up.
-    local: u32,
-    echoes: Vec<Echo>,
     /// The browser's own modifier is held: Command on macOS, Control and
     /// Shift elsewhere. A click is then the browser's, not the host's.
     browser_modifier: bool,
@@ -120,6 +94,16 @@ pub(super) struct TerminalUi {
     /// The modifiers held, as section 5.5 numbers them, which go with
     /// every press, release, move and wheel turn (REQ-RCH-005).
     mods: u8,
+    /// Where the pointer was last given as on the open page: a move goes
+    /// for each change of it, and its leaving the page is gone
+    /// (REQ-RCH-030, REQ-RCH-034).
+    last_dot: Option<Point>,
+    /// The contacts given to the channel, each where it was last given:
+    /// at most `MAX_CONTACTS`, the most the trusted core numbers.
+    touches: Vec<(u64, Point)>,
+    /// The contacts that began on a link, and which: the browser's, never
+    /// the channel's, followed if they lift on it (REQ-RCH-048).
+    link_touches: Vec<(u64, (PageKey, usize))>,
 }
 
 /// The longest prefix of `text` of at most `limit` bytes, whole characters.
@@ -136,12 +120,12 @@ impl Browser {
     pub fn set_typing(&mut self, typing: TypingView, now: u64) {
         let state = &mut self.typing;
         let moved = state.typing.and_then(|old| old.cursor) != typing.cursor;
-        state.echoes.retain(|echo| echo.local > typing.acked);
-        if !typing.on || typing.cursor.is_none_or(|cursor| cursor.flags & ECHO == 0) {
-            state.echoes.clear();
-        }
         if !typing.on {
+            // The trusted core sends gone for what the channel held.
             state.buttons = 0;
+            state.last_dot = None;
+            state.touches.clear();
+            state.link_touches.clear();
         }
         if moved {
             state.moved = now;
@@ -206,13 +190,25 @@ impl Browser {
     /// Where the pointer is on the open page, while it is over it: the cell
     /// and the page image's pixel.
     fn pointer_on_page(&self) -> Option<Point> {
+        self.page_point(self.pointer)
+    }
+
+    /// The dot of the open page's image under `point`, and the cell it
+    /// lies in (INPUT.md section 9.9): the dot first, rounded down and kept
+    /// inside the image, and the cell from it, 12 by 20 dots to a cell, so
+    /// the dot is always inside its cell, as the trusted core's reader
+    /// requires (REQ-INT-127).
+    fn page_point(&self, point: crate::geometry::Point) -> Option<Point> {
         let (_, rect) = self.wall.open()?;
-        let (column, row) = cell_in(rect, self.pointer)?;
-        let x = (self.pointer.x - rect.x0) / rect.width() * f64::from(PAGE_WIDTH);
-        let y = (self.pointer.y - rect.y0) / rect.height() * f64::from(PAGE_HEIGHT);
+        cell_in(rect, point)?;
+        let x = (point.x - rect.x0) / rect.width() * f64::from(PAGE_WIDTH);
+        let y = (point.y - rect.y0) / rect.height() * f64::from(PAGE_HEIGHT);
         #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss, reason = "within the page raster, as cell_in checked")]
-        let pixels = Some((x as u32, y as u32));
-        Some(Point { column: u32::from(column), row: u32::from(row), pixels, mods: self.typing.mods })
+        let (x, y) = (x as u32, y as u32);
+        let x = x.min(u32::from(PAGE_WIDTH).saturating_sub(1));
+        let y = y.min(u32::from(PAGE_HEIGHT).saturating_sub(1));
+        let (column, row) = (x.checked_div(u32::from(CELL_WIDTH))?, y.checked_div(u32::from(CELL_HEIGHT))?);
+        Some(Point { column, row, pixels: Some((x, y)), mods: self.typing.mods })
     }
 
     /// Whether the mouse is the channel's: keys go to it, the pointer is
@@ -237,47 +233,30 @@ impl Browser {
         self.mouse_is_hosts()
     }
 
-    fn send(&mut self, target: PageKey, intent: Intent) -> u32 {
-        self.typing.local = self.typing.local.wrapping_add(1);
-        let local = self.typing.local;
-        self.outputs.push(Output::Terminal { key: target, local, intent });
-        local
+    fn send(&mut self, target: PageKey, intent: Intent) {
+        self.outputs.push(Output::Terminal { key: target, intent });
     }
 
     /// A key while keys go to a channel: `key` is its unshifted character
     /// or functional code, `mods` the protocol's bits, `text` what it
     /// typed and `base` the United States layout's character of the same
-    /// physical key. Returns whether the window needs drawing.
-    pub fn terminal_key(&mut self, action: Action, key: KeyCode, mods: u8, text: Option<&str>, base: Option<char>, now: u64) -> bool {
-        let Some(target) = self.typing_target() else { return false };
+    /// physical key. Nothing is drawn for it: the channel draws what it
+    /// makes of the key.
+    pub fn terminal_key(&mut self, action: Action, key: KeyCode, mods: u8, text: Option<&str>, base: Option<char>) {
+        let Some(target) = self.typing_target() else { return };
         let text = text.map(|text| cut(text, neoteletext_input::MAX_KEY_TEXT)).filter(|text| !text.is_empty()).map(String::from);
-        let echo = text.clone().filter(|text| action != Action::Release && mods & COMMANDS == 0 && text.chars().all(printable));
-        let local = self.send(target, Intent::Key { action, key, mods, text, base });
-        if action == Action::Press && key == KeyCode::Functional(BACKSPACE) {
-            return self.typing.echoes.pop().is_some();
-        }
-        let mut changed = false;
-        for character in echo.iter().flat_map(|text| text.chars()) {
-            changed |= self.echo(character, local, now);
-        }
-        changed
+        self.send(target, Intent::Key { action, key, mods, text, base });
     }
 
     /// Text an input method committed, or a phone typed, while keys go to
-    /// a channel: one intent, without control characters, echoed.
-    pub fn terminal_text(&mut self, text: &str, now: u64) -> bool {
-        let Some(target) = self.typing_target() else { return false };
+    /// a channel: one intent, without control characters. Nothing is
+    /// drawn for it: the channel draws what it makes of the text.
+    pub fn terminal_text(&mut self, text: &str) {
+        let Some(target) = self.typing_target() else { return };
         let printable: String = cut(text, MAX_PASTE).chars().filter(|&character| printable(character)).collect();
-        if printable.is_empty() {
-            return false;
+        if !printable.is_empty() {
+            self.send(target, Intent::Text(printable));
         }
-        let echoed: Vec<char> = printable.chars().collect();
-        let local = self.send(target, Intent::Text(printable));
-        let mut changed = false;
-        for character in echoed {
-            changed |= self.echo(character, local, now);
-        }
-        changed
     }
 
     /// The browser's paste shortcut while keys go to a channel: the text as
@@ -330,25 +309,113 @@ impl Browser {
             MouseAction::Press => self.typing.buttons |= bit,
             MouseAction::Release if self.typing.buttons & bit == 0 => return false,
             MouseAction::Release => self.typing.buttons &= !bit,
-            MouseAction::Move => {}
+            MouseAction::Move | MouseAction::Gone => {}
         }
+        // The channel now knows where the pointer is: leaving the page is
+        // gone, even with no move since (REQ-RCH-034).
+        self.typing.last_dot = Some(at);
         self.send(target, Intent::Mouse { action, button, at });
         true
     }
 
-    /// The pointer moved over the open page: a move for the channel while a
-    /// button is held, or in a pointer area of the page (INPUT.md sections
-    /// 6.3 and 7.4); the session sends it only when the dot under the
-    /// pointer changed.
+    /// The pointer moved: over the open page, each change of the dot is a
+    /// move for the channel, buttons held or not (INPUT.md section 6.3,
+    /// REQ-RCH-030), which the trusted core paces; off it, onto the border,
+    /// the browser's controls or out of the window, gone (REQ-RCH-034).
     pub(in crate::browser) fn terminal_moved(&mut self) {
-        let (Some(target), Some(at)) = (self.typing_target(), self.pointer_on_page()) else { return };
+        let Some(target) = self.typing_target() else {
+            // Keys stopped going: the trusted core sent gone itself.
+            self.typing.last_dot = None;
+            return;
+        };
+        match self.pointer_on_page() {
+            Some(at) => {
+                if self.typing.last_dot != Some(at) {
+                    self.typing.last_dot = Some(at);
+                    let buttons = self.typing.buttons;
+                    self.send(target, Intent::Mouse { action: MouseAction::Move, button: buttons, at });
+                }
+            }
+            None => {
+                if self.typing.last_dot.take().is_some() {
+                    // Gone releases what was held, without a click.
+                    self.typing.buttons = 0;
+                    self.send(target, Intent::Gone);
+                }
+            }
+        }
+    }
+
+    /// A contact on a touch screen, at `x`, `y` in logical pixels, as the
+    /// system reported it (REQ-RCH-041 to REQ-RCH-048): while keys go to
+    /// the open page's channel, a contact that begins on the page is the
+    /// channel's, and goes as an intent the trusted core numbers; one that
+    /// begins on a link the page declares is the browser's, and follows the
+    /// link if it lifts on it, the channel never told of it. A contact that
+    /// leaves the page is cancelled for the channel. Returns whether the
+    /// contact was taken; the browser has no touch gestures of its own yet.
+    pub fn touch(&mut self, phase: TouchPhase, contact: u64, x: f64, y: f64) -> bool {
+        let point = crate::geometry::Point::new(x, y);
+        let Some(target) = self.typing_target() else { return false };
+        if let Some(place) = self.typing.link_touches.iter().position(|(system, _)| *system == contact) {
+            if phase == TouchPhase::Ended {
+                let (_, link) = self.typing.link_touches.swap_remove(place);
+                self.follow_touched_link(point, link);
+            } else if phase == TouchPhase::Cancelled {
+                self.typing.link_touches.swap_remove(place);
+            }
+            return true;
+        }
+        let at = self.page_point(point);
+        let known = self.typing.touches.iter().position(|(system, _)| *system == contact);
+        match (phase, known, at) {
+            (TouchPhase::Began, None, Some(at)) => {
+                #[cfg(feature = "links")]
+                if let Some(link) = self.link_at(point) {
+                    if self.typing.link_touches.len() < neoteletext_input::MAX_CONTACTS {
+                        self.typing.link_touches.push((contact, link));
+                    }
+                    return true;
+                }
+                if self.typing.touches.len() >= neoteletext_input::MAX_CONTACTS {
+                    return true;
+                }
+                self.typing.touches.push((contact, at));
+                self.send(target, Intent::Touch { phase, contact, at });
+                true
+            }
+            (TouchPhase::Moved, Some(place), Some(at)) => {
+                if self.typing.touches.get(place).is_some_and(|(_, last)| *last != at) {
+                    if let Some(entry) = self.typing.touches.get_mut(place) {
+                        entry.1 = at;
+                    }
+                    self.send(target, Intent::Touch { phase, contact, at });
+                }
+                true
+            }
+            (TouchPhase::Ended | TouchPhase::Cancelled | TouchPhase::Moved, Some(place), at) => {
+                let (_, last) = self.typing.touches.swap_remove(place);
+                // Lifted on the page, a lift; lifted or moved off it, or
+                // taken by the system, gone.
+                let phase = if phase == TouchPhase::Ended && at.is_some() { TouchPhase::Ended } else { TouchPhase::Cancelled };
+                self.send(target, Intent::Touch { phase, contact, at: at.unwrap_or(last) });
+                true
+            }
+            _ => false,
+        }
+    }
+
+    /// A contact that began on a link lifted at `point`: the link is
+    /// followed when it lifted on the same link, as a click on it is
+    /// (decision 122).
+    #[cfg_attr(not(feature = "links"), expect(unused_variables, clippy::unused_self, reason = "without links no contact begins on a link"))]
+    fn follow_touched_link(&mut self, point: crate::geometry::Point, link: (PageKey, usize)) {
         #[cfg(feature = "links")]
-        let wanted = self.typing.buttons != 0 || self.in_pointer_area();
-        #[cfg(not(feature = "links"))]
-        let wanted = self.typing.buttons != 0;
-        if wanted && !self.typing.browser_modifier {
-            let buttons = self.typing.buttons;
-            self.send(target, Intent::Mouse { action: MouseAction::Move, button: buttons, at });
+        if self.link_at(point) == Some(link)
+            && let Some(click) = self.wall.cell_at(point)
+        {
+            let version = self.versions.get(&click.key).copied().unwrap_or_default();
+            self.outputs.push(Output::Cell(crate::wall::CellClick { version, ..click }));
         }
     }
 
@@ -381,28 +448,7 @@ impl Browser {
         Some(false)
     }
 
-    fn echo(&mut self, character: char, local: u32, now: u64) -> bool {
-        let Some(cursor) = self.typing.typing.and_then(|typing| typing.cursor) else { return false };
-        if cursor.flags & ECHO == 0 || !printable(character) {
-            return false;
-        }
-        if self.typing.echoes.len() >= usize::from(cursor.width) {
-            return false;
-        }
-        let character = if cursor.flags & MASKED != 0 { MASK } else { character };
-        self.typing.echoes.push(Echo { local, character, at: now });
-        true
-    }
-
-    /// Echoes not confirmed in time are given up.
-    pub(in crate::browser) fn settle_echoes(&mut self, now: u64) -> bool {
-        let before = self.typing.echoes.len();
-        self.typing.echoes.retain(|echo| now.saturating_sub(echo.at) < ECHO_LIFETIME_MILLISECONDS);
-        before != self.typing.echoes.len()
-    }
-
-    /// While a cursor shows, the window draws again at its blink; echoes
-    /// need a frame when they lapse.
+    /// While a cursor shows, the window draws again at its blink.
     pub(in crate::browser) fn terminal_frame_interval(&self) -> Option<u64> {
         self.typing_target()?;
         let typing = self.typing.typing?;

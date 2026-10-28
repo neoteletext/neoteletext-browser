@@ -183,7 +183,7 @@ impl Session {
         if version != neoteletext_input::VERSION {
             return Vec::new();
         }
-        let welcome = Control::Welcome { version, caps: caps & USED };
+        let welcome = Control::Welcome { version, caps: caps & USED, resume: None };
         let Ok(packet) = packet_of(&welcome, AUDIO_SERVICE, self.record_id) else { return Vec::new() };
         self.record_id = self.record_id.wrapping_add(1);
         vec![Push::Packets(packet.bytes.to_vec())]

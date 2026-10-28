@@ -7,7 +7,9 @@ use std::path::Path;
 
 use update::files;
 use update::manifest::{Entry, Manifest};
-use update::platform::{APPARMOR_PROFILE, BUNDLE, Family, MANIFEST, MANIFEST_SIGNATURE, MAX_FILES, PROGRAMS, Platform, SIGNATURE_SUFFIX};
+use update::platform::{
+    APPARMOR_PROFILE, BUNDLE, Family, LINUX_ICON_SIZES, MACOS_ICON, MANIFEST, MANIFEST_SIGNATURE, MAX_FILES, PROGRAMS, Platform, SIGNATURE_SUFFIX,
+};
 use update::version::Version;
 
 use crate::keys::Source;
@@ -18,8 +20,14 @@ const BUNDLE_IDENTIFIER: &str = "com.neoteletext.browser";
 /// own minimum, measured with `otool -l`, section 2).
 const MACOS_MINIMUM: &str = "11.0";
 
+/// Apple's tool that makes an icon file from an iconset and an iconset
+/// from an icon file (`iconutil(1)`), at its fixed place, never looked up
+/// on the path.
+const ICONUTIL: &str = "/usr/bin/iconutil";
+
 /// The bundle's `Info.plist` (Apple's Information Property List Key
-/// Reference): its main executable is the launcher (section 4.1).
+/// Reference): its main executable is the launcher (section 4.1), its icon
+/// the art's icon file (decision 124).
 fn info_plist(version: Version) -> String {
     format!(
         r#"<?xml version="1.0" encoding="UTF-8"?>
@@ -32,6 +40,8 @@ fn info_plist(version: Version) -> String {
 	<string>NeoTeletext</string>
 	<key>CFBundleExecutable</key>
 	<string>neoteletext-launcher</string>
+	<key>CFBundleIconFile</key>
+	<string>{MACOS_ICON}</string>
 	<key>CFBundleIdentifier</key>
 	<string>{BUNDLE_IDENTIFIER}</string>
 	<key>CFBundleInfoDictionaryVersion</key>
@@ -65,8 +75,57 @@ fn apparmor() -> String {
     update::platform::apparmor_profile(update::platform::APPARMOR_DEFAULT_ROOT)
 }
 
+/// Runs `iconutil` with `arguments`.
+fn iconutil(arguments: &[&std::ffi::OsStr]) -> Result<(), String> {
+    let output = std::process::Command::new(ICONUTIL).args(arguments).output().map_err(|error| format!("{ICONUTIL}: {error}"))?;
+    if output.status.success() { Ok(()) } else { Err(format!("{ICONUTIL} failed: {}", String::from_utf8_lossy(&output.stderr).trim())) }
+}
+
+/// The macOS bundle's icon file (decision 124): `iconutil` makes it from
+/// an iconset of the art at every size, in `work`, a new folder; it is
+/// then read back into an iconset and checked to be the art at every size,
+/// pixel for pixel, before its bytes are returned.
+///
+/// # Errors
+/// When `work` exists, `iconutil` fails, or what it made is not the art.
+fn macos_icon(work: &Path) -> Result<Vec<u8>, String> {
+    std::fs::create_dir(work).map_err(|error| format!("{}: {error}", work.display()))?;
+    let made = macos_icon_in(work);
+    let _ = std::fs::remove_dir_all(work);
+    made
+}
+
+/// [`macos_icon`]'s work, in the folder `work`.
+fn macos_icon_in(work: &Path) -> Result<Vec<u8>, String> {
+    let iconset = work.join("NeoTeletext.iconset");
+    icon::macos::write_iconset(&iconset)?;
+    let file = work.join(MACOS_ICON);
+    iconutil(&["-c".as_ref(), "icns".as_ref(), "-o".as_ref(), file.as_os_str(), iconset.as_os_str()])?;
+    let back = work.join("check.iconset");
+    iconutil(&["-c".as_ref(), "iconset".as_ref(), "-o".as_ref(), back.as_os_str(), file.as_os_str()])?;
+    icon::macos::check_iconset(&back)?;
+    std::fs::read(&file).map_err(|error| format!("{}: {error}", file.display()))
+}
+
+/// Every Linux icon file (decision 124), by its path in a version: the
+/// art at each of [`LINUX_ICON_SIZES`], by nearest neighbour.
+///
+/// # Errors
+/// When the art cannot be read.
+fn linux_icons() -> Result<Vec<(String, Vec<u8>)>, String> {
+    let art = icon::source().map_err(|refused| refused.to_string())?;
+    LINUX_ICON_SIZES
+        .iter()
+        .map(|side| {
+            let png = art.scaled(*side).and_then(|image| icon::png::encode(&image)).map_err(|refused| refused.to_string())?;
+            Ok((update::platform::linux_icon(*side), png))
+        })
+        .collect()
+}
+
 /// Lays out version `version` for `platform` in `out`, a new folder, from
-/// the built programs in `programs`.
+/// the built programs in `programs`; on macOS the icon file is made in
+/// `<out>.icon`, a new folder removed afterwards.
 ///
 /// # Errors
 /// When a program is missing or a file cannot be written.
@@ -87,8 +146,19 @@ pub fn layout(platform: Platform, version: Version, programs: &Path, out: &Path)
         Family::Macos => {
             let plist = out.join(BUNDLE).join("Contents/Info.plist");
             files::write_synced(&plist, info_plist(version).as_bytes(), false).map_err(|error| error.to_string())?;
+            let icon = out.join(BUNDLE).join("Contents/Resources").join(MACOS_ICON);
+            if let Some(folder) = icon.parent() {
+                std::fs::create_dir_all(folder).map_err(|error| error.to_string())?;
+            }
+            let bytes = macos_icon(Path::new(&format!("{}.icon", out.display())))?;
+            files::write_synced(&icon, &bytes, false).map_err(|error| format!("{}: {error}", icon.display()))?;
         }
-        Family::Linux => files::write_synced(&out.join(APPARMOR_PROFILE), apparmor().as_bytes(), false).map_err(|error| error.to_string())?,
+        Family::Linux => {
+            files::write_synced(&out.join(APPARMOR_PROFILE), apparmor().as_bytes(), false).map_err(|error| error.to_string())?;
+            for (path, bytes) in linux_icons()? {
+                files::write_synced(&out.join(&path), &bytes, false).map_err(|error| format!("{path}: {error}"))?;
+            }
+        }
         Family::Windows => {}
     }
     Ok(())
@@ -241,6 +311,7 @@ pub fn targets(folder: &Path, platform: Platform, out: &Path) -> Result<(), Stri
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used, reason = "a test")]
 mod tests {
     use super::*;
 
@@ -256,5 +327,28 @@ mod tests {
         );
         assert!(!profile.contains("neoteletext{,-*}"), "no pattern for every program: {profile}");
         assert_eq!(profile.matches("userns").count(), 2, "one rule, and the sentence saying what it allows: {profile}");
+    }
+
+    /// Decision 124: the bundle names its icon file, which the release
+    /// lists.
+    #[test]
+    fn the_bundle_names_its_icon() {
+        let plist = info_plist(Version::new(0, 1, 0));
+        assert!(plist.contains("\t<key>CFBundleIconFile</key>\n\t<string>NeoTeletext.icns</string>\n"), "{plist}");
+        assert!(Platform::MacosArm64.file(&format!("{BUNDLE}/Contents/Resources/{MACOS_ICON}")).is_some_and(|file| file.required));
+    }
+
+    /// Decision 124: Linux's icon files are the art at each size, by
+    /// nearest neighbour, each a file every Linux version must have.
+    #[test]
+    fn the_linux_icons_are_the_art_at_each_size() {
+        let art = icon::source().unwrap();
+        let icons = linux_icons().unwrap();
+        assert_eq!(icons.len(), LINUX_ICON_SIZES.len());
+        for ((path, png), side) in icons.iter().zip(LINUX_ICON_SIZES) {
+            assert_eq!(*path, format!("neoteletext-{side}.png"));
+            assert_eq!(icon::png::decode(png).unwrap(), art.scaled(side).unwrap(), "{path}");
+            assert!(Platform::LinuxX86_64.file(path).is_some_and(|file| file.required && !file.executable), "{path}");
+        }
     }
 }

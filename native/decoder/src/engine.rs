@@ -117,9 +117,6 @@ pub struct Found {
     /// Its controls, as the engine finds them in its packets X/26
     /// (INPUT.md section 7.3, the engine's decision E.127).
     pub controls: Vec<protocol::links::Area>,
-    /// Its pointer areas (INPUT.md section 7.4, the engine's decision
-    /// E.128); the whole page is one area of every row and column.
-    pub pointer_areas: Vec<protocol::links::Area>,
     /// Its coloured keys and Index, from packet X/27/0, and whether row 24
     /// is shown (`page-controls.md` section 2).
     pub fastext: protocol::links::Fastext,

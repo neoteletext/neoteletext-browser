@@ -10,7 +10,16 @@
 //! its socket, so its thread ends then (finding F-63). Once open, another
 //! thread reads the socket, blocking, and wakes the fetcher's loop the
 //! moment bytes arrive, so the loop sleeps until something happens and
-//! never waits on one socket while another has data (REQ-INT-135).
+//! never waits on one socket while another has data (REQ-INT-135); and a
+//! third writes to it, so the loop never waits on a socket the network
+//! does not drain, and counts what it has not yet written (REQ-RCH-035).
+//!
+//! Every connection shares one TLS configuration (REQ-RCH-014, requirement
+//! 18.33): a reconnection to a server resumes the session of the last
+//! connection to it where the server allows, saving a round trip, and no
+//! early data (TLS 0-RTT) is ever sent, since an input message in it could
+//! be replayed. TCP Fast Open is never used: the standard library does not
+//! offer it.
 //!
 //! A server on this computer or the local network is reached only when
 //! the channel's arguments name its address (the engine's REQ-SEC-006):
@@ -40,8 +49,10 @@ mod cancel;
 mod connection;
 mod opening;
 mod port;
+mod writer;
 
 use cancel::Cancel;
+use writer::Outgoing;
 
 /// How long a connection may take to open, from the name's resolution to
 /// the end of its proxy's tunnel and TLS handshake: the engine's connect
@@ -81,6 +92,9 @@ struct Connection {
     incoming: Receiver<Vec<u8>>,
     /// Bytes taken from `incoming` and not yet passed on.
     pending: VecDeque<u8>,
+    /// The writer thread, which writes everything sent once the
+    /// connection is open, the TLS records of alerts among it, in order.
+    outgoing: Outgoing,
     peer: IpAddress,
 }
 
@@ -141,10 +155,24 @@ pub struct Tcp {
 
 impl Tcp {
     pub fn new(wake: Wake, proxy: Option<Proxy>, allowed_local: AllowedLocal) -> Self {
-        // ring is the one provider built in, so the builder installs it.
         let roots = rustls::RootCertStore::from_iter(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
-        let tls = rustls::ClientConfig::builder().with_root_certificates(roots).with_no_client_auth();
-        Self { fetch: None, push: None, live: None, tls: Arc::new(tls), wake, proxy, proxy_failed: false, refused: None, allowed_local, local_refused: false }
+        Self::with_roots(roots, wake, proxy, allowed_local)
+    }
+
+    /// The transport trusting `roots`: Mozilla's, or a test's own.
+    fn with_roots(roots: rustls::RootCertStore, wake: Wake, proxy: Option<Proxy>, allowed_local: AllowedLocal) -> Self {
+        Self {
+            fetch: None,
+            push: None,
+            live: None,
+            tls: Arc::new(tls_config(roots)),
+            wake,
+            proxy,
+            proxy_failed: false,
+            refused: None,
+            allowed_local,
+            local_refused: false,
+        }
     }
 
     /// Whether an address was refused as local since this was last asked.
@@ -195,6 +223,17 @@ impl Tcp {
         self.local_refused |= local_refused;
         self.connection(connection)
     }
+}
+
+/// The TLS configuration every connection of the channel shares
+/// (REQ-RCH-014, the engine's REQ-WEB-035): rustls's in-memory store of
+/// sessions, so a reconnection resumes, and no early data. ring is the one
+/// provider built in, so the builder installs it.
+fn tls_config(roots: rustls::RootCertStore) -> rustls::ClientConfig {
+    let mut config = rustls::ClientConfig::builder().with_root_certificates(roots).with_no_client_auth();
+    config.resumption = rustls::client::Resumption::default();
+    config.enable_early_data = false;
+    config
 }
 
 /// What a connection's thread opens it with.

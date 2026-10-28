@@ -23,15 +23,14 @@ pub(crate) fn push_typing(payload: &mut Vec<u8>, typing: &Typing) -> Result<(), 
         flag(typing.on, FLAG_ON)
             | flag(typing.secure, FLAG_SECURE)
             | flag(typing.cursor.is_some(), FLAG_CURSOR)
-            | flag(typing.round_trip_ms.is_some(), FLAG_ROUND_TRIP)
+            | flag(typing.round_trip_us.is_some(), FLAG_ROUND_TRIP)
             | flag(typing.show.is_some(), FLAG_SHOW)
             | flag(typing.refused, FLAG_REFUSED),
     );
-    let place = typing.cursor.unwrap_or(CursorState { row: cursor::NO_CURSOR, column: 0, width: 0, flags: 0 });
+    let place = typing.cursor.unwrap_or(CursorState { row: cursor::NO_CURSOR, column: 0, flags: 0 });
     check_cursor(typing.page, typing.cursor)?;
-    payload.extend_from_slice(&[place.row, place.column, place.width, place.flags]);
-    payload.extend_from_slice(&typing.acked.to_be_bytes());
-    payload.extend_from_slice(&typing.round_trip_ms.unwrap_or(0).to_be_bytes());
+    payload.extend_from_slice(&[place.row, place.column, place.flags]);
+    payload.extend_from_slice(&typing.round_trip_us.unwrap_or(0).to_be_bytes());
     if let Some(show) = typing.show {
         interface_core::channel::page_index(show).ok_or(ProtocolError::BadValue("page number"))?;
         payload.extend_from_slice(&show.to_be_bytes());
@@ -40,11 +39,14 @@ pub(crate) fn push_typing(payload: &mut Vec<u8>, typing: &Typing) -> Result<(), 
 }
 
 /// The cursor's fields are checked again on each side, by the engine's
-/// own rules (REQ-INT-134).
+/// own rules (REQ-INT-134); no flag but block is told.
 fn check_cursor(page: u16, state: Option<CursorState>) -> Result<(), ProtocolError> {
     let Some(state) = state else { return Ok(()) };
+    if state.flags & !cursor::BLOCK != 0 {
+        return Err(ProtocolError::BadValue("cursor"));
+    }
     let [p0, p1] = page.to_be_bytes();
-    cursor::from_body([p0, p1, 0, 0, state.row, state.column, state.width, state.flags])
+    cursor::from_body([p0, p1, 0, 0, state.row, state.column, 0, state.flags])
         .ok()
         .filter(|checked| checked.place.is_some())
         .map(|_| ())
@@ -58,11 +60,10 @@ pub(crate) fn read_typing(fields: &mut Fields<'_>) -> Result<Typing, ProtocolErr
     if flags & !ALL_FLAGS != 0 {
         return Err(ProtocolError::BadValue("typing flags"));
     }
-    let place = CursorState { row: fields.u8()?, column: fields.u8()?, width: fields.u8()?, flags: fields.u8()? };
+    let place = CursorState { row: fields.u8()?, column: fields.u8()?, flags: fields.u8()? };
     let cursor = (flags & FLAG_CURSOR != 0).then_some(place);
     check_cursor(page, cursor)?;
-    let acked = fields.u32()?;
-    let round_trip = fields.u16()?;
+    let round_trip = fields.u32()?;
     let show = if flags & FLAG_SHOW != 0 { Some(fields.display_page()?) } else { None };
     Ok(Typing {
         channel,
@@ -71,8 +72,7 @@ pub(crate) fn read_typing(fields: &mut Fields<'_>) -> Result<Typing, ProtocolErr
         secure: flags & FLAG_SECURE != 0,
         refused: flags & FLAG_REFUSED != 0,
         cursor,
-        acked,
-        round_trip_ms: (flags & FLAG_ROUND_TRIP != 0).then_some(round_trip),
+        round_trip_us: (flags & FLAG_ROUND_TRIP != 0).then_some(round_trip),
         show,
     })
 }

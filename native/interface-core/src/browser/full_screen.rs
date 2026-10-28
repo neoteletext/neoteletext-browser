@@ -34,8 +34,8 @@ const POINTER_HIDE_MILLISECONDS: u64 = 2_000;
 /// Two presses this close in time and place are a double click: the
 /// default of Windows (`GetDoubleClickTime`) and of macOS's double-click
 /// speed setting's middle; the platforms do not tell the interface theirs.
-const DOUBLE_CLICK_MILLISECONDS: u64 = 500;
-const DOUBLE_CLICK_DISTANCE: f64 = 4.0;
+pub(in crate::browser) const DOUBLE_CLICK_MILLISECONDS: u64 = 500;
+pub(in crate::browser) const DOUBLE_CLICK_DISTANCE: f64 = 4.0;
 /// The notice: what it says, and its box.
 const NOTICE: &str = "Full screen: Escape to leave";
 const NOTICE_PADDING: f64 = 10.0;
@@ -267,7 +267,6 @@ impl Browser {
         // takes the pointer.
         self.tab_strip_forget(!strip);
         self.tips_forget();
-        self.controls_forget();
         let (channel, updates) = (&self.channel, &self.updates);
         let pages: Vec<WallPage<'_>> = crate::channel::bank_indices(self.bank)
             .filter_map(|index| {

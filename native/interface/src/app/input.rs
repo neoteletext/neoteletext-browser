@@ -130,10 +130,13 @@ impl App {
                 changed
             }
             // Leaving the window puts the pointer nowhere: what pops out
-            // under it settles back.
+            // under it settles back, and a channel whose page it was over is
+            // told it has gone, at once (REQ-RCH-034).
             WindowEvent::CursorLeft { .. } => {
                 self.view.cursor = (-1.0, -1.0);
-                self.view.browser.pointer_moved(self.view.cursor.0, self.view.cursor.1, now)
+                let changed = self.view.browser.pointer_moved(self.view.cursor.0, self.view.cursor.1, now);
+                self.act(event_loop);
+                changed
             }
             WindowEvent::MouseInput { state: ElementState::Pressed, button: MouseButton::Left, .. } => self.left_pressed(event_loop, now),
             WindowEvent::MouseInput { state: ElementState::Released, button: MouseButton::Left, .. } => self.left_released(event_loop),
@@ -145,6 +148,12 @@ impl App {
             #[cfg(feature = "interaction")]
             WindowEvent::MouseInput { state, button, .. } => self.other_button(event_loop, state, button),
             WindowEvent::MouseWheel { delta, .. } => self.wheel(event_loop, delta, now),
+            // A touch screen's contacts, on Windows and Linux; macOS's
+            // trackpads give none (`RETURN-CHANNEL.md` section 4.4). winit
+            // 0.30 tells a pen from a finger nowhere: Windows' pen comes as a
+            // contact like a finger's, so it goes as touch, not as a pen.
+            #[cfg(feature = "interaction")]
+            WindowEvent::Touch(touch) => self.touched(event_loop, touch),
             // The system's full-screen key away from macOS, F11, which a
             // channel never receives (decision 85); macOS's, Control-Command-F,
             // is the menu bar's.
@@ -164,7 +173,7 @@ impl App {
             WindowEvent::KeyboardInput { ref event, .. } if event.state == ElementState::Pressed && self.is_paste(event) => self.pasted(event_loop),
             WindowEvent::KeyboardInput { event, .. } if event.state == ElementState::Pressed => self.key_pressed(event_loop, &event),
             #[cfg(feature = "interaction")]
-            WindowEvent::Ime(Ime::Commit(text)) if self.view.browser.typing_target().is_some() => self.channel_text(event_loop, &text, now),
+            WindowEvent::Ime(Ime::Commit(text)) if self.view.browser.typing_target().is_some() => self.channel_text(event_loop, &text),
             // The input method's preedit goes to the channel in the COMPOSE
             // mode (INPUT.md section 9.1).
             #[cfg(feature = "interaction")]
@@ -219,6 +228,25 @@ impl App {
         changed
     }
 
+    /// A contact on a touch screen, in physical pixels: the channel's while
+    /// keys go to it and it began on the page (REQ-RCH-047); the browser has
+    /// no touch gestures of its own yet. Nothing to draw.
+    #[cfg(feature = "interaction")]
+    fn touched(&mut self, event_loop: &ActiveEventLoop, touch: winit::event::Touch) -> bool {
+        use interface_core::input::TouchPhase;
+        let phase = match touch.phase {
+            winit::event::TouchPhase::Started => TouchPhase::Began,
+            winit::event::TouchPhase::Moved => TouchPhase::Moved,
+            winit::event::TouchPhase::Ended => TouchPhase::Ended,
+            winit::event::TouchPhase::Cancelled => TouchPhase::Cancelled,
+        };
+        let scale = self.scale();
+        if self.view.browser.touch(phase, touch.id, touch.location.x / scale, touch.location.y / scale) {
+            self.act(event_loop);
+        }
+        false
+    }
+
     /// The pointer moved to `x`, `y` in physical pixels.
     fn cursor_moved(&mut self, x: f64, y: f64, now: u64) -> bool {
         let scale = self.scale();
@@ -256,12 +284,13 @@ impl App {
         changed
     }
 
-    /// A key while keys go to a channel.
+    /// A key while keys go to a channel: nothing to draw, the channel
+    /// draws what it makes of it.
     #[cfg(feature = "interaction")]
     fn channel_key(&mut self, event_loop: &ActiveEventLoop, event: &KeyEvent) -> bool {
-        let changed = self.terminal_key(event).unwrap_or(false);
+        self.terminal_key(event);
         self.act(event_loop);
-        changed
+        false
     }
 
     /// The paste shortcut while keys go to a channel.
@@ -283,12 +312,13 @@ impl App {
         changed
     }
 
-    /// The input method's text while keys go to a channel.
+    /// The input method's text while keys go to a channel: nothing to
+    /// draw, the channel draws what it makes of it.
     #[cfg(feature = "interaction")]
-    fn channel_text(&mut self, event_loop: &ActiveEventLoop, text: &str, now: u64) -> bool {
-        let changed = self.view.browser.terminal_text(text, now);
+    fn channel_text(&mut self, event_loop: &ActiveEventLoop, text: &str) -> bool {
+        self.view.browser.terminal_text(text);
         self.act(event_loop);
-        changed
+        false
     }
 
     /// The input method's preedit, for the channel, its cursor as a

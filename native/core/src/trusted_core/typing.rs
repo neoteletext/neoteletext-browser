@@ -13,16 +13,6 @@ impl Core {
     pub(super) fn input_intent(&mut self, intent: ToCore) -> Result<(), String> {
         match intent {
             ToCore::Input(intent) => {
-                // A move with no button held goes only in a pointer area of
-                // the page's latest image (INPUT.md section 7.4): the
-                // interface asks, the trusted core decides.
-                #[cfg(feature = "links")]
-                if let protocol::interaction::Intent::Mouse { action: neoteletext_input::event::MouseAction::Move, button: 0, at } = &intent.intent {
-                    let cell = (u8::try_from(at.column).unwrap_or(u8::MAX), u8::try_from(at.row).unwrap_or(u8::MAX));
-                    if !self.links.may_move(intent.key, cell.0, cell.1) {
-                        return Ok(());
-                    }
-                }
                 // A HOVER names a control of the page's latest image, or
                 // goes nowhere (REQ-INT-121).
                 #[cfg(feature = "links")]
@@ -31,16 +21,16 @@ impl Core {
                 {
                     return Ok(());
                 }
-                let sends = self.typing.input_intent(&intent, self.now());
+                let sends = self.typing.input_intent(&intent, self.now_us());
                 // What went is answered by the page's next frame, which
                 // its interval does not hold (REQ-RCH-002).
-                if sends.iter().any(|send| matches!(send, neoteletext::typing::Send::Fetcher(..))) {
+                if sends.iter().any(|send| matches!(send, neoteletext::typing::Send::Fetcher { .. })) {
                     self.frames.input(intent.key);
                 }
                 self.deliver_typing(sends)?;
             }
             ToCore::Editing(editing) => {
-                let sends = self.typing.editing(editing, self.now());
+                let sends = self.typing.editing(editing, self.now_us());
                 self.deliver_typing(sends)?;
             }
             #[cfg(feature = "phone-keyboard")]
@@ -57,29 +47,51 @@ impl Core {
     }
 
     /// Delivers what the typing rules decided: input messages to a
-    /// channel's fetcher, the typing state to the interface.
+    /// channel's fetcher, each move tagged with its contact and the
+    /// messages of one moment marked to leave together; the round trip's
+    /// measurement on or off; the typing state to the interface.
     #[cfg(feature = "interaction")]
     pub(super) fn deliver_typing(&mut self, sends: Vec<neoteletext::typing::Send>) -> Result<(), String> {
+        use neoteletext::typing::Send;
         use protocol::fetcher::{ToFetcher, write_to_fetcher};
         for send in sends {
             match send {
-                neoteletext::typing::Send::Fetcher(channel, record) => {
+                Send::Fetcher { channel, bytes, move_of, more } => {
                     // The trace reads the message as it goes (`input_trace.rs`).
-                    let line = self.input_trace.as_mut().map(|trace| trace.note(&record));
+                    let line = self.input_trace.as_mut().map(|trace| trace.note(&bytes));
                     let Some(input) = self.fetchers.get_mut(&channel).and_then(super::processes::Fetcher::input) else { continue };
-                    let length = record.len();
+                    let length = bytes.len();
                     // A fetcher that cannot be written to has stopped; its
                     // reader reports that, and the socket's state follows.
-                    if write_to_fetcher(input, &ToFetcher::Send(record)).is_ok() {
+                    if write_to_fetcher(input, &ToFetcher::Send { bytes, move_of, more }).is_ok() {
                         self.console.sent(channel, length);
                         if let Some(line) = line {
                             self.send(&ToInterface::InputTrace(line))?;
                         }
                     }
                 }
-                neoteletext::typing::Send::Interface(state) => self.send(&ToInterface::Typing(state))?,
+                Send::Measure { channel, on } => {
+                    if let Some(input) = self.fetchers.get_mut(&channel).and_then(super::processes::Fetcher::input) {
+                        let _ = write_to_fetcher(input, &ToFetcher::MeasureRoundTrip(on));
+                    }
+                }
+                Send::Interface(state) => self.send(&ToInterface::Typing(state))?,
             }
         }
         Ok(())
+    }
+
+    /// When the pointer's next waiting move falls due (REQ-RCH-032): the
+    /// trusted core's timer for it, none while nothing waits.
+    #[cfg(feature = "interaction")]
+    pub(super) fn moves_due_at(&self) -> Option<std::time::Instant> {
+        self.typing.due().and_then(|due| self.started.checked_add(std::time::Duration::from_micros(due)))
+    }
+
+    /// Writes the moves whose period has ended (REQ-RCH-031).
+    #[cfg(feature = "interaction")]
+    pub(super) fn send_due_moves(&mut self) -> Result<(), String> {
+        let sends = self.typing.take_due(self.now_us());
+        self.deliver_typing(sends)
     }
 }

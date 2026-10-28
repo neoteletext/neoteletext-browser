@@ -150,23 +150,39 @@ impl Browser {
             self.tips.shown = false;
         }
         let Some((tip, _)) = self.tips.hovered.as_ref().filter(|_| self.tips.shown) else { return };
-        let text_width = tip.text.split(LINE_BREAK).map(|line| canvas.text_width(line, ROW_TITLE)).fold(0.0, f64::max);
-        #[allow(clippy::cast_precision_loss, reason = "a tip's two lines")]
-        let extra_lines = tip.text.matches(LINE_BREAK).count() as f64;
+        // A line wider than the window, as a long address, wraps onto
+        // further lines; those past the window's height are cut
+        // (decision 127).
+        let widest_text = (width - EDGE * 2.0 - PADDING * 2.0).max(0.0);
+        // The cast drops the part of a line that does not fit.
+        #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss, reason = "clamped from none to u16::MAX lines")]
+        let most_lines = (((height - EDGE * 2.0 - HEIGHT).max(0.0) / LINE_STEP).clamp(0.0, f64::from(u16::MAX)) as usize).saturating_add(1);
+        let lines: Vec<(bool, &str)> = tip
+            .text
+            .split(LINE_BREAK)
+            .enumerate()
+            .flat_map(|(number, line)| wrap(canvas, line, widest_text).into_iter().map(move |part| (number == 0, part)))
+            .take(most_lines)
+            .collect();
+        let text_width = lines.iter().map(|(_, line)| canvas.text_width(line, ROW_TITLE)).fold(0.0, f64::max);
+        #[allow(clippy::cast_precision_loss, reason = "the lines that fit a window's height")]
+        let extra_lines = lines.len().saturating_sub(1) as f64;
         let box_height = HEIGHT + LINE_STEP * extra_lines;
         let box_width = (text_width + PADDING * 2.0).min(width - EDGE * 2.0);
         let x = (self.pointer.x - box_width / 2.0).clamp(EDGE, (width - EDGE - box_width).max(EDGE));
-        // Below the pointer, or above it at the window's foot.
+        // Below the pointer, or above it at the window's foot; inside the
+        // window either way.
         let below = self.pointer.y + BELOW_POINTER;
         let y = if below + box_height > height - EDGE { tip.rect.y0 - EDGE - box_height } else { below };
+        let y = y.clamp(EDGE, (height - EDGE - box_height).max(EDGE));
         let area = Rect::new(x, y, x + box_width, y + box_height);
         canvas.fill(area, RADIUS, BUTTON);
         border(canvas, area, 1.0, RULE);
         canvas.push_clip(area);
         let mut line_top = y;
-        for (number, line) in tip.text.split(LINE_BREAK).enumerate() {
-            let line_area = Rect::new(x, line_top, x + box_width, line_top + if number == 0 { HEIGHT } else { LINE_STEP });
-            left_centred(canvas, line_area, PADDING, line, ROW_TITLE, if number == 0 { WHITE } else { MUTED });
+        for (index, (first, line)) in lines.into_iter().enumerate() {
+            let line_area = Rect::new(x, line_top, x + box_width, line_top + if index == 0 { HEIGHT } else { LINE_STEP });
+            left_centred(canvas, line_area, PADDING, line, ROW_TITLE, if first { WHITE } else { MUTED });
             line_top = line_area.y1;
         }
         canvas.pop_clip();
@@ -220,7 +236,7 @@ impl Browser {
             let first = page_number(indices.start);
             let last = indices.last().and_then(page_number);
             if let (Some(first), Some(last)) = (first, last) {
-                tips.push((*rect, format!("Show pages {first} to {last}")));
+                tips.push((*rect, format!("Show pages {first:03X} to {last:03X}")));
             }
         }
         let toggle = if self.overview.folded { "Open the overview of every page" } else { "Fold the overview away" };
@@ -235,10 +251,39 @@ impl Browser {
         tips.push((smaller, String::from("Smaller pages: more on the wall")));
         tips.push((larger, String::from("Larger pages: fewer on the wall")));
         self.console_tips(tips);
-        self.controls_tips(tips);
         #[cfg(feature = "phone-keyboard")]
         self.phone_tips(tips);
     }
+}
+
+/// `line` in parts each no wider than `widest` in the tips' face, broken
+/// between characters, as an address has no spaces to break at: each part
+/// the longest that fits, found by halving, and at least one character so
+/// every part moves on. An empty line is one empty part.
+fn wrap<'line, C: Canvas + ?Sized>(canvas: &mut C, line: &'line str, widest: f64) -> Vec<&'line str> {
+    let mut parts = Vec::new();
+    let mut rest = line;
+    while !rest.is_empty() {
+        let ends: Vec<usize> = rest.char_indices().map(|(at, _)| at).skip(1).chain(core::iter::once(rest.len())).collect();
+        // So many characters fit, and so many are known not to.
+        let (mut fits, mut too_long) = (0_usize, ends.len().saturating_add(1));
+        while fits.saturating_add(1) < too_long {
+            let middle = fits.midpoint(too_long);
+            if ends.get(middle.saturating_sub(1)).and_then(|&end| rest.get(..end)).is_some_and(|part| canvas.text_width(part, ROW_TITLE) <= widest) {
+                fits = middle;
+            } else {
+                too_long = middle;
+            }
+        }
+        let end = ends.get(fits.max(1).saturating_sub(1)).copied().unwrap_or(rest.len());
+        let (part, after) = rest.split_at(end);
+        parts.push(part);
+        rest = after;
+    }
+    if parts.is_empty() {
+        parts.push(line);
+    }
+    parts
 }
 
 #[cfg(test)]

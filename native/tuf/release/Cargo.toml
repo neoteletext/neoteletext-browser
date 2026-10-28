@@ -19,6 +19,9 @@ path = "src/bin/test_host.rs"
 [dependencies]
 update.workspace = true
 release-identity.workspace = true
+# The icon each release carries: Linux's PNGs, and the images of the
+# macOS bundle's icon file (decision 124).
+icon.workspace = true
 tough.workspace = true
 tokio.workspace = true
 async-trait.workspace = true

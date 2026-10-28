@@ -95,3 +95,18 @@ Building decision 54 (`docs/installation-and-updates.md`) on every desktop, 23 O
 | `tuf-conformance` | A Python program (requirement 1.3); its cases are the browser's own tests |
 
 **For the owner to review:** decisions 73 to 82, rows 1 to 30 above, requirement section 13 (13.7, 13.8 and 13.10 amended, 13.14 to 13.21 new) and requirement 10.12's amendment for `os-install`, `docs/installation-and-updates-security.md` section 4a (including the Windows rename that the copy closed), and `TECH-DEBT.md`'s section for this work.
+
+## The icon (decision 124)
+
+Building the owner's icon on every desktop, 28 October 2026. The owner gave the art ("this is the icon graphic for the browser"); these questions were met without the owner.
+
+| # | Question | Decision | Reason |
+|---|---|---|---|
+| 1 | Where the one source lives | `native/icon/neoteletext-icon.png`, beside the crate that reads it | As the fonts live beside `draw-vello`; every build script reaches it through the crate, not a path of its own |
+| 2 | How to read and write PNG with no PNG crate | A reader of exactly 8-bit RGBA, not interlaced, with the five filters, and a writer with none, over `miniz_oxide`, already the release files' DEFLATE | No library added; bounded, with the no-panic lints and a fuzz target |
+| 3 | Which sizes each desktop gets | macOS: Apple's iconset, 16 to 1024. Windows: 16, 24, 32, 48, 64 and 256. Linux: 16, 24, 32, 48, 64, 128 and 256 | The sizes each system asks for, so it scales the art itself as little as it can; 16, 24 and 48 cannot be exact |
+| 4 | Which Windows programs carry the icon | The stub, the installer, the launcher, the broker and the interface | What a user starts, downloads or sees as a window or an application; the helpers have no window |
+| 5 | How the macOS icon file is made and checked | The release tool's `layout` runs `/usr/bin/iconutil`, reads the file back with it and compares every pixel | Apple's tool knows its format; the check proves it kept the art |
+| 6 | The Dock outside a bundle, and the windows' class on Linux | Both given: the Dock the art at 1024 unless the bundle names an icon; the class `neoteletext` | Each a few lines; without them `cargo run` shows a generic icon on macOS, and Wayland none |
+
+**For the owner to review:** decision 124, rows 1 to 6 above, requirement 12.19, `installation-and-updates.md` section 16 and its security analysis's section 4b; whether a hand-drawn 16 by 16 is wanted, since the art's letters cannot be read at 16 by nearest neighbour.

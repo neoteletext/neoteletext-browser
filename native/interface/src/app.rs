@@ -247,6 +247,12 @@ impl App {
 
 impl ApplicationHandler<Incoming> for App {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
+        // winit calls this from applicationDidFinishLaunching: an icon set
+        // before then is replaced by the generic program's as AppKit
+        // finishes launching an application outside a bundle.
+        if !self.resumed {
+            crate::window::show_dock_icon();
+        }
         self.resumed = true;
         self.open_window(event_loop);
     }

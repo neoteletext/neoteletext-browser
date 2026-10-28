@@ -291,7 +291,6 @@ fn draw(
                 candidates: links.candidates,
                 numbers: links.numbers,
                 controls: links.controls,
-                pointer_areas: links.pointer_areas,
                 fastext: links.fastext,
             };
             write_to_core(output, &message)?;

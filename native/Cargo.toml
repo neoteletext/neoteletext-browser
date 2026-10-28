@@ -3,7 +3,7 @@
 # drawing back ends, the interface process and the trusted core.
 [workspace]
 resolver = "3"
-members = ["interface-core", "draw-vello", "draw-embedded", "protocol", "interface", "core", "decoder", "fetcher", "site", "dock-menu", "web-opener", "keyboard", "confine", "sound", "update", "release-identity", "launcher", "os-install", "stub", "installer"]
+members = ["interface-core", "draw-vello", "draw-embedded", "protocol", "interface", "core", "decoder", "fetcher", "site", "dock-menu", "web-opener", "keyboard", "confine", "sound", "update", "release-identity", "launcher", "os-install", "stub", "installer", "icon"]
 # Built with a nightly compiler of its own (scripts/tools.sh).
 exclude = ["fuzz", "tuf"]
 
@@ -36,6 +36,9 @@ release-identity = { path = "release-identity" }
 # The calls installing and launching need that only an unsafe interface
 # offers (requirement 10.12, as amended for it).
 os-install = { path = "os-install" }
+# The browser's icon, made from the owner's art by build scripts and the
+# release tool (decision 124).
+icon = { path = "icon", package = "neoteletext-icon" }
 # The launcher's logic, for the Windows installer.
 launcher = { path = "launcher", package = "neoteletext-launcher" }
 decoder = { path = "decoder", package = "neoteletext-decoder", default-features = false }
@@ -45,15 +48,15 @@ decoder = { path = "decoder", package = "neoteletext-decoder", default-features 
 # With no features, the core is the standard's numbers (`limits`) and the
 # packet types alone, which the interface core and the protocol take
 # (decision 112); the decoder names the profile it renders with.
-neoteletext-core = { git = "file:///Users/andrewstuart/devel/neoteletext-engine", rev = "e09a589aeb19ed50b5ebbcff0b92c67b70a5dc5d", default-features = false }
-neoteletext-formats = { git = "file:///Users/andrewstuart/devel/neoteletext-engine", rev = "e09a589aeb19ed50b5ebbcff0b92c67b70a5dc5d", default-features = false, features = ["tti", "transport", "sliced"] }
+neoteletext-core = { git = "https://github.com/neoteletext/neoteletext-engine", rev = "a58958fc6f3968d8f071f6b0cbefb4ef950989a8", default-features = false }
+neoteletext-formats = { git = "https://github.com/neoteletext/neoteletext-engine", rev = "a58958fc6f3968d8f071f6b0cbefb4ef950989a8", default-features = false, features = ["tti", "transport", "sliced"] }
 # The engine's web module: HTTP, channels, contents files and push, with no
 # network input or output of its own.
-neoteletext-web = { git = "file:///Users/andrewstuart/devel/neoteletext-engine", rev = "e09a589aeb19ed50b5ebbcff0b92c67b70a5dc5d", default-features = false, features = ["push", "cookies"] }
+neoteletext-web = { git = "https://github.com/neoteletext/neoteletext-engine", rev = "a58958fc6f3968d8f071f6b0cbefb4ef950989a8", default-features = false, features = ["push", "cookies"] }
 # The engine's network port is these traits (its decision E.38); the
 # version the engine uses.
 embedded-io = { version = "=0.7.1", default-features = false }
-neoteletext-image = { git = "file:///Users/andrewstuart/devel/neoteletext-engine", rev = "e09a589aeb19ed50b5ebbcff0b92c67b70a5dc5d", features = ["std"] }
+neoteletext-image = { git = "https://github.com/neoteletext/neoteletext-engine", rev = "a58958fc6f3968d8f071f6b0cbefb4ef950989a8", features = ["std"] }
 # The engine's audio profile (its area AUD): the receiver, and the mixer the
 # interface plays through. Opus alone of its codecs (the engine's decision
 # E.131): PCM16 (`pcm16`) and IMA ADPCM (`ima`) are compiled out of the
@@ -62,14 +65,14 @@ neoteletext-image = { git = "file:///Users/andrewstuart/devel/neoteletext-engine
 # reference channel and the decoder's tests write sounds (`encode`, which
 # brings `ima` with it); neither is shipped, and `scripts/check.sh` proves
 # the shipped programs build without either codec (decision 121).
-neoteletext-audio = { git = "file:///Users/andrewstuart/devel/neoteletext-engine", rev = "e09a589aeb19ed50b5ebbcff0b92c67b70a5dc5d", default-features = false, features = ["idl", "opus"] }
+neoteletext-audio = { git = "https://github.com/neoteletext/neoteletext-engine", rev = "a58958fc6f3968d8f071f6b0cbefb4ef950989a8", default-features = false, features = ["idl", "opus"] }
 # The engine's qrkeyboard client (its decision E.93): the phone keyboard
 # process's pairing and encryption, and the terminal channel's phone page.
-neoteletext-qrkeyboard = { git = "file:///Users/andrewstuart/devel/neoteletext-engine", rev = "e09a589aeb19ed50b5ebbcff0b92c67b70a5dc5d" }
+neoteletext-qrkeyboard = { git = "https://github.com/neoteletext/neoteletext-engine", rev = "a58958fc6f3968d8f071f6b0cbefb4ef950989a8" }
 # The engine's input profile (its area INT): key records and the cursor
 # record (`interaction.md`).
-neoteletext-input = { git = "file:///Users/andrewstuart/devel/neoteletext-engine", rev = "e09a589aeb19ed50b5ebbcff0b92c67b70a5dc5d", default-features = false }
-neoteletext-audio-mix = { git = "file:///Users/andrewstuart/devel/neoteletext-engine", rev = "e09a589aeb19ed50b5ebbcff0b92c67b70a5dc5d" }
+neoteletext-input = { git = "https://github.com/neoteletext/neoteletext-engine", rev = "a58958fc6f3968d8f071f6b0cbefb4ef950989a8", default-features = false }
+neoteletext-audio-mix = { git = "https://github.com/neoteletext/neoteletext-engine", rev = "a58958fc6f3968d8f071f6b0cbefb4ef950989a8" }
 # Apache-2.0: the operating systems' audio output (Core Audio on macOS),
 # without unsafe code of ours (decision 37).
 cpal = "=0.18.2"

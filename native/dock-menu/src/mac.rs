@@ -9,10 +9,10 @@ use objc2::rc::Retained;
 use objc2::runtime::{AnyObject, Sel};
 use objc2::{ClassType, DeclaredClass, declare_class, ffi, msg_send_id, mutability, sel};
 use objc2_app_kit::{
-    NSAboutPanelOptionApplicationName, NSAboutPanelOptionApplicationVersion, NSApplication, NSControlStateValueOn, NSEventModifierFlags,
+    NSAboutPanelOptionApplicationName, NSAboutPanelOptionApplicationVersion, NSApplication, NSControlStateValueOn, NSEventModifierFlags, NSImage,
     NSLeftArrowFunctionKey, NSMenu, NSMenuItem, NSRightArrowFunctionKey,
 };
-use objc2_foundation::{MainThreadMarker, NSDictionary, NSInteger, NSObject, NSObjectProtocol, NSString};
+use objc2_foundation::{MainThreadMarker, NSBundle, NSData, NSDictionary, NSInteger, NSObject, NSObjectProtocol, NSString};
 
 use crate::{
     Choice, DockTab, Entry, MENU_BAR, MenuAction, MenuItem, Shortcut, ShortcutKey, SystemAction, full_screen_title, menu_item, mute_all_item, tab_title,
@@ -153,6 +153,28 @@ fn show_about() {
     // SAFETY: the standard About panel with a dictionary of its own option
     // keys and string values, on the main thread.
     unsafe { NSApplication::sharedApplication(mtm).orderFrontStandardAboutPanelWithOptions(&options) };
+}
+
+/// The bundle's key naming its icon file (Apple's Information Property
+/// List Key Reference).
+const BUNDLE_ICON_KEY: &str = "CFBundleIconFile";
+
+/// The Dock's icon from `png`, a PNG, for a program run outside a bundle
+/// (decision 124): one whose main bundle names an icon file keeps the
+/// icon the system gives it from there. Call it on the main thread once
+/// the application exists.
+pub fn set_icon(png: &[u8]) {
+    let Some(mtm) = MainThreadMarker::new() else { return };
+    let bundle = NSBundle::mainBundle();
+    // SAFETY: reading the main bundle's information dictionary with a
+    // string key; the value is only tested for presence.
+    if unsafe { bundle.objectForInfoDictionaryKey(&NSString::from_str(BUNDLE_ICON_KEY)) }.is_some() {
+        return;
+    }
+    let Some(image) = NSImage::initWithData(NSImage::alloc(), &NSData::with_bytes(png)) else { return };
+    // SAFETY: the application's icon set to an image it retains, on the
+    // main thread.
+    unsafe { NSApplication::sharedApplication(mtm).setApplicationIconImage(Some(&image)) };
 }
 
 /// The version and the copyright notice the About panel shows from now on.

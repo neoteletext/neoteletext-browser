@@ -1,0 +1,25 @@
+[package]
+name = "neoteletext-icon"
+description = "The browser's icon (decision 124): the owner's art, the one source, decoded, scaled by nearest neighbour and written as each platform takes it, a PNG, a Windows resource file or a macOS iconset's images; used by build scripts and the release tool, never by a program at run time"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[lib]
+name = "icon"
+
+[dependencies]
+# The PNG's image data is a zlib stream (the PNG specification, section
+# 10), read with a bound on what it writes; the release files' DEFLATE
+# already (installation-and-updates.md section 6), so no crate is added.
+miniz_oxide.workspace = true
+
+# Only to check, in a test, that the PNG's CRC-32 is the release files'
+# (the same polynomial, ISO 3309), defined there for gzip.
+[dev-dependencies]
+update.workspace = true
+
+[lints]
+workspace = true

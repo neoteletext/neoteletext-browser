@@ -59,6 +59,8 @@ impl Browser {
         self.draw_list_focus(canvas, banks, ListFocus::Magazines);
         self.draw_list(canvas, list, now);
         self.draw_list_focus(canvas, list, ListFocus::Pages);
+        let subpages = self.regions.subpage_list;
+        self.draw_list_focus(canvas, subpages, ListFocus::SubPages);
         if self.console.open() {
             self.draw_console(canvas, overview);
             self.draw_console_grabber(canvas, overview);
@@ -78,7 +80,6 @@ impl Browser {
         self.draw_star_popover(canvas);
         self.draw_tab_overflow(canvas, width, height);
         self.draw_popups(canvas);
-        self.draw_page_controls(canvas);
         self.draw_tips(canvas, width, height);
         // Pages may have moved under a still pointer: by scrolling, a new
         // size or a zoom.
@@ -103,6 +104,7 @@ impl Browser {
         let selected = self.selected.and_then(|index| self.page_key(index));
         self.wall.draw(canvas, zoom, &pages, selected, now);
         drop(pages);
+        self.follow_single();
         #[cfg(feature = "links")]
         self.draw_links(canvas);
         #[cfg(feature = "interaction")]

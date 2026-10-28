@@ -27,6 +27,7 @@ enum Item {
     Bookmarks,
     Bar,
     Overview,
+    Wall,
     BookmarkPage,
     #[cfg(feature = "phone-keyboard")]
     Phone,
@@ -48,6 +49,7 @@ impl Item {
         Self::Bookmarks,
         Self::Bar,
         Self::Overview,
+        Self::Wall,
         Self::BookmarkPage,
         #[cfg(feature = "phone-keyboard")]
         Self::Phone,
@@ -59,7 +61,7 @@ impl Item {
 
     /// Its words, and its shortcut on macOS and elsewhere, in words: the
     /// browser's fonts have no key symbols.
-    fn words(self, bar_shown: bool, overview_shown: bool) -> (&'static str, &'static str, &'static str) {
+    fn words(self, bar_shown: bool, overview_shown: bool, single: bool) -> (&'static str, &'static str, &'static str) {
         match self {
             Self::NewTab => ("New tab", "Cmd+T", "Ctrl+T"),
             Self::NewWindow => ("New window", "Cmd+N", "Ctrl+N"),
@@ -73,6 +75,9 @@ impl Item {
             Self::Bar => ("Show bookmarks bar", "Shift+Cmd+B", "Ctrl+Shift+B"),
             Self::Overview if overview_shown => ("Hide overview of all pages", "Shift+Cmd+E", "Ctrl+Shift+E"),
             Self::Overview => ("Show overview of all pages", "Shift+Cmd+E", "Ctrl+Shift+E"),
+            // The wall of pages or the page alone (decision 126).
+            Self::Wall if single => ("Show wall of pages", "Cmd+G", "Ctrl+Shift+G"),
+            Self::Wall => ("Show current page only", "Cmd+G", "Ctrl+Shift+G"),
             Self::BookmarkPage => ("Bookmark this page", "Cmd+D", "Ctrl+D"),
             #[cfg(feature = "phone-keyboard")]
             Self::Phone => ("Phone keyboard", "", ""),
@@ -112,6 +117,11 @@ impl Browser {
     }
 
     /// A press while the menu is open: an item acts; anywhere else closes it.
+    /// Whether `point` is on the open menu.
+    pub(super) fn over_menu(&self, point: Point) -> bool {
+        self.menu.menu_open && self.menu.menu_area.contains(point)
+    }
+
     pub(super) fn menu_press(&mut self, point: Point) -> bool {
         if !self.menu.menu_open {
             return false;
@@ -136,6 +146,11 @@ impl Browser {
             }
             Item::Bar => self.outputs.push(Output::Bar(BarRequest::Show(!self.bar_shown()))),
             Item::Overview => self.toggle_overview_shown(),
+            Item::Wall => {
+                // The last frame's time: a menu's press is not given the clock.
+                let now = self.remote_time();
+                self.toggle_wall(now);
+            }
             Item::BookmarkPage => self.outputs.push(Output::Bookmark),
             #[cfg(feature = "phone-keyboard")]
             Item::Phone => self.toggle_phone_panel(),
@@ -162,7 +177,7 @@ impl Browser {
             return;
         }
         let anchor = self.regions.menu;
-        #[allow(clippy::cast_precision_loss, reason = "ten items")]
+        #[allow(clippy::cast_precision_loss, reason = "under twenty items")]
         let area = Rect::new(anchor.x1 - MENU_WIDTH, anchor.y1 + HAIRLINE, anchor.x1, anchor.y1 + HAIRLINE + ROW * Item::ALL.len() as f64);
         canvas.fill(area, 0.0, BLACK);
         border(canvas, area, HAIRLINE, RULE);
@@ -174,7 +189,7 @@ impl Browser {
                 canvas.fill(rect, 0.0, SELECTED);
             }
             // macOS's window buttons are its own: the browser draws none there.
-            let (words, mac, elsewhere) = item.words(bar_shown, self.overview_shown());
+            let (words, mac, elsewhere) = item.words(bar_shown, self.overview_shown(), self.wall.single());
             let shortcut = if self.frame.window_buttons { elsewhere } else { mac };
             left_centred(canvas, rect, GAP * 2.0, words, ROW_TITLE, WHITE);
             right_centred(canvas, rect, SHORTCUT_GAP, shortcut, ROW_STATUS, MUTED);

@@ -80,12 +80,7 @@ impl Browser {
         let point = self.pointer;
         let regions = &self.regions;
         if regions.field.contains(point) {
-            if self.editing {
-                let at = self.offset_at(canvas, point.x);
-                self.editor.place(at, extend);
-            } else {
-                self.start_editing();
-            }
+            self.press_field(canvas, point, extend, now);
             return Some(true);
         }
         self.stop_editing();
@@ -135,24 +130,31 @@ impl Browser {
         None
     }
 
-    /// A press below the strip: the divider, the banks, the list, the overview, the
-    /// page's controls, the wall's controls and a page or its cell.
+    /// A press below the strip: the divider, the banks, the list, the
+    /// overview, the wall's controls and a page or its cell.
     /// `None` when it was on none.
     fn press_body(&mut self, now: u64) -> Option<bool> {
         let point = self.pointer;
         if self.divider_press(point) || self.subpages_press(point, now) {
             return Some(true);
         }
+        // With the page alone, choosing a magazine or a page opens it, and
+        // the page opened has the keys, as a page clicked has them; on the
+        // wall a choice opens nothing, and the list keeps the keys.
+        let alone = self.wall.single();
         let regions = &self.regions;
         if let Some(bank) = regions.banks.iter().position(|rect| rect.contains(point)) {
             self.choose_bank(bank);
-            self.list_focus = Some(ListFocus::Magazines);
+            self.list_focus = (!alone).then_some(ListFocus::Magazines);
             return Some(true);
         }
         if regions.list.contains(point) {
             self.list_focus = Some(ListFocus::Pages);
             if let Some(&(_, index)) = regions.rows.iter().find(|(rect, _)| rect.contains(point)) {
                 self.select_page(index, true);
+                if alone {
+                    self.list_focus = None;
+                }
             }
             return Some(true);
         }
@@ -170,9 +172,6 @@ impl Browser {
             {
                 self.select_page(index, true);
             }
-            return Some(true);
-        }
-        if self.controls_press(point) {
             return Some(true);
         }
         if self.wall.pointer_pressed(point, now) {

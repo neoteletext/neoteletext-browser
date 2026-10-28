@@ -5,7 +5,7 @@
 use std::collections::BTreeMap;
 use std::fmt::Write as _;
 
-use neoteletext_input::caps::{CURSOR_CAP, ECHO_CAP, PAGE_CAP};
+use neoteletext_input::caps::{CURSOR_CAP, PAGE_CAP};
 use neoteletext_input::cursor::NO_CURSOR;
 
 // EN 300 706 Table 26: the spacing attributes used here.
@@ -71,14 +71,14 @@ impl Row {
 }
 
 /// What the channel uses of what a receiver offers (INPUT.md section 6.2):
-/// pages, the cursor and echo.
-pub(super) const USED: u32 = PAGE_CAP | CURSOR_CAP | ECHO_CAP;
+/// pages and the cursor.
+pub(super) const USED: u32 = PAGE_CAP | CURSOR_CAP;
 
 /// A page as TTI: its rows and its cursor record as a `CU` line.
 pub(super) struct Page {
     number: u16,
     rows: BTreeMap<u8, Row>,
-    cursor: Option<(u8, u8, u8, u8)>,
+    cursor: Option<(u8, u8)>,
     /// The input count acted on (INPUT.md section 7.1).
     acked: u16,
     /// `LT` lines: a run of text that is a link.
@@ -94,9 +94,8 @@ impl Page {
         page
     }
 
-    /// The cursor record: its row, column, the field's width and its
-    /// flags.
-    pub(super) fn set_cursor(&mut self, cursor: (u8, u8, u8, u8)) {
+    /// The cursor record: its row and column.
+    pub(super) fn set_cursor(&mut self, cursor: (u8, u8)) {
         self.cursor = Some(cursor);
     }
 
@@ -133,10 +132,11 @@ impl Page {
         for link in &self.links {
             let _ = write!(out, "{link}\r\n");
         }
-        // The engine's REQ-INT-006: the cursor record as a line; a page
+        // The engine's REQ-INT-006: the cursor record as a line, with no
+        // echo width and no flags, since the browser echoes nothing; a page
         // with no cursor still acknowledges the keys, for the round trip.
-        let (row, column, width, flags) = self.cursor.unwrap_or((NO_CURSOR, 0, 0, 0));
-        let _ = write!(out, "CU,{row},{column},{width},{flags},{}\r\n", self.acked);
+        let (row, column) = self.cursor.unwrap_or((NO_CURSOR, 0));
+        let _ = write!(out, "CU,{row},{column},0,0,{}\r\n", self.acked);
         out
     }
 }

@@ -20,7 +20,7 @@ use kinds::{
     KIND_SUBPAGES, KIND_SUBPAGES_MISSING,
 };
 #[cfg(feature = "interaction")]
-use kinds::{KIND_INPUT, KIND_SEND};
+use kinds::{KIND_INPUT, KIND_MEASURE_ROUND_TRIP, KIND_ROUND_TRIP, KIND_SEND};
 
 mod cookies;
 mod kinds;
@@ -212,7 +212,24 @@ pub enum FromFetcher {
         /// The page.
         page: u16,
     },
+    /// The push WebSocket's round trip, from a ping to its pong (the
+    /// engine's `Event::RoundTrip`, `RETURN-CHANNEL.md` REQ-RCH-016), while
+    /// [`ToFetcher::MeasureRoundTrip`] is on. Untrusted: the strip shows
+    /// it as a number and nothing else.
+    #[cfg(feature = "interaction")]
+    RoundTrip {
+        /// Microseconds.
+        microseconds: u64,
+    },
 }
+
+/// The byte of [`ToFetcher::Send`]'s `move_of` when the message is not a
+/// move.
+#[cfg(feature = "interaction")]
+const NOT_A_MOVE: u8 = u8::MAX;
+// Every contact's number is below it.
+#[cfg(feature = "interaction")]
+const _: () = assert!(neoteletext_input::MAX_CONTACTS <= NOT_A_MOVE as usize);
 
 /// From the trusted core to a fetcher: input messages (requirement 4.7
 /// and its one exception, 18.4), the answers to its cookie questions, and
@@ -221,9 +238,27 @@ pub enum FromFetcher {
 pub enum ToFetcher {
     /// One input message for the channel's push WebSocket: whole items of
     /// the input stream, at most 4 096 bytes, read by the engine's reader on
-    /// both sides (REQ-INT-133).
+    /// both sides (REQ-INT-133); the engine's `Input::Send` of an
+    /// `InputMessage`.
     #[cfg(feature = "interaction")]
-    Send(Vec<u8>),
+    Send {
+        /// The encoded message.
+        bytes: Vec<u8>,
+        /// The contact whose move the message is, alone: 0 the mouse's, 1 to
+        /// 9 a TOUCH's, below `MAX_CONTACTS`; `None` for any other message.
+        /// The fetcher holds a move while the push socket is congested, the
+        /// contact's latest replacing it (REQ-RCH-035).
+        move_of: Option<u8>,
+        /// More messages of the same moment follow at once: the fetcher
+        /// writes them together, as one send, when the last comes
+        /// (REQ-RCH-010).
+        more: bool,
+    },
+    /// Measure the push connection's round trip (the engine's
+    /// `Input::MeasureRoundTrip`, REQ-RCH-016): on while keys go to the
+    /// channel, off when they stop.
+    #[cfg(feature = "interaction")]
+    MeasureRoundTrip(bool),
     /// The `Cookie` header of a request, empty for none.
     CookieAnswer {
         /// The question's.
@@ -261,10 +296,17 @@ pub enum ToFetcher {
 pub fn write_to_fetcher(out: &mut dyn Write, message: &ToFetcher) -> Result<(), ProtocolError> {
     match message {
         #[cfg(feature = "interaction")]
-        ToFetcher::Send(record) => {
-            crate::interaction::check_message(record)?;
-            write_frame(out, KIND_SEND, record)
+        ToFetcher::Send { bytes, move_of, more } => {
+            crate::interaction::check_message(bytes)?;
+            if let Some(contact) = move_of {
+                crate::interaction::check_move(bytes, *contact)?;
+            }
+            let mut payload = vec![move_of.unwrap_or(NOT_A_MOVE), u8::from(*more)];
+            payload.extend_from_slice(bytes);
+            write_frame(out, KIND_SEND, &payload)
         }
+        #[cfg(feature = "interaction")]
+        ToFetcher::MeasureRoundTrip(on) => write_frame(out, KIND_MEASURE_ROUND_TRIP, &[u8::from(*on)]),
         ToFetcher::CookieAnswer { .. } | ToFetcher::ReachedAnswer { .. } => {
             let mut payload = Vec::new();
             let kind = cookies::push_answer(&mut payload, message)?;
@@ -296,9 +338,20 @@ pub fn read_to_fetcher(input: &mut dyn Read) -> Result<Option<ToFetcher>, Protoc
     let message = match kind {
         #[cfg(feature = "interaction")]
         KIND_SEND => {
-            crate::interaction::check_message(&payload)?;
-            return Ok(Some(ToFetcher::Send(payload)));
+            let move_of = match fields.u8()? {
+                NOT_A_MOVE => None,
+                contact => Some(contact),
+            };
+            let more = fields.flag("more")?;
+            let bytes = fields.take(fields.remaining())?.to_vec();
+            crate::interaction::check_message(&bytes)?;
+            if let Some(contact) = move_of {
+                crate::interaction::check_move(&bytes, contact)?;
+            }
+            ToFetcher::Send { bytes, move_of, more }
         }
+        #[cfg(feature = "interaction")]
+        KIND_MEASURE_ROUND_TRIP => ToFetcher::MeasureRoundTrip(fields.flag("measure")?),
         KIND_COOKIE_ANSWER | KIND_REACHED_ANSWER => cookies::read_answer(kind, &mut fields)?,
         KIND_FETCH_SUBPAGES => ToFetcher::FetchSubPages { page: fields.display_page()? },
         KIND_FETCH_SUBPAGE => {
@@ -403,6 +456,11 @@ pub fn write_to_core(out: &mut dyn Write, message: &FromFetcher) -> Result<(), P
             payload.extend_from_slice(&page.to_be_bytes());
             KIND_SUBPAGES_MISSING
         }
+        #[cfg(feature = "interaction")]
+        FromFetcher::RoundTrip { microseconds } => {
+            payload.extend_from_slice(&microseconds.to_be_bytes());
+            KIND_ROUND_TRIP
+        }
     };
     write_frame(out, kind, &payload)
 }
@@ -480,6 +538,8 @@ pub fn read_from_fetcher(input: &mut dyn Read) -> Result<Option<FromFetcher>, Pr
             FromFetcher::SubPages { page, part }
         }
         KIND_SUBPAGES_MISSING => FromFetcher::SubPagesMissing { page: fields.display_page()? },
+        #[cfg(feature = "interaction")]
+        KIND_ROUND_TRIP => FromFetcher::RoundTrip { microseconds: u64::from_be_bytes(fields.array()?) },
         other => return Err(ProtocolError::UnknownKind(other)),
     };
     fields.end()?;

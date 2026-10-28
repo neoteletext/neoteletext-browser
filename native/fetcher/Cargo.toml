@@ -18,7 +18,7 @@ default = ["links", "interaction"]
 links = ["protocol/links", "dep:interface-core"]
 # Typing into a page (`interaction.md`): off, the typing messages are
 # compiled out and every side refuses their kinds.
-interaction = ["protocol/interaction"]
+interaction = ["protocol/interaction", "dep:neoteletext-input"]
 
 [dependencies]
 confine.workspace = true
@@ -27,6 +27,9 @@ neoteletext-web = { workspace = true, features = ["std"] }
 neoteletext-core.workspace = true
 embedded-io.workspace = true
 protocol.workspace = true
+# The contacts and the longest move the protocol lets the trusted core tag,
+# asserted to fit the web agent's slots (REQ-RCH-035).
+neoteletext-input = { workspace = true, optional = true }
 interface-core = { workspace = true, optional = true }
 rustls.workspace = true
 webpki-roots.workspace = true

@@ -5,9 +5,8 @@
 # distribution since 2018, and lays out the version. Everything it takes
 # is pinned (finding F-73): the image by its digest, each package by its
 # version, rustup-init by its version and SHA-256, and the engine by the
-# commit the workspace names, read from a copy of its history on this host
-# (NEOTELETEXT_ENGINE_GIT, a folder holding its .git, as the full gate's
-# Linux stage keeps one). It refuses a tree with changes: a release is
+# commit the workspace names, fetched from its published repository. It
+# refuses a tree with changes: a release is
 # built from a commit. Not yet run end to end.
 #   scripts/release/build-linux.sh [--test] <version> <out>
 set -euo pipefail
@@ -43,17 +42,13 @@ packages="gcc-8.5.0-29.el8_10.alma.1 gcc-c++-8.5.0-29.el8_10.alma.1 make-4.2.1-1
 # rust-toolchain.toml pins.
 rustup_version="1.28.2"
 rustup_sha256="20a06e644b0d9bd2fbdbfd52d42540bdde820ea7df86e92e533c073da0cdd43c"
-# The engine: the repository native/Cargo.toml names, its history from a
-# copy on this host, holding the pinned commit.
-engine_url="$(sed -n 's/^neoteletext-[a-z]* = { git = "\(file:[^"]*\)".*/\1/p' native/Cargo.toml | sort -u)"
-engine_rev="$(sed -n 's/^neoteletext-[a-z]* = { git = "file:[^"]*", rev = "\([0-9a-f]*\)".*/\1/p' native/Cargo.toml | sort -u)"
-engine_git="${NEOTELETEXT_ENGINE_GIT:?NEOTELETEXT_ENGINE_GIT must name a copy of the engine history}"
-[[ -n "$engine_url" && "$engine_url" != *$'\n'* && -n "$engine_rev" && "$engine_rev" != *$'\n'* ]] || { echo "build-linux: native/Cargo.toml must name one engine commit" >&2; exit 1; }
-git --git-dir "$engine_git" cat-file -e "$engine_rev^{commit}" || { echo "build-linux: $engine_git does not hold the engine's commit $engine_rev" >&2; exit 1; }
+# The engine: one commit of the repository native/Cargo.toml names, which
+# Cargo fetches in the container.
+engine_rev="$(sed -n 's/^neoteletext-[a-z-]* = { git = "[^"]*", rev = "\([0-9a-f]*\)".*/\1/p' native/Cargo.toml | sort -u)"
+[[ -n "$engine_rev" && "$engine_rev" != *$'\n'* ]] || { echo "build-linux: native/Cargo.toml must name one engine commit" >&2; exit 1; }
 programs="neoteletext neoteletext-decoder neoteletext-fetcher neoteletext-interface neoteletext-keyboard neoteletext-sound neoteletext-launcher"
 mkdir -p "$out"
-podman run --rm -v "$PWD:/source:Z" -v "$HOME/.cargo/registry:/root/.cargo/registry:Z" -v "$engine_git:/engine.git:ro,Z" -w /source \
-    -e CARGO_NET_GIT_FETCH_WITH_CLI=true -e GIT_CONFIG_COUNT=1 -e GIT_CONFIG_KEY_0=url.file:///engine.git.insteadOf -e GIT_CONFIG_VALUE_0="$engine_url" \
+podman run --rm -v "$PWD:/source:Z" -v "$HOME/.cargo/registry:/root/.cargo/registry:Z" -w /source \
     -e NEOTELETEXT_RELEASE_VERSION="$version" ${NEOTELETEXT_RELEASE_IDENTITY:+-e NEOTELETEXT_RELEASE_IDENTITY="$NEOTELETEXT_RELEASE_IDENTITY"} "$image" bash -euc "
     dnf install -y -q $packages
     curl --proto '=https' --tlsv1.2 -sSf -o /tmp/rustup-init https://static.rust-lang.org/rustup/archive/$rustup_version/x86_64-unknown-linux-gnu/rustup-init

@@ -126,7 +126,11 @@ fn with_no_keychain_the_key_is_not_asked_and_the_file_is_left_alone() {
     test.core.cookies_at_start();
     assert_eq!(test.core.cookies.key, None, "no key was had");
     let notice = test.core.cookies.for_this_run.clone().unwrap_or_default();
-    assert!(notice.contains(NO_KEYCHAIN), "the panel says why: {notice}");
+    // The flag that changes it: --no-keychain where the Keychain is on by
+    // default, --keychain where it is off (macOS until the release is
+    // signed).
+    let flag = if KEYCHAIN_BY_DEFAULT { NO_KEYCHAIN } else { KEYCHAIN };
+    assert!(notice.contains(flag), "the panel says why: {notice}");
     let news = test.tab("https://news.example/teletext/", false);
     test.set(news, "news.example", "keep=1; Max-Age=3600");
     assert_eq!(test.ask(news, "news.example"), "keep=1", "cookies work for the run");

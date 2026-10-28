@@ -20,7 +20,6 @@ fn page_links() -> PageLinks {
         version: 9,
         runs: vec![run(3, LinkKind::Page), run(4, LinkKind::Channel), run(6, LinkKind::Web)],
         controls: vec![Area { row: 10, column: 2, width: 9, height: 2 }],
-        pointer_areas: Vec::new(),
         remapped: vec![0x302, 0x500],
     }
 }
@@ -66,7 +65,6 @@ fn every_link_message_round_trips() {
         ],
         numbers: vec![NumberLink { number: 0x302, target: "sport:302".into() }],
         controls: vec![Area { row: 20, column: 1, width: 9, height: 1 }, Area { row: 5, column: 2, width: 30, height: 3 }],
-        pointer_areas: Vec::new(),
         fastext: Fastext::default(),
     };
     let mut bytes = Vec::new();
@@ -85,8 +83,8 @@ fn every_link_message_round_trips() {
 fn one_run(place: [u8; 3], flags: u8, kind: u8) -> Vec<u8> {
     let mut payload = vec![0, 0, 0, 7, 0x01, 0x23, 0, 0, 0, 9, 1];
     payload.extend_from_slice(&place);
-    // No controls, no pointer areas, no page numbers remapped.
-    payload.extend_from_slice(&[flags, kind, 0, 0, 0]);
+    // No controls, no page numbers remapped.
+    payload.extend_from_slice(&[flags, kind, 0, 0]);
     let mut bytes = vec![KIND_PAGE_LINKS];
     bytes.extend_from_slice(&u32::try_from(payload.len()).unwrap().to_be_bytes());
     bytes.extend_from_slice(&payload);
@@ -131,7 +129,6 @@ fn a_target_too_long_is_refused_never_cut() {
         candidates: vec![Candidate { row: 5, column: 0, length: 3, double: false, light: false, target }],
         numbers: Vec::new(),
         controls: Vec::new(),
-        pointer_areas: Vec::new(),
         fastext: Fastext::default(),
     };
     assert!(matches!(decoder_writes(&mut Vec::new(), &found), Err(ProtocolError::BadValue("link target too long"))));
@@ -181,7 +178,6 @@ fn an_area_outside_the_page_or_too_many_controls_are_refused() {
         candidates: Vec::new(),
         numbers: Vec::new(),
         controls: vec![Area { row: 1, column: 0, width: 1, height: 1 }; MAX_CONTROLS + 1],
-        pointer_areas: Vec::new(),
         fastext: Fastext::default(),
     };
     assert!(matches!(decoder_writes(&mut Vec::new(), &found), Err(ProtocolError::BadValue("too many controls"))));

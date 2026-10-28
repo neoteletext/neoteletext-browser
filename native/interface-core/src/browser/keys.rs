@@ -196,6 +196,9 @@ impl Browser {
             "[" if self.strip.back => self.outputs.push(Output::Back),
             "]" if self.strip.forward => self.outputs.push(Output::Forward),
             "d" => self.outputs.push(Output::Bookmark),
+            // The wall of pages and its page size bar, or the page alone
+            // (decision 126): Command-G on macOS, Control-Shift-G elsewhere.
+            "g" => self.toggle_wall(now),
             _ => return false,
         }
         true

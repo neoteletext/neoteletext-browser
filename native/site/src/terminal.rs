@@ -7,8 +7,8 @@
 //! - 100, the index, and the page-selection convention of a videotex
 //!   host: `*nnn#` goes to a page, `#` to the next, `*#` back, `*00` shows
 //!   the page again, and on a page with no field three digits go to it;
-//! - 200, typing: a name field with a cursor and local echo, and a
-//!   masked secret field;
+//! - 200, typing: a name field with a cursor, and a secret field the
+//!   channel draws as stars;
 //! - 300, a game with no cursor at all: invaders, pushed ten times a
 //!   second, played with the arrow keys held down and Space;
 //! - 400, a piano: keys A to K play notes, sent as the audio profile's

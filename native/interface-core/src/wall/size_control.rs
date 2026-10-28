@@ -31,6 +31,10 @@ impl Wall {
     /// The slider's right end is the zoomed state: reaching it zooms the
     /// chosen page (or the first on screen), and leaving it zooms out.
     fn set_width(&mut self, width: f32, now: u64) {
+        // With the page alone there is no page size to set (decision 126).
+        if self.single() {
+            return;
+        }
         self.width = clamp_width(width, self.max);
         self.shown_width.set(self.width, now);
         let at_max = self.width >= self.max;

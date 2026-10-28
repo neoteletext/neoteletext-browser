@@ -7,6 +7,7 @@ use alloc::vec::Vec;
 
 use crate::browser::Browser;
 use crate::browser::frames::PULSE_LIMIT;
+use crate::browser::overview::UPDATE_RING_MILLISECONDS;
 use crate::canvas::PageKey;
 use crate::channel::{Channel, PAGES_PER_BANK, PageInfo, Status, bank_indices, page_index, page_number};
 
@@ -26,6 +27,7 @@ impl Browser {
             self.wall.to_top();
             self.pulses.clear();
             self.updates.clear();
+            self.rings.clear();
         }
         self.channel = channel;
     }
@@ -58,6 +60,10 @@ impl Browser {
         let Some(index) = page_index(page) else { return };
         self.updates.retain(|&(updated, _)| updated != index);
         self.updates.push((index, now));
+        if !self.rings.iter().any(|&(ringed, at)| ringed == index && now.saturating_sub(at) < UPDATE_RING_MILLISECONDS) {
+            self.rings.retain(|&(ringed, _)| ringed != index);
+            self.rings.push((index, now));
+        }
     }
 
     pub(super) fn updated_at(&self, index: usize) -> Option<u64> {
@@ -145,6 +151,22 @@ impl Browser {
         if let Some(index) = self.wall.zoomed().and_then(|key| page_index(key.page)) {
             self.selected = Some(index);
             self.reveal_row(index);
+        }
+    }
+
+    /// The wall of pages, or the open page alone (decision 126); the list
+    /// and the overview follow the page shown.
+    pub(super) fn toggle_wall(&mut self, now: u64) {
+        self.wall.toggle_single(now);
+        self.follow_zoom();
+    }
+
+    /// With the page alone, the page the wall opened by itself, the first
+    /// when none was chosen, becomes the chosen one.
+    pub(super) fn follow_single(&mut self) {
+        let shown = self.wall.zoomed().and_then(|key| page_index(key.page));
+        if self.wall.single() && shown.is_some() && shown != self.selected {
+            self.follow_zoom();
         }
     }
 

@@ -5,7 +5,7 @@
 use alloc::format;
 
 use super::grid::{CAPTION_GAP, CAPTION_HEIGHT, CAPTION_NUMBER_WIDTH, FRAME, PAGE_ASPECT, WALL_PADDING};
-use super::{Wall, WallPage};
+use super::{View, Wall, WallPage};
 use crate::canvas::{Canvas, PageKey};
 use crate::geometry::{Point, Rect};
 use crate::text::{cross, fitted_text, label, outline};
@@ -40,7 +40,13 @@ impl Wall {
     /// Zooms `key` from its place on the wall to fill the area. The slider
     /// goes to its right end, which is the zoomed state; its place before
     /// comes back when the zoom closes.
+    /// With the page alone, `key` is shown in place of the open page at once
+    /// (decision 126).
     pub fn zoom(&mut self, key: PageKey, now: u64) {
+        if self.single() {
+            self.open_alone(key);
+            return;
+        }
         if !self.zoom_in && self.width < self.max {
             self.width_before_zoom = Some(self.width);
         }
@@ -55,6 +61,37 @@ impl Wall {
         self.zoom.set(1.0, now);
         self.slide = Tween::new(0.0, SLIDE_MILLISECONDS, STANDARD);
         self.wheel_carry = 0.0;
+    }
+
+    /// Opens `key` alone, at rest, with no zoom from the wall (decision 126).
+    fn open_alone(&mut self, key: PageKey) {
+        self.zoomed = Some(key);
+        self.zoom_in = true;
+        self.zoom = Tween::new(1.0, ZOOM_MILLISECONDS, STANDARD);
+        self.slide = Tween::new(0.0, SLIDE_MILLISECONDS, STANDARD);
+        self.wheel_carry = 0.0;
+    }
+
+    /// The browser's modifier and G (decision 126): from the page alone to
+    /// the wall of pages and its page size bar, the open page zooming back
+    /// to its place there, or from the wall to the page alone, the zoomed
+    /// page or else the chosen one, drawn at once.
+    pub fn toggle_single(&mut self, now: u64) {
+        if self.single() {
+            self.view = View::Wall;
+            if let Some(key) = self.zoomed.filter(|_| self.zoom_in) {
+                self.reveal = Some(key);
+            }
+            self.unzoom(now);
+        } else {
+            self.view = View::Alone;
+            // The next draw opens the chosen or first page when none is zoomed.
+            if let Some(key) = self.zoomed.filter(|_| self.zoom_in) {
+                self.open_alone(key);
+            } else {
+                self.zoomed = None;
+            }
+        }
     }
 
     /// Moves the zoomed page `direction` pages along the wall (1 the next,
@@ -123,9 +160,10 @@ impl Wall {
     }
 
     /// Zooms back to the wall, from wherever the zoom has reached; returns
-    /// whether a page was zoomed.
+    /// whether a page was zoomed. With the page alone there is no wall to
+    /// go back to, so nothing happens (decision 126).
     pub fn unzoom(&mut self, now: u64) -> bool {
-        if !self.zoom_in {
+        if !self.zoom_in || self.single() {
             return false;
         }
         self.zoom_in = false;
@@ -231,16 +269,51 @@ impl Wall {
             self.to_top();
             return None;
         };
+        Some(self.draw_alone(canvas, area, pages, current, now))
+    }
+
+    /// The page area with only the open page (decision 126): the chosen
+    /// page, or else the first, opened at once, and drawn as in full screen
+    /// within `area`, with none of the wall's controls.
+    pub(super) fn draw_single<C: Canvas + ?Sized>(&mut self, canvas: &mut C, area: Rect, pages: &[WallPage<'_>], selected: Option<PageKey>, now: u64) {
+        self.area = area;
+        self.focus = selected;
+        self.page_keys = pages.iter().map(|page| page.key).collect();
+        self.drawn.clear();
+        self.open = None;
+        for control in [&mut self.close, &mut self.bar, &mut self.minus, &mut self.plus, &mut self.bar_zone] {
+            *control = Rect::ZERO;
+        }
+        let on_wall = |key: &PageKey| pages.iter().any(|page| page.key == *key);
+        let open = self.zoomed.filter(|_| self.zoom_in).filter(on_wall);
+        let Some(key) = open.or_else(|| selected.filter(on_wall)).or_else(|| pages.first().map(|page| page.key)) else {
+            // Nothing to show: the bank has no pages yet.
+            self.to_top();
+            canvas.fill(area, 0.0, PANEL);
+            return;
+        };
+        if open.is_none() {
+            self.open_alone(key);
+        }
+        let Some(current) = pages.iter().position(|page| page.key == key) else { return };
+        self.draw_alone(canvas, area, pages, current, now);
+    }
+
+    /// The page at `current` alone in `area`, the largest it fits at its
+    /// own proportions, so limited by whichever of the width and the height
+    /// runs out first, and centred, in its screen colour, the next pages
+    /// sliding in; returns where it is drawn with its screen.
+    fn draw_alone<C: Canvas + ?Sized>(&mut self, canvas: &mut C, area: Rect, pages: &[WallPage<'_>], current: usize, now: u64) -> Rect {
         let width = area.width().min(area.height() / PAGE_ASPECT).max(0.0);
         let (left, top) = (f64::midpoint(area.x0, area.x1) - width / 2.0, f64::midpoint(area.y0, area.y1) - width * PAGE_ASPECT / 2.0);
         let rect = Rect::new(left, top, left + width, top + width * PAGE_ASPECT);
         // Around the page, its screen colour, as the page area draws it.
-        let screen = canvas.screen(key).unwrap_or(BLACK);
+        let screen = pages.get(current).and_then(|page| canvas.screen(page.key)).unwrap_or(BLACK);
         canvas.fill(area, 0.0, screen);
         canvas.push_clip(area);
         self.draw_sliding(canvas, pages, current, rect, false, now);
         canvas.pop_clip();
-        Some(rect)
+        rect
     }
 
     /// The close button of a zoomed page, at the area's top right.

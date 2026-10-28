@@ -98,12 +98,10 @@ pub const CELL_AVAILABLE: Colour = rgb(0x4a, 0x4c, 0x52);
 pub const CELL_PULSE: Colour = WHITE;
 /// A page that has just had a new version: amber, unlike any bank colour.
 pub const UPDATED: Colour = rgb(0xff, 0xb0, 0x20);
-/// Typing into a page: the cursor, the provisional echo and the strip's
-/// "Keys go to" badge (`interaction.md` decision 6), an amber no teletext
-/// colour is (EN 300 706 Table 26's eight are full on or off).
+/// Typing into a page: the cursor and the strip's "Keys go to" badge
+/// (`interaction.md` decision 6), an amber no teletext colour is (EN 300
+/// 706 Table 26's eight are full on or off).
 pub const TYPING: Colour = rgb(0xff, 0xbf, 0x40);
-/// Behind an echoed character: dark, so the amber reads on any page.
-pub const TYPING_FIELD: Colour = rgb(0x20, 0x18, 0x08);
 /// A private tab's word and mark (requirement 20.8): a colour no other part of
 /// the strip uses.
 pub const PRIVATE: Colour = rgb(0xb0, 0x6c, 0xff);

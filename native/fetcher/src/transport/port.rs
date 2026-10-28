@@ -2,7 +2,6 @@
 //! on a thread of its own and its state read back, bytes sent and taken,
 //! and a connection closed, open or still opening.
 
-use std::io::Write;
 use std::net::Shutdown;
 use std::sync::Arc;
 use std::sync::mpsc;
@@ -12,7 +11,7 @@ use embedded_io::ErrorKind;
 use neoteletext_web::port::{ConnectionId, LinkState, Received, Security, Transport};
 
 use super::cancel::{Cancel, shut};
-use super::connection::write_records;
+use super::connection::give_records;
 use super::{CONNECT_DEADLINE, Link, Opener, Tcp};
 
 impl embedded_io::ErrorType for Tcp {
@@ -61,14 +60,23 @@ impl Transport for Tcp {
 
     fn send(&mut self, connection: ConnectionId, bytes: &[u8]) -> Result<(), ErrorKind> {
         let Some(Link::Open(open)) = self.settle(connection) else { return Err(ErrorKind::NotConnected) };
-        // Written whole, blocking, within the write limit: a request or a
-        // input message is small, and the socket drains it at once.
-        let mut socket = &open.socket;
-        let written = match open.tls.as_deref_mut() {
-            None => socket.write_all(bytes).and_then(|()| socket.flush()),
-            Some(tls) => tls.writer().write_all(bytes).and_then(|()| write_records(tls, socket)),
+        // Given whole to the writer thread, as one write: the messages the
+        // agent sends together leave together (REQ-RCH-010), and a socket
+        // the network does not drain holds up only that thread.
+        let given = match open.tls.as_deref_mut() {
+            None => open.outgoing.give(bytes.to_vec()),
+            Some(tls) => std::io::Write::write_all(&mut tls.writer(), bytes).is_ok() && give_records(tls, &open.outgoing),
         };
-        written.map_err(|_| ErrorKind::BrokenPipe)
+        if given { Ok(()) } else { Err(ErrorKind::BrokenPipe) }
+    }
+
+    /// What the writer thread has been given and has not yet written; the
+    /// operating system's own buffer is not seen (`writer.rs`).
+    fn unsent(&mut self, connection: ConnectionId) -> usize {
+        match self.connection(connection) {
+            Some(Link::Open(open)) => open.outgoing.unsent(),
+            _ => 0,
+        }
     }
 
     fn receive(&mut self, connection: ConnectionId, buffer: &mut [u8]) -> Result<Received, ErrorKind> {

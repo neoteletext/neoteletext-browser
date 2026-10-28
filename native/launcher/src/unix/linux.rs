@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 
 use update::files;
 use update::layout::Layout;
-use update::platform::{Family, LAUNCHER_PROGRAM};
+use update::platform::{Family, LAUNCHER_PROGRAM, LINUX_ICON_SIZES, linux_icon};
 use update::version::Version;
 
 use crate::io_text;
@@ -27,6 +27,42 @@ pub(super) fn desktop_entry() -> Option<PathBuf> {
     data_home().map(|data| data.join("applications/neoteletext.desktop"))
 }
 
+/// The name the menu entry gives its icon, and the windows' application
+/// name, by which a desktop finds the entry, and with it the icon, for a
+/// window (`StartupWMClass`; Wayland's application identifier).
+const ICON_NAME: &str = "neoteletext";
+
+/// Where the icon `side` pixels square goes in the `hicolor` theme of the
+/// data folder `data` (the freedesktop.org Icon Theme Specification:
+/// `$XDG_DATA_HOME/icons`, then the theme, `<side>x<side>/apps`, and the
+/// icon's name).
+fn icon_file(data: &Path, side: u32) -> PathBuf {
+    data.join(format!("icons/hicolor/{side}x{side}/apps/{ICON_NAME}.png"))
+}
+
+/// The browser's icon files in the user's icon theme, which `--uninstall`
+/// removes.
+pub(super) fn icon_files() -> Vec<PathBuf> {
+    data_home().map(|data| LINUX_ICON_SIZES.iter().map(|side| icon_file(&data, *side)).collect()).unwrap_or_default()
+}
+
+/// Copies each icon file of the version installed in `version` into the
+/// icon theme of the data folder `data` (decision 124): files the launcher
+/// accepted, by the release key's signature, under names the launcher
+/// makes.
+fn install_icons(version: &Path, data: &Path) -> Result<(), String> {
+    for side in LINUX_ICON_SIZES {
+        let target = icon_file(data, side);
+        let source = version.join(linux_icon(side));
+        let bytes = std::fs::read(&source).map_err(|error| io_text(&source, &error))?;
+        if let Some(folder) = target.parent() {
+            std::fs::create_dir_all(folder).map_err(|error| io_text(folder, &error))?;
+        }
+        files::write_atomically(&target, &bytes).map_err(|error| io_text(&target, &error))?;
+    }
+    Ok(())
+}
+
 /// The command on the path (`~/.local/bin`, the systemd file-hierarchy
 /// specification's user executables).
 pub(super) fn path_link() -> Option<PathBuf> {
@@ -34,11 +70,12 @@ pub(super) fn path_link() -> Option<PathBuf> {
 }
 
 /// The menu entry for a launcher at `program` (Desktop Entry
-/// Specification version 1.5). There is no icon of the browser's own yet;
-/// the theme's web browser icon stands in.
+/// Specification version 1.5), with the browser's icon by its name in the
+/// icon theme and the windows' class, so the desktop shows the icon for
+/// them too (decision 124).
 fn desktop_text(program: &Path) -> String {
     format!(
-        "[Desktop Entry]\nType=Application\nVersion=1.5\nName=NeoTeletext\nGenericName=Teletext browser\nComment=Browse teletext channels on the web\nExec=\"{}\" %U\nIcon=web-browser\nTerminal=false\nCategories=Network;WebBrowser;\n",
+        "[Desktop Entry]\nType=Application\nVersion=1.5\nName=NeoTeletext\nGenericName=Teletext browser\nComment=Browse teletext channels on the web\nExec=\"{}\" %U\nIcon={ICON_NAME}\nStartupWMClass={ICON_NAME}\nTerminal=false\nCategories=Network;WebBrowser;\n",
         program.display()
     )
 }
@@ -90,11 +127,14 @@ pub fn install_linux(own: &Path) -> Result<(), String> {
     let source = own.parent().ok_or("this program has no folder")?;
     let layout = Layout::for_user(Family::Linux, None).ok_or("there is no home folder to install in")?;
     let signer = crate::pinned_signer(platform);
-    let Some((version, _)) = install_version(source, &layout, signer.as_ref())? else {
+    let Some((version, installed)) = install_version(source, &layout, signer.as_ref())? else {
         println!("NeoTeletext is already installed in {}; it keeps itself up to date.", layout.root.display());
         return Ok(());
     };
     let launcher = layout.launcher_folder().join(LINUX_LAUNCHER);
+    if let Some(data) = data_home() {
+        install_icons(&installed, &data)?;
+    }
     if let Some(entry) = desktop_entry() {
         if let Some(folder) = entry.parent() {
             let _ = std::fs::create_dir_all(folder);
@@ -264,5 +304,36 @@ mod tests {
         assert!(text.starts_with("[Desktop Entry]\nType=Application\n"));
         assert!(text.contains("\nExec=\"/home/a/.local/share/neoteletext/bin/neoteletext\" %U\n"));
         assert!(text.ends_with("Categories=Network;WebBrowser;\n"));
+    }
+
+    /// Decision 124: the menu entry names the browser's own icon, and the
+    /// windows' class, which the interface gives its windows.
+    #[test]
+    fn the_menu_entry_shows_the_browsers_icon() {
+        let text = desktop_text(Path::new("/home/a/.local/share/neoteletext/bin/neoteletext"));
+        assert!(text.contains("\nIcon=neoteletext\n"), "{text}");
+        assert!(text.contains("\nStartupWMClass=neoteletext\n"), "{text}");
+        assert!(!text.contains("web-browser"), "{text}");
+    }
+
+    /// Decision 124: `--install` puts each icon file of the version it
+    /// installed into the user's `hicolor` theme, at its size's folder,
+    /// as the icon the menu entry names.
+    #[test]
+    fn the_icons_go_into_the_users_theme() {
+        let folder = std::env::temp_dir().join(format!("neoteletext-install-icons-{}", std::process::id()));
+        let _ = files::remove_tree(&folder);
+        let version = folder.join("version");
+        std::fs::create_dir_all(&version).unwrap();
+        for side in LINUX_ICON_SIZES {
+            std::fs::write(version.join(linux_icon(side)), format!("the icon at {side}")).unwrap();
+        }
+        let data = folder.join("data");
+        install_icons(&version, &data).unwrap();
+        for side in LINUX_ICON_SIZES {
+            let installed = data.join(format!("icons/hicolor/{side}x{side}/apps/neoteletext.png"));
+            assert_eq!(std::fs::read_to_string(&installed).unwrap(), format!("the icon at {side}"), "{side}");
+        }
+        files::remove_tree(&folder).unwrap();
     }
 }

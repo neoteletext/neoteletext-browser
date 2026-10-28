@@ -7,7 +7,7 @@ use interface_core::canvas::PageKey;
 use interface_core::channel::page_index;
 
 use super::found::{flags, place, push_area, read_area, read_flags};
-use super::{LinkKind, LinkRun, MAX_CONTROLS, MAX_DESTINATION, MAX_POINTER_AREAS, MAX_REMAPPED, MAX_RUNS, PageLinks, Pointing, Prompt, PromptKind};
+use super::{LinkKind, LinkRun, MAX_CONTROLS, MAX_DESTINATION, MAX_REMAPPED, MAX_RUNS, PageLinks, Pointing, Prompt, PromptKind};
 use crate::{Fields, ProtocolError, push_count_u8, push_key, push_text};
 
 // A prompt's flags.
@@ -25,10 +25,6 @@ pub(super) fn push_page_links(payload: &mut Vec<u8>, key: PageKey, links: &PageL
     for control in &links.controls {
         push_area(payload, *control);
     }
-    push_count_u8(payload, links.pointer_areas.len(), MAX_POINTER_AREAS, "too many pointer areas")?;
-    for area in &links.pointer_areas {
-        push_area(payload, *area);
-    }
     push_numbers(payload, &links.remapped)
 }
 
@@ -44,8 +40,7 @@ pub(super) fn read_page_links(fields: &mut Fields<'_>) -> Result<(PageKey, PageL
         })
         .collect::<Result<_, _>>()?;
     let controls = (0..fields.count_u8(MAX_CONTROLS, "too many controls")?).map(|_| read_area(fields)).collect::<Result<_, _>>()?;
-    let pointer_areas = (0..fields.count_u8(MAX_POINTER_AREAS, "too many pointer areas")?).map(|_| read_area(fields)).collect::<Result<_, _>>()?;
-    Ok((key, PageLinks { version, runs, controls, pointer_areas, remapped: read_numbers(fields)? }))
+    Ok((key, PageLinks { version, runs, controls, remapped: read_numbers(fields)? }))
 }
 
 /// Page numbers, each a display page.

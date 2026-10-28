@@ -109,6 +109,11 @@ impl Browser {
 
     /// A press on the panel or the strip's Finish; returns whether it was
     /// theirs.
+    /// Whether `point` is on the open phone panel.
+    pub(super) fn over_phone(&self, point: Point) -> bool {
+        self.phone.open && panel_rect(self.wall.area()).contains(point)
+    }
+
     pub(super) fn phone_press(&mut self, point: Point) -> bool {
         if self.phone.badge_finish.contains(point) || self.phone.open && self.phone.finish.contains(point) {
             self.outputs.push(Output::PhoneFinish);

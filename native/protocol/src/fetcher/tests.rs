@@ -31,6 +31,8 @@ fn every_kind_round_trips() {
             part: SubPageRows { count: 8_190, first: 7_168, rows: vec![(0x3F7E, "The last".into()), (0x0001, String::new())] },
         },
         FromFetcher::SubPagesMissing { page: 0x210 },
+        #[cfg(feature = "interaction")]
+        FromFetcher::RoundTrip { microseconds: 190 },
     ] {
         let mut bytes = Vec::new();
         write_to_core(&mut bytes, &message).unwrap();
@@ -42,6 +44,16 @@ fn every_kind_round_trips() {
         ToFetcher::ReachedAnswer { id: 9, reached: true },
         ToFetcher::FetchSubPages { page: 0x210 },
         ToFetcher::FetchSubPage { page: 0x210, subcode: 0x3F7E },
+        #[cfg(feature = "interaction")]
+        ToFetcher::Send { bytes: b"a\xFF\x01\x04\x02".to_vec(), move_of: None, more: true },
+        #[cfg(feature = "interaction")]
+        ToFetcher::Send { bytes: vec![0xFF, 0x02, 0x06, 0x00, 0x0A, 0x05, 0x79, 0x64], move_of: Some(0), more: false },
+        #[cfg(feature = "interaction")]
+        ToFetcher::Send { bytes: vec![0xFF, 0x44, 0x07, 0x06, 0x01, 0x0B, 0x05, 0x85, 0x01, 0x64], move_of: Some(1), more: false },
+        #[cfg(feature = "interaction")]
+        ToFetcher::MeasureRoundTrip(true),
+        #[cfg(feature = "interaction")]
+        ToFetcher::MeasureRoundTrip(false),
     ] {
         let mut bytes = Vec::new();
         write_to_fetcher(&mut bytes, &message).unwrap();
@@ -124,4 +136,49 @@ fn catalogues_and_sub_pages_keep_their_bounds() {
     let mut bytes = Vec::new();
     write_to_fetcher(&mut bytes, &ToFetcher::FetchSubPages { page: 0x210 }).unwrap();
     assert!(read_from_fetcher(&mut bytes.as_slice()).is_err());
+}
+
+/// REQ-RCH-035: a message the trusted core marks as a contact's move is
+/// that contact's move alone, on both sides of the pipe, so a fetcher
+/// holds nothing else in a contact's slot; `more` is a flag.
+#[cfg(feature = "interaction")]
+#[test]
+fn a_move_is_marked_only_as_its_own_contacts() {
+    // `INPUT.md` section 5.8: a move to the dot (121, 100); a key.
+    let mouse_move = vec![0xFF, 0x02, 0x06, 0x00, 0x0A, 0x05, 0x79, 0x64];
+    let second_finger_move = vec![0xFF, 0x44, 0x07, 0x06, 0x01, 0x0B, 0x05, 0x85, 0x01, 0x64];
+    let enter = vec![0xFF, 0x01, 0x04, 0x02];
+    let mut two_moves = mouse_move.clone();
+    two_moves.extend_from_slice(&mouse_move);
+    for (bytes, move_of) in [
+        (mouse_move.clone(), Some(1)),
+        (second_finger_move, Some(0)),
+        (enter, Some(0)),
+        (two_moves, Some(0)),
+        (mouse_move.clone(), Some(u8::try_from(neoteletext_input::MAX_CONTACTS).unwrap())),
+    ] {
+        let message = ToFetcher::Send { bytes: bytes.clone(), move_of, more: false };
+        assert!(write_to_fetcher(&mut Vec::new(), &message).is_err(), "{bytes:?} as {move_of:?}");
+        let mut payload = vec![move_of.unwrap(), 0];
+        payload.extend_from_slice(&bytes);
+        let mut framed = vec![KIND_SEND];
+        framed.extend_from_slice(&u32::try_from(payload.len()).unwrap().to_be_bytes());
+        framed.extend_from_slice(&payload);
+        assert!(read_to_fetcher(&mut framed.as_slice()).is_err(), "{bytes:?} as {move_of:?}");
+    }
+    let mut payload = vec![0, 2];
+    payload.extend_from_slice(&mouse_move);
+    let mut framed = vec![KIND_SEND];
+    framed.extend_from_slice(&u32::try_from(payload.len()).unwrap().to_be_bytes());
+    framed.extend_from_slice(&payload);
+    assert!(read_to_fetcher(&mut framed.as_slice()).is_err(), "more is a flag");
+    let bad_measure = [KIND_MEASURE_ROUND_TRIP, 0, 0, 0, 1, 2];
+    assert!(read_to_fetcher(&mut bad_measure.as_slice()).is_err(), "measure is a flag");
+    // A fetcher may not send the trusted core's messages, nor the core a fetcher's.
+    let mut bytes = Vec::new();
+    write_to_fetcher(&mut bytes, &ToFetcher::MeasureRoundTrip(true)).unwrap();
+    assert!(matches!(read_from_fetcher(&mut bytes.as_slice()), Err(ProtocolError::UnknownKind(KIND_MEASURE_ROUND_TRIP))));
+    let mut bytes = Vec::new();
+    write_to_core(&mut bytes, &FromFetcher::RoundTrip { microseconds: 1 }).unwrap();
+    assert!(matches!(read_to_fetcher(&mut bytes.as_slice()), Err(ProtocolError::UnknownKind(KIND_ROUND_TRIP))));
 }

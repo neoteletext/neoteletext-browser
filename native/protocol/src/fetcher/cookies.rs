@@ -126,7 +126,7 @@ pub(super) fn push_answer(payload: &mut Vec<u8>, answer: &ToFetcher) -> Result<u
             KIND_REACHED_ANSWER
         }
         #[cfg(feature = "interaction")]
-        ToFetcher::Send(_) => return Err(ProtocolError::BadValue("not a cookie answer")),
+        ToFetcher::Send { .. } | ToFetcher::MeasureRoundTrip(_) => return Err(ProtocolError::BadValue("not a cookie answer")),
         ToFetcher::FetchSubPages { .. } | ToFetcher::FetchSubPage { .. } => return Err(ProtocolError::BadValue("not a cookie answer")),
     })
 }

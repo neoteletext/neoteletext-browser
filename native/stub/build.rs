@@ -5,6 +5,10 @@
 //! linker's flag (Microsoft's linker documentation, `/DEPENDENTLOADFLAG`),
 //! and 0x800 is `LOAD_LIBRARY_SEARCH_SYSTEM32` (`LoadLibraryExW`'s flags,
 //! `libloaderapi.h`); a build script has no Windows bindings to name it by.
+//!
+//! The program carries the browser's icon (decision 124): the art as a
+//! resource file (`icon::windows`), which the MSVC linker takes as an
+//! input, so Explorer, the Start menu and the taskbar show it.
 
 /// `LOAD_LIBRARY_SEARCH_SYSTEM32`, as the linker flag takes it.
 const SEARCH_SYSTEM32: &str = "0x800";
@@ -14,5 +18,10 @@ fn main() {
     let msvc = std::env::var("CARGO_CFG_TARGET_ENV").is_ok_and(|env| env == "msvc");
     if windows && msvc {
         println!("cargo:rustc-link-arg-bins=/DEPENDENTLOADFLAG:{SEARCH_SYSTEM32}");
+        // The program's icon (decision 124): the art as a resource file,
+        // which the MSVC linker takes as an input.
+        let out = std::env::var_os("OUT_DIR").expect("Cargo sets OUT_DIR");
+        let resource = icon::windows::write_resource_file(std::path::Path::new(&out)).expect("the icon's resource file is written");
+        println!("cargo:rustc-link-arg-bin=neoteletext-stub={}", resource.display());
     }
 }

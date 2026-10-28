@@ -46,8 +46,6 @@ const PLACE_TOO_WIDE: &str = "+++";
 // The protocol bounds a page's controls by the engine's own bound.
 #[cfg(feature = "links")]
 const _: () = assert!(protocol::links::MAX_CONTROLS == neoteletext_core::controls::MAX_CONTROLS);
-#[cfg(feature = "links")]
-const _: () = assert!(protocol::links::MAX_POINTER_AREAS == neoteletext_core::controls::MAX_POINTER_AREAS);
 
 impl Engine {
     /// The look of an area of `page` under the pointer, or none: the page
@@ -325,8 +323,7 @@ impl Engine {
         #[cfg(feature = "links")]
         let links = {
             let (candidates, numbers) = links::find(&grid, &palette, self.lines.get(page, subcode));
-            let (controls, pointer_areas) = controls(stored);
-            Found { candidates, numbers, controls, pointer_areas, fastext: fastext(stored, &grid) }
+            Found { candidates, numbers, controls: controls(stored), fastext: fastext(stored, &grid) }
         };
         let rates = FlashRates::of(grid.cells.iter().flatten().filter(|cell| cell.flash).map(|cell| cell.attributes.flash_rate()));
         Some(Rendered {
@@ -341,21 +338,17 @@ impl Engine {
     }
 }
 
-/// A page's controls and pointer areas, as the engine finds them in its
-/// local enhancement data (INPUT.md sections 7.3 and 7.4); the whole page
-/// as one pointer area of every row and column. The trusted core checks
-/// them again.
+/// A page's controls, as the engine finds them in its local enhancement
+/// data (INPUT.md section 7.3). The trusted core checks them again.
 #[cfg(feature = "links")]
-fn controls(stored: &StoredPage) -> (Vec<protocol::links::Area>, Vec<protocol::links::Area>) {
-    use interface_core::canvas::{COLUMNS, ROWS};
+fn controls(stored: &StoredPage) -> Vec<protocol::links::Area> {
     let found = neoteletext_core::controls::controls(stored);
-    let area = |control: &Control| protocol::links::Area { row: control.row, column: control.column, width: control.width, height: control.height };
-    let whole = protocol::links::Area { row: 0, column: 0, width: u8::try_from(COLUMNS).unwrap_or(u8::MAX), height: u8::try_from(ROWS).unwrap_or(u8::MAX) };
-    let mut pointer_areas: Vec<_> = found.pointer_areas.as_slice().iter().map(area).collect();
-    if found.whole_page {
-        pointer_areas = vec![whole];
-    }
-    (found.list.as_slice().iter().map(area).collect(), pointer_areas)
+    found
+        .list
+        .as_slice()
+        .iter()
+        .map(|control: &Control| protocol::links::Area { row: control.row, column: control.column, width: control.width, height: control.height })
+        .collect()
 }
 
 /// A page's Fastext from its packet X/27/0, which the engine writes from a

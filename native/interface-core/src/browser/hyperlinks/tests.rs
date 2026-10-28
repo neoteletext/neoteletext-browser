@@ -27,13 +27,7 @@ fn run(row: u8, column: u8, length: u8, kind: LinkKind) -> LinkRun {
 }
 
 fn page_links(version: u32) -> PageLinks {
-    PageLinks {
-        version,
-        runs: vec![run(5, 10, 3, LinkKind::Page), run(7, 0, 12, LinkKind::Web)],
-        controls: Vec::new(),
-        pointer_areas: Vec::new(),
-        remapped: vec![0x302],
-    }
+    PageLinks { version, runs: vec![run(5, 10, 3, LinkKind::Page), run(7, 0, 12, LinkKind::Web)], controls: Vec::new(), remapped: vec![0x302] }
 }
 
 /// A browser with its first page zoomed and open, its image at `VERSION`.
@@ -227,7 +221,7 @@ fn lits(browser: &mut Browser) -> Vec<Option<Lit>> {
 fn a_link_lights_under_the_pointer_and_a_control_only_while_keys_go() {
     let (mut browser, mut canvas, key, rect) = opened();
     let control = Area { row: 20, column: 1, width: 9, height: 1 };
-    browser.set_links(key, PageLinks { controls: vec![control], pointer_areas: Vec::new(), ..page_links(VERSION) });
+    browser.set_links(key, PageLinks { controls: vec![control], ..page_links(VERSION) });
     browser.take_outputs();
     move_to(&mut browser, centre(rect, 11, 5));
     let link = Area { row: 5, column: 10, width: 3, height: 1 };
@@ -251,9 +245,8 @@ fn a_control_lights_and_shows_the_hand_while_keys_go() {
     use crate::browser::typing::TypingView;
     let (mut browser, mut canvas, key, rect) = opened();
     let control = Area { row: 20, column: 1, width: 9, height: 2 };
-    browser.set_links(key, PageLinks { controls: vec![control], pointer_areas: Vec::new(), ..page_links(VERSION) });
-    let typing =
-        TypingView { channel: key.channel, page: key.page, on: true, secure: false, refused: false, cursor: None, acked: 0, round_trip_ms: None, show: None };
+    browser.set_links(key, PageLinks { controls: vec![control], ..page_links(VERSION) });
+    let typing = TypingView { channel: key.channel, page: key.page, on: true, secure: false, refused: false, cursor: None, round_trip_us: None, show: None };
     browser.set_typing(typing, OPEN);
     browser.take_outputs();
     move_to(&mut browser, centre(rect, 9, 21));
@@ -267,7 +260,7 @@ fn a_control_lights_and_shows_the_hand_while_keys_go() {
     assert_eq!(lits(&mut browser), [], "still pressed, on the same control");
     browser.pointer_released();
     assert_eq!(lits(&mut browser), [Some(Lit { key, area: control, pressed: false })]);
-    browser.set_links(key, PageLinks { controls: vec![control], pointer_areas: Vec::new(), ..page_links(VERSION + 1) });
+    browser.set_links(key, PageLinks { controls: vec![control], ..page_links(VERSION + 1) });
     move_to(&mut browser, centre(rect, 11, 5));
     let link = Area { row: 5, column: 10, width: 3, height: 1 };
     assert_eq!(lits(&mut browser), [Some(Lit { key, area: link, pressed: false })], "a link is the browser's while keys go (decision 122)");
@@ -286,8 +279,7 @@ fn the_channel_is_told_as_the_pointer_enters_and_leaves_controls() {
     let first = Area { row: 20, column: 1, width: 9, height: 1 };
     let second = Area { row: 20, column: 10, width: 9, height: 1 };
     browser.set_links(key, PageLinks { controls: vec![first, second], ..page_links(VERSION) });
-    let typing =
-        TypingView { channel: key.channel, page: key.page, on: true, secure: false, refused: false, cursor: None, acked: 0, round_trip_ms: None, show: None };
+    let typing = TypingView { channel: key.channel, page: key.page, on: true, secure: false, refused: false, cursor: None, round_trip_us: None, show: None };
     browser.set_typing(typing, OPEN);
     browser.take_outputs();
     let hovers = |browser: &mut Browser| -> Vec<Intent> {

@@ -79,7 +79,7 @@ impl App {
             #[cfg(feature = "links")]
             Output::Cancel(id) => ToCore::Cancel(id),
             #[cfg(feature = "interaction")]
-            Output::Terminal { key, local, intent } => ToCore::Input(protocol::interaction::InputIntent { key, local, intent }),
+            Output::Terminal { key, intent } => ToCore::Input(protocol::interaction::InputIntent { key, intent }),
             #[cfg(feature = "phone-keyboard")]
             Output::PhonePanel(open) => ToCore::PhonePanel(open),
             #[cfg(feature = "phone-keyboard")]

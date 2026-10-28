@@ -9,6 +9,16 @@ use winit::event_loop::ActiveEventLoop;
 use winit::window::Window;
 
 pub(crate) const WINDOW_TITLE: &str = "NeoTeletext";
+/// The windows' application name on Linux, X11's class and instance and
+/// Wayland's application identifier, which name the menu entry the
+/// launcher installs, and with it the icon, for every window
+/// (`StartupWMClass`; decision 124).
+#[cfg(target_os = "linux")]
+const APPLICATION_NAME: &str = "neoteletext";
+
+// The art, made into the icon this platform's windows or Dock show when
+// the interface was built (`build.rs`, decision 124).
+include!(concat!(env!("OUT_DIR"), "/icon.rs"));
 const WINDOW_WIDTH: f64 = 1440.0;
 /// How far up and left of the pointer a window torn off from a tab opens,
 /// in points, so that its strip is under the pointer.
@@ -27,6 +37,25 @@ pub(crate) const FRAME: Frame = Frame { left_inset: 72.0, window_buttons: false 
 #[cfg(not(target_os = "macos"))]
 pub(crate) const FRAME: Frame = Frame { left_inset: 0.0, window_buttons: true };
 
+/// The windows' icon (decision 124), which Windows shows in the title bar
+/// and the taskbar and X11 gives the window manager; macOS takes the
+/// bundle's, and Wayland the menu entry's.
+#[cfg(not(target_os = "macos"))]
+fn icon() -> Option<winit::window::Icon> {
+    winit::window::Icon::from_rgba(WINDOW_ICON.to_vec(), WINDOW_ICON_SIDE, WINDOW_ICON_SIDE).ok()
+}
+
+/// macOS: the Dock's icon, for the browser run outside its bundle, as
+/// from `cargo run`; a bundle's own icon is left as it is (decision 124).
+#[cfg(target_os = "macos")]
+pub fn show_dock_icon() {
+    dock_menu::set_icon(DOCK_ICON);
+}
+
+/// Elsewhere there is no Dock.
+#[cfg(not(target_os = "macos"))]
+pub fn show_dock_icon() {}
+
 /// The window, at its kept place and size when there are some.
 pub(crate) fn attributes(kept: Option<WindowGeometry>) -> winit::window::WindowAttributes {
     let mut attributes = Window::default_attributes()
@@ -44,8 +73,12 @@ pub(crate) fn attributes(kept: Option<WindowGeometry>) -> winit::window::WindowA
         use winit::platform::macos::WindowAttributesExtMacOS;
         attributes.with_titlebar_transparent(true).with_title_hidden(true).with_fullsize_content_view(true)
     }
+    #[cfg(target_os = "windows")]
+    let attributes = winit::platform::windows::WindowAttributesExtWindows::with_taskbar_icon(attributes, icon());
+    #[cfg(target_os = "linux")]
+    let attributes = winit::platform::x11::WindowAttributesExtX11::with_name(attributes, APPLICATION_NAME, APPLICATION_NAME);
     #[cfg(not(target_os = "macos"))]
-    attributes.with_decorations(false)
+    attributes.with_decorations(false).with_window_icon(icon())
 }
 
 /// Whether the kept window's top left corner falls on a display now: one
@@ -77,3 +110,6 @@ pub(crate) fn geometry(window: &Window) -> Option<WindowGeometry> {
     };
     geometry.is_plausible().then_some(geometry)
 }
+
+#[cfg(test)]
+mod tests;

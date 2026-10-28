@@ -112,10 +112,22 @@ pub struct Browser {
     editor: Editor,
     editing: bool,
     field_scroll: f64,
+    /// While the main button is held after a press in the address field:
+    /// where the selection began, its other end following the pointer.
+    field_press: Option<usize>,
+    /// The pointer's x while dragging in the field, resolved to an offset
+    /// at the next draw, which alone can measure the text.
+    field_drag_to: Option<f64>,
+    /// The last press in the field, for a double click.
+    field_last_press: Option<(Point, u64)>,
     digits: String,
     pulses: Vec<(usize, u64)>,
     /// When each recently updated page had its new version.
     updates: Vec<(usize, u64)>,
+    /// When each page's overview ring began. A page updated again while
+    /// its ring grows keeps that ring: a channel can update a page several
+    /// times a second, and a ring begun again at each would strobe.
+    rings: Vec<(usize, u64)>,
     /// The overview folded into the footer: it then draws nothing but its
     /// heading and keeps no animation.
     overview: OverviewState,
@@ -208,9 +220,13 @@ impl Browser {
             editor: Editor::new(MAX_ADDRESS),
             editing: false,
             field_scroll: 0.0,
+            field_press: None,
+            field_drag_to: None,
+            field_last_press: None,
             digits: String::new(),
             pulses: Vec::new(),
             updates: Vec::new(),
+            rings: Vec::new(),
             overview: OverviewState::default(),
             hovered_row: None,
             hovered_bank: None,

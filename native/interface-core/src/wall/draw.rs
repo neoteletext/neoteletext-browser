@@ -14,7 +14,15 @@ use crate::theme::{PANEL, RULE, WINDOW};
 impl Wall {
     /// Draws the panel in `panel`, with `pages` on the wall and `selected`
     /// outlined.
+    /// With the page alone, the whole panel is the page area, with no page
+    /// size bar (decision 126).
     pub fn draw<C: Canvas + ?Sized>(&mut self, canvas: &mut C, panel: Rect, pages: &[WallPage<'_>], selected: Option<PageKey>, now: u64) {
+        if self.single() {
+            self.draw_single(canvas, panel, pages, selected, now);
+            outline(canvas, panel, RULE);
+            self.drawn_moving = self.moving(now);
+            return;
+        }
         canvas.fill(panel, 0.0, PANEL);
         self.area = Rect::new(panel.x0, panel.y0 + CONTROLS_HEIGHT, panel.x1, panel.y1);
         #[allow(clippy::cast_possible_truncation, reason = "panel widths fit easily in f32")]

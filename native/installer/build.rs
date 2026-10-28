@@ -5,6 +5,10 @@
 //! out, signed and listed. Each file is built into the installer, so the
 //! one signed program carries the whole first install; without the
 //! variable the installer carries nothing and installs nothing.
+//!
+//! The program carries the browser's icon (decision 124): the art as a
+//! resource file (`icon::windows`), which the MSVC linker takes as an
+//! input, so Explorer, the Start menu and the taskbar show it.
 
 use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
@@ -37,6 +41,11 @@ fn main() {
     let msvc = std::env::var("CARGO_CFG_TARGET_ENV").is_ok_and(|env| env == "msvc");
     if windows && msvc {
         println!("cargo:rustc-link-arg-bins=/DEPENDENTLOADFLAG:{SEARCH_SYSTEM32}");
+        // The program's icon (decision 124): the art as a resource file,
+        // which the MSVC linker takes as an input.
+        let out = std::env::var_os("OUT_DIR").expect("Cargo sets OUT_DIR");
+        let resource = icon::windows::write_resource_file(Path::new(&out)).expect("the icon's resource file is written");
+        println!("cargo:rustc-link-arg-bin=neoteletext-installer={}", resource.display());
     }
     println!("cargo:rerun-if-env-changed={VARIABLE}");
     let mut out = String::from("/// The release's files, by their paths in the payload.\npub const FILES: &[(&str, &[u8])] = &[\n");

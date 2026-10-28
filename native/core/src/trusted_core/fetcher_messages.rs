@@ -79,7 +79,12 @@ impl Core {
             }
             #[cfg(feature = "interaction")]
             FromFetcher::Input { open, secure } => {
-                let sends = self.typing.input(channel, open, secure, self.now());
+                let sends = self.typing.input(channel, open, secure, self.now_us());
+                self.deliver_typing(sends)?;
+            }
+            #[cfg(feature = "interaction")]
+            FromFetcher::RoundTrip { microseconds } => {
+                let sends = self.typing.round_trip(channel, microseconds);
                 self.deliver_typing(sends)?;
             }
             FromFetcher::SubPages { page, part } => self.catalogue_part(channel, page, part)?,

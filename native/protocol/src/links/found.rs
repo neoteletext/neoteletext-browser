@@ -5,7 +5,7 @@
 
 use interface_core::canvas::{COLUMNS, ROWS};
 
-use super::{Area, MAX_ALIASES, MAX_CONTROLS, MAX_NUMBER_LINKS, MAX_POINTER_AREAS, MAX_RUNS, MAX_SERVICE_NAME, MAX_SERVICES, MAX_TARGET};
+use super::{Area, MAX_ALIASES, MAX_CONTROLS, MAX_NUMBER_LINKS, MAX_RUNS, MAX_SERVICE_NAME, MAX_SERVICES, MAX_TARGET};
 use crate::{Fields, MAX_ADDRESS, ProtocolError, push_count_u8, raw_text};
 
 // A run's flags on the wire.
@@ -108,9 +108,9 @@ pub(super) fn read_flags(fields: &mut Fields<'_>) -> Result<(bool, bool), Protoc
     Ok((flags & DOUBLE != 0, flags & LIGHT != 0))
 }
 
-/// The decoder's links, controls and pointer areas of one page.
-pub(crate) fn push_found(payload: &mut Vec<u8>, found: (&[Candidate], &[NumberLink], &[Area], &[Area])) -> Result<(), ProtocolError> {
-    let (candidates, numbers, controls, pointer_areas) = found;
+/// The decoder's links and controls of one page.
+pub(crate) fn push_found(payload: &mut Vec<u8>, found: (&[Candidate], &[NumberLink], &[Area])) -> Result<(), ProtocolError> {
+    let (candidates, numbers, controls) = found;
     push_count_u8(payload, candidates.len(), MAX_RUNS, "too many links")?;
     for candidate in candidates {
         payload.extend_from_slice(&[candidate.row, candidate.column, candidate.length, flags(candidate.double, candidate.light)]);
@@ -125,16 +125,12 @@ pub(crate) fn push_found(payload: &mut Vec<u8>, found: (&[Candidate], &[NumberLi
     for control in controls {
         push_area(payload, *control);
     }
-    push_count_u8(payload, pointer_areas.len(), MAX_POINTER_AREAS, "too many pointer areas")?;
-    for area in pointer_areas {
-        push_area(payload, *area);
-    }
     Ok(())
 }
 
-/// What a decoder found in a page: its `LT` runs, its `LK` lines, its
-/// controls and its pointer areas.
-pub(crate) type FoundLinks = (Vec<Candidate>, Vec<NumberLink>, Vec<Area>, Vec<Area>);
+/// What a decoder found in a page: its `LT` runs, its `LK` lines and its
+/// controls.
+pub(crate) type FoundLinks = (Vec<Candidate>, Vec<NumberLink>, Vec<Area>);
 
 pub(crate) fn read_found(fields: &mut Fields<'_>) -> Result<FoundLinks, ProtocolError> {
     let candidates = (0..fields.count_u8(MAX_RUNS, "too many links")?)
@@ -149,8 +145,7 @@ pub(crate) fn read_found(fields: &mut Fields<'_>) -> Result<FoundLinks, Protocol
         .map(|_| Ok::<_, ProtocolError>(NumberLink { number: fields.display_page()?, target: raw_text(fields, MAX_TARGET, "text too long")? }))
         .collect::<Result<_, _>>()?;
     let controls = (0..fields.count_u8(MAX_CONTROLS, "too many controls")?).map(|_| read_area(fields)).collect::<Result<_, _>>()?;
-    let pointer_areas = (0..fields.count_u8(MAX_POINTER_AREAS, "too many pointer areas")?).map(|_| read_area(fields)).collect::<Result<_, _>>()?;
-    Ok((candidates, numbers, controls, pointer_areas))
+    Ok((candidates, numbers, controls))
 }
 
 /// The fetcher's links of its channel.

@@ -1,52 +1,43 @@
-//! Typing drawn: the channel's cursor and the viewer's echo over the open
-//! page, and the strip's badge saying where keys go (REQ-INT-131,
-//! REQ-INT-134).
+//! Typing drawn: the channel's cursor over the open page, and the strip's
+//! badge saying where keys go (REQ-INT-131, REQ-INT-134).
 
 use alloc::format;
 use core::fmt::Write;
 
 use neoteletext_input::cursor::BLOCK;
 
-use super::{BAR_SHARE, BLINK_MILLISECONDS, BLOCK_LINE_SHARE, ECHO_TEXT_SHARE};
+use super::{BAR_SHARE, BLINK_MILLISECONDS, BLOCK_LINE_SHARE};
 use crate::browser::Browser;
-use crate::canvas::{COLUMNS, Canvas, PageKey, ROWS, Style};
+use crate::canvas::{COLUMNS, Canvas, PageKey, ROWS};
 use crate::geometry::Rect;
 use crate::text::left_centred;
-use crate::theme::{FIELD_INK, INSECURE, ROW_STATUS, TYPING, TYPING_FIELD};
+use crate::theme::{FIELD_INK, INSECURE, ROW_STATUS, TYPING};
 
 /// The strip's badge: its padding and its corner.
 const BADGE_PADDING: f64 = 10.0;
 const BADGE_RADIUS: f64 = 4.0;
 const BADGE_INSET: f64 = 6.0;
+/// The round trip is shown in milliseconds to a tenth: a ping over a near
+/// path takes a fraction of one (`RETURN-CHANNEL.md` section 2.1, 0.19 ms
+/// over loopback).
+const MICROSECONDS_PER_MILLISECOND: u32 = 1_000;
+const MICROSECONDS_PER_TENTH: u32 = 100;
 
 impl Browser {
-    /// Draws the cursor and the echo over the open page, in a face and an
-    /// amber no page can draw (REQ-INT-134).
+    /// Draws the cursor over the open page, in an amber no page can draw
+    /// (REQ-INT-134).
     pub(in crate::browser) fn draw_terminal<C: Canvas + ?Sized>(&self, canvas: &mut C, now: u64) {
         let Some(target) = self.typing_target() else { return };
         // Where the open page is drawn: zoomed, or on the wall.
         let shown = self.wall.shown().find(|(key, _)| *key == target).map(|(_, rect)| rect);
         let (Some(cursor), Some(page)) = (self.typing.typing.and_then(|typing| typing.cursor), shown) else { return };
         let (cell_width, cell_height) = (page.width() / f64::from(COLUMNS), page.height() / f64::from(ROWS));
-        let cell = |column: usize| {
-            #[allow(clippy::cast_precision_loss, reason = "a column of a 40-column page")]
-            let x = page.x0 + cell_width * column as f64;
-            let y = page.y0 + cell_height * f64::from(cursor.row);
-            Rect::new(x, y, x + cell_width, y + cell_height)
-        };
         canvas.push_clip(self.wall.area());
-        #[allow(clippy::cast_possible_truncation, reason = "a text size of a few dozen pixels")]
-        let style = Style { size: (cell_height * ECHO_TEXT_SHARE) as f32, monospace: true, bold: false, caps: false };
-        for (index, echo) in self.typing.echoes.iter().enumerate() {
-            let rect = cell(usize::from(cursor.column).saturating_add(index));
-            canvas.fill(rect, 0.0, TYPING_FIELD);
-            let mut text = [0_u8; 4];
-            left_centred(canvas, rect, 0.0, echo.character.encode_utf8(&mut text), style, TYPING);
-        }
-        let column = usize::from(cursor.column).saturating_add(self.typing.echoes.len()).min(usize::from(COLUMNS).saturating_sub(1));
         let visible = (now.saturating_sub(self.typing.moved) / BLINK_MILLISECONDS).is_multiple_of(2);
         if visible {
-            let rect = cell(column);
+            let x = page.x0 + cell_width * f64::from(cursor.column);
+            let y = page.y0 + cell_height * f64::from(cursor.row);
+            let rect = Rect::new(x, y, x + cell_width, y + cell_height);
             if cursor.flags & BLOCK != 0 {
                 let line = cell_width * BLOCK_LINE_SHARE;
                 crate::text::border(canvas, rect, line, TYPING);
@@ -72,8 +63,9 @@ impl Browser {
         } else {
             format!("\u{2328} Keys go to {}", self.strip.identity)
         };
-        if let Some(round_trip) = typing.round_trip_ms.filter(|_| !refused) {
-            let _ = write!(text, " \u{00B7} {round_trip} ms");
+        if let Some(round_trip) = typing.round_trip_us.filter(|_| !refused) {
+            let (milliseconds, tenths) = (round_trip / MICROSECONDS_PER_MILLISECOND, round_trip % MICROSECONDS_PER_MILLISECOND / MICROSECONDS_PER_TENTH);
+            let _ = write!(text, " \u{00B7} {milliseconds}.{tenths} ms");
         }
         let warning = (!typing.secure && !refused).then_some(" \u{00B7} Not secure");
         let width = canvas.text_width(&text, ROW_STATUS) + warning.map_or(0.0, |warning| canvas.text_width(warning, ROW_STATUS)) + 2.0 * BADGE_PADDING;

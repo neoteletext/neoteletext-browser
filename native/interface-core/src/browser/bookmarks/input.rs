@@ -112,6 +112,11 @@ impl Browser {
 
     /// A press on the manager; returns whether it was the manager's. An
     /// item pressed is opened or moved when the button is released.
+    /// Whether `point` is on the open bookmarks panel.
+    pub(in crate::browser) fn over_bookmarks(&self, point: Point) -> bool {
+        self.bookmarks.open && self.bookmarks.controls.panel.contains(point)
+    }
+
     pub(in crate::browser) fn bookmarks_press(&mut self, point: Point) -> bool {
         if !self.bookmarks.open {
             return false;

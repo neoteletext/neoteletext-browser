@@ -14,7 +14,7 @@ The browser has only ever sent a channel requests for its files. This feature se
 The design holds because of four properties:
 1. **Keys go only where the viewer sat down:** to the channel of the page the viewer opened, while the strip says "Keys go to …". No page, record or message can start it; only the viewer opening a page of a channel that declares input. This is a terminal's rule, and no weaker: a terminal window with focus sends every key to its host.
 2. **What leaves is bounded and dumb:** a 14-byte record of the viewer's own key, where it is on the keyboard, and the browser's own clock, written to the channel's own WebSocket. The fetcher takes nothing else from the trusted core; fetching is unchanged.
-3. **What comes back is drawn, never obeyed:** a cursor record places a cursor and clears an echo; it cannot request, navigate or change a setting. The cursor and the echo are overlays no page can draw.
+3. **What comes back is drawn, never obeyed:** a cursor record places a cursor and clears an echo; it cannot request, navigate or change a setting. The cursor and the echo are overlays no page can draw. *Amended 28 October 2026:* the echo is removed; a cursor record places the cursor alone.
 4. **A phone is a keyboard and no more:** its keys do what the local keyboard's do, through the same checks, from a process that holds the pairing secret and nothing else.
 
 The largest remaining risk is **keystrokes over a plain `ws://` connection** until TLS exists, which decision 10 of the design puts to the owner.
@@ -56,6 +56,10 @@ phone ──▶ relay ──▶ neoteletext-keyboard ── PhoneKey
 | A compromised fetcher sends keys it was not given | It has none: the core gives it a record only under section 5 of the design |
 | The fetcher's new reader | Panic-free (the no-panic lint list) and fuzzed (`fetcher_commands`): input messages only, read by the engine's input stream reader (INPUT.md, REQ-INT-133) |
 | A false `Sent { seq }` | Only the round-trip clock reads it, bounded to 256 entries |
+| The tags on `Send` (decision 125): `more` and a move's contact | Two bytes: the contact, or 255 for none, and `more`, a flag. `more` only groups messages already on the pipe into one write: the fetcher's reader waits for the next message only as far as the pipe's next frame, and any other message, the pipe's end or a moment of 11 messages hands on what it holds, so a message is never held for one that does not come. A move's contact is refused unless the message is one MOUSE or TOUCH move of that contact, below the engine's ten contacts, so the agent's slot, where a newer move replaces the one held, can never drop a key, click or release (requirement 18.31; `a_move_is_marked_only_as_its_own_contacts`, `fetcher_commands`) |
+| `MeasureRoundTrip` (decision 125) | One flag; it starts or stops a one-byte WebSocket ping at most once a second on the channel's own push socket, and names nothing else |
+| A false `RoundTrip` from a compromised fetcher | Eight bytes of any value, untrusted: the trusted core shows it on the strip as a number and acts on nothing in it (requirement 18.32) |
+| A push socket that does not drain (decision 125) | The fetcher writes on a thread of its own, so a stalled socket holds up neither its loop nor its fetches; what waits is counted and bounded, 256 KiB, past which the connection is closed; a pointer's move is held in one slot a contact while 1 KiB waits, so positions never queue (requirement 18.31) |
 
 ### C. The decoder into the trusted core
 
@@ -63,8 +67,8 @@ phone ──▶ relay ──▶ neoteletext-keyboard ── PhoneKey
 |---|---|
 | A cursor record outside its bounds | Every field checked again (row 1–23, column and width within 40, known flags, a page of the channel); the rest dropped |
 | A cursor to deceive: over a link, over the strip | It cannot leave rows 1–23 of the page image; it takes no clicks itself; the strip is outside the page area |
-| `echo` to make the browser show characters | Only the viewer's own printable keys, only in the field, only while typing; a page already shows what the channel pushes |
-| A false `acked` | Removes an echo of the viewer's own character early; the pushed page then shows what the channel chose anyway |
+| `echo` to make the browser show characters | Withdrawn 28 October 2026: the browser draws no echo, and its trusted core passes on no echo flag |
+| A false `acked` | Withdrawn with the echo it cleared; an acknowledgement now only governs what a resumed session sends again and when the host's page is followed |
 
 ### D. The interface and the trusted core
 
@@ -148,3 +152,19 @@ Controls (INPUT.md section 7.3) change nothing about where input goes: a click o
 
 Since decision 118 a channel learns every press and release of the pointer over its own page while keys go to it, with the cell and the dot; its drags; and its plain moves only within the pointer areas its page declares (INPUT.md section 7.4), which the trusted core checks itself, so a compromised interface cannot widen them. It learns nothing of the pointer anywhere else: not over the browser's own parts, another tab, or a page whose channel keys do not go to. Moves are sent only when the dot changes and are not counted against the rate of REQ-INT-109, so a moving pointer can never crowd out a key. Every key now goes as KEY with its text, releases included; what a channel learns of typing rhythm is unchanged, since it already received every key.
 
+
+*Amended 28 October 2026 (decision 125):* pointer areas are withdrawn, and with them the trusted core's check of a move against them; section 12 says what a channel learns now.
+
+## 12. Every move, touch and resumption (decision 125)
+
+Reviewed on 28 October 2026 against `security-analysis.md` and `RETURN-CHANNEL.md` sections 4.1 and 4.4, for the inputs decision 125 adds: the interface's moves, its gone and its contacts; the fetcher's round trip; and a channel's WELCOME with a session token.
+
+- **What a channel learns.** Every change of the dot under the pointer over its own open page while keys go to it, buttons held or not, at most 60 a second, and gone as the pointer leaves; every contact of a touch screen begun on that page, off its links. It learns nothing of the pointer over the border, the browser's own controls or strip, another tab or another window, nor while keys do not go to it: the trusted core sends gone and forgets the pointer as keys stop going (requirements 18.16 and 18.17). This is the reading behaviour pointer areas used to confine to what a page asked for (INPUT.md sections 6.3 and 11.4, REQ-RCH-038); it is the owner's decision.
+- **The interface cannot raise the rate.** The interface gives intents; the trusted core paces them with the engine's `pace::Pacer`, one slot and one period a contact, writes only the latest of a period and never an unchanged dot. A hostile interface sending 1,000 moves a second gets 60 a second to the channel (`a_thousand_moves_a_second_go_sixty_a_second`). A move counts no input units and is never kept for a resumption, so moves cannot crowd out keys or fill what a resumption keeps.
+- **The interface cannot say what is held or where gone was.** A move's buttons are those the trusted core sent pressed; gone is the trusted core's own, from the last position it sent; a release the trusted core did not see pressed is dropped.
+- **The interface cannot invent a contact.** Contacts are numbered by the engine's `contacts::Contacts` in the trusted core from the system's identifiers the interface passes: a move or end of a contact not begun, a contact begun twice, an eleventh, or the mouse while a finger is MOUSE, send nothing (`a_hostile_interface_cannot_invent_a_contact`). An identifier is a 64-bit number and nothing else; the interface's own list of contacts it passed is bounded by `MAX_CONTACTS`.
+- **No position no pointer could have had.** The trusted core's reader refuses a dot outside the 480 by 500 image or outside its cell, for the mouse, the wheel and a contact, and closes an interface that sends one (requirement 18.20, `a_dot_outside_its_cell_or_the_image_is_refused`). Until then a misbehaving interface could put any 32-bit dot in an event.
+- **Moves tagged for the fetcher.** The trusted core tags each move with its contact, and the pipe's writer and reader both check the message is that contact's move alone, so a fetcher holds nothing but a move in a contact's slot; `more` is a flag (`a_move_is_marked_only_as_its_own_contacts`, the fuzz target `fetcher_commands`).
+- **The round trip is a number.** `FromFetcher::RoundTrip` carries microseconds, which the strip shows as a number in the trusted core's words; a fetcher can make it show any number, as it could before from acknowledgements, and nothing else. The trusted core asks for measurement only while keys go to the channel, so a channel's pongs measure nothing of the viewer otherwise.
+- **Resumption.** The session's token comes in the channel's WELCOME, through the decoder's control record, checked by the engine's reader; it goes back only in the first message of the same channel's next push WebSocket, never to another channel, a log or the interface. What a resumption sends again is what the viewer typed into that channel's own session and the channel had not acknowledged, bounded by the engine (`RESEND_BYTES`, 256 messages); a channel that claims a count the receiver never sent up to is refused and the session forgotten (`a_false_count_is_refused`). Over plain `ws://` the token travels in clear, as the keys do, which the strip's "Not secure" already says. A tab leaving the channel forgets the session, so a later visit cannot resume it.
+- **Remaining risks.** A channel can now follow the pointer over its page continuously, as above. A touch screen's contacts are taken from winit without a test on hardware. The fetcher's half of the round trip and of the congested socket's held moves is a separate change, reviewed with it.

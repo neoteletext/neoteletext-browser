@@ -152,9 +152,6 @@ pub struct PageLinks {
     /// The page's controls (INPUT.md section 7.3), checked: cells a click
     /// on which goes to the channel.
     pub controls: Vec<Area>,
-    /// The page's pointer areas (INPUT.md section 7.4), checked: where a
-    /// move with no button held goes to the channel.
-    pub pointer_areas: Vec<Area>,
     /// Page numbers that, typed while the page is open, follow a link
     /// rather than going to that page (`LK` lines and the channel's
     /// aliases).
@@ -166,12 +163,6 @@ impl PageLinks {
     #[must_use]
     pub fn run_at(&self, column: u8, row: u8) -> Option<usize> {
         self.runs.iter().position(|run| run.contains(column, row))
-    }
-
-    /// Whether the cell at `column`, `row` is in a pointer area.
-    #[must_use]
-    pub fn in_pointer_area(&self, column: u8, row: u8) -> bool {
-        self.pointer_areas.iter().any(|area| area.contains(column, row))
     }
 
     /// The control at `column`, `row`.

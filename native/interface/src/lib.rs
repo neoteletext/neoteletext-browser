@@ -30,3 +30,4 @@ mod window;
 pub use app::App;
 pub use incoming::{Incoming, Library};
 pub use reader::read_core;
+pub use window::show_dock_icon;

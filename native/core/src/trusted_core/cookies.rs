@@ -17,7 +17,7 @@ use protocol::fetcher::{CookieSite, FromFetcher, ToFetcher, write_to_fetcher};
 
 use super::Core;
 use super::numbers::Numbers;
-use super::run::NO_KEYCHAIN;
+use super::run::{KEYCHAIN, KEYCHAIN_BY_DEFAULT, NO_KEYCHAIN};
 
 /// How long after a change the cookies are written: a burst of changes is
 /// one write (`cookies.md` section 6).
@@ -187,8 +187,10 @@ impl Core {
         // Without a key nothing is read or written (requirement 21.4): the
         // kept cookies stay as they are for the next ordinary start.
         if self.cookies.no_keychain {
-            self.log(Level::Info, None, &format!("cookies are kept for this run only: started with {NO_KEYCHAIN}"));
-            self.cookies.for_this_run = Some(format!("Cookies are kept for this run only: started with {NO_KEYCHAIN}"));
+            let why =
+                if KEYCHAIN_BY_DEFAULT { format!("started with {NO_KEYCHAIN}") } else { format!("the Keychain is used only when started with {KEYCHAIN}") };
+            self.log(Level::Info, None, &format!("cookies are kept for this run only: {why}"));
+            self.cookies.for_this_run = Some(format!("Cookies are kept for this run only: {why}"));
             return;
         }
         let key = match self.broker.as_ref().map(|broker| broker.cookie_key()) {

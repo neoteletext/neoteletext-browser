@@ -17,7 +17,8 @@ pub enum Cursor {
     Hand,
     /// Over a link that leaves the channel: the shape of a shortcut.
     External,
-    /// Over the divider between the page list and the page area.
+    /// Over the divider between the page list and the page area, or a
+    /// side edge of the history panel.
     ResizeColumn,
     /// Over the divider between the pages and their sub-pages.
     ResizeRow,
@@ -28,7 +29,14 @@ impl Browser {
     /// the window needs drawing again.
     pub fn pointer_moved(&mut self, x: f64, y: f64, now: u64) -> bool {
         self.pointer = Point::new(x, y);
-        if self.remote_moved(self.pointer) || self.divider_moved(self.pointer) || self.console_grabber_moved(self.pointer) {
+        if self.drag_field(x) {
+            return true;
+        }
+        if self.remote_moved(self.pointer)
+            || self.divider_moved(self.pointer)
+            || self.console_grabber_moved(self.pointer)
+            || self.history_edge_moved(self.pointer)
+        {
             return true;
         }
         let subpaged = self.subpages_moved(self.pointer);
@@ -61,12 +69,14 @@ impl Browser {
     }
 
     /// The pointer's shape where it is: the column-resize shape over the
-    /// divider, a hand over a page a click would zoom or choose, over the
-    /// overview's fold and close buttons and over the console's minimise,
-    /// maximise and close buttons, the arrow elsewhere.
+    /// divider and the history panel's edges, a hand over a page a click
+    /// would zoom or choose, over the overview's fold and close buttons
+    /// and over the console's minimise, maximise and close buttons, the
+    /// arrow elsewhere.
     #[must_use]
     pub fn cursor(&self) -> Cursor {
-        if self.over_divider() {
+        // The history panel lies over the divider (decision 127).
+        if self.over_history_edge() || self.over_divider() {
             return Cursor::ResizeColumn;
         }
         if self.over_subpage_divider() || self.over_console_grabber() {
@@ -102,9 +112,11 @@ impl Browser {
 
     /// The main button was released.
     pub fn pointer_released(&mut self) {
+        self.release_field();
         self.remote_released();
         self.divider_released();
         self.console_grabber_released();
+        self.history_edge_released();
         self.subpages_released();
         self.tabs_released();
         self.release_back_or_forward();
@@ -123,7 +135,7 @@ impl Browser {
     /// page each notch is one page (`Wall::wheel_notch`); elsewhere it
     /// scrolls by lines.
     pub fn wheel_lines(&mut self, lines: f64, now: u64) -> bool {
-        if self.wall.zoomed().is_some() && self.wall.contains(self.pointer) && !self.wall.over_bar(self.pointer) {
+        if !self.over_overlay() && self.wall.zoomed().is_some() && self.wall.contains(self.pointer) && !self.wall.over_bar(self.pointer) {
             if self.wall.wheel_notch(lines, now).is_some() {
                 self.follow_zoom();
             }
@@ -205,12 +217,37 @@ impl Browser {
         false
     }
 
+    /// Whether the pointer is on something that lies over the window's
+    /// body: a drop-down, the star's popover, a panel, the console, the
+    /// phone panel or the remote, as a press finds them (`press_overlays`).
+    fn over_overlay(&self) -> bool {
+        let point = self.pointer;
+        #[cfg(feature = "phone-keyboard")]
+        if self.over_phone(point) {
+            return true;
+        }
+        self.over_menu(point)
+            || self.over_tab_list(point)
+            || self.over_suggestions(point)
+            || self.over_star(point)
+            || self.over_history(point)
+            || self.over_bookmarks(point)
+            || self.over_settings(point)
+            || self.over_console(point)
+            || self.over_remote(point)
+    }
+
     /// Scrolls whatever is under the pointer.
     pub fn scroll_by(&mut self, distance: f64, now: u64) -> bool {
         if self.history_scroll(distance) || self.cookies_scroll(distance) || self.bookmarks_scroll(distance) {
             return true;
         }
         if self.console_scroll(distance) {
+            return true;
+        }
+        // What lies over the page area takes the wheel, so the pages and
+        // the lists beneath never scroll through it.
+        if self.over_overlay() {
             return true;
         }
         if self.wall.over_bar(self.pointer) {

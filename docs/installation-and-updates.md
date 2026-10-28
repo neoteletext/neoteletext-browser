@@ -3,7 +3,7 @@
 | | |
 |---|---|
 | **Status** | Adopted 22 October 2026 (decision 54), with the owner's answers to section 12 recorded there. Built 23 October 2026 on every desktop while the owner was away, as the owner instructed (decisions 73 to 82); what building changed is section 14, what it proved section 15. What only the owner can give (certificates, hardware keys, the update host) is in `PENDINGTASKSFORANDREW.md`. |
-| **Code** | `native/update` (shared: versions, platforms, manifest, state, gzip, signatures, version mark, the updater's messages, safe writes, acceptance, profiles, fault points); `native/release-identity` (the identity built in); `native/launcher`; `native/stub` and `native/installer` (Windows); `native/os-install` (the unsafe calls); `native/tuf` (a workspace of its own: `updater`, `release`, and their fuzz targets); `confine::Role::Updater`; `core/src/trusted_core/updates.rs` (the core's side) and `core/src/broker.rs` (the broker's: the launcher's state, `started` and `healthy`, the updater's grant); `scripts/updates-e2e.sh`, `scripts/updates-e2e.ps1`, `scripts/release/`. |
+| **Code** | `native/update` (shared: versions, platforms, manifest, state, gzip, signatures, version mark, the updater's messages, safe writes, acceptance, profiles, fault points); `native/release-identity` (the identity built in); `native/launcher`; `native/stub` and `native/installer` (Windows); `native/os-install` (the unsafe calls); `native/icon` (the icon each release carries, section 16); `native/tuf` (a workspace of its own: `updater`, `release`, and their fuzz targets); `confine::Role::Updater`; `core/src/trusted_core/updates.rs` (the core's side) and `core/src/broker.rs` (the broker's: the launcher's state, `started` and `healthy`, the updater's grant); `scripts/updates-e2e.sh`, `scripts/updates-e2e.ps1`, `scripts/release/`. |
 | **Decisions it follows** | 15 (no update can leave the application unusable), 16 (The Update Framework), 17 and 25 (`update.neoteletext.com`), 24 items 10, 11 and 13 (`tough`, one launcher scheme on every desktop, three root keys), 52 (the sandboxes). |
 | **Requirements** | 13.1 to 13.13 (the earlier design's, stated in full at the tag `prototypes-final`, `prototypes/docs/requirements.md` section 13); section 11 proposes 13.14 to 13.20 and amendments. |
 | **Security analysis** | [`installation-and-updates-security.md`](installation-and-updates-security.md). |
@@ -109,7 +109,7 @@ The profile is `settings.txt`, which carries its format version on its first lin
 
 | Path | What |
 |---|---|
-| `/Applications/NeoTeletext.app` (or `~/Applications/` for a user who is not an administrator) | The running version, a complete signed and notarised bundle. Its main executable is the launcher; the trusted core and every helper are in `Contents/MacOS/`. |
+| `/Applications/NeoTeletext.app` (or `~/Applications/` for a user who is not an administrator) | The running version, a complete signed and notarised bundle. Its main executable is the launcher; the trusted core and every helper are in `Contents/MacOS/`. Its icon file is `Contents/Resources/NeoTeletext.icns` (section 16). |
 | `~/Library/Application Support/NeoTeletext/` | `state`, `staging/`, `accepting/`, `previous/NeoTeletext.app`, the settings |
 
 The switch is `renamex_np(accepted, installed, RENAME_SWAP)`, which exchanges the two bundles atomically (measured on APFS): `accepted` is the launcher's own copy of the staged bundle in `accepting/<version>/`, checked there (section 3.1, step 4; decision 87), and the old bundle moves to its path and is then moved under `previous/`, from the trial's own accepted folder alone. Before either exchange, a rollback's included, the bundle about to run is checked again by the pinned signer; one refused is not exchanged in, and nothing runs (finding F-19). **Why one bundle rather than versioned bundles started by a launcher bundle** (the earlier design's arrangement): the system keeps the Dock, Launchpad, Spotlight, login items and privacy permissions by the bundle's path and identity. With versioned bundles, the running app would be the versioned bundle, so a Dock icon pinned to it would point at a version that the next update deletes. One bundle swapped whole keeps all of that. The swap needs the bundle's folder to be writable by the user, which `/Applications` is for an administrator (measured), and `~/Applications` always is.
@@ -183,7 +183,7 @@ The state file is replaced with `std::fs::rename`, which on Windows 10 1607 and 
 | `~/.local/share/neoteletext/versions/<version>/` | Each version's programs |
 | `~/.local/share/neoteletext/state`, `staging/` | As section 3 |
 | `~/.local/bin/neoteletext` | A symbolic link to the launcher, on the path in most distributions |
-| `~/.local/share/applications/neoteletext.desktop`, `~/.local/share/icons/hicolor/…` | The menu entry and its icon |
+| `~/.local/share/applications/neoteletext.desktop`, `~/.local/share/icons/hicolor/<side>x<side>/apps/neoteletext.png` | The menu entry and its icon at each side the version carries (section 16) |
 | `~/.config/neoteletext/` | The settings (`XDG_CONFIG_HOME` honoured) |
 
 A launcher release replaces `bin/` by `renameat2(…, RENAME_EXCHANGE)`, measured on ext4. Btrfs, XFS and tmpfs support it too. On a file system that refuses it (the call says `EINVAL`), the launcher keeps the old copy and the release waits.
@@ -219,7 +219,7 @@ Both checks are of the launcher's own copy of the staged version, made where onl
 
 ## 6. The release files
 
-**No archive format.** Each program, and on macOS each file of the bundle, is a target of its own: `<version>/<platform>-<arch>/<path>.gz`. The updater decompresses with `miniz_oxide`, already in the browser through the PNG reader. That leaves no archive reader to fuzz and no path inside an archive to escape with. A target's path is checked against the platform's list of the files a version has, and anything else is refused.
+**No archive format.** Each program, and on macOS each file of the bundle, is a target of its own: `<version>/<platform>-<arch>/<path>.gz`. The updater decompresses with `miniz_oxide`, already in the browser through the PNG reader. That leaves no archive reader to fuzz and no path inside an archive to escape with. A target's path is checked against the platform's list of the files a version has, and anything else is refused. Besides the programs, the list names a few data files: on macOS the bundle's `Info.plist`, its seal, its stapled ticket and its icon file; on Linux the AppArmor profile and the icon files, each with its signature, as every Linux file has (section 16).
 
 **Full files, no deltas.** A whole release is 5.4 MB gzip-compressed (3.1 MB with xz, which would need a new crate): less than the browser's own channels fetch in a few minutes. Delta updates would add a patch format, and a reader for it, to the most dangerous process, to save under 4 MB a release.
 
@@ -362,7 +362,7 @@ Built while the owner was away, as the owner instructed ("do everything, do not 
 13. **The conformance suite** (`tuf-conformance`) is a Python program and was not run (no interpreter in the tree, requirement 1.3, and no download beyond crates). Its negative cases are tests of the browser's own instead (section 15).
 14. **Fault points** exist in debug builds only; a release build reads no `NEOTELETEXT_FAULT`.
 15. **A Windows launcher release** writes the other copy and switches the byte; a new launcher that cannot start a version is not switched back by the stub, which stays as small as it is. The old copy stays in the other slot, so the byte can be switched back by hand.
-16. **Linux release builds on the C library 2.28** are a script (`scripts/release/build-linux.sh`) that has not been run: it needs an AlmaLinux 8 image, which would have to be downloaded. Since 24 October 2026 (finding F-73) everything it takes is pinned: the image by its digest, each package by its version, rustup-init by its version and SHA-256 (no `curl | sh`), and the engine by its commit from a copy of its history named by `NEOTELETEXT_ENGINE_GIT`; it, and `build-windows.ps1`, refuse a tree with changes.
+16. **Linux release builds on the C library 2.28** are a script (`scripts/release/build-linux.sh`) that has not been run: it needs an AlmaLinux 8 image, which would have to be downloaded. Since 24 October 2026 (finding F-73) everything it takes is pinned: the image by its digest, each package by its version, rustup-init by its version and SHA-256 (no `curl | sh`), and the engine by its commit, fetched from its published repository since 28 October 2026; it, and `build-windows.ps1`, refuse a tree with changes.
 
 17. **The stub is 233,864 bytes**, not a few kilobytes: Rust's standard library, even at `opt-level = "z"`. Its code reads one byte and starts one program; a smaller one would need unsafe Win32 calls without the standard library.
 18. **A Windows version is copied into `versions\`, not renamed** (item 10 above, and `installation-and-updates-security.md` section 4a): what the updater wrote carries its container's full control and the low integrity label; the copy takes `versions\`'s access list and is checked again before it becomes the trial. Since 24 October 2026 every desktop accepts a copy (decision 87, section 3.1 step 4), and `neoteletext --install` on Linux copies the tarball's version first and accepts the copy.
@@ -394,3 +394,21 @@ Section 13's proofs, run on 23 October 2026 with the real programs, test keys ma
 **Found by these runs and fixed:** the confined updater lacked `HOME` (macOS); `codesign` refuses a program with bytes after its last segment (the test broker's slot); a shortcut with no item list resolves to nothing; `CheckNetIsolation` takes a container's SID, not its name; and on Windows a version renamed from `staging\` kept the updater's full control and the low integrity label, so it could not start its helpers and the updater could have changed it after the check: the launcher now copies it in (`IMPLEMENTATION-LOG.md` rows 25 to 30).
 
 **Not proven here:** the owner's signers (a Developer ID requirement and notarisation, the hardware module's certificate, the hardware root keys); macOS 11 and Windows 10 1703; the Linux build on the C library 2.28; the macOS offer to move a translocated bundle and the Windows uninstaller's message boxes, which need a hand.
+
+## 16. The icon (28 October 2026)
+
+Decision 124 gives the browser the owner's art as its icon (requirement 12.19). The art, `native/icon/neoteletext-icon.png`, is the one source; each platform's copy is made from it by nearest neighbour, by the build or the release tool, and nothing reads it at run time.
+
+| Desktop | What a version carries | Made by | Checked by |
+|---|---|---|---|
+| macOS | `NeoTeletext.app/Contents/Resources/NeoTeletext.icns`, named by the `Info.plist`'s `CFBundleIconFile`; a required file on the release's list, sealed by the bundle's signature with every other file | The release tool's `layout`: the iconset at 16 to 1024 pixels, then `/usr/bin/iconutil`, at its fixed path | The same `layout`: `iconutil` turns the icon file back into an iconset, and every image must be the art at its size, pixel for pixel, or the release is not laid out |
+| Windows | The icon inside the programs, as a resource: the stub `NeoTeletext.exe`, `NeoTeletext-Setup.exe`, the launcher, the broker and the interface. No file is added to the list; Authenticode signs each program with its icon | A build script of each program, which writes the resource file and gives it to the linker | A test of the resource file against Microsoft's documented layout |
+| Linux | `neoteletext-16.png` to `neoteletext-256.png`, seven sizes, required files each with its detached signature by the release key, as the AppArmor profile has | The release tool's `layout` | Tests of each file against the art at its size |
+
+**Installing on Linux:** `neoteletext --install` copies each icon file of the version it has accepted into `~/.local/share/icons/hicolor/<side>x<side>/apps/neoteletext.png` (`XDG_DATA_HOME` honoured), names it in the menu entry (`Icon=neoteletext`, `StartupWMClass=neoteletext`), and `--uninstall` removes those seven files. They are written when the browser is installed, as the menu entry is; an update that changed the art would reach the menu at the next install, as a changed menu entry would.
+
+**The file list:** with the icon files a Linux version has 32 files, so the most a version may have, `update::platform::MAX_FILES`, rises from 32 to 48; the manifest's bound on its own length still holds every file at its longest (checked when the code is compiled).
+
+**The windows:** the interface carries the art's pixels from its build and gives them to every window on Windows and X11; on Linux every window's class and Wayland application identifier is `neoteletext`, so the desktop finds the menu entry, and its icon, for the window. On macOS the bundle's icon is the Dock's; a browser run outside a bundle, as from `cargo run`, gives the Dock the art at 1024 pixels.
+
+The security reasoning is `installation-and-updates-security.md` section 4b.

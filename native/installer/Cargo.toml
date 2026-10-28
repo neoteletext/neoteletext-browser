@@ -16,5 +16,9 @@ os-install.workspace = true
 confine.workspace = true
 launcher.workspace = true
 
+# The icon of the program on Windows, and of its windows (decision 124).
+[build-dependencies]
+icon.workspace = true
+
 [lints]
 workspace = true

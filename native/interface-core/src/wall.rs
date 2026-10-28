@@ -124,6 +124,18 @@ pub struct Wall {
     /// The last frame drew something part of the way through a move, so
     /// the frame that ends it is still owed, however late it is asked for.
     drawn_moving: bool,
+    /// What the page area shows (decision 126).
+    view: View,
+}
+
+/// What the page area shows (decision 126).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum View {
+    /// Only the open page, as large as the area fits it, with no wall
+    /// behind it and no page size bar.
+    Alone,
+    /// The wall of pages under its page size bar.
+    Wall,
 }
 
 impl Default for Wall {
@@ -133,7 +145,8 @@ impl Default for Wall {
 }
 
 impl Wall {
-    /// A wall at the default page size, scrolled to the top, nothing zoomed.
+    /// A wall at the default page size, scrolled to the top, nothing
+    /// zoomed, showing the open page alone (decision 126).
     #[must_use]
     pub fn new() -> Self {
         Self {
@@ -165,6 +178,9 @@ impl Wall {
             drawn: Vec::new(),
             open: None,
             drawn_moving: false,
+            // Every window starts with the page alone; nothing keeps the
+            // choice (decision 126).
+            view: View::Alone,
         }
     }
 
@@ -175,6 +191,13 @@ impl Wall {
         self.zoomed = None;
         self.zoom_in = false;
         self.zoom = Tween::new(0.0, ZOOM_MILLISECONDS, STANDARD);
+    }
+
+    /// Whether only the open page shows, with no wall and no page size bar
+    /// (decision 126).
+    #[must_use]
+    pub fn single(&self) -> bool {
+        self.view == View::Alone
     }
 
     /// The page zoomed in, or zooming in.
