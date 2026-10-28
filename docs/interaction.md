@@ -26,6 +26,18 @@ In the browser:
 - **The trusted core** checks them again (requirement 17.13) and gives them to the interface with the page's links (`PageLinks.controls`).
 - **The interface** shows the hand over a control only while a click on the open page goes to the channel, and asks for the look under the pointer.
 
+## 6. Where the pointer is on the page
+
+The mechanism is `~/devel/neoteletext-common/INPUT.md` section 9.9, with its REQ-INT-127: every position a channel receives is the cell and the dot of the page image under the pointer, never a screen position, so the open page may be drawn at any size, in the window or full screen, on any display's scaling, and a channel answers it the same. In the browser:
+
+- **The interface converts.** winit gives the pointer in physical pixels; the interface divides by the window's scale factor (`app/input.rs`, `cursor_moved`), so the browser works in logical pixels, the system's scaling already gone. `Browser::pointer_on_page` (`interface-core/src/browser/typing.rs`) takes the rectangle where the open page's image was drawn in the last frame, `Wall::open`, and scales the position into the image's 480 by 500 dots, rounding down; `wall::cell_in` gives the cell from the same position, 12 by 20 dots to a cell (`canvas.rs`'s `CELL_WIDTH` and `CELL_HEIGHT`). The rectangle is the image alone, as `canvas::draw_page_on_screen` returns it, at the image's own proportions inside the border of its screen colour one cell wide (decision 60); the border is not the page.
+- **Only the open page at rest.** `Wall::open` is set only while the zoomed page is drawn still, with no slide to its neighbours under way, and in full screen (decision 85) the same way in the larger rectangle; a page zooming, sliding or on the wall has no open page, so a click or move there sends nothing to a channel.
+- **Larger or smaller.** Drawn larger, several pixels show a dot and a move within it is not sent (the trusted core sends a move only when the dot changes), so the page's size adds no moves. Drawn smaller, some dots cannot be reached and moves step several dots; cells stay exact. The page size bar and full screen change only the rectangle.
+- **One dot at a boundary.** `draw-vello` samples the image at each pixel's centre with nearest-neighbour sampling (`pages.rs`), and the conversion rounds the pointer down, so at a size that is not a whole multiple the dot sent may be the neighbour of the one drawn under the pointer's tip; never another cell's. Inferred from the code, not measured.
+- **The trusted core checks.** The interface is not trusted (decision 20). `protocol`'s intent reader refuses a cell outside the page; it does not yet check the dot, which INPUT.md REQ-INT-127 asks it to refuse outside the image or outside its cell. Until it does, a misbehaving interface can put any 32-bit dot in a MOUSE or WHEEL event, which confuses only the channel's own page.
+- **A drag let go off the page.** A release is sent only while the pointer is over the open page (`terminal_button`), so a drag let go on the border or outside the window leaves the channel believing the button held. MOUSE's gone (INPUT.md REQ-INT-123, `RETURN-CHANNEL.md` REQ-RCH-034), sent as the pointer leaves, releases it; it is built in the engine (E.133) and not yet in the browser.
+- **Side panels** are not drawn, so a cell is at most column 39; drawing them would widen the image to 72 cells and the conversion with it.
+
 ---
 
 *The sections below are history: version 1, as built on 20 October 2026.*
