@@ -6,8 +6,9 @@ use alloc::vec;
 use crate::browser::fixture::{HEIGHT, WIDTH, browser, press_at};
 use crate::browser::regions::TabRegion;
 use crate::browser::{Frame, Key, Modifiers, Output, WindowAction};
+use crate::settings::UpdateView;
 use crate::test_canvas::Recorder;
-use crate::theme::{BLACK, RAISED, SELECTED};
+use crate::theme::{BLACK, MUTED, RAISED, SELECTED};
 
 fn browser_with(count: usize, active: usize) -> Browser {
     let mut browser = Browser::new(Frame { left_inset: 0.0, window_buttons: false });
@@ -318,4 +319,100 @@ fn a_tab_s_tip_shows_its_address() {
     for line in ["Tab 1", "https://tab1.invalid/"] {
         assert!(canvas.texts.iter().any(|(_, text)| text == line), "{line} drawn on a line of its own");
     }
+}
+
+/// The version the trusted core reports in these tests.
+const VERSION: &str = "0.1.0";
+/// The macOS window buttons' room at the strip's left (the interface's
+/// `window::FRAME` there).
+const MAC_INSET: f64 = 72.0;
+
+/// A browser of `count` tabs, the last active, in a window `width` wide,
+/// framed as `frame`, told the version running and drawn; with what it
+/// drew.
+fn versioned(frame: Frame, count: usize, width: f64) -> (Browser, Recorder) {
+    let mut browser = Browser::new(frame);
+    let tabs = (0..count).map(|index| TabInfo {
+        title: format!("Tab {index}"),
+        colour: 0,
+        channel: u32::try_from(index).unwrap(),
+        muted: false,
+        private: false,
+        address: format!("https://tab{index}.invalid/"),
+    });
+    browser.set_tabs(tabs.collect(), count.saturating_sub(1));
+    browser.set_update(UpdateView { version: VERSION.into(), status: "NeoTeletext is up to date".into(), offer: None, checking: true });
+    let mut canvas = Recorder::new();
+    browser.draw(&mut canvas, width, 900.0, 0);
+    (browser, canvas)
+}
+
+/// Where the version label was drawn, if it was.
+fn label_drawn(canvas: &Recorder) -> Option<Rect> {
+    let text = format!("{VERSION} {RELEASE_STAGE}");
+    canvas.texts.iter().find(|(_, drawn)| *drawn == text).map(|&(rect, _)| rect)
+}
+
+/// Whether two rectangles share any area.
+fn overlap(a: Rect, b: Rect) -> bool {
+    a.x0 < b.x1 && b.x0 < a.x1 && a.y0 < b.y1 && b.y0 < a.y1
+}
+
+/// Decision 123: the strip shows the version the trusted core reports
+/// running, the one the settings panel shows, and BETA after it, in the
+/// secondary text's colour; BETA alone before the trusted core reports.
+#[test]
+fn the_version_label_is_the_version_and_beta() {
+    let mut browser = Browser::new(Frame { left_inset: 0.0, window_buttons: false });
+    assert_eq!(browser.version_label(), "BETA", "before the trusted core reports");
+    browser.set_update(UpdateView { version: VERSION.into(), ..UpdateView::default() });
+    assert_eq!(browser.version_label(), "0.1.0 BETA");
+    let (_, canvas) = versioned(Frame { left_inset: 0.0, window_buttons: false }, 3, 1440.0);
+    assert!(label_drawn(&canvas).is_some(), "drawn: {:?}", canvas.texts);
+    assert_eq!(canvas.coloured_text("0.1.0 BETA"), Some(MUTED), "quiet, as secondary text");
+}
+
+/// Decision 123: the label ends at the strip's right end, before the
+/// window's own buttons where the browser draws them, inside the strip.
+#[test]
+fn the_version_label_is_at_the_strip_s_right_end() {
+    let (_, canvas) = versioned(Frame { left_inset: MAC_INSET, window_buttons: false }, 3, 1440.0);
+    let label = label_drawn(&canvas).expect("drawn on macOS");
+    assert!((label.x1 - (1440.0 - STRIP_MARGIN - VERSION_GAP)).abs() < f64::EPSILON, "at the right end: {label:?}");
+    assert!(label.y0 >= 0.0 && label.y1 <= STRIP_HEIGHT, "in the strip: {label:?}");
+    let (browser, canvas) = versioned(Frame { left_inset: 0.0, window_buttons: true }, 3, 1440.0);
+    let label = label_drawn(&canvas).expect("drawn with the window's buttons");
+    let minimise = browser.regions.minimise;
+    assert!((label.x1 - (minimise.x0 - WINDOW_BUTTON_GAP - VERSION_GAP)).abs() < f64::EPSILON, "just before the window's buttons: {label:?}");
+    let new_tab = browser.regions.new_tab;
+    assert!(browser.regions.tabs.iter().all(|region| region.tab.x1 < label.x0) && new_tab.x1 < label.x0, "after every tab and the new-tab button");
+}
+
+/// Decision 123: at a wide window and at the narrowest, with the window's
+/// buttons on either side, the label covers no tab, count, new-tab
+/// button or window button, and the active tab and the count stay on the
+/// strip; where there is not room for it beside one tab, the count and
+/// the new-tab button, it is left out.
+#[test]
+fn the_version_label_never_covers_a_tab_or_the_new_tab_button() {
+    for frame in [Frame { left_inset: MAC_INSET, window_buttons: false }, Frame { left_inset: 0.0, window_buttons: true }] {
+        for width in [1440.0, 1000.0] {
+            for count in [1, 5, 30] {
+                let (browser, canvas) = versioned(frame, count, width);
+                let label = label_drawn(&canvas).unwrap_or_else(|| panic!("{frame:?}, {width} wide, {count} tabs: drawn"));
+                let regions = &browser.regions;
+                let mut others: Vec<Rect> = regions.tabs.iter().map(|region| region.tab).collect();
+                others.extend([regions.new_tab, browser.tab_strip.count, regions.minimise, regions.maximise, regions.close]);
+                for other in others.into_iter().filter(|&other| other != Rect::ZERO) {
+                    assert!(!overlap(label, other), "{frame:?}, {width} wide, {count} tabs: {label:?} covers {other:?}");
+                }
+                assert!(regions.tabs.iter().any(|region| region.index == count - 1), "{frame:?}, {width} wide: the active tab is shown");
+                assert_eq!(browser.tab_strip.count != Rect::ZERO, regions.tabs.len() < count, "{frame:?}, {width} wide, {count} tabs: the rest counted");
+            }
+        }
+    }
+    let narrow = MAC_INSET + STRIP_MARGIN * 2.0 + LEAST_TABS_ROOM;
+    let (browser, canvas) = versioned(Frame { left_inset: MAC_INSET, window_buttons: false }, 30, narrow);
+    assert!(label_drawn(&canvas).is_none(), "no room beside the tabs: left out");
+    assert!(browser.regions.new_tab.x1 <= narrow - STRIP_MARGIN, "the new-tab button still in the window");
 }

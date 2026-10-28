@@ -20,6 +20,18 @@ $changes = git status --porcelain --untracked-files=no
 if ($LASTEXITCODE -ne 0) { throw "the tree is not a git checkout; a release is built from a commit" }
 if ($changes) { throw "the tree has changes; a release is built from a commit" }
 if ($Test) { $testFlags = @("--test-identity") }
+# The version named is the workspace's (decision 123): the browser shows
+# NEOTELETEXT_RELEASE_VERSION on its tab strip, and its fetcher sends the
+# workspace version in the user agent, so a release where the two differed
+# would show one version and send another. Checked before anything is built.
+$section = ""
+$workspaceVersion = $null
+foreach ($line in Get-Content Cargo.toml) {
+    if ($line -match '^\[(.*)\]$') { $section = $Matches[1] }
+    elseif ($section -eq "workspace.package" -and $line -match '^version = "(.*)"$') { $workspaceVersion = $Matches[1] }
+}
+if (-not $workspaceVersion) { throw "Cargo.toml names no workspace version" }
+if ($Version -ne $workspaceVersion) { throw "the version $Version is not the workspace's $workspaceVersion; set [workspace.package] version in Cargo.toml to it and commit first" }
 $signtool = (Get-ChildItem -Recurse -Filter signtool.exe "C:\Program Files (x86)\Windows Kits\10\bin" | Where-Object { $_.FullName -like "*\x64\*" } | Select-Object -First 1).FullName
 function Sign($files) {
     & $signtool sign /fd SHA256 /sha1 $Thumbprint /tr $TimestampServer /td SHA256 @files

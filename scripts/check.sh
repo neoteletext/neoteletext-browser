@@ -110,9 +110,27 @@ check_desktop_codecs() {
     fi
 }
 
+# Decision 123: a release is built only at the workspace's version, which
+# the fetcher's user agent sends, so the version on the tab strip is the
+# one sent. The macOS and Linux scripts are run with another version, and
+# refuse it before they build anything; the Windows script, which runs
+# only in the virtual machine, is read for its check.
+check_release_versions() {
+    step "the release scripts build only the workspace's version"
+    local script output
+    for script in scripts/release/build-macos.sh scripts/release/build-linux.sh; do
+        if output="$(env -u NEOTELETEXT_RELEASE_IDENTITY bash "$script" 0.0.0-not-the-workspace /nonexistent 2>&1)"; then
+            fail "$script built a version other than the workspace's"
+        fi
+        [[ "$output" == *"is not the workspace's"* ]] || fail "$script did not refuse a version other than the workspace's: $output"
+    done
+    grep -q 'if (\$Version -ne \$workspaceVersion)' scripts/release/build-windows.ps1 || fail "scripts/release/build-windows.ps1 does not refuse a version other than the workspace's"
+}
+
 check_native() {
     check_engine_pin
     check_desktop_codecs
+    check_release_versions
     # The fuzz crate has a lockfile of its own, which a dependency change
     # in the workspace can leave stale.
     step "native: lockfiles up to date"

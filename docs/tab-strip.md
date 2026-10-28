@@ -3,7 +3,7 @@
 | | |
 |---|---|
 | **Asked** | By the owner on 23 October 2026: "design and spec requirements and implement tab dragging and reordering and overflow handling - if you roll over the tab bar and there is overflow then a window (connected) must appear underneath and the tabs wrap into that". |
-| **Decision** | 69, taken while the owner was away (`architecture.md` section 2); amended by decisions 102 (tabs of one width, the panel as a dialog) and 103 (a tab's address in its tip), 25 October 2026. |
+| **Decision** | 69, taken while the owner was away (`architecture.md` section 2); amended by decisions 102 (tabs of one width, the panel as a dialog) and 103 (a tab's address in its tip), 25 October 2026, and 123 (the version at the strip's right end), 28 October 2026. |
 | **Amends** | Requirement 12.1, which named drag to reorder and overflow as not built. |
 
 ## 1. What was wrong
@@ -36,7 +36,7 @@ Command-Option-Left and Right on macOS, Control-Alt-Left and Right elsewhere, ch
 
 ## 6. Requirements
 
-Requirements 12.12 (amended), and 12.13 to 12.15.
+Requirements 12.12 (amended), 12.13 to 12.15, and 12.18.
 
 ## 7. What building settled
 
@@ -46,3 +46,13 @@ Built on 23 October 2026.
 2. **A tab pressed is chosen at once**, before any drag, as Chrome does; a drag then moves the tab already active.
 3. **Seen on macOS**: 25 tabs, the strip showing 13 with the active one last and the count "+12". The panel opening as the pointer rolls on, and dragging, are driven by tests: pointer events posted to the window do not reach it on macOS, as found before (`TECH-DEBT.md`, "By hand").
 4. **25 October 2026 (decisions 102 and 103):** tabs of one width, the panel's wait, its held places, the count shutting it, its raised look and the tab's address were built with tests that fail on the code before (requirements 12.12 and 12.14). The width, 230 points, is the tabs' width before, when few were open; on a 1,440-point window five fit, on the smallest window, 1,000 points, three. Seen by hand: not yet.
+
+## 8. The browser's version
+
+At the strip's right end, in every window, the browser shows its version and the word BETA, "0.1.0 BETA" (decision 123, requirement 12.18), on the owner's instruction of 28 October 2026.
+
+- **The version** is the one the trusted core reports running, the installed one or, for a browser built and not installed, the one it was built as: the same report the settings panel's Updates section and the macOS About panel show, so the three cannot disagree. Until the trusted core has reported, which it does as the window opens, the label is BETA alone.
+- **Its place:** before the window's own buttons on Windows and Linux, at the window's edge on macOS, whose window buttons are at the left; 16 points of room on each side; in the new-tab button's band, in the list rows' status style (12 points, small capitals) and the secondary text's grey, which reads on the strip's black and on its raised grey while the panel is open. It has no face or outline, and a press on it is the empty strip's, which drags the window.
+- **The tabs keep their reach:** the label's room comes from the tabs, so where they would have reached it they overflow into the panel a tab sooner (section 3), every tab still reached by the count, the panel and the keys. Where the strip has not room for the label beside one tab, the count and the new-tab button, it is left out; it never covers a tab, the count, the new-tab button or a window button.
+- **Measured, 28 October 2026,** drawn through the processor back end in Roboto on Linux: "0.1.0 BETA" is 58.5 points wide, so the label and its room take 90.5. From that width: on macOS as many tabs fit as before, five on a 1,440-point window and three on the smallest, 1,000 points. Where the browser draws the window's buttons (Windows and Linux) one tab fewer fits: four and the count on a 1,440-point window, where five fitted, and two and the count on a 1,000-point one, where three fitted, the third missing by half a point. Seen in those drawings: the label sits in grey small capitals at the right end, level with the tabs' titles, apart from the new-tab button and the window's buttons.
+- **A page cannot forge or cover it:** it is drawn in the strip, which no page image is drawn over (requirement 11.1), from the trusted core's report.

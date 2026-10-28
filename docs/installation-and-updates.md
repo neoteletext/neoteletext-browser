@@ -288,7 +288,7 @@ The timestamp is re-signed every day by a scheduled job on a machine the owner c
 
 A script per step, run by the owner, as the gates are (no continuous integration):
 
-1. **Build at the release commit**, after the full gate:
+1. **Build at the release commit**, after the full gate, at the version `native/Cargo.toml`'s `[workspace.package]` names: each build script refuses any other version before it builds, since the fetcher's user agent sends the workspace version and the tab strip shows the release's (decision 123). A release therefore sets and commits the workspace version first.
    - macOS on the owner's Mac, both architectures, and `lipo` for the disk image.
    - Windows in the virtual machine.
    - Linux in the C library 2.28 container on `foundintelquiet4060`.

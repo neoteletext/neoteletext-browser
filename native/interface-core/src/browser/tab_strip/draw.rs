@@ -1,13 +1,15 @@
 //! The tab strip drawn: the window's own buttons where it has them, the
-//! tabs at a width that fits, the count of those that do not, the new-tab
-//! button, and the overflow panel and a dragged tab over everything.
+//! browser's version before them, the tabs at a width that fits, the count
+//! of those that do not, the new-tab button, and the overflow panel and a
+//! dragged tab over everything.
 
 use alloc::format;
 use alloc::vec::Vec;
 
 use super::{
-    COUNT_WIDTH, MARKER_WIDTH, NEW_TAB, PANEL_DIM, PANEL_EDGE, PANEL_ROW, PRIVATE_MARK, SHADOW, SHADOW_BAND, STRIP_HEIGHT, STRIP_MARGIN, TAB_CLOSE, TAB_GAP,
-    TAB_SPEAKER, TAB_TEXT_INSET, TAB_TOP, TAB_TOP_INACTIVE, TAB_WIDTH, WINDOW_BUTTON_GAP, WINDOW_BUTTON_HEIGHT, WINDOW_BUTTON_WIDTH, arrangement, rest_of,
+    COUNT_WIDTH, LEAST_TABS_ROOM, MARKER_WIDTH, NEW_TAB, PANEL_DIM, PANEL_EDGE, PANEL_ROW, PRIVATE_MARK, SHADOW, SHADOW_BAND, STRIP_HEIGHT, STRIP_MARGIN,
+    TAB_CLOSE, TAB_GAP, TAB_SPEAKER, TAB_TEXT_INSET, TAB_TOP, TAB_TOP_INACTIVE, TAB_WIDTH, VERSION_GAP, WINDOW_BUTTON_GAP, WINDOW_BUTTON_HEIGHT,
+    WINDOW_BUTTON_WIDTH, arrangement, rest_of,
 };
 use crate::browser::Browser;
 use crate::browser::banks::BANK_BORDER;
@@ -16,7 +18,7 @@ use crate::browser::regions::{Regions, TabRegion};
 use crate::canvas::Canvas;
 use crate::geometry::{Point, Rect};
 use crate::text::{HAIRLINE, border, centred, cross, left_centred, outline};
-use crate::theme::{BLACK, BUTTON, GLYPH, GREEN, PRIVATE, RAISED, RED, ROW_STATUS, RULE, SELECTED, TAB_COLOURS, TAB_TITLE, WHITE, YELLOW};
+use crate::theme::{BLACK, BUTTON, GLYPH, GREEN, MUTED, PRIVATE, RAISED, RED, ROW_STATUS, RULE, SELECTED, TAB_COLOURS, TAB_TITLE, WHITE, YELLOW};
 
 impl Browser {
     pub(in crate::browser) fn draw_tab_strip<C: Canvas + ?Sized>(&mut self, canvas: &mut C, width: f64) {
@@ -36,8 +38,27 @@ impl Browser {
             draw_window_buttons(canvas, &self.regions);
         }
         let left = self.frame.left_inset + STRIP_MARGIN;
+        let right = self.draw_version(canvas, left, right);
         self.draw_tabs(canvas, left, right);
         self.regions.strip = Rect::new(0.0, 0.0, width, STRIP_HEIGHT);
+    }
+
+    /// The browser's version and release stage at the strip's right end,
+    /// before the window's own buttons (decision 123), as quiet secondary
+    /// text with no face or outline, so that it reads as a label and not a
+    /// button; returns where the tabs end. Left out when it would leave the
+    /// tabs less than [`LEAST_TABS_ROOM`], so that it never covers a tab.
+    fn draw_version<C: Canvas + ?Sized>(&self, canvas: &mut C, left: f64, right: f64) -> f64 {
+        let text = self.version_label();
+        let width = canvas.text_width(&text, ROW_STATUS);
+        // In the new-tab button's band, so the label lines up with it.
+        let label = Rect::new(right - VERSION_GAP - width, TAB_TOP_INACTIVE, right - VERSION_GAP, STRIP_HEIGHT - TAB_GAP);
+        let tabs_end = label.x0 - VERSION_GAP;
+        if tabs_end - left < LEAST_TABS_ROOM {
+            return right;
+        }
+        left_centred(canvas, label, 0.0, &text, ROW_STATUS, MUTED);
+        tabs_end
     }
 
     /// Draws the strip's tabs between `left` and `right`, the new-tab

@@ -909,6 +909,13 @@ Withdrawn on 23 October 2026 (decision 66): no font is fetched; every page is dr
 - **Verification:** Test; by hand on each desktop.
 - **State:** Built 28 October 2026 with tests `the_overview_close_button_hides_it_as_the_view_menu_does` and `the_overview_close_button_has_its_tip`; by hand on macOS owed.
 
+### Requirement 12.18: The version on the tab strip
+- **Statement:** Every window's tab strip must show, at its right end, before the window's own buttons where the browser draws them, the version the trusted core reports running followed by the word BETA ("0.1.0 BETA"), as a label in the strip's secondary text that does nothing when pressed. It must never cover a tab, the count of tabs that do not fit, the new-tab button or a window button: where the strip has not room for it beside one tab, the count and the new-tab button, it must be left out.
+- **Reason:** The owner asked that the client's current version be shown on the tab bar at the right, and that it say BETA. The version is the trusted core's, as the settings panel and the About panel show it, so the three cannot disagree; the tabs keep their reach (requirement 12.14).
+- **Source:** Decision 123; the owner, 28 October 2026, and on the version sent, "fix it - change the release scripts".
+- **Verification:** Interface tests: the label's text, its place at the strip's right end, and that it covers nothing at a wide and at the narrowest window, with the window's buttons at either side; by hand on each desktop. The version shown is the one the fetcher sends: every release script refuses a version other than the workspace's, which the commit gate checks by running the macOS and Linux scripts with another version (`check_release_versions`, failing on the scripts before) and reading the Windows script.
+- **State:** Built 28 October 2026 with tests `the_version_label_is_the_version_and_beta`, `the_version_label_is_at_the_strip_s_right_end` and `the_version_label_never_covers_a_tab_or_the_new_tab_button`, each failing on the code before; by hand on each desktop owed. Screen readers do not see it, as they see nothing of the window yet (requirement 12.9).
+
 ---
 
 ## 13. The application update mechanism

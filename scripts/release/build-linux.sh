@@ -23,6 +23,13 @@ if [[ -n "${NEOTELETEXT_RELEASE_IDENTITY:-}" && ${#test_flags[@]} -eq 0 ]]; then
 fi
 version="${1:?a version}"
 out="${2:?an output folder}"
+# The version named is the workspace's (decision 123): the browser shows
+# NEOTELETEXT_RELEASE_VERSION on its tab strip, and its fetcher sends the
+# workspace version in the user agent, so a release where the two differed
+# would show one version and send another. Checked before anything is built.
+workspace_version="$(sed -n '/^\[workspace.package\]$/,/^\[/s/^version = "\(.*\)"$/\1/p' native/Cargo.toml)"
+[[ -n "$workspace_version" ]] || { echo "build-linux: native/Cargo.toml names no workspace version" >&2; exit 1; }
+[[ "$version" == "$workspace_version" ]] || { echo "build-linux: the version $version is not the workspace's $workspace_version; set [workspace.package] version in native/Cargo.toml to it and commit first" >&2; exit 1; }
 # Outside a git checkout, git status fails and prints nothing, which alone
 # would read as an unchanged tree.
 changes=$(git status --porcelain --untracked-files=no) || { echo "build-linux: the tree is not a git checkout; a release is built from a commit" >&2; exit 1; }

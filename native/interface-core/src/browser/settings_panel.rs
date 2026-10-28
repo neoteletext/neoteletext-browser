@@ -180,6 +180,12 @@ impl Browser {
         self.settings.update = Some(view);
     }
 
+    /// The version the trusted core reports running, once it has: the
+    /// tab strip's label shows it (decision 123).
+    pub(in crate::browser) fn running_version(&self) -> Option<&str> {
+        self.settings.update.as_ref().map(|update| update.version.as_str()).filter(|version| !version.is_empty())
+    }
+
     /// Whether the settings panel is open.
     #[must_use]
     pub fn settings_open(&self) -> bool {

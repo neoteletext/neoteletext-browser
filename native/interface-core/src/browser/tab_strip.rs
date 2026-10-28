@@ -2,9 +2,11 @@
 //! width, the active one always shown; when they overflow, a count, and a
 //! panel joined under the strip into which the rest wrap once the pointer
 //! rests on the tabs; and a tab dragged along to a new place, which the
-//! trusted core decides.
+//! trusted core decides; and at its right end the browser's version and
+//! release stage (decision 123).
 
 use alloc::collections::BTreeSet;
+use alloc::format;
 use alloc::string::String;
 use alloc::vec::Vec;
 
@@ -60,6 +62,18 @@ const SHADOW_BAND: f64 = 3.0;
 const SHADOW: [f32; 4] = [0.5, 0.35, 0.2, 0.1];
 /// The line that shows where a dragged tab will go.
 const MARKER_WIDTH: f64 = 3.0;
+/// The release stage shown after the browser's version (decision 123):
+/// the owner's "ensure it says BETA".
+const RELEASE_STAGE: &str = "BETA";
+/// The room on each side of the version label, which keeps it apart from
+/// the new-tab button and the window's own buttons, so that it reads as a
+/// label of the strip and not as one of them.
+const VERSION_GAP: f64 = 16.0;
+/// The least room the tabs keep beside the version label: one tab, the
+/// count of the rest and the new-tab button, as `draw_tabs` lays them out
+/// when they overflow. With less, the label is left out (decision 123):
+/// every tab stays reachable on the strip or through the count.
+const LEAST_TABS_ROOM: f64 = TAB_WIDTH + TAB_GAP + COUNT_WIDTH + TAB_GAP * 2.0 + NEW_TAB;
 
 /// A tab being pressed or dragged.
 #[derive(Clone, Copy, Debug)]
@@ -167,6 +181,14 @@ impl Browser {
             self.tab_strip.open = false;
             self.tab_strip.resting = None;
         }
+    }
+
+    /// The version label's text (decision 123): the version the trusted
+    /// core reports running, which the settings panel and the About panel
+    /// show, and the release stage; the stage alone until the trusted core
+    /// has reported, which it does as the window opens.
+    pub(super) fn version_label(&self) -> String {
+        self.running_version().map_or_else(|| String::from(RELEASE_STAGE), |version| format!("{version} {RELEASE_STAGE}"))
     }
 
     /// The count's tip.
