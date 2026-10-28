@@ -2,16 +2,24 @@
 # The project's one check script (requirement 14.1). Every step either
 # passes or fails the run: nothing is skipped, a missing tool or an
 # unreachable host is a failure.
-#   scripts/check.sh commit   the pre-commit gate: formatting, lints and
-#                             tests of only what the staged files touch,
-#                             refused while those parts have changes that
-#                             are not staged, so what is checked is what
-#                             is committed
-#   scripts/check.sh full     the pre-push gate: everything, on a clean
-#                             tree at the commit being pushed, including
-#                             release tests, licences and advisories,
-#                             unused dependencies, fuzzing, and the Linux
-#                             build and tests on $NEOTELETEXT_LINUX_HOST
+#   scripts/check.sh commit   the pre-commit gate: the code compiles clean
+#                             (the text checks, formatting and Clippy),
+#                             refused while the parts checked have changes
+#                             that are not staged, so what is checked is
+#                             what is committed
+#   scripts/check.sh push     the pre-push gate of any branch but main, on
+#                             a clean tree at the commit pushed: commit,
+#                             plus Clippy in every feature shape and the
+#                             tests
+#   scripts/check.sh full     the pre-push gate of main, the long
+#                             integration step: push, plus the engine
+#                             check, release and feature-off tests,
+#                             licences and advisories, unused dependencies
+#                             and fuzzing, with the Linux build and tests
+#                             on $NEOTELETEXT_LINUX_HOST alongside
+# Each tier says how long its last pass took before it starts, and skips a
+# lower tier that already passed on the same tree (DEVELOPMENT.md
+# section 9).
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -23,7 +31,52 @@ linux_host="${NEOTELETEXT_LINUX_HOST:-foundintelquiet4060}"
 # input that has ever found a fault (native/fuzz/regressions/).
 fuzz_seconds="${NEOTELETEXT_FUZZ_SECONDS:-20}"
 
-step() { printf '\n== %s\n' "$*"; }
+# Timing and stamps: each step prints its time as it ends; a pass records
+# its steps' times, for the next run's warning, and the tree it passed on,
+# so a higher tier does not run it again.
+git_dir="$(git rev-parse --git-common-dir)"
+step_name=""
+step_start=$SECONDS
+step_times=""
+minutes() { printf '%dm%02ds' $(($1 / 60)) $(($1 % 60)); }
+end_step() {
+    [[ -n "$step_name" ]] || return 0
+    local took=$((SECONDS - step_start))
+    printf '   (%s)\n' "$(minutes "$took")"
+    step_times+="$took	$step_name"$'\n'
+    step_name=""
+}
+step() {
+    end_step
+    step_name="$*"
+    step_start=$SECONDS
+    printf '\n== %s\n' "$*"
+}
+announce() {
+    local file="$git_dir/gate-times-$1"
+    if [[ -f "$file" ]]; then
+        printf '== the %s gate: its last pass took %s; its slowest steps:\n' "$1" "$(minutes "$(head -1 "$file")")"
+        tail -n +2 "$file" | sort -rn | head -3 | while IFS=$'\t' read -r took name; do
+            printf '   %s  %s\n' "$(minutes "$took")" "$name"
+        done
+    else
+        printf '== the %s gate: no pass measured yet\n' "$1"
+    fi
+}
+passed() {
+    local tree="$2"
+    [[ -n "$tree" && -f "$git_dir/gate-passed-$1" && "$(cat "$git_dir/gate-passed-$1")" == "$tree" ]]
+}
+stamp() {
+    [[ -z "$2" ]] || printf '%s\n' "$2" >"$git_dir/gate-passed-$1"
+}
+record_pass() {
+    local tier="$1" tree="$2" took=$((SECONDS - gate_start))
+    end_step
+    printf '%s\n%s' "$took" "$step_times" >"$git_dir/gate-times-$tier"
+    stamp "$tier" "$tree"
+    printf '\nthe %s gate passed in %s\n' "$tier" "$(minutes "$took")"
+}
 fail() {
     printf '\nFAILED: %s\n' "$*" >&2
     exit 1
@@ -127,7 +180,8 @@ check_release_versions() {
     grep -q 'if (\$Version -ne \$workspaceVersion)' scripts/release/build-windows.ps1 || fail "scripts/release/build-windows.ps1 does not refuse a version other than the workspace's"
 }
 
-check_native() {
+# What the commit gate checks: the code compiles clean.
+check_compiles() {
     check_engine_pin
     check_desktop_codecs
     check_release_versions
@@ -141,6 +195,18 @@ check_native() {
     check_no_panic_lists
     step "native: Clippy, warnings as errors"
     (cd native && cargo clippy --quiet --workspace --all-targets -- -D warnings)
+    # The updater's workspace (native/tuf: the updater and the release
+    # tool, with `tough`), apart so its dependencies' features never reach
+    # the browser's crates (installation-and-updates.md section 14).
+    step "native/tuf: lockfiles up to date, formatting"
+    (cd native/tuf && cargo metadata --quiet --locked --format-version 1 >/dev/null && cargo fmt --check)
+    (cd native/tuf/fuzz && cargo metadata --quiet --locked --format-version 1 >/dev/null)
+    step "native/tuf: Clippy, warnings as errors"
+    (cd native/tuf && cargo clippy --quiet --workspace --all-targets -- -D warnings)
+}
+
+# What the push gate adds: every feature shape, and the tests.
+check_shapes_and_tests() {
     # Hyperlinks are a feature on by default; the browser must build without
     # them too (hyperlinks.md).
     step "native: Clippy with hyperlinks, typing and the phone keyboard compiled out, warnings as errors"
@@ -159,18 +225,6 @@ check_native() {
         --no-default-features --features "interface-core/phone-keyboard,protocol/phone-keyboard,neoteletext/phone-keyboard,neoteletext-interface/phone-keyboard,neoteletext-keyboard/phone-keyboard" -- -D warnings)
     step "native: tests"
     (cd native && cargo nextest run --workspace --hide-progress-bar --status-level fail --final-status-level fail)
-    check_tuf
-}
-
-# The updater's workspace (native/tuf: the updater and the release tool,
-# with `tough`), apart so its dependencies' features never reach the
-# browser's crates (installation-and-updates.md section 14).
-check_tuf() {
-    step "native/tuf: lockfiles up to date, formatting"
-    (cd native/tuf && cargo metadata --quiet --locked --format-version 1 >/dev/null && cargo fmt --check)
-    (cd native/tuf/fuzz && cargo metadata --quiet --locked --format-version 1 >/dev/null)
-    step "native/tuf: Clippy, warnings as errors"
-    (cd native/tuf && cargo clippy --quiet --workspace --all-targets -- -D warnings)
     step "native/tuf: tests"
     (cd native/tuf && cargo nextest run --workspace --hide-progress-bar --status-level fail --final-status-level fail)
 }
@@ -215,12 +269,20 @@ commit_gate() {
         loose="$(unstaged_under native scripts .githooks rust-toolchain.toml)"
         [[ -z "$loose" ]] || fail "changes that are not staged would make this check test something other than the commit; stage or stash them:
 $loose"
-        check_native
+        tree="$(git write-tree)"
+        if passed commit "$tree"; then
+            printf '\n== the commit gate already passed on this tree\n'
+            tree=""
+        else
+            check_compiles
+        fi
     fi
     return 0
 }
 
+# Run alongside the steps here; its output is shown when they are done.
 check_linux() {
+    step_name=""
     step "Linux on $linux_host: native, Clippy and tests"
     ssh -o BatchMode=yes -o ConnectTimeout=10 "$linux_host" true || fail "$linux_host is unreachable; the full gate needs it"
     # Files are compared by content and written with the host's own time:
@@ -236,6 +298,7 @@ check_linux() {
         (cd native && cargo clippy --quiet --workspace --all-targets -- -D warnings && cargo test --quiet --workspace \\
             && cargo clippy --quiet --workspace --all-targets --no-default-features -- -D warnings)
         (cd native/tuf && cargo clippy --quiet --workspace --all-targets -- -D warnings && cargo test --quiet --workspace)"
+    end_step
 }
 
 check_fuzz() {
@@ -315,19 +378,44 @@ check_release_identity() {
 $said"
 }
 
-full_gate() {
-    # The commit being pushed is the one checked: the pre-push hook passes
-    # the pushed commits, and the tree must be clean at HEAD.
+# The commit pushed is the one checked: the pre-push hook passes the
+# pushed commits, and the tree must be clean at HEAD.
+clean_head() {
     local pushed
     for pushed in "$@"; do
         [[ "$pushed" == "$(git rev-parse HEAD)" ]] || fail "pushing $pushed, but HEAD is $(git rev-parse HEAD); check out what you push"
     done
     local loose
     loose="$(unstaged_under .; git diff --cached --name-only)"
-    [[ -z "$loose" ]] || fail "the tree has changes that are not committed; the full gate checks the commit being pushed:
+    [[ -z "$loose" ]] || fail "the tree has changes that are not committed; the $mode gate checks the commit being pushed:
 $loose"
+    tree="$(git rev-parse 'HEAD^{tree}')"
+    if passed "$mode" "$tree"; then
+        printf '\n== the %s gate already passed on this tree\n' "$mode"
+        exit 0
+    fi
+}
 
-    check_native
+push_gate() {
+    if passed commit "$tree"; then
+        printf '\n== the commit gate passed on this tree: skipped\n'
+    else
+        check_compiles
+    fi
+    check_shapes_and_tests
+}
+
+full_gate() {
+    local linux_log="$git_dir/gate-linux.log" linux_pid
+    check_linux >"$linux_log" 2>&1 &
+    linux_pid=$!
+    printf '\n== the Linux steps on %s run alongside, logged in %s\n' "$linux_host" "$linux_log"
+
+    if passed push "$tree"; then
+        printf '\n== the push gate passed on this tree: skipped\n'
+    else
+        push_gate
+    fi
     check_engine_safe
     step "native: documentation tests"
     (cd native && cargo test --quiet --workspace --doc)
@@ -346,21 +434,44 @@ $loose"
     (cd native/tuf && cargo nextest run --workspace --release --hide-progress-bar --status-level fail --final-status-level fail)
     check_fuzz
 
-    check_linux
+    step "waiting for the Linux steps on $linux_host"
+    if ! wait "$linux_pid"; then
+        cat "$linux_log"
+        fail "the Linux steps on $linux_host failed"
+    fi
+    cat "$linux_log"
 
     step "the gate changed nothing that is committed"
+    local loose
     loose="$(git status --porcelain --untracked-files=no)"
     [[ -z "$loose" ]] || fail "running the gate changed committed files, so what passed is not what is committed:
 $loose"
 }
 
+tree=""
+[[ -n "$mode" ]] && announce "$mode"
+gate_start=$SECONDS
 case "$mode" in
-commit) commit_gate ;;
+commit)
+    commit_gate
+    [[ -z "$tree" ]] || record_pass commit "$tree"
+    ;;
+push)
+    shift
+    clean_head "$@"
+    push_gate
+    record_pass push "$tree"
+    stamp commit "$tree"
+    ;;
 full)
     shift
-    full_gate "$@"
+    clean_head "$@"
+    full_gate
+    record_pass full "$tree"
+    stamp push "$tree"
+    stamp commit "$tree"
     ;;
-*) fail "usage: scripts/check.sh commit | full [pushed commit]..." ;;
+*) fail "usage: scripts/check.sh commit | push | full [pushed commit]..." ;;
 esac
 
 step "All checks passed ($mode)"

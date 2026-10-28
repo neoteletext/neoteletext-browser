@@ -1,15 +1,21 @@
 #!/usr/bin/env bash
 # Git passes one line per ref pushed: local ref, local commit, remote ref,
-# remote commit. The full gate checks each commit pushed; a deletion pushes
-# no commit, and a commit the remote already holds, on any of its
-# branches, brings it no code the gate has not passed.
+# remote commit. A push to main runs the full gate, the long integration
+# step; a push of any other branch runs the push gate (DEVELOPMENT.md
+# section 9). Each checks the commits pushed; a deletion pushes no commit,
+# and a commit the remote already holds, on any of its branches, brings it
+# no code a gate has not passed.
 set -euo pipefail
 deleted="0000000000000000000000000000000000000000"
 remote="$1"
+tier=""
 pushed=()
-while read -r _ local_commit _ _; do
+while read -r _ local_commit remote_ref _; do
     [[ "$local_commit" == "$deleted" ]] && continue
+    [[ "$remote_ref" == refs/heads/main ]] && tier=full
+    [[ -n "$tier" ]] || tier=push
     [[ -n "$(git branch --remotes --contains "$local_commit" --list "$remote/*")" ]] && continue
     pushed+=("$local_commit")
 done
-exec "$(git rev-parse --show-toplevel)/scripts/check.sh" full "${pushed[@]+"${pushed[@]}"}"
+[[ -n "$tier" ]] || exit 0
+exec "$(git rev-parse --show-toplevel)/scripts/check.sh" "$tier" "${pushed[@]+"${pushed[@]}"}"
