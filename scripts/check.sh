@@ -223,7 +223,10 @@ $loose"
 check_linux() {
     step "Linux on $linux_host: native, Clippy and tests"
     ssh -o BatchMode=yes -o ConnectTimeout=10 "$linux_host" true || fail "$linux_host is unreachable; the full gate needs it"
-    rsync -a --delete --exclude target --exclude tools --exclude .git \
+    # Files are compared by content and written with the host's own time:
+    # with this machine's times kept, a file edited here before the host's
+    # last build looks older than that build, and Cargo reuses it.
+    rsync -a --no-times --checksum --delete --exclude target --exclude tools --exclude .git \
         --exclude native/fuzz/corpus --exclude native/fuzz/artifacts --exclude native/tuf/fuzz/corpus --exclude native/tuf/fuzz/artifacts \
         ./ "$linux_host:neoteletext-browser-check/"
     # The host fetches the engine from its published repository, as Cargo
