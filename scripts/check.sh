@@ -63,6 +63,12 @@ announce() {
         printf '== the %s gate: no pass measured yet\n' "$1"
     fi
 }
+# What the gates read: a stamp is keyed on these paths alone, so a change
+# elsewhere, such as a document, does not run a gate again.
+readonly CHECKED_PATHS=(native scripts .githooks rust-toolchain.toml)
+checked_tree() {
+    git ls-tree "$1" -- "${CHECKED_PATHS[@]}" | git hash-object --stdin
+}
 passed() {
     local tree="$2"
     [[ -n "$tree" && -f "$git_dir/gate-passed-$1" && "$(cat "$git_dir/gate-passed-$1")" == "$tree" ]]
@@ -258,7 +264,7 @@ commit_gate() {
     local native=no path
     while IFS= read -r path; do
         case "$path" in
-        native/* | scripts/* | .githooks/* | rust-toolchain.toml) native=yes ;;
+        native/* | scripts/* | .githooks/* | rust-toolchain.toml) native=yes ;; # CHECKED_PATHS
         esac
     done <<<"$staged"
 
@@ -266,10 +272,10 @@ commit_gate() {
     # untracked file may sit in a part being checked.
     if [[ "$native" == yes ]]; then
         local loose
-        loose="$(unstaged_under native scripts .githooks rust-toolchain.toml)"
+        loose="$(unstaged_under "${CHECKED_PATHS[@]}")"
         [[ -z "$loose" ]] || fail "changes that are not staged would make this check test something other than the commit; stage or stash them:
 $loose"
-        tree="$(git write-tree)"
+        tree="$(checked_tree "$(git write-tree)")"
         if passed commit "$tree"; then
             printf '\n== the commit gate already passed on this tree\n'
             tree=""
@@ -389,7 +395,7 @@ clean_head() {
     loose="$(unstaged_under .; git diff --cached --name-only)"
     [[ -z "$loose" ]] || fail "the tree has changes that are not committed; the $mode gate checks the commit being pushed:
 $loose"
-    tree="$(git rev-parse 'HEAD^{tree}')"
+    tree="$(checked_tree HEAD)"
     if passed "$mode" "$tree"; then
         printf '\n== the %s gate already passed on this tree\n' "$mode"
         exit 0
