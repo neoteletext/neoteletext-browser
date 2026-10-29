@@ -1,2 +1,3 @@
 #!/usr/bin/env bash
+# neoteletext-common's gates/pre-commit, copied by gates/sync (gates.md).
 exec "$(git rev-parse --show-toplevel)/scripts/check.sh" commit
