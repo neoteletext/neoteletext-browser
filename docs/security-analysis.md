@@ -3,7 +3,7 @@
 | | |
 |---|---|
 | **Status** | Analysis of the native architecture (decision 33), 16 October 2026. Where a point was observed on this codebase rather than reasoned, it says so. Where the design and what is built differ, both are given. |
-| **Companion documents** | [`architecture.md`](architecture.md) describes the design. [`requirements.md`](requirements.md) states each requirement this analysis relies on, numbered, with whether it is met; this document cites them as "Requirement N.N". The earlier design's analysis, with its web engine, is in `prototypes/docs/security-analysis.md`. |
+| **Companion documents** | [`architecture.md`](architecture.md) describes the design. the requirements in rdm states each requirement this analysis relies on, numbered, with whether it is met; this document cites them as "Requirement N.N". The earlier design's analysis, with its web engine, is in `prototypes/docs/security-analysis.md`. |
 | **The prototypes** | Removed on 21 October 2026 (decision 50); a path under `prototypes/` here is a path at the git tag `prototypes-final`. |
 
 **Abbreviations.** None are used. Technical terms are written out in full; `architecture.md` section 17 is the glossary.

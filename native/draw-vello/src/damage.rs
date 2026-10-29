@@ -1,5 +1,5 @@
 //! Damage: which device pixels a frame changed from the last
-//! (`TECH-DEBT.md`, damage-limited drawing). A frame's drawing calls are
+//! (an rdm to-do, damage-limited drawing). A frame's drawing calls are
 //! kept and compared with the last frame's; only the box that holds every
 //! call that differs is drawn again.
 

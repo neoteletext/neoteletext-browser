@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Status** | Adopted 21 October 2026 on the owner's instruction to design, specify, number the requirements of and build each of these (decision 51). Requirements: section 19 of [`requirements.md`](requirements.md), with requirements 11.2, 12.6 and 12.7 amended. Security: [`settings-home-console-proxy-security.md`](settings-home-console-proxy-security.md). Section 7 lists what building changed. |
+| **Status** | Adopted 21 October 2026 on the owner's instruction to design, specify, number the requirements of and build each of these (decision 51). Requirements: section 19 of the requirements in rdm, with requirements 11.2, 12.6 and 12.7 amended. Security: [`settings-home-console-proxy-security.md`](settings-home-console-proxy-security.md). Section 7 lists what building changed. |
 | **Engine** | Proxy encoding and the agent's report of each exchange are the engine's (its decision E.102, REQ-WEB-032 and REQ-WEB-033), so `neottx` has them too. |
 
 ## 1. Settings

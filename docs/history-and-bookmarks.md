@@ -4,7 +4,7 @@
 |---|---|
 | **Status** | Proposed 22 October 2026 on the owner's request for an architecture and requirements for browser-style history and browser-style bookmarks; adopted and built the same day by decision 57, while the owner was away, on the owner's instruction to "FULLY implement history and bookmarks - make any decisions you need to". Section 13's items were decided as recommended but item 10; section 14 lists what building changed, for the owner to confirm. |
 | **Security** | [`history-and-bookmarks-security.md`](history-and-bookmarks-security.md), whose findings this design takes. |
-| **Requirements** | Section 20 of [`requirements.md`](requirements.md), with requirements 3.6, 12.5, 12.6, 19.1, 19.2 and 19.7 amended and 19.5 withdrawn; section 12 below is the text as proposed. |
+| **Requirements** | Section 20 of the requirements in rdm, with requirements 3.6, 12.5, 12.6, 19.1, 19.2 and 19.7 amended and 19.5 withdrawn; section 12 below is the text as proposed. |
 | **Builds on** | Each tab's back-and-forward list (requirement 8.1), the star and the bookmarks in `settings.txt` (requirements 19.1 and 19.5), the start page (requirement 19.7), the settings panel (`settings-home-console-proxy.md` section 1.3), the broker and the trusted core's confinement (decision 56). |
 
 ## 1. What is wanted

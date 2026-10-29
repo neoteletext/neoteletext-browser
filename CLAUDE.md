@@ -4,10 +4,14 @@ A desktop browser for teletext channels on the web, built on the neoteletext eng
 
 **The development process is `~/devel/neoteletext-common/DEVELOPMENT.md`**, shared with the engine: how work proceeds, tracking, requirements, decisions, code rules, dependencies, tests, gates, commits, hosts and safety. This file says only what is particular to this repository; where they differ, that document holds.
 
+## Requirements, decisions, checklists and to-dos: rdm only
+
+They are records in rdm, reached through its MCP tools (search, get_record, list_records, create_record, revise_record, set_status, link_records), since 30 October 2026 (rdm decision DEC-1389). **Never create or edit a file to record one:** there is no `docs/requirements.md`, `TECH-DEBT.md` or decisions section in `docs/architecture.md` any more, and a hook refuses edits to those files. Old identifiers still work in rdm: "Requirement 6.3", "Decision 50", "Open decision 4", "TECH-DEBT 12". A requirement has its Statement, Reason, Source, Verification and State in its body; its State is also rdm's implementation status. Work owed is an rdm to-do, not a list in a file. If a merge brings one of those files back, record what it adds in rdm and delete the file.
+
 ## Key documents
 
-- `docs/requirements.md`: every requirement, numbered by section ("Requirement 6.3"), each with Statement, Reason, Source, Verification and a dated State. The only normative text.
-- `docs/architecture.md`: the design. Section 2 is the owner's decisions (Decision n, with a "Now" column); section 5 the engine and its pinned commit; section 15 what is built; section 17 the glossary.
+- The requirements (the only normative text) and the owner's decisions: rdm, above.
+- `docs/architecture.md`: the design. Section 5 the engine and its pinned commit; section 15 what is built; section 17 the glossary.
 - `docs/security-analysis.md`, and one security analysis per feature beside its design: `hyperlinks.md` with `hyperlinks-security.md`, `interaction.md` with `interaction-security.md`, `sandboxing.md` with `sandboxing-security.md`, `history-and-bookmarks.md` with `history-and-bookmarks-security.md`, `cookies.md` with `cookies-security.md`.
 - `docs/licensing.md` and `CREDITS.md`.
 - `docs/native-interface-design.md`: how the native interface was chosen and what was built when.

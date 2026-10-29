@@ -9,7 +9,7 @@
 //!
 //! A file that is absent leaves its constant `None`, and the program
 //! that needs it refuses to work: until the key ceremony
-//! (`PENDINGTASKSFORANDREW.md`), the production identity names only the
+//! (rdm to-dos for the owner), the production identity names only the
 //! host, so a production build stages and accepts nothing.
 
 use std::fmt::Write as _;

@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Status** | Adopted 22 October 2026 (decision 54), with the owner's answers to section 12 recorded there. Built 23 October 2026 on every desktop while the owner was away, as the owner instructed (decisions 73 to 82); what building changed is section 14, what it proved section 15. What only the owner can give (certificates, hardware keys, the update host) is in `PENDINGTASKSFORANDREW.md`. |
+| **Status** | Adopted 22 October 2026 (decision 54), with the owner's answers to section 12 recorded there. Built 23 October 2026 on every desktop while the owner was away, as the owner instructed (decisions 73 to 82); what building changed is section 14, what it proved section 15. What only the owner can give (certificates, hardware keys, the update host) is in rdm to-dos for the owner. |
 | **Code** | `native/update` (shared: versions, platforms, manifest, state, gzip, signatures, version mark, the updater's messages, safe writes, acceptance, profiles, fault points); `native/release-identity` (the identity built in); `native/launcher`; `native/stub` and `native/installer` (Windows); `native/os-install` (the unsafe calls); `native/icon` (the icon each release carries, section 16); `native/tuf` (a workspace of its own: `updater`, `release`, and their fuzz targets); `confine::Role::Updater`; `core/src/trusted_core/updates.rs` (the core's side) and `core/src/broker.rs` (the broker's: the launcher's state, `started` and `healthy`, the updater's grant); `scripts/updates-e2e.sh`, `scripts/updates-e2e.ps1`, `scripts/release/`. |
 | **Decisions it follows** | 15 (no update can leave the application unusable), 16 (The Update Framework), 17 and 25 (`update.neoteletext.com`), 24 items 10, 11 and 13 (`tough`, one launcher scheme on every desktop, three root keys), 52 (the sandboxes). |
 | **Requirements** | 13.1 to 13.13 (the earlier design's, stated in full at the tag `prototypes-final`, `prototypes/docs/requirements.md` section 13); section 11 proposes 13.14 to 13.20 and amendments. |
@@ -12,7 +12,7 @@
 
 - **Installation** that any user can do without an administrator, on every supported version of each system, that puts the browser where the system expects an application and leaves nothing behind when removed.
 - **Updates** that cannot leave the user without a working browser, that run nothing that was not verified twice by keys held apart, and that never restart the browser under the user.
-- **The packaging work the sandboxes left** (`TECH-DEBT.md`): the Windows program folder readable by `ALL APPLICATION PACKAGES`, and a place for the trusted core's own confinement.
+- **The packaging work the sandboxes left** (rdm to-dos): the Windows program folder readable by `ALL APPLICATION PACKAGES`, and a place for the trusted core's own confinement.
 
 ## 2. Measured, 22 October 2026
 
@@ -327,7 +327,7 @@ New:
 4. **ALSA on Linux:** sound moved into a helper process of its own (decision 55), so the interface starts without the library and the browser runs silent where it is missing.
 5. **Architectures** as recommended: universal on macOS, x86-64 first elsewhere.
 6. **The trusted core confined now, properly** (decision 56): not the App Sandbox with XPC services, which cannot give each channel its own decoder without private API; instead a small broker that starts the core confined and every helper for it, on all three platforms.
-7. **Accounts, keys and machines:** not yet; listed in `PENDINGTASKSFORANDREW.md`.
+7. **Accounts, keys and machines:** not yet; listed as rdm to-dos for the owner.
 8. **The timestamp expires after 7 days.**
 9. **Updates are suggested to the user and installed only when accepted** (section 3.4).
 

@@ -55,7 +55,7 @@
 | Feature | State | Where |
 |---|---|---|
 | The installer and the updater | Built, proved end to end with test keys on every desktop | Decisions 54 and 73 to 82 |
-| Signing, the release keys and the update host | The owner's: the key ceremony, the certificates and the host | `PENDINGTASKSFORANDREW.md` |
+| Signing, the release keys and the update host | The owner's: the key ceremony, the certificates and the host | rdm to-dos for the owner |
 | Checks by hand of decisions 63 to 65 on Windows and Linux | Not done | — |
 | Phones and microcontrollers | Not built | — |
 | Diagnostics in the console's Log | Built | Decision 70 |

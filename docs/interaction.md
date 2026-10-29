@@ -3,7 +3,7 @@
 | | |
 |---|---|
 | **Status** | The design of typing back, the cursor and the phone keyboard is now `~/devel/neoteletext-common/INPUT.md`, the input system shared with the engine (protocol version 2, adopted 21 October 2026: the browser's decision 48, the engine's E.100). This document keeps what INPUT.md does not cover, push (section 4), and as history the tests and the changes made when version 1, the 14-byte key record of decisions 44 and 45, was built (sections 16 and 17). The rest of version 1's design is in this repository's history. |
-| **Companion documents** | [`interaction-security.md`](interaction-security.md), INPUT.md section 11 for the input system's security; [`architecture.md`](architecture.md); [`requirements.md`](requirements.md) section 18, whose input requirements point to INPUT.md's REQ-INT-130 to REQ-INT-139. |
+| **Companion documents** | [`interaction-security.md`](interaction-security.md), INPUT.md section 11 for the input system's security; [`architecture.md`](architecture.md); the requirements in rdm section 18, whose input requirements point to INPUT.md's REQ-INT-130 to REQ-INT-139. |
 
 ---
 
