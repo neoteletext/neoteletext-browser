@@ -155,6 +155,13 @@ pub fn run(store_pages: usize) -> Result<(), ProtocolError> {
                 }
                 continue;
             }
+            // The user's font: every page on screen drawn again in it, whole.
+            ToDecoder::Font(font) => {
+                engine.set_font(font);
+                sent.clear();
+                draw(&engine, &showing, now, &mut sent, &mut spare, &mut flashing, &mut output)?;
+                continue;
+            }
             // The sub-page list scrolled rows of a page into view.
             ToDecoder::SubPageRows { page, range } => {
                 write_to_core(&mut output, &FromDecoder::SubPageRows { page, rows: engine.subpage_rows(page, range) })?;

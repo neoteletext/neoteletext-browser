@@ -25,7 +25,7 @@ pub const MAX_UPDATE_STATUS: usize = 200;
 /// The longest version as text.
 pub const MAX_VERSION: usize = 17;
 
-pub use interface_core::settings::{CookieMode, MAX_REMOTE_PLACE, ProxyView, RemoteMode, RemotePlace, SettingChange, SettingsView, UpdateView};
+pub use interface_core::settings::{CookieMode, MAX_REMOTE_PLACE, ProxyView, RemoteMode, RemotePlace, SettingChange, SettingsView, TeletextFont, UpdateView};
 
 const PROXY_NONE: u8 = 0;
 const PROXY_HTTP: u8 = 1;
@@ -41,12 +41,32 @@ const CHANGE_REMOVE_LOCAL: u8 = 7;
 const CHANGE_RESTORE_SESSION: u8 = 9;
 const CHANGE_COOKIES: u8 = 10;
 const CHANGE_REMOTE: u8 = 11;
+const CHANGE_FONT: u8 = 12;
 // Far from the others, so changes added beside this one elsewhere do not
 // meet it (installation-and-updates.md section 3.4).
 const CHANGE_CHECK_UPDATES: u8 = 40;
 const REMOTE_HIDDEN: u8 = 0;
 const REMOTE_DOCKED: u8 = 1;
 const REMOTE_FLOATING: u8 = 2;
+const FONT_BEDSTEAD: u8 = 0;
+const FONT_NOTO_TELETEXT: u8 = 1;
+
+/// The font's byte, in the settings view, a change and the decoder's
+/// message alike.
+pub(crate) const fn push_font(font: TeletextFont) -> u8 {
+    match font {
+        TeletextFont::Bedstead => FONT_BEDSTEAD,
+        TeletextFont::NotoTeletext => FONT_NOTO_TELETEXT,
+    }
+}
+
+pub(crate) fn read_font(fields: &mut Fields<'_>) -> Result<TeletextFont, ProtocolError> {
+    Ok(match fields.u8()? {
+        FONT_BEDSTEAD => TeletextFont::Bedstead,
+        FONT_NOTO_TELETEXT => TeletextFont::NotoTeletext,
+        _ => return Err(ProtocolError::BadValue("font")),
+    })
+}
 
 fn push_mode(mode: CookieMode) -> u8 {
     match mode {
@@ -105,6 +125,7 @@ pub(crate) fn push_view(payload: &mut Vec<u8>, view: &SettingsView) -> Result<()
     }
     push_flag(payload, view.restore_session);
     payload.push(push_mode(view.cookies));
+    payload.push(push_font(view.font));
     match &view.refusal {
         Some(refusal) => {
             push_flag(payload, true);
@@ -124,8 +145,9 @@ pub(crate) fn read_view(fields: &mut Fields<'_>) -> Result<SettingsView, Protoco
     let local = (0..count).map(|_| fields.text(MAX_LOCAL_TEXT)).collect::<Result<Vec<_>, _>>()?;
     let restore_session = fields.flag("flag")?;
     let cookies = read_mode(fields)?;
+    let font = read_font(fields)?;
     let refusal = if fields.flag("flag")? { Some(fields.text(MAX_REFUSAL)?) } else { None };
-    Ok(SettingsView { home, sound, volume, proxy, local, restore_session, cookies, refusal })
+    Ok(SettingsView { home, sound, volume, proxy, local, restore_session, cookies, font, refusal })
 }
 
 pub(crate) fn push_change(payload: &mut Vec<u8>, change: &SettingChange) -> Result<(), ProtocolError> {
@@ -167,6 +189,7 @@ pub(crate) fn push_change(payload: &mut Vec<u8>, change: &SettingChange) -> Resu
             payload.push(CHANGE_CHECK_UPDATES);
             push_flag(payload, *on);
         }
+        SettingChange::Font(font) => payload.extend_from_slice(&[CHANGE_FONT, push_font(*font)]),
     }
     Ok(())
 }
@@ -206,6 +229,7 @@ pub(crate) fn read_change(fields: &mut Fields<'_>) -> Result<SettingChange, Prot
         CHANGE_COOKIES => SettingChange::Cookies(read_mode(fields)?),
         CHANGE_REMOTE => SettingChange::Remote(read_remote(fields)?),
         CHANGE_CHECK_UPDATES => SettingChange::CheckUpdates(fields.flag("flag")?),
+        CHANGE_FONT => SettingChange::Font(read_font(fields)?),
         _ => return Err(ProtocolError::BadValue("setting change")),
     })
 }

@@ -40,3 +40,6 @@ pub(super) const KIND_SUBPAGE_COUNT: u8 = 102;
 pub(super) const KIND_SUBPAGE_ROWS: u8 = 103;
 // Trusted core to decoder: the rows of a page's sub-pages asked for.
 pub(super) const KIND_ASK_SUBPAGE_ROWS: u8 = 104;
+// Trusted core to decoder: the font pages are drawn in, the next kind
+// free in the whole protocol after the phone keyboard's.
+pub(super) const KIND_FONT: u8 = 116;

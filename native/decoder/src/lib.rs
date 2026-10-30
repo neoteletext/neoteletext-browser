@@ -2,8 +2,9 @@
 //! the engine reads (T42 recordings, TTI page files, transport streams,
 //! sliced records) go through its format detection and readers into its
 //! decoder and page store; pages are composed at the presentation level of
-//! the engine's default profile and rendered by its row renderer with its
-//! bundled font, Bedstead, into palette indices.
+//! the engine's default profile and rendered by its row renderer, in
+//! Bedstead or the engine's Noto Teletext font as the user chose, into
+//! palette indices.
 //!
 //! Everything here reads untrusted bytes, which is why it runs in a process
 //! of its own with no network and no files (design section 5).
@@ -26,6 +27,7 @@
 mod changes;
 mod engine;
 mod flash;
+mod fonts;
 #[cfg(feature = "interaction")]
 mod input_records;
 #[cfg(feature = "links")]

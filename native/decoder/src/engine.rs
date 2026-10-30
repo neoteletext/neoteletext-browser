@@ -11,13 +11,13 @@ use neoteletext_core::acq::{Decoder, EnhancementPacket, EnhancementStore, Enhanc
 use neoteletext_core::config::Config;
 use neoteletext_core::consts::COLUMNS;
 use neoteletext_core::consts::{ENHANCEMENT_PACKETS_LEVEL_35, MAGAZINES, MOT_PACKETS};
-use neoteletext_core::glyphs::GlyphSet;
 use neoteletext_core::render::{ChangeTracker, FlashPhase};
 use neoteletext_formats::detect::{AutoConfig, AutoReader, Format};
 use neoteletext_formats::t42::T42Variant;
 use neoteletext_image::palette::Rgba;
 use protocol::audio::Audio;
 use protocol::decoder::{FIRST_STORE_PAGES, MAX_STORE_PAGES, View};
+use protocol::settings::TeletextFont;
 use std::cell::RefCell;
 
 #[cfg(feature = "interaction")]
@@ -29,6 +29,8 @@ use crate::voice_sink::Outbox;
 use crate::{Changed, FlashRates};
 
 mod feed;
+#[cfg(test)]
+mod font_tests;
 mod render;
 #[cfg(test)]
 mod tests;
@@ -62,8 +64,6 @@ const PICTURE: Rgba = Rgba::opaque(0, 0, 0);
 const PAGE_DOTS: usize = PAGE_WIDTH as usize * PAGE_HEIGHT as usize;
 #[cfg(feature = "links")]
 const FASTEXT_ROW: usize = 24;
-
-static GLYPHS: GlyphSet<'static> = GlyphSet::bedstead();
 
 /// The audio store of a desktop receiver (the engine's REQ-AUD-017, Level
 /// B): 4 MB of compressed sound, 256 sounds and 8 records being reassembled.
@@ -194,6 +194,9 @@ pub struct Engine {
     /// sent, for the trusted core to check (INPUT.md section 7).
     #[cfg(feature = "interaction")]
     input: InputRecords,
+    /// The font pages are drawn in: Bedstead until the trusted core names
+    /// the user's.
+    font: TeletextFont,
 }
 
 impl Default for Engine {
@@ -259,6 +262,7 @@ impl Engine {
             looks: BTreeMap::new(),
             #[cfg(feature = "interaction")]
             input: InputRecords::default(),
+            font: TeletextFont::Bedstead,
         }
     }
 

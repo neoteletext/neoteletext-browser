@@ -129,6 +129,7 @@ fn every_message_to_the_interface_round_trips() {
             local: Vec::new(),
             restore_session: true,
             cookies: settings::CookieMode::Close,
+            font: settings::TeletextFont::NotoTeletext,
             refusal: None,
         }),
         ToInterface::Update(settings::UpdateView { version: "0.1.0".into(), status: "NeoTeletext is up to date".into(), offer: None, checking: true }),

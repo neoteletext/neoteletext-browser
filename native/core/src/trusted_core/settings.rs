@@ -54,6 +54,7 @@ impl Core {
             local: self.settings.local.iter().map(ToString::to_string).collect(),
             restore_session: self.settings.restore,
             cookies: super::cookies::mode_view(self.settings.cookies),
+            font: self.settings.font,
             refusal: self.refusal.as_deref().map(|refusal| clean(refusal, protocol::settings::MAX_REFUSAL)),
         };
         self.send(&ToInterface::Settings(view))
@@ -78,6 +79,7 @@ impl Core {
         let cookies = if let SettingChange::Cookies(mode) = change { Some(mode) } else { None };
         let remote = matches!(change, SettingChange::Remote(_));
         let checking = if let SettingChange::CheckUpdates(on) = change { Some(on) } else { None };
+        let font = matches!(change, SettingChange::Font(_));
         match checked_change(&mut self.settings, change, current.as_deref()) {
             Ok(security) => {
                 self.refusal = None;
@@ -100,6 +102,9 @@ impl Core {
                 }
                 if remote {
                     self.send(&ToInterface::Remote(self.settings.remote))?;
+                }
+                if font {
+                    self.tell_decoders_the_font();
                 }
             }
             Err(reason) => self.refusal = Some(reason),
@@ -165,6 +170,11 @@ fn checked_change(settings: &mut Settings, change: SettingChange, current: Optio
         SettingChange::CheckUpdates(on) => {
             settings.check_updates = on;
             Ok((!on).then(|| UPDATES_OFF.to_owned()))
+        }
+        // And the font pages are drawn in, the user's taste alone.
+        SettingChange::Font(font) => {
+            settings.font = font;
+            Ok(None)
         }
     }
 }
@@ -263,5 +273,56 @@ mod tests {
         assert_eq!(said.as_deref(), Some(UPDATES_OFF));
         assert!(!settings.check_updates);
         assert_eq!(checked_change(&mut settings, SettingChange::CheckUpdates(true), None), Ok(None));
+    }
+
+    /// REQ-1584: the font is the user's taste, kept and said nowhere;
+    /// switching back to Bedstead is the reversal.
+    #[test]
+    fn the_font_is_changed_and_said_nowhere() {
+        use protocol::settings::TeletextFont;
+        let mut settings = Settings::default();
+        assert_eq!(settings.font, TeletextFont::NotoTeletext);
+        assert_eq!(checked_change(&mut settings, SettingChange::Font(TeletextFont::Bedstead), None), Ok(None));
+        assert_eq!(settings.font, TeletextFont::Bedstead);
+        assert_eq!(checked_change(&mut settings, SettingChange::Font(TeletextFont::NotoTeletext), None), Ok(None));
+        assert_eq!(settings.font, TeletextFont::NotoTeletext);
+    }
+    /// What a decoder stand-in is sent.
+    #[cfg(unix)]
+    struct Pipe(std::sync::mpsc::Sender<Vec<u8>>);
+
+    #[cfg(unix)]
+    impl std::io::Write for Pipe {
+        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+            let _ = self.0.send(bytes.to_vec());
+            Ok(bytes.len())
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    /// REQ-1584: a font chosen in the panel is told at once to every
+    /// running decoder, which draws the pages on screen again in it.
+    #[cfg(unix)]
+    #[test]
+    fn a_font_change_is_told_to_every_running_decoder() {
+        use protocol::decoder::{ToDecoder, read_from_core};
+        use protocol::settings::TeletextFont;
+        let mut core = super::super::test_support::test_core();
+        let (pipe, sent) = std::sync::mpsc::channel();
+        let child = super::super::test_support::stand_in("/bin/sleep", &["60"], confine::Role::Decoder);
+        core.decoders.insert(1, super::super::processes::Decoder::new(child, neoteletext::outbox::Outbox::new(Pipe(pipe)), 0));
+        core.change_setting(SettingChange::Font(TeletextFont::Bedstead)).unwrap();
+        assert_eq!(core.settings.font, TeletextFont::Bedstead);
+        super::super::processes::stop_decoder(core.decoders.remove(&1).unwrap());
+        let bytes: Vec<u8> = sent.iter().flatten().collect();
+        let mut input = bytes.as_slice();
+        let mut told = Vec::new();
+        while let Some(message) = read_from_core(&mut input).unwrap() {
+            told.push(message);
+        }
+        assert_eq!(told, [ToDecoder::Font(TeletextFont::Bedstead), ToDecoder::Close]);
     }
 }

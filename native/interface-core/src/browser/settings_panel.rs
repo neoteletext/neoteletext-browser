@@ -12,15 +12,15 @@ use alloc::vec::Vec;
 use crate::browser::{Browser, Output};
 use crate::editor::Editor;
 use crate::geometry::Rect;
-use crate::settings::{CookieMode, ProxyView, SettingChange, SettingsView, UpdateView};
+use crate::settings::{CookieMode, ProxyView, SettingChange, SettingsView, TeletextFont, UpdateView};
 
 mod draw;
 mod input;
 
 const PANEL_WIDTH: f64 = 600.0;
-/// Room for its heading, eleven rows, two rows of chips and the trusted
+/// Room for its heading, twelve rows, two rows of chips and the trusted
 /// core's word.
-const PANEL_HEIGHT: f64 = 648.0 + 2.0 * ROW + GAP + ROW_GAP;
+const PANEL_HEIGHT: f64 = 648.0 + 3.0 * ROW + GAP + 2.0 * ROW_GAP;
 const PADDING: f64 = 20.0;
 const HEADING_HEIGHT: f64 = 34.0;
 const ROW: f64 = 32.0;
@@ -85,6 +85,7 @@ struct Controls {
     removes: Vec<(usize, Rect)>,
     restore_on: Rect,
     restore_off: Rect,
+    fonts: Vec<(TeletextFont, Rect)>,
     cookie_modes: Vec<(CookieMode, Rect)>,
     manage_cookies: Rect,
     updates_on: Rect,

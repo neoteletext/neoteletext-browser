@@ -20,6 +20,7 @@ fn settings_round_trip_through_their_file() {
         cookies: crate::cookies::Mode::Close,
         cookie_block: vec!["https://news.example/teletext/".into()],
         remote: RemotePlace { mode: RemoteMode::Floating, x: 900, y: 140 },
+        font: TeletextFont::Bedstead,
     };
     let (read, dropped) = Settings::read(&settings.text());
     assert_eq!((read, dropped), (settings, Dropped::default()));
@@ -82,6 +83,20 @@ fn the_settings_are_this_formats_file_and_keep_the_update_setting() {
     let off = Settings { check_updates: false, ..Settings::default() };
     assert_eq!(Settings::read(&off.text()), (off, Dropped::default()));
     assert!(Settings::default().check_updates, "on by default");
+}
+
+/// REQ-1584: the font is kept as a `font` line, Noto Teletext by
+/// default, and read strictly.
+#[test]
+fn the_font_is_kept_and_noto_teletext_is_the_default() {
+    assert_eq!(Settings::default().font, TeletextFont::NotoTeletext);
+    for (font, line) in [(TeletextFont::Bedstead, "font bedstead"), (TeletextFont::NotoTeletext, "font noto-teletext")] {
+        let settings = Settings { font, ..Settings::default() };
+        assert!(settings.text().lines().any(|each| each == line), "{line}");
+        assert_eq!(Settings::read(&settings.text()), (settings, Dropped::default()));
+    }
+    let (read, dropped) = Settings::read(&format!("{VERSION_LINE}\nfont bedstead\nfont Noto\n"));
+    assert_eq!((read.font, dropped.len()), (TeletextFont::Bedstead, 1), "a font not named is dropped; the one before stands");
 }
 
 #[test]

@@ -3,7 +3,7 @@ use alloc::vec::Vec;
 
 use crate::browser::{Browser, Frame, Key, Modifiers, Output};
 use crate::geometry::{Point, Rect};
-use crate::settings::{CookieMode, ProxyView, SettingChange, SettingsView, UpdateView};
+use crate::settings::{CookieMode, ProxyView, SettingChange, SettingsView, TeletextFont, UpdateView};
 use crate::test_canvas::Recorder;
 
 fn view() -> SettingsView {
@@ -15,6 +15,7 @@ fn view() -> SettingsView {
         local: alloc::vec!["192.168.1.20".into()],
         restore_session: true,
         cookies: CookieMode::Keep,
+        font: TeletextFont::NotoTeletext,
         refusal: None,
     }
 }
@@ -137,6 +138,24 @@ fn the_panel_shows_the_settings_and_the_refusal() {
         assert!(texts.contains(&expected), "{expected} in {texts:?}");
     }
     assert!(browser.settings_key(Key::Escape, false) == Some(true) && !browser.settings_open(), "Escape closes it");
+}
+
+/// REQ-1584: the panel's "Page font" row offers Noto Teletext and
+/// Bedstead, and a press on either asks the trusted core for it.
+#[test]
+fn the_panel_asks_for_either_font() {
+    let mut browser = open();
+    let mut canvas = Recorder::new();
+    browser.draw(&mut canvas, 1440.0, 900.0, 0);
+    let texts: Vec<&str> = canvas.texts.iter().map(|(_, text)| text.as_str()).collect();
+    for expected in ["Page font", "Noto Teletext", "Bedstead"] {
+        assert!(texts.contains(&expected), "{expected} in {texts:?}");
+    }
+    let fonts = browser.settings.controls.fonts.clone();
+    assert_eq!(fonts.iter().map(|&(font, _)| font).collect::<Vec<_>>(), [TeletextFont::NotoTeletext, TeletextFont::Bedstead]);
+    for (font, rect) in fonts {
+        assert_eq!(press(&mut browser, rect), [Output::Setting(SettingChange::Font(font))]);
+    }
 }
 
 #[test]
