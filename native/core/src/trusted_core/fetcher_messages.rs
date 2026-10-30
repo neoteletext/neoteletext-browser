@@ -79,6 +79,15 @@ impl Core {
             }
             #[cfg(feature = "interaction")]
             FromFetcher::Input { open, secure } => {
+                // A tab never shown yet selects the page its address names,
+                // so its session's start tells the channel (REQ-INT-140).
+                if open && self.typing.selection(channel).is_none() {
+                    let page = self.session.all_tabs().find(|tab| tab.channel.id == channel).and_then(|tab| tab.address()).and_then(|address| address.page);
+                    if let Some(page) = page {
+                        let sends = self.typing.select(channel, page, neoteletext_core::limits::SUBCODE_ANY, self.now_us());
+                        self.deliver_typing(sends)?;
+                    }
+                }
                 let sends = self.typing.input(channel, open, secure, self.now_us());
                 self.deliver_typing(sends)?;
             }
@@ -91,9 +100,8 @@ impl Core {
             // A LOG record's line goes to the Log as a TTI `LG` line's does
             // (DEC-633 version 2).
             FromFetcher::ChannelLog { level, page, text } => self.channel_log(channel, level, page, &text),
-            // Not yet shown: the 20-second warning line and the Stats count
-            // are TODO-1464, the "connecting" state TODO-1470.
-            FromFetcher::InvalidPackets { .. } | FromFetcher::Connecting(_) => {}
+            FromFetcher::InvalidPackets { total } => self.invalid_packets(channel, total),
+            FromFetcher::Connecting(connecting) => self.connecting(channel, connecting)?,
             FromFetcher::SubPagesMissing { page } => {
                 let changed = self.channel_subpages(channel).and_then(|subpages| subpages.missing(page));
                 self.subpage_count_changed(channel, page, changed)?;
@@ -162,6 +170,19 @@ impl Core {
                 self.send(&ToInterface::Channel(view))?;
                 self.send_subpages()?;
             }
+        }
+        Ok(())
+    }
+
+    /// A live channel is opening its connection, or its first page arrived
+    /// (DEC-1467): the strip says it is connecting until then, never that
+    /// its page was not found.
+    fn connecting(&mut self, channel: u32, connecting: bool) -> Result<(), String> {
+        let Some(tab) = self.session.all_tabs_mut().find(|tab| tab.channel.id == channel) else { return Ok(()) };
+        tab.channel.live = true;
+        tab.channel.connecting = connecting;
+        if self.active_channel() == Some(channel) {
+            self.send(&ToInterface::Strip(self.strip()))?;
         }
         Ok(())
     }

@@ -41,6 +41,9 @@ pub(crate) struct State {
     fetched: BTreeSet<u16>,
     /// The open page's catalogue was asked for since it opened.
     catalogue_asked: bool,
+    /// A sub-page of a live channel's open page selected and not yet
+    /// drawn: the strip says it is loading (REQ-1505 item 5).
+    awaiting: Option<(PageKey, u16)>,
     /// The controls the interface was last told of.
     sent: Option<PageControls>,
     /// What was asked of each channel's fetcher, for the tests, whose core
@@ -84,6 +87,7 @@ impl Core {
             self.tell(old.channel, ToDecoder::View(View { page: view.page, ..View::default() }));
         }
         self.controls.open = key;
+        self.controls.awaiting = None;
         self.controls.fetched.clear();
         self.controls.catalogue_asked = false;
         if let Some(key) = key {
@@ -108,8 +112,39 @@ impl Core {
         if self.controls.open != Some(key) {
             return Ok(());
         }
+        if self.controls.awaiting.is_some_and(|(awaited, subpage)| awaited == key && subpage == step.shown) {
+            self.controls.awaiting = None;
+            self.send(&ToInterface::Strip(self.strip()))?;
+        }
+        self.adopt_first(key, step.shown);
         self.ask_catalogue(key);
         self.send_controls()
+    }
+
+    /// On a live channel, the first sub-page drawn of a page selected with
+    /// 3F7F is the tab's selection from now on, exactly as if chosen: the
+    /// view holds it, stepping goes on from it, and nothing rotates
+    /// (DEC-1526).
+    #[cfg(feature = "interaction")]
+    fn adopt_first(&mut self, key: PageKey, shown: u16) {
+        let live = self.session.all_tabs().any(|tab| tab.channel.id == key.channel && tab.channel.live);
+        if !live || shown == SUBCODE_ANY || self.typing.selection(key.channel) != Some((key.page, SUBCODE_ANY)) {
+            return;
+        }
+        self.typing.adopt(key.channel, key.page, shown);
+        let view = View { subpage: Some(shown), ..self.controls.view_of(key) };
+        self.controls.view = Some(view);
+        self.tell(key.channel, ToDecoder::View(view));
+    }
+
+    #[cfg(not(feature = "interaction"))]
+    #[expect(clippy::unused_self, reason = "SELECT is input, compiled out")]
+    fn adopt_first(&mut self, _key: PageKey, _shown: u16) {}
+
+    /// The sub-page of a live channel's open page selected and not yet
+    /// drawn, if any.
+    pub(super) fn awaiting(&self) -> Option<(PageKey, u16)> {
+        self.controls.awaiting
     }
 
     /// Forgets the sub-pages of pages no longer on screen, and of channels
@@ -173,8 +208,12 @@ impl Core {
         let Some(subpage) = view.subpage else { return Ok(()) };
         // On a live channel a step or a choice is a sub-page selection,
         // which brings that sub-page alone (neoteletext-common's REQ-1502,
-        // REQ-1505); a channel served as files is asked for its files.
+        // REQ-1505); a channel served as files is asked for its files. A
+        // live sub-page not yet drawn is said to be loading until it is.
         self.select_view(key, subpage)?;
+        let live = self.session.all_tabs().any(|tab| tab.channel.id == key.channel && tab.channel.live);
+        let drawn = self.controls.subpages.get(&key).is_some_and(|step| step.shown == subpage);
+        self.controls.awaiting = (live && !drawn).then_some((key, subpage));
         let Some(around) = self.with_catalogue(key, |catalogue| catalogue.around(subpage, TUNED_EITHER_SIDE)) else { return Ok(()) };
         for subcode in around {
             if subcode != SUBCODE_ANY && self.controls.fetched.insert(subcode) {

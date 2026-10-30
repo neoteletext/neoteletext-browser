@@ -49,6 +49,9 @@ pub struct Counts {
     bytes_sent: u64,
     pages_arrived: u64,
     pages_changed: u64,
+    /// Pushed packets discarded as invalid since the push connection
+    /// opened, as the engine counts them (neoteletext-common's REQ-1462).
+    invalid_packets: u64,
 }
 
 /// Digits between the commas of a large number.
@@ -83,6 +86,7 @@ impl Counts {
             stat("  by push (WebSocket)", format!("{} in {} messages", bytes_text(self.pushed_bytes), grouped(self.pushes))),
             stat("  by fetch (HTTP)", format!("{} in {} requests", bytes_text(self.fetched_bytes), grouped(self.fetches))),
             stat("Packets received", grouped(self.packets)),
+            stat("  invalid, discarded", grouped(self.invalid_packets)),
             stat("Audio received", format!("{} in {} packets", bytes_text(packet_bytes(self.audio_packets)), grouped(self.audio_packets))),
             stat("Cursor records received", format!("{} in {} packets", bytes_text(packet_bytes(self.input_packets)), grouped(self.input_packets))),
             stat("Input events sent", grouped(self.events_sent)),
@@ -207,6 +211,11 @@ impl Console {
         let counts = self.counts(channel);
         counts.fetches = counts.fetches.saturating_add(1);
         counts.fetched_bytes = counts.fetched_bytes.saturating_add(bytes);
+    }
+
+    /// The engine's count of invalid packets the push connection carried.
+    pub fn invalid(&mut self, channel: u32, total: u64) {
+        self.counts(channel).invalid_packets = total;
     }
 
     /// Counts the push connection opening.

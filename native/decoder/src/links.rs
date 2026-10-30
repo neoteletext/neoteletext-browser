@@ -37,21 +37,29 @@ impl Lines {
     /// Keeps the link lines of a page file, replacing its earlier version's.
     pub fn read(&mut self, page: &PageFile) {
         let key = (page.address.mpp(), page.subcode.value());
-        let text = page
-            .text_links
-            .as_slice()
-            .iter()
-            .filter_map(|link| Some((link.row, link.column, link.length, target(&link.destination)?)))
-            .take(MAX_TEXT_LINKS)
-            .collect();
-        let numbers = page
-            .number_links
-            .as_slice()
-            .iter()
-            .filter_map(|link| Some(NumberLink { number: link.number.mpp(), target: target(&link.destination)? }))
-            .take(MAX_NUMBER_LINKS)
-            .collect();
-        let lines = LinkLines { text, numbers };
+        self.set(key, page.text_links.as_slice().iter().copied(), page.number_links.as_slice().iter().copied(), true);
+    }
+
+    /// Keeps a pushed sub-page's links from its LINKS record (REQ-1494),
+    /// as its page file's `LT` and `LK` lines would give them: part 0
+    /// replaces what was held, later parts add to it.
+    pub fn read_record(&mut self, record: &neoteletext_web::records::links::LinksRecord<'_>) {
+        let key = (record.page.mpp(), record.subcode.value());
+        self.set(key, record.text_links(), record.number_links(), record.part == 0);
+    }
+
+    fn set(
+        &mut self,
+        key: (u16, u16),
+        texts: impl Iterator<Item = neoteletext_formats::page::TextLink>,
+        numbers: impl Iterator<Item = neoteletext_formats::page::NumberLink>,
+        replace: bool,
+    ) {
+        let mut lines = if replace { LinkLines::default() } else { self.0.remove(&key).unwrap_or_default() };
+        lines.text.extend(texts.filter_map(|link| Some((link.row, link.column, link.length, target(&link.destination)?))));
+        lines.text.truncate(MAX_TEXT_LINKS);
+        lines.numbers.extend(numbers.filter_map(|link| Some(NumberLink { number: link.number.mpp(), target: target(&link.destination)? })));
+        lines.numbers.truncate(MAX_NUMBER_LINKS);
         if lines == LinkLines::default() {
             self.0.remove(&key);
         } else {

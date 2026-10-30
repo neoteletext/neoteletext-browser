@@ -33,6 +33,9 @@ neoteletext-audio.workspace = true
 # 32 colours, and decision 60 restores them.
 neoteletext-core = { workspace = true, features = ["modern-classic", "level35-32colors"] }
 neoteletext-formats.workspace = true
+# The reader of a live channel's LINKS records (neoteletext-common's
+# REQ-1494): a pushed sub-page's Link Extension links.
+neoteletext-web.workspace = true
 neoteletext-image.workspace = true
 interface-core.workspace = true
 protocol.workspace = true

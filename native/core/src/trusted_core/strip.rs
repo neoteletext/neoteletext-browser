@@ -11,6 +11,8 @@ use super::Core;
 /// How long the strip says a notice (`settings-home-console-proxy-security.md`
 /// section 3).
 const NOTICE_TIME: Duration = Duration::from_secs(10);
+/// What the strip says while a live channel opens its connection.
+const CONNECTING: &str = "Connecting to the channel";
 
 impl Core {
     /// The strip as the session has it, with the notice while it lasts.
@@ -20,6 +22,14 @@ impl Core {
             && std::time::Instant::now() < *until
         {
             strip.notice = clean(text, protocol::MAX_STRIP_NOTICE);
+        } else if self.session.active_tab().is_some_and(|tab| tab.channel.connecting) {
+            // A live channel opening its connection is connecting, never a
+            // page not found (DEC-1467).
+            strip.notice = String::from(CONNECTING);
+        } else if let Some((key, subpage)) = self.awaiting()
+            && self.active_channel() == Some(key.channel)
+        {
+            strip.notice = format!("Loading page {:03X}, sub-page {subpage:04X}", key.page);
         }
         strip
     }

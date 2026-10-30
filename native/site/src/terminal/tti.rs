@@ -117,27 +117,35 @@ impl Page {
 
     /// The page as the channel pushes it (neoteletext-common's DEC-1459):
     /// its TTI encoded to T42 packets by the engine's page encoder, as the
-    /// decoder encodes a page file, then its cursor record as packet 4/31
-    /// of user-defined audio service `service`, record `record_id`, since a
-    /// `CU` line has no packet form of its own. `LT` lines have none
-    /// either: the links stay in the page file the viewer fetches.
-    pub(super) fn packets(&self, service: u8, record_id: u8) -> Vec<u8> {
+    /// decoder encodes a page file; then its Link Extension links as LINKS
+    /// records (REQ-1494); then its cursor record, since a `CU` line has no
+    /// packet form of its own. The records are packets 4/31 of user-defined
+    /// audio service `service`, numbered from `record_id`. Returns the
+    /// packets and the record id after the last.
+    pub(super) fn packets(&self, service: u8, record_id: u8) -> (Vec<u8>, u8) {
         let mut reader = AutoReader::new(AutoConfig { format: Some(Format::Tti), encode_pages: true, ..AutoConfig::default() });
         let mut bytes = Vec::new();
-        let mut take = |item: Item<'_>| {
-            if let Item::Packet { packet, .. } = item {
-                bytes.extend_from_slice(&packet.bytes);
+        let mut links = Vec::new();
+        let mut record_id = record_id;
+        let mut take = |item: Item<'_>| match item {
+            Item::Packet { packet, .. } => bytes.extend_from_slice(&packet.bytes),
+            Item::Page(page) => {
+                if let Ok(sent) = neoteletext_web::records::links::encode_page(page, service, record_id, &mut |packet| links.extend_from_slice(&packet.bytes)) {
+                    record_id = sent.next_record_id;
+                }
             }
+            _ => {}
         };
         let tti = self.tti();
         reader.feed(tti.as_bytes(), &mut take);
         reader.finish(&mut take);
+        bytes.extend_from_slice(&links);
         let place = self.cursor.map(|(row, column)| Place { row, column });
         let cursor = Cursor { page: self.number, acked: self.acked, place, flags: 0 };
         if let Some(packet) = cursor.packet(service, record_id) {
             bytes.extend_from_slice(&packet.bytes);
         }
-        bytes
+        (bytes, record_id.wrapping_add(1))
     }
 
     pub(super) fn tti(&self) -> String {

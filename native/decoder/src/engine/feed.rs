@@ -120,6 +120,13 @@ impl Engine {
                 if let Some(page) = header_page(packet) {
                     self.pushed.insert(page);
                 }
+                // A pushed sub-page's Link Extension links come as a LINKS
+                // record after it (REQ-1494), into the store a page file's
+                // lines fill; the engine's agent counted any it refused.
+                #[cfg(feature = "links")]
+                if let neoteletext_web::records::Read::Record(neoteletext_web::records::ChannelRecord::Links(record)) = self.records.push(packet) {
+                    self.lines.read_record(&record);
+                }
             }
         } else {
             self.drop_pushed(&mut items);

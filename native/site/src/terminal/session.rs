@@ -56,9 +56,9 @@ impl Session {
     /// packets with its cursor record as a packet 4/31 (neoteletext-common's
     /// DEC-1459), each cursor record a record of its own.
     pub(super) fn page_push(&mut self) -> Push {
-        let record_id = self.record_id;
-        self.record_id = self.record_id.wrapping_add(1);
-        Push::Page(self.render().packets(AUDIO_SERVICE, record_id))
+        let (bytes, next_record_id) = self.render().packets(AUDIO_SERVICE, self.record_id);
+        self.record_id = next_record_id;
+        Push::Page(bytes)
     }
 
     /// The open page as it now stands.

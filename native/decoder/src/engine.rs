@@ -170,6 +170,10 @@ pub struct Engine {
     /// The `LT` and `LK` lines of every page file read.
     #[cfg(feature = "links")]
     lines: links::Lines,
+    /// The channel's records on its push connection, for its LINKS
+    /// records (REQ-1494).
+    #[cfg(feature = "links")]
+    records: neoteletext_web::records::RecordReader,
     /// The row 24 the receiver draws for each page file with `LN` lines,
     /// by page and sub-code (REQ-NAV-011, the engine's E.108).
     receiver_rows: BTreeMap<(u16, u16), ReceiverRow>,
@@ -245,6 +249,8 @@ impl Engine {
             sounds: Vec::new(),
             #[cfg(feature = "links")]
             lines: links::Lines::default(),
+            #[cfg(feature = "links")]
+            records: neoteletext_web::records::RecordReader::new(),
             receiver_rows: BTreeMap::new(),
             trackers: RefCell::new(BTreeMap::new()),
             views: BTreeMap::new(),

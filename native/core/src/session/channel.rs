@@ -39,6 +39,11 @@ pub struct ChannelState {
     /// A restored file not yet read: it is read when its tab is first
     /// shown (finding F-53).
     unread: Option<std::path::PathBuf>,
+    /// A live channel: its `channel.json` names a push connection, and its
+    /// pages and contents come only on it (DEC-1467).
+    pub live: bool,
+    /// A live channel whose first page has not yet arrived.
+    pub connecting: bool,
 }
 
 impl ChannelState {
@@ -100,12 +105,20 @@ impl ChannelState {
             problem,
             refused: None,
             unread: None,
+            live: false,
+            connecting: false,
         }
     }
 
     /// The channel's contents file: every page it lists, with its title,
     /// and the name of the section each hundred falls in.
     pub fn set_contents(&mut self, entries: &[Entry]) {
+        // A live channel's index is sent whole each time it changes, so a
+        // page it no longer lists goes (`INPUT.md` section 7.5).
+        if self.live {
+            self.titles.fill(None);
+            self.banks.fill(String::new());
+        }
         let mut section = String::new();
         for entry in entries {
             match entry {

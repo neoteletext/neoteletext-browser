@@ -84,10 +84,19 @@ impl Core {
         }
         let unused: Vec<u32> = self.decoders.keys().chain(self.fetchers.keys()).copied().filter(|id| !channels.iter().any(|(used, ..)| used == id)).collect();
         for id in unused {
+            // The tab left the channel's pages: told with SELECT of page 0
+            // before its connection closes (REQ-INT-140), as far as the
+            // fetcher sends it before it ends.
+            #[cfg(feature = "interaction")]
+            {
+                let sends = self.typing.select(id, 0, neoteletext_core::limits::SUBCODE_ANY, self.now_us());
+                self.deliver_typing(sends)?;
+            }
             self.put_to_sleep(id);
             self.stop_fetcher(id);
             self.sleep.forget(id);
             self.console.forget(id);
+            self.invalid.remove(&id);
         }
         let open = |id: &u32| channels.iter().any(|(used, ..)| used == id);
         self.given_up.retain(open);

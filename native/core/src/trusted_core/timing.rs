@@ -64,6 +64,9 @@ impl Core {
         if let Some(due) = self.frames_due_at() {
             next = next.map(|at| at.min(due));
         }
+        if let Some(due) = self.invalid_due_at() {
+            next = next.map(|at| at.min(due));
+        }
         #[cfg(feature = "interaction")]
         if let Some(due) = self.moves_due_at() {
             next = next.map(|at| at.min(due));
@@ -100,6 +103,9 @@ impl Core {
         }
         if self.frames_due_at().is_some_and(|due| now >= due) {
             self.send_due_frames(now)?;
+        }
+        if self.invalid_due_at().is_some_and(|due| now >= due) {
+            self.invalid_tick(now);
         }
         #[cfg(feature = "interaction")]
         if self.moves_due_at().is_some_and(|due| now >= due) {

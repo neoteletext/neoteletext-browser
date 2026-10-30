@@ -11,6 +11,7 @@ mod fetcher_messages;
 #[cfg(test)]
 mod hostile_tests;
 mod intents;
+mod invalid_packets;
 mod library;
 #[cfg(feature = "links")]
 mod links;
@@ -125,6 +126,8 @@ struct Core {
     notice: Option<(String, std::time::Instant)>,
     /// The developer console's entries (requirement 19.9).
     console: Console,
+    /// Each live channel's invalid packets and their report (REQ-1462).
+    invalid: BTreeMap<u32, invalid_packets::InvalidReport>,
     events: Sender<Event>,
     frames: frames::Frames,
     /// The channel whose decoder was last told which pages are shown.
@@ -283,6 +286,7 @@ impl Core {
             settings_folder,
             refusal: None,
             notice: None,
+            invalid: BTreeMap::new(),
             console: Console::default(),
             events,
             frames: frames::Frames::default(),

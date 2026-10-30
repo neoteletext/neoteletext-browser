@@ -40,9 +40,6 @@ use protocol::interaction::{CursorState, InputIntent, Intent, Typing as TypingSt
 /// nothing: what is typed shows only as the channel draws it (the owner,
 /// 28 October 2026).
 const OFFERED: u32 = PAGE_CAP | CURSOR_CAP | TOUCH_CAP | SELECT_CAP;
-/// The view a tab is within its channel's connection: each tab holds a
-/// connection of its own, so it is the connection's only view.
-const TAB_VIEW: u8 = 0;
 /// A teletext page's text area, in cells (section 5.4's RESIZE): 40
 /// columns; the drawn size goes as 0, unknown, as it changes with the
 /// window.
@@ -199,7 +196,7 @@ impl Channel {
         }
         self.select_told = self.selected;
         let Some((page, sub)) = self.selected else { return };
-        if let Some(select) = Select::new(TAB_VIEW, page, sub) {
+        if let Some(select) = Select::new(page, sub) {
             self.send(channel, &Item::Event(Event::Select(select)), now_us, sends);
         }
     }
@@ -370,6 +367,26 @@ impl Typing {
         if let Some(state) = self.channels.get_mut(&channel) {
             state.tell_select(channel, now_us, sends);
         }
+    }
+
+    /// What the tab of `channel` selects, as `select` or `opened` set it.
+    #[must_use]
+    pub fn selection(&self, channel: u32) -> Option<(u16, u16)> {
+        self.channels.get(&channel).and_then(|state| state.selected)
+    }
+
+    /// The first sub-page that arrived for a page selected with 3F7F is the
+    /// tab's selection from now on, exactly as if chosen (DEC-1526): the
+    /// channel answered with it and holds it, so nothing is sent.
+    pub fn adopt(&mut self, channel: u32, page: u16, sub: u16) {
+        let Some(state) = self.channels.get_mut(&channel) else { return };
+        if state.selected != Some((page, SUBCODE_ANY)) {
+            return;
+        }
+        if state.select_told == state.selected {
+            state.select_told = Some((page, sub));
+        }
+        state.selected = Some((page, sub));
     }
 
     /// The tab of `channel` selected `page` and `sub`, a sub-code or 3F7F
