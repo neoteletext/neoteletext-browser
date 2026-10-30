@@ -51,7 +51,7 @@ const WHOLE_FLAGS_BYTES: usize = 1;
 /// asserts this equals.
 pub const MAX_CHANNEL_LOG: usize = 200;
 /// A log line's page when it followed none.
-const NO_PAGE: u16 = 0;
+pub(crate) const NO_PAGE: u16 = 0;
 
 /// The pages and sub-pages a decoder first has room for: about 0.7 MB of
 /// store, enough for most channels; a decoder that fills it is started

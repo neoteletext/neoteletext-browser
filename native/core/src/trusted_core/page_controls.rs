@@ -92,7 +92,7 @@ impl Core {
         if let Some((pending, subpage)) = self.controls.pending.take()
             && Some(pending) == key
         {
-            self.show_subpage(pending, View { page: pending.page, subpage: Some(subpage), ..View::default() });
+            self.show_subpage(pending, View { page: pending.page, subpage: Some(subpage), ..View::default() })?;
         }
         self.send_controls()
     }
@@ -167,16 +167,35 @@ impl Core {
     /// Shows `view` on `key`, the open page, and fetches the sub-page it
     /// names, with those either side of it, when the page has a catalogue
     /// and they were not asked for since it opened.
-    fn show_subpage(&mut self, key: PageKey, view: View) {
+    fn show_subpage(&mut self, key: PageKey, view: View) -> Result<(), String> {
         self.controls.view = Some(view);
         self.tell(key.channel, ToDecoder::View(view));
-        let Some(subpage) = view.subpage else { return };
-        let Some(around) = self.with_catalogue(key, |catalogue| catalogue.around(subpage, TUNED_EITHER_SIDE)) else { return };
+        let Some(subpage) = view.subpage else { return Ok(()) };
+        // On a live channel a step or a choice is a sub-page selection,
+        // which brings that sub-page alone (neoteletext-common's REQ-1502,
+        // REQ-1505); a channel served as files is asked for its files.
+        self.select_view(key, subpage)?;
+        let Some(around) = self.with_catalogue(key, |catalogue| catalogue.around(subpage, TUNED_EITHER_SIDE)) else { return Ok(()) };
         for subcode in around {
             if subcode != SUBCODE_ANY && self.controls.fetched.insert(subcode) {
                 self.tell_fetcher(key.channel, &ToFetcher::FetchSubPage { page: key.page, subcode });
             }
         }
+        Ok(())
+    }
+
+    /// Tells `key`'s channel that its tab selects `sub` of the page, a
+    /// sub-code or 3F7F for the page (SELECT, REQ-INT-140).
+    #[cfg(feature = "interaction")]
+    fn select_view(&mut self, key: PageKey, sub: u16) -> Result<(), String> {
+        let sends = self.typing.select(key.channel, key.page, sub, self.now_us());
+        self.deliver_typing(sends)
+    }
+
+    #[cfg(not(feature = "interaction"))]
+    #[expect(clippy::unnecessary_wraps, clippy::unused_self, reason = "SELECT is input, compiled out")]
+    fn select_view(&mut self, _key: PageKey, _sub: u16) -> Result<(), String> {
+        Ok(())
     }
 
     /// The open page's catalogue arrived or changed: its controls and the
@@ -187,7 +206,7 @@ impl Core {
         }
         let view = self.controls.view_of(key);
         if view.subpage.is_some() {
-            self.show_subpage(key, view);
+            self.show_subpage(key, view)?;
         }
         self.send_controls()
     }
@@ -218,7 +237,7 @@ impl Core {
                 return Ok(());
             }
             let view = View { subpage: Some(subcode), ..self.controls.view_of(target) };
-            self.show_subpage(target, view);
+            self.show_subpage(target, view)?;
             return self.send_controls();
         }
         let Some(key) = self.controls.open else { return Ok(()) };
@@ -247,10 +266,14 @@ impl Core {
                 // 3F7F names no sub-page (clause 9.6.1).
                 let Some(next) = next.filter(|&next| next != SUBCODE_ANY) else { return Ok(()) };
                 view.subpage = Some(next);
-                self.show_subpage(key, view);
+                self.show_subpage(key, view)?;
                 return self.send_controls();
             }
-            PageControl::Latest => view.subpage = None,
+            PageControl::Latest => {
+                // The return to the latest is a page selection (REQ-1502).
+                view.subpage = None;
+                self.select_view(key, SUBCODE_ANY)?;
+            }
             PageControl::SubPageOf { .. } => return Ok(()),
         }
         self.controls.view = Some(view);

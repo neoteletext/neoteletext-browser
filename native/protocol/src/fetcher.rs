@@ -15,9 +15,9 @@ use interface_core::channel::page_index;
 #[cfg(feature = "links")]
 use kinds::KIND_LINKS;
 use kinds::{
-    KIND_CERTIFICATE_REFUSED, KIND_CLEAR_SITE_DATA, KIND_CONFINED, KIND_CONTENTS, KIND_COOKIE_ANSWER, KIND_COOKIE_QUESTION, KIND_COOKIE_SET, KIND_EXCHANGE,
-    KIND_FETCH_SUBPAGE, KIND_FETCH_SUBPAGES, KIND_NOTICE, KIND_PAGE, KIND_PROXY_FAILED, KIND_PUSHING, KIND_REACHED_ANSWER, KIND_REACHED_QUESTION,
-    KIND_SUBPAGES, KIND_SUBPAGES_MISSING,
+    KIND_CERTIFICATE_REFUSED, KIND_CHANNEL_LOG, KIND_CLEAR_SITE_DATA, KIND_CONFINED, KIND_CONNECTING, KIND_CONTENTS, KIND_COOKIE_ANSWER, KIND_COOKIE_QUESTION,
+    KIND_COOKIE_SET, KIND_EXCHANGE, KIND_FETCH_SUBPAGE, KIND_FETCH_SUBPAGES, KIND_INVALID_PACKETS, KIND_NOTICE, KIND_PAGE, KIND_PROXY_FAILED, KIND_PUSHING,
+    KIND_REACHED_ANSWER, KIND_REACHED_QUESTION, KIND_SUBPAGES, KIND_SUBPAGES_MISSING,
 };
 #[cfg(feature = "interaction")]
 use kinds::{KIND_INPUT, KIND_MEASURE_ROUND_TRIP, KIND_ROUND_TRIP, KIND_SEND};
@@ -213,6 +213,28 @@ pub enum FromFetcher {
         /// The page.
         page: u16,
     },
+    /// A log line for the channel's author from a LOG record on its push
+    /// connection (the engine's `Event::Log`, `INPUT.md` section 7.6):
+    /// untrusted, for the console's Log only, as a TTI `LG` line's is.
+    ChannelLog {
+        /// Its level.
+        level: interface_core::console::Level,
+        /// The page it concerns, if any.
+        page: Option<u16>,
+        /// Its text, at most [`crate::decoder::MAX_CHANNEL_LOG`] bytes.
+        text: String,
+    },
+    /// The count of invalid packets the push connection carried since it
+    /// opened, each discarded (the engine's `Event::InvalidPackets`,
+    /// neoteletext-common's REQ-1462): untrusted, a number for the console.
+    InvalidPackets {
+        /// The count.
+        total: u64,
+    },
+    /// A live channel is opening its connection (true), or its first page
+    /// arrived on it (false): the engine's `ChannelConnecting` and
+    /// `ChannelLive` (DEC-1467).
+    Connecting(bool),
     /// The push WebSocket's round trip, from a ping to its pong (the
     /// engine's `Event::RoundTrip`, `RETURN-CHANNEL.md` REQ-RCH-016), while
     /// [`ToFetcher::MeasureRoundTrip`] is on. Untrusted: the strip shows
@@ -369,6 +391,47 @@ pub fn read_to_fetcher(input: &mut dyn Read) -> Result<Option<ToFetcher>, Protoc
     Ok(Some(message))
 }
 
+/// A live channel's message beyond its pages: its payload, and its kind.
+fn push_live_message(payload: &mut Vec<u8>, message: &FromFetcher) -> Result<u8, ProtocolError> {
+    Ok(match message {
+        FromFetcher::ChannelLog { level, page, text } => {
+            payload.push(crate::console::level_byte(*level));
+            if let Some(page) = page {
+                page_index(*page).ok_or(ProtocolError::BadValue("page number"))?;
+            }
+            payload.extend_from_slice(&page.unwrap_or(crate::decoder::NO_PAGE).to_be_bytes());
+            push_raw_text(payload, text, crate::decoder::MAX_CHANNEL_LOG);
+            KIND_CHANNEL_LOG
+        }
+        FromFetcher::InvalidPackets { total } => {
+            payload.extend_from_slice(&total.to_be_bytes());
+            KIND_INVALID_PACKETS
+        }
+        FromFetcher::Connecting(connecting) => {
+            payload.push(u8::from(*connecting));
+            KIND_CONNECTING
+        }
+        _ => return Err(ProtocolError::BadValue("not a live channel's message")),
+    })
+}
+
+/// Reads a live channel's message beyond its pages, of `kind`.
+fn read_live_message(kind: u8, fields: &mut Fields<'_>) -> Result<FromFetcher, ProtocolError> {
+    Ok(match kind {
+        KIND_CHANNEL_LOG => {
+            let level = crate::console::level_from_byte(fields.u8()?)?;
+            let page = match fields.u16()? {
+                crate::decoder::NO_PAGE => None,
+                page => Some(page_index(page).map(|_| page).ok_or(ProtocolError::BadValue("page number"))?),
+            };
+            FromFetcher::ChannelLog { level, page, text: raw_text(fields, crate::decoder::MAX_CHANNEL_LOG, "log line too long")? }
+        }
+        KIND_INVALID_PACKETS => FromFetcher::InvalidPackets { total: u64::from_be_bytes(fields.array()?) },
+        KIND_CONNECTING => FromFetcher::Connecting(fields.flag("connecting")?),
+        other => return Err(ProtocolError::UnknownKind(other)),
+    })
+}
+
 /// # Errors
 /// When writing fails or the message breaks a bound.
 pub fn write_to_core(out: &mut dyn Write, message: &FromFetcher) -> Result<(), ProtocolError> {
@@ -462,6 +525,7 @@ pub fn write_to_core(out: &mut dyn Write, message: &FromFetcher) -> Result<(), P
             payload.extend_from_slice(&microseconds.to_be_bytes());
             KIND_ROUND_TRIP
         }
+        FromFetcher::ChannelLog { .. } | FromFetcher::InvalidPackets { .. } | FromFetcher::Connecting(_) => push_live_message(&mut payload, message)?,
     };
     write_frame(out, kind, &payload)
 }
@@ -541,6 +605,7 @@ pub fn read_from_fetcher(input: &mut dyn Read) -> Result<Option<FromFetcher>, Pr
         KIND_SUBPAGES_MISSING => FromFetcher::SubPagesMissing { page: fields.display_page()? },
         #[cfg(feature = "interaction")]
         KIND_ROUND_TRIP => FromFetcher::RoundTrip { microseconds: u64::from_be_bytes(fields.array()?) },
+        KIND_CHANNEL_LOG | KIND_INVALID_PACKETS | KIND_CONNECTING => read_live_message(kind, &mut fields)?,
         other => return Err(ProtocolError::UnknownKind(other)),
     };
     fields.end()?;

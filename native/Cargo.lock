@@ -1866,6 +1866,7 @@ dependencies = [
  "embedded-io",
  "interface-core",
  "neoteletext-core",
+ "neoteletext-formats",
  "neoteletext-input",
  "neoteletext-web",
  "protocol",

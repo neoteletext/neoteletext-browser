@@ -102,7 +102,7 @@ impl Core {
     }
 
     /// A line of the channel's log, at `level`, of `page` if it names one.
-    fn channel_log(&mut self, channel: u32, level: Level, page: Option<u16>, text: &str) {
+    pub(super) fn channel_log(&mut self, channel: u32, level: Level, page: Option<u16>, text: &str) {
         let text = clean(text, protocol::decoder::MAX_CHANNEL_LOG);
         let line = match page {
             Some(page) => format!("channel, page {page:03X}: {text}"),

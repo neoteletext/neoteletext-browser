@@ -35,3 +35,10 @@ pub(super) const KIND_FETCH_SUBPAGE: u8 = 108;
 pub(super) const KIND_MEASURE_ROUND_TRIP: u8 = 109;
 #[cfg(feature = "interaction")]
 pub(super) const KIND_ROUND_TRIP: u8 = 110;
+// What a live channel's push connection says beyond its pages
+// (neoteletext-common's DEC-1459): its LOG records, the count of invalid
+// packets it carried (REQ-1462) and whether it is still connecting
+// (DEC-1467), in the next numbers free across every pipe.
+pub(super) const KIND_CHANNEL_LOG: u8 = 130;
+pub(super) const KIND_INVALID_PACKETS: u8 = 131;
+pub(super) const KIND_CONNECTING: u8 = 132;

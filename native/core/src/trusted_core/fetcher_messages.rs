@@ -88,6 +88,12 @@ impl Core {
                 self.deliver_typing(sends)?;
             }
             FromFetcher::SubPages { page, part } => self.catalogue_part(channel, page, part)?,
+            // A LOG record's line goes to the Log as a TTI `LG` line's does
+            // (DEC-633 version 2).
+            FromFetcher::ChannelLog { level, page, text } => self.channel_log(channel, level, page, &text),
+            // Not yet shown: the 20-second warning line and the Stats count
+            // are TODO-1464, the "connecting" state TODO-1470.
+            FromFetcher::InvalidPackets { .. } | FromFetcher::Connecting(_) => {}
             FromFetcher::SubPagesMissing { page } => {
                 let changed = self.channel_subpages(channel).and_then(|subpages| subpages.missing(page));
                 self.subpage_count_changed(channel, page, changed)?;

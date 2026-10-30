@@ -21,11 +21,12 @@ use std::borrow::Cow;
 use std::collections::BTreeMap;
 
 use interface_core::canvas::PageKey;
+use neoteletext_core::limits::SUBCODE_ANY;
 use neoteletext_input::MAX_CONTACTS;
-use neoteletext_input::caps::{CURSOR_CAP, PAGE_CAP, RESUME_CAP, TOUCH_CAP};
+use neoteletext_input::caps::{CURSOR_CAP, PAGE_CAP, RESUME_CAP, SELECT_CAP, TOUCH_CAP};
 use neoteletext_input::contacts::Contacts;
 use neoteletext_input::cursor::{BLOCK, Cursor};
-use neoteletext_input::event::{self, Event, Item, Mouse, MouseAction, Point, Touch};
+use neoteletext_input::event::{self, Event, Item, Mouse, MouseAction, Point, Select, Touch};
 use neoteletext_input::pace::Pacer;
 use neoteletext_input::session::{ResumableSession, State};
 use neoteletext_input::{MAX_MESSAGE, MAX_ROWS};
@@ -33,10 +34,15 @@ use protocol::interaction::{CursorState, InputIntent, Intent, Typing as TypingSt
 
 /// What NeoTeletext offers in HELLO (INPUT.md section 6.2): it shows pages,
 /// draws the cursor, and sends touch (REQ-RCH-041 to REQ-RCH-043); the
-/// resumable session adds RESUME (section 6.4, REQ-RCH-013). It echoes
+/// resumable session adds RESUME (section 6.4, REQ-RCH-013); and it says
+/// which page or sub-page each view selects with SELECT (REQ-INT-140,
+/// decision 128). It echoes
 /// nothing: what is typed shows only as the channel draws it (the owner,
 /// 28 October 2026).
-const OFFERED: u32 = PAGE_CAP | CURSOR_CAP | TOUCH_CAP;
+const OFFERED: u32 = PAGE_CAP | CURSOR_CAP | TOUCH_CAP | SELECT_CAP;
+/// The view a tab is within its channel's connection: each tab holds a
+/// connection of its own, so it is the connection's only view.
+const TAB_VIEW: u8 = 0;
 /// A teletext page's text area, in cells (section 5.4's RESIZE): 40
 /// columns; the drawn size goes as 0, unknown, as it changes with the
 /// window.
@@ -91,6 +97,12 @@ struct Channel {
     round_trip_us: Option<u32>,
     /// The page the channel was last told is open, 0 for none.
     told: Option<u16>,
+    /// What the tab selects: its page and the sub-code chosen, or 3F7F
+    /// when the page was chosen and none of its sub-pages
+    /// (neoteletext-common's REQ-1502).
+    selected: Option<(u16, u16)>,
+    /// The selection the channel was last told with SELECT.
+    select_told: Option<(u16, u16)>,
     /// The focus the channel was last told, which is whether keys go to it
     /// and the round trip is measured.
     focus_told: Option<bool>,
@@ -128,6 +140,8 @@ impl Channel {
             cursor: None,
             round_trip_us: None,
             told: None,
+            selected: None,
+            select_told: None,
             focus_told: None,
             went: None,
             page_unacked: None,
@@ -173,6 +187,21 @@ impl Channel {
         self.finger = None;
         self.held = 0;
         self.last_at = [None; MAX_CONTACTS];
+    }
+
+    /// Tells the channel the tab's selection with SELECT when it changed,
+    /// once the session has started, whether or not keys go to it
+    /// (REQ-INT-140). A channel that did not agree SELECT is told nothing:
+    /// the session refuses the event.
+    fn tell_select(&mut self, channel: u32, now_us: u64, sends: &mut Vec<Send>) {
+        if !self.started || self.selected == self.select_told {
+            return;
+        }
+        self.select_told = self.selected;
+        let Some((page, sub)) = self.selected else { return };
+        if let Some(select) = Select::new(TAB_VIEW, page, sub) {
+            self.send(channel, &Item::Event(Event::Select(select)), now_us, sends);
+        }
     }
 
     /// The connection opened: the session's first message, HELLO, with
@@ -336,6 +365,23 @@ impl Typing {
         let resize = Event::Resize { columns: PAGE_COLUMNS, rows: MAX_ROWS, width: 0, height: 0 };
         state.send(channel, &Item::Event(resize), now_us, sends);
         self.tell(channel, now_us, sends);
+        // Each session's start tells the channel what the tab selects, so a
+        // reconnected channel is told its page again (REQ-INT-140).
+        if let Some(state) = self.channels.get_mut(&channel) {
+            state.tell_select(channel, now_us, sends);
+        }
+    }
+
+    /// The tab of `channel` selected `page` and `sub`, a sub-code or 3F7F
+    /// for the page and none of its sub-pages (neoteletext-common's
+    /// REQ-1502): told to the channel with SELECT at once, or when its
+    /// session starts.
+    pub fn select(&mut self, channel: u32, page: u16, sub: u16, now_us: u64) -> Vec<Send> {
+        let mut sends = Vec::new();
+        let state = self.channels.entry(channel).or_insert_with(Channel::new);
+        state.selected = Some((page, sub));
+        state.tell_select(channel, now_us, &mut sends);
+        sends
     }
 
     /// Whether a page is open for typing: the active tab's open page's
@@ -360,6 +406,15 @@ impl Typing {
         // The viewer chose: the host's earlier word on its page is spent.
         if let Some(state) = opened.and_then(|key| self.channels.get_mut(&key.channel)) {
             state.went = None;
+        }
+        // A page opened is a page selection, 3F7F (REQ-1502); the tab's
+        // sub-page selections come by `select`.
+        if let Some(key) = opened {
+            let state = self.channels.entry(key.channel).or_insert_with(Channel::new);
+            if state.selected.map(|(page, _)| page) != Some(key.page) {
+                state.selected = Some((key.page, SUBCODE_ANY));
+                state.tell_select(key.channel, now_us, &mut sends);
+            }
         }
         for channel in [before.0, active].into_iter().flatten() {
             self.tell(channel, now_us, &mut sends);
@@ -399,6 +454,7 @@ impl Typing {
         if open && !was_open {
             state.started = false;
             state.told = None;
+            state.select_told = None;
             state.page_unacked = None;
             state.focus_told = None;
             state.cursor = None;
@@ -408,6 +464,7 @@ impl Typing {
             state.session.close();
             state.started = false;
             state.told = None;
+            state.select_told = None;
             state.page_unacked = None;
             state.focus_told = None;
             state.round_trip_us = None;

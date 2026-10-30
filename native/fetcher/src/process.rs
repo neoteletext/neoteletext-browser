@@ -30,6 +30,7 @@ use protocol::subpages::SubPageRows;
 use crate::agent::descriptor_links;
 use crate::agent::{Random, product};
 use crate::cookies;
+use crate::live::{LiveIndex, SubPageLists};
 use crate::transport::{AllowedLocal, Tcp, address};
 
 /// The agent's own cookie jar holds nothing: the trusted core keeps the
@@ -148,6 +149,23 @@ enum Action {
     Tell(FromFetcher),
     /// The push connection opened or was lost.
     Push(bool),
+    /// A part of a live channel's index: its pages, and the sending's
+    /// generation.
+    Index(Vec<(u16, String, String)>, u16),
+    /// Every part of an index sending arrived.
+    IndexComplete(u16),
+    /// A part of a page's list of sub-pages from a SUBPAGES record.
+    SubPageList(SubPageListPart),
+}
+
+/// A SUBPAGES record, owned (`INPUT.md` section 7.9).
+struct SubPageListPart {
+    page: PageAddress,
+    version: u16,
+    part: u16,
+    parts: u16,
+    count: u16,
+    entries: Vec<(u16, String)>,
 }
 
 fn collect(output: Output<'_>, actions: &mut Vec<Action>) {
@@ -204,6 +222,33 @@ fn collect(output: Output<'_>, actions: &mut Vec<Action>) {
         // The push WebSocket's round trip, for the strip (REQ-RCH-016).
         #[cfg(feature = "interaction")]
         Output::Event(Event::RoundTrip { microseconds }) => Action::Tell(FromFetcher::RoundTrip { microseconds }),
+        // A live channel's records (neoteletext-common's DEC-1459): its
+        // author's log lines, its invalid packets, its opening, its index
+        // and its pages' lists of sub-pages.
+        Output::Event(Event::Log { line, page }) => Action::Tell(FromFetcher::ChannelLog {
+            level: match line.level {
+                neoteletext_formats::log::LogLevel::Error => protocol::console::Level::Error,
+                neoteletext_formats::log::LogLevel::Warning => protocol::console::Level::Warning,
+                neoteletext_formats::log::LogLevel::Information => protocol::console::Level::Info,
+            },
+            page: page.map(PageAddress::mpp),
+            text: line.text.to_owned(),
+        }),
+        Output::Event(Event::InvalidPackets { total }) => Action::Tell(FromFetcher::InvalidPackets { total }),
+        Output::Event(Event::ChannelConnecting) => Action::Tell(FromFetcher::Connecting(true)),
+        Output::Event(Event::ChannelLive) => Action::Tell(FromFetcher::Connecting(false)),
+        Output::Event(Event::Index(record)) => {
+            Action::Index(record.pages().map(|page| (page.page, page.title.to_owned(), page.section.to_owned())).collect(), record.generation)
+        }
+        Output::Event(Event::IndexComplete { generation }) => Action::IndexComplete(generation),
+        Output::Event(Event::SubPageList(record)) => Action::SubPageList(SubPageListPart {
+            page: record.page,
+            version: record.version,
+            part: record.part,
+            parts: record.parts,
+            count: record.count,
+            entries: record.entries().map(|entry| (entry.subcode.value(), entry.title.to_owned())).collect(),
+        }),
         Output::Event(event) => Action::Tell(FromFetcher::Notice(format!("{event:?}"))),
         _ => return,
     });
@@ -319,6 +364,7 @@ pub fn run(channel: &str, allowed: &[IpAddr], proxy: Option<Proxy>) -> Result<()
     let mut queue: VecDeque<PageAddress> = VecDeque::new();
     let mut waiting = false;
     let mut catalogues = Catalogues::default();
+    let mut live = Live::default();
 
     // The trusted core closes standard input to end the fetcher. Before
     // then it sends only input messages (REQ-INT-133); anything else
@@ -367,6 +413,7 @@ pub fn run(channel: &str, allowed: &[IpAddr], proxy: Option<Proxy>) -> Result<()
                 }
                 Action::Answered => waiting = false,
                 Action::Push(open) => push_changed(&agent, &output, open)?,
+                action @ (Action::Index(..) | Action::IndexComplete(_) | Action::SubPageList(_)) => live_record(action, &mut live, &output)?,
                 Action::Tell(message) => send(&output, &message)?,
             }
         }
@@ -405,6 +452,34 @@ pub fn run(channel: &str, allowed: &[IpAddr], proxy: Option<Proxy>) -> Result<()
                 Wake::Ended => return Ok(()),
             }
         }
+    }
+}
+
+/// What a live channel's records have given so far.
+#[derive(Default)]
+struct Live {
+    index: LiveIndex,
+    lists: SubPageLists,
+}
+
+/// A live channel's index record or SUBPAGES record: held until whole,
+/// then sent on as the contents and the catalogue a channel served as files
+/// gives.
+fn live_record(action: Action, live: &mut Live, output: &cookies::Output) -> Result<(), String> {
+    match action {
+        Action::Index(pages, generation) => {
+            live.index.note(&pages, generation);
+            send(output, &FromFetcher::Contents(live.index.entries()))
+        }
+        Action::IndexComplete(generation) => {
+            live.index.complete(generation);
+            send(output, &FromFetcher::Contents(live.index.entries()))
+        }
+        Action::SubPageList(part) => {
+            let Some((page, parts)) = live.lists.note(part.page.mpp(), part.version, part.part, part.parts, part.count, part.entries) else { return Ok(()) };
+            parts.into_iter().try_for_each(|part| send(output, &FromFetcher::SubPages { page, part }))
+        }
+        _ => Ok(()),
     }
 }
 
