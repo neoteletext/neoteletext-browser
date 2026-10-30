@@ -13,7 +13,7 @@ use super::{
 };
 use crate::browser::Browser;
 use crate::canvas::Canvas;
-use crate::controls::{FastextKey, PageControl, PageControls};
+use crate::controls::{FastextKey, PageControl, PageControls, Rotation};
 use crate::geometry::Rect;
 use crate::settings::RemoteMode;
 use crate::text::{border, centred, left_centred, outline};
@@ -245,7 +245,11 @@ fn draw_subpage_row<C: Canvas + ?Sized>(canvas: &mut C, buttons: &mut Vec<(Butto
     key(canvas, count, &words, ROW_STATUS, false, steps);
     buttons.push((Button::Control(PageControl::SubPage(false)), previous));
     buttons.push((Button::Control(PageControl::SubPage(true)), next));
-    buttons.push((Button::Latest, count));
+    // The count is only shown on a live channel's page: nothing rotates
+    // there, so there is no latest to return to (DEC-1542).
+    if controls.rotation == Rotation::AsBroadcast {
+        buttons.push((Button::Latest, count));
+    }
     y + SMALL_KEY_HEIGHT + GAP
 }
 

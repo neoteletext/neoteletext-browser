@@ -3,7 +3,7 @@
 //! which are on, and the user's key for one of them, as strip input.
 
 use interface_core::channel::page_index;
-use interface_core::controls::{FastextKey, PageControl, PageControls};
+use interface_core::controls::{FastextKey, PageControl, PageControls, Rotation};
 use neoteletext_core::limits::{MAX_SUBPAGES, is_sub_code};
 
 use super::{Fields, ProtocolError};
@@ -17,13 +17,15 @@ const CONTROL_PREVIOUS: u8 = 6;
 const CONTROL_LATEST: u8 = 7;
 const CONTROL_SUBPAGE_OF: u8 = 8;
 
-/// The controls' flags: a page open, reveal, hold, mix, a sub-page chosen.
+/// The controls' flags: a page open, reveal, hold, mix, a sub-page chosen,
+/// sub-pages that never rotate.
 const OPEN: u8 = 1;
 const REVEAL: u8 = 2;
 const HOLD: u8 = 4;
 const MIX: u8 = 8;
 const CHOSEN: u8 = 16;
-const FLAGS: u8 = OPEN | REVEAL | HOLD | MIX | CHOSEN;
+const NEVER_ROTATES: u8 = 32;
+const FLAGS: u8 = OPEN | REVEAL | HOLD | MIX | CHOSEN | NEVER_ROTATES;
 
 pub(crate) fn push_control(payload: &mut Vec<u8>, control: PageControl) {
     match control {
@@ -73,7 +75,8 @@ pub(crate) fn push_controls(payload: &mut Vec<u8>, controls: &PageControls) -> R
         | if controls.reveal { REVEAL } else { 0 }
         | if controls.hold { HOLD } else { 0 }
         | if controls.mix { MIX } else { 0 }
-        | if controls.chosen.is_some() { CHOSEN } else { 0 };
+        | if controls.chosen.is_some() { CHOSEN } else { 0 }
+        | if controls.rotation == Rotation::Never { NEVER_ROTATES } else { 0 };
     payload.push(flags);
     if let Some(page) = controls.page {
         page_index(page).ok_or(ProtocolError::BadValue("page number"))?;
@@ -125,5 +128,6 @@ pub(crate) fn read_controls(fields: &mut Fields<'_>) -> Result<PageControls, Pro
         subpages,
         chosen,
         subcode,
+        rotation: if flags & NEVER_ROTATES == 0 { Rotation::AsBroadcast } else { Rotation::Never },
     })
 }

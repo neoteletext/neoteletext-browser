@@ -116,4 +116,19 @@ pub struct PageControls {
     pub chosen: Option<u16>,
     /// The sub-code of the sub-page shown, for the address and the tips.
     pub subcode: u16,
+    /// Whether the page's sub-pages rotate, and so whether the remote offers
+    /// the return to the latest.
+    pub rotation: Rotation,
+}
+
+/// Whether a page's sub-pages rotate.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Rotation {
+    /// A broadcast's or a recording's: the latest sub-page shows as it
+    /// arrives until the viewer chooses one.
+    #[default]
+    AsBroadcast,
+    /// A live channel's: nothing rotates, so there is no latest to return
+    /// to and the remote offers none (DEC-1526, DEC-1542).
+    Never,
 }

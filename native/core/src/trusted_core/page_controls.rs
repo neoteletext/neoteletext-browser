@@ -13,7 +13,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use interface_core::canvas::PageKey;
-use interface_core::controls::{PageControl, PageControls};
+use interface_core::controls::{PageControl, PageControls, Rotation};
 use neoteletext::subpages::{Catalogue, TUNED_EITHER_SIDE};
 use neoteletext_core::limits::{SUBCODE_ANY, SUBCODE_NONE};
 use protocol::ToInterface;
@@ -309,6 +309,11 @@ impl Core {
                 return self.send_controls();
             }
             PageControl::Latest => {
+                // A live channel's sub-pages never rotate, so there is no
+                // latest to return to (DEC-1542).
+                if self.session.all_tabs().any(|tab| tab.channel.id == key.channel && tab.channel.live) {
+                    return Ok(());
+                }
                 // The return to the latest is a page selection (REQ-1502).
                 view.subpage = None;
                 self.select_view(key, SUBCODE_ANY)?;
@@ -344,6 +349,11 @@ impl Core {
                     subpages,
                     chosen: chosen.filter(|&chosen| chosen < subpages),
                     subcode: drawn.shown,
+                    rotation: if self.session.all_tabs().any(|tab| tab.channel.id == key.channel && tab.channel.live) {
+                        Rotation::Never
+                    } else {
+                        Rotation::AsBroadcast
+                    },
                 }
             }
         };

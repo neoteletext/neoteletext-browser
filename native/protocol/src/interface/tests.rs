@@ -142,6 +142,7 @@ fn every_message_to_the_interface_round_trips() {
             subpages: 8_190,
             chosen: Some(8_189),
             subcode: 0x3F7E,
+            rotation: interface_core::controls::Rotation::Never,
         }),
         ToInterface::PageControls(interface_core::controls::PageControls::default()),
         ToInterface::Remote(settings::RemotePlace { mode: settings::RemoteMode::Floating, x: 800, y: 120 }),
