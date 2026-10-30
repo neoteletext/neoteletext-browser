@@ -117,6 +117,15 @@ fn open_session(input: &Input, received: &mpsc::Receiver<(Instant, FromFetcher)>
     }
 }
 
+/// Whether pushed packets hold a page header, packet 0.
+fn has_header(bytes: &[u8]) -> bool {
+    bytes
+        .as_chunks::<42>()
+        .0
+        .iter()
+        .any(|bytes| neoteletext_core::packet::decode_address(&neoteletext_core::packet::Packet { bytes: *bytes }).is_ok_and(|address| address.number == 0))
+}
+
 fn median(times: &mut [Duration]) -> Duration {
     times.sort();
     times[times.len() / 2]
@@ -159,7 +168,9 @@ fn keys_round_trip_and_pages_reach_the_screen_within_budget() {
     let next_push = |deadline: Instant| loop {
         let wait = deadline.saturating_duration_since(Instant::now());
         match received.recv_timeout(wait) {
-            Ok((at, FromFetcher::Page { origin: Origin::PushedPage, bytes })) => return (at, bytes),
+            // The page, not the sounds pushed before it: whole T42 packets
+            // with a page header (neoteletext-common's DEC-1459).
+            Ok((at, FromFetcher::Page { origin: Origin::PushedPackets, bytes })) if has_header(&bytes) => return (at, bytes),
             Ok(_) => {}
             Err(error) => panic!("no push in time: {error}"),
         }
@@ -191,7 +202,7 @@ fn keys_round_trip_and_pages_reach_the_screen_within_budget() {
         let (arrived, bytes) = next_push(sent + LIMIT);
         round_trips.push(arrived - sent);
         let started = Instant::now();
-        engine.feed_whole(false, true, &bytes);
+        engine.feed_whole(true, true, &bytes);
         let rendered = engine.render(PAGE).expect("the page renders");
         renders.push(started.elapsed());
         let started = Instant::now();

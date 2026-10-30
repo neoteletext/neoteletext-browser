@@ -17,8 +17,8 @@ use crate::podcast::{self, Player};
 
 /// What a session sends.
 pub(super) enum Push {
-    /// A TTI page.
-    Page(String),
+    /// The open page as T42 packets, its cursor record last.
+    Page(Vec<u8>),
     /// Packets: sounds and their commands.
     Packets(Vec<u8>),
 }
@@ -50,6 +50,15 @@ impl Session {
             podcast: settings.podcast.map(|episode| (episode, Player::new())),
             shown: None,
         }
+    }
+
+    /// The open page as it now stands, as the channel pushes it: T42
+    /// packets with its cursor record as a packet 4/31 (neoteletext-common's
+    /// DEC-1459), each cursor record a record of its own.
+    pub(super) fn page_push(&mut self) -> Push {
+        let record_id = self.record_id;
+        self.record_id = self.record_id.wrapping_add(1);
+        Push::Page(self.render().packets(AUDIO_SERVICE, record_id))
     }
 
     /// The open page as it now stands.
@@ -173,7 +182,7 @@ impl Session {
         if self.page == 0x600 && self.phone.is_none() {
             self.start_phone();
         }
-        pushes.push(Push::Page(self.render().tti()));
+        pushes.push(self.page_push());
         pushes
     }
 
@@ -315,7 +324,7 @@ impl Session {
             Some(false) => pushes.push(self.play(LOSE_HANDLE)),
             None => {}
         }
-        pushes.push(Push::Page(self.render().tti()));
+        pushes.push(self.page_push());
         pushes
     }
 }

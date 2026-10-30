@@ -16,7 +16,9 @@ const LENGTH: u8 = 0x7F;
 /// Section 5.2: lengths of 126 and 127 mean a 16-bit or 64-bit length follows.
 const LENGTH_16: u8 = 126;
 const LENGTH_64: u8 = 127;
-/// Section 5.2's opcodes.
+/// Section 5.2's opcodes. The server sends no text (neoteletext-common's
+/// DEC-1459); only a test writes a client's text frame.
+#[cfg(test)]
 pub const TEXT: u8 = 0x1;
 pub const BINARY: u8 = 0x2;
 pub const CLOSE: u8 = 0x8;

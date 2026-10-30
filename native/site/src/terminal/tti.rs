@@ -5,8 +5,10 @@
 use std::collections::BTreeMap;
 use std::fmt::Write as _;
 
+use neoteletext_formats::detect::{AutoConfig, AutoReader, Format};
+use neoteletext_formats::{Item, Reader as _};
 use neoteletext_input::caps::{CURSOR_CAP, PAGE_CAP};
-use neoteletext_input::cursor::NO_CURSOR;
+use neoteletext_input::cursor::{Cursor, NO_CURSOR, Place};
 
 // EN 300 706 Table 26: the spacing attributes used here.
 pub(super) const ALPHA_RED: u8 = 0x01;
@@ -111,6 +113,31 @@ impl Page {
 
     pub(super) fn row(&mut self, number: u8, row: Row) {
         self.rows.insert(number, row);
+    }
+
+    /// The page as the channel pushes it (neoteletext-common's DEC-1459):
+    /// its TTI encoded to T42 packets by the engine's page encoder, as the
+    /// decoder encodes a page file, then its cursor record as packet 4/31
+    /// of user-defined audio service `service`, record `record_id`, since a
+    /// `CU` line has no packet form of its own. `LT` lines have none
+    /// either: the links stay in the page file the viewer fetches.
+    pub(super) fn packets(&self, service: u8, record_id: u8) -> Vec<u8> {
+        let mut reader = AutoReader::new(AutoConfig { format: Some(Format::Tti), encode_pages: true, ..AutoConfig::default() });
+        let mut bytes = Vec::new();
+        let mut take = |item: Item<'_>| {
+            if let Item::Packet { packet, .. } = item {
+                bytes.extend_from_slice(&packet.bytes);
+            }
+        };
+        let tti = self.tti();
+        reader.feed(tti.as_bytes(), &mut take);
+        reader.finish(&mut take);
+        let place = self.cursor.map(|(row, column)| Place { row, column });
+        let cursor = Cursor { page: self.number, acked: self.acked, place, flags: 0 };
+        if let Some(packet) = cursor.packet(service, record_id) {
+            bytes.extend_from_slice(&packet.bytes);
+        }
+        bytes
     }
 
     pub(super) fn tti(&self) -> String {

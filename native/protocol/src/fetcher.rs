@@ -67,8 +67,9 @@ pub enum Origin {
     FetchedPage,
     /// Fetched as T42 packets.
     FetchedPackets,
-    /// A WebSocket text message or a server-sent event: one TTI page,
-    /// whole (the engine's REQ-WEB-005).
+    /// A server-sent event: one TTI page, whole (the engine's REQ-WEB-005).
+    /// A WebSocket text message carries none (neoteletext-common's
+    /// DEC-1459).
     PushedPage,
     /// A WebSocket binary message: whole 42-byte packets.
     PushedPackets,

@@ -44,6 +44,14 @@ fn feed(session: &mut Session, messages: &[Vec<u8>]) -> Vec<Push> {
     pushes
 }
 
+/// The cursor record a page push ends with (neoteletext-common's
+/// DEC-1459), after checking that the push is whole packets.
+fn pushed_cursor(bytes: &[u8]) -> neoteletext_input::cursor::Cursor {
+    let (packets, rest) = bytes.as_chunks::<42>();
+    assert!(rest.is_empty() && packets.len() > 1, "whole packets, a page and its cursor record");
+    neoteletext_input::cursor::from_packet(&neoteletext_core::packet::Packet { bytes: *packets.last().unwrap() }).unwrap().unwrap()
+}
+
 /// INPUT.md section 6.1: HELLO is answered with WELCOME, a control
 /// record of what the channel uses of what was offered.
 #[test]
@@ -110,8 +118,15 @@ fn typing_places_the_cursor_and_acknowledges() {
     let mut session = Session::new(Settings::default());
     let pushes = feed(&mut session, &[page(0x200), press('A'), press('n'), named("Enter")]);
     let Some(Push::Page(last)) = pushes.last() else { panic!() };
-    assert!(last.contains("Hello, An!"), "{last}");
-    assert!(last.contains("CU,5,15,0,0,4"), "the cursor after the name, no echo, acknowledging an input count of 4: {last}");
+    let cursor = pushed_cursor(last);
+    assert_eq!(
+        (cursor.page, cursor.acked, cursor.place.map(|place| (place.row, place.column))),
+        (0x200, 4, Some((5, 15))),
+        "the cursor after the name, acknowledging an input count of 4"
+    );
+    let page = session.render().tti();
+    assert!(page.contains("Hello, An!"), "{page}");
+    assert!(page.contains("CU,5,15,0,0,4"), "the page file's cursor line, no echo: {page}");
     feed(&mut session, &[named("Tab"), press('x')]);
     let page = session.render().tti();
     assert!(page.contains("CU,8,14,0,0,"), "the secret field's cursor, no echo: {page}");
@@ -214,7 +229,8 @@ fn the_podcast_page_says_when_the_episode_ends_within_a_second() {
     assert!(session.render().tti().contains("0:10 / 0:10"));
     thread::sleep(Duration::from_millis(700));
     let pushes = session.podcast_frame();
-    assert!(matches!(pushes.last(), Some(Push::Page(tti)) if tti.contains("Finished")), "the stop, then the page");
+    assert!(matches!(pushes.last(), Some(Push::Page(_))), "the stop, then the page");
+    assert!(session.render().tti().contains("Finished"));
 }
 
 #[test]

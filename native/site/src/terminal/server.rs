@@ -61,7 +61,7 @@ fn session(mut stream: TcpStream, settings: Settings) -> io::Result<()> {
             }
         }
         if session.phone_events() {
-            send(&mut stream, Push::Page(session.render().tti()))?;
+            send(&mut stream, session.page_push())?;
         }
         for push in session.podcast_frame() {
             send(&mut stream, push)?;
@@ -76,10 +76,10 @@ fn session(mut stream: TcpStream, settings: Settings) -> io::Result<()> {
 }
 
 fn send(stream: &mut TcpStream, push: Push) -> io::Result<()> {
-    match push {
-        Push::Page(tti) => websocket::write(stream, websocket::TEXT, tti.as_bytes()),
-        Push::Packets(bytes) => websocket::write(stream, websocket::BINARY, &bytes),
-    }
+    // neoteletext-common's DEC-1459: everything sent downstream is whole
+    // T42 packets in binary messages, never text.
+    let (Push::Page(bytes) | Push::Packets(bytes)) = push;
+    websocket::write(stream, websocket::BINARY, &bytes)
 }
 
 pub(super) fn serve(mut stream: TcpStream, port: u16, settings: &Settings) -> io::Result<()> {

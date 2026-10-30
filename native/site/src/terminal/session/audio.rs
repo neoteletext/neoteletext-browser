@@ -65,7 +65,7 @@ impl Session {
         {
             let now = (episode.seconds(player.position(episode)), player.playing());
             if self.shown.replace(now) != Some(now) {
-                pushes.push(Push::Page(self.render().tti()));
+                pushes.push(self.page_push());
             }
         }
         pushes

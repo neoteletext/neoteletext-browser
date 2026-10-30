@@ -16,6 +16,9 @@ neoteletext-input.workspace = true
 neoteletext-audio = { workspace = true, features = ["encode"] }
 neoteletext-web.workspace = true
 neoteletext-core.workspace = true
+# The engine's page encoder: the channel pushes each page as T42 packets
+# (neoteletext-common's DEC-1459).
+neoteletext-formats.workspace = true
 neoteletext-qrkeyboard.workspace = true
 
 [lints]
