@@ -19,6 +19,7 @@ The browser keeps a few settings between runs, and the bookmarks with them. The 
 | Proxy | None, an HTTP proxy or a SOCKS5 proxy, with its host and port | None | The settings panel (a security setting) |
 | Local addresses allowed | Up to 16 addresses on this computer or the local network | None | The settings panel (a security setting) |
 | Bookmarks | Up to 1 000 addresses | None | The star in the strip |
+| Font | Noto Teletext or Bedstead (`font noto-teletext`, `font bedstead`) | Noto Teletext | The settings panel's "Page font" row |
 
 Nothing else is kept: no history, no cookies (the engine keeps cookies only for the life of a fetcher, its REQ-SEC-013), no window position. *Amended 22 October 2026:* history and bookmarks are kept (decision 57), and the window and its tabs as the session (decision 59), each in a file of its own (`history-and-bookmarks.md`).
 - *Amended 22 and 23 October 2026:* persistent cookies are kept, sealed (decision 62); `settings.txt` also keeps the bookmarks bar (`bar`), restoring the session (`restore`), checking for updates (`updates`), the cookie policy and blocked channels (`cookies`, `cookie-block`), and the remote control's place (`remote`); the bookmarks are in `bookmarks.txt` (decision 57).
@@ -41,6 +42,7 @@ A panel of the trusted strip (requirement 11.1), opened by a gear button at the 
 - **Sound:** a switch, and the volume with minus and plus buttons in steps of 10.
 - **Proxy:** None, HTTP or SOCKS5, and a host and port field.
 - **Local addresses:** the list, each with a remove button, and a field to add one.
+- **Page font** (added 31 October 2026): Noto Teletext or Bedstead. The trusted core tells every running decoder at once (`ToDecoder::Font`), and each draws the pages on screen again in it; a decoder started later is told first. A character Noto Teletext lacks is drawn in Bedstead, and row 0, mosaics and the G3 characters are the engine's own in either font.
 
 The trusted core checks every change; a refused one is said in the panel ("Not an address on this computer or the local network"), and nothing is kept. The interface receives the security settings only as the cleaned text the panel shows, as it receives the strip's "Not secure": it acts on none of them, and a change it asks for is checked by the trusted core as any strip input is (requirement 3.6, amended by decision 51).
 
@@ -109,6 +111,7 @@ A proxy that refuses, answers with anything but success, or does not answer with
 |---|---|---|---|
 | `Settings` | Trusted core | Interface | The settings view: home, sound, volume, proxy, local addresses, the last refusal |
 | `ChangeSetting` | Interface (strip input) | Trusted core | One change, checked again by the trusted core |
+| `Font` | Trusted core | Decoder | The font pages are drawn in: first, and on every change |
 | `Home` | Interface (strip input) | Trusted core | Open the home address |
 | `Console(open)` | Interface | Trusted core | Start or stop sending the console |
 | `ConsoleEntries` | Trusted core | Interface | A tab's new entries, cleaned text |
