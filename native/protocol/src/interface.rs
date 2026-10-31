@@ -99,6 +99,9 @@ pub enum ToInterface {
     /// Open this page of the active channel: a link was followed, an
     /// address named it, or the channel redirected the tab.
     Show(PageKey),
+    /// Show this channel's wall of pages with no page open: the tab's address
+    /// names the wall (REQ-1690 item 5).
+    ShowWall(u32),
     /// About hyperlinks (`hyperlinks.md` section 8.1).
     #[cfg(feature = "links")]
     Link(links::Message),

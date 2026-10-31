@@ -60,7 +60,7 @@ impl Core {
                 return core.select_redirected(key, sub);
             }
             core.send(&ToInterface::Strip(core.strip()))?;
-            core.open_redirected(key, subpage)
+            core.open_page(key, subpage)
         })
     }
 

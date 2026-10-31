@@ -25,7 +25,7 @@ use neoteletext_web::port::{ConnectionId, NetOutput, Pump, Security, Transport};
 use neoteletext_web::proxy::Proxy;
 use neoteletext_web::records::redirect::RedirectRecord;
 use neoteletext_web::subpages;
-use protocol::fetcher::{CATALOGUE_PART, Entry, FromFetcher, Origin, ToFetcher, read_to_fetcher, write_to_core};
+use protocol::fetcher::{CATALOGUE_PART, Entry, FromFetcher, Origin, ToFetcher, read_to_fetcher, redirect_in_bounds, write_to_core};
 use protocol::subpages::SubPageRows;
 
 #[cfg(feature = "links")]
@@ -269,7 +269,7 @@ fn collect(output: Output<'_>, actions: &mut Vec<Action>) {
         }
         // A channel's program moved the viewer (`INPUT.md` section 7.11): the
         // trusted core decides, and an address goes by its own rules.
-        Output::Event(Event::Redirect(RedirectRecord::Page { page, subcode })) => {
+        Output::Event(Event::Redirect(RedirectRecord::Page { page, subcode })) if redirect_in_bounds(page.mpp(), subcode.value()) => {
             Action::Tell(FromFetcher::PageRedirect { page: page.mpp(), sub: subcode.value() })
         }
         Output::Event(Event::Redirect(RedirectRecord::Address(address))) => Action::Tell(FromFetcher::ProgramRedirect(address.to_owned())),
@@ -790,6 +790,11 @@ mod tests {
         collect(Output::Event(Event::Redirect(RedirectRecord::Address("file:///etc/passwd"))), &mut actions);
         assert!(matches!(&actions[0], Action::Tell(FromFetcher::PageRedirect { page: 0x302, sub: 2 })));
         assert!(matches!(&actions[1], Action::Tell(FromFetcher::ProgramRedirect(address)) if address == "file:///etc/passwd"));
+        // A page the engine reads and this browser has no slot for goes to
+        // the log, as any other event: the pipe's reader would refuse it.
+        let lettered = PageAddress::from_mpp(0x1A0).unwrap();
+        collect(Output::Event(Event::Redirect(RedirectRecord::Page { page: lettered, subcode: SubCode::new(2) })), &mut actions);
+        assert!(matches!(&actions[2], Action::Tell(FromFetcher::Notice(_))));
     }
 
     /// REQ-701: a channel's settings file redirected out of the channel is

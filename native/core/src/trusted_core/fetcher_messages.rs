@@ -2,6 +2,7 @@
 //! channel's contents and pages, its notices, a refused certificate
 //! (`certificate-errors.md`), and the console's view of it all.
 
+use interface_core::canvas::PageKey;
 use neoteletext::console::exchange_text;
 use protocol::console::{ConsoleTab, Level};
 use protocol::decoder::{MAX_CHUNK, MAX_WHOLE, ToDecoder};
@@ -82,16 +83,8 @@ impl Core {
             }
             #[cfg(feature = "interaction")]
             FromFetcher::Input { open, secure } => {
-                // A tab never shown yet selects the page its address names,
-                // or else the page its channel opens at, so its session's
-                // start tells the channel (REQ-INT-140).
                 if open && self.typing.selection(channel).is_none() {
-                    let tab = self.session.all_tabs().find(|tab| tab.channel.id == channel);
-                    let page = tab.and_then(|tab| tab.address().and_then(|address| address.page).or(tab.channel.initial_page));
-                    if let Some(page) = page {
-                        let sends = self.typing.select(channel, page, neoteletext_core::limits::SUBCODE_ANY, self.now_us());
-                        self.deliver_typing(sends)?;
-                    }
+                    self.first_selection(channel)?;
                 }
                 let sends = self.typing.input(channel, open, secure, self.now_us());
                 self.deliver_typing(sends)?;
@@ -106,11 +99,7 @@ impl Core {
             // (DEC-633 version 2).
             FromFetcher::ChannelLog { level, page, text } => self.channel_log(channel, level, page, &text),
             FromFetcher::InvalidPackets { total } => self.invalid_packets(channel, total),
-            FromFetcher::InitialPage(page) => {
-                if let Some(tab) = self.session.all_tabs_mut().find(|tab| tab.channel.id == channel) {
-                    tab.channel.initial_page = Some(page);
-                }
-            }
+            FromFetcher::InitialPage(page) => self.initial_page(channel, page)?,
             FromFetcher::Connecting(connecting) => self.connecting(channel, connecting)?,
             FromFetcher::SubPagesMissing { page } => {
                 let changed = self.channel_subpages(channel).and_then(|subpages| subpages.missing(page));
@@ -128,6 +117,38 @@ impl Core {
         Ok(())
     }
 
+    /// A tab never shown yet selects what its address names, or else the
+    /// page its channel opens at, so its session's start tells the channel
+    /// (REQ-INT-140).
+    #[cfg(feature = "interaction")]
+    fn first_selection(&mut self, channel: u32) -> Result<(), String> {
+        let Some(tab) = self.session.all_tabs().find(|tab| tab.channel.id == channel) else { return Ok(()) };
+        let address = tab.address();
+        let sends = if address.is_some_and(|address| address.wall) {
+            self.typing.selects_nothing(channel, self.now_us())
+        } else if let Some(page) = address.and_then(|address| address.page).or(tab.channel.initial_page) {
+            self.typing.select(channel, page, neoteletext_core::limits::SUBCODE_ANY, self.now_us())
+        } else {
+            return Ok(());
+        };
+        self.deliver_typing(sends)
+    }
+
+    /// `channel` gave its initial page: a tab at its bare address arrives
+    /// there, and the page opens (REQ-1693 item 3).
+    fn initial_page(&mut self, channel: u32, page: u16) -> Result<(), String> {
+        if !self.session.arrived(channel, page) {
+            return Ok(());
+        }
+        self.in_window_of(channel, |core| {
+            if core.active_channel() != Some(channel) {
+                return Ok(());
+            }
+            core.send(&ToInterface::Strip(core.strip()))?;
+            core.open_page(PageKey { channel, page }, None)
+        })
+    }
+
     /// Part of a page's catalogue of sub-pages (the engine's REQ-WEB-034):
     /// held once whole, its count told to the interface, and the open page
     /// stepped through it from now on. One out of order is refused, said
@@ -138,7 +159,7 @@ impl Core {
             Ok(None) => Ok(()),
             Ok(Some(count)) => {
                 self.send_subpage_count(channel, page, count)?;
-                self.catalogue_arrived(interface_core::canvas::PageKey { channel, page })
+                self.catalogue_arrived(PageKey { channel, page })
             }
             Err(neoteletext::subpages::Refused::OutOfOrder) => {
                 subpages.unanswered(page);

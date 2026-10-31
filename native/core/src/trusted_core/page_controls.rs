@@ -96,9 +96,25 @@ impl Core {
         if let Some((pending, subpage)) = self.controls.pending.take()
             && Some(pending) == key
         {
+            self.address_follows(pending.page, Some(subpage))?;
             self.show_subpage(pending, View { page: pending.page, subpage: Some(subpage), ..View::default() })?;
         }
         self.send_controls()
+    }
+
+    /// The page open in the active tab, as the interface last reported it.
+    pub(super) fn page_open(&self) -> Option<PageKey> {
+        self.controls.open
+    }
+
+    /// The tab's address follows the sub-page chosen on its open page.
+    /// `adopt_first` does not come here: a page's first sub-page is the page
+    /// (REQ-1690 item 4).
+    fn address_follows(&mut self, page: u16, subpage: Option<u16>) -> Result<(), String> {
+        if self.session.subpage_chosen(page, subpage) {
+            self.send(&ToInterface::Strip(self.strip()))?;
+        }
+        Ok(())
     }
 
     /// A page of `channel` will open at `subpage`, when it opens.
@@ -247,12 +263,13 @@ impl Core {
         Ok(())
     }
 
-    /// The tab in front was redirected to `key`, and to `subpage` of it if
-    /// the redirect names one: the page opens as any page the core opens, or,
-    /// when it is open already, only its sub-page changes.
-    pub(super) fn open_redirected(&mut self, key: PageKey, subpage: Option<u16>) -> Result<(), String> {
+    /// `key` opens in the tab in front, at `subpage` if one is named: as any
+    /// page the core opens, told to its channel at once, or, when it is open
+    /// already, only its sub-page changes.
+    pub(super) fn open_page(&mut self, key: PageKey, subpage: Option<u16>) -> Result<(), String> {
         if self.controls.open != Some(key) {
             self.open_at_subpage(key, subpage);
+            self.select_view(key, subpage.unwrap_or(SUBCODE_ANY))?;
             return self.send(&ToInterface::Show(key));
         }
         let view = View { subpage, ..self.controls.view_of(key) };
@@ -322,6 +339,7 @@ impl Core {
                 self.open_at_subpage(target, Some(subcode));
                 return Ok(());
             }
+            self.address_follows(page, Some(subcode))?;
             let view = View { subpage: Some(subcode), ..self.controls.view_of(target) };
             self.show_subpage(target, view)?;
             return self.send_controls();
@@ -352,6 +370,7 @@ impl Core {
                 // 3F7F names no sub-page (clause 9.6.1).
                 let Some(next) = next.filter(|&next| next != SUBCODE_ANY) else { return Ok(()) };
                 view.subpage = Some(next);
+                self.address_follows(key.page, Some(next))?;
                 self.show_subpage(key, view)?;
                 return self.send_controls();
             }
@@ -363,6 +382,7 @@ impl Core {
                 }
                 // The return to the latest is a page selection (REQ-1502).
                 view.subpage = None;
+                self.address_follows(key.page, None)?;
                 self.select_view(key, SUBCODE_ANY)?;
             }
             PageControl::SubPageOf { .. } => return Ok(()),

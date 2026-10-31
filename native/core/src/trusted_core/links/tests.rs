@@ -14,7 +14,7 @@ use protocol::links::{Alias, Candidate, Fastext, FastextTarget, NumberLink, Serv
 use super::super::Core;
 use super::super::test_support::core_on;
 
-const HOME: &str = "https://news.invalid/teletext/";
+const HOME: &str = "https://news.invalid/teletext/#100";
 const ELSEWHERE: &str = "https://weather.invalid/teletext/";
 const PAGE: u16 = 0x100;
 /// The row and first column of the page's one link.

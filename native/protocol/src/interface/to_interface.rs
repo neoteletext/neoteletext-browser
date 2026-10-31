@@ -7,8 +7,9 @@ use std::io::{Read, Write};
 use super::ToInterface;
 use super::kinds::{
     KIND_BAR_VIEW, KIND_BOOKMARKS_VIEW, KIND_CHANNEL, KIND_CLOSE, KIND_CLOSE_WINDOW_VIEW, KIND_CONSOLE_UPDATE, KIND_COOKIES_VIEW, KIND_FRAME,
-    KIND_HISTORY_VIEW, KIND_OPEN_WINDOW, KIND_PAGE, KIND_PAGE_CONTROLS, KIND_REMOTE, KIND_SETTINGS, KIND_SHOW, KIND_STAR_VIEW, KIND_STRIP, KIND_SUBPAGE_ROWS,
-    KIND_SUBPAGES, KIND_SUGGESTIONS, KIND_TAB_LIST_VIEW, KIND_TAB_SOUNDING, KIND_TABS, KIND_TARGET, KIND_UPDATE_VIEW, KIND_UPDATED, KIND_WINDOW_VIEW,
+    KIND_HISTORY_VIEW, KIND_OPEN_WINDOW, KIND_PAGE, KIND_PAGE_CONTROLS, KIND_REMOTE, KIND_SETTINGS, KIND_SHOW, KIND_SHOW_WALL, KIND_STAR_VIEW, KIND_STRIP,
+    KIND_SUBPAGE_ROWS, KIND_SUBPAGES, KIND_SUGGESTIONS, KIND_TAB_LIST_VIEW, KIND_TAB_SOUNDING, KIND_TABS, KIND_TARGET, KIND_UPDATE_VIEW, KIND_UPDATED,
+    KIND_WINDOW_VIEW,
 };
 use super::pages::{
     FRAME_FIXED_BYTES, push_channel, push_frame, push_page, push_subpage_count, push_subpage_rows, push_updated, read_channel, read_frame_head, read_page,
@@ -47,6 +48,7 @@ fn kind_of(message: &ToInterface) -> u8 {
         ToInterface::Frame { .. } => KIND_FRAME,
         ToInterface::Sounding(_) => KIND_TAB_SOUNDING,
         ToInterface::Show(_) => KIND_SHOW,
+        ToInterface::ShowWall(_) => KIND_SHOW_WALL,
         #[cfg(feature = "links")]
         ToInterface::Link(message) => crate::links::message_kind(message),
         #[cfg(feature = "interaction")]
@@ -90,6 +92,7 @@ fn push_fields(payload: &mut Vec<u8>, message: &ToInterface) -> Result<(), Proto
         ToInterface::Frame { key, version, image } => push_frame(payload, *key, *version, image),
         ToInterface::Sounding(channels) => push_channels(payload, channels)?,
         ToInterface::Show(key) => push_key(payload, *key),
+        ToInterface::ShowWall(channel) => payload.extend_from_slice(&channel.to_be_bytes()),
         #[cfg(feature = "links")]
         ToInterface::Link(message) => crate::links::push_message(payload, message)?,
         #[cfg(feature = "interaction")]
@@ -162,6 +165,7 @@ pub fn read_from_core(input: &mut dyn Read) -> Result<Option<ToInterface>, Proto
         }
         KIND_TAB_SOUNDING => ToInterface::Sounding(read_channels(&mut fields)?),
         KIND_SHOW => ToInterface::Show(fields.key()?),
+        KIND_SHOW_WALL => ToInterface::ShowWall(fields.u32()?),
         #[cfg(feature = "links")]
         kind if crate::links::is_message(kind) => ToInterface::Link(crate::links::read_message(kind, &mut fields)?),
         #[cfg(feature = "interaction")]

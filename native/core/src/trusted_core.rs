@@ -3,6 +3,8 @@
 //! event loop, and every concern it drives, one module each below. It
 //! runs confined, started by the broker (`main.rs`) with `--core`.
 
+#[cfg(test)]
+mod address_tests;
 mod channels;
 mod console;
 mod cookies;

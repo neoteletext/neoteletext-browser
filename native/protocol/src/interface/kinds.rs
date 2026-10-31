@@ -31,6 +31,7 @@ pub(crate) const KIND_FRAME: u8 = 3;
 pub(crate) const KIND_CLOSE: u8 = 4;
 pub(crate) const KIND_TABS: u8 = 5;
 pub(crate) const KIND_CHANNEL: u8 = 6;
+pub(crate) const KIND_SHOW_WALL: u8 = 7;
 pub(crate) const KIND_PAGE: u8 = 8;
 pub(crate) const KIND_UPDATED: u8 = 9;
 pub(crate) const KIND_TAB_SOUNDING: u8 = 10;

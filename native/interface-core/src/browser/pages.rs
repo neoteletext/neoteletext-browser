@@ -92,6 +92,26 @@ impl Browser {
         }
     }
 
+    /// The trusted core's address names the wall of `channel`: no page open.
+    pub fn show_wall(&mut self, channel: u32, now: u64) {
+        if channel != self.channel.channel {
+            return;
+        }
+        self.show_when_listed = None;
+        if self.wall.single() {
+            self.toggle_wall(now);
+        }
+        self.wall.unzoom(now);
+    }
+
+    /// The channel's list changed: the page the trusted core opened, if it
+    /// waited for this.
+    pub fn show_listed(&mut self, now: u64) {
+        if let Some(key) = self.show_when_listed {
+            self.show(key, now);
+        }
+    }
+
     /// A page arrived: the page the trusted core opened, if it waited for it.
     fn show_pending(&mut self, channel: u32, page: u16, now: u64) {
         if let Some(key) = self.show_when_listed.filter(|key| key.channel == channel && key.page == page) {

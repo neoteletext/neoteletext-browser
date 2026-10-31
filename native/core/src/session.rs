@@ -24,6 +24,7 @@ mod links;
 mod navigation;
 mod outside;
 mod saved;
+mod selected;
 mod tab;
 mod windows;
 

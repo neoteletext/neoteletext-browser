@@ -17,32 +17,47 @@ pub struct Address {
     pub encrypted: bool,
     /// A file on this computer, at this absolute path.
     pub file: Option<PathBuf>,
-    /// The page the address names after `#`, as `#302` or `#302:0001`
-    /// does (`hyperlinks.md` section 7.3): a page of the channel, never
-    /// sent in a request.
+    /// The page the address names after `#`, as `#302` or `#302/0001`
+    /// does (REQ-1693): a page of the channel, never sent in a request.
     pub page: Option<u16>,
-    /// The sub-page it names after the page, as `#302:0001` does: the page
+    /// The sub-page it names after the page, as `#302/0001` does: the page
     /// opens at it (`page-controls.md` section 4, decision 67).
     pub subpage: Option<u16>,
+    /// It names the wall of pages with no page selected, as `#wall` does.
+    pub wall: bool,
 }
 
 impl Address {
     /// The address without its fragment: the channel itself, as fetched.
     #[must_use]
     pub fn channel_text(&self) -> &str {
-        if self.file.is_some() {
-            return &self.text;
-        }
         self.text.split_once(FRAGMENT).map_or(self.text.as_str(), |(channel, _)| channel)
     }
 
-    /// The same channel at `page`: its address with `#` and the page number,
-    /// or none when that would be longer than an address may be (finding
-    /// F-78).
+    /// The same channel with `fragment` after `#`, or none when that would
+    /// be longer than an address may be (finding F-78).
+    fn at_fragment(&self, fragment: &str, page: Option<u16>, subpage: Option<u16>) -> Option<Self> {
+        let text = format!("{}{FRAGMENT}{fragment}", self.channel_text());
+        (text.len() <= protocol::MAX_ADDRESS).then(|| Self { text, page, subpage, wall: fragment == WALL, ..self.clone() })
+    }
+
+    /// The same channel at `page`.
     #[must_use]
     pub fn with_page(&self, page: u16) -> Option<Self> {
-        let text = if self.file.is_some() { self.text.clone() } else { format!("{}{FRAGMENT}{page:03X}", self.channel_text()) };
-        (text.len() <= protocol::MAX_ADDRESS).then(|| Self { text, page: Some(page), subpage: None, ..self.clone() })
+        self.with_subpage(page, None)
+    }
+
+    /// The same channel at `page`, and at `subpage` of it if one is named.
+    #[must_use]
+    pub fn with_subpage(&self, page: u16, subpage: Option<u16>) -> Option<Self> {
+        let fragment = subpage.map_or_else(|| format!("{page:03X}"), |subpage| format!("{page:03X}{SUBPAGE_SEPARATOR}{subpage:04X}"));
+        self.at_fragment(&fragment, Some(page), subpage)
+    }
+
+    /// The same channel's wall of pages, with no page selected.
+    #[must_use]
+    pub fn with_wall(&self) -> Option<Self> {
+        self.at_fragment(WALL, None, None)
     }
 
     /// Whether this is the browser's own start page (requirement 19.7).
@@ -68,23 +83,34 @@ pub const HOME_CHANNEL: &str = "https://app.neottx.com/home/";
 const BUILT_IN_SCHEME: &str = "neoteletext:";
 const SCHEME_SEPARATOR: &str = "://";
 const FILE_SCHEME: &str = "file://";
+/// A `#` and a `%` in a file's path, as its address writes them.
+const ESCAPED_FRAGMENT: &str = "%23";
+const ESCAPED_PERCENT: &str = "%25";
 /// What begins a path under the home folder.
 const HOME_SIGN: char = '~';
 /// What begins a link from outside (DEC-1666): the whole address follows it.
 pub const OUTSIDE_SCHEME: &str = "neoteletext://";
-/// What begins an address's fragment, which names a page.
+/// What begins an address's fragment, which holds everything inside a
+/// channel (REQ-1693). The fragments are written and read here alone.
 pub const FRAGMENT: char = '#';
+/// What comes between a page and its sub-page in a fragment.
+const SUBPAGE_SEPARATOR: char = '/';
+/// The fragment of the wall of pages with no page selected.
+const WALL: &str = "wall";
 /// Hexadecimal digits of a page number and of a sub-page number.
 const PAGE_DIGITS: usize = 3;
 const SUBPAGE_DIGITS: usize = 4;
 const HEXADECIMAL: u32 = 16;
+/// The longest fragment a channel's address gains as its tab changes page:
+/// `#NNN/SSSS`. An address with no room for it is refused (REQ-1690 item 10).
+const LONGEST_FRAGMENT: usize = 1 + PAGE_DIGITS + 1 + SUBPAGE_DIGITS;
 
 /// The sub-page a fragment names after its page, when it names one: four
 /// hexadecimal digits of a sub-code, not 3F7F, which means any sub-page.
 #[must_use]
 pub fn fragment_subpage(fragment: &str) -> Option<u16> {
     fragment_page(fragment)?;
-    let (_, subpage) = fragment.split_once(':')?;
+    let (_, subpage) = fragment.split_once(SUBPAGE_SEPARATOR)?;
     // Any of the thirteen bits' values but 3F7F, which names no sub-page
     // (the engine's REQ-NUM-002, REQ-NUM-006 and REQ-NUM-009).
     u16::from_str_radix(subpage, HEXADECIMAL)
@@ -93,10 +119,10 @@ pub fn fragment_subpage(fragment: &str) -> Option<u16> {
 }
 
 /// The page a fragment names: three hexadecimal digits of a display page,
-/// optionally followed by `:` and four of a sub-page.
+/// optionally followed by `/` and four of a sub-page.
 #[must_use]
 pub fn fragment_page(fragment: &str) -> Option<u16> {
-    let (page, subpage) = fragment.split_once(':').map_or((fragment, None), |(page, subpage)| (page, Some(subpage)));
+    let (page, subpage) = fragment.split_once(SUBPAGE_SEPARATOR).map_or((fragment, None), |(page, subpage)| (page, Some(subpage)));
     let digits = |text: &str, count: usize| text.len() == count && text.bytes().all(|byte| byte.is_ascii_hexdigit());
     if !digits(page, PAGE_DIGITS) || subpage.is_some_and(|subpage| !digits(subpage, SUBPAGE_DIGITS)) {
         return None;
@@ -112,7 +138,7 @@ pub fn fragment_page(fragment: &str) -> Option<u16> {
 #[must_use]
 pub fn typed_path(typed: &str, home: Option<&Path>) -> Option<String> {
     if let Some(rest) = typed.strip_prefix(FILE_SCHEME) {
-        return Some(url_to_path(rest));
+        return Some(url_to_path(rest.split_once(FRAGMENT).map_or(rest, |(path, _)| path)));
     }
     if Path::new(typed).is_absolute() {
         return Some(typed.to_owned());
@@ -147,34 +173,49 @@ fn parse_file(typed: &str) -> Option<Result<Address, String>> {
         }
         let path = PathBuf::from(&path);
         let name = path.file_name().and_then(|name| name.to_str()).unwrap_or("/").to_owned();
-        within_bound(Address {
+        let channel = Address {
             text: format!("{FILE_SCHEME}{}", path_to_url(&path)),
             host: name,
             encrypted: false,
             file: Some(path),
             page: None,
             subpage: None,
-        })
+            wall: false,
+        };
+        within_bound(at_fragment_of(channel, typed.strip_prefix(FILE_SCHEME).and_then(|rest| rest.split_once(FRAGMENT)).map(|(_, fragment)| fragment)))
     };
     Some(check())
+}
+
+/// `channel` at `fragment`, when that names a place in it; a fragment that
+/// does not leaves the channel.
+fn at_fragment_of(channel: Address, fragment: Option<&str>) -> Address {
+    let place = match fragment {
+        Some(WALL) => channel.with_wall(),
+        Some(fragment) => fragment_page(fragment).and_then(|page| channel.with_subpage(page, fragment_subpage(fragment))),
+        None => None,
+    };
+    place.unwrap_or(channel)
 }
 
 /// The path of a `file://` address. On Windows, `file:///C:/t42/x.t42`
 /// names `C:/t42/x.t42`: the slash before the drive letter is the URL's.
 fn url_to_path(rest: &str) -> String {
+    let rest = rest.replace(ESCAPED_FRAGMENT, "#").replace(ESCAPED_PERCENT, "%");
     if cfg!(windows)
         && let Some(drive) = rest.strip_prefix('/')
         && drive.as_bytes().get(1) == Some(&b':')
     {
         return drive.to_owned();
     }
-    rest.to_owned()
+    rest
 }
 
-/// The path as a `file://` address writes it: forward slashes, and on
-/// Windows a slash before the drive letter.
+/// The path as a `file://` address writes it: forward slashes, on Windows a
+/// slash before the drive letter, and a `#` in the path escaped, as the
+/// address's own `#` begins its fragment (REQ-1693 item 9).
 fn path_to_url(path: &Path) -> String {
-    let text = path.display().to_string();
+    let text = path.display().to_string().replace('%', ESCAPED_PERCENT).replace('#', ESCAPED_FRAGMENT);
     if cfg!(windows) { format!("/{}", text.replace('\\', "/")) } else { text }
 }
 
@@ -188,7 +229,7 @@ fn parse_built_in(typed: &str) -> Result<Address, String> {
     let page = fragment.and_then(fragment_page);
     let subpage = fragment.and_then(fragment_subpage);
     let text = page.map_or_else(|| START_PAGE.to_owned(), |page| format!("{START_PAGE}{FRAGMENT}{page:03X}"));
-    Ok(Address { text, host: crate::start_page::NAME.to_owned(), encrypted: false, file: None, page, subpage })
+    Ok(Address { text, host: crate::start_page::NAME.to_owned(), encrypted: false, file: None, page, subpage, wall: false })
 }
 
 /// Turns what was typed into an address, or says why it cannot be opened.
@@ -243,8 +284,9 @@ pub fn parse(typed: &str) -> Result<Address, String> {
     let path = if path.is_empty() || path.starts_with(['?', FRAGMENT]) { format!("/{path}") } else { path.to_owned() };
     let page = path.split_once(FRAGMENT).and_then(|(_, fragment)| fragment_page(fragment));
     let subpage = path.split_once(FRAGMENT).and_then(|(_, fragment)| fragment_subpage(fragment));
+    let wall = path.split_once(FRAGMENT).is_some_and(|(_, fragment)| fragment == WALL);
     let port = port.map(|port| format!(":{port}")).unwrap_or_default();
-    within_bound(Address { text: format!("{scheme}{SCHEME_SEPARATOR}{host}{port}{path}"), host, encrypted, file: None, page, subpage })
+    within_bound(Address { text: format!("{scheme}{SCHEME_SEPARATOR}{host}{port}{path}"), host, encrypted, file: None, page, subpage, wall })
 }
 
 /// Where a redirect leads, by the rules the address field uses: `https` or
@@ -287,8 +329,9 @@ pub fn outside_link(text: &str) -> Result<Address, String> {
     let address = redirect_destination(wrapped).map_err(|_| String::from("a link wraps no web address it may open"))?;
     if let Some((_, fragment)) = address.text.split_once(FRAGMENT)
         && fragment_page(fragment).is_none()
+        && fragment != WALL
     {
-        return Err("a link's fragment is not a page".into());
+        return Err("a link's fragment is not a place in a channel".into());
     }
     Ok(address)
 }
@@ -296,9 +339,10 @@ pub fn outside_link(text: &str) -> Result<Address, String> {
 /// The address, when written in full, with its scheme and slash, it is no
 /// longer than an address may be: every one opened can then be kept in
 /// history, bookmarks and the session, which refuse a longer line
-/// (finding F-78).
+/// (finding F-78), with room for the longest fragment its tab may add
+/// (REQ-1690 item 10).
 fn within_bound(address: Address) -> Result<Address, String> {
-    if address.text.len() > protocol::MAX_ADDRESS {
+    if address.text.len() > protocol::MAX_ADDRESS || address.channel_text().len().saturating_add(LONGEST_FRAGMENT) > protocol::MAX_ADDRESS {
         return Err(format!("Addresses are limited to {} characters", protocol::MAX_ADDRESS));
     }
     Ok(address)

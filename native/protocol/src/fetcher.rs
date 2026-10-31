@@ -421,16 +421,17 @@ pub fn read_to_fetcher(input: &mut dyn Read) -> Result<Option<ToFetcher>, Protoc
 }
 
 /// A live channel's message beyond its pages: its payload, and its kind.
-/// A REDIRECT record's page and sub-code, checked again on each side by the
-/// engine's rules (`INPUT.md` section 7.11).
+/// Whether a REDIRECT record's page and sub-code are ones this browser can
+/// show: the engine's rules (`INPUT.md` section 7.11) let a channel name a
+/// page with letters, which it has no slot for.
+#[must_use]
+pub fn redirect_in_bounds(page: u16, sub: u16) -> bool {
+    page_index(page).is_some() && is_sub_code(sub)
+}
+
+/// A REDIRECT record's page and sub-code, checked again on each side.
 fn check_redirect(page: u16, sub: u16) -> Result<(), ProtocolError> {
-    if page_index(page).is_none() {
-        return Err(ProtocolError::BadValue("page number"));
-    }
-    if !is_sub_code(sub) {
-        return Err(ProtocolError::BadValue("sub-code"));
-    }
-    Ok(())
+    if redirect_in_bounds(page, sub) { Ok(()) } else { Err(ProtocolError::BadValue("redirect page")) }
 }
 
 fn push_live_message(payload: &mut Vec<u8>, message: &FromFetcher) -> Result<u8, ProtocolError> {

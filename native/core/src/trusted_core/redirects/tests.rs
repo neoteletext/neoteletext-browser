@@ -293,7 +293,7 @@ fn an_open_channel_is_not_moved() {
     let open = channel(&core);
     core.fetched(open, FromFetcher::InitialPage(0x100)).unwrap();
     hop(&mut core, DESTINATION);
-    assert_eq!((address(&core), channel(&core)), (REDIRECTING, open));
+    assert_eq!((address(&core), channel(&core)), (format!("{REDIRECTING}#100").as_str(), open));
     assert_eq!(core.strip().redirecting, "");
 }
 
@@ -324,6 +324,7 @@ fn live(name: &str) -> (Test, u32) {
     test.core.fetched(channel, FromFetcher::Connecting(true)).unwrap();
     test.core.fetched(channel, FromFetcher::Connecting(false)).unwrap();
     test.core.fetched(channel, FromFetcher::Contents(listing())).unwrap();
+    test.core.fetched(channel, FromFetcher::InitialPage(PAGE_100.page)).unwrap();
     test.core.intent(ToCore::Opened(Some(PageKey { channel, ..PAGE_100 }))).unwrap();
     test.sent();
     (test, channel)
@@ -389,7 +390,7 @@ fn a_redirect_names_a_sub_page() {
 fn a_redirect_to_a_page_not_listed_moves_nothing() {
     let (mut test, channel) = live("not listed");
     redirected(&mut test, channel, 0x400, SUBCODE_ANY);
-    assert_eq!(text(&test), LIVE);
+    assert_eq!(text(&test), PAGE_100_ADDRESS);
     assert_eq!(shown(&mut test), []);
     assert_eq!(test.core.typing.selection(channel), Some((0x100, SUBCODE_ANY)));
 }
@@ -463,7 +464,7 @@ fn a_programs_redirect_shows_the_notice_then_opens_the_channel() {
     core.fetched(old, FromFetcher::InitialPage(0x100)).unwrap();
     program_redirect(&mut core, DESTINATION);
     assert_eq!(core.strip().redirecting, DESTINATION);
-    assert_eq!(address(&core), LIVE, "the address waits");
+    assert_eq!(address(&core), "https://live.invalid/channel/#100", "the address waits");
     elapse(&mut core);
     assert_eq!(address(&core), DESTINATION);
     assert_ne!(channel(&core), old, "a channel of its own");
@@ -580,7 +581,6 @@ const PAGE_300_ADDRESS: &str = "https://live.invalid/channel/#300";
 /// A tab on a live channel on page 100, named by its address and drawn.
 fn on_page_100(name: &str) -> (Test, u32) {
     let (mut test, channel) = live(name);
-    test.core.session.show_page(0x100).unwrap();
     welcomed(&mut test, channel);
     draw(&mut test, channel, 0x100);
     (test, channel)

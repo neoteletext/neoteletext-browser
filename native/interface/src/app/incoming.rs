@@ -39,13 +39,20 @@ impl App {
             #[cfg(feature = "interaction")]
             Incoming::InputTrace(line) => self.view.browser.set_input_trace(line),
             Incoming::Library(view) => self.library(view, now),
-            Incoming::Channel(channel) => self.view.browser.set_channel(channel),
+            Incoming::Channel(channel) => {
+                self.view.browser.set_channel(channel);
+                self.view.browser.show_listed(now);
+            }
             Incoming::Arrived { channel, page, title } => self.view.browser.add_page(channel, page, title, now),
             Incoming::SubPageCount { channel, page, count } => self.view.browser.set_subpage_count(channel, page, count),
             Incoming::SubPageRows { channel, page, rows } => self.view.browser.set_subpage_rows(channel, page, rows.count, rows.first, rows.rows),
             Incoming::Updated { channel, page } => self.page_updated(channel, page, now),
             Incoming::Show(key) => {
                 self.view.browser.show(key, now);
+                self.act(event_loop);
+            }
+            Incoming::ShowWall(channel) => {
+                self.view.browser.show_wall(channel, now);
                 self.act(event_loop);
             }
             Incoming::Page { key, version, image } => self.page_frame(event_loop, key, version, &image, now),

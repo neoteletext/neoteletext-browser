@@ -171,7 +171,7 @@ This is a change to the engine's TTI Link Extension, for the engine's owner: the
 
 ### 7.3 A page in another channel
 
-A link can name a page in another channel by a fragment: `https://weather.example/#302`, or `#302:0001` for a sub-page. Three hexadecimal digits, 100 to 8FF, and optionally a sub-page. The strip shows the page number with the channel, and the same form works when typed into the strip or bookmarked. Today the address rules stop the host at `#` and keep nothing after it (`core/src/address.rs`); this would be its first use. A fragment is never sent in a request, and is never part of an address handed to the system's web browser.
+A link can name a page in another channel by a fragment: `https://weather.example/#302`, or `#302/0001` for a sub-page. Three hexadecimal digits, 100 to 8FF, and optionally a sub-page; REQ-1693 is the whole map. The strip shows the page number with the channel, and the same form works when typed into the strip or bookmarked. Today the address rules stop the host at `#` and keep nothing after it (`core/src/address.rs`); this would be its first use. A fragment is never sent in a request, and is never part of an address handed to the system's web browser.
 
 ## 8. How link data flows
 
@@ -382,7 +382,7 @@ All taken by the owner on 20 October 2026 (decision 41), each as recommended.
 | 5 | The `web:` target form in the engine's TTI Link Extension | Adopt it; there is no other way to tell a channel's folder from a web page |
 | 6 | The engine's `underline` render option | Adopt it; clear the bit in the decoder only until it exists |
 | 7 | How the core opens the web browser on Windows: `ShellExecuteW` through a small crate, a few lines of unsafe code in a crate of its own as the Dock menu has, or `explorer.exe` with the address | A crate of its own with the unsafe confined, as decision 39 did for the Dock menu |
-| 8 | Addresses of a page in another channel by a fragment (section 7.3) | Yes, `#302` and `#302:0001` |
+| 8 | Addresses of a page in another channel by a fragment (section 7.3) | Yes, `#302` and `#302/0001` |
 | 9 | Hand plain `http` web links to the system browser, marked not secure, or refuse them? | Allow and mark, as the address field does (requirement 5.9); `http` links are rare enough that refusing would also be reasonable |
 | 10 | On Linux, the XDG Desktop Portal first, then `xdg-open`? The portal needs a D-Bus client crate (a library choice, requirement 14.3) | Yes, through the smallest D-Bus crate that passes `cargo-deny`; `xdg-open` alone until the crate is approved |
 

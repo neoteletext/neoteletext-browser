@@ -67,7 +67,7 @@ fn the_file_is_read_strictly() {
 /// kept between runs; its line is its name and the address.
 #[test]
 fn the_longest_address_is_kept() {
-    let path = "a".repeat(protocol::MAX_ADDRESS - "https://a.example/".len());
+    let path = "a".repeat(protocol::MAX_ADDRESS - "https://a.example/".len() - "#302/0002".len());
     let address = format!("https://a.example/{path}");
     assert_eq!(checked_address(&address).as_deref(), Some(address.as_str()), "the address rules take it");
     let settings = Settings { home: address, ..Settings::default() };

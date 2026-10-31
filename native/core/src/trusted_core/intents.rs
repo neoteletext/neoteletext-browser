@@ -45,16 +45,24 @@ impl Core {
         #[cfg(feature = "links")]
         self.send_links_afresh()?;
         self.send_mutes();
-        // An address that names a sub-page opens its page there (decision 67).
-        if let Some(tab) = self.session.active_tab()
-            && let Some(address) = tab.address()
-            && let Some(page) = address.page
-        {
-            let key = PageKey { channel: tab.channel.id, page };
-            self.open_at_subpage(key, address.subpage);
-            self.send(&ToInterface::Show(key))?;
+        self.show_address()
+    }
+
+    /// The page area follows the active tab's address: its wall, or the page
+    /// it names or else the channel's first, at the sub-page it names
+    /// (decision 67, REQ-1693).
+    fn show_address(&mut self) -> Result<(), String> {
+        let Some(tab) = self.session.active_tab() else { return Ok(()) };
+        let channel = tab.channel.id;
+        let Some(address) = tab.address() else { return Ok(()) };
+        if address.wall {
+            return self.send(&ToInterface::ShowWall(channel));
         }
-        Ok(())
+        let subpage = address.subpage;
+        match address.page.or(tab.channel.initial_page) {
+            Some(page) => self.open_page(PageKey { channel, page }, subpage),
+            None => Ok(()),
+        }
     }
 
     /// Tells the interface each tab's channel's mute, where it changed: a
@@ -241,6 +249,16 @@ impl Core {
         // (finding F-66).
         let active = self.active_channel();
         let key = key.filter(|key| Some(key.channel) == active);
+        // The address follows what the viewer did (REQ-1690): a page open
+        // going away with its channel still here is the wall, and a new
+        // channel's page comes from its address.
+        let moved = match key {
+            Some(key) => self.session.page_chosen(key.page),
+            None => self.page_open().is_some_and(|open| Some(open.channel) == active) && self.session.wall_chosen(),
+        };
+        if moved {
+            self.send(&ToInterface::Strip(self.strip()))?;
+        }
         #[cfg(feature = "interaction")]
         {
             self.opened = key;
@@ -270,12 +288,9 @@ impl Core {
         match went {
             Went::Nowhere => Ok(()),
             Went::Channel => self.send_all(),
-            Went::Page(page) => {
+            Went::Page(_) => {
                 self.send(&ToInterface::Strip(self.strip()))?;
-                if let (Some(page), Some(channel)) = (page, self.active_channel()) {
-                    self.send(&ToInterface::Show(PageKey { channel, page }))?;
-                }
-                Ok(())
+                self.show_address()
             }
         }
     }
