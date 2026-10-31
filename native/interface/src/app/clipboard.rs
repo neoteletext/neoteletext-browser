@@ -30,16 +30,14 @@ fn menu_key(shortcut: Shortcut) -> (BrowserKey<'static>, Modifiers) {
     (key, Modifiers { command: true, shift: shortcut.shift, alt: shortcut.alt, repeat: false })
 }
 
-/// The most of the clipboard any taker uses: a paste to a channel, a
-/// PASTE of at most `MAX_PASTE` bytes (the input system's REQ-INT-103),
-/// or, built without typing, the longest field, the address field.
+/// The most of the clipboard any taker uses: the longest field, the address
+/// field, or a paste to a channel, a PASTE of at most `MAX_PASTE` bytes (the
+/// input system's REQ-INT-103), which cuts its own to that.
 #[cfg(feature = "interaction")]
-const MAX_CLIPBOARD: usize = neoteletext_input::MAX_PASTE;
+const MAX_CLIPBOARD: usize =
+    if neoteletext_input::MAX_PASTE > interface_core::browser::MAX_ADDRESS { neoteletext_input::MAX_PASTE } else { interface_core::browser::MAX_ADDRESS };
 #[cfg(not(feature = "interaction"))]
 const MAX_CLIPBOARD: usize = interface_core::browser::MAX_ADDRESS;
-// Every field takes at most the address field's length, which the
-// clipboard's bound must cover.
-const _: () = assert!(MAX_CLIPBOARD >= interface_core::browser::MAX_ADDRESS);
 
 /// The clipboard's text as far as any taker uses it, cut on a character
 /// boundary as soon as it is read (finding F-54), the rest let go: the
@@ -160,6 +158,14 @@ mod tests {
         assert!(cut.chars().all(|character| character == 'é'), "cut on a character boundary");
         assert!(cut.capacity() <= MAX_CLIPBOARD, "the rest is let go");
         assert_eq!(bounded("short".into()), "short");
+    }
+
+    /// An address of RFC 9110's 8,000 octets pastes whole (neoteletext-common's
+    /// REQ-1661 item 3).
+    #[test]
+    fn the_clipboard_holds_a_whole_address() {
+        let longest = "a".repeat(8_000);
+        assert_eq!(bounded(longest.clone()), longest);
     }
 
     /// Every menu bar item with the browser's action does what its key

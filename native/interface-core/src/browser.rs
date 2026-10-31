@@ -83,8 +83,9 @@ pub use tab_strip::DropTarget;
 #[cfg(feature = "interaction")]
 pub use typing::{CursorView, TypingView, notched};
 
-/// The address field's limit, as the trusted core's address rules.
-pub const MAX_ADDRESS: usize = 2048;
+/// The address field's limit, as the trusted core's address rules: the
+/// engine's one bound on an address (neoteletext-common's REQ-1661).
+pub const MAX_ADDRESS: usize = neoteletext_core::limits::MAX_URL_LENGTH;
 
 /// Scrolling by one wheel line.
 pub const LINE_HEIGHT: f64 = 21.0;

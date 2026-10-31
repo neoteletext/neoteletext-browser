@@ -31,10 +31,10 @@ pub const MAX_TEXT_LINKS: usize = 8;
 pub const MAX_RUNS: usize = MAX_TEXT_LINKS;
 /// The most `LK` lines a page keeps.
 pub const MAX_NUMBER_LINKS: usize = 8;
-/// A target as a page file writes it: at most 256 bytes (the engine's
-/// `LINK_ADDRESS_BYTES`, TTI Link Extension section E.1), a `web:` target
-/// included.
-pub const MAX_TARGET: usize = 256;
+/// A target as a page file writes it: an address of the one bound with its
+/// `web:` mark (neoteletext-common's DEC-1668). The decoder asserts it is
+/// the engine's `LINK_TARGET_BYTES`.
+pub const MAX_TARGET: usize = MAX_ADDRESS + "web:".len();
 /// The most aliases a descriptor has (the engine's REQ-WEB-002).
 pub const MAX_ALIASES: usize = 16;
 /// The most named services a descriptor lists (the engine's

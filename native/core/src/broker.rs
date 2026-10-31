@@ -50,6 +50,8 @@ const INSTANCE: &str = "instance";
 /// The longest path a local-domain socket takes on macOS: `sun_path`'s 104
 /// bytes, less the zero that ends it.
 const MOST_SOCKET_PATH: usize = 103;
+// Every address, and every link from outside that wraps one, passes a request.
+const _: () = assert!(address::OUTSIDE_SCHEME.len() + protocol::MAX_ADDRESS <= MAX_TEXT, "an address fits a request");
 const KEY_SERVICE: &str = "NeoTeletext cookie file";
 const KEY_ACCOUNT: &str = "cookies.bin";
 

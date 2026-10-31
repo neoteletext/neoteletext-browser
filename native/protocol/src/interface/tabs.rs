@@ -5,11 +5,13 @@ use interface_core::browser::TabInfo;
 use interface_core::theme::TAB_COLOURS;
 
 use super::kinds::{TAB_FLAGS, TAB_MUTED, TAB_PRIVATE};
-use crate::{Fields, MAX_ADDRESS, MAX_PAYLOAD, MAX_TAB_TITLE, MAX_TABS, ProtocolError, push_text};
+use crate::library::MAX_SHOWN_ADDRESS;
+use crate::{Fields, MAX_PAYLOAD, MAX_TAB_TITLE, MAX_TABS, ProtocolError, push_text};
 
 /// A tab on the wire at most: its colour, channel and flags, and its title
-/// and address, each with its two-byte length.
-const MAX_TAB_BYTES: usize = 1 + 4 + 1 + (2 + MAX_TAB_TITLE) + (2 + MAX_ADDRESS);
+/// and address, each with its two-byte length. Its address is only what its
+/// tip shows, cut as a view's is, so that every tab fits one message.
+const MAX_TAB_BYTES: usize = 1 + 4 + 1 + (2 + MAX_TAB_TITLE) + (2 + MAX_SHOWN_ADDRESS);
 const _: () = assert!(2 + MAX_TABS * MAX_TAB_BYTES <= MAX_PAYLOAD, "every tab fits one message");
 
 pub(super) fn push_tabs(payload: &mut Vec<u8>, tabs: &[TabInfo], active: usize) -> Result<(), ProtocolError> {
@@ -23,7 +25,7 @@ pub(super) fn push_tabs(payload: &mut Vec<u8>, tabs: &[TabInfo], active: usize) 
         payload.extend_from_slice(&tab.channel.to_be_bytes());
         payload.push(if tab.muted { TAB_MUTED } else { 0 } | if tab.private { TAB_PRIVATE } else { 0 });
         push_text(payload, &tab.title, MAX_TAB_TITLE)?;
-        push_text(payload, &tab.address, MAX_ADDRESS)?;
+        push_text(payload, &tab.address, MAX_SHOWN_ADDRESS)?;
     }
     Ok(())
 }
@@ -47,7 +49,7 @@ pub(super) fn read_tabs(fields: &mut Fields<'_>) -> Result<(Vec<TabInfo>, usize)
                 return Err(ProtocolError::BadValue("tab flags"));
             }
             let title = fields.text(MAX_TAB_TITLE)?;
-            Ok(TabInfo { colour, channel, muted: flags & TAB_MUTED != 0, private: flags & TAB_PRIVATE != 0, title, address: fields.text(MAX_ADDRESS)? })
+            Ok(TabInfo { colour, channel, muted: flags & TAB_MUTED != 0, private: flags & TAB_PRIVATE != 0, title, address: fields.text(MAX_SHOWN_ADDRESS)? })
         })
         .collect::<Result<_, _>>()?;
     Ok((tabs, active))

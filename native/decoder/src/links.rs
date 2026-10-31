@@ -8,8 +8,14 @@ use std::collections::BTreeMap;
 
 use neoteletext_core::charset::to_unicode;
 use neoteletext_core::level1::{Cell, Glyph, Grid, Size};
-use neoteletext_formats::page::{LINK_LINES, LinkDestination, LinkLine, PageFile};
+use neoteletext_formats::page::{AddressSpan, LINK_LINES, LINK_TARGET_BYTES, LinkDestination, LinkLine, LinkText, PageFile};
 use protocol::links::{Candidate, MAX_NUMBER_LINKS, MAX_TARGET, MAX_TEXT_LINKS, NumberLink};
+
+// A target the engine keeps is one a message can carry.
+const _: () = assert!(MAX_TARGET == LINK_TARGET_BYTES, "the protocol's target is the engine's");
+
+#[cfg(test)]
+mod tests;
 
 /// Light backgrounds take a black edge on the underline: those brighter
 /// than half, by the luminance of ITU-R BT.709, the weights the engine's
@@ -29,6 +35,8 @@ pub struct LinkLines {
     /// A LINKS record's `LN` lines. A page file's stay in the page file,
     /// which draws its row 24 as it is read.
     keys: Vec<LinkLine>,
+    /// The addresses of `keys`, which outlast the record they came in.
+    key_text: LinkText,
 }
 
 impl LinkLines {
@@ -43,6 +51,7 @@ impl LinkLines {
         for &line in &self.keys {
             file.links.push(line);
         }
+        file.link_text = self.key_text.clone();
         Some(file)
     }
 }
@@ -56,7 +65,8 @@ impl Lines {
     /// Keeps the link lines of a page file, replacing its earlier version's.
     pub fn read(&mut self, page: &PageFile) {
         let key = (page.address.mpp(), page.subcode.value());
-        self.set(key, page.text_links.as_slice().iter().copied(), page.number_links.as_slice().iter().copied(), core::iter::empty(), true);
+        let (texts, numbers) = (page.text_links.as_slice().iter().copied(), page.number_links.as_slice().iter().copied());
+        self.set(key, texts, numbers, core::iter::empty(), |span| page.link_text.address(span), true);
     }
 
     /// Keeps a pushed sub-page's links from its LINKS record (REQ-1494),
@@ -64,7 +74,7 @@ impl Lines {
     /// 0 replaces what was held, later parts add to it.
     pub fn read_record(&mut self, record: &neoteletext_web::records::links::LinksRecord<'_>) {
         let key = (record.page.mpp(), record.subcode.value());
-        self.set(key, record.text_links(), record.number_links(), record.key_links(), record.part == 0);
+        self.set(key, record.text_links(), record.number_links(), record.key_links(), |span| record.address(span), record.part == 0);
     }
 
     /// Drops what is held for a sub-page a frame came for with no LINKS
@@ -73,21 +83,28 @@ impl Lines {
         self.0.remove(&(page, subcode));
     }
 
-    fn set(
+    fn set<'a>(
         &mut self,
         key: (u16, u16),
         texts: impl Iterator<Item = neoteletext_formats::page::TextLink>,
         numbers: impl Iterator<Item = neoteletext_formats::page::NumberLink>,
         keys: impl Iterator<Item = LinkLine>,
+        address: impl Fn(AddressSpan) -> &'a [u8],
         replace: bool,
     ) {
         let mut lines = if replace { LinkLines::default() } else { self.0.remove(&key).unwrap_or_default() };
-        lines.text.extend(texts.filter_map(|link| Some((link.row, link.column, link.length, target(&link.destination)?))));
+        lines.text.extend(texts.filter_map(|link| Some((link.row, link.column, link.length, target(&link.destination, &address)?))));
         lines.text.truncate(MAX_TEXT_LINKS);
-        lines.numbers.extend(numbers.filter_map(|link| Some(NumberLink { number: link.number.mpp(), target: target(&link.destination)? })));
+        lines.numbers.extend(numbers.filter_map(|link| Some(NumberLink { number: link.number.mpp(), target: target(&link.destination, &address)? })));
         lines.numbers.truncate(MAX_NUMBER_LINKS);
-        lines.keys.extend(keys);
-        lines.keys.truncate(LINK_LINES);
+        for mut line in keys.take(LINK_LINES.saturating_sub(lines.keys.len())) {
+            // A key's address leaves its record for the text the key keeps.
+            let kept = if line.url.is_empty() { Some(AddressSpan::NONE) } else { lines.key_text.add(address(line.url)) };
+            if let Some(span) = kept {
+                line.url = span;
+                lines.keys.push(line);
+            }
+        }
         if lines == LinkLines::default() {
             self.0.remove(&key);
         } else {
@@ -104,14 +121,15 @@ impl Lines {
 
 /// A target as the page file wrote it (TTI Link Extension section E.1):
 /// an address, `web:` included, as written; otherwise the page, after the
-/// service's name if it has one. The trusted core parses it again.
-fn target(destination: &LinkDestination) -> Option<String> {
+/// service's name if it has one. `address` reads what holds the address.
+/// The trusted core parses it again.
+fn target<'a>(destination: &LinkDestination, address: &impl Fn(AddressSpan) -> &'a [u8]) -> Option<String> {
     let text = if destination.url.is_empty() {
         let page = destination.address.mpp();
         let service = String::from_utf8_lossy(destination.service.as_bytes());
         if service.is_empty() { format!("{page:03X}") } else { format!("{service}:{page:03X}") }
     } else {
-        String::from_utf8_lossy(destination.url.as_bytes()).into_owned()
+        String::from_utf8_lossy(address(destination.url)).into_owned()
     };
     (text.len() <= MAX_TARGET).then_some(text)
 }

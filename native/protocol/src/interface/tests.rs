@@ -10,7 +10,7 @@ use super::kinds::{
     KIND_TAB_TO_WINDOW, KIND_TABS, KIND_TARGET, KIND_VISIBLE,
 };
 use super::*;
-use crate::{MAX_IDENTITY, MAX_PAYLOAD, NEW_WINDOW, ProtocolError, clean};
+use crate::{MAX_IDENTITY, MAX_PAYLOAD, NEW_WINDOW, ProtocolError, clean, fetcher};
 #[cfg(not(feature = "links"))]
 use crate::{decoder, fetcher};
 
@@ -30,6 +30,34 @@ fn strip() -> StripState {
         notice: "Proxy changed to socks5://127.0.0.1:1080".into(),
         refused: Some(CertificateProblem::Revoked),
         redirecting: "https://elsewhere.invalid/teletext/".into(),
+    }
+}
+
+/// neoteletext-common's REQ-1661 item 3: an address of RFC 9110's 8,000
+/// octets crosses every pipe that carries one whole, and every tab of a
+/// window fits one message with its tip's address cut.
+#[test]
+fn an_address_of_8000_octets_crosses_the_pipes() {
+    let longest = format!("https://a.example/{}", "a".repeat(8_000 - "https://a.example/".len()));
+    let long_strip = StripState { address: longest.clone(), redirecting: longest.clone(), ..strip() };
+    let tip = "a".repeat(library::MAX_SHOWN_ADDRESS);
+    let tabs = (0..crate::MAX_TABS)
+        .map(|_| TabInfo { title: "t".repeat(crate::MAX_TAB_TITLE), colour: 0, channel: 1, muted: false, private: false, address: tip.clone() })
+        .collect();
+    for message in [ToInterface::Strip(long_strip), ToInterface::Tabs { tabs, active: 0 }] {
+        let mut bytes = Vec::new();
+        write_to_interface(&mut bytes, &message).unwrap();
+        assert_eq!(read_from_core(&mut bytes.as_slice()).unwrap().unwrap(), message);
+    }
+    for message in [ToCore::Navigate(longest.clone()), ToCore::Suggest(longest.clone())] {
+        let mut bytes = Vec::new();
+        write_to_core(&mut bytes, &message).unwrap();
+        assert_eq!(read_from_interface(&mut bytes.as_slice()).unwrap().unwrap(), message);
+    }
+    for message in [fetcher::FromFetcher::Redirected(longest.clone()), fetcher::FromFetcher::ProgramRedirect(longest.clone())] {
+        let mut bytes = Vec::new();
+        fetcher::write_to_core(&mut bytes, &message).unwrap();
+        assert_eq!(fetcher::read_from_fetcher(&mut bytes.as_slice()).unwrap().unwrap(), message);
     }
 }
 

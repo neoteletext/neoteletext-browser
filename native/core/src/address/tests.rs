@@ -122,6 +122,28 @@ fn a_channels_address_leaves_room_for_a_sub_page() {
     assert!(parse(&format!("{fits}x")).is_err(), "no room");
 }
 
+/// TODO-1662: the address rules read `#` as the engine's parser does: the
+/// host ends at it, a query comes before it and is part of the channel, and
+/// what is fetched holds no fragment.
+#[test]
+fn the_address_rules_and_the_engines_parser_agree_on_a_fragment() {
+    use neoteletext_web::url::Url;
+    for (text, host, query) in [
+        ("https://a.example/news/#302", "a.example", None),
+        ("https://a.example/news/?who=me#302/0002", "a.example", Some("who=me")),
+        ("https://a.example#302", "a.example", None),
+        ("https://evil.example#@good.example", "evil.example", None),
+        ("http://a.example:8080/?a=1&b=2#wall", "a.example", Some("a=1&b=2")),
+    ] {
+        let ours = parse(text).unwrap();
+        let theirs = Url::parse(text).unwrap();
+        assert_eq!((ours.host.as_str(), theirs.host_text()), (host, host), "{text}");
+        assert_eq!(theirs.query(), query, "{text}");
+        assert_eq!(theirs.as_str(), ours.channel_text(), "{text}: what is fetched");
+        assert_eq!(Some(ours.text.split_once(FRAGMENT).unwrap().1), theirs.fragment(), "{text}");
+    }
+}
+
 /// Requirement 19.7: the start page, and no other `neoteletext:` address.
 #[test]
 fn the_start_page_is_the_one_built_in_address() {

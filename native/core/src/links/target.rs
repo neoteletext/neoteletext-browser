@@ -49,8 +49,8 @@ pub enum Target {
 /// reads (requirement 17.12).
 #[must_use]
 pub fn parse_target(text: &str) -> Option<Target> {
-    // Printable ASCII with no spaces or commas, at most 256 bytes (TTI
-    // Link Extension section E.1).
+    // Printable ASCII with no spaces or commas (TTI Link Extension section
+    // E.1), of at most the one bound and a `web:` mark.
     if text.is_empty() || text.len() > MAX_TARGET || !text.bytes().all(|byte| byte.is_ascii_graphic() && byte != b',') {
         return None;
     }

@@ -29,8 +29,8 @@ const _: () = assert!(COOKIE_BLOCK.len() >= ALLOW_LOCAL.len(), "the longest name
 /// The most channels whose cookies are blocked (`cookies.md` section 4.2).
 pub const MAX_BLOCKED: usize = 1_000;
 /// The longest file read (section 1.2): every blocked channel at the
-/// longest line, with room for the rest, rounded up to 3 MiB.
-pub const MAX_FILE: usize = 3 * 1024 * 1024;
+/// longest line, with room for the rest, rounded up to 8 MiB.
+pub const MAX_FILE: usize = 8 * 1024 * 1024;
 const _: () = assert!(MAX_BLOCKED * (MAX_LINE + 1) + 256 * 1024 <= MAX_FILE, "the file bound holds every blocked channel");
 /// The most local addresses allowed (section 1.1).
 pub const MAX_LOCAL: usize = 16;

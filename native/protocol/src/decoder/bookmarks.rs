@@ -7,7 +7,7 @@ use crate::{Fields, ProtocolError, push_raw_text, raw_text};
 
 /// The largest bookmark file a decoder reads (decision 71): the trusted
 /// core's own bookmark file's bound.
-pub const MAX_BOOKMARK_FILE: usize = 24 * 1024 * 1024;
+pub const MAX_BOOKMARK_FILE: usize = 84 * 1024 * 1024;
 /// The most entries a decoder reports from a bookmark file: the trusted
 /// core's bound on bookmarks and folders.
 pub const MAX_BOOKMARK_ENTRIES: usize = 10_000;

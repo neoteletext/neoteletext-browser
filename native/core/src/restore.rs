@@ -35,8 +35,8 @@ const MAX_WINDOW_DIGITS: usize = 10;
 const MAX_LINE: usize = "entry".len() + 1 + 1 + 1 + 1 + 1 + MAX_TIME_DIGITS + 1 + protocol::MAX_ADDRESS + 1 + MAX_TITLE;
 /// The largest file read: every tab and closed tab with every entry at the
 /// longest line, with room for the windows' and the tabs' lines, rounded
-/// up to 16 MiB, as the history file's bound.
-pub const MAX_FILE: usize = 16 * 1024 * 1024;
+/// up to 40 MiB.
+pub const MAX_FILE: usize = 40 * 1024 * 1024;
 const _: () = assert!(
     (MAX_TABS + MAX_CLOSED) * (MAX_ENTRIES + 1) * (MAX_LINE + 1) + MAX_WINDOWS * 2 * 64 < MAX_FILE,
     "the file bound holds every tab and closed tab at the longest lines, and every window's lines"

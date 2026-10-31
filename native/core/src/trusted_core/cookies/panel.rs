@@ -1,8 +1,9 @@
 //! The cookies panel (`cookies.md` section 8, requirement 21.6): its
 //! requests, strip input, and its view of each site and channel.
 
+use neoteletext::address::shown_address;
 use neoteletext::cookies::Channel;
-use protocol::cookies::{CookieRow, CookiesRequest, CookiesView, MAX_LABEL, MAX_NOTICE, MAX_USED, MAX_VIEW_ROWS};
+use protocol::cookies::{CookieRow, CookiesRequest, CookiesView, MAX_NOTICE, MAX_USED, MAX_VIEW_ROWS};
 use protocol::{ToInterface, clean};
 
 use super::super::Core;
@@ -136,7 +137,7 @@ fn site_rows(channels: &[Listed], offset: i32) -> Vec<(Row, CookieRow)> {
         let site_row = CookieRow {
             number: 0,
             site: true,
-            label: clean(&origin, MAX_LABEL),
+            label: shown_address(&origin),
             count: u32::try_from(members.iter().map(|member| member.2).sum::<usize>()).unwrap_or(u32::MAX),
             bytes: u64::try_from(members.iter().map(|member| member.3).sum::<usize>()).unwrap_or(u64::MAX),
             used: used(members.iter().map(|member| member.4).max().unwrap_or(0)),
@@ -148,7 +149,7 @@ fn site_rows(channels: &[Listed], offset: i32) -> Vec<(Row, CookieRow)> {
             let row = CookieRow {
                 number: 0,
                 site: false,
-                label: clean(folder, MAX_LABEL),
+                label: shown_address(folder),
                 count: u32::try_from(*count).unwrap_or(u32::MAX),
                 bytes: u64::try_from(*size).unwrap_or(u64::MAX),
                 used: used(*at),

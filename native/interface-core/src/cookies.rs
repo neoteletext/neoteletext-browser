@@ -9,8 +9,9 @@ use alloc::vec::Vec;
 
 pub use crate::library::{MAX_NOTICE, MAX_QUERY, MAX_VIEW_ROWS};
 
-/// The longest label: a channel's identity, the address field's limit.
-pub const MAX_LABEL: usize = crate::browser::MAX_ADDRESS;
+/// The longest label: a channel's identity, cut as a view's address is. A
+/// row is acted on by its number, never by this text.
+pub const MAX_LABEL: usize = crate::library::MAX_SHOWN_ADDRESS;
 /// The longest "last used" text, as "4 days ago".
 pub const MAX_USED: usize = 32;
 

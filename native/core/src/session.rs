@@ -13,7 +13,7 @@ use interface_core::theme::TAB_COLOURS;
 use protocol::{MAX_ADDRESS, MAX_IDENTITY, MAX_TAB_TITLE, clean};
 
 use crate::source::Source;
-use neoteletext::address::{Address, START_PAGE, parse};
+use neoteletext::address::{Address, START_PAGE, parse, shown_address};
 use neoteletext::bookmarks::Bookmarks;
 use neoteletext::start_page;
 
@@ -266,7 +266,7 @@ impl Session {
                     channel: tab.channel.id,
                     muted: tab.muted,
                     private: tab.private,
-                    address: clean(address, MAX_ADDRESS),
+                    address: shown_address(address),
                 }
             })
             .collect()

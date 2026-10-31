@@ -628,3 +628,36 @@ fn a_restored_file_tab_is_read_only_when_first_shown() {
     assert_eq!(reads.load(Ordering::Relaxed), 1, "read once");
     assert!(restored.tabs[3].channel.source.has_more());
 }
+
+/// RFC 9110 section 4.1's 8,000 octets, with a page after a channel's
+/// address, written out so that these tests say the requirement, not
+/// whatever the constant holds (neoteletext-common's REQ-1661 item 3).
+fn longest() -> String {
+    const LONGEST: usize = 8_000;
+    const HEAD: &str = "https://a.example/";
+    const PAGE: &str = "#302/0002";
+    format!("{HEAD}{}{PAGE}", "x".repeat(LONGEST.saturating_sub(HEAD.len()).saturating_sub(PAGE.len())))
+}
+
+#[test]
+fn the_session_file_keeps_an_address_of_8000_octets() {
+    let mut session = Session::new(Bookmarks::default());
+    session.open(&longest()).unwrap();
+    let (read, dropped) = Saved::read(&session.saved().text());
+    assert!(dropped.is_empty(), "{dropped:?}");
+    let mut restored = Session::new(Bookmarks::default());
+    assert_eq!(restored.restore(&read), 1);
+    assert_eq!(restored.active_tab().and_then(|tab| tab.address()).map(|address| address.text.as_str()), Some(longest().as_str()));
+}
+
+/// A tab's tip shows the address cut as a view's is, so that all the tabs
+/// of a window at the longest still go in one message.
+#[test]
+fn a_tabs_tip_is_cut_as_a_view_is() {
+    let mut session = Session::new(Bookmarks::default());
+    session.open(&longest()).unwrap();
+    let tip = session.tab_infos().remove(0).address;
+    assert_eq!(tip, shown_address(&longest()));
+    assert!(tip.len() <= protocol::library::MAX_SHOWN_ADDRESS);
+    assert!(tip.starts_with("https://a.example/") && tip.ends_with('\u{2026}'), "{tip}");
+}

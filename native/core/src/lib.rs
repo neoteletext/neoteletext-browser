@@ -46,6 +46,8 @@ pub mod input_trace;
 pub mod launch;
 #[cfg(feature = "links")]
 pub mod links;
+#[cfg(test)]
+mod longest_address_tests;
 pub mod outbox;
 mod private_file;
 pub use private_file::make_folder;

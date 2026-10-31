@@ -49,8 +49,11 @@ pub(crate) use wire::{frame, header};
 pub const MAX_HELPERS: usize = 512;
 /// The most arguments a helper is started with, and the longest.
 pub const MAX_ARGUMENTS: usize = 64;
-/// The longest argument, path or address in a request.
-pub const MAX_TEXT: usize = 4096;
+/// The longest argument, path or address in a request: twice the 4,096
+/// bytes of the longest path, which holds an address of 8,000 octets
+/// (neoteletext-common's REQ-1661) in a `neoteletext://` link. The trusted
+/// core asserts that it does.
+pub const MAX_TEXT: usize = 2 * 4096;
 /// The largest reply: a file channel's bytes, at most 64 MB with a line
 /// end for each of at most 4,096 files (`source.rs`), and room to spare.
 pub const MAX_REPLY: usize = 64 * 1024 * 1024 + 64 * 1024;

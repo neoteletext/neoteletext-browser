@@ -105,6 +105,22 @@ const HEXADECIMAL: u32 = 16;
 /// `#NNN/SSSS`. An address with no room for it is refused (REQ-1690 item 10).
 const LONGEST_FRAGMENT: usize = 1 + PAGE_DIGITS + 1 + SUBPAGE_DIGITS;
 
+/// What ends an address cut to fit a view.
+const ELLIPSIS: char = '\u{2026}';
+
+/// An address cut to fit a view or a tab's tip; a row is opened by its
+/// number, never by this text.
+#[must_use]
+pub fn shown_address(address: &str) -> String {
+    let cleaned = protocol::clean(address, usize::MAX);
+    if cleaned.len() <= protocol::library::MAX_SHOWN_ADDRESS {
+        return cleaned;
+    }
+    let mut cut = protocol::clean(&cleaned, protocol::library::MAX_SHOWN_ADDRESS.saturating_sub(ELLIPSIS.len_utf8()));
+    cut.push(ELLIPSIS);
+    cut
+}
+
 /// The sub-page a fragment names after its page, when it names one: four
 /// hexadecimal digits of a sub-code, not 3F7F, which means any sub-page.
 #[must_use]

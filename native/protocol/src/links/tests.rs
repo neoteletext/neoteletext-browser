@@ -82,6 +82,54 @@ fn every_link_message_round_trips() {
     assert_eq!(read_from_fetcher(&mut bytes.as_slice()).unwrap().unwrap(), channel);
 }
 
+/// An address of RFC 9110's 8,000 octets (neoteletext-common's REQ-1661),
+/// told apart by `mark`.
+fn longest(mark: u32) -> String {
+    let head = format!("https://a.example/{mark:04}/");
+    format!("{head}{}", "a".repeat(8_000_usize.saturating_sub(head.len())))
+}
+
+/// REQ-1661 item 3 and DEC-1668: every link a page may hold, each at the
+/// bound, in one message from the decoder, and all a channel's in one from
+/// the fetcher.
+#[test]
+fn every_link_at_the_bound_fits_one_message() {
+    let target = |mark| format!("web:{}", longest(mark));
+    let found = FromDecoder::Links {
+        page: 0x100,
+        with_image: true,
+        candidates: (0..MAX_RUNS)
+            .map(|index| {
+                let index = u32::try_from(index).unwrap();
+                Candidate { row: 2, column: 0, length: 3, double: false, light: false, target: target(index) }
+            })
+            .collect(),
+        numbers: (0..MAX_NUMBER_LINKS).map(|index| NumberLink { number: 0x302, target: target(u32::try_from(index).unwrap()) }).collect(),
+        controls: Vec::new(),
+        fastext: Fastext::default(),
+    };
+    let mut bytes = Vec::new();
+    decoder_writes(&mut bytes, &found).unwrap();
+    assert_eq!(read_from_decoder(&mut bytes.as_slice()).unwrap().unwrap(), found);
+    let channel = FromFetcher::Links {
+        aliases: (0..MAX_ALIASES).map(|index| Alias { page: 0x500, target: longest(u32::try_from(index).unwrap()) }).collect(),
+        services: (0..MAX_SERVICES).map(|index| Service { name: "n".repeat(MAX_SERVICE_NAME), address: longest(u32::try_from(index).unwrap()) }).collect(),
+    };
+    let mut bytes = Vec::new();
+    fetcher_writes(&mut bytes, &channel).unwrap();
+    assert_eq!(read_from_fetcher(&mut bytes.as_slice()).unwrap().unwrap(), channel);
+    let complete = format!("{} (opens in your web browser)", longest(0));
+    for message in [
+        Message::Pointing(Some(Pointing { kind: LinkKind::Web, text: complete.clone(), complete: complete.clone() })),
+        Message::Prompt(Some(Prompt { id: 3, destination: complete.clone(), secure: true })),
+    ] {
+        let message = ToInterface::Link(message);
+        let mut bytes = Vec::new();
+        write_to_interface(&mut bytes, &message).unwrap();
+        assert_eq!(read_from_core(&mut bytes.as_slice()).unwrap().unwrap(), message);
+    }
+}
+
 /// The payload of a page's links with one run of these bytes.
 fn one_run(place: [u8; 3], flags: u8, kind: u8) -> Vec<u8> {
     let mut payload = vec![0, 0, 0, 7, 0x01, 0x23, 0, 0, 0, 9, 1];

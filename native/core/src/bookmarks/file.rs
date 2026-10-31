@@ -22,8 +22,8 @@ const MAX_EXPORTS_A_DAY: u32 = 99;
 /// The longest line: a kind, two numbers, a name and an address.
 const MAX_LINE: usize = "bookmark".len() + 2 * 10 + MAX_NAME + protocol::MAX_ADDRESS + 4;
 /// The largest file read: [`MAX_ITEMS`] of the longest line, and the
-/// version line, rounded up to 24 MiB (section 3.6).
-pub const MAX_FILE: usize = 24 * 1024 * 1024;
+/// version line, rounded up to 84 MiB (section 3.6).
+pub const MAX_FILE: usize = 84 * 1024 * 1024;
 const _: () = assert!(MAX_FILE == protocol::decoder::MAX_BOOKMARK_FILE, "a decoder reads a file of the same bound");
 const _: () = assert!(MAX_ITEMS * (MAX_LINE + 1) + VERSION_LINE.len() < MAX_FILE, "the file bound holds every item at the longest line");
 

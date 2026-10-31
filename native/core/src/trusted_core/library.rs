@@ -6,19 +6,17 @@
 //! last sent (requirement 20.5).
 
 use confine::LocalTime;
+use neoteletext::address::shown_address;
 use neoteletext::bookmarks::Removed;
 use neoteletext::calendar::{local_day, utc_now};
 use neoteletext::history::{History, Visit};
 use protocol::ToCore;
 use protocol::clean;
 use protocol::console::Level;
-use protocol::library::{MAX_NOTICE, MAX_SHOWN_ADDRESS};
+use protocol::library::MAX_NOTICE;
 
 use super::Core;
 use super::numbers::Numbers;
-
-/// What ends an address cut to fit a view.
-const ELLIPSIS: char = '\u{2026}';
 
 /// The bookmarks manager's place.
 #[derive(Debug)]
@@ -53,18 +51,6 @@ pub struct Library {
     bar_numbers: Numbers<u32>,
     /// The local day history was last expired on.
     expired_day: Option<i64>,
-}
-
-/// An address cut to fit a view; a row is opened by its number, never by
-/// this text.
-fn shown_address(address: &str) -> String {
-    let cleaned = clean(address, usize::MAX);
-    if cleaned.len() <= MAX_SHOWN_ADDRESS {
-        return cleaned;
-    }
-    let mut cut = clean(&cleaned, MAX_SHOWN_ADDRESS.saturating_sub(ELLIPSIS.len_utf8()));
-    cut.push(ELLIPSIS);
-    cut
 }
 
 fn notice(text: &str) -> String {
