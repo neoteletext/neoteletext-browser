@@ -47,7 +47,7 @@ fn the_file_is_read_strictly() {
     let (settings, dropped) = Settings::read(text);
     assert_eq!(settings.volume, 30);
     assert!(settings.sound, "the default stands");
-    assert_eq!(settings.home, START_PAGE);
+    assert_eq!(settings.home, HOME_CHANNEL);
     assert_eq!(settings.proxy, None);
     assert_eq!(settings.local, ["10.0.0.1".parse::<IpAddr>().unwrap()], "only a local address may be allowed");
     assert!(!settings.bar);
@@ -97,6 +97,18 @@ fn the_font_is_kept_and_noto_teletext_is_the_default() {
     }
     let (read, dropped) = Settings::read(&format!("{VERSION_LINE}\nfont bedstead\nfont Noto\n"));
     assert_eq!((read.font, dropped.len()), (TeletextFont::Bedstead, 1), "a font not named is dropped; the one before stands");
+}
+
+/// neoteletext-common's DEC-1652: a new browser's home is the home channel,
+/// a home the settings file holds stays the user's, and the built-in page
+/// can still be chosen.
+#[test]
+fn the_home_is_the_home_channel_unless_the_user_has_one() {
+    assert_eq!(Settings::default().home, HOME_CHANNEL);
+    assert_eq!(Settings::read(&format!("{VERSION_LINE}\n")).0.home, HOME_CHANNEL, "no home line");
+    let own = "https://news.example/teletext/";
+    assert_eq!(Settings::read(&format!("{VERSION_LINE}\nhome {own}\n")).0.home, own);
+    assert_eq!(Settings::read(&format!("{VERSION_LINE}\nhome {START_PAGE}\n")).0.home, START_PAGE);
 }
 
 #[test]

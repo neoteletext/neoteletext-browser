@@ -36,7 +36,7 @@ const _: () = assert!(MAX_BLOCKED * (MAX_LINE + 1) + 256 * 1024 <= MAX_FILE, "th
 pub const MAX_LOCAL: usize = 16;
 /// The loudest volume.
 pub const MAX_VOLUME: u8 = 100;
-pub use crate::address::START_PAGE;
+pub use crate::address::{HOME_CHANNEL, START_PAGE};
 /// The file's name in the settings folder.
 const FILE_NAME: &str = "settings.txt";
 /// The settings' format, whose file is its own (`installation-and-updates.md`
@@ -81,7 +81,7 @@ pub struct Settings {
 impl Default for Settings {
     fn default() -> Self {
         Self {
-            home: START_PAGE.to_owned(),
+            home: HOME_CHANNEL.to_owned(),
             sound: true,
             volume: MAX_VOLUME,
             proxy: None,

@@ -61,6 +61,10 @@ impl Address {
 /// The browser's own start page (`settings-home-console-proxy.md`
 /// section 2.2), the one `neoteletext:` address.
 pub const START_PAGE: &str = "neoteletext:home";
+/// The home channel, what a new browser opens and what a new tab shows
+/// (neoteletext-common's DEC-1652). `START_PAGE` stays the built-in page
+/// that needs no network, for private tabs and when this cannot be opened.
+pub const HOME_CHANNEL: &str = "https://app.neottx.com/home/";
 const BUILT_IN_SCHEME: &str = "neoteletext:";
 const SCHEME_SEPARATOR: &str = "://";
 const FILE_SCHEME: &str = "file://";

@@ -13,7 +13,7 @@ The browser keeps a few settings between runs, and the bookmarks with them. The 
 
 | Setting | Values | Default | Where it is changed |
 |---|---|---|---|
-| Home | An address, or `neoteletext:home` | `neoteletext:home` | The settings panel; "Use this page" |
+| Home | An address, or `neoteletext:home` | `https://app.neottx.com/home/`, the home channel | The settings panel; "Use this page" |
 | Sound | On or off | On | The settings panel |
 | Volume | 0 to 100 | 100 | The settings panel |
 | Proxy | None, an HTTP proxy or a SOCKS5 proxy, with its host and port | None | The settings panel (a security setting) |
@@ -54,7 +54,7 @@ A Home button, a house, sits in the strip after Forward (requirement 11.2). It, 
 
 ### 2.2 The start page
 
-The default home is `neoteletext:home`, a channel the trusted core serves itself as teletext, with no network: its pages are TTI the trusted core writes and gives to a decoder as a channel's pages.
+The default home is the home channel, `https://app.neottx.com/home/`: what a new browser opens and a new tab shows, with links to every channel and how to use and host NeoTeletext (neoteletext-common's DEC-1652). `neoteletext:home` is a channel the trusted core serves itself as teletext, with no network: its pages are TTI the trusted core writes and gives to a decoder as a channel's pages. It stays the page of a private tab, and of a home that cannot be opened, and any `home` line a user's settings file holds is kept.
 
 - **Page 100**, NeoTeletext: how to open a channel ("Type a channel's address above"), the keys, and the bookmarks, each with a page number from 201: `201 news.example/teletext`.
 - **Pages 201 to 299**: one a bookmark, which says where it leads and opens it.
