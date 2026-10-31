@@ -219,6 +219,75 @@ fn the_session_is_kept_and_restored() {
 
 /// Requirement 20.10: the lists one way, the nearest first, and going
 /// several steps at once.
+/// A session with one tab of `addresses`, its place on the last.
+fn listed(addresses: &[&str]) -> Session {
+    let mut session = Session::new(Bookmarks::default());
+    session.open(addresses[0]).unwrap();
+    for address in &addresses[1..] {
+        session.navigate(address, true).unwrap();
+    }
+    session
+}
+
+// DEC-1684 item 4: the buttons pass over what is marked, the lists do not;
+// Forward as Back.
+#[test]
+fn the_buttons_pass_over_a_marked_entry() {
+    let mut session = listed(&["a.invalid", "b.invalid", "c.invalid"]);
+    session.tabs[0].history[1].passed_over = true;
+    assert_eq!(session.go(false), Went::Channel);
+    assert_eq!(session.tabs[0].position, 0, "past the marked one");
+    assert_eq!(session.go(true), Went::Channel);
+    assert_eq!(session.tabs[0].position, 2, "past it again");
+    assert_eq!(session.tab_list(false).len(), 2, "it stays in the list");
+    assert_eq!(session.go_to(false, 1), Went::Channel, "and the list goes to it");
+    assert_eq!(session.tabs[0].position, 1);
+}
+
+// DEC-1684 item 8: with every earlier entry marked, Back goes nowhere, and
+// stays enabled for its list.
+#[test]
+fn with_every_earlier_entry_marked_back_does_nothing() {
+    let mut session = listed(&["a.invalid", "b.invalid"]);
+    session.tabs[0].history[0].passed_over = true;
+    assert_eq!(session.go(false), Went::Nowhere);
+    assert_eq!(session.tabs[0].position, 1);
+    assert!(session.strip().back, "enabled, so that its list opens");
+}
+
+// DEC-1684 item 8: a full list drops its oldest marked entry first.
+#[test]
+fn a_full_list_drops_its_oldest_marked_entry_first() {
+    let mut session = listed(&["first.invalid"]);
+    for number in 1..MAX_TAB_ENTRIES {
+        session.navigate(&format!("page{number}.invalid"), true).unwrap();
+    }
+    session.tabs[0].history[3].passed_over = true;
+    session.tabs[0].history[5].passed_over = true;
+    let (third, fifth) = (session.tabs[0].history[3].address.text.clone(), session.tabs[0].history[5].address.text.clone());
+    session.navigate("one-more.invalid", true).unwrap();
+    let history = &session.tabs[0].history;
+    assert_eq!(history.len(), MAX_TAB_ENTRIES);
+    assert!(history.iter().all(|visit| visit.address.text != third), "the oldest marked");
+    assert!(history.iter().any(|visit| visit.address.text == fifth));
+    assert_eq!(history[0].address.host, "first.invalid", "the oldest of all stays");
+    session.tabs[0].history.iter_mut().for_each(|visit| visit.passed_over = false);
+    session.navigate("and-another.invalid", true).unwrap();
+    assert_ne!(session.tabs[0].history[0].address.host, "first.invalid", "with none marked, the oldest of all");
+}
+
+// DEC-1684 item 9: a saved tab keeps its marks.
+#[test]
+fn a_saved_tab_keeps_its_marks() {
+    let mut session = listed(&["a.invalid", "b.invalid"]);
+    session.tabs[0].history[0].passed_over = true;
+    let saved = session.saved();
+    let mut restored = Session::new(Bookmarks::default());
+    restored.restore(&saved);
+    assert!(restored.tabs[0].history[0].passed_over);
+    assert!(!restored.tabs[0].history[1].passed_over);
+}
+
 #[test]
 fn back_and_forward_lists_go_several_steps() {
     let mut session = Session::new(Bookmarks::default());

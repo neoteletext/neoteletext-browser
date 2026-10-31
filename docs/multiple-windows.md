@@ -48,7 +48,7 @@ The session holds the window at hand's tabs as before, and sets the other window
 
 ## 6. The session
 
-`session.txt` is version 3 (`history-and-bookmarks.md` section 15.4): a `window` line begins each window, with its place and size when known, followed by its `active` line and its tabs; `closed` lines carry, after their place, the number of the window they closed with. At start the first window is the one the interface opens, and the others open after it, each where it was.
+`session.txt` is version 4 (`history-and-bookmarks.md` section 15.4): a `window` line begins each window, with its place and size when known, followed by its `active` line and its tabs; `closed` lines carry, after their place, the number of the window they closed with. At start the first window is the one the interface opens, and the others open after it, each where it was.
 
 ## 7. Security
 

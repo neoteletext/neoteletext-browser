@@ -17,7 +17,15 @@ fn kept_history(kept: &restore::Tab) -> Option<Vec<Visit>> {
     let history: Result<Vec<Visit>, String> = kept
         .entries
         .iter()
-        .map(|entry| Ok(Visit { address: parse(&entry.address)?, by_page: entry.by_page, title: clean(&entry.title, restore::MAX_TITLE), at: entry.at }))
+        .map(|entry| {
+            Ok(Visit {
+                address: parse(&entry.address)?,
+                by_page: entry.by_page,
+                title: clean(&entry.title, restore::MAX_TITLE),
+                at: entry.at,
+                passed_over: entry.passed_over,
+            })
+        })
         .collect();
     match history {
         Ok(history) if kept.position < history.len() => Some(history),
@@ -37,6 +45,7 @@ impl Session {
     pub fn saved(&self) -> Saved {
         let entry = |visit: &Visit| restore::Entry {
             by_page: visit.by_page,
+            passed_over: visit.passed_over,
             at: visit.at,
             address: visit.address.text.clone(),
             title: clean(&visit.title, restore::MAX_TITLE),

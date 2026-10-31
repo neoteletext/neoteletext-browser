@@ -6,7 +6,7 @@ use interface_core::library::MAX_TAB_ENTRIES;
 
 use neoteletext::address::Address;
 
-use super::ChannelState;
+use super::{ChannelState, SinceSelected};
 
 /// One entry of a tab's history.
 #[derive(Clone, Debug)]
@@ -21,11 +21,15 @@ pub struct Visit {
     /// Chrome's `NavigationEntry::GetTimestamp`: clearing history by time
     /// removes the entries of that time (section 2.5).
     pub at: i64,
+    /// A redirect with no input from the viewer took the tab from this page
+    /// after it drew: the Back and Forward buttons pass over it, and it
+    /// stays in their lists (neoteletext-common's DEC-1684 item 4).
+    pub passed_over: bool,
 }
 
 impl Visit {
     pub(super) fn new(address: Address, by_page: bool, at: i64) -> Self {
-        Self { address, by_page, title: String::new(), at }
+        Self { address, by_page, title: String::new(), at, passed_over: false }
     }
 
     #[cfg(test)]
@@ -89,16 +93,50 @@ pub struct Tab {
 
 impl Tab {
     /// Adds a visit after the tab's place, dropping what was forward of it
-    /// and, beyond [`MAX_TAB_ENTRIES`], the oldest, as Chrome does
-    /// (`NavigationControllerImpl::PruneOldestSkippableEntryIfFull`).
+    /// and, beyond [`MAX_TAB_ENTRIES`], the oldest entry passed over or else
+    /// the oldest, as Chrome does
+    /// (`NavigationControllerImpl::PruneOldestSkippableEntryIfFull`), so
+    /// that a channel redirecting on a timer pushes out only its own.
     pub(super) fn push(&mut self, visit: Visit) {
         self.channel.redirecting = None;
         self.history.truncate(self.position.saturating_add(1));
         self.history.push(visit);
         if self.history.len() > MAX_TAB_ENTRIES {
-            self.history.remove(0);
+            let oldest = self.history.iter().position(|visit| visit.passed_over).unwrap_or(0);
+            self.history.remove(oldest);
         }
         self.position = self.history.len().saturating_sub(1);
+    }
+
+    /// Takes a program's redirect to `visit` by Chrome's rules, per page
+    /// (neoteletext-common's DEC-1684 items 2 to 4): after the viewer's
+    /// input on the page being left, an entry is added; before that page
+    /// drew, its entry is replaced, as a page that moves on arrival was
+    /// never seen; otherwise an entry is added and the page left is passed
+    /// over from now on. Whether it was marked so.
+    pub(super) fn redirected(&mut self, visit: Visit) -> bool {
+        let SinceSelected { acted, drawn } = self.channel.since_selected;
+        if !acted && !drawn {
+            if let Some(entry) = self.history.get_mut(self.position) {
+                *entry = visit;
+            }
+            return false;
+        }
+        if !acted && let Some(entry) = self.history.get_mut(self.position) {
+            entry.passed_over = true;
+        }
+        self.push(visit);
+        !acted
+    }
+
+    /// How many steps the Back or Forward button goes: past every entry
+    /// passed over to the nearest other, or none, and the button then does
+    /// nothing, as Chrome's `GetIndexForGoBack` (DEC-1684 item 8).
+    pub(super) fn button_steps(&self, forward: bool) -> Option<usize> {
+        (1..=self.history.len()).find(|&steps| {
+            let position = if forward { self.position.checked_add(steps) } else { self.position.checked_sub(steps) };
+            position.and_then(|position| self.history.get(position)).is_some_and(|visit| !visit.passed_over)
+        })
     }
 
     /// The host of the entry at `position`, which a chapter stop changes.

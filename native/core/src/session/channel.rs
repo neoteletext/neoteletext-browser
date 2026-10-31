@@ -22,6 +22,18 @@ pub struct Redirecting {
     pub until: std::time::Instant,
     /// The channels that redirected so far, this one last.
     pub chain: Vec<String>,
+    /// Who sent it.
+    pub by: RedirectBy,
+}
+
+/// What happened to a tab's page since it was selected: what a program's
+/// redirect goes by (neoteletext-common's DEC-1684).
+#[derive(Clone, Copy, Debug, Default)]
+pub struct SinceSelected {
+    /// The viewer gave it input (items 6 and 7).
+    pub acted: bool,
+    /// It drew (item 3).
+    pub drawn: bool,
 }
 
 /// Who sent a redirect that leaves a channel.
@@ -72,6 +84,8 @@ pub struct ChannelState {
     pub redirecting: Option<Redirecting>,
     /// The page its descriptor opens at, once it was read.
     pub initial_page: Option<u16>,
+    /// What happened to the page selected since it was selected.
+    pub since_selected: SinceSelected,
 }
 
 impl ChannelState {
@@ -138,7 +152,14 @@ impl ChannelState {
             redirects: Vec::new(),
             redirecting: None,
             initial_page: None,
+            since_selected: SinceSelected::default(),
         }
+    }
+
+    /// Another page is selected: its count of input starts afresh, and it
+    /// has not drawn (DEC-1684 item 7).
+    pub(super) fn page_selected(&mut self) {
+        self.since_selected = SinceSelected::default();
     }
 
     /// The channel's contents file: every page it lists, with its title,

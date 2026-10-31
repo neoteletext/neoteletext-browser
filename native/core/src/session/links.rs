@@ -33,13 +33,15 @@ impl Session {
             return None;
         }
         tab.push(Visit::new(address, true, self.now));
+        tab.channel.page_selected();
         tab.pending = Some(Pending { typed: false, drawn: true, reload: false });
         tab.address()
     }
 
     /// The channel's program redirected the tab holding `channel` to `page`,
-    /// and `subpage` of it if it names one (`INPUT.md` section 7.11). True
-    /// when the tab's address changed.
+    /// and `subpage` of it if it names one (`INPUT.md` section 7.11), its
+    /// Back list by [`Tab::redirected`]. True when the page left is passed
+    /// over from now on.
     pub fn redirect_page(&mut self, channel: u32, page: u16, subpage: Option<u16>) -> bool {
         let now = self.now;
         let Some(tab) = self.tabs.iter_mut().find(|tab| tab.channel.id == channel) else { return false };
@@ -47,16 +49,30 @@ impl Session {
         if tab.address().is_some_and(|shown| shown.page == address.page && shown.subpage == subpage) {
             return false;
         }
-        tab.push(Visit::new(address, true, now));
-        tab.pending = Some(Pending { typed: false, drawn: true, reload: false });
-        true
+        let typed = tab.pending.is_some_and(|pending| pending.typed);
+        let marked = tab.redirected(Visit::new(address, true, now));
+        tab.channel.page_selected();
+        tab.pending = Some(Pending { typed, drawn: true, reload: false });
+        marked
     }
 
     /// The viewer gave the tab holding `channel` input: a program's redirects
-    /// are counted again from here (REQ-1688 item 6).
+    /// are counted again from here (REQ-1688 item 6), the page's own input
+    /// is counted, and a mark that the buttons pass over it clears
+    /// (DEC-1684 item 5).
     pub fn viewer_input(&mut self, channel: u32) {
+        let Some(tab) = self.tabs.iter_mut().find(|tab| tab.channel.id == channel) else { return };
+        tab.channel.redirects.clear();
+        tab.channel.since_selected.acted = true;
+        if let Some(entry) = tab.history.get_mut(tab.position) {
+            entry.passed_over = false;
+        }
+    }
+
+    /// A page of the tab holding `channel` drew.
+    pub fn page_drawn(&mut self, channel: u32) {
         if let Some(tab) = self.tabs.iter_mut().find(|tab| tab.channel.id == channel) {
-            tab.channel.redirects.clear();
+            tab.channel.since_selected.drawn = true;
         }
     }
 }

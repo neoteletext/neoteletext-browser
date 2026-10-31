@@ -5,7 +5,7 @@ use super::*;
 use crate::dropped::Dropped;
 
 fn entry(address: &str) -> Entry {
-    Entry { by_page: false, at: 1_792_656_300, address: address.into(), title: "News".into() }
+    Entry { by_page: false, passed_over: false, at: 1_792_656_300, address: address.into(), title: "News".into() }
 }
 
 fn tab(muted: bool, position: usize, entries: Vec<Entry>) -> Tab {
@@ -19,7 +19,14 @@ fn saved() -> Saved {
                 geometry: Some(WindowGeometry { x: -120, y: 80, width: 1440, height: 900, maximised: false }),
                 active: 1,
                 tabs: vec![
-                    tab(false, 1, vec![entry("https://news.example/teletext/"), Entry { by_page: true, ..entry("https://news.example/teletext/#302") }]),
+                    tab(
+                        false,
+                        1,
+                        vec![
+                            entry("https://news.example/teletext/"),
+                            Entry { by_page: true, passed_over: true, ..entry("https://news.example/teletext/#302") },
+                        ],
+                    ),
                     tab(true, 0, vec![entry(crate::address::START_PAGE)]),
                 ],
             },
@@ -65,26 +72,26 @@ fn the_file_is_read_strictly() {
         "window\t10\t20\t1440\t900\t0",
         "active\t7",
         "tab\t0\t0",
-        "entry\t0\t5\thttps://a.example/\tA",
+        "entry\t0\t0\t5\thttps://a.example/\tA",
         "tab\t2\t0",
-        "entry\t0\t5\thttps://b.example/\tB",
+        "entry\t0\t0\t5\thttps://b.example/\tB",
         "tab\t0\t5",
-        "entry\t0\t5\thttps://c.example/\tC",
+        "entry\t0\t0\t5\thttps://c.example/\tC",
         "tab\t0\t0",
-        "entry\t0\t5\tnot an address\tD",
+        "entry\t0\t0\t5\tnot an address\tD",
         "tab\t0\t0",
-        "entry\t0\t5\thttps://e.example/\tE\u{202E}",
+        "entry\t0\t0\t5\thttps://e.example/\tE\u{202E}",
         "tab\t0\t0",
-        "entry\t0\t5\thttps://f.example/\tF",
+        "entry\t0\t0\t5\thttps://f.example/\tF",
         "elephant",
         "closed\t0\t0",
-        "entry\t0\t-1\thttps://g.example/\tG",
+        "entry\t0\t0\t-1\thttps://g.example/\tG",
         "closed\t0\t0",
-        "entry\t0\t9\thttps://h.example/\tH",
+        "entry\t0\t0\t9\thttps://h.example/\tH",
         "closed\t0\t0\t3",
-        "entry\t0\t9\thttps://i.example/\tI",
+        "entry\t0\t0\t9\thttps://i.example/\tI",
         "tab\t0\t0\t3",
-        "entry\t0\t9\thttps://j.example/\tJ",
+        "entry\t0\t0\t9\thttps://j.example/\tJ",
         "window",
         "active\t0",
         "window\tx",

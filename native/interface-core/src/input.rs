@@ -156,3 +156,43 @@ impl Intent {
         }))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn key(action: Action, key: KeyCode) -> Intent {
+        Intent::Key { action, key, mods: 0, text: None, base: None }
+    }
+
+    // DEC-1684 item 6: what counts as the viewer's act on a page.
+    #[test]
+    fn only_a_viewers_act_counts() {
+        let at = Point { column: 1, row: 1, pixels: None, mods: 0 };
+        let escape = keys::code("Escape").map_or(KeyCode::Character(' '), KeyCode::Functional);
+        assert!(matches!(escape, KeyCode::Functional(_)));
+        let acts = [
+            key(Action::Press, KeyCode::Character('a')),
+            Intent::Mouse { action: MouseAction::Press, button: 0, at },
+            Intent::Touch { phase: TouchPhase::Ended, contact: 1, at },
+            Intent::Text("a".into()),
+            Intent::Paste("a".into()),
+        ];
+        assert!(acts.iter().all(Intent::is_activation));
+        let not_acts = [
+            key(Action::Press, escape),
+            key(Action::Repeat, KeyCode::Character('a')),
+            key(Action::Release, KeyCode::Character('a')),
+            Intent::Mouse { action: MouseAction::Release, button: 0, at },
+            Intent::Mouse { action: MouseAction::Move, button: 0, at },
+            Intent::Touch { phase: TouchPhase::Began, contact: 1, at },
+            Intent::Touch { phase: TouchPhase::Moved, contact: 1, at },
+            Intent::Touch { phase: TouchPhase::Cancelled, contact: 1, at },
+            Intent::Wheel { dx: 0, dy: 120, at },
+            Intent::Compose { cursor: 0, text: "a".into() },
+            Intent::Hover { leave: false, column: 1, row: 1 },
+            Intent::Gone,
+        ];
+        assert!(!not_acts.iter().any(Intent::is_activation));
+    }
+}

@@ -112,6 +112,7 @@ impl Core {
         if self.controls.open != Some(key) {
             return Ok(());
         }
+        self.session.page_drawn(key.channel);
         #[cfg(feature = "interaction")]
         self.typing.drawn(key, step.shown);
         if self.controls.awaiting.is_some_and(|(awaited, subpage)| awaited == key && subpage == step.shown) {

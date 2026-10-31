@@ -13,7 +13,7 @@ use interface_core::library::{MAX_CLOSED, MAX_TAB_ENTRIES, WindowGeometry};
 
 use crate::private_file::{Read, read_text, write_whole};
 
-pub(crate) const VERSION_LINE: &str = "neoteletext-session 3";
+pub(crate) const VERSION_LINE: &str = "neoteletext-session 4";
 const FILE_NAME: &str = "session.txt";
 const TEMPORARY_NAME: &str = "session.txt.new";
 const SEPARATOR: char = '\t';
@@ -31,8 +31,8 @@ pub const MAX_TITLE: usize = protocol::MAX_TITLE;
 const MAX_TIME_DIGITS: usize = 19;
 /// The longest digits of a closed tab's window, `u32::MAX`.
 const MAX_WINDOW_DIGITS: usize = 10;
-/// The longest line: `entry`, a flag, a time, an address and a title.
-const MAX_LINE: usize = "entry".len() + 1 + 1 + 1 + MAX_TIME_DIGITS + 1 + protocol::MAX_ADDRESS + 1 + MAX_TITLE;
+/// The longest line: `entry`, two flags, a time, an address and a title.
+const MAX_LINE: usize = "entry".len() + 1 + 1 + 1 + 1 + 1 + MAX_TIME_DIGITS + 1 + protocol::MAX_ADDRESS + 1 + MAX_TITLE;
 /// The largest file read: every tab and closed tab with every entry at the
 /// longest line, with room for the windows' and the tabs' lines, rounded
 /// up to 16 MiB, as the history file's bound.
@@ -48,6 +48,9 @@ const _: () = assert!(MAX_WINDOW_DIGITS + "closed".len() + 6 < MAX_LINE, "a clos
 pub struct Entry {
     /// A link on a page started it.
     pub by_page: bool,
+    /// The Back and Forward buttons pass over it (neoteletext-common's
+    /// DEC-1684 item 9: a saved tab keeps its marks).
+    pub passed_over: bool,
     /// When the tab last came to it, in seconds since 1970 (UTC).
     pub at: i64,
     /// Its address, as the address rules print it.
@@ -156,11 +159,12 @@ fn tab_line(closed: bool, fields: &[&str]) -> Option<Tab> {
 }
 
 /// An `entry` line's fields after its name: whether a link on a page
-/// started it, its time, its address and its title.
-fn entry_line(by_page: &str, at: &str, address: &str, title: &str) -> Option<Entry> {
+/// started it, whether the buttons pass over it, its time, its address and
+/// its title.
+fn entry_line(by_page: &str, passed_over: &str, at: &str, address: &str, title: &str) -> Option<Entry> {
     let title = (protocol::clean(title, MAX_TITLE) == title).then(|| title.to_owned())?;
     let at = at.parse::<i64>().ok().filter(|at| *at >= 0)?;
-    Some(Entry { by_page: flag(by_page)?, at, address: kept_address(address)?, title })
+    Some(Entry { by_page: flag(by_page)?, passed_over: flag(passed_over)?, at, address: kept_address(address)?, title })
 }
 
 /// An entry read, added to the tab being read, `tab`, if it has room; an
@@ -234,7 +238,7 @@ impl Saved {
                         tab = Some((read.unwrap_or(Tab { muted: false, position: 0, entries: Vec::new(), window: 0 }), !fine, closed));
                         fine
                     }
-                    ["entry", by_page, at, address, title] => add_entry(&mut tab, entry_line(by_page, at, address, title)),
+                    ["entry", by_page, passed_over, at, address, title] => add_entry(&mut tab, entry_line(by_page, passed_over, at, address, title)),
                     _ => false,
                 };
             if !fine {
@@ -290,7 +294,7 @@ impl Saved {
                 lines.push(format!("{kind}\t{}\t{}", digit(tab.muted), tab.position));
             }
             for entry in tab.entries.iter().take(MAX_ENTRIES) {
-                lines.push(format!("entry\t{}\t{}\t{}\t{}", digit(entry.by_page), entry.at, entry.address, entry.title));
+                lines.push(format!("entry\t{}\t{}\t{}\t{}\t{}", digit(entry.by_page), digit(entry.passed_over), entry.at, entry.address, entry.title));
             }
         };
         let mut kept = 0_usize;

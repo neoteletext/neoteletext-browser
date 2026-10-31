@@ -52,7 +52,8 @@ impl Core {
         }
         let subpage = (sub != SUBCODE_ANY).then_some(sub);
         self.in_window_of(channel, |core| {
-            core.session.redirect_page(channel, page, subpage);
+            let marked = core.session.redirect_page(channel, page, subpage);
+            core.say_passed_over(channel, marked);
             let key = PageKey { channel, page };
             if core.active_channel() != Some(channel) {
                 // Its tab opens the page when it is shown.
@@ -84,6 +85,14 @@ impl Core {
         match address.page.or(tab.channel.initial_page) {
             Some(page) => self.page_redirected(channel, page, address.subpage.unwrap_or(SUBCODE_ANY)),
             None => Ok(()),
+        }
+    }
+
+    /// Says in the tab's console that the page a redirect left is passed
+    /// over from now on (neoteletext-common's DEC-1684 item 9).
+    fn say_passed_over(&mut self, channel: u32, marked: bool) {
+        if marked {
+            self.log(Level::Info, Some(channel), "a page moved the tab with no input from you: the Back and Forward buttons pass over it");
         }
     }
 
@@ -140,7 +149,8 @@ impl Core {
         for channel in due {
             self.in_window_of(channel, |core| {
                 let active = core.active_channel() == Some(channel);
-                core.session.finish_redirect(channel);
+                let marked = core.session.finish_redirect(channel);
+                core.say_passed_over(channel, marked);
                 if active {
                     return core.send_all();
                 }

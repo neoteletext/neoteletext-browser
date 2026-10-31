@@ -86,30 +86,40 @@ impl Session {
         if by == RedirectBy::Server && chain.iter().any(|earlier| earlier == address.channel_text()) {
             return Err("its redirects in a loop".into());
         }
-        tab.channel.redirecting = Some(Redirecting { address, until, chain });
+        tab.channel.redirecting = Some(Redirecting { address, until, chain, by });
         Ok(())
     }
 
-    /// The notice of `channel`'s redirect is over: the destination takes the
-    /// place of the address that redirected, so Back returns to the page
-    /// before it, as in a web browser, with a channel of its own that
-    /// remembers the chain (REQ-701).
-    pub fn finish_redirect(&mut self, channel: u32) {
-        let Some(Redirecting { address, chain, .. }) =
+    /// The notice of `channel`'s redirect is over. A server's: the
+    /// destination takes the place of the address that redirected, so Back
+    /// returns to the page before it, as in a web browser. A program's: by
+    /// [`Tab::redirected`]. Either way with a channel of its own that
+    /// remembers the chain (REQ-701). True when the page left is passed
+    /// over from now on.
+    pub fn finish_redirect(&mut self, channel: u32) -> bool {
+        let Some(Redirecting { address, chain, by, .. }) =
             self.tabs.iter_mut().find(|tab| tab.channel.id == channel).and_then(|tab| tab.channel.redirecting.take())
         else {
-            return;
+            return false;
         };
         let mut next = self.channel_for(&address);
         next.redirects = chain;
         let now = self.now;
-        let Some(tab) = self.tabs.iter_mut().find(|tab| tab.channel.id == channel) else { return };
+        let Some(tab) = self.tabs.iter_mut().find(|tab| tab.channel.id == channel) else { return false };
         let typed = tab.pending.is_some_and(|pending| pending.typed);
-        if let Some(visit) = tab.history.get_mut(tab.position) {
-            *visit = Visit::new(address, true, now);
-        }
+        let visit = Visit::new(address, true, now);
+        let marked = match by {
+            RedirectBy::Program => tab.redirected(visit),
+            RedirectBy::Server => {
+                if let Some(entry) = tab.history.get_mut(tab.position) {
+                    *entry = visit;
+                }
+                false
+            }
+        };
         tab.channel = next;
         tab.pending = Some(Pending { typed, drawn: false, reload: false });
+        marked
     }
 
     /// Opens the active tab's channel afresh where the tab is in its
@@ -128,10 +138,12 @@ impl Session {
         true
     }
 
-    /// Moves the active tab back or forward in its history. Another page of
-    /// the same channel keeps the channel open.
+    /// The Back or Forward button: moves the active tab that way in its
+    /// history, past any entry passed over. Another page of the same channel
+    /// keeps the channel open.
     pub fn go(&mut self, forward: bool) -> Went {
-        self.go_to(forward, 1)
+        let steps = self.active_tab().and_then(|tab| tab.button_steps(forward));
+        steps.map_or(Went::Nowhere, |steps| self.go_to(forward, steps))
     }
 
     /// Moves the active tab `steps` back or forward in its history, as
@@ -151,13 +163,12 @@ impl Session {
         }
         tab.pending = Some(Pending { typed: false, drawn: same, reload: false });
         tab.channel.redirecting = None;
-        match channel {
-            Some(channel) => {
-                tab.channel = channel;
-                Went::Channel
-            }
-            None => Went::Page(visit.address.page),
+        if let Some(channel) = channel {
+            tab.channel = channel;
+            return Went::Channel;
         }
+        tab.channel.page_selected();
+        Went::Page(visit.address.page)
     }
 
     /// The active tab's entries one way, the nearest first, at most

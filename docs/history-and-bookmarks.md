@@ -113,6 +113,8 @@ The trusted core keeps the **last 25 closed tabs**, each with its whole back-and
 
 ### 2.9 Back and Forward lists
 
+*A redirect, REQ-1712, decision DEC-1684:* a channel's program moving the tab goes into this list by Chrome's rules, per page. After the viewer's input on the page being left, an entry is added. Before that page drew, its entry is replaced. Otherwise an entry is added and the page left is marked: the Back and Forward buttons pass over it, and it stays in the lists below. The viewer's input on a marked page clears the mark. A full list drops its oldest marked entry first, and Back with only marked entries behind it stays enabled, does nothing, and opens its list. Marks are kept with the session.
+
 Pressing and holding Back or Forward, or a secondary click on it, opens a list of the tab's entries that way, the nearest first, at most 12, then, when it is full, up to 5 chapter stops where the host changes (decision 64, as Chrome's; section 16), each with its page number and title; the last line is "Show all history". Choosing an entry moves the tab there, as Back pressed that many times would. The list is the trusted core's view of that tab's own entries.
 
 ### 2.10 The address field's suggestions
@@ -485,23 +487,25 @@ A restored tab fetches its channel afresh, as a navigation does; it is not a vis
 ### 15.4 The file
 
 ```
-neoteletext-session 3
+neoteletext-session 4
 window	120	80	1440	900	0
 active	1
 tab	0	1
-entry	0	1792656300	https://news.example/teletext/	news.example
-entry	1	1792656360	https://news.example/teletext/#302	WEATHER
+entry	0	0	1792656300	https://news.example/teletext/	news.example
+entry	1	0	1792656360	https://news.example/teletext/#302	WEATHER
 tab	1	0
-entry	0	1792656000	neoteletext:home	NeoTeletext
+entry	0	0	1792656000	neoteletext:home	NeoTeletext
 closed	0	0
-entry	0	1792655000	https://sport.example/	sport.example
+entry	0	0	1792655000	https://sport.example/	sport.example
 ```
+
+*Version 4, DEC-1684:* each entry carries, after whether a page started it, whether the Back and Forward buttons pass over it. A version 3 file is not read.
 
 *Version 3, decision 72:* a `window` line begins each window, with its place and size, or alone when the interface never reported them; its `active` line and its tabs follow it. A `closed` line may carry a third field, the number of the window it closed with: the closed tabs of one window reopen together. At most 16 windows and 64 tabs among them. A version 2 file is not read.
 
 *Version 2, decision 64:* each entry carries the time the tab last came to it, in seconds since 1970 (UTC), so that clearing history by time reaches the tabs' lists; `closed` lines, after the tabs, hold the recently closed tabs, most recent first, at most 25. A version 1 file is not read.
 
-Tab-separated: `window` with x, y, width, height and maximised (0 or 1); `active` with the active tab's place; each `tab` with its mute and its place in its list, followed by its `entry` lines, each with whether a page started it, its address and its title. **Read strictly**, as `history.txt` is: the version line; at most 8 MiB (64 tabs of 50 entries of the longest line, rounded up); every field within its bound and rule, every address one the address rules accept, every title clean; a tab with no entry, or a place beyond its entries, is dropped with its entries; an active place beyond the tabs is the first. A fuzz target, `session_file`. Another program can write the file; it can already change the user's files.
+Tab-separated: `window` with x, y, width, height and maximised (0 or 1); `active` with the active tab's place; each `tab` with its mute and its place in its list, followed by its `entry` lines, each with whether a page started it, whether the buttons pass over it, its time, its address and its title. **Read strictly**, as `history.txt` is: the version line; at most 8 MiB (64 tabs of 50 entries of the longest line, rounded up); every field within its bound and rule, every address one the address rules accept, every title clean; a tab with no entry, or a place beyond its entries, is dropped with its entries; an active place beyond the tabs is the first. A fuzz target, `session_file`. Another program can write the file; it can already change the user's files.
 
 ### 15.5 Security
 

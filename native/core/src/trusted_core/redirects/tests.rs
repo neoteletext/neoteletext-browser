@@ -9,15 +9,19 @@ use std::time::{Duration, Instant};
 use confine::broker::Program;
 use confine::broker::stand_in::StandIn;
 use interface_core::canvas::PageKey;
+use interface_core::library::MAX_TAB_ENTRIES;
 use neoteletext_core::limits::SUBCODE_ANY;
+use neoteletext_input::event::{Action, KeyCode};
 use protocol::decoder::FromDecoder;
 use protocol::fetcher::{Entry, FromFetcher};
+use protocol::interaction::{InputIntent, Intent};
+use protocol::subpages::SubPageStep;
 use protocol::{ToCore, ToInterface};
 
 use super::super::Core;
 use super::super::test_support::{Test, core_on};
 use super::REDIRECT_NOTICE;
-use crate::session::MAX_REDIRECTS;
+use crate::session::{MAX_REDIRECTS, Went};
 
 const BEFORE: &str = "https://before.invalid/teletext/";
 const REDIRECTING: &str = "https://moved.invalid/teletext/";
@@ -422,14 +426,7 @@ fn a_tab_behind_others_moves() {
 #[test]
 fn a_cursor_record_never_moves_a_viewer() {
     let (mut test, channel) = live("cursor");
-    test.core.typing.input(channel, true, false, 0);
-    let mut body = [0_u8; neoteletext_input::control::MAX_BODY];
-    let length = neoteletext_input::control::write_body(
-        &neoteletext_input::control::Control::Welcome { version: neoteletext_input::VERSION, caps: neoteletext_input::caps::SELECT_CAP, resume: None },
-        &mut body,
-    )
-    .unwrap();
-    test.core.typing.control(channel, &body[..length], 0);
+    welcomed(&mut test, channel);
     test.core.intent(ToCore::Opened(Some(PageKey { channel, page: 0x200 }))).unwrap();
     test.sent();
     let [high, low] = 0x100_u16.to_be_bytes();
@@ -549,4 +546,145 @@ fn the_longest_address_a_record_carries_is_followed() {
     assert_eq!(core.strip().redirecting, location);
     elapse(&mut core);
     assert_eq!(address(&core), location);
+}
+
+/// `channel`'s session with the channel started, so that input goes.
+fn welcomed(test: &mut Test, channel: u32) {
+    test.core.typing.input(channel, true, false, 0);
+    let mut body = [0_u8; neoteletext_input::control::MAX_BODY];
+    let welcome = neoteletext_input::control::Control::Welcome { version: neoteletext_input::VERSION, caps: neoteletext_input::caps::SELECT_CAP, resume: None };
+    let length = neoteletext_input::control::write_body(&welcome, &mut body).unwrap();
+    test.core.typing.control(channel, &body[..length], 0);
+}
+
+/// The open page's first frame is drawn.
+fn draw(test: &mut Test, channel: u32, page: u16) {
+    let step = SubPageStep { count: 1, shown: 0, place: Some(0), previous: None, next: None };
+    test.core.decoded(channel, FromDecoder::SubPages { page, step }).unwrap();
+}
+
+/// A key is pressed on the open page.
+fn press(test: &mut Test, channel: u32, page: u16) {
+    let intent = Intent::Key { action: Action::Press, key: KeyCode::Character('a'), mods: 0, text: Some("a".into()), base: None };
+    test.core.intent(ToCore::Input(InputIntent { key: PageKey { channel, page }, intent })).unwrap();
+}
+
+fn entries(test: &Test) -> Vec<(String, bool)> {
+    test.core.session.active_tab().unwrap().history.iter().map(|visit| (visit.address.text.clone(), visit.passed_over)).collect()
+}
+
+const PAGE_100_ADDRESS: &str = "https://live.invalid/channel/#100";
+const PAGE_200_ADDRESS: &str = "https://live.invalid/channel/#200";
+const PAGE_300_ADDRESS: &str = "https://live.invalid/channel/#300";
+
+/// A tab on a live channel on page 100, named by its address and drawn.
+fn on_page_100(name: &str) -> (Test, u32) {
+    let (mut test, channel) = live(name);
+    test.core.session.show_page(0x100).unwrap();
+    welcomed(&mut test, channel);
+    draw(&mut test, channel, 0x100);
+    (test, channel)
+}
+
+// DEC-1684 item 2: with the viewer's input on the page, an ordinary entry:
+// Back returns to the page acted on.
+#[test]
+fn a_redirect_after_input_adds_an_entry() {
+    let (mut test, channel) = on_page_100("after input");
+    press(&mut test, channel, 0x100);
+    redirected(&mut test, channel, 0x200, SUBCODE_ANY);
+    assert_eq!(entries(&test).last().unwrap(), &(PAGE_200_ADDRESS.to_owned(), false));
+    assert!(entries(&test).iter().all(|(_, passed_over)| !passed_over));
+    assert_eq!(test.core.session.go(false), Went::Page(Some(0x100)), "Back returns to it");
+}
+
+// DEC-1684 item 3: a page that moves on arrival was never seen, and leaves
+// no entry to be trapped by.
+#[test]
+fn a_redirect_before_the_page_drew_replaces_its_entry() {
+    let (mut test, channel) = live("before drawn");
+    let before = entries(&test).len();
+    redirected(&mut test, channel, 0x200, SUBCODE_ANY);
+    assert_eq!(entries(&test), [(PAGE_200_ADDRESS.to_owned(), false)]);
+    assert_eq!(entries(&test).len(), before);
+}
+
+// DEC-1684 item 4: read for a while, then moved with no act of the viewer's:
+// an entry, and the buttons pass over the page left, which stays in the list.
+#[test]
+fn a_redirect_after_the_page_drew_marks_the_page_left() {
+    let (mut test, channel) = on_page_100("after drawn");
+    let before = entries(&test).len();
+    redirected(&mut test, channel, 0x200, SUBCODE_ANY);
+    let list = entries(&test);
+    assert_eq!(list.len(), before + 1);
+    assert_eq!(list[before - 1], (PAGE_100_ADDRESS.to_owned(), true), "marked");
+    assert_eq!(list[before], (PAGE_200_ADDRESS.to_owned(), false));
+    assert!(test.core.session.tab_list(false).iter().any(|(_, visit)| visit.address.text == PAGE_100_ADDRESS), "in the list");
+    let went = test.core.session.go(false);
+    assert_ne!(test.core.session.active_tab().unwrap().address().unwrap().text, PAGE_100_ADDRESS, "the button passed it: {went:?}");
+}
+
+// DEC-1684 item 5: the viewer's input clears the mark, and coming back does
+// not; item 7: it counts on the page it was given to, and a new selection
+// starts afresh.
+#[test]
+fn input_clears_the_mark_and_counts_only_on_its_page() {
+    let (mut test, channel) = on_page_100("input clears");
+    redirected(&mut test, channel, 0x200, SUBCODE_ANY);
+    assert_eq!(test.core.session.go_to(false, 1), Went::Page(Some(0x100)), "from the list");
+    test.core.intent(ToCore::Opened(Some(PageKey { channel, page: 0x100 }))).unwrap();
+    assert!(test.core.session.active_tab().unwrap().history[test.core.session.active_tab().unwrap().position].passed_over, "coming back does not clear it");
+    draw(&mut test, channel, 0x100);
+    press(&mut test, channel, 0x100);
+    assert!(!test.core.session.active_tab().unwrap().history[test.core.session.active_tab().unwrap().position].passed_over, "input does");
+    // Input moved it on; the next page has had none.
+    redirected(&mut test, channel, 0x200, SUBCODE_ANY);
+    test.core.intent(ToCore::Opened(Some(PageKey { channel, page: 0x200 }))).unwrap();
+    draw(&mut test, channel, 0x200);
+    redirected(&mut test, channel, 0x300, SUBCODE_ANY);
+    let list = entries(&test);
+    assert_eq!(list[list.len() - 2], (PAGE_200_ADDRESS.to_owned(), true), "one input allows one entry");
+    assert_eq!(list[list.len() - 1], (PAGE_300_ADDRESS.to_owned(), false));
+}
+
+// DEC-1684 item 8: a channel redirecting on a timer pushes out only its own
+// entries: what the viewer chose stays, and Back returns to it.
+#[test]
+fn a_channel_redirecting_on_a_timer_keeps_the_viewers_entries() {
+    let (mut test, channel) = on_page_100("timer");
+    press(&mut test, channel, 0x100);
+    let viewers = entries(&test);
+    for round in 0..2 * MAX_TAB_ENTRIES {
+        let page = if round % 2 == 0 { 0x200 } else { 0x300 };
+        // The viewer's entries are its own, and this page gets no input.
+        redirected(&mut test, channel, page, SUBCODE_ANY);
+        test.core.intent(ToCore::Opened(Some(PageKey { channel, page }))).unwrap();
+        draw(&mut test, channel, page);
+    }
+    let list = entries(&test);
+    assert_eq!(list.len(), MAX_TAB_ENTRIES);
+    assert!(viewers.iter().all(|(address, _)| list.iter().any(|(kept, _)| kept == address)), "{list:?}");
+    assert_eq!(test.core.session.go(false), Went::Page(Some(0x100)), "Back is the viewer's page, past all of them");
+}
+
+// DEC-1684 items 2 to 4 hold for a program's redirect to another channel.
+#[test]
+fn a_redirect_to_another_channel_follows_the_same_rules() {
+    let hop_after = |prepare: fn(&mut Core, u32)| {
+        let (mut core, _stand_in, old) = live_with_broker();
+        prepare(&mut core, old);
+        program_redirect(&mut core, DESTINATION);
+        elapse(&mut core);
+        let tab = core.session.active_tab().unwrap();
+        tab.history.iter().map(|visit| (visit.address.text.clone(), visit.passed_over)).collect::<Vec<_>>()
+    };
+    let there = (DESTINATION.to_owned(), false);
+    assert_eq!(hop_after(|_, _| {}), core::slice::from_ref(&there), "not drawn: replaced");
+    assert_eq!(hop_after(|core, old| core.session.page_drawn(old)), [(LIVE.to_owned(), true), there.clone()], "drawn: marked");
+    let acted: fn(&mut Core, u32) = |core, old| {
+        core.session.page_drawn(old);
+        core.session.viewer_input(old);
+    };
+    assert_eq!(hop_after(acted), [(LIVE.to_owned(), false), there], "input: an entry");
 }
