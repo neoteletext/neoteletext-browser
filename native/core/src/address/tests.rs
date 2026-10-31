@@ -13,6 +13,27 @@ fn typed_hosts_become_https_addresses() {
     assert!(!address.encrypted);
 }
 
+// DEC-1722: the address field adds a channel's missing final slash.
+#[test]
+fn the_address_field_adds_a_channels_final_slash() {
+    let typed = |text: &str| parse_typed(text).unwrap().text;
+    assert_eq!(typed("app.neottx.com/home"), "https://app.neottx.com/home/");
+    assert_eq!(typed("https://app.neottx.com/a/home"), "https://app.neottx.com/a/home/");
+    assert_eq!(typed("app.neottx.com/home#302"), "https://app.neottx.com/home/#302");
+    assert_eq!(typed("app.neottx.com/home?who=me#302/0002"), "https://app.neottx.com/home/?who=me#302/0002");
+    assert_eq!(typed("app.neottx.com/home/"), "https://app.neottx.com/home/");
+}
+
+// DEC-1722 item 3: nothing else is repaired, and `parse`, which reads links,
+// bookmarks and redirects, adds no slash.
+#[test]
+fn only_the_address_field_adds_a_slash_and_only_to_a_folder() {
+    assert_eq!(parse("app.neottx.com/home").unwrap_err(), NOT_A_CHANNEL);
+    assert_eq!(parse_typed("app.neottx.com/home/page.txt").unwrap_err(), NOT_A_CHANNEL);
+    assert_eq!(parse_typed("app.neottx.com/home/channel.json").unwrap_err(), parse("app.neottx.com/home/channel.json").unwrap_err());
+    assert_eq!(parse_typed("app.neottx.com/home/#G02").unwrap_err(), parse("app.neottx.com/home/#G02").unwrap_err());
+}
+
 #[cfg(unix)]
 #[test]
 fn files_are_opened_by_full_path() {

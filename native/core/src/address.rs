@@ -172,13 +172,17 @@ fn written(write: impl FnOnce(&mut Writer<'_>) -> Result<(), Overflow>) -> Optio
     String::from_utf8(writer.written().to_vec()).ok()
 }
 
+/// The sentence for an address that is not a channel's. [`parse_typed`]
+/// repairs this refusal alone.
+const NOT_A_CHANNEL: &str = "That is not a channel's address, which is a folder ending in /";
+
 /// Why the map refuses an address (REQ-1693 items 2 and 4), for the user.
 fn refusal(error: MapError) -> String {
     match error {
         MapError::Place => "That address names no place in a channel",
         MapError::TwoPlaces => "That address names a page twice",
         MapError::ReceiverFile => "That file is part of a channel, and is not opened on its own",
-        MapError::Channel(_) => "That is not a channel's address, which is a folder ending in /",
+        MapError::Channel(_) => NOT_A_CHANNEL,
     }
     .into()
 }
@@ -352,6 +356,27 @@ pub fn parse(typed: &str) -> Result<Address, String> {
     let read = MapAddress::read(&whole).map_err(refusal)?;
     let text = written(|writer| read.write(writer)).ok_or_else(too_long)?;
     within_bound(Address { text, host, encrypted, file: None, page: None, subpage: None, wall: false, contents: false }.placed(read.place))
+}
+
+/// What the address field opens for `typed`: [`parse`], with a channel's
+/// missing final `/` added, as people will leave it off (DEC-1722). It is
+/// not added to a file's name, nor to an address refused for another reason,
+/// and only here, so a link, a bookmark or a redirect is held to the map.
+///
+/// # Errors
+/// A sentence for the user.
+pub fn parse_typed(typed: &str) -> Result<Address, String> {
+    let refused = match parse(typed) {
+        Err(refused) if refused == NOT_A_CHANNEL => refused,
+        read => return read,
+    };
+    let typed = typed.trim();
+    let (path, rest) = typed.split_at(typed.find(['?', FRAGMENT]).unwrap_or(typed.len()));
+    let last_segment = path.rsplit('/').next().unwrap_or_default();
+    if last_segment.is_empty() || last_segment.contains('.') {
+        return Err(refused);
+    }
+    parse(&format!("{path}/{rest}"))
 }
 
 /// Where a redirect leads, by the rules the address field uses: `https` or

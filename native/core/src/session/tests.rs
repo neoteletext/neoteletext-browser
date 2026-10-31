@@ -40,6 +40,17 @@ fn two_tabs_on_one_channel_share_nothing() {
     assert!(!ids.contains(&session.tabs[1].channel.id), "still nobody else's");
 }
 
+// DEC-1722: the address field repairs what a viewer types, and an address
+// reached any other way, as a bookmark is, is held to the map.
+#[test]
+fn a_typed_channel_needs_no_final_slash_and_a_bookmark_does() {
+    let mut session = Session::new(Bookmarks::default());
+    session.open("news.invalid").unwrap();
+    session.navigate("app.neottx.com/home", true).unwrap();
+    assert_eq!(session.active_tab().and_then(Tab::address).unwrap().text, "https://app.neottx.com/home/");
+    assert!(session.navigate("app.neottx.com/other", false).is_err());
+}
+
 #[test]
 fn history_goes_back_and_forward_and_a_new_address_drops_forward() {
     let mut session = Session::new(Bookmarks::default());

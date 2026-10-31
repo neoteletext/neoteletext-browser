@@ -3,7 +3,7 @@
 //! the lists of each way with their chapter stops.
 
 use interface_core::library::{MAX_CHAPTER_STOPS, MAX_TAB_LIST};
-use neoteletext::address::{Address, FRAGMENT, parse, redirect_destination};
+use neoteletext::address::{Address, FRAGMENT, parse, parse_typed, redirect_destination};
 use std::time::Instant;
 
 use super::{MAX_REDIRECTS, Pending, RedirectBy, Redirecting, Session, Tab, Visit, Went};
@@ -15,7 +15,7 @@ impl Session {
     /// # Errors
     /// When the address cannot be opened, or there is no tab.
     pub fn navigate(&mut self, typed: &str, in_field: bool) -> Result<(), String> {
-        let address = parse(typed)?;
+        let address = if in_field { parse_typed(typed)? } else { parse(typed)? };
         // The address shown, entered again, is a reload, as in Chrome
         // (`chrome.history`'s "reload" transition: "pressing Enter in the
         // address bar").
