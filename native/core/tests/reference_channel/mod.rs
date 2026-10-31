@@ -140,9 +140,13 @@ pub struct Tab {
 impl Tab {
     /// Starts a fetcher for the channel on `port`.
     pub fn open(program: &Path, port: u16) -> Self {
-        let channel = format!("http://127.0.0.1:{port}/terminal/");
-        let mut fetcher =
-            Command::new(program).args([channel.as_str(), "--allow-local", "127.0.0.1"]).stdin(Stdio::piped()).stdout(Stdio::piped()).spawn().unwrap();
+        Self::open_at(program, &format!("http://127.0.0.1:{port}/terminal/"))
+    }
+
+    /// Starts a fetcher for `channel`, an address on this computer, as the
+    /// trusted core starts one: with the address, query and all.
+    pub fn open_at(program: &Path, channel: &str) -> Self {
+        let mut fetcher = Command::new(program).args([channel, "--allow-local", "127.0.0.1"]).stdin(Stdio::piped()).stdout(Stdio::piped()).spawn().unwrap();
         let input: Input = Arc::new(Mutex::new(Some(BufWriter::new(fetcher.stdin.take().unwrap()))));
         let output = fetcher.stdout.take().unwrap();
         let (sender, received) = mpsc::channel();

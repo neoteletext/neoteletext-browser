@@ -29,6 +29,9 @@ const TAB_CLOSES: usize = 8;
 const TYPING: u16 = 0x200;
 const LINKS: u16 = 0x500;
 const INDEX: u16 = 0x100;
+/// The longest address a channel with no page may have: 8,000 octets, less
+/// the longest fragment its tab may add (REQ-1690 item 10).
+const LONGEST_CHANNEL: usize = 7_991;
 
 /// The programs, built once however many tests run.
 fn built() -> &'static (PathBuf, PathBuf) {
@@ -39,6 +42,43 @@ fn built() -> &'static (PathBuf, PathBuf) {
 fn select(tab: &Tab, session: &mut Session, page: u16) {
     let select = Select::new(page, SUBCODE_ANY).unwrap();
     send(&tab.input(), &alone(message(session, &Item::Event(Event::Select(select)))));
+}
+
+/// What the site was asked for, up to the push connection's request.
+fn asked_until_push(site: &Site, heard: &std::sync::mpsc::Receiver<String>, query: &str) -> Vec<String> {
+    let tab = Tab::open_at(&built().1, &format!("http://127.0.0.1:{}/terminal/{query}", site.port));
+    let said = said_until(heard, "GET /terminal/push", Instant::now() + LIMIT);
+    drop(tab);
+    said
+}
+
+// REQ-1674 item 1, TODO-1678: an address's query goes on the push connection's
+// upgrade request exactly as written, and the channel's files are asked for
+// without it, since a query is not part of a channel's folder.
+#[test]
+fn an_address_query_goes_on_the_push_connection() {
+    let (site, heard) = Site::start(&built().0);
+    let said = asked_until_push(&site, &heard, "?id=7&b=%20x");
+    assert!(said.last().unwrap().ends_with("GET /terminal/push?id=7&b=%20x"), "{said:?}");
+    assert!(said.iter().any(|line| line.ends_with("GET /terminal/channel.json")), "{said:?}");
+}
+
+#[test]
+fn an_address_with_no_query_sends_none() {
+    let (site, heard) = Site::start(&built().0);
+    let said = asked_until_push(&site, &heard, "");
+    assert!(said.last().unwrap().ends_with("GET /terminal/push"), "{said:?}");
+}
+
+// REQ-1674 item 3: the longest address a channel opens at carries its whole
+// query, whose push address is three octets longer and within the bound.
+#[test]
+fn the_longest_query_arrives_whole() {
+    let (site, heard) = Site::start(&built().0);
+    let before_query = format!("http://127.0.0.1:{}/terminal/?", site.port);
+    let query = "q".repeat(LONGEST_CHANNEL - before_query.len());
+    let said = asked_until_push(&site, &heard, &format!("?{query}"));
+    assert!(said.last().unwrap().ends_with(&format!("GET /terminal/push?{query}")), "the query came whole");
 }
 
 // TODO-1682 item 1, DEC-1538 item 3: a tab that closes tells the channel it
