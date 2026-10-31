@@ -8,7 +8,7 @@
 
 use alloc::string::String;
 
-use neoteletext_input::event::{self, Action, Device, Event, Item, KeyCode, MouseAction, Point};
+use neoteletext_input::event::{self, Action, Device, Event, Item, KeyCode, MouseAction, Point, Stamp};
 
 /// The mouse's buttons as MOUSE numbers them on a press and a release
 /// (INPUT.md section 5.4); on a move, bit `n` is button `n` held.
@@ -119,21 +119,22 @@ pub enum TouchPhase {
 }
 
 impl Intent {
-    /// The intent as the input stream has it, from the mouse; `None` for
-    /// what only the trusted core can write, gone and a contact, which it
-    /// numbers and places from its own state.
+    /// The intent as the input stream has it, from the mouse, stamped with
+    /// the page on screen (`neoteletext-common/INPUT.md` section 5.4,
+    /// REQ-1555); `None` for what only the trusted core can write, gone and
+    /// a contact, which it numbers and places from its own state.
     #[must_use]
-    pub fn item(&self) -> Option<Item<'_>> {
+    pub fn item(&self, on: Stamp) -> Option<Item<'_>> {
         Some(Item::Event(match self {
             Self::Text(text) => return Some(Item::Text(text)),
             Self::Key { action, key, mods, text, base } => {
-                Event::Key(event::Key { action: *action, key: *key, mods: *mods, text: text.as_deref(), base: *base })
+                Event::Key(event::Key { on, action: *action, key: *key, mods: *mods, text: text.as_deref(), base: *base, lost: false })
             }
-            Self::Mouse { action, button, at } => Event::Mouse(event::Mouse { action: *action, button: *button, at: *at, device: Device::Mouse }),
-            Self::Wheel { dx, dy, at } => Event::Wheel(event::Wheel { dx: *dx, dy: *dy, at: *at }),
-            Self::Paste(text) => Event::Paste(text),
-            Self::Compose { cursor, text } => Event::Compose { cursor: *cursor, text },
-            Self::Hover { leave, column, row } => Event::Hover { leave: *leave, column: u32::from(*column), row: u32::from(*row) },
+            Self::Mouse { action, button, at } => Event::Mouse(event::Mouse { on, action: *action, button: *button, at: *at, device: Device::Mouse }),
+            Self::Wheel { dx, dy, at } => Event::Wheel(event::Wheel { on, dx: *dx, dy: *dy, at: *at }),
+            Self::Paste(text) => Event::Paste { on, text },
+            Self::Compose { cursor, text } => Event::Compose { on, cursor: *cursor, text },
+            Self::Hover { leave, column, row } => Event::Hover { on, leave: *leave, column: u32::from(*column), row: u32::from(*row) },
             Self::Gone | Self::Touch { .. } => return None,
         }))
     }

@@ -222,6 +222,31 @@ fn the_page_under_the_pointer_is_known() {
     assert_eq!(browser.pointed_page(), None, "beside the page");
 }
 
+// REQ-1645: the last dot of the page is in column 39, and no dot past it
+// is on the page at all.
+#[test]
+fn no_position_is_past_column_39() {
+    let mut browser = browser();
+    browser.set_typing(typing(None), 0);
+    let (_, page) = browser.wall.open().unwrap();
+    assert_eq!(browser.page_point(crate::geometry::Point { x: page.x1 - 0.001, y: page.y0 }).map(|at| at.column), Some(39));
+    assert_eq!(browser.page_point(crate::geometry::Point { x: page.x1 + 1.0, y: page.y0 }), None);
+}
+
+// REQ-1554 item 3: keys in the address field or the strip leave the page
+// without the keyboard focus, and it stays open and selected.
+#[test]
+fn the_keys_going_elsewhere_leave_the_page_open() {
+    let mut browser = browser();
+    browser.set_typing(typing(None), 0);
+    assert!(!browser.keys_elsewhere());
+    let opened = browser.opened();
+    browser.editing = true;
+    assert!(browser.keys_elsewhere());
+    assert_eq!(browser.opened(), opened);
+    assert_eq!(browser.typing_target(), None);
+}
+
 /// Decision 107 and INPUT.md section 6.3: the wheel and the pointer's
 /// moves over the page are the channel's; beside the page, or with the
 /// browser's modifier, the wheel is the browser's.
@@ -237,7 +262,9 @@ fn the_wheel_and_moves_go_over_the_page() {
     assert_eq!(browser.terminal_wheel(0.0, 1.0), None, "the modifier keeps it the browser's");
     browser.set_browser_modifier(false);
     pointer_at(&mut browser, -2.0, 3.0);
+    browser.take_outputs();
     assert_eq!(browser.terminal_wheel(0.0, 1.0), None, "beside the page the browser scrolls");
+    assert!(intents(&browser.take_outputs()).is_empty(), "REQ-1554: no WHEEL goes while the pointer is outside the page");
     pointer_at(&mut browser, 3.0, 3.0);
     browser.take_outputs();
     pointer_at(&mut browser, 5.0, 3.0);

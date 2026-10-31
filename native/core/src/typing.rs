@@ -4,10 +4,13 @@
 //! session it keeps with each channel, the pointer's pace and contacts, and
 //! the cursor it passes back.
 //!
-//! Input goes to a channel only while its tab is active, the page the
-//! viewer opened is that channel's, the window has the focus, the address
-//! is not being edited, and the channel's push WebSocket is open with its
-//! descriptor declaring input and its session welcomed. The interface
+//! Input goes to a channel only while the page the viewer opened in the
+//! tab in front is that channel's, a page of it is on screen, the page
+//! holds the keyboard focus (the window has it and no other part of the
+//! browser has the keys), and the channel's push WebSocket is open with its
+//! descriptor declaring input and its session welcomed (neoteletext-common's
+//! REQ-1554). Every event is stamped with the page on screen (REQ-1555).
+//! The interface
 //! sends intents; this decides, paces the pointer's moves, numbers the
 //! contacts of a touch screen, and alone encodes the protocol (REQ-INT-132,
 //! `RETURN-CHANNEL.md` REQ-RCH-036 and REQ-RCH-053). Nothing a channel or a
@@ -23,29 +26,38 @@ use std::collections::BTreeMap;
 use interface_core::canvas::PageKey;
 use neoteletext_core::limits::SUBCODE_ANY;
 use neoteletext_input::MAX_CONTACTS;
-use neoteletext_input::caps::{CURSOR_CAP, PAGE_CAP, RESUME_CAP, SELECT_CAP, TOUCH_CAP};
+use neoteletext_input::caps::{CURSOR_CAP, RESUME_CAP, SELECT_CAP, TOUCH_CAP};
 use neoteletext_input::contacts::Contacts;
 use neoteletext_input::cursor::{BLOCK, Cursor};
-use neoteletext_input::event::{self, Event, Item, Mouse, MouseAction, Point, Select, Touch};
+use neoteletext_input::event::{self, Event, Item, Mouse, MouseAction, Point, Select, Stamp, Touch};
+use neoteletext_input::held::Held;
 use neoteletext_input::pace::Pacer;
 use neoteletext_input::session::{ResumableSession, State};
 use neoteletext_input::{MAX_MESSAGE, MAX_ROWS};
 use protocol::interaction::{CursorState, InputIntent, Intent, Typing as TypingState};
 
-/// What NeoTeletext offers in HELLO (INPUT.md section 6.2): it shows pages,
-/// draws the cursor, and sends touch (REQ-RCH-041 to REQ-RCH-043); the
+/// What NeoTeletext offers in HELLO (INPUT.md section 6.2): it draws the
+/// cursor and sends touch (REQ-RCH-041 to REQ-RCH-043); the
 /// resumable session adds RESUME (section 6.4, REQ-RCH-013); and it says
 /// which page or sub-page each view selects with SELECT (REQ-INT-140,
 /// decision 128). It echoes
 /// nothing: what is typed shows only as the channel draws it (the owner,
 /// 28 October 2026).
-const OFFERED: u32 = PAGE_CAP | CURSOR_CAP | TOUCH_CAP | SELECT_CAP;
+const OFFERED: u32 = CURSOR_CAP | TOUCH_CAP | SELECT_CAP;
 /// A teletext page's text area, in cells (section 5.4's RESIZE): 40
 /// columns; the drawn size goes as 0, unknown, as it changes with the
 /// window.
 const PAGE_COLUMNS: u32 = 40;
-/// The page none is open, as PAGE says it (section 5.4).
+/// The page of a SELECT that says no page is selected (section 5.4).
 const NO_PAGE: u16 = 0;
+/// The pages selected away from that are remembered at once: quick stepping
+/// leaves a page each time, and more than this are not in flight together.
+const MOST_PAGES_LEFT: usize = 8;
+/// How long a cursor record naming a page just left is taken for a frame
+/// sent before the channel read the SELECT, in microseconds: the longest a
+/// program takes to answer one, the server's `PROGRAM_REPLY_LIMIT_MS` of
+/// 5,000 ms. After it, a record naming that page is the channel's own move.
+const PAGE_LEFT_FOR_US: u64 = 5_000_000;
 /// Microseconds in the session's millisecond.
 const MICROSECONDS_PER_MILLISECOND: u64 = 1_000;
 
@@ -92,8 +104,10 @@ struct Channel {
     cursor: Option<Cursor>,
     /// The push connection's last round trip, from the fetcher.
     round_trip_us: Option<u32>,
-    /// The page the channel was last told is open, 0 for none.
-    told: Option<u16>,
+    /// The page and sub-code on screen in the tab, as its decoder last
+    /// drew them, which every input event is stamped with (REQ-1555). A new
+    /// selection leaves the old page here until the new one is drawn.
+    on_screen: Option<Stamp>,
     /// What the tab selects: its page and the sub-code chosen, or 3F7F
     /// when the page was chosen and none of its sub-pages
     /// (neoteletext-common's REQ-1502).
@@ -106,12 +120,21 @@ struct Channel {
     /// The page the channel's last cursor record named, when it named
     /// another than the one open: the host went there.
     went: Option<u16>,
-    /// The input count of the last PAGE sent, until a cursor record
-    /// acknowledges it. A record the channel wrote before it read that
-    /// PAGE names the page it had, which is no going of the host's: taken
-    /// as one, the browser and the channel would send each other between
-    /// the two pages for as long as records crossed.
-    page_unacked: Option<u16>,
+    /// The pages the tab selected away from, until the channel answers the
+    /// selection or `PAGE_LEFT_FOR_US` passes. A frame sent before the
+    /// channel read the SELECT carries a cursor record naming the page it
+    /// had, which is no going of the host's: taken as one, the browser and
+    /// the channel would send each other between the two pages for as long
+    /// as records crossed.
+    left: Vec<u16>,
+    /// When the last of them was left, in the trusted core's microseconds.
+    left_at_us: u64,
+    /// The keys, buttons and contacts down, as sent: a held key's lost
+    /// release is sent from here (REQ-207).
+    down: Held,
+    /// The page the pointer's last event was stamped with, which its gone
+    /// is stamped with too.
+    pointer_on: Option<Stamp>,
     /// The pointer's and each contact's moves, at most 60 a second
     /// (REQ-RCH-031 to REQ-RCH-033, REQ-RCH-045).
     pacer: Pacer,
@@ -136,12 +159,15 @@ impl Channel {
             started: false,
             cursor: None,
             round_trip_us: None,
-            told: None,
+            on_screen: None,
             selected: None,
             select_told: None,
             focus_told: None,
             went: None,
-            page_unacked: None,
+            left: Vec::new(),
+            left_at_us: 0,
+            down: Held::new(),
+            pointer_on: None,
             pacer: Pacer::new(),
             contacts: Contacts::new(),
             finger: None,
@@ -170,6 +196,7 @@ impl Channel {
                 };
                 sends.push(Send::Fetcher { channel, bytes: out.get(..length).unwrap_or(&[]).to_vec(), move_of, more: false });
                 self.sent_pointer(item);
+                self.down.take(item, &mut |_, _| {});
                 Some(self.session.count())
             }
             Ok(0) | Err(_) => None,
@@ -190,15 +217,40 @@ impl Channel {
     /// once the session has started, whether or not keys go to it
     /// (REQ-INT-140). A channel that did not agree SELECT is told nothing:
     /// the session refuses the event.
+    /// What is held is let go first: a change of selection ends the input
+    /// (REQ-207).
     fn tell_select(&mut self, channel: u32, now_us: u64, sends: &mut Vec<Send>) {
         if !self.started || self.selected == self.select_told {
             return;
         }
+        self.let_go(channel, now_us, sends);
+        let before = self.select_told.map(|(page, _)| page);
         self.select_told = self.selected;
         let Some((page, sub)) = self.selected else { return };
+        if let Some(left) = before.filter(|&left| left != page && left != NO_PAGE) {
+            self.remember_left(left, now_us);
+        }
         if let Some(select) = Select::new(page, sub) {
             self.send(channel, &Item::Event(Event::Select(select)), now_us, sends);
         }
+    }
+
+    /// The tab selected away from `page`.
+    fn remember_left(&mut self, page: u16, now_us: u64) {
+        self.left.retain(|&each| each != page);
+        if self.left.len() == MOST_PAGES_LEFT {
+            self.left.remove(0);
+        }
+        self.left.push(page);
+        self.left_at_us = now_us;
+    }
+
+    /// Whether a cursor record naming `page` is a frame in flight from
+    /// before the channel read a SELECT, not the channel moving the tab:
+    /// the page was just left, and the channel has not yet answered the
+    /// selection (`neoteletext-common` DEC-1659).
+    fn page_in_flight(&self, page: u16, now_us: u64) -> bool {
+        self.left.contains(&page) && now_us.saturating_sub(self.left_at_us) < PAGE_LEFT_FOR_US
     }
 
     /// The connection opened: the session's first message, HELLO, with
@@ -227,15 +279,6 @@ fn clock(now_us: u64) -> u32 {
     let milliseconds = now_us.checked_div(MICROSECONDS_PER_MILLISECOND).unwrap_or(0);
     u32::try_from(milliseconds & u64::from(u32::MAX)).unwrap_or(0)
 }
-
-/// RFC 1982 serial arithmetic on 16 bits: whether `count` is `acked` or
-/// before it.
-fn covered(count: u16, acked: u16) -> bool {
-    acked.wrapping_sub(count) < SERIAL_HALF
-}
-
-/// Half the range of the 16-bit input count (RFC 1982 section 3.2).
-const SERIAL_HALF: u16 = 0x8000;
 
 /// Marks every message to a channel's fetcher but its last in `sends` as
 /// having more after it: the messages of one moment leave in one write
@@ -275,7 +318,7 @@ impl Typing {
     }
 
     /// Whether `channel`'s page is open in the active tab, with its input
-    /// socket open: what PAGE tells it.
+    /// socket open.
     fn showing(&self, channel: u32) -> bool {
         self.active == Some(channel)
             && self.opened.is_some_and(|opened| opened.channel == channel)
@@ -316,43 +359,27 @@ impl Typing {
         }
     }
 
-    /// Tells `channel` which of its pages is open now, and whether it has
-    /// the focus, when either changed (section 9.1): PAGE and `FOCUS_IN` when
-    /// input starts going, `FOCUS_OUT` and PAGE 0 when it stops, so the
-    /// channel lets go of anything held (REQ-INT-108). Before either, the
-    /// waiting moves and then gone for the pointer and every contact, since
-    /// the page they were over stopped taking keys (REQ-RCH-034); and the
-    /// round trip is measured exactly while keys go (REQ-RCH-016).
+    /// Tells `channel` whether its page holds the keyboard focus, when that
+    /// changed (section 9.1): `FOCUS_IN` when it gains it, `FOCUS_OUT` when
+    /// it loses it. Before `FOCUS_OUT`, the waiting moves, each held key's
+    /// lost release, and gone for the pointer and every contact, since the
+    /// page stopped taking input (REQ-207, REQ-RCH-034); and the round trip
+    /// is measured exactly while keys go (REQ-RCH-016). The selection is
+    /// not touched: the page stays active (REQ-1553).
     fn tell(&mut self, channel: u32, now_us: u64, sends: &mut Vec<Send>) {
-        let showing = self.showing(channel);
-        let page = if showing { self.opened.map_or(NO_PAGE, |opened| opened.page) } else { NO_PAGE };
-        let focus = showing && !self.away();
+        let focus = self.showing(channel) && !self.away();
         let Some(state) = self.channels.get_mut(&channel) else { return };
-        if !state.started {
+        if !state.started || state.focus_told == Some(focus) {
             return;
         }
-        if state.focus_told != Some(focus) || state.told != Some(page) {
-            state.let_go(channel, now_us, sends);
-        }
-        if state.focus_told != Some(focus) {
-            sends.push(Send::Measure { channel, on: focus });
-        }
-        if state.focus_told != Some(focus) && !focus {
-            state.focus_told = Some(focus);
-            state.send(channel, &Item::Event(Event::FocusOut), now_us, sends);
-        }
-        if state.told != Some(page) {
-            state.told = Some(page);
-            state.page_unacked = state.send(channel, &Item::Event(Event::Page(page)), now_us, sends);
-        }
-        if state.focus_told != Some(focus) && focus {
-            state.focus_told = Some(focus);
-            state.send(channel, &Item::Event(Event::FocusIn), now_us, sends);
-        }
+        state.let_go(channel, now_us, sends);
+        sends.push(Send::Measure { channel, on: focus });
+        state.focus_told = Some(focus);
+        state.send(channel, &Item::Event(if focus { Event::FocusIn } else { Event::FocusOut }), now_us, sends);
     }
 
     /// Once welcomed, the session's start (section 6.1): RESIZE, the focus,
-    /// the page.
+    /// the selection.
     fn start(&mut self, channel: u32, now_us: u64, sends: &mut Vec<Send>) {
         let Some(state) = self.channels.get_mut(&channel) else { return };
         if state.started || !state.session.welcomed() {
@@ -397,8 +424,25 @@ impl Typing {
         let mut sends = Vec::new();
         let state = self.channels.entry(channel).or_insert_with(Channel::new);
         state.selected = Some((page, sub));
+        if page == NO_PAGE {
+            state.on_screen = None;
+        }
         state.tell_select(channel, now_us, &mut sends);
         sends
+    }
+
+    /// The tab of `channel` shows no page of it (the wall, with no page
+    /// zoomed): SELECT with page 0 (neoteletext-common's DEC-1538 item 9).
+    pub fn selects_nothing(&mut self, channel: u32, now_us: u64) -> Vec<Send> {
+        together(self.select(channel, NO_PAGE, SUBCODE_ANY, now_us))
+    }
+
+    /// The decoder of `key`'s channel drew `key`'s sub-page `sub`: what
+    /// input is stamped with from now on (REQ-1555).
+    pub fn drawn(&mut self, key: PageKey, sub: u16) {
+        if let Some(state) = self.channels.get_mut(&key.channel) {
+            state.on_screen = Stamp::new(key.page, sub);
+        }
     }
 
     /// Whether a page is open for typing: the active tab's open page's
@@ -465,14 +509,14 @@ impl Typing {
         let was_open = state.open;
         state.open = open;
         state.secure = open && secure;
-        // The channel takes every held button and contact as released when
-        // the connection goes (section 6.4 item 4), resumed or not.
+        // The channel takes everything held as released when the connection
+        // goes (section 6.4 item 4), resumed or not.
         state.pointer_forgotten();
+        state.down = Held::new();
+        state.left.clear();
         if open && !was_open {
             state.started = false;
-            state.told = None;
             state.select_told = None;
-            state.page_unacked = None;
             state.focus_told = None;
             state.cursor = None;
             state.round_trip_us = None;
@@ -480,9 +524,7 @@ impl Typing {
         } else if !open {
             state.session.close();
             state.started = false;
-            state.told = None;
             state.select_told = None;
-            state.page_unacked = None;
             state.focus_told = None;
             state.round_trip_us = None;
         }
@@ -496,8 +538,8 @@ impl Typing {
         self.keys_moved(now_us)
     }
 
-    /// The viewer began or stopped editing the address, whose keys are
-    /// the strip's, not the page's.
+    /// A part of the browser took the keys from the page, or gave them
+    /// back: the address field, a panel, a list.
     pub fn editing(&mut self, editing: bool, now_us: u64) -> Vec<Send> {
         self.editing = editing;
         self.keys_moved(now_us)
@@ -521,8 +563,12 @@ impl Typing {
             return sends;
         }
         let Some(state) = self.channels.get_mut(&channel) else { return sends };
+        // Nothing on screen, nothing to act on (REQ-1554 item 3); a new
+        // selection not yet drawn leaves the old page's stamp, which the
+        // channel drops (REQ-1555).
+        let Some(on) = state.on_screen else { return sends };
         if matches!(input.intent, Intent::Mouse { .. } | Intent::Gone | Intent::Touch { .. }) {
-            state.pointer(channel, &input.intent, now_us, &mut sends);
+            state.pointer(channel, &input.intent, on, now_us, &mut sends);
             return together(sends);
         }
         // Text goes in Normalization Form C (section 5.7 rule 3,
@@ -536,9 +582,9 @@ impl Typing {
         let item = match &input.intent {
             Intent::Text(_) => Item::Text(&normalized),
             Intent::Key { action, key, mods, text: Some(_), base } => {
-                Item::Event(Event::Key(event::Key { action: *action, key: *key, mods: *mods, text: Some(&normalized), base: *base }))
+                Item::Event(Event::Key(event::Key { on, action: *action, key: *key, mods: *mods, text: Some(&normalized), base: *base, lost: false }))
             }
-            intent => match intent.item() {
+            intent => match intent.item(on) {
                 Some(item) => item,
                 None => return sends,
             },

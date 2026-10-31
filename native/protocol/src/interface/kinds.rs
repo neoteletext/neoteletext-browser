@@ -16,6 +16,7 @@
 //! | 28 | `KIND_PHONE_PANEL` | `keyboard.rs` |
 //! | 29 | `KIND_PHONE_FINISH` | `keyboard.rs` |
 //! | 30 | `KIND_EDITING` | `interaction.rs` |
+//! | 31 | `KIND_WALL_WITHOUT_PAGE` | `interaction.rs` |
 //! | 36 | `KIND_CONFIRM` | `links.rs` |
 //! | 37 | `KIND_CANCEL` | `links.rs` |
 //! | 40 | `KIND_TYPING` | `interaction.rs` |

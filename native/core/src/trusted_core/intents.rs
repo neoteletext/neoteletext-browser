@@ -129,7 +129,7 @@ impl Core {
             #[cfg(any(feature = "links", feature = "interaction"))]
             ToCore::Focused(focused) => self.focused(focused)?,
             #[cfg(feature = "interaction")]
-            ToCore::Input(_) | ToCore::Editing(_) => self.input_intent(intent)?,
+            ToCore::Input(_) | ToCore::Editing(_) | ToCore::WallWithoutPage => self.input_intent(intent)?,
             #[cfg(feature = "phone-keyboard")]
             ToCore::PhonePanel(_) | ToCore::PhoneFinish => self.input_intent(intent)?,
         }

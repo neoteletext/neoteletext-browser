@@ -7,7 +7,7 @@ use neoteletext_input::control::read_body;
 use neoteletext_input::cursor;
 use neoteletext_input::session::Welcomed;
 
-use super::{Send, Typing, covered, together};
+use super::{Send, Typing, together};
 
 impl Typing {
     /// A cursor record a channel's decoder found: checked here by the
@@ -15,21 +15,22 @@ impl Typing {
     /// acknowledgement clears echo (REQ-INT-110) and what a resumption
     /// would send again. The round trip is the push connection's own
     /// (REQ-RCH-016), not the acknowledgement's.
-    pub fn cursor(&mut self, channel: u32, body: [u8; cursor::BODY]) -> Vec<Send> {
+    pub fn cursor(&mut self, channel: u32, body: [u8; cursor::BODY], now_us: u64) -> Vec<Send> {
         let mut sends = Vec::new();
         let Ok(cursor) = cursor::from_body(body) else { return sends };
         let Some(state) = self.channels.get_mut(&channel).filter(|state| state.open && state.session.welcomed()) else {
             return sends;
         };
         state.session.acknowledged(cursor.acked);
-        let acked = state.session.acked();
         // A host goes to a page by sending it (REQ-INT-113): the browser
-        // shows that page of the same channel, once the channel has read
-        // the last page it was told.
-        if state.page_unacked.is_some_and(|count| covered(count, acked)) {
-            state.page_unacked = None;
-        }
-        if state.page_unacked.is_none() {
+        // shows that page of the same channel. A record for the selection
+        // is the channel's answer, after which nothing in flight is left; a
+        // record for a page just left is a frame from before the channel
+        // read the SELECT, and moves nothing (DEC-1659).
+        if state.selected.is_some_and(|(page, _)| page == cursor.page) {
+            state.left.clear();
+            state.went = None;
+        } else if !state.page_in_flight(cursor.page, now_us) {
             state.went = Some(cursor.page);
         }
         state.cursor = Some(cursor);
@@ -43,7 +44,7 @@ impl Typing {
     /// (REQ-INT-111) and applied to the session. WELCOME starts it: a new
     /// session as at its first connection; a resumed one first sends again,
     /// in order, what the channel had not taken, then RESIZE, the focus and
-    /// PAGE, so the channel pushes the open page again (INPUT.md section
+    /// SELECT, so the channel pushes the open page again (INPUT.md section
     /// 6.4 item 7, REQ-INT-125, REQ-RCH-013). A WELCOME that does not fit
     /// leaves the session refused, which the strip says; a resumption that
     /// cannot be leaves it forgotten, taking no input until the next

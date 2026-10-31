@@ -79,6 +79,14 @@ struct View {
     pointer_shape: Cursor,
     /// The page last reported as opened.
     opened: Option<PageKey>,
+    /// Another part of the browser has the keys, as the trusted core was
+    /// last told (neoteletext-common's REQ-1554).
+    #[cfg(feature = "interaction")]
+    keys_elsewhere: bool,
+    /// The wall shows with no page zoomed, as the trusted core was last
+    /// told.
+    #[cfg(feature = "interaction")]
+    wall_without_page: bool,
     /// The tabs as the trusted core last sent them, for the window's title
     /// and the Dock menu.
     tabs: Vec<TabInfo>,
@@ -114,6 +122,10 @@ impl View {
             pace: pace::Pace::default(),
             pointer_shape: Cursor::Arrow,
             opened: None,
+            #[cfg(feature = "interaction")]
+            keys_elsewhere: false,
+            #[cfg(feature = "interaction")]
+            wall_without_page: false,
             tabs: Vec::new(),
             active: 0,
             ime: InputMethod::default(),

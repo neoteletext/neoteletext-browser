@@ -119,9 +119,20 @@ impl Browser {
     /// The page the user has opened, whose sounds play (the engine's
     /// REQ-AUD-012): the zoomed page, or else the page chosen by number or
     /// in the list, as a television goes to the page whose number is typed.
+    /// The wall of pages with none zoomed opens none: the tab has no page
+    /// selected (neoteletext-common's DEC-1538 item 9).
     #[must_use]
     pub fn opened(&self) -> Option<PageKey> {
+        if self.wall_without_page() {
+            return None;
+        }
         self.wall.zoomed().or_else(|| self.selected.and_then(|index| self.page_key(index)))
+    }
+
+    /// Whether the wall of pages shows with no page zoomed in.
+    #[must_use]
+    pub fn wall_without_page(&self) -> bool {
+        !self.wall.single() && self.wall.zoomed().is_none()
     }
 
     /// A digit, from the keyboard or the remote: three choose a page, as on
@@ -199,7 +210,7 @@ impl Browser {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::browser::fixture::{browser, press_at};
+    use crate::browser::fixture::{browser, browser as fixture_browser, press_at};
     use crate::browser::frames::PULSE_MILLISECONDS;
     use crate::browser::{Key, Modifiers};
 
@@ -222,9 +233,19 @@ mod tests {
         let (mut browser, mut canvas) = browser();
         assert_eq!(browser.opened(), None);
         browser.key(Key::Text("401"), Modifiers::default(), 0);
-        assert_eq!(browser.opened(), Some(PageKey { channel: 7, page: 0x401 }));
+        // REQ-1554: DEC-1538 item 9, the wall selects nothing, whatever is
+        // marked on it.
+        assert!(browser.wall_without_page());
+        assert_eq!(browser.opened(), None, "the wall opens no page");
         let (key, rect) = browser.wall().shown().next().unwrap();
         press_at(&mut browser, &mut canvas, rect);
+        assert!(!browser.wall_without_page());
         assert_eq!(browser.opened(), Some(key), "a zoomed page wins");
+
+        let (mut alone, _) = fixture_browser();
+        alone.key(Key::Text("401"), Modifiers::default(), 0);
+        alone.toggle_wall(0);
+        assert!(!alone.wall_without_page());
+        assert_eq!(alone.opened(), Some(PageKey { channel: 7, page: 0x401 }), "with no page zoomed, the chosen one");
     }
 }

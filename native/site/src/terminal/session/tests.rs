@@ -5,7 +5,7 @@ use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
 
-use neoteletext_input::caps::{CURSOR_CAP, PAGE_CAP};
+use neoteletext_input::caps::{CURSOR_CAP, SELECT_CAP};
 
 use crate::podcast::Episode;
 use crate::terminal::invaders::INVADER_TOP;
@@ -24,8 +24,12 @@ fn press(character: char) -> Vec<u8> {
     encoded(&Item::Text(character.encode_utf8(&mut [0; 4])))
 }
 
+/// The stamp of a page on screen; the reference channel keeps no record of
+/// what it stamps, the server's check being the server's.
+const ON: neoteletext_input::event::Stamp = neoteletext_input::event::Stamp { page: 0x100, sub: 0 };
+
 fn key(action: Action, key: KeyCode, text: Option<&str>, base: Option<char>) -> Vec<u8> {
-    encoded(&Item::Event(Event::Key(Key { action, key, mods: 0, text, base })))
+    encoded(&Item::Event(Event::Key(Key { on: ON, action, key, mods: 0, text, base, lost: false })))
 }
 
 fn named(name: &str) -> Vec<u8> {
@@ -33,7 +37,7 @@ fn named(name: &str) -> Vec<u8> {
 }
 
 fn page(number: u16) -> Vec<u8> {
-    encoded(&Item::Event(Event::Page(number)))
+    encoded(&Item::Event(Event::Select(neoteletext_input::event::Select::new(number, neoteletext_core::limits::SUBCODE_ANY).unwrap())))
 }
 
 fn feed(session: &mut Session, messages: &[Vec<u8>]) -> Vec<Push> {
@@ -57,13 +61,13 @@ fn pushed_cursor(bytes: &[u8]) -> neoteletext_input::cursor::Cursor {
 #[test]
 fn hello_is_answered_with_welcome() {
     let mut session = Session::new(Settings::default());
-    let offered = PAGE_CAP | CURSOR_CAP | 0x88; // and two retired mode bits
-    let pushes = feed(&mut session, &[encoded(&Item::Event(Event::Hello { version: 2, caps: offered, agent: None }))]);
+    let offered = SELECT_CAP | CURSOR_CAP | 0x88; // and two retired mode bits
+    let pushes = feed(&mut session, &[encoded(&Item::Event(Event::Hello { version: neoteletext_input::VERSION, caps: offered, agent: None }))]);
     let [Push::Packets(bytes)] = pushes.as_slice() else { panic!("one packet") };
     let packet = neoteletext_core::packet::Packet { bytes: bytes.as_slice().try_into().unwrap() };
     let mut buffer = [0; neoteletext_input::control::FRAGMENT_DATA];
     let welcome = neoteletext_input::control::from_packet(&packet, &mut buffer);
-    assert_eq!(welcome, Some(Ok(Control::Welcome { version: 2, caps: PAGE_CAP | CURSOR_CAP, resume: None })));
+    assert_eq!(welcome, Some(Ok(Control::Welcome { version: neoteletext_input::VERSION, caps: SELECT_CAP | CURSOR_CAP, resume: None })));
     assert!(feed(&mut session, &[encoded(&Item::Event(Event::Hello { version: 1, caps: 0, agent: None }))]).is_empty(), "another version");
 }
 
@@ -121,12 +125,12 @@ fn typing_places_the_cursor_and_acknowledges() {
     let cursor = pushed_cursor(last);
     assert_eq!(
         (cursor.page, cursor.acked, cursor.place.map(|place| (place.row, place.column))),
-        (0x200, 4, Some((5, 15))),
-        "the cursor after the name, acknowledging an input count of 4"
+        (0x200, 3, Some((5, 15))),
+        "the cursor after the name, acknowledging three keys: SELECT is no input unit"
     );
     let page = session.render().tti();
     assert!(page.contains("Hello, An!"), "{page}");
-    assert!(page.contains("CU,5,15,0,0,4"), "the page file's cursor line, no echo: {page}");
+    assert!(page.contains("CU,5,15,0,0,3"), "the page file's cursor line, no echo: {page}");
     feed(&mut session, &[named("Tab"), press('x')]);
     let page = session.render().tti();
     assert!(page.contains("CU,8,14,0,0,"), "the secret field's cursor, no echo: {page}");
@@ -286,7 +290,7 @@ fn a_click_is_the_hosts() {
         &mut session,
         &[
             page(0x500),
-            encoded(&Item::Event(Event::Mouse(Mouse { action: MouseAction::Press, button: 0, at, device: neoteletext_input::event::Device::Mouse }))),
+            encoded(&Item::Event(Event::Mouse(Mouse { on: ON, action: MouseAction::Press, button: 0, at, device: neoteletext_input::event::Device::Mouse }))),
         ],
     );
     assert!(session.render().tti().contains("You clicked column 7, row 11."));

@@ -7,7 +7,7 @@ use std::fmt::Write as _;
 
 use neoteletext_formats::detect::{AutoConfig, AutoReader, Format};
 use neoteletext_formats::{Item, Reader as _};
-use neoteletext_input::caps::{CURSOR_CAP, PAGE_CAP};
+use neoteletext_input::caps::{CURSOR_CAP, SELECT_CAP};
 use neoteletext_input::cursor::{Cursor, NO_CURSOR, Place};
 
 // EN 300 706 Table 26: the spacing attributes used here.
@@ -74,7 +74,7 @@ impl Row {
 
 /// What the channel uses of what a receiver offers (INPUT.md section 6.2):
 /// pages and the cursor.
-pub(super) const USED: u32 = PAGE_CAP | CURSOR_CAP;
+pub(super) const USED: u32 = SELECT_CAP | CURSOR_CAP;
 
 /// A page as TTI: its rows and its cursor record as a `CU` line.
 pub(super) struct Page {

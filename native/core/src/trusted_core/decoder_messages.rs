@@ -72,7 +72,7 @@ impl Core {
             }
             #[cfg(feature = "interaction")]
             FromDecoder::Cursor { body } => {
-                let sends = self.typing.cursor(channel, body);
+                let sends = self.typing.cursor(channel, body, self.now_us());
                 self.deliver_typing(sends)?;
             }
             #[cfg(feature = "interaction")]

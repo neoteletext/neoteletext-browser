@@ -34,7 +34,7 @@ fn every_intent_round_trips() {
         Intent::Key { action: Action::Release, key: KeyCode::Functional(2), mods: CONTROL | ALT, text: None, base: None },
         Intent::Text("Grüße, мир".into()),
         Intent::Mouse { action: MouseAction::Press, button: 0, at: at(10, 5) },
-        Intent::Mouse { action: MouseAction::Move, button: 1, at: Point { pixels: None, ..at(71, 24) } },
+        Intent::Mouse { action: MouseAction::Move, button: 1, at: Point { pixels: None, ..at(39, 24) } },
         Intent::Wheel { dx: 0, dy: -120, at: at(0, 0) },
         Intent::Paste("line one\nline two\t".into()),
         Intent::Compose { cursor: 1, text: "にほ".into() },
@@ -58,7 +58,8 @@ fn what_breaks_a_bound_is_refused() {
         Intent::Text("a".repeat(MAX_PASTE + 1)),
         Intent::Key { action: Action::Press, key: KeyCode::Functional(56), mods: 0, text: None, base: None },
         Intent::Key { action: Action::Press, key: KeyCode::Character('a'), mods: 0, text: Some("a".repeat(33)), base: None },
-        Intent::Mouse { action: MouseAction::Press, button: 0, at: at(72, 0) },
+        // REQ-1645: a page is 40 columns, so column 39 is the last.
+        Intent::Mouse { action: MouseAction::Press, button: 0, at: at(40, 0) },
         Intent::Mouse { action: MouseAction::Press, button: 0, at: at(0, 25) },
         Intent::Compose { cursor: 0, text: "a".repeat(MAX_COMPOSE + 1) },
         Intent::Paste("a".repeat(MAX_PASTE + 1)),
@@ -80,6 +81,16 @@ fn what_breaks_a_bound_is_refused() {
         bytes.extend_from_slice(&tail);
         assert!(read_input(&mut Fields::new(&bytes)).is_err(), "{tail:?}");
     }
+}
+
+// REQ-1554: the wall of pages with none zoomed, told as a message of no
+// fields.
+#[test]
+fn the_wall_without_a_page_round_trips() {
+    use super::super::{ToCore, read_from_interface, write_to_core};
+    let mut bytes = Vec::new();
+    write_to_core(&mut bytes, &ToCore::WallWithoutPage).unwrap();
+    assert_eq!(read_from_interface(&mut bytes.as_slice()).unwrap().unwrap(), ToCore::WallWithoutPage);
 }
 
 #[test]
@@ -125,7 +136,7 @@ fn typing_round_trips_and_a_bad_cursor_is_refused() {
 /// 4 096 bytes.
 #[test]
 fn a_message_for_the_fetcher_is_whole_and_bounded() {
-    assert!(check_message(b"abc\xFF\x01\x04\x02").is_ok());
+    assert!(check_message(b"abc\xFF\x01\x80\x04\x00\x04\x02").is_ok());
     assert!(check_message(b"\xFF\x01").is_err(), "an item cut short");
     assert!(check_message(b"\xFF\x00").is_err(), "a reserved type");
     assert!(check_message(&[b'a'; MAX_MESSAGE + 1]).is_err());
@@ -151,7 +162,7 @@ fn a_trace_line_round_trips_within_a_row() {
 #[test]
 fn a_dot_outside_its_cell_or_the_image_is_refused() {
     let cell = |column, row, x, y| Point { column, row, pixels: Some((x, y)), mods: 0 };
-    let taken = [cell(0, 0, 0, 0), cell(39, 24, 479, 499), cell(10, 5, 131, 119), Point { column: 71, row: 24, pixels: None, mods: 0 }];
+    let taken = [cell(0, 0, 0, 0), cell(39, 24, 479, 499), cell(10, 5, 131, 119), Point { column: 39, row: 24, pixels: None, mods: 0 }];
     let refused = [
         cell(10, 5, 132, 110),
         cell(10, 5, 125, 120),
@@ -159,6 +170,8 @@ fn a_dot_outside_its_cell_or_the_image_is_refused() {
         cell(39, 24, 480, 499),
         cell(39, 24, 479, 500),
         cell(0, 0, u32::MAX, u32::MAX),
+        // REQ-1645: past the last column, with or without a dot in it.
+        cell(40, 0, 480, 0),
         cell(41, 0, 492, 0),
     ];
     for at in taken {

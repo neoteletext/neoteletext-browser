@@ -17,7 +17,7 @@ use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
 use interface_core::canvas::PageKey;
-use neoteletext_input::caps::PAGE_CAP;
+use neoteletext_input::caps::SELECT_CAP;
 use neoteletext_input::control::{Control, FRAGMENT_DATA, from_packet};
 use neoteletext_input::event::{Event, Item};
 use neoteletext_input::session::Session;
@@ -93,7 +93,7 @@ fn send(input: &Input, message: &ToFetcher) {
 }
 
 fn open_session(input: &Input, received: &mpsc::Receiver<(Instant, FromFetcher)>, deadline: Instant) -> Session {
-    let mut session = Session::new(PAGE_CAP);
+    let mut session = Session::new(SELECT_CAP);
     let mut hello = [0; neoteletext_input::MAX_MESSAGE];
     let length = session.open(0, None, &mut hello).unwrap();
     send(input, &alone(hello[..length].to_vec()));
@@ -184,7 +184,8 @@ fn keys_round_trip_and_pages_reach_the_screen_within_budget() {
         }
     }
     let mut session = open_session(&input, &received, deadline);
-    send(&input, &alone(message(&mut session, &Item::Event(Event::Page(PAGE)))));
+    let select = neoteletext_input::event::Select::new(PAGE, neoteletext_core::limits::SUBCODE_ANY).unwrap();
+    send(&input, &alone(message(&mut session, &Item::Event(Event::Select(select)))));
     next_push(Instant::now() + LIMIT);
 
     let mut engine = decoder::Engine::new();

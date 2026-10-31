@@ -58,6 +58,21 @@ impl App {
             self.view.opened = opened;
             self.send(event_loop, &ToCore::Opened(opened));
         }
+        #[cfg(feature = "interaction")]
+        {
+            let elsewhere = self.view.browser.keys_elsewhere();
+            if elsewhere != self.view.keys_elsewhere {
+                self.view.keys_elsewhere = elsewhere;
+                self.send(event_loop, &ToCore::Editing(elsewhere));
+            }
+            let wall = self.view.browser.wall_without_page();
+            if wall != self.view.wall_without_page {
+                self.view.wall_without_page = wall;
+                if wall {
+                    self.send(event_loop, &ToCore::WallWithoutPage);
+                }
+            }
+        }
     }
 
     /// The intent an output is sent on as, or none when it is carried out
@@ -119,7 +134,7 @@ impl App {
                 return None;
             }
             Output::TextInput(allowed) => {
-                self.text_input(event_loop, allowed);
+                self.text_input(allowed);
                 return None;
             }
         })
@@ -133,15 +148,10 @@ impl App {
         ToCore::Visible(visible)
     }
 
-    /// Text input is on exactly while the address is edited, when the keys
-    /// are not the open page's: its channel is told.
-    fn text_input(&mut self, event_loop: &ActiveEventLoop, allowed: bool) {
+    /// Text input is on exactly while the address is edited.
+    fn text_input(&mut self, allowed: bool) {
         self.view.ime.address = allowed;
         self.sync_ime();
-        #[cfg(feature = "interaction")]
-        self.send(event_loop, &ToCore::Editing(allowed));
-        #[cfg(not(feature = "interaction"))]
-        let _ = event_loop;
     }
 }
 

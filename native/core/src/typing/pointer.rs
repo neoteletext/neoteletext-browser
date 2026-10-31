@@ -13,7 +13,8 @@
 
 use neoteletext_input::caps::TOUCH_CAP;
 use neoteletext_input::contacts::MOUSE_CONTACT;
-use neoteletext_input::event::{Device, Event, Item, Mouse, MouseAction, Point, Touch};
+use neoteletext_input::event::{Device, Event, Item, Mouse, MouseAction, Point, Stamp, Touch};
+use neoteletext_input::held::{Released, lost_key};
 use neoteletext_input::pace::Offer;
 use protocol::interaction::{Intent, TouchPhase};
 
@@ -29,12 +30,22 @@ fn button_bit(button: u8) -> u8 {
 /// What a finger as MOUSE holds: button 0, the main one (REQ-RCH-041).
 const FINGER_BUTTON: u8 = 0;
 
+/// What the system reported of a contact.
+#[derive(Clone, Copy)]
+struct Contact {
+    phase: TouchPhase,
+    /// The system's number for it.
+    system: u64,
+    at: Point,
+}
+
 impl Channel {
     /// Records where a pointer event that went was, and what the mouse
     /// holds, for the pointer's gone.
     pub(super) fn sent_pointer(&mut self, item: &Item<'_>) {
         match item {
             Item::Event(Event::Mouse(mouse)) => {
+                self.pointer_on = Some(mouse.on);
                 let index = usize::from(MOUSE_CONTACT);
                 match mouse.action {
                     MouseAction::Gone => {
@@ -55,6 +66,7 @@ impl Channel {
                 }
             }
             Item::Event(Event::Touch(touch)) => {
+                self.pointer_on = Some(touch.on);
                 let at = Point { column: touch.column, row: touch.row, pixels: touch.pixels, mods: 0 };
                 let ended = matches!(touch.action, MouseAction::Release | MouseAction::Gone);
                 set(&mut self.last_at, usize::from(touch.id), (!ended).then_some(at));
@@ -81,11 +93,22 @@ impl Channel {
         }
     }
 
-    /// The waiting moves, then gone for the pointer and every contact the
-    /// channel knows of (REQ-RCH-034, REQ-RCH-046): what they held is
-    /// released without a click. Then nothing is down and nothing waits.
+    /// The waiting moves, each held key's release marked lost and stamped
+    /// with the page that held it (REQ-207), then gone for the pointer and
+    /// every contact the channel knows of (REQ-RCH-034, REQ-RCH-046): what
+    /// they held is released without a click. Then nothing is down and
+    /// nothing waits.
     pub(super) fn let_go(&mut self, channel: u32, now_us: u64, sends: &mut Vec<Send>) {
         self.flush(channel, now_us, sends);
+        let mut keys = Vec::new();
+        self.down.release_all(&mut |released, on| {
+            if let Released::Key(key) = released {
+                keys.push(lost_key(key, on));
+            }
+        });
+        for key in keys {
+            self.send(channel, &Item::Event(Event::Key(key)), now_us, sends);
+        }
         for contact in 0..self.last_at.len() {
             if let Some(event) = self.gone(contact) {
                 self.send(channel, &Item::Event(event), now_us, sends);
@@ -98,16 +121,18 @@ impl Channel {
     /// knows of it.
     fn gone(&self, contact: usize) -> Option<Event<'static>> {
         let at = self.last_at.get(contact).copied().flatten()?;
+        let on = self.pointer_on?;
         if contact == usize::from(MOUSE_CONTACT) {
             let (button, device) = if self.finger.is_some() { (button_bit(FINGER_BUTTON), Device::Touch) } else { (self.held, Device::Mouse) };
-            return Some(Event::Mouse(Mouse { action: MouseAction::Gone, button, at, device }));
+            return Some(Event::Mouse(Mouse { on, action: MouseAction::Gone, button, at, device }));
         }
         let id = u8::try_from(contact).ok()?;
-        Some(Event::Touch(Touch { action: MouseAction::Gone, id, column: at.column, row: at.row, pixels: at.pixels }))
+        Some(Event::Touch(Touch { on, action: MouseAction::Gone, id, column: at.column, row: at.row, pixels: at.pixels }))
     }
 
-    /// A pointer intent: the mouse, its leaving the page, or a contact.
-    pub(super) fn pointer(&mut self, channel: u32, intent: &Intent, now_us: u64, sends: &mut Vec<Send>) {
+    /// A pointer intent: the mouse, its leaving the page, or a contact,
+    /// stamped `on` the page on screen.
+    pub(super) fn pointer(&mut self, channel: u32, intent: &Intent, on: Stamp, now_us: u64, sends: &mut Vec<Send>) {
         match *intent {
             // While a finger is MOUSE, the mouse does not share it
             // (REQ-RCH-041).
@@ -115,7 +140,7 @@ impl Channel {
             Intent::Mouse { action: MouseAction::Move, at, .. } => {
                 // The buttons held are those this core sent pressed, never
                 // what the interface says.
-                let event = Event::Mouse(Mouse { action: MouseAction::Move, button: self.held, at, device: Device::Mouse });
+                let event = Event::Mouse(Mouse { on, action: MouseAction::Move, button: self.held, at, device: Device::Mouse });
                 self.offer(channel, event, now_us, sends);
             }
             Intent::Mouse { action, button, at } => {
@@ -123,7 +148,7 @@ impl Channel {
                     return;
                 }
                 self.flush(channel, now_us, sends);
-                self.send(channel, &Item::Event(Event::Mouse(Mouse { action, button, at, device: Device::Mouse })), now_us, sends);
+                self.send(channel, &Item::Event(Event::Mouse(Mouse { on, action, button, at, device: Device::Mouse })), now_us, sends);
             }
             Intent::Gone => {
                 self.flush(channel, now_us, sends);
@@ -133,7 +158,7 @@ impl Channel {
                 self.held = 0;
                 self.pacer.forget(usize::from(MOUSE_CONTACT));
             }
-            Intent::Touch { phase, contact, at } => self.touch(channel, phase, contact, at, now_us, sends),
+            Intent::Touch { phase, contact, at } => self.touch(channel, on, Contact { phase, system: contact, at }, now_us, sends),
             _ => {}
         }
     }
@@ -141,14 +166,15 @@ impl Channel {
     /// A contact, as the system reported it: numbered here, so the
     /// interface cannot invent one, move or end one not begun, or pass
     /// `MAX_CONTACTS` (REQ-RCH-053).
-    fn touch(&mut self, channel: u32, phase: TouchPhase, system: u64, at: Point, now_us: u64, sends: &mut Vec<Send>) {
+    fn touch(&mut self, channel: u32, on: Stamp, contact: Contact, now_us: u64, sends: &mut Vec<Send>) {
+        let Contact { phase, system, at } = contact;
         let touch_agreed = self.session.caps() & TOUCH_CAP != 0;
         let event = |action: MouseAction, number: u8, at: Point| {
             if number == MOUSE_CONTACT {
                 let button = if action == MouseAction::Move { button_bit(FINGER_BUTTON) } else { FINGER_BUTTON };
-                Event::Mouse(Mouse { action, button, at, device: Device::Touch })
+                Event::Mouse(Mouse { on, action, button, at, device: Device::Touch })
             } else {
-                Event::Touch(Touch { action, id: number, column: at.column, row: at.row, pixels: at.pixels })
+                Event::Touch(Touch { on, action, id: number, column: at.column, row: at.row, pixels: at.pixels })
             }
         };
         match phase {

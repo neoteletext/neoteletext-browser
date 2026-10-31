@@ -148,15 +148,15 @@ impl Session {
         self.acked = self.acked.wrapping_add(u16::try_from(units(item) & u32::from(u16::MAX)).unwrap_or(0));
         let mut pushes = Vec::new();
         match item {
-            Item::Text(text) | Item::Event(Event::Paste(text)) => {
+            Item::Text(text) | Item::Event(Event::Paste { text, .. }) => {
                 for character in text.chars() {
                     pushes.extend(self.character(character));
                 }
             }
             Item::Event(Event::Hello { version, caps, .. }) => return self.welcome(*version, *caps),
-            Item::Event(Event::Page(0)) => {}
-            Item::Event(Event::Page(page)) => {
-                self.page = *page;
+            Item::Event(Event::Select(select)) if select.page == 0 => {}
+            Item::Event(Event::Select(select)) => {
+                self.page = select.page;
                 self.selection.clear();
             }
             Item::Event(Event::FocusIn) => self.away = false,

@@ -79,15 +79,14 @@ fn describe(item: &Item<'_>) -> String {
         Event::Touch(touch) => format!("TOUCH {} {} {},{}", pointer_action(touch.action), touch.id, touch.column, touch.row),
         Event::Resume(_) => String::from("RESUME"),
         Event::Wheel(wheel) => format!("WHEEL {},{} {},{}", wheel.dx, wheel.dy, wheel.at.column, wheel.at.row),
-        Event::Paste(text) => format!("PASTE {} chars", text.chars().count()),
+        Event::Paste { text, .. } => format!("PASTE {} chars", text.chars().count()),
         Event::FocusIn => String::from("FOCUS_IN"),
         Event::FocusOut => String::from("FOCUS_OUT"),
         Event::Resize { columns, rows, .. } => format!("RESIZE {columns}x{rows}"),
         Event::Compose { text, .. } => format!("COMPOSE {} chars", text.chars().count()),
         Event::Hello { version, .. } => format!("HELLO v{version}"),
-        Event::Page(page) => format!("PAGE {page:03X}"),
         Event::Select(select) => format!("SELECT {:03X}/{:04X}", select.page, select.sub),
-        Event::Hover { leave, column, row } => format!("HOVER {} {column},{row}", if *leave { "leave" } else { "enter" }),
+        Event::Hover { leave, column, row, .. } => format!("HOVER {} {column},{row}", if *leave { "leave" } else { "enter" }),
         Event::Extension { kind, .. } => format!("EXTENSION {kind:#04x}"),
     }
 }
@@ -105,7 +104,10 @@ fn pointer_action(action: MouseAction) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use neoteletext_input::event::{Mouse, Point, write};
+    use neoteletext_input::event::{Mouse, Point, Stamp, write};
+
+    /// The page on screen.
+    const ON: Stamp = Stamp { page: 0x100, sub: 0 };
 
     fn message(item: &Item<'_>) -> Vec<u8> {
         let mut out = [0_u8; 64];
@@ -119,14 +121,15 @@ mod tests {
     fn the_trace_counts_the_same_event_and_never_shows_typing() {
         let mut trace = InputTrace::default();
         let at = Point { column: 12, row: 5, pixels: None, mods: 0 };
-        let moved = message(&Item::Event(Event::Mouse(Mouse { action: MouseAction::Move, button: 0, at, device: Device::Mouse })));
+        let moved = message(&Item::Event(Event::Mouse(Mouse { on: ON, action: MouseAction::Move, button: 0, at, device: Device::Mouse })));
         assert_eq!(trace.note(&moved), TraceLine { text: "MOUSE move b0 12,5".into(), repeats: 1, sent: 1 });
         assert_eq!(trace.note(&moved).repeats, 2);
         assert_eq!(trace.note(&moved).repeats, 3);
         let typed = trace.note(&message(&Item::Text("secret")));
         assert_eq!(typed, TraceLine { text: "TEXT 6 chars".into(), repeats: 1, sent: 4 });
-        let key = neoteletext_input::event::Key { action: Action::Press, key: KeyCode::Character('s'), mods: 0, text: None, base: None };
+        let key = neoteletext_input::event::Key { on: ON, action: Action::Press, key: KeyCode::Character('s'), mods: 0, text: None, base: None, lost: false };
         assert_eq!(trace.note(&message(&Item::Event(Event::Key(key)))).text, "KEY a character press");
-        assert_eq!(trace.note(&message(&Item::Event(Event::Page(0x128)))).text, "PAGE 128");
+        let select = neoteletext_input::event::Select::new(0x128, 0).unwrap();
+        assert_eq!(trace.note(&message(&Item::Event(Event::Select(select)))).text, "SELECT 128/0000");
     }
 }

@@ -46,6 +46,8 @@ fn a_broken_image_is_refused() {
     assert_eq!(encode(&PALETTE, 3, &first, None), None, "screen outside the palette");
     assert_eq!(encode(&[], 0, &first, None), None);
     assert_eq!(encode(&PALETTE, 0, &first[1..], None), None);
+    // REQ-1645: an image any wider than 40 columns is not a page.
+    assert_eq!(encode(&PALETTE, 0, &vec![0; PAGE_DOTS + usize::from(PAGE_HEIGHT)], None), None);
     let good = encode(&PALETTE, 1, &first, None).unwrap();
     let broken = |at: usize, value: u8| {
         let mut bytes = good.clone();

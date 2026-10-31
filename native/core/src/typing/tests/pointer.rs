@@ -10,6 +10,9 @@ use neoteletext_input::event::{Device, Mouse, Touch};
 use neoteletext_input::pace::PERIOD_WHOLE_US;
 use protocol::interaction::TouchPhase;
 
+/// The page on screen.
+const ON: Stamp = Stamp { page: PAGE.page, sub: 0 };
+
 /// A position in cell (`column`, `row`), `dot` dots in from its top left.
 fn at(column: u32, row: u32, dot: u32) -> Point {
     let (across, down) = (dot.checked_rem(12).unwrap(), dot.checked_div(12).unwrap().checked_rem(20).unwrap());
@@ -30,11 +33,11 @@ fn moved(at: Point) -> InputIntent {
 }
 
 fn mouse(action: MouseAction, button: u8, at: Point, device: Device) -> String {
-    format!("{:?}", Item::Event(Event::Mouse(Mouse { action, button, at, device })))
+    format!("{:?}", Item::Event(Event::Mouse(Mouse { on: ON, action, button, at, device })))
 }
 
 fn touch(action: MouseAction, id: u8, at: Point) -> String {
-    format!("{:?}", Item::Event(Event::Touch(Touch { action, id, column: at.column, row: at.row, pixels: at.pixels })))
+    format!("{:?}", Item::Event(Event::Touch(Touch { on: ON, action, id, column: at.column, row: at.row, pixels: at.pixels })))
 }
 
 fn contact(phase: TouchPhase, contact: u64, at: Point) -> InputIntent {
@@ -50,7 +53,7 @@ const PERIOD_US: u64 = PERIOD_WHOLE_US + 1;
 /// held the interface's mask.
 #[test]
 fn every_move_goes_with_the_buttons_the_core_sent_held() {
-    let mut typing = ready(PAGE_CAP);
+    let mut typing = ready(SELECT_CAP);
     let here = at(10, 5, 0);
     assert_eq!(items(&typing.input_intent(&moved(here), 0)), [mouse(MouseAction::Move, 0, here, Device::Mouse)], "no button held");
     let press = intent(Intent::Mouse { action: MouseAction::Press, button: 0, at: here });
@@ -70,7 +73,7 @@ fn a_thousand_moves_a_second_go_sixty_a_second() {
     const STEP_US: u64 = 1_000_000 / OFFERED_PER_SECOND;
     /// Dots offered in turn, each other than the one before.
     const DOTS: u64 = 240;
-    let mut typing = ready(PAGE_CAP);
+    let mut typing = ready(SELECT_CAP);
     let mut sent = 0_usize;
     for n in 0..SECONDS * OFFERED_PER_SECOND {
         let now = n.checked_mul(STEP_US).unwrap();
@@ -96,7 +99,7 @@ fn a_thousand_moves_a_second_go_sixty_a_second() {
 /// nothing waits. On the code before, every move went at once.
 #[test]
 fn a_move_goes_at_once_if_it_can_and_the_latest_is_kept() {
-    let mut typing = ready(PAGE_CAP);
+    let mut typing = ready(SELECT_CAP);
     let (first, second, third) = (at(1, 1, 0), at(1, 1, 1), at(1, 1, 2));
     assert_eq!(items(&typing.input_intent(&moved(first), 0)).len(), 1);
     assert_eq!(typing.due(), None, "nothing waits");
@@ -113,7 +116,7 @@ fn a_move_goes_at_once_if_it_can_and_the_latest_is_kept() {
 /// move is written before the release, in the same write.
 #[test]
 fn a_waiting_move_goes_before_the_release() {
-    let mut typing = ready(PAGE_CAP);
+    let mut typing = ready(SELECT_CAP);
     let (start, end) = (at(2, 2, 0), at(3, 2, 0));
     typing.input_intent(&intent(Intent::Mouse { action: MouseAction::Press, button: 0, at: start }), 0);
     typing.input_intent(&moved(start), MS);
@@ -133,7 +136,7 @@ fn a_waiting_move_goes_before_the_release() {
 #[test]
 fn leaving_the_page_sends_the_waiting_move_then_gone() {
     // Gone goes only to a channel that agreed TOUCH or RESUME.
-    let mut typing = ready(PAGE_CAP | TOUCH_CAP);
+    let mut typing = ready(SELECT_CAP | TOUCH_CAP);
     let (start, edge) = (at(5, 5, 0), at(0, 5, 0));
     typing.input_intent(&intent(Intent::Mouse { action: MouseAction::Press, button: 0, at: start }), 0);
     typing.input_intent(&moved(start), MS);
@@ -152,7 +155,7 @@ fn leaving_the_page_sends_the_waiting_move_then_gone() {
 #[test]
 fn keys_stopping_send_the_waiting_move_then_gone() {
     // Gone goes only to a channel that agreed TOUCH or RESUME.
-    let mut typing = ready(PAGE_CAP | TOUCH_CAP);
+    let mut typing = ready(SELECT_CAP | TOUCH_CAP);
     let (here, there) = (at(5, 5, 0), at(6, 5, 0));
     typing.input_intent(&moved(here), 0);
     typing.input_intent(&moved(there), MS);
@@ -169,7 +172,7 @@ fn keys_stopping_send_the_waiting_move_then_gone() {
 }
 
 fn touch_ready() -> Typing {
-    ready(PAGE_CAP | TOUCH_CAP)
+    ready(SELECT_CAP | TOUCH_CAP)
 }
 
 /// REQ-RCH-041, REQ-RCH-042, REQ-RCH-043, REQ-RCH-049: with TOUCH agreed
@@ -193,7 +196,7 @@ fn the_first_contact_is_the_mouse_and_the_next_touch() {
 /// device 0, and further contacts send nothing.
 #[test]
 fn without_touch_a_finger_is_the_mouse_alone() {
-    let mut typing = ready(PAGE_CAP);
+    let mut typing = ready(SELECT_CAP);
     let (a, b) = (at(4, 4, 0), at(20, 10, 0));
     assert_eq!(items(&typing.input_intent(&contact(TouchPhase::Began, 1, a), 0)), [mouse(MouseAction::Press, 0, a, Device::Mouse)]);
     assert_eq!(items(&typing.input_intent(&contact(TouchPhase::Began, 2, b), MS)), [] as [String; 0]);
@@ -273,7 +276,7 @@ fn the_round_trip_is_measured_while_keys_go() {
     let mut typing = Typing::default();
     typing.input(PAGE.channel, true, false, 0);
     typing.opened(Some(PAGE.channel), Some(PAGE), 0);
-    assert_eq!(measures(&typing.control(PAGE.channel, &welcome(PAGE_CAP), 0)), [true], "keys go: on");
+    assert_eq!(measures(&typing.control(PAGE.channel, &welcome(SELECT_CAP), 0)), [true], "keys go: on");
     let sends = typing.round_trip(PAGE.channel, 190);
     assert!(matches!(sends.last(), Some(Send::Interface(state)) if state.round_trip_us == Some(190)), "{sends:?}");
     assert_eq!(measures(&typing.focused(false, MS)), [false], "keys stop: off");
@@ -288,7 +291,7 @@ fn a_moments_messages_leave_together() {
     let mut typing = Typing::default();
     typing.input(PAGE.channel, true, false, 0);
     typing.opened(Some(PAGE.channel), Some(PAGE), 0);
-    let sends = typing.control(PAGE.channel, &welcome(PAGE_CAP), 0);
+    let sends = typing.control(PAGE.channel, &welcome(SELECT_CAP), 0);
     let more: Vec<bool> = sends.iter().filter_map(|send| if let Send::Fetcher { more, .. } = send { Some(*more) } else { None }).collect();
     assert_eq!(more, [true, true, false], "RESIZE, PAGE, FOCUS_IN");
 }

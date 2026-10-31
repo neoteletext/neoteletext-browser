@@ -249,7 +249,7 @@ fn is_page_intent(intent: &ToCore) -> bool {
         #[cfg(feature = "links")]
         ToCore::Point(_) | ToCore::Typed { .. } | ToCore::Focused(_) => true,
         #[cfg(feature = "interaction")]
-        ToCore::Input(_) | ToCore::Editing(_) => true,
+        ToCore::Input(_) | ToCore::Editing(_) | ToCore::WallWithoutPage => true,
         _ => false,
     }
 }

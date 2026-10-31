@@ -557,17 +557,20 @@ fn a_pushed_page_shows_as_it_arrives() {
 #[cfg(feature = "interaction")]
 #[test]
 fn the_channels_input_records_are_passed_on() {
-    use neoteletext_input::caps::PAGE_CAP;
+    use neoteletext_input::caps::SELECT_CAP;
     use neoteletext_input::control::{Control, packet_of, read_body};
     let mut engine = Engine::new();
     engine.feed_whole(false, true, b"PN,50000\r\nOL,1,Links\r\nCU,255,0,0,0,7\r\nIM,8\r\n");
     let input = engine.take_input();
     assert_eq!(input.cursors, [[0x05, 0x00, 0, 7, 255, 0, 0, 0]]);
     assert_eq!(input.controls, [] as [Vec<u8>; 0], "the withdrawn IM line is nothing");
-    let welcome = packet_of(&Control::Welcome { version: 2, caps: PAGE_CAP, resume: None }, 0, 1).unwrap();
+    let welcome = packet_of(&Control::Welcome { version: 2, caps: SELECT_CAP, resume: None }, 0, 1).unwrap();
     engine.feed_whole(true, true, &welcome.bytes);
     let input = engine.take_input();
-    assert_eq!(input.controls.iter().map(|body| read_body(body).unwrap()).collect::<Vec<_>>(), [Control::Welcome { version: 2, caps: PAGE_CAP, resume: None }]);
+    assert_eq!(
+        input.controls.iter().map(|body| read_body(body).unwrap()).collect::<Vec<_>>(),
+        [Control::Welcome { version: 2, caps: SELECT_CAP, resume: None }]
+    );
     assert_eq!(input.cursors, [] as [[u8; neoteletext_input::cursor::BODY]; 0]);
     assert_eq!(engine.take_input(), InputRecords::default(), "once each");
     engine.feed_whole(false, true, b"PN,50100\r\nOL,1,None\r\n");

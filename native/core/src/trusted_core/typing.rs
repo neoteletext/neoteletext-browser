@@ -33,6 +33,12 @@ impl Core {
                 let sends = self.typing.editing(editing, self.now_us());
                 self.deliver_typing(sends)?;
             }
+            ToCore::WallWithoutPage => {
+                if let Some(channel) = self.active_channel() {
+                    let sends = self.typing.selects_nothing(channel, self.now_us());
+                    self.deliver_typing(sends)?;
+                }
+            }
             #[cfg(feature = "phone-keyboard")]
             ToCore::PhonePanel(open) => self.phone_panel(open)?,
             #[cfg(feature = "phone-keyboard")]

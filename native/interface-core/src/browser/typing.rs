@@ -157,6 +157,13 @@ impl Browser {
         (self.opened() == Some(key) && !self.editing && !self.strip_has_keys() && self.list_focus.is_none()).then_some(key)
     }
 
+    /// Whether another part of the browser has the keys, so that the page
+    /// does not hold the keyboard focus (neoteletext-common's REQ-1554).
+    #[must_use]
+    pub fn keys_elsewhere(&self) -> bool {
+        self.editing || self.strip_has_keys() || self.list_focus.is_some()
+    }
+
     /// Whether a panel, popover or list of the strip is open, which then
     /// takes the keys rather than the page's channel.
     pub(super) fn strip_has_keys(&self) -> bool {

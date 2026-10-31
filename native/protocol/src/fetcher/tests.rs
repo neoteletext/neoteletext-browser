@@ -45,11 +45,11 @@ fn every_kind_round_trips() {
         ToFetcher::FetchSubPages { page: 0x210 },
         ToFetcher::FetchSubPage { page: 0x210, subcode: 0x3F7E },
         #[cfg(feature = "interaction")]
-        ToFetcher::Send { bytes: b"a\xFF\x01\x04\x02".to_vec(), move_of: None, more: true },
+        ToFetcher::Send { bytes: b"a\xFF\x01\x80\x04\x00\x04\x02".to_vec(), move_of: None, more: true },
         #[cfg(feature = "interaction")]
-        ToFetcher::Send { bytes: vec![0xFF, 0x02, 0x06, 0x00, 0x0A, 0x05, 0x79, 0x64], move_of: Some(0), more: false },
+        ToFetcher::Send { bytes: vec![0xFF, 0x02, 0x80, 0x04, 0x00, 0x06, 0x00, 0x0A, 0x05, 0x79, 0x64], move_of: Some(0), more: false },
         #[cfg(feature = "interaction")]
-        ToFetcher::Send { bytes: vec![0xFF, 0x44, 0x07, 0x06, 0x01, 0x0B, 0x05, 0x85, 0x01, 0x64], move_of: Some(1), more: false },
+        ToFetcher::Send { bytes: vec![0xFF, 0x44, 0x0A, 0x80, 0x04, 0x00, 0x06, 0x01, 0x0B, 0x05, 0x85, 0x01, 0x64], move_of: Some(1), more: false },
         #[cfg(feature = "interaction")]
         ToFetcher::MeasureRoundTrip(true),
         #[cfg(feature = "interaction")]
@@ -145,9 +145,9 @@ fn catalogues_and_sub_pages_keep_their_bounds() {
 #[test]
 fn a_move_is_marked_only_as_its_own_contacts() {
     // `INPUT.md` section 5.8: a move to the dot (121, 100); a key.
-    let mouse_move = vec![0xFF, 0x02, 0x06, 0x00, 0x0A, 0x05, 0x79, 0x64];
-    let second_finger_move = vec![0xFF, 0x44, 0x07, 0x06, 0x01, 0x0B, 0x05, 0x85, 0x01, 0x64];
-    let enter = vec![0xFF, 0x01, 0x04, 0x02];
+    let mouse_move = vec![0xFF, 0x02, 0x80, 0x04, 0x00, 0x06, 0x00, 0x0A, 0x05, 0x79, 0x64];
+    let second_finger_move = vec![0xFF, 0x44, 0x0A, 0x80, 0x04, 0x00, 0x06, 0x01, 0x0B, 0x05, 0x85, 0x01, 0x64];
+    let enter = vec![0xFF, 0x01, 0x80, 0x04, 0x00, 0x04, 0x02];
     let mut two_moves = mouse_move.clone();
     two_moves.extend_from_slice(&mouse_move);
     for (bytes, move_of) in [

@@ -741,10 +741,10 @@ mod tests {
     /// engine's writer writes them; the agent does not read them.
     #[cfg(feature = "interaction")]
     fn mouse_move(x: u8) -> Vec<u8> {
-        vec![0xFF, 0x02, 0x06, 0x00, 0x01, 0x05, x, 0x64]
+        vec![0xFF, 0x02, 0x80, 0x04, 0x00, 0x06, 0x00, 0x01, 0x05, x, 0x64]
     }
     #[cfg(feature = "interaction")]
-    const KEY: [u8; 6] = [0xFF, 0x01, 0x10, b'a', 1, b'a'];
+    const KEY: [u8; 9] = [0xFF, 0x01, 0x80, 0x04, 0x00, 0x10, b'a', 1, b'a'];
 
     /// The frames of one send on the push WebSocket, unmasked: opcode and
     /// payload each (RFC 6455 section 5.2; short frames only).

@@ -219,10 +219,15 @@ pub enum ToCore {
     /// The window gained or lost the keyboard focus.
     #[cfg(any(feature = "links", feature = "interaction"))]
     Focused(bool),
-    /// The viewer began or stopped editing the address: while they do,
-    /// keys are not the open page's, and the channel has `FOCUS_OUT`.
+    /// Another part of the browser took the keys or gave them back, the
+    /// address field, a panel or a list: while it has them they are not the
+    /// open page's, and the channel has `FOCUS_OUT` (REQ-1554).
     #[cfg(feature = "interaction")]
     Editing(bool),
+    #[cfg(feature = "interaction")]
+    /// The wall of pages shows with no page zoomed: the tab has no page
+    /// selected (neoteletext-common's DEC-1538 item 9).
+    WallWithoutPage,
     /// A key, text, the mouse, a paste or a composition on the open page,
     /// for its channel if it takes input (REQ-INT-130, REQ-INT-132).
     #[cfg(feature = "interaction")]

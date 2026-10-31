@@ -12,7 +12,8 @@ mod typing;
 
 use interface_core::canvas::PageKey;
 use neoteletext_core::consts::{CELL_HEIGHT, CELL_WIDTH, PAGE_HEIGHT, PAGE_WIDTH};
-use neoteletext_input::event::{self, Device, Item, Mouse, MouseAction, Point};
+use neoteletext_core::limits::{LAST_PAGE_ADDRESS, LAST_SUBPAGE_CODE};
+use neoteletext_input::event::{self, Device, Item, Mouse, MouseAction, Point, Stamp};
 use neoteletext_input::{MAX_COMPOSE, MAX_KEY_TEXT, MAX_MESSAGE, MAX_PASTE};
 
 use crate::ProtocolError;
@@ -25,6 +26,7 @@ pub(crate) use typing::{push_typing, read_typing};
 // the pipe): the interface's intents, then the trusted core's state.
 pub(crate) const KIND_INPUT: u8 = 27;
 pub(crate) const KIND_EDITING: u8 = 30;
+pub(crate) const KIND_WALL_WITHOUT_PAGE: u8 = 31;
 pub(crate) const KIND_TYPING: u8 = 40;
 pub(crate) const KIND_INPUT_TRACE: u8 = 94;
 
@@ -86,10 +88,14 @@ fn check(intent: &Intent) -> Result<(), ProtocolError> {
     if point.is_some_and(|at| !dot_in_cell(at)) {
         return Err(ProtocolError::BadValue("dot"));
     }
-    // A contact's position is bounded as a press there is; gone has none.
-    let item = match (intent.item(), intent) {
+    // Bounded as the longest stamp would make it (REQ-1555); a contact's
+    // position as a press there is; gone has none.
+    let on = Stamp { page: LAST_PAGE_ADDRESS, sub: LAST_SUBPAGE_CODE };
+    let item = match (intent.item(on), intent) {
         (Some(item), _) => item,
-        (None, Intent::Touch { at, .. }) => Item::Event(event::Event::Mouse(Mouse { action: MouseAction::Press, button: 0, at: *at, device: Device::Mouse })),
+        (None, Intent::Touch { at, .. }) => {
+            Item::Event(event::Event::Mouse(Mouse { on, action: MouseAction::Press, button: 0, at: *at, device: Device::Mouse }))
+        }
         (None, _) => return Ok(()),
     };
     let mut out = [0_u8; MAX_MESSAGE];
