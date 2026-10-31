@@ -4,9 +4,11 @@ The analysis of [`sandboxing.md`](sandboxing.md), as `DEVELOPMENT.md` section 2.
 
 ## 1. What the sandboxes protect
 
-The property of decision 20: a compromised helper, by a fault in a reader of untrusted data or in a dependency, gains nothing beyond its pipe. Concretely, a compromised decoder must not read the user's files, reach the network or start a program; a compromised fetcher must not read the user's files or start a program, and reaches only the network, which it had; a compromised interface must not reach the network or files beyond fonts and preferences, and must not start a program; a compromised sound helper reaches the sound output and nothing else; a compromised trusted core must not reach the network, the user's files beyond its settings and what a file channel could name, or start any program but the browser's own helpers, each confined by the broker (decisions 55 and 56).
+The property of decision 20: a compromised helper, by a fault in a reader of untrusted data or in a dependency, gains nothing beyond its pipe. Concretely, a compromised decoder must not read the user's files, reach the network or start a program; a compromised fetcher must not read the user's files or start a program, and reaches only the network, which it had; a compromised interface must not reach the network or files beyond fonts and preferences, and must not start a program; a compromised sound helper reaches the sound output and nothing else; a compromised trusted core must not reach the network, the user's files beyond its settings and those the user gave (REQ-1698), or start any program but the browser's own helpers, each confined by the broker (decisions 55 and 56).
 
 ## 2. Threats to the sandboxes themselves
+
+Local files (`sandboxing.md` section 7.6) add three inputs to the broker, the one process not confined: the interface's channel, the chooser's output, and the single-instance channel. Each is bounded. The first and third are fuzzed, and what they name is still put through decision 88's checks. The chooser runs unconfined and is believed only for one absolute path, which is read as any other.
 
 | Threat | Where | Control |
 |---|---|---|

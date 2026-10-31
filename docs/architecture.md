@@ -595,6 +595,7 @@ neoteletext-browser/
     interface/              the interface process (neoteletext-interface): the system window, the reader
                             thread, keys, and app.rs with app/: frames, input, the input method, typing,
                             the phone, the clipboard and menus, windows, what the core said, outputs
+    chooser/                the file dialog (neoteletext-chooser): the broker starts it for one choice
     keyboard/               the phone keyboard process (neoteletext-keyboard): qrkeyboard's relay, pairing
                             and keys
     dock-menu/              the Dock menu and the menu bar on macOS (decisions 39 and 84); unsafe code in
@@ -684,7 +685,7 @@ Unsafe code is allowed only in the modules requirement 10.12 names, each saying 
 **Not built:**
 
 - Discovery results.
-- Any sandbox on Android or iOS; Windows helpers started apart from the console they were started from (decision 100 item 1, measured as needed in the virtual machine on 24 October 2026); the fetcher's connections made by the broker (decision 89); a file chooser owned by the broker (decision 88).
+- Any sandbox on Android or iOS; Windows helpers started apart from the console they were started from (decision 100 item 1, measured as needed in the virtual machine on 24 October 2026); the fetcher's connections made by the broker (decision 89);.
 - Sharing one decoder between tabs on the same channel (decision 11).
 - The grace period for closed tabs; the live-feed threshold; refresh schedules.
 - Discovery.

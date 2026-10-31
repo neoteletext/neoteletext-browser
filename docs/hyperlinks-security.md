@@ -251,6 +251,8 @@ Each changed the spec; `hyperlinks.md` section 18 records the edits.
 | 3 | A fault in the core's target parser | Low (small grammar, fuzzed, no panics) | High (the trusted core) | Fuzzing; `deny(panic)`; the parser's size |
 | 4 | A parser differential between the core and the system browser | Low (re-serialised from parts; hosts are ASCII only) | Medium | Re-serialisation; refusing what does not round-trip |
 | 5 | The default browser or `$BROWSER` is itself hostile or broken | Out of scope (local attacker) | — | — |
+| 6 | A web page or an application fires `neoteletext://` links at the browser | Medium: anyone can, and most web browsers ask first but not all | Low: a tab opens on an `http` or `https` channel of the sender's choosing, unasked (DEC-1667), and that channel's fetcher connects | One wrapped web address and nothing else, the same parser on every route, never `file:`; never a private window; five in ten seconds, the rest dropped; on Windows a launch with anything beside the one argument is refused whole, and a marker's presence turns every other switch off (REQ-1673) |
+| 7 | A crafted link adds switches to the Windows command line | Low (`--open-link` is checked before anything else reads the arguments) | High if it succeeded: `--allow-local` | `launch::read`, fuzzed (`launch_arguments`, `outside_link`); not yet tried by hand in Windows |
 
 ## 15. Checks that keep these properties
 
