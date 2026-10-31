@@ -79,6 +79,10 @@ impl Session {
     pub(super) fn links(&self) -> Page {
         let mut page = Page::new(0x500, "Links and clicks");
         page.row(3, Row::new().code(ALPHA_WHITE).text("Page numbers are links: 100 200 300"));
+        // After the row's code and "Page numbers are links: ".
+        for (column, target) in [(25, 100), (29, 200), (33, 300)] {
+            page.link(format!("LT,3,{column},3,{target}"));
+        }
         page.row(4, Row::new().code(ALPHA_WHITE).text("Command-click one to follow it."));
         page.row(6, Row::new().code(ALPHA_CYAN).text("The teletext engine on the web"));
         page.link("LT,6,1,30,web:https://example.com/".to_owned());

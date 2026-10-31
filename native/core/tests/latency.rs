@@ -9,19 +9,14 @@
 #![cfg(feature = "interaction")]
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::cast_precision_loss, reason = "a test")]
 
-use std::io::{BufRead, BufReader, BufWriter, Write};
-use std::net::TcpListener;
-use std::path::PathBuf;
-use std::process::{Child, Command, Stdio};
-use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
 use interface_core::canvas::PageKey;
-use neoteletext_input::caps::SELECT_CAP;
-use neoteletext_input::control::{Control, FRAGMENT_DATA, from_packet};
 use neoteletext_input::event::{Event, Item};
-use neoteletext_input::session::Session;
-use protocol::fetcher::{FromFetcher, Origin, ToFetcher, read_from_fetcher, write_to_fetcher};
+use protocol::fetcher::{FromFetcher, Origin};
+
+mod reference_channel;
+use reference_channel::{Site, Tab, alone, has_header, message, programs, send};
 
 /// Keys sent, at twenty a second (`interaction.md` section 2).
 const KEYS: u16 = 20;
@@ -42,90 +37,6 @@ const ROUND_TRIP_BUDGET: Duration = Duration::from_millis(20);
 /// once woken by the bytes themselves, and 0.4 ms in a debug build.
 const WAKE_BUDGET: Duration = Duration::from_millis(2);
 
-struct Killed(Child);
-
-impl Drop for Killed {
-    fn drop(&mut self) {
-        let _ = self.0.kill();
-        let _ = self.0.wait();
-    }
-}
-
-/// The channel and the fetcher, built for this test's profile: a test
-/// builds only its own package's programs.
-fn programs() -> (PathBuf, PathBuf) {
-    let mut build = Command::new(env!("CARGO"));
-    build.args(["build", "--quiet", "--package", "neoteletext-site", "--package", "neoteletext-fetcher"]);
-    if !cfg!(debug_assertions) {
-        build.arg("--release");
-    }
-    assert!(build.status().unwrap().success(), "the channel and the fetcher did not build");
-    // The test runs from target/<profile>/deps; the programs are beside it.
-    let deps = std::env::current_exe().unwrap();
-    let directory = deps.parent().and_then(|deps| deps.parent()).unwrap().to_path_buf();
-    let path = |name: &str| directory.join(format!("{name}{}", std::env::consts::EXE_SUFFIX));
-    (path("neoteletext-site"), path("neoteletext-fetcher"))
-}
-
-/// `item` as the receiver's session encodes it.
-fn message(session: &mut Session, item: &Item<'_>) -> Vec<u8> {
-    let mut out = [0; neoteletext_input::MAX_MESSAGE];
-    let length = session.send(item, 0, &mut out).unwrap();
-    assert!(length > 0, "{item:?} went");
-    out[..length].to_vec()
-}
-
-/// HELLO, and the channel's WELCOME in pushed packets (INPUT.md section
-/// 6.1): the session the keys then go in.
-/// The fetcher's input, written by the test and by the thread that answers
-/// its cookie questions as the trusted core does, one message at a time.
-type Input = std::sync::Arc<std::sync::Mutex<BufWriter<std::process::ChildStdin>>>;
-
-/// An input message alone: not a move, nothing more of its moment.
-fn alone(bytes: Vec<u8>) -> ToFetcher {
-    ToFetcher::Send { bytes, move_of: None, more: false }
-}
-
-fn send(input: &Input, message: &ToFetcher) {
-    let mut input = input.lock().unwrap();
-    write_to_fetcher(&mut *input, message).unwrap();
-    input.flush().unwrap();
-}
-
-fn open_session(input: &Input, received: &mpsc::Receiver<(Instant, FromFetcher)>, deadline: Instant) -> Session {
-    let mut session = Session::new(SELECT_CAP);
-    let mut hello = [0; neoteletext_input::MAX_MESSAGE];
-    let length = session.open(0, None, &mut hello).unwrap();
-    send(input, &alone(hello[..length].to_vec()));
-    loop {
-        match received.recv_timeout(deadline.saturating_duration_since(Instant::now())) {
-            Ok((_, FromFetcher::Page { origin: Origin::PushedPackets, bytes })) => {
-                let mut buffer = [0; FRAGMENT_DATA];
-                let welcome =
-                    bytes.as_chunks::<42>().0.iter().find_map(|bytes| match from_packet(&neoteletext_core::packet::Packet { bytes: *bytes }, &mut buffer) {
-                        Some(Ok(Control::Welcome { version, caps, resume })) => Some((version, caps, resume)),
-                        _ => None,
-                    });
-                if let Some((version, caps, resume)) = welcome {
-                    session.welcome(version, caps, resume).unwrap();
-                    return session;
-                }
-            }
-            Ok(_) => {}
-            Err(error) => panic!("no WELCOME: {error}"),
-        }
-    }
-}
-
-/// Whether pushed packets hold a page header, packet 0.
-fn has_header(bytes: &[u8]) -> bool {
-    bytes
-        .as_chunks::<42>()
-        .0
-        .iter()
-        .any(|bytes| neoteletext_core::packet::decode_address(&neoteletext_core::packet::Packet { bytes: *bytes }).is_ok_and(|address| address.number == 0))
-}
-
 fn median(times: &mut [Duration]) -> Duration {
     times.sort();
     times[times.len() / 2]
@@ -134,37 +45,9 @@ fn median(times: &mut [Duration]) -> Duration {
 #[test]
 fn keys_round_trip_and_pages_reach_the_screen_within_budget() {
     let (site_program, fetcher_program) = programs();
-    let port = TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port();
-    let mut site = Command::new(site_program).args(["terminal", &port.to_string()]).stderr(Stdio::piped()).spawn().unwrap();
-    let mut serving = BufReader::new(site.stderr.take().unwrap());
-    let mut line = String::new();
-    serving.read_line(&mut line).unwrap();
-    assert!(line.contains("serving"), "{line}");
-    let _site = Killed(site);
-    let channel = format!("http://127.0.0.1:{port}/terminal/");
-    let mut fetcher =
-        Command::new(fetcher_program).args([channel.as_str(), "--allow-local", "127.0.0.1"]).stdin(Stdio::piped()).stdout(Stdio::piped()).spawn().unwrap();
-    let input: Input = std::sync::Arc::new(std::sync::Mutex::new(BufWriter::new(fetcher.stdin.take().unwrap())));
-    let output = fetcher.stdout.take().unwrap();
-    let _fetcher = Killed(fetcher);
-    let (sender, received) = mpsc::channel();
-    let answering = std::sync::Arc::clone(&input);
-    std::thread::spawn(move || {
-        let mut output = BufReader::new(output);
-        while let Ok(Some(message)) = read_from_fetcher(&mut output) {
-            // The channel sets no cookie: the trusted core's answers are
-            // empty (decision 62).
-            match message {
-                FromFetcher::CookieQuestion { id, .. } => send(&answering, &ToFetcher::CookieAnswer { id, header: Vec::new() }),
-                FromFetcher::ReachedQuestion { id, .. } => send(&answering, &ToFetcher::ReachedAnswer { id, reached: false }),
-                message => {
-                    if sender.send((Instant::now(), message)).is_err() {
-                        return;
-                    }
-                }
-            }
-        }
-    });
+    let (site, _) = Site::start(&site_program);
+    let tab = Tab::open(&fetcher_program, site.port);
+    let (input, received) = (tab.input(), &tab.received);
     let next_push = |deadline: Instant| loop {
         let wait = deadline.saturating_duration_since(Instant::now());
         match received.recv_timeout(wait) {
@@ -175,15 +58,7 @@ fn keys_round_trip_and_pages_reach_the_screen_within_budget() {
             Err(error) => panic!("no push in time: {error}"),
         }
     };
-    let deadline = Instant::now() + LIMIT;
-    loop {
-        match received.recv_timeout(deadline.saturating_duration_since(Instant::now())) {
-            Ok((_, FromFetcher::Input { open: true, .. })) => break,
-            Ok(_) => {}
-            Err(error) => panic!("the channel's input never opened: {error}"),
-        }
-    }
-    let mut session = open_session(&input, &received, deadline);
+    let mut session = tab.session(Instant::now() + LIMIT);
     let select = neoteletext_input::event::Select::new(PAGE, neoteletext_core::limits::SUBCODE_ANY).unwrap();
     send(&input, &alone(message(&mut session, &Item::Event(Event::Select(select)))));
     next_push(Instant::now() + LIMIT);

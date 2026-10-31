@@ -3,9 +3,10 @@
 
 use std::io::{self, BufRead, BufReader, Write};
 use std::net::TcpStream;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
-use neoteletext_input::event::{MAX_STREAM_ITEM, StreamDecoder};
+use neoteletext_input::event::{Event, Item, MAX_STREAM_ITEM, StreamDecoder};
 
 use super::pages::{contents_file, page_file};
 use super::session::Push;
@@ -18,6 +19,8 @@ const MAX_HEAD: usize = 8 * 1024;
 /// frames a second (`interaction.md` section 2: "twenty times a second if
 /// it likes").
 const FRAME: Duration = Duration::from_millis(100);
+/// Numbers each viewer's connection, in what the channel says.
+static CONNECTIONS: AtomicU64 = AtomicU64::new(1);
 
 fn respond(stream: &mut TcpStream, status: &str, media: &str, body: &[u8]) -> io::Result<()> {
     write!(stream, "HTTP/1.1 {status}\r\nContent-Type: {media}\r\nContent-Length: {}\r\nCache-Control: no-cache\r\n\r\n", body.len())?;
@@ -27,7 +30,14 @@ fn respond(stream: &mut TcpStream, status: &str, media: &str, body: &[u8]) -> io
 
 /// A viewer's WebSocket: the input stream in, pages and sounds out, and the
 /// game's frames while its page is open.
-fn session(mut stream: TcpStream, settings: Settings) -> io::Result<()> {
+fn session(stream: TcpStream, settings: Settings) -> io::Result<()> {
+    let connection = CONNECTIONS.fetch_add(1, Ordering::Relaxed);
+    let ended = connected(stream, settings, connection);
+    eprintln!("neoteletext-site: connection {connection}: closed");
+    ended
+}
+
+fn connected(mut stream: TcpStream, settings: Settings, connection: u64) -> io::Result<()> {
     stream.set_read_timeout(Some(FRAME))?;
     stream.set_nodelay(true)?;
     let mut reader = websocket::Reader::default();
@@ -42,7 +52,13 @@ fn session(mut stream: TcpStream, settings: Settings) -> io::Result<()> {
             match opcode {
                 websocket::BINARY => {
                     let mut pushes = Vec::new();
-                    if let Err(error) = input.push(&payload, &mut |item| pushes.extend(session.item(&item))) {
+                    if let Err(error) = input.push(&payload, &mut |item| {
+                        // What a test of the session's end and of two tabs reads.
+                        if let Item::Event(Event::Select(select)) = &item {
+                            eprintln!("neoteletext-site: connection {connection}: SELECT {:03X}/{:04X}", select.page, select.sub);
+                        }
+                        pushes.extend(session.item(&item));
+                    }) {
                         eprintln!("neoteletext-site: input refused: {error:?}");
                         let _ = websocket::write(&mut stream, websocket::CLOSE, &[]);
                         return Ok(());
