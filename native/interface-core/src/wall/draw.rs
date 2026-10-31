@@ -4,7 +4,7 @@
 
 use super::grid::{SCROLL_BAR_WIDTH, WALL_PADDING};
 use super::size_control::CONTROLS_HEIGHT;
-use super::{Drawn, Wall, WallPage};
+use super::{Drawn, MAX_WALL_TILES, Wall, WallPage};
 use crate::canvas::{Canvas, PageKey, draw_page_on_screen};
 use crate::geometry::Rect;
 use crate::size::{Layout, clamp_width, max_width_for_window};
@@ -17,6 +17,7 @@ impl Wall {
     /// With the page alone, the whole panel is the page area, with no page
     /// size bar (decision 126).
     pub fn draw<C: Canvas + ?Sized>(&mut self, canvas: &mut C, panel: Rect, pages: &[WallPage<'_>], selected: Option<PageKey>, now: u64) {
+        let pages = pages.get(..MAX_WALL_TILES).unwrap_or(pages);
         if self.single() {
             self.draw_single(canvas, panel, pages, selected, now);
             outline(canvas, panel, RULE);

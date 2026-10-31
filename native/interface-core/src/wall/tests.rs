@@ -253,3 +253,15 @@ fn the_buttons_step_the_page_size() {
     assert!(wall.pointer_pressed(Point::new(f64::midpoint(plus.x0, plus.x1), f64::midpoint(plus.y0, plus.y1)), 0));
     assert!((wall.width - stepped_width(before, 1)).abs() < f32::EPSILON);
 }
+
+// REQ-1559 item 1: however many pages there are, no 129th tile.
+#[test]
+fn the_wall_never_lays_out_a_129th_tile() {
+    let mut wall = on_wall();
+    let pages = pages(300);
+    let mut canvas = Recorder::new();
+    // Tall enough for every tile at the smallest grid size.
+    wall.draw(&mut canvas, Rect::new(0.0, 0.0, 4_000.0, 40_000.0), &pages, None, 0);
+    assert_eq!(canvas.pages.len(), MAX_WALL_TILES);
+    assert_eq!(wall.visible().len(), MAX_WALL_TILES);
+}

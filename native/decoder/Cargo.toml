@@ -17,11 +17,15 @@ path = "src/main.rs"
 
 # Finding links in pages (`hyperlinks.md` section 6).
 [features]
-default = ["links", "interaction"]
+default = ["links", "interaction", "page-cache"]
 links = ["protocol/links", "interface-core/links"]
 # Typing into a page (`interaction.md`): off, the typing messages are
 # compiled out and every side refuses their kinds.
 interaction = ["protocol/interaction", "interface-core/interaction", "dep:neoteletext-input"]
+# Keeping page source between selections (REQ-1558): on in the browser on
+# every desktop and phone. Off, as a microcontroller receiver would be, a
+# tile is drawn only from what was selected since the wall last changed.
+page-cache = []
 
 [dependencies]
 confine.workspace = true

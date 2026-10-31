@@ -46,6 +46,7 @@ fn every_kind_round_trips() {
         FromDecoder::Updated { page: 0x302 },
         FromDecoder::Confined,
         FromDecoder::StoreFull,
+        FromDecoder::Missing(vec![0x100, 0x899]),
         FromDecoder::Frame { page: 0x123, palette: vec![[0, 0, 0], [255, 255, 255]], screen: 1, indices },
         FromDecoder::SubPages { page: 0x302, step: SubPageStep { count: 3, shown: 2, place: Some(1), previous: Some(1), next: Some(3) } },
         FromDecoder::SubPageCount { page: 0x210, count: 8_190 },

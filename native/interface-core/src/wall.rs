@@ -73,6 +73,11 @@ struct Drawn {
     image: Rect,
 }
 
+/// The most tiles the wall lays out: the owner's "wall limit 128 tiles"
+/// (REQ-1559). The tab's cache holds as many (`decoder::MAX_CACHED_PAGES`,
+/// which asserts it).
+pub const MAX_WALL_TILES: usize = 128;
+
 /// The page area: a bank's pages as a grid or a list, the page size
 /// control above them, and a page zoomed to fill the area.
 pub struct Wall {

@@ -33,6 +33,7 @@ mod input_records;
 #[cfg(feature = "links")]
 pub mod links;
 pub mod netscape;
+mod page_cache;
 pub mod process;
 pub mod sample;
 mod title;
@@ -45,5 +46,6 @@ pub use engine::{ChannelLog, Engine, Exported, Rendered};
 pub use flash::{FlashRates, Flashing};
 #[cfg(feature = "interaction")]
 pub use input_records::InputRecords;
+pub use page_cache::{CACHED_PAGE_LIFETIME_US, MAX_CACHED_PAGES, PageCache};
 
 const _: () = assert!(protocol::decoder::MAX_CHANNEL_LOG == neoteletext_formats::log::MAX_LOG_TEXT_BYTES, "a log line's bound is the engine's");

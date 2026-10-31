@@ -24,6 +24,7 @@ impl Core {
         #[cfg(feature = "interaction")]
         {
             self.opened = None;
+            self.fill_ends();
             let sends = self.typing.opened(self.active_channel(), None, self.now_us());
             self.deliver_typing(sends)?;
         }
@@ -239,6 +240,7 @@ impl Core {
         #[cfg(feature = "interaction")]
         {
             self.opened = key;
+            self.fill_ends();
             let sends = self.typing.opened(self.active_channel(), key, self.now_us());
             self.deliver_typing(sends)?;
         }

@@ -22,6 +22,10 @@ impl Core {
                 }
             }
             FromDecoder::StoreFull => self.grow_decoder(channel)?,
+            #[cfg(feature = "interaction")]
+            FromDecoder::Missing(pages) => self.wall_missing(channel, pages)?,
+            #[cfg(not(feature = "interaction"))]
+            FromDecoder::Missing(_) => {}
             // Only a decoder started to read bookmarks reports them; from a
             // channel's they change nothing.
             // The channel's own log, for its author: in its Log tab only,

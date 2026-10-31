@@ -124,9 +124,11 @@ impl Engine {
             let mut frames: BTreeMap<(u16, u16), Option<links::LinkLines>> = BTreeMap::new();
             #[cfg(feature = "links")]
             let mut linked = BTreeSet::new();
+            let now = self.now_us();
             for (packet, _) in &items {
                 if let Some(key) = header_key(packet) {
                     self.pushed.insert(key.0);
+                    self.cache.get_mut().store(key.0, key.1, now);
                     #[cfg(feature = "links")]
                     frames.entry(key).or_insert_with(|| self.lines.get(key.0, key.1).cloned());
                 }

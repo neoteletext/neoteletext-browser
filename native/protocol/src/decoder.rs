@@ -14,8 +14,8 @@ use crate::{Fields, MAX_PAGE_TITLE, ProtocolError, push_count, push_raw_text, ra
 use interface_core::controls::SUBPAGE_ROWS;
 use kinds::{
     KIND_ARRIVED, KIND_ASK_SUBPAGE_ROWS, KIND_AUDIO, KIND_BOOKMARK_FOLDER, KIND_BOOKMARK_FOLDER_END, KIND_BOOKMARK_LINK, KIND_BOOKMARKS_READ, KIND_CHANNEL_LOG,
-    KIND_CLOSE, KIND_CONFINED, KIND_DATA, KIND_END, KIND_FONT, KIND_FRAME, KIND_OPENED, KIND_SHOWING, KIND_STORE_FULL, KIND_SUBPAGE_COUNT, KIND_SUBPAGE_ROWS,
-    KIND_SUBPAGES, KIND_UPDATED, KIND_VIEW, KIND_WHOLE,
+    KIND_CLOSE, KIND_CONFINED, KIND_DATA, KIND_END, KIND_FONT, KIND_FRAME, KIND_MISSING, KIND_OPENED, KIND_SHOWING, KIND_STORE_FULL, KIND_SUBPAGE_COUNT,
+    KIND_SUBPAGE_ROWS, KIND_SUBPAGES, KIND_UPDATED, KIND_VIEW, KIND_WHOLE,
 };
 #[cfg(feature = "interaction")]
 use kinds::{KIND_CURSOR, KIND_INPUT_CONTROL};
@@ -153,6 +153,10 @@ pub enum FromDecoder {
     /// The page store is full: the channel has more pages and sub-pages
     /// than it has room for, and the oldest are being forgotten.
     StoreFull,
+    /// The pages on screen, in the order they were named, that it has no
+    /// entry of in the tab's cache, for the trusted core to select in turn
+    /// (REQ-1559). Said when the list changes.
+    Missing(Vec<u16>),
     /// Something found in a bookmark file the decoder was given to read
     /// (decision 71).
     Bookmark(BookmarkEntry),
@@ -433,6 +437,14 @@ pub fn write_to_core(out: &mut dyn Write, message: &FromDecoder) -> Result<(), P
         }
         FromDecoder::Confined => KIND_CONFINED,
         FromDecoder::StoreFull => KIND_STORE_FULL,
+        FromDecoder::Missing(pages) => {
+            push_count(&mut payload, pages.len(), PAGES, "too many pages")?;
+            for page in pages {
+                page_index(*page).ok_or(ProtocolError::BadValue("page number"))?;
+                payload.extend_from_slice(&page.to_be_bytes());
+            }
+            KIND_MISSING
+        }
         FromDecoder::Bookmark(entry) => bookmarks::push_entry(&mut payload, entry),
         FromDecoder::BookmarksRead { skipped } => {
             payload.extend_from_slice(&skipped.to_be_bytes());
@@ -504,6 +516,10 @@ pub fn read_from_decoder(input: &mut dyn Read) -> Result<Option<FromDecoder>, Pr
         }
         KIND_CONFINED => FromDecoder::Confined,
         KIND_STORE_FULL => FromDecoder::StoreFull,
+        KIND_MISSING => {
+            let count = fields.count_u16(PAGES, "too many pages")?;
+            FromDecoder::Missing((0..count).map(|_| fields.display_page()).collect::<Result<_, _>>()?)
+        }
         KIND_BOOKMARK_FOLDER | KIND_BOOKMARK_FOLDER_END | KIND_BOOKMARK_LINK => FromDecoder::Bookmark(bookmarks::read_entry(kind, &mut fields)?),
         KIND_BOOKMARKS_READ => FromDecoder::BookmarksRead { skipped: fields.u32()? },
         KIND_CHANNEL_LOG => {

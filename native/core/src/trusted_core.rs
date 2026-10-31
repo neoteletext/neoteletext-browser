@@ -32,6 +32,8 @@ mod timing;
 #[cfg(feature = "interaction")]
 mod typing;
 mod updates;
+#[cfg(feature = "interaction")]
+mod wall_fill;
 mod windows;
 
 use std::collections::BTreeMap;
@@ -163,6 +165,9 @@ struct Core {
     /// Typing into a page (`interaction.md`).
     #[cfg(feature = "interaction")]
     typing: neoteletext::typing::Typing,
+    /// The tiles of the wall being selected in turn (REQ-1559).
+    #[cfg(feature = "interaction")]
+    wall_fill: wall_fill::WallFill,
     /// The page the viewer opened in the active tab.
     #[cfg(feature = "interaction")]
     opened: Option<PageKey>,
@@ -306,6 +311,8 @@ impl Core {
             next_sleep_check: std::time::Instant::now().checked_add(SLEEP_CHECK).unwrap_or_else(std::time::Instant::now),
             #[cfg(feature = "interaction")]
             typing: neoteletext::typing::Typing::default(),
+            #[cfg(feature = "interaction")]
+            wall_fill: wall_fill::WallFill::default(),
             #[cfg(feature = "interaction")]
             opened: None,
             #[cfg(feature = "phone-keyboard")]

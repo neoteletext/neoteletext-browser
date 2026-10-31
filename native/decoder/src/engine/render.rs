@@ -60,6 +60,23 @@ impl Engine {
         };
     }
 
+    /// The pages of `showing`, in its order, with nothing to draw at
+    /// `now_us`: not received, or with no entry that stands (REQ-1559).
+    #[must_use]
+    pub fn missing(&self, showing: &[u16], now_us: u64) -> Vec<u16> {
+        let cache = self.cache.borrow();
+        let drawable = |page: u16| {
+            let view = self.views.get(&page).copied().unwrap_or_default();
+            self.stored(page, view.subpage).is_some_and(|stored| !self.pushed.contains(&page) || cache.fresh(page, stored.key.subcode.value(), now_us))
+        };
+        showing.iter().copied().filter(|&page| !drawable(page)).collect()
+    }
+
+    /// What is on screen changed (REQ-1558 item 7).
+    pub fn screen_changed(&mut self) {
+        self.cache.get_mut().screen_changed();
+    }
+
     /// The font pages are drawn in from now on. Every row of every page
     /// looks different in another font, so each page's next frame is drawn
     /// whole: what its change tracker remembers was drawn in the old one.
@@ -314,6 +331,11 @@ impl Engine {
         page_index(page)?;
         #[cfg_attr(not(feature = "links"), expect(unused_mut, reason = "only the look under the pointer changes the grid, and it comes with links"))]
         let (mut grid, stored) = self.grid(page)?;
+        // A pushed page is drawn only from an entry that stands; a held one
+        // is the page as it was when held.
+        if self.pushed.contains(&page) && !self.held.contains_key(&page) && !self.cache.borrow_mut().draw(page, stored.key.subcode.value(), now_us) {
+            return None;
+        }
         // The look under the pointer, on the page's own cells, before the
         // rows that changed are found: the engine's decision E.127.
         #[cfg(feature = "links")]

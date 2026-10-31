@@ -71,6 +71,10 @@ impl Core {
             next = next.map(|at| at.min(due));
         }
         #[cfg(feature = "interaction")]
+        if let Some(due) = self.fill_due_at() {
+            next = next.map(|at| at.min(due));
+        }
+        #[cfg(feature = "interaction")]
         if let Some(due) = self.moves_due_at() {
             next = next.map(|at| at.min(due));
         }
@@ -113,6 +117,8 @@ impl Core {
         if self.redirect_due_at().is_some_and(|due| now >= due) {
             self.finish_redirects(now)?;
         }
+        #[cfg(feature = "interaction")]
+        self.fill_tick(now)?;
         #[cfg(feature = "interaction")]
         if self.moves_due_at().is_some_and(|due| now >= due) {
             self.send_due_moves()?;

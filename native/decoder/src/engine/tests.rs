@@ -122,6 +122,54 @@ fn changed_rows_keep_the_other_rows() {
     assert_eq!((row(&engine, 1).as_str(), row(&engine, 2).as_str()), ("WHOLE", ""), "the erase bit replaces it");
 }
 
+// REQ-1558 item 2: a pushed frame stores an entry, and a changed-rows frame
+// updates it to the merged page; the source, not an image, is what is kept.
+#[test]
+fn a_pushed_frame_stands_in_the_cache_and_changed_rows_merge() {
+    let mut engine = Engine::new();
+    assert_eq!(engine.missing(&[0x100], 0), [0x100], "nothing yet");
+    engine.feed_whole(true, true, &pushed(b"PN,10000\nSC,0000\nPS,C000\nOL,1,FIRST\nOL,2,SECOND\n", None));
+    assert_eq!(engine.missing(&[0x100], engine.now_us()), [] as [u16; 0]);
+    engine.feed_whole(true, true, &pushed(b"PN,10000\nSC,0000\nPS,8000\nOL,1,CHANGED\n", None));
+    assert_eq!(engine.cache.borrow().len(), 1, "the same entry");
+    let rendered = engine.render_at(0x100, engine.now_us()).expect("drawn from it");
+    assert!(!rendered.indices.is_empty(), "drawn");
+    assert_eq!(engine.export().first().map(|page| page.title.as_str()), Some("CHANGED"));
+}
+
+// REQ-1558 item 4, REQ-1559 item 2: past 24 hours a tile is missing, and
+// drawing it drops it; pages off screen are not named, nor pages of a
+// channel that was never pushed.
+#[test]
+fn a_page_older_than_a_day_is_missing_and_not_drawn() {
+    let mut engine = Engine::new();
+    engine.feed_whole(true, true, &pushed(b"PN,10000\nSC,0000\nPS,8000\nOL,1,OLD\n", None));
+    engine.feed_whole(true, true, &pushed(b"PN,20000\nSC,0000\nPS,8000\nOL,1,OTHER\n", None));
+    let later = engine.now_us() + crate::CACHED_PAGE_LIFETIME_US + 1_000;
+    assert_eq!(engine.missing(&[0x100], later), [0x100], "the page off screen is not named");
+    assert!(engine.render_at(0x100, later).is_none(), "not drawn");
+    assert!(!engine.cache.borrow().fresh(0x100, 0, 0), "dropped as it was about to be drawn");
+    assert!(engine.cache.borrow().fresh(0x200, 0, 0), "the other, not drawn, is not");
+}
+
+// REQ-1559: a file or fetched channel's pages are the store's: never missing.
+#[test]
+fn a_fetched_page_is_not_missing() {
+    let engine = engine_with(b"PN,10000\nSC,0000\nPS,8000\nOL,1,HELLO\n");
+    assert_eq!(engine.missing(&[0x100, 0x200], u64::MAX / 2), [0x200], "only the page that never came");
+}
+
+// REQ-1558 item 7: without the feature, nothing outlives a change of what
+// is on screen, so the wall fills every tile each time it is shown.
+#[cfg(not(feature = "page-cache"))]
+#[test]
+fn without_the_feature_nothing_is_kept() {
+    let mut engine = Engine::new();
+    engine.feed_whole(true, true, &pushed(b"PN,10000\nSC,0000\nPS,8000\nOL,1,GONE\n", None));
+    engine.screen_changed();
+    assert_eq!(engine.missing(&[0x100], engine.now_us()), [0x100]);
+}
+
 // REQ-1494, DEC-1517: a frame followed by no LINKS record means no links,
 // and links alone changing redraws the page.
 #[cfg(feature = "links")]

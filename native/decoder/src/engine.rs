@@ -22,6 +22,7 @@ use std::cell::RefCell;
 
 #[cfg(feature = "interaction")]
 use crate::InputRecords;
+use crate::PageCache;
 use crate::changes::Changes;
 #[cfg(feature = "links")]
 use crate::links;
@@ -197,6 +198,8 @@ pub struct Engine {
     /// The font pages are drawn in: Bedstead until the trusted core names
     /// the user's.
     font: TeletextFont,
+    /// Which pushed pages may be drawn, and how old each is (REQ-1558).
+    cache: RefCell<PageCache>,
 }
 
 impl Default for Engine {
@@ -263,6 +266,7 @@ impl Engine {
             #[cfg(feature = "interaction")]
             input: InputRecords::default(),
             font: TeletextFont::Bedstead,
+            cache: RefCell::new(PageCache::default()),
         }
     }
 

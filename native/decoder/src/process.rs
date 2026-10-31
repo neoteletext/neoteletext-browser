@@ -100,6 +100,8 @@ pub fn run(store_pages: usize) -> Result<(), ProtocolError> {
     // A page's worth of room for the next render, from the last frame not kept.
     let mut spare: Vec<u8> = Vec::new();
     let mut flashing = Flashing::default();
+    // The pages on screen the trusted core was last told are missing.
+    let mut missing: Vec<u16> = Vec::new();
     // The trusted core's messages are read on a thread of their own, so
     // the loop also wakes, by itself, for flash and for its sounds' clock:
     // it sleeps until a message, the next flash phase of a shown page
@@ -136,8 +138,10 @@ pub fn run(store_pages: usize) -> Result<(), ProtocolError> {
                 sent.retain(|page, _| pages.contains(page));
                 flashing.retain(&pages);
                 showing = pages;
+                engine.screen_changed();
                 let fresh: Vec<u16> = showing.iter().copied().filter(|page| !sent.contains_key(page)).collect();
                 draw(&engine, &fresh, now, &mut sent, &mut spare, &mut flashing, &mut output)?;
+                say_missing(&engine, &showing, now, &mut missing, &mut output)?;
                 continue;
             }
             ToDecoder::Close => return Ok(()),
@@ -195,7 +199,19 @@ pub fn run(store_pages: usize) -> Result<(), ProtocolError> {
         shown_clock = clock;
         let pages: Vec<u16> = showing.iter().copied().filter(|page| ticked || changed.everything || changed.pages.contains(page)).collect();
         draw(&engine, &pages, now, &mut sent, &mut spare, &mut flashing, &mut output)?;
+        say_missing(&engine, &showing, now, &mut missing, &mut output)?;
     }
+}
+
+/// Tells the trusted core which pages on screen have nothing to draw, when
+/// that changed since `said`.
+fn say_missing(engine: &Engine, showing: &[u16], now_us: u64, said: &mut Vec<u16>, output: &mut Output<'_>) -> Result<(), ProtocolError> {
+    let missing = engine.missing(showing, now_us);
+    if missing != *said {
+        write_to_core(output, &FromDecoder::Missing(missing.clone()))?;
+        *said = missing;
+    }
+    Ok(())
 }
 
 /// A message read from the trusted core: one, the end of its pipe, or an
