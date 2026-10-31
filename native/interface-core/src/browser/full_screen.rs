@@ -267,7 +267,6 @@ impl Browser {
         // What the window's layout drew is not on the screen, so none of it
         // takes the pointer.
         self.tab_strip_forget(!strip);
-        self.tips_forget();
         let (channel, updates) = (&self.channel, &self.updates);
         let pages: Vec<WallPage<'_>> = crate::channel::bank_indices(self.bank)
             .filter_map(|index| {
@@ -302,6 +301,7 @@ impl Browser {
             self.draw_tab_strip(canvas, width);
             self.draw_tab_overflow(canvas, width, height);
         }
+        self.draw_tips(canvas, width, height, now);
         true
     }
 

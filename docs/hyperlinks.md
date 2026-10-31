@@ -252,6 +252,7 @@ Only on the page that is open: the zoomed page, or the single page at the end of
 
 ### 10.2 The pointer
 
+- **Resting on a link** for half a second shows a popover beside the pointer, over everything, with its complete destination (REQ-1660): a channel's whole address, a web page's with "(opens in your web browser)", or a page of this channel. It wraps and is never cut; one taller than the window scrolls with the wheel. It is a tip, in the interface's own text, from what the trusted core sends for the pointed link alone. A press puts it away until the pointer leaves the link, and leaving or a change of the link puts it away. It shows in full screen too. A finger has no hover, so touch has none.
 - **Pointing at a link** shows its destination in the trusted strip, in the place of the status line, cleaned as all untrusted text is (requirement 11.5). For example: "Page 302", "Page 302 of weather.example (leaves this channel)", or "www.example.com/story (opens in your web browser)". Hosts are shown with the address rules, and internationalised names safely (requirement 11.3).
 - **Clicking a link** follows it (section 11) only if all of these hold:
   - the click's frame version is one the core holds for that page;

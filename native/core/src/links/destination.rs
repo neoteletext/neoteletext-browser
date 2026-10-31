@@ -53,6 +53,19 @@ impl Destination {
         clean(&text, MAX_DESTINATION)
     }
 
+    /// What a link's popover says of it, complete: a channel's or a web
+    /// page's whole address, cleaned and never shortened, up to the longest
+    /// an address is (REQ-1660 item 3).
+    #[must_use]
+    pub fn complete(&self) -> String {
+        let text = match self {
+            Self::Page(_) => self.name(),
+            Self::Channel(address) => address.text.clone(),
+            Self::Web(address) => format!("{address} (opens in your web browser)"),
+        };
+        clean(&text, MAX_DESTINATION)
+    }
+
     /// What the trusted strip says of it while the pointer or the focus is
     /// on it: where it is, and whether it leaves.
     #[must_use]

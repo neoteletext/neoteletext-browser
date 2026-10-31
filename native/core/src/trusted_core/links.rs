@@ -162,7 +162,10 @@ impl Core {
             }
             Err(error) => {
                 self.log(Level::Warning, self.log_place(), &format!("{address}: {error}"));
-                self.link(LinkMessage::Pointing(Some(Pointing { kind: LinkKind::Web, text: "Could not open your web browser".into() })))
+                {
+                    let text = String::from("Could not open your web browser");
+                    self.link(LinkMessage::Pointing(Some(Pointing { kind: LinkKind::Web, complete: text.clone(), text })))
+                }
             }
         }
     }

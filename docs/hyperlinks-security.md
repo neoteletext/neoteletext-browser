@@ -113,7 +113,7 @@ Boundaries B, C and D exist today for frames and clicks; links add new message k
 
 ## 7. Boundary C: the trusted core into the interface
 
-**What crosses.** `LinkRuns { key, version, runs }` with positions and a kind (this channel, another channel, the web): no targets, no addresses, no labels. The strip text for the pointed link's destination. The web-browser prompt, as strip state. The address a redirect is taking the tab to, as strip state, once the trusted core has checked it (REQ-1686).
+**What crosses.** `LinkRuns { key, version, runs }` with positions and a kind (this channel, another channel, the web): no targets, no addresses, no labels. The strip text for the pointed link's destination, and its complete destination for the popover, for that link alone (REQ-1660). The web-browser prompt, as strip state. The address a redirect is taking the tab to, as strip state, once the trusted core has checked it (REQ-1686).
 
 **Threats and mitigations.**
 

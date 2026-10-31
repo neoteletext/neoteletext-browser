@@ -135,6 +135,9 @@ impl Browser {
     /// page each notch is one page (`Wall::wheel_notch`); elsewhere it
     /// scrolls by lines.
     pub fn wheel_lines(&mut self, lines: f64, now: u64) -> bool {
+        if self.tips_scroll(lines * LINE_HEIGHT) {
+            return true;
+        }
         if !self.over_overlay() && self.wall.zoomed().is_some() && self.wall.contains(self.pointer) && !self.wall.over_bar(self.pointer) {
             if self.wall.wheel_notch(lines, now).is_some() {
                 self.follow_zoom();
@@ -239,6 +242,9 @@ impl Browser {
 
     /// Scrolls whatever is under the pointer.
     pub fn scroll_by(&mut self, distance: f64, now: u64) -> bool {
+        if self.tips_scroll(distance) {
+            return true;
+        }
         if self.history_scroll(distance) || self.cookies_scroll(distance) || self.bookmarks_scroll(distance) {
             return true;
         }

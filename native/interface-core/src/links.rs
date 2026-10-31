@@ -178,8 +178,11 @@ impl PageLinks {
 pub struct Pointing {
     /// What kind of place it is.
     pub kind: LinkKind,
-    /// Where it leads.
+    /// Where it leads, as the strip says it.
     pub text: String,
+    /// Where it leads, complete, as its popover shows it: every character
+    /// of an address, never shortened (REQ-1660).
+    pub complete: String,
 }
 
 /// The web-browser prompt (`hyperlinks.md` section 12): the question the

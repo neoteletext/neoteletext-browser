@@ -80,7 +80,7 @@ impl Browser {
         self.draw_star_popover(canvas);
         self.draw_tab_overflow(canvas, width, height);
         self.draw_popups(canvas);
-        self.draw_tips(canvas, width, height);
+        self.draw_tips(canvas, width, height, now);
         // Pages may have moved under a still pointer: by scrolling, a new
         // size or a zoom.
         self.wall.hover(self.pointer, now);

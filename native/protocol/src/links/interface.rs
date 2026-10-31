@@ -62,6 +62,7 @@ pub(super) fn push_pointing(payload: &mut Vec<u8>, pointing: Option<&Pointing>) 
     if let Some(pointing) = pointing {
         payload.push(pointing.kind as u8);
         push_text(payload, &pointing.text, MAX_DESTINATION)?;
+        push_text(payload, &pointing.complete, MAX_DESTINATION)?;
     }
     Ok(())
 }
@@ -71,7 +72,8 @@ pub(super) fn read_pointing(fields: &mut Fields<'_>, empty: bool) -> Result<Opti
         return Ok(None);
     }
     let kind = LinkKind::from_byte(fields.u8()?).ok_or(ProtocolError::BadValue("link kind"))?;
-    Ok(Some(Pointing { kind, text: fields.text(MAX_DESTINATION)? }))
+    let text = fields.text(MAX_DESTINATION)?;
+    Ok(Some(Pointing { kind, text, complete: fields.text(MAX_DESTINATION)? }))
 }
 
 /// A question for the strip, or none.

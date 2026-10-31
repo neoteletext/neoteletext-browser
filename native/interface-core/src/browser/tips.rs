@@ -5,7 +5,8 @@
 //! puts the tip away until the pointer leaves the control. The tips are
 //! the interface's own words, never a channel's text, except a tab's and
 //! a bookmark's title, drawn as the text it is. A tab's tip has a second
-//! line, its address (decision 103).
+//! line, its address (decision 103). A page's link has a tip too, its
+//! popover: where it leads, complete, in the trusted core's words (REQ-1660).
 
 use alloc::format;
 use alloc::string::String;
@@ -51,6 +52,10 @@ pub(super) struct TipsUi {
     shown: bool,
     /// A press put the tip away until the pointer leaves the control.
     dismissed: bool,
+    /// The lines of a tip taller than the window scrolled past its top.
+    scroll: usize,
+    /// The lines of the tip drawn that did not fit the window.
+    overflow: usize,
 }
 
 impl TipsUi {
@@ -69,6 +74,7 @@ impl TipsUi {
         self.hovered = under.map(|tip| (tip, now));
         self.shown = false;
         self.dismissed = false;
+        self.scroll = 0;
         was_shown
     }
 }
@@ -107,11 +113,18 @@ impl Browser {
         false
     }
 
-    /// No control is on the screen, as in full screen: no tip shows.
-    pub(super) fn tips_forget(&mut self) {
-        self.tips.drawn.clear();
-        self.tips.hovered = None;
-        self.tips.shown = false;
+    /// The wheel turned by `distance`, positive to go on: over a tip taller
+    /// than the window, which covers the pointer, it brings the rest of the
+    /// tip (REQ-1660 item 6). Returns whether it did.
+    pub(super) fn tips_scroll(&mut self, distance: f64) -> bool {
+        if !self.tips.shown || self.tips.overflow == 0 {
+            return false;
+        }
+        // The cast drops the part of a line, and a turn moves at least one.
+        #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss, reason = "clamped to the lines there are")]
+        let lines = (libm::ceil(libm::fabs(distance) / LINE_STEP).min(f64::from(u16::MAX)) as usize).max(1);
+        self.tips.scroll = if distance > 0.0 { self.tips.scroll.saturating_add(lines).min(self.tips.overflow) } else { self.tips.scroll.saturating_sub(lines) };
+        true
     }
 
     /// The tip shown now, if any.
@@ -122,11 +135,15 @@ impl Browser {
 
     /// Every control's tip as this frame drew them, then the tip under the
     /// pointer, over everything.
-    pub(super) fn draw_tips<C: Canvas + ?Sized>(&mut self, canvas: &mut C, width: f64, height: f64) {
+    pub(super) fn draw_tips<C: Canvas + ?Sized>(&mut self, canvas: &mut C, width: f64, height: f64, now: u64) {
         let mut tips = Vec::new();
+        // In full screen no control is on the screen; a page's links are.
         // A list or menu open over the window takes the pointer; a panel
         // covers what is below the strip.
-        if !self.popup_open() {
+        if self.full_screen() {
+            #[cfg(feature = "links")]
+            self.link_tips(&mut tips);
+        } else if !self.popup_open() {
             self.strip_tips(&mut tips);
             self.bar_tips(&mut tips);
             self.remote_tips(&mut tips);
@@ -148,11 +165,17 @@ impl Browser {
         {
             self.tips.hovered = None;
             self.tips.shown = false;
+            self.tips.scroll = 0;
+        }
+        // A link's tip comes when the trusted core says where it leads,
+        // under a pointer already still on it.
+        if self.tips.hovered.is_none() && !self.tips.dismissed {
+            self.tips.hovered = self.tips.at(self.pointer).cloned().map(|tip| (tip, now));
         }
         let Some((tip, _)) = self.tips.hovered.as_ref().filter(|_| self.tips.shown) else { return };
         // A line wider than the window, as a long address, wraps onto
-        // further lines; those past the window's height are cut
-        // (decision 127).
+        // further lines; those past the window's height are reached with
+        // the wheel (decision 127, REQ-1660 item 6).
         let widest_text = (width - EDGE * 2.0 - PADDING * 2.0).max(0.0);
         // The cast drops the part of a line that does not fit.
         #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss, reason = "clamped from none to u16::MAX lines")]
@@ -162,8 +185,12 @@ impl Browser {
             .split(LINE_BREAK)
             .enumerate()
             .flat_map(|(number, line)| wrapped_anywhere(canvas, line, widest_text, ROW_TITLE).into_iter().map(move |part| (number == 0, part)))
-            .take(most_lines)
             .collect();
+        let overflow = lines.len().saturating_sub(most_lines);
+        let scroll = self.tips.scroll.min(overflow);
+        self.tips.overflow = overflow;
+        self.tips.scroll = scroll;
+        let lines: Vec<(bool, &str)> = lines.into_iter().skip(scroll).take(most_lines).collect();
         let text_width = lines.iter().map(|(_, line)| canvas.text_width(line, ROW_TITLE)).fold(0.0, f64::max);
         #[allow(clippy::cast_precision_loss, reason = "the lines that fit a window's height")]
         let extra_lines = lines.len().saturating_sub(1) as f64;
@@ -253,6 +280,8 @@ impl Browser {
         self.console_tips(tips);
         #[cfg(feature = "phone-keyboard")]
         self.phone_tips(tips);
+        #[cfg(feature = "links")]
+        self.link_tips(tips);
     }
 }
 

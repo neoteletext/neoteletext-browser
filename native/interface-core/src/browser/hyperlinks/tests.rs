@@ -174,7 +174,7 @@ fn the_question_waits_half_a_second_and_never_takes_the_focus() {
 #[test]
 fn the_strip_shows_where_a_link_leads_in_place_of_the_address() {
     let (mut browser, mut canvas, _, _) = opened();
-    browser.set_pointing(Some(Pointing { kind: LinkKind::Page, text: "Page 302".into() }));
+    browser.set_pointing(Some(Pointing { kind: LinkKind::Page, text: "Page 302".into(), complete: "Page 302".into() }));
     canvas.texts.clear();
     browser.draw(&mut canvas, WIDTH, HEIGHT, OPEN);
     let texts: Vec<&String> = canvas.texts.iter().map(|(_, text)| text).collect();
@@ -300,4 +300,143 @@ fn the_channel_is_told_as_the_pointer_enters_and_leaves_controls() {
     assert_eq!(hovers(&mut browser), [Intent::Hover { leave: true, column: 1, row: 20 }, Intent::Hover { leave: false, column: 10, row: 20 }]);
     move_to(&mut browser, centre(rect, 30, 12));
     assert_eq!(hovers(&mut browser), [Intent::Hover { leave: true, column: 10, row: 20 }]);
+}
+
+/// A page's link under a still pointer, with what the trusted core said of
+/// it: `complete` is its popover's text.
+fn resting_on_a_link(complete: &str) -> (Browser, Recorder, Rect) {
+    let (mut browser, canvas, key, rect) = opened();
+    browser.set_links(key, page_links(VERSION));
+    browser.pointer_moved(centre(rect, 11, 5).x, centre(rect, 11, 5).y, OPEN);
+    browser.set_pointing(Some(Pointing { kind: LinkKind::Channel, text: "the strip's words".into(), complete: complete.into() }));
+    (browser, canvas, rect)
+}
+
+fn drawn_at(browser: &mut Browser, width: f64, height: f64, now: u64) -> Recorder {
+    let mut canvas = Recorder::new();
+    browser.draw(&mut canvas, width, height, now);
+    canvas
+}
+
+/// The lines of a popover, last on the canvas, from the one beginning
+/// `first_line_begins`.
+fn popover_lines(canvas: &Recorder, first_line_begins: &str) -> Vec<String> {
+    let at = canvas.texts.iter().rposition(|(_, text)| text.starts_with(first_line_begins));
+    at.map(|at| canvas.texts[at..].iter().map(|(_, text)| text.clone()).collect()).unwrap_or_default()
+}
+
+const ADDRESS: &str = "https://weather.invalid/teletext/#302";
+
+/// The page is drawn elsewhere: the pointer goes back to its link, at rest.
+fn point_again(browser: &mut Browser, width: f64, height: f64) {
+    drawn_at(browser, width, height, OPEN);
+    let (_, rect) = browser.wall().open().expect("the page is open");
+    let on_link = centre(rect, 11, 5);
+    browser.pointer_moved(on_link.x, on_link.y, OPEN);
+    drawn_at(browser, width, height, OPEN);
+}
+
+// REQ-1660 items 1 and 2: after the half second, over everything, in the
+// interface's own text.
+#[test]
+fn resting_on_a_link_shows_its_complete_address_after_half_a_second() {
+    let (mut browser, _, _) = resting_on_a_link(ADDRESS);
+    assert!(drawn_at(&mut browser, WIDTH, HEIGHT, OPEN).texts.iter().all(|(_, text)| text != ADDRESS), "not at once");
+    let rest = OPEN + 500;
+    assert!(!browser.settle(rest - 1), "not before the rest");
+    assert!(browser.settle(rest), "at the half second");
+    let canvas = drawn_at(&mut browser, WIDTH, HEIGHT, rest);
+    assert_eq!(canvas.texts.last().map(|(_, text)| text.as_str()), Some(ADDRESS), "drawn last, over everything");
+}
+
+// REQ-1660 item 5: a press puts it away until the pointer leaves the link.
+#[test]
+fn a_press_puts_the_popover_away() {
+    let (mut browser, mut canvas, rect) = resting_on_a_link(ADDRESS);
+    drawn_at(&mut browser, WIDTH, HEIGHT, OPEN);
+    browser.settle(OPEN + 500);
+    browser.pointer_pressed(&mut canvas, false, OPEN + 600);
+    browser.settle(OPEN + 2_000);
+    assert!(drawn_at(&mut browser, WIDTH, HEIGHT, OPEN + 2_000).texts.iter().all(|(_, text)| text != ADDRESS));
+    let away = centre(rect, 30, 12);
+    browser.pointer_moved(away.x, away.y, OPEN + 2_100);
+    browser.set_pointing(None);
+    drawn_at(&mut browser, WIDTH, HEIGHT, OPEN + 2_100);
+    let back = centre(rect, 11, 5);
+    browser.pointer_moved(back.x, back.y, OPEN + 2_200);
+    browser.set_pointing(Some(Pointing { kind: LinkKind::Channel, text: String::new(), complete: ADDRESS.into() }));
+    drawn_at(&mut browser, WIDTH, HEIGHT, OPEN + 2_200);
+    browser.settle(OPEN + 2_700);
+    assert!(drawn_at(&mut browser, WIDTH, HEIGHT, OPEN + 2_700).texts.iter().any(|(_, text)| text == ADDRESS), "again, on coming back");
+}
+
+// REQ-1660 item 5: leaving the link puts it away.
+#[test]
+fn leaving_the_link_puts_the_popover_away() {
+    let (mut browser, _, rect) = resting_on_a_link(ADDRESS);
+    drawn_at(&mut browser, WIDTH, HEIGHT, OPEN);
+    browser.settle(OPEN + 500);
+    assert!(drawn_at(&mut browser, WIDTH, HEIGHT, OPEN + 500).texts.iter().any(|(_, text)| text == ADDRESS));
+    let away = centre(rect, 30, 12);
+    browser.pointer_moved(away.x, away.y, OPEN + 600);
+    browser.set_pointing(None);
+    assert!(drawn_at(&mut browser, WIDTH, HEIGHT, OPEN + 600).texts.iter().all(|(_, text)| text != ADDRESS));
+}
+
+// REQ-1660 item 5: a link that changes under the pointer takes it away.
+#[test]
+fn a_link_that_changes_takes_the_popover_away() {
+    let (mut browser, _, _) = resting_on_a_link(ADDRESS);
+    drawn_at(&mut browser, WIDTH, HEIGHT, OPEN);
+    browser.settle(OPEN + 500);
+    assert!(drawn_at(&mut browser, WIDTH, HEIGHT, OPEN + 500).texts.iter().any(|(_, text)| text == ADDRESS));
+    browser.set_pointing(Some(Pointing { kind: LinkKind::Channel, text: String::new(), complete: "https://other.invalid/".into() }));
+    let canvas = drawn_at(&mut browser, WIDTH, HEIGHT, OPEN + 600);
+    assert!(canvas.texts.iter().all(|(_, text)| text != ADDRESS && text != "https://other.invalid/"), "the old one gone, the new one after its own rest");
+}
+
+// REQ-1660 items 3 and 6: the longest address is whole, wrapped, inside the
+// window, at a desktop window's size.
+#[test]
+fn the_longest_address_is_shown_whole() {
+    let start = "https://weather.invalid/";
+    let address = format!("{start}{}", "a".repeat(crate::browser::MAX_ADDRESS - start.len()));
+    let (mut browser, _, _) = resting_on_a_link(&address);
+    drawn_at(&mut browser, WIDTH, HEIGHT, OPEN);
+    browser.settle(OPEN + 500);
+    let canvas = drawn_at(&mut browser, WIDTH, HEIGHT, OPEN + 500);
+    let lines = popover_lines(&canvas, start);
+    assert!(lines.len() > 1, "wrapped");
+    assert_eq!(lines.concat(), address, "every character");
+}
+
+// REQ-1660 item 6: in a window too small for it, it shows from the start
+// and the wheel brings the rest, to its last character.
+#[test]
+fn the_wheel_scrolls_a_popover_taller_than_the_window() {
+    const TOO_SMALL: f64 = 200.0;
+    let start = "https://weather.invalid/";
+    let address = format!("{start}{}z", "a".repeat(crate::browser::MAX_ADDRESS - start.len() - 1));
+    let (mut browser, _, _) = resting_on_a_link(&address);
+    browser.overview.hidden = true;
+    point_again(&mut browser, WIDTH, TOO_SMALL);
+    browser.settle(OPEN + 500);
+    let canvas = drawn_at(&mut browser, WIDTH, TOO_SMALL, OPEN + 500);
+    assert!(canvas.texts.iter().any(|(_, text)| text.starts_with(start)), "from the start");
+    assert!(canvas.texts.iter().all(|(_, text)| !text.ends_with('z')), "the rest is not drawn yet");
+    assert!(browser.scroll_by(100_000.0, OPEN + 600), "the wheel takes it");
+    let canvas = drawn_at(&mut browser, WIDTH, TOO_SMALL, OPEN + 600);
+    assert!(canvas.texts.iter().any(|(_, text)| text.ends_with('z')), "to its last character");
+    assert!(browser.wall().zoomed().is_some(), "the page stayed");
+}
+
+// REQ-1660 item 2: in full screen, the only place left that says where a
+// link leads.
+#[test]
+fn the_popover_shows_in_full_screen() {
+    let (mut browser, _, _) = resting_on_a_link(ADDRESS);
+    assert!(browser.toggle_full_screen(OPEN));
+    point_again(&mut browser, WIDTH, HEIGHT);
+    browser.settle(OPEN + 500);
+    assert!(drawn_at(&mut browser, WIDTH, HEIGHT, OPEN + 500).texts.iter().any(|(_, text)| text == ADDRESS));
 }

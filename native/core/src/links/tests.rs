@@ -241,6 +241,34 @@ fn a_link_to_another_channel_is_followed_with_no_question() {
     assert_eq!(links.prompt(), None);
 }
 
+// REQ-1660 item 3: the popover's text, for each kind of link: complete, and
+// only for the link pointed at.
+#[test]
+fn a_pointed_link_says_where_it_leads_in_full() {
+    let long = format!("https://weather.invalid/{}", "a".repeat(protocol::MAX_ADDRESS - 40));
+    let mut links =
+        links_with(vec![declared(5, 0, 7, "sport:302"), declared(7, 0, 7, "web:https://www.example.invalid/a?b=c#d"), declared(9, 0, 7, "401")], Vec::new());
+    links.descriptor(CHANNEL, &[], &[Service { name: "sport".into(), address: long.clone() }]);
+    let address = home();
+    links.redecide(OPEN, &Channel { id: CHANNEL, address: &address }, START);
+    let complete = |links: &mut Links, row| links.point(Some(spot(1, 1, row))).map(|pointing| pointing.complete);
+    assert_eq!(complete(&mut links, 5), Some(format!("{long}#302")), "another channel's whole address");
+    assert_eq!(complete(&mut links, 7), Some("https://www.example.invalid/a?b=c#d (opens in your web browser)".to_owned()));
+    assert_eq!(complete(&mut links, 9), Some("Page 401".to_owned()));
+    assert_eq!(complete(&mut links, 20), None, "nothing where no link is");
+}
+
+// REQ-1660 item 4: a character that would disguise an address cannot be in
+// a link's address at all, so none reaches the popover.
+#[test]
+fn an_address_with_hidden_characters_is_not_a_link() {
+    for target in
+        ["https://weather.invalid/\u{202E}a", "https://weather.invalid/\u{200B}", "https://weather.invalid/\u{7}", "web:https://www.example.invalid/\u{202E}"]
+    {
+        assert_eq!(parse_target(target), None, "{target:?}");
+    }
+}
+
 // REQ-808: only a `web:` link asks.
 #[test]
 fn the_web_is_asked_about_and_answered_only_after_half_a_second() {

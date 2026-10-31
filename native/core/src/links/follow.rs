@@ -34,7 +34,7 @@ impl Links {
     }
 
     fn pointing(&self) -> Option<Pointing> {
-        self.pointed.as_ref().map(|(_, destination)| Pointing { kind: destination.kind(), text: destination.describe() })
+        self.pointed.as_ref().map(|(_, destination)| Pointing { kind: destination.kind(), text: destination.describe(), complete: destination.complete() })
     }
 
     /// A click on a cell. It follows a link only when the click is on the

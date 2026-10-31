@@ -7,6 +7,7 @@
 
 use alloc::collections::BTreeMap;
 use alloc::format;
+use alloc::string::String;
 use alloc::vec::Vec;
 
 use super::{Browser, Cursor, Key, Modifiers, Output};
@@ -193,6 +194,16 @@ impl Browser {
         return self.click_is_hosts();
         #[cfg(not(feature = "interaction"))]
         false
+    }
+
+    /// The link under the pointer's popover, in the words the trusted core
+    /// sent for it (REQ-1660).
+    pub(super) fn link_tips(&self, tips: &mut Vec<(Rect, String)>) {
+        let Some(pointing) = &self.links.pointing else { return };
+        let Some((_, rect, links)) = self.open_links() else { return };
+        if let Some(run) = self.links.hovered.and_then(|index| links.runs.get(index)) {
+            tips.push((links::cells(rect, run), pointing.complete.clone()));
+        }
     }
 
     /// Asks for the look under the pointer when it changed: hover, or
