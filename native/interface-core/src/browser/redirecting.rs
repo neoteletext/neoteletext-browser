@@ -13,6 +13,8 @@ use crate::theme::{ADDRESS, BLACK, HEADING, WHITE};
 
 /// The notice's first line (REQ-1686 item 2).
 const HEADLINE: &str = "Redirecting to:";
+/// The first line's style: a heading's, with its capital as written.
+const HEADLINE_STYLE: Style = Style { caps: false, ..HEADING };
 /// Between the notice's text and the page area's edges.
 const INSET: f64 = 16.0;
 /// Between the first line and the address.
@@ -26,7 +28,7 @@ const SMALLEST_SIZE: f32 = 6.0;
 /// The address wrapped to `area`, in the largest style it fits in with the
 /// first line above it, with that style's line height.
 fn fit<'text, C: Canvas + ?Sized>(canvas: &mut C, address: &'text str, area: Rect) -> (Vec<&'text str>, Style, f64) {
-    let room = area.height() - canvas.line_height(HEADING) - GAP;
+    let room = area.height() - canvas.line_height(HEADLINE_STYLE) - GAP;
     let mut style = ADDRESS;
     loop {
         let lines = wrapped_anywhere(canvas, address, area.width(), style);
@@ -51,11 +53,11 @@ impl Browser {
         canvas.fill(area, 0.0, BLACK);
         let inside = Rect::new(area.x0 + INSET, area.y0 + INSET, area.x1 - INSET, area.y1 - INSET);
         let (lines, style, line_height) = fit(canvas, &self.strip.redirecting, inside);
-        let headline_height = canvas.line_height(HEADING);
+        let headline_height = canvas.line_height(HEADLINE_STYLE);
         #[allow(clippy::cast_precision_loss, reason = "a few dozen lines")]
         let height = headline_height + GAP + lines.len() as f64 * line_height;
         let mut y = (f64::midpoint(inside.y0, inside.y1) - height / 2.0).max(inside.y0);
-        centred(canvas, Rect::new(inside.x0, y, inside.x1, y + headline_height), HEADLINE, HEADING, WHITE);
+        centred(canvas, Rect::new(inside.x0, y, inside.x1, y + headline_height), HEADLINE, HEADLINE_STYLE, WHITE);
         y += headline_height + GAP;
         for line in lines {
             centred(canvas, Rect::new(inside.x0, y, inside.x1, y + line_height), line, style, WHITE);
