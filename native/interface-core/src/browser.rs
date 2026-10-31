@@ -27,6 +27,7 @@ mod certificate_refused;
 mod console_panel;
 mod cookies_tab;
 mod divider;
+mod file_drag;
 #[cfg(test)]
 mod fixture;
 mod focus;
@@ -112,6 +113,8 @@ pub struct Browser {
     channel: Channel,
     /// A page the trusted core opened that the window does not list yet.
     show_when_listed: Option<PageKey>,
+    /// Files dragged over the window.
+    file_drag: file_drag::FileDrag,
     bank: usize,
     selected: Option<usize>,
     list_scroll: f64,
@@ -222,6 +225,7 @@ impl Browser {
             redirecting_area: Rect::ZERO,
             channel: Channel::empty(),
             show_when_listed: None,
+            file_drag: file_drag::FileDrag::default(),
             bank: 0,
             selected: None,
             list_scroll: 0.0,

@@ -8,8 +8,8 @@ use std::path::Path;
 use update::files;
 use update::manifest::{Entry, Manifest};
 use update::platform::{
-    APPARMOR_PROFILE, BUNDLE, CHOOSER_BUNDLE, CHOOSER_PROGRAM, Family, LINUX_ICON_SIZES, MACOS_ICON, MANIFEST, MANIFEST_SIGNATURE, MAX_FILES, PROGRAMS,
-    Platform, SIGNATURE_SUFFIX,
+    APPARMOR_PROFILE, BUNDLE, CHOOSER_BUNDLE, CHOOSER_IDENTIFIER, CHOOSER_PROGRAM, Family, LINUX_ICON_SIZES, MACOS_ICON, MANIFEST, MANIFEST_SIGNATURE,
+    MAX_FILES, PROGRAMS, Platform, SIGNATURE_SUFFIX,
 };
 use update::version::Version;
 
@@ -126,7 +126,7 @@ fn chooser_plist(version: Version) -> String {
 	<key>CFBundleExecutable</key>
 	<string>{CHOOSER_PROGRAM}</string>
 	<key>CFBundleIdentifier</key>
-	<string>{BUNDLE_IDENTIFIER}.chooser</string>
+	<string>{CHOOSER_IDENTIFIER}</string>
 	<key>CFBundleInfoDictionaryVersion</key>
 	<string>6.0</string>
 	<key>CFBundleName</key>

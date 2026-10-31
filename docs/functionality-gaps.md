@@ -44,8 +44,8 @@
 | Screen readers and keyboard reach of every control | Not built | Requirement 12.9 |
 | Reduced motion | Not built | — |
 | A 4:3 page aspect | Not built | — |
-| Files dropped on the window | Built on macOS and Windows, and on the page and tab strip by place on macOS (REQ-1700); not yet seen with a real drag; none on Linux (DEC-1551 item 4). The arrow, and a background tab switching under a held pointer, are not built: winit 0.30 reports no position during a drag | REQ-1700 |
-| Open File, and opening from the system | Built (REQ-1699, REQ-1703); not yet seen with a person at the dialog | REQ-1699 |
+| Files dropped on the window | Built on macOS and Windows, by place on the page, the tab strip and the address field, with the arrow and a background tab switching under a held pointer (REQ-1700); not yet seen with a real drag; none on Linux (DEC-1551 item 4). The window asks the system where the pointer is, because winit 0.30 reports no position during a drag | REQ-1700 |
+| Open File, and opening from the system | Built (REQ-1699, REQ-1703), the dialog owned by the window on Windows and X11 and given the foreground on macOS; not centred on the window on macOS, and with no parent on Wayland; not yet seen with a person at the dialog | REQ-1699 |
 | Help, and the interface in other languages | Not built | — |
 | Removing a bookmark from a history row's menu | Built | Decision 64 |
 | Ranking the address field's suggestions | Unchanged since decision 57 | `history-and-bookmarks.md` |

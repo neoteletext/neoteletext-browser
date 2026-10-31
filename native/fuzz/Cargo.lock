@@ -355,6 +355,7 @@ version = "0.1.0"
 dependencies = [
  "landlock",
  "libc",
+ "raw-window-handle",
  "seccompiler",
  "windows-sys 0.52.0",
 ]
@@ -1306,6 +1307,12 @@ name = "rand_core"
 version = "0.10.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "63b8176103e19a2643978565ca18b50549f6101881c443590420e4dc998a3c69"
+
+[[package]]
+name = "raw-window-handle"
+version = "0.6.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "20675572f6f24e9e76ef639bc5552774ed45f1c30e2951e1e99c59888861c539"
 
 [[package]]
 name = "regex"

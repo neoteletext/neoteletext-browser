@@ -352,6 +352,9 @@ impl ApplicationHandler<Incoming> for App {
             }
         }
         self.switch_view(here);
+        if let Some(at) = self.follow_file_drag(event_loop) {
+            next = Some(next.map_or(at, |next| next.min(at)));
+        }
         event_loop.set_control_flow(next.map_or(ControlFlow::Wait, ControlFlow::WaitUntil));
     }
 }

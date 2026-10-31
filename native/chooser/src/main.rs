@@ -35,6 +35,10 @@ use std::process::ExitCode;
 
 use confine::broker::ChooseKind;
 
+/// A window handle's base, on the command line.
+#[cfg(windows)]
+const HEXADECIMAL: u32 = 16;
+
 fn title(kind: ChooseKind) -> &'static str {
     match kind {
         ChooseKind::File => "Open File",
@@ -43,13 +47,21 @@ fn title(kind: ChooseKind) -> &'static str {
     }
 }
 
-/// The system's dialog on macOS and Windows.
+/// The system's dialog on macOS and Windows, owned on Windows by `parent`:
+/// `win32:` and a window's handle in hexadecimal, or nothing. macOS centres
+/// the panel on the screen, as it cannot be placed from another process.
 #[cfg(not(target_os = "linux"))]
 #[allow(clippy::unnecessary_wraps, reason = "the same signature as Linux's, whose portal can fail")]
-fn choose(kind: ChooseKind, _parent: &str, folder: Option<&Path>) -> Result<Option<PathBuf>, String> {
+#[cfg_attr(not(windows), allow(unused_variables, reason = "only a window handle of Windows means anything in another process"))]
+fn choose(kind: ChooseKind, parent: &str, folder: Option<&Path>) -> Result<Option<PathBuf>, String> {
     let mut dialog = rfd::FileDialog::new().set_title(title(kind));
     if let Some(folder) = folder {
         dialog = dialog.set_directory(folder);
+    }
+    #[cfg(windows)]
+    if let Some(window) = parent.strip_prefix("win32:").and_then(|handle| isize::from_str_radix(handle, HEXADECIMAL).ok()).and_then(confine::ForeignWindow::new)
+    {
+        dialog = dialog.set_parent(&window);
     }
     Ok(if kind == ChooseKind::Folder { dialog.pick_folder() } else { dialog.pick_file() })
 }

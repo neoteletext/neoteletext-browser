@@ -591,6 +591,7 @@ version = "0.1.0"
 dependencies = [
  "landlock",
  "libc",
+ "raw-window-handle",
  "seccompiler",
  "windows-sys 0.52.0",
 ]
@@ -1971,6 +1972,7 @@ dependencies = [
  "neoteletext-input",
  "protocol",
  "softbuffer",
+ "update",
  "winit",
 ]
 

@@ -324,7 +324,7 @@ pub fn menu_item(number: usize) -> Option<&'static MenuItem> {
 #[cfg(target_os = "macos")]
 mod mac;
 #[cfg(target_os = "macos")]
-pub use mac::{install, install_menu_bar, install_opener, pointer_in_view, set, set_about, set_full_screen, set_icon};
+pub use mac::{install, install_menu_bar, install_opener, pointer_in_view, set, set_about, set_full_screen, set_icon, yield_activation};
 
 /// Elsewhere there is no menu bar: the menu button's menu is its
 /// counterpart (`menu-bar.md` section 1).
@@ -350,6 +350,15 @@ pub fn set_about(_version: &str, _copyright: &str) {}
 /// Elsewhere there is no menu bar.
 #[cfg(not(target_os = "macos"))]
 pub fn set_full_screen(_full_screen: bool) {}
+
+/// The bundle identifier of the chooser's helper on macOS, as the release
+/// tool writes it (`update::platform::CHOOSER_IDENTIFIER`; a test of the
+/// interface holds the two the same).
+pub const CHOOSER_IDENTIFIER: &str = "com.neoteletext.browser.chooser";
+
+/// Nothing to yield: only macOS gives the foreground out.
+#[cfg(not(target_os = "macos"))]
+pub fn yield_activation(_bundle: &str) {}
 
 /// Elsewhere there is no Dock.
 #[cfg(not(target_os = "macos"))]

@@ -32,8 +32,12 @@ libc = "=0.2.190"
 # Windows: the bindings winit and web-opener already use, so no crate is
 # added; the features enable the token, job, pipe and process calls.
 [target.'cfg(windows)'.dependencies]
+# What winit and rfd name a window by, for a dialog owned by another
+# process's window: already in the tree through both.
+raw-window-handle = "=0.6.2"
 windows-sys = { version = "=0.52.0", features = [
     "Win32_Foundation",
+    "Win32_Graphics_Gdi",
     "Win32_System_IO",
     "Win32_Security",
     "Win32_Security_Authorization",
@@ -46,6 +50,7 @@ windows-sys = { version = "=0.52.0", features = [
     "Win32_System_Threading",
     "Win32_System_Time",
     "Win32_System_WindowsProgramming",
+    "Win32_UI_WindowsAndMessaging",
 ] }
 
 # As the Dock menu's and the web opener's crates: unsafe code is denied,

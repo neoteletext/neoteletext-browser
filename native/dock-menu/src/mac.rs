@@ -7,7 +7,7 @@ use std::ffi::CStr;
 
 use objc2::rc::Retained;
 use objc2::runtime::{AnyObject, Sel};
-use objc2::{ClassType, DeclaredClass, declare_class, ffi, msg_send_id, mutability, sel};
+use objc2::{ClassType, DeclaredClass, declare_class, ffi, msg_send, msg_send_id, mutability, sel};
 use objc2_app_kit::{
     NSAboutPanelOptionApplicationName, NSAboutPanelOptionApplicationVersion, NSApplication, NSControlStateValueOn, NSEventModifierFlags, NSImage,
     NSLeftArrowFunctionKey, NSMenu, NSMenuItem, NSRightArrowFunctionKey, NSView,
@@ -461,6 +461,21 @@ pub fn pointer_in_view(view: usize) -> Option<(f64, f64)> {
     let point = view.convertPoint_fromView(unsafe { window.mouseLocationOutsideOfEventStream() }, None);
     let y = if view.isFlipped() { point.y } else { view.bounds().size.height - point.y };
     Some((point.x, y))
+}
+
+/// Lets the application `bundle`, about to show a window, take the
+/// foreground: macOS 14 and later give it only to one this application
+/// yields to. Earlier systems have no such call and need none.
+pub fn yield_activation(bundle: &str) {
+    let Some(mtm) = MainThreadMarker::new() else { return };
+    let application = NSApplication::sharedApplication(mtm);
+    if !application.respondsToSelector(sel!(yieldActivationToApplicationWithBundleIdentifier:)) {
+        return;
+    }
+    let bundle = NSString::from_str(bundle);
+    // SAFETY: the application answers the selector, checked above, which
+    // takes a string and returns nothing, on the main thread, as checked.
+    let () = unsafe { msg_send![&application, yieldActivationToApplicationWithBundleIdentifier: &*bundle] };
 }
 
 /// What the Dock menu lists from now on.

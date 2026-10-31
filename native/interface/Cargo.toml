@@ -37,6 +37,7 @@ icon.workspace = true
 
 # Only to check, in a test, that the windows' icon is the art.
 [dev-dependencies]
+update.workspace = true
 icon.workspace = true
 
 [lints]

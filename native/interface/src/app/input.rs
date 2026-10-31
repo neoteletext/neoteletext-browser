@@ -114,6 +114,15 @@ impl App {
             WindowEvent::CloseRequested => self.sent(event_loop, &ToCore::CloseWindow),
             WindowEvent::DroppedFile(path) => {
                 self.file_dropped(path);
+                self.file_drag_ended();
+                false
+            }
+            WindowEvent::HoveredFile(_) => {
+                self.view.browser.file_drag_began();
+                false
+            }
+            WindowEvent::HoveredFileCancelled => {
+                self.file_drag_ended();
                 false
             }
             WindowEvent::RedrawRequested => {

@@ -31,6 +31,8 @@ pub const BUNDLE: &str = "NeoTeletext.app";
 /// On macOS the chooser is a bundle of its own inside it, an agent, so that
 /// it has no Dock icon or menu (DEC-1551 item 1).
 pub const CHOOSER_BUNDLE: &str = "Contents/Helpers/NeoTeletextChooser.app";
+/// The chooser's helper bundle's identifier on macOS.
+pub const CHOOSER_IDENTIFIER: &str = "com.neoteletext.browser.chooser";
 /// A Linux file's detached signature is beside it, with this suffix
 /// (section 4.3).
 pub const SIGNATURE_SUFFIX: &str = ".sig";
