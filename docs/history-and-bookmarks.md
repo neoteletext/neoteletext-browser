@@ -185,7 +185,7 @@ folder	4	2	Weather
 bookmark	5	4	News Example 302 WEATHER	https://news.example/teletext/#302
 ```
 
-Each line is a kind, a number, its folder's number (0 for the two that are always there), a name and, for a bookmark, an address, separated by tab characters. Lines are in each folder's order. **Read strictly:** the version line; at most 24 MiB (10 000 items of the longest line, rounded up); numbers unique; a folder's line before anything inside it, so there can be no cycle; depth at most 16; each name and address within its bounds and rules. A line that breaks a rule is dropped and logged, with anything inside it if it is a folder. A fuzz target, `bookmarks_file`, as for history.
+Each line is a kind, a number, its folder's number (0 for the two that are always there), a name and, for a bookmark, an address, separated by tab characters. Lines are in each folder's order. **Read strictly:** the version line; at most 84 MiB (10 000 items of the longest line, rounded up, each address up to 8,000 octets); numbers unique; a folder's line before anything inside it, so there can be no cycle; depth at most 16; each name and address within its bounds and rules. A line that breaks a rule is dropped and logged, with anything inside it if it is a folder. A fuzz target, `bookmarks_file`, as for history.
 
 The `bookmark` lines of `settings.txt` are no longer written there (requirements 19.1 and 19.2 amended). Whether today's are moved across once is the owner's decision (section 13, item 9).
 
@@ -264,7 +264,7 @@ Each is to be confirmed by running the confined core, as `the_trusted_core_start
 ## 8. Performance
 
 - **A visit** is one row looked up in memory and one line appended: well under a millisecond, off the drawing path.
-- **Start** reads at most 16 MiB of history and 24 MiB of bookmarks; at typical sizes (6 MB and 100 KB) the measurement to make is the time to the first frame, which must not grow by more than 50 ms (requirement 20.14).
+- **Start** reads at most 16 MiB of history and 84 MiB of bookmarks; at typical sizes (6 MB and 100 KB) the measurement to make is the time to the first frame, which must not grow by more than 50 ms (requirement 20.14).
 - **Search and suggestions** scan at most 50 000 rows and 10 000 bookmarks in memory per keystroke: a few milliseconds; if measurement says otherwise, an index of words is the next step.
 
 ## 9. Showing hostile text safely
@@ -384,7 +384,7 @@ On adoption these are added to `requirements.md` as section 20, and the amendmen
 - *Verification:* Tests of round trip and of an interrupted write.
 
 **Requirement 20.20: The bookmarks file is read strictly.**
-- *Statement:* `bookmarks.txt` must be read as section 3.6 of `history-and-bookmarks.md` defines it: a version line, at most 24 MiB, unique numbers, each folder before its contents so no cycle can be read, depth at most 16, each field within its bound and rule; a line that breaks a rule is dropped and logged with anything inside it.
+- *Statement:* `bookmarks.txt` must be read as section 3.6 of `history-and-bookmarks.md` defines it: a version line, at most 84 MiB, unique numbers, each folder before its contents so no cycle can be read, depth at most 16, each field within its bound and rule; a line that breaks a rule is dropped and logged with anything inside it.
 - *Reason:* The file is outside input.
 - *Verification:* Test of each rule; the fuzz target `bookmarks_file`.
 
@@ -505,7 +505,7 @@ entry	0	0	1792655000	https://sport.example/	sport.example
 
 *Version 2, decision 64:* each entry carries the time the tab last came to it, in seconds since 1970 (UTC), so that clearing history by time reaches the tabs' lists; `closed` lines, after the tabs, hold the recently closed tabs, most recent first, at most 25. A version 1 file is not read.
 
-Tab-separated: `window` with x, y, width, height and maximised (0 or 1); `active` with the active tab's place; each `tab` with its mute and its place in its list, followed by its `entry` lines, each with whether a page started it, whether the buttons pass over it, its time, its address and its title. **Read strictly**, as `history.txt` is: the version line; at most 8 MiB (64 tabs of 50 entries of the longest line, rounded up); every field within its bound and rule, every address one the address rules accept, every title clean; a tab with no entry, or a place beyond its entries, is dropped with its entries; an active place beyond the tabs is the first. A fuzz target, `session_file`. Another program can write the file; it can already change the user's files.
+Tab-separated: `window` with x, y, width, height and maximised (0 or 1); `active` with the active tab's place; each `tab` with its mute and its place in its list, followed by its `entry` lines, each with whether a page started it, whether the buttons pass over it, its time, its address and its title. **Read strictly**, as `history.txt` is: the version line; at most 40 MiB (every tab and closed tab at its most entries of the longest line, rounded up); every field within its bound and rule, every address one the address rules accept, every title clean; a tab with no entry, or a place beyond its entries, is dropped with its entries; an active place beyond the tabs is the first. A fuzz target, `session_file`. Another program can write the file; it can already change the user's files.
 
 ### 15.5 Security
 

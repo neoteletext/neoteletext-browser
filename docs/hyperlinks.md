@@ -69,7 +69,7 @@
   - `LK`, a page number the page shows, linked to a target;
   - `LT`, a run of text, linked to a target. "The page draws the text itself; a receiver may show it as a link."
 
-  The engine parses both (`neoteletext-formats`, `page.rs` and `tti.rs`): at most eight of each per page, with a target of at most 256 bytes. The engine's requirements for showing links (REQ-NAV-013 and REQ-NAV-015) moved to this repository with the browser and were withdrawn there; this document restates them.
+  The engine parses both (`neoteletext-formats`, `page.rs` and `tti.rs`): at most eight of each per page, with a target of at most 8,004 bytes, the longest address with its `web:` mark (neoteletext-common's REQ-1661, DEC-1668). The engine's requirements for showing links (REQ-NAV-013 and REQ-NAV-015) moved to this repository with the browser and were withdrawn there; this document restates them.
 
 **The browser:**
 - **Drawing.** The decoder renders each page with the engine's `render_screen` into a 480 × 500 indexed image. The trusted core checks it and sends it on as a page image (an indexed PNG until decision 61). The interface draws it with `Canvas::page`, and already draws browser-owned things over pages in `Wall::draw_page`: the hover frame, the zoom outline, the close button, and the update glow.
@@ -153,7 +153,7 @@ The trusted core classifies each target when it accepts the link, from the targe
 | `name:mpp`, a service named in the descriptor's `services`, or a descriptor alias to one | **Another channel.** Each named service is its own descriptor, at its own origin and folder, which the engine makes a channel of its own | Opens at once in the same tab (REQ-1670), the strip having named the service's channel |
 | An address of a teletext channel or page file (`http` or `https`, as the TTI Link Extension's section E.1 defines), from an `LT`, `LK` or `LN` line or a descriptor alias | **Another channel** | Opens at once in the same tab (REQ-1670), as a typed address would (content decides, requirement 6.2) |
 | `web:` and an `https` or `http` address (section 7.2) | **The web** | The web-browser prompt in the strip (section 12), then the system's web browser |
-| Anything else: `file:`, `data:`, `javascript:`, any other scheme, a bare path, an address with a user name or hidden characters, over 256 bytes | **Not a link** | Nothing; the text is not underlined |
+| Anything else: `file:`, `data:`, `javascript:`, any other scheme, a bare path, an address with a user name or hidden characters, over 8,004 bytes | **Not a link** | Nothing; the text is not underlined |
 
 **Why from the target and not from what the server returns.** Asking the server to find out would contact a server the user has not agreed to visit, telling it that they looked and from where. And the strip could not say "opens in your web browser" before the click.
 
@@ -295,7 +295,7 @@ One prompt at a time per window: a second web link replaces the first prompt, an
 - parsed, not matched by prefix;
 - with a host of letters, digits, hyphens and dots only, as the address rules require today (internationalised hosts are refused until they can be shown safely, requirement 11.3);
 - with no user name and no hidden characters;
-- at most 2,048 bytes;
+- at most 8,000 bytes (neoteletext-common's REQ-1661);
 - **re-serialised by the core from its parsed parts** (scheme, host, port, path, query). The original string is never passed on, and an address that does not round-trip (a backslash, a percent-encoded host, anything the parser had to guess at) is refused. This removes any difference between how the core read the address and how the operating system or the web browser will.
 
 The scheme is always `https://` or `http://`, so the address can never begin like a command-line option. `http` is shown as not secure. Refused before the opener is considered: `file:`, `data:`, `javascript:`, mail and telephone schemes, every application scheme (`ms-settings:`, `steam:`, `zoom:`, `vscode:` and the rest), UNC and bare paths, and anything beginning with `-`.

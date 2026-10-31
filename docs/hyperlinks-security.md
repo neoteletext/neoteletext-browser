@@ -86,7 +86,7 @@ Boundaries B, C and D exist today for frames and clicks; links add new message k
 |---|---|
 | Malformed link lines crash the parser | The engine's parsers are bounded, panic-free and fuzzed (its REQ-SEC-016); the decoder is a process with no rights (requirement 3.4), so a crash loses one channel's pictures and nothing else |
 | More links than the engine holds | The engine keeps at most eight `LT` and eight `LK` per page and reports the rest |
-| A target over 256 bytes | Refused by the engine |
+| A target over 8,004 bytes | Refused by the engine |
 | A page remaps a visible number (`LK,140,…`) to another page | Within the channel, harmless: the same author controls both pages. To another channel: the strip shows the destination before the number is followed, and Back returns (section 8) |
 | **A descriptor's `aliases` remap a typed number to another service or address** | Up to 16; these are links and must go through the same table and the same screens as `LK`. The proposed spec had missed them (finding 2) |
 | **A descriptor's named `services` lead to other descriptors, at other origins** | A `name:mpp` target is *another channel*, not "this channel, another service" as the spec said (finding 1); the strip names that channel, and it gets its own decoder and cookies |
@@ -95,7 +95,7 @@ Boundaries B, C and D exist today for frames and clicks; links add new message k
 
 ## 6. Boundary B: the decoder into the trusted core
 
-**What crosses.** `Links { key, version, links }`: up to 32 runs per page, each a position and a target string of at most 256 bytes.
+**What crosses.** `Links { key, version, links }`: up to 32 runs per page, each a position and a target string of at most 8,004 bytes (`MAX_TARGET`, asserted equal to the engine's `LINK_TARGET_BYTES`).
 
 **Threats and mitigations.**
 

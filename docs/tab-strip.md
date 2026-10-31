@@ -28,7 +28,7 @@ Tabs shrink to 90 points; past that the strip stopped drawing them. A tab that d
 
 ## 4. A tab's address
 
-Resting on a tab for half a second shows its tip (requirement 12.12): the tab's title, which is its host, and on a line under it the tab's whole address, in the secondary text's colour, as Chrome's tab card shows a page's title over its site (decision 103). The trusted core sends each tab's address with its title, cleaned and bounded as the strip's address is; a line break is refused on the wire, so a channel cannot add lines to the tip. The tip is the interface's, below the pointer, as every tip is; on a tab in the panel it shows the same.
+Resting on a tab for half a second shows its tip (requirement 12.12): the tab's title, which is its host, and on a line under it the tab's address, cut to 512 bytes as a view's is so that every tab fits one message, in the secondary text's colour, as Chrome's tab card shows a page's title over its site (decision 103). The trusted core sends each tab's address with its title, cleaned and bounded as the strip's address is; a line break is refused on the wire, so a channel cannot add lines to the tip. The tip is the interface's, below the pointer, as every tip is; on a tab in the panel it shows the same.
 
 ## 5. Keys and screen readers
 
