@@ -43,3 +43,6 @@ pub(super) const KIND_CHANNEL_LOG: u8 = 130;
 pub(super) const KIND_INVALID_PACKETS: u8 = 131;
 pub(super) const KIND_CONNECTING: u8 = 132;
 pub(super) const KIND_INITIAL_PAGE: u8 = 133;
+// A redirect that leaves the channel (REQ-701), in the next number free
+// across every pipe.
+pub(super) const KIND_REDIRECTED: u8 = 134;

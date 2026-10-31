@@ -17,6 +17,7 @@ use neoteletext_core::types::{Instant, PageAddress, SubCode};
 #[cfg(feature = "interaction")]
 use neoteletext_web::agent::InputMessage;
 use neoteletext_web::agent::{Config, Event, Input, Output, Source, Storage, Subscription, UserAgent};
+use neoteletext_web::channel::SETTINGS_FILE;
 use neoteletext_web::consts::ALLOWED_LOCAL;
 use neoteletext_web::contents::{self, Entry as ContentsEntry};
 use neoteletext_web::http::MediaType;
@@ -258,6 +259,13 @@ fn collect(output: Output<'_>, actions: &mut Vec<Action>) {
             count: record.count,
             entries: record.entries().map(|entry| (entry.subcode.value(), entry.title.to_owned())).collect(),
         }),
+        // The trusted core decides: a channel moved to another folder
+        // redirects its settings file, so the destination named is the
+        // folder, the channel itself (REQ-701).
+        Output::Event(Event::RedirectToOtherChannel { location }) => {
+            let folder = location.strip_suffix(SETTINGS_FILE).filter(|folder| folder.ends_with('/'));
+            Action::Tell(FromFetcher::Redirected(folder.unwrap_or(location).to_owned()))
+        }
         Output::Event(event) => Action::Tell(FromFetcher::Notice(format!("{event:?}"))),
         _ => return,
     });
@@ -763,6 +771,48 @@ mod tests {
         agent.handle(Instant(0), Input::Net(connected), &mut |out| collect(out, &mut actions));
         drop(agent);
         assert_eq!(asked.0, ["a.example/tt/channel.json"]);
+    }
+
+    /// REQ-701: a channel's settings file redirected out of the channel is
+    /// not followed, and the trusted core is told the folder it leads to.
+    #[test]
+    fn a_redirect_out_of_the_channel_names_the_destinations_folder() {
+        use neoteletext_web::port::NetInput;
+        let answer = |location: &str| format!("HTTP/1.1 301 Moved Permanently\r\nLocation: {location}\r\nContent-Length: 0\r\n\r\n");
+        for (location, told) in [
+            ("https://b.example/tt/channel.json", "https://b.example/tt/"),
+            ("https://b.example/elsewhere", "https://b.example/elsewhere"),
+            ("http://a.example/other/channel.json", "http://a.example/other/"),
+        ] {
+            let mut storage = Box::new(Storage::default());
+            let config = Config { tls_available: true, redirects_within_channel: true, ..Config::default() };
+            let mut agent: Box<Agent<'_>> = Box::new(UserAgent::new(config, storage.buffers(), Random::new()));
+            let mut actions = Vec::new();
+            agent.handle(Instant(0), Input::OpenChannel("http://a.example/tt/"), &mut |out| collect(out, &mut actions));
+            let connected = NetInput::Connected(ConnectionId::Fetch, neoteletext_web::url::IpAddress::V4([93, 184, 216, 34]));
+            agent.handle(Instant(0), Input::Net(connected), &mut |out| collect(out, &mut actions));
+            let reply = answer(location);
+            agent.handle(Instant(0), Input::Net(NetInput::Received(ConnectionId::Fetch, reply.as_bytes())), &mut |out| collect(out, &mut actions));
+            assert!(actions.iter().any(|action| matches!(action, Action::Tell(FromFetcher::Redirected(address)) if address == told)), "{location}");
+        }
+    }
+
+    /// REQ-1686 item 1: a channel's `http` address redirected to its own
+    /// `https` address stays in the channel, so the trusted core hears
+    /// nothing of it and no notice shows.
+    #[test]
+    fn a_redirect_within_the_channel_is_not_told() {
+        use neoteletext_web::port::NetInput;
+        let reply = "HTTP/1.1 301 Moved Permanently\r\nLocation: https://a.example/tt/channel.json\r\nContent-Length: 0\r\n\r\n";
+        let mut storage = Box::new(Storage::default());
+        let config = Config { tls_available: true, redirects_within_channel: true, ..Config::default() };
+        let mut agent: Box<Agent<'_>> = Box::new(UserAgent::new(config, storage.buffers(), Random::new()));
+        let mut actions = Vec::new();
+        agent.handle(Instant(0), Input::OpenChannel("http://a.example/tt/"), &mut |out| collect(out, &mut actions));
+        let connected = NetInput::Connected(ConnectionId::Fetch, neoteletext_web::url::IpAddress::V4([93, 184, 216, 34]));
+        agent.handle(Instant(0), Input::Net(connected), &mut |out| collect(out, &mut actions));
+        agent.handle(Instant(0), Input::Net(NetInput::Received(ConnectionId::Fetch, reply.as_bytes())), &mut |out| collect(out, &mut actions));
+        assert!(!actions.iter().any(|action| matches!(action, Action::Tell(FromFetcher::Redirected(_)))));
     }
 
     /// A public address for the test's channel, which the agent may reach.

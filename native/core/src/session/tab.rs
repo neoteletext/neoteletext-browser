@@ -92,6 +92,7 @@ impl Tab {
     /// and, beyond [`MAX_TAB_ENTRIES`], the oldest, as Chrome does
     /// (`NavigationControllerImpl::PruneOldestSkippableEntryIfFull`).
     pub(super) fn push(&mut self, visit: Visit) {
+        self.channel.redirecting = None;
         self.history.truncate(self.position.saturating_add(1));
         self.history.push(visit);
         if self.history.len() > MAX_TAB_ENTRIES {

@@ -26,8 +26,14 @@ mod saved;
 mod tab;
 mod windows;
 
-pub use channel::ChannelState;
+pub use channel::{ChannelState, Redirecting};
 pub use tab::{ClosedTab, Pending, Tab, Visit, Went};
+
+/// The most redirects leaving a channel that one navigation follows: the
+/// Fetch standard's "If request's redirect count is 20, return a network
+/// error", which is `net::URLRequest::kMaxRedirects` in Chromium's
+/// `net/url_request/url_request.h`, read on 31 October 2026 (REQ-701).
+pub const MAX_REDIRECTS: usize = 20;
 pub use windows::Window;
 
 /// The first window's number, as the interface numbers it; numbers are
@@ -280,6 +286,7 @@ impl Session {
             private: tab.private,
             notice: String::new(),
             refused: tab.channel.refused,
+            redirecting: tab.channel.redirecting.as_ref().map(|redirect| clean(&redirect.address.text, MAX_ADDRESS)).unwrap_or_default(),
         }
     }
 }

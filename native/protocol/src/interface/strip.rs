@@ -21,7 +21,7 @@ pub(super) fn push_strip(payload: &mut Vec<u8>, strip: &StripState) -> Result<()
     push_text(payload, &strip.address, MAX_ADDRESS)?;
     push_text(payload, &strip.notice, MAX_STRIP_NOTICE)?;
     payload.push(strip.refused.map_or(0, problem_code));
-    Ok(())
+    push_text(payload, &strip.redirecting, MAX_ADDRESS)
 }
 
 pub(super) fn read_strip(fields: &mut Fields<'_>) -> Result<StripState, ProtocolError> {
@@ -45,6 +45,7 @@ pub(super) fn read_strip(fields: &mut Fields<'_>) -> Result<StripState, Protocol
             0 => None,
             code => Some(problem_of(code).ok_or(ProtocolError::BadValue("certificate problem"))?),
         },
+        redirecting: fields.text(MAX_ADDRESS)?,
     })
 }
 

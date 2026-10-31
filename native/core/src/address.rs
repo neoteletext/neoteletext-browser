@@ -68,7 +68,8 @@ pub const HOME_CHANNEL: &str = "https://app.neottx.com/home/";
 const BUILT_IN_SCHEME: &str = "neoteletext:";
 const SCHEME_SEPARATOR: &str = "://";
 const FILE_SCHEME: &str = "file://";
-const FRAGMENT: char = '#';
+/// What begins an address's fragment, which names a page.
+pub const FRAGMENT: char = '#';
 /// Hexadecimal digits of a page number and of a sub-page number.
 const PAGE_DIGITS: usize = 3;
 const SUBPAGE_DIGITS: usize = 4;
@@ -222,6 +223,20 @@ pub fn parse(typed: &str) -> Result<Address, String> {
     let subpage = path.split_once(FRAGMENT).and_then(|(_, fragment)| fragment_subpage(fragment));
     let port = port.map(|port| format!(":{port}")).unwrap_or_default();
     within_bound(Address { text: format!("{scheme}{SCHEME_SEPARATOR}{host}{port}{path}"), host, encrypted, file: None, page, subpage })
+}
+
+/// Where a redirect leads, by the rules the address field uses: `https` or
+/// `http` written out, never a file, a built-in page or a host with the
+/// scheme left off, whatever a fetcher says (REQ-701 item 2).
+///
+/// # Errors
+/// A sentence for the user.
+pub fn redirect_destination(location: &str) -> Result<Address, String> {
+    let scheme = location.split_once(SCHEME_SEPARATOR).map(|(scheme, _)| scheme).unwrap_or_default();
+    if !scheme.eq_ignore_ascii_case("https") && !scheme.eq_ignore_ascii_case("http") {
+        return Err("it redirected to something other than a web address".into());
+    }
+    parse(location)
 }
 
 /// The address, when written in full, with its scheme and slash, it is no

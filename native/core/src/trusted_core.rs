@@ -20,6 +20,7 @@ mod page_controls;
 #[cfg(feature = "phone-keyboard")]
 mod phone;
 mod processes;
+mod redirects;
 mod run;
 mod settings;
 mod sound;

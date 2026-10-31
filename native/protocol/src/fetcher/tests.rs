@@ -14,6 +14,7 @@ fn every_kind_round_trips() {
         FromFetcher::Page { origin: Origin::FetchedPage, bytes: b"PN,10000\\n".to_vec() },
         FromFetcher::Page { origin: Origin::FetchedPackets, bytes: vec![0; 84] },
         FromFetcher::Notice("Opened".into()),
+        FromFetcher::Redirected("https://b.example/teletext/".into()),
         FromFetcher::Pushing(true),
         FromFetcher::Exchange { method: "GET".into(), url: "https://a.example/100.tti".into(), status: 200, bytes: 512, elapsed_us: 1_234 },
         FromFetcher::Confined,

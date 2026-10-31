@@ -29,6 +29,7 @@ fn strip() -> StripState {
         private: true,
         notice: "Proxy changed to socks5://127.0.0.1:1080".into(),
         refused: Some(CertificateProblem::Revoked),
+        redirecting: "https://elsewhere.invalid/teletext/".into(),
     }
 }
 
@@ -320,7 +321,7 @@ fn text_is_cleaned_before_sending_and_checked_on_arrival() {
     let mut payload = vec![0];
     payload.extend_from_slice(&u16::try_from(identity.len()).unwrap().to_be_bytes());
     payload.extend_from_slice(identity);
-    payload.extend_from_slice(&[0, 0]);
+    payload.extend_from_slice(&[0, 0, 0, 0, 0, 0]);
     let mut bytes = vec![KIND_STRIP];
     bytes.extend_from_slice(&u32::try_from(payload.len()).unwrap().to_be_bytes());
     bytes.extend_from_slice(&payload);

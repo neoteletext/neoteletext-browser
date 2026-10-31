@@ -15,7 +15,7 @@ use super::Browser;
 use crate::canvas::Canvas;
 use crate::channel::{bank_indices, page_number};
 use crate::geometry::{Point, Rect};
-use crate::text::{border, left_centred};
+use crate::text::{border, left_centred, wrapped_anywhere};
 use crate::theme::{BUTTON, MUTED, ROW_TITLE, RULE, WHITE};
 
 /// How long the pointer rests on a control before its tip shows: about
@@ -161,7 +161,7 @@ impl Browser {
             .text
             .split(LINE_BREAK)
             .enumerate()
-            .flat_map(|(number, line)| wrap(canvas, line, widest_text).into_iter().map(move |part| (number == 0, part)))
+            .flat_map(|(number, line)| wrapped_anywhere(canvas, line, widest_text, ROW_TITLE).into_iter().map(move |part| (number == 0, part)))
             .take(most_lines)
             .collect();
         let text_width = lines.iter().map(|(_, line)| canvas.text_width(line, ROW_TITLE)).fold(0.0, f64::max);
@@ -254,36 +254,6 @@ impl Browser {
         #[cfg(feature = "phone-keyboard")]
         self.phone_tips(tips);
     }
-}
-
-/// `line` in parts each no wider than `widest` in the tips' face, broken
-/// between characters, as an address has no spaces to break at: each part
-/// the longest that fits, found by halving, and at least one character so
-/// every part moves on. An empty line is one empty part.
-fn wrap<'line, C: Canvas + ?Sized>(canvas: &mut C, line: &'line str, widest: f64) -> Vec<&'line str> {
-    let mut parts = Vec::new();
-    let mut rest = line;
-    while !rest.is_empty() {
-        let ends: Vec<usize> = rest.char_indices().map(|(at, _)| at).skip(1).chain(core::iter::once(rest.len())).collect();
-        // So many characters fit, and so many are known not to.
-        let (mut fits, mut too_long) = (0_usize, ends.len().saturating_add(1));
-        while fits.saturating_add(1) < too_long {
-            let middle = fits.midpoint(too_long);
-            if ends.get(middle.saturating_sub(1)).and_then(|&end| rest.get(..end)).is_some_and(|part| canvas.text_width(part, ROW_TITLE) <= widest) {
-                fits = middle;
-            } else {
-                too_long = middle;
-            }
-        }
-        let end = ends.get(fits.max(1).saturating_sub(1)).copied().unwrap_or(rest.len());
-        let (part, after) = rest.split_at(end);
-        parts.push(part);
-        rest = after;
-    }
-    if parts.is_empty() {
-        parts.push(line);
-    }
-    parts
 }
 
 #[cfg(test)]

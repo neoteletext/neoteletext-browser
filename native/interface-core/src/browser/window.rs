@@ -90,6 +90,12 @@ impl Browser {
     /// over them; and the pages on screen, told to the trusted core when
     /// they changed.
     fn draw_pages<C: Canvas + ?Sized>(&mut self, canvas: &mut C, zoom: Rect, now: u64) {
+        // A redirect's notice clears the page area: nothing of the channel
+        // being left is drawn (REQ-1686 item 5).
+        self.redirecting_area = Rect::ZERO;
+        if self.draw_redirecting(canvas, zoom) {
+            return;
+        }
         // The titles are borrowed from the channel while the wall draws:
         // the fields are borrowed apart.
         let (channel, updates) = (&self.channel, &self.updates);

@@ -133,7 +133,7 @@ impl Browser {
     /// Something needs the window, which ends full screen (section 5): the
     /// page closed or gone, another tab or channel, a panel or list of the
     /// strip, the console, the remote, the strip's question, a certificate
-    /// refused.
+    /// refused, a redirect's notice.
     fn full_screen_needs_window(&self) -> bool {
         let Some((_, entered)) = self.full_screen.on else { return false };
         let now = Entered { channel: self.channel.channel, tabs: self.tabs.len(), active: self.active, remote: self.remote_shown() };
@@ -157,6 +157,7 @@ impl Browser {
             || phone
             || question
             || self.strip.refused.is_some()
+            || !self.strip.redirecting.is_empty()
     }
 
     /// The pointer moved at `now` in full screen: the strip comes down after

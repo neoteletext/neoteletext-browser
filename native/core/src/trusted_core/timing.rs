@@ -67,6 +67,9 @@ impl Core {
         if let Some(due) = self.invalid_due_at() {
             next = next.map(|at| at.min(due));
         }
+        if let Some(due) = self.redirect_due_at() {
+            next = next.map(|at| at.min(due));
+        }
         #[cfg(feature = "interaction")]
         if let Some(due) = self.moves_due_at() {
             next = next.map(|at| at.min(due));
@@ -106,6 +109,9 @@ impl Core {
         }
         if self.invalid_due_at().is_some_and(|due| now >= due) {
             self.invalid_tick(now);
+        }
+        if self.redirect_due_at().is_some_and(|due| now >= due) {
+            self.finish_redirects(now)?;
         }
         #[cfg(feature = "interaction")]
         if self.moves_due_at().is_some_and(|due| now >= due) {

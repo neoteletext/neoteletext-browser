@@ -43,6 +43,36 @@ pub fn fitted<C: Canvas + ?Sized>(canvas: &mut C, text: &str, width: f64, style:
     if canvas.text_width(&shown, style) <= width { shown } else { String::new() }
 }
 
+/// `line` in parts each no wider than `widest` in `style`, broken between
+/// characters, as an address has no spaces to break at: each part the
+/// longest that fits, found by halving, and at least one character so every
+/// part moves on. No character is lost. An empty line is one empty part.
+pub fn wrapped_anywhere<'line, C: Canvas + ?Sized>(canvas: &mut C, line: &'line str, widest: f64, style: Style) -> Vec<&'line str> {
+    let mut parts = Vec::new();
+    let mut rest = line;
+    while !rest.is_empty() {
+        let ends: Vec<usize> = rest.char_indices().map(|(at, _)| at).skip(1).chain(core::iter::once(rest.len())).collect();
+        // So many characters fit, and so many are known not to.
+        let (mut fits, mut too_long) = (0_usize, ends.len().saturating_add(1));
+        while fits.saturating_add(1) < too_long {
+            let middle = fits.midpoint(too_long);
+            if ends.get(middle.saturating_sub(1)).and_then(|&end| rest.get(..end)).is_some_and(|part| canvas.text_width(part, style) <= widest) {
+                fits = middle;
+            } else {
+                too_long = middle;
+            }
+        }
+        let end = ends.get(fits.max(1).saturating_sub(1)).copied().unwrap_or(rest.len());
+        let (part, after) = rest.split_at(end);
+        parts.push(part);
+        rest = after;
+    }
+    if parts.is_empty() {
+        parts.push(line);
+    }
+    parts
+}
+
 /// Text from `rect`'s top-left, fitted to its width with an ellipsis.
 pub fn fitted_text<C: Canvas + ?Sized>(canvas: &mut C, rect: Rect, text: &str, style: Style, colour: Colour) {
     let shown = fitted(canvas, text, rect.width(), style);

@@ -63,6 +63,10 @@ pub struct StripState {
     /// The channel's certificate was refused, and why: the page area shows
     /// the certificate-error screen (`certificate-errors.md`, decision 83).
     pub refused: Option<CertificateProblem>,
+    /// A redirect is taking the tab out of its channel: the complete address
+    /// it leads to, which the page area shows in place of the pages for a
+    /// second (REQ-1686); empty otherwise.
+    pub redirecting: String,
 }
 
 /// Why a channel's certificate was refused (`certificate-errors.md`

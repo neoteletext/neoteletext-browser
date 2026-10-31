@@ -23,6 +23,22 @@ pub(super) fn test_core() -> Core {
     Core::new(Session::new(Bookmarks::default()), Vec::new(), (Settings::default(), None), events, Outbox::new(Vec::new()), None)
 }
 
+/// A trusted core with a stand-in broker, its clock ten seconds along so
+/// that a link sent at time 0 has settled, and a tab on `address`.
+#[cfg(unix)]
+pub(super) fn core_on(address: &str) -> (Core, confine::broker::stand_in::StandIn) {
+    let (broker, stand_in) =
+        confine::broker::stand_in::StandIn::start(Box::new(|_| Ok(b"PN,10000\r\nOL,1,A\r\n".to_vec())), Box::new(|_| Some(Vec::new()))).unwrap();
+    let reader = std::sync::Arc::clone(&broker);
+    let session =
+        Session::with_reader(Bookmarks::default(), Box::new(move |path: &std::path::Path| reader.read_source(path).map(crate::source::Source::from_bytes)));
+    let (events, _incoming) = mpsc::channel();
+    let mut core = Core::new(session, Vec::new(), (Settings::default(), None), events, Outbox::new(Vec::new()), Some(broker));
+    core.started = std::time::Instant::now().checked_sub(Duration::from_secs(10)).unwrap();
+    core.session.open(address).unwrap();
+    (core, stand_in)
+}
+
 /// A helper of a test, confined as `role`: `program` with `arguments`.
 #[cfg(unix)]
 pub(super) fn stand_in(program: &str, arguments: &[&str], role: confine::Role) -> confine::broker::Helper {

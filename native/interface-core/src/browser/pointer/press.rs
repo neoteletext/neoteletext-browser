@@ -67,6 +67,11 @@ impl Browser {
         if self.refused_press(self.pointer) {
             return Some(true);
         }
+        // A redirect's notice has no buttons, and the pages it covers take
+        // no press.
+        if self.redirecting_area.contains(self.pointer) {
+            return Some(true);
+        }
         if self.remote_press(self.pointer, now) {
             return Some(true);
         }

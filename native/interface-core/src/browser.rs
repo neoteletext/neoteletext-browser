@@ -52,6 +52,7 @@ mod phone;
 mod phone_keys;
 mod pointer;
 mod popups;
+mod redirecting;
 mod regions;
 mod remote;
 mod settings_panel;
@@ -104,6 +105,8 @@ pub struct Browser {
     /// The channels playing sound, muted or not.
     sounding: BTreeSet<u32>,
     strip: StripState,
+    /// Where a redirect's notice was last drawn; empty while none shows.
+    redirecting_area: Rect,
     channel: Channel,
     bank: usize,
     selected: Option<usize>,
@@ -212,6 +215,7 @@ impl Browser {
             active: 0,
             sounding: BTreeSet::new(),
             strip: StripState::default(),
+            redirecting_area: Rect::ZERO,
             channel: Channel::empty(),
             bank: 0,
             selected: None,

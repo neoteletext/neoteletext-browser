@@ -13,6 +13,17 @@ use neoteletext::start_page;
 
 use super::Reader;
 
+/// A redirect leaving a channel, while the tab shows where it leads
+/// (REQ-1686).
+pub struct Redirecting {
+    /// Where it leads, by the address rules.
+    pub address: Address,
+    /// When the notice's second ends.
+    pub until: std::time::Instant,
+    /// The channels that redirected so far, this one last.
+    pub chain: Vec<String>,
+}
+
 /// One channel shown in a tab: the pages its contents file lists and the
 /// pages its decoder has reported.
 pub struct ChannelState {
@@ -44,6 +55,12 @@ pub struct ChannelState {
     pub live: bool,
     /// A live channel whose first page has not yet arrived.
     pub connecting: bool,
+    /// The channels that redirected here in one navigation, oldest first,
+    /// at most [`MAX_REDIRECTS`](super::MAX_REDIRECTS) (REQ-701).
+    pub redirects: Vec<String>,
+    /// A redirect waiting out its notice. It is the channel's, so anything
+    /// that gives the tab another channel drops it (REQ-1686 item 7).
+    pub redirecting: Option<Redirecting>,
     /// The page its descriptor opens at, once it was read.
     pub initial_page: Option<u16>,
 }
@@ -109,6 +126,8 @@ impl ChannelState {
             unread: None,
             live: false,
             connecting: false,
+            redirects: Vec::new(),
+            redirecting: None,
             initial_page: None,
         }
     }

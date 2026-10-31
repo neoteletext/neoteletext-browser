@@ -402,7 +402,7 @@ The cookie store is the engine's, which follows the cookie specification draft R
 ### 9.5 Navigation
 
 - **Navigations the user starts:** the address field, Back, Forward, a new tab, bookmarks, history, suggestions, Home and Reload. Built.
-- **Navigations a page starts:** Fastext keys, page links, redirects, discovery results. Fastext keys and page links are built, decided by the trusted core (decisions 43 and 67); redirects that leave the channel and discovery results are not built.
+- **Navigations a page starts:** Fastext keys, page links, redirects, discovery results. Fastext keys and page links are built, decided by the trusted core (decisions 43 and 67); a redirect that leaves the channel shows its notice for a second and is then followed (REQ-701, REQ-1686); discovery results are not built.
 - **A link or Fastext key that leaves the channel** opens the destination at once, in the same tab, with Back to return, as in a web browser (REQ-1670, decision DEC-1664). Only a `web:` link, which hands an address to another program, asks first, in the trusted strip.
 - **The address shown is always the committed address.**
 
@@ -682,7 +682,7 @@ Unsafe code is allowed only in the modules requirement 10.12 names, each saying 
 
 **Not built:**
 
-- Redirects that leave a channel, and discovery results.
+- Discovery results.
 - Any sandbox on Android or iOS; Windows helpers started apart from the console they were started from (decision 100 item 1, measured as needed in the virtual machine on 24 October 2026); the fetcher's connections made by the broker (decision 89); a file chooser owned by the broker (decision 88).
 - Sharing one decoder between tabs on the same channel (decision 11).
 - The grace period for closed tabs; the live-feed threshold; refresh schedules.

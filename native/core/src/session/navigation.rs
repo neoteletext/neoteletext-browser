@@ -3,9 +3,10 @@
 //! the lists of each way with their chapter stops.
 
 use interface_core::library::{MAX_CHAPTER_STOPS, MAX_TAB_LIST};
-use neoteletext::address::{Address, parse};
+use neoteletext::address::{Address, FRAGMENT, parse, redirect_destination};
+use std::time::Instant;
 
-use super::{Pending, Session, Tab, Visit, Went};
+use super::{MAX_REDIRECTS, Pending, Redirecting, Session, Tab, Visit, Went};
 
 impl Session {
     /// Opens `typed` in the active tab, after its current address in
@@ -39,6 +40,74 @@ impl Session {
         tab.channel = channel;
         tab.pending = Some(Pending { typed, drawn: false, reload: false });
         Ok(())
+    }
+
+    /// Where a server's redirect of `channel` leads, by the address rules.
+    /// Only the request that opens a channel can move its tab: a page
+    /// fetched later is no navigation, whatever an untrusted fetcher says. A
+    /// fragment goes with a redirect that names none (RFC 9110 section
+    /// 10.2.2).
+    ///
+    /// # Errors
+    /// Why it is not followed, a sentence for the user.
+    pub fn server_redirect(&self, channel: u32, location: &str) -> Result<Address, String> {
+        let tab = self.tabs.iter().find(|tab| tab.channel.id == channel).ok_or("its tab has closed")?;
+        if tab.channel.initial_page.is_some() {
+            return Err("a page of it redirected elsewhere".into());
+        }
+        let destination = redirect_destination(location)?;
+        let inherited = tab.address().and_then(|shown| shown.text.split_once(FRAGMENT)).filter(|_| !location.contains(FRAGMENT));
+        match inherited {
+            Some((_, fragment)) => parse(&format!("{}{FRAGMENT}{fragment}", destination.text)),
+            None => Ok(destination),
+        }
+    }
+
+    /// The tab holding `channel` is being redirected to `address`, whoever
+    /// sent it: it is followed at `until`, when its notice has been shown
+    /// (REQ-701, REQ-1686). A redirect already waiting stays as it is, so
+    /// that saying it again does not put its second off.
+    ///
+    /// # Errors
+    /// Why it is not followed, a sentence for the user. The tab stays.
+    pub fn redirect_tab(&mut self, channel: u32, address: Address, until: Instant) -> Result<(), String> {
+        let tab = self.tabs.iter_mut().find(|tab| tab.channel.id == channel).ok_or("its tab has closed")?;
+        if tab.channel.redirecting.is_some() {
+            return Ok(());
+        }
+        let shown = tab.address().ok_or("its tab has closed")?;
+        let mut chain = tab.channel.redirects.clone();
+        chain.push(shown.channel_text().to_owned());
+        if chain.len() > MAX_REDIRECTS {
+            return Err("too many redirects".into());
+        }
+        if chain.iter().any(|earlier| earlier == address.channel_text()) {
+            return Err("its redirects in a loop".into());
+        }
+        tab.channel.redirecting = Some(Redirecting { address, until, chain });
+        Ok(())
+    }
+
+    /// The notice of `channel`'s redirect is over: the destination takes the
+    /// place of the address that redirected, so Back returns to the page
+    /// before it, as in a web browser, with a channel of its own that
+    /// remembers the chain (REQ-701).
+    pub fn finish_redirect(&mut self, channel: u32) {
+        let Some(Redirecting { address, chain, .. }) =
+            self.tabs.iter_mut().find(|tab| tab.channel.id == channel).and_then(|tab| tab.channel.redirecting.take())
+        else {
+            return;
+        };
+        let mut next = self.channel_for(&address);
+        next.redirects = chain;
+        let now = self.now;
+        let Some(tab) = self.tabs.iter_mut().find(|tab| tab.channel.id == channel) else { return };
+        let typed = tab.pending.is_some_and(|pending| pending.typed);
+        if let Some(visit) = tab.history.get_mut(tab.position) {
+            *visit = Visit::new(address, true, now);
+        }
+        tab.channel = next;
+        tab.pending = Some(Pending { typed, drawn: false, reload: false });
     }
 
     /// Opens the active tab's channel afresh where the tab is in its
@@ -79,6 +148,7 @@ impl Session {
             visit.at = now;
         }
         tab.pending = Some(Pending { typed: false, drawn: same, reload: false });
+        tab.channel.redirecting = None;
         match channel {
             Some(channel) => {
                 tab.channel = channel;

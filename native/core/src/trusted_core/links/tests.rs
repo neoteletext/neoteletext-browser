@@ -4,21 +4,15 @@
 
 #![allow(clippy::unwrap_used, clippy::indexing_slicing, reason = "a test")]
 
-use std::sync::mpsc;
-use std::time::{Duration, Instant};
-
 use confine::broker::stand_in::StandIn;
 use interface_core::canvas::PageKey;
 use interface_core::controls::{FastextKey, PageControl};
-use neoteletext::bookmarks::Bookmarks;
 use neoteletext::links::{Channel, DWELL_MILLISECONDS};
-use neoteletext::outbox::Outbox;
-use neoteletext::settings::Settings;
 use protocol::ToCore;
 use protocol::links::{Alias, Candidate, Fastext, FastextTarget, NumberLink, Service, Spot};
 
 use super::super::Core;
-use crate::session::Session;
+use super::super::test_support::core_on;
 
 const HOME: &str = "https://news.invalid/teletext/";
 const ELSEWHERE: &str = "https://weather.invalid/teletext/";
@@ -43,14 +37,7 @@ struct Viewer {
 impl Viewer {
     /// A tab on `address`, page 100 open, older than a link's half second.
     fn on(address: &str) -> Self {
-        let (broker, stand_in) = StandIn::start(Box::new(|_| Ok(b"PN,10000\r\nOL,1,A\r\n".to_vec())), Box::new(|_| Some(Vec::new()))).unwrap();
-        let reader = std::sync::Arc::clone(&broker);
-        let session =
-            Session::with_reader(Bookmarks::default(), Box::new(move |path: &std::path::Path| reader.read_source(path).map(crate::source::Source::from_bytes)));
-        let (events, _incoming) = mpsc::channel();
-        let mut core = Core::new(session, Vec::new(), (Settings::default(), None), events, Outbox::new(Vec::new()), Some(broker));
-        core.started = Instant::now().checked_sub(Duration::from_secs(10)).unwrap();
-        core.session.open(address).unwrap();
+        let (mut core, stand_in) = core_on(address);
         let key = PageKey { channel: core.session.tabs[0].channel.id, page: PAGE };
         core.intent(ToCore::Opened(Some(key))).unwrap();
         Self { core, _stand_in: stand_in, key }
@@ -80,6 +67,7 @@ impl Viewer {
     fn went(&mut self, to: &str, from: &str) {
         assert_eq!(self.address(), to, "the tab moved at once");
         assert_eq!(self.core.links.prompt(), None, "no question");
+        assert_eq!(self.core.strip().redirecting, "", "REQ-1686: a followed link shows no notice");
         assert!(self.core.session.active_tab().unwrap().pending.as_ref().is_some_and(|pending| !pending.typed), "recorded as the page's");
         self.core.intent(ToCore::Back).unwrap();
         assert_eq!(self.address(), from, "Back returns");

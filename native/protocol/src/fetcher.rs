@@ -18,7 +18,7 @@ use kinds::KIND_LINKS;
 use kinds::{
     KIND_CERTIFICATE_REFUSED, KIND_CHANNEL_LOG, KIND_CLEAR_SITE_DATA, KIND_CONFINED, KIND_CONNECTING, KIND_CONTENTS, KIND_COOKIE_ANSWER, KIND_COOKIE_QUESTION,
     KIND_COOKIE_SET, KIND_EXCHANGE, KIND_FETCH_SUBPAGE, KIND_FETCH_SUBPAGES, KIND_INITIAL_PAGE, KIND_INVALID_PACKETS, KIND_NOTICE, KIND_PAGE,
-    KIND_PROXY_FAILED, KIND_PUSHING, KIND_REACHED_ANSWER, KIND_REACHED_QUESTION, KIND_SUBPAGES, KIND_SUBPAGES_MISSING,
+    KIND_PROXY_FAILED, KIND_PUSHING, KIND_REACHED_ANSWER, KIND_REACHED_QUESTION, KIND_REDIRECTED, KIND_SUBPAGES, KIND_SUBPAGES_MISSING,
 };
 #[cfg(feature = "interaction")]
 use kinds::{KIND_INPUT, KIND_MEASURE_ROUND_TRIP, KIND_ROUND_TRIP, KIND_SEND};
@@ -121,6 +121,9 @@ pub enum FromFetcher {
     },
     /// Something for the log, not yet cleaned.
     Notice(String),
+    /// A request of the channel was answered with a redirect that leaves
+    /// it, not followed: the address it leads to, not yet checked (REQ-701).
+    Redirected(String),
     /// The channel's push connection opened (true) or was lost: a sleeping
     /// tab keeps its fetcher while it holds one (decision 47).
     Pushing(bool),
@@ -493,6 +496,10 @@ pub fn write_to_core(out: &mut dyn Write, message: &FromFetcher) -> Result<(), P
             push_raw_text(&mut payload, text, MAX_NOTICE);
             KIND_NOTICE
         }
+        FromFetcher::Redirected(address) => {
+            push_raw_text(&mut payload, address, MAX_ADDRESS);
+            KIND_REDIRECTED
+        }
         #[cfg(feature = "links")]
         FromFetcher::Links { aliases, services } => {
             crate::links::push_channel_links(&mut payload, aliases, services)?;
@@ -588,6 +595,7 @@ pub fn read_from_fetcher(input: &mut dyn Read) -> Result<Option<FromFetcher>, Pr
             FromFetcher::Page { origin, bytes: fields.take(fields.remaining())?.to_vec() }
         }
         KIND_NOTICE => FromFetcher::Notice(raw_text(&mut fields, MAX_NOTICE, "text too long")?),
+        KIND_REDIRECTED => FromFetcher::Redirected(raw_text(&mut fields, MAX_ADDRESS, "address too long")?),
         #[cfg(feature = "links")]
         KIND_LINKS => {
             let (aliases, services) = crate::links::read_channel_links(&mut fields)?;
