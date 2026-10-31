@@ -50,7 +50,7 @@ fn a_resumed_session_sends_again_what_the_channel_had_not_taken() {
             key_b,
             "Event(Resize { columns: 40, rows: 25, width: 0, height: 0 })".to_owned(),
             "Event(FocusIn)".to_owned(),
-            "Event(Select(Select { page: 512, sub: 16255 }))".to_owned()
+            "Event(Select(Select { page: 512, sub: 16255 }, \"\"))".to_owned()
         ]
     );
     assert_eq!(items(&typing.input_intent(&key('a'), 7 * MS)), [KEY_A], "then input goes on");
@@ -71,7 +71,7 @@ fn a_session_not_held_begins_again() {
     let fresh = typing.control(PAGE.channel, &welcome_with(SELECT_CAP | RESUME_CAP, Some(Resumption { token: NEXT_TOKEN, taken: None })), 4 * MS);
     assert_eq!(
         items(&fresh),
-        ["Event(Resize { columns: 40, rows: 25, width: 0, height: 0 })", "Event(FocusIn)", "Event(Select(Select { page: 512, sub: 16255 }))"]
+        ["Event(Resize { columns: 40, rows: 25, width: 0, height: 0 })", "Event(FocusIn)", "Event(Select(Select { page: 512, sub: 16255 }, \"\"))"]
     );
 }
 

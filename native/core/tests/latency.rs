@@ -60,7 +60,7 @@ fn keys_round_trip_and_pages_reach_the_screen_within_budget() {
     };
     let mut session = tab.session(Instant::now() + LIMIT);
     let select = neoteletext_input::event::Select::new(PAGE, neoteletext_core::limits::SUBCODE_ANY).unwrap();
-    send(&input, &alone(message(&mut session, &Item::Event(Event::Select(select)))));
+    send(&input, &alone(message(&mut session, &Item::Event(Event::Select(select, "")))));
     next_push(Instant::now() + LIMIT);
 
     let mut engine = decoder::Engine::new();

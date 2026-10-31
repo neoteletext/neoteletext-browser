@@ -48,15 +48,18 @@ impl Core {
         self.show_address()
     }
 
-    /// The page area follows the active tab's address: its wall, or the page
-    /// it names or else the channel's first, at the sub-page it names
+    /// The page area follows the active tab's address: its wall, its
+    /// contents, or the page it names or else the channel's first, at the sub-page it names
     /// (decision 67, REQ-1693).
-    fn show_address(&mut self) -> Result<(), String> {
+    pub(super) fn show_address(&mut self) -> Result<(), String> {
         let Some(tab) = self.session.active_tab() else { return Ok(()) };
         let channel = tab.channel.id;
         let Some(address) = tab.address() else { return Ok(()) };
         if address.wall {
             return self.send(&ToInterface::ShowWall(channel));
+        }
+        if address.contents {
+            return self.send(&ToInterface::ShowContents(channel));
         }
         let subpage = address.subpage;
         match address.page.or(tab.channel.initial_page) {

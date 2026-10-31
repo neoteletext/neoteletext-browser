@@ -41,7 +41,7 @@ impl Core {
     /// `sub` unless that is 3F7F (REQ-212 item 1). A page the channel does
     /// not list is no redirect: it is logged, and the server, which took it
     /// as a selection, is told again what the tab selects.
-    pub(super) fn page_redirected(&mut self, channel: u32, page: u16, sub: u16) -> Result<(), String> {
+    pub(super) fn page_redirected(&mut self, channel: u32, page: u16, sub: u16, parameters: Option<&str>) -> Result<(), String> {
         if !self.may_redirect(channel) {
             return Ok(());
         }
@@ -52,7 +52,7 @@ impl Core {
         }
         let subpage = (sub != SUBCODE_ANY).then_some(sub);
         self.in_window_of(channel, |core| {
-            let marked = core.session.redirect_page(channel, page, subpage);
+            let marked = core.session.redirect_page(channel, page, subpage, parameters);
             core.say_passed_over(channel, marked);
             let key = PageKey { channel, page };
             if core.active_channel() != Some(channel) {
@@ -89,7 +89,7 @@ impl Core {
         let own = self.session.all_tabs().find(|tab| tab.channel.id == channel).filter(|tab| tab.address().is_some_and(|shown| shown.same_channel(&address)));
         let Some(tab) = own else { return self.redirect_tab(channel, address, RedirectBy::Program) };
         match address.page.or(tab.channel.initial_page) {
-            Some(page) => self.page_redirected(channel, page, address.subpage.unwrap_or(SUBCODE_ANY)),
+            Some(page) => self.page_redirected(channel, page, address.subpage.unwrap_or(SUBCODE_ANY), address.parameters()),
             None => Ok(()),
         }
     }

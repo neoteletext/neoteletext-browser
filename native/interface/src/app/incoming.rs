@@ -60,6 +60,10 @@ impl App {
                 self.view.browser.show_wall(channel, now);
                 self.act(event_loop);
             }
+            Incoming::ShowContents(channel) => {
+                self.view.browser.show_contents(channel, now);
+                self.act(event_loop);
+            }
             Incoming::Page { key, version, image } => self.page_frame(event_loop, key, version, &image, now),
             #[cfg(feature = "phone-keyboard")]
             Incoming::Phone(view) => {

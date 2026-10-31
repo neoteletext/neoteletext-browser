@@ -41,7 +41,7 @@ fn built() -> &'static (PathBuf, PathBuf) {
 
 fn select(tab: &Tab, session: &mut Session, page: u16) {
     let select = Select::new(page, SUBCODE_ANY).unwrap();
-    send(&tab.input(), &alone(message(session, &Item::Event(Event::Select(select)))));
+    send(&tab.input(), &alone(message(session, &Item::Event(Event::Select(select, "")))));
 }
 
 /// What the site was asked for, up to the push connection's request.
@@ -81,6 +81,20 @@ fn the_longest_query_arrives_whole() {
     assert!(said.last().unwrap().ends_with(&format!("GET /terminal/push?{query}")), "the query came whole");
 }
 
+// REQ-1693 item 6, DEC-1715: the longest page parameters go whole in SELECT,
+// through the fetcher and a real socket, to the channel.
+#[test]
+fn the_longest_page_parameters_reach_the_channel_in_select() {
+    let (site, heard) = Site::start(&built().0);
+    let tab = Tab::open(&built().1, site.port);
+    let mut session = tab.session(Instant::now() + LIMIT);
+    let parameters = format!("a={}", "b".repeat(neoteletext_input::MAX_PAGE_PARAMETERS - "a=".len()));
+    let select = Select::new(TYPING, SUBCODE_ANY).unwrap();
+    send(&tab.input(), &alone(message(&mut session, &Item::Event(Event::Select(select, &parameters)))));
+    let said = said_until(&heard, "SELECT 200/3F7F", Instant::now() + LIMIT);
+    assert!(said.last().unwrap().ends_with(&format!("SELECT 200/3F7F {parameters}")), "the parameters came whole");
+}
+
 // TODO-1682 item 1, DEC-1538 item 3: a tab that closes tells the channel it
 // has left: SELECT of page 0 reaches the channel before the connection
 // closes, though the fetcher's input closes with it, as `Fetcher::stop`
@@ -95,7 +109,7 @@ fn select_of_page_0_reaches_the_channel_before_the_connection_closes() {
         select(&tab, &mut session, TYPING);
         tab.next_page(Instant::now() + LIMIT);
         let select_nothing = Select::new(0, SUBCODE_ANY).unwrap();
-        tab.send_and_close(&alone(message(&mut session, &Item::Event(Event::Select(select_nothing)))));
+        tab.send_and_close(&alone(message(&mut session, &Item::Event(Event::Select(select_nothing, "")))));
         let said = said_until(&heard, "closed", Instant::now() + LIMIT);
         assert!(said.iter().any(|line| line.contains("SELECT 000/3F7F")), "the channel heard SELECT of page 0 first: {said:?}");
     }

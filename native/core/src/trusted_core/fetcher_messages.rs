@@ -61,7 +61,7 @@ impl Core {
             }
             FromFetcher::Notice(text) => self.log(Level::Warning, Some(channel), &format!("channel {channel}: {}", clean(&text, MAX_NOTICE))),
             FromFetcher::Redirected(location) => self.redirected(channel, &location)?,
-            FromFetcher::PageRedirect { page, sub } => self.page_redirected(channel, page, sub)?,
+            FromFetcher::PageRedirect { page, sub } => self.page_redirected(channel, page, sub, None)?,
             FromFetcher::ProgramRedirect(location) => self.program_redirected(channel, &location)?,
             // Said in the trusted core's own words, of the channel's host as
             // the strip shows it: a fetcher cannot write the strip.
@@ -124,10 +124,12 @@ impl Core {
     fn first_selection(&mut self, channel: u32) -> Result<(), String> {
         let Some(tab) = self.session.all_tabs().find(|tab| tab.channel.id == channel) else { return Ok(()) };
         let address = tab.address();
-        let sends = if address.is_some_and(|address| address.wall) {
+        let sends = if address.is_some_and(|address| address.wall || address.contents) {
             self.typing.selects_nothing(channel, self.now_us())
         } else if let Some(page) = address.and_then(|address| address.page).or(tab.channel.initial_page) {
-            self.typing.select(channel, page, neoteletext_core::limits::SUBCODE_ANY, self.now_us())
+            let sub = address.and_then(|address| address.subpage).unwrap_or(neoteletext_core::limits::SUBCODE_ANY);
+            let parameters = address.map(|address| address.parameters_of(page, sub).to_owned()).unwrap_or_default();
+            self.typing.select(channel, page, sub, &parameters, self.now_us())
         } else {
             return Ok(());
         };

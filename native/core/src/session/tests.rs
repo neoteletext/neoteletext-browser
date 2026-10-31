@@ -636,7 +636,7 @@ fn longest() -> String {
     const LONGEST: usize = 8_000;
     const HEAD: &str = "https://a.example/";
     const PAGE: &str = "#302/0002";
-    format!("{HEAD}{}{PAGE}", "x".repeat(LONGEST.saturating_sub(HEAD.len()).saturating_sub(PAGE.len())))
+    format!("{HEAD}?q={}{PAGE}", "x".repeat(LONGEST.saturating_sub(HEAD.len()).saturating_sub("?q=".len()).saturating_sub(PAGE.len())))
 }
 
 #[test]

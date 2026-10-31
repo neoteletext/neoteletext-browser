@@ -11,12 +11,15 @@ use crate::settings::{MAX_BLOCKED, Settings, checked_address};
 /// the requirement, not whatever the constant holds.
 const LONGEST: usize = 8_000;
 const HEAD: &str = "https://a.example/";
+/// What makes a channel's address long: its folder is at most the engine's
+/// 256 bytes (`MAX_FOLDER_PATH`), and the query holds the rest.
+const QUERY: &str = "?q=";
 const PAGE: &str = "#302/0002";
 const NOW: i64 = 1_793_000_000;
 
 /// A channel's address that is the longest with `PAGE` after it.
 fn channel() -> String {
-    format!("{HEAD}{}", "x".repeat(LONGEST.saturating_sub(HEAD.len()).saturating_sub(PAGE.len())))
+    format!("{HEAD}{QUERY}{}", "x".repeat(LONGEST.saturating_sub(HEAD.len()).saturating_sub(QUERY.len()).saturating_sub(PAGE.len())))
 }
 
 fn longest() -> String {

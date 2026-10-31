@@ -5,6 +5,11 @@
 
 use std::path::{Path, PathBuf};
 
+use neoteletext_core::limits::SUBCODE_ANY;
+use neoteletext_core::types::{PageAddress, SubCode};
+use neoteletext_web::bytes::{Overflow, Writer};
+use neoteletext_web::map::{MapAddress, MapError, Place};
+
 /// An address as the trusted core keeps and shows it.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Address {
@@ -25,6 +30,8 @@ pub struct Address {
     pub subpage: Option<u16>,
     /// It names the wall of pages with no page selected, as `#wall` does.
     pub wall: bool,
+    /// It names the channel's contents, as `#contents` does.
+    pub contents: bool,
 }
 
 impl Address {
@@ -34,11 +41,20 @@ impl Address {
         self.text.split_once(FRAGMENT).map_or(self.text.as_str(), |(channel, _)| channel)
     }
 
-    /// The same channel with `fragment` after `#`, or none when that would
-    /// be longer than an address may be (finding F-78).
-    fn at_fragment(&self, fragment: &str, page: Option<u16>, subpage: Option<u16>) -> Option<Self> {
-        let text = format!("{}{FRAGMENT}{fragment}", self.channel_text());
-        (text.len() <= protocol::MAX_ADDRESS).then(|| Self { text, page, subpage, wall: fragment == WALL, ..self.clone() })
+    /// The address as `place` says: what its fragment names, or nothing.
+    fn placed(self, place: Option<Place<'_>>) -> Self {
+        let (page, subpage) = match place {
+            Some(Place::Page { page, subcode, .. }) => (Some(page.mpp()), subcode.map(SubCode::value)),
+            _ => (None, None),
+        };
+        Self { page, subpage, wall: place == Some(Place::Wall), contents: place == Some(Place::Contents), ..self }
+    }
+
+    /// The same channel at `place`, or none when that would be longer than
+    /// an address may be (finding F-78).
+    fn at_place(&self, place: Place<'_>) -> Option<Self> {
+        let text = format!("{}{FRAGMENT}{}", self.channel_text(), written(|writer| place.write(writer))?);
+        (text.len() <= protocol::MAX_ADDRESS).then(|| Self { text, ..self.clone() }.placed(Some(place)))
     }
 
     /// The same channel at `page`.
@@ -48,16 +64,51 @@ impl Address {
     }
 
     /// The same channel at `page`, and at `subpage` of it if one is named.
+    /// Page parameters belong to the selection they came with, so none
+    /// follows (REQ-1693 item 6).
     #[must_use]
     pub fn with_subpage(&self, page: u16, subpage: Option<u16>) -> Option<Self> {
-        let fragment = subpage.map_or_else(|| format!("{page:03X}"), |subpage| format!("{page:03X}{SUBPAGE_SEPARATOR}{subpage:04X}"));
-        self.at_fragment(&fragment, Some(page), subpage)
+        self.at_place(Place::Page { page: PageAddress::from_mpp(page)?, subcode: subpage.map(SubCode::new), parameters: None })
+    }
+
+    /// The same page with `parameters`, read from an address of the map;
+    /// none when it names no page.
+    #[must_use]
+    pub fn with_parameters(&self, parameters: Option<&str>) -> Option<Self> {
+        let page = PageAddress::from_mpp(self.page?)?;
+        self.at_place(Place::Page { page, subcode: self.subpage.map(SubCode::new), parameters })
     }
 
     /// The same channel's wall of pages, with no page selected.
     #[must_use]
     pub fn with_wall(&self) -> Option<Self> {
-        self.at_fragment(WALL, None, None)
+        self.at_place(Place::Wall)
+    }
+
+    /// The page parameters the address holds, as written (REQ-1693 item 6).
+    #[must_use]
+    pub fn parameters(&self) -> Option<&str> {
+        let (_, fragment) = self.text.split_once(FRAGMENT)?;
+        match Place::read(fragment)? {
+            Place::Page { parameters, .. } => parameters,
+            Place::Contents | Place::Wall => None,
+        }
+    }
+
+    /// What SELECT says for `page` and `sub`, a sub-code or 3F7F for the
+    /// page: the parameters the address holds when it names that selection,
+    /// and otherwise none, as they belong to the one selection (REQ-1693
+    /// item 6).
+    #[must_use]
+    pub fn parameters_of(&self, page: u16, sub: u16) -> &str {
+        let named = self.page == Some(page) && self.subpage.unwrap_or(SUBCODE_ANY) == sub;
+        self.parameters().filter(|_| named).unwrap_or_default()
+    }
+
+    /// Whether it names nothing inside its channel.
+    #[must_use]
+    pub fn is_bare(&self) -> bool {
+        self.page.is_none() && !self.wall && !self.contents
     }
 
     /// Whether this is the browser's own start page (requirement 19.7).
@@ -93,17 +144,9 @@ pub const OUTSIDE_SCHEME: &str = "neoteletext://";
 /// What begins an address's fragment, which holds everything inside a
 /// channel (REQ-1693). The fragments are written and read here alone.
 pub const FRAGMENT: char = '#';
-/// What comes between a page and its sub-page in a fragment.
-const SUBPAGE_SEPARATOR: char = '/';
-/// The fragment of the wall of pages with no page selected.
-const WALL: &str = "wall";
-/// Hexadecimal digits of a page number and of a sub-page number.
-const PAGE_DIGITS: usize = 3;
-const SUBPAGE_DIGITS: usize = 4;
-const HEXADECIMAL: u32 = 16;
-/// The longest fragment a channel's address gains as its tab changes page:
-/// `#NNN/SSSS`. An address with no room for it is refused (REQ-1690 item 10).
-const LONGEST_FRAGMENT: usize = 1 + PAGE_DIGITS + 1 + SUBPAGE_DIGITS;
+/// The longest fragment a channel's address gains as its tab changes page.
+/// An address with no room for it is refused (REQ-1690 item 10).
+const LONGEST_FRAGMENT: usize = "#NNN/SSSS".len();
 
 /// What ends an address cut to fit a view.
 const ELLIPSIS: char = '\u{2026}';
@@ -121,30 +164,23 @@ pub fn shown_address(address: &str) -> String {
     cut
 }
 
-/// The sub-page a fragment names after its page, when it names one: four
-/// hexadecimal digits of a sub-code, not 3F7F, which means any sub-page.
-#[must_use]
-pub fn fragment_subpage(fragment: &str) -> Option<u16> {
-    fragment_page(fragment)?;
-    let (_, subpage) = fragment.split_once(SUBPAGE_SEPARATOR)?;
-    // Any of the thirteen bits' values but 3F7F, which names no sub-page
-    // (the engine's REQ-NUM-002, REQ-NUM-006 and REQ-NUM-009).
-    u16::from_str_radix(subpage, HEXADECIMAL)
-        .ok()
-        .filter(|&subpage| neoteletext_core::limits::is_sub_code(subpage) && subpage != neoteletext_core::limits::SUBCODE_ANY)
+/// What `write` writes, as text, at most an address long.
+fn written(write: impl FnOnce(&mut Writer<'_>) -> Result<(), Overflow>) -> Option<String> {
+    let mut buffer = vec![0_u8; protocol::MAX_ADDRESS];
+    let mut writer = Writer::new(&mut buffer);
+    write(&mut writer).ok()?;
+    String::from_utf8(writer.written().to_vec()).ok()
 }
 
-/// The page a fragment names: three hexadecimal digits of a display page,
-/// optionally followed by `/` and four of a sub-page.
-#[must_use]
-pub fn fragment_page(fragment: &str) -> Option<u16> {
-    let (page, subpage) = fragment.split_once(SUBPAGE_SEPARATOR).map_or((fragment, None), |(page, subpage)| (page, Some(subpage)));
-    let digits = |text: &str, count: usize| text.len() == count && text.bytes().all(|byte| byte.is_ascii_hexdigit());
-    if !digits(page, PAGE_DIGITS) || subpage.is_some_and(|subpage| !digits(subpage, SUBPAGE_DIGITS)) {
-        return None;
+/// Why the map refuses an address (REQ-1693 items 2 and 4), for the user.
+fn refusal(error: MapError) -> String {
+    match error {
+        MapError::Place => "That address names no place in a channel",
+        MapError::TwoPlaces => "That address names a page twice",
+        MapError::ReceiverFile => "That file is part of a channel, and is not opened on its own",
+        MapError::Channel(_) => "That is not a channel's address, which is a folder ending in /",
     }
-    let page = u16::from_str_radix(page, HEXADECIMAL).ok()?;
-    interface_core::channel::page_index(page).map(|_| page)
+    .into()
 }
 
 /// The path `typed` names, when it names one (REQ-1701): `file:///path`, a
@@ -197,21 +233,19 @@ fn parse_file(typed: &str) -> Option<Result<Address, String>> {
             page: None,
             subpage: None,
             wall: false,
+            contents: false,
         };
-        within_bound(at_fragment_of(channel, typed.strip_prefix(FILE_SCHEME).and_then(|rest| rest.split_once(FRAGMENT)).map(|(_, fragment)| fragment)))
+        // A file takes the fragments a channel does, refused as a channel's
+        // are, and its name is never read as a page's (REQ-1693 item 9).
+        match typed.strip_prefix(FILE_SCHEME).and_then(|rest| rest.split_once(FRAGMENT)) {
+            Some((_, fragment)) => {
+                let place = Place::read(fragment).ok_or_else(|| refusal(MapError::Place))?;
+                within_bound(channel.at_place(place).ok_or_else(too_long)?)
+            }
+            None => within_bound(channel),
+        }
     };
     Some(check())
-}
-
-/// `channel` at `fragment`, when that names a place in it; a fragment that
-/// does not leaves the channel.
-fn at_fragment_of(channel: Address, fragment: Option<&str>) -> Address {
-    let place = match fragment {
-        Some(WALL) => channel.with_wall(),
-        Some(fragment) => fragment_page(fragment).and_then(|page| channel.with_subpage(page, fragment_subpage(fragment))),
-        None => None,
-    };
-    place.unwrap_or(channel)
 }
 
 /// The path of a `file://` address. On Windows, `file:///C:/t42/x.t42`
@@ -242,10 +276,20 @@ fn parse_built_in(typed: &str) -> Result<Address, String> {
     if !channel.eq_ignore_ascii_case(START_PAGE) {
         return Err("The only neoteletext: address is neoteletext:home".into());
     }
-    let page = fragment.and_then(fragment_page);
-    let subpage = fragment.and_then(fragment_subpage);
-    let text = page.map_or_else(|| START_PAGE.to_owned(), |page| format!("{START_PAGE}{FRAGMENT}{page:03X}"));
-    Ok(Address { text, host: crate::start_page::NAME.to_owned(), encrypted: false, file: None, page, subpage, wall: false })
+    let place = fragment.and_then(Place::read).filter(|place| matches!(place, Place::Page { .. }));
+    let built_in = Address {
+        text: String::new(),
+        host: crate::start_page::NAME.to_owned(),
+        encrypted: false,
+        file: None,
+        page: None,
+        subpage: None,
+        wall: false,
+        contents: false,
+    };
+    let built_in = built_in.placed(place);
+    let text = built_in.page.map_or_else(|| START_PAGE.to_owned(), |page| format!("{START_PAGE}{FRAGMENT}{page:03X}"));
+    Ok(Address { text, ..built_in })
 }
 
 /// Turns what was typed into an address, or says why it cannot be opened.
@@ -258,7 +302,7 @@ pub fn parse(typed: &str) -> Result<Address, String> {
         return Err("Enter an address".into());
     }
     if typed.len() > protocol::MAX_ADDRESS {
-        return Err(format!("Addresses are limited to {} characters", protocol::MAX_ADDRESS));
+        return Err(too_long());
     }
     if typed.get(..BUILT_IN_SCHEME.len()).is_some_and(|scheme| scheme.eq_ignore_ascii_case(BUILT_IN_SCHEME)) {
         return parse_built_in(typed);
@@ -298,11 +342,16 @@ pub fn parse(typed: &str) -> Result<Address, String> {
         return Err("Addresses cannot contain spaces or hidden characters".into());
     }
     let path = if path.is_empty() || path.starts_with(['?', FRAGMENT]) { format!("/{path}") } else { path.to_owned() };
-    let page = path.split_once(FRAGMENT).and_then(|(_, fragment)| fragment_page(fragment));
-    let subpage = path.split_once(FRAGMENT).and_then(|(_, fragment)| fragment_subpage(fragment));
-    let wall = path.split_once(FRAGMENT).is_some_and(|(_, fragment)| fragment == WALL);
     let port = port.map(|port| format!(":{port}")).unwrap_or_default();
-    within_bound(Address { text: format!("{scheme}{SCHEME_SEPARATOR}{host}{port}{path}"), host, encrypted, file: None, page, subpage, wall })
+    let whole = format!("{scheme}{SCHEME_SEPARATOR}{host}{port}{path}");
+    if whole.len() > protocol::MAX_ADDRESS {
+        return Err(too_long());
+    }
+    // The URL map reads it, once, and gives its one spelling (REQ-1693
+    // items 3 and 4), which is all that is kept.
+    let read = MapAddress::read(&whole).map_err(refusal)?;
+    let text = written(|writer| read.write(writer)).ok_or_else(too_long)?;
+    within_bound(Address { text, host, encrypted, file: None, page: None, subpage: None, wall: false, contents: false }.placed(read.place))
 }
 
 /// Where a redirect leads, by the rules the address field uses: `https` or
@@ -328,9 +377,8 @@ pub fn is_outside_link(text: &str) -> bool {
 
 /// The address a `neoteletext://` link from outside wraps (REQ-1672 items 1
 /// to 5). The one function every route calls: the prefix goes, and what
-/// remains must be a whole `http` or `https` address by the address rules,
-/// with nothing around it and no fragment but a page. A link carries an
-/// address and a page, and nothing else.
+/// remains must be a whole `http` or `https` address of the URL map, with
+/// nothing around it. A link carries that address, and nothing else.
 ///
 /// # Errors
 /// A sentence for the log, which does not repeat the link (item 12).
@@ -342,14 +390,7 @@ pub fn outside_link(text: &str) -> Result<Address, String> {
     if wrapped.trim() != wrapped {
         return Err("a link has space around its address".into());
     }
-    let address = redirect_destination(wrapped).map_err(|_| String::from("a link wraps no web address it may open"))?;
-    if let Some((_, fragment)) = address.text.split_once(FRAGMENT)
-        && fragment_page(fragment).is_none()
-        && fragment != WALL
-    {
-        return Err("a link's fragment is not a place in a channel".into());
-    }
-    Ok(address)
+    redirect_destination(wrapped).map_err(|_| String::from("a link wraps no web address it may open"))
 }
 
 /// The address, when written in full, with its scheme and slash, it is no
@@ -359,9 +400,13 @@ pub fn outside_link(text: &str) -> Result<Address, String> {
 /// (REQ-1690 item 10).
 fn within_bound(address: Address) -> Result<Address, String> {
     if address.text.len() > protocol::MAX_ADDRESS || address.channel_text().len().saturating_add(LONGEST_FRAGMENT) > protocol::MAX_ADDRESS {
-        return Err(format!("Addresses are limited to {} characters", protocol::MAX_ADDRESS));
+        return Err(too_long());
     }
     Ok(address)
+}
+
+fn too_long() -> String {
+    format!("Addresses are limited to {} characters", protocol::MAX_ADDRESS)
 }
 
 #[cfg(test)]

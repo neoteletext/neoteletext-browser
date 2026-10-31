@@ -104,8 +104,13 @@ struct Channel {
     /// when the page was chosen and none of its sub-pages
     /// (neoteletext-common's REQ-1502).
     selected: Option<(u16, u16)>,
+    /// The page parameters of what the tab selects, none when another
+    /// selection left them behind (REQ-1693 item 6).
+    parameters: String,
     /// The selection the channel was last told with SELECT.
     select_told: Option<(u16, u16)>,
+    /// The parameters it was told with it.
+    parameters_told: String,
     /// The focus the channel was last told, which is whether keys go to it
     /// and the round trip is measured.
     focus_told: Option<bool>,
@@ -141,7 +146,9 @@ impl Channel {
             round_trip_us: None,
             on_screen: None,
             selected: None,
+            parameters: String::new(),
             select_told: None,
+            parameters_told: String::new(),
             focus_told: None,
             down: Held::new(),
             pointer_on: None,
@@ -197,14 +204,16 @@ impl Channel {
     /// What is held is let go first: a change of selection ends the input
     /// (REQ-207).
     fn tell_select(&mut self, channel: u32, now_us: u64, sends: &mut Vec<Send>) {
-        if !self.started || self.selected == self.select_told {
+        if !self.started || (self.selected == self.select_told && self.parameters == self.parameters_told) {
             return;
         }
         self.let_go(channel, now_us, sends);
         self.select_told = self.selected;
+        self.parameters_told.clone_from(&self.parameters);
         let Some((page, sub)) = self.selected else { return };
         if let Some(select) = Select::new(page, sub) {
-            self.send(channel, &Item::Event(Event::Select(select)), now_us, sends);
+            let parameters = self.parameters.clone();
+            self.send(channel, &Item::Event(Event::Select(select, &parameters)), now_us, sends);
         }
     }
 
@@ -356,6 +365,12 @@ impl Typing {
         self.channels.get(&channel).and_then(|state| state.selected)
     }
 
+    /// The page parameters of what the tab of `channel` selects.
+    #[must_use]
+    pub fn parameters(&self, channel: u32) -> Option<&str> {
+        self.channels.get(&channel).map(|state| state.parameters.as_str())
+    }
+
     /// The first sub-page that arrived for a page selected with 3F7F is the
     /// tab's selection from now on, exactly as if chosen (DEC-1526): the
     /// channel answered with it and holds it, so nothing is sent.
@@ -372,12 +387,14 @@ impl Typing {
 
     /// The tab of `channel` selected `page` and `sub`, a sub-code or 3F7F
     /// for the page and none of its sub-pages (neoteletext-common's
-    /// REQ-1502): told to the channel with SELECT at once, or when its
-    /// session starts.
-    pub fn select(&mut self, channel: u32, page: u16, sub: u16, now_us: u64) -> Vec<Send> {
+    /// REQ-1502), with the page parameters that came with this selection:
+    /// told to the channel with SELECT at once, or when its session starts.
+    pub fn select(&mut self, channel: u32, page: u16, sub: u16, parameters: &str, now_us: u64) -> Vec<Send> {
         let mut sends = Vec::new();
         let state = self.channels.entry(channel).or_insert_with(Channel::new);
         state.selected = Some((page, sub));
+        state.parameters.clear();
+        state.parameters.push_str(parameters);
         if page == NO_PAGE {
             state.on_screen = None;
         }
@@ -400,7 +417,7 @@ impl Typing {
     /// The tab of `channel` shows no page of it (the wall, with no page
     /// zoomed): SELECT with page 0 (neoteletext-common's DEC-1538 item 9).
     pub fn selects_nothing(&mut self, channel: u32, now_us: u64) -> Vec<Send> {
-        together(self.select(channel, NO_PAGE, SUBCODE_ANY, now_us))
+        together(self.select(channel, NO_PAGE, SUBCODE_ANY, "", now_us))
     }
 
     /// The decoder of `key`'s channel drew `key`'s sub-page `sub`: what
@@ -436,6 +453,7 @@ impl Typing {
             let state = self.channels.entry(key.channel).or_insert_with(Channel::new);
             if state.selected.map(|(page, _)| page) != Some(key.page) {
                 state.selected = Some((key.page, SUBCODE_ANY));
+                state.parameters.clear();
                 state.tell_select(key.channel, now_us, &mut sends);
             }
         }

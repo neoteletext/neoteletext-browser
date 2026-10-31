@@ -88,6 +88,8 @@ pub enum Incoming {
     Show(PageKey),
     /// Show this channel's wall of pages with no page open.
     ShowWall(u32),
+    /// Show this channel's contents.
+    ShowContents(u32),
     /// Bring the window to the front.
     Raise,
     /// About hyperlinks.

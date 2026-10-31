@@ -105,6 +105,10 @@ pub enum ToInterface {
     /// Show this channel's wall of pages with no page open: the tab's address
     /// names the wall (REQ-1690 item 5).
     ShowWall(u32),
+    /// Show this channel's contents: its wall with no page open and the
+    /// overview of its pages open. The tab's address names them (REQ-1693
+    /// item 1).
+    ShowContents(u32),
     /// About hyperlinks (`hyperlinks.md` section 8.1).
     #[cfg(feature = "links")]
     Link(links::Message),

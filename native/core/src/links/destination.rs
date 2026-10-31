@@ -7,13 +7,11 @@ use protocol::links::{LinkKind, MAX_DESTINATION};
 
 use crate::address::Address;
 
-use super::target::{Target, page};
+use super::target::Target;
 
 /// The page a channel opens at when a link names its folder and no page:
 /// the teletext initial page (the engine's REQ-WEB-018 default).
 pub(super) const INITIAL_PAGE: u16 = 0x100;
-/// The files of a channel that are pages (the engine's REQ-WEB-019).
-const PAGE_FILES: [&str; 2] = [".tti", ".t42"];
 
 /// Where a link leads, decided.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -91,23 +89,15 @@ pub struct Channel<'a> {
 }
 
 impl Channel<'_> {
-    /// The page of this channel an address names: its own folder with a
-    /// page, or one of its page files (`hyperlinks.md` section 7.1).
+    /// The page of this channel an address names, its own folder with a
+    /// page, which is followed with the channel staying open. What the page
+    /// alone cannot say opens the address as a navigation: the wall, the
+    /// contents and page parameters, which go with a selection (REQ-1693).
     fn own_page(&self, address: &Address) -> Option<u16> {
-        if self.address.file.is_some() {
+        if self.address.file.is_some() || address.wall || address.contents || address.parameters().is_some() {
             return None;
         }
-        let folder = self.address.channel_text();
-        let other = address.channel_text();
-        if other == folder {
-            return Some(address.page.unwrap_or(INITIAL_PAGE));
-        }
-        // A page file is in the folder: after its `/`, so a channel at
-        // `/a` does not own `/a302.tti` (finding F-86).
-        let file = other.strip_prefix(folder).filter(|_| folder.ends_with('/'))?;
-        let number = PAGE_FILES.iter().find_map(|extension| file.strip_suffix(extension))?;
-        // Page files are named in decimal digits: `302.tti` is page 302.
-        page(number).filter(|_| number.bytes().all(|byte| byte.is_ascii_digit()))
+        (address.channel_text() == self.address.channel_text()).then(|| address.page.unwrap_or(INITIAL_PAGE))
     }
 }
 

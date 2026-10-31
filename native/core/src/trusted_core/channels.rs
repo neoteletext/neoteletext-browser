@@ -101,7 +101,7 @@ impl Core {
             // fetcher sends it before it ends.
             #[cfg(feature = "interaction")]
             {
-                let sends = self.typing.select(id, 0, neoteletext_core::limits::SUBCODE_ANY, self.now_us());
+                let sends = self.typing.select(id, 0, neoteletext_core::limits::SUBCODE_ANY, "", self.now_us());
                 self.deliver_typing(sends)?;
             }
             self.put_to_sleep(id);

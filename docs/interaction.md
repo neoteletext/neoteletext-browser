@@ -67,7 +67,7 @@ The mechanism is `~/devel/neoteletext-common/INPUT.md` section 9.9, with its REQ
 Built on 20 October 2026, all three phases, in the engine (its decisions E.90 to E.94) and here (decision 45). Where the build departs from sections 1 to 16, this section is the design. The owner confirmed every item on 21 October 2026 (decision 46):
 
 1. **The cursor record is on data channel 12, not 13.** EN 300 708 Table 16 gives data channel 13 to Datavideo. The record is type 4 of the audio profile's frame on the profile's own channel 12, always one fragment, which the audio receiver steps over (engine decision E.91).
-2. **`input` sits in the descriptor's `push` object:** `"push": { "address": …, "method": "websocket", "input": true }`, refused with server-sent events (E.92).
+2. **`input` sits in the descriptor's `push` object:** `"push": { "method": "websocket", "input": true }`, refused with server-sent events (E.92).
 3. **The engine does not encode a `CU` line as a packet.** The formats crate reads and writes the line; the decoder reads it from the page it already has, so the formats crate takes nothing from the input profile (E.91).
 4. **Every fetched file and pushed message is read whole** and its pages completed at once. A pushed page had shown only when the next page of its magazine came, and the last page of each magazine of a fetched channel never arrived at all. A fetched copy of a page the channel pushed is older and is dropped, since the contents' order may bring it after the push.
 5. **The trusted core numbers the records,** not the interface: it alone sends page, focus, resume and release records. *Amended 28 October 2026:* the interface no longer numbers its keys, which it did only for its echo, now removed.

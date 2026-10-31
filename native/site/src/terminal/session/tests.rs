@@ -37,7 +37,7 @@ fn named(name: &str) -> Vec<u8> {
 }
 
 fn page(number: u16) -> Vec<u8> {
-    encoded(&Item::Event(Event::Select(neoteletext_input::event::Select::new(number, neoteletext_core::limits::SUBCODE_ANY).unwrap())))
+    encoded(&Item::Event(Event::Select(neoteletext_input::event::Select::new(number, neoteletext_core::limits::SUBCODE_ANY).unwrap(), "")))
 }
 
 fn feed(session: &mut Session, messages: &[Vec<u8>]) -> Vec<Push> {

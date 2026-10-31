@@ -250,10 +250,13 @@ impl Core {
     }
 
     /// Tells `key`'s channel that its tab selects `sub` of the page, a
-    /// sub-code or 3F7F for the page (SELECT, REQ-INT-140).
+    /// sub-code or 3F7F for the page (SELECT, REQ-INT-140), with the page
+    /// parameters of an address that names that selection (REQ-1693 item 6).
     #[cfg(feature = "interaction")]
     fn select_view(&mut self, key: PageKey, sub: u16) -> Result<(), String> {
-        let sends = self.typing.select(key.channel, key.page, sub, self.now_us());
+        let tab = self.session.all_tabs().find(|tab| tab.channel.id == key.channel);
+        let parameters = tab.and_then(|tab| tab.address()).map(|address| address.parameters_of(key.page, sub).to_owned()).unwrap_or_default();
+        let sends = self.typing.select(key.channel, key.page, sub, &parameters, self.now_us());
         self.deliver_typing(sends)
     }
 

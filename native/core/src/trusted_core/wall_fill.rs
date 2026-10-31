@@ -91,7 +91,7 @@ impl Core {
         let channel = self.wall_fill.channel;
         let sends = match self.wall_fill.step(now) {
             Step::Wait => return Ok(()),
-            Step::Select(page) => self.typing.select(channel, page, SUBCODE_ANY, self.now_us()),
+            Step::Select(page) => self.typing.select(channel, page, SUBCODE_ANY, "", self.now_us()),
             Step::Finished => self.typing.selects_nothing(channel, self.now_us()),
         };
         self.deliver_typing(sends)

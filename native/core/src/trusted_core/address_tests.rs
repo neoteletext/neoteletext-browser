@@ -176,6 +176,104 @@ fn a_files_page_names_its_address() {
     assert_eq!(shown(&test), "file:///tmp/news.tti#200");
 }
 
+// REQ-1693 item 9: the first page a file shows is where a tab at its bare
+// address arrives, in the same entry; a later page is a page chosen.
+#[cfg(unix)]
+#[test]
+fn arriving_at_a_file_adds_no_back_entry() {
+    let mut test = Test::new("address file arrival");
+    test.core.session.open("/tmp/news.tti").unwrap();
+    let channel = test.core.active_channel().unwrap();
+    open(&mut test, channel, 0x100);
+    assert_eq!((shown(&test).as_str(), entries(&test)), ("file:///tmp/news.tti#100", 1));
+    open(&mut test, channel, 0x200);
+    assert_eq!((shown(&test).as_str(), entries(&test)), ("file:///tmp/news.tti#200", 2));
+}
+
+// REQ-1693 item 1: the contents have an address. A viewer's page leaves it,
+// and Back returns to it.
+#[test]
+fn the_contents_have_an_address() {
+    let mut test = Test::new("address contents");
+    test.core.session.open(&at("contents")).unwrap();
+    let channel = test.core.active_channel().unwrap();
+    test.sent();
+    test.core.fetched(channel, FromFetcher::InitialPage(0x100)).unwrap();
+    assert_eq!(shown(&test), at("contents"), "it arrives where it names");
+    test.core.show_address().unwrap();
+    let sent = test.sent();
+    assert!(sent.contains(&ToInterface::ShowContents(channel)), "{sent:?}");
+    open(&mut test, channel, 0x200);
+    assert_eq!((shown(&test), entries(&test)), (at("200"), 2));
+    test.sent();
+    test.core.intent(ToCore::Back).unwrap();
+    assert_eq!(shown(&test), at("contents"));
+    assert!(test.sent().contains(&ToInterface::ShowContents(channel)));
+}
+
+// REQ-1693 items 3 and 8: a location with no fragment inherits the tab's, and
+// one naming a page's file has its own place.
+#[test]
+fn a_redirect_inherits_a_fragment_only_when_it_names_no_place() {
+    let mut test = Test::new("address redirect fragment");
+    test.core.session.open(&at("302?a=1")).unwrap();
+    let channel = test.core.active_channel().unwrap();
+    assert_eq!(test.core.session.server_redirect(channel, "https://other.invalid/a/").unwrap().text, "https://other.invalid/a/#302?a=1");
+    assert_eq!(test.core.session.server_redirect(channel, "https://other.invalid/a/400.tti").unwrap().text, "https://other.invalid/a/#400");
+    assert_eq!(test.core.session.server_redirect(channel, "https://other.invalid/a/#500").unwrap().text, "https://other.invalid/a/#500");
+    assert!(test.core.session.server_redirect(channel, "https://other.invalid/a/channel.json").is_err());
+}
+
+// REQ-1693 item 6: page parameters reach the channel with the selection they
+// came with, stay in the address for Reload, and go with another selection.
+#[cfg(feature = "interaction")]
+#[test]
+fn page_parameters_go_with_their_selection() {
+    let (mut test, channel) = arrived("parameters");
+    let parameters = |test: &Test, channel| test.core.typing.parameters(channel).map(str::to_owned);
+    test.core.session.navigate(&format!("{CHANNEL}#100"), true).unwrap();
+    assert_ne!(test.core.active_channel(), Some(channel));
+    test.core.session.navigate(&at("200?a=1"), true).unwrap();
+    let channel = test.core.active_channel().unwrap();
+    test.core.show_address().unwrap();
+    assert_eq!(test.core.typing.selection(channel), Some((0x200, SUBCODE_ANY)));
+    assert_eq!(parameters(&test, channel).as_deref(), Some("a=1"));
+    open(&mut test, channel, 0x200);
+    assert_eq!(shown(&test), at("200?a=1"), "opening the page it names changes nothing");
+
+    open(&mut test, channel, 0x300);
+    assert_eq!(shown(&test), at("300"));
+    assert_eq!(parameters(&test, channel).as_deref(), Some(""), "another page leaves them behind");
+
+    test.core.intent(ToCore::Back).unwrap();
+    assert_eq!(shown(&test), at("200?a=1"));
+    assert_eq!(parameters(&test, channel).as_deref(), Some("a=1"), "an address sends them again");
+
+    assert!(test.core.session.reload());
+    let again = test.core.active_channel().unwrap();
+    assert_ne!(again, channel);
+    test.core.show_address().unwrap();
+    assert_eq!(parameters(&test, again).as_deref(), Some("a=1"), "and Reload");
+}
+
+// REQ-1693 item 6, by a sub-page: a step leaves them behind in the address
+// and the SELECT alike.
+#[cfg(feature = "interaction")]
+#[test]
+fn a_sub_page_chosen_leaves_page_parameters_behind() {
+    let mut test = Test::new("address parameters sub-page");
+    test.core.session.open(&at("200/0002?a=1")).unwrap();
+    let channel = test.core.active_channel().unwrap();
+    test.core.show_address().unwrap();
+    assert_eq!(test.core.typing.selection(channel), Some((0x200, 2)));
+    assert_eq!(test.core.typing.parameters(channel), Some("a=1"));
+    assert!(test.core.session.subpage_chosen(0x200, Some(3)));
+    assert_eq!(shown(&test), at("200/0003"));
+    test.core.show_address().unwrap();
+    assert_eq!(test.core.typing.selection(channel), Some((0x200, 3)));
+    assert_eq!(test.core.typing.parameters(channel), Some(""));
+}
+
 // REQ-1693 item 10: the start page is in no channel.
 #[test]
 fn the_start_page_keeps_its_address() {

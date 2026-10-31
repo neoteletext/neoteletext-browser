@@ -31,8 +31,7 @@ fn main() -> ExitCode {
         Some("build") if arguments.len() >= 3 => {
             let folder = PathBuf::from(&arguments[1]).join(CHANNEL);
             let sources: Vec<PathBuf> = arguments[2..].iter().map(PathBuf::from).collect();
-            let push = format!("http://127.0.0.1:{DEFAULT_PORT}/{CHANNEL}/push");
-            build::build(&folder, &push, &sources).map(|built| {
+            build::build(&folder, &sources).map(|built| {
                 let live: Vec<String> = built.live.iter().map(|page| format!("{page:03X}")).collect();
                 eprintln!("neoteletext-site: {}: {} pages, live pages {}", folder.display(), built.pages, live.join(" "));
             })

@@ -104,6 +104,17 @@ impl Browser {
         self.wall.unzoom(now);
     }
 
+    /// The trusted core's address names the contents of `channel`: the
+    /// channel's pages laid out, which here are the wall with no page open
+    /// and the overview of every page, unfolded.
+    pub fn show_contents(&mut self, channel: u32, now: u64) {
+        if channel == self.channel.channel {
+            self.overview.folded = false;
+            self.overview.hidden = false;
+        }
+        self.show_wall(channel, now);
+    }
+
     /// The channel's list changed: the page the trusted core opened, if it
     /// waited for this.
     pub fn show_listed(&mut self, now: u64) {
@@ -258,6 +269,19 @@ mod tests {
     use crate::browser::fixture::{browser, browser as fixture_browser, press_at};
     use crate::browser::frames::PULSE_MILLISECONDS;
     use crate::browser::{Key, Modifiers};
+
+    /// REQ-1693 item 1: the channel's contents are its wall with no page
+    /// open and the overview of its pages open, however the viewer left it.
+    #[test]
+    fn the_contents_are_the_wall_and_the_overview() {
+        let (mut browser, _) = browser();
+        browser.overview.folded = true;
+        browser.overview.hidden = true;
+        browser.show_contents(browser.channel.channel + 1, 0);
+        assert!(browser.overview.hidden, "another channel's address changes nothing here");
+        browser.show_contents(browser.channel.channel, 0);
+        assert!(!browser.overview.folded && !browser.overview.hidden && browser.wall_without_page());
+    }
 
     #[test]
     fn three_digits_choose_a_page_and_a_received_page_pulses() {

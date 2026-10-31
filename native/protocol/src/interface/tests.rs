@@ -10,9 +10,9 @@ use super::kinds::{
     KIND_TAB_TO_WINDOW, KIND_TABS, KIND_TARGET, KIND_VISIBLE,
 };
 use super::*;
-use crate::{MAX_IDENTITY, MAX_PAYLOAD, NEW_WINDOW, ProtocolError, clean, fetcher};
 #[cfg(not(feature = "links"))]
-use crate::{decoder, fetcher};
+use crate::decoder;
+use crate::{MAX_IDENTITY, MAX_PAYLOAD, NEW_WINDOW, ProtocolError, clean, fetcher};
 
 const KEY: PageKey = PageKey { channel: 7, page: 0x123 };
 
@@ -151,6 +151,7 @@ fn every_message_to_the_interface_round_trips() {
         ToInterface::Updated { channel: 9, page: 0x302 },
         ToInterface::Show(KEY),
         ToInterface::ShowWall(9),
+        ToInterface::ShowContents(9),
         ToInterface::Raise,
         ToInterface::Frame { key: KEY, version: 3, image: vec![1, 2, 3] },
         ToInterface::Settings(settings::SettingsView {

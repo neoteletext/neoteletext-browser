@@ -23,13 +23,18 @@ impl Session {
     /// link is, with a Back entry and a visit when it draws (REQ-1690 item
     /// 3), which also starts a program's redirects counting again. True when
     /// the address changed. The browser's own start page is in no channel,
-    /// and keeps its address.
+    /// and keeps its address. A file has no descriptor to give an initial
+    /// page, so the first page it shows is where a tab at its bare address
+    /// arrives, in the same entry (REQ-1693 item 9).
     pub fn page_chosen(&mut self, page: u16) -> bool {
         let now = self.now;
         let Some(tab) = self.tabs.get_mut(self.active) else { return false };
         let Some(address) = tab.address().filter(|shown| shown.page != Some(page) && !shown.is_start_page()).and_then(|shown| shown.with_page(page)) else {
             return false;
         };
+        if tab.address().is_some_and(|shown| shown.file.is_some() && shown.is_bare()) {
+            return tab.rename(address, now);
+        }
         tab.push(Visit::new(address, false, now));
         tab.channel.redirects.clear();
         tab.channel.page_selected();
@@ -68,19 +73,22 @@ impl Session {
         let now = self.now;
         let Some(tab) = self.tabs.iter_mut().find(|tab| tab.channel.id == channel) else { return false };
         tab.channel.initial_page = Some(page);
-        let bare = |shown: &&Address| shown.page.is_none() && !shown.wall && !shown.is_start_page() && shown.file.is_none();
+        let bare = |shown: &&Address| shown.is_bare() && !shown.is_start_page() && shown.file.is_none();
         let Some(address) = tab.address().filter(bare).and_then(|shown| shown.with_page(page)) else { return false };
         tab.rename(address, now)
     }
 
     /// The channel's program redirected the tab holding `channel` to `page`,
-    /// and `subpage` of it if it names one (`INPUT.md` section 7.11), its
-    /// Back list by [`Tab::redirected`]. True when the page left is passed
-    /// over from now on.
-    pub fn redirect_page(&mut self, channel: u32, page: u16, subpage: Option<u16>) -> bool {
+    /// and `subpage` of it if it names one (`INPUT.md` section 7.11), with
+    /// the page parameters of an address it named, its Back list by
+    /// [`Tab::redirected`]. True when the page left is passed over from now
+    /// on.
+    pub fn redirect_page(&mut self, channel: u32, page: u16, subpage: Option<u16>, parameters: Option<&str>) -> bool {
         let now = self.now;
         let Some(tab) = self.tabs.iter_mut().find(|tab| tab.channel.id == channel) else { return false };
-        let Some(address) = tab.address().and_then(|shown| shown.with_subpage(page, subpage)) else { return false };
+        let Some(address) = tab.address().and_then(|shown| shown.with_subpage(page, subpage)).and_then(|at| at.with_parameters(parameters)) else {
+            return false;
+        };
         if tab.address().is_some_and(|shown| shown.text == address.text) {
             return false;
         }

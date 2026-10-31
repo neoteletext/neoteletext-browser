@@ -7,7 +7,7 @@ use neoteletext_input::{VERSION, WELCOME_TIMEOUT_MS};
 
 const PAGE: PageKey = PageKey { channel: 7, page: 0x200 };
 /// SELECT of the page, with no sub-page named.
-const SELECT_PAGE: &str = "Event(Select(Select { page: 512, sub: 16255 }))";
+const SELECT_PAGE: &str = "Event(Select(Select { page: 512, sub: 16255 }, \"\"))";
 /// The key `a` as the channel reads it: a KEY carrying its text (INPUT.md
 /// section 6.3).
 const KEY_A: &str =
@@ -142,7 +142,7 @@ fn losing_the_focus_never_changes_the_selection() {
 fn the_wall_selects_nothing_and_a_page_after_it_is_selected_again() {
     let mut typing = ready(SELECT_CAP);
     typing.opened(Some(PAGE.channel), None, 5);
-    assert_eq!(items(&typing.selects_nothing(PAGE.channel, 6)), ["Event(Select(Select { page: 0, sub: 16255 }))"]);
+    assert_eq!(items(&typing.selects_nothing(PAGE.channel, 6)), ["Event(Select(Select { page: 0, sub: 16255 }, \"\"))"]);
     let back = typing.opened(Some(PAGE.channel), Some(PAGE), 7);
     assert_eq!(items(&back), [SELECT_PAGE, "Event(FocusIn)"]);
     assert_eq!(items(&typing.input_intent(&key('a'), 8)), [] as [String; 0], "nothing on screen until the page is drawn again");
@@ -154,7 +154,7 @@ fn the_wall_selects_nothing_and_a_page_after_it_is_selected_again() {
 fn input_is_stamped_with_the_page_on_screen() {
     let mut typing = ready(SELECT_CAP);
     let next = PageKey { page: 0x201, ..PAGE };
-    assert_eq!(items(&typing.opened(Some(PAGE.channel), Some(next), 5)), ["Event(Select(Select { page: 513, sub: 16255 }))"]);
+    assert_eq!(items(&typing.opened(Some(PAGE.channel), Some(next), 5)), ["Event(Select(Select { page: 513, sub: 16255 }, \"\"))"]);
     let sent = items(&typing.input_intent(&InputIntent { key: next, intent: key('a').intent }, 6));
     assert_eq!(sent, [KEY_A], "the old page's stamp, which the channel drops");
     typing.drawn(next, 0x0003);
@@ -173,7 +173,7 @@ fn a_held_key_is_released_lost_when_the_input_ends() {
     let mut typing = ready(SELECT_CAP);
     typing.input_intent(&key('a'), 5);
     let next = PageKey { page: 0x201, ..PAGE };
-    assert_eq!(items(&typing.opened(Some(PAGE.channel), Some(next), 6)), [lost, "Event(Select(Select { page: 513, sub: 16255 }))"]);
+    assert_eq!(items(&typing.opened(Some(PAGE.channel), Some(next), 6)), [lost, "Event(Select(Select { page: 513, sub: 16255 }, \"\"))"]);
     // A key that came up is not let go again.
     let mut typing = ready(SELECT_CAP);
     typing.input_intent(&key('a'), 5);
@@ -374,14 +374,14 @@ fn the_selection_is_each_tabs_own_and_survives_a_new_session() {
     typing.adopt(PAGE.channel, PAGE.page, 1);
     typing.input(8, true, false, 0);
     typing.control(8, &welcome(SELECT_CAP), 0);
-    let other = typing.select(8, 0x300, 2, 0);
+    let other = typing.select(8, 0x300, 2, "", 0);
     assert!(other.iter().all(|send| matches!(send, Send::Fetcher { channel: 8, .. })));
     assert_eq!(typing.selection(PAGE.channel), Some((PAGE.page, 1)), "the other tab's selection is its own");
     assert_eq!(typing.selection(8), Some((0x300, 2)));
     typing.input(PAGE.channel, false, false, 0);
     typing.input(PAGE.channel, true, false, 0);
     let again = items(&typing.control(PAGE.channel, &welcome(SELECT_CAP), 0));
-    assert!(again.contains(&"Event(Select(Select { page: 512, sub: 1 }))".to_owned()), "{again:?}");
+    assert!(again.contains(&"Event(Select(Select { page: 512, sub: 1 }, \"\"))".to_owned()), "{again:?}");
 }
 
 /// REQ-INT-109: 120 units a second.
@@ -397,3 +397,37 @@ fn the_rate_is_limited() {
 
 mod pointer;
 mod resume;
+
+/// REQ-1693 item 6, DEC-1717 item 11: page parameters go in the SELECT of
+/// their selection. The same page with others is a new selection, and any
+/// other selection leaves them behind.
+#[test]
+fn select_carries_the_parameters_of_its_selection() {
+    let mut typing = ready(SELECT_CAP);
+    let channel = PAGE.channel;
+    let with = |sub: u32, parameters: &str| format!("Event(Select(Select {{ page: 513, sub: {sub} }}, {parameters:?}))");
+    let told = typing.select(channel, 0x201, SUBCODE_ANY, "a=1", 1);
+    assert_eq!(items(&told), [with(u32::from(SUBCODE_ANY), "a=1")]);
+    assert!(items(&typing.select(channel, 0x201, SUBCODE_ANY, "a=1", 2)).is_empty(), "said once");
+    let other = typing.select(channel, 0x201, SUBCODE_ANY, "b=2", 3);
+    assert_eq!(items(&other), [with(u32::from(SUBCODE_ANY), "b=2")]);
+    assert_eq!(items(&typing.select_again(channel, 4)), [with(u32::from(SUBCODE_ANY), "b=2")], "said again, whole");
+    let left = typing.select(channel, 0x201, 1, "", 5);
+    assert_eq!(items(&left), [with(1, "")], "a sub-page of it leaves them behind");
+    typing.select(channel, 0x201, SUBCODE_ANY, "a=1", 6);
+    let next = PageKey { channel, page: 0x202 };
+    assert_eq!(items(&typing.opened(Some(channel), Some(next), 7)), ["Event(Select(Select { page: 514, sub: 16255 }, \"\"))"], "so does another page");
+    assert_eq!(typing.parameters(channel), Some(""));
+}
+
+/// A session that starts late, or starts again, says them.
+#[test]
+fn a_sessions_start_says_the_parameters() {
+    let mut typing = Typing::default();
+    typing.input(PAGE.channel, true, false, 0);
+    typing.opened(Some(PAGE.channel), Some(PAGE), 0);
+    typing.select(PAGE.channel, PAGE.page, SUBCODE_ANY, "a=1", 0);
+    let started = typing.control(PAGE.channel, &welcome(SELECT_CAP), 0);
+    let said = items(&started).into_iter().find(|item| item.contains("Select")).unwrap();
+    assert_eq!(said, "Event(Select(Select { page: 512, sub: 16255 }, \"a=1\"))");
+}

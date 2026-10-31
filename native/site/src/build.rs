@@ -189,8 +189,9 @@ fn write_live_versions<'a>(
 }
 
 /// Writes the contents file, each section with its pages, and the
-/// channel's descriptor, whose push feed is at `push`.
-fn write_contents(write: &dyn Fn(&str, &str) -> Result<(), String>, sections: &[(String, Vec<(u16, String)>)], push: &str) -> Result<(), String> {
+/// channel's descriptor, whose push feed is at its folder's `push` (the
+/// URL map, `SERVER.md` section 4.2).
+fn write_contents(write: &dyn Fn(&str, &str) -> Result<(), String>, sections: &[(String, Vec<(u16, String)>)]) -> Result<(), String> {
     let mut contents = format!("# {NAME}: every page from 100 to 899\n");
     for (section, entries) in sections {
         let _ = writeln!(contents, "s\t{section}");
@@ -199,17 +200,14 @@ fn write_contents(write: &dyn Fn(&str, &str) -> Result<(), String>, sections: &[
         }
     }
     write("contents.txt", &contents)?;
-    write(
-        "channel.json",
-        &format!("{{\n  \"name\": \"{NAME}\",\n  \"initial_page\": \"100\",\n  \"push\": {{ \"address\": \"{push}\", \"method\": \"sse\" }}\n}}\n"),
-    )
+    write("channel.json", &format!("{{\n  \"name\": \"{NAME}\",\n  \"initial_page\": \"100\",\n  \"push\": {{ \"method\": \"sse\" }}\n}}\n"))
 }
 
-/// Builds the channel into `out`, whose push feed is at `push`.
+/// Builds the channel into `out`.
 ///
 /// # Errors
 /// When the samples give no pages, or a file cannot be written.
-pub fn build(out: &Path, push: &str, sources: &[PathBuf]) -> Result<Built, String> {
+pub fn build(out: &Path, sources: &[PathBuf]) -> Result<Built, String> {
     let pool = samples(sources);
     if pool.is_empty() {
         return Err("the samples gave no pages".into());
@@ -274,7 +272,7 @@ pub fn build(out: &Path, push: &str, sources: &[PathBuf]) -> Result<Built, Strin
         entries.insert(0, (first, if first == 0x100 { String::from("Front page") } else { format!("{section} index") }));
         sections.push(((*section).to_owned(), entries));
     }
-    write_contents(&write, &sections, push)?;
+    write_contents(&write, &sections)?;
     let pages = sections.iter().map(|(_, entries)| entries.len()).sum();
     Ok(Built { pages, live })
 }

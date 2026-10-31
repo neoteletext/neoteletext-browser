@@ -47,7 +47,7 @@ fn targets_parse_in_every_form_of_the_tti_link_extension() {
     assert_eq!(parse_target("sport:302:0001"), Some(Target::Service { name: "sport".into(), page: 0x302 }));
     assert_eq!(parse_target("abc:302"), Some(Target::Service { name: "abc".into(), page: 0x302 }), "a name is not a page");
     let Some(Target::Channel(address)) = parse_target("https://weather.invalid/300.t42") else { panic!() };
-    assert_eq!(address.text, "https://weather.invalid/300.t42");
+    assert_eq!(address.text, "https://weather.invalid/#300", "a page's file name has one spelling (REQ-1693 item 3)");
     assert_eq!(parse_target("web:https://www.example.invalid/story"), Some(Target::Web("https://www.example.invalid/story".into())));
 }
 
@@ -258,7 +258,7 @@ fn a_link_to_another_channel_is_followed_with_no_question() {
 // only for the link pointed at.
 #[test]
 fn a_pointed_link_says_where_it_leads_in_full() {
-    let long = format!("https://weather.invalid/{}", "a".repeat(protocol::MAX_ADDRESS - 40));
+    let long = format!("https://weather.invalid/?q={}", "a".repeat(protocol::MAX_ADDRESS - 40));
     let mut links =
         links_with(vec![declared(5, 0, 7, "sport:302"), declared(7, 0, 7, "web:https://www.example.invalid/a?b=c#d"), declared(9, 0, 7, "401")], Vec::new());
     links.descriptor(CHANNEL, &[], &[Service { name: "sport".into(), address: long.clone() }]);
@@ -453,22 +453,26 @@ fn fastext_keys_follow_as_links_do() {
     assert_eq!(links.fastext(FastextKey::Red, Some(CHANNEL), START), Err(Refusal::NotALink), "row 24 hidden: no key acts");
 }
 
-/// Finding F-86: a channel owns a page file only inside its own folder,
-/// after its `/`, so a channel opened at `/a` does not own `/a302.tti`.
-/// The review thought it a false positive; it held for a channel address
-/// with no `/` at its end.
+/// Finding F-86, and REQ-1693 item 3: a page's file name reads as the page,
+/// in the channel whose folder holds it, and a name that only begins as a
+/// channel's is no address at all. An address a page alone cannot say is
+/// not followed as a page: it opens as a navigation (REQ-1693 item 6).
 #[test]
-fn a_channel_owns_page_files_only_in_its_folder() {
+fn a_channel_owns_a_page_only_in_its_folder() {
     let folder = address::parse("https://news.invalid/a/").unwrap();
     assert!(folder.channel_text().ends_with('/'));
-    let bare = address::parse("https://news.invalid/a").unwrap();
-    let sibling = address::parse("https://news.invalid/a302.tti").unwrap();
+    assert!(address::parse("https://news.invalid/a").is_err());
+    assert!(address::parse("https://news.invalid/a302.tti").is_err());
     let inside = address::parse("https://news.invalid/a/302.tti").unwrap();
+    let other = address::parse("https://news.invalid/302.tti").unwrap();
     let owned =
         |channel: &Address, target: &Address| Descriptor::default().resolve(&Target::Channel(target.clone()), &Channel { id: CHANNEL, address: channel });
     assert_eq!(owned(&folder, &inside), Some(Destination::Page(0x302)));
-    assert_eq!(owned(&folder, &sibling), Some(Destination::Channel(sibling.clone())), "a sibling of the folder");
-    assert_eq!(owned(&bare, &sibling), Some(Destination::Channel(sibling.clone())), "a name that only begins as the channel's");
+    assert_eq!(owned(&folder, &other), Some(Destination::Channel(other.clone())), "a page of another folder");
+    for target in ["https://news.invalid/a/#302?b=1", "https://news.invalid/a/#wall", "https://news.invalid/a/#contents"] {
+        let target = address::parse(target).unwrap();
+        assert_eq!(owned(&folder, &target), Some(Destination::Channel(target.clone())));
+    }
 }
 
 /// Finding F-41 (decision 100), the core's side: a web address holding a

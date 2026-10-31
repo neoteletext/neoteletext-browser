@@ -56,7 +56,8 @@ impl Session {
             return Err("a page of it redirected elsewhere".into());
         }
         let destination = redirect_destination(location)?;
-        let inherited = tab.address().and_then(|shown| shown.text.split_once(FRAGMENT)).filter(|_| !location.contains(FRAGMENT));
+        // A page's file name in the location names a place too (REQ-1693 item 3).
+        let inherited = tab.address().and_then(|shown| shown.text.split_once(FRAGMENT)).filter(|_| !destination.text.contains(FRAGMENT));
         match inherited {
             Some((_, fragment)) => parse(&format!("{}{FRAGMENT}{fragment}", destination.text)),
             None => Ok(destination),

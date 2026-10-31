@@ -54,8 +54,8 @@ fn connected(mut stream: TcpStream, settings: Settings, connection: u64) -> io::
                     let mut pushes = Vec::new();
                     if let Err(error) = input.push(&payload, &mut |item| {
                         // What a test of the session's end and of two tabs reads.
-                        if let Item::Event(Event::Select(select)) = &item {
-                            eprintln!("neoteletext-site: connection {connection}: SELECT {:03X}/{:04X}", select.page, select.sub);
+                        if let Item::Event(Event::Select(select, parameters)) = &item {
+                            eprintln!("neoteletext-site: connection {connection}: SELECT {:03X}/{:04X} {parameters}", select.page, select.sub);
                         }
                         pushes.extend(session.item(&item));
                     }) {
@@ -98,7 +98,7 @@ fn send(stream: &mut TcpStream, push: Push) -> io::Result<()> {
     websocket::write(stream, websocket::BINARY, &bytes)
 }
 
-pub(super) fn serve(mut stream: TcpStream, port: u16, settings: &Settings) -> io::Result<()> {
+pub(super) fn serve(mut stream: TcpStream, settings: &Settings) -> io::Result<()> {
     let mut reader = BufReader::new(stream.try_clone()?);
     loop {
         let mut head = String::new();
@@ -130,9 +130,7 @@ pub(super) fn serve(mut stream: TcpStream, port: u16, settings: &Settings) -> io
         };
         match name {
             "channel.json" => {
-                let json = format!(
-                    r#"{{"name":"NeoTeletext terminal channel","push":{{"address":"ws://127.0.0.1:{port}/{CHANNEL}/push","method":"websocket","input":true}}}}"#
-                );
+                let json = r#"{"name":"NeoTeletext terminal channel","push":{"method":"websocket","input":true}}"#;
                 respond(&mut stream, "200 OK", "application/json", json.as_bytes())?;
             }
             "contents.txt" => respond(&mut stream, "200 OK", "text/plain", contents_file().as_bytes())?,

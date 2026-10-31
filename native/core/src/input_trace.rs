@@ -85,7 +85,8 @@ fn describe(item: &Item<'_>) -> String {
         Event::Resize { columns, rows, .. } => format!("RESIZE {columns}x{rows}"),
         Event::Compose { text, .. } => format!("COMPOSE {} chars", text.chars().count()),
         Event::Hello { version, .. } => format!("HELLO v{version}"),
-        Event::Select(select) => format!("SELECT {:03X}/{:04X}", select.page, select.sub),
+        Event::Select(select, "") => format!("SELECT {:03X}/{:04X}", select.page, select.sub),
+        Event::Select(select, parameters) => format!("SELECT {:03X}/{:04X}?{parameters}", select.page, select.sub),
         Event::Hover { leave, column, row, .. } => format!("HOVER {} {column},{row}", if *leave { "leave" } else { "enter" }),
         Event::Extension { kind, .. } => format!("EXTENSION {kind:#04x}"),
     }
@@ -130,6 +131,7 @@ mod tests {
         let key = neoteletext_input::event::Key { on: ON, action: Action::Press, key: KeyCode::Character('s'), mods: 0, text: None, base: None, lost: false };
         assert_eq!(trace.note(&message(&Item::Event(Event::Key(key)))).text, "KEY a character press");
         let select = neoteletext_input::event::Select::new(0x128, 0).unwrap();
-        assert_eq!(trace.note(&message(&Item::Event(Event::Select(select)))).text, "SELECT 128/0000");
+        assert_eq!(trace.note(&message(&Item::Event(Event::Select(select, "")))).text, "SELECT 128/0000");
+        assert_eq!(trace.note(&message(&Item::Event(Event::Select(select, "a=1")))).text, "SELECT 128/0000?a=1");
     }
 }

@@ -36,6 +36,7 @@ pub(crate) const KIND_PAGE: u8 = 8;
 pub(crate) const KIND_UPDATED: u8 = 9;
 pub(crate) const KIND_TAB_SOUNDING: u8 = 10;
 pub(crate) const KIND_SHOW: u8 = 14;
+pub(crate) const KIND_SHOW_CONTENTS: u8 = 79;
 pub(crate) const KIND_SETTINGS: u8 = 43;
 pub(crate) const KIND_CONSOLE_UPDATE: u8 = 44;
 // Windows (`multiple-windows.md`, decision 72).

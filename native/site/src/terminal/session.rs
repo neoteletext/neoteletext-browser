@@ -154,8 +154,8 @@ impl Session {
                 }
             }
             Item::Event(Event::Hello { version, caps, .. }) => return self.welcome(*version, *caps),
-            Item::Event(Event::Select(select)) if select.page == 0 => {}
-            Item::Event(Event::Select(select)) => {
+            Item::Event(Event::Select(select, _)) if select.page == 0 => {}
+            Item::Event(Event::Select(select, _)) => {
                 self.page = select.page;
                 self.selection.clear();
             }

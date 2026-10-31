@@ -107,7 +107,7 @@ pub fn run(port: u16, settings: &Settings) -> Result<(), String> {
     for stream in listener.incoming().flatten() {
         let settings = settings.clone();
         thread::spawn(move || {
-            if let Err(error) = server::serve(stream, port, &settings) {
+            if let Err(error) = server::serve(stream, &settings) {
                 eprintln!("neoteletext-site: {error}");
             }
         });

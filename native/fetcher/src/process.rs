@@ -894,7 +894,7 @@ mod tests {
         let handle = |agent: &mut Agent<'_>, input: Input<'_>, actions: &mut Vec<Action>| agent.handle(Instant(now), input, &mut |out| collect(out, actions));
         handle(agent, Input::OpenChannel("http://tt.example/tt/"), &mut actions);
         handle(agent, Input::Net(NetInput::Connected(ConnectionId::Fetch, PUBLIC)), &mut actions);
-        let body = br#"{"name":"Test","push":{"address":"ws://tt.example/tt/push","method":"websocket","input":true}}"#;
+        let body = br#"{"name":"Test","push":{"method":"websocket","input":true}}"#;
         let mut response = format!("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n", body.len()).into_bytes();
         response.extend_from_slice(body);
         handle(agent, Input::Net(NetInput::Received(ConnectionId::Fetch, &response)), &mut actions);
