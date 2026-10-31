@@ -108,6 +108,8 @@ sign_bundle() {
     local bundle="$1" how="${2:-test}" file
     local -a identity_arguments=(--sign -)
     [[ "$how" == wrong ]] && identity_arguments=(--sign - --identifier com.example.other)
+    # The helper bundle first: a bundle's seal covers what is inside it.
+    codesign --force --options runtime --timestamp=none --sign - "$bundle/Contents/Helpers/NeoTeletextChooser.app"
     for file in "$bundle"/Contents/MacOS/*; do
         codesign --force --options runtime --timestamp=none --sign - "$file"
     done

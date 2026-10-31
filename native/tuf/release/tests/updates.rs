@@ -15,7 +15,7 @@ use std::io::{BufRead as _, BufReader};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 
-use update::platform::{BUNDLE, Family, MANIFEST_SIGNATURE, MARKED_PROGRAM, PROGRAMS, Platform};
+use update::platform::{BUNDLE, CHOOSER_BUNDLE, Family, MANIFEST_SIGNATURE, MARKED_PROGRAM, PROGRAMS, Platform};
 use update::version::Version;
 use updater::{Config, Https};
 
@@ -122,6 +122,9 @@ impl Fixture {
             Family::Macos => {
                 // The bundle's seal, which codesign writes; the updater
                 // checks only the manifest's hashes.
+                let helper_seal = built.join(BUNDLE).join(CHOOSER_BUNDLE).join("Contents/_CodeSignature/CodeResources");
+                std::fs::create_dir_all(helper_seal.parent().unwrap()).unwrap();
+                std::fs::write(helper_seal, b"the chooser's seal").unwrap();
                 let seal = built.join(BUNDLE).join("Contents/_CodeSignature/CodeResources");
                 std::fs::create_dir_all(seal.parent().unwrap()).unwrap();
                 std::fs::write(seal, "<plist/>").unwrap();
