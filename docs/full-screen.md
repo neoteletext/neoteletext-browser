@@ -55,7 +55,7 @@ Full screen ends, and the window is as it was, when:
 - **Escape** is pressed while keys do not go to a channel;
 - **the full-screen key** (Control-Command-F, F11) is pressed again, which a channel never receives, so it leaves even while typing;
 - **the system ends it** (macOS's full-screen exit, Mission Control, a display unplugged);
-- **anything needs the window:** a link or Fastext key that leaves the channel (its site-change screen is in the strip, requirement 8.4), a certificate refused (decision 83), the tab closed or another chosen, a new tab or window, a panel of the strip opened, the developer console, or the trusted core's question in the strip.
+- **anything needs the window:** a link or Fastext key that takes the tab to another channel, a certificate refused (decision 83), the tab closed or another chosen, a new tab or window, a panel of the strip opened, the developer console, or the trusted core's question in the strip.
 
 Leaving does not change the open page.
 

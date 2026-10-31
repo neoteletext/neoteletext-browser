@@ -83,10 +83,10 @@ type Decided = (Vec<(LinkRun, Destination)>, Vec<(u16, Destination)>, Vec<Area>)
 pub enum Follow {
     /// Open this page of the active channel.
     Page(u16),
-    /// Ask in the trusted strip first.
+    /// Ask in the trusted strip first: a web page.
     Ask(Prompt),
-    /// The user confirmed leaving for this channel.
-    Leave(Address),
+    /// Open this channel in the active tab, at once (REQ-1670).
+    Channel(Address),
     /// The user confirmed opening this web page in the system's web browser.
     HandOff(String),
 }

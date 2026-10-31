@@ -7,7 +7,7 @@ use interface_core::canvas::PageKey;
 use interface_core::channel::page_index;
 
 use super::found::{flags, place, push_area, read_area, read_flags};
-use super::{LinkKind, LinkRun, MAX_CONTROLS, MAX_DESTINATION, MAX_REMAPPED, MAX_RUNS, PageLinks, Pointing, Prompt, PromptKind};
+use super::{LinkKind, LinkRun, MAX_CONTROLS, MAX_DESTINATION, MAX_REMAPPED, MAX_RUNS, PageLinks, Pointing, Prompt};
 use crate::{Fields, ProtocolError, push_count_u8, push_key, push_text};
 
 // A prompt's flags.
@@ -78,7 +78,6 @@ pub(super) fn read_pointing(fields: &mut Fields<'_>, empty: bool) -> Result<Opti
 pub(super) fn push_prompt(payload: &mut Vec<u8>, prompt: Option<&Prompt>) -> Result<(), ProtocolError> {
     if let Some(prompt) = prompt {
         payload.extend_from_slice(&prompt.id.to_be_bytes());
-        payload.push(prompt.kind as u8);
         payload.push(if prompt.secure { SECURE } else { 0 });
         push_text(payload, &prompt.destination, MAX_DESTINATION)?;
     }
@@ -90,10 +89,9 @@ pub(super) fn read_prompt(fields: &mut Fields<'_>, empty: bool) -> Result<Option
         return Ok(None);
     }
     let id = fields.u32()?;
-    let kind = PromptKind::from_byte(fields.u8()?).ok_or(ProtocolError::BadValue("prompt kind"))?;
     let flags = fields.u8()?;
     if flags & !SECURE != 0 {
         return Err(ProtocolError::BadValue("prompt flags"));
     }
-    Ok(Some(Prompt { id, kind, secure: flags & SECURE != 0, destination: fields.text(MAX_DESTINATION)? }))
+    Ok(Some(Prompt { id, secure: flags & SECURE != 0, destination: fields.text(MAX_DESTINATION)? }))
 }

@@ -122,8 +122,8 @@ impl Watch {
         requests
     }
 
-    /// Checks what an intent asked of the broker: a page intent asks for
-    /// nothing; a hand-off follows only a confirmation in the strip, and
+    /// Checks what an intent asked of the broker: a page intent that moved
+    /// no tab asks for nothing; a hand-off follows only a confirmation in the strip, and
     /// only of a web address; every helper is one of the browser's roles,
     /// with arguments the core gives.
     pub(super) fn check_intent(&mut self, core: &Core, page_intent: bool, confirmation: bool, described: &str) {

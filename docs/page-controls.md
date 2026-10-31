@@ -15,7 +15,7 @@ A teletext set's remote has four coloured keys, an Index key, Reveal, Hold, Mix 
 - **Where the links come from.** The engine's `PageLinks::from_page` reads packet X/27/0, which broadcast pages carry and which the engine's page encoder writes from a TTI page's `FL` and `LN` lines, so every channel's pages have them alike. Four coloured keys, red, green, yellow and cyan, and Index.
 - **The keys.** As the engine's own viewer: `r`, `g`, `y`, `c` or F1 to F4, and `i` for Index, while a page is open and no channel takes the keys. The remote control carries them too (`remote-control.md`, decision 68).
 - **Only while their row is shown** (REQ-SEC-024). A page can draw anything in its rows, but the coloured key's promise is row 24: a key works only while row 24 has something drawn and the page is not boxed away, as the engine's viewer decides it. The decoder reports this with the links.
-- **Where a key leads.** A page of the channel, with its sub-page if the link names one, opens at once. A page of another service the channel's descriptor lists goes through the site-change screen in the strip, as every link that leaves a channel does (requirement 8.4). A link naming a web address is not followed by a key: it is shown on its page and followed by a click, as a page's other links are.
+- **Where a key leads.** A page of the channel, with its sub-page if the link names one, opens at once. A page of another service the channel's descriptor lists opens at once in the same tab, as every link to another channel does (REQ-1670). A link naming a web address is not followed by a key: it is shown on its page and followed by a click, as a page's other links are.
 - **The link row of a TTI page** (REQ-NAV-011): a page whose links come from `LN` lines has its row 24 drawn by the receiver from the links' labels; the decoder draws it with the engine's `links::receiver_links` (the engine's E.108): each key's label in its colour, and a link to another service, which this browser does not follow, blank, where the row the page file carries shows it in white with "»" (`link_lines_draw_the_receivers_row_24`).
 
 ## 3. Reveal, hold and mix
@@ -42,7 +42,7 @@ Each is strip input from the interface (requirement 11.1) and lapses when the pa
 
 ## 6. Security
 
-- A Fastext target is untrusted, like any link the decoder finds (`hyperlinks-security.md`): the trusted core checks it against the page image the user was looking at, decides it, and leaves the channel only through the site-change screen. A page cannot make a key act while its row 24 is hidden.
+- A Fastext target is untrusted, like any link the decoder finds (`hyperlinks-security.md`): the trusted core checks it against the page image the user was looking at and decides it; another channel is followed as any link to it is (REQ-1670). A page cannot make a key act while its row 24 is hidden.
 - The sub-page list and its length are bounded; a hostile channel with thousands of sub-pages is held to the engine's store bound.
 - Nothing here gives the interface anything new: it already draws the page; it learns the count of sub-pages, nothing more.
 

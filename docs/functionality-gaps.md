@@ -35,7 +35,6 @@
 
 | Feature | State | Where |
 |---|---|---|
-| The site-change screen | Partly: built for links and Fastext; redirects and discovery results do not show it | Requirement 8.4 |
 | The certificate-error screen | Built | Decision 83, `certificate-errors.md`, requirement 7.13 |
 | Other refusals (an address refused, a site that will not open) explained in the window | Partly: in the strip's notice and the console's Log only | Decision 70 |
 | Dragging tabs, their overflow, and multiple windows | Built | Decisions 69 and 72 |

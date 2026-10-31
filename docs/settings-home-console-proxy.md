@@ -59,7 +59,7 @@ The default home is the home channel, `https://app.neottx.com/home/`: what a new
 - **Page 100**, NeoTeletext: how to open a channel ("Type a channel's address above"), the keys, and the bookmarks, each with a page number from 201: `201 news.example/teletext`.
 - **Pages 201 to 299**: one a bookmark, which says where it leads and opens it.
 
-Choosing a bookmark, by its number or by clicking it, opens it in the tab as the user's own navigation: the start page is the browser's, so its links are not a page's and need no site-change screen (requirement 8.4 does not apply to it). Its text is built from the bookmarks' addresses, cleaned as every address is (requirement 11.5). Any other `neoteletext:` address is refused.
+Choosing a bookmark, by its number or by clicking it, opens it in the tab as the user's own navigation: the start page is the browser's, so its links are not a page's. Its text is built from the bookmarks' addresses, cleaned as every address is (requirement 11.5). Any other `neoteletext:` address is refused.
 
 ## 3. The developer console
 

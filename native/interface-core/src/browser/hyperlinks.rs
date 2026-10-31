@@ -13,7 +13,7 @@ use super::{Browser, Cursor, Key, Modifiers, Output};
 use crate::canvas::{Canvas, PageKey};
 use crate::channel::page_index;
 use crate::geometry::Rect;
-use crate::links::{self, Area, LinkCell, LinkKind, Lit, PageLinks, Pointing, Prompt, PromptButton, PromptKind};
+use crate::links::{self, Area, LinkCell, LinkKind, Lit, PageLinks, Pointing, Prompt, PromptButton};
 use crate::text::{border, centred, left_centred};
 use crate::theme::{ADDRESS, BUTTON, FIELD_INK, INSECURE, LINK, LINK_INK, ROW_STATUS, ROW_TITLE, RULE, WHITE};
 use crate::wall::{CellClick, cell_in};
@@ -396,10 +396,7 @@ impl Browser {
             self.links.cancel = Rect::ZERO;
             return false;
         };
-        let (question, answer) = match prompt.kind {
-            PromptKind::Leave => (format!("Leave this channel for {}?", prompt.destination), "Go"),
-            PromptKind::Web => (format!("Open {} in your web browser?", prompt.destination), "Open"),
-        };
+        let question = format!("Open {} in your web browser?", prompt.destination);
         let top = field.y0 + PROMPT_BUTTON_INSET;
         let bottom = field.y1 - PROMPT_BUTTON_INSET;
         let cancel = Rect::new(field.x1 - PROMPT_BUTTON_INSET - PROMPT_BUTTON_WIDTH, top, field.x1 - PROMPT_BUTTON_INSET, bottom);
@@ -413,7 +410,7 @@ impl Browser {
         canvas.push_clip(Rect::new(left, field.y0, go.x0 - PROMPT_BUTTON_GAP, field.y1));
         left_centred(canvas, Rect::new(left, field.y0, go.x0, field.y1), 0.0, &question, ADDRESS, LINK_INK);
         canvas.pop_clip();
-        for (rect, label, button) in [(go, answer, PromptButton::Go), (cancel, "Cancel", PromptButton::Cancel)] {
+        for (rect, label, button) in [(go, "Open", PromptButton::Go), (cancel, "Cancel", PromptButton::Cancel)] {
             canvas.fill(rect, 0.0, BUTTON);
             centred(canvas, rect, label, ROW_TITLE, WHITE);
             let colour = if self.links.prompt_focus == Some(button) { LINK } else { RULE };

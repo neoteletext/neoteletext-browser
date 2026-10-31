@@ -20,8 +20,8 @@ const PAGE_FILES: [&str; 2] = [".tti", ".t42"];
 pub enum Destination {
     /// A page of this channel: followed at once.
     Page(u16),
-    /// Another channel, at the page its address names, if any: after the
-    /// site-change screen.
+    /// Another channel, at the page its address names, if any: followed at
+    /// once, in the same tab (REQ-1670).
     Channel(Address),
     /// A web page: after the web-browser prompt, in the system's web browser.
     Web(String),
@@ -38,7 +38,7 @@ impl Destination {
         }
     }
 
-    /// Where it is, as the strip's questions name it, cleaned and cut to
+    /// Where it is, as the strip names it, cleaned and cut to
     /// the strip's limit (requirement 11.5).
     #[must_use]
     pub fn name(&self) -> String {

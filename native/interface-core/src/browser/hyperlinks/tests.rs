@@ -143,7 +143,7 @@ fn tab_moves_between_links_and_enter_follows_the_focused_one() {
 }
 
 fn prompt(id: u32) -> Prompt {
-    Prompt { id, kind: PromptKind::Web, destination: "https://www.example.invalid/".into(), secure: true }
+    Prompt { id, destination: "https://www.example.invalid/".into(), secure: true }
 }
 
 #[test]

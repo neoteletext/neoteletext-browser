@@ -30,7 +30,7 @@ fn every_link_message_round_trips() {
         Message::Page { key: KEY, links: page_links() },
         Message::Pointing(Some(Pointing { kind: LinkKind::Web, text: "https://www.example.invalid/ (opens in your web browser)".into() })),
         Message::Pointing(None),
-        Message::Prompt(Some(Prompt { id: 3, kind: PromptKind::Leave, destination: "weather.invalid".into(), secure: true })),
+        Message::Prompt(Some(Prompt { id: 3, destination: "https://weather.invalid/".into(), secure: true })),
         Message::Prompt(None),
         Message::Show(KEY),
         Message::Aliases { channel: 7, numbers: vec![0x500] },
@@ -147,11 +147,8 @@ fn a_target_too_long_is_refused_never_cut() {
 fn the_strips_text_must_be_cleaned_and_its_flags_known() {
     let hostile = Pointing { kind: LinkKind::Page, text: "Page\u{202E}203".into() };
     assert!(write_to_interface(&mut Vec::new(), &ToInterface::Link(Message::Pointing(Some(hostile)))).is_err());
-    let mut bytes = vec![KIND_PROMPT, 0, 0, 0, 8, 0, 0, 0, 1, 1, 2, 0, 0];
+    let bytes = [KIND_PROMPT, 0, 0, 0, 7, 0, 0, 0, 1, 2, 0, 0];
     assert!(matches!(read_from_core(&mut bytes.as_slice()), Err(ProtocolError::BadValue("prompt flags"))));
-    bytes[9] = 3;
-    bytes[10] = 0;
-    assert!(matches!(read_from_core(&mut bytes.as_slice()), Err(ProtocolError::BadValue("prompt kind"))));
 }
 
 #[test]

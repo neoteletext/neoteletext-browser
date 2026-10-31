@@ -67,7 +67,6 @@ NeoTeletext is an application for browsing teletext, on desktops, then phones, a
 | **Decoder** | The process that recognises, decodes and renders one channel's teletext. It has no network and no secrets. |
 | **Frame** | One rendered page: palette indices plus its palette, produced by the decoder. |
 | **Resource role** | The purpose for which a resource was requested: teletext data, channel descriptor, contents file, or discovery (a font was one until decision 66). A response is read only by the reader for the role it was requested for. |
-| **Site-change screen** | The screen shown in the trusted strip when a tab is about to leave its channel for another because of something a page did. |
 
 ---
 
@@ -262,7 +261,7 @@ Every process speaks the same framing, the engine's: one kind byte, a 32-bit big
 | Core to interface | Frame | One page image: channel and page, frame version, and the image in `protocol::frame`'s form: palette, screen colour, and dots raw, in runs or as changes against the frame of the page the interface holds (decision 61) |
 | Core to interface | Sounding | The channels sounding now, muted or not, for the tabs' speakers; the sound helper says it and the trusted core passes it on (decision 55) |
 | Core to interface | Link: page links | Where each link of one image of a page lies and what kind of place it leads to, never its target; and the page numbers it remaps |
-| Core to interface | Link: pointing, prompt | What the strip shows of the link under the pointer or the focus; the site-change screen or the web-browser prompt, with its number |
+| Core to interface | Link: pointing, prompt | What the strip shows of the link under the pointer or the focus; the web-browser prompt, with its number |
 | Core to interface | Link: show, aliases | Open a page a link led to; the page numbers the channel's descriptor links elsewhere |
 | Core to interface | Typing, phone, phone key | Whether keys go to the open page's channel, and its cursor; the phone keyboard's panel; a key of the paired phone (decisions 45 and 48) |
 | Core to interface | Settings, update | The settings panel's view; the version and an update's offer (decision 81) |
@@ -277,7 +276,7 @@ Every process speaks the same framing, the engine's: one kind byte, a 32-bit big
 | Interface to core | Select tab, close tab, new tab | Tab changes |
 | Interface to core | Opened | The page the user opened in the active tab, passed to that channel's decoder |
 | Interface to core | Mute tab, mute all | Mute or unmute one tab; mute or unmute every tab |
-| Interface to core | Strip input: navigate, back, forward, bookmark, confirm, cancel | What the user did in the trusted strip, including the answer to its question, which names the question. These are message kinds of their own; a page intent reaches another channel only through the site-change screen |
+| Interface to core | Strip input: navigate, back, forward, bookmark, confirm, cancel | What the user did in the trusted strip, including the answer to its question, which names the question. These are message kinds of their own; a page intent reaches another channel only by a link the trusted core holds (REQ-685) |
 | Interface to core | Move tab | Strip input: move a tab along the strip (decision 69) |
 | Interface to core | Editing, input | Editing the address began or stopped; a key, text, the mouse, a paste or a composition for the open page's channel (decision 48) |
 | Interface to core | Phone panel, phone finish | Strip input: open or close the phone keyboard's panel; end its session |
@@ -319,7 +318,7 @@ The application loads only resources that are part of a teletext service (decisi
 | **Contents file** (`contents.txt`) | The engine's contents reader | Fetcher | A bounded, typed list of sections and pages |
 | **Discovery** (HyperText Markup Language) | The engine's discovery reader | Fetcher, not built | — |
 
-Discovery's security analysis was the engine's `docs/web-discovery-security.md`, in its git history since 18 October 2026; its requirements are in the engine's `docs/spec/requirements/web.md`. Its results are never loaded directly: each is a page-initiated navigation through the site-change rules.
+Discovery's security analysis was the engine's `docs/web-discovery-security.md`, in its git history since 18 October 2026; its requirements are in the engine's `docs/spec/requirements/web.md`. Its results are never loaded directly: each is shown to the user, and a chosen one is a page-initiated navigation (REQ-694).
 
 ### 7.2 Transports
 
@@ -383,7 +382,7 @@ The aim is the security behaviour of a tab in a traditional browser (decision 9)
 
 - A channel's pages, cookies and history are never mixed with another channel's.
 - A decoder receives only its own channel's bytes, and a fetcher fetches only its own channel.
-- A page cannot cause a request to another channel. Anything that would is a navigation through the site-change rules.
+- A page cannot cause a request to another channel. Anything that would is a navigation the user chose, by a link the trusted core holds.
 
 ### 9.3 Cookies
 
@@ -400,11 +399,11 @@ The cookie store is the engine's, which follows the cookie specification draft R
 - The interface process stores nothing: no cookies, no files, no cache.
 - **History, bookmarks, settings and the session are kept** by the trusted core in its settings folder, readable by the user alone (decisions 51, 57 and 59); persistent cookies are kept sealed (decision 62).
 
-### 9.5 Navigation and the site-change screen
+### 9.5 Navigation
 
 - **Navigations the user starts:** the address field, Back, Forward, a new tab, bookmarks, history, suggestions, Home and Reload. Built.
 - **Navigations a page starts:** Fastext keys, page links, redirects, discovery results. Fastext keys and page links are built, decided by the trusted core (decisions 43 and 67); redirects that leave the channel and discovery results are not built.
-- **Any navigation a page starts that leaves the channel** must go through the site-change screen, in the trusted strip, with the user's confirmation.
+- **A link or Fastext key that leaves the channel** opens the destination at once, in the same tab, with Back to return, as in a web browser (REQ-1670, decision DEC-1664). Only a `web:` link, which hands an address to another program, asks first, in the trusted strip.
 - **The address shown is always the committed address.**
 
 ### 9.6 Addresses
@@ -493,7 +492,7 @@ The window is decision 35's, drawn by the interface process from the interface c
 - It shows only what the trusted core sends: the address as the address rules formatted it, the identity, the encryption state.
 - It stays visible in every layout, including the zoomed page.
 - Its input is strip input, message kinds of their own (section 6.4).
-- The site-change screen is drawn in the strip only, never in the page area, so a page image cannot imitate it in place.
+- The web-browser prompt is drawn in the strip only, never in the page area, so a page image cannot imitate it in place.
 
 ---
 
@@ -658,7 +657,7 @@ Unsafe code is allowed only in the modules requirement 10.12 names, each saying 
 - Transport Layer Security and `https` channels (decision 41); fuzz targets for every reader of another process's messages and of every file the browser keeps (requirement 4.6).
 - The address rules of section 9.6; tabs.
 - Sound: every tab heard and each muted (decisions 37, 38 and 40); on macOS the Dock menu (decision 39).
-- Hyperlinks, phases 1 and 2 of `hyperlinks.md` (20 October 2026), behind the `links` feature, on by default: page numbers found in the text and `LT`, `LK` and descriptor links, decided by the trusted core; the underline drawn by the interface; the destination, the site-change screen and the web-browser prompt in the strip; the hand-off to the system's web browser (`web-opener`); `#302` page addresses.
+- Hyperlinks, phases 1 and 2 of `hyperlinks.md` (20 October 2026), behind the `links` feature, on by default: page numbers found in the text and `LT`, `LK` and descriptor links, decided by the trusted core; the underline drawn by the interface; the destination and the web-browser prompt in the strip; the hand-off to the system's web browser (`web-opener`); `#302` page addresses.
 - Channel push over WebSocket, typing back to a channel, its cursor and the phone keyboard (`interaction.md`, decisions 45 and 46, 20 October 2026); input protocol version 2 (decision 48) and pasting into a page that takes input (decision 49), 21 October 2026.
 - Settings kept between runs with the bookmarks, the settings panel of the strip, Home and the start page `neoteletext:home`, the developer console, and HTTP and SOCKS5 proxies (`settings-home-console-proxy.md`, decision 51, 21 October 2026).
 - History and bookmarks (`history-and-bookmarks.md`, decision 57, 22 October 2026): history kept 90 days with its panel, search and removal, private tabs, recently closed tabs, Back and Forward lists, address-field suggestions; bookmarks in folders with the star's popover, a manager, a bookmarks bar, import and export in this browser's format; the menu button's menu.
@@ -683,7 +682,7 @@ Unsafe code is allowed only in the modules requirement 10.12 names, each saying 
 
 **Not built:**
 
-- The site-change screen for redirects and discovery results.
+- Redirects that leave a channel, and discovery results.
 - Any sandbox on Android or iOS; Windows helpers started apart from the console they were started from (decision 100 item 1, measured as needed in the virtual machine on 24 October 2026); the fetcher's connections made by the broker (decision 89); a file chooser owned by the broker (decision 88).
 - Sharing one decoder between tabs on the same channel (decision 11).
 - The grace period for closed tabs; the live-feed threshold; refresh schedules.

@@ -8,7 +8,7 @@ use super::{Pending, Session, Visit};
 
 impl Session {
     /// Opens another channel in the active tab because a link on a page led
-    /// there and the user confirmed it in the trusted strip.
+    /// there (REQ-1670).
     ///
     /// # Errors
     /// When there is no tab.

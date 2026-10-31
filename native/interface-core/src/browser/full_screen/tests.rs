@@ -1,6 +1,7 @@
 use super::*;
 use crate::browser::fixture::{HEIGHT, WIDTH, browser, middle};
 use crate::browser::{Key, Modifiers, Output};
+use crate::channel::Channel;
 use crate::test_canvas::Recorder;
 
 fn draw(browser: &mut Browser, now: u64) -> Recorder {
@@ -64,6 +65,11 @@ fn what_needs_the_window_ends_full_screen() {
     browser.set_tabs(tabs, 1);
     draw(&mut browser, 100);
     assert!(!browser.full_screen(), "another tab chosen");
+    // REQ-1670: a link goes at once, and the window's strip is back for it.
+    let mut browser = in_full_screen();
+    browser.set_channel(Channel { channel: browser.channel.channel + 1, ..browser.channel.clone() });
+    draw(&mut browser, 100);
+    assert!(!browser.full_screen(), "another channel in the tab");
     let mut browser = in_full_screen();
     browser.key(Key::Escape, command, 100);
     draw(&mut browser, 100);

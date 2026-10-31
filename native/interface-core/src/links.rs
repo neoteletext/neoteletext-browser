@@ -45,7 +45,7 @@ const FOCUS_PIXELS: f64 = 2.0;
 pub enum LinkKind {
     /// A page of this channel: followed at once.
     Page = 1,
-    /// Another channel: followed after the site-change screen.
+    /// Another channel: followed at once, in the same tab.
     Channel = 2,
     /// A web page: opened in the system's web browser after its prompt.
     Web = 3,
@@ -182,37 +182,14 @@ pub struct Pointing {
     pub text: String,
 }
 
-/// The two questions the trusted strip asks before a link leaves.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum PromptKind {
-    /// The site-change screen: the link leads to another channel
-    /// (requirement 8.4).
-    Leave = 1,
-    /// The web-browser prompt: the link leads to a web page
-    /// (`hyperlinks.md` section 12).
-    Web = 2,
-}
-
-impl PromptKind {
-    /// The kind a protocol byte names, or `None` for any other byte.
-    #[must_use]
-    pub fn from_byte(byte: u8) -> Option<Self> {
-        match byte {
-            1 => Some(Self::Leave),
-            2 => Some(Self::Web),
-            _ => None,
-        }
-    }
-}
-
-/// A question the trusted strip asks, drawn only there.
+/// The web-browser prompt (`hyperlinks.md` section 12): the question the
+/// trusted strip asks before a link hands an address to the system's web
+/// browser, drawn only there.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Prompt {
     /// Which question: a confirmation names it, so a confirmation meant for
     /// an earlier prompt confirms nothing.
     pub id: u32,
-    /// What it asks.
-    pub kind: PromptKind,
     /// The destination, as the trusted core wrote it.
     pub destination: String,
     /// The destination would be reached over an encrypted connection.

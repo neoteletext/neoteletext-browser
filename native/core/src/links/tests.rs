@@ -4,7 +4,7 @@
 use super::destination::{Descriptor, INITIAL_PAGE};
 use super::*;
 use crate::address;
-use protocol::links::{LinkKind, MAX_SERVICE_NAME, MAX_TARGET, PromptKind};
+use protocol::links::{LinkKind, MAX_SERVICE_NAME, MAX_TARGET};
 
 const CHANNEL: u32 = 7;
 const OPEN: PageKey = PageKey { channel: CHANNEL, page: 0x100 };
@@ -229,24 +229,37 @@ fn an_unchanged_link_keeps_its_age_across_new_images() {
     assert_eq!(links.click(spot(1, 11, 5), Some(CHANNEL), LATER), Err(Refusal::Stale));
 }
 
+// REQ-1670: another channel is followed with no question, whatever the
+// window's focus, since only a hand-off leaves the browser.
 #[test]
-fn leaving_and_the_web_are_asked_about_and_answered_only_after_half_a_second() {
-    let mut links = links_with(vec![declared(5, 0, 7, "https://weather.invalid/#302"), declared(7, 0, 7, "web:http://www.example.invalid/")], Vec::new());
+fn a_link_to_another_channel_is_followed_with_no_question() {
+    let mut links = links_with(vec![declared(5, 0, 7, "https://weather.invalid/#302")], Vec::new());
     links.point(Some(spot(1, 1, 5)));
-    let Ok(Follow::Ask(leave)) = links.click(spot(1, 1, 5), Some(CHANNEL), LATER) else { panic!() };
-    assert_eq!((leave.kind, leave.secure), (PromptKind::Leave, true));
-    assert_eq!(leave.destination, "Page 302 of weather.invalid");
-    assert_eq!(links.confirm(leave.id, LATER + PROMPT_DELAY_MILLISECONDS - 1), Err(Refusal::TooSoon));
-    // A new question replaces the first, whose answer then confirms nothing.
+    links.focused(false);
+    let Ok(Follow::Channel(address)) = links.click(spot(1, 1, 5), Some(CHANNEL), LATER) else { panic!() };
+    assert_eq!((address.channel_text(), address.page), ("https://weather.invalid/", Some(0x302)));
+    assert_eq!(links.prompt(), None);
+}
+
+// REQ-808: only a `web:` link asks.
+#[test]
+fn the_web_is_asked_about_and_answered_only_after_half_a_second() {
+    let mut links = links_with(vec![declared(7, 0, 7, "web:http://www.example.invalid/"), declared(9, 0, 7, "web:https://www.example.invalid/")], Vec::new());
     links.point(Some(spot(1, 1, 7)));
-    let Ok(Follow::Ask(web)) = links.click(spot(1, 1, 7), Some(CHANNEL), LATER) else { panic!() };
-    assert_eq!((web.kind, web.secure), (PromptKind::Web, false));
-    assert_eq!(links.confirm(leave.id, LATER + PROMPT_DELAY_MILLISECONDS), Err(Refusal::NoPrompt));
-    assert_eq!(links.confirm(web.id, LATER + PROMPT_DELAY_MILLISECONDS), Ok(Follow::HandOff("http://www.example.invalid/".into())));
+    let Ok(Follow::Ask(first)) = links.click(spot(1, 1, 7), Some(CHANNEL), LATER) else { panic!() };
+    assert!(!first.secure);
+    assert_eq!(first.destination, "http://www.example.invalid/");
+    assert_eq!(links.confirm(first.id, LATER + PROMPT_DELAY_MILLISECONDS - 1), Err(Refusal::TooSoon));
+    // A new question replaces the first, whose answer then confirms nothing.
+    links.point(Some(spot(1, 1, 9)));
+    let Ok(Follow::Ask(web)) = links.click(spot(1, 1, 9), Some(CHANNEL), LATER) else { panic!() };
+    assert!(web.secure);
+    assert_eq!(links.confirm(first.id, LATER + PROMPT_DELAY_MILLISECONDS), Err(Refusal::NoPrompt));
+    assert_eq!(links.confirm(web.id, LATER + PROMPT_DELAY_MILLISECONDS), Ok(Follow::HandOff("https://www.example.invalid/".into())));
     assert_eq!(links.prompt(), None, "answered");
     // Cancelling has no effect but to close the question.
-    links.point(Some(spot(1, 1, 5)));
-    let Ok(Follow::Ask(again)) = links.click(spot(1, 1, 5), Some(CHANNEL), LATER) else { panic!() };
+    links.point(Some(spot(1, 1, 7)));
+    let Ok(Follow::Ask(again)) = links.click(spot(1, 1, 7), Some(CHANNEL), LATER) else { panic!() };
     assert!(!links.cancel(again.id + 1));
     assert!(links.cancel(again.id));
     assert_eq!(links.confirm(again.id, LATER + PROMPT_DELAY_MILLISECONDS), Err(Refusal::NoPrompt));
@@ -285,8 +298,8 @@ fn a_typed_number_follows_the_pages_link_or_the_channels_alias() {
     links.image(OPEN, 1, &Channel { id: CHANNEL, address: &address }, START);
     let active = Some(CHANNEL);
     assert_eq!(links.typed(0x302, Some((OPEN, 1)), active, START), Ok(Follow::Page(0x401)));
-    let Ok(Follow::Ask(prompt)) = links.typed(0x500, None, active, START) else { panic!() };
-    assert_eq!(prompt.destination, "Page 302 of sport.invalid");
+    let Ok(Follow::Channel(sport)) = links.typed(0x500, None, active, START) else { panic!() };
+    assert_eq!((sport.channel_text(), sport.page), ("https://sport.invalid/", Some(0x302)));
     assert_eq!(links.typed(0x302, None, active, START), Err(Refusal::NotALink), "an LK line counts only while its page is open");
     assert_eq!(links.typed(0x302, Some((OPEN, 9)), active, START), Err(Refusal::Stale));
     assert_eq!(links.typed(0x302, Some((PageKey { page: 0x101, ..OPEN }, 1)), active, START), Err(Refusal::NotOpen));
@@ -339,8 +352,8 @@ fn nothing_but_a_confirmation_hands_a_web_page_over() {
 
 /// Decision 67, the engine's REQ-NAV-003 and REQ-SEC-024: a coloured key
 /// follows its page of this channel at once, with the sub-page it names;
-/// a service the descriptor lists, by its place, goes through the strip's
-/// question; a key does nothing while row 24 was not shown.
+/// a service the descriptor lists, by its place, is followed at once
+/// (REQ-1670); a key does nothing while row 24 was not shown.
 #[test]
 fn fastext_keys_follow_as_links_do() {
     use protocol::links::FastextTarget;
@@ -358,8 +371,8 @@ fn fastext_keys_follow_as_links_do() {
     links.image(OPEN, 1, &Channel { id: CHANNEL, address: &address }, START);
     assert_eq!(links.fastext_keys(OPEN), [true, true, false, false, true], "the unknown seventh service leads nowhere");
     assert_eq!(links.fastext(FastextKey::Red, Some(CHANNEL), START), Ok((Follow::Page(0x200), Some(3))));
-    let Ok((Follow::Ask(prompt), None)) = links.fastext(FastextKey::Green, Some(CHANNEL), START) else { panic!("another channel is asked about") };
-    assert_eq!(prompt.kind, PromptKind::Leave);
+    let Ok((Follow::Channel(sport), None)) = links.fastext(FastextKey::Green, Some(CHANNEL), START) else { panic!("another channel, at once") };
+    assert_eq!((sport.channel_text(), sport.page), ("https://sport.invalid/", Some(0x300)));
     assert_eq!(links.fastext(FastextKey::Yellow, Some(CHANNEL), START), Err(Refusal::NotALink));
     assert_eq!(links.fastext(FastextKey::Red, Some(CHANNEL + 1), START), Err(Refusal::NotOpen), "only the active channel's open page");
     links.found(OPEN, Vec::new(), Vec::new(), Vec::new(), Fastext { keys, row24: false });

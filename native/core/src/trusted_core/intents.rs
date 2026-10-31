@@ -276,18 +276,15 @@ impl Core {
         }
     }
 
-    /// A bookmark page of the start page was opened: its bookmark opens.
     /// A start-page bookmark's page opened in the page area: shown, and its
-    /// bookmark offered through the site-change screen, as a link to
-    /// another channel is, never opened by the intent alone (requirement
-    /// 4.5, finding F-67).
+    /// bookmark, an address from the core's own list and never the intent's,
+    /// opens at once, as a link to another channel does (REQ-1670).
     fn open_start_page_bookmark(&mut self, key: PageKey) -> Result<(), String> {
         let bookmark = self.session.start_page_bookmark(key.channel, key.page);
         self.opened(Some(key))?;
         #[cfg(feature = "links")]
         if let Some(address) = bookmark.and_then(|bookmark| neoteletext::address::parse(&bookmark).ok()) {
-            let followed = self.links.ask(neoteletext::links::Destination::Channel(address), self.now());
-            self.follow(followed, "a start-page bookmark")?;
+            self.follow(Ok(neoteletext::links::Follow::Channel(address)), "a start-page bookmark")?;
         }
         #[cfg(not(feature = "links"))]
         let _ = bookmark;
@@ -307,28 +304,5 @@ impl Core {
             self.deliver_typing(sends)?;
         }
         Ok(())
-    }
-}
-
-#[cfg(all(test, feature = "links"))]
-#[allow(clippy::unwrap_used, reason = "a test")]
-mod tests {
-    use super::super::test_support::Test;
-    use interface_core::canvas::PageKey;
-    use protocol::ToCore;
-    use protocol::links::PromptKind;
-
-    /// Finding F-67 (requirement 4.5): a start-page bookmark's page opened
-    /// in the page area is shown, not acted on: its bookmark opens only
-    /// after the site-change screen, as a link to another channel does.
-    #[test]
-    fn a_start_page_bookmark_opens_after_the_site_change_screen() {
-        let mut test = Test::new("start-page-intent");
-        test.core.session.bookmarks.add(neoteletext::bookmarks::BAR, "News", "https://news.invalid/").unwrap();
-        test.core.session.open(neoteletext::address::START_PAGE).unwrap();
-        let channel = test.core.session.tabs[0].channel.id;
-        test.core.intent(ToCore::Opened(Some(PageKey { channel, page: 0x201 }))).unwrap();
-        assert!(test.core.session.active_tab().and_then(|tab| tab.address()).is_some_and(neoteletext::address::Address::is_start_page), "still the start page");
-        assert_eq!(test.core.links.prompt().map(|prompt| prompt.kind), Some(PromptKind::Leave), "the site-change screen asks");
     }
 }

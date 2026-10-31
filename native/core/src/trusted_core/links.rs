@@ -11,6 +11,9 @@ use protocol::{ToCore, ToInterface};
 
 use super::Core;
 
+#[cfg(all(test, unix))]
+mod tests;
+
 impl Core {
     pub(super) fn link(&mut self, message: LinkMessage) -> Result<(), String> {
         self.send(&ToInterface::Link(message))
@@ -90,7 +93,7 @@ impl Core {
                 let followed = self.links.confirm(*id, now);
                 self.follow(followed, "a confirmation")?;
             }
-            // Declining has no effect but to close the question (requirement 8.6).
+            // Declining has no effect but to close the question.
             ToCore::Cancel(id) if self.links.cancel(*id) => self.link(LinkMessage::Prompt(None))?,
             _ => {}
         }
@@ -129,7 +132,7 @@ impl Core {
                 self.link(LinkMessage::Show(PageKey { channel, page }))
             }
             Ok(Follow::Ask(prompt)) => self.link(LinkMessage::Prompt(Some(prompt))),
-            Ok(Follow::Leave(address)) => {
+            Ok(Follow::Channel(address)) => {
                 // From the start page, the user's own navigation, with the
                 // start page's front page behind it (requirement 19.7).
                 let from_start_page = self.session.active_tab().and_then(|tab| tab.address()).is_some_and(neoteletext::address::Address::is_start_page);

@@ -135,10 +135,10 @@ fn only_the_page_navigation_keys_are_the_page_views() {
 #[test]
 fn a_phones_keys_never_answer_the_strips_question() {
     use crate::browser::hyperlinks::PROMPT_DELAY_MILLISECONDS;
-    use crate::links::{Prompt, PromptKind};
+    use crate::links::Prompt;
     use crate::test_canvas::Recorder;
     let (mut browser, _) = opened();
-    browser.set_prompt(Some(Prompt { id: 3, kind: PromptKind::Web, destination: "https://www.example.invalid/".into(), secure: true }), OPEN);
+    browser.set_prompt(Some(Prompt { id: 3, destination: "https://www.example.invalid/".into(), secure: true }), OPEN);
     browser.draw(&mut Recorder::new(), WIDTH, HEIGHT, OPEN);
     let later = OPEN + PROMPT_DELAY_MILLISECONDS * 4;
     browser.phone_key(true, "Tab", later);

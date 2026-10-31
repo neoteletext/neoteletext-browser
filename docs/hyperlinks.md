@@ -41,7 +41,7 @@
 - **A click follows the link the user saw,** in the frame that was on screen, not one the page swapped in at the last moment.
 - **Where a link leads decides what happens:**
   - a page in the same channel opens at once;
-  - another teletext channel goes through the site-change screen;
+  - another teletext channel opens at once, in the same tab, as in a web browser (REQ-1670);
   - a web address declared as one goes, after a confirmation in the strip, to the system's web browser;
   - anything else is not a link.
 
@@ -74,7 +74,7 @@
 **The browser:**
 - **Drawing.** The decoder renders each page with the engine's `render_screen` into a 480 × 500 indexed image. The trusted core checks it and sends it on as a page image (an indexed PNG until decision 61). The interface draws it with `Canvas::page`, and already draws browser-owned things over pages in `Wall::draw_page`: the hover frame, the zoom outline, the close button, and the update glow.
 - **Clicks.** A click is converted to a cell (`Wall::cell_at`) and sent as `ToCore::Cell { key, version, column, row }`. The trusted core decides it (`core/src/trusted_core/intents.rs`, `ToCore::Cell`) and follows a link it finds there (`core/src/trusted_core/links.rs`), by the library's link rules (`core/src/links.rs`).
-- **Navigation.** Navigation exists only from the strip (requirements 4.5 and 11.1). Page-started navigations, the site-change screen and Fastext are not built (requirements 8.2, 8.4, 8.5 and 12.4).
+- **Navigation.** Navigation exists only from the strip (requirements 4.5 and 11.1). Page-started navigations and Fastext are not built (requirements 8.2 and 12.4).
 - **Underline.** The browser has no underline code of its own.
 
 ## 4. What a page can do
@@ -150,14 +150,14 @@ The trusted core classifies each target when it accepts the link, from the targe
 | Target | Kind | What following it does |
 |---|---|---|
 | `mpp` or `mpp:ssss`, or a page file in the current channel's own folder | **This channel** | Opens the page at once |
-| `name:mpp`, a service named in the descriptor's `services`, or a descriptor alias to one | **Another channel.** Each named service is its own descriptor, at its own origin and folder, which the engine makes a channel of its own | The site-change screen (requirement 8.4), naming the service's channel |
-| An address of a teletext channel or page file (`http` or `https`, as the TTI Link Extension's section E.1 defines), from an `LT`, `LK` or `LN` line or a descriptor alias | **Another channel** | The site-change screen (requirement 8.4); then the channel opens as a typed address would (content decides, requirement 6.2) |
+| `name:mpp`, a service named in the descriptor's `services`, or a descriptor alias to one | **Another channel.** Each named service is its own descriptor, at its own origin and folder, which the engine makes a channel of its own | Opens at once in the same tab (REQ-1670), the strip having named the service's channel |
+| An address of a teletext channel or page file (`http` or `https`, as the TTI Link Extension's section E.1 defines), from an `LT`, `LK` or `LN` line or a descriptor alias | **Another channel** | Opens at once in the same tab (REQ-1670), as a typed address would (content decides, requirement 6.2) |
 | `web:` and an `https` or `http` address (section 7.2) | **The web** | The web-browser prompt in the strip (section 12), then the system's web browser |
 | Anything else: `file:`, `data:`, `javascript:`, any other scheme, a bare path, an address with a user name or hidden characters, over 256 bytes | **Not a link** | Nothing; the text is not underlined |
 
 **Why from the target and not from what the server returns.** Asking the server to find out would contact a server the user has not agreed to visit, telling it that they looked and from where. And the strip could not say "opens in your web browser" before the click.
 
-**When a teletext address turns out not to be teletext.** After the user has confirmed the site-change screen, the channel opens as a typed address would. If content detection refuses it as not teletext (requirement 6.3), the strip offers to open it in the system's web browser instead (section 12). The same offer is made when an address typed into the strip turns out not to be teletext.
+**When a teletext address turns out not to be teletext.** A link to another channel opens as a typed address would. If content detection refuses it as not teletext (requirement 6.3), the strip offers to open it in the system's web browser instead (section 12). The same offer is made when an address typed into the strip turns out not to be teletext.
 
 ### 7.2 A target form for the web
 
@@ -274,13 +274,13 @@ Links are announced to screen readers through the interface's accessibility tree
 All following is done by the trusted core, as a page-started navigation (requirement 8.2), recorded as such in the tab's history:
 
 1. **This channel:** the page opens in the tab, and Back returns to the page the link was on.
-2. **Another channel:** the site-change screen, in the strip only, names the destination channel and says it came from a link on the page (requirements 8.4 and 8.5). On confirmation the channel opens as a typed address would. On cancelling, nothing changes (requirement 8.6).
+2. **Another channel:** the tab goes there at once, with no question, as in a web browser (REQ-1670, decision DEC-1664, which withdrew the site-change screen of requirements 8.4 to 8.6). The channel opens as a typed address would, with its own decoder and cookies, and Back returns to the page the link was on. Decision 9 gives a tab the security behaviour of a tab in a traditional browser. The strip has already shown the destination (section 10), and a click follows only what it showed and what has not changed under the pointer (requirement 17.7).
 3. **The web:** the web-browser prompt (section 12).
-4. **A local file's links** (requirement 7.12): links to pages of the same file open at once; links to the web or to a web channel go through the site-change screen or the web-browser prompt. A web page's links never lead to `file:` addresses (section 7.1).
+4. **A local file's links** (requirement 7.12): links to pages of the same file and to a web channel open at once; links to the web go through the web-browser prompt. A web page's links never lead to `file:` addresses (section 7.1).
 
 ## 12. Handing a link to the system's web browser
 
-**The prompt** is drawn in the strip, never in the page area, in the place of the site-change screen. It reads "Open www.example.com/story in your web browser?", with the full address on request and two buttons, Open and Cancel. It is accepted only by a click on Open, or by Enter while the prompt has focus:
+**The prompt** is drawn in the strip, never in the page area, in the place of the address. It reads "Open www.example.com/story in your web browser?", with the full address on request and two buttons, Open and Cancel. It is accepted only by a click on Open, or by Enter while the prompt has focus:
 - not from the page area;
 - not from a key held down before the prompt appeared;
 - not within 500 milliseconds of it appearing;
@@ -317,10 +317,10 @@ On Windows, `ShellExecuteW` needs either unsafe code or a crate that wraps it. W
 
 | Where | Change |
 |---|---|
-| Requirement 4.5 | "No page intent may cause a tab to navigate to another channel": a cell intent may now start a page-started navigation. That navigation reaches another channel only through the site-change screen (8.4), and the web only through the web-browser prompt (section 12). Intents still carry no address: the core takes the target from its own link table. |
+| Requirement 4.5 | "No page intent may cause a tab to navigate to another channel": a cell intent may now start a page-started navigation. That navigation reaches another channel at once (REQ-1670), and the web only through the web-browser prompt (section 12). Intents still carry no address: the core takes the target from its own link table. |
 | Requirement 7.12 | Local files: as section 11, item 4. |
 | Requirement 8.2 | Page links become the first page-started navigation built. |
-| Requirements 8.4, 8.5 and 8.6 | Built for links, as section 11. |
+| Requirements 8.4, 8.5 and 8.6 | Superseded by REQ-1670 (decision DEC-1664): a link to another channel goes at once. |
 | Requirement 11.2 | The strip also holds the link destination and the web-browser prompt. |
 | Requirement 12.3 | The core now decides with the link table, and a click carries its frame's version. |
 | Requirement 12.4 | Typing a number linked by `LK` follows the link. |
@@ -343,10 +343,10 @@ To be added to `requirements.md` as section 17 once adopted.
 | 17.5 | Every link, from a page, a Fastext packet or the descriptor's aliases and services, is classified from its target alone, before any request, as section 7.1 requires; a named service is another channel. | No request before consent; the strip can say where a link leads. | Test of every row of the table. |
 | 17.6 | Pointing at or focusing a link shows its destination in the trusted strip. | The strip, not the underline, is the proof. | Test; review. |
 | 17.7 | A click follows only the link of the frame it was made on, whose target equals the one the strip is showing, unchanged for at least 500 milliseconds. | Against bait and switch. | Test: a page that changes a link's target each frame. |
-| 17.8 | A link that leaves the channel goes through the site-change screen; a link to the web goes through the web-browser prompt; neither can be confirmed from the page area. | Leaving is the user's decision, made where a page cannot reach. | Test for each kind, with clicks in the page area. |
+| 17.8 | A link to another channel goes at once (REQ-1670); a link to the web goes through the web-browser prompt, which cannot be confirmed from the page area. | Handing an address to another program is the user's decision, made where a page cannot reach. | Test for each kind, with clicks in the page area. |
 | 17.9 | Only an `https` or `http` address the core's address rules accept, re-serialised from its parsed parts, is handed to the system's web browser, by the trusted core, as one argument with no shell, at most once per two seconds, from the selected tab of a focused window, and logged. | Opening an address must never run a program. | Test with `file:`, custom schemes, paths, a leading `-` and over-long addresses. |
 | 17.10 | Links can be reached and followed with the keyboard, and are in the accessibility tree. | Not everyone uses a pointer. | Test. |
-| 17.11 | The web-browser prompt and the site-change screen never take the keyboard focus by themselves, and accept Enter only after the user moved the focus into them. | A confirmation key pressed for something else must not confirm. | Test. |
+| 17.11 | The web-browser prompt never takes the keyboard focus by itself, and accepts Enter only after the user moved the focus into it. | A confirmation key pressed for something else must not confirm. | Test. |
 | 17.12 | The core's link-target parser contains no panicking constructs and is fuzzed, as the message readers are. | It is the first page data the trusted core parses. | The fuzz target `link_target` in the full gate; the lint. |
 
 ## 15. Phases
@@ -361,7 +361,6 @@ To be added to `requirements.md` as section 17 once adopted.
    No format changes.
 2. **Declared links and leaving.**
    - TTI `LT` and `LK` targets.
-   - The site-change screen.
    - The `web:` form (an engine change).
    - The web-browser prompt and the handoff.
    - Links to a page in another channel (section 7.3).
@@ -373,7 +372,7 @@ All taken by the owner on 20 October 2026 (decision 41), each as recommended.
 
 | Number | Question | Decided |
 |---|---|---|
-| 1 | May a link lead to another channel, amending requirement 4.5 as section 13 says? | Yes, through the site-change screen |
+| 1 | May a link lead to another channel, amending requirement 4.5 as section 13 says? | Yes, at once (REQ-1670; through a site-change screen until decision DEC-1664 withdrew it) |
 | 2 | Are page numbers in the text links automatically (section 6.1)? | Yes, only for pages that exist, in phase 1. *Reversed 27 October 2026 (decision 116): no; only declared links.* |
 | 3 | The exact blue, and the contrasting edge | A blue near the web's link blue, edged white or black by contrast; chosen on screen |
 | 4 | Links on the small pages of the wall, or only on the open page? | Only on the open page; a click on a small page zooms it |
@@ -390,19 +389,19 @@ All taken by the owner on 20 October 2026 (decision 41), each as recommended.
 - **Finding numbers:** "Sport 140", "p302", "140-145", "£150", "12:30", "1984", "302%", a number for an absent page, concealed numbers, numbers in rows 0 and 24.
 - **The core's checks:** runs outside the page, overlapping runs, 33 runs, targets of every kind in section 7.1, and links naming another channel's page or an unsent version.
 - **Bait and switch:** a page whose link target alternates every frame is never followed; one that has been unchanged for 500 milliseconds is.
-- **Leaving:** each kind of link from section 7.1 leads to the right screen or to none; a confirmation from the page area, from a held key or within 500 milliseconds is ignored; cancelling leaves the tab unchanged.
+- **Leaving:** each kind of link from section 7.1 goes at once or to the web-browser prompt; a confirmation of the prompt from the page area, from a held key or within 500 milliseconds is ignored; cancelling leaves the tab unchanged.
 - **The handoff:** on each platform, an `https` address opens in the default browser; `file:`, `ms-settings:`, a bare path and an address made to begin with `-` are refused before the opener is started.
 - **Drawing:** the underline's thickness and position at each scale; double height; the contrasting edge on every background colour; nothing drawn below two device pixels a dot.
 - **Keyboard and screen readers:** Tab order, Enter, Escape, and the accessibility tree's descriptions.
 - **Nothing else opens:** every message kind other than the Open strip input, driven with web links present, never starts the opener.
-- **Aliases and services:** a descriptor alias and a `name:mpp` target each reach the site-change screen; typing an aliased number shows its destination first.
+- **Aliases and services:** a descriptor alias and a `name:mpp` target each move the tab at once.
 - **Focus:** a prompt that appears while Enter is held, or before the focus was moved into it, is not confirmed.
 
 ## 18. Corrections from the security analysis
 
 Applied on 20 October 2026 from [`hyperlinks-security.md`](hyperlinks-security.md) section 13:
 
-1. `name:mpp` targets are another channel, not another service of this one; they take the site-change screen (sections 6.4 and 7.1).
+1. `name:mpp` targets are another channel, not another service of this one; they move the tab to that channel (sections 6.4 and 7.1).
 2. The descriptor's `aliases` and `services` are a link source and enter the same table (sections 6.4 and 8.1).
 3. A click is accepted only when its frame's target equals the strip's shown target, and the core re-resolves the pointer on every new frame (sections 8.1 and 10.2).
 4. The core's target parser is its own small grammar, panic-free and fuzzed (section 8.2, requirement 17.12).
@@ -423,7 +422,7 @@ Built on 20 October 2026, phases 1 and 2, behind the `links` cargo feature (on b
 4. **The interface reports the pointer's link again whenever a new image arrives.** A flashing page renews its image twelve times a second and the trusted core keeps four images' links; without this the strip would lose its destination within a third of a second.
 5. **The pointer over a link that leaves** is the system's shortcut shape (`CursorIcon::Alias`): there is no "arrow out of a box" pointer.
 6. **The colours,** chosen on screen (decision 3): the link `#3D8BFF`, edged white on dark backgrounds and black on light ones; the strip's link text `#1A4FD8`.
-7. **The strip's questions name the bare destination** ("Open https://www.example.com/story in your web browser?"); the strip's pointing text adds "(leaves this channel)" or "(opens in your web browser)".
+7. **The strip's question names the bare destination** ("Open https://www.example.com/story in your web browser?"); the strip's pointing text adds "(leaves this channel)" or "(opens in your web browser)".
 8. **Linux hands over with `xdg-open`** until a D-Bus crate for the XDG Desktop Portal is approved (decision 10). Windows uses `ShellExecuteW`, which opened an address in Edge in the Windows 11 VM; `xdg-open` has not been run by hand on Linux.
 9. **Not built:**
    - offering the system's web browser when a teletext address turns out not to be teletext (section 7.1): neither the fetcher nor the decoder reports that a channel's content was refused as not teletext, and that report has to be designed first;

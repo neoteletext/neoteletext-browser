@@ -45,7 +45,7 @@ The largest remaining risk is one the architecture already carries: a **compromi
 In addition to `security-analysis.md` section 2:
 
 - **The user's understanding of where a click leads.** A link must never take the user somewhere other than where the browser said it would.
-- **The boundary of the channel.** No page may move a tab to another channel, or another origin, without the site-change screen.
+- **The boundary of the channel.** A page reaches another channel, or another origin, only by a link the trusted core holds, which the user chose, as in a web browser (REQ-1670). The destination gets its own decoder and cookies.
 - **The boundary of the browser.** No page may cause anything to run or open outside NeoTeletext without the user's confirmation in the strip.
 - **The trusted core's integrity.** Link data is page data; parsing it in the core must not add a way to crash or confuse the core.
 - **The user's attention.** Prompts must not be forced, flooded or timed to catch a click meant for something else.
@@ -87,9 +87,9 @@ Boundaries B, C and D exist today for frames and clicks; links add new message k
 | Malformed link lines crash the parser | The engine's parsers are bounded, panic-free and fuzzed (its REQ-SEC-016); the decoder is a process with no rights (requirement 3.4), so a crash loses one channel's pictures and nothing else |
 | More links than the engine holds | The engine keeps at most eight `LT` and eight `LK` per page and reports the rest |
 | A target over 256 bytes | Refused by the engine |
-| A page remaps a visible number (`LK,140,…`) to another page | Within the channel, harmless: the same author controls both pages. To another channel: the site-change screen (section 8) |
+| A page remaps a visible number (`LK,140,…`) to another page | Within the channel, harmless: the same author controls both pages. To another channel: the strip shows the destination before the number is followed, and Back returns (section 8) |
 | **A descriptor's `aliases` remap a typed number to another service or address** | Up to 16; these are links and must go through the same table and the same screens as `LK`. The proposed spec had missed them (finding 2) |
-| **A descriptor's named `services` lead to other descriptors, at other origins** | A `name:mpp` target is *another channel*, not "this channel, another service" as the spec said (finding 1); it needs the site-change screen |
+| **A descriptor's named `services` lead to other descriptors, at other origins** | A `name:mpp` target is *another channel*, not "this channel, another service" as the spec said (finding 1); the strip names that channel, and it gets its own decoder and cookies |
 
 **Remaining risk:** low. The decoder cannot act on a link; it can only describe one.
 
@@ -113,7 +113,7 @@ Boundaries B, C and D exist today for frames and clicks; links add new message k
 
 ## 7. Boundary C: the trusted core into the interface
 
-**What crosses.** `LinkRuns { key, version, runs }` with positions and a kind (this channel, another channel, the web): no targets, no addresses, no labels. The strip text for the pointed link's destination. The site-change screen and the web-browser prompt, as strip state.
+**What crosses.** `LinkRuns { key, version, runs }` with positions and a kind (this channel, another channel, the web): no targets, no addresses, no labels. The strip text for the pointed link's destination. The web-browser prompt, as strip state.
 
 **Threats and mitigations.**
 
@@ -203,7 +203,7 @@ Everything in `security-analysis.md` section 7 applies. What links add:
 
 - **A page can draw a convincing underline** with mosaics and Level 2.5 colour (spec section 4); DRCS glyphs could too until the engine stopped decoding them (its decision E.95, pinned on 21 October 2026). The design does not try to stop this; it makes the real underline *finer* than any teletext dot and makes the strip the proof. A fake underline leads nowhere: a click on it is a cell click on a non-link, and the strip shows no destination when the pointer is over it. **The user's rule is the web's: trust the strip, not the text.**
 - **A page can draw a fake prompt** ("Open in your browser? [Open]") in the page area. A click on its button is a cell click; nothing opens. The real prompt appears only in the strip.
-- **A page can describe one destination in its text and link another.** The strip shows the real one before the click. Within the channel this is harmless; beyond it the site-change screen names the channel, and the web prompt names the host.
+- **A page can describe one destination in its text and link another.** The strip shows the real one before the click. Within the channel this is harmless; beyond it the strip names the channel before the click and the address field after it, and the web prompt names the host.
 - **Below two device pixels per teletext dot,** no underline is drawn at all (spec section 9.2), because nothing drawn at that size could be told from the page's own pixels. Links still work by keyboard, and the strip still names them.
 - **The cursor** becomes a hand or an arrow-out-of-a-box over a link. A page cannot change the cursor. This is a small, true signal.
 
@@ -231,7 +231,7 @@ Everything in `security-analysis.md` section 7 applies. What links add:
 
 Each changed the spec; `hyperlinks.md` section 18 records the edits.
 
-1. **Named services are other channels.** REQ-WEB-002's `services` each name "the address of its own descriptor", and the engine makes a descriptor's channel identity its origin and folder. So `name:mpp` leaves the channel and needs the site-change screen. The spec's classification table called it "this channel, another service". **Severity: high** had it been built: a page could have moved a tab to another origin with no confirmation.
+1. **Named services are other channels.** REQ-WEB-002's `services` each name "the address of its own descriptor", and the engine makes a descriptor's channel identity its origin and folder. So `name:mpp` leaves the channel, and the trusted core must treat it as another channel, with its own decoder and cookies. The spec's classification table called it "this channel, another service". **Severity: high** had it been built: a page of one origin would have been shown in another's channel. Decision DEC-1664 later withdrew the site-change screen this finding first called for: following a link needs no confirmation, as in a web browser.
 2. **Descriptor aliases are links the spec missed.** REQ-WEB-002 allows up to 16 `aliases` mapping a page number to `name:mpp` or an address. They are a third link source (with `LK` and found numbers) and must enter the same table, so that typing an aliased number shows the destination and goes through the screens. A found page number that the descriptor aliases shows the alias's destination, not "Page 140".
 3. **The Point-to-Cell race.** The spec resolved a click against its frame, but the strip could still be naming the previous frame's destination. The core must re-resolve the last `Point` on every `Links` for that page, and accept a click only when the resolved target equals the strip's shown target.
 4. **The address parser becomes reachable from pages.** The spec passed link targets to the core's address rules without noting that these rules have only ever seen user input. A separate target parser, fuzzed, and the address fuzz target kept.
@@ -256,7 +256,7 @@ Each changed the spec; `hyperlinks.md` section 18 records the edits.
 
 To add to the gates when the feature is built:
 
-- **Tests of every row** of the classification table, including `name:mpp` reaching the site-change screen and a descriptor alias reaching it.
+- **Tests of every row** of the classification table, including `name:mpp` and a descriptor alias moving the tab at once (REQ-1670).
 - **A "nothing else opens" test:** every message kind other than Open strip input is driven with web links present, and the opener is asserted never started.
 - **Fuzz targets** `link_target` and the existing `address`, in the full gate.
 - **Timing tests** with a fake clock: a click 499 ms after a target change is refused and one at 500 ms accepted; a prompt confirmed 499 ms after appearing is refused.
