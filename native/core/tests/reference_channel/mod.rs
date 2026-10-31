@@ -50,6 +50,9 @@ pub fn programs() -> (PathBuf, PathBuf) {
     (path("neoteletext-site"), path("neoteletext-fetcher"))
 }
 
+/// How many free ports a site tries.
+const PORT_ATTEMPTS: usize = 8;
+
 /// The reference channel, on a port of its own.
 pub struct Site {
     pub port: u16,
@@ -60,12 +63,18 @@ impl Site {
     /// Starts it, and returns with what it says from now on, a line at a
     /// time: its requests, and each connection's SELECTs and end.
     pub fn start(program: &Path) -> (Self, mpsc::Receiver<String>) {
-        let port = TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port();
-        let mut site = Command::new(program).args(["terminal", &port.to_string()]).stderr(Stdio::piped()).spawn().unwrap();
-        let mut said = BufReader::new(site.stderr.take().unwrap());
-        let mut line = String::new();
-        said.read_line(&mut line).unwrap();
-        assert!(line.contains("serving"), "{line}");
+        // A free port can be taken by another test's site before this one
+        // binds it, so a site that could not serve is started again.
+        let (port, site, said) = (0..PORT_ATTEMPTS)
+            .find_map(|_| {
+                let port = TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port();
+                let mut site = Command::new(program).args(["terminal", &port.to_string()]).stderr(Stdio::piped()).spawn().unwrap();
+                let mut said = BufReader::new(site.stderr.take().unwrap());
+                let mut line = String::new();
+                said.read_line(&mut line).unwrap();
+                line.contains("serving").then_some((port, site, said))
+            })
+            .expect("the site serves on a free port");
         let (lines, heard) = mpsc::channel();
         std::thread::spawn(move || {
             // Read to the end, heard or not: a site that cannot write
