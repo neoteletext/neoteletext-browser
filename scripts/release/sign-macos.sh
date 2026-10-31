@@ -23,7 +23,9 @@ identity="${3:?the signing identity}"
 profile="${4:?the notarytool profile}"
 release_tool="native/tuf/target/release/neoteletext-release"
 sign() {
-    local bundle="$1" file
+    local bundle="$1" file helper="$1/Contents/Helpers/NeoTeletextChooser.app"
+    # The helper bundle first: a bundle's seal covers what is inside it.
+    codesign --force --options runtime --timestamp --sign "$identity" "$helper"
     for file in "$bundle"/Contents/MacOS/*; do
         codesign --force --options runtime --timestamp --sign "$identity" "$file"
     done

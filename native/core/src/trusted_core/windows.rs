@@ -102,6 +102,16 @@ impl Core {
     /// Opens a new window, private or not, with the home address in it,
     /// and makes it the one at hand.
     fn open_window(&mut self, private: bool) -> Result<(), String> {
+        self.open_window_at_or_home(private, &[])
+    }
+
+    /// A new normal window at `addresses`, for what opens from outside when
+    /// every window is private.
+    pub(super) fn open_window_at(&mut self, addresses: &[String]) -> Result<(), String> {
+        self.open_window_at_or_home(false, addresses)
+    }
+
+    fn open_window_at_or_home(&mut self, private: bool, addresses: &[String]) -> Result<(), String> {
         if let Err(reason) = self.session.room_for_a_tab() {
             return self.say(reason);
         }
@@ -112,8 +122,13 @@ impl Core {
         };
         self.park_shown(from);
         self.send_untargeted(&ToInterface::OpenWindow { window, geometry: None })?;
-        let home = self.settings.home.clone();
-        open_home(&mut self.session, &home)?;
+        for reason in self.session.open_at_end(addresses) {
+            self.log(Level::Warning, None, &reason);
+        }
+        if self.session.tabs.is_empty() {
+            let home = self.settings.home.clone();
+            open_home(&mut self.session, &home)?;
+        }
         self.send_window_whole()
     }
 

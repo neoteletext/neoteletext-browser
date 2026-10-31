@@ -8,7 +8,7 @@ use std::path::Path;
 use std::sync::{Arc, Mutex, PoisonError};
 
 use super::wire::{Exit, Reply, Request, decode_reply, encode_request};
-use super::{COOKIE_KEY_BYTES, Channel, MAX_UPDATE_STATE, Program};
+use super::{COOKIE_KEY_BYTES, Channel, ChooseKind, MAX_UPDATE_STATE, Program};
 use crate::{LocalTime, Process, Report};
 
 /// The core's connection to its broker.
@@ -190,6 +190,37 @@ impl Broker {
             (Reply::Source(bytes), _) if bytes.len() <= MAX_UPDATE_STATE => Ok(bytes),
             (Reply::Failed(reason), _) => Err(reason),
             _ => Err(String::from("an unexpected reply")),
+        }
+    }
+
+    /// Asks for the file dialog; the choice arrives on [`Broker::openings`]'
+    /// pipe, or nothing does when the user cancels.
+    ///
+    /// # Errors
+    /// Why it was not shown: one is open already, or it cannot be started.
+    pub fn choose(&self, kind: ChooseKind, parent: &str, keep: bool) -> Result<(), String> {
+        match self.ask(&Request::Choose { kind, parent: parent.to_owned(), keep }).map_err(|error| error.to_string())? {
+            (Reply::Done, _) => Ok(()),
+            (Reply::Failed(reason), _) => Err(reason),
+            _ => Err(String::from("an unexpected reply")),
+        }
+    }
+
+    /// The pipe on which what opens from outside arrives.
+    ///
+    /// # Errors
+    /// When it was given already, or the broker has none.
+    pub fn openings(&self) -> io::Result<File> {
+        match self.ask(&Request::Openings)? {
+            (Reply::Pipe, pipes) => {
+                let mut pipes = pipes.into_iter();
+                match (pipes.next(), pipes.next()) {
+                    (Some(pipe), None) => Ok(pipe),
+                    _ => Err(io::Error::new(io::ErrorKind::InvalidData, "a reply without its pipe")),
+                }
+            }
+            (Reply::Failed(reason), _) => Err(io::Error::other(reason)),
+            _ => Err(io::Error::new(io::ErrorKind::InvalidData, "an unexpected reply")),
         }
     }
 

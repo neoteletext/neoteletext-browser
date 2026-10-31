@@ -17,6 +17,10 @@ pub const MAX_IDENTITY: usize = 256;
 pub const MAX_STRIP_NOTICE: usize = 320;
 /// The address bar's limit, as the trusted core's address rules.
 pub const MAX_ADDRESS: usize = interface_core::browser::MAX_ADDRESS;
+/// The most files one drop or one opening from the system names (DEC-1549
+/// item 9): the broker's own bound, which the trusted core asserts it agrees
+/// with.
+pub const MAX_FILES_AT_ONCE: usize = 16;
 /// A page title: one row of a teletext page is 40 characters, and each
 /// takes at most four bytes of UTF-8.
 pub const MAX_PAGE_TITLE: usize = 40 * 4;

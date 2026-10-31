@@ -173,6 +173,7 @@ fn register_with_windows(layout: &update::layout::Layout, stub: &std::path::Path
         }
         files::write_atomically(&link, &shortcut::shortcut(stub, &layout.root, "NeoTeletext")).map_err(|error| io(&link, &error))?;
     }
+    os_install::register_opening(stub)?;
     let size = folder_size(&layout.root) / BYTES_PER_KIB;
     let uninstall = format!("\"{}\" --uninstall", stub.display());
     os_install::uninstall_entry(&os_install::UninstallEntry {

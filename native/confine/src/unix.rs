@@ -7,18 +7,19 @@
 //! the C library's own `localtime_r`.
 
 use std::io;
-use std::os::fd::OwnedFd;
+use std::os::fd::{AsRawFd as _, OwnedFd};
 use std::os::unix::net::UnixStream;
 use std::process::{Command, Stdio};
 
-use crate::{Process, Report, Spawn};
+use crate::broker::CHANNEL_VARIABLE;
+use crate::{Process, Report, Role, Spawn};
 
 mod channel;
 mod descriptors;
 mod time;
 
 pub(crate) use channel::Channel;
-pub(crate) use descriptors::{receive, send};
+pub(crate) use descriptors::{keep_across_exec, receive, send, take_inherited};
 pub(crate) use time::local_offset;
 
 /// The command that runs a helper: under its profile on macOS; as it is
@@ -46,12 +47,25 @@ pub(crate) fn spawn(spawn: &Spawn<'_>) -> io::Result<Process> {
     for (name, value) in spawn.environment {
         command.env(name, value);
     }
+    // The interface's own channel to the broker (DEC-1551 item 3): its end
+    // kept across the start, its number named in its environment.
+    let channel = if spawn.role == Role::Interface {
+        let (ours, theirs) = UnixStream::pair()?;
+        command.env(CHANNEL_VARIABLE, theirs.as_raw_fd().to_string());
+        keep_across_exec(&mut command, theirs.as_raw_fd());
+        Some((ours, theirs))
+    } else {
+        None
+    };
     let mut child = command.stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::inherit()).spawn()?;
     #[cfg(target_os = "macos")]
     let report = Report { layers: vec![String::from("sandbox-exec")] };
     #[cfg(not(target_os = "macos"))]
     let report = Report { layers: vec![String::from("confines itself at its start")] };
-    Ok(Process::new(child.stdin.take(), child.stdout.take(), child, report))
+    let mut process = Process::new(child.stdin.take(), child.stdout.take(), child, report);
+    // Their end closes here: the interface holds its own.
+    process.broker_side = channel.map(|(ours, _theirs)| Channel::new(ours));
+    Ok(process)
 }
 
 /// Starts the trusted core confined, its standard input the broker's

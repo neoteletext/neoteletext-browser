@@ -21,6 +21,30 @@ pub enum WindowAction {
     Close,
 }
 
+/// What the file dialog is asked to choose (REQ-1699).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum OpenKind {
+    /// A file to open as a channel.
+    File,
+    /// A folder of page files to open as a channel.
+    Folder,
+    /// A bookmarks file to import.
+    Bookmarks,
+}
+
+/// Where dropped files go (REQ-1700).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DropPlace {
+    /// On the page: new tabs after the last, the current tab left alone.
+    NewTabs,
+    /// Over the left quarter of the tab at this index.
+    Before(u8),
+    /// Over the middle half of the tab at this index, which they replace.
+    Replace(u8),
+    /// Over the right quarter of the tab at this index.
+    After(u8),
+}
+
 /// What the user did, for the host to send on or act on.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Output {
@@ -34,6 +58,8 @@ pub enum Output {
     CloseTab(usize),
     /// Open a new tab.
     NewTab,
+    /// Strip input: show the file dialog.
+    OpenFile(OpenKind),
     /// Strip input: an address typed into the trusted strip.
     Navigate(String),
     /// Go back in the tab's history.

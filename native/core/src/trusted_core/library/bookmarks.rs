@@ -94,7 +94,6 @@ impl Core {
                 let folder = self.library.manager.as_ref().map_or(OTHER, |manager| manager.folder);
                 self.session.bookmarks.sort(folder);
             }
-            BookmarkRequest::Import(path) => self.import_bookmarks(&path),
             BookmarkRequest::Export => self.export_bookmarks(),
         }
         self.bookmarks_changed()
@@ -129,6 +128,12 @@ impl Core {
             manager.query = clean(text, protocol::library::MAX_QUERY);
             manager.items_first = 0;
         }
+    }
+
+    /// A bookmarks file chosen in the file dialog (TODO-1426).
+    pub(in crate::trusted_core) fn import_chosen(&mut self, path: &str) -> Result<(), String> {
+        self.import_bookmarks(path);
+        self.bookmarks_changed()
     }
 
     /// Reads bookmarks in this browser's format from a file the user named,

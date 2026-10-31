@@ -14,7 +14,7 @@ mod to_core;
 mod to_interface;
 mod windows;
 
-use interface_core::browser::{StripState, TabInfo};
+use interface_core::browser::{DropPlace, OpenKind, StripState, TabInfo};
 use interface_core::canvas::PageKey;
 use interface_core::channel::Channel;
 
@@ -191,6 +191,28 @@ pub enum ToCore {
     },
     /// Open a new tab.
     NewTab,
+    /// Strip input: show the file dialog (REQ-1699).
+    OpenFile {
+        /// What it chooses.
+        kind: OpenKind,
+        /// The window to place it over, as the chooser reads it, or
+        /// nothing. The interface's word: a false one only misplaces it.
+        parent: String,
+    },
+    /// Strip input: files dropped on a window, each already declared to the
+    /// broker (REQ-1700).
+    Dropped {
+        /// Their paths, at most [`crate::MAX_FILES_AT_ONCE`].
+        files: Vec<String>,
+        /// Where.
+        place: DropPlace,
+        /// How many more were dropped than a drop may open, or cannot be
+        /// named: the trusted core says so.
+        left_out: u16,
+    },
+    /// Strip input: what macOS asked the application to open, each file
+    /// already declared to the broker (REQ-1703 item 3).
+    FromSystem(Vec<String>),
     /// The page the user opened, zoomed on the wall, or none: its sounds
     /// play while it is open (the engine's REQ-AUD-012).
     Opened(Option<PageKey>),

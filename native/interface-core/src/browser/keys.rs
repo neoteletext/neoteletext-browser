@@ -2,7 +2,7 @@
 //! and where each key goes, the panels in their order, the address field,
 //! links, the page's controls, and the browser's own shortcuts.
 
-use crate::browser::{Browser, Output, WindowAction};
+use crate::browser::{Browser, OpenKind, Output, WindowAction};
 
 /// A key the browser handles, as the host translates it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -183,6 +183,11 @@ impl Browser {
             // section 6): each platform's keys are taken everywhere.
             "y" | "h" => self.toggle_history(),
             "o" if modifiers.shift => self.toggle_bookmarks(),
+            // Open File (DEC-1549 item 1): Command-O on macOS, Control-O
+            // elsewhere; with Option or Alt, a folder of page files, which
+            // the system's dialogs do not offer in one (DEC-1705).
+            "o" if modifiers.alt => self.outputs.push(Output::OpenFile(OpenKind::Folder)),
+            "o" => self.outputs.push(Output::OpenFile(OpenKind::File)),
             "b" if modifiers.alt => self.toggle_bookmarks(),
             "b" if modifiers.shift => self.toggle_bar(),
             // The overview of every page, shown or hidden (decision 109).
@@ -209,6 +214,19 @@ impl Browser {
 mod tests {
     use super::*;
     use crate::browser::fixture::browser;
+
+    /// DEC-1549 item 1: Command-O, Control-O elsewhere, asks for the file
+    /// dialog; with Option or Alt, for a folder (DEC-1705). Shift keeps the
+    /// bookmarks manager.
+    #[test]
+    fn open_file_asks_for_the_dialog() {
+        let (mut browser, _) = browser();
+        browser.take_outputs();
+        browser.key(Key::Text("o"), Modifiers { command: true, ..Modifiers::default() }, 0);
+        assert_eq!(browser.take_outputs(), [Output::OpenFile(OpenKind::File)]);
+        browser.key(Key::Text("o"), Modifiers { command: true, alt: true, ..Modifiers::default() }, 0);
+        assert_eq!(browser.take_outputs(), [Output::OpenFile(OpenKind::Folder)]);
+    }
 
     /// Shift-Command-W, Control-Shift-W away from macOS, closes the window
     /// (decision 84); Command-W the tab.

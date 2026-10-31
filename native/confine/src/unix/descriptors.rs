@@ -2,7 +2,10 @@
 //! a local-domain socket carries descriptors with it (`SCM_RIGHTS`,
 //! `unix(7)`), as the broker passes the trusted core each helper's pipes.
 
-#![expect(unsafe_code, reason = "sendmsg and recvmsg with SCM_RIGHTS, which the standard library does not offer yet (decision 56)")]
+#![expect(
+    unsafe_code,
+    reason = "sendmsg and recvmsg with SCM_RIGHTS, which the standard library does not offer yet (decision 56), and a descriptor kept across a start"
+)]
 
 use std::io::{self, Read as _, Write as _};
 use std::mem::size_of;
@@ -55,6 +58,33 @@ fn control_length(bytes: usize) -> io::Result<usize> {
 #[cfg(not(target_os = "linux"))]
 fn control_length(bytes: usize) -> io::Result<libc::socklen_t> {
     libc::socklen_t::try_from(bytes).map_err(|_| io::ErrorKind::InvalidInput.into())
+}
+
+/// Has `command` keep `descriptor` open in the program it starts (DEC-1551
+/// item 3): the standard library opens every descriptor close-on-exec and
+/// offers no other way.
+pub fn keep_across_exec(command: &mut std::process::Command, descriptor: RawFd) {
+    use std::os::unix::process::CommandExt as _;
+    // SAFETY: `fcntl` is async-signal-safe, and the closure touches nothing but the
+    // descriptor's flag, in the child between fork and exec.
+    unsafe {
+        command.pre_exec(move || if libc::fcntl(descriptor, libc::F_SETFD, 0) == -1 { Err(io::Error::last_os_error()) } else { Ok(()) });
+    }
+}
+
+/// The descriptor numbered `number`, which this process was started with and
+/// nothing here owns yet. Standard input, output and error are refused, and
+/// one that is not open.
+pub fn take_inherited(number: RawFd) -> io::Result<OwnedFd> {
+    const FIRST_NOT_STANDARD: RawFd = 3;
+    // SAFETY: `fcntl` with F_GETFD reads a flag and touches no memory.
+    if number < FIRST_NOT_STANDARD || unsafe { libc::fcntl(number, libc::F_GETFD) } == -1 {
+        return Err(io::Error::new(io::ErrorKind::InvalidInput, "no such descriptor"));
+    }
+    // SAFETY: it is open, as just checked, and is the one the broker gave this process
+    // for this channel, read once at the start, so nothing else owns it. It is
+    // made close-on-exec by nothing, as this process starts no other.
+    Ok(unsafe { OwnedFd::from_raw_fd(number) })
 }
 
 /// Sends `bytes`, with `descriptors` attached to their first byte, then

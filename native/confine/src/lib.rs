@@ -40,6 +40,8 @@
 
 pub mod broker;
 mod environment;
+mod identity;
+pub mod instance;
 #[cfg(target_os = "linux")]
 mod linux;
 #[cfg(target_os = "macos")]
@@ -54,6 +56,7 @@ mod unix;
 mod windows;
 
 pub use environment::environment;
+pub use identity::{FileIdentity, file_identity};
 #[cfg(target_os = "linux")]
 #[doc(hidden)]
 pub use linux::probe;

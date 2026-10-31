@@ -8,17 +8,31 @@
 //! (`installation-and-updates.md` sections 3 and 5).
 
 use std::ffi::OsString;
-use std::io::Write;
+use std::fs::File;
+use std::io::{PipeWriter, Read as _, Write};
 use std::path::{Path, PathBuf};
+use std::process::{Command, Stdio};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex, PoisonError};
+use std::time::Instant;
 
 use confine::Role;
-use confine::broker::{Handlers, UpdaterGrant};
+use confine::broker::{ChooseKind, Declaration, Handlers, MAX_TEXT, Opening, UpdaterGrant, read_opening, write_opening};
+use confine::instance::{self, Instance};
+use neoteletext::address::{self, Address};
+use neoteletext::grants;
+use neoteletext::launch::{self, Launch};
 use neoteletext::settings as stored;
 use update::layout::{HEALTHY_LINE, LAUNCHED_VARIABLE, Layout, STARTED_LINE};
 use update::platform::Platform;
 use update::state::MAX_STATE;
 
 use crate::source;
+use crate::trusted_core::given_addresses;
+
+mod access;
+
+use access::{Access, Admission};
 
 /// The trusted core's own flag: the broker starts this program again
 /// with it (decision 56).
@@ -37,13 +51,38 @@ const KEY_ACCOUNT: &str = "cookies.bin";
 /// process not confined. It starts the trusted core confined, then serves
 /// its requests until it ends.
 pub(crate) fn broker() -> Result<(), String> {
+    let given: Vec<OsString> = std::env::args_os().skip(1).collect();
+    // First of all: a registered link or file allows one argument, and no
+    // switch takes effect with it (REQ-1673). A launch refused opens nothing.
+    let launched = launch::read(&given).map_err(|refused| format!("this start was refused: {refused}"))?;
     tell_launcher_started();
     let program = std::env::current_exe().map_err(|error| format!("cannot find this program: {error}"))?;
     let programs = program.parent().ok_or("this program has no directory")?.to_path_buf();
     let settings = stored::folder().ok_or("there is no folder for the settings")?;
     neoteletext::make_folder(&settings).map_err(|error| format!("{}: {error}", settings.display()))?;
+    let own_folder = grants::folder(&settings).ok_or("there is no folder for the broker's files")?;
+    neoteletext::make_folder(&own_folder).map_err(|error| format!("{}: {error}", own_folder.display()))?;
+    let (links, files) = what_it_names(&launched, &given);
+    let place = instance_place(&own_folder);
+    // Something to open, and a browser running: it opens there (DEC-1551
+    // item 7). A start that names nothing runs as it always has.
+    if let Some(place) = &place
+        && !(links.is_empty() && files.is_empty())
+        && hand_over(place, &links, &files)
+    {
+        return Ok(());
+    }
+    let access = Arc::new(Mutex::new(Access::load(Some(own_folder.clone()))));
+    for file in &files {
+        lock(&access).name(Path::new(file), true);
+    }
+    let (openings_reader, openings_writer) = std::io::pipe().map_err(|error| format!("cannot make a pipe: {error}"))?;
+    let openings_writer = Arc::new(Mutex::new(openings_writer));
+    if let Some(place) = &place {
+        listen(place, &access, &openings_writer);
+    }
     let mut arguments = vec![OsString::from(CORE_FLAG)];
-    arguments.extend(std::env::args_os().skip(1));
+    arguments.extend(given);
     let environment = confine::environment(Role::Core);
     let core = confine::broker::start_core(&program, &arguments, &settings, &environment).map_err(|error| format!("cannot start the trusted core: {error}"))?;
     let version = update::mark::own(VERSION_MARK).map_err(|refused| format!("this program's version: {refused}"))?;
@@ -51,18 +90,27 @@ pub(crate) fn broker() -> Result<(), String> {
     #[cfg(feature = "links")]
     let last_opened = std::cell::Cell::new(None);
     #[cfg(feature = "links")]
-    let open_web = |address: &str| paced(&last_opened, std::time::Instant::now(), || web_opener::open(address).map_err(|error| error.to_string()));
+    let open_web = |address: &str| paced(&last_opened, Instant::now(), || web_opener::open(address).map_err(|error| error.to_string()));
     // With links compiled out the core never asks; if it does, it is refused.
     #[cfg(not(feature = "links"))]
     let open_web = |_: &str| Err(String::from("links are compiled out"));
+    let chooser =
+        Chooser { program: chooser_program(&programs), access: Arc::clone(&access), openings: openings_writer, open: Arc::new(AtomicBool::new(false)) };
+    let read_source = |path: &Path| read_given(path, &access, &places());
+    let openings_reader = std::cell::Cell::new(Some(file_of(openings_reader)));
+    let declared_access = Arc::clone(&access);
+    let declared = move |declaration: Declaration| lock(&declared_access).declare(&declaration, home().as_deref(), Instant::now());
     let handlers = Handlers {
-        read_source: &read_for_core,
+        read_source: &read_source,
         open_web: &open_web,
         environment: &confine::environment,
         cookie_key: &cookie_key,
         healthy: &tell_launcher_healthy,
         update_state: &launcher_state,
         updater: &updater_grant,
+        choose: &|kind, parent, keep| chooser.start(kind, parent, keep),
+        openings: &|| openings_reader.take(),
+        declared: Arc::new(declared),
     };
     let exit = confine::broker::serve(core, &programs, &handlers).map_err(|error| format!("cannot wait for the trusted core: {error}"))?;
     if exit.success { Ok(()) } else { Err(format!("the trusted core ended abnormally ({exit})")) }
@@ -86,15 +134,184 @@ fn cookie_key() -> Result<Vec<u8>, String> {
     }
 }
 
-/// A file channel's bytes, read by the broker for the core by the rules of
-/// decision 88 (`Source::read`), in this user's places.
-fn read_for_core(path: &Path) -> Result<Vec<u8>, String> {
-    read_within(path, &places())
+fn lock(access: &Mutex<Access>) -> std::sync::MutexGuard<'_, Access> {
+    access.lock().unwrap_or_else(PoisonError::into_inner)
 }
 
-/// A file channel's bytes, read in `places`; every refusal in one sentence.
-fn read_within(path: &Path, places: &source::Places) -> Result<Vec<u8>, String> {
-    source::Source::read(path, places).map(source::Source::into_bytes).map_err(String::from)
+/// A file's bytes, read for the core only when `access` says it was given
+/// (REQ-1698), then by the rules of decision 88 in `places`; every refusal in
+/// one sentence. The table is not held while the file is read.
+fn read_given(path: &Path, access: &Mutex<Access>, places: &source::Places) -> Result<Vec<u8>, String> {
+    let canonical = path.canonicalize().map_err(|_| String::from(source::REFUSAL))?;
+    let admission = lock(access).admit(&canonical, Instant::now());
+    let expected = match admission {
+        Admission::Refused => return Err(source::REFUSAL.to_owned()),
+        Admission::Granted(identity) => Some(identity),
+        Admission::Fresh { .. } => None,
+    };
+    let (read, identity) = source::Source::read_as(&canonical, places, expected).map_err(String::from)?;
+    if let Admission::Fresh { keep } = admission {
+        lock(access).read(&canonical, identity, keep);
+    }
+    Ok(read.into_bytes())
+}
+
+/// The home folder, as `places` takes it.
+fn home() -> Option<PathBuf> {
+    std::env::var_os("HOME").or_else(|| std::env::var_os("USERPROFILE")).map(PathBuf::from).filter(|home| home.is_absolute())
+}
+
+/// The links and the files of this start: what a marked launch names, or the
+/// addresses on an ordinary command line that are files.
+fn what_it_names(launched: &Launch, given: &[OsString]) -> (Vec<String>, Vec<String>) {
+    match launched {
+        Launch::Link(link) => (vec![link.clone()], Vec::new()),
+        Launch::File(file) => (Vec::new(), address::parse(file).ok().and_then(file_of_address).into_iter().collect()),
+        Launch::Plain => {
+            let text = given.iter().filter_map(|argument| argument.to_str()).map(str::to_owned);
+            let files = given_addresses(text).iter().filter_map(|given| address::parse(given).ok()).filter_map(file_of_address).collect();
+            (Vec::new(), files)
+        }
+    }
+}
+
+fn file_of_address(address: Address) -> Option<String> {
+    address.file.and_then(|path| path.to_str().map(str::to_owned))
+}
+
+/// Where the single-instance channel is: a pipe's name on Windows, for this
+/// user; on Linux the runtime folder, which neither of the roles allowed
+/// local sockets can see (`confine/src/linux/runtime.rs`), and with none no
+/// channel; on macOS the broker's own folder, as every profile denies the
+/// network's operations, these among them.
+fn instance_place(own_folder: &Path) -> Option<PathBuf> {
+    if cfg!(windows) {
+        let user = std::env::var_os("USERNAME")?;
+        let mut name = OsString::from(r"\\.\pipe\NeoTeletext-");
+        name.push(user);
+        return Some(PathBuf::from(name));
+    }
+    if cfg!(target_os = "linux") {
+        return std::env::var_os("XDG_RUNTIME_DIR").map(PathBuf::from).filter(|folder| folder.is_absolute()).map(|folder| folder.join("neoteletext-instance"));
+    }
+    Some(own_folder.join("instance"))
+}
+
+/// Hands `links` and `files` to the browser running at `place`: false when
+/// none answers. At most what one opening may name goes.
+fn hand_over(place: &Path, links: &[String], files: &[String]) -> bool {
+    let Ok(mut stream) = instance::connect(place) else { return false };
+    write_opening(&mut stream, &Opening::Outside { links: links.to_vec(), files: files.to_vec() }).is_ok()
+}
+
+/// Hears second starts, on a thread of their own. What arrives may come from
+/// any program that reaches the channel, so it is read strictly, a file is
+/// allowed only as if it were on this broker's command line, and a link goes
+/// to the core, which checks it again (REQ-1672 item 10).
+fn listen(place: &Path, access: &Arc<Mutex<Access>>, openings: &Arc<Mutex<PipeWriter>>) {
+    let instance = match Instance::bind(place) {
+        Ok(instance) => instance,
+        Err(error) => {
+            eprintln!("neoteletext: another start cannot hand this browser anything: {error}");
+            return;
+        }
+    };
+    let (access, openings) = (Arc::clone(access), Arc::clone(openings));
+    std::thread::spawn(move || {
+        while let Ok(mut stream) = instance.next() {
+            match read_opening(&mut stream) {
+                Ok(opening @ Opening::Outside { .. }) => {
+                    let Opening::Outside { files, .. } = &opening else { continue };
+                    for file in files {
+                        if let Some(path) = address::parse(file).ok().and_then(|address| address.file) {
+                            lock(&access).name(&path, true);
+                        }
+                    }
+                    send_opening(&openings, &opening);
+                }
+                _ => eprintln!("neoteletext: another start sent something that is not an opening, which is refused"),
+            }
+        }
+    });
+}
+
+fn send_opening(openings: &Mutex<PipeWriter>, opening: &Opening) {
+    let mut pipe = openings.lock().unwrap_or_else(PoisonError::into_inner);
+    if let Err(error) = write_opening(&mut *pipe, opening) {
+        eprintln!("neoteletext: the trusted core was not told of an opening: {error}");
+    }
+}
+
+/// The chooser (DEC-1551 item 1): its program, and what its answer changes.
+struct Chooser {
+    program: PathBuf,
+    access: Arc<Mutex<Access>>,
+    openings: Arc<Mutex<PipeWriter>>,
+    /// A dialog is open: one at a time.
+    open: Arc<AtomicBool>,
+}
+
+impl Chooser {
+    /// Shows the dialog on a thread of its own, so that the core goes on
+    /// being served, and answers now. The choice arrives on the pipe.
+    fn start(&self, kind: ChooseKind, parent: &str, keep: bool) -> Result<(), String> {
+        if self.open.swap(true, Ordering::SeqCst) {
+            return Err(String::from("a file dialog is already open"));
+        }
+        let start_in = lock(&self.access).last_folder();
+        let mut command = Command::new(&self.program);
+        command.arg(kind.argument()).arg(parent).arg(start_in.as_deref().unwrap_or(Path::new(""))).stdin(Stdio::null()).stdout(Stdio::piped());
+        let (access, openings, open) = (Arc::clone(&self.access), Arc::clone(&self.openings), Arc::clone(&self.open));
+        std::thread::spawn(move || {
+            if let Some(path) = ask_chooser(command) {
+                if keep {
+                    let folder = if kind == ChooseKind::Folder { Some(path.as_path()) } else { path.parent() };
+                    lock(&access).set_last_folder(folder);
+                }
+                lock(&access).name(&path, keep);
+                if let Some(path) = path.to_str().map(str::to_owned) {
+                    send_opening(&openings, &Opening::Chosen { kind, path });
+                }
+            }
+            open.store(false, Ordering::SeqCst);
+        });
+        Ok(())
+    }
+}
+
+/// What the chooser printed, bounded, read as one absolute path; nothing when
+/// the user cancelled or it failed.
+fn ask_chooser(mut command: Command) -> Option<PathBuf> {
+    let mut child = command.spawn().map_err(|error| eprintln!("neoteletext: cannot start the file dialog: {error}")).ok()?;
+    let mut printed = Vec::new();
+    let read = child.stdout.take().map(|output| output.take((MAX_TEXT as u64).saturating_add(1)).read_to_end(&mut printed));
+    let status = child.wait().ok()?;
+    read?.ok()?;
+    if !status.success() || printed.len() > MAX_TEXT {
+        return None;
+    }
+    let path = PathBuf::from(String::from_utf8(printed).ok()?);
+    path.is_absolute().then_some(path)
+}
+
+/// The chooser's program: in a macOS bundle, its helper bundle, so that it
+/// has no Dock icon of its own; beside the broker otherwise.
+fn chooser_program(programs: &Path) -> PathBuf {
+    let name = format!("neoteletext-chooser{}", std::env::consts::EXE_SUFFIX);
+    let helper = programs.parent().map(|contents| contents.join("Helpers/NeoTeletextChooser.app/Contents/MacOS").join(&name));
+    helper.filter(|helper| helper.is_file()).unwrap_or_else(|| programs.join(name))
+}
+
+/// The pipe's reading end as a file, to pass on.
+#[cfg(unix)]
+fn file_of(pipe: std::io::PipeReader) -> File {
+    File::from(std::os::fd::OwnedFd::from(pipe))
+}
+
+/// The pipe's reading end as a file, to pass on.
+#[cfg(windows)]
+fn file_of(pipe: std::io::PipeReader) -> File {
+    File::from(std::os::windows::io::OwnedHandle::from(pipe))
 }
 
 /// The places no file channel is read from (decision 88), taken afresh at
@@ -102,8 +319,10 @@ fn read_within(path: &Path, places: &source::Places) -> Result<Vec<u8>, String> 
 /// the platform's folders of applications' data; and the browser's own
 /// settings and update folders, the only ones the trusted core writes.
 fn places() -> source::Places {
-    let home = std::env::var_os("HOME").or_else(|| std::env::var_os("USERPROFILE")).map(PathBuf::from).filter(|home| home.is_absolute());
+    let home = home();
     let mut refused: Vec<PathBuf> = stored::folder().into_iter().collect();
+    // The broker's own files, which are no channel.
+    refused.extend(stored::folder().as_deref().and_then(grants::folder));
     refused.extend(Platform::this().and_then(|platform| Layout::for_user(platform.family(), None)).map(|layout| layout.root));
     refused.extend(installation().map(|layout| layout.root));
     if cfg!(target_os = "macos") {
@@ -191,7 +410,7 @@ const OPEN_WEB_INTERVAL: std::time::Duration = std::time::Duration::from_millis(
 /// [`OPEN_WEB_INTERVAL`] of `now`: a compromised core cannot use the
 /// system's web browser as a channel out faster than a link could.
 #[cfg(feature = "links")]
-fn paced(last: &std::cell::Cell<Option<std::time::Instant>>, now: std::time::Instant, open: impl FnOnce() -> Result<(), String>) -> Result<(), String> {
+fn paced(last: &std::cell::Cell<Option<Instant>>, now: Instant, open: impl FnOnce() -> Result<(), String>) -> Result<(), String> {
     if last.get().is_some_and(|last| now.saturating_duration_since(last) < OPEN_WEB_INTERVAL) {
         return Err(String::from("web pages are opened at most once every two seconds"));
     }
@@ -214,7 +433,7 @@ mod tests {
             opened.set(opened.get() + 1);
             Ok(())
         };
-        let start = std::time::Instant::now();
+        let start = Instant::now();
         assert_eq!(paced(&last, start, open), Ok(()));
         let soon = start + std::time::Duration::from_secs(1);
         assert!(paced(&last, soon, open).is_err(), "a second request a second later is refused");
@@ -259,16 +478,60 @@ mod tests {
         if !ssh.is_dir() {
             return;
         }
-        let refused = read_for_core(&ssh.join("..").join(".ssh")).unwrap_err();
+        let refused = read_within(&ssh.join("..").join(".ssh"), &super::places()).unwrap_err();
         assert_eq!(refused, REFUSAL);
     }
 
     use crate::source::{Places, REFUSAL};
 
+    /// A file's bytes as the broker reads one the user gave.
+    fn read_within(path: &Path, places: &Places) -> Result<Vec<u8>, String> {
+        let access = Mutex::new(Access::default());
+        lock(&access).name(path, false);
+        read_given(path, &access, places)
+    }
+
+    /// REQ-1698, finding F-03: the core's word alone reads nothing, even a
+    /// recording that DEC-981's checks would pass; the same file is read once
+    /// the interface has declared it, and after that through its grant.
+    #[test]
+    fn the_broker_reads_nothing_nobody_gave_it() {
+        let home = home("given");
+        write(&home.join("recordings/news.t42"), &recording());
+        let path = home.join("recordings/news.t42");
+        let places = places(&home);
+        let access = Mutex::new(Access::default());
+        assert_eq!(read_given(&path, &access, &places), Err(REFUSAL.to_owned()));
+        let declaration = Declaration { paths: vec![path.display().to_string()], keep: false };
+        lock(&access).declare(&declaration, None, Instant::now());
+        assert_eq!(read_given(&path, &access, &places).unwrap(), recording());
+        assert_eq!(read_given(&path, &access, &places).unwrap(), recording(), "through its grant");
+        std::fs::remove_file(&path).unwrap();
+        write(&path, &recording());
+        assert_eq!(read_given(&path, &access, &places), Err(REFUSAL.to_owned()), "another file at its path");
+        std::fs::remove_dir_all(&home).unwrap();
+    }
+
     /// The places of a test's home folder: its dot-entries, and its
     /// `settings` folder as the browser's own.
     fn places(home: &Path) -> Places {
         Places::new(Some(home.to_path_buf()), vec![home.join("settings")])
+    }
+
+    /// DEC-1551 item 1: the chooser's answer is one absolute path, whatever
+    /// it prints; nothing printed is a cancel.
+    #[cfg(unix)]
+    #[test]
+    fn the_chooser_is_believed_only_for_one_path() {
+        let printing = |text: &str| {
+            let mut command = Command::new("/bin/sh");
+            command.arg("-c").arg(format!("printf '%s' '{text}'")).stdin(Stdio::null()).stdout(Stdio::piped());
+            ask_chooser(command)
+        };
+        assert_eq!(printing("/home/a/news.t42"), Some(PathBuf::from("/home/a/news.t42")));
+        assert_eq!(printing(""), None, "cancelled");
+        assert_eq!(printing("relative/news.t42"), None);
+        assert_eq!(printing(&"/a".repeat(MAX_TEXT)), None, "too long");
     }
 
     /// A home folder of its own for one test, with the browser's settings

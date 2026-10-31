@@ -115,6 +115,9 @@ pub enum Incoming {
     Dock(Choice),
     /// The user chose an item of the menu bar (decision 84).
     Menu(&'static MenuItem),
+    /// What macOS asked the application to open: `file://` addresses and
+    /// links, which no one has checked.
+    OpenedBySystem(Vec<String>),
     /// The messages that follow are for this window (`multiple-windows.md`).
     Target(u32),
     /// Open a window of this number.

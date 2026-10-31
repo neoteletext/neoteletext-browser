@@ -22,6 +22,7 @@ mod closed;
 #[cfg(feature = "links")]
 mod links;
 mod navigation;
+mod outside;
 mod saved;
 mod tab;
 mod windows;

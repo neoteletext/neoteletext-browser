@@ -18,7 +18,8 @@ use windows_sys::Win32::Security::WinTrust::{
 };
 use windows_sys::Win32::System::LibraryLoader::{LOAD_LIBRARY_SEARCH_SYSTEM32, SetDefaultDllDirectories};
 use windows_sys::Win32::System::Registry::{
-    HKEY, HKEY_CURRENT_USER, KEY_WRITE, REG_DWORD, REG_OPTION_NON_VOLATILE, REG_SZ, RegCloseKey, RegCreateKeyExW, RegDeleteTreeW, RegSetValueExW,
+    HKEY, HKEY_CURRENT_USER, KEY_WRITE, REG_DWORD, REG_OPTION_NON_VOLATILE, REG_SZ, RegCloseKey, RegCreateKeyExW, RegDeleteKeyValueW, RegDeleteTreeW,
+    RegSetValueExW,
 };
 use windows_sys::Win32::UI::WindowsAndMessaging::{IDYES, MB_ICONINFORMATION, MB_ICONQUESTION, MB_OK, MB_YESNO, MessageBoxW};
 
@@ -231,6 +232,14 @@ impl Drop for Key {
     }
 }
 
+/// The per-user key of the `neoteletext` scheme (REQ-1671 item 2).
+const SCHEME_KEY: &str = "Software\\Classes\\neoteletext";
+/// The name of the type a `.tti` file may open as, and its per-user key.
+const PAGE_FILE_NAME: &str = "NeoTeletext.Page.1";
+const PAGE_FILE_KEY: &str = "Software\\Classes\\NeoTeletext.Page.1";
+/// Where `.tti` lists this browser among those that open it.
+const TTI_KEY: &str = "Software\\Classes\\.tti\\OpenWithProgids";
+
 fn set_text(key: &Key, name: &str, value: &str) -> Result<(), String> {
     let (name, value) = (wide(name), wide(value));
     let bytes = u32::try_from(value.len().saturating_mul(2)).map_err(|_| String::from("a value too long"))?;
@@ -280,6 +289,58 @@ pub fn uninstall_entry(entry: &UninstallEntry<'_>) -> Result<(), String> {
     // is no Windows Installer to put old files back (section 4.2).
     set_number(&key, "NoModify", 1)?;
     set_number(&key, "NoRepair", 1)
+}
+
+/// What a registered link or file opens with: the program, a marker and one
+/// argument (REQ-1673).
+fn open_command(program: &Path, marker: &str) -> String {
+    format!("\"{}\" {marker} \"%1\"", program.display())
+}
+
+fn create_key(path: &str) -> Result<Key, String> {
+    let path = wide(path);
+    let mut key: HKEY = 0;
+    // SAFETY: as in `uninstall_entry`: a zero-terminated path, null optionals, and a key
+    // written to this function's own local, closed once by `Key`'s drop.
+    let made = unsafe {
+        RegCreateKeyExW(HKEY_CURRENT_USER, path.as_ptr(), 0, ptr::null(), REG_OPTION_NON_VOLATILE, KEY_WRITE, ptr::null(), &raw mut key, ptr::null_mut())
+    };
+    if made == 0 { Ok(Key(key)) } else { Err(format!("the registry refused a key ({made})")) }
+}
+
+/// Registers the `neoteletext` scheme and `.tti` files for `program`, in the
+/// user's own hive (REQ-1671 item 2, REQ-1703 item 4). Nothing else is
+/// claimed, and no default is taken: Windows leaves that to the user.
+///
+/// # Errors
+/// When the registry refuses.
+pub fn register_opening(program: &Path) -> Result<(), String> {
+    let scheme = create_key(SCHEME_KEY)?;
+    set_text(&scheme, "", "URL:NeoTeletext link")?;
+    set_text(&scheme, "URL Protocol", "")?;
+    set_text(&create_key(&format!("{SCHEME_KEY}\\shell\\open\\command"))?, "", &open_command(program, "--open-link"))?;
+    set_text(&create_key(PAGE_FILE_KEY)?, "", "Teletext page")?;
+    set_text(&create_key(&format!("{PAGE_FILE_KEY}\\shell\\open\\command"))?, "", &open_command(program, "--open-file"))?;
+    set_text(&create_key(TTI_KEY)?, PAGE_FILE_NAME, "")
+}
+
+/// Removes what [`register_opening`] wrote, if it is there.
+///
+/// # Errors
+/// When the registry refuses.
+pub fn remove_opening() -> Result<(), String> {
+    for path in [SCHEME_KEY, PAGE_FILE_KEY] {
+        let path = wide(path);
+        // SAFETY: a predefined key and a zero-terminated path that outlives the call.
+        let removed = unsafe { RegDeleteTreeW(HKEY_CURRENT_USER, path.as_ptr()) };
+        if removed != 0 && removed != ERROR_FILE_NOT_FOUND {
+            return Err(format!("the registry refused to remove a key ({removed})"));
+        }
+    }
+    let (key, name) = (wide(TTI_KEY), wide(PAGE_FILE_NAME));
+    // SAFETY: as above; the value named under that key is the one this browser wrote.
+    let removed = unsafe { RegDeleteKeyValueW(HKEY_CURRENT_USER, key.as_ptr(), name.as_ptr()) };
+    if removed == 0 || removed == ERROR_FILE_NOT_FOUND { Ok(()) } else { Err(format!("the registry refused to remove a value ({removed})")) }
 }
 
 /// Removes the uninstall entry, if it is there.

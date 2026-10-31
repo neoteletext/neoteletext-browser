@@ -32,6 +32,7 @@
 
 #![expect(unsafe_code, reason = "the Win32 calls that create a confined process (requirement 10.12, decision 52)")]
 
+use std::ffi::OsString;
 use std::fs::File;
 use std::io;
 use std::os::windows::io::FromRawHandle as _;
@@ -42,6 +43,7 @@ use windows_sys::Win32::System::Console::{GetStdHandle, STD_ERROR_HANDLE};
 use windows_sys::Win32::System::JobObjects::AssignProcessToJobObject;
 use windows_sys::Win32::System::Threading::{ResumeThread, TerminateProcess};
 
+use crate::broker::CHANNEL_VARIABLE;
 use crate::{Process, Report, Role, Spawn};
 
 mod acl;
@@ -49,6 +51,7 @@ mod attributes;
 mod channel;
 mod container;
 mod handles;
+pub(crate) mod instance;
 mod job;
 mod process;
 mod relay;
@@ -61,6 +64,7 @@ pub(crate) use time::local_offset;
 use acl::grant;
 use attributes::start;
 use container::{INTERNET_CLIENT_SID, PRIVATE_NETWORK_SID, container};
+pub(crate) use handles::identity_of;
 use handles::{ContainerSid, Owned, Sid, keep_ours, last_error, pipe};
 use job::job;
 use relay::relay;
@@ -119,6 +123,21 @@ fn spawn_in(spawn: &Spawn<'_>, sid: &ContainerSid) -> io::Result<Process> {
     if let Some((_, theirs)) = &errors {
         inherited.push(theirs.raw());
     }
+    // The interface's own channel to the broker (DEC-1551 item 3): two more
+    // pipes, their handle values named in its environment.
+    let mut environment = spawn.environment.to_vec();
+    let channel = if spawn.role == Role::Interface {
+        let (their_reader, our_writer) = pipe()?;
+        let (our_reader, their_writer) = pipe()?;
+        keep_ours(our_reader.raw())?;
+        keep_ours(our_writer.raw())?;
+        inherited.extend([their_reader.raw(), their_writer.raw()]);
+        environment.push((OsString::from(CHANNEL_VARIABLE), OsString::from(format!("{},{}", their_reader.raw() as usize, their_writer.raw() as usize))));
+        Some((our_reader, our_writer, their_reader, their_writer))
+    } else {
+        None
+    };
+    let spawn = &Spawn { environment: &environment, ..*spawn };
     let job = job(spawn.role)?;
     let mut report = Report { layers: vec![String::from("job object"), String::from("mitigation policies"), String::from("no child processes")] };
     let mut capabilities = Vec::new();
@@ -159,6 +178,16 @@ fn spawn_in(spawn: &Spawn<'_>, sid: &ContainerSid) -> io::Result<Process> {
     drop(thread);
     drop(their_stdin);
     drop(their_stdout);
+    let broker_side = channel.map(|(our_reader, our_writer, their_reader, their_writer)| {
+        drop(their_reader);
+        drop(their_writer);
+        // SAFETY: our ends of the channel's pipes, made by `pipe` and owned only by these,
+        // forgotten below so each file becomes the one owner.
+        let side = unsafe { Channel::new(File::from_raw_handle(our_reader.raw() as _), File::from_raw_handle(our_writer.raw() as _)) };
+        std::mem::forget(our_reader);
+        std::mem::forget(our_writer);
+        side
+    });
     if let Some((ours, theirs)) = errors {
         drop(theirs);
         // SAFETY: our end of the standard error pipe, made by `pipe` and owned only by
@@ -177,7 +206,9 @@ fn spawn_in(spawn: &Spawn<'_>, sid: &ContainerSid) -> io::Result<Process> {
     let inner = Inner::new(process.raw(), job.raw());
     std::mem::forget(process);
     std::mem::forget(job);
-    Ok(Process::new(Some(stdin), Some(stdout), inner, report))
+    let mut process = Process::new(Some(stdin), Some(stdout), inner, report);
+    process.broker_side = broker_side;
+    Ok(process)
 }
 
 /// Starts the trusted core confined, its standard input and output the

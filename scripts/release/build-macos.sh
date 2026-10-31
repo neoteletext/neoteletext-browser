@@ -30,7 +30,7 @@ workspace_version="$(sed -n '/^\[workspace.package\]$/,/^\[/s/^version = "\(.*\)
 # would read as an unchanged tree.
 changes=$(git status --porcelain --untracked-files=no) || { echo "build-macos: the tree is not a git checkout; a release is built from a commit" >&2; exit 1; }
 [[ -z "$changes" ]] || { echo "build-macos: the tree has changes; a release is built from a commit" >&2; exit 1; }
-programs=(neoteletext neoteletext-decoder neoteletext-fetcher neoteletext-interface neoteletext-keyboard neoteletext-sound neoteletext-launcher)
+programs=(neoteletext neoteletext-chooser neoteletext-decoder neoteletext-fetcher neoteletext-interface neoteletext-keyboard neoteletext-sound neoteletext-launcher)
 mkdir -p "$out"
 cargo build --quiet --manifest-path native/tuf/Cargo.toml --release -p neoteletext-release
 release_tool="native/tuf/target/release/neoteletext-release"
@@ -50,7 +50,7 @@ done
 # The disk image's bundle: each program both architectures (section 4.1).
 rm -rf "$out/universal" && mkdir -p "$out/universal"
 cp -R "$out/macos-arm64/$version/NeoTeletext.app" "$out/universal/"
-for file in "$out/universal/NeoTeletext.app/Contents/MacOS/"*; do
+for file in "$out/universal/NeoTeletext.app/Contents/MacOS/"* "$out/universal/NeoTeletext.app/Contents/Helpers/NeoTeletextChooser.app/Contents/MacOS/"*; do
     name="$(basename "$file")"
     lipo -create -output "$file" "$out/programs-aarch64-apple-darwin/$name" "$out/programs-x86_64-apple-darwin/$name"
 done

@@ -7,8 +7,9 @@ use std::fmt;
 use std::io;
 
 use super::{
-    COOKIE_KEY_BYTES, HEADER_BYTES, KIND_COOKIE_KEY, KIND_DONE, KIND_EXITED, KIND_FAILED, KIND_HEALTHY, KIND_KEY, KIND_KILL, KIND_LOCAL_TIME, KIND_OPEN_WEB,
-    KIND_READ, KIND_SOURCE, KIND_SPAWN, KIND_SPAWNED, KIND_TIME, KIND_UPDATE_STATE, KIND_WAIT, MAX_ARGUMENTS, MAX_REPLY, MAX_TEXT, Program,
+    COOKIE_KEY_BYTES, ChooseKind, HEADER_BYTES, KIND_CHOOSE, KIND_COOKIE_KEY, KIND_DONE, KIND_EXITED, KIND_FAILED, KIND_HEALTHY, KIND_KEY, KIND_KILL,
+    KIND_LOCAL_TIME, KIND_OPEN_WEB, KIND_OPENINGS, KIND_PIPE, KIND_READ, KIND_SOURCE, KIND_SPAWN, KIND_SPAWNED, KIND_TIME, KIND_UPDATE_STATE, KIND_WAIT,
+    MAX_ARGUMENTS, MAX_REPLY, MAX_TEXT, Program,
 };
 use crate::LocalTime;
 
@@ -67,6 +68,20 @@ pub enum Request {
     /// answered with its bytes, or refused when no launcher started the
     /// broker.
     UpdateState,
+    /// Show the file dialog (DEC-1551 item 1). Answered at once: the choice
+    /// comes later on the pipe of [`Request::Openings`], because a dialog may
+    /// stay open for minutes and this channel answers one request at a time.
+    Choose {
+        /// What it chooses.
+        kind: ChooseKind,
+        /// The window to place it over, as the chooser reads it, or nothing.
+        parent: String,
+        /// The choice is kept: not one made in a private window.
+        keep: bool,
+    },
+    /// The pipe on which what opens from outside arrives: a choice, and what
+    /// a second start hands over. Answered with it once.
+    Openings,
 }
 
 /// The broker's answer.
@@ -92,9 +107,11 @@ pub enum Reply {
     Time(LocalTime),
     /// The cookie file's key.
     Key(Vec<u8>),
+    /// The pipe of [`Request::Openings`], which travels with the reply.
+    Pipe,
 }
 
-fn push_text(payload: &mut Vec<u8>, text: &str) -> io::Result<()> {
+pub(super) fn push_text(payload: &mut Vec<u8>, text: &str) -> io::Result<()> {
     let length = u16::try_from(text.len()).map_err(|_| io::ErrorKind::InvalidInput)?;
     if text.len() > MAX_TEXT {
         return Err(io::Error::new(io::ErrorKind::InvalidInput, "text too long"));
@@ -105,7 +122,7 @@ fn push_text(payload: &mut Vec<u8>, text: &str) -> io::Result<()> {
 }
 
 /// Reads fields, refusing anything short, long or not UTF-8.
-struct Fields<'a>(&'a [u8]);
+pub(super) struct Fields<'a>(pub(super) &'a [u8]);
 
 impl<'a> Fields<'a> {
     fn take(&mut self, count: usize) -> io::Result<&'a [u8]> {
@@ -117,11 +134,19 @@ impl<'a> Fields<'a> {
         Ok(taken)
     }
 
-    fn u8(&mut self) -> io::Result<u8> {
+    pub(super) fn u8(&mut self) -> io::Result<u8> {
         Ok(self.take(1)?.first().copied().unwrap_or(0))
     }
 
-    fn u16(&mut self) -> io::Result<u16> {
+    pub(super) fn flag(&mut self) -> io::Result<bool> {
+        match self.u8()? {
+            0 => Ok(false),
+            1 => Ok(true),
+            _ => Err(io::Error::new(io::ErrorKind::InvalidData, "a flag that is not one")),
+        }
+    }
+
+    pub(super) fn u16(&mut self) -> io::Result<u16> {
         Ok(u16::from_be_bytes(self.take(2)?.try_into().map_err(|_| io::ErrorKind::InvalidData)?))
     }
 
@@ -129,7 +154,7 @@ impl<'a> Fields<'a> {
         Ok(u32::from_be_bytes(self.take(4)?.try_into().map_err(|_| io::ErrorKind::InvalidData)?))
     }
 
-    fn text(&mut self) -> io::Result<String> {
+    pub(super) fn text(&mut self) -> io::Result<String> {
         let length = usize::from(self.u16()?);
         if length > MAX_TEXT {
             return Err(io::Error::new(io::ErrorKind::InvalidData, "text too long"));
@@ -137,7 +162,7 @@ impl<'a> Fields<'a> {
         String::from_utf8(self.take(length)?.to_vec()).map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "text not UTF-8"))
     }
 
-    fn end(&self) -> io::Result<()> {
+    pub(super) fn end(&self) -> io::Result<()> {
         if self.0.is_empty() { Ok(()) } else { Err(io::Error::new(io::ErrorKind::InvalidData, "message longer than its fields")) }
     }
 }
@@ -190,6 +215,13 @@ pub fn encode_request(request: &Request) -> io::Result<Vec<u8>> {
         Request::CookieKey => KIND_COOKIE_KEY,
         Request::Healthy => KIND_HEALTHY,
         Request::UpdateState => KIND_UPDATE_STATE,
+        Request::Choose { kind, parent, keep } => {
+            payload.push(kind.code());
+            payload.push(u8::from(*keep));
+            push_text(&mut payload, parent)?;
+            KIND_CHOOSE
+        }
+        Request::Openings => KIND_OPENINGS,
     };
     frame(kind, &payload)
 }
@@ -204,11 +236,7 @@ pub fn decode_request(kind: u8, payload: &[u8]) -> io::Result<Request> {
     let request = match kind {
         KIND_SPAWN => {
             let program = Program::from_code(fields.u8()?).ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "no such program"))?;
-            let local_network = match fields.u8()? {
-                0 => false,
-                1 => true,
-                _ => return Err(io::Error::new(io::ErrorKind::InvalidData, "a flag that is not one")),
-            };
+            let local_network = fields.flag()?;
             let count = usize::from(fields.u16()?);
             if count > MAX_ARGUMENTS {
                 return Err(io::Error::new(io::ErrorKind::InvalidData, "too many arguments"));
@@ -224,6 +252,12 @@ pub fn decode_request(kind: u8, payload: &[u8]) -> io::Result<Request> {
         KIND_COOKIE_KEY => Request::CookieKey,
         KIND_HEALTHY => Request::Healthy,
         KIND_UPDATE_STATE => Request::UpdateState,
+        KIND_CHOOSE => {
+            let kind = ChooseKind::from_code(fields.u8()?).ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "no such kind of choice"))?;
+            let keep = fields.flag()?;
+            Request::Choose { kind, keep, parent: fields.text()? }
+        }
+        KIND_OPENINGS => Request::Openings,
         _ => return Err(io::Error::new(io::ErrorKind::InvalidData, "no such request")),
     };
     fields.end()?;
@@ -274,6 +308,7 @@ pub fn encode_reply(reply: &Reply) -> io::Result<Vec<u8>> {
             payload.extend_from_slice(key);
             KIND_KEY
         }
+        Reply::Pipe => KIND_PIPE,
     };
     frame(kind, &payload)
 }
@@ -305,6 +340,7 @@ pub fn decode_reply(kind: u8, payload: Vec<u8>) -> io::Result<Reply> {
             Reply::Time(time)
         }
         KIND_KEY => Reply::Key(fields.take(COOKIE_KEY_BYTES)?.to_vec()),
+        KIND_PIPE => Reply::Pipe,
         _ => return Err(io::Error::new(io::ErrorKind::InvalidData, "no such reply")),
     };
     fields.end()?;
@@ -348,6 +384,8 @@ mod tests {
             Request::Healthy,
             Request::UpdateState,
             Request::Spawn { program: Program::Updater, local_network: false, arguments: vec!["--proxy".into(), "http://proxy.example:3128".into()] },
+            Request::Choose { kind: ChooseKind::Folder, parent: "x11:4a".into(), keep: false },
+            Request::Openings,
         ] {
             assert_eq!(round_trip(&request), request);
         }
@@ -359,6 +397,7 @@ mod tests {
             Reply::Failed("no".into()),
             Reply::Time(LocalTime { utc: 1_792_656_300, offset: 39_600 }),
             Reply::Key(vec![9; COOKIE_KEY_BYTES]),
+            Reply::Pipe,
         ] {
             let bytes = encode_reply(&reply).unwrap();
             let (kind, _) = header(bytes[..HEADER_BYTES].try_into().unwrap(), MAX_REPLY).unwrap();
@@ -379,6 +418,8 @@ mod tests {
         assert!(decode_request(KIND_READ, &[0, 2, 0xFF, 0xFE]).is_err(), "not UTF-8");
         assert!(decode_request(77, &[]).is_err());
         assert!(decode_request(KIND_LOCAL_TIME, &[0]).is_err(), "long");
+        assert!(decode_request(KIND_CHOOSE, &[9, 0, 0, 0]).is_err(), "no such kind of choice");
+        assert!(decode_request(KIND_CHOOSE, &[1, 2, 0, 0]).is_err(), "a flag that is not one");
         let mut beyond = 1_i64.to_be_bytes().to_vec();
         beyond.extend_from_slice(&(MAX_OFFSET + 1).to_be_bytes());
         assert!(decode_reply(KIND_TIME, beyond).is_err(), "an offset no zone has");

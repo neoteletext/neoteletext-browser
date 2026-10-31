@@ -100,6 +100,7 @@ fn remove(launcher: &Launcher, ask: &dyn Fn(&str) -> bool) -> Result<(), String>
         for icon in icon_files() {
             let _ = std::fs::remove_file(icon);
         }
+        linux::unregister_types();
     }
     if let Some(bundle) = &layout.bundle {
         files::remove_tree(bundle).map_err(|error| io_text(bundle, &error))?;

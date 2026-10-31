@@ -10,7 +10,8 @@ use alloc::format;
 use alloc::string::String;
 use alloc::vec::Vec;
 
-use crate::browser::{Browser, TabInfo};
+use crate::browser::toolbar::{TOOLBAR_HEIGHT, TOOLBAR_TOP};
+use crate::browser::{Browser, DropPlace, TabInfo};
 use crate::geometry::{Point, Rect};
 
 mod drag;
@@ -142,6 +143,41 @@ fn arrangement(count: usize, active: usize, fit: usize) -> (Vec<usize>, Vec<usiz
 /// The tabs of `count` that `shown` leaves for the panel, in order.
 fn rest_of(count: usize, shown: &[usize]) -> Vec<usize> {
     (0..count).filter(|index| !shown.contains(index)).collect()
+}
+
+/// What lies under a drop (REQ-1700 items 1 to 3).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DropTarget {
+    /// The address field, which takes the first file's address.
+    Address,
+    /// Anywhere else: tabs by this place.
+    Tabs(DropPlace),
+}
+
+impl Browser {
+    /// What lies at `point`, for files dropped there.
+    pub fn drop_target(&self, point: Point) -> DropTarget {
+        const QUARTERS: f64 = 4.0;
+        if self.regions.field_text.contains(point) {
+            return DropTarget::Address;
+        }
+        let tab = self.regions.tabs.iter().find(|tab| tab.tab.contains(point));
+        let place = tab.and_then(|tab| {
+            let index = u8::try_from(tab.index).ok()?;
+            let quarter = tab.tab.width() / QUARTERS;
+            Some(if point.x < tab.tab.x0 + quarter {
+                DropPlace::Before(index)
+            } else if point.x > tab.tab.x1 - quarter {
+                DropPlace::After(index)
+            } else {
+                DropPlace::Replace(index)
+            })
+        });
+        // Over the toolbar they replace the active tab, as a drop on it does.
+        let on_toolbar = (TOOLBAR_TOP..TOOLBAR_TOP + TOOLBAR_HEIGHT).contains(&point.y);
+        let active = u8::try_from(self.active).ok().filter(|_| on_toolbar).map(DropPlace::Replace);
+        DropTarget::Tabs(place.or(active).unwrap_or(DropPlace::NewTabs))
+    }
 }
 
 impl Browser {

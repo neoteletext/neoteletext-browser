@@ -80,11 +80,11 @@ build() {
     programs="$(programs_of "$version")"
     step "the browser $version, built with the test identity"
     NEOTELETEXT_RELEASE_VERSION="$version" cargo build --quiet --release --manifest-path native/Cargo.toml --target-dir "$work/target" \
-        -p neoteletext -p neoteletext-decoder -p neoteletext-fetcher -p neoteletext-interface -p neoteletext-keyboard -p neoteletext-sound -p neoteletext-launcher
+        -p neoteletext -p neoteletext-chooser -p neoteletext-decoder -p neoteletext-fetcher -p neoteletext-interface -p neoteletext-keyboard -p neoteletext-sound -p neoteletext-launcher
     cargo build --quiet --release --manifest-path native/tuf/Cargo.toml --target-dir "$work/tuf-target" -p neoteletext-updater
     mkdir -p "$programs"
     local program
-    for program in neoteletext neoteletext-decoder neoteletext-fetcher neoteletext-interface neoteletext-keyboard neoteletext-sound neoteletext-launcher; do
+    for program in neoteletext neoteletext-chooser neoteletext-decoder neoteletext-fetcher neoteletext-interface neoteletext-keyboard neoteletext-sound neoteletext-launcher; do
         cp "$work/target/release/$program" "$programs/"
     done
     cp "$work/tuf-target/release/neoteletext-updater" "$programs/"

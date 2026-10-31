@@ -6,10 +6,11 @@ use std::fs::File;
 use std::io::{self, Read, Write};
 
 use super::handles::{duplicate_into, file_from_handle_value};
-use crate::broker::{HEADER_BYTES, KIND_SPAWNED, MAX_REPLY, frame, header};
+use crate::broker::{HEADER_BYTES, KIND_PIPE, KIND_SPAWNED, MAX_REPLY, frame, header};
 use crate::{Input, Output, Process};
 
 /// One end of the broker's channel.
+#[derive(Debug)]
 pub(crate) struct Channel {
     reader: File,
     writer: File,
@@ -27,6 +28,14 @@ impl Channel {
         let reader = File::from(io::stdin().as_handle().try_clone_to_owned()?);
         let writer = File::from(io::stdout().as_handle().try_clone_to_owned()?);
         Ok(Self { reader, writer })
+    }
+
+    /// The interface's end of its own channel (DEC-1551 item 3): the two
+    /// inherited handle values the broker named, read then written.
+    pub(crate) fn inherited(value: &str) -> io::Result<Self> {
+        let (reader, writer) = value.split_once(',').ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "no handles"))?;
+        let handle = |text: &str| text.parse::<u64>().map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "no handle"));
+        Ok(Self { reader: file_from_handle_value(handle(reader)?)?, writer: file_from_handle_value(handle(writer)?)? })
     }
 
     /// One frame, its length within `max`.
@@ -63,6 +72,11 @@ impl Channel {
             for chunk in values.as_chunks::<8>().0 {
                 pipes.push(file_from_handle_value(u64::from_be_bytes(*chunk))?);
             }
+        } else if kind == KIND_PIPE {
+            let tail = payload.split_off(payload.len().saturating_sub(8));
+            if let Ok(value) = <[u8; 8]>::try_from(tail.as_slice()) {
+                pipes.push(file_from_handle_value(u64::from_be_bytes(value))?);
+            }
         }
         Ok((kind, payload, pipes))
     }
@@ -79,5 +93,13 @@ impl Channel {
             payload.extend_from_slice(&value.to_be_bytes());
         }
         self.write(&frame(KIND_SPAWNED, &payload)?)
+    }
+
+    /// Sends the reply `bytes` with `file` duplicated into the core's
+    /// process, its value after the reply's fields.
+    pub(crate) fn send_file(&mut self, bytes: &[u8], file: &File, core: &Process) -> io::Result<()> {
+        let mut payload = bytes.get(HEADER_BYTES..).unwrap_or_default().to_vec();
+        payload.extend_from_slice(&duplicate_into(file, core.raw_process())?.to_be_bytes());
+        self.write(&frame(KIND_PIPE, &payload)?)
     }
 }

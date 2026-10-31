@@ -13,7 +13,33 @@ use crate::theme::{ADDRESS, Colour, DIM, FIELD_INK, FIELD_SELECTION};
 pub(super) const FIELD_PADDING: f64 = 12.0;
 const CARET_WIDTH: f64 = 2.0;
 
+/// What a file's address begins with, which the field leaves off when it is
+/// not being edited.
+const FILE_PREFIX: &str = "file://";
+
+/// Whether what was typed names a file, so the interface declares it to the
+/// broker (DEC-1551 item 3): the address rules decide what it really is.
+#[must_use]
+pub fn names_a_file(typed: &str) -> bool {
+    let drive = matches!(typed.as_bytes(), [letter, b':', ..] if letter.is_ascii_alphabetic());
+    typed.starts_with(FILE_PREFIX) || typed.starts_with(['/', '~', '\\']) || drive
+}
+
 impl Browser {
+    /// Whether the active tab is private.
+    #[must_use]
+    pub fn is_private(&self) -> bool {
+        self.strip.private
+    }
+
+    /// A file dropped on the address field: its address fills the field,
+    /// selected, and it goes nowhere until Enter (DEC-1549 item 4).
+    pub fn drop_on_address(&mut self, address: &str) {
+        self.start_editing();
+        self.editor.set(address);
+        self.editor.select_all();
+    }
+
     pub(super) fn start_editing(&mut self) {
         if self.settings_open() {
             self.toggle_settings();
@@ -155,7 +181,9 @@ impl Browser {
         } else {
             // The address as the trusted core formatted it, its host in
             // full ink and the rest muted, as browsers show it.
-            let address = &self.strip.address;
+            // A file shows its path, beside the "File" label; the whole
+            // `file:///` address is what is edited (DEC-1549 item 6).
+            let address = self.strip.address.strip_prefix(FILE_PREFIX).filter(|_| self.strip.local).unwrap_or(&self.strip.address);
             let identity_at = address.find(self.strip.identity.as_str()).filter(|_| !self.strip.identity.is_empty());
             let mut x = area.x0;
             let parts: [(&str, Colour); 3] = identity_at
@@ -164,7 +192,7 @@ impl Browser {
                     let (identity, after) = rest.split_at_checked(self.strip.identity.len())?;
                     Some([(before, DIM), (identity, FIELD_INK), (after, DIM)])
                 })
-                .unwrap_or([(address.as_str(), FIELD_INK), ("", DIM), ("", DIM)]);
+                .unwrap_or([(address, FIELD_INK), ("", DIM), ("", DIM)]);
             for (part, colour) in parts {
                 canvas.text(Rect::new(x, y, area.x1, y + line), part, ADDRESS, colour);
                 x += canvas.text_width(part, ADDRESS);
@@ -177,8 +205,36 @@ impl Browser {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::browser::fixture::{browser, press_at};
+    use crate::browser::fixture::{HEIGHT, WIDTH, browser, press_at};
     use crate::browser::{Modifiers, StripState};
+
+    /// DEC-1551 item 3: what names a file is told apart from a host by its
+    /// form alone.
+    #[test]
+    fn what_names_a_file_is_known_by_its_form() {
+        for typed in ["/a/b.t42", "~/b.t42", "file:///a.t42", "C:\\a.tti", "\\\\server\\a"] {
+            assert!(names_a_file(typed), "{typed}");
+        }
+        for typed in ["sport.invalid", "https://a.invalid/", "neoteletext:home"] {
+            assert!(!names_a_file(typed), "{typed}");
+        }
+    }
+
+    /// DEC-1549 items 4 and 6: a file's path shows without its `file://`
+    /// until it is edited, whole; a file dropped on the field waits there.
+    #[test]
+    fn a_file_shows_its_path_and_edits_its_address() {
+        let (mut browser, mut canvas) = browser();
+        browser.set_strip(StripState { address: "file:///home/a/news.t42".into(), identity: "news.t42".into(), local: true, ..StripState::default() });
+        canvas.texts.clear();
+        browser.draw(&mut canvas, WIDTH, HEIGHT, 0);
+        assert!(canvas.texts.iter().any(|(_, text)| text == "/home/a/"), "the path, without file://: {:?}", canvas.texts);
+        assert!(!canvas.texts.iter().any(|(_, text)| text.contains("file://")));
+        browser.take_outputs();
+        browser.drop_on_address("file:///home/a/other.t42");
+        assert_eq!(browser.editor.text(), "file:///home/a/other.t42");
+        assert_eq!(browser.take_outputs(), [Output::TextInput(true)], "it goes nowhere until Enter");
+    }
 
     #[test]
     fn typing_an_address_navigates() {

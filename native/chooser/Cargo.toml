@@ -1,0 +1,25 @@
+[package]
+name = "neoteletext-chooser"
+description = "The file dialog (DEC-1551 item 1): the broker starts it for one choice, it shows the system's dialog, prints the path chosen and ends, so that GUI toolkits and the shell's extensions stay out of the broker"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+confine.workspace = true
+
+# The system's dialogs with no unsafe code of this project's (DEC-1551 item
+# 2): MIT. Without its Linux backends, which `ashpd` serves.
+[target.'cfg(any(target_os = "macos", windows))'.dependencies]
+rfd = { version = "=0.17.2", default-features = false }
+
+# The XDG desktop portal's FileChooser, which can be parented to the browser's
+# window from another process (DEC-1551 item 2): MIT.
+[target.'cfg(target_os = "linux")'.dependencies]
+ashpd = { version = "=0.13.13", default-features = false, features = ["file_chooser", "tokio"] }
+tokio = { version = "=1.53.3", default-features = false, features = ["rt"] }
+
+[lints]
+workspace = true

@@ -15,6 +15,7 @@ use windows_sys::Win32::Foundation::{
 };
 use windows_sys::Win32::Security::Authorization::ConvertStringSidToSidW;
 use windows_sys::Win32::Security::{FreeSid, SECURITY_ATTRIBUTES};
+use windows_sys::Win32::Storage::FileSystem::{BY_HANDLE_FILE_INFORMATION, GetFileInformationByHandle};
 use windows_sys::Win32::System::Pipes::CreatePipe;
 use windows_sys::Win32::System::Threading::GetCurrentProcess;
 
@@ -147,4 +148,18 @@ pub(crate) fn file_from_handle_value(value: u64) -> io::Result<File> {
     // its value once over the channel, so nothing else here owns it; 0 and
     // INVALID_HANDLE_VALUE are refused above. The broker is the trusted side (decision 56).
     Ok(unsafe { File::from_raw_handle(handle as _) })
+}
+
+/// The volume and file index of the open file `file`, what names it whatever
+/// its path (DEC-1551 item 1).
+pub(crate) fn identity_of(file: &File) -> io::Result<(u64, u64)> {
+    use std::os::windows::io::AsRawHandle as _;
+    // SAFETY: every field is an integer, for which zero is a value.
+    let mut information: BY_HANDLE_FILE_INFORMATION = unsafe { std::mem::zeroed() };
+    // SAFETY: the handle is the one `file` owns, alive for the call, and the structure a
+    // live local the call only writes.
+    if unsafe { GetFileInformationByHandle(file.as_raw_handle() as HANDLE, &raw mut information) } == 0 {
+        return Err(last_error());
+    }
+    Ok((u64::from(information.dwVolumeSerialNumber), (u64::from(information.nFileIndexHigh) << 32) | u64::from(information.nFileIndexLow)))
 }

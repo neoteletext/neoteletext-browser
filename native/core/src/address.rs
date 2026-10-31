@@ -68,6 +68,10 @@ pub const HOME_CHANNEL: &str = "https://app.neottx.com/home/";
 const BUILT_IN_SCHEME: &str = "neoteletext:";
 const SCHEME_SEPARATOR: &str = "://";
 const FILE_SCHEME: &str = "file://";
+/// What begins a path under the home folder.
+const HOME_SIGN: char = '~';
+/// What begins a link from outside (DEC-1666): the whole address follows it.
+pub const OUTSIDE_SCHEME: &str = "neoteletext://";
 /// What begins an address's fragment, which names a page.
 pub const FRAGMENT: char = '#';
 /// Hexadecimal digits of a page number and of a sub-page number.
@@ -101,16 +105,34 @@ pub fn fragment_page(fragment: &str) -> Option<u16> {
     interface_core::channel::page_index(page).map(|_| page)
 }
 
-/// A file address: `file:///path`, or a path absolute on this platform
-/// (`/Users/...`, or `C:\\...` on Windows).
-fn parse_file(typed: &str) -> Option<Result<Address, String>> {
-    let path = if let Some(rest) = typed.strip_prefix(FILE_SCHEME) {
-        url_to_path(rest)
-    } else if Path::new(typed).is_absolute() {
-        typed.to_owned()
-    } else {
+/// The path `typed` names, when it names one (REQ-1701): `file:///path`, a
+/// path absolute on this platform (`/Users/...`, or `C:\\...` on Windows), or
+/// on macOS and Linux `~` for the home folder at `home`. Nothing is checked
+/// here: a typed path becomes an address whether or not the file exists.
+#[must_use]
+pub fn typed_path(typed: &str, home: Option<&Path>) -> Option<String> {
+    if let Some(rest) = typed.strip_prefix(FILE_SCHEME) {
+        return Some(url_to_path(rest));
+    }
+    if Path::new(typed).is_absolute() {
+        return Some(typed.to_owned());
+    }
+    if cfg!(windows) {
         return None;
-    };
+    }
+    let rest = typed.strip_prefix(HOME_SIGN).filter(|rest| rest.is_empty() || rest.starts_with('/'))?;
+    let home = home?.to_str()?.trim_end_matches('/');
+    Some(format!("{home}{rest}"))
+}
+
+/// The home folder, as a `~` in a typed path names it, on this platform.
+fn home_folder() -> Option<PathBuf> {
+    std::env::var_os("HOME").map(PathBuf::from).filter(|home| home.is_absolute())
+}
+
+/// A file address: whatever [`typed_path`] takes as a path.
+fn parse_file(typed: &str) -> Option<Result<Address, String>> {
+    let path = typed_path(typed, home_folder().as_deref())?;
     let check = || -> Result<Address, String> {
         if !Path::new(&path).is_absolute() {
             return Err("File addresses need a full path".into());
@@ -237,6 +259,38 @@ pub fn redirect_destination(location: &str) -> Result<Address, String> {
         return Err("it redirected to something other than a web address".into());
     }
     parse(location)
+}
+
+/// Whether `text` is a link from outside: it begins [`OUTSIDE_SCHEME`], in
+/// any case.
+#[must_use]
+pub fn is_outside_link(text: &str) -> bool {
+    text.get(..OUTSIDE_SCHEME.len()).is_some_and(|scheme| scheme.eq_ignore_ascii_case(OUTSIDE_SCHEME))
+}
+
+/// The address a `neoteletext://` link from outside wraps (REQ-1672 items 1
+/// to 5). The one function every route calls: the prefix goes, and what
+/// remains must be a whole `http` or `https` address by the address rules,
+/// with nothing around it and no fragment but a page. A link carries an
+/// address and a page, and nothing else.
+///
+/// # Errors
+/// A sentence for the log, which does not repeat the link (item 12).
+pub fn outside_link(text: &str) -> Result<Address, String> {
+    if !is_outside_link(text) {
+        return Err("it is not a neoteletext:// link".into());
+    }
+    let wrapped = text.get(OUTSIDE_SCHEME.len()..).unwrap_or_default();
+    if wrapped.trim() != wrapped {
+        return Err("a link has space around its address".into());
+    }
+    let address = redirect_destination(wrapped).map_err(|_| String::from("a link wraps no web address it may open"))?;
+    if let Some((_, fragment)) = address.text.split_once(FRAGMENT)
+        && fragment_page(fragment).is_none()
+    {
+        return Err("a link's fragment is not a page".into());
+    }
+    Ok(address)
 }
 
 /// The address, when written in full, with its scheme and slash, it is no

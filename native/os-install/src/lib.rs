@@ -31,7 +31,7 @@ mod macos;
 mod windows;
 
 #[cfg(windows)]
-pub use windows::{UninstallEntry, WindowsSigner, remove_uninstall_entry, signer_key, uninstall_entry};
+pub use windows::{UninstallEntry, WindowsSigner, register_opening, remove_opening, remove_uninstall_entry, signer_key, uninstall_entry};
 
 /// Windows: from here on, this process loads a library only from System32
 /// (`SetDefaultDllDirectories`), so none is taken from the folder it was

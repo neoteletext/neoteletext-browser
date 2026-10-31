@@ -127,7 +127,6 @@ fn every_request_round_trips() {
         BookmarkRequest::Remove(5),
         BookmarkRequest::Undo,
         BookmarkRequest::Sort,
-        BookmarkRequest::Import("/home/user/bookmarks.txt".into()),
         BookmarkRequest::Export,
     ] {
         round_trip(&request, push_bookmark_request, read_bookmark_request);

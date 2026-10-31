@@ -69,14 +69,16 @@ mod typing;
 mod widgets;
 mod window;
 
+pub use address::names_a_file;
 pub use keys::{Key, Modifiers};
-pub use output::{Output, WindowAction};
+pub use output::{DropPlace, OpenKind, Output, WindowAction};
 #[cfg(feature = "phone-keyboard")]
 pub use phone::{PhoneStatus, PhoneUiView};
 #[cfg(feature = "phone-keyboard")]
 pub use phone_keys::{PhonePageKey, phone_page_key};
 pub use pointer::Cursor;
 pub use shown::{CertificateProblem, Frame, StripState, TabInfo};
+pub use tab_strip::DropTarget;
 #[cfg(feature = "interaction")]
 pub use typing::{CursorView, TypingView, notched};
 

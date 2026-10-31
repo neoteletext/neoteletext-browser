@@ -10,9 +10,9 @@ use objc2::runtime::{AnyObject, Sel};
 use objc2::{ClassType, DeclaredClass, declare_class, ffi, msg_send_id, mutability, sel};
 use objc2_app_kit::{
     NSAboutPanelOptionApplicationName, NSAboutPanelOptionApplicationVersion, NSApplication, NSControlStateValueOn, NSEventModifierFlags, NSImage,
-    NSLeftArrowFunctionKey, NSMenu, NSMenuItem, NSRightArrowFunctionKey,
+    NSLeftArrowFunctionKey, NSMenu, NSMenuItem, NSRightArrowFunctionKey, NSView,
 };
-use objc2_foundation::{MainThreadMarker, NSBundle, NSData, NSDictionary, NSInteger, NSObject, NSObjectProtocol, NSString};
+use objc2_foundation::{MainThreadMarker, NSArray, NSBundle, NSData, NSDictionary, NSInteger, NSObject, NSObjectProtocol, NSString, NSURL};
 
 use crate::{
     Choice, DockTab, Entry, MENU_BAR, MenuAction, MenuItem, Shortcut, ShortcutKey, SystemAction, full_screen_title, menu_item, mute_all_item, tab_title,
@@ -383,6 +383,84 @@ pub fn install(choose: impl Fn(Choice) + 'static) {
     let state = State { tabs: Vec::new(), choose: Box::new(choose), target: new_target(mtm), menu: NSMenu::new(mtm) };
     build(mtm, &state);
     STATE.with(|cell| *cell.borrow_mut() = Some(state));
+}
+
+/// Who hears what the system asks the application to open.
+type Opener = Box<dyn Fn(Vec<String>)>;
+
+thread_local! {
+    /// Who hears what the system asks the application to open.
+    static OPENER: RefCell<Option<Opener>> = const { RefCell::new(None) };
+}
+
+/// The Objective-C type of `application:openURLs:`: it returns nothing, and
+/// takes the receiver, the selector, the application and the array.
+const OPEN_URLS_TYPES: &CStr = c"v@:@@";
+
+/// What one URL the system gave is, as the browser reads it: a file's path as
+/// a `file://` address, undoing the URL's encoding, or the link as it came.
+fn opened_text(url: &NSURL) -> Option<String> {
+    // SAFETY: these read a live URL's own properties, with no requirements.
+    unsafe {
+        if url.isFileURL() {
+            return url.path().map(|path| format!("file://{path}"));
+        }
+        url.absoluteString().map(|text| text.to_string())
+    }
+}
+
+/// `application:openURLs:`, added to winit's application delegate (DEC-1551
+/// item 7): files and `neoteletext://` links. What comes here is a claim.
+extern "C" fn open_urls(_this: &AnyObject, _command: Sel, _application: &AnyObject, urls: &NSArray<NSURL>) {
+    let opened: Vec<String> = urls.iter().filter_map(opened_text).collect();
+    OPENER.with(|opener| {
+        if let Ok(opener) = opener.try_borrow()
+            && let Some(opener) = opener.as_ref()
+        {
+            opener(opened);
+        }
+    });
+}
+
+/// Has `open` hear what the system asks the application to open. Call it on
+/// the main thread once the application's delegate exists and before the
+/// application launches, when `AppKit` first delivers an opening.
+pub fn install_opener(open: impl Fn(Vec<String>) + 'static) {
+    let Some(mtm) = MainThreadMarker::new() else { return };
+    let app = NSApplication::sharedApplication(mtm);
+    // SAFETY: reading the delegate has no requirements.
+    let Some(delegate) = (unsafe { app.delegate() }) else {
+        return;
+    };
+    OPENER.with(|opener| *opener.borrow_mut() = Some(Box::new(open)));
+    let implementation: extern "C" fn(&AnyObject, Sel, &AnyObject, &NSArray<NSURL>) = open_urls;
+    // SAFETY: as `install`: the delegate is live, `open_urls` has the C signature
+    // OPEN_URLS_TYPES names, and AppKit calls it as `application:openURLs:`.
+    unsafe {
+        let implementation = std::mem::transmute::<extern "C" fn(&AnyObject, Sel, &AnyObject, &NSArray<NSURL>), unsafe extern "C" fn()>(implementation);
+        let class = ffi::object_getClass(Retained::as_ptr(&delegate).cast());
+        ffi::class_addMethod(class.cast_mut(), sel!(application:openURLs:).as_ptr(), Some(implementation), OPEN_URLS_TYPES.as_ptr());
+    }
+    // As `install`: AppKit notes what a delegate answers when it is set.
+    app.setDelegate(None);
+    app.setDelegate(Some(&delegate));
+}
+
+/// Where the pointer is now in the view at `view`, in points from its top
+/// left: winit's events do not follow a drag from another application.
+/// `view` is the address of a live `NSView` of this process, as the window
+/// handle gives it. Off the main thread, or outside a window, there is none.
+#[must_use]
+pub fn pointer_in_view(view: usize) -> Option<(f64, f64)> {
+    MainThreadMarker::new()?;
+    // SAFETY: the caller gives the address of a view its window holds alive, on the
+    // main thread, as checked, for the length of this call.
+    let view: &NSView = unsafe { (view as *const NSView).as_ref() }?;
+    let window = view.window()?;
+    // SAFETY: reads a live window's own property, with no requirements.
+    let point = view.convertPoint_fromView(unsafe { window.mouseLocationOutsideOfEventStream() }, None);
+    let y = if view.isFlipped() { point.y } else { view.bounds().size.height - point.y };
+    Some((point.x, y))
 }
 
 /// What the Dock menu lists from now on.

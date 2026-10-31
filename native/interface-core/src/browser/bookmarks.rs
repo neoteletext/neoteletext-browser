@@ -52,8 +52,6 @@ enum Form {
     Add,
     /// A new folder: its name.
     Folder,
-    /// An import: the file's path, in the address field.
-    Import,
     /// Editing the item of this number.
     Edit(u32),
 }

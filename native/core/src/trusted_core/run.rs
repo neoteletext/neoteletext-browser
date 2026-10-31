@@ -7,6 +7,8 @@ use std::sync::Arc;
 use std::sync::mpsc;
 
 use confine::broker::{Broker, Exit, Program};
+use neoteletext::address::{is_outside_link, outside_link};
+use neoteletext::launch;
 use neoteletext::outbox::Outbox;
 use protocol::console::Level;
 use protocol::sound::{FromSound, ToSound, write_to_sound};
@@ -57,6 +59,10 @@ fn handle(core: &mut Core, event: Event) -> Result<bool, String> {
             core.sounding(&[])?;
         }
         Event::BookmarksRead(read) => core.bookmarks_read(read)?,
+        Event::Opening(opening) => {
+            core.session.now = neoteletext::calendar::utc_now();
+            core.opening(opening)?;
+        }
         Event::Updater(message) => {
             core.updates.said(message, neoteletext::calendar::utc_now());
             core.send_update()?;
@@ -126,6 +132,7 @@ pub(crate) fn run(broker: &Arc<Broker>, given: impl Iterator<Item = String>, con
     }
     core.switch_window(first);
     core.flush()?;
+    core.hear_openings(broker);
 
     let result = event_loop(&mut core, &incoming);
     shut_down(core);
@@ -170,6 +177,12 @@ struct CommandLine {
     input_trace: bool,
 }
 
+/// The addresses on a command line, for the broker: it grants the files
+/// among them itself (REQ-1703 item 4).
+pub(crate) fn given_addresses(given: impl Iterator<Item = String>) -> Vec<String> {
+    arguments(given).map(|command_line| command_line.addresses).unwrap_or_default()
+}
+
 fn arguments(given: impl Iterator<Item = String>) -> Result<CommandLine, String> {
     let mut command_line = CommandLine { addresses: Vec::new(), allow_local: Vec::new(), no_keychain: !KEYCHAIN_BY_DEFAULT, input_trace: false };
     let mut arguments = given;
@@ -182,6 +195,14 @@ fn arguments(given: impl Iterator<Item = String>) -> Result<CommandLine, String>
             command_line.no_keychain = false;
         } else if argument == INPUT_TRACE {
             command_line.input_trace = true;
+        } else if argument == launch::OPEN_LINK {
+            // The broker refused any other shape of this launch (REQ-1673).
+            let link = arguments.next().ok_or("--open-link needs a link")?;
+            command_line.addresses.push(outside_link(&link)?.text);
+        } else if argument == launch::OPEN_FILE {
+            command_line.addresses.push(arguments.next().ok_or("--open-file needs a file")?);
+        } else if is_outside_link(&argument) {
+            command_line.addresses.push(outside_link(&argument)?.text);
         } else {
             command_line.addresses.push(argument);
         }

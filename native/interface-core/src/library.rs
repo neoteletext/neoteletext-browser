@@ -304,9 +304,6 @@ pub enum BookmarkRequest {
     Undo,
     /// Sort the open folder by name.
     Sort,
-    /// Read bookmarks from the file at this path: one this browser wrote,
-    /// or another browser's Netscape bookmark file (decision 71).
-    Import(String),
     /// Write the bookmarks to a file beside the browser's own.
     Export,
 }

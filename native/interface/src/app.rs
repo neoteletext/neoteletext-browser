@@ -23,6 +23,7 @@ use crate::incoming::Incoming;
 use crate::window::FRAME;
 
 mod clipboard;
+mod files;
 mod frame;
 mod ime;
 mod incoming;
@@ -161,6 +162,10 @@ pub struct App {
     torn_at: Option<WindowGeometry>,
     modifiers: ModifiersState,
     output: outputs::CorePipe<io::Stdout>,
+    /// The interface's own channel to the broker (DEC-1551 item 3).
+    declarer: Option<confine::broker::Declarer>,
+    /// The files of the drop at hand, each its own event.
+    dropped: Vec<std::path::PathBuf>,
     exit: Option<String>,
     /// Reports each frame and what it cost, for measuring the drawing.
     trace_frames: bool,
@@ -195,6 +200,8 @@ impl App {
             torn_at: None,
             modifiers: ModifiersState::empty(),
             output: outputs::CorePipe::new(io::stdout()),
+            declarer: files::declarer(),
+            dropped: Vec::new(),
             exit: None,
             trace_frames,
             first_frame: None,
@@ -280,7 +287,7 @@ impl ApplicationHandler<Incoming> for App {
             Incoming::OpenWindow { window, geometry } => self.open_another(event_loop, window, geometry),
             Incoming::CloseWindow(window) => self.close_view(window),
             // The Dock menu and the menu bar are the focused window's.
-            Incoming::Dock(_) | Incoming::Menu(_) => {
+            Incoming::Dock(_) | Incoming::Menu(_) | Incoming::OpenedBySystem(_) => {
                 self.switch_view(self.focused);
                 self.incoming(event_loop, incoming);
             }
@@ -330,6 +337,7 @@ impl ApplicationHandler<Incoming> for App {
     /// Redraws while something animates; otherwise sleeps until the next
     /// event.
     fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
+        self.drop_done(event_loop);
         // What the events produced goes to the trusted core before waiting.
         if !self.flush(event_loop) {
             return;

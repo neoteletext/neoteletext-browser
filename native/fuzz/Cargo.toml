@@ -121,6 +121,41 @@ doc = false
 bench = false
 
 [[bin]]
+name = "broker_declarations"
+path = "fuzz_targets/broker_declarations.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "broker_openings"
+path = "fuzz_targets/broker_openings.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "grants_file"
+path = "fuzz_targets/grants_file.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "outside_link"
+path = "fuzz_targets/outside_link.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "launch_arguments"
+path = "fuzz_targets/launch_arguments.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
 name = "phone_keys"
 path = "fuzz_targets/phone_keys.rs"
 test = false

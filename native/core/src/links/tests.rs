@@ -50,6 +50,16 @@ fn targets_parse_in_every_form_of_the_tti_link_extension() {
     assert_eq!(parse_target("web:https://www.example.invalid/story"), Some(Target::Web("https://www.example.invalid/story".into())));
 }
 
+/// REQ-1672 item 13: `neoteletext://` is for what opens the browser from
+/// outside. In a page it is no link, so a page cannot launder a navigation
+/// through it.
+#[test]
+fn a_page_cannot_link_through_the_scheme() {
+    for target in ["neoteletext://https://a.invalid/", "NEOTELETEXT://https://a.invalid/", "neoteletext://home"] {
+        assert_eq!(parse_target(target), None, "{target}");
+    }
+}
+
 #[test]
 fn every_other_target_is_refused() {
     let long = format!("web:https://example.invalid/{}", "a".repeat(MAX_TARGET));

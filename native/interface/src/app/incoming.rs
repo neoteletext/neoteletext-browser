@@ -23,6 +23,7 @@ impl App {
             // trusted core (decision 55).
             Incoming::Sounding(channels) => return self.sounding(channels),
             Incoming::Dock(choice) => return self.dock_chosen(event_loop, choice),
+            Incoming::OpenedBySystem(opened) => return self.opened_by_system(event_loop, opened),
             Incoming::Menu(item) => {
                 self.menu_chosen(event_loop, item);
                 self.act(event_loop);

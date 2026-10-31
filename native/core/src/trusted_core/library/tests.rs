@@ -177,7 +177,7 @@ fn the_manager_edits_by_number() {
     assert_eq!(view.items, Vec::new());
     test.core.bookmark_request(BookmarkRequest::Undo).unwrap();
     assert_eq!(test.last_bookmarks().items.len(), 1);
-    test.core.bookmark_request(BookmarkRequest::Import("/nowhere/bookmarks.txt".into())).unwrap();
+    test.core.import_chosen("/nowhere/bookmarks.txt").unwrap();
     assert_eq!(test.last_bookmarks().notice, "Not imported: not a bookmarks file this browser can read", "one sentence for every refusal (decision 88)");
     test.core.bookmark_request(BookmarkRequest::Export).unwrap();
     let notice = test.last_bookmarks().notice;

@@ -37,7 +37,7 @@ function Sign($files) {
     & $signtool sign /fd SHA256 /sha1 $Thumbprint /tr $TimestampServer /td SHA256 @files
     if ($LASTEXITCODE -ne 0) { throw "signtool" }
 }
-$programs = @("neoteletext", "neoteletext-decoder", "neoteletext-fetcher", "neoteletext-interface", "neoteletext-keyboard", "neoteletext-sound", "neoteletext-launcher", "neoteletext-stub")
+$programs = @("neoteletext", "neoteletext-chooser", "neoteletext-decoder", "neoteletext-fetcher", "neoteletext-interface", "neoteletext-keyboard", "neoteletext-sound", "neoteletext-launcher", "neoteletext-stub")
 $env:NEOTELETEXT_RELEASE_VERSION = $Version
 $arguments = @("build", "--release", "--locked")
 foreach ($program in $programs) { $arguments += @("-p", $program) }

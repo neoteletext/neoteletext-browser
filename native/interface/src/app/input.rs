@@ -112,6 +112,10 @@ impl App {
             // The trusted core closes the window and its tabs, or, for the
             // last window, ends the browser (`multiple-windows.md`).
             WindowEvent::CloseRequested => self.sent(event_loop, &ToCore::CloseWindow),
+            WindowEvent::DroppedFile(path) => {
+                self.file_dropped(path);
+                false
+            }
             WindowEvent::RedrawRequested => {
                 self.redraw(event_loop);
                 false

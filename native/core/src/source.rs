@@ -8,6 +8,7 @@ use std::fs;
 use std::io::Read;
 use std::path::{Component, Path, PathBuf};
 
+use confine::{FileIdentity, file_identity};
 use neoteletext_formats::detect::{DETECTION_BYTES, Detection, detect};
 
 /// The largest channel read from a file: far above a day's recording of a
@@ -108,6 +109,31 @@ fn open_no_follow(canonical: &Path) -> Option<fs::File> {
     (metadata.is_file() && !metadata.file_type().is_symlink()).then_some(file)
 }
 
+/// Opens a folder as [`open_no_follow`] opens a file, for its identity alone:
+/// its files are read by name, each without following a link.
+fn open_folder(canonical: &Path) -> Option<fs::File> {
+    let mut options = fs::OpenOptions::new();
+    options.read(true);
+    #[cfg(target_os = "macos")]
+    {
+        use std::os::unix::fs::OpenOptionsExt as _;
+        options.custom_flags(libc::O_NOFOLLOW_ANY | libc::O_DIRECTORY);
+    }
+    #[cfg(all(unix, not(target_os = "macos")))]
+    {
+        use std::os::unix::fs::OpenOptionsExt as _;
+        options.custom_flags(libc::O_NOFOLLOW | libc::O_DIRECTORY);
+    }
+    // A folder opens on Windows only by this flag.
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::OpenOptionsExt as _;
+        use windows_sys::Win32::Storage::FileSystem::{FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_OPEN_REPARSE_POINT};
+        options.custom_flags(FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT);
+    }
+    options.open(canonical).ok().filter(|folder| folder.metadata().is_ok_and(|metadata| metadata.is_dir()))
+}
+
 /// Whether the engine recognises the bytes as teletext in a format the
 /// decoder is built with (requirement 2.1, decision 88).
 fn teletext(bytes: &[u8]) -> bool {
@@ -121,14 +147,17 @@ fn bookmarks(bytes: &[u8]) -> bool {
     protocol::decoder::is_netscape_bookmarks(bytes) || neoteletext::bookmarks::is_bookmarks_file(bytes)
 }
 
-/// A file's bytes, at most `room` of them, when the file may be read.
-fn read_file(canonical: &Path, places: &Places, room: u64) -> Option<Vec<u8>> {
+/// A file's bytes, at most `room` of them, when the file may be read, and
+/// its identity, from the descriptor they were read through.
+fn read_file(canonical: &Path, places: &Places, room: u64) -> Option<(Vec<u8>, FileIdentity)> {
     if places.refuses(canonical) {
         return None;
     }
     let mut bytes = Vec::new();
-    open_no_follow(canonical)?.take(room).read_to_end(&mut bytes).ok()?;
-    Some(bytes)
+    let file = open_no_follow(canonical)?;
+    let identity = file_identity(&file).ok()?;
+    file.take(room).read_to_end(&mut bytes).ok()?;
+    Some((bytes, identity))
 }
 
 impl Source {
@@ -140,20 +169,35 @@ impl Source {
     ///
     /// # Errors
     /// [`REFUSAL`], whatever the reason.
+    #[cfg(test)]
     pub fn read(path: &Path, places: &Places) -> Result<Self, &'static str> {
         let canonical = path.canonicalize().map_err(|_| REFUSAL)?;
-        if places.refuses(&canonical) {
+        Self::read_as(&canonical, places, None).map(|(source, _)| source)
+    }
+
+    /// As [`Source::read`], for a canonical path: and when `expected` names a
+    /// grant's file, only that file (DEC-1551 item 1). With what was read,
+    /// the file's or folder's identity, from what was opened, for its grant.
+    ///
+    /// # Errors
+    /// [`REFUSAL`], whatever the reason.
+    pub fn read_as(canonical: &Path, places: &Places, expected: Option<FileIdentity>) -> Result<(Self, FileIdentity), &'static str> {
+        if places.refuses(canonical) {
             return Err(REFUSAL);
         }
-        let metadata = fs::symlink_metadata(&canonical).map_err(|_| REFUSAL)?;
+        let metadata = fs::symlink_metadata(canonical).map_err(|_| REFUSAL)?;
+        let is_expected = |identity: FileIdentity| expected.is_none_or(|expected| expected == identity);
         if !metadata.is_dir() {
             if !metadata.is_file() || metadata.len() > MAX_SOURCE_BYTES {
                 return Err(REFUSAL);
             }
-            let bytes = read_file(&canonical, places, MAX_SOURCE_BYTES).filter(|bytes| teletext(bytes) || bookmarks(bytes)).ok_or(REFUSAL)?;
-            return Ok(Self::from_bytes(bytes));
+            let (bytes, identity) = read_file(canonical, places, MAX_SOURCE_BYTES)
+                .filter(|(bytes, identity)| is_expected(*identity) && (teletext(bytes) || bookmarks(bytes)))
+                .ok_or(REFUSAL)?;
+            return Ok((Self::from_bytes(bytes), identity));
         }
-        let mut names: Vec<_> = fs::read_dir(&canonical)
+        let identity = open_folder(canonical).and_then(|folder| file_identity(&folder).ok()).filter(|identity| is_expected(*identity)).ok_or(REFUSAL)?;
+        let mut names: Vec<_> = fs::read_dir(canonical)
             .map_err(|_| REFUSAL)?
             .filter_map(Result::ok)
             // The entry's own type: a link is never followed.
@@ -165,7 +209,7 @@ impl Source {
         let mut bytes = Vec::new();
         for name in names {
             let room = MAX_SOURCE_BYTES.saturating_sub(bytes.len() as u64);
-            let Some(file) = read_file(&canonical.join(name), places, room).filter(|file| teletext(file)) else { continue };
+            let Some((file, _)) = read_file(&canonical.join(name), places, room).filter(|(file, _)| teletext(file)) else { continue };
             bytes.extend(file);
             // Page files end their last line; a missing end of line
             // would join two files' lines.
@@ -174,7 +218,7 @@ impl Source {
         if bytes.is_empty() {
             return Err(REFUSAL);
         }
-        Ok(Self::from_bytes(bytes))
+        Ok((Self::from_bytes(bytes), identity))
     }
 
     /// The channel's bytes, for the broker to send the core (decision 56).
@@ -252,6 +296,31 @@ mod tests {
         let places = Places::new(None, Vec::new());
         assert_eq!(Source::read(&socket, &places).err(), Some(REFUSAL));
         assert!(Source::read(&folder, &places).is_ok(), "the folder itself is a channel, with the socket skipped");
+        fs::remove_dir_all(&folder).unwrap();
+    }
+
+    /// DEC-1551 item 1: a grant is of the file, not its path. A file put at
+    /// the path since is refused, by what was opened, not what was looked
+    /// at; so is a folder.
+    #[test]
+    fn a_grant_is_of_the_file_and_not_of_its_path() {
+        let folder = std::env::temp_dir().join(format!("neoteletext-source-grant-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&folder);
+        fs::create_dir_all(folder.join("pages")).unwrap();
+        let folder = folder.canonicalize().unwrap();
+        let places = Places::new(None, Vec::new());
+        let file = folder.join("100.tti");
+        fs::write(&file, b"PN,10000\n").unwrap();
+        fs::write(folder.join("pages/100.tti"), b"PN,10000\n").unwrap();
+        let (_, identity) = Source::read_as(&file, &places, None).unwrap();
+        assert!(Source::read_as(&file, &places, Some(identity)).is_ok());
+        let (_, of_folder) = Source::read_as(&folder.join("pages"), &places, None).unwrap();
+        assert!(Source::read_as(&folder.join("pages"), &places, Some(of_folder)).is_ok());
+        assert_eq!(Source::read_as(&folder.join("pages"), &places, Some(identity)).err(), Some(REFUSAL));
+        fs::remove_file(&file).unwrap();
+        fs::write(folder.join("other"), b"PN,10000\n").unwrap();
+        fs::write(&file, b"PN,10000\n").unwrap();
+        assert_eq!(Source::read_as(&file, &places, Some(identity)).err(), Some(REFUSAL), "another file at its path");
         fs::remove_dir_all(&folder).unwrap();
     }
 

@@ -100,6 +100,9 @@ impl Core {
                 self.send_history()?;
             }
             ToCore::NewTab => self.new_tab()?,
+            ToCore::OpenFile { kind, parent } => self.choose(kind, &parent)?,
+            ToCore::Dropped { files, place, left_out } => self.dropped(&files, place, left_out)?,
+            ToCore::FromSystem(opened) => self.opened_by_system(&opened)?,
             // The start page's bookmark pages open their bookmarks, as the
             // user's own navigation (requirement 19.7).
             ToCore::Opened(Some(key)) if self.session.start_page_bookmark(key.channel, key.page).is_some() => self.open_start_page_bookmark(key)?,

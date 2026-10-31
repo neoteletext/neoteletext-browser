@@ -16,6 +16,7 @@ mod library;
 #[cfg(feature = "links")]
 mod links;
 mod numbers;
+mod outside;
 mod page_controls;
 #[cfg(feature = "phone-keyboard")]
 mod phone;
@@ -62,7 +63,7 @@ use protocol::{ToCore, ToInterface, write_to_interface};
 use crate::session::Session;
 
 use processes::{Decoder, Fetcher};
-pub(crate) use run::run;
+pub(crate) use run::{given_addresses, run};
 use windows::Shown;
 
 /// A channel's data is handed to its decoder in pieces of 64 packets of 42
@@ -88,6 +89,8 @@ enum Event {
     Budgeted(Box<Event>, neoteletext::budget::Ticket),
     Decoded(u32, u64, FromDecoder),
     Fetched(u32, u64, FromFetcher),
+    /// What opens from outside, from the broker.
+    Opening(confine::broker::Opening),
     FetcherEnded(u32, u64, Option<String>),
     DecoderEnded(u32, u64, Option<String>),
     Intent(ToCore),
@@ -219,6 +222,8 @@ struct Core {
     kept_session: String,
     /// Updates (`installation-and-updates.md`).
     updates: updates::Updates,
+    /// The limit on links from outside (REQ-1672 item 11).
+    outside_links: neoteletext::launch::OutsideLinks,
 }
 
 impl Core {
@@ -337,6 +342,7 @@ impl Core {
             controls: page_controls::State::default(),
             kept_session: String::new(),
             updates: updates::Updates::default(),
+            outside_links: neoteletext::launch::OutsideLinks::default(),
         }
     }
 }

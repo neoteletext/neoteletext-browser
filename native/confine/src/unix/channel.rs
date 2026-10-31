@@ -7,11 +7,12 @@ use std::io::{self, Read, Write};
 use std::os::fd::AsRawFd as _;
 use std::os::unix::net::UnixStream;
 
-use super::{receive, send};
+use super::{receive, send, take_inherited};
 use crate::broker::{HEADER_BYTES, MAX_REPLY, header};
 use crate::{Input, Output, Process};
 
 /// One end of the broker's channel.
+#[derive(Debug)]
 pub(crate) struct Channel {
     stream: UnixStream,
 }
@@ -29,6 +30,16 @@ impl Channel {
         let stream = UnixStream::from(descriptor);
         // Standard input that is not a socket was not set up by a broker.
         stream.peer_addr().map_err(|_| io::Error::other("this program is started by the browser's broker, not directly"))?;
+        Ok(Self { stream })
+    }
+
+    /// The interface's end of its own channel (DEC-1551 item 3), by the
+    /// descriptor number the broker gave it. One that is not a socket was not
+    /// set up by a broker.
+    pub(crate) fn inherited(value: &str) -> io::Result<Self> {
+        let number = value.parse().map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "no descriptor"))?;
+        let stream = UnixStream::from(take_inherited(number)?);
+        stream.peer_addr().map_err(|_| io::Error::other("the channel to the broker is not a socket"))?;
         Ok(Self { stream })
     }
 
@@ -72,5 +83,10 @@ impl Channel {
     pub(crate) fn send_spawned(&mut self, bytes: &[u8], stdin: &Input, stdout: &Output, _core: &Process) -> io::Result<()> {
         send(&self.stream, bytes, &[stdin.as_raw_fd(), stdout.as_raw_fd()])
         // Our copies close here; the core holds its own.
+    }
+
+    /// Sends the reply `bytes` with `file` attached.
+    pub(crate) fn send_file(&mut self, bytes: &[u8], file: &File, _core: &Process) -> io::Result<()> {
+        send(&self.stream, bytes, &[file.as_raw_fd()])
     }
 }

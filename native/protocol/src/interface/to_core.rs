@@ -4,6 +4,7 @@
 
 use std::io::{Read, Write};
 
+use interface_core::browser::{DropPlace, OpenKind};
 use interface_core::canvas::PageKey;
 
 use super::ToCore;
@@ -11,9 +12,9 @@ use super::ToCore;
 use super::kinds::KIND_FOCUSED;
 use super::kinds::{
     KIND_ASK_SUBPAGE_ROWS, KIND_BACK, KIND_BAR, KIND_BOOKMARK, KIND_BOOKMARKS, KIND_CELL, KIND_CHANGE_SETTING, KIND_CLOSE_TAB, KIND_CLOSE_WINDOW, KIND_CONSOLE,
-    KIND_COOKIES, KIND_DRAWN, KIND_FORWARD, KIND_FROM, KIND_GO_TO, KIND_HISTORY, KIND_HOME, KIND_INSTALL_UPDATE, KIND_MOVE_TAB, KIND_MUTE_ALL, KIND_MUTE_TAB,
-    KIND_NAVIGATE, KIND_NEW_PRIVATE_TAB, KIND_NEW_TAB, KIND_NEW_WINDOW, KIND_OPENED, KIND_PAGE_CONTROL, KIND_RELOAD, KIND_SELECT_TAB, KIND_STAR, KIND_SUGGEST,
-    KIND_SUGGESTION, KIND_TAB_LIST, KIND_TAB_TO_WINDOW, KIND_VISIBLE, KIND_WINDOW,
+    KIND_COOKIES, KIND_DRAWN, KIND_DROPPED, KIND_FORWARD, KIND_FROM, KIND_FROM_SYSTEM, KIND_GO_TO, KIND_HISTORY, KIND_HOME, KIND_INSTALL_UPDATE, KIND_MOVE_TAB,
+    KIND_MUTE_ALL, KIND_MUTE_TAB, KIND_NAVIGATE, KIND_NEW_PRIVATE_TAB, KIND_NEW_TAB, KIND_NEW_WINDOW, KIND_OPEN_FILE, KIND_OPENED, KIND_PAGE_CONTROL,
+    KIND_RELOAD, KIND_SELECT_TAB, KIND_STAR, KIND_SUGGEST, KIND_SUGGESTION, KIND_TAB_LIST, KIND_TAB_TO_WINDOW, KIND_VISIBLE, KIND_WINDOW,
 };
 use super::pages::{CELL_BYTES, push_cell, read_cell};
 use super::windows::{push_tab_to_window, push_window_number, window_intent};
@@ -23,7 +24,10 @@ use crate::interaction::{KIND_EDITING, KIND_INPUT, KIND_WALL_WITHOUT_PAGE};
 use crate::keyboard::{KIND_PHONE_FINISH, KIND_PHONE_PANEL};
 #[cfg(feature = "links")]
 use crate::links::{KIND_CANCEL, KIND_CONFIRM, KIND_LIT, KIND_POINT, KIND_TYPED};
-use crate::{Fields, MAX_ADDRESS, MAX_TABS, ProtocolError, controls, cookies, library, push_key, push_keys, push_text, read_frame, settings, write_frame};
+use crate::{
+    Fields, MAX_ADDRESS, MAX_FILES_AT_ONCE, MAX_TABS, ProtocolError, controls, cookies, library, push_count_u8, push_key, push_keys, push_text, read_frame,
+    settings, write_frame,
+};
 
 /// Writes a message to the trusted core.
 ///
@@ -44,6 +48,9 @@ fn kind_of(message: &ToCore) -> u8 {
         ToCore::CloseTab(_) => KIND_CLOSE_TAB,
         ToCore::MoveTab { .. } => KIND_MOVE_TAB,
         ToCore::NewTab => KIND_NEW_TAB,
+        ToCore::OpenFile { .. } => KIND_OPEN_FILE,
+        ToCore::Dropped { .. } => KIND_DROPPED,
+        ToCore::FromSystem(_) => KIND_FROM_SYSTEM,
         ToCore::Opened(_) => KIND_OPENED,
         ToCore::MuteTab(_) => KIND_MUTE_TAB,
         ToCore::MuteAll(_) => KIND_MUTE_ALL,
@@ -111,6 +118,16 @@ fn push_fields(payload: &mut Vec<u8>, message: &ToCore) -> Result<(), ProtocolEr
         ToCore::MuteTab(index) => payload.push(*index),
         ToCore::MuteAll(muted) => payload.push(u8::from(*muted)),
         ToCore::Navigate(address) => push_text(payload, address, MAX_ADDRESS)?,
+        ToCore::OpenFile { kind, parent } => {
+            payload.push(open_kind_code(*kind));
+            push_text(payload, parent, MAX_PARENT)?;
+        }
+        ToCore::Dropped { files, place, left_out } => {
+            payload.extend_from_slice(&drop_place_code(*place));
+            payload.extend_from_slice(&left_out.to_be_bytes());
+            push_files(payload, files)?;
+        }
+        ToCore::FromSystem(files) => push_files(payload, files)?,
         ToCore::NewTab | ToCore::Back | ToCore::Forward | ToCore::Bookmark | ToCore::Home | ToCore::Reload => {}
         ToCore::PageControl(control) => controls::push_control(payload, *control),
         ToCore::SubPageRows { page, range } => {
@@ -193,6 +210,60 @@ fn push_suggestion(payload: &mut Vec<u8>, number: u32, new_tab: bool) {
     payload.push(u8::from(new_tab));
 }
 
+/// The longest window identifier the chooser is told: a portal's `x11:` and
+/// a number, or an exported Wayland handle.
+const MAX_PARENT: usize = 256;
+
+fn open_kind_code(kind: OpenKind) -> u8 {
+    match kind {
+        OpenKind::File => 1,
+        OpenKind::Folder => 2,
+        OpenKind::Bookmarks => 3,
+    }
+}
+
+fn read_open_kind(fields: &mut Fields<'_>) -> Result<OpenKind, ProtocolError> {
+    match fields.u8()? {
+        1 => Ok(OpenKind::File),
+        2 => Ok(OpenKind::Folder),
+        3 => Ok(OpenKind::Bookmarks),
+        _ => Err(ProtocolError::BadValue("kind of file")),
+    }
+}
+
+fn drop_place_code(place: DropPlace) -> [u8; 2] {
+    match place {
+        DropPlace::NewTabs => [0, 0],
+        DropPlace::Before(tab) => [1, tab],
+        DropPlace::Replace(tab) => [2, tab],
+        DropPlace::After(tab) => [3, tab],
+    }
+}
+
+fn read_drop_place(fields: &mut Fields<'_>) -> Result<DropPlace, ProtocolError> {
+    let (kind, tab) = (fields.u8()?, fields.u8()?);
+    if usize::from(tab) >= MAX_TABS {
+        return Err(ProtocolError::BadValue("tab place"));
+    }
+    match (kind, tab) {
+        (0, 0) => Ok(DropPlace::NewTabs),
+        (1, tab) => Ok(DropPlace::Before(tab)),
+        (2, tab) => Ok(DropPlace::Replace(tab)),
+        (3, tab) => Ok(DropPlace::After(tab)),
+        _ => Err(ProtocolError::BadValue("where files were dropped")),
+    }
+}
+
+fn push_files(payload: &mut Vec<u8>, files: &[String]) -> Result<(), ProtocolError> {
+    push_count_u8(payload, files.len(), MAX_FILES_AT_ONCE, "too many files")?;
+    files.iter().try_for_each(|file| push_text(payload, file, MAX_ADDRESS))
+}
+
+fn read_files(fields: &mut Fields<'_>) -> Result<Vec<String>, ProtocolError> {
+    let count = fields.count_u8(MAX_FILES_AT_ONCE, "too many files")?;
+    (0..count).map(|_| fields.text(MAX_ADDRESS)).collect()
+}
+
 /// Steps back or forward through a tab's history, at least one and at
 /// most the list's length.
 fn push_go_to(payload: &mut Vec<u8>, forward: bool, steps: u8) -> Result<(), ProtocolError> {
@@ -230,6 +301,16 @@ pub fn read_from_interface(input: &mut dyn Read) -> Result<Option<ToCore>, Proto
             ToCore::MoveTab { from, to }
         }
         KIND_NEW_TAB => ToCore::NewTab,
+        KIND_OPEN_FILE => {
+            let kind = read_open_kind(&mut fields)?;
+            ToCore::OpenFile { kind, parent: fields.text(MAX_PARENT)? }
+        }
+        KIND_DROPPED => {
+            let place = read_drop_place(&mut fields)?;
+            let left_out = fields.u16()?;
+            ToCore::Dropped { place, left_out, files: read_files(&mut fields)? }
+        }
+        KIND_FROM_SYSTEM => ToCore::FromSystem(read_files(&mut fields)?),
         KIND_OPENED => ToCore::Opened(if payload.is_empty() { None } else { Some(fields.key()?) }),
         KIND_MUTE_TAB => ToCore::MuteTab(fields.u8()?),
         KIND_MUTE_ALL => ToCore::MuteAll(fields.flag("mute")?),

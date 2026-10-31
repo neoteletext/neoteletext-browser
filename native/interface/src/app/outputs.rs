@@ -103,7 +103,13 @@ impl App {
             Output::CloseTab(index) => ToCore::CloseTab(u8::try_from(index).ok()?),
             Output::MoveTab { from, to } => ToCore::MoveTab { from: u8::try_from(from).ok()?, to: u8::try_from(to).ok()? },
             Output::NewTab => ToCore::NewTab,
-            Output::Navigate(address) => ToCore::Navigate(address),
+            Output::OpenFile(kind) => ToCore::OpenFile { kind, parent: self.window_for_dialog() },
+            Output::Navigate(address) => {
+                if interface_core::browser::names_a_file(&address) {
+                    self.declare(core::slice::from_ref(&address));
+                }
+                ToCore::Navigate(address)
+            }
             Output::Back => ToCore::Back,
             Output::Forward => ToCore::Forward,
             Output::Bookmark => ToCore::Bookmark,

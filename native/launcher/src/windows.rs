@@ -127,6 +127,7 @@ pub fn uninstall_from(root: &Path, and_settings: bool) -> Result<(), String> {
     if let Some(shortcut) = shortcut() {
         let _ = std::fs::remove_file(shortcut);
     }
+    os_install::remove_opening()?;
     os_install::remove_uninstall_entry()?;
     confine::remove_containers();
     if and_settings && let Some(settings) = settings_folder() {

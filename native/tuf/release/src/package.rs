@@ -8,7 +8,8 @@ use std::path::Path;
 use update::files;
 use update::manifest::{Entry, Manifest};
 use update::platform::{
-    APPARMOR_PROFILE, BUNDLE, Family, LINUX_ICON_SIZES, MACOS_ICON, MANIFEST, MANIFEST_SIGNATURE, MAX_FILES, PROGRAMS, Platform, SIGNATURE_SUFFIX,
+    APPARMOR_PROFILE, BUNDLE, CHOOSER_BUNDLE, CHOOSER_PROGRAM, Family, LINUX_ICON_SIZES, MACOS_ICON, MANIFEST, MANIFEST_SIGNATURE, MAX_FILES, PROGRAMS,
+    Platform, SIGNATURE_SUFFIX,
 };
 use update::version::Version;
 
@@ -16,6 +17,8 @@ use crate::keys::Source;
 
 /// The bundle's identifier.
 const BUNDLE_IDENTIFIER: &str = "com.neoteletext.browser";
+/// The identifier of a page file, which no system declares (REQ-1703 item 3).
+const TTI_TYPE: &str = "com.neoteletext.tti";
 /// The oldest macOS a release runs on (requirement 13.16; the binaries'
 /// own minimum, measured with `otool -l`, section 2).
 const MACOS_MINIMUM: &str = "11.0";
@@ -54,11 +57,89 @@ fn info_plist(version: Version) -> String {
 	<string>{version}</string>
 	<key>CFBundleVersion</key>
 	<string>{version}</string>
+	<key>CFBundleDocumentTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleTypeName</key>
+			<string>Teletext page</string>
+			<key>CFBundleTypeRole</key>
+			<string>Viewer</string>
+			<key>LSHandlerRank</key>
+			<string>Alternate</string>
+			<key>LSItemContentTypes</key>
+			<array>
+				<string>{TTI_TYPE}</string>
+			</array>
+		</dict>
+	</array>
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleURLName</key>
+			<string>{BUNDLE_IDENTIFIER}.link</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>neoteletext</string>
+			</array>
+		</dict>
+	</array>
 	<key>LSApplicationCategoryType</key>
 	<string>public.app-category.news</string>
 	<key>LSMinimumSystemVersion</key>
 	<string>{MACOS_MINIMUM}</string>
 	<key>NSHighResolutionCapable</key>
+	<true/>
+	<key>UTImportedTypeDeclarations</key>
+	<array>
+		<dict>
+			<key>UTTypeConformsTo</key>
+			<array>
+				<string>public.data</string>
+			</array>
+			<key>UTTypeDescription</key>
+			<string>Teletext page</string>
+			<key>UTTypeIdentifier</key>
+			<string>{TTI_TYPE}</string>
+			<key>UTTypeTagSpecification</key>
+			<dict>
+				<key>public.filename-extension</key>
+				<array>
+					<string>tti</string>
+				</array>
+			</dict>
+		</dict>
+	</array>
+</dict>
+</plist>
+"#
+    )
+}
+
+/// The chooser's bundle's `Info.plist`: an agent, with no Dock icon or menu
+/// (`LSUIElement`, DEC-1551 item 1).
+fn chooser_plist(version: Version) -> String {
+    format!(
+        r#"<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleExecutable</key>
+	<string>{CHOOSER_PROGRAM}</string>
+	<key>CFBundleIdentifier</key>
+	<string>{BUNDLE_IDENTIFIER}.chooser</string>
+	<key>CFBundleInfoDictionaryVersion</key>
+	<string>6.0</string>
+	<key>CFBundleName</key>
+	<string>NeoTeletext Chooser</string>
+	<key>CFBundlePackageType</key>
+	<string>APPL</string>
+	<key>CFBundleShortVersionString</key>
+	<string>{version}</string>
+	<key>CFBundleVersion</key>
+	<string>{version}</string>
+	<key>LSMinimumSystemVersion</key>
+	<string>{MACOS_MINIMUM}</string>
+	<key>LSUIElement</key>
 	<true/>
 </dict>
 </plist>
@@ -146,6 +227,8 @@ pub fn layout(platform: Platform, version: Version, programs: &Path, out: &Path)
         Family::Macos => {
             let plist = out.join(BUNDLE).join("Contents/Info.plist");
             files::write_synced(&plist, info_plist(version).as_bytes(), false).map_err(|error| error.to_string())?;
+            let helper = out.join(BUNDLE).join(CHOOSER_BUNDLE).join("Contents/Info.plist");
+            files::write_synced(&helper, chooser_plist(version).as_bytes(), false).map_err(|error| error.to_string())?;
             let icon = out.join(BUNDLE).join("Contents/Resources").join(MACOS_ICON);
             if let Some(folder) = icon.parent() {
                 std::fs::create_dir_all(folder).map_err(|error| error.to_string())?;
@@ -336,6 +419,21 @@ mod tests {
         let plist = info_plist(Version::new(0, 1, 0));
         assert!(plist.contains("\t<key>CFBundleIconFile</key>\n\t<string>NeoTeletext.icns</string>\n"), "{plist}");
         assert!(Platform::MacosArm64.file(&format!("{BUNDLE}/Contents/Resources/{MACOS_ICON}")).is_some_and(|file| file.required));
+    }
+
+    /// REQ-1671 item 1 and REQ-1703 item 3: the bundle declares one scheme and
+    /// page files, claims neither `http` nor `https`, and its chooser is an
+    /// agent, which the release lists.
+    #[test]
+    fn the_bundle_declares_the_scheme_and_page_files_and_nothing_else() {
+        let plist = info_plist(Version::new(0, 1, 0));
+        assert!(plist.contains("<key>CFBundleURLSchemes</key>\n\t\t\t<array>\n\t\t\t\t<string>neoteletext</string>\n\t\t\t</array>"), "{plist}");
+        assert!(!plist.contains("<string>http"), "{plist}");
+        assert!(plist.contains("<string>tti</string>"), "{plist}");
+        assert!(chooser_plist(Version::new(0, 1, 0)).contains("<key>LSUIElement</key>\n\t<true/>"));
+        let helper = format!("{BUNDLE}/{CHOOSER_BUNDLE}");
+        assert!(Platform::MacosArm64.file(&format!("{helper}/Contents/MacOS/{CHOOSER_PROGRAM}")).is_some_and(|file| file.executable && file.required));
+        assert!(Platform::MacosArm64.file(&format!("{helper}/Contents/Info.plist")).is_some_and(|file| file.required));
     }
 
     /// Decision 124: Linux's icon files are the art at each size, by

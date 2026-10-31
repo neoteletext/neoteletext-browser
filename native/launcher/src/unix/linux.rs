@@ -69,13 +69,59 @@ pub(super) fn path_link() -> Option<PathBuf> {
     std::env::var_os("HOME").map(PathBuf::from).filter(|home| home.is_absolute()).map(|home| home.join(".local/bin/neoteletext"))
 }
 
+/// The media type of a page file (the engine's REQ-516), which no system
+/// ships, so the browser's own package names it (REQ-1703 item 4).
+const TTI_TYPE: &str = "text/x-teletext-tti";
+/// The shared-mime-info package that names it, by the file's extension.
+const MIME_PACKAGE: &str = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>
+<mime-info xmlns=\"http://www.freedesktop.org/standards/shared-mime-info\">
+  <mime-type type=\"text/x-teletext-tti\">
+    <comment>Teletext page</comment>
+    <glob pattern=\"*.tti\"/>
+  </mime-type>
+</mime-info>
+";
+
+/// The package's place in `data`, the user's data folder.
+fn mime_package(data: &Path) -> PathBuf {
+    data.join("mime/packages/neoteletext.xml")
+}
+
+/// Tells the desktop what the menu entry opens: the package written and the
+/// two caches made again. Each is a desktop's tool that may not be there, and
+/// the browser opens files and links by hand without them.
+fn register_types(data: &Path) {
+    let package = mime_package(data);
+    if let Some(folder) = package.parent() {
+        let _ = std::fs::create_dir_all(folder);
+    }
+    if files::write_atomically(&package, MIME_PACKAGE.as_bytes()).is_err() {
+        return;
+    }
+    refresh_types(data);
+}
+
+/// Makes the desktop's caches of types and of menu entries again.
+fn refresh_types(data: &Path) {
+    let _ = std::process::Command::new("update-mime-database").arg(data.join("mime")).status();
+    let _ = std::process::Command::new("update-desktop-database").arg(data.join("applications")).status();
+}
+
+/// Takes the browser's types off the desktop, as the menu entry was.
+pub(super) fn unregister_types() {
+    if let Some(data) = data_home() {
+        let _ = std::fs::remove_file(mime_package(&data));
+        refresh_types(&data);
+    }
+}
+
 /// The menu entry for a launcher at `program` (Desktop Entry
 /// Specification version 1.5), with the browser's icon by its name in the
 /// icon theme and the windows' class, so the desktop shows the icon for
 /// them too (decision 124).
 fn desktop_text(program: &Path) -> String {
     format!(
-        "[Desktop Entry]\nType=Application\nVersion=1.5\nName=NeoTeletext\nGenericName=Teletext browser\nComment=Browse teletext channels on the web\nExec=\"{}\" %U\nIcon={ICON_NAME}\nStartupWMClass={ICON_NAME}\nTerminal=false\nCategories=Network;WebBrowser;\n",
+        "[Desktop Entry]\nType=Application\nVersion=1.5\nName=NeoTeletext\nGenericName=Teletext browser\nComment=Browse teletext channels on the web\nExec=\"{}\" %u\nIcon={ICON_NAME}\nStartupWMClass={ICON_NAME}\nTerminal=false\nCategories=Network;WebBrowser;\nMimeType=x-scheme-handler/neoteletext;{TTI_TYPE};\n",
         program.display()
     )
 }
@@ -140,6 +186,9 @@ pub fn install_linux(own: &Path) -> Result<(), String> {
             let _ = std::fs::create_dir_all(folder);
         }
         files::write_atomically(&entry, desktop_text(&launcher).as_bytes()).map_err(|error| io_text(&entry, &error))?;
+    }
+    if let Some(data) = data_home() {
+        register_types(&data);
     }
     let on_path = path_link().and_then(|link| link_on_path(&launcher, link));
     println!("NeoTeletext {version} is installed in {}.", layout.root.display());
@@ -302,8 +351,8 @@ mod tests {
     fn the_menu_entry_starts_the_launcher() {
         let text = desktop_text(Path::new("/home/a/.local/share/neoteletext/bin/neoteletext"));
         assert!(text.starts_with("[Desktop Entry]\nType=Application\n"));
-        assert!(text.contains("\nExec=\"/home/a/.local/share/neoteletext/bin/neoteletext\" %U\n"));
-        assert!(text.ends_with("Categories=Network;WebBrowser;\n"));
+        assert!(text.contains("\nExec=\"/home/a/.local/share/neoteletext/bin/neoteletext\" %u\n"), "one address, not several (REQ-1671 item 3)");
+        assert!(text.ends_with("MimeType=x-scheme-handler/neoteletext;text/x-teletext-tti;\n"), "{text}");
     }
 
     /// Decision 124: the menu entry names the browser's own icon, and the

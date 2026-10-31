@@ -71,7 +71,7 @@ cargo build --quiet --locked --offline --target-dir "$work\tools" -p neoteletext
 Pop-Location
 function Key($name) { "file:$identity\keys\$name.pk8" }
 
-$programs = @("neoteletext", "neoteletext-decoder", "neoteletext-fetcher", "neoteletext-interface", "neoteletext-keyboard", "neoteletext-sound", "neoteletext-launcher")
+$programs = @("neoteletext", "neoteletext-chooser", "neoteletext-decoder", "neoteletext-fetcher", "neoteletext-interface", "neoteletext-keyboard", "neoteletext-sound", "neoteletext-launcher")
 function Build($version) {
     Step "the browser $version, built with the test identity"
     $env:NEOTELETEXT_RELEASE_VERSION = $version

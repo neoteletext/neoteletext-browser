@@ -416,3 +416,22 @@ fn the_version_label_never_covers_a_tab_or_the_new_tab_button() {
     assert!(label_drawn(&canvas).is_none(), "no room beside the tabs: left out");
     assert!(browser.regions.new_tab.x1 <= narrow - STRIP_MARGIN, "the new-tab button still in the window");
 }
+
+/// DEC-1549 items 3 and 4: where a drop lands, by the tab's quarters.
+#[test]
+fn a_drop_lands_by_the_quarters_of_a_tab() {
+    use crate::browser::{DropPlace, DropTarget};
+
+    let (browser, _) = browser();
+    let tab = browser.regions.tabs.first().unwrap();
+    let (index, rect) = (u8::try_from(tab.index).unwrap(), tab.tab);
+    let at = |fraction: f64| Point::new(rect.x0 + rect.width() * fraction, f64::midpoint(rect.y0, rect.y1));
+    assert_eq!(browser.drop_target(at(0.1)), DropTarget::Tabs(DropPlace::Before(index)));
+    assert_eq!(browser.drop_target(at(0.5)), DropTarget::Tabs(DropPlace::Replace(index)));
+    assert_eq!(browser.drop_target(at(0.9)), DropTarget::Tabs(DropPlace::After(index)));
+    assert_eq!(browser.drop_target(Point::new(1.0, 500.0)), DropTarget::Tabs(DropPlace::NewTabs), "the page");
+    let active = u8::try_from(browser.active).unwrap();
+    assert_eq!(browser.drop_target(Point::new(1.0, 60.0)), DropTarget::Tabs(DropPlace::Replace(active)), "the toolbar");
+    let field = browser.regions.field_text;
+    assert_eq!(browser.drop_target(Point::new(f64::midpoint(field.x0, field.x1), f64::midpoint(field.y0, field.y1))), DropTarget::Address);
+}

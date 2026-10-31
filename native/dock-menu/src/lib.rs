@@ -234,6 +234,8 @@ pub const MENU_BAR: &[Menu] = &[
             browser("New Private Tab", shift_command("n")),
             Entry::Item(MenuItem { title: "New Private Window", shortcut: None, action: MenuAction::NewPrivateWindow }),
             Entry::Separator,
+            browser("Open File\u{2026}", command("o")),
+            browser("Open Folder\u{2026}", option_command(ShortcutKey::Text("o"))),
             browser("Open Location\u{2026}", command("l")),
             browser("Reopen Closed Tab", shift_command("t")),
             Entry::Separator,
@@ -322,7 +324,7 @@ pub fn menu_item(number: usize) -> Option<&'static MenuItem> {
 #[cfg(target_os = "macos")]
 mod mac;
 #[cfg(target_os = "macos")]
-pub use mac::{install, install_menu_bar, set, set_about, set_full_screen, set_icon};
+pub use mac::{install, install_menu_bar, install_opener, pointer_in_view, set, set_about, set_full_screen, set_icon};
 
 /// Elsewhere there is no menu bar: the menu button's menu is its
 /// counterpart (`menu-bar.md` section 1).
@@ -332,6 +334,10 @@ pub fn install_menu_bar(_choose: impl Fn(&'static MenuItem) + 'static) {}
 /// Elsewhere there is no Dock.
 #[cfg(not(target_os = "macos"))]
 pub fn install(_choose: impl Fn(Choice) + 'static) {}
+
+/// Elsewhere what the system opens comes on the command line.
+#[cfg(not(target_os = "macos"))]
+pub fn install_opener(_open: impl Fn(Vec<String>) + 'static) {}
 
 /// Elsewhere there is no Dock.
 #[cfg(not(target_os = "macos"))]

@@ -5,7 +5,7 @@
 use alloc::string::String;
 
 use super::{DRAG_DISTANCE, Field, Form, ItemControls, WHEEL_ROWS};
-use crate::browser::{Browser, Key, Output};
+use crate::browser::{Browser, Key, OpenKind, Output};
 use crate::geometry::Point;
 use crate::library::BookmarkRequest;
 
@@ -14,7 +14,7 @@ impl Browser {
         self.bookmarks.form = Some(form);
         self.bookmarks.name.set(name);
         self.bookmarks.address.set(address);
-        self.focus_bookmarks(if form == Form::Import { Field::Address } else { Field::Name });
+        self.focus_bookmarks(Field::Name);
     }
 
     /// The form's change goes to the trusted core.
@@ -26,7 +26,6 @@ impl Browser {
         let request = match form {
             Form::Add => BookmarkRequest::Add { name, address },
             Form::Folder => BookmarkRequest::NewFolder(name),
-            Form::Import => BookmarkRequest::Import(address),
             Form::Edit(number) => BookmarkRequest::Edit { number, name, address },
         };
         self.outputs.push(Output::Bookmarks(request));
@@ -148,11 +147,14 @@ impl Browser {
             Some(Form::Folder)
         } else if controls.add.contains(point) {
             Some(Form::Add)
-        } else if controls.import.contains(point) {
-            Some(Form::Import)
         } else {
             None
         };
+        // The system's dialog, from the broker (TODO-1426).
+        if controls.import.contains(point) {
+            self.outputs.push(Output::OpenFile(OpenKind::Bookmarks));
+            return true;
+        }
         let simple = if controls.sort.contains(point) {
             Some(BookmarkRequest::Sort)
         } else if controls.export.contains(point) {

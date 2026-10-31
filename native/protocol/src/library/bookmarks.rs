@@ -3,8 +3,8 @@
 //! and the interface's requests.
 
 use super::{
-    BarRequest, BarView, BookmarkRequest, BookmarksView, MAX_FOLDER_DEPTH, MAX_NAME, MAX_NOTICE, MAX_PATH, MAX_QUERY, MAX_VIEW_ROWS, StarRequest, StarView,
-    push_folders, push_items, read_folders, read_items,
+    BarRequest, BarView, BookmarkRequest, BookmarksView, MAX_FOLDER_DEPTH, MAX_NAME, MAX_NOTICE, MAX_QUERY, MAX_VIEW_ROWS, StarRequest, StarView, push_folders,
+    push_items, read_folders, read_items,
 };
 use crate::{Fields, MAX_ADDRESS, ProtocolError, push_flag, push_text};
 
@@ -20,7 +20,6 @@ const BOOKMARKS_ADD: u8 = 9;
 const BOOKMARKS_REMOVE: u8 = 10;
 const BOOKMARKS_UNDO: u8 = 11;
 const BOOKMARKS_SORT: u8 = 12;
-const BOOKMARKS_IMPORT: u8 = 13;
 const BOOKMARKS_EXPORT: u8 = 14;
 
 const STAR_EDIT: u8 = 1;
@@ -111,10 +110,6 @@ pub(crate) fn push_bookmark_request(payload: &mut Vec<u8>, request: &BookmarkReq
         }
         BookmarkRequest::Undo => payload.push(BOOKMARKS_UNDO),
         BookmarkRequest::Sort => payload.push(BOOKMARKS_SORT),
-        BookmarkRequest::Import(path) => {
-            payload.push(BOOKMARKS_IMPORT);
-            push_text(payload, path, MAX_PATH)?;
-        }
         BookmarkRequest::Export => payload.push(BOOKMARKS_EXPORT),
     }
     Ok(())
@@ -134,7 +129,6 @@ pub(crate) fn read_bookmark_request(fields: &mut Fields<'_>) -> Result<BookmarkR
         BOOKMARKS_REMOVE => BookmarkRequest::Remove(fields.u32()?),
         BOOKMARKS_UNDO => BookmarkRequest::Undo,
         BOOKMARKS_SORT => BookmarkRequest::Sort,
-        BOOKMARKS_IMPORT => BookmarkRequest::Import(fields.text(MAX_PATH)?),
         BOOKMARKS_EXPORT => BookmarkRequest::Export,
         _ => return Err(ProtocolError::BadValue("bookmark request")),
     })

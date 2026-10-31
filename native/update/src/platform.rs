@@ -8,8 +8,9 @@ use std::fmt;
 /// The browser's programs, as each version has them: the broker and
 /// trusted core, its helpers, the updater, and the launcher of this
 /// release (installed only by a launcher release, section 7).
-pub const PROGRAMS: [&str; 8] = [
+pub const PROGRAMS: [&str; 9] = [
     "neoteletext",
+    "neoteletext-chooser",
     "neoteletext-decoder",
     "neoteletext-fetcher",
     "neoteletext-interface",
@@ -23,8 +24,13 @@ pub const PROGRAMS: [&str; 8] = [
 pub const MARKED_PROGRAM: &str = "neoteletext";
 /// The launcher's program in a version.
 pub const LAUNCHER_PROGRAM: &str = "neoteletext-launcher";
+/// The file dialog's program (DEC-1551 item 1).
+pub const CHOOSER_PROGRAM: &str = "neoteletext-chooser";
 /// The bundle every macOS version is.
 pub const BUNDLE: &str = "NeoTeletext.app";
+/// On macOS the chooser is a bundle of its own inside it, an agent, so that
+/// it has no Dock icon or menu (DEC-1551 item 1).
+pub const CHOOSER_BUNDLE: &str = "Contents/Helpers/NeoTeletextChooser.app";
 /// A Linux file's detached signature is beside it, with this suffix
 /// (section 4.3).
 pub const SIGNATURE_SUFFIX: &str = ".sig";
@@ -213,6 +219,7 @@ impl Platform {
     #[must_use]
     pub fn program_path(self, program: &str) -> String {
         match self.family() {
+            Family::Macos if program == CHOOSER_PROGRAM => format!("{BUNDLE}/{CHOOSER_BUNDLE}/Contents/MacOS/{program}"),
             Family::Macos => format!("{BUNDLE}/Contents/MacOS/{program}"),
             Family::Windows | Family::Linux => self.program_file(program),
         }
@@ -231,6 +238,8 @@ impl Platform {
                 files.push(data(&format!("{BUNDLE}/Contents/Info.plist"), true));
                 files.push(data(&format!("{BUNDLE}/Contents/Resources/{MACOS_ICON}"), true));
                 files.push(data(&format!("{BUNDLE}/Contents/_CodeSignature/CodeResources"), true));
+                files.push(data(&format!("{BUNDLE}/{CHOOSER_BUNDLE}/Contents/Info.plist"), true));
+                files.push(data(&format!("{BUNDLE}/{CHOOSER_BUNDLE}/Contents/_CodeSignature/CodeResources"), true));
                 // The notarisation ticket, stapled (section 4.1); a test
                 // build signed without Apple has none.
                 files.push(data(&format!("{BUNDLE}/Contents/CodeResources"), false));

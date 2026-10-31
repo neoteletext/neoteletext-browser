@@ -59,6 +59,10 @@ fn main() -> std::process::ExitCode {
     dock_menu::install_menu_bar(move |item| {
         let _ = menu_proxy.send_event(Incoming::Menu(item));
     });
+    let opened_proxy = proxy.clone();
+    dock_menu::install_opener(move |opened| {
+        let _ = opened_proxy.send_event(Incoming::OpenedBySystem(opened));
+    });
     std::thread::spawn(move || read_core(&proxy));
     // NEOTELETEXT_FRAME_TRACE reports every frame drawn and its cost.
     let mut app = App::new(std::env::var_os("NEOTELETEXT_FRAME_TRACE").is_some());

@@ -21,23 +21,27 @@ use std::path::PathBuf;
 
 use crate::Role;
 #[cfg(unix)]
-use crate::unix::Channel;
+pub(crate) use crate::unix::Channel;
 #[cfg(windows)]
-use crate::windows::Channel;
+pub(crate) use crate::windows::Channel;
 
 mod client;
-mod server;
+mod local_files;
+pub(crate) mod server;
 // A stand-in for tests of the trusted core (finding F-98), never shipped.
 #[cfg(all(unix, feature = "test-support"))]
 pub mod stand_in;
 mod wire;
 
 pub use client::{Broker, Helper};
+pub(crate) use local_files::CHANNEL_VARIABLE;
+pub use local_files::{
+    ChooseKind, Declaration, Declarer, MAX_DECLARATION, MAX_FILES_AT_ONCE, MAX_OPENING, Opening, decode_declaration, decode_opening, encode_declaration,
+    encode_opening, read_opening, write_opening,
+};
 pub use server::{Core, Handlers, serve, start_core};
-#[cfg(windows)]
-pub(crate) use wire::frame;
-pub(crate) use wire::header;
 pub use wire::{Exit, Reply, Request, decode_reply, decode_request, encode_reply, encode_request};
+pub(crate) use wire::{frame, header};
 
 /// The most helpers alive at once: far more than tabs (`protocol::MAX_TABS`
 /// is 64, each with a decoder and a fetcher), and few enough that a
@@ -64,6 +68,7 @@ const KIND_LOCAL_TIME: u8 = 6;
 const KIND_COOKIE_KEY: u8 = 7;
 const KIND_HEALTHY: u8 = 8;
 const KIND_UPDATE_STATE: u8 = 9;
+const KIND_CHOOSE: u8 = 10;
 pub(crate) const KIND_SPAWNED: u8 = 11;
 const KIND_DONE: u8 = 12;
 const KIND_EXITED: u8 = 13;
@@ -71,6 +76,9 @@ const KIND_SOURCE: u8 = 14;
 const KIND_FAILED: u8 = 15;
 const KIND_TIME: u8 = 16;
 const KIND_KEY: u8 = 17;
+const KIND_OPENINGS: u8 = 18;
+/// The reply that carries the pipe of what opens from outside.
+pub(crate) const KIND_PIPE: u8 = 19;
 /// The cookie file's key: 256 bits (`cookies.md` section 7).
 pub const COOKIE_KEY_BYTES: usize = 32;
 /// The port of TLS, the update host's (`installation-and-updates.md`

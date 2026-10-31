@@ -3,11 +3,14 @@
 
 use std::collections::BTreeMap;
 use std::ffi::OsString;
+use std::fs::File;
 use std::io;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
+use super::local_files::{ChooseKind, Declaration, acknowledgement, decode_declaration};
 use super::wire::{Exit, Reply, Request, decode_request, encode_reply};
-use super::{COOKIE_KEY_BYTES, Channel, MAX_HELPERS, MAX_REPLY, MAX_REQUEST, MAX_UPDATE_STATE, Program, UpdaterGrant};
+use super::{COOKIE_KEY_BYTES, Channel, MAX_DECLARATION, MAX_HELPERS, MAX_REPLY, MAX_REQUEST, MAX_UPDATE_STATE, Program, UpdaterGrant};
 #[cfg(unix)]
 use crate::unix as platform;
 #[cfg(windows)]
@@ -32,6 +35,14 @@ pub struct Handlers<'a> {
     /// What the updater, started with these arguments, may write and
     /// reach; refused where no launcher installed the browser.
     pub updater: &'a dyn Fn(&[String]) -> Result<UpdaterGrant, String>,
+    /// Starts the chooser for the core (DEC-1551 item 1), and answers at
+    /// once.
+    pub choose: &'a dyn Fn(ChooseKind, &str, bool) -> Result<(), String>,
+    /// The reading end of the pipe of what opens from outside, once.
+    pub openings: &'a dyn Fn() -> Option<File>,
+    /// Takes what the interface declares on its own channel, on a thread
+    /// of that channel's.
+    pub declared: Arc<dyn Fn(Declaration) + Send + Sync>,
 }
 
 /// The core, started confined, and the broker's end of its channel.
@@ -100,6 +111,9 @@ fn answer(core: &mut Core, helpers: &mut Helpers, programs: &Path, handlers: &Ha
                         let id = helpers.next;
                         helpers.next = helpers.next.wrapping_add(1).max(1);
                         let report = process.report.to_string();
+                        if let Some(channel) = process.broker_side.take() {
+                            hear_declarations(channel, Arc::clone(&handlers.declared));
+                        }
                         let (Some(stdin), Some(stdout)) = (process.stdin.take(), process.stdout.take()) else {
                             return core.channel.write(&encode_reply(&Reply::Failed(String::from("a helper without its pipes")))?);
                         };
@@ -151,8 +165,41 @@ fn answer(core: &mut Core, helpers: &mut Helpers, programs: &Path, handlers: &Ha
             Ok(_) => Reply::Failed(String::from("the launcher's state is too long")),
             Err(reason) => Reply::Failed(reason),
         },
+        Request::Choose { kind, parent, keep } => match (handlers.choose)(kind, &parent, keep) {
+            Ok(()) => Reply::Done,
+            Err(reason) => Reply::Failed(reason),
+        },
+        Request::Openings => match (handlers.openings)() {
+            Some(pipe) => {
+                let bytes = encode_reply(&Reply::Pipe)?;
+                return core.channel.send_file(&bytes, &pipe, &core.process);
+            }
+            None => Reply::Failed(String::from("the pipe was given already")),
+        },
     };
     core.channel.write(&encode_reply(&reply)?)
+}
+
+/// Hears the interface's channel on a thread of its own (DEC-1551 item 3):
+/// each declaration is taken, then acknowledged, and the interface sends the
+/// core its intent only after that, so no read overtakes what allows it. A
+/// message that breaks the protocol ends the channel, and the interface is
+/// then believed about nothing more.
+pub(crate) fn hear_declarations(mut channel: Channel, declared: Arc<dyn Fn(Declaration) + Send + Sync>) {
+    std::thread::spawn(move || {
+        while let Ok((kind, payload)) = channel.read_frame(MAX_DECLARATION) {
+            match decode_declaration(kind, &payload) {
+                Ok(declaration) => declared(declaration),
+                Err(error) => {
+                    eprintln!("neoteletext: the interface broke its channel to the broker, which is closed: {error}");
+                    break;
+                }
+            }
+            if channel.write(&acknowledgement()).is_err() {
+                break;
+            }
+        }
+    });
 }
 
 /// Starts one of the browser's own helpers, beside the broker.

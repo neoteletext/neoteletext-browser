@@ -35,12 +35,15 @@ pub struct Process {
     inner: Inner,
     /// How the helper was confined, for the trusted core to report.
     pub report: Report,
+    /// The broker's end of the interface's own channel (DEC-1551 item 3),
+    /// which the core never sees: the interface alone has one.
+    pub(crate) broker_side: Option<crate::broker::Channel>,
 }
 
 impl Process {
     /// A started helper, from its pipes, its process and its report.
     pub(crate) fn new(stdin: Option<Input>, stdout: Option<Output>, inner: Inner, report: Report) -> Self {
-        Self { stdin, stdout, inner, report }
+        Self { stdin, stdout, inner, report, broker_side: None }
     }
 
     /// Ends the helper at once.

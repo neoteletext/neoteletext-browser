@@ -38,10 +38,12 @@ pub mod console;
 pub mod cookies;
 pub mod dropped;
 pub mod frames;
+pub mod grants;
 pub mod hearing;
 pub mod history;
 #[cfg(feature = "interaction")]
 pub mod input_trace;
+pub mod launch;
 #[cfg(feature = "links")]
 pub mod links;
 pub mod outbox;

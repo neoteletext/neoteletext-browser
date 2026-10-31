@@ -101,6 +101,10 @@ pub(crate) const KIND_ASK_SUBPAGE_ROWS: u8 = 101;
 pub(crate) const KIND_UPDATE_VIEW: u8 = 120;
 pub(crate) const KIND_DRAWN: u8 = 121;
 pub(crate) const KIND_INSTALL_UPDATE: u8 = 122;
+// What opens local files (REQ-1699, REQ-1700, REQ-1703).
+pub(crate) const KIND_OPEN_FILE: u8 = 123;
+pub(crate) const KIND_DROPPED: u8 = 124;
+pub(crate) const KIND_FROM_SYSTEM: u8 = 125;
 
 // The strip's flags.
 pub(crate) const ENCRYPTED: u8 = 1;

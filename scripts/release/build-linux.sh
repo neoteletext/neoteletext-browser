@@ -46,7 +46,7 @@ rustup_sha256="20a06e644b0d9bd2fbdbfd52d42540bdde820ea7df86e92e533c073da0cdd43c"
 # Cargo fetches in the container.
 engine_rev="$(sed -n 's/^neoteletext-[a-z-]* = { git = "[^"]*", rev = "\([0-9a-f]*\)".*/\1/p' native/Cargo.toml | sort -u)"
 [[ -n "$engine_rev" && "$engine_rev" != *$'\n'* ]] || { echo "build-linux: native/Cargo.toml must name one engine commit" >&2; exit 1; }
-programs="neoteletext neoteletext-decoder neoteletext-fetcher neoteletext-interface neoteletext-keyboard neoteletext-sound neoteletext-launcher"
+programs="neoteletext neoteletext-chooser neoteletext-decoder neoteletext-fetcher neoteletext-interface neoteletext-keyboard neoteletext-sound neoteletext-launcher"
 mkdir -p "$out"
 podman run --rm -v "$PWD:/source:Z" -v "$HOME/.cargo/registry:/root/.cargo/registry:Z" -w /source \
     -e NEOTELETEXT_RELEASE_VERSION="$version" ${NEOTELETEXT_RELEASE_IDENTITY:+-e NEOTELETEXT_RELEASE_IDENTITY="$NEOTELETEXT_RELEASE_IDENTITY"} "$image" bash -euc "

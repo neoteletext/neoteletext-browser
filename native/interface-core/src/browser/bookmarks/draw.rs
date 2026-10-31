@@ -157,28 +157,21 @@ impl Browser {
     }
 
     /// The form at the top of `room`: a new bookmark, a new folder, an
-    /// import, an edit. Returns where the contents start below it.
+    /// edit. Returns where the contents start below it.
     fn draw_bookmarks_form<C: Canvas + ?Sized>(&self, canvas: &mut C, controls: &mut Controls, room: Rect) -> f64 {
         let (contents_left, right, mut row_y) = (room.x0, room.x1, room.y0);
         if let Some(form) = self.bookmarks.form {
             let two = matches!(form, Form::Add | Form::Edit(_));
             let (name_label, address_label) = match form {
-                Form::Import => ("", "The file's path"),
                 Form::Folder => ("The folder's name", ""),
                 _ => ("Name", "Address"),
             };
             controls.cancel = Rect::new(right - BUTTON_WIDTH * 0.7, row_y, right, row_y + CONTROL_HEIGHT);
             controls.save = Rect::new(controls.cancel.x0 - GAP - BUTTON_WIDTH * 0.7, row_y, controls.cancel.x0 - GAP, row_y + CONTROL_HEIGHT);
-            button(canvas, controls.save, if form == Form::Import { "Import" } else { "Save" }, true);
+            button(canvas, controls.save, "Save", true);
             button(canvas, controls.cancel, "Cancel", false);
             let room = controls.save.x0 - GAP - contents_left;
-            let (name_width, address_width) = if two {
-                (room * 0.4, room * 0.6 - GAP)
-            } else if form == Form::Import {
-                (0.0, room)
-            } else {
-                (room, 0.0)
-            };
+            let (name_width, address_width) = if two { (room * 0.4, room * 0.6 - GAP) } else { (room, 0.0) };
             if name_width > 0.0 {
                 controls.name = Rect::new(contents_left, row_y, contents_left + name_width, row_y + CONTROL_HEIGHT);
                 field(canvas, controls.name, &self.bookmarks.name, self.bookmarks.focus == Some(Field::Name));

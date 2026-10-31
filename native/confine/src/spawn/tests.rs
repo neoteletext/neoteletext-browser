@@ -183,3 +183,49 @@ fn a_fetcher_reaches_this_computer_only_when_allowed() {
     assert_eq!(reached(false), "LOOPBACK refused");
     assert_eq!(reached(true), "LOOPBACK connected");
 }
+
+/// What a copy of this test binary does, run as the interface: declares a
+/// path on the channel it was started with.
+const DECLARER_PROBE: &str = "NEOTELETEXT_CONFINE_DECLARER_PROBE";
+
+/// The probe: run by `the_interface_alone_has_a_channel_to_the_broker`,
+/// never on its own.
+#[test]
+fn declarer_probe() {
+    if std::env::var_os(DECLARER_PROBE).is_none() {
+        return;
+    }
+    let mut declarer = crate::broker::Declarer::from_parent().unwrap();
+    declarer.declare(&crate::broker::Declaration { paths: vec![String::from("/declared.tti")], keep: true }).unwrap();
+    println!("DECLARED");
+}
+
+/// DEC-1551 item 3: the interface reaches the broker on its own channel,
+/// under its real sandbox, and is believed once the broker has acknowledged;
+/// no other role is given one. Before this nothing but the core's pipes
+/// reached the interface.
+#[test]
+fn the_interface_alone_has_a_channel_to_the_broker() {
+    use std::sync::{Arc, Mutex};
+
+    let program = std::env::current_exe().unwrap();
+    let arguments = [OsString::from("--exact"), OsString::from("spawn::tests::declarer_probe"), OsString::from("--nocapture")];
+    let mut environment = environment(Role::Interface);
+    environment.push((OsString::from(DECLARER_PROBE), OsString::from("1")));
+    let start =
+        |role| spawn(&Spawn { program: &program, arguments: &arguments, role, environment: &environment, local_network: false, writable: None }).unwrap();
+
+    let mut decoder = start(Role::Decoder);
+    assert!(decoder.broker_side.is_none(), "only the interface has one");
+    let _ = decoder.kill();
+    let _ = decoder.wait();
+
+    let mut interface = start(Role::Interface);
+    let heard = Arc::new(Mutex::new(Vec::new()));
+    let recorded = Arc::clone(&heard);
+    crate::broker::server::hear_declarations(interface.broker_side.take().unwrap(), Arc::new(move |declaration| recorded.lock().unwrap().push(declaration)));
+    let output: Vec<String> = BufReader::new(interface.stdout.take().unwrap()).lines().map_while(Result::ok).collect();
+    let _ = interface.wait();
+    assert!(output.iter().any(|line| line.contains("DECLARED")), "{output:?}");
+    assert_eq!(*heard.lock().unwrap(), [crate::broker::Declaration { paths: vec![String::from("/declared.tti")], keep: true }]);
+}

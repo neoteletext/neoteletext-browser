@@ -206,13 +206,14 @@ impl Server {
                 Ok(_) => Reply::Failed(String::from("the channel is too large")),
                 Err(reason) => Reply::Failed(reason),
             },
-            Request::OpenWeb(_) | Request::Healthy => Reply::Done,
+            Request::OpenWeb(_) | Request::Healthy | Request::Choose { .. } => Reply::Done,
             Request::LocalTime => match crate::local_time() {
                 Ok(time) => Reply::Time(time),
                 Err(error) => Reply::Failed(error.to_string()),
             },
             Request::CookieKey => Reply::Failed(String::from("a test has no secret store")),
             Request::UpdateState => Reply::Failed(String::from("no launcher started this broker")),
+            Request::Openings => Reply::Failed(String::from("a test opens nothing from outside")),
         };
         self.keep(request);
         self.stream.write_all(&encode_reply(&reply)?)

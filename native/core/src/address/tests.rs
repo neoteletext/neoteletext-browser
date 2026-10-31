@@ -124,3 +124,61 @@ fn an_address_is_within_its_bound_written_in_full() {
     assert_eq!(longest.text.len(), max);
     assert!(longest.with_page(0x302).is_none(), "no room for the page");
 }
+
+/// REQ-1672 items 1 to 5: a link wraps a whole web address, and nothing else
+/// opens.
+#[test]
+fn a_link_from_outside_unwraps_to_its_web_address() {
+    for (link, address, page) in [
+        ("neoteletext://https://news.example/#302", "https://news.example/#302", Some(0x302)),
+        ("NEOTELETEXT://http://news.example/channel/?id=7", "http://news.example/channel/?id=7", None),
+        ("neoteletext://https://NEWS.Example:8443/", "https://news.example:8443/", None),
+    ] {
+        let opened = outside_link(link).unwrap();
+        assert_eq!((opened.text.as_str(), opened.page), (address, page), "{link}");
+    }
+}
+
+#[test]
+fn a_link_from_outside_carries_nothing_else() {
+    for link in [
+        "neoteletext://home",
+        "neoteletext://",
+        "neoteletext:home",
+        "neoteletext://file:///etc/passwd",
+        "neoteletext://web:https://a.example/",
+        "neoteletext://data:text/html,x",
+        "neoteletext://javascript:alert(1)",
+        "neoteletext://ftp://a.example/",
+        "neoteletext://neoteletext://https://a.example/",
+        "neoteletext://https://a.example/#not-a-page",
+        "neoteletext://https://a.example/#302:12",
+        "neoteletext://https://a%2eexample/",
+        "neoteletext://https://caf\u{e9}.example/",
+        "neoteletext://https://user@a.example/",
+        "neoteletext:// https://a.example/",
+        "neoteletext://https://a.example/ ",
+        "neoteletext://news.example/",
+        "https://a.example/",
+    ] {
+        assert!(outside_link(link).is_err(), "{link}");
+    }
+    let long = format!("neoteletext://https://a.example/{}", "x".repeat(protocol::MAX_ADDRESS));
+    assert!(outside_link(&long).is_err(), "longer than an address may be");
+}
+
+/// REQ-1701: a typed path is one by its form, and nothing is checked.
+#[test]
+fn a_typed_path_is_a_path_by_its_form_alone() {
+    let home = Path::new(if cfg!(windows) { r"C:\\Users\\a" } else { "/home/a" });
+    assert_eq!(typed_path("file:///x/y.t42", Some(home)).as_deref(), Some("/x/y.t42"));
+    assert_eq!(typed_path("news.example", Some(home)), None);
+    if !cfg!(windows) {
+        assert_eq!(typed_path("/no/such/file.t42", Some(home)).as_deref(), Some("/no/such/file.t42"));
+        assert_eq!(typed_path("~/x.t42", Some(home)).as_deref(), Some("/home/a/x.t42"));
+        assert_eq!(typed_path("~", Some(home)).as_deref(), Some("/home/a"));
+        assert_eq!(typed_path("~/x.t42", None), None, "no home folder known");
+        assert_eq!(typed_path("~other/x.t42", Some(home)), None, "another user's is not named");
+        assert!(parse("/no/such/file.t42").is_ok_and(|address| address.file.is_some()));
+    }
+}
