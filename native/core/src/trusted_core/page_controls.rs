@@ -539,6 +539,7 @@ mod tests {
 
     /// A tab on a live channel with page 210 open, its list of `subcodes`
     /// from a SUBPAGES sending.
+    #[cfg(feature = "interaction")]
     fn live_page(name: &str, subcodes: &[u16]) -> (super::super::test_support::Test, PageKey) {
         use protocol::fetcher::FromFetcher;
         use protocol::subpages::SubPageRows;
@@ -555,6 +556,7 @@ mod tests {
         (test, key)
     }
 
+    #[cfg(feature = "interaction")]
     fn drawn(test: &mut super::super::test_support::Test, key: PageKey, shown: u16, count: u16, place: u16) {
         use protocol::decoder::FromDecoder;
         let step = SubPageStep { count, shown, place: Some(place), previous: None, next: None };
@@ -565,6 +567,7 @@ mod tests {
     // SUBPAGES record before anything beyond the first sub-page is held;
     // the first sub-page drawn of a page selected with 3F7F is the
     // selection, with nothing fetched, and another arriving changes nothing.
+    #[cfg(feature = "interaction")]
     #[test]
     fn a_live_page_lists_from_its_record_and_adopts_its_first_sub_page() {
         let (mut test, key) = live_page("live list", &[0, 1, 2]);
@@ -582,6 +585,7 @@ mod tests {
 
     // REQ-1505 item 4: a step is one selection, loading until it arrives.
     // REQ-703: and no file is asked for.
+    #[cfg(feature = "interaction")]
     #[test]
     fn a_live_step_selects_the_next_sub_page_and_loads_until_it_arrives() {
         let (mut test, key) = live_page("live step", &[1, 2, 3]);
@@ -601,6 +605,7 @@ mod tests {
     }
 
     // DEC-1526: a channel served as files adopts nothing.
+    #[cfg(feature = "interaction")]
     #[test]
     fn a_channel_served_as_files_adopts_no_selection() {
         let mut test = super::super::test_support::Test::new("files");

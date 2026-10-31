@@ -95,6 +95,7 @@ impl Session {
     /// are counted again from here (REQ-1688 item 6), the page's own input
     /// is counted, and a mark that the buttons pass over it clears
     /// (DEC-1684 item 5).
+    #[cfg(feature = "interaction")]
     pub fn viewer_input(&mut self, channel: u32) {
         let Some(tab) = self.tabs.iter_mut().find(|tab| tab.channel.id == channel) else { return };
         tab.channel.redirects.clear();

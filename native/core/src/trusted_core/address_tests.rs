@@ -5,6 +5,7 @@
 
 use interface_core::canvas::PageKey;
 use interface_core::controls::PageControl;
+#[cfg(feature = "interaction")]
 use neoteletext_core::limits::SUBCODE_ANY;
 use protocol::decoder::FromDecoder;
 use protocol::fetcher::{Entry, FromFetcher};
@@ -64,6 +65,7 @@ fn arriving_at_a_channel_names_its_initial_page() {
     assert_eq!(entries(&test), 1, "no Back entry");
     let sent = test.sent();
     assert!(sent.contains(&ToInterface::Show(PageKey { channel, page: 0x100 })), "{sent:?}");
+    #[cfg(feature = "interaction")]
     assert_eq!(test.core.typing.selection(channel), Some((0x100, SUBCODE_ANY)), "and it is selected");
 }
 
@@ -97,6 +99,7 @@ fn the_address_follows_a_page_the_viewer_chose() {
 
 // REQ-1690: a followed link and a redirect moved the address already; what
 // the interface reports after them adds nothing.
+#[cfg(feature = "links")]
 #[test]
 fn a_page_the_core_opened_counts_once() {
     let (mut test, channel) = arrived("once");

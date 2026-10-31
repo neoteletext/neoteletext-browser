@@ -174,11 +174,13 @@ fn a_link_to_a_sub_page_opens_it() {
     viewer.page(vec![link("100:0002")], Vec::new(), Fastext::default(), VERSION, 0);
     viewer.click(VERSION);
     assert_eq!(viewer.address(), "https://news.invalid/teletext/#100/0002");
+    #[cfg(feature = "interaction")]
     assert_eq!(viewer.core.typing.selection(viewer.key.channel), Some((PAGE, 2)));
     viewer.page(vec![link("302:0002")], Vec::new(), Fastext::default(), VERSION + 1, 0);
     viewer.click(VERSION + 1);
     assert_eq!(viewer.address(), "https://news.invalid/teletext/#302/0002");
     viewer.core.intent(ToCore::Opened(Some(PageKey { page: 0x302, ..viewer.key }))).unwrap();
+    #[cfg(feature = "interaction")]
     assert_eq!(viewer.core.typing.selection(viewer.key.channel), Some((0x302, 2)), "when it opens");
 }
 
