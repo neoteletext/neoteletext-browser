@@ -124,6 +124,7 @@ fn changed_rows_keep_the_other_rows() {
 
 // REQ-1558 item 2: a pushed frame stores an entry, and a changed-rows frame
 // updates it to the merged page; the source, not an image, is what is kept.
+#[cfg(feature = "links")]
 #[test]
 fn a_pushed_frame_stands_in_the_cache_and_changed_rows_merge() {
     let mut engine = Engine::new();
@@ -140,6 +141,7 @@ fn a_pushed_frame_stands_in_the_cache_and_changed_rows_merge() {
 // REQ-1558 item 4, REQ-1559 item 2: past 24 hours a tile is missing, and
 // drawing it drops it; pages off screen are not named, nor pages of a
 // channel that was never pushed.
+#[cfg(feature = "links")]
 #[test]
 fn a_page_older_than_a_day_is_missing_and_not_drawn() {
     let mut engine = Engine::new();
@@ -161,7 +163,7 @@ fn a_fetched_page_is_not_missing() {
 
 // REQ-1558 item 7: without the feature, nothing outlives a change of what
 // is on screen, so the wall fills every tile each time it is shown.
-#[cfg(not(feature = "page-cache"))]
+#[cfg(all(feature = "links", not(feature = "page-cache")))]
 #[test]
 fn without_the_feature_nothing_is_kept() {
     let mut engine = Engine::new();

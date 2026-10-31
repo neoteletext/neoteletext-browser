@@ -43,6 +43,7 @@ impl App {
     /// What lies under a drop. winit's events do not follow a drag from
     /// another application, so the place comes from the system on macOS;
     /// where it cannot be known a drop is on the page, which replaces no tab.
+    #[cfg_attr(not(target_os = "macos"), allow(clippy::unused_self, reason = "only macOS can say where the pointer is"))]
     fn drop_target(&self) -> DropTarget {
         #[cfg(target_os = "macos")]
         if let Some(graphics) = &self.view.graphics
