@@ -114,18 +114,8 @@ impl Core {
                 self.log(Level::Warning, None, &format!("{what} was not followed: {refusal:?}"));
                 Ok(())
             }
-            Ok(Follow::Page(page)) => {
-                let Some(channel) = self.active_channel() else { return Ok(()) };
-                // A link to the page shown reloads it, as in Chrome.
-                let shown = self.session.active_tab().and_then(|tab| tab.address()).is_some_and(|shown| shown.page == Some(page));
-                if shown {
-                    return self.reload();
-                }
-                if self.session.show_page(page).is_some() {
-                    self.send(&ToInterface::Strip(self.strip()))?;
-                }
-                self.send(&ToInterface::Show(PageKey { channel, page }))
-            }
+            Ok(Follow::Page(page)) => self.follow_page(page, None),
+            Ok(Follow::SubPage(page, subpage)) => self.follow_page(page, Some(subpage)),
             Ok(Follow::Ask(prompt)) => self.link(LinkMessage::Prompt(Some(prompt))),
             Ok(Follow::Channel(address)) => {
                 // From the start page, the user's own navigation, with the
@@ -143,6 +133,20 @@ impl Core {
                 self.hand_off(&address)
             }
         }
+    }
+
+    /// A link led to `page` of the active channel, and to `subpage` of it if
+    /// it names one. A link to what is shown reloads it, as in Chrome.
+    fn follow_page(&mut self, page: u16, subpage: Option<u16>) -> Result<(), String> {
+        let Some(channel) = self.active_channel() else { return Ok(()) };
+        let shown = self.session.active_tab().and_then(|tab| tab.address()).map(|shown| (shown.page, shown.subpage));
+        if shown == Some((Some(page), subpage)) {
+            return self.reload();
+        }
+        if self.session.show_page(page).is_some() {
+            self.send(&ToInterface::Strip(self.strip()))?;
+        }
+        self.open_followed(PageKey { channel, page }, subpage)
     }
 
     /// Hands a web page to the system's web browser, logged with the page

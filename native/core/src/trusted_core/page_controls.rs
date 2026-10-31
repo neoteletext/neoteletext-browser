@@ -283,6 +283,13 @@ impl Core {
         self.send_controls()
     }
 
+    /// A link led to `key`: it opens, and its address follows a sub-page.
+    #[cfg(feature = "links")]
+    pub(super) fn open_followed(&mut self, key: PageKey, subpage: Option<u16>) -> Result<(), String> {
+        self.address_follows(key.page, subpage)?;
+        self.open_page(key, subpage)
+    }
+
     /// A tab behind others was redirected to `key`: its channel is told.
     pub(super) fn select_redirected(&mut self, key: PageKey, sub: u16) -> Result<(), String> {
         self.select_view(key, sub)

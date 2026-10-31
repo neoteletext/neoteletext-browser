@@ -29,6 +29,7 @@ impl Links {
         let name = destination.name();
         let address = match destination {
             Destination::Page(page) => return Ok(Follow::Page(page)),
+            Destination::SubPage(page, subpage) => return Ok(Follow::SubPage(page, subpage)),
             Destination::Channel(address) => return Ok(Follow::Channel(address)),
             Destination::Web(address) => address,
         };

@@ -86,6 +86,7 @@ impl Links {
                 // decided; here only another channel or this one's page.
                 match target {
                     Target::Page(page) => Destination::Page(*page),
+                    Target::SubPage(page, subpage) => Destination::SubPage(*page, *subpage),
                     Target::Service { name, page } => {
                         let address = descriptor.service(name).ok_or(Refusal::NotALink)?;
                         Destination::Channel(address.with_page(*page).ok_or(Refusal::NotALink)?)

@@ -21,6 +21,8 @@ use neoteletext_core::compose::compose_level;
 use neoteletext_core::config::Config;
 use neoteletext_core::consts::{CLOCK_BYTES, G2_RIGHT_GUILLEMET, ROWS, SPACE, STATUS_COLUMNS};
 #[cfg(feature = "links")]
+use neoteletext_core::consts::{COLOUR_BLUE_BIT, COLOUR_GREEN_BIT, COLOUR_RED_BIT};
+#[cfg(feature = "links")]
 use neoteletext_core::controls::{Control, Look, apply_look};
 use neoteletext_core::fsm::PageState;
 use neoteletext_core::level1::{DisplayOptions, Glyph, Grid, build_grid};
@@ -396,6 +398,10 @@ fn controls(stored: &StoredPage) -> Vec<protocol::links::Area> {
         .collect()
 }
 
+/// The Level 1 colours of the coloured keys' prompts, in their order.
+#[cfg(feature = "links")]
+const KEY_COLOURS: [u8; 4] = [COLOUR_RED_BIT, COLOUR_GREEN_BIT, COLOUR_RED_BIT | COLOUR_GREEN_BIT, COLOUR_GREEN_BIT | COLOUR_BLUE_BIT];
+
 /// A page's Fastext from its packet X/27/0, which the engine writes from a
 /// TTI page's link lines too (the engine's REQ-NAV-003), and whether its
 /// row 24 is shown as the engine's viewer decides it: drawn, and not boxed
@@ -422,5 +428,19 @@ fn fastext(stored: &StoredPage, grid: &Grid, receiver: Option<&ReceiverRow>) -> 
         }),
         None => [target(red), target(green), target(yellow), target(cyan), target(links.index)],
     };
-    protocol::links::Fastext { keys, row24 }
+    let prompts = grid.cells.get(FASTEXT_ROW).filter(|_| row24).map_or([None; 4], |row| prompts(row));
+    protocol::links::Fastext { keys, row24, prompts }
+}
+
+/// Where row 24 shows each coloured key's prompt: the cells from the first
+/// to the last that draw something in its colour (EN 300 706 clause 12.2.2's
+/// red, green, yellow and cyan), as a first column and a length.
+#[cfg(feature = "links")]
+fn prompts(row: &[neoteletext_core::level1::Cell]) -> [Option<(u8, u8)>; 4] {
+    KEY_COLOURS.map(|colour| {
+        let in_colour = |cell: &neoteletext_core::level1::Cell| cell.foreground == colour && !cell.glyph.is_blank();
+        let first = row.iter().position(in_colour)?;
+        let last = row.iter().rposition(in_colour)?;
+        Some((u8::try_from(first).ok()?, u8::try_from(last.checked_sub(first)?.checked_add(1)?).ok()?))
+    })
 }

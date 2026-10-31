@@ -1,6 +1,7 @@
 //! A page's Fastext as a decoder reads it from packet X/27/0: where each
 //! coloured key and Index lead, untrusted, for the trusted core to decide.
 
+use interface_core::canvas::COLUMNS;
 use interface_core::channel::page_index;
 
 use crate::decoder::names_one_subpage;
@@ -28,6 +29,9 @@ pub struct Fastext {
     pub keys: [Option<FastextTarget>; 5],
     /// Row 24 is drawn and not boxed away.
     pub row24: bool,
+    /// Where row 24 shows the red, green, yellow and cyan keys' prompts: a
+    /// first column and a length (REQ-1660 item 1).
+    pub prompts: [Option<(u8, u8)>; 4],
 }
 
 const FASTEXT_PAGE: u8 = 1;
@@ -35,8 +39,21 @@ const FASTEXT_SUBCODE: u8 = 2;
 const FASTEXT_SERVICE: u8 = 4;
 const FASTEXT_FLAGS: u8 = FASTEXT_PAGE | FASTEXT_SUBCODE | FASTEXT_SERVICE;
 
+/// A prompt lies within row 24's columns.
+fn check_prompt(column: u8, length: u8) -> Result<(), ProtocolError> {
+    if u16::from(column).saturating_add(u16::from(length)) > COLUMNS {
+        return Err(ProtocolError::BadValue("Fastext prompt"));
+    }
+    Ok(())
+}
+
 pub(crate) fn push_fastext(payload: &mut Vec<u8>, fastext: &Fastext) -> Result<(), ProtocolError> {
     payload.push(u8::from(fastext.row24));
+    for prompt in &fastext.prompts {
+        let (column, length) = prompt.unwrap_or((0, 0));
+        check_prompt(column, length)?;
+        payload.extend_from_slice(&[column, length]);
+    }
     for key in &fastext.keys {
         let Some(target) = key else {
             payload.push(0);
@@ -61,6 +78,12 @@ pub(crate) fn push_fastext(payload: &mut Vec<u8>, fastext: &Fastext) -> Result<(
 
 pub(crate) fn read_fastext(fields: &mut Fields<'_>) -> Result<Fastext, ProtocolError> {
     let row24 = fields.flag("Fastext row 24")?;
+    let mut prompts = [None; 4];
+    for prompt in &mut prompts {
+        let (column, length) = (fields.u8()?, fields.u8()?);
+        check_prompt(column, length)?;
+        *prompt = (length > 0).then_some((column, length));
+    }
     let mut keys = [None; 5];
     for key in &mut keys {
         let flags = fields.u8()?;
@@ -83,5 +106,5 @@ pub(crate) fn read_fastext(fields: &mut Fields<'_>) -> Result<Fastext, ProtocolE
         let service = if flags & FASTEXT_SERVICE == 0 { None } else { Some(fields.u8()?) };
         *key = Some(FastextTarget { page, subcode, service });
     }
-    Ok(Fastext { keys, row24 })
+    Ok(Fastext { keys, row24, prompts })
 }

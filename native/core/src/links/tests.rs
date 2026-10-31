@@ -41,7 +41,8 @@ fn runs(links: &Links) -> Vec<(u8, u8, LinkKind)> {
 #[test]
 fn targets_parse_in_every_form_of_the_tti_link_extension() {
     assert_eq!(parse_target("302"), Some(Target::Page(0x302)));
-    assert_eq!(parse_target("302:0001"), Some(Target::Page(0x302)), "a sub-page");
+    assert_eq!(parse_target("302:0001"), Some(Target::SubPage(0x302, 1)), "a sub-page");
+    assert_eq!(parse_target("302:3F7F"), Some(Target::Page(0x302)), "3F7F names none");
     assert_eq!(parse_target("sport:302"), Some(Target::Service { name: "sport".into(), page: 0x302 }));
     assert_eq!(parse_target("sport:302:0001"), Some(Target::Service { name: "sport".into(), page: 0x302 }));
     assert_eq!(parse_target("abc:302"), Some(Target::Service { name: "abc".into(), page: 0x302 }), "a name is not a page");
@@ -123,6 +124,8 @@ fn targets_are_classified_from_the_target_alone() {
     assert_eq!(decide("302"), Some(Destination::Page(0x302)));
     assert_eq!(decide("https://news.invalid/teletext/302.tti"), Some(Destination::Page(0x302)), "a page file of this channel");
     assert_eq!(decide("https://news.invalid/teletext/302.t42"), Some(Destination::Page(0x302)));
+    assert_eq!(decide("302:0002"), Some(Destination::SubPage(0x302, 2)));
+    assert_eq!(decide("https://news.invalid/teletext/#401/0002"), Some(Destination::SubPage(0x401, 2)), "this channel's");
     assert_eq!(decide("https://news.invalid/teletext/#401"), Some(Destination::Page(0x401)), "this channel at a page");
     assert_eq!(decide("https://news.invalid/teletext/"), Some(Destination::Page(INITIAL_PAGE)));
     let Some(Destination::Channel(other)) = decide("https://news.invalid/other/302.tti") else { panic!() };
@@ -268,6 +271,37 @@ fn a_pointed_link_says_where_it_leads_in_full() {
     assert_eq!(complete(&mut links, 20), None, "nothing where no link is");
 }
 
+// REQ-1660 item 3: a link within the channel shows its sub-page when it has
+// one, and follows it.
+#[test]
+fn a_link_to_a_sub_page_says_so_and_goes_there() {
+    let mut links = links_with(vec![declared(5, 0, 7, "401:0002")], Vec::new());
+    let pointing = links.point(Some(spot(1, 1, 5))).unwrap();
+    assert_eq!(pointing.complete, "Page 401, sub-page 0002");
+    assert_eq!(links.click(spot(1, 1, 5), Some(CHANNEL), LATER), Ok(Follow::SubPage(0x401, 2)));
+}
+
+// REQ-1660 item 1: a coloured key's prompt on row 24 is a link to where the
+// key leads, with no prompt while row 24 is not shown; a click follows it.
+#[test]
+fn a_keys_prompt_says_where_it_leads() {
+    use protocol::links::FastextTarget;
+    let keys = [Some(FastextTarget { page: 0x200, subcode: Some(3), service: None }), None, None, None, None];
+    let prompts = [Some((2, 8)), None, Some((12, 8)), None];
+    let address = home();
+    let channel = Channel { id: CHANNEL, address: &address };
+    let mut links = Links::default();
+    links.opened(Some(OPEN));
+    links.found(OPEN, Vec::new(), Vec::new(), Vec::new(), Fastext { keys, row24: true, prompts });
+    let runs = links.image(OPEN, 1, &channel, START).runs;
+    assert_eq!(runs.iter().map(|run| (run.row, run.column, run.length)).collect::<Vec<_>>(), [(24, 2, 8)], "the yellow key leads nowhere");
+    let pointing = links.point(Some(spot(1, 3, 24))).unwrap();
+    assert_eq!(pointing.complete, "Page 200, sub-page 0003");
+    assert_eq!(links.click(spot(1, 3, 24), Some(CHANNEL), LATER), Ok(Follow::SubPage(0x200, 3)));
+    links.found(OPEN, Vec::new(), Vec::new(), Vec::new(), Fastext { keys, row24: false, prompts });
+    assert!(links.image(OPEN, 2, &channel, LATER).runs.is_empty(), "a boxed page's row 24 acts on nothing");
+}
+
 // REQ-1660 item 4: a character that would disguise an address cannot be in
 // a link's address at all, so none reaches the popover.
 #[test]
@@ -404,7 +438,7 @@ fn fastext_keys_follow_as_links_do() {
         &[],
         &[Service { name: "news".into(), address: "https://news.invalid/".into() }, Service { name: "sport".into(), address: "https://sport.invalid/".into() }],
     );
-    links.found(OPEN, Vec::new(), Vec::new(), Vec::new(), Fastext { keys, row24: true });
+    links.found(OPEN, Vec::new(), Vec::new(), Vec::new(), Fastext { keys, row24: true, prompts: [None; 4] });
     let address = home();
     links.image(OPEN, 1, &Channel { id: CHANNEL, address: &address }, START);
     assert_eq!(links.fastext_keys(OPEN), [true, true, false, false, true], "the unknown seventh service leads nowhere");
@@ -413,7 +447,7 @@ fn fastext_keys_follow_as_links_do() {
     assert_eq!((sport.channel_text(), sport.page), ("https://sport.invalid/", Some(0x300)));
     assert_eq!(links.fastext(FastextKey::Yellow, Some(CHANNEL), START), Err(Refusal::NotALink));
     assert_eq!(links.fastext(FastextKey::Red, Some(CHANNEL + 1), START), Err(Refusal::NotOpen), "only the active channel's open page");
-    links.found(OPEN, Vec::new(), Vec::new(), Vec::new(), Fastext { keys, row24: false });
+    links.found(OPEN, Vec::new(), Vec::new(), Vec::new(), Fastext { keys, row24: false, prompts: [None; 4] });
     links.image(OPEN, 2, &Channel { id: CHANNEL, address: &address }, START);
     assert_eq!(links.fastext_keys(OPEN), [false; 5]);
     assert_eq!(links.fastext(FastextKey::Red, Some(CHANNEL), START), Err(Refusal::NotALink), "row 24 hidden: no key acts");

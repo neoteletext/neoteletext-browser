@@ -57,10 +57,16 @@ impl Core {
             let key = PageKey { channel, page };
             if core.active_channel() != Some(channel) {
                 // Its tab opens the page when it is shown.
-                return core.select_redirected(key, sub);
+                core.select_redirected(key, sub)?;
+                core.keep_session();
+                return Ok(());
             }
             core.send(&ToInterface::Strip(core.strip()))?;
-            core.open_page(key, subpage)
+            core.open_page(key, subpage)?;
+            // A record is no intent, whose end records and keeps these.
+            core.record_drawn()?;
+            core.keep_session();
+            Ok(())
         })
     }
 

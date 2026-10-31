@@ -29,6 +29,8 @@ const WEB: &str = "web:";
 pub enum Target {
     /// A page of this channel.
     Page(u16),
+    /// A sub-page of a page of this channel.
+    SubPage(u16, u16),
     /// A page of a service the channel's descriptor names.
     Service {
         /// The service's short name.
@@ -68,7 +70,8 @@ pub fn parse_target(text: &str) -> Option<Target> {
         // `mpp:ssss`, or `name:mpp`: a page number is three hexadecimal
         // digits and a name of three such letters is read as a page.
         (Some(second), None) => match (page(first), subpage(second)) {
-            (Some(page), Some(())) => Some(Target::Page(page)),
+            (Some(page), Some(subpage)) if names_one_subpage(subpage) => Some(Target::SubPage(page, subpage)),
+            (Some(page), Some(_)) => Some(Target::Page(page)),
             _ => Some(Target::Service { name: name(first)?, page: page(second)? }),
         },
         (Some(second), Some(third)) => {
@@ -88,10 +91,15 @@ pub(super) fn page(text: &str) -> Option<u16> {
     page_index(page).map(|_| page)
 }
 
-/// A sub-page: four hexadecimal digits. Links go to a page; its sub-page
-/// is shown as the page shows it.
-fn subpage(text: &str) -> Option<()> {
-    (text.len() == SUBPAGE_DIGITS && text.bytes().all(|byte| byte.is_ascii_hexdigit())).then_some(())
+/// A sub-page: four hexadecimal digits.
+fn subpage(text: &str) -> Option<u16> {
+    (text.len() == SUBPAGE_DIGITS && text.bytes().all(|byte| byte.is_ascii_hexdigit())).then(|| u16::from_str_radix(text, HEXADECIMAL).ok())?
+}
+
+/// Whether four digits name one sub-page: 3F7F names none, and a value with
+/// bits outside the thirteen is no sub-code (the engine's REQ-NUM-002).
+fn names_one_subpage(subpage: u16) -> bool {
+    neoteletext_core::limits::is_sub_code(subpage) && subpage != neoteletext_core::limits::SUBCODE_ANY
 }
 
 /// A service's short name: letters, digits and hyphens (TTI Link Extension

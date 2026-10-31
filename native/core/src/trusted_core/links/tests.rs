@@ -100,7 +100,7 @@ fn a_coloured_key_and_index_to_another_channel_go_at_once() {
         let channel = viewer.key.channel;
         viewer.core.links.descriptor(channel, &[], &[Service { name: "weather".into(), address: ELSEWHERE.into() }]);
         let target = Some(FastextTarget { page: 0x100, subcode: None, service: Some(0) });
-        viewer.page(Vec::new(), Vec::new(), Fastext { keys: [target, target, target, target, target], row24: true }, VERSION, 0);
+        viewer.page(Vec::new(), Vec::new(), Fastext { keys: [target, target, target, target, target], row24: true, prompts: [None; 4] }, VERSION, 0);
         viewer.core.intent(ToCore::PageControl(PageControl::Fastext(key))).unwrap();
         viewer.went("https://weather.invalid/teletext/#100", HOME);
     }
@@ -164,6 +164,22 @@ fn a_link_changed_under_the_pointer_is_not_followed() {
     viewer.core.intent(ToCore::Point(Some(Spot { version: VERSION + 1, ..spot }))).unwrap();
     viewer.core.intent(ToCore::Cell { key: viewer.key, version: VERSION + 1, column: spot.column, row: spot.row }).unwrap();
     assert_eq!(viewer.address(), HOME, "not followed within its half second of changing ({DWELL_MILLISECONDS} ms)");
+}
+
+// REQ-1660 item 3, REQ-1690: a link naming a sub-page opens it, and the
+// address says so: on the page open, or on another.
+#[test]
+fn a_link_to_a_sub_page_opens_it() {
+    let mut viewer = Viewer::on(HOME);
+    viewer.page(vec![link("100:0002")], Vec::new(), Fastext::default(), VERSION, 0);
+    viewer.click(VERSION);
+    assert_eq!(viewer.address(), "https://news.invalid/teletext/#100/0002");
+    assert_eq!(viewer.core.typing.selection(viewer.key.channel), Some((PAGE, 2)));
+    viewer.page(vec![link("302:0002")], Vec::new(), Fastext::default(), VERSION + 1, 0);
+    viewer.click(VERSION + 1);
+    assert_eq!(viewer.address(), "https://news.invalid/teletext/#302/0002");
+    viewer.core.intent(ToCore::Opened(Some(PageKey { page: 0x302, ..viewer.key }))).unwrap();
+    assert_eq!(viewer.core.typing.selection(viewer.key.channel), Some((0x302, 2)), "when it opens");
 }
 
 // REQ-808, REQ-1670: a `web:` link keeps its prompt, and the tab stays.

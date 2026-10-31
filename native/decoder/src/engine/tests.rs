@@ -203,6 +203,8 @@ fn a_links_records_keys_act_and_draw_row_24() {
     let fastext = engine.render_at(0x100, 0).unwrap().links.fastext;
     assert!(fastext.row24, "the receiver drew row 24");
     assert_eq!(fastext.keys.map(|key| key.map(|key| key.page)), [Some(0x200), None, None, None, Some(0x100)]);
+    assert!(fastext.prompts[0].is_some_and(|(_, length)| length >= u8::try_from("Headlines".len()).unwrap()), "REQ-1660 item 1: where the red key's prompt is");
+    assert_eq!(fastext.prompts[3], None, "the cyan key has none");
     engine.feed_whole(true, true, &pushed(FRAME, None));
     let fastext = engine.render_at(0x100, 0).unwrap().links.fastext;
     assert_eq!(fastext.keys, [None; 5], "no record, no keys");

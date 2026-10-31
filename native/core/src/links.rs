@@ -38,9 +38,12 @@ pub const DWELL_MILLISECONDS: u64 = 500;
 /// section 8.3).
 pub const KEPT_IMAGES: usize = 4;
 /// Text rows: row 0 is the header, row 24 the Fastext row, and neither
-/// holds links (`hyperlinks.md` sections 6.1 and 8.2).
+/// holds a page's own links (`hyperlinks.md` sections 6.1 and 8.2); row 24
+/// holds the coloured keys' prompts, which are links of their own
+/// (REQ-1660 item 1).
 const FIRST_LINK_ROW: u8 = 1;
 const LAST_LINK_ROW: u8 = 23;
+const PROMPT_ROW: u8 = 24;
 /// One link of an image, decided.
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct Link {
@@ -83,6 +86,8 @@ type Decided = (Vec<(LinkRun, Destination)>, Vec<(u16, Destination)>, Vec<Area>)
 pub enum Follow {
     /// Open this page of the active channel.
     Page(u16),
+    /// Open this sub-page of a page of the active channel.
+    SubPage(u16, u16),
     /// Ask in the trusted strip first: a web page.
     Ask(Prompt),
     /// Open this channel in the active tab, at once (REQ-1670).
@@ -241,6 +246,22 @@ impl Links {
         })
     }
 
+    /// The coloured keys' prompts on row 24, as links to where each key
+    /// leads.
+    fn prompts(&self, key: PageKey) -> Vec<(LinkRun, Destination)> {
+        let Some(state) = self.pages.get(&key) else { return Vec::new() };
+        let keys = self.decide_fastext(key);
+        let prompts = state.fastext.prompts.iter().zip(keys).filter_map(|(prompt, key)| {
+            let (column, length) = (*prompt)?;
+            let destination = match key? {
+                (Destination::Page(page), Some(subpage)) => Destination::SubPage(page, subpage),
+                (destination, _) => destination,
+            };
+            Some((LinkRun { row: PROMPT_ROW, column, length, double: false, light: false, kind: destination.kind() }, destination))
+        });
+        prompts.collect()
+    }
+
     /// Which of Fastext's keys lead somewhere on the latest image of the
     /// open page, for the controls the interface draws.
     #[must_use]
@@ -319,7 +340,9 @@ impl Links {
             }
             runs.push((run, destination));
         }
-        runs.truncate(MAX_RUNS);
+        let prompts = self.prompts(key);
+        runs.truncate(MAX_RUNS.saturating_sub(prompts.len()));
+        runs.extend(prompts);
         runs.sort_by_key(|(run, _)| (run.row, run.column));
         let controls = decide_controls(controls, &runs);
         (runs, numbers, controls)

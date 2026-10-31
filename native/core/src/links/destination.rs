@@ -20,6 +20,8 @@ const PAGE_FILES: [&str; 2] = [".tti", ".t42"];
 pub enum Destination {
     /// A page of this channel: followed at once.
     Page(u16),
+    /// A sub-page of a page of this channel, the same.
+    SubPage(u16, u16),
     /// Another channel, at the page its address names, if any: followed at
     /// once, in the same tab (REQ-1670).
     Channel(Address),
@@ -32,7 +34,7 @@ impl Destination {
     #[must_use]
     pub fn kind(&self) -> LinkKind {
         match self {
-            Self::Page(_) => LinkKind::Page,
+            Self::Page(_) | Self::SubPage(..) => LinkKind::Page,
             Self::Channel(_) => LinkKind::Channel,
             Self::Web(_) => LinkKind::Web,
         }
@@ -44,6 +46,7 @@ impl Destination {
     pub fn name(&self) -> String {
         let text = match self {
             Self::Page(page) => format!("Page {page:03X}"),
+            Self::SubPage(page, subpage) => format!("Page {page:03X}, sub-page {subpage:04X}"),
             Self::Channel(address) => match address.page {
                 Some(page) => format!("Page {page:03X} of {}", address.host),
                 None => address.channel_text().to_owned(),
@@ -59,7 +62,7 @@ impl Destination {
     #[must_use]
     pub fn complete(&self) -> String {
         let text = match self {
-            Self::Page(_) => self.name(),
+            Self::Page(_) | Self::SubPage(..) => self.name(),
             Self::Channel(address) => address.text.clone(),
             Self::Web(address) => format!("{address} (opens in your web browser)"),
         };
@@ -71,7 +74,7 @@ impl Destination {
     #[must_use]
     pub fn describe(&self) -> String {
         let text = match self {
-            Self::Page(_) => self.name(),
+            Self::Page(_) | Self::SubPage(..) => self.name(),
             Self::Channel(_) => format!("{} (leaves this channel)", self.name()),
             Self::Web(_) => format!("{} (opens in your web browser)", self.name()),
         };
@@ -154,11 +157,16 @@ impl Descriptor {
     pub(super) fn resolve(&self, target: &Target, channel: &Channel<'_>) -> Option<Destination> {
         match target {
             Target::Page(page) => Some(Destination::Page(*page)),
+            Target::SubPage(page, subpage) => Some(Destination::SubPage(*page, *subpage)),
             Target::Service { name, page } => {
                 let (_, address) = self.services.iter().find(|(known, _)| known == name)?;
                 Some(Destination::Channel(address.with_page(*page)?))
             }
-            Target::Channel(address) => Some(channel.own_page(address).map_or_else(|| Destination::Channel(address.clone()), Destination::Page)),
+            Target::Channel(address) => Some(match (channel.own_page(address), address.subpage) {
+                (Some(page), Some(subpage)) => Destination::SubPage(page, subpage),
+                (Some(page), None) => Destination::Page(page),
+                (None, _) => Destination::Channel(address.clone()),
+            }),
             Target::Web(address) => Some(Destination::Web(address.clone())),
         }
     }

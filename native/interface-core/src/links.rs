@@ -74,7 +74,7 @@ impl LinkKind {
 /// checks already applied.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct LinkRun {
-    /// The row, 1 to 23.
+    /// The row, 1 to 23, or 24 for a coloured key's prompt.
     pub row: u8,
     /// The first column.
     pub column: u8,
@@ -91,6 +91,13 @@ pub struct LinkRun {
 }
 
 impl LinkRun {
+    /// Whether this is a coloured key's prompt on row 24: the page's own
+    /// colours say what it is, and no line is drawn under it.
+    #[must_use]
+    pub fn is_prompt(&self) -> bool {
+        u16::from(self.row) == ROWS.saturating_sub(1)
+    }
+
     /// Whether the cell at `column`, `row` is part of the link.
     #[must_use]
     pub fn contains(&self, column: u8, row: u8) -> bool {
@@ -265,7 +272,7 @@ pub fn draw<C: Canvas + ?Sized>(canvas: &mut C, rect: Rect, runs: &[LinkRun], hi
     let scale = canvas.device_scale();
     let base = if dot >= THICK_DOT_PIXELS { THICK_PIXELS } else { THIN_PIXELS };
     let edge = EDGE_PIXELS / scale;
-    for (index, run) in runs.iter().enumerate() {
+    for (index, run) in runs.iter().enumerate().filter(|(_, run)| !run.is_prompt()) {
         let marked = highlighted == Some(index) || focused == Some(index);
         let line = underline(rect, run, base + if marked { HIGHLIGHT_PIXELS } else { 0.0 }, scale);
         canvas.fill(Rect::new(line.x0, line.y0 - edge, line.x1, line.y1 + edge), 0.0, if run.light { BLACK } else { WHITE });
@@ -282,6 +289,20 @@ pub fn draw<C: Canvas + ?Sized>(canvas: &mut C, rect: Rect, runs: &[LinkRun], hi
 mod tests {
     use super::*;
     use crate::test_canvas::Recorder;
+
+    // REQ-1660 item 1: a prompt is a link to rest on, and its page's colours
+    // already say what it is: no line goes under it.
+    #[test]
+    fn a_prompt_has_no_line_under_it() {
+        let prompt = LinkRun { row: 24, column: 2, length: 8, double: false, light: false, kind: LinkKind::Page };
+        assert!(prompt.is_prompt() && prompt.contains(3, 24));
+        assert!(!LinkRun { row: 23, ..prompt }.is_prompt());
+        let mut canvas = Recorder::new();
+        draw(&mut canvas, PAGE, &[prompt], None, None);
+        assert_eq!(canvas.fills.len(), 0);
+        draw(&mut canvas, PAGE, &[LinkRun { row: 23, ..prompt }], None, None);
+        assert!(!canvas.fills.is_empty(), "a link's line is drawn");
+    }
 
     const PAGE: Rect = Rect::new(0.0, 0.0, 480.0, 500.0);
 
