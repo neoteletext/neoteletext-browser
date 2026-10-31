@@ -23,7 +23,7 @@ const GAP: f64 = 12.0;
 const SIZE_STEP: f32 = 1.0;
 /// The size it stops at: a window narrowed past what the smallest window's
 /// longest address needs is the only way here, and is clipped.
-const SMALLEST_SIZE: f32 = 6.0;
+const SMALLEST_SIZE: f32 = 5.0;
 
 /// The address wrapped to `area`, in the largest style it fits in with the
 /// first line above it, with that style's line height.

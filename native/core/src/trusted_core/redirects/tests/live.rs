@@ -247,8 +247,10 @@ fn the_viewers_input_starts_the_count_again() {
 #[test]
 fn the_longest_address_a_record_carries_is_followed() {
     use neoteletext_web::records::redirect::MAX_ADDRESS;
-    let head = "https://long.invalid/";
-    let location = format!("{head}{}", "a".repeat(MAX_ADDRESS - head.len()));
+    // An address names a page to take up the last of the bound: one with no
+    // page and no room for one is refused (REQ-1690 item 10).
+    let (head, page) = ("https://long.invalid/", "#302/0002");
+    let location = format!("{head}{}{page}", "a".repeat(MAX_ADDRESS - head.len() - page.len()));
     assert_eq!(location.len(), MAX_ADDRESS);
     let (mut core, _stand_in, _) = live_with_broker();
     program_redirect(&mut core, &location);

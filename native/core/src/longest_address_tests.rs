@@ -36,7 +36,10 @@ fn the_address_rules_take_the_longest_and_no_more() {
 fn the_settings_keep_the_longest_home_and_every_blocked_channel() {
     let home = checked_address(&longest()).unwrap();
     assert_eq!(home, channel());
-    let cookie_block = (0..MAX_BLOCKED).map(|index| format!("{HEAD}{index:04}{}", "x".repeat(LONGEST.saturating_sub(HEAD.len()).saturating_sub(4)))).collect();
+    // A blocked channel is a folder, its key ending in `/`, at the longest a
+    // channel's address may be.
+    let folder_text = LONGEST.saturating_sub(HEAD.len()).saturating_sub(PAGE.len()).saturating_sub("0000/".len());
+    let cookie_block = (0..MAX_BLOCKED).map(|index| format!("{HEAD}{index:04}{}/", "x".repeat(folder_text))).collect();
     let settings = Settings { home, cookie_block, ..Settings::default() };
     let (read, dropped) = Settings::read(&settings.text());
     assert!(dropped.is_empty(), "{dropped:?}");
