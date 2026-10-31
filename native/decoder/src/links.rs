@@ -8,7 +8,7 @@ use std::collections::BTreeMap;
 
 use neoteletext_core::charset::to_unicode;
 use neoteletext_core::level1::{Cell, Glyph, Grid, Size};
-use neoteletext_formats::page::{LinkDestination, PageFile};
+use neoteletext_formats::page::{LINK_LINES, LinkDestination, LinkLine, PageFile};
 use protocol::links::{Candidate, MAX_NUMBER_LINKS, MAX_TARGET, MAX_TEXT_LINKS, NumberLink};
 
 /// Light backgrounds take a black edge on the underline: those brighter
@@ -26,6 +26,25 @@ pub struct LinkLines {
     text: Vec<(u8, u8, u8, String)>,
     /// `LK`: a page number and its target.
     numbers: Vec<NumberLink>,
+    /// A LINKS record's `LN` lines. A page file's stay in the page file,
+    /// which draws its row 24 as it is read.
+    keys: Vec<LinkLine>,
+}
+
+impl LinkLines {
+    /// The receiver's row 24 and keys these lines give, as a page file
+    /// with the same `LN` lines gives them (the engine's REQ-NAV-011).
+    #[must_use]
+    pub fn key_file(&self) -> Option<PageFile> {
+        if self.keys.is_empty() {
+            return None;
+        }
+        let mut file = PageFile::new();
+        for &line in &self.keys {
+            file.links.push(line);
+        }
+        Some(file)
+    }
 }
 
 /// The link lines of every page file read, by page number and sub-code,
@@ -37,15 +56,21 @@ impl Lines {
     /// Keeps the link lines of a page file, replacing its earlier version's.
     pub fn read(&mut self, page: &PageFile) {
         let key = (page.address.mpp(), page.subcode.value());
-        self.set(key, page.text_links.as_slice().iter().copied(), page.number_links.as_slice().iter().copied(), true);
+        self.set(key, page.text_links.as_slice().iter().copied(), page.number_links.as_slice().iter().copied(), core::iter::empty(), true);
     }
 
     /// Keeps a pushed sub-page's links from its LINKS record (REQ-1494),
-    /// as its page file's `LT` and `LK` lines would give them: part 0
-    /// replaces what was held, later parts add to it.
+    /// as its page file's `LT`, `LK` and `LN` lines would give them: part
+    /// 0 replaces what was held, later parts add to it.
     pub fn read_record(&mut self, record: &neoteletext_web::records::links::LinksRecord<'_>) {
         let key = (record.page.mpp(), record.subcode.value());
-        self.set(key, record.text_links(), record.number_links(), record.part == 0);
+        self.set(key, record.text_links(), record.number_links(), record.key_links(), record.part == 0);
+    }
+
+    /// Drops what is held for a sub-page a frame came for with no LINKS
+    /// record: it has no links (neoteletext-common's DEC-1517).
+    pub fn clear(&mut self, page: u16, subcode: u16) {
+        self.0.remove(&(page, subcode));
     }
 
     fn set(
@@ -53,6 +78,7 @@ impl Lines {
         key: (u16, u16),
         texts: impl Iterator<Item = neoteletext_formats::page::TextLink>,
         numbers: impl Iterator<Item = neoteletext_formats::page::NumberLink>,
+        keys: impl Iterator<Item = LinkLine>,
         replace: bool,
     ) {
         let mut lines = if replace { LinkLines::default() } else { self.0.remove(&key).unwrap_or_default() };
@@ -60,6 +86,8 @@ impl Lines {
         lines.text.truncate(MAX_TEXT_LINKS);
         lines.numbers.extend(numbers.filter_map(|link| Some(NumberLink { number: link.number.mpp(), target: target(&link.destination)? })));
         lines.numbers.truncate(MAX_NUMBER_LINKS);
+        lines.keys.extend(keys);
+        lines.keys.truncate(LINK_LINES);
         if lines == LinkLines::default() {
             self.0.remove(&key);
         } else {

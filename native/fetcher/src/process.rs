@@ -20,7 +20,7 @@ use neoteletext_web::agent::{Config, Event, Input, Output, Source, Storage, Subs
 use neoteletext_web::consts::ALLOWED_LOCAL;
 use neoteletext_web::contents::{self, Entry as ContentsEntry};
 use neoteletext_web::http::MediaType;
-use neoteletext_web::port::{ConnectionId, NetOutput, Pump, Security};
+use neoteletext_web::port::{ConnectionId, NetOutput, Pump, Security, Transport};
 use neoteletext_web::proxy::Proxy;
 use neoteletext_web::subpages;
 use protocol::fetcher::{CATALOGUE_PART, Entry, FromFetcher, Origin, ToFetcher, read_to_fetcher, write_to_core};
@@ -75,6 +75,9 @@ const _: () = assert!(neoteletext_input::event::MAX_MOVE_BYTES <= neoteletext_we
 /// groups of this many, still in order.
 #[cfg(feature = "interaction")]
 const MOMENT_MESSAGES: usize = neoteletext_web::consts::PUSH_MOVE_SLOTS + 1;
+
+/// How often the last writes are looked at.
+const LAST_WRITE_POLL: Duration = Duration::from_millis(1);
 
 /// The wake that ends the loop's wait: none at once while the loop is
 /// busy; otherwise the first to come, an input message the moment it
@@ -136,7 +139,7 @@ enum Action {
         origin: Origin,
         bytes: Vec<u8>,
     },
-    Ready,
+    Ready(u16),
     Contents(Vec<u8>),
     /// A page's catalogue of sub-pages, as fetched.
     SubPages(PageAddress, Vec<u8>),
@@ -149,9 +152,14 @@ enum Action {
     Tell(FromFetcher),
     /// The push connection opened or was lost.
     Push(bool),
-    /// A part of a live channel's index: its pages, and the sending's
-    /// generation.
-    Index(Vec<(u16, String, String)>, u16),
+    /// A part of a live channel's index: its magazine, the magazine's
+    /// name, its pages, and the sending's generation.
+    Index {
+        magazine: u8,
+        name: String,
+        pages: Vec<(u16, String, String)>,
+        generation: u16,
+    },
     /// Every part of an index sending arrived.
     IndexComplete(u16),
     /// A part of a page's list of sub-pages from a SUBPAGES record.
@@ -195,7 +203,7 @@ fn collect(output: Output<'_>, actions: &mut Vec<Action>) {
     }
     actions.push(match output {
         Output::Timer { at } => Action::Timer(at),
-        Output::Event(Event::ServiceReady { .. }) => Action::Ready,
+        Output::Event(Event::ServiceReady { initial_page, .. }) => Action::Ready(initial_page.mpp()),
         Output::Event(Event::Contents(bytes)) => Action::Contents(bytes.to_vec()),
         Output::Event(Event::SubPages { page, bytes }) => Action::SubPages(page, bytes.to_vec()),
         Output::Event(Event::SubPagesCurrent { page }) => Action::SubPagesCurrent(page),
@@ -238,7 +246,8 @@ fn collect(output: Output<'_>, actions: &mut Vec<Action>) {
         Output::Event(Event::ChannelConnecting) => Action::Tell(FromFetcher::Connecting(true)),
         Output::Event(Event::ChannelLive) => Action::Tell(FromFetcher::Connecting(false)),
         Output::Event(Event::Index(record)) => {
-            Action::Index(record.pages().map(|page| (page.page, page.title.to_owned(), page.section.to_owned())).collect(), record.generation)
+            let pages = record.pages().map(|page| (page.page, page.title.to_owned(), page.section.to_owned())).collect();
+            Action::Index { magazine: record.magazine, name: record.name.to_owned(), pages, generation: record.generation }
         }
         Output::Event(Event::IndexComplete { generation }) => Action::IndexComplete(generation),
         Output::Event(Event::SubPageList(record)) => Action::SubPageList(SubPageListPart {
@@ -385,7 +394,8 @@ pub fn run(channel: &str, allowed: &[IpAddr], proxy: Option<Proxy>) -> Result<()
                 Action::Close(connection) => pump.execute(NetOutput::Close(connection)),
                 Action::Timer(at) => next_tick = Some(next_tick.map_or(at, |current| current.min(at))),
                 Action::Bytes { origin, bytes } => send(&output, &FromFetcher::Page { origin, bytes })?,
-                Action::Ready => {
+                Action::Ready(page) => {
+                    send(&output, &FromFetcher::InitialPage(page))?;
                     // The descriptor's links, for the trusted core to decide
                     // (`hyperlinks.md` section 6.4).
                     #[cfg(feature = "links")]
@@ -413,7 +423,7 @@ pub fn run(channel: &str, allowed: &[IpAddr], proxy: Option<Proxy>) -> Result<()
                 }
                 Action::Answered => waiting = false,
                 Action::Push(open) => push_changed(&agent, &output, open)?,
-                action @ (Action::Index(..) | Action::IndexComplete(_) | Action::SubPageList(_)) => live_record(action, &mut live, &output)?,
+                action @ (Action::Index { .. } | Action::IndexComplete(_) | Action::SubPageList(_)) => live_record(action, &mut live, &output)?,
                 Action::Tell(message) => send(&output, &message)?,
             }
         }
@@ -437,6 +447,7 @@ pub fn run(channel: &str, allowed: &[IpAddr], proxy: Option<Proxy>) -> Result<()
         // Every wake already here, so the input messages read at the same
         // moment are known to follow one another (REQ-RCH-010).
         let mut woke: VecDeque<Wake> = first.into_iter().chain(std::iter::from_fn(|| woken.try_recv().ok())).collect();
+        let mut ended = false;
         while let Some(wake) = woke.pop_front() {
             match wake {
                 #[cfg(feature = "interaction")]
@@ -449,9 +460,30 @@ pub fn run(channel: &str, allowed: &[IpAddr], proxy: Option<Proxy>) -> Result<()
                 Wake::Fetch(asked) => fetch(&mut agent, &clock, &asked, &mut actions),
                 // The sockets are looked at on the next turn.
                 Wake::Network => {}
-                Wake::Ended => return Ok(()),
+                Wake::Ended => ended = true,
             }
         }
+        if ended {
+            send_last(&mut pump, actions);
+            return Ok(());
+        }
+    }
+}
+
+/// What the trusted core's last messages produced leaves before the
+/// fetcher ends, so a channel is told a tab left (SELECT of page 0,
+/// neoteletext-common's DEC-1538 item 3). A network that does not take it
+/// in [`protocol::fetcher::LAST_WRITES_WAIT`] holds nothing up: the channel sees the
+/// connection close, which says as much.
+fn send_last(pump: &mut Pump<Tcp>, actions: Vec<Action>) {
+    for action in actions {
+        if let Action::Send(connection, bytes) = action {
+            pump.execute(NetOutput::Send(connection, &bytes));
+        }
+    }
+    let begun = Clock::now();
+    while pump.transport.unsent(ConnectionId::Push) > 0 && begun.elapsed() < protocol::fetcher::LAST_WRITES_WAIT {
+        std::thread::sleep(LAST_WRITE_POLL);
     }
 }
 
@@ -467,8 +499,8 @@ struct Live {
 /// gives.
 fn live_record(action: Action, live: &mut Live, output: &cookies::Output) -> Result<(), String> {
     match action {
-        Action::Index(pages, generation) => {
-            live.index.note(&pages, generation);
+        Action::Index { magazine, name, pages, generation } => {
+            live.index.note(magazine, &name, &pages, generation);
             send(output, &FromFetcher::Contents(live.index.entries()))
         }
         Action::IndexComplete(generation) => {
@@ -792,7 +824,7 @@ mod tests {
         let mut response = format!("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n", body.len()).into_bytes();
         response.extend_from_slice(body);
         handle(agent, Input::Net(NetInput::Received(ConnectionId::Fetch, &response)), &mut actions);
-        assert!(actions.iter().any(|action| matches!(action, Action::Ready)), "the channel is ready");
+        assert!(actions.iter().any(|action| matches!(action, Action::Ready(_))), "the channel is ready");
         ask_for_channel(agent, &|| Instant(now), &mut actions);
         assert!(actions.iter().any(|action| matches!(action, Action::Connect { connection: ConnectionId::Push, .. })), "the push connection opens");
         handle(agent, Input::Net(NetInput::Connected(ConnectionId::Push, PUBLIC)), &mut actions);

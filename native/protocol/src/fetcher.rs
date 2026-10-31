@@ -6,6 +6,7 @@
 //! passes page bytes to the channel's decoder without reading them.
 
 use std::io::{Read, Write};
+use std::time::Duration;
 
 pub use interface_core::browser::CertificateProblem;
 
@@ -16,8 +17,8 @@ use interface_core::channel::page_index;
 use kinds::KIND_LINKS;
 use kinds::{
     KIND_CERTIFICATE_REFUSED, KIND_CHANNEL_LOG, KIND_CLEAR_SITE_DATA, KIND_CONFINED, KIND_CONNECTING, KIND_CONTENTS, KIND_COOKIE_ANSWER, KIND_COOKIE_QUESTION,
-    KIND_COOKIE_SET, KIND_EXCHANGE, KIND_FETCH_SUBPAGE, KIND_FETCH_SUBPAGES, KIND_INVALID_PACKETS, KIND_NOTICE, KIND_PAGE, KIND_PROXY_FAILED, KIND_PUSHING,
-    KIND_REACHED_ANSWER, KIND_REACHED_QUESTION, KIND_SUBPAGES, KIND_SUBPAGES_MISSING,
+    KIND_COOKIE_SET, KIND_EXCHANGE, KIND_FETCH_SUBPAGE, KIND_FETCH_SUBPAGES, KIND_INITIAL_PAGE, KIND_INVALID_PACKETS, KIND_NOTICE, KIND_PAGE,
+    KIND_PROXY_FAILED, KIND_PUSHING, KIND_REACHED_ANSWER, KIND_REACHED_QUESTION, KIND_SUBPAGES, KIND_SUBPAGES_MISSING,
 };
 #[cfg(feature = "interaction")]
 use kinds::{KIND_INPUT, KIND_MEASURE_ROUND_TRIP, KIND_ROUND_TRIP, KIND_SEND};
@@ -52,6 +53,13 @@ const CATALOGUE_HEAD_BYTES: usize = 2 + 2 + 2 + 2;
 const _: () = assert!(CATALOGUE_HEAD_BYTES + CATALOGUE_PART * CATALOGUE_ENTRY_BYTES <= MAX_PAYLOAD, "a catalogue part fits one message");
 /// HTTP status codes are three digits from 100 (RFC 9110 section 15).
 const STATUS_CODES: core::ops::RangeInclusive<u16> = 100..=599;
+
+/// How long a fetcher whose input closed may take to send what it was
+/// last told.
+pub const LAST_WRITES_WAIT: Duration = Duration::from_millis(200);
+/// When the trusted core ends a fetcher whose input it closed.
+pub const FETCHER_END_WAIT: Duration = Duration::from_millis(400);
+const _: () = assert!(LAST_WRITES_WAIT.as_millis() < FETCHER_END_WAIT.as_millis(), "the fetcher ends itself first");
 
 const ENTRY_SECTION: u8 = 1;
 const ENTRY_PAGE: u8 = 2;
@@ -235,6 +243,10 @@ pub enum FromFetcher {
     /// arrived on it (false): the engine's `ChannelConnecting` and
     /// `ChannelLive` (DEC-1467).
     Connecting(bool),
+    /// The page a channel's descriptor opens at (the engine's
+    /// `Event::ServiceReady`): what a tab selects whose address names no
+    /// page, before it is shown (REQ-INT-140).
+    InitialPage(u16),
     /// The push WebSocket's round trip, from a ping to its pong (the
     /// engine's `Event::RoundTrip`, `RETURN-CHANNEL.md` REQ-RCH-016), while
     /// [`ToFetcher::MeasureRoundTrip`] is on. Untrusted: the strip shows
@@ -411,6 +423,10 @@ fn push_live_message(payload: &mut Vec<u8>, message: &FromFetcher) -> Result<u8,
             payload.push(u8::from(*connecting));
             KIND_CONNECTING
         }
+        FromFetcher::InitialPage(page) => {
+            payload.extend_from_slice(&page.to_be_bytes());
+            KIND_INITIAL_PAGE
+        }
         _ => return Err(ProtocolError::BadValue("not a live channel's message")),
     })
 }
@@ -428,6 +444,11 @@ fn read_live_message(kind: u8, fields: &mut Fields<'_>) -> Result<FromFetcher, P
         }
         KIND_INVALID_PACKETS => FromFetcher::InvalidPackets { total: u64::from_be_bytes(fields.array()?) },
         KIND_CONNECTING => FromFetcher::Connecting(fields.flag("connecting")?),
+        KIND_INITIAL_PAGE => {
+            let page = u16::from_be_bytes(fields.array()?);
+            page_index(page).ok_or(ProtocolError::BadValue("page number"))?;
+            FromFetcher::InitialPage(page)
+        }
         other => return Err(ProtocolError::UnknownKind(other)),
     })
 }
@@ -525,7 +546,9 @@ pub fn write_to_core(out: &mut dyn Write, message: &FromFetcher) -> Result<(), P
             payload.extend_from_slice(&microseconds.to_be_bytes());
             KIND_ROUND_TRIP
         }
-        FromFetcher::ChannelLog { .. } | FromFetcher::InvalidPackets { .. } | FromFetcher::Connecting(_) => push_live_message(&mut payload, message)?,
+        FromFetcher::ChannelLog { .. } | FromFetcher::InvalidPackets { .. } | FromFetcher::Connecting(_) | FromFetcher::InitialPage(_) => {
+            push_live_message(&mut payload, message)?
+        }
     };
     write_frame(out, kind, &payload)
 }
@@ -605,7 +628,7 @@ pub fn read_from_fetcher(input: &mut dyn Read) -> Result<Option<FromFetcher>, Pr
         KIND_SUBPAGES_MISSING => FromFetcher::SubPagesMissing { page: fields.display_page()? },
         #[cfg(feature = "interaction")]
         KIND_ROUND_TRIP => FromFetcher::RoundTrip { microseconds: u64::from_be_bytes(fields.array()?) },
-        KIND_CHANNEL_LOG | KIND_INVALID_PACKETS | KIND_CONNECTING => read_live_message(kind, &mut fields)?,
+        KIND_CHANNEL_LOG | KIND_INVALID_PACKETS | KIND_CONNECTING | KIND_INITIAL_PAGE => read_live_message(kind, &mut fields)?,
         other => return Err(ProtocolError::UnknownKind(other)),
     };
     fields.end()?;

@@ -20,7 +20,10 @@ use neoteletext_core::packet::{Packet, PacketMeta};
 use neoteletext_core::types::{Instant, PageAddress, SubCode};
 use neoteletext_formats::Item;
 use neoteletext_formats::item::Reader;
+use neoteletext_formats::links::{Destination, KEYS_WITH_INDEX};
 use std::collections::BTreeMap;
+#[cfg(feature = "links")]
+use std::collections::BTreeSet;
 
 /// The most log lines held between two takes: a page carries at most the
 /// engine's `MAX_LOG_LINES_PER_PAGE`, and a feed a few pages; past this a
@@ -116,17 +119,31 @@ impl Engine {
         reader.feed(bytes, &mut take);
         reader.finish(&mut take);
         if pushed {
+            // The sub-pages of this message and the links each held.
+            #[cfg(feature = "links")]
+            let mut frames: BTreeMap<(u16, u16), Option<links::LinkLines>> = BTreeMap::new();
+            #[cfg(feature = "links")]
+            let mut linked = BTreeSet::new();
             for (packet, _) in &items {
-                if let Some(page) = header_page(packet) {
-                    self.pushed.insert(page);
+                if let Some(key) = header_key(packet) {
+                    self.pushed.insert(key.0);
+                    #[cfg(feature = "links")]
+                    frames.entry(key).or_insert_with(|| self.lines.get(key.0, key.1).cloned());
                 }
                 // A pushed sub-page's Link Extension links come as a LINKS
                 // record after it (REQ-1494), into the store a page file's
                 // lines fill; the engine's agent counted any it refused.
                 #[cfg(feature = "links")]
                 if let neoteletext_web::records::Read::Record(neoteletext_web::records::ChannelRecord::Links(record)) = self.records.push(packet) {
+                    let key = (record.page.mpp(), record.subcode.value());
+                    frames.entry(key).or_insert_with(|| self.lines.get(key.0, key.1).cloned());
+                    linked.insert(key);
                     self.lines.read_record(&record);
                 }
+            }
+            #[cfg(feature = "links")]
+            if packets {
+                self.settle_links(frames, &linked);
             }
         } else {
             self.drop_pushed(&mut items);
@@ -134,6 +151,31 @@ impl Engine {
         self.push_all(&items);
         self.complete();
         self.arrivals()
+    }
+
+    /// After a pushed message, each sub-page's links are what the message
+    /// said: a frame with no LINKS record means no links, whole or changed
+    /// rows (neoteletext-common's DEC-1517). A TTI page pushed whole is not
+    /// such a frame: its own lines were read with it. Links that changed
+    /// redraw the page even when no row did, as a frame of the header alone
+    /// says (REQ-1494).
+    #[cfg(feature = "links")]
+    fn settle_links(&mut self, frames: BTreeMap<(u16, u16), Option<links::LinkLines>>, linked: &BTreeSet<(u16, u16)>) {
+        for (key, before) in frames {
+            let (page, subcode) = key;
+            if !linked.contains(&key) {
+                self.lines.clear(page, subcode);
+            }
+            let now = self.lines.get(page, subcode);
+            if now == before.as_ref() {
+                continue;
+            }
+            match now.and_then(links::LinkLines::key_file).as_ref().and_then(receiver_row) {
+                Some(row) => self.receiver_rows.insert(key, row),
+                None => self.receiver_rows.remove(&key),
+            };
+            self.updated.push(page);
+        }
     }
 
     /// Drops the fetched packets of pages the channel has pushed: a page
@@ -223,10 +265,30 @@ impl Engine {
 
 /// The page number a header packet starts, as teletext writes it.
 fn header_page(packet: &Packet) -> Option<u16> {
+    header_key(packet).map(|(page, _)| page)
+}
+
+/// The page number and sub-code a header packet starts.
+fn header_key(packet: &Packet) -> Option<(u16, u16)> {
     match neoteletext_core::packet::decode(packet) {
-        Ok(neoteletext_core::packet::Decoded::Header(header)) => Some(PageAddress { magazine: header.magazine, page: header.page? }.mpp()),
+        Ok(neoteletext_core::packet::Decoded::Header(header)) => {
+            Some((PageAddress { magazine: header.magazine, page: header.page? }.mpp(), header.subcode.map_or(0, SubCode::value)))
+        }
         _ => None,
     }
+}
+
+/// The receiver's row 24 of a page file's `LN` lines, the one way a page
+/// file and a LINKS record get theirs. The browser follows no linked
+/// service (decision E.88), so a link to another service is null.
+fn receiver_row(page: &neoteletext_formats::page::PageFile) -> Option<ReceiverRow> {
+    let receiver = neoteletext_formats::links::receiver_links(page, &[] as &[&str], false)?;
+    let marks = receiver.row.marks.as_slice().iter().map(|&column| usize::from(column)).collect();
+    let keys = receiver.keys.map(|key| match key {
+        Some(Destination::Page { address, subcode, service: None }) => Some((address.mpp(), subcode.filter(|subcode| !subcode.is_any()).map(SubCode::value))),
+        _ => None,
+    });
+    Some(ReceiverRow { codes: receiver.row.codes, marks, keys })
 }
 
 /// What a page file says beyond its packets: its link lines and its
@@ -237,6 +299,9 @@ fn header_page(packet: &Packet) -> Option<u16> {
 pub(super) struct ReceiverRow {
     codes: [u8; COLUMNS],
     marks: Vec<usize>,
+    /// Where each key leads on this channel: red, green, yellow, cyan and
+    /// Index, a page and its sub-code when it names one.
+    keys: [Option<(u16, Option<u16>)>; KEYS_WITH_INDEX],
 }
 
 impl ReceiverRow {
@@ -248,6 +313,12 @@ impl ReceiverRow {
     /// The columns of its "»" marks.
     pub(super) fn marks(&self) -> &[usize] {
         &self.marks
+    }
+
+    /// Where its keys lead.
+    #[cfg(feature = "links")]
+    pub(super) fn keys(&self) -> [Option<(u16, Option<u16>)>; KEYS_WITH_INDEX] {
+        self.keys
     }
 }
 
@@ -265,18 +336,11 @@ impl PageLines<'_> {
     fn read(&mut self, page: &neoteletext_formats::page::PageFile) {
         #[cfg(feature = "links")]
         self.lines.read(page);
-        // The engine's receiver row: the browser follows no linked service
-        // (decision E.88), so a link to another service is null.
         let key = (page.address.mpp(), page.subcode.value());
-        match neoteletext_formats::links::receiver_links(page, &[] as &[&str], false) {
-            Some(receiver) => {
-                let marks = receiver.row.marks.as_slice().iter().map(|&column| usize::from(column)).collect();
-                self.receiver_rows.insert(key, ReceiverRow { codes: receiver.row.codes, marks });
-            }
-            None => {
-                self.receiver_rows.remove(&key);
-            }
-        }
+        match receiver_row(page) {
+            Some(row) => self.receiver_rows.insert(key, row),
+            None => self.receiver_rows.remove(&key),
+        };
         // REQ-INT-006: a `CU` line is the page's cursor record.
         #[cfg(feature = "interaction")]
         if let Some(line) = page.cursor {

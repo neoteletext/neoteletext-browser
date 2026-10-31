@@ -150,6 +150,22 @@ mod tests {
         assert!(!sleep.awake(3, None, start));
     }
 
+    // REQ-679, DEC-1527: a tab's kept data and its wake state are its own.
+    #[test]
+    fn two_tabs_keep_their_own_data_and_their_own_sleep() {
+        let start = Instant::now();
+        let mut sleep = Sleep::default();
+        sleep.keep(3, ToDecoder::Data(vec![3]));
+        sleep.keep(4, ToDecoder::Data(vec![4]));
+        assert_eq!(sleep.kept(3), [ToDecoder::Data(vec![3])]);
+        assert_eq!(sleep.kept(4), [ToDecoder::Data(vec![4])]);
+        sleep.set_pushing(3, true);
+        assert!(sleep.awake(3, None, start + Duration::from_secs(86_400)), "the pushing tab");
+        assert!(!sleep.awake(4, None, start + Duration::from_secs(86_400)), "the other tab sleeps");
+        sleep.forget(3);
+        assert_eq!(sleep.kept(4), [ToDecoder::Data(vec![4])], "forgetting one leaves the other");
+    }
+
     #[test]
     fn a_tab_whose_channel_pushes_never_sleeps() {
         let start = Instant::now();

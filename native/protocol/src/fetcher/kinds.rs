@@ -42,3 +42,4 @@ pub(super) const KIND_ROUND_TRIP: u8 = 110;
 pub(super) const KIND_CHANNEL_LOG: u8 = 130;
 pub(super) const KIND_INVALID_PACKETS: u8 = 131;
 pub(super) const KIND_CONNECTING: u8 = 132;
+pub(super) const KIND_INITIAL_PAGE: u8 = 133;

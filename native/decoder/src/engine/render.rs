@@ -341,7 +341,12 @@ impl Engine {
         #[cfg(feature = "links")]
         let links = {
             let (candidates, numbers) = links::find(&grid, &palette, self.lines.get(page, subcode));
-            Found { candidates, numbers, controls: controls(stored), fastext: fastext(stored, &grid) }
+            Found {
+                candidates,
+                numbers,
+                controls: controls(stored),
+                fastext: fastext(stored, &grid, self.receiver_rows.get(&(page, stored.key.subcode.value()))),
+            }
         };
         let rates = FlashRates::of(grid.cells.iter().flatten().filter(|cell| cell.flash).map(|cell| cell.attributes.flash_rate()));
         Some(Rendered {
@@ -374,7 +379,7 @@ fn controls(stored: &StoredPage) -> Vec<protocol::links::Area> {
 /// row 24 is shown as the engine's viewer decides it: drawn, and not boxed
 /// away (REQ-SEC-024).
 #[cfg(feature = "links")]
-fn fastext(stored: &StoredPage, grid: &Grid) -> protocol::links::Fastext {
+fn fastext(stored: &StoredPage, grid: &Grid, receiver: Option<&ReceiverRow>) -> protocol::links::Fastext {
     let links = PageLinks::from_page(stored);
     let target = |link: Option<neoteletext_core::nav::LinkTarget>| {
         let link = link?;
@@ -385,5 +390,15 @@ fn fastext(stored: &StoredPage, grid: &Grid) -> protocol::links::Fastext {
     };
     let [red, green, yellow, cyan] = links.keys;
     let row24 = !grid.boxed_mode && grid.cells.get(FASTEXT_ROW).is_some_and(|row| row.iter().any(|cell| !cell.glyph.is_blank()));
-    protocol::links::Fastext { keys: [target(red), target(green), target(yellow), target(cyan), target(links.index)], row24 }
+    // `LN` lines give the keys whatever the packets say: a LINKS record's
+    // never become an X/27/0 (the engine's REQ-NAV-011).
+    let keys = match receiver {
+        Some(receiver) => receiver.keys().map(|key| {
+            let (page, subcode) = key?;
+            page_index(page)?;
+            Some(protocol::links::FastextTarget { page, subcode, service: None })
+        }),
+        None => [target(red), target(green), target(yellow), target(cyan), target(links.index)],
+    };
+    protocol::links::Fastext { keys, row24 }
 }

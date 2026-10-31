@@ -169,6 +169,10 @@ impl Core {
             return;
         }
         self.controls.catalogue_asked = true;
+        // A live channel's lists come on its connection, unasked (REQ-703).
+        if self.session.all_tabs().any(|tab| tab.channel.id == key.channel && tab.channel.live) {
+            return;
+        }
         let ask = self.channel_subpages(key.channel).is_some_and(|subpages| {
             subpages.unanswered(key.page);
             subpages.ask(key.page)
@@ -216,6 +220,9 @@ impl Core {
         let live = self.session.all_tabs().any(|tab| tab.channel.id == key.channel && tab.channel.live);
         let drawn = self.controls.subpages.get(&key).is_some_and(|step| step.shown == subpage);
         self.controls.awaiting = (live && !drawn).then_some((key, subpage));
+        if live {
+            return Ok(());
+        }
         let Some(around) = self.with_catalogue(key, |catalogue| catalogue.around(subpage, TUNED_EITHER_SIDE)) else { return Ok(()) };
         for subcode in around {
             if subcode != SUBCODE_ANY && self.controls.fetched.insert(subcode) {
@@ -463,5 +470,97 @@ mod tests {
         let rows = test.sent().into_iter().find_map(|message| if let ToInterface::SubPageRows { rows, .. } = message { Some(rows) } else { None }).unwrap();
         assert_eq!((rows.count, rows.first, rows.rows.len()), (most, most - 64, 64));
         assert_eq!(rows.rows[63], (last, format!("Story {last:04X}")), "answered from the catalogue");
+    }
+
+    /// A tab on a live channel with page 210 open, its list of `subcodes`
+    /// from a SUBPAGES sending.
+    fn live_page(name: &str, subcodes: &[u16]) -> (super::super::test_support::Test, PageKey) {
+        use protocol::fetcher::FromFetcher;
+        use protocol::subpages::SubPageRows;
+        let mut test = super::super::test_support::Test::new(name);
+        test.core.session.open("https://news.invalid/teletext/").unwrap();
+        let channel = test.core.active_channel().unwrap();
+        test.core.fetched(channel, FromFetcher::Connecting(true)).unwrap();
+        test.core.fetched(channel, FromFetcher::Connecting(false)).unwrap();
+        let key = PageKey { channel, page: 0x210 };
+        let count = u16::try_from(subcodes.len()).unwrap();
+        let part = SubPageRows { count, first: 0, rows: subcodes.iter().map(|&subcode| (subcode, format!("Story {subcode:04X}"))).collect() };
+        test.core.fetched(channel, FromFetcher::SubPages { page: 0x210, part }).unwrap();
+        test.core.intent(protocol::ToCore::Opened(Some(key))).unwrap();
+        (test, key)
+    }
+
+    fn drawn(test: &mut super::super::test_support::Test, key: PageKey, shown: u16, count: u16, place: u16) {
+        use protocol::decoder::FromDecoder;
+        let step = SubPageStep { count, shown, place: Some(place), previous: None, next: None };
+        test.core.decoded(key.channel, FromDecoder::SubPages { page: key.page, step }).unwrap();
+    }
+
+    // REQ-1505, DEC-1526: the list, its count and the place come from the
+    // SUBPAGES record before anything beyond the first sub-page is held;
+    // the first sub-page drawn of a page selected with 3F7F is the
+    // selection, with nothing fetched, and another arriving changes nothing.
+    #[test]
+    fn a_live_page_lists_from_its_record_and_adopts_its_first_sub_page() {
+        let (mut test, key) = live_page("live list", &[0, 1, 2]);
+        assert_eq!(test.core.typing.selection(key.channel), Some((0x210, SUBCODE_ANY)));
+        drawn(&mut test, key, 0, 1, 0);
+        assert_eq!(test.core.typing.selection(key.channel), Some((0x210, 0)), "the answer is the selection");
+        assert_eq!(test.core.controls.view.and_then(|view| view.subpage), Some(0), "the view holds it");
+        let sent = test.sent();
+        let controls = sent.iter().rev().find_map(|message| if let ToInterface::PageControls(controls) = message { Some(*controls) } else { None });
+        assert_eq!(controls.map(|controls| controls.subpages), Some(3), "every sub-page of the list, with one held");
+        drawn(&mut test, key, 2, 2, 2);
+        assert_eq!(test.core.typing.selection(key.channel), Some((0x210, 0)), "nothing rotates");
+        assert!(test.core.controls.told_fetchers.is_empty(), "REQ-703: a live channel is asked for no file");
+    }
+
+    // REQ-1505 item 4: a step is one selection, loading until it arrives.
+    // REQ-703: and no file is asked for.
+    #[test]
+    fn a_live_step_selects_the_next_sub_page_and_loads_until_it_arrives() {
+        let (mut test, key) = live_page("live step", &[1, 2, 3]);
+        drawn(&mut test, key, 1, 1, 0);
+        test.core.intent(protocol::ToCore::PageControl(PageControl::SubPage(true))).unwrap();
+        assert_eq!(test.core.typing.selection(key.channel), Some((0x210, 2)), "the next after the one adopted");
+        assert_eq!(test.core.controls.awaiting, Some((key, 2)), "loading");
+        assert_eq!(test.core.strip().notice, "Loading page 210, sub-page 0002");
+        assert!(test.core.controls.told_fetchers.is_empty(), "no file");
+        drawn(&mut test, key, 2, 2, 1);
+        assert_eq!(test.core.controls.awaiting, None, "it arrived");
+        assert_eq!(test.core.strip().notice, "", "and the strip stops saying so");
+        test.core.intent(protocol::ToCore::PageControl(PageControl::SubPage(true))).unwrap();
+        assert_eq!(test.core.typing.selection(key.channel), Some((0x210, 3)));
+        test.core.intent(protocol::ToCore::PageControl(PageControl::SubPage(true))).unwrap();
+        assert_eq!(test.core.typing.selection(key.channel), Some((0x210, 1)), "round the list, before the last arrived");
+    }
+
+    // DEC-1526: a channel served as files adopts nothing.
+    #[test]
+    fn a_channel_served_as_files_adopts_no_selection() {
+        let mut test = super::super::test_support::Test::new("files");
+        test.core.session.open("https://news.invalid/teletext/").unwrap();
+        let channel = test.core.active_channel().unwrap();
+        let key = PageKey { channel, page: 0x210 };
+        test.core.intent(protocol::ToCore::Opened(Some(key))).unwrap();
+        drawn(&mut test, key, 1, 2, 0);
+        assert_eq!(test.core.typing.selection(key.channel), Some((0x210, SUBCODE_ANY)));
+        assert_eq!(test.core.controls.awaiting, None);
+        test.core.intent(protocol::ToCore::PageControl(PageControl::SubPage(true))).unwrap();
+        assert_eq!(test.core.strip().notice, "", "a channel served as files says no loading");
+    }
+
+    // DEC-1467: the strip says connecting from the descriptor to the first
+    // page, never that a page was not found.
+    #[test]
+    fn a_live_channel_says_it_is_connecting_until_its_first_page() {
+        use protocol::fetcher::FromFetcher;
+        let mut test = super::super::test_support::Test::new("connecting");
+        test.core.session.open("https://news.invalid/teletext/").unwrap();
+        let channel = test.core.active_channel().unwrap();
+        test.core.fetched(channel, FromFetcher::Connecting(true)).unwrap();
+        assert_eq!(test.core.strip().notice, "Connecting to the channel");
+        test.core.fetched(channel, FromFetcher::Connecting(false)).unwrap();
+        assert_eq!(test.core.strip().notice, "");
     }
 }

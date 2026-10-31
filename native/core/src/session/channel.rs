@@ -44,6 +44,8 @@ pub struct ChannelState {
     pub live: bool,
     /// A live channel whose first page has not yet arrived.
     pub connecting: bool,
+    /// The page its descriptor opens at, once it was read.
+    pub initial_page: Option<u16>,
 }
 
 impl ChannelState {
@@ -107,6 +109,7 @@ impl ChannelState {
             unread: None,
             live: false,
             connecting: false,
+            initial_page: None,
         }
     }
 

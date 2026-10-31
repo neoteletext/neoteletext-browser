@@ -61,6 +61,18 @@ fn every_kind_round_trips() {
     }
 }
 
+// REQ-INT-140: a page the descriptor opens at is a page, like any other
+// number a fetcher sends.
+#[test]
+fn an_initial_page_is_a_page() {
+    let mut bytes = Vec::new();
+    write_to_core(&mut bytes, &FromFetcher::InitialPage(0x302)).unwrap();
+    assert_eq!(read_from_fetcher(&mut bytes.as_slice()).unwrap().unwrap(), FromFetcher::InitialPage(0x302));
+    let mut bytes = Vec::new();
+    write_to_core(&mut bytes, &FromFetcher::InitialPage(0x0FF)).unwrap();
+    assert!(read_from_fetcher(&mut bytes.as_slice()).is_err());
+}
+
 /// Decision 62: cookie messages within their bounds only.
 #[test]
 fn cookie_messages_are_bounded() {

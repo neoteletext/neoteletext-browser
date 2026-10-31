@@ -25,6 +25,21 @@ fn a_tab_stays_muted_on_its_next_channel_and_mute_all_reaches_every_tab() {
     assert!(session.tab_infos().iter().all(|tab| !tab.muted));
 }
 
+// REQ-714, DEC-1527: two tabs on one channel are two channels here, each
+// with its own number and so its own fetcher, connection and decoder, and
+// going to another address leaves the other tab's untouched.
+#[test]
+fn two_tabs_on_one_channel_share_nothing() {
+    let mut session = Session::new(Bookmarks::default());
+    session.open("news.invalid").unwrap();
+    session.open("news.invalid").unwrap();
+    let ids = [session.tabs[0].channel.id, session.tabs[1].channel.id];
+    assert_ne!(ids[0], ids[1]);
+    session.navigate("news.invalid/#200", true).unwrap();
+    assert_eq!(session.tabs[0].channel.id, ids[0], "the other tab");
+    assert!(!ids.contains(&session.tabs[1].channel.id), "still nobody else's");
+}
+
 #[test]
 fn history_goes_back_and_forward_and_a_new_address_drops_forward() {
     let mut session = Session::new(Bookmarks::default());

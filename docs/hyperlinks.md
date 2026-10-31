@@ -123,9 +123,13 @@ The page's own `LK` line for the same number wins (section 6.2).
 
 The engine already parses both. Their targets are those of the engine's TTI Link Extension (section E.1): a page or sub-page, a named service, or an address of a teletext channel or page file. One new form is proposed for links to the web (section 7.2).
 
+On a live channel the same lines come as a LINKS record after each frame of the sub-page (REQ-1494), read into the same store, and a frame with no record means no links (DEC-1517).
+
 ### 6.3 Fastext
 
 The coloured keys (X/27/0 and TTI `LN`) are links too. They follow the same path to the core, and their prompts are drawn by the receiver as decision E.36 requires, not underlined. Built on 23 October 2026 with requirement 12.4 (`page-controls.md`, decision 67). This document only makes sure they use the same link table and the same rules for following.
+
+`LN` lines win over X/27/0 and over any row 24 the page sent (the engine's REQ-NAV-011). A LINKS record's `LN` lines draw row 24 and give the keys just as a page file's do; they never become a packet X/27/0, so the decoder takes them from the record. As with a page file, a key to another service or an address is null (decision E.88).
 
 ### 6.4 The channel descriptor
 

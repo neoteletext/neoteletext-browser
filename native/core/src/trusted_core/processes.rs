@@ -12,7 +12,7 @@ use neoteletext::budget::Budget;
 use neoteletext::outbox::Outbox;
 use neoteletext::settings::{self as stored, Settings};
 use protocol::decoder::{BookmarkEntry, FromDecoder, MAX_BOOKMARK_ENTRIES, MAX_CHUNK, ToDecoder, read_from_decoder, write_to_decoder};
-use protocol::fetcher::read_from_fetcher;
+use protocol::fetcher::{FETCHER_END_WAIT, read_from_fetcher};
 use protocol::settings::TeletextFont;
 use protocol::{ProtocolError, read_from_interface};
 
@@ -115,12 +115,17 @@ impl Fetcher {
         self.input.as_mut()
     }
 
-    /// Ends it: closing its input ends a fetcher, which is then killed and
-    /// waited for.
+    /// Ends it: closing its input ends a fetcher once what it was last
+    /// told has left, the channel told the tab went (neoteletext-common's
+    /// DEC-1538 item 3). It is killed and waited for after that, on a
+    /// thread of its own, so nothing waits for its network.
     pub(super) fn stop(mut self) {
         drop(self.child.stdin.take());
         drop(self.input.take());
-        end(&mut self.child);
+        thread::spawn(move || {
+            thread::sleep(FETCHER_END_WAIT);
+            end(&mut self.child);
+        });
     }
 
     /// Waits for it once it has ended by itself; what it says is of no use.

@@ -71,6 +71,94 @@ fn link_lines_draw_the_receivers_row_24() {
     assert!(rendered.links.fastext.keys[0].is_some() && rendered.links.fastext.keys[1].is_none(), "red leads to 200; green's other service is null");
 }
 
+/// A page file's packets, and the LINKS record of `links` when it is
+/// given, as one message on a live channel's connection.
+#[cfg(feature = "links")]
+fn pushed(tti: &[u8], links: Option<&[u8]>) -> Vec<u8> {
+    let mut packets = Vec::new();
+    let mut record = Vec::new();
+    let mut reader = AutoReader::new(AutoConfig { format: Some(Format::Tti), encode_pages: true, ..AutoConfig::default() });
+    let mut take = |item: Item<'_>| {
+        if let Item::Packet { packet, .. } = item {
+            packets.extend_from_slice(&packet.bytes);
+        }
+    };
+    reader.feed(tti, &mut take);
+    reader.finish(&mut take);
+    let mut reader = AutoReader::new(AutoConfig { format: Some(Format::Tti), encode_pages: true, ..AutoConfig::default() });
+    let mut take = |item: Item<'_>| {
+        if let Item::Page(page) = item {
+            neoteletext_web::records::links::encode_page(page, 0, 0, &mut |packet| record.extend_from_slice(&packet.bytes)).unwrap();
+        }
+    };
+    reader.feed(links.unwrap_or_default(), &mut take);
+    reader.finish(&mut take);
+    packets.extend_from_slice(&record);
+    packets
+}
+
+// REQ-1504: a frame whose header does not set the erase bit changes the
+// rows it carries and keeps the others.
+#[cfg(feature = "links")]
+#[test]
+fn changed_rows_keep_the_other_rows() {
+    let row = |engine: &Engine, number: usize| -> String {
+        let (grid, _) = engine.grid(0x100).unwrap();
+        grid.cells[number]
+            .iter()
+            .map(|cell| match cell.glyph {
+                Glyph::Char(character) => to_unicode(character).base,
+                _ => ' ',
+            })
+            .collect::<String>()
+            .trim()
+            .to_owned()
+    };
+    let mut engine = Engine::new();
+    engine.feed_whole(true, true, &pushed(b"PN,10000\nSC,0000\nPS,C000\nOL,1,FIRST\nOL,2,SECOND\n", None));
+    engine.feed_whole(true, true, &pushed(b"PN,10000\nSC,0000\nPS,8000\nOL,1,CHANGED\n", None));
+    assert_eq!((row(&engine, 1).as_str(), row(&engine, 2).as_str()), ("CHANGED", "SECOND"));
+    engine.feed_whole(true, true, &pushed(b"PN,10000\nSC,0000\nPS,C000\nOL,1,WHOLE\n", None));
+    assert_eq!((row(&engine, 1).as_str(), row(&engine, 2).as_str()), ("WHOLE", ""), "the erase bit replaces it");
+}
+
+// REQ-1494, DEC-1517: a frame followed by no LINKS record means no links,
+// and links alone changing redraws the page.
+#[cfg(feature = "links")]
+#[test]
+fn a_pushed_frame_with_no_links_record_drops_the_links() {
+    const LINKED: &[u8] = b"PN,10000\nSC,0000\nPS,8000\nOL,1,LINKED HERE\nLT,1,0,6,200\n";
+    let mut engine = Engine::new();
+    engine.feed_whole(true, true, &pushed(LINKED, Some(LINKED)));
+    assert_eq!(engine.render_at(0x100, 0).unwrap().links.candidates.len(), 1, "the record's text link");
+    engine.take_updated();
+    engine.feed_whole(true, true, &pushed(LINKED, Some(LINKED)));
+    assert_eq!(engine.take_updated(), [] as [u16; 0], "the same links redraw nothing");
+    engine.feed_whole(true, true, &pushed(LINKED, None));
+    assert_eq!(engine.render_at(0x100, 0).unwrap().links.candidates.len(), 0, "dropped");
+    assert_eq!(engine.take_updated(), [0x100], "the page draws again without them");
+}
+
+// REQ-1494: `LN` keys travel only in the LINKS record, which never
+// becomes a packet X/27/0, so the keys and row 24 come from it (the
+// engine's REQ-NAV-011). A page file's other service stays null.
+#[cfg(feature = "links")]
+#[test]
+fn a_links_records_keys_act_and_draw_row_24() {
+    // The frame has no keys of its own: its packets say nothing of them.
+    const FRAME: &[u8] = b"PN,10000\nSC,0000\nPS,8000\nOL,1,INDEX\n";
+    const KEYS: &[u8] = b"PN,10000\nSC,0000\nPS,8000\nOL,1,INDEX\nLN,R,200,Headlines\nLN,G,sport:300,Sport\nLN,I,100,\n";
+    let mut engine = Engine::new();
+    engine.feed_whole(true, true, &pushed(FRAME, Some(KEYS)));
+    let fastext = engine.render_at(0x100, 0).unwrap().links.fastext;
+    assert!(fastext.row24, "the receiver drew row 24");
+    assert_eq!(fastext.keys.map(|key| key.map(|key| key.page)), [Some(0x200), None, None, None, Some(0x100)]);
+    engine.feed_whole(true, true, &pushed(FRAME, None));
+    let fastext = engine.render_at(0x100, 0).unwrap().links.fastext;
+    assert_eq!(fastext.keys, [None; 5], "no record, no keys");
+    assert!(!fastext.row24, "and no row of the receiver's");
+}
+
 /// The engine's E.107: a page drawn over its last frame, only its
 /// changed rows again, is the page drawn whole, through every flash
 /// phase and a new version of the page.

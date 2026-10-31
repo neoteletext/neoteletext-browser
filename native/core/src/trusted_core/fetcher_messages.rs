@@ -80,9 +80,11 @@ impl Core {
             #[cfg(feature = "interaction")]
             FromFetcher::Input { open, secure } => {
                 // A tab never shown yet selects the page its address names,
-                // so its session's start tells the channel (REQ-INT-140).
+                // or else the page its channel opens at, so its session's
+                // start tells the channel (REQ-INT-140).
                 if open && self.typing.selection(channel).is_none() {
-                    let page = self.session.all_tabs().find(|tab| tab.channel.id == channel).and_then(|tab| tab.address()).and_then(|address| address.page);
+                    let tab = self.session.all_tabs().find(|tab| tab.channel.id == channel);
+                    let page = tab.and_then(|tab| tab.address().and_then(|address| address.page).or(tab.channel.initial_page));
                     if let Some(page) = page {
                         let sends = self.typing.select(channel, page, neoteletext_core::limits::SUBCODE_ANY, self.now_us());
                         self.deliver_typing(sends)?;
@@ -101,6 +103,11 @@ impl Core {
             // (DEC-633 version 2).
             FromFetcher::ChannelLog { level, page, text } => self.channel_log(channel, level, page, &text),
             FromFetcher::InvalidPackets { total } => self.invalid_packets(channel, total),
+            FromFetcher::InitialPage(page) => {
+                if let Some(tab) = self.session.all_tabs_mut().find(|tab| tab.channel.id == channel) {
+                    tab.channel.initial_page = Some(page);
+                }
+            }
             FromFetcher::Connecting(connecting) => self.connecting(channel, connecting)?,
             FromFetcher::SubPagesMissing { page } => {
                 let changed = self.channel_subpages(channel).and_then(|subpages| subpages.missing(page));
@@ -241,6 +248,20 @@ impl Core {
 mod tests {
     use super::super::test_support::Test;
     use super::*;
+
+    // REQ-INT-140, TODO-1536 item 3: a tab whose address names no page
+    // selects the page its descriptor opens at, shown or not.
+    #[cfg(feature = "interaction")]
+    #[test]
+    fn a_tab_never_shown_selects_its_channels_initial_page() {
+        use protocol::fetcher::FromFetcher;
+        let mut test = Test::new("initial page");
+        test.core.session.open("news.invalid").unwrap();
+        let channel = test.core.session.tabs[0].channel.id;
+        test.core.fetched(channel, FromFetcher::InitialPage(0x302)).unwrap();
+        test.core.fetched(channel, FromFetcher::Input { open: true, secure: true }).unwrap();
+        assert_eq!(test.core.typing.selection(channel), Some((0x302, neoteletext_core::limits::SUBCODE_ANY)));
+    }
 
     /// Requirement 7.13: a channel's refused certificate reaches its strip
     /// and the Log once, and goes when the channel's contents arrive.
