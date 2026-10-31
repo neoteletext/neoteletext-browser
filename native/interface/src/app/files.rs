@@ -12,9 +12,11 @@ use winit::event_loop::ActiveEventLoop;
 
 use super::App;
 
-/// What the file address of `path` is.
+/// What the file address of `path` is: a `#` in it is the path's, as the
+/// address's own begins its fragment (REQ-1693 item 9).
 fn file_address(path: &str) -> String {
-    format!("file://{}", if cfg!(windows) { format!("/{}", path.replace('\\', "/")) } else { path.to_owned() })
+    let path = path.replace('%', "%25").replace('#', "%23");
+    format!("file://{}", if cfg!(windows) { format!("/{}", path.replace('\\', "/")) } else { path })
 }
 
 impl App {
@@ -119,6 +121,7 @@ mod tests {
     fn a_file_address_is_written_as_the_address_rules_read_it() {
         if !cfg!(windows) {
             assert_eq!(file_address("/a b/c.tti"), "file:///a b/c.tti");
+            assert_eq!(file_address("/a#b%c.tti"), "file:///a%23b%25c.tti");
         }
     }
 }

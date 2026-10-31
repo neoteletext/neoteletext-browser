@@ -5,6 +5,7 @@ use std::io::{self, BufWriter, Write};
 
 use interface_core::browser::Output;
 use interface_core::canvas::PageKey;
+use interface_core::settings::SettingChange;
 use protocol::{ProtocolError, ToCore, write_to_core};
 use winit::event_loop::ActiveEventLoop;
 
@@ -130,7 +131,15 @@ impl App {
             Output::NewWindow { private } => ToCore::NewWindow { private },
             Output::TabToNewWindow => self.tab_to_new_window()?,
             Output::TabOut { index, x, y } => self.tab_out(index, x, y)?,
-            Output::Setting(change) => ToCore::ChangeSetting(change),
+            Output::Setting(change) => {
+                // A home that is a file is the user's own naming of it.
+                if let SettingChange::Home(typed) = &change
+                    && interface_core::browser::names_a_file(typed)
+                {
+                    self.declare(core::slice::from_ref(typed));
+                }
+                ToCore::ChangeSetting(change)
+            }
             Output::InstallUpdate => ToCore::InstallUpdate,
             Output::Console(open) => ToCore::Console(open),
             Output::MuteTab(index) => ToCore::MuteTab(u8::try_from(index).ok()?),

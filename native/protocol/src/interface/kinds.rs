@@ -41,6 +41,7 @@ pub(crate) const KIND_CONSOLE_UPDATE: u8 = 44;
 // Windows (`multiple-windows.md`, decision 72).
 pub(crate) const KIND_TARGET: u8 = 46;
 pub(crate) const KIND_OPEN_WINDOW: u8 = 47;
+pub(crate) const KIND_RAISE: u8 = 48;
 pub(crate) const KIND_CLOSE_WINDOW_VIEW: u8 = 49;
 // Interface to trusted core: intents.
 pub(crate) const KIND_VISIBLE: u8 = 16;

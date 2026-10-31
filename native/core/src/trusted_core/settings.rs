@@ -36,6 +36,16 @@ impl Core {
         }
     }
 
+    /// The viewer named a home, which the interface declared if it is a
+    /// file: it is read while the declaration stands, so that a grant keeps
+    /// it for the next start (REQ-1698).
+    fn home_named(&mut self) {
+        let Some(path) = neoteletext::address::parse(&self.settings.home).ok().and_then(|address| address.file) else { return };
+        if let Err(reason) = self.broker().and_then(|broker| broker.read_source(&path).map(drop)) {
+            self.log(Level::Warning, None, &format!("{}: {reason}", self.settings.home));
+        }
+    }
+
     /// The settings as the panel shows them, with the last refusal; the
     /// sound helper is told the sound and the volume (requirement 19.4).
     pub(super) fn send_settings(&mut self) -> Result<(), String> {
@@ -80,6 +90,7 @@ impl Core {
         let remote = matches!(change, SettingChange::Remote(_));
         let checking = if let SettingChange::CheckUpdates(on) = change { Some(on) } else { None };
         let font = matches!(change, SettingChange::Font(_));
+        let home = matches!(change, SettingChange::Home(_));
         match checked_change(&mut self.settings, change, current.as_deref()) {
             Ok(security) => {
                 self.refusal = None;
@@ -105,6 +116,9 @@ impl Core {
                 }
                 if font {
                     self.tell_decoders_the_font();
+                }
+                if home {
+                    self.home_named();
                 }
             }
             Err(reason) => self.refusal = Some(reason),
@@ -223,6 +237,21 @@ fn remove_local(settings: &mut Settings, index: usize) -> Result<Option<String>,
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// REQ-1698: a home that is a file is read when it is named, while the
+    /// interface's declaration stands, so that a grant keeps it. A web
+    /// address asks the broker for nothing.
+    #[cfg(unix)]
+    #[test]
+    fn a_home_that_is_a_file_is_read_when_it_is_named() {
+        use confine::broker::Request;
+        let (mut core, stand_in) = super::super::test_support::core_on("a.invalid");
+        let _ = stand_in.take_requests();
+        core.change_setting(SettingChange::Home("https://news.invalid/".into())).unwrap();
+        assert!(!stand_in.take_requests().iter().any(|request| matches!(request, Request::Read(_))));
+        core.change_setting(SettingChange::Home("/tmp/news.tti".into())).unwrap();
+        assert!(stand_in.take_requests().iter().any(|request| matches!(request, Request::Read(path) if path == "/tmp/news.tti")));
+    }
 
     /// Requirement 19.3: each change is checked by its setting's rule; a
     /// refused one changes nothing and says why; a security setting's

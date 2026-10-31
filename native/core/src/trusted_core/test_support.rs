@@ -27,13 +27,42 @@ pub(super) fn test_core() -> Core {
 /// that a link sent at time 0 has settled, and a tab on `address`.
 #[cfg(unix)]
 pub(super) fn core_on(address: &str) -> (Core, confine::broker::stand_in::StandIn) {
+    core_writing_to(address, Vec::new())
+}
+
+/// [`core_on`], and what it sends the interface read back.
+#[cfg(unix)]
+pub(super) fn core_watched(address: &str) -> (Core, confine::broker::stand_in::StandIn, mpsc::Receiver<Vec<u8>>) {
+    let (sender, written) = mpsc::channel();
+    let (core, stand_in) = core_writing_to(address, Sink(sender));
+    (core, stand_in, written)
+}
+
+/// What a watched core sent the interface, as far as it has been flushed.
+#[cfg(unix)]
+pub(super) fn sent_to_interface(core: &mut Core, written: &mpsc::Receiver<Vec<u8>>) -> Vec<ToInterface> {
+    core.to_interface.flush().unwrap();
+    let mut bytes = Vec::new();
+    while let Ok(chunk) = written.recv_timeout(Duration::from_millis(200)) {
+        bytes.extend(chunk);
+    }
+    let mut input = bytes.as_slice();
+    let mut messages = Vec::new();
+    while let Some(message) = read_from_core(&mut input).unwrap() {
+        messages.push(message);
+    }
+    messages
+}
+
+#[cfg(unix)]
+fn core_writing_to<W: Write + Send + 'static>(address: &str, interface: W) -> (Core, confine::broker::stand_in::StandIn) {
     let (broker, stand_in) =
         confine::broker::stand_in::StandIn::start(Box::new(|_| Ok(b"PN,10000\r\nOL,1,A\r\n".to_vec())), Box::new(|_| Some(Vec::new()))).unwrap();
     let reader = std::sync::Arc::clone(&broker);
     let session =
         Session::with_reader(Bookmarks::default(), Box::new(move |path: &std::path::Path| reader.read_source(path).map(crate::source::Source::from_bytes)));
     let (events, _incoming) = mpsc::channel();
-    let mut core = Core::new(session, Vec::new(), (Settings::default(), None), events, Outbox::new(Vec::new()), Some(broker));
+    let mut core = Core::new(session, Vec::new(), (Settings::default(), None), events, Outbox::new(interface), Some(broker));
     core.started = std::time::Instant::now().checked_sub(Duration::from_secs(10)).unwrap();
     core.session.open(address).unwrap();
     (core, stand_in)

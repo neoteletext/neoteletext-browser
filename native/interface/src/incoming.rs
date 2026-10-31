@@ -88,6 +88,8 @@ pub enum Incoming {
     Show(PageKey),
     /// Show this channel's wall of pages with no page open.
     ShowWall(u32),
+    /// Bring the window to the front.
+    Raise,
     /// About hyperlinks.
     #[cfg(feature = "links")]
     Link(protocol::links::Message),

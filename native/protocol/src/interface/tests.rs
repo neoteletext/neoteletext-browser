@@ -123,6 +123,7 @@ fn every_message_to_the_interface_round_trips() {
         ToInterface::Updated { channel: 9, page: 0x302 },
         ToInterface::Show(KEY),
         ToInterface::ShowWall(9),
+        ToInterface::Raise,
         ToInterface::Frame { key: KEY, version: 3, image: vec![1, 2, 3] },
         ToInterface::Settings(settings::SettingsView {
             home: "neoteletext:home".into(),

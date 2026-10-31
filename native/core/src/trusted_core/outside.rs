@@ -10,6 +10,7 @@ use confine::broker::{Broker, ChooseKind, Opening, read_opening};
 use interface_core::browser::{DropPlace, OpenKind};
 use neoteletext::address::{is_outside_link, outside_link, typed_path};
 use protocol::MAX_FILES_AT_ONCE;
+use protocol::ToInterface;
 use protocol::console::Level;
 
 use super::{Core, Event};
@@ -107,7 +108,8 @@ impl Core {
                 for reason in self.session.open_at_end(&addresses) {
                     self.log(Level::Warning, None, &reason);
                 }
-                self.send_all()
+                self.send_all()?;
+                self.send(&ToInterface::Raise)
             }
             None => self.open_window_at(&addresses),
         }
@@ -126,7 +128,7 @@ fn hear_openings(mut pipe: File, events: &std::sync::mpsc::Sender<Event>) {
 #[cfg(all(test, unix))]
 #[allow(clippy::unwrap_used, clippy::indexing_slicing, reason = "a test")]
 mod tests {
-    use super::super::test_support::core_on;
+    use super::super::test_support::{core_on, core_watched, sent_to_interface};
     use super::*;
     use neoteletext::launch::MAX_OUTSIDE_LINKS;
 
@@ -148,6 +150,14 @@ mod tests {
         assert_eq!(addresses(&core), ["https://a.invalid/", "https://news.invalid/#302"]);
         assert_eq!(core.session.active, 1);
         assert!(core.session.tabs.iter().all(|tab| !tab.private));
+    }
+
+    /// REQ-1703 item 9: what opens from outside comes to the front.
+    #[test]
+    fn what_opens_from_outside_raises_the_window() {
+        let (mut core, _broker, written) = core_watched("a.invalid");
+        open_links(&mut core, &[LINK]);
+        assert!(sent_to_interface(&mut core, &written).contains(&ToInterface::Raise));
     }
 
     /// REQ-1672 items 2 and 12: what a second start sends is checked again;

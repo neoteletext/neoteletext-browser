@@ -51,6 +51,11 @@ impl App {
                 self.view.browser.show(key, now);
                 self.act(event_loop);
             }
+            Incoming::Raise => {
+                if let Some(graphics) = &self.view.graphics {
+                    graphics.window.focus_window();
+                }
+            }
             Incoming::ShowWall(channel) => {
                 self.view.browser.show_wall(channel, now);
                 self.act(event_loop);

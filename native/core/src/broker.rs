@@ -9,6 +9,7 @@
 
 use std::ffi::OsString;
 use std::fs::File;
+use std::hash::{DefaultHasher, Hash as _, Hasher as _};
 use std::io::{PipeWriter, Read as _, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -44,6 +45,11 @@ static VERSION_MARK: &str = update::version_mark!(env!("NEOTELETEXT_VERSION"));
 
 /// What the cookie file's key is kept under in the platform's secret store
 /// (`cookies.md` section 7): a name a person reading the store recognises.
+/// The single-instance socket's name in the broker's folder.
+const INSTANCE: &str = "instance";
+/// The longest path a local-domain socket takes on macOS: `sun_path`'s 104
+/// bytes, less the zero that ends it.
+const MOST_SOCKET_PATH: usize = 103;
 const KEY_SERVICE: &str = "NeoTeletext cookie file";
 const KEY_ACCOUNT: &str = "cookies.bin";
 
@@ -194,7 +200,20 @@ fn instance_place(own_folder: &Path) -> Option<PathBuf> {
     if cfg!(target_os = "linux") {
         return std::env::var_os("XDG_RUNTIME_DIR").map(PathBuf::from).filter(|folder| folder.is_absolute()).map(|folder| folder.join("neoteletext-instance"));
     }
-    Some(own_folder.join("instance"))
+    short_place(own_folder, std::env::var_os("TMPDIR").map(PathBuf::from).as_deref())
+}
+
+/// `instance` in `own_folder`, or, under a home too deep for a socket's
+/// path, a name made from that folder in the user's own temporary folder,
+/// which no other user can enter.
+fn short_place(own_folder: &Path, temporary: Option<&Path>) -> Option<PathBuf> {
+    let place = own_folder.join(INSTANCE);
+    if place.as_os_str().len() <= MOST_SOCKET_PATH {
+        return Some(place);
+    }
+    let mut name = DefaultHasher::new();
+    own_folder.hash(&mut name);
+    Some(temporary.filter(|folder| folder.is_absolute())?.join(format!("neoteletext-{:016x}", name.finish())))
 }
 
 /// Hands `links` and `files` to the browser running at `place`: false when
@@ -442,6 +461,29 @@ mod tests {
         assert_eq!(opened.get(), 2);
     }
     use confine::broker::Program;
+
+    /// REQ-1703 item 8: a home too deep for a socket's path still has a
+    /// channel, in the user's temporary folder, the same at every start; an
+    /// ordinary one stays in the broker's own folder. Without the short
+    /// place a second start ran a second browser.
+    #[cfg(unix)]
+    #[test]
+    fn a_deep_home_still_has_a_single_instance_channel() {
+        let shallow = Path::new("/Users/a/Library/Application Support/NeoTeletext-broker");
+        assert_eq!(short_place(shallow, Some(Path::new("/tmp"))).unwrap(), shallow.join(INSTANCE));
+        let deep = Path::new("/private/tmp").join("a".repeat(MOST_SOCKET_PATH));
+        let temporary = std::env::temp_dir();
+        let place = short_place(&deep, Some(&temporary)).unwrap();
+        assert!(place.as_os_str().len() <= MOST_SOCKET_PATH, "{}", place.display());
+        assert!(place.starts_with(&temporary));
+        assert_eq!(short_place(&deep, Some(&temporary)), Some(place.clone()), "the same each start");
+        assert_ne!(short_place(&deep.join("x"), Some(&temporary)), Some(place.clone()), "each home its own");
+        assert_eq!(short_place(&deep, None), None);
+        let instance = Instance::bind(&place).unwrap();
+        assert!(instance::connect(&place).is_ok(), "it binds and answers");
+        drop(instance);
+        let _ = std::fs::remove_file(&place);
+    }
 
     /// Decision 93: the broker tells the launcher it started with the line
     /// the launcher waits for, whole and flushed.
