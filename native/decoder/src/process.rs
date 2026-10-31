@@ -112,7 +112,7 @@ pub fn run(store_pages: usize) -> Result<(), ProtocolError> {
         output.flush()?;
         let now = engine.now_us();
         let audio = engine.next_audio_tick_ms().map(|ms| ms.saturating_mul(MICROSECONDS_PER_MILLISECOND));
-        let deadline = [flashing.next_us(now), audio].into_iter().flatten().min();
+        let deadline = [flashing.next_us(now, engine.config()), audio].into_iter().flatten().min();
         let received = match wait(&incoming, deadline, now) {
             Woken::Message(message) => Some(message),
             Woken::Deadline => None,
@@ -124,7 +124,7 @@ pub fn run(store_pages: usize) -> Result<(), ProtocolError> {
             // A deadline: the sounds' clock, and the flashing pages whose
             // phase has changed.
             send_sounds(&mut engine, &mut output)?;
-            draw(&engine, &flashing.due(now), now, &mut sent, &mut spare, &mut flashing, &mut output)?;
+            draw(&engine, &flashing.due(now, engine.config()), now, &mut sent, &mut spare, &mut flashing, &mut output)?;
             continue;
         };
         let Some(message) = message? else { return Ok(()) };

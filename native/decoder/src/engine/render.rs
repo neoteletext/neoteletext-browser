@@ -18,6 +18,7 @@ use interface_core::channel::page_index;
 use neoteletext_core::acq::StoredPage;
 use neoteletext_core::charset::{CharRef, CharSet, G2Set};
 use neoteletext_core::compose::compose_level;
+use neoteletext_core::config::Config;
 use neoteletext_core::consts::{CLOCK_BYTES, G2_RIGHT_GUILLEMET, ROWS, SPACE, STATUS_COLUMNS};
 #[cfg(feature = "links")]
 use neoteletext_core::controls::{Control, Look, apply_look};
@@ -282,6 +283,12 @@ impl Engine {
         self.render_at(page, self.now_us())
     }
 
+    /// The decoder's configuration, which holds the Level 1 flash timing.
+    #[must_use]
+    pub fn config(&self) -> &Config {
+        self.decoder.config()
+    }
+
     /// Renders `page` at the flash phase of `now_us`, on
     /// [`Engine::now_us`]'s clock.
     #[must_use]
@@ -317,7 +324,7 @@ impl Engine {
         let subcode = stored.key.subcode.value();
         let reveal = self.views.get(&page).is_some_and(|view| view.reveal);
         let config = self.decoder.config();
-        let phase = FlashPhase::at(Instant(now_us));
+        let phase = FlashPhase::at(Instant(now_us), config);
         let render = RenderOptions::resolved(config, reveal, phase).with_underline(false);
         let changed = self.trackers.borrow_mut().entry(page).or_default().changed_rows(&grid, render);
         indices.clear();

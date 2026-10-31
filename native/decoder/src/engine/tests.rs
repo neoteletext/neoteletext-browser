@@ -5,6 +5,7 @@ use super::feed::MAX_LOGS_HELD;
 use super::*;
 use crate::{Flashing, sample};
 use neoteletext_core::charset::to_unicode;
+use neoteletext_core::config::Config;
 #[cfg(feature = "links")]
 use neoteletext_core::consts::ROWS;
 use neoteletext_core::consts::{FLASH_CYCLE_US, FLASH_UNITS};
@@ -600,28 +601,29 @@ fn arrivals_compare_only_the_pages_that_completed() {
     assert_eq!(engine.take_updated(), [0x101]);
 }
 
+/// The engine's decisions E.12 and E.48 as the owner changed them: the
+/// Level 1 Flash code keeps the SAA5050's timing at every level, 960 ms
+/// shown and 320 ms hidden, and the decoder wakes at those changes alone.
 #[test]
 fn only_a_shown_page_that_flashes_wakes_the_decoder_and_only_when_its_phase_changes() {
+    let config = Config::default();
     let mut engine = Engine::new();
     engine.feed_whole(false, false, b"PN,10000\nSC,0000\nPS,8000\nOL,1,Steady\n\nPN,10100\nSC,0000\nPS,8000\nOL,1,\x1b\x48Flashing\n\n");
     let mut flashing = Flashing::default();
-    // Unit 0 of a cycle: slow flash on (decision E.48).
-    let start = 3 * FLASH_CYCLE_US;
+    // The start of the Level 1 flash's period of 1.28 seconds.
+    let start = 3 * 1_280_000;
     flashing.drawn(0x100, &engine.render_at(0x100, start).unwrap());
-    assert_eq!(flashing.next_us(start), None, "a steady page never wakes it");
+    assert_eq!(flashing.next_us(start, &config), None, "a steady page never wakes it");
     flashing.drawn(0x101, &engine.render_at(0x101, start).unwrap());
-    let unit = FLASH_CYCLE_US.div_ceil(u64::from(FLASH_UNITS));
-    // Slow flash, the only rate the page uses, stays on until unit 9:
-    // the fast rates change phase before then, but change nothing on
-    // this page, so the decoder sleeps until unit 9. Before this it
-    // woke at every unit and drew the page at seven of the twelve.
-    assert_eq!(flashing.next_us(start), Some(start + (9 * FLASH_CYCLE_US).div_ceil(u64::from(FLASH_UNITS))), "unit 9, where the slow flash turns off");
-    assert_eq!(flashing.due(start + unit), [] as [u16; 0]);
-    assert_eq!(flashing.due(start + 2 * unit + 1), [] as [u16; 0], "the fast rates' change at unit 2 is not this page's");
-    let off = start + 9 * FLASH_CYCLE_US / u64::from(FLASH_UNITS) + 1;
-    assert_eq!(flashing.due(off), [0x101]);
+    assert_eq!(flashing.next_us(start, &config), Some(start + 960_000), "hidden after 960 ms");
+    assert_eq!(flashing.due(start + 800_000, &config), [] as [u16; 0], "the units' 750 ms is not this flash's");
+    assert_eq!(flashing.due(start + 959_999, &config), [] as [u16; 0]);
+    let off = start + 960_000;
+    assert_eq!(flashing.due(off, &config), [0x101]);
+    flashing.drawn(0x101, &engine.render_at(0x101, off).unwrap());
+    assert_eq!(flashing.next_us(off, &config), Some(start + 1_280_000), "shown again after 320 ms");
     flashing.retain(&[0x100]);
-    assert_eq!(flashing.next_us(off), None, "no longer shown");
+    assert_eq!(flashing.next_us(off, &config), None, "no longer shown");
 }
 
 #[test]

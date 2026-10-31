@@ -1,10 +1,11 @@
-//! Flash (EN 300 706 clause 12.3, the engine's decision E.48): which
-//! flash rates a page's cells use, and the shown pages that flash, so the
+//! Flash (EN 300 706 clause 12.3, the engine's decisions E.12 and E.48):
+//! which flash rates a page's cells use, and the shown pages that flash, so the
 //! decoder wakes and draws again only when a rate one of them uses changes
 //! phase.
 
 use std::collections::BTreeMap;
 
+use neoteletext_core::config::Config;
 use neoteletext_core::consts::{FLASH_CYCLE_US, FLASH_UNITS};
 use neoteletext_core::level1::FlashRate;
 use neoteletext_core::render::FlashPhase;
@@ -12,9 +13,11 @@ use neoteletext_core::types::Instant;
 
 use crate::Rendered;
 
-/// The flash rates of the engine's decision E.48, in the order of
-/// [`FlashRates`]' bits.
-const RATES: [FlashRate; 4] = [FlashRate::Slow, FlashRate::FastPhase1, FlashRate::FastPhase2, FlashRate::FastPhase3];
+/// The flash rates of the engine's decisions E.12 and E.48, in the order
+/// of [`FlashRates`]' bits.
+const RATES: [FlashRate; 5] = [FlashRate::Level1, FlashRate::Slow, FlashRate::FastPhase1, FlashRate::FastPhase2, FlashRate::FastPhase3];
+/// The rates the twelve units time: every one but the Level 1 flash.
+const UNIT_RATES: u8 = !1;
 
 /// The set of flash rates a page's cells use: one bit for each of
 /// [`RATES`].
@@ -35,6 +38,14 @@ impl FlashRates {
         Self(self.0 | other.0)
     }
 
+    fn level_1(self) -> bool {
+        self.0 & !UNIT_RATES != 0
+    }
+
+    fn timed_by_units(self) -> Self {
+        Self(self.0 & UNIT_RATES)
+    }
+
     /// Whether any of these rates is in a different phase in `drawn` and
     /// `now`: whether a page drawn in `drawn` looks different at `now`.
     fn differ(self, drawn: FlashPhase, now: FlashPhase) -> bool {
@@ -46,8 +57,8 @@ impl FlashRates {
 /// last drawn in and the rates it uses: the decoder wakes for flash only
 /// when one of them is shown, and only when a rate one of them uses
 /// changes phase, and draws a page again only when a rate it uses did
-/// (requirement 9.7). A page with slow flash alone is drawn twice a
-/// second, not seven times.
+/// (requirement 9.7). A page with the Level 1 flash alone is drawn at its
+/// two changes in every 1.28 seconds, not seven times a second.
 #[derive(Debug, Default)]
 pub struct Flashing {
     pages: BTreeMap<u16, (FlashPhase, FlashRates)>,
@@ -70,29 +81,47 @@ impl Flashing {
     /// The flashing pages that look different at `now_us` from how they
     /// were drawn.
     #[must_use]
-    pub fn due(&self, now_us: u64) -> Vec<u16> {
-        let phase = FlashPhase::at(Instant(now_us));
+    pub fn due(&self, now_us: u64, config: &Config) -> Vec<u16> {
+        let phase = FlashPhase::at(Instant(now_us), config);
         self.pages.iter().filter(|&(_, &(drawn, rates))| rates.differ(drawn, phase)).map(|(&page, _)| page).collect()
     }
 
     /// When a rate some shown page uses next changes phase, if any shown
-    /// page flashes: the start of that one of the twelve units of the
-    /// one-second cycle (the engine's decision E.48).
+    /// page flashes: the next change of the Level 1 flash (the engine's
+    /// decision E.12), or the start of that one of the twelve units of the
+    /// one-second cycle (its decision E.48), whichever comes first.
     #[must_use]
-    pub fn next_us(&self, now_us: u64) -> Option<u64> {
+    pub fn next_us(&self, now_us: u64, config: &Config) -> Option<u64> {
         let used = self.pages.values().fold(FlashRates::default(), |used, &(_, rates)| used.union(rates));
-        if used.is_empty() {
-            return None;
-        }
-        let units = u64::from(FLASH_UNITS);
-        let cycle = now_us.checked_div(FLASH_CYCLE_US).unwrap_or(0).saturating_mul(FLASH_CYCLE_US);
-        let within = now_us.saturating_sub(cycle);
-        let unit = within.saturating_mul(units).checked_div(FLASH_CYCLE_US).unwrap_or(0);
-        let phase = FlashPhase::at_unit(u8::try_from(unit).unwrap_or(0));
-        // The first later unit whose phase differs for a rate in use; every
-        // rate changes within a cycle, so one is found.
-        let ahead = (1..=units).find(|&ahead| used.differ(phase, FlashPhase::at_unit(u8::try_from(unit.saturating_add(ahead)).unwrap_or(0)))).unwrap_or(1);
-        let next = unit.saturating_add(ahead).saturating_mul(FLASH_CYCLE_US).div_ceil(units);
-        Some(cycle.saturating_add(next))
+        let level_1 = used.level_1().then(|| level_1_next_us(now_us, config)).flatten();
+        let units = next_unit_us(now_us, used.timed_by_units());
+        [level_1, units].into_iter().flatten().min()
     }
+}
+
+/// When the Level 1 flash next changes, on its 960 ms shown and 320 ms
+/// hidden by default; `None` when the configuration has it steady.
+fn level_1_next_us(now_us: u64, config: &Config) -> Option<u64> {
+    let shown = config.flash_shown_us;
+    let period = shown.saturating_add(config.flash_hidden_us);
+    let within = now_us.checked_rem(period)?;
+    let next = if within < shown { shown } else { period };
+    Some(now_us.saturating_sub(within).saturating_add(next))
+}
+
+/// When a rate of `used` that the units time next changes phase.
+fn next_unit_us(now_us: u64, used: FlashRates) -> Option<u64> {
+    if used.is_empty() {
+        return None;
+    }
+    let units = u64::from(FLASH_UNITS);
+    let cycle = now_us.checked_div(FLASH_CYCLE_US).unwrap_or(0).saturating_mul(FLASH_CYCLE_US);
+    let within = now_us.saturating_sub(cycle);
+    let unit = within.saturating_mul(units).checked_div(FLASH_CYCLE_US).unwrap_or(0);
+    let phase = FlashPhase::at_unit(u8::try_from(unit).unwrap_or(0));
+    // The first later unit whose phase differs for a rate in use; every
+    // rate changes within a cycle, so one is found.
+    let ahead = (1..=units).find(|&ahead| used.differ(phase, FlashPhase::at_unit(u8::try_from(unit.saturating_add(ahead)).unwrap_or(0)))).unwrap_or(1);
+    let next = unit.saturating_add(ahead).saturating_mul(FLASH_CYCLE_US).div_ceil(units);
+    Some(cycle.saturating_add(next))
 }
