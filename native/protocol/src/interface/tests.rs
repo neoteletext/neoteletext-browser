@@ -121,6 +121,7 @@ fn every_message_to_the_interface_round_trips() {
             rows: crate::subpages::SubPageRows { count: 8_190, first: 8_188, rows: vec![(0x3F7D, "Story 1/2".into()), (0x3F7E, "Comments".into())] },
         },
         ToInterface::Updated { channel: 9, page: 0x302 },
+        ToInterface::Show(KEY),
         ToInterface::Frame { key: KEY, version: 3, image: vec![1, 2, 3] },
         ToInterface::Settings(settings::SettingsView {
             home: "neoteletext:home".into(),

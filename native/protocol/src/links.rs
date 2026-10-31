@@ -63,7 +63,6 @@ pub(crate) const KIND_LIT: u8 = 95;
 const KIND_PAGE_LINKS: u8 = 11;
 const KIND_POINTING: u8 = 12;
 const KIND_PROMPT: u8 = 13;
-const KIND_SHOW: u8 = 14;
 const KIND_ALIASES: u8 = 15;
 
 /// What the trusted core tells the interface about hyperlinks.
@@ -83,8 +82,6 @@ pub enum Message {
     /// The question the trusted strip asks before a link leaves, or none
     /// (requirements 8.4 and 17.8).
     Prompt(Option<Prompt>),
-    /// Open this page of the active channel: a link was followed.
-    Show(PageKey),
     /// The page numbers the channel's descriptor links elsewhere: typed,
     /// they go to the trusted core.
     Aliases {
@@ -101,7 +98,6 @@ pub(crate) fn message_kind(message: &Message) -> u8 {
         Message::Page { .. } => KIND_PAGE_LINKS,
         Message::Pointing(_) => KIND_POINTING,
         Message::Prompt(_) => KIND_PROMPT,
-        Message::Show(_) => KIND_SHOW,
         Message::Aliases { .. } => KIND_ALIASES,
     }
 }
@@ -112,7 +108,6 @@ pub(crate) fn push_message(payload: &mut Vec<u8>, message: &Message) -> Result<(
         Message::Page { key, links } => push_page_links(payload, *key, links)?,
         Message::Pointing(pointing) => push_pointing(payload, pointing.as_ref())?,
         Message::Prompt(prompt) => push_prompt(payload, prompt.as_ref())?,
-        Message::Show(key) => push_key(payload, *key),
         Message::Aliases { channel, numbers } => {
             payload.extend_from_slice(&channel.to_be_bytes());
             push_numbers(payload, numbers)?;
@@ -136,7 +131,6 @@ pub(crate) fn read_message(kind: u8, fields: &mut Fields<'_>) -> Result<Message,
         }
         KIND_POINTING => Message::Pointing(read_pointing(fields, empty)?),
         KIND_PROMPT => Message::Prompt(read_prompt(fields, empty)?),
-        KIND_SHOW => Message::Show(fields.key()?),
         KIND_ALIASES => Message::Aliases { channel: fields.u32()?, numbers: read_numbers(fields)? },
         other => return Err(ProtocolError::UnknownKind(other)),
     })

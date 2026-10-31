@@ -26,7 +26,7 @@ fn browser() -> Browser {
 }
 
 fn typing(cursor: Option<CursorView>) -> TypingView {
-    TypingView { channel: KEY.channel, page: KEY.page, on: true, secure: false, refused: false, cursor, round_trip_us: None, show: None }
+    TypingView { channel: KEY.channel, page: KEY.page, on: true, secure: false, refused: false, cursor, round_trip_us: None }
 }
 
 fn intents(outputs: &[Output]) -> Vec<Intent> {

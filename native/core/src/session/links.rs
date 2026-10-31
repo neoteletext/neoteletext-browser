@@ -36,4 +36,27 @@ impl Session {
         tab.pending = Some(Pending { typed: false, drawn: true, reload: false });
         tab.address()
     }
+
+    /// The channel's program redirected the tab holding `channel` to `page`,
+    /// and `subpage` of it if it names one (`INPUT.md` section 7.11). True
+    /// when the tab's address changed.
+    pub fn redirect_page(&mut self, channel: u32, page: u16, subpage: Option<u16>) -> bool {
+        let now = self.now;
+        let Some(tab) = self.tabs.iter_mut().find(|tab| tab.channel.id == channel) else { return false };
+        let Some(address) = tab.address().and_then(|shown| shown.with_page(page)).map(|address| Address { subpage, ..address }) else { return false };
+        if tab.address().is_some_and(|shown| shown.page == address.page && shown.subpage == subpage) {
+            return false;
+        }
+        tab.push(Visit::new(address, true, now));
+        tab.pending = Some(Pending { typed: false, drawn: true, reload: false });
+        true
+    }
+
+    /// The viewer gave the tab holding `channel` input: a program's redirects
+    /// are counted again from here (REQ-1688 item 6).
+    pub fn viewer_input(&mut self, channel: u32) {
+        if let Some(tab) = self.tabs.iter_mut().find(|tab| tab.channel.id == channel) {
+            tab.channel.redirects.clear();
+        }
+    }
 }

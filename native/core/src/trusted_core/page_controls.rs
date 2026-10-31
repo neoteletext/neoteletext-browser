@@ -246,6 +246,43 @@ impl Core {
         Ok(())
     }
 
+    /// The tab in front was redirected to `key`, and to `subpage` of it if
+    /// the redirect names one: the page opens as any page the core opens, or,
+    /// when it is open already, only its sub-page changes.
+    pub(super) fn open_redirected(&mut self, key: PageKey, subpage: Option<u16>) -> Result<(), String> {
+        if self.controls.open != Some(key) {
+            self.open_at_subpage(key, subpage);
+            return self.send(&ToInterface::Show(key));
+        }
+        let view = View { subpage, ..self.controls.view_of(key) };
+        if subpage.is_some() {
+            self.show_subpage(key, view)?;
+        } else {
+            self.controls.view = Some(view);
+            self.tell(key.channel, ToDecoder::View(view));
+            self.select_view(key, SUBCODE_ANY)?;
+        }
+        self.send_controls()
+    }
+
+    /// A tab behind others was redirected to `key`: its channel is told.
+    pub(super) fn select_redirected(&mut self, key: PageKey, sub: u16) -> Result<(), String> {
+        self.select_view(key, sub)
+    }
+
+    /// Says again what `channel`'s tab selects.
+    #[cfg(feature = "interaction")]
+    pub(super) fn select_again(&mut self, channel: u32) -> Result<(), String> {
+        let sends = self.typing.select_again(channel, self.now_us());
+        self.deliver_typing(sends)
+    }
+
+    #[cfg(not(feature = "interaction"))]
+    #[expect(clippy::unnecessary_wraps, clippy::unused_self, reason = "SELECT is input, compiled out")]
+    pub(super) fn select_again(&mut self, _channel: u32) -> Result<(), String> {
+        Ok(())
+    }
+
     /// The open page's catalogue arrived or changed: its controls and the
     /// sub-page it shows follow it.
     pub(super) fn catalogue_arrived(&mut self, key: PageKey) -> Result<(), String> {

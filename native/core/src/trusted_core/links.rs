@@ -62,19 +62,14 @@ impl Core {
     }
 
     /// After a change of tab or channel: no page's links, no question in
-    /// the strip, the channel's aliases, and the page its address names.
+    /// the strip, and the channel's aliases.
     pub(super) fn send_links_afresh(&mut self) -> Result<(), String> {
         self.links.clear_pages();
         self.links.forget_prompt();
         self.link(LinkMessage::Prompt(None))?;
         self.link(LinkMessage::Pointing(None))?;
         let Some(channel) = self.active_channel() else { return Ok(()) };
-        self.link(LinkMessage::Aliases { channel, numbers: self.links.aliases(channel) })?;
-        let page = self.session.active_tab().and_then(|tab| tab.address()).and_then(|address| address.page);
-        match page {
-            Some(page) => self.link(LinkMessage::Show(PageKey { channel, page })),
-            None => Ok(()),
-        }
+        self.link(LinkMessage::Aliases { channel, numbers: self.links.aliases(channel) })
     }
 
     pub(super) fn link_intent(&mut self, intent: &ToCore) -> Result<(), String> {
@@ -129,7 +124,7 @@ impl Core {
                 if self.session.show_page(page).is_some() {
                     self.send(&ToInterface::Strip(self.strip()))?;
                 }
-                self.link(LinkMessage::Show(PageKey { channel, page }))
+                self.send(&ToInterface::Show(PageKey { channel, page }))
             }
             Ok(Follow::Ask(prompt)) => self.link(LinkMessage::Prompt(Some(prompt))),
             Ok(Follow::Channel(address)) => {

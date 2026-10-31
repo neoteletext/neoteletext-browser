@@ -12,7 +12,6 @@ use alloc::vec::Vec;
 
 use super::{Browser, Cursor, Key, Modifiers, Output};
 use crate::canvas::{Canvas, PageKey};
-use crate::channel::page_index;
 use crate::geometry::Rect;
 use crate::links::{self, Area, LinkCell, LinkKind, Lit, PageLinks, Pointing, Prompt, PromptButton};
 use crate::text::{border, centred, left_centred};
@@ -49,8 +48,6 @@ pub(super) struct LinkUi {
     hovered: Option<usize>,
     /// What the trusted core was last told the pointer or focus is on.
     sent: Option<LinkCell>,
-    /// A page the trusted core opened that the window does not list yet.
-    pending: Option<PageKey>,
     /// The question's buttons, where last drawn.
     go: Rect,
     cancel: Rect,
@@ -100,31 +97,6 @@ impl Browser {
     /// The page numbers the active channel's descriptor links elsewhere.
     pub fn set_aliases(&mut self, channel: u32, numbers: Vec<u16>) {
         self.links.aliases = (channel, numbers);
-    }
-
-    /// The trusted core followed a link to `key`: the page opens, zoomed. A
-    /// page not listed yet opens when it is.
-    pub fn show(&mut self, key: PageKey, now: u64) {
-        if key.channel != self.channel.channel {
-            return;
-        }
-        let listed = page_index(key.page).filter(|&index| matches!(self.channel.pages.get(index), Some(Some(_))));
-        let Some(index) = listed else {
-            self.links.pending = Some(key);
-            return;
-        };
-        self.links.pending = None;
-        self.select_page(index, true);
-        if self.wall.zoomed().is_none() {
-            self.wall.zoom(key, now);
-        }
-    }
-
-    /// A page arrived: the page the trusted core opened, if it waited for it.
-    pub(super) fn show_pending(&mut self, channel: u32, page: u16, now: u64) {
-        if let Some(key) = self.links.pending.filter(|key| key.channel == channel && key.page == page) {
-            self.show(key, now);
-        }
     }
 
     /// The open page's links, when they belong to its image on screen.

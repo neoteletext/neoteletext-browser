@@ -142,10 +142,6 @@ pub struct Typing {
     /// The push connection's last round trip, WebSocket ping to pong, in
     /// microseconds (REQ-RCH-016), while keys go to the channel.
     pub round_trip_us: Option<u32>,
-    /// The channel's page now, when its cursor record names another of its
-    /// pages than the one open: a host goes to a page by sending it
-    /// (REQ-INT-113), and the browser shows it.
-    pub show: Option<u16>,
 }
 
 /// An input message for the fetcher to write: whole items of the engine's

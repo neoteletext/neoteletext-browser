@@ -48,7 +48,6 @@ impl Browser {
             self.pulses.push((index, now));
         }
         *slot = Some(PageInfo { title, status: Status::Loaded });
-        #[cfg(feature = "links")]
         self.show_pending(channel, page, now);
     }
 
@@ -72,6 +71,32 @@ impl Browser {
 
     pub(super) fn page_key(&self, index: usize) -> Option<PageKey> {
         page_number(index).map(|page| PageKey { channel: self.channel.channel, page })
+    }
+
+    /// The trusted core opened `key`: a link was followed, an address named
+    /// it, or the channel redirected the tab. The page opens, zoomed. A page
+    /// not listed yet opens when it is.
+    pub fn show(&mut self, key: PageKey, now: u64) {
+        if key.channel != self.channel.channel {
+            return;
+        }
+        let listed = page_index(key.page).filter(|&index| matches!(self.channel.pages.get(index), Some(Some(_))));
+        let Some(index) = listed else {
+            self.show_when_listed = Some(key);
+            return;
+        };
+        self.show_when_listed = None;
+        self.select_page(index, true);
+        if self.wall.zoomed().is_none() {
+            self.wall.zoom(key, now);
+        }
+    }
+
+    /// A page arrived: the page the trusted core opened, if it waited for it.
+    fn show_pending(&mut self, channel: u32, page: u16, now: u64) {
+        if let Some(key) = self.show_when_listed.filter(|key| key.channel == channel && key.page == page) {
+            self.show(key, now);
+        }
     }
 
     pub(super) fn select_page(&mut self, index: usize, reveal: bool) {

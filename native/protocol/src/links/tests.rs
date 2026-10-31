@@ -36,7 +36,6 @@ fn every_link_message_round_trips() {
         Message::Pointing(None),
         Message::Prompt(Some(Prompt { id: 3, destination: "https://weather.invalid/".into(), secure: true })),
         Message::Prompt(None),
-        Message::Show(KEY),
         Message::Aliases { channel: 7, numbers: vec![0x500] },
     ] {
         let message = ToInterface::Link(message);

@@ -59,7 +59,7 @@ fn a_session_starts_with_hello_and_waits_for_welcome() {
     let mut typing = Typing::default();
     let opened = typing.input(PAGE.channel, true, true, 0);
     let offered = OFFERED | RESUME_CAP;
-    assert_eq!(items(&opened), [format!("Event(Hello {{ version: 3, caps: {offered}, agent: None }})")]);
+    assert_eq!(items(&opened), [format!("Event(Hello {{ version: {VERSION}, caps: {offered}, agent: None }})")]);
     typing.opened(Some(PAGE.channel), Some(PAGE), 0);
     assert_eq!(items(&typing.input_intent(&key('a'), 0)), [] as [String; 0], "nothing before WELCOME");
     let welcomed = typing.control(PAGE.channel, &welcome(SELECT_CAP | CURSOR_CAP), 5);
@@ -191,33 +191,13 @@ fn the_keys_going_elsewhere_keep_the_selection() {
     assert_eq!(typing.selection(PAGE.channel), Some((PAGE.page, SUBCODE_ANY)));
 }
 
-/// DEC-1659: a frame in flight when the viewer selected another page names
-/// the page left, and does not move the viewer back; a page the channel
-/// names otherwise is its own move, and once its answer has come, or the
-/// answer's time has passed, a record naming the page left is a move too.
+// DEC-1707: a redirect the core did not follow leaves the server with a
+// selection the tab does not have, so the tab says its own again.
 #[test]
-fn a_cursor_record_in_flight_does_not_move_the_viewer_back() {
-    const NEXT: PageKey = PageKey { channel: 7, page: 0x201 };
-    let record = |page: PageKey| {
-        let [high, low] = page.page.to_be_bytes();
-        [high, low, 0, 0, 255, 0, 0, 0]
-    };
-    let show = |sends: Vec<Send>| sends.iter().rev().find_map(|send| if let Send::Interface(state) = send { Some(state.show) } else { None });
+fn a_selection_is_said_again_when_asked() {
     let mut typing = ready(SELECT_CAP);
-    typing.opened(Some(PAGE.channel), Some(NEXT), 10 * MS);
-    assert_eq!(show(typing.cursor(PAGE.channel, record(PAGE), 11 * MS)), Some(None), "the page left: a frame in flight");
-    // A page the viewer did not leave is the channel's move.
-    let elsewhere = PageKey { channel: 7, page: 0x300 };
-    assert_eq!(show(typing.cursor(PAGE.channel, record(elsewhere), 12 * MS)), Some(Some(0x300)), "a goto");
-    // The selection's answer ends the waiting: the page left may be gone
-    // back to by the channel.
-    assert_eq!(show(typing.cursor(PAGE.channel, record(NEXT), 13 * MS)), Some(None), "the answer");
-    assert_eq!(show(typing.cursor(PAGE.channel, record(PAGE), 14 * MS)), Some(Some(0x200)), "a goto back");
-    // With no answer, the channel's move still lands when the time passes.
-    let mut typing = ready(SELECT_CAP);
-    typing.opened(Some(PAGE.channel), Some(NEXT), 10 * MS);
-    assert_eq!(show(typing.cursor(PAGE.channel, record(PAGE), 10 * MS + PAGE_LEFT_FOR_US - 1)), Some(None));
-    assert_eq!(show(typing.cursor(PAGE.channel, record(PAGE), 10 * MS + PAGE_LEFT_FOR_US)), Some(Some(0x200)));
+    assert_eq!(items(&typing.select_again(PAGE.channel, MS)), [SELECT_PAGE]);
+    assert_eq!(items(&typing.select_again(0, MS)), [] as [String; 0], "no such channel");
 }
 
 #[test]
@@ -345,17 +325,11 @@ fn a_cursor_record_places_the_cursor() {
     // A channel written before the engine's decision E.134 still sends an
     // echo width and the echo flag (1): read, and not told.
     let body = |row: u8, acked: u8| [0x02, 0x00, 0, acked, row, 4, 10, 1 | BLOCK];
-    assert_eq!(typing.cursor(PAGE.channel, body(24, 5), 120 * MS), [], "row 24 is refused");
-    let sends = typing.cursor(PAGE.channel, body(5, 5), 120 * MS);
+    assert_eq!(typing.cursor(PAGE.channel, body(24, 5)), [], "row 24 is refused");
+    let sends = typing.cursor(PAGE.channel, body(5, 5));
     let Some(Send::Interface(state)) = sends.last() else { panic!("{sends:?}") };
     assert_eq!(state.cursor, Some(CursorState { row: 5, column: 4, flags: BLOCK }), "no echo is told");
     assert_eq!(state.round_trip_us, None);
-    assert_eq!(state.show, None, "the open page's own record");
-    let elsewhere = |acked: u8| [0x02, 0x01, 0, acked, 255, 0, 0, 0];
-    let sends = typing.cursor(PAGE.channel, elsewhere(5), 130 * MS);
-    assert!(matches!(sends.last(), Some(Send::Interface(state)) if state.show == Some(0x201)), "the host went to 201");
-    let sends = typing.opened(Some(PAGE.channel), Some(PageKey { page: 0x201, ..PAGE }), 156 * MS);
-    assert!(matches!(sends.last(), Some(Send::Interface(state)) if state.show.is_none()), "and the browser followed");
 }
 
 /// REQ-INT-137: no code that handles the viewer's input prints or logs

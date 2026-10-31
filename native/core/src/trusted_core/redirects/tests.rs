@@ -8,11 +8,14 @@ use std::time::{Duration, Instant};
 
 use confine::broker::Program;
 use confine::broker::stand_in::StandIn;
-use protocol::ToCore;
-use protocol::fetcher::FromFetcher;
+use interface_core::canvas::PageKey;
+use neoteletext_core::limits::SUBCODE_ANY;
+use protocol::decoder::FromDecoder;
+use protocol::fetcher::{Entry, FromFetcher};
+use protocol::{ToCore, ToInterface};
 
 use super::super::Core;
-use super::super::test_support::core_on;
+use super::super::test_support::{Test, core_on};
 use super::REDIRECT_NOTICE;
 use crate::session::MAX_REDIRECTS;
 
@@ -298,4 +301,252 @@ fn a_gone_channel_moves_nothing() {
     core.fetched(only + 1_000, FromFetcher::Redirected(DESTINATION.into())).unwrap();
     assert_eq!(core.redirect_due_at(), None);
     assert_eq!((address(&core), channel(&core)), (shown.as_str(), only));
+}
+
+const LIVE: &str = "https://live.invalid/channel/";
+const PAGE_100: PageKey = PageKey { channel: 0, page: 0x100 };
+
+/// A live channel's listing: pages 100, 200 and 300.
+fn listing() -> Vec<Entry> {
+    [0x100, 0x200, 0x300].map(|page| Entry::Page { page, title: format!("Page {page:03X}") }).to_vec()
+}
+
+/// A tab on a live channel listing [`listing`], page 100 open, with what
+/// was sent so far read.
+fn live(name: &str) -> (Test, u32) {
+    let mut test = Test::new(&format!("redirect {name}"));
+    test.core.session.open(LIVE).unwrap();
+    let channel = test.core.active_channel().unwrap();
+    test.core.fetched(channel, FromFetcher::Connecting(true)).unwrap();
+    test.core.fetched(channel, FromFetcher::Connecting(false)).unwrap();
+    test.core.fetched(channel, FromFetcher::Contents(listing())).unwrap();
+    test.core.intent(ToCore::Opened(Some(PageKey { channel, ..PAGE_100 }))).unwrap();
+    test.sent();
+    (test, channel)
+}
+
+fn redirected(test: &mut Test, channel: u32, page: u16, sub: u16) {
+    test.core.fetched(channel, FromFetcher::PageRedirect { page, sub }).unwrap();
+}
+
+/// The pages the interface was told to open since the last look.
+fn shown(test: &mut Test) -> Vec<PageKey> {
+    test.sent().into_iter().filter_map(|message| if let ToInterface::Show(key) = message { Some(key) } else { None }).collect()
+}
+
+fn text(test: &Test) -> &str {
+    &test.core.session.active_tab().unwrap().address().unwrap().text
+}
+
+// REQ-212 item 1, DEC-1683: the record moves the tab: the trusted core sets
+// its address and tells the interface, which reports the page as opened.
+#[test]
+fn a_page_redirect_moves_the_tab_and_its_address() {
+    let (mut test, channel) = live("page");
+    redirected(&mut test, channel, 0x200, SUBCODE_ANY);
+    assert_eq!(text(&test), "https://live.invalid/channel/#200");
+    assert_eq!(test.core.strip().address, "https://live.invalid/channel/#200", "the strip says it");
+    let key = PageKey { channel, page: 0x200 };
+    assert_eq!(shown(&mut test), [key], "the interface is told");
+    test.core.intent(ToCore::Opened(Some(key))).unwrap();
+    assert_eq!(test.core.typing.selection(channel), Some((0x200, SUBCODE_ANY)), "a selection, told to the channel");
+}
+
+// DEC-1707: nothing in it asks where the keys are: here no session was ever
+// welcomed and the window has lost the focus.
+#[test]
+fn a_redirect_moves_the_tab_wherever_the_keys_are() {
+    let (mut test, channel) = live("keys");
+    test.core.intent(ToCore::Focused(false)).unwrap();
+    assert!(!test.core.typing.page_takes_keys());
+    redirected(&mut test, channel, 0x300, SUBCODE_ANY);
+    assert_eq!(text(&test), "https://live.invalid/channel/#300");
+}
+
+// REQ-212 item 1: a sub-code names the sub-page, and a redirect to another
+// sub-page of the open page changes the sub-page alone.
+#[test]
+fn a_redirect_names_a_sub_page() {
+    let (mut test, channel) = live("sub-page");
+    redirected(&mut test, channel, 0x200, 2);
+    let key = PageKey { channel, page: 0x200 };
+    assert_eq!(shown(&mut test), [key]);
+    test.core.intent(ToCore::Opened(Some(key))).unwrap();
+    assert_eq!(test.core.typing.selection(channel), Some((0x200, 2)));
+    redirected(&mut test, channel, 0x200, 3);
+    assert_eq!(shown(&mut test), [], "the page stays open");
+    assert_eq!(test.core.typing.selection(channel), Some((0x200, 3)));
+    redirected(&mut test, channel, 0x200, SUBCODE_ANY);
+    assert_eq!(test.core.typing.selection(channel), Some((0x200, SUBCODE_ANY)), "the page itself");
+}
+
+// DEC-1683: a page the channel does not list is no redirect.
+#[test]
+fn a_redirect_to_a_page_not_listed_moves_nothing() {
+    let (mut test, channel) = live("not listed");
+    redirected(&mut test, channel, 0x400, SUBCODE_ANY);
+    assert_eq!(text(&test), LIVE);
+    assert_eq!(shown(&mut test), []);
+    assert_eq!(test.core.typing.selection(channel), Some((0x100, SUBCODE_ANY)));
+}
+
+// A record comes only on a push connection, whatever a fetcher says: a
+// channel served as files has none to move a tab with.
+#[test]
+fn a_channel_served_as_files_redirects_nothing() {
+    let mut test = Test::new("redirect files");
+    test.core.session.open(LIVE).unwrap();
+    let channel = test.core.active_channel().unwrap();
+    test.core.fetched(channel, FromFetcher::Contents(listing())).unwrap();
+    test.sent();
+    redirected(&mut test, channel, 0x200, SUBCODE_ANY);
+    assert_eq!(text(&test), LIVE);
+    assert_eq!(shown(&mut test), []);
+}
+
+// REQ-1686 item 8's rule for a page redirect: the tab behind others moves,
+// and its address opens the page when it comes to the front.
+#[test]
+fn a_tab_behind_others_moves() {
+    let (mut test, channel) = live("behind");
+    test.core.session.open("https://other.invalid/").unwrap();
+    let _ = test.sent();
+    redirected(&mut test, channel, 0x200, SUBCODE_ANY);
+    assert_eq!(test.core.session.tabs[0].address().unwrap().text, "https://live.invalid/channel/#200");
+    assert_eq!(test.core.typing.selection(channel), Some((0x200, SUBCODE_ANY)), "the channel is told");
+    assert_eq!(shown(&mut test), [], "not its window's page");
+}
+
+// TODO-1656, `INPUT.md` section 7.1: a cursor record moves nothing, whatever
+// page it names and however late it comes. Only the REDIRECT record does.
+#[test]
+fn a_cursor_record_never_moves_a_viewer() {
+    let (mut test, channel) = live("cursor");
+    test.core.typing.input(channel, true, false, 0);
+    let mut body = [0_u8; neoteletext_input::control::MAX_BODY];
+    let length = neoteletext_input::control::write_body(
+        &neoteletext_input::control::Control::Welcome { version: neoteletext_input::VERSION, caps: neoteletext_input::caps::SELECT_CAP, resume: None },
+        &mut body,
+    )
+    .unwrap();
+    test.core.typing.control(channel, &body[..length], 0);
+    test.core.intent(ToCore::Opened(Some(PageKey { channel, page: 0x200 }))).unwrap();
+    test.sent();
+    let [high, low] = 0x100_u16.to_be_bytes();
+    let left = FromDecoder::Cursor { body: [high, low, 0, 0, neoteletext_input::cursor::NO_CURSOR, 0, 0, 0] };
+    test.core.decoded(channel, left).unwrap();
+    assert_eq!(shown(&mut test), []);
+    assert_eq!(test.core.typing.selection(channel), Some((0x200, SUBCODE_ANY)));
+    redirected(&mut test, channel, 0x100, SUBCODE_ANY);
+    assert_eq!(shown(&mut test), [PageKey { channel, page: 0x100 }], "the record does");
+}
+
+/// A tab on a live channel, with a stand-in broker for the channels it goes to.
+fn live_with_broker() -> (Core, StandIn, u32) {
+    let (mut core, stand_in) = core_on(LIVE);
+    let channel = channel(&core);
+    core.fetched(channel, FromFetcher::Connecting(true)).unwrap();
+    core.fetched(channel, FromFetcher::Connecting(false)).unwrap();
+    (core, stand_in, channel)
+}
+
+fn program_redirect(core: &mut Core, location: &str) {
+    let live = channel(core);
+    core.fetched(live, FromFetcher::Connecting(false)).unwrap();
+    core.fetched(live, FromFetcher::ProgramRedirect(location.into())).unwrap();
+}
+
+// REQ-1688 item 4, REQ-1686 item 1: a program's redirect to another channel
+// shows the notice for a second, then opens it as a channel of its own,
+// recorded as started by the page. It can come long after the channel opened,
+// as a server's redirect cannot (DEC-1696).
+#[test]
+fn a_programs_redirect_shows_the_notice_then_opens_the_channel() {
+    let (mut core, _stand_in, old) = live_with_broker();
+    core.fetched(old, FromFetcher::InitialPage(0x100)).unwrap();
+    program_redirect(&mut core, DESTINATION);
+    assert_eq!(core.strip().redirecting, DESTINATION);
+    assert_eq!(address(&core), LIVE, "the address waits");
+    elapse(&mut core);
+    assert_eq!(address(&core), DESTINATION);
+    assert_ne!(channel(&core), old, "a channel of its own");
+    let tab = core.session.active_tab().unwrap();
+    assert!(tab.history[tab.position].by_page, "started by the page");
+}
+
+// REQ-1688 item 3: the address is hostile text, and leads only to the web.
+#[test]
+fn a_programs_redirect_leads_only_to_the_web() {
+    let (mut core, _stand_in, old) = live_with_broker();
+    for location in
+        ["file:///etc/passwd", "neoteletext:home", "web:https://example.invalid/", "ftp://example.invalid/", "https://user@example.invalid/", "/etc/passwd"]
+    {
+        program_redirect(&mut core, location);
+        assert_eq!(core.strip().redirecting, "", "{location}");
+        elapse(&mut core);
+        assert_eq!((address(&core), channel(&core)), (LIVE, old), "{location} leaves the tab");
+    }
+    assert_eq!(core.session.active_tab().unwrap().history.len(), 1);
+}
+
+// REQ-1686 item 1: an address of the channel itself stays in it, with no
+// notice, and is a page redirect.
+#[test]
+fn a_programs_redirect_to_its_own_channel_shows_no_notice() {
+    let (mut test, channel) = live("own");
+    test.core.fetched(channel, FromFetcher::ProgramRedirect("https://live.invalid/channel/#300".into())).unwrap();
+    assert_eq!(test.core.strip().redirecting, "");
+    assert_eq!(text(&test), "https://live.invalid/channel/#300");
+    assert_eq!(shown(&mut test), [PageKey { channel, page: 0x300 }]);
+}
+
+// REQ-1688 item 6: two channels that redirect to each other stop at the
+// bound, with no refusal for coming round, and the tab stays where it is.
+#[test]
+fn two_channels_redirecting_to_each_other_stop_at_the_bound() {
+    let (mut core, _stand_in, _) = live_with_broker();
+    let (first, second) = (LIVE, DESTINATION);
+    for hop_number in 1..=MAX_REDIRECTS {
+        let location = if hop_number % 2 == 1 { second } else { first };
+        program_redirect(&mut core, location);
+        assert_eq!(core.strip().redirecting, location, "hop {hop_number} has its own notice");
+        elapse(&mut core);
+        assert_eq!(address(&core), location, "hop {hop_number} is followed");
+    }
+    let last = channel(&core);
+    let here = address(&core).to_owned();
+    program_redirect(&mut core, if here == first { second } else { first });
+    assert_eq!(core.strip().redirecting, "", "past the bound");
+    elapse(&mut core);
+    assert_eq!((address(&core), channel(&core)), (here.as_str(), last), "dropped, and the tab stays");
+}
+
+// REQ-1688 item 6: a viewer's input starts the count again.
+#[test]
+fn the_viewers_input_starts_the_count_again() {
+    let (mut core, _stand_in, _) = live_with_broker();
+    for hop_number in 1..=MAX_REDIRECTS {
+        program_redirect(&mut core, &format!("https://hop{hop_number}.invalid/"));
+        elapse(&mut core);
+    }
+    let last = channel(&core);
+    core.session.viewer_input(last);
+    program_redirect(&mut core, "https://onemore.invalid/");
+    assert_eq!(core.strip().redirecting, "https://onemore.invalid/");
+}
+
+// REQ-1688's hostile case: the longest address a record can carry is read,
+// shown and followed. One past it never gets here: the engine's reader
+// refuses the record whole, and `a_record_past_its_bound_is_refused` shows it.
+#[test]
+fn the_longest_address_a_record_carries_is_followed() {
+    use neoteletext_web::records::redirect::MAX_ADDRESS;
+    let head = "https://long.invalid/";
+    let location = format!("{head}{}", "a".repeat(MAX_ADDRESS - head.len()));
+    assert_eq!(location.len(), MAX_ADDRESS);
+    let (mut core, _stand_in, _) = live_with_broker();
+    program_redirect(&mut core, &location);
+    assert_eq!(core.strip().redirecting, location);
+    elapse(&mut core);
+    assert_eq!(address(&core), location);
 }

@@ -11,9 +11,8 @@ const FLAG_ON: u8 = 1;
 const FLAG_SECURE: u8 = 2;
 const FLAG_CURSOR: u8 = 4;
 const FLAG_ROUND_TRIP: u8 = 8;
-const FLAG_SHOW: u8 = 16;
-const FLAG_REFUSED: u8 = 32;
-const ALL_FLAGS: u8 = FLAG_ON | FLAG_SECURE | FLAG_CURSOR | FLAG_ROUND_TRIP | FLAG_SHOW | FLAG_REFUSED;
+const FLAG_REFUSED: u8 = 16;
+const ALL_FLAGS: u8 = FLAG_ON | FLAG_SECURE | FLAG_CURSOR | FLAG_ROUND_TRIP | FLAG_REFUSED;
 
 pub(crate) fn push_typing(payload: &mut Vec<u8>, typing: &Typing) -> Result<(), ProtocolError> {
     let flag = |set: bool, bit: u8| if set { bit } else { 0 };
@@ -24,17 +23,12 @@ pub(crate) fn push_typing(payload: &mut Vec<u8>, typing: &Typing) -> Result<(), 
             | flag(typing.secure, FLAG_SECURE)
             | flag(typing.cursor.is_some(), FLAG_CURSOR)
             | flag(typing.round_trip_us.is_some(), FLAG_ROUND_TRIP)
-            | flag(typing.show.is_some(), FLAG_SHOW)
             | flag(typing.refused, FLAG_REFUSED),
     );
     let place = typing.cursor.unwrap_or(CursorState { row: cursor::NO_CURSOR, column: 0, flags: 0 });
     check_cursor(typing.page, typing.cursor)?;
     payload.extend_from_slice(&[place.row, place.column, place.flags]);
     payload.extend_from_slice(&typing.round_trip_us.unwrap_or(0).to_be_bytes());
-    if let Some(show) = typing.show {
-        interface_core::channel::page_index(show).ok_or(ProtocolError::BadValue("page number"))?;
-        payload.extend_from_slice(&show.to_be_bytes());
-    }
     Ok(())
 }
 
@@ -64,7 +58,6 @@ pub(crate) fn read_typing(fields: &mut Fields<'_>) -> Result<Typing, ProtocolErr
     let cursor = (flags & FLAG_CURSOR != 0).then_some(place);
     check_cursor(page, cursor)?;
     let round_trip = fields.u32()?;
-    let show = if flags & FLAG_SHOW != 0 { Some(fields.display_page()?) } else { None };
     Ok(Typing {
         channel,
         page,
@@ -73,6 +66,5 @@ pub(crate) fn read_typing(fields: &mut Fields<'_>) -> Result<Typing, ProtocolErr
         refused: flags & FLAG_REFUSED != 0,
         cursor,
         round_trip_us: (flags & FLAG_ROUND_TRIP != 0).then_some(round_trip),
-        show,
     })
 }

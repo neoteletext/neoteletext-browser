@@ -84,6 +84,8 @@ pub enum Incoming {
         /// the frame of the page it holds.
         image: Vec<u8>,
     },
+    /// Open this page of the active channel.
+    Show(PageKey),
     /// About hyperlinks.
     #[cfg(feature = "links")]
     Link(protocol::links::Message),

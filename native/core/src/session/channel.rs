@@ -24,6 +24,15 @@ pub struct Redirecting {
     pub chain: Vec<String>,
 }
 
+/// Who sent a redirect that leaves a channel.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RedirectBy {
+    /// A web server, opening the channel (REQ-701).
+    Server,
+    /// The channel's program (REQ-1688).
+    Program,
+}
+
 /// One channel shown in a tab: the pages its contents file lists and the
 /// pages its decoder has reported.
 pub struct ChannelState {

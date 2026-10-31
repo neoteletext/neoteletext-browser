@@ -27,7 +27,7 @@ mod saved;
 mod tab;
 mod windows;
 
-pub use channel::{ChannelState, Redirecting};
+pub use channel::{ChannelState, RedirectBy, Redirecting};
 pub use tab::{ClosedTab, Pending, Tab, Visit, Went};
 
 /// The most redirects leaving a channel that one navigation follows: the

@@ -6,7 +6,7 @@ use interface_core::library::{MAX_CHAPTER_STOPS, MAX_TAB_LIST};
 use neoteletext::address::{Address, FRAGMENT, parse, redirect_destination};
 use std::time::Instant;
 
-use super::{MAX_REDIRECTS, Pending, Redirecting, Session, Tab, Visit, Went};
+use super::{MAX_REDIRECTS, Pending, RedirectBy, Redirecting, Session, Tab, Visit, Went};
 
 impl Session {
     /// Opens `typed` in the active tab, after its current address in
@@ -66,11 +66,13 @@ impl Session {
     /// The tab holding `channel` is being redirected to `address`, whoever
     /// sent it: it is followed at `until`, when its notice has been shown
     /// (REQ-701, REQ-1686). A redirect already waiting stays as it is, so
-    /// that saying it again does not put its second off.
+    /// that saying it again does not put its second off. A server's chain
+    /// stops at a loop, as a web browser's does; a program's only at the
+    /// bound, since a viewer's input starts its count again (REQ-1688 item 6).
     ///
     /// # Errors
     /// Why it is not followed, a sentence for the user. The tab stays.
-    pub fn redirect_tab(&mut self, channel: u32, address: Address, until: Instant) -> Result<(), String> {
+    pub fn redirect_tab(&mut self, channel: u32, address: Address, until: Instant, by: RedirectBy) -> Result<(), String> {
         let tab = self.tabs.iter_mut().find(|tab| tab.channel.id == channel).ok_or("its tab has closed")?;
         if tab.channel.redirecting.is_some() {
             return Ok(());
@@ -81,7 +83,7 @@ impl Session {
         if chain.len() > MAX_REDIRECTS {
             return Err("too many redirects".into());
         }
-        if chain.iter().any(|earlier| earlier == address.channel_text()) {
+        if by == RedirectBy::Server && chain.iter().any(|earlier| earlier == address.channel_text()) {
             return Err("its redirects in a loop".into());
         }
         tab.channel.redirecting = Some(Redirecting { address, until, chain });

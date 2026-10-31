@@ -68,7 +68,6 @@ impl App {
             refused: typing.refused,
             cursor,
             round_trip_us: typing.round_trip_us,
-            show: typing.show,
         };
         self.view.browser.set_typing(view, now);
         self.sync_ime();

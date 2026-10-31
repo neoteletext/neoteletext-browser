@@ -44,6 +44,10 @@ impl App {
             Incoming::SubPageCount { channel, page, count } => self.view.browser.set_subpage_count(channel, page, count),
             Incoming::SubPageRows { channel, page, rows } => self.view.browser.set_subpage_rows(channel, page, rows.count, rows.first, rows.rows),
             Incoming::Updated { channel, page } => self.page_updated(channel, page, now),
+            Incoming::Show(key) => {
+                self.view.browser.show(key, now);
+                self.act(event_loop);
+            }
             Incoming::Page { key, version, image } => self.page_frame(event_loop, key, version, &image, now),
             #[cfg(feature = "phone-keyboard")]
             Incoming::Phone(view) => {
@@ -139,7 +143,6 @@ impl App {
             Message::Page { key, links } => self.view.browser.set_links(key, links),
             Message::Pointing(pointing) => self.view.browser.set_pointing(pointing),
             Message::Prompt(prompt) => self.view.browser.set_prompt(prompt, now),
-            Message::Show(key) => self.view.browser.show(key, now),
             Message::Aliases { channel, numbers } => self.view.browser.set_aliases(channel, numbers),
         }
         self.act(event_loop);

@@ -25,6 +25,7 @@ pub fn read_core(proxy: &EventLoopProxy<Incoming>) {
             Ok(Some(ToInterface::Updated { channel, page })) => Incoming::Updated { channel, page },
             Ok(Some(ToInterface::Frame { key, version, image })) => Incoming::Page { key, version, image },
             Ok(Some(ToInterface::Sounding(channels))) => Incoming::Sounding(channels.into_iter().collect()),
+            Ok(Some(ToInterface::Show(key))) => Incoming::Show(key),
             #[cfg(feature = "links")]
             Ok(Some(ToInterface::Link(message))) => Incoming::Link(message),
             #[cfg(feature = "interaction")]

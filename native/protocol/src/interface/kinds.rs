@@ -8,7 +8,7 @@
 //!
 //! | Kind | Name | File |
 //! |---|---|---|
-//! | 11 to 15 | `KIND_PAGE_LINKS` to `KIND_ALIASES` | `links.rs` |
+//! | 11 to 13, 15 | `KIND_PAGE_LINKS` to `KIND_ALIASES` | `links.rs` |
 //! | 24 | `KIND_POINT` | `links.rs` |
 //! | 25 | `KIND_TYPED` | `links.rs` |
 //! | 26 | `KIND_FOCUSED` | here: hyperlinks and typing both use it |
@@ -34,6 +34,7 @@ pub(crate) const KIND_CHANNEL: u8 = 6;
 pub(crate) const KIND_PAGE: u8 = 8;
 pub(crate) const KIND_UPDATED: u8 = 9;
 pub(crate) const KIND_TAB_SOUNDING: u8 = 10;
+pub(crate) const KIND_SHOW: u8 = 14;
 pub(crate) const KIND_SETTINGS: u8 = 43;
 pub(crate) const KIND_CONSOLE_UPDATE: u8 = 44;
 // Windows (`multiple-windows.md`, decision 72).

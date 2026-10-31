@@ -48,15 +48,15 @@ decoder = { path = "decoder", package = "neoteletext-decoder", default-features 
 # With no features, the core is the standard's numbers (`limits`) and the
 # packet types alone, which the interface core and the protocol take
 # (decision 112); the decoder names the profile it renders with.
-neoteletext-core = { git = "https://github.com/neoteletext/neoteletext-engine", rev = "4566a534d88ac874984d42f205edbee2086533f5", default-features = false }
-neoteletext-formats = { git = "https://github.com/neoteletext/neoteletext-engine", rev = "4566a534d88ac874984d42f205edbee2086533f5", default-features = false, features = ["tti", "transport", "sliced"] }
+neoteletext-core = { git = "https://github.com/neoteletext/neoteletext-engine", rev = "053ebcdf073a9ac779f45ffba1e66163168f5bac", default-features = false }
+neoteletext-formats = { git = "https://github.com/neoteletext/neoteletext-engine", rev = "053ebcdf073a9ac779f45ffba1e66163168f5bac", default-features = false, features = ["tti", "transport", "sliced"] }
 # The engine's web module: HTTP, channels, contents files and push, with no
 # network input or output of its own.
-neoteletext-web = { git = "https://github.com/neoteletext/neoteletext-engine", rev = "4566a534d88ac874984d42f205edbee2086533f5", default-features = false, features = ["push", "cookies"] }
+neoteletext-web = { git = "https://github.com/neoteletext/neoteletext-engine", rev = "053ebcdf073a9ac779f45ffba1e66163168f5bac", default-features = false, features = ["push", "cookies"] }
 # The engine's network port is these traits (its decision E.38); the
 # version the engine uses.
 embedded-io = { version = "=0.7.1", default-features = false }
-neoteletext-image = { git = "https://github.com/neoteletext/neoteletext-engine", rev = "4566a534d88ac874984d42f205edbee2086533f5", features = ["std"] }
+neoteletext-image = { git = "https://github.com/neoteletext/neoteletext-engine", rev = "053ebcdf073a9ac779f45ffba1e66163168f5bac", features = ["std"] }
 # The engine's audio profile (its area AUD): the receiver, and the mixer the
 # interface plays through. Opus alone of its codecs (the engine's decision
 # E.131): PCM16 (`pcm16`) and IMA ADPCM (`ima`) are compiled out of the
@@ -65,14 +65,14 @@ neoteletext-image = { git = "https://github.com/neoteletext/neoteletext-engine",
 # reference channel and the decoder's tests write sounds (`encode`, which
 # brings `ima` with it); neither is shipped, and `scripts/check.sh` proves
 # the shipped programs build without either codec (decision 121).
-neoteletext-audio = { git = "https://github.com/neoteletext/neoteletext-engine", rev = "4566a534d88ac874984d42f205edbee2086533f5", default-features = false, features = ["idl", "opus"] }
+neoteletext-audio = { git = "https://github.com/neoteletext/neoteletext-engine", rev = "053ebcdf073a9ac779f45ffba1e66163168f5bac", default-features = false, features = ["idl", "opus"] }
 # The engine's qrkeyboard client (its decision E.93): the phone keyboard
 # process's pairing and encryption, and the terminal channel's phone page.
-neoteletext-qrkeyboard = { git = "https://github.com/neoteletext/neoteletext-engine", rev = "4566a534d88ac874984d42f205edbee2086533f5" }
+neoteletext-qrkeyboard = { git = "https://github.com/neoteletext/neoteletext-engine", rev = "053ebcdf073a9ac779f45ffba1e66163168f5bac" }
 # The engine's input profile (its area INT): key records and the cursor
 # record (`interaction.md`).
-neoteletext-input = { git = "https://github.com/neoteletext/neoteletext-engine", rev = "4566a534d88ac874984d42f205edbee2086533f5", default-features = false }
-neoteletext-audio-mix = { git = "https://github.com/neoteletext/neoteletext-engine", rev = "4566a534d88ac874984d42f205edbee2086533f5" }
+neoteletext-input = { git = "https://github.com/neoteletext/neoteletext-engine", rev = "053ebcdf073a9ac779f45ffba1e66163168f5bac", default-features = false }
+neoteletext-audio-mix = { git = "https://github.com/neoteletext/neoteletext-engine", rev = "053ebcdf073a9ac779f45ffba1e66163168f5bac" }
 # Apache-2.0: the operating systems' audio output (Core Audio on macOS),
 # without unsafe code of ours (decision 37).
 cpal = "=0.18.2"

@@ -7,7 +7,7 @@ use std::io::{Read, Write};
 use super::ToInterface;
 use super::kinds::{
     KIND_BAR_VIEW, KIND_BOOKMARKS_VIEW, KIND_CHANNEL, KIND_CLOSE, KIND_CLOSE_WINDOW_VIEW, KIND_CONSOLE_UPDATE, KIND_COOKIES_VIEW, KIND_FRAME,
-    KIND_HISTORY_VIEW, KIND_OPEN_WINDOW, KIND_PAGE, KIND_PAGE_CONTROLS, KIND_REMOTE, KIND_SETTINGS, KIND_STAR_VIEW, KIND_STRIP, KIND_SUBPAGE_ROWS,
+    KIND_HISTORY_VIEW, KIND_OPEN_WINDOW, KIND_PAGE, KIND_PAGE_CONTROLS, KIND_REMOTE, KIND_SETTINGS, KIND_SHOW, KIND_STAR_VIEW, KIND_STRIP, KIND_SUBPAGE_ROWS,
     KIND_SUBPAGES, KIND_SUGGESTIONS, KIND_TAB_LIST_VIEW, KIND_TAB_SOUNDING, KIND_TABS, KIND_TARGET, KIND_UPDATE_VIEW, KIND_UPDATED, KIND_WINDOW_VIEW,
 };
 use super::pages::{
@@ -21,7 +21,7 @@ use super::windows::{push_open_window, read_open_window, window_number};
 use crate::interaction::{KIND_INPUT_TRACE, KIND_TYPING};
 #[cfg(feature = "phone-keyboard")]
 use crate::keyboard::{KIND_PHONE, KIND_PHONE_KEY};
-use crate::{Fields, ProtocolError, console, controls, cookies, library, read_frame, settings, tail, write_frame};
+use crate::{Fields, ProtocolError, console, controls, cookies, library, push_key, read_frame, settings, tail, write_frame};
 
 /// Writes a message to the interface.
 ///
@@ -46,6 +46,7 @@ fn kind_of(message: &ToInterface) -> u8 {
         ToInterface::Updated { .. } => KIND_UPDATED,
         ToInterface::Frame { .. } => KIND_FRAME,
         ToInterface::Sounding(_) => KIND_TAB_SOUNDING,
+        ToInterface::Show(_) => KIND_SHOW,
         #[cfg(feature = "links")]
         ToInterface::Link(message) => crate::links::message_kind(message),
         #[cfg(feature = "interaction")]
@@ -88,6 +89,7 @@ fn push_fields(payload: &mut Vec<u8>, message: &ToInterface) -> Result<(), Proto
         ToInterface::Updated { channel, page } => push_updated(payload, *channel, *page),
         ToInterface::Frame { key, version, image } => push_frame(payload, *key, *version, image),
         ToInterface::Sounding(channels) => push_channels(payload, channels)?,
+        ToInterface::Show(key) => push_key(payload, *key),
         #[cfg(feature = "links")]
         ToInterface::Link(message) => crate::links::push_message(payload, message)?,
         #[cfg(feature = "interaction")]
@@ -159,6 +161,7 @@ pub fn read_from_core(input: &mut dyn Read) -> Result<Option<ToInterface>, Proto
             return Ok(Some(ToInterface::Frame { key, version, image }));
         }
         KIND_TAB_SOUNDING => ToInterface::Sounding(read_channels(&mut fields)?),
+        KIND_SHOW => ToInterface::Show(fields.key()?),
         #[cfg(feature = "links")]
         kind if crate::links::is_message(kind) => ToInterface::Link(crate::links::read_message(kind, &mut fields)?),
         #[cfg(feature = "interaction")]

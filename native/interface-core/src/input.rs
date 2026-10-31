@@ -9,6 +9,7 @@
 use alloc::string::String;
 
 use neoteletext_input::event::{self, Action, Device, Event, Item, KeyCode, MouseAction, Point, Stamp};
+use neoteletext_input::keys;
 
 /// The mouse's buttons as MOUSE numbers them on a press and a release
 /// (INPUT.md section 5.4); on a move, bit `n` is button `n` held.
@@ -119,6 +120,22 @@ pub enum TouchPhase {
 }
 
 impl Intent {
+    /// Whether this is an act of the viewer's on the page, as the HTML
+    /// Standard's activation triggering input event is
+    /// (neoteletext-common's DEC-1684 item 6): a key pressed but Esc, a
+    /// button pressed, a touch ended, text or a paste. A hover, a move, a
+    /// release, the wheel and an unfinished composition are not.
+    #[must_use]
+    pub fn is_activation(&self) -> bool {
+        match self {
+            Self::Key { action, key, .. } => *action == Action::Press && !matches!(key, KeyCode::Functional(code) if keys::name(*code) == Some("Escape")),
+            Self::Mouse { action, .. } => *action == MouseAction::Press,
+            Self::Touch { phase, .. } => *phase == TouchPhase::Ended,
+            Self::Text(_) | Self::Paste(_) => true,
+            Self::Gone | Self::Wheel { .. } | Self::Compose { .. } | Self::Hover { .. } => false,
+        }
+    }
+
     /// The intent as the input stream has it, from the mouse, stamped with
     /// the page on screen (`neoteletext-common/INPUT.md` section 5.4,
     /// REQ-1555); `None` for what only the trusted core can write, gone and

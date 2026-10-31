@@ -46,3 +46,7 @@ pub(super) const KIND_INITIAL_PAGE: u8 = 133;
 // A redirect that leaves the channel (REQ-701), in the next number free
 // across every pipe.
 pub(super) const KIND_REDIRECTED: u8 = 134;
+// A REDIRECT record of the channel's program (`INPUT.md` section 7.11), to a
+// page of it or to another channel's address.
+pub(super) const KIND_PAGE_REDIRECT: u8 = 135;
+pub(super) const KIND_PROGRAM_REDIRECT: u8 = 136;

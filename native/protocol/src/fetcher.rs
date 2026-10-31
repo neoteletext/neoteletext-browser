@@ -18,10 +18,12 @@ use kinds::KIND_LINKS;
 use kinds::{
     KIND_CERTIFICATE_REFUSED, KIND_CHANNEL_LOG, KIND_CLEAR_SITE_DATA, KIND_CONFINED, KIND_CONNECTING, KIND_CONTENTS, KIND_COOKIE_ANSWER, KIND_COOKIE_QUESTION,
     KIND_COOKIE_SET, KIND_EXCHANGE, KIND_FETCH_SUBPAGE, KIND_FETCH_SUBPAGES, KIND_INITIAL_PAGE, KIND_INVALID_PACKETS, KIND_NOTICE, KIND_PAGE,
-    KIND_PROXY_FAILED, KIND_PUSHING, KIND_REACHED_ANSWER, KIND_REACHED_QUESTION, KIND_REDIRECTED, KIND_SUBPAGES, KIND_SUBPAGES_MISSING,
+    KIND_PAGE_REDIRECT, KIND_PROGRAM_REDIRECT, KIND_PROXY_FAILED, KIND_PUSHING, KIND_REACHED_ANSWER, KIND_REACHED_QUESTION, KIND_REDIRECTED, KIND_SUBPAGES,
+    KIND_SUBPAGES_MISSING,
 };
 #[cfg(feature = "interaction")]
 use kinds::{KIND_INPUT, KIND_MEASURE_ROUND_TRIP, KIND_ROUND_TRIP, KIND_SEND};
+use neoteletext_core::limits::is_sub_code;
 
 mod cookies;
 mod kinds;
@@ -124,6 +126,18 @@ pub enum FromFetcher {
     /// A request of the channel was answered with a redirect that leaves
     /// it, not followed: the address it leads to, not yet checked (REQ-701).
     Redirected(String),
+    /// A REDIRECT record of the channel's program (`INPUT.md` section 7.11):
+    /// the tab goes to this page of the channel, `sub` being a sub-code or
+    /// 3F7F for the page.
+    PageRedirect {
+        /// The page number.
+        page: u16,
+        /// The sub-code.
+        sub: u16,
+    },
+    /// A REDIRECT record of the channel's program naming another channel's
+    /// address, not yet checked (REQ-1688).
+    ProgramRedirect(String),
     /// The channel's push connection opened (true) or was lost: a sleeping
     /// tab keeps its fetcher while it holds one (decision 47).
     Pushing(bool),
@@ -407,6 +421,18 @@ pub fn read_to_fetcher(input: &mut dyn Read) -> Result<Option<ToFetcher>, Protoc
 }
 
 /// A live channel's message beyond its pages: its payload, and its kind.
+/// A REDIRECT record's page and sub-code, checked again on each side by the
+/// engine's rules (`INPUT.md` section 7.11).
+fn check_redirect(page: u16, sub: u16) -> Result<(), ProtocolError> {
+    if page_index(page).is_none() {
+        return Err(ProtocolError::BadValue("page number"));
+    }
+    if !is_sub_code(sub) {
+        return Err(ProtocolError::BadValue("sub-code"));
+    }
+    Ok(())
+}
+
 fn push_live_message(payload: &mut Vec<u8>, message: &FromFetcher) -> Result<u8, ProtocolError> {
     Ok(match message {
         FromFetcher::ChannelLog { level, page, text } => {
@@ -430,6 +456,20 @@ fn push_live_message(payload: &mut Vec<u8>, message: &FromFetcher) -> Result<u8,
             payload.extend_from_slice(&page.to_be_bytes());
             KIND_INITIAL_PAGE
         }
+        FromFetcher::Redirected(address) => {
+            push_raw_text(payload, address, MAX_ADDRESS);
+            KIND_REDIRECTED
+        }
+        FromFetcher::PageRedirect { page, sub } => {
+            check_redirect(*page, *sub)?;
+            payload.extend_from_slice(&page.to_be_bytes());
+            payload.extend_from_slice(&sub.to_be_bytes());
+            KIND_PAGE_REDIRECT
+        }
+        FromFetcher::ProgramRedirect(address) => {
+            push_raw_text(payload, address, MAX_ADDRESS);
+            KIND_PROGRAM_REDIRECT
+        }
         _ => return Err(ProtocolError::BadValue("not a live channel's message")),
     })
 }
@@ -452,6 +492,13 @@ fn read_live_message(kind: u8, fields: &mut Fields<'_>) -> Result<FromFetcher, P
             page_index(page).ok_or(ProtocolError::BadValue("page number"))?;
             FromFetcher::InitialPage(page)
         }
+        KIND_REDIRECTED => FromFetcher::Redirected(raw_text(fields, MAX_ADDRESS, "address too long")?),
+        KIND_PAGE_REDIRECT => {
+            let (page, sub) = (fields.u16()?, fields.u16()?);
+            check_redirect(page, sub)?;
+            FromFetcher::PageRedirect { page, sub }
+        }
+        KIND_PROGRAM_REDIRECT => FromFetcher::ProgramRedirect(raw_text(fields, MAX_ADDRESS, "address too long")?),
         other => return Err(ProtocolError::UnknownKind(other)),
     })
 }
@@ -495,10 +542,6 @@ pub fn write_to_core(out: &mut dyn Write, message: &FromFetcher) -> Result<(), P
         FromFetcher::Notice(text) => {
             push_raw_text(&mut payload, text, MAX_NOTICE);
             KIND_NOTICE
-        }
-        FromFetcher::Redirected(address) => {
-            push_raw_text(&mut payload, address, MAX_ADDRESS);
-            KIND_REDIRECTED
         }
         #[cfg(feature = "links")]
         FromFetcher::Links { aliases, services } => {
@@ -553,9 +596,13 @@ pub fn write_to_core(out: &mut dyn Write, message: &FromFetcher) -> Result<(), P
             payload.extend_from_slice(&microseconds.to_be_bytes());
             KIND_ROUND_TRIP
         }
-        FromFetcher::ChannelLog { .. } | FromFetcher::InvalidPackets { .. } | FromFetcher::Connecting(_) | FromFetcher::InitialPage(_) => {
-            push_live_message(&mut payload, message)?
-        }
+        FromFetcher::ChannelLog { .. }
+        | FromFetcher::InvalidPackets { .. }
+        | FromFetcher::Connecting(_)
+        | FromFetcher::InitialPage(_)
+        | FromFetcher::Redirected(_)
+        | FromFetcher::PageRedirect { .. }
+        | FromFetcher::ProgramRedirect(_) => push_live_message(&mut payload, message)?,
     };
     write_frame(out, kind, &payload)
 }
@@ -595,7 +642,6 @@ pub fn read_from_fetcher(input: &mut dyn Read) -> Result<Option<FromFetcher>, Pr
             FromFetcher::Page { origin, bytes: fields.take(fields.remaining())?.to_vec() }
         }
         KIND_NOTICE => FromFetcher::Notice(raw_text(&mut fields, MAX_NOTICE, "text too long")?),
-        KIND_REDIRECTED => FromFetcher::Redirected(raw_text(&mut fields, MAX_ADDRESS, "address too long")?),
         #[cfg(feature = "links")]
         KIND_LINKS => {
             let (aliases, services) = crate::links::read_channel_links(&mut fields)?;
@@ -636,7 +682,9 @@ pub fn read_from_fetcher(input: &mut dyn Read) -> Result<Option<FromFetcher>, Pr
         KIND_SUBPAGES_MISSING => FromFetcher::SubPagesMissing { page: fields.display_page()? },
         #[cfg(feature = "interaction")]
         KIND_ROUND_TRIP => FromFetcher::RoundTrip { microseconds: u64::from_be_bytes(fields.array()?) },
-        KIND_CHANNEL_LOG | KIND_INVALID_PACKETS | KIND_CONNECTING | KIND_INITIAL_PAGE => read_live_message(kind, &mut fields)?,
+        KIND_CHANNEL_LOG | KIND_INVALID_PACKETS | KIND_CONNECTING | KIND_INITIAL_PAGE | KIND_REDIRECTED | KIND_PAGE_REDIRECT | KIND_PROGRAM_REDIRECT => {
+            read_live_message(kind, &mut fields)?
+        }
         other => return Err(ProtocolError::UnknownKind(other)),
     };
     fields.end()?;

@@ -15,7 +15,6 @@ use neoteletext_input::{MAX_COMPOSE, MAX_PASTE};
 
 use crate::browser::{Browser, Output};
 use crate::canvas::{CELL_HEIGHT, CELL_WIDTH, PAGE_HEIGHT, PAGE_WIDTH, PageKey};
-use crate::channel::page_index;
 use crate::input::{Intent, TouchPhase, mouse_button};
 use crate::wall::cell_in;
 
@@ -75,9 +74,6 @@ pub struct TypingView {
     /// The push connection's last round trip, in microseconds
     /// (REQ-RCH-016).
     pub round_trip_us: Option<u32>,
-    /// Another page of the channel its host went to (REQ-INT-113): the
-    /// browser shows it.
-    pub show: Option<u16>,
 }
 
 /// The browser's typing state.
@@ -134,15 +130,6 @@ impl Browser {
         // Whether a click goes to the channel decides what lights.
         #[cfg(feature = "links")]
         self.relight();
-        // The host went to another of its pages: it is shown, as a
-        // terminal shows what its host sends. Only a page of the same
-        // channel, listed, while keys go to it.
-        if let Some(page) = typing.show.filter(|_| typing.on && typing.channel == self.channel.channel) {
-            let listed = page_index(page).filter(|&index| matches!(self.channel.pages.get(index), Some(Some(_))));
-            if let Some(index) = listed {
-                self.select_page(index, true);
-            }
-        }
     }
 
     /// The page keys go to now, if any: the open page, while the trusted

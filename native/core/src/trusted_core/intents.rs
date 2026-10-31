@@ -7,7 +7,7 @@ use neoteletext::frames;
 use protocol::console::Level;
 use protocol::decoder::ToDecoder;
 #[cfg(feature = "links")]
-use protocol::links::{Message as LinkMessage, Spot};
+use protocol::links::Spot;
 use protocol::{ToCore, ToInterface};
 
 use super::startup::open_home;
@@ -52,6 +52,7 @@ impl Core {
         {
             let key = PageKey { channel: tab.channel.id, page };
             self.open_at_subpage(key, address.subpage);
+            self.send(&ToInterface::Show(key))?;
         }
         Ok(())
     }
@@ -269,12 +270,10 @@ impl Core {
         match went {
             Went::Nowhere => Ok(()),
             Went::Channel => self.send_all(),
-            #[cfg_attr(not(feature = "links"), allow(unused_variables, reason = "only a link opens a page"))]
             Went::Page(page) => {
                 self.send(&ToInterface::Strip(self.strip()))?;
-                #[cfg(feature = "links")]
                 if let (Some(page), Some(channel)) = (page, self.active_channel()) {
-                    self.link(LinkMessage::Show(PageKey { channel, page }))?;
+                    self.send(&ToInterface::Show(PageKey { channel, page }))?;
                 }
                 Ok(())
             }

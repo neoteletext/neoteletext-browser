@@ -96,6 +96,9 @@ pub enum ToInterface {
     /// the sound helper says it and the trusted core passes it on
     /// (decision 55).
     Sounding(Vec<u32>),
+    /// Open this page of the active channel: a link was followed, an
+    /// address named it, or the channel redirected the tab.
+    Show(PageKey),
     /// About hyperlinks (`hyperlinks.md` section 8.1).
     #[cfg(feature = "links")]
     Link(links::Message),

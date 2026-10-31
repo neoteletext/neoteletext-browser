@@ -26,6 +26,9 @@ impl Core {
                 // its interval does not hold (REQ-RCH-002).
                 if sends.iter().any(|send| matches!(send, neoteletext::typing::Send::Fetcher { .. })) {
                     self.frames.input(intent.key);
+                    if intent.intent.is_activation() {
+                        self.session.viewer_input(intent.key.channel);
+                    }
                 }
                 self.deliver_typing(sends)?;
             }

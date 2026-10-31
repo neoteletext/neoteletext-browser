@@ -23,6 +23,7 @@ use neoteletext_web::contents::{self, Entry as ContentsEntry};
 use neoteletext_web::http::MediaType;
 use neoteletext_web::port::{ConnectionId, NetOutput, Pump, Security, Transport};
 use neoteletext_web::proxy::Proxy;
+use neoteletext_web::records::redirect::RedirectRecord;
 use neoteletext_web::subpages;
 use protocol::fetcher::{CATALOGUE_PART, Entry, FromFetcher, Origin, ToFetcher, read_to_fetcher, write_to_core};
 use protocol::subpages::SubPageRows;
@@ -266,6 +267,12 @@ fn collect(output: Output<'_>, actions: &mut Vec<Action>) {
             let folder = location.strip_suffix(SETTINGS_FILE).filter(|folder| folder.ends_with('/'));
             Action::Tell(FromFetcher::Redirected(folder.unwrap_or(location).to_owned()))
         }
+        // A channel's program moved the viewer (`INPUT.md` section 7.11): the
+        // trusted core decides, and an address goes by its own rules.
+        Output::Event(Event::Redirect(RedirectRecord::Page { page, subcode })) => {
+            Action::Tell(FromFetcher::PageRedirect { page: page.mpp(), sub: subcode.value() })
+        }
+        Output::Event(Event::Redirect(RedirectRecord::Address(address))) => Action::Tell(FromFetcher::ProgramRedirect(address.to_owned())),
         Output::Event(event) => Action::Tell(FromFetcher::Notice(format!("{event:?}"))),
         _ => return,
     });
@@ -771,6 +778,18 @@ mod tests {
         agent.handle(Instant(0), Input::Net(connected), &mut |out| collect(out, &mut actions));
         drop(agent);
         assert_eq!(asked.0, ["a.example/tt/channel.json"]);
+    }
+
+    /// `INPUT.md` section 7.11: a REDIRECT record is told as it is, for the
+    /// trusted core to judge. Nothing here reads the address.
+    #[test]
+    fn a_redirect_record_is_told() {
+        let mut actions = Vec::new();
+        let page = PageAddress::from_mpp(0x302).unwrap();
+        collect(Output::Event(Event::Redirect(RedirectRecord::Page { page, subcode: SubCode::new(2) })), &mut actions);
+        collect(Output::Event(Event::Redirect(RedirectRecord::Address("file:///etc/passwd"))), &mut actions);
+        assert!(matches!(&actions[0], Action::Tell(FromFetcher::PageRedirect { page: 0x302, sub: 2 })));
+        assert!(matches!(&actions[1], Action::Tell(FromFetcher::ProgramRedirect(address)) if address == "file:///etc/passwd"));
     }
 
     /// REQ-701: a channel's settings file redirected out of the channel is

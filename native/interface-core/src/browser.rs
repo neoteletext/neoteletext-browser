@@ -110,6 +110,8 @@ pub struct Browser {
     /// Where a redirect's notice was last drawn; empty while none shows.
     redirecting_area: Rect,
     channel: Channel,
+    /// A page the trusted core opened that the window does not list yet.
+    show_when_listed: Option<PageKey>,
     bank: usize,
     selected: Option<usize>,
     list_scroll: f64,
@@ -219,6 +221,7 @@ impl Browser {
             strip: StripState::default(),
             redirecting_area: Rect::ZERO,
             channel: Channel::empty(),
+            show_when_listed: None,
             bank: 0,
             selected: None,
             list_scroll: 0.0,

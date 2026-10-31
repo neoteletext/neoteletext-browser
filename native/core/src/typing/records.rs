@@ -14,25 +14,17 @@ impl Typing {
     /// engine's rules (REQ-INT-134), kept for its page; its
     /// acknowledgement clears echo (REQ-INT-110) and what a resumption
     /// would send again. The round trip is the push connection's own
-    /// (REQ-RCH-016), not the acknowledgement's.
-    pub fn cursor(&mut self, channel: u32, body: [u8; cursor::BODY], now_us: u64) -> Vec<Send> {
+    /// (REQ-RCH-016), not the acknowledgement's. It never moves a viewer,
+    /// whatever page it names: it travels with every page frame, so one in
+    /// flight names the page just left, and only a REDIRECT record moves
+    /// one (`INPUT.md` section 7.1).
+    pub fn cursor(&mut self, channel: u32, body: [u8; cursor::BODY]) -> Vec<Send> {
         let mut sends = Vec::new();
         let Ok(cursor) = cursor::from_body(body) else { return sends };
         let Some(state) = self.channels.get_mut(&channel).filter(|state| state.open && state.session.welcomed()) else {
             return sends;
         };
         state.session.acknowledged(cursor.acked);
-        // A host goes to a page by sending it (REQ-INT-113): the browser
-        // shows that page of the same channel. A record for the selection
-        // is the channel's answer, after which nothing in flight is left; a
-        // record for a page just left is a frame from before the channel
-        // read the SELECT, and moves nothing (DEC-1659).
-        if state.selected.is_some_and(|(page, _)| page == cursor.page) {
-            state.left.clear();
-            state.went = None;
-        } else if !state.page_in_flight(cursor.page, now_us) {
-            state.went = Some(cursor.page);
-        }
         state.cursor = Some(cursor);
         if self.on(channel) {
             self.tell_interface(&mut sends);

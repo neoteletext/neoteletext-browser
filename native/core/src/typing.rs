@@ -50,14 +50,6 @@ const OFFERED: u32 = CURSOR_CAP | TOUCH_CAP | SELECT_CAP;
 const PAGE_COLUMNS: u32 = 40;
 /// The page of a SELECT that says no page is selected (section 5.4).
 const NO_PAGE: u16 = 0;
-/// The pages selected away from that are remembered at once: quick stepping
-/// leaves a page each time, and more than this are not in flight together.
-const MOST_PAGES_LEFT: usize = 8;
-/// How long a cursor record naming a page just left is taken for a frame
-/// sent before the channel read the SELECT, in microseconds: the longest a
-/// program takes to answer one, the server's `PROGRAM_REPLY_LIMIT_MS` of
-/// 5,000 ms. After it, a record naming that page is the channel's own move.
-const PAGE_LEFT_FOR_US: u64 = 5_000_000;
 /// Microseconds in the session's millisecond.
 const MICROSECONDS_PER_MILLISECOND: u64 = 1_000;
 
@@ -117,18 +109,6 @@ struct Channel {
     /// The focus the channel was last told, which is whether keys go to it
     /// and the round trip is measured.
     focus_told: Option<bool>,
-    /// The page the channel's last cursor record named, when it named
-    /// another than the one open: the host went there.
-    went: Option<u16>,
-    /// The pages the tab selected away from, until the channel answers the
-    /// selection or `PAGE_LEFT_FOR_US` passes. A frame sent before the
-    /// channel read the SELECT carries a cursor record naming the page it
-    /// had, which is no going of the host's: taken as one, the browser and
-    /// the channel would send each other between the two pages for as long
-    /// as records crossed.
-    left: Vec<u16>,
-    /// When the last of them was left, in the trusted core's microseconds.
-    left_at_us: u64,
     /// The keys, buttons and contacts down, as sent: a held key's lost
     /// release is sent from here (REQ-207).
     down: Held,
@@ -163,9 +143,6 @@ impl Channel {
             selected: None,
             select_told: None,
             focus_told: None,
-            went: None,
-            left: Vec::new(),
-            left_at_us: 0,
             down: Held::new(),
             pointer_on: None,
             pacer: Pacer::new(),
@@ -224,33 +201,11 @@ impl Channel {
             return;
         }
         self.let_go(channel, now_us, sends);
-        let before = self.select_told.map(|(page, _)| page);
         self.select_told = self.selected;
         let Some((page, sub)) = self.selected else { return };
-        if let Some(left) = before.filter(|&left| left != page && left != NO_PAGE) {
-            self.remember_left(left, now_us);
-        }
         if let Some(select) = Select::new(page, sub) {
             self.send(channel, &Item::Event(Event::Select(select)), now_us, sends);
         }
-    }
-
-    /// The tab selected away from `page`.
-    fn remember_left(&mut self, page: u16, now_us: u64) {
-        self.left.retain(|&each| each != page);
-        if self.left.len() == MOST_PAGES_LEFT {
-            self.left.remove(0);
-        }
-        self.left.push(page);
-        self.left_at_us = now_us;
-    }
-
-    /// Whether a cursor record naming `page` is a frame in flight from
-    /// before the channel read a SELECT, not the channel moving the tab:
-    /// the page was just left, and the channel has not yet answered the
-    /// selection (`neoteletext-common` DEC-1659).
-    fn page_in_flight(&self, page: u16, now_us: u64) -> bool {
-        self.left.contains(&page) && now_us.saturating_sub(self.left_at_us) < PAGE_LEFT_FOR_US
     }
 
     /// The connection opened: the session's first message, HELLO, with
@@ -349,7 +304,6 @@ impl Typing {
             refused: state.is_some_and(|state| state.open && state.session.state() == State::Refused),
             cursor: cursor.filter(|_| on),
             round_trip_us: state.and_then(|state| state.round_trip_us).filter(|_| on),
-            show: state.and_then(|state| state.went).filter(|&page| page != opened.page && on),
         })
     }
 
@@ -431,6 +385,18 @@ impl Typing {
         sends
     }
 
+    /// A redirect the trusted core did not follow: the server took it as a
+    /// selection, so the tab says again what it selects, and the two agree
+    /// (neoteletext-common's DEC-1707).
+    pub fn select_again(&mut self, channel: u32, now_us: u64) -> Vec<Send> {
+        let mut sends = Vec::new();
+        if let Some(state) = self.channels.get_mut(&channel) {
+            state.select_told = None;
+            state.tell_select(channel, now_us, &mut sends);
+        }
+        together(sends)
+    }
+
     /// The tab of `channel` shows no page of it (the wall, with no page
     /// zoomed): SELECT with page 0 (neoteletext-common's DEC-1538 item 9).
     pub fn selects_nothing(&mut self, channel: u32, now_us: u64) -> Vec<Send> {
@@ -464,10 +430,6 @@ impl Typing {
         let before = (self.active, self.opened);
         self.active = active;
         self.opened = opened;
-        // The viewer chose: the host's earlier word on its page is spent.
-        if let Some(state) = opened.and_then(|key| self.channels.get_mut(&key.channel)) {
-            state.went = None;
-        }
         // A page opened is a page selection, 3F7F (REQ-1502); the tab's
         // sub-page selections come by `select`.
         if let Some(key) = opened {
@@ -492,7 +454,6 @@ impl Typing {
                 refused: false,
                 cursor: None,
                 round_trip_us: None,
-                show: None,
             }));
         }
         self.tell_interface(&mut sends);
@@ -513,7 +474,6 @@ impl Typing {
         // goes (section 6.4 item 4), resumed or not.
         state.pointer_forgotten();
         state.down = Held::new();
-        state.left.clear();
         if open && !was_open {
             state.started = false;
             state.select_told = None;

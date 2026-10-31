@@ -22,7 +22,7 @@ fn resumable() -> Typing {
 /// The cursor record acknowledging `acked`.
 fn acknowledge(typing: &mut Typing, acked: u16) {
     let [high, low] = acked.to_be_bytes();
-    typing.cursor(PAGE.channel, [0x02, 0x00, high, low, 255, 0, 0, 0], 0);
+    typing.cursor(PAGE.channel, [0x02, 0x00, high, low, 255, 0, 0, 0]);
 }
 
 /// REQ-RCH-013, REQ-INT-125: after a lost connection the next asks to
@@ -41,7 +41,7 @@ fn a_resumed_session_sends_again_what_the_channel_had_not_taken() {
     let hello = typing.input(PAGE.channel, true, true, 5 * MS);
     let offered = OFFERED | RESUME_CAP;
     let resume = format!("Event(Resume(Resume {{ token: {TOKEN:?}, acked: 4 }}))");
-    assert_eq!(items(&hello), [format!("Event(Hello {{ version: 3, caps: {offered}, agent: None }})"), resume], "HELLO, then RESUME, in one message");
+    assert_eq!(items(&hello), [format!("Event(Hello {{ version: {VERSION}, caps: {offered}, agent: None }})"), resume], "HELLO, then RESUME, in one message");
     let resumed = typing.control(PAGE.channel, &welcome_with(SELECT_CAP | RESUME_CAP, Some(Resumption { token: NEXT_TOKEN, taken: Some(4) })), 6 * MS);
     let key_b = KEY_A.replace("'a'", "'b'").replace("\"a\"", "\"b\"");
     assert_eq!(
