@@ -689,3 +689,20 @@ fn clearing_cookies_reconnects_every_ordinary_tab() {
     let shown: Vec<_> = session.tabs.iter().filter_map(|tab| tab.address().map(|shown| shown.text.clone())).collect();
     assert_eq!(shown, addresses, "each tab stays where it is");
 }
+
+/// DEC-1730 item 8: the cookies cleared are the ordinary tabs', so a private
+/// tab keeps its connection, where it stands among them.
+#[test]
+fn clearing_cookies_leaves_a_private_tab_connected() {
+    let mut session = Session::new(Bookmarks::default());
+    session.open("https://a.invalid/200").unwrap();
+    session.open_private("https://b.invalid/300").unwrap();
+    session.open("https://c.invalid/400").unwrap();
+    let before: Vec<_> = session.tabs.iter().map(|tab| tab.channel.id).collect();
+    assert!(session.reconnect_ordinary_tabs());
+    let after: Vec<_> = session.tabs.iter().map(|tab| tab.channel.id).collect();
+    assert_eq!(after[1], before[1], "the private tab's channel is the one it had");
+    assert!(session.tabs[1].pending.is_none_or(|pending| !pending.reload), "and it is not reloaded");
+    assert!(after[0] != before[0] && after[2] != before[2], "the ordinary tabs were opened afresh: {before:?} {after:?}");
+    assert!(session.tabs[1].private);
+}
