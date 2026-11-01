@@ -61,6 +61,26 @@ fn a_row_clicked_with_the_page_alone_takes_the_keys_from_the_channel() {
     assert_eq!(browser.typing_target(), Some(KEY), "and gives them back");
 }
 
+/// REQ-1758 item 7 gives a list the keys and nothing else: with a row
+/// clicked the wheel, a move and another button over the page still go to
+/// its channel, or the wheel would turn the page.
+#[test]
+fn a_list_with_the_keys_leaves_the_mouse_with_the_page() {
+    let mut browser = browser();
+    browser.set_typing(typing(None), 0);
+    let row = browser.regions.rows[0].0;
+    crate::browser::fixture::press_at(&mut browser, &mut Recorder::new(), row);
+    assert_eq!(browser.typing_target(), None, "the list has the keys");
+    let (_, page) = browser.wall.open().expect("the page is open");
+    browser.draw(&mut Recorder::new(), 1440.0, 900.0, 10_000);
+    browser.take_outputs();
+    browser.pointer_moved(f64::midpoint(page.x0, page.x1), f64::midpoint(page.y0, page.y1), 10_000);
+    assert_eq!(browser.terminal_wheel(0.0, 1.0), Some(false), "the wheel is the channel's");
+    let sent = intents(&browser.take_outputs());
+    assert!(sent.iter().any(|intent| matches!(intent, Intent::Wheel { .. })), "{sent:?}");
+    assert!(sent.iter().any(|intent| matches!(intent, Intent::Mouse { .. })), "the move too: {sent:?}");
+}
+
 #[test]
 fn keys_go_only_while_the_core_says_so() {
     let mut browser = browser();

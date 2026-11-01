@@ -132,16 +132,23 @@ impl Browser {
         self.relight();
     }
 
-    /// The page keys go to now, if any: the open page, while the trusted
-    /// core says its channel takes them.
+    /// The page keys go to now, if any: the page the mouse goes to, unless a
+    /// list at the left has the keys.
     #[must_use]
     pub fn typing_target(&self) -> Option<PageKey> {
+        self.mouse_target().filter(|_| self.list_focus.is_none())
+    }
+
+    /// The page the mouse goes to while the pointer is over it: the open
+    /// page, while the trusted core says its channel takes input. A list
+    /// with the keys has the keys and no more: pointer events go by where
+    /// the pointer is (neoteletext-common's REQ-1554).
+    fn mouse_target(&self) -> Option<PageKey> {
         let typing = self.typing.typing.filter(|typing| typing.on)?;
         let key = PageKey { channel: typing.channel, page: typing.page };
         // While a panel, popover or list of the strip is open, the keys are
         // the strip's (`history-and-bookmarks.md` section 2.4).
-        // While a list at the left has them too.
-        (self.opened() == Some(key) && !self.editing && !self.strip_has_keys() && self.list_focus.is_none()).then_some(key)
+        (self.opened() == Some(key) && !self.editing && !self.strip_has_keys()).then_some(key)
     }
 
     /// Whether another part of the browser has the keys, so that the page
@@ -210,7 +217,7 @@ impl Browser {
     /// always keeps a click the browser's (INPUT.md section 6.3,
     /// REQ-INT-115, REQ-INT-136).
     fn mouse_is_hosts(&self) -> bool {
-        self.typing_target().is_some() && !self.typing.browser_modifier && self.pointer_on_page().is_some()
+        self.mouse_target().is_some() && !self.typing.browser_modifier && self.pointer_on_page().is_some()
     }
 
     /// Whether a click on the open page is the host's: the mouse is, and
@@ -293,7 +300,7 @@ impl Browser {
     /// A button pressed or released on the open page while the mouse is
     /// the channel's (REQ-INT-115, REQ-RCH-005).
     pub(in crate::browser) fn terminal_button(&mut self, action: MouseAction, button: u8) -> bool {
-        let Some(target) = self.typing_target() else { return false };
+        let Some(target) = self.mouse_target() else { return false };
         let Some(at) = self.pointer_on_page() else { return false };
         if action == MouseAction::Press && !self.click_is_hosts() {
             return false;
@@ -317,7 +324,7 @@ impl Browser {
     /// REQ-RCH-030), which the trusted core paces; off it, onto the border,
     /// the browser's controls or out of the window, gone (REQ-RCH-034).
     pub(in crate::browser) fn terminal_moved(&mut self) {
-        let Some(target) = self.typing_target() else {
+        let Some(target) = self.mouse_target() else {
             // Keys stopped going: the trusted core sent gone itself.
             self.typing.last_dot = None;
             return;
@@ -350,7 +357,7 @@ impl Browser {
     /// contact was taken; the browser has no touch gestures of its own yet.
     pub fn touch(&mut self, phase: TouchPhase, contact: u64, x: f64, y: f64) -> bool {
         let point = crate::geometry::Point::new(x, y);
-        let Some(target) = self.typing_target() else { return false };
+        let Some(target) = self.mouse_target() else { return false };
         if let Some(place) = self.typing.link_touches.iter().position(|(system, _)| *system == contact) {
             if phase == TouchPhase::Ended {
                 let (_, link) = self.typing.link_touches.swap_remove(place);
@@ -418,7 +425,7 @@ impl Browser {
     /// told only while keys go to that page. Only links know the controls.
     #[cfg(feature = "links")]
     pub(in crate::browser) fn terminal_hover(&mut self, key: PageKey, column: u8, row: u8, leave: bool) {
-        if self.typing_target() == Some(key) {
+        if self.mouse_target() == Some(key) {
             self.send(key, Intent::Hover { leave, column, row });
         }
     }
@@ -431,7 +438,7 @@ impl Browser {
         if self.typing.browser_modifier {
             return None;
         }
-        let target = self.typing_target()?;
+        let target = self.mouse_target()?;
         let at = self.pointer_on_page()?;
         #[allow(clippy::cast_possible_truncation, reason = "a wheel's lines, far inside i32 once scaled")]
         let (dx, dy) = (libm::round(across * WHEEL_UNITS_PER_LINE) as i32, libm::round(down * WHEEL_UNITS_PER_LINE) as i32);
