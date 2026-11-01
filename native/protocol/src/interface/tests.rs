@@ -222,7 +222,7 @@ fn every_intent_round_trips() {
         ToCore::OpenFile { kind: OpenKind::Folder, parent: "x11:4a".into() },
         ToCore::Dropped { files: vec!["/a/b.tti".into(), "/c.t42".into()], place: DropPlace::Before(3), left_out: 0 },
         ToCore::Dropped { files: Vec::new(), place: DropPlace::NewTabs, left_out: 7 },
-        ToCore::FromSystem(vec!["file:///a.tti".into(), "neoteletext://https://a.example/".into()]),
+        ToCore::FromSystem(vec!["file:///a.tti".into(), "neottx://https://a.example/".into()]),
         ToCore::Navigate("sport.invalid".into()),
         ToCore::Back,
         ToCore::Forward,

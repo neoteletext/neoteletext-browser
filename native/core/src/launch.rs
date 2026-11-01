@@ -138,12 +138,16 @@ mod tests {
         list.iter().map(OsString::from).collect()
     }
 
-    const LINK: &str = "neoteletext://https://news.example/302";
+    /// A link from outside to `address`.
+    fn link(address: &str) -> String {
+        format!("{}{address}", crate::address::OUTSIDE_SCHEME)
+    }
 
     #[test]
     fn a_marker_and_one_good_argument_is_a_launch() {
-        assert_eq!(read(&arguments(&[OPEN_LINK, LINK])), Ok(Launch::Link(LINK.into())));
-        assert_eq!(read(&arguments(&[LINK])), Ok(Launch::Link(LINK.into())), "Linux's %u");
+        let good = link("https://news.example/302");
+        assert_eq!(read(&arguments(&[OPEN_LINK, &good])), Ok(Launch::Link(good.clone())));
+        assert_eq!(read(&arguments(&[&good])), Ok(Launch::Link(good.clone())), "Linux's %u");
         let file_name = if cfg!(windows) { r"C:\pages\100.tti" } else { "/pages/100.tti" };
         assert_eq!(read(&arguments(&[OPEN_FILE, file_name])), Ok(Launch::File(file_name.into())));
         assert_eq!(read(&arguments(&["--allow-local", "127.0.0.1", "/a.t42"])), Ok(Launch::Plain), "no marker: as ever");
@@ -153,17 +157,19 @@ mod tests {
     /// quote gives more than one argument, and each is refused whole.
     #[test]
     fn anything_beside_the_one_argument_refuses_the_launch() {
+        let good = link("https://news.example/302");
+        let good = good.as_str();
         for list in [
             &[OPEN_LINK][..],
-            &[OPEN_LINK, LINK, "--uninstall"],
-            &[OPEN_LINK, "neoteletext://https://a.example/", "--allow-local", "127.0.0.1"],
-            &["--no-keychain", OPEN_LINK, LINK],
-            &[OPEN_LINK, LINK, LINK],
+            &[OPEN_LINK, good, "--uninstall"],
+            &[OPEN_LINK, good, "--allow-local", "127.0.0.1"],
+            &["--no-keychain", OPEN_LINK, good],
+            &[OPEN_LINK, good, good],
             &[OPEN_FILE, "/a.tti", "/b.tti"],
             &["--keychain", OPEN_FILE, "/a.tti"],
             &[OPEN_LINK, OPEN_FILE, "/a.tti"],
-            &[LINK, "--input-trace"],
-            &["--input-trace", LINK],
+            &[good, "--input-trace"],
+            &["--input-trace", good],
         ] {
             assert_eq!(read(&arguments(list)), Err(Refused::NotOneArgument), "{list:?}");
         }
@@ -171,7 +177,9 @@ mod tests {
 
     #[test]
     fn the_one_argument_must_pass_its_own_rules() {
-        for bad in ["--uninstall", "https://a.example/", "neoteletext://home", "neoteletext://file:///etc/passwd", "neoteletext://javascript://x"] {
+        let (home, file, script) = (link("home"), link("file:///etc/passwd"), link("javascript://x"));
+        // DEC-1726: the old scheme is refused as any other argument is.
+        for bad in ["--uninstall", "https://a.example/", &home, &file, &script, "neoteletext://https://news.example/302"] {
             assert_eq!(read(&arguments(&[OPEN_LINK, bad])), Err(Refused::BadLink), "{bad}");
         }
         assert_eq!(read(&arguments(&[OPEN_FILE, "--uninstall"])), Err(Refused::BadFile));

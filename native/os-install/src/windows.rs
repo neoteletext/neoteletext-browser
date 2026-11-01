@@ -10,6 +10,7 @@ use std::os::windows::ffi::OsStrExt as _;
 use std::path::Path;
 use std::ptr;
 
+use crate::LINK_SCHEME_NAME;
 use windows_sys::Win32::Foundation::{ERROR_FILE_NOT_FOUND, HANDLE, LocalFree};
 use windows_sys::Win32::Security::Cryptography::{CRYPT_ENCODE_ALLOC_FLAG, CryptEncodeObjectEx, X509_ASN_ENCODING, X509_PUBLIC_KEY_INFO};
 use windows_sys::Win32::Security::WinTrust::{
@@ -232,8 +233,10 @@ impl Drop for Key {
     }
 }
 
-/// The per-user key of the `neoteletext` scheme (REQ-1671 item 2).
-const SCHEME_KEY: &str = "Software\\Classes\\neoteletext";
+/// The per-user key of the link scheme (REQ-1671 item 2).
+fn scheme_key() -> String {
+    format!("Software\\Classes\\{LINK_SCHEME_NAME}")
+}
 /// The name of the type a `.tti` file may open as, and its per-user key.
 const PAGE_FILE_NAME: &str = "NeoTeletext.Page.1";
 const PAGE_FILE_KEY: &str = "Software\\Classes\\NeoTeletext.Page.1";
@@ -308,17 +311,18 @@ fn create_key(path: &str) -> Result<Key, String> {
     if made == 0 { Ok(Key(key)) } else { Err(format!("the registry refused a key ({made})")) }
 }
 
-/// Registers the `neoteletext` scheme and `.tti` files for `program`, in the
+/// Registers the link scheme and `.tti` files for `program`, in the
 /// user's own hive (REQ-1671 item 2, REQ-1703 item 4). Nothing else is
 /// claimed, and no default is taken: Windows leaves that to the user.
 ///
 /// # Errors
 /// When the registry refuses.
 pub fn register_opening(program: &Path) -> Result<(), String> {
-    let scheme = create_key(SCHEME_KEY)?;
+    let scheme_key = scheme_key();
+    let scheme = create_key(&scheme_key)?;
     set_text(&scheme, "", "URL:NeoTeletext link")?;
     set_text(&scheme, "URL Protocol", "")?;
-    set_text(&create_key(&format!("{SCHEME_KEY}\\shell\\open\\command"))?, "", &open_command(program, "--open-link"))?;
+    set_text(&create_key(&format!("{scheme_key}\\shell\\open\\command"))?, "", &open_command(program, "--open-link"))?;
     set_text(&create_key(PAGE_FILE_KEY)?, "", "Teletext page")?;
     set_text(&create_key(&format!("{PAGE_FILE_KEY}\\shell\\open\\command"))?, "", &open_command(program, "--open-file"))?;
     set_text(&create_key(TTI_KEY)?, PAGE_FILE_NAME, "")
@@ -329,7 +333,7 @@ pub fn register_opening(program: &Path) -> Result<(), String> {
 /// # Errors
 /// When the registry refuses.
 pub fn remove_opening() -> Result<(), String> {
-    for path in [SCHEME_KEY, PAGE_FILE_KEY] {
+    for path in [scheme_key().as_str(), PAGE_FILE_KEY] {
         let path = wide(path);
         // SAFETY: a predefined key and a zero-terminated path that outlives the call.
         let removed = unsafe { RegDeleteTreeW(HKEY_CURRENT_USER, path.as_ptr()) };

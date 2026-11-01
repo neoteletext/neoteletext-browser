@@ -71,7 +71,7 @@ pub struct ChannelState {
     /// A restored file not yet read: it is read when its tab is first
     /// shown (finding F-53).
     unread: Option<std::path::PathBuf>,
-    /// A live channel: its `channel.json` names a push connection, and its
+    /// A live channel: its `channel.ttx` names a push connection, and its
     /// pages and contents come only on it (DEC-1467).
     pub live: bool,
     /// A live channel whose first page has not yet arrived.

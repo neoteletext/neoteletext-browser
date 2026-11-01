@@ -51,7 +51,7 @@ NeoTeletext is an application for browsing teletext, on desktops, then phones, a
 |---|---|
 | **Teletext page** | One screen of teletext: 40 columns by 25 rows of character cells, row 0 being the header. Identified by magazine (1 to 8), page number (00 to FF) and subcode. |
 | **Subpage** | One of several versions of a page carrying the same page number, distinguished by subcode. |
-| **Channel** | One teletext service. On the web it is identified by its **origin** and its **folder path** (`neoteletext` decision E.70, the engine's `docs/spec/requirements/web.md`): a folder holding `channel.json`, `contents.txt`, optionally a bundle `index.t42`, and page files such as `101.tti`. A file channel is a recording or a folder of page files. The channel is the unit of trust and isolation: it plays the part a site plays in a traditional browser. |
+| **Channel** | One teletext service. On the web it is identified by its **origin** and its **folder path** (`neoteletext` decision E.70, the engine's `docs/spec/requirements/web.md`): a folder holding `channel.ttx`, `contents.txt`, optionally a bundle `index.t42`, and page files such as `101.tti`. A file channel is a recording or a folder of page files. The channel is the unit of trust and isolation: it plays the part a site plays in a traditional browser. |
 | **Origin** | The combination of scheme, host and port of an address. |
 | **Tab** | One view onto one channel at a time, with its own history. |
 | **Bank** | A magazine, as the window calls it (decision 105): a hundred pages, such as 100 to 199: teletext's convention gives each section a hundred, with the section's index on its first page. The window shows the eight banks 100 to 899. |
@@ -314,7 +314,7 @@ The application loads only resources that are part of a teletext service (decisi
 | Role | Read by | Read in | What the trusted core receives |
 |---|---|---|---|
 | **Teletext data**: page files, bundles, the other formats of `neoteletext-formats`, and pushed pages | Content detection and the format readers | Decoder | Arrivals, updates and frames |
-| **Channel descriptor** (`channel.json`) | The engine's descriptor reader | Fetcher | Its aliases and named services, as written, for the trusted core to parse (`Links`, `hyperlinks.md` section 6.4); the fetcher uses the rest to find the contents file and the push feed |
+| **Channel descriptor** (`channel.ttx`) | The engine's descriptor reader | Fetcher | Its aliases and named services, as written, for the trusted core to parse (`Links`, `hyperlinks.md` section 6.4); the fetcher uses the rest to find the contents file and the push feed |
 | **Contents file** (`contents.txt`) | The engine's contents reader | Fetcher | A bounded, typed list of sections and pages |
 | **Discovery** (HyperText Markup Language) | The engine's discovery reader | Fetcher, not built | — |
 

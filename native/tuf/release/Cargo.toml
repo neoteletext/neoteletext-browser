@@ -19,6 +19,8 @@ path = "src/bin/test_host.rs"
 [dependencies]
 update.workspace = true
 release-identity.workspace = true
+# The link scheme the bundle's property list registers (DEC-1726 item 5).
+os-install = { path = "../../os-install" }
 # The icon each release carries: Linux's PNGs, and the images of the
 # macOS bundle's icon file (decision 124).
 icon.workspace = true
@@ -43,9 +45,6 @@ rcgen = { version = "=0.14.10", default-features = false, features = ["crypto", 
 
 [dev-dependencies]
 neoteletext-updater = { path = "../updater" }
-
-[target.'cfg(windows)'.dependencies]
-os-install = { path = "../../os-install" }
 
 [lints]
 workspace = true

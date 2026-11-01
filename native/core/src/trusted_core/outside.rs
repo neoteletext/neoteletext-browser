@@ -130,9 +130,17 @@ fn hear_openings(mut pipe: File, events: &std::sync::mpsc::Sender<Event>) {
 mod tests {
     use super::super::test_support::{core_on, core_watched, sent_to_interface};
     use super::*;
+    use neoteletext::address::OUTSIDE_SCHEME;
     use neoteletext::launch::MAX_OUTSIDE_LINKS;
 
-    const LINK: &str = "neoteletext://https://news.invalid/302";
+    /// A link from outside to `address`.
+    fn link(address: &str) -> String {
+        format!("{OUTSIDE_SCHEME}{address}")
+    }
+
+    fn good_link() -> String {
+        link("https://news.invalid/302")
+    }
 
     fn open_links(core: &mut Core, links: &[&str]) {
         core.opening(Opening::Outside { links: links.iter().map(|link| (*link).to_owned()).collect(), files: Vec::new() }).unwrap();
@@ -146,7 +154,7 @@ mod tests {
     #[test]
     fn a_link_opens_at_once_in_a_new_active_tab() {
         let (mut core, _broker) = core_on("a.invalid");
-        open_links(&mut core, &[LINK]);
+        open_links(&mut core, &[&good_link()]);
         assert_eq!(addresses(&core), ["https://a.invalid/", "https://news.invalid/302"]);
         assert_eq!(core.session.active, 1);
         assert!(core.session.tabs.iter().all(|tab| !tab.private));
@@ -156,7 +164,7 @@ mod tests {
     #[test]
     fn what_opens_from_outside_raises_the_window() {
         let (mut core, _broker, written) = core_watched("a.invalid");
-        open_links(&mut core, &[LINK]);
+        open_links(&mut core, &[&good_link()]);
         assert!(sent_to_interface(&mut core, &written).contains(&ToInterface::Raise));
     }
 
@@ -165,7 +173,9 @@ mod tests {
     #[test]
     fn a_hostile_link_opens_nothing() {
         let (mut core, _broker) = core_on("a.invalid");
-        open_links(&mut core, &["neoteletext://file:///etc/passwd", "https://a.invalid/", "neoteletext://home"]);
+        // DEC-1726: the old scheme opens nothing, whatever it wraps.
+        let (file, home) = (link("file:///etc/passwd"), link("home"));
+        open_links(&mut core, &[&file, "https://a.invalid/", &home, "neoteletext://https://news.invalid/302"]);
         assert_eq!(addresses(&core), ["https://a.invalid/"]);
     }
 
@@ -174,7 +184,7 @@ mod tests {
     fn a_burst_of_links_opens_only_what_the_limit_allows() {
         let (mut core, _broker) = core_on("a.invalid");
         for _ in 0..3 * MAX_OUTSIDE_LINKS {
-            open_links(&mut core, &[LINK]);
+            open_links(&mut core, &[&good_link()]);
         }
         assert_eq!(core.session.tabs.len(), 1 + MAX_OUTSIDE_LINKS);
     }
@@ -184,7 +194,7 @@ mod tests {
     fn with_only_a_private_window_a_normal_one_opens() {
         let (mut core, _broker) = core_on("a.invalid");
         core.session.private_window = true;
-        open_links(&mut core, &[LINK]);
+        open_links(&mut core, &[&good_link()]);
         assert_eq!(core.session.window_count(), 2);
         assert!(!core.session.private_window, "the new window is at hand, and normal");
         assert_eq!(addresses(&core), ["https://news.invalid/302"]);
@@ -196,7 +206,7 @@ mod tests {
     #[test]
     fn what_macos_names_goes_the_same_way() {
         let (mut core, _broker) = core_on("a.invalid");
-        core.opened_by_system(&[LINK.to_owned(), "file:///no/such/page.tti".to_owned(), "neoteletext://file:///etc/passwd".to_owned()]).unwrap();
+        core.opened_by_system(&[good_link(), "file:///no/such/page.tti".to_owned(), link("file:///etc/passwd")]).unwrap();
         assert_eq!(addresses(&core), ["https://a.invalid/", "https://news.invalid/302", "file:///no/such/page.tti"]);
         assert_eq!(core.session.active, 1);
     }

@@ -407,10 +407,10 @@ mod tests {
 
     /// neoteletext-common's REQ-1661: a fetcher is started with a channel's
     /// address of 8,000 octets, a web link of that length is handed over,
-    /// and a `neoteletext://` link wrapping one fits a request.
+    /// and a `neottx://` link wrapping one fits a request.
     #[test]
     fn a_request_holds_an_address_of_8000_octets() {
-        let address = "a".repeat("neoteletext://".len() + 8_000);
+        let address = "a".repeat("neottx://".len() + 8_000);
         for request in [Request::Spawn { program: Program::Fetcher, local_network: false, arguments: vec![address.clone()] }, Request::OpenWeb(address.clone())]
         {
             assert_eq!(round_trip(&request), request);

@@ -5,6 +5,7 @@
 
 use std::path::Path;
 
+use os_install::LINK_SCHEME_NAME;
 use update::files;
 use update::manifest::{Entry, Manifest};
 use update::platform::{
@@ -79,7 +80,7 @@ fn info_plist(version: Version) -> String {
 			<string>{BUNDLE_IDENTIFIER}.link</string>
 			<key>CFBundleURLSchemes</key>
 			<array>
-				<string>neoteletext</string>
+				<string>{LINK_SCHEME_NAME}</string>
 			</array>
 		</dict>
 	</array>
@@ -427,7 +428,11 @@ mod tests {
     #[test]
     fn the_bundle_declares_the_scheme_and_page_files_and_nothing_else() {
         let plist = info_plist(Version::new(0, 1, 0));
-        assert!(plist.contains("<key>CFBundleURLSchemes</key>\n\t\t\t<array>\n\t\t\t\t<string>neoteletext</string>\n\t\t\t</array>"), "{plist}");
+        assert!(
+            plist.contains(&format!("<key>CFBundleURLSchemes</key>\n\t\t\t<array>\n\t\t\t\t<string>{LINK_SCHEME_NAME}</string>\n\t\t\t</array>")),
+            "{plist}"
+        );
+        assert!(!plist.contains("<string>neoteletext</string>"), "DEC-1726: the old scheme is not registered: {plist}");
         assert!(!plist.contains("<string>http"), "{plist}");
         assert!(plist.contains("<string>tti</string>"), "{plist}");
         assert!(chooser_plist(Version::new(0, 1, 0)).contains("<key>LSUIElement</key>\n\t<true/>"));

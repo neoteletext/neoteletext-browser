@@ -7,6 +7,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
 use neoteletext_input::event::{Event, Item, MAX_STREAM_ITEM, StreamDecoder};
+use neoteletext_web::channel::SETTINGS_FILE;
 
 use super::pages::{contents_file, page_file};
 use super::session::Push;
@@ -129,7 +130,7 @@ pub(super) fn serve(mut stream: TcpStream, settings: &Settings) -> io::Result<()
             continue;
         };
         match name {
-            "channel.json" => {
+            SETTINGS_FILE => {
                 let json = r#"{"name":"NeoTeletext terminal channel","push":{"input":true}}"#;
                 respond(&mut stream, "200 OK", "application/json", json.as_bytes())?;
             }

@@ -57,7 +57,7 @@ fn an_address_query_stays_off_the_push_connection() {
     let (site, heard) = Site::start(&built().0);
     let said = asked_until_push(&site, &heard, "?id=7&b=%20x");
     assert!(said.last().unwrap().ends_with("GET /terminal/push"), "{said:?}");
-    assert!(said.iter().any(|line| line.ends_with("GET /terminal/channel.json")), "{said:?}");
+    assert!(said.iter().any(|line| line.ends_with(&format!("GET /terminal/{}", neoteletext_web::channel::SETTINGS_FILE))), "{said:?}");
 }
 
 // REQ-1693 item 6, DEC-1715: the longest page parameters go whole in SELECT,

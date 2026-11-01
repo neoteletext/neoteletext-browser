@@ -25,6 +25,12 @@
     clippy::unimplemented
 )]
 
+/// The URL scheme the browser registers with the operating system (REQ-1671).
+/// The crates that register it link no engine, so the name is held here, and
+/// a test holds it to the engine's `LINK_SCHEME`, the form with `://` the
+/// browser reads (DEC-1726 item 5).
+pub const LINK_SCHEME_NAME: &str = "neottx";
+
 #[cfg(target_os = "macos")]
 mod macos;
 #[cfg(windows)]
@@ -78,5 +84,17 @@ pub fn tell(title: &str, message: &str) {
     #[cfg(not(any(target_os = "macos", windows)))]
     {
         eprintln!("{title}: {message}");
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::LINK_SCHEME_NAME;
+
+    /// DEC-1726 item 5: what the operating system is told to send here is
+    /// what the browser reads.
+    #[test]
+    fn the_registered_scheme_is_the_one_the_browser_reads() {
+        assert_eq!(format!("{LINK_SCHEME_NAME}://"), neoteletext_core::consts::LINK_SCHEME);
     }
 }

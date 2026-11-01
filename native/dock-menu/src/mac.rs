@@ -410,7 +410,7 @@ fn opened_text(url: &NSURL) -> Option<String> {
 }
 
 /// `application:openURLs:`, added to winit's application delegate (DEC-1551
-/// item 7): files and `neoteletext://` links. What comes here is a claim.
+/// item 7): files and `neottx://` links. What comes here is a claim.
 extern "C" fn open_urls(_this: &AnyObject, _command: Sel, _application: &AnyObject, urls: &NSArray<NSURL>) {
     let opened: Vec<String> = urls.iter().filter_map(opened_text).collect();
     OPENER.with(|opener| {

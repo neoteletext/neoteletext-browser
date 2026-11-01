@@ -2,7 +2,7 @@
 //! of the engine asks of every server: 404 for a missing file, the
 //! project's media types, no query strings. The channel has no live
 //! connection: every few seconds one of the live pages changes here, and
-//! `channel.json`'s `refresh` has a reader ask for the page on screen again.
+//! `channel.ttx`'s `refresh` has a reader ask for the page on screen again.
 //!
 //! Each live page rotates through the versions the builder kept, and is
 //! stamped on row 23 with the time it changed, so every update is visible.
@@ -15,6 +15,8 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
+
+use neoteletext_web::channel::SETTINGS_FILE;
 
 /// Each live page's latest version, by its number.
 type Latest = Arc<Mutex<HashMap<String, String>>>;
@@ -33,10 +35,12 @@ const STAMP_ROW: &str = "OL,23,";
 const ESCAPE: char = '\x1b';
 
 fn media_type(path: &Path) -> &'static str {
+    if path.file_name().is_some_and(|name| name == SETTINGS_FILE) {
+        return "application/json";
+    }
     match path.extension().and_then(|extension| extension.to_str()) {
         Some("tti") => "text/x-teletext-tti",
         Some("t42") => "application/x-teletext-t42",
-        Some("json") => "application/json",
         _ => "text/plain",
     }
 }

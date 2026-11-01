@@ -17,7 +17,7 @@ REQ-WEB-005 stands, with two additions and one change:
 
 - **One selection on each tab's connection.** A tab has its own WebSocket, decoder and store, and tells its channel what it selects with SELECT (DEC-1538, DEC-1527). Losing the focus changes nothing about that. The wall of pages with none zoomed selects nothing (page 0), and a tab leaving the channel sends page 0 before its connection closes: the fetcher's input closing lets it write what it was last told, and the trusted core ends it a little later.
 - **What a frame's links are.** A LINKS record (REQ-1494) follows a frame in the same message, and gives the sub-page's `LT`, `LK` and `LN` links as its page file's lines would. A frame with none means the sub-page has no links, whole or changed rows (DEC-1517), and a frame of the header alone is how links changing with no row changing redraws the page.
-- **The contents.** A live channel's index records give the contents, and each magazine's name is its bank's name, whatever its first page's section. Its SUBPAGES records give each page's list of sub-pages; nothing is fetched after `channel.json` (REQ-703, REQ-1505).
+- **The contents.** A live channel's index records give the contents, and each magazine's name is its bank's name, whatever its first page's section. Its SUBPAGES records give each page's list of sub-pages; nothing is fetched after `channel.ttx` (REQ-703, REQ-1505).
 
 The WebSocket is the transport because every host has one. When WebTransport (HTTP/3, QUIC) is as common, it is the transport to move to: unreliable datagrams for key records and pushed rows, no head-of-line blocking, and a connection that survives a change of network, which is what `mosh` built for the terminal. Nothing in the records would change.
 

@@ -1,4 +1,4 @@
-//! A `neoteletext://` link from outside the browser (REQ-1672): what it
+//! A `neottx://` link from outside the browser (REQ-1672): what it
 //! wraps is always a web address.
 #![no_main]
 

@@ -84,7 +84,7 @@ mod tests {
         let place = folder.join("instance");
         assert!(connect(&place).is_err(), "none running");
         let first = Instance::bind(&place).unwrap();
-        let opening = Opening::Outside { links: vec!["neoteletext://https://a.example/".into()], files: Vec::new() };
+        let opening = Opening::Outside { links: vec!["neottx://https://a.example/".into()], files: Vec::new() };
         write_opening(&mut connect(&place).unwrap(), &opening).unwrap();
         assert_eq!(read_opening(&mut first.next().unwrap()).unwrap(), opening);
         drop(first);

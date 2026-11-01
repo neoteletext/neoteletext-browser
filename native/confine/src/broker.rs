@@ -51,7 +51,7 @@ pub const MAX_HELPERS: usize = 512;
 pub const MAX_ARGUMENTS: usize = 64;
 /// The longest argument, path or address in a request: twice the 4,096
 /// bytes of the longest path, which holds an address of 8,000 octets
-/// (neoteletext-common's REQ-1661) in a `neoteletext://` link. The trusted
+/// (neoteletext-common's REQ-1661) in a `neottx://` link. The trusted
 /// core asserts that it does.
 pub const MAX_TEXT: usize = 2 * 4096;
 /// The largest reply: a file channel's bytes, at most 64 MB with a line

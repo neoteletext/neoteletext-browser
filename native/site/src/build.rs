@@ -2,7 +2,7 @@
 //! `docs/channels.md` describes a channel (sections 1 and 3): page 100 the
 //! front page, each hundred a section with its index at its first page,
 //! every page a `NNN.tti` file, `contents.txt` listing every page with its
-//! title, and `channel.json` asking readers to refresh the page on screen. The pages' bodies come
+//! title, and `channel.ttx` asking readers to refresh the page on screen. The pages' bodies come
 //! from sample recordings, decoded by the teletext engine; each keeps its
 //! hundred where the samples allow, so news stays in 1xx and sport in 3xx.
 //!
@@ -15,12 +15,13 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use decoder::{Engine, Exported};
+use neoteletext_web::channel::SETTINGS_FILE;
 
 /// The fictional channel.
 pub const NAME: &str = "Halcyon Teletext";
 const SHORT_NAME: &str = "HALCYON";
 /// How often a reader asks for the page on screen again: the shortest
-/// `refresh` `channel.json` allows, so that the live pages are seen to change.
+/// `refresh` `channel.ttx` allows, so that the live pages are seen to change.
 const REFRESH_SECONDS: u32 = 5;
 const SECTIONS: [&str; 8] = ["News", "Business", "Sport", "Weather and travel", "Entertainment", "Television", "Lifestyle", "Service"];
 /// A contents file title is at most 32 printable ASCII characters (the
@@ -203,7 +204,7 @@ fn write_contents(write: &dyn Fn(&str, &str) -> Result<(), String>, sections: &[
         }
     }
     write("contents.txt", &contents)?;
-    write("channel.json", &format!("{{\n  \"name\": \"{NAME}\",\n  \"initial_page\": \"100\",\n  \"refresh\": {REFRESH_SECONDS}\n}}\n"))
+    write(SETTINGS_FILE, &format!("{{\n  \"name\": \"{NAME}\",\n  \"initial_page\": \"100\",\n  \"refresh\": {REFRESH_SECONDS}\n}}\n"))
 }
 
 /// Builds the channel into `out`.

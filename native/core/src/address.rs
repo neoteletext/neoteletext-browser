@@ -179,7 +179,9 @@ const ESCAPED_PERCENT: &str = "%25";
 /// What begins a path under the home folder.
 const HOME_SIGN: char = '~';
 /// What begins a link from outside (DEC-1666): the whole address follows it.
-pub const OUTSIDE_SCHEME: &str = "neoteletext://";
+/// The engine's, so that this browser reads what the server's page links to
+/// (DEC-1726 item 5).
+pub const OUTSIDE_SCHEME: &str = neoteletext_core::consts::LINK_SCHEME;
 /// What begins a file address's fragment, which holds the place inside it
 /// (DEC-1694 rule 10). An `http` or `https` address has none.
 pub const FRAGMENT: char = '#';
@@ -433,7 +435,7 @@ pub fn is_outside_link(text: &str) -> bool {
     text.get(..OUTSIDE_SCHEME.len()).is_some_and(|scheme| scheme.eq_ignore_ascii_case(OUTSIDE_SCHEME))
 }
 
-/// The address a `neoteletext://` link from outside wraps (REQ-1672 items 1
+/// The address a link from outside wraps (REQ-1672 items 1
 /// to 5). The one function every route calls: the prefix goes, and what
 /// remains must be a whole `http` or `https` address of the URL map, with
 /// nothing around it. A link carries that address, and nothing else.
@@ -442,7 +444,7 @@ pub fn is_outside_link(text: &str) -> bool {
 /// A sentence for the log, which does not repeat the link (item 12).
 pub fn outside_link(text: &str) -> Result<Address, String> {
     if !is_outside_link(text) {
-        return Err("it is not a neoteletext:// link".into());
+        return Err(format!("it is not a {OUTSIDE_SCHEME} link"));
     }
     let wrapped = text.get(OUTSIDE_SCHEME.len()..).unwrap_or_default();
     if wrapped.trim() != wrapped {

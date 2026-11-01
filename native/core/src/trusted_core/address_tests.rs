@@ -221,7 +221,7 @@ fn a_redirect_inherits_a_fragment_only_when_it_names_no_place() {
     assert_eq!(test.core.session.server_redirect(channel, "https://other.invalid/a/").unwrap().text, "https://other.invalid/a/302?a=1");
     assert_eq!(test.core.session.server_redirect(channel, "https://other.invalid/a/400.tti").unwrap().text, "https://other.invalid/a/400");
     assert_eq!(test.core.session.server_redirect(channel, "https://other.invalid/a/500").unwrap().text, "https://other.invalid/a/500");
-    assert!(test.core.session.server_redirect(channel, "https://other.invalid/a/channel.json").is_err());
+    assert!(test.core.session.server_redirect(channel, &format!("https://other.invalid/a/{}", neoteletext_web::channel::SETTINGS_FILE)).is_err());
 }
 
 // REQ-1693 item 6: page parameters reach the channel with the selection they

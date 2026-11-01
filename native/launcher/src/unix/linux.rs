@@ -4,6 +4,7 @@
 
 use std::path::{Path, PathBuf};
 
+use os_install::LINK_SCHEME_NAME;
 use update::files;
 use update::layout::Layout;
 use update::platform::{Family, LAUNCHER_PROGRAM, LINUX_ICON_SIZES, linux_icon};
@@ -121,7 +122,7 @@ pub(super) fn unregister_types() {
 /// them too (decision 124).
 fn desktop_text(program: &Path) -> String {
     format!(
-        "[Desktop Entry]\nType=Application\nVersion=1.5\nName=NeoTeletext\nGenericName=Teletext browser\nComment=Browse teletext channels on the web\nExec=\"{}\" %u\nIcon={ICON_NAME}\nStartupWMClass={ICON_NAME}\nTerminal=false\nCategories=Network;WebBrowser;\nMimeType=x-scheme-handler/neoteletext;{TTI_TYPE};\n",
+        "[Desktop Entry]\nType=Application\nVersion=1.5\nName=NeoTeletext\nGenericName=Teletext browser\nComment=Browse teletext channels on the web\nExec=\"{}\" %u\nIcon={ICON_NAME}\nStartupWMClass={ICON_NAME}\nTerminal=false\nCategories=Network;WebBrowser;\nMimeType=x-scheme-handler/{LINK_SCHEME_NAME};{TTI_TYPE};\n",
         program.display()
     )
 }
@@ -352,7 +353,8 @@ mod tests {
         let text = desktop_text(Path::new("/home/a/.local/share/neoteletext/bin/neoteletext"));
         assert!(text.starts_with("[Desktop Entry]\nType=Application\n"));
         assert!(text.contains("\nExec=\"/home/a/.local/share/neoteletext/bin/neoteletext\" %u\n"), "one address, not several (REQ-1671 item 3)");
-        assert!(text.ends_with("MimeType=x-scheme-handler/neoteletext;text/x-teletext-tti;\n"), "{text}");
+        assert!(text.ends_with(&format!("MimeType=x-scheme-handler/{LINK_SCHEME_NAME};text/x-teletext-tti;\n")), "{text}");
+        assert!(!text.contains("x-scheme-handler/neoteletext"), "DEC-1726: the old scheme is not registered: {text}");
     }
 
     /// Decision 124: the menu entry names the browser's own icon, and the

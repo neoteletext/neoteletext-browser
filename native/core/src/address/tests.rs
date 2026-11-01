@@ -30,7 +30,8 @@ fn the_address_field_adds_a_channels_final_slash() {
 fn only_the_address_field_adds_a_slash_and_only_to_a_folder() {
     assert_eq!(parse("app.neottx.com/home").unwrap_err(), NOT_A_CHANNEL);
     assert_eq!(parse_typed("app.neottx.com/home/page.txt").unwrap_err(), NOT_A_CHANNEL);
-    assert_eq!(parse_typed("app.neottx.com/home/channel.json").unwrap_err(), parse("app.neottx.com/home/channel.json").unwrap_err());
+    let settings = format!("app.neottx.com/home/{}", neoteletext_web::channel::SETTINGS_FILE);
+    assert_eq!(parse_typed(&settings).unwrap_err(), parse(&settings).unwrap_err());
     assert_eq!(parse_typed("app.neottx.com/home/#G02").unwrap_err(), parse("app.neottx.com/home/#G02").unwrap_err());
 }
 
@@ -108,7 +109,7 @@ fn the_conformance_table_holds_for_the_address_rules() {
             _ => panic!("a row of the table: {line}"),
         }
     }
-    assert_eq!((opened, refused), (30, 33), "the table's rows, all of them read");
+    assert_eq!((opened, refused), (30, 34), "the table's rows, all of them read");
 }
 
 /// REQ-1693 items 1 and 6: what an address holds beyond its page, read once.
@@ -272,52 +273,74 @@ fn an_address_is_within_its_bound_written_in_full() {
     assert!(parse(&format!("https://a.example/?q={}", "x".repeat(max - "https://a.example/?q=".len()))).is_err(), "no room for a page");
 }
 
+/// A link from outside to `address`.
+fn link(address: &str) -> String {
+    format!("{OUTSIDE_SCHEME}{address}")
+}
+
 /// REQ-1672 items 1 to 5: a link wraps a whole web address, and nothing else
 /// opens.
 #[test]
 fn a_link_from_outside_unwraps_to_its_web_address() {
+    let capitals = format!("{}http://news.example/channel/?id=7", OUTSIDE_SCHEME.to_ascii_uppercase());
     for (link, address, page) in [
-        ("neoteletext://https://news.example/302", "https://news.example/302", Some(0x302)),
-        ("NEOTELETEXT://http://news.example/channel/?id=7", "http://news.example/channel/?id=7", None),
-        ("neoteletext://https://news.example/1fe?a=1", "https://news.example/1FE?a=1", Some(0x1FE)),
-        ("neoteletext://https://news.example/302.tti", "https://news.example/302", Some(0x302)),
-        ("neoteletext://https://news.example/contents", "https://news.example/contents", None),
-        ("neoteletext://https://news.example/wall", "https://news.example/wall", None),
-        ("neoteletext://https://NEWS.Example:8443/", "https://news.example:8443/", None),
+        (link("https://news.example/302"), "https://news.example/302", Some(0x302)),
+        (capitals, "http://news.example/channel/?id=7", None),
+        (link("https://news.example/1fe?a=1"), "https://news.example/1FE?a=1", Some(0x1FE)),
+        (link("https://news.example/302.tti"), "https://news.example/302", Some(0x302)),
+        (link("https://news.example/contents"), "https://news.example/contents", None),
+        (link("https://news.example/wall"), "https://news.example/wall", None),
+        (link("https://NEWS.Example:8443/"), "https://news.example:8443/", None),
     ] {
-        let opened = outside_link(link).unwrap();
+        let opened = outside_link(&link).unwrap();
         assert_eq!((opened.text.as_str(), opened.page), (address, page), "{link}");
     }
 }
 
 #[test]
 fn a_link_from_outside_carries_nothing_else() {
-    for link in [
-        "neoteletext://home",
-        "neoteletext://",
-        "neoteletext:home",
-        "neoteletext://file:///etc/passwd",
-        "neoteletext://web:https://a.example/",
-        "neoteletext://data:text/html,x",
-        "neoteletext://javascript:alert(1)",
-        "neoteletext://ftp://a.example/",
-        "neoteletext://neoteletext://https://a.example/",
-        "neoteletext://https://a.example/#not-a-page",
-        "neoteletext://https://a.example/302:12",
-        "neoteletext://https://a.example/channel.json",
-        "neoteletext://https://a.example/302.tti#303",
-        "neoteletext://https://a%2eexample/",
-        "neoteletext://https://caf\u{e9}.example/",
-        "neoteletext://https://user@a.example/",
-        "neoteletext:// https://a.example/",
-        "neoteletext://https://a.example/ ",
-        "neoteletext://news.example/",
-        "https://a.example/",
+    for wrapped in [
+        "home",
+        "",
+        "file:///etc/passwd",
+        "web:https://a.example/",
+        "data:text/html,x",
+        "javascript:alert(1)",
+        "ftp://a.example/",
+        &link("https://a.example/"),
+        "https://a.example/#not-a-page",
+        "https://a.example/302:12",
+        &format!("https://a.example/{}", neoteletext_web::channel::SETTINGS_FILE),
+        "https://a.example/302.tti#303",
+        "https://a%2eexample/",
+        "https://caf\u{e9}.example/",
+        "https://user@a.example/",
+        " https://a.example/",
+        "https://a.example/ ",
+        "news.example/",
     ] {
-        assert!(outside_link(link).is_err(), "{link}");
+        let link = link(wrapped);
+        assert!(outside_link(&link).is_err(), "{link}");
     }
-    let long = format!("neoteletext://https://a.example/{}", "x".repeat(protocol::MAX_ADDRESS));
+    for bare in ["neoteletext:home", "https://a.example/"] {
+        assert!(outside_link(bare).is_err(), "{bare}");
+    }
+    let long = link(&format!("https://a.example/{}", "x".repeat(protocol::MAX_ADDRESS)));
     assert!(outside_link(&long).is_err(), "longer than an address may be");
+}
+
+/// DEC-1726: the old scheme is no link, in any case, and the old name of a
+/// channel's entry file is nowhere a channel's: no route opens either.
+#[test]
+fn the_old_names_are_not_read() {
+    assert_eq!(OUTSIDE_SCHEME, "neottx://", "documents name the scheme literally");
+    for old in ["neoteletext://https://news.example/302", "NEOTELETEXT://https://news.example/302"] {
+        assert!(!is_outside_link(old), "{old}");
+        assert!(outside_link(old).is_err(), "{old}");
+        assert!(parse(old).is_err(), "{old}");
+    }
+    assert!(outside_link(&link("https://a.example/channel.json")).is_err());
+    assert!(parse("https://a.example/channel.json").is_err());
 }
 
 /// REQ-1701: a typed path is one by its form, and nothing is checked.

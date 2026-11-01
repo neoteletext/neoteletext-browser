@@ -6,7 +6,7 @@ use super::*;
 const NOW: u64 = 1_792_000_000;
 
 fn news() -> Channel {
-    Channel::of("https://news.example/teletext/channel.json").unwrap()
+    Channel::of(&format!("https://news.example/teletext/{}", neoteletext_web::channel::SETTINGS_FILE)).unwrap()
 }
 
 fn header(store: &mut Store, private: bool, channel: &Channel, path: &str) -> String {

@@ -29,6 +29,10 @@ windows-sys = { version = "=0.52.0", features = [
 # As dock-menu's, web-opener's and confine's: unsafe code is denied, not
 # forbidden, and allowed only in the macOS and Windows modules, each
 # block with its reason (requirement 10.12, as amended for this crate).
+[dev-dependencies]
+# A test holds the scheme registered here to the one the browser reads.
+neoteletext-core.workspace = true
+
 [lints.rust]
 unsafe_code = "deny"
 missing_docs = "warn"

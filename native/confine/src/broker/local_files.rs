@@ -98,7 +98,7 @@ pub enum Opening {
     },
     /// What a second start names.
     Outside {
-        /// `neoteletext://` links, which the core checks again.
+        /// `neottx://` links, which the core checks again.
         links: Vec<String>,
         /// Files, each already granted by the broker.
         files: Vec<String>,
@@ -265,7 +265,7 @@ mod tests {
         assert_eq!(decode_declaration(bytes[0], &bytes[HEADER_BYTES..]).unwrap(), declaration);
         for opening in [
             Opening::Chosen { kind: ChooseKind::Bookmarks, path: "/tmp/b.html".into() },
-            Opening::Outside { links: vec!["neoteletext://https://a.example/".into()], files: paths(2) },
+            Opening::Outside { links: vec!["neottx://https://a.example/".into()], files: paths(2) },
         ] {
             let mut pipe = Vec::new();
             write_opening(&mut pipe, &opening).unwrap();
