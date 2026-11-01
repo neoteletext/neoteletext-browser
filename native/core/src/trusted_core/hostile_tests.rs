@@ -537,7 +537,7 @@ fn the_core_stands_against_a_hostile_interface() {
         path: "/teletext/".into(),
         scope: None,
         secure: true,
-        line: format!("session={SECRET}; Path=/teletext/; Secure").into_bytes(),
+        cookie: super::test_support::read_cookie(&format!("session={SECRET}; Path=/teletext/; Secure")),
     };
     core.cookie_reply(channel, set).unwrap();
     // Pages on screen, so that cells, links and frames have somewhere to be.

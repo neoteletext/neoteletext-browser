@@ -30,7 +30,7 @@ mod kinds;
 #[cfg(test)]
 mod tests;
 
-pub use cookies::{CookieSite, MAX_COOKIE_HEADER, MAX_SET_COOKIE};
+pub use cookies::{CookieSameSite, CookieSite, MAX_COOKIE_ATTRIBUTE, MAX_COOKIE_HEADER, MAX_COOKIE_NAME_VALUE, SetCookie};
 
 /// The engine's contents file limits (`neoteletext-web` `contents`): at
 /// most 1000 lines, so at most 1000 entries, and 800 pages.
@@ -212,7 +212,7 @@ pub enum FromFetcher {
         /// The host asked about.
         host: String,
     },
-    /// A `Set-Cookie` value a response carried, as received.
+    /// A `Set-Cookie` value a response carried, as the fetcher read it.
     CookieSet {
         /// The response's host.
         host: String,
@@ -222,8 +222,8 @@ pub enum FromFetcher {
         scope: Option<String>,
         /// The response came over an encrypted connection.
         secure: bool,
-        /// The header's value, as received.
-        line: Vec<u8>,
+        /// The header's fields.
+        cookie: SetCookie,
     },
     /// A response from `host` over an encrypted connection said
     /// `Clear-Site-Data: "cookies"` (`cookies.md` section 8).

@@ -60,7 +60,7 @@
 
 **The trusted core owns every cookie** (requirement 7.5). It holds one jar per channel, the engine's `CookieJar`, with the engine's rules unchanged. Tabs on the same channel share its jar (requirement 7.4, decision 11), whether or not they share a fetcher or a decoder.
 
-**A fetcher holds no cookie.** For each request it is about to send, it asks the trusted core for that request's `Cookie` header, giving the address and the kind of request (a page or file of its channel, the push connection, a form submission and its target, a top-level navigation into the channel). The trusted core answers with the header the engine's `header_for` builds, or none. Each `Set-Cookie` line a response carries goes back to the trusted core as received, bounded, with the address it answered and whether the connection was encrypted; the trusted core stores it with the engine's `store`, under the engine's rules. So a fetcher compromised by its channel's server sees only the cookies of the requests it is sending at that moment, and can store a cookie only as the server could have.
+**A fetcher holds no cookie.** For each request it is about to send, it asks the trusted core for that request's `Cookie` header, giving the address and the kind of request (a page or file of its channel, the push connection, a form submission and its target, a top-level navigation into the channel). The trusted core answers with the header the engine's `header_for` builds, or none. The fetcher reads each `Set-Cookie` line a response carries into typed, bounded fields, with the engine's `SetCookie::parse`, and sends those to the trusted core with the address it answered and whether the connection was encrypted, so that the core reads no header a server wrote (requirement 3.2, DEC-1765). The trusted core stores them with the engine's `store_set_cookie`, under the engine's rules, every one of which it applies to the fields, and it refuses fields no header could give. So a fetcher compromised by its channel's server sees only the cookies of the requests it is sending at that moment, and can store a cookie only as the server could have.
 
 **An engine change.** The engine's user agent keeps its jar inside itself today. It is to take its cookies through its platform interface instead: a `Cookies` trait with `header_for(request)` and `set(response, line)`, which the engine's own jar implements for ports that want it inside, and the fetcher implements by asking the trusted core. This is the engine's change to make, by its own process, and the pin moved here (`DEVELOPMENT.md` section 11; `architecture.md` section 5.1 already lists it).
 
@@ -112,7 +112,7 @@ The history panel's "Clear" (requirement 20.6) gains a choice beside its time ra
 | Cookies a channel keeps | 180 | Chrome's per-site limit |
 | Cookies in all | 3 000 | Chrome's total |
 | Channels with cookies | 3 000 (a jar is made only when its first cookie is stored) | Follows from the total |
-| `Set-Cookie` lines from a fetcher | Within the engine's bounds on a response's headers: 16 KiB together (`DEFAULT_HEADER_LIMIT`), 64 headers (`MAX_RESPONSE_HEADERS`) | The engine's HTTP reader (its REQ-SEC-011) |
+| `Set-Cookie` fields from a fetcher | A name and value of at most 4,096 bytes together and a path of at most 1,024, within the engine's bounds on a response's headers: 16 KiB together (`DEFAULT_HEADER_LIMIT`), 64 headers (`MAX_RESPONSE_HEADERS`) | The engine's `SetCookie::parse` in the fetcher, and the protocol's and the jar's checks in the trusted core |
 | The cookies file | 32 MiB | 3 000 cookies at the largest, encoded, with room |
 
 Beyond a bound the least recently used cookie goes first, expired ones before all (the engine's rule). The engine's jar is given its limits with `set_limits`; the browser's constants name the engine's where they are the same (requirement 2.4).
@@ -155,7 +155,7 @@ A response from the channel over `https` with `Clear-Site-Data` naming `"cookies
 |---|---|---|
 | Fetcher → core | Cookie question | A request number, the address, the request's kind, whether encrypted |
 | Core → fetcher | Cookie answer | The request number, the `Cookie` header or none |
-| Fetcher → core | Cookies set | The address, whether encrypted, the `Set-Cookie` lines, within the engine's bounds on a response's headers |
+| Fetcher → core | Cookies set | The address, whether encrypted, and each `Set-Cookie` line's fields, typed and bounded (DEC-1765) |
 | Fetcher → core | Site data cleared | The address, the directives |
 | Core → interface | Cookies view | Rows: view number, identity, count, size, last used, blocked |
 | Interface → core | Cookies request | Open, search, delete by view number, delete a site by view number, block or unblock by view number, delete all |

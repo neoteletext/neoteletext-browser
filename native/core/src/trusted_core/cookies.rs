@@ -10,10 +10,10 @@ use std::time::{Duration, Instant};
 
 use neoteletext::calendar::utc_now;
 use neoteletext::cookies::{self as kept, Channel, Mode, Refused, Store};
-use neoteletext_web::cookie::Site;
+use neoteletext_web::cookie::{SameSite, SetCookie, Site};
 use panel::Row;
 use protocol::console::Level;
-use protocol::fetcher::{CookieSite, FromFetcher, ToFetcher, write_to_fetcher};
+use protocol::fetcher::{CookieSameSite, CookieSite, FromFetcher, ToFetcher, write_to_fetcher};
 
 use super::Core;
 use super::numbers::Numbers;
@@ -54,6 +54,27 @@ const fn site(site: CookieSite) -> Site {
     match site {
         CookieSite::SameService => Site::SameService,
         CookieSite::CrossServiceNavigation => Site::CrossServiceNavigation,
+    }
+}
+
+/// The fields a fetcher read, for the jar, which applies every rule to them.
+fn fields(cookie: &protocol::fetcher::SetCookie) -> SetCookie<'_> {
+    SetCookie {
+        name: &cookie.name,
+        value: &cookie.value,
+        max_age: cookie.max_age,
+        expires: cookie.expires,
+        domain: cookie.domain,
+        path: cookie.path.as_deref(),
+        secure: cookie.secure,
+        http_only: cookie.http_only,
+        partitioned: cookie.partitioned,
+        same_site: match cookie.same_site {
+            CookieSameSite::Strict => SameSite::Strict,
+            CookieSameSite::Lax => SameSite::Lax,
+            CookieSameSite::None => SameSite::None,
+            CookieSameSite::Default => SameSite::Default,
+        },
     }
 }
 
@@ -115,9 +136,9 @@ impl Core {
                 let reached = owner.is_some_and(|(owner, private)| self.cookies.store.reached_securely(private, &owner, &host, now));
                 return Ok(Some(ToFetcher::ReachedAnswer { id, reached }));
             }
-            FromFetcher::CookieSet { host, path, secure, line, .. } => {
+            FromFetcher::CookieSet { host, path, secure, cookie, .. } => {
                 let Some((owner, private)) = owner else { return Ok(None) };
-                match self.cookies.store.store(private, &owner, (&host, &path, secure), &line, now) {
+                match self.cookies.store.store(private, &owner, (&host, &path, secure), &fields(&cookie), now) {
                     Ok(()) => self.cookies_changed(),
                     Err(Refused::Blocked) => {
                         if self.cookies.said_blocked.insert(owner.key.clone()) && self.active_channel() == Some(channel) {

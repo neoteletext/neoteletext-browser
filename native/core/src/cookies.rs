@@ -1,9 +1,10 @@
 //! The trusted core's cookies (`cookies.md`, decision 62): one store for
 //! the ordinary tabs and one for the private tabs, each the engine's jar,
 //! with the engine's rules (its REQ-WEB-006, REQ-WEB-026). A fetcher holds
-//! none: it asks for each request's header and hands back each
-//! `Set-Cookie` value, and is answered only with its own channel's cookies
-//! (requirement 21.1).
+//! none: it asks for each request's header and hands back the fields of each
+//! `Set-Cookie` value, which it reads so that this process reads no header a
+//! server wrote (DEC-1765), and is answered only with its own channel's
+//! cookies (requirement 21.1).
 //!
 //! A channel is its scheme, host, port and folder (requirement 7.1). The
 //! jar keeps cookies by host, so each channel's cookies are kept under a
@@ -15,7 +16,7 @@ use crate::dropped::Dropped;
 use std::collections::{BTreeMap, BTreeSet};
 
 use neoteletext_web::bytes::Writer;
-use neoteletext_web::cookie::{CookieJar, CookieRejected, Site};
+use neoteletext_web::cookie::{CookieJar, CookieRejected, SetCookie, Site};
 use neoteletext_web::url::Url;
 
 /// Cookies a channel keeps (`cookies.md` section 5): Chrome's per-site limit.
@@ -34,7 +35,8 @@ const MAX_CHANNELS: usize = TOTAL;
 /// The longest `Cookie` header answered (`protocol::fetcher`).
 const MAX_HEADER: usize = protocol::fetcher::MAX_COOKIE_HEADER;
 const _: () = assert!(MAX_HEADER == neoteletext_web::consts::DEFAULT_REQUEST_LIMIT, "the engine's room for a request");
-const _: () = assert!(protocol::fetcher::MAX_SET_COOKIE == neoteletext_web::consts::DEFAULT_HEADER_LIMIT, "the engine's limit on a response's headers");
+const _: () = assert!(protocol::fetcher::MAX_COOKIE_NAME_VALUE == neoteletext_web::consts::MAX_COOKIE_NAME_VALUE, "the engine's limit on a cookie");
+const _: () = assert!(protocol::fetcher::MAX_COOKIE_ATTRIBUTE == neoteletext_web::consts::MAX_COOKIE_ATTRIBUTE_VALUE, "the engine's limit on an attribute");
 pub(crate) const FILE_VERSION: &str = "neoteletext-cookie-file 1";
 const TAG_PREFIX: &str = "c";
 /// Room for building a jar of this size: its records and arena, which a
@@ -223,7 +225,7 @@ impl Store {
     /// # Errors
     /// When cookies are blocked, the response was not the channel's, or the
     /// engine's rules refuse the cookie.
-    pub fn store(&mut self, private: bool, channel: &Channel, response: (&str, &str, bool), line: &[u8], now: u64) -> Result<(), Refused> {
+    pub fn store(&mut self, private: bool, channel: &Channel, response: (&str, &str, bool), cookie: &SetCookie<'_>, now: u64) -> Result<(), Refused> {
         let (host, path, secure) = response;
         if self.is_blocked(channel) {
             return Err(Refused::Blocked);
@@ -236,7 +238,7 @@ impl Store {
         let tag = self.tag(channel);
         let folder = channel.folder.clone();
         let jar = self.jar(private).ok_or(Refused::NoJar)?;
-        jar.store_within(line, &tag, path, Some(&folder), secure, now, true).map_err(Refused::Rules)?;
+        jar.store_set_cookie(cookie, &tag, path, Some(&folder), secure, now).map_err(Refused::Rules)?;
         if !private {
             self.changed = true;
         }

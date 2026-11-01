@@ -5,6 +5,11 @@ use super::*;
 
 const NOW: u64 = 1_792_000_000;
 
+/// A `Set-Cookie` header as a fetcher reads it.
+fn read(line: &[u8]) -> SetCookie<'_> {
+    SetCookie::parse(line, true).unwrap()
+}
+
 fn news() -> Channel {
     Channel::of(&format!("https://news.example/teletext/{}", neoteletext_web::channel::SETTINGS_FILE)).unwrap()
 }
@@ -29,7 +34,7 @@ fn a_channel_is_its_folder_on_its_origin() {
 fn a_channels_cookies_stay_in_the_channel() {
     let mut store = Store::new();
     let news = news();
-    store.store(false, &news, ("news.example", "/teletext/100.tti", true), b"id=1; Path=/", NOW).unwrap();
+    store.store(false, &news, ("news.example", "/teletext/100.tti", true), &read(b"id=1; Path=/"), NOW).unwrap();
     assert_eq!(header(&mut store, false, &news, "/teletext/101.tti"), "id=1", "the path narrowed to the folder");
     assert_eq!(header(&mut store, false, &news, "/other/"), "", "another folder");
     let neighbour = Channel::of("https://news.example/other/").unwrap();
@@ -39,8 +44,8 @@ fn a_channels_cookies_stay_in_the_channel() {
     let port = Channel::of("https://news.example:8443/teletext/").unwrap();
     assert_eq!(header(&mut store, false, &port, "/teletext/"), "");
     // A fetcher reporting another channel's host is refused.
-    assert_eq!(store.store(false, &news, ("evil.example", "/teletext/", true), b"x=1", NOW), Err(Refused::NotTheChannel));
-    assert_eq!(store.store(false, &news, ("news.example", "/teletext/", false), b"x=1", NOW), Err(Refused::NotTheChannel));
+    assert_eq!(store.store(false, &news, ("evil.example", "/teletext/", true), &read(b"x=1"), NOW), Err(Refused::NotTheChannel));
+    assert_eq!(store.store(false, &news, ("news.example", "/teletext/", false), &read(b"x=1"), NOW), Err(Refused::NotTheChannel));
 }
 
 /// Requirements 21.3 and 21.7: private cookies apart and gone with the
@@ -49,20 +54,20 @@ fn a_channels_cookies_stay_in_the_channel() {
 fn private_and_blocked_cookies() {
     let mut store = Store::new();
     let news = news();
-    store.store(true, &news, ("news.example", "/teletext/", true), b"p=1", NOW).unwrap();
+    store.store(true, &news, ("news.example", "/teletext/", true), &read(b"p=1"), NOW).unwrap();
     assert_eq!(header(&mut store, false, &news, "/teletext/"), "", "not in the ordinary tabs");
     assert_eq!(header(&mut store, true, &news, "/teletext/"), "p=1");
     assert!(!store.changed(), "a private cookie is never to be written");
     store.close_private();
     assert_eq!(header(&mut store, true, &news, "/teletext/"), "");
 
-    store.store(false, &news, ("news.example", "/teletext/", true), b"o=1", NOW).unwrap();
+    store.store(false, &news, ("news.example", "/teletext/", true), &read(b"o=1"), NOW).unwrap();
     store.block(&news.key, true);
     assert_eq!(header(&mut store, false, &news, "/teletext/"), "", "deleted when blocked");
-    assert_eq!(store.store(false, &news, ("news.example", "/teletext/", true), b"o=2", NOW), Err(Refused::Blocked));
+    assert_eq!(store.store(false, &news, ("news.example", "/teletext/", true), &read(b"o=2"), NOW), Err(Refused::Blocked));
     store.block(&news.key, false);
     store.mode = Mode::Block;
-    assert_eq!(store.store(false, &news, ("news.example", "/teletext/", true), b"o=3", NOW), Err(Refused::Blocked));
+    assert_eq!(store.store(false, &news, ("news.example", "/teletext/", true), &read(b"o=3"), NOW), Err(Refused::Blocked));
 }
 
 /// Requirements 21.6, 21.8 and 21.9: listing, deleting by channel,
@@ -73,10 +78,10 @@ fn listing_and_deleting() {
     let news = news();
     let sport = Channel::of("https://news.example/sport/").unwrap();
     let other = Channel::of("https://other.example/tt/").unwrap();
-    store.store(false, &news, ("news.example", "/teletext/", true), b"a=1", NOW).unwrap();
-    store.store(false, &news, ("news.example", "/teletext/", true), b"b=22", NOW + 5).unwrap();
-    store.store(false, &sport, ("news.example", "/sport/", true), b"c=1", NOW + 10).unwrap();
-    store.store(false, &other, ("other.example", "/tt/", true), b"d=1", NOW + 20).unwrap();
+    store.store(false, &news, ("news.example", "/teletext/", true), &read(b"a=1"), NOW).unwrap();
+    store.store(false, &news, ("news.example", "/teletext/", true), &read(b"b=22"), NOW + 5).unwrap();
+    store.store(false, &sport, ("news.example", "/sport/", true), &read(b"c=1"), NOW + 10).unwrap();
+    store.store(false, &other, ("other.example", "/tt/", true), &read(b"d=1"), NOW + 20).unwrap();
     let listed = store.listed();
     let summary: Vec<(&str, &str, usize, u64)> = listed.iter().map(|row| (row.key.as_str(), row.origin.as_str(), row.count, row.used_at)).collect();
     assert_eq!(
@@ -92,11 +97,11 @@ fn listing_and_deleting() {
     assert_eq!(store.delete_created(NOW + 1, NOW + 30), 2);
     assert_eq!(header(&mut store, false, &news, "/teletext/"), "a=1");
     assert_eq!(store.delete_origin("https://news.example"), 1);
-    store.store(false, &other, ("other.example", "/tt/", true), b"e=1", NOW).unwrap();
+    store.store(false, &other, ("other.example", "/tt/", true), &read(b"e=1"), NOW).unwrap();
     store.delete_all();
     assert_eq!(store.listed(), []);
     let plain = Channel::of("http://plain.example/tt/").unwrap();
-    store.store(false, &plain, ("plain.example", "/tt/", false), b"f=1", NOW).unwrap();
+    store.store(false, &plain, ("plain.example", "/tt/", false), &read(b"f=1"), NOW).unwrap();
     store.clear_site(false, &plain, "plain.example");
     assert_eq!(store.listed().len(), 1, "never over plain HTTP");
 }
@@ -108,7 +113,7 @@ fn cookies_are_bounded() {
     let mut store = Store::new();
     let news = news();
     for number in 0..=PER_CHANNEL {
-        store.store(false, &news, ("news.example", "/teletext/", true), format!("n{number}=1").as_bytes(), NOW + number as u64).unwrap();
+        store.store(false, &news, ("news.example", "/teletext/", true), &read(format!("n{number}=1").as_bytes()), NOW + number as u64).unwrap();
     }
     assert_eq!(store.listed()[0].count, PER_CHANNEL);
     assert!(!header(&mut store, false, &news, "/teletext/").split("; ").any(|pair| pair == "n0=1"), "the oldest went");
@@ -117,7 +122,7 @@ fn cookies_are_bounded() {
         let address = format!("https://c{channel}.example/tt/");
         let other = Channel::of(&address).unwrap();
         for number in 0..PER_CHANNEL {
-            store.store(false, &other, (&format!("c{channel}.example"), "/tt/", true), format!("n{number}=1").as_bytes(), NOW).unwrap();
+            store.store(false, &other, (&format!("c{channel}.example"), "/tt/", true), &read(format!("n{number}=1").as_bytes()), NOW).unwrap();
         }
     }
     assert_eq!(store.listed().iter().map(|row| row.count).sum::<usize>(), TOTAL);
@@ -129,9 +134,9 @@ fn cookies_are_bounded() {
 fn the_file_keeps_persistent_cookies_of_named_channels() {
     let mut store = Store::new();
     let news = news();
-    store.store(false, &news, ("news.example", "/teletext/", true), b"keep=1; Max-Age=3600; Secure", NOW).unwrap();
-    store.store(false, &news, ("news.example", "/teletext/", true), b"session=1", NOW).unwrap();
-    store.store(true, &news, ("news.example", "/teletext/", true), b"private=1; Max-Age=3600", NOW).unwrap();
+    store.store(false, &news, ("news.example", "/teletext/", true), &read(b"keep=1; Max-Age=3600; Secure"), NOW).unwrap();
+    store.store(false, &news, ("news.example", "/teletext/", true), &read(b"session=1"), NOW).unwrap();
+    store.store(true, &news, ("news.example", "/teletext/", true), &read(b"private=1; Max-Age=3600"), NOW).unwrap();
     let text = store.export(NOW);
     let shown = String::from_utf8_lossy(&text);
     assert!(shown.starts_with("neoteletext-cookie-file 1\nchannel\tc1\thttps://news.example/teletext/\n\n"), "{shown}");
@@ -141,7 +146,7 @@ fn the_file_keeps_persistent_cookies_of_named_channels() {
     assert_eq!(header(&mut restored, false, &news, "/teletext/"), "keep=1");
     // Another channel made in the next run gets a tag of its own.
     let other = Channel::of("https://other.example/tt/").unwrap();
-    restored.store(false, &other, ("other.example", "/tt/", true), b"x=1", NOW).unwrap();
+    restored.store(false, &other, ("other.example", "/tt/", true), &read(b"x=1"), NOW).unwrap();
     assert_eq!(header(&mut restored, false, &news, "/teletext/"), "keep=1");
 
     // Strictness: each broken table line dropped, stray cookies dropped.
@@ -168,8 +173,8 @@ fn a_channel_under_two_tags_is_read_once() {
     let mut store = Store::new();
     let news = news();
     let sport = Channel::of("https://news.example/sport/").unwrap();
-    store.store(false, &news, ("news.example", "/teletext/", true), b"a=1; Max-Age=3600", NOW).unwrap();
-    store.store(false, &sport, ("news.example", "/sport/", true), b"b=1; Max-Age=3600", NOW).unwrap();
+    store.store(false, &news, ("news.example", "/teletext/", true), &read(b"a=1; Max-Age=3600"), NOW).unwrap();
+    store.store(false, &sport, ("news.example", "/sport/", true), &read(b"b=1; Max-Age=3600"), NOW).unwrap();
     let text = String::from_utf8(store.export(NOW)).unwrap();
     let twice = text.replace(&sport.key, &news.key);
     assert_ne!(twice, text, "the file names the channel twice");
@@ -190,7 +195,7 @@ fn the_file_is_sealed() {
     let key = [7_u8; KEY_BYTES];
     let mut store = Store::new();
     let news = news();
-    store.store(false, &news, ("news.example", "/teletext/", true), b"secret-value=42; Max-Age=3600", NOW).unwrap();
+    store.store(false, &news, ("news.example", "/teletext/", true), &read(b"secret-value=42; Max-Age=3600"), NOW).unwrap();
     let folder = std::env::temp_dir().join(format!("neoteletext-cookies-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&folder);
     assert_eq!(load(&folder).unwrap(), None);
@@ -215,4 +220,29 @@ fn the_file_is_sealed() {
     remove(&folder).unwrap();
     assert_eq!(load(&folder).unwrap(), None);
     let _ = std::fs::remove_dir_all(&folder);
+}
+
+/// DEC-1765: fields come from a confined fetcher, so they are untrusted. The
+/// rules hold for them, and a fetcher that sends fields no header could give
+/// is refused, so it can do nothing a server could not: here, a value that
+/// would write a `__Host-` cookie of its own into the `Cookie` header, a
+/// `__Host-` cookie with no `Secure`, and `Secure` over a plain connection.
+#[test]
+fn a_hostile_fetchers_fields_gain_nothing() {
+    let mut store = Store::default();
+    let news = news();
+    let plain = read(b"a=1");
+    let response = ("news.example", "/teletext/", true);
+    let injected = SetCookie { value: b"1; __Host-id=evil", ..plain };
+    assert_eq!(store.store(false, &news, response, &injected, NOW), Err(Refused::Rules(CookieRejected::NotAHeader)));
+    let unsecured = SetCookie { name: b"__Host-id", path: Some(b"/"), ..plain };
+    assert_eq!(store.store(false, &news, response, &unsecured, NOW), Err(Refused::Rules(CookieRejected::Prefix)));
+    let plain_channel = Channel::of("http://news.example/teletext/").unwrap();
+    let secure = SetCookie { secure: true, ..plain };
+    assert_eq!(store.store(false, &plain_channel, ("news.example", "/teletext/", false), &secure, NOW), Err(Refused::Rules(CookieRejected::SecureOverPlain)));
+    assert_eq!(header(&mut store, false, &news, "/teletext/100.tti"), "", "nothing was stored");
+    let outside = SetCookie { path: Some(b"/other/"), ..plain };
+    store.store(false, &news, response, &outside, NOW).unwrap();
+    assert_eq!(header(&mut store, false, &news, "/other/1.tti"), "", "a path outside the channel's folder stays inside it");
+    assert_eq!(header(&mut store, false, &news, "/teletext/100.tti"), "a=1");
 }

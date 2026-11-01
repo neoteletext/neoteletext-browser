@@ -4,6 +4,37 @@
 use super::*;
 use crate::ProtocolError;
 
+/// A cookie with no attributes.
+fn plain_cookie() -> SetCookie {
+    SetCookie {
+        name: b"x".to_vec(),
+        value: b"2".to_vec(),
+        max_age: None,
+        expires: None,
+        domain: false,
+        path: None,
+        secure: false,
+        http_only: false,
+        partitioned: false,
+        same_site: CookieSameSite::Default,
+    }
+}
+
+/// A cookie with every attribute.
+fn full_cookie() -> SetCookie {
+    SetCookie {
+        max_age: Some(-5),
+        expires: Some(1_791_590_400),
+        domain: true,
+        path: Some(b"/tt/".to_vec()),
+        secure: true,
+        http_only: true,
+        partitioned: true,
+        same_site: CookieSameSite::Strict,
+        ..plain_cookie()
+    }
+}
+
 #[test]
 fn every_kind_round_trips() {
     for message in [
@@ -28,8 +59,8 @@ fn every_kind_round_trips() {
         FromFetcher::CookieQuestion { id: 7, host: "a.example".into(), path: "/tt/100.tti".into(), secure: true, site: CookieSite::SameService },
         FromFetcher::CookieQuestion { id: 8, host: "b.example".into(), path: "/".into(), secure: false, site: CookieSite::CrossServiceNavigation },
         FromFetcher::ReachedQuestion { id: 9, host: "a.example".into() },
-        FromFetcher::CookieSet { host: "a.example".into(), path: "/tt/".into(), scope: Some("/tt/".into()), secure: true, line: b"id=1; Secure".to_vec() },
-        FromFetcher::CookieSet { host: "a.example".into(), path: "/p".into(), scope: None, secure: false, line: b"x=2".to_vec() },
+        FromFetcher::CookieSet { host: "a.example".into(), path: "/tt/".into(), scope: Some("/tt/".into()), secure: true, cookie: full_cookie() },
+        FromFetcher::CookieSet { host: "a.example".into(), path: "/p".into(), scope: None, secure: false, cookie: plain_cookie() },
         FromFetcher::ClearSiteData("a.example".into()),
         FromFetcher::SubPages {
             page: 0x210,
@@ -81,14 +112,28 @@ fn an_initial_page_is_a_page() {
 /// Decision 62: cookie messages within their bounds only.
 #[test]
 fn cookie_messages_are_bounded() {
-    let long = FromFetcher::CookieSet { host: "a.example".into(), path: "/".into(), scope: None, secure: true, line: vec![b'x'; MAX_SET_COOKIE + 1] };
-    assert!(write_to_core(&mut Vec::new(), &long).is_err());
-    let mut bytes = vec![KIND_COOKIE_SET];
-    let mut payload = vec![0, 1, b'a', 0, 1, b'/', 0];
-    payload.extend(std::iter::repeat_n(b'x', MAX_SET_COOKIE + 1));
-    bytes.extend_from_slice(&u32::try_from(payload.len()).unwrap().to_be_bytes());
-    bytes.extend(payload);
-    assert!(matches!(read_from_fetcher(&mut bytes.as_slice()), Err(ProtocolError::BadValue("Set-Cookie too long"))));
+    let set = |cookie: SetCookie| FromFetcher::CookieSet { host: "a.example".into(), path: "/".into(), scope: None, secure: true, cookie };
+    assert!(write_to_core(&mut Vec::new(), &set(SetCookie { value: vec![b'x'; MAX_COOKIE_NAME_VALUE], ..plain_cookie() })).is_err());
+    assert!(write_to_core(&mut Vec::new(), &set(SetCookie { path: Some(vec![b'/'; MAX_COOKIE_ATTRIBUTE + 1]), ..plain_cookie() })).is_err());
+    // What a hostile fetcher could write itself: the lengths of a name and
+    // value over the bound, a path over it, a `SameSite` that is none, and
+    // bytes after the cookie.
+    let message = |lengths: [u16; 3], same_site: u8, more: &[u8]| {
+        let mut payload = vec![0, 1, b'a', 0, 1, b'/', 0, same_site];
+        payload.extend(lengths.iter().flat_map(|length| length.to_be_bytes()));
+        payload.extend_from_slice(more);
+        let mut bytes = vec![KIND_COOKIE_SET];
+        bytes.extend_from_slice(&u32::try_from(payload.len()).unwrap().to_be_bytes());
+        bytes.extend(payload);
+        bytes
+    };
+    let refused =
+        |bytes: Vec<u8>, reason: &str| assert!(matches!(read_from_fetcher(&mut bytes.as_slice()), Err(ProtocolError::BadValue(said)) if said == reason));
+    let long = u16::try_from(MAX_COOKIE_NAME_VALUE + 1).unwrap();
+    refused(message([long, 0, u16::MAX], 0, &[]), "cookie too long");
+    refused(message([1, 0, u16::try_from(MAX_COOKIE_ATTRIBUTE + 1).unwrap()], 0, b"a"), "cookie path too long");
+    refused(message([1, 0, u16::MAX], 4, b"a"), "cookie SameSite");
+    refused(message([1, 0, u16::MAX], 0, b"ab"), "cookie has more");
     let bad_site = [KIND_COOKIE_QUESTION, 0, 0, 0, 12, 0, 0, 0, 1, 0, 1, b'a', 0, 1, b'/', 0, 3];
     assert!(matches!(read_from_fetcher(&mut bad_site.as_slice()), Err(ProtocolError::BadValue("site"))));
     let answer = ToFetcher::CookieAnswer { id: 1, header: vec![b'x'; MAX_COOKIE_HEADER + 1] };

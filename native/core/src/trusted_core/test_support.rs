@@ -85,6 +85,28 @@ pub(super) fn healthy_once_settled(core: &mut Core) -> bool {
     core.updates.health.healthy(std::time::Instant::now().checked_add(super::updates::HEALTH_SETTLE).unwrap())
 }
 
+/// A `Set-Cookie` header as a fetcher would have read it.
+pub(super) fn read_cookie(line: &str) -> protocol::fetcher::SetCookie {
+    let cookie = neoteletext_web::cookie::SetCookie::parse(line.as_bytes(), true).unwrap();
+    protocol::fetcher::SetCookie {
+        name: cookie.name.to_vec(),
+        value: cookie.value.to_vec(),
+        max_age: cookie.max_age,
+        expires: cookie.expires,
+        domain: cookie.domain,
+        path: cookie.path.map(<[u8]>::to_vec),
+        secure: cookie.secure,
+        http_only: cookie.http_only,
+        partitioned: cookie.partitioned,
+        same_site: match cookie.same_site {
+            neoteletext_web::cookie::SameSite::Strict => protocol::fetcher::CookieSameSite::Strict,
+            neoteletext_web::cookie::SameSite::Lax => protocol::fetcher::CookieSameSite::Lax,
+            neoteletext_web::cookie::SameSite::None => protocol::fetcher::CookieSameSite::None,
+            neoteletext_web::cookie::SameSite::Default => protocol::fetcher::CookieSameSite::Default,
+        },
+    }
+}
+
 /// Gives `channel` a decoder that reads nothing, and what the core writes to
 /// it read back, a chunk at a time.
 #[cfg(unix)]
@@ -185,7 +207,7 @@ impl Test {
     }
 
     pub(super) fn set(&mut self, channel: u32, host: &str, line: &str) {
-        let message = FromFetcher::CookieSet { host: host.into(), path: "/teletext/".into(), scope: None, secure: true, line: line.as_bytes().to_vec() };
+        let message = FromFetcher::CookieSet { host: host.into(), path: "/teletext/".into(), scope: None, secure: true, cookie: read_cookie(line) };
         assert_eq!(self.core.cookie_reply(channel, message).unwrap(), None);
     }
 
