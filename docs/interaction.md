@@ -11,7 +11,7 @@
 
 REQ-WEB-005 stands, with two additions and one change:
 
-- **A heartbeat.** After 25 s of silence the browser sends a WebSocket ping and expects a pong within 10 s; otherwise it reconnects with the existing backoff and re-sends its subscription. A silent Server-Sent Events stream is reconnected after 60 s.
+- **A heartbeat.** After 25 s of silence the browser sends a WebSocket ping and expects a pong within 10 s; otherwise it reconnects with the existing backoff and re-sends its subscription.
 - **TLS,** so that `wss://` works (requirement 5.8; decision 41 chose `rustls`). The phone keyboard needs it too.
 - **Rows of the open page may be pushed on their own.** The guidance "push each page whole" stands for a carousel; a channel answering a key may push only the rows that changed, and the decoder renders the page in progress (section 10).
 

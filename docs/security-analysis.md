@@ -119,7 +119,7 @@ Boundary 4 of the earlier design, the font helper, is gone: no font is fetched f
 
 ### 5.1 Boundary 1: the network into the fetcher
 
-**Threats.** Faults in the protocol readers (the HyperText Transfer Protocol, Server-Sent Events, the descriptor and contents readers); decompression bombs; slow or endless responses; redirect loops; requests aimed at the local network.
+**Threats.** Faults in the protocol readers (the HyperText Transfer Protocol, the descriptor and contents readers); decompression bombs; slow or endless responses; redirect loops; requests aimed at the local network.
 
 **Mitigations.**
 - The engine's strict, bounded readers, through its user agent; the fetcher only moves bytes between the agent and its sockets (requirement 2.1).

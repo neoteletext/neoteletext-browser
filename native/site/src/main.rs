@@ -4,9 +4,8 @@
 //!   "Halcyon Teletext", every page from 100 to 899, in `<folder>/halcyon/`,
 //!   from sample recordings (`.t42` files, or folders with
 //!   `binaries/NNN.bin` per page).
-//! - `neoteletext-site serve <folder> [port]` serves it, with push updates to its
-//!   live pages, at `http://127.0.0.1:<port>/halcyon/` (port 8070 unless
-//!   given).
+//! - `neoteletext-site serve <folder> [port]` serves it, with its live pages
+//!   changing, at `http://127.0.0.1:<port>/halcyon/` (port 8070 unless given).
 //! - `neoteletext-site terminal [port] [--relay <address>]` serves the terminal
 //!   channel, which takes the viewer's keys (`interaction.md`), at
 //!   `http://127.0.0.1:<port>/terminal/` (port 8071 unless given); with a

@@ -8,7 +8,6 @@ use crate::ProtocolError;
 fn every_kind_round_trips() {
     for message in [
         FromFetcher::Contents(vec![Entry::Section("News".into()), Entry::Page { page: 0x101, title: "Headlines".into() }]),
-        FromFetcher::Page { origin: Origin::PushedPage, bytes: b"PN,10100\\nOL,1,Hello\\n".to_vec() },
         FromFetcher::Page { origin: Origin::PushedPackets, bytes: vec![0; 42] },
         FromFetcher::Page { origin: Origin::Fetched, bytes: vec![1, 2, 3] },
         FromFetcher::Page { origin: Origin::FetchedPage, bytes: b"PN,10000\\n".to_vec() },

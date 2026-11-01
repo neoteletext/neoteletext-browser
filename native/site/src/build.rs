@@ -2,7 +2,7 @@
 //! `docs/channels.md` describes a channel (sections 1 and 3): page 100 the
 //! front page, each hundred a section with its index at its first page,
 //! every page a `NNN.tti` file, `contents.txt` listing every page with its
-//! title, and `channel.json` naming the push feed. The pages' bodies come
+//! title, and `channel.json` asking readers to refresh the page on screen. The pages' bodies come
 //! from sample recordings, decoded by the teletext engine; each keeps its
 //! hundred where the samples allow, so news stays in 1xx and sport in 3xx.
 //!
@@ -19,6 +19,9 @@ use decoder::{Engine, Exported};
 /// The fictional channel.
 pub const NAME: &str = "Halcyon Teletext";
 const SHORT_NAME: &str = "HALCYON";
+/// How often a reader asks for the page on screen again: the shortest
+/// `refresh` `channel.json` allows, so that the live pages are seen to change.
+const REFRESH_SECONDS: u32 = 5;
 const SECTIONS: [&str; 8] = ["News", "Business", "Sport", "Weather and travel", "Entertainment", "Television", "Lifestyle", "Service"];
 /// A contents file title is at most 32 printable ASCII characters (the
 /// engine's `contents::MAX_TITLE`).
@@ -189,8 +192,8 @@ fn write_live_versions<'a>(
 }
 
 /// Writes the contents file, each section with its pages, and the
-/// channel's descriptor, whose push feed is at its folder's `push` (the
-/// URL map, `SERVER.md` section 4.2).
+/// channel's settings, whose `refresh` has a reader ask for the page on
+/// screen again, so that its live pages are seen to change.
 fn write_contents(write: &dyn Fn(&str, &str) -> Result<(), String>, sections: &[(String, Vec<(u16, String)>)]) -> Result<(), String> {
     let mut contents = format!("# {NAME}: every page from 100 to 899\n");
     for (section, entries) in sections {
@@ -200,7 +203,7 @@ fn write_contents(write: &dyn Fn(&str, &str) -> Result<(), String>, sections: &[
         }
     }
     write("contents.txt", &contents)?;
-    write("channel.json", &format!("{{\n  \"name\": \"{NAME}\",\n  \"initial_page\": \"100\",\n  \"push\": {{ \"method\": \"sse\" }}\n}}\n"))
+    write("channel.json", &format!("{{\n  \"name\": \"{NAME}\",\n  \"initial_page\": \"100\",\n  \"refresh\": {REFRESH_SECONDS}\n}}\n"))
 }
 
 /// Builds the channel into `out`.

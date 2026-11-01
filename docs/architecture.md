@@ -95,7 +95,7 @@ The engine is `neoteletext` (`~/devel/neoteletext-engine`), a Rust implementatio
 | `neoteletext-core` | Packet decoding, page store, Presentation Levels 1.0 to 3.5, rendering a page to palette indices, flash timing | In the decoder; its flash timing constants in the trusted core; its page addresses in the fetcher. Built with the engine's recommended `modern-classic` profile and its `level35-32colors` feature (decision 60) (its decision E.71) |
 | `neoteletext-formats` | Readers for T42 recordings, Teletext Text Interchange page files, transport streams and sliced records; content detection | In the decoder, with the `tti`, `transport` and `sliced` features |
 | `neoteletext-image` | Palette indices to colour formats; the Portable Network Graphics writer | The palette in the decoder; the writer no longer (decision 61) |
-| `neoteletext-web` | The strict address parser, origins, the HyperText Transfer Protocol version 1.1, Server-Sent Events, WebSocket, the cookie store, channel descriptors, contents files, push subscriptions, and the user agent that opens and fetches a channel, with no network input or output of its own | In the fetcher, with the `push` and `cookies` features; in the trusted core, its cookie jar, proxy-address parser and address type; in the phone keyboard; and in the updater, pinned in `native/tuf/Cargo.toml` |
+| `neoteletext-web` | The strict address parser, origins, the HyperText Transfer Protocol version 1.1, WebSocket, the cookie store, channel descriptors, contents files, push subscriptions, and the user agent that opens and fetches a channel, with no network input or output of its own | In the fetcher, with the `push` and `cookies` features; in the trusted core, its cookie jar, proxy-address parser and address type; in the phone keyboard; and in the updater, pinned in `native/tuf/Cargo.toml` |
 | `neoteletext-audio` | The audio profile's receiver (its area AUD) | In the decoder (decision 37) |
 | `neoteletext-audio-mix` | The audio mixer | In the sound helper (decision 55) |
 | `neoteletext-input` | Key, cursor and control records and input sessions (its area INT) | In the trusted core, the decoder, the interface core and the interface (decisions 44 and 48) |
@@ -323,7 +323,7 @@ Discovery's security analysis was the engine's `docs/web-discovery-security.md`,
 ### 7.2 Transports
 
 - **The HyperText Transfer Protocol version 1.1**, plain or with Transport Layer Security (`rustls` with Mozilla's root certificates, decision 41; `fetcher/src/transport.rs`). The trusted strip shows "Not secure" for a channel reached without Transport Layer Security (decision 10).
-- **Server-Sent Events and WebSocket** carry the channel's push feed: the fetcher subscribes to all of a channel's pages and passes each pushed page to its decoder; on a channel whose descriptor says it takes input, the WebSocket also carries the viewer's input (`interaction.md`, decision 45; `core/tests/latency.rs`).
+- **WebSocket** carries the channel's push feed: the fetcher subscribes to all of a channel's pages and passes each pushed page to its decoder; on a channel whose descriptor says it takes input, the WebSocket also carries the viewer's input (`interaction.md`, decision 45; `core/tests/latency.rs`).
 - **Not supported:** the push mechanism of the HyperText Transfer Protocol version 2, which traditional browsers have removed.
 
 ### 7.3 Rules that apply to every request
@@ -650,7 +650,7 @@ Unsafe code is allowed only in the modules requirement 10.12 names, each saying 
 
 - The broker, the trusted core, the decoder, the fetcher, the interface process, the sound helper, the phone keyboard and the updater, each its own program, communicating only over the bounded protocols of section 6.4; and the launcher, which starts the broker.
 - The engine at a pinned commit, `8c59a89`, decoding T42 recordings, Teletext Text Interchange page files, transport streams and sliced records.
-- Web channels over the HyperText Transfer Protocol, plain or with Transport Layer Security: the contents file, fetching in its order at the engine's rate, push over Server-Sent Events and WebSocket, update marks in the window.
+- Web channels over the HyperText Transfer Protocol, plain or with Transport Layer Security: the contents file, fetching in its order at the engine's rate, push over WebSocket, update marks in the window.
 - File channels, fed at the same pace.
 - The window of section 11, drawn on the processor, redrawing only the boxes that changed since the last frame (`native-interface-design.md` section 12.7); and the same interface core drawn by the microcontroller back end in a test.
 - Every process but the broker and the launcher confined on macOS, Windows and Linux from "deny everything" (decisions 52 and 58, 22 October 2026); sound in a helper of its own (decision 55); the trusted core confined behind the broker (decision 56; `sandboxing.md` section 7).
@@ -726,7 +726,6 @@ Unsafe code is allowed only in the modules requirement 10.12 names, each saying 
 | RFC 6265bis | The current draft of the Internet Engineering Task Force specification for cookies. |
 | `sandbox-exec` | The macOS program that starts another program under a sandbox profile written in the system's sandbox language. |
 | seccomp filter | A Linux mechanism by which a process restricts which system calls it may make. |
-| Server-Sent Events | A standard way for a web server to push a stream of messages to a client over one HyperText Transfer Protocol response. |
 | SIL Open Font License | A permissive licence for fonts. |
 | softbuffer | A Rust library that shows pixels drawn on the processor in a window. |
 | Teletext Text Interchange | A text file format for teletext pages, used by page editors; the page files of a web channel. |

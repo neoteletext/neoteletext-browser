@@ -55,7 +55,7 @@ impl Core {
             FromFetcher::Page { origin, bytes } => {
                 if bytes.len() <= MAX_WHOLE {
                     let packets = matches!(origin, Origin::PushedPackets | Origin::FetchedPackets);
-                    let pushed = matches!(origin, Origin::PushedPackets | Origin::PushedPage);
+                    let pushed = matches!(origin, Origin::PushedPackets);
                     self.tell(channel, ToDecoder::Whole { packets, pushed, bytes });
                 }
             }
@@ -242,7 +242,7 @@ impl Core {
         let at = self.now();
         match message {
             FromFetcher::Page { origin, bytes } => {
-                let pushed = matches!(origin, Origin::PushedPackets | Origin::PushedPage);
+                let pushed = matches!(origin, Origin::PushedPackets);
                 let packets = matches!(origin, Origin::PushedPackets | Origin::FetchedPackets);
                 self.console.received(channel, pushed, packets, bytes);
                 if packets {

@@ -189,8 +189,7 @@ fn collect(output: Output<'_>, actions: &mut Vec<Action>) {
     }
     if let Output::PageBytes(page) = output {
         let origin = match (page.source, page.media) {
-            (Source::Push, MediaType::T42) => Origin::PushedPackets,
-            (Source::Push, _) => Origin::PushedPage,
+            (Source::Push, _) => Origin::PushedPackets,
             (_, MediaType::T42) => Origin::FetchedPackets,
             (_, MediaType::Tti) => Origin::FetchedPage,
             _ => Origin::Fetched,
@@ -211,7 +210,7 @@ fn collect(output: Output<'_>, actions: &mut Vec<Action>) {
         Output::Event(Event::SubPagesCurrent { page }) => Action::SubPagesCurrent(page),
         Output::Event(Event::SubPagesMissing { page }) => Action::Tell(FromFetcher::SubPagesMissing { page: page.mpp() }),
         Output::Event(Event::PageCurrent { .. } | Event::PageNotInService { .. } | Event::FetchFailed { .. }) => Action::Answered,
-        Output::Event(Event::PushConnected(_)) => Action::Push(true),
+        Output::Event(Event::PushConnected) => Action::Push(true),
         Output::Event(Event::Exchanged { method, url, status, bytes, elapsed_us }) => Action::Tell(FromFetcher::Exchange {
             method: String::from_utf8_lossy(method.token()).into_owned(),
             url: url.to_owned(),
@@ -580,7 +579,7 @@ fn push_changed(agent: &Agent<'_>, output: &cookies::Output, open: bool) -> Resu
     send(output, &FromFetcher::Pushing(open))?;
     #[cfg(feature = "interaction")]
     if let Some(descriptor) = agent.descriptor().filter(|descriptor| descriptor.input()) {
-        let secure = descriptor.push().is_some_and(|(url, _)| url.is_secure());
+        let secure = descriptor.push().is_some_and(neoteletext_web::url::Url::is_secure);
         send(output, &FromFetcher::Input { open, secure })?;
     }
     #[cfg(not(feature = "interaction"))]

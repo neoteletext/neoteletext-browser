@@ -1,7 +1,7 @@
 //! Messages from a fetcher process to the trusted core: the same framing,
 //! bounds and strictness as the other messages, with kinds of their own.
-//! The fetcher reads the network formats (HTTP, server-sent events, the
-//! contents file) through the engine's web module; what it sends is
+//! The fetcher reads the network formats (HTTP, the contents file) through
+//! the engine's web module; what it sends is
 //! untrusted, and every bound is checked on arrival. The trusted core
 //! passes page bytes to the channel's decoder without reading them.
 
@@ -77,16 +77,11 @@ pub enum Origin {
     FetchedPage,
     /// Fetched as T42 packets.
     FetchedPackets,
-    /// A server-sent event: one TTI page, whole (the engine's REQ-WEB-005).
-    /// A WebSocket text message carries none (neoteletext-common's
-    /// DEC-1459).
-    PushedPage,
     /// A WebSocket binary message: whole 42-byte packets.
     PushedPackets,
 }
 
 const ORIGIN_FETCHED: u8 = 0;
-const ORIGIN_PUSHED_PAGE: u8 = 1;
 const ORIGIN_PUSHED_PACKETS: u8 = 2;
 const ORIGIN_FETCHED_PAGE: u8 = 3;
 const ORIGIN_FETCHED_PACKETS: u8 = 4;
@@ -534,7 +529,6 @@ pub fn write_to_core(out: &mut dyn Write, message: &FromFetcher) -> Result<(), P
                 Origin::Fetched => ORIGIN_FETCHED,
                 Origin::FetchedPage => ORIGIN_FETCHED_PAGE,
                 Origin::FetchedPackets => ORIGIN_FETCHED_PACKETS,
-                Origin::PushedPage => ORIGIN_PUSHED_PAGE,
                 Origin::PushedPackets => ORIGIN_PUSHED_PACKETS,
             });
             payload.extend_from_slice(bytes);
@@ -636,7 +630,6 @@ pub fn read_from_fetcher(input: &mut dyn Read) -> Result<Option<FromFetcher>, Pr
                 ORIGIN_FETCHED => Origin::Fetched,
                 ORIGIN_FETCHED_PAGE => Origin::FetchedPage,
                 ORIGIN_FETCHED_PACKETS => Origin::FetchedPackets,
-                ORIGIN_PUSHED_PAGE => Origin::PushedPage,
                 ORIGIN_PUSHED_PACKETS => Origin::PushedPackets,
                 _ => return Err(ProtocolError::BadValue("page origin")),
             };
