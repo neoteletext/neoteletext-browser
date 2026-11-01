@@ -111,7 +111,6 @@ impl Browser {
         let selected = self.selected.and_then(|index| self.page_key(index));
         self.wall.draw(canvas, zoom, &pages, selected, now);
         drop(pages);
-        self.follow_single();
         #[cfg(feature = "links")]
         self.draw_links(canvas);
         #[cfg(feature = "interaction")]

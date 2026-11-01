@@ -71,6 +71,9 @@ impl Browser {
         let split = self.magazine_has_subpages();
         let area = if split { Rect::new(whole.x0, whole.y0, whole.x1, self.split_at(whole)) } else { whole };
         self.regions.list = area;
+        // Only now can a row be put in view: the regions are cleared at the
+        // start of each draw, so the list has no height before this.
+        self.follow_single();
         #[allow(clippy::cast_precision_loss, reason = "at most 100 rows")]
         let content = pages.len() as f64 * ROW_HEIGHT;
         let max_scroll = (content - area.height()).max(0.0);
@@ -266,5 +269,18 @@ mod tests {
         let page = crate::channel::page_number(at(&browser, rows).unwrap());
         assert_ne!(page, Some(first));
         assert_eq!(browser.wall.zoomed().map(|key| key.page), page);
+    }
+
+    /// The page the wall opens by itself is chosen during a draw, before the
+    /// list has its height, and its row must still land inside the list.
+    #[test]
+    fn with_the_page_alone_the_chosen_row_starts_in_the_list() {
+        let (mut browser, mut canvas) = browser();
+        browser.toggle_wall(0);
+        browser.draw(&mut canvas, WIDTH, HEIGHT, 0);
+        let chosen = browser.selected.expect("the first page chosen");
+        let row = browser.regions.rows.iter().find(|&&(_, index)| index == chosen).expect("its row drawn").0;
+        let list = browser.regions.list;
+        assert!(row.y0 >= list.y0 && row.y1 <= list.y1, "{row:?} in {list:?}");
     }
 }
