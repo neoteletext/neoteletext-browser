@@ -4,6 +4,9 @@
 //! and other invisible characters) are never inserted, so what the field shows is what it holds.
 
 use alloc::string::String;
+use core::cell::Cell;
+
+use crate::geometry::Rect;
 
 mod keys;
 
@@ -73,13 +76,38 @@ pub struct Editor {
     /// The other end of the selection; equal to the caret when none.
     anchor: usize,
     limit: usize,
+    /// Where the field was last drawn. A cell, since drawing reads a field
+    /// and this is all it writes.
+    drawn: Cell<Drawn>,
+}
+
+/// Where a field's text was last drawn, which is how a press finds its place
+/// in it (`browser::field_mouse`).
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct Drawn {
+    /// The whole field: a press anywhere in it is in the field.
+    pub area: Rect,
+    /// Where the text's first character starts, scrolled as it was drawn.
+    pub origin: f64,
 }
 
 impl Editor {
     /// An editor holding at most `limit` bytes.
     #[must_use]
     pub fn new(limit: usize) -> Self {
-        Self { text: String::new(), caret: 0, anchor: 0, limit }
+        Self { text: String::new(), caret: 0, anchor: 0, limit, drawn: Cell::new(Drawn::default()) }
+    }
+
+    /// Says where the field was drawn: whatever draws a field must, so that
+    /// the mouse works in it.
+    pub fn mark_drawn(&self, area: Rect, origin: f64) {
+        self.drawn.set(Drawn { area, origin });
+    }
+
+    /// Where the field was last drawn.
+    #[must_use]
+    pub fn drawn(&self) -> Drawn {
+        self.drawn.get()
     }
 
     /// The text.

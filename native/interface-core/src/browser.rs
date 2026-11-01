@@ -28,6 +28,7 @@ mod console_panel;
 mod cookies_tab;
 mod denied;
 mod divider;
+mod field_mouse;
 mod file_drag;
 #[cfg(test)]
 mod fixture;
@@ -131,16 +132,8 @@ pub struct Browser {
     editor: Editor,
     editing: bool,
     field_scroll: f64,
-    /// While the main button is held after a press in the address field:
-    /// where the selection began, its other end following the pointer.
-    field_press: Option<usize>,
-    /// The pointer's x while dragging in the field, resolved to an offset
-    /// at the next draw, which alone can measure the text.
-    field_drag_to: Option<f64>,
-    /// The last press in the field, for a double click.
-    field_last_press: Option<(Point, u64, u8)>,
-    /// The word a double click selected, while its drag goes by words.
-    field_word: Option<(usize, usize)>,
+    /// The main button in whichever text field it was pressed.
+    field_mouse: field_mouse::FieldMouse,
     digits: String,
     pulses: Vec<(usize, u64)>,
     /// When each recently updated page had its new version.
@@ -244,10 +237,7 @@ impl Browser {
             editor: Editor::new(MAX_ADDRESS),
             editing: false,
             field_scroll: 0.0,
-            field_press: None,
-            field_drag_to: None,
-            field_last_press: None,
-            field_word: None,
+            field_mouse: field_mouse::FieldMouse::default(),
             digits: String::new(),
             pulses: Vec::new(),
             updates: Vec::new(),

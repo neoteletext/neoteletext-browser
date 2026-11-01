@@ -59,7 +59,7 @@ On macOS the Edit menu's items and their Command keys do it; on Windows and Linu
 | Delete to the end | Command-Fn-Delete, Control-K | |
 | A character | The arrows, Control-B, Control-F, Control-H, Control-D | The arrows |
 
-A word's step right ends after the word on macOS and Linux, and on the start of the next on Windows. A word ends at the punctuation of an address. In the address field a double click selects a word and a drag from it goes by words, and a triple click selects the whole address.
+A word's step right ends after the word on macOS and Linux, and on the start of the next on Windows. A word ends at the punctuation of an address. The mouse is the same in every field (`interface-core/src/browser/field_mouse.rs`): a press places the caret, Shift extends the selection, a drag selects, a double click selects a word and a drag from it goes by words, and a triple click selects it all. A field has all of this by being an `Editor` that `focused_field` returns and that `widgets::field` draws; the address field, which draws itself, says where it was drawn with `Editor::mark_drawn`.
 
 The clipboard is read and written by the interface process, which already reads it to paste into a channel (decision 49, the `arboard` library). Nothing the trusted core holds is copied: the address field shows only what the strip already shows.
 

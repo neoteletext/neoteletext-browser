@@ -9,8 +9,15 @@ use crate::channel::page_index;
 use crate::wall::CellClick;
 
 impl Browser {
-    /// A press of the main button, with `extend` when Shift is held.
+    /// A press of the main button, with `extend` when Shift is held. It goes
+    /// to what is under it, and then, if that left it in the text field that
+    /// has the keys, to the field's text.
     pub fn pointer_pressed<C: Canvas + ?Sized>(&mut self, canvas: &mut C, extend: bool, now: u64) -> bool {
+        let changed = self.press_window(extend, now);
+        self.press_field(canvas, extend, now) || changed
+    }
+
+    fn press_window(&mut self, extend: bool, now: u64) -> bool {
         self.tips_pressed();
         // A press means the button was let go since the last: a drag whose
         // release never came, as one let go outside every window, is over.
@@ -31,7 +38,7 @@ impl Browser {
         if let Some(taken) = self.press_overlays(extend, now) {
             return taken;
         }
-        if let Some(taken) = self.press_strip(canvas, extend, now) {
+        if let Some(taken) = self.press_strip(extend, now) {
             return taken;
         }
         self.press_body(now).unwrap_or(false)
@@ -81,11 +88,11 @@ impl Browser {
     /// A press on the trusted strip: the address field, Back and Forward,
     /// the gear, the menu, the fixed buttons, the bookmarks bar and the
     /// empty strip, which drags the window. `None` when it was on none.
-    fn press_strip<C: Canvas + ?Sized>(&mut self, canvas: &mut C, extend: bool, now: u64) -> Option<bool> {
+    fn press_strip(&mut self, extend: bool, now: u64) -> Option<bool> {
         let point = self.pointer;
         let regions = &self.regions;
         if regions.field.contains(point) {
-            self.press_field(canvas, point, extend, now);
+            self.focus_address();
             return Some(true);
         }
         self.stop_editing();

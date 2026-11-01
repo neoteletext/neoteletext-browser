@@ -92,3 +92,12 @@ fn the_search_asks_for_rows() {
     browser.toggle_console();
     assert_eq!(browser.take_outputs(), [Output::Console(true), Output::Cookies(CookiesRequest::Panel(true))]);
 }
+
+#[test]
+fn the_mouse_selects_in_the_search() {
+    let mut browser = open();
+    let mut canvas = Recorder::new();
+    browser.draw(&mut canvas, crate::browser::fixture::WIDTH, crate::browser::fixture::HEIGHT, 0);
+    let search = browser.cookies.controls.search;
+    crate::browser::field_mouse::tests::the_mouse_selects(&mut browser, &mut canvas, search);
+}

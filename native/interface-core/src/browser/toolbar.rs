@@ -127,6 +127,7 @@ impl Browser {
         #[cfg(feature = "interaction")]
         let text = self.draw_typing_badge(canvas, text);
         self.regions.field_text = text;
+        self.editor.mark_drawn(field, text.x0 - if self.editing { self.field_scroll } else { 0.0 });
         // While the pointer or the focus is on a link, the field shows where
         // it leads (requirement 17.6).
         #[cfg(feature = "links")]

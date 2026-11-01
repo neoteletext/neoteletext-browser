@@ -40,3 +40,13 @@ fn the_popover_asks_for_each_change() {
     assert_eq!(browser.take_outputs(), [Output::Star(StarRequest::Edit { name: "Weather".into(), folder: 11 }), Output::Star(StarRequest::Done)]);
     assert!(!browser.star_open());
 }
+
+#[test]
+fn the_mouse_selects_in_the_name() {
+    let mut browser = blank_browser();
+    browser.set_star(StarView { open: true, name: "News".into(), folder: 0, ..StarView::default() });
+    let mut canvas = Recorder::new();
+    browser.draw(&mut canvas, crate::browser::fixture::WIDTH, crate::browser::fixture::HEIGHT, 0);
+    let name = browser.star.controls.name;
+    crate::browser::field_mouse::tests::a_drag_selects(&mut browser, &mut canvas, name);
+}

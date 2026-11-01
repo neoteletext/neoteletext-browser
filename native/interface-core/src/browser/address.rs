@@ -4,18 +4,13 @@
 
 use alloc::string::String;
 
-use crate::browser::full_screen::{DOUBLE_CLICK_DISTANCE, DOUBLE_CLICK_MILLISECONDS};
 use crate::browser::{Browser, Key, Modifiers, Output};
 use crate::canvas::Canvas;
-use crate::geometry::{Point, Rect};
+use crate::geometry::Rect;
 use crate::theme::{ADDRESS, Colour, DIM, FIELD_INK, FIELD_SELECTION};
 
 pub(super) const FIELD_PADDING: f64 = 12.0;
 const CARET_WIDTH: f64 = 2.0;
-/// The clicks of a double click, and of a triple click, after which the
-/// next click starts again.
-const WORD_CLICKS: u8 = 2;
-const MOST_CLICKS: u8 = 3;
 
 /// What a file's address begins with, which the field leaves off when it is
 /// not being edited.
@@ -58,7 +53,7 @@ impl Browser {
 
     pub(super) fn stop_editing(&mut self) {
         self.close_suggestions();
-        self.release_field();
+        self.cancel_field();
         if self.editing {
             self.editing = false;
             self.outputs.push(Output::TextInput(false));
@@ -93,90 +88,13 @@ impl Browser {
     }
 
     /// A press in the address field: the first gives it the focus with
-    /// all selected, as browsers do; a later one places the caret, or with
-    /// Shift extends the selection; a double click selects the word and a
-    /// drag from it goes by words; a triple click selects it all; and
-    /// holding the button and moving selects from the press to the pointer.
-    pub(super) fn press_field<C: Canvas + ?Sized>(&mut self, canvas: &mut C, point: Point, extend: bool, now: u64) {
-        let again = self.field_last_press.is_some_and(|(at, when, _)| {
-            now.saturating_sub(when) <= DOUBLE_CLICK_MILLISECONDS && libm::hypot(point.x - at.x, point.y - at.y) <= DOUBLE_CLICK_DISTANCE
-        });
-        let clicks = self.field_last_press.filter(|_| again).map_or(0, |(_, _, clicks)| clicks).checked_rem(MOST_CLICKS).unwrap_or(0).saturating_add(1);
-        self.field_last_press = Some((point, now, clicks));
-        self.field_drag_to = None;
-        self.field_word = None;
+    /// all selected, as browsers do. Where it lands is `field_mouse`'s, as
+    /// in every field.
+    pub(super) fn focus_address(&mut self) {
         if !self.editing {
             self.start_editing();
-            self.field_press = Some(self.offset_at(canvas, point.x));
-            return;
+            self.field_selected_on_focus();
         }
-        let at = self.offset_at(canvas, point.x);
-        match clicks {
-            WORD_CLICKS => {
-                let word = self.editor.word_at(at);
-                self.editor.select_word(at);
-                self.field_word = Some(word);
-                self.field_press = Some(word.0);
-            }
-            MOST_CLICKS => {
-                self.editor.select_all();
-                self.field_press = None;
-            }
-            _ => {
-                self.editor.place(at, extend);
-                self.field_press = Some(self.editor.anchor());
-            }
-        }
-    }
-
-    /// The pointer moved with the button held after a press in the field:
-    /// the selection follows it at the next draw. Returns whether it did.
-    pub(super) fn drag_field(&mut self, x: f64) -> bool {
-        if self.field_press.is_none() || !self.editing {
-            return false;
-        }
-        self.field_drag_to = Some(x);
-        true
-    }
-
-    /// The main button was released: no drag in the field any more.
-    pub(super) fn release_field(&mut self) {
-        self.field_press = None;
-        self.field_drag_to = None;
-        self.field_word = None;
-    }
-
-    /// Selects from the press to `at`: from the word pressed to the word at
-    /// `at` when the press was a double click.
-    fn drag_selection(&mut self, anchor: usize, at: usize) {
-        let Some((word_start, word_end)) = self.field_word else {
-            self.editor.place(anchor, false);
-            self.editor.place(at, true);
-            return;
-        };
-        let (start, end) = self.editor.word_at(at);
-        if at < word_start {
-            self.editor.place(word_end, false);
-            self.editor.place(start, true);
-        } else {
-            self.editor.place(word_start, false);
-            self.editor.place(end.max(word_end), true);
-        }
-    }
-
-    /// The byte offset in the address nearest to `x`.
-    pub(super) fn offset_at<C: Canvas + ?Sized>(&self, canvas: &mut C, x: f64) -> usize {
-        let text = self.editor.text();
-        let target = x - self.regions.field_text.x0 + self.field_scroll;
-        let mut best = (0, f64::MAX);
-        for (offset, _) in text.char_indices().chain(core::iter::once((text.len(), ' '))) {
-            let before = text.get(..offset).unwrap_or_default();
-            let distance = (canvas.text_width(before, ADDRESS) - target).abs();
-            if distance < best.1 {
-                best = (offset, distance);
-            }
-        }
-        best.0
     }
 
     pub(super) fn draw_address<C: Canvas + ?Sized>(&mut self, canvas: &mut C, area: Rect) {
@@ -184,10 +102,6 @@ impl Browser {
         let y = (area.y0 + area.y1 - line) / 2.0;
         canvas.push_clip(area);
         if self.editing {
-            if let (Some(anchor), Some(x)) = (self.field_press, self.field_drag_to.take()) {
-                let at = self.offset_at(canvas, x);
-                self.drag_selection(anchor, at);
-            }
             let text = self.editor.text();
             let caret = canvas.text_width(text.get(..self.editor.caret()).unwrap_or_default(), ADDRESS);
             // Keep the caret in view.
@@ -198,6 +112,7 @@ impl Browser {
                 self.field_scroll = caret;
             }
             let x = area.x0 - self.field_scroll;
+            self.editor.mark_drawn(self.regions.field, x);
             let (start, end) = self.editor.selection();
             if start != end {
                 let from = canvas.text_width(text.get(..start).unwrap_or_default(), ADDRESS);
@@ -232,7 +147,6 @@ impl Browser {
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::arithmetic_side_effects, reason = "a test")]
     use super::*;
     use crate::browser::fixture::{HEIGHT, WIDTH, browser, press_at};
     use crate::browser::{Modifiers, StripState};
@@ -354,43 +268,6 @@ mod tests {
         let tab = browser.regions.tabs[0].tab;
         press_at(&mut browser, &mut canvas, tab);
         assert!(!browser.editing);
-    }
-
-    /// `clicks` presses at `x` in the field from `now`, the last still held.
-    fn click_field(browser: &mut Browser, canvas: &mut Recorder, x: f64, clicks: u64, now: u64) {
-        let y = f64::midpoint(browser.regions.field.y0, browser.regions.field.y1);
-        for click in 0..clicks {
-            browser.pointer_released();
-            browser.pointer_moved(x, y, now + click);
-            browser.pointer_pressed(canvas, false, now + click);
-            browser.draw(canvas, WIDTH, HEIGHT, now + click);
-        }
-    }
-
-    /// A double click selects the word, a drag from it goes on by words,
-    /// and a triple click selects the whole address, as text does everywhere.
-    #[test]
-    fn a_double_click_drags_by_words_and_a_triple_click_selects_it_all() {
-        let (mut browser, mut canvas) = browser();
-        browser.set_strip(StripState { address: "https://news.example/sport/".into(), ..browser.strip.clone() });
-        browser.draw(&mut canvas, WIDTH, HEIGHT, 0);
-        let text = browser.regions.field_text;
-        let cell = canvas.text_width("a", ADDRESS);
-        let at = |letters: f64| text.x0 + cell * letters;
-        click_field(&mut browser, &mut canvas, at(9.5), 2, 0);
-        assert_eq!(browser.selected_text().as_deref(), Some("news"));
-        browser.pointer_moved(at(15.5), 0.0, 10);
-        browser.draw(&mut canvas, WIDTH, HEIGHT, 10);
-        assert_eq!(browser.selected_text().as_deref(), Some("news.example"), "the drag takes the whole word");
-        browser.pointer_moved(at(1.5), 0.0, 11);
-        browser.draw(&mut canvas, WIDTH, HEIGHT, 11);
-        assert_eq!(browser.selected_text().as_deref(), Some("https://news"), "and back, keeping the word pressed");
-        browser.pointer_released();
-        browser.stop_editing();
-        click_field(&mut browser, &mut canvas, at(9.5), 3, 100_000);
-        assert_eq!(browser.selected_text().as_deref(), Some("https://news.example/sport/"), "a triple click");
-        click_field(&mut browser, &mut canvas, at(9.5), 1, 100_003);
-        assert_eq!(browser.selected_text(), None, "a fourth press starts again");
     }
 
     /// The modifiers reach the field through the browser: with the command

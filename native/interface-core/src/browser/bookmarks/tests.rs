@@ -176,3 +176,12 @@ fn the_manager_asks_for_each_change() {
     browser.bookmarks_released(false);
     assert_eq!(browser.take_outputs(), [Output::Bookmarks(BookmarkRequest::Move { number: 5, folder: 4, index: u32::MAX })]);
 }
+
+#[test]
+fn the_mouse_selects_in_the_search() {
+    let (mut browser, mut canvas) = crate::browser::fixture::browser();
+    browser.toggle_bookmarks();
+    browser.draw(&mut canvas, crate::browser::fixture::WIDTH, crate::browser::fixture::HEIGHT, 0);
+    let search = browser.bookmarks.controls.search;
+    crate::browser::field_mouse::tests::the_mouse_selects(&mut browser, &mut canvas, search);
+}

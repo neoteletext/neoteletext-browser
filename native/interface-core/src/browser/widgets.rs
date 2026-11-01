@@ -28,6 +28,7 @@ pub(super) fn button<C: Canvas + ?Sized>(canvas: &mut C, rect: Rect, word: &str,
 }
 
 /// A text field showing `editor`, with its caret and selection when focused.
+/// A field drawn here has the mouse (`field_mouse`) with nothing more to do.
 pub(super) fn field<C: Canvas + ?Sized>(canvas: &mut C, rect: Rect, editor: &Editor, focused: bool) {
     canvas.fill(rect, RADIUS, FIELD);
     if focused {
@@ -42,6 +43,7 @@ pub(super) fn field<C: Canvas + ?Sized>(canvas: &mut C, rect: Rect, editor: &Edi
     // Keep the caret in view.
     let shift = (caret - inner.width() + CARET_WIDTH).max(0.0);
     let x = inner.x0 - shift;
+    editor.mark_drawn(rect, x);
     if focused {
         let (start, end) = editor.selection();
         if start != end {

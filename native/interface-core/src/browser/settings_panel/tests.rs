@@ -163,3 +163,12 @@ fn the_gear_and_its_shortcut_open_the_panel() {
     browser.key(Key::Text(","), Modifiers { command: true, ..Modifiers::default() }, 0);
     assert!(!browser.settings_open());
 }
+
+#[test]
+fn the_mouse_selects_in_a_field() {
+    let (mut browser, mut canvas) = crate::browser::fixture::browser();
+    browser.toggle_settings();
+    browser.draw(&mut canvas, crate::browser::fixture::WIDTH, crate::browser::fixture::HEIGHT, 0);
+    let home = browser.settings.controls.fields[0].1;
+    crate::browser::field_mouse::tests::the_mouse_selects(&mut browser, &mut canvas, home);
+}

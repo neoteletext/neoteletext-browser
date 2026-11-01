@@ -157,3 +157,12 @@ fn the_search_and_the_wheel_ask_for_rows() {
     assert!(browser.history_scroll(1.0));
     assert_eq!(browser.take_outputs(), [Output::History(HistoryRequest::Query { text: "n".into(), first: 3 })]);
 }
+
+#[test]
+fn the_mouse_selects_in_the_search() {
+    let (mut browser, mut canvas) = crate::browser::fixture::browser();
+    browser.set_history_open(true);
+    browser.draw(&mut canvas, crate::browser::fixture::WIDTH, crate::browser::fixture::HEIGHT, 0);
+    let search = browser.history.controls.search;
+    crate::browser::field_mouse::tests::the_mouse_selects(&mut browser, &mut canvas, search);
+}

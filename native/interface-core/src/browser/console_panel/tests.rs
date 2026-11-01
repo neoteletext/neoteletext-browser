@@ -327,3 +327,15 @@ fn the_grabber_leaves_minimised_and_maximised() {
     }
     assert_eq!(browser.console.area, pulled, "maximise restores the height pulled");
 }
+
+#[test]
+fn the_mouse_selects_in_the_search() {
+    let mut browser = open();
+    let mut canvas = Recorder::new();
+    browser.draw(&mut canvas, crate::browser::fixture::WIDTH, crate::browser::fixture::HEIGHT, 0);
+    let log = browser.console.tabs.iter().find(|(tab, _)| *tab == Tab::Entries(ConsoleTab::Log)).expect("a tab").1;
+    press(&mut browser, log);
+    browser.draw(&mut canvas, crate::browser::fixture::WIDTH, crate::browser::fixture::HEIGHT, 0);
+    let search = browser.console.search_field;
+    crate::browser::field_mouse::tests::a_drag_selects(&mut browser, &mut canvas, search);
+}
