@@ -1,9 +1,40 @@
 //! Files and links that open from outside a page: dropped on a window
 //! (REQ-1700), or named by the operating system (REQ-1703).
 
+use std::path::Path;
+
 use interface_core::browser::DropPlace;
 
 use super::Session;
+
+/// What a viewer drags to the tab strip by mistake: the file types of an
+/// ordinary desktop, none of which a teletext file is given, and the two
+/// that name recordings this browser does not open (DEC-1762). The bytes
+/// decide what a file is, so a name that may be a recording's, such as
+/// `.bin`, `.vbi` or `.txt`, is left to them.
+const NOT_TELETEXT: &[&str] = &[
+    "7z", "aac", "avi", "bmp", "doc", "docx", "ep1", "flac", "gif", "gz", "heic", "htm", "html", "ico", "jpeg", "jpg", "js", "json", "m2ts", "m4a", "m4v",
+    "md", "mkv", "mov", "mp3", "mp4", "mpeg", "mpg", "odp", "ods", "odt", "pdf", "pes", "png", "ppt", "pptx", "rar", "rtf", "svg", "tar", "tgz", "tif", "tiff",
+    "ts", "wav", "webm", "webp", "xls", "xlsx", "xml", "zip",
+];
+
+/// Whether `file`'s name says it is of a type known not to be teletext.
+fn known_not_teletext(file: &str) -> bool {
+    Path::new(file)
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .is_some_and(|extension| NOT_TELETEXT.contains(&extension.to_ascii_lowercase().as_str()))
+}
+
+/// What of `files` a drop at `place` opens. On the tab strip and the toolbar
+/// files of a type known not to be teletext are removed (REQ-1700 item 2),
+/// as Chrome removes what it cannot show. On the page each opens its tab,
+/// which shows the refusal (item 1).
+#[must_use]
+pub fn left_of_drop(files: &[String], place: DropPlace) -> Vec<String> {
+    let on_the_page = matches!(place, DropPlace::NewTabs);
+    files.iter().filter(|file| on_the_page || !known_not_teletext(file)).cloned().collect()
+}
 
 impl Session {
     /// Opens `files` where they were dropped. The current tab is replaced
@@ -137,6 +168,20 @@ mod tests {
         dropped(&mut session, DropPlace::Replace(9));
         assert_eq!(hosts(&session), ["a.invalid", "one.invalid", "two.invalid"]);
         assert_eq!(session.active, 1);
+    }
+
+    /// REQ-1700 item 2: the tab strip removes what is known not to be
+    /// teletext, by any case of its name, and leaves what the bytes must
+    /// decide. The page removes nothing: each file there opens its tab,
+    /// which shows the refusal.
+    #[test]
+    fn a_drop_on_the_tab_strip_leaves_out_what_is_known_not_to_be_teletext() {
+        let files = ["/a/photo.JPG", "/a/news.tti", "/a/recording.t42", "/a/capture.bin", "/a/pages", "/a/clip.ts"].map(str::to_owned);
+        let left = ["/a/news.tti", "/a/recording.t42", "/a/capture.bin", "/a/pages"].map(str::to_owned);
+        for place in [DropPlace::Before(0), DropPlace::After(0), DropPlace::Replace(0)] {
+            assert_eq!(left_of_drop(&files, place), left);
+        }
+        assert_eq!(left_of_drop(&files, DropPlace::NewTabs), files);
     }
 
     #[test]

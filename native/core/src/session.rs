@@ -29,6 +29,7 @@ mod tab;
 mod windows;
 
 pub use channel::{ChannelState, RedirectBy, Redirecting, SinceSelected};
+pub use outside::left_of_drop;
 pub use tab::{ClosedTab, Pending, Tab, Visit, Went};
 
 /// The most redirects leaving a channel that one navigation follows: the

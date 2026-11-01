@@ -14,6 +14,7 @@ use protocol::ToInterface;
 use protocol::console::Level;
 
 use super::{Core, Event};
+use crate::session::left_of_drop;
 
 const _: () = assert!(MAX_FILES_AT_ONCE == confine::broker::MAX_FILES_AT_ONCE, "the protocol's bound and the broker's are one bound");
 
@@ -64,7 +65,12 @@ impl Core {
 
     /// Files dropped on the window at hand (REQ-1700).
     pub(super) fn dropped(&mut self, files: &[String], place: DropPlace, left_out: u16) -> Result<(), String> {
-        for reason in self.session.open_dropped(files, place) {
+        let left = left_of_drop(files, place);
+        // A drop left with nothing is refused, and no tab changes.
+        if left.is_empty() && !files.is_empty() {
+            return self.say(String::from(crate::source::REFUSAL));
+        }
+        for reason in self.session.open_dropped(&left, place) {
             self.log(Level::Warning, self.log_place(), &reason);
         }
         self.send_all()?;
@@ -158,6 +164,16 @@ mod tests {
         assert_eq!(addresses(&core), ["https://a.invalid/", "https://news.invalid/302"]);
         assert_eq!(core.session.active, 1);
         assert!(core.session.tabs.iter().all(|tab| !tab.private));
+    }
+
+    /// REQ-1700 item 2: a drop left with nothing is refused, says so, and
+    /// changes no tab. On the code before, each file replaced or opened one.
+    #[test]
+    fn a_drop_on_the_tab_strip_of_nothing_teletext_is_refused() {
+        let (mut core, _broker) = core_on("a.invalid");
+        core.dropped(&["/a/photo.jpg".to_owned(), "/a/report.pdf".to_owned()], DropPlace::Replace(0), 0).unwrap();
+        assert_eq!(addresses(&core), ["https://a.invalid/"]);
+        assert_eq!(core.notice.as_ref().map(|(text, _)| text.as_str()), Some(crate::source::REFUSAL));
     }
 
     /// REQ-1703 item 9: what opens from outside comes to the front.
