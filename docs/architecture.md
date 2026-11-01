@@ -221,6 +221,7 @@ Every process speaks the same framing, the engine's: one kind byte, a 32-bit big
 | Confined | Its first message, before it opens its channel: as a decoder's |
 | Contents | The channel's contents file as the engine read it: section headings and page entries with titles, at most 1,000 entries |
 | Page | A page's bytes, fetched or pushed, passed to the decoder unread |
+| Denied | A selection the channel refused: its status and place (`INPUT.md` section 7.12), checked by the trusted core, whose words the page area shows |
 | Notice | A short report, such as an unreachable address, cleaned and shown in the trusted core's log |
 | Links | The descriptor's aliases (at most 16) and named services (at most 16), as written, for the trusted core to parse |
 | Pushing | The push connection opened or was lost (decision 47) |
@@ -228,7 +229,7 @@ Every process speaks the same framing, the engine's: one kind byte, a 32-bit big
 | ProxyFailed | The proxy refused, failed or did not answer; it carries nothing (requirement 19.10) |
 | Input | The push WebSocket of a channel that takes input opened or closed, and whether it is `wss` |
 | CookieQuestion, ReachedQuestion | Asks for a request's `Cookie` header, or whether a host was reached securely with a live cookie (decision 62) |
-| CookieSet | A `Set-Cookie` value a response carried, as received |
+| CookieSet | A `Set-Cookie` value a response carried, as typed fields the fetcher read (DEC-1765) |
 | ClearSiteData | A host's encrypted response said `Clear-Site-Data: "cookies"` |
 
 **From the trusted core to a fetcher** (`protocol::fetcher`):
@@ -363,7 +364,7 @@ A response in the teletext data role is recognised by its content alone, by the 
 
 **Rules of this architecture:**
 
-- **Detection runs in the decoder,** the process with no rights.
+- **Detection runs in the decoder,** the process with no rights. The broker runs it too on a file, to read only teletext for the trusted core (decision 88). Both know T42 and TTI alone: the engine's other readers are not built (DEC-1762).
 - **"Teletext only" means "the decoder recognised it".** Bytes the decoder does not recognise produce no page; nothing else ever reads them.
 - **Data crafted to pass detection is teletext by definition,** and is then subject to every bound of the engine's readers and decoder.
 
