@@ -152,6 +152,7 @@ fn subpage_mark<C: Canvas + ?Sized>(canvas: &mut C, row: Rect, right: f64, count
 mod tests {
     use super::rows_per_key;
     use crate::browser::fixture::{HEIGHT, WIDTH, browser, middle, press_at};
+    use crate::browser::list_focus::ListFocus;
     use crate::browser::pointer::Cursor;
     use crate::browser::{Key, Modifiers};
     use crate::test_canvas::Recorder;
@@ -282,5 +283,28 @@ mod tests {
         let row = browser.regions.rows.iter().find(|&&(_, index)| index == chosen).expect("its row drawn").0;
         let list = browser.regions.list;
         assert!(row.y0 >= list.y0 && row.y1 <= list.y1, "{row:?} in {list:?}");
+    }
+
+    /// REQ-1758 item 7: with the page alone a page clicked in the list
+    /// opens, and the list keeps the keys, so the arrows and the Page keys
+    /// move it on as they do on the wall, and the page follows.
+    #[test]
+    fn with_the_page_alone_a_row_clicked_keeps_the_keys_in_the_list() {
+        let (mut browser, mut canvas) = browser();
+        browser.toggle_wall(0);
+        browser.draw(&mut canvas, WIDTH, HEIGHT, 0);
+        assert!(browser.wall.single(), "the page alone");
+        let row = browser.regions.rows[0].0;
+        press_at(&mut browser, &mut canvas, row);
+        assert_eq!(browser.list_focus, Some(ListFocus::Pages), "the list has the keys");
+        browser.key(Key::Down, Modifiers::default(), 0);
+        assert_eq!(browser.selected, at(&browser, 1), "Down moves a row");
+        assert_eq!(browser.wall.zoomed().map(|key| key.page), crate::channel::page_number(at(&browser, 1).unwrap()));
+        browser.key(Key::Up, Modifiers::default(), 0);
+        assert_eq!(browser.selected, at(&browser, 0), "Up moves back");
+        let rows = rows_per_key(browser.regions.list.height());
+        browser.key(Key::PageDown, Modifiers::default(), 0);
+        assert_eq!(browser.selected, at(&browser, rows), "Page Down moves a list-height less a row");
+        assert_eq!(browser.list_focus, Some(ListFocus::Pages), "and the list keeps them");
     }
 }

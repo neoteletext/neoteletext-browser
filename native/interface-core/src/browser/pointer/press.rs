@@ -143,23 +143,21 @@ impl Browser {
         if self.divider_press(point) || self.subpages_press(point, now) {
             return Some(true);
         }
-        // With the page alone, choosing a magazine or a page opens it, and
-        // the page opened has the keys, as a page clicked has them; on the
-        // wall a choice opens nothing, and the list keeps the keys.
-        let alone = self.wall.single();
+        // With the page alone, choosing a magazine opens its page, which
+        // has the keys; on the wall a choice opens nothing, and the list
+        // keeps them.
         let regions = &self.regions;
         if let Some(bank) = regions.banks.iter().position(|rect| rect.contains(point)) {
             self.choose_bank(bank);
-            self.list_focus = (!alone).then_some(ListFocus::Magazines);
+            self.list_focus = (!self.wall.single()).then_some(ListFocus::Magazines);
             return Some(true);
         }
+        // The page list keeps the keys either way, so that the arrows and
+        // the Page keys work on from the row clicked (REQ-1758 item 7).
         if regions.list.contains(point) {
             self.list_focus = Some(ListFocus::Pages);
             if let Some(&(_, index)) = regions.rows.iter().find(|(rect, _)| rect.contains(point)) {
                 self.select_page(index, true);
-                if alone {
-                    self.list_focus = None;
-                }
             }
             return Some(true);
         }

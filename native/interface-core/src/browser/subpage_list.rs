@@ -44,6 +44,8 @@ const TITLE_COLUMN: f64 = 84.0;
 const ROWS_ABOVE: u16 = 8;
 // A run asked for holds the rows in view and those above them.
 const _: () = assert!((ROWS_ABOVE as usize) < SUBPAGE_ROWS);
+/// How far Up or Down moves the list.
+const ARROW_ROWS: u16 = 1;
 
 /// The rows of one page's sub-pages the list holds: from place `first`.
 #[derive(Debug)]
@@ -275,10 +277,23 @@ impl Browser {
     /// not held is fetched as a scroll fetches it, and shown when it arrives
     /// (REQ-1758).
     pub(super) fn page_through_subpages(&mut self, forward: bool, now: u64) {
+        let rows = u16::try_from(rows_per_key(self.regions.subpage_list.height())).unwrap_or(u16::MAX);
+        self.move_through_subpages(forward, rows, now);
+    }
+
+    /// Up or Down with the keys in the list: moves it one row as
+    /// [`Browser::page_through_subpages`] moves it further, from the list's
+    /// own rows, so that it does not wait on what the open page's controls
+    /// count and stays on the end rows as the page list does (REQ-1758).
+    pub(super) fn step_subpages(&mut self, forward: bool, now: u64) {
+        self.move_through_subpages(forward, ARROW_ROWS, now);
+    }
+
+    /// Moves the list `rows` rows on or back and shows the sub-page there.
+    fn move_through_subpages(&mut self, forward: bool, rows: u16, now: u64) {
         let Some(index) = self.selected else { return };
         let (Some(count), Some(page)) = (self.subpage_count(index), crate::channel::page_number(index)) else { return };
         let height = self.regions.subpage_list.height();
-        let rows = u16::try_from(rows_per_key(height)).unwrap_or(u16::MAX);
         let landed = self.subpages.landing.filter(|landing| landing.index == index).map(|landing| landing.place);
         let top = self.places_in_view(height, count).start;
         let from = landed.or_else(|| self.chosen_place(page)).unwrap_or(top);
@@ -553,6 +568,40 @@ mod tests {
         browser.draw(&mut canvas, WIDTH, HEIGHT, 0);
         page_key(&mut browser, Key::PageDown, &mut canvas);
         assert_eq!(asked(&mut browser), Some(40), "and stays there");
+    }
+
+    /// REQ-1758 item 6: Up and Down move the list a row, by place, and stay
+    /// on the end rows, as Page Up and Page Down do and as the page list does.
+    #[test]
+    fn up_and_down_move_the_sub_pages_a_row_and_stay_on_the_end_rows() {
+        let (mut browser, mut canvas) = listed(40);
+        chosen(&mut browser, 40, 0);
+        browser.draw(&mut canvas, WIDTH, HEIGHT, 0);
+        page_key(&mut browser, Key::Down, &mut canvas);
+        assert_eq!(asked(&mut browser), Some(2), "the next row, by its sub-code");
+        chosen(&mut browser, 40, 1);
+        browser.draw(&mut canvas, WIDTH, HEIGHT, 0);
+        page_key(&mut browser, Key::Up, &mut canvas);
+        assert_eq!(asked(&mut browser), Some(1), "and back");
+        chosen(&mut browser, 40, 0);
+        browser.draw(&mut canvas, WIDTH, HEIGHT, 0);
+        page_key(&mut browser, Key::Up, &mut canvas);
+        assert_eq!(asked(&mut browser), Some(1), "stays on the first row");
+        chosen(&mut browser, 40, 39);
+        browser.draw(&mut canvas, WIDTH, HEIGHT, 0);
+        page_key(&mut browser, Key::Down, &mut canvas);
+        assert_eq!(asked(&mut browser), Some(40), "and on the last");
+    }
+
+    /// REQ-1758 item 6: the list's own rows decide, not the page's controls,
+    /// which may not yet count the sub-pages the list shows.
+    #[test]
+    fn up_and_down_follow_the_list_whatever_the_controls_count() {
+        let (mut browser, mut canvas) = listed(40);
+        chosen(&mut browser, 1, 0);
+        browser.draw(&mut canvas, WIDTH, HEIGHT, 0);
+        page_key(&mut browser, Key::Down, &mut canvas);
+        assert_eq!(asked(&mut browser), Some(2));
     }
 
     /// REQ-1758 item 4: the distance follows the height the divider left.

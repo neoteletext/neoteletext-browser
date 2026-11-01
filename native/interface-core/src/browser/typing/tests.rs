@@ -3,7 +3,7 @@ use alloc::vec::Vec;
 
 use neoteletext_input::event::{Action, CONTROL, KeyCode, MouseAction, Point};
 
-use crate::browser::{Browser, Frame, Output};
+use crate::browser::{Browser, Frame, Key, Modifiers, Output};
 use crate::canvas::PageKey;
 use crate::channel::{Channel, PageInfo, Status};
 use crate::geometry::Rect;
@@ -47,6 +47,20 @@ fn pointer_at(browser: &mut Browser, column: f64, row: f64) {
 }
 
 /// REQ-INT-130, REQ-INT-132: intents only while the core says so.
+/// REQ-1758 item 7: a row clicked with the page alone gives the list the
+/// keys even on a page whose channel takes them, and Escape gives them back.
+#[test]
+fn a_row_clicked_with_the_page_alone_takes_the_keys_from_the_channel() {
+    let mut browser = browser();
+    browser.set_typing(typing(None), 0);
+    assert_eq!(browser.typing_target(), Some(KEY));
+    let row = browser.regions.rows[0].0;
+    crate::browser::fixture::press_at(&mut browser, &mut Recorder::new(), row);
+    assert_eq!(browser.typing_target(), None, "the list has the keys");
+    browser.key(Key::Escape, Modifiers::default(), 0);
+    assert_eq!(browser.typing_target(), Some(KEY), "and gives them back");
+}
+
 #[test]
 fn keys_go_only_while_the_core_says_so() {
     let mut browser = browser();
