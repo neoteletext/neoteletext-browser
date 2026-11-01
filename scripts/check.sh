@@ -173,6 +173,11 @@ check_shapes_and_tests() {
     (cd native && cargo nextest run --workspace --hide-progress-bar --status-level fail --final-status-level fail)
     step "native/tuf: tests"
     (cd native/tuf && cargo nextest run --workspace --hide-progress-bar --status-level fail --final-status-level fail)
+    # A build with nothing changed must build nothing. A build script that
+    # watched files that do not exist once rebuilt the crates under it on
+    # every Cargo run, which cost each step of this gate minutes.
+    step "native: a build with nothing changed builds nothing"
+    (cd native && ! cargo test --workspace --no-run 2>&1 | grep -E '^ +Compiling')
 }
 
 # The packages that have each optional area, as `package/area` features.

@@ -21,7 +21,6 @@ const VARIABLE: &str = "NEOTELETEXT_RELEASE_IDENTITY";
 /// A file of the identity, if present, as text without its line end.
 fn text(folder: &Path, name: &str) -> Option<String> {
     let path = folder.join(name);
-    println!("cargo:rerun-if-changed={}", path.display());
     let text = std::fs::read_to_string(&path).ok()?;
     let text = text.strip_suffix('\n').unwrap_or(&text);
     // One line; it is written as a string literal by `{:?}`, which escapes
@@ -33,7 +32,6 @@ fn text(folder: &Path, name: &str) -> Option<String> {
 /// A file of the identity, if present, by its absolute path.
 fn file(folder: &Path, name: &str) -> Option<PathBuf> {
     let path = folder.join(name);
-    println!("cargo:rerun-if-changed={}", path.display());
     path.is_file().then(|| path.canonicalize().unwrap_or(path))
 }
 
@@ -58,6 +56,10 @@ fn main() {
         }
         None => (manifest.join("production"), String::from("production")),
     };
+    // The folder and not each file: Cargo takes a file that is absent, as
+    // most of the identity is until the key ceremony, as changed on every
+    // build, which built this and all that depends on it every time.
+    println!("cargo:rerun-if-changed={}", folder.display());
     let host = text(&folder, "host").expect("an identity names its update host");
     assert!(!host.is_empty() && host.bytes().all(|byte| byte.is_ascii_alphanumeric() || byte == b'-' || byte == b'.'), "the host must be a plain DNS name");
     let port: u16 = text(&folder, "port").map_or(443, |port| port.parse().expect("the port must be a number"));
