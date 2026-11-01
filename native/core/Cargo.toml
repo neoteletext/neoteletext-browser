@@ -13,13 +13,15 @@ default = ["links", "interaction", "phone-keyboard"]
 links = ["protocol/links", "interface-core/links", "dep:web-opener", "decoder/links"]
 # Typing into a page (`interaction.md`): off, the typing messages are
 # compiled out and every side refuses their kinds.
-interaction = ["protocol/interaction", "interface-core/interaction", "dep:neoteletext-input", "dep:unicode-normalization"]
+interaction = ["protocol/interaction", "interface-core/interaction", "dep:unicode-normalization"]
 # The phone keyboard (`interaction.md` section 9): its process, its panel.
 phone-keyboard = ["interaction", "protocol/phone-keyboard", "interface-core/phone-keyboard"]
 
 [dependencies]
 confine.workspace = true
-neoteletext-input = { workspace = true, optional = true }
+# A redirect's query is held to what SELECT carries in every build, with
+# typing compiled out too.
+neoteletext-input = { workspace = true }
 unicode-normalization = { workspace = true, optional = true }
 interface-core.workspace = true
 protocol.workspace = true
