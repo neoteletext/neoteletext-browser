@@ -1270,6 +1270,7 @@ dependencies = [
  "neoteletext-audio",
  "neoteletext-core",
  "neoteletext-input",
+ "unicode-normalization",
 ]
 
 [[package]]

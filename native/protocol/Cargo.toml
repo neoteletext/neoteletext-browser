@@ -27,6 +27,10 @@ neoteletext-audio.workspace = true
 # The standard's page and sub-page numbers (`limits`) that bound the
 # messages' sub-pages (decision 112).
 neoteletext-core.workspace = true
+# Unicode's table of combining marks, so the bound on a run of them counts
+# every script's (finding F-36, the owner's choice of 1 November 2026
+# beside decision 49).
+unicode-normalization.workspace = true
 
 [lints]
 workspace = true
