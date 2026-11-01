@@ -3,19 +3,18 @@
 //! handshake (finding F-63), with each address the name resolves to
 //! checked before it is connected to (finding F-62).
 
-use std::collections::VecDeque;
 use std::io::{ErrorKind as IoErrorKind, Read, Write};
 use std::net::{IpAddr, SocketAddr, TcpStream, ToSocketAddrs};
 use std::sync::Arc;
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
+use neoteletext_transport::{SOCKET_READ, TlsFailure, start_tls, web_address};
 use neoteletext_web::port::Security;
 
 use super::cancel::hold;
-use super::connection::read_socket;
 use super::writer::Outgoing;
-use super::{AllowedLocal, Connection, Failure, Opener, READS_AHEAD, WRITE_TIMEOUT, address, certificate_problem};
+use super::{AllowedLocal, Connection, Failure, Opener, WRITE_TIMEOUT, certificate_problem};
 
 /// A socket whose every read and write must finish by one moment: each
 /// is given only the time left, so no number of slow ones together takes
@@ -109,48 +108,31 @@ impl Opener {
         socket.set_nodelay(true).map_err(own)?;
         // The host's bytes that came with the proxy's answer come first: a
         // plain connection's data, or a TLS server's records.
-        let mut pending = VecDeque::new();
-        let tls = match security {
-            Security::Plain => {
-                pending.extend(early);
-                None
-            }
+        let (tls, first) = match security {
+            Security::Plain => (None, early),
             Security::Tls => {
-                let name = rustls::pki_types::ServerName::try_from(host.to_owned()).map_err(own)?;
-                let mut connection = rustls::ClientConnection::new(Arc::clone(&self.tls), name).map_err(own)?;
-                let mut early = early.as_slice();
-                while !early.is_empty() {
-                    if connection.read_tls(&mut early).map_err(own)? == 0 {
-                        break;
-                    }
-                    connection.process_new_packets().map_err(|error| refused(&std::io::Error::new(std::io::ErrorKind::InvalidData, error)))?;
-                }
                 // A certificate that fails is a hard stop (requirement 7.11).
                 let mut bounded = Deadline { socket: &socket, until: self.until };
-                while connection.is_handshaking() {
-                    connection.complete_io(&mut bounded).map_err(|error| refused(&error))?;
-                }
-                Some(Box::new(connection))
+                let connection = start_tls(Arc::clone(&self.tls), host, &early, &mut bounded).map_err(|failure| match failure {
+                    TlsFailure::Name(_) | TlsFailure::Start(_) | TlsFailure::Read(_) => own(failure),
+                    TlsFailure::Records(error) => refused(&std::io::Error::new(IoErrorKind::InvalidData, error)),
+                    TlsFailure::Handshake(error) => refused(&error),
+                })?;
+                (Some(Box::new(connection)), Vec::new())
             }
         };
-        // From here the reader thread waits on the socket for as long as
-        // it is open; the agent's own timers decide when it has been
-        // silent too long, and closing it ends the wait.
-        socket.set_read_timeout(None).map_err(own)?;
         socket.set_write_timeout(Some(WRITE_TIMEOUT)).map_err(own)?;
-        let reader = socket.try_clone().map_err(own)?;
         let outgoing = Outgoing::start(socket.try_clone().map_err(own)?, Arc::clone(&self.wake));
-        let (chunks, incoming) = mpsc::sync_channel(READS_AHEAD);
         let wake = Arc::clone(&self.wake);
-        std::thread::spawn(move || read_socket(reader, &chunks, &*wake));
-        Ok(Connection { socket, tls, incoming, pending, outgoing, peer: address(ip) })
+        let stream = neoteletext_transport::Connection::start(socket, tls, first, SOCKET_READ, move || wake()).map_err(own)?;
+        Ok(Connection { stream, outgoing, peer: web_address(ip) })
     }
 }
 
 /// Whether `ip` may not be connected to: the engine's rule (REQ-SEC-006),
 /// as its agent applies it to a peer.
 fn refused_local(ip: IpAddr, allowed: &AllowedLocal) -> bool {
-    let ip = address(ip);
+    let ip = web_address(ip);
     ip.is_blocked() && !allowed.contains(&Some(ip))
 }
 

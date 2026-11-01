@@ -2,7 +2,6 @@
 //! on a thread of its own and its state read back, bytes sent and taken,
 //! and a connection closed, open or still opening.
 
-use std::net::Shutdown;
 use std::sync::Arc;
 use std::sync::mpsc;
 use std::time::Instant;
@@ -41,7 +40,7 @@ impl Transport for Tcp {
             // The connection was closed while opening: the socket goes,
             // and its reader thread with it.
             if let Err(mpsc::SendError(Ok(open))) = done.send(reached) {
-                let _ = open.socket.shutdown(Shutdown::Both);
+                open.stream.shutdown();
             }
             (opener.wake)();
         });
@@ -63,7 +62,7 @@ impl Transport for Tcp {
         // Given whole to the writer thread, as one write: the messages the
         // agent sends together leave together (REQ-RCH-010), and a socket
         // the network does not drain holds up only that thread.
-        let given = match open.tls.as_deref_mut() {
+        let given = match open.stream.tls_mut() {
             None => open.outgoing.give(bytes.to_vec()),
             Some(tls) => std::io::Write::write_all(&mut tls.writer(), bytes).is_ok() && give_records(tls, &open.outgoing),
         };
@@ -93,9 +92,7 @@ impl Transport for Tcp {
         // socket is shut, and a connection it opens all the same is
         // dropped when it finds no one to give it to.
         match self.connection(connection).take() {
-            Some(Link::Open(open)) => {
-                let _ = open.socket.shutdown(Shutdown::Both);
-            }
+            Some(Link::Open(open)) => open.stream.shutdown(),
             Some(Link::Connecting(_, opening)) => shut(&opening),
             Some(Link::Failed) | None => {}
         }

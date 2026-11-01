@@ -100,6 +100,7 @@ The engine is `neoteletext` (`~/devel/neoteletext-engine`), a Rust implementatio
 | `neoteletext-audio-mix` | The audio mixer | In the sound helper (decision 55) |
 | `neoteletext-input` | Key, cursor and control records and input sessions (its area INT) | In the trusted core, the decoder, the interface core and the interface (decisions 44 and 48) |
 | `neoteletext-qrkeyboard` | qrkeyboard's client: pairing, encryption and QR codes | In the phone keyboard (decision 44) |
+| `neoteletext-transport` | A client's reader thread, TLS pump, handshake and TLS configuration, shared with the engine's own programs (its DEC-1905) | In the fetcher, and through `neoteletext-qrkeyboard` in the phone keyboard. Its opening under one deadline and its writer thread are the fetcher's own (the engine's DEC-1906) |
 | `neoteletext-slicer` | Recovering teletext from sampled video | Not yet |
 | `neoteletext-browser`, `neoteletext-gui`, the application crate | The engine's own browser shell | **Not used** (decision 36) |
 
@@ -592,7 +593,8 @@ neoteletext-browser/
                             it uses it (engine.rs, + engine/: feed, render), changes, flash, input records,
                             links, titles, the voice sink, and the Netscape bookmark reader (netscape.rs)
     fetcher/                the fetcher (neoteletext-fetcher): its arguments, its loop (process.rs), the
-                            engine's agent's own parts, its cookies, and the transport over the network
+                            engine's agent's own parts, its cookies, and the engine's network port:
+                            opening a connection and writing to it, over neoteletext-transport
     interface/              the interface process (neoteletext-interface): the system window, the reader
                             thread, keys, and app.rs with app/: frames, input, the input method, typing,
                             the phone, the clipboard and menus, windows, what the core said, outputs

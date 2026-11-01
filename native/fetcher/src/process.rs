@@ -14,6 +14,7 @@ use std::sync::mpsc::{self, RecvTimeoutError};
 use std::time::{Duration, Instant as Clock};
 
 use neoteletext_core::types::{Instant, PageAddress, SubCode};
+use neoteletext_transport::web_address;
 #[cfg(feature = "interaction")]
 use neoteletext_web::agent::InputMessage;
 use neoteletext_web::agent::{Config, Event, Input, Output, Source, Storage, Subscription, UserAgent};
@@ -33,7 +34,7 @@ use crate::agent::descriptor_links;
 use crate::agent::{Random, product};
 use crate::cookies;
 use crate::live::{LiveIndex, SubPageLists};
-use crate::transport::{AllowedLocal, Tcp, address};
+use crate::transport::{AllowedLocal, Tcp};
 
 const _: () = assert!(protocol::fetcher::MAX_DENIED_PLACE == neoteletext_web::records::denied::MAX_PLACE, "the engine's longest place");
 
@@ -356,7 +357,7 @@ fn agent_config(allowed: &[IpAddr], proxied: bool) -> Config {
     // Proxied, local names are refused before the proxy is asked (REQ-WEB-032).
     let mut config = Config { tls_available: true, redirects_within_channel: true, product: product(), proxied, page_limit: PAGE_LIMIT, ..Config::default() };
     for (slot, &ip) in config.allowed_local.iter_mut().zip(allowed.iter().take(ALLOWED_LOCAL)) {
-        *slot = Some(address(ip));
+        *slot = Some(web_address(ip));
     }
     config
 }

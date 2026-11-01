@@ -32,14 +32,18 @@
 //! proxy opens, asked for by the engine's encoding before TLS starts, so
 //! TLS runs end to end; a proxy that refuses fails the connection, and
 //! nothing goes direct instead.
+//!
+//! The reading of an open connection, the TLS start and the configuration
+//! are the engine's `neoteletext-transport`, which its own programs use.
+//! The opening's one deadline, its address checks and its cancelling, and
+//! the writer thread, are this process's alone (the engine's DEC-1906).
 
-use std::collections::VecDeque;
-use std::net::{IpAddr, TcpStream};
 use std::sync::Arc;
 use std::sync::mpsc::{Receiver, TryRecvError};
 use std::time::{Duration, Instant};
 
-use neoteletext_web::consts::{ALLOWED_LOCAL, DEFAULT_CONNECT_TIMEOUT_US};
+use neoteletext_transport::{CONNECT_TIMEOUT, client_config, mozilla_roots};
+use neoteletext_web::consts::ALLOWED_LOCAL;
 use neoteletext_web::port::ConnectionId;
 use neoteletext_web::proxy::Proxy;
 use neoteletext_web::url::IpAddress;
@@ -57,15 +61,9 @@ use writer::Outgoing;
 /// How long a connection may take to open, from the name's resolution to
 /// the end of its proxy's tunnel and TLS handshake: the engine's connect
 /// limit, which the agent's own timer keeps too.
-const CONNECT_DEADLINE: Duration = Duration::from_micros(DEFAULT_CONNECT_TIMEOUT_US);
+const CONNECT_DEADLINE: Duration = CONNECT_TIMEOUT;
 /// How long a write to an open connection may block: the same limit.
 const WRITE_TIMEOUT: Duration = CONNECT_DEADLINE;
-/// Bytes a reader thread takes from its socket at a time.
-const SOCKET_READ: usize = 16 * 1024;
-/// Reads a reader thread may be ahead of the loop before it waits: with
-/// `SOCKET_READ`, what one connection holds in memory at most, beyond the
-/// operating system's own buffer.
-const READS_AHEAD: usize = 4;
 
 /// Wakes the fetcher's loop.
 pub type Wake = Arc<dyn Fn() + Send + Sync>;
@@ -75,23 +73,10 @@ pub type Wake = Arc<dyn Fn() + Send + Sync>;
 /// the same.
 pub type AllowedLocal = [Option<IpAddress>; ALLOWED_LOCAL];
 
-/// The address the operating system resolved, as the engine writes one.
-pub fn address(ip: IpAddr) -> IpAddress {
-    match ip {
-        IpAddr::V4(v4) => IpAddress::V4(v4.octets()),
-        IpAddr::V6(v6) => IpAddress::V6(v6.segments()),
-    }
-}
-
 /// One open connection.
 struct Connection {
-    /// For writing and for shutting down; the reader thread reads a clone.
-    socket: TcpStream,
-    tls: Option<Box<rustls::ClientConnection>>,
-    /// What the reader thread read; the channel ends when the socket does.
-    incoming: Receiver<Vec<u8>>,
-    /// Bytes taken from `incoming` and not yet passed on.
-    pending: VecDeque<u8>,
+    /// The reader thread and what it read, plain or through TLS.
+    stream: neoteletext_transport::Connection,
     /// The writer thread, which writes everything sent once the
     /// connection is open, the TLS records of alerts among it, in order.
     outgoing: Outgoing,
@@ -155,8 +140,7 @@ pub struct Tcp {
 
 impl Tcp {
     pub fn new(wake: Wake, proxy: Option<Proxy>, allowed_local: AllowedLocal) -> Self {
-        let roots = rustls::RootCertStore::from_iter(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
-        Self::with_roots(roots, wake, proxy, allowed_local)
+        Self::with_roots(mozilla_roots(), wake, proxy, allowed_local)
     }
 
     /// The transport trusting `roots`: Mozilla's, or a test's own.
@@ -165,7 +149,7 @@ impl Tcp {
             fetch: None,
             push: None,
             live: None,
-            tls: Arc::new(tls_config(roots)),
+            tls: Arc::new(client_config(roots)),
             wake,
             proxy,
             proxy_failed: false,
@@ -223,17 +207,6 @@ impl Tcp {
         self.local_refused |= local_refused;
         self.connection(connection)
     }
-}
-
-/// The TLS configuration every connection of the channel shares
-/// (REQ-RCH-014, the engine's REQ-WEB-035): rustls's in-memory store of
-/// sessions, so a reconnection resumes, and no early data. ring is the one
-/// provider built in, so the builder installs it.
-fn tls_config(roots: rustls::RootCertStore) -> rustls::ClientConfig {
-    let mut config = rustls::ClientConfig::builder().with_root_certificates(roots).with_no_client_auth();
-    config.resumption = rustls::client::Resumption::default();
-    config.enable_early_data = false;
-    config
 }
 
 /// What a connection's thread opens it with.

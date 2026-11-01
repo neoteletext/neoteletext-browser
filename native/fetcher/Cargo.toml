@@ -34,7 +34,9 @@ protocol.workspace = true
 neoteletext-input = { workspace = true, optional = true }
 interface-core = { workspace = true, optional = true }
 rustls.workspace = true
-webpki-roots.workspace = true
+# The reader thread, the TLS pump and the handshake, shared with the
+# engine's own clients.
+neoteletext-transport.workspace = true
 
 [lints]
 workspace = true
