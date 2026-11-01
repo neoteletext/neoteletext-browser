@@ -9,6 +9,7 @@ use std::time::Instant;
 use interface_core::canvas::PageKey;
 use neoteletext::address::{Address, redirect_destination};
 use neoteletext_core::limits::SUBCODE_ANY;
+use neoteletext_input::event::{Select, is_page_parameters};
 use protocol::console::Level;
 use protocol::fetcher::MAX_NOTICE;
 use protocol::{ToInterface, clean};
@@ -44,6 +45,12 @@ impl Core {
     pub(super) fn page_redirected(&mut self, channel: u32, page: u16, sub: u16, parameters: Option<&str>) -> Result<(), String> {
         if !self.may_redirect(channel) {
             return Ok(());
+        }
+        // What the fetcher gives is hostile text: a query goes on only as a
+        // SELECT may carry it (`INPUT.md` section 5.4).
+        if parameters.is_some_and(|query| !Select::new(page, sub).is_some_and(|select| is_page_parameters(select, query))) {
+            self.log(Level::Warning, Some(channel), &format!("a redirect to page {page:03X} with a query no address holds was not followed"));
+            return self.select_again(channel);
         }
         let listed = self.session.all_tabs().any(|tab| tab.channel.id == channel && tab.channel.page_title(page).is_some());
         if !listed {
