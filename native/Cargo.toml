@@ -49,7 +49,7 @@ decoder = { path = "decoder", package = "neoteletext-decoder", default-features 
 # packet types alone, which the interface core and the protocol take
 # (decision 112); the decoder names the profile it renders with.
 neoteletext-core = { git = "https://github.com/neoteletext/neoteletext-engine", rev = "1cd962a6882befd1ffcde9ba34d3f21eb08753a4", default-features = false }
-neoteletext-formats = { git = "https://github.com/neoteletext/neoteletext-engine", rev = "1cd962a6882befd1ffcde9ba34d3f21eb08753a4", default-features = false, features = ["tti", "transport", "sliced", "alloc"] }
+neoteletext-formats = { git = "https://github.com/neoteletext/neoteletext-engine", rev = "1cd962a6882befd1ffcde9ba34d3f21eb08753a4", default-features = false, features = ["tti", "alloc"] }
 # The engine's web module: HTTP, channels, contents files and push, with no
 # network input or output of its own.
 neoteletext-web = { git = "https://github.com/neoteletext/neoteletext-engine", rev = "1cd962a6882befd1ffcde9ba34d3f21eb08753a4", default-features = false, features = ["push", "cookies"] }

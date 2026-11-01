@@ -62,6 +62,7 @@ impl Core {
         }
         let channels: Vec<(u32, Option<String>, Option<String>)> =
             self.session.all_tabs().map(|tab| (tab.channel.id, tab.channel.problem.clone(), tab.channel.web.clone())).collect();
+        let mut started = false;
         for (id, problem, web) in &channels {
             let awake = self.sleep.awake(*id, active, now);
             if awake && !self.decoders.contains_key(id) && !self.given_up.contains(id) {
@@ -78,6 +79,8 @@ impl Core {
                 }
                 self.note(Level::Info, Some(*id), &format!("decoder: confined: {}", decoder.report()));
                 self.decoders.insert(*id, decoder);
+                self.rewind_source(*id);
+                started = true;
             } else if !awake && self.decoders.contains_key(id) {
                 self.put_to_sleep(*id);
             }
@@ -113,7 +116,17 @@ impl Core {
         let open = |id: &u32| channels.iter().any(|(used, ..)| used == id);
         self.given_up.retain(open);
         self.restarts.retain(|id, _| open(id));
+        if started {
+            self.load();
+        }
         Ok(())
+    }
+
+    /// A new decoder has the channel's file to read from its start.
+    fn rewind_source(&mut self, id: u32) {
+        for tab in self.session.all_tabs_mut().filter(|tab| tab.channel.id == id) {
+            tab.channel.source.rewind();
+        }
     }
 
     /// Closes a channel's decoder, and forgets what it showed: its links,
@@ -153,6 +166,8 @@ impl Core {
             let _ = decoder.tell(&ToDecoder::Showing(self.shown_pages.clone()));
         }
         self.decoders.insert(id, decoder);
+        self.rewind_source(id);
+        self.load();
         Ok(())
     }
 

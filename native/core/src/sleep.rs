@@ -6,9 +6,11 @@
 //! while it is the active one, while its channel holds a push connection,
 //! while its sound plays, and for [`SLEEP_AFTER`] after it was last shown;
 //! a tab restored with a session, never shown and with nothing live, sleeps
-//! from the start. What the trusted core gave a channel's decoder is kept,
-//! and given to a new decoder when the tab wakes, so its pages are there at
-//! once. A decoder at rest takes 6.2 MB (measured 21 October 2026).
+//! from the start. What the trusted core gave a web channel's decoder is
+//! kept, and given to a new decoder when the tab wakes, so its pages are
+//! there at once; a file channel's file is its own copy, read again from
+//! its start (`Source::rewind`). A decoder at rest takes 6.2 MB (measured
+//! 21 October 2026).
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::time::{Duration, Instant};

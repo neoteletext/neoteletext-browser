@@ -28,6 +28,18 @@ fn engine_with(tti: &[u8]) -> Engine {
     engine
 }
 
+/// DEC-1762: the only readers built into the decoder are T42's and TTI's,
+/// so nothing else that handles untrusted input is there to reach.
+#[test]
+fn the_decoder_reads_only_t42_and_tti() {
+    use neoteletext_formats::sliced::ByteOrder;
+    use neoteletext_formats::transport::TsPacketSize;
+    assert!(Format::T42(T42Variant::Plain).is_compiled() && Format::Tti.is_compiled());
+    let others =
+        [Format::TransportStream(TsPacketSize::Standard), Format::Pes, Format::Sliced(ByteOrder::Little), Format::Ep1, Format::EditTf, Format::ScreenDump];
+    assert!(others.iter().all(|format| !format.is_compiled()), "{:?}", others.map(Format::is_compiled));
+}
+
 /// The engine's REQ-INP-026 and decision 70: a page's `LG` lines reach
 /// the trusted core with their level and page, and no more than are
 /// held at once.

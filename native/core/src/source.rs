@@ -1,15 +1,16 @@
-//! A channel's data, read from a file on this computer: a recording (T42,
-//! a transport stream, sliced records) or page files (TTI), or a folder of
-//! page files read in name order. The trusted core never parses these
-//! bytes; it hands them to the channel's decoder a piece at a time, at a
-//! fixed pace, as a fetcher would hand over what it received.
+//! A channel's data, read from a file on this computer: a T42 recording or
+//! a TTI page file, or a folder of page files read in name order, the only
+//! formats the browser opens (DEC-1762). The trusted core never parses these
+//! bytes; it hands them to the channel's decoder at once, in pieces within
+//! the protocol's bound, as a fetcher hands over what it received.
 
 use std::fs;
 use std::io::Read;
 use std::path::{Component, Path, PathBuf};
 
 use confine::{FileIdentity, file_identity};
-use neoteletext_formats::detect::{DETECTION_BYTES, Detection, detect};
+use neoteletext_formats::detect::{DETECTION_BYTES, Detection, Format, detect};
+use neoteletext_formats::t42::T42Variant;
 
 /// The largest channel read from a file: far above a day's recording of a
 /// teletext service, which is a few megabytes.
@@ -17,6 +18,8 @@ pub const MAX_SOURCE_BYTES: u64 = 64 * 1024 * 1024;
 /// The most page files read from one folder: a channel has at most 800
 /// display pages, with sub-pages in further files.
 const MAX_FILES: usize = 4096;
+// DEC-1762: what the broker reads is what the decoder is built to read.
+const _: () = assert!(Format::T42(T42Variant::Plain).is_compiled() && Format::Tti.is_compiled());
 
 pub struct Source {
     bytes: Vec<u8>,
@@ -135,10 +138,10 @@ fn open_folder(canonical: &Path) -> Option<fs::File> {
 }
 
 /// Whether the engine recognises the bytes as teletext in a format the
-/// decoder is built with (requirement 2.1, decision 88).
+/// browser opens, T42 or TTI (requirement 2.1, decision 88, DEC-1762).
 fn teletext(bytes: &[u8]) -> bool {
     let prefix = bytes.get(..DETECTION_BYTES).unwrap_or(bytes);
-    matches!(detect(prefix, prefix.len() == bytes.len()), Detection::Found { format, .. } if format.is_compiled())
+    matches!(detect(prefix, prefix.len() == bytes.len()), Detection::Found { format: Format::T42(_) | Format::Tti, .. })
 }
 
 /// Whether the bytes are a bookmarks file the trusted core may import:
@@ -240,6 +243,14 @@ impl Source {
         Self { bytes: Vec::new(), sent: 0, ended: true }
     }
 
+    /// Starts again from the first byte, for a new decoder: the file itself
+    /// is what its last decoder was given. A channel with no data stays
+    /// ended, so a web channel's decoder is never told its data ended.
+    pub fn rewind(&mut self) {
+        self.sent = 0;
+        self.ended = self.ended && self.bytes.is_empty();
+    }
+
     /// Whether [`Source::next`] has anything left to give.
     #[must_use]
     pub fn has_more(&self) -> bool {
@@ -263,6 +274,7 @@ impl Source {
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::arithmetic_side_effects, reason = "a test")]
     use super::*;
 
     #[test]
@@ -274,6 +286,82 @@ mod tests {
         assert!(matches!(source.next(2), Next::End));
         assert!(matches!(source.next(2), Next::Done));
         assert!(matches!(Source::empty().next(2), Next::Done));
+    }
+
+    /// DEC-1762: a new decoder is given the file from its start, however
+    /// much the last one had, and a channel with no data gives nothing.
+    #[test]
+    fn a_rewound_source_gives_everything_again() {
+        let mut source = Source::from_bytes(vec![1, 2, 3]);
+        assert!(matches!(source.next(2), Next::Data([1, 2])));
+        source.rewind();
+        assert!(matches!(source.next(3), Next::Data([1, 2, 3])));
+        assert!(matches!(source.next(3), Next::End));
+        source.rewind();
+        assert!(source.has_more());
+        assert!(matches!(source.next(3), Next::Data([1, 2, 3])));
+        let mut empty = Source::empty();
+        empty.rewind();
+        assert!(!empty.has_more());
+    }
+
+    /// `bytes` bytes that look like no packet, as a recording's other
+    /// contents do: zeros would read as packets whose addresses decode.
+    fn noise(bytes: usize) -> Vec<u8> {
+        (0..bytes)
+            .scan(0x2F_u32, |state, _| {
+                *state = state.wrapping_mul(1_103_515_245).wrapping_add(12_345);
+                Some(state.to_be_bytes()[0])
+            })
+            .collect()
+    }
+
+    /// `count` records of `unit` bytes each holding, at `at`, a packet
+    /// address that decodes: Hamming 8/4 of 0 twice, magazine 8, row 0.
+    fn with_addresses(count: usize, unit: usize, at: usize) -> Vec<u8> {
+        const ADDRESS: [u8; 2] = [0x15, 0x15];
+        let mut bytes = noise(count * unit);
+        for record in bytes.chunks_exact_mut(unit) {
+            record[at..at + ADDRESS.len()].copy_from_slice(&ADDRESS);
+        }
+        bytes
+    }
+
+    /// DEC-1762: the formats the engine's `detect` knows beyond T42 and TTI
+    /// are refused as anything else that is not teletext is. On the code
+    /// before, the first two were read: the broker asked only whether the
+    /// decoder was built with the format.
+    #[test]
+    fn only_t42_and_tti_are_channels() {
+        /// An MPEG-2 transport stream's packet, and the byte that starts it.
+        const TS_PACKET: usize = 188;
+        const TS_SYNC: u8 = 0x47;
+        /// A Linux sliced VBI record: its service, line and reserved words,
+        /// then its data.
+        const SLICED_RECORD: usize = 64;
+        const SLICED_HEADER: usize = 16;
+        /// `V4L2_SLICED_TELETEXT_B`, the service word of a teletext record.
+        const SLICED_TELETEXT: [u8; 4] = [1, 0, 0, 0];
+        let refused = |name: &str, bytes: &[u8]| {
+            let folder = std::env::temp_dir().join(format!("neoteletext-source-formats-{}-{name}", std::process::id()));
+            let _ = fs::remove_dir_all(&folder);
+            fs::create_dir_all(&folder).unwrap();
+            let file = folder.join(name);
+            fs::write(&file, bytes).unwrap();
+            let refused = Source::read(&file, &Places::new(None, Vec::new())).err();
+            fs::remove_dir_all(&folder).unwrap();
+            refused == Some(REFUSAL)
+        };
+        let mut transport = noise(TS_PACKET * 8);
+        transport.iter_mut().step_by(TS_PACKET).for_each(|byte| *byte = TS_SYNC);
+        assert!(refused("recording.ts", &transport), "a transport stream");
+        let mut sliced = with_addresses(300, SLICED_RECORD, SLICED_HEADER);
+        for record in sliced.as_chunks_mut::<SLICED_RECORD>().0 {
+            record[..SLICED_TELETEXT.len()].copy_from_slice(&SLICED_TELETEXT);
+        }
+        assert!(refused("recording.vbi", &sliced), "sliced records");
+        assert!(!refused("recording.t42", &with_addresses(300, 42, 0)), "T42");
+        assert!(!refused("page.tti", b"PN,10000\nOL,1,A\n"), "TTI");
     }
 
     #[test]

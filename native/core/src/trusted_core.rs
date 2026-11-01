@@ -68,15 +68,17 @@ use processes::{Decoder, Fetcher};
 pub(crate) use run::{given_addresses, run};
 use windows::Shown;
 
-/// A channel's data is handed to its decoder in pieces of 64 packets of 42
-/// bytes (2,688 bytes) every 0.2 seconds, the engine's
-/// `DEFAULT_FETCH_INTERVAL_US` (`architecture.md` section 5.1): slow
-/// enough to watch the pages of a recording arrive, about 13 kilobytes a
-/// second.
-const PACKET_BYTES: usize = 42;
-const CHUNK_PACKETS: usize = 64;
-const CHUNK_BYTES: usize = PACKET_BYTES * CHUNK_PACKETS;
+/// How often timed work waits on is looked at: the console's news, typing
+/// waited on, and a file too large to be queued for its decoder at once.
+/// It is the engine's `DEFAULT_FETCH_INTERVAL_US` (`architecture.md`
+/// section 5.1).
 const LOAD_INTERVAL: Duration = Duration::from_millis(200);
+/// The most of a file queued for its decoder (DEC-1762): half of what may
+/// wait for a process before it counts as having stopped reading, so that
+/// the largest file goes in steps and an honest decoder is never given up.
+const MOST_FILE_QUEUED: usize = neoteletext::outbox::MAX_QUEUED_BYTES / 2;
+// A decoder may be given what was kept for it on top of a file's bytes.
+const _: () = assert!(MOST_FILE_QUEUED + neoteletext::sleep::MAX_KEPT_BYTES <= neoteletext::outbox::MAX_QUEUED_BYTES);
 /// How often the trusted core looks for tabs that may sleep: a tab sleeps
 /// at most this long after its time is up (decision 47).
 const SLEEP_CHECK: Duration = Duration::from_secs(60);

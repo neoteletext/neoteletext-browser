@@ -93,7 +93,7 @@ The engine is `neoteletext` (`~/devel/neoteletext-engine`), a Rust implementatio
 | Crate | What it does | Used by NeoTeletext |
 |---|---|---|
 | `neoteletext-core` | Packet decoding, page store, Presentation Levels 1.0 to 3.5, rendering a page to palette indices, flash timing | In the decoder; its flash timing constants in the trusted core; its page addresses in the fetcher. Built with the engine's recommended `modern-classic` profile and its `level35-32colors` feature (decision 60) (its decision E.71) |
-| `neoteletext-formats` | Readers for T42 recordings, Teletext Text Interchange page files, transport streams and sliced records; content detection | In the decoder, with the `tti`, `transport` and `sliced` features |
+| `neoteletext-formats` | Readers for T42 recordings and Teletext Text Interchange page files; content detection | In the decoder, with the `tti` feature: the browser opens these two and no other (DEC-1762), so the engine's other readers are not built |
 | `neoteletext-image` | Palette indices to colour formats; the Portable Network Graphics writer | The palette in the decoder; the writer no longer (decision 61) |
 | `neoteletext-web` | The strict address parser, origins, the HyperText Transfer Protocol version 1.1, WebSocket, the cookie store, channel descriptors, contents files, push subscriptions, and the user agent that opens and fetches a channel, with no network input or output of its own | In the fetcher, with the `push` and `cookies` features; in the trusted core, its cookie jar, proxy-address parser and address type; in the phone keyboard; and in the updater, pinned in `native/tuf/Cargo.toml` |
 | `neoteletext-audio` | The audio profile's receiver (its area AUD) | In the decoder (decision 37) |
@@ -166,7 +166,7 @@ Decision 18's shape, with the interface process in place of the web-engine windo
 
 ### 6.2 Why bytes pass through the trusted core
 
-The fetcher never talks to a decoder directly. The trusted core passes every page the fetcher delivers to the decoder of that fetcher's channel, because only the trusted core knows which tab shows which channel. It never parses those bytes: it cuts them into pieces within the message limit and passes them on. File channels are the same: the trusted core reads the file and passes its bytes, unread, in pieces of 64 packets every 0.2 seconds, the engine's fetch interval.
+The fetcher never talks to a decoder directly. The trusted core passes every page the fetcher delivers to the decoder of that fetcher's channel, because only the trusted core knows which tab shows which channel. It never parses those bytes: it cuts them into pieces within the message limit and passes them on. File channels are the same, but for their pace: a file the viewer opens is passed on at once (DEC-1762). The broker reads the file for the trusted core, which passes its bytes, unread, in pieces within the message limit, as many as may be queued for the decoder, half of `outbox::MAX_QUEUED_BYTES`; what does not fit follows at the next `LOAD_INTERVAL`, 0.2 seconds on. A new decoder is given the file from its start, so a file is not kept twice.
 
 ### 6.3 Decoders and fetchers per channel
 
@@ -345,7 +345,7 @@ Decision 22, **rescinded on 25 October 2026 by decision 104**: pages are to be f
 | A bundle, `index.t42` | The whole bundle when the channel opens |
 | A contents file, `contents.txt` | Every page file it lists, in the order it lists them, one every 0.2 seconds, when the channel opens. **Built**, by the engine's user agent |
 | Only separate page files | Each page when it is selected (decision 23), the one exception |
-| A file on this computer | All of it, in its own order, one piece every 0.2 seconds, whatever is on screen. **Built** |
+| A file on this computer | All of it, in its own order, at once, whatever is on screen (DEC-1762). **Built** |
 
 - **Refreshing** follows the channel's push feed, its declared schedule, or a fixed default, never which page is shown.
 - **Keys and interface requests only select among pages already held.** The interface's only influence on the decoder is which pages it renders, which never reaches the network.
@@ -649,7 +649,7 @@ Unsafe code is allowed only in the modules requirement 10.12 names, each saying 
 **Built** (23 October 2026), with 440 tests passing in `native/` (`cargo test --workspace --all-features` on macOS) and the updater's own in `native/tuf`:
 
 - The broker, the trusted core, the decoder, the fetcher, the interface process, the sound helper, the phone keyboard and the updater, each its own program, communicating only over the bounded protocols of section 6.4; and the launcher, which starts the broker.
-- The engine at a pinned commit, `8c59a89`, decoding T42 recordings, Teletext Text Interchange page files, transport streams and sliced records.
+- The engine at a pinned commit, `8c59a89`, decoding T42 recordings and Teletext Text Interchange page files (DEC-1762).
 - Web channels over the HyperText Transfer Protocol, plain or with Transport Layer Security: the contents file, fetching in its order at the engine's rate, push over WebSocket, update marks in the window.
 - File channels, fed at the same pace.
 - The window of section 11, drawn on the processor, redrawing only the boxes that changed since the last frame (`native-interface-design.md` section 12.7); and the same interface core drawn by the microcontroller back end in a test.

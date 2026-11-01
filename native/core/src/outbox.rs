@@ -14,8 +14,8 @@ use std::thread::{self, JoinHandle};
 
 /// The most bytes a process may be behind by. A decoder is given at most
 /// 8 MB of kept data when it wakes (`sleep::MAX_KEPT_BYTES`), in one
-/// flush; twice that is a process that has stopped reading, not one that
-/// is busy.
+/// flush, and at most as much of a file; more than both together is a
+/// process that has stopped reading, not one that is busy.
 pub const MAX_QUEUED_BYTES: usize = 16 * 1024 * 1024;
 
 #[derive(Default)]
@@ -94,6 +94,12 @@ impl Outbox {
         }
         state.closed = true;
         self.shared.ready.notify_one();
+    }
+
+    /// The bytes written and not yet passed to the pipe.
+    #[must_use]
+    pub fn queued(&self) -> usize {
+        self.shared.lock().bytes.saturating_add(self.pending.len())
     }
 
     /// Ends the pipe and waits until everything queued has been written

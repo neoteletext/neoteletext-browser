@@ -77,6 +77,11 @@ impl Decoder {
         self.input.flush()
     }
 
+    /// The bytes told it that it has not read yet.
+    pub(super) fn queued(&self) -> usize {
+        self.input.queued()
+    }
+
     /// Ends it at once, told nothing: it broke its protocol or ended.
     pub(super) fn end(mut self) {
         end(&mut self.child);

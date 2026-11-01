@@ -1,7 +1,7 @@
 //! The teletext engine as the decoder process uses it. Bytes of any format
-//! the engine reads (T42 recordings, TTI page files, transport streams,
-//! sliced records) go through its format detection and readers into its
-//! decoder and page store; pages are composed at the presentation level of
+//! the browser opens (T42 recordings and TTI page files, DEC-1762) go
+//! through its format detection and readers into its decoder and page
+//! store; pages are composed at the presentation level of
 //! the engine's default profile and rendered by its row renderer, in
 //! Bedstead or the engine's Noto Teletext font as the user chose, into
 //! palette indices.

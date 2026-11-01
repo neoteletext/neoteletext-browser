@@ -85,6 +85,16 @@ pub(super) fn healthy_once_settled(core: &mut Core) -> bool {
     core.updates.health.healthy(std::time::Instant::now().checked_add(super::updates::HEALTH_SETTLE).unwrap())
 }
 
+/// Gives `channel` a decoder that reads nothing, and what the core writes to
+/// it read back, a chunk at a time.
+#[cfg(unix)]
+pub(super) fn decoder_watched(core: &mut Core, channel: u32) -> mpsc::Receiver<Vec<u8>> {
+    let (sender, written) = mpsc::channel();
+    let child = stand_in("/bin/sleep", &["60"], confine::Role::Decoder);
+    core.decoders.insert(channel, super::processes::Decoder::new(child, Outbox::new(Sink(sender)), 1));
+    written
+}
+
 /// What the core writes to the interface, a chunk at a time.
 pub(super) struct Sink(mpsc::Sender<Vec<u8>>);
 
