@@ -58,11 +58,7 @@ impl Browser {
         if self.typing_target().is_none() && !refused {
             return area;
         }
-        let mut text = if refused {
-            format!("\u{2328} {} did not answer: keys stay here", self.strip.identity)
-        } else {
-            format!("\u{2328} Keys go to {}", self.strip.identity)
-        };
+        let mut text = if refused { format!("{} did not answer: keys stay here", self.strip.identity) } else { format!("Keys go to {}", self.strip.identity) };
         if let Some(round_trip) = typing.round_trip_us.filter(|_| !refused) {
             let (milliseconds, tenths) = (round_trip / MICROSECONDS_PER_MILLISECOND, round_trip % MICROSECONDS_PER_MILLISECOND / MICROSECONDS_PER_TENTH);
             let _ = write!(text, " \u{00B7} {milliseconds}.{tenths} ms");
