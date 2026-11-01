@@ -111,7 +111,6 @@ fn pushed(tti: &[u8], links: Option<&[u8]>) -> Vec<u8> {
 
 // REQ-1504: a frame whose header does not set the erase bit changes the
 // rows it carries and keeps the others.
-#[cfg(feature = "links")]
 /// A channel's `region` gives the group of a page that names none, here
 /// Greek, whose option 7 the page's header holds; a channel with none reads
 /// as the receiver does (the engine's REQ-WEB-002).
@@ -130,6 +129,7 @@ fn a_channels_region_is_the_group_of_its_pages() {
     assert!(!row(None).contains('\u{3B1}'), "{:?}", row(None));
 }
 
+#[cfg(feature = "links")]
 #[test]
 fn changed_rows_keep_the_other_rows() {
     let row = |engine: &Engine, number: usize| -> String {
