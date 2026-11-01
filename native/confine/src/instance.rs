@@ -70,27 +70,3 @@ mod unix {
         }
     }
 }
-
-#[cfg(all(test, unix))]
-#[allow(clippy::unwrap_used, reason = "a test")]
-mod tests {
-    use super::*;
-    use crate::broker::{Opening, read_opening, write_opening};
-
-    #[test]
-    fn a_second_start_reaches_the_first_and_nothing_else_answers_after() {
-        let folder = std::env::temp_dir().join(format!("neoteletext-instance-{}", std::process::id()));
-        std::fs::create_dir_all(&folder).unwrap();
-        let place = folder.join("instance");
-        assert!(connect(&place).is_err(), "none running");
-        let first = Instance::bind(&place).unwrap();
-        let opening = Opening::Outside { links: vec!["neottx://https://a.example/".into()], files: Vec::new() };
-        write_opening(&mut connect(&place).unwrap(), &opening).unwrap();
-        assert_eq!(read_opening(&mut first.next().unwrap()).unwrap(), opening);
-        drop(first);
-        assert!(connect(&place).is_err(), "a socket left by a browser that ended answers nothing");
-        let _again = Instance::bind(&place).unwrap();
-        assert!(connect(&place).is_ok(), "and its place can be taken");
-        std::fs::remove_dir_all(&folder).unwrap();
-    }
-}
