@@ -19,7 +19,7 @@ What this browser has today: each tab keeps its back-and-forward list in memory 
 
 ### 1.1 What makes teletext different
 
-- **A page is a place.** An address names a channel and, after `#`, a page: `https://news.example/teletext/#302` is the weather. A user moves through dozens of pages a minute by typing three digits, so history keeps a page once a day, not once a visit (section 2.1), as Chrome's history page shows a page once a day however often it was visited.
+- **A page is a place.** An address names a channel and, at the end of its path, a page: `https://news.example/teletext/302` is the weather. A user moves through dozens of pages a minute by typing three digits, so history keeps a page once a day, not once a visit (section 2.1), as Chrome's history page shows a page once a day however often it was visited.
 - **Pages change while they are shown.** A pushed update, a new subpage or a clock is not a visit; only a navigation is.
 - **Titles come from the channel.** A channel's title and a page's title are written by the channel's author, so they are hostile text (section 9 and the security analysis).
 - **A channel holds at most 800 pages**, which bounds how much history one channel can make in a day. *To change (decisions 112 and 119):* a channel may hold every page number that may carry a page, 2,022, and the bound on history becomes the one a channel's 2,022 pages give.
@@ -64,7 +64,7 @@ Recording happens in the trusted core, which already knows each navigation and e
 
 ```
 neoteletext-history 1
-2026-10-22	1792656300	3	1	https://news.example/teletext/#302	News Example	WEATHER
+2026-10-22	1792656300	3	1	https://news.example/teletext/302	News Example	WEATHER
 ```
 
 The first line is the format and its version. Each further line is one row: day, last visit, visits, typed, address, channel title, page title, separated by tab characters. A tab is never in a field: the address rules refuse hidden characters (requirement 11.3), and cleaning removes them from titles (requirement 11.5).
@@ -182,7 +182,7 @@ folder	1	0	Bookmarks bar
 folder	2	0	Other bookmarks
 bookmark	3	1	News Example	https://news.example/teletext/
 folder	4	2	Weather
-bookmark	5	4	News Example 302 WEATHER	https://news.example/teletext/#302
+bookmark	5	4	News Example 302 WEATHER	https://news.example/teletext/302
 ```
 
 Each line is a kind, a number, its folder's number (0 for the two that are always there), a name and, for a bookmark, an address, separated by tab characters. Lines are in each folder's order. **Read strictly:** the version line; at most 84 MiB (10 000 items of the longest line, rounded up, each address up to 8,000 octets); numbers unique; a folder's line before anything inside it, so there can be no cycle; depth at most 16; each name and address within its bounds and rules. A line that breaks a rule is dropped and logged, with anything inside it if it is a folder. A fuzz target, `bookmarks_file`, as for history.
@@ -492,7 +492,7 @@ window	120	80	1440	900	0
 active	1
 tab	0	1
 entry	0	0	1792656300	https://news.example/teletext/	news.example
-entry	1	0	1792656360	https://news.example/teletext/#302	WEATHER
+entry	1	0	1792656360	https://news.example/teletext/302	WEATHER
 tab	1	0
 entry	0	0	1792656000	neoteletext:home	NeoTeletext
 closed	0	0

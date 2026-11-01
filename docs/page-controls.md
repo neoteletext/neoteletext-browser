@@ -30,7 +30,7 @@ Each is strip input from the interface (requirement 11.1) and lapses when the pa
 
 - **Kept.** The engine's store keeps every sub-page it receives, within its bound; the decoder now reports a page's sub-pages, in their order, and which is shown.
 - **Shown.** By default the latest received, so a rotating page rotates as broadcast. Choosing one, by Left and Right while the page is open (the engine viewer's keys) or in the sub-page list, shows that one and holds it there until another page is opened or the latest is chosen again.
-- **In the address.** `#302/0002` opens page 302 at sub-page 0002; the address rules accepted the sub-page before and dropped it. The address field shows the sub-page while one is chosen, and Back and history keep it.
+- **In the address.** `<channel>302/0002` opens page 302 at sub-page 0002; the address rules accepted the sub-page before and dropped it. The address field shows the sub-page while one is chosen, and Back and history keep it.
 - **On the page.** While the open page has more than one sub-page, the strip below it shows "2/4" with a step each way, with its tip.
 
 ## 5. Messages

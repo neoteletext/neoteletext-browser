@@ -172,7 +172,7 @@ What would close it: strip input signed by something the interface does not hold
 
 - Only an address that **parsed** as `https` or `http` by the core's address rules, with a host of letters, digits, hyphens and dots, no user name, no hidden characters, a numeric port if any, and at most 8,000 bytes.
 - **Re-serialised** by the core from its parsed parts: scheme, host, port, path, query. The original string is never passed on. Anything that does not round-trip (`https://a\@b`, a percent-encoded host, a host with a trailing dot that changed meaning, backslashes) is refused. This removes the **parser differential** between the core's rules and the operating system's, which is where open-redirect and host-confusion bugs in "open URL" code have historically lived.
-- The fragment of section 7.3 of the spec (`#302`) is a teletext page address; it is never part of a web hand-off.
+- The page in a channel's address (`<channel>302`) is a teletext page address; it is never part of a web hand-off.
 - `http` is allowed and marked not secure in the prompt. (The owner may prefer to refuse it; section 13.)
 
 Everything else is refused in the core before the opener is considered: `file:`, `data:`, `javascript:`, `ms-settings:`, `steam:`, `zoom:`, `vscode:`, mail and telephone schemes, UNC paths, bare paths, and anything beginning with `-`. Because the serialised form always begins `https://` or `http://`, no address can be read as an option by an opener program.
