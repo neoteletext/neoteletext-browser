@@ -41,12 +41,12 @@ pub struct Sleep {
 }
 
 impl Sleep {
-    /// Keeps `message` for the channel's next decoder: its data, not its
-    /// requests.
+    /// Keeps `message` for the channel's next decoder: its data and how to
+    /// read it, not its requests.
     pub fn keep(&mut self, channel: u32, message: ToDecoder) {
         let bytes = match &message {
             ToDecoder::Data(bytes) | ToDecoder::Whole { bytes, .. } => bytes.len(),
-            ToDecoder::End => 0,
+            ToDecoder::End | ToDecoder::Region(_) => 0,
             _ => return,
         };
         let kept = self.kept.entry(channel).or_default();
@@ -132,6 +132,15 @@ mod tests {
         assert!(sleep.awake(2, Some(1), start + SLEEP_AFTER), "its sound plays");
         sleep.set_sounding(&[]);
         assert!(!sleep.awake(2, Some(1), start + SLEEP_AFTER));
+    }
+
+    /// A new decoder reads the channel's pages in its region, as the old one
+    /// did.
+    #[test]
+    fn a_channels_region_is_kept_for_its_next_decoder() {
+        let mut sleep = Sleep::default();
+        sleep.keep(1, ToDecoder::Region(Some(6)));
+        assert_eq!(sleep.kept(1), [ToDecoder::Region(Some(6))]);
     }
 
     #[test]

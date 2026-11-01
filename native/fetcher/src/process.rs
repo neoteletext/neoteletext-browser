@@ -144,7 +144,7 @@ enum Action {
         origin: Origin,
         bytes: Vec<u8>,
     },
-    Ready(u16),
+    Ready(u16, Option<u8>),
     Contents(Vec<u8>),
     /// A page's catalogue of sub-pages, as fetched.
     SubPages(PageAddress, Vec<u8>),
@@ -214,7 +214,7 @@ fn collect(output: Output<'_>, actions: &mut Vec<Action>) {
     }
     actions.push(match output {
         Output::Timer { at } => Action::Timer(at),
-        Output::Event(Event::ServiceReady { initial_page, .. }) => Action::Ready(initial_page.mpp()),
+        Output::Event(Event::ServiceReady { initial_page, region, .. }) => Action::Ready(initial_page.mpp(), region),
         Output::Event(Event::Contents(bytes)) => Action::Contents(bytes.to_vec()),
         Output::Event(Event::SubPages { page, bytes }) => Action::SubPages(page, bytes.to_vec()),
         Output::Event(Event::SubPagesCurrent { page }) => Action::SubPagesCurrent(page),
@@ -419,7 +419,9 @@ pub fn run(channel: &str, allowed: &[IpAddr], proxy: Option<Proxy>) -> Result<()
                 Action::Close(connection) => pump.execute(NetOutput::Close(connection)),
                 Action::Timer(at) => next_tick = Some(next_tick.map_or(at, |current| current.min(at))),
                 Action::Bytes { origin, bytes } => send(&output, &FromFetcher::Page { origin, bytes })?,
-                Action::Ready(page) => {
+                Action::Ready(page, region) => {
+                    // Before any page, so that none is read in another group.
+                    send(&output, &FromFetcher::Region(region))?;
                     send(&output, &FromFetcher::InitialPage(page))?;
                     // The descriptor's links, for the trusted core to decide
                     // (`hyperlinks.md` section 6.4).
@@ -896,6 +898,16 @@ mod tests {
             .collect()
     }
 
+    /// A channel's region goes on with its first page (the engine's
+    /// REQ-WEB-002).
+    #[test]
+    fn a_channels_region_goes_with_its_initial_page() {
+        let mut actions = Vec::new();
+        let initial_page = PageAddress::from_mpp(0x100).unwrap();
+        collect(Output::Event(Event::ServiceReady { name: "Test", initial_page, region: Some(6), secure: true }), &mut actions);
+        assert!(matches!(actions[..], [Action::Ready(0x100, Some(6))]));
+    }
+
     /// Opens the channel `http://tt.example/tt/`, which takes
     /// input, and its push WebSocket, as the loop would from what its
     /// sockets give, at `now` microseconds and on.
@@ -910,7 +922,7 @@ mod tests {
         let mut response = format!("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n", body.len()).into_bytes();
         response.extend_from_slice(body);
         handle(agent, Input::Net(NetInput::Received(ConnectionId::Fetch, &response)), &mut actions);
-        assert!(actions.iter().any(|action| matches!(action, Action::Ready(_))), "the channel is ready");
+        assert!(actions.iter().any(|action| matches!(action, Action::Ready(..))), "the channel is ready");
         ask_for_channel(agent, &|| Instant(now), &mut actions);
         assert!(actions.iter().any(|action| matches!(action, Action::Connect { connection: ConnectionId::Push, .. })), "the push connection opens");
         handle(agent, Input::Net(NetInput::Connected(ConnectionId::Push, PUBLIC)), &mut actions);

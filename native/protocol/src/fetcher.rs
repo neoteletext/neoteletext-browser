@@ -18,8 +18,8 @@ use kinds::KIND_LINKS;
 use kinds::{
     KIND_CERTIFICATE_REFUSED, KIND_CHANNEL_LOG, KIND_CLEAR_SITE_DATA, KIND_CONFINED, KIND_CONNECTING, KIND_CONTENTS, KIND_COOKIE_ANSWER, KIND_COOKIE_QUESTION,
     KIND_COOKIE_SET, KIND_DENIED, KIND_EXCHANGE, KIND_FETCH_SUBPAGE, KIND_FETCH_SUBPAGES, KIND_INITIAL_PAGE, KIND_INVALID_PACKETS, KIND_NOTICE, KIND_PAGE,
-    KIND_PAGE_REDIRECT, KIND_PROGRAM_REDIRECT, KIND_PROXY_FAILED, KIND_PUSHING, KIND_REACHED_ANSWER, KIND_REACHED_QUESTION, KIND_REDIRECTED, KIND_SUBPAGES,
-    KIND_SUBPAGES_MISSING,
+    KIND_PAGE_REDIRECT, KIND_PROGRAM_REDIRECT, KIND_PROXY_FAILED, KIND_PUSHING, KIND_REACHED_ANSWER, KIND_REACHED_QUESTION, KIND_REDIRECTED, KIND_REGION,
+    KIND_SUBPAGES, KIND_SUBPAGES_MISSING,
 };
 #[cfg(feature = "interaction")]
 use kinds::{KIND_INPUT, KIND_MEASURE_ROUND_TRIP, KIND_ROUND_TRIP, KIND_SEND};
@@ -273,6 +273,9 @@ pub enum FromFetcher {
     /// `Event::ServiceReady`): what a tab selects whose address names no
     /// page, before it is shown (REQ-INT-140).
     InitialPage(u16),
+    /// The character set region a channel's descriptor gives, or none: the
+    /// group of a page that names no group (the engine's REQ-WEB-002).
+    Region(Option<u8>),
     /// The push WebSocket's round trip, from a ping to its pong (the
     /// engine's `Event::RoundTrip`, `RETURN-CHANNEL.md` REQ-RCH-016), while
     /// [`ToFetcher::MeasureRoundTrip`] is on. Untrusted: the strip shows
@@ -466,6 +469,10 @@ fn push_live_message(payload: &mut Vec<u8>, message: &FromFetcher) -> Result<u8,
             payload.extend_from_slice(&page.to_be_bytes());
             KIND_INITIAL_PAGE
         }
+        FromFetcher::Region(region) => {
+            crate::decoder::push_region(payload, *region)?;
+            KIND_REGION
+        }
         FromFetcher::Redirected(address) => {
             push_raw_text(payload, address, MAX_ADDRESS);
             KIND_REDIRECTED
@@ -508,6 +515,7 @@ fn read_live_message(kind: u8, fields: &mut Fields<'_>) -> Result<FromFetcher, P
             page_index(page).ok_or(ProtocolError::BadValue("page number"))?;
             FromFetcher::InitialPage(page)
         }
+        KIND_REGION => FromFetcher::Region(crate::decoder::read_region(fields)?),
         KIND_REDIRECTED => FromFetcher::Redirected(raw_text(fields, MAX_ADDRESS, "address too long")?),
         KIND_PAGE_REDIRECT => {
             let (page, sub) = (fields.u16()?, fields.u16()?);
@@ -617,6 +625,7 @@ pub fn write_to_core(out: &mut dyn Write, message: &FromFetcher) -> Result<(), P
         | FromFetcher::InvalidPackets { .. }
         | FromFetcher::Connecting(_)
         | FromFetcher::InitialPage(_)
+        | FromFetcher::Region(_)
         | FromFetcher::Redirected(_)
         | FromFetcher::PageRedirect { .. }
         | FromFetcher::ProgramRedirect(_)
@@ -703,6 +712,7 @@ pub fn read_from_fetcher(input: &mut dyn Read) -> Result<Option<FromFetcher>, Pr
         | KIND_INVALID_PACKETS
         | KIND_CONNECTING
         | KIND_INITIAL_PAGE
+        | KIND_REGION
         | KIND_REDIRECTED
         | KIND_PAGE_REDIRECT
         | KIND_PROGRAM_REDIRECT

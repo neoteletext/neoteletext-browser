@@ -15,6 +15,9 @@ pub(super) const KIND_VIEW: u8 = 55;
 // used, and the next free kind of the whole protocol is taken.
 #[cfg(feature = "links")]
 pub(super) const KIND_LOOK: u8 = 99;
+/// The channel's default character set region, in the next number free
+/// across every pipe.
+pub(super) const KIND_REGION: u8 = 139;
 // Decoder to trusted core.
 pub(super) const KIND_ARRIVED: u8 = 64;
 pub(super) const KIND_FRAME: u8 = 65;

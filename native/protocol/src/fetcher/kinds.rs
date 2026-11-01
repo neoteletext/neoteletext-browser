@@ -52,3 +52,5 @@ pub(super) const KIND_PAGE_REDIRECT: u8 = 135;
 pub(super) const KIND_PROGRAM_REDIRECT: u8 = 136;
 /// A selection the channel refused (`INPUT.md` section 7.12).
 pub(super) const KIND_DENIED: u8 = 137;
+/// A channel's default character set region (REQ-WEB-002).
+pub(super) const KIND_REGION: u8 = 138;

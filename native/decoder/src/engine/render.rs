@@ -76,6 +76,14 @@ impl Engine {
         showing.iter().copied().filter(|&page| !drawable(page)).collect()
     }
 
+    /// The group of a page that names none: the channel's, or with none
+    /// the receiver's own (the engine's decision E.4).
+    pub fn set_region(&mut self, region: Option<u8>) {
+        let mut config = *self.decoder.config();
+        config.default_region = region.unwrap_or(Config::default().default_region);
+        self.decoder.set_config(config);
+    }
+
     /// What is on screen changed (REQ-1558 item 7).
     pub fn screen_changed(&mut self) {
         self.cache.get_mut().screen_changed();

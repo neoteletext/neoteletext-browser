@@ -145,6 +145,10 @@ pub fn run(store_pages: usize) -> Result<(), ProtocolError> {
                 continue;
             }
             ToDecoder::Close => return Ok(()),
+            ToDecoder::Region(region) => {
+                engine.set_region(region);
+                continue;
+            }
             ToDecoder::Opened(page) => {
                 engine.open_page(page);
                 send_sounds(&mut engine, &mut output)?;

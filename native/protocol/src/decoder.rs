@@ -14,13 +14,14 @@ use crate::{Fields, MAX_PAGE_TITLE, ProtocolError, push_count, push_raw_text, ra
 use interface_core::controls::SUBPAGE_ROWS;
 use kinds::{
     KIND_ARRIVED, KIND_ASK_SUBPAGE_ROWS, KIND_AUDIO, KIND_BOOKMARK_FOLDER, KIND_BOOKMARK_FOLDER_END, KIND_BOOKMARK_LINK, KIND_BOOKMARKS_READ, KIND_CHANNEL_LOG,
-    KIND_CLOSE, KIND_CONFINED, KIND_DATA, KIND_END, KIND_FRAME, KIND_MISSING, KIND_OPENED, KIND_SHOWING, KIND_STORE_FULL, KIND_SUBPAGE_COUNT,
+    KIND_CLOSE, KIND_CONFINED, KIND_DATA, KIND_END, KIND_FRAME, KIND_MISSING, KIND_OPENED, KIND_REGION, KIND_SHOWING, KIND_STORE_FULL, KIND_SUBPAGE_COUNT,
     KIND_SUBPAGE_ROWS, KIND_SUBPAGES, KIND_UPDATED, KIND_VIEW, KIND_WHOLE,
 };
 #[cfg(feature = "interaction")]
 use kinds::{KIND_CURSOR, KIND_INPUT_CONTROL};
 #[cfg(feature = "links")]
 use kinds::{KIND_LINKS, KIND_LOOK};
+use neoteletext_core::consts::NIBBLE_MASK;
 
 mod bookmarks;
 mod frame;
@@ -102,6 +103,9 @@ pub enum ToDecoder {
         /// The rows, at most [`interface_core::controls::SUBPAGE_ROWS`].
         range: SubPageRange,
     },
+    /// The group of a page that names none, as the channel's descriptor
+    /// gives it, or none for the decoder's own (the engine's REQ-WEB-002).
+    Region(Option<u8>),
     /// The look of one area of a page under the pointer, hovered or
     /// pressed, or none (INPUT.md section 9.7, the engine's decision
     /// E.127): drawn on the page's own cells.
@@ -283,6 +287,10 @@ pub fn write_to_decoder(out: &mut dyn Write, message: &ToDecoder) -> Result<(), 
             payload.extend_from_slice(bytes);
             KIND_WHOLE
         }
+        ToDecoder::Region(region) => {
+            push_region(&mut payload, *region)?;
+            KIND_REGION
+        }
         ToDecoder::View(view) => {
             view::push_view(&mut payload, view)?;
             KIND_VIEW
@@ -305,6 +313,30 @@ pub fn write_to_decoder(out: &mut dyn Write, message: &ToDecoder) -> Result<(), 
         }
     };
     write_frame(out, kind, &payload)
+}
+
+/// Writes a character set region, which a fetcher hands on as a decoder takes
+/// it: four bits (the engine's decision E.4), or nothing for none.
+pub(crate) fn push_region(payload: &mut Vec<u8>, region: Option<u8>) -> Result<(), ProtocolError> {
+    if let Some(region) = region {
+        if region > NIBBLE_MASK {
+            return Err(ProtocolError::BadValue("region"));
+        }
+        payload.push(region);
+    }
+    Ok(())
+}
+
+/// Reads what [`push_region`] wrote.
+pub(crate) fn read_region(fields: &mut Fields<'_>) -> Result<Option<u8>, ProtocolError> {
+    if fields.is_empty() {
+        return Ok(None);
+    }
+    let region = fields.u8()?;
+    if region > NIBBLE_MASK {
+        return Err(ProtocolError::BadValue("region"));
+    }
+    Ok(Some(region))
 }
 
 /// Reads one message from the trusted core, or `None` at a clean end.
@@ -341,6 +373,7 @@ pub fn read_from_core(input: &mut dyn Read) -> Result<Option<ToDecoder>, Protoco
             }
             return Ok(Some(ToDecoder::Whole { packets: flags & 1 != 0, pushed: flags & 2 != 0, bytes: crate::tail(payload, WHOLE_FLAGS_BYTES) }));
         }
+        KIND_REGION => ToDecoder::Region(read_region(&mut fields)?),
         KIND_VIEW => ToDecoder::View(view::read_view(&mut fields)?),
         KIND_ASK_SUBPAGE_ROWS => {
             let page = fields.display_page()?;

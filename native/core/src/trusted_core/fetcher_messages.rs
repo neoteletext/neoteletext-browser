@@ -101,6 +101,7 @@ impl Core {
             FromFetcher::ChannelLog { level, page, text } => self.channel_log(channel, level, page, &text),
             FromFetcher::InvalidPackets { total } => self.invalid_packets(channel, total),
             FromFetcher::InitialPage(page) => self.initial_page(channel, page)?,
+            FromFetcher::Region(region) => self.tell(channel, ToDecoder::Region(region)),
             FromFetcher::Connecting(connecting) => self.connecting(channel, connecting)?,
             FromFetcher::SubPagesMissing { page } => {
                 let changed = self.channel_subpages(channel).and_then(|subpages| subpages.missing(page));

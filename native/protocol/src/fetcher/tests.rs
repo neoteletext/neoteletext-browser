@@ -110,6 +110,23 @@ fn an_initial_page_is_a_page() {
     assert!(read_from_fetcher(&mut bytes.as_slice()).is_err());
 }
 
+/// A hostile fetcher may write any byte: a region is four bits, and one.
+#[test]
+fn a_region_is_four_bits() {
+    let read = |payload: &[u8]| {
+        let mut bytes = Vec::new();
+        write_to_core(&mut bytes, &FromFetcher::Region(None)).unwrap();
+        let kind_and_length = bytes.len();
+        bytes[kind_and_length - 4..].copy_from_slice(&u32::try_from(payload.len()).unwrap().to_be_bytes());
+        bytes.extend_from_slice(payload);
+        read_from_fetcher(&mut bytes.as_slice())
+    };
+    assert_eq!(read(&[]).unwrap().unwrap(), FromFetcher::Region(None));
+    assert_eq!(read(&[6]).unwrap().unwrap(), FromFetcher::Region(Some(6)));
+    assert!(read(&[16]).is_err());
+    assert!(read(&[6, 6]).is_err());
+}
+
 /// Decision 62: cookie messages within their bounds only.
 #[test]
 fn cookie_messages_are_bounded() {

@@ -112,6 +112,24 @@ fn pushed(tti: &[u8], links: Option<&[u8]>) -> Vec<u8> {
 // REQ-1504: a frame whose header does not set the erase bit changes the
 // rows it carries and keeps the others.
 #[cfg(feature = "links")]
+/// A channel's `region` gives the group of a page that names none, here
+/// Greek, whose option 7 the page's header holds; a channel with none reads
+/// as the receiver does (the engine's REQ-WEB-002).
+#[test]
+fn a_channels_region_is_the_group_of_its_pages() {
+    const GREEK_GROUP: u8 = 6;
+    let row = |region: Option<u8>| -> String {
+        let mut engine = Engine::new();
+        engine.set_region(region);
+        engine.feed(b"PN,10000\nSC,0000\nPS,8380\nOL,1,abc\n");
+        engine.finish();
+        let (grid, _) = engine.grid(0x100).unwrap();
+        grid.cells[1].iter().filter_map(|cell| if let Glyph::Char(character) = cell.glyph { Some(to_unicode(character).base) } else { None }).collect()
+    };
+    assert!(row(Some(GREEK_GROUP)).starts_with("\u{3B1}\u{3B2}\u{3B3}"), "{:?}", row(Some(GREEK_GROUP)));
+    assert!(!row(None).contains('\u{3B1}'), "{:?}", row(None));
+}
+
 #[test]
 fn changed_rows_keep_the_other_rows() {
     let row = |engine: &Engine, number: usize| -> String {

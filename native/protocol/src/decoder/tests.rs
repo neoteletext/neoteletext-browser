@@ -29,6 +29,8 @@ fn every_kind_round_trips() {
         ToDecoder::End,
         ToDecoder::Showing(vec![0x100, 0x899]),
         ToDecoder::Close,
+        ToDecoder::Region(Some(NIBBLE_MASK)),
+        ToDecoder::Region(None),
         ToDecoder::View(View { page: 0x302, reveal: true, hold: false, mix: true, subpage: Some(2) }),
         ToDecoder::View(View { page: 0x100, ..View::default() }),
         ToDecoder::SubPageRows { page: 0x210, range: SubPageRange { first: 8_126, count: 64 } },
@@ -177,4 +179,10 @@ fn showing_holds_display_pages_and_no_more_than_a_channel_has() {
     assert!(write(vec![0x100, 0x899]).is_ok());
     assert!(write(vec![0x100, 0x1A0]).is_err(), "a hexadecimal page");
     assert!(write(vec![0x100; PAGES + 1]).is_err(), "too many");
+}
+
+/// A region is four bits, on either side of the pipe.
+#[test]
+fn a_region_over_four_bits_is_refused() {
+    assert!(write_to_decoder(&mut Vec::new(), &ToDecoder::Region(Some(NIBBLE_MASK + 1))).is_err());
 }
