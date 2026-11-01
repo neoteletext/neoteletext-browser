@@ -62,7 +62,7 @@ impl Core {
             FromFetcher::Notice(text) => self.log(Level::Warning, Some(channel), &format!("channel {channel}: {}", clean(&text, MAX_NOTICE))),
             FromFetcher::Denied { status, place } => self.denied(channel, status, &place)?,
             FromFetcher::Redirected(location) => self.redirected(channel, &location)?,
-            FromFetcher::PageRedirect { page, sub } => self.page_redirected(channel, page, sub, None)?,
+            FromFetcher::PageRedirect { page, sub, query } => self.page_redirected(channel, page, sub, query.as_deref())?,
             FromFetcher::ProgramRedirect(location) => self.program_redirected(channel, &location)?,
             // Said in the trusted core's own words, of the channel's host as
             // the strip shows it: a fetcher cannot write the strip.

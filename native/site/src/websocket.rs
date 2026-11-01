@@ -3,6 +3,8 @@
 //! (masked, section 5.3) and written to it (unmasked). Fragmented messages
 //! are refused; no client of this server sends them.
 
+use neoteletext_web::consts::PUSH_SUBPROTOCOL;
+use neoteletext_web::ws::offers_subprotocol;
 use std::io::{self, Read, Write};
 use std::net::TcpStream;
 
@@ -26,8 +28,16 @@ pub const PING: u8 = 0x9;
 pub const PONG: u8 = 0xA;
 
 /// The `Sec-WebSocket-Accept` answer for a request head, or `None` when
-/// the head is not a WebSocket upgrade.
+/// the head is not a WebSocket upgrade to the push subprotocol
+/// (`INPUT.md` section 5.1).
 pub fn accept(head: &str) -> Option<String> {
+    let offered = head
+        .lines()
+        .filter_map(|line| line.split_once(':'))
+        .any(|(name, value)| name.trim().eq_ignore_ascii_case("sec-websocket-protocol") && offers_subprotocol(value.as_bytes(), PUSH_SUBPROTOCOL));
+    if !offered {
+        return None;
+    }
     let key = head.lines().find_map(|line| {
         let (name, value) = line.split_once(':')?;
         name.trim().eq_ignore_ascii_case("sec-websocket-key").then(|| value.trim().to_owned())
@@ -38,7 +48,10 @@ pub fn accept(head: &str) -> Option<String> {
 
 /// Answers the opening handshake.
 pub fn handshake(stream: &mut TcpStream, accept: &str) -> io::Result<()> {
-    write!(stream, "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: {accept}\r\n\r\n")?;
+    write!(
+        stream,
+        "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Protocol: {PUSH_SUBPROTOCOL}\r\nSec-WebSocket-Accept: {accept}\r\n\r\n"
+    )?;
     stream.flush()
 }
 
@@ -143,7 +156,8 @@ mod tests {
     #[test]
     fn the_accept_value_is_rfc_6455s_example() {
         // RFC 6455 section 1.3.
-        let head = "GET /chat HTTP/1.1\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n";
-        assert_eq!(accept(head).as_deref(), Some("s3pPLMBiTxaQ9kYGzzhZRbK+xOo="));
+        let head = format!("GET /chat HTTP/1.1\r\nSec-WebSocket-Protocol: {PUSH_SUBPROTOCOL}\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n");
+        assert_eq!(accept(&head).as_deref(), Some("s3pPLMBiTxaQ9kYGzzhZRbK+xOo="));
+        assert_eq!(accept("GET /chat HTTP/1.1\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n"), None, "no subprotocol, no connection");
     }
 }

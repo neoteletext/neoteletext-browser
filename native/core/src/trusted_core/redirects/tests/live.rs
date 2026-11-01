@@ -39,7 +39,7 @@ fn live(name: &str) -> (Test, u32) {
 }
 
 fn redirected(test: &mut Test, channel: u32, page: u16, sub: u16) {
-    test.core.fetched(channel, FromFetcher::PageRedirect { page, sub }).unwrap();
+    test.core.fetched(channel, FromFetcher::PageRedirect { page, sub, query: None }).unwrap();
 }
 
 /// The pages the interface was told to open since the last look.
@@ -63,6 +63,19 @@ fn a_page_redirect_moves_the_tab_and_its_address() {
     assert_eq!(shown(&mut test), [key], "the interface is told");
     test.core.intent(ToCore::Opened(Some(key))).unwrap();
     assert_eq!(test.core.typing.selection(channel), Some((0x200, SUBCODE_ANY)), "a selection, told to the channel");
+}
+
+// TODO-1731 item 5: a redirect that keeps a query keeps it in the address, as
+// a viewer sees it, so the SELECT that follows carries it; and one no map
+// reads moves nothing.
+#[test]
+fn a_page_redirect_keeps_its_query_in_the_address() {
+    let (mut test, channel) = live("query");
+    test.core.fetched(channel, FromFetcher::PageRedirect { page: 0x200, sub: SUBCODE_ANY, query: Some("a=1".into()) }).unwrap();
+    assert_eq!(text(&test), "https://live.invalid/channel/200?a=1");
+    let before = text(&test).to_owned();
+    test.core.fetched(channel, FromFetcher::PageRedirect { page: 0x300, sub: SUBCODE_ANY, query: Some("no pairs".into()) }).unwrap();
+    assert_eq!(text(&test), before, "hostile text from the fetcher");
 }
 
 // DEC-1707: nothing in it asks where the keys are: here no session was ever

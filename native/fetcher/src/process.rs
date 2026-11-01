@@ -204,6 +204,13 @@ fn collect(output: Output<'_>, actions: &mut Vec<Action>) {
         }
         return;
     }
+    // It ended for good and is not tried again (`INPUT.md` section 5.1).
+    if let Output::Event(Event::PushStopped(stop)) = output {
+        eprintln!("neoteletext-fetcher: the push connection stopped ({stop:?}); it is not tried again");
+        actions.push(Action::Tell(FromFetcher::Notice(format!("the push connection stopped: {stop:?}"))));
+        actions.push(Action::Push(false));
+        return;
+    }
     actions.push(match output {
         Output::Timer { at } => Action::Timer(at),
         Output::Event(Event::ServiceReady { initial_page, .. }) => Action::Ready(initial_page.mpp()),
@@ -271,8 +278,8 @@ fn collect(output: Output<'_>, actions: &mut Vec<Action>) {
         }
         // A channel's program moved the viewer (`INPUT.md` section 7.11): the
         // trusted core decides, and an address goes by its own rules.
-        Output::Event(Event::Redirect(RedirectRecord::Page { page, subcode })) if redirect_in_bounds(page.mpp(), subcode.value()) => {
-            Action::Tell(FromFetcher::PageRedirect { page: page.mpp(), sub: subcode.value() })
+        Output::Event(Event::Redirect(RedirectRecord::Page { page, subcode, parameters })) if redirect_in_bounds(page.mpp(), subcode.value()) => {
+            Action::Tell(FromFetcher::PageRedirect { page: page.mpp(), sub: subcode.value(), query: parameters.map(str::to_owned) })
         }
         Output::Event(Event::Redirect(RedirectRecord::Address(address))) => Action::Tell(FromFetcher::ProgramRedirect(address.to_owned())),
         Output::Event(event) => Action::Tell(FromFetcher::Notice(format!("{event:?}"))),
@@ -790,14 +797,14 @@ mod tests {
     fn a_redirect_record_is_told() {
         let mut actions = Vec::new();
         let page = PageAddress::from_mpp(0x302).unwrap();
-        collect(Output::Event(Event::Redirect(RedirectRecord::Page { page, subcode: SubCode::new(2) })), &mut actions);
+        collect(Output::Event(Event::Redirect(RedirectRecord::Page { page, subcode: SubCode::new(2), parameters: None })), &mut actions);
         collect(Output::Event(Event::Redirect(RedirectRecord::Address("file:///etc/passwd"))), &mut actions);
-        assert!(matches!(&actions[0], Action::Tell(FromFetcher::PageRedirect { page: 0x302, sub: 2 })));
+        assert!(matches!(&actions[0], Action::Tell(FromFetcher::PageRedirect { page: 0x302, sub: 2, query: None })));
         assert!(matches!(&actions[1], Action::Tell(FromFetcher::ProgramRedirect(address)) if address == "file:///etc/passwd"));
         // A page the engine reads and this browser has no slot for goes to
         // the log, as any other event: the pipe's reader would refuse it.
         let lettered = PageAddress::from_mpp(0x1A0).unwrap();
-        collect(Output::Event(Event::Redirect(RedirectRecord::Page { page: lettered, subcode: SubCode::new(2) })), &mut actions);
+        collect(Output::Event(Event::Redirect(RedirectRecord::Page { page: lettered, subcode: SubCode::new(2), parameters: None })), &mut actions);
         assert!(matches!(&actions[2], Action::Tell(FromFetcher::Notice(_))));
     }
 
@@ -917,7 +924,8 @@ mod tests {
         let key = request.lines().find_map(|line| line.strip_prefix("Sec-WebSocket-Key: ")).expect("a key").trim().to_owned();
         let accept = neoteletext_web::ws::accept_for(key.as_bytes());
         let upgrade = format!(
-            "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: {}\r\n\r\n",
+            "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Protocol: {}\r\nSec-WebSocket-Accept: {}\r\n\r\n",
+            neoteletext_web::consts::PUSH_SUBPROTOCOL,
             std::str::from_utf8(&accept).unwrap()
         );
         handle(agent, Input::Net(NetInput::Received(ConnectionId::Push, upgrade.as_bytes())), &mut actions);

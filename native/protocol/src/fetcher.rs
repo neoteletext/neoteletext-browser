@@ -141,6 +141,8 @@ pub enum FromFetcher {
         page: u16,
         /// The sub-code.
         sub: u16,
+        /// The query the place keeps, without its `?`, not yet checked.
+        query: Option<String>,
     },
     /// A REDIRECT record of the channel's program naming another channel's
     /// address, not yet checked (REQ-1688).
@@ -468,10 +470,11 @@ fn push_live_message(payload: &mut Vec<u8>, message: &FromFetcher) -> Result<u8,
             push_raw_text(payload, address, MAX_ADDRESS);
             KIND_REDIRECTED
         }
-        FromFetcher::PageRedirect { page, sub } => {
+        FromFetcher::PageRedirect { page, sub, query } => {
             check_redirect(*page, *sub)?;
             payload.extend_from_slice(&page.to_be_bytes());
             payload.extend_from_slice(&sub.to_be_bytes());
+            push_raw_text(payload, query.as_deref().unwrap_or_default(), MAX_ADDRESS);
             KIND_PAGE_REDIRECT
         }
         FromFetcher::ProgramRedirect(address) => {
@@ -509,7 +512,8 @@ fn read_live_message(kind: u8, fields: &mut Fields<'_>) -> Result<FromFetcher, P
         KIND_PAGE_REDIRECT => {
             let (page, sub) = (fields.u16()?, fields.u16()?);
             check_redirect(page, sub)?;
-            FromFetcher::PageRedirect { page, sub }
+            let query = raw_text(fields, MAX_ADDRESS, "query too long")?;
+            FromFetcher::PageRedirect { page, sub, query: (!query.is_empty()).then_some(query) }
         }
         KIND_PROGRAM_REDIRECT => FromFetcher::ProgramRedirect(raw_text(fields, MAX_ADDRESS, "address too long")?),
         KIND_DENIED => FromFetcher::Denied { status: fields.u16()?, place: raw_text(fields, MAX_DENIED_PLACE, "text too long")? },
