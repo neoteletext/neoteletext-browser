@@ -53,9 +53,10 @@ fn browser(painter: &mut Painter, pages: &[Sample]) -> Browser {
         0,
     );
     browser.set_channel(channel);
-    // These tests draw the wall of pages; a new window shows the page
-    // alone (decision 126).
+    // These tests draw the wall of pages and the overview; a new window
+    // shows the page alone (decision 126) and no overview.
     browser.wall_mut().toggle_single(0);
+    browser.toggle_overview_shown();
     browser
 }
 
