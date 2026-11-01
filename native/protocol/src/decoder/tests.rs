@@ -3,7 +3,7 @@
 
 #[cfg(feature = "interaction")]
 use super::kinds::KIND_INPUT_CONTROL;
-use super::kinds::{KIND_ARRIVED, KIND_BOOKMARK_FOLDER, KIND_END, KIND_FONT, KIND_FRAME};
+use super::kinds::{KIND_ARRIVED, KIND_BOOKMARK_FOLDER, KIND_END, KIND_FRAME};
 use super::*;
 use crate::frame::PAGE_DOTS;
 use crate::{MAX_PAGE_TITLE, ProtocolError};
@@ -32,8 +32,6 @@ fn every_kind_round_trips() {
         ToDecoder::View(View { page: 0x302, reveal: true, hold: false, mix: true, subpage: Some(2) }),
         ToDecoder::View(View { page: 0x100, ..View::default() }),
         ToDecoder::SubPageRows { page: 0x210, range: SubPageRange { first: 8_126, count: 64 } },
-        ToDecoder::Font(crate::settings::TeletextFont::Bedstead),
-        ToDecoder::Font(crate::settings::TeletextFont::NotoTeletext),
     ] {
         let mut bytes = Vec::new();
         write_to_decoder(&mut bytes, &message).unwrap();
@@ -179,16 +177,4 @@ fn showing_holds_display_pages_and_no_more_than_a_channel_has() {
     assert!(write(vec![0x100, 0x899]).is_ok());
     assert!(write(vec![0x100, 0x1A0]).is_err(), "a hexadecimal page");
     assert!(write(vec![0x100; PAGES + 1]).is_err(), "too many");
-}
-
-/// The font message carries one of the two fonts the setting names; any
-/// other byte is refused, as every malformed message is.
-#[test]
-fn a_font_the_protocol_does_not_name_is_refused() {
-    let mut bytes = Vec::new();
-    write_frame(&mut bytes, KIND_FONT, &[2]).unwrap();
-    assert!(read_from_core(&mut bytes.as_slice()).is_err());
-    let mut bytes = Vec::new();
-    write_frame(&mut bytes, KIND_FONT, &[1, 0]).unwrap();
-    assert!(read_from_core(&mut bytes.as_slice()).is_err(), "nothing after the font");
 }

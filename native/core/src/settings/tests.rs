@@ -20,7 +20,6 @@ fn settings_round_trip_through_their_file() {
         cookies: crate::cookies::Mode::Close,
         cookie_block: vec!["https://news.example/teletext/".into()],
         remote: RemotePlace { mode: RemoteMode::Floating, x: 900, y: 140 },
-        font: TeletextFont::Bedstead,
     };
     let (read, dropped) = Settings::read(&settings.text());
     assert_eq!((read, dropped), (settings, Dropped::default()));
@@ -85,18 +84,14 @@ fn the_settings_are_this_formats_file_and_keep_the_update_setting() {
     assert!(Settings::default().check_updates, "on by default");
 }
 
-/// REQ-1584: the font is kept as a `font` line, Noto Teletext by
-/// default, and read strictly.
+/// DEC-1761: Noto Teletext is the only font, so a settings file written
+/// while there was a choice loads whole. Its `font` line names nothing known
+/// and is dropped and logged as any such line is; the next save leaves it out.
 #[test]
-fn the_font_is_kept_and_noto_teletext_is_the_default() {
-    assert_eq!(Settings::default().font, TeletextFont::NotoTeletext);
-    for (font, line) in [(TeletextFont::Bedstead, "font bedstead"), (TeletextFont::NotoTeletext, "font noto-teletext")] {
-        let settings = Settings { font, ..Settings::default() };
-        assert!(settings.text().lines().any(|each| each == line), "{line}");
-        assert_eq!(Settings::read(&settings.text()), (settings, Dropped::default()));
-    }
-    let (read, dropped) = Settings::read(&format!("{VERSION_LINE}\nfont bedstead\nfont Noto\n"));
-    assert_eq!((read.font, dropped.len()), (TeletextFont::Bedstead, 1), "a font not named is dropped; the one before stands");
+fn a_stored_font_line_is_dropped_and_the_rest_still_loads() {
+    let (read, dropped) = Settings::read(&format!("{VERSION_LINE}\nfont bedstead\nvolume 3\nfont noto-teletext\nsound off\n"));
+    assert_eq!((read.volume, read.sound, dropped.len()), (3, false, 2));
+    assert!(read.text().lines().all(|line| !line.starts_with("font")), "not written back");
 }
 
 /// neoteletext-common's DEC-1652: a new browser's home is the home channel,

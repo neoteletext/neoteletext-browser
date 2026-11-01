@@ -12,7 +12,6 @@ fn view() -> SettingsView {
         local: vec!["192.168.1.20".into()],
         restore_session: true,
         cookies: CookieMode::Close,
-        font: TeletextFont::Bedstead,
         refusal: Some("Not an address on this computer or the local network".into()),
     }
 }
@@ -36,8 +35,6 @@ fn the_view_and_every_change_round_trip() {
         SettingChange::Remote(RemotePlace { mode: RemoteMode::Floating, x: 900, y: 140 }),
         SettingChange::Remote(RemotePlace { mode: RemoteMode::Docked, x: 0, y: 0 }),
         SettingChange::CheckUpdates(false),
-        SettingChange::Font(TeletextFont::Bedstead),
-        SettingChange::Font(TeletextFont::NotoTeletext),
     ] {
         let mut payload = Vec::new();
         push_change(&mut payload, &change).unwrap();
@@ -56,7 +53,6 @@ fn what_breaks_a_bound_is_refused() {
     assert!(read_change(&mut Fields::new(&[CHANGE_SOUND, 2])).is_err());
     assert!(read_change(&mut Fields::new(&[CHANGE_PROXY, 3])).is_err());
     assert!(read_change(&mut Fields::new(&[CHANGE_CHECK_UPDATES, 2])).is_err());
-    assert!(read_change(&mut Fields::new(&[CHANGE_FONT, 2])).is_err(), "no third font");
 }
 
 #[test]

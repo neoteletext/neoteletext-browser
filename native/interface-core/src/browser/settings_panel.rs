@@ -12,7 +12,7 @@ use alloc::vec::Vec;
 use crate::browser::{Browser, Output};
 use crate::editor::Editor;
 use crate::geometry::Rect;
-use crate::settings::{CookieMode, ProxyView, SettingChange, SettingsView, TeletextFont, UpdateView};
+use crate::settings::{CookieMode, ProxyView, SettingChange, SettingsView, UpdateView};
 
 mod draw;
 mod input;
@@ -85,7 +85,6 @@ struct Controls {
     removes: Vec<(usize, Rect)>,
     restore_on: Rect,
     restore_off: Rect,
-    fonts: Vec<(TeletextFont, Rect)>,
     cookie_modes: Vec<(CookieMode, Rect)>,
     manage_cookies: Rect,
     updates_on: Rect,

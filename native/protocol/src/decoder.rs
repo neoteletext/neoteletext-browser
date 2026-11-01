@@ -14,7 +14,7 @@ use crate::{Fields, MAX_PAGE_TITLE, ProtocolError, push_count, push_raw_text, ra
 use interface_core::controls::SUBPAGE_ROWS;
 use kinds::{
     KIND_ARRIVED, KIND_ASK_SUBPAGE_ROWS, KIND_AUDIO, KIND_BOOKMARK_FOLDER, KIND_BOOKMARK_FOLDER_END, KIND_BOOKMARK_LINK, KIND_BOOKMARKS_READ, KIND_CHANNEL_LOG,
-    KIND_CLOSE, KIND_CONFINED, KIND_DATA, KIND_END, KIND_FONT, KIND_FRAME, KIND_MISSING, KIND_OPENED, KIND_SHOWING, KIND_STORE_FULL, KIND_SUBPAGE_COUNT,
+    KIND_CLOSE, KIND_CONFINED, KIND_DATA, KIND_END, KIND_FRAME, KIND_MISSING, KIND_OPENED, KIND_SHOWING, KIND_STORE_FULL, KIND_SUBPAGE_COUNT,
     KIND_SUBPAGE_ROWS, KIND_SUBPAGES, KIND_UPDATED, KIND_VIEW, KIND_WHOLE,
 };
 #[cfg(feature = "interaction")]
@@ -112,10 +112,6 @@ pub enum ToDecoder {
         /// The area and whether it is pressed.
         look: Option<(crate::links::Area, bool)>,
     },
-    /// The font pages are drawn in: sent first to every decoder of a
-    /// channel and again when the setting changes, when the pages on screen
-    /// are drawn again in it.
-    Font(crate::settings::TeletextFont),
 }
 
 /// From a decoder to the trusted core.
@@ -307,10 +303,6 @@ pub fn write_to_decoder(out: &mut dyn Write, message: &ToDecoder) -> Result<(), 
             }
             KIND_LOOK
         }
-        ToDecoder::Font(font) => {
-            payload.push(crate::settings::push_font(*font));
-            KIND_FONT
-        }
     };
     write_frame(out, kind, &payload)
 }
@@ -360,7 +352,6 @@ pub fn read_from_core(input: &mut dyn Read) -> Result<Option<ToDecoder>, Protoco
             let look = if fields.is_empty() { None } else { Some((crate::links::read_area(&mut fields)?, fields.flag("pressed")?)) };
             ToDecoder::Look { page, look }
         }
-        KIND_FONT => ToDecoder::Font(crate::settings::read_font(&mut fields)?),
         other => return Err(ProtocolError::UnknownKind(other)),
     };
     fields.end()?;

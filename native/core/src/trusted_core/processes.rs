@@ -13,7 +13,6 @@ use neoteletext::outbox::Outbox;
 use neoteletext::settings::{self as stored, Settings};
 use protocol::decoder::{BookmarkEntry, FromDecoder, MAX_BOOKMARK_ENTRIES, MAX_CHUNK, ToDecoder, read_from_decoder, write_to_decoder};
 use protocol::fetcher::{FETCHER_END_WAIT, read_from_fetcher};
-use protocol::settings::TeletextFont;
 use protocol::{ProtocolError, read_from_interface};
 
 use super::Event;
@@ -179,16 +178,8 @@ pub(super) fn end(helper: &mut Helper) {
     let _ = helper.wait();
 }
 
-/// Starts a decoder for `channel`, whose messages arrive as events, told
-/// first the font pages are drawn in.
-pub(super) fn start_decoder(
-    broker: &Arc<Broker>,
-    channel: u32,
-    generation: u64,
-    store_pages: usize,
-    font: TeletextFont,
-    events: Sender<Event>,
-) -> Result<Decoder, String> {
+/// Starts a decoder for `channel`, whose messages arrive as events.
+pub(super) fn start_decoder(broker: &Arc<Broker>, channel: u32, generation: u64, store_pages: usize, events: Sender<Event>) -> Result<Decoder, String> {
     let mut child = spawn(broker, Program::Decoder, &[String::from("--store-pages"), store_pages.to_string()], false)?;
     let output = child.stdout.take().ok_or("the decoder has no output")?;
     let input = Outbox::new(child.stdin.take().ok_or("the decoder has no input")?);
@@ -199,11 +190,7 @@ pub(super) fn start_decoder(
         move |message| Event::Decoded(channel, generation, message),
         move |end| Event::DecoderEnded(channel, generation, end),
     );
-    let mut decoder = Decoder::new(child, input, generation);
-    // A decoder that cannot be written to has stopped; its reader reports
-    // that.
-    let _ = decoder.tell(&ToDecoder::Font(font));
-    Ok(decoder)
+    Ok(Decoder::new(child, input, generation))
 }
 
 /// Starts a decoder to read another browser's bookmark file (decision

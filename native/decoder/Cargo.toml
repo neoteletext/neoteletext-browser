@@ -34,10 +34,10 @@ neoteletext-input = { workspace = true, optional = true }
 neoteletext-audio.workspace = true
 # The engine's "modern-classic" profile (its decision E.71) with the Colour
 # Map of Levels 2.5 and 3.5, which that profile leaves out: decision 6 is
-# 32 colours, and decision 60 restores them.
-neoteletext-core = { workspace = true, features = ["modern-classic", "level35-32colors"] }
-# The engine's reader of loaded fonts, for the bundled Noto Teletext font.
-neoteletext-formats = { workspace = true, features = ["bdf"] }
+# 32 colours, and decision 60 restores them. And `extended-sets`, so that a
+# page in any language the engine supports shows (its DEC-1761).
+neoteletext-core = { workspace = true, features = ["modern-classic", "level35-32colors", "extended-sets"] }
+neoteletext-formats.workspace = true
 # The reader of a live channel's LINKS records (neoteletext-common's
 # REQ-1494): a pushed sub-page's Link Extension links.
 neoteletext-web.workspace = true

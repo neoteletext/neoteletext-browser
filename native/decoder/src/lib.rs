@@ -2,9 +2,8 @@
 //! the browser opens (T42 recordings and TTI page files, DEC-1762) go
 //! through its format detection and readers into its decoder and page
 //! store; pages are composed at the presentation level of
-//! the engine's default profile and rendered by its row renderer, in
-//! Bedstead or the engine's Noto Teletext font as the user chose, into
-//! palette indices.
+//! the engine's default profile and rendered by its row renderer, in the
+//! engine's compiled Noto Teletext font, into palette indices.
 //!
 //! Everything here reads untrusted bytes, which is why it runs in a process
 //! of its own with no network and no files (design section 5).
@@ -27,7 +26,6 @@
 mod changes;
 mod engine;
 mod flash;
-mod fonts;
 #[cfg(feature = "interaction")]
 mod input_records;
 #[cfg(feature = "links")]

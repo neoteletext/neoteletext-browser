@@ -44,8 +44,6 @@ pub struct SettingsView {
     pub restore_session: bool,
     /// What is kept of cookies (requirement 21.7).
     pub cookies: CookieMode,
-    /// The font pages are drawn in.
-    pub font: TeletextFont,
     /// Why the last change was refused, if it was.
     pub refusal: Option<String>,
 }
@@ -76,22 +74,6 @@ pub enum SettingChange {
     Remote(RemotePlace),
     /// Check for updates, or not (`installation-and-updates.md` section 3.4).
     CheckUpdates(bool),
-    /// The font pages are drawn in.
-    Font(TeletextFont),
-}
-
-/// The font a page's text is drawn in. Row 0, mosaics and the G3
-/// characters are the engine's own whichever is chosen, and a character
-/// the Noto-derived font lacks is drawn in Bedstead.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum TeletextFont {
-    /// Bedstead 3.261, the engine's one compiled-in font (the engine's
-    /// REQ-FNT-001).
-    Bedstead,
-    /// "Noto Teletext", the engine's Noto-derived 12 by 20 font (the
-    /// engine's REQ-FNT-012), bundled with the decoder: the setting's
-    /// default, on the owner's instruction to see it in the browser.
-    NotoTeletext,
 }
 
 /// The furthest a floating remote's corner may be from the window's, in

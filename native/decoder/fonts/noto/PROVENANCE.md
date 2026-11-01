@@ -1,8 +1,0 @@
-# Noto Teletext, bundled with the decoder
-
-`noto-teletext.bdf` is the engine's `third_party/noto/noto-teletext.bdf`, byte for byte, at the engine commit the workspace pins (`75db08c4bff91c78867c7d9b9066ed55803bbaaf`; the file itself last changed in engine commit `5fff9cf44711dae12241970dfacd36b321a7e98f`, 18 October 2026). It is "Noto Teletext", the engine's Noto-derived 12 × 20 font of 848 characters (the engine's decision E.77 and REQ-FNT-012), made by the engine's `third_party/noto/convert.py` from the Noto source fonts that `third_party/noto/sources.txt` there pins by checksum.
-
-- **SHA-256:** `82fe9e2bb463bfc301ba4509c21542fecef7f5a8a27d0c87de0f5a529a7a4a4a`, as the engine's `third_party/noto/PROVENANCE.md` records it; the decoder's test `the_bundled_font_is_the_engines_and_its_reader_takes_it` checks the copy against it.
-- **Licence:** the SIL Open Font License 1.1, reproduced in `OFL.txt` beside it with the copyright line of every Noto source, copied from the engine's `third_party/noto/OFL.txt`. The licence declares no Reserved Font Name. The converted font is a Modified Version under the licence and is distributed under it, inside the decoder program; it is never sold on its own.
-- **Why it is here:** the user's "Font" setting draws pages in it (the browser's decision recorded in rdm for the setting). The decoder may open no file, so the font is compiled into it with `include_bytes!` and read at run time by the engine's bounded reader of loaded fonts (`src/fonts.rs`).
-- **When the engine's font changes:** copy the file again from the engine at the new pin, and update the commit and checksum here and in the test.

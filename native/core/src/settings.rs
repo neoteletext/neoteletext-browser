@@ -8,7 +8,7 @@ use crate::dropped::Dropped;
 use std::net::IpAddr;
 use std::path::{Path, PathBuf};
 
-use interface_core::settings::{MAX_REMOTE_PLACE, RemoteMode, RemotePlace, TeletextFont};
+use interface_core::settings::{MAX_REMOTE_PLACE, RemoteMode, RemotePlace};
 
 use crate::address;
 use crate::private_file::{Read, read_text};
@@ -74,8 +74,6 @@ pub struct Settings {
     pub cookie_block: Vec<String>,
     /// Where the remote control is (`remote-control.md`, decision 68).
     pub remote: RemotePlace,
-    /// The font pages are drawn in.
-    pub font: TeletextFont,
 }
 
 impl Default for Settings {
@@ -92,10 +90,6 @@ impl Default for Settings {
             cookies: crate::cookies::Mode::Keep,
             cookie_block: Vec::new(),
             remote: RemotePlace::default(),
-            // The owner's instruction of 31 October 2026, to see the
-            // engine's Noto Teletext font in the browser; Bedstead is the
-            // setting's other value.
-            font: TeletextFont::NotoTeletext,
         }
     }
 }
@@ -111,18 +105,6 @@ fn read_remote(value: &str) -> Option<RemotePlace> {
         _ => return None,
     };
     (words.next().is_none() && place.x <= MAX_REMOTE_PLACE && place.y <= MAX_REMOTE_PLACE).then_some(place)
-}
-
-/// The font's word in its line.
-const fn font_word(font: TeletextFont) -> &'static str {
-    match font {
-        TeletextFont::Bedstead => "bedstead",
-        TeletextFont::NotoTeletext => "noto-teletext",
-    }
-}
-
-fn read_font(value: &str) -> Option<TeletextFont> {
-    [TeletextFont::Bedstead, TeletextFont::NotoTeletext].into_iter().find(|&font| font_word(font) == value)
 }
 
 fn remote_line(place: RemotePlace) -> String {
@@ -196,7 +178,6 @@ impl Settings {
             "remote" => read_remote(value).map(|place| self.remote = place).is_some(),
             "restore" => switch(value).map(|on| self.restore = on).is_some(),
             "updates" => switch(value).map(|on| self.check_updates = on).is_some(),
-            "font" => read_font(value).map(|font| self.font = font).is_some(),
             "cookies" => match value {
                 "keep" => Some(crate::cookies::Mode::Keep),
                 "close" => Some(crate::cookies::Mode::Close),
@@ -246,7 +227,6 @@ impl Settings {
         lines.push(format!("restore {}", if self.restore { "on" } else { "off" }));
         lines.push(remote_line(self.remote));
         lines.push(format!("updates {}", if self.check_updates { "on" } else { "off" }));
-        lines.push(format!("font {}", font_word(self.font)));
         lines.push(format!(
             "cookies {}",
             match self.cookies {

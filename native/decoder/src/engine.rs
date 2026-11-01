@@ -17,7 +17,6 @@ use neoteletext_formats::t42::T42Variant;
 use neoteletext_image::palette::Rgba;
 use protocol::audio::Audio;
 use protocol::decoder::{FIRST_STORE_PAGES, MAX_STORE_PAGES, View};
-use protocol::settings::TeletextFont;
 use std::cell::RefCell;
 
 #[cfg(feature = "interaction")]
@@ -195,9 +194,6 @@ pub struct Engine {
     /// sent, for the trusted core to check (INPUT.md section 7).
     #[cfg(feature = "interaction")]
     input: InputRecords,
-    /// The font pages are drawn in: Bedstead until the trusted core names
-    /// the user's.
-    font: TeletextFont,
     /// Which pushed pages may be drawn, and how old each is (REQ-1558).
     cache: RefCell<PageCache>,
 }
@@ -265,7 +261,6 @@ impl Engine {
             looks: BTreeMap::new(),
             #[cfg(feature = "interaction")]
             input: InputRecords::default(),
-            font: TeletextFont::Bedstead,
             cache: RefCell::new(PageCache::default()),
         }
     }

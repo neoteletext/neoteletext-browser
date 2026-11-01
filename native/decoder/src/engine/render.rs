@@ -8,7 +8,6 @@ use super::{ALL_ROWS, Engine, Exported, PAGE_DOTS, PICTURE, Rendered};
 #[cfg(feature = "links")]
 use super::{FASTEXT_ROW, Found};
 use crate::FlashRates;
-use protocol::settings::TeletextFont;
 
 #[cfg(feature = "links")]
 use crate::links;
@@ -25,6 +24,7 @@ use neoteletext_core::consts::{COLOUR_BLUE_BIT, COLOUR_GREEN_BIT, COLOUR_RED_BIT
 #[cfg(feature = "links")]
 use neoteletext_core::controls::{Control, Look, apply_look};
 use neoteletext_core::fsm::PageState;
+use neoteletext_core::glyphs::GlyphSet;
 use neoteletext_core::level1::{DisplayOptions, Glyph, Grid, build_grid};
 use neoteletext_core::limits::DECIMAL_DIGIT_MAX;
 #[cfg(feature = "links")]
@@ -46,6 +46,8 @@ const THREE_DIGIT_PLACE: usize = DECIMAL_BASE * DECIMAL_BASE * DECIMAL_BASE - 1;
 /// (`STANDARD-LIMITS.md` question 2, open): the place is in the browser's
 /// own controls.
 const PLACE_TOO_WIDE: &str = "+++";
+/// Noto Teletext, the engine's one compiled font (its REQ-FNT-001).
+static GLYPHS: GlyphSet<'static> = GlyphSet::noto_teletext();
 
 // The protocol bounds a page's controls by the engine's own bound.
 #[cfg(feature = "links")]
@@ -77,16 +79,6 @@ impl Engine {
     /// What is on screen changed (REQ-1558 item 7).
     pub fn screen_changed(&mut self) {
         self.cache.get_mut().screen_changed();
-    }
-
-    /// The font pages are drawn in from now on. Every row of every page
-    /// looks different in another font, so each page's next frame is drawn
-    /// whole: what its change tracker remembers was drawn in the old one.
-    pub fn set_font(&mut self, font: TeletextFont) {
-        if font != self.font {
-            self.font = font;
-            self.trackers.borrow_mut().clear();
-        }
     }
 
     /// How `page` is drawn from now on: a page held keeps the version it
@@ -360,7 +352,7 @@ impl Engine {
             ALL_ROWS
         };
         let mut buffer = IndexBuffer { format: IndexFormat::Bits8, data: &mut indices, stride: usize::from(PAGE_WIDTH) };
-        render_screen(&grid, rows, crate::fonts::glyphs(self.font), render, &mut buffer).ok()?;
+        render_screen(&grid, rows, &GLYPHS, render, &mut buffer).ok()?;
         let palette: Vec<[u8; 3]> = colour_map_palette(&grid.colour_map, PICTURE).iter().map(|colour| [colour.r, colour.g, colour.b]).collect();
         #[cfg(feature = "links")]
         let links = {

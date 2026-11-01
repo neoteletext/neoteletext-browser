@@ -73,8 +73,6 @@ impl Browser {
             Some(SettingChange::RestoreSession(true))
         } else if controls.restore_off.contains(point) {
             Some(SettingChange::RestoreSession(false))
-        } else if let Some(&(font, _)) = controls.fonts.iter().find(|(_, rect)| rect.contains(point)) {
-            Some(SettingChange::Font(font))
         } else if let Some(&(mode, _)) = controls.cookie_modes.iter().find(|(_, rect)| rect.contains(point)) {
             Some(SettingChange::Cookies(mode))
         } else if controls.manage_cookies.contains(point) {

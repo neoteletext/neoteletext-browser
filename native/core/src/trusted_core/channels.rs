@@ -31,18 +31,6 @@ impl Core {
         self.sleep.keep(channel, message);
     }
 
-    /// Tells every running decoder the font of the settings, so the pages
-    /// on screen are drawn again in it; a sleeping channel's decoder is told
-    /// as it starts.
-    pub(super) fn tell_decoders_the_font(&mut self) {
-        let message = ToDecoder::Font(self.settings.font);
-        for decoder in self.decoders.values_mut() {
-            // A decoder that cannot be written to has stopped; its reader
-            // reports that, and its pages stay as they were.
-            let _ = decoder.tell(&message);
-        }
-    }
-
     /// Starts a decoder for every awake channel that has none, giving it
     /// what the channel's last decoder was given; puts to sleep the
     /// decoders of channels that may sleep (decision 47); starts a fetcher
@@ -73,7 +61,7 @@ impl Core {
                 }
                 self.generation = self.generation.wrapping_add(1);
                 let pages = self.store_pages.get(id).copied().unwrap_or(FIRST_STORE_PAGES);
-                let mut decoder = start_decoder(self.broker()?, *id, self.generation, pages, self.settings.font, self.events.clone())?;
+                let mut decoder = start_decoder(self.broker()?, *id, self.generation, pages, self.events.clone())?;
                 for message in self.sleep.kept(*id) {
                     let _ = decoder.tell(message);
                 }
@@ -158,7 +146,7 @@ impl Core {
             stop_decoder(decoder);
         }
         self.generation = self.generation.wrapping_add(1);
-        let mut decoder = start_decoder(self.broker()?, id, self.generation, pages, self.settings.font, self.events.clone())?;
+        let mut decoder = start_decoder(self.broker()?, id, self.generation, pages, self.events.clone())?;
         for message in self.sleep.kept(id) {
             let _ = decoder.tell(message);
         }

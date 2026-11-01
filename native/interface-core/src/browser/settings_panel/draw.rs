@@ -13,7 +13,7 @@ use crate::browser::Browser;
 use crate::browser::widgets::{RADIUS, button, field, panel, panel_rect};
 use crate::canvas::Canvas;
 use crate::geometry::Rect;
-use crate::settings::{CookieMode, SettingsView, TeletextFont};
+use crate::settings::{CookieMode, SettingsView};
 use crate::text::{border, centred, left_centred};
 use crate::theme::{BUTTON, HEADING, INSECURE, MUTED, ROW_STATUS, ROW_TITLE, RULE, WHITE};
 
@@ -54,7 +54,6 @@ impl Browser {
         y = draw_settings_sound(canvas, view.as_ref(), &mut controls, row(y), field_left);
         y = self.draw_settings_proxy(canvas, &mut controls, row(y), field_left);
         y = draw_settings_restore(canvas, view.as_ref(), &mut controls, row(y), field_left);
-        y = draw_settings_font(canvas, view.as_ref(), &mut controls, row(y), field_left);
         y = draw_settings_cookies(canvas, view.as_ref(), &mut controls, row(y), field_left);
         y = self.draw_settings_updates(canvas, &mut controls, row(y), field_left);
         self.draw_settings_local(canvas, view.as_ref(), &mut controls, row(y), field_left);
@@ -207,22 +206,6 @@ fn draw_settings_restore<C: Canvas + ?Sized>(canvas: &mut C, view: Option<&Setti
     controls.restore_off = Rect::new(controls.restore_on.x1 + GAP, y, controls.restore_on.x1 + GAP + BUTTON_WIDTH * 1.5, y + ROW);
     button(canvas, controls.restore_on, "Restore", restore);
     button(canvas, controls.restore_off, "Home", !restore);
-    y + ROW + ROW_GAP
-}
-
-/// The font pages are drawn in, in `line`. Returns where the next row
-/// starts. Until the trusted core has said, neither is marked.
-fn draw_settings_font<C: Canvas + ?Sized>(canvas: &mut C, view: Option<&SettingsView>, controls: &mut Controls, line: Rect, field_left: f64) -> f64 {
-    let y = line.y0;
-    let chosen = view.map(|view| view.font);
-    left_centred(canvas, line, 0.0, "Page font", ROW_TITLE, WHITE);
-    let mut x = field_left;
-    for (font, word) in [(TeletextFont::NotoTeletext, "Noto Teletext"), (TeletextFont::Bedstead, "Bedstead")] {
-        let rect = Rect::new(x, y, x + WIDE_BUTTON, y + ROW);
-        button(canvas, rect, word, chosen == Some(font));
-        controls.fonts.push((font, rect));
-        x = rect.x1 + GAP;
-    }
     y + ROW + ROW_GAP
 }
 
