@@ -1,7 +1,8 @@
 //! The keys of the lists at the left: on the wall of pages, a click on the
 //! channel's magazines or on the page list gives that list the keys, and
-//! Up and Down then move through it, even on a page whose channel takes
-//! the keys, until a click anywhere else or Escape gives them back. With
+//! Up and Down then move through it, and Page Up and Page Down by a
+//! list-height at a time, even on a page whose channel takes the keys,
+//! until a click anywhere else or Escape gives them back. With
 //! the page alone, a magazine or a page clicked opens a page, which has
 //! the keys (decision 126).
 
@@ -43,7 +44,10 @@ impl Browser {
                 }
             }
             (ListFocus::Pages, Key::Up | Key::Down) => self.step_list(key == Key::Down),
+            (ListFocus::Pages, Key::PageUp | Key::PageDown) => self.page_through_list(key == Key::PageDown),
+            (ListFocus::SubPages, Key::PageUp | Key::PageDown) => self.page_through_subpages(key == Key::PageDown, now),
             (ListFocus::SubPages, Key::Up | Key::Down) => {
+                self.subpages.landing = None;
                 if self.controls_open() && self.page_controls.controls.subpages > 1 {
                     self.ask_control(PageControl::SubPage(key == Key::Down));
                 }

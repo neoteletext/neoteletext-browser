@@ -3,7 +3,9 @@
 //! above and the chosen page's sub-pages below, with a divider between
 //! them that can be pulled; a click on a sub-page opens its page there,
 //! and gives the sub-pages the keys, Up and Down stepping through them as
-//! they step through the pages of the page list.
+//! they step through the pages of the page list, and Page Up and Page Down
+//! moving by a list-height, which land by place because a place far off may
+//! not be held yet.
 //!
 //! The lower list is virtual (decision 112 item 4): it knows each page's
 //! count, draws a row for every place to the standard's 8,190, and holds
@@ -16,7 +18,7 @@ use alloc::string::String;
 use alloc::vec::Vec;
 
 use crate::browser::list_focus::ListFocus;
-use crate::browser::page_list::ROW_HEIGHT;
+use crate::browser::page_list::{ROW_HEIGHT, rows_per_key};
 use crate::browser::window::PADDING;
 use crate::browser::{Browser, Output};
 use crate::canvas::Canvas;
@@ -61,6 +63,17 @@ impl Held {
     }
 }
 
+/// Where Page Up or Page Down moved the list (REQ-1758): a place, because a
+/// row not held has no sub-code to ask for yet.
+#[derive(Clone, Copy, Debug)]
+pub(super) struct Landing {
+    index: usize,
+    place: u16,
+    /// Its sub-page was asked for. A key held down moves on from the
+    /// landing, not from the sub-page last shown.
+    asked: bool,
+}
+
 /// The page list's sub-pages: each page's count, the rows held, the
 /// divider and the scroll.
 #[derive(Debug)]
@@ -85,11 +98,25 @@ pub(super) struct SubPages {
     /// The chosen place the list last scrolled to while it had the keys,
     /// so a step brings the new one into view and the wheel stays free.
     revealed: Option<u16>,
+    /// Where Page Up or Page Down last moved the list, until that sub-page
+    /// is the one chosen.
+    pub(super) landing: Option<Landing>,
 }
 
 impl Default for SubPages {
     fn default() -> Self {
-        Self { counts: BTreeMap::new(), channel: 0, held: None, asked: None, share: PAGES_SHARE, grip: None, scroll: 0.0, hovered: None, revealed: None }
+        Self {
+            counts: BTreeMap::new(),
+            channel: 0,
+            held: None,
+            asked: None,
+            share: PAGES_SHARE,
+            grip: None,
+            scroll: 0.0,
+            hovered: None,
+            revealed: None,
+            landing: None,
+        }
     }
 }
 
@@ -100,6 +127,7 @@ impl SubPages {
             self.counts.clear();
             self.held = None;
             self.asked = None;
+            self.landing = None;
             self.channel = channel;
         }
     }
@@ -164,7 +192,7 @@ impl Browser {
     /// Draws the chosen page's sub-pages in `area`, under the divider: a
     /// row for each place in view, with its title once held, and asks for
     /// the rows in view that are not.
-    pub(super) fn draw_subpage_list<C: Canvas + ?Sized>(&mut self, canvas: &mut C, area: Rect, colour: crate::theme::Colour) {
+    pub(super) fn draw_subpage_list<C: Canvas + ?Sized>(&mut self, canvas: &mut C, area: Rect, colour: crate::theme::Colour, now: u64) {
         let divider = Rect::new(area.x0, area.y0, area.x1, area.y0 + DIVIDER_HEIGHT);
         canvas.fill(divider, 0.0, colour);
         self.regions.subpage_divider = Rect::new(divider.x0, divider.y0 - DIVIDER_HEIGHT, divider.x1, divider.y1 + DIVIDER_HEIGHT);
@@ -180,20 +208,17 @@ impl Browser {
         let rows = Rect::new(area.x0, heading.y1, area.x1, area.y1);
         self.regions.subpage_list = rows;
         let Some((index, count, page)) = selected else { return };
-        // The sub-page drawn, when this is the page open and one is chosen.
-        let controls = &self.page_controls.controls;
-        let chosen = (controls.page == Some(page)).then_some(controls.chosen).flatten();
+        let chosen = self.chosen_place(page);
+        if self.subpages.landing.is_some_and(|landing| landing.index != index || chosen == Some(landing.place)) {
+            self.subpages.landing = None;
+        }
+        self.open_landing(now);
         // Stepped with the keys, the list follows the sub-page chosen, as
-        // the page list follows the page.
-        if self.list_focus == Some(ListFocus::SubPages) && chosen != self.subpages.revealed {
+        // the page list follows the page, once what a key moved to is shown.
+        if self.list_focus == Some(ListFocus::SubPages) && self.subpages.landing.is_none() && chosen != self.subpages.revealed {
             self.subpages.revealed = chosen;
             if let Some(place) = chosen {
-                let top = f64::from(place) * ROW_HEIGHT;
-                if top < self.subpages.scroll {
-                    self.subpages.scroll = top;
-                } else if top + ROW_HEIGHT > self.subpages.scroll + rows.height() {
-                    self.subpages.scroll = top + ROW_HEIGHT - rows.height();
-                }
+                self.reveal_subpage(place, rows.height());
             }
         }
         let content = f64::from(count) * ROW_HEIGHT;
@@ -225,6 +250,60 @@ impl Browser {
         if let Some(place) = missing {
             self.ask_subpage_rows(index, page, place);
         }
+    }
+
+    /// The sub-page drawn of `page`, when it is the page open and one is
+    /// chosen.
+    fn chosen_place(&self, page: u16) -> Option<u16> {
+        let controls = &self.page_controls.controls;
+        (controls.page == Some(page)).then_some(controls.chosen).flatten()
+    }
+
+    /// Scrolls the list, `height` high, so that `place` is in view.
+    fn reveal_subpage(&mut self, place: u16, height: f64) {
+        let top = f64::from(place) * ROW_HEIGHT;
+        if top < self.subpages.scroll {
+            self.subpages.scroll = top;
+        } else if top + ROW_HEIGHT > self.subpages.scroll + height {
+            self.subpages.scroll = top + ROW_HEIGHT - height;
+        }
+    }
+
+    /// Page Up or Page Down: moves the list one list-height less one row
+    /// from where it is, staying on the first and the last row, and shows
+    /// the sub-page there, as the arrows show the one they land on. A row
+    /// not held is fetched as a scroll fetches it, and shown when it arrives
+    /// (REQ-1758).
+    pub(super) fn page_through_subpages(&mut self, forward: bool, now: u64) {
+        let Some(index) = self.selected else { return };
+        let (Some(count), Some(page)) = (self.subpage_count(index), crate::channel::page_number(index)) else { return };
+        let height = self.regions.subpage_list.height();
+        let rows = u16::try_from(rows_per_key(height)).unwrap_or(u16::MAX);
+        let landed = self.subpages.landing.filter(|landing| landing.index == index).map(|landing| landing.place);
+        let top = self.places_in_view(height, count).start;
+        let from = landed.or_else(|| self.chosen_place(page)).unwrap_or(top);
+        let place = if forward { from.saturating_add(rows).min(count.saturating_sub(1)) } else { from.saturating_sub(rows) };
+        self.reveal_subpage(place, height);
+        self.subpages.landing = Some(Landing { index, place, asked: false });
+        self.open_landing(now);
+    }
+
+    /// Shows the sub-page the list moved to, once its row is held.
+    fn open_landing(&mut self, now: u64) {
+        let Some(landing) = self.subpages.landing.filter(|landing| !landing.asked) else { return };
+        let Some(subcode) = self.subpages.held.as_ref().and_then(|held| held.at(landing.index, landing.place)).map(|&(subcode, _)| subcode) else { return };
+        self.subpages.landing = Some(Landing { asked: true, ..landing });
+        self.open_subpage(landing.index, subcode, now);
+    }
+
+    /// Opens sub-code `subcode` of page `index`, opening the page first so
+    /// that the trusted core shows it at the sub-page asked.
+    fn open_subpage(&mut self, index: usize, subcode: u16, now: u64) {
+        let (Some(page), Some(key)) = (crate::channel::page_number(index), self.page_key(index)) else { return };
+        if self.wall.zoomed() != Some(key) {
+            self.wall.zoom(key, now);
+        }
+        self.ask_control(PageControl::SubPageOf { page, subcode });
     }
 
     /// The places of the rows in view in a list `height` high of `count`
@@ -264,12 +343,8 @@ impl Browser {
         self.subpages.revealed = None;
         let Some(&(_, subcode)) = self.regions.subrows.iter().find(|(rect, _)| rect.contains(point)) else { return true };
         let Some(index) = self.selected else { return true };
-        let (Some(page), Some(key)) = (crate::channel::page_number(index), self.page_key(index)) else { return true };
-        // Opened first, so the trusted core shows it at the sub-page asked.
-        if self.wall.zoomed() != Some(key) {
-            self.wall.zoom(key, now);
-        }
-        self.ask_control(PageControl::SubPageOf { page, subcode });
+        self.subpages.landing = None;
+        self.open_subpage(index, subcode, now);
         true
     }
 
@@ -303,9 +378,11 @@ impl Browser {
 
 #[cfg(test)]
 mod tests {
-    use crate::browser::Output;
+    #![allow(clippy::arithmetic_side_effects, reason = "a test")]
     use crate::browser::fixture::{HEIGHT, WIDTH, browser, middle, press_at};
+    use crate::browser::page_list::rows_per_key;
     use crate::browser::pointer::Cursor;
+    use crate::browser::{Key, Modifiers, Output};
     use crate::controls::PageControl;
     use crate::test_canvas::Recorder;
 
@@ -397,5 +474,131 @@ mod tests {
         assert!(answered.texts.iter().any(|(_, text)| text == "Story 8189"));
         assert!(!browser.regions.subrows.is_empty() && browser.regions.subrows.len() <= 64, "only the rows in view: {}", browser.regions.subrows.len());
         assert_eq!(browser.take_outputs(), [], "every row in view held");
+    }
+
+    /// A browser whose chosen page 100 has `count` sub-pages, listed from
+    /// sub-code 1, with the first run of rows held and the list's keys.
+    fn listed(count: u16) -> (crate::browser::Browser, Recorder) {
+        let (mut browser, mut canvas) = browser();
+        browser.set_subpage_count(7, 0x100, count);
+        browser.draw(&mut canvas, WIDTH, HEIGHT, 0);
+        let row = browser.regions.rows[0].0;
+        press_at(&mut browser, &mut canvas, row);
+        browser.draw(&mut canvas, WIDTH, HEIGHT, 0);
+        browser.set_subpage_rows(7, 0x100, count, 0, held(0, count.min(64)));
+        browser.draw(&mut canvas, WIDTH, HEIGHT, 0);
+        let list = browser.regions.subpage_list;
+        browser.pointer_moved(list.x0 + 1.0, list.y1 - 1.0, 0);
+        browser.pointer_pressed(&mut canvas, false, 0);
+        browser.take_outputs();
+        (browser, canvas)
+    }
+
+    /// The rows from place `first`, each named by its sub-code, one more
+    /// than its place.
+    fn held(first: u16, count: u16) -> alloc::vec::Vec<(u16, alloc::string::String)> {
+        (first..first + count).map(|place| (place + 1, alloc::format!("Story {place}"))).collect()
+    }
+
+    /// The trusted core shows place `chosen` of the list, as it does when
+    /// a sub-page opens.
+    fn chosen(browser: &mut crate::browser::Browser, count: u16, chosen: u16) {
+        browser.set_page_controls(crate::controls::PageControls { page: Some(0x100), subpages: count, chosen: Some(chosen), ..Default::default() });
+    }
+
+    /// The sub-page a key asked to be shown.
+    fn asked(browser: &mut crate::browser::Browser) -> Option<u16> {
+        browser.take_outputs().iter().find_map(|output| match output {
+            Output::PageControl(PageControl::SubPageOf { page: 0x100, subcode }) => Some(*subcode),
+            _ => None,
+        })
+    }
+
+    fn page_key(browser: &mut crate::browser::Browser, key: Key<'_>, canvas: &mut Recorder) {
+        browser.key(key, Modifiers::default(), 0);
+        browser.draw(canvas, WIDTH, HEIGHT, 0);
+    }
+
+    /// REQ-1758 items 1 and 2: Page Down shows the sub-page one list-height
+    /// less one row on, scrolled into view, and Page Up returns.
+    #[test]
+    fn page_down_moves_the_sub_pages_a_list_height_and_page_up_returns() {
+        let (mut browser, mut canvas) = listed(60);
+        chosen(&mut browser, 60, 0);
+        let rows = rows_per_key(browser.regions.subpage_list.height());
+        assert!(rows < 60, "the list is shorter than its rows: {rows}");
+        let landed = u16::try_from(rows).unwrap();
+        browser.key(Key::PageDown, Modifiers::default(), 0);
+        assert_eq!(asked(&mut browser), Some(landed + 1), "the row a list-height less one row on, by its sub-code");
+        chosen(&mut browser, 60, landed);
+        browser.draw(&mut canvas, WIDTH, HEIGHT, 0);
+        assert!(browser.regions.subrows.iter().any(|&(_, subcode)| subcode == landed + 1), "scrolled into view");
+        browser.key(Key::PageUp, Modifiers::default(), 0);
+        assert_eq!(asked(&mut browser), Some(1), "and back");
+    }
+
+    /// REQ-1758 item 3: neither key wraps round.
+    #[test]
+    fn the_keys_stay_on_the_end_rows_of_the_sub_pages() {
+        let (mut browser, mut canvas) = listed(40);
+        chosen(&mut browser, 40, 0);
+        browser.draw(&mut canvas, WIDTH, HEIGHT, 0);
+        page_key(&mut browser, Key::PageUp, &mut canvas);
+        assert_eq!(asked(&mut browser), Some(1), "stays on the first row");
+        chosen(&mut browser, 40, 38);
+        browser.draw(&mut canvas, WIDTH, HEIGHT, 0);
+        page_key(&mut browser, Key::PageDown, &mut canvas);
+        assert_eq!(asked(&mut browser), Some(40), "goes to the last row");
+        chosen(&mut browser, 40, 39);
+        browser.draw(&mut canvas, WIDTH, HEIGHT, 0);
+        page_key(&mut browser, Key::PageDown, &mut canvas);
+        assert_eq!(asked(&mut browser), Some(40), "and stays there");
+    }
+
+    /// REQ-1758 item 4: the distance follows the height the divider left.
+    #[test]
+    fn the_distance_follows_the_divider() {
+        let (mut browser, mut canvas) = listed(60);
+        chosen(&mut browser, 60, 0);
+        let before = rows_per_key(browser.regions.subpage_list.height());
+        let divider = middle(browser.regions.subpage_divider);
+        browser.pointer_moved(divider.x, divider.y, 0);
+        browser.pointer_pressed(&mut canvas, false, 0);
+        browser.pointer_moved(divider.x, divider.y - 135.0, 0);
+        browser.pointer_released();
+        browser.draw(&mut canvas, WIDTH, HEIGHT, 0);
+        let after = rows_per_key(browser.regions.subpage_list.height());
+        assert!(after > before, "the list is taller: {after} rows from {before}");
+        let first = browser.regions.subrows[0].0;
+        press_at(&mut browser, &mut canvas, first);
+        browser.take_outputs();
+        browser.key(Key::PageDown, Modifiers::default(), 0);
+        assert_eq!(asked(&mut browser), Some(u16::try_from(after).unwrap() + 1), "by the new height");
+    }
+
+    /// REQ-1758 item 5: a key that lands past the rows held asks for the
+    /// part it landed in, and shows the sub-page when it arrives. A key held
+    /// down moves on from the landing, not from the sub-page last shown.
+    #[test]
+    fn page_down_past_the_fetched_rows_asks_for_the_part_it_landed_in() {
+        let (mut browser, mut canvas) = listed(1_000);
+        chosen(&mut browser, 1_000, 0);
+        let rows = u16::try_from(rows_per_key(browser.regions.subpage_list.height())).unwrap();
+        let presses = 64 / rows + 1;
+        for _ in 0..presses {
+            page_key(&mut browser, Key::PageDown, &mut canvas);
+        }
+        let place = rows * presses;
+        assert!(place >= 64, "past the part held: {place}");
+        let outputs = browser.take_outputs();
+        let first = outputs.iter().rev().find_map(|output| match output {
+            Output::SubPageRows { page: 0x100, first, count: 64 } => Some(*first),
+            _ => None,
+        });
+        let first = first.expect("the part asked for");
+        assert!(first <= place && place < first + 64, "the part holds the row landed on: {first} and {place}");
+        browser.set_subpage_rows(7, 0x100, 1_000, first, held(first, 64));
+        browser.draw(&mut canvas, WIDTH, HEIGHT, 0);
+        assert_eq!(asked(&mut browser), Some(place + 1), "shown once it arrived");
     }
 }

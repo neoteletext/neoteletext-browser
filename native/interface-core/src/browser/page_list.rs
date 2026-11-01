@@ -25,6 +25,19 @@ const COLUMN_HEAD_HEIGHT: f64 = 26.0;
 /// Where the title column starts: after a three-digit page number.
 const TITLE_COLUMN: f64 = 56.0;
 const SCROLL_BAR_WIDTH: f64 = 4.0;
+/// The row of a list Page Up and Page Down keep in view, so that the viewer
+/// keeps their place (REQ-1758 item 1).
+const ROWS_OVERLAPPED: usize = 1;
+
+/// The rows Page Up and Page Down move a list `height` high: one
+/// list-height, less the overlap, and always at least one, so that a key
+/// moves even a list too short to hold two rows.
+pub(super) fn rows_per_key(height: f64) -> usize {
+    // Whole rows, and a negative height saturates to none.
+    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss, reason = "the cast is the rounding down wanted")]
+    let rows = (height / ROW_HEIGHT) as usize;
+    rows.saturating_sub(ROWS_OVERLAPPED).max(1)
+}
 
 impl Browser {
     pub(super) fn draw_list<C: Canvas + ?Sized>(&mut self, canvas: &mut C, panel: Rect, now: u64) {
@@ -107,7 +120,7 @@ impl Browser {
             canvas.fill(Rect::new(area.x1 - SCROLL_BAR_WIDTH * 2.0, top, area.x1 - SCROLL_BAR_WIDTH, top + bar), SCROLL_BAR_WIDTH / 2.0, RULE);
         }
         if split {
-            self.draw_subpage_list(canvas, Rect::new(whole.x0, area.y1, whole.x1, whole.y1), colour);
+            self.draw_subpage_list(canvas, Rect::new(whole.x0, area.y1, whole.x1, whole.y1), colour, now);
         }
         border(canvas, panel, LIST_BORDER, colour);
     }
@@ -134,8 +147,10 @@ fn subpage_mark<C: Canvas + ?Sized>(canvas: &mut C, row: Rect, right: f64, count
 
 #[cfg(test)]
 mod tests {
+    use super::rows_per_key;
     use crate::browser::fixture::{HEIGHT, WIDTH, browser, middle, press_at};
     use crate::browser::pointer::Cursor;
+    use crate::browser::{Key, Modifiers};
     use crate::test_canvas::Recorder;
     use crate::theme::{BANK_COLOURS, BLACK, WHITE};
 
@@ -175,5 +190,81 @@ mod tests {
         let mut canvas = Recorder::new();
         browser.draw(&mut canvas, WIDTH, HEIGHT, 0);
         assert_eq!(canvas.coloured_text("Magazine 1"), Some(WHITE), "white reads on red");
+    }
+
+    /// The bank's page at `position` in its list.
+    fn at(browser: &crate::browser::Browser, position: usize) -> Option<usize> {
+        browser.bank_pages().get(position).copied()
+    }
+
+    /// The first row chosen, with the keys in the list.
+    fn on_first_row() -> (crate::browser::Browser, Recorder) {
+        let (mut browser, mut canvas) = browser();
+        let row = browser.regions.rows[0].0;
+        press_at(&mut browser, &mut canvas, row);
+        (browser, canvas)
+    }
+
+    /// REQ-1758 items 1 and 2: Page Down chooses the page one list-height
+    /// less one row on, scrolled into view, and Page Up returns.
+    #[test]
+    fn page_down_moves_the_pages_a_list_height_and_page_up_returns() {
+        let (mut browser, mut canvas) = on_first_row();
+        let rows = rows_per_key(browser.regions.list.height());
+        assert!(rows < browser.bank_pages().len(), "the list is shorter than its rows: {rows}");
+        browser.key(Key::PageDown, Modifiers::default(), 0);
+        assert_eq!(browser.selected, at(&browser, rows));
+        browser.draw(&mut canvas, WIDTH, HEIGHT, 0);
+        assert!(browser.regions.rows.iter().any(|&(row, index)| Some(index) == browser.selected && row.y1 <= browser.regions.list.y1), "scrolled into view");
+        browser.key(Key::PageUp, Modifiers::default(), 0);
+        assert_eq!(browser.selected, at(&browser, 0));
+    }
+
+    /// REQ-1758 item 3: neither key wraps round.
+    #[test]
+    fn the_keys_stay_on_the_end_rows_of_the_pages() {
+        let (mut browser, _) = on_first_row();
+        browser.key(Key::PageUp, Modifiers::default(), 0);
+        assert_eq!(browser.selected, at(&browser, 0), "stays on the first row");
+        let last = browser.bank_pages().len() - 1;
+        for _ in 0..=last {
+            browser.key(Key::PageDown, Modifiers::default(), 0);
+        }
+        assert_eq!(browser.selected, at(&browser, last), "stops on the last row");
+        browser.key(Key::PageDown, Modifiers::default(), 0);
+        assert_eq!(browser.selected, at(&browser, last), "and stays there");
+    }
+
+    /// REQ-1758 item 4: the distance follows the height the divider left.
+    #[test]
+    fn the_distance_follows_the_height_of_the_pages() {
+        let (mut browser, mut canvas) = on_first_row();
+        browser.set_subpage_count(7, 0x100, 3);
+        browser.draw(&mut canvas, WIDTH, HEIGHT, 0);
+        let before = rows_per_key(browser.regions.list.height());
+        let divider = middle(browser.regions.subpage_divider);
+        browser.pointer_moved(divider.x, divider.y, 0);
+        browser.pointer_pressed(&mut canvas, false, 0);
+        browser.pointer_moved(divider.x, divider.y - 135.0, 0);
+        browser.pointer_released();
+        browser.draw(&mut canvas, WIDTH, HEIGHT, 0);
+        let after = rows_per_key(browser.regions.list.height());
+        assert!(after < before, "the list is shorter: {after} rows from {before}");
+        browser.key(Key::PageDown, Modifiers::default(), 0);
+        assert_eq!(browser.selected, at(&browser, after));
+    }
+
+    /// With the page alone no list has the keys, and the arrows move from
+    /// page to page: these keys do too, further, and the page follows.
+    #[test]
+    fn with_the_page_alone_the_keys_move_it_a_list_height() {
+        let (mut browser, _) = on_first_row();
+        browser.key(Key::Enter, Modifiers::default(), 0);
+        let first = browser.wall.zoomed().expect("the page open").page;
+        let rows = rows_per_key(browser.regions.list.height());
+        browser.key(Key::PageDown, Modifiers::default(), 0);
+        let page = crate::channel::page_number(at(&browser, rows).unwrap());
+        assert_ne!(page, Some(first));
+        assert_eq!(browser.wall.zoomed().map(|key| key.page), page);
     }
 }

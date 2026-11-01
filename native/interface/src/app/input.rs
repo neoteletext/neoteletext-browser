@@ -64,6 +64,8 @@ impl App {
             Key::Named(NamedKey::ArrowDown) => Some(BrowserKey::Down),
             Key::Named(NamedKey::Home) => Some(BrowserKey::Home),
             Key::Named(NamedKey::End) => Some(BrowserKey::End),
+            Key::Named(NamedKey::PageUp) => Some(BrowserKey::PageUp),
+            Key::Named(NamedKey::PageDown) => Some(BrowserKey::PageDown),
             _ => None,
         };
         // F1 to F4: the coloured keys, as in the engine's viewer.

@@ -83,8 +83,8 @@ impl Browser {
             Key::Left => self.editor.left(shift),
             Key::Right => self.editor.right(shift),
             Key::Up | Key::Down if self.choose_suggestion(key == Key::Down) => {}
-            Key::Home | Key::Up => self.editor.home(shift),
-            Key::End | Key::Down => self.editor.end(shift),
+            Key::Home | Key::Up | Key::PageUp => self.editor.home(shift),
+            Key::End | Key::Down | Key::PageDown => self.editor.end(shift),
         }
         // What is typed asks for suggestions (requirement 20.11).
         if self.editing && self.editor.text() != before {

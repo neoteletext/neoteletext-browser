@@ -84,8 +84,8 @@ impl Browser {
             Key::Delete => search.delete(),
             Key::Left => search.left(shift),
             Key::Right => search.right(shift),
-            Key::Home | Key::Up => search.home(shift),
-            Key::End | Key::Down => search.end(shift),
+            Key::Home | Key::Up | Key::PageUp => search.home(shift),
+            Key::End | Key::Down | Key::PageDown => search.end(shift),
             Key::Escape | Key::Tab | Key::Enter => self.stop_console_search(),
         }
         self.console.back = 0;

@@ -29,6 +29,10 @@ pub enum Key<'a> {
     Home,
     /// End.
     End,
+    /// Page Up.
+    PageUp,
+    /// Page Down.
+    PageDown,
     /// Tab: with Shift, backwards.
     Tab,
 }
@@ -108,6 +112,7 @@ impl Browser {
             Key::Left => self.wall.step(-1, now),
             Key::Right => self.wall.step(1, now),
             Key::Up | Key::Down => self.step_page(key == Key::Down, now),
+            Key::PageUp | Key::PageDown => self.page_through_list(key == Key::PageDown),
             Key::Text(text) => {
                 for digit in text.chars().filter(char::is_ascii_digit) {
                     self.type_digit(digit);

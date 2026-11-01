@@ -11,7 +11,7 @@ use crate::browser::overview::UPDATE_RING_MILLISECONDS;
 use crate::canvas::PageKey;
 use crate::channel::{Channel, PAGES_PER_BANK, PageInfo, Status, bank_indices, page_index, page_number};
 
-use crate::browser::page_list::ROW_HEIGHT;
+use crate::browser::page_list::{ROW_HEIGHT, rows_per_key};
 
 const DECIMAL_DIGITS: usize = 3;
 
@@ -256,6 +256,23 @@ impl Browser {
             (None, _) => pages.first(),
             (Some(position), true) => position.checked_add(1).and_then(|following| pages.get(following)),
             (Some(position), false) => position.checked_sub(1).and_then(|previous| pages.get(previous)),
+        };
+        if let Some(&index) = next {
+            self.select_page(index, true);
+        }
+    }
+
+    /// Page Up or Page Down: chooses the page one list-height less one row
+    /// before or after the chosen one, as [`Browser::step_list`] chooses the
+    /// next, staying on the first and the last row (REQ-1758 items 1 to 3).
+    pub(super) fn page_through_list(&mut self, forward: bool) {
+        let pages = self.bank_pages();
+        let rows = rows_per_key(self.regions.list.height());
+        let position = self.selected.and_then(|selected| pages.iter().position(|&index| index == selected));
+        let next = match (position, forward) {
+            (None, _) => pages.first(),
+            (Some(position), true) => pages.get(position.saturating_add(rows)).or(pages.last()),
+            (Some(position), false) => pages.get(position.saturating_sub(rows)),
         };
         if let Some(&index) = next {
             self.select_page(index, true);

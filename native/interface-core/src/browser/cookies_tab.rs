@@ -141,8 +141,8 @@ impl Browser {
             Key::Delete => editor.delete(),
             Key::Left => editor.left(shift),
             Key::Right => editor.right(shift),
-            Key::Home | Key::Up => editor.home(shift),
-            Key::End | Key::Down => editor.end(shift),
+            Key::Home | Key::Up | Key::PageUp => editor.home(shift),
+            Key::End | Key::Down | Key::PageDown => editor.end(shift),
             Key::Escape | Key::Tab | Key::Enter => self.unfocus_cookies(),
         }
         if self.cookies.query.text() != before {
