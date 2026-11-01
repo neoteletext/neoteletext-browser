@@ -1,6 +1,7 @@
 //! Tests of cookies in the running browser (requirements 21.1 to 21.8).
 #![allow(clippy::unwrap_used, clippy::indexing_slicing, clippy::arithmetic_side_effects, reason = "a test")]
 
+use super::super::library::cleared_since;
 use super::super::test_support::Test;
 use super::*;
 use protocol::cookies::CookiesRequest;
@@ -146,7 +147,8 @@ fn clearing_with_history_removes_cookies_of_the_range() {
     let mut test = Test::new("clear");
     let news = test.tab("https://news.example/teletext/", false);
     test.set(news, "news.example", "a=1");
-    test.core.history_request(protocol::library::HistoryRequest::ClearCookies(protocol::library::ClearRange::Hour)).unwrap();
+    let now = test.core.local_time().utc;
+    test.core.clear_cookies_since(cleared_since(protocol::library::ClearRange::Hour, now));
     assert_eq!(test.ask(news, "news.example"), "", "made a moment ago");
 }
 

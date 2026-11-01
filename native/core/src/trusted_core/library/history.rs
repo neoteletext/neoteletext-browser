@@ -101,17 +101,10 @@ impl Core {
         Ok(())
     }
 
-    /// The cookies set in the time `range` cleared.
+    /// The cookies set in the time `range` cleared, and every ordinary tab
+    /// reopened, so that no connection goes on with them (DEC-1730 item 8).
     fn clear_cookies_in(&mut self, range: ClearRange) -> Result<(), String> {
-        let now = self.local_time().utc;
-        let since = match range {
-            ClearRange::FifteenMinutes => Some(now.saturating_sub(FIFTEEN_MINUTES)),
-            ClearRange::Hour => Some(now.saturating_sub(HOUR)),
-            ClearRange::Day => Some(now.saturating_sub(DAY)),
-            ClearRange::Week => Some(now.saturating_sub(WEEK)),
-            ClearRange::FourWeeks => Some(now.saturating_sub(FOUR_WEEKS)),
-            ClearRange::All => None,
-        };
+        let since = cleared_since(range, self.local_time().utc);
         let removed = self.clear_cookies_since(since);
         self.library.history_notice = notice(&format!("Cookies cleared: {removed} removed"));
         if removed > 0 && self.session.reconnect_ordinary_tabs() {
@@ -268,5 +261,17 @@ impl Core {
     pub(crate) fn go_to(&mut self, forward: bool, steps: u8) -> Result<(), String> {
         let went = self.session.go_to(forward, usize::from(steps));
         self.went(went)
+    }
+}
+
+/// When `range` begins, seconds since 1970, at `now`; `None` is all time.
+pub(in crate::trusted_core) const fn cleared_since(range: ClearRange, now: i64) -> Option<i64> {
+    match range {
+        ClearRange::FifteenMinutes => Some(now.saturating_sub(FIFTEEN_MINUTES)),
+        ClearRange::Hour => Some(now.saturating_sub(HOUR)),
+        ClearRange::Day => Some(now.saturating_sub(DAY)),
+        ClearRange::Week => Some(now.saturating_sub(WEEK)),
+        ClearRange::FourWeeks => Some(now.saturating_sub(FOUR_WEEKS)),
+        ClearRange::All => None,
     }
 }

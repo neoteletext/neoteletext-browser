@@ -192,6 +192,8 @@ impl Core {
 mod bar;
 mod bookmarks;
 mod history;
+#[cfg(test)]
+pub(super) use history::cleared_since;
 mod star;
 
 #[cfg(test)]
