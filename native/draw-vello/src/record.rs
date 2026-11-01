@@ -205,6 +205,10 @@ impl Canvas for Painter {
     }
 
     fn text_width(&mut self, text: &str, style: Style) -> f64 {
+        // A layout of no text keeps a line, and with it a character's width.
+        if text.is_empty() {
+            return 0.0;
+        }
         self.layout(text, style).map_or(0.0, |layout| f64::from(layout.width()))
     }
 

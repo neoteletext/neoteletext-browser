@@ -162,6 +162,17 @@ fn a_surface_that_holds_the_last_frame_takes_only_the_damage() {
     assert_eq!(held, words, "a fresh surface takes every pixel");
 }
 
+/// A layout of no text still measures a character, the font's own empty
+/// line, which put the caret and a selection from the address's start a
+/// letter along and left the first letter unselectable.
+#[test]
+fn no_text_has_no_width() {
+    let mut painter = Painter::new(Family::Roboto);
+    let style = interface_core::theme::ADDRESS;
+    assert_eq!(painter.text_width("", style), 0.0);
+    assert!(painter.text_width("h", style) > 0.0);
+}
+
 #[test]
 fn small_capitals_mark_what_was_lower_case() {
     let (text, small) = small_capitals("Page size ß");
