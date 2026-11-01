@@ -35,6 +35,8 @@ use crate::cookies;
 use crate::live::{LiveIndex, SubPageLists};
 use crate::transport::{AllowedLocal, Tcp, address};
 
+const _: () = assert!(protocol::fetcher::MAX_DENIED_PLACE == neoteletext_web::records::denied::MAX_PLACE, "the engine's longest place");
+
 /// The agent's own cookie jar holds nothing: the trusted core keeps the
 /// cookies (decision 62).
 pub(crate) const COOKIE_SLOTS: usize = 0;
@@ -211,10 +213,7 @@ fn collect(output: Output<'_>, actions: &mut Vec<Action>) {
         Output::Event(Event::SubPagesMissing { page }) => Action::Tell(FromFetcher::SubPagesMissing { page: page.mpp() }),
         Output::Event(Event::PageCurrent { .. } | Event::PageNotInService { .. } | Event::FetchFailed { .. }) => Action::Answered,
         Output::Event(Event::PushConnected) => Action::Push(true),
-        Output::Event(Event::Denied(denied)) => {
-            let place = if denied.place.is_empty() { "The channel" } else { denied.place };
-            Action::Tell(FromFetcher::Notice(format!("{place} was refused: status {}", denied.status)))
-        }
+        Output::Event(Event::Denied(denied)) => Action::Tell(FromFetcher::Denied { status: denied.status, place: denied.place.to_owned() }),
         Output::Event(Event::Exchanged { method, url, status, bytes, elapsed_us }) => Action::Tell(FromFetcher::Exchange {
             method: String::from_utf8_lossy(method.token()).into_owned(),
             url: url.to_owned(),

@@ -1,7 +1,7 @@
 //! A channel shown in a tab (`architecture.md` section 6): the pages its
 //! contents file lists and the pages its decoder has reported.
 
-use interface_core::browser::CertificateProblem;
+use interface_core::browser::{CertificateProblem, Denied};
 use interface_core::channel::{BANKS, Channel, PAGES, PAGES_PER_BANK, PageInfo, Status, page_index};
 use protocol::fetcher::Entry;
 use protocol::{MAX_BANK_NAME, MAX_PAGE_TITLE, MAX_TITLE, clean};
@@ -86,6 +86,9 @@ pub struct ChannelState {
     pub initial_page: Option<u16>,
     /// What happened to the page selected since it was selected.
     pub since_selected: SinceSelected,
+    /// The channel refused a selection, and which (page and sub-code), until
+    /// a page draws. It stands only while that is what the tab selects.
+    pub denied: Option<(Denied, Option<(u16, u16)>)>,
 }
 
 impl ChannelState {
@@ -153,6 +156,7 @@ impl ChannelState {
             redirecting: None,
             initial_page: None,
             since_selected: SinceSelected::default(),
+            denied: None,
         }
     }
 

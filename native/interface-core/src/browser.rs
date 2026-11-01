@@ -26,6 +26,7 @@ mod bookmarks_bar;
 mod certificate_refused;
 mod console_panel;
 mod cookies_tab;
+mod denied;
 mod divider;
 mod file_drag;
 #[cfg(test)]
@@ -78,7 +79,7 @@ pub use phone::{PhoneStatus, PhoneUiView};
 #[cfg(feature = "phone-keyboard")]
 pub use phone_keys::{PhonePageKey, phone_page_key};
 pub use pointer::Cursor;
-pub use shown::{CertificateProblem, Frame, StripState, TabInfo};
+pub use shown::{CertificateProblem, Denied, Frame, StripState, TabInfo};
 pub use tab_strip::DropTarget;
 #[cfg(feature = "interaction")]
 pub use typing::{CursorView, TypingView, notched};

@@ -68,6 +68,49 @@ pub struct StripState {
     /// it leads to, which the page area shows in place of the pages for a
     /// second (REQ-1686); empty otherwise.
     pub redirecting: String,
+    /// The channel refused what the tab selected: the page area says so, in
+    /// the browser's own words (`INPUT.md` section 7.12, REQ-1481).
+    pub denied: Option<Denied>,
+}
+
+/// Why a channel refused a selection: the real HTTP status a DENIED record
+/// carries (`INPUT.md` section 7.12).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Denied {
+    /// 403: the channel does not allow the page.
+    Forbidden,
+    /// 404: the channel has no such page.
+    NotFound,
+    /// 429: a limit of the channel was reached.
+    TooMany,
+    /// 503: the channel's program is not answering.
+    Unavailable,
+}
+
+impl Denied {
+    /// The refusal a status means; none for a status a DENIED record does
+    /// not carry.
+    #[must_use]
+    pub const fn of_status(status: u16) -> Option<Self> {
+        match status {
+            403 => Some(Self::Forbidden),
+            404 => Some(Self::NotFound),
+            429 => Some(Self::TooMany),
+            503 => Some(Self::Unavailable),
+            _ => None,
+        }
+    }
+
+    /// Its status number.
+    #[must_use]
+    pub const fn status(self) -> u16 {
+        match self {
+            Self::Forbidden => 403,
+            Self::NotFound => 404,
+            Self::TooMany => 429,
+            Self::Unavailable => 503,
+        }
+    }
 }
 
 /// Why a channel's certificate was refused (`certificate-errors.md`

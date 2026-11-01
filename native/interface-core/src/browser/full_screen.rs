@@ -157,6 +157,7 @@ impl Browser {
             || phone
             || question
             || self.strip.refused.is_some()
+            || self.strip.denied.is_some()
             || !self.strip.redirecting.is_empty()
     }
 

@@ -118,6 +118,8 @@ impl Browser {
         self.draw_terminal(canvas, now);
         #[cfg(feature = "interaction")]
         self.draw_input_trace(canvas);
+        // A selection the channel refused: why, in place of the pages.
+        self.draw_denied(canvas, zoom);
         // A refused certificate: its screen in place of the pages.
         self.draw_refusal(canvas, zoom);
         self.report_visible();

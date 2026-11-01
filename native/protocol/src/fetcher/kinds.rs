@@ -50,3 +50,5 @@ pub(super) const KIND_REDIRECTED: u8 = 134;
 // page of it or to another channel's address.
 pub(super) const KIND_PAGE_REDIRECT: u8 = 135;
 pub(super) const KIND_PROGRAM_REDIRECT: u8 = 136;
+/// A selection the channel refused (`INPUT.md` section 7.12).
+pub(super) const KIND_DENIED: u8 = 137;

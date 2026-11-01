@@ -17,7 +17,7 @@ use interface_core::channel::page_index;
 use kinds::KIND_LINKS;
 use kinds::{
     KIND_CERTIFICATE_REFUSED, KIND_CHANNEL_LOG, KIND_CLEAR_SITE_DATA, KIND_CONFINED, KIND_CONNECTING, KIND_CONTENTS, KIND_COOKIE_ANSWER, KIND_COOKIE_QUESTION,
-    KIND_COOKIE_SET, KIND_EXCHANGE, KIND_FETCH_SUBPAGE, KIND_FETCH_SUBPAGES, KIND_INITIAL_PAGE, KIND_INVALID_PACKETS, KIND_NOTICE, KIND_PAGE,
+    KIND_COOKIE_SET, KIND_DENIED, KIND_EXCHANGE, KIND_FETCH_SUBPAGE, KIND_FETCH_SUBPAGES, KIND_INITIAL_PAGE, KIND_INVALID_PACKETS, KIND_NOTICE, KIND_PAGE,
     KIND_PAGE_REDIRECT, KIND_PROGRAM_REDIRECT, KIND_PROXY_FAILED, KIND_PUSHING, KIND_REACHED_ANSWER, KIND_REACHED_QUESTION, KIND_REDIRECTED, KIND_SUBPAGES,
     KIND_SUBPAGES_MISSING,
 };
@@ -37,6 +37,9 @@ pub use cookies::{CookieSite, MAX_COOKIE_HEADER, MAX_SET_COOKIE};
 pub const MAX_ENTRIES: usize = 1000;
 /// A notice for the log.
 pub const MAX_NOTICE: usize = 512;
+/// The longest place a DENIED record names (the engine's
+/// `records::denied::MAX_PLACE`, which the fetcher asserts it equals).
+pub const MAX_DENIED_PLACE: usize = 8;
 /// The longest method an exchange reports: `GET` and `POST` are the
 /// engine's (its `http::Method`).
 pub const MAX_METHOD: usize = 8;
@@ -118,6 +121,15 @@ pub enum FromFetcher {
     },
     /// Something for the log, not yet cleaned.
     Notice(String),
+    /// The channel refused a selection (`INPUT.md` section 7.12, REQ-1481),
+    /// a record of its connection, not yet checked.
+    Denied {
+        /// Its status number.
+        status: u16,
+        /// The place refused, at most [`MAX_DENIED_PLACE`] bytes, as SELECT
+        /// carried it; empty when the whole channel is unavailable.
+        place: String,
+    },
     /// A request of the channel was answered with a redirect that leaves
     /// it, not followed: the address it leads to, not yet checked (REQ-701).
     Redirected(String),
@@ -466,6 +478,11 @@ fn push_live_message(payload: &mut Vec<u8>, message: &FromFetcher) -> Result<u8,
             push_raw_text(payload, address, MAX_ADDRESS);
             KIND_PROGRAM_REDIRECT
         }
+        FromFetcher::Denied { status, place } => {
+            payload.extend_from_slice(&status.to_be_bytes());
+            push_raw_text(payload, place, MAX_DENIED_PLACE);
+            KIND_DENIED
+        }
         _ => return Err(ProtocolError::BadValue("not a live channel's message")),
     })
 }
@@ -495,6 +512,7 @@ fn read_live_message(kind: u8, fields: &mut Fields<'_>) -> Result<FromFetcher, P
             FromFetcher::PageRedirect { page, sub }
         }
         KIND_PROGRAM_REDIRECT => FromFetcher::ProgramRedirect(raw_text(fields, MAX_ADDRESS, "address too long")?),
+        KIND_DENIED => FromFetcher::Denied { status: fields.u16()?, place: raw_text(fields, MAX_DENIED_PLACE, "text too long")? },
         other => return Err(ProtocolError::UnknownKind(other)),
     })
 }
@@ -597,7 +615,8 @@ pub fn write_to_core(out: &mut dyn Write, message: &FromFetcher) -> Result<(), P
         | FromFetcher::InitialPage(_)
         | FromFetcher::Redirected(_)
         | FromFetcher::PageRedirect { .. }
-        | FromFetcher::ProgramRedirect(_) => push_live_message(&mut payload, message)?,
+        | FromFetcher::ProgramRedirect(_)
+        | FromFetcher::Denied { .. } => push_live_message(&mut payload, message)?,
     };
     write_frame(out, kind, &payload)
 }
@@ -676,9 +695,14 @@ pub fn read_from_fetcher(input: &mut dyn Read) -> Result<Option<FromFetcher>, Pr
         KIND_SUBPAGES_MISSING => FromFetcher::SubPagesMissing { page: fields.display_page()? },
         #[cfg(feature = "interaction")]
         KIND_ROUND_TRIP => FromFetcher::RoundTrip { microseconds: u64::from_be_bytes(fields.array()?) },
-        KIND_CHANNEL_LOG | KIND_INVALID_PACKETS | KIND_CONNECTING | KIND_INITIAL_PAGE | KIND_REDIRECTED | KIND_PAGE_REDIRECT | KIND_PROGRAM_REDIRECT => {
-            read_live_message(kind, &mut fields)?
-        }
+        KIND_CHANNEL_LOG
+        | KIND_INVALID_PACKETS
+        | KIND_CONNECTING
+        | KIND_INITIAL_PAGE
+        | KIND_REDIRECTED
+        | KIND_PAGE_REDIRECT
+        | KIND_PROGRAM_REDIRECT
+        | KIND_DENIED => read_live_message(kind, &mut fields)?,
         other => return Err(ProtocolError::UnknownKind(other)),
     };
     fields.end()?;

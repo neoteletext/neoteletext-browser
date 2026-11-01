@@ -53,6 +53,12 @@ pub(crate) struct State {
 }
 
 impl State {
+    /// Whether `key` is the page open.
+    #[cfg(feature = "interaction")]
+    pub(super) fn is_open(&self, key: PageKey) -> bool {
+        self.open == Some(key)
+    }
+
     /// The view of `key`, as drawn now.
     fn view_of(&self, key: PageKey) -> View {
         self.view.filter(|view| self.open == Some(key) && view.page == key.page).unwrap_or(View { page: key.page, ..View::default() })
@@ -584,6 +590,40 @@ mod tests {
         drawn(&mut test, key, 2, 2, 2);
         assert_eq!(test.core.typing.selection(key.channel), Some((0x210, 0)), "nothing rotates");
         assert!(test.core.controls.told_fetchers.is_empty(), "REQ-703: a live channel is asked for no file");
+    }
+
+    // `INPUT.md` section 7.12: what the channel refuses is said on the page
+    // area, by its status, while the tab still selects it. On the code
+    // before, the fetcher made it a line for the console, and the strip had
+    // nothing to say.
+    #[cfg(feature = "interaction")]
+    #[test]
+    fn a_refused_selection_shows_by_its_status_until_the_next_selection() {
+        use interface_core::browser::Denied;
+        use protocol::fetcher::FromFetcher;
+        let refused = |test: &mut super::super::test_support::Test, channel: u32, status: u16, place: &str| {
+            test.core.fetched(channel, FromFetcher::Denied { status, place: place.into() }).unwrap();
+            test.core.strip().denied
+        };
+        let (mut test, key) = live_page("denied", &[1, 2, 3]);
+        for (status, denied) in [(403, Denied::Forbidden), (404, Denied::NotFound), (429, Denied::TooMany), (503, Denied::Unavailable)] {
+            assert_eq!(refused(&mut test, key.channel, status, "210"), Some(denied));
+        }
+        assert_eq!(
+            test.sent().iter().rev().find_map(|message| if let ToInterface::Strip(strip) = message { strip.denied } else { None }),
+            Some(Denied::Unavailable),
+            "told"
+        );
+        test.core.intent(protocol::ToCore::PageControl(PageControl::SubPage(true))).unwrap();
+        assert_eq!(test.core.strip().denied, None, "the next selection takes it away");
+
+        let (mut test, key) = live_page("denied elsewhere", &[1, 2, 3]);
+        assert_eq!(refused(&mut test, key.channel, 404, "300"), None, "a page the tab does not have open");
+        assert_eq!(refused(&mut test, key.channel, 500, "210"), None, "a status no DENIED record carries");
+        assert_eq!(refused(&mut test, key.channel, 503, ""), Some(Denied::Unavailable), "the whole channel");
+        drawn(&mut test, key, 1, 1, 0);
+        test.core.session.page_drawn(key.channel);
+        assert_eq!(test.core.strip().denied, None, "a page that drew takes it away");
     }
 
     // REQ-1505 item 4: a step is one selection, loading until it arrives.

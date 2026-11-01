@@ -118,6 +118,7 @@ impl Session {
     pub fn page_drawn(&mut self, channel: u32) {
         if let Some(tab) = self.tabs.iter_mut().find(|tab| tab.channel.id == channel) {
             tab.channel.since_selected.drawn = true;
+            tab.channel.denied = None;
         }
     }
 }

@@ -1,10 +1,13 @@
 //! The trusted strip's state on the wire: its flags, its texts, and the
 //! code of a refused certificate (decision 83).
 
-use interface_core::browser::{CertificateProblem, StripState};
+use interface_core::browser::{CertificateProblem, Denied, StripState};
 
 use super::kinds::{ALL_FLAGS, BOOKMARKED, BUILT_IN, CAN_GO_BACK, CAN_GO_FORWARD, ENCRYPTED, LOCAL, PRIVATE};
 use crate::{Fields, MAX_ADDRESS, MAX_IDENTITY, MAX_STRIP_NOTICE, ProtocolError, push_text};
+
+/// In place of a status: the channel refused nothing.
+const NOT_DENIED: u16 = 0;
 
 pub(super) fn push_strip(payload: &mut Vec<u8>, strip: &StripState) -> Result<(), ProtocolError> {
     let flag = |set: bool, bit: u8| if set { bit } else { 0 };
@@ -21,7 +24,9 @@ pub(super) fn push_strip(payload: &mut Vec<u8>, strip: &StripState) -> Result<()
     push_text(payload, &strip.address, MAX_ADDRESS)?;
     push_text(payload, &strip.notice, MAX_STRIP_NOTICE)?;
     payload.push(strip.refused.map_or(0, problem_code));
-    push_text(payload, &strip.redirecting, MAX_ADDRESS)
+    push_text(payload, &strip.redirecting, MAX_ADDRESS)?;
+    payload.extend_from_slice(&strip.denied.map_or(NOT_DENIED, Denied::status).to_be_bytes());
+    Ok(())
 }
 
 pub(super) fn read_strip(fields: &mut Fields<'_>) -> Result<StripState, ProtocolError> {
@@ -46,6 +51,10 @@ pub(super) fn read_strip(fields: &mut Fields<'_>) -> Result<StripState, Protocol
             code => Some(problem_of(code).ok_or(ProtocolError::BadValue("certificate problem"))?),
         },
         redirecting: fields.text(MAX_ADDRESS)?,
+        denied: match fields.u16()? {
+            NOT_DENIED => None,
+            status => Some(Denied::of_status(status).ok_or(ProtocolError::BadValue("denied status"))?),
+        },
     })
 }
 

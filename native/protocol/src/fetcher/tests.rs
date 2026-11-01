@@ -13,6 +13,8 @@ fn every_kind_round_trips() {
         FromFetcher::Page { origin: Origin::FetchedPage, bytes: b"PN,10000\\n".to_vec() },
         FromFetcher::Page { origin: Origin::FetchedPackets, bytes: vec![0; 84] },
         FromFetcher::Notice("Opened".into()),
+        FromFetcher::Denied { status: 404, place: "302/0002".into() },
+        FromFetcher::Denied { status: 503, place: String::new() },
         FromFetcher::Redirected("https://b.example/teletext/".into()),
         FromFetcher::PageRedirect { page: 0x302, sub: 2 },
         FromFetcher::PageRedirect { page: 0x302, sub: neoteletext_core::limits::SUBCODE_ANY },

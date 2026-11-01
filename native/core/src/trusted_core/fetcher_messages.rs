@@ -60,6 +60,7 @@ impl Core {
                 }
             }
             FromFetcher::Notice(text) => self.log(Level::Warning, Some(channel), &format!("channel {channel}: {}", clean(&text, MAX_NOTICE))),
+            FromFetcher::Denied { status, place } => self.denied(channel, status, &place)?,
             FromFetcher::Redirected(location) => self.redirected(channel, &location)?,
             FromFetcher::PageRedirect { page, sub } => self.page_redirected(channel, page, sub, None)?,
             FromFetcher::ProgramRedirect(location) => self.program_redirected(channel, &location)?,

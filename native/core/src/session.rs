@@ -290,6 +290,7 @@ impl Session {
             notice: String::new(),
             refused: tab.channel.refused,
             redirecting: tab.channel.redirecting.as_ref().map(|redirect| clean(&redirect.address.text, MAX_ADDRESS)).unwrap_or_default(),
+            denied: None,
         }
     }
 }
