@@ -92,12 +92,19 @@ pub const MAX_ADDRESS: usize = neoteletext_core::limits::MAX_URL_LENGTH;
 pub const LINE_HEIGHT: f64 = 21.0;
 
 /// The overview of every page as the viewer has it.
-#[derive(Clone, Copy, Debug, Default)]
+#[derive(Clone, Copy, Debug)]
 struct OverviewState {
     /// Folded to its heading.
     folded: bool,
-    /// Taken off the window from the View menu (decision 109).
+    /// Taken off the window from the View menu (decision 109), which is how
+    /// a window starts (REQ-769).
     hidden: bool,
+}
+
+impl Default for OverviewState {
+    fn default() -> Self {
+        Self { folded: false, hidden: true }
+    }
 }
 
 /// The whole browser window: tabs, trusted strip, banks, page list, page

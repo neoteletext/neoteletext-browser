@@ -37,7 +37,7 @@ impl Browser {
         let in_bank = |index: usize| index / PAGES_PER_BANK == self.bank;
         let since_update =
             |limit: u64, everywhere: bool| self.updates.iter().any(|&(index, at)| (everywhere || in_bank(index)) && now.saturating_sub(at) < limit);
-        let rings = !self.overview.folded && !self.console.open();
+        let rings = self.overview_open() && !self.console.open();
         // A held Back or Forward opens its list at its time; Undo ends.
         let deadline = self
             .hold_deadline(now)

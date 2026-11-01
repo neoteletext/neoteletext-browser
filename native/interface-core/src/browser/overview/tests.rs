@@ -121,7 +121,7 @@ fn the_overview_close_button_hides_it_as_the_view_menu_does() {
     let (mut browser, mut canvas) = browser();
     let list_bottom = browser.regions.list.y1;
     let close = browser.regions.overview_close;
-    assert!(close.x1 < browser.regions.overview_toggle.x0, "left of the fold button");
+    assert!(close.x0 > browser.regions.overview_toggle.x1, "right of the fold button");
     browser.pointer_moved(f64::midpoint(close.x0, close.x1), f64::midpoint(close.y0, close.y1), 0);
     assert_eq!(browser.cursor(), Cursor::Hand);
     press_at(&mut browser, &mut canvas, close);
@@ -132,4 +132,30 @@ fn the_overview_close_button_hides_it_as_the_view_menu_does() {
     browser.key(Key::Text("e"), Modifiers { command: true, shift: true, ..Modifiers::default() }, 0);
     browser.draw(&mut canvas, WIDTH, HEIGHT, 0);
     assert!((browser.regions.list.y1 - list_bottom).abs() < 1e-9, "shown again where it was");
+}
+
+/// REQ-769: a window starts with no overview, its room given to the pages,
+/// and the View menu's item shows it.
+#[test]
+fn a_new_window_starts_with_the_overview_hidden() {
+    let mut browser = Browser::new(crate::browser::Frame { left_inset: 0.0, window_buttons: false });
+    let mut canvas = Recorder::new();
+    browser.draw(&mut canvas, WIDTH, HEIGHT, 0);
+    assert!(!browser.overview_shown());
+    assert_eq!(browser.regions.overview, Rect::ZERO, "nothing drawn");
+    browser.toggle_overview_shown();
+    browser.draw(&mut canvas, WIDTH, HEIGHT, 0);
+    assert_ne!(browser.regions.overview, Rect::ZERO, "the menu's item shows it");
+}
+
+/// A hidden overview keeps no animation, as a folded one keeps none: with
+/// the overview off, as a window starts, what arrives asks for no frames.
+#[test]
+fn a_hidden_overview_keeps_no_animation() {
+    let (mut browser, _) = browser();
+    browser.overview.hidden = true;
+    browser.add_page(7, 0x100, "A page".into(), 0);
+    assert_eq!(browser.pulses.len(), 0, "no dot kept");
+    browser.page_updated(7, 0x401, 100);
+    assert_eq!(browser.frame_interval(200), None, "no ring asks for frames");
 }

@@ -40,11 +40,12 @@ impl Browser {
             return;
         }
         let Some(index) = page_index(page) else { return };
+        let overview_open = self.overview_open();
         let Some(slot) = self.channel.pages.get_mut(index) else { return };
         let new = !matches!(slot, Some(info) if info.status == Status::Loaded);
-        // A folded overview keeps no animation; opened, it draws the page
-        // as it is.
-        if new && !self.overview.folded && self.pulses.len() < PULSE_LIMIT {
+        // A folded or hidden overview keeps no animation; opened, it draws
+        // the page as it is.
+        if new && overview_open && self.pulses.len() < PULSE_LIMIT {
             self.pulses.push((index, now));
         }
         *slot = Some(PageInfo { title, status: Status::Loaded });

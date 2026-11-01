@@ -33,10 +33,11 @@ const UPDATE_RING_SCALE: f64 = 4.0;
 const UPDATE_RING_WIDTH: f64 = 2.0;
 /// The update dot leaves a quarter of the cell all round.
 const UPDATE_DOT_INSET: f64 = 0.25;
-/// The button at the overview's top right that folds it into the footer
-/// and opens it again, with its chevron.
+/// The button at the overview's top right that closes it, and the button
+/// to its left, the same size, that folds it into the footer and opens it
+/// again, with its chevron.
 const TOGGLE_SIZE: f64 = 28.0;
-/// The close button beside it, the same size, with this gap between them.
+/// The gap between them.
 const CLOSE_GAP: f64 = 6.0;
 /// A page under the pointer in the overview pops up at its native size,
 /// this far above its cell, with a shadow offset as the wall's hover.
@@ -58,6 +59,12 @@ impl Browser {
         self.overview.hidden = !self.overview.hidden;
         self.pulses.clear();
         self.previewed = None;
+    }
+
+    /// Whether the overview's cells are drawn, so that it wants the dots
+    /// and rings of what arrives and updates.
+    pub(super) fn overview_open(&self) -> bool {
+        !self.overview.hidden && !self.overview.folded
     }
 
     /// Whether the overview is shown at all, folded or not.
@@ -123,8 +130,8 @@ impl Browser {
         let heading = Rect::new(panel.x0, panel.y0, panel.x1, panel.y0 + HEADING_HEIGHT);
         left_centred(canvas, heading, PADDING, &format!("All {PAGES} pages · overview"), HEADING, WHITE);
         let middle = f64::midpoint(heading.y0, heading.y1);
-        let toggle = Rect::new(heading.x1 - PADDING - TOGGLE_SIZE, middle - TOGGLE_SIZE / 2.0, heading.x1 - PADDING, middle + TOGGLE_SIZE / 2.0);
-        let close = Rect::new(toggle.x0 - CLOSE_GAP - TOGGLE_SIZE, toggle.y0, toggle.x0 - CLOSE_GAP, toggle.y1);
+        let close = Rect::new(heading.x1 - PADDING - TOGGLE_SIZE, middle - TOGGLE_SIZE / 2.0, heading.x1 - PADDING, middle + TOGGLE_SIZE / 2.0);
+        let toggle = Rect::new(close.x0 - CLOSE_GAP - TOGGLE_SIZE, close.y0, close.x0 - CLOSE_GAP, close.y1);
         self.regions.overview = panel;
         self.regions.overview_toggle = toggle;
         self.regions.overview_close = close;
@@ -138,7 +145,7 @@ impl Browser {
         if self.overview.folded {
             return;
         }
-        self.draw_legend(canvas, heading, close.x0);
+        self.draw_legend(canvas, heading, toggle.x0);
 
         let cells = Rect::new(panel.x0 + PADDING + AXIS_WIDTH, heading.y1, panel.x1 - PADDING, panel.y1 - PADDING);
         self.regions.cells = cells;

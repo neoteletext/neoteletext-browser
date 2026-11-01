@@ -331,6 +331,7 @@ mod tests {
     #[test]
     fn the_overview_close_button_has_its_tip() {
         let mut browser = Browser::new(Frame { left_inset: 0.0, window_buttons: false });
+        browser.toggle_overview_shown();
         draw(&mut browser, 0);
         let close = browser.regions.overview_close;
         rest_on(&mut browser, close, 1_000);
