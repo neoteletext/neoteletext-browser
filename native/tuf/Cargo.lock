@@ -712,7 +712,7 @@ dependencies = [
 [[package]]
 name = "neoteletext-audio"
 version = "0.1.0"
-source = "git+https://github.com/neoteletext/neoteletext-engine?rev=447344f1f5125e42a49055e0b076cc48d29b3e7f#447344f1f5125e42a49055e0b076cc48d29b3e7f"
+source = "git+https://github.com/neoteletext/neoteletext-engine?rev=ca0f1e8e7a98fa5567f8063833ee19a6b62d1b95#ca0f1e8e7a98fa5567f8063833ee19a6b62d1b95"
 dependencies = [
  "neoteletext-core",
 ]
@@ -720,12 +720,12 @@ dependencies = [
 [[package]]
 name = "neoteletext-core"
 version = "0.1.0"
-source = "git+https://github.com/neoteletext/neoteletext-engine?rev=447344f1f5125e42a49055e0b076cc48d29b3e7f#447344f1f5125e42a49055e0b076cc48d29b3e7f"
+source = "git+https://github.com/neoteletext/neoteletext-engine?rev=ca0f1e8e7a98fa5567f8063833ee19a6b62d1b95#ca0f1e8e7a98fa5567f8063833ee19a6b62d1b95"
 
 [[package]]
 name = "neoteletext-formats"
 version = "0.1.0"
-source = "git+https://github.com/neoteletext/neoteletext-engine?rev=447344f1f5125e42a49055e0b076cc48d29b3e7f#447344f1f5125e42a49055e0b076cc48d29b3e7f"
+source = "git+https://github.com/neoteletext/neoteletext-engine?rev=ca0f1e8e7a98fa5567f8063833ee19a6b62d1b95#ca0f1e8e7a98fa5567f8063833ee19a6b62d1b95"
 dependencies = [
  "neoteletext-core",
 ]
@@ -779,7 +779,7 @@ dependencies = [
 [[package]]
 name = "neoteletext-web"
 version = "0.1.0"
-source = "git+https://github.com/neoteletext/neoteletext-engine?rev=447344f1f5125e42a49055e0b076cc48d29b3e7f#447344f1f5125e42a49055e0b076cc48d29b3e7f"
+source = "git+https://github.com/neoteletext/neoteletext-engine?rev=ca0f1e8e7a98fa5567f8063833ee19a6b62d1b95#ca0f1e8e7a98fa5567f8063833ee19a6b62d1b95"
 dependencies = [
  "embedded-io",
  "neoteletext-audio",
