@@ -35,13 +35,15 @@ impl Drop for Killed {
 }
 
 /// Cargo, for a test to build with, without what the test runner set for the
-/// package under test. A build script can watch those variables, as `ring`'s
-/// does: with them set, this build changes what the next ordinary build must
-/// rebuild, `ring` and all that sits on it, on every run of the tests.
+/// package under test: `OUT_DIR` and Cargo's own variables, but for where it
+/// keeps things. A build script can watch those, as `ring`'s does: with them
+/// set, this build changes what the next ordinary build must rebuild, `ring`
+/// and all that sits on it, on every run of the tests.
 pub fn cargo() -> Command {
     let mut command = Command::new(env!("CARGO"));
     for (name, _) in std::env::vars_os() {
-        if name.to_str().is_some_and(|name| name.starts_with("CARGO_PKG_") || name.starts_with("CARGO_MANIFEST_")) {
+        let runners = name.to_str().is_some_and(|name| name == "OUT_DIR" || (name.starts_with("CARGO_") && !matches!(name, "CARGO_HOME" | "CARGO_TARGET_DIR")));
+        if runners {
             command.env_remove(name);
         }
     }

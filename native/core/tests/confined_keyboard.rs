@@ -24,7 +24,8 @@ fn keyboard() -> std::path::PathBuf {
     // Not the runner's variables for this package, which a build script can
     // watch: `reference_channel::cargo` says why.
     for (name, _) in std::env::vars_os() {
-        if name.to_str().is_some_and(|name| name.starts_with("CARGO_PKG_") || name.starts_with("CARGO_MANIFEST_")) {
+        let runners = name.to_str().is_some_and(|name| name == "OUT_DIR" || (name.starts_with("CARGO_") && !matches!(name, "CARGO_HOME" | "CARGO_TARGET_DIR")));
+        if runners {
             build.env_remove(name);
         }
     }
