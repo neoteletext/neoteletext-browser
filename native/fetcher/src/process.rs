@@ -211,6 +211,10 @@ fn collect(output: Output<'_>, actions: &mut Vec<Action>) {
         Output::Event(Event::SubPagesMissing { page }) => Action::Tell(FromFetcher::SubPagesMissing { page: page.mpp() }),
         Output::Event(Event::PageCurrent { .. } | Event::PageNotInService { .. } | Event::FetchFailed { .. }) => Action::Answered,
         Output::Event(Event::PushConnected) => Action::Push(true),
+        Output::Event(Event::Denied(denied)) => {
+            let place = if denied.place.is_empty() { "The channel" } else { denied.place };
+            Action::Tell(FromFetcher::Notice(format!("{place} was refused: status {}", denied.status)))
+        }
         Output::Event(Event::Exchanged { method, url, status, bytes, elapsed_us }) => Action::Tell(FromFetcher::Exchange {
             method: String::from_utf8_lossy(method.token()).into_owned(),
             url: url.to_owned(),

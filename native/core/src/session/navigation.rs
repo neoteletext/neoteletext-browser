@@ -3,7 +3,7 @@
 //! the lists of each way with their chapter stops.
 
 use interface_core::library::{MAX_CHAPTER_STOPS, MAX_TAB_LIST};
-use neoteletext::address::{Address, FRAGMENT, parse, parse_typed, redirect_destination};
+use neoteletext::address::{Address, parse, parse_typed, redirect_destination};
 use std::time::Instant;
 
 use super::{MAX_REDIRECTS, Pending, RedirectBy, Redirecting, Session, Tab, Visit, Went};
@@ -45,8 +45,8 @@ impl Session {
     /// Where a server's redirect of `channel` leads, by the address rules.
     /// Only the request that opens a channel can move its tab: a page
     /// fetched later is no navigation, whatever an untrusted fetcher says. A
-    /// fragment goes with a redirect that names none (RFC 9110 section
-    /// 10.2.2).
+    /// redirect that names no place keeps the one being opened (DEC-1694
+    /// rule 8).
     ///
     /// # Errors
     /// Why it is not followed, a sentence for the user.
@@ -56,11 +56,9 @@ impl Session {
             return Err("a page of it redirected elsewhere".into());
         }
         let destination = redirect_destination(location)?;
-        // A page's file name in the location names a place too (REQ-1693 item 3).
-        let inherited = tab.address().and_then(|shown| shown.text.split_once(FRAGMENT)).filter(|_| !destination.text.contains(FRAGMENT));
-        match inherited {
-            Some((_, fragment)) => parse(&format!("{}{FRAGMENT}{fragment}", destination.text)),
-            None => Ok(destination),
+        match tab.address() {
+            Some(shown) if destination.is_bare() => destination.at_same_place(shown),
+            _ => Ok(destination),
         }
     }
 

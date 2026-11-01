@@ -16,7 +16,7 @@ fn every_kind_round_trips() {
         FromFetcher::Redirected("https://b.example/teletext/".into()),
         FromFetcher::PageRedirect { page: 0x302, sub: 2 },
         FromFetcher::PageRedirect { page: 0x302, sub: neoteletext_core::limits::SUBCODE_ANY },
-        FromFetcher::ProgramRedirect("https://b.example/teletext/#302".into()),
+        FromFetcher::ProgramRedirect("https://b.example/teletext/302".into()),
         FromFetcher::Pushing(true),
         FromFetcher::Exchange { method: "GET".into(), url: "https://a.example/100.tti".into(), status: 200, bytes: 512, elapsed_us: 1_234 },
         FromFetcher::Confined,

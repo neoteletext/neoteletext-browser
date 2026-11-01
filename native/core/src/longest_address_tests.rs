@@ -14,16 +14,17 @@ const HEAD: &str = "https://a.example/";
 /// What makes a channel's address long: its folder is at most the engine's
 /// 256 bytes (`MAX_FOLDER_PATH`), and the query holds the rest.
 const QUERY: &str = "?q=";
-const PAGE: &str = "#302/0002";
+const PAGE: &str = "302/0002";
 const NOW: i64 = 1_793_000_000;
 
-/// A channel's address that is the longest with `PAGE` after it.
+/// A channel's address, with the query that makes it the longest once `PAGE`
+/// is added.
 fn channel() -> String {
     format!("{HEAD}{QUERY}{}", "x".repeat(LONGEST.saturating_sub(HEAD.len()).saturating_sub(QUERY.len()).saturating_sub(PAGE.len())))
 }
 
 fn longest() -> String {
-    format!("{}{PAGE}", channel())
+    format!("{HEAD}{PAGE}{}", channel().strip_prefix(HEAD).unwrap_or_default())
 }
 
 #[test]
@@ -37,7 +38,7 @@ fn the_address_rules_take_the_longest_and_no_more() {
 
 #[test]
 fn the_settings_keep_the_longest_home_and_every_blocked_channel() {
-    let home = checked_address(&longest()).unwrap();
+    let home = checked_address(&channel()).unwrap();
     assert_eq!(home, channel());
     // A blocked channel is a folder, its key ending in `/`, at the longest a
     // channel's address may be.

@@ -86,13 +86,13 @@ fn a_rows_bookmarks_are_removed_from_its_menu() {
 #[test]
 fn suggestions_come_from_bookmarks_then_history() {
     let mut test = Test::new("suggest");
-    test.core.session.bookmarks.add(BAR, "News bookmark", "news.invalid/#302").unwrap();
+    test.core.session.bookmarks.add(BAR, "News bookmark", "news.invalid/302").unwrap();
     test.visit("news.invalid");
     test.sent();
     test.core.suggest("news").unwrap();
     let suggestions = test.sent().into_iter().find_map(|message| if let ToInterface::Suggestions(view) = message { Some(view) } else { None }).unwrap();
     let addresses: Vec<&str> = suggestions.rows.iter().map(|row| row.address.as_str()).collect();
-    assert_eq!(addresses, ["https://news.invalid/#302", "https://news.invalid/"]);
+    assert_eq!(addresses, ["https://news.invalid/302", "https://news.invalid/"]);
     assert!(suggestions.rows[0].bookmarked && !suggestions.rows[1].bookmarked);
     assert_eq!(suggestions.inline, "", "a visit not typed never completes the field");
     // A test core has no broker to start decoders: the navigation is
@@ -108,9 +108,9 @@ fn suggestions_come_from_bookmarks_then_history() {
 #[test]
 fn the_star_bookmarks_the_page_shown() {
     let mut test = Test::new("star");
-    test.core.session.open("news.invalid/#302").unwrap();
+    test.core.session.open("news.invalid/302").unwrap();
     test.core.star().unwrap();
-    let id = test.core.session.bookmarks.find("https://news.invalid/#302").unwrap();
+    let id = test.core.session.bookmarks.find("https://news.invalid/302").unwrap();
     assert_eq!(test.core.session.bookmarks.item(id).unwrap().parent, OTHER);
     assert!(test.core.session.strip().bookmarked);
     let star = test.sent().into_iter().rev().find_map(|message| if let ToInterface::Star(view) = message { Some(view) } else { None }).unwrap();
@@ -139,7 +139,7 @@ fn another_browsers_bookmarks_come_in_as_channels_only() {
         link("Most Visited", "place:sort=8"),
         link("A script", "javascript:alert(1)"),
         BookmarkEntry::FolderEnd,
-        link("News", "news.invalid/#302"),
+        link("News", "news.invalid/302"),
     ];
     test.core.bookmarks_read(Ok((entries, 2))).unwrap();
     let bookmarks = &test.core.session.bookmarks;

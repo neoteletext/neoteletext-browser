@@ -33,7 +33,7 @@ fn history() -> HistoryView {
             channel: "News Example".into(),
             page: Some(0x302),
             title: "WEATHER".into(),
-            address: "https://news.example/teletext/#302".into(),
+            address: "https://news.example/teletext/302".into(),
             bookmarked: true,
         }],
         closed: vec![ClosedTab { number: 3, title: "Sport".into() }],

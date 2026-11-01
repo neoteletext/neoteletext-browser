@@ -12,7 +12,7 @@ use protocol::cookies::CookiesRequest;
 fn each_fetcher_is_answered_with_its_channels_cookies() {
     let mut test = Test::new("answers");
     let news = test.tab("https://news.example/teletext/", false);
-    let again = test.tab("https://news.example/teletext/#302", false);
+    let again = test.tab("https://news.example/teletext/302", false);
     let other = test.tab("https://other.example/teletext/", false);
     test.set(news, "news.example", "id=1");
     assert_eq!(test.ask(news, "news.example"), "id=1");

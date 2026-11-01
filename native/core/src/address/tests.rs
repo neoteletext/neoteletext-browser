@@ -19,8 +19,8 @@ fn the_address_field_adds_a_channels_final_slash() {
     let typed = |text: &str| parse_typed(text).unwrap().text;
     assert_eq!(typed("app.neottx.com/home"), "https://app.neottx.com/home/");
     assert_eq!(typed("https://app.neottx.com/a/home"), "https://app.neottx.com/a/home/");
-    assert_eq!(typed("app.neottx.com/home#302"), "https://app.neottx.com/home/#302");
-    assert_eq!(typed("app.neottx.com/home?who=me#302/0002"), "https://app.neottx.com/home/?who=me#302/0002");
+    assert_eq!(typed("app.neottx.com/home?who=me"), "https://app.neottx.com/home/?who=me");
+    assert_eq!(typed("app.neottx.com/home/302"), "https://app.neottx.com/home/302");
     assert_eq!(typed("app.neottx.com/home/"), "https://app.neottx.com/home/");
 }
 
@@ -66,22 +66,22 @@ fn a_windows_path_is_not_a_file_elsewhere() {
 }
 
 #[test]
-fn a_fragment_names_a_page_of_the_channel_and_is_never_fetched() {
-    let address = parse("weather.invalid/teletext/#302").unwrap();
+fn a_path_names_a_page_of_the_channel_and_the_channel_is_its_folder() {
+    let address = parse("weather.invalid/teletext/302").unwrap();
     assert_eq!(address.page, Some(0x302));
-    assert_eq!(address.text, "https://weather.invalid/teletext/#302");
+    assert_eq!(address.text, "https://weather.invalid/teletext/302");
     assert_eq!(address.channel_text(), "https://weather.invalid/teletext/");
-    let with_subpage = parse("weather.invalid/#302/0001").unwrap();
+    let with_subpage = parse("weather.invalid/302/0001").unwrap();
     assert_eq!((with_subpage.page, with_subpage.subpage), (Some(0x302), Some(1)), "decision 67: the sub-page is kept");
     // Decision 119 (the engine's REQ-NUM-002 and REQ-NUM-006): every value
     // of the thirteen bits names a sub-page.
-    assert_eq!(parse("weather.invalid/#302/3F7E").unwrap().subpage, Some(0x3F7E));
-    assert_eq!(parse("weather.invalid/#302/0A5C").unwrap().subpage, Some(0x0A5C));
-    assert_eq!(parse("weather.invalid/#302").unwrap().subpage, None);
-    assert_eq!(parse("weather.invalid#302").unwrap().text, "https://weather.invalid/#302");
-    assert_eq!(parse("weather.invalid/#1A0").unwrap().page, Some(0x1A0), "every page the standard defines");
+    assert_eq!(parse("weather.invalid/302/3F7E").unwrap().subpage, Some(0x3F7E));
+    assert_eq!(parse("weather.invalid/302/0A5C").unwrap().subpage, Some(0x0A5C));
+    assert_eq!(parse("weather.invalid/302").unwrap().subpage, None);
+    assert_eq!(parse("weather.invalid/1A0").unwrap().page, Some(0x1A0), "every page the standard defines");
+    assert!(parse("weather.invalid/#302").is_err(), "DEC-1694: a fragment is refused");
     let at = address.with_page(0x100).unwrap();
-    assert_eq!((at.text.as_str(), at.page), ("https://weather.invalid/teletext/#100", Some(0x100)));
+    assert_eq!((at.text.as_str(), at.page), ("https://weather.invalid/teletext/100", Some(0x100)));
     assert!(at.same_channel(&address) && !at.same_channel(&parse("weather.invalid/other/").unwrap()));
 }
 
@@ -108,45 +108,48 @@ fn the_conformance_table_holds_for_the_address_rules() {
             _ => panic!("a row of the table: {line}"),
         }
     }
-    assert_eq!((opened, refused), (23, 29), "the table's rows, all of them read");
+    assert_eq!((opened, refused), (30, 33), "the table's rows, all of them read");
 }
 
 /// REQ-1693 items 1 and 6: what an address holds beyond its page, read once.
 #[test]
-fn an_address_holds_its_page_parameters_and_contents() {
-    let channel = "https://weather.invalid/teletext/?city=x";
-    let with = parse(&format!("{channel}#302/0002?b=%41&a=1")).unwrap();
+fn an_address_holds_its_query_and_contents() {
+    let channel = "https://weather.invalid/teletext/";
+    let with = parse(&format!("{channel}302/0002?b=%41&a=1")).unwrap();
     assert_eq!(with.parameters(), Some("b=%41&a=1"), "as they came");
     assert_eq!(with.parameters_of(0x302, 2), "b=%41&a=1");
     assert_eq!(with.parameters_of(0x302, SUBCODE_ANY), "", "another selection");
     assert_eq!(with.parameters_of(0x303, 2), "", "another selection");
-    let page = parse(&format!("{channel}#302?a=1")).unwrap();
+    let page = parse(&format!("{channel}302?a=1")).unwrap();
     assert_eq!(page.parameters_of(0x302, SUBCODE_ANY), "a=1");
     assert_eq!(page.with_page(0x303).unwrap().parameters(), None, "another page leaves them behind");
     assert_eq!(page.with_subpage(0x302, Some(1)).unwrap().parameters(), None);
     assert_eq!(page.with_wall().unwrap().parameters(), None);
-    assert_eq!(page.with_parameters(Some("b=2")).unwrap().text, format!("{channel}#302?b=2"));
-    assert_eq!(page.with_parameters(None).unwrap().text, format!("{channel}#302"));
-    let contents = parse(&format!("{channel}#contents")).unwrap();
+    assert_eq!(page.with_parameters(Some("b=2")).unwrap().text, format!("{channel}302?b=2"));
+    assert_eq!(page.with_parameters(None).unwrap().text, format!("{channel}302"));
+    let contents = parse(&format!("{channel}contents")).unwrap();
     assert!(contents.contents && !contents.wall && !contents.is_bare());
     assert_eq!((contents.page, contents.parameters()), (None, None));
     assert_eq!(parse(&contents.text).unwrap(), contents);
     assert!(contents.same_channel(&page));
     assert!(parse(channel).unwrap().is_bare());
+    let bare = parse(&format!("{channel}?city=x")).unwrap();
+    assert!(bare.is_bare() && bare.same_channel(&page), "a query names no other channel");
+    assert_eq!(bare.parameters_of(0x100, SUBCODE_ANY), "city=x", "DEC-1730: it goes with the arrival");
 }
 
 /// REQ-1693 and REQ-1690: the map's forms, written and read in one place.
 #[test]
 fn an_address_writes_and_reads_the_maps_forms() {
-    let channel = parse("https://weather.invalid/teletext/?city=x").unwrap();
+    let channel = parse("https://weather.invalid/teletext/").unwrap();
     let sub_page = channel.with_subpage(0x302, Some(2)).unwrap();
-    assert_eq!(sub_page.text, "https://weather.invalid/teletext/?city=x#302/0002", "a sub-page, with the channel's own query");
+    assert_eq!(sub_page.text, "https://weather.invalid/teletext/302/0002", "a sub-page");
     assert_eq!((sub_page.page, sub_page.subpage, sub_page.wall), (Some(0x302), Some(2), false));
     assert_eq!(parse(&sub_page.text).unwrap(), sub_page, "it reads back as it was written");
     let page = sub_page.with_page(0x100).unwrap();
-    assert_eq!((page.text.as_str(), page.subpage), ("https://weather.invalid/teletext/?city=x#100", None));
+    assert_eq!((page.text.as_str(), page.subpage), ("https://weather.invalid/teletext/100", None));
     let wall = sub_page.with_wall().unwrap();
-    assert_eq!(wall.text, "https://weather.invalid/teletext/?city=x#wall");
+    assert_eq!(wall.text, "https://weather.invalid/teletext/wall");
     assert_eq!((wall.page, wall.subpage, wall.wall), (None, None, true));
     assert_eq!(parse(&wall.text).unwrap(), wall);
     assert!(wall.same_channel(&channel));
@@ -189,30 +192,28 @@ fn a_files_address_names_its_page() {
 fn a_channels_address_leaves_room_for_a_sub_page() {
     let head = "https://a.invalid/";
     let channel = |length| format!("{head}?q={}", "x".repeat(length));
-    let fits = protocol::MAX_ADDRESS - head.len() - "?q=#302/0002".len();
+    let fits = protocol::MAX_ADDRESS - head.len() - "?q=302/0002".len();
     let address = parse(&channel(fits)).unwrap();
     assert!(address.with_subpage(0x302, Some(2)).is_some());
     assert!(parse(&channel(fits + 1)).is_err(), "no room");
 }
 
-/// TODO-1662: the address rules read `#` as the engine's parser does: the
-/// host ends at it, a query comes before it and is part of the channel, and
-/// what is fetched holds no fragment.
+/// TODO-1662: the address rules and the engine's parser agree on a host, and
+/// what is fetched is the channel's folder. A `#` cannot hide the real host.
 #[test]
-fn the_address_rules_and_the_engines_parser_agree_on_a_fragment() {
+fn the_address_rules_and_the_engines_parser_agree_on_an_address() {
     use neoteletext_web::url::Url;
-    for (text, host, query) in [
-        ("https://a.example/news/#302", "a.example", None),
-        ("https://a.example/news/?who=me#302/0002", "a.example", Some("who=me")),
-        ("https://a.example#302", "a.example", None),
-        ("http://a.example:8080/?a=1&b=2#wall", "a.example", Some("a=1&b=2")),
+    for (text, host, query, folder) in [
+        ("https://a.example/news/302", "a.example", None, "https://a.example/news/"),
+        ("https://a.example/news/302/0002?who=me", "a.example", Some("who=me"), "https://a.example/news/"),
+        ("https://a.example/302", "a.example", None, "https://a.example/"),
+        ("http://a.example:8080/news/?a=1&b=2", "a.example", Some("a=1&b=2"), "http://a.example:8080/news/"),
     ] {
         let ours = parse(text).unwrap();
         let theirs = Url::parse(text).unwrap();
         assert_eq!((ours.host.as_str(), theirs.host_text()), (host, host), "{text}");
         assert_eq!(theirs.query(), query, "{text}");
-        assert_eq!(theirs.as_str(), ours.channel_text(), "{text}: what is fetched");
-        assert_eq!(Some(ours.text.split_once(FRAGMENT).unwrap().1), theirs.fragment(), "{text}");
+        assert_eq!(ours.channel_text(), folder, "{text}: what is fetched");
     }
     assert_eq!(Url::parse("https://evil.example#@good.example").unwrap().host_text(), "evil.example");
     assert!(parse("https://evil.example#@good.example").is_err(), "no place in a channel");
@@ -276,12 +277,12 @@ fn an_address_is_within_its_bound_written_in_full() {
 #[test]
 fn a_link_from_outside_unwraps_to_its_web_address() {
     for (link, address, page) in [
-        ("neoteletext://https://news.example/#302", "https://news.example/#302", Some(0x302)),
+        ("neoteletext://https://news.example/302", "https://news.example/302", Some(0x302)),
         ("NEOTELETEXT://http://news.example/channel/?id=7", "http://news.example/channel/?id=7", None),
-        ("neoteletext://https://news.example/#1fe?a=1", "https://news.example/#1FE?a=1", Some(0x1FE)),
-        ("neoteletext://https://news.example/302.tti", "https://news.example/#302", Some(0x302)),
-        ("neoteletext://https://news.example/#contents", "https://news.example/#contents", None),
-        ("neoteletext://https://news.example/#wall", "https://news.example/#wall", None),
+        ("neoteletext://https://news.example/1fe?a=1", "https://news.example/1FE?a=1", Some(0x1FE)),
+        ("neoteletext://https://news.example/302.tti", "https://news.example/302", Some(0x302)),
+        ("neoteletext://https://news.example/contents", "https://news.example/contents", None),
+        ("neoteletext://https://news.example/wall", "https://news.example/wall", None),
         ("neoteletext://https://NEWS.Example:8443/", "https://news.example:8443/", None),
     ] {
         let opened = outside_link(link).unwrap();
@@ -302,7 +303,7 @@ fn a_link_from_outside_carries_nothing_else() {
         "neoteletext://ftp://a.example/",
         "neoteletext://neoteletext://https://a.example/",
         "neoteletext://https://a.example/#not-a-page",
-        "neoteletext://https://a.example/#302:12",
+        "neoteletext://https://a.example/302:12",
         "neoteletext://https://a.example/channel.json",
         "neoteletext://https://a.example/302.tti#303",
         "neoteletext://https://a%2eexample/",

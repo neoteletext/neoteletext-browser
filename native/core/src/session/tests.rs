@@ -35,7 +35,7 @@ fn two_tabs_on_one_channel_share_nothing() {
     session.open("news.invalid").unwrap();
     let ids = [session.tabs[0].channel.id, session.tabs[1].channel.id];
     assert_ne!(ids[0], ids[1]);
-    session.navigate("news.invalid/#200", true).unwrap();
+    session.navigate("news.invalid/200", true).unwrap();
     assert_eq!(session.tabs[0].channel.id, ids[0], "the other tab");
     assert!(!ids.contains(&session.tabs[1].channel.id), "still nobody else's");
 }
@@ -71,14 +71,14 @@ fn a_link_within_the_channel_keeps_it_open_and_is_recorded_as_the_pages() {
     let mut session = Session::new(Bookmarks::default());
     session.open("news.invalid/teletext/").unwrap();
     let channel = session.tabs[0].channel.id;
-    assert_eq!(session.show_page(0x302).map(|address| address.text.as_str()), Some("https://news.invalid/teletext/#302"));
+    assert_eq!(session.show_page(0x302).map(|address| address.text.as_str()), Some("https://news.invalid/teletext/302"));
     assert!(session.tabs[0].history[1].by_page && !session.tabs[0].history[0].by_page);
     assert_eq!(session.tabs[0].channel.id, channel, "the same channel, still open");
     assert_eq!(session.go(false), Went::Page(None));
     assert_eq!(session.go(true), Went::Page(Some(0x302)));
     assert_eq!(session.tabs[0].channel.id, channel);
     // A link to another channel opens it, recorded as the page's.
-    session.follow(parse("https://sport.invalid/#401").unwrap()).unwrap();
+    session.follow(parse("https://sport.invalid/401").unwrap()).unwrap();
     assert!(session.tabs[0].history[2].by_page);
     assert_ne!(session.tabs[0].channel.id, channel);
     assert_eq!(session.tabs[0].channel.web.as_deref(), Some("https://sport.invalid/"), "the fragment is never fetched");
@@ -149,9 +149,9 @@ fn closing_tabs_keeps_a_valid_active_tab() {
 #[test]
 fn bookmarks_follow_the_address() {
     let mut session = Session::new(Bookmarks::default());
-    session.open("news.invalid/#302").unwrap();
+    session.open("news.invalid/302").unwrap();
     assert!(!session.strip().bookmarked);
-    session.bookmarks.add(neoteletext::bookmarks::OTHER, "", "news.invalid/#302").unwrap();
+    session.bookmarks.add(neoteletext::bookmarks::OTHER, "", "news.invalid/302").unwrap();
     assert!(session.strip().bookmarked);
     session.navigate("news.invalid", true).unwrap();
     assert!(!session.strip().bookmarked, "the channel without the page is another address");
@@ -326,7 +326,7 @@ fn navigations_wait_to_be_recorded() {
     session.tabs[0].pending = None;
     session.navigate("sport.invalid", true).unwrap();
     assert_eq!(session.tabs[0].pending, Some(Pending { typed: true, drawn: false, reload: false }));
-    session.navigate("sport.invalid/#401", false).unwrap();
+    session.navigate("sport.invalid/401", false).unwrap();
     session.tabs[0].pending = None;
     assert_eq!(session.go(false), Went::Page(None));
     assert_eq!(session.tabs[0].pending, Some(Pending { typed: false, drawn: true, reload: false }), "the same channel, already drawing");
@@ -343,7 +343,7 @@ fn back_lists_twelve_then_chapter_stops_and_a_tab_keeps_fifty() {
     session.open("a.invalid").unwrap();
     // a, then b×3, c×3, d×3, e×3, f×3, g×3, h×3: 22 entries, the last h.
     for host in ["b", "c", "d", "e", "f", "g", "h"] {
-        for page in ["#100", "#200", "#300"] {
+        for page in ["100", "200", "300"] {
             session.navigate(&format!("{host}.invalid/{page}"), false).unwrap();
         }
     }
@@ -360,7 +360,7 @@ fn back_lists_twelve_then_chapter_stops_and_a_tab_keeps_fifty() {
     // the last entry, an h, at 21.
     assert_eq!(hosts(session.chapter_stops(true)), [(15, "f.invalid".into()), (18, "g.invalid".into()), (21, "h.invalid".into())]);
     for page in 0..60 {
-        session.navigate(&format!("z.invalid/#{:03}", 100 + page), false).unwrap();
+        session.navigate(&format!("z.invalid/{:03}", 100 + page), false).unwrap();
     }
     let tab = &session.tabs[0];
     assert_eq!((tab.history.len(), tab.position), (MAX_TAB_ENTRIES, MAX_TAB_ENTRIES - 1), "the oldest dropped");
@@ -450,7 +450,7 @@ fn tabs_move_and_the_active_one_stays_active() {
 fn a_reload_opens_the_channel_afresh_where_the_tab_is() {
     let mut session = Session::new(Bookmarks::default());
     session.open("news.invalid/teletext/").unwrap();
-    session.navigate("sport.invalid/#401", false).unwrap();
+    session.navigate("sport.invalid/401", false).unwrap();
     assert_eq!(session.go(false), Went::Channel);
     let addresses = |tab: &Tab| tab.history.iter().map(|visit| visit.address.text.clone()).collect::<Vec<_>>();
     let (before, history, position) = (session.tabs[0].channel.id, addresses(&session.tabs[0]), session.tabs[0].position);
@@ -646,8 +646,8 @@ fn a_restored_file_tab_is_read_only_when_first_shown() {
 fn longest() -> String {
     const LONGEST: usize = 8_000;
     const HEAD: &str = "https://a.example/";
-    const PAGE: &str = "#302/0002";
-    format!("{HEAD}?q={}{PAGE}", "x".repeat(LONGEST.saturating_sub(HEAD.len()).saturating_sub("?q=".len()).saturating_sub(PAGE.len())))
+    const PAGE: &str = "302/0002";
+    format!("{HEAD}{PAGE}?q={}", "x".repeat(LONGEST.saturating_sub(HEAD.len()).saturating_sub("?q=".len()).saturating_sub(PAGE.len())))
 }
 
 #[test]

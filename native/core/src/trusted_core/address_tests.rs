@@ -19,7 +19,7 @@ use crate::session::Went;
 const CHANNEL: &str = "https://live.invalid/channel/";
 
 fn at(fragment: &str) -> String {
-    format!("{CHANNEL}#{fragment}")
+    format!("{CHANNEL}{fragment}")
 }
 
 /// A tab on a live channel listing pages 100, 200 and 300, and sub-pages 1,
@@ -218,9 +218,9 @@ fn a_redirect_inherits_a_fragment_only_when_it_names_no_place() {
     let mut test = Test::new("address redirect fragment");
     test.core.session.open(&at("302?a=1")).unwrap();
     let channel = test.core.active_channel().unwrap();
-    assert_eq!(test.core.session.server_redirect(channel, "https://other.invalid/a/").unwrap().text, "https://other.invalid/a/#302?a=1");
-    assert_eq!(test.core.session.server_redirect(channel, "https://other.invalid/a/400.tti").unwrap().text, "https://other.invalid/a/#400");
-    assert_eq!(test.core.session.server_redirect(channel, "https://other.invalid/a/#500").unwrap().text, "https://other.invalid/a/#500");
+    assert_eq!(test.core.session.server_redirect(channel, "https://other.invalid/a/").unwrap().text, "https://other.invalid/a/302?a=1");
+    assert_eq!(test.core.session.server_redirect(channel, "https://other.invalid/a/400.tti").unwrap().text, "https://other.invalid/a/400");
+    assert_eq!(test.core.session.server_redirect(channel, "https://other.invalid/a/500").unwrap().text, "https://other.invalid/a/500");
     assert!(test.core.session.server_redirect(channel, "https://other.invalid/a/channel.json").is_err());
 }
 
@@ -231,7 +231,7 @@ fn a_redirect_inherits_a_fragment_only_when_it_names_no_place() {
 fn page_parameters_go_with_their_selection() {
     let (mut test, channel) = arrived("parameters");
     let parameters = |test: &Test, channel| test.core.typing.parameters(channel).map(str::to_owned);
-    test.core.session.navigate(&format!("{CHANNEL}#100"), true).unwrap();
+    test.core.session.navigate(&format!("{CHANNEL}100"), true).unwrap();
     assert_ne!(test.core.active_channel(), Some(channel));
     test.core.session.navigate(&at("200?a=1"), true).unwrap();
     let channel = test.core.active_channel().unwrap();

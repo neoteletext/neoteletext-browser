@@ -22,10 +22,7 @@ fn saved() -> Saved {
                     tab(
                         false,
                         1,
-                        vec![
-                            entry("https://news.example/teletext/"),
-                            Entry { by_page: true, passed_over: true, ..entry("https://news.example/teletext/#302") },
-                        ],
+                        vec![entry("https://news.example/teletext/"), Entry { by_page: true, passed_over: true, ..entry("https://news.example/teletext/302") }],
                     ),
                     tab(true, 0, vec![entry(crate::address::START_PAGE)]),
                 ],

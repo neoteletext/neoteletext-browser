@@ -14,7 +14,7 @@ use protocol::links::{Alias, Candidate, Fastext, FastextTarget, NumberLink, Serv
 use super::super::Core;
 use super::super::test_support::core_on;
 
-const HOME: &str = "https://news.invalid/teletext/#100";
+const HOME: &str = "https://news.invalid/teletext/100";
 const ELSEWHERE: &str = "https://weather.invalid/teletext/";
 const PAGE: u16 = 0x100;
 /// The row and first column of the page's one link.
@@ -102,7 +102,7 @@ fn a_coloured_key_and_index_to_another_channel_go_at_once() {
         let target = Some(FastextTarget { page: 0x100, subcode: None, service: Some(0) });
         viewer.page(Vec::new(), Vec::new(), Fastext { keys: [target, target, target, target, target], row24: true, prompts: [None; 4] }, VERSION, 0);
         viewer.core.intent(ToCore::PageControl(PageControl::Fastext(key))).unwrap();
-        viewer.went("https://weather.invalid/teletext/#100", HOME);
+        viewer.went("https://weather.invalid/teletext/100", HOME);
     }
 }
 
@@ -124,7 +124,7 @@ fn a_named_service_goes_at_once() {
     viewer.core.links.descriptor(channel, &[], &[Service { name: "sport".into(), address: "https://sport.invalid/".into() }]);
     viewer.page(vec![link("sport:302")], Vec::new(), Fastext::default(), VERSION, 0);
     viewer.click(VERSION);
-    viewer.went("https://sport.invalid/#302", HOME);
+    viewer.went("https://sport.invalid/302", HOME);
 }
 
 // REQ-1670: a bookmark chosen on the built-in start page.
@@ -173,12 +173,12 @@ fn a_link_to_a_sub_page_opens_it() {
     let mut viewer = Viewer::on(HOME);
     viewer.page(vec![link("100:0002")], Vec::new(), Fastext::default(), VERSION, 0);
     viewer.click(VERSION);
-    assert_eq!(viewer.address(), "https://news.invalid/teletext/#100/0002");
+    assert_eq!(viewer.address(), "https://news.invalid/teletext/100/0002");
     #[cfg(feature = "interaction")]
     assert_eq!(viewer.core.typing.selection(viewer.key.channel), Some((PAGE, 2)));
     viewer.page(vec![link("302:0002")], Vec::new(), Fastext::default(), VERSION + 1, 0);
     viewer.click(VERSION + 1);
-    assert_eq!(viewer.address(), "https://news.invalid/teletext/#302/0002");
+    assert_eq!(viewer.address(), "https://news.invalid/teletext/302/0002");
     viewer.core.intent(ToCore::Opened(Some(PageKey { page: 0x302, ..viewer.key }))).unwrap();
     #[cfg(feature = "interaction")]
     assert_eq!(viewer.core.typing.selection(viewer.key.channel), Some((0x302, 2)), "when it opens");

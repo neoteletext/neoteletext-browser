@@ -138,7 +138,7 @@ mod tests {
         list.iter().map(OsString::from).collect()
     }
 
-    const LINK: &str = "neoteletext://https://news.example/#302";
+    const LINK: &str = "neoteletext://https://news.example/302";
 
     #[test]
     fn a_marker_and_one_good_argument_is_a_launch() {

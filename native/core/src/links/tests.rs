@@ -47,7 +47,7 @@ fn targets_parse_in_every_form_of_the_tti_link_extension() {
     assert_eq!(parse_target("sport:302:0001"), Some(Target::Service { name: "sport".into(), page: 0x302 }));
     assert_eq!(parse_target("abc:302"), Some(Target::Service { name: "abc".into(), page: 0x302 }), "a name is not a page");
     let Some(Target::Channel(address)) = parse_target("https://weather.invalid/300.t42") else { panic!() };
-    assert_eq!(address.text, "https://weather.invalid/#300", "a page's file name has one spelling (REQ-1693 item 3)");
+    assert_eq!(address.text, "https://weather.invalid/300", "a page's file name has one spelling (REQ-1693 item 3)");
     assert_eq!(parse_target("web:https://www.example.invalid/story"), Some(Target::Web("https://www.example.invalid/story".into())));
 }
 
@@ -125,8 +125,8 @@ fn targets_are_classified_from_the_target_alone() {
     assert_eq!(decide("https://news.invalid/teletext/302.tti"), Some(Destination::Page(0x302)), "a page file of this channel");
     assert_eq!(decide("https://news.invalid/teletext/302.t42"), Some(Destination::Page(0x302)));
     assert_eq!(decide("302:0002"), Some(Destination::SubPage(0x302, 2)));
-    assert_eq!(decide("https://news.invalid/teletext/#401/0002"), Some(Destination::SubPage(0x401, 2)), "this channel's");
-    assert_eq!(decide("https://news.invalid/teletext/#401"), Some(Destination::Page(0x401)), "this channel at a page");
+    assert_eq!(decide("https://news.invalid/teletext/401/0002"), Some(Destination::SubPage(0x401, 2)), "this channel's");
+    assert_eq!(decide("https://news.invalid/teletext/401"), Some(Destination::Page(0x401)), "this channel at a page");
     assert_eq!(decide("https://news.invalid/teletext/"), Some(Destination::Page(INITIAL_PAGE)));
     let Some(Destination::Channel(other)) = decide("https://news.invalid/other/302.tti") else { panic!() };
     assert_eq!(other.host, "news.invalid", "another folder of the same host is another channel");
@@ -246,7 +246,7 @@ fn an_unchanged_link_keeps_its_age_across_new_images() {
 // window's focus, since only a hand-off leaves the browser.
 #[test]
 fn a_link_to_another_channel_is_followed_with_no_question() {
-    let mut links = links_with(vec![declared(5, 0, 7, "https://weather.invalid/#302")], Vec::new());
+    let mut links = links_with(vec![declared(5, 0, 7, "https://weather.invalid/302")], Vec::new());
     links.point(Some(spot(1, 1, 5)));
     links.focused(false);
     let Ok(Follow::Channel(address)) = links.click(spot(1, 1, 5), Some(CHANNEL), LATER) else { panic!() };
@@ -265,7 +265,7 @@ fn a_pointed_link_says_where_it_leads_in_full() {
     let address = home();
     links.redecide(OPEN, &Channel { id: CHANNEL, address: &address }, START);
     let complete = |links: &mut Links, row| links.point(Some(spot(1, 1, row))).map(|pointing| pointing.complete);
-    assert_eq!(complete(&mut links, 5), Some(format!("{long}#302")), "another channel's whole address");
+    assert_eq!(complete(&mut links, 5), Some("https://weather.invalid/302".to_owned()), "another channel's whole address");
     assert_eq!(complete(&mut links, 7), Some("https://www.example.invalid/a?b=c#d (opens in your web browser)".to_owned()));
     assert_eq!(complete(&mut links, 9), Some("Page 401".to_owned()));
     assert_eq!(complete(&mut links, 20), None, "nothing where no link is");
@@ -469,7 +469,7 @@ fn a_channel_owns_a_page_only_in_its_folder() {
         |channel: &Address, target: &Address| Descriptor::default().resolve(&Target::Channel(target.clone()), &Channel { id: CHANNEL, address: channel });
     assert_eq!(owned(&folder, &inside), Some(Destination::Page(0x302)));
     assert_eq!(owned(&folder, &other), Some(Destination::Channel(other.clone())), "a page of another folder");
-    for target in ["https://news.invalid/a/#302?b=1", "https://news.invalid/a/#wall", "https://news.invalid/a/#contents"] {
+    for target in ["https://news.invalid/a/302?b=1", "https://news.invalid/a/wall", "https://news.invalid/a/contents"] {
         let target = address::parse(target).unwrap();
         assert_eq!(owned(&folder, &target), Some(Destination::Channel(target.clone())));
     }

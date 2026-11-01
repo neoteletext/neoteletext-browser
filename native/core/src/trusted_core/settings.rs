@@ -260,7 +260,7 @@ mod tests {
     fn each_setting_change_is_checked() {
         let mut settings = Settings::default();
         let mut change = |change: SettingChange| checked_change(&mut settings, change, Some("https://open.example/"));
-        assert_eq!(change(SettingChange::Home("news.example/teletext/#302".into())), Ok(None));
+        assert_eq!(change(SettingChange::Home("news.example/teletext/302".into())), Ok(None));
         assert!(change(SettingChange::Home("javascript:alert(1)".into())).is_err());
         assert!(change(SettingChange::Home("neoteletext:settings".into())).is_err());
         assert_eq!(change(SettingChange::Volume(101)), Err("The volume is from 0 to 100".into()));

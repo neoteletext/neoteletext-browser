@@ -57,8 +57,8 @@ fn text(test: &Test) -> &str {
 fn a_page_redirect_moves_the_tab_and_its_address() {
     let (mut test, channel) = live("page");
     redirected(&mut test, channel, 0x200, SUBCODE_ANY);
-    assert_eq!(text(&test), "https://live.invalid/channel/#200");
-    assert_eq!(test.core.strip().address, "https://live.invalid/channel/#200", "the strip says it");
+    assert_eq!(text(&test), "https://live.invalid/channel/200");
+    assert_eq!(test.core.strip().address, "https://live.invalid/channel/200", "the strip says it");
     let key = PageKey { channel, page: 0x200 };
     assert_eq!(shown(&mut test), [key], "the interface is told");
     test.core.intent(ToCore::Opened(Some(key))).unwrap();
@@ -73,7 +73,7 @@ fn a_redirect_moves_the_tab_wherever_the_keys_are() {
     test.core.intent(ToCore::Focused(false)).unwrap();
     assert!(!test.core.typing.page_takes_keys());
     redirected(&mut test, channel, 0x300, SUBCODE_ANY);
-    assert_eq!(text(&test), "https://live.invalid/channel/#300");
+    assert_eq!(text(&test), "https://live.invalid/channel/300");
 }
 
 // REQ-212 item 1: a sub-code names the sub-page, and a redirect to another
@@ -125,7 +125,7 @@ fn a_tab_behind_others_moves() {
     test.core.session.open("https://other.invalid/").unwrap();
     let _ = test.sent();
     redirected(&mut test, channel, 0x200, SUBCODE_ANY);
-    assert_eq!(test.core.session.tabs[0].address().unwrap().text, "https://live.invalid/channel/#200");
+    assert_eq!(test.core.session.tabs[0].address().unwrap().text, "https://live.invalid/channel/200");
     assert_eq!(test.core.typing.selection(channel), Some((0x200, SUBCODE_ANY)), "the channel is told");
     assert_eq!(shown(&mut test), [], "not its window's page");
 }
@@ -172,7 +172,7 @@ fn a_programs_redirect_shows_the_notice_then_opens_the_channel() {
     core.fetched(old, FromFetcher::InitialPage(0x100)).unwrap();
     program_redirect(&mut core, DESTINATION);
     assert_eq!(core.strip().redirecting, DESTINATION);
-    assert_eq!(address(&core), "https://live.invalid/channel/#100", "the address waits");
+    assert_eq!(address(&core), "https://live.invalid/channel/100", "the address waits");
     elapse(&mut core);
     assert_eq!(address(&core), DESTINATION);
     assert_ne!(channel(&core), old, "a channel of its own");
@@ -200,9 +200,9 @@ fn a_programs_redirect_leads_only_to_the_web() {
 #[test]
 fn a_programs_redirect_to_its_own_channel_shows_no_notice() {
     let (mut test, channel) = live("own");
-    test.core.fetched(channel, FromFetcher::ProgramRedirect("https://live.invalid/channel/#300".into())).unwrap();
+    test.core.fetched(channel, FromFetcher::ProgramRedirect("https://live.invalid/channel/300".into())).unwrap();
     assert_eq!(test.core.strip().redirecting, "");
-    assert_eq!(text(&test), "https://live.invalid/channel/#300");
+    assert_eq!(text(&test), "https://live.invalid/channel/300");
     assert_eq!(shown(&mut test), [PageKey { channel, page: 0x300 }]);
 }
 
@@ -249,8 +249,8 @@ fn the_longest_address_a_record_carries_is_followed() {
     use neoteletext_web::records::redirect::MAX_ADDRESS;
     // An address names a page to take up the last of the bound: one with no
     // page and no room for one is refused (REQ-1690 item 10).
-    let (head, page) = ("https://long.invalid/?q=", "#302/0002");
-    let location = format!("{head}{}{page}", "a".repeat(MAX_ADDRESS - head.len() - page.len()));
+    let head = "https://long.invalid/302/0002?q=";
+    let location = format!("{head}{}", "a".repeat(MAX_ADDRESS - head.len()));
     assert_eq!(location.len(), MAX_ADDRESS);
     let (mut core, _stand_in, _) = live_with_broker();
     program_redirect(&mut core, &location);
@@ -284,9 +284,9 @@ fn entries(test: &Test) -> Vec<(String, bool)> {
     test.core.session.active_tab().unwrap().history.iter().map(|visit| (visit.address.text.clone(), visit.passed_over)).collect()
 }
 
-const PAGE_100_ADDRESS: &str = "https://live.invalid/channel/#100";
-const PAGE_200_ADDRESS: &str = "https://live.invalid/channel/#200";
-const PAGE_300_ADDRESS: &str = "https://live.invalid/channel/#300";
+const PAGE_100_ADDRESS: &str = "https://live.invalid/channel/100";
+const PAGE_200_ADDRESS: &str = "https://live.invalid/channel/200";
+const PAGE_300_ADDRESS: &str = "https://live.invalid/channel/300";
 
 /// A tab on a live channel on page 100, named by its address and drawn.
 fn on_page_100(name: &str) -> (Test, u32) {

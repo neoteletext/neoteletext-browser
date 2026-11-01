@@ -15,6 +15,8 @@ use neoteletext_web::map::{MapAddress, MapError, Place};
 pub struct Address {
     /// The address in full, as the address field shows it.
     pub text: String,
+    /// The channel it belongs to: its folder, or a file's own address.
+    channel: String,
     /// The site's host, or a file's name: what the strip shows as the
     /// channel's identity.
     pub host: String,
@@ -22,26 +24,46 @@ pub struct Address {
     pub encrypted: bool,
     /// A file on this computer, at this absolute path.
     pub file: Option<PathBuf>,
-    /// The page the address names after `#`, as `#302` or `#302/0001`
-    /// does (REQ-1693): a page of the channel, never sent in a request.
+    /// The page the address names, as `<channel>302` or `<channel>302/0001`
+    /// does (REQ-1693), or `#302` on a file's address.
     pub page: Option<u16>,
-    /// The sub-page it names after the page, as `#302/0001` does: the page
+    /// The sub-page it names after the page, as `302/0001` does: the page
     /// opens at it (`page-controls.md` section 4, decision 67).
     pub subpage: Option<u16>,
-    /// It names the wall of pages with no page selected, as `#wall` does.
+    /// It names the wall of pages with no page selected, as `wall` does.
     pub wall: bool,
-    /// It names the channel's contents, as `#contents` does.
+    /// It names the channel's contents, as `contents` does.
     pub contents: bool,
 }
 
 impl Address {
-    /// The address without its fragment: the channel itself, as fetched.
+    /// The channel itself, as fetched: an `http` or `https` address's folder,
+    /// or a file's own address.
     #[must_use]
     pub fn channel_text(&self) -> &str {
-        self.text.split_once(FRAGMENT).map_or(self.text.as_str(), |(channel, _)| channel)
+        &self.channel
     }
 
-    /// The address as `place` says: what its fragment names, or nothing.
+    /// The address to keep for this channel: its own, with the query of an
+    /// address that names no place, which is how a home says who it is for.
+    #[must_use]
+    pub fn channel_address(&self) -> &str {
+        if self.is_bare() { &self.text } else { &self.channel }
+    }
+
+    /// What the address says after its channel: a place and a query, a
+    /// query alone, or nothing. On a file's address it holds its `#`.
+    fn tail(&self) -> &str {
+        self.text.strip_prefix(&self.channel).unwrap_or_default()
+    }
+
+    /// Whether this address's places follow a `#`: a file's, whose path names
+    /// a real file (DEC-1694 rule 10), and the built-in page's.
+    fn places_in_fragment(&self) -> bool {
+        self.file.is_some() || self.channel == START_PAGE
+    }
+
+    /// The address as `place` says: what it names, or nothing.
     fn placed(self, place: Option<Place<'_>>) -> Self {
         let (page, subpage) = match place {
             Some(Place::Page { page, subcode, .. }) => (Some(page.mpp()), subcode.map(SubCode::value)),
@@ -53,7 +75,9 @@ impl Address {
     /// The same channel at `place`, or none when that would be longer than
     /// an address may be (finding F-78).
     fn at_place(&self, place: Place<'_>) -> Option<Self> {
-        let text = format!("{}{FRAGMENT}{}", self.channel_text(), written(|writer| place.write(writer))?);
+        let written = written(|writer| place.write(writer))?;
+        let mark = if self.places_in_fragment() { "#" } else { "" };
+        let text = format!("{}{mark}{written}", self.channel);
         (text.len() <= protocol::MAX_ADDRESS).then(|| Self { text, ..self.clone() }.placed(Some(place)))
     }
 
@@ -85,11 +109,15 @@ impl Address {
         self.at_place(Place::Wall)
     }
 
-    /// The page parameters the address holds, as written (REQ-1693 item 6).
+    /// The query the address holds, as written (REQ-1693 item 6), with its
+    /// page or on its own at the channel's address.
     #[must_use]
     pub fn parameters(&self) -> Option<&str> {
-        let (_, fragment) = self.text.split_once(FRAGMENT)?;
-        match Place::read(fragment)? {
+        let tail = self.tail();
+        if let Some(query) = tail.strip_prefix('?') {
+            return Some(query);
+        }
+        match Place::read(tail.strip_prefix(FRAGMENT).unwrap_or(tail))? {
             Place::Page { parameters, .. } => parameters,
             Place::Contents | Place::Wall => None,
         }
@@ -101,8 +129,19 @@ impl Address {
     /// item 6).
     #[must_use]
     pub fn parameters_of(&self, page: u16, sub: u16) -> &str {
-        let named = self.page == Some(page) && self.subpage.unwrap_or(SUBCODE_ANY) == sub;
+        // A query at the channel's own address goes with the page it arrives at.
+        let named = self.is_bare() || (self.page == Some(page) && self.subpage.unwrap_or(SUBCODE_ANY) == sub);
         self.parameters().filter(|_| named).unwrap_or_default()
+    }
+
+    /// This channel at what `shown` names inside its own: a redirect of a
+    /// channel keeps the place being opened (DEC-1694 rule 8).
+    ///
+    /// # Errors
+    /// A sentence for the user.
+    pub fn at_same_place(&self, shown: &Self) -> Result<Self, String> {
+        let tail = shown.tail();
+        parse(&format!("{}{tail}", self.channel))
     }
 
     /// Whether it names nothing inside its channel.
@@ -141,12 +180,12 @@ const ESCAPED_PERCENT: &str = "%25";
 const HOME_SIGN: char = '~';
 /// What begins a link from outside (DEC-1666): the whole address follows it.
 pub const OUTSIDE_SCHEME: &str = "neoteletext://";
-/// What begins an address's fragment, which holds everything inside a
-/// channel (REQ-1693). The fragments are written and read here alone.
+/// What begins a file address's fragment, which holds the place inside it
+/// (DEC-1694 rule 10). An `http` or `https` address has none.
 pub const FRAGMENT: char = '#';
-/// The longest fragment a channel's address gains as its tab changes page.
+/// The longest place a channel's address gains as its tab changes page.
 /// An address with no room for it is refused (REQ-1690 item 10).
-const LONGEST_FRAGMENT: usize = "#NNN/SSSS".len();
+const LONGEST_PLACE: usize = "NNN/SSSS".len();
 
 /// What ends an address cut to fit a view.
 const ELLIPSIS: char = '\u{2026}';
@@ -180,7 +219,6 @@ const NOT_A_CHANNEL: &str = "That is not a channel's address, which is a folder 
 fn refusal(error: MapError) -> String {
     match error {
         MapError::Place => "That address names no place in a channel",
-        MapError::TwoPlaces => "That address names a page twice",
         MapError::ReceiverFile => "That file is part of a channel, and is not opened on its own",
         MapError::Channel(_) => NOT_A_CHANNEL,
     }
@@ -229,16 +267,9 @@ fn parse_file(typed: &str) -> Option<Result<Address, String>> {
         }
         let path = PathBuf::from(&path);
         let name = path.file_name().and_then(|name| name.to_str()).unwrap_or("/").to_owned();
-        let channel = Address {
-            text: format!("{FILE_SCHEME}{}", path_to_url(&path)),
-            host: name,
-            encrypted: false,
-            file: Some(path),
-            page: None,
-            subpage: None,
-            wall: false,
-            contents: false,
-        };
+        let text = format!("{FILE_SCHEME}{}", path_to_url(&path));
+        let channel =
+            Address { channel: text.clone(), text, host: name, encrypted: false, file: Some(path), page: None, subpage: None, wall: false, contents: false };
         // A file takes the fragments a channel does, refused as a channel's
         // are, and its name is never read as a page's (REQ-1693 item 9).
         match typed.strip_prefix(FILE_SCHEME).and_then(|rest| rest.split_once(FRAGMENT)) {
@@ -283,6 +314,7 @@ fn parse_built_in(typed: &str) -> Result<Address, String> {
     let place = fragment.and_then(Place::read).filter(|place| matches!(place, Place::Page { .. }));
     let built_in = Address {
         text: String::new(),
+        channel: START_PAGE.to_owned(),
         host: crate::start_page::NAME.to_owned(),
         encrypted: false,
         file: None,
@@ -355,7 +387,8 @@ pub fn parse(typed: &str) -> Result<Address, String> {
     // items 3 and 4), which is all that is kept.
     let read = MapAddress::read(&whole).map_err(refusal)?;
     let text = written(|writer| read.write(writer)).ok_or_else(too_long)?;
-    within_bound(Address { text, host, encrypted, file: None, page: None, subpage: None, wall: false, contents: false }.placed(read.place))
+    let channel = read.folder.as_str().to_owned();
+    within_bound(Address { text, channel, host, encrypted, file: None, page: None, subpage: None, wall: false, contents: false }.placed(read.place))
 }
 
 /// What the address field opens for `typed`: [`parse`], with a channel's
@@ -421,10 +454,10 @@ pub fn outside_link(text: &str) -> Result<Address, String> {
 /// The address, when written in full, with its scheme and slash, it is no
 /// longer than an address may be: every one opened can then be kept in
 /// history, bookmarks and the session, which refuse a longer line
-/// (finding F-78), with room for the longest fragment its tab may add
+/// (finding F-78), with room for the longest place its tab may add
 /// (REQ-1690 item 10).
 fn within_bound(address: Address) -> Result<Address, String> {
-    if address.text.len() > protocol::MAX_ADDRESS || address.channel_text().len().saturating_add(LONGEST_FRAGMENT) > protocol::MAX_ADDRESS {
+    if address.text.len() > protocol::MAX_ADDRESS || address.channel_address().len().saturating_add(LONGEST_PLACE) > protocol::MAX_ADDRESS {
         return Err(too_long());
     }
     Ok(address)

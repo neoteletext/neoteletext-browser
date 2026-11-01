@@ -9,7 +9,7 @@ fn tree() -> (Bookmarks, u32, u32, u32) {
     let mut bookmarks = Bookmarks::default();
     let news = bookmarks.add(BAR, "News Example", "https://news.example/teletext/").unwrap();
     let weather = bookmarks.add_folder(OTHER, "Weather").unwrap();
-    let page = bookmarks.add(weather, "", "https://news.example/teletext/#302").unwrap();
+    let page = bookmarks.add(weather, "", "https://news.example/teletext/302").unwrap();
     (bookmarks, news, weather, page)
 }
 
@@ -19,17 +19,17 @@ fn bookmarks_live_in_folders() {
     let (bookmarks, news, weather, page) = tree();
     assert_eq!(bookmarks.children(ROOT), [BAR, OTHER]);
     assert_eq!(bookmarks.children(BAR), [news]);
-    assert_eq!(bookmarks.item(page).unwrap().name, "https://news.example/teletext/#302", "an empty name is the address");
+    assert_eq!(bookmarks.item(page).unwrap().name, "https://news.example/teletext/302", "an empty name is the address");
     assert_eq!(bookmarks.path(page), [OTHER, weather]);
     assert_eq!(bookmarks.depth(page), 2);
-    assert_eq!(bookmarks.find("https://news.example/teletext/#302"), Some(page));
+    assert_eq!(bookmarks.find("https://news.example/teletext/302"), Some(page));
     assert_eq!(bookmarks.search("WEATHER"), [weather]);
     assert_eq!(
         bookmarks.listed(),
         [
             Listed::Bookmark { name: "News Example".into(), address: "https://news.example/teletext/".into() },
             Listed::Folder("Weather".into()),
-            Listed::Bookmark { name: "https://news.example/teletext/#302".into(), address: "https://news.example/teletext/#302".into() },
+            Listed::Bookmark { name: "https://news.example/teletext/302".into(), address: "https://news.example/teletext/302".into() },
         ]
     );
 }
@@ -91,7 +91,7 @@ fn bookmarks_are_managed() {
     bookmarks.sort(weather);
     assert_eq!(bookmarks.children(weather), [page, news], "by name: https… before News");
     bookmarks.edit(page, "Weather page", "").unwrap();
-    assert_eq!(bookmarks.item(page).unwrap().address.as_deref(), Some("https://news.example/teletext/#302"));
+    assert_eq!(bookmarks.item(page).unwrap().address.as_deref(), Some("https://news.example/teletext/302"));
     assert!(bookmarks.edit(page, "x", "not an address").is_err());
     bookmarks.edit(weather, "Forecasts", "ignored").unwrap();
     assert_eq!(bookmarks.item(weather).unwrap().address, None);
@@ -130,7 +130,7 @@ fn the_file_is_read_strictly() {
         VERSION_LINE,
         "folder\t1\t0\tMy bar",
         "folder\t7\t2\tWeather",
-        "bookmark\t8\t7\tForecast\thttps://news.example/teletext/#302",
+        "bookmark\t8\t7\tForecast\thttps://news.example/teletext/302",
         "folder\t9\t10\tBefore its folder",
         "folder\t10\t9\tA cycle",
         "bookmark\t11\t10\tInside the cycle\thttps://a.example/",

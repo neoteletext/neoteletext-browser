@@ -40,13 +40,13 @@ fn scratch(name: &str) -> std::path::PathBuf {
 #[test]
 fn a_page_is_one_row_a_day() {
     let mut history = History::default();
-    assert!(history.record(&visit("https://news.example/teletext/#302", true), NOW, SYDNEY).is_some());
-    history.record(&visit("https://news.example/teletext/#302", false), NOW + 60, SYDNEY);
-    history.record(&visit("https://news.example/teletext/#302", false), NOW + SECONDS_PER_DAY, SYDNEY);
+    assert!(history.record(&visit("https://news.example/teletext/302", true), NOW, SYDNEY).is_some());
+    history.record(&visit("https://news.example/teletext/302", false), NOW + 60, SYDNEY);
+    history.record(&visit("https://news.example/teletext/302", false), NOW + SECONDS_PER_DAY, SYDNEY);
     assert_eq!(history.record(&visit("neoteletext:home", true), NOW, SYDNEY), None);
     assert_eq!(history.record(&visit("not an address", true), NOW, SYDNEY), None);
     assert_eq!(history.len(), 2);
-    let today = history.row(20_748, "https://news.example/teletext/#302").unwrap();
+    let today = history.row(20_748, "https://news.example/teletext/302").unwrap();
     assert_eq!((today.visits, today.typed, today.last), (2, 1, NOW + 60));
 }
 
@@ -85,7 +85,7 @@ fn the_file_is_read_strictly() {
         offset: SYDNEY,
         visits: 2,
         typed: 1,
-        address: "https://news.example/teletext/#302".into(),
+        address: "https://news.example/teletext/302".into(),
         channel: "News".into(),
         title: "WEATHER".into(),
     };
@@ -96,8 +96,8 @@ fn the_file_is_read_strictly() {
         line.replace(&SYDNEY.to_string(), "90000"),
         line.replacen("\t2\t", "\t0\t", 1),
         line.replacen("\t2\t1\t", "\t1\t2\t", 1),
-        line.replace("https://news.example/teletext/#302", "neoteletext:home"),
-        line.replace("https://news.example/teletext/#302", "https://news.example/a b"),
+        line.replace("https://news.example/teletext/302", "neoteletext:home"),
+        line.replace("https://news.example/teletext/302", "https://news.example/a b"),
         line.replace("WEATHER", "WEA\u{202E}THER"),
         format!("{line}\textra"),
         line.replace("2026-10-22", "2026-10-21"),
@@ -138,11 +138,11 @@ fn history_is_kept_ninety_days_and_bounded() {
 #[test]
 fn history_is_removed_as_asked() {
     let mut history = History::default();
-    history.record(&visit("https://news.example/teletext/#100", false), NOW - 2 * HOUR, 0);
-    history.record(&visit("https://news.example/teletext/#302", false), NOW - 30 * 60, 0);
+    history.record(&visit("https://news.example/teletext/100", false), NOW - 2 * HOUR, 0);
+    history.record(&visit("https://news.example/teletext/302", false), NOW - 30 * 60, 0);
     history.record(&visit("https://sport.example/", false), NOW - 10, 0);
     assert_eq!(history.clear(History::since(NOW, HOUR)), 2);
-    assert_eq!(history.remove(&[(local_day(NOW, 0), "https://news.example/teletext/#100".into())]), ["https://news.example/teletext/#100"]);
+    assert_eq!(history.remove(&[(local_day(NOW, 0), "https://news.example/teletext/100".into())]), ["https://news.example/teletext/100"]);
     assert!(history.is_empty());
     history.record(&visit("https://sport.example/", false), NOW, 0);
     assert_eq!(history.query("host:SPORT.example").len(), 1, "host: names one host, in any case");

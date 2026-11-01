@@ -128,7 +128,7 @@ fn the_viewers_own_navigation_drops_the_redirect() {
     for (intent, stays) in [
         (ToCore::Navigate("https://typed.invalid/".into()), "https://typed.invalid/"),
         (ToCore::Reload, REDIRECTING),
-        (ToCore::Navigate(format!("{REDIRECTING}#302")), "https://moved.invalid/teletext/#302"),
+        (ToCore::Navigate(format!("{REDIRECTING}302")), "https://moved.invalid/teletext/302"),
     ] {
         let (mut core, _stand_in) = opening();
         redirect(&mut core, DESTINATION);
@@ -268,14 +268,14 @@ fn a_downgrade_is_followed_and_shown_not_secure() {
 #[test]
 fn a_fragment_goes_with_a_redirect_that_names_none() {
     let (mut core, _stand_in) = core_on(BEFORE);
-    core.intent(ToCore::Navigate(format!("{REDIRECTING}#302"))).unwrap();
+    core.intent(ToCore::Navigate(format!("{REDIRECTING}302"))).unwrap();
     redirect(&mut core, DESTINATION);
-    assert_eq!(core.strip().redirecting, format!("{DESTINATION}#302"), "the complete address");
+    assert_eq!(core.strip().redirecting, format!("{DESTINATION}302"), "the complete address");
     elapse(&mut core);
-    assert_eq!(address(&core), format!("{DESTINATION}#302"));
-    core.intent(ToCore::Navigate(format!("{REDIRECTING}#302"))).unwrap();
-    hop(&mut core, &format!("{DESTINATION}#401"));
-    assert_eq!(address(&core), format!("{DESTINATION}#401"));
+    assert_eq!(address(&core), format!("{DESTINATION}302"));
+    core.intent(ToCore::Navigate(format!("{REDIRECTING}302"))).unwrap();
+    hop(&mut core, &format!("{DESTINATION}401"));
+    assert_eq!(address(&core), format!("{DESTINATION}401"));
 }
 
 // REQ-701: a page fetched once the channel is open is no navigation, and a
@@ -286,7 +286,7 @@ fn an_open_channel_is_not_moved() {
     let open = channel(&core);
     core.fetched(open, FromFetcher::InitialPage(0x100)).unwrap();
     hop(&mut core, DESTINATION);
-    assert_eq!((address(&core), channel(&core)), (format!("{REDIRECTING}#100").as_str(), open));
+    assert_eq!((address(&core), channel(&core)), (format!("{REDIRECTING}100").as_str(), open));
     assert_eq!(core.strip().redirecting, "");
 }
 

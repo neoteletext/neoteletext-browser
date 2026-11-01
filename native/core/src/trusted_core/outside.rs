@@ -132,7 +132,7 @@ mod tests {
     use super::*;
     use neoteletext::launch::MAX_OUTSIDE_LINKS;
 
-    const LINK: &str = "neoteletext://https://news.invalid/#302";
+    const LINK: &str = "neoteletext://https://news.invalid/302";
 
     fn open_links(core: &mut Core, links: &[&str]) {
         core.opening(Opening::Outside { links: links.iter().map(|link| (*link).to_owned()).collect(), files: Vec::new() }).unwrap();
@@ -147,7 +147,7 @@ mod tests {
     fn a_link_opens_at_once_in_a_new_active_tab() {
         let (mut core, _broker) = core_on("a.invalid");
         open_links(&mut core, &[LINK]);
-        assert_eq!(addresses(&core), ["https://a.invalid/", "https://news.invalid/#302"]);
+        assert_eq!(addresses(&core), ["https://a.invalid/", "https://news.invalid/302"]);
         assert_eq!(core.session.active, 1);
         assert!(core.session.tabs.iter().all(|tab| !tab.private));
     }
@@ -187,7 +187,7 @@ mod tests {
         open_links(&mut core, &[LINK]);
         assert_eq!(core.session.window_count(), 2);
         assert!(!core.session.private_window, "the new window is at hand, and normal");
-        assert_eq!(addresses(&core), ["https://news.invalid/#302"]);
+        assert_eq!(addresses(&core), ["https://news.invalid/302"]);
         assert!(!core.session.tabs.iter().any(|tab| tab.private));
     }
 
@@ -197,7 +197,7 @@ mod tests {
     fn what_macos_names_goes_the_same_way() {
         let (mut core, _broker) = core_on("a.invalid");
         core.opened_by_system(&[LINK.to_owned(), "file:///no/such/page.tti".to_owned(), "neoteletext://file:///etc/passwd".to_owned()]).unwrap();
-        assert_eq!(addresses(&core), ["https://a.invalid/", "https://news.invalid/#302", "file:///no/such/page.tti"]);
+        assert_eq!(addresses(&core), ["https://a.invalid/", "https://news.invalid/302", "file:///no/such/page.tti"]);
         assert_eq!(core.session.active, 1);
     }
 

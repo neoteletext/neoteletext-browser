@@ -74,7 +74,8 @@ impl Session {
         let Some(tab) = self.tabs.iter_mut().find(|tab| tab.channel.id == channel) else { return false };
         tab.channel.initial_page = Some(page);
         let bare = |shown: &&Address| shown.is_bare() && !shown.is_start_page() && shown.file.is_none();
-        let Some(address) = tab.address().filter(bare).and_then(|shown| shown.with_page(page)) else { return false };
+        let arrived = |shown: &Address| shown.with_page(page).and_then(|at| at.with_parameters(shown.parameters()));
+        let Some(address) = tab.address().filter(bare).and_then(arrived) else { return false };
         tab.rename(address, now)
     }
 

@@ -150,7 +150,7 @@ pub fn checked_address(text: &str) -> Option<String> {
     if text == START_PAGE {
         return Some(START_PAGE.to_owned());
     }
-    address::parse(text).ok().map(|parsed| parsed.channel_text().to_owned())
+    address::parse(text).ok().map(|parsed| parsed.channel_address().to_owned())
 }
 
 impl Settings {
