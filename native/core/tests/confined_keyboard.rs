@@ -21,6 +21,13 @@ const RELAY_TIME: Duration = Duration::from_secs(30);
 /// test, as `latency.rs` does.
 fn keyboard() -> std::path::PathBuf {
     let mut build = Command::new(env!("CARGO"));
+    // Not the runner's variables for this package, which a build script can
+    // watch: `reference_channel::cargo` says why.
+    for (name, _) in std::env::vars_os() {
+        if name.to_str().is_some_and(|name| name.starts_with("CARGO_PKG_") || name.starts_with("CARGO_MANIFEST_")) {
+            build.env_remove(name);
+        }
+    }
     build.args(["build", "--quiet", "--package", "neoteletext-keyboard"]);
     if !cfg!(debug_assertions) {
         build.arg("--release");

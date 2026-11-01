@@ -34,10 +34,24 @@ impl Drop for Killed {
     }
 }
 
+/// Cargo, for a test to build with, without what the test runner set for the
+/// package under test. A build script can watch those variables, as `ring`'s
+/// does: with them set, this build changes what the next ordinary build must
+/// rebuild, `ring` and all that sits on it, on every run of the tests.
+pub fn cargo() -> Command {
+    let mut command = Command::new(env!("CARGO"));
+    for (name, _) in std::env::vars_os() {
+        if name.to_str().is_some_and(|name| name.starts_with("CARGO_PKG_") || name.starts_with("CARGO_MANIFEST_")) {
+            command.env_remove(name);
+        }
+    }
+    command
+}
+
 /// The channel and the fetcher, built for this test's profile: a test
 /// builds only its own package's programs.
 pub fn programs() -> (PathBuf, PathBuf) {
-    let mut build = Command::new(env!("CARGO"));
+    let mut build = cargo();
     build.args(["build", "--quiet", "--package", "neoteletext-site", "--package", "neoteletext-fetcher"]);
     if !cfg!(debug_assertions) {
         build.arg("--release");
