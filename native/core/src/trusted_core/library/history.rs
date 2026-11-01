@@ -114,6 +114,9 @@ impl Core {
         };
         let removed = self.clear_cookies_since(since);
         self.library.history_notice = notice(&format!("Cookies cleared: {removed} removed"));
+        if removed > 0 && self.session.reconnect_ordinary_tabs() {
+            self.send_all()?;
+        }
         self.send_cookies()
     }
 

@@ -137,6 +137,25 @@ impl Session {
         true
     }
 
+    /// Opens every ordinary tab's channel afresh where it is, because the
+    /// viewer cleared cookies and each connection holds those it opened with
+    /// (DEC-1730 item 8). True when any tab was opened. Private tabs have
+    /// cookies of their own, which clearing does not touch.
+    pub fn reconnect_ordinary_tabs(&mut self) -> bool {
+        let mut any = false;
+        for index in 0..self.tabs.len() {
+            let shown = self.tabs.get(index).filter(|tab| !tab.private).and_then(Tab::address).cloned();
+            let Some(address) = shown else { continue };
+            let channel = self.channel_for(&address);
+            if let Some(tab) = self.tabs.get_mut(index) {
+                tab.channel = channel;
+                tab.pending = Some(Pending { typed: false, drawn: false, reload: true });
+                any = true;
+            }
+        }
+        any
+    }
+
     /// The Back or Forward button: moves the active tab that way in its
     /// history, past any entry passed over. Another page of the same channel
     /// keeps the channel open.

@@ -672,3 +672,20 @@ fn a_tabs_tip_is_cut_as_a_view_is() {
     assert!(tip.len() <= protocol::library::MAX_SHOWN_ADDRESS);
     assert!(tip.starts_with("https://a.example/") && tip.ends_with('\u{2026}'), "{tip}");
 }
+
+/// DEC-1730 item 8: clearing cookies opens every ordinary tab's channel
+/// afresh, where it is, so that no connection goes on with the old ones. A
+/// private tab has its own cookies, and stays.
+#[test]
+fn clearing_cookies_reconnects_every_ordinary_tab() {
+    let mut session = Session::new(Bookmarks::default());
+    session.open("https://a.invalid/200").unwrap();
+    session.open("https://b.invalid/300").unwrap();
+    let before: Vec<_> = session.tabs.iter().map(|tab| tab.channel.id).collect();
+    let addresses: Vec<_> = session.tabs.iter().filter_map(|tab| tab.address().map(|shown| shown.text.clone())).collect();
+    assert!(session.reconnect_ordinary_tabs());
+    let after: Vec<_> = session.tabs.iter().map(|tab| tab.channel.id).collect();
+    assert!(before.iter().zip(&after).all(|(old, new)| old != new), "{before:?} {after:?}");
+    let shown: Vec<_> = session.tabs.iter().filter_map(|tab| tab.address().map(|shown| shown.text.clone())).collect();
+    assert_eq!(shown, addresses, "each tab stays where it is");
+}
