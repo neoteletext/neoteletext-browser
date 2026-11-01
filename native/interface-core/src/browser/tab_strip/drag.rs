@@ -21,6 +21,8 @@ impl Browser {
         let Some(region) = self.regions.tabs.iter().rev().find(|region| region.tab.contains(point)).copied() else {
             return self.tab_strip.panel.contains(point);
         };
+        // This press is taken before the strip's, which ends editing.
+        self.stop_editing();
         if region.close.contains(point) {
             self.outputs.push(Output::CloseTab(region.index));
         } else if region.speaker.is_some_and(|speaker| speaker.contains(point)) {

@@ -183,8 +183,14 @@ impl Browser {
 impl Browser {
     /// The tabs as the trusted core reports them, and which is active.
     pub fn set_tabs(&mut self, tabs: Vec<TabInfo>, active: usize) {
+        let shown = self.tabs.get(self.active).map(|tab| tab.channel);
         self.active = active.min(tabs.len().saturating_sub(1));
         self.tabs = tabs;
+        // The field edits the active tab's address, so a change of tab, by
+        // any route, ends it; otherwise it goes on showing the other tab's.
+        if self.tabs.get(self.active).map(|tab| tab.channel) != shown {
+            self.stop_editing();
+        }
     }
 
     /// The channels playing sound, muted or not, as the host's mixers

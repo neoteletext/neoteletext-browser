@@ -274,4 +274,55 @@ mod tests {
         browser.key(Key::Escape, Modifiers::default(), 0);
         assert!(!browser.key(Key::Text("a"), command, 0), "select all with no field is no shortcut");
     }
+
+    /// The address is the active tab's, so a change of tab, by any route,
+    /// ends editing what was the other tab's address.
+    #[test]
+    fn a_change_of_tab_shows_the_new_tabs_address() {
+        let (mut browser, mut canvas) = browser();
+        browser.set_strip(StripState { address: "https://one.example/".into(), ..browser.strip.clone() });
+        browser.draw(&mut canvas, WIDTH, HEIGHT, 0);
+        let field = browser.regions.field_text;
+        press_at(&mut browser, &mut canvas, field);
+        browser.pointer_released();
+        assert!(browser.editing);
+        browser.take_outputs();
+        let tabs = browser.tabs.clone();
+        browser.set_tabs(tabs, 1);
+        browser.set_strip(StripState { address: "https://two.example/".into(), ..browser.strip.clone() });
+        assert!(!browser.editing, "the field is not left editing the other tab's address");
+        assert_eq!(browser.take_outputs(), [Output::TextInput(false)]);
+        let mut drawn = crate::test_canvas::Recorder::new();
+        browser.draw(&mut drawn, WIDTH, HEIGHT, 0);
+        assert!(drawn.texts.iter().any(|(_, text)| text.contains("two.example")), "the new tab's address shows");
+        assert!(!drawn.texts.iter().any(|(_, text)| text.contains("one.example")));
+    }
+
+    /// The list of tabs changing without the active tab changing leaves
+    /// what is being typed alone: a title arrives at any time.
+    #[test]
+    fn a_change_to_the_tabs_alone_keeps_editing() {
+        let (mut browser, mut canvas) = browser();
+        let field = browser.regions.field_text;
+        press_at(&mut browser, &mut canvas, field);
+        browser.pointer_released();
+        let mut tabs = browser.tabs.clone();
+        tabs[1].title = "a new title".into();
+        browser.set_tabs(tabs, 0);
+        assert!(browser.editing);
+    }
+
+    /// A press on the tab strip leaves the field, as a press anywhere else
+    /// outside it does.
+    #[test]
+    fn a_press_on_a_tab_ends_editing() {
+        let (mut browser, mut canvas) = browser();
+        let field = browser.regions.field_text;
+        press_at(&mut browser, &mut canvas, field);
+        browser.pointer_released();
+        assert!(browser.editing);
+        let tab = browser.regions.tabs[0].tab;
+        press_at(&mut browser, &mut canvas, tab);
+        assert!(!browser.editing);
+    }
 }
