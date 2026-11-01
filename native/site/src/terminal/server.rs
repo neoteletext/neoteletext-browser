@@ -130,7 +130,7 @@ pub(super) fn serve(mut stream: TcpStream, settings: &Settings) -> io::Result<()
         };
         match name {
             "channel.json" => {
-                let json = r#"{"name":"NeoTeletext terminal channel","push":{"method":"websocket","input":true}}"#;
+                let json = r#"{"name":"NeoTeletext terminal channel","push":{"input":true}}"#;
                 respond(&mut stream, "200 OK", "application/json", json.as_bytes())?;
             }
             "contents.txt" => respond(&mut stream, "200 OK", "text/plain", contents_file().as_bytes())?,
