@@ -5,6 +5,10 @@
 
 use alloc::string::String;
 
+mod keys;
+
+pub use keys::Platform;
+
 /// Characters never typed into the address or shown from untrusted text:
 /// controls, and the invisible characters that reorder or hide text
 /// (finding F-36). These are, by the Unicode Character Database 16.0:
@@ -206,18 +210,22 @@ impl Editor {
         self.anchor
     }
 
-    /// Selects the word around `at`: the run of letters, digits and
-    /// underscores it is in or next to, as a double click selects it; the
-    /// punctuation of an address (`/`, `.`, `:`) ends a word.
-    pub fn select_word(&mut self, at: usize) {
+    /// The word around `at`, start then end: the run of letters, digits
+    /// and underscores it is in or next to; the punctuation of an address
+    /// (`/`, `.`, `:`) ends a word.
+    #[must_use]
+    pub fn word_at(&self, at: usize) -> (usize, usize) {
         let at = at.min(self.text.len());
-        let is_word = |character: char| character.is_alphanumeric() || character == '_';
         let before = self.text.get(..at).unwrap_or_default();
         let after = self.text.get(at..).unwrap_or_default();
-        let start = before.char_indices().rev().take_while(|&(_, character)| is_word(character)).last().map_or(at, |(offset, _)| offset);
-        let end = at.saturating_add(after.char_indices().find(|&(_, character)| !is_word(character)).map_or(after.len(), |(offset, _)| offset));
-        self.anchor = start;
-        self.caret = end;
+        let start = before.char_indices().rev().take_while(|&(_, character)| keys::is_word(character)).last().map_or(at, |(index, _)| index);
+        let end = at.saturating_add(after.char_indices().find(|&(_, character)| !keys::is_word(character)).map_or(after.len(), |(index, _)| index));
+        (start, end)
+    }
+
+    /// Selects the word around `at`, as a double click selects it.
+    pub fn select_word(&mut self, at: usize) {
+        (self.anchor, self.caret) = self.word_at(at);
     }
 
     /// Puts the caret at `at`, rounded down to a character boundary.

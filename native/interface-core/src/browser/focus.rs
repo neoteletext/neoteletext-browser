@@ -48,6 +48,12 @@ impl Browser {
         self.editing.then_some(&mut self.editor)
     }
 
+    /// Whether a text field has the keys.
+    #[must_use]
+    pub fn field_has_keys(&mut self) -> bool {
+        self.focused_field().is_some()
+    }
+
     /// The selected text of the field with the keys, for Copy (decision
     /// 84); `None` when no field has them or nothing is selected.
     #[must_use]

@@ -15,7 +15,7 @@ use super::clipboard::clipboard_key;
 impl App {
     fn modifiers(&self) -> Modifiers {
         let command = if cfg!(target_os = "macos") { self.modifiers.super_key() } else { self.modifiers.control_key() };
-        Modifiers { shift: self.modifiers.shift_key(), command, alt: self.modifiers.alt_key(), repeat: false }
+        Modifiers { shift: self.modifiers.shift_key(), command, alt: self.modifiers.alt_key(), control: self.modifiers.control_key(), repeat: false }
     }
 
     /// The wheel: the channel's over its page when it asked for the mouse
@@ -97,6 +97,15 @@ impl App {
                 return self.view.browser.key(BrowserKey::Text(character), modifiers, now);
             }
             return false;
+        }
+        // macOS's Control keys in a text field go by the key, as a shortcut
+        // does: what Control and a letter would type is a control character.
+        if cfg!(target_os = "macos")
+            && modifiers.control
+            && self.view.browser.field_has_keys()
+            && let Key::Character(character) = key
+        {
+            return self.view.browser.key(BrowserKey::Text(character), modifiers, now);
         }
         text.is_some_and(|text| self.view.browser.key(BrowserKey::Text(text), modifiers, now))
     }

@@ -5,7 +5,7 @@
 use alloc::string::String;
 
 use super::{DRAG_DISTANCE, Field, Form, ItemControls, WHEEL_ROWS};
-use crate::browser::{Browser, Key, OpenKind, Output};
+use crate::browser::{Browser, Key, Modifiers, OpenKind, Output};
 use crate::geometry::Point;
 use crate::library::BookmarkRequest;
 
@@ -32,7 +32,7 @@ impl Browser {
     }
 
     /// A key while the manager is open; `None` when it is not the manager's.
-    pub(in crate::browser) fn bookmarks_key(&mut self, key: Key<'_>, shift: bool) -> Option<bool> {
+    pub(in crate::browser) fn bookmarks_key(&mut self, key: Key<'_>, modifiers: Modifiers) -> Option<bool> {
         if !self.bookmarks.open {
             return None;
         }
@@ -51,13 +51,9 @@ impl Browser {
         let editor = self.bookmarks.editor(field);
         let before = String::from(editor.text());
         match key {
-            Key::Text(text) => editor.insert(text),
-            Key::Backspace => editor.backspace(),
-            Key::Delete => editor.delete(),
-            Key::Left => editor.left(shift),
-            Key::Right => editor.right(shift),
-            Key::Home | Key::Up | Key::PageUp => editor.home(shift),
-            Key::End | Key::Down | Key::PageDown => editor.end(shift),
+            Key::Text(_) | Key::Backspace | Key::Delete | Key::Left | Key::Right | Key::Home | Key::End | Key::Up | Key::Down | Key::PageUp | Key::PageDown => {
+                editor.key(key, modifiers);
+            }
             Key::Escape => {
                 if field != Field::Query {
                     self.bookmarks.form = None;

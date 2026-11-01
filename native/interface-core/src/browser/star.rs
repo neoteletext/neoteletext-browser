@@ -8,7 +8,7 @@ use alloc::vec::Vec;
 
 use crate::browser::bookmarks_bar::CHIP_RADIUS;
 use crate::browser::widgets::{TRIANGLE, button, field, panel, triangle};
-use crate::browser::{Browser, Key, Output};
+use crate::browser::{Browser, Key, Modifiers, Output};
 use crate::canvas::Canvas;
 use crate::editor::Editor;
 use crate::geometry::{Point, Rect};
@@ -100,7 +100,7 @@ impl Browser {
     }
 
     /// A key while the popover is open; `None` when it is not the popover's.
-    pub(super) fn star_key(&mut self, key: Key<'_>, shift: bool) -> Option<bool> {
+    pub(super) fn star_key(&mut self, key: Key<'_>, modifiers: Modifiers) -> Option<bool> {
         if !self.star.view.open {
             return None;
         }
@@ -113,13 +113,9 @@ impl Browser {
         }
         let editor = &mut self.star.name;
         match key {
-            Key::Text(text) => editor.insert(text),
-            Key::Backspace => editor.backspace(),
-            Key::Delete => editor.delete(),
-            Key::Left => editor.left(shift),
-            Key::Right => editor.right(shift),
-            Key::Home | Key::Up | Key::PageUp => editor.home(shift),
-            Key::End | Key::Down | Key::PageDown => editor.end(shift),
+            Key::Text(_) | Key::Backspace | Key::Delete | Key::Left | Key::Right | Key::Home | Key::End | Key::Up | Key::Down | Key::PageUp | Key::PageDown => {
+                editor.key(key, modifiers);
+            }
             Key::Escape | Key::Enter => self.star_done(),
             Key::Tab => self.unfocus_star(),
         }

@@ -5,13 +5,13 @@ use alloc::string::String;
 use alloc::vec::Vec;
 
 use super::{RowAction, WHEEL_ROWS};
-use crate::browser::{Browser, Key, Output};
+use crate::browser::{Browser, Key, Modifiers, Output};
 use crate::geometry::Point;
 use crate::library::{HistoryRequest, MAX_VIEW_ROWS};
 
 impl Browser {
     /// A key while the panel is open; `None` when it is not the panel's.
-    pub(in crate::browser) fn history_key(&mut self, key: Key<'_>, shift: bool) -> Option<bool> {
+    pub(in crate::browser) fn history_key(&mut self, key: Key<'_>, modifiers: Modifiers) -> Option<bool> {
         if !self.history.open {
             return None;
         }
@@ -29,13 +29,9 @@ impl Browser {
         let editor = &mut self.history.query;
         let before = String::from(editor.text());
         match key {
-            Key::Text(text) => editor.insert(text),
-            Key::Backspace => editor.backspace(),
-            Key::Delete => editor.delete(),
-            Key::Left => editor.left(shift),
-            Key::Right => editor.right(shift),
-            Key::Home | Key::Up | Key::PageUp => editor.home(shift),
-            Key::End | Key::Down | Key::PageDown => editor.end(shift),
+            Key::Text(_) | Key::Backspace | Key::Delete | Key::Left | Key::Right | Key::Home | Key::End | Key::Up | Key::Down | Key::PageUp | Key::PageDown => {
+                editor.key(key, modifiers);
+            }
             Key::Escape | Key::Tab | Key::Enter => self.unfocus_history(),
         }
         // The search follows each change as it is typed.

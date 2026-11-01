@@ -136,7 +136,7 @@ fn the_panel_shows_the_settings_and_the_refusal() {
     for expected in ["Settings", "neoteletext:home", "80", "192.168.1.20", "proxy.example", "3128", "Not an address on this computer or the local network"] {
         assert!(texts.contains(&expected), "{expected} in {texts:?}");
     }
-    assert!(browser.settings_key(Key::Escape, false) == Some(true) && !browser.settings_open(), "Escape closes it");
+    assert!(browser.settings_key(Key::Escape, Modifiers::default()) == Some(true) && !browser.settings_open(), "Escape closes it");
 }
 
 /// DEC-1761: Noto Teletext is the only font, so the panel offers no choice of

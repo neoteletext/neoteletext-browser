@@ -5,13 +5,13 @@ use alloc::string::String;
 
 use super::{Field, Kind, MAX_VOLUME, PANEL_HEIGHT, PANEL_WIDTH, VOLUME_STEP};
 use crate::browser::widgets::panel_rect;
-use crate::browser::{Browser, Key, Output};
+use crate::browser::{Browser, Key, Modifiers, Output};
 use crate::geometry::Point;
 use crate::settings::{ProxyView, SettingChange};
 
 impl Browser {
     /// A key while the panel is open; `None` when it is not the panel's.
-    pub(in crate::browser) fn settings_key(&mut self, key: Key<'_>, shift: bool) -> Option<bool> {
+    pub(in crate::browser) fn settings_key(&mut self, key: Key<'_>, modifiers: Modifiers) -> Option<bool> {
         if !self.settings.open {
             return None;
         }
@@ -24,19 +24,16 @@ impl Browser {
         };
         let editor = self.settings.editor(field);
         match key {
-            Key::Text(text) => editor.insert(text),
-            Key::Backspace => editor.backspace(),
-            Key::Delete => editor.delete(),
-            Key::Left => editor.left(shift),
-            Key::Right => editor.right(shift),
-            Key::Home | Key::Up | Key::PageUp => editor.home(shift),
-            Key::End | Key::Down | Key::PageDown => editor.end(shift),
+            Key::Text(_) | Key::Backspace | Key::Delete | Key::Left | Key::Right | Key::Home | Key::End | Key::Up | Key::Down | Key::PageUp | Key::PageDown => {
+                editor.key(key, modifiers);
+            }
             Key::Escape => self.unfocus_settings(),
             Key::Enter => self.submit(field),
             Key::Tab => {
                 let at = Field::ALL.iter().position(|&each| each == field).unwrap_or(0);
                 let count = Field::ALL.len();
-                let next = if shift { at.checked_sub(1).unwrap_or(count.saturating_sub(1)) } else { at.saturating_add(1).checked_rem(count).unwrap_or(0) };
+                let next =
+                    if modifiers.shift { at.checked_sub(1).unwrap_or(count.saturating_sub(1)) } else { at.saturating_add(1).checked_rem(count).unwrap_or(0) };
                 if let Some(&next) = Field::ALL.get(next) {
                     self.focus_settings(next);
                 }

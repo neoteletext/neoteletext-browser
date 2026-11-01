@@ -138,7 +138,9 @@ pub struct Browser {
     /// at the next draw, which alone can measure the text.
     field_drag_to: Option<f64>,
     /// The last press in the field, for a double click.
-    field_last_press: Option<(Point, u64)>,
+    field_last_press: Option<(Point, u64, u8)>,
+    /// The word a double click selected, while its drag goes by words.
+    field_word: Option<(usize, usize)>,
     digits: String,
     pulses: Vec<(usize, u64)>,
     /// When each recently updated page had its new version.
@@ -245,6 +247,7 @@ impl Browser {
             field_press: None,
             field_drag_to: None,
             field_last_press: None,
+            field_word: None,
             digits: String::new(),
             pulses: Vec::new(),
             updates: Vec::new(),

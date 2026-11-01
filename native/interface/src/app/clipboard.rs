@@ -27,7 +27,7 @@ fn menu_key(shortcut: Shortcut) -> (BrowserKey<'static>, Modifiers) {
         ShortcutKey::Left => BrowserKey::Left,
         ShortcutKey::Right => BrowserKey::Right,
     };
-    (key, Modifiers { command: true, shift: shortcut.shift, alt: shortcut.alt, repeat: false })
+    (key, Modifiers { command: true, shift: shortcut.shift, alt: shortcut.alt, ..Modifiers::default() })
 }
 
 /// The most of the clipboard any taker uses: the longest field, the address

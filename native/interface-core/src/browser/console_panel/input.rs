@@ -4,7 +4,7 @@
 use alloc::collections::VecDeque;
 
 use super::{LINE, Tab, level_index};
-use crate::browser::{Browser, Key, Output};
+use crate::browser::{Browser, Key, Modifiers, Output};
 use crate::editor::Editor;
 use crate::geometry::Point;
 
@@ -73,19 +73,15 @@ impl Browser {
     }
 
     /// A key while the log's search takes them; `None` when it does not.
-    pub(in crate::browser) fn console_key(&mut self, key: Key<'_>, shift: bool) -> Option<bool> {
+    pub(in crate::browser) fn console_key(&mut self, key: Key<'_>, modifiers: Modifiers) -> Option<bool> {
         if !self.console_searching() {
             return None;
         }
         let search = &mut self.console.search;
         match key {
-            Key::Text(text) => search.insert(text),
-            Key::Backspace => search.backspace(),
-            Key::Delete => search.delete(),
-            Key::Left => search.left(shift),
-            Key::Right => search.right(shift),
-            Key::Home | Key::Up | Key::PageUp => search.home(shift),
-            Key::End | Key::Down | Key::PageDown => search.end(shift),
+            Key::Text(_) | Key::Backspace | Key::Delete | Key::Left | Key::Right | Key::Home | Key::End | Key::Up | Key::Down | Key::PageUp | Key::PageDown => {
+                search.key(key, modifiers);
+            }
             Key::Escape | Key::Tab | Key::Enter => self.stop_console_search(),
         }
         self.console.back = 0;

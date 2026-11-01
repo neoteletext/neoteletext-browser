@@ -9,7 +9,7 @@ use alloc::format;
 use alloc::string::String;
 
 use super::widgets::{button, field};
-use super::{Browser, Key, Output};
+use super::{Browser, Key, Modifiers, Output};
 use crate::canvas::Canvas;
 use crate::cookies::{CookiesRequest, CookiesView, MAX_QUERY};
 use crate::editor::Editor;
@@ -122,7 +122,7 @@ impl Browser {
     }
 
     /// A key while the cookies are shown; `None` when it is not theirs.
-    pub(super) fn cookies_key(&mut self, key: Key<'_>, shift: bool) -> Option<bool> {
+    pub(super) fn cookies_key(&mut self, key: Key<'_>, modifiers: Modifiers) -> Option<bool> {
         if !self.cookies.open {
             return None;
         }
@@ -136,13 +136,9 @@ impl Browser {
         let editor = &mut self.cookies.query;
         let before = String::from(editor.text());
         match key {
-            Key::Text(text) => editor.insert(text),
-            Key::Backspace => editor.backspace(),
-            Key::Delete => editor.delete(),
-            Key::Left => editor.left(shift),
-            Key::Right => editor.right(shift),
-            Key::Home | Key::Up | Key::PageUp => editor.home(shift),
-            Key::End | Key::Down | Key::PageDown => editor.end(shift),
+            Key::Text(_) | Key::Backspace | Key::Delete | Key::Left | Key::Right | Key::Home | Key::End | Key::Up | Key::Down | Key::PageUp | Key::PageDown => {
+                editor.key(key, modifiers);
+            }
             Key::Escape | Key::Tab | Key::Enter => self.unfocus_cookies(),
         }
         if self.cookies.query.text() != before {

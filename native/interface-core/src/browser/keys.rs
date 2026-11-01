@@ -47,6 +47,9 @@ pub struct Modifiers {
     pub command: bool,
     /// Option (macOS) or Alt (elsewhere) is held.
     pub alt: bool,
+    /// Control is held, on every platform: macOS's text keys want it apart
+    /// from `command`.
+    pub control: bool,
     /// The key is held down and repeating.
     pub repeat: bool,
 }
@@ -65,7 +68,7 @@ impl Browser {
                 return true;
             }
         }
-        if modifiers.command {
+        if modifiers.command && !self.field_takes(key, modifiers) {
             return self.shortcut(key, modifiers, now);
         }
         // Alt-Home, the Home button's key away from macOS (requirement 19.6).
@@ -76,26 +79,26 @@ impl Browser {
         if key == Key::Escape && (self.close_popup() || self.tabs_cancel()) {
             return true;
         }
-        if let Some(changed) = self.star_key(key, modifiers.shift) {
+        if let Some(changed) = self.star_key(key, modifiers) {
             return changed;
         }
-        if let Some(changed) = self.history_key(key, modifiers.shift) {
+        if let Some(changed) = self.history_key(key, modifiers) {
             return changed;
         }
-        if let Some(changed) = self.cookies_key(key, modifiers.shift) {
+        if let Some(changed) = self.cookies_key(key, modifiers) {
             return changed;
         }
-        if let Some(changed) = self.console_key(key, modifiers.shift) {
+        if let Some(changed) = self.console_key(key, modifiers) {
             return changed;
         }
-        if let Some(changed) = self.bookmarks_key(key, modifiers.shift) {
+        if let Some(changed) = self.bookmarks_key(key, modifiers) {
             return changed;
         }
-        if let Some(changed) = self.settings_key(key, modifiers.shift) {
+        if let Some(changed) = self.settings_key(key, modifiers) {
             return changed;
         }
         if self.editing {
-            return self.edit(key, modifiers.shift);
+            return self.edit(key, modifiers);
         }
         #[cfg(feature = "links")]
         if let Some(changed) = self.link_key(key, modifiers, now) {
@@ -121,6 +124,16 @@ impl Browser {
             _ => return false,
         }
         true
+    }
+
+    /// Whether a key with the command key held is a text field's, not a
+    /// shortcut: the moving and deleting keys while a field has the keys
+    /// (`crate::editor::Platform`). With Option or Alt they stay the tab
+    /// keys, and with Shift a deleting key stays Clear History.
+    fn field_takes(&mut self, key: Key<'_>, modifiers: Modifiers) -> bool {
+        let moves = matches!(key, Key::Left | Key::Right | Key::Up | Key::Down | Key::Home | Key::End);
+        let deletes = matches!(key, Key::Backspace | Key::Delete);
+        (moves || (deletes && !modifiers.shift)) && !modifiers.alt && self.focused_field().is_some()
     }
 
     fn shortcut(&mut self, key: Key<'_>, modifiers: Modifiers, now: u64) -> bool {

@@ -48,6 +48,19 @@ Every text field the browser draws (the address field, the history and bookmarks
 
 On macOS the Edit menu's items and their Command keys do it; on Windows and Linux, Control-X, Control-C, Control-V and Control-A. Pasted text passes through the field's own rules: hidden characters dropped and its length bounded, as typed text is. A paste goes nowhere when no field has the keys and no channel takes them.
 
+**The keys of a text field.** Every field of the browser, the address and each panel's, takes the same keys (`interface-core/src/editor/keys.rs`, REQ-2019). With Shift each moving key selects as it goes.
+
+| | macOS | Windows and Linux |
+|---|---|---|
+| By a word | Option and an arrow | Control and an arrow |
+| To either end | Command and an arrow, Home, End, Control-A, Control-E | Home, End |
+| Delete a word | Option-Delete, and forward Option-Fn-Delete | Control-Backspace, Control-Delete |
+| Delete to the start | Command-Delete | |
+| Delete to the end | Command-Fn-Delete, Control-K | |
+| A character | The arrows, Control-B, Control-F, Control-H, Control-D | The arrows |
+
+A word's step right ends after the word on macOS and Linux, and on the start of the next on Windows. A word ends at the punctuation of an address. In the address field a double click selects a word and a drag from it goes by words, and a triple click selects the whole address.
+
 The clipboard is read and written by the interface process, which already reads it to paste into a channel (decision 49, the `arboard` library). Nothing the trusted core holds is copied: the address field shows only what the strip already shows.
 
 ## 5. Where the code is
