@@ -317,7 +317,9 @@ fn oversized_and_malformed_payloads_are_refused() {
 #[cfg(not(feature = "links"))]
 #[test]
 fn with_links_compiled_out_their_kinds_are_refused() {
-    for kind in 11..=15 {
+    // `links.rs`'s kinds from the trusted core: 14 between them is
+    // `KIND_SHOW`, which every build reads (`interface/kinds.rs`).
+    for kind in [11, 12, 13, 15] {
         let bytes = [kind, 0, 0, 0, 0];
         assert!(matches!(read_from_core(&mut bytes.as_slice()), Err(ProtocolError::UnknownKind(refused)) if refused == kind));
     }
@@ -326,7 +328,9 @@ fn with_links_compiled_out_their_kinds_are_refused() {
         let bytes = [kind, 0, 0, 0, 0];
         assert!(matches!(read_from_interface(&mut bytes.as_slice()), Err(ProtocolError::UnknownKind(refused)) if refused == kind));
     }
-    for kind in [24, 25, 36, 37] {
+    // `links.rs`'s kinds from the interface, the look under the pointer
+    // (95) among them.
+    for kind in [24, 25, 36, 37, 95] {
         let bytes = [kind, 0, 0, 0, 0];
         assert!(matches!(read_from_interface(&mut bytes.as_slice()), Err(ProtocolError::UnknownKind(refused)) if refused == kind));
     }
