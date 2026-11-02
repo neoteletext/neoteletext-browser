@@ -21,8 +21,8 @@ web-opener = { path = "../web-opener" }
 confine = { path = "../confine" }
 update = { path = "../update" }
 icon = { path = "../icon", package = "neoteletext-icon" }
-neoteletext-qrkeyboard = { git = "https://github.com/neoteletext/neoteletext-engine", rev = "ca0f1e8e7a98fa5567f8063833ee19a6b62d1b95" }
-neoteletext-input = { git = "https://github.com/neoteletext/neoteletext-engine", rev = "ca0f1e8e7a98fa5567f8063833ee19a6b62d1b95" }
+neoteletext-qrkeyboard = { git = "https://github.com/neoteletext/neoteletext-engine", rev = "5b39e3d942823732328e48f994ebc081738c8719" }
+neoteletext-input = { git = "https://github.com/neoteletext/neoteletext-engine", rev = "5b39e3d942823732328e48f994ebc081738c8719" }
 
 [workspace]
 members = ["."]

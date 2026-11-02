@@ -2,14 +2,14 @@
 //! until it is whole (neoteletext-app-server's DEC-1467 and DEC-1482,
 //! neoteletext-common's DEC-1500): the channel's index, from its index
 //! records, as the contents the trusted core takes from `contents.txt`;
-//! and each page's list of sub-pages, from its SUBPAGES records, as the
-//! catalogue it takes from `NNN.sub`. What is sent is untrusted and
-//! checked again in the trusted core.
+//! and each page's list of sub-pages, from its SUBPAGES records, in the
+//! parts it takes from `NNN/P.sub`. What is sent is untrusted and checked
+//! again in the trusted core.
 
 use std::collections::BTreeMap;
 
 use neoteletext_core::limits::MPP_MAGAZINE_SHIFT;
-use protocol::fetcher::{CATALOGUE_PART, Entry, MAX_ENTRIES};
+use protocol::fetcher::{Entry, MAX_ENTRIES, ROWS_PER_PART};
 use protocol::subpages::SubPageRows;
 
 /// A page of the index, and the sending it was last listed in.
@@ -98,8 +98,9 @@ pub(crate) struct SubPageLists {
 pub(crate) enum Noted {
     /// Its sending is not whole yet: nothing changes.
     Partial,
-    /// The page's whole list, in catalogue parts.
-    Whole(u16, Vec<SubPageRows>),
+    /// The page's whole list, its version as the parts of a list carry
+    /// it, and its rows in the parts of `NNN/P.sub`.
+    Whole(u16, String, Vec<SubPageRows>),
     /// The page's sending, whole, breaks its totals: it is discarded whole
     /// and the page keeps the list it had (DOC-1952, DOC-1959).
     Refused(u16, Refusal),
@@ -143,11 +144,11 @@ impl SubPageLists {
             return Noted::Refused(page, Refusal::Order);
         }
         let parts = entries
-            .chunks(CATALOGUE_PART)
-            .zip((0_u16..).step_by(CATALOGUE_PART))
+            .chunks(ROWS_PER_PART)
+            .zip((0_u16..).step_by(ROWS_PER_PART))
             .map(|(rows, first)| SubPageRows { count: whole.count, first, rows: rows.to_vec() })
             .collect();
-        Noted::Whole(page, parts)
+        Noted::Whole(page, whole.version.to_string(), parts)
     }
 }
 
@@ -198,7 +199,8 @@ mod tests {
         lists.note(0x210, 3, 0, 2, 5, rows(&[1, 2]));
         assert_eq!(lists.note(0x210, 3, 1, 2, 5, rows(&[3, 4])), Noted::Refused(0x210, Refusal::Count), "four of five");
         lists.note(0x210, 4, 0, 2, 4, rows(&[1, 2]));
-        let Noted::Whole(0x210, parts) = lists.note(0x210, 4, 1, 2, 4, rows(&[3, 4])) else { panic!("a sound sending is whole") };
+        let Noted::Whole(0x210, version, parts) = lists.note(0x210, 4, 1, 2, 4, rows(&[3, 4])) else { panic!("a sound sending is whole") };
+        assert_eq!(version, "4");
         assert_eq!(parts, [SubPageRows { count: 4, first: 0, rows: rows(&[1, 2, 3, 4]) }]);
     }
 }

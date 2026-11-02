@@ -109,7 +109,7 @@ fn the_conformance_table_holds_for_the_address_rules() {
             _ => panic!("a row of the table: {line}"),
         }
     }
-    assert_eq!((opened, refused), (30, 34), "the table's rows, all of them read");
+    assert_eq!((opened, refused), (34, 44), "the table's rows, all of them read");
 }
 
 /// REQ-1693 items 1 and 6: what an address holds beyond its page, read once.
