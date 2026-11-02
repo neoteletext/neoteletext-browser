@@ -68,6 +68,12 @@ pub fn programs() -> (PathBuf, PathBuf) {
 
 /// How many free ports a site tries.
 const PORT_ATTEMPTS: usize = 8;
+/// A ceiling on a site's first line, which arrives within milliseconds: on 3
+/// November 2026 macOS held one freshly built site at `_dyld_start`, before
+/// `main`, for over 30 minutes, and a wait with no ceiling held the full gate
+/// with it. A site that has not said it serves by then is ended and another
+/// started, as one whose port was taken is.
+const SITE_SERVES_WITHIN: Duration = Duration::from_secs(10);
 
 /// The reference channel, on a port of its own.
 pub struct Site {
@@ -81,25 +87,28 @@ impl Site {
     pub fn start(program: &Path) -> (Self, mpsc::Receiver<String>) {
         // A free port can be taken by another test's site before this one
         // binds it, so a site that could not serve is started again.
-        let (port, site, said) = (0..PORT_ATTEMPTS)
+        let (port, site, heard) = (0..PORT_ATTEMPTS)
             .find_map(|_| {
                 let port = TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port();
                 let mut site = Command::new(program).args(["terminal", &port.to_string()]).stderr(Stdio::piped()).spawn().unwrap();
-                let mut said = BufReader::new(site.stderr.take().unwrap());
-                let mut line = String::new();
-                said.read_line(&mut line).unwrap();
-                line.contains("serving").then_some((port, site, said))
+                let said = BufReader::new(site.stderr.take().unwrap());
+                let site = Killed(site);
+                let (lines, heard) = mpsc::channel();
+                std::thread::spawn(move || {
+                    // Read to the end, heard or not: a site that cannot write
+                    // would panic in its session.
+                    for line in said.lines().map_while(Result::ok) {
+                        let _ = lines.send(line);
+                    }
+                });
+                // A site dropped here is killed, which ends its reader.
+                match heard.recv_timeout(SITE_SERVES_WITHIN) {
+                    Ok(line) if line.contains("serving") => Some((port, site, heard)),
+                    _ => None,
+                }
             })
             .expect("the site serves on a free port");
-        let (lines, heard) = mpsc::channel();
-        std::thread::spawn(move || {
-            // Read to the end, heard or not: a site that cannot write
-            // would panic in its session.
-            for line in said.lines().map_while(Result::ok) {
-                let _ = lines.send(line);
-            }
-        });
-        (Self { port, _process: Killed(site) }, heard)
+        (Self { port, _process: site }, heard)
     }
 }
 
