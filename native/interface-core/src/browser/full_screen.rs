@@ -311,16 +311,25 @@ impl Browser {
     }
 
     /// While keys go to a channel, the strip's typing badge in the margin,
-    /// since the strip that says it is up (section 3).
+    /// since the strip that says it is up (section 3): on one line at the
+    /// right margin's top or under the page, whichever holds it whole, else
+    /// on lines of its own down the right margin. The page is centred, so
+    /// the left margin and the one above are as wide as these, and the
+    /// notice is there.
     #[cfg(feature = "interaction")]
     fn draw_full_screen_badge<C: Canvas + ?Sized>(&self, canvas: &mut C, area: Rect, page: Rect) {
-        if self.typing_target().is_none() {
-            return;
+        let Some(badge) = self.typing_badge() else { return };
+        let right_margin = Rect::new(page.x1 + MARGIN_GAP, area.y0 + MARGIN_GAP, area.x1 - MARGIN_GAP, area.y1 - MARGIN_GAP);
+        let below = Rect::new(area.x0 + MARGIN_GAP, page.y1 + MARGIN_GAP / 2.0, area.x1 - MARGIN_GAP, area.y1 - MARGIN_GAP / 2.0);
+        let width = badge.line_width(canvas);
+        let row = [right_margin, below].into_iter().find(|margin| margin.width() >= width && margin.height() >= BADGE_ROW);
+        if let Some(row) = row {
+            badge.draw_line(canvas, Rect::new(row.x0, row.y0, row.x1, row.y0 + BADGE_ROW));
+        } else {
+            // A margin with no room for it either way shows none, as one
+            // with none for the notice (section 2).
+            let _ = badge.draw_lines(canvas, right_margin);
         }
-        let right_margin = Rect::new(page.x1 + MARGIN_GAP, area.y0 + MARGIN_GAP, area.x1 - MARGIN_GAP, area.y0 + MARGIN_GAP + BADGE_ROW);
-        let below = Rect::new(page.x0, page.y1 + MARGIN_GAP / 2.0, page.x1, (page.y1 + MARGIN_GAP / 2.0 + BADGE_ROW).min(area.y1));
-        let row = if right_margin.width() >= below.width() / 2.0 { right_margin } else { below };
-        let _ = self.draw_typing_badge(canvas, row);
     }
 }
 
