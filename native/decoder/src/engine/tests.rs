@@ -302,6 +302,30 @@ fn sub_pages_are_listed_and_one_can_be_chosen() {
     assert_eq!(engine.render_at(0x100, 0).unwrap().subpages.shown, 2, "one not stored: the latest");
 }
 
+/// REQ-328 (the engine's REQ-NUM-030): the page open is the decoder's
+/// requested page, so a store filled by other pages never evicts it, and
+/// closing it lets it go. On the code before, the decoder was never told,
+/// and the page open was the first evicted.
+#[test]
+fn the_page_open_is_never_evicted() {
+    /// A store of four pages, filled past by those after the one open.
+    const STORE: usize = 4;
+    let page = |number: u16| format!("PN,{number:03X}00\nSC,0000\nPS,8000\nOL,1,PAGE {number:03X}\n\n").into_bytes();
+    let mut engine = Engine::with_store(STORE);
+    engine.feed(&page(0x100));
+    engine.open_page(Some(0x100));
+    for number in 0x101..0x101 + u16::try_from(STORE * 2).unwrap() {
+        engine.feed(&page(number));
+    }
+    engine.finish();
+    assert!(engine.render_at(0x100, 0).is_some(), "the page open is kept");
+    assert!(engine.render_at(0x101, 0).is_none(), "another as old is not");
+    engine.open_page(None);
+    engine.feed(&page(0x200));
+    engine.finish();
+    assert!(engine.render_at(0x100, 0).is_none(), "closed, it goes as any page");
+}
+
 /// Decision 119 (the engine's REQ-NUM-020 and REQ-NUM-030): a page of
 /// more sub-pages than the 64 the browser once listed is counted, stepped
 /// and listed by range in full, and row 0 shows a place of three digits
