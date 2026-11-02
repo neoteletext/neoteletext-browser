@@ -74,8 +74,9 @@ fn a_certificate_problem_is_held_to_its_codes() {
     assert_eq!(problem_of(8), None);
     let mut bytes = Vec::new();
     write_to_interface(&mut bytes, &ToInterface::Strip(strip())).unwrap();
-    let last = bytes.len() - 1;
-    bytes[last] = 9;
+    // The high byte of the status the strip ends with, out of bounds.
+    let high = bytes.len() - 2;
+    bytes[high] = 0xFF;
     assert!(read_from_core(&mut bytes.as_slice()).is_err());
 }
 
