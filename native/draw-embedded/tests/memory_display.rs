@@ -11,7 +11,7 @@ use embedded_graphics::prelude::*;
 use interface_core::browser::{Browser, Frame, Output, StripState, TabInfo};
 use interface_core::canvas::PageKey;
 use interface_core::channel::{Channel, PageInfo, Status, page_index};
-use interface_core::theme::{BLACK, WINDOW};
+use interface_core::theme::BLACK;
 
 /// A 7-inch panel of 1024 by 600, as driven by many microcontrollers.
 const WIDTH: u32 = 1024;
@@ -88,8 +88,9 @@ fn the_browser_draws_with_its_pages() {
     let (screen, mut browser) = drawn();
     // The tab strip's background, right of the tabs and the + button.
     assert_eq!(screen.target.pixels[(2 * WIDTH + WIDTH - 2) as usize], rgb(BLACK));
-    // The window behind the panels, in the margin at the bottom.
-    assert_eq!(screen.target.pixels[((HEIGHT - 2) * WIDTH + WIDTH / 2) as usize], rgb(WINDOW));
+    // The margin at the bottom shows the open page's screen colour, black here:
+    // with a page alone it is the background of the window (REQ-740).
+    assert_eq!(screen.target.pixels[((HEIGHT - 2) * WIDTH + WIDTH / 2) as usize], rgb(BLACK));
     // The first bank's pages were reported visible, for the trusted core to render.
     let outputs = browser.take_outputs();
     let Some(Output::Visible(visible)) = outputs.first() else { panic!("{outputs:?}") };
