@@ -208,12 +208,12 @@ impl Core {
     pub(super) fn fetcher_ended(&mut self, channel: u32, generation: u64, reason: Option<String>) {
         if self.fetchers.get(&channel).map(Fetcher::generation) == Some(generation) {
             let stopped = format!("the fetcher for channel {channel} stopped{}", reason.map(|reason| format!(": {reason}")).unwrap_or_default());
-            self.log(Level::Error, None, &stopped);
+            self.log(Level::Error, Some(channel), &stopped);
             if let Some(fetcher) = self.fetchers.remove(&channel) {
                 if !fetcher.heard() {
                     self.updates.helper_failed(&format!("{stopped} before it said it was confined"));
                 }
-                fetcher.reap();
+                fetcher.end();
             }
         }
     }

@@ -19,7 +19,7 @@ use update::wire::{FromUpdater, ToUpdater, read_from_updater, write_to_updater};
 use neoteletext::settings as stored;
 use protocol::{ToCore, ToInterface, clean};
 
-use super::processes::{end, relay};
+use super::processes::{end, end_aside, relay};
 use super::{Core, Event};
 
 /// How often the updater looks while the browser runs (section 3.4).
@@ -225,7 +225,10 @@ impl Updates {
         if let Some(reason) = &reason {
             eprintln!("neoteletext: the updater ended: {reason}");
         }
-        self.updater = None;
+        if let Some((child, input)) = self.updater.take() {
+            drop(input);
+            end_aside(child);
+        }
         self.failure = Some(reason.unwrap_or_else(|| String::from("the updater ended")));
     }
 

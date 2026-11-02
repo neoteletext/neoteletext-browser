@@ -148,3 +148,17 @@ fn an_updater_that_floods_the_core_is_held_at_its_budget() {
     let most = neoteletext::budget::MAX_WAITING_BYTES + PIPE_AND_READER_BUFFERS + message_bytes;
     assert!(held_at <= most, "the updater wrote {held_at} bytes while the core handled nothing; at most {most}");
 }
+
+/// REQ-683, TODO-2071: an updater that broke the protocol and keeps running
+/// is killed. On the code before, it was dropped and ran on.
+#[cfg(unix)]
+#[test]
+fn an_updater_that_broke_the_protocol_is_killed() {
+    use super::super::test_support::{ended_soon, sleeping_helper};
+    let (child, output) = sleeping_helper(confine::Role::Network);
+    let mut updates = launched(Version::new(0, 1, 0));
+    updates.updater = Some((child, Box::new(Vec::new())));
+    updates.ended(Some(String::from("a malformed message")));
+    assert!(ended_soon(output), "killed");
+    assert!(updates.updater.is_none());
+}

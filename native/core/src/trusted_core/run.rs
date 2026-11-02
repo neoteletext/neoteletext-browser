@@ -14,7 +14,7 @@ use protocol::console::Level;
 use protocol::sound::{FromSound, ToSound, write_to_sound};
 use protocol::{ToInterface, write_to_interface};
 
-use super::processes::{end, read_interface, spawn, stop_decoder};
+use super::processes::{end, end_aside, read_interface, spawn, stop_decoder};
 use super::startup::{load_bookmarks, load_history, load_session, load_settings, open_at_start};
 use super::{Core, Event};
 use crate::session::Session;
@@ -55,7 +55,10 @@ fn handle(core: &mut Core, event: Event) -> Result<bool, String> {
         Event::Sound(FromSound::Sounding(channels)) => core.sounding(&channels)?,
         Event::SoundEnded(reason) => {
             core.log(Level::Error, None, &format!("no sound: the sound helper ended{}", reason.map(|reason| format!(": {reason}")).unwrap_or_default()));
-            core.sound = None;
+            if let Some((helper, input)) = core.sound.take() {
+                drop(input);
+                end_aside(helper);
+            }
             core.sounding(&[])?;
         }
         Event::BookmarksRead(read) => core.bookmarks_read(read)?,
@@ -289,6 +292,55 @@ mod tests {
         let failed = Exit::from(std::process::ExitStatus::from_raw(1 << EXIT_CODE_SHIFT));
         assert!(ended(Ok(()), &failed).is_err());
         assert_eq!(ended(Err("first".into()), &crashed), Err("first".into()), "the first error is the one reported");
+    }
+
+    /// REQ-683, TODO-2071: a fetcher that broke the protocol and keeps
+    /// running is killed, whether its reader saw a bad message or only its
+    /// output closed, and nothing waits for it: the core's one event loop
+    /// goes on. The line is its channel's, and no other channel's. On the
+    /// code before, `handle` waited on the broker for as long as the
+    /// fetcher chose to sleep.
+    #[test]
+    fn a_fetcher_still_running_holds_nothing_up_and_is_killed() {
+        use super::super::processes::Fetcher;
+        use super::super::test_support::{HELPER_LIMIT, ended_soon, sleeping_helper, test_core};
+        use confine::Role;
+        use protocol::console::ConsoleTab;
+
+        for reason in [Some(String::from("a malformed message")), None] {
+            let (child, output) = sleeping_helper(Role::Network);
+            let mut core = test_core();
+            core.console.set_open(true);
+            core.fetchers.insert(1, Fetcher::new(child, 1, None));
+            let begun = std::time::Instant::now();
+            handle(&mut core, Event::FetcherEnded(1, 1, reason)).unwrap();
+            assert!(begun.elapsed() < HELPER_LIMIT, "the event loop waited {:?} for a fetcher still running", begun.elapsed());
+            assert!(ended_soon(output), "killed");
+            assert!(core.fetchers.is_empty());
+            let stopped = |core: &mut Core, channel| {
+                core.console
+                    .updates(Some(channel))
+                    .iter()
+                    .flat_map(|update| update.entries.clone())
+                    .any(|entry| entry.tab == ConsoleTab::Log && entry.text.contains("fetcher for channel 1 stopped"))
+            };
+            assert!(stopped(&mut core, 1), "in the channel's Log");
+            assert!(!stopped(&mut core, 2), "and not the browser-wide one, which every channel's Log shows");
+        }
+    }
+
+    /// REQ-683, TODO-2071: a sound helper that broke the protocol and keeps
+    /// running is killed. On the code before, it was dropped and ran on.
+    #[test]
+    fn a_sound_helper_that_broke_the_protocol_is_killed() {
+        use super::super::test_support::{ended_soon, sleeping_helper, test_core};
+        use confine::Role;
+        let (child, output) = sleeping_helper(Role::Sound);
+        let mut core = test_core();
+        core.sound = Some((child, Outbox::new(Vec::new())));
+        handle(&mut core, Event::SoundEnded(Some(String::from("a malformed message")))).unwrap();
+        assert!(ended_soon(output), "killed");
+        assert!(core.sound.is_none());
     }
 
     /// Finding F-12: a helper is heard once it says it is confined, its

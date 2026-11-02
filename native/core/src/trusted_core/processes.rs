@@ -132,9 +132,14 @@ impl Fetcher {
         });
     }
 
-    /// Waits for it once it has ended by itself; what it says is of no use.
-    pub(super) fn reap(mut self) {
-        let _ = self.child.wait();
+    /// Ends it at once, told nothing: its output stopped, and that says
+    /// nothing of whether it ended. A helper reads a hostile server's data,
+    /// so one that broke its protocol or closed its output may sleep for
+    /// ever (REQ-683).
+    pub(super) fn end(mut self) {
+        drop(self.child.stdin.take());
+        drop(self.input.take());
+        end_aside(self.child);
     }
 }
 
@@ -176,6 +181,13 @@ pub(super) fn stop_decoder(mut decoder: Decoder) {
 pub(super) fn end(helper: &mut Helper) {
     let _ = helper.kill();
     let _ = helper.wait();
+}
+
+/// Ends `helper` on a thread of its own. The broker holds its one channel
+/// through a wait, so the event loop never waits for a helper it did not
+/// choose to end, whatever that helper does.
+pub(super) fn end_aside(mut helper: Helper) {
+    thread::spawn(move || end(&mut helper));
 }
 
 /// Starts a decoder for `channel`, whose messages arrive as events.

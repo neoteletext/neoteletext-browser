@@ -78,6 +78,35 @@ pub(super) fn stand_in(program: &str, arguments: &[&str], role: confine::Role) -
     )
 }
 
+/// How long a [`sleeping_helper`] sleeps: a test that must not wait for it
+/// then fails on the code it guards against, rather than hanging.
+#[cfg(unix)]
+pub(super) const HELPER_SLEEPS: Duration = Duration::from_secs(6);
+/// Far less than [`HELPER_SLEEPS`], and far longer than a wait that does not
+/// happen, or a killed process's end.
+#[cfg(unix)]
+pub(super) const HELPER_LIMIT: Duration = Duration::from_secs(3);
+
+/// A helper that says nothing and runs on, as a hostile one does after its
+/// last message, and the end of its output, which closes when it is killed.
+#[cfg(unix)]
+pub(super) fn sleeping_helper(role: confine::Role) -> (confine::broker::Helper, std::fs::File) {
+    let mut child = stand_in("/bin/sleep", &[&HELPER_SLEEPS.as_secs().to_string()], role);
+    let output = child.stdout.take().unwrap();
+    (child, output)
+}
+
+/// Whether the helper writing to `output` ended within [`HELPER_LIMIT`].
+#[cfg(unix)]
+pub(super) fn ended_soon(mut output: std::fs::File) -> bool {
+    let (ended, closed) = mpsc::channel();
+    std::thread::spawn(move || {
+        let _ = std::io::Read::read_to_end(&mut output, &mut Vec::new());
+        let _ = ended.send(());
+    });
+    closed.recv_timeout(HELPER_LIMIT).is_ok()
+}
+
 /// Whether the version is healthy once its window has drawn and settled.
 #[cfg(unix)]
 pub(super) fn healthy_once_settled(core: &mut Core) -> bool {
