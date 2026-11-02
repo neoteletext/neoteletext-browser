@@ -48,6 +48,29 @@ fn a_channels_cookies_stay_in_the_channel() {
     assert_eq!(store.store(false, &news, ("news.example", "/teletext/", false), &read(b"x=1"), NOW), Err(Refused::NotTheChannel));
 }
 
+/// neoteletext-common's REQ-1883 and DEC-1863, the engine's REQ-515: a
+/// folder inside a channel's folder is another channel, so a cookie of the
+/// channel at `/teletext/` reaches its own requests and never the channel
+/// at `/teletext/sub/`, nor the other way, though each request's path lies
+/// under the other's cookie's path. The jar keeps each cookie in the folder
+/// of the channel that set it and is told the channel's folder with each
+/// request, without which it sends nothing at all; and a request the outer
+/// channel's fetcher reports for a path in the nested folder is not the
+/// outer channel's, while one in a page's folder is.
+#[test]
+fn a_channels_cookies_do_not_reach_a_channel_nested_in_its_folder() {
+    let mut store = Store::new();
+    let news = news();
+    let nested = Channel::of("https://news.example/teletext/sub/").unwrap();
+    store.store(false, &news, ("news.example", "/teletext/100.tti", true), &read(b"outer=1; Path=/"), NOW).unwrap();
+    store.store(false, &nested, ("news.example", "/teletext/sub/100.tti", true), &read(b"inner=1; Path=/"), NOW).unwrap();
+    assert_eq!(header(&mut store, false, &news, "/teletext/101.tti"), "outer=1", "the channel's own");
+    assert_eq!(header(&mut store, false, &nested, "/teletext/sub/101.tti"), "inner=1", "the nested channel's own, and no other");
+    assert_eq!(header(&mut store, false, &news, "/teletext/sub/101.tti"), "", "never to the nested channel's folder");
+    assert_eq!(header(&mut store, false, &news, "/teletext/210/0002.t42"), "outer=1", "a page's folder is the channel's own");
+    assert_eq!(header(&mut store, false, &news, "/teletext/210/x/0002.t42"), "", "but nothing below it");
+}
+
 /// Requirements 21.3 and 21.7: private cookies apart and gone with the
 /// last private tab; blocking refuses and deletes.
 #[test]
@@ -139,7 +162,7 @@ fn the_file_keeps_persistent_cookies_of_named_channels() {
     store.store(true, &news, ("news.example", "/teletext/", true), &read(b"private=1; Max-Age=3600"), NOW).unwrap();
     let text = store.export(NOW);
     let shown = String::from_utf8_lossy(&text);
-    assert!(shown.starts_with("neoteletext-cookie-file 1\nchannel\tc1\thttps://news.example/teletext/\n\n"), "{shown}");
+    assert!(shown.starts_with("neoteletext-cookie-file 2\nchannel\tc1\thttps://news.example/teletext/\n\n"), "{shown}");
     assert!(!shown.contains("session") && !shown.contains("private"), "{shown}");
     let mut restored = Store::new();
     assert!(restored.import(&text, NOW + 10).is_empty());

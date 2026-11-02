@@ -892,6 +892,7 @@ mod tests {
                 &mut self,
                 host: &str,
                 path: &str,
+                _: Option<&str>,
                 _: bool,
                 _: neoteletext_web::cookie::Site,
                 _: u64,
@@ -915,7 +916,7 @@ mod tests {
             fn reached_securely(&self, _: &str, _: u64) -> bool {
                 false
             }
-            fn clear_host(&mut self, _: &str) {}
+            fn clear_site_data(&mut self, _: &str, _: Option<&str>) {}
             fn wipe(&mut self) {}
         }
         let mut storage = Box::new(Storage::default());

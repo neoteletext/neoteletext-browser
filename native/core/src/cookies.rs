@@ -37,7 +37,10 @@ const MAX_HEADER: usize = protocol::fetcher::MAX_COOKIE_HEADER;
 const _: () = assert!(MAX_HEADER == neoteletext_web::consts::DEFAULT_REQUEST_LIMIT, "the engine's room for a request");
 const _: () = assert!(protocol::fetcher::MAX_COOKIE_NAME_VALUE == neoteletext_web::consts::MAX_COOKIE_NAME_VALUE, "the engine's limit on a cookie");
 const _: () = assert!(protocol::fetcher::MAX_COOKIE_ATTRIBUTE == neoteletext_web::consts::MAX_COOKIE_ATTRIBUTE_VALUE, "the engine's limit on an attribute");
-pub(crate) const FILE_VERSION: &str = "neoteletext-cookie-file 1";
+/// Version 2: the engine's saved form is its version 3, which keeps the
+/// folder of the channel that set each cookie (engine `690bf94`). An older
+/// file is not read: this is development.
+pub(crate) const FILE_VERSION: &str = "neoteletext-cookie-file 2";
 const TAG_PREFIX: &str = "c";
 /// Room for building a jar of this size: its records and arena, which a
 /// thread of the default size could not hold while the box is made.
@@ -106,9 +109,17 @@ impl Channel {
     }
 
     /// Whether a request or response a fetcher reports is the channel's: its
-    /// host and scheme, and a path inside its folder (requirement 21.1).
+    /// host and scheme, and a path of its own (requirement 21.1): a file in
+    /// its folder, or in one of its pages' folders (DEC-2116). Any other
+    /// folder inside its folder is another channel (neoteletext-common's
+    /// REQ-1885), which its cookies never reach.
     fn owns(&self, host: &str, path: &str, secure: bool) -> bool {
-        host == self.host && secure == self.secure && path.starts_with(self.folder.as_str())
+        let Some(rest) = path.strip_prefix(self.folder.as_str()) else { return false };
+        let own = match rest.split_once('/') {
+            None => true,
+            Some((folder, file)) => neoteletext_web::channel::page_folder(folder).is_some() && !file.contains('/'),
+        };
+        host == self.host && secure == self.secure && own
     }
 }
 
@@ -213,7 +224,11 @@ impl Store {
         let Some(jar) = self.jar(private) else { return Vec::new() };
         let mut room = vec![0_u8; MAX_HEADER];
         let mut writer = Writer::new(&mut room);
-        let (count, _) = jar.header_for(&tag, path, secure, site, now, &mut writer);
+        // The channel's folder, as each of its cookies was stored in it: the
+        // jar sends a cookie only to the channel whose folder set it, so one
+        // of a channel never reaches a channel nested in its folder (the
+        // engine's REQ-515, neoteletext-common's REQ-1883).
+        let (count, _) = jar.header_for(&tag, path, Some(&channel.folder), secure, site, now, &mut writer);
         let length = if count == 0 { 0 } else { writer.len() };
         room.truncate(length);
         room
