@@ -20,6 +20,9 @@ const MARKUP: &[u8] = b"<!doctype html><title>Not teletext</title>";
 /// The start of an image.
 const IMAGE: &[u8] = b"\x89PNG\r\n\x1a\n\0\0\0\rIHDR";
 
+/// Bytes that are nothing.
+const RANDOM: &[u8] = &[0x93, 0x11, 0xFE, 0x02, 0x77, 0xC4, 0x5A, 0x08];
+
 /// One file: status, media type and body.
 type File = (u16, &'static str, &'static [u8]);
 
@@ -157,7 +160,6 @@ fn a_declared_refresh_reaches_the_trusted_core() {
 /// wait for the next and nothing more.
 #[test]
 fn what_is_not_teletext_as_a_page_is_refused_with_its_status() {
-    const RANDOM: &[u8] = &[0x93, 0x11, 0xFE, 0x02, 0x77, 0xC4, 0x5A, 0x08];
     for body in [MARKUP, IMAGE, RANDOM] {
         for status in [200, 403, 500] {
             let media = if body == MARKUP { "text/html" } else { "application/octet-stream" };
@@ -178,13 +180,11 @@ fn what_is_not_teletext_as_a_page_is_refused_with_its_status() {
 /// REQ-708: the same as `channel.ttx`.
 #[test]
 fn what_is_not_a_channel_is_refused_with_its_status() {
-    for (status, media, body, said) in [
-        (500, "text/html", MARKUP, Some(500)),
-        (403, "application/json", &b"{}"[..], Some(403)),
-        (200, "text/html", MARKUP, Some(200)),
-        (200, "application/octet-stream", IMAGE, Some(200)),
-    ] {
-        let port = serve(BTreeMap::from([("/channel.ttx", (status, media, body))]));
-        assert_eq!(Fetcher::start(port).refusal(RefusedFile::Channel), said, "{body:?} under {status}");
+    for body in [MARKUP, IMAGE, RANDOM] {
+        for status in [200, 403, 500] {
+            let media = if body == MARKUP { "text/html" } else { "application/octet-stream" };
+            let port = serve(BTreeMap::from([("/channel.ttx", (status, media, body))]));
+            assert_eq!(Fetcher::start(port).refusal(RefusedFile::Channel), Some(status), "{body:?} under {status}");
+        }
     }
 }
