@@ -3,12 +3,13 @@
 
 use std::time::Duration;
 
-use interface_core::browser::Denied;
+use interface_core::browser::{Denied, Failed};
 #[cfg(feature = "interaction")]
 use interface_core::canvas::PageKey;
 #[cfg(feature = "interaction")]
 use neoteletext_core::limits::SUBCODE_ANY;
 use protocol::console::Level;
+use protocol::fetcher::RefusedFile;
 use protocol::{ToInterface, clean};
 
 use super::Core;
@@ -37,7 +38,45 @@ impl Core {
             strip.notice = format!("Loading page {:03X}, sub-page {subpage:04X}", key.page);
         }
         strip.denied = self.denial_shown();
+        strip.failed = self.failure_shown();
         strip
+    }
+
+    /// Why the active tab shows nothing: of the channel, or of the page open.
+    fn failure_shown(&self) -> Option<Failed> {
+        let (failed, page) = self.session.active_tab()?.channel.failed?;
+        (page.is_none() || page == self.controls.open_page(self.active_channel()?)).then_some(failed)
+    }
+
+    /// A file of a static channel was refused, in a message its fetcher
+    /// sent, untrusted: said in the channel's Log in the trusted core's own
+    /// words, and in the tab when it leaves the tab with nothing: the
+    /// channel's own file, or the page open when none of it was drawn. A
+    /// bundle or a contents file is missed, not needed (REQ-708).
+    pub(super) fn refused(&mut self, channel: u32, file: RefusedFile, status: Option<u16>) -> Result<(), String> {
+        let answer = status.map_or_else(|| String::from("nothing answered"), |status| format!("status {status}"));
+        let (level, name) = match file {
+            RefusedFile::Channel => (Level::Error, String::from("its channel file")),
+            RefusedFile::Bundle => (Level::Warning, String::from("its bundle")),
+            RefusedFile::Contents => (Level::Warning, String::from("its contents file")),
+            RefusedFile::Page(page) => (Level::Warning, format!("page {page:03X}")),
+        };
+        self.log(level, Some(channel), &format!("channel {channel}: {name} was refused: {answer}"));
+        let failed = match file {
+            RefusedFile::Channel => Some((Failed::Channel(status), None)),
+            RefusedFile::Page(page) => Some((Failed::Page(status), Some(page))),
+            RefusedFile::Bundle | RefusedFile::Contents => None,
+        };
+        let Some(failed) = failed else { return Ok(()) };
+        let Some(tab) = self.session.all_tabs_mut().find(|tab| tab.channel.id == channel) else { return Ok(()) };
+        if failed.1.is_some_and(|page| tab.channel.is_loaded(page)) {
+            return Ok(());
+        }
+        tab.channel.failed = Some(failed);
+        if self.active_channel() == Some(channel) {
+            self.send(&ToInterface::Strip(self.strip()))?;
+        }
+        Ok(())
     }
 
     /// The refusal the active tab shows: one of what it still selects.

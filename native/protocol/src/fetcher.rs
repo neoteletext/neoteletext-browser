@@ -18,8 +18,8 @@ use kinds::KIND_LINKS;
 use kinds::{
     KIND_CERTIFICATE_REFUSED, KIND_CHANNEL_LOG, KIND_CLEAR_SITE_DATA, KIND_CONFINED, KIND_CONNECTING, KIND_CONTENTS, KIND_COOKIE_ANSWER, KIND_COOKIE_QUESTION,
     KIND_COOKIE_SET, KIND_DENIED, KIND_EXCHANGE, KIND_FETCH_SUBPAGE, KIND_FETCH_SUBPAGES, KIND_INITIAL_PAGE, KIND_INVALID_PACKETS, KIND_NOTICE, KIND_PAGE,
-    KIND_PAGE_REDIRECT, KIND_PROGRAM_REDIRECT, KIND_PROXY_FAILED, KIND_PUSHING, KIND_REACHED_ANSWER, KIND_REACHED_QUESTION, KIND_REDIRECTED, KIND_REGION,
-    KIND_SUBPAGES, KIND_SUBPAGES_MISSING,
+    KIND_PAGE_REDIRECT, KIND_PROGRAM_REDIRECT, KIND_PROXY_FAILED, KIND_PUSHING, KIND_REACHED_ANSWER, KIND_REACHED_QUESTION, KIND_REDIRECTED, KIND_REFUSED,
+    KIND_REGION, KIND_SUBPAGES, KIND_SUBPAGES_MISSING,
 };
 #[cfg(feature = "interaction")]
 use kinds::{KIND_INPUT, KIND_MEASURE_ROUND_TRIP, KIND_ROUND_TRIP, KIND_SEND};
@@ -57,7 +57,16 @@ const CATALOGUE_ENTRY_BYTES: usize = 2 + 2 + MAX_PAGE_TITLE;
 const CATALOGUE_HEAD_BYTES: usize = 2 + 2 + 2 + 2;
 const _: () = assert!(CATALOGUE_HEAD_BYTES + CATALOGUE_PART * CATALOGUE_ENTRY_BYTES <= MAX_PAYLOAD, "a catalogue part fits one message");
 /// HTTP status codes are three digits from 100 (RFC 9110 section 15).
-const STATUS_CODES: core::ops::RangeInclusive<u16> = 100..=599;
+pub(crate) const STATUS_CODES: core::ops::RangeInclusive<u16> = 100..=599;
+/// In place of a status: nothing answered.
+const NO_STATUS: u16 = 0;
+/// In place of a page, in a refusal of a channel's own file.
+const NOT_A_PAGE: u16 = 0;
+/// What a refusal's role byte says of [`RefusedFile`].
+const REFUSED_CHANNEL: u8 = 0;
+const REFUSED_BUNDLE: u8 = 1;
+const REFUSED_CONTENTS: u8 = 2;
+const REFUSED_PAGE: u8 = 3;
 
 /// How long a fetcher whose input closed may take to send what it was
 /// last told.
@@ -103,6 +112,20 @@ pub enum Entry {
     },
 }
 
+/// Which of a static channel's files a refusal is of, by its role alone
+/// (REQ-708).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RefusedFile {
+    /// `channel.ttx`, without which there is no channel.
+    Channel,
+    /// `index.t42`, whose pages can still be fetched one by one.
+    Bundle,
+    /// `contents.txt`, without which pages can still be fetched by number.
+    Contents,
+    /// A page's own file, `NNN.tti` or `NNN.t42`.
+    Page(u16),
+}
+
 /// From a fetcher to the trusted core. A fetcher is untrusted.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum FromFetcher {
@@ -121,6 +144,16 @@ pub enum FromFetcher {
     },
     /// Something for the log, not yet cleaned.
     Notice(String),
+    /// A response of a static channel was refused or none came (REQ-708):
+    /// which file, and the real HTTP status, none when nothing answered. It
+    /// carries no text of the server's: the trusted core says it in its own
+    /// words.
+    Refused {
+        /// Which file.
+        file: RefusedFile,
+        /// The status, within [`STATUS_CODES`].
+        status: Option<u16>,
+    },
     /// The channel refused a selection (DOC-1961, REQ-1481),
     /// a record of its connection, not yet checked.
     Denied {
@@ -529,6 +562,64 @@ fn read_live_message(kind: u8, fields: &mut Fields<'_>) -> Result<FromFetcher, P
     })
 }
 
+/// A static channel's message about its files: its payload, and its kind.
+fn push_static_message(payload: &mut Vec<u8>, message: &FromFetcher) -> Result<u8, ProtocolError> {
+    Ok(match message {
+        FromFetcher::SubPagesMissing { page } => {
+            page_index(*page).ok_or(ProtocolError::BadValue("page number"))?;
+            payload.extend_from_slice(&page.to_be_bytes());
+            KIND_SUBPAGES_MISSING
+        }
+        FromFetcher::Refused { file, status } => {
+            if status.is_some_and(|status| !STATUS_CODES.contains(&status)) {
+                return Err(ProtocolError::BadValue("status"));
+            }
+            let (role, page) = match file {
+                RefusedFile::Channel => (REFUSED_CHANNEL, NOT_A_PAGE),
+                RefusedFile::Bundle => (REFUSED_BUNDLE, NOT_A_PAGE),
+                RefusedFile::Contents => (REFUSED_CONTENTS, NOT_A_PAGE),
+                RefusedFile::Page(page) => {
+                    page_index(*page).ok_or(ProtocolError::BadValue("page number"))?;
+                    (REFUSED_PAGE, *page)
+                }
+            };
+            payload.push(role);
+            payload.extend_from_slice(&page.to_be_bytes());
+            payload.extend_from_slice(&status.unwrap_or(NO_STATUS).to_be_bytes());
+            KIND_REFUSED
+        }
+        _ => return Err(ProtocolError::BadValue("not a static channel's message")),
+    })
+}
+
+/// Reads a static channel's message about its files, of `kind`.
+fn read_static_message(kind: u8, fields: &mut Fields<'_>) -> Result<FromFetcher, ProtocolError> {
+    Ok(match kind {
+        KIND_SUBPAGES_MISSING => FromFetcher::SubPagesMissing { page: fields.display_page()? },
+        KIND_REFUSED => {
+            let role = fields.u8()?;
+            let page = fields.u16()?;
+            let file = match (role, page) {
+                (REFUSED_CHANNEL, NOT_A_PAGE) => RefusedFile::Channel,
+                (REFUSED_BUNDLE, NOT_A_PAGE) => RefusedFile::Bundle,
+                (REFUSED_CONTENTS, NOT_A_PAGE) => RefusedFile::Contents,
+                (REFUSED_PAGE, page) => {
+                    page_index(page).ok_or(ProtocolError::BadValue("page number"))?;
+                    RefusedFile::Page(page)
+                }
+                _ => return Err(ProtocolError::BadValue("refused file")),
+            };
+            let status = match fields.u16()? {
+                NO_STATUS => None,
+                status if STATUS_CODES.contains(&status) => Some(status),
+                _ => return Err(ProtocolError::BadValue("status")),
+            };
+            FromFetcher::Refused { file, status }
+        }
+        other => return Err(ProtocolError::UnknownKind(other)),
+    })
+}
+
 /// # Errors
 /// When writing fails or the message breaks a bound.
 pub fn write_to_core(out: &mut dyn Write, message: &FromFetcher) -> Result<(), ProtocolError> {
@@ -611,11 +702,7 @@ pub fn write_to_core(out: &mut dyn Write, message: &FromFetcher) -> Result<(), P
             })?;
             KIND_SUBPAGES
         }
-        FromFetcher::SubPagesMissing { page } => {
-            page_index(*page).ok_or(ProtocolError::BadValue("page number"))?;
-            payload.extend_from_slice(&page.to_be_bytes());
-            KIND_SUBPAGES_MISSING
-        }
+        FromFetcher::SubPagesMissing { .. } | FromFetcher::Refused { .. } => push_static_message(&mut payload, message)?,
         #[cfg(feature = "interaction")]
         FromFetcher::RoundTrip { microseconds } => {
             payload.extend_from_slice(&microseconds.to_be_bytes());
@@ -705,7 +792,7 @@ pub fn read_from_fetcher(input: &mut dyn Read) -> Result<Option<FromFetcher>, Pr
             let part = crate::subpages::read_rows(&mut fields, CATALOGUE_PART, |fields| raw_text(fields, MAX_PAGE_TITLE, "title too long"))?;
             FromFetcher::SubPages { page, part }
         }
-        KIND_SUBPAGES_MISSING => FromFetcher::SubPagesMissing { page: fields.display_page()? },
+        KIND_SUBPAGES_MISSING | KIND_REFUSED => read_static_message(kind, &mut fields)?,
         #[cfg(feature = "interaction")]
         KIND_ROUND_TRIP => FromFetcher::RoundTrip { microseconds: u64::from_be_bytes(fields.array()?) },
         KIND_CHANNEL_LOG

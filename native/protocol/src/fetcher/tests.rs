@@ -68,6 +68,10 @@ fn every_kind_round_trips() {
             part: SubPageRows { count: 8_190, first: 7_168, rows: vec![(0x3F7E, "The last".into()), (0x0001, String::new())] },
         },
         FromFetcher::SubPagesMissing { page: 0x210 },
+        FromFetcher::Refused { file: RefusedFile::Channel, status: Some(500) },
+        FromFetcher::Refused { file: RefusedFile::Bundle, status: None },
+        FromFetcher::Refused { file: RefusedFile::Contents, status: Some(403) },
+        FromFetcher::Refused { file: RefusedFile::Page(0x210), status: Some(200) },
         #[cfg(feature = "interaction")]
         FromFetcher::RoundTrip { microseconds: 190 },
     ] {
@@ -261,4 +265,21 @@ fn a_move_is_marked_only_as_its_own_contacts() {
     let mut bytes = Vec::new();
     write_to_core(&mut bytes, &FromFetcher::RoundTrip { microseconds: 1 }).unwrap();
     assert!(matches!(read_to_fetcher(&mut bytes.as_slice()), Err(ProtocolError::UnknownKind(KIND_ROUND_TRIP))));
+}
+
+/// REQ-708: a refusal carries a real status or none, and a file by its role.
+#[test]
+fn a_refusal_is_held_to_its_bounds() {
+    let refused = |status| FromFetcher::Refused { file: RefusedFile::Page(0x100), status };
+    assert!(write_to_core(&mut Vec::new(), &refused(Some(9_999))).is_err(), "no status has four digits");
+    let mut bytes = Vec::new();
+    write_to_core(&mut bytes, &refused(Some(500))).unwrap();
+    let last = bytes.len() - 1;
+    bytes[last] = 0xFF;
+    assert!(read_from_fetcher(&mut bytes.as_slice()).is_err(), "a status out of bounds closes the fetcher");
+    let mut page_of_the_channel = Vec::new();
+    write_to_core(&mut page_of_the_channel, &FromFetcher::Refused { file: RefusedFile::Channel, status: None }).unwrap();
+    let place = page_of_the_channel.len() - 3;
+    page_of_the_channel[place] = 1;
+    assert!(read_from_fetcher(&mut page_of_the_channel.as_slice()).is_err(), "a channel's file has no page");
 }

@@ -103,7 +103,12 @@ impl Browser {
     /// the browser's stands in place of the page, so that nothing of a
     /// channel being left stays on screen (REQ-740 items 5 and 6).
     fn screen_alone<C: Canvas + ?Sized>(&self, canvas: &mut C) -> Option<Colour> {
-        if !self.wall.single() || !self.strip.redirecting.is_empty() || self.strip.refused.is_some() || self.strip.denied.is_some() {
+        if !self.wall.single()
+            || !self.strip.redirecting.is_empty()
+            || self.strip.refused.is_some()
+            || self.strip.denied.is_some()
+            || self.strip.failed.is_some()
+        {
             return None;
         }
         let keys: Vec<PageKey> = self.bank_pages().into_iter().filter_map(|index| self.page_key(index)).collect();
@@ -146,6 +151,8 @@ impl Browser {
         self.draw_input_trace(canvas);
         // A selection the channel refused: why, in place of the pages.
         self.draw_denied(canvas, zoom);
+        // A tab that failed: why, in place of the pages.
+        self.draw_failed(canvas, zoom);
         // A refused certificate: its screen in place of the pages.
         self.draw_refusal(canvas, zoom);
         self.report_visible();

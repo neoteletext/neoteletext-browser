@@ -1,7 +1,7 @@
 //! A channel shown in a tab (`architecture.md` section 6): the pages its
 //! contents file lists and the pages its decoder has reported.
 
-use interface_core::browser::{CertificateProblem, Denied};
+use interface_core::browser::{CertificateProblem, Denied, Failed};
 use interface_core::channel::{BANKS, Channel, PAGES, PAGES_PER_BANK, PageInfo, Status, page_index};
 use protocol::fetcher::Entry;
 use protocol::{MAX_BANK_NAME, MAX_PAGE_TITLE, MAX_TITLE, clean};
@@ -89,6 +89,11 @@ pub struct ChannelState {
     /// The channel refused a selection, and which (page and sub-code), until
     /// a page draws. It stands only while that is what the tab selects.
     pub denied: Option<(Denied, Option<(u16, u16)>)>,
+    /// Why the tab shows nothing of the channel, and the page that stands
+    /// for, none when it is the whole channel. A helper that broke its
+    /// protocol stands until the tab is reloaded, which makes a new channel
+    /// (REQ-683); a refused file until a page draws (REQ-708).
+    pub failed: Option<(Failed, Option<u16>)>,
 }
 
 impl ChannelState {
@@ -157,6 +162,7 @@ impl ChannelState {
             initial_page: None,
             since_selected: SinceSelected::default(),
             denied: None,
+            failed: None,
         }
     }
 
@@ -211,6 +217,12 @@ impl ChannelState {
         *loaded = true;
         let title = self.titles.get_mut(index)?.get_or_insert_with(|| clean(title, MAX_PAGE_TITLE)).clone();
         Some(title)
+    }
+
+    /// Whether `page` has arrived.
+    #[must_use]
+    pub fn is_loaded(&self, page: u16) -> bool {
+        page_index(page).and_then(|index| self.loaded.get(index)).copied().unwrap_or(false)
     }
 
     /// The channel as the interface shows it.

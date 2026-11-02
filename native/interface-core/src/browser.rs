@@ -80,7 +80,7 @@ pub use phone::{PhoneStatus, PhoneUiView};
 #[cfg(feature = "phone-keyboard")]
 pub use phone_keys::{PhonePageKey, phone_page_key};
 pub use pointer::Cursor;
-pub use shown::{CertificateProblem, Denied, Frame, StripState, TabInfo};
+pub use shown::{CertificateProblem, Denied, Failed, Frame, StripState, TabInfo};
 pub use tab_strip::DropTarget;
 #[cfg(feature = "interaction")]
 pub use typing::{CursorView, TypingView, notched};

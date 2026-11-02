@@ -61,6 +61,7 @@ impl Core {
             }
             FromFetcher::Notice(text) => self.log(Level::Warning, Some(channel), &format!("channel {channel}: {}", clean(&text, MAX_NOTICE))),
             FromFetcher::Denied { status, place } => self.denied(channel, status, &place)?,
+            FromFetcher::Refused { file, status } => self.refused(channel, file, status)?,
             FromFetcher::Redirected(location) => self.redirected(channel, &location)?,
             FromFetcher::PageRedirect { page, sub, query } => self.page_redirected(channel, page, sub, query.as_deref())?,
             FromFetcher::ProgramRedirect(location) => self.program_redirected(channel, &location)?,
@@ -313,5 +314,95 @@ mod tests {
         test.core.fetched(channel, FromFetcher::Contents(Vec::new())).unwrap();
         let strips: Vec<_> = test.sent().into_iter().filter_map(|message| if let ToInterface::Strip(strip) = message { Some(strip) } else { None }).collect();
         assert_eq!(strips.last().map(|strip| strip.refused), Some(None));
+    }
+
+    /// A tab on a static channel, with the page `open` open; its channel.
+    fn static_tab(test: &mut Test, open: u16) -> u32 {
+        test.core.session.open("https://news.invalid/teletext/").unwrap();
+        let channel = test.core.active_channel().unwrap();
+        test.core.intent(protocol::ToCore::Opened(Some(PageKey { channel, page: open }))).unwrap();
+        channel
+    }
+
+    /// REQ-683: a decoder or a fetcher that broke its protocol fails its
+    /// tab, in the strip's state and so on its page area, and none starts
+    /// for the channel again, so a hostile server cannot crash one for
+    /// ever; a reload makes a new channel, which has neither. One that
+    /// merely ended fails nothing.
+    #[cfg(unix)]
+    #[test]
+    fn a_helper_that_broke_its_protocol_fails_its_tab_until_it_is_reloaded() {
+        use super::super::processes::Fetcher;
+        use super::super::test_support::{decoder_watched, stand_in};
+        use interface_core::browser::Failed;
+        let mut test = Test::new("helper-broke");
+        let channel = static_tab(&mut test, 0x100);
+        let fetcher = |test: &mut Test| {
+            test.core.fetchers.insert(channel, Fetcher::new(stand_in("/bin/sleep", &["60"], confine::Role::Network), 1, None));
+        };
+        fetcher(&mut test);
+        test.core.fetcher_ended(channel, 1, None);
+        assert_eq!(test.core.strip().failed, None, "it ended, and may start again");
+        assert!(!test.core.given_up.contains(&channel));
+        fetcher(&mut test);
+        test.core.fetcher_ended(channel, 1, Some("a malformed message".into()));
+        assert_eq!(test.core.strip().failed, Some(Failed::Fetcher));
+        assert!(test.core.given_up.contains(&channel), "no new fetcher");
+        test.core.match_decoders().unwrap();
+        assert!(test.core.fetchers.is_empty(), "none started at the next look");
+        test.core.session.page_drawn(channel);
+        assert_eq!(test.core.strip().failed, Some(Failed::Fetcher), "a page drawn does not mend it");
+
+        let mut test = Test::new("decoder-broke");
+        let channel = static_tab(&mut test, 0x100);
+        let _written = decoder_watched(&mut test.core, channel);
+        test.core.decoder_ended(channel, 1, Some("a malformed message".into()));
+        assert_eq!(test.core.strip().failed, Some(Failed::Decoder));
+        assert!(test.core.given_up.contains(&channel));
+        test.core.session.reload();
+        assert_eq!(test.core.strip().failed, None, "a reload is a new channel");
+    }
+
+    /// REQ-708: `channel.ttx` refused, whatever came back, leaves the tab
+    /// saying so with the status. On the code before, a line in the Log,
+    /// and the tab stayed empty.
+    #[test]
+    fn a_refused_channel_is_said_in_the_tab_with_its_status() {
+        use interface_core::browser::Failed;
+        use protocol::fetcher::RefusedFile;
+        for status in [Some(200), Some(403), Some(500), None] {
+            let mut test = Test::new("refused-channel");
+            let channel = static_tab(&mut test, 0x100);
+            test.core.fetched(channel, FromFetcher::Refused { file: RefusedFile::Channel, status }).unwrap();
+            assert_eq!(test.core.strip().failed, Some(Failed::Channel(status)));
+        }
+    }
+
+    /// REQ-708: a refused page is said for the page open and for no other,
+    /// and never over a page that has arrived; another page takes it away,
+    /// and a page drawn ends it. A bundle or a contents file is missed, not
+    /// needed: the Log alone says so.
+    #[test]
+    fn a_refused_page_is_said_for_the_page_open_alone() {
+        use interface_core::browser::Failed;
+        use protocol::fetcher::RefusedFile;
+        let mut test = Test::new("refused-page");
+        let channel = static_tab(&mut test, 0x100);
+        let refused = |test: &mut Test, file, status| test.core.fetched(channel, FromFetcher::Refused { file, status }).unwrap();
+        refused(&mut test, RefusedFile::Bundle, Some(500));
+        refused(&mut test, RefusedFile::Contents, Some(403));
+        refused(&mut test, RefusedFile::Page(0x200), Some(500));
+        assert_eq!(test.core.strip().failed, None);
+        refused(&mut test, RefusedFile::Page(0x100), Some(200));
+        assert_eq!(test.core.strip().failed, Some(Failed::Page(Some(200))), "an answer that was not teletext");
+        test.core.intent(protocol::ToCore::Opened(Some(PageKey { channel, page: 0x101 }))).unwrap();
+        assert_eq!(test.core.strip().failed, None, "another page open");
+        test.core.intent(protocol::ToCore::Opened(Some(PageKey { channel, page: 0x100 }))).unwrap();
+        assert_eq!(test.core.strip().failed, Some(Failed::Page(Some(200))), "it stands for its page");
+        test.core.session.page_drawn(channel);
+        assert_eq!(test.core.strip().failed, None, "a page drew");
+        test.core.session.all_tabs_mut().next().unwrap().channel.arrived(0x100, "Headlines");
+        refused(&mut test, RefusedFile::Page(0x100), Some(500));
+        assert_eq!(test.core.strip().failed, None, "a page that arrived is not disturbed");
     }
 }

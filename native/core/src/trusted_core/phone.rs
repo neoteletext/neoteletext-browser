@@ -159,6 +159,7 @@ impl Core {
         if generation != self.phone_generation {
             return Ok(());
         }
+        let broke = reason.is_some();
         if let Some(reason) = reason {
             self.log(Level::Error, None, &format!("the phone keyboard stopped: {reason}"));
         }
@@ -166,7 +167,11 @@ impl Core {
             end(&mut child);
         }
         self.phone_view = protocol::keyboard::PhoneView { state: protocol::keyboard::PhoneState::Finished, qr: None, pin: None };
-        self.send_phone()
+        self.send_phone()?;
+        if broke {
+            self.say(String::from("The phone keyboard misbehaved and was closed"))?;
+        }
+        Ok(())
     }
 }
 
@@ -194,6 +199,23 @@ mod tests {
             })
             .unwrap(),
         )
+    }
+
+    /// REQ-683: a phone keyboard that broke its protocol is closed, its panel
+    /// finishes, and the strip says why. On the code before, the panel
+    /// finished with no reason given.
+    #[cfg(unix)]
+    #[test]
+    fn a_keyboard_that_broke_the_protocol_is_said_to_have_failed() {
+        let mut test = Test::new("phone-broke");
+        let mut child = deaf_keyboard("60");
+        let input = neoteletext::outbox::Outbox::new(child.stdin.take().unwrap());
+        test.core.phone = Some((child, input));
+        let generation = test.core.phone_generation;
+        test.core.phone_ended(generation, Some(String::from("a malformed message"))).unwrap();
+        assert!(test.core.phone.is_none());
+        assert_eq!(test.core.phone_view.state, PhoneState::Finished);
+        assert_eq!(test.core.strip().notice, "The phone keyboard misbehaved and was closed");
     }
 
     /// Finding F-26: closing the panel never waits on the keyboard process

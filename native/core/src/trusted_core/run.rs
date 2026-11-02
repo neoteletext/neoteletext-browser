@@ -54,12 +54,18 @@ fn handle(core: &mut Core, event: Event) -> Result<bool, String> {
         Event::PhoneEnded(generation, reason) => core.phone_ended(generation, reason)?,
         Event::Sound(FromSound::Sounding(channels)) => core.sounding(&channels)?,
         Event::SoundEnded(reason) => {
+            let broke = reason.is_some();
             core.log(Level::Error, None, &format!("no sound: the sound helper ended{}", reason.map(|reason| format!(": {reason}")).unwrap_or_default()));
             if let Some((helper, input)) = core.sound.take() {
                 drop(input);
                 end_aside(helper);
             }
             core.sounding(&[])?;
+            // It served every tab: the strip says so, whichever is in front
+            // (REQ-683). A helper that merely ended leaves the browser silent.
+            if broke {
+                core.say(String::from("The sound helper misbehaved and was closed"))?;
+            }
         }
         Event::BookmarksRead(read) => core.bookmarks_read(read)?,
         Event::Opening(opening) => {
@@ -341,6 +347,7 @@ mod tests {
         handle(&mut core, Event::SoundEnded(Some(String::from("a malformed message")))).unwrap();
         assert!(ended_soon(output), "killed");
         assert!(core.sound.is_none());
+        assert_eq!(core.strip().notice, "The sound helper misbehaved and was closed", "said to every tab, whichever is in front");
     }
 
     /// Finding F-12: a helper is heard once it says it is confined, its

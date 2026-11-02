@@ -1,13 +1,26 @@
 //! The trusted strip's state on the wire: its flags, its texts, and the
 //! code of a refused certificate (decision 83).
 
-use interface_core::browser::{CertificateProblem, Denied, StripState};
+use interface_core::browser::{CertificateProblem, Denied, Failed, StripState};
 
 use super::kinds::{ALL_FLAGS, BOOKMARKED, BUILT_IN, CAN_GO_BACK, CAN_GO_FORWARD, ENCRYPTED, LOCAL, PRIVATE};
+use crate::fetcher::STATUS_CODES;
 use crate::{Fields, MAX_ADDRESS, MAX_IDENTITY, MAX_STRIP_NOTICE, ProtocolError, push_text};
 
 /// In place of a status: the channel refused nothing.
 const NOT_DENIED: u16 = 0;
+/// In place of a failure: the tab has not failed.
+const NOT_FAILED: u8 = 0;
+/// The tab's decoder failed.
+const FAILED_DECODER: u8 = 1;
+/// The tab's fetcher failed.
+const FAILED_FETCHER: u8 = 2;
+/// The address's channel file was refused.
+const FAILED_CHANNEL: u8 = 3;
+/// The page open was refused.
+const FAILED_PAGE: u8 = 4;
+/// In place of a status: nothing answered.
+const NO_STATUS: u16 = 0;
 
 pub(super) fn push_strip(payload: &mut Vec<u8>, strip: &StripState) -> Result<(), ProtocolError> {
     let flag = |set: bool, bit: u8| if set { bit } else { 0 };
@@ -26,6 +39,15 @@ pub(super) fn push_strip(payload: &mut Vec<u8>, strip: &StripState) -> Result<()
     payload.push(strip.refused.map_or(0, problem_code));
     push_text(payload, &strip.redirecting, MAX_ADDRESS)?;
     payload.extend_from_slice(&strip.denied.map_or(NOT_DENIED, Denied::status).to_be_bytes());
+    let (failed, status) = match strip.failed {
+        None => (NOT_FAILED, None),
+        Some(Failed::Decoder) => (FAILED_DECODER, None),
+        Some(Failed::Fetcher) => (FAILED_FETCHER, None),
+        Some(Failed::Channel(status)) => (FAILED_CHANNEL, status),
+        Some(Failed::Page(status)) => (FAILED_PAGE, status),
+    };
+    payload.push(failed);
+    payload.extend_from_slice(&status.unwrap_or(NO_STATUS).to_be_bytes());
     Ok(())
 }
 
@@ -54,6 +76,22 @@ pub(super) fn read_strip(fields: &mut Fields<'_>) -> Result<StripState, Protocol
         denied: match fields.u16()? {
             NOT_DENIED => None,
             status => Some(Denied::of_status(status).ok_or(ProtocolError::BadValue("denied status"))?),
+        },
+        failed: {
+            let failed = fields.u8()?;
+            let status = match fields.u16()? {
+                NO_STATUS => None,
+                status if STATUS_CODES.contains(&status) => Some(status),
+                _ => return Err(ProtocolError::BadValue("failed tab's status")),
+            };
+            match failed {
+                NOT_FAILED => None,
+                FAILED_DECODER => Some(Failed::Decoder),
+                FAILED_FETCHER => Some(Failed::Fetcher),
+                FAILED_CHANNEL => Some(Failed::Channel(status)),
+                FAILED_PAGE => Some(Failed::Page(status)),
+                _ => return Err(ProtocolError::BadValue("failed tab")),
+            }
         },
     })
 }

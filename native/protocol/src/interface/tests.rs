@@ -30,6 +30,7 @@ fn strip() -> StripState {
         notice: "Proxy changed to socks5://127.0.0.1:1080".into(),
         refused: Some(CertificateProblem::Revoked),
         denied: Some(interface_core::browser::Denied::NotFound),
+        failed: Some(interface_core::browser::Failed::Page(Some(500))),
         redirecting: "https://elsewhere.invalid/teletext/".into(),
     }
 }

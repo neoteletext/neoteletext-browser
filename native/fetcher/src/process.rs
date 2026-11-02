@@ -17,7 +17,7 @@ use neoteletext_core::types::{Instant, PageAddress, SubCode};
 use neoteletext_transport::web_address;
 #[cfg(feature = "interaction")]
 use neoteletext_web::agent::InputMessage;
-use neoteletext_web::agent::{Config, Event, Input, Output, Source, Storage, Subscription, UserAgent};
+use neoteletext_web::agent::{Config, Event, Failure, Input, Output, Source, Storage, Subscription, UserAgent};
 use neoteletext_web::channel::SETTINGS_FILE;
 use neoteletext_web::consts::ALLOWED_LOCAL;
 use neoteletext_web::contents::{self, Entry as ContentsEntry};
@@ -26,7 +26,7 @@ use neoteletext_web::port::{ConnectionId, NetOutput, Pump, Security, Transport};
 use neoteletext_web::proxy::Proxy;
 use neoteletext_web::records::redirect::RedirectRecord;
 use neoteletext_web::subpages;
-use protocol::fetcher::{CATALOGUE_PART, Entry, FromFetcher, Origin, ToFetcher, read_to_fetcher, redirect_in_bounds, write_to_core};
+use protocol::fetcher::{CATALOGUE_PART, Entry, FromFetcher, Origin, RefusedFile, ToFetcher, read_to_fetcher, redirect_in_bounds, write_to_core};
 use protocol::subpages::SubPageRows;
 
 #[cfg(feature = "links")]
@@ -152,6 +152,8 @@ enum Action {
     SubPagesCurrent(PageAddress),
     /// The page asked for has been answered, one way or another.
     Answered,
+    /// A file was refused, for the trusted core to say (REQ-708).
+    Refused(RefusedFile, Answer),
     /// A message for the trusted core as it is: a notice, or an exchange
     /// for the developer console (the engine's REQ-WEB-033).
     Tell(FromFetcher),
@@ -169,6 +171,54 @@ enum Action {
     IndexComplete(u16),
     /// A part of a page's list of sub-pages from a SUBPAGES record.
     SubPageList(SubPageListPart),
+}
+
+/// What came of a file that was refused.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Answer {
+    /// This status.
+    Status(u16),
+    /// A response whose content was refused: its status is the exchange's
+    /// that came before.
+    Content,
+    /// None came.
+    Nothing,
+}
+
+impl Answer {
+    fn of(failure: Failure) -> Self {
+        match failure {
+            Failure::Status(status) => Self::Status(status),
+            Failure::Content | Failure::MediaType => Self::Content,
+            _ => Self::Nothing,
+        }
+    }
+
+    /// The status to say, `last` being the last response's.
+    const fn status(self, last: Option<u16>) -> Option<u16> {
+        match self {
+            Self::Status(status) => Some(status),
+            Self::Content => last,
+            Self::Nothing => None,
+        }
+    }
+}
+
+/// The status of the 404 that says a page is not in the service.
+const NOT_FOUND: u16 = 404;
+
+/// The refusal an event says, if it says one of a whole file: a sub-page's
+/// file is another page's business, and stored pages are not disturbed.
+fn refusal(event: &Event<'_>) -> Option<(RefusedFile, Answer)> {
+    Some(match *event {
+        Event::DescriptorFailed(failure) => (RefusedFile::Channel, Answer::of(failure)),
+        Event::DescriptorRejected(_) => (RefusedFile::Channel, Answer::Content),
+        Event::BundleFailed(failure) => (RefusedFile::Bundle, Answer::of(failure)),
+        Event::ContentsFailed(failure) => (RefusedFile::Contents, Answer::of(failure)),
+        Event::PageNotInService { page, subcode: None } => (RefusedFile::Page(page.mpp()), Answer::Status(NOT_FOUND)),
+        Event::FetchFailed { page, subcode: None, failure } => (RefusedFile::Page(page.mpp()), Answer::of(failure)),
+        _ => return None,
+    })
 }
 
 /// A SUBPAGES record, owned (DOC-1959).
@@ -201,6 +251,17 @@ fn collect(output: Output<'_>, actions: &mut Vec<Action>) {
         // A bundle, a form's answer or a push is page bytes too; only a page
         // fetch ends the wait for the next one.
         if matches!(page.source, Source::Page { .. }) {
+            actions.push(Action::Answered);
+        }
+        return;
+    }
+    // Said to the trusted core by its role and status, and a page's ends the
+    // wait for the next one as well.
+    if let Output::Event(event) = output
+        && let Some((file, answer)) = refusal(&event)
+    {
+        actions.push(Action::Refused(file, answer));
+        if matches!(file, RefusedFile::Page(_)) {
             actions.push(Action::Answered);
         }
         return;
@@ -399,6 +460,8 @@ pub fn run(channel: &str, allowed: &[IpAddr], proxy: Option<Proxy>) -> Result<()
     let mut waiting = false;
     let mut catalogues = Catalogues::default();
     let mut live = Live::default();
+    // The status of the last response, for a refusal of its content.
+    let mut last_status = None;
 
     // The trusted core closes standard input to end the fetcher. Before
     // then it sends only input messages (REQ-INT-133); anything else
@@ -420,15 +483,7 @@ pub fn run(channel: &str, allowed: &[IpAddr], proxy: Option<Proxy>) -> Result<()
                 Action::Timer(at) => next_tick = Some(next_tick.map_or(at, |current| current.min(at))),
                 Action::Bytes { origin, bytes } => send(&output, &FromFetcher::Page { origin, bytes })?,
                 Action::Ready(page, region) => {
-                    // Before any page, so that none is read in another group.
-                    send(&output, &FromFetcher::Region(region))?;
-                    send(&output, &FromFetcher::InitialPage(page))?;
-                    // The descriptor's links, for the trusted core to decide
-                    // (`hyperlinks.md` section 6.4).
-                    #[cfg(feature = "links")]
-                    if let Some(links) = descriptor_links(&agent) {
-                        send(&output, &links)?;
-                    }
+                    service_ready(&agent, &output, page, region)?;
                     ask_for_channel(&mut agent, &clock, &mut actions);
                 }
                 Action::Contents(bytes) => {
@@ -449,9 +504,13 @@ pub fn run(channel: &str, allowed: &[IpAddr], proxy: Option<Proxy>) -> Result<()
                     }
                 }
                 Action::Answered => waiting = false,
+                Action::Refused(file, answer) => send(&output, &FromFetcher::Refused { file, status: answer.status(last_status) })?,
                 Action::Push(open) => push_changed(&agent, &output, open)?,
                 action @ (Action::Index { .. } | Action::IndexComplete(_) | Action::SubPageList(_)) => live_record(action, &mut live, &output)?,
-                Action::Tell(message) => send(&output, &message)?,
+                Action::Tell(message) => {
+                    last_status = if let FromFetcher::Exchange { status, .. } = message { Some(status) } else { last_status };
+                    send(&output, &message)?;
+                }
             }
         }
         tell_failures(&mut pump.transport, &output)?;
@@ -576,6 +635,22 @@ fn poll_sockets(pump: &mut Pump<Tcp>, buffer: &mut [u8], agent: &mut Agent<'_>, 
     busy
 }
 
+/// Tells the trusted core what the open channel's descriptor says.
+fn service_ready(agent: &Agent<'_>, output: &cookies::Output, page: u16, region: Option<u8>) -> Result<(), String> {
+    // Before any page, so that none is read in another group.
+    send(output, &FromFetcher::Region(region))?;
+    send(output, &FromFetcher::InitialPage(page))?;
+    // The descriptor's links, for the trusted core to decide
+    // (`hyperlinks.md` section 6.4).
+    #[cfg(feature = "links")]
+    if let Some(links) = descriptor_links(agent) {
+        send(output, &links)?;
+    }
+    #[cfg(not(feature = "links"))]
+    let _ = agent;
+    Ok(())
+}
+
 /// Asks for the whole channel: its contents file, then every page it
 /// lists; and the push connection, for all its pages.
 fn ask_for_channel(agent: &mut Agent<'_>, clock: &dyn Fn() -> Instant, actions: &mut Vec<Action>) {
@@ -691,6 +766,33 @@ fn read_commands(input: &mut dyn Read, commands: &mpsc::Sender<Wake>, answers: &
 mod tests {
     use super::*;
     use neoteletext_web::channel::SETTINGS_FILE;
+
+    /// REQ-708: every failure of a whole file reaches the trusted core by
+    /// its role, with the status when there was one and nothing a server
+    /// wrote; a missing page is 404, and ends the wait for the next page.
+    /// On the code before, a page's failures only ended that wait, and the
+    /// rest were a debug line in the Log.
+    #[test]
+    fn a_failure_of_a_file_is_a_refusal() {
+        let page = PageAddress::from_mpp(0x100).unwrap();
+        let actions_of = |event: Event<'_>| {
+            let mut actions = Vec::new();
+            collect(Output::Event(event), &mut actions);
+            actions.iter().filter_map(|action| if let Action::Refused(file, answer) = action { Some((*file, *answer)) } else { None }).collect::<Vec<_>>()
+        };
+        let here = RefusedFile::Page(0x100);
+        assert_eq!(actions_of(Event::PageNotInService { page, subcode: None }), [(here, Answer::Status(404))]);
+        assert_eq!(actions_of(Event::FetchFailed { page, subcode: None, failure: Failure::Status(500) }), [(here, Answer::Status(500))]);
+        assert_eq!(actions_of(Event::FetchFailed { page, subcode: None, failure: Failure::Content }), [(here, Answer::Content)]);
+        assert_eq!(actions_of(Event::FetchFailed { page, subcode: None, failure: Failure::Network }), [(here, Answer::Nothing)]);
+        assert_eq!(actions_of(Event::DescriptorFailed(Failure::MediaType)), [(RefusedFile::Channel, Answer::Content)]);
+        assert_eq!(actions_of(Event::BundleFailed(Failure::Status(403))), [(RefusedFile::Bundle, Answer::Status(403))]);
+        assert_eq!(actions_of(Event::ContentsFailed(Failure::Timeout)), [(RefusedFile::Contents, Answer::Nothing)]);
+        assert_eq!(actions_of(Event::PageNotInService { page, subcode: Some(SubCode::new(2)) }), [], "a sub-page's file is not the page's");
+        let mut actions = Vec::new();
+        collect(Output::Event(Event::PageNotInService { page, subcode: None }), &mut actions);
+        assert!(actions.iter().any(|action| matches!(action, Action::Answered)), "the next page may go");
+    }
 
     /// Finding F-74: the largest page, bundle or form answer the agent
     /// accepts is one message to the trusted core. Before this the agent

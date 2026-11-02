@@ -4,6 +4,8 @@
 
 use std::io::Write;
 
+use interface_core::browser::Failed;
+use protocol::ToInterface;
 use protocol::console::Level;
 use protocol::decoder::{FIRST_STORE_PAGES, MAX_STORE_PAGES, ToDecoder};
 
@@ -77,6 +79,7 @@ impl Core {
             // depends on viewing (decision 22).
             if let Some(address) = web
                 && !self.fetchers.contains_key(id)
+                && !self.given_up.contains(id)
             {
                 self.generation = self.generation.wrapping_add(1);
                 let reach = Reach::of(&self.allow_local, &self.settings);
@@ -173,6 +176,7 @@ impl Core {
             return;
         }
         let heard = self.decoders.get(&channel).is_some_and(Decoder::heard);
+        let broke = reason.is_some();
         if let Some(reason) = &reason {
             self.log(Level::Error, Some(channel), &format!("the decoder for channel {channel} stopped: {reason}"));
             let at = self.now();
@@ -198,6 +202,28 @@ impl Core {
         }
         let sends = self.hearing.channel_gone(channel);
         self.deliver(sends);
+        if broke {
+            self.helper_broke(channel, Failed::Decoder);
+        }
+    }
+
+    /// A helper of `channel` broke its protocol and was closed: it may be
+    /// compromised, and a server can make one do so again, so none starts
+    /// for the channel until its tab is reloaded, and the tab says why
+    /// (REQ-683, finding F-30).
+    fn helper_broke(&mut self, channel: u32, failed: Failed) {
+        self.given_up.insert(channel);
+        if let Some(tab) = self.session.all_tabs_mut().find(|tab| tab.channel.id == channel) {
+            tab.channel.failed = Some((failed, None));
+        }
+        // An interface that cannot be written to has stopped; its reader
+        // reports that.
+        let _ = self.in_window_of(channel, |core| {
+            if core.active_channel() == Some(channel) {
+                core.send(&ToInterface::Strip(core.strip()))?;
+            }
+            Ok(())
+        });
     }
 
     /// A fetcher ended. One the core did not end, that ended before it said
@@ -207,6 +233,7 @@ impl Core {
     /// server that crashes it cannot force a rollback.
     pub(super) fn fetcher_ended(&mut self, channel: u32, generation: u64, reason: Option<String>) {
         if self.fetchers.get(&channel).map(Fetcher::generation) == Some(generation) {
+            let broke = reason.is_some();
             let stopped = format!("the fetcher for channel {channel} stopped{}", reason.map(|reason| format!(": {reason}")).unwrap_or_default());
             self.log(Level::Error, Some(channel), &stopped);
             if let Some(fetcher) = self.fetchers.remove(&channel) {
@@ -214,6 +241,9 @@ impl Core {
                     self.updates.helper_failed(&format!("{stopped} before it said it was confined"));
                 }
                 fetcher.end();
+            }
+            if broke {
+                self.helper_broke(channel, Failed::Fetcher);
             }
         }
     }

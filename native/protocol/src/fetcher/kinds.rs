@@ -54,3 +54,6 @@ pub(super) const KIND_PROGRAM_REDIRECT: u8 = 136;
 pub(super) const KIND_DENIED: u8 = 137;
 /// A channel's default character set region (REQ-WEB-002).
 pub(super) const KIND_REGION: u8 = 138;
+// A static channel's refused response (REQ-708), past the last number used
+// across every pipe.
+pub(super) const KIND_REFUSED: u8 = 140;

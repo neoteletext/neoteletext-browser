@@ -59,6 +59,11 @@ impl State {
         self.open == Some(key)
     }
 
+    /// The page open, when it is of `channel`.
+    pub(super) fn open_page(&self, channel: u32) -> Option<u16> {
+        self.open.filter(|key| key.channel == channel).map(|key| key.page)
+    }
+
     /// The view of `key`, as drawn now.
     fn view_of(&self, key: PageKey) -> View {
         self.view.filter(|view| self.open == Some(key) && view.page == key.page).unwrap_or(View { page: key.page, ..View::default() })

@@ -3,6 +3,7 @@
 //! channel's bare address, and what its Back list goes by. The trusted core
 //! keeps the address, at the one point every selection is reported to it.
 
+use interface_core::browser::Failed;
 use neoteletext::address::Address;
 
 use super::{Pending, Session, Tab, Visit};
@@ -119,6 +120,7 @@ impl Session {
         if let Some(tab) = self.tabs.iter_mut().find(|tab| tab.channel.id == channel) {
             tab.channel.since_selected.drawn = true;
             tab.channel.denied = None;
+            tab.channel.failed.take_if(|(failed, _)| matches!(failed, Failed::Channel(_) | Failed::Page(_)));
         }
     }
 }

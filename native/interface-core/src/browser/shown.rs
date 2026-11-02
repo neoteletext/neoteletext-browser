@@ -71,6 +71,26 @@ pub struct StripState {
     /// The channel refused what the tab selected: the page area says so, in
     /// the browser's own words (DOC-1961, REQ-1481).
     pub denied: Option<Denied>,
+    /// The tab failed: the page area says so, in the browser's own words
+    /// (REQ-683).
+    pub failed: Option<Failed>,
+}
+
+/// Why a tab shows nothing of its channel: said by the trusted core, in the
+/// browser's own words, since a helper or a server can only name which.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Failed {
+    /// The tab's decoder broke its protocol and was closed (REQ-683).
+    Decoder,
+    /// The tab's fetcher broke its protocol and was closed (REQ-683).
+    Fetcher,
+    /// The address's `channel.ttx` was refused or could not be fetched:
+    /// the real HTTP status, or none when nothing answered (REQ-708).
+    Channel(Option<u16>),
+    /// The page open was refused or could not be fetched: the real HTTP
+    /// status, or none when nothing answered. A status that a DENIED record
+    /// carries reads as that record does (REQ-708).
+    Page(Option<u16>),
 }
 
 /// Why a channel refused a selection: the real HTTP status a DENIED record
