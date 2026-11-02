@@ -384,7 +384,7 @@ fn pages_arrive_with_titles_and_render_in_teletext_colours() {
     assert!(engine.render(0x102).is_none(), "a page never received");
 }
 
-/// Decision 60: the Colour Map of EN 300 706 clause 12.4 reaches the
+/// REQ-739, decision 60: the Colour Map of EN 300 706 clause 12.4 reaches the
 /// frame. Page 100's X/28/0 (Table 4) redefines CLUTs 2 and 3 and sets
 /// Colour Table Re-mapping 5, so the Level 1 foreground colours come
 /// from CLUT 2; page 101's X/28/4 (Table 10, Level 3.5) redefines CLUTs
