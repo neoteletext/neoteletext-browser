@@ -18,11 +18,22 @@ pub struct Recorder {
     /// Each text's colour, in the order drawn.
     pub inks: Vec<(alloc::string::String, Colour)>,
     pub scale: f64,
+    /// What every page's screen colour is; none before a page has arrived.
+    pub screen: Option<Colour>,
 }
 
 impl Recorder {
     pub fn new() -> Self {
-        Self { pages: Vec::new(), texts: Vec::new(), fills: Vec::new(), polygons: Vec::new(), dims: Vec::new(), inks: Vec::new(), scale: 2.0 }
+        Self {
+            pages: Vec::new(),
+            texts: Vec::new(),
+            fills: Vec::new(),
+            polygons: Vec::new(),
+            dims: Vec::new(),
+            inks: Vec::new(),
+            scale: 2.0,
+            screen: Some(crate::theme::BLACK),
+        }
     }
 
     /// The colour `text` was last drawn in, if it was.
@@ -52,7 +63,7 @@ impl Canvas for Recorder {
         true
     }
     fn screen(&mut self, _: PageKey) -> Option<Colour> {
-        Some(crate::theme::BLACK)
+        self.screen
     }
     fn text(&mut self, rect: Rect, text: &str, _: Style, colour: Colour) {
         self.texts.push((rect, text.into()));

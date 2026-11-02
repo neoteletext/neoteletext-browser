@@ -259,6 +259,7 @@ The earlier design's main concession was the system webview: many millions of li
 **Mitigations.**
 - The address, identity, encryption state and the web-browser prompt are shown only in the trusted strip, which is drawn outside the page area and which no page image is ever drawn over (requirements 11.1 and 11.2).
 - **Every page image is kept below the strip,** including the zoomed page and the overview's popup of a page at its native size, which shrinks on a short window rather than cover the strip (observed in this codebase's tests).
+- **A page's screen colour stops at the strip.** With a page alone the colour is the background of the window below the strip (REQ-740), so a channel chooses one of 4,096 colours for that area: never a word, a shape or a pixel of the strip, which draws its own ground first and is drawn the same on every page (`the_strip_never_takes_the_colour`, `a_pages_colour_reaches_every_pixel_below_the_strip_and_no_further`). The panels on the colour draw the channel's magazine names and page titles in the browser's ink, fitted to their places as on black.
 - A click on a page means only "this cell" (requirement 12.3).
 - The strip stays visible in every layout but the page-only full screen, which ends before anything leaves the channel and brings the strip back at the top edge (requirement 11.4, `full-screen-security.md`).
 - Every new layout is reviewed for spoofing (requirement 14.5, no review recorded yet).

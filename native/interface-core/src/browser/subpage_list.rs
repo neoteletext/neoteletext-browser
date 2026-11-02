@@ -25,8 +25,9 @@ use crate::canvas::Canvas;
 use crate::channel::page_index;
 use crate::controls::{PageControl, SUBPAGE_ROWS};
 use crate::geometry::{Point, Rect};
+use crate::surface::Surface;
 use crate::text::{HAIRLINE, left_centred, left_fitted};
-use crate::theme::{COLUMN_HEAD, MUTED, PANEL, RAISED, ROW_NUMBER, ROW_TITLE, RULE, RULE_SOFT, SELECTED, WHITE};
+use crate::theme::{COLUMN_HEAD, RAISED, ROW_NUMBER, ROW_TITLE, SELECTED};
 
 /// The share of the list the pages take until the divider is pulled.
 const PAGES_SHARE: f64 = 0.6;
@@ -194,19 +195,19 @@ impl Browser {
     /// Draws the chosen page's sub-pages in `area`, under the divider: a
     /// row for each place in view, with its title once held, and asks for
     /// the rows in view that are not.
-    pub(super) fn draw_subpage_list<C: Canvas + ?Sized>(&mut self, canvas: &mut C, area: Rect, colour: crate::theme::Colour, now: u64) {
+    pub(super) fn draw_subpage_list<C: Canvas + ?Sized>(&mut self, canvas: &mut C, area: Rect, colour: crate::theme::Colour, surface: Surface, now: u64) {
         let divider = Rect::new(area.x0, area.y0, area.x1, area.y0 + DIVIDER_HEIGHT);
         canvas.fill(divider, 0.0, colour);
         self.regions.subpage_divider = Rect::new(divider.x0, divider.y0 - DIVIDER_HEIGHT, divider.x1, divider.y1 + DIVIDER_HEIGHT);
         let heading = Rect::new(area.x0, divider.y1, area.x1, divider.y1 + HEADING_HEIGHT);
-        canvas.fill(heading, 0.0, PANEL);
+        canvas.fill(heading, 0.0, surface.back);
         let selected = self.selected.and_then(|index| Some((index, self.subpage_count(index)?, crate::channel::page_number(index)?)));
         let words = match selected {
             Some((_, count, page)) => format!("Sub-pages of {page:03X} ({count})"),
             None => String::from("Choose a page marked with sub-pages"),
         };
-        left_fitted(canvas, heading, PADDING, &words, COLUMN_HEAD, MUTED);
-        canvas.fill(Rect::new(heading.x0, heading.y1 - HAIRLINE, heading.x1, heading.y1), 0.0, RULE);
+        left_fitted(canvas, heading, PADDING, &words, COLUMN_HEAD, surface.muted);
+        canvas.fill(Rect::new(heading.x0, heading.y1 - HAIRLINE, heading.x1, heading.y1), 0.0, surface.rule);
         let rows = Rect::new(area.x0, heading.y1, area.x1, area.y1);
         self.regions.subpage_list = rows;
         let Some((index, count, page)) = selected else { return };
@@ -232,18 +233,28 @@ impl Browser {
             let top = rows.y0 + f64::from(place) * ROW_HEIGHT - self.subpages.scroll;
             let row = Rect::new(rows.x0, top, rows.x1, top + ROW_HEIGHT);
             let held = self.subpages.held.as_ref().and_then(|held| held.at(index, place));
-            if chosen == Some(place) {
-                canvas.fill(row, 0.0, SELECTED);
+            // A row with a fill of its own keeps white text.
+            let fill = if chosen == Some(place) {
+                Some(SELECTED)
             } else if held.is_some_and(|(subcode, _)| self.subpages.hovered == Some(*subcode)) {
-                canvas.fill(row, 0.0, RAISED);
+                Some(RAISED)
+            } else {
+                None
+            };
+            let on = if fill.is_some() { Surface::BROWSER } else { surface };
+            if let Some(fill) = fill {
+                canvas.fill(row, 0.0, fill);
             }
-            canvas.fill(Rect::new(row.x0, row.y1 - HAIRLINE, row.x1, row.y1), 0.0, RULE_SOFT);
-            left_centred(canvas, row, PADDING, &format!("{}/{count}", u32::from(place).saturating_add(1)), ROW_NUMBER, WHITE);
+            canvas.fill(Rect::new(row.x0, row.y1 - HAIRLINE, row.x1, row.y1), 0.0, on.rule_soft);
+            if let Some(fill) = fill {
+                surface.edge(canvas, row, fill);
+            }
+            left_centred(canvas, row, PADDING, &format!("{}/{count}", u32::from(place).saturating_add(1)), ROW_NUMBER, on.ink);
             match held {
                 Some((subcode, title)) => {
                     let (subcode, title) = (*subcode, title.clone());
                     self.regions.subrows.push((row, subcode));
-                    left_fitted(canvas, Rect::new(row.x0 + TITLE_COLUMN, row.y0, row.x1 - PADDING, row.y1), PADDING, &title, ROW_TITLE, WHITE);
+                    left_fitted(canvas, Rect::new(row.x0 + TITLE_COLUMN, row.y0, row.x1 - PADDING, row.y1), PADDING, &title, ROW_TITLE, on.ink);
                 }
                 None => missing = missing.or(Some(place)),
             }

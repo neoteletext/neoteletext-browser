@@ -144,6 +144,53 @@ fn a_hover_redraws_only_where_it_shows_and_matches_a_whole_frame() {
     assert_eq!(differing(&words, &expected), 0);
 }
 
+/// REQ-740 in pixels: a later version of the open page with a screen colour
+/// of its own colours its border and all the window below the strip, every
+/// pixel of the strip stays as it was, and the wall keeps the browser's own.
+#[test]
+fn a_pages_colour_reaches_every_pixel_below_the_strip_and_no_further() {
+    const SCREEN: [u8; 3] = [0x77, 0x00, 0x77];
+    const SCREEN_WORD: u32 = 0x0077_0077;
+    /// `WINDOW`, the window behind the wall.
+    const WINDOW_WORD: u32 = 0x0012_1214;
+    /// In the window's left margin, halfway down.
+    const MARGIN: (usize, usize) = (2, HEIGHT as usize / 2);
+    let across = usize::from(WIDTH);
+    let pages = pages();
+    let recolour = |painter: &mut Painter, _: &mut Browser| {
+        let front = &pages[0];
+        let palette: Vec<[u8; 3]> = front.palette.iter().copied().chain([SCREEN]).collect();
+        painter.set_page(FRONT, &palette, u8::try_from(front.palette.len()).unwrap(), &front.indices).unwrap();
+    };
+    let mut painter = Painter::new(Family::Roboto);
+    let mut browser = browser(&mut painter, &pages);
+    browser.wall_mut().toggle_single(SETTLED);
+    frame(&mut painter, &mut browser, SETTLED);
+    let black = frame(&mut painter, &mut browser, SETTLED).1;
+    recolour(&mut painter, &mut browser);
+    let coloured = frame(&mut painter, &mut browser, SETTLED).1;
+    assert_eq!(coloured[MARGIN.1 * across + MARGIN.0], SCREEN_WORD, "the margin");
+    let strip_end = (0..usize::from(HEIGHT)).find(|&row| coloured[row * across + MARGIN.0] == SCREEN_WORD).unwrap();
+    assert!(strip_end > 0);
+    assert_eq!(differing(&coloured[..strip_end * across], &black[..strip_end * across]), 0, "the strip's pixels");
+    let (_, image) = browser.wall().shown().next().unwrap();
+    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss, reason = "inside the window")]
+    let (left, middle) = (image.x0 as usize - 1, f64::midpoint(image.y0, image.y1) as usize);
+    assert_eq!(coloured[middle * across + left], SCREEN_WORD, "the page's border");
+    let expected = fresh(&pages, SETTLED, |painter, browser| {
+        browser.wall_mut().toggle_single(SETTLED);
+        recolour(painter, browser);
+    });
+    // Text's edges blended over a colour round either way by a level,
+    // depending on where the drawn part starts.
+    let channels = |word: u32| word.to_be_bytes().map(i16::from);
+    let apart = |a: u32, b: u32| channels(a).into_iter().zip(channels(b)).any(|(a, b)| (a - b).abs() > 1);
+    assert_eq!(coloured.iter().zip(&expected).filter(|&(&a, &b)| apart(a, b)).count(), 0, "drawn in part, as a frame drawn whole");
+    browser.wall_mut().toggle_single(SETTLED);
+    let wall = frame(&mut painter, &mut browser, SETTLED * 2).1;
+    assert_eq!(wall[MARGIN.1 * across + MARGIN.0], WINDOW_WORD, "the wall's margin");
+}
+
 #[test]
 fn a_surface_that_holds_the_last_frame_takes_only_the_damage() {
     let mut painter = Painter::new(Family::Roboto);

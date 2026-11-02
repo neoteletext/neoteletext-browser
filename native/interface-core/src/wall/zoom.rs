@@ -272,6 +272,15 @@ impl Wall {
         Some(self.draw_alone(canvas, area, pages, current, now))
     }
 
+    /// The page the area shows alone among `keys`, the wall's pages: the
+    /// open page, or else the one `selected`, or else the first (decision
+    /// 126).
+    #[must_use]
+    pub fn alone_page(&self, keys: &[PageKey], selected: Option<PageKey>) -> Option<PageKey> {
+        let on_wall = |key: &PageKey| keys.contains(key);
+        self.zoomed().filter(on_wall).or_else(|| selected.filter(on_wall)).or_else(|| keys.first().copied())
+    }
+
     /// The page area with only the open page (decision 126): the chosen
     /// page, or else the first, opened at once, and drawn as in full screen
     /// within `area`, with none of the wall's controls.
@@ -284,15 +293,13 @@ impl Wall {
         for control in [&mut self.close, &mut self.bar, &mut self.minus, &mut self.plus, &mut self.bar_zone] {
             *control = Rect::ZERO;
         }
-        let on_wall = |key: &PageKey| pages.iter().any(|page| page.key == *key);
-        let open = self.zoomed.filter(|_| self.zoom_in).filter(on_wall);
-        let Some(key) = open.or_else(|| selected.filter(on_wall)).or_else(|| pages.first().map(|page| page.key)) else {
+        let Some(key) = self.alone_page(&self.page_keys, selected) else {
             // Nothing to show: the bank has no pages yet.
             self.to_top();
             canvas.fill(area, 0.0, PANEL);
             return;
         };
-        if open.is_none() {
+        if self.zoomed() != Some(key) {
             self.open_alone(key);
         }
         let Some(current) = pages.iter().position(|page| page.key == key) else { return };

@@ -20,7 +20,6 @@ impl Wall {
         let pages = pages.get(..MAX_WALL_TILES).unwrap_or(pages);
         if self.single() {
             self.draw_single(canvas, panel, pages, selected, now);
-            outline(canvas, panel, RULE);
             self.drawn_moving = self.moving(now);
             return;
         }

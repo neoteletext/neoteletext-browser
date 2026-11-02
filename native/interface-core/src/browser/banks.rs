@@ -9,8 +9,9 @@ use crate::browser::window::{HEADING_HEIGHT, PADDING};
 use crate::canvas::Canvas;
 use crate::channel::BANKS;
 use crate::geometry::{Point, Rect};
+use crate::surface::Surface;
 use crate::text::{HAIRLINE, border, fitted_text, label, left_centred, outline, right_centred};
-use crate::theme::{BANK_COLOURS, BANK_COUNT, BANK_NAME, BANK_RANGE, BUTTON, HEADING, MUTED, PANEL, RAISED, RULE, RULE_SOFT, WHITE};
+use crate::theme::{BANK_COLOURS, BANK_COUNT, BANK_NAME, BANK_RANGE, BUTTON, HEADING, RAISED};
 
 const BANK_GAP: f64 = 6.0;
 const BANK_MAX_HEIGHT: f64 = 60.0;
@@ -21,12 +22,12 @@ pub(super) const BANK_BORDER: f64 = 3.0;
 const BANK_RANGE_RISE: f64 = 2.0;
 
 impl Browser {
-    pub(super) fn draw_banks<C: Canvas + ?Sized>(&mut self, canvas: &mut C, panel: Rect) {
-        canvas.fill(panel, 0.0, PANEL);
-        outline(canvas, panel, RULE);
+    pub(super) fn draw_banks<C: Canvas + ?Sized>(&mut self, canvas: &mut C, panel: Rect, surface: Surface) {
+        canvas.fill(panel, 0.0, surface.back);
+        outline(canvas, panel, surface.rule);
         let heading = Rect::new(panel.x0, panel.y0, panel.x1, panel.y0 + HEADING_HEIGHT);
-        left_centred(canvas, heading, PADDING, "Channel magazines", HEADING, WHITE);
-        canvas.fill(Rect::new(panel.x0, heading.y1 - HAIRLINE, panel.x1, heading.y1), 0.0, RULE);
+        left_centred(canvas, heading, PADDING, "Channel magazines", HEADING, surface.ink);
+        canvas.fill(Rect::new(panel.x0, heading.y1 - HAIRLINE, panel.x1, heading.y1), 0.0, surface.rule);
         #[allow(clippy::cast_precision_loss, reason = "eight banks")]
         let height = ((panel.height() - HEADING_HEIGHT - BANK_GAP) / BANKS as f64 - BANK_GAP).min(BANK_MAX_HEIGHT);
         for (bank, &colour) in BANK_COLOURS.iter().enumerate() {
@@ -43,14 +44,21 @@ impl Browser {
                 } else if hovered {
                     RAISED
                 } else {
-                    PANEL
+                    surface.back
                 },
             );
             if chosen {
                 border(canvas, rect, BANK_BORDER, colour);
             } else {
-                outline(canvas, rect, RULE_SOFT);
+                outline(canvas, rect, surface.rule_soft);
             }
+            if hovered && !chosen {
+                surface.edge(canvas, rect, RAISED);
+            }
+            // A magazine with a fill of its own reads as it does on black;
+            // the others stand on the surface.
+            let on = if chosen || hovered { Surface::BROWSER } else { surface };
+            let colour = on.mark(colour);
             let middle = f64::midpoint(rect.y0, rect.y1);
             let swatch = Rect::new(rect.x0 + PADDING, rect.y0 + SWATCH_INSET, rect.x0 + PADDING + SWATCH_WIDTH, rect.y1 - SWATCH_INSET);
             canvas.fill(swatch, 0.0, colour);
@@ -69,7 +77,7 @@ impl Browser {
                 PADDING,
                 &format!("{}", self.channel.bank_count(bank)),
                 BANK_COUNT,
-                MUTED,
+                on.muted,
             );
             self.regions.banks.push(rect);
         }

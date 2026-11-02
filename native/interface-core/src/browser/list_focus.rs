@@ -10,6 +10,7 @@ use crate::browser::{Browser, Key};
 use crate::canvas::Canvas;
 use crate::channel::BANKS;
 use crate::geometry::Rect;
+use crate::surface::Surface;
 use crate::text::border;
 use crate::theme::LINK;
 
@@ -57,9 +58,9 @@ impl Browser {
     }
 
     /// A ring round `panel` when `focus` is the list that has the keys.
-    pub(super) fn draw_list_focus<C: Canvas + ?Sized>(&self, canvas: &mut C, panel: Rect, focus: ListFocus) {
+    pub(super) fn draw_list_focus<C: Canvas + ?Sized>(&self, canvas: &mut C, panel: Rect, focus: ListFocus, surface: Surface) {
         if self.list_focus == Some(focus) {
-            border(canvas, panel, FOCUS_RING, LINK);
+            border(canvas, panel, FOCUS_RING, surface.mark(LINK));
         }
     }
 }

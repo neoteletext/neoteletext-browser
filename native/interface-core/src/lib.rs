@@ -48,6 +48,7 @@ pub mod links;
 mod session;
 pub mod settings;
 pub mod size;
+pub mod surface;
 #[cfg(test)]
 mod test_canvas;
 pub mod text;

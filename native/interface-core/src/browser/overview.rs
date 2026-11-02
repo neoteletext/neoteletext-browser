@@ -13,10 +13,9 @@ use crate::browser::window::{HEADING_HEIGHT, MARGIN, PADDING};
 use crate::canvas::{Canvas, PAGE_HEIGHT, PAGE_WIDTH, SCREEN_SCALE, draw_page_on_screen};
 use crate::channel::{BANKS, PAGES, PAGES_PER_BANK, Status, bank_indices, page_index};
 use crate::geometry::{Point, Rect};
+use crate::surface::Surface;
 use crate::text::{border, centred, left_centred, outline};
-use crate::theme::{
-    AXIS, BANK_COLOURS, BLACK, BUTTON, CELL_AVAILABLE, CELL_EMPTY, CELL_PULSE, HEADING, LEGEND, MUTED, PANEL, RULE, SELECTED, UPDATED, WHITE, YELLOW, mix,
-};
+use crate::theme::{AXIS, BANK_COLOURS, BLACK, BUTTON, HEADING, LEGEND, MUTED, RULE, SELECTED, UPDATED, WHITE, YELLOW, mix};
 use crate::wall::since;
 
 const AXIS_WIDTH: f64 = 40.0;
@@ -93,42 +92,42 @@ impl Browser {
 
     /// The overview's legend and page counts in `heading`, right-aligned to
     /// end before `right`.
-    fn draw_legend<C: Canvas + ?Sized>(&self, canvas: &mut C, heading: Rect, right: f64) {
+    fn draw_legend<C: Canvas + ?Sized>(&self, canvas: &mut C, heading: Rect, right: f64, surface: Surface) {
         let middle = f64::midpoint(heading.y0, heading.y1);
         let (present, loaded) = self.channel.counts();
         let mut x = right - LEGEND_SPACING;
         let counts = format!("{present} of {PAGES} pages have content, {loaded} loaded");
         x -= canvas.text_width(&counts, LEGEND);
-        left_centred(canvas, Rect::new(x, heading.y0, heading.x1, heading.y1), 0.0, &counts, LEGEND, MUTED);
+        left_centred(canvas, Rect::new(x, heading.y0, heading.x1, heading.y1), 0.0, &counts, LEGEND, surface.muted);
         x -= LEGEND_SPACING * 2.0;
         for (word, colour, ring) in [
-            ("Empty", CELL_EMPTY, false),
-            ("Available", CELL_AVAILABLE, false),
-            ("Loaded", YELLOW, false),
-            ("Shown", YELLOW, true),
-            ("Updated", UPDATED, false),
+            ("Empty", surface.cell_empty, false),
+            ("Available", surface.cell_available, false),
+            ("Loaded", surface.mark(YELLOW), false),
+            ("Shown", surface.mark(YELLOW), true),
+            ("Updated", surface.mark(UPDATED), false),
         ]
         .into_iter()
         .rev()
         {
             let width = canvas.text_width(word, LEGEND);
             x -= width;
-            left_centred(canvas, Rect::new(x, heading.y0, x + width, heading.y1), 0.0, word, LEGEND, MUTED);
+            left_centred(canvas, Rect::new(x, heading.y0, x + width, heading.y1), 0.0, word, LEGEND, surface.muted);
             x -= LEGEND_GAP + LEGEND_SWATCH;
             let swatch = Rect::new(x, middle - LEGEND_SWATCH / 2.0, x + LEGEND_SWATCH, middle + LEGEND_SWATCH / 2.0);
             canvas.fill(swatch, 0.0, colour);
             if ring {
-                outline(canvas, swatch, WHITE);
+                outline(canvas, swatch, surface.ink);
             }
             x -= LEGEND_SPACING;
         }
     }
 
-    pub(super) fn draw_overview<C: Canvas + ?Sized>(&mut self, canvas: &mut C, panel: Rect, now: u64) {
-        canvas.fill(panel, 0.0, PANEL);
-        outline(canvas, panel, RULE);
+    pub(super) fn draw_overview<C: Canvas + ?Sized>(&mut self, canvas: &mut C, panel: Rect, surface: Surface, now: u64) {
+        canvas.fill(panel, 0.0, surface.back);
+        outline(canvas, panel, surface.rule);
         let heading = Rect::new(panel.x0, panel.y0, panel.x1, panel.y0 + HEADING_HEIGHT);
-        left_centred(canvas, heading, PADDING, &format!("All {PAGES} pages · overview"), HEADING, WHITE);
+        left_centred(canvas, heading, PADDING, &format!("All {PAGES} pages · overview"), HEADING, surface.ink);
         let middle = f64::midpoint(heading.y0, heading.y1);
         let close = Rect::new(heading.x1 - PADDING - TOGGLE_SIZE, middle - TOGGLE_SIZE / 2.0, heading.x1 - PADDING, middle + TOGGLE_SIZE / 2.0);
         let toggle = Rect::new(close.x0 - CLOSE_GAP - TOGGLE_SIZE, close.y0, close.x0 - CLOSE_GAP, close.y1);
@@ -145,21 +144,21 @@ impl Browser {
         if self.overview.folded {
             return;
         }
-        self.draw_legend(canvas, heading, toggle.x0);
+        self.draw_legend(canvas, heading, toggle.x0, surface);
 
         let cells = Rect::new(panel.x0 + PADDING + AXIS_WIDTH, heading.y1, panel.x1 - PADDING, panel.y1 - PADDING);
         self.regions.cells = cells;
         #[allow(clippy::cast_precision_loss, reason = "small counts")]
         let size = (cells.width() / PAGES_PER_BANK as f64, cells.height() / BANKS as f64);
-        self.draw_cells(canvas, panel, cells, size, now);
-        self.draw_rings(canvas, cells, size, now);
-        self.draw_pulses(canvas, cells, size, now);
+        self.draw_cells(canvas, panel, cells, size, surface, now);
+        self.draw_rings(canvas, cells, size, surface, now);
+        self.draw_pulses(canvas, cells, size, surface, now);
     }
 
     /// The bank axis and a cell for each of the 800 pages in `cells`, each
     /// `size` wide and high: its state's colour, outlined on screen, ringed
     /// when chosen, dotted for a minute after an update.
-    fn draw_cells<C: Canvas + ?Sized>(&self, canvas: &mut C, panel: Rect, cells: Rect, size: (f64, f64), now: u64) {
+    fn draw_cells<C: Canvas + ?Sized>(&self, canvas: &mut C, panel: Rect, cells: Rect, size: (f64, f64), surface: Surface, now: u64) {
         let (width, height) = size;
         // Which cells are on screen, looked up once for each rather than
         // searched for in the list of visible pages 800 times.
@@ -170,12 +169,13 @@ impl Browser {
             }
         }
         for (bank, &bank_colour) in BANK_COLOURS.iter().enumerate() {
+            let bank_colour = surface.mark(bank_colour);
             #[allow(clippy::cast_precision_loss, reason = "eight banks")]
             let top = cells.y0 + bank as f64 * height;
             let axis = Rect::new(panel.x0 + PADDING, top, cells.x0, top + height);
-            left_centred(canvas, axis, 0.0, &format!("{}00", bank.saturating_add(1)), AXIS, if bank == self.bank { WHITE } else { MUTED });
+            left_centred(canvas, axis, 0.0, &format!("{}00", bank.saturating_add(1)), AXIS, if bank == self.bank { surface.ink } else { surface.muted });
             if bank == self.bank {
-                canvas.fill(Rect::new(axis.x0 - PADDING / 2.0, top + CELL_GAP, axis.x0 - PADDING / 2.0 + CELL_GAP, top + height - CELL_GAP), 0.0, WHITE);
+                canvas.fill(Rect::new(axis.x0 - PADDING / 2.0, top + CELL_GAP, axis.x0 - PADDING / 2.0 + CELL_GAP, top + height - CELL_GAP), 0.0, surface.ink);
             }
             for (column, index) in bank_indices(bank).enumerate() {
                 #[allow(clippy::cast_precision_loss, reason = "small counts")]
@@ -183,15 +183,15 @@ impl Browser {
                 let cell = Rect::new(left, top, left + width - CELL_GAP, top + height - CELL_GAP);
                 let colour = match self.channel.pages.get(index) {
                     Some(Some(info)) if info.status == Status::Loaded => bank_colour,
-                    Some(Some(_)) => CELL_AVAILABLE,
-                    _ => CELL_EMPTY,
+                    Some(Some(_)) => surface.cell_available,
+                    _ => surface.cell_empty,
                 };
                 canvas.fill(cell, 0.0, colour);
                 if on_screen.get(index).copied().unwrap_or(false) {
-                    outline(canvas, cell, WHITE);
+                    outline(canvas, cell, surface.ink);
                 }
                 if self.selected == Some(index) {
-                    border(canvas, Rect::new(cell.x0 - CELL_GAP, cell.y0 - CELL_GAP, cell.x1 + CELL_GAP, cell.y1 + CELL_GAP), CELL_GAP, SELECTED);
+                    border(canvas, Rect::new(cell.x0 - CELL_GAP, cell.y0 - CELL_GAP, cell.x1 + CELL_GAP, cell.y1 + CELL_GAP), CELL_GAP, surface.mark(SELECTED));
                 }
                 // An amber dot for a minute after each update.
                 if since(self.updated_at(index), now).is_some() {
@@ -204,7 +204,7 @@ impl Browser {
     }
 
     /// A ring bursting out of each page just updated, growing and fading.
-    fn draw_rings<C: Canvas + ?Sized>(&self, canvas: &mut C, cells: Rect, size: (f64, f64), now: u64) {
+    fn draw_rings<C: Canvas + ?Sized>(&self, canvas: &mut C, cells: Rect, size: (f64, f64), surface: Surface, now: u64) {
         let (width, height) = size;
         for &(index, at) in &self.rings {
             let elapsed = now.saturating_sub(at);
@@ -217,12 +217,12 @@ impl Browser {
             let centre = Point::new(cells.x0 + ((index % PAGES_PER_BANK) as f64 + 0.5) * width, cells.y0 + ((index / PAGES_PER_BANK) as f64 + 0.5) * height);
             let radius = width.min(height) * (1.0 + UPDATE_RING_SCALE * progress) / 2.0;
             let ring = Rect::new(centre.x - radius, centre.y - radius, centre.x + radius, centre.y + radius);
-            border(canvas, ring, UPDATE_RING_WIDTH, mix(UPDATED, PANEL, progress));
+            border(canvas, ring, UPDATE_RING_WIDTH, mix(surface.mark(UPDATED), surface.back, progress));
         }
     }
 
     /// A dot on each page just received, shrinking away.
-    fn draw_pulses<C: Canvas + ?Sized>(&self, canvas: &mut C, cells: Rect, size: (f64, f64), now: u64) {
+    fn draw_pulses<C: Canvas + ?Sized>(&self, canvas: &mut C, cells: Rect, size: (f64, f64), surface: Surface, now: u64) {
         let (width, height) = size;
         for &(index, start) in &self.pulses {
             let elapsed = now.saturating_sub(start);
@@ -234,7 +234,7 @@ impl Browser {
             #[allow(clippy::cast_precision_loss, reason = "small counts")]
             let centre = Point::new(cells.x0 + ((index % PAGES_PER_BANK) as f64 + 0.5) * width, cells.y0 + ((index / PAGES_PER_BANK) as f64 + 0.5) * height);
             let radius = width.min(height) * PULSE_SCALE * remaining / 2.0;
-            canvas.fill(Rect::new(centre.x - radius, centre.y - radius, centre.x + radius, centre.y + radius), radius, CELL_PULSE);
+            canvas.fill(Rect::new(centre.x - radius, centre.y - radius, centre.x + radius, centre.y + radius), radius, surface.ink);
         }
     }
 

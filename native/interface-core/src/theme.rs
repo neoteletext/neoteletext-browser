@@ -31,7 +31,7 @@ pub const LINK_INK: Colour = rgb(0x1a, 0x4f, 0xd8);
 pub const BLACK: Colour = rgb(0x00, 0x00, 0x00);
 /// White: headings, labels, and ink on dark tab colours.
 pub const WHITE: Colour = rgb(0xff, 0xff, 0xff);
-/// The window behind every panel, and the panels themselves.
+/// The window behind every panel.
 pub const WINDOW: Colour = rgb(0x12, 0x12, 0x14);
 /// The inside of each panel.
 pub const PANEL: Colour = rgb(0x00, 0x00, 0x00);
@@ -94,8 +94,6 @@ pub const TAB_COLOURS: [(Colour, Colour); 8] =
 pub const CELL_EMPTY: Colour = rgb(0x1c, 0x1d, 0x21);
 /// An overview cell for a page the channel has but has not yet sent.
 pub const CELL_AVAILABLE: Colour = rgb(0x4a, 0x4c, 0x52);
-/// The flash of an overview cell whose page has just arrived.
-pub const CELL_PULSE: Colour = WHITE;
 /// A page that has just had a new version: amber, unlike any bank colour.
 pub const UPDATED: Colour = rgb(0xff, 0xb0, 0x20);
 /// Typing into a page: the cursor and the strip's "Keys go to" badge
@@ -106,16 +104,68 @@ pub const TYPING: Colour = rgb(0xff, 0xbf, 0x40);
 /// the strip uses.
 pub const PRIVATE: Colour = rgb(0xb0, 0x6c, 0xff);
 
+/// The contrast text reaches against what it is drawn on: WCAG 2.1 success
+/// criterion 1.4.3, level AA. [`clearest_ink`] reaches it on every colour.
+pub const TEXT_CONTRAST: f64 = 4.5;
+/// The contrast a mark, a line or text that says something twice over
+/// reaches against what it is drawn on: WCAG 2.1 success criterion 1.4.11.
+pub const MARK_CONTRAST: f64 = 3.0;
+
+/// ITU-R BT.709's shares of red, green and blue in a colour's luminance.
+const LUMINANCE_SHARES: [f64; 3] = [0.2126, 0.7152, 0.0722];
+
+/// `colour`'s channels, each measured by `channel`, in their shares.
+fn luminance(colour: Colour, channel: impl Fn(u8) -> f64) -> f64 {
+    let [red, green, blue] = LUMINANCE_SHARES;
+    red * channel(colour.red) + green * channel(colour.green) + blue * channel(colour.blue)
+}
+
 /// The ink that reads on `background`: black on a light colour, white on a
-/// dark one, by its relative luminance (ITU-R BT.709's weights, as WCAG
-/// 2.1 section 1.4.3 measures it, without the gamma step, which is enough
-/// to tell the bank colours apart).
+/// dark one, by its luminance without the gamma step, which is enough to
+/// tell the bank colours apart. On a colour a channel chose,
+/// [`clearest_ink`] is the one that always reads.
 #[must_use]
 pub fn ink_on(background: Colour) -> Colour {
     /// Half of full brightness: lighter than this takes black.
     const LIGHT: f64 = 127.5;
-    let luminance = 0.2126 * f64::from(background.red) + 0.7152 * f64::from(background.green) + 0.0722 * f64::from(background.blue);
-    if luminance > LIGHT { BLACK } else { WHITE }
+    if luminance(background, f64::from) > LIGHT { BLACK } else { WHITE }
+}
+
+/// `colour`'s relative luminance, from 0 to 1: WCAG 2.1's definition of the
+/// term, which undoes the sRGB transfer function before weighing the
+/// channels.
+fn relative_luminance(colour: Colour) -> f64 {
+    /// A channel at or below this share is on the transfer function's
+    /// straight part, of this slope.
+    const STRAIGHT_LIMIT: f64 = 0.03928;
+    const STRAIGHT_SLOPE: f64 = 12.92;
+    /// The curved part: ((share + offset) / scale) ^ gamma.
+    const OFFSET: f64 = 0.055;
+    const SCALE: f64 = 1.055;
+    const GAMMA: f64 = 2.4;
+    luminance(colour, |channel| {
+        let share = f64::from(channel) / f64::from(u8::MAX);
+        if share <= STRAIGHT_LIMIT { share / STRAIGHT_SLOPE } else { libm::pow((share + OFFSET) / SCALE, GAMMA) }
+    })
+}
+
+/// The contrast between two colours, from 1 to 21: WCAG 2.1's definition of
+/// contrast ratio, (lighter + 0.05) / (darker + 0.05) of their relative
+/// luminances.
+#[must_use]
+pub fn contrast(one: Colour, other: Colour) -> f64 {
+    /// The standard's allowance for light falling on the screen.
+    const FLARE: f64 = 0.05;
+    let (one, other) = (relative_luminance(one), relative_luminance(other));
+    (one.max(other) + FLARE) / (one.min(other) + FLARE)
+}
+
+/// Whichever of black and white stands out more from `background`. Their
+/// two contrasts against any colour multiply to 21, so the greater is at
+/// least the square root of 21, about 4.58, above [`TEXT_CONTRAST`].
+#[must_use]
+pub fn clearest_ink(background: Colour) -> Colour {
+    if contrast(WHITE, background) >= contrast(BLACK, background) { WHITE } else { BLACK }
 }
 
 /// `from` moved towards `to` by `amount`, 0 to 1: for highlights that

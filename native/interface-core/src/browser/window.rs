@@ -11,7 +11,9 @@ use crate::browser::{Browser, Output};
 use crate::canvas::{Canvas, PageKey};
 use crate::channel::{bank_indices, page_number};
 use crate::geometry::Rect;
-use crate::theme::WINDOW;
+use crate::surface::Surface;
+use crate::text::outline;
+use crate::theme::{Colour, WINDOW};
 use crate::wall::WallPage;
 
 pub(super) const BODY_TOP: f64 = TOOLBAR_TOP + TOOLBAR_HEIGHT + MARGIN;
@@ -36,6 +38,14 @@ impl Browser {
         // The docked remote narrows the content (decision 68).
         let right = width - MARGIN - self.remote_docked_width(now);
         self.body = Rect::new(MARGIN, body_top, right, height - MARGIN);
+        // The open page's colour is the background of all the window below
+        // the strip, and stops where the strip ends: a channel never paints
+        // what the browser alone says (REQ-740 items 2 and 3).
+        let screen = self.screen_alone(canvas);
+        if let Some(screen) = screen {
+            canvas.fill(Rect::new(0.0, body_top - MARGIN, width, height), 0.0, screen);
+        }
+        let surface = screen.map_or(Surface::BROWSER, Surface::on);
         // The console docks where the overview is, minimised to its tab
         // bar or maximised to all the pages can spare (decision 120); the
         // overview hidden from the View menu gives its room to the pages.
@@ -55,18 +65,18 @@ impl Browser {
         let list = Rect::new(banks.x1 + MARGIN, body_top, banks.x1 + MARGIN + list_width, body_bottom);
         self.place_divider(list);
         let zoom = Rect::new(list.x1 + MARGIN, body_top, right, body_bottom);
-        self.draw_pages(canvas, zoom, now);
-        self.draw_banks(canvas, banks);
-        self.draw_list_focus(canvas, banks, ListFocus::Magazines);
-        self.draw_list(canvas, list, now);
-        self.draw_list_focus(canvas, list, ListFocus::Pages);
+        self.draw_pages(canvas, zoom, surface, now);
+        self.draw_banks(canvas, banks, surface);
+        self.draw_list_focus(canvas, banks, ListFocus::Magazines, surface);
+        self.draw_list(canvas, list, surface, now);
+        self.draw_list_focus(canvas, list, ListFocus::Pages, surface);
         let subpages = self.regions.subpage_list;
-        self.draw_list_focus(canvas, subpages, ListFocus::SubPages);
+        self.draw_list_focus(canvas, subpages, ListFocus::SubPages, surface);
         if self.console.open() {
             self.draw_console(canvas, overview);
-            self.draw_console_grabber(canvas, overview);
+            self.draw_console_grabber(canvas, overview, surface);
         } else if !self.overview.hidden {
-            self.draw_overview(canvas, overview, now);
+            self.draw_overview(canvas, overview, surface, now);
         }
         self.draw_toolbar(canvas, width);
         self.draw_bar(canvas, TOOLBAR_TOP + TOOLBAR_HEIGHT, width);
@@ -88,10 +98,23 @@ impl Browser {
         self.wall.hover(self.pointer, now);
     }
 
+    /// The screen colour of the one page the page area shows this frame:
+    /// none on the wall, before the page has arrived, and while something of
+    /// the browser's stands in place of the page, so that nothing of a
+    /// channel being left stays on screen (REQ-740 items 5 and 6).
+    fn screen_alone<C: Canvas + ?Sized>(&self, canvas: &mut C) -> Option<Colour> {
+        if !self.wall.single() || !self.strip.redirecting.is_empty() || self.strip.refused.is_some() || self.strip.denied.is_some() {
+            return None;
+        }
+        let keys: Vec<PageKey> = self.bank_pages().into_iter().filter_map(|index| self.page_key(index)).collect();
+        let selected = self.selected.and_then(|index| self.page_key(index));
+        canvas.screen(self.wall.alone_page(&keys, selected)?)
+    }
+
     /// The chosen bank's pages on the wall in `zoom`, with what is drawn
     /// over them; and the pages on screen, told to the trusted core when
     /// they changed.
-    fn draw_pages<C: Canvas + ?Sized>(&mut self, canvas: &mut C, zoom: Rect, now: u64) {
+    fn draw_pages<C: Canvas + ?Sized>(&mut self, canvas: &mut C, zoom: Rect, surface: Surface, now: u64) {
         // A redirect's notice clears the page area: nothing of the channel
         // being left is drawn (REQ-1686 item 5).
         self.redirecting_area = Rect::ZERO;
@@ -112,6 +135,9 @@ impl Browser {
         let selected = self.selected.and_then(|index| self.page_key(index));
         self.wall.draw(canvas, zoom, &pages, selected, now);
         drop(pages);
+        if self.wall.single() {
+            outline(canvas, zoom, surface.rule);
+        }
         #[cfg(feature = "links")]
         self.draw_links(canvas);
         #[cfg(feature = "interaction")]
@@ -143,23 +169,4 @@ impl Browser {
 }
 
 #[cfg(test)]
-mod tests {
-    use alloc::vec::Vec;
-
-    use super::*;
-    use crate::browser::fixture::{HEIGHT, WIDTH, browser};
-    use crate::test_canvas::Recorder;
-
-    /// Requirement 19.8: the console docks in the overview's place.
-    #[test]
-    fn the_console_takes_the_overviews_place() {
-        let (mut browser, _) = browser();
-        browser.toggle_console();
-        let mut canvas = Recorder::new();
-        browser.draw(&mut canvas, WIDTH, HEIGHT, 0);
-        assert_eq!(browser.regions.overview, Rect::ZERO, "no overview");
-        let texts: Vec<&str> = canvas.texts.iter().map(|(_, text)| text.as_str()).collect();
-        assert!(texts.contains(&"Network 0") && texts.contains(&"Pause"), "{texts:?}");
-        assert!(browser.console.area().y1 <= HEIGHT && browser.console.area().y0 > BODY_TOP);
-    }
-}
+mod tests;

@@ -11,6 +11,7 @@ use crate::browser::Browser;
 use crate::browser::window::MARGIN;
 use crate::canvas::Canvas;
 use crate::geometry::{Point, Rect};
+use crate::surface::Surface;
 use crate::theme::{DIM, MUTED};
 
 use super::{BAR_HEIGHT, ConsoleUi, GAP, LINE, Sizing};
@@ -44,12 +45,13 @@ impl Browser {
 
     /// The grabber's grip over the gap above the console at `area`, and its
     /// handle, lit while the pointer is on it or pulling it.
-    pub(in crate::browser) fn draw_console_grabber<C: Canvas + ?Sized>(&mut self, canvas: &mut C, area: Rect) {
+    pub(in crate::browser) fn draw_console_grabber<C: Canvas + ?Sized>(&mut self, canvas: &mut C, area: Rect, surface: Surface) {
         self.regions.console_grabber = Rect::new(area.x0, area.y0 - MARGIN - GRIP_REACH, area.x1, area.y0 + GRIP_REACH);
         let middle = f64::midpoint(area.x0, area.x1);
         let y = area.y0 - MARGIN / 2.0;
         let handle = Rect::new(middle - HANDLE_WIDTH / 2.0, y - HANDLE_HEIGHT / 2.0, middle + HANDLE_WIDTH / 2.0, y + HANDLE_HEIGHT / 2.0);
-        canvas.fill(handle, HANDLE_HEIGHT / 2.0, if self.over_console_grabber() { MUTED } else { DIM });
+        // In the margin above the console, on what the window shows there.
+        canvas.fill(handle, HANDLE_HEIGHT / 2.0, surface.mark(if self.over_console_grabber() { MUTED } else { DIM }));
     }
 
     /// A press on the grabber grips the console's top edge where it was pressed.

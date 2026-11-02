@@ -10,10 +10,9 @@ use crate::browser::window::{HEADING_HEIGHT, PADDING};
 use crate::canvas::Canvas;
 use crate::channel::page_number;
 use crate::geometry::Rect;
+use crate::surface::Surface;
 use crate::text::{HAIRLINE, border, left_centred, left_fitted, right_centred};
-use crate::theme::{
-    BANK_COLOURS, COLUMN_HEAD, HEADING, MUTED, PANEL, RAISED, ROW_NUMBER, ROW_STATUS, ROW_TITLE, RULE, RULE_SOFT, SELECTED, UPDATED, WHITE, ink_on, mix,
-};
+use crate::theme::{BANK_COLOURS, COLUMN_HEAD, HEADING, RAISED, ROW_NUMBER, ROW_STATUS, ROW_TITLE, SELECTED, UPDATED, ink_on, mix};
 use crate::wall::{glow, since};
 
 pub(super) const ROW_HEIGHT: f64 = 27.0;
@@ -40,11 +39,11 @@ pub(super) fn rows_per_key(height: f64) -> usize {
 }
 
 impl Browser {
-    pub(super) fn draw_list<C: Canvas + ?Sized>(&mut self, canvas: &mut C, panel: Rect, now: u64) {
-        canvas.fill(panel, 0.0, PANEL);
+    pub(super) fn draw_list<C: Canvas + ?Sized>(&mut self, canvas: &mut C, panel: Rect, surface: Surface, now: u64) {
+        canvas.fill(panel, 0.0, surface.back);
         // The heading in the magazine's colour, as the magazines show it:
         // its name, and under it its range and how many pages it has.
-        let colour = BANK_COLOURS.get(self.bank).copied().unwrap_or(SELECTED);
+        let colour = surface.mark(BANK_COLOURS.get(self.bank).copied().unwrap_or(SELECTED));
         let ink = ink_on(colour);
         let heading = Rect::new(panel.x0, panel.y0, panel.x1, panel.y0 + HEADING_HEIGHT + RANGE_LINE_HEIGHT);
         canvas.fill(heading, 0.0, colour);
@@ -61,9 +60,9 @@ impl Browser {
         let head = Rect::new(panel.x0, heading.y1, panel.x1, heading.y1 + COLUMN_HEAD_HEIGHT);
         let title_x = panel.x0 + TITLE_COLUMN;
         for (x, text) in [(panel.x0 + PADDING, "Page"), (title_x + PADDING, "Title")] {
-            left_centred(canvas, Rect::new(x, head.y0, panel.x1, head.y1), 0.0, text, COLUMN_HEAD, MUTED);
+            left_centred(canvas, Rect::new(x, head.y0, panel.x1, head.y1), 0.0, text, COLUMN_HEAD, surface.muted);
         }
-        canvas.fill(Rect::new(panel.x0, head.y1 - HAIRLINE, panel.x1, head.y1), 0.0, RULE);
+        canvas.fill(Rect::new(panel.x0, head.y1 - HAIRLINE, panel.x1, head.y1), 0.0, surface.rule);
 
         // With sub-pages in the magazine, the list is two: the pages above
         // the divider, the chosen page's sub-pages below (decision 111).
@@ -91,47 +90,57 @@ impl Browser {
                 continue;
             };
             let chosen = self.selected == Some(index);
+            let hovered = !chosen && self.hovered_row == Some(index);
             if chosen {
                 canvas.fill(row, 0.0, SELECTED);
-            } else if self.hovered_row == Some(index) {
+            } else if hovered {
                 canvas.fill(row, 0.0, RAISED);
             }
-            canvas.fill(Rect::new(row.x0, row.y1 - HAIRLINE, row.x1, row.y1), 0.0, RULE_SOFT);
             // A row just updated flashes amber and fades back.
             let updated = self.updated_at(index);
             let glowing = glow(updated, now);
+            // A row with a fill of its own keeps white text, and a flash
+            // replaces the hover's fill with one mixed from the surface.
+            let on = if chosen || (hovered && glowing <= 0.0) { Surface::BROWSER } else { surface };
+            canvas.fill(Rect::new(row.x0, row.y1 - HAIRLINE, row.x1, row.y1), 0.0, on.rule_soft);
             if glowing > 0.0 {
-                canvas.fill(row, 0.0, mix(if chosen { SELECTED } else { PANEL }, UPDATED, glowing * ROW_FLASH));
+                canvas.fill(row, 0.0, mix(if chosen { SELECTED } else { surface.back }, UPDATED, glowing * ROW_FLASH));
+            }
+            if chosen {
+                surface.edge(canvas, row, SELECTED);
+            } else if hovered {
+                surface.edge(canvas, row, RAISED);
             }
             let number = page_number(index).map_or_else(String::new, |page| format!("{page:03X}"));
-            left_centred(canvas, row, PADDING, &number, ROW_NUMBER, WHITE);
+            left_centred(canvas, row, PADDING, &number, ROW_NUMBER, on.ink);
             let mut title_end = row.x1 - PADDING;
             // A page with sub-pages is marked with how many it has.
             if let Some(count) = self.subpage_count(index) {
-                title_end -= subpage_mark(canvas, row, title_end, count) + PADDING;
+                title_end -= subpage_mark(canvas, row, title_end, count, on) + PADDING;
             }
             if let Some(age) = since(updated, now) {
-                right_centred(canvas, Rect::new(row.x0, row.y0, title_end, row.y1), 0.0, &age, ROW_STATUS, UPDATED);
+                right_centred(canvas, Rect::new(row.x0, row.y0, title_end, row.y1), 0.0, &age, ROW_STATUS, on.mark(UPDATED));
                 title_end -= canvas.text_width(&age, ROW_STATUS) + PADDING;
             }
-            left_fitted(canvas, Rect::new(title_x, row.y0, title_end, row.y1), PADDING, &info.title, ROW_TITLE, WHITE);
+            left_fitted(canvas, Rect::new(title_x, row.y0, title_end, row.y1), PADDING, &info.title, ROW_TITLE, on.ink);
         }
         canvas.pop_clip();
         if max_scroll > 0.0 {
             let bar = area.height() * area.height() / content;
             let top = area.y0 + (area.height() - bar) * self.list_scroll / max_scroll;
-            canvas.fill(Rect::new(area.x1 - SCROLL_BAR_WIDTH * 2.0, top, area.x1 - SCROLL_BAR_WIDTH, top + bar), SCROLL_BAR_WIDTH / 2.0, RULE);
+            canvas.fill(Rect::new(area.x1 - SCROLL_BAR_WIDTH * 2.0, top, area.x1 - SCROLL_BAR_WIDTH, top + bar), SCROLL_BAR_WIDTH / 2.0, surface.rule);
         }
         if split {
-            self.draw_subpage_list(canvas, Rect::new(whole.x0, area.y1, whole.x1, whole.y1), colour, now);
+            self.draw_subpage_list(canvas, Rect::new(whole.x0, area.y1, whole.x1, whole.y1), colour, surface, now);
         }
         border(canvas, panel, LIST_BORDER, colour);
     }
 }
 
 /// The mark of a page with sub-pages, ending at `right` in `row`: two
-/// offset outlines, a stack of pages, and how many it has. Returns its width.
-fn subpage_mark<C: Canvas + ?Sized>(canvas: &mut C, row: Rect, right: f64, count: u16) -> f64 {
+/// offset outlines, a stack of pages, and how many it has, on `on`. Returns
+/// its width.
+fn subpage_mark<C: Canvas + ?Sized>(canvas: &mut C, row: Rect, right: f64, count: u16, on: Surface) -> f64 {
     /// A card of the stack, and how far the one behind sits up and right.
     const CARD: f64 = 9.0;
     const OFFSET: f64 = 3.0;
@@ -141,10 +150,10 @@ fn subpage_mark<C: Canvas + ?Sized>(canvas: &mut C, row: Rect, right: f64, count
     let left = right - width - CARD - OFFSET - PADDING / 2.0;
     let front = Rect::new(left, middle - CARD / 2.0 + OFFSET / 2.0, left + CARD, middle + CARD / 2.0 + OFFSET / 2.0);
     let back = Rect::new(front.x0 + OFFSET, front.y0 - OFFSET, front.x1 + OFFSET, front.y1 - OFFSET);
-    crate::text::outline(canvas, back, MUTED);
-    canvas.fill(front, 0.0, PANEL);
-    crate::text::outline(canvas, front, WHITE);
-    right_centred(canvas, Rect::new(row.x0, row.y0, right, row.y1), 0.0, &text, ROW_STATUS, WHITE);
+    crate::text::outline(canvas, back, on.muted);
+    canvas.fill(front, 0.0, on.back);
+    crate::text::outline(canvas, front, on.ink);
+    right_centred(canvas, Rect::new(row.x0, row.y0, right, row.y1), 0.0, &text, ROW_STATUS, on.ink);
     right - left
 }
 
