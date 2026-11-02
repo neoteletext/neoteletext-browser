@@ -31,7 +31,7 @@ use protocol::subpages::SubPageRows;
 
 #[cfg(feature = "links")]
 use crate::agent::descriptor_links;
-use crate::agent::{Random, product, refresh_seconds};
+use crate::agent::{Random, product};
 use crate::cookies;
 use crate::live::{LiveIndex, SubPageLists};
 use crate::transport::{AllowedLocal, Tcp};
@@ -651,7 +651,9 @@ fn service_ready(agent: &Agent<'_>, output: &cookies::Output, page: u16, region:
     if let Some(links) = descriptor_links(agent) {
         send(output, &links)?;
     }
-    if let Some(seconds) = refresh_seconds(agent) {
+    // The interval for asking again for the page on screen, when no push
+    // connection brings its changes (REQ-704).
+    if let Some(seconds) = agent.descriptor().filter(|descriptor| descriptor.push().is_none()).and_then(|descriptor| descriptor.refresh_seconds) {
         send(output, &FromFetcher::Refresh(seconds))?;
     }
     Ok(())
