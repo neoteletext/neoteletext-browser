@@ -210,7 +210,7 @@ Every process speaks the same framing, the engine's: one kind byte, a 32-bit big
 | Links | The links found in a page, before its image when they change: at most 32 runs (page numbers in its text and its `LT` lines, each a place and either a page number or a target as written, at most 256 bytes, never cut) and its `LK` lines; and whether an image follows (`hyperlinks.md` section 8.1) |
 | StoreFull | The page store is full and the oldest pages are being forgotten |
 | SubPages | The sub-pages of a page on screen and the one drawn, whenever they change (decision 67) |
-| Cursor | A cursor record the channel sent for a page, untrusted, for the trusted core to check (INPUT.md section 7.1) |
+| Cursor | A cursor record the channel sent for a page, untrusted, for the trusted core to check (DOC-1954) |
 | InputControl | An input control record (WELCOME; the withdrawn mode records are ignored), untrusted (REQ-INT-111) |
 | ChannelLog | A log line the channel wrote (an `LG` line), untrusted, for the console's Log alone (decision 70) |
 | Bookmark, BookmarksRead | A folder, its end or a bookmark found in another browser's bookmark file, and how many were left out, from a decoder started with `--bookmarks` (decision 71) |
@@ -222,7 +222,7 @@ Every process speaks the same framing, the engine's: one kind byte, a 32-bit big
 | Confined | Its first message, before it opens its channel: as a decoder's |
 | Contents | The channel's contents file as the engine read it: section headings and page entries with titles, at most 1,000 entries |
 | Page | A page's bytes, fetched or pushed, passed to the decoder unread |
-| Denied | A selection the channel refused: its status and place (`INPUT.md` section 7.12), checked by the trusted core, whose words the page area shows |
+| Denied | A selection the channel refused: its status and place (DOC-1961), checked by the trusted core, whose words the page area shows |
 | Notice | A short report, such as an unreachable address, cleaned and shown in the trusted core's log |
 | Links | The descriptor's aliases (at most 16) and named services (at most 16), as written, for the trusted core to parse |
 | Pushing | The push connection opened or was lost (decision 47) |

@@ -171,7 +171,7 @@ This is a change to the engine's TTI Link Extension, for the engine's owner: the
 
 ### 7.3 A page in another channel
 
-A link can name a page in another channel by an address of the channel URL map, whose one written form is `neoteletext-common/SERVER.md` section 4: this document does not restate it. The address rules read every address through the engine's map (`neoteletext_web::map`) in `core/src/address.rs`, keep only its one spelling, and refuse what it refuses, so a link with any other fragment is not a link. The tests run the map's conformance table. The strip shows the page number with the channel, and the same form works when typed into the strip or bookmarked. A fragment is never sent in a request, and is never part of an address handed to the system's web browser.
+A link can name a page in another channel by an address of the channel URL map, whose one written form is DOC-1779: this document does not restate it. The address rules read every address through the engine's map (`neoteletext_web::map`) in `core/src/address.rs`, keep only its one spelling, and refuse what it refuses, so a link with any other fragment is not a link. The tests run the map's conformance table. The strip shows the page number with the channel, and the same form works when typed into the strip or bookmarked. A fragment is never sent in a request, and is never part of an address handed to the system's web browser.
 
 An address of the link's own channel that names only a page keeps the channel open. One that says more than a page can (the wall, the contents, or page parameters, which belong to the selection they came with) opens as a navigation.
 
@@ -239,12 +239,12 @@ The browser is never patched (requirement 2.5); the option goes through the engi
 
 ### 9.3 The look under the pointer (decision 117)
 
-Besides its underline, a link under the pointer is drawn **hovered**, and while the main button that went down on it is held, **pressed**. A page's controls (INPUT.md section 7.3: buttons and list rows, declared by its control triplets) take the same looks, and the hand pointer, in place of links while keys go to the page's channel, since a click then goes to it.
+Besides its underline, a link under the pointer is drawn **hovered**, and while the main button that went down on it is held, **pressed**. A page's controls (DOC-1844: buttons and list rows, declared by its control triplets) take the same looks, and the hand pointer, in place of links while keys go to the page's channel, since a click then goes to it.
 
 - **Hover:** each colour of the cells moves to the same entry of the adjacent CLUT (index exclusive-or 8: CLUT 0 with 1, 2 with 3), the pairing of Table 29's colour flash. With Table 30's colours that is the half-intensity colour; a page that wants other hover colours defines CLUTs 2 and 3 (X/28/0 Format 1) and draws its links and controls from them.
 - **Pressed:** the hover colours with foreground and background exchanged, as Invert Colour exchanges them; a cell already inverted is turned back.
 - **Who draws it:** the interface finds the area under the pointer from the open page's latest links, whichever image they came with, and asks the trusted core (`ToCore::Lit`). The trusted core checks the area is a link or a control of the latest image of the page open in the active tab, and tells the page's decoder (`ToDecoder::Look`), which draws the look on the page's own cells with the engine's `controls::apply_look` before the rows that changed are found. The look's new image comes with the same links, so the look does not go out while they follow it.
-- **Nothing leaves:** the channel is sent nothing for a look; the moves it receives are the input protocol's own (INPUT.md section 6.3), not the look's.
+- **Nothing leaves:** the channel is sent nothing for a look; the moves it receives are the input protocol's own (DOC-1945), not the look's.
 
 ## 10. Using links
 

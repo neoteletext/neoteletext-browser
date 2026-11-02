@@ -272,7 +272,7 @@ To add to the gates when the feature is built:
 
 ## 16. Controls and the look under the pointer (decision 117)
 
-Decision 117 adds a page's controls (INPUT.md section 7.3) to what crosses boundaries B and C, and the look under the pointer to boundaries D and back to the decoder.
+Decision 117 adds a page's controls (DOC-1844) to what crosses boundaries B and C, and the look under the pointer to boundaries D and back to the decoder.
 
 | Boundary | What crosses | Threat | Mitigation |
 |---|---|---|---|
