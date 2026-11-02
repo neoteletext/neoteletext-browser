@@ -22,7 +22,7 @@ fuzz_target!(|data: &[u8]| {
                 }
             }
             ToFetcher::CookieAnswer { header, .. } => assert!(header.len() <= MAX_COOKIE_HEADER),
-            ToFetcher::ReachedAnswer { .. } | ToFetcher::FetchSubPages { .. } | ToFetcher::FetchSubPage { .. } | ToFetcher::MeasureRoundTrip(_) => {}
+            ToFetcher::ReachedAnswer { .. } | ToFetcher::FetchPage { .. } | ToFetcher::FetchSubPages { .. } | ToFetcher::FetchSubPage { .. } | ToFetcher::MeasureRoundTrip(_) => {}
         }
     }
 });

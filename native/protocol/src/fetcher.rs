@@ -17,9 +17,9 @@ use interface_core::channel::page_index;
 use kinds::KIND_LINKS;
 use kinds::{
     KIND_CERTIFICATE_REFUSED, KIND_CHANNEL_LOG, KIND_CLEAR_SITE_DATA, KIND_CONFINED, KIND_CONNECTING, KIND_CONTENTS, KIND_COOKIE_ANSWER, KIND_COOKIE_QUESTION,
-    KIND_COOKIE_SET, KIND_DENIED, KIND_EXCHANGE, KIND_FETCH_SUBPAGE, KIND_FETCH_SUBPAGES, KIND_INITIAL_PAGE, KIND_INVALID_PACKETS, KIND_NOTICE, KIND_PAGE,
-    KIND_PAGE_REDIRECT, KIND_PROGRAM_REDIRECT, KIND_PROXY_FAILED, KIND_PUSHING, KIND_REACHED_ANSWER, KIND_REACHED_QUESTION, KIND_REDIRECTED, KIND_REFUSED,
-    KIND_REGION, KIND_SUBPAGES, KIND_SUBPAGES_MISSING,
+    KIND_COOKIE_SET, KIND_DENIED, KIND_EXCHANGE, KIND_FETCH_PAGE, KIND_FETCH_SUBPAGE, KIND_FETCH_SUBPAGES, KIND_INITIAL_PAGE, KIND_INVALID_PACKETS,
+    KIND_NO_CONTENTS, KIND_NOTICE, KIND_PAGE, KIND_PAGE_REDIRECT, KIND_PROGRAM_REDIRECT, KIND_PROXY_FAILED, KIND_PUSHING, KIND_REACHED_ANSWER,
+    KIND_REACHED_QUESTION, KIND_REDIRECTED, KIND_REFRESH, KIND_REFUSED, KIND_REGION, KIND_SUBPAGES, KIND_SUBPAGES_MISSING,
 };
 #[cfg(feature = "interaction")]
 use kinds::{KIND_INPUT, KIND_MEASURE_ROUND_TRIP, KIND_ROUND_TRIP, KIND_SEND};
@@ -112,6 +112,12 @@ pub enum Entry {
     },
 }
 
+/// The shortest interval a channel's `refresh` may declare, in seconds: the
+/// engine's, which the fetcher asserts it equals (the engine's REQ-509).
+pub const MIN_REFRESH_SECONDS: u32 = 5;
+/// The longest.
+pub const MAX_REFRESH_SECONDS: u32 = 86_400;
+
 /// Which of a static channel's files a refusal is of, by its role alone
 /// (REQ-708).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -154,6 +160,12 @@ pub enum FromFetcher {
         /// The status, within [`STATUS_CODES`].
         status: Option<u16>,
     },
+    /// The channel's contents file was answered with none, or failed: its
+    /// pages are asked for one by one as they are wanted (REQ-703).
+    NoContents,
+    /// The interval the channel's `channel.ttx` declares, in seconds, for a
+    /// channel with no push connection (REQ-704).
+    Refresh(u32),
     /// The channel refused a selection (DOC-1961, REQ-1481),
     /// a record of its connection, not yet checked.
     Denied {
@@ -370,6 +382,13 @@ pub enum ToFetcher {
         /// Reached securely, with a cookie still live.
         reached: bool,
     },
+    /// Fetch a page's own file, conditionally when it was fetched before
+    /// (the engine's `Input::FetchPage`): a page wanted that nothing else
+    /// brings, or the page on screen again (REQ-703, REQ-704).
+    FetchPage {
+        /// The page.
+        page: u16,
+    },
     /// Fetch a page's catalogue of sub-pages, `NNN.sub` (the engine's
     /// `Input::FetchSubPages`, REQ-WEB-034), conditionally when it was
     /// fetched before.
@@ -408,6 +427,10 @@ pub fn write_to_fetcher(out: &mut dyn Write, message: &ToFetcher) -> Result<(), 
             let mut payload = Vec::new();
             let kind = cookies::push_answer(&mut payload, message)?;
             write_frame(out, kind, &payload)
+        }
+        ToFetcher::FetchPage { page } => {
+            page_index(*page).ok_or(ProtocolError::BadValue("page number"))?;
+            write_frame(out, KIND_FETCH_PAGE, &page.to_be_bytes())
         }
         ToFetcher::FetchSubPages { page } => {
             page_index(*page).ok_or(ProtocolError::BadValue("page number"))?;
@@ -450,6 +473,7 @@ pub fn read_to_fetcher(input: &mut dyn Read) -> Result<Option<ToFetcher>, Protoc
         #[cfg(feature = "interaction")]
         KIND_MEASURE_ROUND_TRIP => ToFetcher::MeasureRoundTrip(fields.flag("measure")?),
         KIND_COOKIE_ANSWER | KIND_REACHED_ANSWER => cookies::read_answer(kind, &mut fields)?,
+        KIND_FETCH_PAGE => ToFetcher::FetchPage { page: fields.display_page()? },
         KIND_FETCH_SUBPAGES => ToFetcher::FetchSubPages { page: fields.display_page()? },
         KIND_FETCH_SUBPAGE => {
             let page = fields.display_page()?;
@@ -570,6 +594,14 @@ fn push_static_message(payload: &mut Vec<u8>, message: &FromFetcher) -> Result<u
             payload.extend_from_slice(&page.to_be_bytes());
             KIND_SUBPAGES_MISSING
         }
+        FromFetcher::NoContents => KIND_NO_CONTENTS,
+        FromFetcher::Refresh(seconds) => {
+            if !(MIN_REFRESH_SECONDS..=MAX_REFRESH_SECONDS).contains(seconds) {
+                return Err(ProtocolError::BadValue("refresh"));
+            }
+            payload.extend_from_slice(&seconds.to_be_bytes());
+            KIND_REFRESH
+        }
         FromFetcher::Refused { file, status } => {
             if status.is_some_and(|status| !STATUS_CODES.contains(&status)) {
                 return Err(ProtocolError::BadValue("status"));
@@ -596,6 +628,14 @@ fn push_static_message(payload: &mut Vec<u8>, message: &FromFetcher) -> Result<u
 fn read_static_message(kind: u8, fields: &mut Fields<'_>) -> Result<FromFetcher, ProtocolError> {
     Ok(match kind {
         KIND_SUBPAGES_MISSING => FromFetcher::SubPagesMissing { page: fields.display_page()? },
+        KIND_NO_CONTENTS => FromFetcher::NoContents,
+        KIND_REFRESH => {
+            let seconds = u32::from_be_bytes(fields.array()?);
+            if !(MIN_REFRESH_SECONDS..=MAX_REFRESH_SECONDS).contains(&seconds) {
+                return Err(ProtocolError::BadValue("refresh"));
+            }
+            FromFetcher::Refresh(seconds)
+        }
         KIND_REFUSED => {
             let role = fields.u8()?;
             let page = fields.u16()?;
@@ -702,7 +742,9 @@ pub fn write_to_core(out: &mut dyn Write, message: &FromFetcher) -> Result<(), P
             })?;
             KIND_SUBPAGES
         }
-        FromFetcher::SubPagesMissing { .. } | FromFetcher::Refused { .. } => push_static_message(&mut payload, message)?,
+        FromFetcher::SubPagesMissing { .. } | FromFetcher::Refused { .. } | FromFetcher::NoContents | FromFetcher::Refresh(_) => {
+            push_static_message(&mut payload, message)?
+        }
         #[cfg(feature = "interaction")]
         FromFetcher::RoundTrip { microseconds } => {
             payload.extend_from_slice(&microseconds.to_be_bytes());
@@ -792,7 +834,7 @@ pub fn read_from_fetcher(input: &mut dyn Read) -> Result<Option<FromFetcher>, Pr
             let part = crate::subpages::read_rows(&mut fields, CATALOGUE_PART, |fields| raw_text(fields, MAX_PAGE_TITLE, "title too long"))?;
             FromFetcher::SubPages { page, part }
         }
-        KIND_SUBPAGES_MISSING | KIND_REFUSED => read_static_message(kind, &mut fields)?,
+        KIND_SUBPAGES_MISSING | KIND_REFUSED | KIND_NO_CONTENTS | KIND_REFRESH => read_static_message(kind, &mut fields)?,
         #[cfg(feature = "interaction")]
         KIND_ROUND_TRIP => FromFetcher::RoundTrip { microseconds: u64::from_be_bytes(fields.array()?) },
         KIND_CHANNEL_LOG

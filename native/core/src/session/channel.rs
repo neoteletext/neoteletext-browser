@@ -68,6 +68,13 @@ pub struct ChannelState {
     /// Its certificate was refused, and why, until its contents next arrive
     /// (`certificate-errors.md`, decision 83).
     pub refused: Option<CertificateProblem>,
+    /// Its contents file was answered, or there is none, so a page's own
+    /// file can be asked for: the service is open, and what its bundle held
+    /// has come (REQ-703).
+    pub contents_settled: bool,
+    /// How often its page on screen is asked for again, from its
+    /// `channel.ttx` (REQ-704).
+    pub refresh: Option<std::time::Duration>,
     /// A restored file not yet read: it is read when its tab is first
     /// shown (finding F-53).
     unread: Option<std::path::PathBuf>,
@@ -154,6 +161,8 @@ impl ChannelState {
             web,
             problem,
             refused: None,
+            contents_settled: false,
+            refresh: None,
             unread: None,
             live: false,
             connecting: false,
@@ -217,6 +226,13 @@ impl ChannelState {
         *loaded = true;
         let title = self.titles.get_mut(index)?.get_or_insert_with(|| clean(title, MAX_PAGE_TITLE)).clone();
         Some(title)
+    }
+
+    /// Whether `page` is on its way or here: listed by the contents file,
+    /// whose pages are fetched in turn, or arrived.
+    #[must_use]
+    pub fn is_known(&self, page: u16) -> bool {
+        page_index(page).and_then(|index| self.titles.get(index)).is_some_and(Option::is_some)
     }
 
     /// Whether `page` has arrived.

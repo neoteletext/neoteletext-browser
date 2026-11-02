@@ -57,3 +57,8 @@ pub(super) const KIND_REGION: u8 = 138;
 // A static channel's refused response (REQ-708), past the last number used
 // across every pipe.
 pub(super) const KIND_REFUSED: u8 = 140;
+// A static channel's pages as they are wanted (REQ-703), and its refresh
+// (REQ-704), in the next numbers.
+pub(super) const KIND_NO_CONTENTS: u8 = 141;
+pub(super) const KIND_REFRESH: u8 = 142;
+pub(super) const KIND_FETCH_PAGE: u8 = 143;

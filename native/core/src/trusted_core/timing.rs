@@ -73,6 +73,9 @@ impl Core {
         if let Some(due) = self.redirect_due_at() {
             next = next.map(|at| at.min(due));
         }
+        if let Some(due) = self.refresh_due_at() {
+            next = next.map(|at| at.min(due));
+        }
         #[cfg(feature = "interaction")]
         if let Some(due) = self.fill_due_at() {
             next = next.map(|at| at.min(due));
@@ -98,6 +101,7 @@ impl Core {
             self.send_console()?;
         }
         self.notice_tick()?;
+        self.refresh_tick(now);
         if now >= self.next_sleep_check {
             self.next_sleep_check = now.checked_add(SLEEP_CHECK).unwrap_or(now);
             self.match_decoders()?;

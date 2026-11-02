@@ -40,7 +40,12 @@ impl Core {
                     fetcher.hear();
                 }
             }
-            FromFetcher::Contents(entries) => self.contents(channel, &entries)?,
+            FromFetcher::Contents(entries) => {
+                self.contents(channel, &entries)?;
+                self.contents_settled(channel);
+            }
+            FromFetcher::NoContents => self.contents_settled(channel),
+            FromFetcher::Refresh(seconds) => self.refresh_declared(channel, seconds),
             FromFetcher::Page { origin: Origin::Fetched, bytes } => {
                 // Untouched, a piece at a time; each page file ends its last
                 // line, so the next one starts cleanly.
@@ -277,6 +282,7 @@ impl Core {
 mod tests {
     use super::super::test_support::Test;
     use super::*;
+    use protocol::fetcher::ToFetcher;
 
     // REQ-INT-140, TODO-1536 item 3: a tab whose address names no page
     // selects the page its descriptor opens at, shown or not.
@@ -404,5 +410,84 @@ mod tests {
         test.core.session.all_tabs_mut().next().unwrap().channel.arrived(0x100, "Headlines");
         refused(&mut test, RefusedFile::Page(0x100), Some(500));
         assert_eq!(test.core.strip().failed, None, "a page that arrived is not disturbed");
+    }
+
+    /// REQ-703: a static channel with no contents file has the page its
+    /// tab wants asked for, once what its bundle holds has come, and each
+    /// page opened after, once; a listed page comes in the contents file's
+    /// turn, and one that arrived is not asked for. On the code before,
+    /// nothing asked, and such a channel showed no page.
+    #[test]
+    fn a_static_channel_with_no_contents_has_its_wanted_pages_asked_for() {
+        let mut test = Test::new("wanted");
+        let channel = static_tab(&mut test, 0x100);
+        let asked = |test: &mut Test| core::mem::take(&mut test.core.controls.told_fetchers);
+        assert_eq!(asked(&mut test), [], "not before the channel has opened");
+        test.core.fetched(channel, FromFetcher::NoContents).unwrap();
+        assert_eq!(asked(&mut test), [(channel, ToFetcher::FetchPage { page: 0x100 })]);
+        test.core.intent(protocol::ToCore::Opened(Some(PageKey { channel, page: 0x200 }))).unwrap();
+        assert_eq!(asked(&mut test), [(channel, ToFetcher::FetchPage { page: 0x200 })], "selecting a page fetches it");
+        test.core.session.all_tabs_mut().next().unwrap().channel.arrived(0x300, "Sport");
+        test.core.intent(protocol::ToCore::Opened(Some(PageKey { channel, page: 0x300 }))).unwrap();
+        assert_eq!(asked(&mut test), [], "it has arrived");
+    }
+
+    /// REQ-703: with a contents file, its listed pages come in turn, and
+    /// a page it does not list is still asked for when it is opened.
+    #[test]
+    fn a_page_the_contents_file_does_not_list_is_asked_for() {
+        use protocol::fetcher::Entry;
+        let mut test = Test::new("unlisted");
+        let channel = static_tab(&mut test, 0x100);
+        test.core.fetched(channel, FromFetcher::Contents(vec![Entry::Page { page: 0x100, title: "Index".into() }])).unwrap();
+        assert_eq!(core::mem::take(&mut test.core.controls.told_fetchers), [], "listed");
+        test.core.intent(protocol::ToCore::Opened(Some(PageKey { channel, page: 0x200 }))).unwrap();
+        assert_eq!(test.core.controls.told_fetchers, [(channel, ToFetcher::FetchPage { page: 0x200 })]);
+    }
+
+    /// DEC-1467: a live channel's pages come on its connection alone.
+    #[test]
+    fn a_live_channels_pages_are_never_asked_for() {
+        let mut test = Test::new("live-wanted");
+        let channel = static_tab(&mut test, 0x100);
+        test.core.fetched(channel, FromFetcher::Connecting(true)).unwrap();
+        test.core.fetched(channel, FromFetcher::NoContents).unwrap();
+        test.core.intent(protocol::ToCore::Opened(Some(PageKey { channel, page: 0x200 }))).unwrap();
+        assert_eq!(test.core.controls.told_fetchers, []);
+    }
+
+    /// REQ-704: a declared `refresh` asks again for the page on screen at
+    /// its interval and for nothing else, and the time follows the page
+    /// open; no `refresh`, no asking; a live channel's does nothing. On the
+    /// code before, nothing read it.
+    #[test]
+    fn a_refresh_asks_again_for_the_page_on_screen_alone() {
+        use std::time::{Duration, Instant};
+        const SECONDS: u32 = 5;
+        let every = Duration::from_secs(u64::from(SECONDS));
+        let mut test = Test::new("refresh");
+        let channel = static_tab(&mut test, 0x100);
+        let later = |by: Duration| Instant::now().checked_add(by).unwrap();
+        test.core.refresh_tick(later(every * 2));
+        assert_eq!(test.core.refresh_due_at(), None, "none declared");
+        assert_eq!(test.core.controls.told_fetchers, [], "no asking");
+        test.core.fetched(channel, FromFetcher::Refresh(SECONDS)).unwrap();
+        let due = test.core.refresh_due_at().unwrap();
+        assert!(due > Instant::now() && test.core.next_wake().is_some_and(|wake| wake <= due), "the core wakes for it");
+        test.core.refresh_tick(due.checked_sub(Duration::from_millis(1)).unwrap());
+        assert_eq!(test.core.controls.told_fetchers, [], "not yet");
+        test.core.refresh_tick(later(every));
+        assert_eq!(core::mem::take(&mut test.core.controls.told_fetchers), [(channel, ToFetcher::FetchPage { page: 0x100 })]);
+        assert!(test.core.refresh_due_at().is_some(), "and again");
+        test.core.intent(protocol::ToCore::Opened(None)).unwrap();
+        assert_eq!(test.core.refresh_due_at(), None, "no page on screen");
+        test.core.refresh_tick(later(every * 2));
+        assert_eq!(test.core.controls.told_fetchers, []);
+
+        let mut live = Test::new("refresh-live");
+        let channel = static_tab(&mut live, 0x100);
+        live.core.fetched(channel, FromFetcher::Connecting(true)).unwrap();
+        live.core.fetched(channel, FromFetcher::Refresh(SECONDS)).unwrap();
+        assert_eq!(live.core.refresh_due_at(), None, "a live channel's connection brings its changes");
     }
 }

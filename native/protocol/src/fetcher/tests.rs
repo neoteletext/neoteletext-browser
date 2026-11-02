@@ -68,6 +68,9 @@ fn every_kind_round_trips() {
             part: SubPageRows { count: 8_190, first: 7_168, rows: vec![(0x3F7E, "The last".into()), (0x0001, String::new())] },
         },
         FromFetcher::SubPagesMissing { page: 0x210 },
+        FromFetcher::NoContents,
+        FromFetcher::Refresh(5),
+        FromFetcher::Refresh(86_400),
         FromFetcher::Refused { file: RefusedFile::Channel, status: Some(500) },
         FromFetcher::Refused { file: RefusedFile::Bundle, status: None },
         FromFetcher::Refused { file: RefusedFile::Contents, status: Some(403) },
@@ -83,6 +86,7 @@ fn every_kind_round_trips() {
         ToFetcher::CookieAnswer { id: 7, header: b"id=1".to_vec() },
         ToFetcher::CookieAnswer { id: 8, header: Vec::new() },
         ToFetcher::ReachedAnswer { id: 9, reached: true },
+        ToFetcher::FetchPage { page: 0x210 },
         ToFetcher::FetchSubPages { page: 0x210 },
         ToFetcher::FetchSubPage { page: 0x210, subcode: 0x3F7E },
         #[cfg(feature = "interaction")]
@@ -282,4 +286,17 @@ fn a_refusal_is_held_to_its_bounds() {
     let place = page_of_the_channel.len() - 3;
     page_of_the_channel[place] = 1;
     assert!(read_from_fetcher(&mut page_of_the_channel.as_slice()).is_err(), "a channel's file has no page");
+}
+
+/// REQ-704: a `refresh` outside what `channel.ttx` may declare is refused on
+/// both sides, so a fetcher cannot have the core ask too often.
+#[test]
+fn a_refresh_is_held_to_its_bounds() {
+    assert!(write_to_core(&mut Vec::new(), &FromFetcher::Refresh(MIN_REFRESH_SECONDS - 1)).is_err());
+    assert!(write_to_core(&mut Vec::new(), &FromFetcher::Refresh(MAX_REFRESH_SECONDS + 1)).is_err());
+    let mut bytes = Vec::new();
+    write_to_core(&mut bytes, &FromFetcher::Refresh(MIN_REFRESH_SECONDS)).unwrap();
+    let last = bytes.len() - 1;
+    bytes[last] = 1;
+    assert!(read_from_fetcher(&mut bytes.as_slice()).is_err());
 }

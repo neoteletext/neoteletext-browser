@@ -346,7 +346,8 @@ Decision 22, **rescinded on 25 October 2026 by decision 104**: pages are to be f
 |---|---|
 | A bundle, `index.t42` | The whole bundle when the channel opens |
 | A contents file, `contents.txt` | Every page file it lists, in the order it lists them, one every 0.2 seconds, when the channel opens. **Built**, by the engine's user agent |
-| Only separate page files | Each page when it is selected (decision 23), the one exception |
+| Only separate page files | The page a tab wants, once the contents file has been answered, and each page as it is opened. **Built**: the trusted core asks with `ToFetcher::FetchPage` |
+| A `refresh` in `channel.ttx`, and no push connection | The page on screen again at that interval, conditionally. **Built**: the trusted core's timer, and only for the page open (REQ-704) |
 | A file on this computer | All of it, in its own order, at once, whatever is on screen (DEC-1762). **Built** |
 
 - **Refreshing** follows the channel's push feed, its declared schedule, or a fixed default, never which page is shown.

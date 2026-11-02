@@ -53,6 +53,12 @@ pub(crate) fn product() -> Option<neoteletext_web::user_agent::Product> {
     })
 }
 
+/// The interval the open channel declares for asking again for the page on
+/// screen, when it has no push connection to bring changes (REQ-704).
+pub(crate) fn refresh_seconds(agent: &UserAgent<'_, Random, COOKIE_SLOTS, COOKIE_BYTES>) -> Option<u32> {
+    agent.descriptor().filter(|descriptor| descriptor.push().is_none()).and_then(|descriptor| descriptor.refresh_seconds)
+}
+
 /// The aliases and named services of the open channel's descriptor, as
 /// written: untrusted, for the trusted core to parse. Aliases of numbers
 /// that are not display pages are left out.

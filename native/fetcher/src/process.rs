@@ -31,12 +31,14 @@ use protocol::subpages::SubPageRows;
 
 #[cfg(feature = "links")]
 use crate::agent::descriptor_links;
-use crate::agent::{Random, product};
+use crate::agent::{Random, product, refresh_seconds};
 use crate::cookies;
 use crate::live::{LiveIndex, SubPageLists};
 use crate::transport::{AllowedLocal, Tcp};
 
 const _: () = assert!(protocol::fetcher::MAX_DENIED_PLACE == neoteletext_web::records::denied::MAX_PLACE, "the engine's longest place");
+const _: () = assert!(protocol::fetcher::MIN_REFRESH_SECONDS == neoteletext_web::descriptor::MIN_REFRESH_SECONDS, "the engine's shortest refresh");
+const _: () = assert!(protocol::fetcher::MAX_REFRESH_SECONDS == neoteletext_web::descriptor::MAX_REFRESH_SECONDS, "the engine's longest refresh");
 
 /// The agent's own cookie jar holds nothing: the trusted core keeps the
 /// cookies (decision 62).
@@ -261,8 +263,10 @@ fn collect(output: Output<'_>, actions: &mut Vec<Action>) {
         && let Some((file, answer)) = refusal(&event)
     {
         actions.push(Action::Refused(file, answer));
-        if matches!(file, RefusedFile::Page(_)) {
-            actions.push(Action::Answered);
+        match file {
+            RefusedFile::Page(_) => actions.push(Action::Answered),
+            RefusedFile::Contents => actions.push(Action::Tell(FromFetcher::NoContents)),
+            RefusedFile::Channel | RefusedFile::Bundle => {}
         }
         return;
     }
@@ -277,6 +281,7 @@ fn collect(output: Output<'_>, actions: &mut Vec<Action>) {
         Output::Timer { at } => Action::Timer(at),
         Output::Event(Event::ServiceReady { initial_page, region, .. }) => Action::Ready(initial_page.mpp(), region),
         Output::Event(Event::Contents(bytes)) => Action::Contents(bytes.to_vec()),
+        Output::Event(Event::ContentsMissing) => Action::Tell(FromFetcher::NoContents),
         Output::Event(Event::SubPages { page, bytes }) => Action::SubPages(page, bytes.to_vec()),
         Output::Event(Event::SubPagesCurrent { page }) => Action::SubPagesCurrent(page),
         Output::Event(Event::SubPagesMissing { page }) => Action::Tell(FromFetcher::SubPagesMissing { page: page.mpp() }),
@@ -646,8 +651,9 @@ fn service_ready(agent: &Agent<'_>, output: &cookies::Output, page: u16, region:
     if let Some(links) = descriptor_links(agent) {
         send(output, &links)?;
     }
-    #[cfg(not(feature = "links"))]
-    let _ = agent;
+    if let Some(seconds) = refresh_seconds(agent) {
+        send(output, &FromFetcher::Refresh(seconds))?;
+    }
     Ok(())
 }
 
@@ -698,6 +704,7 @@ fn tell_failures(transport: &mut Tcp, output: &cookies::Output) -> Result<(), St
 /// agent queues and spaces the requests at its own rate.
 fn fetch(agent: &mut Agent<'_>, clock: &dyn Fn() -> Instant, asked: &ToFetcher, actions: &mut Vec<Action>) {
     let input = match *asked {
+        ToFetcher::FetchPage { page } => PageAddress::from_mpp(page).map(|page| Input::FetchPage { page, subcode: None }),
         ToFetcher::FetchSubPages { page } => PageAddress::from_mpp(page).map(|page| Input::FetchSubPages { page }),
         ToFetcher::FetchSubPage { page, subcode } => PageAddress::from_mpp(page).map(|page| Input::FetchPage { page, subcode: Some(SubCode::new(subcode)) }),
         _ => None,
@@ -752,7 +759,9 @@ fn read_commands(input: &mut dyn Read, commands: &mpsc::Sender<Wake>, answers: &
             #[cfg(feature = "interaction")]
             ToFetcher::MeasureRoundTrip(on) => commands.send(Wake::RoundTrip(on)).is_ok(),
             answer @ (ToFetcher::CookieAnswer { .. } | ToFetcher::ReachedAnswer { .. }) => answers.send(answer).is_ok(),
-            asked @ (ToFetcher::FetchSubPages { .. } | ToFetcher::FetchSubPage { .. }) => commands.send(Wake::Fetch(asked)).is_ok(),
+            asked @ (ToFetcher::FetchPage { .. } | ToFetcher::FetchSubPages { .. } | ToFetcher::FetchSubPage { .. }) => {
+                commands.send(Wake::Fetch(asked)).is_ok()
+            }
         };
         if !delivered {
             return;

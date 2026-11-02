@@ -30,6 +30,8 @@ pub(crate) struct State {
     open: Option<PageKey>,
     /// How it is drawn, when the user changed it.
     view: Option<View>,
+    /// When the page open is next asked for again (REQ-704).
+    next_refresh: Option<std::time::Instant>,
     /// The sub-pages of the pages on screen from the one drawn, as their
     /// decoders reported them.
     subpages: BTreeMap<PageKey, SubPageStep>,
@@ -65,7 +67,7 @@ impl State {
     }
 
     /// The view of `key`, as drawn now.
-    fn view_of(&self, key: PageKey) -> View {
+    pub(super) fn view_of(&self, key: PageKey) -> View {
         self.view.filter(|view| self.open == Some(key) && view.page == key.page).unwrap_or(View { page: key.page, ..View::default() })
     }
 }
@@ -103,7 +105,9 @@ impl Core {
         self.controls.catalogue_asked = false;
         if let Some(key) = key {
             self.ask_catalogue(key);
+            self.ask_page(key.channel, key.page);
         }
+        self.arm_refresh();
         if let Some((pending, subpage)) = self.controls.pending.take()
             && Some(pending) == key
         {
@@ -208,6 +212,76 @@ impl Core {
         if ask {
             self.tell_fetcher(key.channel, &ToFetcher::FetchSubPages { page: key.page });
         }
+    }
+
+    /// A static channel's contents file was answered or there is none: the
+    /// page its tab wants is asked for, if nothing else is bringing it.
+    pub(super) fn contents_settled(&mut self, channel: u32) {
+        let Some(tab) = self.session.all_tabs_mut().find(|tab| tab.channel.id == channel) else { return };
+        tab.channel.contents_settled = true;
+        let named = tab.address().and_then(|address| address.page);
+        let initial = tab.channel.initial_page;
+        if let Some(page) = self.controls.open_page(channel).or(named).or(initial) {
+            self.ask_page(channel, page);
+        }
+    }
+
+    /// Asks `channel`'s fetcher for `page`, wanted by a tab, when it is a
+    /// static channel's and nothing else brings it: it was neither listed
+    /// nor has it arrived. A live channel's come on its connection
+    /// (DEC-1467), and before its contents file is answered the page may
+    /// yet be in its bundle (REQ-703).
+    pub(super) fn ask_page(&mut self, channel: u32, page: u16) {
+        let wanted = self.session.all_tabs().any(|tab| {
+            tab.channel.id == channel && !tab.channel.live && tab.channel.web.is_some() && tab.channel.contents_settled && !tab.channel.is_known(page)
+        });
+        if wanted {
+            self.tell_fetcher(channel, &ToFetcher::FetchPage { page });
+        }
+    }
+
+    /// The interval `channel`'s `channel.ttx` declares (REQ-704): a page
+    /// open on it is asked for again from now on.
+    pub(super) fn refresh_declared(&mut self, channel: u32, seconds: u32) {
+        if let Some(tab) = self.session.all_tabs_mut().find(|tab| tab.channel.id == channel) {
+            tab.channel.refresh = Some(std::time::Duration::from_secs(u64::from(seconds)));
+        }
+        self.arm_refresh();
+    }
+
+    /// The page on screen and how often it is asked for again, when its
+    /// channel declared that and is not live (REQ-704).
+    fn refreshing(&self) -> Option<(PageKey, std::time::Duration)> {
+        let key = self.controls.open?;
+        let tab = self.session.all_tabs().find(|tab| tab.channel.id == key.channel)?;
+        Some((key, tab.channel.refresh.filter(|_| !tab.channel.live)?))
+    }
+
+    /// Times the next asking from now, or none.
+    fn arm_refresh(&mut self) {
+        let now = std::time::Instant::now();
+        self.controls.next_refresh = self.refreshing().and_then(|(_, every)| now.checked_add(every));
+    }
+
+    /// When the page on screen is next asked for again.
+    pub(super) fn refresh_due_at(&self) -> Option<std::time::Instant> {
+        self.controls.next_refresh
+    }
+
+    /// Asks again for the page on screen, or the sub-page shown of it, when
+    /// its time has come. The agent makes the request conditional on what
+    /// it holds, and only this page is asked for (REQ-704).
+    pub(super) fn refresh_tick(&mut self, now: std::time::Instant) {
+        if self.controls.next_refresh.is_none_or(|due| now < due) {
+            return;
+        }
+        self.arm_refresh();
+        let Some((key, _)) = self.refreshing() else { return };
+        let message = match self.controls.view_of(key).subpage.filter(|subcode| *subcode != SUBCODE_ANY) {
+            Some(subcode) => ToFetcher::FetchSubPage { page: key.page, subcode },
+            None => ToFetcher::FetchPage { page: key.page },
+        };
+        self.tell_fetcher(key.channel, &message);
     }
 
     /// The sub-page state of `channel`'s tab.
