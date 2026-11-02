@@ -225,3 +225,53 @@ fn the_pointer_hides_when_still() {
     assert!(!browser.pointer_hidden(5_000), "moving shows it");
     assert!(!(Browser::new(crate::browser::Frame { left_inset: 0.0, window_buttons: false })).pointer_hidden(10_000), "never in the window");
 }
+
+/// Section 3 of the design: while keys go to a channel, the trusted badge
+/// is drawn whole in the margin, on the display and never over the page,
+/// at the sizes full screen takes: a 16 by 10 laptop, a 16 by 9 desktop
+/// display, a 16 by 10 high-density laptop and a window taller than it is
+/// wide, with the aspect correction off and on (REQ-737). On the code
+/// before, a page as tall as the display put the badge in a row below it,
+/// past the display's bottom edge.
+#[cfg(feature = "interaction")]
+#[test]
+fn the_keys_badge_is_drawn_whole_beside_the_page_at_full_screen_sizes() {
+    use crate::browser::typing::TypingView;
+    use crate::theme::ROW_STATUS;
+    use alloc::format;
+    use alloc::string::String;
+    /// A host as long as the channels of the demonstration server's.
+    const HOST: &str = "uicomponentsdemo.neoteletext.com";
+    let sizes = [(1440.0, 900.0), (1920.0, 1080.0), (2560.0, 1600.0), (700.0, 1000.0)];
+    for (width, height) in sizes {
+        for corrected in [false, true] {
+            let mut browser = in_full_screen();
+            set_aspect(&mut browser, corrected);
+            browser.strip.identity = HOST.into();
+            let key = browser.wall().zoomed().expect("a page open");
+            let typing = TypingView { channel: key.channel, page: key.page, on: true, secure: false, refused: false, cursor: None, round_trip_us: Some(3_250) };
+            browser.set_typing(typing, 0);
+            // After the notice, so that every text drawn is the badge's.
+            let mut canvas = Recorder::new();
+            browser.draw(&mut canvas, width, height, NOTICE_MILLISECONDS);
+            let area = Rect::new(0.0, 0.0, width, height);
+            let (_, image) = *canvas.pages.last().expect("the page");
+            let at = format!("at {width} by {height}, corrected {corrected}");
+            let badge = canvas.texts.clone();
+            let said: String = badge.iter().map(|(_, text)| text.as_str()).collect();
+            if (width, corrected) == (1440.0, true) {
+                assert!(badge.len() > 3, "on lines of its own in a margin of 164 points {at}: {badge:?}");
+            }
+            for part in ["Keys go to", HOST, "3.2 ms", "Not secure"] {
+                assert!(said.contains(part), "{part} said {at}: {said:?}");
+            }
+            for (rect, text) in &badge {
+                let drawn = Rect::new(rect.x0, rect.y0, rect.x0 + canvas.text_width(text, ROW_STATUS), rect.y0 + canvas.line_height(ROW_STATUS));
+                let on_display = drawn.x0 >= area.x0 && drawn.x1 <= area.x1 && drawn.y0 >= area.y0 && drawn.y1 <= area.y1;
+                assert!(on_display, "{text:?} at {drawn:?} is off the display {at}");
+                let over_page = drawn.x0 < image.x1 && drawn.x1 > image.x0 && drawn.y0 < image.y1 && drawn.y1 > image.y0;
+                assert!(!over_page, "{text:?} at {drawn:?} is over the page {image:?} {at}");
+            }
+        }
+    }
+}

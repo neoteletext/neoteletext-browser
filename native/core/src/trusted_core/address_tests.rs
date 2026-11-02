@@ -33,7 +33,7 @@ fn arrived(name: &str) -> (Test, u32) {
     let pages = [0x100, 0x200, 0x300].map(|page| Entry::Page { page, title: format!("Page {page:03X}") }).to_vec();
     test.core.fetched(channel, FromFetcher::Contents(pages)).unwrap();
     let rows = (1_u16..=3).map(|subcode| (subcode, String::new())).collect();
-    test.core.fetched(channel, FromFetcher::SubPages { page: 0x200, part: SubPageRows { count: 3, first: 0, rows } }).unwrap();
+    test.core.fetched(channel, FromFetcher::SubPages { page: 0x200, version: "1".into(), part: SubPageRows { count: 3, first: 0, rows } }).unwrap();
     test.core.fetched(channel, FromFetcher::InitialPage(0x100)).unwrap();
     test.core.intent(ToCore::Opened(Some(PageKey { channel, page: 0x100 }))).unwrap();
     test.sent();

@@ -271,8 +271,12 @@ impl Engine {
     }
 
     /// The user opened `page`, or none: its sounds play while it is open
-    /// (the engine's REQ-AUD-012).
+    /// (the engine's REQ-AUD-012), and it is the page the engine's decoder
+    /// is told is requested, whose latest sub-page its store never evicts
+    /// (REQ-328, the engine's REQ-NUM-030) and whose magazine the rolling
+    /// header follows (the engine's decision E.11).
     pub fn open_page(&mut self, page: Option<u16>) {
+        self.decoder.set_requested(page.and_then(neoteletext_core::types::PageAddress::from_mpp));
         self.audio.open_page(page, &mut Outbox::new(&mut self.sounds));
     }
 

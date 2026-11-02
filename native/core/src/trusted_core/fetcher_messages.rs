@@ -101,7 +101,7 @@ impl Core {
                 let sends = self.typing.round_trip(channel, microseconds);
                 self.deliver_typing(sends)?;
             }
-            FromFetcher::SubPages { page, part } => self.catalogue_part(channel, page, part)?,
+            FromFetcher::SubPages { page, version, part } => self.catalogue_part(channel, page, &version, part)?,
             // A LOG record's line goes to the Log as a TTI `LG` line's does
             // (DEC-633 version 2).
             FromFetcher::ChannelLog { level, page, text } => self.channel_log(channel, level, page, &text),
@@ -109,10 +109,14 @@ impl Core {
             FromFetcher::InitialPage(page) => self.initial_page(channel, page)?,
             FromFetcher::Region(region) => self.tell(channel, ToDecoder::Region(region)),
             FromFetcher::Connecting(connecting) => self.connecting(channel, connecting)?,
-            FromFetcher::SubPagesMissing { page } => {
-                let changed = self.channel_subpages(channel).and_then(|subpages| subpages.missing(page));
+            FromFetcher::SubPagesMissing { page, part } => {
+                let changed = self.channel_subpages(channel).and_then(|subpages| subpages.missing(page, part));
                 self.subpage_count_changed(channel, page, changed)?;
+                self.answer_rows_wanted(PageKey { channel, page }, true)?;
             }
+            // It stays asked until its page opens again; rows waiting for it
+            // are answered with what is held.
+            FromFetcher::SubPagesFailed { page, .. } => self.answer_rows_wanted(PageKey { channel, page }, true)?,
             #[cfg(feature = "links")]
             FromFetcher::Links { aliases, services } => {
                 self.links.descriptor(channel, &aliases, &services);
@@ -159,22 +163,29 @@ impl Core {
         })
     }
 
-    /// Part of a page's catalogue of sub-pages (the engine's REQ-WEB-034):
-    /// held once whole, its count told to the interface, and the open page
-    /// stepped through it from now on. One out of order is refused, said
-    /// in the log, and the page listed from what its decoder holds.
-    fn catalogue_part(&mut self, channel: u32, page: u16, part: protocol::subpages::SubPageRows) -> Result<(), String> {
+    /// A part of a page's list of sub-pages (REQ-1888): held with the
+    /// others of its version, the page's count told to the interface, and
+    /// the open page stepped through it from now on; the parts of another
+    /// version held before are asked for again (DOC-1869), as each was
+    /// asked for the open page or the rows the list shows. One not the
+    /// shape of a part is refused, said in the log, and the page listed from
+    /// what was held and what its decoder holds.
+    fn catalogue_part(&mut self, channel: u32, page: u16, version: &str, part: protocol::subpages::SubPageRows) -> Result<(), String> {
         let Some(subpages) = self.channel_subpages(channel) else { return Ok(()) };
-        match subpages.part(page, part) {
-            Ok(None) => Ok(()),
-            Ok(Some(count)) => {
-                self.send_subpage_count(channel, page, count)?;
-                self.catalogue_arrived(PageKey { channel, page })
+        let key = PageKey { channel, page };
+        match subpages.part(page, version, part) {
+            Ok(arrived) => {
+                self.subpage_count_changed(channel, page, arrived.count)?;
+                self.ask_parts(key, &arrived.again);
+                self.catalogue_arrived(key)
             }
-            Err(neoteletext::subpages::Refused::OutOfOrder) => {
-                subpages.unanswered(page);
-                self.log(Level::Warning, Some(channel), &format!("channel {channel}: the catalogue of page {page:03X} came out of order; ignored"));
-                Ok(())
+            Err(neoteletext::subpages::Refused::Misshapen) => {
+                self.log(
+                    Level::Warning,
+                    Some(channel),
+                    &format!("channel {channel}: a part of the list of sub-pages of page {page:03X} was not the shape of a part; ignored"),
+                );
+                self.answer_rows_wanted(key, true)
             }
         }
     }

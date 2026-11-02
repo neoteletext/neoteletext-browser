@@ -302,6 +302,30 @@ fn sub_pages_are_listed_and_one_can_be_chosen() {
     assert_eq!(engine.render_at(0x100, 0).unwrap().subpages.shown, 2, "one not stored: the latest");
 }
 
+/// REQ-328 (the engine's REQ-NUM-030): the page open is the decoder's
+/// requested page, so a store filled by other pages never evicts it, and
+/// closing it lets it go. On the code before, the decoder was never told,
+/// and the page open was the first evicted.
+#[test]
+fn the_page_open_is_never_evicted() {
+    /// A store of four pages, filled past by those after the one open.
+    const STORE: usize = 4;
+    let page = |number: u16| format!("PN,{number:03X}00\nSC,0000\nPS,8000\nOL,1,PAGE {number:03X}\n\n").into_bytes();
+    let mut engine = Engine::with_store(STORE);
+    engine.feed(&page(0x100));
+    engine.open_page(Some(0x100));
+    for number in 0x101..0x101 + u16::try_from(STORE * 2).unwrap() {
+        engine.feed(&page(number));
+    }
+    engine.finish();
+    assert!(engine.render_at(0x100, 0).is_some(), "the page open is kept");
+    assert!(engine.render_at(0x101, 0).is_none(), "another as old is not");
+    engine.open_page(None);
+    engine.feed(&page(0x200));
+    engine.finish();
+    assert!(engine.render_at(0x100, 0).is_none(), "closed, it goes as any page");
+}
+
 /// Decision 119 (the engine's REQ-NUM-020 and REQ-NUM-030): a page of
 /// more sub-pages than the 64 the browser once listed is counted, stepped
 /// and listed by range in full, and row 0 shows a place of three digits
@@ -368,11 +392,12 @@ fn fastext_comes_from_the_link_line_and_needs_row_24() {
     assert!(!without_row.render_at(0x100, 0).unwrap().links.fastext.row24, "no row 24: the keys do nothing");
 }
 
-/// REQ-SEC-024, DEC-2115: a coloured key follows its link only while its own
-/// prompt can be read whole in row 24, however the page draws the row; a
-/// key whose colour the row does not use has no link, and Index shows no
-/// prompt, so it keeps its own. On the code before, any glyph in row 24 kept
-/// every key live.
+/// REQ-SEC-024, DEC-2115: a coloured key follows its link only while the
+/// engine's `Grid::prompts_shown` says row 24 shows its prompt whole; a key
+/// whose colour the row does not use has no link, and Index shows no
+/// prompt, so it keeps its own. The engine's own tests hold every way a
+/// prompt is hidden; these hold that the keys follow its verdict. On the
+/// code before, any glyph in row 24 kept every key live.
 #[cfg(feature = "links")]
 #[test]
 fn a_key_needs_its_own_prompt_shown_whole() {
@@ -385,10 +410,6 @@ fn a_key_needs_its_own_prompt_shown_whole() {
     assert_eq!(keys(b"\x1bAnews"), [true, false, false, true], "red alone");
     assert_eq!(keys(b"plain text"), [false, false, false, true], "in no key's colour");
     assert_eq!(keys(b"\x1bA\x1bXnews \x1bBsport"), [false, true, false, true], "concealed");
-    assert_eq!(keys(b"\x1bA\x1bHnews\x1bI \x1bBsport"), [false, true, false, true], "flashing");
-    assert_eq!(keys(b"\x1bAne\x1bHws\x1bI \x1bBsport"), [false, true, false, true], "partly flashing");
-    assert_eq!(keys(b"\x1bA\x1b]news \x1bBsport"), [false, true, false, true], "red on red");
-    assert_eq!(keys(b"\x1b@news"), [false, false, false, true], "black");
 }
 
 /// REQ-SEC-024: a coloured `LN` link with no label shows nothing, so its key

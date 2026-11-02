@@ -19,11 +19,11 @@ use kinds::{
     KIND_CERTIFICATE_REFUSED, KIND_CHANNEL_LOG, KIND_CLEAR_SITE_DATA, KIND_CONFINED, KIND_CONNECTING, KIND_CONTENTS, KIND_COOKIE_ANSWER, KIND_COOKIE_QUESTION,
     KIND_COOKIE_SET, KIND_DENIED, KIND_EXCHANGE, KIND_FETCH_PAGE, KIND_FETCH_SUBPAGE, KIND_FETCH_SUBPAGES, KIND_INITIAL_PAGE, KIND_INVALID_PACKETS,
     KIND_NO_CONTENTS, KIND_NOTICE, KIND_PAGE, KIND_PAGE_REDIRECT, KIND_PROGRAM_REDIRECT, KIND_PROXY_FAILED, KIND_PUSHING, KIND_REACHED_ANSWER,
-    KIND_REACHED_QUESTION, KIND_REDIRECTED, KIND_REFRESH, KIND_REFUSED, KIND_REGION, KIND_SUBPAGES, KIND_SUBPAGES_MISSING,
+    KIND_REACHED_QUESTION, KIND_REDIRECTED, KIND_REFRESH, KIND_REFUSED, KIND_REGION, KIND_SUBPAGES, KIND_SUBPAGES_FAILED, KIND_SUBPAGES_MISSING,
 };
 #[cfg(feature = "interaction")]
 use kinds::{KIND_INPUT, KIND_MEASURE_ROUND_TRIP, KIND_ROUND_TRIP, KIND_SEND};
-use neoteletext_core::limits::is_sub_code;
+use neoteletext_core::limits::{MAX_SUBPAGES, is_sub_code};
 
 mod cookies;
 mod kinds;
@@ -46,16 +46,24 @@ pub const MAX_METHOD: usize = 8;
 /// The longest address an exchange reports: the engine's `MAX_URL_LENGTH`,
 /// which is the address field's limit too.
 pub const MAX_EXCHANGE_URL: usize = MAX_ADDRESS;
-/// The entries of a page's catalogue of sub-pages one message carries: a
-/// catalogue of the standard's 8,190 is eight messages, each well within
-/// a payload with every title at its longest (decision 112 item 3).
-pub const CATALOGUE_PART: usize = 1024;
-/// A catalogue entry at its longest: its sub-code, its title's length and
+/// The rows of a part of a page's list of sub-pages, `NNN/P.sub` (DOC-1869,
+/// `ROWS_PER_PART`), which the fetcher and the trusted core assert is the
+/// engine's `subpages::ROWS_PER_PART`: a part is one message, and a live
+/// channel's list goes to the trusted core in parts of the same rows.
+pub const ROWS_PER_PART: usize = 64;
+/// The parts of the longest list: a page of 8,190 sub-pages has parts 0 to
+/// 127 (DOC-1869), the engine's `subpages::MAX_PARTS`.
+pub const MAX_LIST_PARTS: usize = MAX_SUBPAGES.div_ceil(ROWS_PER_PART);
+/// The longest version of a list a part carries: DOC-1869's 1 to 16
+/// characters, the engine's `subpages::MAX_VALIDATOR`.
+pub const MAX_LIST_VERSION: usize = 16;
+/// A row of a list at its longest: its sub-code, its title's length and
 /// the title.
-const CATALOGUE_ENTRY_BYTES: usize = 2 + 2 + MAX_PAGE_TITLE;
-/// A catalogue message's page and its three counts.
-const CATALOGUE_HEAD_BYTES: usize = 2 + 2 + 2 + 2;
-const _: () = assert!(CATALOGUE_HEAD_BYTES + CATALOGUE_PART * CATALOGUE_ENTRY_BYTES <= MAX_PAYLOAD, "a catalogue part fits one message");
+const LIST_ROW_BYTES: usize = 2 + 2 + MAX_PAGE_TITLE;
+/// A list message's page, its version and its three counts.
+const LIST_HEAD_BYTES: usize = 2 + 2 + MAX_LIST_VERSION + 2 + 2 + 2;
+const _: () = assert!(LIST_HEAD_BYTES + ROWS_PER_PART * LIST_ROW_BYTES <= MAX_PAYLOAD, "a part of a list fits one message");
+const _: () = assert!(MAX_LIST_PARTS <= u8::MAX as usize, "a part's number is a byte");
 /// HTTP status codes are three digits from 100 (RFC 9110 section 15).
 pub(crate) const STATUS_CODES: core::ops::RangeInclusive<u16> = 100..=599;
 /// In place of a status: nothing answered.
@@ -74,6 +82,11 @@ pub const LAST_WRITES_WAIT: Duration = Duration::from_millis(200);
 /// When the trusted core ends a fetcher whose input it closed.
 pub const FETCHER_END_WAIT: Duration = Duration::from_millis(400);
 const _: () = assert!(LAST_WRITES_WAIT.as_millis() < FETCHER_END_WAIT.as_millis(), "the fetcher ends itself first");
+
+/// A part's number, refused past the longest list's last part.
+fn checked_part(part: u8) -> Result<u8, ProtocolError> {
+    if usize::from(part) < MAX_LIST_PARTS { Ok(part) } else { Err(ProtocolError::BadValue("part of a list")) }
+}
 
 const ENTRY_SECTION: u8 = 1;
 const ENTRY_PAGE: u8 = 2;
@@ -275,22 +288,34 @@ pub enum FromFetcher {
     /// A response from `host` over an encrypted connection said
     /// `Clear-Site-Data: "cookies"` (`cookies.md` section 8).
     ClearSiteData(String),
-    /// Part of a page's catalogue of sub-pages, `NNN.sub`, as the engine's
-    /// reader read it (REQ-WEB-034): the catalogue's count, the place of
-    /// the part's first entry and at most [`CATALOGUE_PART`] entries, each
-    /// a sub-code and its title, not yet cleaned, in the page's order. The
-    /// parts of one catalogue come in order, the first at place 0.
+    /// A part of a page's list of sub-pages, `NNN/P.sub` (DOC-1869), as
+    /// the engine's reader read it, or of a live channel's list from its
+    /// SUBPAGES records: the page's version, its number of sub-pages, the
+    /// place of the part's first row, a multiple of [`ROWS_PER_PART`], and
+    /// at most that many rows, each a sub-code and its title, not yet
+    /// cleaned, in ascending order. Parts come in any order.
     SubPages {
         /// The page.
         page: u16,
-        /// The count, the first entry's place and the entries.
+        /// The page's version, which every part of one list shares.
+        version: String,
+        /// The count, the first row's place and the rows.
         part: SubPageRows,
     },
-    /// The page has no catalogue (404 or 410): its sub-pages, if any, are
-    /// in its page file.
+    /// A part of the page's list does not exist (404 or 410). For part 0
+    /// the page has no folder: its sub-pages, if any, are in its page file.
     SubPagesMissing {
         /// The page.
         page: u16,
+        /// The part.
+        part: u8,
+    },
+    /// A part of the page's list could not be fetched, or was refused.
+    SubPagesFailed {
+        /// The page.
+        page: u16,
+        /// The part.
+        part: u8,
     },
     /// A log line for the channel's author from a LOG record on its push
     /// connection (the engine's `Event::Log`, DOC-1956):
@@ -389,16 +414,19 @@ pub enum ToFetcher {
         /// The page.
         page: u16,
     },
-    /// Fetch a page's catalogue of sub-pages, `NNN.sub` (the engine's
-    /// `Input::FetchSubPages`, REQ-WEB-034), conditionally when it was
-    /// fetched before.
+    /// Fetch a part of a page's list of sub-pages, `NNN/P.sub` (the
+    /// engine's `Input::FetchSubPages`, REQ-1888), conditionally when it was
+    /// fetched before. Part 0 says whether the page has a folder.
     FetchSubPages {
         /// The page.
         page: u16,
+        /// The part, below [`MAX_LIST_PARTS`].
+        part: u8,
     },
-    /// Fetch one sub-page: its own file, `NNN-SSSS.t42`, once the page's
-    /// catalogue has answered, else the page's file (the engine's
-    /// `Input::FetchPage` with a sub-code, REQ-WEB-019).
+    /// Fetch one sub-page: its own file in its page's folder, `NNN/SSSS.t42`
+    /// or `NNN/SSSS.tti` (DEC-2116), once a part of the page's list has
+    /// answered, else the page's file (the engine's `Input::FetchPage` with
+    /// a sub-code, REQ-1887).
     FetchSubPage {
         /// The page.
         page: u16,
@@ -432,9 +460,11 @@ pub fn write_to_fetcher(out: &mut dyn Write, message: &ToFetcher) -> Result<(), 
             page_index(*page).ok_or(ProtocolError::BadValue("page number"))?;
             write_frame(out, KIND_FETCH_PAGE, &page.to_be_bytes())
         }
-        ToFetcher::FetchSubPages { page } => {
+        ToFetcher::FetchSubPages { page, part } => {
             page_index(*page).ok_or(ProtocolError::BadValue("page number"))?;
-            write_frame(out, KIND_FETCH_SUBPAGES, &page.to_be_bytes())
+            let mut payload = page.to_be_bytes().to_vec();
+            payload.push(checked_part(*part)?);
+            write_frame(out, KIND_FETCH_SUBPAGES, &payload)
         }
         ToFetcher::FetchSubPage { page, subcode } => {
             page_index(*page).ok_or(ProtocolError::BadValue("page number"))?;
@@ -474,7 +504,7 @@ pub fn read_to_fetcher(input: &mut dyn Read) -> Result<Option<ToFetcher>, Protoc
         KIND_MEASURE_ROUND_TRIP => ToFetcher::MeasureRoundTrip(fields.flag("measure")?),
         KIND_COOKIE_ANSWER | KIND_REACHED_ANSWER => cookies::read_answer(kind, &mut fields)?,
         KIND_FETCH_PAGE => ToFetcher::FetchPage { page: fields.display_page()? },
-        KIND_FETCH_SUBPAGES => ToFetcher::FetchSubPages { page: fields.display_page()? },
+        KIND_FETCH_SUBPAGES => ToFetcher::FetchSubPages { page: fields.display_page()?, part: checked_part(fields.u8()?)? },
         KIND_FETCH_SUBPAGE => {
             let page = fields.display_page()?;
             let subcode = fields.u16()?;
@@ -586,13 +616,33 @@ fn read_live_message(kind: u8, fields: &mut Fields<'_>) -> Result<FromFetcher, P
     })
 }
 
+/// Writes a part of a page's list: the page, the version and the rows,
+/// each held to a part's bounds; returns its kind.
+fn push_list_part(payload: &mut Vec<u8>, page: u16, version: &str, part: &SubPageRows) -> Result<u8, ProtocolError> {
+    page_index(page).ok_or(ProtocolError::BadValue("page number"))?;
+    payload.extend_from_slice(&page.to_be_bytes());
+    if version.len() > MAX_LIST_VERSION {
+        return Err(ProtocolError::BadValue("version too long"));
+    }
+    push_raw_text(payload, version, MAX_LIST_VERSION);
+    if usize::from(part.first) % ROWS_PER_PART != 0 {
+        return Err(ProtocolError::BadValue("a part's first place"));
+    }
+    crate::subpages::push_rows(payload, part, ROWS_PER_PART, |payload, title| {
+        push_raw_text(payload, title, MAX_PAGE_TITLE);
+        Ok(())
+    })?;
+    Ok(KIND_SUBPAGES)
+}
+
 /// A static channel's message about its files: its payload, and its kind.
 fn push_static_message(payload: &mut Vec<u8>, message: &FromFetcher) -> Result<u8, ProtocolError> {
     Ok(match message {
-        FromFetcher::SubPagesMissing { page } => {
+        FromFetcher::SubPagesMissing { page, part } | FromFetcher::SubPagesFailed { page, part } => {
             page_index(*page).ok_or(ProtocolError::BadValue("page number"))?;
             payload.extend_from_slice(&page.to_be_bytes());
-            KIND_SUBPAGES_MISSING
+            payload.push(checked_part(*part)?);
+            if matches!(message, FromFetcher::SubPagesMissing { .. }) { KIND_SUBPAGES_MISSING } else { KIND_SUBPAGES_FAILED }
         }
         FromFetcher::NoContents => KIND_NO_CONTENTS,
         FromFetcher::Refresh(seconds) => {
@@ -627,7 +677,8 @@ fn push_static_message(payload: &mut Vec<u8>, message: &FromFetcher) -> Result<u
 /// Reads a static channel's message about its files, of `kind`.
 fn read_static_message(kind: u8, fields: &mut Fields<'_>) -> Result<FromFetcher, ProtocolError> {
     Ok(match kind {
-        KIND_SUBPAGES_MISSING => FromFetcher::SubPagesMissing { page: fields.display_page()? },
+        KIND_SUBPAGES_MISSING => FromFetcher::SubPagesMissing { page: fields.display_page()?, part: checked_part(fields.u8()?)? },
+        KIND_SUBPAGES_FAILED => FromFetcher::SubPagesFailed { page: fields.display_page()?, part: checked_part(fields.u8()?)? },
         KIND_NO_CONTENTS => FromFetcher::NoContents,
         KIND_REFRESH => {
             let seconds = u32::from_be_bytes(fields.array()?);
@@ -733,18 +784,12 @@ pub fn write_to_core(out: &mut dyn Write, message: &FromFetcher) -> Result<(), P
         FromFetcher::CookieQuestion { .. } | FromFetcher::ReachedQuestion { .. } | FromFetcher::CookieSet { .. } | FromFetcher::ClearSiteData(_) => {
             cookies::push_cookie_message(&mut payload, message)?
         }
-        FromFetcher::SubPages { page, part } => {
-            page_index(*page).ok_or(ProtocolError::BadValue("page number"))?;
-            payload.extend_from_slice(&page.to_be_bytes());
-            crate::subpages::push_rows(&mut payload, part, CATALOGUE_PART, |payload, title| {
-                push_raw_text(payload, title, MAX_PAGE_TITLE);
-                Ok(())
-            })?;
-            KIND_SUBPAGES
-        }
-        FromFetcher::SubPagesMissing { .. } | FromFetcher::Refused { .. } | FromFetcher::NoContents | FromFetcher::Refresh(_) => {
-            push_static_message(&mut payload, message)?
-        }
+        FromFetcher::SubPages { page, version, part } => push_list_part(&mut payload, *page, version, part)?,
+        FromFetcher::SubPagesMissing { .. }
+        | FromFetcher::SubPagesFailed { .. }
+        | FromFetcher::Refused { .. }
+        | FromFetcher::NoContents
+        | FromFetcher::Refresh(_) => push_static_message(&mut payload, message)?,
         #[cfg(feature = "interaction")]
         FromFetcher::RoundTrip { microseconds } => {
             payload.extend_from_slice(&microseconds.to_be_bytes());
@@ -831,10 +876,14 @@ pub fn read_from_fetcher(input: &mut dyn Read) -> Result<Option<FromFetcher>, Pr
         KIND_COOKIE_QUESTION | KIND_REACHED_QUESTION | KIND_COOKIE_SET | KIND_CLEAR_SITE_DATA => cookies::read_cookie_message(kind, &mut fields)?,
         KIND_SUBPAGES => {
             let page = fields.display_page()?;
-            let part = crate::subpages::read_rows(&mut fields, CATALOGUE_PART, |fields| raw_text(fields, MAX_PAGE_TITLE, "title too long"))?;
-            FromFetcher::SubPages { page, part }
+            let version = raw_text(&mut fields, MAX_LIST_VERSION, "version too long")?;
+            let part = crate::subpages::read_rows(&mut fields, ROWS_PER_PART, |fields| raw_text(fields, MAX_PAGE_TITLE, "title too long"))?;
+            if usize::from(part.first) % ROWS_PER_PART != 0 {
+                return Err(ProtocolError::BadValue("a part's first place"));
+            }
+            FromFetcher::SubPages { page, version, part }
         }
-        KIND_SUBPAGES_MISSING | KIND_REFUSED | KIND_NO_CONTENTS | KIND_REFRESH => read_static_message(kind, &mut fields)?,
+        KIND_SUBPAGES_MISSING | KIND_SUBPAGES_FAILED | KIND_REFUSED | KIND_NO_CONTENTS | KIND_REFRESH => read_static_message(kind, &mut fields)?,
         #[cfg(feature = "interaction")]
         KIND_ROUND_TRIP => FromFetcher::RoundTrip { microseconds: u64::from_be_bytes(fields.array()?) },
         KIND_CHANNEL_LOG

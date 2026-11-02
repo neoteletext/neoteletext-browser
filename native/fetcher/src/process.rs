@@ -25,8 +25,8 @@ use neoteletext_web::http::MediaType;
 use neoteletext_web::port::{ConnectionId, NetOutput, Pump, Security, Transport};
 use neoteletext_web::proxy::Proxy;
 use neoteletext_web::records::redirect::RedirectRecord;
-use neoteletext_web::subpages;
-use protocol::fetcher::{CATALOGUE_PART, Entry, FromFetcher, Origin, RefusedFile, ToFetcher, read_to_fetcher, redirect_in_bounds, write_to_core};
+use neoteletext_web::subpages::{self, PartNumber};
+use protocol::fetcher::{Entry, FromFetcher, Origin, RefusedFile, ToFetcher, read_to_fetcher, redirect_in_bounds, write_to_core};
 use protocol::subpages::SubPageRows;
 
 #[cfg(feature = "links")]
@@ -59,14 +59,19 @@ const _: () = assert!(PAGE_LIMIT <= neoteletext_web::consts::DEFAULT_PAGE_LIMIT)
 const _: () = assert!(neoteletext_web::consts::DEFAULT_PUSH_LIMIT <= PAGE_LIMIT);
 /// Bytes passed to the agent at a time.
 const READ_CHUNK: usize = 16 * 1024;
-/// The catalogues of sub-pages kept as read, so that one the agent says
+/// The parts of lists of sub-pages kept as read, so that one the agent says
 /// is current (304, or fresh by its lifetime) is sent again without a
-/// request: as many as the trusted core holds a channel.
-const CATALOGUES_KEPT: usize = 16;
-// A catalogue's entries are the engine's, within the standard's maximum,
-// and its titles a row's, within a page title's bound on the wire.
+/// request: two whole lists of the standard's 8,190, or one part of each
+/// of 256 pages, at most a megabyte at the engine's 4,119 bytes a part.
+const PARTS_KEPT: usize = 2 * subpages::MAX_PARTS;
+// A list's rows are the engine's, within the standard's maximum, in the
+// protocol's parts, and its titles a row's, within a page title's bound on
+// the wire.
 const _: () = assert!(subpages::MAX_ENTRIES == neoteletext_core::limits::MAX_SUBPAGES);
 const _: () = assert!(subpages::MAX_TITLE * 4 <= protocol::MAX_PAGE_TITLE);
+const _: () = assert!(subpages::ROWS_PER_PART == protocol::fetcher::ROWS_PER_PART, "the engine's rows of a part");
+const _: () = assert!(subpages::MAX_PARTS == protocol::fetcher::MAX_LIST_PARTS, "the engine's parts of a list");
+const _: () = assert!(subpages::MAX_VALIDATOR == protocol::fetcher::MAX_LIST_VERSION, "the engine's longest version");
 // An exchange reports an address the engine accepted, so the protocol's
 // bound must hold the engine's longest.
 const _: () = assert!(protocol::fetcher::MAX_EXCHANGE_URL >= neoteletext_web::consts::MAX_URL_LENGTH);
@@ -148,10 +153,10 @@ enum Action {
     },
     Ready(u16, Option<u8>),
     Contents(Vec<u8>),
-    /// A page's catalogue of sub-pages, as fetched.
-    SubPages(PageAddress, Vec<u8>),
-    /// A page's catalogue is current: the one kept is sent again.
-    SubPagesCurrent(PageAddress),
+    /// A part of a page's list of sub-pages, as fetched.
+    SubPages(PageAddress, PartNumber, Vec<u8>),
+    /// A part of a page's list is current: the one kept is sent again.
+    SubPagesCurrent(PageAddress, PartNumber),
     /// The page asked for has been answered, one way or another.
     Answered,
     /// A file was refused, for the trusted core to say (REQ-708).
@@ -282,9 +287,6 @@ fn collect(output: Output<'_>, actions: &mut Vec<Action>) {
         Output::Event(Event::ServiceReady { initial_page, region, .. }) => Action::Ready(initial_page.mpp(), region),
         Output::Event(Event::Contents(bytes)) => Action::Contents(bytes.to_vec()),
         Output::Event(Event::ContentsMissing) => Action::Tell(FromFetcher::NoContents),
-        Output::Event(Event::SubPages { page, bytes }) => Action::SubPages(page, bytes.to_vec()),
-        Output::Event(Event::SubPagesCurrent { page }) => Action::SubPagesCurrent(page),
-        Output::Event(Event::SubPagesMissing { page }) => Action::Tell(FromFetcher::SubPagesMissing { page: page.mpp() }),
         Output::Event(Event::PageCurrent { .. } | Event::PageNotInService { .. } | Event::FetchFailed { .. }) => Action::Answered,
         Output::Event(Event::PushConnected) => Action::Push(true),
         Output::Event(Event::Denied(denied)) => Action::Tell(FromFetcher::Denied { status: denied.status, place: denied.place.to_owned() }),
@@ -349,9 +351,23 @@ fn collect(output: Output<'_>, actions: &mut Vec<Action>) {
             Action::Tell(FromFetcher::PageRedirect { page: page.mpp(), sub: subcode.value(), query: parameters.map(str::to_owned) })
         }
         Output::Event(Event::Redirect(RedirectRecord::Address(address))) => Action::Tell(FromFetcher::ProgramRedirect(address.to_owned())),
-        Output::Event(event) => Action::Tell(FromFetcher::Notice(format!("{event:?}"))),
+        Output::Event(event) => list_action(&event).unwrap_or_else(|| Action::Tell(FromFetcher::Notice(format!("{event:?}")))),
         _ => return,
     });
+}
+
+/// What a part of a page's list of sub-pages asks of the loop (REQ-1888).
+fn list_action(event: &Event<'_>) -> Option<Action> {
+    Some(match *event {
+        Event::SubPages { page, part, bytes } => Action::SubPages(page, part, bytes.to_vec()),
+        Event::SubPagesCurrent { page, part } => Action::SubPagesCurrent(page, part),
+        Event::SubPagesMissing { page, part } => Action::Tell(FromFetcher::SubPagesMissing { page: page.mpp(), part: part.number() }),
+        Event::SubPagesFailed { page, part, failure } => {
+            eprintln!("neoteletext-fetcher: part {} of the list of sub-pages of page {:03X} failed ({failure:?})", part.number(), page.mpp());
+            Action::Tell(FromFetcher::SubPagesFailed { page: page.mpp(), part: part.number() })
+        }
+        _ => return None,
+    })
 }
 
 fn contents_entries(bytes: &[u8]) -> (Vec<Entry>, Vec<PageAddress>) {
@@ -371,50 +387,47 @@ fn contents_entries(bytes: &[u8]) -> (Vec<Entry>, Vec<PageAddress>) {
     (entries, pages)
 }
 
-/// A page's catalogue of sub-pages, read by the engine's bounded reader
-/// (REQ-WEB-034), as the parts the trusted core takes: every entry the
-/// reader keeps, at most the standard's 8,190, in the page's order, at
-/// most [`CATALOGUE_PART`] a part. A catalogue refused whole, or with no
-/// entry, is one part of none.
-fn catalogue_parts(bytes: &[u8]) -> Vec<SubPageRows> {
-    let entries: Vec<(u16, String)> = match subpages::read(bytes) {
-        Ok(entries) => entries.flatten().map(|entry| (entry.subcode.value(), entry.title.unwrap_or_default().to_owned())).collect(),
-        Err(_) => Vec::new(),
-    };
-    let count = u16::try_from(entries.len().min(subpages::MAX_ENTRIES)).unwrap_or(0);
-    if entries.is_empty() {
-        return vec![SubPageRows::default()];
-    }
-    entries.chunks(CATALOGUE_PART).zip((0_u16..).step_by(CATALOGUE_PART)).map(|(rows, first)| SubPageRows { count, first, rows: rows.to_vec() }).collect()
+/// A part of a page's list of sub-pages, `NNN/P.sub`, read by the engine's
+/// bounded reader (REQ-1888), as the trusted core takes it: the page's
+/// version, and its number of sub-pages, the part's first place and every
+/// row the reader keeps, which are at most a part's and ascend. None when
+/// the reader refused it whole, or it lies past the page's count.
+fn list_part(part: PartNumber, bytes: &[u8]) -> Option<(String, SubPageRows)> {
+    let list = subpages::read(bytes).ok()?;
+    let first = u16::try_from(part.first_place()).ok().filter(|&first| first < list.total)?;
+    let rows: Vec<(u16, String)> = list.entries.flatten().map(|entry| (entry.subcode.value(), entry.title.unwrap_or_default().to_owned())).collect();
+    let fits = usize::from(first).saturating_add(rows.len()) <= usize::from(list.total);
+    fits.then(|| (list.version.as_str().to_owned(), SubPageRows { count: list.total, first, rows }))
 }
 
-/// The catalogues of sub-pages last read, the most recent last.
+/// The parts of lists of sub-pages last read, the most recent last.
 #[derive(Default)]
-struct Catalogues(VecDeque<(PageAddress, Vec<u8>)>);
+struct Parts(VecDeque<((PageAddress, PartNumber), Vec<u8>)>);
 
-impl Catalogues {
-    /// Keeps `bytes` as `page`'s catalogue, forgetting the oldest past
-    /// [`CATALOGUES_KEPT`].
-    fn keep(&mut self, page: PageAddress, bytes: Vec<u8>) {
-        self.0.retain(|(kept, _)| *kept != page);
-        self.0.push_back((page, bytes));
-        if self.0.len() > CATALOGUES_KEPT {
+impl Parts {
+    /// Keeps `bytes` as `page`'s part `part`, forgetting the oldest past
+    /// [`PARTS_KEPT`].
+    fn keep(&mut self, page: PageAddress, part: PartNumber, bytes: Vec<u8>) {
+        self.0.retain(|(kept, _)| *kept != (page, part));
+        self.0.push_back(((page, part), bytes));
+        if self.0.len() > PARTS_KEPT {
             self.0.pop_front();
         }
     }
 
-    /// The catalogue kept of `page`.
-    fn get(&self, page: PageAddress) -> Option<&[u8]> {
-        self.0.iter().find(|(kept, _)| *kept == page).map(|(_, bytes)| bytes.as_slice())
+    /// The part kept of `page`.
+    fn get(&self, page: PageAddress, part: PartNumber) -> Option<&[u8]> {
+        self.0.iter().find(|(kept, _)| *kept == (page, part)).map(|(_, bytes)| bytes.as_slice())
     }
 }
 
-/// Sends `page`'s catalogue to the trusted core in parts.
-fn send_catalogue(output: &cookies::Output, page: PageAddress, bytes: &[u8]) -> Result<(), String> {
-    for part in catalogue_parts(bytes) {
-        send(output, &FromFetcher::SubPages { page: page.mpp(), part })?;
+/// Sends part `part` of `page`'s list to the trusted core, or that it could
+/// not be used.
+fn send_part(output: &cookies::Output, page: PageAddress, part: PartNumber, bytes: Option<&[u8]>) -> Result<(), String> {
+    match bytes.and_then(|bytes| list_part(part, bytes)) {
+        Some((version, rows)) => send(output, &FromFetcher::SubPages { page: page.mpp(), version, part: rows }),
+        None => send(output, &FromFetcher::SubPagesFailed { page: page.mpp(), part: part.number() }),
     }
-    Ok(())
 }
 
 /// The agent's settings for a channel that may reach the local addresses
@@ -463,7 +476,7 @@ pub fn run(channel: &str, allowed: &[IpAddr], proxy: Option<Proxy>) -> Result<()
     let mut next_tick: Option<Instant> = None;
     let mut queue: VecDeque<PageAddress> = VecDeque::new();
     let mut waiting = false;
-    let mut catalogues = Catalogues::default();
+    let mut parts = Parts::default();
     let mut live = Live::default();
     // The status of the last response, for a refusal of its content.
     let mut last_status = None;
@@ -496,18 +509,14 @@ pub fn run(channel: &str, allowed: &[IpAddr], proxy: Option<Proxy>) -> Result<()
                     send(&output, &FromFetcher::Contents(entries))?;
                     queue.extend(pages);
                 }
-                Action::SubPages(page, bytes) => {
-                    send_catalogue(&output, page, &bytes)?;
-                    catalogues.keep(page, bytes);
+                Action::SubPages(page, part, bytes) => {
+                    send_part(&output, page, part, Some(&bytes))?;
+                    parts.keep(page, part, bytes);
                 }
-                // A catalogue no longer kept, though the agent holds its
-                // validators, is not sent: the page is listed from what
-                // its decoder holds until the catalogue next changes.
-                Action::SubPagesCurrent(page) => {
-                    if let Some(bytes) = catalogues.get(page) {
-                        send_catalogue(&output, page, bytes)?;
-                    }
-                }
+                // A part no longer kept, though the agent holds its
+                // validators, is said to have failed: the trusted core asks
+                // for it again when its page next opens.
+                Action::SubPagesCurrent(page, part) => send_part(&output, page, part, parts.get(page, part))?,
                 Action::Answered => waiting = false,
                 Action::Refused(file, answer) => send(&output, &FromFetcher::Refused { file, status: answer.status(last_status) })?,
                 Action::Push(open) => push_changed(&agent, &output, open)?,
@@ -600,7 +609,9 @@ fn live_record(action: Action, live: &mut Live, output: &cookies::Output) -> Res
         }
         Action::SubPageList(part) => match live.lists.note(part.page.mpp(), part.version, part.part, part.parts, part.count, part.entries) {
             Noted::Partial => Ok(()),
-            Noted::Whole(page, parts) => parts.into_iter().try_for_each(|part| send(output, &FromFetcher::SubPages { page, part })),
+            Noted::Whole(page, version, parts) => {
+                parts.into_iter().try_for_each(|part| send(output, &FromFetcher::SubPages { page, version: version.clone(), part }))
+            }
             // Said where a channel's other faults are, the console; the
             // engine counted the records it refused alone.
             Noted::Refused(page, why) => {
@@ -713,7 +724,9 @@ fn tell_failures(transport: &mut Tcp, output: &cookies::Output) -> Result<(), St
 fn fetch(agent: &mut Agent<'_>, clock: &dyn Fn() -> Instant, asked: &ToFetcher, actions: &mut Vec<Action>) {
     let input = match *asked {
         ToFetcher::FetchPage { page } => PageAddress::from_mpp(page).map(|page| Input::FetchPage { page, subcode: None }),
-        ToFetcher::FetchSubPages { page } => PageAddress::from_mpp(page).map(|page| Input::FetchSubPages { page }),
+        ToFetcher::FetchSubPages { page, part } => {
+            PageAddress::from_mpp(page).zip(PartNumber::new(usize::from(part))).map(|(page, part)| Input::FetchSubPages { page, part })
+        }
         ToFetcher::FetchSubPage { page, subcode } => PageAddress::from_mpp(page).map(|page| Input::FetchPage { page, subcode: Some(SubCode::new(subcode)) }),
         _ => None,
     };
@@ -826,38 +839,45 @@ mod tests {
         assert!(matches!(read, Some(FromFetcher::Page { bytes, .. }) if bytes.len() == config.page_limit));
     }
 
-    /// Decision 119 and decision 112 item 3 (the engine's REQ-WEB-034): a
-    /// catalogue of the standard's 8,190 sub-pages reaches the trusted core
-    /// whole, in order, in parts each one message; one the engine's reader
-    /// refuses whole goes as a catalogue of none.
+    /// REQ-1888, DOC-1869: a part of a list of the standard's 8,190
+    /// sub-pages, as `NNN/P.sub` holds it, reaches the trusted core as one
+    /// message, at its part's first place, with the page's count and
+    /// version; one the engine's reader refuses whole, or past the page's
+    /// count, is a part that failed.
     #[test]
-    fn a_catalogue_of_8190_sub_pages_goes_in_parts() {
-        use neoteletext_core::limits::{MAX_SUBPAGES, from_rank};
+    fn a_part_of_a_list_of_8190_sub_pages_is_one_message() {
+        use neoteletext_core::limits::from_rank;
         use std::fmt::Write as _;
-        let most = u16::try_from(MAX_SUBPAGES).unwrap();
-        let mut file = String::new();
-        for rank in 1..=most {
-            let subcode = from_rank(rank);
-            let _ = write!(file, "{subcode:04X}\t{rank:016x}\tStory {rank}\r\n");
+        let part_file = |total: u16, part: usize| {
+            let mut file = format!("{total}\t4be81f7a09c2d635\r\n");
+            for place in part * subpages::ROWS_PER_PART..((part + 1) * subpages::ROWS_PER_PART).min(usize::from(total)) {
+                let rank = u16::try_from(place + 1).unwrap();
+                let _ = write!(file, "{:04X}\t{rank:016x}\tStory {rank}\r\n", from_rank(rank));
+            }
+            file
+        };
+        let last = PartNumber::new(subpages::MAX_PARTS - 1).unwrap();
+        let (version, rows) = list_part(last, part_file(8_190, last.number().into()).as_bytes()).unwrap();
+        assert_eq!(version, "4be81f7a09c2d635");
+        assert_eq!((rows.count, rows.first, rows.rows.len()), (8_190, 8_128, 62), "the last part holds the rest");
+        assert_eq!(rows.rows[61], (from_rank(8_190), String::from("Story 8190")));
+        let mut written = Vec::new();
+        write_to_core(&mut written, &FromFetcher::SubPages { page: 0x210, version, part: rows }).unwrap();
+        let second = PartNumber::new(1).unwrap();
+        assert_eq!(list_part(second, part_file(8_190, 1).as_bytes()).map(|(_, rows)| (rows.first, rows.rows.len())), Some((64, 64)));
+        assert_eq!(list_part(second, part_file(10, 0).as_bytes()), None, "part 1 of a page of ten");
+        assert_eq!(list_part(PartNumber::FIRST, &vec![b'x'; subpages::MAX_BYTES + 1]), None, "refused whole");
+        let mut kept = Parts::default();
+        let page = PageAddress::from_mpp(0x100).unwrap();
+        for part in 0..=PARTS_KEPT {
+            kept.keep(
+                PageAddress::from_mpp(0x100 + u16::try_from(part / subpages::MAX_PARTS).unwrap()).unwrap(),
+                PartNumber::new(part % subpages::MAX_PARTS).unwrap(),
+                vec![1],
+            );
         }
-        let parts = catalogue_parts(file.as_bytes());
-        assert_eq!(parts.len(), MAX_SUBPAGES.div_ceil(CATALOGUE_PART));
-        let mut next = 0_u16;
-        for part in &parts {
-            assert_eq!((part.count, part.first), (most, next), "in order");
-            let mut written = Vec::new();
-            write_to_core(&mut written, &FromFetcher::SubPages { page: 0x210, part: part.clone() }).unwrap();
-            next += u16::try_from(part.rows.len()).unwrap();
-        }
-        assert_eq!(next, most, "every entry");
-        assert_eq!(parts[0].rows[0], (from_rank(1), String::from("Story 1")));
-        assert_eq!(catalogue_parts(&vec![b'x'; subpages::MAX_BYTES + 1]), [SubPageRows::default()], "refused whole");
-        let mut kept = Catalogues::default();
-        for page in 0..=u16::try_from(CATALOGUES_KEPT).unwrap() {
-            kept.keep(PageAddress::from_mpp(0x100 + page).unwrap(), vec![1]);
-        }
-        assert!(kept.get(PageAddress::from_mpp(0x100).unwrap()).is_none(), "the oldest forgotten");
-        assert!(kept.get(PageAddress::from_mpp(0x101).unwrap()).is_some());
+        assert!(kept.get(page, PartNumber::FIRST).is_none(), "the oldest forgotten");
+        assert!(kept.get(page, second).is_some());
     }
 
     /// Decision 62: the agent the fetcher builds asks its store for each
@@ -872,6 +892,7 @@ mod tests {
                 &mut self,
                 host: &str,
                 path: &str,
+                _: Option<&str>,
                 _: bool,
                 _: neoteletext_web::cookie::Site,
                 _: u64,
@@ -895,7 +916,7 @@ mod tests {
             fn reached_securely(&self, _: &str, _: u64) -> bool {
                 false
             }
-            fn clear_host(&mut self, _: &str) {}
+            fn clear_site_data(&mut self, _: &str, _: Option<&str>) {}
             fn wipe(&mut self) {}
         }
         let mut storage = Box::new(Storage::default());

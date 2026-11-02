@@ -101,7 +101,9 @@ fn typed(cookie: &SetCookie<'_>) -> protocol::fetcher::SetCookie {
 }
 
 impl Cookies for CoreCookies {
-    fn header_for(&mut self, host: &str, path: &str, secure: bool, kind: Site, _now: u64, out: &mut Writer<'_>) -> (usize, bool) {
+    // The trusted core knows the channel this fetcher is for, and answers
+    // from that channel's folder alone, so the agent's scope goes no further.
+    fn header_for(&mut self, host: &str, path: &str, _scope: Option<&str>, secure: bool, kind: Site, _now: u64, out: &mut Writer<'_>) -> (usize, bool) {
         let id = self.next_id();
         let question = FromFetcher::CookieQuestion { id, host: host.to_owned(), path: path.to_owned(), secure, site: site(kind) };
         let Some(ToFetcher::CookieAnswer { header, .. }) = self.ask(&question, id) else { return (0, false) };
@@ -140,7 +142,9 @@ impl Cookies for CoreCookies {
         matches!(self.ask(&FromFetcher::ReachedQuestion { id, host: host.to_owned() }, id), Some(ToFetcher::ReachedAnswer { reached: true, .. }))
     }
 
-    fn clear_host(&mut self, host: &str) {
+    // The trusted core clears this fetcher's channel alone, whose folder the
+    // scope is.
+    fn clear_site_data(&mut self, host: &str, _scope: Option<&str>) {
         self.tell(&FromFetcher::ClearSiteData(host.to_owned()));
     }
 

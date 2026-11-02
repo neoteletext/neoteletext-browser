@@ -18,9 +18,9 @@ use neoteletext_core::acq::StoredPage;
 use neoteletext_core::charset::{CharRef, CharSet, G2Set};
 use neoteletext_core::compose::compose_level;
 use neoteletext_core::config::Config;
-use neoteletext_core::consts::{CLOCK_BYTES, G2_RIGHT_GUILLEMET, ROWS, SPACE, STATUS_COLUMNS};
 #[cfg(feature = "links")]
-use neoteletext_core::consts::{COLOUR_BLUE_BIT, COLOUR_GREEN_BIT, COLOUR_RED_BIT};
+use neoteletext_core::consts::FASTEXT_COLOURS;
+use neoteletext_core::consts::{CLOCK_BYTES, G2_RIGHT_GUILLEMET, ROWS, SPACE, STATUS_COLUMNS};
 #[cfg(feature = "links")]
 use neoteletext_core::controls::{Control, Look, apply_look};
 use neoteletext_core::fsm::PageState;
@@ -398,10 +398,6 @@ fn controls(stored: &StoredPage) -> Vec<protocol::links::Area> {
         .collect()
 }
 
-/// The Level 1 colours of the coloured keys' prompts, in their order.
-#[cfg(feature = "links")]
-const KEY_COLOURS: [u8; 4] = [COLOUR_RED_BIT, COLOUR_GREEN_BIT, COLOUR_RED_BIT | COLOUR_GREEN_BIT, COLOUR_GREEN_BIT | COLOUR_BLUE_BIT];
-
 /// A page's Fastext from its packet X/27/0, which the engine writes from a
 /// TTI page's link lines too (the engine's REQ-NAV-003), and whether its
 /// row 24 is shown as the engine's viewer decides it: drawn, and not boxed
@@ -428,8 +424,10 @@ fn fastext(stored: &StoredPage, grid: &Grid, receiver: Option<&ReceiverRow>) -> 
         }),
         None => [target(red), target(green), target(yellow), target(cyan), target(links.index)],
     };
-    let prompts = grid.cells.get(FASTEXT_ROW).filter(|_| row24).map_or([None; 4], |row| prompts(row));
-    // REQ-SEC-024: a coloured key follows only a link its prompt shows.
+    // REQ-SEC-024, DEC-2115: a coloured key follows only a link whose
+    // prompt row 24 shows whole, as the engine judges it.
+    let shown = if row24 { grid.prompts_shown() } else { [false; FASTEXT_COLOURS.len()] };
+    let prompts = grid.cells.get(FASTEXT_ROW).map_or([None; FASTEXT_COLOURS.len()], |row| prompts(row, shown));
     let mut keys = keys;
     for (key, prompt) in keys.iter_mut().zip(prompts) {
         *key = key.filter(|_| prompt.is_some());
@@ -437,22 +435,22 @@ fn fastext(stored: &StoredPage, grid: &Grid, receiver: Option<&ReceiverRow>) -> 
     protocol::links::Fastext { keys, row24, prompts }
 }
 
-/// Where row 24 shows each coloured key's prompt: the cells from the first
-/// to the last that draw something in its colour (EN 300 706 clause 12.2.2's
-/// red, green, yellow and cyan), as a first column and a length. A prompt
-/// that any of those cells conceals, flashes or draws on its own colour is
-/// no prompt (REQ-SEC-024, DEC-2115): the engine's `Grid::prompts_shown`
-/// decides the same from commit `d174c29`, and replaces this test when the
-/// pin moves past it.
+/// Where row 24 shows each coloured key's prompt, of those `shown`: the
+/// cells from the first to the last that draw something in its colour (EN
+/// 300 706 clause 12.2.2's red, green, yellow and cyan), as a first column
+/// and a length.
 #[cfg(feature = "links")]
-fn prompts(row: &[neoteletext_core::level1::Cell]) -> [Option<(u8, u8)>; 4] {
-    KEY_COLOURS.map(|colour| {
+fn prompts(row: &[neoteletext_core::level1::Cell], shown: [bool; FASTEXT_COLOURS.len()]) -> [Option<(u8, u8)>; FASTEXT_COLOURS.len()] {
+    let mut prompts = [None; FASTEXT_COLOURS.len()];
+    for ((prompt, colour), shown) in prompts.iter_mut().zip(FASTEXT_COLOURS).zip(shown) {
         let in_colour = |cell: &neoteletext_core::level1::Cell| cell.foreground == colour && !cell.glyph.is_blank();
-        if row.iter().filter(|cell| in_colour(cell)).any(|cell| cell.conceal || cell.flash || cell.background == colour) {
-            return None;
-        }
-        let first = row.iter().position(in_colour)?;
-        let last = row.iter().rposition(in_colour)?;
-        Some((u8::try_from(first).ok()?, u8::try_from(last.checked_sub(first)?.checked_add(1)?).ok()?))
-    })
+        *prompt = shown
+            .then(|| {
+                let first = row.iter().position(in_colour)?;
+                let last = row.iter().rposition(in_colour)?;
+                Some((u8::try_from(first).ok()?, u8::try_from(last.checked_sub(first)?.checked_add(1)?).ok()?))
+            })
+            .flatten();
+    }
+    prompts
 }

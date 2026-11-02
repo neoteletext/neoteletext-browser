@@ -21,9 +21,8 @@ pub(super) const KIND_CONFINED: u8 = 93;
 pub(super) const KIND_SEND: u8 = 96;
 pub(super) const KIND_COOKIE_ANSWER: u8 = 97;
 pub(super) const KIND_REACHED_ANSWER: u8 = 98;
-// A page's catalogue of sub-pages, `NNN.sub` (the engine's REQ-WEB-034,
-// decision 112), in the first numbers free across every pipe after the
-// decoder's.
+// A part of a page's list of sub-pages, `NNN/P.sub` (REQ-1888, decision
+// 112), in the first numbers free across every pipe after the decoder's.
 pub(super) const KIND_SUBPAGES: u8 = 105;
 pub(super) const KIND_SUBPAGES_MISSING: u8 = 106;
 pub(super) const KIND_FETCH_SUBPAGES: u8 = 107;
@@ -62,3 +61,6 @@ pub(super) const KIND_REFUSED: u8 = 140;
 pub(super) const KIND_NO_CONTENTS: u8 = 141;
 pub(super) const KIND_REFRESH: u8 = 142;
 pub(super) const KIND_FETCH_PAGE: u8 = 143;
+// A part of a page's list that could not be fetched (REQ-1888), in the next
+// number.
+pub(super) const KIND_SUBPAGES_FAILED: u8 = 144;

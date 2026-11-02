@@ -4,11 +4,12 @@
 //! decoder and lapsing when another page is opened, as on a set.
 //!
 //! Sub-pages are stepped from a place and a count, never a list (decision
-//! 112 item 4): from the page's catalogue when its fetcher read one, which
-//! lists every sub-page whether held or not, else from the neighbours its
-//! decoder says of the one drawn. A sub-page of a page with a catalogue is
-//! fetched, with those either side of it, only when it is shown (decision
-//! 112 item 3; the engine's REQ-WEB-019).
+//! 112 item 4): from the page's list of sub-pages when its fetcher read the
+//! part that holds the next, `NNN/P.sub` (REQ-1888), which lists every
+//! sub-page whether held or not, else from the neighbours its decoder says
+//! of the one drawn. A sub-page of a page with a list is fetched, with
+//! those either side of it, only when it is shown (decision 112 item 3;
+//! REQ-1887), and the parts of the list beside it with it.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -16,6 +17,7 @@ use interface_core::canvas::PageKey;
 use interface_core::controls::{PageControl, PageControls, Rotation};
 use neoteletext::subpages::{Catalogue, TUNED_EITHER_SIDE};
 use neoteletext_core::limits::{SUBCODE_ANY, SUBCODE_NONE};
+use neoteletext_web::subpages::PartNumber;
 use protocol::ToInterface;
 use protocol::decoder::{ToDecoder, View};
 use protocol::fetcher::{ToFetcher, write_to_fetcher};
@@ -41,8 +43,11 @@ pub(crate) struct State {
     /// The sub-pages of the open page asked of its fetcher since it
     /// opened: each is asked for once.
     fetched: BTreeSet<u16>,
-    /// The open page's catalogue was asked for since it opened.
+    /// The open page's list was asked for since it opened.
     catalogue_asked: bool,
+    /// The rows the sub-page list asked for of a page whose list lacks the
+    /// parts they fall in, answered when those parts have come.
+    rows_wanted: Option<(PageKey, SubPageRange)>,
     /// A sub-page of a live channel's open page selected and not yet
     /// drawn: the strip says it is loading (REQ-1505 item 5).
     awaiting: Option<(PageKey, u16)>,
@@ -104,6 +109,9 @@ impl Core {
         self.controls.fetched.clear();
         self.controls.catalogue_asked = false;
         if let Some(key) = key {
+            if let Some(subpages) = self.channel_subpages(key.channel) {
+                subpages.again(key.page);
+            }
             self.ask_catalogue(key);
             self.ask_page(key.channel, key.page);
         }
@@ -188,9 +196,9 @@ impl Core {
         self.controls.subpages.retain(|key, _| visible.contains(key) || Some(*key) == open);
     }
 
-    /// The open page's catalogue of sub-pages, asked of its fetcher once
-    /// it opens, when it is one of a set (the engine's REQ-WEB-034): a
-    /// channel that publishes none is asked once a page and never again.
+    /// Part 0 of the open page's list of sub-pages, asked of its fetcher
+    /// once it opens, when it is one of a set (REQ-1888): it says whether
+    /// the page has a folder, and a page with none is never asked again.
     fn ask_catalogue(&mut self, key: PageKey) {
         if self.controls.catalogue_asked || self.controls.open != Some(key) {
             return;
@@ -205,12 +213,20 @@ impl Core {
         if self.session.all_tabs().any(|tab| tab.channel.id == key.channel && tab.channel.live) {
             return;
         }
-        let ask = self.channel_subpages(key.channel).is_some_and(|subpages| {
-            subpages.unanswered(key.page);
-            subpages.ask(key.page)
-        });
-        if ask {
-            self.tell_fetcher(key.channel, &ToFetcher::FetchSubPages { page: key.page });
+        self.ask_parts(key, &[PartNumber::FIRST.number()]);
+    }
+
+    /// Asks `key`'s fetcher for those of `parts` of its page's list not
+    /// asked since the page opened, on a channel served as files: a live
+    /// channel's lists come on its connection (REQ-703).
+    pub(super) fn ask_parts(&mut self, key: PageKey, parts: &[u8]) {
+        if self.session.all_tabs().any(|tab| tab.channel.id == key.channel && tab.channel.live) {
+            return;
+        }
+        for &part in parts {
+            if self.channel_subpages(key.channel).is_some_and(|subpages| subpages.ask(key.page, part)) {
+                self.tell_fetcher(key.channel, &ToFetcher::FetchSubPages { page: key.page, part });
+            }
         }
     }
 
@@ -325,12 +341,19 @@ impl Core {
         if live {
             return Ok(());
         }
-        let Some(around) = self.with_catalogue(key, |catalogue| catalogue.around(subpage, TUNED_EITHER_SIDE)) else { return Ok(()) };
+        // The parts beside it too, so that a step past the sub-pages fetched
+        // with it finds its row (DOC-1869).
+        let Some((around, parts)) = self.with_catalogue(key, |catalogue| {
+            (catalogue.around(subpage, TUNED_EITHER_SIDE), catalogue.parts_around(subpage, TUNED_EITHER_SIDE.saturating_add(1)))
+        }) else {
+            return Ok(());
+        };
         for subcode in around {
             if subcode != SUBCODE_ANY && self.controls.fetched.insert(subcode) {
                 self.tell_fetcher(key.channel, &ToFetcher::FetchSubPage { page: key.page, subcode });
             }
         }
+        self.ask_parts(key, &parts);
         Ok(())
     }
 
@@ -396,31 +419,54 @@ impl Core {
         Ok(())
     }
 
-    /// The open page's catalogue arrived or changed: its controls and the
-    /// sub-page it shows follow it.
+    /// A part of a page's list arrived or changed: rows waiting for it are
+    /// answered, and the open page's controls and the sub-page it shows
+    /// follow it.
     pub(super) fn catalogue_arrived(&mut self, key: PageKey) -> Result<(), String> {
+        self.answer_rows_wanted(key, false)?;
         if self.controls.open != Some(key) {
             return Ok(());
         }
         let view = self.controls.view_of(key);
         if view.subpage.is_some() {
             self.show_subpage(key, view)?;
+        } else if let Some(drawn) = self.controls.subpages.get(&key).map(|drawn| drawn.shown) {
+            // The page as it opened: the parts a step from it takes.
+            let parts = self.with_catalogue(key, |catalogue| catalogue.parts_around(drawn, TUNED_EITHER_SIDE.saturating_add(1))).unwrap_or_default();
+            self.ask_parts(key, &parts);
         }
         self.send_controls()
     }
 
     /// The sub-page list asks for rows of `page` of the active channel:
-    /// answered from its catalogue when one is held, else by its decoder
-    /// from what it holds. Nothing is fetched for it: only the page open
-    /// has its catalogue asked for (requirement 4.7 as amended for
-    /// decision 121).
+    /// answered from its list when any of it is held, once the parts the
+    /// rows fall in have come, which are asked for (REQ-1888: the list
+    /// scrolled asks for the parts its rows fall in); else by its decoder
+    /// from what it holds. A page's list is first asked for only when it
+    /// opens (requirement 4.7 as amended for decision 121).
     pub(super) fn subpage_rows(&mut self, page: u16, range: SubPageRange) -> Result<(), String> {
         let Some(channel) = self.active_channel() else { return Ok(()) };
-        if let Some(rows) = self.with_catalogue(PageKey { channel, page }, |catalogue| catalogue.rows(range)) {
-            return self.send(&ToInterface::SubPageRows { channel, page, rows });
+        let key = PageKey { channel, page };
+        let Some(wanted) = self.with_catalogue(key, |catalogue| catalogue.parts_wanted(range)) else {
+            self.tell(channel, ToDecoder::SubPageRows { page, range });
+            return Ok(());
+        };
+        self.controls.rows_wanted = Some((key, range));
+        self.ask_parts(key, &wanted);
+        self.answer_rows_wanted(key, false)
+    }
+
+    /// Answers the rows waiting on `key`'s list once the parts they fall in
+    /// are held, or at once with what is held when `now`: a part that could
+    /// not be fetched is not waited for.
+    pub(super) fn answer_rows_wanted(&mut self, key: PageKey, now: bool) -> Result<(), String> {
+        let Some((wanted, range)) = self.controls.rows_wanted.filter(|(wanted, _)| *wanted == key) else { return Ok(()) };
+        let Some((parts, rows)) = self.with_catalogue(wanted, |catalogue| (catalogue.parts_wanted(range), catalogue.rows(range))) else { return Ok(()) };
+        if !parts.is_empty() && !now {
+            return Ok(());
         }
-        self.tell(channel, ToDecoder::SubPageRows { page, range });
-        Ok(())
+        self.controls.rows_wanted = None;
+        self.send(&ToInterface::SubPageRows { channel: key.channel, page: key.page, rows })
     }
 
     /// Strip input: a key of the open page's controls.
@@ -458,10 +504,12 @@ impl Core {
             PageControl::SubPage(forward) => {
                 let drawn = self.controls.subpages.get(&key).copied();
                 let current = view.subpage.or(drawn.map(|drawn| drawn.shown)).unwrap_or(SUBCODE_ANY);
-                let next = match self.with_catalogue(key, |catalogue| catalogue.step(current, forward)) {
-                    Some(stepped) => stepped,
-                    None => drawn.and_then(|drawn| step_drawn(&drawn, &view, forward)),
-                };
+                // The list's next row when its part is held, else the
+                // decoder's.
+                let next = self
+                    .with_catalogue(key, |catalogue| catalogue.step(current, forward))
+                    .flatten()
+                    .or_else(|| drawn.and_then(|drawn| step_drawn(&drawn, &view, forward)));
                 // 3F7F names no sub-page (clause 9.6.1).
                 let Some(next) = next.filter(|&next| next != SUBCODE_ANY) else { return Ok(()) };
                 view.subpage = Some(next);
@@ -572,18 +620,30 @@ mod tests {
         assert_eq!(test.core.controls.open, Some(key));
     }
 
-    /// Decision 119 and decision 112 item 3 (the engine's REQ-WEB-019 and
-    /// REQ-WEB-034): a page that is one of a set has its catalogue asked
-    /// for when it opens; the catalogue's 8,190 sub-pages are counted and
-    /// stepped through, the list's rows answered from it, and only the
-    /// sub-page shown and those either side of it asked of the fetcher,
-    /// each once.
+    /// The parts of the list of `subcodes` as page 210's fetcher sends them.
+    fn list_part(subcodes: &[u16], version: &str, part: usize) -> protocol::fetcher::FromFetcher {
+        use protocol::fetcher::{FromFetcher, ROWS_PER_PART};
+        use protocol::subpages::SubPageRows;
+        let count = u16::try_from(subcodes.len()).unwrap();
+        let rows = subcodes.chunks(ROWS_PER_PART).nth(part).unwrap_or_default().iter().map(|&subcode| (subcode, format!("Story {subcode:04X}"))).collect();
+        FromFetcher::SubPages { page: 0x210, version: version.into(), part: SubPageRows { count, first: u16::try_from(part * ROWS_PER_PART).unwrap(), rows } }
+    }
+
+    /// What the core asked of page 210's fetcher since last asked.
+    fn told(test: &mut super::super::test_support::Test) -> Vec<ToFetcher> {
+        core::mem::take(&mut test.core.controls.told_fetchers).into_iter().map(|(_, told)| told).collect()
+    }
+
+    /// Decision 119, decision 112 item 3, REQ-1887 and REQ-1888: a page that
+    /// is one of a set has part 0 of its list asked for when it opens; the
+    /// list's 8,190 sub-pages are counted from it, the part a step from the
+    /// page shown takes asked for with it, the list's rows answered once the
+    /// parts they fall in have come, and only the sub-page shown and those
+    /// either side of it asked of the fetcher, each once.
     #[test]
-    fn a_catalogue_lists_every_sub_page_and_only_those_shown_are_fetched() {
+    fn a_list_counts_every_sub_page_and_only_the_parts_and_sub_pages_wanted_are_fetched() {
         use neoteletext_core::limits::{MAX_SUBPAGES, from_rank};
         use protocol::decoder::FromDecoder;
-        use protocol::fetcher::{CATALOGUE_PART, FromFetcher};
-        use protocol::subpages::SubPageRows;
         let most = u16::try_from(MAX_SUBPAGES).unwrap();
         // Every sub-code but 0000 and 3F7F, in ascending order.
         let subcodes: Vec<u16> = (1..=most).map(from_rank).collect();
@@ -595,34 +655,73 @@ mod tests {
         assert!(test.core.controls.told_fetchers.is_empty(), "not asked before the page is known to be one of a set");
         let first = SubPageStep { count: 1, shown: subcodes[0], place: Some(0), previous: None, next: None };
         test.core.decoded(channel, FromDecoder::SubPages { page: 0x210, step: first }).unwrap();
-        assert_eq!(core::mem::take(&mut test.core.controls.told_fetchers), [(channel, ToFetcher::FetchSubPages { page: 0x210 })]);
+        let part = |part| ToFetcher::FetchSubPages { page: 0x210, part };
+        assert_eq!(told(&mut test), [part(0)]);
         test.core.decoded(channel, FromDecoder::SubPages { page: 0x210, step: first }).unwrap();
         assert!(test.core.controls.told_fetchers.is_empty(), "asked once while it is open");
-        for (place, part) in (0_u16..).step_by(CATALOGUE_PART).zip(subcodes.chunks(CATALOGUE_PART)) {
-            let part = SubPageRows { count: most, first: place, rows: part.iter().map(|&subcode| (subcode, format!("Story {subcode:04X}"))).collect() };
-            test.core.fetched(channel, FromFetcher::SubPages { page: 0x210, part }).unwrap();
-        }
+        test.core.fetched(channel, list_part(&subcodes, "v1", 0)).unwrap();
         let sent = test.sent();
-        assert!(sent.contains(&ToInterface::SubPageCount { channel, page: 0x210, count: most }));
+        assert!(sent.contains(&ToInterface::SubPageCount { channel, page: 0x210, count: most }), "part 0 alone sizes the list");
         let controls = sent.iter().rev().find_map(|message| if let ToInterface::PageControls(controls) = message { Some(*controls) } else { None });
         assert_eq!(controls.map(|controls| controls.subpages), Some(most), "every sub-page, held or not");
+        assert_eq!(told(&mut test), [part(127)], "the last part, a step back from the first");
+        test.core.fetched(channel, list_part(&subcodes, "v1", 127)).unwrap();
         test.core.intent(protocol::ToCore::PageControl(PageControl::SubPage(false))).unwrap();
         let last = subcodes[usize::from(most) - 1];
         assert_eq!(test.core.controls.view.and_then(|view| view.subpage), Some(last), "round from the first to the last");
-        let told: Vec<ToFetcher> = core::mem::take(&mut test.core.controls.told_fetchers).into_iter().map(|(_, told)| told).collect();
         let fetch = |subcode| ToFetcher::FetchSubPage { page: 0x210, subcode };
-        assert_eq!(told, [fetch(last), fetch(subcodes[0]), fetch(subcodes[usize::from(most) - 2])], "the one shown and those either side");
+        assert_eq!(told(&mut test), [fetch(last), fetch(subcodes[0]), fetch(subcodes[usize::from(most) - 2])], "the one shown and those either side");
         test.core.intent(protocol::ToCore::PageControl(PageControl::SubPage(true))).unwrap();
-        let told: Vec<ToFetcher> = core::mem::take(&mut test.core.controls.told_fetchers).into_iter().map(|(_, told)| told).collect();
-        assert_eq!(told, [fetch(subcodes[1])], "each asked for once: only the new neighbour");
+        assert_eq!(told(&mut test), [fetch(subcodes[1])], "each asked for once: only the new neighbour");
         let sent = test.sent();
         let controls = sent.iter().rev().find_map(|message| if let ToInterface::PageControls(controls) = message { Some(*controls) } else { None });
-        assert_eq!(controls.and_then(|controls| controls.chosen), Some(0), "back at the first, by its place in the catalogue");
+        assert_eq!(controls.and_then(|controls| controls.chosen), Some(0), "back at the first, by its place in the list");
         let range = SubPageRange { first: most - 64, count: 64 };
         test.core.intent(protocol::ToCore::SubPageRows { page: 0x210, range }).unwrap();
-        let rows = test.sent().into_iter().find_map(|message| if let ToInterface::SubPageRows { rows, .. } = message { Some(rows) } else { None }).unwrap();
+        assert_eq!(told(&mut test), [part(126)], "the part of the rows not held");
+        let rows = |test: &mut super::super::test_support::Test| {
+            test.sent().into_iter().find_map(|message| if let ToInterface::SubPageRows { rows, .. } = message { Some(rows) } else { None })
+        };
+        assert_eq!(rows(&mut test), None, "the rows wait for their part");
+        test.core.fetched(channel, list_part(&subcodes, "v1", 126)).unwrap();
+        let rows = rows(&mut test).unwrap();
         assert_eq!((rows.count, rows.first, rows.rows.len()), (most, most - 64, 64));
-        assert_eq!(rows.rows[63], (last, format!("Story {last:04X}")), "answered from the catalogue");
+        assert_eq!(rows.rows[63], (last, format!("Story {last:04X}")), "answered from the list");
+    }
+
+    /// DOC-1869: a part of another version replaces the parts held, which
+    /// are asked for again; a part that failed answers the rows waiting
+    /// with what is held, and is not asked again while its page is open.
+    #[test]
+    fn a_new_version_of_a_list_is_fetched_again() {
+        use neoteletext_core::limits::from_rank;
+        use protocol::decoder::FromDecoder;
+        use protocol::fetcher::FromFetcher;
+        let subcodes: Vec<u16> = (1..=300).map(from_rank).collect();
+        let mut test = super::super::test_support::Test::new("versions");
+        test.core.session.open("https://news.invalid/teletext/").unwrap();
+        let channel = test.core.active_channel().unwrap();
+        let key = PageKey { channel, page: 0x210 };
+        test.core.intent(protocol::ToCore::Opened(Some(key))).unwrap();
+        let first = SubPageStep { count: 1, shown: subcodes[0], place: Some(0), previous: None, next: None };
+        test.core.decoded(channel, FromDecoder::SubPages { page: 0x210, step: first }).unwrap();
+        test.core.fetched(channel, list_part(&subcodes, "v1", 0)).unwrap();
+        test.core.fetched(channel, list_part(&subcodes, "v1", 4)).unwrap();
+        told(&mut test);
+        test.core.intent(protocol::ToCore::SubPageRows { page: 0x210, range: SubPageRange { first: 64, count: 64 } }).unwrap();
+        assert_eq!(told(&mut test), [ToFetcher::FetchSubPages { page: 0x210, part: 1 }]);
+        test.core.fetched(channel, list_part(&subcodes, "v2", 1)).unwrap();
+        let again: Vec<ToFetcher> = told(&mut test);
+        assert_eq!(again, [0, 4].map(|part| ToFetcher::FetchSubPages { page: 0x210, part }), "the old version's parts, again");
+        let rows = test.sent().into_iter().find_map(|message| if let ToInterface::SubPageRows { rows, .. } = message { Some(rows) } else { None });
+        assert_eq!(rows.map(|rows| rows.rows.len()), Some(64), "the new part answers the rows");
+        test.core.intent(protocol::ToCore::SubPageRows { page: 0x210, range: SubPageRange { first: 128, count: 64 } }).unwrap();
+        assert_eq!(told(&mut test), [ToFetcher::FetchSubPages { page: 0x210, part: 2 }]);
+        test.core.fetched(channel, FromFetcher::SubPagesFailed { page: 0x210, part: 2 }).unwrap();
+        let rows = test.sent().into_iter().find_map(|message| if let ToInterface::SubPageRows { rows, .. } = message { Some(rows) } else { None });
+        assert_eq!(rows.map(|rows| (rows.first, rows.rows.len())), Some((128, 0)), "answered with what is held");
+        test.core.intent(protocol::ToCore::SubPageRows { page: 0x210, range: SubPageRange { first: 128, count: 64 } }).unwrap();
+        assert!(told(&mut test).is_empty(), "not asked again while the page is open");
     }
 
     /// A tab on a live channel with page 210 open, its list of `subcodes`
@@ -630,16 +729,13 @@ mod tests {
     #[cfg(feature = "interaction")]
     fn live_page(name: &str, subcodes: &[u16]) -> (super::super::test_support::Test, PageKey) {
         use protocol::fetcher::FromFetcher;
-        use protocol::subpages::SubPageRows;
         let mut test = super::super::test_support::Test::new(name);
         test.core.session.open("https://news.invalid/teletext/").unwrap();
         let channel = test.core.active_channel().unwrap();
         test.core.fetched(channel, FromFetcher::Connecting(true)).unwrap();
         test.core.fetched(channel, FromFetcher::Connecting(false)).unwrap();
         let key = PageKey { channel, page: 0x210 };
-        let count = u16::try_from(subcodes.len()).unwrap();
-        let part = SubPageRows { count, first: 0, rows: subcodes.iter().map(|&subcode| (subcode, format!("Story {subcode:04X}"))).collect() };
-        test.core.fetched(channel, FromFetcher::SubPages { page: 0x210, part }).unwrap();
+        test.core.fetched(channel, list_part(subcodes, "1", 0)).unwrap();
         test.core.intent(protocol::ToCore::Opened(Some(key))).unwrap();
         (test, key)
     }
