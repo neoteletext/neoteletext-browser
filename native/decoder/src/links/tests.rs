@@ -2,7 +2,7 @@
 //! a page file's, and a LINKS record's, which do not outlive their message.
 
 use neoteletext_core::types::{PageAddress, SubCode};
-use neoteletext_formats::page::{LinkDestination, LinkKey, LinkLine, LinkText, TextLink};
+use neoteletext_formats::page::{LinkDestination, LinkKey, LinkLine, LinkText, NumberLink, TextLink};
 use neoteletext_formats::text::Text;
 use neoteletext_formats::tti::link_destination;
 use neoteletext_web::records::links::{SubPageLinks, encode};
@@ -149,4 +149,42 @@ fn a_web_link_of_the_longest_address_keeps_its_mark() {
     let texts = [text_link(2, link_destination(web.as_bytes(), &mut text).unwrap())];
     let lines = read_all(SubPageLinks { keys: &[], numbers: &[], texts: &texts, addresses: &text });
     assert_eq!(lines.get(PAGE, 0).unwrap().text[0].3, web);
+}
+
+/// DOC-1958: over a whole LINKS sending each key and each page number comes
+/// once, at most five key links, eight page-number links and eight text
+/// links. Parts that are each sound alone and follow one another, but give
+/// a key or a page number a second time between them, are refused, and the
+/// sub-page is left with no Link Extension links. On the code before, the
+/// second part was added to the first.
+#[test]
+fn a_sending_that_breaks_its_totals_across_parts_leaves_no_links() {
+    let mut text = LinkText::new();
+    let (first, second) = (address('a'), address('b'));
+    let one = link_destination(first.as_bytes(), &mut text).unwrap();
+    let two = link_destination(second.as_bytes(), &mut text).unwrap();
+    let held = |groups: [&Vec<neoteletext_core::packet::Packet>; 2]| {
+        let mut lines = Lines::default();
+        for group in groups {
+            read_into(&mut lines, group);
+        }
+        lines.get(PAGE, 0).map(|lines| (lines.keys.len(), lines.numbers.len()))
+    };
+    // Two sendings of two parts each, a key link a part, in the opposite
+    // order: part 0 of one and part 1 of the other give red twice.
+    let red_green = [key(LinkKey::Red, one), key(LinkKey::Green, two)];
+    let green_red = [key(LinkKey::Green, two), key(LinkKey::Red, one)];
+    let a = records(SubPageLinks { keys: &red_green, numbers: &[], texts: &[], addresses: &text }, 0);
+    let b = records(SubPageLinks { keys: &green_red, numbers: &[], texts: &[], addresses: &text }, 10);
+    assert_eq!((a.len(), b.len()), (2, 2), "a record a link");
+    assert_eq!(held([&a[0], &a[1]]), Some((2, 0)), "a sound sending");
+    assert_eq!(held([&a[0], &b[1]]), None, "red twice");
+    // The same with page numbers.
+    let number = |page: u16, destination| NumberLink { number: PageAddress::from_mpp(page).unwrap(), destination, line: 0 };
+    let up = [number(0x101, one), number(0x102, two)];
+    let down = [number(0x102, two), number(0x101, one)];
+    let c = records(SubPageLinks { keys: &[], numbers: &up, texts: &[], addresses: &text }, 20);
+    let d = records(SubPageLinks { keys: &[], numbers: &down, texts: &[], addresses: &text }, 30);
+    assert_eq!(held([&c[0], &c[1]]), Some((0, 2)), "a sound sending");
+    assert_eq!(held([&c[0], &d[1]]), None, "page 101 twice");
 }

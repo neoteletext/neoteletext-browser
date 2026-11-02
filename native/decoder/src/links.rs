@@ -8,7 +8,7 @@ use std::collections::BTreeMap;
 
 use neoteletext_core::charset::to_unicode;
 use neoteletext_core::level1::{Cell, Glyph, Grid, Size};
-use neoteletext_formats::page::{AddressSpan, LINK_LINES, LINK_TARGET_BYTES, LinkDestination, LinkLine, LinkText, PageFile};
+use neoteletext_formats::page::{AddressSpan, LINK_LINES, LINK_TARGET_BYTES, LinkDestination, LinkLine, LinkText, NUMBER_LINKS, PageFile, TEXT_LINKS};
 use protocol::links::{Candidate, MAX_NUMBER_LINKS, MAX_TARGET, MAX_TEXT_LINKS, NumberLink};
 
 // A target the engine keeps is one a message can carry.
@@ -61,9 +61,46 @@ impl LinkLines {
 #[derive(Default)]
 pub struct Lines {
     held: BTreeMap<(u16, u16), LinkLines>,
-    /// Each pushed sub-page's LINKS sending: its number of parts, and the
-    /// part that comes next.
-    sendings: BTreeMap<(u16, u16), (u8, u8)>,
+    /// Each pushed sub-page's LINKS sending so far.
+    sendings: BTreeMap<(u16, u16), Sending>,
+}
+
+/// A sub-page's LINKS sending as its parts arrive: how many parts it has,
+/// the part that comes next, and the links its parts gave, against the
+/// totals of a whole sending (DOC-1958).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+struct Sending {
+    parts: u8,
+    next: u8,
+    /// The keys given, each at most once: four coloured and Index.
+    keys: Vec<neoteletext_formats::page::LinkKey>,
+    /// The page numbers given, each at most once.
+    numbers: Vec<u16>,
+    /// How many text links were given.
+    texts: usize,
+}
+
+impl Sending {
+    /// Takes `record`'s links into the sending's totals; false when a key or
+    /// a page number comes a second time, or a kind passes its bound over
+    /// the whole sending.
+    fn take(&mut self, record: &neoteletext_web::records::links::LinksRecord<'_>) -> bool {
+        for line in record.key_links() {
+            if self.keys.contains(&line.key) || self.keys.len() >= LINK_LINES {
+                return false;
+            }
+            self.keys.push(line.key);
+        }
+        for link in record.number_links() {
+            let number = link.number.mpp();
+            if self.numbers.contains(&number) || self.numbers.len() >= NUMBER_LINKS {
+                return false;
+            }
+            self.numbers.push(number);
+        }
+        self.texts = self.texts.saturating_add(record.text_links().count());
+        self.texts <= TEXT_LINKS
+    }
 }
 
 impl Lines {
@@ -78,17 +115,31 @@ impl Lines {
     /// as its page file's `LT`, `LK` and `LN` lines would give them: part
     /// 0 replaces what was held, later parts add to it. A later part is
     /// taken only as the next of the sending part 0 began, with the same
-    /// number of parts; one that is not is refused, and a LINKS record
-    /// refused leaves its sub-page with no Link Extension links (DOC-1952,
-    /// DOC-1958). The engine's reader checked each record alone.
+    /// number of parts, and while the sending keeps a whole sending's totals:
+    /// each key and each page number once, at most five key links, eight
+    /// page-number links and eight text links over all its parts. A part
+    /// that breaks either is refused, and a LINKS record refused leaves its
+    /// sub-page with no Link Extension links (DOC-1952, DOC-1958). The
+    /// engine's reader checked each record alone.
     pub fn read_record(&mut self, record: &neoteletext_web::records::links::LinksRecord<'_>) {
         let key = (record.page.mpp(), record.subcode.value());
-        let follows = record.part == 0 || self.sendings.get(&key) == Some(&(record.parts, record.part));
-        if !follows {
+        let mut sending = if record.part == 0 {
+            Sending { parts: record.parts, ..Sending::default() }
+        } else {
+            match self.sendings.get(&key) {
+                Some(sending) if (sending.parts, sending.next) == (record.parts, record.part) => sending.clone(),
+                _ => {
+                    self.clear(key.0, key.1);
+                    return;
+                }
+            }
+        };
+        if !sending.take(record) {
             self.clear(key.0, key.1);
             return;
         }
-        self.sendings.insert(key, (record.parts, record.part.saturating_add(1)));
+        sending.next = record.part.saturating_add(1);
+        self.sendings.insert(key, sending);
         self.set(key, record.text_links(), record.number_links(), record.key_links(), |span| record.address(span), record.part == 0);
     }
 
