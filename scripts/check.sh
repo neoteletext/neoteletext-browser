@@ -173,6 +173,10 @@ check_shapes_and_tests() {
     (cd native && cargo nextest run --workspace --hide-progress-bar --status-level fail --final-status-level fail)
     step "native/tuf: tests"
     (cd native/tuf && cargo nextest run --workspace --hide-progress-bar --status-level fail --final-status-level fail)
+    # gates.md: a pass says nothing of a test that is ignored, so the gate says
+    # which ones, each with what would make it run.
+    step "the tests that have not run: each ignored test and its reason (gates.md)"
+    git grep -n -A1 -F '#[ignore' -- 'native/*.rs'
     # A build with nothing changed must build nothing. A build script that
     # watched files that do not exist once rebuilt the crates under it on
     # every Cargo run, which cost each step of this gate minutes.
