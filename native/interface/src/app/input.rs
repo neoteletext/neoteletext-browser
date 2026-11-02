@@ -19,7 +19,7 @@ impl App {
     }
 
     /// The wheel: the channel's over its page when it asked for the mouse
-    /// (INPUT.md section 9.1), in lines positive right and down; otherwise
+    /// (`interaction.md` section 7.3), in lines positive right and down; otherwise
     /// the browser's, to scroll. Returns whether the window needs drawing.
     fn wheel(&mut self, event_loop: &ActiveEventLoop, delta: MouseScrollDelta, now: u64) -> bool {
         let scale = self.scale();
@@ -192,14 +192,14 @@ impl App {
                 self.channel_key(event_loop, event)
             }
             // The browser's paste shortcut while keys go to a channel: the
-            // clipboard's text as one PASTE (INPUT.md section 9.1).
+            // clipboard's text as one PASTE (`interaction.md` section 7.3).
             #[cfg(feature = "interaction")]
             WindowEvent::KeyboardInput { ref event, .. } if event.state == ElementState::Pressed && self.is_paste(event) => self.pasted(event_loop),
             WindowEvent::KeyboardInput { event, .. } if event.state == ElementState::Pressed => self.key_pressed(event_loop, &event),
             #[cfg(feature = "interaction")]
             WindowEvent::Ime(Ime::Commit(text)) if self.view.browser.typing_target().is_some() => self.channel_text(event_loop, &text),
             // The input method's preedit goes to the channel in the COMPOSE
-            // mode (INPUT.md section 9.1).
+            // mode (`interaction.md` section 7.3).
             #[cfg(feature = "interaction")]
             WindowEvent::Ime(Ime::Preedit(text, cursor)) if self.view.browser.composes_for_channel() => self.channel_preedit(event_loop, &text, cursor),
             WindowEvent::Ime(Ime::Commit(text)) => self.committed(event_loop, &text, now),
@@ -224,7 +224,7 @@ impl App {
             let held = self.browser_modifier();
             self.view.browser.set_browser_modifier(held);
             // The mouse's events carry the modifiers held, as a key's do
-            // (INPUT.md section 5.4, REQ-RCH-005).
+            // (DOC-1938, REQ-RCH-005).
             self.view.browser.set_mouse_modifiers(crate::keys::modifiers(modifiers));
         }
         false

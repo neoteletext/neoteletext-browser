@@ -1,5 +1,5 @@
 //! Tests of the pointer's moves, gone and touch in the trusted core
-//! (`RETURN-CHANNEL.md` sections 4.1 and 4.4; INPUT.md section 9.8,
+//! (`RETURN-CHANNEL.md` sections 4.1 and 4.4; DOC-1945,
 //! REQ-INT-122 to REQ-INT-124), each also a hostile interface's: what it
 //! sends cannot raise the rate, set the buttons a move holds, or invent,
 //! move or end a contact.

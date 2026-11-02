@@ -51,7 +51,7 @@ pub(super) struct LinkUi {
     /// The question's buttons, where last drawn.
     go: Rect,
     cancel: Rect,
-    /// The look last asked for under the pointer (INPUT.md section 9.7).
+    /// The look last asked for under the pointer (DOC-1947).
     lit: Option<Lit>,
     /// The area the main button went down on, while it is held.
     pressing: Option<Area>,
@@ -145,7 +145,7 @@ impl Browser {
     /// makes a new image with the same links, and the look must not go out
     /// while they follow it. A control while a click goes to the channel,
     /// a link otherwise: on a page that takes input a link is the
-    /// browser's, and lights as on any page (INPUT.md section 9.7,
+    /// browser's, and lights as on any page (DOC-1947,
     /// decision 122).
     fn area_under_pointer(&self) -> Option<(PageKey, Area)> {
         let (key, rect) = self.wall.open()?;
@@ -188,7 +188,7 @@ impl Browser {
             self.outputs.push(Output::Lit(wanted));
         }
         // The channel is told as the pointer enters and leaves its controls
-        // (INPUT.md section 5.4's HOVER): only while a click is its, when
+        // (DOC-1940): only while a click is its, when
         // what is under the pointer is a control.
         let control = under.filter(|_| self.clicks_are_hosts());
         if control != self.links.hovered_control {
@@ -251,8 +251,7 @@ impl Browser {
 
     /// The pointer's shape over a link: a hand for a page of this channel,
     /// the shape of a shortcut for one that leaves, on every page; and a
-    /// hand over a control while a click goes to the channel (INPUT.md
-    /// section 9.7).
+    /// hand over a control while a click goes to the channel (DOC-1947).
     pub(super) fn link_cursor(&self) -> Option<Cursor> {
         if self.clicks_are_hosts() {
             return self.area_under_pointer().map(|_| Cursor::Hand);

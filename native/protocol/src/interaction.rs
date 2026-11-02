@@ -1,4 +1,4 @@
-//! Typing into a page (`neoteletext-common/INPUT.md`, the input system):
+//! Typing into a page (DOC-1781 of `neoteletext-common/PROTOCOL.html`, the input system):
 //! the viewer's input as *intents* from the interface to the trusted core,
 //! the typing state back, and the encoded input messages the trusted core
 //! gives a fetcher. The interface never encodes the protocol
@@ -48,7 +48,7 @@ pub(crate) fn read_trace(fields: &mut crate::Fields<'_>) -> Result<TraceLine, Pr
 }
 
 /// Whether the dot of a position, when it has one, lies in the page image
-/// and inside the position's cell (INPUT.md section 9.9, REQ-INT-127): the
+/// and inside the position's cell (DOC-1946, REQ-INT-127): the
 /// image is the engine's 480 by 500 dots, 12 by 20 to a cell, so `px` / 12
 /// is the column and `py` / 20 the row. The interface is not trusted to say
 /// where the pointer was, so the trusted core's reader refuses an intent

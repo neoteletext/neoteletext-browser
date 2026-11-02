@@ -47,7 +47,7 @@ fn keep_log(logs: &mut Vec<ChannelLog>, line: &neoteletext_formats::log::LogLine
 impl Engine {
     fn push_all(&mut self, packets: &[(Packet, PacketMeta)]) {
         for (packet, meta) in packets {
-            // The channel's cursor and control records (INPUT.md section 7)
+            // The channel's cursor and control records (DOC-1951)
             // ride the audio profile's data channel; only one that reads
             // goes on, as its body.
             #[cfg(feature = "interaction")]

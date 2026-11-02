@@ -1,4 +1,4 @@
-//! Typing into a page (`interaction.md`, INPUT.md): the keyboard's intents
+//! Typing into a page (`interaction.md`, DOC-1781): the keyboard's intents
 //! for the open page's channel, and what the typing rules decided,
 //! delivered.
 

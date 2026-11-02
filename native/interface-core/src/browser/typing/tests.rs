@@ -281,7 +281,7 @@ fn the_keys_going_elsewhere_leave_the_page_open() {
     assert_eq!(browser.typing_target(), None);
 }
 
-/// Decision 107 and INPUT.md section 6.3: the wheel and the pointer's
+/// Decision 107 and DOC-1938: the wheel and the pointer's
 /// moves over the page are the channel's; beside the page, or with the
 /// browser's modifier, the wheel is the browser's.
 #[test]
@@ -462,7 +462,7 @@ fn the_cursor_is_drawn_only_while_typing() {
     assert!(canvas.fills.len() > before, "a bar is drawn");
 }
 
-/// INPUT.md section 5.4: a wheel's notch is at least a whole line, in
+/// DOC-1938: a wheel's notch is at least a whole line, in
 /// either direction, so one slow notch moves a list a line; a faster
 /// notch keeps its acceleration, and no turn stays no turn.
 #[test]

@@ -1,5 +1,5 @@
 //! The window's keys as the input system has them
-//! (`neoteletext-common/INPUT.md` sections 5.5 to 5.7): winit names its
+//! (DOC-1935 to DOC-1937): winit names its
 //! keys by the W3C UI Events values, the names the engine's functional
 //! codes number, so a key's code is looked up as winit spells it.
 
@@ -43,7 +43,7 @@ fn functional(named: NamedKey, physical: PhysicalKey) -> u32 {
 }
 
 /// Whether the physical key is on the keypad: in `ALL_KEYS` its code is the
-/// keypad's, its text otherwise (section 5.7 rule 8).
+/// keypad's, its text otherwise (DOC-1937).
 fn keypad(physical: PhysicalKey) -> Option<u32> {
     match physical {
         PhysicalKey::Code(code) if format!("{code:?}").starts_with("Numpad") => keys::code(&format!("{code:?}")),
@@ -52,7 +52,7 @@ fn keypad(physical: PhysicalKey) -> Option<u32> {
 }
 
 /// The protocol's modifier bits: Shift, Control and Alt. Command (the
-/// Super key) never goes: it is the browser's (INPUT.md section 9.1). The
+/// Super key) never goes: it is the browser's (`interaction.md` section 7.3). The
 /// lock states are not known to winit, so they are not sent.
 #[must_use]
 pub fn modifiers(state: ModifiersState) -> u8 {
@@ -64,8 +64,8 @@ pub fn modifiers(state: ModifiersState) -> u8 {
 /// layout gives, `unmodified` the same key with no modifier (winit's
 /// `key_without_modifiers`), `text` what it typed.
 ///
-/// AltGr and macOS's Option are level shifts, not modifiers (section 5.7
-/// rule 5): a key that types printable text with Control and Alt held
+/// AltGr and macOS's Option are level shifts, not modifiers (DOC-1937):
+/// a key that types printable text with Control and Alt held
 /// together, or with Alt alone giving another character than the key's
 /// own, is text with neither.
 #[must_use]
@@ -106,8 +106,8 @@ pub fn parts(action: Action, logical: &Key, unmodified: &Key, physical: Physical
     Some(KeyParts { action, key, mods, text, base })
 }
 
-/// A phone's key by its W3C name or its one character (INPUT.md section
-/// 10): no modifiers, its text when it is a character.
+/// A phone's key by its W3C name or its one character (DOC-2029):
+/// no modifiers, its text when it is a character.
 #[must_use]
 pub fn phone_parts(down: bool, name: &str) -> Option<KeyParts> {
     let action = if down { Action::Press } else { Action::Release };

@@ -209,7 +209,7 @@ fn a_typed_number_must_be_a_display_page() {
     assert!(matches!(read_from_interface(&mut bytes.as_slice()), Err(ProtocolError::BadValue("page number"))));
 }
 
-/// INPUT.md section 7.3: an area is inside the page, at least a cell
+/// DOC-1844: an area is inside the page, at least a cell
 /// each way, on every pipe that carries one; and a page's controls are
 /// bounded by the engine's `MAX_CONTROLS`.
 #[test]
@@ -231,7 +231,7 @@ fn an_area_outside_the_page_or_too_many_controls_are_refused() {
     assert!(matches!(decoder_writes(&mut Vec::new(), &found), Err(ProtocolError::BadValue("too many controls"))));
 }
 
-/// INPUT.md section 9.7: the decoder is told the look of one area of a
+/// DOC-1947: the decoder is told the look of one area of a
 /// page, or that there is none.
 #[test]
 fn the_look_round_trips_to_the_decoder() {

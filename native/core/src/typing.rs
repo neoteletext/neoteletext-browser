@@ -1,4 +1,4 @@
-//! Typing into a page (`neoteletext-common/INPUT.md` sections 6 to 9,
+//! Typing into a page (DOC-1781 of `neoteletext-common/PROTOCOL.html`, and `interaction.md` section 7,
 //! REQ-INT-122 to REQ-INT-127 and REQ-INT-130 to REQ-INT-137): the trusted
 //! core's rules for when the viewer's input goes to a channel, the input
 //! session it keeps with each channel, the pointer's pace and contacts, and
@@ -36,19 +36,19 @@ use neoteletext_input::session::{ResumableSession, State};
 use neoteletext_input::{MAX_MESSAGE, MAX_ROWS};
 use protocol::interaction::{CursorState, InputIntent, Intent, Typing as TypingState};
 
-/// What NeoTeletext offers in HELLO (INPUT.md section 6.2): it draws the
+/// What NeoTeletext offers in HELLO (DOC-1922): it draws the
 /// cursor and sends touch (REQ-RCH-041 to REQ-RCH-043); the
-/// resumable session adds RESUME (section 6.4, REQ-RCH-013); and it says
+/// resumable session adds RESUME (DOC-1923, REQ-RCH-013); and it says
 /// which page or sub-page each view selects with SELECT (REQ-INT-140,
 /// decision 128). It echoes
 /// nothing: what is typed shows only as the channel draws it (the owner,
 /// 28 October 2026).
 const OFFERED: u32 = CURSOR_CAP | TOUCH_CAP | SELECT_CAP;
-/// A teletext page's text area, in cells (section 5.4's RESIZE): 40
+/// A teletext page's text area, in cells (DOC-1942's RESIZE): 40
 /// columns; the drawn size goes as 0, unknown, as it changes with the
 /// window.
 const PAGE_COLUMNS: u32 = 40;
-/// The page of a SELECT that says no page is selected (section 5.4).
+/// The page of a SELECT that says no page is selected (DOC-1753).
 const NO_PAGE: u16 = 0;
 /// Microseconds in the session's millisecond.
 const MICROSECONDS_PER_MILLISECOND: u64 = 1_000;
@@ -88,9 +88,9 @@ struct Channel {
     open: bool,
     secure: bool,
     /// The session, kept across a lost connection when the channel set
-    /// RESUME (INPUT.md section 6.4).
+    /// RESUME (DOC-1923).
     session: ResumableSession,
-    /// Welcomed, and told the size and the focus (section 6.1).
+    /// Welcomed, and told the size and the focus (DOC-1921).
     started: bool,
     /// The cursor the channel placed, and for which page.
     cursor: Option<Cursor>,
@@ -131,7 +131,7 @@ struct Channel {
     /// The mouse's buttons held, as sent: bit `n` is button `n`.
     held: u8,
     /// Where each contact was last sent, 0 the mouse's: what its gone says
-    /// (section 5.4), and whether the channel knows of it at all.
+    /// (DOC-1938), and whether the channel knows of it at all.
     last_at: [Option<Point>; MAX_CONTACTS],
 }
 
@@ -188,7 +188,7 @@ impl Channel {
     }
 
     /// Forgets the pointer and every contact, as the channel does when the
-    /// connection is lost or it is told they have gone (section 8 rule 3).
+    /// connection is lost or it is told they have gone (DOC-1944).
     fn pointer_forgotten(&mut self) {
         self.pacer.clear();
         self.contacts.clear();
@@ -289,7 +289,7 @@ impl Typing {
             && self.channels.get(&channel).is_some_and(|state| state.open)
     }
 
-    /// Whether input goes to `channel` now (INPUT.md section 9.1): its page
+    /// Whether input goes to `channel` now (`interaction.md` section 7.3): its page
     /// showing and its session welcomed.
     fn on(&self, channel: u32) -> bool {
         self.showing(channel) && self.channels.get(&channel).is_some_and(|state| state.session.welcomed())
@@ -323,7 +323,7 @@ impl Typing {
     }
 
     /// Tells `channel` whether its page holds the keyboard focus, when that
-    /// changed (section 9.1): `FOCUS_IN` when it gains it, `FOCUS_OUT` when
+    /// changed (`interaction.md` section 7.3): `FOCUS_IN` when it gains it, `FOCUS_OUT` when
     /// it loses it. Before `FOCUS_OUT`, the waiting moves, each held key's
     /// lost release, and gone for the pointer and every contact, since the
     /// page stopped taking input (REQ-207, REQ-RCH-034); and the round trip
@@ -341,7 +341,7 @@ impl Typing {
         state.send(channel, &Item::Event(if focus { Event::FocusIn } else { Event::FocusOut }), now_us, sends);
     }
 
-    /// Once welcomed, the session's start (section 6.1): RESIZE, the focus,
+    /// Once welcomed, the session's start (DOC-1921): RESIZE, the focus,
     /// the selection.
     fn start(&mut self, channel: u32, now_us: u64, sends: &mut Vec<Send>) {
         let Some(state) = self.channels.get_mut(&channel) else { return };
@@ -429,7 +429,7 @@ impl Typing {
     }
 
     /// Whether a page is open for typing: the active tab's open page's
-    /// channel takes input now (section 9.1). Only then do a phone's keys
+    /// channel takes input now (`interaction.md` section 7.3). Only then do a phone's keys
     /// go beyond page navigation (decision 99).
     #[must_use]
     pub fn page_takes_keys(&self) -> bool {
@@ -480,7 +480,7 @@ impl Typing {
 
     /// A channel's input socket opened or closed. A connection begins with
     /// HELLO, and RESUME after it when the channel set RESUME and the
-    /// session may be resumed (INPUT.md section 6.4, REQ-RCH-013); a lost
+    /// session may be resumed (DOC-1923, REQ-RCH-013); a lost
     /// connection keeps what a resumption needs (`close`).
     pub fn input(&mut self, channel: u32, open: bool, secure: bool, now_us: u64) -> Vec<Send> {
         let mut sends = Vec::new();
@@ -489,7 +489,7 @@ impl Typing {
         state.open = open;
         state.secure = open && secure;
         // The channel takes everything held as released when the connection
-        // goes (section 6.4 item 4), resumed or not.
+        // goes (DOC-1923), resumed or not.
         state.pointer_forgotten();
         state.down = Held::new();
         if open && !was_open {
@@ -549,13 +549,13 @@ impl Typing {
             state.pointer(channel, &input.intent, on, now_us, &mut sends);
             return together(sends);
         }
-        // Text goes in Normalization Form C (section 5.7 rule 3,
+        // Text goes in Normalization Form C (DOC-1937,
         // REQ-INT-116), a KEY's text too; a paste goes as it was copied.
         let normalized = match &input.intent {
             Intent::Text(text) | Intent::Key { text: Some(text), .. } => nfc(text),
             _ => Cow::Borrowed(""),
         };
-        // Every key goes as KEY, carrying its text (INPUT.md section 6.3);
+        // Every key goes as KEY, carrying its text (DOC-1935);
         // raw text is only what does not come from a key.
         let item = match &input.intent {
             Intent::Text(_) => Item::Text(&normalized),

@@ -132,7 +132,7 @@ impl Core {
     }
 
     /// Lets time pass for typing: a channel that has not answered HELLO
-    /// in time takes no input (INPUT.md section 6.1).
+    /// in time takes no input (DOC-1921).
     #[cfg_attr(not(feature = "interaction"), allow(clippy::unnecessary_wraps, clippy::unused_self, reason = "only typing has a time"))]
     fn typing_tick(&mut self) -> Result<(), String> {
         #[cfg(feature = "interaction")]

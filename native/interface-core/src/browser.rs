@@ -211,7 +211,7 @@ pub struct Browser {
     /// The last input event sent, with `--input-trace` (`input_trace.rs`).
     #[cfg(feature = "interaction")]
     input_trace: Option<crate::trace::TraceLine>,
-    /// The phone keyboard (INPUT.md section 10).
+    /// The phone keyboard (DOC-2029).
     #[cfg(feature = "phone-keyboard")]
     phone: phone::PhoneUi,
 }

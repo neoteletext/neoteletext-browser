@@ -1,4 +1,4 @@
-//! The phone keyboard (INPUT.md section 10, REQ-INT-138): a
+//! The phone keyboard (DOC-2029, REQ-INT-138): a
 //! process of its own holds the pairing secret; the trusted core shows its
 //! QR in the panel and gives the interface the phone's keys, which act as
 //! the interface's own.

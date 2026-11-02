@@ -1,5 +1,5 @@
 //! Tests of resuming a lost connection's session in the trusted core
-//! (INPUT.md section 6.4, REQ-INT-125; `RETURN-CHANNEL.md` REQ-RCH-013).
+//! (DOC-1923, REQ-INT-125; `RETURN-CHANNEL.md` REQ-RCH-013).
 
 use super::*;
 use neoteletext_input::caps::RESUME_CAP;

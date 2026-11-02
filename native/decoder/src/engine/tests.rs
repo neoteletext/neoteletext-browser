@@ -921,7 +921,7 @@ fn a_pushed_page_opens_at_its_first_sub_page_and_lists_its_sub_pages() {
     assert_eq!(engine.grid(0x210).unwrap().1.key.subcode.value(), 3, "one chosen is drawn");
 }
 
-/// INPUT.md sections 7.3 and 9.7 (the engine's decision E.127): the
+/// DOC-1844 and DOC-1947 (the engine's decision E.127): the
 /// controls a page declares in its packets X/26 are found, and a look
 /// changes the control's cells and no others: hover to the adjacent CLUT,
 /// pressed exchanging foreground and background too.

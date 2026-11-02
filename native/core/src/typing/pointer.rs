@@ -1,7 +1,6 @@
-//! The pointer and the contacts of a touch screen (`neoteletext-common/
-//! INPUT.md` sections 5.4, 9.8 and 9.9; `RETURN-CHANNEL.md` sections 4.1
-//! and 4.4): every change of the dot over the open page as a move, at most
-//! 60 a second by the engine's [`Pacer`](neoteletext_input::pace::Pacer),
+//! The pointer and the contacts of a touch screen (DOC-1938, DOC-1945 and
+//! DOC-1946; `RETURN-CHANNEL.md` sections 4.1 and 4.4): every change of the
+//! dot over the open page as a move, at most 60 a second by the engine's [`Pacer`](neoteletext_input::pace::Pacer),
 //! the latest kept and flushed before any other event; gone when the
 //! pointer leaves the page or keys stop going; and each contact numbered by
 //! the engine's [`Contacts`](neoteletext_input::contacts::Contacts), the
@@ -22,7 +21,7 @@ use super::{Channel, Send, Typing, together};
 
 /// The bit of the mask of buttons held that is button `button`, or none
 /// for a button the mask cannot hold (MOUSE's `button` on a move is a
-/// byte, INPUT.md section 5.4).
+/// byte, DOC-1938).
 fn button_bit(button: u8) -> u8 {
     1_u8.checked_shl(u32::from(button)).unwrap_or(0)
 }

@@ -1,5 +1,5 @@
 //! Redirects: a server's that leaves a channel (REQ-701) and a channel's
-//! program's (`INPUT.md` section 7.11, REQ-1688). The fetcher says where one
+//! program's (DOC-1960, REQ-1688). The fetcher says where one
 //! leads, and the trusted core takes the tab there by its own rules. Nothing
 //! here asks whether keys go to the channel: a tab and the server agree on
 //! what it selects (neoteletext-common's DEC-1707).
@@ -47,7 +47,7 @@ impl Core {
             return Ok(());
         }
         // What the fetcher gives is hostile text: a query goes on only as a
-        // SELECT may carry it (`INPUT.md` section 5.4).
+        // SELECT may carry it (DOC-1753).
         if parameters.is_some_and(|query| !Select::new(page, sub).is_some_and(|select| is_page_parameters(select, query))) {
             self.log(Level::Warning, Some(channel), &format!("a redirect to page {page:03X} with a query no address holds was not followed"));
             return self.select_again(channel);

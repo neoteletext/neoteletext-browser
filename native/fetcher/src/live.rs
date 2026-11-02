@@ -20,7 +20,7 @@ struct IndexedPage {
 }
 
 /// A live channel's index: every page its index records listed, the latest
-/// listing of each kept (`INPUT.md` section 7.5), and each magazine's name
+/// listing of each kept (DOC-1955), and each magazine's name
 /// with the sending that gave it.
 #[derive(Default)]
 pub(crate) struct LiveIndex {

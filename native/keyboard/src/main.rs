@@ -1,4 +1,4 @@
-//! The phone keyboard process (INPUT.md section 10, REQ-INT-138): it
+//! The phone keyboard process (DOC-2029, REQ-INT-138): it
 //! asks qrkeyboard's relay for an instance, gives the trusted
 //! core the QR to show, pairs with the phone that scans it, and passes the
 //! phone's keys on, bounded, with no modifiers. It alone holds the pairing

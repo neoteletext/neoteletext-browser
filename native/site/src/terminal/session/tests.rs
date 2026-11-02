@@ -56,7 +56,7 @@ fn pushed_cursor(bytes: &[u8]) -> neoteletext_input::cursor::Cursor {
     neoteletext_input::cursor::from_packet(&neoteletext_core::packet::Packet { bytes: *packets.last().unwrap() }).unwrap().unwrap()
 }
 
-/// INPUT.md section 6.1: HELLO is answered with WELCOME, a control
+/// DOC-1921: HELLO is answered with WELCOME, a control
 /// record of what the channel uses of what was offered.
 #[test]
 fn hello_is_answered_with_welcome() {

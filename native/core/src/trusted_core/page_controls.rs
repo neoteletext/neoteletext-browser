@@ -592,7 +592,7 @@ mod tests {
         assert!(test.core.controls.told_fetchers.is_empty(), "REQ-703: a live channel is asked for no file");
     }
 
-    // `INPUT.md` section 7.12: what the channel refuses is said on the page
+    // DOC-1961: what the channel refuses is said on the page
     // area, by its status, while the tab still selects it. On the code
     // before, the fetcher made it a line for the console, and the strip had
     // nothing to say.

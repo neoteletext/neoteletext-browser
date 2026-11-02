@@ -1,4 +1,4 @@
-//! The channel's records for its input (INPUT.md section 7): its cursor
+//! The channel's records for its input (DOC-1951): its cursor
 //! records and its input control messages, untrusted, passed on in their
 //! order of arrival.
 

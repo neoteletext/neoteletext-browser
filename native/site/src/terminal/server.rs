@@ -43,8 +43,8 @@ fn connected(mut stream: TcpStream, settings: Settings, connection: u64) -> io::
     stream.set_nodelay(true)?;
     let mut reader = websocket::Reader::default();
     let mut session = Session::new(settings);
-    // The viewer's input stream, read across messages (INPUT.md section
-    // 5.1); a protocol error closes the connection (section 8).
+    // The viewer's input stream, read across messages (DOC-1929);
+    // a protocol error closes the connection (DOC-1919).
     let mut input = StreamDecoder::<MAX_STREAM_ITEM>::default();
     let mut last_frame = Instant::now();
     loop {

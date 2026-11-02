@@ -1,4 +1,4 @@
-//! The phone keyboard's panel and strip (INPUT.md section 10,
+//! The phone keyboard's panel and strip (DOC-2029,
 //! REQ-INT-138): the menu button opens a panel with the QR to scan,
 //! the PIN in PIN mode, and the one line of warning; while a phone is the
 //! keyboard the strip says so, with Finish.
@@ -43,7 +43,7 @@ pub struct PhoneUiView {
     pub pin: Option<String>,
 }
 
-/// The one line every QR panel shows (INPUT.md section 10).
+/// The one line every QR panel shows (DOC-2029).
 pub const WARNING: &str = "Scan with your phone camera to type here. Anyone who can see this code can type.";
 /// Without a PIN, what connects the scanned phone (decision 101): its
 /// first key, the first frame that proves it holds the QR's key (the

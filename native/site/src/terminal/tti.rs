@@ -72,7 +72,7 @@ impl Row {
     }
 }
 
-/// What the channel uses of what a receiver offers (INPUT.md section 6.2):
+/// What the channel uses of what a receiver offers (DOC-1922):
 /// pages and the cursor.
 pub(super) const USED: u32 = SELECT_CAP | CURSOR_CAP;
 
@@ -81,7 +81,7 @@ pub(super) struct Page {
     number: u16,
     rows: BTreeMap<u8, Row>,
     cursor: Option<(u8, u8)>,
-    /// The input count acted on (INPUT.md section 7.1).
+    /// The input count acted on (DOC-1943).
     acked: u16,
     /// `LT` lines: a run of text that is a link.
     links: Vec<String>,

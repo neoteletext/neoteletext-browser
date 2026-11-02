@@ -8,7 +8,7 @@ use neoteletext_web::ws::offers_subprotocol;
 use std::io::{self, Read, Write};
 use std::net::TcpStream;
 
-/// The largest message read: an input message (INPUT.md section 5.1).
+/// The largest message read: an input message (DOC-1918).
 const MAX_MESSAGE: usize = neoteletext_input::MAX_MESSAGE;
 /// Section 5.2: the FIN bit, the opcode's bits and the mask bit.
 const FIN: u8 = 0x80;
@@ -29,7 +29,7 @@ pub const PONG: u8 = 0xA;
 
 /// The `Sec-WebSocket-Accept` answer for a request head, or `None` when
 /// the head is not a WebSocket upgrade to the push subprotocol
-/// (`INPUT.md` section 5.1).
+/// (DOC-1917).
 pub fn accept(head: &str) -> Option<String> {
     let offered = head
         .lines()

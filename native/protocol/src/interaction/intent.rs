@@ -1,4 +1,4 @@
-//! The viewer's input as intents on the wire (INPUT.md, REQ-INT-132):
+//! The viewer's input as intents on the wire (DOC-1781, REQ-INT-132):
 //! a key, text, the mouse, the wheel, a paste or a composition, each
 //! checked against the engine's bounds both ways.
 

@@ -1,5 +1,5 @@
 //! `neoteletext-site terminal`: the reference channel that takes input
-//! (INPUT.md, protocol version 2), as a host a terminal talks to. Its
+//! (DOC-1781, protocol version 2), as a host a terminal talks to. Its
 //! descriptor declares `push.input`; each viewer's WebSocket is a session
 //! with its own pages, and every item of input that arrives is answered by
 //! pushing the page it changed.
@@ -72,7 +72,7 @@ struct Session {
     page: u16,
     previous: Vec<u16>,
     /// The input count acted on, which the pushed page acknowledges
-    /// (INPUT.md section 7.1).
+    /// (DOC-1943).
     acked: u16,
     /// Page selection typed so far: `*` and digits, or plain digits.
     selection: String,

@@ -31,7 +31,7 @@ impl App {
 
     /// A key while keys go to a channel: every key but the browser's own
     /// goes, pressed, repeating and released, as the trusted core's
-    /// session asks for them (INPUT.md section 9.1). Nothing is drawn for
+    /// session asks for them (`interaction.md` section 7.3). Nothing is drawn for
     /// it: the channel draws what it makes of the key.
     pub(super) fn terminal_key(&mut self, event: &winit::event::KeyEvent) {
         use neoteletext_input::event::Action;

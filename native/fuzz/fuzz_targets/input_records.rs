@@ -11,7 +11,7 @@ use neoteletext_input::cursor::{BLOCK, BODY};
 
 /// WELCOME, version 2, with every capability NeoTeletext offers but the
 /// agent: pages, the cursor, echo and every mode, 459 007, whose varint
-/// is FF 81 1C (INPUT.md section 5.2).
+/// is FF 81 1C (DOC-1929).
 const WELCOME: [u8; 6] = [0xFF, 0x01, 0x02, 0xFF, 0x81, 0x1C];
 
 fuzz_target!(|data: &[u8]| {

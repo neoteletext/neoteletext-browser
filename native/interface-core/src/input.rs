@@ -1,10 +1,10 @@
 //! The viewer's input as the interface gives it to the trusted core
-//! (`neoteletext-common/INPUT.md` section 3.3, REQ-INT-132): *intents*,
+//! (`interaction.md` section 7.1, REQ-INT-132): *intents*,
 //! which the trusted core checks whole, paces and alone encodes. The
 //! interface never writes the protocol: a move is each change of the dot
 //! under the pointer, a touch is the system's own report of a contact,
 //! and the trusted core keeps the pace, numbers the contacts and says when
-//! the pointer has gone (INPUT.md section 9.8, REQ-RCH-036, REQ-RCH-053).
+//! the pointer has gone (DOC-1945, REQ-RCH-036, REQ-RCH-053).
 
 use alloc::string::String;
 
@@ -12,7 +12,7 @@ use neoteletext_input::event::{self, Action, Device, Event, Item, KeyCode, Mouse
 use neoteletext_input::keys;
 
 /// The mouse's buttons as MOUSE numbers them on a press and a release
-/// (INPUT.md section 5.4); on a move, bit `n` is button `n` held.
+/// (DOC-1938); on a move, bit `n` is button `n` held.
 pub mod mouse_button {
     /// The main button.
     pub const LEFT: u8 = 0;
@@ -37,7 +37,7 @@ pub enum Intent {
         /// The key: its unshifted character on the active layout, or its
         /// functional code.
         key: KeyCode,
-        /// The modifier bits held, as INPUT.md section 5.5 numbers them.
+        /// The modifier bits held, as DOC-1935 numbers them.
         mods: u8,
         /// The text the press produced, at most 32 bytes.
         text: Option<String>,
@@ -92,8 +92,7 @@ pub enum Intent {
         /// The preedit.
         text: String,
     },
-    /// The pointer entered or left a control of the page (INPUT.md section
-    /// 5.4's HOVER): the control's first cell.
+    /// The pointer entered or left a control of the page (DOC-1940): the control's first cell.
     Hover {
         /// It left, rather than entered.
         leave: bool,
@@ -137,7 +136,7 @@ impl Intent {
     }
 
     /// The intent as the input stream has it, from the mouse, stamped with
-    /// the page on screen (`neoteletext-common/INPUT.md` section 5.4,
+    /// the page on screen (DOC-1934,
     /// REQ-1555); `None` for what only the trusted core can write, gone and
     /// a contact, which it numbers and places from its own state.
     #[must_use]

@@ -509,7 +509,7 @@ fn controls_with(controls: Vec<Area>) -> Links {
     links
 }
 
-/// REQ-INT-118 and INPUT.md section 7.3: the decoder's controls are
+/// REQ-INT-118 and DOC-1844: the decoder's controls are
 /// checked again: rows 1 to 23, the 40 columns, a cell at least, on no
 /// link's cell or an earlier control's, at most `MAX_CONTROLS`.
 #[test]

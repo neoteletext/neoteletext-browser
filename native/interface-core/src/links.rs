@@ -114,7 +114,7 @@ impl LinkRun {
     }
 }
 
-/// A rectangle of a page's cells: a control (INPUT.md section 7.3, the
+/// A rectangle of a page's cells: a control (DOC-1844, the
 /// engine's decision E.127), or a link's cells, which take a look under
 /// the pointer.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -137,8 +137,8 @@ impl Area {
     }
 }
 
-/// The look the control or link under the pointer takes (INPUT.md section
-/// 9.7): the decoder draws it on the page's own cells.
+/// The look the control or link under the pointer takes (DOC-1947):
+/// the decoder draws it on the page's own cells.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Lit {
     /// The page.
@@ -156,7 +156,7 @@ pub struct PageLinks {
     pub version: u32,
     /// Each link, in reading order.
     pub runs: Vec<LinkRun>,
-    /// The page's controls (INPUT.md section 7.3), checked: cells a click
+    /// The page's controls (DOC-1844), checked: cells a click
     /// on which goes to the channel.
     pub controls: Vec<Area>,
     /// Page numbers that, typed while the page is open, follow a link

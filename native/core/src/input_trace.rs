@@ -92,7 +92,7 @@ fn describe(item: &Item<'_>) -> String {
     }
 }
 
-/// A pointer's action as the trace names it (INPUT.md section 5.4).
+/// A pointer's action as the trace names it (DOC-1938).
 fn pointer_action(action: MouseAction) -> &'static str {
     match action {
         MouseAction::Press => "press",

@@ -171,7 +171,7 @@ enum Action {
     SubPageList(SubPageListPart),
 }
 
-/// A SUBPAGES record, owned (`INPUT.md` section 7.9).
+/// A SUBPAGES record, owned (DOC-1959).
 struct SubPageListPart {
     page: PageAddress,
     version: u16,
@@ -205,7 +205,7 @@ fn collect(output: Output<'_>, actions: &mut Vec<Action>) {
         }
         return;
     }
-    // It ended for good and is not tried again (`INPUT.md` section 5.1).
+    // It ended for good and is not tried again (DOC-1920).
     if let Output::Event(Event::PushStopped(stop)) = output {
         eprintln!("neoteletext-fetcher: the push connection stopped ({stop:?}); it is not tried again");
         actions.push(Action::Tell(FromFetcher::Notice(format!("the push connection stopped: {stop:?}"))));
@@ -277,7 +277,7 @@ fn collect(output: Output<'_>, actions: &mut Vec<Action>) {
             let folder = location.strip_suffix(SETTINGS_FILE).filter(|folder| folder.ends_with('/'));
             Action::Tell(FromFetcher::Redirected(folder.unwrap_or(location).to_owned()))
         }
-        // A channel's program moved the viewer (`INPUT.md` section 7.11): the
+        // A channel's program moved the viewer (DOC-1960): the
         // trusted core decides, and an address goes by its own rules.
         Output::Event(Event::Redirect(RedirectRecord::Page { page, subcode, parameters })) if redirect_in_bounds(page.mpp(), subcode.value()) => {
             Action::Tell(FromFetcher::PageRedirect { page: page.mpp(), sub: subcode.value(), query: parameters.map(str::to_owned) })
@@ -794,7 +794,7 @@ mod tests {
         assert_eq!(SETTINGS_FILE, "channel.ttx", "DEC-1726: documents and channels name the file literally");
     }
 
-    /// `INPUT.md` section 7.11: a REDIRECT record is told as it is, for the
+    /// DOC-1960: a REDIRECT record is told as it is, for the
     /// trusted core to judge. Nothing here reads the address.
     #[test]
     fn a_redirect_record_is_told() {

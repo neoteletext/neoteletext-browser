@@ -1,4 +1,4 @@
-//! A selection the channel refused (`INPUT.md` section 7.12, REQ-1481):
+//! A selection the channel refused (DOC-1961, REQ-1481):
 //! while the strip says so, the page area is cleared and says why in the
 //! browser's own words, by the status alone, as a web browser's error page
 //! does; a channel writes nothing here. It asks nothing and has no buttons,
@@ -53,7 +53,7 @@ mod tests {
         canvas
     }
 
-    /// `INPUT.md` section 7.12: each of the four statuses has its own
+    /// DOC-1961: each of the four statuses has its own
     /// words, on the page area, in place of the pages. The next selection
     /// takes them away. On the code before, the viewer saw a console line.
     #[test]

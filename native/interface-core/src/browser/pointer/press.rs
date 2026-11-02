@@ -198,7 +198,7 @@ impl Browser {
             // terminal with mouse reporting gives it, but on a link the page
             // declares, which the browser follows on every page (decision
             // 122); the browser's modifier keeps any click the browser's
-            // (INPUT.md section 9.1, REQ-INT-115).
+            // (`interaction.md` section 7.3, REQ-INT-115).
             #[cfg(feature = "interaction")]
             if self.wall.zoomed().is_some() && self.click_is_hosts() {
                 return Some(self.terminal_button(neoteletext_input::event::MouseAction::Press, crate::input::mouse_button::LEFT));

@@ -143,7 +143,7 @@ fn a_tab_behind_others_moves() {
     assert_eq!(shown(&mut test), [], "not its window's page");
 }
 
-// TODO-1656, `INPUT.md` section 7.1: a cursor record moves nothing, whatever
+// TODO-1656, DOC-1954: a cursor record moves nothing, whatever
 // page it names and however late it comes. Only the REDIRECT record does.
 #[test]
 fn a_cursor_record_never_moves_a_viewer() {

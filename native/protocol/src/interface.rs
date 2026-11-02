@@ -120,7 +120,7 @@ pub enum ToInterface {
     /// `--input-trace`, for the open page's row 0.
     #[cfg(feature = "interaction")]
     InputTrace(interaction::TraceLine),
-    /// The phone keyboard's panel and state (INPUT.md section 10).
+    /// The phone keyboard's panel and state (DOC-2029).
     #[cfg(feature = "phone-keyboard")]
     Phone(keyboard::PhoneView),
     /// A key of the paired phone, which the interface takes as its own.
@@ -238,7 +238,7 @@ pub enum ToCore {
     #[cfg(feature = "links")]
     Point(Option<links::Spot>),
     /// The control or link under the pointer and whether a button is held
-    /// on it, or none: its look (INPUT.md section 9.7). Nothing goes to the
+    /// on it, or none: its look (DOC-1947). Nothing goes to the
     /// channel for it.
     #[cfg(feature = "links")]
     Lit(Option<links::Lit>),

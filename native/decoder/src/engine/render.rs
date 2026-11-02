@@ -55,7 +55,7 @@ const _: () = assert!(protocol::links::MAX_CONTROLS == neoteletext_core::control
 
 impl Engine {
     /// The look of an area of `page` under the pointer, or none: the page
-    /// is drawn with it until it changes (INPUT.md section 9.7).
+    /// is drawn with it until it changes (DOC-1947).
     #[cfg(feature = "links")]
     pub fn set_look(&mut self, page: u16, look: Option<(protocol::links::Area, bool)>) {
         match look {
@@ -386,7 +386,7 @@ impl Engine {
 }
 
 /// A page's controls, as the engine finds them in its local enhancement
-/// data (INPUT.md section 7.3). The trusted core checks them again.
+/// data (DOC-1844). The trusted core checks them again.
 #[cfg(feature = "links")]
 fn controls(stored: &StoredPage) -> Vec<protocol::links::Area> {
     let found = neoteletext_core::controls::controls(stored);

@@ -69,12 +69,12 @@ pub struct StripState {
     /// second (REQ-1686); empty otherwise.
     pub redirecting: String,
     /// The channel refused what the tab selected: the page area says so, in
-    /// the browser's own words (`INPUT.md` section 7.12, REQ-1481).
+    /// the browser's own words (DOC-1961, REQ-1481).
     pub denied: Option<Denied>,
 }
 
 /// Why a channel refused a selection: the real HTTP status a DENIED record
-/// carries (`INPUT.md` section 7.12).
+/// carries (DOC-1961).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Denied {
     /// 403: the channel does not allow the page.

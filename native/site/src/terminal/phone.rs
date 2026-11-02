@@ -78,7 +78,7 @@ impl Session {
     }
 }
 
-/// The channel as the screen of qrkeyboard (INPUT.md section 10):
+/// The channel as the screen of qrkeyboard (DOC-2029):
 /// the instance, its QR as mosaic rows, and the phone's keys.
 fn phone(relay: &str, events: &mpsc::Sender<PhoneEvent>) {
     use neoteletext_qrkeyboard::config::{Layout, ScreenConfig};

@@ -60,7 +60,7 @@ struct Image {
     links: Vec<Link>,
     /// Page numbers the page links elsewhere (`LK` lines), decided.
     numbers: Vec<(u16, Destination)>,
-    /// Its controls, checked (INPUT.md section 7.3).
+    /// Its controls, checked (DOC-1844).
     controls: Vec<Area>,
     /// Fastext's keys, decided, each with the sub-page it names; none when
     /// row 24 was not shown with this image (the engine's REQ-SEC-024).
@@ -134,7 +134,7 @@ pub struct Links {
     unfocused: bool,
     /// The page open in the active tab.
     opened: Option<PageKey>,
-    /// The area drawn in its look under the pointer (INPUT.md section 9.7).
+    /// The area drawn in its look under the pointer (DOC-1947).
     lit: Option<Lit>,
 }
 
@@ -183,7 +183,7 @@ impl Links {
 
     /// The look the interface asks for under the pointer, checked: only an
     /// area that is a link or a control of the latest image of the page
-    /// open in the active tab (INPUT.md section 9.7, requirement 17.13).
+    /// open in the active tab (DOC-1947, requirement 17.13).
     /// Returns what each page's decoder is to draw now: the area lit
     /// before, put out, and the area lit now.
     pub fn light(&mut self, wanted: Option<Lit>) -> Vec<(PageKey, Option<(Area, bool)>)> {
@@ -204,7 +204,7 @@ impl Links {
 
     /// Whether `column`, `row` is the first cell of a control of the latest
     /// image of the page open in the active tab: what a HOVER may name
-    /// (INPUT.md section 5.4, REQ-INT-121).
+    /// (DOC-1940, REQ-INT-121).
     #[must_use]
     pub fn is_control_at(&self, key: PageKey, column: u8, row: u8) -> bool {
         Some(key) == self.opened
@@ -395,8 +395,8 @@ impl Links {
     }
 }
 
-/// A page's controls as the decoder found them, checked again (INPUT.md
-/// section 7.3, REQ-INT-118): inside rows 1 to 23 and the 40 columns, at
+/// A page's controls as the decoder found them, checked again (DOC-1844,
+/// REQ-INT-118): inside rows 1 to 23 and the 40 columns, at
 /// least one cell each way, on no cell of a link or of an earlier control,
 /// at most `MAX_CONTROLS`.
 fn decide_controls(found: &[Area], runs: &[(LinkRun, Destination)]) -> Vec<Area> {

@@ -1,4 +1,4 @@
-//! Tests of typing into a page (`interaction.md`, INPUT.md).
+//! Tests of typing into a page (`interaction.md`, DOC-1781).
 
 use super::*;
 use neoteletext_input::control::Control;
@@ -8,8 +8,7 @@ use neoteletext_input::{VERSION, WELCOME_TIMEOUT_MS};
 const PAGE: PageKey = PageKey { channel: 7, page: 0x200 };
 /// SELECT of the page, with no sub-page named.
 const SELECT_PAGE: &str = "Event(Select(Select { page: 512, sub: 16255 }, \"\"))";
-/// The key `a` as the channel reads it: a KEY carrying its text (INPUT.md
-/// section 6.3).
+/// The key `a` as the channel reads it: a KEY carrying its text (DOC-1935).
 const KEY_A: &str =
     "Event(Key(Key { on: Stamp { page: 512, sub: 0 }, action: Press, key: Character('a'), mods: 0, text: Some(\"a\"), base: None, lost: false }))";
 
@@ -224,7 +223,7 @@ fn a_new_connection_is_a_new_session() {
     assert_eq!(items(&typing.input_intent(&key('a'), 3)), [] as [String; 0], "waiting for WELCOME again");
 }
 
-/// INPUT.md section 6.3 (decision E.125): every key goes as KEY with its
+/// DOC-1935 (decision E.125): every key goes as KEY with its
 /// text, a command modifier's key with none, and every release.
 #[test]
 fn every_key_goes_as_a_key_with_its_text() {
@@ -279,7 +278,7 @@ fn the_mouse_always_goes() {
     assert_eq!(items(&typing.input_intent(&click, 0)), expected, "an older channel's PAGE_MODES");
 }
 
-/// REQ-RCH-005: every button and the modifiers go as INPUT.md section 5.4
+/// REQ-RCH-005: every button and the modifiers go as DOC-1938
 /// lays MOUSE out: `0xFF`, the type, the flags (the action, bit 2 for the
 /// dot, bit 3 for the modifiers), the button, the cell, the dot and the
 /// modifiers, each press and its release.

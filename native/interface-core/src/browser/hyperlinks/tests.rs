@@ -214,7 +214,7 @@ fn lits(browser: &mut Browser) -> Vec<Option<Lit>> {
     browser.take_outputs().into_iter().filter_map(|output| if let Output::Lit(lit) = output { Some(lit) } else { None }).collect()
 }
 
-/// INPUT.md section 9.7: while keys do not go to the channel, a link under the pointer takes
+/// DOC-1947: while keys do not go to the channel, a link under the pointer takes
 /// the hover look and a press its pressed look; a control takes neither,
 /// nor the hand, since a click on it would not reach the channel.
 #[test]
@@ -235,7 +235,7 @@ fn a_link_lights_under_the_pointer_and_a_control_only_while_keys_go() {
     assert_eq!(browser.cursor(), Cursor::Arrow);
 }
 
-/// INPUT.md section 9.7: while keys go to the channel, a control shows the hand and
+/// DOC-1947: while keys go to the channel, a control shows the hand and
 /// lights, hovered and then pressed while the button is held on it, and
 /// a new image with the same links keeps the look rather than putting it
 /// out while its links follow.
@@ -267,7 +267,7 @@ fn a_control_lights_and_shows_the_hand_while_keys_go() {
     assert_eq!(browser.cursor(), Cursor::Hand);
 }
 
-/// INPUT.md section 5.4 (decision E.129): while keys go to the channel it is
+/// DOC-1940 (decision E.129): while keys go to the channel it is
 /// told as the pointer enters and leaves each control, the leave before the
 /// enter from one to the next, with the control's first cell.
 #[cfg(feature = "interaction")]

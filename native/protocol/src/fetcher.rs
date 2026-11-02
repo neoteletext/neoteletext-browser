@@ -121,7 +121,7 @@ pub enum FromFetcher {
     },
     /// Something for the log, not yet cleaned.
     Notice(String),
-    /// The channel refused a selection (`INPUT.md` section 7.12, REQ-1481),
+    /// The channel refused a selection (DOC-1961, REQ-1481),
     /// a record of its connection, not yet checked.
     Denied {
         /// Its status number.
@@ -133,7 +133,7 @@ pub enum FromFetcher {
     /// A request of the channel was answered with a redirect that leaves
     /// it, not followed: the address it leads to, not yet checked (REQ-701).
     Redirected(String),
-    /// A REDIRECT record of the channel's program (`INPUT.md` section 7.11):
+    /// A REDIRECT record of the channel's program (DOC-1960):
     /// the tab goes to this page of the channel, `sub` being a sub-code or
     /// 3F7F for the page.
     PageRedirect {
@@ -183,7 +183,7 @@ pub enum FromFetcher {
         services: Vec<crate::links::Service>,
     },
     /// The channel's push WebSocket opened or closed, when its descriptor
-    /// says it takes input (INPUT.md section 4): a session may start now,
+    /// says it takes input (DOC-1865): a session may start now,
     /// and whether they go encrypted.
     #[cfg(feature = "interaction")]
     Input {
@@ -248,7 +248,7 @@ pub enum FromFetcher {
         page: u16,
     },
     /// A log line for the channel's author from a LOG record on its push
-    /// connection (the engine's `Event::Log`, `INPUT.md` section 7.6):
+    /// connection (the engine's `Event::Log`, DOC-1956):
     /// untrusted, for the console's Log only, as a TTI `LG` line's is.
     ChannelLog {
         /// Its level.
@@ -434,7 +434,7 @@ pub fn read_to_fetcher(input: &mut dyn Read) -> Result<Option<ToFetcher>, Protoc
 
 /// A live channel's message beyond its pages: its payload, and its kind.
 /// Whether a REDIRECT record's page and sub-code are ones this browser can
-/// show: the engine's rules (`INPUT.md` section 7.11) let a channel name a
+/// show: the engine's rules (DOC-1960) let a channel name a
 /// page with letters, which it has no slot for.
 #[must_use]
 pub fn redirect_in_bounds(page: u16, sub: u16) -> bool {

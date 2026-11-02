@@ -220,7 +220,7 @@ impl Tab {
     }
 
     /// Waits for the push connection, then HELLO and the channel's WELCOME
-    /// in pushed packets (INPUT.md section 6.1): the session input then
+    /// in pushed packets (DOC-1921): the session input then
     /// goes in.
     pub fn session(&self, deadline: Instant) -> Session {
         loop {

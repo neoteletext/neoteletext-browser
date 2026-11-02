@@ -43,7 +43,7 @@ pub const MAX_SERVICES: usize = 16;
 /// A named service's short name (the engine's `MAX_SHORT_NAME`).
 pub const MAX_SERVICE_NAME: usize = 32;
 /// The most controls a page has (the engine's `MAX_CONTROLS`, decision
-/// E.127; INPUT.md section 7.3).
+/// E.127; DOC-1844).
 pub const MAX_CONTROLS: usize = 32;
 /// Page numbers a page remaps: its `LK` lines and the channel's aliases.
 pub const MAX_REMAPPED: usize = MAX_NUMBER_LINKS + MAX_ALIASES;
@@ -57,7 +57,7 @@ pub(crate) const KIND_POINT: u8 = 24;
 pub(crate) const KIND_TYPED: u8 = 25;
 pub(crate) const KIND_CONFIRM: u8 = 36;
 pub(crate) const KIND_CANCEL: u8 = 37;
-// The look under the pointer (INPUT.md section 9.7).
+// The look under the pointer (DOC-1947).
 pub(crate) const KIND_LIT: u8 = 95;
 // Trusted core to interface.
 const KIND_PAGE_LINKS: u8 = 11;

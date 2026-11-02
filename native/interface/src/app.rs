@@ -95,7 +95,7 @@ struct View {
     /// The window's input method: whether the address is being edited, so
     /// the method is the field's, and whether the method is enabled now,
     /// which it is while the address is edited and while keys go to a
-    /// channel (INPUT.md section 9.1).
+    /// channel (`interaction.md` section 7.3).
     ime: InputMethod,
     /// The version and indices of the last frame of each page shown, which
     /// the next frame of the page may be sent as changes against.

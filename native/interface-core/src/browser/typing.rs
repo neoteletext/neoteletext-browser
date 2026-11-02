@@ -1,4 +1,4 @@
-//! Typing into a page (`neoteletext-common/INPUT.md` section 9): while
+//! Typing into a page (`interaction.md` section 7): while
 //! the page open is a page of a channel that takes input, the viewer's
 //! keys are the channel's, as a terminal's are its host's, and the mouse
 //! and the contacts of a touch screen on the page too. The browser draws
@@ -26,10 +26,10 @@ pub const BLINK_MILLISECONDS: u64 = 530;
 const BAR_SHARE: f64 = 0.15;
 /// A block cursor's outline as a share of a cell's width.
 const BLOCK_LINE_SHARE: f64 = 0.12;
-/// The wheel's unit: 1/120th of a line (INPUT.md section 5.4).
+/// The wheel's unit: 1/120th of a line (DOC-1938).
 const WHEEL_UNITS_PER_LINE: f64 = 120.0;
 /// Turns of a wheel that moves in notches, in lines, as a channel gets
-/// them: at least a whole line a notch (INPUT.md section 5.4). macOS
+/// them: at least a whole line a notch (DOC-1938). macOS
 /// reports a slow notch as a tenth of a line, which a list that moves a
 /// line at a time would need ten notches to show; a faster notch, past a
 /// line, keeps its acceleration. A trackpad's pixels are not notches and
@@ -39,7 +39,7 @@ pub fn notched(lines: f64) -> f64 {
     if lines != 0.0 && lines.abs() < 1.0 { lines.signum() } else { lines }
 }
 
-/// Mouse buttons tracked as held, as section 5.4's `button` numbers them:
+/// Mouse buttons tracked as held, as DOC-1938's `button` numbers them:
 /// a move's mask of the buttons held is a byte.
 const BUTTONS: u8 = 8;
 // Every button the browser sends is tracked.
@@ -87,7 +87,7 @@ pub(super) struct TerminalUi {
     moved: u64,
     /// The mouse buttons held on the page, bit `n` for button `n`.
     buttons: u8,
-    /// The modifiers held, as section 5.5 numbers them, which go with
+    /// The modifiers held, as DOC-1935 numbers them, which go with
     /// every press, release, move and wheel turn (REQ-RCH-005).
     mods: u8,
     /// Where the pointer was last given as on the open page: a move goes
@@ -170,8 +170,8 @@ impl Browser {
             || self.popup_open()
     }
 
-    /// Whether the input method's preedit goes to the channel (INPUT.md
-    /// sections 6.3 and 9.1): whenever keys go to it.
+    /// Whether the input method's preedit goes to the channel (`interaction.md` section 7.3):
+    /// whenever keys go to it.
     #[must_use]
     pub fn composes_for_channel(&self) -> bool {
         self.typing_target().is_some()
@@ -182,8 +182,8 @@ impl Browser {
         self.typing.browser_modifier = held;
     }
 
-    /// The modifiers held now, as INPUT.md section 5.5 numbers them: the
-    /// mouse's events carry them (section 5.4, REQ-RCH-005).
+    /// The modifiers held now, as DOC-1935 numbers them: the
+    /// mouse's events carry them (DOC-1938, REQ-RCH-005).
     pub fn set_mouse_modifiers(&mut self, mods: u8) {
         self.typing.mods = mods;
     }
@@ -195,7 +195,7 @@ impl Browser {
     }
 
     /// The dot of the open page's image under `point`, and the cell it
-    /// lies in (INPUT.md section 9.9): the dot first, rounded down and kept
+    /// lies in (DOC-1946): the dot first, rounded down and kept
     /// inside the image, and the cell from it, 12 by 20 dots to a cell, so
     /// the dot is always inside its cell, as the trusted core's reader
     /// requires (REQ-INT-127).
@@ -214,7 +214,7 @@ impl Browser {
 
     /// Whether the mouse is the channel's: keys go to it, the pointer is
     /// over the open page, and not with the browser's modifier, which
-    /// always keeps a click the browser's (INPUT.md section 6.3,
+    /// always keeps a click the browser's (DOC-1938,
     /// REQ-INT-115, REQ-INT-136).
     fn mouse_is_hosts(&self) -> bool {
         self.mouse_target().is_some() && !self.typing.browser_modifier && self.pointer_on_page().is_some()
@@ -320,7 +320,7 @@ impl Browser {
     }
 
     /// The pointer moved: over the open page, each change of the dot is a
-    /// move for the channel, buttons held or not (INPUT.md section 6.3,
+    /// move for the channel, buttons held or not (DOC-1945,
     /// REQ-RCH-030), which the trusted core paces; off it, onto the border,
     /// the browser's controls or out of the window, gone (REQ-RCH-034).
     pub(in crate::browser) fn terminal_moved(&mut self) {
@@ -421,7 +421,7 @@ impl Browser {
     }
 
     /// The pointer entered or left the control whose first cell is
-    /// `column`, `row` on the page `key` (INPUT.md section 5.4's HOVER);
+    /// `column`, `row` on the page `key` (DOC-1940);
     /// told only while keys go to that page. Only links know the controls.
     #[cfg(feature = "links")]
     pub(in crate::browser) fn terminal_hover(&mut self, key: PageKey, column: u8, row: u8, leave: bool) {
@@ -431,7 +431,7 @@ impl Browser {
     }
 
     /// The wheel, in lines, over the open page: the channel's while keys go
-    /// to it (INPUT.md sections 6.3 and 9.1, decision 107);
+    /// to it (DOC-1938 and `interaction.md` section 7.3, decision 107);
     /// `None` when it is the browser's, to scroll: beside the page, or with
     /// the browser's modifier held.
     pub fn terminal_wheel(&mut self, across: f64, down: f64) -> Option<bool> {

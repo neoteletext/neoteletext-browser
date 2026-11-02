@@ -95,13 +95,12 @@ impl Session {
         }
     }
 
-    /// The videotex convention (INPUT.md section 9.4), and three
+    /// The videotex convention (`interaction.md` section 7.6), and three
     /// plain digits where the page has no field. Returns whether the key
     /// was part of a page selection.
     fn select(&mut self, character: char) -> bool {
         let field_page = self.page == 0x200;
-        // The decimal digits of any script select as 0 to 9 (INPUT.md
-        // section 5.7 rule 8).
+        // The decimal digits of any script select as 0 to 9 (DOC-1937).
         let character = decimal_digit(character).map_or(character, |digit| char::from(b'0' + digit));
         match character {
             '*' => "*".clone_into(&mut self.selection),
@@ -143,7 +142,7 @@ impl Session {
 
     /// Acts on one item of the input stream; returns what to push.
     pub(super) fn item(&mut self, item: &Item<'_>) -> Vec<Push> {
-        // The input count (INPUT.md section 7.1): a character or an event
+        // The input count (DOC-1943): a character or an event
         // counts one, modulo 65 536.
         self.acked = self.acked.wrapping_add(u16::try_from(units(item) & u32::from(u16::MAX)).unwrap_or(0));
         let mut pushes = Vec::new();
@@ -187,7 +186,7 @@ impl Session {
     }
 
     /// HELLO: WELCOME back with what the channel uses of what is offered,
-    /// as a control record (INPUT.md section 7.2).
+    /// as a control record (DOC-1953).
     fn welcome(&mut self, version: u32, caps: u32) -> Vec<Push> {
         if version != neoteletext_input::VERSION {
             return Vec::new();
@@ -261,7 +260,7 @@ impl Session {
                 let name = self.fields[0].text.trim().to_owned();
                 self.greeting = if name.is_empty() { "Type your name first.".to_owned() } else { format!("Hello, {name}!") };
             }
-            // A key's text types, held keys repeating it (INPUT.md section 6.3).
+            // A key's text types, held keys repeating it (DOC-1935).
             (_, _, Some(_)) if !control => {
                 let mut pushes = Vec::new();
                 for typed in key.text.unwrap_or_default().chars() {

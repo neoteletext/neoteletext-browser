@@ -107,7 +107,7 @@ pub enum ToDecoder {
     /// gives it, or none for the decoder's own (the engine's REQ-WEB-002).
     Region(Option<u8>),
     /// The look of one area of a page under the pointer, hovered or
-    /// pressed, or none (INPUT.md section 9.7, the engine's decision
+    /// pressed, or none (DOC-1947, the engine's decision
     /// E.127): drawn on the page's own cells.
     #[cfg(feature = "links")]
     Look {
@@ -194,7 +194,7 @@ pub enum FromDecoder {
         candidates: Vec<crate::links::Candidate>,
         /// Its `LK` lines.
         numbers: Vec<crate::links::NumberLink>,
-        /// Its controls (INPUT.md section 7.3), as the engine found them.
+        /// Its controls (DOC-1844), as the engine found them.
         controls: Vec<crate::links::Area>,
         /// Its coloured keys and Index, from packet X/27/0.
         fastext: crate::links::Fastext,
@@ -227,7 +227,7 @@ pub enum FromDecoder {
     },
     /// A cursor record the channel sent for a page, from a pushed packet or
     /// a page's `CU` line: untrusted, its body as sent, for the trusted
-    /// core to check (INPUT.md section 7.1).
+    /// core to check (DOC-1954).
     #[cfg(feature = "interaction")]
     Cursor {
         /// The record's body: page, acknowledgement, row, column, width

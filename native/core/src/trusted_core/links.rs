@@ -96,7 +96,7 @@ impl Core {
     }
 
     /// Has each page's decoder draw the look under the pointer the
-    /// interface asked for, once checked (INPUT.md section 9.7).
+    /// interface asked for, once checked (DOC-1947).
     pub(super) fn light(&mut self, lit: Option<protocol::links::Lit>) {
         for (key, look) in self.links.light(lit) {
             // The frame that draws it is the look's, which the page's

@@ -178,8 +178,7 @@ impl Console {
 
     /// Counts what a push brought: its bytes, and when they are packets,
     /// each packet, and those of the audio profile's data channel by what
-    /// they carry, as the engine tells them (`idl::is_audio`, INPUT.md
-    /// section 7).
+    /// they carry, as the engine tells them (`idl::is_audio`, DOC-1951).
     pub fn received(&mut self, channel: u32, pushed: bool, packets: bool, bytes: &[u8]) {
         let counts = self.counts(channel);
         let length = u64::try_from(bytes.len()).unwrap_or(u64::MAX);

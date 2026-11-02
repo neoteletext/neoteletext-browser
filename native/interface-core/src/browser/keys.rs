@@ -138,7 +138,7 @@ impl Browser {
 
     fn shortcut(&mut self, key: Key<'_>, modifiers: Modifiers, now: u64) -> bool {
         // The browser's Escape: leaves a page whose channel has every
-        // other key (INPUT.md section 9.1).
+        // other key (`interaction.md` section 7.3).
         if key == Key::Escape {
             self.stop_editing();
             return self.wall.unzoom(now);

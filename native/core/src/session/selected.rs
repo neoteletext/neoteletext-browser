@@ -80,7 +80,7 @@ impl Session {
     }
 
     /// The channel's program redirected the tab holding `channel` to `page`,
-    /// and `subpage` of it if it names one (`INPUT.md` section 7.11), with
+    /// and `subpage` of it if it names one (DOC-1960), with
     /// the page parameters of an address it named, its Back list by
     /// [`Tab::redirected`]. True when the page left is passed over from now
     /// on.

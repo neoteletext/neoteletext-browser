@@ -1,5 +1,5 @@
-//! What a channel's decoder found for typing (`neoteletext-common/INPUT.md`
-//! sections 5 and 8, REQ-INT-107 to REQ-INT-114, REQ-INT-134): its cursor
+//! What a channel's decoder found for typing (DOC-1781,
+//! REQ-INT-107 to REQ-INT-114, REQ-INT-134): its cursor
 //! records, checked by the engine's rules, and its control records,
 //! applied to the channel's input session.
 
@@ -17,7 +17,7 @@ impl Typing {
     /// (REQ-RCH-016), not the acknowledgement's. It never moves a viewer,
     /// whatever page it names: it travels with every page frame, so one in
     /// flight names the page just left, and only a REDIRECT record moves
-    /// one (`INPUT.md` section 7.1).
+    /// one (DOC-1954).
     pub fn cursor(&mut self, channel: u32, body: [u8; cursor::BODY]) -> Vec<Send> {
         let mut sends = Vec::new();
         let Ok(cursor) = cursor::from_body(body) else { return sends };
@@ -36,8 +36,8 @@ impl Typing {
     /// (REQ-INT-111) and applied to the session. WELCOME starts it: a new
     /// session as at its first connection; a resumed one first sends again,
     /// in order, what the channel had not taken, then RESIZE, the focus and
-    /// SELECT, so the channel pushes the open page again (INPUT.md section
-    /// 6.4 item 7, REQ-INT-125, REQ-RCH-013). A WELCOME that does not fit
+    /// SELECT, so the channel pushes the open page again (DOC-1923
+    /// item 7, REQ-INT-125, REQ-RCH-013). A WELCOME that does not fit
     /// leaves the session refused, which the strip says; a resumption that
     /// cannot be leaves it forgotten, taking no input until the next
     /// connection, a new session.

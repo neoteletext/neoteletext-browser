@@ -170,7 +170,7 @@ impl ChannelState {
     /// and the name of the section each hundred falls in.
     pub fn set_contents(&mut self, entries: &[Entry]) {
         // A live channel's index is sent whole each time it changes, so a
-        // page it no longer lists goes (`INPUT.md` section 7.5).
+        // page it no longer lists goes (DOC-1955).
         if self.live {
             self.titles.fill(None);
             self.banks.fill(String::new());
