@@ -59,7 +59,12 @@ impl LinkLines {
 /// The link lines of every page file read, by page number and sub-code,
 /// as the store keeps pages.
 #[derive(Default)]
-pub struct Lines(BTreeMap<(u16, u16), LinkLines>);
+pub struct Lines {
+    held: BTreeMap<(u16, u16), LinkLines>,
+    /// Each pushed sub-page's LINKS sending: its number of parts, and the
+    /// part that comes next.
+    sendings: BTreeMap<(u16, u16), (u8, u8)>,
+}
 
 impl Lines {
     /// Keeps the link lines of a page file, replacing its earlier version's.
@@ -71,16 +76,27 @@ impl Lines {
 
     /// Keeps a pushed sub-page's links from its LINKS record (REQ-1494),
     /// as its page file's `LT`, `LK` and `LN` lines would give them: part
-    /// 0 replaces what was held, later parts add to it.
+    /// 0 replaces what was held, later parts add to it. A later part is
+    /// taken only as the next of the sending part 0 began, with the same
+    /// number of parts; one that is not is refused, and a LINKS record
+    /// refused leaves its sub-page with no Link Extension links (DOC-1952,
+    /// DOC-1958). The engine's reader checked each record alone.
     pub fn read_record(&mut self, record: &neoteletext_web::records::links::LinksRecord<'_>) {
         let key = (record.page.mpp(), record.subcode.value());
+        let follows = record.part == 0 || self.sendings.get(&key) == Some(&(record.parts, record.part));
+        if !follows {
+            self.clear(key.0, key.1);
+            return;
+        }
+        self.sendings.insert(key, (record.parts, record.part.saturating_add(1)));
         self.set(key, record.text_links(), record.number_links(), record.key_links(), |span| record.address(span), record.part == 0);
     }
 
     /// Drops what is held for a sub-page a frame came for with no LINKS
     /// record: it has no links (neoteletext-common's DEC-1517).
     pub fn clear(&mut self, page: u16, subcode: u16) {
-        self.0.remove(&(page, subcode));
+        self.held.remove(&(page, subcode));
+        self.sendings.remove(&(page, subcode));
     }
 
     fn set<'a>(
@@ -92,7 +108,7 @@ impl Lines {
         address: impl Fn(AddressSpan) -> &'a [u8],
         replace: bool,
     ) {
-        let mut lines = if replace { LinkLines::default() } else { self.0.remove(&key).unwrap_or_default() };
+        let mut lines = if replace { LinkLines::default() } else { self.held.remove(&key).unwrap_or_default() };
         lines.text.extend(texts.filter_map(|link| Some((link.row, link.column, link.length, target(&link.destination, &address)?))));
         lines.text.truncate(MAX_TEXT_LINKS);
         lines.numbers.extend(numbers.filter_map(|link| Some(NumberLink { number: link.number.mpp(), target: target(&link.destination, &address)? })));
@@ -106,16 +122,16 @@ impl Lines {
             }
         }
         if lines == LinkLines::default() {
-            self.0.remove(&key);
+            self.held.remove(&key);
         } else {
-            self.0.insert(key, lines);
+            self.held.insert(key, lines);
         }
     }
 
     /// The link lines of a page as stored.
     #[must_use]
     pub fn get(&self, page: u16, subcode: u16) -> Option<&LinkLines> {
-        self.0.get(&(page, subcode))
+        self.held.get(&(page, subcode))
     }
 }
 

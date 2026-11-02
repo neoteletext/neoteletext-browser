@@ -32,19 +32,80 @@ fn text_link(row: u8, destination: LinkDestination) -> TextLink {
     TextLink { row, column: 0, length: 4, destination, line: 0 }
 }
 
-/// Reads the records of `links` as a decoder does, each record dropped once
-/// it is read.
-fn read_all(links: SubPageLinks<'_>) -> Lines {
+/// The packets of the LINKS records of `links`, for page 100's sub-page
+/// 0000, from record id `first_id`.
+fn encoded(links: SubPageLinks<'_>, first_id: u8) -> Vec<neoteletext_core::packet::Packet> {
     let page = PageAddress::from_mpp(PAGE).unwrap();
     let mut packets = Vec::new();
-    encode(page, SubCode::new(0), links, SERVICE, 0, &mut |packet| packets.push(packet)).unwrap();
-    let (mut held, mut reader) = (Lines::default(), RecordReader::new());
-    for packet in &packets {
+    encode(page, SubCode::new(0), links, SERVICE, first_id, &mut |packet| packets.push(packet)).unwrap();
+    packets
+}
+
+/// Reads the records in `packets` into `held` as a decoder does, each
+/// record dropped once it is read.
+fn read_into(held: &mut Lines, packets: &[neoteletext_core::packet::Packet]) {
+    let mut reader = RecordReader::new();
+    for packet in packets {
         if let Read::Record(ChannelRecord::Links(record)) = reader.push(packet) {
             held.read_record(&record);
         }
     }
+}
+
+/// Reads the records of `links` as a decoder does, each record dropped once
+/// it is read.
+fn read_all(links: SubPageLinks<'_>) -> Lines {
+    let mut held = Lines::default();
+    read_into(&mut held, &encoded(links, 0));
     held
+}
+
+/// `count` text links, each to an address of the longest kind, so that
+/// each takes a LINKS record of its own.
+fn long_links(count: u8, mark: char) -> (LinkText, Vec<TextLink>) {
+    let mut text = LinkText::new();
+    let target = address(mark);
+    let texts = (2..).take(usize::from(count)).map(|row| text_link(row, link_destination(target.as_bytes(), &mut text).unwrap())).collect();
+    (text, texts)
+}
+
+/// The packets of each record of `links`, one record a group.
+fn records(links: SubPageLinks<'_>, first_id: u8) -> Vec<Vec<neoteletext_core::packet::Packet>> {
+    let mut groups: Vec<Vec<neoteletext_core::packet::Packet>> = Vec::new();
+    let mut reader = RecordReader::new();
+    let mut group = Vec::new();
+    for packet in encoded(links, first_id) {
+        group.push(packet);
+        if matches!(reader.push(&packet), Read::Record(_)) {
+            groups.push(core::mem::take(&mut group));
+        }
+    }
+    groups
+}
+
+/// DOC-1952 and DOC-1958: a LINKS part that is not the next of the sending
+/// part 0 began, or that gives the sending another number of parts, is
+/// refused, and the sub-page is left with no Link Extension links. On the
+/// code before, each was added to what part 0 gave.
+#[test]
+fn a_part_that_breaks_its_sending_leaves_no_links() {
+    let (text, texts) = long_links(3, 'a');
+    let three = records(SubPageLinks { keys: &[], numbers: &[], texts: &texts, addresses: &text }, 0);
+    let (other_text, other_texts) = long_links(4, 'b');
+    let four = records(SubPageLinks { keys: &[], numbers: &[], texts: &other_texts, addresses: &other_text }, 10);
+    assert_eq!((three.len(), four.len()), (3, 4), "a record a link");
+    let held = |groups: &[&Vec<neoteletext_core::packet::Packet>]| {
+        let mut lines = Lines::default();
+        for group in groups {
+            read_into(&mut lines, group);
+        }
+        lines.get(PAGE, 0).map(|lines| lines.text.len())
+    };
+    assert_eq!(held(&[&three[0], &three[1], &three[2]]), Some(3), "a sound sending");
+    assert_eq!(held(&[&three[0], &four[1]]), None, "a part of four after a part 0 of three");
+    assert_eq!(held(&[&three[0], &three[2]]), None, "a part skipped");
+    assert_eq!(held(&[&three[1]]), None, "no part 0");
+    assert_eq!(held(&[&three[0], &three[1], &three[2], &three[2]]), None, "a part again");
 }
 
 fn keys_addresses(lines: &LinkLines) -> Vec<Vec<u8>> {
