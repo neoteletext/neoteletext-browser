@@ -278,8 +278,9 @@ fn a_refusal_is_held_to_its_bounds() {
     assert!(write_to_core(&mut Vec::new(), &refused(Some(9_999))).is_err(), "no status has four digits");
     let mut bytes = Vec::new();
     write_to_core(&mut bytes, &refused(Some(500))).unwrap();
-    let last = bytes.len() - 1;
-    bytes[last] = 0xFF;
+    // The status's high byte.
+    let high = bytes.len() - 2;
+    bytes[high] = 0xFF;
     assert!(read_from_fetcher(&mut bytes.as_slice()).is_err(), "a status out of bounds closes the fetcher");
     let mut page_of_the_channel = Vec::new();
     write_to_core(&mut page_of_the_channel, &FromFetcher::Refused { file: RefusedFile::Channel, status: None }).unwrap();
