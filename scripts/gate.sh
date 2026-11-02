@@ -1,5 +1,5 @@
 # Copied by neoteletext-common gates/sync; change it there, not here.
-# neoteletext-common gates at 5fefe88b87fba9b4ab18a1f9b9674c7de1de2fdd
+# neoteletext-common gates at a3b0fae15e26e8a27738902f90f0ddb0089cec33
 # The gate machinery every neoteletext repository shares (gates.md). A
 # repository's scripts/check.sh sets its own steps and sources its copy of
 # this file, scripts/gate.sh, which gates/sync writes; the commit gate
@@ -20,6 +20,14 @@
 common="${NEOTELETEXT_COMMON:-$HOME/devel/neoteletext-common}"
 # The Linux host's copy has no git directory, and records nothing.
 git_dir="$(git rev-parse --git-common-dir 2>/dev/null || true)"
+# Git in neoteletext-common. A hook in a linked worktree inherits GIT_DIR
+# and its neighbours, which would override -C and read the wrong repository.
+common_git() { env -u GIT_DIR -u GIT_INDEX_FILE -u GIT_WORK_TREE git -C "$common" "$@"; }
+# Names of the documents DEC-2022 deleted, as a tracked file might write them:
+# bare, or with the dot escaped in a pattern. A longer name that ends in one
+# of them is another document. This text cannot match itself, as a closing
+# bracket stands where a name would meet its extension.
+readonly DELETED_DOCUMENT_NAMES='(^|[^-A-Za-z0-9_])(INPUT|SERVER|CHANNEL)\\*\.md'
 
 fail() {
     printf '\nFAILED: %s\n' "$*" >&2
@@ -82,18 +90,39 @@ unstaged_under() {
     git ls-files --others --exclude-standard -- "$@"
 }
 
+# No tracked file names a deleted document (DEC-2022): the protocol's text
+# is in rdm's items, and a reference to a file that is gone sends a reader
+# nowhere. It reads the index, what is being committed, and every path, since
+# a document is where such a mention lives and CHECKED_PATHS may not hold it.
+# A repository that must keep a mention as history, such as a dated review,
+# names that file alone in DELETED_DOCUMENT_HISTORY before sourcing this.
+check_deleted_documents() {
+    step "no tracked file names a deleted document (DEC-2022)"
+    local found status=0 path
+    local paths=(.)
+    for path in "${DELETED_DOCUMENT_HISTORY[@]+"${DELETED_DOCUMENT_HISTORY[@]}"}"; do
+        paths+=(":(exclude,literal)$path")
+    done
+    found="$(git grep --cached -nIE "$DELETED_DOCUMENT_NAMES" -- "${paths[@]}")" || status=$?
+    [[ "$status" -le 1 ]] || fail "git grep failed looking for deleted documents"
+    [[ -z "$found" ]] || fail "these name a document that is deleted; cite the item, DOC-n of neoteletext-common's PROTOCOL.html, that holds the rule:
+$found"
+}
+
 # The copy of this file and the hooks are neoteletext-common's at the
-# commit the copy names on its second line, unedited.
+# commit the copy names on its second line, unedited. neoteletext-common
+# itself runs the original.
 check_gate_copy() {
+    [[ ! -f gates/gate.sh ]] || return 0
     step "the gate machinery is neoteletext-common's, unedited"
     local revision file
     revision="$(sed -n '2s/^# neoteletext-common gates at \([0-9a-f]*\)$/\1/p' scripts/gate.sh)"
     [[ -n "$revision" ]] || fail "scripts/gate.sh names no neoteletext-common commit; run $common/gates/sync"
     [[ -d "$common/.git" ]] || fail "neoteletext-common is needed at $common (or NEOTELETEXT_COMMON) to check the gate's copy"
-    tail -n +3 scripts/gate.sh | cmp -s - <(git -C "$common" show "$revision:gates/gate.sh") ||
+    tail -n +3 scripts/gate.sh | cmp -s - <(common_git show "$revision:gates/gate.sh") ||
         fail "scripts/gate.sh differs from neoteletext-common's gates/gate.sh at $revision; change it there and run gates/sync"
     for file in pre-commit pre-merge-commit pre-push; do
-        cmp -s ".githooks/$file" <(git -C "$common" show "$revision:gates/$file") ||
+        cmp -s ".githooks/$file" <(common_git show "$revision:gates/$file") ||
             fail ".githooks/$file differs from neoteletext-common's gates/$file at $revision; run $common/gates/sync"
     done
 }
@@ -103,6 +132,7 @@ commit_gate() {
         step "nothing staged"
         return 0
     fi
+    check_deleted_documents
     if [[ -z "$(git diff --cached --name-only -- "${CHECKED_PATHS[@]}")" ]]; then
         step "nothing staged that the gates read"
         return 0
@@ -133,6 +163,7 @@ clean_head() {
     loose="$(unstaged_under .; git diff --cached --name-only)"
     [[ -z "$loose" ]] || fail "the tree has changes that are not committed; the $mode gate checks the commit being pushed:
 $loose"
+    check_deleted_documents
     tree="$(checked_tree HEAD)"
     if passed "$mode" "$tree"; then
         printf '\n== the %s gate already passed on this tree\n' "$mode"
