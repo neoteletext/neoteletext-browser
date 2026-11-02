@@ -1,5 +1,5 @@
 # Copied by neoteletext-common gates/sync; change it there, not here.
-# neoteletext-common gates at a3b0fae15e26e8a27738902f90f0ddb0089cec33
+# neoteletext-common gates at 26c4dd331b6e9903f04dc9b9cbca8e0fac31b1ab
 # The gate machinery every neoteletext repository shares (gates.md). A
 # repository's scripts/check.sh sets its own steps and sources its copy of
 # this file, scripts/gate.sh, which gates/sync writes; the commit gate
@@ -32,6 +32,22 @@ readonly DELETED_DOCUMENT_NAMES='(^|[^-A-Za-z0-9_])(INPUT|SERVER|CHANNEL)\\*\.md
 fail() {
     printf '\nFAILED: %s\n' "$*" >&2
     exit 1
+}
+
+# A step that cannot run fails the gate, naming what it lacks and how to get
+# it (gates.md). A step never asks whether its tool is there and goes on
+# without it: that gate would pass having checked nothing.
+need_tool() {
+    command -v "$1" >/dev/null 2>&1 || fail "$1 is not installed, so this gate cannot run; $2"
+}
+need_host() {
+    ssh -o BatchMode=yes -o ConnectTimeout=10 "$linux_host" true || fail "$linux_host is unreachable; the full gate needs it"
+}
+# A tool on the Linux host. A command over ssh has neither folder on its path.
+need_host_tool() {
+    # shellcheck disable=SC2029 # the tool's name is expanded here on purpose
+    ssh -o BatchMode=yes -o ConnectTimeout=10 "$linux_host" "PATH=\$HOME/.cargo/bin:\$HOME/.local/bin:\$PATH command -v $1 >/dev/null 2>&1" ||
+        fail "$1 is not installed on $linux_host, so this gate cannot run; $2"
 }
 
 # Each step prints its time as it ends; a pass records its steps' times,
@@ -109,6 +125,19 @@ check_deleted_documents() {
 $found"
 }
 
+# A check script that can report a step as skipped can pass without running
+# it, which gates.md forbids. The word is written in two parts, so that this
+# file does not name it.
+readonly SKIP_REPORT='SKIP''PED'
+check_no_skipping() {
+    step "no step of this gate can be skipped (gates.md)"
+    local found status=0
+    found="$(git grep --cached -nF "$SKIP_REPORT" -- 'scripts/*.sh' ':(exclude)scripts/gate.sh')" || status=$?
+    [[ "$status" -le 1 ]] || fail "git grep failed looking for a step that can be skipped"
+    [[ -z "$found" ]] || fail "a step that cannot run must fail the gate, with need_tool or need_host, and not report itself skipped:
+$found"
+}
+
 # The copy of this file and the hooks are neoteletext-common's at the
 # commit the copy names on its second line, unedited. neoteletext-common
 # itself runs the original.
@@ -149,6 +178,7 @@ $loose"
         return 0
     fi
     check_gate_copy
+    check_no_skipping
     commit_steps
     record_pass commit
 }
@@ -176,6 +206,7 @@ push_gate() {
         printf '\n== the commit gate passed on this tree: skipped\n'
     else
         check_gate_copy
+        check_no_skipping
         commit_steps
     fi
     if defined push_steps; then push_steps; fi

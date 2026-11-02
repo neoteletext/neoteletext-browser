@@ -193,7 +193,7 @@ feature_list() {
 
 linux_steps() {
     step "Linux on $linux_host: native, Clippy and tests"
-    ssh -o BatchMode=yes -o ConnectTimeout=10 "$linux_host" true || fail "$linux_host is unreachable; the full gate needs it"
+    need_host
     # Files are compared by content and written with the host's own time:
     # with this machine's times kept, a file edited here before the host's
     # last build looks older than that build, and Cargo reuses it.
