@@ -368,11 +368,12 @@ fn fastext_comes_from_the_link_line_and_needs_row_24() {
     assert!(!without_row.render_at(0x100, 0).unwrap().links.fastext.row24, "no row 24: the keys do nothing");
 }
 
-/// REQ-SEC-024, DEC-2115: a coloured key follows its link only while its own
-/// prompt can be read whole in row 24, however the page draws the row; a
-/// key whose colour the row does not use has no link, and Index shows no
-/// prompt, so it keeps its own. On the code before, any glyph in row 24 kept
-/// every key live.
+/// REQ-SEC-024, DEC-2115: a coloured key follows its link only while the
+/// engine's `Grid::prompts_shown` says row 24 shows its prompt whole; a key
+/// whose colour the row does not use has no link, and Index shows no
+/// prompt, so it keeps its own. The engine's own tests hold every way a
+/// prompt is hidden; these hold that the keys follow its verdict. On the
+/// code before, any glyph in row 24 kept every key live.
 #[cfg(feature = "links")]
 #[test]
 fn a_key_needs_its_own_prompt_shown_whole() {
@@ -385,10 +386,6 @@ fn a_key_needs_its_own_prompt_shown_whole() {
     assert_eq!(keys(b"\x1bAnews"), [true, false, false, true], "red alone");
     assert_eq!(keys(b"plain text"), [false, false, false, true], "in no key's colour");
     assert_eq!(keys(b"\x1bA\x1bXnews \x1bBsport"), [false, true, false, true], "concealed");
-    assert_eq!(keys(b"\x1bA\x1bHnews\x1bI \x1bBsport"), [false, true, false, true], "flashing");
-    assert_eq!(keys(b"\x1bAne\x1bHws\x1bI \x1bBsport"), [false, true, false, true], "partly flashing");
-    assert_eq!(keys(b"\x1bA\x1b]news \x1bBsport"), [false, true, false, true], "red on red");
-    assert_eq!(keys(b"\x1b@news"), [false, false, false, true], "black");
 }
 
 /// REQ-SEC-024: a coloured `LN` link with no label shows nothing, so its key
