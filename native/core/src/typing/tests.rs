@@ -1,6 +1,7 @@
 //! Tests of typing into a page (`interaction.md`, DOC-1781).
 
 use super::*;
+use neoteletext_input::caps::RESUME_CAP;
 use neoteletext_input::control::Control;
 use neoteletext_input::event::{Action, CONTROL, KeyCode, MouseAction, Point, read_message};
 use neoteletext_input::{VERSION, WELCOME_TIMEOUT_MS};

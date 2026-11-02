@@ -26,10 +26,10 @@ use std::collections::BTreeMap;
 use interface_core::canvas::PageKey;
 use neoteletext_core::limits::SUBCODE_ANY;
 use neoteletext_input::MAX_CONTACTS;
-use neoteletext_input::caps::{CURSOR_CAP, RESUME_CAP, SELECT_CAP, TOUCH_CAP};
+use neoteletext_input::caps::{CURSOR_CAP, SELECT_CAP, TOUCH_CAP};
 use neoteletext_input::contacts::Contacts;
 use neoteletext_input::cursor::{BLOCK, Cursor};
-use neoteletext_input::event::{self, Event, Item, Mouse, MouseAction, Point, Select, Stamp, Touch};
+use neoteletext_input::event::{self, Event, Item, Point, Select, Stamp};
 use neoteletext_input::held::Held;
 use neoteletext_input::pace::Pacer;
 use neoteletext_input::session::{ResumableSession, State};
@@ -164,13 +164,6 @@ impl Channel {
     /// count after it, if it went. A move is tagged with its contact, and
     /// every pointer event's position is kept for its gone.
     fn send(&mut self, channel: u32, item: &Item<'_>, now_us: u64, sends: &mut Vec<Send>) -> Option<u16> {
-        // MOUSE's and TOUCH's action 3, gone, came with the engine's E.133;
-        // a channel built before it reads action 3 as a protocol error and
-        // ends the session, so gone goes only to a channel that agreed a
-        // capability of the same change, TOUCH or RESUME, and so knows it.
-        if is_gone(item) && self.session.caps() & (TOUCH_CAP | RESUME_CAP) == 0 {
-            return None;
-        }
         let mut out = [0_u8; MAX_MESSAGE];
         match self.session.send(item, clock(now_us), &mut out) {
             Ok(length @ 1..) => {
@@ -225,11 +218,6 @@ impl Channel {
             sends.push(Send::Fetcher { channel, bytes: out.get(..length).unwrap_or(&[]).to_vec(), move_of: None, more: false });
         }
     }
-}
-
-/// Whether `item` is a pointer's or a contact's gone.
-fn is_gone(item: &Item<'_>) -> bool {
-    matches!(item, Item::Event(Event::Mouse(Mouse { action: MouseAction::Gone, .. }) | Event::Touch(Touch { action: MouseAction::Gone, .. })))
 }
 
 /// `text` in Unicode Normalization Form C, borrowed when it already is.

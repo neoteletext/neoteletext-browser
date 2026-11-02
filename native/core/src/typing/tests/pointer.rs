@@ -132,11 +132,12 @@ fn a_waiting_move_goes_before_the_release() {
 /// sends the waiting move and then gone, with the buttons held and the
 /// last position; a drag let go off the page so ends, and its release,
 /// which the channel has had as gone, is not sent. On the code before,
-/// nothing went and the channel kept the button held.
+/// nothing went and the channel kept the button held. REQ-222, DOC-1938:
+/// gone needs no capability: this session has agreed what the NeoTeletext
+/// server agrees, which is neither TOUCH nor RESUME.
 #[test]
 fn leaving_the_page_sends_the_waiting_move_then_gone() {
-    // Gone goes only to a channel that agreed TOUCH or RESUME.
-    let mut typing = ready(SELECT_CAP | TOUCH_CAP);
+    let mut typing = ready(SELECT_CAP);
     let (start, edge) = (at(5, 5, 0), at(0, 5, 0));
     typing.input_intent(&intent(Intent::Mouse { action: MouseAction::Press, button: 0, at: start }), 0);
     typing.input_intent(&moved(start), MS);
@@ -154,8 +155,7 @@ fn leaving_the_page_sends_the_waiting_move_then_gone() {
 /// and gone before `FOCUS_OUT`.
 #[test]
 fn keys_stopping_send_the_waiting_move_then_gone() {
-    // Gone goes only to a channel that agreed TOUCH or RESUME.
-    let mut typing = ready(SELECT_CAP | TOUCH_CAP);
+    let mut typing = ready(SELECT_CAP);
     let (here, there) = (at(5, 5, 0), at(6, 5, 0));
     typing.input_intent(&moved(here), 0);
     typing.input_intent(&moved(there), MS);
@@ -190,6 +190,17 @@ fn the_first_contact_is_the_mouse_and_the_next_touch() {
     assert_eq!(items(&typing.input_intent(&contact(TouchPhase::Ended, 77, c), 4 * MS)), [mouse(MouseAction::Release, 0, c, Device::Touch)]);
     assert_eq!(items(&typing.input_intent(&contact(TouchPhase::Moved, 77, a), 40 * MS)), [] as [String; 0], "no hover from a finger");
     assert_eq!(items(&typing.focused(false, 50 * MS)), ["Event(FocusOut)"], "nothing to let go of");
+}
+
+/// REQ-222, REQ-RCH-041: a cancelled first contact is a gone, with neither
+/// TOUCH nor RESUME agreed, so what it held is let go at the channel.
+#[test]
+fn a_cancelled_first_contact_is_gone_whatever_was_agreed() {
+    let mut typing = ready(SELECT_CAP);
+    let a = at(4, 4, 0);
+    typing.input_intent(&contact(TouchPhase::Began, 77, a), 0);
+    let cancelled = typing.input_intent(&contact(TouchPhase::Cancelled, 77, a), MS);
+    assert_eq!(items(&cancelled), [mouse(MouseAction::Gone, 1, a, Device::Mouse)]);
 }
 
 /// REQ-RCH-041: without TOUCH agreed the first contact goes as the mouse,
