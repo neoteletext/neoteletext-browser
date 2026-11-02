@@ -33,7 +33,7 @@ use protocol::subpages::SubPageRows;
 use crate::agent::descriptor_links;
 use crate::agent::{Random, product};
 use crate::cookies;
-use crate::live::{LiveIndex, SubPageLists};
+use crate::live::{LiveIndex, Noted, SubPageLists};
 use crate::transport::{AllowedLocal, Tcp};
 
 const _: () = assert!(protocol::fetcher::MAX_DENIED_PLACE == neoteletext_web::records::denied::MAX_PLACE, "the engine's longest place");
@@ -598,10 +598,16 @@ fn live_record(action: Action, live: &mut Live, output: &cookies::Output) -> Res
             live.index.complete(generation);
             send(output, &FromFetcher::Contents(live.index.entries()))
         }
-        Action::SubPageList(part) => {
-            let Some((page, parts)) = live.lists.note(part.page.mpp(), part.version, part.part, part.parts, part.count, part.entries) else { return Ok(()) };
-            parts.into_iter().try_for_each(|part| send(output, &FromFetcher::SubPages { page, part }))
-        }
+        Action::SubPageList(part) => match live.lists.note(part.page.mpp(), part.version, part.part, part.parts, part.count, part.entries) {
+            Noted::Partial => Ok(()),
+            Noted::Whole(page, parts) => parts.into_iter().try_for_each(|part| send(output, &FromFetcher::SubPages { page, part })),
+            // Said where a channel's other faults are, the console; the
+            // engine counted the records it refused alone.
+            Noted::Refused(page, why) => {
+                eprintln!("neoteletext-fetcher: the list of sub-pages of page {page:03X} broke its totals ({why:?}); discarded");
+                send(output, &FromFetcher::Notice(format!("the list of sub-pages of page {page:03X} broke its totals ({why:?}); discarded")))
+            }
+        },
         _ => Ok(()),
     }
 }

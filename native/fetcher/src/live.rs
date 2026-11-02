@@ -93,13 +93,38 @@ pub(crate) struct SubPageLists {
     sending: BTreeMap<u16, Sending>,
 }
 
+/// What came of a SUBPAGES record.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum Noted {
+    /// Its sending is not whole yet: nothing changes.
+    Partial,
+    /// The page's whole list, in catalogue parts.
+    Whole(u16, Vec<SubPageRows>),
+    /// The page's sending, whole, breaks its totals: it is discarded whole
+    /// and the page keeps the list it had (DOC-1952, DOC-1959).
+    Refused(u16, Refusal),
+}
+
+/// Why a whole sending was discarded.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Refusal {
+    /// Its parts carried another number of sub-pages than its count.
+    Count,
+    /// A sub-code is not above the one before it, across its parts: out of
+    /// order, or given twice.
+    Order,
+}
+
 impl SubPageLists {
     /// Part `part` of `parts` of `page`'s list of `count` sub-pages,
     /// version `version`, from a SUBPAGES record: a record of another
-    /// version of the page begins a new list. Returns the page and its
-    /// whole list in catalogue parts once every part has arrived; a partial
-    /// list gives nothing, so it removes nothing.
-    pub(crate) fn note(&mut self, page: u16, version: u16, part: u16, parts: u16, count: u16, entries: Vec<(u16, String)>) -> Option<(u16, Vec<SubPageRows>)> {
+    /// version of the page begins a new list. Once every part has arrived
+    /// the list is whole when its entries number `count` and its sub-codes
+    /// ascend over all its parts, each once, and is discarded otherwise; a
+    /// partial list gives nothing, so it removes nothing. Each record is
+    /// checked alone by the engine's reader; only the whole sending can
+    /// break these totals.
+    pub(crate) fn note(&mut self, page: u16, version: u16, part: u16, parts: u16, count: u16, entries: Vec<(u16, String)>) -> Noted {
         let fresh = || Sending { version, parts, count, received: BTreeMap::new() };
         let sending = self.sending.entry(page).or_insert_with(fresh);
         if (sending.version, sending.parts, sending.count) != (version, parts, count) {
@@ -107,19 +132,22 @@ impl SubPageLists {
         }
         sending.received.insert(part, entries);
         if sending.received.len() < usize::from(sending.parts) {
-            return None;
+            return Noted::Partial;
         }
-        let whole = self.sending.remove(&page)?;
-        // The count is the entries the parts carried: the trusted core
-        // holds a list once that many have come.
+        let Some(whole) = self.sending.remove(&page) else { return Noted::Partial };
         let entries: Vec<(u16, String)> = whole.received.into_values().flatten().collect();
-        let count = u16::try_from(entries.len()).ok()?;
+        if entries.len() != usize::from(whole.count) {
+            return Noted::Refused(page, Refusal::Count);
+        }
+        if entries.windows(2).any(|pair| matches!(pair, [(before, _), (after, _)] if after <= before)) {
+            return Noted::Refused(page, Refusal::Order);
+        }
         let parts = entries
             .chunks(CATALOGUE_PART)
             .zip((0_u16..).step_by(CATALOGUE_PART))
-            .map(|(rows, first)| SubPageRows { count, first, rows: rows.to_vec() })
+            .map(|(rows, first)| SubPageRows { count: whole.count, first, rows: rows.to_vec() })
             .collect();
-        Some((page, parts))
+        Noted::Whole(page, parts)
     }
 }
 
@@ -150,5 +178,27 @@ mod tests {
         index.note(1, "", &[page(0x100, "")], 2);
         index.complete(2);
         assert_eq!(sections(&index), [] as [&str; 0]);
+    }
+
+    fn rows(subcodes: &[u16]) -> Vec<(u16, String)> {
+        subcodes.iter().map(|&subcode| (subcode, format!("Story {subcode:04X}"))).collect()
+    }
+
+    // DOC-1959, DOC-1952: a sending whose parts, each valid alone, repeat a
+    // sub-code or go back across a part, or carry another number of
+    // sub-pages than its count, is discarded whole, and the list the page
+    // had stands. On the code before, each was taken as the page's list.
+    #[test]
+    fn a_sending_that_breaks_its_totals_is_discarded() {
+        let mut lists = SubPageLists::default();
+        assert_eq!(lists.note(0x210, 1, 0, 2, 4, rows(&[1, 2])), Noted::Partial);
+        assert_eq!(lists.note(0x210, 1, 1, 2, 4, rows(&[2, 3])), Noted::Refused(0x210, Refusal::Order), "repeated across parts");
+        lists.note(0x210, 2, 0, 2, 4, rows(&[3, 4]));
+        assert_eq!(lists.note(0x210, 2, 1, 2, 4, rows(&[1, 2])), Noted::Refused(0x210, Refusal::Order), "back across parts");
+        lists.note(0x210, 3, 0, 2, 5, rows(&[1, 2]));
+        assert_eq!(lists.note(0x210, 3, 1, 2, 5, rows(&[3, 4])), Noted::Refused(0x210, Refusal::Count), "four of five");
+        lists.note(0x210, 4, 0, 2, 4, rows(&[1, 2]));
+        let Noted::Whole(0x210, parts) = lists.note(0x210, 4, 1, 2, 4, rows(&[3, 4])) else { panic!("a sound sending is whole") };
+        assert_eq!(parts, [SubPageRows { count: 4, first: 0, rows: rows(&[1, 2, 3, 4]) }]);
     }
 }
