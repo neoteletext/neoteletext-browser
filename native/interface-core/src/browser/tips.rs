@@ -137,10 +137,15 @@ impl Browser {
     /// pointer, over everything.
     pub(super) fn draw_tips<C: Canvas + ?Sized>(&mut self, canvas: &mut C, width: f64, height: f64, now: u64) {
         let mut tips = Vec::new();
-        // In full screen no control is on the screen; a page's links are.
-        // A list or menu open over the window takes the pointer; a panel
-        // covers what is below the strip.
+        // In full screen a page's links are on the screen, and the strip
+        // while it is down, over them. A list or menu open over the window
+        // takes the pointer; a panel covers what is below the strip.
         if self.full_screen() {
+            if self.full_screen_strip(now) {
+                self.strip_tips(&mut tips);
+                self.bar_tips(&mut tips);
+                self.tabs_tips(&mut tips);
+            }
             #[cfg(feature = "links")]
             self.link_tips(&mut tips);
         } else if !self.popup_open() {

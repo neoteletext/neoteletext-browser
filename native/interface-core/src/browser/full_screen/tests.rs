@@ -144,6 +144,29 @@ fn the_strip_comes_down_from_the_top_edge() {
     assert_eq!(browser.regions.field, Rect::ZERO, "for three seconds");
 }
 
+/// REQ-764, TODO-2082: with the strip down in full screen its controls have
+/// their tips, as they do in the window. On the code before, `draw_tips`
+/// listed only the page's links in full screen.
+#[test]
+fn the_strip_has_its_tips_while_it_is_down() {
+    /// Half a second's rest and a little: the tip's delay.
+    const REST_MILLISECONDS: u64 = 600;
+    let mut browser = in_full_screen();
+    draw(&mut browser, 0);
+    browser.pointer_moved(400.0, 1.0, 1_000);
+    let down = 1_000 + EDGE_WAIT_MILLISECONDS;
+    assert!(browser.settle(down));
+    draw(&mut browser, down);
+    let reload = middle(browser.regions.reload);
+    browser.pointer_moved(reload.x, reload.y, down);
+    draw(&mut browser, down);
+    assert!(browser.tips_settle(down + REST_MILLISECONDS), "a tip waited for");
+    assert!(browser.tip_shown().is_some_and(|tip| tip.starts_with("Reload: ")), "{:?}", browser.tip_shown());
+    browser.pointer_moved(400.0, 600.0, down + 2 * REST_MILLISECONDS);
+    draw(&mut browser, down + 2 * REST_MILLISECONDS);
+    assert_eq!(browser.tip_shown(), None, "gone with the strip");
+}
+
 impl Browser {
     /// Whether a press at the pointer now would be the page's.
     fn tabs_strip_hit_is_page(&self) -> bool {

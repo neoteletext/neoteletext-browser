@@ -124,7 +124,7 @@ impl Browser {
     }
 
     /// The strip is down over the page.
-    fn full_screen_strip(&self, now: u64) -> bool {
+    pub(super) fn full_screen_strip(&self, now: u64) -> bool {
         self.full_screen.strip || self.full_screen.strip_until.is_some_and(|until| now < until)
     }
 

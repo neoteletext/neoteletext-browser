@@ -15,6 +15,8 @@ const CARET_WIDTH: f64 = 2.0;
 /// What a file's address begins with, which the field leaves off when it is
 /// not being edited.
 const FILE_PREFIX: &str = "file://";
+/// What ends an address's scheme.
+const SCHEME_END: &str = "://";
 
 /// Whether what was typed names a file, so the interface declares it to the
 /// broker (DEC-1551 item 3): the address rules decide what it really is.
@@ -127,7 +129,13 @@ impl Browser {
             // A file shows its path, beside the "File" label; the whole
             // `file:///` address is what is edited (DEC-1549 item 6).
             let address = self.strip.address.strip_prefix(FILE_PREFIX).filter(|_| self.strip.local).unwrap_or(&self.strip.address);
-            let identity_at = address.find(self.strip.identity.as_str()).filter(|_| !self.strip.identity.is_empty());
+            // After the scheme: a short host's letters can be the scheme's.
+            let host_from = address.find(SCHEME_END).map_or(0, |at| at.saturating_add(SCHEME_END.len()));
+            let identity_at = address
+                .get(host_from..)
+                .and_then(|rest| rest.find(self.strip.identity.as_str()))
+                .map(|at| at.saturating_add(host_from))
+                .filter(|_| !self.strip.identity.is_empty());
             let mut x = area.x0;
             let parts: [(&str, Colour); 3] = identity_at
                 .and_then(|start| {
@@ -178,6 +186,27 @@ mod tests {
         browser.drop_on_address("file:///home/a/other.t42");
         assert_eq!(browser.editor.text(), "file:///home/a/other.t42");
         assert_eq!(browser.take_outputs(), [Output::TextInput(true)], "it goes nowhere until Enter");
+    }
+
+    /// TODO-2085: the host is emphasised where it stands, after the scheme,
+    /// though its letters also make part of the scheme. On the code before,
+    /// the `h` of `http` took the host's ink.
+    #[test]
+    fn the_host_is_emphasised_after_the_scheme() {
+        for (address, host, before, after) in [
+            ("http://h/", "h", "http://", "/"),
+            ("https://ps/ps", "ps", "https://", "/ps"),
+            ("http://tt/100", "tt", "http://", "/100"),
+            ("https://news.example/news.example", "news.example", "https://", "/news.example"),
+        ] {
+            let (mut browser, _) = browser();
+            browser.set_strip(StripState { address: address.into(), identity: host.into(), ..StripState::default() });
+            let mut canvas = Recorder::new();
+            browser.draw(&mut canvas, WIDTH, HEIGHT, 0);
+            let parts: alloc::vec::Vec<&str> = canvas.texts.iter().map(|(_, text)| text.as_str()).collect();
+            let at = parts.iter().position(|part| *part == before).unwrap_or_else(|| panic!("{address}: {parts:?}"));
+            assert_eq!(parts.get(at + 1..at + 3), Some(&[host, after][..]), "{address}");
+        }
     }
 
     #[test]
