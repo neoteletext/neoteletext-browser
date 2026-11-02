@@ -438,6 +438,54 @@ fn a_page_redefines_its_colour_map() {
     assert_eq!(redefined.palette[TRANSPARENT], [0, 0, 0], "CLUT 1 entry 0 stays transparent, shown as the picture behind");
 }
 
+/// A page in TTI whose X/26 is a Full Screen Colour triplet of `colour`, as
+/// a channel on the component library writes it: address 41 (EN 300 706
+/// Annex A.5 NOTE 1), mode 00000 and the Colour Map entry as data (Table
+/// 28), then Termination Markers (Annex A.3). A packed line's characters
+/// hold six bits each, low first, after the designation code.
+fn screen_colour_page(colour: u32) -> Vec<u8> {
+    const PACKED: u32 = 0x40;
+    const SIX_BITS: u32 = 0x3F;
+    const TRIPLETS: usize = 13;
+    const FULL_SCREEN_COLOUR: u32 = 41;
+    const TERMINATION: u32 = 63 | (0x1F << 6);
+    let character = |bits: u32| char::from_u32(PACKED | (bits & SIX_BITS)).unwrap();
+    let mut file = String::from("PN,10000\nSC,0000\nPS,8000\nOL,1,Page\nOL,26,");
+    file.push(character(0));
+    for at in 0..TRIPLETS {
+        let triplet = if at == 0 { FULL_SCREEN_COLOUR | (colour << 11) } else { TERMINATION };
+        for shift in [0, 6, 12] {
+            file.push(character(triplet >> shift));
+        }
+    }
+    file.push('\n');
+    file.into_bytes()
+}
+
+/// REQ-740, REQ-276: the colour a page's Full Screen Colour triplet names is
+/// the screen colour of its frame, any of the Colour Map's entries; a page
+/// with none has the default, Colour Map entry 0 (Annex A.5).
+#[test]
+fn a_pages_full_screen_colour_is_its_frames_screen_colour() {
+    for colour in [1, 4, 13, 31] {
+        let engine = engine_with(&screen_colour_page(colour));
+        assert_eq!(u32::from(engine.render(0x100).unwrap().screen), colour);
+    }
+    assert_eq!(engine_with(TTI).render(0x100).unwrap().screen, 0, "no triplet: Colour Map entry 0");
+}
+
+/// A later version of the page, without the erase bit, brings a new colour:
+/// what a channel's change does on a live connection, where the server
+/// sends the header, the changed X/26 and the changed rows (REQ-1504).
+#[test]
+fn a_later_version_of_a_page_changes_its_screen_colour() {
+    let mut engine = Engine::new();
+    engine.feed_whole(false, true, &screen_colour_page(4));
+    assert_eq!(engine.render(0x100).unwrap().screen, 4);
+    engine.feed_whole(false, true, &screen_colour_page(5));
+    assert_eq!(engine.render(0x100).unwrap().screen, 5);
+}
+
 #[test]
 fn mosaics_are_not_taken_for_a_title() {
     // Row 1 is graphics (mosaic green, 0x12): its lower-case letters and
