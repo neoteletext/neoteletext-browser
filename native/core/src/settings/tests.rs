@@ -15,6 +15,7 @@ fn settings_round_trip_through_their_file() {
         proxy: Some(Proxy::Socks5 { host: "127.0.0.1".into(), port: 1080 }),
         local: vec!["192.168.1.20".parse().unwrap()],
         bar: true,
+        aspect: true,
         restore: false,
         check_updates: false,
         cookies: crate::cookies::Mode::Close,
@@ -24,6 +25,19 @@ fn settings_round_trip_through_their_file() {
     let (read, dropped) = Settings::read(&settings.text());
     assert_eq!((read, dropped), (settings, Dropped::default()));
     assert_eq!(Settings::read("").0, Settings::default());
+}
+
+/// REQ-737 item 2: off by default, in a file that has no line for it too;
+/// kept as `aspect on` and read strictly.
+#[test]
+fn the_aspect_correction_is_off_until_turned_on_and_read_strictly() {
+    assert!(!Settings::default().aspect);
+    assert!(Settings::default().text().contains("aspect off\n"));
+    let (read, dropped) = Settings::read(&format!("{VERSION_LINE}\nbar on\n"));
+    assert_eq!((read.aspect, dropped.len()), (false, 0), "a file written before it");
+    assert!(Settings::read(&format!("{VERSION_LINE}\naspect on\n")).0.aspect);
+    let (read, dropped) = Settings::read(&format!("{VERSION_LINE}\naspect sideways\n"));
+    assert_eq!((read.aspect, dropped.len()), (false, 1));
 }
 
 /// Decision 68: the remote's line, read strictly.

@@ -28,6 +28,7 @@ enum Item {
     Bar,
     Overview,
     Wall,
+    Aspect,
     BookmarkPage,
     #[cfg(feature = "phone-keyboard")]
     Phone,
@@ -50,6 +51,7 @@ impl Item {
         Self::Bar,
         Self::Overview,
         Self::Wall,
+        Self::Aspect,
         Self::BookmarkPage,
         #[cfg(feature = "phone-keyboard")]
         Self::Phone,
@@ -60,8 +62,9 @@ impl Item {
     ];
 
     /// Its words, and its shortcut on macOS and elsewhere, in words: the
-    /// browser's fonts have no key symbols.
-    fn words(self, bar_shown: bool, overview_shown: bool, single: bool) -> (&'static str, &'static str, &'static str) {
+    /// browser's fonts have no key symbols. What it says of what is on or
+    /// shown is `browser`'s state.
+    fn words(self, browser: &Browser) -> (&'static str, &'static str, &'static str) {
         match self {
             Self::NewTab => ("New tab", "Cmd+T", "Ctrl+T"),
             Self::NewWindow => ("New window", "Cmd+N", "Ctrl+N"),
@@ -71,13 +74,16 @@ impl Item {
             Self::Reopen => ("Reopen closed tab", "Shift+Cmd+T", "Ctrl+Shift+T"),
             Self::History => ("History", "Cmd+Y", "Ctrl+H"),
             Self::Bookmarks => ("Bookmarks", "Option+Cmd+B", "Ctrl+Shift+O"),
-            Self::Bar if bar_shown => ("Hide bookmarks bar", "Shift+Cmd+B", "Ctrl+Shift+B"),
+            Self::Bar if browser.bar_shown() => ("Hide bookmarks bar", "Shift+Cmd+B", "Ctrl+Shift+B"),
             Self::Bar => ("Show bookmarks bar", "Shift+Cmd+B", "Ctrl+Shift+B"),
-            Self::Overview if overview_shown => ("Hide overview of all pages", "Shift+Cmd+E", "Ctrl+Shift+E"),
+            Self::Overview if browser.overview_shown() => ("Hide overview of all pages", "Shift+Cmd+E", "Ctrl+Shift+E"),
             Self::Overview => ("Show overview of all pages", "Shift+Cmd+E", "Ctrl+Shift+E"),
             // The wall of pages or the page alone (decision 126).
-            Self::Wall if single => ("Show wall of pages", "Cmd+G", "Ctrl+Shift+G"),
+            Self::Wall if browser.wall.single() => ("Show wall of pages", "Cmd+G", "Ctrl+Shift+G"),
             Self::Wall => ("Show current page only", "Cmd+G", "Ctrl+Shift+G"),
+            // The 4:3 aspect correction (REQ-737).
+            Self::Aspect if browser.aspect_corrected() => ("Turn off aspect correction", "Shift+Cmd+A", "Ctrl+Shift+A"),
+            Self::Aspect => ("Turn on aspect correction", "Shift+Cmd+A", "Ctrl+Shift+A"),
             Self::BookmarkPage => ("Bookmark this page", "Cmd+D", "Ctrl+D"),
             #[cfg(feature = "phone-keyboard")]
             Self::Phone => ("Phone keyboard", "", ""),
@@ -151,6 +157,7 @@ impl Browser {
                 let now = self.remote_time();
                 self.toggle_wall(now);
             }
+            Item::Aspect => self.toggle_aspect(),
             Item::BookmarkPage => self.outputs.push(Output::Bookmark),
             #[cfg(feature = "phone-keyboard")]
             Item::Phone => self.toggle_phone_panel(),
@@ -181,7 +188,6 @@ impl Browser {
         let area = Rect::new(anchor.x1 - MENU_WIDTH, anchor.y1 + HAIRLINE, anchor.x1, anchor.y1 + HAIRLINE + ROW * Item::ALL.len() as f64);
         canvas.fill(area, 0.0, BLACK);
         border(canvas, area, HAIRLINE, RULE);
-        let bar_shown = self.bar_shown();
         let mut y = area.y0;
         for &item in Item::ALL {
             let rect = Rect::new(area.x0, y, area.x1, y + ROW);
@@ -189,7 +195,7 @@ impl Browser {
                 canvas.fill(rect, 0.0, SELECTED);
             }
             // macOS's window buttons are its own: the browser draws none there.
-            let (words, mac, elsewhere) = item.words(bar_shown, self.overview_shown(), self.wall.single());
+            let (words, mac, elsewhere) = item.words(self);
             let shortcut = if self.frame.window_buttons { elsewhere } else { mac };
             left_centred(canvas, rect, GAP * 2.0, words, ROW_TITLE, WHITE);
             right_centred(canvas, rect, SHORTCUT_GAP, shortcut, ROW_STATUS, MUTED);
@@ -203,8 +209,9 @@ impl Browser {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::browser::fixture::middle;
+    use crate::browser::fixture::{middle, set_aspect};
     use crate::browser::{Frame, StripState};
+    use crate::settings::SettingChange;
     use crate::test_canvas::Recorder;
 
     fn browser() -> Browser {
@@ -236,5 +243,52 @@ mod tests {
         press(&mut browser, history, 0);
         assert_eq!(browser.take_outputs(), [Output::History(HistoryRequest::Panel(true))]);
         assert!(browser.history_open());
+    }
+
+    /// Opens the menu and says what its aspect correction item shows.
+    fn aspect_words(browser: &mut Browser) -> (alloc::string::String, Rect) {
+        let menu = browser.regions.menu;
+        press(browser, menu, 0);
+        let mut canvas = Recorder::new();
+        browser.draw(&mut canvas, 1440.0, 900.0, 0);
+        let rect = browser.menu.menu.iter().find(|(item, _)| *item == Item::Aspect).map(|(_, rect)| *rect).unwrap();
+        let words = canvas.texts.iter().find(|(place, text)| rect.contains(middle(*place)) && text.contains("aspect")).map(|(_, text)| text.clone()).unwrap();
+        (words, rect)
+    }
+
+    /// No item's words run into its shortcut, whichever way it says it: the
+    /// overview's "Hide" line was read clear of its shortcut in a drawn
+    /// window, so none is longer. The test canvas has no font to measure by.
+    #[test]
+    fn no_items_words_are_longer_than_those_seen_to_fit() {
+        const LONGEST: usize = "Hide overview of all pages".len();
+        let mut browser = browser();
+        for on in [false, true] {
+            set_aspect(&mut browser, on);
+            for item in Item::ALL {
+                let (words, _, _) = item.words(&browser);
+                assert!(words.len() <= LONGEST, "{words}");
+            }
+        }
+    }
+
+    /// REQ-737 item 2: off by default; the item says what choosing it does,
+    /// as the bar's and the overview's say, and asks the trusted core, whose
+    /// answer alone turns it on.
+    #[test]
+    fn the_menu_shows_and_changes_the_aspect_correction() {
+        let mut browser = browser();
+        assert!(!browser.aspect_corrected(), "off in a new window");
+        let (words, item) = aspect_words(&mut browser);
+        assert_eq!(words, "Turn on aspect correction");
+        press(&mut browser, item, 0);
+        assert_eq!(browser.take_outputs(), [Output::Setting(SettingChange::Aspect(true))]);
+        assert!(!browser.aspect_corrected(), "the trusted core keeps it");
+        set_aspect(&mut browser, true);
+        assert!(browser.aspect_corrected());
+        let (words, item) = aspect_words(&mut browser);
+        assert_eq!(words, "Turn off aspect correction");
+        press(&mut browser, item, 0);
+        assert_eq!(browser.take_outputs(), [Output::Setting(SettingChange::Aspect(false))]);
     }
 }

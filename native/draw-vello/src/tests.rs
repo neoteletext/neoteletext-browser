@@ -9,6 +9,7 @@ use decoder::Engine;
 use interface_core::browser::{Browser, Frame as WindowFrame, TabInfo};
 use interface_core::canvas::Canvas;
 use interface_core::channel::{Channel, PageInfo, Status, page_index};
+use interface_core::settings::{CookieMode, ProxyView, SettingsView};
 
 const WIDTH: u16 = 720;
 const HEIGHT: u16 = 450;
@@ -189,6 +190,60 @@ fn a_pages_colour_reaches_every_pixel_below_the_strip_and_no_further() {
     browser.wall_mut().toggle_single(SETTLED);
     let wall = frame(&mut painter, &mut browser, SETTLED * 2).1;
     assert_eq!(wall[MARGIN.1 * across + MARGIN.0], WINDOW_WORD, "the wall's margin");
+}
+
+/// REQ-737 item 2 with REQ-740, in pixels: a page of one colour on a screen
+/// of another, alone in the window. With the correction on it is 16/13 as
+/// wide at the same height, and its screen stands either side of it.
+#[test]
+fn the_aspect_correction_stretches_the_drawn_page_and_keeps_its_screen() {
+    const WINDOW: (u16, u16) = (1440, 900);
+    const SCREEN_WORD: u32 = 0x0000_00FF;
+    const PAGE_WORD: u32 = 0x00FF_0000;
+    let across = usize::from(WINDOW.0);
+    // How wide and high the page's own colour is, in pixels, and the words
+    // either side of it along its middle row.
+    let drawn = |aspect: bool| {
+        let mut painter = Painter::new(Family::Roboto);
+        let mut browser = browser(&mut painter, &pages());
+        browser.wall_mut().toggle_single(0);
+        browser.toggle_overview_shown();
+        painter.set_page(FRONT, &[[0, 0, 0xFF], [0xFF, 0, 0]], 0, &vec![1; PAGE_DOTS]).unwrap();
+        browser.set_settings(SettingsView {
+            home: String::new(),
+            sound: true,
+            volume: 0,
+            proxy: ProxyView::None,
+            local: Vec::new(),
+            restore_session: true,
+            cookies: CookieMode::Keep,
+            aspect,
+            refusal: None,
+        });
+        for _ in 0..2 {
+            painter.begin(WINDOW.0, WINDOW.1, 1.0);
+            browser.draw(&mut painter, f64::from(WINDOW.0), f64::from(WINDOW.1), SETTLED);
+            painter.render();
+        }
+        let mut words = vec![0; across * usize::from(WINDOW.1)];
+        painter.redraw_whole();
+        painter.begin(WINDOW.0, WINDOW.1, 1.0);
+        browser.draw(&mut painter, f64::from(WINDOW.0), f64::from(WINDOW.1), SETTLED);
+        let damage = painter.render();
+        painter.copy_to(&mut words, &damage, 0);
+        let page: Vec<usize> = words.iter().enumerate().filter(|&(_, &word)| word == PAGE_WORD).map(|(index, _)| index).collect();
+        let (top, bottom) = (page[0] / across, page[page.len() - 1] / across);
+        let row = &words[usize::midpoint(top, bottom) * across..][..across];
+        let left = row.iter().position(|&word| word == PAGE_WORD).unwrap();
+        let right = row.iter().rposition(|&word| word == PAGE_WORD).unwrap();
+        // A pixel out from the page's edge, which blends the two colours.
+        (right - left + 1, bottom - top + 1, row[left - 2], row[right + 2])
+    };
+    let (off, on) = (drawn(false), drawn(true));
+    assert_eq!((off.2, off.3), (SCREEN_WORD, SCREEN_WORD), "the screen around the page: {off:?}");
+    assert_eq!((on.2, on.3), (SCREEN_WORD, SCREEN_WORD), "the screen around the corrected page: {on:?}");
+    assert_eq!(on.1, off.1, "the same height: {off:?} {on:?}");
+    assert!(on.0.abs_diff(off.0 * 16 / 13) <= 1, "16/13 as wide: {off:?} {on:?}");
 }
 
 #[test]

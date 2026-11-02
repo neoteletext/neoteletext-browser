@@ -6,7 +6,7 @@ use alloc::format;
 
 use super::updates::{GLOW_WIDTH, glow, since};
 use super::{Wall, WallPage};
-use crate::canvas::{Canvas, PAGE_HEIGHT, PAGE_WIDTH, PageKey};
+use crate::canvas::{Canvas, PageKey};
 use crate::geometry::{Point, Rect};
 use crate::size::grid_width;
 use crate::text::{border, fitted_text, label, outline};
@@ -18,7 +18,6 @@ const COLUMN_GAP: f64 = 12.0;
 const ROW_GAP: f64 = 26.0;
 pub(super) const CAPTION_GAP: f64 = 6.0;
 pub(super) const CAPTION_HEIGHT: f64 = 18.0;
-pub(super) const PAGE_ASPECT: f64 = PAGE_HEIGHT as f64 / PAGE_WIDTH as f64;
 const LIST_PAGE_WIDTH: f64 = 120.0;
 const LIST_ROW_PADDING: f64 = 8.0;
 const LIST_GAP: f64 = 16.0;
@@ -46,11 +45,12 @@ impl Wall {
     pub(super) fn draw_grid<C: Canvas + ?Sized>(&mut self, canvas: &mut C, pages: &[WallPage<'_>], selected: Option<PageKey>, now: u64) -> f64 {
         let area = self.area;
         let available = area.width() - WALL_PADDING * 2.0;
-        let card_width = f64::from(grid_width(self.shown_width.value(now)));
+        // The page size sets a page's height; the correction only widens it.
+        let card_width = f64::from(grid_width(self.shown_width.value(now))) * self.shape.stretch();
         #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss, reason = "a small, positive column count")]
         let columns = (libm::floor((available + COLUMN_GAP) / (card_width + COLUMN_GAP)) as usize).max(1);
         let rows = pages.len().div_ceil(columns);
-        let page_height = card_width * PAGE_ASPECT;
+        let page_height = card_width * self.shape.height_per_width();
         let card_height = page_height + CAPTION_GAP + CAPTION_HEIGHT;
         let pitch = card_height + ROW_GAP;
         #[allow(clippy::cast_precision_loss, reason = "small counts")]
@@ -115,7 +115,8 @@ impl Wall {
         let area = self.area;
         let left = area.x0 + WALL_PADDING;
         let right = area.x1 - WALL_PADDING;
-        let page_height = LIST_PAGE_WIDTH * PAGE_ASPECT;
+        let page_width = LIST_PAGE_WIDTH * self.shape.stretch();
+        let page_height = page_width * self.shape.height_per_width();
         let row_height = page_height + LIST_ROW_PADDING * 2.0;
         if let Some(key) = self.reveal.take()
             && let Some(index) = pages.iter().position(|page| page.key == key)
@@ -136,12 +137,8 @@ impl Wall {
                 canvas.fill(row, 0.0, SELECTED);
             }
             canvas.fill(Rect::new(left, row.y1 - 1.0, right, row.y1), 0.0, RULE_SOFT);
-            let rect = Rect::new(
-                left + LIST_ROW_PADDING,
-                row_top + LIST_ROW_PADDING,
-                left + LIST_ROW_PADDING + LIST_PAGE_WIDTH,
-                row_top + LIST_ROW_PADDING + page_height,
-            );
+            let rect =
+                Rect::new(left + LIST_ROW_PADDING, row_top + LIST_ROW_PADDING, left + LIST_ROW_PADDING + page_width, row_top + LIST_ROW_PADDING + page_height);
             self.draw_page(canvas, page.key, rect);
             let text_left = rect.x1 + LIST_GAP;
             let middle = rect.y0 + page_height / 2.0;

@@ -1,5 +1,6 @@
 //! The settings as the trusted core shows them and the changes the
-//! settings panel asks for (`settings-home-console-proxy.md` section 1.3).
+//! settings panel and the menus ask for (`settings-home-console-proxy.md`
+//! section 1.3).
 //! The interface acts on none of them (requirement 3.6): each change is
 //! strip input the trusted core checks.
 
@@ -44,6 +45,8 @@ pub struct SettingsView {
     pub restore_session: bool,
     /// What is kept of cookies (requirement 21.7).
     pub cookies: CookieMode,
+    /// Pages are drawn with the 4:3 aspect correction (REQ-737).
+    pub aspect: bool,
     /// Why the last change was refused, if it was.
     pub refusal: Option<String>,
 }
@@ -74,6 +77,8 @@ pub enum SettingChange {
     Remote(RemotePlace),
     /// Check for updates, or not (`installation-and-updates.md` section 3.4).
     CheckUpdates(bool),
+    /// The 4:3 aspect correction on or off (REQ-737).
+    Aspect(bool),
 }
 
 /// The furthest a floating remote's corner may be from the window's, in

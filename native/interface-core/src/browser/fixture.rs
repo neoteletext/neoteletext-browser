@@ -3,10 +3,12 @@
 //! middle of what was drawn.
 
 use alloc::format;
+use alloc::string::String;
 
 use crate::browser::{Browser, Frame, StripState, TabInfo};
 use crate::channel::{BANKS, Channel, PAGES, PAGES_PER_BANK, PageInfo, Status};
 use crate::geometry::{Point, Rect};
+use crate::settings::{CookieMode, ProxyView, SettingsView};
 use crate::test_canvas::Recorder;
 
 pub(super) const WIDTH: f64 = 1440.0;
@@ -46,6 +48,21 @@ pub(super) fn browser() -> (Browser, Recorder) {
     let mut canvas = Recorder::new();
     browser.draw(&mut canvas, WIDTH, HEIGHT, 0);
     (browser, canvas)
+}
+
+/// The trusted core's answer that the aspect correction is `on`.
+pub(super) fn set_aspect(browser: &mut Browser, on: bool) {
+    browser.set_settings(SettingsView {
+        home: String::new(),
+        sound: true,
+        volume: 0,
+        proxy: ProxyView::None,
+        local: alloc::vec::Vec::new(),
+        restore_session: true,
+        cookies: CookieMode::Keep,
+        aspect: on,
+        refusal: None,
+    });
 }
 
 pub(super) fn press_at(browser: &mut Browser, canvas: &mut Recorder, rect: Rect) {

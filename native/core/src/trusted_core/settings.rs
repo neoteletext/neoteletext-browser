@@ -64,6 +64,7 @@ impl Core {
             local: self.settings.local.iter().map(ToString::to_string).collect(),
             restore_session: self.settings.restore,
             cookies: super::cookies::mode_view(self.settings.cookies),
+            aspect: self.settings.aspect,
             refusal: self.refusal.as_deref().map(|refusal| clean(refusal, protocol::settings::MAX_REFUSAL)),
         };
         self.send(&ToInterface::Settings(view))
@@ -172,6 +173,12 @@ fn checked_change(settings: &mut Settings, change: SettingChange, current: Optio
                 protocol::settings::CookieMode::Close => neoteletext::cookies::Mode::Close,
                 protocol::settings::CookieMode::Block => neoteletext::cookies::Mode::Block,
             };
+            Ok(None)
+        }
+        // How pages are drawn, the window's alone: no channel is told
+        // (REQ-737 item 4).
+        SettingChange::Aspect(on) => {
+            settings.aspect = on;
             Ok(None)
         }
         // And whether to check for updates (`installation-and-updates.md`

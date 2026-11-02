@@ -19,6 +19,7 @@ The browser keeps a few settings between runs, and the bookmarks with them. The 
 | Proxy | None, an HTTP proxy or a SOCKS5 proxy, with its host and port | None | The settings panel (a security setting) |
 | Local addresses allowed | Up to 16 addresses on this computer or the local network | None | The settings panel (a security setting) |
 | Bookmarks | Up to 1 000 addresses | None | The star in the strip |
+| 4:3 aspect correction (REQ-737) | On or off | Off | The View menu and the menu button's menu |
 
 Nothing else is kept: no history, no cookies (the engine keeps cookies only for the life of a fetcher, its REQ-SEC-013), no window position. *Amended 22 October 2026:* history and bookmarks are kept (decision 57), and the window and its tabs as the session (decision 59), each in a file of its own (`history-and-bookmarks.md`).
 - *Amended 22 and 23 October 2026:* persistent cookies are kept, sealed (decision 62); `settings.txt` also keeps the bookmarks bar (`bar`), restoring the session (`restore`), checking for updates (`updates`), the cookie policy and blocked channels (`cookies`, `cookie-block`), and the remote control's place (`remote`); the bookmarks are in `bookmarks.txt` (decision 57).
@@ -31,7 +32,7 @@ One text file, `settings.txt`, in the platform's place for an application's sett
 - Windows: `%APPDATA%\NeoTeletext\`
 - Linux and other Unix systems: `$XDG_CONFIG_HOME/neoteletext/`, or `~/.config/neoteletext/` when that is not set.
 
-Each line is a name, one space, and a value: `home neoteletext:home`, `sound on`, `volume 80`, `proxy socks5 127.0.0.1 1080`, `allow-local 192.168.1.20`, `bookmark https://news.example/teletext/`. The first line is `neoteletext-settings 1`, the format's version. The file is at most 256 KB and a line at most its name, a space and a value of 2 048 bytes, the longest address; a value is checked as the setting's own rule says (an address by the trusted core's address rules of requirement 11.3, a number within its range). A line that breaks a rule, or a name not known, is dropped and written to the log; the rest stand. The file is written whole to a temporary file beside it and renamed over it, so a crash never leaves half a file.
+Each line is a name, one space, and a value: `home neoteletext:home`, `sound on`, `volume 80`, `proxy socks5 127.0.0.1 1080`, `allow-local 192.168.1.20`, `aspect on`, `bookmark https://news.example/teletext/`. The first line is `neoteletext-settings 1`, the format's version. The file is at most 256 KB and a line at most its name, a space and a value of 2 048 bytes, the longest address; a value is checked as the setting's own rule says (an address by the trusted core's address rules of requirement 11.3, a number within its range). A line that breaks a rule, or a name not known, is dropped and written to the log; the rest stand. The file is written whole to a temporary file beside it and renamed over it, so a crash never leaves half a file.
 
 ### 1.3 The settings panel
 

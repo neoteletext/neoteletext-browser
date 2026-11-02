@@ -3,6 +3,8 @@
 //! them. Coordinates are logical pixels; a back end applies the display
 //! scale.
 
+use neoteletext_core::consts::{ASPECT_DENOMINATOR, ASPECT_NUMERATOR};
+
 use crate::geometry::{Point, Rect};
 use crate::theme::Colour;
 
@@ -39,16 +41,52 @@ pub const SCREEN_BORDER: u16 = CELL_WIDTH;
 /// How much larger a page with its screen is than its image, both ways.
 pub const SCREEN_SCALE: f64 = (PAGE_WIDTH as f64 + 2.0 * SCREEN_BORDER as f64) / PAGE_WIDTH as f64;
 
+/// The shape a page is drawn in, which only the drawing transform changes:
+/// the page's raster and every coordinate sent to its channel stay the same
+/// (REQ-737).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum PageShape {
+    /// The raster's own proportions, every dot as wide as a line is high.
+    #[default]
+    Raster,
+    /// As a 4:3 television shows the raster: wider by the engine's aspect
+    /// factor, its height unchanged (DEC-2049).
+    Corrected,
+}
+
+impl PageShape {
+    /// The shape for the viewer's View menu setting (REQ-737 item 2).
+    #[must_use]
+    pub const fn of_setting(corrected: bool) -> Self {
+        if corrected { Self::Corrected } else { Self::Raster }
+    }
+
+    /// How many times wider a page is drawn than the raster's proportions.
+    #[must_use]
+    pub const fn stretch(self) -> f64 {
+        #[allow(clippy::cast_precision_loss, reason = "the engine's 16 and 13, exact in any float")]
+        match self {
+            Self::Raster => 1.0,
+            Self::Corrected => ASPECT_NUMERATOR as f64 / ASPECT_DENOMINATOR as f64,
+        }
+    }
+
+    /// A page's height for each unit of its width.
+    #[must_use]
+    pub const fn height_per_width(self) -> f64 {
+        PAGE_HEIGHT as f64 / PAGE_WIDTH as f64 / self.stretch()
+    }
+}
+
 /// Where a page's image sits when the page, with its screen, is drawn in
-/// `rect`: scaled alike both ways so that the screen is
-/// [`SCREEN_BORDER`] dots wide at the sides, and centred down, so the
-/// screen above and below is as wide in proportion.
+/// `rect`: smaller by [`SCREEN_SCALE`] both ways and centred, so the screen
+/// is [`SCREEN_BORDER`] dots of the drawn page at the sides, and as wide in
+/// proportion above and below. The shape is `rect`'s own: whoever lays a
+/// page out gives it the page's proportions (REQ-740, DEC-953).
 #[must_use]
 pub fn image_within(rect: Rect) -> Rect {
-    let across = f64::from(PAGE_WIDTH) + 2.0 * f64::from(SCREEN_BORDER);
-    let scale = rect.width() / across;
-    let (width, height) = (f64::from(PAGE_WIDTH) * scale, f64::from(PAGE_HEIGHT) * scale);
-    let (left, top) = (rect.x0 + f64::from(SCREEN_BORDER) * scale, f64::midpoint(rect.y0, rect.y1) - height / 2.0);
+    let (width, height) = (rect.width() / SCREEN_SCALE, rect.height() / SCREEN_SCALE);
+    let (left, top) = (f64::midpoint(rect.x0, rect.x1) - width / 2.0, f64::midpoint(rect.y0, rect.y1) - height / 2.0);
     Rect::new(left, top, left + width, top + height)
 }
 

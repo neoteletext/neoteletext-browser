@@ -117,6 +117,36 @@ fn the_pages_colour_is_behind_everything_below_the_strip() {
     }
 }
 
+/// REQ-737 item 2 with REQ-740: the corrected page alone stands on its
+/// colour, the window's fill unchanged and its screen around its image.
+#[test]
+fn the_corrected_page_alone_stands_on_its_colour() {
+    let (mut browser, off) = alone(Some(SCREEN));
+    crate::browser::fixture::set_aspect(&mut browser, true);
+    let on = drawn(&mut browser, Some(SCREEN));
+    let (image, off_image) = (on.pages[0].1, off.pages[0].1);
+    assert!(image.width() > off_image.width(), "{image:?} {off_image:?}");
+    assert!(on.fills.contains(&(Rect::new(0.0, STRIP_BOTTOM, WIDTH, HEIGHT), SCREEN)), "the whole of it");
+    assert!(on.fills.contains(&(browser.wall.area(), SCREEN)), "the page area");
+    let page = on.fills.iter().rev().find(|(rect, colour)| *colour == SCREEN && rect.contains(middle(image))).map(|&(rect, _)| rect).unwrap();
+    assert!(page.x0 < image.x0 && page.x1 > image.x1 && page.y0 < image.y0 && page.y1 > image.y1, "around it: {page:?} {image:?}");
+}
+
+/// REQ-737 item 2 with REQ-740: on the wall each page keeps its own border
+/// on all four sides of the stretched image.
+#[test]
+fn a_corrected_page_on_the_wall_keeps_its_border() {
+    let (mut browser, off) = browser();
+    crate::browser::fixture::set_aspect(&mut browser, true);
+    let on = drawn(&mut browser, Some(SCREEN));
+    let image = on.pages[0].1;
+    assert!(image.width() > off.pages[0].1.width() * 1.2, "{image:?}");
+    let border = on.fills.iter().find(|(rect, colour)| *colour == SCREEN && rect.contains(middle(image))).map(|&(rect, _)| rect).unwrap();
+    let cell = image.width() / f64::from(crate::canvas::COLUMNS);
+    assert!((image.x0 - border.x0 - cell).abs() < 1e-6 && (border.x1 - image.x1 - cell).abs() < 1e-6, "one cell: {border:?} {image:?}");
+    assert!(image.y0 > border.y0 && image.y1 < border.y1, "{border:?} {image:?}");
+}
+
 /// The fills and the texts of the window's strip.
 type Strip = (Vec<(Rect, Colour)>, Vec<(String, Colour)>);
 

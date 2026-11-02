@@ -63,6 +63,8 @@ pub struct Settings {
     pub local: Vec<IpAddr>,
     /// The bookmarks bar is shown (requirement 20.18).
     pub bar: bool,
+    /// Pages are drawn with the 4:3 aspect correction (REQ-737).
+    pub aspect: bool,
     /// The last session is restored at start (requirement 20.24).
     pub restore: bool,
     /// The browser checks for updates (`installation-and-updates.md`
@@ -85,6 +87,7 @@ impl Default for Settings {
             proxy: None,
             local: Vec::new(),
             bar: false,
+            aspect: false,
             restore: true,
             check_updates: true,
             cookies: crate::cookies::Mode::Keep,
@@ -175,6 +178,7 @@ impl Settings {
             "home" => checked_address(value).map(|home| self.home = home).is_some(),
             "sound" => switch(value).map(|on| self.sound = on).is_some(),
             "bar" => switch(value).map(|on| self.bar = on).is_some(),
+            "aspect" => switch(value).map(|on| self.aspect = on).is_some(),
             "remote" => read_remote(value).map(|place| self.remote = place).is_some(),
             "restore" => switch(value).map(|on| self.restore = on).is_some(),
             "updates" => switch(value).map(|on| self.check_updates = on).is_some(),
@@ -224,6 +228,7 @@ impl Settings {
         lines.extend(self.proxy.iter().map(Proxy::line));
         lines.extend(self.local.iter().map(|address| format!("{ALLOW_LOCAL} {address}")));
         lines.push(format!("bar {}", if self.bar { "on" } else { "off" }));
+        lines.push(format!("aspect {}", if self.aspect { "on" } else { "off" }));
         lines.push(format!("restore {}", if self.restore { "on" } else { "off" }));
         lines.push(remote_line(self.remote));
         lines.push(format!("updates {}", if self.check_updates { "on" } else { "off" }));

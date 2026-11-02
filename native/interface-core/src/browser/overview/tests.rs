@@ -1,5 +1,5 @@
 use super::*;
-use crate::browser::fixture::{HEIGHT, WIDTH, browser, cell_centre, press_at};
+use crate::browser::fixture::{HEIGHT, WIDTH, browser, cell_centre, press_at, set_aspect};
 use crate::browser::window::{BODY_TOP, OVERVIEW_HEIGHT};
 use crate::browser::{Cursor, Key, Modifiers, Output};
 use crate::canvas::PageKey;
@@ -51,6 +51,25 @@ fn a_page_in_the_overview_pops_up_at_native_size_under_a_hand() {
     browser.draw(&mut canvas, WIDTH, short, 0);
     let &(_, rect) = canvas.pages.iter().rev().find(|(drawn, _)| *drawn == key).expect("the preview is drawn");
     assert!(rect.y0 >= BODY_TOP && rect.height() < f64::from(PAGE_HEIGHT), "{rect:?}");
+}
+
+/// REQ-737 item 2: the preview is stretched in width at the same height,
+/// and stays above its cell and below the trusted strip.
+#[test]
+fn the_preview_is_stretched_in_width() {
+    let (mut browser, mut canvas) = browser();
+    browser.add_page(7, 0x610, "Weather".into(), 0);
+    set_aspect(&mut browser, true);
+    browser.draw(&mut canvas, WIDTH, HEIGHT, 0);
+    let point = cell_centre(&browser, page_index(0x610).unwrap());
+    assert!(browser.pointer_moved(point.x, point.y, 0));
+    canvas.pages.clear();
+    browser.draw(&mut canvas, WIDTH, HEIGHT, 0);
+    let key = PageKey { channel: 7, page: 0x610 };
+    let &(_, rect) = canvas.pages.iter().rev().find(|(drawn, _)| *drawn == key).expect("the preview is drawn");
+    assert!((rect.width() - f64::from(PAGE_WIDTH) * 16.0 / 13.0).abs() < 1e-6, "{rect:?}");
+    assert!((rect.height() - f64::from(PAGE_HEIGHT)).abs() < 1e-6, "{rect:?}");
+    assert!(rect.y1 <= point.y && rect.y0 >= BODY_TOP && rect.x1 <= WIDTH, "{rect:?}");
 }
 
 #[test]

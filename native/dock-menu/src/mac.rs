@@ -15,7 +15,8 @@ use objc2_app_kit::{
 use objc2_foundation::{MainThreadMarker, NSArray, NSBundle, NSData, NSDictionary, NSInteger, NSObject, NSObjectProtocol, NSString, NSURL};
 
 use crate::{
-    Choice, DockTab, Entry, MENU_BAR, MenuAction, MenuItem, Shortcut, ShortcutKey, SystemAction, full_screen_title, menu_item, mute_all_item, tab_title,
+    Choice, DockTab, Entry, MENU_BAR, MenuAction, MenuItem, Shortcut, ShortcutKey, SystemAction, aspect_title, full_screen_title, menu_item, mute_all_item,
+    tab_title,
 };
 
 /// The tag of the mute-all item; a tab's item is tagged with its index.
@@ -43,6 +44,8 @@ struct MenuBar {
     target: Retained<Target>,
     /// The full-screen item, retitled as the page goes full screen and back.
     full_screen: Option<Retained<NSMenuItem>>,
+    /// The aspect correction item, retitled as it is turned on and off.
+    aspect: Option<Retained<NSMenuItem>>,
 }
 
 thread_local! {
@@ -269,6 +272,7 @@ pub fn install_menu_bar(choose: impl Fn(&'static MenuItem) + 'static) {
     let bar = NSMenu::new(mtm);
     let mut tag: NSInteger = 0;
     let mut full_screen = None;
+    let mut aspect = None;
     let app = NSApplication::sharedApplication(mtm);
     for menu in MENU_BAR {
         let title = NSString::from_str(menu.title);
@@ -281,6 +285,8 @@ pub fn install_menu_bar(choose: impl Fn(&'static MenuItem) + 'static) {
                     submenu.addItem(&menu_item);
                     if item.action == MenuAction::FullScreen {
                         full_screen = Some(menu_item);
+                    } else if item.title == aspect_title(false) {
+                        aspect = Some(menu_item);
                     }
                     tag = tag.saturating_add(1);
                 }
@@ -297,7 +303,7 @@ pub fn install_menu_bar(choose: impl Fn(&'static MenuItem) + 'static) {
         }
     }
     app.setMainMenu(Some(&bar));
-    MENU_BAR_STATE.with(|cell| *cell.borrow_mut() = Some(MenuBar { choose: Box::new(choose), target, full_screen }));
+    MENU_BAR_STATE.with(|cell| *cell.borrow_mut() = Some(MenuBar { choose: Box::new(choose), target, full_screen, aspect }));
 }
 
 /// The full-screen item names the way out while the page is full screen,
@@ -309,6 +315,19 @@ pub fn set_full_screen(full_screen: bool) {
             // SAFETY: a fixed title from the crate's own table, on the
             // main thread, given to an item the menu bar holds.
             unsafe { item.setTitle(&NSString::from_str(full_screen_title(full_screen))) };
+        }
+    });
+}
+
+/// The aspect correction item names what choosing it does (REQ-737 item
+/// 2). Call it on the main thread.
+pub fn set_aspect(on: bool) {
+    MENU_BAR_STATE.with(|state| {
+        let Ok(state) = state.try_borrow() else { return };
+        if let Some(item) = state.as_ref().and_then(|bar| bar.aspect.as_ref()) {
+            // SAFETY: a fixed title from the crate's own table, on the
+            // main thread, given to an item the menu bar holds.
+            unsafe { item.setTitle(&NSString::from_str(aspect_title(on))) };
         }
     });
 }

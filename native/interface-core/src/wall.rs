@@ -6,7 +6,7 @@
 
 use alloc::vec::Vec;
 
-use crate::canvas::{CELL_HEIGHT, CELL_WIDTH, COLUMNS, PAGE_HEIGHT, PAGE_WIDTH, PageKey, ROWS};
+use crate::canvas::{CELL_HEIGHT, CELL_WIDTH, COLUMNS, PAGE_HEIGHT, PAGE_WIDTH, PageKey, PageShape, ROWS};
 use crate::geometry::{Point, Rect};
 use crate::size::{DEFAULT_WIDTH, Layout, MAX_WIDTH, layout_for_width};
 use crate::tween::{EASE_OUT, STANDARD, Tween};
@@ -131,6 +131,8 @@ pub struct Wall {
     drawn_moving: bool,
     /// What the page area shows (decision 126).
     view: View,
+    /// The shape every page is laid out in (REQ-737).
+    shape: PageShape,
 }
 
 /// What the page area shows (decision 126).
@@ -186,6 +188,7 @@ impl Wall {
             // Every window starts with the page alone; nothing keeps the
             // choice (decision 126).
             view: View::Alone,
+            shape: PageShape::Raster,
         }
     }
 
@@ -203,6 +206,17 @@ impl Wall {
     #[must_use]
     pub fn single(&self) -> bool {
         self.view == View::Alone
+    }
+
+    /// The shape pages are drawn in (REQ-737).
+    #[must_use]
+    pub const fn shape(&self) -> PageShape {
+        self.shape
+    }
+
+    /// Draws every page in `shape` from the next frame.
+    pub const fn set_shape(&mut self, shape: PageShape) {
+        self.shape = shape;
     }
 
     /// The page zoomed in, or zooming in.

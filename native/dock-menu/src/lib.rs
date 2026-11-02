@@ -207,6 +207,13 @@ pub const fn full_screen_title(full_screen: bool) -> &'static str {
     if full_screen { "Exit Full Screen" } else { "Enter Full Screen" }
 }
 
+/// The aspect correction item's title: what choosing it does, as the
+/// full-screen item's says (REQ-737 item 2).
+#[must_use]
+pub const fn aspect_title(on: bool) -> &'static str {
+    if on { "Turn Off Aspect Correction" } else { "Turn On Aspect Correction" }
+}
+
 /// The menu bar on macOS (`menu-bar.md` section 2, decision 84). Each
 /// [`MenuAction::Browser`] item's key is one the interface core already
 /// answers.
@@ -270,6 +277,7 @@ pub const MENU_BAR: &[Menu] = &[
             browser("Overview of All Pages", shift_command("e")),
             // The wall of pages or the page alone (decision 126).
             browser("Wall of Pages", command("g")),
+            browser(aspect_title(false), shift_command("a")),
             browser("Remote Control", shift_command("r")),
             browser("Developer Console", option_command(ShortcutKey::Text("i"))),
         ],
@@ -324,7 +332,7 @@ pub fn menu_item(number: usize) -> Option<&'static MenuItem> {
 #[cfg(target_os = "macos")]
 mod mac;
 #[cfg(target_os = "macos")]
-pub use mac::{install, install_menu_bar, install_opener, pointer_in_view, set, set_about, set_full_screen, set_icon, yield_activation};
+pub use mac::{install, install_menu_bar, install_opener, pointer_in_view, set, set_about, set_aspect, set_full_screen, set_icon, yield_activation};
 
 /// Elsewhere there is no menu bar: the menu button's menu is its
 /// counterpart (`menu-bar.md` section 1).
@@ -350,6 +358,10 @@ pub fn set_about(_version: &str, _copyright: &str) {}
 /// Elsewhere there is no menu bar.
 #[cfg(not(target_os = "macos"))]
 pub fn set_full_screen(_full_screen: bool) {}
+
+/// Elsewhere there is no menu bar.
+#[cfg(not(target_os = "macos"))]
+pub fn set_aspect(_on: bool) {}
 
 /// The bundle identifier of the chooser's helper on macOS, as the release
 /// tool writes it (`update::platform::CHOOSER_IDENTIFIER`; a test of the
@@ -418,6 +430,17 @@ mod tests {
         assert_eq!(full_screen_title(true), "Exit Full Screen");
         let full: Vec<&str> = menu_items().filter(|item| item.action == MenuAction::FullScreen).map(|item| item.title).collect();
         assert_eq!(full, [full_screen_title(false)]);
+    }
+
+    /// REQ-737 item 2: the View menu's aspect correction starts as the way
+    /// on, the one title [`set_aspect`] finds its item by.
+    #[test]
+    fn the_aspect_item_names_turning_it_on_and_off() {
+        assert_eq!(aspect_title(true), "Turn Off Aspect Correction");
+        let view = MENU_BAR.iter().filter(|menu| menu.title == "View").flat_map(|menu| menu.entries);
+        let titles: Vec<&str> = view.filter_map(|entry| if let Entry::Item(item) = entry { Some(item.title) } else { None }).collect();
+        assert!(titles.contains(&aspect_title(false)), "{titles:?}");
+        assert_eq!(menu_items().filter(|item| item.title == aspect_title(false)).count(), 1);
     }
 
     #[test]

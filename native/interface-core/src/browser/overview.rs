@@ -238,8 +238,8 @@ impl Browser {
         }
     }
 
-    /// The overview's page under the pointer, at its native size, above
-    /// its cell. It never covers the tab strip or the trusted strip, where
+    /// The overview's page under the pointer, at its native size in the
+    /// shape pages are drawn in, above its cell. It never covers the tab strip or the trusted strip, where
     /// a page image could pass for the address: on a short window it
     /// shrinks to fit below them.
     pub(super) fn draw_preview<C: Canvas + ?Sized>(&self, canvas: &mut C, width: f64) {
@@ -256,7 +256,8 @@ impl Browser {
         if scale <= 0.0 {
             return;
         }
-        let (page_width, page_height) = (f64::from(PAGE_WIDTH) * scale * SCREEN_SCALE, f64::from(PAGE_HEIGHT) * scale * SCREEN_SCALE);
+        let (page_width, page_height) =
+            (f64::from(PAGE_WIDTH) * scale * SCREEN_SCALE * self.wall.shape().stretch(), f64::from(PAGE_HEIGHT) * scale * SCREEN_SCALE);
         let left = (centre - page_width / 2.0).clamp(MARGIN, (width - MARGIN - page_width).max(MARGIN));
         let rect = Rect::new(left, bottom - page_height, left + page_width, bottom);
         canvas.dim(Rect::new(rect.x0 + PREVIEW_SHADOW, rect.y0 + PREVIEW_SHADOW, rect.x1 + PREVIEW_SHADOW, rect.y1 + PREVIEW_SHADOW), PREVIEW_SHADOW_DARKNESS);

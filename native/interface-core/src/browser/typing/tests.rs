@@ -462,6 +462,47 @@ fn the_cursor_is_drawn_only_while_typing() {
     assert!(canvas.fills.len() > before, "a bar is drawn");
 }
 
+/// REQ-737 items 3 and 4: the same cell of the page, pressed and moved over
+/// where it is drawn, sends the channel the same events either way, though
+/// the pointer is somewhere else on the screen.
+#[test]
+fn what_the_channel_is_sent_does_not_change_with_the_aspect_correction() {
+    let sent = |on: bool| {
+        let mut browser = browser();
+        crate::browser::fixture::set_aspect(&mut browser, on);
+        browser.draw(&mut Recorder::new(), 1440.0, 900.0, 10_000);
+        browser.set_typing(typing(None), 0);
+        browser.take_outputs();
+        let mut pointer = Vec::new();
+        for (column, row) in [(0.5, 0.5), (10.25, 5.75), (39.5, 24.5)] {
+            pointer_at(&mut browser, column, row);
+            pointer.push(browser.pointer);
+            browser.pointer_pressed(&mut Recorder::new(), false, 10_000);
+            browser.pointer_released();
+        }
+        (intents(&browser.take_outputs()), pointer)
+    };
+    let ((off, off_pointer), (on, on_pointer)) = (sent(false), sent(true));
+    assert!(off.iter().filter(|intent| matches!(intent, Intent::Mouse { action: MouseAction::Press, .. })).count() == 3, "{off:?}");
+    assert_eq!(on, off);
+    assert_ne!(on_pointer, off_pointer, "the page is drawn elsewhere");
+}
+
+/// REQ-737 item 2: the channel's cursor covers its cell of the page as drawn.
+#[test]
+fn the_cursor_covers_its_cell_of_the_corrected_page() {
+    let mut browser = browser();
+    crate::browser::fixture::set_aspect(&mut browser, true);
+    browser.draw(&mut Recorder::new(), 1440.0, 900.0, 10_000);
+    browser.set_typing(typing(Some(CursorView { row: 3, column: 39, flags: 0 })), 0);
+    let (_, page) = browser.wall.open().unwrap();
+    let mut canvas = Recorder::new();
+    browser.draw_terminal(&mut canvas, 0);
+    let &(bar, _) = canvas.fills.last().unwrap();
+    assert!((bar.x0 - (page.x1 - page.width() / 40.0)).abs() < 1e-6, "{bar:?} on {page:?}");
+    assert!((bar.y0 - (page.y0 + 3.0 * page.height() / 25.0)).abs() < 1e-6, "{bar:?} on {page:?}");
+}
+
 /// DOC-1938: a wheel's notch is at least a whole line, in
 /// either direction, so one slow notch moves a list a line; a faster
 /// notch keeps its acceleration, and no turn stays no turn.

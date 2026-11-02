@@ -5,9 +5,11 @@
 use super::super::test_support::Test;
 use super::*;
 use neoteletext::bookmarks::{BAR, OTHER};
-use protocol::ToInterface;
+use neoteletext::settings::Settings;
 use protocol::decoder::BookmarkEntry;
 use protocol::library::{BarRequest, BookmarkRequest, ClearRange, HistoryRequest, StarRequest};
+use protocol::settings::SettingChange;
+use protocol::{ToCore, ToInterface};
 
 /// Requirement 20.1: a visit is recorded when its page draws; not in a
 /// private tab, not the browser's own page, not while history is not
@@ -203,6 +205,25 @@ fn the_bar_shows_its_folder() {
     let _ = test.core.bar_request(&BarRequest::Open { number: shown.items[0].number, new_tab: true });
     assert_eq!(test.core.session.tabs.len(), 1);
     assert_eq!(test.core.session.strip().address, "https://news.invalid/");
+}
+
+/// REQ-737 item 2: the View menu's aspect correction is kept in the file
+/// as the bookmarks bar is, a later run reads it, a window is told it when
+/// it opens, and the answer goes to the interface alone.
+#[test]
+fn the_aspect_correction_is_kept_between_runs() {
+    let aspect = |message: &ToInterface| if let ToInterface::Settings(view) = message { Some(view.aspect) } else { None };
+    let mut test = Test::new("aspect");
+    test.core.send_window_whole().unwrap();
+    assert_eq!(test.sent().iter().find_map(aspect), Some(false), "off in a new window");
+    test.core.settings_intent(ToCore::ChangeSetting(SettingChange::Aspect(true))).unwrap();
+    assert_eq!(test.sent().iter().find_map(aspect), Some(true));
+    let (kept, dropped) = Settings::load(&test.folder).unwrap();
+    assert!(kept.aspect && dropped.is_empty(), "the next run reads it: {dropped:?}");
+    test.core.send_window_whole().unwrap();
+    assert_eq!(test.sent().iter().find_map(aspect), Some(true), "a new window is told");
+    test.core.settings_intent(ToCore::ChangeSetting(SettingChange::Aspect(false))).unwrap();
+    assert!(!Settings::load(&test.folder).unwrap().0.aspect, "and turned off again");
 }
 
 /// Requirement 20.10: the list and a step of several.

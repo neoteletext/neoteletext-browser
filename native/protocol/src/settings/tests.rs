@@ -12,6 +12,7 @@ fn view() -> SettingsView {
         local: vec!["192.168.1.20".into()],
         restore_session: true,
         cookies: CookieMode::Close,
+        aspect: true,
         refusal: Some("Not an address on this computer or the local network".into()),
     }
 }
@@ -35,6 +36,7 @@ fn the_view_and_every_change_round_trip() {
         SettingChange::Remote(RemotePlace { mode: RemoteMode::Floating, x: 900, y: 140 }),
         SettingChange::Remote(RemotePlace { mode: RemoteMode::Docked, x: 0, y: 0 }),
         SettingChange::CheckUpdates(false),
+        SettingChange::Aspect(true),
     ] {
         let mut payload = Vec::new();
         push_change(&mut payload, &change).unwrap();

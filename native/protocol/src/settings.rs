@@ -41,6 +41,7 @@ const CHANGE_REMOVE_LOCAL: u8 = 7;
 const CHANGE_RESTORE_SESSION: u8 = 9;
 const CHANGE_COOKIES: u8 = 10;
 const CHANGE_REMOTE: u8 = 11;
+const CHANGE_ASPECT: u8 = 12;
 // Far from the others, so changes added beside this one elsewhere do not
 // meet it (installation-and-updates.md section 3.4).
 const CHANGE_CHECK_UPDATES: u8 = 40;
@@ -104,6 +105,7 @@ pub(crate) fn push_view(payload: &mut Vec<u8>, view: &SettingsView) -> Result<()
     }
     push_flag(payload, view.restore_session);
     payload.push(push_mode(view.cookies));
+    push_flag(payload, view.aspect);
     match &view.refusal {
         Some(refusal) => {
             push_flag(payload, true);
@@ -123,8 +125,9 @@ pub(crate) fn read_view(fields: &mut Fields<'_>) -> Result<SettingsView, Protoco
     let local = (0..count).map(|_| fields.text(MAX_LOCAL_TEXT)).collect::<Result<Vec<_>, _>>()?;
     let restore_session = fields.flag("flag")?;
     let cookies = read_mode(fields)?;
+    let aspect = fields.flag("flag")?;
     let refusal = if fields.flag("flag")? { Some(fields.text(MAX_REFUSAL)?) } else { None };
-    Ok(SettingsView { home, sound, volume, proxy, local, restore_session, cookies, refusal })
+    Ok(SettingsView { home, sound, volume, proxy, local, restore_session, cookies, aspect, refusal })
 }
 
 pub(crate) fn push_change(payload: &mut Vec<u8>, change: &SettingChange) -> Result<(), ProtocolError> {
@@ -166,6 +169,10 @@ pub(crate) fn push_change(payload: &mut Vec<u8>, change: &SettingChange) -> Resu
             payload.push(CHANGE_CHECK_UPDATES);
             push_flag(payload, *on);
         }
+        SettingChange::Aspect(on) => {
+            payload.push(CHANGE_ASPECT);
+            push_flag(payload, *on);
+        }
     }
     Ok(())
 }
@@ -205,6 +212,7 @@ pub(crate) fn read_change(fields: &mut Fields<'_>) -> Result<SettingChange, Prot
         CHANGE_COOKIES => SettingChange::Cookies(read_mode(fields)?),
         CHANGE_REMOTE => SettingChange::Remote(read_remote(fields)?),
         CHANGE_CHECK_UPDATES => SettingChange::CheckUpdates(fields.flag("flag")?),
+        CHANGE_ASPECT => SettingChange::Aspect(fields.flag("flag")?),
         _ => return Err(ProtocolError::BadValue("setting change")),
     })
 }

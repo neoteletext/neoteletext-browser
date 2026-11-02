@@ -1,7 +1,8 @@
 use super::*;
-use crate::browser::fixture::{HEIGHT, WIDTH, browser, middle};
+use crate::browser::fixture::{HEIGHT, WIDTH, browser, middle, set_aspect};
 use crate::browser::{Key, Modifiers, Output};
 use crate::channel::Channel;
+use crate::geometry::Point;
 use crate::test_canvas::Recorder;
 
 fn draw(browser: &mut Browser, now: u64) -> Recorder {
@@ -36,6 +37,47 @@ fn full_screen_shows_the_open_page_alone() {
     assert!(notice.is_some_and(|rect| rect.x1 <= image.x0), "the notice in the margin beside the page: {notice:?}");
     let later = draw(&mut browser, NOTICE_MILLISECONDS);
     assert!(!later.texts.iter().any(|(_, text)| text == NOTICE), "gone after three seconds");
+}
+
+/// REQ-737 item 2: in full screen the page is stretched in width and
+/// centred, and a press finds the same cell.
+#[test]
+fn full_screen_stretches_the_page_in_width() {
+    let drawn = |on: bool| {
+        let mut browser = in_full_screen();
+        set_aspect(&mut browser, on);
+        let canvas = draw(&mut browser, 1_000);
+        (browser, canvas)
+    };
+    let ((_, off), (on_browser, on)) = (drawn(false), drawn(true));
+    let (off_image, on_image) = (off.pages[0].1, on.pages[0].1);
+    assert!((on_image.width() - off_image.width() * 16.0 / 13.0).abs() < 1e-6, "{off_image:?} {on_image:?}");
+    assert!((on_image.height() - off_image.height()).abs() < 1e-6, "{off_image:?} {on_image:?}");
+    assert!((middle(on_image).x - WIDTH / 2.0).abs() < 1.0, "centred: {on_image:?}");
+    let last = Point::new(on_image.x1 - 1.0, on_image.y0 + 1.0);
+    assert!(last.x > off_image.x1, "beyond where the raster's proportions end");
+    let click = on_browser.wall().cell_at(last).expect("a cell");
+    assert_eq!((click.column, click.row), (39, 0));
+}
+
+/// Section 2 with REQ-737 item 2: the wider page leaves a window of 1.6 to
+/// 1 too little margin for the whole notice, so the way to leave is said in
+/// fewer words, still beside the page and never over it.
+#[test]
+fn the_notice_stays_off_the_corrected_page() {
+    /// A window of 2 to 1, whose side margins hold the whole notice.
+    const WIDE: f64 = HEIGHT * 2.0;
+    let mut browser = in_full_screen();
+    set_aspect(&mut browser, true);
+    let said = |canvas: &Recorder, words: &str| canvas.texts.iter().find(|(_, text)| text == words).map(|(rect, _)| *rect);
+    let narrow = draw(&mut browser, 1_000);
+    let (_, image) = narrow.pages[0];
+    assert_eq!(said(&narrow, NOTICE), None, "no room beside it: {image:?}");
+    assert!(said(&narrow, SHORT_NOTICE).is_some_and(|rect| rect.x1 <= image.x0), "{:?}", said(&narrow, SHORT_NOTICE));
+    let mut wide = Recorder::new();
+    browser.draw(&mut wide, WIDE, HEIGHT, 1_000);
+    let (_, image) = wide.pages[0];
+    assert!(said(&wide, NOTICE).is_some_and(|rect| rect.x1 <= image.x0), "beside the page: {:?}", said(&wide, NOTICE));
 }
 
 /// Escape leaves, and the page stays open (section 5).

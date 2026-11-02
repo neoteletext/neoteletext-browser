@@ -182,6 +182,8 @@ impl Browser {
     fn shortcut_letter(&mut self, text: &str, modifiers: Modifiers, now: u64) -> bool {
         match text.to_ascii_lowercase().as_str() {
             "l" => self.start_editing(),
+            // The 4:3 aspect correction (REQ-737), before Select All.
+            "a" if modifiers.shift => self.toggle_aspect(),
             "a" => {
                 let Some(field) = self.focused_field() else { return false };
                 field.select_all();
@@ -231,7 +233,7 @@ impl Browser {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::browser::fixture::browser;
+    use crate::browser::fixture::{browser, set_aspect};
 
     /// DEC-1549 item 1: Command-O, Control-O elsewhere, asks for the file
     /// dialog; with Option or Alt, for a folder (DEC-1705). Shift keeps the
@@ -244,6 +246,22 @@ mod tests {
         assert_eq!(browser.take_outputs(), [Output::OpenFile(OpenKind::File)]);
         browser.key(Key::Text("o"), Modifiers { command: true, alt: true, ..Modifiers::default() }, 0);
         assert_eq!(browser.take_outputs(), [Output::OpenFile(OpenKind::Folder)]);
+    }
+
+    /// REQ-737 item 2: the menu bar's item is its key, and it turns the
+    /// correction the other way each time, which Select All never does.
+    #[test]
+    fn the_browsers_key_changes_the_aspect_correction() {
+        let (mut browser, _) = browser();
+        browser.take_outputs();
+        let shifted = Modifiers { command: true, shift: true, ..Modifiers::default() };
+        assert!(browser.key(Key::Text("A"), shifted, 0));
+        assert_eq!(browser.take_outputs(), [Output::Setting(crate::settings::SettingChange::Aspect(true))]);
+        set_aspect(&mut browser, true);
+        assert!(browser.key(Key::Text("a"), shifted, 0));
+        assert_eq!(browser.take_outputs(), [Output::Setting(crate::settings::SettingChange::Aspect(false))]);
+        browser.key(Key::Text("a"), Modifiers { command: true, ..Modifiers::default() }, 0);
+        assert_eq!(browser.take_outputs(), []);
     }
 
     /// Shift-Command-W, Control-Shift-W away from macOS, closes the window

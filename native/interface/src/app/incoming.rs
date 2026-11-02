@@ -29,7 +29,10 @@ impl App {
                 self.act(event_loop);
             }
             Incoming::Strip(strip) => self.view.browser.set_strip(strip),
-            Incoming::Settings(view) => self.view.browser.set_settings(view),
+            Incoming::Settings(view) => {
+                dock_menu::set_aspect(view.aspect);
+                self.view.browser.set_settings(view);
+            }
             Incoming::Update(view) => {
                 // The About panel shows the version the trusted core reports.
                 dock_menu::set_about(&view.version, interface_core::COPYRIGHT);

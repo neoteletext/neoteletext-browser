@@ -25,8 +25,9 @@ impl Wall {
         }
         canvas.fill(panel, 0.0, PANEL);
         self.area = Rect::new(panel.x0, panel.y0 + CONTROLS_HEIGHT, panel.x1, panel.y1);
+        // The largest page size is the widest page that fits as it is drawn.
         #[allow(clippy::cast_possible_truncation, reason = "panel widths fit easily in f32")]
-        let available = (self.area.width() - WALL_PADDING * 2.0) as f32;
+        let available = ((self.area.width() - WALL_PADDING * 2.0) / self.shape.stretch()) as f32;
         self.max = max_width_for_window(available);
         // A new window size keeps the zoomed state at the slider's end, and
         // never zooms by itself.

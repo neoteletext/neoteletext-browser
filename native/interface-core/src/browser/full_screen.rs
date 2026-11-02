@@ -38,6 +38,9 @@ pub(in crate::browser) const DOUBLE_CLICK_MILLISECONDS: u64 = 500;
 pub(in crate::browser) const DOUBLE_CLICK_DISTANCE: f64 = 4.0;
 /// The notice: what it says, and its box.
 const NOTICE: &str = "Full screen: Escape to leave";
+/// The same in a margin too narrow for it: on a display of 16 by 10 the
+/// page with the aspect correction on leaves one (REQ-737).
+const SHORT_NOTICE: &str = "Escape to leave";
 const NOTICE_PADDING: f64 = 10.0;
 const NOTICE_HEIGHT: f64 = 30.0;
 const NOTICE_RADIUS: f64 = 4.0;
@@ -323,11 +326,14 @@ impl Browser {
 /// "Full screen: Escape to leave" in the margin beside the page, never
 /// over it: the side margin when it is wide enough, else above.
 fn draw_notice<C: Canvas + ?Sized>(canvas: &mut C, area: Rect, page: Rect) {
-    let width = canvas.text_width(NOTICE, ROW_TITLE) + NOTICE_PADDING * 2.0;
-    let Some(place) = margin_place(area, page, width, NOTICE_HEIGHT) else { return };
+    let fitted = [NOTICE, SHORT_NOTICE].into_iter().find_map(|words| {
+        let width = canvas.text_width(words, ROW_TITLE) + NOTICE_PADDING * 2.0;
+        margin_place(area, page, width, NOTICE_HEIGHT).map(|place| (words, place))
+    });
+    let Some((words, place)) = fitted else { return };
     canvas.fill(place, NOTICE_RADIUS, BUTTON);
     border(canvas, place, 1.0, RULE);
-    left_centred(canvas, place, NOTICE_PADDING, NOTICE, ROW_TITLE, WHITE);
+    left_centred(canvas, place, NOTICE_PADDING, words, ROW_TITLE, WHITE);
 }
 
 /// A box of `width` by `height` in the margin around `page` within

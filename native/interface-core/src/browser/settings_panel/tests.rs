@@ -15,6 +15,7 @@ fn view() -> SettingsView {
         local: alloc::vec!["192.168.1.20".into()],
         restore_session: true,
         cookies: CookieMode::Keep,
+        aspect: false,
         refusal: None,
     }
 }

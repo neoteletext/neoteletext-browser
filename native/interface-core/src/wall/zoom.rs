@@ -4,7 +4,7 @@
 
 use alloc::format;
 
-use super::grid::{CAPTION_GAP, CAPTION_HEIGHT, CAPTION_NUMBER_WIDTH, FRAME, PAGE_ASPECT, WALL_PADDING};
+use super::grid::{CAPTION_GAP, CAPTION_HEIGHT, CAPTION_NUMBER_WIDTH, FRAME, WALL_PADDING};
 use super::{View, Wall, WallPage};
 use crate::canvas::{Canvas, PageKey};
 use crate::geometry::{Point, Rect};
@@ -179,9 +179,10 @@ impl Wall {
     pub(super) fn zoomed_rect(&self) -> Rect {
         let area = self.area;
         let room = Rect::new(area.x0 + WALL_PADDING, area.y0 + WALL_PADDING + CAPTION_HEIGHT + CAPTION_GAP, area.x1 - WALL_PADDING, area.y1 - WALL_PADDING);
-        let width = room.width().min(room.height() / PAGE_ASPECT).max(0.0);
+        let aspect = self.shape.height_per_width();
+        let width = room.width().min(room.height() / aspect).max(0.0);
         let left = f64::midpoint(room.x0, room.x1) - width / 2.0;
-        Rect::new(left, room.y0, left + width, room.y0 + width * PAGE_ASPECT)
+        Rect::new(left, room.y0, left + width, room.y0 + width * aspect)
     }
 
     /// The page part of the way between its place on the wall and its
@@ -311,9 +312,10 @@ impl Wall {
     /// runs out first, and centred, in its screen colour, the next pages
     /// sliding in; returns where it is drawn with its screen.
     fn draw_alone<C: Canvas + ?Sized>(&mut self, canvas: &mut C, area: Rect, pages: &[WallPage<'_>], current: usize, now: u64) -> Rect {
-        let width = area.width().min(area.height() / PAGE_ASPECT).max(0.0);
-        let (left, top) = (f64::midpoint(area.x0, area.x1) - width / 2.0, f64::midpoint(area.y0, area.y1) - width * PAGE_ASPECT / 2.0);
-        let rect = Rect::new(left, top, left + width, top + width * PAGE_ASPECT);
+        let aspect = self.shape.height_per_width();
+        let width = area.width().min(area.height() / aspect).max(0.0);
+        let (left, top) = (f64::midpoint(area.x0, area.x1) - width / 2.0, f64::midpoint(area.y0, area.y1) - width * aspect / 2.0);
+        let rect = Rect::new(left, top, left + width, top + width * aspect);
         // Around the page, its screen colour, as the page area draws it.
         let screen = pages.get(current).and_then(|page| canvas.screen(page.key)).unwrap_or(BLACK);
         canvas.fill(area, 0.0, screen);

@@ -10,6 +10,7 @@ use alloc::string::String;
 use alloc::vec::Vec;
 
 use crate::browser::{Browser, Output};
+use crate::canvas::PageShape;
 use crate::editor::Editor;
 use crate::geometry::Rect;
 use crate::settings::{CookieMode, ProxyView, SettingChange, SettingsView, UpdateView};
@@ -170,8 +171,21 @@ impl SettingsUi {
 impl Browser {
     /// The settings as the trusted core sent them.
     pub fn set_settings(&mut self, view: SettingsView) {
+        self.wall.set_shape(PageShape::of_setting(view.aspect));
         self.settings.view = Some(view);
         self.settings.refresh();
+    }
+
+    /// Whether pages are drawn with the 4:3 aspect correction (REQ-737).
+    #[must_use]
+    pub fn aspect_corrected(&self) -> bool {
+        self.wall.shape() == PageShape::Corrected
+    }
+
+    /// The View menu's aspect correction: the trusted core keeps it, as it
+    /// keeps the bookmarks bar, and its answer is what changes the pages.
+    pub(super) fn toggle_aspect(&mut self) {
+        self.outputs.push(Output::Setting(SettingChange::Aspect(!self.aspect_corrected())));
     }
 
     /// Updates as the trusted core sent them (`installation-and-updates.md`

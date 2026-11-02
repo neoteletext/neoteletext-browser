@@ -79,6 +79,30 @@ fn the_pointer_on_a_link_is_reported_once_per_link_with_its_shape() {
     assert_eq!(browser.cursor(), Cursor::Arrow);
 }
 
+/// REQ-737 item 3: on the corrected page a link is found where it is drawn,
+/// and the press names the same cell, its line along the cells as drawn.
+#[test]
+fn a_link_is_the_same_on_the_corrected_page() {
+    let (mut browser, mut canvas, key, off) = opened();
+    browser.set_links(key, page_links(VERSION));
+    crate::browser::fixture::set_aspect(&mut browser, true);
+    browser.draw(&mut canvas, WIDTH, HEIGHT, OPEN);
+    let (_, on) = browser.wall().open().expect("the page is open");
+    assert!(on.width() > off.width(), "{on:?} {off:?}");
+    browser.take_outputs();
+    move_to(&mut browser, centre(on, 11, 5));
+    assert_eq!(points(&mut browser), [Some(LinkCell { key, version: VERSION, column: 11, row: 5 })]);
+    assert_eq!(browser.cursor(), Cursor::Hand);
+    canvas.fills.clear();
+    browser.draw(&mut canvas, WIDTH, HEIGHT, OPEN);
+    let run = page_links(VERSION).runs[0];
+    let expected = links::underline(on, &run, 1.0, 1.0);
+    let line = canvas.fills.iter().find(|(rect, colour)| *colour == LINK && (rect.x0 - expected.x0).abs() < 1e-6 && (rect.x1 - expected.x1).abs() < 1e-6);
+    assert!(line.is_some(), "under the cells as drawn: {expected:?}");
+    browser.pointer_pressed(&mut canvas, false, OPEN);
+    assert!(browser.take_outputs().contains(&Output::Cell(CellClick { key, version: VERSION, column: 11, row: 5 })));
+}
+
 #[test]
 fn a_new_image_under_the_pointer_is_reported_again() {
     // The trusted core keeps a few images' links; the strip must follow

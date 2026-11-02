@@ -30,7 +30,7 @@ Only a window with an open page can enter full screen. With the wall showing, th
 
 On macOS the window enters a full-screen space of its own, as every Mac application's full screen does; elsewhere it becomes borderless and covers its display. Each window has its own full screen; the others stay as they are.
 
-**On entering, the browser says how to leave:** "Full screen: Escape to leave", drawn by the interface for three seconds in the screen colour's margin beside the page, never over the page, in the strip's own style.
+**On entering, the browser says how to leave:** "Full screen: Escape to leave", drawn by the interface for three seconds in the screen colour's margin beside the page, never over the page, in the strip's own style. A margin too narrow for those words takes "Escape to leave": with the 4:3 aspect correction on (REQ-737), a display of 16 by 10 leaves 188 points a side at 1440 by 900. A display with no margin for either shows neither.
 
 ## 3. Inside
 
