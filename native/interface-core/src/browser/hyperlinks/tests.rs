@@ -4,6 +4,7 @@ use crate::channel::{Channel, PAGES, PageInfo, Status};
 use crate::geometry::Point;
 use crate::links::LinkRun;
 use crate::test_canvas::Recorder;
+use crate::theme::{Colour, DIM, FIELD_INK, POINTED_INK, SECURE};
 use alloc::string::String;
 use alloc::vec;
 
@@ -204,6 +205,44 @@ fn the_strip_shows_where_a_link_leads_in_place_of_the_address() {
     let texts: Vec<&String> = canvas.texts.iter().map(|(_, text)| text).collect();
     assert!(texts.iter().any(|text| text.as_str() == "\u{2192} Page 302"));
     assert!(!texts.iter().any(|text| text.contains("news.invalid")), "the address gives way");
+}
+
+/// Whether `inner` lies within `outer`.
+fn within(inner: Rect, outer: Rect) -> bool {
+    inner.x0 >= outer.x0 && inner.x1 <= outer.x1 && inner.y0 >= outer.y0 && inner.y1 <= outer.y1
+}
+
+// Requirement 17.6 (REQ-806) as DEC-2496 has it, for requirement 14.5
+// (REQ-785): while a link is pointed at, its destination is drawn in the
+// pointed ink, never in an ink of the real address, and the channel's
+// identity is greyed, so the field cannot be read as being at the link's
+// address with the channel's padlock vouching for it.
+#[test]
+fn a_pointed_destination_is_never_drawn_as_the_channels_own_address() {
+    for (encrypted, identity_ink) in [(true, SECURE), (false, INSECURE)] {
+        for kind in [LinkKind::Page, LinkKind::Channel, LinkKind::Web] {
+            let (mut browser, _, _, _) = opened();
+            browser.set_strip(StripState { address: "https://news.invalid/".into(), identity: "news.invalid".into(), encrypted, ..StripState::default() });
+            let shown = drawn_at(&mut browser, WIDTH, HEIGHT, OPEN);
+            let field = browser.regions.field;
+            let in_field = |canvas: &Recorder, colour: Colour| {
+                canvas.fills.iter().any(|(rect, ink)| *ink == colour && within(*rect, field))
+                    || canvas.texts.iter().zip(&canvas.inks).any(|((rect, _), (_, ink))| *ink == colour && within(*rect, field))
+            };
+            assert!(in_field(&shown, identity_ink), "the identity is drawn as the channel's while nothing is pointed at");
+            browser.set_pointing(Some(Pointing { kind, text: "https://weather.invalid/".into(), complete: ADDRESS.into() }));
+            let pointed = drawn_at(&mut browser, WIDTH, HEIGHT, OPEN);
+            let destination = pointed.inks.iter().find(|(text, _)| text.ends_with("https://weather.invalid/"));
+            assert_eq!(destination.map(|(_, ink)| *ink), Some(POINTED_INK), "{kind:?}");
+            for ink in [FIELD_INK, DIM] {
+                let texts = pointed.texts.iter().zip(&pointed.inks).filter(|((rect, _), (_, colour))| *colour == ink && within(*rect, field));
+                assert!(texts.clone().all(|((_, text), _)| !text.contains("weather.invalid")), "{kind:?}: the destination takes the real address's ink");
+            }
+            assert!(!in_field(&pointed, FIELD_INK), "{kind:?}: nothing in the field is in the address's ink");
+            assert!(!in_field(&pointed, identity_ink), "{kind:?}, encrypted {encrypted}: the identity does not vouch for the destination");
+            assert!(in_field(&pointed, DIM), "{kind:?}: the identity is greyed, not hidden");
+        }
+    }
 }
 
 #[test]
