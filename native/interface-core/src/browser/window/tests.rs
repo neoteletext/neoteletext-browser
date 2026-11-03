@@ -13,7 +13,7 @@ use neoteletext_core::consts::COLOUR_MAP_ENTRIES;
 
 use super::*;
 use crate::browser::bookmarks_bar::BAR_HEIGHT;
-use crate::browser::fixture::{HEIGHT, WIDTH, browser, cell_centre, middle};
+use crate::browser::fixture::{HEIGHT, WIDTH, browser, cell_centre, channel, middle};
 use crate::browser::overview::ROW_FLASH;
 use crate::browser::{CertificateProblem, Denied, StripState};
 use crate::channel::{BANKS, Status};
@@ -447,4 +447,38 @@ fn a_magazines_name_is_cut_to_its_place_on_any_colour() {
         canvas.texts.iter().find(|(rect, text)| rect.x0 > bank.x0 && rect.y0 > bank.y0 && rect.y1 <= bank.y1 && text.starts_with('M')).expect("the name");
     assert!(name.1.chars().count() < 200, "fitted: {}", name.1);
     assert!(name.0.x1 <= bank.x1, "{:?} in {bank:?}", name.0);
+}
+
+/// REQ-772: a window starts with the page alone and no page size bar, and
+/// the browser's modifier and G, through `Browser::key`, brings the wall
+/// with its bar and takes it away again: Command-G on macOS, Control-Shift-G
+/// elsewhere, and on Windows and Linux Control-G alone does nothing, since
+/// the requirement names Control-Shift-G. On the code before Control-G
+/// alone toggled the wall away from macOS.
+#[test]
+fn the_wall_comes_and_goes_by_its_key_and_the_page_alone_has_no_size_bar() {
+    use crate::browser::{Frame, Key, Modifiers};
+    let no_bar = (Rect::ZERO, Rect::ZERO);
+    for (window_buttons, key) in
+        [(false, Modifiers { command: true, ..Modifiers::default() }), (true, Modifiers { command: true, shift: true, control: true, ..Modifiers::default() })]
+    {
+        let mut browser = Browser::new(Frame { left_inset: 0.0, window_buttons });
+        browser.set_channel(channel());
+        let _first = drawn(&mut browser, None);
+        assert!(browser.wall.single(), "a window starts with the page alone");
+        assert_eq!(browser.wall.size_buttons(), no_bar, "no page size bar");
+        assert!(browser.key(Key::Text("g"), key, 0));
+        let _wall = drawn(&mut browser, None);
+        assert!(!browser.wall.single(), "the wall");
+        assert_ne!(browser.wall.size_buttons(), no_bar, "with its page size bar");
+        assert!(browser.key(Key::Text("g"), key, 0));
+        let _again = drawn(&mut browser, None);
+        assert!(browser.wall.single(), "and back");
+        assert_eq!(browser.wall.size_buttons(), no_bar);
+    }
+    let mut browser = Browser::new(Frame { left_inset: 0.0, window_buttons: true });
+    browser.set_channel(channel());
+    let control_g = Modifiers { command: true, control: true, ..Modifiers::default() };
+    browser.key(Key::Text("g"), control_g, 0);
+    assert!(browser.wall.single(), "Control-G alone is not the wall's key away from macOS");
 }
