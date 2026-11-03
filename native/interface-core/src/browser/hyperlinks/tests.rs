@@ -442,12 +442,16 @@ fn a_link_that_changes_takes_the_popover_away() {
 // window, at a desktop window's size.
 #[test]
 fn the_longest_address_is_shown_whole() {
+    // A window tall enough for all of it below the strip, which the
+    // popover never covers (REQ-785); in a shorter one the wheel brings the
+    // rest, as the next test shows.
+    const TALL_ENOUGH: f64 = 1200.0;
     let start = "https://weather.invalid/";
     let address = format!("{start}{}", "a".repeat(crate::browser::MAX_ADDRESS - start.len()));
     let (mut browser, _, _) = resting_on_a_link(&address);
-    drawn_at(&mut browser, WIDTH, HEIGHT, OPEN);
+    point_again(&mut browser, WIDTH, TALL_ENOUGH);
     browser.settle(OPEN + 500);
-    let canvas = drawn_at(&mut browser, WIDTH, HEIGHT, OPEN + 500);
+    let canvas = drawn_at(&mut browser, WIDTH, TALL_ENOUGH, OPEN + 500);
     let lines = popover_lines(&canvas, start);
     assert!(lines.len() > 1, "wrapped");
     assert_eq!(lines.concat(), address, "every character");
@@ -482,4 +486,41 @@ fn the_popover_shows_in_full_screen() {
     point_again(&mut browser, WIDTH, HEIGHT);
     browser.settle(OPEN + 500);
     assert!(drawn_at(&mut browser, WIDTH, HEIGHT, OPEN + 500).texts.iter().any(|(_, text)| text == ADDRESS));
+}
+
+// REQ-785, the spoofing review of 3 November 2026: a link's popover holds
+// an address the channel chose, so however long, it never covers the
+// trusted strip, at the smallest window the interface allows
+// (`MINIMUM_WIDTH` and `MINIMUM_HEIGHT` in `native/interface/src/window.rs`)
+// with the bookmarks bar hidden and shown. On the code before, an address
+// of `MAX_ADDRESS` octets put the box above the pointer, clamped only to
+// the window's top, over the address field and the padlock.
+#[test]
+fn a_links_popover_never_covers_the_strip() {
+    const SMALLEST_WIDTH: f64 = 1000.0;
+    const SMALLEST_HEIGHT: f64 = 640.0;
+    let start = "https://weather.invalid/";
+    let address = format!("{start}{}", "a".repeat(crate::browser::MAX_ADDRESS - start.len()));
+    for bar in [false, true] {
+        let (mut browser, _, _) = resting_on_a_link(&address);
+        browser.set_bar(crate::library::BarView { shown: bar, ..crate::library::BarView::default() });
+        point_again(&mut browser, SMALLEST_WIDTH, SMALLEST_HEIGHT);
+        browser.settle(OPEN + 500);
+        let canvas = drawn_at(&mut browser, SMALLEST_WIDTH, SMALLEST_HEIGHT, OPEN + 500);
+        let strip_end = browser.strip_end(OPEN + 500);
+        assert_eq!(
+            strip_end,
+            crate::browser::window::BODY_TOP - crate::browser::window::MARGIN + if bar { crate::browser::bookmarks_bar::BAR_HEIGHT } else { 0.0 }
+        );
+        let lines = popover_lines(&canvas, start);
+        assert!(!lines.is_empty(), "the popover is drawn");
+        let first = canvas.texts.iter().rposition(|(_, text)| text.starts_with(start)).expect("its first line");
+        for (rect, text) in &canvas.texts[first..] {
+            assert!(rect.y0 >= strip_end, "bar {bar}: the line {text:.20} at {} is above the strip's end {strip_end}", rect.y0);
+        }
+        // The box and its four edges are the last five fills.
+        for (rect, _) in canvas.fills.iter().rev().take(5) {
+            assert!(rect.y0 >= strip_end, "bar {bar}: the box reaches {} above the strip's end {strip_end}", rect.y0);
+        }
+    }
 }

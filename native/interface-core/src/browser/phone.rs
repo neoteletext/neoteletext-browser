@@ -111,7 +111,7 @@ impl Browser {
     /// theirs.
     /// Whether `point` is on the open phone panel.
     pub(super) fn over_phone(&self, point: Point) -> bool {
-        self.phone.open && panel_rect(self.wall.area()).contains(point)
+        self.phone.open && panel_rect(self.wall.area(), self.body).contains(point)
     }
 
     pub(super) fn phone_press(&mut self, point: Point) -> bool {
@@ -125,7 +125,7 @@ impl Browser {
             return true;
         }
         // The panel takes every press on it.
-        self.phone.open && panel_rect(self.wall.area()).contains(point)
+        self.phone.open && panel_rect(self.wall.area(), self.body).contains(point)
     }
 
     /// The strip's "Phone connected" with Finish, at the right of the
@@ -152,7 +152,7 @@ impl Browser {
         if !self.phone.open {
             return;
         }
-        let panel = panel_rect(self.wall.area());
+        let panel = panel_rect(self.wall.area(), self.body);
         canvas.fill(panel, 8.0, PANEL);
         outline(canvas, panel, RULE);
         let heading = Rect::new(panel.x0 + PANEL_PADDING, panel.y0 + PANEL_PADDING, panel.x1 - PANEL_PADDING, panel.y0 + PANEL_PADDING + LINE * 1.5);
@@ -165,7 +165,9 @@ impl Browser {
         let view = self.phone.view.clone();
         let status = view.as_ref().map_or(PhoneStatus::Preparing, |view| view.status);
         let qr_top = heading.y1 + PANEL_PADDING;
-        let qr_box = Rect::new(f64::midpoint(panel.x0, panel.x1) - QR_SIDE / 2.0, qr_top, f64::midpoint(panel.x0, panel.x1) + QR_SIDE / 2.0, qr_top + QR_SIDE);
+        // The code gives up what the panel lost to a short window.
+        let qr_side = (QR_SIDE - (PANEL_HEIGHT - panel.height())).max(0.0);
+        let qr_box = Rect::new(f64::midpoint(panel.x0, panel.x1) - qr_side / 2.0, qr_top, f64::midpoint(panel.x0, panel.x1) + qr_side / 2.0, qr_top + qr_side);
         if let (PhoneStatus::Scan | PhoneStatus::PinFailed(_), Some((size, bits))) = (status, view.as_ref().and_then(|view| view.qr.as_ref())) {
             draw_qr(canvas, qr_box, *size, bits);
         } else {
@@ -222,9 +224,15 @@ impl Browser {
     }
 }
 
-fn panel_rect(area: Rect) -> Rect {
-    let centre = Point::new(f64::midpoint(area.x0, area.x1), f64::midpoint(area.y0, area.y1));
-    Rect::new(centre.x - PANEL_WIDTH / 2.0, centre.y - PANEL_HEIGHT / 2.0, centre.x + PANEL_WIDTH / 2.0, centre.y + PANEL_HEIGHT / 2.0)
+/// The panel, centred on the page area but kept within `body`, the window
+/// below the strip: on a short window it is shorter, and its code smaller
+/// by as much, so it never covers the trusted strip (REQ-785, the spoofing
+/// review of 3 November 2026).
+fn panel_rect(area: Rect, body: Rect) -> Rect {
+    let height = PANEL_HEIGHT.min(body.height());
+    let lowest = body.y0 + height / 2.0;
+    let centre = Point::new(f64::midpoint(area.x0, area.x1), f64::midpoint(area.y0, area.y1).clamp(lowest, (body.y1 - height / 2.0).max(lowest)));
+    Rect::new(centre.x - PANEL_WIDTH / 2.0, centre.y - height / 2.0, centre.x + PANEL_WIDTH / 2.0, centre.y + height / 2.0)
 }
 
 /// The code dark on white, with its quiet zone, as a phone's camera reads it.
@@ -278,6 +286,41 @@ mod tests {
         let mut canvas = Recorder::new();
         browser.draw(&mut canvas, 1440.0, 900.0, 0);
         assert!(canvas.texts.iter().any(|(_, text)| text == "Phone connected"));
+    }
+
+    /// REQ-785, the spoofing review of 3 November 2026: the panel never
+    /// covers the trusted strip, at the smallest window the interface
+    /// allows (`MINIMUM_WIDTH` and `MINIMUM_HEIGHT` in
+    /// `native/interface/src/window.rs`), with the overview and the
+    /// bookmarks bar each shown and hidden, and its code is drawn whole
+    /// within it. On the code before, the panel was centred on the page
+    /// area at its full 560 points and reached above the strip's end.
+    #[test]
+    fn the_panel_never_covers_the_strip() {
+        const SMALLEST_WIDTH: f64 = 1000.0;
+        const SMALLEST_HEIGHT: f64 = 640.0;
+        for overview_hidden in [false, true] {
+            for bar in [false, true] {
+                let mut browser = Browser::new(Frame { left_inset: 0.0, window_buttons: false });
+                browser.overview.hidden = overview_hidden;
+                browser.set_bar(crate::library::BarView { shown: bar, ..crate::library::BarView::default() });
+                browser.toggle_phone_panel();
+                browser.set_phone(PhoneUiView { status: PhoneStatus::Scan, qr: Some((21, alloc::vec![0xFF; 56])), pin: Some("1234".into()) });
+                let mut canvas = Recorder::new();
+                browser.draw(&mut canvas, SMALLEST_WIDTH, SMALLEST_HEIGHT, 0);
+                let strip_end = browser.strip_end(0);
+                let case = alloc::format!("overview hidden {overview_hidden}, bar {bar}");
+                let panel = panel_rect(browser.wall.area(), browser.body);
+                for (what, rect) in [("panel", panel), ("close button", browser.phone.close), ("Finish", browser.phone.finish)] {
+                    assert!(rect.y0 >= strip_end, "{case}: the {what}'s top {} is above the strip's end {strip_end}", rect.y0);
+                    assert!(rect.y1 <= SMALLEST_HEIGHT, "{case}: the {what}'s foot {} is below the window", rect.y1);
+                }
+                // The code's dark modules: the black fills narrower than the panel.
+                for (module, _) in canvas.fills.iter().filter(|(rect, colour)| *colour == BLACK && rect.width() < panel.width()) {
+                    assert!(module.y0 >= strip_end, "{case}: a module of the code at {} is above the strip's end", module.y0);
+                }
+            }
+        }
     }
 
     /// Decision 101: without a PIN the phone is connected only by its first
