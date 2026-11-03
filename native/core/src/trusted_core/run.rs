@@ -61,10 +61,10 @@ fn handle(core: &mut Core, event: Event) -> Result<bool, String> {
                 end_aside(helper);
             }
             core.sounding(&[])?;
-            // It served every tab: the strip says so, whichever is in front
+            // It served every tab: each says so until it is reloaded
             // (REQ-683). A helper that merely ended leaves the browser silent.
             if broke {
-                core.say(String::from("The sound helper misbehaved and was closed"))?;
+                core.shared_helper_broke(SOUND_HELPER_BROKE)?;
             }
         }
         Event::BookmarksRead(read) => core.bookmarks_read(read)?,
@@ -86,6 +86,9 @@ fn handle(core: &mut Core, event: Event) -> Result<bool, String> {
     }
     Ok(true)
 }
+
+/// What every tab says once the sound helper broke its protocol.
+const SOUND_HELPER_BROKE: &str = "The sound helper misbehaved and was closed";
 
 pub(crate) fn run(broker: &Arc<Broker>, given: impl Iterator<Item = String>, confined: &str) -> Result<(), String> {
     // What happens before the trusted core is made, for its Log tab.
@@ -363,7 +366,32 @@ mod tests {
         handle(&mut core, Event::SoundEnded(Some(String::from("a malformed message")))).unwrap();
         assert!(ended_soon(output), "killed");
         assert!(core.sound.is_none());
-        assert_eq!(core.strip().notice, "The sound helper misbehaved and was closed", "said to every tab, whichever is in front");
+        assert_eq!(core.strip().notice, SOUND_HELPER_BROKE, "said to every tab, whichever is in front");
+    }
+
+    /// REQ-683, requirement 4.3: a sound helper that broke its protocol served
+    /// every tab, so every tab open says so, and goes on saying it after a
+    /// notice's time, until it is reloaded. On the code before, the notice
+    /// lasted ten seconds in whichever tab was in front.
+    #[test]
+    fn every_tab_a_broken_sound_helper_served_says_so_until_reloaded() {
+        use super::super::test_support::{Test, sleeping_helper};
+        use confine::Role;
+        let mut test = Test::new("sound-broke-tabs");
+        test.tab("https://one.example/teletext/", false);
+        test.tab("https://two.example/teletext/", false);
+        let (child, _output) = sleeping_helper(Role::Sound);
+        test.core.sound = Some((child, Outbox::new(Vec::new())));
+        handle(&mut test.core, Event::SoundEnded(Some(String::from("a malformed message")))).unwrap();
+        // The notice's time is up.
+        test.core.notice = None;
+        for active in 0..test.core.session.tabs.len() {
+            test.core.session.active = active;
+            assert_eq!(test.core.strip().notice, SOUND_HELPER_BROKE, "tab {active}");
+        }
+        test.core.session.open("https://three.example/teletext/").unwrap();
+        test.core.session.active = test.core.session.tabs.len() - 1;
+        assert_eq!(test.core.strip().notice, "", "a tab opened after, which the helper never served");
     }
 
     /// Finding F-12: a helper is heard once it says it is confined, its

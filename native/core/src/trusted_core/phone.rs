@@ -28,6 +28,9 @@ fn relay_override(named: Option<String>, debug: bool) -> Option<String> {
     named.filter(|relay| debug && (relay.starts_with("https://") || relay.starts_with("http://")))
 }
 
+/// What every tab says once the phone keyboard broke its protocol.
+const PHONE_KEYBOARD_BROKE: &str = "The phone keyboard misbehaved and was closed";
+
 impl Core {
     fn send_phone(&mut self) -> Result<(), String> {
         let view = self.phone_view.clone();
@@ -168,8 +171,9 @@ impl Core {
         }
         self.phone_view = protocol::keyboard::PhoneView { state: protocol::keyboard::PhoneState::Finished, qr: None, pin: None };
         self.send_phone()?;
+        // It served every tab: each says so until it is reloaded (REQ-683).
         if broke {
-            self.say(String::from("The phone keyboard misbehaved and was closed"))?;
+            self.shared_helper_broke(PHONE_KEYBOARD_BROKE)?;
         }
         Ok(())
     }
@@ -179,6 +183,7 @@ impl Core {
 #[allow(clippy::unwrap_used, reason = "a test")]
 mod tests {
     use super::super::test_support::Test;
+    use super::PHONE_KEYBOARD_BROKE;
     use protocol::ToInterface;
     use protocol::keyboard::{FromKeyboard, PhoneKey, PhoneState};
 
@@ -215,7 +220,28 @@ mod tests {
         test.core.phone_ended(generation, Some(String::from("a malformed message"))).unwrap();
         assert!(test.core.phone.is_none());
         assert_eq!(test.core.phone_view.state, PhoneState::Finished);
-        assert_eq!(test.core.strip().notice, "The phone keyboard misbehaved and was closed");
+        assert_eq!(test.core.strip().notice, PHONE_KEYBOARD_BROKE);
+    }
+
+    /// REQ-683, requirement 4.3: the phone keyboard served every tab, so every tab
+    /// open says it broke, after a notice's time too, until it is
+    /// reloaded. On the code before, only a ten-second notice said so.
+    #[cfg(unix)]
+    #[test]
+    fn every_tab_a_broken_phone_keyboard_served_says_so() {
+        let mut test = Test::new("phone-broke-tabs");
+        test.tab("https://one.example/teletext/", false);
+        test.tab("https://two.example/teletext/", false);
+        let mut child = deaf_keyboard("60");
+        let input = neoteletext::outbox::Outbox::new(child.stdin.take().unwrap());
+        test.core.phone = Some((child, input));
+        let generation = test.core.phone_generation;
+        test.core.phone_ended(generation, Some(String::from("a malformed message"))).unwrap();
+        test.core.notice = None;
+        for active in 0..test.core.session.tabs.len() {
+            test.core.session.active = active;
+            assert_eq!(test.core.strip().notice, PHONE_KEYBOARD_BROKE, "tab {active}");
+        }
     }
 
     /// Finding F-26: closing the panel never waits on the keyboard process

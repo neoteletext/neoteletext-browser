@@ -36,6 +36,8 @@ impl Core {
             && self.active_channel() == Some(key.channel)
         {
             strip.notice = format!("Loading page {:03X}, sub-page {subpage:04X}", key.page);
+        } else if let Some(text) = self.session.active_tab().and_then(|tab| tab.channel.helper_broke) {
+            strip.notice = String::from(text);
         }
         strip.denied = self.denial_shown();
         strip.failed = self.failure_shown();
@@ -124,6 +126,17 @@ impl Core {
     #[expect(clippy::unused_self, reason = "a selection is input, compiled out")]
     fn selected_place(&self, _channel: u32, _place: &str) -> Option<(u16, u16)> {
         None
+    }
+
+    /// A helper that served every tab broke its protocol and was closed:
+    /// the strip says `text` as a notice, and every tab open goes on saying
+    /// it after the notice's time, until it is reloaded, not only the tab
+    /// in front for that time (REQ-683, requirement 4.3).
+    pub(super) fn shared_helper_broke(&mut self, text: &'static str) -> Result<(), String> {
+        for tab in self.session.all_tabs_mut() {
+            tab.channel.helper_broke = Some(text);
+        }
+        self.say(String::from(text))
     }
 
     /// Says `text` in the strip for a while, and in the log.
