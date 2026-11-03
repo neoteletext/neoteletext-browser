@@ -1027,6 +1027,34 @@ mod tests {
         }
     }
 
+    /// REQ-701 item 5 and the engine's REQ-420 (REQ-SEC-007), as DEC-2378
+    /// settled: an `https` channel redirected to a plain `http` address,
+    /// its own folder or another channel's, is refused. The trusted core
+    /// is told of no redirect to follow, and nothing is asked for over
+    /// plain HTTP. This runs the fetcher's own handling of the engine's
+    /// agent, which is what a real fetcher sends; the trusted core's
+    /// stand-in fetcher cannot show it.
+    #[test]
+    fn a_redirect_from_https_to_http_is_refused_and_nothing_is_fetched_plain() {
+        use neoteletext_web::port::{NetInput, Security};
+        for location in [format!("http://a.example/tt/{SETTINGS_FILE}"), format!("http://b.example/tt/{SETTINGS_FILE}")] {
+            let reply = format!("HTTP/1.1 301 Moved Permanently\r\nLocation: {location}\r\nContent-Length: 0\r\n\r\n");
+            let mut storage = Box::new(Storage::default());
+            let config = Config { tls_available: true, redirects_within_channel: true, ..Config::default() };
+            let mut agent: Box<Agent<'_>> = Box::new(UserAgent::new(config, storage.buffers(), Random::new()));
+            let mut actions = Vec::new();
+            agent.handle(Instant(0), Input::OpenChannel("https://a.example/tt/"), &mut |out| collect(out, &mut actions));
+            assert!(matches!(&actions[..], [Action::Connect { security: Security::Tls, .. }, ..]), "opened encrypted");
+            let opened = actions.len();
+            let connected = NetInput::Connected(ConnectionId::Fetch, neoteletext_web::url::IpAddress::V4([93, 184, 216, 34]));
+            agent.handle(Instant(0), Input::Net(connected), &mut |out| collect(out, &mut actions));
+            agent.handle(Instant(0), Input::Net(NetInput::Received(ConnectionId::Fetch, reply.as_bytes())), &mut |out| collect(out, &mut actions));
+            let after = actions.get(opened..).unwrap_or_default();
+            assert!(!after.iter().any(|action| matches!(action, Action::Tell(FromFetcher::Redirected(_)))), "{location}: not followed");
+            assert!(!after.iter().any(|action| matches!(action, Action::Connect { security: Security::Plain, .. })), "{location}: nothing plain");
+        }
+    }
+
     /// REQ-1686 item 1: a channel's `http` address redirected to its own
     /// `https` address stays in the channel, so the trusted core hears
     /// nothing of it and no notice shows.
