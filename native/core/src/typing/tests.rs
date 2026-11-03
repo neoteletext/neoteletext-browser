@@ -312,8 +312,9 @@ fn every_button_and_modifier_goes_as_input_md_lays_it_out() {
     }
 }
 
-/// REQ-INT-110: a cursor record places the cursor, with its block flag
-/// alone, since the browser echoes nothing; it gives no round trip, which
+/// REQ-INT-110, REQ-INT-134 (the engine's REQ-1382): a cursor record
+/// places the cursor within rows 1 to 23, row 24 refused, with its block
+/// flag alone, since the browser echoes nothing; it gives no round trip, which
 /// is the push connection's own (REQ-RCH-016); and one naming another
 /// page is the host going there (REQ-INT-113).
 #[test]

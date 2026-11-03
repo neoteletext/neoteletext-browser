@@ -451,6 +451,8 @@ fn the_strip_says_where_keys_go() {
     assert!(badge(&browser).contains("did not answer"), "{}", badge(&browser));
 }
 
+/// REQ-INT-134 (the engine's REQ-1382): the cursor a channel sends is drawn
+/// by the interface as an overlay, and only while keys go to the channel.
 #[test]
 fn the_cursor_is_drawn_only_while_typing() {
     let mut browser = browser();
@@ -488,7 +490,8 @@ fn what_the_channel_is_sent_does_not_change_with_the_aspect_correction() {
     assert_ne!(on_pointer, off_pointer, "the page is drawn elsewhere");
 }
 
-/// REQ-737 item 2: the channel's cursor covers its cell of the page as drawn.
+/// REQ-737 item 2, REQ-INT-134 (the engine's REQ-1382): the channel's
+/// cursor covers its cell of the page as drawn, column 39 included.
 #[test]
 fn the_cursor_covers_its_cell_of_the_corrected_page() {
     let mut browser = browser();
