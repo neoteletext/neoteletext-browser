@@ -240,9 +240,23 @@ check_browser_names() {
 $unexpected"
 }
 
+# The engine's REQ-329 (TODO-2422): the standard's page ranges, 100 to
+# 8FF and the keyable 100 to 899, are named once, in the engine's
+# `neoteletext_core::limits`; no range here ends in them as a literal.
+readonly PAGE_RANGE_LITERAL='\.\.=? *0x(8ff|899)\b'
+check_page_range_literals() {
+    step "no page range is written with the literals 0x8FF or 0x899 (the engine's REQ-329)"
+    local found status=0
+    found="$(git grep --cached -n -IiE "$PAGE_RANGE_LITERAL" -- 'native/*.rs')" || status=$?
+    [[ "$status" -le 1 ]] || fail "git grep failed looking for page range literals"
+    [[ -z "$found" ]] || fail "these lines write a page range's end as a literal; use neoteletext_core::limits's FIRST_PAGE_ADDRESS, LAST_PAGE_ADDRESS, FIRST_KEYABLE_PAGE or LAST_KEYABLE_PAGE:
+$found"
+}
+
 # What the commit gate checks: the code compiles clean.
 check_compiles() {
     check_browser_names
+    check_page_range_literals
     check_engine_pin
     check_desktop_codecs
     check_release_versions

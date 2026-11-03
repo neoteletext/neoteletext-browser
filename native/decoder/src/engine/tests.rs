@@ -1026,7 +1026,9 @@ fn a_pages_controls_are_found_and_their_look_drawn_on_their_cells() {
 /// the code before, only the 800 decimal pages were drawn.
 #[test]
 fn every_page_the_standard_defines_is_drawn() {
-    let pages: Vec<u16> = (0x100..=0x8FF).filter(|&page| interface_core::channel::is_channel_page(page)).collect();
+    let pages: Vec<u16> = (neoteletext_core::limits::FIRST_PAGE_ADDRESS..=neoteletext_core::limits::LAST_PAGE_ADDRESS)
+        .filter(|&page| interface_core::channel::is_channel_page(page))
+        .collect();
     assert_eq!(pages.len(), neoteletext_core::limits::USABLE_PAGE_NUMBERS);
     let mut tti = String::new();
     for page in &pages {
@@ -1053,4 +1055,15 @@ fn a_key_to_a_hexadecimal_page_is_kept_and_a_page_without_links_says_so() {
     assert!(hidden.linked && hidden.keys.iter().all(Option::is_none), "linked, with every key set aside");
     let none = engine_with(b"PN,10000\nSC,0000\nPS,8000\nOL,1,INDEX\n").render_at(0x100, 0).unwrap().links.fastext;
     assert!(!none.linked);
+}
+
+/// The engine's REQ-AUD-017: the receiver a decoder builds reports, through
+/// `Receiver::limits`, exactly the sizes it was built with, and they meet
+/// audio Level B's minimum, the least a desktop receiver holds.
+#[test]
+fn the_audio_receiver_reports_its_sizes_and_meets_level_b() {
+    let limits = Engine::new().audio_limits();
+    assert_eq!(limits, ReceiverLimits { store_bytes: AUDIO_ARENA, objects: AUDIO_OBJECTS, records_in_flight: AUDIO_RECORDS });
+    assert_eq!(limits, AUDIO_LIMITS);
+    assert!(limits.meets(&LEVEL_B_MINIMUM), "{limits:?} against {LEVEL_B_MINIMUM:?}");
 }

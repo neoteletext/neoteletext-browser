@@ -110,6 +110,17 @@ pub fn convert_picture() -> Result<(), ProtocolError> {
     Ok(())
 }
 
+/// The receiver's figures as the protocol carries them: each saturates at
+/// the field's bound, which no receiver this process builds reaches.
+fn audio_receiver(limits: neoteletext_audio::ReceiverLimits) -> protocol::decoder::AudioReceiver {
+    let figure = |value: usize| u32::try_from(value).unwrap_or(u32::MAX);
+    protocol::decoder::AudioReceiver {
+        store_bytes: figure(limits.store_bytes),
+        objects: figure(limits.objects),
+        records_in_flight: figure(limits.records_in_flight),
+    }
+}
+
 /// A channel's decoder, with a store of `store_pages`: it reads the
 /// channel's bytes and requests from the trusted core and sends back which
 /// pages arrived and the pages shown, until the channel closes. Its first
@@ -125,6 +136,7 @@ pub fn run(store_pages: usize) -> Result<(), ProtocolError> {
     write_to_core(&mut output, &FromDecoder::Confined)?;
     output.flush()?;
     let mut engine = Engine::with_store(store_pages);
+    write_to_core(&mut output, &FromDecoder::AudioReceiver(audio_receiver(engine.audio_limits())))?;
     let mut showing: Vec<u16> = Vec::new();
     // The clock the pages on screen were last drawn with.
     let mut shown_clock = None;

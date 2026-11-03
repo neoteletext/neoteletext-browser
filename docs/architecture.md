@@ -204,6 +204,7 @@ Every process speaks the same framing, the engine's: one kind byte, a 32-bit big
 | Message | Meaning |
 |---|---|
 | Confined | Its first message, before it reads anything: it is confined and running; one that ends before saying it fails an update's trial (finding F-12) |
+| AudioReceiver | Its second message, once its audio receiver is built: what the receiver holds, three figures shown in the channel's Log tab (the engine's REQ-AUD-017). The browser builds every receiver with a 4,194,304-byte object store, 256 objects and 8 records reassembled at once (`AUDIO_ARENA`, `AUDIO_OBJECTS` and `AUDIO_RECORDS` in `native/decoder/src/engine.rs`), at least audio Level B's minimum (`neoteletext_audio::LEVEL_B_MINIMUM`), which a compile-time assertion checks |
 | Arrived | A page was received completely for the first time: its number and a title from its first text row |
 | Updated | A page already held arrived again with different rows |
 | Frame | A rendered page: 480 by 500 palette indices and a palette of at most 32 colours, every index checked against the palette on arrival |
