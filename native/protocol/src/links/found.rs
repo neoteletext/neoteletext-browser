@@ -142,7 +142,7 @@ pub(crate) fn read_found(fields: &mut Fields<'_>) -> Result<FoundLinks, Protocol
         })
         .collect::<Result<_, _>>()?;
     let numbers = (0..fields.count_u8(MAX_NUMBER_LINKS, "too many number links")?)
-        .map(|_| Ok::<_, ProtocolError>(NumberLink { number: fields.display_page()?, target: raw_text(fields, MAX_TARGET, "text too long")? }))
+        .map(|_| Ok::<_, ProtocolError>(NumberLink { number: fields.keyable_page()?, target: raw_text(fields, MAX_TARGET, "text too long")? }))
         .collect::<Result<_, _>>()?;
     let controls = (0..fields.count_u8(MAX_CONTROLS, "too many controls")?).map(|_| read_area(fields)).collect::<Result<_, _>>()?;
     Ok((candidates, numbers, controls))
@@ -165,7 +165,7 @@ pub(crate) fn push_channel_links(payload: &mut Vec<u8>, aliases: &[Alias], servi
 
 pub(crate) fn read_channel_links(fields: &mut Fields<'_>) -> Result<(Vec<Alias>, Vec<Service>), ProtocolError> {
     let aliases = (0..fields.count_u8(MAX_ALIASES, "too many aliases")?)
-        .map(|_| Ok::<_, ProtocolError>(Alias { page: fields.display_page()?, target: raw_text(fields, MAX_ADDRESS, "text too long")? }))
+        .map(|_| Ok::<_, ProtocolError>(Alias { page: fields.keyable_page()?, target: raw_text(fields, MAX_ADDRESS, "text too long")? }))
         .collect::<Result<_, _>>()?;
     let services = (0..fields.count_u8(MAX_SERVICES, "too many services")?)
         .map(|_| {

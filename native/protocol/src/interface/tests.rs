@@ -372,19 +372,40 @@ fn text_is_cleaned_before_sending_and_checked_on_arrival() {
     assert!(matches!(read_from_core(&mut bytes.as_slice()), Err(ProtocolError::BadValue("text not cleaned"))));
 }
 
-/// Finding F-29: a page key's number is a display page, 100 to 899 with
-/// decimal digits, as the decoder takes it; a hexadecimal one such as
-/// 1A0 is refused where it arrives, not by the decoder after the trusted
-/// core sent it on.
+/// Finding F-29: a page key's number is a page as the decoder takes it,
+/// refused where it arrives, not by the decoder after the trusted core
+/// sent it on. REQ-300: a page with a hexadecimal digit such as 1A0, which
+/// a link reaches, is one; a number the standard reserves is not.
 #[test]
-fn a_page_key_with_a_hexadecimal_number_is_refused() {
+fn a_page_key_names_a_channel_page_hexadecimal_included() {
     let opened = |page: u16| {
         let mut bytes = Vec::new();
         write_to_core(&mut bytes, &ToCore::Opened(Some(PageKey { channel: 7, page }))).unwrap();
         read_from_interface(&mut bytes.as_slice())
     };
-    assert_eq!(opened(0x899).unwrap(), Some(ToCore::Opened(Some(PageKey { channel: 7, page: 0x899 }))));
-    for page in [0x1A0, 0x10F, 0x8FF, 0x0FF, 0x900] {
+    for page in [0x899, 0x1A0, 0x10F, 0x8FC] {
+        assert_eq!(opened(page).unwrap(), Some(ToCore::Opened(Some(PageKey { channel: 7, page }))), "{page:X}");
+    }
+    for page in [0x8FF, 0x1FE, 0x1F0, 0x0FF, 0x900] {
         assert!(opened(page).is_err(), "{page:X}");
     }
+}
+
+/// REQ-1386: the phone panel's three values go and come back as what they
+/// are, and a fourth is refused, so an interface can ask for a PIN and for
+/// nothing else under the panel's kind.
+#[cfg(feature = "phone-keyboard")]
+#[test]
+fn the_phone_panel_carries_a_request_for_a_pin_and_nothing_more() {
+    use crate::keyboard::KIND_PHONE_PANEL;
+    for message in [ToCore::PhonePanel(false), ToCore::PhonePanel(true), ToCore::PhonePin, ToCore::PhoneFinish] {
+        let mut bytes = Vec::new();
+        write_to_core(&mut bytes, &message).unwrap();
+        assert_eq!(read_from_interface(&mut bytes.as_slice()).unwrap().unwrap(), message);
+    }
+    let mut bytes = Vec::new();
+    write_to_core(&mut bytes, &ToCore::PhonePin).unwrap();
+    let value = bytes.len() - 1;
+    bytes[value] = 3;
+    assert!(read_from_interface(&mut bytes.as_slice()).is_err(), "kind {KIND_PHONE_PANEL} with a value it does not have");
 }

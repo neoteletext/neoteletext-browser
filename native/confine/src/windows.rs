@@ -66,8 +66,8 @@ pub(crate) use time::local_offset;
 use acl::grant;
 use attributes::start;
 use container::{INTERNET_CLIENT_SID, PRIVATE_NETWORK_SID, container};
-pub(crate) use handles::identity_of;
 use handles::{ContainerSid, Owned, Sid, keep_ours, last_error, pipe};
+pub(crate) use handles::{final_path_of, identity_of};
 use job::job;
 use relay::relay;
 

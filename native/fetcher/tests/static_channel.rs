@@ -1,6 +1,8 @@
 //! A fetcher against a real server of files, confined as the broker
-//! confines it: a static channel with no bundle and no contents file gives
-//! its pages when they are asked for (REQ-703), and what a server refuses
+//! confines it: a channel opens with exactly the requests REQ-703 names, a
+//! static channel's pages and listing are fetched only when they are asked
+//! for, a live channel asks for nothing after `channel.ttx` but its push
+//! connection (REQ-703, DEC-1467), and what a server refuses
 //! reaches the trusted core as a refusal stating its status, whatever came
 //! back (REQ-708).
 
@@ -24,6 +26,10 @@ const IMAGE: &[u8] = b"\x89PNG\r\n\x1a\n\0\0\0\rIHDR";
 
 /// Bytes that are nothing.
 const RANDOM: &[u8] = &[0x93, 0x11, 0xFE, 0x02, 0x77, 0xC4, 0x5A, 0x08];
+
+/// The status that has the test's server close the connection without
+/// answering, as a lost connection does.
+const HANG_UP: u16 = 0;
 
 /// One file: status, media type and body.
 type File = (u16, &'static str, &'static [u8]);
@@ -72,6 +78,9 @@ fn answer(connection: TcpStream, files: &BTreeMap<&'static str, File>, asked: &A
         let path = first.split(' ').nth(1).unwrap_or_default().to_owned();
         asked.lock().unwrap().push(path.clone());
         let (status, media, body) = files.get(path.as_str()).copied().unwrap_or((404, "text/plain", b""));
+        if status == HANG_UP {
+            return;
+        }
         let head = format!("HTTP/1.1 {status} S\r\nContent-Type: {media}\r\nContent-Length: {}\r\n\r\n", body.len());
         if writer.write_all(head.as_bytes()).and_then(|()| writer.write_all(body)).is_err() {
             return;
@@ -129,6 +138,14 @@ impl Fetcher {
         }
     }
 
+    /// The page bytes it gives next.
+    fn page(&mut self) -> Vec<u8> {
+        self.until(|message| match message {
+            FromFetcher::Page { origin: Origin::FetchedPage, bytes } => Some(bytes.clone()),
+            _ => None,
+        })
+    }
+
     fn tell(&mut self, message: &ToFetcher) {
         let input = self.process.stdin.as_mut().unwrap();
         write_to_fetcher(input, message).unwrap();
@@ -152,7 +169,7 @@ impl Drop for Fetcher {
 }
 
 /// REQ-703: no `channel.ttx`, no bundle, no `contents.txt`, and one page
-/// file: the fetcher says there is no contents file, and gives the page when
+/// file: the fetcher says the bundle has settled, and gives the page when
 /// the trusted core asks for it, and a page that is not there is a 404's
 /// refusal. On the code before, nothing could ask for a page.
 #[test]
@@ -163,13 +180,9 @@ impl Drop for Fetcher {
 fn a_channel_of_one_page_file_gives_it_when_asked() {
     let port = serve(BTreeMap::from([("/100.tti", (200, "text/plain", PAGE))]));
     let mut fetcher = Fetcher::start(port);
-    fetcher.until(|message| matches!(message, FromFetcher::NoContents).then_some(()));
+    fetcher.until(|message| matches!(message, FromFetcher::BundleSettled).then_some(()));
     fetcher.tell(&ToFetcher::FetchPage { page: 0x100 });
-    let bytes = fetcher.until(|message| match message {
-        FromFetcher::Page { origin: Origin::FetchedPage, bytes } => Some(bytes.clone()),
-        _ => None,
-    });
-    assert_eq!(bytes, PAGE);
+    assert_eq!(fetcher.page(), PAGE);
     fetcher.tell(&ToFetcher::FetchPage { page: 0x200 });
     assert_eq!(fetcher.refusal(RefusedFile::Page(0x200)), Some(404));
 }
@@ -204,7 +217,7 @@ fn what_is_not_teletext_as_a_page_is_refused_with_its_status() {
             let media = if body == MARKUP { "text/html" } else { "application/octet-stream" };
             let port = serve(BTreeMap::from([("/100.tti", (status, media, body)), ("/100.t42", (status, media, body))]));
             let mut fetcher = Fetcher::start(port);
-            fetcher.until(|message| matches!(message, FromFetcher::NoContents).then_some(()));
+            fetcher.until(|message| matches!(message, FromFetcher::BundleSettled).then_some(()));
             fetcher.tell(&ToFetcher::FetchPage { page: 0x100 });
             let found = fetcher.until(|message| match message {
                 FromFetcher::Refused { file: RefusedFile::Page(0x100), status } => Some(Ok(*status)),
@@ -262,7 +275,7 @@ fn a_pages_sub_pages_come_from_its_folder() {
         ("/210/0002.tti", (200, "text/plain", SUB_PAGE)),
     ]));
     let mut fetcher = Fetcher::start(port);
-    fetcher.until(|message| matches!(message, FromFetcher::NoContents).then_some(()));
+    fetcher.until(|message| matches!(message, FromFetcher::BundleSettled).then_some(()));
     let ask = |fetcher: &mut Fetcher, part: u8| {
         fetcher.tell(&ToFetcher::FetchSubPages { page: 0x210, part });
         fetcher.until(|message| match message {
@@ -288,4 +301,58 @@ fn a_pages_sub_pages_come_from_its_folder() {
     assert_eq!(missing, 0, "a page with no folder");
     let asked: Vec<String> = asked.lock().unwrap().iter().filter(|path| path.starts_with("/210") || path.starts_with("/300")).cloned().collect();
     assert_eq!(asked, ["/210/0.sub", "/210/1.sub", "/210/2.sub", "/210/0002.t42", "/210/0002.tti", "/300/0.sub"]);
+}
+
+/// REQ-703: a static channel opens with `channel.ttx` and `index.t42` and
+/// nothing more; its page is fetched when asked for, its contents file only
+/// when its listing is, and a page that file lists and nothing asks for is
+/// never fetched. On the code before, `contents.txt` was fetched as the
+/// channel opened and every page it listed after it, and the fetcher never
+/// said the bundle had settled.
+#[test]
+fn a_static_channel_opens_with_exactly_its_settings_and_bundle() {
+    const LISTED: &[u8] = b"p\t100\tHeadlines\np\t200\tSport\n";
+    let (port, asked) = serve_logged(BTreeMap::from([
+        ("/channel.ttx", (200, "application/json", &b"{\"name\":\"Static\"}"[..])),
+        ("/contents.txt", (200, "text/plain", LISTED)),
+        ("/100.tti", (200, "text/plain", PAGE)),
+        ("/200.tti", (200, "text/plain", PAGE)),
+    ]));
+    let mut fetcher = Fetcher::start(port);
+    fetcher.until(|message| matches!(message, FromFetcher::BundleSettled).then_some(()));
+    fetcher.tell(&ToFetcher::FetchPage { page: 0x100 });
+    assert_eq!(fetcher.page(), PAGE);
+    assert_eq!(*asked.lock().unwrap(), ["/channel.ttx", "/index.t42", "/100.tti"], "exactly these, in this order");
+    fetcher.tell(&ToFetcher::FetchContents);
+    let listed = fetcher.until(|message| if let FromFetcher::Contents(entries) = message { Some(entries.len()) } else { None });
+    assert_eq!(listed, 2);
+    // A page not there, asked after the contents file: its refusal comes
+    // after anything the contents file could have set going.
+    fetcher.tell(&ToFetcher::FetchPage { page: 0x300 });
+    assert_eq!(fetcher.refusal(RefusedFile::Page(0x300)), Some(404));
+    let asked: Vec<String> = asked.lock().unwrap().iter().filter(|path| path.as_str() != "/300.t42").cloned().collect();
+    assert_eq!(asked, ["/channel.ttx", "/index.t42", "/100.tti", "/contents.txt", "/300.tti"], "200 is listed and was never wanted");
+}
+
+/// REQ-703, DEC-1467 (TODO-1470 item 5): a live channel asks for nothing
+/// after `channel.ttx` but its push connection, whatever the trusted core
+/// asks of it. Its push connection is hung up, so it is tried again after
+/// the engine's first delay of a second: the second try comes after what
+/// the trusted core asked had reached the fetcher's loop, which could have
+/// set nothing going without it showing first.
+#[test]
+fn a_live_channel_asks_for_nothing_after_its_settings_but_its_push_connection() {
+    let (port, asked) = serve_logged(BTreeMap::from([
+        ("/channel.ttx", (200, "application/json", &b"{\"name\":\"Live\",\"push\":{}}"[..])),
+        ("/push", (HANG_UP, "text/plain", &b""[..])),
+    ]));
+    let mut fetcher = Fetcher::start(port);
+    fetcher.until(|message| matches!(message, FromFetcher::Connecting(true)).then_some(()));
+    for asking in [ToFetcher::FetchContents, ToFetcher::FetchPage { page: 0x100 }, ToFetcher::FetchSubPages { page: 0x100, part: 0 }] {
+        fetcher.tell(&asking);
+    }
+    for _ in 0..2 {
+        fetcher.until(|message| matches!(message, FromFetcher::Pushing(false)).then_some(()));
+    }
+    assert_eq!(*asked.lock().unwrap(), ["/channel.ttx", "/push", "/push"]);
 }

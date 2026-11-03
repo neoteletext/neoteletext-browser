@@ -6,13 +6,18 @@
 # unreachable host is a failure.
 #   scripts/check.sh commit   the code compiles clean (the text checks,
 #                             formatting and Clippy), on what is staged
-#   scripts/check.sh push     Clippy in every feature shape and the tests:
-#                             a push of livedevelopment
-#   scripts/check.sh full     the engine check, release and feature-off
-#                             tests, licences and advisories, unused
-#                             dependencies and fuzzing, with the Linux
-#                             build and tests on $NEOTELETEXT_LINUX_HOST
-#                             alongside: a push to main
+#   scripts/check.sh push     Clippy in every feature shape and for the
+#                             microcontrollers, the dependency trees, the
+#                             advisories and the tests: a push of
+#                             livedevelopment
+#   scripts/check.sh full     the engine's unsafe-code check and its own
+#                             full gate, release and feature-off tests,
+#                             licences, unused dependencies and fuzzing,
+#                             with the Linux build and tests on
+#                             $NEOTELETEXT_LINUX_HOST alongside: a push to
+#                             main
+# Windows is checked by hand in the virtual machine (DEVELOPMENT.md
+# section 12.1, DEC-2358), not by a stage of this script.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -57,12 +62,88 @@ check_no_panic_lists() {
     done
 }
 
-# Requirement 2.5: every workspace depends on the engine at one commit.
+# Requirement 2.5 (REQ-666), DEVELOPMENT.md section 11 and appendix B
+# browser item 4: every workspace depends on the engine by one commit of
+# one repository, through every neoteletext-* dependency, never through a
+# copy, a working tree or a patch. Each manifest line that names a source
+# is read: a git source must be the engine's, in the one form below; a
+# path must stay inside this repository; an engine crate without either
+# inherits the workspace's line. A form this does not read fails, so that
+# a dependency cannot pass by being written differently. The lockfiles are
+# read too, since they are what Cargo builds: every git package in them is
+# the same commit of the same repository.
 check_engine_pin() {
-    step "the engine is pinned at one commit in every workspace"
-    local revs
-    revs="$(sed -n 's/^neoteletext-[a-z-]* = { git = "[^"]*", rev = "\([0-9a-f]*\)".*/\1/p' native/Cargo.toml native/tuf/Cargo.toml native/fuzz/Cargo.toml | sort -u)"
-    [[ -n "$revs" && "$revs" != *$'\n'* ]] || fail "the workspaces must name one engine commit, found: ${revs:-none}"
+    step "every neoteletext-* dependency names the engine at one commit (requirement 2.5)"
+    local manifest line target sources="" unread="" outside="" patched="" locked
+    local -r engine_line='^neoteletext-[a-z0-9-]+ = \{ git = "([^"]+)", rev = "([0-9a-f]{40})"(, [^{}]*)? \}$'
+    local root
+    root="$(pwd -P)"
+    while IFS= read -r manifest; do
+        patched+="$(grep -nE '^\[(patch|replace)' "$manifest" | sed "s|^|$manifest:|" || true)"
+        while IFS= read -r line; do
+            if [[ "$line" =~ $engine_line ]]; then
+                sources+="${BASH_REMATCH[1]} ${BASH_REMATCH[2]}"$'\n'
+            elif [[ "$line" == *'git = '* || "$line" =~ ^\[.*dependencies\. ]]; then
+                unread+="$manifest: $line"$'\n'
+            elif [[ "$line" =~ path\ =\ \"([^\"]+)\" ]]; then
+                target="$(realpath -m "$(dirname "$manifest")/${BASH_REMATCH[1]}")"
+                [[ "$target" == "$root"/* ]] || outside+="$manifest: $line"$'\n'
+            elif [[ "$line" =~ ^neoteletext-[a-z0-9-]+\ = && "$line" != *'workspace = true'* ]]; then
+                unread+="$manifest: $line"$'\n'
+            fi
+        done < <(grep -E '^(neoteletext-[a-z0-9-]+ *=|[a-z0-9_-]+ *= *\{.*(git|path) = |\[.*dependencies\.)' "$manifest")
+    done < <(git ls-files -- 'native/Cargo.toml' 'native/**/Cargo.toml')
+    [[ -z "$patched" ]] || fail "a manifest patches or replaces a dependency, which requirement 2.5 forbids:
+$patched"
+    [[ -z "$unread" ]] || fail "these name a git source, or an engine crate, in a form this check does not read; write each as neoteletext-<crate> = { git = \"...\", rev = \"<40 hexadecimal digits>\", ... } or with workspace = true:
+$unread"
+    [[ -z "$outside" ]] || fail "these name a path outside this repository, such as a working tree of the engine:
+$outside"
+    sources="$(sort -u <<<"$sources" | sed '/^$/d')"
+    [[ -n "$sources" && "$sources" != *$'\n'* ]] || fail "the workspaces must name one engine repository at one commit, found: ${sources:-none}"
+    while IFS= read -r locked; do
+        [[ "$locked" == "git+${sources% *}?rev=${sources#* }#${sources#* }" ]] || fail "a lockfile builds a git package from $locked, not the engine at ${sources#* }"
+    done < <(git ls-files -- 'native/Cargo.lock' 'native/**/Cargo.lock' | xargs sed -n 's/^source = "\(git+[^"]*\)"$/\1/p' | sort -u)
+}
+
+# Requirement 3.2 (REQ-668, DEC-2355): the trusted core (the package
+# neoteletext, which is also the broker's program) links no engine crate
+# but these, each for the bounded use DEC-2355 names, and no web engine,
+# script engine or interpreter. An engine crate added to its tree fails
+# here until that decision names it.
+readonly CORE_ENGINE_CRATES="neoteletext-audio neoteletext-core neoteletext-formats neoteletext-input neoteletext-opus neoteletext-web"
+# Requirement 1.3 (REQ-661): no crate in any program's tree executes or
+# interprets code from outside. Each is a crate a program could run a
+# script, a WebAssembly module or a web page with; wasmi waits on
+# decision 41's iOS decoder and is listed until that work starts.
+readonly INTERPRETER_CRATES='boa_engine|deno_core|dyon|gluon|hlua|js-sandbox|ketos|koto|mlua|mun_runtime|pyo3|quickjs|quickjs-rs|rhai|rlua|rquickjs|rune|rustpython-vm|servo|starlark|steel-core|tauri|v8|wasm3|wasmer|wasmi|wasmtime|webkit2gtk|webview2-com|wry'
+# Requirement 2.2 (REQ-663): no engine crate the browser uses brings a
+# user interface or graphics toolkit; those are the interface's alone.
+readonly TOOLKIT_CRATES='cairo-rs|cocoa|druid|eframe|egui|embedded-graphics|femtovg|fltk|fontique|gdk|gdk4|glib|glow|glutin|gtk|gtk4|iced|minifb|objc2-app-kit|pango|parley|sdl2|slint|smithay-client-toolkit|softbuffer|tao|tiny-skia|vello|vello_cpu|vello_hybrid|wayland-client|wgpu|winit|x11rb|xilem'
+
+# The packages in the normal and build dependencies of `$@` (cargo tree's
+# package options), on every target, run in native/: one a line, as the
+# package's name, then its source in brackets where it has one.
+tree_packages() {
+    (cd native && cargo tree --quiet --locked -e normal,build --target all --prefix none -f '{p}' "$@") | sed 's/ (\*)$//' | sort -u
+}
+# Their names alone.
+tree_names() { tree_packages "$@" | sed 's/ .*//' | sort -u; }
+# The engine's crates among them: those from a git source, which
+# check_engine_pin holds to the engine's one commit.
+engine_names() { tree_packages "$@" | sed -n 's/^\([^ ]*\) v[^ ]* (\(https\|file\):.*/\1/p' | sort -u; }
+
+check_dependency_trees() {
+    step "the trusted core's engine crates, and no interpreter or toolkit where none may be (requirements 1.3, 2.2 and 3.2)"
+    local found crate
+    found="$(engine_names -p neoteletext | tr '\n' ' ' | sed 's/ $//')"
+    [[ "$found" == "$CORE_ENGINE_CRATES" ]] || fail "the trusted core links the engine crates \"$found\", not the \"$CORE_ENGINE_CRATES\" DEC-2355 permits"
+    found="$( (tree_names --workspace; cd native/tuf && cargo tree --quiet --locked --workspace -e normal,build --target all --prefix none -f '{p}' | sed 's/ .*//') | sort -u | grep -xE "$INTERPRETER_CRATES" || true)"
+    [[ -z "$found" ]] || fail "a program's tree holds a script engine, a web engine or an interpreter: $found"
+    for crate in $(engine_names --workspace); do
+        found="$(tree_names -p "$crate" | grep -xE "$TOOLKIT_CRATES" || true)"
+        [[ -z "$found" ]] || fail "the engine crate $crate brings a user interface or graphics toolkit: $found"
+    done
 }
 
 # The programs a release script builds together, as it names them: the
@@ -169,6 +250,14 @@ check_shapes_and_tests() {
     step "native: Clippy with only: phone-keyboard"
     (cd native && cargo clippy --quiet -p interface-core -p protocol -p neoteletext -p neoteletext-interface -p neoteletext-keyboard --all-targets \
         --no-default-features --features "interface-core/phone-keyboard,protocol/phone-keyboard,neoteletext/phone-keyboard,neoteletext-interface/phone-keyboard,neoteletext-keyboard/phone-keyboard" -- -D warnings)
+    check_dependency_trees
+    check_microcontroller_builds
+    # Requirement 14.3 (REQ-783, DEC-2354): the advisory check runs at every
+    # push, not only on the way to main, so a crate yanked or found unsafe
+    # stops the work while it is fresh.
+    step "native, native/tuf: advisories"
+    (cd native && cargo deny check advisories)
+    (cd native/tuf && cargo deny check advisories)
     step "native: tests"
     (cd native && cargo nextest run --workspace --hide-progress-bar --status-level fail --final-status-level fail)
     step "native/tuf: tests"
@@ -183,6 +272,23 @@ check_shapes_and_tests() {
     # every Cargo run, which cost each step of this gate minutes.
     step "native: a build with nothing changed builds nothing"
     (cd native && ! cargo nextest run --workspace --no-run 2>&1 | grep -E '^ +Compiling')
+}
+
+# Requirement 15.3 (REQ-789, DEC-2357): the interface core and its
+# microcontroller back end build for microcontrollers with no standard
+# library: Arm Cortex-M0 (no atomic compare-and-swap, no floating point)
+# and RISC-V RV32IMC, the smallest of the engine's targets (its
+# REQ-GEN-015), with every optional area and with none.
+readonly MICROCONTROLLER_TARGETS=(thumbv6m-none-eabi riscv32imc-unknown-none-elf)
+check_microcontroller_builds() {
+    local target
+    for target in "${MICROCONTROLLER_TARGETS[@]}"; do
+        # rust-toolchain.toml installs each target's standard library.
+        grep -qE "^targets = \[.*\"$target\"" rust-toolchain.toml || fail "$target is not among rust-toolchain.toml's targets"
+        step "native: Clippy for $target, interface-core and draw-embedded, with every optional area and with none, warnings as errors"
+        (cd native && cargo clippy --quiet --locked -p interface-core -p draw-embedded --target "$target" -- -D warnings &&
+            cargo clippy --quiet --locked -p interface-core -p draw-embedded --target "$target" --no-default-features -- -D warnings)
+    done
 }
 
 # The packages that have each optional area, as `package/area` features.
@@ -237,6 +343,23 @@ check_fuzz() {
     done
 }
 
+# The engine's repository and pinned commit, as native/Cargo.toml names
+# them (check_engine_pin holds every workspace to the same), fetched into
+# a bare copy the gate keeps between runs, native/target/engine.git. A
+# hook runs with git's GIT_DIR set to this repository, absolute in a
+# worktree, which git would follow instead of the copy's.
+engine_copy="native/target/engine.git"
+engine_git() { env -u GIT_DIR -u GIT_WORK_TREE -u GIT_INDEX_FILE git --git-dir "$engine_copy" "$@"; }
+engine_fetch() {
+    engine="$(sed -n 's/^neoteletext-[a-z-]* = { git = "\([^"]*\)".*/\1/p' native/Cargo.toml | sort -u)"
+    revision="$(sed -n 's/^neoteletext-[a-z-]* = { git = "[^"]*", rev = "\([0-9a-f]*\)".*/\1/p' native/Cargo.toml | sort -u)"
+    [[ -n "$engine" && "$engine" != *$'\n'* ]] || fail "native/Cargo.toml must name one engine repository, found: ${engine:-none}"
+    [[ -n "$revision" && "$revision" != *$'\n'* ]] || fail "native/Cargo.toml must name one engine commit, found: ${revision:-none}"
+    [[ -d "$engine_copy" ]] || env -u GIT_DIR -u GIT_WORK_TREE -u GIT_INDEX_FILE git init --quiet --bare "$engine_copy"
+    engine_git cat-file -e "$revision^{commit}" 2>/dev/null || engine_git fetch --quiet "$engine" "$revision" ||
+        fail "the engine repository $engine has no commit $revision"
+}
+
 # The browser builds the engine with its lints capped, so the engine's own
 # forbid(unsafe_code) is held only by the engine's gate (finding F-88):
 # the source at the pinned commit is read here, and the word `unsafe` in
@@ -246,19 +369,7 @@ check_fuzz() {
 check_engine_safe() {
     step "the engine at its pinned commit has no unsafe code"
     local engine revision found line code hits="" status=0
-    engine="$(sed -n 's/^neoteletext-[a-z-]* = { git = "\([^"]*\)".*/\1/p' native/Cargo.toml | sort -u)"
-    revision="$(sed -n 's/^neoteletext-[a-z-]* = { git = "[^"]*", rev = "\([0-9a-f]*\)".*/\1/p' native/Cargo.toml | sort -u)"
-    [[ -n "$engine" && "$engine" != *$'\n'* ]] || fail "native/Cargo.toml must name one engine repository, found: ${engine:-none}"
-    [[ -n "$revision" && "$revision" != *$'\n'* ]] || fail "native/Cargo.toml must name one engine commit, found: ${revision:-none}"
-    # The source read is the commit as the repository Cargo builds from
-    # publishes it, fetched into a copy the gate keeps between runs. A hook
-    # runs with git's GIT_DIR set to this repository, absolute in a
-    # worktree, which git would follow instead of the copy's.
-    local copy="native/target/engine.git"
-    engine_git() { env -u GIT_DIR -u GIT_WORK_TREE -u GIT_INDEX_FILE git --git-dir "$copy" "$@"; }
-    [[ -d "$copy" ]] || env -u GIT_DIR -u GIT_WORK_TREE -u GIT_INDEX_FILE git init --quiet --bare "$copy"
-    engine_git cat-file -e "$revision^{commit}" 2>/dev/null || engine_git fetch --quiet "$engine" "$revision" ||
-        fail "the engine repository $engine has no commit $revision"
+    engine_fetch
     found="$(engine_git grep --line-number -I --word-regexp -e unsafe "$revision" -- '*.rs')" || status=$?
     # 1 is no line found.
     ((status <= 1)) || fail "reading the engine at $revision failed"
@@ -275,6 +386,34 @@ check_engine_safe() {
     done <<<"$found"
     [[ -z "$hits" ]] || fail "the engine at $revision has unsafe code:
 $hits"
+}
+
+# Requirement 2.3 (REQ-664, DEC-2360): the engine's crates are built with
+# their own checks, fuzzing and feature rules, so the engine's own full
+# gate runs at the commit the browser builds against; its feature rule
+# for a browser build, decision E.131, is check_desktop_codecs. It runs
+# in a clone of the bare
+# copy, native/target/engine-check, never in a working tree of the
+# engine, and the clone keeps the engine gate's record of what passed, so
+# the step takes seconds until the pin moves. The engine's pinned tools
+# are linked from its checkout ($NEOTELETEXT_ENGINE, as worktrees of the
+# engine link them); at another version, the engine's gate says so and
+# fails.
+engine_checkout="${NEOTELETEXT_ENGINE:-$HOME/devel/neoteletext-engine}"
+engine_check="native/target/engine-check"
+check_engine_gate() {
+    step "the engine's own full gate at its pinned commit (requirement 2.3)"
+    local engine revision
+    engine_fetch
+    check_git() { env -u GIT_DIR -u GIT_WORK_TREE -u GIT_INDEX_FILE git -C "$engine_check" "$@"; }
+    [[ -d "$engine_check/.git" ]] || env -u GIT_DIR -u GIT_WORK_TREE -u GIT_INDEX_FILE git init --quiet "$engine_check"
+    check_git cat-file -e "$revision^{commit}" 2>/dev/null || check_git fetch --quiet "$(pwd -P)/$engine_copy" "$revision"
+    check_git checkout --quiet --detach "$revision"
+    [[ -z "$(check_git status --porcelain)" ]] || fail "$engine_check has changes; the engine's gate would check something other than $revision"
+    [[ -d "$engine_checkout/tools" ]] || fail "the engine's pinned tools are needed at $engine_checkout/tools (or NEOTELETEXT_ENGINE); run scripts/tools.sh there"
+    [[ -e "$engine_check/tools" ]] || ln -s "$engine_checkout/tools" "$engine_check/tools"
+    (cd "$engine_check" && env -u GIT_DIR -u GIT_WORK_TREE -u GIT_INDEX_FILE scripts/check.sh full) ||
+        fail "the engine's full gate failed at $revision"
 }
 
 # A release script refuses a test identity unless told it is a test
@@ -295,6 +434,7 @@ commit_steps() { check_compiles; }
 push_steps() { check_shapes_and_tests; }
 full_steps() {
     check_engine_safe
+    check_engine_gate
     step "native: documentation tests"
     (cd native && cargo test --quiet --workspace --doc)
     step "native: release tests"

@@ -234,6 +234,25 @@ fn a_page_the_trusted_core_opens_is_zoomed_now_or_when_it_arrives() {
     assert_eq!(browser.wall().zoomed(), Some(missing));
 }
 
+// REQ-300, REQ-313: a page with a hexadecimal digit, which no list holds,
+// opens at once when the trusted core shows it, with no row of the list
+// chosen; a page of the list chosen afterwards replaces it.
+#[test]
+fn a_hexadecimal_page_the_trusted_core_opens_is_zoomed_at_once() {
+    let (mut browser, _, _, _) = opened();
+    let listed = PageKey { channel: 7, page: 0x301 };
+    browser.show(listed, OPEN);
+    let hexadecimal = PageKey { channel: 7, page: 0x1A0 };
+    browser.show(hexadecimal, OPEN);
+    assert_eq!(browser.wall().zoomed(), Some(hexadecimal));
+    assert_eq!(browser.opened(), Some(hexadecimal));
+    assert_eq!(browser.selected, None, "no row of the list stands for it");
+    browser.show(listed, OPEN);
+    assert_eq!(browser.wall().zoomed(), Some(listed), "Back to a listed page");
+    browser.show(PageKey { channel: 7, page: 0x1FF }, OPEN);
+    assert_eq!(browser.wall().zoomed(), Some(listed), "a reserved number is no page");
+}
+
 fn lits(browser: &mut Browser) -> Vec<Option<Lit>> {
     browser.take_outputs().into_iter().filter_map(|output| if let Output::Lit(lit) = output { Some(lit) } else { None }).collect()
 }
@@ -289,6 +308,39 @@ fn a_control_lights_and_shows_the_hand_while_keys_go() {
     let link = Area { row: 5, column: 10, width: 3, height: 1 };
     assert_eq!(lits(&mut browser), [Some(Lit { key, area: link, pressed: false })], "a link is the browser's while keys go (decision 122)");
     assert_eq!(browser.cursor(), Cursor::Hand);
+}
+
+/// REQ-1370, DEC-2385: while keys go to the channel, a contact on a control
+/// gives it the pressed look, never a hover look, and the look ends as the
+/// contact lifts, is cancelled or leaves the control; a second contact on
+/// another control waits for the first, a page having one look at a time.
+/// On the code before, a finger on a control asked for no look at all.
+#[cfg(feature = "interaction")]
+#[test]
+fn a_contact_on_a_control_gives_it_the_pressed_look() {
+    use crate::browser::typing::TypingView;
+    use crate::input::TouchPhase;
+    let (mut browser, _, key, rect) = opened();
+    let first = Area { row: 20, column: 1, width: 9, height: 1 };
+    let second = Area { row: 22, column: 1, width: 9, height: 1 };
+    browser.set_links(key, PageLinks { controls: vec![first, second], ..page_links(VERSION) });
+    let typing = TypingView { channel: key.channel, page: key.page, on: true, secure: false, refused: false, cursor: None, round_trip_us: None };
+    browser.set_typing(typing, OPEN);
+    browser.take_outputs();
+    let on_first = centre(rect, 3, 20);
+    let on_second = centre(rect, 3, 22);
+    assert!(browser.touch(TouchPhase::Began, 1, on_first.x, on_first.y));
+    assert_eq!(lits(&mut browser), [Some(Lit { key, area: first, pressed: true })], "pressed, with no hover look first");
+    assert!(browser.touch(TouchPhase::Began, 2, on_second.x, on_second.y));
+    assert_eq!(lits(&mut browser), [], "the first contact keeps the look");
+    let off = centre(rect, 20, 10);
+    assert!(browser.touch(TouchPhase::Moved, 1, off.x, off.y));
+    assert_eq!(lits(&mut browser), [None], "leaving the control ends it");
+    assert!(browser.touch(TouchPhase::Ended, 1, off.x, off.y));
+    assert!(browser.touch(TouchPhase::Moved, 2, on_second.x + 1.0, on_second.y));
+    assert_eq!(lits(&mut browser), [Some(Lit { key, area: second, pressed: true })], "then the other contact's control");
+    assert!(browser.touch(TouchPhase::Cancelled, 2, on_second.x, on_second.y));
+    assert_eq!(lits(&mut browser), [None], "a cancelled contact ends it");
 }
 
 /// DOC-1940 (decision E.129): while keys go to the channel it is
@@ -423,12 +475,16 @@ fn a_link_that_changes_takes_the_popover_away() {
 // window, at a desktop window's size.
 #[test]
 fn the_longest_address_is_shown_whole() {
+    // A window tall enough for all of it below the strip, which the
+    // popover never covers (REQ-785); in a shorter one the wheel brings the
+    // rest, as the next test shows.
+    const TALL_ENOUGH: f64 = 1200.0;
     let start = "https://weather.invalid/";
     let address = format!("{start}{}", "a".repeat(crate::browser::MAX_ADDRESS - start.len()));
     let (mut browser, _, _) = resting_on_a_link(&address);
-    drawn_at(&mut browser, WIDTH, HEIGHT, OPEN);
+    point_again(&mut browser, WIDTH, TALL_ENOUGH);
     browser.settle(OPEN + 500);
-    let canvas = drawn_at(&mut browser, WIDTH, HEIGHT, OPEN + 500);
+    let canvas = drawn_at(&mut browser, WIDTH, TALL_ENOUGH, OPEN + 500);
     let lines = popover_lines(&canvas, start);
     assert!(lines.len() > 1, "wrapped");
     assert_eq!(lines.concat(), address, "every character");
@@ -463,4 +519,41 @@ fn the_popover_shows_in_full_screen() {
     point_again(&mut browser, WIDTH, HEIGHT);
     browser.settle(OPEN + 500);
     assert!(drawn_at(&mut browser, WIDTH, HEIGHT, OPEN + 500).texts.iter().any(|(_, text)| text == ADDRESS));
+}
+
+// REQ-785, the spoofing review of 3 November 2026: a link's popover holds
+// an address the channel chose, so however long, it never covers the
+// trusted strip, at the smallest window the interface allows
+// (`MINIMUM_WIDTH` and `MINIMUM_HEIGHT` in `native/interface/src/window.rs`)
+// with the bookmarks bar hidden and shown. On the code before, an address
+// of `MAX_ADDRESS` octets put the box above the pointer, clamped only to
+// the window's top, over the address field and the padlock.
+#[test]
+fn a_links_popover_never_covers_the_strip() {
+    const SMALLEST_WIDTH: f64 = 1000.0;
+    const SMALLEST_HEIGHT: f64 = 640.0;
+    let start = "https://weather.invalid/";
+    let address = format!("{start}{}", "a".repeat(crate::browser::MAX_ADDRESS - start.len()));
+    for bar in [false, true] {
+        let (mut browser, _, _) = resting_on_a_link(&address);
+        browser.set_bar(crate::library::BarView { shown: bar, ..crate::library::BarView::default() });
+        point_again(&mut browser, SMALLEST_WIDTH, SMALLEST_HEIGHT);
+        browser.settle(OPEN + 500);
+        let canvas = drawn_at(&mut browser, SMALLEST_WIDTH, SMALLEST_HEIGHT, OPEN + 500);
+        let strip_end = browser.strip_end(OPEN + 500);
+        assert_eq!(
+            strip_end,
+            crate::browser::window::BODY_TOP - crate::browser::window::MARGIN + if bar { crate::browser::bookmarks_bar::BAR_HEIGHT } else { 0.0 }
+        );
+        let lines = popover_lines(&canvas, start);
+        assert!(!lines.is_empty(), "the popover is drawn");
+        let first = canvas.texts.iter().rposition(|(_, text)| text.starts_with(start)).expect("its first line");
+        for (rect, text) in &canvas.texts[first..] {
+            assert!(rect.y0 >= strip_end, "bar {bar}: the line {text:.20} at {} is above the strip's end {strip_end}", rect.y0);
+        }
+        // The box and its four edges are the last five fills.
+        for (rect, _) in canvas.fills.iter().rev().take(5) {
+            assert!(rect.y0 >= strip_end, "bar {bar}: the box reaches {} above the strip's end {strip_end}", rect.y0);
+        }
+    }
 }

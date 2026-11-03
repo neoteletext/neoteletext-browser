@@ -4,6 +4,7 @@
 
 use interface_core::canvas::PageKey;
 use neoteletext::frames;
+#[cfg(not(feature = "links"))]
 use protocol::console::Level;
 use protocol::decoder::ToDecoder;
 #[cfg(feature = "links")]
@@ -45,6 +46,12 @@ impl Core {
         #[cfg(feature = "links")]
         self.send_links_afresh()?;
         self.send_mutes();
+        // The tab now in front wants its listing, and its page on screen is
+        // asked for again from now on (REQ-703, REQ-704).
+        if let Some(channel) = self.active_channel() {
+            self.ask_wanted(channel);
+        }
+        self.arm_refreshes();
         self.show_address()
     }
 
@@ -147,7 +154,7 @@ impl Core {
             #[cfg(feature = "interaction")]
             ToCore::Input(_) | ToCore::Editing(_) | ToCore::WallWithoutPage => self.input_intent(intent)?,
             #[cfg(feature = "phone-keyboard")]
-            ToCore::PhonePanel(_) | ToCore::PhoneFinish => self.input_intent(intent)?,
+            ToCore::PhonePanel(_) | ToCore::PhonePin | ToCore::PhoneFinish => self.input_intent(intent)?,
         }
         // Another page of a channel already drawing is a visit at once.
         self.record_drawn()?;
@@ -168,6 +175,10 @@ impl Core {
         self.shown_pages.clone_from(&pages);
         self.tell(channel, ToDecoder::Showing(pages));
         self.showing = Some(channel);
+        // The pages shown are wanted, the wall's thumbnails among them
+        // (REQ-703, DEC-997).
+        let shown = self.shown_pages.clone();
+        self.ask_shown(channel, &shown);
     }
 
     /// A click means only "this cell"; the trusted core decides whether a
@@ -208,8 +219,12 @@ impl Core {
 
     /// An address typed in the address field opened in the active tab.
     fn navigate(&mut self, typed: &str) -> Result<(), String> {
-        if let Err(reason) = self.session.navigate(typed, true) {
-            self.log(Level::Warning, self.log_place(), &reason);
+        match self.session.navigate(typed, true) {
+            // REQ-749: the trusted core opens it or says why it cannot, in
+            // the strip where the viewer pressed Enter, and in the Log.
+            Err(reason) => return self.say_in(self.log_place(), reason),
+            // A reason left from an earlier refusal is not this address's.
+            Ok(()) => self.notice = None,
         }
         self.send_all()
     }

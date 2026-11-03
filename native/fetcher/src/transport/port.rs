@@ -32,6 +32,7 @@ impl Transport for Tcp {
             cancel: Cancel::default(),
             // A clock that cannot be read that far ahead leaves no time.
             until: now.checked_add(CONNECT_DEADLINE).unwrap_or(now),
+            resolving: Arc::clone(&self.resolving),
         };
         let cancel = Arc::clone(&opener.cancel);
         let host = host.to_owned();

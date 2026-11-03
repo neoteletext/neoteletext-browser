@@ -21,14 +21,53 @@ const SECONDS_PER_MINUTE: u64 = 60;
 
 /// A text field of the typing page.
 pub(super) struct Field {
-    pub(super) row: u8,
-    pub(super) column: u8,
-    pub(super) width: u8,
-    pub(super) text: String,
-    pub(super) masked: bool,
+    row: u8,
+    column: u8,
+    width: u8,
+    text: String,
+    masked: bool,
+}
+
+impl Field {
+    /// A character typed into the field: kept while it fits, if it is
+    /// printable ASCII.
+    pub(super) fn type_character(&mut self, character: char) {
+        if self.text.chars().count() < usize::from(self.width) && character.is_ascii() && !character.is_ascii_control() {
+            self.text.push(character);
+        }
+    }
+}
+
+/// The typing page's fields, empty: a name, and a secret shown masked.
+pub(super) fn typing_fields() -> [Field; 2] {
+    [Field { row: 5, column: 13, width: 20, text: String::new(), masked: false }, Field { row: 8, column: 13, width: 12, text: String::new(), masked: true }]
 }
 
 impl Session {
+    /// A key named `name` pressed on the typing page; returns whether the
+    /// page took it. Tab moves between the fields, Backspace takes a
+    /// character back, Escape clears the page, Enter greets.
+    pub(super) fn typing_key(&mut self, name: Option<&str>) -> bool {
+        match name {
+            Some("Tab") => self.focus = (self.focus + 1) % self.fields.len(),
+            Some("Backspace") => {
+                self.fields[self.focus].text.pop();
+            }
+            Some("Escape") => {
+                for field in &mut self.fields {
+                    field.text.clear();
+                }
+                self.greeting.clear();
+            }
+            Some("Enter") => {
+                let name = self.fields[0].text.trim().to_owned();
+                self.greeting = if name.is_empty() { "Type your name first.".to_owned() } else { format!("Hello, {name}!") };
+            }
+            _ => return false,
+        }
+        true
+    }
+
     pub(super) fn typing(&self) -> Page {
         let mut page = Page::new(0x200, "Type into a page");
         page.row(3, Row::new().code(ALPHA_WHITE).text("Type: each key goes to this channel."));
@@ -182,3 +221,6 @@ pub(super) fn contents_file() -> String {
     }
     contents
 }
+
+#[cfg(test)]
+mod tests;

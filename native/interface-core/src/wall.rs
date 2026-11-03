@@ -133,6 +133,16 @@ pub struct Wall {
     view: View,
     /// The shape every page is laid out in (REQ-737).
     shape: PageShape,
+    /// Whether the wall moves, as the platform's preference has it (REQ-754).
+    motion: Motion,
+}
+
+/// Whether moves take their time, or end at once as the platform's
+/// preference for reduced motion asks (REQ-754).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Motion {
+    Full,
+    Reduced,
 }
 
 /// What the page area shows (decision 126).
@@ -189,7 +199,31 @@ impl Wall {
             // choice (decision 126).
             view: View::Alone,
             shape: PageShape::Raster,
+            motion: Motion::Full,
         }
+    }
+
+    /// The platform asks for reduced motion (REQ-754): every move of the
+    /// wall, its width, hover, zoom and slide, ends at once, and moves
+    /// again once it no longer asks.
+    pub fn set_reduced_motion(&mut self, reduced: bool) {
+        self.motion = if reduced { Motion::Reduced } else { Motion::Full };
+        self.shown_width.set_duration(self.motion(WIDTH_TRANSITION_MILLISECONDS));
+        self.hover.set_duration(self.motion(HOVER_MILLISECONDS));
+        self.leave.set_duration(self.motion(HOVER_MILLISECONDS));
+        self.slide.set_duration(self.motion(SLIDE_MILLISECONDS));
+        self.zoom.set_duration(self.motion(ZOOM_MILLISECONDS));
+    }
+
+    /// Whether the platform asks for reduced motion.
+    #[must_use]
+    pub const fn reduced_motion(&self) -> bool {
+        matches!(self.motion, Motion::Reduced)
+    }
+
+    /// How long a move of `milliseconds` takes: none with reduced motion.
+    pub(crate) const fn motion(&self, milliseconds: u64) -> u64 {
+        if matches!(self.motion, Motion::Reduced) { 0 } else { milliseconds }
     }
 
     /// Starts the wall at its top, as for a newly chosen bank, and leaves
@@ -198,7 +232,7 @@ impl Wall {
         self.scroll = 0.0;
         self.zoomed = None;
         self.zoom_in = false;
-        self.zoom = Tween::new(0.0, ZOOM_MILLISECONDS, STANDARD);
+        self.zoom = Tween::new(0.0, self.motion(ZOOM_MILLISECONDS), STANDARD);
     }
 
     /// Whether only the open page shows, with no wall and no page size bar

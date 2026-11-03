@@ -91,6 +91,31 @@ fn a_zoomed_page_grows_from_its_place_to_fill_the_area() {
     assert!(!wall.animating(ZOOM_MILLISECONDS));
 }
 
+/// REQ-754: with the platform's reduced motion, a zoom, a slide to the next
+/// page, the page size and a hover end where they go at once, with nothing
+/// moving; and once the preference is off they move again. On the code
+/// before, the wall had no such preference and every move took its time.
+#[test]
+fn reduced_motion_ends_every_move_at_once() {
+    let mut wall = on_wall();
+    wall.set_reduced_motion(true);
+    let pages = pages(24);
+    let key = pages[1].key;
+    draw_at(&mut wall, &pages, 0);
+    wall.zoom(key, 0);
+    assert!(!wall.animating(0), "nothing moves");
+    let end = draw_at(&mut wall, &pages, 0);
+    assert_eq!(last_rect(&end, key), image_within(wall.zoomed_rect()), "the page is in its zoomed place at once");
+    assert!(wall.step_zoom(1, 1).is_some());
+    assert!(!wall.animating(1), "a step does not slide");
+    wall.unzoom(2);
+    assert!(!wall.animating(2), "nor does the way back");
+    wall.set_reduced_motion(false);
+    draw_at(&mut wall, &pages, 3);
+    wall.zoom(key, 3);
+    assert!(wall.animating(4), "without the preference the zoom moves again");
+}
+
 #[test]
 fn the_close_button_zooms_back_to_the_wall() {
     let mut wall = on_wall();

@@ -44,6 +44,12 @@ impl Session {
         self.tabs.iter().chain(self.others.iter().flat_map(|window| window.tabs.iter()))
     }
 
+    /// The tab in front of each window, the window at hand's first: the
+    /// tabs whose pages are on screen.
+    pub fn front_tabs(&self) -> impl Iterator<Item = &Tab> {
+        self.tabs.get(self.active).into_iter().chain(self.others.iter().filter_map(|window| window.tabs.get(window.active)))
+    }
+
     /// Every tab, in every window, to change.
     pub fn all_tabs_mut(&mut self) -> impl Iterator<Item = &mut Tab> {
         self.tabs.iter_mut().chain(self.others.iter_mut().flat_map(|window| window.tabs.iter_mut()))

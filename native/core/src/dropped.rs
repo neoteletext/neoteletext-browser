@@ -94,7 +94,7 @@ mod tests {
     fn a_malformed_file_is_reported_within_a_bound() {
         bounded(crate::history::History::read(&broken(crate::history::VERSION_LINE)).1);
         bounded(crate::settings::Settings::read(&broken(crate::settings::VERSION_LINE)).1);
-        bounded(crate::restore::Saved::read(&broken(crate::restore::VERSION_LINE)).1);
+        bounded(crate::session_file::Saved::read(&broken(crate::session_file::VERSION_LINE)).1);
         bounded(crate::bookmarks::Bookmarks::read(&broken(crate::bookmarks::VERSION_LINE)).1);
         let cookies = format!("{}\n", broken(crate::cookies::FILE_VERSION).replace("\n\n", "\n"));
         bounded(crate::cookies::Store::new().import(cookies.as_bytes(), 0));

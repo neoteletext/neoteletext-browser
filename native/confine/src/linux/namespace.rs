@@ -44,7 +44,10 @@ pub(super) fn network_namespace() -> Result<(), String> {
 /// is sent when the thread that started the helper ends; the broker
 /// starts every helper from its one serving thread. A parent that ended
 /// before the signal was set would leave the helper reparented already,
-/// so the parent is read before and after: a change means it ended.
+/// so the parent is read before and after: a change means it ended. A
+/// parent that ended even before the first read is seen by the number its
+/// parent gave it at its start ([`crate::broker::PARENT_VARIABLE`]), which
+/// is then not its parent's (TODO-1278 item 2).
 pub(super) fn end_with_parent() -> Result<(), String> {
     // SAFETY: getppid takes no arguments.
     let parent = unsafe { libc::getppid() };
@@ -54,5 +57,32 @@ pub(super) fn end_with_parent() -> Result<(), String> {
         return Err(std::io::Error::last_os_error().to_string());
     }
     // SAFETY: as above.
-    if unsafe { libc::getppid() } == parent { Ok(()) } else { Err(String::from("its parent ended before it was confined")) }
+    let now = unsafe { libc::getppid() };
+    let given = std::env::var(crate::broker::PARENT_VARIABLE).ok().and_then(|number| number.parse::<libc::pid_t>().ok());
+    parent_unchanged(parent, now, given)
+}
+
+/// Whether the parent read before the signal was set, `before`, is still
+/// the parent, `now`, and is the one its parent named, `given`, if any.
+fn parent_unchanged(before: libc::pid_t, now: libc::pid_t, given: Option<libc::pid_t>) -> Result<(), String> {
+    if now != before || given.is_some_and(|given| given != now) { Err(String::from("its parent ended before it was confined")) } else { Ok(()) }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parent_unchanged;
+
+    /// TODO-1278 item 2, finding F-34: a helper whose parent ended before
+    /// it first read its parent is reparented already, so its parent is
+    /// not the one that started it and named itself; it refuses to run.
+    /// On the code before, only a change between the two reads was seen.
+    #[test]
+    fn a_parent_that_ended_before_the_first_look_is_seen() {
+        const BROKER: libc::pid_t = 4_242;
+        const ADOPTER: libc::pid_t = 1;
+        assert!(parent_unchanged(BROKER, BROKER, Some(BROKER)).is_ok());
+        assert!(parent_unchanged(BROKER, BROKER, None).is_ok(), "a helper started by no broker, as a test starts one");
+        assert!(parent_unchanged(BROKER, ADOPTER, Some(BROKER)).is_err(), "it ended between the two reads");
+        assert!(parent_unchanged(ADOPTER, ADOPTER, Some(BROKER)).is_err(), "it ended before the first read");
+    }
 }

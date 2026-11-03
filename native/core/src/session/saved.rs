@@ -6,14 +6,14 @@ use interface_core::library::{MAX_CLOSED, WindowGeometry};
 use protocol::{MAX_TAB_TITLE, clean};
 
 use neoteletext::address::parse;
-use neoteletext::restore::{self, Saved};
+use neoteletext::session_file::{self, Saved};
 
 use super::tab::without;
 use super::{ClosedTab, MAX_TABS, Pending, Session, Tab, Visit};
 
 /// A kept tab's list as entries, when every address is still accepted and
 /// its place is in it; a refusal is logged.
-fn kept_history(kept: &restore::Tab) -> Option<Vec<Visit>> {
+fn kept_history(kept: &session_file::Tab) -> Option<Vec<Visit>> {
     let history: Result<Vec<Visit>, String> = kept
         .entries
         .iter()
@@ -21,7 +21,7 @@ fn kept_history(kept: &restore::Tab) -> Option<Vec<Visit>> {
             Ok(Visit {
                 address: parse(&entry.address)?,
                 by_page: entry.by_page,
-                title: clean(&entry.title, restore::MAX_TITLE),
+                title: clean(&entry.title, session_file::MAX_TITLE),
                 at: entry.at,
                 passed_over: entry.passed_over,
             })
@@ -43,29 +43,30 @@ impl Session {
     /// and the active tab's place among them.
     #[must_use]
     pub fn saved(&self) -> Saved {
-        let entry = |visit: &Visit| restore::Entry {
+        let entry = |visit: &Visit| session_file::Entry {
             by_page: visit.by_page,
             passed_over: visit.passed_over,
             at: visit.at,
             address: visit.address.text.clone(),
-            title: clean(&visit.title, restore::MAX_TITLE),
+            title: clean(&visit.title, session_file::MAX_TITLE),
         };
         let window = |geometry: Option<WindowGeometry>, tabs: &[Tab], active: usize| {
             let kept: Vec<(usize, &Tab)> = tabs.iter().enumerate().filter(|(_, tab)| !tab.private).collect();
             // A private active tab: the kept tab before it, or the first.
             let active = kept.iter().filter(|(index, _)| *index <= active).count().saturating_sub(1);
-            let tabs = kept.iter().map(|(_, tab)| restore::Tab::trimmed(tab.muted, tab.position, tab.history.iter().map(entry).collect())).collect();
-            restore::Window { geometry, active, tabs }
+            let tabs = kept.iter().map(|(_, tab)| session_file::Tab::trimmed(tab.muted, tab.position, tab.history.iter().map(entry).collect())).collect();
+            session_file::Window { geometry, active, tabs }
         };
         // The windows in the order they opened, the one at hand among them.
-        let mut windows: Vec<(u32, restore::Window)> = self.others.iter().map(|other| (other.id, window(other.geometry, &other.tabs, other.active))).collect();
+        let mut windows: Vec<(u32, session_file::Window)> =
+            self.others.iter().map(|other| (other.id, window(other.geometry, &other.tabs, other.active))).collect();
         windows.push((self.window, window(self.geometry, &self.tabs, self.active)));
         windows.sort_by_key(|(id, _)| *id);
         let windows = windows.into_iter().map(|(_, window)| window).filter(|window| !window.tabs.is_empty()).collect();
         let closed = self
             .closed
             .iter()
-            .map(|tab| restore::Tab { window: tab.window, ..restore::Tab::trimmed(tab.muted, tab.position, tab.history.iter().map(entry).collect()) })
+            .map(|tab| session_file::Tab { window: tab.window, ..session_file::Tab::trimmed(tab.muted, tab.position, tab.history.iter().map(entry).collect()) })
             .collect();
         Saved { windows, closed }
     }

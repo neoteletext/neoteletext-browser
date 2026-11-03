@@ -171,12 +171,14 @@ mod tests {
     /// Every menu bar item with the browser's action does what its key
     /// does: the interface core takes the key, in a window with two tabs,
     /// history either way and an open page. A key the core does not know
-    /// would make the item do nothing.
+    /// would make the item do nothing. The menu bar is macOS's, so its keys
+    /// are tried in macOS's frame on every platform the test runs on: the
+    /// wall's Command-G is Control-Shift-G elsewhere (REQ-772).
     #[test]
     fn every_menu_item_s_key_is_taken() {
-        use interface_core::browser::{Browser, StripState, TabInfo};
+        use interface_core::browser::{Browser, Frame, StripState, TabInfo};
         let window = || {
-            let mut browser = Browser::new(crate::window::FRAME);
+            let mut browser = Browser::new(Frame { window_buttons: false, ..crate::window::FRAME });
             let tab = |title: &str| TabInfo { title: title.into(), colour: 0, channel: 1, muted: false, private: false, address: String::new() };
             browser.set_tabs(vec![tab("one"), tab("two")], 0);
             browser.set_strip(StripState { back: true, forward: true, ..StripState::default() });

@@ -57,6 +57,11 @@ const QR_SIDE: f64 = 300.0;
 /// ISO/IEC 18004's quiet zone: four modules of light round the code.
 const QUIET_ZONE: usize = 4;
 const BUTTON_WIDTH: f64 = 96.0;
+/// The button that asks for a PIN, wide enough for its words.
+const PIN_BUTTON_WIDTH: f64 = 120.0;
+/// What it says, and its tip (REQ-1386).
+const USE_A_PIN: &str = "Use a PIN";
+const USE_A_PIN_TIP: &str = "Pair with a PIN typed on the phone, so that a photograph of the code is not enough";
 const BUTTON_HEIGHT: f64 = 32.0;
 const LINE: f64 = 22.0;
 const BADGE_WIDTH: f64 = 210.0;
@@ -72,6 +77,8 @@ pub(super) struct PhoneUi {
     close: Rect,
     finish: Rect,
     badge_finish: Rect,
+    /// "Use a PIN", while the code waits to be scanned without one.
+    use_pin: Rect,
 }
 
 impl Browser {
@@ -84,6 +91,9 @@ impl Browser {
     pub(super) fn phone_tips(&self, tips: &mut Vec<(Rect, String)>) {
         if self.phone.open {
             tips.push((self.phone.close, "Close the phone keyboard".into()));
+            if self.phone.use_pin != Rect::ZERO {
+                tips.push((self.phone.use_pin, USE_A_PIN_TIP.into()));
+            }
         }
     }
 
@@ -111,12 +121,17 @@ impl Browser {
     /// theirs.
     /// Whether `point` is on the open phone panel.
     pub(super) fn over_phone(&self, point: Point) -> bool {
-        self.phone.open && panel_rect(self.wall.area()).contains(point)
+        self.phone.open && panel_rect(self.wall.area(), self.body).contains(point)
     }
 
     pub(super) fn phone_press(&mut self, point: Point) -> bool {
         if self.phone.badge_finish.contains(point) || self.phone.open && self.phone.finish.contains(point) {
             self.outputs.push(Output::PhoneFinish);
+            return true;
+        }
+        // A PIN asked for: the trusted core pairs again with one (REQ-1386).
+        if self.phone.open && self.phone.use_pin.contains(point) {
+            self.outputs.push(Output::PhonePin);
             return true;
         }
         if self.phone.open && self.phone.close.contains(point) {
@@ -125,7 +140,7 @@ impl Browser {
             return true;
         }
         // The panel takes every press on it.
-        self.phone.open && panel_rect(self.wall.area()).contains(point)
+        self.phone.open && panel_rect(self.wall.area(), self.body).contains(point)
     }
 
     /// The strip's "Phone connected" with Finish, at the right of the
@@ -149,10 +164,11 @@ impl Browser {
     pub(super) fn draw_phone_panel<C: Canvas + ?Sized>(&mut self, canvas: &mut C) {
         self.phone.close = Rect::ZERO;
         self.phone.finish = Rect::ZERO;
+        self.phone.use_pin = Rect::ZERO;
         if !self.phone.open {
             return;
         }
-        let panel = panel_rect(self.wall.area());
+        let panel = panel_rect(self.wall.area(), self.body);
         canvas.fill(panel, 8.0, PANEL);
         outline(canvas, panel, RULE);
         let heading = Rect::new(panel.x0 + PANEL_PADDING, panel.y0 + PANEL_PADDING, panel.x1 - PANEL_PADDING, panel.y0 + PANEL_PADDING + LINE * 1.5);
@@ -165,7 +181,9 @@ impl Browser {
         let view = self.phone.view.clone();
         let status = view.as_ref().map_or(PhoneStatus::Preparing, |view| view.status);
         let qr_top = heading.y1 + PANEL_PADDING;
-        let qr_box = Rect::new(f64::midpoint(panel.x0, panel.x1) - QR_SIDE / 2.0, qr_top, f64::midpoint(panel.x0, panel.x1) + QR_SIDE / 2.0, qr_top + QR_SIDE);
+        // The code gives up what the panel lost to a short window.
+        let qr_side = (QR_SIDE - (PANEL_HEIGHT - panel.height())).max(0.0);
+        let qr_box = Rect::new(f64::midpoint(panel.x0, panel.x1) - qr_side / 2.0, qr_top, f64::midpoint(panel.x0, panel.x1) + qr_side / 2.0, qr_top + qr_side);
         if let (PhoneStatus::Scan | PhoneStatus::PinFailed(_), Some((size, bits))) = (status, view.as_ref().and_then(|view| view.qr.as_ref())) {
             draw_qr(canvas, qr_box, *size, bits);
         } else {
@@ -219,12 +237,32 @@ impl Browser {
             centred(canvas, finish, "Finish", ROW_TITLE, WHITE);
             self.phone.finish = finish;
         }
+        // Pairing by the code alone can be made to ask for a PIN, which
+        // the panel then shows beside the code (REQ-1386, DEC-2405).
+        if status == PhoneStatus::Scan && view.as_ref().is_some_and(|view| view.pin.is_none()) {
+            let use_pin = Rect::new(
+                panel.x0 + PANEL_PADDING,
+                panel.y1 - PANEL_PADDING - BUTTON_HEIGHT,
+                panel.x0 + PANEL_PADDING + PIN_BUTTON_WIDTH,
+                panel.y1 - PANEL_PADDING,
+            );
+            canvas.fill(use_pin, 4.0, BUTTON);
+            border(canvas, use_pin, 2.0, RULE);
+            centred(canvas, use_pin, USE_A_PIN, ROW_TITLE, WHITE);
+            self.phone.use_pin = use_pin;
+        }
     }
 }
 
-fn panel_rect(area: Rect) -> Rect {
-    let centre = Point::new(f64::midpoint(area.x0, area.x1), f64::midpoint(area.y0, area.y1));
-    Rect::new(centre.x - PANEL_WIDTH / 2.0, centre.y - PANEL_HEIGHT / 2.0, centre.x + PANEL_WIDTH / 2.0, centre.y + PANEL_HEIGHT / 2.0)
+/// The panel, centred on the page area but kept within `body`, the window
+/// below the strip: on a short window it is shorter, and its code smaller
+/// by as much, so it never covers the trusted strip (REQ-785, the spoofing
+/// review of 3 November 2026).
+fn panel_rect(area: Rect, body: Rect) -> Rect {
+    let height = PANEL_HEIGHT.min(body.height());
+    let lowest = body.y0 + height / 2.0;
+    let centre = Point::new(f64::midpoint(area.x0, area.x1), f64::midpoint(area.y0, area.y1).clamp(lowest, (body.y1 - height / 2.0).max(lowest)));
+    Rect::new(centre.x - PANEL_WIDTH / 2.0, centre.y - height / 2.0, centre.x + PANEL_WIDTH / 2.0, centre.y + height / 2.0)
 }
 
 /// The code dark on white, with its quiet zone, as a phone's camera reads it.
@@ -250,6 +288,40 @@ mod tests {
     use super::*;
     use crate::browser::Frame;
     use crate::test_canvas::Recorder;
+
+    /// REQ-1386, DEC-2405: while the code waits to be scanned without a PIN
+    /// the panel offers one, and pressing it asks the trusted core to pair
+    /// with a PIN; once a PIN shows, or a phone is paired, it is not
+    /// offered. The panel draws the PIN, a wrong PIN and the lock. On the
+    /// code before, nothing offered a PIN.
+    #[test]
+    fn the_panel_offers_a_pin_and_shows_it() {
+        let mut browser = Browser::new(Frame { left_inset: 0.0, window_buttons: false });
+        browser.draw(&mut Recorder::new(), 1440.0, 900.0, 0);
+        browser.toggle_phone_panel();
+        browser.take_outputs();
+        let qr = Some((21, alloc::vec![0xFF; 56]));
+        browser.set_phone(PhoneUiView { status: PhoneStatus::Scan, qr: qr.clone(), pin: None });
+        let canvas = &mut Recorder::new();
+        browser.draw(canvas, 1440.0, 900.0, 0);
+        assert!(canvas.texts.iter().any(|(_, text)| text == USE_A_PIN), "offered");
+        let use_pin = browser.phone.use_pin;
+        assert!(browser.phone_press(Point::new(f64::midpoint(use_pin.x0, use_pin.x1), f64::midpoint(use_pin.y0, use_pin.y1))));
+        assert_eq!(browser.take_outputs(), [Output::PhonePin]);
+        for (status, pin, said) in [
+            (PhoneStatus::Scan, Some("4821"), "PIN: 4821"),
+            (PhoneStatus::PinFailed(3), Some("4821"), "Wrong PIN: 3 tries left."),
+            (PhoneStatus::Locked, None, "Too many wrong PINs. Finish, then start again."),
+            (PhoneStatus::Connected, None, "Your phone is the keyboard."),
+        ] {
+            browser.set_phone(PhoneUiView { status, qr: qr.clone(), pin: pin.map(String::from) });
+            let canvas = &mut Recorder::new();
+            browser.draw(canvas, 1440.0, 900.0, 0);
+            let texts: Vec<&str> = canvas.texts.iter().map(|(_, text)| text.as_str()).collect();
+            assert!(texts.contains(&said), "{status:?}: {texts:?}");
+            assert!(!texts.contains(&USE_A_PIN) && browser.phone.use_pin == Rect::ZERO, "{status:?}: not offered again");
+        }
+    }
 
     #[test]
     fn the_panel_shows_the_qr_and_the_warning_and_finish_is_asked_for() {
@@ -278,6 +350,41 @@ mod tests {
         let mut canvas = Recorder::new();
         browser.draw(&mut canvas, 1440.0, 900.0, 0);
         assert!(canvas.texts.iter().any(|(_, text)| text == "Phone connected"));
+    }
+
+    /// REQ-785, the spoofing review of 3 November 2026: the panel never
+    /// covers the trusted strip, at the smallest window the interface
+    /// allows (`MINIMUM_WIDTH` and `MINIMUM_HEIGHT` in
+    /// `native/interface/src/window.rs`), with the overview and the
+    /// bookmarks bar each shown and hidden, and its code is drawn whole
+    /// within it. On the code before, the panel was centred on the page
+    /// area at its full 560 points and reached above the strip's end.
+    #[test]
+    fn the_panel_never_covers_the_strip() {
+        const SMALLEST_WIDTH: f64 = 1000.0;
+        const SMALLEST_HEIGHT: f64 = 640.0;
+        for overview_hidden in [false, true] {
+            for bar in [false, true] {
+                let mut browser = Browser::new(Frame { left_inset: 0.0, window_buttons: false });
+                browser.overview.hidden = overview_hidden;
+                browser.set_bar(crate::library::BarView { shown: bar, ..crate::library::BarView::default() });
+                browser.toggle_phone_panel();
+                browser.set_phone(PhoneUiView { status: PhoneStatus::Scan, qr: Some((21, alloc::vec![0xFF; 56])), pin: Some("1234".into()) });
+                let mut canvas = Recorder::new();
+                browser.draw(&mut canvas, SMALLEST_WIDTH, SMALLEST_HEIGHT, 0);
+                let strip_end = browser.strip_end(0);
+                let case = alloc::format!("overview hidden {overview_hidden}, bar {bar}");
+                let panel = panel_rect(browser.wall.area(), browser.body);
+                for (what, rect) in [("panel", panel), ("close button", browser.phone.close), ("Finish", browser.phone.finish)] {
+                    assert!(rect.y0 >= strip_end, "{case}: the {what}'s top {} is above the strip's end {strip_end}", rect.y0);
+                    assert!(rect.y1 <= SMALLEST_HEIGHT, "{case}: the {what}'s foot {} is below the window", rect.y1);
+                }
+                // The code's dark modules: the black fills narrower than the panel.
+                for (module, _) in canvas.fills.iter().filter(|(rect, colour)| *colour == BLACK && rect.width() < panel.width()) {
+                    assert!(module.y0 >= strip_end, "{case}: a module of the code at {} is above the strip's end", module.y0);
+                }
+            }
+        }
     }
 
     /// Decision 101: without a PIN the phone is connected only by its first

@@ -128,6 +128,12 @@ impl Browser {
         self.menu.menu_open && self.menu.menu_area.contains(point)
     }
 
+    /// Where the open menu was last drawn.
+    #[cfg(test)]
+    pub(super) fn menu_area(&self) -> Rect {
+        self.menu.menu_area
+    }
+
     pub(super) fn menu_press(&mut self, point: Point) -> bool {
         if !self.menu.menu_open {
             return false;

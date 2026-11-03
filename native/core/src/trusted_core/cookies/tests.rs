@@ -175,3 +175,36 @@ fn kept_cookies_are_written_sealed_and_removed_on_close() {
     test.core.keep_cookies();
     assert_eq!(kept::load(&test.folder).unwrap(), None, "and none written");
 }
+
+/// REQ-880, REQ-881, DEC-1527, TODO-1534 item 2: two tabs on one live channel
+/// have a connection each, and one jar between them. A cookie a `SET_COOKIE`
+/// record set through the first tab's connection (DOC-1957), as its
+/// fetcher reports it, host-only and with no path of its own, is sent by
+/// the second tab's next request: its push connection's handshake. A private
+/// tab on the same channel keeps its own jar.
+#[test]
+fn a_cookie_set_through_one_tabs_connection_is_sent_by_another() {
+    const LIVE: &str = "https://live.example/teletext/";
+    let mut test = Test::new("live tabs");
+    let first = test.tab(LIVE, false);
+    let second = test.tab(LIVE, false);
+    let private = test.tab(LIVE, true);
+    assert!(first != second && second != private, "a channel number, a fetcher and a connection each");
+    let record = FromFetcher::CookieSet {
+        host: "live.example".into(),
+        path: "/teletext/push".into(),
+        scope: None,
+        secure: true,
+        cookie: super::super::test_support::read_cookie("seen=4"),
+    };
+    assert_eq!(test.core.cookie_reply(first, record).unwrap(), None);
+    let handshake = |test: &mut Test, channel: u32| {
+        let question =
+            FromFetcher::CookieQuestion { id: 3, host: "live.example".into(), path: "/teletext/push".into(), secure: true, site: CookieSite::SameService };
+        let Some(ToFetcher::CookieAnswer { id: 3, header }) = test.core.cookie_reply(channel, question).unwrap() else { panic!("no answer") };
+        String::from_utf8(header).unwrap()
+    };
+    assert_eq!(handshake(&mut test, second), "seen=4", "the other tab's connection sends it");
+    assert_eq!(handshake(&mut test, first), "seen=4");
+    assert_eq!(handshake(&mut test, private), "", "the private tab's jar is its own");
+}

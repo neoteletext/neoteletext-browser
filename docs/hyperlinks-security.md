@@ -120,7 +120,7 @@ Boundaries B, C and D exist today for frames and clicks; links add new message k
 | Threat | Mitigation |
 |---|---|
 | The interface learns channel data it does not need | It receives only positions and a kind (requirement 7.9) |
-| Destination text makes the strip misleading | Cleaned as all untrusted text is (requirement 11.5); hosts shown by the address rules with the host emphasised; internationalised hosts refused until shown safely (requirement 11.3), which for the web hand-off means **no homograph host can be handed over at all** today |
+| Destination text makes the strip misleading | Cleaned as all untrusted text is (requirement 11.5); hosts shown by the address rules with the host emphasised; an internationalised host is held and shown only in its ASCII `xn--` form and one typed in Unicode is refused (requirement 11.3, DEC-2340), which for the web hand-off means **no homograph host can be handed over at all** |
 | A very long address in the strip | Cut to the strip's limit, host first; the full address on request |
 | Blue lines where no text is: `LT` runs over blank cells used as decoration or to draw shapes | Runs are trimmed to their shown, non-blank cells before drawing; a run with no shown cell is not drawn (finding 7). The total of underlined cells per page is bounded (eight `LT` × 40 plus 24 numbers × 3, about 400 cells) |
 

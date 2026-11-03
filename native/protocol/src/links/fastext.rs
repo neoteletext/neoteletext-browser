@@ -2,7 +2,6 @@
 //! coloured key and Index lead, untrusted, for the trusted core to decide.
 
 use interface_core::canvas::COLUMNS;
-use interface_core::channel::page_index;
 
 use crate::decoder::names_one_subpage;
 use crate::{Fields, ProtocolError};
@@ -29,6 +28,10 @@ pub struct Fastext {
     pub keys: [Option<FastextTarget>; 5],
     /// Row 24 is drawn and not boxed away.
     pub row24: bool,
+    /// The page has a link for at least one of the five keys, shown or
+    /// not: without any, Index requests the initial page (REQ-286, the
+    /// engine's REQ-SVC-004 and Annex H.4 of EN 300 706).
+    pub linked: bool,
     /// Where row 24 shows the red, green, yellow and cyan keys' prompts: a
     /// first column and a length (REQ-1660 item 1).
     pub prompts: [Option<(u8, u8)>; 4],
@@ -38,6 +41,10 @@ const FASTEXT_PAGE: u8 = 1;
 const FASTEXT_SUBCODE: u8 = 2;
 const FASTEXT_SERVICE: u8 = 4;
 const FASTEXT_FLAGS: u8 = FASTEXT_PAGE | FASTEXT_SUBCODE | FASTEXT_SERVICE;
+/// The first byte: row 24 shown, and the page linked.
+const ROW24: u8 = 1;
+const LINKED: u8 = 2;
+const PAGE_FLAGS: u8 = ROW24 | LINKED;
 
 /// A prompt lies within row 24's columns.
 fn check_prompt(column: u8, length: u8) -> Result<(), ProtocolError> {
@@ -48,7 +55,7 @@ fn check_prompt(column: u8, length: u8) -> Result<(), ProtocolError> {
 }
 
 pub(crate) fn push_fastext(payload: &mut Vec<u8>, fastext: &Fastext) -> Result<(), ProtocolError> {
-    payload.push(u8::from(fastext.row24));
+    payload.push(if fastext.row24 { ROW24 } else { 0 } | if fastext.linked { LINKED } else { 0 });
     for prompt in &fastext.prompts {
         let (column, length) = prompt.unwrap_or((0, 0));
         check_prompt(column, length)?;
@@ -59,7 +66,7 @@ pub(crate) fn push_fastext(payload: &mut Vec<u8>, fastext: &Fastext) -> Result<(
             payload.push(0);
             continue;
         };
-        page_index(target.page).ok_or(ProtocolError::BadValue("Fastext page"))?;
+        crate::fields::check_page(target.page).map_err(|_| ProtocolError::BadValue("Fastext page"))?;
         if target.subcode.is_some_and(|subcode| !names_one_subpage(subcode)) {
             return Err(ProtocolError::BadValue("Fastext sub-code"));
         }
@@ -77,7 +84,11 @@ pub(crate) fn push_fastext(payload: &mut Vec<u8>, fastext: &Fastext) -> Result<(
 }
 
 pub(crate) fn read_fastext(fields: &mut Fields<'_>) -> Result<Fastext, ProtocolError> {
-    let row24 = fields.flag("Fastext row 24")?;
+    let flags = fields.u8()?;
+    if flags & !PAGE_FLAGS != 0 {
+        return Err(ProtocolError::BadValue("Fastext row 24"));
+    }
+    let (row24, linked) = (flags & ROW24 != 0, flags & LINKED != 0);
     let mut prompts = [None; 4];
     for prompt in &mut prompts {
         let (column, length) = (fields.u8()?, fields.u8()?);
@@ -93,7 +104,7 @@ pub(crate) fn read_fastext(fields: &mut Fields<'_>) -> Result<Fastext, ProtocolE
         if flags & !FASTEXT_FLAGS != 0 || flags & FASTEXT_PAGE == 0 {
             return Err(ProtocolError::BadValue("Fastext flags"));
         }
-        let page = fields.display_page()?;
+        let page = fields.channel_page()?;
         let subcode = if flags & FASTEXT_SUBCODE == 0 {
             None
         } else {
@@ -106,5 +117,5 @@ pub(crate) fn read_fastext(fields: &mut Fields<'_>) -> Result<Fastext, ProtocolE
         let service = if flags & FASTEXT_SERVICE == 0 { None } else { Some(fields.u8()?) };
         *key = Some(FastextTarget { page, subcode, service });
     }
-    Ok(Fastext { keys, row24, prompts })
+    Ok(Fastext { keys, row24, linked, prompts })
 }

@@ -26,6 +26,19 @@ pub fn file_identity(file: &File) -> io::Result<FileIdentity> {
     Ok(FileIdentity { volume: metadata.dev(), file: metadata.ino() })
 }
 
+/// The path the system resolved the open file `file` by, every link and
+/// junction followed, in the form `std::fs::canonicalize` gives: compared
+/// with the canonical path opened, it shows a junction swapped in for a
+/// folder of that path after it was resolved, which opening the last
+/// component as a reparse point does not (TODO-1278 item 1, decision 88).
+///
+/// # Errors
+/// When the system will not say.
+#[cfg(windows)]
+pub fn opened_path(file: &File) -> io::Result<std::path::PathBuf> {
+    crate::windows::final_path_of(file)
+}
+
 /// The identity of the open file `file`: of the handle, so that nothing
 /// changed since it was opened can stand in for it.
 ///

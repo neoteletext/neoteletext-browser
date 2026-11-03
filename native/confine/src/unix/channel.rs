@@ -57,6 +57,12 @@ impl Channel {
         Ok((kind, payload))
     }
 
+    /// Another handle on the same socket, for watching it end
+    /// ([`super::wait_for_hang_up`]) while this one carries the requests.
+    pub(crate) fn watched(&self) -> io::Result<UnixStream> {
+        self.stream.try_clone()
+    }
+
     /// Writes `bytes` whole.
     pub(crate) fn write(&mut self, bytes: &[u8]) -> io::Result<()> {
         let writer = &mut self.stream;

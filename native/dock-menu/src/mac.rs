@@ -10,7 +10,7 @@ use objc2::runtime::{AnyObject, Sel};
 use objc2::{ClassType, DeclaredClass, declare_class, ffi, msg_send, msg_send_id, mutability, sel};
 use objc2_app_kit::{
     NSAboutPanelOptionApplicationName, NSAboutPanelOptionApplicationVersion, NSApplication, NSControlStateValueOn, NSEventModifierFlags, NSImage,
-    NSLeftArrowFunctionKey, NSMenu, NSMenuItem, NSRightArrowFunctionKey, NSView,
+    NSLeftArrowFunctionKey, NSMenu, NSMenuItem, NSRightArrowFunctionKey, NSView, NSWorkspace,
 };
 use objc2_foundation::{MainThreadMarker, NSArray, NSBundle, NSData, NSDictionary, NSInteger, NSObject, NSObjectProtocol, NSString, NSURL};
 
@@ -317,6 +317,18 @@ pub fn set_full_screen(full_screen: bool) {
             unsafe { item.setTitle(&NSString::from_str(full_screen_title(full_screen))) };
         }
     });
+}
+
+/// Whether the viewer asked macOS to reduce motion (System Settings,
+/// Accessibility, Display, "Reduce motion"), which the browser's moves
+/// follow (REQ-754).
+#[must_use]
+pub fn reduced_motion() -> bool {
+    // SAFETY: `sharedWorkspace` returns the process's one workspace object,
+    // retained, on any thread, and the property is a plain read of a
+    // Boolean that takes no argument (Apple's `NSWorkspace` documentation,
+    // "accessibilityDisplayShouldReduceMotion", macOS 10.12 and later).
+    unsafe { NSWorkspace::sharedWorkspace().accessibilityDisplayShouldReduceMotion() }
 }
 
 /// The aspect correction item names what choosing it does (REQ-737 item

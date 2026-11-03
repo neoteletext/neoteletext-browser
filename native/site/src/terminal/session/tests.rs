@@ -8,19 +8,18 @@ use std::time::Duration;
 use neoteletext_input::caps::{CURSOR_CAP, SELECT_CAP};
 
 use crate::podcast::Episode;
-use crate::terminal::invaders::INVADER_TOP;
 use crate::terminal::pages::contents_file;
 use neoteletext_input::event::{Mouse, Point, read_message, write};
 
 /// One item as a receiver sends it.
-fn encoded(item: &Item<'_>) -> Vec<u8> {
+pub(in crate::terminal) fn encoded(item: &Item<'_>) -> Vec<u8> {
     let mut out = [0; neoteletext_input::MAX_MESSAGE];
     let length = write(item, &mut out).unwrap();
     out[..length].to_vec()
 }
 
 /// A printable key, as a receiver sends it outside `ALL_KEYS`: its text.
-fn press(character: char) -> Vec<u8> {
+pub(in crate::terminal) fn press(character: char) -> Vec<u8> {
     encoded(&Item::Text(character.encode_utf8(&mut [0; 4])))
 }
 
@@ -32,15 +31,15 @@ fn key(action: Action, key: KeyCode, text: Option<&str>, base: Option<char>) -> 
     encoded(&Item::Event(Event::Key(Key { on: ON, action, key, mods: 0, text, base, lost: false })))
 }
 
-fn named(name: &str) -> Vec<u8> {
+pub(in crate::terminal) fn named(name: &str) -> Vec<u8> {
     key(Action::Press, KeyCode::Functional(keys::code(name).unwrap()), None, None)
 }
 
-fn page(number: u16) -> Vec<u8> {
+pub(in crate::terminal) fn page(number: u16) -> Vec<u8> {
     encoded(&Item::Event(Event::Select(neoteletext_input::event::Select::new(number, neoteletext_core::limits::SUBCODE_ANY).unwrap(), "")))
 }
 
-fn feed(session: &mut Session, messages: &[Vec<u8>]) -> Vec<Push> {
+pub(in crate::terminal) fn feed(session: &mut Session, messages: &[Vec<u8>]) -> Vec<Push> {
     let mut pushes = Vec::new();
     for message in messages {
         read_message(message, &mut |item| pushes.extend(session.item(&item))).unwrap();
@@ -81,16 +80,6 @@ fn the_digits_of_any_script_choose_a_page() {
     assert_eq!(session.page, 0x500, "Devanagari, the videotex way");
 }
 
-/// REQ-INT-108: `FOCUS_OUT` lets go of what is held.
-#[test]
-fn focus_out_releases_the_held_arrow() {
-    let mut session = Session::new(Settings::default());
-    feed(&mut session, &[page(0x300), named("ArrowLeft")]);
-    assert!(session.invaders.left);
-    feed(&mut session, &[encoded(&Item::Event(Event::FocusOut))]);
-    assert!(!session.invaders.left, "no release was sent, and none was needed");
-}
-
 /// Decision E.125: no page asks for input modes.
 #[test]
 fn no_page_has_an_im_line() {
@@ -114,7 +103,6 @@ fn pages_are_chosen_as_on_prestel() {
     assert_eq!(session.page, 0x500, "three digits where there is no field");
     feed(&mut session, &[page(0x200), press('1'), press('0'), press('0')]);
     assert_eq!(session.page, 0x200, "on a page with a field digits are text");
-    assert_eq!(session.fields[0].text, "100");
 }
 
 #[test]
@@ -238,35 +226,6 @@ fn the_podcast_page_says_when_the_episode_ends_within_a_second() {
 }
 
 #[test]
-fn the_game_has_no_cursor_and_moves_while_a_key_is_held() {
-    let mut session = Session::new(Settings::default());
-    let start = session.invaders.ship;
-    feed(&mut session, &[page(0x300), named("ArrowLeft")]);
-    assert_eq!(session.invaders.ship, start - 1, "a press moves at once");
-    session.invaders.tick();
-    session.invaders.tick();
-    assert_eq!(session.invaders.ship, start - 3, "and held, each frame");
-    assert!(session.render().tti().contains("CU,255,0,0,0,"));
-}
-
-#[test]
-fn the_game_sounds_a_shot_and_a_hit() {
-    let mut session = Session::new(Settings::default());
-    let opened = feed(&mut session, &[page(0x300)]);
-    assert_eq!(opened.iter().filter(|push| matches!(push, Push::Packets(_))).count(), PIANO.len() + 6, "its sounds first");
-    let fired = feed(&mut session, &[press(' ')]);
-    assert!(matches!(fired.first(), Some(Push::Packets(bytes)) if bytes.len() == 42), "the shot's command");
-    // A shot one row below the bottom row's first invader hits it next frame.
-    session.invaders.shots.clear();
-    let (x, y) = *session.invaders.alive.last().unwrap();
-    let (offset, drop) = (session.invaders.offset, session.invaders.drop);
-    session.invaders.shots.push((x + offset + 1, INVADER_TOP + y + drop + 1));
-    let frame = session.frame();
-    assert!(matches!(frame.first(), Some(Push::Packets(bytes)) if bytes.len() == 42), "a hit sounds");
-    assert_eq!(session.invaders.score, 10);
-}
-
-#[test]
 fn the_contents_file_is_the_engines_format() {
     let contents = contents_file();
     let read = neoteletext_web::contents::read(contents.as_bytes()).unwrap();
@@ -294,4 +253,114 @@ fn a_click_is_the_hosts() {
         ],
     );
     assert!(session.render().tti().contains("You clicked column 7, row 11."));
+}
+
+/// The page number of each page header (packet 0) among whole packets.
+fn headers(packets: &[[u8; 42]]) -> Vec<u16> {
+    packets
+        .iter()
+        .filter_map(|bytes| match neoteletext_core::packet::decode(&neoteletext_core::packet::Packet { bytes: *bytes }) {
+            Ok(neoteletext_core::packet::Decoded::Header(header)) => {
+                Some(neoteletext_core::types::PageAddress { magazine: header.magazine, page: header.page.unwrap() }.mpp())
+            }
+            _ => None,
+        })
+        .collect()
+}
+
+/// The `CU` line of a page file: the cursor's place, or `None` for no
+/// cursor, and the input count acknowledged (the engine's REQ-INT-006).
+fn cu_line(tti: &str) -> (Option<(u8, u8)>, u16) {
+    let line = tti.lines().find_map(|line| line.strip_prefix("CU,")).expect("a CU line");
+    let fields: Vec<&str> = line.split(',').collect();
+    let [row, column, _, _, acked] = fields.as_slice() else { panic!("five fields: {line}") };
+    let (row, column) = (row.parse::<u8>().unwrap(), column.parse::<u8>().unwrap());
+    ((row != neoteletext_input::cursor::NO_CURSOR).then_some((row, column)), acked.parse().unwrap())
+}
+
+/// Checks every push as neoteletext-common's DEC-1459 and the engine's
+/// REQ-41 require: whole 42-byte packets, never empty; a page push holds one
+/// page header, for the open page, and ends with that page's cursor record,
+/// which says what the page file's `CU` line says (REQ-195).
+fn check_pushes(session: &Session, pushes: &[Push]) {
+    for push in pushes {
+        let (Push::Page(bytes) | Push::Packets(bytes)) = push;
+        let (packets, rest) = bytes.as_chunks::<42>();
+        assert!(rest.is_empty() && !packets.is_empty(), "page {:03X}: a push of {} bytes is not whole packets", session.page, bytes.len());
+        if let Push::Page(_) = push {
+            assert_eq!(headers(packets), [session.page], "one page header, for the open page");
+            let cursor = neoteletext_input::cursor::from_packet(&neoteletext_core::packet::Packet { bytes: *packets.last().unwrap() })
+                .expect("the last packet is a cursor record")
+                .unwrap();
+            let (place, acked) = cu_line(&session.render().tti());
+            assert_eq!(
+                (cursor.page, cursor.acked, cursor.place.map(|place| (place.row, place.column))),
+                (session.page, acked, place),
+                "page {:03X}: the cursor record and the CU line",
+                session.page
+            );
+        }
+    }
+}
+
+// DEC-1459, REQ-41, REQ-195: every page of the channel, the game's frames and
+// the podcast's frames go as whole packets, each page with one header and its
+// cursor record last.
+#[test]
+fn every_push_is_whole_packets_and_each_page_ends_with_its_cursor() {
+    let rate = 8_000;
+    let episode = Episode { title: "Pilot".to_owned(), rate, samples: vec![500; usize::try_from(rate).unwrap() * 3] };
+    let mut session = Session::new(Settings { relay: None, podcast: Some(Arc::new(episode)) });
+    let mut pages = 0;
+    for (number, _) in PAGES {
+        // One item at a time, so that each push is checked against the
+        // session as it stood when it was pushed.
+        for item in [page(number), press('a'), named("Enter")] {
+            let pushes = feed(&mut session, &[item]);
+            pages += pushes.iter().filter(|push| matches!(push, Push::Page(_))).count();
+            check_pushes(&session, &pushes);
+        }
+    }
+    assert_eq!(pages, PAGES.len() * 3, "each item answered with its page");
+    feed(&mut session, &[page(0x300)]);
+    for _ in 0..3 {
+        let frame = session.frame();
+        assert!(matches!(frame.last(), Some(Push::Page(_))), "a frame ends with its page");
+        check_pushes(&session, &frame);
+    }
+    let mut sound = false;
+    for item in [page(0x700), press(' ')] {
+        let pushes = feed(&mut session, &[item]);
+        sound |= pushes.iter().any(|push| matches!(push, Push::Packets(_)));
+        check_pushes(&session, &pushes);
+    }
+    for _ in 0..3 {
+        let pushes = session.podcast_frame();
+        sound |= pushes.iter().any(|push| matches!(push, Push::Packets(_)));
+        check_pushes(&session, &pushes);
+    }
+    assert!(sound, "the episode's sound went");
+}
+
+// DEC-1459: the pushed packets lose nothing a viewer sees: a page pushed and
+// decoded draws exactly what its page file draws.
+#[test]
+fn a_pushed_page_draws_as_its_page_file_does() {
+    let mut session = Session::new(Settings::default());
+    for (number, _) in PAGES {
+        let pushes = feed(&mut session, &[page(number), press('A'), press('n')]);
+        let Some(Push::Page(packets)) = pushes.last() else { panic!("page {number:03X} was pushed") };
+        let mut from_packets = decoder::Engine::new();
+        from_packets.feed_whole(true, true, packets);
+        let mut from_file = decoder::Engine::new();
+        from_file.feed_whole(false, false, session.render().tti().as_bytes());
+        let drawn_from_packets = from_packets.render(number).expect("the pushed page draws");
+        let drawn_from_file = from_file.render(number).expect("the page file draws");
+        assert_eq!(
+            (drawn_from_packets.palette, drawn_from_packets.screen),
+            (drawn_from_file.palette, drawn_from_file.screen),
+            "page {number:03X}: its colours"
+        );
+        assert!(drawn_from_packets.indices == drawn_from_file.indices, "page {number:03X}: its dots");
+    }
 }

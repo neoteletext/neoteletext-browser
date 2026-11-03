@@ -54,7 +54,7 @@ pub(super) fn push_numbers(payload: &mut Vec<u8>, numbers: &[u16]) -> Result<(),
 }
 
 pub(super) fn read_numbers(fields: &mut Fields<'_>) -> Result<Vec<u16>, ProtocolError> {
-    (0..fields.count_u8(MAX_REMAPPED, "too many page numbers")?).map(|_| fields.display_page()).collect()
+    (0..fields.count_u8(MAX_REMAPPED, "too many page numbers")?).map(|_| fields.keyable_page()).collect()
 }
 
 /// What the strip shows of a link, or nothing.

@@ -3,40 +3,74 @@
 
 use std::collections::BTreeMap;
 
+use super::Session;
+use super::session::Push;
+use super::sounds::{FIRE_HANDLE, HIT_HANDLE, LOSE_HANDLE, WIN_HANDLE};
 use super::tti::{ALPHA_CYAN, ALPHA_GREEN, ALPHA_RED, ALPHA_WHITE, COLUMNS, DOUBLE_HEIGHT, Page, Row};
 
 /// The invaders' playfield.
-pub(super) const FIELD_LEFT: i32 = 1;
-pub(super) const FIELD_RIGHT: i32 = 38;
-pub(super) const INVADER_TOP: i32 = 5;
-pub(super) const SHIP_ROW: i32 = 21;
+const FIELD_LEFT: i32 = 1;
+const FIELD_RIGHT: i32 = 38;
+const INVADER_TOP: i32 = 5;
+const SHIP_ROW: i32 = 21;
 const INVADER_COLUMNS: i32 = 8;
 const INVADER_ROWS: i32 = 3;
 const INVADER_SPACING: i32 = 4;
 /// The invaders step sideways every few frames, and down at each edge.
 const INVADER_PERIOD: u32 = 4;
+/// The most shots in flight at once.
+const MAX_SHOTS: usize = 3;
 
 /// What happened in one frame of the game.
 #[derive(Default)]
-pub(super) struct Happened {
+struct Happened {
     /// A shot hit an invader.
-    pub(super) hit: bool,
+    hit: bool,
     /// The game ended in this frame: won, or lost.
-    pub(super) over: Option<bool>,
+    over: Option<bool>,
 }
 
 pub(super) struct Invaders {
-    pub(super) alive: Vec<(i32, i32)>,
-    pub(super) offset: i32,
+    alive: Vec<(i32, i32)>,
+    offset: i32,
     direction: i32,
-    pub(super) drop: i32,
-    pub(super) ship: i32,
-    pub(super) shots: Vec<(i32, i32)>,
-    pub(super) left: bool,
-    pub(super) right: bool,
-    pub(super) score: u32,
+    drop: i32,
+    ship: i32,
+    shots: Vec<(i32, i32)>,
+    left: bool,
+    right: bool,
+    score: u32,
     frames: u32,
-    pub(super) over: Option<bool>,
+    over: Option<bool>,
+}
+
+impl Session {
+    /// Space: a shot, and its sound, unless three are in flight or the
+    /// game is over.
+    pub(super) fn fire(&mut self) -> Vec<Push> {
+        let game = &mut self.invaders;
+        if game.shots.len() < MAX_SHOTS && game.over.is_none() {
+            game.shots.push((game.ship + 1, SHIP_ROW - 1));
+            return vec![self.play(FIRE_HANDLE)];
+        }
+        Vec::new()
+    }
+
+    /// One frame of the game: its sounds, then its page.
+    pub(super) fn frame(&mut self) -> Vec<Push> {
+        let happened = self.invaders.tick();
+        let mut pushes = Vec::new();
+        if happened.hit {
+            pushes.push(self.play(HIT_HANDLE));
+        }
+        match happened.over {
+            Some(true) => pushes.push(self.play(WIN_HANDLE)),
+            Some(false) => pushes.push(self.play(LOSE_HANDLE)),
+            None => {}
+        }
+        pushes.push(self.page_push());
+        pushes
+    }
 }
 
 impl Invaders {
@@ -45,8 +79,42 @@ impl Invaders {
         Self { alive, offset: 2, direction: 1, drop: 0, ship: 19, shots: Vec::new(), left: false, right: false, score: 0, frames: 0, over: None }
     }
 
+    /// A key named `name` pressed on the game's page; returns whether
+    /// the game took it. A press moves at once; held, the ship keeps
+    /// moving each frame. Enter after the end plays again.
+    pub(super) fn key_down(&mut self, name: Option<&str>) -> bool {
+        match name {
+            Some("ArrowLeft") => {
+                self.left = true;
+                self.ship = (self.ship - 1).max(FIELD_LEFT);
+            }
+            Some("ArrowRight") => {
+                self.right = true;
+                self.ship = (self.ship + 1).min(FIELD_RIGHT - 2);
+            }
+            Some("Enter") if self.over.is_some() => *self = Self::new(),
+            _ => return false,
+        }
+        true
+    }
+
+    /// A key named `name` let go, on any page: the ship stops.
+    pub(super) fn key_up(&mut self, name: Option<&str>) {
+        match name {
+            Some("ArrowLeft") => self.left = false,
+            Some("ArrowRight") => self.right = false,
+            _ => {}
+        }
+    }
+
+    /// Everything held is let go.
+    pub(super) fn release(&mut self) {
+        self.left = false;
+        self.right = false;
+    }
+
     /// One frame of the game: what happened in it, for its sounds.
-    pub(super) fn tick(&mut self) -> Happened {
+    fn tick(&mut self) -> Happened {
         let mut happened = Happened::default();
         if self.over.is_some() {
             return happened;
@@ -137,3 +205,6 @@ impl Invaders {
         page
     }
 }
+
+#[cfg(test)]
+mod tests;

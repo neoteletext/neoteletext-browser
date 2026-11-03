@@ -37,7 +37,7 @@
 NeoTeletext is an application for browsing teletext, on desktops, then phones, and with features cut on microcontrollers.
 
 - **Teletext** is the page-based information service defined by the European Telecommunications Standards Institute standard EN 300 706, "Enhanced Teletext specification". A copy is at `~/devel/teletext-reference/teletext-standards/en_300706v010201o.pdf`.
-- **Every tab is one teletext channel.** A teletext channel is one teletext service: eight magazines, numbered 1 to 8, each with pages numbered 00 to FF in hexadecimal, and each page with subpages. NeoTeletext shows pages 100 to 899.
+- **Every tab is one teletext channel.** A teletext channel is one teletext service: eight magazines, numbered 1 to 8, each with pages numbered 00 to FF in hexadecimal, and each page with subpages. A viewer keys pages 100 to 899, which the lists and the overview hold; a page with a hexadecimal digit, such as 1A0, is reached by a link and drawn like any other (REQ-300, REQ-313), and every number but those Annex A.10 of the standard reserves is a page (`interface_core::channel::is_channel_page`).
 - **A channel comes from the web or from a file.** On the web a channel is a folder on a server (the engine's `docs/spec/requirements/web.md`); a file is a recording or a folder of page files on this computer.
 - **Every image on screen is one teletext page,** rendered by the teletext engine at the native raster and scaled by the interface.
 - **The interface is drawn by NeoTeletext's own Rust code, with no web engine.** It draws on the processor, so it needs no graphics processor, and it shows many pages at once and animates between them.
@@ -169,10 +169,11 @@ Decision 18's shape, with the interface process in place of the web-engine windo
 
 The fetcher never talks to a decoder directly. The trusted core passes every page the fetcher delivers to the decoder of that fetcher's channel, because only the trusted core knows which tab shows which channel. It never parses those bytes: it cuts them into pieces within the message limit and passes them on. File channels are the same, but for their pace: a file the viewer opens is passed on at once (DEC-1762). The broker reads the file for the trusted core, which passes its bytes, unread, in pieces within the message limit, as many as may be queued for the decoder, half of `outbox::MAX_QUEUED_BYTES`; what does not fit follows at the next `LOAD_INTERVAL`, 0.2 seconds on. A new decoder is given the file from its start, so a file is not kept twice.
 
-### 6.3 Decoders and fetchers per channel
+### 6.3 Decoders and fetchers per tab
 
 - **Every channel has its own decoder,** and every web channel its own fetcher, so no two channels share a process that reads their data.
-- **Decision 11 says tabs on the same channel share one decoder and one cookie store.** Today every tab and every navigation opens its own channel, with its own decoder and fetcher; the protocol is the same either way, so sharing is a later step.
+- **Every tab is a channel of its own** (decision 11 as amended, DEC-910 version 3; neoteletext-common's DEC-1527): `Session::channel_for` gives each tab, and each navigation to another channel, a channel number of its own, even when another tab shows the same channel. So each tab of a live channel has its own push connection, fetcher, decoder, page store and kept sleep data, and its own one selection, told on its own connection with SELECT. The server keeps one selection and one baseline of changed rows per connection, so they apply to the store that received the version they were taken against. Nothing of this is shared between tabs, and no sharing is planned.
+- **The cookie jar alone is per channel:** every tab of a channel is answered from the channel's one jar (decision 62, REQ-880), so a cookie set through one tab's connection is sent by the others; a private tab has a jar of its own (REQ-881).
 - **A decoder and its fetcher are stopped** when no tab uses their channel any more.
 
 ### 6.4 Messages between processes
@@ -320,7 +321,7 @@ The application loads only resources that are part of a teletext service (decisi
 | **Contents file** (`contents.txt`) | The engine's contents reader | Fetcher | A bounded, typed list of sections and pages |
 | **Discovery** (HyperText Markup Language) | The engine's discovery reader | Fetcher, not built | — |
 
-Discovery's security analysis was the engine's `docs/web-discovery-security.md`, in its git history since 18 October 2026; its requirements are in the engine's `docs/spec/requirements/web.md`. Its results are never loaded directly: each is shown to the user, and a chosen one is a page-initiated navigation (REQ-694).
+Discovery's design is `discovery.md` and its security analysis `discovery-security.md` (3 November 2026), which take over the engine's `docs/web-discovery-security.md`, in its git history since 18 October 2026. Its results are never loaded directly: each is shown to the user in the strip, and a chosen one is a page-initiated navigation (REQ-694). It is not built: DEC-1722 item 1 leaves it no address to run on until the owner answers DEC-2374, and the engine has no link-pointer reader yet (the engine's TODO-2376).
 
 ### 7.2 Transports
 
@@ -338,21 +339,23 @@ These are the engine's user agent's rules, which the fetcher uses as they are:
 - **Every response has limits** on size, time and redirects, all the engine's constants.
 - **No `Referer` header is sent,** and only the engine's minimal user agent profile.
 
-### 7.4 Fetching never depends on viewing
+### 7.4 Fetching what is wanted
 
-Decision 22, **rescinded on 25 October 2026 by decision 104**: pages are to be fetched while they are visible or have focus. What follows is what is built, until decision 104's fetching is designed. The pattern of network requests must reveal nothing about which pages are viewed.
+Decision 22, under which fetching never depended on viewing, was **rescinded on 25 October 2026 by decision 104** (DEC-997): pages are fetched while they are visible or have focus, so a channel's server learns which of its pages are on screen. Requirements 5.15 (REQ-703) and 5.16 (REQ-704) state the design; DEC-2141 and DEC-2356 record how the browser builds it.
 
-| What the channel publishes | How its pages are fetched |
+| What the channel publishes | What is fetched, and when |
 |---|---|
-| A bundle, `index.t42` | The whole bundle when the channel opens |
-| A contents file, `contents.txt` | Every page file it lists, in the order it lists them, one every 0.2 seconds, when the channel opens. **Built**, by the engine's user agent |
-| Only separate page files | The page a tab wants, once the contents file has been answered, and each page as it is opened. **Built**: the trusted core asks with `ToFetcher::FetchPage` |
-| A `refresh` in `channel.ttx`, and no push connection | The page on screen again at that interval, conditionally. **Built**: the trusted core's timer, and only for the page open (REQ-704) |
-| A file on this computer | All of it, in its own order, at once, whatever is on screen (DEC-1762). **Built** |
+| `channel.ttx` | First, when the channel opens. A live channel, whose `channel.ttx` names a push connection, then opens that connection and fetches nothing more: its pages, its listing (the index records) and its lists of sub-pages come on it (DEC-1467) |
+| A bundle, `index.t42` | Next, when a static channel opens, by the engine's user agent. The fetcher says `FromFetcher::BundleSettled` once the bundle's pages have gone to the decoder, or it was refused, or it is missing |
+| A page's own file, `NNN.tti` or `NNN.t42` | Once the bundle has settled, when the page is wanted and has not arrived: the page a tab shows (the page open, or its address's, or the channel's first), each page opened after, and the pages the interface shows of the active tab's channel, the wall's thumbnails among them. Each is asked once until it arrives or is refused (`ToFetcher::FetchPage`) |
+| A contents file, `contents.txt` | Once, when the channel's listing is first wanted: when its tab is in front of a window, after its page, since the page list, the contents view and the overview show it (`ToFetcher::FetchContents`). A page it lists is never fetched for being listed |
+| A page's folder of sub-pages and its list in parts | As `page-controls.md` and requirement 4.7's third exception say |
+| A `refresh` in `channel.ttx`, and no push connection | The page on screen in every window again at that interval, conditionally (REQ-704): the trusted core's timer, per channel, for each tab in front of a window that shows a page |
+| A file on this computer | All of it, in its own order, at once, whatever is on screen (DEC-1762) |
 
-- **Refreshing** follows the channel's push feed, its declared schedule, or a fixed default, never which page is shown.
-- **Keys and interface requests only select among pages already held.** The interface's only influence on the decoder is which pages it renders, which never reaches the network.
-- **Closing a tab** must keep its channel refreshing for a grace period defined in neoteletext (section 5.1). Not built: closing a tab stops its fetcher at once.
+- **Requests follow the trusted core's own state.** The trusted core asks a fetcher for a page, a sub-page, a part of a list or the listing from what it holds: the page the active tab's address names, the pages the interface says it shows of the active tab's channel, each checked against the protocol's bounds and asked once. Nothing the interface reports reaches another tab's channel (requirement 4.7, DEC-2356).
+- **The agent keeps the rate.** Every request goes through the engine's user agent, which spaces them by its request interval and holds a bounded queue.
+- **Closing a tab** stops its fetcher at once.
 
 ---
 
@@ -414,7 +417,7 @@ The cookie store is the engine's, which follows the cookie specification draft R
 The trusted core's address rules (`core/src/address.rs`) decide what may be opened and how the strip shows it:
 
 - `https` and `http` web addresses, with `https` assumed when no scheme is typed;
-- plain hosts only, letters, digits and hyphens, until internationalised names can be shown safely (requirement 11.3);
+- plain hosts only, letters, digits and hyphens: an internationalised name is opened and shown only in its ASCII `xn--` form, which no other script can imitate, and a host typed in Unicode is refused with a sentence saying how to type it (requirement 11.3, DEC-2340);
 - no user name before the host, the classic way to make an address look like another site's;
 - a port, if given, must be a number from 0 to 65535;
 - no hidden characters anywhere;
@@ -581,7 +584,7 @@ neoteletext-browser/
                             calendar, the console's entries, cookies (+ cookies/file.rs, the sealed file),
                             dropped lines, frames, hearing, history (+ history/search.rs), links (+ links/:
                             targets, destinations, the strip's questions, following), the outbox, private
-                            files, the session file (restore.rs), settings (+ settings/proxy.rs), sleep,
+                            files, the session file (session_file.rs), settings (+ settings/proxy.rs), sleep,
                             the start page, typing (+ typing/records.rs); and the binary: main.rs, the
                             entry alone, broker.rs, the unconfined broker, source.rs, a file channel's bytes
       src/session/          the tabs and windows: a tab, its history and navigation, its channel, closed
@@ -666,7 +669,7 @@ Unsafe code is allowed only in the modules requirement 10.12 names, each saying 
 - The wall on a live channel (31 October 2026; REQ-1558, REQ-1559): each tab's decoder keeps, over the engine's store, which pushed pages and sub-pages it holds, at most 128, how old each is and when it was last drawn (`native/decoder/src/page_cache.rs`, the `page-cache` feature). The source is the store's packets; nothing is an image. An entry older than 24 hours is dropped as it is about to be drawn. The decoder tells the trusted core which pages on screen it cannot draw, and the core selects them with the ordinary SELECT, one at a time in screen order, each after its frame or the channel's 5-second limit for answering, then SELECT page 0 (`native/core/src/trusted_core/wall_fill.rs`). The wall lays out at most 128 tiles. An entry dropped leaves its store slot until the engine reuses it: the engine's store has no removal, so the store's own size bounds that memory, not the cache's.
 - Hyperlinks, phases 1 and 2 of `hyperlinks.md` (20 October 2026), behind the `links` feature, on by default: page numbers found in the text and `LT`, `LK` and descriptor links, decided by the trusted core; the underline drawn by the interface; the destination and the web-browser prompt in the strip; the hand-off to the system's web browser (`web-opener`); `#302` page addresses.
 - Channel push over WebSocket, typing back to a channel, its cursor and the phone keyboard (`interaction.md`, decisions 45 and 46, 20 October 2026); input protocol version 2 (decision 48) and pasting into a page that takes input (decision 49), 21 October 2026.
-- Settings kept between runs with the bookmarks, the settings panel of the strip, Home and the start page `neoteletext:home`, the developer console, and HTTP and SOCKS5 proxies (`settings-home-console-proxy.md`, decision 51, 21 October 2026).
+- Settings kept between runs with the bookmarks, the settings panel of the strip, Home and the start page `neoteletext:home`, the developer console, and HTTP and SOCKS5 proxies (`settings-home-console-proxy.md`, decision 51, 21 October 2026). Since DEC-1652 the default home, which a new browser and a new tab open, is the home channel at `https://app.neottx.com/home/` (`HOME_CHANNEL` in `native/core/src/address.rs`); the built-in start page needs no network and opens in its place when nothing answers for it (DEC-2364).
 - History and bookmarks (`history-and-bookmarks.md`, decision 57, 22 October 2026): history kept 90 days with its panel, search and removal, private tabs, recently closed tabs, Back and Forward lists, address-field suggestions; bookmarks in folders with the star's popover, a manager, a bookmarks bar, import and export in this browser's format; the menu button's menu.
 - The session kept after every change and restored at start, with its setting (`history-and-bookmarks.md` section 15, decision 59, 22 October 2026).
 - The Colour Map of Levels 2.5 and 3.5 and the screen colour (decision 60), and page images in the browser's own form (decision 61), 22 October 2026.
@@ -691,15 +694,14 @@ Unsafe code is allowed only in the modules requirement 10.12 names, each saying 
 
 - Discovery results.
 - Any sandbox on Android or iOS; Windows helpers started apart from the console they were started from (decision 100 item 1, measured as needed in the virtual machine on 24 October 2026); the fetcher's connections made by the broker (decision 89);.
-- Sharing one decoder between tabs on the same channel (decision 11).
 - The grace period for closed tabs; the live-feed threshold; refresh schedules.
 - Discovery.
 - Full screen of the page alone (`full-screen.md`, decision 85, designed 23 October 2026).
-- Screen readers, the input method's text shown while it is composed, reduced motion.
+- Screen readers, reduced motion.
 - The hostile interface harness with the real helpers running (it runs against the trusted core with a stand-in broker and stand-in helpers).
 - A release signed by the owner's keys: the certificates, the hardware keys, the update host and the key ceremony are the owner's (rdm to-dos for the owner); the Linux release build on the C library 2.28.
 - Builds on phones and microcontroller targets.
-- Page numbers with a hexadecimal digit, which decision 119 accepts (`STANDARD-LIMITS.md` question 3); a server's catalogue of sub-pages, its titles by range and tuning by sub-page (decision 112 item 3), which await the server; a channel's IMA ADPCM and PCM16 sound on the desktops, by the owner's instruction (decision 121 item 7).
+- A server's catalogue of sub-pages, its titles by range and tuning by sub-page (decision 112 item 3), which await the server; a channel's IMA ADPCM and PCM16 sound on the desktops, by the owner's instruction (decision 121 item 7).
 
 ---
 

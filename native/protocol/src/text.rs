@@ -102,6 +102,22 @@ mod tests {
         }
     }
 
+    /// Finding F-36's receiving half (TODO-1278 item 5): a text field that
+    /// arrives with a run of combining marks longer than any script writes
+    /// has the run cut, as `clean` cuts it, rather than the pipe refused.
+    /// On the code before, the whole pile was taken as it came.
+    #[test]
+    fn a_run_of_combining_marks_that_arrives_is_cut() {
+        let piled = format!("a{}b", "\u{0301}".repeat(40));
+        let mut payload = u16::try_from(piled.len()).unwrap().to_be_bytes().to_vec();
+        payload.extend_from_slice(piled.as_bytes());
+        let received = Fields::new(&payload).text(1024).unwrap();
+        assert_eq!(received, format!("a{}b", "\u{0301}".repeat(MAX_COMBINING_RUN)));
+        let mut plain = u16::try_from("Ceefax".len()).unwrap().to_be_bytes().to_vec();
+        plain.extend_from_slice(b"Ceefax");
+        assert_eq!(Fields::new(&plain).text(1024).unwrap(), "Ceefax", "a clean text is as it came");
+    }
+
     /// What these scripts write stays as it is written: a syllable's marks
     /// are within the bound, and each new letter starts a new run.
     #[test]

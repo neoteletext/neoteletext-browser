@@ -34,6 +34,9 @@ fn bytes_of(size: usize) -> usize {
 // lists every kind of that pipe): strip input, then the trusted core's.
 pub(crate) const KIND_PHONE_PANEL: u8 = 28;
 pub(crate) const KIND_PHONE_FINISH: u8 = 29;
+/// The phone panel's value that asks to pair with a PIN (REQ-1386), beside
+/// 0 to close the panel and 1 to open it, so that no new kind is taken.
+pub(crate) const PHONE_PANEL_WITH_PIN: u8 = 2;
 pub(crate) const KIND_PHONE: u8 = 41;
 pub(crate) const KIND_PHONE_KEY: u8 = 42;
 

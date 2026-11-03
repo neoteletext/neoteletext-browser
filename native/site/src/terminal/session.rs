@@ -8,9 +8,9 @@ use neoteletext_input::digits::decimal_digit;
 use neoteletext_input::event::{ALT, Action, CONTROL, Event, Item, Key, KeyCode, MouseAction, SHIFT, units};
 use neoteletext_input::keys;
 
-use super::invaders::{FIELD_LEFT, FIELD_RIGHT, Invaders, SHIP_ROW};
-use super::pages::{Field, index};
-use super::sounds::{AUDIO_CHANNELS, AUDIO_SERVICE, BELL_HANDLE, CLICK_HANDLE, FIRE_HANDLE, FIRST_HANDLE, HIT_HANDLE, LOSE_HANDLE, PIANO, WIN_HANDLE};
+use super::invaders::Invaders;
+use super::pages::{index, typing_fields};
+use super::sounds::{AUDIO_CHANNELS, AUDIO_SERVICE, BELL_HANDLE, CLICK_HANDLE, FIRST_HANDLE, PIANO};
 use super::tti::{ALPHA_CYAN, ALPHA_MAGENTA, ALPHA_WHITE, ALPHA_YELLOW, Page, Row, USED};
 use super::{PAGES, Session, Settings};
 use crate::podcast::{self, Player};
@@ -31,10 +31,7 @@ impl Session {
             acked: 0,
             selection: String::new(),
             last_key: String::new(),
-            fields: [
-                Field { row: 5, column: 13, width: 20, text: String::new(), masked: false },
-                Field { row: 8, column: 13, width: 12, text: String::new(), masked: true },
-            ],
+            fields: typing_fields(),
             focus: 0,
             greeting: String::new(),
             invaders: Invaders::new(),
@@ -199,8 +196,7 @@ impl Session {
 
     /// Everything held is released: the game's ship stops, the note ends.
     fn release_all(&mut self) {
-        self.invaders.left = false;
-        self.invaders.right = false;
+        self.invaders.release();
         self.piano = None;
     }
 
@@ -219,16 +215,8 @@ impl Session {
         // rings on Enter.
         let sound = (self.page == 0x200).then_some(if name == Some("Enter") { BELL_HANDLE } else { CLICK_HANDLE });
         match (self.page, name, character) {
-            // A press moves at once; held, the ship keeps moving each frame.
-            (0x300, Some("ArrowLeft"), _) => {
-                self.invaders.left = true;
-                self.invaders.ship = (self.invaders.ship - 1).max(FIELD_LEFT);
-            }
-            (0x300, Some("ArrowRight"), _) => {
-                self.invaders.right = true;
-                self.invaders.ship = (self.invaders.ship + 1).min(FIELD_RIGHT - 2);
-            }
-            (0x300, Some("Enter"), _) if self.invaders.over.is_some() => self.invaders = Invaders::new(),
+            (0x300, _, _) if self.invaders.key_down(name) => {}
+            (0x200, _, _) if self.typing_key(name) => {}
             (0x400, _, _) => {
                 // By position on any layout, or by letter.
                 let letter = key.base.or(character).map(|character| character.to_ascii_lowercase());
@@ -246,20 +234,6 @@ impl Session {
             (0x700, Some("ArrowLeft"), _) => return self.listen(|player, episode, record_id| player.skip(episode, -podcast::SKIP_SECONDS, record_id)),
             (0x700, Some("ArrowRight"), _) => return self.listen(|player, episode, record_id| player.skip(episode, podcast::SKIP_SECONDS, record_id)),
             (0x700, Some("Enter"), _) => return self.listen(Player::restart),
-            (0x200, Some("Tab"), _) => self.focus = (self.focus + 1) % self.fields.len(),
-            (0x200, Some("Backspace"), _) => {
-                self.fields[self.focus].text.pop();
-            }
-            (0x200, Some("Escape"), _) => {
-                for field in &mut self.fields {
-                    field.text.clear();
-                }
-                self.greeting.clear();
-            }
-            (0x200, Some("Enter"), _) => {
-                let name = self.fields[0].text.trim().to_owned();
-                self.greeting = if name.is_empty() { "Type your name first.".to_owned() } else { format!("Hello, {name}!") };
-            }
             // A key's text types, held keys repeating it (DOC-1935).
             (_, _, Some(_)) if !control => {
                 let mut pushes = Vec::new();
@@ -274,10 +248,8 @@ impl Session {
     }
 
     fn up(&mut self, key: &Key<'_>) {
-        match key.key {
-            KeyCode::Functional(code) if keys::name(code) == Some("ArrowLeft") => self.invaders.left = false,
-            KeyCode::Functional(code) if keys::name(code) == Some("ArrowRight") => self.invaders.right = false,
-            _ => {}
+        if let KeyCode::Functional(code) = key.key {
+            self.invaders.key_up(keys::name(code));
         }
         if self.page == 0x400 {
             self.piano = None;
@@ -288,13 +260,7 @@ impl Session {
     /// selects a page, and on the typing page it goes into the field.
     fn character(&mut self, character: char) -> Vec<Push> {
         match (self.page, character) {
-            (0x300, ' ') => {
-                if self.invaders.shots.len() < 3 && self.invaders.over.is_none() {
-                    self.invaders.shots.push((self.invaders.ship + 1, SHIP_ROW - 1));
-                    return vec![self.play(FIRE_HANDLE)];
-                }
-                return Vec::new();
-            }
+            (0x300, ' ') => return self.fire(),
             (0x700, ' ') => return self.listen(Player::toggle),
             _ => {}
         }
@@ -302,29 +268,10 @@ impl Session {
             return Vec::new();
         }
         if self.page == 0x200 {
-            let field = &mut self.fields[self.focus];
-            if field.text.chars().count() < usize::from(field.width) && character.is_ascii() && !character.is_ascii_control() {
-                field.text.push(character);
-            }
+            self.fields[self.focus].type_character(character);
             return vec![self.play(CLICK_HANDLE)];
         }
         Vec::new()
-    }
-
-    /// One frame of the game: its sounds, then its page.
-    pub(super) fn frame(&mut self) -> Vec<Push> {
-        let happened = self.invaders.tick();
-        let mut pushes = Vec::new();
-        if happened.hit {
-            pushes.push(self.play(HIT_HANDLE));
-        }
-        match happened.over {
-            Some(true) => pushes.push(self.play(WIN_HANDLE)),
-            Some(false) => pushes.push(self.play(LOSE_HANDLE)),
-            None => {}
-        }
-        pushes.push(self.page_push());
-        pushes
     }
 }
 
@@ -351,4 +298,4 @@ fn describe(key: &Key<'_>) -> String {
 
 mod audio;
 #[cfg(test)]
-mod tests;
+pub(super) mod tests;

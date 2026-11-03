@@ -45,6 +45,8 @@ impl Core {
             #[cfg(feature = "phone-keyboard")]
             ToCore::PhonePanel(open) => self.phone_panel(open)?,
             #[cfg(feature = "phone-keyboard")]
+            ToCore::PhonePin => self.phone_with_pin()?,
+            #[cfg(feature = "phone-keyboard")]
             ToCore::PhoneFinish => {
                 if let Some((_, input)) = &mut self.phone {
                     let _ = protocol::keyboard::write_to_keyboard(input, &protocol::keyboard::ToKeyboard::Finish);

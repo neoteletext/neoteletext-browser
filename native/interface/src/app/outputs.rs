@@ -100,6 +100,8 @@ impl App {
             Output::PhonePanel(open) => ToCore::PhonePanel(open),
             #[cfg(feature = "phone-keyboard")]
             Output::PhoneFinish => ToCore::PhoneFinish,
+            #[cfg(feature = "phone-keyboard")]
+            Output::PhonePin => ToCore::PhonePin,
             Output::SelectTab(index) => ToCore::SelectTab(u8::try_from(index).ok()?),
             Output::CloseTab(index) => ToCore::CloseTab(u8::try_from(index).ok()?),
             Output::MoveTab { from, to } => ToCore::MoveTab { from: u8::try_from(from).ok()?, to: u8::try_from(to).ok()? },

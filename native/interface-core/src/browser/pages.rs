@@ -9,7 +9,7 @@ use crate::browser::Browser;
 use crate::browser::frames::PULSE_LIMIT;
 use crate::browser::overview::UPDATE_RING_MILLISECONDS;
 use crate::canvas::PageKey;
-use crate::channel::{Channel, PAGES_PER_BANK, PageInfo, Status, bank_indices, page_index, page_number};
+use crate::channel::{Channel, PAGES_PER_BANK, PageInfo, Status, bank_indices, is_channel_page, page_index, page_number};
 
 use crate::browser::page_list::{ROW_HEIGHT, rows_per_key};
 
@@ -76,9 +76,22 @@ impl Browser {
 
     /// The trusted core opened `key`: a link was followed, an address named
     /// it, or the channel redirected the tab. The page opens, zoomed. A page
-    /// not listed yet opens when it is.
+    /// not listed yet opens when it is. A page with a hexadecimal digit,
+    /// which only a link reaches and no list holds (REQ-300, REQ-313),
+    /// opens at once, with no row of the list chosen: the list holds the
+    /// keyable pages alone, and the strip's address names the page.
     pub fn show(&mut self, key: PageKey, now: u64) {
         if key.channel != self.channel.channel {
+            return;
+        }
+        if page_index(key.page).is_none() && is_channel_page(key.page) {
+            self.show_when_listed = None;
+            self.selected = None;
+            if self.wall.zoomed().is_some() {
+                self.wall.switch_zoom(key);
+            } else {
+                self.wall.zoom(key, now);
+            }
             return;
         }
         let listed = page_index(key.page).filter(|&index| matches!(self.channel.pages.get(index), Some(Some(_))));

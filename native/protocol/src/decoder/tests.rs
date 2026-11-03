@@ -129,16 +129,17 @@ fn page_controls_keep_their_bounds() {
         let fastext = Fastext {
             keys: [target(0x200, None, None), None, target(0x302, Some(4), None), target(0x101, None, Some(1)), target(0x100, None, None)],
             row24: true,
+            linked: true,
             prompts: [Some((1, 8)), None, Some((20, 10)), None],
         };
         let message = FromDecoder::Links { page: 0x100, with_image: true, candidates: Vec::new(), numbers: Vec::new(), controls: Vec::new(), fastext };
         let mut bytes = Vec::new();
         write_to_core(&mut bytes, &message).unwrap();
         assert_eq!(read_from_decoder(&mut bytes.as_slice()).unwrap().unwrap(), message);
-        let wrong = Fastext { keys: [target(0x0FF, None, None), None, None, None, None], row24: false, prompts: [None; 4] };
+        let wrong = Fastext { keys: [target(0x0FF, None, None), None, None, None, None], row24: false, linked: true, prompts: [None; 4] };
         let wrong = FromDecoder::Links { page: 0x100, with_image: true, candidates: Vec::new(), numbers: Vec::new(), controls: Vec::new(), fastext: wrong };
         assert!(write_to_core(&mut Vec::new(), &wrong).is_err(), "not a display page");
-        let wrong = Fastext { keys: [None; 5], row24: true, prompts: [Some((35, 6)), None, None, None] };
+        let wrong = Fastext { keys: [None; 5], row24: true, linked: false, prompts: [Some((35, 6)), None, None, None] };
         let wrong = FromDecoder::Links { page: 0x100, with_image: true, candidates: Vec::new(), numbers: Vec::new(), controls: Vec::new(), fastext: wrong };
         assert!(write_to_core(&mut Vec::new(), &wrong).is_err(), "a prompt past the row's end");
     }
@@ -172,12 +173,17 @@ fn a_decoder_cannot_send_what_it_may_not() {
 }
 
 /// Finding F-29: the trusted core never writes a decoder a page it would
-/// refuse, nor more pages than a channel has.
+/// refuse, nor more pages than a channel has. REQ-300: a page with a
+/// hexadecimal digit, reached by a link, is shown like any other; a number
+/// the standard reserves is no page.
 #[test]
-fn showing_holds_display_pages_and_no_more_than_a_channel_has() {
+fn showing_holds_channel_pages_and_no_more_than_a_channel_has() {
     let write = |pages: Vec<u16>| write_to_decoder(&mut Vec::new(), &ToDecoder::Showing(pages));
     assert!(write(vec![0x100, 0x899]).is_ok());
-    assert!(write(vec![0x100, 0x1A0]).is_err(), "a hexadecimal page");
+    assert!(write(vec![0x100, 0x1A0, 0x8FC]).is_ok(), "a hexadecimal page");
+    for reserved in [0x1FD, 0x2FE, 0x8FF, 0x1BE, 0x1F0, 0x0FF, 0x900] {
+        assert!(write(vec![0x100, reserved]).is_err(), "{reserved:X}");
+    }
     assert!(write(vec![0x100; PAGES + 1]).is_err(), "too many");
 }
 

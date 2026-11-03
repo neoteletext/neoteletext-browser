@@ -1019,3 +1019,38 @@ fn a_pages_controls_are_found_and_their_look_drawn_on_their_cells() {
     engine.set_look(0x128, None);
     assert_eq!(engine.render(0x128).unwrap().indices, plain.indices);
 }
+
+/// REQ-300: the decoder draws every page the standard defines, numbers 00
+/// to FE of every magazine with the digits A to F among them, but for
+/// those Annex A.10 reserves, with the store large enough to hold them. On
+/// the code before, only the 800 decimal pages were drawn.
+#[test]
+fn every_page_the_standard_defines_is_drawn() {
+    let pages: Vec<u16> = (0x100..=0x8FF).filter(|&page| interface_core::channel::is_channel_page(page)).collect();
+    assert_eq!(pages.len(), neoteletext_core::limits::USABLE_PAGE_NUMBERS);
+    let mut tti = String::new();
+    for page in &pages {
+        write!(tti, "PN,{page:03X}00\nSC,0000\nPS,8000\nOL,1,PAGE {page:03X}\n").unwrap();
+    }
+    let mut engine = Engine::with_store(MAX_STORE_PAGES);
+    engine.feed(tti.as_bytes());
+    engine.finish();
+    let undrawn: Vec<u16> = pages.iter().copied().filter(|&page| engine.render_at(page, 0).is_none()).collect();
+    assert_eq!(undrawn, Vec::<u16>::new());
+}
+
+/// REQ-300, REQ-286: a coloured key's target with a hexadecimal digit is
+/// kept, and a page with no link for any key says so, for Index to request
+/// the initial page; a page whose links are hidden is still linked.
+#[cfg(feature = "links")]
+#[test]
+fn a_key_to_a_hexadecimal_page_is_kept_and_a_page_without_links_says_so() {
+    let fastext =
+        engine_with(b"PN,10000\nSC,0000\nPS,8000\nOL,1,INDEX\nOL,24,\x1bAnews\nFL,1a0,8ff,8ff,8ff,8ff,8ff\n").render_at(0x100, 0).unwrap().links.fastext;
+    assert_eq!(fastext.keys[0].map(|target| target.page), Some(0x1A0));
+    assert!(fastext.linked);
+    let hidden = engine_with(b"PN,10000\nSC,0000\nPS,8000\nOL,1,INDEX\nFL,200,8ff,8ff,8ff,8ff,8ff\n").render_at(0x100, 0).unwrap().links.fastext;
+    assert!(hidden.linked && hidden.keys.iter().all(Option::is_none), "linked, with every key set aside");
+    let none = engine_with(b"PN,10000\nSC,0000\nPS,8000\nOL,1,INDEX\n").render_at(0x100, 0).unwrap().links.fastext;
+    assert!(!none.linked);
+}

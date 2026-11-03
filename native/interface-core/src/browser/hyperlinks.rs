@@ -12,7 +12,7 @@ use alloc::vec::Vec;
 
 use super::{Browser, Cursor, Key, Modifiers, Output};
 use crate::canvas::{Canvas, PageKey};
-use crate::geometry::Rect;
+use crate::geometry::{Point, Rect};
 use crate::links::{self, Area, LinkCell, LinkKind, Lit, PageLinks, Pointing, Prompt, PromptButton};
 use crate::text::{border, centred, left_centred};
 use crate::theme::{ADDRESS, BUTTON, FIELD_INK, INSECURE, LINK, LINK_INK, ROW_STATUS, ROW_TITLE, RULE, WHITE};
@@ -57,6 +57,10 @@ pub(super) struct LinkUi {
     pressing: Option<Area>,
     /// The control the channel was last told the pointer is on (HOVER).
     hovered_control: Option<(PageKey, Area)>,
+    /// The control under a contact on a touch screen, which shows the
+    /// pressed look while the contact is on it (REQ-1370, DEC-2385): the first
+    /// contact's that lies on one, since a page has one look at a time.
+    touched: Option<(u64, PageKey, Area)>,
 }
 
 impl LinkUi {
@@ -127,7 +131,7 @@ impl Browser {
     /// page and its place in reading order: a contact that begins on one is
     /// the browser's (REQ-RCH-048).
     #[cfg(feature = "interaction")]
-    pub(super) fn link_at(&self, point: crate::geometry::Point) -> Option<(PageKey, usize)> {
+    pub(super) fn link_at(&self, point: Point) -> Option<(PageKey, usize)> {
         let (key, rect) = self.wall.open()?;
         let (column, row) = cell_in(rect, point)?;
         self.links.pages.get(&key)?.run_at(column, row).map(|index| (key, index))
@@ -148,14 +152,15 @@ impl Browser {
     /// browser's, and lights as on any page (DOC-1947,
     /// decision 122).
     fn area_under_pointer(&self) -> Option<(PageKey, Area)> {
+        self.area_at(self.pointer, self.clicks_are_hosts())
+    }
+
+    /// The open page's control at `point` when `controls`, else its link.
+    fn area_at(&self, point: Point, controls: bool) -> Option<(PageKey, Area)> {
         let (key, rect) = self.wall.open()?;
         let links = self.links.pages.get(&key)?;
-        let (column, row) = cell_in(rect, self.pointer)?;
-        let area = if self.clicks_are_hosts() {
-            links.control_at(column, row)
-        } else {
-            links.runs.iter().find(|run| run.contains(column, row)).map(links::LinkRun::area)
-        };
+        let (column, row) = cell_in(rect, point)?;
+        let area = if controls { links.control_at(column, row) } else { links.runs.iter().find(|run| run.contains(column, row)).map(links::LinkRun::area) };
         Some((key, area?))
     }
 
@@ -182,7 +187,10 @@ impl Browser {
     /// pressed while the button that went down on the same area is held.
     pub(super) fn relight(&mut self) {
         let under = self.area_under_pointer();
-        let wanted = under.map(|(key, area)| Lit { key, area, pressed: self.links.pressing == Some(area) });
+        // A control under a contact is pressed, and takes the one look a
+        // page has; a finger never gives a hover look (REQ-1370).
+        let touched = self.links.touched.map(|(_, key, area)| Lit { key, area, pressed: true });
+        let wanted = touched.or_else(|| under.map(|(key, area)| Lit { key, area, pressed: self.links.pressing == Some(area) }));
         if wanted != self.links.lit {
             self.links.lit = wanted;
             self.outputs.push(Output::Lit(wanted));
@@ -203,6 +211,27 @@ impl Browser {
             }
             self.links.hovered_control = control;
         }
+    }
+
+    /// A contact of the channel's on the open page is at `point`, or ended
+    /// with `None` (REQ-1370, DEC-2385): the control under it takes the pressed
+    /// look, which ends as the contact ends or leaves the control. Only one
+    /// contact's control is lit, the first on one.
+    #[cfg(feature = "interaction")]
+    pub(super) fn touch_look(&mut self, contact: u64, point: Option<Point>) {
+        let mine = self.links.touched.is_none_or(|(touching, _, _)| touching == contact);
+        if mine {
+            // The contact is the channel's, so what is under it is a control.
+            let control = point.and_then(|point| self.area_at(point, true));
+            self.links.touched = control.map(|(key, area)| (contact, key, area));
+            self.relight();
+        }
+    }
+
+    /// No contact is the channel's any more: none presses a control.
+    #[cfg(feature = "interaction")]
+    pub(super) fn forget_touch_look(&mut self) {
+        self.links.touched = None;
     }
 
     /// The main button went down: the area under it is pressed.

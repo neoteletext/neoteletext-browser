@@ -146,6 +146,10 @@ impl Launcher {
             };
             let ended = start::start(self, chosen, arguments)?;
             lock.unlock().map_err(|error| io_text(&self.layout.lock(), &error))?;
+            // Asked to end: the broker was asked too, and nothing starts again.
+            if start::terminated() {
+                return Ok(ended.code);
+            }
             if let Chosen::Trial(version) = chosen
                 && !ended.healthy
             {

@@ -64,3 +64,11 @@ pub(super) const KIND_FETCH_PAGE: u8 = 143;
 // A part of a page's list that could not be fetched (REQ-1888), in the next
 // number.
 pub(super) const KIND_SUBPAGES_FAILED: u8 = 144;
+// A static channel's bundle settled, and its listing asked for when it is
+// wanted (REQ-703, DEC-997). 150 and 151, clear of the numbers other work
+// in flight on 3 November 2026 may take next.
+pub(super) const KIND_BUNDLE_SETTLED: u8 = 150;
+pub(super) const KIND_FETCH_CONTENTS: u8 = 151;
+// A connection whose opening ran out of its deadline (TODO-1277), in the
+// next number.
+pub(super) const KIND_TIMED_OUT: u8 = 145;

@@ -36,6 +36,8 @@ impl Core {
             && self.active_channel() == Some(key.channel)
         {
             strip.notice = format!("Loading page {:03X}, sub-page {subpage:04X}", key.page);
+        } else if let Some(text) = self.session.active_tab().and_then(|tab| tab.channel.helper_broke) {
+            strip.notice = String::from(text);
         }
         strip.denied = self.denial_shown();
         strip.failed = self.failure_shown();
@@ -69,16 +71,27 @@ impl Core {
         };
         let Some(failed) = failed else { return Ok(()) };
         let exemption = self.loopback_exemption.clone();
+        let home = self.settings.home.clone();
         let Some(tab) = self.session.all_tabs_mut().find(|tab| tab.channel.id == channel) else { return Ok(()) };
         if failed.1.is_some_and(|page| tab.channel.is_loaded(page)) {
             return Ok(());
         }
+        // The home address, when nothing answered for it, as with no
+        // network: the built-in start page, which needs none, opens in its
+        // place, and Back tries the home channel again (DEC-2364, REQ-847).
+        let unreached_home = file == RefusedFile::Channel && status.is_none() && tab.address().is_some_and(|address| address.text == home);
         tab.channel.failed = Some(failed);
         // Nothing answered a channel on this computer: on Windows, its
         // fetcher's container is the likely reason (TODO-1251).
         let blocked = (file == RefusedFile::Channel && status.is_none())
             .then(|| tab.address().and_then(|address| super::loopback::refused_text(address, exemption.as_deref())))
             .flatten();
+        if unreached_home && self.active_channel() == Some(channel) {
+            self.log(Level::Info, Some(channel), &format!("{home} was not reached: the start page opens instead"));
+            self.session.navigate(neoteletext::address::START_PAGE, false)?;
+            self.send_all()?;
+            return blocked.map_or(Ok(()), |text| self.say(text));
+        }
         if self.active_channel() == Some(channel) {
             match blocked {
                 Some(text) => self.say(text)?,
@@ -135,9 +148,26 @@ impl Core {
         None
     }
 
+    /// A helper that served every tab broke its protocol and was closed:
+    /// the strip says `text` as a notice, and every tab open goes on saying
+    /// it after the notice's time, until it is reloaded, not only the tab
+    /// in front for that time (REQ-683, requirement 4.3).
+    pub(super) fn shared_helper_broke(&mut self, text: &'static str) -> Result<(), String> {
+        for tab in self.session.all_tabs_mut() {
+            tab.channel.helper_broke = Some(text);
+        }
+        self.say(String::from(text))
+    }
+
     /// Says `text` in the strip for a while, and in the log.
     pub(super) fn say(&mut self, text: String) -> Result<(), String> {
-        self.log(Level::Warning, None, &text);
+        self.say_in(None, text)
+    }
+
+    /// [`Core::say`], its log line in `place`'s Log: a private tab's stays
+    /// in its own window.
+    pub(super) fn say_in(&mut self, place: Option<u32>, text: String) -> Result<(), String> {
+        self.log(Level::Warning, place, &text);
         let now = std::time::Instant::now();
         self.notice = Some((text, now.checked_add(NOTICE_TIME).unwrap_or(now)));
         self.send(&ToInterface::Strip(self.strip()))

@@ -2,7 +2,8 @@
 //! channel holds a push connection is live, and never sleeps. A tab with
 //! nothing live (a static channel already fetched, or a file) has its
 //! decoder closed while it sleeps; its fetcher is never closed or paused,
-//! since fetching never depends on viewing (decision 22). A tab is awake
+//! but it fetches only what is asked of it, as a page is wanted (REQ-703),
+//! so a sleeping tab costs its server nothing. A tab is awake
 //! while it is the active one, while its channel holds a push connection,
 //! while its sound plays, and for [`SLEEP_AFTER`] after it was last shown;
 //! a tab restored with a session, never shown and with nothing live, sleeps
@@ -10,7 +11,8 @@
 //! kept, and given to a new decoder when the tab wakes, so its pages are
 //! there at once; a file channel's file is its own copy, read again from
 //! its start (`Source::rewind`). A decoder at rest takes 6.2 MB (measured
-//! 21 October 2026).
+//! 21 October 2026). A channel number here is a tab's (DEC-1527): two tabs
+//! on one channel never share kept data or a wake state.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::time::{Duration, Instant};
@@ -62,14 +64,14 @@ impl Sleep {
         kept.messages.push(message);
     }
 
-    /// Whether everything the channel's decoder was given is kept: false
+    /// Whether everything the tab's decoder was given is kept: false
     /// once it grew past [`MAX_KEPT_BYTES`].
     #[must_use]
     pub fn has_everything(&self, channel: u32) -> bool {
         !self.kept.get(&channel).is_some_and(|kept| kept.overflowed)
     }
 
-    /// What the channel's decoder was given, to give a new one.
+    /// What the tab's decoder was given, to give a new one.
     #[must_use]
     pub fn kept(&self, channel: u32) -> &[ToDecoder] {
         self.kept.get(&channel).map_or(&[], |kept| &kept.messages)
@@ -85,7 +87,7 @@ impl Sleep {
         self.sounding = channels.iter().copied().collect();
     }
 
-    /// Whether the channel's fetcher holds a push connection.
+    /// Whether the tab's fetcher holds a push connection.
     pub fn set_pushing(&mut self, channel: u32, open: bool) {
         if open {
             self.pushing.insert(channel);

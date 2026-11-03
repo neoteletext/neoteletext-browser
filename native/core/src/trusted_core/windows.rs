@@ -3,7 +3,7 @@
 //! kept after every change (requirement 20.21).
 
 use neoteletext::frames;
-use neoteletext::restore::Saved;
+use neoteletext::session_file::Saved;
 use protocol::console::Level;
 use protocol::decoder::ToDecoder;
 use protocol::{ToCore, ToInterface};
@@ -56,6 +56,9 @@ impl Core {
             return false;
         }
         self.park_shown(from);
+        // The strip's notice was the other window's, perhaps a private
+        // one's, and is not said in this one.
+        self.notice = None;
         let next = self.shown_elsewhere.remove(&id).unwrap_or_default();
         self.frames = next.frames;
         self.showing = next.showing;
@@ -395,6 +398,7 @@ mod tests {
         let shown: Vec<String> =
             test.core.console.updates(test.core.active_channel()).into_iter().flat_map(|update| update.entries).map(|entry| entry.text).collect();
         assert!(!shown.iter().any(|text| text.contains("ftp")), "{shown:?}");
+        assert_eq!(test.core.strip().notice, "", "nor does its refusal's notice in the strip");
     }
 
     /// Requirements 20.21 and 20.22: the session is written after every
@@ -423,5 +427,96 @@ mod tests {
         test.core.session.active = 1;
         test.core.keep_session();
         assert_eq!(kept(&test).tab_count(), 1, "a private tab is never kept");
+    }
+}
+
+/// The whole window flow, from the interface's intents, against the
+/// stand-in broker that starts and ends the windows' helpers.
+#[cfg(all(test, unix))]
+#[allow(clippy::unwrap_used, clippy::indexing_slicing, reason = "a test")]
+mod flow_tests {
+    use super::super::test_support::{core_watched, sent_to_interface};
+    use super::*;
+    use confine::broker::stand_in::{StandIn, Started};
+    use confine::broker::{Program, Request};
+
+    /// What the stand-in broker reads as the first window's file channel.
+    const FILE: &str = "/tmp/news.tti";
+    /// A line of that file as the test's stand-in reads it
+    /// (`test_support::core_writing_to`).
+    const FILE_LINE: &[u8] = b"OL,1,A";
+    /// Ceiling on the stand-in's account once the core has gone.
+    const FINISH_WITHIN: std::time::Duration = std::time::Duration::from_secs(10);
+
+    /// The helpers started since `seen` of them were, of `program`.
+    fn started_since(stand_in: &StandIn, seen: &mut usize, program: Program) -> Vec<Started> {
+        let started = stand_in.started();
+        let new = started[*seen..].iter().filter(|helper| helper.program == program).cloned().collect();
+        *seen = started.len();
+        new
+    }
+
+    fn killed(requests: &[Request]) -> Vec<u32> {
+        requests.iter().filter_map(|request| if let Request::Kill(id) = request { Some(*id) } else { None }).collect()
+    }
+
+    // REQ-760, DEC-965, TODO-1257: a window opened by the interface's intent
+    // is told to the interface and starts a decoder for its tab; a tab moved
+    // into it keeps its decoder, and the window it left, empty, closes; a
+    // private window's decoder is never given another window's channel file;
+    // and a window closed ends its tabs' decoders and fetchers.
+    #[test]
+    fn a_window_opened_moved_into_and_closed_starts_and_ends_its_helpers() {
+        let (mut core, stand_in, written) = core_watched(FILE);
+        let first = core.session.window;
+        let file_channel = core.session.tabs[0].channel.id;
+        let mut seen = 0;
+
+        core.intent(ToCore::NewWindow { private: false }).unwrap();
+        let second = core.session.window;
+        assert_ne!(second, first);
+        let sent = sent_to_interface(&mut core, &written);
+        assert_eq!(sent.first(), Some(&ToInterface::OpenWindow { window: second, geometry: None }), "the interface opens it");
+        assert!(sent.iter().any(|message| matches!(message, ToInterface::Tabs { tabs, .. } if tabs.len() == 1)), "and is sent its strip");
+        let home_channel = core.session.tabs[0].channel.id;
+        assert!(core.decoders.contains_key(&home_channel), "its tab's decoder");
+        let decoders = started_since(&stand_in, &mut seen, Program::Decoder);
+        assert_eq!(decoders.len(), 2, "the new window's tab's decoder, and the first window's, which the flush wakes: {decoders:?}");
+        let _ = stand_in.take_requests();
+
+        core.intent(ToCore::From(first)).unwrap();
+        core.intent(ToCore::TabToWindow { tab: 0, window: second, index: 1 }).unwrap();
+        let sent = sent_to_interface(&mut core, &written);
+        assert!(sent.contains(&ToInterface::CloseWindow(first)), "the window left empty closes");
+        assert_eq!(core.session.window_ids(), vec![second]);
+        core.switch_window(second);
+        let channels: Vec<u32> = core.session.tabs.iter().map(|tab| tab.channel.id).collect();
+        assert_eq!(channels, [home_channel, file_channel], "the tab moved, its channel with it");
+        assert!(core.decoders.contains_key(&file_channel), "its decoder kept");
+        assert_eq!(started_since(&stand_in, &mut seen, Program::Decoder), [], "none started again");
+        assert_eq!(killed(&stand_in.take_requests()), [] as [u32; 0], "none ended");
+
+        core.intent(ToCore::NewWindow { private: true }).unwrap();
+        let private = core.session.window;
+        let private_channel = core.session.tabs[0].channel.id;
+        let private_decoder = started_since(&stand_in, &mut seen, Program::Decoder);
+        assert_eq!(private_decoder.len(), 1, "the private window's tab's decoder");
+        assert!(core.fetchers.contains_key(&private_channel), "and its fetcher");
+        let _ = stand_in.take_requests();
+
+        core.intent(ToCore::From(private)).unwrap();
+        core.intent(ToCore::CloseWindow).unwrap();
+        assert!(!core.session.window_ids().contains(&private));
+        assert!(!core.decoders.contains_key(&private_channel) && !core.fetchers.contains_key(&private_channel), "its helpers are ended");
+        assert!(killed(&stand_in.take_requests()).contains(&private_decoder[0].id), "its decoder killed at once");
+        assert!(core.decoders.contains_key(&file_channel) && core.decoders.contains_key(&home_channel), "the other window's are not");
+
+        drop(core);
+        let written = stand_in.finish(FINISH_WITHIN).unwrap();
+        let given_the_file = |id: u32| {
+            written.iter().find(|written| written.helper.id == id).is_some_and(|written| written.bytes.windows(FILE_LINE.len()).any(|bytes| bytes == FILE_LINE))
+        };
+        assert!(!given_the_file(private_decoder[0].id), "the private window's decoder was never given the file");
+        assert!(decoders.iter().any(|decoder| given_the_file(decoder.id)), "the file's own decoder was");
     }
 }

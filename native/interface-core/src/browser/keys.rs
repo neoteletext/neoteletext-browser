@@ -222,8 +222,11 @@ impl Browser {
             "]" if self.strip.forward => self.outputs.push(Output::Forward),
             "d" => self.outputs.push(Output::Bookmark),
             // The wall of pages and its page size bar, or the page alone
-            // (decision 126): Command-G on macOS, Control-Shift-G elsewhere.
-            "g" => self.toggle_wall(now),
+            // (decision 126): Command-G on macOS, Control-Shift-G elsewhere
+            // (REQ-772), where Control-G alone is not taken. The frame with
+            // its own window buttons is the platform other than macOS, as
+            // `keys_named` has it.
+            "g" if modifiers.shift || !self.frame.window_buttons => self.toggle_wall(now),
             _ => return false,
         }
         true

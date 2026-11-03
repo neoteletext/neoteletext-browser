@@ -254,8 +254,8 @@ Only on the page that is open: the zoomed page, or the single page at the end of
 
 ### 10.2 The pointer
 
-- **Resting on a link** for half a second shows a popover beside the pointer, over everything, with its complete destination (REQ-1660): a channel's whole address, a web page's with "(opens in your web browser)", or a page of this channel. It wraps and is never cut; one taller than the window scrolls with the wheel. It is a tip, in the interface's own text, from what the trusted core sends for the pointed link alone. A press puts it away until the pointer leaves the link, and leaving or a change of the link puts it away. It shows in full screen too. A finger has no hover, so touch has none.
-- **Pointing at a link** shows its destination in the trusted strip, in the place of the status line, cleaned as all untrusted text is (requirement 11.5). For example: "Page 302", "Page 302 of weather.example (leaves this channel)", or "www.example.com/story (opens in your web browser)". Hosts are shown with the address rules, and internationalised names safely (requirement 11.3).
+- **Resting on a link** for half a second shows a popover beside the pointer, over everything below the strip and never over the strip (DEC-2387), with its complete destination (REQ-1660): a channel's whole address, a web page's with "(opens in your web browser)", or a page of this channel. It wraps and is never cut; one taller than the window below the strip scrolls with the wheel. It is a tip, in the interface's own text, from what the trusted core sends for the pointed link alone. A press puts it away until the pointer leaves the link, and leaving or a change of the link puts it away. It shows in full screen too. A finger has no hover, so touch has none.
+- **Pointing at a link** shows its destination in the trusted strip, in the place of the status line, cleaned as all untrusted text is (requirement 11.5). For example: "Page 302", "Page 302 of weather.example (leaves this channel)", or "www.example.com/story (opens in your web browser)". Hosts are shown with the address rules, and internationalised names only in their ASCII `xn--` form (requirement 11.3, DEC-2340).
 - **Clicking a link** follows it (section 11) only if all of these hold:
   - the click's frame version is one the core holds for that page;
   - the target resolved from that frame's links **equals the target the strip is showing** at that moment;
@@ -295,7 +295,7 @@ One prompt at a time per window: a second web link replaces the first prompt, an
 
 **What may be handed over.** Only an `https` or `http` address that the core's address rules accept:
 - parsed, not matched by prefix;
-- with a host of letters, digits, hyphens and dots only, as the address rules require today (internationalised hosts are refused until they can be shown safely, requirement 11.3);
+- with a host of letters, digits, hyphens and dots only, as the address rules require today (an internationalised host only in its ASCII `xn--` form, and one in Unicode refused with the way to type it, requirement 11.3 and DEC-2340);
 - with no user name and no hidden characters;
 - at most 8,000 bytes (neoteletext-common's REQ-1661);
 - **re-serialised by the core from its parsed parts** (scheme, host, port, path, query). The original string is never passed on, and an address that does not round-trip (a backslash, a percent-encoded host, anything the parser had to guess at) is refused. This removes any difference between how the core read the address and how the operating system or the web browser will.

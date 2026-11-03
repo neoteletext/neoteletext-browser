@@ -4,7 +4,7 @@
 #![no_main]
 
 use libfuzzer_sys::fuzz_target;
-use neoteletext::restore::{MAX_ENTRIES, MAX_FILE, MAX_TABS, MAX_WINDOWS, Saved};
+use neoteletext::session_file::{MAX_ENTRIES, MAX_FILE, MAX_TABS, MAX_WINDOWS, Saved};
 
 fuzz_target!(|data: &[u8]| {
     let text = String::from_utf8_lossy(data);

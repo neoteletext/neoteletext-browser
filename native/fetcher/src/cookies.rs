@@ -7,7 +7,7 @@
 //! wrote (requirement 3.2, DEC-1765).
 
 use std::cell::{Cell, RefCell};
-use std::io::{self, BufWriter, Write};
+use std::io::{BufWriter, Write};
 use std::rc::Rc;
 use std::sync::mpsc::Receiver;
 use std::time::Duration;
@@ -20,8 +20,9 @@ use protocol::fetcher::{CookieSameSite, CookieSite, FromFetcher, ToFetcher, writ
 /// and never uses: it can hold no cookie at all.
 pub type UnusedJar = CookieJar<0, 0>;
 
-/// The fetcher's standard output, shared by its loop and this store.
-pub type Output = Rc<RefCell<BufWriter<io::Stdout>>>;
+/// The fetcher's standard output, or a test's pipe in its place, shared by
+/// its loop and this store.
+pub type Output = Rc<RefCell<BufWriter<Box<dyn Write>>>>;
 
 /// How long the fetcher waits for an answer. The trusted core answers from
 /// memory as soon as it reads the question; one that has not answered in
@@ -30,11 +31,17 @@ pub type Output = Rc<RefCell<BufWriter<io::Stdout>>>;
 const ANSWER_LIMIT: Duration = Duration::from_secs(2);
 
 /// The cookies of the fetcher's channel, kept by the trusted core.
-#[derive(Debug)]
 pub struct CoreCookies {
     output: Output,
     answers: Receiver<ToFetcher>,
     next: Cell<u32>,
+}
+
+impl std::fmt::Debug for CoreCookies {
+    // The pipe it writes to says nothing worth showing.
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.debug_struct("CoreCookies").field("next", &self.next).finish_non_exhaustive()
+    }
 }
 
 impl CoreCookies {
@@ -177,7 +184,7 @@ mod tests {
             }
         );
         let (_answers_in, answers) = std::sync::mpsc::channel();
-        let output = Rc::new(RefCell::new(BufWriter::new(io::stdout())));
+        let output: Output = Rc::new(RefCell::new(BufWriter::new(Box::new(std::io::sink()))));
         let mut store = CoreCookies::new(output, answers);
         assert_eq!(store.store_within(b"a=\n", "a.example", "/", None, true, 0, true), Err(CookieRejected::ControlCharacter));
     }

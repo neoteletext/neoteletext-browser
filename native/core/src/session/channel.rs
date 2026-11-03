@@ -45,6 +45,21 @@ pub enum RedirectBy {
     Program,
 }
 
+/// How far a static channel's files have come (REQ-703).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Files {
+    /// Its bundle has not settled: a page may yet be in it.
+    #[default]
+    Opening,
+    /// Its bundle was answered, refused or found missing, so a page's own
+    /// file can be asked for: the service is open, and what its bundle held
+    /// has gone to its decoder.
+    BundleSettled,
+    /// Its contents file was asked for too, which is done once, when its
+    /// listing is first wanted.
+    ContentsAsked,
+}
+
 /// One channel shown in a tab: the pages its contents file lists and the
 /// pages its decoder has reported.
 pub struct ChannelState {
@@ -68,13 +83,17 @@ pub struct ChannelState {
     /// Its certificate was refused, and why, until its contents next arrive
     /// (`certificate-errors.md`, decision 83).
     pub refused: Option<CertificateProblem>,
-    /// Its contents file was answered, or there is none, so a page's own
-    /// file can be asked for: the service is open, and what its bundle held
-    /// has come (REQ-703).
-    pub contents_settled: bool,
+    /// How far a static channel's opening has come (REQ-703).
+    pub files: Files,
+    /// The pages asked for by their own files, each once until it arrives
+    /// or is refused (REQ-703).
+    pub asked: std::collections::BTreeSet<u16>,
     /// How often its page on screen is asked for again, from its
     /// `channel.ttx` (REQ-704).
     pub refresh: Option<std::time::Duration>,
+    /// When its page on screen is next asked for again, while its tab is
+    /// in front of a window (REQ-704).
+    pub next_refresh: Option<std::time::Instant>,
     /// A restored file not yet read: it is read when its tab is first
     /// shown (finding F-53).
     unread: Option<std::path::PathBuf>,
@@ -101,6 +120,11 @@ pub struct ChannelState {
     /// protocol stands until the tab is reloaded, which makes a new channel
     /// (REQ-683); a refused file until a page draws (REQ-708).
     pub failed: Option<(Failed, Option<u16>)>,
+    /// A helper that served every tab, the sound helper or the phone
+    /// keyboard, broke its protocol and was closed: said in the strip of
+    /// each tab open then, in the trusted core's own words, until the tab
+    /// is reloaded, which makes a new channel (REQ-683, requirement 4.3).
+    pub helper_broke: Option<&'static str>,
 }
 
 impl ChannelState {
@@ -161,8 +185,10 @@ impl ChannelState {
             web,
             problem,
             refused: None,
-            contents_settled: false,
+            files: Files::Opening,
+            asked: std::collections::BTreeSet::new(),
             refresh: None,
+            next_refresh: None,
             unread: None,
             live: false,
             connecting: false,
@@ -172,6 +198,7 @@ impl ChannelState {
             since_selected: SinceSelected::default(),
             denied: None,
             failed: None,
+            helper_broke: None,
         }
     }
 
@@ -226,13 +253,6 @@ impl ChannelState {
         *loaded = true;
         let title = self.titles.get_mut(index)?.get_or_insert_with(|| clean(title, MAX_PAGE_TITLE)).clone();
         Some(title)
-    }
-
-    /// Whether `page` is on its way or here: listed by the contents file,
-    /// whose pages are fetched in turn, or arrived.
-    #[must_use]
-    pub fn is_known(&self, page: u16) -> bool {
-        page_index(page).and_then(|index| self.titles.get(index)).is_some_and(Option::is_some)
     }
 
     /// Whether `page` has arrived.

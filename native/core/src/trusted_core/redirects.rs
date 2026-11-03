@@ -62,9 +62,10 @@ impl Core {
             let marked = core.session.redirect_page(channel, page, subpage, parameters);
             core.say_passed_over(channel, marked);
             let key = PageKey { channel, page };
+            // The redirect is the tab's selection, told already, whether its
+            // page opens now or when its tab is shown.
+            core.select_redirected(key, sub)?;
             if core.active_channel() != Some(channel) {
-                // Its tab opens the page when it is shown.
-                core.select_redirected(key, sub)?;
                 core.keep_session();
                 return Ok(());
             }

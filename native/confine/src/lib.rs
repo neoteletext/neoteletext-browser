@@ -56,6 +56,8 @@ mod unix;
 mod windows;
 
 pub use environment::environment;
+#[cfg(windows)]
+pub use identity::opened_path;
 pub use identity::{FileIdentity, file_identity};
 #[cfg(target_os = "linux")]
 #[doc(hidden)]
@@ -64,6 +66,8 @@ pub use process::{Input, Output, Process};
 pub use role::{Report, Role};
 pub use spawn::{Spawn, apply, spawn};
 pub use time::{LocalTime, MAX_OFFSET, local_time};
+#[cfg(unix)]
+pub use unix::{DESCRIPTORS_NEEDED, TERMINATION_SIGNALS, raise_descriptor_limit, termination_requests};
 #[cfg(windows)]
 pub use windows::{ForeignWindow, grant_packages_read, pointer_in_window, remove_containers};
 

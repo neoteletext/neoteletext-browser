@@ -293,3 +293,21 @@ fn the_address_waits_for_a_redirect_to_arrive() {
     assert_eq!(shown(&test), before);
     assert_eq!(test.core.strip().redirecting, "https://new.invalid/");
 }
+
+// REQ-749: an address the trusted core refuses is said in the strip, in its
+// own words, where the viewer pressed Enter; the next address that opens
+// takes it away. On the code before it went to the Log alone.
+#[test]
+fn a_refused_address_says_why_in_the_strip() {
+    let (mut test, _channel) = arrived("refused");
+    let before = shown(&test);
+    test.core.intent(ToCore::Navigate("ftp://x/".into())).unwrap();
+    let said = test.sent().into_iter().rev().find_map(|message| if let ToInterface::Strip(strip) = message { Some(strip.notice) } else { None });
+    let reason = neoteletext::address::parse_typed("ftp://x/").unwrap_err();
+    assert_eq!(said.as_deref(), Some(reason.as_str()), "the strip says the trusted core's reason");
+    assert_eq!(shown(&test), before, "nothing opened");
+    // This trusted core has no broker to start the new channel's helpers,
+    // which fails after the address is taken; the reason has gone by then.
+    let _no_broker = test.core.intent(ToCore::Navigate("https://other.invalid/".into()));
+    assert_eq!(test.core.strip().notice, "", "an address that opens ends the reason");
+}

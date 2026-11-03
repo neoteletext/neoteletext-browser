@@ -499,6 +499,11 @@ fn a_held_link_is_followed_by_a_cell_intent(core: &mut Core, watch: &mut Watch) 
 #[test]
 #[allow(clippy::arithmetic_side_effects, reason = "a test's counts")]
 fn the_core_stands_against_a_hostile_interface() {
+    // The broker raises the limit on open files the core inherits; here the
+    // core, the stand-in and its helpers' ends of their pipes are all in this
+    // one process, which macOS starts with room for 256.
+    #[cfg(unix)]
+    confine::raise_descriptor_limit().unwrap();
     let folder = std::env::temp_dir().join(format!("neoteletext-hostile-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&folder);
     std::fs::create_dir_all(&folder).unwrap();

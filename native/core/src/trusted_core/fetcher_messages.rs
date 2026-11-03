@@ -40,11 +40,10 @@ impl Core {
                     fetcher.hear();
                 }
             }
-            FromFetcher::Contents(entries) => {
-                self.contents(channel, &entries)?;
-                self.contents_settled(channel);
-            }
-            FromFetcher::NoContents => self.contents_settled(channel),
+            FromFetcher::Contents(entries) => self.contents(channel, &entries)?,
+            // It lists nothing, and the Log has said why.
+            FromFetcher::NoContents => {}
+            FromFetcher::BundleSettled => self.bundle_settled(channel),
             FromFetcher::Refresh(seconds) => self.refresh_declared(channel, seconds),
             FromFetcher::Page { origin: Origin::Fetched, bytes } => {
                 // Untouched, a piece at a time; each page file ends its last
@@ -66,7 +65,12 @@ impl Core {
             }
             FromFetcher::Notice(text) => self.log(Level::Warning, Some(channel), &format!("channel {channel}: {}", clean(&text, MAX_NOTICE))),
             FromFetcher::Denied { status, place } => self.denied(channel, status, &place)?,
-            FromFetcher::Refused { file, status } => self.refused(channel, file, status)?,
+            FromFetcher::Refused { file, status } => {
+                if let protocol::fetcher::RefusedFile::Page(page) = file {
+                    self.page_refused(channel, page);
+                }
+                self.refused(channel, file, status)?;
+            }
             FromFetcher::Redirected(location) => self.redirected(channel, &location)?,
             FromFetcher::PageRedirect { page, sub, query } => self.page_redirected(channel, page, sub, query.as_deref())?,
             FromFetcher::ProgramRedirect(location) => self.program_redirected(channel, &location)?,
@@ -74,6 +78,7 @@ impl Core {
             // the strip shows it: a fetcher cannot write the strip.
             FromFetcher::CertificateRefused(problem) => self.certificate_refused(channel, problem)?,
             FromFetcher::ProxyFailed => self.proxy_failed(channel)?,
+            FromFetcher::TimedOut => self.timed_out(channel)?,
             FromFetcher::Exchange { .. } => {}
             message @ (FromFetcher::CookieQuestion { .. }
             | FromFetcher::ReachedQuestion { .. }
@@ -242,9 +247,22 @@ impl Core {
     /// The proxy refused a connection of `channel`: said in the strip when
     /// it is the active channel, logged when not.
     fn proxy_failed(&mut self, channel: u32) -> Result<(), String> {
+        self.connection_failed(channel, |host| format!("The proxy refused the connection to {host}"))
+    }
+
+    /// A connection of `channel` did not open in time (TODO-1277): said in
+    /// the trusted core's own words, as the proxy's failure is, and not as
+    /// a certificate refused.
+    fn timed_out(&mut self, channel: u32) -> Result<(), String> {
+        self.connection_failed(channel, |host| format!("{host} did not answer in time"))
+    }
+
+    /// A connection of `channel` failed, as `text` says of its host: its
+    /// channel's Log, and the strip when the tab is in front.
+    fn connection_failed(&mut self, channel: u32, text: impl FnOnce(&str) -> String) -> Result<(), String> {
         let host = self.session.tabs.iter().find(|tab| tab.channel.id == channel).and_then(|tab| tab.address()).map(|address| address.host.clone());
         if let Some(host) = host {
-            let text = format!("The proxy refused the connection to {host}");
+            let text = text(&host);
             self.console.log(Some(channel), Level::Warning, self.now(), &text);
             if self.active_channel() == Some(channel) {
                 self.say(text)?;
@@ -309,6 +327,25 @@ mod tests {
         assert_eq!(test.core.typing.selection(channel), Some((0x302, neoteletext_core::limits::SUBCODE_ANY)));
     }
 
+    /// TODO-1277: a connection that did not open in time is said in the
+    /// strip and the channel's Log as the channel not answering in time,
+    /// and no certificate is shown as refused.
+    #[test]
+    fn a_connection_out_of_time_is_said_and_refuses_no_certificate() {
+        use protocol::fetcher::FromFetcher;
+        let mut test = Test::new("timed out");
+        test.core.session.open("news.invalid").unwrap();
+        let channel = test.core.session.tabs[0].channel.id;
+        test.core.fetched(channel, FromFetcher::TimedOut).unwrap();
+        let strip = test.core.strip();
+        assert_eq!(strip.notice, "news.invalid did not answer in time");
+        assert_eq!(strip.refused, None, "no certificate refused");
+        test.core.console.set_open(true);
+        let logged =
+            test.core.console.updates(Some(channel)).iter().flat_map(|update| update.entries.iter()).any(|entry| entry.text.contains("did not answer in time"));
+        assert!(logged, "said in the channel's Log");
+    }
+
     /// Requirement 7.13: a channel's refused certificate reaches its strip
     /// and the Log once, and goes when the channel's contents arrive.
     #[test]
@@ -331,6 +368,75 @@ mod tests {
         test.core.fetched(channel, FromFetcher::Contents(Vec::new())).unwrap();
         let strips: Vec<_> = test.sent().into_iter().filter_map(|message| if let ToInterface::Strip(strip) = message { Some(strip) } else { None }).collect();
         assert_eq!(strips.last().map(|strip| strip.refused), Some(None));
+    }
+
+    // TODO-1531 item 3, DOC-1956: a LOG record's line reaches the console's
+    // Log of its own channel only, marked as the channel's, with its level and
+    // page, and cleaned of what the console does not show.
+    #[test]
+    fn a_channels_log_line_is_in_its_own_log_marked_as_the_channels() {
+        use interface_core::console::Level;
+        use protocol::fetcher::FromFetcher;
+        let mut test = Test::new("channel log");
+        test.core.session.open("https://news.invalid/teletext/").unwrap();
+        let channel = test.core.session.tabs[0].channel.id;
+        test.core.session.open("https://other.invalid/teletext/").unwrap();
+        let other = test.core.session.tabs[1].channel.id;
+        test.core.fetched(channel, FromFetcher::ChannelLog { level: Level::Warning, page: Some(0x302), text: "Feed\u{202E} late".into() }).unwrap();
+        test.core.fetched(channel, FromFetcher::ChannelLog { level: Level::Info, page: None, text: "Started".into() }).unwrap();
+        test.core.console.set_open(true);
+        let logged = |test: &mut Test, channel| -> Vec<(Level, String)> {
+            test.core
+                .console
+                .updates(Some(channel))
+                .iter()
+                .flat_map(|update| update.entries.clone())
+                .filter(|entry| entry.tab == ConsoleTab::Log && entry.text.starts_with("channel"))
+                .map(|entry| (entry.level, entry.text))
+                .collect()
+        };
+        assert_eq!(logged(&mut test, channel), [(Level::Warning, "channel, page 302: Feed late".to_owned()), (Level::Info, "channel: Started".to_owned())]);
+        assert_eq!(logged(&mut test, other), [], "another channel's Log has none of it");
+    }
+
+    // DEC-1527, REQ-714, TODO-1534 item 3: a tab whose connection is lost
+    // and opens again starts a session of its own on its own fetcher; the
+    // other tab on the same channel is told nothing, keeps its selection and
+    // its session, and stays live.
+    #[cfg(all(unix, feature = "interaction"))]
+    #[test]
+    fn a_tabs_reconnection_leaves_the_other_tab_on_its_channel_untouched() {
+        use super::super::test_support::{core_on, input_items, sent_to_fetcher, wire};
+        use protocol::fetcher::FromFetcher;
+        const LIVE: &str = "https://live.invalid/teletext/";
+        // The stand-in broker starts the decoders a live tab wakes.
+        let (mut core, _stand_in) = core_on(LIVE);
+        let first = core.session.tabs[0].channel.id;
+        core.session.open(LIVE).unwrap();
+        let second = core.session.tabs[1].channel.id;
+        assert_ne!(first, second, "a channel number each");
+        let _ = core.typing.select(first, 0x200, neoteletext_core::limits::SUBCODE_ANY, "", 0);
+        let _ = core.typing.select(second, 0x500, 2, "", 0);
+        let (first_wire, second_wire) = (wire(&mut core, first), wire(&mut core, second));
+        core.fetched(second, FromFetcher::Pushing(true)).unwrap();
+        // Long after it was last seen, a tab is awake only while it is live.
+        let later = std::time::Instant::now() + 2 * neoteletext::sleep::SLEEP_AFTER;
+        let second_before = (core.typing.selection(second), core.sleep.awake(second, None, later));
+        assert!(second_before.1, "live");
+
+        for (pushing, open) in [(false, false), (true, true)] {
+            core.fetched(first, FromFetcher::Pushing(pushing)).unwrap();
+            core.fetched(first, FromFetcher::Input { open, secure: true }).unwrap();
+        }
+        let hello = input_items(&sent_to_fetcher(&mut core, first, &first_wire));
+        assert!(matches!(hello.as_slice(), [hello] if hello.starts_with("Event(Hello")), "the first tab's new session: {hello:?}");
+        assert_eq!(sent_to_fetcher(&mut core, second, &second_wire), [], "nothing to the second tab's connection");
+        assert_eq!((core.typing.selection(second), core.sleep.awake(second, None, later)), second_before, "its selection, and live");
+        assert_eq!(core.typing.selection(first), Some((0x200, neoteletext_core::limits::SUBCODE_ANY)), "the first keeps its own");
+        let sends = core.typing.select(second, 0x500, 3, "", 0);
+        core.deliver_typing(sends).unwrap();
+        let said = input_items(&sent_to_fetcher(&mut core, second, &second_wire));
+        assert_eq!(said, ["Event(Select(Select { page: 1280, sub: 3 }, \"\"))"], "its session goes on, welcomed");
     }
 
     /// A tab on a static channel, with the page `open` open; its channel.
@@ -428,6 +534,33 @@ mod tests {
         assert_eq!(panel, None);
     }
 
+    /// DEC-2364, REQ-847: when nothing answers for the home address, as
+    /// with no network, the built-in start page opens in its place, and
+    /// Back tries the home again; another address that nothing answers
+    /// stays, saying so, and so does a home that answered with a refusal.
+    /// On the code before, the home channel's tab said "Channel not
+    /// reached" and offered nothing.
+    #[cfg(unix)]
+    #[test]
+    fn an_unreached_home_opens_the_start_page_in_its_place() {
+        use interface_core::browser::Failed;
+        use protocol::fetcher::RefusedFile;
+        let home = neoteletext::address::HOME_CHANNEL;
+        for (address, status, falls_back) in [(home, None, true), (home, Some(503), false), ("https://news.invalid/teletext/", None, false)] {
+            let (mut core, _stand_in) = super::super::test_support::core_on(address);
+            let channel = core.active_channel().unwrap();
+            core.fetched(channel, FromFetcher::Refused { file: RefusedFile::Channel, status }).unwrap();
+            let shown = core.session.active_tab().unwrap().address().unwrap().clone();
+            assert_eq!(shown.is_start_page(), falls_back, "{address} {status:?}");
+            if falls_back {
+                core.intent(protocol::ToCore::Back).unwrap();
+                assert_eq!(core.session.active_tab().unwrap().address().unwrap().text, home, "Back tries the home again");
+            } else {
+                assert_eq!(core.strip().failed, Some(Failed::Channel(status)));
+            }
+        }
+    }
+
     /// REQ-708: a refused page is said for the page open and for no other,
     /// and never over a page that has arrived; another page takes it away,
     /// and a page drawn ends it. A bundle or a contents file is missed, not
@@ -456,47 +589,146 @@ mod tests {
         assert_eq!(test.core.strip().failed, None, "a page that arrived is not disturbed");
     }
 
-    /// REQ-703: a static channel with no contents file has the page its
-    /// tab wants asked for, once what its bundle holds has come, and each
-    /// page opened after, once; a listed page comes in the contents file's
-    /// turn, and one that arrived is not asked for. On the code before,
-    /// nothing asked, and such a channel showed no page.
+    /// What the core asked of fetchers since last asked, taken.
+    fn asked(test: &mut Test) -> Vec<(u32, ToFetcher)> {
+        core::mem::take(&mut test.core.controls.told_fetchers)
+    }
+
+    /// REQ-703: a static channel's page is asked for once its bundle has
+    /// settled, and not before, since the bundle may hold it; then each page
+    /// opened, once until it arrives or is refused; and its listing once,
+    /// after its page, as its tab is in front. On the code before, the
+    /// contents file was fetched as the channel opened, and a page was
+    /// asked for only once the contents file had answered.
     #[test]
-    fn a_static_channel_with_no_contents_has_its_wanted_pages_asked_for() {
+    fn a_static_channels_wanted_pages_are_asked_for_once_its_bundle_settles() {
+        use protocol::fetcher::RefusedFile;
         let mut test = Test::new("wanted");
         let channel = static_tab(&mut test, 0x100);
-        let asked = |test: &mut Test| core::mem::take(&mut test.core.controls.told_fetchers);
-        assert_eq!(asked(&mut test), [], "not before the channel has opened");
+        assert_eq!(asked(&mut test), [], "not before the bundle has settled");
         test.core.fetched(channel, FromFetcher::NoContents).unwrap();
-        assert_eq!(asked(&mut test), [(channel, ToFetcher::FetchPage { page: 0x100 })]);
+        assert_eq!(asked(&mut test), [], "a contents file says nothing of the bundle");
+        test.core.fetched(channel, FromFetcher::BundleSettled).unwrap();
+        assert_eq!(asked(&mut test), [(channel, ToFetcher::FetchPage { page: 0x100 }), (channel, ToFetcher::FetchContents)]);
+        test.core.fetched(channel, FromFetcher::BundleSettled).unwrap();
+        assert_eq!(asked(&mut test), [], "each once");
         test.core.intent(protocol::ToCore::Opened(Some(PageKey { channel, page: 0x200 }))).unwrap();
         assert_eq!(asked(&mut test), [(channel, ToFetcher::FetchPage { page: 0x200 })], "selecting a page fetches it");
+        test.core.intent(protocol::ToCore::Opened(Some(PageKey { channel, page: 0x100 }))).unwrap();
+        assert_eq!(asked(&mut test), [], "asked already, and on its way");
+        test.core.fetched(channel, FromFetcher::Refused { file: RefusedFile::Page(0x200), status: Some(503) }).unwrap();
+        test.core.intent(protocol::ToCore::Opened(Some(PageKey { channel, page: 0x200 }))).unwrap();
+        assert_eq!(asked(&mut test), [(channel, ToFetcher::FetchPage { page: 0x200 })], "a refused page is asked again when wanted");
         test.core.session.all_tabs_mut().next().unwrap().channel.arrived(0x300, "Sport");
         test.core.intent(protocol::ToCore::Opened(Some(PageKey { channel, page: 0x300 }))).unwrap();
         assert_eq!(asked(&mut test), [], "it has arrived");
     }
 
-    /// REQ-703: with a contents file, its listed pages come in turn, and
-    /// a page it does not list is still asked for when it is opened.
+    /// REQ-703: a page the contents file lists and nothing wants is never
+    /// asked for; the pages the interface shows of the channel, the wall's
+    /// thumbnails, are, each once. On the code before, every listed page was
+    /// fetched in turn, and a thumbnail never.
     #[test]
-    fn a_page_the_contents_file_does_not_list_is_asked_for() {
+    fn a_listed_page_nothing_wants_is_not_asked_for_and_a_thumbnail_shown_is() {
         use protocol::fetcher::Entry;
-        let mut test = Test::new("unlisted");
+        let mut test = Test::new("listed");
         let channel = static_tab(&mut test, 0x100);
-        test.core.fetched(channel, FromFetcher::Contents(vec![Entry::Page { page: 0x100, title: "Index".into() }])).unwrap();
-        assert_eq!(core::mem::take(&mut test.core.controls.told_fetchers), [], "listed");
-        test.core.intent(protocol::ToCore::Opened(Some(PageKey { channel, page: 0x200 }))).unwrap();
-        assert_eq!(test.core.controls.told_fetchers, [(channel, ToFetcher::FetchPage { page: 0x200 })]);
+        test.core.fetched(channel, FromFetcher::BundleSettled).unwrap();
+        asked(&mut test);
+        let listed = (0x100..0x110).map(|page| Entry::Page { page, title: format!("Page {page:03X}") }).collect();
+        test.core.fetched(channel, FromFetcher::Contents(listed)).unwrap();
+        assert_eq!(asked(&mut test), [], "listed is not wanted");
+        let shown = |pages: &[u16]| protocol::ToCore::Visible(pages.iter().map(|&page| PageKey { channel, page }).collect());
+        test.core.intent(shown(&[0x100, 0x101, 0x102])).unwrap();
+        assert_eq!(asked(&mut test), [(channel, ToFetcher::FetchPage { page: 0x101 }), (channel, ToFetcher::FetchPage { page: 0x102 })]);
+        test.core.intent(shown(&[0x101, 0x102, 0x103])).unwrap();
+        assert_eq!(asked(&mut test), [(channel, ToFetcher::FetchPage { page: 0x103 })], "each once");
     }
 
-    /// DEC-1467: a live channel's pages come on its connection alone.
+    /// REQ-703: a tab behind another has the page it shows asked for when
+    /// its bundle settles, and its listing only once it comes to the front.
+    #[test]
+    fn a_tab_behind_asks_for_its_listing_only_when_it_comes_to_the_front() {
+        let mut test = Test::new("behind");
+        let behind = static_tab(&mut test, 0x100);
+        test.core.session.open("https://other.invalid/teletext/").unwrap();
+        asked(&mut test);
+        test.core.fetched(behind, FromFetcher::BundleSettled).unwrap();
+        assert_eq!(asked(&mut test), [(behind, ToFetcher::FetchPage { page: 0x100 })]);
+        let index = test.core.session.tabs.iter().position(|tab| tab.channel.id == behind).unwrap();
+        // As `send_all` does when the tab is chosen; this core has no
+        // broker to start its helpers with.
+        test.core.session.active = index;
+        test.core.ask_wanted(behind);
+        assert!(asked(&mut test).contains(&(behind, ToFetcher::FetchContents)), "its listing is wanted now");
+    }
+
+    /// REQ-687 as amended by DEC-997 and DEC-2356: the interface's reports
+    /// of pages open and shown ask for pages of the active tab's channel
+    /// alone, by page number, and nothing it names of another tab's channel
+    /// reaches that channel's fetcher. It held on the code before for the
+    /// page open, and the wall's pages were not asked for at all.
+    #[test]
+    fn the_interface_asks_for_pages_of_the_active_tabs_channel_alone() {
+        let mut test = Test::new("active-alone");
+        let behind = static_tab(&mut test, 0x100);
+        test.core.session.open("https://front.invalid/teletext/").unwrap();
+        let front = test.core.active_channel().unwrap();
+        for channel in [behind, front] {
+            test.core.fetched(channel, FromFetcher::BundleSettled).unwrap();
+        }
+        asked(&mut test);
+        for page in [0x200, 0x201] {
+            test.core.intent(protocol::ToCore::Opened(Some(PageKey { channel: behind, page }))).unwrap();
+            test.core.intent(protocol::ToCore::Visible(vec![PageKey { channel: behind, page }, PageKey { channel: front, page }])).unwrap();
+        }
+        test.core.intent(protocol::ToCore::Opened(Some(PageKey { channel: front, page: 0x300 }))).unwrap();
+        let asked = asked(&mut test);
+        assert!(asked.iter().all(|(channel, _)| *channel == front), "{asked:?}");
+        assert_eq!(
+            asked.into_iter().map(|(_, message)| message).collect::<Vec<_>>(),
+            [ToFetcher::FetchPage { page: 0x200 }, ToFetcher::FetchPage { page: 0x201 }, ToFetcher::FetchPage { page: 0x300 }]
+        );
+    }
+
+    /// DEC-1467, DEC-1482, TODO-1470 item 4: a live channel's contents
+    /// come from its index, and a later index replaces the one before at
+    /// once: a page it no longer lists leaves the contents, a retitled page
+    /// shows its new title, and the interface is sent the channel each time.
+    #[test]
+    fn a_live_channels_later_index_replaces_its_contents_at_once() {
+        use interface_core::channel::page_index;
+        use protocol::fetcher::Entry;
+        let mut test = Test::new("live-index");
+        let channel = static_tab(&mut test, 0x100);
+        test.core.fetched(channel, FromFetcher::Connecting(true)).unwrap();
+        test.sent();
+        let index = |pages: &[(u16, &str)]| {
+            let mut entries = vec![Entry::Section("News".into())];
+            entries.extend(pages.iter().map(|&(page, title)| Entry::Page { page, title: title.into() }));
+            FromFetcher::Contents(entries)
+        };
+        test.core.fetched(channel, index(&[(0x100, "Headlines"), (0x101, "Weather")])).unwrap();
+        test.core.fetched(channel, index(&[(0x100, "Top stories")])).unwrap();
+        let views: Vec<_> = test.sent().into_iter().filter_map(|message| if let ToInterface::Channel(view) = message { Some(view) } else { None }).collect();
+        assert_eq!(views.len(), 2, "each index at once");
+        let title = |view: &interface_core::channel::Channel, page: u16| view.pages[page_index(page).unwrap()].as_ref().map(|info| info.title.clone());
+        assert_eq!(title(&views[0], 0x101).as_deref(), Some("Weather"));
+        assert_eq!(title(&views[1], 0x100).as_deref(), Some("Top stories"), "retitled");
+        assert_eq!(title(&views[1], 0x101), None, "no longer listed");
+        assert_eq!(views[1].banks[0], "News");
+    }
+
+    /// DEC-1467: a live channel's pages and listing come on its connection
+    /// alone.
     #[test]
     fn a_live_channels_pages_are_never_asked_for() {
         let mut test = Test::new("live-wanted");
         let channel = static_tab(&mut test, 0x100);
         test.core.fetched(channel, FromFetcher::Connecting(true)).unwrap();
-        test.core.fetched(channel, FromFetcher::NoContents).unwrap();
+        test.core.fetched(channel, FromFetcher::BundleSettled).unwrap();
         test.core.intent(protocol::ToCore::Opened(Some(PageKey { channel, page: 0x200 }))).unwrap();
+        test.core.intent(protocol::ToCore::Visible(vec![PageKey { channel, page: 0x300 }])).unwrap();
         assert_eq!(test.core.controls.told_fetchers, []);
     }
 
@@ -533,5 +765,32 @@ mod tests {
         live.core.fetched(channel, FromFetcher::Connecting(true)).unwrap();
         live.core.fetched(channel, FromFetcher::Refresh(SECONDS)).unwrap();
         assert_eq!(live.core.refresh_due_at(), None, "a live channel's connection brings its changes");
+    }
+
+    /// REQ-704: the page on screen in every window is asked for again, each
+    /// at its own channel's interval, and a tab behind another is not. On
+    /// the code before, only the page open in the window last used was.
+    #[test]
+    fn a_refresh_asks_again_for_the_page_on_screen_in_every_window() {
+        use std::time::{Duration, Instant};
+        const SECONDS: u32 = 5;
+        let later = Instant::now().checked_add(Duration::from_secs(u64::from(SECONDS) * 2)).unwrap();
+        let mut test = Test::new("refresh-windows");
+        let first = static_tab(&mut test, 0x100);
+        test.core.session.open("https://behind.invalid/teletext/").unwrap();
+        let behind = test.core.active_channel().unwrap();
+        assert!(test.core.session.page_chosen(0x300));
+        test.core.session.active = 0;
+        test.core.session.new_window(false).unwrap();
+        test.core.session.open("https://second.invalid/teletext/").unwrap();
+        let second = test.core.active_channel().unwrap();
+        assert!(test.core.session.page_chosen(0x200));
+        for channel in [first, behind, second] {
+            test.core.fetched(channel, FromFetcher::Refresh(SECONDS)).unwrap();
+        }
+        test.core.refresh_tick(later);
+        let mut asked = core::mem::take(&mut test.core.controls.told_fetchers);
+        asked.sort_by_key(|(channel, _)| *channel);
+        assert_eq!(asked, [(first, ToFetcher::FetchPage { page: 0x100 }), (second, ToFetcher::FetchPage { page: 0x200 })]);
     }
 }

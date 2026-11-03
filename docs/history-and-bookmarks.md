@@ -170,7 +170,7 @@ An optional row of the strip, below the address, showing the Bookmarks bar folde
 
 ### 3.5 The start page
 
-Page 100 of `neoteletext:home` lists the bookmarks, and pages 201 to 299 each open one (requirement 19.7). With folders, it lists the Bookmarks bar folder's bookmarks first and then Other bookmarks', walking each folder in order, a folder's name as a heading line; the first 99 bookmarks so walked have pages. A bookmark's line shows its name, cut to the row, instead of its address.
+Page 100 of `neoteletext:home` lists the bookmarks, and pages 201 to 299 each open one (requirement 19.7). Since DEC-1652 the home channel, not this page, is what a new browser opens first, so the bar, the star, the menu, the manager and the address field are where a viewer meets their bookmarks; the start page shows them when it is typed, and when nothing answers for the home address it opens in that tab's place (DEC-2364). With folders, it lists the Bookmarks bar folder's bookmarks first and then Other bookmarks', walking each folder in order, a folder's name as a heading line; the first 99 bookmarks so walked have pages. A bookmark's line shows its name, cut to the row, instead of its address.
 
 ### 3.6 The file
 
