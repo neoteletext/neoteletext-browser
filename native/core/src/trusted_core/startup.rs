@@ -146,4 +146,21 @@ mod tests {
         open_at_start(&mut session, Some(&Saved::default()), &[], stored::START_PAGE).unwrap();
         assert_eq!(addresses(&session), [stored::START_PAGE], "nothing kept: the home address");
     }
+
+    /// DEC-1652, TODO-1653: a new profile, with no settings file and no
+    /// session kept, opens the home channel, as `run` passes the settings'
+    /// home to [`open_at_start`]. On the code before commit `d8c6f74` it
+    /// opened the built-in start page.
+    #[test]
+    fn a_new_profile_opens_the_home_channel() {
+        let folder = std::env::temp_dir().join(format!("neoteletext-new-profile-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&folder);
+        std::fs::create_dir_all(&folder).unwrap();
+        let (settings, _dropped) = Settings::load(&folder).unwrap();
+        let mut session = Session::new(Bookmarks::default());
+        open_at_start(&mut session, None, &[], &settings.home).unwrap();
+        let opened: Vec<&str> = session.tabs.iter().map(|tab| tab.address().unwrap().text.as_str()).collect();
+        assert_eq!(opened, [stored::HOME_CHANNEL]);
+        std::fs::remove_dir_all(&folder).unwrap();
+    }
 }

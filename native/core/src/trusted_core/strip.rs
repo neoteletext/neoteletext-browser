@@ -68,11 +68,21 @@ impl Core {
             RefusedFile::Bundle | RefusedFile::Contents => None,
         };
         let Some(failed) = failed else { return Ok(()) };
+        let home = self.settings.home.clone();
         let Some(tab) = self.session.all_tabs_mut().find(|tab| tab.channel.id == channel) else { return Ok(()) };
         if failed.1.is_some_and(|page| tab.channel.is_loaded(page)) {
             return Ok(());
         }
+        // The home address, when nothing answered for it, as with no
+        // network: the built-in start page, which needs none, opens in its
+        // place, and Back tries the home channel again (DEC-2364, REQ-847).
+        let unreached_home = file == RefusedFile::Channel && status.is_none() && tab.address().is_some_and(|address| address.text == home);
         tab.channel.failed = Some(failed);
+        if unreached_home && self.active_channel() == Some(channel) {
+            self.log(Level::Info, Some(channel), &format!("{home} was not reached: the start page opens instead"));
+            self.session.navigate(neoteletext::address::START_PAGE, false)?;
+            return self.send_all();
+        }
         if self.active_channel() == Some(channel) {
             self.send(&ToInterface::Strip(self.strip()))?;
         }
