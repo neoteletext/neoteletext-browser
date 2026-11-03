@@ -55,6 +55,11 @@ const _: () = assert!(address::OUTSIDE_SCHEME.len() + protocol::MAX_ADDRESS <= M
 const KEY_SERVICE: &str = "NeoTeletext cookie file";
 const KEY_ACCOUNT: &str = "cookies.bin";
 
+/// The exit status of a broker that ended because its launcher had gone,
+/// which nothing reads: the launcher that would is gone. Not success, so a
+/// log of it is not taken for a quit.
+const LAUNCHER_GONE_EXIT: i32 = 1;
+
 /// The broker (decision 56): the program the user starts, and the one
 /// process not confined. It starts the trusted core confined, then serves
 /// its requests until it ends.
@@ -63,6 +68,13 @@ pub(crate) fn broker() -> Result<(), String> {
     // First of all: a registered link or file allows one argument, and no
     // switch takes effect with it (REQ-1673). A launch refused opens nothing.
     let launched = launch::read(&given).map_err(|refused| format!("this start was refused: {refused}"))?;
+    // A launcher killed outright ends the browser too (TODO-2006): the
+    // trusted core hears this broker end and ends, and each helper with
+    // the pipe the core held to it.
+    update::layout::when_launcher_gone(|| {
+        eprintln!("neoteletext: the launcher has gone, and the browser ends with it");
+        std::process::exit(LAUNCHER_GONE_EXIT);
+    });
     tell_launcher_started();
     let program = std::env::current_exe().map_err(|error| format!("cannot find this program: {error}"))?;
     let programs = program.parent().ok_or("this program has no directory")?.to_path_buf();

@@ -626,7 +626,28 @@ fn running_child() {
 #[cfg(unix)]
 #[test]
 fn a_launcher_asked_to_end_ends_its_broker_and_every_helper() {
-    let fixture = Fixture::new("terminated");
+    let launcher_ended = launcher_ended_by("terminated", "-TERM");
+    assert!(launcher_ended, "the launcher ended once its broker had");
+}
+
+/// TODO-2006, REQ-667, DEC-973: a launcher killed outright (`SIGKILL`, or
+/// a crash), which no handler hears, still leaves no broker or helper
+/// running: the broker's standard input is a pipe only the launcher
+/// writes to, and its end tells the broker its launcher has gone. On the
+/// code before, the broker and its helpers ran on with no parent.
+#[cfg(unix)]
+#[test]
+fn a_launcher_killed_outright_leaves_no_broker_or_helper() {
+    launcher_ended_by("killed", "-KILL");
+}
+
+/// Runs a launcher in a process of its own with a broker that serves and
+/// has started a helper, sends the launcher `signal` (as `kill` takes it),
+/// and requires the broker and the helper gone within [`GONE_WITHIN`].
+/// Returns whether the launcher had ended by then.
+#[cfg(unix)]
+fn launcher_ended_by(name: &str, signal: &str) -> bool {
+    let fixture = Fixture::new(name);
     fixture.install(OLD, "serves");
     let mut launcher = std::process::Command::new(std::env::current_exe().unwrap())
         .args(["--exact", "running_child", "--nocapture", "--test-threads=1"])
@@ -644,7 +665,7 @@ fn a_launcher_asked_to_end_ends_its_broker_and_every_helper() {
         std::thread::sleep(Duration::from_millis(50));
     };
     let pid = i32::try_from(launcher.id()).unwrap();
-    assert!(std::process::Command::new("/bin/kill").args(["-TERM", &pid.to_string()]).status().unwrap().success());
+    assert!(std::process::Command::new("/bin/kill").args([signal, &pid.to_string()]).status().unwrap().success());
     let asked = std::time::Instant::now();
     while launcher.try_wait().unwrap().is_none() && asked.elapsed() < GONE_WITHIN {
         std::thread::sleep(Duration::from_millis(50));
@@ -655,8 +676,8 @@ fn a_launcher_asked_to_end_ends_its_broker_and_every_helper() {
         let _ = launcher.wait();
     }
     let left = left_after_waiting(&pids);
-    assert!(left.is_empty(), "the broker or its helper outlived the launcher: {left:?} of {pids:?}");
-    assert!(launcher_ended, "the launcher ended once its broker had");
+    assert!(left.is_empty(), "the broker or its helper outlived the launcher ({signal}): {left:?} of {pids:?}");
+    launcher_ended
 }
 
 /// Finding F-34: a broker that crashes leaves no helper behind; the

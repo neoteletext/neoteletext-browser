@@ -31,6 +31,45 @@ pub const WINDOWS_LAUNCHER_CHOICE: &str = "launcher";
 /// The variable the launcher sets for the broker it starts: the broker
 /// then reports health on its standard output and may run the updater.
 pub const LAUNCHED_VARIABLE: &str = "NEOTELETEXT_LAUNCHED";
+/// The variable the launcher sets, with [`LIFELINE_VALUE`], when the
+/// broker's standard input is the reading end of a pipe whose writing end
+/// the launcher alone holds and never writes to (TODO-2006): the pipe ends
+/// when the launcher does, however it ends, a `SIGKILL` or a crash
+/// included, which no handler of the launcher's can hear.
+pub const LIFELINE_VARIABLE: &str = "NEOTELETEXT_LIFELINE";
+/// [`LIFELINE_VARIABLE`]'s value: the lifeline is standard input.
+pub const LIFELINE_VALUE: &str = "stdin";
+/// The most bytes a read of the lifeline takes: the launcher writes none,
+/// so any are passed over.
+const LIFELINE_READ: usize = 16;
+
+/// When the launcher started this process with a lifeline
+/// ([`LIFELINE_VARIABLE`]), calls `gone` on a thread of its own once the
+/// launcher has ended, and returns true; otherwise returns false and
+/// `gone` is never called. Without the variable standard input means
+/// something else (a terminal, or nothing at all for an older launcher,
+/// whose end of file would otherwise be taken for its end).
+pub fn when_launcher_gone(gone: impl FnOnce() + Send + 'static) -> bool {
+    if std::env::var_os(LIFELINE_VARIABLE).is_none_or(|value| value != LIFELINE_VALUE) {
+        return false;
+    }
+    std::thread::spawn(move || {
+        let mut lifeline = std::io::stdin().lock();
+        let mut bytes = [0_u8; LIFELINE_READ];
+        loop {
+            match std::io::Read::read(&mut lifeline, &mut bytes) {
+                Ok(0) => break,
+                Ok(_) => {}
+                Err(error) if error.kind() == std::io::ErrorKind::Interrupted => {}
+                // A broken pipe on Windows, or any other failure: nothing
+                // will be heard from the launcher again.
+                Err(_) => break,
+            }
+        }
+        gone();
+    });
+    true
+}
 /// The updater's own folder in the staging folder, kept between runs: The
 /// Update Framework's trusted metadata and its last check's time.
 pub const UPDATER_METADATA: &str = "metadata";
