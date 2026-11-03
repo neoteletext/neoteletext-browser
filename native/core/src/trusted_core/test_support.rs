@@ -271,11 +271,10 @@ pub(super) fn wire(core: &mut Core, channel: u32) -> mpsc::Receiver<Vec<u8>> {
     written
 }
 
-/// Each SELECT the tab of `channel` sent its fetcher since the last look, as
-/// its page and sub-code.
+/// Every message the trusted core wrote to the fetcher of `channel`, wired
+/// by [`wire`], since the last look.
 #[cfg(all(unix, feature = "interaction"))]
-pub(super) fn selects_sent(core: &mut Core, channel: u32, written: &mpsc::Receiver<Vec<u8>>) -> Vec<(u16, u16)> {
-    use neoteletext_input::event::{Event, Item, read_message};
+pub(super) fn sent_to_fetcher(core: &mut Core, channel: u32, written: &mpsc::Receiver<Vec<u8>>) -> Vec<ToFetcher> {
     if let Some(input) = core.fetchers.get_mut(&channel).and_then(super::processes::Fetcher::input) {
         input.flush().unwrap();
     }
@@ -284,8 +283,32 @@ pub(super) fn selects_sent(core: &mut Core, channel: u32, written: &mpsc::Receiv
         bytes.extend(chunk);
     }
     let mut input = bytes.as_slice();
-    let mut selects = Vec::new();
+    let mut messages = Vec::new();
     while let Some(message) = protocol::fetcher::read_to_fetcher(&mut input).unwrap() {
+        messages.push(message);
+    }
+    messages
+}
+
+/// The input items in `messages`, as the channel reads them.
+#[cfg(all(unix, feature = "interaction"))]
+pub(super) fn input_items(messages: &[ToFetcher]) -> Vec<String> {
+    let mut items = Vec::new();
+    for message in messages {
+        if let ToFetcher::Send { bytes, .. } = message {
+            neoteletext_input::event::read_message(bytes, &mut |item| items.push(format!("{item:?}"))).unwrap();
+        }
+    }
+    items
+}
+
+/// Each SELECT the tab of `channel` sent its fetcher since the last look, as
+/// its page and sub-code.
+#[cfg(all(unix, feature = "interaction"))]
+pub(super) fn selects_sent(core: &mut Core, channel: u32, written: &mpsc::Receiver<Vec<u8>>) -> Vec<(u16, u16)> {
+    use neoteletext_input::event::{Event, Item, read_message};
+    let mut selects = Vec::new();
+    for message in sent_to_fetcher(core, channel, written) {
         if let ToFetcher::Send { bytes, .. } = message {
             read_message(&bytes, &mut |item| {
                 if let Item::Event(Event::Select(select, _)) = item {

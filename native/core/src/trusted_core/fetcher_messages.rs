@@ -362,6 +362,46 @@ mod tests {
         assert_eq!(logged(&mut test, other), [], "another channel's Log has none of it");
     }
 
+    // DEC-1527, REQ-714, TODO-1534 item 3: a tab whose connection is lost
+    // and opens again starts a session of its own on its own fetcher; the
+    // other tab on the same channel is told nothing, keeps its selection and
+    // its session, and stays live.
+    #[cfg(all(unix, feature = "interaction"))]
+    #[test]
+    fn a_tabs_reconnection_leaves_the_other_tab_on_its_channel_untouched() {
+        use super::super::test_support::{core_on, input_items, sent_to_fetcher, wire};
+        use protocol::fetcher::FromFetcher;
+        const LIVE: &str = "https://live.invalid/teletext/";
+        // The stand-in broker starts the decoders a live tab wakes.
+        let (mut core, _stand_in) = core_on(LIVE);
+        let first = core.session.tabs[0].channel.id;
+        core.session.open(LIVE).unwrap();
+        let second = core.session.tabs[1].channel.id;
+        assert_ne!(first, second, "a channel number each");
+        let _ = core.typing.select(first, 0x200, neoteletext_core::limits::SUBCODE_ANY, "", 0);
+        let _ = core.typing.select(second, 0x500, 2, "", 0);
+        let (first_wire, second_wire) = (wire(&mut core, first), wire(&mut core, second));
+        core.fetched(second, FromFetcher::Pushing(true)).unwrap();
+        // Long after it was last seen, a tab is awake only while it is live.
+        let later = std::time::Instant::now() + 2 * neoteletext::sleep::SLEEP_AFTER;
+        let second_before = (core.typing.selection(second), core.sleep.awake(second, None, later));
+        assert!(second_before.1, "live");
+
+        for (pushing, open) in [(false, false), (true, true)] {
+            core.fetched(first, FromFetcher::Pushing(pushing)).unwrap();
+            core.fetched(first, FromFetcher::Input { open, secure: true }).unwrap();
+        }
+        let hello = input_items(&sent_to_fetcher(&mut core, first, &first_wire));
+        assert!(matches!(hello.as_slice(), [hello] if hello.starts_with("Event(Hello")), "the first tab's new session: {hello:?}");
+        assert_eq!(sent_to_fetcher(&mut core, second, &second_wire), [], "nothing to the second tab's connection");
+        assert_eq!((core.typing.selection(second), core.sleep.awake(second, None, later)), second_before, "its selection, and live");
+        assert_eq!(core.typing.selection(first), Some((0x200, neoteletext_core::limits::SUBCODE_ANY)), "the first keeps its own");
+        let sends = core.typing.select(second, 0x500, 3, "", 0);
+        core.deliver_typing(sends).unwrap();
+        let said = input_items(&sent_to_fetcher(&mut core, second, &second_wire));
+        assert_eq!(said, ["Event(Select(Select { page: 1280, sub: 3 }, \"\"))"], "its session goes on, welcomed");
+    }
+
     /// A tab on a static channel, with the page `open` open; its channel.
     fn static_tab(test: &mut Test, open: u16) -> u32 {
         test.core.session.open("https://news.invalid/teletext/").unwrap();
