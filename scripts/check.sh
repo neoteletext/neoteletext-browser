@@ -57,12 +57,48 @@ check_no_panic_lists() {
     done
 }
 
-# Requirement 2.5: every workspace depends on the engine at one commit.
+# Requirement 2.5 (REQ-666), DEVELOPMENT.md section 11 and appendix B
+# browser item 4: every workspace depends on the engine by one commit of
+# one repository, through every neoteletext-* dependency, never through a
+# copy, a working tree or a patch. Each manifest line that names a source
+# is read: a git source must be the engine's, in the one form below; a
+# path must stay inside this repository; an engine crate without either
+# inherits the workspace's line. A form this does not read fails, so that
+# a dependency cannot pass by being written differently. The lockfiles are
+# read too, since they are what Cargo builds: every git package in them is
+# the same commit of the same repository.
 check_engine_pin() {
-    step "the engine is pinned at one commit in every workspace"
-    local revs
-    revs="$(sed -n 's/^neoteletext-[a-z-]* = { git = "[^"]*", rev = "\([0-9a-f]*\)".*/\1/p' native/Cargo.toml native/tuf/Cargo.toml native/fuzz/Cargo.toml | sort -u)"
-    [[ -n "$revs" && "$revs" != *$'\n'* ]] || fail "the workspaces must name one engine commit, found: ${revs:-none}"
+    step "every neoteletext-* dependency names the engine at one commit (requirement 2.5)"
+    local manifest line target sources="" unread="" outside="" patched="" locked
+    local -r engine_line='^neoteletext-[a-z0-9-]+ = \{ git = "([^"]+)", rev = "([0-9a-f]{40})"(, [^{}]*)? \}$'
+    local root
+    root="$(pwd -P)"
+    while IFS= read -r manifest; do
+        patched+="$(grep -nE '^\[(patch|replace)' "$manifest" | sed "s|^|$manifest:|" || true)"
+        while IFS= read -r line; do
+            if [[ "$line" =~ $engine_line ]]; then
+                sources+="${BASH_REMATCH[1]} ${BASH_REMATCH[2]}"$'\n'
+            elif [[ "$line" == *'git = '* || "$line" =~ ^\[.*dependencies\. ]]; then
+                unread+="$manifest: $line"$'\n'
+            elif [[ "$line" =~ path\ =\ \"([^\"]+)\" ]]; then
+                target="$(realpath -m "$(dirname "$manifest")/${BASH_REMATCH[1]}")"
+                [[ "$target" == "$root"/* ]] || outside+="$manifest: $line"$'\n'
+            elif [[ "$line" =~ ^neoteletext-[a-z0-9-]+\ = && "$line" != *'workspace = true'* ]]; then
+                unread+="$manifest: $line"$'\n'
+            fi
+        done < <(grep -E '^(neoteletext-[a-z0-9-]+ *=|[a-z0-9_-]+ *= *\{.*(git|path) = |\[.*dependencies\.)' "$manifest")
+    done < <(git ls-files -- 'native/Cargo.toml' 'native/**/Cargo.toml')
+    [[ -z "$patched" ]] || fail "a manifest patches or replaces a dependency, which requirement 2.5 forbids:
+$patched"
+    [[ -z "$unread" ]] || fail "these name a git source, or an engine crate, in a form this check does not read; write each as neoteletext-<crate> = { git = \"...\", rev = \"<40 hexadecimal digits>\", ... } or with workspace = true:
+$unread"
+    [[ -z "$outside" ]] || fail "these name a path outside this repository, such as a working tree of the engine:
+$outside"
+    sources="$(sort -u <<<"$sources" | sed '/^$/d')"
+    [[ -n "$sources" && "$sources" != *$'\n'* ]] || fail "the workspaces must name one engine repository at one commit, found: ${sources:-none}"
+    while IFS= read -r locked; do
+        [[ "$locked" == "git+${sources% *}?rev=${sources#* }#${sources#* }" ]] || fail "a lockfile builds a git package from $locked, not the engine at ${sources#* }"
+    done < <(git ls-files -- 'native/Cargo.lock' 'native/**/Cargo.lock' | xargs sed -n 's/^source = "\(git+[^"]*\)"$/\1/p' | sort -u)
 }
 
 # The programs a release script builds together, as it names them: the
