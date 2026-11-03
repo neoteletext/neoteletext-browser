@@ -3,12 +3,11 @@ Copyright 2024 The Noto Project Authors (https://github.com/notofonts/hebrew)
 Copyright 2022 The Noto Project Authors (https://github.com/notofonts/arabic)
 Copyright 2022 The Noto Project Authors (https://github.com/notofonts/symbols)
 Copyright 2022 Google LLC. All Rights Reserved. (Noto Sans Math)
-Copyright 2022 The Noto Project Authors (https://github.com/notofonts/thai)
-Copyright 2022 The Noto Project Authors (https://github.com/notofonts/lao)
 Copyright 2022 The Noto Project Authors (https://github.com/notofonts/georgian)
 Copyright 2022 The Noto Project Authors (https://github.com/notofonts/armenian)
 Copyright 2022 The Noto Project Authors (https://github.com/notofonts/tifinagh)
 Copyright 2022 The Noto Project Authors (https://github.com/notofonts/canadian-aboriginal)
+Copyright (c) 2014-2021 Adobe (http://www.adobe.com/), with Reserved Font Name 'Source' (Noto Sans JP)
 
 This Font Software is licensed under the SIL Open Font License, Version 1.1.
 This license is copied below, and is also available with a FAQ at:
