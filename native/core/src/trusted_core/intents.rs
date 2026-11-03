@@ -148,7 +148,7 @@ impl Core {
             #[cfg(feature = "interaction")]
             ToCore::Input(_) | ToCore::Editing(_) | ToCore::WallWithoutPage => self.input_intent(intent)?,
             #[cfg(feature = "phone-keyboard")]
-            ToCore::PhonePanel(_) | ToCore::PhoneFinish => self.input_intent(intent)?,
+            ToCore::PhonePanel(_) | ToCore::PhonePin | ToCore::PhoneFinish => self.input_intent(intent)?,
         }
         // Another page of a channel already drawing is a visit at once.
         self.record_drawn()?;

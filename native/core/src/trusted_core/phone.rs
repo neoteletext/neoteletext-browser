@@ -63,10 +63,32 @@ impl Core {
         if self.phone.is_some() {
             return self.send_phone();
         }
+        self.start_phone(false)
+    }
+
+    /// The viewer asked to pair with a PIN (REQ-1386, DEC-2405): a keyboard
+    /// process asking the relay without one is ended, as closing the panel
+    /// ends it, and another started with `--pin`, whose PIN the panel shows
+    /// beside its QR. A phone already paired keeps its pairing.
+    pub(super) fn phone_with_pin(&mut self) -> Result<(), String> {
+        use protocol::keyboard::PhoneState;
+        if self.phone_view.state == PhoneState::Connected || self.phone_view.pin.is_some() {
+            return self.send_phone();
+        }
+        self.phone_panel(false)?;
+        self.start_phone(true)
+    }
+
+    /// Starts the keyboard process, with a PIN when `pin`.
+    fn start_phone(&mut self, pin: bool) -> Result<(), String> {
+        use protocol::keyboard::PhoneState;
         let mut arguments = Vec::new();
         // Without one, the keyboard process uses qrkeyboard's own relay.
         let test_relay = relay_override(std::env::var(RELAY_VARIABLE).ok(), cfg!(debug_assertions));
         arguments.extend(test_relay.clone());
+        if pin {
+            arguments.push(String::from("--pin"));
+        }
         // The proxy, given only at its start (requirement 19.12).
         if let Some(proxy) = &self.settings.proxy {
             arguments.push(String::from("--proxy"));
@@ -313,5 +335,30 @@ mod tests {
         }
         let names: Vec<String> = given(&mut test).into_iter().map(|key| if let PhoneKey::Key { name, .. } = key { name } else { String::new() }).collect();
         assert_eq!(names, ["1", "0", "ArrowUp", "ArrowLeft", "ColorF0Red", "ColorF3Blue"]);
+    }
+
+    /// REQ-1386, DEC-2405: the panel pairs by the code alone until the viewer
+    /// asks for a PIN; then the keyboard process asking without one is
+    /// ended and another started with `--pin`, and nothing else in its
+    /// arguments changes. A phone already paired keeps its pairing. On the
+    /// code before, no way in the browser started it with `--pin`.
+    #[test]
+    fn asking_for_a_pin_starts_the_keyboard_again_with_one() {
+        use confine::broker::Program;
+        use protocol::ToCore;
+        let (mut core, stand_in) = super::super::test_support::core_on("https://news.invalid/");
+        core.intent(ToCore::PhonePanel(true)).unwrap();
+        core.intent(ToCore::PhonePin).unwrap();
+        let keyboards: Vec<Vec<String>> =
+            stand_in.started().into_iter().filter(|helper| helper.program == Program::Keyboard).map(|helper| helper.arguments).collect();
+        assert_eq!(keyboards.len(), 2, "{keyboards:?}");
+        assert!(!keyboards[0].iter().any(|argument| argument == "--pin"), "by the code alone first");
+        let mut with_pin = keyboards[1].clone();
+        assert_eq!(with_pin.pop().as_deref(), Some("--pin"));
+        assert_eq!(with_pin, keyboards[0], "nothing else changes");
+        // Paired, a phone keeps its pairing.
+        core.phone_view.state = PhoneState::Connected;
+        core.intent(ToCore::PhonePin).unwrap();
+        assert_eq!(stand_in.started().into_iter().filter(|helper| helper.program == Program::Keyboard).count(), 2);
     }
 }

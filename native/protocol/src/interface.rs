@@ -273,6 +273,10 @@ pub enum ToCore {
     /// Strip input: end the phone keyboard's session.
     #[cfg(feature = "phone-keyboard")]
     PhoneFinish,
+    /// Strip input: pair the phone with a PIN rather than by the QR alone
+    /// (REQ-1386): sent as the phone panel's kind with its own value.
+    #[cfg(feature = "phone-keyboard")]
+    PhonePin,
     /// Strip input: an address typed into the trusted strip.
     Navigate(String),
     /// Strip input: go back in the tab's history.

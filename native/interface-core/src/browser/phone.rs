@@ -57,6 +57,11 @@ const QR_SIDE: f64 = 300.0;
 /// ISO/IEC 18004's quiet zone: four modules of light round the code.
 const QUIET_ZONE: usize = 4;
 const BUTTON_WIDTH: f64 = 96.0;
+/// The button that asks for a PIN, wide enough for its words.
+const PIN_BUTTON_WIDTH: f64 = 120.0;
+/// What it says, and its tip (REQ-1386).
+const USE_A_PIN: &str = "Use a PIN";
+const USE_A_PIN_TIP: &str = "Pair with a PIN typed on the phone, so that a photograph of the code is not enough";
 const BUTTON_HEIGHT: f64 = 32.0;
 const LINE: f64 = 22.0;
 const BADGE_WIDTH: f64 = 210.0;
@@ -72,6 +77,8 @@ pub(super) struct PhoneUi {
     close: Rect,
     finish: Rect,
     badge_finish: Rect,
+    /// "Use a PIN", while the code waits to be scanned without one.
+    use_pin: Rect,
 }
 
 impl Browser {
@@ -84,6 +91,9 @@ impl Browser {
     pub(super) fn phone_tips(&self, tips: &mut Vec<(Rect, String)>) {
         if self.phone.open {
             tips.push((self.phone.close, "Close the phone keyboard".into()));
+            if self.phone.use_pin != Rect::ZERO {
+                tips.push((self.phone.use_pin, USE_A_PIN_TIP.into()));
+            }
         }
     }
 
@@ -119,6 +129,11 @@ impl Browser {
             self.outputs.push(Output::PhoneFinish);
             return true;
         }
+        // A PIN asked for: the trusted core pairs again with one (REQ-1386).
+        if self.phone.open && self.phone.use_pin.contains(point) {
+            self.outputs.push(Output::PhonePin);
+            return true;
+        }
         if self.phone.open && self.phone.close.contains(point) {
             self.phone.open = false;
             self.outputs.push(Output::PhonePanel(false));
@@ -149,6 +164,7 @@ impl Browser {
     pub(super) fn draw_phone_panel<C: Canvas + ?Sized>(&mut self, canvas: &mut C) {
         self.phone.close = Rect::ZERO;
         self.phone.finish = Rect::ZERO;
+        self.phone.use_pin = Rect::ZERO;
         if !self.phone.open {
             return;
         }
@@ -219,6 +235,20 @@ impl Browser {
             centred(canvas, finish, "Finish", ROW_TITLE, WHITE);
             self.phone.finish = finish;
         }
+        // Pairing by the code alone can be made to ask for a PIN, which
+        // the panel then shows beside the code (REQ-1386, DEC-2405).
+        if status == PhoneStatus::Scan && view.as_ref().is_some_and(|view| view.pin.is_none()) {
+            let use_pin = Rect::new(
+                panel.x0 + PANEL_PADDING,
+                panel.y1 - PANEL_PADDING - BUTTON_HEIGHT,
+                panel.x0 + PANEL_PADDING + PIN_BUTTON_WIDTH,
+                panel.y1 - PANEL_PADDING,
+            );
+            canvas.fill(use_pin, 4.0, BUTTON);
+            border(canvas, use_pin, 2.0, RULE);
+            centred(canvas, use_pin, USE_A_PIN, ROW_TITLE, WHITE);
+            self.phone.use_pin = use_pin;
+        }
     }
 }
 
@@ -250,6 +280,40 @@ mod tests {
     use super::*;
     use crate::browser::Frame;
     use crate::test_canvas::Recorder;
+
+    /// REQ-1386, DEC-2405: while the code waits to be scanned without a PIN
+    /// the panel offers one, and pressing it asks the trusted core to pair
+    /// with a PIN; once a PIN shows, or a phone is paired, it is not
+    /// offered. The panel draws the PIN, a wrong PIN and the lock. On the
+    /// code before, nothing offered a PIN.
+    #[test]
+    fn the_panel_offers_a_pin_and_shows_it() {
+        let mut browser = Browser::new(Frame { left_inset: 0.0, window_buttons: false });
+        browser.draw(&mut Recorder::new(), 1440.0, 900.0, 0);
+        browser.toggle_phone_panel();
+        browser.take_outputs();
+        let qr = Some((21, alloc::vec![0xFF; 56]));
+        browser.set_phone(PhoneUiView { status: PhoneStatus::Scan, qr: qr.clone(), pin: None });
+        let canvas = &mut Recorder::new();
+        browser.draw(canvas, 1440.0, 900.0, 0);
+        assert!(canvas.texts.iter().any(|(_, text)| text == USE_A_PIN), "offered");
+        let use_pin = browser.phone.use_pin;
+        assert!(browser.phone_press(Point::new(f64::midpoint(use_pin.x0, use_pin.x1), f64::midpoint(use_pin.y0, use_pin.y1))));
+        assert_eq!(browser.take_outputs(), [Output::PhonePin]);
+        for (status, pin, said) in [
+            (PhoneStatus::Scan, Some("4821"), "PIN: 4821"),
+            (PhoneStatus::PinFailed(3), Some("4821"), "Wrong PIN: 3 tries left."),
+            (PhoneStatus::Locked, None, "Too many wrong PINs. Finish, then start again."),
+            (PhoneStatus::Connected, None, "Your phone is the keyboard."),
+        ] {
+            browser.set_phone(PhoneUiView { status, qr: qr.clone(), pin: pin.map(String::from) });
+            let canvas = &mut Recorder::new();
+            browser.draw(canvas, 1440.0, 900.0, 0);
+            let texts: Vec<&str> = canvas.texts.iter().map(|(_, text)| text.as_str()).collect();
+            assert!(texts.contains(&said), "{status:?}: {texts:?}");
+            assert!(!texts.contains(&USE_A_PIN) && browser.phone.use_pin == Rect::ZERO, "{status:?}: not offered again");
+        }
+    }
 
     #[test]
     fn the_panel_shows_the_qr_and_the_warning_and_finish_is_asked_for() {

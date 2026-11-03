@@ -387,3 +387,22 @@ fn a_page_key_with_a_hexadecimal_number_is_refused() {
         assert!(opened(page).is_err(), "{page:X}");
     }
 }
+
+/// REQ-1386: the phone panel's three values go and come back as what they
+/// are, and a fourth is refused, so an interface can ask for a PIN and for
+/// nothing else under the panel's kind.
+#[cfg(feature = "phone-keyboard")]
+#[test]
+fn the_phone_panel_carries_a_request_for_a_pin_and_nothing_more() {
+    use crate::keyboard::KIND_PHONE_PANEL;
+    for message in [ToCore::PhonePanel(false), ToCore::PhonePanel(true), ToCore::PhonePin, ToCore::PhoneFinish] {
+        let mut bytes = Vec::new();
+        write_to_core(&mut bytes, &message).unwrap();
+        assert_eq!(read_from_interface(&mut bytes.as_slice()).unwrap().unwrap(), message);
+    }
+    let mut bytes = Vec::new();
+    write_to_core(&mut bytes, &ToCore::PhonePin).unwrap();
+    let value = bytes.len() - 1;
+    bytes[value] = 3;
+    assert!(read_from_interface(&mut bytes.as_slice()).is_err(), "kind {KIND_PHONE_PANEL} with a value it does not have");
+}
