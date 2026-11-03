@@ -3,7 +3,7 @@
 | | |
 |---|---|
 | **Asked** | By the owner: "examine the broad functionality of neoteletext. what is missing, what have i forgotten", re-analysed on 23 October 2026 against what was built since, and turned into this document. |
-| **State** | As of 23 October 2026, commit `04d1612`. Each row names its decision or requirement where one exists; the normative text is `requirements.md`. |
+| **State** | As of 23 October 2026, commit `04d1612`. Each row names its decision or requirement where one exists; the normative text is the requirements in rdm (DEC-1389); this document is the survey of that day, not kept current. |
 
 **Built** means in the code with its tests. **Partly** says what is missing. **Not built** has no code. **Withdrawn** was decided against.
 
@@ -14,7 +14,7 @@
 | Fastext, the Index key and the receiver's row 24 | Built | Decision 67, `page-controls.md` |
 | Reveal, hold, mix and sub-pages | Built | Decision 67 |
 | The remote control | Built | Decision 68, `remote-control.md` |
-| The channel's date, time and name in the header (SVC-002, SVC-005) | Not built | — |
+| The channel's date, time and name in the header (SVC-002, SVC-005) | Built 26 October 2026: the clock in row 0, columns 32 to 39 (note of 4 November 2026, TODO-2436 item 6) | Decision 110 (DEC-1003) |
 | The channel's initial page; every channel opens at 100 | Not built | — |
 | A subtitle or newsflash mode, the page boxed over nothing | Not built | — |
 | Full screen of the page alone | Built 25 October 2026; by hand on each desktop owed | Decision 85, `full-screen.md`, requirement 12.16 |

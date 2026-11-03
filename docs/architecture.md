@@ -694,11 +694,9 @@ Unsafe code is allowed only in the modules requirement 10.12 names, each saying 
 
 **Not built:**
 
-- Discovery results.
 - Any sandbox on Android or iOS; Windows helpers started apart from the console they were started from (decision 100 item 1, measured as needed in the virtual machine on 24 October 2026); the fetcher's connections made by the broker (decision 89);.
 - The grace period for closed tabs; the live-feed threshold; refresh schedules.
 - Discovery.
-- Full screen of the page alone (`full-screen.md`, decision 85, designed 23 October 2026).
 - Screen readers, reduced motion.
 - The hostile interface harness with the real helpers on Windows, where `confine` has no stand-in broker (TODO-2200's desktop session).
 - A release signed by the owner's keys: the certificates, the hardware keys, the update host and the key ceremony are the owner's (rdm to-dos for the owner); the Linux release build on the C library 2.28.
