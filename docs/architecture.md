@@ -101,6 +101,7 @@ The engine is `neoteletext` (`~/devel/neoteletext-engine`), a Rust implementatio
 | `neoteletext-input` | Key, cursor and control records and input sessions (its area INT) | In the trusted core, the decoder, the interface core and the interface (decisions 44 and 48) |
 | `neoteletext-qrkeyboard` | qrkeyboard's client: pairing, encryption and QR codes | In the phone keyboard (decision 44) |
 | `neoteletext-transport` | A client's reader thread, TLS pump, handshake and TLS configuration, shared with the engine's own programs (its DEC-1905) | In the fetcher, and through `neoteletext-qrkeyboard` in the phone keyboard. Its opening under one deadline and its writer thread are the fetcher's own (the engine's DEC-1906) |
+| `neoteletext-picture` | A picture file to a teletext page, as TTI and T42 (its DEC-2325) | In the decoder alone, started with `--picture` for the Tools menu (`picture-tools.md`) |
 | `neoteletext-slicer` | Recovering teletext from sampled video | Not yet |
 | `neoteletext-browser`, `neoteletext-gui`, the application crate | The engine's own browser shell | **Not used** (decision 36) |
 
@@ -182,6 +183,7 @@ Every process speaks the same framing, the engine's: one kind byte, a 32-bit big
 - **Every length is bounded before anything is allocated:** at most 256 kilobytes a message, the engine's `MAX_FRAME`, and tighter bounds per field (titles, addresses, page counts, palette sizes).
 - **Every payload is parsed strictly** to its exact length.
 - **Each side accepts only the kinds meant for it,** so no process can send what only another may say.
+- **The picture converter's messages** (`picture-tools.md` section 3): `ToCore::Picture` (148), `ToInterface::PictureStatus` (149), `ToDecoder::Picture` (145), `FromDecoder::PictureConverted` (146) and `FromDecoder::PictureRefused` (147), and the broker's `ReadPicture` (20) and `Save` (21).
 - **Text that came from outside** (page titles, bank names, notices, addresses) is cleaned on both sides: control characters, bidirectional controls and zero-width characters removed, and cut to its bound (requirement 11.5).
 - **A process that breaks the protocol is closed.** A decoder or fetcher that does so is stopped and its channel's pages stay as they were; an interface that does so ends the application; a malformed message from the trusted core ends the interface.
 - **Each process flushes its pipe once per event, not per message** (decision 53), so what one event produced goes in one write. **The trusted core writes every pipe through a queue with a writer thread of its own** (`core/src/outbox.rs`): its one thread, which owns every tab, never waits on a process that is slow to read. A decoder that stops reading fills its queue, 16 MB, and is killed and replaced with what it was given (decision 47); an interface that stops reading ends the browser.
@@ -659,6 +661,7 @@ Unsafe code is allowed only in the modules requirement 10.12 names, each saying 
 - The engine at a pinned commit, `8c59a89`, decoding T42 recordings and Teletext Text Interchange page files (DEC-1762).
 - Web channels over the HyperText Transfer Protocol, plain or with Transport Layer Security: the contents file, fetching in its order at the engine's rate, push over WebSocket, update marks in the window.
 - File channels, fed at the same pace.
+- The Tools menu's picture converter (`picture-tools.md`, DEC-2390, 3 November 2026, on the branch `picture-tools`): the picture panel, conversion by the engine's `neoteletext-picture` in a decoder started with `--picture`, the page at `neoteletext:picture`, and saving as TTI or T42 through the system's save dialog, written by the broker once.
 - The window of section 11, drawn on the processor, redrawing only the boxes that changed since the last frame (`native-interface-design.md` section 12.7); and the same interface core drawn by the microcontroller back end in a test.
 - Every process but the broker and the launcher confined on macOS, Windows and Linux from "deny everything" (decisions 52 and 58, 22 October 2026); sound in a helper of its own (decision 55); the trusted core confined behind the broker (decision 56; `sandboxing.md` section 7).
 - Builds and tests on Windows, in a virtual machine, and on Linux (`DEVELOPMENT.md` section 12).
