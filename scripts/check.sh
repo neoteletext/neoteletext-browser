@@ -246,6 +246,7 @@ check_shapes_and_tests() {
     (cd native && cargo clippy --quiet -p interface-core -p protocol -p neoteletext -p neoteletext-interface -p neoteletext-keyboard --all-targets \
         --no-default-features --features "interface-core/phone-keyboard,protocol/phone-keyboard,neoteletext/phone-keyboard,neoteletext-interface/phone-keyboard,neoteletext-keyboard/phone-keyboard" -- -D warnings)
     check_dependency_trees
+    check_microcontroller_builds
     step "native: tests"
     (cd native && cargo nextest run --workspace --hide-progress-bar --status-level fail --final-status-level fail)
     step "native/tuf: tests"
@@ -260,6 +261,23 @@ check_shapes_and_tests() {
     # every Cargo run, which cost each step of this gate minutes.
     step "native: a build with nothing changed builds nothing"
     (cd native && ! cargo nextest run --workspace --no-run 2>&1 | grep -E '^ +Compiling')
+}
+
+# Requirement 15.3 (REQ-789, DEC-2357): the interface core and its
+# microcontroller back end build for microcontrollers with no standard
+# library: Arm Cortex-M0 (no atomic compare-and-swap, no floating point)
+# and RISC-V RV32IMC, the smallest of the engine's targets (its
+# REQ-GEN-015), with every optional area and with none.
+readonly MICROCONTROLLER_TARGETS=(thumbv6m-none-eabi riscv32imc-unknown-none-elf)
+check_microcontroller_builds() {
+    local target
+    for target in "${MICROCONTROLLER_TARGETS[@]}"; do
+        # rust-toolchain.toml installs each target's standard library.
+        grep -qE "^targets = \[.*\"$target\"" rust-toolchain.toml || fail "$target is not among rust-toolchain.toml's targets"
+        step "native: Clippy for $target, interface-core and draw-embedded, with every optional area and with none, warnings as errors"
+        (cd native && cargo clippy --quiet --locked -p interface-core -p draw-embedded --target "$target" -- -D warnings &&
+            cargo clippy --quiet --locked -p interface-core -p draw-embedded --target "$target" --no-default-features -- -D warnings)
+    done
 }
 
 # The packages that have each optional area, as `package/area` features.

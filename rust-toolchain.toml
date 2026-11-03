@@ -3,4 +3,8 @@
 # repositories are checked by the same compiler and the same Clippy.
 channel = "1.99.0"
 components = ["clippy", "rustfmt"]
+# The microcontrollers the interface core and its embedded back end are
+# built for (requirement 15.3, DEC-2357; scripts/check.sh
+# MICROCONTROLLER_TARGETS).
+targets = ["thumbv6m-none-eabi", "riscv32imc-unknown-none-elf"]
 profile = "minimal"
