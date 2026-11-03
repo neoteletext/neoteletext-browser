@@ -89,6 +89,15 @@ pub fn remove_containers() {
     container::remove_containers();
 }
 
+/// The SID of the fetcher's `AppContainer` as text, which the
+/// administrator's loopback exemption names (decision 78).
+///
+/// # Errors
+/// When Windows cannot derive it.
+pub fn fetcher_container_sid() -> io::Result<String> {
+    container::fetcher_sid()
+}
+
 /// A process's own side: its parent started it with the token, job and
 /// policies that confine it.
 pub(crate) fn apply() -> Report {
@@ -134,7 +143,8 @@ fn spawn_in(spawn: &Spawn<'_>, sid: &ContainerSid) -> io::Result<Process> {
         keep_ours(our_reader.raw())?;
         keep_ours(our_writer.raw())?;
         inherited.extend([their_reader.raw(), their_writer.raw()]);
-        environment.push((OsString::from(CHANNEL_VARIABLE), OsString::from(format!("{},{}", their_reader.raw() as usize, their_writer.raw() as usize))));
+        environment
+            .push((OsString::from(CHANNEL_VARIABLE), OsString::from(format!("{},{}", their_reader.raw().cast_unsigned(), their_writer.raw().cast_unsigned()))));
         Some((our_reader, our_writer, their_reader, their_writer))
     } else {
         None
@@ -156,7 +166,8 @@ fn spawn_in(spawn: &Spawn<'_>, sid: &ContainerSid) -> io::Result<Process> {
     {
         grant(folder, sid)?;
     }
-    let information = start(spawn, &inherited, their_stdin.raw(), their_stdout.raw(), sid, &capabilities)
+    let their_stderr = errors.as_ref().map_or(0, |(_, theirs)| theirs.raw());
+    let information = start(spawn, &inherited, their_stdin.raw(), their_stdout.raw(), their_stderr, sid, &capabilities)
         .map_err(|error| io::Error::new(error.kind(), format!("cannot start in its AppContainer: {error}")))?;
     report.layers.push(String::from(if matches!(spawn.role, Role::Decoder | Role::Core) { "less privileged AppContainer" } else { "AppContainer" }));
     let process = Owned::new(information.hProcess);

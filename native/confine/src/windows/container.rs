@@ -9,7 +9,7 @@ use std::sync::{Mutex, PoisonError};
 use windows_sys::Win32::Foundation::PSID;
 use windows_sys::Win32::Security::Isolation::{CreateAppContainerProfile, DeleteAppContainerProfile, DeriveAppContainerSidFromAppContainerName};
 
-use super::handles::{ContainerSid, wide};
+use super::handles::{ContainerSid, sid_text, wide};
 use crate::Role;
 
 /// The internet client capability (`SECURITY_CAPABILITY_INTERNET_CLIENT`).
@@ -89,4 +89,20 @@ pub(super) fn profile(name: &str) -> io::Result<ContainerSid> {
         return Err(io::Error::other("cannot make or find the AppContainer profile"));
     }
     Ok(ContainerSid::new(sid))
+}
+
+/// The fetcher's container's SID as text (`S-1-15-2-...`), derived from
+/// its name alone, without making its profile, so that a process in a
+/// container may ask it: what an administrator's loopback exemption names
+/// (decision 78), since `CheckNetIsolation` refuses the container's name.
+pub(super) fn fetcher_sid() -> io::Result<String> {
+    let name = wide(CONTAINER_NETWORK);
+    let mut sid: PSID = ptr::null_mut();
+    // SAFETY: the name is NUL-terminated and alive; the SID is written to a live local and
+    // owned by `ContainerSid`.
+    if unsafe { DeriveAppContainerSidFromAppContainerName(name.as_ptr(), &raw mut sid) } < 0 {
+        return Err(io::Error::other("cannot derive the fetcher's AppContainer SID"));
+    }
+    let sid = ContainerSid::new(sid);
+    sid_text(sid.raw())
 }

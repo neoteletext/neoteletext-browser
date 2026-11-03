@@ -133,11 +133,19 @@ fn role(command: &str) -> String {
     if program == "neoteletext" && words.next() == Some("--core") { String::from("neoteletext --core") } else { program }
 }
 
-/// How many processes run each program.
+/// How many processes run each program. A `neoteletext` started by a
+/// `neoteletext` is the core whatever its command line shows: on Windows,
+/// in the virtual machine on 4 November 2026, the listing did not show the
+/// core's `--core`, and the census counted two brokers.
 fn census(family: &BTreeMap<u32, Process>) -> BTreeMap<String, usize> {
     let mut census = BTreeMap::new();
     for process in family.values() {
-        *census.entry(role(&process.command)).or_default() += 1;
+        let mut named = role(&process.command);
+        let parent_is_the_program = family.get(&process.parent).is_some_and(|parent| role(&parent.command) == "neoteletext");
+        if named == "neoteletext" && parent_is_the_program {
+            named = String::from("neoteletext --core");
+        }
+        *census.entry(named).or_default() += 1;
     }
     census
 }

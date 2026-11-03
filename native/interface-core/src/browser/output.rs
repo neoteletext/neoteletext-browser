@@ -130,6 +130,9 @@ pub enum Output {
         /// How many steps.
         steps: u8,
     },
+    /// Put this text on the system's clipboard: the loopback exemption's
+    /// command, from the settings panel's Copy (TODO-1251).
+    Copy(String),
     /// Strip input: open a private tab (requirement 20.8).
     NewPrivateTab,
     /// Strip input: open a new window, private or not

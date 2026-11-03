@@ -219,6 +219,7 @@ fn the_aspect_correction_stretches_the_drawn_page_and_keeps_its_screen() {
             cookies: CookieMode::Keep,
             aspect,
             refusal: None,
+            loopback_exemption: None,
         });
         for _ in 0..2 {
             painter.begin(WINDOW.0, WINDOW.1, 1.0);

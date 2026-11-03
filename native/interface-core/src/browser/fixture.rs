@@ -62,6 +62,7 @@ pub(super) fn set_aspect(browser: &mut Browser, on: bool) {
         cookies: CookieMode::Keep,
         aspect: on,
         refusal: None,
+        loopback_exemption: None,
     });
 }
 

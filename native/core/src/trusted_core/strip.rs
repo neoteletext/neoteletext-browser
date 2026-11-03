@@ -70,6 +70,7 @@ impl Core {
             RefusedFile::Bundle | RefusedFile::Contents => None,
         };
         let Some(failed) = failed else { return Ok(()) };
+        let exemption = self.loopback_exemption.clone();
         let home = self.settings.home.clone();
         let Some(tab) = self.session.all_tabs_mut().find(|tab| tab.channel.id == channel) else { return Ok(()) };
         if failed.1.is_some_and(|page| tab.channel.is_loaded(page)) {
@@ -80,13 +81,22 @@ impl Core {
         // place, and Back tries the home channel again (DEC-2364, REQ-847).
         let unreached_home = file == RefusedFile::Channel && status.is_none() && tab.address().is_some_and(|address| address.text == home);
         tab.channel.failed = Some(failed);
+        // Nothing answered a channel on this computer: on Windows, its
+        // fetcher's container is the likely reason (TODO-1251).
+        let blocked = (file == RefusedFile::Channel && status.is_none())
+            .then(|| tab.address().and_then(|address| super::loopback::refused_text(address, exemption.as_deref())))
+            .flatten();
         if unreached_home && self.active_channel() == Some(channel) {
             self.log(Level::Info, Some(channel), &format!("{home} was not reached: the start page opens instead"));
             self.session.navigate(neoteletext::address::START_PAGE, false)?;
-            return self.send_all();
+            self.send_all()?;
+            return blocked.map_or(Ok(()), |text| self.say(text));
         }
         if self.active_channel() == Some(channel) {
-            self.send(&ToInterface::Strip(self.strip()))?;
+            match blocked {
+                Some(text) => self.say(text)?,
+                None => self.send(&ToInterface::Strip(self.strip()))?,
+            }
         }
         Ok(())
     }

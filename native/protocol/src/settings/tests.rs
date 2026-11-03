@@ -14,6 +14,7 @@ fn view() -> SettingsView {
         cookies: CookieMode::Close,
         aspect: true,
         refusal: Some("Not an address on this computer or the local network".into()),
+        loopback_exemption: Some("CheckNetIsolation.exe LoopbackExempt -a -p=S-1-15-2-1-2-3-4-5-6-7".into()),
     }
 }
 
@@ -49,6 +50,7 @@ fn what_breaks_a_bound_is_refused() {
     assert!(push_view(&mut Vec::new(), &SettingsView { volume: 101, ..view() }).is_err());
     assert!(push_view(&mut Vec::new(), &SettingsView { local: vec!["10.0.0.1".into(); MAX_LOCAL + 1], ..view() }).is_err());
     assert!(push_view(&mut Vec::new(), &SettingsView { home: "a\u{202e}b".into(), ..view() }).is_err(), "hidden characters");
+    assert!(push_view(&mut Vec::new(), &SettingsView { loopback_exemption: Some("a".repeat(MAX_LOOPBACK_EXEMPTION + 1)), ..view() }).is_err());
     assert!(push_change(&mut Vec::new(), &SettingChange::Volume(101)).is_err());
     assert!(read_change(&mut Fields::new(&[CHANGE_VOLUME, 101])).is_err());
     assert!(read_change(&mut Fields::new(&[9])).is_err());

@@ -168,6 +168,7 @@ fn every_message_to_the_interface_round_trips() {
             cookies: settings::CookieMode::Close,
             aspect: false,
             refusal: None,
+            loopback_exemption: None,
         }),
         ToInterface::Update(settings::UpdateView { version: "0.1.0".into(), status: "NeoTeletext is up to date".into(), offer: None, checking: true }),
         ToInterface::Cookies(cookies::CookiesView { query: "news".into(), total: 0, ..cookies::CookiesView::default() }),

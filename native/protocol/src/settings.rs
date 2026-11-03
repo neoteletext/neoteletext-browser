@@ -20,6 +20,11 @@ pub const MAX_PROXY_HOST: usize = 255;
 pub const MAX_VOLUME: u8 = 100;
 /// The longest refusal the panel says.
 pub const MAX_REFUSAL: usize = 160;
+/// The longest loopback exemption command the panel gives (TODO-1251):
+/// room for `CheckNetIsolation.exe LoopbackExempt -a -p=`, 43 bytes, and
+/// the longest SID as text, 186 (`SECURITY_MAX_SID_STRING_CHARACTERS` of
+/// `winnt.h` less its NUL).
+pub const MAX_LOOPBACK_EXEMPTION: usize = 256;
 /// The longest status line of updates the panel says.
 pub const MAX_UPDATE_STATUS: usize = 200;
 /// The longest version as text.
@@ -113,6 +118,13 @@ pub(crate) fn push_view(payload: &mut Vec<u8>, view: &SettingsView) -> Result<()
         }
         None => push_flag(payload, false),
     }
+    match &view.loopback_exemption {
+        Some(command) => {
+            push_flag(payload, true);
+            push_text(payload, command, MAX_LOOPBACK_EXEMPTION)?;
+        }
+        None => push_flag(payload, false),
+    }
     Ok(())
 }
 
@@ -127,7 +139,8 @@ pub(crate) fn read_view(fields: &mut Fields<'_>) -> Result<SettingsView, Protoco
     let cookies = read_mode(fields)?;
     let aspect = fields.flag("flag")?;
     let refusal = if fields.flag("flag")? { Some(fields.text(MAX_REFUSAL)?) } else { None };
-    Ok(SettingsView { home, sound, volume, proxy, local, restore_session, cookies, aspect, refusal })
+    let loopback_exemption = if fields.flag("flag")? { Some(fields.text(MAX_LOOPBACK_EXEMPTION)?) } else { None };
+    Ok(SettingsView { home, sound, volume, proxy, local, restore_session, cookies, aspect, refusal, loopback_exemption })
 }
 
 pub(crate) fn push_change(payload: &mut Vec<u8>, change: &SettingChange) -> Result<(), ProtocolError> {

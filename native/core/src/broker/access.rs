@@ -187,9 +187,13 @@ mod tests {
         assert_eq!(access.admit(&path, now + DECLARED_FOR.saturating_sub(Duration::from_millis(1))), Admission::Fresh { keep: true });
         assert_eq!(access.admit(&path, now + DECLARED_FOR), Admission::Refused);
 
-        let mut access = Access::default();
-        access.declare(&Declaration { paths: vec!["~/a.tti".into()], keep: true }, Some(&home), now);
-        assert_eq!(access.admit(&path, now), Admission::Fresh { keep: true });
+        // A typed `~` is the home folder on macOS and Linux; on Windows a
+        // path is typed whole (`address::typed_path`).
+        if cfg!(unix) {
+            let mut access = Access::default();
+            access.declare(&Declaration { paths: vec!["~/a.tti".into()], keep: true }, Some(&home), now);
+            assert_eq!(access.admit(&path, now), Admission::Fresh { keep: true });
+        }
         std::fs::remove_dir_all(&home).unwrap();
     }
 

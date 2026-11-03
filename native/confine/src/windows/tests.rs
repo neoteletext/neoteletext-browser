@@ -4,13 +4,15 @@
 #![expect(unsafe_code, reason = "the console calls a helper could make, tried as a helper (requirement 10.12, decision 100)")]
 
 use std::ffi::OsString;
+use std::io::{BufRead as _, BufReader};
 use std::os::windows::process::CommandExt as _;
 use std::ptr;
 
 use windows_sys::Win32::Foundation::{GENERIC_READ, GENERIC_WRITE};
 use windows_sys::Win32::Storage::FileSystem::{CreateFileW, FILE_SHARE_READ, FILE_SHARE_WRITE, OPEN_EXISTING};
 use windows_sys::Win32::System::Console::{
-    ATTACH_PARENT_PROCESS, AttachConsole, FlushConsoleInputBuffer, FreeConsole, INPUT_RECORD, KEY_EVENT, PeekConsoleInputW, WriteConsoleInputW,
+    ATTACH_PARENT_PROCESS, AttachConsole, FlushConsoleInputBuffer, FreeConsole, GetStdHandle, INPUT_RECORD, KEY_EVENT, PeekConsoleInputW, STD_ERROR_HANDLE,
+    SetStdHandle, WriteConsoleInputW,
 };
 use windows_sys::Win32::System::Threading::CREATE_NEW_CONSOLE;
 
@@ -197,4 +199,67 @@ fn a_confined_helper_cannot_type_into_its_console() {
     for role in ROLES {
         assert!(said.contains(&format!("TYPED {role:?} 0\n")) || said.contains(&format!("TYPED {role:?} 0\r\n")), "{role:?} typed into its console: {said}");
     }
+}
+
+/// REQ-2402, decision 78, TODO-1251: the SID the browser gives for the administrator's
+/// loopback exemption is the fetcher's container's, as the profile made for
+/// it names it, in its text form: `S-1-15-2-` and seven sub-authorities.
+#[test]
+fn the_fetcher_container_is_named_by_the_sid_of_its_profile() {
+    let derived = crate::fetcher_container().unwrap();
+    let profile = container(Role::Network).unwrap();
+    assert_eq!(derived, handles::sid_text(profile.raw()).unwrap());
+    let parts: Vec<&str> = derived.split('-').collect();
+    assert_eq!(parts[..4], ["S", "1", "15", "2"], "{derived}");
+    assert_eq!(parts.len(), 4 + 7, "{derived}");
+    assert!(parts[4..].iter().all(|part| part.parse::<u32>().is_ok()), "{derived}");
+}
+
+/// What a copy of this test binary does as the interface: says whether its
+/// standard error is one of the two handles of its channel to the broker.
+const STANDARD_ERROR_PROBE: &str = "NEOTELETEXT_CONFINE_STANDARD_ERROR_PROBE";
+
+/// The probe: run by `an_interface_started_with_no_standard_error_keeps_its_channel_apart`.
+#[test]
+fn standard_error_probe() {
+    if std::env::var_os(STANDARD_ERROR_PROBE).is_none() {
+        return;
+    }
+    let channel = std::env::var(CHANNEL_VARIABLE).unwrap_or_default();
+    // SAFETY: GetStdHandle takes a constant and returns this process's handle or none; it
+    // is only compared.
+    let stderr = unsafe { GetStdHandle(STD_ERROR_HANDLE) }.cast_unsigned();
+    let shared = channel.split(',').any(|value| value.parse::<usize>().is_ok_and(|value| value == stderr && stderr != 0));
+    println!("STDERR {}", if shared { "is-the-channel" } else { "apart" });
+}
+
+/// A broker with no standard error, as one started from the Start menu
+/// or Explorer has, starts the interface with none either, never with its
+/// channel to the broker in that place. Before, the third handle of the
+/// inherited list was taken for the standard error, and with no error
+/// pipe that was the interface's channel: the interface's first report
+/// went into it and it ended at once, and with it the browser (measured in
+/// the Windows virtual machine on 4 November 2026).
+#[test]
+fn an_interface_started_with_no_standard_error_keeps_its_channel_apart() {
+    let program = std::env::current_exe().unwrap();
+    let arguments = [OsString::from("--exact"), OsString::from("windows::tests::standard_error_probe"), OsString::from("--nocapture")];
+    let mut environment = environment(Role::Interface);
+    environment.push((OsString::from(STANDARD_ERROR_PROBE), OsString::from("1")));
+    let spawn = Spawn { program: &program, arguments: &arguments, role: Role::Interface, environment: &environment, local_network: false, writable: None };
+    // As the shell starts a desktop program: no standard error. Put back
+    // at once, so that the other tests keep theirs.
+    // SAFETY: GetStdHandle and SetStdHandle take constants and a handle this process
+    // already has (or none); the handle is put back below, and none is closed.
+    let kept = unsafe { GetStdHandle(STD_ERROR_HANDLE) };
+    // SAFETY: as above.
+    unsafe { SetStdHandle(STD_ERROR_HANDLE, 0) };
+    let started = crate::spawn(&spawn);
+    // SAFETY: as above.
+    unsafe { SetStdHandle(STD_ERROR_HANDLE, kept) };
+    let mut process = started.unwrap();
+    let output = process.stdout.take().unwrap();
+    let line = BufReader::new(output).lines().map_while(Result::ok).find(|line| line.starts_with("STDERR")).unwrap_or_default();
+    let _ = process.wait();
+    assert_eq!(line, "STDERR apart");
 }

@@ -81,8 +81,12 @@ pub fn run() -> Result<(), String> {
             Wake::Core(Some(ToSound::Close) | None) => return Ok(()),
             Wake::Broken(reason) => return Err(format!("bad message from the trusted core: {reason}")),
             Wake::Sounding(sounding) => {
-                // The device runs only while a channel sounds.
-                speaker.set_playing(!sounding.is_empty());
+                // The device runs only while a channel sounds (decision 53);
+                // the trace says when it starts and stops (TODO-1243).
+                let playing = !sounding.is_empty();
+                if speaker.set_playing(playing) && trace {
+                    eprintln!("neoteletext-sound: the output device {}", if playing { "started" } else { "stopped" });
+                }
                 write_from_sound(&mut output, &FromSound::Sounding(sounding.into_iter().collect()))
                     .and_then(|()| output.flush().map_err(Into::into))
                     .map_err(|error| format!("cannot write to the trusted core: {error}"))?;

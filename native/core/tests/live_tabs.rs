@@ -26,6 +26,13 @@ const NOTHING_FOR: Duration = Duration::from_millis(300);
 /// How many tabs are closed. With `send_last` taken out, the first of them
 /// failed on 31 October 2026.
 const TAB_CLOSES: usize = 8;
+/// What the site says when a viewer's connection ends, "connection <n>:
+/// closed": not the bare word, since on Windows a fetcher killed or closed
+/// resets its connection for files too, and the site says that error, "An
+/// existing connection was forcibly closed by the remote host", which a
+/// test would take for the end of the viewer's connection (measured in the
+/// Windows virtual machine, 3 November 2026).
+const CONNECTION_CLOSED: &str = ": closed";
 const TYPING: u16 = 0x200;
 const LINKS: u16 = 0x500;
 const INDEX: u16 = 0x100;
@@ -89,7 +96,7 @@ fn select_of_page_0_reaches_the_channel_before_the_connection_closes() {
         tab.next_page(Instant::now() + LIMIT);
         let select_nothing = Select::new(0, SUBCODE_ANY).unwrap();
         tab.send_and_close(&alone(message(&mut session, &Item::Event(Event::Select(select_nothing, "")))));
-        let said = said_until(&heard, "closed", Instant::now() + LIMIT);
+        let said = said_until(&heard, CONNECTION_CLOSED, Instant::now() + LIMIT);
         assert!(said.iter().any(|line| line.contains("SELECT 000/3F7F")), "the channel heard SELECT of page 0 first: {said:?}");
     }
 }
@@ -123,7 +130,7 @@ fn two_tabs_on_one_channel_are_apart() {
     assert!(second_store.render(TYPING).is_none() && second_store.render(LINKS).is_some(), "each store holds its own");
 
     first.kill();
-    let said = said_until(&heard, "closed", Instant::now() + LIMIT);
+    let said = said_until(&heard, CONNECTION_CLOSED, Instant::now() + LIMIT);
     assert!(said.last().unwrap().contains(&connection), "{said:?}");
     select(&second, &mut second_session, INDEX);
     second_store.feed_whole(true, true, &second.next_page(Instant::now() + LIMIT));
@@ -165,6 +172,6 @@ fn page_500_is_followed_by_its_links_record_alone() {
         }
     }
     tab.close_input();
-    let said = said_until(&heard, "closed", Instant::now() + LIMIT);
+    let said = said_until(&heard, CONNECTION_CLOSED, Instant::now() + LIMIT);
     assert!(said.iter().all(|line| !line.contains("500.tti")), "page 500 was never fetched as a file: {said:?}");
 }

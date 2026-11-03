@@ -230,6 +230,66 @@ fn the_interface_alone_has_a_channel_to_the_broker() {
     assert_eq!(*heard.lock().unwrap(), [crate::broker::Declaration { paths: vec![String::from("/declared.tti")], keep: true }]);
 }
 
+/// What a spawned copy of this test binary connects to as a fetcher on
+/// Windows: a listener's port on this computer.
+#[cfg(windows)]
+const WINDOWS_LOOPBACK_PORT: &str = "NEOTELETEXT_CONFINE_WINDOWS_LOOPBACK_PORT";
+
+/// The Windows loopback probe: run by
+/// `a_fetcher_reaches_this_computer_only_with_the_exemption`, never on its
+/// own. It says whether it connected, how the connection failed and how
+/// long that took, and the fetcher container's SID as it derives it from
+/// inside the container.
+#[cfg(windows)]
+#[test]
+fn windows_loopback_probe() {
+    let Some(port) = std::env::var_os(WINDOWS_LOOPBACK_PORT) else { return };
+    let address: std::net::SocketAddr = format!("127.0.0.1:{}", port.to_string_lossy()).parse().unwrap();
+    let started = std::time::Instant::now();
+    let reached = match std::net::TcpStream::connect_timeout(&address, CONNECT_WAIT) {
+        Ok(_) => String::from("connected"),
+        Err(error) => format!("refused ({:?}, os error {:?})", error.kind(), error.raw_os_error()),
+    };
+    println!("LOOPBACK {reached} after {} ms", started.elapsed().as_millis());
+    println!("SID {}", crate::fetcher_container().unwrap_or_default());
+}
+
+/// Whether an administrator has exempted the fetcher's container from
+/// Windows' loopback isolation: `CheckNetIsolation LoopbackExempt -s` lists
+/// each exempted container by its SID.
+#[cfg(windows)]
+fn fetcher_is_exempt(sid: &str) -> bool {
+    let listed = std::process::Command::new("CheckNetIsolation.exe").args(["LoopbackExempt", "-s"]).output().unwrap();
+    String::from_utf8_lossy(&listed.stdout).to_ascii_lowercase().contains(&sid.to_ascii_lowercase())
+}
+
+/// REQ-2402, decision 78, TODO-1251: on Windows a fetcher, even one allowed the local
+/// network, reaches this computer only once an administrator has exempted
+/// its container, and the SID the browser gives for that exemption is the
+/// one the container derives for itself, inside it. The probe prints how
+/// the connection failed, which the trusted core's message rests on.
+#[cfg(windows)]
+#[test]
+fn a_fetcher_reaches_this_computer_only_with_the_exemption() {
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port().to_string();
+    let program = std::env::current_exe().unwrap();
+    let arguments = [OsString::from("--exact"), OsString::from("spawn::tests::windows_loopback_probe"), OsString::from("--nocapture")];
+    let mut environment = environment(Role::Network);
+    environment.push((OsString::from(WINDOWS_LOOPBACK_PORT), OsString::from(&port)));
+    let mut process =
+        spawn(&Spawn { program: &program, arguments: &arguments, role: Role::Network, environment: &environment, local_network: true, writable: None })
+            .unwrap();
+    let lines: Vec<String> = BufReader::new(process.stdout.take().unwrap()).lines().map_while(Result::ok).collect();
+    let _ = process.wait();
+    drop(listener);
+    println!("{}", lines.join("\n"));
+    let reached = lines.iter().find(|line| line.starts_with("LOOPBACK")).cloned().unwrap_or_default();
+    let sid = lines.iter().find_map(|line| line.strip_prefix("SID ")).unwrap_or_default().to_owned();
+    assert_eq!(sid, crate::fetcher_container().unwrap(), "the container derives the SID the broker derives");
+    assert_eq!(reached.starts_with("LOOPBACK connected"), fetcher_is_exempt(&sid), "{reached}");
+}
+
 /// What a copy of this test binary does, run as a decoder: lists the
 /// descriptors it holds.
 #[cfg(unix)]

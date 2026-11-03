@@ -49,6 +49,10 @@ pub struct SettingsView {
     pub aspect: bool,
     /// Why the last change was refused, if it was.
     pub refusal: Option<String>,
+    /// On Windows, the command an administrator runs once so that channels
+    /// on this computer can be reached (decision 78, TODO-1251); none
+    /// elsewhere.
+    pub loopback_exemption: Option<String>,
 }
 
 /// One change the panel asks for.
