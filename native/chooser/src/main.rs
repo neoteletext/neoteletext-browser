@@ -103,9 +103,9 @@ fn choose(kind: ChooseKind, parent: &str, folder: Option<&Path>) -> Result<Optio
 /// `enable-animations`, a boolean, false when the viewer turned off
 /// Accessibility's animations). Read only where the portal lacks the
 /// standard key, as a portal before version 1.20 of xdg-desktop-portal does.
-#[cfg(any(target_os = "linux", test))]
+#[cfg(target_os = "linux")]
 const GNOME_INTERFACE: &str = "org.gnome.desktop.interface";
-#[cfg(any(target_os = "linux", test))]
+#[cfg(target_os = "linux")]
 const GNOME_ENABLE_ANIMATIONS: &str = "enable-animations";
 /// The `org.freedesktop.appearance` key `reduced-motion`'s value for
 /// reduced motion: the portal's Settings documentation gives it as an
