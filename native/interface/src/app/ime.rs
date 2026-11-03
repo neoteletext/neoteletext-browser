@@ -38,6 +38,12 @@ impl App {
     pub(super) fn follow_reduced_motion(&mut self) {
         let reduced = system_reduced_motion();
         if reduced != self.view.browser.wall().reduced_motion() {
+            // Under the frame trace, what the system answered the confined
+            // interface: on Windows a refused call reads as no preference,
+            // so only this line shows the answer came (TODO-2083).
+            if self.trace_frames {
+                eprintln!("neoteletext-interface: reduced motion {}, as the system says", if reduced { "on" } else { "off" });
+            }
             self.view.browser.wall_mut().set_reduced_motion(reduced);
             self.request_redraw();
         }
