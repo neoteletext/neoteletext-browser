@@ -34,7 +34,7 @@ use crate::agent::descriptor_links;
 use crate::agent::{Random, product};
 use crate::cookies;
 use crate::live::{LiveIndex, Noted, SubPageLists};
-use crate::transport::{AllowedLocal, Tcp};
+use crate::transport::Tcp;
 
 const _: () = assert!(protocol::fetcher::MAX_DENIED_PLACE == neoteletext_web::records::denied::MAX_PLACE, "the engine's longest place");
 const _: () = assert!(protocol::fetcher::MIN_REFRESH_SECONDS == neoteletext_web::descriptor::MIN_REFRESH_SECONDS, "the engine's shortest refresh");
@@ -473,17 +473,29 @@ fn agent_config(allowed: &[IpAddr], proxied: bool) -> Config {
 /// # Errors
 /// When writing to the trusted core fails.
 pub fn run(channel: &str, allowed: &[IpAddr], proxy: Option<Proxy>) -> Result<(), String> {
-    // Before anything of the channel, so the trusted core can tell a
-    // fetcher that could not start from one its server ended (finding
-    // F-12).
-    let output: cookies::Output = Rc::new(RefCell::new(BufWriter::new(io::stdout())));
-    send(&output, &FromFetcher::Confined)?;
-    output.borrow_mut().flush().map_err(|error| error.to_string())?;
-    let mut storage = Box::new(Storage::default());
     let config = agent_config(allowed, proxy.is_some());
     // The transport refuses the same local addresses before connecting
     // (finding F-62).
     let allowed_local = config.allowed_local;
+    run_with(channel, config, |wake| Tcp::new(wake, proxy, allowed_local), Box::new(io::stdin()), Box::new(io::stdout()))
+}
+
+/// [`run`] with the agent's settings, the transport `transport` makes with
+/// the loop's waker, and the trusted core's pipes, which a test replaces.
+fn run_with(
+    channel: &str,
+    config: Config,
+    transport: impl FnOnce(crate::transport::Wake) -> Tcp,
+    input: Box<dyn Read + Send>,
+    output: Box<dyn Write>,
+) -> Result<(), String> {
+    // Before anything of the channel, so the trusted core can tell a
+    // fetcher that could not start from one its server ended (finding
+    // F-12).
+    let output: cookies::Output = Rc::new(RefCell::new(BufWriter::new(output)));
+    send(&output, &FromFetcher::Confined)?;
+    output.borrow_mut().flush().map_err(|error| error.to_string())?;
+    let mut storage = Box::new(Storage::default());
     let random = Random::new();
     let (wakes, woken) = mpsc::channel::<Wake>();
     // The trusted core's answers to the cookie questions, read by the same
@@ -491,7 +503,10 @@ pub fn run(channel: &str, allowed: &[IpAddr], proxy: Option<Proxy>) -> Result<()
     let (answers, answered) = mpsc::channel();
     let mut store = cookies::CoreCookies::new(Rc::clone(&output), answered);
     let mut agent: Box<Agent<'_>> = Box::new(UserAgent::with_cookies(config, storage.buffers(), random, &mut store));
-    let mut pump = sockets(wakes.clone(), proxy, allowed_local);
+    let network = wakes.clone();
+    let mut pump = Pump::new(transport(Arc::new(move || {
+        let _ = network.send(Wake::Network);
+    })));
     let start = Clock::now();
     let clock = || Instant(u64::try_from(start.elapsed().as_micros()).unwrap_or(u64::MAX));
     let mut buffer = vec![0_u8; READ_CHUNK];
@@ -508,7 +523,7 @@ pub fn run(channel: &str, allowed: &[IpAddr], proxy: Option<Proxy>) -> Result<()
     // then it sends only input messages (REQ-INT-133); anything else
     // ends the fetcher too.
     std::thread::spawn(move || {
-        read_commands(&mut io::BufReader::new(io::stdin().lock()), &wakes, &answers);
+        read_commands(&mut io::BufReader::new(input), &wakes, &answers);
         let _ = wakes.send(Wake::Ended);
     });
 
@@ -642,19 +657,6 @@ fn live_record(action: Action, live: &mut Live, output: &cookies::Output) -> Res
 
 /// The agent with the cookie jar it keeps: none of its own.
 type Agent<'a> = UserAgent<'a, Random, COOKIE_SLOTS, COOKIE_BYTES>;
-
-/// The sockets, through `proxy` when there is one, refusing the local
-/// addresses but `allowed_local`; each wakes the loop when it has bytes
-/// or has ended.
-fn sockets(wakes: mpsc::Sender<Wake>, proxy: Option<Proxy>, allowed_local: AllowedLocal) -> Pump<Tcp> {
-    Pump::new(Tcp::new(
-        Arc::new(move || {
-            let _ = wakes.send(Wake::Network);
-        }),
-        proxy,
-        allowed_local,
-    ))
-}
 
 /// Writes `message` to the trusted core.
 fn send(output: &cookies::Output, message: &FromFetcher) -> Result<(), String> {
@@ -1195,6 +1197,179 @@ mod tests {
             [vec![binary(&mouse_move(1)), binary(&KEY)], vec![binary(&KEY), binary(&mouse_move(3))], vec![binary(&KEY)]],
             "a moment in one send, in order; one already here joins it; a lone message at once"
         );
+    }
+
+    /// The frames a WebSocket client wrote, read from `stream` until it ends:
+    /// opcode and unmasked payload each (RFC 6455 section 5.2).
+    #[cfg(feature = "interaction")]
+    #[allow(clippy::arithmetic_side_effects, reason = "a test's frames, within their lengths")]
+    fn read_client_frame(stream: &mut dyn Read) -> Option<(u8, Vec<u8>)> {
+        let mut head = [0_u8; 2];
+        stream.read_exact(&mut head).ok()?;
+        let length = match head[1] & 0x7F {
+            126 => {
+                let mut length = [0_u8; 2];
+                stream.read_exact(&mut length).ok()?;
+                usize::from(u16::from_be_bytes(length))
+            }
+            127 => return None,
+            length => usize::from(length),
+        };
+        let mut mask = [0_u8; 4];
+        stream.read_exact(&mut mask).ok()?;
+        let mut payload = vec![0_u8; length];
+        stream.read_exact(&mut payload).ok()?;
+        payload.iter_mut().zip(mask.iter().cycle()).for_each(|(byte, key)| *byte ^= key);
+        Some((head[0] & 0x0F, payload))
+    }
+
+    /// Row 1 of a page of magazine 1, blank, as 42 bytes: its address
+    /// Hamming 8/4 coded, magazine and the row's low bit in the first byte
+    /// and the row's other bits in the second (EN 300 706 clause 7.1.2).
+    #[cfg(feature = "interaction")]
+    fn blank_row() -> Vec<u8> {
+        use neoteletext_core::ecc::hamming84_encode;
+        const MAGAZINE: u8 = 1;
+        const ROW: u8 = 1;
+        // A space has one bit set, so it is its own odd parity (clause 8.2).
+        const SPACE: u8 = b' ';
+        let mut packet = vec![hamming84_encode(MAGAZINE | ((ROW & 1) << 3)), hamming84_encode(ROW >> 1)];
+        packet.resize(neoteletext_core::consts::PACKET_BYTES, SPACE);
+        packet
+    }
+
+    /// TODO-2075 item 1, REQ-696, REQ-814: a live channel served only over
+    /// TLS, its push connection `wss`: the fetcher's own loop, as `run`
+    /// runs it but trusting the test's certificate, opens `channel.ttx`
+    /// over `https`, completes the WebSocket handshake over TLS, passes the
+    /// pushed packets to the trusted core as pushed, says input goes over a
+    /// secure connection, and writes an input message the trusted core
+    /// gives it to the channel over `wss`. No test opened a `wss`
+    /// connection before; its parts were each tested over plain WebSocket.
+    #[cfg(feature = "interaction")]
+    #[test]
+    #[allow(clippy::too_many_lines, reason = "one server and one exchange, read in order")]
+    fn a_secure_push_connection_carries_pages_and_input() {
+        use rustls::pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer};
+        use std::io::{BufRead, BufReader};
+        use std::net::{Ipv4Addr, TcpListener};
+        // The transport's test certificate for `localhost`, valid to 2126.
+        let certificate = CertificateDer::from(include_bytes!("transport/testdata/localhost-certificate.der").to_vec());
+        let key = PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(include_bytes!("transport/testdata/localhost-key.der").to_vec()));
+        let server_config = Arc::new(rustls::ServerConfig::builder().with_no_client_auth().with_single_cert(vec![certificate.clone()], key).unwrap());
+        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let page = blank_row();
+        let (heard, hearing) = mpsc::channel::<Vec<u8>>();
+        let pushed = page.clone();
+        std::thread::spawn(move || {
+            for socket in listener.incoming().flatten() {
+                let (server_config, pushed, heard) = (Arc::clone(&server_config), pushed.clone(), heard.clone());
+                std::thread::spawn(move || {
+                    let connection = rustls::ServerConnection::new(server_config).unwrap();
+                    let mut stream = BufReader::new(rustls::StreamOwned::new(connection, socket));
+                    loop {
+                        let mut lines = Vec::new();
+                        loop {
+                            let mut line = String::new();
+                            if stream.read_line(&mut line).unwrap_or(0) == 0 {
+                                return;
+                            }
+                            if line.trim().is_empty() {
+                                break;
+                            }
+                            lines.push(line.trim().to_owned());
+                        }
+                        let path = lines[0].split(' ').nth(1).unwrap_or_default().to_owned();
+                        let writer = stream.get_mut();
+                        if path == "/tt/push" {
+                            let key = lines.iter().find_map(|line| line.strip_prefix("Sec-WebSocket-Key: ")).unwrap().to_owned();
+                            let accept = neoteletext_web::ws::accept_for(key.as_bytes());
+                            let upgrade = format!(
+                                "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Protocol: {}\r\nSec-WebSocket-Accept: {}\r\n\r\n",
+                                neoteletext_web::consts::PUSH_SUBPROTOCOL,
+                                std::str::from_utf8(&accept).unwrap()
+                            );
+                            writer.write_all(upgrade.as_bytes()).unwrap();
+                            // One binary frame, unmasked as a server's is.
+                            let mut frame = vec![0x80 | neoteletext_web::consts::OPCODE_BINARY, u8::try_from(pushed.len()).unwrap()];
+                            frame.extend_from_slice(&pushed);
+                            writer.write_all(&frame).unwrap();
+                            writer.flush().unwrap();
+                            while let Some((opcode, payload)) = read_client_frame(&mut stream) {
+                                if opcode == neoteletext_web::consts::OPCODE_BINARY && heard.send(payload).is_err() {
+                                    return;
+                                }
+                            }
+                            return;
+                        }
+                        let body = br#"{"name":"Secure","push":{"input":true}}"#;
+                        let answer = format!("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n", body.len());
+                        writer.write_all(answer.as_bytes()).unwrap();
+                        writer.write_all(body).unwrap();
+                        writer.flush().unwrap();
+                    }
+                });
+            }
+        });
+
+        let (core_reads, fetcher_writes) = io::pipe().unwrap();
+        let (fetcher_reads, mut core_writes) = io::pipe().unwrap();
+        let channel = format!("https://localhost:{port}/tt/");
+        std::thread::spawn(move || {
+            let mut roots = rustls::RootCertStore::empty();
+            roots.add(certificate).unwrap();
+            let local = [IpAddr::from(Ipv4Addr::LOCALHOST)];
+            let config = agent_config(&local, false);
+            let allowed_local = config.allowed_local;
+            run_with(&channel, config, |wake| Tcp::with_roots(roots, wake, None, allowed_local), Box::new(fetcher_reads), Box::new(fetcher_writes))
+        });
+        let mut from_fetcher = BufReader::new(core_reads);
+        let mut until = |core_writes: &mut io::PipeWriter, wanted: &dyn Fn(&FromFetcher) -> bool| loop {
+            let message = protocol::fetcher::read_from_fetcher(&mut from_fetcher).unwrap().expect("the fetcher ended");
+            match &message {
+                FromFetcher::CookieQuestion { id, .. } => {
+                    protocol::fetcher::write_to_fetcher(core_writes, &ToFetcher::CookieAnswer { id: *id, header: Vec::new() }).unwrap();
+                }
+                FromFetcher::ReachedQuestion { id, .. } => {
+                    protocol::fetcher::write_to_fetcher(core_writes, &ToFetcher::ReachedAnswer { id: *id, reached: false }).unwrap();
+                }
+                _ => {}
+            }
+            if wanted(&message) {
+                return message;
+            }
+        };
+        // The handshake: the connection is open, and said secure.
+        let input = until(&mut core_writes, &|message| matches!(message, FromFetcher::Input { .. }));
+        assert_eq!(input, FromFetcher::Input { open: true, secure: true }, "keys go over a secure connection");
+        let page_message = until(&mut core_writes, &|message| matches!(message, FromFetcher::Page { origin: Origin::PushedPackets, .. }));
+        assert_eq!(page_message, FromFetcher::Page { origin: Origin::PushedPackets, bytes: page }, "pushed over wss");
+        protocol::fetcher::write_to_fetcher(&mut core_writes, &ToFetcher::Send { bytes: KEY.to_vec(), move_of: None, more: false }).unwrap();
+        // A ceiling, not a wait: the key arrives as soon as it is written.
+        let deadline = Duration::from_secs(10);
+        let key = hearing.recv_timeout(deadline).expect("the input message reached the channel");
+        assert_eq!(key, KEY, "written over wss");
+    }
+
+    /// REQ-814: the push WebSocket has the engine's heartbeat in the
+    /// fetcher: silent for `PUSH_PING_AFTER_US`, it is pinged, and a ping
+    /// not answered within `PUSH_PONG_WITHIN_US` loses the connection,
+    /// which is tried again.
+    #[cfg(feature = "interaction")]
+    #[test]
+    fn a_silent_push_connection_is_pinged_and_lost_when_it_does_not_answer() {
+        use neoteletext_web::consts::{OPCODE_PING, PUSH_PING_AFTER_US, PUSH_PONG_WITHIN_US};
+        let mut storage = Box::new(Storage::default());
+        let mut agent = agent(&mut storage);
+        open_push(&mut agent, 0);
+        let mut actions = Vec::new();
+        agent.handle(Instant(PUSH_PING_AFTER_US - 1), Input::Tick, &mut |out| collect(out, &mut actions));
+        assert!(push_sends(&mut actions).concat().iter().all(|(opcode, _)| *opcode != OPCODE_PING), "not yet");
+        agent.handle(Instant(PUSH_PING_AFTER_US), Input::Tick, &mut |out| collect(out, &mut actions));
+        assert!(push_sends(&mut actions).concat().iter().any(|(opcode, _)| *opcode == OPCODE_PING), "the heartbeat");
+        agent.handle(Instant(PUSH_PING_AFTER_US + PUSH_PONG_WITHIN_US), Input::Tick, &mut |out| collect(out, &mut actions));
+        assert!(actions.iter().any(|action| matches!(action, Action::Push(false))), "unanswered, the connection is lost");
     }
 
     /// REQ-RCH-016 (requirement 18.32): asked to, the agent measures the

@@ -144,7 +144,7 @@ impl Tcp {
     }
 
     /// The transport trusting `roots`: Mozilla's, or a test's own.
-    fn with_roots(roots: rustls::RootCertStore, wake: Wake, proxy: Option<Proxy>, allowed_local: AllowedLocal) -> Self {
+    pub(crate) fn with_roots(roots: rustls::RootCertStore, wake: Wake, proxy: Option<Proxy>, allowed_local: AllowedLocal) -> Self {
         Self {
             fetch: None,
             push: None,
