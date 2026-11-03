@@ -37,7 +37,7 @@
 NeoTeletext is an application for browsing teletext, on desktops, then phones, and with features cut on microcontrollers.
 
 - **Teletext** is the page-based information service defined by the European Telecommunications Standards Institute standard EN 300 706, "Enhanced Teletext specification". A copy is at `~/devel/teletext-reference/teletext-standards/en_300706v010201o.pdf`.
-- **Every tab is one teletext channel.** A teletext channel is one teletext service: eight magazines, numbered 1 to 8, each with pages numbered 00 to FF in hexadecimal, and each page with subpages. NeoTeletext shows pages 100 to 899.
+- **Every tab is one teletext channel.** A teletext channel is one teletext service: eight magazines, numbered 1 to 8, each with pages numbered 00 to FF in hexadecimal, and each page with subpages. A viewer keys pages 100 to 899, which the lists and the overview hold; a page with a hexadecimal digit, such as 1A0, is reached by a link and drawn like any other (REQ-300, REQ-313), and every number but those Annex A.10 of the standard reserves is a page (`interface_core::channel::is_channel_page`).
 - **A channel comes from the web or from a file.** On the web a channel is a folder on a server (the engine's `docs/spec/requirements/web.md`); a file is a recording or a folder of page files on this computer.
 - **Every image on screen is one teletext page,** rendered by the teletext engine at the native raster and scaled by the interface.
 - **The interface is drawn by NeoTeletext's own Rust code, with no web engine.** It draws on the processor, so it needs no graphics processor, and it shows many pages at once and animates between them.
@@ -699,7 +699,7 @@ Unsafe code is allowed only in the modules requirement 10.12 names, each saying 
 - The hostile interface harness with the real helpers running (it runs against the trusted core with a stand-in broker and stand-in helpers).
 - A release signed by the owner's keys: the certificates, the hardware keys, the update host and the key ceremony are the owner's (rdm to-dos for the owner); the Linux release build on the C library 2.28.
 - Builds on phones and microcontroller targets.
-- Page numbers with a hexadecimal digit, which decision 119 accepts (`STANDARD-LIMITS.md` question 3); a server's catalogue of sub-pages, its titles by range and tuning by sub-page (decision 112 item 3), which await the server; a channel's IMA ADPCM and PCM16 sound on the desktops, by the owner's instruction (decision 121 item 7).
+- A server's catalogue of sub-pages, its titles by range and tuning by sub-page (decision 112 item 3), which await the server; a channel's IMA ADPCM and PCM16 sound on the desktops, by the owner's instruction (decision 121 item 7).
 
 ---
 
