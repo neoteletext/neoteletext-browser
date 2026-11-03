@@ -55,6 +55,7 @@ fn every_kind_round_trips() {
         FromFetcher::Exchange { method: "GET".into(), url: "https://a.example/100.tti".into(), status: 200, bytes: 512, elapsed_us: 1_234 },
         FromFetcher::Confined,
         FromFetcher::ProxyFailed,
+        FromFetcher::TimedOut,
         FromFetcher::CertificateRefused(CertificateProblem::Expired),
         FromFetcher::CertificateRefused(CertificateProblem::Handshake),
         FromFetcher::CookieQuestion { id: 7, host: "a.example".into(), path: "/tt/100.tti".into(), secure: true, site: CookieSite::SameService },

@@ -701,7 +701,8 @@ fn push_changed(agent: &Agent<'_>, output: &cookies::Output, open: bool) -> Resu
 }
 
 /// Tells the trusted core what the transport refused since it was last
-/// asked: a proxy's failure, a certificate, a local address.
+/// asked: a proxy's failure, a certificate, an opening out of time, a local
+/// address.
 fn tell_failures(transport: &mut Tcp, output: &cookies::Output) -> Result<(), String> {
     let send = |message: FromFetcher| write_to_core(&mut *output.borrow_mut(), &message).map_err(|error| error.to_string());
     if transport.take_proxy_failure() {
@@ -709,6 +710,9 @@ fn tell_failures(transport: &mut Tcp, output: &cookies::Output) -> Result<(), St
     }
     if let Some(problem) = transport.take_certificate_refusal() {
         send(FromFetcher::CertificateRefused(problem))?;
+    }
+    if transport.take_timeout() {
+        send(FromFetcher::TimedOut)?;
     }
     // The agent hears only that the connection failed; the console hears
     // why, as it heard the engine's own refusal of a local peer.

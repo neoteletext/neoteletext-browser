@@ -64,3 +64,6 @@ pub(super) const KIND_FETCH_PAGE: u8 = 143;
 // A part of a page's list that could not be fetched (REQ-1888), in the next
 // number.
 pub(super) const KIND_SUBPAGES_FAILED: u8 = 144;
+// A connection whose opening ran out of its deadline (TODO-1277), in the
+// next number.
+pub(super) const KIND_TIMED_OUT: u8 = 145;

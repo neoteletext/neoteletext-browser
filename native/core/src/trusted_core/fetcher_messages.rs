@@ -74,6 +74,7 @@ impl Core {
             // the strip shows it: a fetcher cannot write the strip.
             FromFetcher::CertificateRefused(problem) => self.certificate_refused(channel, problem)?,
             FromFetcher::ProxyFailed => self.proxy_failed(channel)?,
+            FromFetcher::TimedOut => self.timed_out(channel)?,
             FromFetcher::Exchange { .. } => {}
             message @ (FromFetcher::CookieQuestion { .. }
             | FromFetcher::ReachedQuestion { .. }
@@ -242,9 +243,22 @@ impl Core {
     /// The proxy refused a connection of `channel`: said in the strip when
     /// it is the active channel, logged when not.
     fn proxy_failed(&mut self, channel: u32) -> Result<(), String> {
+        self.connection_failed(channel, |host| format!("The proxy refused the connection to {host}"))
+    }
+
+    /// A connection of `channel` did not open in time (TODO-1277): said in
+    /// the trusted core's own words, as the proxy's failure is, and not as
+    /// a certificate refused.
+    fn timed_out(&mut self, channel: u32) -> Result<(), String> {
+        self.connection_failed(channel, |host| format!("{host} did not answer in time"))
+    }
+
+    /// A connection of `channel` failed, as `text` says of its host: its
+    /// channel's Log, and the strip when the tab is in front.
+    fn connection_failed(&mut self, channel: u32, text: impl FnOnce(&str) -> String) -> Result<(), String> {
         let host = self.session.tabs.iter().find(|tab| tab.channel.id == channel).and_then(|tab| tab.address()).map(|address| address.host.clone());
         if let Some(host) = host {
-            let text = format!("The proxy refused the connection to {host}");
+            let text = text(&host);
             self.console.log(Some(channel), Level::Warning, self.now(), &text);
             if self.active_channel() == Some(channel) {
                 self.say(text)?;
@@ -307,6 +321,25 @@ mod tests {
         test.core.fetched(channel, FromFetcher::InitialPage(0x302)).unwrap();
         test.core.fetched(channel, FromFetcher::Input { open: true, secure: true }).unwrap();
         assert_eq!(test.core.typing.selection(channel), Some((0x302, neoteletext_core::limits::SUBCODE_ANY)));
+    }
+
+    /// TODO-1277: a connection that did not open in time is said in the
+    /// strip and the channel's Log as the channel not answering in time,
+    /// and no certificate is shown as refused.
+    #[test]
+    fn a_connection_out_of_time_is_said_and_refuses_no_certificate() {
+        use protocol::fetcher::FromFetcher;
+        let mut test = Test::new("timed out");
+        test.core.session.open("news.invalid").unwrap();
+        let channel = test.core.session.tabs[0].channel.id;
+        test.core.fetched(channel, FromFetcher::TimedOut).unwrap();
+        let strip = test.core.strip();
+        assert_eq!(strip.notice, "news.invalid did not answer in time");
+        assert_eq!(strip.refused, None, "no certificate refused");
+        test.core.console.set_open(true);
+        let logged =
+            test.core.console.updates(Some(channel)).iter().flat_map(|update| update.entries.iter()).any(|entry| entry.text.contains("did not answer in time"));
+        assert!(logged, "said in the channel's Log");
     }
 
     /// Requirement 7.13: a channel's refused certificate reaches its strip

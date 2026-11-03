@@ -6,6 +6,7 @@
 use std::io::{ErrorKind as IoErrorKind, Read, Write};
 use std::net::{IpAddr, SocketAddr, TcpStream, ToSocketAddrs};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
@@ -14,7 +15,7 @@ use neoteletext_web::port::Security;
 
 use super::cancel::hold;
 use super::writer::Outgoing;
-use super::{AllowedLocal, Connection, Failure, Opener, WRITE_TIMEOUT, certificate_problem};
+use super::{AllowedLocal, Connection, Failure, MAX_RESOLVING, Opener, WRITE_TIMEOUT, certificate_problem};
 
 /// A socket whose every read and write must finish by one moment: each
 /// is given only the time left, so no number of slow ones together takes
@@ -61,9 +62,13 @@ impl Opener {
     /// (the engine's REQ-WEB-032).
     fn reach(&self, host: &str, port: u16) -> Result<(TcpStream, IpAddr, Vec<u8>), Failure> {
         let proxy = self.proxy.as_ref();
-        let mut failure = Failure { proxy: proxy.is_some(), certificate: None, local: false };
+        let mut failure = Failure { proxy: proxy.is_some(), ..Failure::default() };
         let (to_host, to_port) = proxy.map_or((host, port), |proxy| (proxy.host.as_str(), proxy.port));
-        let Some(targets) = resolve(to_host, to_port, self.until) else { return Err(failure) };
+        let targets = match resolve(to_host, to_port, self.until, &self.resolving) {
+            Resolution::Addresses(targets) => targets,
+            Resolution::Failed => return Err(failure),
+            Resolution::TimedOut => return Err(Failure { timed_out: true, ..failure }),
+        };
         for target in targets {
             if proxy.is_none() && refused_local(target.ip(), &self.allowed) {
                 failure.local = true;
@@ -80,28 +85,36 @@ impl Opener {
                 return Err(failure);
             }
             let early = match proxy {
-                Some(proxy) => proxy.open_tunnel(&mut Deadline { socket: &socket, until: self.until }, host, port).map_err(|_| Failure {
-                    proxy: true,
-                    certificate: None,
-                    local: false,
-                })?,
+                Some(proxy) => proxy
+                    .open_tunnel(&mut Deadline { socket: &socket, until: self.until }, host, port)
+                    .map_err(|_| Failure { proxy: true, ..Failure::default() })?,
                 None => Vec::new(),
             };
             return Ok((socket, target.ip(), early));
         }
+        failure.timed_out = self.out_of_time();
         Err(failure)
+    }
+
+    /// Whether the opening's deadline has passed.
+    fn out_of_time(&self) -> bool {
+        Instant::now() >= self.until
     }
 
     /// Opens a connection, blocking: on the connection's own thread.
     pub(super) fn open(&self, host: &str, port: u16, security: Security) -> Result<Connection, Failure> {
         // A failure once the socket is reached is not the proxy's.
         fn own<E>(_: E) -> Failure {
-            Failure { proxy: false, certificate: None, local: false }
+            Failure::default()
         }
         // A failure of the secure handshake, and why.
         fn refused(error: &std::io::Error) -> Failure {
-            Failure { proxy: false, certificate: Some(certificate_problem(error)), local: false }
+            Failure { certificate: Some(certificate_problem(error)), ..Failure::default() }
         }
+        // A handshake the deadline ended, by a read or write given no more
+        // time, is the channel not answering in time, not its certificate
+        // (TODO-1277).
+        let timed_out = |error: &std::io::Error| self.out_of_time() || matches!(error.kind(), IoErrorKind::TimedOut | IoErrorKind::WouldBlock);
         let (socket, ip, early) = self.reach(host, port)?;
         // An input message goes in its own packet at once (`interaction.md`
         // section 10).
@@ -114,6 +127,7 @@ impl Opener {
                 // A certificate that fails is a hard stop (requirement 7.11).
                 let mut bounded = Deadline { socket: &socket, until: self.until };
                 let connection = start_tls(Arc::clone(&self.tls), host, &early, &mut bounded).map_err(|failure| match failure {
+                    TlsFailure::Handshake(error) if timed_out(&error) => Failure { timed_out: true, ..Failure::default() },
                     TlsFailure::Name(_) | TlsFailure::Start(_) | TlsFailure::Read(_) => own(failure),
                     TlsFailure::Records(error) => refused(&std::io::Error::new(IoErrorKind::InvalidData, error)),
                     TlsFailure::Handshake(error) => refused(&error),
@@ -136,15 +150,76 @@ fn refused_local(ip: IpAddr, allowed: &AllowedLocal) -> bool {
     ip.is_blocked() && !allowed.contains(&Some(ip))
 }
 
+/// How a name's resolution went.
+#[derive(Debug, PartialEq, Eq)]
+enum Resolution {
+    /// The addresses it resolves to.
+    Addresses(Vec<SocketAddr>),
+    /// It does not resolve.
+    Failed,
+    /// It did not resolve by the deadline, or no resolution could start,
+    /// [`MAX_RESOLVING`] being under way.
+    TimedOut,
+}
+
+/// One of the fetcher's [`MAX_RESOLVING`] resolutions, given back when its
+/// thread ends.
+struct Resolving(Arc<AtomicUsize>);
+
+impl Resolving {
+    /// A resolution of `count`'s, if fewer than [`MAX_RESOLVING`] are under
+    /// way.
+    fn take(count: &Arc<AtomicUsize>) -> Option<Self> {
+        let mut under_way = count.load(Ordering::SeqCst);
+        loop {
+            if under_way >= MAX_RESOLVING {
+                return None;
+            }
+            match count.compare_exchange(under_way, under_way.saturating_add(1), Ordering::SeqCst, Ordering::SeqCst) {
+                Ok(_) => return Some(Self(Arc::clone(count))),
+                Err(now) => under_way = now,
+            }
+        }
+    }
+}
+
+impl Drop for Resolving {
+    fn drop(&mut self) {
+        self.0.fetch_sub(1, Ordering::SeqCst);
+    }
+}
+
 /// The addresses `host` resolves to, if it resolves by `until`. The
 /// operating system's resolver cannot be interrupted, so it runs on a
 /// thread of its own, which ends when the resolver gives up, by its own
-/// limits; the connection does not wait for it.
-fn resolve(host: &str, port: u16, until: Instant) -> Option<Vec<SocketAddr>> {
+/// limits; the connection does not wait for it, and at most
+/// [`MAX_RESOLVING`] such threads run at once.
+fn resolve(host: &str, port: u16, until: Instant, resolving: &Arc<AtomicUsize>) -> Resolution {
+    resolve_with(host, port, until, resolving, |host, port| (host, port).to_socket_addrs().map(Iterator::collect))
+}
+
+/// [`resolve`], with `lookup` as the resolver.
+fn resolve_with(
+    host: &str,
+    port: u16,
+    until: Instant,
+    resolving: &Arc<AtomicUsize>,
+    lookup: impl FnOnce(&str, u16) -> std::io::Result<Vec<SocketAddr>> + Send + 'static,
+) -> Resolution {
+    let Some(slot) = Resolving::take(resolving) else { return Resolution::TimedOut };
     let (resolved, outcome) = mpsc::sync_channel(1);
     let host = host.to_owned();
     std::thread::spawn(move || {
-        let _ = resolved.send((host.as_str(), port).to_socket_addrs().map(Iterator::collect::<Vec<_>>));
+        let addresses = lookup(&host, port);
+        drop(slot);
+        let _ = resolved.send(addresses);
     });
-    outcome.recv_timeout(until.saturating_duration_since(Instant::now())).ok()?.ok()
+    match outcome.recv_timeout(until.saturating_duration_since(Instant::now())) {
+        Ok(Ok(addresses)) => Resolution::Addresses(addresses),
+        Ok(Err(_)) | Err(mpsc::RecvTimeoutError::Disconnected) => Resolution::Failed,
+        Err(mpsc::RecvTimeoutError::Timeout) => Resolution::TimedOut,
+    }
 }
+
+#[cfg(test)]
+mod tests;
