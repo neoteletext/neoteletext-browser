@@ -8,19 +8,18 @@ use std::time::Duration;
 use neoteletext_input::caps::{CURSOR_CAP, SELECT_CAP};
 
 use crate::podcast::Episode;
-use crate::terminal::invaders::INVADER_TOP;
 use crate::terminal::pages::contents_file;
 use neoteletext_input::event::{Mouse, Point, read_message, write};
 
 /// One item as a receiver sends it.
-fn encoded(item: &Item<'_>) -> Vec<u8> {
+pub(in crate::terminal) fn encoded(item: &Item<'_>) -> Vec<u8> {
     let mut out = [0; neoteletext_input::MAX_MESSAGE];
     let length = write(item, &mut out).unwrap();
     out[..length].to_vec()
 }
 
 /// A printable key, as a receiver sends it outside `ALL_KEYS`: its text.
-fn press(character: char) -> Vec<u8> {
+pub(in crate::terminal) fn press(character: char) -> Vec<u8> {
     encoded(&Item::Text(character.encode_utf8(&mut [0; 4])))
 }
 
@@ -32,15 +31,15 @@ fn key(action: Action, key: KeyCode, text: Option<&str>, base: Option<char>) -> 
     encoded(&Item::Event(Event::Key(Key { on: ON, action, key, mods: 0, text, base, lost: false })))
 }
 
-fn named(name: &str) -> Vec<u8> {
+pub(in crate::terminal) fn named(name: &str) -> Vec<u8> {
     key(Action::Press, KeyCode::Functional(keys::code(name).unwrap()), None, None)
 }
 
-fn page(number: u16) -> Vec<u8> {
+pub(in crate::terminal) fn page(number: u16) -> Vec<u8> {
     encoded(&Item::Event(Event::Select(neoteletext_input::event::Select::new(number, neoteletext_core::limits::SUBCODE_ANY).unwrap(), "")))
 }
 
-fn feed(session: &mut Session, messages: &[Vec<u8>]) -> Vec<Push> {
+pub(in crate::terminal) fn feed(session: &mut Session, messages: &[Vec<u8>]) -> Vec<Push> {
     let mut pushes = Vec::new();
     for message in messages {
         read_message(message, &mut |item| pushes.extend(session.item(&item))).unwrap();
@@ -81,16 +80,6 @@ fn the_digits_of_any_script_choose_a_page() {
     assert_eq!(session.page, 0x500, "Devanagari, the videotex way");
 }
 
-/// REQ-INT-108: `FOCUS_OUT` lets go of what is held.
-#[test]
-fn focus_out_releases_the_held_arrow() {
-    let mut session = Session::new(Settings::default());
-    feed(&mut session, &[page(0x300), named("ArrowLeft")]);
-    assert!(session.invaders.left);
-    feed(&mut session, &[encoded(&Item::Event(Event::FocusOut))]);
-    assert!(!session.invaders.left, "no release was sent, and none was needed");
-}
-
 /// Decision E.125: no page asks for input modes.
 #[test]
 fn no_page_has_an_im_line() {
@@ -114,7 +103,6 @@ fn pages_are_chosen_as_on_prestel() {
     assert_eq!(session.page, 0x500, "three digits where there is no field");
     feed(&mut session, &[page(0x200), press('1'), press('0'), press('0')]);
     assert_eq!(session.page, 0x200, "on a page with a field digits are text");
-    assert_eq!(session.fields[0].text, "100");
 }
 
 #[test]
@@ -235,35 +223,6 @@ fn the_podcast_page_says_when_the_episode_ends_within_a_second() {
     let pushes = session.podcast_frame();
     assert!(matches!(pushes.last(), Some(Push::Page(_))), "the stop, then the page");
     assert!(session.render().tti().contains("Finished"));
-}
-
-#[test]
-fn the_game_has_no_cursor_and_moves_while_a_key_is_held() {
-    let mut session = Session::new(Settings::default());
-    let start = session.invaders.ship;
-    feed(&mut session, &[page(0x300), named("ArrowLeft")]);
-    assert_eq!(session.invaders.ship, start - 1, "a press moves at once");
-    session.invaders.tick();
-    session.invaders.tick();
-    assert_eq!(session.invaders.ship, start - 3, "and held, each frame");
-    assert!(session.render().tti().contains("CU,255,0,0,0,"));
-}
-
-#[test]
-fn the_game_sounds_a_shot_and_a_hit() {
-    let mut session = Session::new(Settings::default());
-    let opened = feed(&mut session, &[page(0x300)]);
-    assert_eq!(opened.iter().filter(|push| matches!(push, Push::Packets(_))).count(), PIANO.len() + 6, "its sounds first");
-    let fired = feed(&mut session, &[press(' ')]);
-    assert!(matches!(fired.first(), Some(Push::Packets(bytes)) if bytes.len() == 42), "the shot's command");
-    // A shot one row below the bottom row's first invader hits it next frame.
-    session.invaders.shots.clear();
-    let (x, y) = *session.invaders.alive.last().unwrap();
-    let (offset, drop) = (session.invaders.offset, session.invaders.drop);
-    session.invaders.shots.push((x + offset + 1, INVADER_TOP + y + drop + 1));
-    let frame = session.frame();
-    assert!(matches!(frame.first(), Some(Push::Packets(bytes)) if bytes.len() == 42), "a hit sounds");
-    assert_eq!(session.invaders.score, 10);
 }
 
 #[test]

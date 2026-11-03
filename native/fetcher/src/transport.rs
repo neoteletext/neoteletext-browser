@@ -39,6 +39,7 @@
 //! the writer thread, are this process's alone (the engine's DEC-1906).
 
 use std::sync::Arc;
+use std::sync::atomic::AtomicUsize;
 use std::sync::mpsc::{Receiver, TryRecvError};
 use std::time::{Duration, Instant};
 
@@ -64,6 +65,14 @@ use writer::Outgoing;
 const CONNECT_DEADLINE: Duration = CONNECT_TIMEOUT;
 /// How long a write to an open connection may block: the same limit.
 const WRITE_TIMEOUT: Duration = CONNECT_DEADLINE;
+/// The most names a fetcher resolves at once (finding F-62's residual,
+/// TODO-1277): one for each connection it holds, the fetch, push and live
+/// connections. The system's resolver cannot be interrupted, so a
+/// resolution outlives its connection's deadline on a thread of its own
+/// until the resolver gives up; a name whose servers never answer, tried
+/// again at the agent's rate, held a thread more at every try. A
+/// resolution beyond this fails at once, as one out of time.
+const MAX_RESOLVING: usize = 3;
 
 /// Wakes the fetcher's loop.
 pub type Wake = Arc<dyn Fn() + Send + Sync>;
@@ -86,11 +95,17 @@ struct Connection {
 /// A connection did not open; the port is not told why (the engine's
 /// agent treats every failure alike), only whether the proxy is to blame,
 /// whether the certificate was refused (`certificate-errors.md`), and
-/// whether an address was refused as local.
+/// whether an address was refused as local, and whether the opening ran
+/// out of its deadline.
+#[derive(Default)]
 struct Failure {
     proxy: bool,
     certificate: Option<CertificateProblem>,
     local: bool,
+    /// The opening ran out of [`CONNECT_DEADLINE`], or a resolution could
+    /// not start for [`MAX_RESOLVING`]: the channel did not answer in time,
+    /// which is not a certificate's fault (TODO-1277).
+    timed_out: bool,
 }
 
 /// The kind of a failed secure handshake, from the TLS library's error
@@ -136,6 +151,10 @@ pub struct Tcp {
     allowed_local: AllowedLocal,
     /// An address was refused as local since this was last asked.
     local_refused: bool,
+    /// An opening ran out of its deadline since this was last asked.
+    timed_out: bool,
+    /// How many names are being resolved, of at most [`MAX_RESOLVING`].
+    resolving: Arc<AtomicUsize>,
 }
 
 impl Tcp {
@@ -156,6 +175,8 @@ impl Tcp {
             refused: None,
             allowed_local,
             local_refused: false,
+            timed_out: false,
+            resolving: Arc::new(AtomicUsize::new(0)),
         }
     }
 
@@ -167,6 +188,12 @@ impl Tcp {
     /// Whether the proxy failed a connection since this was last asked.
     pub fn take_proxy_failure(&mut self) -> bool {
         std::mem::take(&mut self.proxy_failed)
+    }
+
+    /// Whether an opening ran out of its deadline since this was last
+    /// asked.
+    pub fn take_timeout(&mut self) -> bool {
+        std::mem::take(&mut self.timed_out)
     }
 
     /// The certificate refused since this was last asked, and why.
@@ -188,6 +215,7 @@ impl Tcp {
         let mut proxy_failed = false;
         let mut refused = None;
         let mut local_refused = false;
+        let mut timed_out = false;
         let slot = self.connection(connection);
         if let Some(Link::Connecting(outcome, _)) = slot {
             match outcome.try_recv() {
@@ -196,6 +224,7 @@ impl Tcp {
                     proxy_failed = failure.proxy;
                     refused = failure.certificate;
                     local_refused = failure.local;
+                    timed_out = failure.timed_out;
                     *slot = Some(Link::Failed);
                 }
                 Err(TryRecvError::Empty) => {}
@@ -205,6 +234,7 @@ impl Tcp {
         self.proxy_failed |= proxy_failed;
         self.refused = refused.or(self.refused);
         self.local_refused |= local_refused;
+        self.timed_out |= timed_out;
         self.connection(connection)
     }
 }
@@ -219,6 +249,8 @@ struct Opener {
     /// When the whole opening must be done by: `CONNECT_DEADLINE` from
     /// its start.
     until: Instant,
+    /// The fetcher's count of names being resolved.
+    resolving: Arc<AtomicUsize>,
 }
 
 #[cfg(test)]

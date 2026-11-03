@@ -105,6 +105,9 @@ enum Event {
     DecoderEnded(u32, u64, Option<String>),
     Intent(ToCore),
     InterfaceEnded(Option<String>),
+    /// The broker ended: by a signal, a crash or its own end, the core has
+    /// no one to start, end or wait for its helpers, and ends (TODO-2006).
+    BrokerEnded,
     /// The phone keyboard process said something, untrusted.
     /// Of the keyboard process started as the generation given.
     #[cfg(feature = "phone-keyboard")]

@@ -27,7 +27,7 @@ impl Session {
     }
 
     /// The command that plays a sound, on the next of the effects' channels.
-    pub(super) fn play(&mut self, handle: u8) -> Push {
+    pub(in crate::terminal) fn play(&mut self, handle: u8) -> Push {
         let channel = self.next_channel;
         self.next_channel = (self.next_channel + 1) % AUDIO_CHANNELS;
         let sequence = &mut self.audio_sequence[usize::from(channel)];

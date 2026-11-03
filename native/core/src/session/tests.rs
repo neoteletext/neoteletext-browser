@@ -3,7 +3,7 @@
 use super::*;
 use interface_core::channel::page_index;
 use interface_core::library::{MAX_CLOSED, MAX_TAB_ENTRIES, MAX_TAB_LIST};
-use neoteletext::restore::Saved;
+use neoteletext::session_file::Saved;
 use protocol::fetcher::Entry;
 
 #[test]

@@ -98,6 +98,25 @@ impl Broker {
         Arc::new(Self { channel: Mutex::new(channel) })
     }
 
+    /// Calls `ended`, on a thread of its own, once the broker has ended
+    /// (TODO-2006): the broker ended by a signal or a crash leaves the
+    /// core with no one to start, end or wait for its helpers, so the core
+    /// ends too, and each helper with the pipe the core held to it. On
+    /// Linux the core is killed with its broker as well (`end_with_parent`);
+    /// on Windows its job, which the broker holds, ends it.
+    ///
+    /// # Errors
+    /// When the channel cannot be watched.
+    #[cfg(unix)]
+    pub fn when_ended(&self, ended: impl FnOnce() + Send + 'static) -> io::Result<()> {
+        let watched = self.channel.lock().unwrap_or_else(PoisonError::into_inner).watched()?;
+        std::thread::spawn(move || {
+            crate::unix::wait_for_hang_up(&watched);
+            ended();
+        });
+        Ok(())
+    }
+
     /// Sends one request and reads its reply, with the pipes that came
     /// with it.
     fn ask(&self, request: &Request) -> io::Result<(Reply, Vec<File>)> {
@@ -234,5 +253,37 @@ impl Broker {
             (Reply::Failed(reason), _) => Err(reason),
             _ => Err(String::from("an unexpected reply")),
         }
+    }
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use std::io::Write as _;
+    use std::os::unix::net::UnixStream;
+    use std::sync::mpsc;
+    use std::time::Duration;
+
+    use super::*;
+
+    /// Longer than a hang-up takes to be heard, and than a reply waiting
+    /// unread is looked at again.
+    const HEARD_WITHIN: Duration = Duration::from_secs(5);
+    /// Long enough for a watch that wrongly took a reply for the end to
+    /// have said so.
+    const QUIET_FOR: Duration = Duration::from_millis(300);
+
+    /// TODO-2006: the core hears its broker end, however it ends, and not
+    /// before: a reply waiting unread is not taken for the end, and is left
+    /// for the thread that asked.
+    #[test]
+    fn the_core_hears_its_broker_end_and_nothing_else() {
+        let (core_end, mut broker_end) = UnixStream::pair().unwrap();
+        let broker = Broker { channel: Mutex::new(Channel::new(core_end)) };
+        let (said, heard) = mpsc::channel();
+        broker.when_ended(move || said.send(()).unwrap()).unwrap();
+        broker_end.write_all(b"a reply").unwrap();
+        assert!(heard.recv_timeout(QUIET_FOR).is_err(), "a reply is not the broker's end");
+        drop(broker_end);
+        assert!(heard.recv_timeout(HEARD_WITHIN).is_ok(), "the broker's end was not heard");
     }
 }

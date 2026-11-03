@@ -11,11 +11,13 @@ use std::os::fd::{AsRawFd as _, OwnedFd};
 use std::os::unix::net::UnixStream;
 use std::process::{Command, Stdio};
 
-use crate::broker::CHANNEL_VARIABLE;
+use crate::broker::{CHANNEL_VARIABLE, PARENT_VARIABLE};
 use crate::{Process, Report, Role, Spawn};
 
 mod channel;
 mod descriptors;
+mod hang_up;
+mod termination;
 mod time;
 
 pub(crate) use channel::Channel;
@@ -24,6 +26,8 @@ pub(crate) use descriptors::inheritable_copy;
 #[cfg(test)]
 pub(crate) use descriptors::open_descriptors;
 pub(crate) use descriptors::{hold_only, receive, send, take_inherited};
+pub(crate) use hang_up::wait_for_hang_up;
+pub use termination::{TERMINATION_SIGNALS, termination_requests};
 pub(crate) use time::local_offset;
 
 /// The command that runs a helper: under its profile on macOS; as it is
@@ -51,6 +55,7 @@ pub(crate) fn spawn(spawn: &Spawn<'_>) -> io::Result<Process> {
     for (name, value) in spawn.environment {
         command.env(name, value);
     }
+    command.env(PARENT_VARIABLE, std::process::id().to_string());
     // The interface's own channel to the broker (DEC-1551 item 3): its end
     // kept across the start, its number named in its environment.
     let channel = if spawn.role == Role::Interface {
@@ -81,6 +86,7 @@ pub(crate) fn start_core(spawn: &Spawn<'_>) -> io::Result<(Process, Channel)> {
     for (name, value) in spawn.environment {
         command.env(name, value);
     }
+    command.env(PARENT_VARIABLE, std::process::id().to_string());
     hold_only(&mut command, None);
     let child = command.stdin(Stdio::from(OwnedFd::from(theirs))).stdout(Stdio::null()).stderr(Stdio::inherit()).spawn()?;
     #[cfg(target_os = "macos")]

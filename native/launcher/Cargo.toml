@@ -20,9 +20,12 @@ release-identity.workspace = true
 os-install.workspace = true
 
 # Ending a trial version that hangs, with every process it started: its
-# process group (section 13's "one that hangs").
+# process group (section 13's "one that hangs"); and a request to end, by
+# signal, passed on to that group (TODO-2006), heard through confine,
+# which holds the project's Unix process code.
 [target.'cfg(unix)'.dependencies]
 rustix = { workspace = true, features = ["process"] }
+confine.workspace = true
 
 # Windows: the uninstaller removes the helpers' AppContainer profiles.
 [target.'cfg(windows)'.dependencies]

@@ -3,8 +3,11 @@
 //! <key.pem> <address:port>` serves the files under the folder, as the
 //! update host serves the repository, with `rustls`. Each request is read
 //! within a bound; a path that leaves the folder is not found. It prints
-//! `listening` on its standard output once it listens, and each request
-//! it answers on its standard error.
+//! `listening on <address:port>` on its standard output once it listens,
+//! and each request it answers on its standard error. Port 0 asks for a
+//! free port, chosen by the system and held from the start, which the
+//! line names: a test that found a free port and let it go before the
+//! host bound it could lose it to another process (TODO-1996).
 
 #![deny(
     clippy::indexing_slicing,
@@ -19,7 +22,7 @@
 )]
 
 use std::io::{Read, Write};
-use std::net::{TcpListener, TcpStream};
+use std::net::{SocketAddr, TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::sync::Arc;
@@ -32,6 +35,9 @@ use rustls::pki_types::{CertificateDer, PrivateKeyDer};
 const MAX_REQUEST: usize = 8 * 1024;
 /// How long a client may take to send its request.
 const READ_TIMEOUT: Duration = Duration::from_secs(10);
+/// How many free ports are tried when the port the system chose for the
+/// name's first address is taken on another of its addresses.
+const PORT_ATTEMPTS: usize = 16;
 
 fn main() -> ExitCode {
     match run() {
@@ -60,10 +66,10 @@ fn run() -> Result<(), String> {
     let config = Arc::new(config);
     // Every address the name has, so a client trying `localhost`'s IPv6
     // address first is answered there and not left to time out.
-    let addresses: Vec<std::net::SocketAddr> =
-        std::net::ToSocketAddrs::to_socket_addrs(address.as_str()).map_err(|error| format!("{address}: {error}"))?.collect();
-    let listeners = addresses.iter().map(|each| TcpListener::bind(each).map_err(|error| format!("{each}: {error}"))).collect::<Result<Vec<_>, _>>()?;
-    println!("listening on {address}");
+    let addresses: Vec<SocketAddr> = std::net::ToSocketAddrs::to_socket_addrs(address.as_str()).map_err(|error| format!("{address}: {error}"))?.collect();
+    let (listeners, port) = bind_all(&addresses)?;
+    let name = address.rsplit_once(':').map_or(address.as_str(), |(name, _)| name);
+    println!("listening on {name}:{port}");
     let _ = std::io::stdout().flush();
     let root = PathBuf::from(folder);
     let threads: Vec<_> = listeners
@@ -86,6 +92,30 @@ fn run() -> Result<(), String> {
         let _ = thread.join();
     }
     Ok(())
+}
+
+/// Binds every one of `addresses` at one port: theirs, or when it is 0 a
+/// port the system chooses for the first and the rest then share.
+fn bind_all(addresses: &[SocketAddr]) -> Result<(Vec<TcpListener>, u16), String> {
+    let Some(first) = addresses.first() else { return Err(String::from("the name has no address")) };
+    let mut last_error = String::new();
+    for _ in 0..PORT_ATTEMPTS {
+        let first_listener = TcpListener::bind(first).map_err(|error| format!("{first}: {error}"))?;
+        let port = first_listener.local_addr().map_err(|error| error.to_string())?.port();
+        let rest: Result<Vec<TcpListener>, String> = addresses
+            .iter()
+            .skip(1)
+            .map(|each| TcpListener::bind(SocketAddr::new(each.ip(), port)).map_err(|error| format!("{}: {error}", SocketAddr::new(each.ip(), port))))
+            .collect();
+        match rest {
+            Ok(rest) => return Ok((std::iter::once(first_listener).chain(rest).collect(), port)),
+            // A port given is the caller's to free; only a chosen one is
+            // chosen again.
+            Err(error) if first.port() == 0 => last_error = error,
+            Err(error) => return Err(error),
+        }
+    }
+    Err(last_error)
 }
 
 fn serve(stream: TcpStream, config: Arc<rustls::ServerConfig>, root: &Path) -> Result<(), String> {

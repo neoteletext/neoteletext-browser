@@ -15,7 +15,9 @@ use windows_sys::Win32::Foundation::{
 };
 use windows_sys::Win32::Security::Authorization::ConvertStringSidToSidW;
 use windows_sys::Win32::Security::{FreeSid, SECURITY_ATTRIBUTES};
-use windows_sys::Win32::Storage::FileSystem::{BY_HANDLE_FILE_INFORMATION, GetFileInformationByHandle};
+use windows_sys::Win32::Storage::FileSystem::{
+    BY_HANDLE_FILE_INFORMATION, FILE_NAME_NORMALIZED, GetFileInformationByHandle, GetFinalPathNameByHandleW, VOLUME_NAME_DOS,
+};
 use windows_sys::Win32::System::Pipes::CreatePipe;
 use windows_sys::Win32::System::Threading::GetCurrentProcess;
 
@@ -148,6 +150,44 @@ pub(crate) fn file_from_handle_value(value: u64) -> io::Result<File> {
     // its value once over the channel, so nothing else here owns it; 0 and
     // INVALID_HANDLE_VALUE are refused above. The broker is the trusted side (decision 56).
     Ok(unsafe { File::from_raw_handle(handle as _) })
+}
+
+/// The longest path Windows gives a file, in UTF-16 units: the extended
+/// path's limit (Microsoft's "Maximum Path Length Limitation": about 32,767
+/// characters), with room for the zero that ends it.
+const MOST_PATH_UNITS: usize = 32_768;
+/// The first buffer tried, which holds every ordinary path at once.
+const FIRST_PATH_UNITS: usize = 512;
+
+/// The path of the open file `file` as the system resolved it, every link
+/// and junction on the way followed: `\\?\C:\...`, the form
+/// `std::fs::canonicalize` gives, which is built on the same call. A path
+/// that differs from the one opened means a reparse point stood somewhere
+/// in it when it was opened (TODO-1278 item 1).
+pub(crate) fn final_path_of(file: &File) -> io::Result<std::path::PathBuf> {
+    use std::os::windows::ffi::OsStringExt as _;
+    use std::os::windows::io::AsRawHandle as _;
+    let mut buffer = vec![0_u16; FIRST_PATH_UNITS];
+    loop {
+        let room = u32::try_from(buffer.len()).map_err(|_| io::Error::from(io::ErrorKind::InvalidInput))?;
+        // SAFETY: the handle is the one `file` owns, alive for the call, and the buffer a
+        // live vector of `room` units, which the call writes within.
+        let written = unsafe { GetFinalPathNameByHandleW(file.as_raw_handle() as HANDLE, buffer.as_mut_ptr(), room, FILE_NAME_NORMALIZED | VOLUME_NAME_DOS) };
+        let written = usize::try_from(written).map_err(|_| io::Error::from(io::ErrorKind::InvalidData))?;
+        if written == 0 {
+            return Err(last_error());
+        }
+        // Too small: `written` is the room needed, with the ending zero.
+        if written >= buffer.len() {
+            if written > MOST_PATH_UNITS {
+                return Err(io::Error::new(io::ErrorKind::InvalidData, "a path longer than Windows gives"));
+            }
+            buffer.resize(written, 0);
+            continue;
+        }
+        buffer.truncate(written);
+        return Ok(std::path::PathBuf::from(std::ffi::OsString::from_wide(&buffer)));
+    }
 }
 
 /// The volume and file index of the open file `file`, what names it whatever

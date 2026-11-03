@@ -20,7 +20,7 @@ use kinds::{
     KIND_COOKIE_QUESTION, KIND_COOKIE_SET, KIND_DENIED, KIND_EXCHANGE, KIND_FETCH_CONTENTS, KIND_FETCH_PAGE, KIND_FETCH_SUBPAGE, KIND_FETCH_SUBPAGES,
     KIND_INITIAL_PAGE, KIND_INVALID_PACKETS, KIND_NO_CONTENTS, KIND_NOTICE, KIND_PAGE, KIND_PAGE_REDIRECT, KIND_PROGRAM_REDIRECT, KIND_PROXY_FAILED,
     KIND_PUSHING, KIND_REACHED_ANSWER, KIND_REACHED_QUESTION, KIND_REDIRECTED, KIND_REFRESH, KIND_REFUSED, KIND_REGION, KIND_SUBPAGES, KIND_SUBPAGES_FAILED,
-    KIND_SUBPAGES_MISSING,
+    KIND_SUBPAGES_MISSING, KIND_TIMED_OUT,
 };
 #[cfg(feature = "interaction")]
 use kinds::{KIND_INPUT, KIND_MEASURE_ROUND_TRIP, KIND_ROUND_TRIP, KIND_SEND};
@@ -231,6 +231,11 @@ pub enum FromFetcher {
     /// (requirement 19.10). It carries nothing: the trusted core says it in
     /// its own words, so a fetcher cannot write the strip.
     ProxyFailed,
+    /// A connection of the channel did not open in time: its opening, from
+    /// the name's resolution to the end of the TLS handshake, ran out of
+    /// its deadline (TODO-1277). It carries nothing: the trusted core says
+    /// it in its own words, and it is not a certificate refused.
+    TimedOut,
     /// A connection of the channel was refused because of its certificate,
     /// and why (`certificate-errors.md`, decision 83). It names no host:
     /// the trusted core knows the fetcher's channel.
@@ -789,6 +794,7 @@ pub fn write_to_core(out: &mut dyn Write, message: &FromFetcher) -> Result<(), P
         }
         FromFetcher::Confined => KIND_CONFINED,
         FromFetcher::ProxyFailed => KIND_PROXY_FAILED,
+        FromFetcher::TimedOut => KIND_TIMED_OUT,
         FromFetcher::CertificateRefused(problem) => {
             payload.push(crate::problem_code(*problem));
             KIND_CERTIFICATE_REFUSED
@@ -885,6 +891,7 @@ pub fn read_from_fetcher(input: &mut dyn Read) -> Result<Option<FromFetcher>, Pr
         }
         KIND_CONFINED => FromFetcher::Confined,
         KIND_PROXY_FAILED => FromFetcher::ProxyFailed,
+        KIND_TIMED_OUT => FromFetcher::TimedOut,
         KIND_CERTIFICATE_REFUSED => FromFetcher::CertificateRefused(crate::problem_of(fields.u8()?).ok_or(ProtocolError::BadValue("certificate problem"))?),
         KIND_COOKIE_QUESTION | KIND_REACHED_QUESTION | KIND_COOKIE_SET | KIND_CLEAR_SITE_DATA => cookies::read_cookie_message(kind, &mut fields)?,
         KIND_SUBPAGES => {

@@ -89,8 +89,9 @@ fn open_no_follow(canonical: &Path) -> Option<fs::File> {
         use std::os::unix::fs::OpenOptionsExt as _;
         options.custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK);
     }
-    // A reparse point (a link or a junction) is opened as itself, and then
-    // refused below by its type.
+    // A reparse point (a link or a junction) at the last step is opened as
+    // itself, and then refused below by its type; one at an earlier step is
+    // caught by the handle's own path below.
     #[cfg(windows)]
     {
         use std::os::windows::fs::OpenOptionsExt as _;
@@ -105,6 +106,13 @@ fn open_no_follow(canonical: &Path) -> Option<fs::File> {
         if opened != canonical {
             return None;
         }
+    }
+    // A junction swapped in for a folder of the path after it was resolved
+    // is followed by the open; the path the handle was resolved by then
+    // differs from the canonical one (TODO-1278 item 1, decision 88).
+    #[cfg(windows)]
+    if confine::opened_path(&file).ok()? != canonical {
+        return None;
     }
     let metadata = file.metadata().ok()?;
     // Only a file: a pipe would hold the broker at its read, and a device is
@@ -426,6 +434,33 @@ mod tests {
         let folder = folder.canonicalize().unwrap();
         assert!(open_no_follow(&folder.join("real/100.tti")).is_some());
         assert!(open_no_follow(&folder.join("linked/100.tti")).is_none());
+        fs::remove_dir_all(&folder).unwrap();
+    }
+
+    /// TODO-1278 item 1, decision 88: on Windows a folder of the path
+    /// swapped for a junction after the path was resolved is not read
+    /// through, though only the last step is opened as a reparse point.
+    /// On the code before, the open followed the junction and read the file
+    /// it led to.
+    #[cfg(windows)]
+    #[test]
+    fn a_junction_inside_the_path_refuses_the_open() {
+        let folder = std::env::temp_dir().join(format!("neoteletext-source-junction-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&folder);
+        fs::create_dir_all(folder.join("real")).unwrap();
+        fs::create_dir_all(folder.join("elsewhere")).unwrap();
+        fs::write(folder.join("real/100.tti"), b"PN,10000\n").unwrap();
+        fs::write(folder.join("elsewhere/100.tti"), b"PN,10000\n").unwrap();
+        let folder = folder.canonicalize().unwrap();
+        let resolved = folder.join("real/100.tti").canonicalize().unwrap();
+        assert!(open_no_follow(&resolved).is_some());
+        // The folder is swapped for a junction to another after it was
+        // resolved: `mklink /J` makes one without an administrator.
+        fs::rename(folder.join("real"), folder.join("moved")).unwrap();
+        let made = std::process::Command::new("cmd").args(["/C", "mklink", "/J"]).arg(folder.join("real")).arg(folder.join("elsewhere")).output().unwrap();
+        assert!(made.status.success(), "{}", String::from_utf8_lossy(&made.stderr));
+        assert!(open_no_follow(&resolved).is_none(), "read through the junction");
+        let _ = fs::remove_dir(folder.join("real"));
         fs::remove_dir_all(&folder).unwrap();
     }
 }

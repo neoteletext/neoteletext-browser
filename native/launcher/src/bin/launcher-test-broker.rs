@@ -10,7 +10,9 @@
 //! successfully, as a user quitting does; `slow` starts only after
 //! [`SLOW_START`], then reports health; `orphan` starts a helper in its
 //! process group, writes its number to the log's name plus `.helpers`,
-//! and crashes. Two never say they started: `quiet`
+//! and crashes; `serves` does the same but writes its own number too,
+//! reports health and runs on, as a browser in use does. Two never say
+//! they started: `quiet`
 //! ends successfully, `mute` hangs. Each run appends its version and
 //! behaviour to the file its first argument names.
 
@@ -109,11 +111,15 @@ fn main() -> std::process::ExitCode {
         }
         "slow" => std::thread::sleep(SLOW_START),
         // A helper left behind: a program in the broker's process group,
-        // which outlives it, its number written beside the log.
-        "orphan" => {
+        // which outlives it, its number written beside the log; one that
+        // serves writes its own number too.
+        "orphan" | "serves" => {
             if let (Some(log), Ok(helper)) = (arguments.first(), std::process::Command::new("/bin/sleep").arg(ORPHAN_LIFE).spawn())
                 && let Ok(mut file) = std::fs::OpenOptions::new().create(true).append(true).open(format!("{log}.helpers"))
             {
+                if behaviour == "serves" {
+                    let _ = writeln!(file, "{}", std::process::id());
+                }
                 let _ = writeln!(file, "{}", helper.id());
             }
         }
@@ -126,6 +132,11 @@ fn main() -> std::process::ExitCode {
             std::process::ExitCode::SUCCESS
         }
         "hang" => {
+            std::thread::sleep(HANG);
+            std::process::ExitCode::SUCCESS
+        }
+        "serves" => {
+            say(update::layout::HEALTHY_LINE);
             std::thread::sleep(HANG);
             std::process::ExitCode::SUCCESS
         }

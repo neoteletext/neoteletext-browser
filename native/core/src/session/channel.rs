@@ -120,6 +120,11 @@ pub struct ChannelState {
     /// protocol stands until the tab is reloaded, which makes a new channel
     /// (REQ-683); a refused file until a page draws (REQ-708).
     pub failed: Option<(Failed, Option<u16>)>,
+    /// A helper that served every tab, the sound helper or the phone
+    /// keyboard, broke its protocol and was closed: said in the strip of
+    /// each tab open then, in the trusted core's own words, until the tab
+    /// is reloaded, which makes a new channel (REQ-683, requirement 4.3).
+    pub helper_broke: Option<&'static str>,
 }
 
 impl ChannelState {
@@ -193,6 +198,7 @@ impl ChannelState {
             since_selected: SinceSelected::default(),
             denied: None,
             failed: None,
+            helper_broke: None,
         }
     }
 

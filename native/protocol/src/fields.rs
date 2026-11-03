@@ -5,7 +5,7 @@
 
 use interface_core::canvas::PageKey;
 
-use crate::text::is_clean;
+use crate::text::{clean, is_clean};
 use crate::{MAX_PAGES, ProtocolError};
 
 pub(crate) const KEY_BYTES: usize = 6;
@@ -117,7 +117,13 @@ impl<'a> Fields<'a> {
         if !is_clean(text, max_bytes) {
             return Err(ProtocolError::BadValue("text not cleaned"));
         }
-        Ok(text.to_owned())
+        // A run of combining marks longer than any script writes is cut,
+        // not refused (finding F-36's receiving half, TODO-1278 item 5):
+        // a sender that did not cut it, as the interface sending what the
+        // user typed may not, is not a broken protocol, and what arrives is
+        // bounded all the same. `clean` changes nothing else of a text
+        // `is_clean` passed.
+        Ok(clean(text, max_bytes))
     }
 
     pub(crate) fn end(&self) -> Result<(), ProtocolError> {

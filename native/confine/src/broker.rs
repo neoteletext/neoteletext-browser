@@ -35,6 +35,12 @@ mod wire;
 
 pub use client::{Broker, Helper};
 pub(crate) use local_files::CHANNEL_VARIABLE;
+
+/// The variable in which the process that starts a helper names its own
+/// process number, so that on Linux a helper whose parent ended before the
+/// helper first looked is seen to have been reparented (TODO-1278 item 2).
+#[cfg(unix)]
+pub(crate) const PARENT_VARIABLE: &str = "NEOTELETEXT_PARENT_PROCESS";
 pub use local_files::{
     ChooseKind, Declaration, Declarer, MAX_DECLARATION, MAX_FILES_AT_ONCE, MAX_OPENING, Opening, decode_declaration, decode_opening, encode_declaration,
     encode_opening, read_opening, write_opening,
