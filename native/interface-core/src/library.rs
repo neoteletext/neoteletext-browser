@@ -15,14 +15,15 @@ pub use crate::session::{MAX_COORDINATE, MAX_WINDOW_SIZE, MAX_WINDOWS, WindowGeo
 pub const MAX_VIEW_ROWS: usize = 100;
 /// The most suggestions under the address field (section 2.10).
 pub const MAX_SUGGESTIONS: usize = 8;
-/// The most entries of a Back or Forward list (section 2.9): Chrome's
-/// `BackForwardMenuModel::kMaxHistoryItems`.
+/// The most entries of a Back or Forward list (sections 2.9 and 16, which
+/// name where 12 comes from).
 pub const MAX_TAB_LIST: usize = 12;
-/// The most chapter stops after a full list: Chrome's
-/// `BackForwardMenuModel::kMaxChapterStops`.
+/// The most chapter stops after a full list (section 16, "The Back and
+/// Forward menus", which names where 5 comes from).
 pub const MAX_CHAPTER_STOPS: usize = 5;
 /// The most entries a tab's back-and-forward list keeps, the oldest
-/// dropped first: Chrome's `blink::kMaxSessionHistoryEntries`.
+/// dropped first (section 16, "A tab's list", which names where 50 comes
+/// from).
 pub const MAX_TAB_ENTRIES: usize = 50;
 /// The most steps a list's entry can be from the tab's place.
 pub const MAX_STEPS: usize = MAX_TAB_ENTRIES - 1;
@@ -65,7 +66,7 @@ pub struct HistoryRow {
     /// [`MAX_SHOWN_ADDRESS`].
     pub address: String,
     /// The address is bookmarked: its menu offers to remove the bookmark,
-    /// as Chrome's does (decision 64).
+    /// (decision 64; section 16, "A row's menu").
     pub bookmarked: bool,
 }
 
@@ -98,7 +99,7 @@ pub struct HistoryView {
 /// The time a clearing removes (section 2.5).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ClearRange {
-    /// The last 15 minutes, as Chrome offers (`browsing_data::TimePeriod::LAST_15_MINUTES`).
+    /// The last 15 minutes (section 16, "Clearing ranges").
     FifteenMinutes,
     /// The last hour.
     Hour,
@@ -133,10 +134,10 @@ pub enum HistoryRequest {
     },
     /// Remove these rows.
     Remove(Vec<u32>),
-    /// Search for this row's host, as Chrome's "More from this site".
+    /// Search for this row's host: "More from this site" (section 16).
     MoreFromSite(u32),
-    /// Remove the bookmarks of this row's address, as Chrome's "Remove
-    /// bookmark".
+    /// Remove the bookmarks of this row's address: "Remove bookmark"
+    /// (section 16).
     RemoveBookmark(u32),
     /// Remove the rows of a time.
     Clear(ClearRange),
@@ -193,7 +194,8 @@ pub struct TabList {
     /// At most [`MAX_TAB_LIST`], the nearest first.
     pub entries: Vec<TabEntry>,
     /// When the list is full, at most [`MAX_CHAPTER_STOPS`] entries beyond
-    /// it, each where the host changes, as Chrome's chapter stops.
+    /// it, each where the host changes (section 16, "The Back and Forward
+    /// menus").
     pub chapters: Vec<TabEntry>,
 }
 

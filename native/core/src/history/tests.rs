@@ -13,7 +13,7 @@ fn visit(address: &str, typed: bool) -> Visit {
 
 /// Decision 63: a reload moves the row's last visit and counts no
 /// visit; on a day with no visit yet it makes the day's row, with none
-/// counted, as Chrome and Firefox record a reload without counting it.
+/// counted (`history-and-bookmarks.md` section 16, "A reload").
 #[test]
 fn a_reload_moves_the_last_visit_and_counts_none() {
     let mut history = History::default();

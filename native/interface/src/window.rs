@@ -29,11 +29,11 @@ const MINIMUM_HEIGHT: f64 = 640.0;
 /// How far in from the window's edge a press resizes it, on platforms
 /// where the browser draws its own frame.
 pub(crate) const RESIZE_MARGIN: f64 = 6.0;
-/// On macOS the system's window buttons sit in the tab strip, as in
-/// Chrome; they take this much of its left end.
+/// On macOS the system's window buttons sit in the tab strip
+/// (`tab-strip.md` section 10); they take this much of its left end.
 #[cfg(target_os = "macos")]
 pub(crate) const FRAME: Frame = Frame { left_inset: 72.0, window_buttons: false };
-/// Elsewhere the browser draws the whole frame, as Chrome does.
+/// Elsewhere the browser draws the whole frame (`tab-strip.md` section 10).
 #[cfg(not(target_os = "macos"))]
 pub(crate) const FRAME: Frame = Frame { left_inset: 0.0, window_buttons: true };
 

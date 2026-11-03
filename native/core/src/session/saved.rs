@@ -126,8 +126,8 @@ impl Session {
     }
 
     /// Removes the entries `gone` names from the tabs' lists and the closed
-    /// tabs', after history was removed, as Chrome does
-    /// (`browsing_data::RemoveNavigationEntries`): an open tab keeps the
+    /// tabs', after history was removed (`history-and-bookmarks.md` section 16,
+    /// "Removing history and the tabs"): an open tab keeps the
     /// entry it is at; a closed tab whose entry it was at goes whole; a
     /// private tab is not touched. Returns whether any list changed.
     pub fn remove_entries(&mut self, gone: impl Fn(&Visit) -> bool) -> bool {
