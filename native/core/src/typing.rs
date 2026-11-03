@@ -16,6 +16,9 @@
 //! `RETURN-CHANNEL.md` REQ-RCH-036 and REQ-RCH-053). Nothing a channel or a
 //! decoder sends can start it.
 //!
+//! A channel number here is a tab's: each tab has its own connection and
+//! session, even on a channel another tab shows (DEC-1527).
+//!
 //! Times are microseconds of the trusted core's clock: the pointer's
 //! period of 1000/60 ms is not a whole number of milliseconds
 //! (`neoteletext_input::pace`).
@@ -160,7 +163,7 @@ impl Channel {
         }
     }
 
-    /// Encodes `item` and gives it to the channel's fetcher; the input
+    /// Encodes `item` and gives it to the tab's fetcher; the input
     /// count after it, if it went. A move is tagged with its contact, and
     /// every pointer event's position is kept for its gone.
     fn send(&mut self, channel: u32, item: &Item<'_>, now_us: u64, sends: &mut Vec<Send>) -> Option<u16> {
@@ -582,7 +585,7 @@ impl Typing {
         together(sends)
     }
 
-    /// The push connection's round trip, as the channel's fetcher measured
+    /// The push connection's round trip, as the tab's fetcher measured
     /// it (REQ-RCH-016): shown in the strip while keys go to the channel.
     pub fn round_trip(&mut self, channel: u32, microseconds: u64) -> Vec<Send> {
         let mut sends = Vec::new();

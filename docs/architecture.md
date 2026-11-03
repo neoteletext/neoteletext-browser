@@ -169,10 +169,11 @@ Decision 18's shape, with the interface process in place of the web-engine windo
 
 The fetcher never talks to a decoder directly. The trusted core passes every page the fetcher delivers to the decoder of that fetcher's channel, because only the trusted core knows which tab shows which channel. It never parses those bytes: it cuts them into pieces within the message limit and passes them on. File channels are the same, but for their pace: a file the viewer opens is passed on at once (DEC-1762). The broker reads the file for the trusted core, which passes its bytes, unread, in pieces within the message limit, as many as may be queued for the decoder, half of `outbox::MAX_QUEUED_BYTES`; what does not fit follows at the next `LOAD_INTERVAL`, 0.2 seconds on. A new decoder is given the file from its start, so a file is not kept twice.
 
-### 6.3 Decoders and fetchers per channel
+### 6.3 Decoders and fetchers per tab
 
 - **Every channel has its own decoder,** and every web channel its own fetcher, so no two channels share a process that reads their data.
-- **Decision 11 says tabs on the same channel share one decoder and one cookie store.** Today every tab and every navigation opens its own channel, with its own decoder and fetcher; the protocol is the same either way, so sharing is a later step.
+- **Every tab is a channel of its own** (decision 11 as amended, DEC-910 version 3; neoteletext-common's DEC-1527): `Session::channel_for` gives each tab, and each navigation to another channel, a channel number of its own, even when another tab shows the same channel. So each tab of a live channel has its own push connection, fetcher, decoder, page store and kept sleep data, and its own one selection, told on its own connection with SELECT. The server keeps one selection and one baseline of changed rows per connection, so they apply to the store that received the version they were taken against. Nothing of this is shared between tabs, and no sharing is planned.
+- **The cookie jar alone is per channel:** every tab of a channel is answered from the channel's one jar (decision 62, REQ-880), so a cookie set through one tab's connection is sent by the others; a private tab has a jar of its own (REQ-881).
 - **A decoder and its fetcher are stopped** when no tab uses their channel any more.
 
 ### 6.4 Messages between processes
@@ -691,7 +692,6 @@ Unsafe code is allowed only in the modules requirement 10.12 names, each saying 
 
 - Discovery results.
 - Any sandbox on Android or iOS; Windows helpers started apart from the console they were started from (decision 100 item 1, measured as needed in the virtual machine on 24 October 2026); the fetcher's connections made by the broker (decision 89);.
-- Sharing one decoder between tabs on the same channel (decision 11).
 - The grace period for closed tabs; the live-feed threshold; refresh schedules.
 - Discovery.
 - Full screen of the page alone (`full-screen.md`, decision 85, designed 23 October 2026).
