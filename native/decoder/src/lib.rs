@@ -32,6 +32,7 @@ mod input_records;
 pub mod links;
 pub mod netscape;
 mod page_cache;
+mod picture;
 pub mod process;
 pub mod sample;
 mod title;

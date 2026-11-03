@@ -100,6 +100,9 @@ impl Browser {
         if self.editing {
             return self.edit(key, modifiers);
         }
+        if key == Key::Escape && self.picture_escape() {
+            return true;
+        }
         #[cfg(feature = "links")]
         if let Some(changed) = self.link_key(key, modifiers, now) {
             return changed;
@@ -212,6 +215,9 @@ impl Browser {
             "b" if modifiers.shift => self.toggle_bar(),
             // The overview of every page, shown or hidden (decision 109).
             "e" if modifiers.shift => self.toggle_overview_shown(),
+            // The Tools menu's picture converter (`docs/picture-tools.md`):
+            // Command-Shift-P on macOS, Control-Shift-P elsewhere.
+            "p" if modifiers.shift => self.toggle_picture(),
             "t" if modifiers.shift => self.outputs.push(Output::History(crate::library::HistoryRequest::Reopen(None))),
             "n" if modifiers.shift => self.outputs.push(Output::NewPrivateTab),
             "t" => self.outputs.push(Output::NewTab),

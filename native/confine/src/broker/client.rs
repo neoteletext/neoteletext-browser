@@ -225,6 +225,33 @@ impl Broker {
         }
     }
 
+    /// A picture the user chose in the picture dialog, read by the broker
+    /// (`docs/picture-tools.md`).
+    ///
+    /// # Errors
+    /// Why it could not be read, in words for the log.
+    pub fn read_picture(&self, path: &Path) -> Result<Vec<u8>, String> {
+        let text = path.to_str().ok_or("the path is not text")?;
+        match self.ask(&Request::ReadPicture(text.to_owned())).map_err(|error| error.to_string())? {
+            (Reply::Source(bytes), _) => Ok(bytes),
+            (Reply::Failed(reason), _) => Err(reason),
+            _ => Err(String::from("an unexpected reply")),
+        }
+    }
+
+    /// Has the broker write `bytes` where the user last chose to save a page
+    /// of `kind`.
+    ///
+    /// # Errors
+    /// Why it was not written: no such choice, or the system refused.
+    pub fn save(&self, kind: ChooseKind, bytes: &[u8]) -> Result<(), String> {
+        match self.ask(&Request::Save { kind, bytes: bytes.to_vec() }).map_err(|error| error.to_string())? {
+            (Reply::Done, _) => Ok(()),
+            (Reply::Failed(reason), _) => Err(reason),
+            _ => Err(String::from("an unexpected reply")),
+        }
+    }
+
     /// The pipe on which what opens from outside arrives.
     ///
     /// # Errors

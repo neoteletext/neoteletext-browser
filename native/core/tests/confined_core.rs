@@ -42,6 +42,8 @@ fn the_trusted_core_starts_confined_and_reaches_its_own_code() {
         updater: &refuse_updater,
         choose: &|_, _, _| Err(String::from("this test shows no dialog")),
         openings: &|| None,
+        read_picture: &refuse_read,
+        save: &|_, _| Err(String::from("this test saves nothing")),
         declared: std::sync::Arc::new(|_| {}),
     };
     let exit = serve(core, programs, &handlers).unwrap();

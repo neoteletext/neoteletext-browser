@@ -30,6 +30,13 @@ pub enum OpenKind {
     Folder,
     /// A bookmarks file to import.
     Bookmarks,
+    /// A picture to convert to a teletext page (the Tools menu,
+    /// `docs/picture-tools.md`).
+    Picture,
+    /// Where to save the converted page as a TTI page file.
+    SavePictureTti,
+    /// Where to save the converted page as T42 packets.
+    SavePictureT42,
 }
 
 /// Where dropped files go (REQ-1700).
@@ -60,6 +67,9 @@ pub enum Output {
     NewTab,
     /// Strip input: show the file dialog.
     OpenFile(OpenKind),
+    /// Strip input: the picture panel's choices changed; the trusted core
+    /// converts the chosen picture again with them.
+    Picture(crate::picture::PictureChoice),
     /// Strip input: an address typed into the trusted strip.
     Navigate(String),
     /// Go back in the tab's history.

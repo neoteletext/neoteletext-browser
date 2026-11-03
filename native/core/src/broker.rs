@@ -102,9 +102,18 @@ pub(crate) fn broker() -> Result<(), String> {
     // With links compiled out the core never asks; if it does, it is refused.
     #[cfg(not(feature = "links"))]
     let open_web = |_: &str| Err(String::from("links are compiled out"));
-    let chooser =
-        Chooser { program: chooser_program(&programs), access: Arc::clone(&access), openings: openings_writer, open: Arc::new(AtomicBool::new(false)) };
+    let chooser = Chooser {
+        program: chooser_program(&programs),
+        access: Arc::clone(&access),
+        openings: openings_writer,
+        open: Arc::new(AtomicBool::new(false)),
+        picture: Arc::new(Mutex::new(None)),
+        save: Arc::new(Mutex::new(None)),
+    };
     let read_source = |path: &Path| read_given(path, &access, &places());
+    let (chosen_picture, chosen_save) = (Arc::clone(&chooser.picture), Arc::clone(&chooser.save));
+    let read_picture = move |path: &Path| read_chosen_picture(path, &chosen_picture, &places());
+    let save = move |kind: ChooseKind, bytes: &[u8]| save_chosen(kind, bytes, &chosen_save);
     let openings_reader = std::cell::Cell::new(Some(file_of(openings_reader)));
     let declared_access = Arc::clone(&access);
     let declared = move |declaration: Declaration| lock(&declared_access).declare(&declaration, home().as_deref(), Instant::now());
@@ -118,6 +127,8 @@ pub(crate) fn broker() -> Result<(), String> {
         updater: &updater_grant,
         choose: &|kind, parent, keep| chooser.start(kind, parent, keep),
         openings: &|| openings_reader.take(),
+        read_picture: &read_picture,
+        save: &save,
         declared: Arc::new(declared),
     };
     let exit = confine::broker::serve(core, &programs, &handlers).map_err(|error| format!("cannot wait for the trusted core: {error}"))?;
@@ -270,6 +281,12 @@ struct Chooser {
     openings: Arc<Mutex<PipeWriter>>,
     /// A dialog is open: one at a time.
     open: Arc<AtomicBool>,
+    /// The picture last chosen to convert: the one file a picture read
+    /// may name (`docs/picture-tools.md`).
+    picture: Arc<Mutex<Option<PathBuf>>>,
+    /// Where the user last chose to save a converted page, and as what:
+    /// written once, then forgotten.
+    save: Arc<Mutex<Option<(ChooseKind, PathBuf)>>>,
 }
 
 impl Chooser {
@@ -283,13 +300,20 @@ impl Chooser {
         let mut command = Command::new(&self.program);
         command.arg(kind.argument()).arg(parent).arg(start_in.as_deref().unwrap_or(Path::new(""))).stdin(Stdio::null()).stdout(Stdio::piped());
         let (access, openings, open) = (Arc::clone(&self.access), Arc::clone(&self.openings), Arc::clone(&self.open));
+        let (picture, save) = (Arc::clone(&self.picture), Arc::clone(&self.save));
         std::thread::spawn(move || {
             if let Some(path) = ask_chooser(command) {
                 if keep {
                     let folder = if kind == ChooseKind::Folder { Some(path.as_path()) } else { path.parent() };
                     lock(&access).set_last_folder(folder);
                 }
-                lock(&access).name(&path, keep);
+                // A picture is read only as a picture, and a place to save
+                // is written once: neither is a grant to read as a channel.
+                match kind {
+                    ChooseKind::Picture => *picture.lock().unwrap_or_else(PoisonError::into_inner) = Some(path.clone()),
+                    ChooseKind::SaveTti | ChooseKind::SaveT42 => *save.lock().unwrap_or_else(PoisonError::into_inner) = Some((kind, path.clone())),
+                    ChooseKind::File | ChooseKind::Folder | ChooseKind::Bookmarks => lock(&access).name(&path, keep),
+                }
                 if let Some(path) = path.to_str().map(str::to_owned) {
                     send_opening(&openings, &Opening::Chosen { kind, path });
                 }
@@ -298,6 +322,40 @@ impl Chooser {
         });
         Ok(())
     }
+}
+
+/// The picture the user last chose to convert, when `path` names it, read
+/// by the rules of a file channel (decision 88) but only as one of the five
+/// picture formats; every refusal in one sentence.
+fn read_chosen_picture(path: &Path, chosen: &Mutex<Option<PathBuf>>, places: &source::Places) -> Result<Vec<u8>, String> {
+    let refusal = || String::from(source::REFUSAL);
+    let canonical = path.canonicalize().map_err(|_| refusal())?;
+    let named = chosen.lock().unwrap_or_else(PoisonError::into_inner).clone();
+    if named.and_then(|named| named.canonicalize().ok()).as_deref() != Some(canonical.as_path()) {
+        return Err(refusal());
+    }
+    source::read_picture(&canonical, places).map_err(|_| refusal())
+}
+
+/// Writes `bytes` where the user last chose to save a page of `kind`, once:
+/// the choice is forgotten whatever happens. The path is the system's save
+/// dialog's, which asked before replacing a file; a link in its place is
+/// refused rather than followed.
+fn save_chosen(kind: ChooseKind, bytes: &[u8], chosen: &Mutex<Option<(ChooseKind, PathBuf)>>) -> Result<(), String> {
+    let taken = chosen.lock().unwrap_or_else(PoisonError::into_inner).take();
+    let Some((chosen_kind, path)) = taken.filter(|(chosen_kind, _)| *chosen_kind == kind) else {
+        return Err(String::from("no place to save was chosen"));
+    };
+    debug_assert_eq!(chosen_kind, kind);
+    let mut options = std::fs::OpenOptions::new();
+    options.write(true).create(true).truncate(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt as _;
+        options.custom_flags(libc::O_NOFOLLOW);
+    }
+    let mut file = options.open(&path).map_err(|error| format!("{}: {error}", path.display()))?;
+    file.write_all(bytes).and_then(|()| file.flush()).map_err(|error| format!("{}: {error}", path.display()))
 }
 
 /// What the chooser printed, bounded, read as one absolute path; nothing when
@@ -669,6 +727,53 @@ mod tests {
         assert_eq!(pages, b"PN,10000\nOL,1,Hello\n\nPN,10100\nOL,1,World\n\n");
         assert!(read_within(&home.join("Documents/bookmarks.html"), &places).is_ok());
         assert!(read_within(&home.join("Documents/bookmarks-export.txt"), &places).is_ok());
+        std::fs::remove_dir_all(&home).unwrap();
+    }
+
+    /// The picture converter (`docs/picture-tools.md`): only the picture
+    /// last chosen in its dialog is read, and only when it starts as one of
+    /// the five formats.
+    #[test]
+    fn only_the_chosen_picture_is_read_and_only_as_a_picture() {
+        let home = home("picture");
+        let places = Places::new(Some(home.clone()), vec![home.join("settings")]);
+        let (picture, other, text) = (home.join("photo.png"), home.join("other.png"), home.join("notes.png"));
+        let png = b"\x89PNG\r\n\x1a\n and the rest".to_vec();
+        write(&picture, &png);
+        write(&other, &png);
+        write(&text, b"not a picture at all");
+        let chosen = Mutex::new(None);
+        assert!(read_chosen_picture(&picture, &chosen, &places).is_err(), "nothing chosen yet");
+        *chosen.lock().unwrap() = Some(picture.clone());
+        assert_eq!(read_chosen_picture(&picture, &chosen, &places).unwrap(), png);
+        assert!(read_chosen_picture(&other, &chosen, &places).is_err(), "another file");
+        *chosen.lock().unwrap() = Some(text.clone());
+        assert!(read_chosen_picture(&text, &chosen, &places).is_err(), "not a picture");
+        std::fs::remove_dir_all(&home).unwrap();
+    }
+
+    /// A save is written once, where the user chose and as the kind chosen;
+    /// a link in that place is not followed.
+    #[test]
+    fn a_page_is_saved_once_where_chosen() {
+        let home = home("save");
+        let place = home.join("page.tti");
+        let chosen = Mutex::new(Some((ChooseKind::SaveTti, place.clone())));
+        assert!(save_chosen(ChooseKind::SaveT42, b"x", &chosen).is_err(), "another kind");
+        *chosen.lock().unwrap() = Some((ChooseKind::SaveTti, place.clone()));
+        save_chosen(ChooseKind::SaveTti, b"PN,10000\n", &chosen).unwrap();
+        assert_eq!(std::fs::read(&place).unwrap(), b"PN,10000\n");
+        assert!(save_chosen(ChooseKind::SaveTti, b"again", &chosen).is_err(), "once only");
+        #[cfg(unix)]
+        {
+            let target = home.join("target.txt");
+            write(&target, b"kept");
+            let link = home.join("link.tti");
+            std::os::unix::fs::symlink(&target, &link).unwrap();
+            *chosen.lock().unwrap() = Some((ChooseKind::SaveTti, link));
+            assert!(save_chosen(ChooseKind::SaveTti, b"over", &chosen).is_err());
+            assert_eq!(std::fs::read(&target).unwrap(), b"kept");
+        }
         std::fs::remove_dir_all(&home).unwrap();
     }
 }

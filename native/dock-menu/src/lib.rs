@@ -299,6 +299,9 @@ pub const MENU_BAR: &[Menu] = &[
         entries: &[browser("Bookmark This Page\u{2026}", command("d")), browser("Bookmark Manager", option_command(ShortcutKey::Text("b")))],
         lists_windows: false,
     },
+    // The Tools menu (`picture-tools.md`): the picture converter's panel,
+    // by the key the interface core answers.
+    Menu { title: "Tools", entries: &[browser("Convert Picture to Teletext\u{2026}", shift_command("p"))], lists_windows: false },
     Menu {
         title: "Window",
         entries: &[
@@ -408,7 +411,7 @@ mod tests {
         }
         assert_eq!(MENU_BAR.iter().filter(|menu| menu.lists_windows).count(), 1, "one Window menu");
         let titles: Vec<&str> = MENU_BAR.iter().map(|menu| menu.title).collect();
-        assert_eq!(titles, ["NeoTeletext", "File", "Edit", "View", "History", "Bookmarks", "Window"]);
+        assert_eq!(titles, ["NeoTeletext", "File", "Edit", "View", "History", "Bookmarks", "Tools", "Window"]);
     }
 
     /// The number an item reports finds it again.

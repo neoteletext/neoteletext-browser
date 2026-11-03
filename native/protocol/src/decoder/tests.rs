@@ -34,6 +34,7 @@ fn every_kind_round_trips() {
         ToDecoder::View(View { page: 0x302, reveal: true, hold: false, mix: true, subpage: Some(2) }),
         ToDecoder::View(View { page: 0x100, ..View::default() }),
         ToDecoder::SubPageRows { page: 0x210, range: SubPageRange { first: 8_126, count: 64 } },
+        ToDecoder::Picture(interface_core::picture::PictureChoice { level: 0, fit: 1, align: 8, background: 7, hold_mosaics: true }),
     ] {
         let mut bytes = Vec::new();
         write_to_decoder(&mut bytes, &message).unwrap();
@@ -59,6 +60,8 @@ fn every_kind_round_trips() {
         FromDecoder::BookmarksRead { skipped: 3 },
         FromDecoder::ChannelLog { level: interface_core::console::Level::Warning, page: Some(0x1A0 - 0xA0), text: "Weather feed late".into() },
         FromDecoder::ChannelLog { level: interface_core::console::Level::Info, page: None, text: "Started".into() },
+        FromDecoder::PictureConverted { tti: b"PN,10000\n".to_vec(), t42: vec![0; 42], summary: "8 colours".into() },
+        FromDecoder::PictureRefused("the picture could not be read".into()),
     ] {
         let mut bytes = Vec::new();
         write_to_core(&mut bytes, &message).unwrap();
@@ -191,4 +194,26 @@ fn showing_holds_channel_pages_and_no_more_than_a_channel_has() {
 #[test]
 fn a_region_over_four_bits_is_refused() {
     assert!(write_to_decoder(&mut Vec::new(), &ToDecoder::Region(Some(NIBBLE_MASK + 1))).is_err());
+}
+
+/// The picture converter's messages are bounded both ways: a choice outside
+/// its lists, hold mosaics above Level 1.5, and a page past the bound are
+/// refused when written and when read.
+#[test]
+fn picture_messages_are_bounded() {
+    use crate::picture::MAX_PICTURE_PAGE;
+    use interface_core::picture::PictureChoice;
+    let mut bytes = Vec::new();
+    for bad in [PictureChoice { level: 3, ..PictureChoice::default() }, PictureChoice { hold_mosaics: true, ..PictureChoice::default() }] {
+        assert!(write_to_decoder(&mut bytes, &ToDecoder::Picture(bad)).is_err());
+    }
+    let too_long = FromDecoder::PictureConverted { tti: vec![b' '; MAX_PICTURE_PAGE + 1], t42: Vec::new(), summary: String::new() };
+    assert!(write_to_core(&mut bytes, &too_long).is_err());
+    // Read: a choice whose hold flag is 2, and a page claiming more than the bound.
+    let mut frame = vec![145, 0, 0, 0, 5, 0, 0, 4, 0, 2];
+    assert!(read_from_core(&mut frame.as_slice()).is_err());
+    let length = u32::try_from(MAX_PICTURE_PAGE + 1).unwrap().to_be_bytes();
+    frame = vec![146, 0, 0, 0, 4];
+    frame.extend(length);
+    assert!(read_from_decoder(&mut frame.as_slice()).is_err());
 }

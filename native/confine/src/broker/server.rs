@@ -40,10 +40,19 @@ pub struct Handlers<'a> {
     pub choose: &'a dyn Fn(ChooseKind, &str, bool) -> Result<(), String>,
     /// The reading end of the pipe of what opens from outside, once.
     pub openings: &'a dyn Fn() -> Option<File>,
+    /// Reads a picture the user chose in the picture dialog, by its rules
+    /// and bounds (`docs/picture-tools.md`).
+    pub read_picture: &'a dyn Fn(&Path) -> Result<Vec<u8>, String>,
+    /// Writes a converted page where the user last chose to save one of
+    /// this kind, once.
+    pub save: &'a SaveHandler,
     /// Takes what the interface declares on its own channel, on a thread
     /// of that channel's.
     pub declared: Arc<dyn Fn(Declaration) + Send + Sync>,
 }
+
+/// What writes a converted page where the user chose to save it.
+pub type SaveHandler = dyn Fn(ChooseKind, &[u8]) -> Result<(), String>;
 
 /// The core, started confined, and the broker's end of its channel.
 pub struct Core {
@@ -163,6 +172,15 @@ fn answer(core: &mut Core, helpers: &mut Helpers, programs: &Path, handlers: &Ha
         Request::UpdateState => match (handlers.update_state)() {
             Ok(bytes) if bytes.len() <= MAX_UPDATE_STATE => Reply::Source(bytes),
             Ok(_) => Reply::Failed(String::from("the launcher's state is too long")),
+            Err(reason) => Reply::Failed(reason),
+        },
+        Request::ReadPicture(path) => match (handlers.read_picture)(Path::new(&path)) {
+            Ok(bytes) if bytes.len() <= MAX_REPLY => Reply::Source(bytes),
+            Ok(_) => Reply::Failed(String::from("the picture is too large")),
+            Err(reason) => Reply::Failed(reason),
+        },
+        Request::Save { kind, bytes } => match (handlers.save)(kind, &bytes) {
+            Ok(()) => Reply::Done,
             Err(reason) => Reply::Failed(reason),
         },
         Request::Choose { kind, parent, keep } => match (handlers.choose)(kind, &parent, keep) {

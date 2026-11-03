@@ -7,9 +7,9 @@ use std::io::{Read, Write};
 use super::ToInterface;
 use super::kinds::{
     KIND_BAR_VIEW, KIND_BOOKMARKS_VIEW, KIND_CHANNEL, KIND_CLOSE, KIND_CLOSE_WINDOW_VIEW, KIND_CONSOLE_UPDATE, KIND_COOKIES_VIEW, KIND_FRAME,
-    KIND_HISTORY_VIEW, KIND_OPEN_WINDOW, KIND_PAGE, KIND_PAGE_CONTROLS, KIND_RAISE, KIND_REMOTE, KIND_SETTINGS, KIND_SHOW, KIND_SHOW_CONTENTS, KIND_SHOW_WALL,
-    KIND_STAR_VIEW, KIND_STRIP, KIND_SUBPAGE_ROWS, KIND_SUBPAGES, KIND_SUGGESTIONS, KIND_TAB_LIST_VIEW, KIND_TAB_SOUNDING, KIND_TABS, KIND_TARGET,
-    KIND_UPDATE_VIEW, KIND_UPDATED, KIND_WINDOW_VIEW,
+    KIND_HISTORY_VIEW, KIND_OPEN_WINDOW, KIND_PAGE, KIND_PAGE_CONTROLS, KIND_PICTURE_STATUS, KIND_RAISE, KIND_REMOTE, KIND_SETTINGS, KIND_SHOW,
+    KIND_SHOW_CONTENTS, KIND_SHOW_WALL, KIND_STAR_VIEW, KIND_STRIP, KIND_SUBPAGE_ROWS, KIND_SUBPAGES, KIND_SUGGESTIONS, KIND_TAB_LIST_VIEW, KIND_TAB_SOUNDING,
+    KIND_TABS, KIND_TARGET, KIND_UPDATE_VIEW, KIND_UPDATED, KIND_WINDOW_VIEW,
 };
 use super::pages::{
     FRAME_FIXED_BYTES, push_channel, push_frame, push_page, push_subpage_count, push_subpage_rows, push_updated, read_channel, read_frame_head, read_page,
@@ -62,6 +62,7 @@ fn kind_of(message: &ToInterface) -> u8 {
         #[cfg(feature = "phone-keyboard")]
         ToInterface::PhoneKey(_) => KIND_PHONE_KEY,
         ToInterface::Settings(_) => KIND_SETTINGS,
+        ToInterface::PictureStatus(_) => KIND_PICTURE_STATUS,
         ToInterface::Update(_) => KIND_UPDATE_VIEW,
         ToInterface::Console(_) => KIND_CONSOLE_UPDATE,
         ToInterface::History(_) => KIND_HISTORY_VIEW,
@@ -107,6 +108,7 @@ fn push_fields(payload: &mut Vec<u8>, message: &ToInterface) -> Result<(), Proto
         #[cfg(feature = "phone-keyboard")]
         ToInterface::PhoneKey(key) => crate::keyboard::push_phone_key(payload, key)?,
         ToInterface::Settings(view) => settings::push_view(payload, view)?,
+        ToInterface::PictureStatus(status) => crate::picture::push_status(payload, status)?,
         ToInterface::Update(view) => settings::push_update(payload, view)?,
         ToInterface::Console(update) => console::push_update(payload, update)?,
         ToInterface::History(view) => library::push_history_view(payload, view)?,
@@ -182,6 +184,7 @@ pub fn read_from_core(input: &mut dyn Read) -> Result<Option<ToInterface>, Proto
         #[cfg(feature = "phone-keyboard")]
         KIND_PHONE_KEY => ToInterface::PhoneKey(crate::keyboard::read_phone_key(&mut fields)?),
         KIND_SETTINGS => ToInterface::Settings(settings::read_view(&mut fields)?),
+        KIND_PICTURE_STATUS => ToInterface::PictureStatus(crate::picture::read_status(&mut fields)?),
         KIND_UPDATE_VIEW => ToInterface::Update(settings::read_update(&mut fields)?),
         KIND_CONSOLE_UPDATE => ToInterface::Console(console::read_update(&mut fields)?),
         KIND_HISTORY_VIEW => ToInterface::History(library::read_history_view(&mut fields)?),

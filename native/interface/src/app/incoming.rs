@@ -33,6 +33,7 @@ impl App {
                 dock_menu::set_aspect(view.aspect);
                 self.view.browser.set_settings(view);
             }
+            Incoming::PictureStatus(status) => self.view.browser.set_picture_status(status),
             Incoming::Update(view) => {
                 // The About panel shows the version the trusted core reports.
                 dock_menu::set_about(&view.version, interface_core::COPYRIGHT);

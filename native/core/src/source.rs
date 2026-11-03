@@ -158,6 +158,39 @@ fn bookmarks(bytes: &[u8]) -> bool {
     protocol::decoder::is_netscape_bookmarks(bytes) || neoteletext::bookmarks::is_bookmarks_file(bytes)
 }
 
+/// The signatures of the five picture formats the engine's converter reads
+/// (its DEC-2114), each at its offset: PNG (ISO/IEC 15948 clause 5.2),
+/// JPEG's start of image and next marker (ITU-T T.81 Annex B), GIF's two
+/// versions, BMP's file header, and WebP's RIFF form type at byte 8.
+const PICTURE_SIGNATURES: [(usize, &[u8]); 6] = [(0, b"\x89PNG\r\n\x1a\n"), (0, &[0xFF, 0xD8, 0xFF]), (0, b"GIF87a"), (0, b"GIF89a"), (0, b"BM"), (8, b"WEBP")];
+/// A WebP file starts as a RIFF file (RFC 9649 section 2.4).
+const RIFF: &[u8] = b"RIFF";
+
+/// Whether the bytes start as one of the five picture formats: only a
+/// filter before a confined decoder reads them, which decides.
+fn picture(bytes: &[u8]) -> bool {
+    PICTURE_SIGNATURES.iter().any(|&(at, signature)| {
+        let starts = bytes.get(at..).is_some_and(|rest| rest.starts_with(signature));
+        starts && (at == 0 || bytes.starts_with(RIFF))
+    })
+}
+
+/// A picture the user chose to convert (`docs/picture-tools.md`), read as a
+/// file channel is: nothing in a refused place, nothing through a link, at
+/// most the engine converter's own bound, and only when it starts as one of
+/// its five formats.
+///
+/// # Errors
+/// [`REFUSAL`], whatever the reason.
+pub fn read_picture(canonical: &Path, places: &Places) -> Result<Vec<u8>, &'static str> {
+    let most = u64::try_from(protocol::picture::MAX_PICTURE_FILE).unwrap_or(MAX_SOURCE_BYTES);
+    let metadata = fs::symlink_metadata(canonical).map_err(|_| REFUSAL)?;
+    if !metadata.is_file() || metadata.len() > most {
+        return Err(REFUSAL);
+    }
+    read_file(canonical, places, most).map(|(bytes, _)| bytes).filter(|bytes| picture(bytes)).ok_or(REFUSAL)
+}
+
 /// A file's bytes, at most `room` of them, when the file may be read, and
 /// its identity, from the descriptor they were read through.
 fn read_file(canonical: &Path, places: &Places, room: u64) -> Option<(Vec<u8>, FileIdentity)> {

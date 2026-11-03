@@ -214,6 +214,7 @@ impl Server {
             Request::CookieKey => Reply::Failed(String::from("a test has no secret store")),
             Request::UpdateState => Reply::Failed(String::from("no launcher started this broker")),
             Request::Openings => Reply::Failed(String::from("a test opens nothing from outside")),
+            Request::ReadPicture(_) | Request::Save { .. } => Reply::Failed(String::from("a test has no pictures")),
         };
         self.keep(request);
         self.stream.write_all(&encode_reply(&reply)?)

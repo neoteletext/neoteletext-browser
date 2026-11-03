@@ -76,6 +76,10 @@ pub struct Session {
     /// The time, in seconds since 1970 (UTC), that the trusted core set
     /// before the change at hand: what a tab's entry is stamped with.
     pub now: i64,
+    /// The page the Tools menu's picture converter last made, as a TTI page
+    /// file from a confined decoder, which `neoteletext:picture` shows
+    /// (`docs/picture-tools.md`); empty until one is made.
+    pub picture_page: Vec<u8>,
 }
 
 impl Session {
@@ -103,13 +107,14 @@ impl Session {
             next_channel: 1,
             reader,
             now: 0,
+            picture_page: Vec::new(),
         }
     }
 
     fn channel_for(&mut self, address: &Address) -> ChannelState {
         let id = self.next_channel;
         self.next_channel = self.next_channel.wrapping_add(1).max(1);
-        ChannelState::new(id, address, &self.bookmarks, &self.reader)
+        ChannelState::new(id, address, &self.bookmarks, &self.reader, &self.picture_page)
     }
 
     /// A channel for a restored tab: a file is read only when its tab is
@@ -285,7 +290,7 @@ impl Session {
             back: tab.position > 0,
             forward: tab.position.saturating_add(1) < tab.history.len(),
             bookmarked: self.bookmarks.find(&address.text).is_some(),
-            built_in: address.is_start_page(),
+            built_in: address.is_built_in(),
             private: tab.private,
             notice: String::new(),
             refused: tab.channel.refused,
