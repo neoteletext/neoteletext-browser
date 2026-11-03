@@ -295,3 +295,113 @@ fn a_click_is_the_hosts() {
     );
     assert!(session.render().tti().contains("You clicked column 7, row 11."));
 }
+
+/// The page number of each page header (packet 0) among whole packets.
+fn headers(packets: &[[u8; 42]]) -> Vec<u16> {
+    packets
+        .iter()
+        .filter_map(|bytes| match neoteletext_core::packet::decode(&neoteletext_core::packet::Packet { bytes: *bytes }) {
+            Ok(neoteletext_core::packet::Decoded::Header(header)) => {
+                Some(neoteletext_core::types::PageAddress { magazine: header.magazine, page: header.page.unwrap() }.mpp())
+            }
+            _ => None,
+        })
+        .collect()
+}
+
+/// The `CU` line of a page file: the cursor's place, or `None` for no
+/// cursor, and the input count acknowledged (the engine's REQ-INT-006).
+fn cu_line(tti: &str) -> (Option<(u8, u8)>, u16) {
+    let line = tti.lines().find_map(|line| line.strip_prefix("CU,")).expect("a CU line");
+    let fields: Vec<&str> = line.split(',').collect();
+    let [row, column, _, _, acked] = fields.as_slice() else { panic!("five fields: {line}") };
+    let (row, column) = (row.parse::<u8>().unwrap(), column.parse::<u8>().unwrap());
+    ((row != neoteletext_input::cursor::NO_CURSOR).then_some((row, column)), acked.parse().unwrap())
+}
+
+/// Checks every push as neoteletext-common's DEC-1459 and the engine's
+/// REQ-41 require: whole 42-byte packets, never empty; a page push holds one
+/// page header, for the open page, and ends with that page's cursor record,
+/// which says what the page file's `CU` line says (REQ-195).
+fn check_pushes(session: &Session, pushes: &[Push]) {
+    for push in pushes {
+        let (Push::Page(bytes) | Push::Packets(bytes)) = push;
+        let (packets, rest) = bytes.as_chunks::<42>();
+        assert!(rest.is_empty() && !packets.is_empty(), "page {:03X}: a push of {} bytes is not whole packets", session.page, bytes.len());
+        if let Push::Page(_) = push {
+            assert_eq!(headers(packets), [session.page], "one page header, for the open page");
+            let cursor = neoteletext_input::cursor::from_packet(&neoteletext_core::packet::Packet { bytes: *packets.last().unwrap() })
+                .expect("the last packet is a cursor record")
+                .unwrap();
+            let (place, acked) = cu_line(&session.render().tti());
+            assert_eq!(
+                (cursor.page, cursor.acked, cursor.place.map(|place| (place.row, place.column))),
+                (session.page, acked, place),
+                "page {:03X}: the cursor record and the CU line",
+                session.page
+            );
+        }
+    }
+}
+
+// DEC-1459, REQ-41, REQ-195: every page of the channel, the game's frames and
+// the podcast's frames go as whole packets, each page with one header and its
+// cursor record last.
+#[test]
+fn every_push_is_whole_packets_and_each_page_ends_with_its_cursor() {
+    let rate = 8_000;
+    let episode = Episode { title: "Pilot".to_owned(), rate, samples: vec![500; usize::try_from(rate).unwrap() * 3] };
+    let mut session = Session::new(Settings { relay: None, podcast: Some(Arc::new(episode)) });
+    let mut pages = 0;
+    for (number, _) in PAGES {
+        // One item at a time, so that each push is checked against the
+        // session as it stood when it was pushed.
+        for item in [page(number), press('a'), named("Enter")] {
+            let pushes = feed(&mut session, &[item]);
+            pages += pushes.iter().filter(|push| matches!(push, Push::Page(_))).count();
+            check_pushes(&session, &pushes);
+        }
+    }
+    assert_eq!(pages, PAGES.len() * 3, "each item answered with its page");
+    feed(&mut session, &[page(0x300)]);
+    for _ in 0..3 {
+        let frame = session.frame();
+        assert!(matches!(frame.last(), Some(Push::Page(_))), "a frame ends with its page");
+        check_pushes(&session, &frame);
+    }
+    let mut sound = false;
+    for item in [page(0x700), press(' ')] {
+        let pushes = feed(&mut session, &[item]);
+        sound |= pushes.iter().any(|push| matches!(push, Push::Packets(_)));
+        check_pushes(&session, &pushes);
+    }
+    for _ in 0..3 {
+        let pushes = session.podcast_frame();
+        sound |= pushes.iter().any(|push| matches!(push, Push::Packets(_)));
+        check_pushes(&session, &pushes);
+    }
+    assert!(sound, "the episode's sound went");
+}
+
+// DEC-1459: the pushed packets lose nothing a viewer sees: a page pushed and
+// decoded draws exactly what its page file draws.
+#[test]
+fn a_pushed_page_draws_as_its_page_file_does() {
+    let mut session = Session::new(Settings::default());
+    for (number, _) in PAGES {
+        let pushes = feed(&mut session, &[page(number), press('A'), press('n')]);
+        let Some(Push::Page(packets)) = pushes.last() else { panic!("page {number:03X} was pushed") };
+        let mut from_packets = decoder::Engine::new();
+        from_packets.feed_whole(true, true, packets);
+        let mut from_file = decoder::Engine::new();
+        from_file.feed_whole(false, false, session.render().tti().as_bytes());
+        let drawn_from_packets = from_packets.render(number).expect("the pushed page draws");
+        let drawn_from_file = from_file.render(number).expect("the page file draws");
+        assert_eq!(
+            (drawn_from_packets.palette, drawn_from_packets.screen),
+            (drawn_from_file.palette, drawn_from_file.screen),
+            "page {number:03X}: its colours"
+        );
+        assert!(drawn_from_packets.indices == drawn_from_file.indices, "page {number:03X}: its dots");
+    }
+}
