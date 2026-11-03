@@ -88,6 +88,13 @@ const KIND_KEY: u8 = 17;
 const KIND_OPENINGS: u8 = 18;
 /// The reply that carries the pipe of what opens from outside.
 pub(crate) const KIND_PIPE: u8 = 19;
+/// A picture the user chose to convert (`docs/picture-tools.md`).
+const KIND_READ_PICTURE: u8 = 20;
+/// The converted page, written where the user chose to save it.
+const KIND_SAVE: u8 = 21;
+/// The most bytes the broker saves for the core: a converted page, at
+/// most `protocol::picture::MAX_PICTURE_PAGE`, which the core asserts fits.
+pub const MAX_SAVE: usize = 256 * 1024;
 /// The cookie file's key: 256 bits (`cookies.md` section 7).
 pub const COOKIE_KEY_BYTES: usize = 32;
 /// The port of TLS, the update host's (`installation-and-updates.md`

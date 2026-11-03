@@ -35,6 +35,7 @@ enum Item {
     Console,
     Remote,
     FullScreen,
+    Picture,
     Settings,
 }
 
@@ -58,6 +59,7 @@ impl Item {
         Self::Console,
         Self::Remote,
         Self::FullScreen,
+        Self::Picture,
         Self::Settings,
     ];
 
@@ -91,6 +93,8 @@ impl Item {
             Self::Remote => ("Remote control", "Shift+Cmd+R", "Ctrl+Shift+R"),
             // The page alone (decision 85), by the system's own key.
             Self::FullScreen => ("Full screen", "Ctrl+Cmd+F", "F11"),
+            // The Tools menu's one item, as the macOS menu bar has it (DEC-2390).
+            Self::Picture => ("Picture to teletext\u{2026}", "Shift+Cmd+P", "Ctrl+Shift+P"),
             Self::Settings => ("Settings", "Cmd+,", "Ctrl+,"),
         }
     }
@@ -173,6 +177,11 @@ impl Browser {
                 // The last frame's time: a menu's press is not given the clock.
                 let now = self.remote_time();
                 self.toggle_full_screen(now);
+            }
+            Item::Picture => {
+                if !self.picture_open() {
+                    self.toggle_picture();
+                }
             }
             Item::Settings => {
                 if !self.settings_open() {

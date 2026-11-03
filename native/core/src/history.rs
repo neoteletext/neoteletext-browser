@@ -141,7 +141,7 @@ fn clean_exactly(text: &str, max: usize) -> Option<String> {
 #[must_use]
 pub fn recordable(text: &str) -> Option<String> {
     let parsed = address::parse(text).ok()?;
-    (parsed.text == text && !parsed.is_start_page() && !text.contains(SEPARATOR) && !text.contains('\n')).then(|| text.to_owned())
+    (parsed.text == text && !parsed.is_built_in() && !text.contains(SEPARATOR) && !text.contains('\n')).then(|| text.to_owned())
 }
 
 impl History {

@@ -1,7 +1,8 @@
 //! Requirement 3.1 (REQ-667): the browser started whole runs exactly the
 //! processes it names, each its own program: the broker, the trusted core,
-//! the interface, the sound helper, a decoder for each open channel and a
-//! fetcher for each web channel, and no phone keyboard until one is opened.
+//! the interface, the sound helper, a decoder for each channel awake (a
+//! tab's channel sleeps without one by decision 47) and a fetcher for each
+//! web channel, and no phone keyboard until one is opened.
 //!
 //! The browser opens a window, so this runs only in a desktop session: on
 //! Linux under an X or Wayland display, on macOS in the logged-in session,
@@ -23,10 +24,17 @@ use reference_channel::{Killed, Site, cargo, programs};
 
 /// A ceiling on the browser's start: its helpers start within a second.
 const STARTS_WITHIN: Duration = Duration::from_secs(30);
+/// How long the browser is watched, once its helpers have started, for one
+/// more it must not start: all of them started within 0.3 seconds of the
+/// browser on Linux on 4 November 2026.
+const NOTHING_MORE_FOR: Duration = Duration::from_secs(3);
 /// Where the broker's line for each helper it was asked to start begins
 /// (`trusted_core/processes.rs`, `start_helper`).
 const STARTED: &str = "neoteletext: the ";
 const STARTED_CONFINED: &str = " started confined: ";
+/// What the broker says when the sound helper ended for want of an output
+/// (`trusted_core/run.rs`).
+const SOUND_ENDED: &str = "no sound: the sound helper ended";
 
 /// The browser's other programs, built beside the broker for this test's
 /// profile, as a release puts them beside it.
@@ -154,7 +162,11 @@ fn the_browser_started_whole_runs_exactly_the_processes_it_names() {
     let broker = PathBuf::from(env!("CARGO_BIN_EXE_neoteletext"));
     let web = format!("http://127.0.0.1:{}/terminal/", site.port);
     let mut command = Command::new(&broker);
-    command.args(["--allow-local", "127.0.0.1", &web]).arg(&page).stderr(Stdio::piped()).stdout(Stdio::null());
+    // The file first: the first address opened is the tab in front, which
+    // is awake; the web channel's tab behind it is awake because its channel
+    // holds a push connection. A file tab behind others, never shown, would
+    // sleep with no decoder (decision 47, `sleep.rs`), as it should.
+    command.args(["--allow-local", "127.0.0.1"]).arg(&page).arg(&web).stderr(Stdio::piped()).stdout(Stdio::null());
     // A settings folder of the test's own: the user's are never touched.
     command.env("HOME", &folder).env("XDG_CONFIG_HOME", folder.join("config")).env("APPDATA", folder.join("appdata"));
     let mut browser = command.spawn().unwrap();
@@ -186,22 +198,49 @@ fn the_browser_started_whole_runs_exactly_the_processes_it_names() {
         log.push(line);
     }
 
+    // Nothing more starts: a helper started beyond the expected ones would
+    // come within moments of them.
+    let quiet_until = Instant::now() + NOTHING_MORE_FOR;
+    while let Ok(line) = heard.recv_timeout(quiet_until.saturating_duration_since(Instant::now())) {
+        if let Some(name) = line.strip_prefix(STARTED).and_then(|rest| rest.split_once(STARTED_CONFINED)).map(|(name, _)| name.to_owned()) {
+            *starts.entry(name).or_default() += 1;
+        }
+        log.push(line);
+    }
+    let started: BTreeMap<&str, usize> = starts.iter().map(|(name, count)| (name.as_str(), *count)).collect();
+    assert_eq!(started, expected_starts, "the helpers the core asked the broker for:\n{}", log.join("\n"));
+
     let family = family(root);
     let census = census(&family);
+    // A sound helper with no output device to open says so and ends
+    // (decision 55): a desktop with no sound, as a headless one, has none
+    // left running, which is right, and is waited for to be said.
+    let sound = if census.contains_key("neoteletext-sound") {
+        1
+    } else {
+        while !log.iter().any(|line| line.contains(SOUND_ENDED)) {
+            let line = heard
+                .recv_timeout(deadline.saturating_duration_since(Instant::now()))
+                .unwrap_or_else(|_| panic!("no sound helper runs, and none was said to end:\n{}", log.join("\n")));
+            log.push(line);
+        }
+        eprintln!("no sound helper: this desktop has no sound output");
+        0
+    };
     let expected: BTreeMap<String, usize> = [
         ("neoteletext", 1),
         ("neoteletext --core", 1),
         ("neoteletext-interface", 1),
-        ("neoteletext-sound", 1),
+        ("neoteletext-sound", sound),
         ("neoteletext-decoder", 2),
         ("neoteletext-fetcher", 1),
     ]
     .into_iter()
+    .filter(|(_, count)| *count > 0)
     .map(|(name, count)| (name.to_owned(), count))
     .collect();
     let listed: Vec<String> = family.iter().map(|(pid, process)| format!("{pid} (parent {}): {}", process.parent, process.command)).collect();
     assert_eq!(census, expected, "the processes the browser runs:\n{}", listed.join("\n"));
-    assert!(!starts.contains_key("phone keyboard"), "no phone keyboard until it is opened");
     browser.kill();
     // A helper outlives the broker only if confinement failed to tie it to
     // its parent; none may be left behind.

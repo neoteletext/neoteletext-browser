@@ -131,7 +131,7 @@ impl Core {
         if let Some(visit) = tab.history.get_mut(tab.position) {
             visit.title.clone_from(&title);
         }
-        if tab.private || address.is_start_page() {
+        if tab.private || address.is_built_in() {
             return Ok(());
         }
         let time = self.local_time();

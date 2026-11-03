@@ -31,6 +31,7 @@ Each item does exactly what its key or button does: the menu bar sends the inter
 | **View** | Reload (Command-R); Enter Full Screen (Control-Command-F), the page alone (decision 85), titled Exit Full Screen while the page is full screen; Bookmarks Bar (Shift-Command-B), shown or hidden; Overview of All Pages (Shift-Command-E), shown or hidden; Wall of Pages (Command-G), the wall or the page alone (decision 126); Turn On Aspect Correction (Shift-Command-A), titled Turn Off Aspect Correction while it is on, the 4:3 correction, which draws every page 16/13 as wide and is kept between runs (REQ-737); Remote Control (Shift-Command-R); Developer Console (Option-Command-I) |
 | **History** | Back (Command-[), Forward (Command-]), Home (Shift-Command-H); Show All History (Command-Y) |
 | **Bookmarks** | Bookmark This Page (Command-D), Bookmark Manager (Option-Command-B) |
+| **Tools** | Convert Picture to Teletext… (Shift-Command-P), the picture panel (`picture-tools.md`, DEC-2390) |
 | **Window** | Minimise (Command-M), Zoom; Show Previous Tab (Option-Command-Left), Show Next Tab (Option-Command-Right); Move Tab to New Window; then the open windows, which the system lists |
 
 **Command-H is the system's Hide**, as in every Mac application; history stays on Command-Y, its key since decision 57. Open Location focuses the address field and selects its text, as Command-L does in every browser.

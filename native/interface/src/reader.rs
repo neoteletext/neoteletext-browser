@@ -40,6 +40,7 @@ pub fn read_core(proxy: &EventLoopProxy<Incoming>) {
             #[cfg(feature = "phone-keyboard")]
             Ok(Some(ToInterface::PhoneKey(key))) => Incoming::PhoneKey(key),
             Ok(Some(ToInterface::Settings(view))) => Incoming::Settings(view),
+            Ok(Some(ToInterface::PictureStatus(status))) => Incoming::PictureStatus(status),
             Ok(Some(ToInterface::Update(view))) => Incoming::Update(view),
             Ok(Some(ToInterface::Console(update))) => Incoming::Console(update),
             Ok(Some(ToInterface::History(view))) => Incoming::Library(Library::History(view)),

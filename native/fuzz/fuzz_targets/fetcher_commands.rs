@@ -26,7 +26,11 @@ fuzz_target!(|data: &[u8]| {
             // A part of a page's list of sub-pages, `NNN/P.sub`, that a list
             // can have (REQ-1888).
             ToFetcher::FetchSubPages { part, .. } => assert!(usize::from(part) < MAX_LIST_PARTS),
-            ToFetcher::ReachedAnswer { .. } | ToFetcher::FetchPage { .. } | ToFetcher::FetchSubPage { .. } | ToFetcher::MeasureRoundTrip(_) => {}
+            ToFetcher::ReachedAnswer { .. }
+            | ToFetcher::FetchContents
+            | ToFetcher::FetchPage { .. }
+            | ToFetcher::FetchSubPage { .. }
+            | ToFetcher::MeasureRoundTrip(_) => {}
         }
     }
 });

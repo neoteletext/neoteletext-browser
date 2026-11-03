@@ -23,6 +23,7 @@ mod outside;
 mod page_controls;
 #[cfg(feature = "phone-keyboard")]
 mod phone;
+mod picture;
 mod processes;
 mod redirects;
 mod run;
@@ -124,6 +125,10 @@ enum Event {
     SoundEnded(Option<String>),
     /// A decoder read another browser's bookmark file (decision 71).
     BookmarksRead(Result<(Vec<BookmarkEntry>, u32), String>),
+    /// A decoder converted a picture, or did not, for the conversion of
+    /// that generation (`docs/picture-tools.md`): TTI, T42 and the
+    /// converter's summary, untrusted.
+    PictureConverted(u64, Result<(Vec<u8>, Vec<u8>, String), String>),
     /// The updater said something, untrusted (`installation-and-updates.md`).
     Updater(update::wire::FromUpdater),
     /// The updater ended.
@@ -243,6 +248,8 @@ struct Core {
     updates: updates::Updates,
     /// The limit on links from outside (REQ-1672 item 11).
     outside_links: neoteletext::launch::OutsideLinks,
+    /// The Tools menu's picture converter (`docs/picture-tools.md`).
+    picture: picture::PictureState,
 }
 
 impl Core {
@@ -363,6 +370,7 @@ impl Core {
             kept_session: String::new(),
             updates: updates::Updates::default(),
             outside_links: neoteletext::launch::OutsideLinks::default(),
+            picture: picture::PictureState::default(),
         }
     }
 }

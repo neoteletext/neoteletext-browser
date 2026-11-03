@@ -40,10 +40,19 @@ pub struct Handlers<'a> {
     pub choose: &'a dyn Fn(ChooseKind, &str, bool) -> Result<(), String>,
     /// The reading end of the pipe of what opens from outside, once.
     pub openings: &'a dyn Fn() -> Option<File>,
+    /// Reads a picture the user chose in the picture dialog, by its rules
+    /// and bounds (`docs/picture-tools.md`).
+    pub read_picture: &'a dyn Fn(&Path) -> Result<Vec<u8>, String>,
+    /// Writes a converted page where the user last chose to save one of
+    /// this kind, once.
+    pub save: &'a SaveHandler,
     /// Takes what the interface declares on its own channel, on a thread
     /// of that channel's.
     pub declared: Arc<dyn Fn(Declaration) + Send + Sync>,
 }
+
+/// What writes a converted page where the user chose to save it.
+pub type SaveHandler = dyn Fn(ChooseKind, &[u8]) -> Result<(), String>;
 
 /// The core, started confined, and the broker's end of its channel.
 pub struct Core {
@@ -165,6 +174,15 @@ fn answer(core: &mut Core, helpers: &mut Helpers, programs: &Path, handlers: &Ha
             Ok(_) => Reply::Failed(String::from("the launcher's state is too long")),
             Err(reason) => Reply::Failed(reason),
         },
+        Request::ReadPicture(path) => match (handlers.read_picture)(Path::new(&path)) {
+            Ok(bytes) if bytes.len() <= MAX_REPLY => Reply::Source(bytes),
+            Ok(_) => Reply::Failed(String::from("the picture is too large")),
+            Err(reason) => Reply::Failed(reason),
+        },
+        Request::Save { kind, bytes } => match (handlers.save)(kind, &bytes) {
+            Ok(()) => Reply::Done,
+            Err(reason) => Reply::Failed(reason),
+        },
         Request::Choose { kind, parent, keep } => match (handlers.choose)(kind, &parent, keep) {
             Ok(()) => Reply::Done,
             Err(reason) => Reply::Failed(reason),
@@ -210,9 +228,22 @@ fn start_helper(programs: &Path, program: Program, local_network: bool, argument
     let grant = if program == Program::Updater { Some((handlers.updater)(arguments).map_err(io::Error::other)?) } else { None };
     let role = grant.as_ref().map_or(program.role(), |grant| Role::Updater { port: grant.port });
     let writable = grant.as_ref().map(|grant| grant.staging.as_path());
+    start_confined(&path, role, local_network, arguments, &(handlers.environment)(role), writable)
+}
+
+/// Starts the program at `path` confined as `role`, with `arguments` as the
+/// core named them: the broker's start of every helper, and the stand-in's
+/// of a real decoder or fetcher (`stand_in`), so the two cannot differ.
+pub(crate) fn start_confined(
+    path: &Path,
+    role: Role,
+    local_network: bool,
+    arguments: &[String],
+    environment: &[(OsString, OsString)],
+    writable: Option<&Path>,
+) -> io::Result<Process> {
     let arguments: Vec<OsString> = arguments.iter().map(OsString::from).collect();
-    let environment = (handlers.environment)(role);
-    crate::spawn(&Spawn { program: &path, arguments: &arguments, role, environment: &environment, local_network, writable })
+    crate::spawn(&Spawn { program: path, arguments: &arguments, role, environment, local_network, writable })
 }
 
 /// Sends the core a started helper's number, with its two pipes.

@@ -128,7 +128,7 @@ pub struct ChannelState {
 }
 
 impl ChannelState {
-    pub(super) fn new(id: u32, address: &Address, bookmarks: &Bookmarks, reader: &Reader) -> Self {
+    pub(super) fn new(id: u32, address: &Address, bookmarks: &Bookmarks, reader: &Reader, picture: &[u8]) -> Self {
         // The start page is written here, from the bookmarks, and needs no
         // network (requirement 19.7).
         if address.is_start_page() {
@@ -136,6 +136,11 @@ impl ChannelState {
             let mut channel = Self::with(id, address, Source::from_bytes(start_page::pages(&listed)), None, None);
             channel.set_contents(&start_page::contents(&listed));
             return channel;
+        }
+        // The converted picture is the bytes a confined decoder made, passed
+        // unread to the channel's own decoder, as a file's are.
+        if address.is_picture() {
+            return Self::with(id, address, Source::from_bytes(picture.to_vec()), None, None);
         }
         let (source, web, problem) = match &address.file {
             Some(path) => match reader(path) {

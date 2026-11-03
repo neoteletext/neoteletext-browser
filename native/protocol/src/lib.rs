@@ -40,6 +40,7 @@ pub mod keyboard;
 pub mod library;
 #[cfg(feature = "links")]
 pub mod links;
+pub mod picture;
 pub mod settings;
 pub mod sound;
 pub mod subpages;

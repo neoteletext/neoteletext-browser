@@ -53,6 +53,7 @@ mod pages;
 mod phone;
 #[cfg(feature = "phone-keyboard")]
 mod phone_keys;
+mod picture_panel;
 mod pointer;
 mod popups;
 mod redirecting;
@@ -170,6 +171,8 @@ pub struct Browser {
     body: Rect,
     /// The settings panel (requirement 19.3).
     settings: settings_panel::SettingsUi,
+    /// The Tools menu's picture panel (`docs/picture-tools.md`).
+    picture: picture_panel::PictureUi,
     /// The developer console (requirement 19.8).
     console: console_panel::ConsoleUi,
     /// The history panel (requirement 20.4).
@@ -257,6 +260,7 @@ impl Browser {
             outputs: Vec::new(),
             body: Rect::ZERO,
             settings: settings_panel::SettingsUi::default(),
+            picture: picture_panel::PictureUi::default(),
             console: console_panel::ConsoleUi::default(),
             history: history::HistoryUi::default(),
             cookies: cookies_tab::CookiesUi::default(),

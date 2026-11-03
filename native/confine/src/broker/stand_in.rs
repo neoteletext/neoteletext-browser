@@ -1,12 +1,16 @@
 //! A stand-in for the broker, for the trusted core's tests (finding F-98):
 //! the core is given a [`Broker`] connected, over the same socket and wire
 //! as the real one, to a thread of the test's process instead of the
-//! broker's. It starts no program. Each helper the core asks for is two
-//! pipes whose far ends the stand-in holds: what the core writes to the
-//! helper is kept, for the test to read, and what the helper says is what
-//! the test chose. Every request is kept too, so a test sees which helpers
-//! the core started, which files it asked for and what it handed to the
-//! system's browser.
+//! broker's. Started with [`StandIn::start`], it starts no program: each
+//! helper the core asks for is two pipes whose far ends the stand-in holds;
+//! what the core writes to the helper is kept, for the test to read, and
+//! what the helper says is what the test chose. Started with
+//! [`StandIn::start_real`], a decoder or fetcher the core asks for is the
+//! real program, confined as the broker confines it, its pipes handed to
+//! the core as the broker hands them (TODO-1254); every other program is
+//! still two pipes. Every request is kept either way, so a test sees which
+//! helpers the core started, which files it asked for and what it handed
+//! to the system's browser.
 //!
 //! Only with the `test-support` feature, which only the trusted core's
 //! tests turn on (a dev-dependency's feature): no shipped program holds it.
@@ -15,13 +19,14 @@ use std::collections::BTreeMap;
 use std::io::{self, Read as _, Write as _};
 use std::os::fd::AsRawFd as _;
 use std::os::unix::net::UnixStream;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::{Duration, Instant};
 
 use super::wire::{Exit, Reply, Request, decode_request, encode_reply, header};
 use super::{Broker, Channel, HEADER_BYTES, MAX_HELPERS, MAX_REPLY, MAX_REQUEST, Program};
+use crate::Process;
 use crate::unix::send;
 
 /// What the core has written to one helper that is kept: far more than a
@@ -51,6 +56,9 @@ pub struct Started {
     pub arguments: Vec<String>,
     /// Whether it may reach the local network.
     pub local_network: bool,
+    /// How it was confined, as the core is told: the real program's
+    /// report, or the stand-in's own words for two pipes.
+    pub report: String,
 }
 
 /// What the core wrote to one helper, once its end of the pipe closed.
@@ -71,6 +79,8 @@ struct Record {
     requests: Vec<Request>,
     /// Every helper started.
     started: Vec<Started>,
+    /// How many of them are two pipes, whose input is kept.
+    piped: usize,
 }
 
 /// A stand-in broker serving one core.
@@ -90,14 +100,45 @@ impl StandIn {
     /// # Errors
     /// When the socket between them cannot be made.
     pub fn start(read_source: ReadSource, first_words: FirstWords) -> io::Result<(Arc<Broker>, Self)> {
+        Self::serving(read_source, first_words, None)
+    }
+
+    /// As [`StandIn::start`], but a decoder or fetcher the core asks for is
+    /// the real program in `programs`, the folder the build put it in,
+    /// started confined as its program's role says, as the broker starts
+    /// it; `first_words` are said by the other programs' pipes.
+    ///
+    /// # Errors
+    /// When the socket between them cannot be made.
+    pub fn start_real(read_source: ReadSource, first_words: FirstWords, programs: PathBuf) -> io::Result<(Arc<Broker>, Self)> {
+        Self::serving(read_source, first_words, Some(programs))
+    }
+
+    fn serving(read_source: ReadSource, first_words: FirstWords, programs: Option<PathBuf>) -> io::Result<(Arc<Broker>, Self)> {
         let (core, ours) = UnixStream::pair()?;
         let record = Arc::new(Mutex::new(Record::default()));
         let (written_sender, written) = mpsc::channel();
         let (served_sender, served) = mpsc::channel();
         let theirs = Arc::clone(&record);
         std::thread::spawn(move || {
-            let mut serving = Server { stream: ours, record: theirs, outputs: BTreeMap::new(), read_source, first_words, written: written_sender, next: 1 };
+            let mut serving = Server {
+                stream: ours,
+                record: theirs,
+                outputs: BTreeMap::new(),
+                alive: BTreeMap::new(),
+                programs,
+                read_source,
+                first_words,
+                written: written_sender,
+                next: 1,
+            };
             serving.serve();
+            // As the broker does once the core has gone: every real helper
+            // still alive is ended.
+            for (_, mut helper) in std::mem::take(&mut serving.alive) {
+                let _ = helper.kill();
+                let _ = helper.wait();
+            }
             drop(serving);
             let _ = served_sender.send(());
         });
@@ -119,7 +160,8 @@ impl StandIn {
     }
 
     /// Once the core and every helper it was given have gone, what it
-    /// wrote to each helper, in the order their pipes closed.
+    /// wrote to each helper of two pipes, in the order their pipes closed;
+    /// a real helper read its own input.
     ///
     /// # Errors
     /// When the core's side, or a helper's input, is still open at
@@ -128,7 +170,7 @@ impl StandIn {
         let until = Instant::now().checked_add(deadline).ok_or("a deadline too far")?;
         let left = || until.saturating_duration_since(Instant::now());
         self.served.recv_timeout(left()).map_err(|_| String::from("the core's side of the broker is still open"))?;
-        let count = self.lock().started.len();
+        let count = self.lock().piped;
         let mut all = Vec::with_capacity(count);
         while all.len() < count {
             let written =
@@ -150,6 +192,10 @@ struct Server {
     /// Each live helper's output, which the core reads: dropped when the
     /// core ends the helper.
     outputs: BTreeMap<u32, io::PipeWriter>,
+    /// Each real helper not yet waited for.
+    alive: BTreeMap<u32, Process>,
+    /// Where the real decoder and fetcher are, when they are started.
+    programs: Option<PathBuf>,
     read_source: ReadSource,
     first_words: FirstWords,
     written: Sender<Written>,
@@ -181,21 +227,38 @@ impl Server {
     fn answer(&mut self, request: Request) -> io::Result<()> {
         let reply = match &request {
             Request::Spawn { program, local_network, arguments } => {
-                let helper = Started { id: self.next, program: *program, arguments: arguments.clone(), local_network: *local_network };
-                if self.outputs.len() >= MAX_HELPERS {
+                let helper =
+                    Started { id: self.next, program: *program, arguments: arguments.clone(), local_network: *local_network, report: String::from(REPORT) };
+                if self.outputs.len().saturating_add(self.alive.len()) >= MAX_HELPERS {
                     Reply::Failed(String::from("too many helpers"))
                 } else {
+                    let real = self
+                        .programs
+                        .as_ref()
+                        .filter(|_| matches!(program, Program::Decoder | Program::Fetcher))
+                        .map(|programs| programs.join(program.file_name()));
                     self.keep(request);
-                    return self.start(helper);
+                    return match real {
+                        Some(path) => self.start_program(helper, &path),
+                        None => self.start(helper),
+                    };
                 }
             }
             Request::Kill(id) => {
                 self.outputs.remove(id);
+                if let Some(helper) = self.alive.get_mut(id) {
+                    let _ = helper.kill();
+                }
                 Reply::Done
             }
             Request::Wait(id) => {
                 self.outputs.remove(id);
-                if self.lock().started.iter().any(|helper| helper.id == *id) {
+                if let Some(mut helper) = self.alive.remove(id) {
+                    match helper.wait() {
+                        Ok(status) => Reply::Exited(Exit::from(status)),
+                        Err(error) => Reply::Failed(error.to_string()),
+                    }
+                } else if self.lock().started.iter().any(|helper| helper.id == *id) {
                     Reply::Exited(Exit { success: true, text: String::from(REPORT) })
                 } else {
                     Reply::Failed(String::from("no such helper"))
@@ -214,6 +277,7 @@ impl Server {
             Request::CookieKey => Reply::Failed(String::from("a test has no secret store")),
             Request::UpdateState => Reply::Failed(String::from("no launcher started this broker")),
             Request::Openings => Reply::Failed(String::from("a test opens nothing from outside")),
+            Request::ReadPicture(_) | Request::Save { .. } => Reply::Failed(String::from("a test has no pictures")),
         };
         self.keep(request);
         self.stream.write_all(&encode_reply(&reply)?)
@@ -234,7 +298,11 @@ impl Server {
         // The core holds its own ends now.
         drop((core_writes, core_reads));
         self.next = self.next.wrapping_add(1).max(1);
-        self.lock().started.push(helper.clone());
+        {
+            let mut record = self.lock();
+            record.started.push(helper.clone());
+            record.piped = record.piped.saturating_add(1);
+        }
         if let Some(words) = (self.first_words)(&helper) {
             // A helper's first words fit in its pipe; a test's helper that
             // says more holds its output open, unread, as a slow one would.
@@ -254,6 +322,34 @@ impl Server {
             }
             let _ = written.send(Written { helper, bytes, cut });
         });
+        Ok(())
+    }
+
+    /// Starts `helper` as the real program at `path`, confined as the
+    /// broker confines it, and sends the core its pipes as the broker does.
+    fn start_program(&mut self, mut helper: Started, path: &Path) -> io::Result<()> {
+        let role = helper.program.role();
+        let started = super::server::start_confined(path, role, helper.local_network, &helper.arguments, &crate::environment(role), None);
+        let mut process = match started {
+            Ok(process) => process,
+            Err(error) => {
+                let reply = Reply::Failed(format!("cannot start the {}: {error}", helper.program.name()));
+                return self.stream.write_all(&encode_reply(&reply)?);
+            }
+        };
+        let (Some(stdin), Some(stdout)) = (process.stdin.take(), process.stdout.take()) else {
+            let _ = process.kill();
+            let _ = process.wait();
+            return self.stream.write_all(&encode_reply(&Reply::Failed(String::from("a helper without its pipes")))?);
+        };
+        helper.report = process.report.to_string();
+        let reply = encode_reply(&Reply::Spawned { id: helper.id, report: helper.report.clone() })?;
+        send(&self.stream, &reply, &[stdin.as_raw_fd(), stdout.as_raw_fd()])?;
+        // Our copies close here; the core holds its own.
+        drop((stdin, stdout));
+        self.alive.insert(helper.id, process);
+        self.next = self.next.wrapping_add(1).max(1);
+        self.lock().started.push(helper);
         Ok(())
     }
 

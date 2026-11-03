@@ -46,3 +46,9 @@ pub(super) const KIND_ASK_SUBPAGE_ROWS: u8 = 104;
 // Decoder to trusted core: the pages on screen it cannot draw from its
 // cache (REQ-1559), in the next number free across every pipe.
 pub(super) const KIND_MISSING: u8 = 135;
+// The Tools menu's picture converter (`docs/picture-tools.md`), in the next
+// numbers free across every pipe: the choices, to a decoder started with
+// `--picture`; the page it made; and why it made none.
+pub(super) const KIND_PICTURE: u8 = 145;
+pub(super) const KIND_PICTURE_CONVERTED: u8 = 146;
+pub(super) const KIND_PICTURE_REFUSED: u8 = 147;

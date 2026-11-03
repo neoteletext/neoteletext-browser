@@ -1,5 +1,5 @@
 # Copied by neoteletext-common gates/sync; change it there, not here.
-# neoteletext-common gates at bb33cf14984b8621af4284c4c741c347a9ff3fc7
+# neoteletext-common gates at d2008378754a6101219ed88d440f3775e7165307
 # The gate machinery every neoteletext repository shares (DEVELOPMENT.md
 # section 9). A
 # repository's scripts/check.sh sets its own steps and sources its copy of
@@ -26,11 +26,12 @@ git_dir="$(git rev-parse --git-common-dir 2>/dev/null || true)"
 common_git() { env -u GIT_DIR -u GIT_INDEX_FILE -u GIT_WORK_TREE git -C "$common" "$@"; }
 # Names of the documents deleted because rdm or DEVELOPMENT.md now holds
 # them (DEC-2022's protocol documents; the gate and rdm documents folded into
-# DEVELOPMENT.md on 3 November 2026), as a tracked file might write them:
+# DEVELOPMENT.md on 3 November 2026; the server's applications document,
+# deleted for its items the same day, TODO-2245), as a tracked file might write them:
 # bare, or with the dot escaped in a pattern. A longer name that ends in one
 # of them is another document. This text cannot match itself, as a closing
 # bracket stands where a name would meet its extension.
-readonly DELETED_DOCUMENT_NAMES='(^|[^-A-Za-z0-9_])(INPUT|SERVER|CHANNEL|gates|rdm)\\*\.md'
+readonly DELETED_DOCUMENT_NAMES='(^|[^-A-Za-z0-9_])(INPUT|SERVER|CHANNEL|gates|rdm|applications)\\*\.md'
 
 fail() {
     printf '\nFAILED: %s\n' "$*" >&2
@@ -151,6 +152,10 @@ check_gate_copy() {
     revision="$(sed -n '2s/^# neoteletext-common gates at \([0-9a-f]*\)$/\1/p' scripts/gate.sh)"
     [[ -n "$revision" ]] || fail "scripts/gate.sh names no neoteletext-common commit; run $common/gates/sync"
     [[ -d "$common/.git" ]] || fail "neoteletext-common is needed at $common (or NEOTELETEXT_COMMON) to check the gate's copy"
+    # A commit neoteletext-common lacks is a checkout to bring up to date,
+    # not a copy that differs: say which, rather than blame the copy.
+    common_git cat-file -e "$revision:gates/gate.sh" 2>/dev/null ||
+        fail "neoteletext-common at $common could not be read at $revision, which scripts/gate.sh names; pull or fetch neoteletext-common so that it has that commit"
     tail -n +3 scripts/gate.sh | cmp -s - <(common_git show "$revision:gates/gate.sh") ||
         fail "scripts/gate.sh differs from neoteletext-common's gates/gate.sh at $revision; change it there and run gates/sync"
     for file in pre-commit pre-merge-commit pre-push; do

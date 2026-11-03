@@ -109,6 +109,11 @@ pub(crate) const KIND_INSTALL_UPDATE: u8 = 122;
 pub(crate) const KIND_OPEN_FILE: u8 = 123;
 pub(crate) const KIND_DROPPED: u8 = 124;
 pub(crate) const KIND_FROM_SYSTEM: u8 = 125;
+// The Tools menu's picture converter (`docs/picture-tools.md`), in the next
+// numbers free across every pipe: the panel's choices, strip input; and
+// what the trusted core says of a conversion.
+pub(crate) const KIND_PICTURE_CHOICE: u8 = 148;
+pub(crate) const KIND_PICTURE_STATUS: u8 = 149;
 
 // The strip's flags.
 pub(crate) const ENCRYPTED: u8 = 1;
