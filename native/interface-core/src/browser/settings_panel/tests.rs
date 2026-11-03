@@ -185,16 +185,27 @@ fn the_panel_gives_the_loopback_exemption_when_there_is_one() {
     let command = "CheckNetIsolation.exe LoopbackExempt -a -p=S-1-15-2-1-2-3-4-5-6-7";
     let mut browser = open();
     browser.set_settings(SettingsView { loopback_exemption: Some(command.into()), ..view() });
+    browser.set_update(UpdateView { version: "0.1.0".into(), status: "This copy was not installed by the installer".into(), offer: None, checking: true });
     let mut canvas = Recorder::new();
-    browser.draw(&mut canvas, 1440.0, 1200.0, 0);
+    // A window lower than the panel, with the updates' rows, as the
+    // virtual machine's was.
+    browser.draw(&mut canvas, 900.0, 650.0, 0);
     let texts: Vec<&str> = canvas.texts.iter().map(|(_, text)| text.as_str()).collect();
     for expected in
         ["This computer's channels need an administrator to run once:", "CheckNetIsolation.exe LoopbackExempt -a", "-p=S-1-15-2-1-2-3-4-5-6-7", "Copy"]
     {
         assert!(texts.contains(&expected), "{expected} in {texts:?}");
     }
-    browser.take_outputs();
+    // Below the local network it concerns, clear of every other control
+    // (seen overlapping the updates' lines in the Windows virtual machine
+    // on 4 November 2026, when it was placed from the panel's foot).
     let copy = browser.settings.controls.copy_exemption;
+    let controls = &browser.settings.controls;
+    assert!(copy.y0 >= controls.add.y1, "{copy:?} below {:?}", controls.add);
+    for (_, field) in &controls.fields {
+        assert!(copy.y0 >= field.y1, "{copy:?} below {field:?}");
+    }
+    browser.take_outputs();
     assert_eq!(press(&mut browser, copy), [Output::Copy(command.into())]);
 
     let mut browser = open();

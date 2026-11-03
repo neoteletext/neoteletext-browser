@@ -56,13 +56,13 @@ impl Browser {
         y = draw_settings_restore(canvas, view.as_ref(), &mut controls, row(y), field_left);
         y = draw_settings_cookies(canvas, view.as_ref(), &mut controls, row(y), field_left);
         y = self.draw_settings_updates(canvas, &mut controls, row(y), field_left);
-        self.draw_settings_local(canvas, view.as_ref(), &mut controls, row(y), field_left);
-        let refusal_line = Rect::new(left, panel.y1 - PADDING - ROW, right, panel.y1 - PADDING);
+        y = self.draw_settings_local(canvas, view.as_ref(), &mut controls, row(y), field_left);
+        // Below the local network it concerns, across the panel's whole
+        // width, which the container's SID needs.
         if let Some(command) = view.as_ref().and_then(|view| view.loopback_exemption.as_deref()) {
-            let top = refusal_line.y0 - GAP - 3.0 * ROW;
-            controls.copy_exemption = draw_exemption(canvas, command, Rect::new(field_left, top, right, refusal_line.y0 - GAP));
+            controls.copy_exemption = draw_exemption(canvas, command, Rect::new(left, y + GAP, right, y + GAP + 3.0 * ROW));
         }
-        draw_refusal_line(canvas, view.as_ref(), refusal_line);
+        draw_refusal_line(canvas, view.as_ref(), Rect::new(left, panel.y1 - PADDING - ROW, right, panel.y1 - PADDING));
         self.settings.controls = controls;
     }
 
@@ -141,8 +141,15 @@ impl Browser {
     }
 
     /// The local addresses allowed: a field to add one in `line`, then
-    /// each as a chip below.
-    fn draw_settings_local<C: Canvas + ?Sized>(&mut self, canvas: &mut C, view: Option<&SettingsView>, controls: &mut Controls, line: Rect, field_left: f64) {
+    /// each as a chip below. Returns where what follows starts.
+    fn draw_settings_local<C: Canvas + ?Sized>(
+        &mut self,
+        canvas: &mut C,
+        view: Option<&SettingsView>,
+        controls: &mut Controls,
+        line: Rect,
+        field_left: f64,
+    ) -> f64 {
         let (right, mut y) = (line.x1, line.y0);
         left_centred(canvas, line, 0.0, "Local network", ROW_TITLE, WHITE);
         controls.add = Rect::new(right - BUTTON_WIDTH, y, right, y + ROW);
@@ -172,6 +179,11 @@ impl Browser {
             centred(canvas, remove, "\u{00D7}", ROW_TITLE, WHITE);
             controls.removes.push((index, remove));
         }
+        // The chips' rows, or the one line saying there are none.
+        let rows = addresses.len().div_ceil(CHIPS_PER_ROW).max(1);
+        #[allow(clippy::cast_precision_loss, reason = "at most six rows")]
+        let rows = rows as f64;
+        y + rows * (CHIP_HEIGHT + CHIP_GAP)
     }
 
     fn draw_settings_field<C: Canvas + ?Sized>(&mut self, canvas: &mut C, which: Field, rect: Rect) {
