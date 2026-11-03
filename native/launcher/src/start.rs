@@ -19,7 +19,10 @@
 use std::ffi::OsString;
 use std::io::{BufRead as _, BufReader, PipeWriter, Write as _};
 use std::process::{Child, Command, Stdio};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
+#[cfg(unix)]
+use std::sync::{Mutex, PoisonError};
 use std::time::{Duration, Instant};
 
 use update::layout::{HEALTHY_LINE, LAUNCHED_VARIABLE, STARTED_LINE};
@@ -43,6 +46,53 @@ const END_MARK_LINE: &str = "neoteletext-launcher: the broker ended\n";
 const ATOMIC_PIPE_WRITE: usize = 512;
 const _: () = assert!(END_MARK_LINE.len() < ATOMIC_PIPE_WRITE, "the newline and the mark are written whole");
 const _: () = assert!((END_MARK_LINE.len() as u64) <= MAX_LINE, "the mark is read as one line");
+
+/// The process group of the broker running, which a request to end is
+/// passed on to (TODO-2006); none while no broker runs. It is cleared
+/// before the broker is reaped, under the same lock, so a request never
+/// reaches a group whose number has been given to another process.
+#[cfg(unix)]
+static BROKER_GROUP: Mutex<Option<i32>> = Mutex::new(None);
+/// A request to end was heard: the broker running was asked to end, and
+/// no other is started.
+static TERMINATED: AtomicBool = AtomicBool::new(false);
+
+/// Whether a request to end (a signal such as `SIGTERM`) was heard: the
+/// launcher then starts no other broker and ends.
+pub(crate) fn terminated() -> bool {
+    TERMINATED.load(Ordering::SeqCst)
+}
+
+/// From now on, once for the process, a request to end is heard rather
+/// than ending the launcher at once, and passed on to the broker's whole
+/// process group: the broker, the trusted core and every helper. Without
+/// it the launcher alone ended, and the broker, in a process group of its
+/// own, ran on with everything it started (TODO-2006).
+#[cfg(unix)]
+fn hear_termination() {
+    static HEARD: std::sync::Once = std::sync::Once::new();
+    HEARD.call_once(|| match confine::termination_requests() {
+        Ok(mut requests) => {
+            std::thread::spawn(move || {
+                let mut signal = [0_u8; 1];
+                while matches!(std::io::Read::read(&mut requests, &mut signal), Ok(1)) {
+                    TERMINATED.store(true, Ordering::SeqCst);
+                    pass_on_termination();
+                }
+            });
+        }
+        Err(error) => eprintln!("neoteletext: a request to end cannot be passed on to the browser: {error}"),
+    });
+}
+
+/// Asks the broker's process group, if one runs, to end.
+#[cfg(unix)]
+fn pass_on_termination() {
+    let group = BROKER_GROUP.lock().unwrap_or_else(PoisonError::into_inner);
+    if let Some(group) = group.and_then(rustix::process::Pid::from_raw) {
+        let _ = rustix::process::kill_process_group(group, rustix::process::Signal::TERM);
+    }
+}
 
 /// A line of the broker's output that means something.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -106,12 +156,21 @@ pub fn start(launcher: &Launcher, chosen: Chosen, arguments: &[OsString]) -> Res
         // Its own process group, so a trial that hangs is ended whole.
         use std::os::unix::process::CommandExt as _;
         command.process_group(0);
+        hear_termination();
     }
     let spawned = command.spawn();
     // The command holds the broker's end of the output; only the broker
     // and what it starts are to.
     drop(command);
     let mut child = spawned.map_err(|error| format!("cannot start {}: {error}", program.display()))?;
+    #[cfg(unix)]
+    {
+        *BROKER_GROUP.lock().unwrap_or_else(PoisonError::into_inner) = i32::try_from(child.id()).ok();
+        // A request heard while the broker was being started.
+        if terminated() {
+            pass_on_termination();
+        }
+    }
     let mut output = Output::hear(output, own_end);
     let mut ended = Ended { started: false, healthy: false, deadline: None, success: false, code: None };
     match chosen {
@@ -266,7 +325,10 @@ fn wait_whole(child: &mut Child) -> std::io::Result<std::process::ExitStatus> {
                 break;
             }
         }
+        let mut running = BROKER_GROUP.lock().unwrap_or_else(PoisonError::into_inner);
         let _ = rustix::process::kill_process_group(group, rustix::process::Signal::KILL);
+        *running = None;
+        return child.wait();
     }
     child.wait()
 }

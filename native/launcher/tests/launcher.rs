@@ -43,6 +43,13 @@ const TEST_START_DEADLINE: Duration = Duration::from_secs(2);
 const SLOW_TEST_HEALTH_DEADLINE: Duration = Duration::from_secs(3);
 /// The fault child's variable: the fixture it runs.
 const CHILD: &str = "LAUNCHER_TEST_FAULT_CHILD";
+/// The running child's variable: the fixture whose launcher it runs, to
+/// be asked to end.
+#[cfg(unix)]
+const RUNNING_CHILD: &str = "LAUNCHER_TEST_RUNNING_CHILD";
+/// How long processes asked or made to end are given to be gone.
+#[cfg(unix)]
+const GONE_WITHIN: Duration = Duration::from_secs(5);
 
 /// The platform's signer for tests: on Linux the real one with a test
 /// key; elsewhere a check of the test broker's appended signature, since
@@ -581,13 +588,82 @@ fn a_previous_bundle_not_signed_is_not_rolled_back_to() {
     assert!(!fixture.log().contains("0.1.0"), "{}", fixture.log());
 }
 
+/// Whether process `pid` is alive.
+#[cfg(unix)]
+fn alive(pid: i32) -> bool {
+    std::process::Command::new("/bin/kill").args(["-0", &pid.to_string()]).stderr(std::process::Stdio::null()).status().unwrap().success()
+}
+
+/// Waits up to [`GONE_WITHIN`] for every one of `pids` to end; those
+/// still running are killed, and returned.
+#[cfg(unix)]
+fn left_after_waiting(pids: &[i32]) -> Vec<i32> {
+    let started = std::time::Instant::now();
+    while pids.iter().any(|&pid| alive(pid)) && started.elapsed() < GONE_WITHIN {
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    let left: Vec<i32> = pids.iter().copied().filter(|&pid| alive(pid)).collect();
+    for &pid in &left {
+        let _ = std::process::Command::new("/bin/kill").args(["-9", &pid.to_string()]).status();
+    }
+    left
+}
+
+/// Not a test of its own: the launcher the termination test runs in a
+/// process of its own, to be asked to end.
+#[cfg(unix)]
+#[test]
+fn running_child() {
+    let Some(folder) = std::env::var_os(RUNNING_CHILD) else { return };
+    let fixture = Fixture::at(PathBuf::from(folder));
+    fixture.run(NO_DEADLINE_NEEDED);
+}
+
+/// TODO-2006, REQ-667: a launcher asked to end by `SIGTERM`, as `kill`
+/// asks, ends its broker and every process the broker started, then
+/// itself. On the code before, the launcher alone ended, and the broker,
+/// in a process group of its own, ran on with its helpers.
+#[cfg(unix)]
+#[test]
+fn a_launcher_asked_to_end_ends_its_broker_and_every_helper() {
+    let fixture = Fixture::new("terminated");
+    fixture.install(OLD, "serves");
+    let mut launcher = std::process::Command::new(std::env::current_exe().unwrap())
+        .args(["--exact", "running_child", "--nocapture", "--test-threads=1"])
+        .env(RUNNING_CHILD, &fixture.folder)
+        .spawn()
+        .unwrap();
+    let helpers_file = fixture.folder.join("log.helpers");
+    let started = std::time::Instant::now();
+    let pids = loop {
+        let pids: Vec<i32> = fs::read_to_string(&helpers_file).unwrap_or_default().lines().filter_map(|line| line.parse().ok()).collect();
+        if pids.len() == 2 {
+            break pids;
+        }
+        assert!(started.elapsed() < NO_DEADLINE_NEEDED, "the broker never started its helper");
+        std::thread::sleep(Duration::from_millis(50));
+    };
+    let pid = i32::try_from(launcher.id()).unwrap();
+    assert!(std::process::Command::new("/bin/kill").args(["-TERM", &pid.to_string()]).status().unwrap().success());
+    let asked = std::time::Instant::now();
+    while launcher.try_wait().unwrap().is_none() && asked.elapsed() < GONE_WITHIN {
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    let launcher_ended = launcher.try_wait().unwrap().is_some();
+    if !launcher_ended {
+        let _ = launcher.kill();
+        let _ = launcher.wait();
+    }
+    let left = left_after_waiting(&pids);
+    assert!(left.is_empty(), "the broker or its helper outlived the launcher: {left:?} of {pids:?}");
+    assert!(launcher_ended, "the launcher ended once its broker had");
+}
+
 /// Finding F-34: a broker that crashes leaves no helper behind; the
 /// launcher ends its whole process group after it ends.
 #[cfg(unix)]
 #[test]
 fn a_broker_that_crashes_leaves_no_helper() {
-    /// How long a helper killed by the launcher is given to be gone.
-    const GONE_WITHIN: Duration = Duration::from_secs(5);
     let fixture = Fixture::new("orphan");
     fixture.install(OLD, "healthy");
     fixture.stage(NEW, "orphan", true);
@@ -595,16 +671,7 @@ fn a_broker_that_crashes_leaves_no_helper() {
     let helpers = fs::read_to_string(fixture.folder.join("log.helpers")).unwrap();
     let helpers: Vec<i32> = helpers.lines().map(|line| line.parse().unwrap()).collect();
     assert!(!helpers.is_empty(), "the broken broker left helpers");
-    let alive =
-        |pid: i32| std::process::Command::new("/bin/kill").args(["-0", &pid.to_string()]).stderr(std::process::Stdio::null()).status().unwrap().success();
-    let started = std::time::Instant::now();
-    while helpers.iter().any(|&pid| alive(pid)) && started.elapsed() < GONE_WITHIN {
-        std::thread::sleep(Duration::from_millis(100));
-    }
-    let left: Vec<i32> = helpers.iter().copied().filter(|&pid| alive(pid)).collect();
-    for &pid in &left {
-        let _ = std::process::Command::new("/bin/kill").args(["-9", &pid.to_string()]).status();
-    }
+    let left = left_after_waiting(&helpers);
     assert!(left.is_empty(), "helpers outlived their broker: {left:?}");
 }
 

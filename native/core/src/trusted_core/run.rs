@@ -82,6 +82,7 @@ fn handle(core: &mut Core, event: Event) -> Result<bool, String> {
         }
         Event::InterfaceEnded(None) => return Ok(false),
         Event::InterfaceEnded(Some(reason)) => return Err(format!("the interface broke the protocol and was closed: {reason}")),
+        Event::BrokerEnded => return Err(String::from("the broker ended, and the browser ends with it")),
     }
     Ok(true)
 }
@@ -94,6 +95,13 @@ pub(crate) fn run(broker: &Arc<Broker>, given: impl Iterator<Item = String>, con
     log.push((Level::Info, format!("interface: confined: {}", interface.report)));
     let (events, incoming) = mpsc::channel();
     read_interface(&mut interface, events.clone())?;
+    // A broker ended by a signal leaves nothing to end the core and its
+    // helpers on macOS (TODO-2006); on Linux they are killed with it.
+    #[cfg(unix)]
+    {
+        let broker_ended = events.clone();
+        broker.when_ended(move || drop(broker_ended.send(Event::BrokerEnded))).map_err(|error| format!("cannot watch the broker: {error}"))?;
+    }
 
     let (settings, settings_folder, settings_read) = load_settings(&mut log);
     let bookmarks = load_bookmarks(settings_folder.as_deref(), &mut log);
@@ -298,6 +306,14 @@ mod tests {
         let failed = Exit::from(std::process::ExitStatus::from_raw(1 << EXIT_CODE_SHIFT));
         assert!(ended(Ok(()), &failed).is_err());
         assert_eq!(ended(Err("first".into()), &crashed), Err("first".into()), "the first error is the one reported");
+    }
+
+    /// TODO-2006: the broker's end ends the core, which then ends its
+    /// helpers, rather than leaving it running with no one to end it.
+    #[test]
+    fn the_brokers_end_ends_the_core() {
+        let mut core = super::super::test_support::test_core();
+        assert!(handle(&mut core, Event::BrokerEnded).is_err_and(|error| error.contains("broker ended")));
     }
 
     /// REQ-683, TODO-2071: a fetcher that broke the protocol and keeps

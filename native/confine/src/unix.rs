@@ -16,10 +16,14 @@ use crate::{Process, Report, Role, Spawn};
 
 mod channel;
 mod descriptors;
+mod hang_up;
+mod termination;
 mod time;
 
 pub(crate) use channel::Channel;
 pub(crate) use descriptors::{keep_across_exec, receive, send, take_inherited};
+pub(crate) use hang_up::wait_for_hang_up;
+pub use termination::{TERMINATION_SIGNALS, termination_requests};
 pub(crate) use time::local_offset;
 
 /// The command that runs a helper: under its profile on macOS; as it is
