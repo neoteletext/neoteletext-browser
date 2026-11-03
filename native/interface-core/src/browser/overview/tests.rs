@@ -1,9 +1,11 @@
 use super::*;
+use crate::browser::bookmarks_bar::BAR_HEIGHT;
 use crate::browser::fixture::{HEIGHT, WIDTH, browser, cell_centre, press_at, set_aspect};
 use crate::browser::window::{BODY_TOP, OVERVIEW_HEIGHT};
 use crate::browser::{Cursor, Key, Modifiers, Output};
 use crate::canvas::PageKey;
-use crate::test_canvas::Recorder;
+use crate::library::BarView;
+use crate::test_canvas::{Painted, Recorder};
 
 #[test]
 fn a_click_on_the_overview_selects_its_page() {
@@ -51,6 +53,53 @@ fn a_page_in_the_overview_pops_up_at_native_size_under_a_hand() {
     browser.draw(&mut canvas, WIDTH, short, 0);
     let &(_, rect) = canvas.pages.iter().rev().find(|(drawn, _)| *drawn == key).expect("the preview is drawn");
     assert!(rect.y0 >= BODY_TOP && rect.height() < f64::from(PAGE_HEIGHT), "{rect:?}");
+}
+
+/// REQ-785 (requirement 14.5), the spoofing review of 3 November 2026:
+/// the native-size preview is drawn after the strip and not clipped, so
+/// its scale alone keeps it off the strip. The whole of it (the page's
+/// screen colour around the image, the image, its outline and its shadow)
+/// stays at or below the page area's top, with the bookmarks bar hidden
+/// and shown, in the tests' window, in the smallest the interface allows
+/// (`MINIMUM_WIDTH` and `MINIMUM_HEIGHT` in `native/interface/src/window.rs`)
+/// and in a short one, where the preview shrinks.
+#[test]
+fn the_whole_preview_stays_below_the_strip_with_the_bar_shown_or_hidden() {
+    const SMALLEST_WIDTH: f64 = 1000.0;
+    const SMALLEST_HEIGHT: f64 = 640.0;
+    /// The preview's scale is a quotient, and its top, scaled to touch
+    /// the page area's, lands within rounding of it: far less than a
+    /// device pixel.
+    const ROUNDING: f64 = 1e-9;
+    let short = BODY_TOP + OVERVIEW_HEIGHT + 300.0;
+    let key = PageKey { channel: 7, page: 0x610 };
+    for (width, height) in [(WIDTH, HEIGHT), (SMALLEST_WIDTH, SMALLEST_HEIGHT), (WIDTH, short)] {
+        for bar in [false, true] {
+            let case = format!("{width} by {height}, bar {bar}");
+            let (mut browser, mut canvas) = browser();
+            browser.set_bar(BarView { shown: bar, ..BarView::default() });
+            browser.add_page(7, 0x610, "Weather".into(), 0);
+            browser.draw(&mut canvas, width, height, 0);
+            let point = cell_centre(&browser, page_index(0x610).unwrap());
+            assert!(browser.pointer_moved(point.x, point.y, 0), "{case}: over the page");
+            let mut canvas = Recorder::new();
+            browser.draw(&mut canvas, width, height, 0);
+            let page_top = browser.strip_end(0) + MARGIN;
+            assert_eq!(page_top, BODY_TOP + if bar { BAR_HEIGHT } else { 0.0 }, "{case}: the page area's top");
+            let at = canvas.painted.iter().rposition(|painted| matches!(painted, Painted::Page(drawn, _) if *drawn == key)).expect("the preview is drawn");
+            // The screen colour, the image and the outline's four sides.
+            let preview = canvas.painted.get(at - 1..=at + 4).expect("the preview's calls");
+            let Some(&Painted::Fill(screen, _)) = preview.first() else { panic!("{case}: the screen colour first: {preview:?}") };
+            let Painted::Page(_, image) = preview[1] else { panic!("{case}: {preview:?}") };
+            assert!(screen.x0 < image.x0 && screen.y0 < image.y0 && screen.x1 > image.x1 && screen.y1 > image.y1, "{case}: the screen around the image");
+            for painted in preview {
+                let (Painted::Fill(rect, _) | Painted::Page(_, rect)) = *painted;
+                assert!(rect.y0 >= page_top - ROUNDING, "{case}: {painted:?} reaches above the page area's top {page_top}");
+            }
+            let &(shadow, _) = canvas.dims.last().expect("the preview's shadow");
+            assert!(shadow.y0 >= page_top - ROUNDING, "{case}: the shadow {shadow:?}");
+        }
+    }
 }
 
 /// REQ-737 item 2: the preview is stretched in width at the same height,

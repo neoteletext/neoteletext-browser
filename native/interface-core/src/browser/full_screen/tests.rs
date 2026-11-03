@@ -3,7 +3,9 @@ use crate::browser::fixture::{HEIGHT, WIDTH, browser, middle, set_aspect};
 use crate::browser::{Key, Modifiers, Output};
 use crate::channel::Channel;
 use crate::geometry::Point;
-use crate::test_canvas::Recorder;
+use crate::library::BarView;
+use crate::test_canvas::{Painted, Recorder};
+use alloc::format;
 
 fn draw(browser: &mut Browser, now: u64) -> Recorder {
     let mut canvas = Recorder::new();
@@ -142,6 +144,68 @@ fn the_strip_comes_down_from_the_top_edge() {
     assert!(browser.settle(3_000 + KEY_STRIP_MILLISECONDS));
     draw(&mut browser, 3_000 + KEY_STRIP_MILLISECONDS);
     assert_eq!(browser.regions.field, Rect::ZERO, "for three seconds");
+}
+
+/// REQ-785 (requirement 14.5), the spoofing review of 3 November 2026:
+/// when the strip comes down in full screen it is drawn over the page, so
+/// nothing of the channel's shows through it. Every page image and the
+/// page's screen colour come before the strip's fills, and those fills,
+/// opaque and across the whole window, cover every row from the top to
+/// the strip's end; in the tests' window and in the smallest the
+/// interface allows (`MINIMUM_WIDTH` and `MINIMUM_HEIGHT` in
+/// `native/interface/src/window.rs`), with the bookmarks bar hidden and
+/// shown. On code that drew the strip before the page, the page's screen
+/// colour, filling the whole window, would cover the strip.
+#[test]
+fn the_strip_in_full_screen_is_drawn_over_the_page() {
+    const SMALLEST_WIDTH: f64 = 1000.0;
+    const SMALLEST_HEIGHT: f64 = 640.0;
+    /// While a browser key holds the strip down.
+    const DOWN: u64 = 1_000;
+    for (width, height) in [(WIDTH, HEIGHT), (SMALLEST_WIDTH, SMALLEST_HEIGHT)] {
+        for bar in [false, true] {
+            let case = format!("{width} by {height}, bar {bar}");
+            let mut browser = in_full_screen();
+            browser.set_bar(BarView { shown: bar, ..BarView::default() });
+            browser.key(Key::Text("d"), Modifiers { command: true, ..Modifiers::default() }, DOWN);
+            let mut canvas = Recorder::new();
+            browser.draw(&mut canvas, width, height, DOWN);
+            assert!(browser.full_screen(), "{case}: still in full screen");
+            assert_ne!(browser.regions.field, Rect::ZERO, "{case}: the strip is down");
+            let strip_end = browser.strip_end(DOWN);
+            assert!(strip_end > 0.0, "{case}");
+            let (last_page, image) = canvas
+                .painted
+                .iter()
+                .enumerate()
+                .rev()
+                .find_map(|(index, painted)| match *painted {
+                    Painted::Page(_, image) => Some((index, image)),
+                    Painted::Fill(..) => None,
+                })
+                .expect("the page is drawn");
+            // The page's screen colour fills the window around it.
+            let screen = canvas.painted.iter().position(|painted| matches!(painted, Painted::Fill(rect, _) if rect.y0 <= 0.0 && rect.y1 >= height));
+            assert!(screen.is_some_and(|screen| screen < last_page), "{case}: the screen colour before the page: {screen:?}");
+            // The rows the fills after the page cover across the whole
+            // window, joined.
+            let mut rows: Vec<(f64, f64)> = canvas.painted[last_page + 1..]
+                .iter()
+                .filter_map(|painted| match *painted {
+                    Painted::Fill(rect, _) if rect.x0 <= 0.0 && rect.x1 >= width => Some((rect.y0, rect.y1)),
+                    _ => None,
+                })
+                .collect();
+            rows.sort_by(|a, b| a.0.total_cmp(&b.0));
+            let mut covered = 0.0_f64;
+            for (top, bottom) in rows {
+                if top <= covered {
+                    covered = covered.max(bottom);
+                }
+            }
+            assert!(covered >= strip_end, "{case}: the strip's fills after the page {image:?} cover to {covered}, short of the strip's end {strip_end}");
+        }
+    }
 }
 
 /// REQ-764, TODO-2082: with the strip down in full screen its controls have
