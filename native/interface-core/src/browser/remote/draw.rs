@@ -81,6 +81,7 @@ impl Browser {
         y = self.draw_readout(canvas, &controls, open, line(y));
         y = draw_pad(canvas, &mut buttons, line(y));
         y = draw_page_keys(canvas, &mut buttons, line(y));
+        y = draw_arrow_keys(canvas, &mut buttons, line(y));
         y = draw_fastext_keys(canvas, &mut buttons, &controls, open, line(y));
         y = draw_subpage_row(canvas, &mut buttons, &controls, open, line(y));
         draw_toggles(canvas, &mut buttons, &controls, open, line(y));
@@ -147,6 +148,9 @@ impl Browser {
                 Button::Control(PageControl::Latest) | Button::Latest => String::from("Back to the sub-pages as they arrive"),
                 Button::Dock if self.remote.place.mode == RemoteMode::Floating => String::from("Dock the remote at the right"),
                 Button::Dock => String::from("Float the remote over the page"),
+                Button::Arrow(true) => String::from("Up, as the keyboard's Up"),
+                Button::Arrow(false) => String::from("Down, as the keyboard's Down"),
+                Button::Ok => String::from("OK, as the keyboard's Enter"),
                 Button::Close => String::from("Put the remote control away"),
             };
             tips.push((rect, words));
@@ -203,6 +207,21 @@ fn draw_page_keys<C: Canvas + ?Sized>(canvas: &mut C, buttons: &mut Vec<(Button,
     key(canvas, down, "Page \u{25BC}", ROW_TITLE, false, true);
     buttons.push((Button::PageUp, up));
     buttons.push((Button::PageDown, down));
+    y + SMALL_KEY_HEIGHT + GAP * 2.0
+}
+
+/// The up and down arrows with OK between them (REQ-1373); left and right
+/// are the sub-page steps. Returns where the next row starts.
+fn draw_arrow_keys<C: Canvas + ?Sized>(canvas: &mut C, buttons: &mut Vec<(Button, Rect)>, line: Rect) -> f64 {
+    let (left, right, y) = (line.x0, line.x1, line.y0);
+    let third = (right - left - GAP * 2.0) / 3.0;
+    for (index, (words, button)) in [("\u{25B2}", Button::Arrow(true)), ("OK", Button::Ok), ("\u{25BC}", Button::Arrow(false))].into_iter().enumerate() {
+        #[allow(clippy::cast_precision_loss, reason = "three keys")]
+        let x = left + index as f64 * (third + GAP);
+        let rect = Rect::new(x, y, x + third, y + SMALL_KEY_HEIGHT);
+        key(canvas, rect, words, ROW_TITLE, false, true);
+        buttons.push((button, rect));
+    }
     y + SMALL_KEY_HEIGHT + GAP * 2.0
 }
 

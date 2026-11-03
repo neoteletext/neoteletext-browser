@@ -28,11 +28,14 @@ From the top:
 2. **The page number**: the three digits being entered, or the open page's number, as a set shows it.
 3. **The number pad**: 1 to 9, then 0, in a telephone's layout, as on a remote. A digit is the same as the keyboard's digit (requirement 12.4).
 4. **Page up and page down**: the next and previous page, as Up and Down.
-5. **Fastext**: the four coloured keys in a row, red, green, yellow, cyan, and Index below them. Each is lit only while the open page's key leads somewhere with row 24 shown (requirement 22.2); a dim key does nothing.
-6. **Sub-pages**: the sub-page before, the count ("2/4", or the count and a turning mark while the latest shows), and the next; lit only on a page with more than one.
-7. **Reveal, Hold and Mix**: each lit while on, dim while off, and dim altogether while no page is open.
+5. **The arrows and OK**: up, OK and down in a row, as the keyboard's Up, Enter and Down (REQ-1373); the sub-page steps below are left and right.
+6. **Fastext**: the four coloured keys in a row, red, green, yellow, cyan, and Index below them. Each is lit only while the open page's key leads somewhere with row 24 shown (requirement 22.2); a dim key does nothing.
+7. **Sub-pages**: the sub-page before, the count ("2/4", or the count and a turning mark while the latest shows), and the next; lit only on a page with more than one.
+8. **Reveal, Hold and Mix**: each lit while on, dim while off, and dim altogether while no page is open.
 
 Every button has its tip (requirement 12.12), naming it, what it does and its key.
+
+**While keys go to a channel** (REQ-1373), the digits, the four coloured keys, the arrows (the sub-page steps being left and right), OK and page up and down go to the channel instead, each as KEY with the keyboard's same key, a press then a release, so a page that takes input hears the remote as it hears the keyboard. Index, Reveal, Hold, Mix, the sub-page count and the title row stay the browser's.
 
 ## 4. Keys
 
@@ -40,7 +43,7 @@ Command-Shift-R on macOS, Control-Shift-R elsewhere, shows or hides the remote (
 
 ## 5. Security
 
-The remote is part of the window the interface process draws; each button produces an input that already exists, a digit or a page control, which reaches the trusted core as strip input and is decided there exactly as its key is. It shows nothing the interface did not already have: the page number it was told, and which controls the open page has (requirement 22.6). Floating, it is held below the strip so that it can never hide what the strip shows. No new message carries anything but the remote's place.
+The remote is part of the window the interface process draws; each button produces an input that already exists, a digit or a page control, which reaches the trusted core as strip input and is decided there exactly as its key is; while keys go to a channel, a key intent exactly as the keyboard's, checked and encoded by the trusted core as every intent is. It shows nothing the interface did not already have: the page number it was told, and which controls the open page has (requirement 22.6). Floating, it is held below the strip so that it can never hide what the strip shows. No new message carries anything but the remote's place.
 
 ## 6. Requirements
 

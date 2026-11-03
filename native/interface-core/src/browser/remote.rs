@@ -1,12 +1,14 @@
 //! The remote control (`remote-control.md`, decision 68): a teletext set's
 //! remote as a panel docked along the window's right edge, sliding in and
 //! out, or floating over the page area. Every button is an input that
-//! already exists, a digit, a page step or a page control, so the remote
-//! adds a place to press, never a power.
+//! already exists, a digit, a page step, an arrow, OK or a page control, so
+//! the remote adds a place to press, never a power. While keys go to a
+//! channel, its digits, colours, arrows, OK and page keys go to the channel
+//! as the keyboard's same keys would (REQ-1373).
 
 use alloc::vec::Vec;
 
-use crate::browser::{Browser, Output};
+use crate::browser::{Browser, Key, Modifiers, Output};
 use crate::controls::PageControl;
 use crate::geometry::{Point, Rect};
 use crate::settings::{MAX_REMOTE_PLACE, RemoteMode, RemotePlace, SettingChange};
@@ -44,6 +46,10 @@ pub(super) enum Button {
     Control(PageControl),
     /// The count between the sub-page steps: back to the latest.
     Latest,
+    /// The up arrow, or with `false` the down arrow (REQ-1373).
+    Arrow(bool),
+    /// OK, the keyboard's Enter (REQ-1373).
+    Ok,
     Dock,
     Close,
 }
@@ -162,7 +168,18 @@ impl Browser {
             }
             return true;
         };
+        // While keys go to a channel its keys are the channel's (REQ-1373).
+        #[cfg(feature = "interaction")]
+        if self.remote_key_to_channel(button) {
+            return true;
+        }
         match button {
+            Button::Arrow(up) => {
+                self.key(if up { Key::Up } else { Key::Down }, Modifiers::default(), now);
+            }
+            Button::Ok => {
+                self.key(Key::Enter, Modifiers::default(), now);
+            }
             Button::Digit(digit) => {
                 self.stop_editing();
                 self.type_digit(digit);
@@ -203,7 +220,54 @@ impl Browser {
 
 /// The panel's height: every row of the remote.
 fn panel_height() -> f64 {
-    PADDING * 2.0 + TITLE_HEIGHT + GAP + READOUT_HEIGHT + GAP + 4.0 * (KEY_HEIGHT + GAP) + 5.0 * (SMALL_KEY_HEIGHT + GAP) + GAP * 2.0
+    PADDING * 2.0 + TITLE_HEIGHT + GAP + READOUT_HEIGHT + GAP + 4.0 * (KEY_HEIGHT + GAP) + 6.0 * (SMALL_KEY_HEIGHT + GAP) + GAP * 2.0
+}
+
+/// The keyboard's key a remote button is while keys go to a channel, by
+/// its name in the input protocol's table (DOC-1936), and the text it
+/// types: a digit its own, the rest none (REQ-1373). The title row's
+/// buttons, Index, Reveal, Hold, Mix and the sub-page count are the
+/// browser's own and have none.
+#[cfg(feature = "interaction")]
+fn keyboard_key(button: Button) -> Option<(neoteletext_input::event::KeyCode, Option<char>)> {
+    use crate::controls::FastextKey;
+    use neoteletext_input::event::KeyCode;
+    let name = match button {
+        Button::Digit(digit) => return Some((KeyCode::Character(digit), Some(digit))),
+        Button::PageUp => "PageUp",
+        Button::PageDown => "PageDown",
+        Button::Arrow(true) => "ArrowUp",
+        Button::Arrow(false) => "ArrowDown",
+        Button::Control(PageControl::SubPage(false)) => "ArrowLeft",
+        Button::Control(PageControl::SubPage(true)) => "ArrowRight",
+        Button::Ok => "Enter",
+        Button::Control(PageControl::Fastext(FastextKey::Red)) => "ColorF0Red",
+        Button::Control(PageControl::Fastext(FastextKey::Green)) => "ColorF1Green",
+        Button::Control(PageControl::Fastext(FastextKey::Yellow)) => "ColorF2Yellow",
+        Button::Control(PageControl::Fastext(FastextKey::Cyan)) => "ColorF3Blue",
+        _ => return None,
+    };
+    Some((KeyCode::Functional(neoteletext_input::keys::code(name)?), None))
+}
+
+impl Browser {
+    /// A remote button pressed while keys go to a channel: a key the
+    /// keyboard has goes to the channel, pressed then released, as
+    /// `terminal_key` sends the keyboard's (REQ-1373). Returns whether it
+    /// went.
+    #[cfg(feature = "interaction")]
+    fn remote_key_to_channel(&mut self, button: Button) -> bool {
+        use neoteletext_input::event::Action;
+        let Some((key, text)) = keyboard_key(button) else { return false };
+        if self.typing_target().is_none() {
+            return false;
+        }
+        let mut typed = [0_u8; 4];
+        let text = text.map(|character| &*character.encode_utf8(&mut typed));
+        self.terminal_key(Action::Press, key, 0, text, None);
+        self.terminal_key(Action::Release, key, 0, None, None);
+        true
+    }
 }
 
 /// A panel's corner, as kept: whole points within the bound.
