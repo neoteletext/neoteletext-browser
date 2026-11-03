@@ -17,6 +17,10 @@ const SOUND: Sound = Sound { handle: 2, generation: 1 };
 const RATE: u32 = 16_000;
 /// How long the helper has to say each change.
 const WAIT: Duration = Duration::from_secs(5);
+/// How long the helper is kept, silent, before it is closed: long enough to
+/// see from the system's side that its output device stopped while it still
+/// runs (decision 53, TODO-1243), not only when it ended.
+const HELD_SILENT: Duration = Duration::from_secs(3);
 
 /// Requirements 16.6 and 3.7: the sound helper, under its sandbox, opens
 /// the device, plays, and reports its channel sounding and then silent.
@@ -57,6 +61,7 @@ fn a_tone_plays_through_the_confined_sound_helper() {
     assert_eq!(read_from_sound(&mut output).unwrap(), Some(FromSound::Sounding(Vec::new())), "and stops when the second has played");
     let played = started.elapsed();
     assert!(played >= Duration::from_millis(800) && played < WAIT, "the device consumed the second in real time: {played:?}");
+    std::thread::sleep(HELD_SILENT);
     write_to_sound(&mut input, &ToSound::Close).unwrap();
     input.flush().unwrap();
     assert!(process.wait().unwrap().success());
