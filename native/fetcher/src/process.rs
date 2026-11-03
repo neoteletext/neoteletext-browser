@@ -197,7 +197,7 @@ impl Answer {
     fn of(failure: Failure) -> Self {
         match failure {
             Failure::Status(status) => Self::Status(status),
-            Failure::Content | Failure::MediaType => Self::Content,
+            Failure::Content | Failure::MediaType(_) => Self::Content,
             _ => Self::Nothing,
         }
     }
@@ -843,7 +843,7 @@ mod tests {
         assert_eq!(actions_of(Event::FetchFailed { page, subcode: None, failure: Failure::Status(500) }), [(here, Answer::Status(500))]);
         assert_eq!(actions_of(Event::FetchFailed { page, subcode: None, failure: Failure::Content }), [(here, Answer::Content)]);
         assert_eq!(actions_of(Event::FetchFailed { page, subcode: None, failure: Failure::Network }), [(here, Answer::Nothing)]);
-        assert_eq!(actions_of(Event::DescriptorFailed(Failure::MediaType)), [(RefusedFile::Channel, Answer::Content)]);
+        assert_eq!(actions_of(Event::DescriptorFailed(Failure::MediaType(MediaType::TextPlain))), [(RefusedFile::Channel, Answer::Content)]);
         assert_eq!(actions_of(Event::BundleFailed(Failure::Status(403))), [(RefusedFile::Bundle, Answer::Status(403))]);
         assert_eq!(actions_of(Event::ContentsFailed(Failure::Timeout)), [(RefusedFile::Contents, Answer::Nothing)]);
         assert_eq!(actions_of(Event::PageNotInService { page, subcode: Some(SubCode::new(2)) }), [], "a sub-page's file is not the page's");
