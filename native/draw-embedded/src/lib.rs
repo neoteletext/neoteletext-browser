@@ -40,8 +40,10 @@ use interface_core::geometry::Rect;
 use interface_core::theme::Colour;
 
 const PAGE_DOTS: usize = PAGE_WIDTH as usize * PAGE_HEIGHT as usize;
-/// The Colour Map of Presentation Level 2.5: four tables of eight.
-const MAX_COLOURS: usize = 32;
+/// The engine's resolved colour mode: the Colour Map of Presentation Levels
+/// 2.5 and 3.5, four tables of eight, then the receiver's own eight colours
+/// (the engine's DEC-2464).
+const MAX_COLOURS: usize = neoteletext_core::consts::RESOLVED_COLOURS;
 
 /// Font sizes, in logical pixels, below which the next smaller bitmap font
 /// is used. The fonts' own heights are 10, 13, 15 and 20 pixels.

@@ -15,7 +15,7 @@ fn proxy() -> Result<Option<Proxy>, String> {
     let arguments: Vec<String> = std::env::args().skip(1).collect();
     match arguments.as_slice() {
         [] => Ok(None),
-        [flag, url] if flag == "--proxy" => Proxy::parse(url).map(Some),
+        [flag, url] if flag == "--proxy" => Proxy::parse(url).map(Some).map_err(|error| error.to_string()),
         _ => Err(String::from("usage: neoteletext-updater [--proxy URL]")),
     }
 }

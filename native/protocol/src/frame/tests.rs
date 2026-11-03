@@ -55,7 +55,7 @@ fn a_broken_image_is_refused() {
         decode(&bytes, None)
     };
     assert_eq!(broken(0, 0), Err(FrameError::Palette));
-    assert_eq!(broken(0, 33), Err(FrameError::Palette));
+    assert_eq!(broken(0, u8::try_from(MAX_COLOURS + 1).unwrap()), Err(FrameError::Palette));
     assert_eq!(broken(10, 3), Err(FrameError::Index), "screen");
     assert_eq!(broken(11, 9), Err(FrameError::Form));
     assert_eq!(broken(12, 3), Err(FrameError::Index), "a dot");
