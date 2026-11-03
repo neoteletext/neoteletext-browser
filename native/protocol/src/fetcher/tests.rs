@@ -342,8 +342,9 @@ fn crafted(kind: u8, payload: &[u8]) -> Result<Option<FromFetcher>, ProtocolErro
 }
 
 // TODO-1531 item 3, DOC-1956: a channel's log line names a page the browser
-// can show (100 to 899, decimal digits only) or none, and holds at most MAX_CHANNEL_LOG bytes, however the
-// fetcher writes it.
+// can show or none, and holds at most MAX_CHANNEL_LOG bytes, however the
+// fetcher writes it. Since TODO-2048 a page with a hexadecimal digit is one
+// the browser shows (`Fields::channel_page`); a reserved number is not.
 #[test]
 fn a_channel_log_line_is_bounded() {
     let log = |page: u16, text: &[u8]| {
@@ -359,7 +360,8 @@ fn a_channel_log_line_is_bounded() {
     );
     assert!(matches!(log(0x0FF, b"ok"), Err(ProtocolError::BadValue("page number"))));
     assert!(matches!(log(0x900, b"ok"), Err(ProtocolError::BadValue("page number"))));
-    assert!(matches!(log(0x1A0, b"ok"), Err(ProtocolError::BadValue("page number"))), "a page with a hexadecimal digit");
+    assert!(log(0x1A0, b"ok").is_ok(), "a page with a hexadecimal digit");
+    assert!(matches!(log(0x1FF, b"ok"), Err(ProtocolError::BadValue("page number"))), "a reserved page number");
     assert!(log(0x100, &[b'x'; crate::decoder::MAX_CHANNEL_LOG]).is_ok());
     assert!(matches!(log(0x100, &[b'x'; crate::decoder::MAX_CHANNEL_LOG + 1]), Err(ProtocolError::BadValue("log line too long"))));
     let mut level = vec![3, 0, 0, 0, 0];
