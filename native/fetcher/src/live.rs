@@ -203,4 +203,102 @@ mod tests {
         assert_eq!(version, "4");
         assert_eq!(parts, [SubPageRows { count: 4, first: 0, rows: rows(&[1, 2, 3, 4]) }]);
     }
+
+    fn pages(index: &LiveIndex) -> Vec<u16> {
+        index.entries().into_iter().filter_map(|entry| if let Entry::Page { page, .. } = entry { Some(page) } else { None }).collect()
+    }
+
+    // DOC-1955, TODO-1531 item 5: each part of a sending shows its pages as it
+    // arrives; a whole sending removes the pages it did not list, and a
+    // partial one removes nothing.
+    #[test]
+    fn a_sending_in_parts_shows_each_part_and_a_whole_one_removes_the_rest() {
+        let mut index = LiveIndex::default();
+        index.note(1, "News", &[page(0x100, "Front"), page(0x101, "Front")], 1);
+        assert_eq!(pages(&index), [0x100, 0x101], "the first part, at once");
+        index.note(2, "Sport", &[page(0x200, "Football")], 1);
+        assert_eq!(pages(&index), [0x100, 0x101, 0x200], "both parts");
+        index.complete(1);
+        assert_eq!(pages(&index), [0x100, 0x101, 0x200]);
+        index.note(1, "News", &[page(0x100, "Front")], 2);
+        assert_eq!(pages(&index), [0x100, 0x101, 0x200], "a partial sending removes nothing");
+        index.note(3, "Weather", &[page(0x300, "Today")], 2);
+        index.complete(2);
+        assert_eq!(pages(&index), [0x100, 0x300], "a whole sending removes the pages it did not list");
+        assert_eq!(sections(&index), ["News", "Weather"]);
+    }
+
+    // DOC-1955, TODO-1531 item 5: the index never gives the trusted core more
+    // than the contents file's MAX_ENTRIES entries, however a channel lists it.
+    #[test]
+    fn the_index_holds_at_most_max_entries() {
+        let mut index = LiveIndex::default();
+        // Every page of the eight magazines, each in a section of its own:
+        // 800 pages and 800 sections.
+        let every: Vec<_> = (1..=8_u16)
+            .flat_map(|magazine| (0..100_u16).map(move |number| (magazine << 8) | ((number / 10) << 4) | (number % 10)))
+            .map(|number| page(number, &format!("Section {number:X}")))
+            .collect();
+        index.note(1, "", &every, 1);
+        index.complete(1);
+        let entries = index.entries();
+        assert_eq!(entries.len(), MAX_ENTRIES);
+        assert_eq!(entries.first(), Some(&Entry::Section("Section 100".to_owned())));
+        assert_eq!(entries.last(), Some(&Entry::Page { page: 0x599, title: "Page 599".to_owned() }), "the first thousand, in order");
+    }
+
+    // REQ-1505, REQ-1503, TODO-1531 item 6: the largest list, 8,190 sub-pages
+    // in many records, reaches the trusted core whole, in ascending order, in
+    // parts of ROWS_PER_PART rows each at its first place; and only when its
+    // last record has arrived.
+    #[test]
+    fn the_largest_list_arrives_whole_in_parts_of_the_trusted_cores_size() {
+        let count = neoteletext_core::limits::MAX_SUBPAGES;
+        let all: Vec<u16> = (1..=u16::try_from(count).unwrap()).collect();
+        // The records as a channel might send them: 100 sub-pages each.
+        let records: Vec<&[u16]> = all.chunks(100).collect();
+        let parts = u16::try_from(records.len()).unwrap();
+        let count = u16::try_from(count).unwrap();
+        let mut lists = SubPageLists::default();
+        let mut noted = Vec::new();
+        for (part, subcodes) in records.iter().enumerate() {
+            noted.push(lists.note(0x602, 7, u16::try_from(part).unwrap(), parts, count, rows(subcodes)));
+        }
+        let Some(Noted::Whole(0x602, version, whole)) = noted.pop() else { panic!("whole at the last record") };
+        assert!(noted.iter().all(|noted| *noted == Noted::Partial), "nothing before it");
+        assert_eq!(version, "7");
+        assert_eq!(whole.len(), all.len().div_ceil(ROWS_PER_PART));
+        for (index, part) in whole.iter().enumerate() {
+            let first = index * ROWS_PER_PART;
+            let expected = &all[first..(first + ROWS_PER_PART).min(all.len())];
+            assert_eq!((part.count, usize::from(part.first)), (count, first), "part {index}");
+            assert_eq!(part.rows, rows(expected), "part {index}");
+        }
+    }
+
+    // DEC-1526, TODO-1531 item 6: 0000 beside other sub-codes is the page's
+    // own content and an ordinary first entry.
+    #[test]
+    fn sub_code_0000_beside_others_stays_first() {
+        let mut lists = SubPageLists::default();
+        lists.note(0x210, 1, 0, 2, 3, rows(&[0x0000]));
+        let Noted::Whole(_, _, parts) = lists.note(0x210, 1, 1, 2, 3, rows(&[0x0001, 0x0002])) else { panic!("whole") };
+        assert_eq!(parts, [SubPageRows { count: 3, first: 0, rows: rows(&[0x0000, 0x0001, 0x0002]) }]);
+    }
+
+    // DOC-1959, TODO-1531 item 6: a record of a new version begins a new
+    // sending, so the old version's parts are never joined to it, and a
+    // partial sending gives nothing.
+    #[test]
+    fn a_new_version_discards_the_old_parts() {
+        let mut lists = SubPageLists::default();
+        assert_eq!(lists.note(0x210, 1, 0, 2, 4, rows(&[1, 2])), Noted::Partial);
+        assert_eq!(lists.note(0x210, 2, 1, 2, 4, rows(&[7, 8])), Noted::Partial, "version 1's first part is not version 2's");
+        let Noted::Whole(_, version, parts) = lists.note(0x210, 2, 0, 2, 4, rows(&[5, 6])) else { panic!("whole") };
+        assert_eq!(version, "2");
+        assert_eq!(parts, [SubPageRows { count: 4, first: 0, rows: rows(&[5, 6, 7, 8]) }]);
+        // Another page's sending is its own.
+        assert_eq!(lists.note(0x211, 2, 0, 2, 4, rows(&[1, 2])), Noted::Partial);
+        assert_eq!(lists.note(0x210, 3, 0, 1, 1, rows(&[1])), Noted::Whole(0x210, "3".to_owned(), vec![SubPageRows { count: 1, first: 0, rows: rows(&[1]) }]));
+    }
 }
