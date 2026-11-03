@@ -877,6 +877,24 @@ mod tests {
         assert_eq!(selects_sent(&mut test.core, key.channel, &written), [(0x302, 3)], "another sub-page of the page open");
     }
 
+    // DEC-1542, TODO-1531 item 2: on a live channel nothing rotates, so the
+    // return to the sub-pages as they arrive does nothing and sends nothing;
+    // the sub-page chosen stays the selection.
+    #[cfg(all(unix, feature = "interaction"))]
+    #[test]
+    fn the_return_to_the_latest_does_nothing_on_a_live_channel() {
+        use super::super::test_support::{selects_sent, wire};
+        let (mut test, key) = live_page("live latest", &[1, 2, 3]);
+        let written = wire(&mut test.core, key.channel);
+        drawn(&mut test, key, 1, 1, 0);
+        test.core.intent(protocol::ToCore::PageControl(PageControl::SubPageOf { page: 0x210, subcode: 2 })).unwrap();
+        let _ = selects_sent(&mut test.core, key.channel, &written);
+        test.core.intent(protocol::ToCore::PageControl(PageControl::Latest)).unwrap();
+        assert_eq!(selects_sent(&mut test.core, key.channel, &written), [], "no SELECT of 3F7F");
+        assert_eq!(test.core.typing.selection(key.channel), Some((0x210, 2)));
+        assert_eq!(test.core.controls.view.and_then(|view| view.subpage), Some(2), "the view keeps the sub-page chosen");
+    }
+
     // DEC-1526: a channel served as files adopts nothing.
     #[cfg(feature = "interaction")]
     #[test]
