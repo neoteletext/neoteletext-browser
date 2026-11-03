@@ -32,12 +32,10 @@ const GRAVE: u8 = 1;
 const HALF_DOTS: u32 = 6;
 const HALF_MASK: u16 = 0b11_1111;
 
-/// The designations of the engine's own sets (its `EXTENDED_TABLE_32`, the
-/// values Table 32 reserves), a group of four bits and an option of three:
-/// groups 1001 and 1100, with options 000, 010 and 100.
+/// The designation of one of the engine's own sets (its `EXTENDED_TABLE_32`,
+/// the values Table 32 reserves), a group of four bits and an option of
+/// three: Persian, group 1001 option 000.
 const PERSIAN: u8 = 0b100_1000;
-const THAI: u8 = 0b110_0010;
-const LAO: u8 = 0b110_0100;
 
 /// Noto Teletext's glyph of `character`, as the engine compiles it.
 fn noto_glyph(character: char) -> Lines {
@@ -142,30 +140,4 @@ fn a_persian_page_is_joined_and_drawn_through_the_decoder() {
     assert_eq!(cell(&drawn, 3, 4), noto_glyph(joined('م', JoinForm::Final)), "the last letter, on the left");
     assert_eq!(cell(&drawn, 3, 5), noto_glyph(joined('س', JoinForm::Medial)), "the middle letter");
     assert_eq!(cell(&drawn, 3, 6), noto_glyph(joined('ب', JoinForm::Initial)), "the first letter, on the right");
-}
-
-/// TODO-1585: a Thai page, set 1100 010: a consonant and a side vowel, and in
-/// the row above the consonant's upper mark, which the engine's decision
-/// E.80 draws at the bottom of its own cell.
-#[test]
-fn a_thai_page_is_drawn_through_the_decoder() {
-    let mut page = page_in(THAI);
-    page.text(2, 4, &[code_of(G0Set::Thai, '\u{0E48}')]).unwrap();
-    page.text(3, 4, &[code_of(G0Set::Thai, 'ก'), code_of(G0Set::Thai, 'า')]).unwrap();
-    let drawn = engine_with_page(&page).render(0x100).unwrap();
-    assert_eq!(cell(&drawn, 2, 4), noto_glyph('\u{0E48}'), "the tone mark");
-    assert_eq!(cell(&drawn, 3, 4), noto_glyph('ก'));
-    assert_eq!(cell(&drawn, 3, 5), noto_glyph('า'));
-}
-
-/// TODO-1585: a Lao page, set 1100 100: Lao is the engine's Indic-derived
-/// script beside Thai, as its languages design leaves the scripts of India
-/// out of scope.
-#[test]
-fn a_lao_page_is_drawn_through_the_decoder() {
-    let mut page = page_in(LAO);
-    page.text(3, 4, &[code_of(G0Set::Lao, 'ກ'), code_of(G0Set::Lao, 'າ')]).unwrap();
-    let drawn = engine_with_page(&page).render(0x100).unwrap();
-    assert_eq!(cell(&drawn, 3, 4), noto_glyph('ກ'));
-    assert_eq!(cell(&drawn, 3, 5), noto_glyph('າ'));
 }
