@@ -14,6 +14,13 @@
 //! Its title is fixed here: neither the trusted core nor the interface can
 //! reword it. The system's dialogs do not offer files and folders in one,
 //! so a folder is a kind of its own (DEC-1705).
+//!
+//! On Linux it has one more use, as the browser's one holder of the desktop
+//! portal: `neoteletext-chooser reduced-motion` prints
+//! `confine::broker::REDUCED_MOTION_ANSWER` when the desktop asks for
+//! reduced motion, and nothing otherwise (REQ-754). The broker asks it
+//! before starting the interface, which reaches no session bus (decision
+//! 86), and believes nothing but that one answer.
 
 // No panicking constructs: this program reads its arguments from outside. The
 // same list is in each such crate; scripts/check.sh checks that they agree.
@@ -91,6 +98,49 @@ fn choose(kind: ChooseKind, parent: &str, folder: Option<&Path>) -> Result<Optio
     })
 }
 
+/// GNOME's own setting of animations, which the portal's Settings serves
+/// beside its standard keys (`org.gnome.desktop.interface` schema, key
+/// `enable-animations`, a boolean, false when the viewer turned off
+/// Accessibility's animations). Read only where the portal lacks the
+/// standard key, as a portal before version 1.20 of xdg-desktop-portal does.
+#[cfg(any(target_os = "linux", test))]
+const GNOME_INTERFACE: &str = "org.gnome.desktop.interface";
+#[cfg(any(target_os = "linux", test))]
+const GNOME_ENABLE_ANIMATIONS: &str = "enable-animations";
+/// The `org.freedesktop.appearance` key `reduced-motion`'s value for
+/// reduced motion: the portal's Settings documentation gives it as an
+/// unsigned 32-bit number, 0 for no preference and 1 for reduced motion,
+/// and asks that other values be read as no preference.
+#[cfg(any(target_os = "linux", test))]
+const PORTAL_REDUCED_MOTION: u32 = 1;
+
+/// The desktop's preference from what the portal answered: its standard key
+/// when it has one, whatever GNOME's key says; GNOME's key otherwise; no
+/// preference when neither was answered.
+#[cfg(any(target_os = "linux", test))]
+fn reduced(appearance: Option<u32>, animations: Option<bool>) -> bool {
+    match appearance {
+        Some(value) => value == PORTAL_REDUCED_MOTION,
+        None => animations == Some(false),
+    }
+}
+
+/// Asks the desktop portal's Settings for the reduced-motion preference.
+#[cfg(target_os = "linux")]
+fn ask_reduced_motion() -> Result<bool, String> {
+    use ashpd::desktop::settings::{APPEARANCE_NAMESPACE, REDUCED_MOTION_KEY, Settings};
+
+    let runtime = tokio::runtime::Builder::new_current_thread().enable_all().build().map_err(|error| error.to_string())?;
+    runtime.block_on(async {
+        let settings = Settings::new().await.map_err(|error| error.to_string())?;
+        // A key the portal does not know is an error of its; either read
+        // failing is that key unanswered.
+        let appearance = settings.read::<u32>(APPEARANCE_NAMESPACE, REDUCED_MOTION_KEY).await.ok();
+        let animations = if appearance.is_none() { settings.read::<bool>(GNOME_INTERFACE, GNOME_ENABLE_ANIMATIONS).await.ok() } else { None };
+        Ok(reduced(appearance, animations))
+    })
+}
+
 /// The path a portal's `file://` URI names ("All URIs have the `file://`
 /// scheme": the `FileChooser` portal's documentation), its escapes undone.
 #[cfg(any(target_os = "linux", test))]
@@ -112,7 +162,25 @@ fn path_of_uri(uri: &str) -> Option<PathBuf> {
 
 fn main() -> ExitCode {
     let mut arguments = std::env::args().skip(1);
-    let Some(kind) = arguments.next().as_deref().and_then(ChooseKind::from_argument) else {
+    let first = arguments.next();
+    #[cfg(target_os = "linux")]
+    if first.as_deref() == Some(confine::broker::REDUCED_MOTION_ARGUMENT) {
+        return match ask_reduced_motion() {
+            Ok(true) => {
+                if std::io::stdout().write_all(confine::broker::REDUCED_MOTION_ANSWER).is_err() {
+                    ExitCode::FAILURE
+                } else {
+                    ExitCode::SUCCESS
+                }
+            }
+            Ok(false) => ExitCode::SUCCESS,
+            Err(error) => {
+                eprintln!("neoteletext-chooser: the desktop portal's settings: {error}");
+                ExitCode::FAILURE
+            }
+        };
+    }
+    let Some(kind) = first.as_deref().and_then(ChooseKind::from_argument) else {
         eprintln!("neoteletext-chooser: the browser's broker starts this program");
         return ExitCode::FAILURE;
     };
@@ -147,5 +215,32 @@ mod tests {
     fn each_kind_has_its_own_title() {
         assert_eq!(title(ChooseKind::File), "Open File");
         assert_eq!(title(ChooseKind::Bookmarks), "Import Bookmarks");
+    }
+
+    /// REQ-754: the portal's standard key decides when it is answered,
+    /// 1 alone being reduced motion; GNOME's `enable-animations` turned off
+    /// decides otherwise; nothing answered is no preference.
+    #[test]
+    fn the_portals_answer_gives_the_preference() {
+        assert!(reduced(Some(PORTAL_REDUCED_MOTION), None));
+        assert!(reduced(Some(PORTAL_REDUCED_MOTION), Some(true)));
+        for no_preference in [0, 2, u32::MAX] {
+            assert!(!reduced(Some(no_preference), Some(false)), "{no_preference}");
+        }
+        assert!(reduced(None, Some(false)));
+        assert!(!reduced(None, Some(true)));
+        assert!(!reduced(None, None));
+    }
+
+    /// REQ-754 on Linux: the answer is the desktop's own setting. GNOME
+    /// keeps it in `org.gnome.desktop.interface enable-animations`, which
+    /// Settings, Accessibility, "Reduce Animation" turns off.
+    #[cfg(target_os = "linux")]
+    #[test]
+    #[ignore = "needs a GNOME desktop session with xdg-desktop-portal running, so it runs by hand there with Reduce Animation on and then off"]
+    fn reduced_motion_is_the_desktops_setting() {
+        let read = std::process::Command::new("gsettings").args(["get", GNOME_INTERFACE, GNOME_ENABLE_ANIMATIONS]).output().unwrap();
+        let animations = String::from_utf8_lossy(&read.stdout).trim() == "true";
+        assert_eq!(ask_reduced_motion(), Ok(!animations));
     }
 }

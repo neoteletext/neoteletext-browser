@@ -1,9 +1,10 @@
-//! The shell's `ShellExecuteW`, the one call of this crate that is
-//! `unsafe`.
-#![allow(unsafe_code, reason = "ShellExecuteW is a foreign function: the one call, with its reason")]
+//! The shell's `ShellExecuteW` and the system's `SystemParametersInfoW`,
+//! the two calls of this crate that are `unsafe`.
+#![allow(unsafe_code, reason = "ShellExecuteW and SystemParametersInfoW are foreign functions: two calls, each with its reason")]
 
+use windows_sys::Win32::Foundation::BOOL;
 use windows_sys::Win32::UI::Shell::ShellExecuteW;
-use windows_sys::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
+use windows_sys::Win32::UI::WindowsAndMessaging::{SPI_GETCLIENTAREAANIMATION, SW_SHOWNORMAL, SystemParametersInfoW};
 
 use crate::OpenError;
 
@@ -26,4 +27,20 @@ pub(crate) fn open(address: &str) -> Result<(), OpenError> {
     // browser and never runs.
     let result = unsafe { ShellExecuteW(0, verb.as_ptr(), file.as_ptr(), std::ptr::null(), std::ptr::null(), SW_SHOWNORMAL) };
     if result > SUCCESS_ABOVE { Ok(()) } else { Err(OpenError::Failed(format!("ShellExecuteW returned {result}"))) }
+}
+
+/// Whether the viewer turned off "Animation effects" (Settings,
+/// Accessibility, Visual effects), which Windows reads as
+/// `SPI_GETCLIENTAREAANIMATION`: the Windows SDK's documentation of
+/// `SystemParametersInfoW` says `pvParam` points to a `BOOL` that receives
+/// true when client-area animations are enabled. A call that fails is no
+/// preference, so motion stays as it always was.
+pub(crate) fn reduced_motion() -> bool {
+    let mut animations: BOOL = 1;
+    // SAFETY: `pvParam` points to a `BOOL` that lives in this frame until
+    // the call returns, which is what this action writes and all it
+    // writes; `uiParam` is unused by it and zero, and `fWinIni` is zero as
+    // a read changes no setting.
+    let succeeded = unsafe { SystemParametersInfoW(SPI_GETCLIENTAREAANIMATION, 0, std::ptr::from_mut(&mut animations).cast(), 0) };
+    succeeded != 0 && animations == 0
 }

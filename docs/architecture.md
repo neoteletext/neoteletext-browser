@@ -603,7 +603,8 @@ neoteletext-browser/
     interface/              the interface process (neoteletext-interface): the system window, the reader
                             thread, keys, and app.rs with app/: frames, input, the input method, typing,
                             the phone, the clipboard and menus, windows, what the core said, outputs
-    chooser/                the file dialog (neoteletext-chooser): the broker starts it for one choice
+    chooser/                the file dialog (neoteletext-chooser): the broker starts it for one choice;
+                            on Linux also the desktop portal's reduced-motion preference (DEC-2424)
     keyboard/               the phone keyboard process (neoteletext-keyboard): qrkeyboard's relay, pairing
                             and keys
     dock-menu/              the Dock menu and the menu bar on macOS (decisions 39 and 84); unsafe code in

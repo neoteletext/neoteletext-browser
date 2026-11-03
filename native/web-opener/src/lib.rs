@@ -12,6 +12,11 @@
 //!   `http` address in the default browser. That call is `unsafe`, so this
 //!   is the second crate of the browser allowed it, on Windows only
 //!   (decision 41, the hyperlink decision 7).
+//!
+//! On Windows it also reads the viewer's "Animation effects" for the
+//! interface (REQ-754), through `SystemParametersInfoW`: the other call of
+//! Windows that is `unsafe` and that the browser needs outside `confine`,
+//! kept here rather than in a crate of its own (requirement 10.12).
 
 // No panicking constructs: the address is untrusted page data, however
 // well checked.
@@ -117,6 +122,15 @@ fn detached(command: &mut std::process::Command) -> &mut std::process::Command {
     command.stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null()).process_group(0)
 }
 
+/// The viewer asked Windows for reduced motion: "Animation effects" is
+/// off (REQ-754). The interface reads it as macOS's is read, whenever a
+/// window opens or gains the focus.
+#[cfg(windows)]
+#[must_use]
+pub fn reduced_motion() -> bool {
+    windows::reduced_motion()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -184,5 +198,21 @@ mod tests {
     #[ignore = "opens the system's web browser"]
     fn an_address_opens_in_the_default_browser() {
         assert_eq!(open("https://www.example.com/"), Ok(()));
+    }
+
+    /// REQ-754: the setting read is the one Windows's Settings change under
+    /// Accessibility, Visual effects, "Animation effects", which WPF reads
+    /// as `SystemParameters.ClientAreaAnimation`.
+    #[cfg(windows)]
+    #[test]
+    #[ignore = "reads the logged-in viewer's settings through PowerShell, so it runs by hand in the Windows virtual machine with Animation effects on and then off"]
+    fn reduced_motion_is_the_systems_setting() {
+        let read = std::process::Command::new("powershell")
+            .args(["-NoProfile", "-Command", "Add-Type -AssemblyName PresentationFramework; [System.Windows.SystemParameters]::ClientAreaAnimation"])
+            .output()
+            .map(|output| output.stdout)
+            .unwrap_or_default();
+        let animations = String::from_utf8_lossy(&read).trim().eq_ignore_ascii_case("true");
+        assert_eq!(reduced_motion(), !animations);
     }
 }

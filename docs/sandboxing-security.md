@@ -8,7 +8,7 @@ The property of decision 20: a compromised helper, by a fault in a reader of unt
 
 ## 2. Threats to the sandboxes themselves
 
-Local files (`sandboxing.md` section 7.6) add three inputs to the broker, the one process not confined: the interface's channel, the chooser's output, and the single-instance channel. Each is bounded. The first and third are fuzzed, and what they name is still put through decision 88's checks. The chooser runs unconfined and is believed only for one absolute path, which is read as any other.
+Local files (`sandboxing.md` section 7.6) add three inputs to the broker, the one process not confined: the interface's channel, the chooser's output, and the single-instance channel. Each is bounded. The first and third are fuzzed, and what they name is still put through decision 88's checks. The chooser runs unconfined and is believed only for one absolute path, which is read as any other. On Linux the broker also asks the chooser, once at its start, for the desktop portal's reduced-motion preference (DEC-2424): at most eight bytes of its output are read, and only the one fixed answer from a chooser that ended well means reduced motion; the broker parses no D-Bus, and the interface, told by one variable of the environment the broker builds for it, still reaches no session bus (decision 86).
 
 | Threat | Where | Control |
 |---|---|---|
