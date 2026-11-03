@@ -12,7 +12,10 @@ use crate::browser::{Browser, MAX_ADDRESS, StripState};
 use crate::geometry::Rect;
 use crate::test_canvas::Recorder;
 
-/// The smallest window the interface allows (`interface/src/window.rs`).
+/// The smallest window the interface allows: `MINIMUM_WIDTH` and
+/// `MINIMUM_HEIGHT` in `native/interface/src/window.rs`, which this crate
+/// cannot reach, so the two must be kept equal by hand (REQ-785, the
+/// spoofing review of 3 November 2026 measures every layout there).
 const SMALLEST_WIDTH: f64 = 1000.0;
 const SMALLEST_HEIGHT: f64 = 640.0;
 
