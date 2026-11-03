@@ -79,6 +79,16 @@ fn answer(connection: TcpStream, files: &BTreeMap<&'static str, File>, asked: &A
     }
 }
 
+/// Whether an administrator has exempted the fetcher's container from
+/// Windows' loopback isolation: `CheckNetIsolation LoopbackExempt -s` lists
+/// each exempted container by its SID.
+#[cfg(windows)]
+fn fetcher_is_exempt() -> bool {
+    let sid = confine::fetcher_container().unwrap().to_ascii_lowercase();
+    let listed = std::process::Command::new("CheckNetIsolation.exe").args(["LoopbackExempt", "-s"]).output().unwrap();
+    String::from_utf8_lossy(&listed.stdout).to_ascii_lowercase().contains(&sid)
+}
+
 /// A fetcher of the channel at `port`, as the trusted core starts one that
 /// may reach this computer.
 struct Fetcher {
@@ -88,6 +98,10 @@ struct Fetcher {
 
 impl Fetcher {
     fn start(port: u16) -> Self {
+        // Asked for without the exemption, the fetcher would wait for a
+        // server it cannot reach: the test fails at once instead.
+        #[cfg(windows)]
+        assert!(fetcher_is_exempt(), "the fetcher's container is not exempted from Windows' loopback isolation (decision 78)");
         let program = Path::new(env!("CARGO_BIN_EXE_neoteletext-fetcher"));
         let arguments = [OsString::from(format!("http://127.0.0.1:{port}/")), OsString::from("--allow-local"), OsString::from("127.0.0.1")];
         let environment = confine::environment(Role::Network);
@@ -142,6 +156,10 @@ impl Drop for Fetcher {
 /// the trusted core asks for it, and a page that is not there is a 404's
 /// refusal. On the code before, nothing could ask for a page.
 #[test]
+#[cfg_attr(
+    windows,
+    ignore = "a confined fetcher reaches this computer only once an administrator has run CheckNetIsolation.exe LoopbackExempt -a -p=<the fetcher container's SID> (decision 78); run with --ignored after it"
+)]
 fn a_channel_of_one_page_file_gives_it_when_asked() {
     let port = serve(BTreeMap::from([("/100.tti", (200, "text/plain", PAGE))]));
     let mut fetcher = Fetcher::start(port);
@@ -160,6 +178,10 @@ fn a_channel_of_one_page_file_gives_it_when_asked() {
 /// to; `refresh` of a channel with a push connection says nothing, which the
 /// agent's descriptor gives the fetcher.
 #[test]
+#[cfg_attr(
+    windows,
+    ignore = "a confined fetcher reaches this computer only once an administrator has run CheckNetIsolation.exe LoopbackExempt -a -p=<the fetcher container's SID> (decision 78); run with --ignored after it"
+)]
 fn a_declared_refresh_reaches_the_trusted_core() {
     let port = serve(BTreeMap::from([("/channel.ttx", (200, "application/json", &b"{\"refresh\":7}"[..]))]));
     let mut fetcher = Fetcher::start(port);
@@ -172,6 +194,10 @@ fn a_declared_refresh_reaches_the_trusted_core() {
 /// status. Each failed on the code before, where a failed page ended the
 /// wait for the next and nothing more.
 #[test]
+#[cfg_attr(
+    windows,
+    ignore = "a confined fetcher reaches this computer only once an administrator has run CheckNetIsolation.exe LoopbackExempt -a -p=<the fetcher container's SID> (decision 78); run with --ignored after it"
+)]
 fn what_is_not_teletext_as_a_page_is_refused_with_its_status() {
     for body in [MARKUP, IMAGE, RANDOM] {
         for status in [200, 403, 500] {
@@ -192,6 +218,10 @@ fn what_is_not_teletext_as_a_page_is_refused_with_its_status() {
 
 /// REQ-708: the same as `channel.ttx`.
 #[test]
+#[cfg_attr(
+    windows,
+    ignore = "a confined fetcher reaches this computer only once an administrator has run CheckNetIsolation.exe LoopbackExempt -a -p=<the fetcher container's SID> (decision 78); run with --ignored after it"
+)]
 fn what_is_not_a_channel_is_refused_with_its_status() {
     for body in [MARKUP, IMAGE, RANDOM] {
         for status in [200, 403, 500] {
@@ -220,6 +250,10 @@ fn list_part(total: u16, part: u16) -> &'static [u8] {
 /// its own file, `210/0002.t42` and then `210/0002.tti`; and nothing else
 /// is asked for. On the code before, the fetcher asked for `210.sub`.
 #[test]
+#[cfg_attr(
+    windows,
+    ignore = "a confined fetcher reaches this computer only once an administrator has run CheckNetIsolation.exe LoopbackExempt -a -p=<the fetcher container's SID> (decision 78); run with --ignored after it"
+)]
 fn a_pages_sub_pages_come_from_its_folder() {
     const SUB_PAGE: &[u8] = b"PN,21002\r\nSC,0002\r\nOL,1,SECOND\r\n";
     let (port, asked) = serve_logged(BTreeMap::from([
