@@ -6,13 +6,18 @@
 # unreachable host is a failure.
 #   scripts/check.sh commit   the code compiles clean (the text checks,
 #                             formatting and Clippy), on what is staged
-#   scripts/check.sh push     Clippy in every feature shape and the tests:
-#                             a push of livedevelopment
-#   scripts/check.sh full     the engine check, release and feature-off
-#                             tests, licences and advisories, unused
-#                             dependencies and fuzzing, with the Linux
-#                             build and tests on $NEOTELETEXT_LINUX_HOST
-#                             alongside: a push to main
+#   scripts/check.sh push     Clippy in every feature shape and for the
+#                             microcontrollers, the dependency trees, the
+#                             advisories and the tests: a push of
+#                             livedevelopment
+#   scripts/check.sh full     the engine's unsafe-code check and its own
+#                             full gate, release and feature-off tests,
+#                             licences, unused dependencies and fuzzing,
+#                             with the Linux build and tests on
+#                             $NEOTELETEXT_LINUX_HOST alongside: a push to
+#                             main
+# Windows is checked by hand in the virtual machine (DEVELOPMENT.md
+# section 12.1, DEC-2358), not by a stage of this script.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -338,6 +343,23 @@ check_fuzz() {
     done
 }
 
+# The engine's repository and pinned commit, as native/Cargo.toml names
+# them (check_engine_pin holds every workspace to the same), fetched into
+# a bare copy the gate keeps between runs, native/target/engine.git. A
+# hook runs with git's GIT_DIR set to this repository, absolute in a
+# worktree, which git would follow instead of the copy's.
+engine_copy="native/target/engine.git"
+engine_git() { env -u GIT_DIR -u GIT_WORK_TREE -u GIT_INDEX_FILE git --git-dir "$engine_copy" "$@"; }
+engine_fetch() {
+    engine="$(sed -n 's/^neoteletext-[a-z-]* = { git = "\([^"]*\)".*/\1/p' native/Cargo.toml | sort -u)"
+    revision="$(sed -n 's/^neoteletext-[a-z-]* = { git = "[^"]*", rev = "\([0-9a-f]*\)".*/\1/p' native/Cargo.toml | sort -u)"
+    [[ -n "$engine" && "$engine" != *$'\n'* ]] || fail "native/Cargo.toml must name one engine repository, found: ${engine:-none}"
+    [[ -n "$revision" && "$revision" != *$'\n'* ]] || fail "native/Cargo.toml must name one engine commit, found: ${revision:-none}"
+    [[ -d "$engine_copy" ]] || env -u GIT_DIR -u GIT_WORK_TREE -u GIT_INDEX_FILE git init --quiet --bare "$engine_copy"
+    engine_git cat-file -e "$revision^{commit}" 2>/dev/null || engine_git fetch --quiet "$engine" "$revision" ||
+        fail "the engine repository $engine has no commit $revision"
+}
+
 # The browser builds the engine with its lints capped, so the engine's own
 # forbid(unsafe_code) is held only by the engine's gate (finding F-88):
 # the source at the pinned commit is read here, and the word `unsafe` in
@@ -347,19 +369,7 @@ check_fuzz() {
 check_engine_safe() {
     step "the engine at its pinned commit has no unsafe code"
     local engine revision found line code hits="" status=0
-    engine="$(sed -n 's/^neoteletext-[a-z-]* = { git = "\([^"]*\)".*/\1/p' native/Cargo.toml | sort -u)"
-    revision="$(sed -n 's/^neoteletext-[a-z-]* = { git = "[^"]*", rev = "\([0-9a-f]*\)".*/\1/p' native/Cargo.toml | sort -u)"
-    [[ -n "$engine" && "$engine" != *$'\n'* ]] || fail "native/Cargo.toml must name one engine repository, found: ${engine:-none}"
-    [[ -n "$revision" && "$revision" != *$'\n'* ]] || fail "native/Cargo.toml must name one engine commit, found: ${revision:-none}"
-    # The source read is the commit as the repository Cargo builds from
-    # publishes it, fetched into a copy the gate keeps between runs. A hook
-    # runs with git's GIT_DIR set to this repository, absolute in a
-    # worktree, which git would follow instead of the copy's.
-    local copy="native/target/engine.git"
-    engine_git() { env -u GIT_DIR -u GIT_WORK_TREE -u GIT_INDEX_FILE git --git-dir "$copy" "$@"; }
-    [[ -d "$copy" ]] || env -u GIT_DIR -u GIT_WORK_TREE -u GIT_INDEX_FILE git init --quiet --bare "$copy"
-    engine_git cat-file -e "$revision^{commit}" 2>/dev/null || engine_git fetch --quiet "$engine" "$revision" ||
-        fail "the engine repository $engine has no commit $revision"
+    engine_fetch
     found="$(engine_git grep --line-number -I --word-regexp -e unsafe "$revision" -- '*.rs')" || status=$?
     # 1 is no line found.
     ((status <= 1)) || fail "reading the engine at $revision failed"
@@ -376,6 +386,34 @@ check_engine_safe() {
     done <<<"$found"
     [[ -z "$hits" ]] || fail "the engine at $revision has unsafe code:
 $hits"
+}
+
+# Requirement 2.3 (REQ-664, DEC-2360): the engine's crates are built with
+# their own checks, fuzzing and feature rules, so the engine's own full
+# gate runs at the commit the browser builds against; its feature rule
+# for a browser build, decision E.131, is check_desktop_codecs. It runs
+# in a clone of the bare
+# copy, native/target/engine-check, never in a working tree of the
+# engine, and the clone keeps the engine gate's record of what passed, so
+# the step takes seconds until the pin moves. The engine's pinned tools
+# are linked from its checkout ($NEOTELETEXT_ENGINE, as worktrees of the
+# engine link them); at another version, the engine's gate says so and
+# fails.
+engine_checkout="${NEOTELETEXT_ENGINE:-$HOME/devel/neoteletext-engine}"
+engine_check="native/target/engine-check"
+check_engine_gate() {
+    step "the engine's own full gate at its pinned commit (requirement 2.3)"
+    local engine revision
+    engine_fetch
+    check_git() { env -u GIT_DIR -u GIT_WORK_TREE -u GIT_INDEX_FILE git -C "$engine_check" "$@"; }
+    [[ -d "$engine_check/.git" ]] || env -u GIT_DIR -u GIT_WORK_TREE -u GIT_INDEX_FILE git init --quiet "$engine_check"
+    check_git cat-file -e "$revision^{commit}" 2>/dev/null || check_git fetch --quiet "$(pwd -P)/$engine_copy" "$revision"
+    check_git checkout --quiet --detach "$revision"
+    [[ -z "$(check_git status --porcelain)" ]] || fail "$engine_check has changes; the engine's gate would check something other than $revision"
+    [[ -d "$engine_checkout/tools" ]] || fail "the engine's pinned tools are needed at $engine_checkout/tools (or NEOTELETEXT_ENGINE); run scripts/tools.sh there"
+    [[ -e "$engine_check/tools" ]] || ln -s "$engine_checkout/tools" "$engine_check/tools"
+    (cd "$engine_check" && env -u GIT_DIR -u GIT_WORK_TREE -u GIT_INDEX_FILE scripts/check.sh full) ||
+        fail "the engine's full gate failed at $revision"
 }
 
 # A release script refuses a test identity unless told it is a test
@@ -396,6 +434,7 @@ commit_steps() { check_compiles; }
 push_steps() { check_shapes_and_tests; }
 full_steps() {
     check_engine_safe
+    check_engine_gate
     step "native: documentation tests"
     (cd native && cargo test --quiet --workspace --doc)
     step "native: release tests"
