@@ -68,10 +68,16 @@ use processes::{Decoder, Fetcher};
 pub(crate) use run::{given_addresses, run};
 use windows::Shown;
 
-/// How often timed work waits on is looked at: the console's news, typing
-/// waited on, and a file too large to be queued for its decoder at once.
-/// It is the engine's `DEFAULT_FETCH_INTERVAL_US` (`architecture.md`
-/// section 5.1).
+/// How often timed work waits on is looked at: the console's news, a
+/// channel's answer to HELLO waited on (its time-out is the input
+/// session's own), and a file too large to be queued for its decoder at
+/// once. It is the trusted core's own pace, not a limit on fetching,
+/// refreshing or input, so requirement 2.4 (REQ-665) does not make it an
+/// engine constant: nothing is fetched or sent to a channel because it
+/// passes, since a file's pieces come from the broker and a file is loaded
+/// at once (DEC-1762). Five times a second keeps the console and a file's
+/// remainder prompt to the eye while an idle core wakes rarely
+/// (decision 46).
 const LOAD_INTERVAL: Duration = Duration::from_millis(200);
 /// The most of a file queued for its decoder (DEC-1762): half of what may
 /// wait for a process before it counts as having stopped reading, so that
