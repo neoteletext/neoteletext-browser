@@ -1,3 +1,3 @@
 #!/usr/bin/env bash
-# neoteletext-common's gates/pre-merge-commit, copied by gates/sync (gates.md).
+# neoteletext-common's gates/pre-merge-commit, copied by gates/sync (DEVELOPMENT.md section 9.3).
 exec "$(git rev-parse --show-toplevel)/scripts/check.sh" commit

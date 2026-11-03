@@ -2,7 +2,11 @@
 
 A desktop browser for teletext channels on the web, built on the neoteletext engine (`~/devel/neoteletext-engine`) at a pinned commit. The code is in `native/`. The earlier Tauri design and its prototypes were removed on 21 October 2026 (decision 50) and are kept in git at the tag `prototypes-final`; a path under `prototypes/` in any document is a path there.
 
-**The development process is `~/devel/neoteletext-common/DEVELOPMENT.md`**, shared with the engine: how work proceeds, tracking, requirements, decisions, code rules, dependencies, tests, gates, commits, hosts and safety. This file says only what is particular to this repository; where they differ, that document holds.
+## How we work
+
+@~/devel/neoteletext-common/DEVELOPMENT.md
+
+That is the one document of how we work, for every NeoTeletext repository, with rdm as the record of all work (DEC-2162). This file says only what is particular to this repository; where the two differ, that document holds.
 
 ## Requirements, decisions, checklists and to-dos: rdm only
 
@@ -28,7 +32,7 @@ They are records in rdm, reached through its MCP tools (search, get_record, list
 
 - Tools: `scripts/tools.sh` installs the pinned tools into the ignored `tools/`; the check script sources it and refuses other versions.
 - Edit loop: `scripts/try.sh` (Clippy on every save) or `scripts/try.sh <crate> [filter]`.
-- Gates and the work branch: `scripts/check.sh commit | push | full`; the Linux stage runs on `NEOTELETEXT_LINUX_HOST`, `foundintelquiet4060` by default. How they work and the day-to-day routine: @~/devel/neoteletext-common/gates.md
+- Gates and the work branch: `scripts/check.sh commit | push | full`; the Linux stage runs on `NEOTELETEXT_LINUX_HOST`, `foundintelquiet4060` by default. How they work and the day-to-day routine: `DEVELOPMENT.md` section 9.
 - The reference channel: `cargo run -p neoteletext-site -- terminal [port] [--relay URL] [--podcast FILE.wav]`.
 - A local qrkeyboard relay for tests: `NEOTELETEXT_QRKEYBOARD_RELAY` names one, in a debug build only, which alone gives the phone keyboard the local network (decision 100); qrkeyboard.com runs protocol 3 since 21 October 2026.
 - Input trace: `neoteletext --input-trace` shows each input event sent to a channel on the open page's row 0, with a count of the same event running (decision 115).

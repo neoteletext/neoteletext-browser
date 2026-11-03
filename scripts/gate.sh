@@ -1,6 +1,7 @@
 # Copied by neoteletext-common gates/sync; change it there, not here.
-# neoteletext-common gates at 26c4dd331b6e9903f04dc9b9cbca8e0fac31b1ab
-# The gate machinery every neoteletext repository shares (gates.md). A
+# neoteletext-common gates at bb33cf14984b8621af4284c4c741c347a9ff3fc7
+# The gate machinery every neoteletext repository shares (DEVELOPMENT.md
+# section 9). A
 # repository's scripts/check.sh sets its own steps and sources its copy of
 # this file, scripts/gate.sh, which gates/sync writes; the commit gate
 # fails when the copy differs from this file at the commit it names.
@@ -23,11 +24,13 @@ git_dir="$(git rev-parse --git-common-dir 2>/dev/null || true)"
 # Git in neoteletext-common. A hook in a linked worktree inherits GIT_DIR
 # and its neighbours, which would override -C and read the wrong repository.
 common_git() { env -u GIT_DIR -u GIT_INDEX_FILE -u GIT_WORK_TREE git -C "$common" "$@"; }
-# Names of the documents DEC-2022 deleted, as a tracked file might write them:
+# Names of the documents deleted because rdm or DEVELOPMENT.md now holds
+# them (DEC-2022's protocol documents; the gate and rdm documents folded into
+# DEVELOPMENT.md on 3 November 2026), as a tracked file might write them:
 # bare, or with the dot escaped in a pattern. A longer name that ends in one
 # of them is another document. This text cannot match itself, as a closing
 # bracket stands where a name would meet its extension.
-readonly DELETED_DOCUMENT_NAMES='(^|[^-A-Za-z0-9_])(INPUT|SERVER|CHANNEL)\\*\.md'
+readonly DELETED_DOCUMENT_NAMES='(^|[^-A-Za-z0-9_])(INPUT|SERVER|CHANNEL|gates|rdm)\\*\.md'
 
 fail() {
     printf '\nFAILED: %s\n' "$*" >&2
@@ -35,7 +38,7 @@ fail() {
 }
 
 # A step that cannot run fails the gate, naming what it lacks and how to get
-# it (gates.md). A step never asks whether its tool is there and goes on
+# it (DEVELOPMENT.md section 9.2). A step never asks whether its tool is there and goes on
 # without it: that gate would pass having checked nothing.
 need_tool() {
     command -v "$1" >/dev/null 2>&1 || fail "$1 is not installed, so this gate cannot run; $2"
@@ -121,16 +124,16 @@ check_deleted_documents() {
     done
     found="$(git grep --cached -nIE "$DELETED_DOCUMENT_NAMES" -- "${paths[@]}")" || status=$?
     [[ "$status" -le 1 ]] || fail "git grep failed looking for deleted documents"
-    [[ -z "$found" ]] || fail "these name a document that is deleted; cite the item, DOC-n of neoteletext-common's PROTOCOL.html, that holds the rule:
+    [[ -z "$found" ]] || fail "these name a document that is deleted; cite what holds it now: the item, DOC-n of neoteletext-common's PROTOCOL.html, the rdm record, or a section of DEVELOPMENT.md:
 $found"
 }
 
 # A check script that can report a step as skipped can pass without running
-# it, which gates.md forbids. The word is written in two parts, so that this
+# it, which DEVELOPMENT.md section 9.2 forbids. The word is written in two parts, so that this
 # file does not name it.
 readonly SKIP_REPORT='SKIP''PED'
 check_no_skipping() {
-    step "no step of this gate can be skipped (gates.md)"
+    step "no step of this gate can be skipped (DEVELOPMENT.md section 9.2)"
     local found status=0
     found="$(git grep --cached -nF "$SKIP_REPORT" -- 'scripts/*.sh' ':(exclude)scripts/gate.sh')" || status=$?
     [[ "$status" -le 1 ]] || fail "git grep failed looking for a step that can be skipped"

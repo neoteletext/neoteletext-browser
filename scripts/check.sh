@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # The project's one check script (requirement 14.1): its own steps, on the
 # gate machinery every neoteletext repository shares (scripts/gate.sh,
-# copied from neoteletext-common; gates.md there). Every step either
+# copied from neoteletext-common; DEVELOPMENT.md section 9 there). Every step either
 # passes or fails the run: nothing is skipped, a missing tool or an
 # unreachable host is a failure.
 #   scripts/check.sh commit   the code compiles clean (the text checks,
@@ -173,9 +173,10 @@ check_shapes_and_tests() {
     (cd native && cargo nextest run --workspace --hide-progress-bar --status-level fail --final-status-level fail)
     step "native/tuf: tests"
     (cd native/tuf && cargo nextest run --workspace --hide-progress-bar --status-level fail --final-status-level fail)
-    # gates.md: a pass says nothing of a test that is ignored, so the gate says
+    # DEVELOPMENT.md section 9.2: a pass says nothing of a test that is
+    # ignored, so the gate says
     # which ones, each with what would make it run.
-    step "the tests that have not run: each ignored test and its reason (gates.md)"
+    step "the tests that have not run: each ignored test and its reason (DEVELOPMENT.md section 9.2)"
     git grep -n -A1 -F '#[ignore' -- 'native/*.rs'
     # A build with nothing changed must build nothing. A build script that
     # watched files that do not exist once rebuilt the crates under it on
