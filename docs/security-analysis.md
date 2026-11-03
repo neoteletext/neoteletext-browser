@@ -243,6 +243,30 @@ Removed by decision 66: no font is fetched from a channel, so there is no font f
 
 **Remaining risk:** low. The broker is small and unconfined: a fault in its parser would give a compromised core the user's rights. It parses only a handful of fixed messages.
 
+### 5.9 A channel's program moving a tab (the REDIRECT record)
+
+Reviewed on 3 November 2026 at browser `aed1829` (TODO-1691), for REQ-1688 and DEC-1683: a live channel's program may move the tab showing it to another of its pages, or to another channel, with no act of the viewer's, by a REDIRECT record on the push connection (DOC-1960). Section 5.1's redirects are a server's answers to a request; this one is a channel's own decision, carried in its data, and acted on by the trusted core.
+
+**Threats.** A hostile channel sends the viewer somewhere they did not choose: to a lookalike channel, to this computer or the local network, to a `file:` address or a built-in page, or in a loop that never lets the tab rest; it uses the moves to fill the tab's history; it sends a page or query no address could hold; a compromised fetcher invents the record for a channel that never sent it.
+
+**Mitigations** (`native/core/src/trusted_core/redirects.rs`, `native/core/src/session/navigation.rs`).
+- **The record is the fetcher's word, read as hostile text.** The fetcher reads it with the engine's bounded, fuzzed record reader and passes it on as `FromFetcher::PageRedirect` (a page and sub-code, checked by `redirect_in_bounds`, and a query) or `FromFetcher::ProgramRedirect` (an address of at most `MAX_ADDRESS` bytes); the fetcher protocol's reader is fuzzed (`fetcher_messages`).
+- **Only a live channel's tab, not already leaving, can be moved** (`may_redirect`): a static channel has no program, and a second record while the first's notice shows is ignored.
+- **A page of the channel** is followed only when the channel lists it, and with a query only when a SELECT could carry that query for that page (`is_page_parameters`); otherwise the record is dropped and logged, and the server is told again what the tab selects. The page opens as the tab's selection, with no notice, as a link in the channel would.
+- **Another channel** goes by the rules of a server's redirect (`redirect_destination`, REQ-701 item 2): `https` or `http` written out, read by the URL map's address rules, never a file, a built-in page or a host with its scheme left off. One refused is dropped and logged and the tab stays where it is. The engine's fetcher then refuses this computer and the local network as for any channel (requirement 5.10).
+- **The viewer sees where the tab is going.** For one second (`REDIRECT_NOTICE`) the page area shows "Redirecting to:" and the destination, in words and a style the channel does not choose (REQ-1686; section 7.1), and only then does the tab follow; a tab behind others runs its own second.
+- **Loops end.** The tab keeps the chain of channels it was redirected through; past `MAX_REDIRECTS`, 20, with no input from the viewer the redirect is refused (REQ-1688 item 6). The viewer's own input on the tab, or a page the viewer chooses, starts the count again. A program's loop is not refused at its first repeat, as a server's is, since a program may rightly send a viewer back; the bound of 20 at one second each ends it within about twenty seconds.
+- **History.** A program's redirect adds a history entry by DEC-1684's rules (`Tab::redirected`), marking the page left as passed over when the viewer did nothing there, so Back does not return into the redirect. Entries are held to `MAX_TAB_ENTRIES`, 50, the oldest passed-over entry going first.
+- **The destination is a channel like any other**, with its own fetcher, decoder and cookies (REQ-714), and nothing of the channel that sent the viewer.
+
+**If the sending channel is hostile.** It **can** move its own tab to any channel the address rules accept, as a web page can, up to 20 times in a row, each shown for a second; it **can** add history entries, each bounded as above. It **cannot** move another tab, open a file, a built-in page or this computer's addresses, carry anything of its own into the destination, or move the tab without the second's notice when it leaves the channel.
+
+**If the fetcher is compromised.** It can invent the record for its own channel, which is what that channel's server could send, and no more: the trusted core applies every check above to it.
+
+**If the interface is compromised** (section 5.6). An `Opened` intent for a page of the tab's own channel adds a history entry and starts the redirect count again (`Session::page_chosen`). That is within what a compromised interface can already do by navigating the tab, and the entries are bounded by `MAX_TAB_ENTRIES`; it cannot reach another channel's tab or name an address through it.
+
+**Remaining risk:** low; ranked 8 in `hyperlinks-security.md`'s table of risks. What is not verified: no channel deployed on 3 November 2026 sends a redirect naming another channel, so the notice, the move and the loop's bound have been seen only in the tests of `native/core/src/trusted_core/redirects/tests.rs`, not live (TODO-1691, TODO-2064).
+
 ## 6. What leaving the web engine changed
 
 The earlier design's main concession was the system webview: many millions of lines of C++ and Objective-C with a steady flow of security fixes, which it contained with a window host, a Content Security Policy, the removal of WebRTC, and on Linux an outside confinement, a nested display and a display host of its own (`prototypes/docs/security-analysis.md` section 6).
