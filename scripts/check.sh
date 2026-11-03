@@ -101,6 +101,46 @@ $outside"
     done < <(git ls-files -- 'native/Cargo.lock' 'native/**/Cargo.lock' | xargs sed -n 's/^source = "\(git+[^"]*\)"$/\1/p' | sort -u)
 }
 
+# Requirement 3.2 (REQ-668, DEC-2355): the trusted core (the package
+# neoteletext, which is also the broker's program) links no engine crate
+# but these, each for the bounded use DEC-2355 names, and no web engine,
+# script engine or interpreter. An engine crate added to its tree fails
+# here until that decision names it.
+readonly CORE_ENGINE_CRATES="neoteletext-audio neoteletext-core neoteletext-formats neoteletext-input neoteletext-opus neoteletext-web"
+# Requirement 1.3 (REQ-661): no crate in any program's tree executes or
+# interprets code from outside. Each is a crate a program could run a
+# script, a WebAssembly module or a web page with; wasmi waits on
+# decision 41's iOS decoder and is listed until that work starts.
+readonly INTERPRETER_CRATES='boa_engine|deno_core|dyon|gluon|hlua|js-sandbox|ketos|koto|mlua|mun_runtime|pyo3|quickjs|quickjs-rs|rhai|rlua|rquickjs|rune|rustpython-vm|servo|starlark|steel-core|tauri|v8|wasm3|wasmer|wasmi|wasmtime|webkit2gtk|webview2-com|wry'
+# Requirement 2.2 (REQ-663): no engine crate the browser uses brings a
+# user interface or graphics toolkit; those are the interface's alone.
+readonly TOOLKIT_CRATES='cairo-rs|cocoa|druid|eframe|egui|embedded-graphics|femtovg|fltk|fontique|gdk|gdk4|glib|glow|glutin|gtk|gtk4|iced|minifb|objc2-app-kit|pango|parley|sdl2|slint|smithay-client-toolkit|softbuffer|tao|tiny-skia|vello|vello_cpu|vello_hybrid|wayland-client|wgpu|winit|x11rb|xilem'
+
+# The packages in the normal and build dependencies of `$@` (cargo tree's
+# package options), on every target, run in native/: one a line, as the
+# package's name, then its source in brackets where it has one.
+tree_packages() {
+    (cd native && cargo tree --quiet --locked -e normal,build --target all --prefix none -f '{p}' "$@") | sed 's/ (\*)$//' | sort -u
+}
+# Their names alone.
+tree_names() { tree_packages "$@" | sed 's/ .*//' | sort -u; }
+# The engine's crates among them: those from a git source, which
+# check_engine_pin holds to the engine's one commit.
+engine_names() { tree_packages "$@" | sed -n 's/^\([^ ]*\) v[^ ]* (\(https\|file\):.*/\1/p' | sort -u; }
+
+check_dependency_trees() {
+    step "the trusted core's engine crates, and no interpreter or toolkit where none may be (requirements 1.3, 2.2 and 3.2)"
+    local found crate
+    found="$(engine_names -p neoteletext | tr '\n' ' ' | sed 's/ $//')"
+    [[ "$found" == "$CORE_ENGINE_CRATES" ]] || fail "the trusted core links the engine crates \"$found\", not the \"$CORE_ENGINE_CRATES\" DEC-2355 permits"
+    found="$( (tree_names --workspace; cd native/tuf && cargo tree --quiet --locked --workspace -e normal,build --target all --prefix none -f '{p}' | sed 's/ .*//') | sort -u | grep -xE "$INTERPRETER_CRATES" || true)"
+    [[ -z "$found" ]] || fail "a program's tree holds a script engine, a web engine or an interpreter: $found"
+    for crate in $(engine_names --workspace); do
+        found="$(tree_names -p "$crate" | grep -xE "$TOOLKIT_CRATES" || true)"
+        [[ -z "$found" ]] || fail "the engine crate $crate brings a user interface or graphics toolkit: $found"
+    done
+}
+
 # The programs a release script builds together, as it names them: the
 # macOS and Linux scripts' shell lists and the Windows script's array.
 release_programs() {
@@ -205,6 +245,7 @@ check_shapes_and_tests() {
     step "native: Clippy with only: phone-keyboard"
     (cd native && cargo clippy --quiet -p interface-core -p protocol -p neoteletext -p neoteletext-interface -p neoteletext-keyboard --all-targets \
         --no-default-features --features "interface-core/phone-keyboard,protocol/phone-keyboard,neoteletext/phone-keyboard,neoteletext-interface/phone-keyboard,neoteletext-keyboard/phone-keyboard" -- -D warnings)
+    check_dependency_trees
     step "native: tests"
     (cd native && cargo nextest run --workspace --hide-progress-bar --status-level fail --final-status-level fail)
     step "native/tuf: tests"
