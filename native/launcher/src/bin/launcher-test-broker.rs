@@ -42,6 +42,24 @@ const SLOW_START: Duration = Duration::from_secs(6);
 /// The exit status of a broker that ended because its launcher had gone,
 /// which nothing reads: the launcher that would is gone.
 const LAUNCHER_GONE_EXIT: i32 = 4;
+
+/// A helper that lives [`ORPHAN_LIFE`] seconds doing nothing: `sleep` on
+/// Unix; on Windows `ping` of this computer, once a second, its output
+/// dropped, since `timeout` there needs a console.
+fn helper() -> std::process::Command {
+    #[cfg(windows)]
+    {
+        let mut command = std::process::Command::new(r"C:\Windows\System32\PING.EXE");
+        command.args(["-n", ORPHAN_LIFE, "127.0.0.1"]).stdout(std::process::Stdio::null());
+        command
+    }
+    #[cfg(not(windows))]
+    {
+        let mut command = std::process::Command::new("/bin/sleep");
+        command.arg(ORPHAN_LIFE);
+        command
+    }
+}
 /// The slot `--make` fills: its length is the most a mark and a behaviour
 /// may take, and its text is what `--make` finds.
 const SLOT_BYTES: usize = 64;
@@ -118,7 +136,7 @@ fn main() -> std::process::ExitCode {
         // which outlives it, its number written beside the log; one that
         // serves writes its own number too.
         "orphan" | "serves" => {
-            if let (Some(log), Ok(mut helper)) = (arguments.first(), std::process::Command::new("/bin/sleep").arg(ORPHAN_LIFE).spawn())
+            if let (Some(log), Ok(mut helper)) = (arguments.first(), helper().spawn())
                 && let Ok(mut file) = std::fs::OpenOptions::new().create(true).append(true).open(format!("{log}.helpers"))
             {
                 let helper_id = helper.id();

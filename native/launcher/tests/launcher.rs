@@ -45,10 +45,10 @@ const SLOW_TEST_HEALTH_DEADLINE: Duration = Duration::from_secs(3);
 const CHILD: &str = "LAUNCHER_TEST_FAULT_CHILD";
 /// The running child's variable: the fixture whose launcher it runs, to
 /// be asked to end.
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 const RUNNING_CHILD: &str = "LAUNCHER_TEST_RUNNING_CHILD";
 /// How long processes asked or made to end are given to be gone.
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 const GONE_WITHIN: Duration = Duration::from_secs(5);
 
 /// The platform's signer for tests: on Linux the real one with a test
@@ -594,9 +594,26 @@ fn alive(pid: i32) -> bool {
     std::process::Command::new("/bin/kill").args(["-0", &pid.to_string()]).stderr(std::process::Stdio::null()).status().unwrap().success()
 }
 
+/// Whether process `pid` is alive: `tasklist` lists it.
+#[cfg(windows)]
+fn alive(pid: i32) -> bool {
+    let listed = std::process::Command::new("tasklist").args(["/FI", &format!("PID eq {pid}"), "/NH", "/FO", "CSV"]).output().unwrap();
+    String::from_utf8_lossy(&listed.stdout).contains(&format!("\"{pid}\""))
+}
+
+/// Ends process `pid` outright: `SIGKILL`, or `TerminateProcess`, which no
+/// program can hear.
+fn kill_outright(pid: i32) -> bool {
+    #[cfg(unix)]
+    let ended = std::process::Command::new("/bin/kill").args(["-9", &pid.to_string()]).status();
+    #[cfg(windows)]
+    let ended = std::process::Command::new("taskkill").args(["/PID", &pid.to_string(), "/F"]).stdout(std::process::Stdio::null()).status();
+    ended.is_ok_and(|status| status.success())
+}
+
 /// Waits up to [`GONE_WITHIN`] for every one of `pids` to end; those
 /// still running are killed, and returned.
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 fn left_after_waiting(pids: &[i32]) -> Vec<i32> {
     let started = std::time::Instant::now();
     while pids.iter().any(|&pid| alive(pid)) && started.elapsed() < GONE_WITHIN {
@@ -604,14 +621,14 @@ fn left_after_waiting(pids: &[i32]) -> Vec<i32> {
     }
     let left: Vec<i32> = pids.iter().copied().filter(|&pid| alive(pid)).collect();
     for &pid in &left {
-        let _ = std::process::Command::new("/bin/kill").args(["-9", &pid.to_string()]).status();
+        kill_outright(pid);
     }
     left
 }
 
 /// Not a test of its own: the launcher the termination test runs in a
 /// process of its own, to be asked to end.
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 #[test]
 fn running_child() {
     let Some(folder) = std::env::var_os(RUNNING_CHILD) else { return };
@@ -641,11 +658,21 @@ fn a_launcher_killed_outright_leaves_no_broker_or_helper() {
     launcher_ended_by("killed", "-KILL");
 }
 
+/// TODO-2006, REQ-667, DEC-2432: on Windows a launcher ended outright
+/// (`taskkill /F`, Task Manager's End task, a crash), which no program can
+/// hear, still leaves no broker or helper running: the end of the
+/// broker's standard input tells it its launcher has gone, as on Unix.
+#[cfg(windows)]
+#[test]
+fn a_launcher_ended_outright_on_windows_leaves_no_broker_or_helper() {
+    launcher_ended_by("killed", "");
+}
+
 /// Runs a launcher in a process of its own with a broker that serves and
 /// has started a helper, sends the launcher `signal` (as `kill` takes it),
 /// and requires the broker and the helper gone within [`GONE_WITHIN`].
 /// Returns whether the launcher had ended by then.
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 fn launcher_ended_by(name: &str, signal: &str) -> bool {
     let fixture = Fixture::new(name);
     fixture.install(OLD, "serves");
@@ -665,7 +692,14 @@ fn launcher_ended_by(name: &str, signal: &str) -> bool {
         std::thread::sleep(Duration::from_millis(50));
     };
     let pid = i32::try_from(launcher.id()).unwrap();
+    #[cfg(unix)]
     assert!(std::process::Command::new("/bin/kill").args([signal, &pid.to_string()]).status().unwrap().success());
+    // Windows has only the one way, outright.
+    #[cfg(windows)]
+    {
+        let _ = signal;
+        assert!(kill_outright(pid));
+    }
     let asked = std::time::Instant::now();
     while launcher.try_wait().unwrap().is_none() && asked.elapsed() < GONE_WITHIN {
         std::thread::sleep(Duration::from_millis(50));
