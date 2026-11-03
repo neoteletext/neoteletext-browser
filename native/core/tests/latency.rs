@@ -31,11 +31,25 @@ const PAGE: u16 = 0x200;
 /// the channel's answer to a key within the same 20 ms.
 const PIPELINE_BUDGET: Duration = Duration::from_millis(20);
 const ROUND_TRIP_BUDGET: Duration = Duration::from_millis(20);
-/// The fetcher wakes when the channel's answer arrives (REQ-INT-135).
+/// REQ-1383: the fetcher wakes when the channel's answer arrives (REQ-INT-135).
 /// When it looked at its sockets every 5 ms, that wait was most of the
 /// round trip: a median of 6.3 ms here on 21 October 2026, against 0.3 ms
 /// once woken by the bytes themselves, and 0.4 ms in a debug build.
+/// The lower quartile of the round trips is held to it, not the median
+/// (DEC-2348, after the engine's DEC-1993): a fetcher that sleeps on a
+/// timer raises the floor of most round trips, while a busy computer only
+/// adds to some of them. Measured on 3 November 2026 with the load average
+/// between 33 and 59: on the code as it is the sixth quickest of 20 was
+/// at most 0.68 ms while the median reached 3.8 ms; with a 5 ms sleep in the
+/// fetcher's wait, up to five of 20 escaped it (the quickest alone was
+/// 0.36 ms) and the sixth quickest was at least 5.37 ms.
 const WAKE_BUDGET: Duration = Duration::from_millis(2);
+
+/// The round trip a quarter of the way up from the quickest.
+fn lower_quartile(times: &mut [Duration]) -> Duration {
+    times.sort();
+    times[times.len() / 4]
+}
 
 fn median(times: &mut [Duration]) -> Duration {
     times.sort();
@@ -93,8 +107,9 @@ fn keys_round_trip_and_pages_reach_the_screen_within_budget() {
     }
     let pipelines: Vec<Duration> = (0..renders.len()).map(|index| renders[index] + encodes[index] + decodes[index]).collect();
     let worst = |times: &[Duration]| times.iter().max().copied().unwrap_or_default();
+    let quartile = lower_quartile(&mut round_trips.clone());
     eprintln!(
-        "latency over {KEYS} keys: key to pushed page median {:?} worst {:?}; render median {:?}, encode median {:?}, interface decode median {:?}; pipeline worst {:?}",
+        "latency over {KEYS} keys: key to pushed page lower quartile {quartile:?} median {:?} worst {:?}; render median {:?}, encode median {:?}, interface decode median {:?}; pipeline worst {:?}",
         median(&mut round_trips.clone()),
         worst(&round_trips),
         median(&mut renders),
@@ -103,7 +118,12 @@ fn keys_round_trip_and_pages_reach_the_screen_within_budget() {
         worst(&pipelines)
     );
     assert!(median(&mut round_trips.clone()) <= ROUND_TRIP_BUDGET, "{round_trips:?}");
-    assert!(median(&mut round_trips.clone()) <= WAKE_BUDGET, "the fetcher waited for its answer: {round_trips:?}");
+    assert!(
+        quartile <= WAKE_BUDGET,
+        "the fetcher waited for its answer: lower quartile {quartile:?}, median {:?}, worst {:?}: {round_trips:?}",
+        median(&mut round_trips.clone()),
+        worst(&round_trips)
+    );
     // The budget is the shipped build's: an unoptimised build's render and
     // encoding take about three times as long, and are only reported.
     if !cfg!(debug_assertions) {
