@@ -247,6 +247,12 @@ check_shapes_and_tests() {
         --no-default-features --features "interface-core/phone-keyboard,protocol/phone-keyboard,neoteletext/phone-keyboard,neoteletext-interface/phone-keyboard,neoteletext-keyboard/phone-keyboard" -- -D warnings)
     check_dependency_trees
     check_microcontroller_builds
+    # Requirement 14.3 (REQ-783, DEC-2354): the advisory check runs at every
+    # push, not only on the way to main, so a crate yanked or found unsafe
+    # stops the work while it is fresh.
+    step "native, native/tuf: advisories"
+    (cd native && cargo deny check advisories)
+    (cd native/tuf && cargo deny check advisories)
     step "native: tests"
     (cd native && cargo nextest run --workspace --hide-progress-bar --status-level fail --final-status-level fail)
     step "native/tuf: tests"
