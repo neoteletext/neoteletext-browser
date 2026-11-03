@@ -4,6 +4,7 @@
 
 use interface_core::canvas::PageKey;
 use neoteletext::frames;
+#[cfg(not(feature = "links"))]
 use protocol::console::Level;
 use protocol::decoder::ToDecoder;
 #[cfg(feature = "links")]
@@ -208,8 +209,12 @@ impl Core {
 
     /// An address typed in the address field opened in the active tab.
     fn navigate(&mut self, typed: &str) -> Result<(), String> {
-        if let Err(reason) = self.session.navigate(typed, true) {
-            self.log(Level::Warning, self.log_place(), &reason);
+        match self.session.navigate(typed, true) {
+            // REQ-749: the trusted core opens it or says why it cannot, in
+            // the strip where the viewer pressed Enter, and in the Log.
+            Err(reason) => return self.say(reason),
+            // A reason left from an earlier refusal is not this address's.
+            Ok(()) => self.notice = None,
         }
         self.send_all()
     }
