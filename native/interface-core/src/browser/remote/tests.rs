@@ -113,3 +113,106 @@ fn only_a_page_that_rotates_offers_the_return_to_the_latest() {
     assert!(offered(Rotation::AsBroadcast), "a broadcast's page");
     assert!(!offered(Rotation::Never), "a live channel's page");
 }
+
+/// REQ-1373: while keys go to a channel, each of the remote's digits,
+/// Fastext colours, arrows, OK and page keys goes to the channel as KEY, a
+/// press then a release, with the keyboard's same key: a digit its
+/// character and text, the rest their functional codes from the input
+/// protocol's table of names (DOC-1936), the names the interface gives the
+/// keyboard's own keys. The browser's own buttons still act. On the code
+/// before, every remote key did the browser's action and none reached the
+/// channel.
+#[cfg(feature = "interaction")]
+#[test]
+fn the_remotes_keys_go_to_the_channel_as_the_keyboards() {
+    use crate::browser::typing::TypingView;
+    use crate::canvas::PageKey;
+    use crate::channel::{Channel, PageInfo, Status};
+    use crate::input::Intent;
+    use neoteletext_input::event::{Action, KeyCode};
+    use neoteletext_input::keys::code;
+    const KEY: PageKey = PageKey { channel: 4, page: 0x100 };
+    let mut browser = Browser::new(Frame { left_inset: 0.0, window_buttons: false });
+    let mut channel = Channel::empty();
+    channel.channel = KEY.channel;
+    channel.pages[0] = Some(PageInfo { title: "Terminal".into(), status: Status::Loaded });
+    browser.set_channel(channel);
+    browser.set_remote(RemotePlace { mode: RemoteMode::Docked, x: 0, y: 0 });
+    browser.draw(&mut Recorder::new(), WIDTH, HEIGHT, 0);
+    browser.wall.zoom(KEY, 0);
+    browser.draw(&mut Recorder::new(), WIDTH, HEIGHT, 10_000);
+    browser.set_typing(TypingView { channel: KEY.channel, page: KEY.page, on: true, secure: false, refused: false, cursor: None, round_trip_us: None }, 10_000);
+    browser.draw(&mut Recorder::new(), WIDTH, HEIGHT, 10_000);
+    browser.take_outputs();
+    let functional = |name: &str| KeyCode::Functional(code(name).unwrap());
+    let expected = [
+        (Button::Digit('7'), KeyCode::Character('7'), Some("7")),
+        (Button::Digit('0'), KeyCode::Character('0'), Some("0")),
+        (Button::Control(PageControl::Fastext(FastextKey::Red)), functional("ColorF0Red"), None),
+        (Button::Control(PageControl::Fastext(FastextKey::Green)), functional("ColorF1Green"), None),
+        (Button::Control(PageControl::Fastext(FastextKey::Yellow)), functional("ColorF2Yellow"), None),
+        (Button::Control(PageControl::Fastext(FastextKey::Cyan)), functional("ColorF3Blue"), None),
+        (Button::Arrow(true), functional("ArrowUp"), None),
+        (Button::Arrow(false), functional("ArrowDown"), None),
+        (Button::Control(PageControl::SubPage(false)), functional("ArrowLeft"), None),
+        (Button::Control(PageControl::SubPage(true)), functional("ArrowRight"), None),
+        (Button::Ok, functional("Enter"), None),
+        (Button::PageUp, functional("PageUp"), None),
+        (Button::PageDown, functional("PageDown"), None),
+    ];
+    for (button, key, text) in expected {
+        assert!(browser.remote_press(middle(rect_of(&browser, button)), 10_000));
+        let sent: Vec<Intent> =
+            browser.take_outputs().into_iter().filter_map(|output| if let Output::Terminal { intent, .. } = output { Some(intent) } else { None }).collect();
+        assert_eq!(
+            sent,
+            [
+                Intent::Key { action: Action::Press, key, mods: 0, text: text.map(alloc::string::String::from), base: None },
+                Intent::Key { action: Action::Release, key, mods: 0, text: None, base: None }
+            ],
+            "{button:?}"
+        );
+    }
+    assert!(browser.digits.is_empty(), "no digit was the browser's");
+    // Reveal is the browser's own, keys going or not.
+    browser.remote_press(middle(rect_of(&browser, Button::Control(PageControl::Reveal))), 10_000);
+    assert_eq!(browser.take_outputs(), [Output::PageControl(PageControl::Reveal)]);
+}
+
+/// REQ-894 (decision 112 item 4): the remote's sub-page control, the
+/// control the page area's had before decision 126, shows how many
+/// sub-pages there are and which is shown, to the standard's 8,190; steps
+/// with its arrows; and on a broadcast, whose sub-pages rotate, returns to
+/// the latest when its count is pressed. A live channel's has no return
+/// (DEC-1542).
+#[test]
+fn the_remotes_sub_page_control_counts_to_the_standards_maximum_and_returns_to_the_latest() {
+    use crate::canvas::PageKey;
+    use crate::channel::{Channel, PageInfo, Status};
+    use crate::controls::{PageControls, Rotation};
+    const KEY: PageKey = PageKey { channel: 4, page: 0x100 };
+    let mut browser = Browser::new(Frame { left_inset: 0.0, window_buttons: false });
+    let mut channel = Channel::empty();
+    channel.channel = KEY.channel;
+    channel.pages[0] = Some(PageInfo { title: "Rotating".into(), status: Status::Loaded });
+    browser.set_channel(channel);
+    browser.set_remote(RemotePlace { mode: RemoteMode::Docked, x: 0, y: 0 });
+    browser.draw(&mut Recorder::new(), WIDTH, HEIGHT, 0);
+    browser.wall.zoom(KEY, 0);
+    browser.draw(&mut Recorder::new(), WIDTH, HEIGHT, 10_000);
+    let last = u16::try_from(neoteletext_core::limits::MAX_SUBPAGES).unwrap();
+    let controls = PageControls { page: Some(0x100), subpages: last, chosen: Some(last - 1), rotation: Rotation::AsBroadcast, ..PageControls::default() };
+    browser.set_page_controls(controls);
+    let mut canvas = Recorder::new();
+    browser.draw(&mut canvas, WIDTH, HEIGHT, 10_000);
+    let place = alloc::format!("{last}/{last}");
+    assert!(canvas.texts.iter().any(|(_, text)| *text == place), "the last of {last}: {:?}", canvas.texts);
+    browser.take_outputs();
+    browser.remote_press(middle(rect_of(&browser, Button::Control(PageControl::SubPage(false)))), 10_000);
+    assert_eq!(browser.take_outputs(), [Output::PageControl(PageControl::SubPage(false))]);
+    browser.remote_press(middle(rect_of(&browser, Button::Latest)), 10_000);
+    assert_eq!(browser.take_outputs(), [Output::PageControl(PageControl::Latest)], "back to the latest");
+    browser.set_page_controls(PageControls { rotation: Rotation::Never, ..controls });
+    browser.draw(&mut Recorder::new(), WIDTH, HEIGHT, 10_000);
+    assert!(!browser.remote.buttons.iter().any(|(button, _)| *button == Button::Latest), "a live channel's has no return");
+}

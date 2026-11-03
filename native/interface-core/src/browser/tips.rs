@@ -7,6 +7,8 @@
 //! a bookmark's title, drawn as the text it is. A tab's tip has a second
 //! line, its address (decision 103). A page's link has a tip too, its
 //! popover: where it leads, complete, in the trusted core's words (REQ-1660).
+//! A channel's title cut short in a list has no tip, by the same rule; it
+//! is read in full on its page (DEC-2352).
 
 use alloc::format;
 use alloc::string::String;
@@ -138,9 +140,18 @@ impl Browser {
     pub(super) fn draw_tips<C: Canvas + ?Sized>(&mut self, canvas: &mut C, width: f64, height: f64, now: u64) {
         let mut tips = Vec::new();
         // In full screen a page's links are on the screen, and the strip
-        // while it is down, over them. A list or menu open over the window
-        // takes the pointer; a panel covers what is below the strip.
-        if self.full_screen() {
+        // while it is down, over them. While a menu or list is dropped down
+        // only the strip's controls can still be pressed, so only theirs
+        // show, and none over the drop-down itself, whose rows are words
+        // with their shortcuts or a channel's titles (REQ-764, DEC-2352). A
+        // panel covers what is below the strip.
+        if self.popup_open() {
+            if !self.over_popup(self.pointer) {
+                self.strip_tips(&mut tips);
+                self.bar_tips(&mut tips);
+                self.tabs_tips(&mut tips);
+            }
+        } else if self.full_screen() {
             if self.full_screen_strip(now) {
                 self.strip_tips(&mut tips);
                 self.bar_tips(&mut tips);
@@ -148,7 +159,7 @@ impl Browser {
             }
             #[cfg(feature = "links")]
             self.link_tips(&mut tips);
-        } else if !self.popup_open() {
+        } else {
             self.strip_tips(&mut tips);
             self.bar_tips(&mut tips);
             self.remote_tips(&mut tips);
@@ -336,6 +347,34 @@ mod tests {
         assert_eq!(browser.tip_shown(), Some("Home: open the home page (Shift+Cmd+H)"));
         assert!(browser.pointer_moved(-1.0, -1.0, 2_600), "leaving the window takes it away");
         assert!(browser.tip_shown().is_none());
+    }
+
+    /// REQ-764: while a menu or list is dropped down over the window,
+    /// the strip's controls keep their tips, since a press still reaches
+    /// them, and nothing over the drop-down shows one. On the code before no
+    /// tip showed while a drop-down was open.
+    #[test]
+    fn the_strip_keeps_its_tips_while_a_menu_is_open() {
+        let mut browser = Browser::new(Frame { left_inset: 0.0, window_buttons: false });
+        draw(&mut browser, 0);
+        browser.toggle_menu();
+        draw(&mut browser, 0);
+        let reload = browser.regions.reload;
+        rest_on(&mut browser, reload, 1_000);
+        assert!(browser.tips_settle(1_500));
+        assert_eq!(browser.tip_shown(), Some("Reload: open this channel afresh (Cmd+R)"));
+        // Over the menu itself, nothing.
+        draw(&mut browser, 1_600);
+        let menu = browser.menu_area();
+        rest_on(&mut browser, menu, 2_000);
+        draw(&mut browser, 2_000);
+        assert!(!browser.tips_settle(2_600) && browser.tip_shown().is_none(), "no tip over the menu");
+        browser.toggle_menu();
+        draw(&mut browser, 2_700);
+        browser.pointer_moved(-1.0, -1.0, 2_800);
+        rest_on(&mut browser, reload, 3_000);
+        assert!(browser.tips_settle(3_500));
+        assert_eq!(browser.tip_shown(), Some("Reload: open this channel afresh (Cmd+R)"));
     }
 
     /// The overview's close button says what it does and how the View

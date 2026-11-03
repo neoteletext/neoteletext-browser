@@ -59,7 +59,7 @@ impl Wall {
         self.zoomed = Some(key);
         self.zoom_in = true;
         self.zoom.set(1.0, now);
-        self.slide = Tween::new(0.0, SLIDE_MILLISECONDS, STANDARD);
+        self.slide = Tween::new(0.0, self.motion(SLIDE_MILLISECONDS), STANDARD);
         self.wheel_carry = 0.0;
     }
 
@@ -67,8 +67,8 @@ impl Wall {
     fn open_alone(&mut self, key: PageKey) {
         self.zoomed = Some(key);
         self.zoom_in = true;
-        self.zoom = Tween::new(1.0, ZOOM_MILLISECONDS, STANDARD);
-        self.slide = Tween::new(0.0, SLIDE_MILLISECONDS, STANDARD);
+        self.zoom = Tween::new(1.0, self.motion(ZOOM_MILLISECONDS), STANDARD);
+        self.slide = Tween::new(0.0, self.motion(SLIDE_MILLISECONDS), STANDARD);
         self.wheel_carry = 0.0;
     }
 
@@ -107,7 +107,7 @@ impl Wall {
         let next = current.checked_add_signed(isize::from(direction))?;
         let key = *self.page_keys.get(next)?;
         self.zoomed = Some(key);
-        let mut slide = Tween::new(self.slide.value(now) + f32::from(direction), SLIDE_MILLISECONDS, STANDARD);
+        let mut slide = Tween::new(self.slide.value(now) + f32::from(direction), self.motion(SLIDE_MILLISECONDS), STANDARD);
         slide.set(0.0, now);
         self.slide = slide;
         Some(key)

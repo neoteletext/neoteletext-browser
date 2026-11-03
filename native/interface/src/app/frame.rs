@@ -23,6 +23,7 @@ use interface_core::browser::Cursor;
 use interface_core::canvas::PageKey;
 use protocol::ToCore;
 use protocol::frame::{self, FrameError};
+use winit::dpi::{LogicalPosition, LogicalSize};
 use winit::event_loop::ActiveEventLoop;
 use winit::window::CursorIcon;
 
@@ -62,6 +63,15 @@ impl App {
         self.view.painter.begin(width, height, graphics.window.scale_factor());
         let logical = (f64::from(width) / self.view.painter.scale, f64::from(height) / self.view.painter.scale);
         self.view.browser.draw(&mut self.view.painter, logical.0, logical.1, now);
+        // The input method's candidates sit beside the caret of the field
+        // with the keys (REQ-763), told again only when it moved.
+        if self.view.ime.allowed
+            && let Some(caret) = self.view.browser.caret_area()
+            && self.view.ime.caret != Some(caret)
+        {
+            graphics.window.set_ime_cursor_area(LogicalPosition::new(caret.x0, caret.y0), LogicalSize::new(caret.width(), caret.height()));
+            self.view.ime.caret = Some(caret);
+        }
         // Only what changed since the last frame is drawn; a frame that
         // changed nothing is not presented, and the window keeps the last.
         let damage = self.view.painter.render();

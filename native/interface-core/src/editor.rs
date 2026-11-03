@@ -76,6 +76,12 @@ pub struct Editor {
     /// The other end of the selection; equal to the caret when none.
     anchor: usize,
     limit: usize,
+    /// What the system's input method is composing at the caret, shown
+    /// there until it is committed (REQ-763). It is kept apart from the
+    /// text, so nothing composed is ever sent or copied.
+    composing: String,
+    /// The input method's cursor in `composing`, a byte offset.
+    composing_cursor: usize,
     /// Where the field was last drawn. A cell, since drawing reads a field
     /// and this is all it writes.
     drawn: Cell<Drawn>,
@@ -89,19 +95,79 @@ pub struct Drawn {
     pub area: Rect,
     /// Where the text's first character starts, scrolled as it was drawn.
     pub origin: f64,
+    /// Where the caret was drawn, beside which the system's input method
+    /// puts its candidates.
+    pub caret: Rect,
+}
+
+/// What a field shows: its text with what is being composed put in at the
+/// caret. Positions are byte offsets in `text`.
+#[derive(Debug, PartialEq, Eq)]
+pub struct Shown {
+    /// The text shown.
+    pub text: String,
+    /// What is being composed, start then end; empty when nothing is.
+    pub composing: (usize, usize),
+    /// Where the caret is drawn.
+    pub caret: usize,
 }
 
 impl Editor {
     /// An editor holding at most `limit` bytes.
     #[must_use]
     pub fn new(limit: usize) -> Self {
-        Self { text: String::new(), caret: 0, anchor: 0, limit, drawn: Cell::new(Drawn::default()) }
+        Self { text: String::new(), caret: 0, anchor: 0, limit, composing: String::new(), composing_cursor: 0, drawn: Cell::new(Drawn::default()) }
     }
 
     /// Says where the field was drawn: whatever draws a field must, so that
     /// the mouse works in it.
     pub fn mark_drawn(&self, area: Rect, origin: f64) {
-        self.drawn.set(Drawn { area, origin });
+        let caret = self.drawn.get().caret;
+        self.drawn.set(Drawn { area, origin, caret });
+    }
+
+    /// Says where the caret was drawn, for the system's input method.
+    pub fn mark_caret(&self, caret: Rect) {
+        let drawn = self.drawn.get();
+        self.drawn.set(Drawn { caret, ..drawn });
+    }
+
+    /// The input method's text being composed (REQ-763): shown at the
+    /// caret, its cursor at `cursor` bytes into it, and not part of the
+    /// text until it is committed, which arrives as text typed. Hidden
+    /// characters are dropped and it is bounded by the room left, as typed
+    /// text is; empty text ends the composition.
+    pub fn compose(&mut self, text: &str, cursor: Option<usize>) {
+        self.composing.clear();
+        let room = self.limit.saturating_sub(self.text.len());
+        let mut cursor_shown = None;
+        for (at, character) in text.char_indices() {
+            if cursor == Some(at) {
+                cursor_shown = Some(self.composing.len());
+            }
+            if hidden(character) {
+                continue;
+            }
+            if self.composing.len().saturating_add(character.len_utf8()) > room {
+                break;
+            }
+            self.composing.push(character);
+        }
+        self.composing_cursor = cursor_shown.unwrap_or(self.composing.len());
+    }
+
+    /// What is being composed, empty when nothing is.
+    #[must_use]
+    pub fn composing(&self) -> &str {
+        &self.composing
+    }
+
+    /// The text as shown, with what is being composed at the caret.
+    #[must_use]
+    pub fn shown(&self) -> Shown {
+        let (before, after) = self.text.split_at_checked(self.caret).unwrap_or((&self.text, ""));
+        let end = self.caret.saturating_add(self.composing.len());
+        Shown { text: [before, &self.composing, after].concat(), composing: (self.caret, end), caret: self.caret.saturating_add(self.composing_cursor) }
     }
 
     /// Where the field was last drawn.
@@ -136,6 +202,7 @@ impl Editor {
         self.text.clear();
         self.caret = 0;
         self.anchor = 0;
+        self.composing.clear();
         self.insert(text);
         self.select_all();
     }
@@ -160,6 +227,8 @@ impl Editor {
     /// Inserts `text` at the caret, replacing any selection, without its
     /// hidden characters and only as far as the limit allows.
     pub fn insert(&mut self, text: &str) {
+        // What is committed takes the composition's place.
+        self.composing.clear();
         self.delete_selection();
         for character in text.chars().filter(|&character| !hidden(character)) {
             if self.text.len().saturating_add(character.len_utf8()) > self.limit {
@@ -364,6 +433,20 @@ mod tests {
         assert_eq!(editor.selection(), (0, 1));
         editor.insert("b");
         assert_eq!(editor.text(), "b");
+    }
+
+    /// REQ-763: what is composed drops hidden characters and keeps to the
+    /// room left, as typed text does, and its cursor follows what is kept.
+    #[test]
+    fn a_composition_keeps_the_fields_rules() {
+        let mut editor = Editor::new(8);
+        editor.insert("abc");
+        editor.compose("x\u{202E}yé", Some("x\u{202E}y".len()));
+        assert_eq!(editor.shown(), Shown { text: "abcxyé".into(), composing: (3, 7), caret: 5 });
+        editor.compose("ééé", None);
+        assert_eq!(editor.composing(), "éé", "a third é would pass the limit");
+        editor.set("new");
+        assert_eq!(editor.composing(), "", "a new text ends it");
     }
 
     #[test]

@@ -706,3 +706,47 @@ fn clearing_cookies_leaves_a_private_tab_connected() {
     assert!(after[0] != before[0] && after[2] != before[2], "the ordinary tabs were opened afresh: {before:?} {after:?}");
     assert!(session.tabs[1].private);
 }
+
+// REQ-749, DEC-2340: deceptive and internationalised addresses. Each is
+// refused, or shown in the field with its whole real host, in ASCII, as the
+// emphasised part, so no letter of another script and no user name can pass
+// for a familiar site. On the code before, a host typed in Unicode was
+// refused with no word of how to open it.
+#[test]
+fn deceptive_and_internationalised_addresses_are_refused_or_shown_by_their_real_host() {
+    use neoteletext::address::NOT_ASCII_HOST;
+    let shown = [
+        // A familiar name to the left of the real host: the whole host is the identity.
+        ("bank.example.evil.invalid", "bank.example.evil.invalid"),
+        // An internationalised name in its xn-- form stays in that form (a
+        // Cyrillic "аррӏе"), never drawn in Unicode.
+        ("https://xn--80ak6aa92e.com/", "xn--80ak6aa92e.com"),
+        ("https://xn--bcher-kva.example/", "xn--bcher-kva.example"),
+        // Capitals are the same host, shown in lower case.
+        ("HTTPS://NEWS.INVALID/", "news.invalid"),
+    ];
+    for (typed, host) in shown {
+        let mut session = Session::new(Bookmarks::default());
+        session.open("start.invalid").unwrap();
+        session.navigate(typed, true).unwrap();
+        let strip = session.strip();
+        assert_eq!(strip.identity, host, "{typed}");
+        assert!(strip.address.contains(host) && strip.address.is_ascii(), "{typed}: {}", strip.address);
+    }
+    let unicode = [
+        // A Cyrillic "а" in place of the Latin one.
+        "https://\u{0430}pple.com/",
+        "https://bücher.example/",
+        // Fullwidth Latin letters.
+        "https://\u{FF45}xample.invalid/",
+        // A dotless i of Turkish.
+        "https://\u{0131}nvalid.example/",
+    ];
+    for typed in unicode {
+        assert_eq!(parse(typed).unwrap_err(), NOT_ASCII_HOST, "{typed}");
+    }
+    for typed in ["https://bank.example@evil.invalid/", "https://example.invalid/\u{202E}gpj", "https://exa mple.invalid/"] {
+        let refused = parse(typed).unwrap_err();
+        assert_ne!(refused, NOT_ASCII_HOST, "{typed}: refused for what it is");
+    }
+}

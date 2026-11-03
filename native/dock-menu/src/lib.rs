@@ -332,7 +332,9 @@ pub fn menu_item(number: usize) -> Option<&'static MenuItem> {
 #[cfg(target_os = "macos")]
 mod mac;
 #[cfg(target_os = "macos")]
-pub use mac::{install, install_menu_bar, install_opener, pointer_in_view, set, set_about, set_aspect, set_full_screen, set_icon, yield_activation};
+pub use mac::{
+    install, install_menu_bar, install_opener, pointer_in_view, reduced_motion, set, set_about, set_aspect, set_full_screen, set_icon, yield_activation,
+};
 
 /// Elsewhere there is no menu bar: the menu button's menu is its
 /// counterpart (`menu-bar.md` section 1).
@@ -375,6 +377,14 @@ pub fn yield_activation(_bundle: &str) {}
 /// Elsewhere there is no Dock.
 #[cfg(not(target_os = "macos"))]
 pub fn set_icon(_png: &[u8]) {}
+
+/// Elsewhere this crate reads no preference: the interface asks its own
+/// platform (REQ-754).
+#[cfg(not(target_os = "macos"))]
+#[must_use]
+pub fn reduced_motion() -> bool {
+    false
+}
 
 #[cfg(test)]
 mod tests {
@@ -448,5 +458,16 @@ mod tests {
         assert_eq!(mute_all_item(&[]), ("Mute All Tabs", Choice::MuteAll(true)));
         assert_eq!(mute_all_item(&[tab("a", true, true), tab("b", false, false)]), ("Mute All Tabs", Choice::MuteAll(true)));
         assert_eq!(mute_all_item(&[tab("a", true, true), tab("b", false, true)]), ("Unmute All Tabs", Choice::MuteAll(false)));
+    }
+
+    /// REQ-754: on macOS the preference read is the one System Settings
+    /// keeps, under Accessibility, Display, "Reduce motion".
+    #[cfg(target_os = "macos")]
+    #[test]
+    #[ignore = "reads the logged-in viewer's accessibility settings, so it runs by hand on macOS"]
+    fn reduced_motion_is_the_systems_setting() {
+        let read = std::process::Command::new("defaults").args(["read", "com.apple.universalaccess", "reduceMotion"]).output();
+        let set = read.is_ok_and(|output| String::from_utf8_lossy(&output.stdout).trim() == "1");
+        assert_eq!(reduced_motion(), set);
     }
 }

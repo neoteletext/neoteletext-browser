@@ -4,6 +4,7 @@
 
 use alloc::string::String;
 
+use crate::browser::widgets::underline_composing;
 use crate::browser::{Browser, Key, Modifiers, Output};
 use crate::canvas::Canvas;
 use crate::geometry::Rect;
@@ -104,8 +105,9 @@ impl Browser {
         let y = (area.y0 + area.y1 - line) / 2.0;
         canvas.push_clip(area);
         if self.editing {
-            let text = self.editor.text();
-            let caret = canvas.text_width(text.get(..self.editor.caret()).unwrap_or_default(), ADDRESS);
+            let shown = self.editor.shown();
+            let text = shown.text.as_str();
+            let caret = canvas.text_width(text.get(..shown.caret).unwrap_or_default(), ADDRESS);
             // Keep the caret in view.
             let room = area.width() - CARET_WIDTH;
             if caret - self.field_scroll > room {
@@ -116,13 +118,18 @@ impl Browser {
             let x = area.x0 - self.field_scroll;
             self.editor.mark_drawn(self.regions.field, x);
             let (start, end) = self.editor.selection();
-            if start != end {
+            // While something is composed the composition's mark shows, not
+            // the selection it will replace.
+            if start != end && self.editor.composing().is_empty() {
                 let from = canvas.text_width(text.get(..start).unwrap_or_default(), ADDRESS);
                 let to = canvas.text_width(text.get(..end).unwrap_or_default(), ADDRESS);
                 canvas.fill(Rect::new(x + from, y, x + to, y + line), 0.0, FIELD_SELECTION);
             }
             canvas.text(Rect::new(x, y, area.x1 + self.field_scroll, y + line), text, ADDRESS, FIELD_INK);
-            canvas.fill(Rect::new(x + caret, y, x + caret + CARET_WIDTH, y + line), 0.0, FIELD_INK);
+            underline_composing(canvas, &shown, x, y + line, ADDRESS);
+            let drawn = Rect::new(x + caret, y, x + caret + CARET_WIDTH, y + line);
+            canvas.fill(drawn, 0.0, FIELD_INK);
+            self.editor.mark_caret(drawn);
         } else {
             // The address as the trusted core formatted it, its host in
             // full ink and the rest muted, as browsers show it.
@@ -158,6 +165,7 @@ mod tests {
     use super::*;
     use crate::browser::fixture::{HEIGHT, WIDTH, browser, press_at};
     use crate::browser::{Modifiers, StripState};
+    use crate::canvas::Canvas;
     use crate::test_canvas::Recorder;
 
     /// DEC-1551 item 3: what names a file is told apart from a host by its
@@ -222,6 +230,48 @@ mod tests {
             browser.take_outputs(),
             [Output::TextInput(true), Output::Suggest("sport.invalid".into()), Output::TextInput(false), Output::Navigate("sport.invalid".into())]
         );
+    }
+
+    /// REQ-763: what an input method composes in the address field is
+    /// drawn at the caret, underlined, while it is composed, and is no part
+    /// of the field's text: Enter sends what was typed without it, an empty
+    /// composition ends it, and the commit, which comes as typed text,
+    /// inserts it. On the code before, nothing composed was drawn.
+    #[test]
+    fn an_input_methods_composition_shows_at_the_caret_and_is_not_sent() {
+        let (mut browser, mut canvas) = browser();
+        browser.take_outputs();
+        let field = browser.regions.field;
+        press_at(&mut browser, &mut canvas, field);
+        browser.key(Key::Text("news.example/"), Modifiers::default(), 0);
+        assert!(browser.compose("にゅーす", Some("にゅ".len())));
+        let mut canvas = Recorder::new();
+        browser.draw(&mut canvas, WIDTH, HEIGHT, 0);
+        assert!(canvas.texts.iter().any(|(_, text)| text == "news.example/にゅーす"), "drawn at the caret: {:?}", canvas.texts);
+        assert_eq!(browser.editor.text(), "news.example/", "not in the text");
+        // The underline: a fill one pixel high exactly under the composition.
+        let line = canvas.line_height(ADDRESS);
+        let from = canvas.text_width("news.example/", ADDRESS);
+        let to = canvas.text_width("news.example/にゅーす", ADDRESS);
+        let underline = canvas.fills.iter().find(|(rect, _)| (rect.width() - (to - from)).abs() < 0.01 && rect.height() < line);
+        assert!(underline.is_some(), "underlined: {:?}", canvas.fills);
+        // The caret is drawn at the input method's cursor, and the system is
+        // told where it is.
+        let caret = browser.caret_area().unwrap();
+        let x0 = browser.editor.drawn().origin;
+        assert!((caret.x0 - (x0 + canvas.text_width("news.example/にゅ", ADDRESS))).abs() < 0.01, "{caret:?}");
+        // An empty composition ends it; a commit inserts it.
+        assert!(browser.compose("", None));
+        assert_eq!(browser.editor.composing(), "");
+        browser.compose("にゅーす", None);
+        browser.key(Key::Text("ニュース"), Modifiers::default(), 0);
+        assert_eq!((browser.editor.text(), browser.editor.composing()), ("news.example/ニュース", ""));
+        // Enter while composing sends the text without what is composed.
+        browser.compose("ぺーじ", None);
+        browser.take_outputs();
+        browser.key(Key::Enter, Modifiers::default(), 0);
+        assert!(browser.take_outputs().contains(&Output::Navigate("news.example/ニュース".into())));
+        assert!(!browser.compose("x", None), "no field has the keys: nothing is composed");
     }
 
     /// Requirement 12.11 (decision 84): the field with the keys copies, cuts

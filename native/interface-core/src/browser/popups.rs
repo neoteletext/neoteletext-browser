@@ -32,6 +32,11 @@ impl Browser {
         self.menu.is_open() || self.tab_lists.is_open()
     }
 
+    /// Whether `point` is on the open menu or Back or Forward list.
+    pub(super) fn over_popup(&self, point: Point) -> bool {
+        self.over_menu(point) || self.over_tab_list(point)
+    }
+
     /// Whether a drop-down is open to close with Escape; closes it.
     pub(super) fn close_popup(&mut self) -> bool {
         self.menu.close() || self.tab_lists.close()

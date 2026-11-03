@@ -239,6 +239,7 @@ impl App {
         };
         self.windows.insert(window.id(), self.window);
         self.view.graphics = Some(Graphics { window, surface, _context: context, asked: false });
+        self.follow_reduced_motion();
         self.show_tabs();
         self.report_window(event_loop);
     }

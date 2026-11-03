@@ -42,6 +42,8 @@ struct InputMethod {
     address: bool,
     /// The method is enabled now.
     allowed: bool,
+    /// Where the system was last told the caret is.
+    caret: Option<interface_core::geometry::Rect>,
 }
 
 struct Graphics {
@@ -311,6 +313,8 @@ impl ApplicationHandler<Incoming> for App {
         if matches!(event, WindowEvent::Focused(true)) {
             self.focused = id;
             self.show_tabs();
+            // The viewer may have changed it while away (REQ-754).
+            self.follow_reduced_motion();
         }
         if matches!(event, WindowEvent::Resized(_)) {
             self.full_screen_resized();

@@ -94,7 +94,7 @@ phone ──▶ relay ──▶ neoteletext-keyboard ── PhoneKey
 | A hostile relay relabels the phone's keys or renames the screen | qrkeyboard's configuration hash in the QR, computed as its SDK computes it |
 | Replay or reordering by the relay | Counter nonces accepted once and in order; fresh salts per connection |
 | Anyone on the relay sends a salt and the screen says a phone is connected (finding F-71) | Without a PIN a phone is connected only by its first frame that opens under the QR's key, its first key (the engine's decision E.116 item 3), and the panel says to press one (decision 101); with a PIN, by the PIN run's confirmation |
-| **Whoever photographs the QR has the keyboard** | The QR appears only from the panel, with its one-line warning; a PIN is offered; one phone; Finish in the strip; a dropped phone holds the screen 30 s, not qrkeyboard's default 5 minutes |
+| **Whoever photographs the QR has the keyboard** | The QR appears only from the panel, with its one-line warning; a PIN is offered, by the panel's "Use a PIN" (DEC-2405); one phone; Finish in the strip; a dropped phone holds the screen 30 s, not qrkeyboard's default 5 minutes |
 | TLS to the relay | The browser's first TLS; a certificate failure is a hard stop (requirement 7.11); the relay's host is fixed and never taken from a page |
 | New cryptography dependencies | `cargo-deny`; pinned; the no-PIN mode needs no `p256`, so PIN pairing is a separate approval |
 

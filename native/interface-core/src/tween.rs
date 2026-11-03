@@ -64,9 +64,13 @@ impl Tween {
         Self { from: value, to: value, start: 0, duration, curve }
     }
 
-    /// The value at `now`, in milliseconds.
+    /// The value at `now`, in milliseconds. A tween of no duration is at its
+    /// target at once, as reduced motion has every move (REQ-754).
     #[must_use]
     pub fn value(&self, now: u64) -> f32 {
+        if self.duration == 0 {
+            return self.to;
+        }
         #[allow(clippy::cast_precision_loss, reason = "animation durations are a few hundred milliseconds")]
         let progress = (now.saturating_sub(self.start) as f32 / self.duration.max(1) as f32).min(1.0);
         self.from + (self.to - self.from) * self.curve.at(progress)
@@ -79,6 +83,12 @@ impl Tween {
             self.to = target;
             self.start = now;
         }
+    }
+
+    /// Takes `duration` milliseconds for each move from now on; a move under
+    /// way ends at once when it is none.
+    pub fn set_duration(&mut self, duration: u64) {
+        self.duration = duration;
     }
 
     /// Whether it is still on its way at `now`.

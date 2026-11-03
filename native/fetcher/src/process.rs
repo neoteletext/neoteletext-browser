@@ -520,8 +520,11 @@ fn run_with(
     let mut last_status = None;
 
     // The trusted core closes standard input to end the fetcher. Before
-    // then it sends only input messages (REQ-INT-133); anything else
-    // ends the fetcher too.
+    // then it sends only what `ToFetcher` holds (REQ-1381 version 2):
+    // input messages, the round trip's switch, the answers about a
+    // cookie and whether a host was reached securely, and requests for
+    // pages, lists of sub-pages and sub-pages; anything else ends the
+    // fetcher too.
     std::thread::spawn(move || {
         read_commands(&mut io::BufReader::new(input), &wakes, &answers);
         let _ = wakes.send(Wake::Ended);

@@ -21,7 +21,7 @@ use super::windows::{push_tab_to_window, push_window_number, window_intent};
 #[cfg(feature = "interaction")]
 use crate::interaction::{KIND_EDITING, KIND_INPUT, KIND_WALL_WITHOUT_PAGE};
 #[cfg(feature = "phone-keyboard")]
-use crate::keyboard::{KIND_PHONE_FINISH, KIND_PHONE_PANEL};
+use crate::keyboard::{KIND_PHONE_FINISH, KIND_PHONE_PANEL, PHONE_PANEL_WITH_PIN};
 #[cfg(feature = "links")]
 use crate::links::{KIND_CANCEL, KIND_CONFIRM, KIND_LIT, KIND_POINT, KIND_TYPED};
 use crate::{
@@ -85,7 +85,7 @@ fn kind_of(message: &ToCore) -> u8 {
         #[cfg(feature = "interaction")]
         ToCore::Input(_) => KIND_INPUT,
         #[cfg(feature = "phone-keyboard")]
-        ToCore::PhonePanel(_) => KIND_PHONE_PANEL,
+        ToCore::PhonePanel(_) | ToCore::PhonePin => KIND_PHONE_PANEL,
         #[cfg(feature = "phone-keyboard")]
         ToCore::PhoneFinish => KIND_PHONE_FINISH,
         #[cfg(feature = "links")]
@@ -157,6 +157,8 @@ fn push_fields(payload: &mut Vec<u8>, message: &ToCore) -> Result<(), ProtocolEr
         ToCore::Input(intent) => crate::interaction::push_input(payload, intent)?,
         #[cfg(feature = "phone-keyboard")]
         ToCore::PhonePanel(open) => payload.push(u8::from(*open)),
+        #[cfg(feature = "phone-keyboard")]
+        ToCore::PhonePin => payload.push(PHONE_PANEL_WITH_PIN),
         #[cfg(feature = "phone-keyboard")]
         ToCore::PhoneFinish => {}
         #[cfg(feature = "links")]
@@ -342,7 +344,12 @@ pub fn read_from_interface(input: &mut dyn Read) -> Result<Option<ToCore>, Proto
         #[cfg(feature = "interaction")]
         KIND_INPUT => ToCore::Input(crate::interaction::read_input(&mut fields)?),
         #[cfg(feature = "phone-keyboard")]
-        KIND_PHONE_PANEL => ToCore::PhonePanel(fields.flag("phone panel")?),
+        KIND_PHONE_PANEL => match fields.u8()? {
+            PHONE_PANEL_WITH_PIN => ToCore::PhonePin,
+            0 => ToCore::PhonePanel(false),
+            1 => ToCore::PhonePanel(true),
+            _ => return Err(ProtocolError::BadValue("phone panel")),
+        },
         #[cfg(feature = "phone-keyboard")]
         KIND_PHONE_FINISH => ToCore::PhoneFinish,
         #[cfg(any(feature = "links", feature = "interaction"))]

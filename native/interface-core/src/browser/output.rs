@@ -195,4 +195,7 @@ pub enum Output {
     /// Strip input: end the phone keyboard's session.
     #[cfg(feature = "phone-keyboard")]
     PhoneFinish,
+    /// Pair the phone with a PIN (REQ-1386).
+    #[cfg(feature = "phone-keyboard")]
+    PhonePin,
 }

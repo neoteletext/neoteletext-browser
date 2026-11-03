@@ -306,3 +306,42 @@ fn a_moments_messages_leave_together() {
     let more: Vec<bool> = sends.iter().filter_map(|send| if let Send::Fetcher { more, .. } = send { Some(*more) } else { None }).collect();
     assert_eq!(more, [true, true, false], "RESIZE, PAGE, FOCUS_IN");
 }
+
+/// REQ-1357, DEC-2383: what an interface sends cannot raise the moves' pace
+/// past its bound. A hostile interface alternating a new move with a key
+/// release, which is never held to the input rate, or with HOVER, a
+/// thousand pairs a second for ten seconds, gets no more moves to the
+/// channel than 60 a second paced and 60 a second sent early before another
+/// event: at most 120 a second, the input rate's bound. On the code before,
+/// every other event sent the waiting move at once, and each pair gave the
+/// channel a move: 10,000 in ten seconds.
+#[test]
+fn moves_alternated_with_releases_or_hover_stay_within_the_bound() {
+    const SECONDS: u64 = 10;
+    const PAIRS_PER_SECOND: u64 = 1_000;
+    const STEP_US: u64 = 1_000_000 / PAIRS_PER_SECOND;
+    /// Dots offered in turn, each other than the one before.
+    const DOTS: u64 = 240;
+    let release = Intent::Key { action: Action::Release, key: KeyCode::Character('a'), mods: 0, text: None, base: None };
+    let hover = Intent::Hover { leave: false, column: 3, row: 3 };
+    for other in [release, hover] {
+        let mut typing = ready(SELECT_CAP);
+        let mut moves = 0_usize;
+        let count = |sent: &[Send]| sent.iter().filter(|send| matches!(send, Send::Fetcher { move_of: Some(_), .. })).count();
+        for n in 0..SECONDS * PAIRS_PER_SECOND {
+            let now = n.checked_mul(STEP_US).unwrap();
+            if typing.due().is_some_and(|due| due <= now) {
+                moves = moves.checked_add(count(&typing.take_due(now))).unwrap();
+            }
+            let dot = u32::try_from(n.checked_rem(DOTS).unwrap()).unwrap();
+            let place = at(dot.checked_rem(40).unwrap(), dot.checked_div(40).unwrap().checked_add(1).unwrap(), dot);
+            moves = moves.checked_add(count(&typing.input_intent(&moved(place), now))).unwrap();
+            let after = now.checked_add(STEP_US / 2).unwrap();
+            moves = moves.checked_add(count(&typing.input_intent(&intent(other.clone()), after))).unwrap();
+        }
+        // Each of the two kinds may begin with one more than its share.
+        let most = usize::try_from(SECONDS * 2 * neoteletext_input::MOVES_PER_SECOND).unwrap().checked_add(2).unwrap();
+        assert_eq!(2 * neoteletext_input::MOVES_PER_SECOND, u64::from(neoteletext_input::MAX_PER_SECOND), "the bound is the input rate's");
+        assert!(moves <= most, "{other:?}: {moves} moves in {SECONDS} s, more than {most}");
+    }
+}
