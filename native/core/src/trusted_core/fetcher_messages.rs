@@ -529,6 +529,34 @@ mod tests {
         );
     }
 
+    /// DEC-1467, DEC-1482, TODO-1470 item 4: a live channel's contents
+    /// come from its index, and a later index replaces the one before at
+    /// once: a page it no longer lists leaves the contents, a retitled page
+    /// shows its new title, and the interface is sent the channel each time.
+    #[test]
+    fn a_live_channels_later_index_replaces_its_contents_at_once() {
+        use interface_core::channel::page_index;
+        use protocol::fetcher::Entry;
+        let mut test = Test::new("live-index");
+        let channel = static_tab(&mut test, 0x100);
+        test.core.fetched(channel, FromFetcher::Connecting(true)).unwrap();
+        test.sent();
+        let index = |pages: &[(u16, &str)]| {
+            let mut entries = vec![Entry::Section("News".into())];
+            entries.extend(pages.iter().map(|&(page, title)| Entry::Page { page, title: title.into() }));
+            FromFetcher::Contents(entries)
+        };
+        test.core.fetched(channel, index(&[(0x100, "Headlines"), (0x101, "Weather")])).unwrap();
+        test.core.fetched(channel, index(&[(0x100, "Top stories")])).unwrap();
+        let views: Vec<_> = test.sent().into_iter().filter_map(|message| if let ToInterface::Channel(view) = message { Some(view) } else { None }).collect();
+        assert_eq!(views.len(), 2, "each index at once");
+        let title = |view: &interface_core::channel::Channel, page: u16| view.pages[page_index(page).unwrap()].as_ref().map(|info| info.title.clone());
+        assert_eq!(title(&views[0], 0x101).as_deref(), Some("Weather"));
+        assert_eq!(title(&views[1], 0x100).as_deref(), Some("Top stories"), "retitled");
+        assert_eq!(title(&views[1], 0x101), None, "no longer listed");
+        assert_eq!(views[1].banks[0], "News");
+    }
+
     /// DEC-1467: a live channel's pages and listing come on its connection
     /// alone.
     #[test]
