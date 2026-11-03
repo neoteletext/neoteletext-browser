@@ -39,16 +39,34 @@ pub enum ChooseKind {
     Folder,
     /// A bookmarks file to import (TODO-1426).
     Bookmarks,
+    /// A picture to convert to a page (the Tools menu,
+    /// `docs/picture-tools.md`): read only by [`super::Request::ReadPicture`],
+    /// for a decoder to convert.
+    Picture,
+    /// Where to save the converted page as a TTI page file: a save dialog,
+    /// whose choice the broker writes once and grants nothing.
+    SaveTti,
+    /// Where to save the converted page as T42 packets, likewise.
+    SaveT42,
 }
 
 impl ChooseKind {
-    const ALL: [Self; 3] = [Self::File, Self::Folder, Self::Bookmarks];
+    const ALL: [Self; 6] = [Self::File, Self::Folder, Self::Bookmarks, Self::Picture, Self::SaveTti, Self::SaveT42];
+
+    /// Whether the dialog chooses where to save, not what to read.
+    #[must_use]
+    pub fn is_save(self) -> bool {
+        matches!(self, Self::SaveTti | Self::SaveT42)
+    }
 
     pub(super) fn code(self) -> u8 {
         match self {
             Self::File => 1,
             Self::Folder => 2,
             Self::Bookmarks => 3,
+            Self::Picture => 4,
+            Self::SaveTti => 5,
+            Self::SaveT42 => 6,
         }
     }
 
@@ -63,6 +81,9 @@ impl ChooseKind {
             Self::File => "file",
             Self::Folder => "folder",
             Self::Bookmarks => "bookmarks",
+            Self::Picture => "picture",
+            Self::SaveTti => "save-tti",
+            Self::SaveT42 => "save-t42",
         }
     }
 

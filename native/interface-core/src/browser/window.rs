@@ -95,6 +95,7 @@ impl Browser {
         self.draw_remote(canvas, width, height, body_top, now);
         #[cfg(feature = "phone-keyboard")]
         self.draw_phone_panel(canvas);
+        self.draw_picture_panel(canvas);
         self.draw_settings_panel(canvas);
         self.draw_history_panel(canvas);
         self.draw_bookmarks_panel(canvas, now);

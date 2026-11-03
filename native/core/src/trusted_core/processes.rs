@@ -257,6 +257,63 @@ fn read_bookmarks_with(mut child: Helper, file: Vec<u8>, events: Sender<Event>, 
     Ok(())
 }
 
+/// Starts a decoder to convert one picture (`docs/picture-tools.md`): it is
+/// given the choices and the picture, and its page, or why it made none,
+/// arrives as one event of `generation`; then it is ended.
+pub(super) fn start_picture_converter(
+    broker: &Arc<Broker>,
+    picture: Arc<Vec<u8>>,
+    choice: interface_core::picture::PictureChoice,
+    generation: u64,
+    events: Sender<Event>,
+) -> Result<(), String> {
+    let child = spawn(broker, Program::Decoder, &[String::from("--picture")], false)?;
+    convert_picture_with(child, picture, choice, generation, events, PICTURE_DEADLINE)
+}
+
+/// How long a picture decoder has to convert before it is killed: a
+/// conversion took at most 1.5 seconds at Level 3.5 in a release build on 3
+/// November 2026 (the engine's `docs/spec/design/pictures.md`), and a 64 MB
+/// picture's decoding more; thirty seconds is far above both.
+const PICTURE_DEADLINE: std::time::Duration = std::time::Duration::from_secs(30);
+
+/// Gives the picture decoder `child` the choices and the picture, and sends
+/// what it answers, or, once `deadline` has passed, kills it and says so.
+fn convert_picture_with(
+    mut child: Helper,
+    picture: Arc<Vec<u8>>,
+    choice: interface_core::picture::PictureChoice,
+    generation: u64,
+    events: Sender<Event>,
+    deadline: std::time::Duration,
+) -> Result<(), String> {
+    let output = child.stdout.take().ok_or("the picture converter has no output")?;
+    let mut input = child.stdin.take().ok_or("the picture converter has no input")?;
+    let (answer, answered) = std::sync::mpsc::channel();
+    thread::spawn(move || {
+        let exchange = move || -> Result<(Vec<u8>, Vec<u8>, String), String> {
+            write_to_decoder(&mut input, &ToDecoder::Picture(choice)).map_err(|error| error.to_string())?;
+            for chunk in picture.chunks(MAX_CHUNK) {
+                write_to_decoder(&mut input, &ToDecoder::Data(chunk.to_vec())).map_err(|error| error.to_string())?;
+            }
+            write_to_decoder(&mut input, &ToDecoder::End).map_err(|error| error.to_string())?;
+            match read_from_decoder(&mut BufReader::new(output)).map_err(|error| error.to_string())? {
+                Some(FromDecoder::PictureConverted { tti, t42, summary }) => Ok((tti, t42, summary)),
+                Some(FromDecoder::PictureRefused(reason)) => Err(reason),
+                Some(_) => Err(String::from("the picture converter said what it may not")),
+                None => Err(String::from("the picture converter ended without a page")),
+            }
+        };
+        let _ = answer.send(exchange());
+    });
+    thread::spawn(move || {
+        let converted = answered.recv_timeout(deadline).unwrap_or_else(|_| Err(String::from("the picture converter took too long")));
+        end(&mut child);
+        let _ = events.send(Event::PictureConverted(generation, converted));
+    });
+    Ok(())
+}
+
 /// Starts a fetcher for the web channel at `address`, whose messages
 /// arrive as events.
 /// A fetcher is given its proxy only here, when it starts: a change of the

@@ -120,6 +120,7 @@ impl Core {
             }
             ToCore::NewTab => self.new_tab()?,
             ToCore::OpenFile { kind, parent } => self.choose(kind, &parent)?,
+            ToCore::Picture(choice) => self.picture_choice(choice)?,
             ToCore::Dropped { files, place, left_out } => self.dropped(&files, place, left_out)?,
             ToCore::FromSystem(opened) => self.opened_by_system(&opened)?,
             // The start page's bookmark pages open their bookmarks, as the

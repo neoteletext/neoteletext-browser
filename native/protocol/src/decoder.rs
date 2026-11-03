@@ -14,8 +14,8 @@ use crate::{Fields, MAX_PAGE_TITLE, ProtocolError, push_count, push_raw_text, ra
 use interface_core::controls::SUBPAGE_ROWS;
 use kinds::{
     KIND_ARRIVED, KIND_ASK_SUBPAGE_ROWS, KIND_AUDIO, KIND_BOOKMARK_FOLDER, KIND_BOOKMARK_FOLDER_END, KIND_BOOKMARK_LINK, KIND_BOOKMARKS_READ, KIND_CHANNEL_LOG,
-    KIND_CLOSE, KIND_CONFINED, KIND_DATA, KIND_END, KIND_FRAME, KIND_MISSING, KIND_OPENED, KIND_REGION, KIND_SHOWING, KIND_STORE_FULL, KIND_SUBPAGE_COUNT,
-    KIND_SUBPAGE_ROWS, KIND_SUBPAGES, KIND_UPDATED, KIND_VIEW, KIND_WHOLE,
+    KIND_CLOSE, KIND_CONFINED, KIND_DATA, KIND_END, KIND_FRAME, KIND_MISSING, KIND_OPENED, KIND_PICTURE, KIND_PICTURE_CONVERTED, KIND_PICTURE_REFUSED,
+    KIND_REGION, KIND_SHOWING, KIND_STORE_FULL, KIND_SUBPAGE_COUNT, KIND_SUBPAGE_ROWS, KIND_SUBPAGES, KIND_UPDATED, KIND_VIEW, KIND_WHOLE,
 };
 #[cfg(feature = "interaction")]
 use kinds::{KIND_CURSOR, KIND_INPUT_CONTROL};
@@ -103,6 +103,9 @@ pub enum ToDecoder {
         /// The rows, at most [`interface_core::controls::SUBPAGE_ROWS`].
         range: SubPageRange,
     },
+    /// The choices for the picture whose bytes follow as data, to a decoder
+    /// started to convert it (`--picture`, `docs/picture-tools.md`).
+    Picture(interface_core::picture::PictureChoice),
     /// The group of a page that names none, as the channel's descriptor
     /// gives it, or none for the decoder's own (the engine's REQ-WEB-002).
     Region(Option<u8>),
@@ -179,6 +182,19 @@ pub enum FromDecoder {
     },
     /// A voice operation of the channel's audio receiver.
     Audio(crate::audio::Audio),
+    /// The page a picture decoder made: its TTI page file and its T42
+    /// packets, each at most [`crate::picture::MAX_PICTURE_PAGE`] bytes,
+    /// and the converter's summary, untrusted (`docs/picture-tools.md`).
+    PictureConverted {
+        /// The TTI page file.
+        tti: Vec<u8>,
+        /// The same page as T42 packets.
+        t42: Vec<u8>,
+        /// What the converter used, not yet cleaned.
+        summary: String,
+    },
+    /// Why a picture decoder made no page, not yet cleaned.
+    PictureRefused(String),
     /// The links found in a page, sent before its image whenever they
     /// change (`hyperlinks.md` section 8.1): untrusted, for the trusted
     /// core to check and decide.
@@ -291,6 +307,10 @@ pub fn write_to_decoder(out: &mut dyn Write, message: &ToDecoder) -> Result<(), 
             push_region(&mut payload, *region)?;
             KIND_REGION
         }
+        ToDecoder::Picture(choice) => {
+            crate::picture::push_choice(&mut payload, *choice)?;
+            KIND_PICTURE
+        }
         ToDecoder::View(view) => {
             view::push_view(&mut payload, view)?;
             KIND_VIEW
@@ -374,6 +394,7 @@ pub fn read_from_core(input: &mut dyn Read) -> Result<Option<ToDecoder>, Protoco
             return Ok(Some(ToDecoder::Whole { packets: flags & 1 != 0, pushed: flags & 2 != 0, bytes: crate::tail(payload, WHOLE_FLAGS_BYTES) }));
         }
         KIND_REGION => ToDecoder::Region(read_region(&mut fields)?),
+        KIND_PICTURE => ToDecoder::Picture(crate::picture::read_choice(&mut fields)?),
         KIND_VIEW => ToDecoder::View(view::read_view(&mut fields)?),
         KIND_ASK_SUBPAGE_ROWS => {
             let page = fields.channel_page()?;
@@ -459,6 +480,14 @@ pub fn write_to_core(out: &mut dyn Write, message: &FromDecoder) -> Result<(), P
             payload.extend_from_slice(body);
             KIND_INPUT_CONTROL
         }
+        FromDecoder::PictureConverted { tti, t42, summary } => {
+            crate::picture::push_converted(&mut payload, tti, t42, summary)?;
+            KIND_PICTURE_CONVERTED
+        }
+        FromDecoder::PictureRefused(reason) => {
+            push_raw_text(&mut payload, reason, interface_core::picture::MAX_STATUS);
+            KIND_PICTURE_REFUSED
+        }
         FromDecoder::Confined => KIND_CONFINED,
         FromDecoder::StoreFull => KIND_STORE_FULL,
         FromDecoder::Missing(pages) => {
@@ -538,6 +567,11 @@ pub fn read_from_decoder(input: &mut dyn Read) -> Result<Option<FromDecoder>, Pr
             }
             FromDecoder::InputControl { body: fields.take(length)?.to_vec() }
         }
+        KIND_PICTURE_CONVERTED => {
+            let (tti, t42, summary) = crate::picture::read_converted(&mut fields)?;
+            FromDecoder::PictureConverted { tti, t42, summary }
+        }
+        KIND_PICTURE_REFUSED => FromDecoder::PictureRefused(raw_text(&mut fields, interface_core::picture::MAX_STATUS, "reason too long")?),
         KIND_CONFINED => FromDecoder::Confined,
         KIND_STORE_FULL => FromDecoder::StoreFull,
         KIND_MISSING => {

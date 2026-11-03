@@ -8,8 +8,8 @@ use std::io;
 
 use super::{
     COOKIE_KEY_BYTES, ChooseKind, HEADER_BYTES, KIND_CHOOSE, KIND_COOKIE_KEY, KIND_DONE, KIND_EXITED, KIND_FAILED, KIND_HEALTHY, KIND_KEY, KIND_KILL,
-    KIND_LOCAL_TIME, KIND_OPEN_WEB, KIND_OPENINGS, KIND_PIPE, KIND_READ, KIND_SOURCE, KIND_SPAWN, KIND_SPAWNED, KIND_TIME, KIND_UPDATE_STATE, KIND_WAIT,
-    MAX_ARGUMENTS, MAX_REPLY, MAX_TEXT, Program,
+    KIND_LOCAL_TIME, KIND_OPEN_WEB, KIND_OPENINGS, KIND_PIPE, KIND_READ, KIND_READ_PICTURE, KIND_SAVE, KIND_SOURCE, KIND_SPAWN, KIND_SPAWNED, KIND_TIME,
+    KIND_UPDATE_STATE, KIND_WAIT, MAX_ARGUMENTS, MAX_REPLY, MAX_SAVE, MAX_TEXT, Program,
 };
 use crate::LocalTime;
 
@@ -82,6 +82,18 @@ pub enum Request {
     /// The pipe on which what opens from outside arrives: a choice, and what
     /// a second start hands over. Answered with it once.
     Openings,
+    /// Read a picture the user chose in the picture dialog, to convert
+    /// (`docs/picture-tools.md`): answered with its bytes, which the core
+    /// passes to a decoder unread.
+    ReadPicture(String),
+    /// Write the converted page where the user last chose to save it, of
+    /// this kind, once: the core never names the path.
+    Save {
+        /// The save dialog's kind, which must be the last one chosen.
+        kind: ChooseKind,
+        /// The page, at most [`MAX_SAVE`] bytes.
+        bytes: Vec<u8>,
+    },
 }
 
 /// The broker's answer.
@@ -222,6 +234,18 @@ pub fn encode_request(request: &Request) -> io::Result<Vec<u8>> {
             KIND_CHOOSE
         }
         Request::Openings => KIND_OPENINGS,
+        Request::ReadPicture(path) => {
+            push_text(&mut payload, path)?;
+            KIND_READ_PICTURE
+        }
+        Request::Save { kind, bytes } => {
+            if !kind.is_save() || bytes.len() > MAX_SAVE {
+                return Err(io::Error::new(io::ErrorKind::InvalidInput, "not a save, or too large"));
+            }
+            payload.push(kind.code());
+            payload.extend_from_slice(bytes);
+            KIND_SAVE
+        }
     };
     frame(kind, &payload)
 }
@@ -258,6 +282,16 @@ pub fn decode_request(kind: u8, payload: &[u8]) -> io::Result<Request> {
             Request::Choose { kind, keep, parent: fields.text()? }
         }
         KIND_OPENINGS => Request::Openings,
+        KIND_READ_PICTURE => Request::ReadPicture(fields.text()?),
+        KIND_SAVE => {
+            let kind = ChooseKind::from_code(fields.u8()?).filter(|kind| kind.is_save());
+            let kind = kind.ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "not a kind of save"))?;
+            if fields.0.len() > MAX_SAVE {
+                return Err(io::Error::new(io::ErrorKind::InvalidData, "too much to save"));
+            }
+            let bytes = core::mem::take(&mut fields.0).to_vec();
+            Request::Save { kind, bytes }
+        }
         _ => return Err(io::Error::new(io::ErrorKind::InvalidData, "no such request")),
     };
     fields.end()?;
@@ -385,6 +419,9 @@ mod tests {
             Request::UpdateState,
             Request::Spawn { program: Program::Updater, local_network: false, arguments: vec!["--proxy".into(), "http://proxy.example:3128".into()] },
             Request::Choose { kind: ChooseKind::Folder, parent: "x11:4a".into(), keep: false },
+            Request::Choose { kind: ChooseKind::SaveT42, parent: String::new(), keep: true },
+            Request::ReadPicture("/home/a/photo.jpg".into()),
+            Request::Save { kind: ChooseKind::SaveTti, bytes: b"PN,10000\n".to_vec() },
             Request::Openings,
         ] {
             assert_eq!(round_trip(&request), request);

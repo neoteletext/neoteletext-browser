@@ -14,7 +14,7 @@ use super::kinds::{
     KIND_ASK_SUBPAGE_ROWS, KIND_BACK, KIND_BAR, KIND_BOOKMARK, KIND_BOOKMARKS, KIND_CELL, KIND_CHANGE_SETTING, KIND_CLOSE_TAB, KIND_CLOSE_WINDOW, KIND_CONSOLE,
     KIND_COOKIES, KIND_DRAWN, KIND_DROPPED, KIND_FORWARD, KIND_FROM, KIND_FROM_SYSTEM, KIND_GO_TO, KIND_HISTORY, KIND_HOME, KIND_INSTALL_UPDATE, KIND_MOVE_TAB,
     KIND_MUTE_ALL, KIND_MUTE_TAB, KIND_NAVIGATE, KIND_NEW_PRIVATE_TAB, KIND_NEW_TAB, KIND_NEW_WINDOW, KIND_OPEN_FILE, KIND_OPENED, KIND_PAGE_CONTROL,
-    KIND_RELOAD, KIND_SELECT_TAB, KIND_STAR, KIND_SUGGEST, KIND_SUGGESTION, KIND_TAB_LIST, KIND_TAB_TO_WINDOW, KIND_VISIBLE, KIND_WINDOW,
+    KIND_PICTURE_CHOICE, KIND_RELOAD, KIND_SELECT_TAB, KIND_STAR, KIND_SUGGEST, KIND_SUGGESTION, KIND_TAB_LIST, KIND_TAB_TO_WINDOW, KIND_VISIBLE, KIND_WINDOW,
 };
 use super::pages::{CELL_BYTES, push_cell, read_cell};
 use super::windows::{push_tab_to_window, push_window_number, window_intent};
@@ -49,6 +49,7 @@ fn kind_of(message: &ToCore) -> u8 {
         ToCore::MoveTab { .. } => KIND_MOVE_TAB,
         ToCore::NewTab => KIND_NEW_TAB,
         ToCore::OpenFile { .. } => KIND_OPEN_FILE,
+        ToCore::Picture(_) => KIND_PICTURE_CHOICE,
         ToCore::Dropped { .. } => KIND_DROPPED,
         ToCore::FromSystem(_) => KIND_FROM_SYSTEM,
         ToCore::Opened(_) => KIND_OPENED,
@@ -122,6 +123,7 @@ fn push_fields(payload: &mut Vec<u8>, message: &ToCore) -> Result<(), ProtocolEr
             payload.push(open_kind_code(*kind));
             push_text(payload, parent, MAX_PARENT)?;
         }
+        ToCore::Picture(choice) => crate::picture::push_choice(payload, *choice)?,
         ToCore::Dropped { files, place, left_out } => {
             payload.extend_from_slice(&drop_place_code(*place));
             payload.extend_from_slice(&left_out.to_be_bytes());
@@ -221,6 +223,9 @@ fn open_kind_code(kind: OpenKind) -> u8 {
         OpenKind::File => 1,
         OpenKind::Folder => 2,
         OpenKind::Bookmarks => 3,
+        OpenKind::Picture => 4,
+        OpenKind::SavePictureTti => 5,
+        OpenKind::SavePictureT42 => 6,
     }
 }
 
@@ -229,6 +234,9 @@ fn read_open_kind(fields: &mut Fields<'_>) -> Result<OpenKind, ProtocolError> {
         1 => Ok(OpenKind::File),
         2 => Ok(OpenKind::Folder),
         3 => Ok(OpenKind::Bookmarks),
+        4 => Ok(OpenKind::Picture),
+        5 => Ok(OpenKind::SavePictureTti),
+        6 => Ok(OpenKind::SavePictureT42),
         _ => Err(ProtocolError::BadValue("kind of file")),
     }
 }
@@ -307,6 +315,7 @@ pub fn read_from_interface(input: &mut dyn Read) -> Result<Option<ToCore>, Proto
             let kind = read_open_kind(&mut fields)?;
             ToCore::OpenFile { kind, parent: fields.text(MAX_PARENT)? }
         }
+        KIND_PICTURE_CHOICE => ToCore::Picture(crate::picture::read_choice(&mut fields)?),
         KIND_DROPPED => {
             let place = read_drop_place(&mut fields)?;
             let left_out = fields.u16()?;

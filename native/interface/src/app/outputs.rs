@@ -107,6 +107,7 @@ impl App {
             Output::MoveTab { from, to } => ToCore::MoveTab { from: u8::try_from(from).ok()?, to: u8::try_from(to).ok()? },
             Output::NewTab => ToCore::NewTab,
             Output::OpenFile(kind) => ToCore::OpenFile { kind, parent: self.window_for_dialog() },
+            Output::Picture(choice) => ToCore::Picture(choice),
             Output::Navigate(address) => {
                 if interface_core::browser::names_a_file(&address) {
                     self.declare(core::slice::from_ref(&address));

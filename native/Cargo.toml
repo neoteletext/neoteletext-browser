@@ -76,6 +76,11 @@ neoteletext-transport = { git = "file:///Users/andrewstuart/devel/neoteletext-en
 # record (`interaction.md`).
 neoteletext-input = { git = "file:///Users/andrewstuart/devel/neoteletext-engine", rev = "e950dcbcf4035839c2e33b712187788d8cd7b370", default-features = false }
 neoteletext-audio-mix = { git = "file:///Users/andrewstuart/devel/neoteletext-engine", rev = "e950dcbcf4035839c2e33b712187788d8cd7b370" }
+# The engine's picture converter (its DEC-2325): a picture file's bytes to a
+# teletext page, run only in a decoder started to convert one picture
+# (the Tools menu, docs/picture-tools.md). It brings the image crate's five
+# decoders, approved by the engine's DEC-2142.
+neoteletext-picture = { git = "file:///Users/andrewstuart/devel/neoteletext-engine", rev = "e950dcbcf4035839c2e33b712187788d8cd7b370" }
 # Apache-2.0: the operating systems' audio output (Core Audio on macOS),
 # without unsafe code of ours (decision 37).
 cpal = "=0.18.2"

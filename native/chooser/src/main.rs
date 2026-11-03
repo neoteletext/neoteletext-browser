@@ -51,8 +51,24 @@ fn title(kind: ChooseKind) -> &'static str {
         ChooseKind::File => "Open File",
         ChooseKind::Folder => "Open Folder",
         ChooseKind::Bookmarks => "Import Bookmarks",
+        ChooseKind::Picture => "Convert Picture to Teletext",
+        ChooseKind::SaveTti => "Save Page as TTI",
+        ChooseKind::SaveT42 => "Save Page as T42",
     }
 }
+
+/// The name a save dialog offers, by kind: the converted page's.
+fn save_name(kind: ChooseKind) -> &'static str {
+    if kind == ChooseKind::SaveT42 { "picture.t42" } else { "picture.tti" }
+}
+
+/// The picture formats the engine's converter reads (its DEC-2114), by
+/// their file name endings, for the picture dialog's filter. The broker
+/// reads a chosen file only if it starts as one of them.
+const PICTURE_ENDINGS: [&str; 6] = ["png", "jpg", "jpeg", "gif", "bmp", "webp"];
+/// The same formats by their media types, for the desktop portal.
+#[cfg(target_os = "linux")]
+const PICTURE_TYPES: [&str; 5] = ["image/png", "image/jpeg", "image/gif", "image/bmp", "image/webp"];
 
 /// The system's dialog on macOS and Windows, owned on Windows by `parent`:
 /// `win32:` and a window's handle in hexadecimal, or nothing. macOS centres
@@ -70,21 +86,44 @@ fn choose(kind: ChooseKind, parent: &str, folder: Option<&Path>) -> Result<Optio
     {
         dialog = dialog.set_parent(&window);
     }
-    Ok(if kind == ChooseKind::Folder { dialog.pick_folder() } else { dialog.pick_file() })
+    if kind == ChooseKind::Picture {
+        dialog = dialog.add_filter("Pictures", &PICTURE_ENDINGS);
+    }
+    Ok(match kind {
+        ChooseKind::Folder => dialog.pick_folder(),
+        ChooseKind::SaveTti | ChooseKind::SaveT42 => dialog.set_file_name(save_name(kind)).save_file(),
+        ChooseKind::File | ChooseKind::Bookmarks | ChooseKind::Picture => dialog.pick_file(),
+    })
 }
 
 /// The desktop portal's dialog on Linux, parented by `parent`: `x11:` and a
 /// window's number in hexadecimal, or nothing.
 #[cfg(target_os = "linux")]
 fn choose(kind: ChooseKind, parent: &str, folder: Option<&Path>) -> Result<Option<PathBuf>, String> {
-    use ashpd::desktop::file_chooser::OpenFileRequest;
+    use ashpd::desktop::file_chooser::{FileFilter, OpenFileRequest, SaveFileRequest};
     use ashpd::{Error, WindowIdentifier};
 
     let runtime = tokio::runtime::Builder::new_current_thread().enable_all().build().map_err(|error| error.to_string())?;
+    let identifier =
+        parent.strip_prefix("x11:").and_then(|number| u32::from_str_radix(number, 16).ok()).map(|window| WindowIdentifier::from_xid(u64::from(window)));
+    if kind.is_save() {
+        return runtime.block_on(async {
+            let mut request = SaveFileRequest::default().title(title(kind)).current_name(save_name(kind)).identifier(identifier);
+            if let Some(folder) = folder {
+                request = request.current_folder(folder).map_err(|error| error.to_string())?;
+            }
+            match request.send().await.map_err(|error| error.to_string())?.response() {
+                Ok(files) => Ok(files.uris().first().and_then(|uri| path_of_uri(uri.as_str()))),
+                Err(Error::Response(ashpd::desktop::ResponseError::Cancelled)) => Ok(None),
+                Err(error) => Err(error.to_string()),
+            }
+        });
+    }
     runtime.block_on(async {
-        let mut request = OpenFileRequest::default().title(title(kind)).directory(kind == ChooseKind::Folder).multiple(false);
-        if let Some(window) = parent.strip_prefix("x11:").and_then(|number| u32::from_str_radix(number, 16).ok()) {
-            request = request.identifier(WindowIdentifier::from_xid(u64::from(window)));
+        let mut request = OpenFileRequest::default().title(title(kind)).directory(kind == ChooseKind::Folder).multiple(false).identifier(identifier);
+        if kind == ChooseKind::Picture {
+            let types = PICTURE_TYPES.iter().fold(FileFilter::new("Pictures"), |filter, kind| filter.mimetype(kind));
+            request = request.filter(PICTURE_ENDINGS.iter().fold(types, |filter, ending| filter.glob(&format!("*.{ending}"))));
         }
         if let Some(folder) = folder {
             request = request.current_folder(folder).map_err(|error| error.to_string())?;
@@ -215,6 +254,8 @@ mod tests {
     fn each_kind_has_its_own_title() {
         assert_eq!(title(ChooseKind::File), "Open File");
         assert_eq!(title(ChooseKind::Bookmarks), "Import Bookmarks");
+        assert_eq!(title(ChooseKind::Picture), "Convert Picture to Teletext");
+        assert_eq!((save_name(ChooseKind::SaveTti), save_name(ChooseKind::SaveT42)), ("picture.tti", "picture.t42"));
     }
 
     /// REQ-754: the portal's standard key decides when it is answered,

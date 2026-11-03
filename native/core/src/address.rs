@@ -60,7 +60,7 @@ impl Address {
     /// Whether this address's places follow a `#`: a file's, whose path names
     /// a real file (DEC-1694 rule 10), and the built-in page's.
     fn places_in_fragment(&self) -> bool {
-        self.file.is_some() || self.channel == START_PAGE
+        self.file.is_some() || self.channel == START_PAGE || self.channel == PICTURE_PAGE
     }
 
     /// The address as `place` says: what it names, or nothing.
@@ -156,6 +156,20 @@ impl Address {
         self.file.is_none() && self.channel_text() == START_PAGE
     }
 
+    /// Whether this is the page the Tools menu's picture converter made
+    /// (`docs/picture-tools.md`).
+    #[must_use]
+    pub fn is_picture(&self) -> bool {
+        self.file.is_none() && self.channel_text() == PICTURE_PAGE
+    }
+
+    /// Whether this is one of the browser's own `neoteletext:` pages, which
+    /// need no network and are never kept in history.
+    #[must_use]
+    pub fn is_built_in(&self) -> bool {
+        self.is_start_page() || self.is_picture()
+    }
+
     /// Whether `other` is the same channel, whatever page each names.
     #[must_use]
     pub fn same_channel(&self, other: &Self) -> bool {
@@ -170,6 +184,12 @@ pub const START_PAGE: &str = "neoteletext:home";
 /// (neoteletext-common's DEC-1652). `START_PAGE` stays the built-in page
 /// that needs no network, for private tabs and when this cannot be opened.
 pub const HOME_CHANNEL: &str = "https://app.neottx.com/home/";
+/// The page the Tools menu's picture converter made, while the browser runs
+/// (`docs/picture-tools.md`): its bytes are the trusted core's, from a
+/// confined decoder, and are not kept.
+pub const PICTURE_PAGE: &str = "neoteletext:picture";
+/// What the strip names the converted page's channel.
+const PICTURE_NAME: &str = "Converted picture";
 const BUILT_IN_SCHEME: &str = "neoteletext:";
 const SCHEME_SEPARATOR: &str = "://";
 const FILE_SCHEME: &str = "file://";
@@ -306,18 +326,23 @@ fn path_to_url(path: &Path) -> String {
     if cfg!(windows) { format!("/{}", text.replace('\\', "/")) } else { text }
 }
 
-/// `neoteletext:home`, with a page after `#` if one is named: any other
-/// `neoteletext:` address is refused (requirement 19.7).
+/// `neoteletext:home` or `neoteletext:picture`, with a page after `#` if
+/// one is named: any other `neoteletext:` address is refused (requirement
+/// 19.7).
 fn parse_built_in(typed: &str) -> Result<Address, String> {
     let (channel, fragment) = typed.split_once(FRAGMENT).map_or((typed, None), |(channel, fragment)| (channel, Some(fragment)));
-    if !channel.eq_ignore_ascii_case(START_PAGE) {
-        return Err("The only neoteletext: address is neoteletext:home".into());
-    }
+    let (name, host) = if channel.eq_ignore_ascii_case(START_PAGE) {
+        (START_PAGE, crate::start_page::NAME)
+    } else if channel.eq_ignore_ascii_case(PICTURE_PAGE) {
+        (PICTURE_PAGE, PICTURE_NAME)
+    } else {
+        return Err("The only neoteletext: addresses are neoteletext:home and neoteletext:picture".into());
+    };
     let place = fragment.and_then(Place::read).filter(|place| matches!(place, Place::Page { .. }));
     let built_in = Address {
         text: String::new(),
-        channel: START_PAGE.to_owned(),
-        host: crate::start_page::NAME.to_owned(),
+        channel: name.to_owned(),
+        host: host.to_owned(),
         encrypted: false,
         file: None,
         page: None,
@@ -326,7 +351,7 @@ fn parse_built_in(typed: &str) -> Result<Address, String> {
         contents: false,
     };
     let built_in = built_in.placed(place);
-    let text = built_in.page.map_or_else(|| START_PAGE.to_owned(), |page| format!("{START_PAGE}{FRAGMENT}{page:03X}"));
+    let text = built_in.page.map_or_else(|| name.to_owned(), |page| format!("{name}{FRAGMENT}{page:03X}"));
     Ok(Address { text, ..built_in })
 }
 

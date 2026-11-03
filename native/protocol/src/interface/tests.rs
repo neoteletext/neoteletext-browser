@@ -144,6 +144,7 @@ fn every_message_to_the_interface_round_trips() {
         },
         ToInterface::Strip(strip()),
         ToInterface::Channel(channel()),
+        ToInterface::PictureStatus(interface_core::picture::PictureStatus { converted: true, text: "Level 3.5: 31 colours".into() }),
         ToInterface::Page { channel: 9, page: 0x899, title: "Clock".into() },
         ToInterface::SubPageCount { channel: 9, page: 0x210, count: 8_190 },
         ToInterface::SubPageRows {
@@ -223,6 +224,10 @@ fn every_intent_round_trips() {
         ToCore::CloseWindow,
         ToCore::NewTab,
         ToCore::OpenFile { kind: OpenKind::Folder, parent: "x11:4a".into() },
+        ToCore::OpenFile { kind: OpenKind::Picture, parent: String::new() },
+        ToCore::OpenFile { kind: OpenKind::SavePictureTti, parent: String::new() },
+        ToCore::OpenFile { kind: OpenKind::SavePictureT42, parent: String::new() },
+        ToCore::Picture(interface_core::picture::PictureChoice { level: 1, fit: 2, align: 0, background: 4, hold_mosaics: false }),
         ToCore::Dropped { files: vec!["/a/b.tti".into(), "/c.t42".into()], place: DropPlace::Before(3), left_out: 0 },
         ToCore::Dropped { files: Vec::new(), place: DropPlace::NewTabs, left_out: 7 },
         ToCore::FromSystem(vec!["file:///a.tti".into(), "neottx://https://a.example/".into()]),

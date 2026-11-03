@@ -23,6 +23,8 @@ pub enum Mode {
     Channel(usize),
     /// To read one bookmark file (decision 71).
     Bookmarks,
+    /// To convert one picture to a page (`docs/picture-tools.md`).
+    Picture,
 }
 
 /// The mode the trusted core asked for: a channel's store size,
@@ -37,7 +39,8 @@ pub fn mode() -> Result<Mode, String> {
         (None, _) => Ok(Mode::Channel(FIRST_STORE_PAGES)),
         (Some("--store-pages"), Some(Ok(pages))) if (FIRST_STORE_PAGES..=MAX_STORE_PAGES).contains(&pages) => Ok(Mode::Channel(pages)),
         (Some("--bookmarks"), None) => Ok(Mode::Bookmarks),
-        _ => Err(format!("usage: neoteletext-decoder [--store-pages {FIRST_STORE_PAGES} to {MAX_STORE_PAGES} | --bookmarks]")),
+        (Some("--picture"), None) => Ok(Mode::Picture),
+        _ => Err(format!("usage: neoteletext-decoder [--store-pages {FIRST_STORE_PAGES} to {MAX_STORE_PAGES} | --bookmarks | --picture]")),
     }
 }
 
@@ -72,6 +75,37 @@ pub fn read_bookmarks() -> Result<(), ProtocolError> {
         }
         Err(not_read) => eprintln!("neoteletext-decoder: not a bookmark file this reader reads: {not_read:?}"),
     }
+    output.flush()?;
+    Ok(())
+}
+
+/// Converts one picture the trusted core sends: its choices, then the
+/// picture as data to its end, at most the engine's `MAX_INPUT_BYTES`; then
+/// sends the page made, or why there is none, and ends.
+///
+/// # Errors
+/// When the pipe fails, or the trusted core sends anything else.
+pub fn convert_picture() -> Result<(), ProtocolError> {
+    let mut input = BufReader::new(io::stdin().lock());
+    let Some(ToDecoder::Picture(choice)) = read_from_core(&mut input)? else {
+        return Err(ProtocolError::BadValue("a picture converter takes its choices first"));
+    };
+    let mut picture: Vec<u8> = Vec::new();
+    loop {
+        match read_from_core(&mut input)? {
+            Some(ToDecoder::Data(bytes)) => {
+                if picture.len().saturating_add(bytes.len()) > neoteletext_picture::MAX_INPUT_BYTES {
+                    return Err(ProtocolError::TooLong(picture.len().saturating_add(bytes.len())));
+                }
+                picture.extend_from_slice(&bytes);
+            }
+            Some(ToDecoder::End) => break,
+            Some(_) => return Err(ProtocolError::BadValue("a picture converter takes only data after its choices")),
+            None => return Ok(()),
+        }
+    }
+    let mut output = BufWriter::new(io::stdout().lock());
+    write_to_core(&mut output, &crate::picture::converted(&picture, choice))?;
     output.flush()?;
     Ok(())
 }
@@ -145,6 +179,9 @@ pub fn run(store_pages: usize) -> Result<(), ProtocolError> {
                 continue;
             }
             ToDecoder::Close => return Ok(()),
+            // A channel's decoder converts no picture: the trusted core
+            // sends choices only to one started with `--picture`.
+            ToDecoder::Picture(_) => return Err(ProtocolError::BadValue("a channel's decoder converts no picture")),
             ToDecoder::Region(region) => {
                 engine.set_region(region);
                 continue;

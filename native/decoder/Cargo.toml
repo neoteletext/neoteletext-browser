@@ -42,6 +42,9 @@ neoteletext-formats.workspace = true
 # REQ-1494): a pushed sub-page's Link Extension links.
 neoteletext-web.workspace = true
 neoteletext-image.workspace = true
+# A picture converted for the Tools menu, in a decoder started for it alone
+# (`--picture`), never in a channel's.
+neoteletext-picture.workspace = true
 interface-core.workspace = true
 protocol.workspace = true
 

@@ -168,6 +168,9 @@ pub enum ToInterface {
     },
     /// Close the window of this number: its tabs are gone.
     CloseWindow(u32),
+    /// What the trusted core says of the Tools menu's picture converter
+    /// (`docs/picture-tools.md`), for its panel.
+    PictureStatus(interface_core::picture::PictureStatus),
     /// The browser is closing: the interface ends.
     Close,
 }
@@ -212,6 +215,9 @@ pub enum ToCore {
         /// nothing. The interface's word: a false one only misplaces it.
         parent: String,
     },
+    /// Strip input: the picture panel's choices; the trusted core converts
+    /// the chosen picture again with them (`docs/picture-tools.md`).
+    Picture(interface_core::picture::PictureChoice),
     /// Strip input: files dropped on a window, each already declared to the
     /// broker (REQ-1700).
     Dropped {

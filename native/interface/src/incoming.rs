@@ -111,6 +111,8 @@ pub enum Incoming {
     Sounding(BTreeSet<u32>),
     /// The settings, for the panel of the trusted strip.
     Settings(interface_core::settings::SettingsView),
+    /// What the trusted core says of the picture converter.
+    PictureStatus(interface_core::picture::PictureStatus),
     /// Updates, for the settings panel.
     Update(interface_core::settings::UpdateView),
     /// New entries for the developer console.
