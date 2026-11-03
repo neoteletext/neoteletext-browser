@@ -11,7 +11,7 @@ use std::os::fd::{AsRawFd as _, OwnedFd};
 use std::os::unix::net::UnixStream;
 use std::process::{Command, Stdio};
 
-use crate::broker::CHANNEL_VARIABLE;
+use crate::broker::{CHANNEL_VARIABLE, PARENT_VARIABLE};
 use crate::{Process, Report, Role, Spawn};
 
 mod channel;
@@ -51,6 +51,7 @@ pub(crate) fn spawn(spawn: &Spawn<'_>) -> io::Result<Process> {
     for (name, value) in spawn.environment {
         command.env(name, value);
     }
+    command.env(PARENT_VARIABLE, std::process::id().to_string());
     // The interface's own channel to the broker (DEC-1551 item 3): its end
     // kept across the start, its number named in its environment.
     let channel = if spawn.role == Role::Interface {
@@ -81,6 +82,7 @@ pub(crate) fn start_core(spawn: &Spawn<'_>) -> io::Result<(Process, Channel)> {
     for (name, value) in spawn.environment {
         command.env(name, value);
     }
+    command.env(PARENT_VARIABLE, std::process::id().to_string());
     let child = command.stdin(Stdio::from(OwnedFd::from(theirs))).stdout(Stdio::null()).stderr(Stdio::inherit()).spawn()?;
     #[cfg(target_os = "macos")]
     let report = Report { layers: vec![String::from("sandbox-exec")] };
