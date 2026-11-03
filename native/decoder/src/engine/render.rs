@@ -365,7 +365,8 @@ impl Engine {
         };
         let mut buffer = IndexBuffer { format: IndexFormat::Bits8, data: &mut indices, stride: usize::from(PAGE_WIDTH) };
         render_screen(&grid, rows, &GLYPHS, render, &mut buffer).ok()?;
-        let palette: Vec<[u8; 3]> = colour_map_palette(&grid.colour_map, PICTURE).iter().map(|colour| [colour.r, colour.g, colour.b]).collect();
+        let palette: Vec<[u8; 3]> =
+            colour_map_palette(&grid.colour_map, &grid.receiver_colours, PICTURE).iter().map(|colour| [colour.r, colour.g, colour.b]).collect();
         #[cfg(feature = "links")]
         let links = {
             let (candidates, numbers) = links::find(&grid, &palette, self.lines.get(page, subcode));

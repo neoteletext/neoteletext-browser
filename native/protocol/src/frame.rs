@@ -1,5 +1,5 @@
 //! A page image as the trusted core sends it to the interface (requirement
-//! 9.3, decision 61): its palette of at most 32 colours, the colour of the
+//! 9.3, decision 61): its palette of at most 40 colours, the colour of the
 //! screen around it, and its dots in the smallest of three forms. Every
 //! dot is an index into the palette, so colours stay exact.
 //!
@@ -24,9 +24,12 @@ use interface_core::canvas::{PAGE_HEIGHT, PAGE_WIDTH};
 #[cfg(test)]
 mod tests;
 
-/// The Colour Map of Presentation Levels 2.5 and 3.5: 32 entries (EN 300
-/// 706 clause 12.4).
-pub const MAX_COLOURS: usize = 32;
+/// The palette of the engine's resolved colour mode: the Colour Map of
+/// Presentation Levels 2.5 and 3.5, 32 entries (EN 300 706 clause 12.4),
+/// then the receiver's own eight colours, in which the engine draws the
+/// status area and a receiver-drawn row 24 whatever the page's Colour Map
+/// holds (the engine's DEC-2464).
+pub const MAX_COLOURS: usize = neoteletext_core::consts::RESOLVED_COLOURS;
 /// The dots of a page, 480 by 500.
 pub const PAGE_DOTS: usize = PAGE_WIDTH as usize * PAGE_HEIGHT as usize;
 /// Red, green and blue: the bytes of one palette entry.
@@ -67,7 +70,7 @@ pub struct Image {
 /// What is wrong with an image.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum FrameError {
-    /// The palette is empty or larger than 32 colours.
+    /// The palette is empty or larger than [`MAX_COLOURS`].
     Palette,
     /// The screen colour or a dot lies outside the palette.
     Index,
@@ -85,7 +88,7 @@ pub enum FrameError {
 impl core::fmt::Display for FrameError {
     fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         formatter.write_str(match self {
-            Self::Palette => "palette of no colours or more than 32",
+            Self::Palette => "palette of no colours or more than the resolved mode's",
             Self::Index => "an index outside the palette",
             Self::Form => "an unknown form",
             Self::Shape => "dots that do not fill the page",

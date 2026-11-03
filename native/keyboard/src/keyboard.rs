@@ -183,7 +183,7 @@ fn arguments(given: impl IntoIterator<Item = String>) -> Result<Arguments, Strin
     while let Some(argument) = given.next() {
         match argument.as_str() {
             "--pin" => read.pin = true,
-            "--proxy" => read.proxy = Some(Proxy::parse(&given.next().ok_or("--proxy needs an address")?)?),
+            "--proxy" => read.proxy = Some(Proxy::parse(&given.next().ok_or("--proxy needs an address")?).map_err(|error| error.to_string())?),
             other if other.starts_with("--") => return Err(format!("{other}: not understood")),
             _ => read.relay = argument,
         }

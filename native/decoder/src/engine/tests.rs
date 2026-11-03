@@ -430,7 +430,7 @@ fn pages_arrive_with_titles_and_render_in_teletext_colours() {
     assert_eq!(arrived, [(0x100, "RED HEADLINES".to_owned()), (0x101, "Sport results".to_owned())]);
     let page = engine.render(0x100).unwrap();
     assert_eq!(page.indices.len(), PAGE_DOTS);
-    assert!(page.palette.len() <= 32);
+    assert!(page.palette.len() <= protocol::decoder::MAX_COLOURS);
     assert!(page.indices.iter().all(|&index| usize::from(index) < page.palette.len()));
     // Some dot of row 1 is drawn in red: alpha-red is code 0x01 (Table 26).
     let row_one = &page.indices[usize::from(PAGE_WIDTH) * 20..usize::from(PAGE_WIDTH) * 40];
@@ -481,7 +481,7 @@ fn a_page_redefines_its_colour_map() {
     let scaled = |colour: Rgb12| [colour.red() * 17, colour.green() * 17, colour.blue() * 17];
 
     let remapped = engine.render(0x100).unwrap();
-    assert_eq!(remapped.palette.len(), 32);
+    assert_eq!(remapped.palette.len(), neoteletext_core::consts::RESOLVED_COLOURS);
     assert_eq!(remapped.palette[CLUT_2_RED], scaled(Rgb12::new(1, 3, 0xF)), "CLUT 2 entry 1 as X/28/0 sent it");
     assert!(row_one(&remapped).contains(&u8::try_from(CLUT_2_RED).unwrap()), "red drawn from CLUT 2");
     assert_eq!(remapped.palette[1], [0xFF, 0, 0], "CLUT 0 is fixed below Level 3.5's X/28/4");
@@ -490,6 +490,18 @@ fn a_page_redefines_its_colour_map() {
     assert_eq!(redefined.palette[1], scaled(Rgb12::new(1, 9, 0xF)), "CLUT 0 entry 1 as X/28/4 sent it");
     assert!(row_one(&redefined).contains(&1), "red is CLUT 0 entry 1, redefined");
     assert_eq!(redefined.palette[TRANSPARENT], [0, 0, 0], "CLUT 1 entry 0 stays transparent, shown as the picture behind");
+    // The engine's DEC-2464: after the Colour Map come the receiver's own
+    // eight colours, Table 30's CLUT 0, whatever X/28/4 made of the page's,
+    // so the status area and a receiver-drawn row 24 keep their colours.
+    let receiver = usize::from(neoteletext_core::consts::RECEIVER_COLOUR_BASE);
+    for page in [&remapped, &redefined] {
+        assert_eq!(page.palette.len(), neoteletext_core::consts::RESOLVED_COLOURS);
+        assert_eq!(
+            page.palette[receiver..],
+            neoteletext_image::palette::CLUT0.map(|colour| [colour.r, colour.g, colour.b]),
+            "the receiver's colours are Table 30's CLUT 0"
+        );
+    }
 }
 
 /// A page in TTI whose X/26 is a Full Screen Colour triplet of `colour`, as

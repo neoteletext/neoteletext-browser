@@ -32,9 +32,9 @@ mod tests;
 mod view;
 
 pub use bookmarks::{BookmarkEntry, MAX_BOOKMARK_ENTRIES, MAX_BOOKMARK_FILE, MAX_BOOKMARK_NAME, NETSCAPE_DOCTYPE, is_netscape_bookmarks};
-// The Colour Map of Presentation Levels 2.5 and 3.5 (EN 300 706 clause
-// 12.4): every page is rendered in the engine's resolved colour mode,
-// which indexes it.
+// Every page is rendered in the engine's resolved colour mode: the Colour
+// Map of Presentation Levels 2.5 and 3.5 (EN 300 706 clause 12.4) and the
+// receiver's eight colours after it (the engine's DEC-2464).
 pub use crate::frame::MAX_COLOURS;
 pub use frame::write_frame_to_core;
 pub use view::View;

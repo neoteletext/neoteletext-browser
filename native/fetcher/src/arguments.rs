@@ -28,7 +28,7 @@ pub fn arguments(given: impl IntoIterator<Item = String>) -> Result<Arguments, S
         let value = given.next().ok_or_else(|| format!("{argument} needs a value"))?;
         match argument.as_str() {
             "--allow-local" => read.allowed.push(value.parse::<IpAddr>().map_err(|_| format!("{value}: not an IP address"))?),
-            "--proxy" if read.proxy.is_none() => read.proxy = Some(Proxy::parse(&value)?),
+            "--proxy" if read.proxy.is_none() => read.proxy = Some(Proxy::parse(&value).map_err(|error| error.to_string())?),
             _ => return Err(format!("{argument}: not understood")),
         }
     }

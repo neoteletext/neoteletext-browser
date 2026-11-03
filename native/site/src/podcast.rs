@@ -9,7 +9,7 @@
 
 use std::time::Instant;
 
-use neoteletext_audio::encode::{Command, Sound, packets};
+use neoteletext_audio::encode::{Command, LiveEncoder, Sound, packets};
 use neoteletext_audio::{Codec, IMA_BLOCK_LARGE};
 
 mod wave;
@@ -54,15 +54,15 @@ impl Episode {
 
 /// A listener's place in the episode.
 pub struct Player {
-    /// The live sound now streaming, if one has started.
-    sound: Option<Sound>,
+    /// The encoder of the live sound now streaming, if one has started: it
+    /// keeps the IMA ADPCM state and the next block's number from one block
+    /// to the next (the engine's DEC-2467).
+    encoder: Option<LiveEncoder>,
     generation: u16,
     /// Samples sent so far; the next block starts here.
     sent: usize,
     /// When playing: when it started, and where it was then.
     playing: Option<(Instant, usize)>,
-    /// The live sound's next block number.
-    next_block: u16,
     /// The last command's number on the podcast's channel.
     sequence: u16,
 }
@@ -70,7 +70,7 @@ pub struct Player {
 impl Player {
     /// A player at the start, paused.
     pub fn new() -> Self {
-        Self { sound: None, generation: 0, sent: 0, playing: None, next_block: 0, sequence: 0 }
+        Self { encoder: None, generation: 0, sent: 0, playing: None, sequence: 0 }
     }
 
     /// Whether it is playing.
@@ -114,8 +114,8 @@ impl Player {
         self.generation = self.generation.wrapping_add(1);
         let Ok(sound) = Sound::live(HANDLE, self.generation, Codec::ImaAdpcm, episode.rate, IMA_BLOCK_LARGE) else { return Vec::new() };
         let Ok(object) = sound.object_record() else { return Vec::new() };
-        self.sound = Some(sound);
-        self.next_block = 0;
+        let Ok(encoder) = LiveEncoder::new(&sound, 0) else { return Vec::new() };
+        self.encoder = Some(encoder);
         self.playing = Some((Instant::now(), self.sent));
         let mut records = vec![object, self.command(PLAY)];
         records.extend(self.due(episode));
@@ -168,17 +168,19 @@ impl Player {
 
     /// The blocks now due, as records.
     fn due(&mut self, episode: &Episode) -> Vec<Vec<u8>> {
-        let (Some((started, at)), Some(sound)) = (self.playing, &self.sound) else { return Vec::new() };
+        let (Some((started, at)), Some(encoder)) = (self.playing, &mut self.encoder) else { return Vec::new() };
         let ahead = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX).saturating_add(LEAD_MS);
         let due = at.saturating_add(usize::try_from(ahead.saturating_mul(u64::from(episode.rate)) / MILLISECONDS_PER_SECOND).unwrap_or(usize::MAX));
-        let block = usize::try_from(sound.samples_per_block()).unwrap_or(1).max(1);
+        let block = usize::try_from(encoder.sound().samples_per_block()).unwrap_or(1).max(1);
         let mut records = Vec::new();
         // Whole blocks only: a block is sent once all of it is due, and the
-        // last, part one is padded with silence by `live_records`.
+        // last, part one is padded with silence by `LiveEncoder::finish`.
         while self.sent < episode.samples.len() && self.sent.saturating_add(block) <= due {
             let end = self.sent.saturating_add(block).min(episode.samples.len());
-            records.extend(sound.live_records(self.next_block, episode.samples.get(self.sent..end).unwrap_or_default()));
-            self.next_block = self.next_block.wrapping_add(1);
+            records.extend(encoder.records(episode.samples.get(self.sent..end).unwrap_or_default()));
+            if end == episode.samples.len() {
+                records.extend(encoder.finish());
+            }
             self.sent = end;
         }
         records

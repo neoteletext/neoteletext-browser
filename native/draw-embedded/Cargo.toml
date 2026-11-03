@@ -9,6 +9,8 @@ publish.workspace = true
 
 [dependencies]
 interface-core.workspace = true
+# The resolved colour mode's palette size, `neoteletext_core::consts::RESOLVED_COLOURS`.
+neoteletext-core.workspace = true
 embedded-graphics.workspace = true
 libm.workspace = true
 

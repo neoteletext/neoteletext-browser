@@ -105,7 +105,7 @@ impl Https {
                     // the proxy's answer; the engine returns them, and they
                     // are read first (finding F-87).
                     let early = match &self.proxy {
-                        Some(proxy) => proxy.open_tunnel(&mut stream, &self.host, self.port)?,
+                        Some(proxy) => proxy.open_tunnel(&mut stream, &self.host, self.port).map_err(|error| error.to_string())?,
                         None => Vec::new(),
                     };
                     return Ok(Tunnel { early, at: 0, stream });
