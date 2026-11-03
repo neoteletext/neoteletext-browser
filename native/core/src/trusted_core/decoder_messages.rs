@@ -21,6 +21,8 @@ impl Core {
                     decoder.hear();
                 }
             }
+            // Published in the channel's Log tab (the engine's REQ-AUD-017).
+            FromDecoder::AudioReceiver(receiver) => self.note(Level::Info, Some(channel), &neoteletext::console::audio_receiver_line(&receiver)),
             FromDecoder::StoreFull => self.grow_decoder(channel)?,
             #[cfg(feature = "interaction")]
             FromDecoder::Missing(pages) => self.wall_missing(channel, pages)?,

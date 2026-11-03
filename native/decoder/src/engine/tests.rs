@@ -1056,3 +1056,14 @@ fn a_key_to_a_hexadecimal_page_is_kept_and_a_page_without_links_says_so() {
     let none = engine_with(b"PN,10000\nSC,0000\nPS,8000\nOL,1,INDEX\n").render_at(0x100, 0).unwrap().links.fastext;
     assert!(!none.linked);
 }
+
+/// The engine's REQ-AUD-017: the receiver a decoder builds reports, through
+/// `Receiver::limits`, exactly the sizes it was built with, and they meet
+/// audio Level B's minimum, the least a desktop receiver holds.
+#[test]
+fn the_audio_receiver_reports_its_sizes_and_meets_level_b() {
+    let limits = Engine::new().audio_limits();
+    assert_eq!(limits, ReceiverLimits { store_bytes: AUDIO_ARENA, objects: AUDIO_OBJECTS, records_in_flight: AUDIO_RECORDS });
+    assert_eq!(limits, AUDIO_LIMITS);
+    assert!(limits.meets(&LEVEL_B_MINIMUM), "{limits:?} against {LEVEL_B_MINIMUM:?}");
+}

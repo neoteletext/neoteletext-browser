@@ -370,6 +370,22 @@ mod tests {
         assert!(healthy_once_settled(&mut core), "a decoder that said it was confined is not counted");
     }
 
+    /// The engine's REQ-AUD-017: a port publishes its audio receiver's
+    /// figures. What a channel's decoder reports of its receiver is shown
+    /// in that channel's Log tab.
+    #[test]
+    fn a_decoders_audio_receiver_is_published_in_its_log() {
+        let mut core = test_core();
+        core.console.set_open(true);
+        let receiver = protocol::decoder::AudioReceiver { store_bytes: 4_194_304, objects: 256, records_in_flight: 8 };
+        core.decoded(1, protocol::decoder::FromDecoder::AudioReceiver(receiver)).unwrap();
+        let lines: Vec<String> = core.console.updates(Some(1)).into_iter().flat_map(|update| update.entries).map(|entry| entry.text).collect();
+        assert!(
+            lines.contains(&"decoder: audio receiver: a store of 4,194,304 bytes, 256 objects, 8 records in flight".to_owned()),
+            "the receiver's figures in the channel's log: {lines:?}"
+        );
+    }
+
     /// Finding F-30: a channel whose decoder stops reading more than
     /// `MAX_DECODER_RESTARTS` times in `DECODER_RESTART_WINDOW` is given up
     /// until it is reloaded: no further decoder is started for it. Before

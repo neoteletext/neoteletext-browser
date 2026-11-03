@@ -7,6 +7,7 @@ use std::time::Instant as Clock;
 use interface_core::canvas::{PAGE_HEIGHT, PAGE_WIDTH};
 use interface_core::channel::PAGES;
 use neoteletext_audio::receiver::Receiver;
+use neoteletext_audio::{LEVEL_B_MINIMUM, ReceiverLimits};
 use neoteletext_core::acq::{Decoder, EnhancementPacket, EnhancementStore, EnhancementSubPage, StoredPage};
 use neoteletext_core::config::Config;
 use neoteletext_core::consts::COLUMNS;
@@ -70,6 +71,11 @@ const FASTEXT_ROW: usize = 24;
 const AUDIO_ARENA: usize = 4 * 1024 * 1024;
 const AUDIO_OBJECTS: usize = 256;
 const AUDIO_RECORDS: usize = 8;
+/// What the receiver built from these holds.
+const AUDIO_LIMITS: ReceiverLimits = ReceiverLimits { store_bytes: AUDIO_ARENA, objects: AUDIO_OBJECTS, records_in_flight: AUDIO_RECORDS };
+// REQ-AUD-017: a desktop receiver, audio Level B, holds at least that
+// level's minimum, which the engine names once (its DEC-2372).
+const _: () = assert!(AUDIO_LIMITS.meets(&LEVEL_B_MINIMUM), "the audio receiver is smaller than audio Level B's minimum");
 
 /// A display page as stored: its number, its 25 rows of 7-bit codes, and
 /// its title.
@@ -333,6 +339,13 @@ impl Engine {
     #[must_use]
     pub fn next_audio_tick_ms(&self) -> Option<u64> {
         self.audio.next_tick_ms()
+    }
+
+    /// What the channel's audio receiver holds, as it reports it, for the
+    /// browser to publish (the engine's REQ-AUD-017).
+    #[must_use]
+    pub fn audio_limits(&self) -> ReceiverLimits {
+        self.audio.limits()
     }
 
     /// The pages whose content changed since they were reported, once each.

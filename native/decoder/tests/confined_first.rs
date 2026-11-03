@@ -31,8 +31,21 @@ fn a_decoder_says_it_is_confined_before_it_reads_anything() {
     // ends, with no deadline.
     drop(process.stdin.take());
     let output = process.stdout.take().unwrap();
-    let first = read_from_decoder(&mut BufReader::new(output)).map_err(|error| error.to_string());
+    let mut output = BufReader::new(output);
+    let first = read_from_decoder(&mut output).map_err(|error| error.to_string());
+    // Then what its audio receiver holds, for the console (the engine's
+    // REQ-AUD-017): at least audio Level B's minimum.
+    let second = read_from_decoder(&mut output).map_err(|error| error.to_string());
     let _ = process.kill();
     let _ = process.wait();
     assert_eq!(first, Ok(Some(FromDecoder::Confined)), "its first message, with no data given");
+    let Ok(Some(FromDecoder::AudioReceiver(receiver))) = second else { panic!("its second message: {second:?}") };
+    let minimum = neoteletext_audio::LEVEL_B_MINIMUM;
+    let figure = |value: usize| u32::try_from(value).unwrap();
+    assert!(
+        receiver.store_bytes >= figure(minimum.store_bytes)
+            && receiver.objects >= figure(minimum.objects)
+            && receiver.records_in_flight >= figure(minimum.records_in_flight),
+        "{receiver:?} against {minimum:?}"
+    );
 }

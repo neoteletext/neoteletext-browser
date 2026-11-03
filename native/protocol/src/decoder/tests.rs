@@ -46,6 +46,7 @@ fn every_kind_round_trips() {
         FromDecoder::Arrived { page: 0x100, title: "Headlines".into() },
         FromDecoder::Updated { page: 0x302 },
         FromDecoder::Confined,
+        FromDecoder::AudioReceiver(AudioReceiver { store_bytes: 4_194_304, objects: 256, records_in_flight: 8 }),
         FromDecoder::StoreFull,
         FromDecoder::Missing(vec![0x100, 0x899]),
         FromDecoder::Frame { page: 0x123, palette: vec![[0, 0, 0], [255, 255, 255]], screen: 1, indices },

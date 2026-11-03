@@ -13,9 +13,10 @@ use crate::subpages::{SubPageRange, SubPageRows, SubPageStep};
 use crate::{Fields, MAX_PAGE_TITLE, ProtocolError, push_count, push_raw_text, raw_text, read_frame, write_frame};
 use interface_core::controls::SUBPAGE_ROWS;
 use kinds::{
-    KIND_ARRIVED, KIND_ASK_SUBPAGE_ROWS, KIND_AUDIO, KIND_BOOKMARK_FOLDER, KIND_BOOKMARK_FOLDER_END, KIND_BOOKMARK_LINK, KIND_BOOKMARKS_READ, KIND_CHANNEL_LOG,
-    KIND_CLOSE, KIND_CONFINED, KIND_DATA, KIND_END, KIND_FRAME, KIND_MISSING, KIND_OPENED, KIND_PICTURE, KIND_PICTURE_CONVERTED, KIND_PICTURE_REFUSED,
-    KIND_REGION, KIND_SHOWING, KIND_STORE_FULL, KIND_SUBPAGE_COUNT, KIND_SUBPAGE_ROWS, KIND_SUBPAGES, KIND_UPDATED, KIND_VIEW, KIND_WHOLE,
+    KIND_ARRIVED, KIND_ASK_SUBPAGE_ROWS, KIND_AUDIO, KIND_AUDIO_RECEIVER, KIND_BOOKMARK_FOLDER, KIND_BOOKMARK_FOLDER_END, KIND_BOOKMARK_LINK,
+    KIND_BOOKMARKS_READ, KIND_CHANNEL_LOG, KIND_CLOSE, KIND_CONFINED, KIND_DATA, KIND_END, KIND_FRAME, KIND_MISSING, KIND_OPENED, KIND_PICTURE,
+    KIND_PICTURE_CONVERTED, KIND_PICTURE_REFUSED, KIND_REGION, KIND_SHOWING, KIND_STORE_FULL, KIND_SUBPAGE_COUNT, KIND_SUBPAGE_ROWS, KIND_SUBPAGES,
+    KIND_UPDATED, KIND_VIEW, KIND_WHOLE,
 };
 #[cfg(feature = "interaction")]
 use kinds::{KIND_CURSOR, KIND_INPUT_CONTROL};
@@ -121,6 +122,19 @@ pub enum ToDecoder {
     },
 }
 
+/// The figures of a decoder's audio receiver (the engine's REQ-AUD-017,
+/// `neoteletext_audio::ReceiverLimits`): the bytes of its object store,
+/// the objects it holds and the records it reassembles at once.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct AudioReceiver {
+    /// Bytes of the object store.
+    pub store_bytes: u32,
+    /// Objects held at once.
+    pub objects: u32,
+    /// Records reassembled at once.
+    pub records_in_flight: u32,
+}
+
 /// From a decoder to the trusted core.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum FromDecoder {
@@ -128,6 +142,10 @@ pub enum FromDecoder {
     /// before it reads anything, so the trusted core can tell one that
     /// could not start from one a channel's data ended (finding F-12).
     Confined,
+    /// What its audio receiver holds, said once the receiver is built,
+    /// for the developer console's Log tab (the engine's REQ-AUD-017: a
+    /// port publishes its receiver's figures). Untrusted, as all it says.
+    AudioReceiver(AudioReceiver),
     /// A page has been received completely for the first time, with a
     /// title taken from its text, not yet cleaned.
     Arrived {
@@ -489,6 +507,12 @@ pub fn write_to_core(out: &mut dyn Write, message: &FromDecoder) -> Result<(), P
             KIND_PICTURE_REFUSED
         }
         FromDecoder::Confined => KIND_CONFINED,
+        FromDecoder::AudioReceiver(receiver) => {
+            for figure in [receiver.store_bytes, receiver.objects, receiver.records_in_flight] {
+                payload.extend_from_slice(&figure.to_be_bytes());
+            }
+            KIND_AUDIO_RECEIVER
+        }
         FromDecoder::StoreFull => KIND_STORE_FULL,
         FromDecoder::Missing(pages) => {
             push_count(&mut payload, pages.len(), PAGES, "too many pages")?;
@@ -573,6 +597,9 @@ pub fn read_from_decoder(input: &mut dyn Read) -> Result<Option<FromDecoder>, Pr
         }
         KIND_PICTURE_REFUSED => FromDecoder::PictureRefused(raw_text(&mut fields, interface_core::picture::MAX_STATUS, "reason too long")?),
         KIND_CONFINED => FromDecoder::Confined,
+        KIND_AUDIO_RECEIVER => {
+            FromDecoder::AudioReceiver(AudioReceiver { store_bytes: fields.u32()?, objects: fields.u32()?, records_in_flight: fields.u32()? })
+        }
         KIND_STORE_FULL => FromDecoder::StoreFull,
         KIND_MISSING => {
             let count = fields.count_u16(PAGES, "too many pages")?;

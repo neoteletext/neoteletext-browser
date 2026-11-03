@@ -75,6 +75,18 @@ fn bytes_text(bytes: u64) -> String {
     format!("{} bytes", grouped(bytes))
 }
 
+/// The Log tab's line publishing a decoder's audio receiver (the engine's
+/// REQ-AUD-017): the figures it reported, untrusted but numbers alone.
+#[must_use]
+pub fn audio_receiver_line(receiver: &protocol::decoder::AudioReceiver) -> String {
+    format!(
+        "decoder: audio receiver: a store of {}, {} objects, {} records in flight",
+        bytes_text(u64::from(receiver.store_bytes)),
+        grouped(u64::from(receiver.objects)),
+        grouped(u64::from(receiver.records_in_flight)),
+    )
+}
+
 impl Counts {
     /// The Stats tab's figures.
     #[must_use]
