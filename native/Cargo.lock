@@ -1835,7 +1835,7 @@ dependencies = [
 [[package]]
 name = "neoteletext-audio"
 version = "0.1.0"
-source = "git+file:///Users/andrewstuart/devel/neoteletext-engine?rev=4ddd34be7ae63c2c4c081c118ecb58a4581d4a0d#4ddd34be7ae63c2c4c081c118ecb58a4581d4a0d"
+source = "git+file:///Users/andrewstuart/devel/neoteletext-engine?rev=633930c1758627a20dbd067dae4a50a3b78632bc#633930c1758627a20dbd067dae4a50a3b78632bc"
 dependencies = [
  "neoteletext-core",
  "neoteletext-opus",
@@ -1844,7 +1844,7 @@ dependencies = [
 [[package]]
 name = "neoteletext-audio-mix"
 version = "0.1.0"
-source = "git+file:///Users/andrewstuart/devel/neoteletext-engine?rev=4ddd34be7ae63c2c4c081c118ecb58a4581d4a0d#4ddd34be7ae63c2c4c081c118ecb58a4581d4a0d"
+source = "git+file:///Users/andrewstuart/devel/neoteletext-engine?rev=633930c1758627a20dbd067dae4a50a3b78632bc#633930c1758627a20dbd067dae4a50a3b78632bc"
 
 [[package]]
 name = "neoteletext-chooser"
@@ -1859,7 +1859,7 @@ dependencies = [
 [[package]]
 name = "neoteletext-core"
 version = "0.1.0"
-source = "git+file:///Users/andrewstuart/devel/neoteletext-engine?rev=4ddd34be7ae63c2c4c081c118ecb58a4581d4a0d#4ddd34be7ae63c2c4c081c118ecb58a4581d4a0d"
+source = "git+file:///Users/andrewstuart/devel/neoteletext-engine?rev=633930c1758627a20dbd067dae4a50a3b78632bc#633930c1758627a20dbd067dae4a50a3b78632bc"
 
 [[package]]
 name = "neoteletext-decoder"
@@ -1895,7 +1895,7 @@ dependencies = [
 [[package]]
 name = "neoteletext-formats"
 version = "0.1.0"
-source = "git+file:///Users/andrewstuart/devel/neoteletext-engine?rev=4ddd34be7ae63c2c4c081c118ecb58a4581d4a0d#4ddd34be7ae63c2c4c081c118ecb58a4581d4a0d"
+source = "git+file:///Users/andrewstuart/devel/neoteletext-engine?rev=633930c1758627a20dbd067dae4a50a3b78632bc#633930c1758627a20dbd067dae4a50a3b78632bc"
 dependencies = [
  "neoteletext-core",
 ]
@@ -1911,7 +1911,7 @@ dependencies = [
 [[package]]
 name = "neoteletext-image"
 version = "0.1.0"
-source = "git+file:///Users/andrewstuart/devel/neoteletext-engine?rev=4ddd34be7ae63c2c4c081c118ecb58a4581d4a0d#4ddd34be7ae63c2c4c081c118ecb58a4581d4a0d"
+source = "git+file:///Users/andrewstuart/devel/neoteletext-engine?rev=633930c1758627a20dbd067dae4a50a3b78632bc#633930c1758627a20dbd067dae4a50a3b78632bc"
 dependencies = [
  "neoteletext-core",
 ]
@@ -1919,7 +1919,7 @@ dependencies = [
 [[package]]
 name = "neoteletext-input"
 version = "0.1.0"
-source = "git+file:///Users/andrewstuart/devel/neoteletext-engine?rev=4ddd34be7ae63c2c4c081c118ecb58a4581d4a0d#4ddd34be7ae63c2c4c081c118ecb58a4581d4a0d"
+source = "git+file:///Users/andrewstuart/devel/neoteletext-engine?rev=633930c1758627a20dbd067dae4a50a3b78632bc#633930c1758627a20dbd067dae4a50a3b78632bc"
 dependencies = [
  "neoteletext-audio",
  "neoteletext-core",
@@ -1981,12 +1981,12 @@ dependencies = [
 [[package]]
 name = "neoteletext-opus"
 version = "0.1.0"
-source = "git+file:///Users/andrewstuart/devel/neoteletext-engine?rev=4ddd34be7ae63c2c4c081c118ecb58a4581d4a0d#4ddd34be7ae63c2c4c081c118ecb58a4581d4a0d"
+source = "git+file:///Users/andrewstuart/devel/neoteletext-engine?rev=633930c1758627a20dbd067dae4a50a3b78632bc#633930c1758627a20dbd067dae4a50a3b78632bc"
 
 [[package]]
 name = "neoteletext-qrkeyboard"
 version = "0.1.0"
-source = "git+file:///Users/andrewstuart/devel/neoteletext-engine?rev=4ddd34be7ae63c2c4c081c118ecb58a4581d4a0d#4ddd34be7ae63c2c4c081c118ecb58a4581d4a0d"
+source = "git+file:///Users/andrewstuart/devel/neoteletext-engine?rev=633930c1758627a20dbd067dae4a50a3b78632bc#633930c1758627a20dbd067dae4a50a3b78632bc"
 dependencies = [
  "aes-gcm",
  "getrandom 0.2.17",
@@ -2035,7 +2035,7 @@ dependencies = [
 [[package]]
 name = "neoteletext-transport"
 version = "0.1.0"
-source = "git+file:///Users/andrewstuart/devel/neoteletext-engine?rev=4ddd34be7ae63c2c4c081c118ecb58a4581d4a0d#4ddd34be7ae63c2c4c081c118ecb58a4581d4a0d"
+source = "git+file:///Users/andrewstuart/devel/neoteletext-engine?rev=633930c1758627a20dbd067dae4a50a3b78632bc#633930c1758627a20dbd067dae4a50a3b78632bc"
 dependencies = [
  "neoteletext-web",
  "rustls",
@@ -2045,7 +2045,7 @@ dependencies = [
 [[package]]
 name = "neoteletext-web"
 version = "0.1.0"
-source = "git+file:///Users/andrewstuart/devel/neoteletext-engine?rev=4ddd34be7ae63c2c4c081c118ecb58a4581d4a0d#4ddd34be7ae63c2c4c081c118ecb58a4581d4a0d"
+source = "git+file:///Users/andrewstuart/devel/neoteletext-engine?rev=633930c1758627a20dbd067dae4a50a3b78632bc#633930c1758627a20dbd067dae4a50a3b78632bc"
 dependencies = [
  "embedded-io",
  "neoteletext-audio",
