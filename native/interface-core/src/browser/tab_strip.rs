@@ -28,7 +28,7 @@ const TAB_TEXT_INSET: f64 = 14.0;
 const TAB_CLOSE: f64 = 22.0;
 /// A private tab's mark, before its title.
 const PRIVATE_MARK: f64 = 10.0;
-/// A tab's sound button, before its close button, as Chrome places it.
+/// A tab's sound button, before its close button (`tab-strip.md` section 9).
 const TAB_SPEAKER: f64 = 24.0;
 const NEW_TAB: f64 = 38.0;
 const STRIP_MARGIN: f64 = 8.0;

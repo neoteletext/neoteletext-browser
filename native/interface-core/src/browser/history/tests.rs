@@ -93,7 +93,7 @@ fn rows_are_removed_by_number() {
     browser.history_press(middle(other.2), false);
     assert!(browser.take_outputs().is_empty() && browser.history.menu.is_none());
     browser.pointer_moved(middle(menu).x, middle(menu).y, 0);
-    // The row's menu, as Chrome's: more from this site, remove, and,
+    // The row's menu (`history-and-bookmarks.md` section 16): more from this site, remove, and,
     // its address being bookmarked, remove the bookmark.
     assert_eq!(number, 7, "the bookmarked row");
     for (index, expected) in

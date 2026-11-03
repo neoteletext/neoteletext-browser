@@ -66,8 +66,9 @@ fn rows_are_removed_by_their_numbers_and_from_the_file() {
     assert!(cleared.rows.is_empty() && cleared.closed.is_empty(), "everything, and the closed tabs");
 }
 
-/// Decision 64: a bookmarked row says so, and Chrome's "Remove bookmark"
-/// on it removes every bookmark of its address.
+/// Decision 64: a bookmarked row says so, and its "Remove bookmark"
+/// (`history-and-bookmarks.md` section 16) removes every bookmark of its
+/// address.
 #[test]
 fn a_rows_bookmarks_are_removed_from_its_menu() {
     let mut test = Test::new("unbookmark");

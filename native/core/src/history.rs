@@ -20,7 +20,8 @@ pub(crate) const VERSION_LINE: &str = "neoteletext-history 1";
 /// rename.
 const FILE_NAME: &str = "history.txt";
 const TEMPORARY_NAME: &str = "history.txt.new";
-/// Days of history kept, today among them (section 2.2): Chrome's 90.
+/// Days of history kept, today among them (sections 2.2 and 16, which
+/// name where 90 comes from).
 pub const KEEP_DAYS: i64 = 90;
 /// The most rows kept (section 2.2): 90 days of more than 550 pages a day.
 pub const MAX_ROWS: usize = 50_000;
@@ -72,8 +73,8 @@ pub struct Visit {
     /// Typed in the address field.
     pub typed: bool,
     /// A reload: it moves the row's last visit, or makes the day's row, and
-    /// counts no visit, as Chrome and Firefox count none (Chrome's
-    /// `HistoryBackend::AddPageVisit`, Firefox's `VISIT_COUNT_INC`).
+    /// counts no visit (decision 63; section 16, "A reload", names the
+    /// rule's source).
     pub reload: bool,
 }
 

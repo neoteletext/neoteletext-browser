@@ -142,7 +142,8 @@ impl Core {
     }
 
     /// A link led to `page` of the active channel, and to `subpage` of it if
-    /// it names one. A link to what is shown reloads it, as in Chrome.
+    /// it names one. A link to what is shown reloads it
+    /// (`history-and-bookmarks.md` section 16).
     fn follow_page(&mut self, page: u16, subpage: Option<u16>) -> Result<(), String> {
         let Some(channel) = self.active_channel() else { return Ok(()) };
         let shown = self.session.active_tab().and_then(|tab| tab.address()).map(|shown| (shown.page, shown.subpage));

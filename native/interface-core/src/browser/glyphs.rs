@@ -129,7 +129,7 @@ pub(super) fn arrow<C: Canvas + ?Sized>(canvas: &mut C, rect: Rect, pointing_lef
 }
 
 /// A loudspeaker centred in `rect`: with sound waves, or crossed out when
-/// muted, as Chrome's tab shows it.
+/// muted (`tab-strip.md` section 9).
 pub(super) fn speaker_glyph<C: Canvas + ?Sized>(canvas: &mut C, rect: Rect, muted: bool, colour: Colour) {
     let centre = Point::new(f64::midpoint(rect.x0, rect.x1), f64::midpoint(rect.y0, rect.y1));
     let half = SPEAKER_HALF;

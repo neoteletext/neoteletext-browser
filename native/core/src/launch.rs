@@ -91,7 +91,7 @@ fn file(argument: &OsString) -> Result<Launch, Refused> {
 
 /// The most links from outside opened in [`OUTSIDE_LINK_INTERVAL`]: more than
 /// a viewer clicks by hand, few enough that no program can fill a window with
-/// tabs (REQ-1672 item 11). Chrome limits only on the sending side.
+/// tabs (REQ-1672 item 11; `hyperlinks.md` section 11 item 5).
 pub const MAX_OUTSIDE_LINKS: usize = 5;
 /// The time [`MAX_OUTSIDE_LINKS`] is counted over.
 pub const OUTSIDE_LINK_INTERVAL: Duration = Duration::from_secs(10);

@@ -13,8 +13,8 @@ impl Session {
     /// # Errors
     /// When there is no tab.
     pub fn follow(&mut self, address: Address) -> Result<(), String> {
-        // A link to the address shown is a reload, as in Chrome
-        // (`ShouldTreatNavigationAsReload`).
+        // A link to the address shown is a reload (`history-and-bookmarks.md` section 16,
+        // "The address shown, entered again or linked to").
         if self.is_shown(&address) {
             self.reload();
             return Ok(());

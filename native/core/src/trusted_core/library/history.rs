@@ -32,9 +32,9 @@ impl Core {
             HistoryRequest::Query { text, first } => {
                 self.library.history_panel = Some((clean(&text, protocol::library::MAX_QUERY), usize::try_from(first).unwrap_or(usize::MAX)));
             }
-            // Chrome's "Remove bookmark": every bookmark of the row's address.
+            // "Remove bookmark" (`history-and-bookmarks.md` section 16): every bookmark of the row's address.
             HistoryRequest::RemoveBookmark(number) => self.remove_row_bookmarks(number)?,
-            // Chrome's "More from this site": the panel searches the row's host.
+            // "More from this site" (`history-and-bookmarks.md` section 16): the panel searches the row's host.
             HistoryRequest::MoreFromSite(number) => {
                 let host =
                     self.library.history_numbers.get(number).and_then(|(_, address)| neoteletext::address::parse(address).ok()).map(|address| address.host);
@@ -61,7 +61,8 @@ impl Core {
         self.send_history()
     }
 
-    /// Chrome's "Remove bookmark": every bookmark of the row's address.
+    /// "Remove bookmark" (`history-and-bookmarks.md` section 16): every
+    /// bookmark of the row's address.
     fn remove_row_bookmarks(&mut self, number: u32) -> Result<(), String> {
         let Some((_, address)) = self.library.history_numbers.get(number).cloned() else { return Ok(()) };
         let mut removed = 0_usize;
@@ -247,8 +248,8 @@ impl Core {
     }
 
     /// After rows were removed: the addresses no day has a row of any more
-    /// leave the tabs' and closed tabs' lists, as Chrome removes the
-    /// entries of the addresses whose history is gone.
+    /// leave the tabs' and closed tabs' lists (`history-and-bookmarks.md`
+    /// section 16, "Removing history and the tabs").
     fn remove_entries_of(&mut self, removed: &[String]) -> Result<(), String> {
         let gone: Vec<&String> = removed.iter().filter(|address| !self.library.history.has_address(address)).collect();
         if !gone.is_empty() && self.session.remove_entries(|visit| gone.contains(&&visit.address.text)) {

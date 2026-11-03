@@ -161,7 +161,7 @@ impl Browser {
             return true;
         }
         let Key::Text(text) = key else { return false };
-        // Command-1 to 8 choose those tabs, Command-9 the last, as in Chrome.
+        // Command-1 to 8 choose those tabs, Command-9 the last (`tab-strip.md` section 5).
         if let Some(digit) = text.chars().next().and_then(|first| first.to_digit(10)).filter(|digit| (1..=9).contains(digit) && text.len() == 1) {
             let index = if digit == 9 {
                 self.tabs.len().checked_sub(1)

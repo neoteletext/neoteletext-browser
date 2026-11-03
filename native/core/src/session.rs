@@ -34,8 +34,8 @@ pub use tab::{ClosedTab, Pending, Tab, Visit, Went};
 
 /// The most redirects leaving a channel that one navigation follows: the
 /// Fetch standard's "If request's redirect count is 20, return a network
-/// error", which is `net::URLRequest::kMaxRedirects` in Chromium's
-/// `net/url_request/url_request.h`, read on 31 October 2026 (REQ-701).
+/// error" (REQ-701; `hyperlinks.md` section 11 item 4, which names where
+/// else the limit is used).
 pub const MAX_REDIRECTS: usize = 20;
 pub use windows::Window;
 

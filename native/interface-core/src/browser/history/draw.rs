@@ -158,7 +158,7 @@ impl Browser {
             border(canvas, check, 1.0, if checked { SELECTED } else { MUTED });
             let time = Rect::new(check.x1 + GAP, y, check.x1 + GAP + TIME_WIDTH, y + ROW_HEIGHT);
             left_centred(canvas, time, 0.0, &row.time, ROW_STATUS, MUTED);
-            // The row's menu button, as Chrome's: shown while hovered or open.
+            // The row's menu button (`history-and-bookmarks.md` section 16): shown while hovered or open.
             let menu = Rect::new(right - SMALL_BUTTON, y, right, y + ROW_HEIGHT);
             if hovered || self.history.menu == Some(row.number) {
                 centred(canvas, menu, "\u{22EE}", ROW_TITLE, WHITE);

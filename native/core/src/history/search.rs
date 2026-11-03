@@ -8,8 +8,8 @@ use crate::address;
 
 use super::{History, Row};
 
-/// The search that names one host, as Chrome's history page writes "More
-/// from this site" (`history_list.ts`: `'host:' + domain`).
+/// The search that names one host, which a row's "More from this site"
+/// writes (`history-and-bookmarks.md` section 16, "A row's menu").
 pub const HOST_SEARCH: &str = "host:";
 /// The schemes an inline completion leaves out when the text typed has none.
 const SCHEMES: [&str; 2] = ["https://", "http://"];
@@ -27,7 +27,7 @@ impl History {
     #[must_use]
     pub fn query(&self, query: &str) -> Vec<&Row> {
         let query = query.to_lowercase();
-        // `host:` names one host, as Chrome's history search does.
+        // `host:` names one host (`history-and-bookmarks.md` section 16).
         let host = query.strip_prefix(HOST_SEARCH).map(str::trim);
         let mut rows: Vec<&Row> = self
             .rows

@@ -2,8 +2,8 @@
 //! to 20.23): each window's place and size and its tabs but private ones
 //! (`multiple-windows.md`), and the recently closed tabs, each with its back-and-forward list and each
 //! entry's time, kept in `session.txt` after every change so that it can
-//! always be restored, as Chrome keeps its session and its closed tabs
-//! (`TabRestoreServiceImpl`); read strictly, since another program can
+//! always be restored, closed tabs too (`history-and-bookmarks.md`
+//! section 16, "Recently closed tabs"); read strictly, since another program can
 //! write the file.
 
 use crate::dropped::Dropped;

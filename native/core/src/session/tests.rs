@@ -334,7 +334,7 @@ fn navigations_wait_to_be_recorded() {
     assert!(session.tab_infos()[1].private && session.strip().private);
 }
 
-/// Requirement 20.10, as Chrome's Back list: twelve entries, then,
+/// Requirement 20.10 (`history-and-bookmarks.md` section 16): twelve entries, then,
 /// beyond them, up to five chapter stops where the host changes; a
 /// tab keeps at most 50 entries, the oldest dropped.
 #[test]
@@ -366,7 +366,7 @@ fn back_lists_twelve_then_chapter_stops_and_a_tab_keeps_fifty() {
     assert_eq!((tab.history.len(), tab.position), (MAX_TAB_ENTRIES, MAX_TAB_ENTRIES - 1), "the oldest dropped");
 }
 
-/// Requirement 20.6, as Chrome: removing history removes those entries
+/// Requirement 20.6 (`history-and-bookmarks.md` section 16): removing history removes those entries
 /// from the tabs' lists but never the entry a tab is at, drops a closed
 /// tab whose entry it was at, and leaves private tabs alone.
 #[test]
@@ -403,7 +403,7 @@ fn removed_history_leaves_the_tabs_lists() {
     assert!(!session.remove_entries(|visit| visit.host_is("z.invalid")), "nothing named, nothing changed");
 }
 
-/// Requirement 20.9, as Chrome: the recently closed tabs, with each
+/// Requirement 20.9 (`history-and-bookmarks.md` section 16): the recently closed tabs, with each
 /// entry's time, are kept with the session and come back with it.
 #[test]
 fn closed_tabs_are_kept_between_runs() {
@@ -462,8 +462,8 @@ fn a_reload_opens_the_channel_afresh_where_the_tab_is() {
     assert_eq!(tab.address().map(|address| address.text.clone()), history.get(position).cloned());
     assert_eq!(tab.pending, Some(Pending { typed: false, drawn: false, reload: true }));
     assert!(!Session::new(Bookmarks::default()).reload(), "no tab, nothing to reload");
-    // The address shown, entered again or linked to, is a reload, as in
-    // Chrome: no new entry.
+    // The address shown, entered again or linked to, is a reload
+    // (`history-and-bookmarks.md` section 16): no new entry.
     let shown = session.tabs[0].address().map(|address| address.text.clone()).unwrap();
     session.tabs[0].pending = None;
     session.navigate(&shown, true).unwrap();
@@ -537,8 +537,8 @@ fn windows_keep_their_own_tabs() {
 }
 
 /// A tab moves between windows; a window closes with its tabs, which
-/// reopen together in a window of their own, as Chrome reopens a closed
-/// window.
+/// reopen together in a window of their own (`multiple-windows.md`
+/// section 5).
 #[test]
 fn a_closed_window_reopens_whole() {
     let mut session = Session::new(Bookmarks::default());

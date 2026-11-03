@@ -1,4 +1,5 @@
-//! Files dragged over the window (DEC-1549 items 3 and 5, as Chrome does):
+//! Files dragged over the window (DEC-1549 items 3 and 5, `tab-strip.md`
+//! section 11):
 //! an arrow marks where they would land on the tab strip, and resting over
 //! the middle of a background tab brings it forward. Only where the system
 //! says where the pointer is during a drag does any of this run.
@@ -9,10 +10,11 @@ use crate::canvas::Canvas;
 use crate::geometry::{Point, Rect};
 use crate::theme::LINK;
 
-/// The arrow's height and width: Chrome's 20 pixels.
+/// The arrow's height and width (`tab-strip.md` section 11, which names
+/// where 20 comes from).
 const ARROW: f64 = 20.0;
-/// How long the pointer rests on a background tab before it comes forward:
-/// Chrome's `hover_tab_selector.cc`.
+/// How long the pointer rests on a background tab before it comes forward
+/// (`tab-strip.md` section 11, which names where 500 comes from).
 const HOVER_TO_SWITCH: u64 = 500;
 
 /// A drag of files over the window.
