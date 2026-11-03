@@ -342,7 +342,7 @@ To be added to `requirements.md` as section 17 once adopted.
 | Number | Statement | Reason | Verification |
 |---|---|---|---|
 | 17.1 | Teletext's underline attribute is not drawn on any page shown by NeoTeletext; separated mosaics are drawn as before. | An underline must mean only a link. | Test: a Level 2.5 page with underlined text and separated mosaics. |
-| 17.2 | Links are drawn only by the interface, over the page image, in one style the page cannot change (section 9.2), and only when a teletext dot is at least two device pixels. | A page must not be able to draw the browser's link. | Test of the drawing at several scales; review. |
+| 17.2 | Links are drawn only by the interface, over the page image, in one style the page cannot change (section 9.2), and only when a teletext dot is at least one and a half device pixels (section 19 item 1). | A page must not be able to draw the browser's link. | Test of the drawing at several scales; review. |
 | 17.3 | The trusted core decides every link, from the decoder's candidates, checked as section 8.2 requires. The interface receives only where to draw. | The decoder and the page are untrusted; the interface holds no channel data. | Test with out-of-range, overlapping, excessive and invalid links. |
 | 17.4 | Page numbers in the text are links when, and only when, section 6.1's rules hold. | Navigation teletext readers already expect, without false links. | Test of each rule, including currency, times and absent pages. |
 | 17.5 | Every link, from a page, a Fastext packet or the descriptor's aliases and services, is classified from its target alone, before any request, as section 7.1 requires; a named service is another channel. | No request before consent; the strip can say where a link leads. | Test of every row of the table. |
@@ -396,7 +396,7 @@ All taken by the owner on 20 October 2026 (decision 41), each as recommended.
 - **Bait and switch:** a page whose link target alternates every frame is never followed; one that has been unchanged for 500 milliseconds is.
 - **Leaving:** each kind of link from section 7.1 goes at once or to the web-browser prompt; a confirmation of the prompt from the page area, from a held key or within 500 milliseconds is ignored; cancelling leaves the tab unchanged.
 - **The handoff:** on each platform, an `https` address opens in the default browser; `file:`, `ms-settings:`, a bare path and an address made to begin with `-` are refused before the opener is started.
-- **Drawing:** the underline's thickness and position at each scale; double height; the contrasting edge on every background colour; nothing drawn below two device pixels a dot.
+- **Drawing:** the underline's thickness and position at each scale; double height; the contrasting edge on every background colour; nothing drawn below one and a half device pixels a dot.
 - **Keyboard and screen readers:** Tab order, Enter, Escape, and the accessibility tree's descriptions.
 - **Nothing else opens:** every message kind other than the Open strip input, driven with web links present, never starts the opener.
 - **Aliases and services:** a descriptor alias and a `name:mpp` target each move the tab at once.

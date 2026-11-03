@@ -48,10 +48,10 @@ const _: () = assert!(size_of::<cookies::UnusedJar>() == size_of::<neoteletext_w
 /// What the console is told when a name led only to addresses the channel
 /// may not reach.
 const LOCAL_REFUSED: &str = "Blocked: the server's name leads to this computer or the local network, which this channel may not reach";
-/// The longest body the agent takes for a page, a bundle or a form's
-/// answer: what one page message to the trusted core carries, its payload
-/// being the origin byte and then the bytes (`write_to_core` refuses
-/// more, and refusing ends this fetcher; finding F-74).
+/// The longest body the agent takes for a page or a bundle: what one
+/// page message to the trusted core carries, its payload being the origin
+/// byte and then the bytes (`write_to_core` refuses more, and refusing
+/// ends this fetcher; finding F-74).
 const PAGE_LIMIT: usize = protocol::MAX_PAYLOAD - 1;
 // The agent's body buffer holds it, so it is the limit the agent keeps.
 const _: () = assert!(PAGE_LIMIT <= neoteletext_web::consts::DEFAULT_PAGE_LIMIT);
@@ -872,7 +872,7 @@ mod tests {
         assert!(!settles(Output::Event(Event::ContentsMissing)));
     }
 
-    /// Finding F-74: the largest page, bundle or form answer the agent
+    /// Finding F-74: the largest page or bundle the agent
     /// accepts is one message to the trusted core. Before this the agent
     /// took a body of its default limit, 262,144 bytes, which with the
     /// origin byte is one byte too many for a message, so writing it

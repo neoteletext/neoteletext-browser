@@ -4,7 +4,7 @@
 |---|---|
 | **Asked** | By the owner on 23 October 2026: "implement fastext, reveal, subpages"; whether hold and mix come with them was left open. |
 | **Decision** | 67, taken while the owner was away (`architecture.md` section 2). |
-| **Engine** | Each is the engine's: REQ-NAV-003 and REQ-NAV-011 (Fastext), REQ-L1-010 and REQ-NAV-007 (reveal and mix), REQ-NAV-006 (hold), REQ-NAV-005 (sub-pages), REQ-SEC-024 (the keys only while row 24 is shown). The browser asks the engine for each and decides nothing about teletext itself (requirement 2.1). |
+| **Engine** | Each is the engine's: REQ-NAV-003 and REQ-NAV-011 (Fastext), REQ-L1-010 (reveal), REQ-L1-020 (mix, as the engine's grid draws it) and REQ-NAV-007 (reveal and mix as the viewer's settings), REQ-NAV-006 (hold), REQ-NAV-005 (sub-pages), REQ-SEC-024 (the keys only while row 24 is shown). The browser asks the engine for each and decides nothing about teletext itself (requirement 2.1). |
 
 ## 1. What a teletext set offers, and what the browser lacked
 
