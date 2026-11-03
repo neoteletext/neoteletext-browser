@@ -330,6 +330,9 @@ fn parse_built_in(typed: &str) -> Result<Address, String> {
     Ok(Address { text, ..built_in })
 }
 
+/// Why a host with letters beyond ASCII is refused, and how to open it.
+pub const NOT_ASCII_HOST: &str = "That host name has letters beyond A to Z; type an internationalised name in its xn-- form";
+
 /// Turns what was typed into an address, or says why it cannot be opened.
 ///
 /// # Errors
@@ -370,8 +373,15 @@ pub fn parse(typed: &str) -> Result<Address, String> {
     {
         return Err("That port is not a number from 0 to 65535".into());
     }
-    // Plain hosts only, until internationalised hosts are shown safely
-    // (requirement 11.3).
+    // An internationalised name is held and shown only in its ASCII form,
+    // each label `xn--` and Punycode (RFC 5890 section 2.3.2.1, RFC 3492),
+    // which no other script can imitate (REQ-749, DEC-2340). Its Unicode form
+    // would need IDNA's mapping and a rule against mixed scripts, from
+    // tables this browser does not hold, so a host typed in Unicode is
+    // refused with the way to type it.
+    if !host.is_ascii() {
+        return Err(NOT_ASCII_HOST.into());
+    }
     let plain = |label: &str| !label.is_empty() && label.bytes().all(|byte| byte.is_ascii_alphanumeric() || byte == b'-');
     if host.is_empty() || !host.split('.').all(plain) {
         return Err("That host name cannot be opened".into());

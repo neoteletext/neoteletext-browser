@@ -414,7 +414,7 @@ The cookie store is the engine's, which follows the cookie specification draft R
 The trusted core's address rules (`core/src/address.rs`) decide what may be opened and how the strip shows it:
 
 - `https` and `http` web addresses, with `https` assumed when no scheme is typed;
-- plain hosts only, letters, digits and hyphens, until internationalised names can be shown safely (requirement 11.3);
+- plain hosts only, letters, digits and hyphens: an internationalised name is opened and shown only in its ASCII `xn--` form, which no other script can imitate, and a host typed in Unicode is refused with a sentence saying how to type it (requirement 11.3, DEC-2340);
 - no user name before the host, the classic way to make an address look like another site's;
 - a port, if given, must be a number from 0 to 65535;
 - no hidden characters anywhere;
