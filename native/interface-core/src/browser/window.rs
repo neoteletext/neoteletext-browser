@@ -24,6 +24,16 @@ pub(super) const HEADING_HEIGHT: f64 = 40.0;
 pub(super) const PADDING: f64 = 12.0;
 
 impl Browser {
+    /// Where the trusted strip ends: below it everything may be a
+    /// channel's, above it nothing is. In full screen with the strip up
+    /// there is no strip, so nothing is above it.
+    pub(super) fn strip_end(&self, now: u64) -> f64 {
+        if self.full_screen() && !self.full_screen_strip(now) {
+            return 0.0;
+        }
+        BODY_TOP - MARGIN + if self.bar_shown() { BAR_HEIGHT } else { 0.0 }
+    }
+
     /// Draws the whole window; `width` and `height` are logical pixels.
     pub fn draw<C: Canvas + ?Sized>(&mut self, canvas: &mut C, width: f64, height: f64, now: u64) {
         self.follow_field_drag(canvas);

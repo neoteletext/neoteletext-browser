@@ -178,13 +178,20 @@ impl Browser {
             self.tips.hovered = self.tips.at(self.pointer).cloned().map(|tip| (tip, now));
         }
         let Some((tip, _)) = self.tips.hovered.as_ref().filter(|_| self.tips.shown) else { return };
+        // A tip of something below the strip, a link's address above all,
+        // which a channel chose, stays below the strip: drawn over it, it
+        // would cover the address and the padlock with words that are not
+        // the browser's (REQ-785, the spoofing review of 3 November 2026).
+        // The strip's own controls' tips may go anywhere.
+        let strip_end = self.strip_end(now);
+        let ceiling = if tip.rect.y0 >= strip_end { strip_end + EDGE } else { EDGE };
         // A line wider than the window, as a long address, wraps onto
         // further lines; those past the window's height are reached with
         // the wheel (decision 127, REQ-1660 item 6).
         let widest_text = (width - EDGE * 2.0 - PADDING * 2.0).max(0.0);
         // The cast drops the part of a line that does not fit.
         #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss, reason = "clamped from none to u16::MAX lines")]
-        let most_lines = (((height - EDGE * 2.0 - HEIGHT).max(0.0) / LINE_STEP).clamp(0.0, f64::from(u16::MAX)) as usize).saturating_add(1);
+        let most_lines = (((height - ceiling - EDGE - HEIGHT).max(0.0) / LINE_STEP).clamp(0.0, f64::from(u16::MAX)) as usize).saturating_add(1);
         let lines: Vec<(bool, &str)> = tip
             .text
             .split(LINE_BREAK)
@@ -206,7 +213,7 @@ impl Browser {
         // window either way.
         let below = self.pointer.y + BELOW_POINTER;
         let y = if below + box_height > height - EDGE { tip.rect.y0 - EDGE - box_height } else { below };
-        let y = y.clamp(EDGE, (height - EDGE - box_height).max(EDGE));
+        let y = y.clamp(ceiling, (height - EDGE - box_height).max(ceiling));
         let area = Rect::new(x, y, x + box_width, y + box_height);
         canvas.fill(area, RADIUS, BUTTON);
         border(canvas, area, 1.0, RULE);
