@@ -20,6 +20,15 @@ const HAS_NAME: u32 = 0x0000_0004;
 const HAS_WORKING_DIR: u32 = 0x0000_0010;
 const HAS_ICON_LOCATION: u32 = 0x0000_0040;
 const IS_UNICODE: u32 = 0x0000_0080;
+const HAS_EXP_STRING: u32 = 0x0000_0200;
+/// Section 2.5.4: the `EnvironmentVariableDataBlock`'s `BlockSize`, its
+/// `BlockSignature`, and its two fixed fields' sizes: `TargetAnsi`, 260
+/// bytes, and `TargetUnicode`, 520 bytes (260 UTF-16 code units), each
+/// NUL-terminated.
+const ENVIRONMENT_BLOCK_SIZE: u32 = 0x0000_0314;
+const ENVIRONMENT_BLOCK_SIGNATURE: u32 = 0xA000_0001;
+const ENVIRONMENT_TARGET_UNITS: usize = 260;
+const _: () = assert!(ENVIRONMENT_BLOCK_SIZE as usize == 4 + 4 + ENVIRONMENT_TARGET_UNITS + 2 * ENVIRONMENT_TARGET_UNITS, "section 2.5.4's size");
 /// Section 2.1.2: `FILE_ATTRIBUTE_NORMAL`.
 const FILE_ATTRIBUTE_NORMAL: u32 = 0x0000_0080;
 /// Section 2.1: `SW_SHOWNORMAL`.
@@ -155,15 +164,43 @@ fn link_info(target: &str) -> Vec<u8> {
     out
 }
 
+/// Section 2.5.4: the target's path again, in an
+/// `EnvironmentVariableDataBlock`, whose Unicode form the shell reads the
+/// target from when the link says it has one (`HasExpString`). The item
+/// list names folders in ASCII alone, so a path with any other character
+/// (a user folder such as `C:\Users\Zoë`) resolved through it to a folder
+/// that does not exist: measured in the Windows 11 virtual machine on 4
+/// November 2026, such a link resolved to `C:\Users\Public\Zo?\...` and
+/// would not open (TODO-1264). None when the path does not fit the
+/// block's 260 code units with its NUL.
+fn environment_block(target: &str) -> Option<Vec<u8>> {
+    let units = utf16(target);
+    if units.len() >= ENVIRONMENT_TARGET_UNITS {
+        return None;
+    }
+    let mut out = Vec::new();
+    push_u32(&mut out, ENVIRONMENT_BLOCK_SIZE);
+    push_u32(&mut out, ENVIRONMENT_BLOCK_SIGNATURE);
+    let mut ansi: Vec<u8> = target.chars().map(|character| if character.is_ascii() { u8::try_from(character).unwrap_or(b'?') } else { b'?' }).collect();
+    ansi.resize(ENVIRONMENT_TARGET_UNITS, 0);
+    out.extend_from_slice(&ansi);
+    let mut unicode = units;
+    unicode.resize(ENVIRONMENT_TARGET_UNITS, 0);
+    out.extend(unicode.into_iter().flat_map(u16::to_le_bytes));
+    Some(out)
+}
+
 /// A shortcut to the program `target`, started in `working`, named
 /// `name`, with the program's own icon.
 #[must_use]
 pub fn shortcut(target: &Path, working: &Path, name: &str) -> Vec<u8> {
     let target = target.display().to_string();
+    let environment = environment_block(&target);
     let mut out = Vec::new();
     push_u32(&mut out, HEADER_SIZE);
     out.extend_from_slice(&LINK_CLSID);
-    push_u32(&mut out, HAS_LINK_TARGET_ID_LIST | HAS_LINK_INFO | HAS_NAME | HAS_WORKING_DIR | HAS_ICON_LOCATION | IS_UNICODE);
+    let expanded = if environment.is_some() { HAS_EXP_STRING } else { 0 };
+    push_u32(&mut out, HAS_LINK_TARGET_ID_LIST | HAS_LINK_INFO | HAS_NAME | HAS_WORKING_DIR | HAS_ICON_LOCATION | IS_UNICODE | expanded);
     push_u32(&mut out, FILE_ATTRIBUTE_NORMAL);
     // CreationTime, AccessTime, WriteTime: unknown, zero.
     out.extend_from_slice(&[0; 24]);
@@ -179,7 +216,10 @@ pub fn shortcut(target: &Path, working: &Path, name: &str) -> Vec<u8> {
     push_string(&mut out, name);
     push_string(&mut out, &working.display().to_string());
     push_string(&mut out, &target);
-    // Section 2.5: the terminal block.
+    // Section 2.5: the extra data, then its terminal block.
+    if let Some(block) = environment {
+        out.extend_from_slice(&block);
+    }
     push_u32(&mut out, 0);
     out
 }
@@ -235,5 +275,26 @@ mod tests {
         let name = info + info_size;
         assert_eq!(u16::from_le_bytes([link[name], link[name + 1]]), 11);
         assert_eq!(u32_at(&link, link.len() - 4), 0, "the terminal block");
+    }
+
+    /// TODO-1264: a target whose folders have a character outside ASCII is
+    /// given whole, in Unicode, in an `EnvironmentVariableDataBlock`
+    /// (section 2.5.4) the link says it has, since the item list names it
+    /// with a question mark. Before, the link held no such block, and
+    /// Windows resolved it to the folder named with the question mark.
+    #[test]
+    fn a_target_outside_ascii_is_given_whole_in_the_environment_block() {
+        let target = "C:\\Users\\Zo\u{00EB}\\AppData\\Local\\Programs\\NeoTeletext\\NeoTeletext.exe";
+        let link = shortcut(Path::new(target), Path::new("C:\\Users\\Zo\u{00EB}"), "NeoTeletext");
+        assert_eq!(u32_at(&link, 0x14) & HAS_EXP_STRING, HAS_EXP_STRING);
+        let block = link.len() - 4 - ENVIRONMENT_BLOCK_SIZE as usize;
+        assert_eq!(u32_at(&link, block), ENVIRONMENT_BLOCK_SIZE);
+        assert_eq!(u32_at(&link, block + 4), ENVIRONMENT_BLOCK_SIGNATURE);
+        let unicode = &link[block + 8 + ENVIRONMENT_TARGET_UNITS..block + ENVIRONMENT_BLOCK_SIZE as usize];
+        let units: Vec<u16> = unicode.chunks(2).map(|pair| u16::from_le_bytes([pair[0], pair[1]])).take_while(|unit| *unit != 0).collect();
+        assert_eq!(String::from_utf16(&units).unwrap(), target);
+        let too_long = format!("C:\\{}\\NeoTeletext.exe", "a".repeat(ENVIRONMENT_TARGET_UNITS));
+        let link = shortcut(Path::new(&too_long), Path::new("C:\\"), "NeoTeletext");
+        assert_eq!(u32_at(&link, 0x14) & HAS_EXP_STRING, 0, "a path the block cannot hold is left to the item list");
     }
 }
