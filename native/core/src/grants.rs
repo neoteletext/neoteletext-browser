@@ -176,13 +176,19 @@ impl Grants {
 mod tests {
     use super::*;
 
+    /// `path`, written as on macOS and Linux, absolute on this platform: a
+    /// path from the root is not absolute on Windows, and a grant must be.
+    fn absolute(path: &str) -> String {
+        if cfg!(windows) { format!("C:{}", path.replace('/', "\\")) } else { path.to_owned() }
+    }
+
     fn grant(path: &str, file: u64) -> Grant {
-        Grant { path: PathBuf::from(path), identity: FileIdentity { volume: 7, file } }
+        Grant { path: PathBuf::from(absolute(path)), identity: FileIdentity { volume: 7, file } }
     }
 
     #[test]
     fn grants_round_trip_whatever_a_path_holds() {
-        let mut grants = Grants { last_folder: Some(PathBuf::from("/home/a b")), ..Grants::default() };
+        let mut grants = Grants { last_folder: Some(PathBuf::from(absolute("/home/a b"))), ..Grants::default() };
         grants.record(grant("/home/news\nof the day é.t42", 1));
         grants.record(grant("/home/other.tti", 2));
         let (read, dropped) = Grants::parse(&grants.to_text());
@@ -191,8 +197,8 @@ mod tests {
 
     #[test]
     fn a_line_that_breaks_a_rule_is_dropped() {
-        let good = format!("{HEADER}\ngrant 7 1 2f61\n");
-        assert_eq!(Grants::parse(&good).0.find(Path::new("/a")), Some(&grant("/a", 1)));
+        let good = format!("{HEADER}\ngrant 7 1 {}\n", hexadecimal(Path::new(&absolute("/a"))).unwrap());
+        assert_eq!(Grants::parse(&good).0.find(Path::new(&absolute("/a"))), Some(&grant("/a", 1)));
         for bad in ["grant 7 1", "grant 7 1 61", "grant 7 1 zz", "grant 7 1 612f", "grant x 1 2f61", "grant 7 1 2f61 extra", "folder 61", "another 1"] {
             let (read, dropped) = Grants::parse(&format!("{good}{bad}\n"));
             assert_eq!((read.len(), dropped), (1, 1), "{bad}");
