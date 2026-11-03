@@ -145,6 +145,8 @@ fn the_interface_s_window_reaches_the_screen() {
             updater: &refuse_updater,
             choose: &|_, _, _| Err(String::from("this test shows no dialog")),
             openings: &|| None,
+            read_picture: &refuse_read,
+            save: &|_, _| Err(String::from("this test saves nothing")),
             declared: Arc::new(|_| {}),
         };
         serve(core, &programs, &handlers)
