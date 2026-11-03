@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 
 use neoteletext::bookmarks::Bookmarks;
 use neoteletext::history::History;
-use neoteletext::restore::Saved;
+use neoteletext::session_file::Saved;
 use neoteletext::settings::{self as stored, Settings};
 use protocol::console::Level;
 

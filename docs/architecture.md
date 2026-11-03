@@ -581,7 +581,7 @@ neoteletext-browser/
                             calendar, the console's entries, cookies (+ cookies/file.rs, the sealed file),
                             dropped lines, frames, hearing, history (+ history/search.rs), links (+ links/:
                             targets, destinations, the strip's questions, following), the outbox, private
-                            files, the session file (restore.rs), settings (+ settings/proxy.rs), sleep,
+                            files, the session file (session_file.rs), settings (+ settings/proxy.rs), sleep,
                             the start page, typing (+ typing/records.rs); and the binary: main.rs, the
                             entry alone, broker.rs, the unconfined broker, source.rs, a file channel's bytes
       src/session/          the tabs and windows: a tab, its history and navigation, its channel, closed

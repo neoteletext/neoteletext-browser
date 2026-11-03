@@ -3,7 +3,7 @@
 //! kept after every change (requirement 20.21).
 
 use neoteletext::frames;
-use neoteletext::restore::Saved;
+use neoteletext::session_file::Saved;
 use protocol::console::Level;
 use protocol::decoder::ToDecoder;
 use protocol::{ToCore, ToInterface};
