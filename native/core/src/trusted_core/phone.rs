@@ -344,13 +344,24 @@ mod tests {
     /// code before, no way in the browser started it with `--pin`.
     #[test]
     fn asking_for_a_pin_starts_the_keyboard_again_with_one() {
-        use confine::broker::Program;
+        use confine::broker::{Program, Request};
         use protocol::ToCore;
         let (mut core, stand_in) = super::super::test_support::core_on("https://news.invalid/");
         core.intent(ToCore::PhonePanel(true)).unwrap();
         core.intent(ToCore::PhonePin).unwrap();
-        let keyboards: Vec<Vec<String>> =
-            stand_in.started().into_iter().filter(|helper| helper.program == Program::Keyboard).map(|helper| helper.arguments).collect();
+        // The requests, which the stand-in keeps before it answers each;
+        // what it started it records after, so a read of that may race.
+        let keyboards = |stand_in: &confine::broker::stand_in::StandIn| -> Vec<Vec<String>> {
+            stand_in
+                .take_requests()
+                .into_iter()
+                .filter_map(|request| match request {
+                    Request::Spawn { program: Program::Keyboard, arguments, .. } => Some(arguments),
+                    _ => None,
+                })
+                .collect()
+        };
+        let keyboards = keyboards(&stand_in);
         assert_eq!(keyboards.len(), 2, "{keyboards:?}");
         assert!(!keyboards[0].iter().any(|argument| argument == "--pin"), "by the code alone first");
         let mut with_pin = keyboards[1].clone();
@@ -359,6 +370,9 @@ mod tests {
         // Paired, a phone keeps its pairing.
         core.phone_view.state = PhoneState::Connected;
         core.intent(ToCore::PhonePin).unwrap();
-        assert_eq!(stand_in.started().into_iter().filter(|helper| helper.program == Program::Keyboard).count(), 2);
+        assert!(
+            !stand_in.take_requests().iter().any(|request| matches!(request, Request::Spawn { program: Program::Keyboard, .. })),
+            "no keyboard started again"
+        );
     }
 }
