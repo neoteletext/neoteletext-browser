@@ -44,11 +44,6 @@ fn text(path: &Path) -> String {
     path.to_str().unwrap().to_owned()
 }
 
-/// A free port on this computer.
-fn free_port() -> u16 {
-    std::net::TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port()
-}
-
 /// The host, ended when dropped.
 struct Host(Child);
 
@@ -59,16 +54,20 @@ impl Drop for Host {
     }
 }
 
-fn serve(repository: &Path, identity: &Path, port: u16) -> Host {
+/// The host on a port it chooses and holds from the start (TODO-1996):
+/// a port found free and let go before the host bound it could be taken
+/// in between, by a process a sibling test started that inherited the
+/// probe's socket. Returns the host and its port.
+fn serve(repository: &Path, identity: &Path) -> (Host, u16) {
     let mut child = Command::new(env!("CARGO_BIN_EXE_neoteletext-test-host"))
-        .args([text(repository), text(&identity.join("host.pem")), text(&identity.join("host.key.pem")), format!("localhost:{port}")])
+        .args([text(repository), text(&identity.join("host.pem")), text(&identity.join("host.key.pem")), String::from("localhost:0")])
         .stdout(Stdio::piped())
         .spawn()
         .unwrap();
     let mut line = String::new();
     BufReader::new(child.stdout.take().unwrap()).read_line(&mut line).unwrap();
-    assert!(line.starts_with("listening"), "{line}");
-    Host(child)
+    let port = line.trim_end().strip_prefix("listening on localhost:").and_then(|port| port.parse().ok()).unwrap_or_else(|| panic!("{line}"));
+    (Host(child), port)
 }
 
 /// Everything a test works with.
@@ -89,11 +88,14 @@ impl Fixture {
     fn new(name: &str) -> Self {
         let folder = scratch(name);
         let identity = folder.join("identity");
-        let port = free_port();
-        release(&["test-identity", &text(&identity), "--host", "localhost", "--port", &port.to_string()]);
+        // The identity's port is the host's, which it chooses once it has
+        // the identity's certificate: the identity is made, the host
+        // started, and the port then written into the identity.
+        release(&["test-identity", &text(&identity), "--host", "localhost", "--port", "0"]);
         let repository = folder.join("repository");
-        let fixture =
-            Self { folder: folder.clone(), identity, repository: repository.clone(), port, _host: serve(&repository, &folder.join("identity"), port) };
+        let (host, port) = serve(&repository, &identity);
+        std::fs::write(identity.join("port"), format!("{port}\n")).unwrap();
+        let fixture = Self { folder: folder.clone(), identity, repository, port, _host: host };
         fixture.publish(VERSION, &[]);
         fixture
     }
@@ -497,5 +499,20 @@ fn the_updater_killed_at_every_step_still_stages_whole() {
         }
         block(client.download(VERSION)).unwrap_or_else(|error| panic!("{point}: {error}"));
         assert!(update::accept::complete(&staged, client.platform).is_ok(), "{point}: staged whole after");
+    }
+}
+
+/// TODO-1996: the host chooses its port and holds it from the start, on
+/// every address `localhost` has, and names it; nothing finds a free port
+/// and lets it go first.
+#[test]
+fn the_host_holds_the_port_it_names_on_every_address() {
+    let folder = scratch("held-port");
+    let identity = folder.join("identity");
+    release(&["test-identity", &text(&identity), "--host", "localhost", "--port", "0"]);
+    let (_host, port) = serve(&folder, &identity);
+    assert_ne!(port, 0);
+    for address in std::net::ToSocketAddrs::to_socket_addrs(&("localhost", port)).unwrap() {
+        std::net::TcpStream::connect(address).unwrap_or_else(|error| panic!("{address}: {error}"));
     }
 }
