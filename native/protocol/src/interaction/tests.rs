@@ -131,8 +131,8 @@ fn typing_round_trips_and_a_bad_cursor_is_refused() {
     assert!(push_typing(&mut Vec::new(), &echo).is_err());
 }
 
-/// REQ-INT-133: the fetcher takes whole items of the stream, at most
-/// 4 096 bytes.
+/// REQ-INT-133 (REQ-1381): the fetcher takes whole items of the stream, at
+/// most the input protocol's `MAX_MESSAGE`, 8,192 bytes (DEC-1715).
 #[test]
 fn a_message_for_the_fetcher_is_whole_and_bounded() {
     assert!(check_message(b"abc\xFF\x01\x80\x04\x00\x04\x02").is_ok());
