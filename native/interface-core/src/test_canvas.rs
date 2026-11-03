@@ -7,8 +7,18 @@ use crate::canvas::{Canvas, PageKey, Style};
 use crate::geometry::{Point, Rect};
 use crate::theme::Colour;
 
+/// A page image or a fill, as one call in the order of drawing.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Painted {
+    Page(PageKey, Rect),
+    Fill(Rect, Colour),
+}
+
 pub struct Recorder {
     pub pages: Vec<(PageKey, Rect)>,
+    /// The page images and the fills together, in the order drawn, for
+    /// what must be drawn over what.
+    pub painted: Vec<Painted>,
     pub texts: Vec<(Rect, alloc::string::String)>,
     pub fills: Vec<(Rect, Colour)>,
     /// Each polygon, and its colour.
@@ -26,6 +36,7 @@ impl Recorder {
     pub fn new() -> Self {
         Self {
             pages: Vec::new(),
+            painted: Vec::new(),
             texts: Vec::new(),
             fills: Vec::new(),
             polygons: Vec::new(),
@@ -45,6 +56,7 @@ impl Recorder {
 impl Canvas for Recorder {
     fn fill(&mut self, rect: Rect, _: f64, colour: Colour) {
         self.fills.push((rect, colour));
+        self.painted.push(Painted::Fill(rect, colour));
     }
     fn device_scale(&self) -> f64 {
         self.scale
@@ -60,6 +72,7 @@ impl Canvas for Recorder {
     fn gradient(&mut self, _: Rect, _: f64, _: &[(f32, Colour)]) {}
     fn page(&mut self, key: PageKey, rect: Rect) -> bool {
         self.pages.push((key, rect));
+        self.painted.push(Painted::Page(key, rect));
         true
     }
     fn screen(&mut self, _: PageKey) -> Option<Colour> {
