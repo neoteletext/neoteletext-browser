@@ -18,14 +18,14 @@
 
 use std::ffi::OsString;
 use std::io::{BufRead as _, BufReader, PipeWriter, Write as _};
-use std::process::{Child, Command, Stdio};
+use std::process::{Child, Command};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
 #[cfg(unix)]
 use std::sync::{Mutex, PoisonError};
 use std::time::{Duration, Instant};
 
-use update::layout::{HEALTHY_LINE, LAUNCHED_VARIABLE, STARTED_LINE};
+use update::layout::{HEALTHY_LINE, LAUNCHED_VARIABLE, LIFELINE_VALUE, LIFELINE_VARIABLE, STARTED_LINE};
 use update::platform::MARKED_PROGRAM;
 
 use crate::{Chosen, Deadline, Ended, Launcher, launcher_release};
@@ -149,8 +149,12 @@ pub fn start(launcher: &Launcher, chosen: Chosen, arguments: &[OsString]) -> Res
     let program = launcher.layout.programs(version).join(launcher.platform.program_file(MARKED_PROGRAM));
     let (output, broker_end) = std::io::pipe().map_err(|error| format!("cannot make the broker's output: {error}"))?;
     let own_end = broker_end.try_clone().map_err(|error| format!("cannot make the broker's output: {error}"))?;
+    // The broker's lifeline (TODO-2006): its standard input, whose
+    // writing end only this launcher holds, until the broker has ended; a
+    // launcher killed outright closes it, and the broker ends.
+    let (lifeline, _lifeline_end) = std::io::pipe().map_err(|error| format!("cannot make the broker's lifeline: {error}"))?;
     let mut command = Command::new(&program);
-    command.args(arguments).env(LAUNCHED_VARIABLE, "1").stdin(Stdio::null()).stdout(broker_end);
+    command.args(arguments).env(LAUNCHED_VARIABLE, "1").env(LIFELINE_VARIABLE, LIFELINE_VALUE).stdin(lifeline).stdout(broker_end);
     #[cfg(unix)]
     {
         // Its own process group, so a trial that hangs is ended whole.
@@ -403,7 +407,7 @@ mod tests {
         } else {
             command.arg("--list");
         }
-        let mut child = command.stdout(Stdio::null()).stderr(Stdio::null()).spawn().unwrap();
+        let mut child = command.stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null()).spawn().unwrap();
         if !lives {
             child.wait().unwrap();
         }

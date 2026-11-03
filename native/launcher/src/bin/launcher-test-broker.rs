@@ -11,7 +11,8 @@
 //! [`SLOW_START`], then reports health; `orphan` starts a helper in its
 //! process group, writes its number to the log's name plus `.helpers`,
 //! and crashes; `serves` does the same but writes its own number too,
-//! reports health and runs on, as a browser in use does. Two never say
+//! reports health and runs on, as a browser in use does, until its
+//! launcher has gone, when it ends its helper and itself. Two never say
 //! they started: `quiet`
 //! ends successfully, `mute` hangs. Each run appends its version and
 //! behaviour to the file its first argument names.
@@ -38,6 +39,9 @@ const ORPHAN_LIFE: &str = "3600";
 /// deadline the launcher's test gives it, far shorter than its start
 /// deadline.
 const SLOW_START: Duration = Duration::from_secs(6);
+/// The exit status of a broker that ended because its launcher had gone,
+/// which nothing reads: the launcher that would is gone.
+const LAUNCHER_GONE_EXIT: i32 = 4;
 /// The slot `--make` fills: its length is the most a mark and a behaviour
 /// may take, and its text is what `--make` finds.
 const SLOT_BYTES: usize = 64;
@@ -114,13 +118,22 @@ fn main() -> std::process::ExitCode {
         // which outlives it, its number written beside the log; one that
         // serves writes its own number too.
         "orphan" | "serves" => {
-            if let (Some(log), Ok(helper)) = (arguments.first(), std::process::Command::new("/bin/sleep").arg(ORPHAN_LIFE).spawn())
+            if let (Some(log), Ok(mut helper)) = (arguments.first(), std::process::Command::new("/bin/sleep").arg(ORPHAN_LIFE).spawn())
                 && let Ok(mut file) = std::fs::OpenOptions::new().create(true).append(true).open(format!("{log}.helpers"))
             {
+                let helper_id = helper.id();
                 if behaviour == "serves" {
+                    // As the real broker does, it ends once its launcher has
+                    // gone, and its helper with it, before its numbers are
+                    // written for a test to end the launcher.
+                    update::layout::when_launcher_gone(move || {
+                        let _ = helper.kill();
+                        let _ = helper.wait();
+                        std::process::exit(LAUNCHER_GONE_EXIT);
+                    });
                     let _ = writeln!(file, "{}", std::process::id());
                 }
-                let _ = writeln!(file, "{}", helper.id());
+                let _ = writeln!(file, "{helper_id}");
             }
         }
         _ => {}
