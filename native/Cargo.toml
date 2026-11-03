@@ -91,7 +91,12 @@ parley = "=0.12.0"
 # fonts (installation-and-updates.md section 4.3). The same version as
 # Parley's.
 fontique = { version = "=0.12.0", default-features = false, features = ["fontconfig-dlopen"] }
-winit = "=0.30.13"
+# Without its "wayland-csd-adwaita" default feature: on Linux the window
+# asks for no system decorations (interface/src/window.rs), so winit's
+# Adwaita title bar, and the unmaintained ttf-parser under it
+# (RUSTSEC-2026-0192), was compiled in and never drawn (DEC-2339). The
+# other defaults are kept as they were.
+winit = { version = "=0.30.13", default-features = false, features = ["rwh_06", "x11", "wayland", "wayland-dlopen"] }
 # The same Linux displays as winit's default features, loaded at run time
 # as winit loads them; without a backend softbuffer does not build on
 # Linux. Its kms backend draws to the console with no window, which winit
