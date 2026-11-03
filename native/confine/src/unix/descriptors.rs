@@ -60,16 +60,84 @@ fn control_length(bytes: usize) -> io::Result<libc::socklen_t> {
     libc::socklen_t::try_from(bytes).map_err(|_| io::ErrorKind::InvalidInput.into())
 }
 
-/// Has `command` keep `descriptor` open in the program it starts (DEC-1551
-/// item 3): the standard library opens every descriptor close-on-exec and
-/// offers no other way.
-pub fn keep_across_exec(command: &mut std::process::Command, descriptor: RawFd) {
+/// Has `command` start its program holding its standard input, output and
+/// error, `kept` if there is one (DEC-1551 item 3), and nothing else of
+/// this process (TODO-1994).
+///
+/// On macOS a socket, a pipe or an accepted connection is made in one
+/// system call and made close-on-exec in a second, by the standard library
+/// as by the system's own libraries, so a program started by another thread
+/// between the two would hold it for its whole life; and a library may
+/// leave a descriptor without the flag at all. So in the child, between
+/// fork and exec, every descriptor but those is made close-on-exec, as
+/// `POSIX_SPAWN_CLOEXEC_DEFAULT` would, which the standard library's
+/// `Command` does not offer. Linux makes the standard library's descriptors
+/// close-on-exec atomically, so there only `kept` is changed, and a helper
+/// without one is started as the standard library starts it.
+pub fn hold_only(command: &mut std::process::Command, kept: Option<RawFd>) {
     use std::os::unix::process::CommandExt as _;
-    // SAFETY: `fcntl` is async-signal-safe, and the closure touches nothing but the
-    // descriptor's flag, in the child between fork and exec.
-    unsafe {
-        command.pre_exec(move || if libc::fcntl(descriptor, libc::F_SETFD, 0) == -1 { Err(io::Error::last_os_error()) } else { Ok(()) });
+    #[cfg(target_os = "macos")]
+    {
+        /// The first descriptor that is not standard input, output or error.
+        const FIRST_NOT_STANDARD: RawFd = 3;
+        // Every descriptor is numbered below the size of the descriptor
+        // table, which macOS gives clamped to the system's own limit; read
+        // here, in the parent, so the child calls only `fcntl`.
+        // SAFETY: `getdtablesize` reads a limit and touches no memory.
+        let table = unsafe { libc::getdtablesize() };
+        // SAFETY: `fcntl` is async-signal-safe, and the closure touches
+        // nothing but descriptors' flags, in the child between fork and exec;
+        // `table` and `kept` are integers copied into it.
+        unsafe {
+            command.pre_exec(move || {
+                for descriptor in FIRST_NOT_STANDARD..table {
+                    let flags = libc::fcntl(descriptor, libc::F_GETFD);
+                    if flags == -1 {
+                        continue;
+                    }
+                    let wanted = if Some(descriptor) == kept { flags & !libc::FD_CLOEXEC } else { flags | libc::FD_CLOEXEC };
+                    if wanted != flags && libc::fcntl(descriptor, libc::F_SETFD, wanted) == -1 {
+                        return Err(io::Error::last_os_error());
+                    }
+                }
+                Ok(())
+            });
+        }
     }
+    #[cfg(not(target_os = "macos"))]
+    if let Some(descriptor) = kept {
+        // SAFETY: `fcntl` is async-signal-safe, and the closure touches nothing but the
+        // descriptor's flag, in the child between fork and exec.
+        unsafe {
+            command.pre_exec(move || if libc::fcntl(descriptor, libc::F_SETFD, 0) == -1 { Err(io::Error::last_os_error()) } else { Ok(()) });
+        }
+    }
+}
+
+/// The descriptors this process holds open, lowest first: what a test's
+/// probe reports of what it was started with.
+#[cfg(test)]
+pub fn open_descriptors() -> Vec<RawFd> {
+    // SAFETY: `getdtablesize` reads a limit and touches no memory.
+    let table = unsafe { libc::getdtablesize() };
+    // SAFETY: `fcntl` with F_GETFD reads a flag and touches no memory; a
+    // number that is not open answers -1.
+    (0..table).filter(|&number| unsafe { libc::fcntl(number, libc::F_GETFD) } != -1).collect()
+}
+
+/// A copy of `descriptor` numbered `number` or above that is not
+/// close-on-exec, as a library that opens a file without the flag leaves
+/// one: what a test's parent holds that no helper must be given.
+#[cfg(all(test, target_os = "macos"))]
+pub fn inheritable_copy(descriptor: &impl std::os::fd::AsRawFd, number: RawFd) -> io::Result<OwnedFd> {
+    // SAFETY: `fcntl` with F_DUPFD makes a new descriptor, without the
+    // close-on-exec flag, and touches no memory.
+    let copy = unsafe { libc::fcntl(descriptor.as_raw_fd(), libc::F_DUPFD, number) };
+    if copy == -1 {
+        return Err(io::Error::last_os_error());
+    }
+    // SAFETY: it was just made, and nothing else owns it.
+    Ok(unsafe { OwnedFd::from_raw_fd(copy) })
 }
 
 /// The descriptor numbered `number`, which this process was started with and

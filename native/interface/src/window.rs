@@ -56,9 +56,21 @@ pub fn show_dock_icon() {
 #[cfg(not(target_os = "macos"))]
 pub fn show_dock_icon() {}
 
+/// Whether the browser runs beside what the person at the computer is
+/// using, without taking the focus from it: a debug build started with
+/// `NEOTELETEXT_BACKGROUND`, as the check that its window reaches the
+/// screen starts it (TODO-1258). Its windows still reach the screen; they
+/// are ordered in without being made key, and the application is not
+/// activated while another is active.
+#[must_use]
+pub fn in_background() -> bool {
+    cfg!(debug_assertions) && std::env::var_os("NEOTELETEXT_BACKGROUND").is_some()
+}
+
 /// The window, at its kept place and size when there are some.
 pub(crate) fn attributes(kept: Option<WindowGeometry>) -> winit::window::WindowAttributes {
     let mut attributes = Window::default_attributes()
+        .with_active(!in_background())
         .with_title(WINDOW_TITLE)
         .with_inner_size(LogicalSize::new(WINDOW_WIDTH, WINDOW_HEIGHT))
         .with_min_inner_size(LogicalSize::new(MINIMUM_WIDTH, MINIMUM_HEIGHT));

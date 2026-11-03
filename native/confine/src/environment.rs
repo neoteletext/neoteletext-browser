@@ -49,6 +49,14 @@ const ENVIRONMENT_WINDOW: &[&str] = &[
     "LC_CTYPE",
     "NEOTELETEXT_FRAME_TRACE",
 ];
+/// What the interface is given besides in a debug build: the switch with
+/// which a check opens the browser's window without taking the focus from
+/// what the person at the computer is using (TODO-1258). A release build
+/// reads none.
+#[cfg(debug_assertions)]
+const ENVIRONMENT_WINDOW_DEBUG: &[&str] = &["NEOTELETEXT_BACKGROUND"];
+#[cfg(not(debug_assertions))]
+const ENVIRONMENT_WINDOW_DEBUG: &[&str] = &[];
 /// What the sound helper needs: the sound server and the user's sound
 /// configuration, and its own diagnostics.
 const ENVIRONMENT_SOUND: &[&str] =
@@ -84,7 +92,8 @@ pub fn environment(role: Role) -> Vec<(OsString, OsString)> {
         Role::Updater { .. } => ENVIRONMENT_UPDATER,
         Role::Decoder | Role::Network => &[],
     };
-    let mut names: Vec<&str> = ENVIRONMENT_NEEDED.iter().chain(extra).copied().collect();
+    let debug: &[&str] = if role == Role::Interface { ENVIRONMENT_WINDOW_DEBUG } else { &[] };
+    let mut names: Vec<&str> = ENVIRONMENT_NEEDED.iter().chain(extra).chain(debug).copied().collect();
     names.sort_unstable();
     names.dedup();
     names.into_iter().filter_map(|name| std::env::var_os(name).map(|value| (OsString::from(name), value))).collect()
@@ -103,5 +112,14 @@ mod tests {
     fn the_relay_override_is_a_debug_build_variable() {
         let present = ENVIRONMENT_CORE.contains(&"NEOTELETEXT_QRKEYBOARD_RELAY");
         assert_eq!(present, cfg!(debug_assertions), "the relay override must be passed only in a debug build");
+    }
+
+    /// TODO-1258: the switch that opens the window without taking the
+    /// focus is a debug-build variable only, as the interface reads it only
+    /// in a debug build.
+    #[test]
+    fn the_background_switch_is_a_debug_build_variable() {
+        assert_eq!(ENVIRONMENT_WINDOW_DEBUG.contains(&"NEOTELETEXT_BACKGROUND"), cfg!(debug_assertions));
+        assert!(!ENVIRONMENT_WINDOW.contains(&"NEOTELETEXT_BACKGROUND"), "the release list never has it");
     }
 }
