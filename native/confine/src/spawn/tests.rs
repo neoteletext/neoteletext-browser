@@ -229,3 +229,106 @@ fn the_interface_alone_has_a_channel_to_the_broker() {
     assert!(output.iter().any(|line| line.contains("DECLARED")), "{output:?}");
     assert_eq!(*heard.lock().unwrap(), [crate::broker::Declaration { paths: vec![String::from("/declared.tti")], keep: true }]);
 }
+
+/// What a copy of this test binary does, run as a decoder: lists the
+/// descriptors it holds.
+#[cfg(unix)]
+const DESCRIPTORS_PROBE: &str = "NEOTELETEXT_CONFINE_DESCRIPTORS_PROBE";
+
+/// The probe: run by `a_helper_holds_only_its_own_descriptors_while_others_are_made`
+/// and `a_descriptor_left_inheritable_does_not_reach_a_helper`, never on
+/// its own.
+#[cfg(unix)]
+#[test]
+fn descriptors_probe() {
+    if std::env::var_os(DESCRIPTORS_PROBE).is_none() {
+        return;
+    }
+    println!("DESCRIPTORS {:?}", crate::unix::open_descriptors());
+}
+
+/// Starts this test binary as a decoder that lists the descriptors it holds,
+/// and returns that list as it printed it.
+#[cfg(unix)]
+fn descriptors_of_a_helper() -> String {
+    let program = std::env::current_exe().unwrap();
+    let arguments = [OsString::from("--exact"), OsString::from("spawn::tests::descriptors_probe"), OsString::from("--nocapture")];
+    let mut environment = environment(Role::Decoder);
+    environment.push((OsString::from(DESCRIPTORS_PROBE), OsString::from("1")));
+    let mut process =
+        spawn(&Spawn { program: &program, arguments: &arguments, role: Role::Decoder, environment: &environment, local_network: false, writable: None })
+            .unwrap();
+    let line = BufReader::new(process.stdout.take().unwrap())
+        .lines()
+        .map_while(Result::ok)
+        .find_map(|line| line.strip_prefix("DESCRIPTORS ").map(str::to_owned))
+        .unwrap_or_default();
+    let _ = process.wait();
+    line
+}
+
+/// REQ-673 and REQ-674 (TODO-1994): a confined helper holds what it is
+/// given and what it opens itself, and nothing else, even while another
+/// thread of its parent makes descriptors as it starts. On macOS the
+/// standard library makes a socket or a pipe and sets it close-on-exec in a
+/// second call, so a helper started between the two held the descriptor for
+/// its whole life; the broker's single-instance listener and file dialog
+/// make such descriptors on threads of their own. Linux makes them
+/// close-on-exec atomically. What a helper opens itself is measured first,
+/// with nothing else being made: on macOS a decoder opens the system log's
+/// socket.
+#[cfg(unix)]
+#[test]
+fn a_helper_holds_only_its_own_descriptors_while_others_are_made() {
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    /// How many helpers are started while other threads make descriptors:
+    /// on the Mac, on the code before, about one start in five held one
+    /// (19 of 100, measured on 3 November 2026), so this many leave no
+    /// doubt; they take about 20 milliseconds each there.
+    const STARTS: usize = 100;
+    /// Threads making descriptors at once.
+    const MAKERS: usize = 2;
+
+    let own = descriptors_of_a_helper();
+    assert!(own.starts_with("[0, 1, 2"), "a helper holds its standard input, output and error: {own}");
+    let stop = Arc::new(AtomicBool::new(false));
+    let makers: Vec<_> = (0..MAKERS)
+        .map(|_| {
+            let making = Arc::clone(&stop);
+            std::thread::spawn(move || {
+                while !making.load(Ordering::Relaxed) {
+                    let pair = std::os::unix::net::UnixStream::pair();
+                    let pipe = io::pipe();
+                    drop((pair, pipe));
+                }
+            })
+        })
+        .collect();
+    let held: Vec<String> = (0..STARTS).map(|_| descriptors_of_a_helper()).collect();
+    stop.store(true, Ordering::Relaxed);
+    for maker in makers {
+        maker.join().unwrap();
+    }
+    let wrong: Vec<&String> = held.iter().filter(|line| **line != own).collect();
+    assert!(wrong.is_empty(), "{} of {STARTS} helpers held other descriptors than their own {own}: {wrong:?}", wrong.len());
+}
+
+/// REQ-673 and REQ-674 (TODO-1994): a descriptor its parent holds without
+/// close-on-exec, as a system library may leave one, does not reach a
+/// helper on macOS. Before, every helper was given it.
+#[cfg(target_os = "macos")]
+#[test]
+fn a_descriptor_left_inheritable_does_not_reach_a_helper() {
+    /// The number the parent's descriptor is given or exceeds: far above
+    /// the few a new helper opens itself, and below the 256 descriptors
+    /// macOS allows a process by default (`launchctl limit maxfiles`).
+    const HIGH: i32 = 100;
+
+    let (reader, _writer) = io::pipe().unwrap();
+    let inheritable = crate::unix::inheritable_copy(&reader, HIGH).unwrap();
+    let number = std::os::fd::AsRawFd::as_raw_fd(&inheritable);
+    let held = descriptors_of_a_helper();
+    assert!(!held.contains(&number.to_string()), "the helper was given descriptor {number}: {held}");
+}

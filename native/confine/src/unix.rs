@@ -19,7 +19,11 @@ mod descriptors;
 mod time;
 
 pub(crate) use channel::Channel;
-pub(crate) use descriptors::{keep_across_exec, receive, send, take_inherited};
+#[cfg(all(test, target_os = "macos"))]
+pub(crate) use descriptors::inheritable_copy;
+#[cfg(test)]
+pub(crate) use descriptors::open_descriptors;
+pub(crate) use descriptors::{hold_only, receive, send, take_inherited};
 pub(crate) use time::local_offset;
 
 /// The command that runs a helper: under its profile on macOS; as it is
@@ -52,11 +56,11 @@ pub(crate) fn spawn(spawn: &Spawn<'_>) -> io::Result<Process> {
     let channel = if spawn.role == Role::Interface {
         let (ours, theirs) = UnixStream::pair()?;
         command.env(CHANNEL_VARIABLE, theirs.as_raw_fd().to_string());
-        keep_across_exec(&mut command, theirs.as_raw_fd());
         Some((ours, theirs))
     } else {
         None
     };
+    hold_only(&mut command, channel.as_ref().map(|(_, theirs)| theirs.as_raw_fd()));
     let mut child = command.stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::inherit()).spawn()?;
     #[cfg(target_os = "macos")]
     let report = Report { layers: vec![String::from("sandbox-exec")] };
@@ -77,6 +81,7 @@ pub(crate) fn start_core(spawn: &Spawn<'_>) -> io::Result<(Process, Channel)> {
     for (name, value) in spawn.environment {
         command.env(name, value);
     }
+    hold_only(&mut command, None);
     let child = command.stdin(Stdio::from(OwnedFd::from(theirs))).stdout(Stdio::null()).stderr(Stdio::inherit()).spawn()?;
     #[cfg(target_os = "macos")]
     let report = Report { layers: vec![String::from("sandbox-exec")] };
