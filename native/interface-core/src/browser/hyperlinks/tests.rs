@@ -291,6 +291,39 @@ fn a_control_lights_and_shows_the_hand_while_keys_go() {
     assert_eq!(browser.cursor(), Cursor::Hand);
 }
 
+/// REQ-1370, DEC-2385: while keys go to the channel, a contact on a control
+/// gives it the pressed look, never a hover look, and the look ends as the
+/// contact lifts, is cancelled or leaves the control; a second contact on
+/// another control waits for the first, a page having one look at a time.
+/// On the code before, a finger on a control asked for no look at all.
+#[cfg(feature = "interaction")]
+#[test]
+fn a_contact_on_a_control_gives_it_the_pressed_look() {
+    use crate::browser::typing::TypingView;
+    use crate::input::TouchPhase;
+    let (mut browser, _, key, rect) = opened();
+    let first = Area { row: 20, column: 1, width: 9, height: 1 };
+    let second = Area { row: 22, column: 1, width: 9, height: 1 };
+    browser.set_links(key, PageLinks { controls: vec![first, second], ..page_links(VERSION) });
+    let typing = TypingView { channel: key.channel, page: key.page, on: true, secure: false, refused: false, cursor: None, round_trip_us: None };
+    browser.set_typing(typing, OPEN);
+    browser.take_outputs();
+    let on_first = centre(rect, 3, 20);
+    let on_second = centre(rect, 3, 22);
+    assert!(browser.touch(TouchPhase::Began, 1, on_first.x, on_first.y));
+    assert_eq!(lits(&mut browser), [Some(Lit { key, area: first, pressed: true })], "pressed, with no hover look first");
+    assert!(browser.touch(TouchPhase::Began, 2, on_second.x, on_second.y));
+    assert_eq!(lits(&mut browser), [], "the first contact keeps the look");
+    let off = centre(rect, 20, 10);
+    assert!(browser.touch(TouchPhase::Moved, 1, off.x, off.y));
+    assert_eq!(lits(&mut browser), [None], "leaving the control ends it");
+    assert!(browser.touch(TouchPhase::Ended, 1, off.x, off.y));
+    assert!(browser.touch(TouchPhase::Moved, 2, on_second.x + 1.0, on_second.y));
+    assert_eq!(lits(&mut browser), [Some(Lit { key, area: second, pressed: true })], "then the other contact's control");
+    assert!(browser.touch(TouchPhase::Cancelled, 2, on_second.x, on_second.y));
+    assert_eq!(lits(&mut browser), [None], "a cancelled contact ends it");
+}
+
 /// DOC-1940 (decision E.129): while keys go to the channel it is
 /// told as the pointer enters and leaves each control, the leave before the
 /// enter from one to the next, with the control's first cell.

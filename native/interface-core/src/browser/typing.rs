@@ -127,6 +127,11 @@ impl Browser {
             state.moved = now;
         }
         state.typing = Some(typing);
+        // Nor does any contact press a control now (REQ-1370).
+        #[cfg(feature = "links")]
+        if !typing.on {
+            self.forget_touch_look();
+        }
         // Whether a click goes to the channel decides what lights.
         #[cfg(feature = "links")]
         self.relight();
@@ -383,6 +388,8 @@ impl Browser {
                 }
                 self.typing.touches.push((contact, at));
                 self.send(target, Intent::Touch { phase, contact, at });
+                #[cfg(feature = "links")]
+                self.touch_look(contact, Some(point));
                 true
             }
             (TouchPhase::Moved, Some(place), Some(at)) => {
@@ -392,6 +399,8 @@ impl Browser {
                     }
                     self.send(target, Intent::Touch { phase, contact, at });
                 }
+                #[cfg(feature = "links")]
+                self.touch_look(contact, Some(point));
                 true
             }
             (TouchPhase::Ended | TouchPhase::Cancelled | TouchPhase::Moved, Some(place), at) => {
@@ -400,6 +409,8 @@ impl Browser {
                 // taken by the system, gone.
                 let phase = if phase == TouchPhase::Ended && at.is_some() { TouchPhase::Ended } else { TouchPhase::Cancelled };
                 self.send(target, Intent::Touch { phase, contact, at: at.unwrap_or(last) });
+                #[cfg(feature = "links")]
+                self.touch_look(contact, None);
                 true
             }
             _ => false,
