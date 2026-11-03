@@ -53,14 +53,21 @@ impl Speaker {
 
     /// Runs the device while `playing`, and stops it otherwise. A device
     /// that cannot stop keeps running: sound matters more than the wakeups.
-    pub fn set_playing(&mut self, playing: bool) {
+    /// Returns whether the device started or stopped.
+    pub fn set_playing(&mut self, playing: bool) -> bool {
         if playing == self.playing {
-            return;
+            return false;
         }
         let result = if playing { self.stream.play() } else { self.stream.pause() };
         match result {
-            Ok(()) => self.playing = playing,
-            Err(error) => eprintln!("neoteletext-interface: audio output: {error}"),
+            Ok(()) => {
+                self.playing = playing;
+                true
+            }
+            Err(error) => {
+                eprintln!("neoteletext-sound: audio output: {error}");
+                false
+            }
         }
     }
 }

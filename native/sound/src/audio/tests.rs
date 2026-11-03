@@ -192,12 +192,13 @@ fn a_tone_plays_through_the_default_output_device() {
     assert!(wakes.recv_timeout(std::time::Duration::from_millis(100)).is_ok(), "the start wakes the watcher");
     std::thread::sleep(std::time::Duration::from_millis(300));
     assert_eq!(speaker.mixers.lock().unwrap().sounding(), BTreeSet::from([1]), "the device is stopped: nothing was consumed");
-    speaker.set_playing(true);
+    assert!(speaker.set_playing(true), "the device starts");
+    assert!(!speaker.set_playing(true), "once");
     std::thread::sleep(std::time::Duration::from_millis(300));
     assert_eq!(speaker.mixers.lock().unwrap().sounding(), BTreeSet::from([1]), "still playing after 300 ms: the device is pulling samples");
     assert!(wakes.recv_timeout(std::time::Duration::from_millis(1500)).is_ok(), "the end wakes the watcher");
     assert_eq!(speaker.mixers.lock().unwrap().sounding(), BTreeSet::new(), "finished: the device consumed the whole second");
-    speaker.set_playing(false);
+    assert!(speaker.set_playing(false), "the device stops");
 }
 
 /// Finding F-55: only a definition or a live sound makes a channel's
