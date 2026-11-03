@@ -214,10 +214,10 @@ mod tests {
             grants.record(grant(&format!("/{index}"), 1));
         }
         assert_eq!(grants.len(), MAX_GRANTS);
-        assert!(grants.find(Path::new("/0")).is_none());
+        assert!(grants.find(Path::new(&absolute("/0"))).is_none());
         grants.record(grant("/1", 9));
         assert_eq!(grants.len(), MAX_GRANTS);
-        assert_eq!(grants.find(Path::new("/1")).map(|kept| kept.identity.file), Some(9));
+        assert_eq!(grants.find(Path::new(&absolute("/1"))).map(|kept| kept.identity.file), Some(9));
     }
 
     /// REQ-1698: the broker's folder is beside the settings folder, the one
