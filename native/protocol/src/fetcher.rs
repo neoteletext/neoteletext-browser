@@ -16,10 +16,11 @@ use interface_core::channel::page_index;
 #[cfg(feature = "links")]
 use kinds::KIND_LINKS;
 use kinds::{
-    KIND_CERTIFICATE_REFUSED, KIND_CHANNEL_LOG, KIND_CLEAR_SITE_DATA, KIND_CONFINED, KIND_CONNECTING, KIND_CONTENTS, KIND_COOKIE_ANSWER, KIND_COOKIE_QUESTION,
-    KIND_COOKIE_SET, KIND_DENIED, KIND_EXCHANGE, KIND_FETCH_PAGE, KIND_FETCH_SUBPAGE, KIND_FETCH_SUBPAGES, KIND_INITIAL_PAGE, KIND_INVALID_PACKETS,
-    KIND_NO_CONTENTS, KIND_NOTICE, KIND_PAGE, KIND_PAGE_REDIRECT, KIND_PROGRAM_REDIRECT, KIND_PROXY_FAILED, KIND_PUSHING, KIND_REACHED_ANSWER,
-    KIND_REACHED_QUESTION, KIND_REDIRECTED, KIND_REFRESH, KIND_REFUSED, KIND_REGION, KIND_SUBPAGES, KIND_SUBPAGES_FAILED, KIND_SUBPAGES_MISSING,
+    KIND_BUNDLE_SETTLED, KIND_CERTIFICATE_REFUSED, KIND_CHANNEL_LOG, KIND_CLEAR_SITE_DATA, KIND_CONFINED, KIND_CONNECTING, KIND_CONTENTS, KIND_COOKIE_ANSWER,
+    KIND_COOKIE_QUESTION, KIND_COOKIE_SET, KIND_DENIED, KIND_EXCHANGE, KIND_FETCH_CONTENTS, KIND_FETCH_PAGE, KIND_FETCH_SUBPAGE, KIND_FETCH_SUBPAGES,
+    KIND_INITIAL_PAGE, KIND_INVALID_PACKETS, KIND_NO_CONTENTS, KIND_NOTICE, KIND_PAGE, KIND_PAGE_REDIRECT, KIND_PROGRAM_REDIRECT, KIND_PROXY_FAILED,
+    KIND_PUSHING, KIND_REACHED_ANSWER, KIND_REACHED_QUESTION, KIND_REDIRECTED, KIND_REFRESH, KIND_REFUSED, KIND_REGION, KIND_SUBPAGES, KIND_SUBPAGES_FAILED,
+    KIND_SUBPAGES_MISSING,
 };
 #[cfg(feature = "interaction")]
 use kinds::{KIND_INPUT, KIND_MEASURE_ROUND_TRIP, KIND_ROUND_TRIP, KIND_SEND};
@@ -173,9 +174,13 @@ pub enum FromFetcher {
         /// The status, within [`STATUS_CODES`].
         status: Option<u16>,
     },
-    /// The channel's contents file was answered with none, or failed: its
-    /// pages are asked for one by one as they are wanted (REQ-703).
+    /// The channel's contents file was answered with none, or failed: it
+    /// lists nothing (REQ-703).
     NoContents,
+    /// A static channel's bundle, `index.t42`, was answered, refused or
+    /// found missing, and every page it held has been sent: a page it did
+    /// not hold may now be asked for by its own file (REQ-703).
+    BundleSettled,
     /// The interval the channel's `channel.ttx` declares, in seconds, for a
     /// channel with no push connection (REQ-704).
     Refresh(u32),
@@ -407,6 +412,9 @@ pub enum ToFetcher {
         /// Reached securely, with a cookie still live.
         reached: bool,
     },
+    /// Fetch the channel's contents file, `contents.txt`: its listing is
+    /// wanted, and is never fetched as the channel opens (REQ-703).
+    FetchContents,
     /// Fetch a page's own file, conditionally when it was fetched before
     /// (the engine's `Input::FetchPage`): a page wanted that nothing else
     /// brings, or the page on screen again (REQ-703, REQ-704).
@@ -456,6 +464,7 @@ pub fn write_to_fetcher(out: &mut dyn Write, message: &ToFetcher) -> Result<(), 
             let kind = cookies::push_answer(&mut payload, message)?;
             write_frame(out, kind, &payload)
         }
+        ToFetcher::FetchContents => write_frame(out, KIND_FETCH_CONTENTS, &[]),
         ToFetcher::FetchPage { page } => {
             page_index(*page).ok_or(ProtocolError::BadValue("page number"))?;
             write_frame(out, KIND_FETCH_PAGE, &page.to_be_bytes())
@@ -503,6 +512,7 @@ pub fn read_to_fetcher(input: &mut dyn Read) -> Result<Option<ToFetcher>, Protoc
         #[cfg(feature = "interaction")]
         KIND_MEASURE_ROUND_TRIP => ToFetcher::MeasureRoundTrip(fields.flag("measure")?),
         KIND_COOKIE_ANSWER | KIND_REACHED_ANSWER => cookies::read_answer(kind, &mut fields)?,
+        KIND_FETCH_CONTENTS => ToFetcher::FetchContents,
         KIND_FETCH_PAGE => ToFetcher::FetchPage { page: fields.display_page()? },
         KIND_FETCH_SUBPAGES => ToFetcher::FetchSubPages { page: fields.display_page()?, part: checked_part(fields.u8()?)? },
         KIND_FETCH_SUBPAGE => {
@@ -645,6 +655,7 @@ fn push_static_message(payload: &mut Vec<u8>, message: &FromFetcher) -> Result<u
             if matches!(message, FromFetcher::SubPagesMissing { .. }) { KIND_SUBPAGES_MISSING } else { KIND_SUBPAGES_FAILED }
         }
         FromFetcher::NoContents => KIND_NO_CONTENTS,
+        FromFetcher::BundleSettled => KIND_BUNDLE_SETTLED,
         FromFetcher::Refresh(seconds) => {
             if !(MIN_REFRESH_SECONDS..=MAX_REFRESH_SECONDS).contains(seconds) {
                 return Err(ProtocolError::BadValue("refresh"));
@@ -680,6 +691,7 @@ fn read_static_message(kind: u8, fields: &mut Fields<'_>) -> Result<FromFetcher,
         KIND_SUBPAGES_MISSING => FromFetcher::SubPagesMissing { page: fields.display_page()?, part: checked_part(fields.u8()?)? },
         KIND_SUBPAGES_FAILED => FromFetcher::SubPagesFailed { page: fields.display_page()?, part: checked_part(fields.u8()?)? },
         KIND_NO_CONTENTS => FromFetcher::NoContents,
+        KIND_BUNDLE_SETTLED => FromFetcher::BundleSettled,
         KIND_REFRESH => {
             let seconds = u32::from_be_bytes(fields.array()?);
             if !(MIN_REFRESH_SECONDS..=MAX_REFRESH_SECONDS).contains(&seconds) {
@@ -789,6 +801,7 @@ pub fn write_to_core(out: &mut dyn Write, message: &FromFetcher) -> Result<(), P
         | FromFetcher::SubPagesFailed { .. }
         | FromFetcher::Refused { .. }
         | FromFetcher::NoContents
+        | FromFetcher::BundleSettled
         | FromFetcher::Refresh(_) => push_static_message(&mut payload, message)?,
         #[cfg(feature = "interaction")]
         FromFetcher::RoundTrip { microseconds } => {
@@ -883,7 +896,9 @@ pub fn read_from_fetcher(input: &mut dyn Read) -> Result<Option<FromFetcher>, Pr
             }
             FromFetcher::SubPages { page, version, part }
         }
-        KIND_SUBPAGES_MISSING | KIND_SUBPAGES_FAILED | KIND_REFUSED | KIND_NO_CONTENTS | KIND_REFRESH => read_static_message(kind, &mut fields)?,
+        KIND_SUBPAGES_MISSING | KIND_SUBPAGES_FAILED | KIND_REFUSED | KIND_NO_CONTENTS | KIND_BUNDLE_SETTLED | KIND_REFRESH => {
+            read_static_message(kind, &mut fields)?
+        }
         #[cfg(feature = "interaction")]
         KIND_ROUND_TRIP => FromFetcher::RoundTrip { microseconds: u64::from_be_bytes(fields.array()?) },
         KIND_CHANNEL_LOG

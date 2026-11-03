@@ -2,7 +2,8 @@
 //! channel holds a push connection is live, and never sleeps. A tab with
 //! nothing live (a static channel already fetched, or a file) has its
 //! decoder closed while it sleeps; its fetcher is never closed or paused,
-//! since fetching never depends on viewing (decision 22). A tab is awake
+//! but it fetches only what is asked of it, as a page is wanted (REQ-703),
+//! so a sleeping tab costs its server nothing. A tab is awake
 //! while it is the active one, while its channel holds a push connection,
 //! while its sound plays, and for [`SLEEP_AFTER`] after it was last shown;
 //! a tab restored with a session, never shown and with nothing live, sleeps

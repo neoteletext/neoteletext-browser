@@ -28,7 +28,7 @@ mod selected;
 mod tab;
 mod windows;
 
-pub use channel::{ChannelState, RedirectBy, Redirecting, SinceSelected};
+pub use channel::{ChannelState, Files, RedirectBy, Redirecting, SinceSelected};
 pub use outside::left_of_drop;
 pub use tab::{ClosedTab, Pending, Tab, Visit, Went};
 

@@ -338,21 +338,23 @@ These are the engine's user agent's rules, which the fetcher uses as they are:
 - **Every response has limits** on size, time and redirects, all the engine's constants.
 - **No `Referer` header is sent,** and only the engine's minimal user agent profile.
 
-### 7.4 Fetching never depends on viewing
+### 7.4 Fetching what is wanted
 
-Decision 22, **rescinded on 25 October 2026 by decision 104**: pages are to be fetched while they are visible or have focus. What follows is what is built, until decision 104's fetching is designed. The pattern of network requests must reveal nothing about which pages are viewed.
+Decision 22, under which fetching never depended on viewing, was **rescinded on 25 October 2026 by decision 104** (DEC-997): pages are fetched while they are visible or have focus, so a channel's server learns which of its pages are on screen. Requirements 5.15 (REQ-703) and 5.16 (REQ-704) state the design; DEC-2141 and DEC-2356 record how the browser builds it.
 
-| What the channel publishes | How its pages are fetched |
+| What the channel publishes | What is fetched, and when |
 |---|---|
-| A bundle, `index.t42` | The whole bundle when the channel opens |
-| A contents file, `contents.txt` | Every page file it lists, in the order it lists them, one every 0.2 seconds, when the channel opens. **Built**, by the engine's user agent |
-| Only separate page files | The page a tab wants, once the contents file has been answered, and each page as it is opened. **Built**: the trusted core asks with `ToFetcher::FetchPage` |
-| A `refresh` in `channel.ttx`, and no push connection | The page on screen again at that interval, conditionally. **Built**: the trusted core's timer, and only for the page open (REQ-704) |
-| A file on this computer | All of it, in its own order, at once, whatever is on screen (DEC-1762). **Built** |
+| `channel.ttx` | First, when the channel opens. A live channel, whose `channel.ttx` names a push connection, then opens that connection and fetches nothing more: its pages, its listing (the index records) and its lists of sub-pages come on it (DEC-1467) |
+| A bundle, `index.t42` | Next, when a static channel opens, by the engine's user agent. The fetcher says `FromFetcher::BundleSettled` once the bundle's pages have gone to the decoder, or it was refused, or it is missing |
+| A page's own file, `NNN.tti` or `NNN.t42` | Once the bundle has settled, when the page is wanted and has not arrived: the page a tab shows (the page open, or its address's, or the channel's first), each page opened after, and the pages the interface shows of the active tab's channel, the wall's thumbnails among them. Each is asked once until it arrives or is refused (`ToFetcher::FetchPage`) |
+| A contents file, `contents.txt` | Once, when the channel's listing is first wanted: when its tab is in front of a window, after its page, since the page list, the contents view and the overview show it (`ToFetcher::FetchContents`). A page it lists is never fetched for being listed |
+| A page's folder of sub-pages and its list in parts | As `page-controls.md` and requirement 4.7's third exception say |
+| A `refresh` in `channel.ttx`, and no push connection | The page on screen in every window again at that interval, conditionally (REQ-704): the trusted core's timer, per channel, for each tab in front of a window that shows a page |
+| A file on this computer | All of it, in its own order, at once, whatever is on screen (DEC-1762) |
 
-- **Refreshing** follows the channel's push feed, its declared schedule, or a fixed default, never which page is shown.
-- **Keys and interface requests only select among pages already held.** The interface's only influence on the decoder is which pages it renders, which never reaches the network.
-- **Closing a tab** must keep its channel refreshing for a grace period defined in neoteletext (section 5.1). Not built: closing a tab stops its fetcher at once.
+- **Requests follow the trusted core's own state.** The trusted core asks a fetcher for a page, a sub-page, a part of a list or the listing from what it holds: the page the active tab's address names, the pages the interface says it shows of the active tab's channel, each checked against the protocol's bounds and asked once. Nothing the interface reports reaches another tab's channel (requirement 4.7, DEC-2356).
+- **The agent keeps the rate.** Every request goes through the engine's user agent, which spaces them by its request interval and holds a bounded queue.
+- **Closing a tab** stops its fetcher at once.
 
 ---
 

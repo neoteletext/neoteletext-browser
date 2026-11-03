@@ -1,7 +1,7 @@
 //! The fetcher's loop: the agent's output turned into actions on the
-//! sockets and messages for the trusted core, one page at a time in the
-//! contents file's order, and the trusted core's messages read on a
-//! thread of their own. The input messages of one moment reach the agent
+//! sockets and messages for the trusted core, each file the trusted core
+//! asks for as it is wanted (REQ-703), and the trusted core's messages read
+//! on a thread of their own. The input messages of one moment reach the agent
 //! together, so they leave in one write (REQ-RCH-010).
 
 use std::cell::RefCell;
@@ -18,8 +18,8 @@ use neoteletext_transport::web_address;
 #[cfg(feature = "interaction")]
 use neoteletext_web::agent::InputMessage;
 use neoteletext_web::agent::{Config, Event, Failure, Input, Output, Source, Storage, Subscription, UserAgent};
-use neoteletext_web::channel::SETTINGS_FILE;
-use neoteletext_web::consts::ALLOWED_LOCAL;
+use neoteletext_web::channel::{BUNDLE_FILE, SETTINGS_FILE};
+use neoteletext_web::consts::{ALLOWED_LOCAL, STATUS_GONE, STATUS_NOT_FOUND};
 use neoteletext_web::contents::{self, Entry as ContentsEntry};
 use neoteletext_web::http::MediaType;
 use neoteletext_web::port::{ConnectionId, NetOutput, Pump, Security, Transport};
@@ -118,8 +118,8 @@ enum Wake {
     /// (REQ-RCH-016).
     #[cfg(feature = "interaction")]
     RoundTrip(bool),
-    /// The trusted core asks for a page's catalogue of sub-pages, or for
-    /// one sub-page (decision 112).
+    /// The trusted core asks for the contents file, a page, a part of a
+    /// page's list of sub-pages, or one sub-page (REQ-703, decision 112).
     Fetch(ToFetcher),
     /// A socket has bytes, or has ended.
     Network,
@@ -157,8 +157,9 @@ enum Action {
     SubPages(PageAddress, PartNumber, Vec<u8>),
     /// A part of a page's list is current: the one kept is sent again.
     SubPagesCurrent(PageAddress, PartNumber),
-    /// The page asked for has been answered, one way or another.
-    Answered,
+    /// The bundle was answered, refused or found missing: what it held
+    /// has gone to the trusted core (REQ-703).
+    BundleSettled,
     /// A file was refused, for the trusted core to say (REQ-708).
     Refused(RefusedFile, Answer),
     /// A message for the trusted core as it is: a notice, or an exchange
@@ -212,7 +213,15 @@ impl Answer {
 }
 
 /// The status of the 404 that says a page is not in the service.
-const NOT_FOUND: u16 = 404;
+const NOT_FOUND: u16 = STATUS_NOT_FOUND;
+
+/// Whether an exchange says the channel has no bundle: `index.t42` answered
+/// 404 or 410, for which the agent says nothing more, as a channel without
+/// a bundle is still a channel (the engine's REQ-WEB-018). A bundle
+/// answered otherwise is said by its bytes or its refusal.
+fn bundle_missing(url: &str, status: u16) -> bool {
+    (status == STATUS_NOT_FOUND || status == STATUS_GONE) && url.rsplit('/').next() == Some(BUNDLE_FILE)
+}
 
 /// The refusal an event says, if it says one of a whole file: a sub-page's
 /// file is another page's business, and stored pages are not disturbed.
@@ -255,24 +264,27 @@ fn collect(output: Output<'_>, actions: &mut Vec<Action>) {
             _ => Origin::Fetched,
         };
         actions.push(Action::Bytes { origin, bytes: page.bytes.to_vec() });
-        // A bundle, a form's answer or a push is page bytes too; only a page
-        // fetch ends the wait for the next one.
-        if matches!(page.source, Source::Page { .. }) {
-            actions.push(Action::Answered);
+        // The bundle's pages have gone, so a page it lacks may be asked for.
+        if matches!(page.source, Source::FrontDoor) {
+            actions.push(Action::BundleSettled);
         }
         return;
     }
-    // Said to the trusted core by its role and status, and a page's ends the
-    // wait for the next one as well.
+    // Said to the trusted core by its role and status; a refused bundle has
+    // settled, and a refused contents file lists nothing.
     if let Output::Event(event) = output
         && let Some((file, answer)) = refusal(&event)
     {
         actions.push(Action::Refused(file, answer));
         match file {
-            RefusedFile::Page(_) => actions.push(Action::Answered),
+            RefusedFile::Bundle => actions.push(Action::BundleSettled),
             RefusedFile::Contents => actions.push(Action::Tell(FromFetcher::NoContents)),
-            RefusedFile::Channel | RefusedFile::Bundle => {}
+            RefusedFile::Channel | RefusedFile::Page(_) => {}
         }
+        return;
+    }
+    if let Output::Event(Event::Exchanged { method, url, status, bytes, elapsed_us }) = output {
+        exchanged(method, url, status, bytes, elapsed_us, actions);
         return;
     }
     // It ended for good and is not tried again (DOC-1920).
@@ -287,16 +299,11 @@ fn collect(output: Output<'_>, actions: &mut Vec<Action>) {
         Output::Event(Event::ServiceReady { initial_page, region, .. }) => Action::Ready(initial_page.mpp(), region),
         Output::Event(Event::Contents(bytes)) => Action::Contents(bytes.to_vec()),
         Output::Event(Event::ContentsMissing) => Action::Tell(FromFetcher::NoContents),
-        Output::Event(Event::PageCurrent { .. } | Event::PageNotInService { .. } | Event::FetchFailed { .. }) => Action::Answered,
+        // A page current, or a sub-page's file not there or failed, changes
+        // nothing the trusted core holds.
+        Output::Event(Event::PageCurrent { .. } | Event::PageNotInService { .. } | Event::FetchFailed { .. }) => return,
         Output::Event(Event::PushConnected) => Action::Push(true),
         Output::Event(Event::Denied(denied)) => Action::Tell(FromFetcher::Denied { status: denied.status, place: denied.place.to_owned() }),
-        Output::Event(Event::Exchanged { method, url, status, bytes, elapsed_us }) => Action::Tell(FromFetcher::Exchange {
-            method: String::from_utf8_lossy(method.token()).into_owned(),
-            url: url.to_owned(),
-            status,
-            bytes: u64::try_from(bytes).unwrap_or(u64::MAX),
-            elapsed_us,
-        }),
         // A lost connection waits before the next; a bad message that
         // keeps the connection says it is retried at once, and is not one.
         Output::Event(Event::PushLost { retry_in_us, problem }) if retry_in_us > 0 => {
@@ -356,6 +363,21 @@ fn collect(output: Output<'_>, actions: &mut Vec<Action>) {
     });
 }
 
+/// An exchange, for the developer console (the engine's REQ-WEB-033), and
+/// the bundle settled when it says there is none.
+fn exchanged(method: neoteletext_web::http::Method, url: &str, status: u16, bytes: usize, elapsed_us: u64, actions: &mut Vec<Action>) {
+    actions.push(Action::Tell(FromFetcher::Exchange {
+        method: String::from_utf8_lossy(method.token()).into_owned(),
+        url: url.to_owned(),
+        status,
+        bytes: u64::try_from(bytes).unwrap_or(u64::MAX),
+        elapsed_us,
+    }));
+    if bundle_missing(url, status) {
+        actions.push(Action::BundleSettled);
+    }
+}
+
 /// What a part of a page's list of sub-pages asks of the loop (REQ-1888).
 fn list_action(event: &Event<'_>) -> Option<Action> {
     Some(match *event {
@@ -370,21 +392,19 @@ fn list_action(event: &Event<'_>) -> Option<Action> {
     })
 }
 
-fn contents_entries(bytes: &[u8]) -> (Vec<Entry>, Vec<PageAddress>) {
+/// The contents file's sections and pages, as the engine's reader reads
+/// them. A page it lists is not fetched for being listed (REQ-703).
+fn contents_entries(bytes: &[u8]) -> Vec<Entry> {
     let mut entries = Vec::new();
-    let mut pages = Vec::new();
-    let Ok(read) = contents::read(bytes) else { return (entries, pages) };
+    let Ok(read) = contents::read(bytes) else { return entries };
     for entry in read.flatten() {
         match entry {
             ContentsEntry::Section { title } => entries.push(Entry::Section(title.to_owned())),
-            ContentsEntry::Page { page, title, .. } => {
-                entries.push(Entry::Page { page: page.mpp(), title: title.to_owned() });
-                pages.push(page);
-            }
+            ContentsEntry::Page { page, title, .. } => entries.push(Entry::Page { page: page.mpp(), title: title.to_owned() }),
             ContentsEntry::Channel { .. } => {}
         }
     }
-    (entries, pages)
+    entries
 }
 
 /// A part of a page's list of sub-pages, `NNN/P.sub`, read by the engine's
@@ -442,9 +462,11 @@ fn agent_config(allowed: &[IpAddr], proxied: bool) -> Config {
 }
 
 /// Holds the channel `channel`'s connections until the trusted core closes
-/// standard input: the engine's agent opens it, fetches its contents file
-/// and every page it lists, and holds its push connection; what arrives
-/// goes to the trusted core on standard output. A server on this computer
+/// standard input: the engine's agent opens it, which fetches `channel.ttx`
+/// and then a static channel's bundle, holds a live channel's push
+/// connection, and fetches each file the trusted core asks for as it is
+/// wanted (REQ-703); what arrives goes to the trusted core on standard
+/// output. A server on this computer
 /// or the local network is reached only when `allowed` names it. Its
 /// first message says it is confined, as `main.rs` has made it.
 ///
@@ -474,8 +496,9 @@ pub fn run(channel: &str, allowed: &[IpAddr], proxy: Option<Proxy>) -> Result<()
     let clock = || Instant(u64::try_from(start.elapsed().as_micros()).unwrap_or(u64::MAX));
     let mut buffer = vec![0_u8; READ_CHUNK];
     let mut next_tick: Option<Instant> = None;
-    let mut queue: VecDeque<PageAddress> = VecDeque::new();
-    let mut waiting = false;
+    // A static channel's bundle not yet settled: the trusted core is told
+    // once when it has (REQ-703).
+    let mut bundle_pending = false;
     let mut parts = Parts::default();
     let mut live = Live::default();
     // The status of the last response, for a refusal of its content.
@@ -502,12 +525,14 @@ pub fn run(channel: &str, allowed: &[IpAddr], proxy: Option<Proxy>) -> Result<()
                 Action::Bytes { origin, bytes } => send(&output, &FromFetcher::Page { origin, bytes })?,
                 Action::Ready(page, region) => {
                     service_ready(&agent, &output, page, region)?;
+                    bundle_pending = agent.descriptor().is_some_and(|descriptor| descriptor.push().is_none());
                     ask_for_channel(&mut agent, &clock, &mut actions);
                 }
-                Action::Contents(bytes) => {
-                    let (entries, pages) = contents_entries(&bytes);
-                    send(&output, &FromFetcher::Contents(entries))?;
-                    queue.extend(pages);
+                Action::Contents(bytes) => send(&output, &FromFetcher::Contents(contents_entries(&bytes)))?,
+                Action::BundleSettled => {
+                    if core::mem::take(&mut bundle_pending) {
+                        send(&output, &FromFetcher::BundleSettled)?;
+                    }
                 }
                 Action::SubPages(page, part, bytes) => {
                     send_part(&output, page, part, Some(&bytes))?;
@@ -517,7 +542,6 @@ pub fn run(channel: &str, allowed: &[IpAddr], proxy: Option<Proxy>) -> Result<()
                 // validators, is said to have failed: the trusted core asks
                 // for it again when its page next opens.
                 Action::SubPagesCurrent(page, part) => send_part(&output, page, part, parts.get(page, part))?,
-                Action::Answered => waiting = false,
                 Action::Refused(file, answer) => send(&output, &FromFetcher::Refused { file, status: answer.status(last_status) })?,
                 Action::Push(open) => push_changed(&agent, &output, open)?,
                 action @ (Action::Index { .. } | Action::IndexComplete(_) | Action::SubPageList(_)) => live_record(action, &mut live, &output)?,
@@ -528,13 +552,6 @@ pub fn run(channel: &str, allowed: &[IpAddr], proxy: Option<Proxy>) -> Result<()
             }
         }
         tell_failures(&mut pump.transport, &output)?;
-        // One page at a time, in the contents file's order; the agent
-        // spaces the requests at the engine's rate.
-        if !waiting && let Some(page) = queue.pop_front() {
-            waiting = true;
-            busy = true;
-            agent.handle(clock(), Input::FetchPage { page, subcode: None }, &mut |out| collect(out, &mut actions));
-        }
         busy |= poll_sockets(&mut pump, &mut buffer, &mut agent, &clock, &mut actions);
         if next_tick.is_some_and(|at| at <= clock()) {
             next_tick = None;
@@ -676,10 +693,11 @@ fn service_ready(agent: &Agent<'_>, output: &cookies::Output, page: u16, region:
     Ok(())
 }
 
-/// Asks for the whole channel: its contents file, then every page it
-/// lists; and the push connection, for all its pages.
+/// Asks for a live channel's push connection, for all its pages. Nothing
+/// else is asked as a channel opens: the agent fetches a static channel's
+/// bundle by itself, and its contents file and pages only as the trusted
+/// core says they are wanted (REQ-703).
 fn ask_for_channel(agent: &mut Agent<'_>, clock: &dyn Fn() -> Instant, actions: &mut Vec<Action>) {
-    agent.handle(clock(), Input::FetchContents, &mut |out| collect(out, actions));
     agent.handle(clock(), Input::Subscribe(Subscription::All), &mut |out| collect(out, actions));
 }
 
@@ -723,6 +741,7 @@ fn tell_failures(transport: &mut Tcp, output: &cookies::Output) -> Result<(), St
 /// agent queues and spaces the requests at its own rate.
 fn fetch(agent: &mut Agent<'_>, clock: &dyn Fn() -> Instant, asked: &ToFetcher, actions: &mut Vec<Action>) {
     let input = match *asked {
+        ToFetcher::FetchContents => Some(Input::FetchContents),
         ToFetcher::FetchPage { page } => PageAddress::from_mpp(page).map(|page| Input::FetchPage { page, subcode: None }),
         ToFetcher::FetchSubPages { page, part } => {
             PageAddress::from_mpp(page).zip(PartNumber::new(usize::from(part))).map(|(page, part)| Input::FetchSubPages { page, part })
@@ -780,7 +799,7 @@ fn read_commands(input: &mut dyn Read, commands: &mpsc::Sender<Wake>, answers: &
             #[cfg(feature = "interaction")]
             ToFetcher::MeasureRoundTrip(on) => commands.send(Wake::RoundTrip(on)).is_ok(),
             answer @ (ToFetcher::CookieAnswer { .. } | ToFetcher::ReachedAnswer { .. }) => answers.send(answer).is_ok(),
-            asked @ (ToFetcher::FetchPage { .. } | ToFetcher::FetchSubPages { .. } | ToFetcher::FetchSubPage { .. }) => {
+            asked @ (ToFetcher::FetchContents | ToFetcher::FetchPage { .. } | ToFetcher::FetchSubPages { .. } | ToFetcher::FetchSubPage { .. }) => {
                 commands.send(Wake::Fetch(asked)).is_ok()
             }
         };
@@ -799,9 +818,9 @@ mod tests {
 
     /// REQ-708: every failure of a whole file reaches the trusted core by
     /// its role, with the status when there was one and nothing a server
-    /// wrote; a missing page is 404, and ends the wait for the next page.
-    /// On the code before, a page's failures only ended that wait, and the
-    /// rest were a debug line in the Log.
+    /// wrote; a missing page is 404. On the code before, a page's failures
+    /// only ended the wait for the next page, and the rest were a debug
+    /// line in the Log.
     #[test]
     fn a_failure_of_a_file_is_a_refusal() {
         let page = PageAddress::from_mpp(0x100).unwrap();
@@ -819,9 +838,29 @@ mod tests {
         assert_eq!(actions_of(Event::BundleFailed(Failure::Status(403))), [(RefusedFile::Bundle, Answer::Status(403))]);
         assert_eq!(actions_of(Event::ContentsFailed(Failure::Timeout)), [(RefusedFile::Contents, Answer::Nothing)]);
         assert_eq!(actions_of(Event::PageNotInService { page, subcode: Some(SubCode::new(2)) }), [], "a sub-page's file is not the page's");
-        let mut actions = Vec::new();
-        collect(Output::Event(Event::PageNotInService { page, subcode: None }), &mut actions);
-        assert!(actions.iter().any(|action| matches!(action, Action::Answered)), "the next page may go");
+    }
+
+    /// REQ-703: the bundle settles when its pages have gone, when it is
+    /// refused, and when it is missing, which the agent says only by the
+    /// exchange's 404 or 410; nothing else settles it.
+    #[test]
+    fn the_bundle_settles_however_it_is_answered() {
+        let settles = |output: Output<'_>| {
+            let mut actions = Vec::new();
+            collect(output, &mut actions);
+            actions.iter().any(|action| matches!(action, Action::BundleSettled))
+        };
+        let exchange = |url, status| Output::Event(Event::Exchanged { method: neoteletext_web::http::Method::Get, url, status, bytes: 0, elapsed_us: 0 });
+        let bundle = format!("http://a.example/tt/{BUNDLE_FILE}");
+        assert!(settles(exchange(&bundle, 404)));
+        assert!(settles(exchange(&bundle, 410)));
+        assert!(!settles(exchange(&bundle, 200)), "its bytes or its refusal follow");
+        assert!(!settles(exchange(&bundle, 301)), "a redirect is followed");
+        assert!(!settles(exchange("http://a.example/tt/100.tti", 404)));
+        assert!(settles(Output::Event(Event::BundleFailed(Failure::Status(500)))));
+        let bytes = neoteletext_web::agent::PageBytes { source: Source::FrontDoor, media: MediaType::T42, url: &bundle, secure: false, bytes: &[] };
+        assert!(settles(Output::PageBytes(bytes)));
+        assert!(!settles(Output::Event(Event::ContentsMissing)));
     }
 
     /// Finding F-74: the largest page, bundle or form answer the agent
