@@ -96,3 +96,20 @@ fn a_floating_remote_moves_and_stays_below_the_strip() {
     browser.remote_press(middle(dock), 0);
     assert!(matches!(browser.take_outputs().as_slice(), [Output::Setting(SettingChange::Remote(RemotePlace { mode: RemoteMode::Docked, .. }))]));
 }
+
+/// DEC-1542, DEC-1526, TODO-1531 item 2: the remote offers the return to the
+/// sub-pages as they arrive only where they rotate, a broadcast's or a
+/// recording's; on a live channel's page nothing rotates, and it has none.
+#[test]
+fn only_a_page_that_rotates_offers_the_return_to_the_latest() {
+    use crate::controls::{PageControls, Rotation};
+    let offered = |rotation: Rotation| {
+        let mut browser = Browser::new(Frame { left_inset: 0.0, window_buttons: false });
+        browser.set_remote(RemotePlace { mode: RemoteMode::Docked, x: 0, y: 0 });
+        browser.set_page_controls(PageControls { page: Some(0x210), subpages: 12, chosen: Some(2), subcode: 3, rotation, ..PageControls::default() });
+        browser.draw(&mut Recorder::new(), WIDTH, HEIGHT, SLIDE_MILLISECONDS);
+        browser.remote.buttons.iter().any(|(button, _)| *button == Button::Latest)
+    };
+    assert!(offered(Rotation::AsBroadcast), "a broadcast's page");
+    assert!(!offered(Rotation::Never), "a live channel's page");
+}

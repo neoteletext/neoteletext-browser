@@ -142,3 +142,6 @@ pub(super) fn serve(mut stream: TcpStream, settings: &Settings) -> io::Result<()
         }
     }
 }
+
+#[cfg(test)]
+mod tests;

@@ -52,6 +52,28 @@ impl Core {
         }
         let channels: Vec<(u32, Option<String>, Option<String>)> =
             self.session.all_tabs().map(|tab| (tab.channel.id, tab.channel.problem.clone(), tab.channel.web.clone())).collect();
+        // A channel no tab holds any more is ended first: a helper that then
+        // cannot start, as when the broker refuses one, leaves none running
+        // that no tab holds (REQ-683).
+        let unused: Vec<u32> = self.decoders.keys().chain(self.fetchers.keys()).copied().filter(|id| !channels.iter().any(|(used, ..)| used == id)).collect();
+        for id in unused {
+            // The tab left the channel's pages: told with SELECT of page 0
+            // before its connection closes (REQ-INT-140), as far as the
+            // fetcher sends it before it ends.
+            #[cfg(feature = "interaction")]
+            {
+                let sends = self.typing.select(id, 0, neoteletext_core::limits::SUBCODE_ANY, "", self.now_us());
+                self.deliver_typing(sends)?;
+            }
+            self.put_to_sleep(id);
+            self.stop_fetcher(id);
+            self.sleep.forget(id);
+            self.console.forget(id);
+            self.invalid.remove(&id);
+        }
+        let open = |id: &u32| channels.iter().any(|(used, ..)| used == id);
+        self.given_up.retain(open);
+        self.restarts.retain(|id, _| open(id));
         let mut started = false;
         for (id, problem, web) in &channels {
             let awake = self.sleep.awake(*id, active, now);
@@ -88,25 +110,6 @@ impl Core {
                 self.fetchers.insert(*id, fetcher);
             }
         }
-        let unused: Vec<u32> = self.decoders.keys().chain(self.fetchers.keys()).copied().filter(|id| !channels.iter().any(|(used, ..)| used == id)).collect();
-        for id in unused {
-            // The tab left the channel's pages: told with SELECT of page 0
-            // before its connection closes (REQ-INT-140), as far as the
-            // fetcher sends it before it ends.
-            #[cfg(feature = "interaction")]
-            {
-                let sends = self.typing.select(id, 0, neoteletext_core::limits::SUBCODE_ANY, "", self.now_us());
-                self.deliver_typing(sends)?;
-            }
-            self.put_to_sleep(id);
-            self.stop_fetcher(id);
-            self.sleep.forget(id);
-            self.console.forget(id);
-            self.invalid.remove(&id);
-        }
-        let open = |id: &u32| channels.iter().any(|(used, ..)| used == id);
-        self.given_up.retain(open);
-        self.restarts.retain(|id, _| open(id));
         if started {
             self.load();
         }
@@ -405,5 +408,25 @@ mod tests {
         core.fetcher_ended(1, 1, None);
         assert!(!core.fetchers.contains_key(&1));
         assert!(!healthy_once_settled(&mut core), "a fetcher that never said it was confined failed the version");
+    }
+
+    // REQ-683, REQ-675: a channel no tab holds any more has its helpers ended
+    // even when a helper for another channel cannot be started, as when the
+    // broker refuses one. Before, the first refusal returned from
+    // match_decoders before the unused channels were reached, and a tab that
+    // went Back to another channel left the old channel's fetcher running.
+    #[test]
+    fn a_helper_that_cannot_start_leaves_no_unused_helper_running() {
+        use super::super::processes::Fetcher;
+        use super::super::test_support::sleeping_helper;
+        let mut core = test_core();
+        core.session.open("https://old.invalid/teletext/").unwrap();
+        let old = core.session.tabs[0].channel.id;
+        let (child, _output) = sleeping_helper(Role::Network);
+        core.fetchers.insert(old, Fetcher::new(child, 1, None));
+        core.session.navigate("https://new.invalid/teletext/", false).unwrap();
+        assert_ne!(core.session.tabs[0].channel.id, old, "another channel");
+        assert!(core.match_decoders().is_err(), "this core has no broker to start the new channel's helpers");
+        assert!(!core.fetchers.contains_key(&old), "the old channel's fetcher is ended all the same");
     }
 }

@@ -80,6 +80,16 @@ fn every_kind_round_trips() {
         FromFetcher::Refused { file: RefusedFile::Bundle, status: None },
         FromFetcher::Refused { file: RefusedFile::Contents, status: Some(403) },
         FromFetcher::Refused { file: RefusedFile::Page(0x210), status: Some(200) },
+        // TODO-1531 item 3, DOC-1956: a channel's LOG record, with a page and
+        // without, at the bound of its text.
+        FromFetcher::ChannelLog { level: interface_core::console::Level::Warning, page: Some(0x899), text: "Weather feed late".into() },
+        FromFetcher::ChannelLog { level: interface_core::console::Level::Info, page: None, text: "x".repeat(crate::decoder::MAX_CHANNEL_LOG) },
+        // TODO-1531 item 4: REQ-1462's count of invalid packets, and DEC-1467's
+        // connecting and live.
+        FromFetcher::InvalidPackets { total: 0 },
+        FromFetcher::InvalidPackets { total: u64::MAX },
+        FromFetcher::Connecting(true),
+        FromFetcher::Connecting(false),
         #[cfg(feature = "interaction")]
         FromFetcher::RoundTrip { microseconds: 190 },
     ] {
@@ -321,4 +331,60 @@ fn a_refresh_is_held_to_its_bounds() {
     let last = bytes.len() - 1;
     bytes[last] = 1;
     assert!(read_from_fetcher(&mut bytes.as_slice()).is_err());
+}
+
+/// A message of `kind` with `payload`, as a hostile fetcher could write it.
+fn crafted(kind: u8, payload: &[u8]) -> Result<Option<FromFetcher>, ProtocolError> {
+    let mut bytes = vec![kind];
+    bytes.extend_from_slice(&u32::try_from(payload.len()).unwrap().to_be_bytes());
+    bytes.extend_from_slice(payload);
+    read_from_fetcher(&mut bytes.as_slice())
+}
+
+// TODO-1531 item 3, DOC-1956: a channel's log line names a page the browser
+// can show (100 to 899, decimal digits only) or none, and holds at most MAX_CHANNEL_LOG bytes, however the
+// fetcher writes it.
+#[test]
+fn a_channel_log_line_is_bounded() {
+    let log = |page: u16, text: &[u8]| {
+        let mut payload = vec![2];
+        payload.extend_from_slice(&page.to_be_bytes());
+        payload.extend_from_slice(&u16::try_from(text.len()).unwrap().to_be_bytes());
+        payload.extend_from_slice(text);
+        crafted(KIND_CHANNEL_LOG, &payload)
+    };
+    assert_eq!(
+        log(0x100, b"ok").unwrap().unwrap(),
+        FromFetcher::ChannelLog { level: interface_core::console::Level::Info, page: Some(0x100), text: "ok".into() }
+    );
+    assert!(matches!(log(0x0FF, b"ok"), Err(ProtocolError::BadValue("page number"))));
+    assert!(matches!(log(0x900, b"ok"), Err(ProtocolError::BadValue("page number"))));
+    assert!(matches!(log(0x1A0, b"ok"), Err(ProtocolError::BadValue("page number"))), "a page with a hexadecimal digit");
+    assert!(log(0x100, &[b'x'; crate::decoder::MAX_CHANNEL_LOG]).is_ok());
+    assert!(matches!(log(0x100, &[b'x'; crate::decoder::MAX_CHANNEL_LOG + 1]), Err(ProtocolError::BadValue("log line too long"))));
+    let mut level = vec![3, 0, 0, 0, 0];
+    assert!(matches!(crafted(KIND_CHANNEL_LOG, &level), Err(ProtocolError::BadValue("log level"))));
+    level[0] = 0;
+    assert!(crafted(KIND_CHANNEL_LOG, &level).is_ok());
+    // A writer cuts its text at the bound and refuses a page it cannot show.
+    let over_the_bound =
+        FromFetcher::ChannelLog { level: interface_core::console::Level::Error, page: None, text: "y".repeat(crate::decoder::MAX_CHANNEL_LOG + 9) };
+    let mut bytes = Vec::new();
+    write_to_core(&mut bytes, &over_the_bound).unwrap();
+    let Some(FromFetcher::ChannelLog { text, .. }) = read_from_fetcher(&mut bytes.as_slice()).unwrap() else { panic!("a log line") };
+    assert_eq!(text.len(), crate::decoder::MAX_CHANNEL_LOG);
+    let outside = FromFetcher::ChannelLog { level: interface_core::console::Level::Error, page: Some(0x0A0), text: String::new() };
+    assert!(write_to_core(&mut Vec::new(), &outside).is_err());
+}
+
+// TODO-1531 item 4: a flag is 0 or 1, and a count is its eight bytes exactly.
+#[test]
+fn connecting_and_invalid_packets_are_exact() {
+    assert_eq!(crafted(KIND_CONNECTING, &[1]).unwrap().unwrap(), FromFetcher::Connecting(true));
+    assert!(matches!(crafted(KIND_CONNECTING, &[2]), Err(ProtocolError::BadValue("connecting"))));
+    assert!(crafted(KIND_CONNECTING, &[]).is_err());
+    assert!(crafted(KIND_CONNECTING, &[0, 0]).is_err());
+    assert_eq!(crafted(KIND_INVALID_PACKETS, &7_u64.to_be_bytes()).unwrap().unwrap(), FromFetcher::InvalidPackets { total: 7 });
+    assert!(crafted(KIND_INVALID_PACKETS, &[0; 7]).is_err());
+    assert!(crafted(KIND_INVALID_PACKETS, &[0; 9]).is_err());
 }

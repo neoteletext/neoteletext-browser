@@ -21,6 +21,12 @@ use protocol::fetcher::{FromFetcher, Origin, ToFetcher, read_from_fetcher, write
 pub struct Killed(Child);
 
 impl Killed {
+    /// `child`, ended with the test.
+    #[must_use]
+    pub fn new(child: Child) -> Self {
+        Self(child)
+    }
+
     /// Ends the process now, as a fault would.
     pub fn kill(&mut self) {
         let _ = self.0.kill();

@@ -431,3 +431,56 @@ fn a_sessions_start_says_the_parameters() {
     let said = items(&started).into_iter().find(|item| item.contains("Select")).unwrap();
     assert_eq!(said, "Event(Select(Select { page: 512, sub: 16255 }, \"a=1\"))");
 }
+
+/// Whether a SELECT is among the sends.
+fn selects(sends: &[Send]) -> Vec<String> {
+    items(sends).into_iter().filter(|item| item.starts_with("Event(Select(")).collect()
+}
+
+// DEC-1091, REQ-1502, TODO-1531 item 1: the page already selected, opened
+// again, is no new selection, so no SELECT goes; after another tab or the
+// wall it is still the selection, so none goes either.
+#[test]
+fn the_same_page_opened_again_sends_no_select() {
+    let mut typing = ready(SELECT_CAP);
+    assert_eq!(selects(&typing.opened(Some(PAGE.channel), Some(PAGE), 1)), [] as [String; 0], "opened again as it is");
+    typing.opened(Some(8), None, 2);
+    assert_eq!(selects(&typing.opened(Some(PAGE.channel), Some(PAGE), 3)), [] as [String; 0], "back from another tab");
+    typing.opened(Some(PAGE.channel), None, 4);
+    assert_eq!(selects(&typing.opened(Some(PAGE.channel), Some(PAGE), 5)), [] as [String; 0], "back from no page open");
+    let next = PageKey { page: 0x201, ..PAGE };
+    assert_eq!(selects(&typing.opened(Some(PAGE.channel), Some(next), 6)), ["Event(Select(Select { page: 513, sub: 16255 }, \"\"))"], "another page does");
+}
+
+// DOC-1922, REQ-1502, TODO-1531 item 1: SELECT is the channel's to take: one
+// whose WELCOME did not set SELECT_CAP is never sent one, at the session's
+// start or after.
+#[test]
+fn a_channel_that_did_not_take_select_is_sent_none() {
+    let mut typing = Typing::default();
+    typing.input(PAGE.channel, true, false, 0);
+    typing.opened(Some(PAGE.channel), Some(PAGE), 0);
+    let welcomed = typing.control(PAGE.channel, &welcome(CURSOR_CAP), 1);
+    assert_eq!(items(&welcomed), ["Event(Resize { columns: 40, rows: 25, width: 0, height: 0 })", "Event(FocusIn)"], "no SELECT at the start");
+    typing.drawn(PAGE, 0);
+    let next = PageKey { page: 0x201, ..PAGE };
+    assert_eq!(selects(&typing.opened(Some(PAGE.channel), Some(next), 2)), [] as [String; 0]);
+    assert_eq!(selects(&typing.select(PAGE.channel, 0x201, 2, "", 3)), [] as [String; 0]);
+    assert_eq!(typing.selection(PAGE.channel), Some((0x201, 2)), "the tab's selection is its own all the same");
+}
+
+// DOC-1943, TODO-1531 item 1: SELECT is no input unit, so selections, however
+// many, take nothing from the rate keys are held to, and one goes even when
+// the rate is spent.
+#[test]
+fn select_counts_nothing_against_the_rate() {
+    let mut typing = ready(SELECT_CAP);
+    let selections: usize = (0..200_u16).map(|n| selects(&typing.select(PAGE.channel, PAGE.page, n % 2 + 1, "", 0)).len()).sum();
+    assert_eq!(selections, 200, "every selection went");
+    let mut keys = 0;
+    for n in 0..200_u32 {
+        keys += items(&typing.input_intent(&key(char::from(b'a' + u8::try_from(n % 26).unwrap())), 0)).len();
+    }
+    assert_eq!(keys, usize::try_from(neoteletext_input::MAX_PER_SECOND).unwrap() - 2, "the same keys as with no selection: RESIZE and FOCUS_IN counted");
+    assert_eq!(selects(&typing.select(PAGE.channel, PAGE.page, 3, "", 0)).len(), 1, "a selection goes when the rate is spent");
+}

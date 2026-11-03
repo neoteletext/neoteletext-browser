@@ -16,6 +16,9 @@
 //! `RETURN-CHANNEL.md` REQ-RCH-036 and REQ-RCH-053). Nothing a channel or a
 //! decoder sends can start it.
 //!
+//! A channel number here is a tab's: each tab has its own connection and
+//! session, even on a channel another tab shows (DEC-1527).
+//!
 //! Times are microseconds of the trusted core's clock: the pointer's
 //! period of 1000/60 ms is not a whole number of milliseconds
 //! (`neoteletext_input::pace`).
@@ -160,7 +163,7 @@ impl Channel {
         }
     }
 
-    /// Encodes `item` and gives it to the channel's fetcher; the input
+    /// Encodes `item` and gives it to the tab's fetcher; the input
     /// count after it, if it went. A move is tagged with its contact, and
     /// every pointer event's position is kept for its gone.
     fn send(&mut self, channel: u32, item: &Item<'_>, now_us: u64, sends: &mut Vec<Send>) -> Option<u16> {
@@ -390,6 +393,27 @@ impl Typing {
         sends
     }
 
+    /// The channel's program redirected the tab to `page` and `sub`, with
+    /// the page parameters its address now holds (neoteletext-common's
+    /// DEC-1683). The server recorded that as the connection's selection,
+    /// exactly as a SELECT would (neoteletext-app-server's REQ-1472 item 4),
+    /// so it is the tab's selection, already told: a SELECT of it would be a
+    /// new selection, and ask the program again (DOC-1753). What was held on
+    /// the page left goes up, lost, as for any selection (REQ-207).
+    pub fn redirected(&mut self, channel: u32, page: u16, sub: u16, parameters: &str, now_us: u64) -> Vec<Send> {
+        let mut sends = Vec::new();
+        let state = self.channels.entry(channel).or_insert_with(Channel::new);
+        state.selected = Some((page, sub));
+        state.parameters.clear();
+        state.parameters.push_str(parameters);
+        if state.started {
+            state.let_go(channel, now_us, &mut sends);
+            state.select_told = state.selected;
+            state.parameters_told.clone_from(&state.parameters);
+        }
+        together(sends)
+    }
+
     /// A redirect the trusted core did not follow: the server took it as a
     /// selection, so the tab says again what it selects, and the two agree
     /// (neoteletext-common's DEC-1707).
@@ -561,7 +585,7 @@ impl Typing {
         together(sends)
     }
 
-    /// The push connection's round trip, as the channel's fetcher measured
+    /// The push connection's round trip, as the tab's fetcher measured
     /// it (REQ-RCH-016): shown in the strip while keys go to the channel.
     pub fn round_trip(&mut self, channel: u32, microseconds: u64) -> Vec<Send> {
         let mut sends = Vec::new();
