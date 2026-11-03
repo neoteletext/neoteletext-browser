@@ -16,10 +16,12 @@ use crate::{Process, Report, Role, Spawn};
 
 mod channel;
 mod descriptors;
+mod limits;
 mod time;
 
 pub(crate) use channel::Channel;
 pub(crate) use descriptors::{keep_across_exec, receive, send, take_inherited};
+pub use limits::{DESCRIPTORS_NEEDED, raise_descriptor_limit};
 pub(crate) use time::local_offset;
 
 /// The command that runs a helper: under its profile on macOS; as it is

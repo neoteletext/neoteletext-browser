@@ -89,6 +89,12 @@ pub(crate) fn broker() -> Result<(), String> {
     if let Some(place) = &place {
         listen(place, &access, &openings_writer);
     }
+    // The core and the helpers inherit it: room for two pipes a helper
+    // where the system starts a program with less (macOS gives 256).
+    #[cfg(unix)]
+    if let Err(error) = confine::raise_descriptor_limit() {
+        eprintln!("neoteletext: the limit on open files could not be raised: {error}");
+    }
     let mut arguments = vec![OsString::from(CORE_FLAG)];
     arguments.extend(given);
     let environment = confine::environment(Role::Core);

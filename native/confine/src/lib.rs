@@ -64,5 +64,7 @@ pub use process::{Input, Output, Process};
 pub use role::{Report, Role};
 pub use spawn::{Spawn, apply, spawn};
 pub use time::{LocalTime, MAX_OFFSET, local_time};
+#[cfg(unix)]
+pub use unix::{DESCRIPTORS_NEEDED, raise_descriptor_limit};
 #[cfg(windows)]
 pub use windows::{ForeignWindow, grant_packages_read, pointer_in_window, remove_containers};
