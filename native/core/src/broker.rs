@@ -385,8 +385,8 @@ impl ReducedMotion {
 
 /// What the chooser printed, believed only as the one answer that means
 /// reduced motion, and only when it ended well; anything else, or a chooser
-/// that cannot start, is no preference.
-#[cfg(any(target_os = "linux", test))]
+/// that cannot start, is no preference. Its test is Unix's.
+#[cfg(any(target_os = "linux", all(test, unix)))]
 fn ask_reduced_motion(mut command: Command) -> bool {
     use confine::broker::REDUCED_MOTION_ANSWER;
     let Ok(mut child) = command.spawn().map_err(|error| eprintln!("neoteletext: cannot ask the desktop about reduced motion: {error}")) else {
