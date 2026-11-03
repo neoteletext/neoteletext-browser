@@ -9,6 +9,7 @@ use decoder::Engine;
 use interface_core::browser::{Browser, Frame as WindowFrame, TabInfo};
 use interface_core::canvas::Canvas;
 use interface_core::channel::{Channel, PageInfo, Status, page_index};
+use interface_core::library::BarView;
 use interface_core::settings::{CookieMode, ProxyView, SettingsView};
 
 const WIDTH: u16 = 720;
@@ -17,6 +18,14 @@ const CHANNEL: u32 = 3;
 /// Long after any transition, in milliseconds.
 const SETTLED: u64 = 10_000;
 const FRONT: PageKey = PageKey { channel: CHANNEL, page: 0x100 };
+/// The smallest window the interface allows: `MINIMUM_WIDTH` and
+/// `MINIMUM_HEIGHT` in `native/interface/src/window.rs`, which this crate
+/// cannot reach, so the two are kept equal by hand.
+const SMALLEST: (u16, u16) = (1000, 640);
+/// Moments part of the way through the slide between pages (220
+/// milliseconds) and the zoom from the wall (300), early and late on their
+/// eased curves: a test that uses them asserts the wall is still moving.
+const PART_WAY: [u64; 4] = [25, 50, 100, 150];
 
 /// A sample page as the engine renders it.
 struct Sample {
@@ -63,10 +72,15 @@ fn browser(painter: &mut Painter, pages: &[Sample]) -> Browser {
 
 /// The window as `browser` draws it at `now`, by `painter`.
 fn frame(painter: &mut Painter, browser: &mut Browser, now: u64) -> (Vec<DeviceBox>, Vec<u32>) {
-    painter.begin(WIDTH, HEIGHT, 1.0);
-    browser.draw(painter, f64::from(WIDTH), f64::from(HEIGHT), now);
+    sized_frame(painter, browser, (WIDTH, HEIGHT), now)
+}
+
+/// The window `size` points across and down, drawn at a scale of one.
+fn sized_frame(painter: &mut Painter, browser: &mut Browser, size: (u16, u16), now: u64) -> (Vec<DeviceBox>, Vec<u32>) {
+    painter.begin(size.0, size.1, 1.0);
+    browser.draw(painter, f64::from(size.0), f64::from(size.1), now);
     let damage = painter.render();
-    let mut words = vec![0; usize::from(WIDTH).saturating_mul(usize::from(HEIGHT))];
+    let mut words = vec![0; usize::from(size.0).saturating_mul(usize::from(size.1))];
     painter.copy_to(&mut words, &damage, 0);
     (damage.boxes().to_vec(), words)
 }
@@ -190,6 +204,73 @@ fn a_pages_colour_reaches_every_pixel_below_the_strip_and_no_further() {
     browser.wall_mut().toggle_single(SETTLED);
     let wall = frame(&mut painter, &mut browser, SETTLED * 2).1;
     assert_eq!(wall[MARGIN.1 * across + MARGIN.0], WINDOW_WORD, "the wall's margin");
+}
+
+/// REQ-785 (requirement 14.5), the spoofing review of 3 November 2026:
+/// what moves in the page area stays inside it. Part of the way through
+/// the zoom from the wall, the slide between zoomed pages and the slide
+/// between pages alone, at the smallest window with the bookmarks bar
+/// hidden and shown, every pixel above the page area's clip (the trusted
+/// strip, the margin under it and the wall's size controls) is as it is
+/// once the move has ended. The strip is drawn after the page area and
+/// covers its own rows whatever reaches them; the clip alone keeps a
+/// sliding neighbour out of the margin between the strip and the page
+/// area, where it would stand against the strip's edge. The interface
+/// core's test canvas records no clip, so only a canvas that clips can
+/// show this. With the wall's and the lone page's clips taken out, the
+/// slides fail here, a neighbour reaching the row the strip ends on; the
+/// zoom runs between two places inside the area and needs no clip.
+#[test]
+fn what_moves_in_the_page_area_never_leaves_its_clip() {
+    #[derive(Clone, Copy, Debug)]
+    enum Move {
+        Zoom,
+        WallSlide,
+        AloneSlide,
+    }
+    let pages = pages();
+    let across = usize::from(SMALLEST.0);
+    for bar in [false, true] {
+        for case in [Move::Zoom, Move::WallSlide, Move::AloneSlide] {
+            let mut painter = Painter::new(Family::Roboto);
+            let mut browser = browser(&mut painter, &pages);
+            browser.set_bar(BarView { shown: bar, ..BarView::default() });
+            if matches!(case, Move::AloneSlide) {
+                browser.wall_mut().toggle_single(SETTLED);
+            }
+            sized_frame(&mut painter, &mut browser, SMALLEST, SETTLED);
+            let mut start = SETTLED;
+            match case {
+                Move::Zoom => browser.wall_mut().zoom(FRONT, start),
+                Move::WallSlide => {
+                    browser.wall_mut().zoom(FRONT, start);
+                    start += SETTLED;
+                    sized_frame(&mut painter, &mut browser, SMALLEST, start);
+                    assert!(browser.wall_mut().step_zoom(1, start).is_some(), "{case:?}: a next page");
+                }
+                Move::AloneSlide => assert!(browser.wall_mut().step_zoom(1, start).is_some(), "{case:?}: a next page"),
+            }
+            let mut moving = Vec::new();
+            for after in PART_WAY {
+                painter.redraw_whole();
+                moving.push((after, sized_frame(&mut painter, &mut browser, SMALLEST, start + after).1));
+                assert!(browser.wall().animating(start + after), "{case:?}: still moving {after} milliseconds in");
+            }
+            let clip = browser.wall().area();
+            painter.redraw_whole();
+            let rest = sized_frame(&mut painter, &mut browser, SMALLEST, start + SETTLED).1;
+            assert_eq!(browser.wall().area(), clip, "{case:?}: the same page area at rest");
+            let strip_end = browser.strip_end(start + SETTLED);
+            assert!(clip.y0 > strip_end, "{case:?}, bar {bar}: the page area {clip:?} starts below the strip's end {strip_end}");
+            #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss, reason = "inside the window, at a scale of one")]
+            let above = clip.y0.floor() as usize * across;
+            for (after, moving) in moving {
+                let changed = differing(&moving[..above], &rest[..above]);
+                let first = moving[..above].iter().zip(&rest[..above]).position(|(a, b)| a != b).map(|index| (index % across, index / across));
+                assert_eq!(changed, 0, "{case:?}, bar {bar}, {after} ms in: pixels above the area's top {} moved, first {first:?}", clip.y0);
+            }
+        }
+    }
 }
 
 /// REQ-737 item 2 with REQ-740, in pixels: a page of one colour on a screen

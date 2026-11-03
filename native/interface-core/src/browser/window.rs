@@ -27,7 +27,8 @@ impl Browser {
     /// Where the trusted strip ends: below it everything may be a
     /// channel's, above it nothing is. In full screen with the strip up
     /// there is no strip, so nothing is above it.
-    pub(super) fn strip_end(&self, now: u64) -> f64 {
+    #[must_use]
+    pub fn strip_end(&self, now: u64) -> f64 {
         if self.full_screen() && !self.full_screen_strip(now) {
             return 0.0;
         }
