@@ -143,7 +143,8 @@ fn spawn_in(spawn: &Spawn<'_>, sid: &ContainerSid) -> io::Result<Process> {
         keep_ours(our_reader.raw())?;
         keep_ours(our_writer.raw())?;
         inherited.extend([their_reader.raw(), their_writer.raw()]);
-        environment.push((OsString::from(CHANNEL_VARIABLE), OsString::from(format!("{},{}", their_reader.raw() as usize, their_writer.raw() as usize))));
+        environment
+            .push((OsString::from(CHANNEL_VARIABLE), OsString::from(format!("{},{}", their_reader.raw().cast_unsigned(), their_writer.raw().cast_unsigned()))));
         Some((our_reader, our_writer, their_reader, their_writer))
     } else {
         None
