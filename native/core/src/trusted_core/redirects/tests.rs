@@ -253,14 +253,21 @@ fn saying_it_again_does_not_put_the_second_off() {
     assert_eq!(core.strip().redirecting, DESTINATION);
 }
 
-// REQ-701 item 5: https to http is followed, and the strip says so.
+// REQ-701 item 5, the engine's REQ-420 (REQ-SEC-007), DEC-2378: a redirect
+// from https to http is refused, even when a fetcher, which is untrusted,
+// says one; the tab stays encrypted where it was and says why.
 #[test]
-fn a_downgrade_is_followed_and_shown_not_secure() {
+fn a_downgrade_is_refused_whatever_the_fetcher_says() {
     let (mut core, _stand_in) = opening();
+    let (shown, only) = (address(&core).to_owned(), channel(&core));
     assert!(core.strip().encrypted);
-    hop(&mut core, "http://new.invalid/teletext/");
-    assert_eq!(address(&core), "http://new.invalid/teletext/");
-    assert!(!core.strip().encrypted);
+    redirect(&mut core, "http://new.invalid/teletext/");
+    assert_eq!(core.redirect_due_at(), None, "no notice: nothing to follow");
+    assert_eq!(core.strip().redirecting, "");
+    elapse(&mut core);
+    assert_eq!((address(&core), channel(&core)), (shown.as_str(), only));
+    assert!(core.strip().encrypted);
+    assert!(says(&core, crate::session::DOWNGRADE_REFUSED));
 }
 
 // RFC 9110 section 10.2.2, as REQ-505 keeps a fragment off the wire: the

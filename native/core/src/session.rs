@@ -29,6 +29,8 @@ mod tab;
 mod windows;
 
 pub use channel::{ChannelState, Files, RedirectBy, Redirecting, SinceSelected};
+#[cfg(test)]
+pub use navigation::DOWNGRADE_REFUSED;
 pub use outside::left_of_drop;
 pub use tab::{ClosedTab, Pending, Tab, Visit, Went};
 

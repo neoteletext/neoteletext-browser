@@ -8,6 +8,11 @@ use std::time::Instant;
 
 use super::{MAX_REDIRECTS, Pending, RedirectBy, Redirecting, Session, Tab, Visit, Went};
 
+/// Why a server's redirect from an `https` channel to a plain `http`
+/// address is not followed: the engine's REQ-420 (REQ-SEC-007), REQ-701
+/// item 5. The strip shows it after "The channel could not open: ".
+pub const DOWNGRADE_REFUSED: &str = "it redirected from an encrypted address to an unencrypted one, which is refused";
+
 impl Session {
     /// Opens `typed` in the active tab, after its current address in
     /// history; `in_field` when the user typed it in the address field.
@@ -43,6 +48,8 @@ impl Session {
     }
 
     /// Where a server's redirect of `channel` leads, by the address rules.
+    /// An encrypted channel's redirect to a plain address is refused
+    /// (`DOWNGRADE_REFUSED`).
     /// Only the request that opens a channel can move its tab: a page
     /// fetched later is no navigation, whatever an untrusted fetcher says. A
     /// redirect that names no place keeps the one being opened (DEC-1694
@@ -56,6 +63,12 @@ impl Session {
             return Err("a page of it redirected elsewhere".into());
         }
         let destination = redirect_destination(location)?;
+        // The engine's REQ-420 (REQ-SEC-007), DEC-2378: the engine's agent
+        // refuses a redirect from https to plain http, and a fetcher is
+        // untrusted, so the trusted core refuses one whatever it is told.
+        if tab.address().is_some_and(|shown| shown.encrypted) && !destination.encrypted {
+            return Err(DOWNGRADE_REFUSED.into());
+        }
         match tab.address() {
             Some(shown) if destination.is_bare() => destination.at_same_place(shown),
             _ => Ok(destination),
