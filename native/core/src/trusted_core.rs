@@ -108,6 +108,8 @@ enum Event {
     InterfaceEnded(Option<String>),
     /// The broker ended: by a signal, a crash or its own end, the core has
     /// no one to start, end or wait for its helpers, and ends (TODO-2006).
+    /// On Windows the core is in a job the broker holds, killed with it.
+    #[cfg(unix)]
     BrokerEnded,
     /// The phone keyboard process said something, untrusted.
     /// Of the keyboard process started as the generation given.

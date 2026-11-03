@@ -82,6 +82,7 @@ fn handle(core: &mut Core, event: Event) -> Result<bool, String> {
         }
         Event::InterfaceEnded(None) => return Ok(false),
         Event::InterfaceEnded(Some(reason)) => return Err(format!("the interface broke the protocol and was closed: {reason}")),
+        #[cfg(unix)]
         Event::BrokerEnded => return Err(String::from("the broker ended, and the browser ends with it")),
     }
     Ok(true)
@@ -313,6 +314,7 @@ mod tests {
 
     /// TODO-2006: the broker's end ends the core, which then ends its
     /// helpers, rather than leaving it running with no one to end it.
+    #[cfg(unix)]
     #[test]
     fn the_brokers_end_ends_the_core() {
         let mut core = super::super::test_support::test_core();

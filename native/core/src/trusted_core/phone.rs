@@ -205,6 +205,7 @@ impl Core {
 #[allow(clippy::unwrap_used, reason = "a test")]
 mod tests {
     use super::super::test_support::Test;
+    #[cfg(unix)]
     use super::PHONE_KEYBOARD_BROKE;
     use protocol::ToInterface;
     use protocol::keyboard::{FromKeyboard, PhoneKey, PhoneState};
@@ -367,7 +368,9 @@ mod tests {
     /// asks for a PIN; then the keyboard process asking without one is
     /// ended and another started with `--pin`, and nothing else in its
     /// arguments changes. A phone already paired keeps its pairing. On the
-    /// code before, no way in the browser started it with `--pin`.
+    /// code before, no way in the browser started it with `--pin`. The
+    /// stand-in broker is Unix's.
+    #[cfg(unix)]
     #[test]
     fn asking_for_a_pin_starts_the_keyboard_again_with_one() {
         use confine::broker::{Program, Request};
