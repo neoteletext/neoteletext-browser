@@ -42,7 +42,7 @@
 | Cut, copy, paste and select all in every text field | Built | Decision 84, requirement 12.11 |
 | The input method's text shown while it is composed | Not built | Requirement 12.11 |
 | Screen readers and keyboard reach of every control | Not built | Requirement 12.9 |
-| Reduced motion | Not built | — |
+| Reduced motion | Built: the wall's and the docked remote's moves take no time when the platform asks. Read on macOS and Windows by the interface whenever a window opens or gains the focus; on Linux from the desktop portal by the chooser at the broker's start, and given to the interface in its environment, so a change there is followed at the next start (DEC-2424). Not yet seen on Windows or Linux by hand | REQ-754, DEC-2424 |
 | A 4:3 page aspect | Built, a View menu option, off by default | REQ-737, DEC-2049 |
 | Files dropped on the window | Built on macOS and Windows, by place on the page, the tab strip and the address field, with the arrow and a background tab switching under a held pointer (REQ-1700); not yet seen with a real drag; none on Linux (DEC-1551 item 4). The window asks the system where the pointer is, because winit 0.30 reports no position during a drag | REQ-1700 |
 | Open File, and opening from the system | Built (REQ-1699, REQ-1703), the dialog owned by the window on Windows and X11 and given the foreground on macOS; not centred on the window on macOS, and with no parent on Wayland; not yet seen with a person at the dialog | REQ-1699 |
