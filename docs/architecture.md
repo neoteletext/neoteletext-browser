@@ -320,7 +320,7 @@ The application loads only resources that are part of a teletext service (decisi
 | **Contents file** (`contents.txt`) | The engine's contents reader | Fetcher | A bounded, typed list of sections and pages |
 | **Discovery** (HyperText Markup Language) | The engine's discovery reader | Fetcher, not built | — |
 
-Discovery's security analysis was the engine's `docs/web-discovery-security.md`, in its git history since 18 October 2026; its requirements are in the engine's `docs/spec/requirements/web.md`. Its results are never loaded directly: each is shown to the user, and a chosen one is a page-initiated navigation (REQ-694).
+Discovery's design is `discovery.md` and its security analysis `discovery-security.md` (3 November 2026), which take over the engine's `docs/web-discovery-security.md`, in its git history since 18 October 2026. Its results are never loaded directly: each is shown to the user in the strip, and a chosen one is a page-initiated navigation (REQ-694). It is not built: DEC-1722 item 1 leaves it no address to run on until the owner answers DEC-2374, and the engine has no link-pointer reader yet (the engine's TODO-2376).
 
 ### 7.2 Transports
 
