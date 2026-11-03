@@ -1,7 +1,7 @@
 //! What the keys do in a text field, each platform as its own text fields
 //! do it: every field of the browser takes its keys here, so all of them
-//! behave alike. Chrome's address bar and the systems' text fields are the
-//! measure, with a word ending at the punctuation of an address.
+//! behave alike, measured as `menu-bar.md` section 4 says, with a word
+//! ending at the punctuation of an address.
 
 use crate::browser::{Key, Modifiers};
 use crate::editor::Editor;

@@ -28,7 +28,7 @@ fn known_not_teletext(file: &str) -> bool {
 
 /// What of `files` a drop at `place` opens. On the tab strip and the toolbar
 /// files of a type known not to be teletext are removed (REQ-1700 item 2),
-/// as Chrome removes what it cannot show. On the page each opens its tab,
+/// (`tab-strip.md` section 11). On the page each opens its tab,
 /// which shows the refusal (item 1).
 #[must_use]
 pub fn left_of_drop(files: &[String], place: DropPlace) -> Vec<String> {

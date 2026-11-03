@@ -207,8 +207,42 @@ check_release_versions() {
     grep -q 'if (\$Version -ne \$workspaceVersion)' scripts/release/build-windows.ps1 || fail "scripts/release/build-windows.ps1 does not refuse a version other than the workspace's"
 }
 
+# TODO-1280: source code does not name another browser as the source of
+# a rule or a number (the owner's baseline rule: no outside reference
+# project is named in code). A rule the browser follows from another
+# browser is stated in its design document, which may name that browser,
+# and the comment cites the section. Allowed are only the lines below,
+# each as git grep prints it (path:text), where the browser is the
+# subject: a bookmarks file as that browser writes it, which the
+# bookmarks import reads.
+readonly BROWSER_NAMES='chrome|chromium|firefox'
+readonly BROWSER_NAMES_ALLOWED=(
+    "native/decoder/src/netscape/tests.rs:/// As Chrome writes it, with Firefox's comments and descriptions."
+    'native/decoder/src/netscape/tests.rs:const CHROME: &str = r#"<!DOCTYPE NETSCAPE-Bookmark-file-1>'
+    'native/decoder/src/netscape/tests.rs:    let found = read(CHROME.as_bytes()).unwrap();'
+    'native/decoder/tests/confined_bookmarks.rs:/// As Firefox writes it.'
+    'native/decoder/tests/confined_bookmarks.rs:const FIREFOX: &str = r#"<!DOCTYPE NETSCAPE-Bookmark-file-1>'
+    'native/decoder/tests/confined_bookmarks.rs:    write_to_decoder(&mut input, &ToDecoder::Data(FIREFOX.as_bytes().to_vec())).unwrap();'
+)
+check_browser_names() {
+    step "no source line names Chrome, Chromium or Firefox outside the allow list (TODO-1280)"
+    local found status=0 line allowed unexpected=""
+    found="$(git grep --cached -IiwE "$BROWSER_NAMES" -- native)" || status=$?
+    [[ "$status" -le 1 ]] || fail "git grep failed looking for other browsers' names"
+    while IFS= read -r line; do
+        [[ -n "$line" ]] || continue
+        for allowed in "${BROWSER_NAMES_ALLOWED[@]}"; do
+            [[ "$line" == "$allowed" ]] && continue 2
+        done
+        unexpected+="$line"$'\n'
+    done <<<"$found"
+    [[ -z "$unexpected" ]] || fail "these lines name another browser; state the rule in its design document and cite the section, or, where the browser is the subject, add the line to BROWSER_NAMES_ALLOWED in scripts/check.sh:
+$unexpected"
+}
+
 # What the commit gate checks: the code compiles clean.
 check_compiles() {
+    check_browser_names
     check_engine_pin
     check_desktop_codecs
     check_release_versions

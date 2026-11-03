@@ -1,5 +1,5 @@
 //! The browser window, after the owner's mockups: the tab strip and
-//! window buttons along the top as Chrome draws them, the toolbar with the
+//! window buttons along the top (`tab-strip.md` section 10), the toolbar with the
 //! trusted strip's address field, and below it the page banks on the left,
 //! the chosen bank's page list in the middle, the zoomable page area on the
 //! right, and the overview of all 800 pages along the bottom.

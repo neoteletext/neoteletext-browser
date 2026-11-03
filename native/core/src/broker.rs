@@ -114,10 +114,18 @@ pub(crate) fn broker() -> Result<(), String> {
     let openings_reader = std::cell::Cell::new(Some(file_of(openings_reader)));
     let declared_access = Arc::clone(&access);
     let declared = move |declaration: Declaration| lock(&declared_access).declare(&declaration, home().as_deref(), Instant::now());
+    // Asked now, on a thread, so that the answer is in by the time the core
+    // asks for the interface (REQ-754).
+    #[cfg(target_os = "linux")]
+    let motion = ReducedMotion::ask(&chooser.program);
+    #[cfg(target_os = "linux")]
+    let environment = |role: Role| with_reduced_motion(role, confine::environment(role), motion.reduced());
+    #[cfg(not(target_os = "linux"))]
+    let environment = confine::environment;
     let handlers = Handlers {
         read_source: &read_source,
         open_web: &open_web,
-        environment: &confine::environment,
+        environment: &environment,
         cookie_key: &cookie_key,
         healthy: &tell_launcher_healthy,
         update_state: &launcher_state,
@@ -319,6 +327,75 @@ fn ask_chooser(mut command: Command) -> Option<PathBuf> {
     }
     let path = PathBuf::from(String::from_utf8(printed).ok()?);
     path.is_absolute().then_some(path)
+}
+
+/// How long the interface's start waits for the desktop's reduced-motion
+/// preference, at most: a portal already running answers in milliseconds,
+/// one the session bus must start first can take longer, and a window
+/// should not wait for a preference about its animations. Unanswered by
+/// then, the interface moves as it always did.
+#[cfg(target_os = "linux")]
+const MOTION_DEADLINE: std::time::Duration = std::time::Duration::from_secs(1);
+
+/// The desktop's reduced-motion preference on Linux (REQ-754), read for
+/// the interface, which reaches no session bus (decision 86), by the
+/// chooser, the browser's one holder of the desktop portal, which the broker
+/// starts unconfined beside itself. Asked once, at the broker's start; a
+/// change is followed at the browser's next start (DEC-2424).
+#[cfg(target_os = "linux")]
+struct ReducedMotion {
+    answer: Mutex<Option<std::sync::mpsc::Receiver<bool>>>,
+    known: std::sync::OnceLock<bool>,
+}
+
+#[cfg(target_os = "linux")]
+impl ReducedMotion {
+    /// Starts the chooser asking, on a thread of its own.
+    fn ask(chooser: &Path) -> Self {
+        let (sender, receiver) = std::sync::mpsc::channel();
+        let mut command = Command::new(chooser);
+        command.arg(confine::broker::REDUCED_MOTION_ARGUMENT).stdin(Stdio::null()).stdout(Stdio::piped());
+        std::thread::spawn(move || {
+            let _ = sender.send(ask_reduced_motion(command));
+        });
+        Self { answer: Mutex::new(Some(receiver)), known: std::sync::OnceLock::new() }
+    }
+
+    /// The answer, waited for at most `MOTION_DEADLINE` the first time and
+    /// kept; no preference if none came.
+    fn reduced(&self) -> bool {
+        *self.known.get_or_init(|| {
+            let receiver = self.answer.lock().unwrap_or_else(PoisonError::into_inner).take();
+            receiver.and_then(|receiver| receiver.recv_timeout(MOTION_DEADLINE).ok()).unwrap_or(false)
+        })
+    }
+}
+
+/// What the chooser printed, believed only as the one answer that means
+/// reduced motion, and only when it ended well; anything else, or a chooser
+/// that cannot start, is no preference.
+#[cfg(any(target_os = "linux", test))]
+fn ask_reduced_motion(mut command: Command) -> bool {
+    use confine::broker::REDUCED_MOTION_ANSWER;
+    let Ok(mut child) = command.spawn().map_err(|error| eprintln!("neoteletext: cannot ask the desktop about reduced motion: {error}")) else {
+        return false;
+    };
+    let mut printed = Vec::new();
+    let most = u64::try_from(REDUCED_MOTION_ANSWER.len()).unwrap_or(u64::MAX).saturating_add(1);
+    let read = child.stdout.take().map(|output| output.take(most).read_to_end(&mut printed));
+    let ended_well = child.wait().is_ok_and(|status| status.success());
+    ended_well && read.is_some_and(|read| read.is_ok()) && printed == REDUCED_MOTION_ANSWER
+}
+
+/// A helper's environment, with the interface's told that motion is
+/// reduced when it is: the broker's own word, never a variable passed on
+/// from its own environment, which `confine::environment` does not pass.
+#[cfg(any(target_os = "linux", test))]
+fn with_reduced_motion(role: Role, mut environment: Vec<(OsString, OsString)>, reduced: bool) -> Vec<(OsString, OsString)> {
+    if role == Role::Interface && reduced {
+        environment.push((OsString::from(confine::broker::REDUCED_MOTION_VARIABLE), OsString::from(confine::broker::REDUCED_MOTION_VALUE)));
+    }
+    environment
 }
 
 /// The chooser's program: in a macOS bundle, its helper bundle, so that it
@@ -582,6 +659,39 @@ mod tests {
         assert_eq!(printing(""), None, "cancelled");
         assert_eq!(printing("relative/news.t42"), None);
         assert_eq!(printing(&"/a".repeat(MAX_TEXT)), None, "too long");
+    }
+
+    /// REQ-754: the chooser is believed that motion is reduced only when it
+    /// prints the one answer and ends well.
+    #[cfg(unix)]
+    #[test]
+    fn the_chooser_is_believed_only_for_its_one_answer() {
+        let printing = |text: &str, status: u8| {
+            let mut command = Command::new("/bin/sh");
+            command.arg("-c").arg(format!("printf '%s' '{text}'; exit {status}")).stdin(Stdio::null()).stdout(Stdio::piped());
+            ask_reduced_motion(command)
+        };
+        let answer = std::str::from_utf8(confine::broker::REDUCED_MOTION_ANSWER).unwrap();
+        assert!(printing(answer, 0));
+        assert!(!printing(answer, 1), "a chooser that failed");
+        assert!(!printing("", 0), "no preference");
+        for other in ["reduced\n", "reducedmotion", "1", "Reduced"] {
+            assert!(!printing(other, 0), "{other}");
+        }
+        assert!(!ask_reduced_motion(Command::new("/nonexistent/neoteletext-chooser")), "no chooser");
+    }
+
+    /// REQ-754: only the interface is told, and only when motion is
+    /// reduced.
+    #[test]
+    fn only_the_interface_is_told_motion_is_reduced() {
+        let told = (OsString::from(confine::broker::REDUCED_MOTION_VARIABLE), OsString::from(confine::broker::REDUCED_MOTION_VALUE));
+        let base = vec![(OsString::from("HOME"), OsString::from("/home/a"))];
+        assert_eq!(with_reduced_motion(Role::Interface, base.clone(), true), vec![base[0].clone(), told]);
+        assert_eq!(with_reduced_motion(Role::Interface, base.clone(), false), base);
+        for role in [Role::Core, Role::Decoder, Role::Network, Role::Sound] {
+            assert_eq!(with_reduced_motion(role, base.clone(), true), base, "{role:?}");
+        }
     }
 
     /// A home folder of its own for one test, with the browser's settings

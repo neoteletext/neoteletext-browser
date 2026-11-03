@@ -1,6 +1,6 @@
 //! A tab and its history (`history-and-bookmarks.md` section 2, requirements
 //! 20.9 and 20.10): its visits, the visit waiting to be recorded, a closed
-//! tab, and the list rules Chrome's are.
+//! tab, and the list rules of section 16.
 
 use interface_core::library::MAX_TAB_ENTRIES;
 
@@ -17,9 +17,9 @@ pub struct Visit {
     pub by_page: bool,
     /// Its title once its page drew, for the Back and Forward lists.
     pub title: String,
-    /// When the tab last came to it, in seconds since 1970 (UTC), as
-    /// Chrome's `NavigationEntry::GetTimestamp`: clearing history by time
-    /// removes the entries of that time (section 2.5).
+    /// When the tab last came to it, in seconds since 1970 (UTC): clearing
+    /// history by time removes the entries of that time (sections 2.5 and
+    /// 16, "Removing history and the tabs").
     pub at: i64,
     /// A redirect with no input from the viewer took the tab from this page
     /// after it drew: the Back and Forward buttons pass over it, and it
@@ -63,8 +63,8 @@ pub struct ClosedTab {
     /// Its title, for the panel and the menu.
     pub title: String,
     /// The window it closed with, whose closed tabs share this number and
-    /// reopen together, as Chrome keeps a closed window; 0 when it closed
-    /// alone (`multiple-windows.md`).
+    /// reopen together; 0 when it closed alone (`multiple-windows.md`
+    /// section 5, "Closed windows").
     pub window: u32,
 }
 
@@ -94,9 +94,9 @@ pub struct Tab {
 impl Tab {
     /// Adds a visit after the tab's place, dropping what was forward of it
     /// and, beyond [`MAX_TAB_ENTRIES`], the oldest entry passed over or else
-    /// the oldest, as Chrome does
-    /// (`NavigationControllerImpl::PruneOldestSkippableEntryIfFull`), so
-    /// that a channel redirecting on a timer pushes out only its own.
+    /// the oldest (sections 2.9 and 16, "A redirect the viewer did not ask
+    /// for"), so that a channel redirecting on a timer pushes out only its
+    /// own.
     pub(super) fn push(&mut self, visit: Visit) {
         self.channel.redirecting = None;
         self.history.truncate(self.position.saturating_add(1));
@@ -108,8 +108,8 @@ impl Tab {
         self.position = self.history.len().saturating_sub(1);
     }
 
-    /// Takes a program's redirect to `visit` by Chrome's rules, per page
-    /// (neoteletext-common's DEC-1684 items 2 to 4): after the viewer's
+    /// Takes a program's redirect to `visit` by the rules of section 2.9,
+    /// per page (neoteletext-common's DEC-1684 items 2 to 4): after the viewer's
     /// input on the page being left, an entry is added; before that page
     /// drew, its entry is replaced, as a page that moves on arrival was
     /// never seen; otherwise an entry is added and the page left is passed
@@ -131,7 +131,8 @@ impl Tab {
 
     /// How many steps the Back or Forward button goes: past every entry
     /// passed over to the nearest other, or none, and the button then does
-    /// nothing, as Chrome's `GetIndexForGoBack` (DEC-1684 item 8).
+    /// nothing (DEC-1684 item 8; sections 2.9 and 16, "A redirect the
+    /// viewer did not ask for").
     pub(super) fn button_steps(&self, forward: bool) -> Option<usize> {
         (1..=self.history.len()).find(|&steps| {
             let position = if forward { self.position.checked_add(steps) } else { self.position.checked_sub(steps) };
@@ -144,8 +145,8 @@ impl Tab {
         self.history.get(position).map(|visit| visit.address.host.as_str())
     }
 
-    /// The next chapter stop from `start`, as Chrome's
-    /// `BackForwardMenuModel::GetIndexOfNextChapterStop`, with the host for
+    /// The next chapter stop from `start` (section 16, "The Back and
+    /// Forward menus"), with the host for
     /// its registrable domain (decision 62 dropped the Public Suffix List):
     /// going back, the nearest earlier entry of another host; going
     /// forward, the last entry of the run of hosts after `start`, the last

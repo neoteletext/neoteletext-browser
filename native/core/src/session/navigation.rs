@@ -16,9 +16,9 @@ impl Session {
     /// When the address cannot be opened, or there is no tab.
     pub fn navigate(&mut self, typed: &str, in_field: bool) -> Result<(), String> {
         let address = if in_field { parse_typed(typed)? } else { parse(typed)? };
-        // The address shown, entered again, is a reload, as in Chrome
-        // (`chrome.history`'s "reload" transition: "pressing Enter in the
-        // address bar").
+        // The address shown, entered again, is a reload
+        // (`history-and-bookmarks.md` section 16, "The address shown, entered
+        // again or linked to").
         if self.is_shown(&address) {
             self.reload();
             return Ok(());
@@ -203,8 +203,8 @@ impl Session {
     }
 
     /// After a full list, at most [`MAX_CHAPTER_STOPS`] entries beyond it
-    /// where the host changes, with their steps, as Chrome's
-    /// `BackForwardMenuModel::GetChapterStopCount` and `FindChapterStop`.
+    /// where the host changes, with their steps (`history-and-bookmarks.md` section 16,
+    /// "The Back and Forward menus").
     #[must_use]
     pub fn chapter_stops(&self, forward: bool) -> Vec<(usize, &Visit)> {
         let Some(tab) = self.active_tab() else { return Vec::new() };

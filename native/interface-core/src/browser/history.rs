@@ -72,9 +72,9 @@ struct Controls {
     menu_area: Rect,
 }
 
-/// What a row's menu offers, as Chrome's history page does: "More from
-/// this site", "Remove from history", and "Remove bookmark" when the
-/// address is bookmarked (its `history_list.html.ts`).
+/// What a row's menu offers: "More from this site", "Remove from
+/// history", and "Remove bookmark" when the address is bookmarked
+/// (`history-and-bookmarks.md` section 16, "A row's menu").
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum RowAction {
     MoreFromSite,

@@ -19,9 +19,10 @@ use neoteletext_web::bytes::Writer;
 use neoteletext_web::cookie::{CookieJar, CookieRejected, SetCookie, Site};
 use neoteletext_web::url::Url;
 
-/// Cookies a channel keeps (`cookies.md` section 5): Chrome's per-site limit.
+/// Cookies a channel keeps (`cookies.md` section 5, where the value comes
+/// from).
 pub const PER_CHANNEL: usize = 180;
-/// Cookies kept in all: Chrome's total.
+/// Cookies kept in all (`cookies.md` section 5).
 pub const TOTAL: usize = 3_000;
 /// The text of every cookie together: a thousand bytes and more for each of
 /// the 3 000, rounded to 4 MiB. Beyond it the least recently used cookie

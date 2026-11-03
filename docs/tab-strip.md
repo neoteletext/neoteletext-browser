@@ -56,3 +56,21 @@ At the strip's right end, in every window, the browser shows its version and the
 - **The tabs keep their reach:** the label's room comes from the tabs, so where they would have reached it they overflow into the panel a tab sooner (section 3), every tab still reached by the count, the panel and the keys. Where the strip has not room for the label beside one tab, the count and the new-tab button, it is left out; it never covers a tab, the count, the new-tab button or a window button.
 - **Measured, 28 October 2026,** drawn through the processor back end in Roboto on Linux: "0.1.0 BETA" is 58.5 points wide, so the label and its room take 90.5. From that width: on macOS as many tabs fit as before, five on a 1,440-point window and three on the smallest, 1,000 points. Where the browser draws the window's buttons (Windows and Linux) one tab fewer fits: four and the count on a 1,440-point window, where five fitted, and two and the count on a 1,000-point one, where three fitted, the third missing by half a point. Seen in those drawings: the label sits in grey small capitals at the right end, level with the tabs' titles, apart from the new-tab button and the window's buttons.
 - **A page cannot forge or cover it:** it is drawn in the strip, which no page image is drawn over (requirement 11.1), from the trusted core's report.
+
+## 9. A tab's sound button
+
+A tab whose channel is sounding shows a loudspeaker, a button that mutes it (decisions 37 and 38: the owner asked for tabs that show and mute their sound as Chrome's do): with sound waves while heard, crossed out while muted, as Chrome's tab shows it. It sits before the tab's close button, where Chrome places it, 24 points wide (`TAB_SPEAKER`). A press on it does not start a drag (section 2).
+
+## 10. The window's frame
+
+The frame is drawn as Chrome draws it on each platform (the owner's answer of 15 October 2026, `native-interface-design.md` section 12.1). On macOS the system's own window buttons sit at the tab strip's left end and the tabs start after them, 72 points in (`FRAME.left_inset`), the room those buttons take. On Windows and Linux there is no system frame: the browser draws its own minimise, maximise and close buttons at the strip's right end, each 44 points wide (`WINDOW_BUTTON_WIDTH`), the strip drags the window, and a press within 6 points of the window's edge (`RESIZE_MARGIN`) resizes it.
+
+## 11. Files dragged over the window
+
+Files dropped on the window behave as Chrome's do (DEC-1549 items 2 to 5, REQ-1700), on macOS and Windows only: Linux takes no drop (DEC-1551 item 4). Where each rule was read in Chromium's source is DEC-1549's record.
+
+- **On the tab strip,** over the left quarter of a tab the files go before it, over its middle half they replace it, over its right quarter they go after it, and over empty strip they go at the end; over the toolbar outside the address field they replace the active tab (`tab_container_impl.cc`). Files of a type known not to be teletext are removed from such a drop, as Chrome removes what it cannot show, by their names as DEC-1769 lists them; a drop left with nothing is refused and the strip says so.
+- **The arrow:** while files are over the strip, an arrow 20 pixels high and wide (`ARROW`), Chrome's size, marks where they would land: above the strip pointing down, or below it pointing up when there is no room above.
+- **A background tab comes forward** when the pointer rests over its middle for 500 milliseconds (`HOVER_TO_SWITCH`), Chrome's wait (`hover_tab_selector.cc`).
+- **On the page area** the current tab is never replaced: each file opens its own tab, the first in front, and a file that is not teletext opens its tab and shows the refusal (REQ-1700 item 1).
+- **On the address field** a drop does not navigate: the first file's address is put in the field, selected, for the viewer to press Enter (REQ-1700 item 3).
