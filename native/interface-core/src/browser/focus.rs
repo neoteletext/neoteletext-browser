@@ -48,6 +48,24 @@ impl Browser {
         self.editing.then_some(&mut self.editor)
     }
 
+    /// The system's input method is composing `text` for the field with the
+    /// keys (REQ-763), its cursor `cursor` bytes into it; empty text ends
+    /// it. Returns whether the window needs drawing again.
+    pub fn compose(&mut self, text: &str, cursor: Option<usize>) -> bool {
+        let Some(field) = self.focused_field() else { return false };
+        let before = String::from(field.composing());
+        field.compose(text, cursor);
+        field.composing() != before
+    }
+
+    /// Where the caret of the field with the keys was last drawn, for the
+    /// system's input method to put its candidates beside it.
+    pub fn caret_area(&mut self) -> Option<crate::geometry::Rect> {
+        let field = self.focused_field()?;
+        let caret = field.drawn().caret;
+        (caret != crate::geometry::Rect::default()).then_some(caret)
+    }
+
     /// Whether a text field has the keys.
     #[must_use]
     pub fn field_has_keys(&mut self) -> bool {

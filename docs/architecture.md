@@ -695,7 +695,7 @@ Unsafe code is allowed only in the modules requirement 10.12 names, each saying 
 - The grace period for closed tabs; the live-feed threshold; refresh schedules.
 - Discovery.
 - Full screen of the page alone (`full-screen.md`, decision 85, designed 23 October 2026).
-- Screen readers, the input method's text shown while it is composed, reduced motion.
+- Screen readers, reduced motion.
 - The hostile interface harness with the real helpers running (it runs against the trusted core with a stand-in broker and stand-in helpers).
 - A release signed by the owner's keys: the certificates, the hardware keys, the update host and the key ceremony are the owner's (rdm to-dos for the owner); the Linux release build on the C library 2.28.
 - Builds on phones and microcontroller targets.

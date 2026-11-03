@@ -42,6 +42,8 @@ struct InputMethod {
     address: bool,
     /// The method is enabled now.
     allowed: bool,
+    /// Where the system was last told the caret is.
+    caret: Option<interface_core::geometry::Rect>,
 }
 
 struct Graphics {

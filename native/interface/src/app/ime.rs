@@ -16,6 +16,8 @@ impl App {
         {
             graphics.window.set_ime_allowed(allowed);
             self.view.ime.allowed = allowed;
+            // A method enabled afresh is told where the caret is again.
+            self.view.ime.caret = None;
         }
     }
 }

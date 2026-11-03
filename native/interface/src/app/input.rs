@@ -203,6 +203,11 @@ impl App {
             #[cfg(feature = "interaction")]
             WindowEvent::Ime(Ime::Preedit(text, cursor)) if self.view.browser.composes_for_channel() => self.channel_preedit(event_loop, &text, cursor),
             WindowEvent::Ime(Ime::Commit(text)) => self.committed(event_loop, &text, now),
+            // Otherwise the preedit is the focused field's, shown at its
+            // caret until committed (REQ-763); an input method turned off
+            // takes what it was composing with it.
+            WindowEvent::Ime(Ime::Preedit(text, cursor)) => self.view.browser.compose(&text, cursor.map(|(start, _)| start)),
+            WindowEvent::Ime(Ime::Disabled) => self.view.browser.compose("", None),
             _ => false,
         };
         if changed {
