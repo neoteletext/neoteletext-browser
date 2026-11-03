@@ -56,6 +56,17 @@ pub const BUTTON: Colour = rgb(0x0c, 0x0c, 0x10);
 pub const FIELD: Colour = rgb(0xf4, 0xf4, 0xf4);
 /// Text in the address field.
 pub const FIELD_INK: Colour = rgb(0x10, 0x10, 0x10);
+/// A pointed link's destination where it stands in the address field in
+/// place of the address (requirement 17.6): the link ink, which the real
+/// address, drawn only in `FIELD_INK` and `DIM`, never takes, so that a
+/// destination cannot be read as the channel's own address (DEC-2496).
+pub const POINTED_INK: Colour = LINK_INK;
+const _: () = assert!(differs(POINTED_INK, FIELD_INK) && differs(POINTED_INK, DIM), "a pointed destination never takes an ink of the real address");
+
+/// Whether two colours differ, at compile time.
+const fn differs(one: Colour, other: Colour) -> bool {
+    one.red != other.red || one.green != other.green || one.blue != other.blue
+}
 /// Selected text in the address field.
 pub const FIELD_SELECTION: Colour = rgb(0xa8, 0xc0, 0xff);
 /// The padlock of a channel fetched over an encrypted connection.

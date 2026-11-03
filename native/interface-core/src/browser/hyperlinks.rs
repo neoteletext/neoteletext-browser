@@ -15,7 +15,7 @@ use crate::canvas::{Canvas, PageKey};
 use crate::geometry::{Point, Rect};
 use crate::links::{self, Area, LinkCell, LinkKind, Lit, PageLinks, Pointing, Prompt, PromptButton};
 use crate::text::{border, centred, left_centred};
-use crate::theme::{ADDRESS, BUTTON, FIELD_INK, INSECURE, LINK, LINK_INK, ROW_STATUS, ROW_TITLE, RULE, WHITE};
+use crate::theme::{ADDRESS, BUTTON, INSECURE, LINK, LINK_INK, POINTED_INK, ROW_STATUS, ROW_TITLE, RULE, WHITE};
 use crate::wall::{CellClick, cell_in};
 
 /// The strip's questions take no answer in their first half second, as the
@@ -432,6 +432,12 @@ impl Browser {
         true
     }
 
+    /// Whether a link is under the pointer or the focus, so that its
+    /// destination stands in the address field.
+    pub(super) const fn is_pointing(&self) -> bool {
+        self.links.pointing.is_some()
+    }
+
     /// Draws the destination of the link under the pointer or the focus in
     /// the address field, in place of the address. Returns whether there is
     /// one.
@@ -441,8 +447,11 @@ impl Browser {
             LinkKind::Page => "\u{2192} ",
             LinkKind::Channel | LinkKind::Web => "\u{2197} ",
         };
+        // In the link's ink, which the real address never takes, so that a
+        // destination cannot be read as the channel's own address (DEC-2496
+        // item 1).
         canvas.push_clip(area);
-        left_centred(canvas, area, 0.0, &format!("{arrow}{}", pointing.text), ADDRESS, if pointing.kind.leaves() { FIELD_INK } else { LINK_INK });
+        left_centred(canvas, area, 0.0, &format!("{arrow}{}", pointing.text), ADDRESS, POINTED_INK);
         canvas.pop_clip();
         true
     }

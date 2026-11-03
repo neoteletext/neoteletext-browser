@@ -99,24 +99,33 @@ impl Browser {
             left_centred(canvas, Rect::new(text_left, field.y0, field.x1, field.y1), 0.0, word, ROW_STATUS, PRIVATE);
             text_left += canvas.text_width(word, ROW_STATUS) + LOCK_GAP;
         }
+        // While a pointed link's destination stands in the field, the
+        // identity speaks of the channel, not of the link: it is greyed so it
+        // does not vouch for the destination (spoofing review of 3 November
+        // 2026, DEC-2496 item 2).
+        #[cfg(feature = "links")]
+        let vouching = self.editing || !self.is_pointing();
+        #[cfg(not(feature = "links"))]
+        let vouching = true;
+        let ink = |colour| if vouching { colour } else { DIM };
         if self.strip.built_in {
             let word = "NeoTeletext";
-            left_centred(canvas, Rect::new(text_left, field.y0, field.x1, field.y1), 0.0, word, ROW_STATUS, FIELD_INK);
+            left_centred(canvas, Rect::new(text_left, field.y0, field.x1, field.y1), 0.0, word, ROW_STATUS, ink(FIELD_INK));
             text_left += canvas.text_width(word, ROW_STATUS) + LOCK_GAP;
         } else if self.strip.local {
             let word = "File";
-            left_centred(canvas, Rect::new(text_left, field.y0, field.x1, field.y1), 0.0, word, ROW_STATUS, FIELD_INK);
+            left_centred(canvas, Rect::new(text_left, field.y0, field.x1, field.y1), 0.0, word, ROW_STATUS, ink(FIELD_INK));
             text_left += canvas.text_width(word, ROW_STATUS) + LOCK_GAP;
         } else if self.strip.refused.is_some() {
             let warning = "Certificate refused";
-            left_centred(canvas, Rect::new(text_left, field.y0, field.x1, field.y1), 0.0, warning, ROW_STATUS, INSECURE);
+            left_centred(canvas, Rect::new(text_left, field.y0, field.x1, field.y1), 0.0, warning, ROW_STATUS, ink(INSECURE));
             text_left += canvas.text_width(warning, ROW_STATUS) + LOCK_GAP;
         } else if self.strip.encrypted {
-            padlock(canvas, Point::new(text_left, middle), SECURE);
+            padlock(canvas, Point::new(text_left, middle), ink(SECURE));
             text_left += LOCK_WIDTH + LOCK_GAP;
         } else {
             let warning = "Not secure";
-            left_centred(canvas, Rect::new(text_left, field.y0, field.x1, field.y1), 0.0, warning, ROW_STATUS, INSECURE);
+            left_centred(canvas, Rect::new(text_left, field.y0, field.x1, field.y1), 0.0, warning, ROW_STATUS, ink(INSECURE));
             text_left += canvas.text_width(warning, ROW_STATUS) + LOCK_GAP;
         }
         self.regions.star = Rect::new(field.x1 - TOOL_SIZE, field.y0, field.x1, field.y1);
