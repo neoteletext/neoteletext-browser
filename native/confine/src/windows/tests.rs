@@ -4,13 +4,15 @@
 #![expect(unsafe_code, reason = "the console calls a helper could make, tried as a helper (requirement 10.12, decision 100)")]
 
 use std::ffi::OsString;
+use std::io::{BufRead as _, BufReader};
 use std::os::windows::process::CommandExt as _;
 use std::ptr;
 
 use windows_sys::Win32::Foundation::{GENERIC_READ, GENERIC_WRITE};
 use windows_sys::Win32::Storage::FileSystem::{CreateFileW, FILE_SHARE_READ, FILE_SHARE_WRITE, OPEN_EXISTING};
 use windows_sys::Win32::System::Console::{
-    ATTACH_PARENT_PROCESS, AttachConsole, FlushConsoleInputBuffer, FreeConsole, INPUT_RECORD, KEY_EVENT, PeekConsoleInputW, WriteConsoleInputW,
+    ATTACH_PARENT_PROCESS, AttachConsole, FlushConsoleInputBuffer, FreeConsole, GetStdHandle, INPUT_RECORD, KEY_EVENT, PeekConsoleInputW, STD_ERROR_HANDLE,
+    SetStdHandle, WriteConsoleInputW,
 };
 use windows_sys::Win32::System::Threading::CREATE_NEW_CONSOLE;
 
@@ -223,10 +225,10 @@ fn standard_error_probe() {
     if std::env::var_os(STANDARD_ERROR_PROBE).is_none() {
         return;
     }
-    let channel = std::env::var(crate::broker::CHANNEL_VARIABLE).unwrap_or_default();
+    let channel = std::env::var(CHANNEL_VARIABLE).unwrap_or_default();
     // SAFETY: GetStdHandle takes a constant and returns this process's handle or none; it
     // is only compared.
-    let stderr = unsafe { windows_sys::Win32::System::Console::GetStdHandle(windows_sys::Win32::System::Console::STD_ERROR_HANDLE) } as usize;
+    let stderr = unsafe { GetStdHandle(STD_ERROR_HANDLE) }.cast_unsigned();
     let shared = channel.split(',').any(|value| value.parse::<usize>().is_ok_and(|value| value == stderr && stderr != 0));
     println!("STDERR {}", if shared { "is-the-channel" } else { "apart" });
 }
@@ -240,7 +242,6 @@ fn standard_error_probe() {
 /// the Windows virtual machine on 4 November 2026).
 #[test]
 fn an_interface_started_with_no_standard_error_keeps_its_channel_apart() {
-    use windows_sys::Win32::System::Console::{GetStdHandle, STD_ERROR_HANDLE, SetStdHandle};
     let program = std::env::current_exe().unwrap();
     let arguments = [OsString::from("--exact"), OsString::from("windows::tests::standard_error_probe"), OsString::from("--nocapture")];
     let mut environment = environment(Role::Interface);
@@ -258,7 +259,7 @@ fn an_interface_started_with_no_standard_error_keeps_its_channel_apart() {
     unsafe { SetStdHandle(STD_ERROR_HANDLE, kept) };
     let mut process = started.unwrap();
     let output = process.stdout.take().unwrap();
-    let line = std::io::BufRead::lines(std::io::BufReader::new(output)).map_while(Result::ok).find(|line| line.starts_with("STDERR")).unwrap_or_default();
+    let line = BufReader::new(output).lines().map_while(Result::ok).find(|line| line.starts_with("STDERR")).unwrap_or_default();
     let _ = process.wait();
     assert_eq!(line, "STDERR apart");
 }
