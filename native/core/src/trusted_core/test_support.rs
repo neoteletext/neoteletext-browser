@@ -252,3 +252,48 @@ impl Drop for Test {
         let _ = std::fs::remove_dir_all(&self.folder);
     }
 }
+
+/// A fetcher for the tab of `channel` whose input the test reads, and the
+/// tab's session welcomed by a channel that takes SELECT, so that what the
+/// tab tells its channel from now on can be read with [`selects_sent`].
+#[cfg(all(unix, feature = "interaction"))]
+pub(super) fn wire(core: &mut Core, channel: u32) -> mpsc::Receiver<Vec<u8>> {
+    use neoteletext_input::control::{Control, MAX_BODY, write_body};
+    let (sender, written) = mpsc::channel();
+    let (child, _output) = sleeping_helper(confine::Role::Network);
+    core.fetchers.insert(channel, super::processes::Fetcher::new(child, 1, Some(Outbox::new(Sink(sender)))));
+    // What the session's start says is the test's to know, not to read.
+    let _ = core.typing.input(channel, true, false, 0);
+    let mut body = [0; MAX_BODY];
+    let welcome = Control::Welcome { version: neoteletext_input::VERSION, caps: neoteletext_input::caps::SELECT_CAP, resume: None };
+    let length = write_body(&welcome, &mut body).unwrap();
+    let _ = core.typing.control(channel, &body[..length], 0);
+    written
+}
+
+/// Each SELECT the tab of `channel` sent its fetcher since the last look, as
+/// its page and sub-code.
+#[cfg(all(unix, feature = "interaction"))]
+pub(super) fn selects_sent(core: &mut Core, channel: u32, written: &mpsc::Receiver<Vec<u8>>) -> Vec<(u16, u16)> {
+    use neoteletext_input::event::{Event, Item, read_message};
+    if let Some(input) = core.fetchers.get_mut(&channel).and_then(super::processes::Fetcher::input) {
+        input.flush().unwrap();
+    }
+    let mut bytes = Vec::new();
+    while let Ok(chunk) = written.recv_timeout(Duration::from_millis(200)) {
+        bytes.extend(chunk);
+    }
+    let mut input = bytes.as_slice();
+    let mut selects = Vec::new();
+    while let Some(message) = protocol::fetcher::read_to_fetcher(&mut input).unwrap() {
+        if let ToFetcher::Send { bytes, .. } = message {
+            read_message(&bytes, &mut |item| {
+                if let Item::Event(Event::Select(select, _)) = item {
+                    selects.push((select.page, select.sub));
+                }
+            })
+            .unwrap();
+        }
+    }
+    selects
+}

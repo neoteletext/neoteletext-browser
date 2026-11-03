@@ -822,6 +822,49 @@ mod tests {
         assert_eq!(test.core.typing.selection(key.channel), Some((0x210, 1)), "round the list, before the last arrived");
     }
 
+    // REQ-1505, REQ-1502, TODO-1531 item 2: a sub-page chosen from the list
+    // on a live channel is exactly one SELECT of its sub-code, on the tab's own
+    // connection, the tab saying it is loading until it arrives; the first
+    // sub-page adopted sends nothing, and choosing the selection again sends
+    // nothing either.
+    #[cfg(all(unix, feature = "interaction"))]
+    #[test]
+    fn a_live_choice_sends_one_select_of_its_sub_code() {
+        use super::super::test_support::{selects_sent, wire};
+        let (mut test, key) = live_page("live choice", &[1, 2, 3]);
+        let written = wire(&mut test.core, key.channel);
+        drawn(&mut test, key, 1, 1, 0);
+        assert_eq!(selects_sent(&mut test.core, key.channel, &written), [], "the answer is adopted with nothing sent");
+        let choose = |test: &mut super::super::test_support::Test, subcode| {
+            test.core.intent(protocol::ToCore::PageControl(PageControl::SubPageOf { page: 0x210, subcode })).unwrap();
+        };
+        choose(&mut test, 3);
+        assert_eq!(selects_sent(&mut test.core, key.channel, &written), [(0x210, 3)]);
+        assert_eq!(test.core.controls.awaiting, Some((key, 3)), "loading");
+        choose(&mut test, 3);
+        assert_eq!(selects_sent(&mut test.core, key.channel, &written), [], "the selection already");
+    }
+
+    // REQ-1693, REQ-1502, TODO-1531 item 2: a link naming a sub-page (an
+    // address's `302/0002`), to the page open or to another, sends SELECT with
+    // that sub-code, once, on the tab's own connection.
+    #[cfg(all(unix, feature = "interaction", feature = "links"))]
+    #[test]
+    fn a_link_naming_a_sub_page_selects_it() {
+        use super::super::test_support::{selects_sent, wire};
+        let (mut test, key) = live_page("link sub-page", &[1, 2, 3]);
+        let written = wire(&mut test.core, key.channel);
+        drawn(&mut test, key, 1, 1, 0);
+        let other = PageKey { channel: key.channel, page: 0x302 };
+        test.core.open_followed(other, Some(2)).unwrap();
+        assert_eq!(selects_sent(&mut test.core, key.channel, &written), [(0x302, 2)]);
+        test.core.intent(protocol::ToCore::Opened(Some(other))).unwrap();
+        assert_eq!(selects_sent(&mut test.core, key.channel, &written), [], "the page opening says nothing more");
+        assert_eq!(test.core.typing.selection(key.channel), Some((0x302, 2)));
+        test.core.open_followed(other, Some(3)).unwrap();
+        assert_eq!(selects_sent(&mut test.core, key.channel, &written), [(0x302, 3)], "another sub-page of the page open");
+    }
+
     // DEC-1526: a channel served as files adopts nothing.
     #[cfg(feature = "interaction")]
     #[test]
