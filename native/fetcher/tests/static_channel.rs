@@ -310,6 +310,10 @@ fn a_pages_sub_pages_come_from_its_folder() {
 /// channel opened and every page it listed after it, and the fetcher never
 /// said the bundle had settled.
 #[test]
+#[cfg_attr(
+    windows,
+    ignore = "a confined fetcher reaches this computer only once an administrator has run CheckNetIsolation.exe LoopbackExempt -a -p=<the fetcher container's SID> (decision 78); run with --ignored after it"
+)]
 fn a_static_channel_opens_with_exactly_its_settings_and_bundle() {
     const LISTED: &[u8] = b"p\t100\tHeadlines\np\t200\tSport\n";
     let (port, asked) = serve_logged(BTreeMap::from([
@@ -341,6 +345,10 @@ fn a_static_channel_opens_with_exactly_its_settings_and_bundle() {
 /// the trusted core asked had reached the fetcher's loop, which could have
 /// set nothing going without it showing first.
 #[test]
+#[cfg_attr(
+    windows,
+    ignore = "a confined fetcher reaches this computer only once an administrator has run CheckNetIsolation.exe LoopbackExempt -a -p=<the fetcher container's SID> (decision 78); run with --ignored after it"
+)]
 fn a_live_channel_asks_for_nothing_after_its_settings_but_its_push_connection() {
     let (port, asked) = serve_logged(BTreeMap::from([
         ("/channel.ttx", (200, "application/json", &b"{\"name\":\"Live\",\"push\":{}}"[..])),
