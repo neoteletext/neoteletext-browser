@@ -56,6 +56,9 @@ impl Core {
             return false;
         }
         self.park_shown(from);
+        // The strip's notice was the other window's, perhaps a private
+        // one's, and is not said in this one.
+        self.notice = None;
         let next = self.shown_elsewhere.remove(&id).unwrap_or_default();
         self.frames = next.frames;
         self.showing = next.showing;
@@ -395,6 +398,7 @@ mod tests {
         let shown: Vec<String> =
             test.core.console.updates(test.core.active_channel()).into_iter().flat_map(|update| update.entries).map(|entry| entry.text).collect();
         assert!(!shown.iter().any(|text| text.contains("ftp")), "{shown:?}");
+        assert_eq!(test.core.strip().notice, "", "nor does its refusal's notice in the strip");
     }
 
     /// Requirements 20.21 and 20.22: the session is written after every

@@ -212,7 +212,7 @@ impl Core {
         match self.session.navigate(typed, true) {
             // REQ-749: the trusted core opens it or says why it cannot, in
             // the strip where the viewer pressed Enter, and in the Log.
-            Err(reason) => return self.say(reason),
+            Err(reason) => return self.say_in(self.log_place(), reason),
             // A reason left from an earlier refusal is not this address's.
             Ok(()) => self.notice = None,
         }

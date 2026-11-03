@@ -128,7 +128,13 @@ impl Core {
 
     /// Says `text` in the strip for a while, and in the log.
     pub(super) fn say(&mut self, text: String) -> Result<(), String> {
-        self.log(Level::Warning, None, &text);
+        self.say_in(None, text)
+    }
+
+    /// [`Core::say`], its log line in `place`'s Log: a private tab's stays
+    /// in its own window.
+    pub(super) fn say_in(&mut self, place: Option<u32>, text: String) -> Result<(), String> {
+        self.log(Level::Warning, place, &text);
         let now = std::time::Instant::now();
         self.notice = Some((text, now.checked_add(NOTICE_TIME).unwrap_or(now)));
         self.send(&ToInterface::Strip(self.strip()))
