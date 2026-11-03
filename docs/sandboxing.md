@@ -182,6 +182,10 @@ Decision 54 installs per user, with no administrator, on every desktop. On Linux
 - `a_helper_whose_container_cannot_be_made_is_not_started` (`confine/src/spawn/tests.rs`, Windows): a decoder whose container cannot be made, without the user's profile folders in its environment, must not start. On the code before, it started with the restricted token alone; and `a_helper_gets_only_the_environment_it_is_given` had been passing that way, without its container, unseen. It is now given a decoder's real environment.
 - The probes now run as a program of their own, `confine-probe`, with one thread, as a helper is when it confines itself: a test harness's threads make the kernel refuse a new user namespace, which the code before had silently reported as missing, so its own probe tests had run without the namespace.
 
+### 8.5 For development on a restricted machine
+
+The sandbox's tests start helpers from the build folders, which the release's profile (section 8.3) does not name, so on a machine that restricts user namespaces (Ubuntu from 24.04) the probes of section 8.4 and the confined decoder's tests fail with "cannot make an empty network namespace: setgroups: Permission denied". `scripts/apparmor-development.sh` installs, with `sudo`, one more profile, `/etc/apparmor.d/neoteletext-development`, which allows a user namespace and nothing else to every program under this checkout's `native/target` and `native/fuzz/target` folders and those of its worktrees; `--remove` takes it away. It changes nothing a release carries, and does nothing on a machine without the restriction, such as the test host `foundintelquiet4060`.
+
 ## 9. The security review of 24 October 2026
 
 The review of 24 October 2026 (`neoteletext-common/reviews/2026-10-24-security/FIX-PLAN.md`, work package WP-1) found these gaps in the sandboxes; decisions 86 to 100 record what was chosen, while the owner was away, for the owner to confirm. Each fix has a regression test that fails on the code before it.
