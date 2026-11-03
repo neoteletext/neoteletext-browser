@@ -593,7 +593,7 @@ neoteletext-browser/
                             timing, windows, intents, decoder and fetcher messages, the strip, the console,
                             settings, sound, updates, the phone, links, typing, start-up, the run, panel
                             numbers, page controls, library/ (history, bookmarks, the star, the bar),
-                            cookies (+ cookies/panel.rs); hostile_tests.rs, the hostile interface harness
+                            cookies (+ cookies/panel.rs); hostile_tests.rs, the hostile interface harness (+ hostile_tests/: the stand-in broker's watch, the real helpers' run)
     decoder/                the decoder (neoteletext-decoder): its process (process.rs) and the engine as
                             it uses it (engine.rs, + engine/: feed, render), changes, flash, input records,
                             links, titles, the voice sink, and the Netscape bookmark reader (netscape.rs)
@@ -681,7 +681,7 @@ Unsafe code is allowed only in the modules requirement 10.12 names, each saying 
 - The console's Log, each line with its level and process, and the channel's own `LG` lines (decision 70); bookmarks imported from other browsers' Netscape files, and "Move…" (decision 71); multiple windows, with tabs moved and torn off between them (decision 72), 23 October 2026.
 - Every sub-page to the standard's 8,190, counted, stepped and placed in 16 bits from the engine's `neoteletext_core::limits`, the sub-page list a virtual list of rows asked for by range, and sub-pages as files of their own with each page's catalogue (decisions 112, 119 and 121, 28 October 2026); PCM16 and IMA ADPCM compiled out of the desktop builds, which `scripts/check.sh` proves (decision 121).
 - The browser's version and BETA at the tab strip's right end in every window, the version the trusted core reports running (decision 123, 28 October 2026).
-- Requirement 3.9's hostile interface harness against the trusted core (`native/core/src/trusted_core/hostile_tests.rs`), run by the commit gate, with bookmarks, the start page and a second, private window; on macOS and Linux against a stand-in broker whose requests and helpers' input it checks (finding F-98).
+- Requirement 3.9's hostile interface harness against the trusted core (`native/core/src/trusted_core/hostile_tests.rs`), run by the commit gate, with bookmarks, the start page and a second, private window; on macOS and Linux against a stand-in broker whose requests and helpers' input it checks (finding F-98); and, on macOS and Linux, with the real decoder and fetcher confined against two reference channels on this computer (`hostile_tests/real_helpers.rs`, TODO-1254): the channel behind hears exactly a quiet run's requests, the channel in front only those and bare SELECTs of its own pages, and nothing else is reached.
 - Installation and updates on every desktop (`installation-and-updates.md`, decisions 54 and 73 to 82, 23 October 2026): the launcher, the confined updater with `tough`, the Windows stub and installer, Linux's `--install`, removal, the release tool, and the core's offer, setting and health check, proved end to end with test keys on macOS, Windows and Linux.
 - The certificate-error screen (`certificate-errors.md`, decision 83, 23 October 2026).
 - The browser's icon, the owner's art, on every desktop (decision 124, 28 October 2026): the macOS bundle's icon file, made by `iconutil` and checked pixel for pixel, and the Dock's icon outside a bundle; a resource in the Windows stub, installer, launcher, broker and interface, written by a build script; Linux's icon files in the user's icon theme and the menu entry naming them; every window's icon on Windows and X11, and its class on Linux. Every size by nearest neighbour from the one source, `native/icon/neoteletext-icon.png`.
@@ -699,7 +699,7 @@ Unsafe code is allowed only in the modules requirement 10.12 names, each saying 
 - Discovery.
 - Full screen of the page alone (`full-screen.md`, decision 85, designed 23 October 2026).
 - Screen readers, reduced motion.
-- The hostile interface harness with the real helpers running (it runs against the trusted core with a stand-in broker and stand-in helpers).
+- The hostile interface harness with the real helpers on Windows, where `confine` has no stand-in broker (TODO-2200's desktop session).
 - A release signed by the owner's keys: the certificates, the hardware keys, the update host and the key ceremony are the owner's (rdm to-dos for the owner); the Linux release build on the C library 2.28.
 - Builds on phones and microcontroller targets.
 - A server's catalogue of sub-pages, its titles by range and tuning by sub-page (decision 112 item 3), which await the server; a channel's IMA ADPCM and PCM16 sound on the desktops, by the owner's instruction (decision 121 item 7).

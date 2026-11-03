@@ -20,7 +20,7 @@ use super::{Core, Event};
 use crate::session::Session;
 
 /// Handles one event; `Ok(false)` once the browser is to end.
-fn handle(core: &mut Core, event: Event) -> Result<bool, String> {
+pub(super) fn handle(core: &mut Core, event: Event) -> Result<bool, String> {
     match event {
         // Handled, then its bytes given back to its helper's budget.
         Event::Budgeted(event, ticket) => {
@@ -265,7 +265,7 @@ fn event_loop(core: &mut Core, incoming: &mpsc::Receiver<Event>) -> Result<(), S
 /// Ends every helper but the interface, which is told to close: a move not
 /// yet kept, and cookies not yet written or to remove, are kept first. The
 /// core goes with it, before the interface is waited for.
-fn shut_down(mut core: Core) {
+pub(super) fn shut_down(mut core: Core) {
     core.keep_window();
     core.cookies_at_exit();
     for id in core.fetchers.keys().copied().collect::<Vec<_>>() {
