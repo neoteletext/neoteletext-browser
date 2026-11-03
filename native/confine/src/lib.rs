@@ -56,6 +56,8 @@ mod unix;
 mod windows;
 
 pub use environment::environment;
+#[cfg(windows)]
+pub use identity::opened_path;
 pub use identity::{FileIdentity, file_identity};
 #[cfg(target_os = "linux")]
 #[doc(hidden)]
