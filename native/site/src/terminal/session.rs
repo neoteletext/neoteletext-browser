@@ -3,6 +3,8 @@
 
 use std::fmt::Write as _;
 
+// The engine's REQ-329: the standard's page ranges are named once, there.
+use neoteletext_core::limits::{FIRST_KEYABLE_PAGE, FIRST_PAGE_ADDRESS, LAST_KEYABLE_PAGE, LAST_PAGE_ADDRESS};
 use neoteletext_input::control::{Control, packet_of};
 use neoteletext_input::digits::decimal_digit;
 use neoteletext_input::event::{ALT, Action, CONTROL, Event, Item, Key, KeyCode, MouseAction, SHIFT, units};
@@ -109,7 +111,7 @@ impl Session {
             }
             '#' if self.selection.starts_with('*') => {
                 if let Ok(page) = u16::from_str_radix(&self.selection[1..], 16)
-                    && (0x100..=0x8FF).contains(&page)
+                    && (FIRST_PAGE_ADDRESS..=LAST_PAGE_ADDRESS).contains(&page)
                 {
                     self.go(page);
                 }
@@ -125,7 +127,7 @@ impl Session {
                     self.selection.clear();
                 } else if !self.selection.starts_with('*') && self.selection.len() == 3 {
                     if let Ok(page) = u16::from_str_radix(&self.selection, 16)
-                        && (0x100..=0x899).contains(&page)
+                        && (FIRST_KEYABLE_PAGE..=LAST_KEYABLE_PAGE).contains(&page)
                     {
                         self.go(page);
                     }

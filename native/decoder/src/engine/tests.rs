@@ -1026,7 +1026,9 @@ fn a_pages_controls_are_found_and_their_look_drawn_on_their_cells() {
 /// the code before, only the 800 decimal pages were drawn.
 #[test]
 fn every_page_the_standard_defines_is_drawn() {
-    let pages: Vec<u16> = (0x100..=0x8FF).filter(|&page| interface_core::channel::is_channel_page(page)).collect();
+    let pages: Vec<u16> = (neoteletext_core::limits::FIRST_PAGE_ADDRESS..=neoteletext_core::limits::LAST_PAGE_ADDRESS)
+        .filter(|&page| interface_core::channel::is_channel_page(page))
+        .collect();
     assert_eq!(pages.len(), neoteletext_core::limits::USABLE_PAGE_NUMBERS);
     let mut tti = String::new();
     for page in &pages {
