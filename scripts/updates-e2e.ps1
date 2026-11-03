@@ -158,8 +158,12 @@ Sign @("$work\NeoTeletext-Setup.exe")
 "the stub: $((Get-Item "$payload\NeoTeletext.exe").Length) bytes"
 # F-25: a harmless library that, when loaded, writes where it was loaded
 # from and by which program into a marker folder; built here with the MSVC
-# tools Rust uses. A positive control loading wintrust.dll by name with the
-# default search order shows that the plant is taken where it can be.
+# tools Rust uses. A positive control loading it by a name of its own,
+# beside it, shows that a plant taken writes its marker; the control also
+# says where Windows takes wintrust.dll from for a program with the
+# default search order and the plant beside it, which on Windows 11 of 4
+# November 2026 was System32, so the installer's check below is shown to
+# hold, not to be what alone keeps the plant out.
 $plant = "$work\plant"
 $markers = "C:\Users\Public\neoteletext-plant-markers"
 New-Item -ItemType Directory -Force "$plant\control" | Out-Null
@@ -190,16 +194,24 @@ BOOL WINAPI DllMain(HINSTANCE instance, DWORD reason, LPVOID reserved) {
 '@
 Set-Content "$plant\control.c" @'
 #include <windows.h>
-int main(void) { return LoadLibraryW(L"wintrust.dll") ? 0 : 1; }
+#include <stdio.h>
+int main(void) {
+    wchar_t path[MAX_PATH] = L"";
+    HMODULE trust = LoadLibraryW(L"wintrust.dll");
+    if (trust) GetModuleFileNameW(trust, path, MAX_PATH);
+    wprintf(L"a program with the default search order takes wintrust.dll from: %ls\n", path);
+    return LoadLibraryW(L"neoteletext-plant-control.dll") ? 0 : 1;
+}
 '@
 $vcvars = (Get-ChildItem -Recurse -Filter vcvars64.bat "C:\BuildTools", "C:\Program Files\Microsoft Visual Studio", "C:\Program Files (x86)\Microsoft Visual Studio" -ErrorAction SilentlyContinue | Select-Object -First 1).FullName
 cmd /c "`"$vcvars`" >nul && cd /d $plant && cl /nologo /LD plant.c /Fe:plant.dll user32.lib kernel32.lib >nul && cl /nologo control.c /Fe:control\control.exe >nul"
 if (-not (Test-Path "$plant\plant.dll")) { Fail "F-25: the planted library was not built" }
 Remove-Item -Recurse -Force $markers -ErrorAction SilentlyContinue
 Copy-Item "$plant\plant.dll" "$plant\control\wintrust.dll"
+Copy-Item "$plant\plant.dll" "$plant\control\neoteletext-plant-control.dll"
 & "$plant\control\control.exe"
 if (-not (Get-ChildItem $markers -ErrorAction SilentlyContinue)) { Fail "F-25: the positive control did not load the plant, so the check below would prove nothing" }
-Ok "F-25: a program with the default search order loads a wintrust.dll put beside it"
+Ok "F-25: the plant, once loaded, leaves its marker: $(Get-ChildItem $markers | Get-Content)"
 Remove-Item -Recurse -Force $markers
 $downloads = Join-Path $env:USERPROFILE "Downloads"
 Copy-Item "$work\NeoTeletext-Setup.exe" "$downloads\NeoTeletext-Setup.exe" -Force
