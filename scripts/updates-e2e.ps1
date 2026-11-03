@@ -12,7 +12,12 @@
 # the Start menu shortcut and the uninstall entry); a healthy start; an
 # update checked and staged by the confined updater, accepted by the
 # pinned Authenticode signer, tried and committed; a release that crashes,
-# rolled back after two starts; an unsigned release, refused; removal.
+# rolled back after two starts; an unsigned release, refused; a staged
+# release whose manifest.sig was changed, refused (finding F-07, decision
+# 92); a staged release holding a junction, refused (finding F-50); the
+# installer run from Downloads beside planted libraries, loading neither,
+# and the installer, stub and launcher carrying DependentLoadFlags 0x800
+# (finding F-25); removal.
 # Native programs write warnings on their error stream, which "Stop" would
 # take for failures; each step checks its own outcome instead.
 $ErrorActionPreference = "Continue"
@@ -151,7 +156,61 @@ Remove-Item Env:\NEOTELETEXT_INSTALLER_PAYLOAD
 Copy-Item "$work\target\release\neoteletext-installer.exe" "$work\NeoTeletext-Setup.exe"
 Sign @("$work\NeoTeletext-Setup.exe")
 "the stub: $((Get-Item "$payload\NeoTeletext.exe").Length) bytes"
-In-Desktop "$work\NeoTeletext-Setup.exe" 25
+# F-25: a harmless library that, when loaded, writes where it was loaded
+# from and by which program into a marker folder; built here with the MSVC
+# tools Rust uses. A positive control loading wintrust.dll by name with the
+# default search order shows that the plant is taken where it can be.
+$plant = "$work\plant"
+$markers = "C:\Users\Public\neoteletext-plant-markers"
+New-Item -ItemType Directory -Force "$plant\control" | Out-Null
+Set-Content "$plant\plant.c" @'
+#include <windows.h>
+BOOL WINAPI DllMain(HINSTANCE instance, DWORD reason, LPVOID reserved) {
+    (void)reserved;
+    if (reason == DLL_PROCESS_ATTACH) {
+        wchar_t self[MAX_PATH], program[MAX_PATH], marker[MAX_PATH + 64];
+        GetModuleFileNameW(instance, self, MAX_PATH);
+        GetModuleFileNameW(NULL, program, MAX_PATH);
+        CreateDirectoryW(L"C:\\Users\\Public\\neoteletext-plant-markers", NULL);
+        wsprintfW(marker, L"C:\\Users\\Public\\neoteletext-plant-markers\\%u.txt", GetCurrentProcessId());
+        HANDLE file = CreateFileW(marker, FILE_APPEND_DATA, FILE_SHARE_READ, NULL, OPEN_ALWAYS, 0, NULL);
+        if (file != INVALID_HANDLE_VALUE) {
+            char line[MAX_PATH * 6 + 8];
+            int length = WideCharToMultiByte(CP_UTF8, 0, self, -1, line, MAX_PATH * 3, NULL, NULL);
+            line[length - 1] = ' ';
+            int more = WideCharToMultiByte(CP_UTF8, 0, program, -1, line + length, MAX_PATH * 3, NULL, NULL);
+            line[length + more - 1] = '\n';
+            DWORD written;
+            WriteFile(file, line, (DWORD)(length + more), &written, NULL);
+            CloseHandle(file);
+        }
+    }
+    return TRUE;
+}
+'@
+Set-Content "$plant\control.c" @'
+#include <windows.h>
+int main(void) { return LoadLibraryW(L"wintrust.dll") ? 0 : 1; }
+'@
+$vcvars = (Get-ChildItem -Recurse -Filter vcvars64.bat "C:\BuildTools", "C:\Program Files\Microsoft Visual Studio", "C:\Program Files (x86)\Microsoft Visual Studio" -ErrorAction SilentlyContinue | Select-Object -First 1).FullName
+cmd /c "`"$vcvars`" >nul && cd /d $plant && cl /nologo /LD plant.c /Fe:plant.dll user32.lib kernel32.lib >nul && cl /nologo control.c /Fe:control\control.exe >nul"
+if (-not (Test-Path "$plant\plant.dll")) { Fail "F-25: the planted library was not built" }
+Remove-Item -Recurse -Force $markers -ErrorAction SilentlyContinue
+Copy-Item "$plant\plant.dll" "$plant\control\wintrust.dll"
+& "$plant\control\control.exe"
+if (-not (Get-ChildItem $markers -ErrorAction SilentlyContinue)) { Fail "F-25: the positive control did not load the plant, so the check below would prove nothing" }
+Ok "F-25: a program with the default search order loads a wintrust.dll put beside it"
+Remove-Item -Recurse -Force $markers
+$downloads = Join-Path $env:USERPROFILE "Downloads"
+Copy-Item "$work\NeoTeletext-Setup.exe" "$downloads\NeoTeletext-Setup.exe" -Force
+foreach ($name in @("wintrust.dll", "crypt32.dll")) { Copy-Item "$plant\plant.dll" "$downloads\$name" -Force }
+In-Desktop "$downloads\NeoTeletext-Setup.exe" 25
+Get-Process | Where-Object { $_.Path -eq "$downloads\NeoTeletext-Setup.exe" } | Stop-Process -Force -ErrorAction SilentlyContinue
+$planted = Get-ChildItem $markers -ErrorAction SilentlyContinue | Get-Content
+Start-Sleep -Seconds 2
+Remove-Item "$downloads\NeoTeletext-Setup.exe", "$downloads\wintrust.dll", "$downloads\crypt32.dll" -Force -ErrorAction SilentlyContinue
+if ($planted) { "planted libraries loaded: $planted"; Fail "F-25: a library planted beside the installer was loaded" }
+Ok "F-25: neither planted library was loaded by the installer run from Downloads"
 foreach ($file in @("NeoTeletext.exe", "launcher-a.exe", "launcher", "state", "versions\0.1.0\neoteletext.exe", "versions\0.1.0\manifest")) {
     if (-not (Test-Path "$root\$file")) { Fail "the install lacks $file" }
 }
@@ -214,6 +273,49 @@ if ((State) -match [regex]::Escape("bad 0.1.3")) { Fail "4. a refused version wa
 if (Test-Path "$root\staging\0.1.3") { Fail "4. the refused version was not removed" }
 Ok "4. refused and removed, not marked bad"
 Expect-State "4. the current version still runs" "current 0.1.1"
+
+# 4b. F-07, decision 92: a release staged whole, then one byte of its
+# manifest.sig changed.
+Build "0.1.4"
+Release "0.1.4"
+Step "4b. 0.1.4, staged, then its manifest.sig changed"
+& "$work\tools\debug\updater-drive.exe" "$root\versions\0.1.1\neoteletext-updater.exe" stage 0.1.4 2>&1 | Out-Null
+$signature = "$root\staging\0.1.4\manifest.sig"
+if (-not (Test-Path $signature)) { Fail "4b. 0.1.4 was not staged with its manifest.sig" }
+$bytes = [System.IO.File]::ReadAllBytes($signature); $bytes[0] = $bytes[0] -bxor 1; [System.IO.File]::WriteAllBytes($signature, $bytes)
+$said = In-Desktop "$root\NeoTeletext.exe" 30
+$said
+if ((State) -match [regex]::Escape("trial 0.1.4") -or (State) -match [regex]::Escape("current 0.1.4")) { Fail "4b. a release whose manifest.sig was changed was tried" }
+if (-not (($said | Out-String) -match "manifest")) { Fail "4b. the launcher did not say why it refused 0.1.4" }
+Ok "4b. refused for its manifest's signature"
+Expect-State "4b. the current version still runs" "current 0.1.1"
+
+# 4c. F-50: a junction at a program's name in a staged release.
+Build "0.1.5"
+Release "0.1.5"
+Step "4c. 0.1.5, staged, then its decoder replaced by a junction"
+& "$work\tools\debug\updater-drive.exe" "$root\versions\0.1.1\neoteletext-updater.exe" stage 0.1.5 2>&1 | Out-Null
+$decoder = "$root\staging\0.1.5\neoteletext-decoder.exe"
+if (-not (Test-Path $decoder)) { Fail "4c. 0.1.5 was not staged" }
+Remove-Item $decoder -Force
+cmd /c mklink /J "$decoder" "$root\versions\0.1.1" | Out-Null
+"4c. the decoder's name is now: $((Get-Item $decoder -Force).Attributes)"
+$said = In-Desktop "$root\NeoTeletext.exe" 30
+$said
+if ((State) -match [regex]::Escape("trial 0.1.5") -or (State) -match [regex]::Escape("current 0.1.5")) { Fail "4c. a release holding a junction was tried" }
+if (Test-Path "$root\versions\0.1.5") { Fail "4c. a release holding a junction was copied in" }
+Ok "4c. refused"
+Expect-State "4c. the current version still runs" "current 0.1.1"
+
+# F-25: the linker's load flag in each program started from a folder a
+# user can write: the installer, the stub, the launcher.
+$dumpbin = (Get-ChildItem -Recurse -Filter dumpbin.exe "C:\BuildTools", "C:\Program Files\Microsoft Visual Studio", "C:\Program Files (x86)\Microsoft Visual Studio" -ErrorAction SilentlyContinue | Where-Object { $_.FullName -like "*Hostx64\x64*" } | Select-Object -First 1).FullName
+foreach ($program in @("$work\NeoTeletext-Setup.exe", "$work\payload\NeoTeletext.exe", "$work\built\0.1.0\neoteletext-launcher.exe")) {
+    $flags = & $dumpbin /nologo /loadconfig $program | Select-String "Dependent Load Flag"
+    "F-25 ${program}: $flags"
+    if (-not ($flags -match "800")) { Fail "F-25: $program lacks DependentLoadFlags 0x800" }
+}
+Ok "F-25: the installer, the stub and the launcher carry DependentLoadFlags 0x800"
 
 # 5. Removal, as the uninstaller's copy does it once the questions are
 # answered (the questions themselves are message boxes, for a hand).
