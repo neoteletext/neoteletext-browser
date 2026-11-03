@@ -66,6 +66,7 @@ impl Core {
             cookies: super::cookies::mode_view(self.settings.cookies),
             aspect: self.settings.aspect,
             refusal: self.refusal.as_deref().map(|refusal| clean(refusal, protocol::settings::MAX_REFUSAL)),
+            loopback_exemption: self.loopback_exemption.clone(),
         };
         self.send(&ToInterface::Settings(view))
     }

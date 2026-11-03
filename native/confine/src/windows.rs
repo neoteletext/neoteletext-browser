@@ -89,6 +89,15 @@ pub fn remove_containers() {
     container::remove_containers();
 }
 
+/// The SID of the fetcher's `AppContainer` as text, which the
+/// administrator's loopback exemption names (decision 78).
+///
+/// # Errors
+/// When Windows cannot derive it.
+pub fn fetcher_container_sid() -> io::Result<String> {
+    container::fetcher_sid()
+}
+
 /// A process's own side: its parent started it with the token, job and
 /// policies that confine it.
 pub(crate) fn apply() -> Report {

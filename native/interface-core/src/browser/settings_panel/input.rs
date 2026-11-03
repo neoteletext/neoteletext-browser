@@ -3,7 +3,7 @@
 
 use alloc::string::String;
 
-use super::{Field, Kind, MAX_VOLUME, PANEL_HEIGHT, PANEL_WIDTH, VOLUME_STEP};
+use super::{Field, Kind, MAX_VOLUME, PANEL_WIDTH, VOLUME_STEP};
 use crate::browser::widgets::panel_rect;
 use crate::browser::{Browser, Key, Modifiers, Output};
 use crate::geometry::Point;
@@ -45,7 +45,7 @@ impl Browser {
     /// A press on the panel; returns whether it was the panel's.
     /// Whether `point` is on the open settings panel.
     pub(in crate::browser) fn over_settings(&self, point: Point) -> bool {
-        self.settings.open && panel_rect(self.settings_area(), PANEL_WIDTH, PANEL_HEIGHT).contains(point)
+        self.settings.open && panel_rect(self.settings_area(), PANEL_WIDTH, self.settings_height()).contains(point)
     }
 
     pub(in crate::browser) fn settings_press(&mut self, point: Point) -> bool {
@@ -74,6 +74,11 @@ impl Browser {
             Some(SettingChange::Cookies(mode))
         } else if controls.manage_cookies.contains(point) {
             self.manage_cookies();
+            return true;
+        } else if controls.copy_exemption.contains(point) {
+            if let Some(command) = view.as_ref().and_then(|view| view.loopback_exemption.clone()) {
+                self.outputs.push(Output::Copy(command));
+            }
             return true;
         } else if controls.install.contains(point) {
             self.outputs.push(Output::InstallUpdate);
@@ -110,6 +115,6 @@ impl Browser {
             self.change(change);
         }
         // The panel takes every press on it.
-        panel_rect(self.settings_area(), PANEL_WIDTH, PANEL_HEIGHT).contains(point)
+        panel_rect(self.settings_area(), PANEL_WIDTH, self.settings_height()).contains(point)
     }
 }

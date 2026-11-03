@@ -100,6 +100,8 @@ Every connection the fetcher makes: descriptors, contents files, pages, push. Th
 
 With a proxy, the proxy resolves names, so the browser does not learn the addresses a name resolves to. The local-network rule (requirement 5.10, the engine's REQ-SEC-006) is then kept on what the browser can see: an address written as a local IP address, `localhost` and names under `.local` and `.internal` are refused unless allowed, before anything is sent to the proxy. A public name that resolves, at the proxy, to an address on the proxy's own network reaches it; that network is the proxy's to protect (residual risk 2 of the security analysis). The proxy's own address may be local: it is the user's choice.
 
+On Windows a fetcher runs in an AppContainer, which reaches this computer's own addresses (`localhost` and the loopback addresses) only after an administrator exempts that container once with `CheckNetIsolation.exe LoopbackExempt -a -p=<SID>` (decision 78); allowing the address in the panel is not enough there. The trusted core derives the fetcher container's SID and sends the whole command to the panel, which shows it under the local network with a Copy button that puts it on the clipboard; when nothing answers a channel on this computer, the strip says that Windows blocks it until an administrator runs that command (TODO-1251, `cookies.md` section 15 item 11). On macOS and Linux nothing of this is shown.
+
 ### 4.4 Errors
 
 A proxy that refuses, answers with anything but success, or does not answer within the engine's connection timeout fails that connection, with "The proxy refused the connection to *host*" in the strip's notice; nothing goes direct instead.

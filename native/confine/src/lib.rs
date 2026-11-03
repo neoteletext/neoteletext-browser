@@ -66,3 +66,16 @@ pub use spawn::{Spawn, apply, spawn};
 pub use time::{LocalTime, MAX_OFFSET, local_time};
 #[cfg(windows)]
 pub use windows::{ForeignWindow, grant_packages_read, pointer_in_window, remove_containers};
+
+/// On Windows, the security identifier of the fetcher's `AppContainer` as
+/// text (`S-1-15-2-...`): a fetcher reaches this computer's own addresses
+/// only once an administrator exempts that container from Windows'
+/// loopback isolation, a command that names it (decision 78). Elsewhere,
+/// and when Windows cannot derive it, none.
+#[must_use]
+pub fn fetcher_container() -> Option<String> {
+    #[cfg(windows)]
+    return windows::fetcher_container_sid().ok();
+    #[cfg(not(windows))]
+    None
+}

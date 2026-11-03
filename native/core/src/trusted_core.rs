@@ -17,6 +17,7 @@ mod invalid_packets;
 mod library;
 #[cfg(feature = "links")]
 mod links;
+mod loopback;
 mod numbers;
 mod outside;
 mod page_controls;
@@ -132,6 +133,9 @@ struct Core {
     settings_folder: Option<PathBuf>,
     /// Why the last change the panel asked for was refused.
     refusal: Option<String>,
+    /// On Windows, the administrator's command that lets the fetchers
+    /// reach this computer (decision 78, TODO-1251); none elsewhere.
+    loopback_exemption: Option<String>,
     /// What the strip says, until when (requirements 19.3, 19.10).
     notice: Option<(String, std::time::Instant)>,
     /// The developer console's entries (requirement 19.9).
@@ -300,6 +304,7 @@ impl Core {
             settings,
             settings_folder,
             refusal: None,
+            loopback_exemption: loopback::this_computers_exemption(),
             notice: None,
             invalid: BTreeMap::new(),
             console: Console::default(),

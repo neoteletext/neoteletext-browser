@@ -68,13 +68,22 @@ impl Core {
             RefusedFile::Bundle | RefusedFile::Contents => None,
         };
         let Some(failed) = failed else { return Ok(()) };
+        let exemption = self.loopback_exemption.clone();
         let Some(tab) = self.session.all_tabs_mut().find(|tab| tab.channel.id == channel) else { return Ok(()) };
         if failed.1.is_some_and(|page| tab.channel.is_loaded(page)) {
             return Ok(());
         }
         tab.channel.failed = Some(failed);
+        // Nothing answered a channel on this computer: on Windows, its
+        // fetcher's container is the likely reason (TODO-1251).
+        let blocked = (file == RefusedFile::Channel && status.is_none())
+            .then(|| tab.address().and_then(|address| super::loopback::refused_text(address, exemption.as_deref())))
+            .flatten();
         if self.active_channel() == Some(channel) {
-            self.send(&ToInterface::Strip(self.strip()))?;
+            match blocked {
+                Some(text) => self.say(text)?,
+                None => self.send(&ToInterface::Strip(self.strip()))?,
+            }
         }
         Ok(())
     }

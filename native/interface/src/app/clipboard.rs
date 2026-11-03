@@ -67,7 +67,7 @@ impl App {
     }
 
     /// Puts `text` on the clipboard; returns whether it is there.
-    fn copy_text(&mut self, text: String) -> bool {
+    pub(super) fn copy_text(&mut self, text: String) -> bool {
         self.clipboard().is_some_and(|clipboard| clipboard.set_text(text).is_ok())
     }
 

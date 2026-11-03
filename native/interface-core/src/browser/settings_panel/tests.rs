@@ -17,6 +17,7 @@ fn view() -> SettingsView {
         cookies: CookieMode::Keep,
         aspect: false,
         refusal: None,
+        loopback_exemption: None,
     }
 }
 
@@ -172,4 +173,34 @@ fn the_mouse_selects_in_a_field() {
     browser.draw(&mut canvas, crate::browser::fixture::WIDTH, crate::browser::fixture::HEIGHT, 0);
     let home = browser.settings.controls.fields[0].1;
     crate::browser::field_mouse::tests::the_mouse_selects(&mut browser, &mut canvas, home);
+}
+
+/// REQ-2402, TODO-1251 (decision 78): on Windows the trusted core gives the
+/// administrator's loopback exemption, and the panel says why it is needed
+/// and shows the command with the fetcher container's SID, which Copy puts
+/// on the clipboard; with none, as on macOS and Linux, the panel says
+/// nothing of it. Before, the panel had no such line.
+#[test]
+fn the_panel_gives_the_loopback_exemption_when_there_is_one() {
+    let command = "CheckNetIsolation.exe LoopbackExempt -a -p=S-1-15-2-1-2-3-4-5-6-7";
+    let mut browser = open();
+    browser.set_settings(SettingsView { loopback_exemption: Some(command.into()), ..view() });
+    let mut canvas = Recorder::new();
+    browser.draw(&mut canvas, 1440.0, 1200.0, 0);
+    let texts: Vec<&str> = canvas.texts.iter().map(|(_, text)| text.as_str()).collect();
+    for expected in
+        ["This computer's channels need an administrator to run once:", "CheckNetIsolation.exe LoopbackExempt -a", "-p=S-1-15-2-1-2-3-4-5-6-7", "Copy"]
+    {
+        assert!(texts.contains(&expected), "{expected} in {texts:?}");
+    }
+    browser.take_outputs();
+    let copy = browser.settings.controls.copy_exemption;
+    assert_eq!(press(&mut browser, copy), [Output::Copy(command.into())]);
+
+    let mut browser = open();
+    let mut canvas = Recorder::new();
+    browser.draw(&mut canvas, 1440.0, 1200.0, 0);
+    let texts: Vec<&str> = canvas.texts.iter().map(|(_, text)| text.as_str()).collect();
+    assert!(!texts.iter().any(|text| text.contains("CheckNetIsolation") || text.contains("administrator")), "{texts:?}");
+    assert_eq!(browser.settings.controls.copy_exemption, Rect::default());
 }

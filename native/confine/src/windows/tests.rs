@@ -198,3 +198,17 @@ fn a_confined_helper_cannot_type_into_its_console() {
         assert!(said.contains(&format!("TYPED {role:?} 0\n")) || said.contains(&format!("TYPED {role:?} 0\r\n")), "{role:?} typed into its console: {said}");
     }
 }
+
+/// REQ-2402, decision 78, TODO-1251: the SID the browser gives for the administrator's
+/// loopback exemption is the fetcher's container's, as the profile made for
+/// it names it, in its text form: `S-1-15-2-` and seven sub-authorities.
+#[test]
+fn the_fetcher_container_is_named_by_the_sid_of_its_profile() {
+    let derived = crate::fetcher_container().unwrap();
+    let profile = container(Role::Network).unwrap();
+    assert_eq!(derived, handles::sid_text(profile.raw()).unwrap());
+    let parts: Vec<&str> = derived.split('-').collect();
+    assert_eq!(parts[..4], ["S", "1", "15", "2"], "{derived}");
+    assert_eq!(parts.len(), 4 + 7, "{derived}");
+    assert!(parts[4..].iter().all(|part| part.parse::<u32>().is_ok()), "{derived}");
+}

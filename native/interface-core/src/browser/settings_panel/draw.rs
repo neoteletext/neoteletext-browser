@@ -7,7 +7,7 @@ use alloc::vec::Vec;
 
 use super::{
     BUTTON_WIDTH, CHIP_GAP, CHIP_HEIGHT, CHIPS_PER_ROW, Controls, FIELD_PADDING, Field, GAP, HEADING_HEIGHT, Kind, LABEL_WIDTH, MAX_VOLUME, PADDING,
-    PANEL_HEIGHT, PANEL_WIDTH, PORT_WIDTH, ROW, ROW_GAP, SMALL_BUTTON, WIDE_BUTTON,
+    PANEL_WIDTH, PORT_WIDTH, ROW, ROW_GAP, SMALL_BUTTON, WIDE_BUTTON,
 };
 use crate::browser::Browser;
 use crate::browser::widgets::{RADIUS, button, field, panel, panel_rect};
@@ -36,7 +36,7 @@ impl Browser {
             self.settings.controls = controls;
             return;
         }
-        let panel_area = panel_rect(self.settings_area(), PANEL_WIDTH, PANEL_HEIGHT);
+        let panel_area = panel_rect(self.settings_area(), PANEL_WIDTH, self.settings_height());
         panel(canvas, panel_area);
         let panel = panel_area;
         let left = panel.x0 + PADDING;
@@ -57,7 +57,12 @@ impl Browser {
         y = draw_settings_cookies(canvas, view.as_ref(), &mut controls, row(y), field_left);
         y = self.draw_settings_updates(canvas, &mut controls, row(y), field_left);
         self.draw_settings_local(canvas, view.as_ref(), &mut controls, row(y), field_left);
-        draw_refusal_line(canvas, view.as_ref(), Rect::new(left, panel.y1 - PADDING - ROW, right, panel.y1 - PADDING));
+        let refusal_line = Rect::new(left, panel.y1 - PADDING - ROW, right, panel.y1 - PADDING);
+        if let Some(command) = view.as_ref().and_then(|view| view.loopback_exemption.as_deref()) {
+            let top = refusal_line.y0 - GAP - 3.0 * ROW;
+            controls.copy_exemption = draw_exemption(canvas, command, Rect::new(field_left, top, right, refusal_line.y0 - GAP));
+        }
+        draw_refusal_line(canvas, view.as_ref(), refusal_line);
         self.settings.controls = controls;
     }
 
@@ -228,6 +233,31 @@ fn draw_settings_cookies<C: Canvas + ?Sized>(canvas: &mut C, view: Option<&Setti
 }
 
 /// The trusted core's word on the last change, in `line`.
+/// The administrator's loopback exemption, on Windows (decision 78,
+/// TODO-1251): why a channel on this computer needs it, a Copy button, and
+/// the command, broken before its container's SID, in `area`, three rows
+/// high. Returns the Copy button.
+fn draw_exemption<C: Canvas + ?Sized>(canvas: &mut C, command: &str, area: Rect) -> Rect {
+    let row = |index: f64| Rect::new(area.x0, area.y0 + index * ROW, area.x1, area.y0 + (index + 1.0) * ROW);
+    let copy = Rect::new(area.x1 - BUTTON_WIDTH, area.y0, area.x1, area.y0 + ROW);
+    button(canvas, copy, "Copy", false);
+    let first = row(0.0);
+    canvas.push_clip(Rect::new(first.x0, first.y0, copy.x0 - GAP, first.y1));
+    left_centred(canvas, first, 0.0, EXEMPTION_NOTE, ROW_STATUS, MUTED);
+    canvas.pop_clip();
+    let (before, sid) = command.find(" -p=").map_or((command, ""), |at| command.split_at(at));
+    for (index, line) in [(1.0, before), (2.0, sid.trim_start())] {
+        let line_rect = row(index);
+        canvas.push_clip(line_rect);
+        left_centred(canvas, line_rect, 0.0, line, ROW_STATUS, WHITE);
+        canvas.pop_clip();
+    }
+    copy
+}
+
+/// What the panel says of the loopback exemption, before the command.
+const EXEMPTION_NOTE: &str = "This computer's channels need an administrator to run once:";
+
 fn draw_refusal_line<C: Canvas + ?Sized>(canvas: &mut C, view: Option<&SettingsView>, line: Rect) {
     if let Some(refusal) = view.and_then(|view| view.refusal.as_deref()) {
         canvas.push_clip(line);

@@ -13,7 +13,7 @@ use std::ptr;
 use windows_sys::Win32::Foundation::{
     CloseHandle, DUPLICATE_SAME_ACCESS, DuplicateHandle, GetLastError, HANDLE, HANDLE_FLAG_INHERIT, INVALID_HANDLE_VALUE, LocalFree, PSID, SetHandleInformation,
 };
-use windows_sys::Win32::Security::Authorization::ConvertStringSidToSidW;
+use windows_sys::Win32::Security::Authorization::{ConvertSidToStringSidW, ConvertStringSidToSidW};
 use windows_sys::Win32::Security::{FreeSid, SECURITY_ATTRIBUTES};
 use windows_sys::Win32::Storage::FileSystem::{BY_HANDLE_FILE_INFORMATION, GetFileInformationByHandle};
 use windows_sys::Win32::System::Pipes::CreatePipe;
@@ -90,6 +90,36 @@ impl Drop for ContainerSid {
         // SAFETY: the container calls allocated this SID, to be freed with FreeSid; once, here.
         unsafe { FreeSid(self.0) };
     }
+}
+
+/// The longest SID as text, with its terminating NUL: the SDK's
+/// `SECURITY_MAX_SID_STRING_CHARACTERS` (`winnt.h`), `2 + 4 + 15 +
+/// (11 * SID_MAX_SUB_AUTHORITIES) + 1`, 187.
+const MAX_SID_TEXT: usize = 2 + 4 + 15 + 11 * SID_MAX_SUB_AUTHORITIES + 1;
+/// The most sub-authorities a SID has (`SID_MAX_SUB_AUTHORITIES`, `winnt.h`).
+const SID_MAX_SUB_AUTHORITIES: usize = 15;
+
+/// `sid` in its text form, `S-1-...`.
+pub(super) fn sid_text(sid: PSID) -> io::Result<String> {
+    let mut text: *mut u16 = ptr::null_mut();
+    // SAFETY: `sid` is a valid SID its owner keeps alive for the call; the text is
+    // allocated by the call into a live local and freed below.
+    if unsafe { ConvertSidToStringSidW(sid, &raw mut text) } == 0 {
+        return Err(last_error());
+    }
+    let mut units = Vec::new();
+    for index in 0..MAX_SID_TEXT {
+        // SAFETY: the call wrote a NUL-terminated string of at most MAX_SID_TEXT units,
+        // and reading stops at its NUL.
+        let unit = unsafe { *text.add(index) };
+        if unit == 0 {
+            break;
+        }
+        units.push(unit);
+    }
+    // SAFETY: ConvertSidToStringSidW allocated the text with LocalAlloc; it is freed once, here.
+    unsafe { LocalFree(text.cast()) };
+    String::from_utf16(&units).map_err(|_| io::ErrorKind::InvalidData.into())
 }
 
 /// `text` as a zero-terminated UTF-16 string.

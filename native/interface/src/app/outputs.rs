@@ -152,6 +152,10 @@ impl App {
                 self.text_input(allowed);
                 return None;
             }
+            Output::Copy(text) => {
+                self.copy_text(text);
+                return None;
+            }
         })
     }
 

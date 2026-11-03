@@ -22,6 +22,9 @@ const PANEL_WIDTH: f64 = 600.0;
 /// Room for its heading, twelve rows, two rows of chips and the trusted
 /// core's word.
 const PANEL_HEIGHT: f64 = 648.0 + 3.0 * ROW + GAP + 2.0 * ROW_GAP;
+/// Room added, on Windows, for the loopback exemption: a line saying why
+/// with its Copy button, and the command on two lines (TODO-1251).
+const EXEMPTION_ROOM: f64 = 3.0 * ROW + GAP;
 const PADDING: f64 = 20.0;
 const HEADING_HEIGHT: f64 = 34.0;
 const ROW: f64 = 32.0;
@@ -91,6 +94,7 @@ struct Controls {
     updates_on: Rect,
     updates_off: Rect,
     install: Rect,
+    copy_exemption: Rect,
 }
 
 /// The panel's state in the browser.
@@ -265,6 +269,12 @@ impl Browser {
     }
 
     /// The area the panel is centred in: below the strip.
+    /// The panel's height: more where the trusted core gave the loopback
+    /// exemption to show.
+    fn settings_height(&self) -> f64 {
+        if self.settings.view.as_ref().is_some_and(|view| view.loopback_exemption.is_some()) { PANEL_HEIGHT + EXEMPTION_ROOM } else { PANEL_HEIGHT }
+    }
+
     fn settings_area(&self) -> Rect {
         self.body
     }

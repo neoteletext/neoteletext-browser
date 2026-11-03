@@ -395,6 +395,39 @@ mod tests {
         }
     }
 
+    /// REQ-2402, TODO-1251 (decision 78): on Windows, where the fetcher's container
+    /// reaches this computer only once an administrator exempts it, a
+    /// channel on this computer that nothing answered is said in the strip
+    /// to be blocked by Windows, with the command; the settings panel is
+    /// given the command too. A channel elsewhere is said as before, and
+    /// with no command (macOS, Linux) nothing changes. Before, the strip
+    /// said nothing of why and the panel had no command.
+    #[test]
+    fn a_channel_on_this_computer_refused_on_windows_is_said_with_the_exemption() {
+        use protocol::fetcher::RefusedFile;
+        let command = String::from("CheckNetIsolation.exe LoopbackExempt -a -p=S-1-15-2-1-2-3-4-5-6-7");
+        let refused = |address: &str, exemption: Option<&String>| {
+            let mut test = Test::new("loopback-refused");
+            test.core.loopback_exemption = exemption.cloned();
+            test.core.session.open(address).unwrap();
+            let channel = test.core.active_channel().unwrap();
+            test.core.fetched(channel, FromFetcher::Refused { file: RefusedFile::Channel, status: None }).unwrap();
+            test.core.send_settings().unwrap();
+            let sent = test.sent();
+            let panel =
+                sent.iter().rev().find_map(|message| if let ToInterface::Settings(view) = message { Some(view.loopback_exemption.clone()) } else { None });
+            (test.core.strip().notice, panel.flatten())
+        };
+        let (notice, panel) = refused("http://127.0.0.1:8080/teletext/", Some(&command));
+        assert_eq!(notice, format!("Windows blocks channels on this computer until an administrator runs {command}"));
+        assert_eq!(panel, Some(command.clone()));
+        let (notice, _) = refused("https://news.invalid/teletext/", Some(&command));
+        assert!(!notice.contains("CheckNetIsolation"), "{notice}");
+        let (notice, panel) = refused("http://127.0.0.1:8080/teletext/", None);
+        assert!(!notice.contains("CheckNetIsolation"), "{notice}");
+        assert_eq!(panel, None);
+    }
+
     /// REQ-708: a refused page is said for the page open and for no other,
     /// and never over a page that has arrived; another page takes it away,
     /// and a page drawn ends it. A bundle or a contents file is missed, not
