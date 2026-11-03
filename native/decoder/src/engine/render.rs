@@ -13,7 +13,7 @@ use crate::FlashRates;
 use crate::links;
 use crate::title::title;
 use interface_core::canvas::PAGE_WIDTH;
-use interface_core::channel::page_index;
+use interface_core::channel::{is_channel_page, page_index};
 use neoteletext_core::acq::StoredPage;
 use neoteletext_core::charset::{CharRef, CharSet, G2Set};
 use neoteletext_core::compose::compose_level;
@@ -197,7 +197,9 @@ impl Engine {
 
     /// Every display page received completely, each with its 25 rows of
     /// stored 7-bit codes and its title: for tools that rebuild channels
-    /// from recordings.
+    /// from recordings. Only decimal pages: a broadcast's pages with a
+    /// hexadecimal digit are mostly data pages, such as TOP's tables
+    /// (EN 300 706 clause 9.1, Table 1, note), and make no samples.
     #[must_use]
     pub fn export(&self) -> Vec<Exported> {
         let mut pages: Vec<Exported> = self
@@ -330,7 +332,9 @@ impl Engine {
     /// the same.
     #[must_use]
     pub fn render_over(&self, page: u16, now_us: u64, last: Option<&[u8]>, mut indices: Vec<u8>) -> Option<Rendered> {
-        page_index(page)?;
+        // Any page a channel may have, a hexadecimal one reached by a link
+        // too (REQ-300).
+        is_channel_page(page).then_some(())?;
         #[cfg_attr(not(feature = "links"), expect(unused_mut, reason = "only the look under the pointer changes the grid, and it comes with links"))]
         let (mut grid, stored) = self.grid(page)?;
         // A pushed page is drawn only from an entry that stands; a held one
@@ -408,7 +412,7 @@ fn fastext(stored: &StoredPage, grid: &Grid, receiver: Option<&ReceiverRow>) -> 
     let target = |link: Option<neoteletext_core::nav::LinkTarget>| {
         let link = link?;
         let page = link.address.mpp();
-        page_index(page)?;
+        is_channel_page(page).then_some(())?;
         let subcode = (!link.subcode.is_any()).then(|| link.subcode.value());
         Some(protocol::links::FastextTarget { page, subcode, service: link.service })
     };
@@ -419,7 +423,7 @@ fn fastext(stored: &StoredPage, grid: &Grid, receiver: Option<&ReceiverRow>) -> 
     let keys = match receiver {
         Some(receiver) => receiver.keys().map(|key| {
             let (page, subcode) = key?;
-            page_index(page)?;
+            is_channel_page(page).then_some(())?;
             Some(protocol::links::FastextTarget { page, subcode, service: None })
         }),
         None => [target(red), target(green), target(yellow), target(cyan), target(links.index)],
@@ -428,11 +432,15 @@ fn fastext(stored: &StoredPage, grid: &Grid, receiver: Option<&ReceiverRow>) -> 
     // prompt row 24 shows whole, as the engine judges it.
     let shown = if row24 { grid.prompts_shown() } else { [false; FASTEXT_COLOURS.len()] };
     let prompts = grid.cells.get(FASTEXT_ROW).map_or([None; FASTEXT_COLOURS.len()], |row| prompts(row, shown));
+    // Before any key is set aside for its prompt: a page whose links are
+    // hidden still has links, and only a page with none sends Index to the
+    // initial page (REQ-286).
+    let linked = keys.iter().any(Option::is_some);
     let mut keys = keys;
     for (key, prompt) in keys.iter_mut().zip(prompts) {
         *key = key.filter(|_| prompt.is_some());
     }
-    protocol::links::Fastext { keys, row24, prompts }
+    protocol::links::Fastext { keys, row24, linked, prompts }
 }
 
 /// Where row 24 shows each coloured key's prompt, of those `shown`: the

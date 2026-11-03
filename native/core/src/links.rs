@@ -65,6 +65,8 @@ struct Image {
     /// Fastext's keys, decided, each with the sub-page it names; none when
     /// row 24 was not shown with this image (the engine's REQ-SEC-024).
     fastext: [Option<(Destination, Option<u16>)>; 5],
+    /// The page had no link for any of the five keys, shown or not.
+    unlinked: bool,
 }
 
 #[derive(Default)]
@@ -86,6 +88,9 @@ type Decided = (Vec<(LinkRun, Destination)>, Vec<(u16, Destination)>, Vec<Area>)
 pub enum Follow {
     /// Open this page of the active channel.
     Page(u16),
+    /// Open the active channel's initial page: Index on a page with no
+    /// links at all (REQ-286).
+    InitialPage,
     /// Open this sub-page of a page of the active channel.
     SubPage(u16, u16),
     /// Ask in the trusted strip first: a web page.
@@ -267,7 +272,11 @@ impl Links {
     #[must_use]
     pub fn fastext_keys(&self, key: PageKey) -> [bool; 5] {
         let image = self.pages.get(&key).and_then(|state| state.images.front());
-        core::array::from_fn(|index| image.is_some_and(|image| image.fastext.get(index).is_some_and(Option::is_some)))
+        // Index on a page with no links leads to the initial page.
+        let unlinked = image.is_some_and(|image| image.unlinked);
+        core::array::from_fn(|index| {
+            (unlinked && index == FastextKey::Index.index()) || image.is_some_and(|image| image.fastext.get(index).is_some_and(Option::is_some))
+        })
     }
 
     /// One of Fastext's keys on the open page, as it was last drawn: a page
@@ -279,6 +288,13 @@ impl Links {
     pub fn fastext(&mut self, key: FastextKey, active: Option<u32>, now: u64) -> Result<(Follow, Option<u16>), Refusal> {
         let opened = self.opened.filter(|opened| Some(opened.channel) == active).ok_or(Refusal::NotOpen)?;
         let image = self.pages.get(&opened).and_then(|state| state.images.front()).ok_or(Refusal::NotALink)?;
+        // REQ-286: "when the page has no links at all the Index key
+        // requests the initial page" (the engine's REQ-SVC-004; EN 300 706
+        // Annex H.4). A page with coloured links and no Index link leaves
+        // Index without effect, as the requirement says of an absent link.
+        if key == FastextKey::Index && image.unlinked {
+            return Ok((Follow::InitialPage, None));
+        }
         let (destination, subcode) = image.fastext.get(key.index()).cloned().flatten().ok_or(Refusal::NotALink)?;
         let subcode = matches!(destination, Destination::Page(_)).then_some(subcode).flatten();
         Ok((self.follow(destination, now)?, subcode))
@@ -354,8 +370,9 @@ impl Links {
         let (runs, numbers, controls) = self.decide(key, channel);
         let fastext = self.decide_fastext(key);
         let state = self.pages.entry(key).or_default();
+        let unlinked = !state.fastext.linked;
         let links = carry_since(state.images.front(), runs, now);
-        state.images.push_front(Image { version, links, numbers, controls, fastext });
+        state.images.push_front(Image { version, links, numbers, controls, fastext, unlinked });
         state.images.truncate(KEPT_IMAGES);
         self.page_links(key, key.channel)
     }
@@ -366,15 +383,18 @@ impl Links {
     pub fn redecide(&mut self, key: PageKey, channel: &Channel<'_>, now: u64) -> Option<PageLinks> {
         let (runs, numbers, controls) = self.decide(key, channel);
         let fastext = self.decide_fastext(key);
-        let image = self.pages.get_mut(&key)?.images.front_mut()?;
+        let state = self.pages.get_mut(&key)?;
+        let unlinked = !state.fastext.linked;
+        let image = state.images.front_mut()?;
         let links = carry_since(Some(image), runs, now);
-        if links == image.links && numbers == image.numbers && controls == image.controls && fastext == image.fastext {
+        if links == image.links && numbers == image.numbers && controls == image.controls && fastext == image.fastext && unlinked == image.unlinked {
             return None;
         }
         image.links = links;
         image.numbers = numbers;
         image.controls = controls;
         image.fastext = fastext;
+        image.unlinked = unlinked;
         Some(self.page_links(key, key.channel))
     }
 

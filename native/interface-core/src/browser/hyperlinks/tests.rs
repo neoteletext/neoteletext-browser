@@ -234,6 +234,25 @@ fn a_page_the_trusted_core_opens_is_zoomed_now_or_when_it_arrives() {
     assert_eq!(browser.wall().zoomed(), Some(missing));
 }
 
+// REQ-300, REQ-313: a page with a hexadecimal digit, which no list holds,
+// opens at once when the trusted core shows it, with no row of the list
+// chosen; a page of the list chosen afterwards replaces it.
+#[test]
+fn a_hexadecimal_page_the_trusted_core_opens_is_zoomed_at_once() {
+    let (mut browser, _, _, _) = opened();
+    let listed = PageKey { channel: 7, page: 0x301 };
+    browser.show(listed, OPEN);
+    let hexadecimal = PageKey { channel: 7, page: 0x1A0 };
+    browser.show(hexadecimal, OPEN);
+    assert_eq!(browser.wall().zoomed(), Some(hexadecimal));
+    assert_eq!(browser.opened(), Some(hexadecimal));
+    assert_eq!(browser.selected, None, "no row of the list stands for it");
+    browser.show(listed, OPEN);
+    assert_eq!(browser.wall().zoomed(), Some(listed), "Back to a listed page");
+    browser.show(PageKey { channel: 7, page: 0x1FF }, OPEN);
+    assert_eq!(browser.wall().zoomed(), Some(listed), "a reserved number is no page");
+}
+
 fn lits(browser: &mut Browser) -> Vec<Option<Lit>> {
     browser.take_outputs().into_iter().filter_map(|output| if let Output::Lit(lit) = output { Some(lit) } else { None }).collect()
 }

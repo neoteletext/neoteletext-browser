@@ -4,7 +4,6 @@
 //! list of keys).
 
 use interface_core::canvas::PageKey;
-use interface_core::channel::page_index;
 
 use crate::text::is_clean;
 use crate::{MAX_PAGES, ProtocolError};
@@ -60,7 +59,7 @@ impl<'a> Fields<'a> {
     /// would restart for it (finding F-29).
     pub(crate) fn key(&mut self) -> Result<PageKey, ProtocolError> {
         let channel = self.u32()?;
-        let page = self.display_page()?;
+        let page = self.channel_page()?;
         Ok(PageKey { channel, page })
     }
 
@@ -69,10 +68,21 @@ impl<'a> Fields<'a> {
         (0..count).map(|_| self.key()).collect()
     }
 
-    /// A display page number, 100 to 8FF.
-    pub(crate) fn display_page(&mut self) -> Result<u16, ProtocolError> {
+    /// A page a channel may have, hexadecimal digits included
+    /// ([`interface_core::channel::is_channel_page`]).
+    pub(crate) fn channel_page(&mut self) -> Result<u16, ProtocolError> {
         let page = self.u16()?;
-        page_index(page).ok_or(ProtocolError::BadValue("page number"))?;
+        check_page(page)?;
+        Ok(page)
+    }
+
+    /// A page a viewer can key, 100 to 899 with decimal digits: a typed
+    /// number, never a page with a hexadecimal digit (TR 100 287 clause
+    /// 10.1, REQ-313). Only links carry one.
+    #[cfg(feature = "links")]
+    pub(crate) fn keyable_page(&mut self) -> Result<u16, ProtocolError> {
+        let page = self.u16()?;
+        interface_core::channel::page_index(page).ok_or(ProtocolError::BadValue("page number"))?;
         Ok(page)
     }
 
@@ -159,4 +169,13 @@ pub(crate) fn push_count_u8(payload: &mut Vec<u8>, count: usize, max: usize, rea
     }
     payload.push(u8::try_from(count).map_err(|_| ProtocolError::BadValue(reason))?);
     Ok(())
+}
+
+/// Refuses a number that is no page a channel may have: what every
+/// message naming a page shown, fetched or drawn is held to.
+///
+/// # Errors
+/// [`ProtocolError::BadValue`] for any other number.
+pub(crate) fn check_page(page: u16) -> Result<(), ProtocolError> {
+    if interface_core::channel::is_channel_page(page) { Ok(()) } else { Err(ProtocolError::BadValue("page number")) }
 }

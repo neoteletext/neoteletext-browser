@@ -10,7 +10,7 @@ mod lists;
 #[cfg(test)]
 mod tests;
 
-use interface_core::channel::page_index;
+use interface_core::channel::is_channel_page;
 
 use crate::{Fields, ProtocolError, push_count, push_flag, push_text};
 
@@ -32,7 +32,7 @@ const NO_PAGE: u16 = 0;
 
 fn push_page(payload: &mut Vec<u8>, page: Option<u16>) -> Result<(), ProtocolError> {
     match page {
-        Some(page) if page_index(page).is_some() => payload.extend_from_slice(&page.to_be_bytes()),
+        Some(page) if is_channel_page(page) => payload.extend_from_slice(&page.to_be_bytes()),
         Some(_) => return Err(ProtocolError::BadValue("page number")),
         None => payload.extend_from_slice(&NO_PAGE.to_be_bytes()),
     }
@@ -42,7 +42,7 @@ fn push_page(payload: &mut Vec<u8>, page: Option<u16>) -> Result<(), ProtocolErr
 fn read_page(fields: &mut Fields<'_>) -> Result<Option<u16>, ProtocolError> {
     match fields.u16()? {
         NO_PAGE => Ok(None),
-        page if page_index(page).is_some() => Ok(Some(page)),
+        page if is_channel_page(page) => Ok(Some(page)),
         _ => Err(ProtocolError::BadValue("page number")),
     }
 }

@@ -457,17 +457,17 @@ pub fn write_to_fetcher(out: &mut dyn Write, message: &ToFetcher) -> Result<(), 
             write_frame(out, kind, &payload)
         }
         ToFetcher::FetchPage { page } => {
-            page_index(*page).ok_or(ProtocolError::BadValue("page number"))?;
+            crate::fields::check_page(*page)?;
             write_frame(out, KIND_FETCH_PAGE, &page.to_be_bytes())
         }
         ToFetcher::FetchSubPages { page, part } => {
-            page_index(*page).ok_or(ProtocolError::BadValue("page number"))?;
+            crate::fields::check_page(*page)?;
             let mut payload = page.to_be_bytes().to_vec();
             payload.push(checked_part(*part)?);
             write_frame(out, KIND_FETCH_SUBPAGES, &payload)
         }
         ToFetcher::FetchSubPage { page, subcode } => {
-            page_index(*page).ok_or(ProtocolError::BadValue("page number"))?;
+            crate::fields::check_page(*page)?;
             if !crate::decoder::names_one_subpage(*subcode) {
                 return Err(ProtocolError::BadValue("sub-code"));
             }
@@ -503,10 +503,10 @@ pub fn read_to_fetcher(input: &mut dyn Read) -> Result<Option<ToFetcher>, Protoc
         #[cfg(feature = "interaction")]
         KIND_MEASURE_ROUND_TRIP => ToFetcher::MeasureRoundTrip(fields.flag("measure")?),
         KIND_COOKIE_ANSWER | KIND_REACHED_ANSWER => cookies::read_answer(kind, &mut fields)?,
-        KIND_FETCH_PAGE => ToFetcher::FetchPage { page: fields.display_page()? },
-        KIND_FETCH_SUBPAGES => ToFetcher::FetchSubPages { page: fields.display_page()?, part: checked_part(fields.u8()?)? },
+        KIND_FETCH_PAGE => ToFetcher::FetchPage { page: fields.channel_page()? },
+        KIND_FETCH_SUBPAGES => ToFetcher::FetchSubPages { page: fields.channel_page()?, part: checked_part(fields.u8()?)? },
         KIND_FETCH_SUBPAGE => {
-            let page = fields.display_page()?;
+            let page = fields.channel_page()?;
             let subcode = fields.u16()?;
             if !crate::decoder::names_one_subpage(subcode) {
                 return Err(ProtocolError::BadValue("sub-code"));
@@ -525,7 +525,7 @@ pub fn read_to_fetcher(input: &mut dyn Read) -> Result<Option<ToFetcher>, Protoc
 /// page with letters, which it has no slot for.
 #[must_use]
 pub fn redirect_in_bounds(page: u16, sub: u16) -> bool {
-    page_index(page).is_some() && is_sub_code(sub)
+    interface_core::channel::is_channel_page(page) && is_sub_code(sub)
 }
 
 /// A REDIRECT record's page and sub-code, checked again on each side.
@@ -538,7 +538,7 @@ fn push_live_message(payload: &mut Vec<u8>, message: &FromFetcher) -> Result<u8,
         FromFetcher::ChannelLog { level, page, text } => {
             payload.push(crate::console::level_byte(*level));
             if let Some(page) = page {
-                page_index(*page).ok_or(ProtocolError::BadValue("page number"))?;
+                crate::fields::check_page(*page)?;
             }
             payload.extend_from_slice(&page.unwrap_or(crate::decoder::NO_PAGE).to_be_bytes());
             push_raw_text(payload, text, crate::decoder::MAX_CHANNEL_LOG);
@@ -591,7 +591,7 @@ fn read_live_message(kind: u8, fields: &mut Fields<'_>) -> Result<FromFetcher, P
             let level = crate::console::level_from_byte(fields.u8()?)?;
             let page = match fields.u16()? {
                 crate::decoder::NO_PAGE => None,
-                page => Some(page_index(page).map(|_| page).ok_or(ProtocolError::BadValue("page number"))?),
+                page => Some(crate::fields::check_page(page).map(|()| page)?),
             };
             FromFetcher::ChannelLog { level, page, text: raw_text(fields, crate::decoder::MAX_CHANNEL_LOG, "log line too long")? }
         }
@@ -619,7 +619,7 @@ fn read_live_message(kind: u8, fields: &mut Fields<'_>) -> Result<FromFetcher, P
 /// Writes a part of a page's list: the page, the version and the rows,
 /// each held to a part's bounds; returns its kind.
 fn push_list_part(payload: &mut Vec<u8>, page: u16, version: &str, part: &SubPageRows) -> Result<u8, ProtocolError> {
-    page_index(page).ok_or(ProtocolError::BadValue("page number"))?;
+    crate::fields::check_page(page)?;
     payload.extend_from_slice(&page.to_be_bytes());
     if version.len() > MAX_LIST_VERSION {
         return Err(ProtocolError::BadValue("version too long"));
@@ -639,7 +639,7 @@ fn push_list_part(payload: &mut Vec<u8>, page: u16, version: &str, part: &SubPag
 fn push_static_message(payload: &mut Vec<u8>, message: &FromFetcher) -> Result<u8, ProtocolError> {
     Ok(match message {
         FromFetcher::SubPagesMissing { page, part } | FromFetcher::SubPagesFailed { page, part } => {
-            page_index(*page).ok_or(ProtocolError::BadValue("page number"))?;
+            crate::fields::check_page(*page)?;
             payload.extend_from_slice(&page.to_be_bytes());
             payload.push(checked_part(*part)?);
             if matches!(message, FromFetcher::SubPagesMissing { .. }) { KIND_SUBPAGES_MISSING } else { KIND_SUBPAGES_FAILED }
@@ -661,7 +661,7 @@ fn push_static_message(payload: &mut Vec<u8>, message: &FromFetcher) -> Result<u
                 RefusedFile::Bundle => (REFUSED_BUNDLE, NOT_A_PAGE),
                 RefusedFile::Contents => (REFUSED_CONTENTS, NOT_A_PAGE),
                 RefusedFile::Page(page) => {
-                    page_index(*page).ok_or(ProtocolError::BadValue("page number"))?;
+                    crate::fields::check_page(*page)?;
                     (REFUSED_PAGE, *page)
                 }
             };
@@ -677,8 +677,8 @@ fn push_static_message(payload: &mut Vec<u8>, message: &FromFetcher) -> Result<u
 /// Reads a static channel's message about its files, of `kind`.
 fn read_static_message(kind: u8, fields: &mut Fields<'_>) -> Result<FromFetcher, ProtocolError> {
     Ok(match kind {
-        KIND_SUBPAGES_MISSING => FromFetcher::SubPagesMissing { page: fields.display_page()?, part: checked_part(fields.u8()?)? },
-        KIND_SUBPAGES_FAILED => FromFetcher::SubPagesFailed { page: fields.display_page()?, part: checked_part(fields.u8()?)? },
+        KIND_SUBPAGES_MISSING => FromFetcher::SubPagesMissing { page: fields.channel_page()?, part: checked_part(fields.u8()?)? },
+        KIND_SUBPAGES_FAILED => FromFetcher::SubPagesFailed { page: fields.channel_page()?, part: checked_part(fields.u8()?)? },
         KIND_NO_CONTENTS => FromFetcher::NoContents,
         KIND_REFRESH => {
             let seconds = u32::from_be_bytes(fields.array()?);
@@ -695,7 +695,7 @@ fn read_static_message(kind: u8, fields: &mut Fields<'_>) -> Result<FromFetcher,
                 (REFUSED_BUNDLE, NOT_A_PAGE) => RefusedFile::Bundle,
                 (REFUSED_CONTENTS, NOT_A_PAGE) => RefusedFile::Contents,
                 (REFUSED_PAGE, page) => {
-                    page_index(page).ok_or(ProtocolError::BadValue("page number"))?;
+                    crate::fields::check_page(page)?;
                     RefusedFile::Page(page)
                 }
                 _ => return Err(ProtocolError::BadValue("refused file")),
@@ -823,7 +823,7 @@ pub fn read_from_fetcher(input: &mut dyn Read) -> Result<Option<FromFetcher>, Pr
                 .map(|_| match fields.u8()? {
                     ENTRY_SECTION => Ok(Entry::Section(raw_text(&mut fields, MAX_PAGE_TITLE, "text too long")?)),
                     ENTRY_PAGE => {
-                        let page = fields.display_page()?;
+                        let page = fields.channel_page()?;
                         Ok(Entry::Page { page, title: raw_text(&mut fields, MAX_PAGE_TITLE, "text too long")? })
                     }
                     _ => Err(ProtocolError::BadValue("contents entry")),
@@ -875,7 +875,7 @@ pub fn read_from_fetcher(input: &mut dyn Read) -> Result<Option<FromFetcher>, Pr
         KIND_CERTIFICATE_REFUSED => FromFetcher::CertificateRefused(crate::problem_of(fields.u8()?).ok_or(ProtocolError::BadValue("certificate problem"))?),
         KIND_COOKIE_QUESTION | KIND_REACHED_QUESTION | KIND_COOKIE_SET | KIND_CLEAR_SITE_DATA => cookies::read_cookie_message(kind, &mut fields)?,
         KIND_SUBPAGES => {
-            let page = fields.display_page()?;
+            let page = fields.channel_page()?;
             let version = raw_text(&mut fields, MAX_LIST_VERSION, "version too long")?;
             let part = crate::subpages::read_rows(&mut fields, ROWS_PER_PART, |fields| raw_text(fields, MAX_PAGE_TITLE, "title too long"))?;
             if usize::from(part.first) % ROWS_PER_PART != 0 {

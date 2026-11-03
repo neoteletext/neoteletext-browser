@@ -2,7 +2,6 @@
 //! (`page-controls.md` section 5, decision 67): what the page has and
 //! which are on, and the user's key for one of them, as strip input.
 
-use interface_core::channel::page_index;
 use interface_core::controls::{FastextKey, PageControl, PageControls, Rotation};
 use neoteletext_core::limits::{MAX_SUBPAGES, is_sub_code};
 
@@ -54,7 +53,7 @@ pub(crate) fn read_control(fields: &mut Fields<'_>) -> Result<PageControl, Proto
         CONTROL_PREVIOUS => PageControl::SubPage(false),
         CONTROL_LATEST => PageControl::Latest,
         CONTROL_SUBPAGE_OF => {
-            let page = fields.display_page()?;
+            let page = fields.channel_page()?;
             let subcode = fields.u16()?;
             // Any of the thirteen bits' values, none outside them (the
             // engine's REQ-NUM-002 and REQ-NUM-006).
@@ -79,7 +78,7 @@ pub(crate) fn push_controls(payload: &mut Vec<u8>, controls: &PageControls) -> R
         | if controls.rotation == Rotation::Never { NEVER_ROTATES } else { 0 };
     payload.push(flags);
     if let Some(page) = controls.page {
-        page_index(page).ok_or(ProtocolError::BadValue("page number"))?;
+        crate::fields::check_page(page)?;
         payload.extend_from_slice(&page.to_be_bytes());
     }
     let keys = controls.fastext.iter().enumerate().fold(0_u8, |bits, (index, on)| if *on { bits | (1 << index) } else { bits });
@@ -97,7 +96,7 @@ pub(crate) fn read_controls(fields: &mut Fields<'_>) -> Result<PageControls, Pro
     if flags & !FLAGS != 0 {
         return Err(ProtocolError::BadValue("control flags"));
     }
-    let page = if flags & OPEN == 0 { None } else { Some(fields.display_page()?) };
+    let page = if flags & OPEN == 0 { None } else { Some(fields.channel_page()?) };
     let keys = fields.u8()?;
     if usize::from(keys) >> FastextKey::ALL.len() != 0 {
         return Err(ProtocolError::BadValue("Fastext keys"));

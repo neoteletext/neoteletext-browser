@@ -49,7 +49,7 @@ fn check_cursor(page: u16, state: Option<CursorState>) -> Result<(), ProtocolErr
 
 pub(crate) fn read_typing(fields: &mut Fields<'_>) -> Result<Typing, ProtocolError> {
     let channel = fields.u32()?;
-    let page = fields.display_page()?;
+    let page = fields.channel_page()?;
     let flags = fields.u8()?;
     if flags & !ALL_FLAGS != 0 {
         return Err(ProtocolError::BadValue("typing flags"));

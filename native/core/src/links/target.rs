@@ -2,7 +2,7 @@
 //! of the TTI Link Extension's forms and `web:`, the one page data the
 //! trusted core reads.
 
-use interface_core::channel::page_index;
+use interface_core::channel::is_channel_page;
 use protocol::MAX_ADDRESS;
 use protocol::links::{MAX_SERVICE_NAME, MAX_TARGET};
 
@@ -81,14 +81,16 @@ pub fn parse_target(text: &str) -> Option<Target> {
     }
 }
 
-/// A display page: three hexadecimal digits naming a page of 100 to 899
-/// with no digit above 9.
+/// A page: three hexadecimal digits naming a page a channel may have, one
+/// with a digit A to F included, which only a link reaches (EN 300 706
+/// clause 9.1, Table 1, note; REQ-300). A number the standard reserves,
+/// such as 1FF or 1F0, is none.
 pub(super) fn page(text: &str) -> Option<u16> {
     if text.len() != PAGE_DIGITS || !text.bytes().all(|byte| byte.is_ascii_hexdigit()) {
         return None;
     }
     let page = u16::from_str_radix(text, HEXADECIMAL).ok()?;
-    page_index(page).map(|_| page)
+    is_channel_page(page).then_some(page)
 }
 
 /// A sub-page: four hexadecimal digits.

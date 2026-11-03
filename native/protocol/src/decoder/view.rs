@@ -1,8 +1,6 @@
 //! How the open page is drawn (`page-controls.md`, decision 67) on the
 //! wire: its page, its reveal, hold and mix, and the sub-page chosen.
 
-use interface_core::channel::page_index;
-
 use crate::{Fields, ProtocolError};
 
 /// A view's flags: reveal, hold, mix, and a sub-page chosen.
@@ -29,7 +27,7 @@ pub struct View {
 }
 
 pub(super) fn push_view(payload: &mut Vec<u8>, view: &View) -> Result<(), ProtocolError> {
-    page_index(view.page).ok_or(ProtocolError::BadValue("page number"))?;
+    crate::fields::check_page(view.page)?;
     let flags = if view.reveal { VIEW_REVEAL } else { 0 }
         | if view.hold { VIEW_HOLD } else { 0 }
         | if view.mix { VIEW_MIX } else { 0 }
@@ -46,7 +44,7 @@ pub(super) fn push_view(payload: &mut Vec<u8>, view: &View) -> Result<(), Protoc
 }
 
 pub(super) fn read_view(fields: &mut Fields<'_>) -> Result<View, ProtocolError> {
-    let page = fields.display_page()?;
+    let page = fields.channel_page()?;
     let flags = fields.u8()?;
     if flags & !VIEW_FLAGS != 0 {
         return Err(ProtocolError::BadValue("view flags"));

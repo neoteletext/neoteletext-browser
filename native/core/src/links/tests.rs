@@ -65,12 +65,27 @@ fn a_page_cannot_link_through_the_scheme() {
     }
 }
 
+/// REQ-300, REQ-313: a page with a hexadecimal digit is reached by a link,
+/// so a target names one, of this channel or of a service; a number the
+/// standard reserves (Annex A.10) is none.
+#[test]
+fn a_target_names_a_hexadecimal_page() {
+    assert_eq!(parse_target("1A0"), Some(Target::Page(0x1A0)));
+    assert_eq!(parse_target("8fc"), Some(Target::Page(0x8FC)), "either case");
+    assert_eq!(parse_target("1A0:0002"), Some(Target::SubPage(0x1A0, 2)));
+    assert_eq!(parse_target("sport:2B5"), Some(Target::Service { name: "sport".into(), page: 0x2B5 }));
+}
+
 #[test]
 fn every_other_target_is_refused() {
     let long = format!("web:https://example.invalid/{}", "a".repeat(MAX_TARGET));
     for text in [
         "",
-        "1A0",
+        "1FF",
+        "1FE",
+        "2FD",
+        "1F0",
+        "1BE",
         "30",
         "3022",
         "902",
@@ -296,13 +311,13 @@ fn a_keys_prompt_says_where_it_leads() {
     let channel = Channel { id: CHANNEL, address: &address };
     let mut links = Links::default();
     links.opened(Some(OPEN));
-    links.found(OPEN, Vec::new(), Vec::new(), Vec::new(), Fastext { keys, row24: true, prompts });
+    links.found(OPEN, Vec::new(), Vec::new(), Vec::new(), Fastext { keys, row24: true, linked: true, prompts });
     let runs = links.image(OPEN, 1, &channel, START).runs;
     assert_eq!(runs.iter().map(|run| (run.row, run.column, run.length)).collect::<Vec<_>>(), [(24, 2, 8)], "the yellow key leads nowhere");
     let pointing = links.point(Some(spot(1, 3, 24))).unwrap();
     assert_eq!(pointing.complete, "Page 200, sub-page 0003");
     assert_eq!(links.click(spot(1, 3, 24), Some(CHANNEL), LATER), Ok(Follow::SubPage(0x200, 3)));
-    links.found(OPEN, Vec::new(), Vec::new(), Vec::new(), Fastext { keys, row24: false, prompts });
+    links.found(OPEN, Vec::new(), Vec::new(), Vec::new(), Fastext { keys, row24: false, linked: true, prompts });
     assert!(links.image(OPEN, 2, &channel, LATER).runs.is_empty(), "a boxed page's row 24 acts on nothing");
 }
 
@@ -442,7 +457,7 @@ fn fastext_keys_follow_as_links_do() {
         &[],
         &[Service { name: "news".into(), address: "https://news.invalid/".into() }, Service { name: "sport".into(), address: "https://sport.invalid/".into() }],
     );
-    links.found(OPEN, Vec::new(), Vec::new(), Vec::new(), Fastext { keys, row24: true, prompts: [None; 4] });
+    links.found(OPEN, Vec::new(), Vec::new(), Vec::new(), Fastext { keys, row24: true, linked: true, prompts: [None; 4] });
     let address = home();
     links.image(OPEN, 1, &Channel { id: CHANNEL, address: &address }, START);
     assert_eq!(links.fastext_keys(OPEN), [true, true, false, false, true], "the unknown seventh service leads nowhere");
@@ -451,7 +466,7 @@ fn fastext_keys_follow_as_links_do() {
     assert_eq!((sport.channel_text(), sport.page), ("https://sport.invalid/", Some(0x300)));
     assert_eq!(links.fastext(FastextKey::Yellow, Some(CHANNEL), START), Err(Refusal::NotALink));
     assert_eq!(links.fastext(FastextKey::Red, Some(CHANNEL + 1), START), Err(Refusal::NotOpen), "only the active channel's open page");
-    links.found(OPEN, Vec::new(), Vec::new(), Vec::new(), Fastext { keys, row24: false, prompts: [None; 4] });
+    links.found(OPEN, Vec::new(), Vec::new(), Vec::new(), Fastext { keys, row24: false, linked: true, prompts: [None; 4] });
     links.image(OPEN, 2, &Channel { id: CHANNEL, address: &address }, START);
     assert_eq!(links.fastext_keys(OPEN), [false; 5]);
     assert_eq!(links.fastext(FastextKey::Red, Some(CHANNEL), START), Err(Refusal::NotALink), "row 24 hidden: no key acts");

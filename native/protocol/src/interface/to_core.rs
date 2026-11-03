@@ -131,7 +131,7 @@ fn push_fields(payload: &mut Vec<u8>, message: &ToCore) -> Result<(), ProtocolEr
         ToCore::NewTab | ToCore::Back | ToCore::Forward | ToCore::Bookmark | ToCore::Home | ToCore::Reload => {}
         ToCore::PageControl(control) => controls::push_control(payload, *control),
         ToCore::SubPageRows { page, range } => {
-            interface_core::channel::page_index(*page).ok_or(ProtocolError::BadValue("page number"))?;
+            crate::fields::check_page(*page)?;
             payload.extend_from_slice(&page.to_be_bytes());
             crate::subpages::push_range(payload, *range, interface_core::controls::SUBPAGE_ROWS)?;
         }
@@ -322,7 +322,7 @@ pub fn read_from_interface(input: &mut dyn Read) -> Result<Option<ToCore>, Proto
         KIND_RELOAD => ToCore::Reload,
         KIND_PAGE_CONTROL => ToCore::PageControl(controls::read_control(&mut fields)?),
         KIND_ASK_SUBPAGE_ROWS => {
-            let page = fields.display_page()?;
+            let page = fields.channel_page()?;
             ToCore::SubPageRows { page, range: crate::subpages::read_range(&mut fields, interface_core::controls::SUBPAGE_ROWS)? }
         }
         KIND_FROM | KIND_NEW_WINDOW | KIND_TAB_TO_WINDOW | KIND_CLOSE_WINDOW => window_intent(kind, &mut fields)?,
@@ -335,7 +335,7 @@ pub fn read_from_interface(input: &mut dyn Read) -> Result<Option<ToCore>, Proto
         KIND_LIT => ToCore::Lit(if payload.is_empty() { None } else { Some(crate::links::read_lit(&mut fields)?) }),
         #[cfg(feature = "links")]
         KIND_TYPED => {
-            let number = fields.display_page()?;
+            let number = fields.keyable_page()?;
             let opened = if fields.is_empty() { None } else { Some((fields.key()?, fields.u32()?)) };
             ToCore::Typed { number, opened }
         }
