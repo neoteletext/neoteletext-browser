@@ -333,6 +333,35 @@ mod tests {
         assert_eq!(strips.last().map(|strip| strip.refused), Some(None));
     }
 
+    // TODO-1531 item 3, DOC-1956: a LOG record's line reaches the console's
+    // Log of its own channel only, marked as the channel's, with its level and
+    // page, and cleaned of what the console does not show.
+    #[test]
+    fn a_channels_log_line_is_in_its_own_log_marked_as_the_channels() {
+        use interface_core::console::Level;
+        use protocol::fetcher::FromFetcher;
+        let mut test = Test::new("channel log");
+        test.core.session.open("https://news.invalid/teletext/").unwrap();
+        let channel = test.core.session.tabs[0].channel.id;
+        test.core.session.open("https://other.invalid/teletext/").unwrap();
+        let other = test.core.session.tabs[1].channel.id;
+        test.core.fetched(channel, FromFetcher::ChannelLog { level: Level::Warning, page: Some(0x302), text: "Feed\u{202E} late".into() }).unwrap();
+        test.core.fetched(channel, FromFetcher::ChannelLog { level: Level::Info, page: None, text: "Started".into() }).unwrap();
+        test.core.console.set_open(true);
+        let logged = |test: &mut Test, channel| -> Vec<(Level, String)> {
+            test.core
+                .console
+                .updates(Some(channel))
+                .iter()
+                .flat_map(|update| update.entries.clone())
+                .filter(|entry| entry.tab == ConsoleTab::Log && entry.text.starts_with("channel"))
+                .map(|entry| (entry.level, entry.text))
+                .collect()
+        };
+        assert_eq!(logged(&mut test, channel), [(Level::Warning, "channel, page 302: Feed late".to_owned()), (Level::Info, "channel: Started".to_owned())]);
+        assert_eq!(logged(&mut test, other), [], "another channel's Log has none of it");
+    }
+
     /// A tab on a static channel, with the page `open` open; its channel.
     fn static_tab(test: &mut Test, open: u16) -> u32 {
         test.core.session.open("https://news.invalid/teletext/").unwrap();
