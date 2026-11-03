@@ -378,14 +378,6 @@ pub fn yield_activation(_bundle: &str) {}
 #[cfg(not(target_os = "macos"))]
 pub fn set_icon(_png: &[u8]) {}
 
-/// Elsewhere this crate reads no preference: the interface asks its own
-/// platform (REQ-754).
-#[cfg(not(target_os = "macos"))]
-#[must_use]
-pub fn reduced_motion() -> bool {
-    false
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

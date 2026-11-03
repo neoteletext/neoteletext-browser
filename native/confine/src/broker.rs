@@ -97,6 +97,21 @@ const HTTPS_PORT: u16 = 443;
 /// own bound (`update::state::MAX_STATE`), with room.
 pub const MAX_UPDATE_STATE: usize = 4 * 1024;
 
+/// The chooser's first argument that asks it the desktop's reduced-motion
+/// preference instead of showing a dialog (REQ-754; Linux, where the
+/// confined interface reaches no session bus, decision 86).
+pub const REDUCED_MOTION_ARGUMENT: &str = "reduced-motion";
+/// What the chooser prints, and nothing else, when the desktop asks for
+/// reduced motion. Anything else it prints, or its failure, means no
+/// preference, so a chooser that cannot reach the portal changes nothing.
+pub const REDUCED_MOTION_ANSWER: &[u8] = b"reduced";
+/// The variable in which the broker tells the interface it starts that the
+/// desktop asks for reduced motion (Linux). The broker sets it itself; it
+/// is never passed on from the broker's own environment.
+pub const REDUCED_MOTION_VARIABLE: &str = "NEOTELETEXT_REDUCED_MOTION";
+/// The variable's one value that means reduced motion.
+pub const REDUCED_MOTION_VALUE: &str = "1";
+
 /// The browser's own helpers: the only programs the broker starts.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Program {
