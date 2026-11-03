@@ -384,6 +384,12 @@ These were observed, not reasoned:
 | 8 | A decoder or fetcher fault, with the sandboxes complete | Low | Contained to one channel | Separate processes per channel, no rights (requirements 3.3, 3.4, 3.12) |
 | 9 | Exhaustion of resources | Low | An unresponsive tab or application | Visibility culling, bounds, on-demand drawing (section 11) |
 
+**Smaller residuals of the review of 24 October 2026, settled on 3 November 2026 (TODO-1278, DEC-2415, awaiting the owner's confirmation).** Closed: a junction swapped in for a folder of a file channel's path on Windows is refused by the path the open handle was resolved by (`a_junction_inside_the_path_refuses_the_open`, to be run in the Windows virtual machine); a Linux helper whose broker ended before it first read its parent refuses to run, by the parent's number given at its start (finding F-34, `a_parent_that_ended_before_the_first_look_is_seen`); a text field that arrives with a run of combining marks longer than `MAX_COMBINING_RUN` has the run cut, not the pipe refused (finding F-36, `a_run_of_combining_marks_that_arrives_is_cut`). Accepted, each with its reason in DEC-2415:
+- **F-26:** the phone keyboard closed in the instant between its screen being made and its waker stored exits without closing the screen, whose relay instance then lapses by the relay's own expiry; no phone can have joined it. Closing it needs the engine's qrkeyboard library to take a waker before its screen exists.
+- **F-54:** `arboard` reads the clipboard whole before the paste is cut; the clipboard is the user's own or a local program's, and a bounded read needs another library.
+- **F-09:** on macOS a trial that never says `started` ends that start with an error, and is rolled back after three such starts (`NOT_STARTED_TO_ROLL_BACK`).
+- **F-80:** after a lost state on macOS the installed bundle, from which the launcher itself runs and which the system checks at each start, is not accepted again; a replaced bundle would carry a replaced launcher.
+
 ---
 
 ## 17. Checks that keep these properties
