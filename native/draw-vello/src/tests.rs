@@ -72,15 +72,22 @@ fn browser(painter: &mut Painter, pages: &[Sample]) -> Browser {
 
 /// The window as `browser` draws it at `now`, by `painter`.
 fn frame(painter: &mut Painter, browser: &mut Browser, now: u64) -> (Vec<DeviceBox>, Vec<u32>) {
-    sized_frame(painter, browser, (WIDTH, HEIGHT), now)
+    scaled_frame(painter, browser, (WIDTH, HEIGHT), 1, now)
 }
 
 /// The window `size` points across and down, drawn at a scale of one.
 fn sized_frame(painter: &mut Painter, browser: &mut Browser, size: (u16, u16), now: u64) -> (Vec<DeviceBox>, Vec<u32>) {
-    painter.begin(size.0, size.1, 1.0);
+    scaled_frame(painter, browser, size, 1, now)
+}
+
+/// The window `size` points across and down, drawn at `scale` device
+/// pixels to the point.
+fn scaled_frame(painter: &mut Painter, browser: &mut Browser, size: (u16, u16), scale: u16, now: u64) -> (Vec<DeviceBox>, Vec<u32>) {
+    let device = (size.0.saturating_mul(scale), size.1.saturating_mul(scale));
+    painter.begin(device.0, device.1, f64::from(scale));
     browser.draw(painter, f64::from(size.0), f64::from(size.1), now);
     let damage = painter.render();
-    let mut words = vec![0; usize::from(size.0).saturating_mul(usize::from(size.1))];
+    let mut words = vec![0; usize::from(device.0).saturating_mul(usize::from(device.1))];
     painter.copy_to(&mut words, &damage, 0);
     (damage.boxes().to_vec(), words)
 }
@@ -91,13 +98,18 @@ fn covered(boxes: &[DeviceBox]) -> u32 {
 
 /// The same window drawn whole, every pixel, by another painter.
 fn fresh(pages: &[Sample], now: u64, change: impl Fn(&mut Painter, &mut Browser)) -> Vec<u32> {
+    fresh_scaled(pages, (WIDTH, HEIGHT), 1, now, change)
+}
+
+/// As [`fresh`], `size` points at `scale`.
+fn fresh_scaled(pages: &[Sample], size: (u16, u16), scale: u16, now: u64, change: impl Fn(&mut Painter, &mut Browser)) -> Vec<u32> {
     let mut painter = Painter::new(Family::Roboto);
     let mut browser = browser(&mut painter, pages);
     // The first frame reports which pages are on screen.
-    frame(&mut painter, &mut browser, SETTLED);
+    scaled_frame(&mut painter, &mut browser, size, scale, SETTLED);
     change(&mut painter, &mut browser);
     painter.redraw_whole();
-    frame(&mut painter, &mut browser, now).1
+    scaled_frame(&mut painter, &mut browser, size, scale, now).1
 }
 
 fn differing(left: &[u32], right: &[u32]) -> usize {
@@ -162,48 +174,68 @@ fn a_hover_redraws_only_where_it_shows_and_matches_a_whole_frame() {
 /// REQ-740 in pixels: a later version of the open page with a screen colour
 /// of its own colours its border and all the window below the strip, every
 /// pixel of the strip stays as it was, and the wall keeps the browser's own.
+/// With REQ-785 (requirement 14.5), the spoofing review of 3 November
+/// 2026: the colour starts on exactly the row the strip ends on
+/// (`Browser::strip_end`, the toolbar's foot or the bookmarks bar's), at
+/// the drawing's scale, so it neither reaches into the strip nor leaves a
+/// band of the browser's own between them; in a window of the tests' size
+/// and in the smallest the interface allows, with the bar hidden and shown,
+/// at one and two device pixels to the point.
 #[test]
 fn a_pages_colour_reaches_every_pixel_below_the_strip_and_no_further() {
-    const SCREEN: [u8; 3] = [0x77, 0x00, 0x77];
-    const SCREEN_WORD: u32 = 0x0077_0077;
-    /// `WINDOW`, the window behind the wall.
-    const WINDOW_WORD: u32 = 0x0012_1214;
-    /// In the window's left margin, halfway down.
-    const MARGIN: (usize, usize) = (2, HEIGHT as usize / 2);
-    let across = usize::from(WIDTH);
-    let pages = pages();
-    let recolour = |painter: &mut Painter, _: &mut Browser| {
-        let front = &pages[0];
-        let palette: Vec<[u8; 3]> = front.palette.iter().copied().chain([SCREEN]).collect();
-        painter.set_page(FRONT, &palette, u8::try_from(front.palette.len()).unwrap(), &front.indices).unwrap();
-    };
-    let mut painter = Painter::new(Family::Roboto);
-    let mut browser = browser(&mut painter, &pages);
-    browser.wall_mut().toggle_single(SETTLED);
-    frame(&mut painter, &mut browser, SETTLED);
-    let black = frame(&mut painter, &mut browser, SETTLED).1;
-    recolour(&mut painter, &mut browser);
-    let coloured = frame(&mut painter, &mut browser, SETTLED).1;
-    assert_eq!(coloured[MARGIN.1 * across + MARGIN.0], SCREEN_WORD, "the margin");
-    let strip_end = (0..usize::from(HEIGHT)).find(|&row| coloured[row * across + MARGIN.0] == SCREEN_WORD).unwrap();
-    assert!(strip_end > 0);
-    assert_eq!(differing(&coloured[..strip_end * across], &black[..strip_end * across]), 0, "the strip's pixels");
-    let (_, image) = browser.wall().shown().next().unwrap();
-    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss, reason = "inside the window")]
-    let (left, middle) = (image.x0 as usize - 1, f64::midpoint(image.y0, image.y1) as usize);
-    assert_eq!(coloured[middle * across + left], SCREEN_WORD, "the page's border");
-    let expected = fresh(&pages, SETTLED, |painter, browser| {
+    let check = |size: (u16, u16), scale: u16, bar: bool| {
+        const SCREEN: [u8; 3] = [0x77, 0x00, 0x77];
+        const SCREEN_WORD: u32 = 0x0077_0077;
+        /// `WINDOW`, the window behind the wall.
+        const WINDOW_WORD: u32 = 0x0012_1214;
+        let case = format!("{size:?} at {scale}, bar {bar}");
+        let across = usize::from(size.0 * scale);
+        let down = usize::from(size.1 * scale);
+        // In the window's left margin, halfway down.
+        let margin = (2, down / 2);
+        let pages = pages();
+        let recolour = |painter: &mut Painter, browser: &mut Browser| {
+            browser.set_bar(BarView { shown: bar, ..BarView::default() });
+            let front = &pages[0];
+            let palette: Vec<[u8; 3]> = front.palette.iter().copied().chain([SCREEN]).collect();
+            painter.set_page(FRONT, &palette, u8::try_from(front.palette.len()).unwrap(), &front.indices).unwrap();
+        };
+        let mut painter = Painter::new(Family::Roboto);
+        let mut browser = browser(&mut painter, &pages);
+        browser.set_bar(BarView { shown: bar, ..BarView::default() });
         browser.wall_mut().toggle_single(SETTLED);
-        recolour(painter, browser);
-    });
-    // Text's edges blended over a colour round either way by a level,
-    // depending on where the drawn part starts.
-    let channels = |word: u32| word.to_be_bytes().map(i16::from);
-    let apart = |a: u32, b: u32| channels(a).into_iter().zip(channels(b)).any(|(a, b)| (a - b).abs() > 1);
-    assert_eq!(coloured.iter().zip(&expected).filter(|&(&a, &b)| apart(a, b)).count(), 0, "drawn in part, as a frame drawn whole");
-    browser.wall_mut().toggle_single(SETTLED);
-    let wall = frame(&mut painter, &mut browser, SETTLED * 2).1;
-    assert_eq!(wall[MARGIN.1 * across + MARGIN.0], WINDOW_WORD, "the wall's margin");
+        scaled_frame(&mut painter, &mut browser, size, scale, SETTLED);
+        let black = scaled_frame(&mut painter, &mut browser, size, scale, SETTLED).1;
+        recolour(&mut painter, &mut browser);
+        let coloured = scaled_frame(&mut painter, &mut browser, size, scale, SETTLED).1;
+        assert_eq!(coloured[margin.1 * across + margin.0], SCREEN_WORD, "{case}: the margin");
+        let strip_end = (0..down).find(|&row| coloured[row * across + margin.0] == SCREEN_WORD).unwrap();
+        #[allow(clippy::cast_precision_loss, reason = "a row of the window")]
+        let found = strip_end as f64;
+        assert_eq!(found, browser.strip_end(SETTLED) * f64::from(scale), "{case}: the colour starts where the strip ends");
+        assert_eq!(differing(&coloured[..strip_end * across], &black[..strip_end * across]), 0, "{case}: the strip's pixels");
+        let (_, image) = browser.wall().shown().next().unwrap();
+        #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss, reason = "inside the window")]
+        let (left, middle) = ((image.x0 * f64::from(scale)) as usize - 1, (f64::midpoint(image.y0, image.y1) * f64::from(scale)) as usize);
+        assert_eq!(coloured[middle * across + left], SCREEN_WORD, "{case}: the page's border");
+        let expected = fresh_scaled(&pages, size, scale, SETTLED, |painter, browser| {
+            browser.wall_mut().toggle_single(SETTLED);
+            recolour(painter, browser);
+        });
+        // Text's edges blended over a colour round either way by a level,
+        // depending on where the drawn part starts.
+        let channels = |word: u32| word.to_be_bytes().map(i16::from);
+        let apart = |a: u32, b: u32| channels(a).into_iter().zip(channels(b)).any(|(a, b)| (a - b).abs() > 1);
+        assert_eq!(coloured.iter().zip(&expected).filter(|&(&a, &b)| apart(a, b)).count(), 0, "{case}: drawn in part, as a frame drawn whole");
+        browser.wall_mut().toggle_single(SETTLED);
+        let wall = scaled_frame(&mut painter, &mut browser, size, scale, SETTLED * 2).1;
+        assert_eq!(wall[margin.1 * across + margin.0], WINDOW_WORD, "{case}: the wall's margin");
+    };
+    for (size, scale) in [((WIDTH, HEIGHT), 1), (SMALLEST, 1), (SMALLEST, 2)] {
+        for bar in [false, true] {
+            check(size, scale, bar);
+        }
+    }
 }
 
 /// REQ-785 (requirement 14.5), the spoofing review of 3 November 2026:
