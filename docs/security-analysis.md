@@ -259,12 +259,50 @@ The earlier design's main concession was the system webview: many millions of li
 **Mitigations.**
 - The address, identity, encryption state and the web-browser prompt are shown only in the trusted strip, which is drawn outside the page area and which no page image is ever drawn over (requirements 11.1 and 11.2).
 - **Every page image is kept below the strip,** including the zoomed page and the overview's popup of a page at its native size, which shrinks on a short window rather than cover the strip (observed in this codebase's tests).
-- **A page's screen colour stops at the strip.** With a page alone the colour is the background of the window below the strip (REQ-740), so a channel chooses one of 4,096 colours for that area: never a word, a shape or a pixel of the strip, which draws its own ground first and is drawn the same on every page (`the_strip_never_takes_the_colour`, `a_pages_colour_reaches_every_pixel_below_the_strip_and_no_further`). The panels on the colour draw the channel's magazine names and page titles in the browser's ink, fitted to their places as on black.
+- **A page's screen colour stops at the strip.** With a page alone the colour is the background of the window below the strip (REQ-740), so a channel chooses one of 4,096 colours for that area: never a word, a shape or a pixel of the strip, which is drawn after the page area, over anything that reached it, and the same on every page (`the_strip_never_takes_the_colour`, `a_pages_colour_reaches_every_pixel_below_the_strip_and_no_further`). The panels on the colour draw the channel's magazine names and page titles in the browser's ink, fitted to their places as on black.
 - A click on a page means only "this cell" (requirement 12.3).
 - The strip stays visible in every layout but the page-only full screen, which ends before anything leaves the channel and brings the strip back at the top edge (requirement 11.4, `full-screen-security.md`).
-- Every new layout is reviewed for spoofing (requirement 14.5, no review recorded yet).
+- Every new layout is reviewed for spoofing (requirement 14.5); the review of every layout, 3 November 2026, follows.
 
 **Remaining risk:** medium. This is where safety depends on discipline in visual design: an interface built for animation is exactly where a security indicator could be hidden or imitated.
+
+### 7.1 The review of every layout, 3 November 2026
+
+Read at browser commit `c69b96a` and its two fixes `9ddd23a` and `158a6f2` (REQ-785, TODO-2086, DEC-2387), in `native/interface-core/src/browser` and `wall`, with the desktop back end `native/draw-vello`, at a wide window (1440 by 900 points) and at the smallest the interface allows (1000 by 640, `MINIMUM_WIDTH` and `MINIMUM_HEIGHT` in `native/interface/src/window.rs`). Two questions for each layout: does the trusted strip stay visible, with nothing drawn over it; and can anything a channel controls look like it? What a channel controls: every pixel of a page image, the screen colour (REQ-740), and text the trusted core passes on cleaned (page titles, magazine names, sub-page titles, a link's address, a redirect's target, a host).
+
+**The strip and the order of drawing.** The strip is the tab row (0 to 44 points), the toolbar with the address field and the padlock (44 to 98, black, ending in a one-point rule) and the bookmarks bar when shown (98 to 132). The page area starts 8 points below it (`BODY_TOP`, `Browser::strip_end`). `Browser::draw` (`browser/window.rs`) draws the page area first (the screen colour, the banks, the lists, the wall or the page, the overview and the console) and the strip after it, opaque, so nothing of the page area can show above the strip's end whatever its rectangle. Only what is drawn after the strip can cover it: the overview's native-size preview, the remote, the phone keyboard's panel, the settings, history and bookmarks panels, the star, the tab overflow list, popups, tips and the link popover, and a dragged tab. The desktop back end clips each area it is told to (`draw-vello/src/record.rs`); the interface core's test canvas records no clip, so the clipping below is held by reading, not by its tests.
+
+**The wall, at every page size** (decision 35). The pages, the hover pop-out and the zoom are drawn inside a clip of the wall's area, which starts below the size controls, at least 48 points below the strip's end. The screen colour is off on the wall. Strip visible; nothing like it.
+
+**The page alone** (DEC-1018, REQ-772). The page is centred in the page area, drawn in a clip of it, on the channel's screen colour, which starts at the strip's end (REQ-740). Strip visible. Look-alike: a channel can choose a colour near the strip's black or its rule and draw, in its top rows, something like a second toolbar about 8 to 10 points under the real one. That is the line of death every browser has; the strip above it holds the real address and padlock, a click on the page is only a cell (requirement 12.3), and nothing a page draws can be typed into. Residual, low.
+
+**Full screen** (DEC-978, `full-screen-security.md`). The strip is gone by design while it is up; nothing leaves the channel without full screen ending first. When it comes down at the top edge it is drawn after the page, opaque, over it. The leaving notice and the typing badge are drawn in the margin after the page; during a slide between pages a neighbouring page passes through that margin under them, never over them. Strip visible when down; a page drawing a false strip while it is up is `full-screen-security.md`'s first threat, answered there.
+
+**The console docked at the foot** (decision 120). Drawn in the page area, its log clipped to its list; at the smallest window its top stays below the page area's. Nothing of it reaches the strip.
+
+**The overview and its native-size preview.** The preview is drawn after the strip and not clipped, but its scale keeps its top at or below the page area's top, the bookmarks bar included. Strip visible; tested with the bar hidden (`a_page_in_the_overview_pops_up_at_native_size_under_a_hand`).
+
+**The bookmarks bar shown or hidden.** The page area and the screen colour start below the bar when it shows (`the_strip_never_takes_the_colour`, both states). The bar's chips are bookmark names the user kept; its folder list stays within the page area.
+
+**The sub-pages list and its divider.** The divider is the browser's colour and stays inside the list; the channel's sub-page titles are clipped to their rows (`the_sub_pages_stand_on_the_colour`).
+
+**The whole-window screen colour** (REQ-740). Filled from the strip's end down, the strip drawn after it (`the_strip_never_takes_the_colour`, `the_pages_colour_is_behind_everything_below_the_strip`, `a_pages_colour_reaches_every_pixel_below_the_strip_and_no_further`). Look-alike: as for the page alone.
+
+**A redirect's notice, a refused certificate, a denied selection** (REQ-1686, `certificate-errors.md`). Each is drawn in the page area with the screen colour off. The redirect's notice shows the channel's target in the address field's typeface, white on black under the words "Redirecting to:", not the field's dark ink on grey; the certificate's panel shows the host; the denied notice has fixed words. None reaches the strip. Residual, low.
+
+**The link popover** (REQ-1660). **Fault, fixed.** It holds the address a channel chose and was drawn after the strip, clamped only to the window's top: at 1000 by 640 a long address put it over the address field and the padlock, and the longest over the whole strip. Since `9ddd23a` a tip of anything below the strip stays below the strip's end, and the rest scrolls with the wheel (`a_links_popover_never_covers_the_strip`, which failed on the code before). In full screen its box is drawn as the leaving notice is; it shows an address, the notice fixed words. Residual, low.
+
+**The pointed link in the address field** (requirement 17.6, REQ-806). While the pointer is on a link the field shows where it leads, behind "↗ " for a link that leaves the channel, in the field's own ink, with the current channel's padlock still beside it. That is by design, and it is where a viewer could take a link's address for the channel's own. TODO-2398: draw a pointed address in an ink the real address never uses, with the padlock not vouching for it.
+
+**Multiple windows and a dragged tab** (`multiple-windows.md`). Each window draws its own strip in the same way. A dragged tab is the browser's tab, titled with the host the trusted core gives, and may pass over the page area; the tab overflow list holds the browser's tabs. Nothing of a channel's reaches a strip.
+
+**Zoom and animation.** Zooming in and out, the slide between pages and the hover pop-out all run inside the wall's or the page area's clip; no animated page passes the strip's end. Held by the back end's clip, which no test of the interface core can see.
+
+**The panels.** Settings, history, bookmarks and the remote are placed within the page area (`widgets::panel_rect`, `remote/draw.rs`). History and bookmarks show titles and addresses a channel gave, in their rows, below the strip. **The phone keyboard's panel: fault, fixed.** It was centred on the page area at its full 560 points with no limit and reached above the strip at 1000 by 640; its content is the browser's, but it hid the strip and took its presses. Since `158a6f2` it stays below the strip, shorter on a short window with its code smaller by as much (`the_panel_never_covers_the_strip`, which failed on the code before).
+
+**What remains, recorded as to-dos:** the pointed address's ink, above (TODO-2398); and tests the review found missing, which reading holds today (TODO-2399): a clipping check on a canvas that clips, the screen colour's end measured against the strip's height in device pixels rather than found from the drawing, the strip drawn over a page in full screen, and the overview's preview with the bookmarks bar shown.
+
+**For each new layout:** a commit that adds a layout, or anything drawn after the strip, names its answer to the two questions in this section.
 
 ---
 
@@ -403,4 +441,4 @@ Each check below belongs in the project's check script, run by git hooks (requir
 11. **Channel isolation:** cookies and pages never cross channels (requirements 7.3 and 7.8).
 12. **Dependencies:** `cargo-deny` and lockfile review (requirement 14.3). **Built:** `cargo deny check advisories` in both workspaces at every push, and `cargo deny check` whole in the full gate; `cargo deny`'s advisory check is the RustSec check in place of `cargo audit` (DEC-2354).
 13. **Updates:** the full set of update tests (requirement 13.12).
-14. **Spoofing:** recorded review of every layout (requirement 14.5).
+14. **Spoofing:** recorded review of every layout (requirement 14.5). **Built:** section 7.1, 3 November 2026, with `a_links_popover_never_covers_the_strip` and `the_panel_never_covers_the_strip`; the tests it found missing are TODO-2399.
