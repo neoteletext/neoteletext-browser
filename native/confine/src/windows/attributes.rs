@@ -89,12 +89,15 @@ fn add_attribute_at(attributes: &Attributes, which: usize, value: *const std::ff
     Ok(())
 }
 
-/// Starts the helper in its container `sid`, with `capabilities`.
+/// Starts the helper in its container `sid`, with `capabilities`, its
+/// standard handles `stdin`, `stdout` and `stderr` (none, 0, when the
+/// broker has no standard error to relay to).
 pub(super) fn start(
     spawn: &Spawn<'_>,
     inherited: &[HANDLE],
     stdin: HANDLE,
     stdout: HANDLE,
+    stderr: HANDLE,
     sid: &ContainerSid,
     capability_sids: &[Sid],
 ) -> io::Result<PROCESS_INFORMATION> {
@@ -141,7 +144,13 @@ pub(super) fn start(
     startup.StartupInfo.dwFlags = STARTF_USESTDHANDLES;
     startup.StartupInfo.hStdInput = stdin;
     startup.StartupInfo.hStdOutput = stdout;
-    startup.StartupInfo.hStdError = inherited.get(2).copied().unwrap_or(0);
+    // Named, never found by its place in the inherited list: with no
+    // standard error, the third handle there is the interface's channel
+    // to the broker, and as its standard error the interface's first
+    // report went into that channel and it ended at once, as did the whole
+    // browser started from the Start menu (measured in the Windows virtual
+    // machine on 4 November 2026).
+    startup.StartupInfo.hStdError = stderr;
     startup.lpAttributeList = attributes.list;
     let program = wide(spawn.program);
     let mut line = command_line(spawn.program.as_os_str(), spawn.arguments);
