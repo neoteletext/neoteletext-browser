@@ -401,9 +401,21 @@ impl Core {
         self.open_page(key, subpage)
     }
 
-    /// A tab behind others was redirected to `key`: its channel is told.
+    /// A program redirected `key`'s tab to `key` and `sub`: the server took
+    /// it as the tab's selection (neoteletext-app-server's REQ-1472 item 4),
+    /// so the tab's is the same, with nothing sent but what was held let go.
+    #[cfg(feature = "interaction")]
     pub(super) fn select_redirected(&mut self, key: PageKey, sub: u16) -> Result<(), String> {
-        self.select_view(key, sub)
+        let tab = self.session.all_tabs().find(|tab| tab.channel.id == key.channel);
+        let parameters = tab.and_then(|tab| tab.address()).map(|address| address.parameters_of(key.page, sub).to_owned()).unwrap_or_default();
+        let sends = self.typing.redirected(key.channel, key.page, sub, &parameters, self.now_us());
+        self.deliver_typing(sends)
+    }
+
+    #[cfg(not(feature = "interaction"))]
+    #[expect(clippy::unnecessary_wraps, clippy::unused_self, reason = "SELECT is input, compiled out")]
+    pub(super) fn select_redirected(&mut self, _key: PageKey, _sub: u16) -> Result<(), String> {
+        Ok(())
     }
 
     /// Says again what `channel`'s tab selects.

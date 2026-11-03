@@ -411,3 +411,26 @@ fn a_redirect_to_another_channel_follows_the_same_rules() {
     };
     assert_eq!(hop_after(acted), [(LIVE.to_owned(), false), there], "input: an entry");
 }
+
+// REQ-1472 item 4, DEC-1683, TODO-1531 item 2: the server records a program's
+// page redirect as the connection's selection, exactly as a SELECT would, so
+// the tab makes the page and sub-code its selection and sends no SELECT of its
+// own, whether the page was open, another page, or the tab is behind others.
+#[test]
+fn a_page_redirect_is_the_selection_with_no_select_sent() {
+    use super::super::super::test_support::{selects_sent, wire};
+    let (mut test, channel) = live("no select");
+    let written = wire(&mut test.core, channel);
+    redirected(&mut test, channel, 0x200, 2);
+    test.core.intent(ToCore::Opened(Some(PageKey { channel, page: 0x200 }))).unwrap();
+    assert_eq!(test.core.typing.selection(channel), Some((0x200, 2)));
+    assert_eq!(selects_sent(&mut test.core, channel, &written), [], "another page");
+    redirected(&mut test, channel, 0x200, 3);
+    assert_eq!(test.core.typing.selection(channel), Some((0x200, 3)));
+    assert_eq!(selects_sent(&mut test.core, channel, &written), [], "another sub-page of the page open");
+    test.core.session.open("https://other.invalid/").unwrap();
+    let _ = test.sent();
+    redirected(&mut test, channel, 0x300, SUBCODE_ANY);
+    assert_eq!(test.core.typing.selection(channel), Some((0x300, SUBCODE_ANY)));
+    assert_eq!(selects_sent(&mut test.core, channel, &written), [], "a tab behind others");
+}
