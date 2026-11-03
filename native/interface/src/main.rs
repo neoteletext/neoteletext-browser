@@ -43,6 +43,10 @@ fn main() -> std::process::ExitCode {
     // The browser's own menu bar replaces winit's (decision 84).
     #[cfg(target_os = "macos")]
     winit::platform::macos::EventLoopBuilderExtMacOS::with_default_menu(&mut builder, false);
+    // Started to run beside the person's work, it is activated only if no
+    // other application is (TODO-1258).
+    #[cfg(target_os = "macos")]
+    winit::platform::macos::EventLoopBuilderExtMacOS::with_activate_ignoring_other_apps(&mut builder, !neoteletext_interface::in_background());
     let Ok(event_loop) = builder.build() else {
         eprintln!("neoteletext-interface: cannot open the event loop");
         return std::process::ExitCode::FAILURE;
