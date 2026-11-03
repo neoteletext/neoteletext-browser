@@ -36,7 +36,7 @@ pub fn write_frame_to_core(out: &mut dyn Write, page: u16, palette: &[[u8; 3]], 
 /// A frame's page, palette and screen colour, its indices checked against
 /// the palette; the indices are the payload's tail, which the caller moves.
 pub(super) fn read_frame(fields: &mut Fields<'_>) -> Result<(u16, Vec<[u8; 3]>, u8), ProtocolError> {
-    let page = fields.display_page()?;
+    let page = fields.channel_page()?;
     let colours = usize::from(fields.u8()?);
     if colours == 0 || colours > MAX_COLOURS {
         return Err(ProtocolError::BadValue("palette size"));

@@ -944,11 +944,15 @@ mod tests {
         collect(Output::Event(Event::Redirect(RedirectRecord::Address("file:///etc/passwd"))), &mut actions);
         assert!(matches!(&actions[0], Action::Tell(FromFetcher::PageRedirect { page: 0x302, sub: 2, query: None })));
         assert!(matches!(&actions[1], Action::Tell(FromFetcher::ProgramRedirect(address)) if address == "file:///etc/passwd"));
-        // A page the engine reads and this browser has no slot for goes to
-        // the log, as any other event: the pipe's reader would refuse it.
+        // REQ-300: a page with a hexadecimal digit is a page like any
+        // other. A number the standard reserves goes to the log, as any
+        // other event: the pipe's reader would refuse it.
         let lettered = PageAddress::from_mpp(0x1A0).unwrap();
         collect(Output::Event(Event::Redirect(RedirectRecord::Page { page: lettered, subcode: SubCode::new(2), parameters: None })), &mut actions);
-        assert!(matches!(&actions[2], Action::Tell(FromFetcher::Notice(_))));
+        assert!(matches!(&actions[2], Action::Tell(FromFetcher::PageRedirect { page: 0x1A0, sub: 2, query: None })));
+        let reserved = PageAddress::from_mpp(0x1FE).unwrap();
+        collect(Output::Event(Event::Redirect(RedirectRecord::Page { page: reserved, subcode: SubCode::new(2), parameters: None })), &mut actions);
+        assert!(matches!(&actions[3], Action::Tell(FromFetcher::Notice(_))));
     }
 
     /// REQ-701: a channel's settings file redirected out of the channel is

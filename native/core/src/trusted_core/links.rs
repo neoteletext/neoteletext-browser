@@ -115,6 +115,12 @@ impl Core {
                 Ok(())
             }
             Ok(Follow::Page(page)) => self.follow_page(page, None),
+            Ok(Follow::InitialPage) => {
+                // The channel's own initial page, or 100 when it names none
+                // (the engine's REQ-SVC-004; EN 300 706 Annex E.15).
+                let initial = self.session.active_tab().and_then(|tab| tab.channel.initial_page);
+                self.follow_page(initial.unwrap_or(neoteletext_core::limits::PAGE_HOME), None)
+            }
             Ok(Follow::SubPage(page, subpage)) => self.follow_page(page, Some(subpage)),
             Ok(Follow::Ask(prompt)) => self.link(LinkMessage::Prompt(Some(prompt))),
             Ok(Follow::Channel(address)) => {

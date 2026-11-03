@@ -395,6 +395,33 @@ mod tests {
         }
     }
 
+    /// DEC-2364, REQ-847: when nothing answers for the home address, as
+    /// with no network, the built-in start page opens in its place, and
+    /// Back tries the home again; another address that nothing answers
+    /// stays, saying so, and so does a home that answered with a refusal.
+    /// On the code before, the home channel's tab said "Channel not
+    /// reached" and offered nothing.
+    #[cfg(unix)]
+    #[test]
+    fn an_unreached_home_opens_the_start_page_in_its_place() {
+        use interface_core::browser::Failed;
+        use protocol::fetcher::RefusedFile;
+        let home = neoteletext::address::HOME_CHANNEL;
+        for (address, status, falls_back) in [(home, None, true), (home, Some(503), false), ("https://news.invalid/teletext/", None, false)] {
+            let (mut core, _stand_in) = super::super::test_support::core_on(address);
+            let channel = core.active_channel().unwrap();
+            core.fetched(channel, FromFetcher::Refused { file: RefusedFile::Channel, status }).unwrap();
+            let shown = core.session.active_tab().unwrap().address().unwrap().clone();
+            assert_eq!(shown.is_start_page(), falls_back, "{address} {status:?}");
+            if falls_back {
+                core.intent(protocol::ToCore::Back).unwrap();
+                assert_eq!(core.session.active_tab().unwrap().address().unwrap().text, home, "Back tries the home again");
+            } else {
+                assert_eq!(core.strip().failed, Some(Failed::Channel(status)));
+            }
+        }
+    }
+
     /// REQ-708: a refused page is said for the page open and for no other,
     /// and never over a page that has arrived; another page takes it away,
     /// and a page drawn ends it. A bundle or a contents file is missed, not

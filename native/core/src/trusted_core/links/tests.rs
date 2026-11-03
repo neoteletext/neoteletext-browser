@@ -100,7 +100,13 @@ fn a_coloured_key_and_index_to_another_channel_go_at_once() {
         let channel = viewer.key.channel;
         viewer.core.links.descriptor(channel, &[], &[Service { name: "weather".into(), address: ELSEWHERE.into() }]);
         let target = Some(FastextTarget { page: 0x100, subcode: None, service: Some(0) });
-        viewer.page(Vec::new(), Vec::new(), Fastext { keys: [target, target, target, target, target], row24: true, prompts: [None; 4] }, VERSION, 0);
+        viewer.page(
+            Vec::new(),
+            Vec::new(),
+            Fastext { keys: [target, target, target, target, target], row24: true, linked: true, prompts: [None; 4] },
+            VERSION,
+            0,
+        );
         viewer.core.intent(ToCore::PageControl(PageControl::Fastext(key))).unwrap();
         viewer.went("https://weather.invalid/teletext/100", HOME);
     }
@@ -201,4 +207,78 @@ fn a_click_where_the_core_holds_no_link_moves_nothing() {
     viewer.page(Vec::new(), Vec::new(), Fastext::default(), VERSION, 0);
     viewer.click(VERSION);
     assert_eq!(viewer.address(), HOME);
+}
+
+/// A page with a hexadecimal digit, which only a link reaches.
+const HEXADECIMAL: u16 = 0x1A0;
+
+// REQ-300, REQ-313: a coloured key whose target is page 1A0 follows it,
+// and the tab shows that page: its address names it, the interface is told
+// to show it, and Back returns through it.
+#[test]
+fn a_coloured_key_to_a_hexadecimal_page_opens_it() {
+    let (mut core, _stand_in, written) = super::super::test_support::core_watched(HOME);
+    let channel = core.session.tabs[0].channel.id;
+    let key = PageKey { channel, page: PAGE };
+    core.intent(ToCore::Opened(Some(key))).unwrap();
+    let address = core.session.tabs[0].address().unwrap().clone();
+    let target = Some(FastextTarget { page: HEXADECIMAL, subcode: None, service: None });
+    core.links.found(
+        key,
+        Vec::new(),
+        Vec::new(),
+        Vec::new(),
+        Fastext { keys: [target, None, None, None, None], row24: true, linked: true, prompts: [None; 4] },
+    );
+    core.links.image(key, VERSION, &Channel { id: channel, address: &address }, 0);
+    assert_eq!(core.links.fastext_keys(key), [true, false, false, false, false]);
+    super::super::test_support::sent_to_interface(&mut core, &written);
+    core.intent(ToCore::PageControl(PageControl::Fastext(FastextKey::Red))).unwrap();
+    assert_eq!(core.session.active_tab().unwrap().address().unwrap().text, "https://news.invalid/teletext/1A0");
+    let shown = PageKey { channel, page: HEXADECIMAL };
+    assert!(super::super::test_support::sent_to_interface(&mut core, &written).contains(&protocol::ToInterface::Show(shown)), "the page is shown");
+    core.intent(ToCore::Opened(Some(shown))).unwrap();
+    assert_eq!(core.controls.open_page(channel), Some(HEXADECIMAL), "the page open");
+    core.intent(ToCore::Back).unwrap();
+    assert_eq!(core.session.active_tab().unwrap().address().unwrap().text, HOME, "Back returns through it");
+}
+
+// REQ-300: a text link to page 1A0 is a link, and clicking it opens the
+// page.
+#[test]
+fn a_text_link_to_a_hexadecimal_page_opens_it() {
+    let mut viewer = Viewer::on(HOME);
+    viewer.page(vec![link("1A0")], Vec::new(), Fastext::default(), VERSION, 0);
+    viewer.click(VERSION);
+    assert_eq!(viewer.address(), "https://news.invalid/teletext/1A0");
+}
+
+// REQ-286: on a page with no links at all, Index requests the channel's
+// initial page, 100 when the channel names none.
+#[test]
+fn index_on_a_page_with_no_links_opens_the_initial_page() {
+    for (initial, expected) in [(Some(0x302), "https://news.invalid/teletext/302"), (None, HOME)] {
+        let mut viewer = Viewer::on("https://news.invalid/teletext/200");
+        viewer.key = PageKey { channel: viewer.key.channel, page: 0x200 };
+        viewer.core.intent(ToCore::Opened(Some(viewer.key))).unwrap();
+        viewer.core.session.tabs[0].channel.initial_page = initial;
+        viewer.page(Vec::new(), Vec::new(), Fastext { keys: [None; 5], row24: false, linked: false, prompts: [None; 4] }, VERSION, 0);
+        assert_eq!(viewer.core.links.fastext_keys(viewer.key), [false, false, false, false, true], "Index leads somewhere");
+        viewer.core.intent(ToCore::PageControl(PageControl::Fastext(FastextKey::Index))).unwrap();
+        assert_eq!(viewer.address(), expected);
+    }
+}
+
+// REQ-286: a page that has links, here coloured ones whose row 24 is not
+// shown, and no Index link leaves Index without effect.
+#[test]
+fn index_on_a_page_with_links_and_no_index_link_does_nothing() {
+    let start = "https://news.invalid/teletext/200";
+    let mut viewer = Viewer::on(start);
+    viewer.key = PageKey { channel: viewer.key.channel, page: 0x200 };
+    viewer.core.intent(ToCore::Opened(Some(viewer.key))).unwrap();
+    viewer.page(Vec::new(), Vec::new(), Fastext { keys: [None; 5], row24: false, linked: true, prompts: [None; 4] }, VERSION, 0);
+    assert_eq!(viewer.core.links.fastext_keys(viewer.key), [false; 5]);
+    viewer.core.intent(ToCore::PageControl(PageControl::Fastext(FastextKey::Index))).unwrap();
+    assert_eq!(viewer.address(), start);
 }

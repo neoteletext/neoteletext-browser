@@ -37,7 +37,7 @@
 NeoTeletext is an application for browsing teletext, on desktops, then phones, and with features cut on microcontrollers.
 
 - **Teletext** is the page-based information service defined by the European Telecommunications Standards Institute standard EN 300 706, "Enhanced Teletext specification". A copy is at `~/devel/teletext-reference/teletext-standards/en_300706v010201o.pdf`.
-- **Every tab is one teletext channel.** A teletext channel is one teletext service: eight magazines, numbered 1 to 8, each with pages numbered 00 to FF in hexadecimal, and each page with subpages. NeoTeletext shows pages 100 to 899.
+- **Every tab is one teletext channel.** A teletext channel is one teletext service: eight magazines, numbered 1 to 8, each with pages numbered 00 to FF in hexadecimal, and each page with subpages. A viewer keys pages 100 to 899, which the lists and the overview hold; a page with a hexadecimal digit, such as 1A0, is reached by a link and drawn like any other (REQ-300, REQ-313), and every number but those Annex A.10 of the standard reserves is a page (`interface_core::channel::is_channel_page`).
 - **A channel comes from the web or from a file.** On the web a channel is a folder on a server (the engine's `docs/spec/requirements/web.md`); a file is a recording or a folder of page files on this computer.
 - **Every image on screen is one teletext page,** rendered by the teletext engine at the native raster and scaled by the interface.
 - **The interface is drawn by NeoTeletext's own Rust code, with no web engine.** It draws on the processor, so it needs no graphics processor, and it shows many pages at once and animates between them.
@@ -320,7 +320,7 @@ The application loads only resources that are part of a teletext service (decisi
 | **Contents file** (`contents.txt`) | The engine's contents reader | Fetcher | A bounded, typed list of sections and pages |
 | **Discovery** (HyperText Markup Language) | The engine's discovery reader | Fetcher, not built | — |
 
-Discovery's security analysis was the engine's `docs/web-discovery-security.md`, in its git history since 18 October 2026; its requirements are in the engine's `docs/spec/requirements/web.md`. Its results are never loaded directly: each is shown to the user, and a chosen one is a page-initiated navigation (REQ-694).
+Discovery's design is `discovery.md` and its security analysis `discovery-security.md` (3 November 2026), which take over the engine's `docs/web-discovery-security.md`, in its git history since 18 October 2026. Its results are never loaded directly: each is shown to the user in the strip, and a chosen one is a page-initiated navigation (REQ-694). It is not built: DEC-1722 item 1 leaves it no address to run on until the owner answers DEC-2374, and the engine has no link-pointer reader yet (the engine's TODO-2376).
 
 ### 7.2 Transports
 
@@ -666,7 +666,7 @@ Unsafe code is allowed only in the modules requirement 10.12 names, each saying 
 - The wall on a live channel (31 October 2026; REQ-1558, REQ-1559): each tab's decoder keeps, over the engine's store, which pushed pages and sub-pages it holds, at most 128, how old each is and when it was last drawn (`native/decoder/src/page_cache.rs`, the `page-cache` feature). The source is the store's packets; nothing is an image. An entry older than 24 hours is dropped as it is about to be drawn. The decoder tells the trusted core which pages on screen it cannot draw, and the core selects them with the ordinary SELECT, one at a time in screen order, each after its frame or the channel's 5-second limit for answering, then SELECT page 0 (`native/core/src/trusted_core/wall_fill.rs`). The wall lays out at most 128 tiles. An entry dropped leaves its store slot until the engine reuses it: the engine's store has no removal, so the store's own size bounds that memory, not the cache's.
 - Hyperlinks, phases 1 and 2 of `hyperlinks.md` (20 October 2026), behind the `links` feature, on by default: page numbers found in the text and `LT`, `LK` and descriptor links, decided by the trusted core; the underline drawn by the interface; the destination and the web-browser prompt in the strip; the hand-off to the system's web browser (`web-opener`); `#302` page addresses.
 - Channel push over WebSocket, typing back to a channel, its cursor and the phone keyboard (`interaction.md`, decisions 45 and 46, 20 October 2026); input protocol version 2 (decision 48) and pasting into a page that takes input (decision 49), 21 October 2026.
-- Settings kept between runs with the bookmarks, the settings panel of the strip, Home and the start page `neoteletext:home`, the developer console, and HTTP and SOCKS5 proxies (`settings-home-console-proxy.md`, decision 51, 21 October 2026).
+- Settings kept between runs with the bookmarks, the settings panel of the strip, Home and the start page `neoteletext:home`, the developer console, and HTTP and SOCKS5 proxies (`settings-home-console-proxy.md`, decision 51, 21 October 2026). Since DEC-1652 the default home, which a new browser and a new tab open, is the home channel at `https://app.neottx.com/home/` (`HOME_CHANNEL` in `native/core/src/address.rs`); the built-in start page needs no network and opens in its place when nothing answers for it (DEC-2364).
 - History and bookmarks (`history-and-bookmarks.md`, decision 57, 22 October 2026): history kept 90 days with its panel, search and removal, private tabs, recently closed tabs, Back and Forward lists, address-field suggestions; bookmarks in folders with the star's popover, a manager, a bookmarks bar, import and export in this browser's format; the menu button's menu.
 - The session kept after every change and restored at start, with its setting (`history-and-bookmarks.md` section 15, decision 59, 22 October 2026).
 - The Colour Map of Levels 2.5 and 3.5 and the screen colour (decision 60), and page images in the browser's own form (decision 61), 22 October 2026.
@@ -699,7 +699,7 @@ Unsafe code is allowed only in the modules requirement 10.12 names, each saying 
 - The hostile interface harness with the real helpers running (it runs against the trusted core with a stand-in broker and stand-in helpers).
 - A release signed by the owner's keys: the certificates, the hardware keys, the update host and the key ceremony are the owner's (rdm to-dos for the owner); the Linux release build on the C library 2.28.
 - Builds on phones and microcontroller targets.
-- Page numbers with a hexadecimal digit, which decision 119 accepts (`STANDARD-LIMITS.md` question 3); a server's catalogue of sub-pages, its titles by range and tuning by sub-page (decision 112 item 3), which await the server; a channel's IMA ADPCM and PCM16 sound on the desktops, by the owner's instruction (decision 121 item 7).
+- A server's catalogue of sub-pages, its titles by range and tuning by sub-page (decision 112 item 3), which await the server; a channel's IMA ADPCM and PCM16 sound on the desktops, by the owner's instruction (decision 121 item 7).
 
 ---
 

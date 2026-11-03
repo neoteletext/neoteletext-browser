@@ -6,7 +6,7 @@
 
 use std::io::{Read, Write};
 
-use interface_core::channel::{PAGES, page_index};
+use interface_core::channel::PAGES;
 
 use crate::frame::PAGE_DOTS;
 use crate::subpages::{SubPageRange, SubPageRows, SubPageStep};
@@ -265,7 +265,7 @@ pub fn write_to_decoder(out: &mut dyn Write, message: &ToDecoder) -> Result<(), 
             for page in pages {
                 // Only display pages, as the decoder reads them: any other
                 // is refused there, and the decoder restarts (finding F-29).
-                page_index(*page).ok_or(ProtocolError::BadValue("page number"))?;
+                crate::fields::check_page(*page)?;
                 payload.extend_from_slice(&page.to_be_bytes());
             }
             KIND_SHOWING
@@ -273,7 +273,7 @@ pub fn write_to_decoder(out: &mut dyn Write, message: &ToDecoder) -> Result<(), 
         ToDecoder::Close => KIND_CLOSE,
         ToDecoder::Opened(page) => {
             if let Some(page) = page {
-                page_index(*page).ok_or(ProtocolError::BadValue("page number"))?;
+                crate::fields::check_page(*page)?;
                 payload.extend_from_slice(&page.to_be_bytes());
             }
             KIND_OPENED
@@ -296,14 +296,14 @@ pub fn write_to_decoder(out: &mut dyn Write, message: &ToDecoder) -> Result<(), 
             KIND_VIEW
         }
         ToDecoder::SubPageRows { page, range } => {
-            page_index(*page).ok_or(ProtocolError::BadValue("page number"))?;
+            crate::fields::check_page(*page)?;
             payload.extend_from_slice(&page.to_be_bytes());
             crate::subpages::push_range(&mut payload, *range, SUBPAGE_ROWS)?;
             KIND_ASK_SUBPAGE_ROWS
         }
         #[cfg(feature = "links")]
         ToDecoder::Look { page, look } => {
-            page_index(*page).ok_or(ProtocolError::BadValue("page number"))?;
+            crate::fields::check_page(*page)?;
             payload.extend_from_slice(&page.to_be_bytes());
             if let Some((area, pressed)) = look {
                 crate::links::push_area(&mut payload, *area);
@@ -358,10 +358,10 @@ pub fn read_from_core(input: &mut dyn Read) -> Result<Option<ToDecoder>, Protoco
         KIND_END => ToDecoder::End,
         KIND_SHOWING => {
             let count = fields.count_u16(PAGES, "too many pages")?;
-            ToDecoder::Showing((0..count).map(|_| fields.display_page()).collect::<Result<_, _>>()?)
+            ToDecoder::Showing((0..count).map(|_| fields.channel_page()).collect::<Result<_, _>>()?)
         }
         KIND_CLOSE => ToDecoder::Close,
-        KIND_OPENED => ToDecoder::Opened(if payload.is_empty() { None } else { Some(fields.display_page()?) }),
+        KIND_OPENED => ToDecoder::Opened(if payload.is_empty() { None } else { Some(fields.channel_page()?) }),
         KIND_WHOLE => {
             let flags = fields.u8()?;
             if flags > 3 {
@@ -376,12 +376,12 @@ pub fn read_from_core(input: &mut dyn Read) -> Result<Option<ToDecoder>, Protoco
         KIND_REGION => ToDecoder::Region(read_region(&mut fields)?),
         KIND_VIEW => ToDecoder::View(view::read_view(&mut fields)?),
         KIND_ASK_SUBPAGE_ROWS => {
-            let page = fields.display_page()?;
+            let page = fields.channel_page()?;
             ToDecoder::SubPageRows { page, range: crate::subpages::read_range(&mut fields, SUBPAGE_ROWS)? }
         }
         #[cfg(feature = "links")]
         KIND_LOOK => {
-            let page = fields.display_page()?;
+            let page = fields.channel_page()?;
             let look = if fields.is_empty() { None } else { Some((crate::links::read_area(&mut fields)?, fields.flag("pressed")?)) };
             ToDecoder::Look { page, look }
         }
@@ -421,13 +421,13 @@ pub fn write_to_core(out: &mut dyn Write, message: &FromDecoder) -> Result<(), P
             KIND_LINKS
         }
         FromDecoder::SubPages { page, step } => {
-            page_index(*page).ok_or(ProtocolError::BadValue("page number"))?;
+            crate::fields::check_page(*page)?;
             payload.extend_from_slice(&page.to_be_bytes());
             crate::subpages::push_step(&mut payload, step)?;
             KIND_SUBPAGES
         }
         FromDecoder::SubPageCount { page, count } => {
-            page_index(*page).ok_or(ProtocolError::BadValue("page number"))?;
+            crate::fields::check_page(*page)?;
             if usize::from(*count) > neoteletext_core::limits::MAX_SUBPAGES {
                 return Err(ProtocolError::BadValue("too many sub-pages"));
             }
@@ -436,7 +436,7 @@ pub fn write_to_core(out: &mut dyn Write, message: &FromDecoder) -> Result<(), P
             KIND_SUBPAGE_COUNT
         }
         FromDecoder::SubPageRows { page, rows } => {
-            page_index(*page).ok_or(ProtocolError::BadValue("page number"))?;
+            crate::fields::check_page(*page)?;
             payload.extend_from_slice(&page.to_be_bytes());
             // The decoder's titles are untrusted: cut to length here and
             // cleaned by the trusted core.
@@ -464,7 +464,7 @@ pub fn write_to_core(out: &mut dyn Write, message: &FromDecoder) -> Result<(), P
         FromDecoder::Missing(pages) => {
             push_count(&mut payload, pages.len(), PAGES, "too many pages")?;
             for page in pages {
-                page_index(*page).ok_or(ProtocolError::BadValue("page number"))?;
+                crate::fields::check_page(*page)?;
                 payload.extend_from_slice(&page.to_be_bytes());
             }
             KIND_MISSING
@@ -495,7 +495,7 @@ pub fn read_from_decoder(input: &mut dyn Read) -> Result<Option<FromDecoder>, Pr
     let mut fields = Fields::new(&payload);
     let message = match kind {
         KIND_ARRIVED => {
-            let page = fields.display_page()?;
+            let page = fields.channel_page()?;
             FromDecoder::Arrived { page, title: raw_text(&mut fields, MAX_PAGE_TITLE, "title too long")? }
         }
         KIND_FRAME => {
@@ -504,26 +504,26 @@ pub fn read_from_decoder(input: &mut dyn Read) -> Result<Option<FromDecoder>, Pr
             let offset = payload.len().saturating_sub(PAGE_DOTS);
             return Ok(Some(FromDecoder::Frame { page, palette, screen, indices: crate::tail(payload, offset) }));
         }
-        KIND_UPDATED => FromDecoder::Updated { page: fields.display_page()? },
+        KIND_UPDATED => FromDecoder::Updated { page: fields.channel_page()? },
         KIND_AUDIO => FromDecoder::Audio(crate::audio::read(&mut fields, crate::audio::Sender::Decoder)?),
         #[cfg(feature = "links")]
         KIND_LINKS => {
-            let page = fields.display_page()?;
+            let page = fields.channel_page()?;
             let with_image = fields.flag("with image")?;
             let (candidates, numbers, controls) = crate::links::read_found(&mut fields)?;
             let fastext = crate::links::read_fastext(&mut fields)?;
             FromDecoder::Links { page, with_image, candidates, numbers, controls, fastext }
         }
         KIND_SUBPAGES => {
-            let page = fields.display_page()?;
+            let page = fields.channel_page()?;
             FromDecoder::SubPages { page, step: crate::subpages::read_step(&mut fields)? }
         }
         KIND_SUBPAGE_COUNT => {
-            let page = fields.display_page()?;
+            let page = fields.channel_page()?;
             FromDecoder::SubPageCount { page, count: crate::subpages::read_count(&mut fields)? }
         }
         KIND_SUBPAGE_ROWS => {
-            let page = fields.display_page()?;
+            let page = fields.channel_page()?;
             let rows = crate::subpages::read_rows(&mut fields, SUBPAGE_ROWS, |fields| raw_text(fields, MAX_PAGE_TITLE, "title too long"))?;
             FromDecoder::SubPageRows { page, rows }
         }
@@ -542,7 +542,7 @@ pub fn read_from_decoder(input: &mut dyn Read) -> Result<Option<FromDecoder>, Pr
         KIND_STORE_FULL => FromDecoder::StoreFull,
         KIND_MISSING => {
             let count = fields.count_u16(PAGES, "too many pages")?;
-            FromDecoder::Missing((0..count).map(|_| fields.display_page()).collect::<Result<_, _>>()?)
+            FromDecoder::Missing((0..count).map(|_| fields.channel_page()).collect::<Result<_, _>>()?)
         }
         KIND_BOOKMARK_FOLDER | KIND_BOOKMARK_FOLDER_END | KIND_BOOKMARK_LINK => FromDecoder::Bookmark(bookmarks::read_entry(kind, &mut fields)?),
         KIND_BOOKMARKS_READ => FromDecoder::BookmarksRead { skipped: fields.u32()? },
@@ -550,7 +550,7 @@ pub fn read_from_decoder(input: &mut dyn Read) -> Result<Option<FromDecoder>, Pr
             let level = crate::console::level_from_byte(fields.u8()?)?;
             let page = match fields.u16()? {
                 NO_PAGE => None,
-                page => Some(page_index(page).map(|_| page).ok_or(ProtocolError::BadValue("page number"))?),
+                page => Some(crate::fields::check_page(page).map(|()| page)?),
             };
             FromDecoder::ChannelLog { level, page, text: raw_text(&mut fields, MAX_CHANNEL_LOG, "log line too long")? }
         }

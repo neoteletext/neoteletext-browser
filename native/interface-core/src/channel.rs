@@ -1,8 +1,9 @@
 //! A channel as the interface shows it: its banks and the status of each of
 //! its 800 pages. Teletext pages run from 100 to 899 in eight banks, one
-//! per magazine; a page number is three digits, the magazine and two
-//! decimal digits (EN 300 706 clause 7.1.2; numbers with the digits A to F
-//! are not pages for display).
+//! per magazine; a page number a viewer keys is three digits, the magazine
+//! and two decimal digits (EN 300 706 clause 7.1.2). Numbers with the
+//! digits A to F are pages too, reached by links alone, with no place in
+//! the lists ([`is_channel_page`]).
 
 use alloc::string::String;
 use alloc::vec;
@@ -66,6 +67,24 @@ pub fn page_index(page: u16) -> Option<usize> {
     }
     let within = usize::from(tens).saturating_mul(usize::from(DECIMAL)).saturating_add(usize::from(ones));
     Some(bank_indices(usize::from(magazine.saturating_sub(1))).start.saturating_add(within))
+}
+
+/// Whether `page`, in the form `0xMPP`, is a page a channel may have and
+/// a link may lead to: magazine 1 to 8, both digits 0 to F, and not a
+/// number the standard reserves for another function (EN 300 706 clause
+/// 9.1, Table 1, note; Annex A.10). A page with a hexadecimal digit is
+/// reached by a link and never keyed (TR 100 287 clause 10.1), so it has
+/// no slot in [`page_index`]'s 800, which stays the keyable set.
+#[must_use]
+pub fn is_channel_page(page: u16) -> bool {
+    use neoteletext_core::limits::{FIRST_PAGE_ADDRESS, LAST_PAGE_ADDRESS, MPP_MAGAZINE_SHIFT, is_reserved_page};
+    // The magazine is the high byte of `0xMPP`, the page number the low.
+    const _: () = assert!(MPP_MAGAZINE_SHIFT == u8::BITS);
+    if !(FIRST_PAGE_ADDRESS..=LAST_PAGE_ADDRESS).contains(&page) {
+        return false;
+    }
+    let [magazine, number] = page.to_be_bytes();
+    !is_reserved_page(magazine, number)
 }
 
 /// The indices of bank `bank`'s pages (0 to 7, magazines 1 to 8).
@@ -135,5 +154,29 @@ mod tests {
         assert_eq!(page_index(0x1A0), None, "a hexadecimal page is not a display page");
         assert_eq!(page_index(0x900), None);
         assert_eq!(page_index(0x099), None);
+    }
+
+    // REQ-300: every address the standard defines is a page a channel may
+    // have, each magazine's 00 to FC but for the numbers Annex A.10
+    // reserves; nothing outside magazines 1 to 8 is.
+    #[test]
+    fn every_page_the_standard_defines_is_a_channel_page() {
+        let mut pages = 0;
+        for magazine in 1..=8_u16 {
+            for number in 0..=0xFF_u16 {
+                let page = magazine << 8 | number;
+                let reserved = [0xFD, 0xFE, 0xFF].contains(&number) || page == 0x1BE || page == 0x1F0;
+                assert_eq!(is_channel_page(page), !reserved, "page {page:03X}");
+                pages += usize::from(!reserved);
+            }
+        }
+        assert_eq!(pages, neoteletext_core::limits::USABLE_PAGE_NUMBERS);
+        for index in 0..PAGES {
+            assert!(is_channel_page(page_number(index).unwrap()), "every keyable page is a channel's");
+        }
+        for outside in [0x000, 0x0FF, 0x900, 0xFFFF] {
+            assert!(!is_channel_page(outside), "{outside:X}");
+        }
+        assert!(is_channel_page(0x1A0));
     }
 }

@@ -65,7 +65,7 @@ pub(super) fn push_page(payload: &mut Vec<u8>, channel: u32, page: u16, title: &
 
 pub(super) fn read_page(fields: &mut Fields<'_>) -> Result<(u32, u16, String), ProtocolError> {
     let channel = fields.u32()?;
-    let page = fields.display_page()?;
+    let page = fields.channel_page()?;
     Ok((channel, page, fields.text(MAX_PAGE_TITLE)?))
 }
 
@@ -77,7 +77,7 @@ pub(super) fn push_updated(payload: &mut Vec<u8>, channel: u32, page: u16) {
 
 pub(super) fn read_updated(fields: &mut Fields<'_>) -> Result<(u32, u16), ProtocolError> {
     let channel = fields.u32()?;
-    let page = fields.display_page()?;
+    let page = fields.channel_page()?;
     Ok((channel, page))
 }
 
@@ -127,14 +127,14 @@ pub(super) fn push_subpage_count(payload: &mut Vec<u8>, channel: u32, page: u16,
 /// Reads [`push_subpage_count`].
 pub(super) fn read_subpage_count(fields: &mut Fields<'_>) -> Result<(u32, u16, u16), ProtocolError> {
     let channel = fields.u32()?;
-    let page = fields.display_page()?;
+    let page = fields.channel_page()?;
     Ok((channel, page, crate::subpages::read_count(fields)?))
 }
 
 /// A run of a page's sub-pages: its channel, number and rows, each title
 /// cleaned.
 pub(super) fn push_subpage_rows(payload: &mut Vec<u8>, channel: u32, page: u16, rows: &SubPageRows) -> Result<(), ProtocolError> {
-    page_index(page).ok_or(ProtocolError::BadValue("page number"))?;
+    crate::fields::check_page(page)?;
     payload.extend_from_slice(&channel.to_be_bytes());
     payload.extend_from_slice(&page.to_be_bytes());
     crate::subpages::push_rows(payload, rows, SUBPAGE_ROWS, |payload, title| push_text(payload, title, MAX_PAGE_TITLE))
@@ -143,7 +143,7 @@ pub(super) fn push_subpage_rows(payload: &mut Vec<u8>, channel: u32, page: u16, 
 /// Reads [`push_subpage_rows`].
 pub(super) fn read_subpage_rows(fields: &mut Fields<'_>) -> Result<(u32, u16, SubPageRows), ProtocolError> {
     let channel = fields.u32()?;
-    let page = fields.display_page()?;
+    let page = fields.channel_page()?;
     let rows = crate::subpages::read_rows(fields, SUBPAGE_ROWS, |fields| fields.text(MAX_PAGE_TITLE))?;
     Ok((channel, page, rows))
 }
