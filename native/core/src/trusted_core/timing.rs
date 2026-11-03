@@ -8,7 +8,7 @@ use crate::source::Next;
 
 impl Core {
     /// Hands every running decoder as much of its channel's file as may be
-    /// queued for it, whether or not it is on screen (decision 22), so a
+    /// queued for it, whether or not it is on screen (DEC-1762), so a
     /// file the viewer opens is in its store at once (DEC-1762). What is
     /// handed over is not kept: the file is, and a new decoder is given it
     /// from its start.

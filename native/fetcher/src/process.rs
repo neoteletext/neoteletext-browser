@@ -1,7 +1,7 @@
 //! The fetcher's loop: the agent's output turned into actions on the
-//! sockets and messages for the trusted core, one page at a time in the
-//! contents file's order, and the trusted core's messages read on a
-//! thread of their own. The input messages of one moment reach the agent
+//! sockets and messages for the trusted core, each file the trusted core
+//! asks for as it is wanted (REQ-703), and the trusted core's messages read
+//! on a thread of their own. The input messages of one moment reach the agent
 //! together, so they leave in one write (REQ-RCH-010).
 
 use std::cell::RefCell;
@@ -18,8 +18,8 @@ use neoteletext_transport::web_address;
 #[cfg(feature = "interaction")]
 use neoteletext_web::agent::InputMessage;
 use neoteletext_web::agent::{Config, Event, Failure, Input, Output, Source, Storage, Subscription, UserAgent};
-use neoteletext_web::channel::SETTINGS_FILE;
-use neoteletext_web::consts::ALLOWED_LOCAL;
+use neoteletext_web::channel::{BUNDLE_FILE, SETTINGS_FILE};
+use neoteletext_web::consts::{ALLOWED_LOCAL, STATUS_GONE, STATUS_NOT_FOUND};
 use neoteletext_web::contents::{self, Entry as ContentsEntry};
 use neoteletext_web::http::MediaType;
 use neoteletext_web::port::{ConnectionId, NetOutput, Pump, Security, Transport};
@@ -34,7 +34,7 @@ use crate::agent::descriptor_links;
 use crate::agent::{Random, product};
 use crate::cookies;
 use crate::live::{LiveIndex, Noted, SubPageLists};
-use crate::transport::{AllowedLocal, Tcp};
+use crate::transport::Tcp;
 
 const _: () = assert!(protocol::fetcher::MAX_DENIED_PLACE == neoteletext_web::records::denied::MAX_PLACE, "the engine's longest place");
 const _: () = assert!(protocol::fetcher::MIN_REFRESH_SECONDS == neoteletext_web::descriptor::MIN_REFRESH_SECONDS, "the engine's shortest refresh");
@@ -118,8 +118,8 @@ enum Wake {
     /// (REQ-RCH-016).
     #[cfg(feature = "interaction")]
     RoundTrip(bool),
-    /// The trusted core asks for a page's catalogue of sub-pages, or for
-    /// one sub-page (decision 112).
+    /// The trusted core asks for the contents file, a page, a part of a
+    /// page's list of sub-pages, or one sub-page (REQ-703, decision 112).
     Fetch(ToFetcher),
     /// A socket has bytes, or has ended.
     Network,
@@ -157,8 +157,9 @@ enum Action {
     SubPages(PageAddress, PartNumber, Vec<u8>),
     /// A part of a page's list is current: the one kept is sent again.
     SubPagesCurrent(PageAddress, PartNumber),
-    /// The page asked for has been answered, one way or another.
-    Answered,
+    /// The bundle was answered, refused or found missing: what it held
+    /// has gone to the trusted core (REQ-703).
+    BundleSettled,
     /// A file was refused, for the trusted core to say (REQ-708).
     Refused(RefusedFile, Answer),
     /// A message for the trusted core as it is: a notice, or an exchange
@@ -212,7 +213,15 @@ impl Answer {
 }
 
 /// The status of the 404 that says a page is not in the service.
-const NOT_FOUND: u16 = 404;
+const NOT_FOUND: u16 = STATUS_NOT_FOUND;
+
+/// Whether an exchange says the channel has no bundle: `index.t42` answered
+/// 404 or 410, for which the agent says nothing more, as a channel without
+/// a bundle is still a channel (the engine's REQ-WEB-018). A bundle
+/// answered otherwise is said by its bytes or its refusal.
+fn bundle_missing(url: &str, status: u16) -> bool {
+    (status == STATUS_NOT_FOUND || status == STATUS_GONE) && url.rsplit('/').next() == Some(BUNDLE_FILE)
+}
 
 /// The refusal an event says, if it says one of a whole file: a sub-page's
 /// file is another page's business, and stored pages are not disturbed.
@@ -255,24 +264,27 @@ fn collect(output: Output<'_>, actions: &mut Vec<Action>) {
             _ => Origin::Fetched,
         };
         actions.push(Action::Bytes { origin, bytes: page.bytes.to_vec() });
-        // A bundle, a form's answer or a push is page bytes too; only a page
-        // fetch ends the wait for the next one.
-        if matches!(page.source, Source::Page { .. }) {
-            actions.push(Action::Answered);
+        // The bundle's pages have gone, so a page it lacks may be asked for.
+        if matches!(page.source, Source::FrontDoor) {
+            actions.push(Action::BundleSettled);
         }
         return;
     }
-    // Said to the trusted core by its role and status, and a page's ends the
-    // wait for the next one as well.
+    // Said to the trusted core by its role and status; a refused bundle has
+    // settled, and a refused contents file lists nothing.
     if let Output::Event(event) = output
         && let Some((file, answer)) = refusal(&event)
     {
         actions.push(Action::Refused(file, answer));
         match file {
-            RefusedFile::Page(_) => actions.push(Action::Answered),
+            RefusedFile::Bundle => actions.push(Action::BundleSettled),
             RefusedFile::Contents => actions.push(Action::Tell(FromFetcher::NoContents)),
-            RefusedFile::Channel | RefusedFile::Bundle => {}
+            RefusedFile::Channel | RefusedFile::Page(_) => {}
         }
+        return;
+    }
+    if let Output::Event(Event::Exchanged { method, url, status, bytes, elapsed_us }) = output {
+        exchanged(method, url, status, bytes, elapsed_us, actions);
         return;
     }
     // It ended for good and is not tried again (DOC-1920).
@@ -287,16 +299,11 @@ fn collect(output: Output<'_>, actions: &mut Vec<Action>) {
         Output::Event(Event::ServiceReady { initial_page, region, .. }) => Action::Ready(initial_page.mpp(), region),
         Output::Event(Event::Contents(bytes)) => Action::Contents(bytes.to_vec()),
         Output::Event(Event::ContentsMissing) => Action::Tell(FromFetcher::NoContents),
-        Output::Event(Event::PageCurrent { .. } | Event::PageNotInService { .. } | Event::FetchFailed { .. }) => Action::Answered,
+        // A page current, or a sub-page's file not there or failed, changes
+        // nothing the trusted core holds.
+        Output::Event(Event::PageCurrent { .. } | Event::PageNotInService { .. } | Event::FetchFailed { .. }) => return,
         Output::Event(Event::PushConnected) => Action::Push(true),
         Output::Event(Event::Denied(denied)) => Action::Tell(FromFetcher::Denied { status: denied.status, place: denied.place.to_owned() }),
-        Output::Event(Event::Exchanged { method, url, status, bytes, elapsed_us }) => Action::Tell(FromFetcher::Exchange {
-            method: String::from_utf8_lossy(method.token()).into_owned(),
-            url: url.to_owned(),
-            status,
-            bytes: u64::try_from(bytes).unwrap_or(u64::MAX),
-            elapsed_us,
-        }),
         // A lost connection waits before the next; a bad message that
         // keeps the connection says it is retried at once, and is not one.
         Output::Event(Event::PushLost { retry_in_us, problem }) if retry_in_us > 0 => {
@@ -356,6 +363,21 @@ fn collect(output: Output<'_>, actions: &mut Vec<Action>) {
     });
 }
 
+/// An exchange, for the developer console (the engine's REQ-WEB-033), and
+/// the bundle settled when it says there is none.
+fn exchanged(method: neoteletext_web::http::Method, url: &str, status: u16, bytes: usize, elapsed_us: u64, actions: &mut Vec<Action>) {
+    actions.push(Action::Tell(FromFetcher::Exchange {
+        method: String::from_utf8_lossy(method.token()).into_owned(),
+        url: url.to_owned(),
+        status,
+        bytes: u64::try_from(bytes).unwrap_or(u64::MAX),
+        elapsed_us,
+    }));
+    if bundle_missing(url, status) {
+        actions.push(Action::BundleSettled);
+    }
+}
+
 /// What a part of a page's list of sub-pages asks of the loop (REQ-1888).
 fn list_action(event: &Event<'_>) -> Option<Action> {
     Some(match *event {
@@ -370,21 +392,19 @@ fn list_action(event: &Event<'_>) -> Option<Action> {
     })
 }
 
-fn contents_entries(bytes: &[u8]) -> (Vec<Entry>, Vec<PageAddress>) {
+/// The contents file's sections and pages, as the engine's reader reads
+/// them. A page it lists is not fetched for being listed (REQ-703).
+fn contents_entries(bytes: &[u8]) -> Vec<Entry> {
     let mut entries = Vec::new();
-    let mut pages = Vec::new();
-    let Ok(read) = contents::read(bytes) else { return (entries, pages) };
+    let Ok(read) = contents::read(bytes) else { return entries };
     for entry in read.flatten() {
         match entry {
             ContentsEntry::Section { title } => entries.push(Entry::Section(title.to_owned())),
-            ContentsEntry::Page { page, title, .. } => {
-                entries.push(Entry::Page { page: page.mpp(), title: title.to_owned() });
-                pages.push(page);
-            }
+            ContentsEntry::Page { page, title, .. } => entries.push(Entry::Page { page: page.mpp(), title: title.to_owned() }),
             ContentsEntry::Channel { .. } => {}
         }
     }
-    (entries, pages)
+    entries
 }
 
 /// A part of a page's list of sub-pages, `NNN/P.sub`, read by the engine's
@@ -442,26 +462,40 @@ fn agent_config(allowed: &[IpAddr], proxied: bool) -> Config {
 }
 
 /// Holds the channel `channel`'s connections until the trusted core closes
-/// standard input: the engine's agent opens it, fetches its contents file
-/// and every page it lists, and holds its push connection; what arrives
-/// goes to the trusted core on standard output. A server on this computer
+/// standard input: the engine's agent opens it, which fetches `channel.ttx`
+/// and then a static channel's bundle, holds a live channel's push
+/// connection, and fetches each file the trusted core asks for as it is
+/// wanted (REQ-703); what arrives goes to the trusted core on standard
+/// output. A server on this computer
 /// or the local network is reached only when `allowed` names it. Its
 /// first message says it is confined, as `main.rs` has made it.
 ///
 /// # Errors
 /// When writing to the trusted core fails.
 pub fn run(channel: &str, allowed: &[IpAddr], proxy: Option<Proxy>) -> Result<(), String> {
-    // Before anything of the channel, so the trusted core can tell a
-    // fetcher that could not start from one its server ended (finding
-    // F-12).
-    let output: cookies::Output = Rc::new(RefCell::new(BufWriter::new(io::stdout())));
-    send(&output, &FromFetcher::Confined)?;
-    output.borrow_mut().flush().map_err(|error| error.to_string())?;
-    let mut storage = Box::new(Storage::default());
     let config = agent_config(allowed, proxy.is_some());
     // The transport refuses the same local addresses before connecting
     // (finding F-62).
     let allowed_local = config.allowed_local;
+    run_with(channel, config, |wake| Tcp::new(wake, proxy, allowed_local), Box::new(io::stdin()), Box::new(io::stdout()))
+}
+
+/// [`run`] with the agent's settings, the transport `transport` makes with
+/// the loop's waker, and the trusted core's pipes, which a test replaces.
+fn run_with(
+    channel: &str,
+    config: Config,
+    transport: impl FnOnce(crate::transport::Wake) -> Tcp,
+    input: Box<dyn Read + Send>,
+    output: Box<dyn Write>,
+) -> Result<(), String> {
+    // Before anything of the channel, so the trusted core can tell a
+    // fetcher that could not start from one its server ended (finding
+    // F-12).
+    let output: cookies::Output = Rc::new(RefCell::new(BufWriter::new(output)));
+    send(&output, &FromFetcher::Confined)?;
+    output.borrow_mut().flush().map_err(|error| error.to_string())?;
+    let mut storage = Box::new(Storage::default());
     let random = Random::new();
     let (wakes, woken) = mpsc::channel::<Wake>();
     // The trusted core's answers to the cookie questions, read by the same
@@ -469,13 +503,17 @@ pub fn run(channel: &str, allowed: &[IpAddr], proxy: Option<Proxy>) -> Result<()
     let (answers, answered) = mpsc::channel();
     let mut store = cookies::CoreCookies::new(Rc::clone(&output), answered);
     let mut agent: Box<Agent<'_>> = Box::new(UserAgent::with_cookies(config, storage.buffers(), random, &mut store));
-    let mut pump = sockets(wakes.clone(), proxy, allowed_local);
+    let network = wakes.clone();
+    let mut pump = Pump::new(transport(Arc::new(move || {
+        let _ = network.send(Wake::Network);
+    })));
     let start = Clock::now();
     let clock = || Instant(u64::try_from(start.elapsed().as_micros()).unwrap_or(u64::MAX));
     let mut buffer = vec![0_u8; READ_CHUNK];
     let mut next_tick: Option<Instant> = None;
-    let mut queue: VecDeque<PageAddress> = VecDeque::new();
-    let mut waiting = false;
+    // A static channel's bundle not yet settled: the trusted core is told
+    // once when it has (REQ-703).
+    let mut bundle_pending = false;
     let mut parts = Parts::default();
     let mut live = Live::default();
     // The status of the last response, for a refusal of its content.
@@ -485,7 +523,7 @@ pub fn run(channel: &str, allowed: &[IpAddr], proxy: Option<Proxy>) -> Result<()
     // then it sends only input messages (REQ-INT-133); anything else
     // ends the fetcher too.
     std::thread::spawn(move || {
-        read_commands(&mut io::BufReader::new(io::stdin().lock()), &wakes, &answers);
+        read_commands(&mut io::BufReader::new(input), &wakes, &answers);
         let _ = wakes.send(Wake::Ended);
     });
 
@@ -502,12 +540,14 @@ pub fn run(channel: &str, allowed: &[IpAddr], proxy: Option<Proxy>) -> Result<()
                 Action::Bytes { origin, bytes } => send(&output, &FromFetcher::Page { origin, bytes })?,
                 Action::Ready(page, region) => {
                     service_ready(&agent, &output, page, region)?;
+                    bundle_pending = agent.descriptor().is_some_and(|descriptor| descriptor.push().is_none());
                     ask_for_channel(&mut agent, &clock, &mut actions);
                 }
-                Action::Contents(bytes) => {
-                    let (entries, pages) = contents_entries(&bytes);
-                    send(&output, &FromFetcher::Contents(entries))?;
-                    queue.extend(pages);
+                Action::Contents(bytes) => send(&output, &FromFetcher::Contents(contents_entries(&bytes)))?,
+                Action::BundleSettled => {
+                    if core::mem::take(&mut bundle_pending) {
+                        send(&output, &FromFetcher::BundleSettled)?;
+                    }
                 }
                 Action::SubPages(page, part, bytes) => {
                     send_part(&output, page, part, Some(&bytes))?;
@@ -517,7 +557,6 @@ pub fn run(channel: &str, allowed: &[IpAddr], proxy: Option<Proxy>) -> Result<()
                 // validators, is said to have failed: the trusted core asks
                 // for it again when its page next opens.
                 Action::SubPagesCurrent(page, part) => send_part(&output, page, part, parts.get(page, part))?,
-                Action::Answered => waiting = false,
                 Action::Refused(file, answer) => send(&output, &FromFetcher::Refused { file, status: answer.status(last_status) })?,
                 Action::Push(open) => push_changed(&agent, &output, open)?,
                 action @ (Action::Index { .. } | Action::IndexComplete(_) | Action::SubPageList(_)) => live_record(action, &mut live, &output)?,
@@ -528,13 +567,6 @@ pub fn run(channel: &str, allowed: &[IpAddr], proxy: Option<Proxy>) -> Result<()
             }
         }
         tell_failures(&mut pump.transport, &output)?;
-        // One page at a time, in the contents file's order; the agent
-        // spaces the requests at the engine's rate.
-        if !waiting && let Some(page) = queue.pop_front() {
-            waiting = true;
-            busy = true;
-            agent.handle(clock(), Input::FetchPage { page, subcode: None }, &mut |out| collect(out, &mut actions));
-        }
         busy |= poll_sockets(&mut pump, &mut buffer, &mut agent, &clock, &mut actions);
         if next_tick.is_some_and(|at| at <= clock()) {
             next_tick = None;
@@ -626,19 +658,6 @@ fn live_record(action: Action, live: &mut Live, output: &cookies::Output) -> Res
 /// The agent with the cookie jar it keeps: none of its own.
 type Agent<'a> = UserAgent<'a, Random, COOKIE_SLOTS, COOKIE_BYTES>;
 
-/// The sockets, through `proxy` when there is one, refusing the local
-/// addresses but `allowed_local`; each wakes the loop when it has bytes
-/// or has ended.
-fn sockets(wakes: mpsc::Sender<Wake>, proxy: Option<Proxy>, allowed_local: AllowedLocal) -> Pump<Tcp> {
-    Pump::new(Tcp::new(
-        Arc::new(move || {
-            let _ = wakes.send(Wake::Network);
-        }),
-        proxy,
-        allowed_local,
-    ))
-}
-
 /// Writes `message` to the trusted core.
 fn send(output: &cookies::Output, message: &FromFetcher) -> Result<(), String> {
     write_to_core(&mut *output.borrow_mut(), message).map_err(|error| error.to_string())
@@ -676,10 +695,11 @@ fn service_ready(agent: &Agent<'_>, output: &cookies::Output, page: u16, region:
     Ok(())
 }
 
-/// Asks for the whole channel: its contents file, then every page it
-/// lists; and the push connection, for all its pages.
+/// Asks for a live channel's push connection, for all its pages. Nothing
+/// else is asked as a channel opens: the agent fetches a static channel's
+/// bundle by itself, and its contents file and pages only as the trusted
+/// core says they are wanted (REQ-703).
 fn ask_for_channel(agent: &mut Agent<'_>, clock: &dyn Fn() -> Instant, actions: &mut Vec<Action>) {
-    agent.handle(clock(), Input::FetchContents, &mut |out| collect(out, actions));
     agent.handle(clock(), Input::Subscribe(Subscription::All), &mut |out| collect(out, actions));
 }
 
@@ -723,6 +743,7 @@ fn tell_failures(transport: &mut Tcp, output: &cookies::Output) -> Result<(), St
 /// agent queues and spaces the requests at its own rate.
 fn fetch(agent: &mut Agent<'_>, clock: &dyn Fn() -> Instant, asked: &ToFetcher, actions: &mut Vec<Action>) {
     let input = match *asked {
+        ToFetcher::FetchContents => Some(Input::FetchContents),
         ToFetcher::FetchPage { page } => PageAddress::from_mpp(page).map(|page| Input::FetchPage { page, subcode: None }),
         ToFetcher::FetchSubPages { page, part } => {
             PageAddress::from_mpp(page).zip(PartNumber::new(usize::from(part))).map(|(page, part)| Input::FetchSubPages { page, part })
@@ -780,7 +801,7 @@ fn read_commands(input: &mut dyn Read, commands: &mpsc::Sender<Wake>, answers: &
             #[cfg(feature = "interaction")]
             ToFetcher::MeasureRoundTrip(on) => commands.send(Wake::RoundTrip(on)).is_ok(),
             answer @ (ToFetcher::CookieAnswer { .. } | ToFetcher::ReachedAnswer { .. }) => answers.send(answer).is_ok(),
-            asked @ (ToFetcher::FetchPage { .. } | ToFetcher::FetchSubPages { .. } | ToFetcher::FetchSubPage { .. }) => {
+            asked @ (ToFetcher::FetchContents | ToFetcher::FetchPage { .. } | ToFetcher::FetchSubPages { .. } | ToFetcher::FetchSubPage { .. }) => {
                 commands.send(Wake::Fetch(asked)).is_ok()
             }
         };
@@ -799,9 +820,9 @@ mod tests {
 
     /// REQ-708: every failure of a whole file reaches the trusted core by
     /// its role, with the status when there was one and nothing a server
-    /// wrote; a missing page is 404, and ends the wait for the next page.
-    /// On the code before, a page's failures only ended that wait, and the
-    /// rest were a debug line in the Log.
+    /// wrote; a missing page is 404. On the code before, a page's failures
+    /// only ended the wait for the next page, and the rest were a debug
+    /// line in the Log.
     #[test]
     fn a_failure_of_a_file_is_a_refusal() {
         let page = PageAddress::from_mpp(0x100).unwrap();
@@ -819,9 +840,29 @@ mod tests {
         assert_eq!(actions_of(Event::BundleFailed(Failure::Status(403))), [(RefusedFile::Bundle, Answer::Status(403))]);
         assert_eq!(actions_of(Event::ContentsFailed(Failure::Timeout)), [(RefusedFile::Contents, Answer::Nothing)]);
         assert_eq!(actions_of(Event::PageNotInService { page, subcode: Some(SubCode::new(2)) }), [], "a sub-page's file is not the page's");
-        let mut actions = Vec::new();
-        collect(Output::Event(Event::PageNotInService { page, subcode: None }), &mut actions);
-        assert!(actions.iter().any(|action| matches!(action, Action::Answered)), "the next page may go");
+    }
+
+    /// REQ-703: the bundle settles when its pages have gone, when it is
+    /// refused, and when it is missing, which the agent says only by the
+    /// exchange's 404 or 410; nothing else settles it.
+    #[test]
+    fn the_bundle_settles_however_it_is_answered() {
+        let settles = |output: Output<'_>| {
+            let mut actions = Vec::new();
+            collect(output, &mut actions);
+            actions.iter().any(|action| matches!(action, Action::BundleSettled))
+        };
+        let exchange = |url, status| Output::Event(Event::Exchanged { method: neoteletext_web::http::Method::Get, url, status, bytes: 0, elapsed_us: 0 });
+        let bundle = format!("http://a.example/tt/{BUNDLE_FILE}");
+        assert!(settles(exchange(&bundle, 404)));
+        assert!(settles(exchange(&bundle, 410)));
+        assert!(!settles(exchange(&bundle, 200)), "its bytes or its refusal follow");
+        assert!(!settles(exchange(&bundle, 301)), "a redirect is followed");
+        assert!(!settles(exchange("http://a.example/tt/100.tti", 404)));
+        assert!(settles(Output::Event(Event::BundleFailed(Failure::Status(500)))));
+        let bytes = neoteletext_web::agent::PageBytes { source: Source::FrontDoor, media: MediaType::T42, url: &bundle, secure: false, bytes: &[] };
+        assert!(settles(Output::PageBytes(bytes)));
+        assert!(!settles(Output::Event(Event::ContentsMissing)));
     }
 
     /// Finding F-74: the largest page, bundle or form answer the agent
@@ -1160,6 +1201,179 @@ mod tests {
             [vec![binary(&mouse_move(1)), binary(&KEY)], vec![binary(&KEY), binary(&mouse_move(3))], vec![binary(&KEY)]],
             "a moment in one send, in order; one already here joins it; a lone message at once"
         );
+    }
+
+    /// The frames a WebSocket client wrote, read from `stream` until it ends:
+    /// opcode and unmasked payload each (RFC 6455 section 5.2).
+    #[cfg(feature = "interaction")]
+    #[allow(clippy::arithmetic_side_effects, reason = "a test's frames, within their lengths")]
+    fn read_client_frame(stream: &mut dyn Read) -> Option<(u8, Vec<u8>)> {
+        let mut head = [0_u8; 2];
+        stream.read_exact(&mut head).ok()?;
+        let length = match head[1] & 0x7F {
+            126 => {
+                let mut length = [0_u8; 2];
+                stream.read_exact(&mut length).ok()?;
+                usize::from(u16::from_be_bytes(length))
+            }
+            127 => return None,
+            length => usize::from(length),
+        };
+        let mut mask = [0_u8; 4];
+        stream.read_exact(&mut mask).ok()?;
+        let mut payload = vec![0_u8; length];
+        stream.read_exact(&mut payload).ok()?;
+        payload.iter_mut().zip(mask.iter().cycle()).for_each(|(byte, key)| *byte ^= key);
+        Some((head[0] & 0x0F, payload))
+    }
+
+    /// Row 1 of a page of magazine 1, blank, as 42 bytes: its address
+    /// Hamming 8/4 coded, magazine and the row's low bit in the first byte
+    /// and the row's other bits in the second (EN 300 706 clause 7.1.2).
+    #[cfg(feature = "interaction")]
+    fn blank_row() -> Vec<u8> {
+        use neoteletext_core::ecc::hamming84_encode;
+        const MAGAZINE: u8 = 1;
+        const ROW: u8 = 1;
+        // A space has one bit set, so it is its own odd parity (clause 8.2).
+        const SPACE: u8 = b' ';
+        let mut packet = vec![hamming84_encode(MAGAZINE | ((ROW & 1) << 3)), hamming84_encode(ROW >> 1)];
+        packet.resize(neoteletext_core::consts::PACKET_BYTES, SPACE);
+        packet
+    }
+
+    /// TODO-2075 item 1, REQ-696, REQ-814: a live channel served only over
+    /// TLS, its push connection `wss`: the fetcher's own loop, as `run`
+    /// runs it but trusting the test's certificate, opens `channel.ttx`
+    /// over `https`, completes the WebSocket handshake over TLS, passes the
+    /// pushed packets to the trusted core as pushed, says input goes over a
+    /// secure connection, and writes an input message the trusted core
+    /// gives it to the channel over `wss`. No test opened a `wss`
+    /// connection before; its parts were each tested over plain WebSocket.
+    #[cfg(feature = "interaction")]
+    #[test]
+    #[allow(clippy::too_many_lines, reason = "one server and one exchange, read in order")]
+    fn a_secure_push_connection_carries_pages_and_input() {
+        use rustls::pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer};
+        use std::io::{BufRead, BufReader};
+        use std::net::{Ipv4Addr, TcpListener};
+        // The transport's test certificate for `localhost`, valid to 2126.
+        let certificate = CertificateDer::from(include_bytes!("transport/testdata/localhost-certificate.der").to_vec());
+        let key = PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(include_bytes!("transport/testdata/localhost-key.der").to_vec()));
+        let server_config = Arc::new(rustls::ServerConfig::builder().with_no_client_auth().with_single_cert(vec![certificate.clone()], key).unwrap());
+        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let page = blank_row();
+        let (heard, hearing) = mpsc::channel::<Vec<u8>>();
+        let pushed = page.clone();
+        std::thread::spawn(move || {
+            for socket in listener.incoming().flatten() {
+                let (server_config, pushed, heard) = (Arc::clone(&server_config), pushed.clone(), heard.clone());
+                std::thread::spawn(move || {
+                    let connection = rustls::ServerConnection::new(server_config).unwrap();
+                    let mut stream = BufReader::new(rustls::StreamOwned::new(connection, socket));
+                    loop {
+                        let mut lines = Vec::new();
+                        loop {
+                            let mut line = String::new();
+                            if stream.read_line(&mut line).unwrap_or(0) == 0 {
+                                return;
+                            }
+                            if line.trim().is_empty() {
+                                break;
+                            }
+                            lines.push(line.trim().to_owned());
+                        }
+                        let path = lines[0].split(' ').nth(1).unwrap_or_default().to_owned();
+                        let writer = stream.get_mut();
+                        if path == "/tt/push" {
+                            let key = lines.iter().find_map(|line| line.strip_prefix("Sec-WebSocket-Key: ")).unwrap().to_owned();
+                            let accept = neoteletext_web::ws::accept_for(key.as_bytes());
+                            let upgrade = format!(
+                                "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Protocol: {}\r\nSec-WebSocket-Accept: {}\r\n\r\n",
+                                neoteletext_web::consts::PUSH_SUBPROTOCOL,
+                                std::str::from_utf8(&accept).unwrap()
+                            );
+                            writer.write_all(upgrade.as_bytes()).unwrap();
+                            // One binary frame, unmasked as a server's is.
+                            let mut frame = vec![0x80 | neoteletext_web::consts::OPCODE_BINARY, u8::try_from(pushed.len()).unwrap()];
+                            frame.extend_from_slice(&pushed);
+                            writer.write_all(&frame).unwrap();
+                            writer.flush().unwrap();
+                            while let Some((opcode, payload)) = read_client_frame(&mut stream) {
+                                if opcode == neoteletext_web::consts::OPCODE_BINARY && heard.send(payload).is_err() {
+                                    return;
+                                }
+                            }
+                            return;
+                        }
+                        let body = br#"{"name":"Secure","push":{"input":true}}"#;
+                        let answer = format!("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n", body.len());
+                        writer.write_all(answer.as_bytes()).unwrap();
+                        writer.write_all(body).unwrap();
+                        writer.flush().unwrap();
+                    }
+                });
+            }
+        });
+
+        let (core_reads, fetcher_writes) = io::pipe().unwrap();
+        let (fetcher_reads, mut core_writes) = io::pipe().unwrap();
+        let channel = format!("https://localhost:{port}/tt/");
+        std::thread::spawn(move || {
+            let mut roots = rustls::RootCertStore::empty();
+            roots.add(certificate).unwrap();
+            let local = [IpAddr::from(Ipv4Addr::LOCALHOST)];
+            let config = agent_config(&local, false);
+            let allowed_local = config.allowed_local;
+            run_with(&channel, config, |wake| Tcp::with_roots(roots, wake, None, allowed_local), Box::new(fetcher_reads), Box::new(fetcher_writes))
+        });
+        let mut from_fetcher = BufReader::new(core_reads);
+        let mut until = |core_writes: &mut io::PipeWriter, wanted: &dyn Fn(&FromFetcher) -> bool| loop {
+            let message = protocol::fetcher::read_from_fetcher(&mut from_fetcher).unwrap().expect("the fetcher ended");
+            match &message {
+                FromFetcher::CookieQuestion { id, .. } => {
+                    protocol::fetcher::write_to_fetcher(core_writes, &ToFetcher::CookieAnswer { id: *id, header: Vec::new() }).unwrap();
+                }
+                FromFetcher::ReachedQuestion { id, .. } => {
+                    protocol::fetcher::write_to_fetcher(core_writes, &ToFetcher::ReachedAnswer { id: *id, reached: false }).unwrap();
+                }
+                _ => {}
+            }
+            if wanted(&message) {
+                return message;
+            }
+        };
+        // The handshake: the connection is open, and said secure.
+        let input = until(&mut core_writes, &|message| matches!(message, FromFetcher::Input { .. }));
+        assert_eq!(input, FromFetcher::Input { open: true, secure: true }, "keys go over a secure connection");
+        let page_message = until(&mut core_writes, &|message| matches!(message, FromFetcher::Page { origin: Origin::PushedPackets, .. }));
+        assert_eq!(page_message, FromFetcher::Page { origin: Origin::PushedPackets, bytes: page }, "pushed over wss");
+        protocol::fetcher::write_to_fetcher(&mut core_writes, &ToFetcher::Send { bytes: KEY.to_vec(), move_of: None, more: false }).unwrap();
+        // A ceiling, not a wait: the key arrives as soon as it is written.
+        let deadline = Duration::from_secs(10);
+        let key = hearing.recv_timeout(deadline).expect("the input message reached the channel");
+        assert_eq!(key, KEY, "written over wss");
+    }
+
+    /// REQ-814: the push WebSocket has the engine's heartbeat in the
+    /// fetcher: silent for `PUSH_PING_AFTER_US`, it is pinged, and a ping
+    /// not answered within `PUSH_PONG_WITHIN_US` loses the connection,
+    /// which is tried again.
+    #[cfg(feature = "interaction")]
+    #[test]
+    fn a_silent_push_connection_is_pinged_and_lost_when_it_does_not_answer() {
+        use neoteletext_web::consts::{OPCODE_PING, PUSH_PING_AFTER_US, PUSH_PONG_WITHIN_US};
+        let mut storage = Box::new(Storage::default());
+        let mut agent = agent(&mut storage);
+        open_push(&mut agent, 0);
+        let mut actions = Vec::new();
+        agent.handle(Instant(PUSH_PING_AFTER_US - 1), Input::Tick, &mut |out| collect(out, &mut actions));
+        assert!(push_sends(&mut actions).concat().iter().all(|(opcode, _)| *opcode != OPCODE_PING), "not yet");
+        agent.handle(Instant(PUSH_PING_AFTER_US), Input::Tick, &mut |out| collect(out, &mut actions));
+        assert!(push_sends(&mut actions).concat().iter().any(|(opcode, _)| *opcode == OPCODE_PING), "the heartbeat");
+        agent.handle(Instant(PUSH_PING_AFTER_US + PUSH_PONG_WITHIN_US), Input::Tick, &mut |out| collect(out, &mut actions));
+        assert!(actions.iter().any(|action| matches!(action, Action::Push(false))), "unanswered, the connection is lost");
     }
 
     /// REQ-RCH-016 (requirement 18.32): asked to, the agent measures the

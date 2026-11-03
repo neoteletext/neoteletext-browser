@@ -75,8 +75,8 @@ impl Core {
                 self.put_to_sleep(*id);
             }
             // A web channel's pages come from its own fetcher, which runs
-            // for as long as its tab is open, asleep or not: fetching never
-            // depends on viewing (decision 22).
+            // for as long as its tab is open, asleep or not, and fetches a
+            // static channel's files only as they are wanted (REQ-703).
             if let Some(address) = web
                 && !self.fetchers.contains_key(id)
                 && !self.given_up.contains(id)

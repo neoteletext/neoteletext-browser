@@ -45,6 +45,12 @@ impl Core {
         #[cfg(feature = "links")]
         self.send_links_afresh()?;
         self.send_mutes();
+        // The tab now in front wants its listing, and its page on screen is
+        // asked for again from now on (REQ-703, REQ-704).
+        if let Some(channel) = self.active_channel() {
+            self.ask_wanted(channel);
+        }
+        self.arm_refreshes();
         self.show_address()
     }
 
@@ -168,6 +174,10 @@ impl Core {
         self.shown_pages.clone_from(&pages);
         self.tell(channel, ToDecoder::Showing(pages));
         self.showing = Some(channel);
+        // The pages shown are wanted, the wall's thumbnails among them
+        // (REQ-703, DEC-997).
+        let shown = self.shown_pages.clone();
+        self.ask_shown(channel, &shown);
     }
 
     /// A click means only "this cell"; the trusted core decides whether a
