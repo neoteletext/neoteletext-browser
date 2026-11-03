@@ -94,7 +94,8 @@ impl Browser {
     fn move_remote(&mut self, place: RemotePlace, now: u64) {
         let from = self.remote.out(now);
         self.remote.place = place;
-        self.remote.slide = Some((from, now));
+        // With reduced motion the remote is in its place at once (REQ-754).
+        self.remote.slide = (!self.wall.reduced_motion()).then_some((from, now));
     }
 
     /// The user put the remote somewhere: kept by the trusted core.

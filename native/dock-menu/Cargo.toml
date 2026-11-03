@@ -12,7 +12,7 @@ publish.workspace = true
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2 = "=0.5.3"
 objc2-foundation = { version = "=0.2.2", features = ["NSBundle", "NSData", "NSArray", "NSDictionary", "NSEnumerator", "NSGeometry", "NSObject", "NSString", "NSThread", "NSURL"] }
-objc2-app-kit = { version = "=0.2.2", features = ["NSApplication", "NSCell", "NSEvent", "NSImage", "NSMenu", "NSMenuItem", "NSResponder", "NSView", "NSWindow"] }
+objc2-app-kit = { version = "=0.2.2", features = ["NSAccessibility", "NSApplication", "NSCell", "NSEvent", "NSImage", "NSMenu", "NSMenuItem", "NSResponder", "NSView", "NSWindow", "NSWorkspace"] }
 
 # The workspace's lints, except that unsafe code is denied rather than
 # forbidden: this is the one crate allowed it, at each site with its
