@@ -32,6 +32,10 @@
 //! decoder may be given another channel's bytes, a private tab's among
 //! them.
 //!
+//! `real_helpers` runs the rounds again with the real decoder and fetcher,
+//! confined, against two reference channels on this computer that log every
+//! request, and compares what each channel heard with a quiet run's.
+//!
 //! The interface's process is not replaced here: the broker starts it, and
 //! a way to start another would be a way into a release build. The core is
 //! the same code either way; its pipe is the only difference.
@@ -39,6 +43,14 @@
 use std::io::Write;
 use std::sync::mpsc;
 
+#[cfg(unix)]
+mod real_helpers;
+// The reference channel and its programs' build, shared with the tests in
+// `core/tests` that run it.
+#[cfg(unix)]
+#[allow(clippy::arithmetic_side_effects, reason = "a test's deadlines, as in the tests it is shared with")]
+#[path = "../../tests/reference_channel/site.rs"]
+mod reference_channel;
 #[cfg(unix)]
 mod watch;
 #[cfg(unix)]
