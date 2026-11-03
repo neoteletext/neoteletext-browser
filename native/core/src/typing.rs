@@ -133,6 +133,10 @@ struct Channel {
     /// Where each contact was last sent, 0 the mouse's: what its gone says
     /// (DOC-1938), and whether the channel knows of it at all.
     last_at: [Option<Point>; MAX_CONTACTS],
+    /// When another event may next send waiting moves before their period
+    /// has ended (REQ-1357, DEC-2383): at most once a period, so an interface
+    /// alternating moves with other events gains no more than that.
+    early_flush_at_us: u64,
 }
 
 impl Channel {
@@ -157,6 +161,7 @@ impl Channel {
             finger: None,
             held: 0,
             last_at: [None; MAX_CONTACTS],
+            early_flush_at_us: 0,
         }
     }
 
@@ -555,8 +560,9 @@ impl Typing {
                 None => return sends,
             },
         };
-        // The waiting moves go before any other event (REQ-RCH-033).
-        state.flush(channel, now_us, &mut sends);
+        // The waiting moves go before any other event (REQ-RCH-033), as
+        // often as the pace allows (REQ-1357).
+        state.flush_before_event(channel, now_us, &mut sends);
         state.send(channel, &item, now_us, &mut sends);
         together(sends)
     }

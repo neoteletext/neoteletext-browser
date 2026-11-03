@@ -14,7 +14,7 @@ use neoteletext_input::caps::TOUCH_CAP;
 use neoteletext_input::contacts::MOUSE_CONTACT;
 use neoteletext_input::event::{Device, Event, Item, Mouse, MouseAction, Point, Stamp, Touch};
 use neoteletext_input::held::{Released, lost_key};
-use neoteletext_input::pace::Offer;
+use neoteletext_input::pace::{Offer, PERIOD_WHOLE_US};
 use protocol::interaction::{Intent, TouchPhase};
 
 use super::{Channel, Send, Typing, together};
@@ -81,6 +81,24 @@ impl Channel {
         for event in waiting {
             self.send(channel, &Item::Event(event), now_us, sends);
         }
+    }
+
+    /// Before an event other than the pointer's: the waiting moves go first
+    /// (REQ-RCH-033) when they are due, and before their period has ended
+    /// at most once a period (REQ-1357, DEC-2383). An interface alternating
+    /// moves with releases or HOVER, which are not held to the input rate,
+    /// would otherwise send a move with every pair. Past that bound a move
+    /// waits for its period and goes after the event, which no viewer's
+    /// hand can make happen: it needs more than 60 other events a second.
+    pub(super) fn flush_before_event(&mut self, channel: u32, now_us: u64, sends: &mut Vec<Send>) {
+        let Some(due_us) = self.pacer.due() else { return };
+        if due_us > now_us {
+            if now_us < self.early_flush_at_us {
+                return;
+            }
+            self.early_flush_at_us = now_us.saturating_add(PERIOD_WHOLE_US);
+        }
+        self.flush(channel, now_us, sends);
     }
 
     /// A move, paced: sent now if its contact's period has ended, else
