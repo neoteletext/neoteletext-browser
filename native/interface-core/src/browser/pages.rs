@@ -169,12 +169,21 @@ impl Browser {
     pub(super) fn choose_bank(&mut self, bank: usize) {
         self.bank = bank;
         self.selected = None;
+        self.clicked_row = None;
         self.list_scroll = 0.0;
         self.wall.to_top();
     }
 
     /// Scrolls the list so that page `index`'s row is in view.
     pub(super) fn reveal_row(&mut self, index: usize) {
+        // A row the viewer clicked stays where it was clicked: the list
+        // does not move under the pointer, then or when its page is shown
+        // (REQ-6364). Any other row moved to is brought into view, and the
+        // clicked one is then no longer held still.
+        if self.clicked_row == Some(index) {
+            return;
+        }
+        self.clicked_row = None;
         let position = self.bank_pages().iter().position(|&candidate| candidate == index);
         let Some(position) = position else { return };
         #[allow(clippy::cast_precision_loss, reason = "at most 100 rows")]

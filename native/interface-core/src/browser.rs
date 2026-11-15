@@ -154,6 +154,9 @@ pub struct Browser {
     hovered_bank: Option<usize>,
     /// The sub-pages under the page list (decision 111).
     subpages: subpage_list::SubPages,
+    /// The page row the viewer last clicked, by page index, which the list
+    /// does not scroll to (REQ-6364); none once the choice moved another way.
+    clicked_row: Option<usize>,
     /// The list at the left that has the keys, if one has.
     list_focus: Option<list_focus::ListFocus>,
     /// The list the wheel steps through outside the page area: the one
@@ -268,6 +271,7 @@ impl Browser {
             hovered_row: None,
             hovered_bank: None,
             subpages: subpage_list::SubPages::default(),
+            clicked_row: None,
             list_focus: None,
             wheel_list: pointer::WheelList::Pages,
             wheel_step_carry: 0.0,

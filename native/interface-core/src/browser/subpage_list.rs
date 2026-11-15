@@ -118,6 +118,10 @@ pub(super) struct SubPages {
     /// Where Page Up or Page Down last moved the list, until that sub-page
     /// is the one chosen.
     pub(super) landing: Option<Landing>,
+    /// A row was clicked, of this page, while this place was the one
+    /// shown: the list stays where it is until the clicked sub-page is
+    /// shown, and does not scroll to it then (REQ-6364).
+    still: Option<(usize, Option<u16>)>,
 }
 
 impl Default for SubPages {
@@ -134,6 +138,7 @@ impl Default for SubPages {
             hovered: None,
             revealed: None,
             landing: None,
+            still: None,
         }
     }
 }
@@ -147,6 +152,7 @@ impl SubPages {
         self.move_event(MoveEvent::Left);
         self.hovered = None;
         self.revealed = None;
+        self.still = None;
         self.scroll = 0.0;
     }
 }
@@ -293,7 +299,19 @@ impl Browser {
         self.open_landing(now);
         // Stepped with the keys, the list follows the sub-page chosen, as
         // the page list follows the page, once what a key moved to is shown.
-        if self.list_focus == Some(ListFocus::SubPages) && self.subpages.landing.is_none() && chosen != self.subpages.revealed {
+        // A row clicked holds the list still: it does not follow the
+        // sub-page shown before the click while the clicked one is on its
+        // way, nor scroll to the clicked one when it is shown (REQ-6364).
+        if let Some((clicked_index, shown_then)) = self.subpages.still {
+            if clicked_index != index {
+                self.subpages.still = None;
+            } else if chosen != shown_then {
+                self.subpages.still = None;
+                self.subpages.revealed = chosen;
+            }
+        }
+        if self.subpages.still.is_none() && self.list_focus == Some(ListFocus::SubPages) && self.subpages.landing.is_none() && chosen != self.subpages.revealed
+        {
             self.subpages.revealed = chosen;
             if let Some(place) = chosen {
                 self.reveal_subpage(place, rows.height());
@@ -391,6 +409,7 @@ impl Browser {
         let top = self.places_in_view(height, count).start;
         let from = landed.or_else(|| self.chosen_place(page)).unwrap_or(top);
         let place = if forward { from.saturating_add(rows).min(count.saturating_sub(1)) } else { from.saturating_sub(rows) };
+        self.subpages.still = None;
         self.reveal_subpage(place, height);
         self.subpages.landing = Some(Landing { index, place, since: now });
         self.subpages.move_event(MoveEvent::Moved);
@@ -480,6 +499,8 @@ impl Browser {
         let Some(&(_, subcode)) = self.regions.subrows.iter().find(|(rect, _)| rect.contains(point)) else { return true };
         let Some(index) = self.selected else { return true };
         self.subpages.move_event(MoveEvent::Left);
+        let shown = crate::channel::page_number(index).and_then(|page| self.chosen_place(page));
+        self.subpages.still = Some((index, shown));
         self.open_subpage(index, subcode, now);
         true
     }
@@ -817,6 +838,37 @@ mod tests {
         other.channel = 8;
         browser.set_channel(other);
         assert!(browser.subpages.held.is_none() && browser.subpages.request.is_none());
+    }
+
+    /// REQ-6364: a click on a sub-page's row never moves the list. It does
+    /// not scroll back to the sub-page shown before while the clicked one
+    /// is on its way, nor to the clicked one when it is shown; a key
+    /// afterwards scrolls again.
+    #[test]
+    fn a_click_on_a_sub_page_row_leaves_the_list_where_it_is() {
+        let (mut browser, mut canvas) = listed(60);
+        chosen(&mut browser, 60, 0);
+        browser.draw(&mut canvas, WIDTH, HEIGHT, 0);
+        // The viewer scrolls well away from the sub-page shown, so its row is out of view.
+        browser.subpages.scroll = 20.0 * crate::browser::page_list::ROW_HEIGHT + 7.0;
+        browser.draw(&mut canvas, WIDTH, HEIGHT, 0);
+        let scrolled = browser.subpages.scroll;
+        // The last row drawn is cut by the list's lower edge.
+        let (row, subcode) = *browser.regions.subrows.last().unwrap();
+        browser.pointer_moved(row.x0 + 30.0, row.y0 + 2.0, 0);
+        browser.pointer_pressed(&mut canvas, false, 0);
+        assert_eq!(asked(&mut browser), Some(subcode), "the row clicked is asked for");
+        browser.draw(&mut canvas, WIDTH, HEIGHT, 10);
+        assert!((browser.subpages.scroll - scrolled).abs() < f64::EPSILON, "it does not go back to the sub-page shown before");
+        // The trusted core shows the clicked sub-page: its place is its sub-code less one.
+        chosen(&mut browser, 60, subcode - 1);
+        browser.draw(&mut canvas, WIDTH, HEIGHT, 20);
+        assert!((browser.subpages.scroll - scrolled).abs() < f64::EPSILON, "nor scroll to the row clicked");
+        // A key moves the list again.
+        page_key(&mut browser, Key::Down, &mut canvas);
+        chosen(&mut browser, 60, subcode);
+        browser.draw(&mut canvas, WIDTH, HEIGHT, 30);
+        assert!(browser.subpages.scroll > scrolled, "a key brings the row it moved to into view");
     }
 
     /// REQ-1758 item 3: neither key wraps round.

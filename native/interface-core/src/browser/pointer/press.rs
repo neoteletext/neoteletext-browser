@@ -172,6 +172,8 @@ impl Browser {
             self.list_focus = Some(ListFocus::Pages);
             self.wheel_list = WheelList::Pages;
             if let Some(&(_, index)) = regions.rows.iter().find(|(rect, _)| rect.contains(point)) {
+                // The row stays where it was clicked (REQ-6364).
+                self.clicked_row = Some(index);
                 self.select_page(index, true);
             }
             return Some(true);

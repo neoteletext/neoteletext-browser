@@ -318,4 +318,33 @@ mod tests {
         assert_eq!(browser.selected, at(&browser, rows), "Page Down moves a list-height less a row");
         assert_eq!(browser.list_focus, Some(ListFocus::Pages), "and the list keeps them");
     }
+
+    /// REQ-6364: a click on a page's row never moves the page list, even
+    /// on a row only partly in view, through the trusted core's answer
+    /// too; a key afterwards scrolls again.
+    #[test]
+    fn a_click_on_a_page_row_leaves_the_list_where_it_is() {
+        let (mut browser, mut canvas) = browser();
+        browser.draw(&mut canvas, WIDTH, HEIGHT, 0);
+        // Scrolled so that rows are cut at both edges of the list.
+        browser.list_scroll = 3.0 * super::ROW_HEIGHT + 9.0;
+        browser.draw(&mut canvas, WIDTH, HEIGHT, 0);
+        let scrolled = browser.list_scroll;
+        let list = browser.regions.list;
+        let (row, index) = *browser.regions.rows.iter().rev().find(|(row, _)| row.y1 > list.y1).expect("a row cut by the list's lower edge");
+        browser.pointer_moved(row.x0 + 30.0, list.y1 - 2.0, 0);
+        browser.pointer_pressed(&mut canvas, false, 0);
+        assert_eq!(browser.selected, Some(index), "the row clicked is chosen");
+        assert!((browser.list_scroll - scrolled).abs() < f64::EPSILON, "and the list has not moved");
+        // The trusted core says the page is shown, and the list is drawn again.
+        let key = browser.page_key(index).unwrap();
+        browser.show(key, 10);
+        browser.draw(&mut canvas, WIDTH, HEIGHT, 20);
+        assert!((browser.list_scroll - scrolled).abs() < f64::EPSILON, "nor when its page is shown");
+        // A key moves the choice, and the list follows it again.
+        for _ in 0..3 {
+            browser.key(Key::Down, Modifiers::default(), 30);
+        }
+        assert!(browser.list_scroll > scrolled, "a key brings the row it moved to into view");
+    }
 }
