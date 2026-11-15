@@ -83,6 +83,14 @@ pub enum Incoming {
         /// The picture.
         picture: protocol::regis::RegisPicture,
     },
+    /// Whether a drawing a click would act on is under the pointer on a
+    /// page's ReGIS picture (REQ-6374).
+    RegisOver {
+        /// Which page.
+        key: PageKey,
+        /// One is.
+        over: bool,
+    },
     /// A page image.
     Page {
         /// Which page.

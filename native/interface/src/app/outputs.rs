@@ -88,6 +88,7 @@ impl App {
             }
             #[cfg(feature = "links")]
             Output::Lit(lit) => ToCore::Lit(lit),
+            Output::RegisPointer(pointer) => ToCore::RegisPointer(pointer),
             #[cfg(feature = "links")]
             Output::Typed { number, opened } => ToCore::Typed { number, opened },
             #[cfg(feature = "links")]

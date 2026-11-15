@@ -26,6 +26,7 @@ mod phone;
 mod picture;
 mod processes;
 mod redirects;
+mod regis_pointer;
 mod run;
 mod selection;
 mod settings;
@@ -163,6 +164,8 @@ struct Core {
     frames: frames::Frames,
     /// The pick records of the pages drawn in ReGIS (DEC-6335).
     regis: neoteletext::regis::PickRecords,
+    /// The pointer on a ReGIS picture (`regis_pointer.rs`).
+    regis_pointing: neoteletext::regis_pointer::Pointing,
     /// The channel whose decoder was last told which pages are shown.
     showing: Option<u32>,
     /// What of each channel's sound reached the interface.
@@ -332,6 +335,7 @@ impl Core {
             events,
             frames: frames::Frames::default(),
             regis: neoteletext::regis::PickRecords::default(),
+            regis_pointing: neoteletext::regis_pointer::Pointing::default(),
             showing: None,
             hearing: Hearing::default(),
             sleep: Sleep::default(),

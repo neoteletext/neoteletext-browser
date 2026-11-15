@@ -182,6 +182,10 @@ pub enum Output {
     /// decoder draw (DOC-1947).
     #[cfg(feature = "links")]
     Lit(Option<crate::links::Lit>),
+    /// Where the pointer is on the open page's ReGIS picture, and whether
+    /// it is pressed (REQ-6377), for the trusted core, which alone knows
+    /// what is drawn there.
+    RegisPointer(crate::regis::RegisPointer),
     /// A page number typed that the open page or the channel links
     /// elsewhere.
     #[cfg(feature = "links")]

@@ -7,7 +7,7 @@
 //! Everything here comes from a decoder, so every count and every index is
 //! checked on reading.
 
-use crate::{Fields, MAX_PAYLOAD, ProtocolError};
+use crate::{Fields, MAX_PAYLOAD, ProtocolError, push_flag, push_key};
 
 /// A ReGIS picture's width in pixels.
 pub const REGIS_WIDTH: usize = interface_core::canvas::REGIS_WIDTH as usize;
@@ -298,4 +298,65 @@ mod tests {
         let bytes = [0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
         assert!(read_pick(&mut Fields::new(&bytes)).is_err());
     }
+}
+
+pub use interface_core::regis::RegisPointer;
+
+/// The pointer's flag bits on the wire.
+const POINTER_ON_PICTURE: u8 = 1;
+const POINTER_PRESSED: u8 = 2;
+const POINTER_FINGER: u8 = 4;
+
+pub(crate) fn push_pointer(payload: &mut Vec<u8>, pointer: &RegisPointer) {
+    push_key(payload, pointer.key);
+    let flags = [(pointer.at.is_some(), POINTER_ON_PICTURE), (pointer.pressed, POINTER_PRESSED), (pointer.finger, POINTER_FINGER)];
+    payload.push(flags.into_iter().filter(|(set, _)| *set).fold(0, |all, (_, bit)| all | bit));
+    if let Some((x, y)) = pointer.at {
+        payload.extend_from_slice(&x.to_be_bytes());
+        payload.extend_from_slice(&y.to_be_bytes());
+    }
+}
+
+pub(crate) fn read_pointer(fields: &mut Fields<'_>) -> Result<RegisPointer, ProtocolError> {
+    let key = fields.key()?;
+    let flags = fields.u8()?;
+    if flags & !(POINTER_ON_PICTURE | POINTER_PRESSED | POINTER_FINGER) != 0 {
+        return Err(ProtocolError::BadValue("a ReGIS pointer's flags"));
+    }
+    let at = if flags & POINTER_ON_PICTURE == 0 {
+        None
+    } else {
+        let (x, y) = (fields.u16()?, fields.u16()?);
+        // The interface is not trusted to say a pixel the picture has not.
+        if usize::from(x) >= REGIS_WIDTH || usize::from(y) >= REGIS_HEIGHT {
+            return Err(ProtocolError::BadValue("a ReGIS pointer outside the picture"));
+        }
+        Some((x, y))
+    };
+    Ok(RegisPointer { key, at, pressed: flags & POINTER_PRESSED != 0, finger: flags & POINTER_FINGER != 0 })
+}
+
+/// What the viewer's pointer is doing to a sub-page's picture, as the
+/// trusted core tells the decoder (REQ-6374, REQ-6378): the renderer
+/// paints the hovered drawing with its hover look and the pressed one with
+/// its pressed look, and the decoder blinks the sub-page's cursor drawing
+/// while keys go to the channel.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct RegisViewer {
+    /// The numbered drawing the pointer is over, 0 for none.
+    pub hovered: u16,
+    /// The numbered drawing pressed, 0 for none.
+    pub pressed: u16,
+    /// Keys go to the channel: the cursor drawing blinks.
+    pub typing: bool,
+}
+
+pub(crate) fn push_viewer(payload: &mut Vec<u8>, viewer: RegisViewer) {
+    payload.extend_from_slice(&viewer.hovered.to_be_bytes());
+    payload.extend_from_slice(&viewer.pressed.to_be_bytes());
+    push_flag(payload, viewer.typing);
+}
+
+pub(crate) fn read_viewer(fields: &mut Fields<'_>) -> Result<RegisViewer, ProtocolError> {
+    Ok(RegisViewer { hovered: fields.u16()?, pressed: fields.u16()?, typing: fields.flag("a ReGIS viewer's typing flag")? })
 }

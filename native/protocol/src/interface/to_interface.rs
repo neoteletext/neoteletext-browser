@@ -7,9 +7,9 @@ use std::io::{Read, Write};
 use super::ToInterface;
 use super::kinds::{
     KIND_BAR_VIEW, KIND_BOOKMARKS_VIEW, KIND_CHANNEL, KIND_CLOSE, KIND_CLOSE_WINDOW_VIEW, KIND_CONSOLE_UPDATE, KIND_COOKIES_VIEW, KIND_FRAME,
-    KIND_HISTORY_VIEW, KIND_OPEN_WINDOW, KIND_PAGE, KIND_PAGE_CONTROLS, KIND_PICTURE_STATUS, KIND_RAISE, KIND_REGIS_FRAME, KIND_REMOTE, KIND_SETTINGS,
-    KIND_SHOW, KIND_SHOW_CONTENTS, KIND_SHOW_WALL, KIND_STAR_VIEW, KIND_STRIP, KIND_SUBPAGE_ROWS, KIND_SUBPAGES, KIND_SUGGESTIONS, KIND_TAB_LIST_VIEW,
-    KIND_TAB_SOUNDING, KIND_TABS, KIND_TARGET, KIND_UPDATE_VIEW, KIND_UPDATED, KIND_WINDOW_VIEW,
+    KIND_HISTORY_VIEW, KIND_OPEN_WINDOW, KIND_PAGE, KIND_PAGE_CONTROLS, KIND_PICTURE_STATUS, KIND_RAISE, KIND_REGIS_FRAME, KIND_REGIS_OVER, KIND_REMOTE,
+    KIND_SETTINGS, KIND_SHOW, KIND_SHOW_CONTENTS, KIND_SHOW_WALL, KIND_STAR_VIEW, KIND_STRIP, KIND_SUBPAGE_ROWS, KIND_SUBPAGES, KIND_SUGGESTIONS,
+    KIND_TAB_LIST_VIEW, KIND_TAB_SOUNDING, KIND_TABS, KIND_TARGET, KIND_UPDATE_VIEW, KIND_UPDATED, KIND_WINDOW_VIEW,
 };
 use super::pages::{
     FRAME_FIXED_BYTES, push_channel, push_frame, push_page, push_subpage_count, push_subpage_rows, push_updated, read_channel, read_frame_head, read_page,
@@ -47,6 +47,7 @@ fn kind_of(message: &ToInterface) -> u8 {
         ToInterface::Updated { .. } => KIND_UPDATED,
         ToInterface::Frame { .. } => KIND_FRAME,
         ToInterface::Regis { .. } => KIND_REGIS_FRAME,
+        ToInterface::RegisOver { .. } => KIND_REGIS_OVER,
         ToInterface::Sounding(_) => KIND_TAB_SOUNDING,
         ToInterface::Show(_) => KIND_SHOW,
         ToInterface::ShowWall(_) => KIND_SHOW_WALL,
@@ -97,6 +98,10 @@ fn push_fields(payload: &mut Vec<u8>, message: &ToInterface) -> Result<(), Proto
         ToInterface::Regis { key, picture } => {
             push_key(payload, *key);
             crate::regis::push_picture(payload, picture)?;
+        }
+        ToInterface::RegisOver { key, over } => {
+            push_key(payload, *key);
+            crate::push_flag(payload, *over);
         }
         ToInterface::Sounding(channels) => push_channels(payload, channels)?,
         ToInterface::Show(key) => push_key(payload, *key),
@@ -177,6 +182,7 @@ pub fn read_from_core(input: &mut dyn Read) -> Result<Option<ToInterface>, Proto
             let key = fields.key()?;
             ToInterface::Regis { key, picture: crate::regis::read_picture(&mut fields)? }
         }
+        KIND_REGIS_OVER => ToInterface::RegisOver { key: fields.key()?, over: fields.flag("a ReGIS pointer over a drawing")? },
         KIND_TAB_SOUNDING => ToInterface::Sounding(read_channels(&mut fields)?),
         KIND_SHOW => ToInterface::Show(fields.key()?),
         KIND_SHOW_WALL => ToInterface::ShowWall(fields.u32()?),

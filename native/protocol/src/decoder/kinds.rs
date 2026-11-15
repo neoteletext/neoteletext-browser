@@ -58,3 +58,7 @@ pub(super) const KIND_AUDIO_RECEIVER: u8 = 152;
 // Decoder to trusted core: a picture drawn by the ReGIS renderer and its
 // pick record (DEC-6335), in the next number free across every pipe.
 pub(super) const KIND_REGIS: u8 = 153;
+// Trusted core to decoder: what the viewer's pointer is doing to a
+// sub-page's ReGIS picture (REQ-6374), in the next number free across
+// every pipe.
+pub(super) const KIND_REGIS_VIEWER: u8 = 157;

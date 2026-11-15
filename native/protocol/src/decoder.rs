@@ -120,6 +120,17 @@ pub enum ToDecoder {
         /// The area and whether it is pressed.
         look: Option<(crate::links::Area, bool)>,
     },
+    /// What the viewer's pointer is doing to a sub-page's ReGIS picture
+    /// (REQ-6374): its looks are drawn, and its cursor drawing blinked.
+    RegisViewer {
+        /// The page.
+        page: u16,
+        /// The sub-code.
+        sub: u16,
+        /// The hovered and pressed drawings, and whether keys go to the
+        /// channel.
+        viewer: crate::regis::RegisViewer,
+    },
 }
 
 /// The figures of a decoder's audio receiver (the engine's REQ-AUD-017,
@@ -362,6 +373,13 @@ pub fn write_to_decoder(out: &mut dyn Write, message: &ToDecoder) -> Result<(), 
             }
             KIND_LOOK
         }
+        ToDecoder::RegisViewer { page, sub, viewer } => {
+            crate::fields::check_page(*page)?;
+            payload.extend_from_slice(&page.to_be_bytes());
+            payload.extend_from_slice(&sub.to_be_bytes());
+            crate::regis::push_viewer(&mut payload, *viewer);
+            kinds::KIND_REGIS_VIEWER
+        }
     };
     write_frame(out, kind, &payload)
 }
@@ -436,6 +454,10 @@ pub fn read_from_core(input: &mut dyn Read) -> Result<Option<ToDecoder>, Protoco
             let page = fields.channel_page()?;
             let look = if fields.is_empty() { None } else { Some((crate::links::read_area(&mut fields)?, fields.flag("pressed")?)) };
             ToDecoder::Look { page, look }
+        }
+        kinds::KIND_REGIS_VIEWER => {
+            let (page, sub) = (fields.channel_page()?, fields.u16()?);
+            ToDecoder::RegisViewer { page, sub, viewer: crate::regis::read_viewer(&mut fields)? }
         }
         other => return Err(ProtocolError::UnknownKind(other)),
     };

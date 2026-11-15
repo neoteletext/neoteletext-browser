@@ -51,6 +51,7 @@ mod longest_address_tests;
 pub mod outbox;
 mod private_file;
 pub mod regis;
+pub mod regis_pointer;
 pub use private_file::make_folder;
 pub mod session_file;
 pub mod settings;

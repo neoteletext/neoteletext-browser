@@ -162,8 +162,7 @@ pub fn run(store_pages: usize) -> Result<(), ProtocolError> {
         let audio = engine.next_audio_tick_ms().map(|ms| ms.saturating_mul(MICROSECONDS_PER_MILLISECOND));
         // A ReGIS picture whose repaint its budget held back is drawn when
         // the budget allows (REQ-6380).
-        let regis = showing.iter().filter_map(|&page| engine.regis().owed_us(page, shown_subpage(&sent, page), now)).min();
-        let deadline = [flashing.next_us(now, engine.config()), audio, regis].into_iter().flatten().min();
+        let deadline = [flashing.next_us(now, engine.config()), audio, regis_owed(&mut engine, &showing, &sent, now)].into_iter().flatten().min();
         let received = match wait(&incoming, deadline, now) {
             Woken::Message(message) => Some(message),
             Woken::Deadline => None,
@@ -226,6 +225,14 @@ pub fn run(store_pages: usize) -> Result<(), ProtocolError> {
                 write_to_core(&mut output, &FromDecoder::SubPageRows { page, rows: engine.subpage_rows(page, range) })?;
                 continue;
             }
+            // What the viewer's pointer is doing to a ReGIS picture
+            // changed (REQ-6374): repainted at once if on screen and its
+            // budget allows.
+            ToDecoder::RegisViewer { page, sub, viewer } => {
+                engine.regis().set_viewer(page, sub, viewer);
+                // Nothing arrived; what is owed is drawn below, as after data.
+                Vec::new()
+            }
             // The look under the pointer changed: drawn again at once.
             #[cfg(feature = "links")]
             ToDecoder::Look { page, look } => {
@@ -263,6 +270,11 @@ pub fn run(store_pages: usize) -> Result<(), ProtocolError> {
 /// was: the sub-page whose ReGIS picture is shown.
 fn shown_subpage(sent: &BTreeMap<u16, Rendered>, page: u16) -> Option<u16> {
     sent.get(&page).map(|rendered| rendered.subpages.shown)
+}
+
+/// When the earliest repaint owed to a ReGIS picture on screen may be made.
+fn regis_owed(engine: &mut Engine, showing: &[u16], sent: &BTreeMap<u16, Rendered>, now_us: u64) -> Option<u64> {
+    showing.iter().filter_map(|&page| engine.regis().owed_us(page, shown_subpage(sent, page), now_us)).min()
 }
 
 /// Sends the picture of each page on screen that the channel draws in

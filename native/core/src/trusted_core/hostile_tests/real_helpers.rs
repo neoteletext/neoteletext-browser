@@ -163,6 +163,7 @@ fn is_strip_input(intent: &ToCore) -> bool {
         | ToCore::TabList(_)
         | ToCore::Window(_)
         | ToCore::SubPageRows { .. }
+        | ToCore::RegisPointer(_)
         | ToCore::From(_) => false,
         #[cfg(feature = "links")]
         ToCore::Point(_) | ToCore::Lit(_) | ToCore::Typed { .. } => false,

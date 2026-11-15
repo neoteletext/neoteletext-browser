@@ -14,6 +14,8 @@ impl Browser {
     /// to what is under it, and then, if that left it in the text field that
     /// has the keys, to the field's text.
     pub fn pointer_pressed<C: Canvas + ?Sized>(&mut self, canvas: &mut C, extend: bool, now: u64) -> bool {
+        // Before the press goes to the channel (REQ-6377).
+        self.regis_button(true);
         let changed = self.press_window(extend, now);
         self.press_field(canvas, extend, now) || changed
     }

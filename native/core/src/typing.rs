@@ -443,6 +443,35 @@ impl Typing {
         self.channels.get(&channel).and_then(|state| state.on_screen)
     }
 
+    /// The page open in the active tab, if any.
+    #[must_use]
+    pub const fn opened_page(&self) -> Option<PageKey> {
+        self.opened
+    }
+
+    /// Whether keys go to the channel for `key`: it is the open page, its
+    /// channel's session is welcomed, and the window has the keyboard.
+    #[must_use]
+    pub fn takes_keys(&self, key: PageKey) -> bool {
+        self.on(key.channel) && self.opened == Some(key) && !self.away()
+    }
+
+    /// `DRAWING_HOVER` (the engine's REQ-6369): the pointer came onto a
+    /// detectable numbered drawing of the picture of `key`'s sub-page
+    /// `on`, or went off it. Nothing goes unless keys go to the channel
+    /// and that sub-page is still the one on screen, whose stamp tells the
+    /// channel the rest.
+    pub fn drawing_hover(&mut self, key: PageKey, on: Stamp, leave: bool, drawing: u16, commits: u32, now_us: u64) -> Vec<Send> {
+        let mut sends = Vec::new();
+        if !self.takes_keys(key) {
+            return sends;
+        }
+        if let Some(state) = self.channels.get_mut(&key.channel).filter(|state| state.on_screen == Some(on)) {
+            state.send(key.channel, &Item::Event(Event::DrawingHover { on, leave, drawing, commits }), now_us, &mut sends);
+        }
+        sends
+    }
+
     /// PICK (the engine's REQ-6337): what lay under the pointer of the
     /// pointer event just sent for `key`, a page the ReGIS renderer draws.
     /// It goes under the conditions the event itself went under.

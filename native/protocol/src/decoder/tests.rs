@@ -80,6 +80,9 @@ fn every_kind_round_trips() {
         ToDecoder::View(View { page: 0x100, ..View::default() }),
         ToDecoder::SubPageRows { page: 0x210, range: SubPageRange { first: 8_126, count: 64 } },
         ToDecoder::Picture(interface_core::picture::PictureChoice { level: 0, fit: 1, align: 8, background: 7, hold_mosaics: true }),
+        // REQ-6374: what the pointer is doing to a sub-page's ReGIS picture.
+        ToDecoder::RegisViewer { page: 0x103, sub: 2, viewer: crate::regis::RegisViewer { hovered: 12, pressed: 65_535, typing: true } },
+        ToDecoder::RegisViewer { page: 0x103, sub: 0, viewer: crate::regis::RegisViewer::default() },
     ] {
         let mut bytes = Vec::new();
         write_to_decoder(&mut bytes, &message).unwrap();

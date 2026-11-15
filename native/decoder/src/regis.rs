@@ -13,8 +13,8 @@
 use std::collections::BTreeMap;
 
 use neoteletext_web::records::regis::RegisRecord;
-use protocol::regis::{RegisPick, RegisPicture, pack};
-use regis::{Event, Font, Picture, RepaintBudget, Screen, Terminal};
+use protocol::regis::{RegisPick, RegisPicture, RegisViewer, pack};
+use regis::{Event, Font, Picture, RepaintBudget, Screen, Terminal, ViewerState};
 
 /// The most sub-pages whose ReGIS is kept. Each holds two pages of pixels,
 /// a picture and its drawings: about a megabyte and a half before any
@@ -40,6 +40,8 @@ struct Page {
     changed: bool,
     /// When it was last fed, by the count of records read.
     fed: u64,
+    /// What the viewer's pointer is doing to it, as the trusted core said.
+    viewer: RegisViewer,
     /// What bounds its repainting (the renderer's REQ-6368).
     budget: RepaintBudget,
     /// The time the budget was last credited to, in milliseconds of the
@@ -48,7 +50,9 @@ struct Page {
 }
 
 impl Page {
-    fn new(generation: u16) -> Self {
+    /// A sub-page's ReGIS begun: `viewer` is what the pointer was doing to
+    /// the stream before it, which a new stream does not change.
+    fn new(generation: u16, viewer: RegisViewer) -> Self {
         let mut terminal = Terminal::new();
         // The font is this program's own data: if it did not parse, text
         // would be drawn as blocks, as the renderer draws a missing glyph.
@@ -64,6 +68,7 @@ impl Page {
             picture: Picture::new(),
             changed: true,
             fed: 0,
+            viewer,
             budget: RepaintBudget::new(),
             earned_ms: None,
         }
@@ -71,6 +76,14 @@ impl Page {
 }
 
 impl Page {
+    /// Gives the renderer the viewer state: the drawings hovered and
+    /// pressed (REQ-6374). The picture is owed a repaint when the renderer
+    /// says it may differ; a drawing with no look costs none.
+    fn apply_viewer(&mut self) {
+        let state = ViewerState { hovered: self.viewer.hovered, pressed: self.viewer.pressed, hidden: 0 };
+        self.changed |= self.terminal.set_viewer_state(state);
+    }
+
     /// Credits the repaint budget for the time since it was last credited.
     fn earn(&mut self, now_us: u64) {
         let milliseconds = now_us.checked_div(MICROSECONDS_PER_MILLISECOND).unwrap_or(0);
@@ -122,7 +135,10 @@ impl RegisPages {
                     self.pages.remove(&oldest);
                 }
             }
-            self.pages.insert(key, Page::new(record.generation));
+            let viewer = self.pages.get(&key).map(|page| page.viewer).unwrap_or_default();
+            let mut page = Page::new(record.generation, viewer);
+            page.apply_viewer();
+            self.pages.insert(key, page);
         }
         let Some(page) = self.pages.get_mut(&key) else { return };
         page.fed = self.records;
@@ -137,6 +153,16 @@ impl RegisPages {
         // do: a pause (no local animation) or a reply to the host.
         let committed = events.iter().any(|event| matches!(event, Event::Committed(_)));
         page.changed |= committed | page.screen.take_changed();
+    }
+
+    /// The trusted core said what the viewer's pointer is doing to a
+    /// sub-page's picture (REQ-6374). A sub-page with no ReGIS has no
+    /// picture for it to change.
+    pub fn set_viewer(&mut self, page: u16, sub: u16, viewer: RegisViewer) {
+        if let Some(held) = self.pages.get_mut(&(page, sub)) {
+            held.viewer = viewer;
+            held.apply_viewer();
+        }
     }
 
     /// Whether the channel has sent ReGIS for a page.
@@ -347,5 +373,38 @@ mod tests {
             pages.read(&record(0x100, 1, offset, moved.as_bytes()));
             offset += u32::try_from(moved.len()).unwrap();
         }
+    }
+
+    /// REQ-6374: the hovered drawing is painted with its hover look and the
+    /// pressed one with its pressed look, with no bytes from the channel;
+    /// a drawing with no look, and a viewer state that changes nothing,
+    /// cost no repaint.
+    #[test]
+    fn the_viewer_state_paints_looks_and_costs_nothing_where_there_are_none() {
+        let square = |colour: u8| format!("W(I{colour})V[0,0][19,0][19,19][0,19][0,0]");
+        let scene = format!(
+            "D(B1){}D(E)D(B2){}D(E)D(B3){}D(E)D(B4){}D(E)D(S1(X100,Y50,I1,H2,A3),S2(V0),S3(V0),S4(X300,Y50,I1),C)",
+            square(3),
+            square(5),
+            square(6),
+            square(7)
+        );
+        let mut pages = RegisPages::default();
+        pages.read(&record(0x100, 1, 0, scene.as_bytes()));
+        let at = |pages: &mut RegisPages| pages.take(0x100, Some(0), 0).map(|drawn| unpack(&drawn.picture.packed)[50 * REGIS_WIDTH + 100]);
+        assert_eq!(at(&mut pages), Some(3));
+        pages.set_viewer(0x100, 0, RegisViewer { hovered: 1, pressed: 0, typing: true });
+        assert_eq!(at(&mut pages), Some(5), "the hover look");
+        pages.set_viewer(0x100, 0, RegisViewer { hovered: 1, pressed: 1, typing: true });
+        assert_eq!(at(&mut pages), Some(6), "the pressed look wins");
+        pages.set_viewer(0x100, 0, RegisViewer { hovered: 1, pressed: 1, typing: true });
+        assert_eq!(at(&mut pages), None, "the same state again repaints nothing");
+        pages.set_viewer(0x100, 0, RegisViewer { hovered: 4, pressed: 0, typing: true });
+        assert_eq!(at(&mut pages), Some(3), "drawing 1 is itself again");
+        pages.set_viewer(0x100, 0, RegisViewer { hovered: 0, pressed: 4, typing: true });
+        assert_eq!(at(&mut pages), None, "drawing 4 has no looks: nothing to repaint");
+        // Another sub-page's viewer state is not this one's.
+        pages.set_viewer(0x100, 9, RegisViewer { hovered: 1, pressed: 0, typing: true });
+        assert_eq!(at(&mut pages), None);
     }
 }

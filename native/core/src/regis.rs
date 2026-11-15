@@ -6,8 +6,8 @@
 
 use std::collections::BTreeMap;
 
-use interface_core::canvas::{PAGE_HEIGHT, PAGE_WIDTH, PageKey, REGIS_LINES, REGIS_TOP_LINE};
-use protocol::regis::{REGIS_HEIGHT, REGIS_WIDTH, RegisPick};
+use interface_core::canvas::PageKey;
+use protocol::regis::RegisPick;
 
 /// The most pages whose pick record is kept: more than a window shows of
 /// one channel at once. One more forgets the lowest page of the lowest
@@ -40,31 +40,6 @@ pub struct Under {
     pub commits: u32,
 }
 
-/// The pixel of a ReGIS picture under a dot of its page's image, or `None`
-/// for a dot outside the picture (REQ-6363 item 4). Contained in the page
-/// area (`contain`), the page is laid out in the picture's shape and the
-/// picture fills its image: the image's dots span the picture's pixels
-/// and its lines the picture's rows. Contained to the teletext page, the
-/// picture is drawn across the whole width of the image and
-/// [`REGIS_LINES`] of its lines, from line [`REGIS_TOP_LINE`]
-/// (`interface_core::canvas::regis_within`), and a dot above or below
-/// that band is outside it.
-#[must_use]
-pub fn picture_pixel(dot: (u32, u32), contain: bool) -> Option<(usize, usize)> {
-    let (x, y) = (usize::try_from(dot.0).ok()?, usize::try_from(dot.1).ok()?);
-    if x >= usize::from(PAGE_WIDTH) || y >= usize::from(PAGE_HEIGHT) {
-        return None;
-    }
-    let (line, lines) = if contain {
-        (y, usize::from(PAGE_HEIGHT))
-    } else {
-        (y.checked_sub(usize::from(REGIS_TOP_LINE)).filter(|line| *line < usize::from(REGIS_LINES))?, usize::from(REGIS_LINES))
-    };
-    let across = x.saturating_mul(REGIS_WIDTH).checked_div(usize::from(PAGE_WIDTH))?;
-    let down = line.saturating_mul(REGIS_HEIGHT).checked_div(lines)?;
-    Some((across.min(REGIS_WIDTH.saturating_sub(1)), down.min(REGIS_HEIGHT.saturating_sub(1))))
-}
-
 /// The pick records kept.
 #[derive(Default)]
 pub struct PickRecords {
@@ -91,22 +66,31 @@ impl PickRecords {
         self.pages.retain(|key, _| key.channel != channel);
     }
 
-    /// What lies under a dot of the image of `key`'s sub-page `sub`; `None`
-    /// when the page is not drawn in ReGIS, another sub-page of it is, or
-    /// the dot is outside the picture.
+    /// The sub-code of the picture held for a page, and the commits
+    /// applied to it.
     #[must_use]
-    pub fn under(&self, key: PageKey, sub: u16, dot: (u32, u32), contain: bool) -> Option<Under> {
-        let held = self.pages.get(&key).filter(|held| held.sub == sub)?;
-        let (x, y) = picture_pixel(dot, contain)?;
-        let picked = held.pick.at(x, y);
-        Some(Under {
-            drawing: picked.drawing,
-            x: picked.x,
-            y: picked.y,
-            picture_x: u32::try_from(x).ok()?,
-            picture_y: u32::try_from(y).ok()?,
-            commits: held.commits,
-        })
+    pub fn held(&self, key: PageKey) -> Option<(u16, u32)> {
+        self.pages.get(&key).map(|held| (held.sub, held.commits))
+    }
+
+    /// What lies under a pixel of the picture held for `key`, whichever
+    /// sub-page it is of; `None` when the page is not drawn in ReGIS. The
+    /// pixel is the picture's own, as the interface found it from where
+    /// the picture is drawn (REQ-6377), and the reader of its message has
+    /// checked that the picture has it.
+    #[must_use]
+    pub fn at(&self, key: PageKey, pixel: (u16, u16)) -> Option<Under> {
+        let held = self.pages.get(&key)?;
+        let picked = held.pick.at(usize::from(pixel.0), usize::from(pixel.1));
+        Some(Under { drawing: picked.drawing, x: picked.x, y: picked.y, picture_x: u32::from(pixel.0), picture_y: u32::from(pixel.1), commits: held.commits })
+    }
+
+    /// What lies under a pixel of the picture of `key`'s sub-page `sub`;
+    /// `None` when the page is not drawn in ReGIS or the picture held is
+    /// of another sub-page.
+    #[must_use]
+    pub fn under(&self, key: PageKey, sub: u16, pixel: (u16, u16)) -> Option<Under> {
+        self.held(key).filter(|(held, _)| *held == sub).and_then(|_| self.at(key, pixel))
     }
 }
 
@@ -114,52 +98,43 @@ impl PickRecords {
 mod tests {
     #![allow(clippy::unwrap_used, clippy::indexing_slicing, reason = "a test reports a failure by panicking, and indexes data it built to a known size")]
 
-    use protocol::regis::REGIS_PIXELS;
+    use protocol::regis::{REGIS_PIXELS, REGIS_WIDTH};
 
     use super::*;
 
     const KEY: PageKey = PageKey { channel: 3, page: 0x100 };
 
-    /// The picture fills the image's width and 288 of its 500 lines, from
-    /// line 106: the corners of that band are the picture's corners, and
-    /// the lines above and below are outside it.
+    /// DEC-6335 item 1: the drawing under a pixel comes from the record
+    /// kept with the picture shown, for the sub-page shown only.
     #[test]
-    fn a_dot_of_the_image_is_a_pixel_of_the_picture_or_outside_it() {
-        assert_eq!(picture_pixel((0, 106), false), Some((0, 0)));
-        assert_eq!(picture_pixel((479, 393), false), Some((798, 478)));
-        assert_eq!(picture_pixel((240, 250), false), Some((400, 240)));
-        assert_eq!(picture_pixel((0, 105), false), None);
-        assert_eq!(picture_pixel((0, 394), false), None);
-        assert_eq!(picture_pixel((480, 200), false), None);
-        // REQ-6363 item 4: contained in the page area, the whole image is the picture.
-        assert_eq!(picture_pixel((0, 0), true), Some((0, 0)));
-        assert_eq!(picture_pixel((479, 499), true), Some((798, 479)));
-        assert_eq!(picture_pixel((240, 250), true), Some((400, 240)));
-        assert_eq!(picture_pixel((0, 105), true), Some((0, 100)), "no band: a line above the teletext band is a row of the picture");
-        assert_eq!(picture_pixel((480, 200), true), None);
-        assert_eq!(picture_pixel((0, 500), true), None);
-    }
-
-    /// DEC-6335 item 1: the drawing under a dot comes from the record kept
-    /// with the picture shown, for the sub-page shown only.
-    #[test]
-    fn the_drawing_under_a_dot_is_read_from_the_record_kept() {
+    fn the_drawing_under_a_pixel_is_read_from_the_record_kept() {
         let mut record = vec![0_u16; REGIS_PIXELS];
         record[240 * REGIS_WIDTH + 400] = 9;
         let mut records = PickRecords::default();
-        assert_eq!(records.under(KEY, 0, (240, 250), false), None, "not a page drawn in ReGIS");
+        assert_eq!(records.under(KEY, 0, (400, 240)), None, "not a page drawn in ReGIS");
         records.hold(KEY, 0, 7, RegisPick::of(&record, [(9, 390, 200)].into_iter()));
-        let under = records.under(KEY, 0, (240, 250), false).unwrap();
+        let under = records.under(KEY, 0, (400, 240)).unwrap();
         assert_eq!((under.drawing, under.x, under.y, under.picture_x, under.picture_y, under.commits), (9, 10, 40, 400, 240, 7));
-        assert_eq!(records.under(KEY, 0, (0, 106), false).unwrap().drawing, 0);
-        assert_eq!(records.under(KEY, 2, (240, 250), false), None, "another sub-page is on screen");
-        assert_eq!(records.under(KEY, 0, (240, 10), false), None, "above the picture");
-        // REQ-6363 item 4: contained in the page area, the same drawing is
-        // under the dot the picture's pixel (400, 240) is drawn at, and no
-        // dot of the image is outside the picture.
-        assert_eq!(records.under(KEY, 0, (240, 250), true).map(|under| (under.drawing, under.picture_x, under.picture_y)), Some((9, 400, 240)));
-        assert_eq!(records.under(KEY, 0, (240, 10), true).map(|under| under.drawing), Some(0));
+        assert_eq!(records.under(KEY, 0, (0, 0)).unwrap().drawing, 0);
+        assert_eq!(records.under(KEY, 2, (400, 240)), None, "another sub-page is on screen");
+        assert_eq!(records.at(KEY, (400, 240)).map(|under| under.drawing), Some(9), "whichever sub-page the picture held is of");
+        assert_eq!(records.held(KEY), Some((0, 7)));
         records.forget(KEY.channel);
         assert!(!records.has(KEY));
+    }
+
+    /// REQ-6377: a drawing one pixel wide is under its own column and not
+    /// under the columns beside it. Through the page image's 480 dots,
+    /// column 401 of the picture could not be named at all.
+    #[test]
+    fn a_drawing_one_pixel_wide_is_hit_at_its_column_and_missed_beside_it() {
+        let mut record = vec![0_u16; REGIS_PIXELS];
+        for row in 100..200 {
+            record[row * REGIS_WIDTH + 401] = 5;
+        }
+        let mut records = PickRecords::default();
+        records.hold(KEY, 0, 1, RegisPick::of(&record, [(5, 401, 100)].into_iter()));
+        let drawing = |column: u16| records.under(KEY, 0, (column, 150)).unwrap().drawing;
+        assert_eq!((drawing(400), drawing(401), drawing(402)), (0, 5, 0));
     }
 }

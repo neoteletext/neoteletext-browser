@@ -57,6 +57,8 @@ impl Core {
                 let key = PageKey { channel, page };
                 self.regis.hold(key, sub, picture.commits, pick);
                 self.send(&ToInterface::Regis { key, picture })?;
+                // What lies under a still pointer may have changed (REQ-6374 item 5).
+                self.regis_repoint()?;
             }
             #[cfg(feature = "links")]
             FromDecoder::Links { page, with_image, candidates, numbers, controls, fastext } => {

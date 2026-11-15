@@ -102,6 +102,15 @@ pub enum ToInterface {
         /// The picture.
         picture: crate::regis::RegisPicture,
     },
+    /// Whether a numbered drawing a click would act on lies under the
+    /// pointer on a page drawn in ReGIS: the pointer is then the hand
+    /// (REQ-6374). The interface never sees the pick record.
+    RegisOver {
+        /// Which page.
+        key: PageKey,
+        /// A detectable drawing is under the pointer.
+        over: bool,
+    },
     /// The channels sounding now, muted or not, for the tabs' speakers;
     /// the sound helper says it and the trusted core passes it on
     /// (decision 55).
@@ -258,6 +267,9 @@ pub enum ToCore {
     /// channel for it.
     #[cfg(feature = "links")]
     Lit(Option<links::Lit>),
+    /// Where the pointer is on the open page's ReGIS picture, and whether
+    /// it is pressed (REQ-6377).
+    RegisPointer(crate::regis::RegisPointer),
     /// A page number typed that the open page or the channel links
     /// elsewhere.
     #[cfg(feature = "links")]

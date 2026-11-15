@@ -14,8 +14,11 @@ impl Core {
     fn pick_under(&mut self, input: &protocol::interaction::InputIntent) -> Vec<neoteletext::typing::Send> {
         use protocol::interaction::Intent;
         let (Intent::Mouse { at, .. } | Intent::Touch { at, .. } | Intent::Wheel { at, .. }) = &input.intent else { return Vec::new() };
-        let (Some(dot), Some(on)) = (at.pixels, self.typing.on_screen(input.key.channel)) else { return Vec::new() };
-        let Some(under) = self.regis.under(input.key, on.sub, dot, self.settings.regis_contain) else { return Vec::new() };
+        // The place is the picture's own pixel, as the interface said it
+        // before this event (REQ-6377), not the event's dot of the page image.
+        let _ = at;
+        let (Some(pixel), Some(on)) = (self.regis_pointing.at(input.key), self.typing.on_screen(input.key.channel)) else { return Vec::new() };
+        let Some(under) = self.regis.under(input.key, on.sub, pixel) else { return Vec::new() };
         let pick = neoteletext_input::event::Pick {
             on,
             drawing: under.drawing,
@@ -112,7 +115,12 @@ impl Core {
                         let _ = write_to_fetcher(input, &ToFetcher::MeasureRoundTrip(on));
                     }
                 }
-                Send::Interface(state) => self.send(&ToInterface::Typing(state))?,
+                Send::Interface(state) => {
+                    self.send(&ToInterface::Typing(state))?;
+                    // Keys may have started or stopped going to the
+                    // channel: the looks and the hover follow (REQ-6374).
+                    self.regis_repoint()?;
+                }
             }
         }
         Ok(())

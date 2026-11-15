@@ -58,6 +58,7 @@ mod pointer;
 mod popups;
 mod redirecting;
 mod regions;
+mod regis_pointer;
 mod regis_status;
 mod remote;
 mod settings_panel;
@@ -239,6 +240,8 @@ pub struct Browser {
     /// For each page drawn in ReGIS, the commits applied to its picture
     /// and the work units its last repaint cost (`regis_status.rs`).
     regis: BTreeMap<PageKey, (u32, u64)>,
+    /// The pointer on the open page's ReGIS picture (`regis_pointer.rs`).
+    regis_pointer: regis_pointer::RegisPointing,
     /// The phone keyboard (DOC-2029).
     #[cfg(feature = "phone-keyboard")]
     phone: phone::PhoneUi,
@@ -316,6 +319,7 @@ impl Browser {
             #[cfg(feature = "interaction")]
             input_trace: None,
             regis: BTreeMap::new(),
+            regis_pointer: regis_pointer::RegisPointing::default(),
             #[cfg(feature = "phone-keyboard")]
             phone: phone::PhoneUi::default(),
         }

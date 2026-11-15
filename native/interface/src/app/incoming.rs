@@ -79,6 +79,11 @@ impl App {
                 self.view.browser.set_regis(key, picture.commits, picture.work);
                 self.request_redraw();
             }
+            Incoming::RegisOver { key, over } => {
+                self.view.browser.set_regis_over(key, over);
+                // The pointer's shape follows at the next frame.
+                self.request_redraw();
+            }
             #[cfg(feature = "phone-keyboard")]
             Incoming::Phone(view) => {
                 self.show_phone(view);

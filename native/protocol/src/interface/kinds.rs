@@ -31,6 +31,12 @@ pub(crate) const KIND_FRAME: u8 = 3;
 // Trusted core to interface: a picture drawn by the ReGIS renderer
 // (DEC-6335), in the next number free across every pipe.
 pub(crate) const KIND_REGIS_FRAME: u8 = 154;
+// Interface to trusted core: where the pointer is on a page drawn in
+// ReGIS (REQ-6377); and trusted core to interface: whether a drawing a
+// click would act on is under it (REQ-6374). The next numbers free across
+// every pipe.
+pub(crate) const KIND_REGIS_POINTER: u8 = 155;
+pub(crate) const KIND_REGIS_OVER: u8 = 156;
 pub(crate) const KIND_CLOSE: u8 = 4;
 pub(crate) const KIND_TABS: u8 = 5;
 pub(crate) const KIND_CHANNEL: u8 = 6;

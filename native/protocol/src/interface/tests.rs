@@ -227,6 +227,10 @@ fn every_message_to_the_interface_round_trips() {
 fn every_intent_round_trips() {
     for message in [
         ToCore::Visible(vec![KEY]),
+        // REQ-6377: the pointer on a ReGIS picture, on it and off it.
+        ToCore::RegisPointer(crate::regis::RegisPointer { key: KEY, at: Some((799, 479)), pressed: true, finger: false }),
+        ToCore::RegisPointer(crate::regis::RegisPointer { key: KEY, at: Some((0, 0)), pressed: false, finger: true }),
+        ToCore::RegisPointer(crate::regis::RegisPointer { key: KEY, at: None, pressed: false, finger: false }),
         ToCore::Cell { key: KEY, version: 7, column: 39, row: 24 },
         ToCore::SelectTab(3),
         ToCore::CloseTab(0),
@@ -427,4 +431,38 @@ fn the_phone_panel_carries_a_request_for_a_pin_and_nothing_more() {
     let value = bytes.len() - 1;
     bytes[value] = 3;
     assert!(read_from_interface(&mut bytes.as_slice()).is_err(), "kind {KIND_PHONE_PANEL} with a value it does not have");
+}
+
+/// REQ-6377 item 2: the interface is not trusted to say a pixel the picture
+/// has not, nor a flag the pointer has not.
+#[test]
+fn a_regis_pointer_outside_the_picture_is_refused() {
+    let written = |pointer: crate::regis::RegisPointer| {
+        let mut bytes = Vec::new();
+        write_to_core(&mut bytes, &ToCore::RegisPointer(pointer)).unwrap();
+        bytes
+    };
+    let good = crate::regis::RegisPointer { key: KEY, at: Some((799, 479)), pressed: false, finger: false };
+    assert!(read_from_interface(&mut written(good).as_slice()).is_ok());
+    for at in [(800, 0), (0, 480), (u16::MAX, u16::MAX)] {
+        let bytes = written(crate::regis::RegisPointer { at: Some(at), ..good });
+        assert!(read_from_interface(&mut bytes.as_slice()).is_err(), "{at:?}");
+    }
+    // A flag bit that means nothing: the byte after the page's key.
+    let mut flagged = written(good);
+    let flags = flagged.len() - 5;
+    flagged[flags] |= 0x80;
+    assert!(read_from_interface(&mut flagged.as_slice()).is_err());
+}
+
+/// REQ-6374: whether a drawing is under the pointer goes to the interface
+/// and reads back.
+#[test]
+fn whether_a_drawing_is_under_the_pointer_round_trips() {
+    for over in [true, false] {
+        let message = ToInterface::RegisOver { key: KEY, over };
+        let mut bytes = Vec::new();
+        write_to_interface(&mut bytes, &message).unwrap();
+        assert_eq!(read_from_core(&mut bytes.as_slice()).unwrap().unwrap(), message);
+    }
 }

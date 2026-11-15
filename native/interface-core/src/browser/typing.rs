@@ -362,6 +362,9 @@ impl Browser {
     /// contact was taken; the browser has no touch gestures of its own yet.
     pub fn touch(&mut self, phase: TouchPhase, contact: u64, x: f64, y: f64) -> bool {
         let point = crate::geometry::Point::new(x, y);
+        // A finger on a ReGIS picture presses the drawing under it, and
+        // does not hover (REQ-6374).
+        self.regis_finger(matches!(phase, TouchPhase::Began | TouchPhase::Moved).then_some(point));
         let Some(target) = self.mouse_target() else { return false };
         if let Some(place) = self.typing.link_touches.iter().position(|(system, _)| *system == contact) {
             if phase == TouchPhase::Ended {

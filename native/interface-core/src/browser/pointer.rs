@@ -53,6 +53,9 @@ impl Browser {
         let hovered = self.wall.hover(self.pointer, now);
         let previewed = self.overview_page(self.pointer);
         let preview_changed = previewed != self.previewed;
+        // Before the move goes to the channel: what the trusted core looks
+        // up for it is of this place (REQ-6377).
+        self.regis_pointed();
         #[cfg(feature = "interaction")]
         self.terminal_moved();
         self.previewed = previewed;
@@ -95,6 +98,10 @@ impl Browser {
         if let Some(cursor) = self.link_cursor() {
             return cursor;
         }
+        // A drawing of a ReGIS picture that a click would act on (REQ-6374).
+        if self.over_regis_drawing() {
+            return Cursor::Hand;
+        }
         let over_toggle = self.regions.overview_toggle.contains(self.pointer)
             || self.regions.overview_close.contains(self.pointer)
             || self.console.over_window_button(self.pointer)
@@ -123,6 +130,7 @@ impl Browser {
 
     /// The main button was released.
     pub fn pointer_released(&mut self) {
+        self.regis_button(false);
         self.release_field();
         self.remote_released();
         self.divider_released();
