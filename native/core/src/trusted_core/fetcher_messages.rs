@@ -33,6 +33,10 @@ impl Core {
 
     pub(super) fn fetched(&mut self, channel: u32, message: FromFetcher) -> Result<(), String> {
         self.console_fetched(channel, &message);
+        // The open page's controls say what it has brought (REQ-6352).
+        if matches!(message, FromFetcher::Page { .. }) && self.selection_shown(channel).is_some() {
+            self.send_controls()?;
+        }
         match message {
             // As a decoder's (`decoded`).
             FromFetcher::Confined => {
@@ -282,6 +286,10 @@ impl Core {
                 let pushed = matches!(origin, Origin::PushedPackets);
                 let packets = matches!(origin, Origin::PushedPackets | Origin::FetchedPackets);
                 self.console.received(channel, pushed, packets, bytes);
+                // What the open page or sub-page has brought (REQ-6352).
+                if let Some(selection) = self.selection_shown(channel) {
+                    self.console.downloaded(channel, selection, bytes.len());
+                }
                 if packets {
                     self.console.packets(channel, at, pushed, bytes);
                 }

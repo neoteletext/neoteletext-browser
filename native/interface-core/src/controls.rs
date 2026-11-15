@@ -116,6 +116,9 @@ pub struct PageControls {
     pub chosen: Option<u16>,
     /// The sub-code of the sub-page shown, for the address and the tips.
     pub subcode: u16,
+    /// The bytes downloaded for the page or sub-page shown since it was
+    /// selected, as the trusted core counts them (REQ-6352).
+    pub downloaded: u64,
     /// Whether the page's sub-pages rotate, and so whether the remote offers
     /// the return to the latest.
     pub rotation: Rotation,

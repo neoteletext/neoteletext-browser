@@ -28,6 +28,27 @@ const SEVEN_BITS: u8 = 0x7F;
 struct Log {
     tabs: [VecDeque<(u64, ConsoleEntry)>; ConsoleTab::ALL.len()],
     counts: Counts,
+    /// What the tab's selection has brought since it was made (REQ-6352).
+    downloaded: Option<(Selection, u64)>,
+}
+
+/// What a tab shows of its channel: a page, and the sub-page of it chosen,
+/// or none while the page was opened without naming one.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Selection {
+    /// The page's number.
+    pub page: u16,
+    /// The sub-code chosen, if one was.
+    pub sub: Option<u16>,
+}
+
+impl Selection {
+    /// Whether `next` is this selection still: the same page and sub-page,
+    /// or the page opened without a sub-page now showing its first, whose
+    /// bytes those already counted are (REQ-6352 item 3).
+    fn goes_on_as(self, next: Self) -> bool {
+        self.page == next.page && (self.sub == next.sub || self.sub.is_none())
+    }
 }
 
 /// What the Stats tab counts of a channel since it opened (the owner, 27
@@ -215,6 +236,24 @@ impl Console {
             }
             counts.audio_packets = counts.audio_packets.saturating_add(1);
         }
+    }
+
+    /// Counts `bytes` of page content that came for `channel` while its tab
+    /// showed `selection`: added to the selection's count, which starts
+    /// again when the selection is another (REQ-6352 item 2).
+    pub fn downloaded(&mut self, channel: u32, selection: Selection, bytes: usize) {
+        let length = u64::try_from(bytes).unwrap_or(u64::MAX);
+        let log = self.channels.entry(channel).or_default();
+        let before = log.downloaded.filter(|(counted, _)| counted.goes_on_as(selection)).map_or(0, |(_, count)| count);
+        log.downloaded = Some((selection, before.saturating_add(length)));
+    }
+
+    /// The bytes counted for `selection` of `channel`: none when the count
+    /// kept is another selection's.
+    #[must_use]
+    pub fn downloaded_for(&self, channel: u32, selection: Selection) -> u64 {
+        let kept = self.channels.get(&channel).and_then(|log| log.downloaded);
+        kept.filter(|(counted, _)| counted.goes_on_as(selection)).map_or(0, |(_, count)| count)
     }
 
     /// Counts an exchange the fetcher made and the bytes it brought.

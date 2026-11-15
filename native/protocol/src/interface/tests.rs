@@ -191,6 +191,7 @@ fn every_message_to_the_interface_round_trips() {
             subpages: 8_190,
             chosen: Some(8_189),
             subcode: 0x3F7E,
+            downloaded: 0x0123_4567_89AB_CDEF,
             rotation: interface_core::controls::Rotation::Never,
         }),
         ToInterface::PageControls(interface_core::controls::PageControls::default()),

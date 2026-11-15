@@ -20,7 +20,7 @@ const INSET_SHARE: f64 = 0.3;
 const GROUP: usize = 3;
 
 /// A number with a comma between each three digits.
-fn grouped(number: u64) -> String {
+pub(super) fn grouped(number: u64) -> String {
     let digits = format!("{number}");
     let mut text = String::new();
     for (index, digit) in digits.chars().enumerate() {

@@ -623,6 +623,12 @@ impl Core {
         self.send_controls()
     }
 
+    /// What the open page shows of `channel`, when the open page is its.
+    pub(super) fn selection_shown(&self, channel: u32) -> Option<neoteletext::console::Selection> {
+        let key = self.controls.open.filter(|key| key.channel == channel)?;
+        Some(neoteletext::console::Selection { page: key.page, sub: self.controls.view_of(key).subpage })
+    }
+
     /// Tells the interface of the open page's controls, when they changed.
     pub(crate) fn send_controls(&mut self) -> Result<(), String> {
         let controls = match self.controls.open {
@@ -647,6 +653,7 @@ impl Core {
                     subpages,
                     chosen: chosen.filter(|&chosen| chosen < subpages),
                     subcode: drawn.shown,
+                    downloaded: self.selection_shown(key.channel).map_or(0, |selection| self.console.downloaded_for(key.channel, selection)),
                     rotation: if self.session.all_tabs().any(|tab| tab.channel.id == key.channel && tab.channel.live) {
                         Rotation::Never
                     } else {

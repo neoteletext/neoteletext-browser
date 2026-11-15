@@ -28,8 +28,11 @@ impl Browser {
         let heading = Rect::new(panel.x0, panel.y0, panel.x1, panel.y0 + HEADING_HEIGHT);
         left_centred(canvas, heading, PADDING, "Channel magazines", HEADING, surface.ink);
         canvas.fill(Rect::new(panel.x0, heading.y1 - HAIRLINE, panel.x1, heading.y1), 0.0, surface.rule);
+        // Room is kept under eight entries for the bytes downloaded, so
+        // that they show whatever the window's height (REQ-6352).
+        let downloaded_room = BANK_GAP + canvas.line_height(BANK_NAME) + canvas.line_height(BANK_RANGE);
         #[allow(clippy::cast_precision_loss, reason = "eight banks")]
-        let height = ((panel.height() - HEADING_HEIGHT - BANK_GAP) / BANKS as f64 - BANK_GAP).min(BANK_MAX_HEIGHT);
+        let height = ((panel.height() - HEADING_HEIGHT - BANK_GAP - downloaded_room) / BANKS as f64 - BANK_GAP).min(BANK_MAX_HEIGHT);
         // Only a magazine with pages has an entry, and the entries stand
         // one under another with no gap for the others (REQ-6350).
         let mut top = heading.y1 + BANK_GAP;
@@ -95,6 +98,25 @@ impl Browser {
             self.regions.banks.push(rect);
             top = rect.y1 + BANK_GAP;
         }
+        self.draw_downloaded(canvas, Rect::new(panel.x0 + BANK_GAP + PADDING, top + BANK_GAP, panel.x1 - BANK_GAP, panel.y1), surface);
+    }
+
+    /// Under the magazines, in `room`: the bytes downloaded for the page
+    /// shown, or for the sub-page shown when the page has sub-pages, one
+    /// figure and never both, as the trusted core counts them (REQ-6352).
+    fn draw_downloaded<C: Canvas + ?Sized>(&self, canvas: &mut C, room: Rect, surface: Surface) {
+        let controls = self.page_controls();
+        if controls.page.is_none() {
+            return;
+        }
+        let caption = if controls.subpages > 1 { "Sub-page downloaded" } else { "Page downloaded" };
+        let (caption_height, figure_height) = (canvas.line_height(BANK_NAME), canvas.line_height(BANK_RANGE));
+        if room.y0 + caption_height + figure_height > room.y1 {
+            return;
+        }
+        label(canvas, Point::new(room.x0, room.y0), caption, BANK_NAME, surface.muted);
+        let figure = format!("{} bytes", crate::browser::regis_status::grouped(controls.downloaded));
+        fitted_text(canvas, Rect::new(room.x0, room.y0 + caption_height, room.x1, room.y0 + caption_height + figure_height), &figure, BANK_RANGE, surface.ink);
     }
 }
 
@@ -138,6 +160,28 @@ mod tests {
         browser.key(Key::Up, Modifiers::default(), 0);
         browser.key(Key::Up, Modifiers::default(), 0);
         assert_eq!(browser.bank, 0, "and Up too");
+    }
+
+    /// REQ-6352: under the magazines, the bytes of the page shown, or of
+    /// the sub-page shown on a page with sub-pages; nothing with none open.
+    #[test]
+    fn the_bytes_downloaded_are_shown_under_the_magazines() {
+        use crate::controls::PageControls;
+        let (mut browser, mut canvas) = browser();
+        let said = |canvas: &crate::test_canvas::Recorder, text: &str| canvas.texts.iter().any(|(_, drawn)| drawn == text);
+        let drawn = |browser: &mut crate::browser::Browser, canvas: &mut crate::test_canvas::Recorder, controls: PageControls| {
+            browser.set_page_controls(controls);
+            canvas.texts.clear();
+            browser.draw(canvas, WIDTH, HEIGHT, 0);
+        };
+        drawn(&mut browser, &mut canvas, PageControls::default());
+        assert!(!said(&canvas, "Page downloaded") && !said(&canvas, "Sub-page downloaded"), "no page is open");
+        drawn(&mut browser, &mut canvas, PageControls { page: Some(0x100), subpages: 1, downloaded: 1_234_567, ..PageControls::default() });
+        assert!(said(&canvas, "Page downloaded") && said(&canvas, "1,234,567 bytes"), "{:?}", canvas.texts);
+        assert!(!said(&canvas, "Sub-page downloaded"), "one figure, the page's");
+        drawn(&mut browser, &mut canvas, PageControls { page: Some(0x100), subpages: 10, chosen: Some(2), downloaded: 890, ..PageControls::default() });
+        assert!(said(&canvas, "Sub-page downloaded") && said(&canvas, "890 bytes"), "{:?}", canvas.texts);
+        assert!(!said(&canvas, "Page downloaded"), "one figure, the sub-page's");
     }
 
     #[test]

@@ -142,3 +142,32 @@ fn the_stats_count_what_came_and_went_and_go_when_they_change() {
     assert!(updates[0].entries.is_empty() && updates[0].stats.is_some());
     assert_eq!(grouped(1_234_567), "1,234,567");
 }
+
+/// REQ-6352 items 2 and 3: what comes for a selection is added up, another
+/// page or sub-page starts from nothing, and a page opened without a
+/// sub-page keeps its count when its first sub-page is the one shown.
+#[test]
+fn the_bytes_downloaded_are_the_selections_and_start_again_with_another() {
+    let mut console = Console::default();
+    let page = Selection { page: 0x101, sub: None };
+    let first = Selection { page: 0x101, sub: Some(1) };
+    let second = Selection { page: 0x101, sub: Some(2) };
+    assert_eq!(console.downloaded_for(4, page), 0, "nothing yet");
+    console.downloaded(4, page, 1_000);
+    console.downloaded(4, page, 500);
+    assert_eq!(console.downloaded_for(4, page), 1_500);
+    assert_eq!(console.downloaded_for(4, first), 1_500, "the first sub-page's bytes are those that brought it");
+    console.downloaded(4, first, 200);
+    assert_eq!(console.downloaded_for(4, first), 1_700);
+    assert_eq!(console.downloaded_for(4, second), 0, "another sub-page has brought nothing yet");
+    console.downloaded(4, second, 300);
+    assert_eq!((console.downloaded_for(4, second), console.downloaded_for(4, first)), (300, 0));
+    console.downloaded(4, page, 50);
+    assert_eq!(console.downloaded_for(4, page), 50, "back at the page without a sub-page is a selection of its own");
+    console.downloaded(4, Selection { page: 0x102, sub: None }, 7);
+    assert_eq!((console.downloaded_for(4, Selection { page: 0x102, sub: None }), console.downloaded_for(4, page)), (7, 0));
+    assert_eq!(console.downloaded_for(5, page), 0, "each channel's own");
+    console.downloaded(5, page, usize::MAX);
+    console.downloaded(5, page, usize::MAX);
+    assert_eq!(console.downloaded_for(5, page), u64::MAX, "it stops at the most");
+}

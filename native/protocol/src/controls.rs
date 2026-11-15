@@ -88,6 +88,7 @@ pub(crate) fn push_controls(payload: &mut Vec<u8>, controls: &PageControls) -> R
         payload.extend_from_slice(&chosen.to_be_bytes());
     }
     payload.extend_from_slice(&controls.subcode.to_be_bytes());
+    payload.extend_from_slice(&controls.downloaded.to_be_bytes());
     Ok(())
 }
 
@@ -118,6 +119,8 @@ pub(crate) fn read_controls(fields: &mut Fields<'_>) -> Result<PageControls, Pro
     if !is_sub_code(subcode) {
         return Err(ProtocolError::BadValue("sub-code"));
     }
+    // A count of 64 bits, its high half first.
+    let downloaded = (u64::from(fields.u32()?) << u32::BITS) | u64::from(fields.u32()?);
     Ok(PageControls {
         page,
         fastext: core::array::from_fn(|index| keys & (1 << index) != 0),
@@ -127,6 +130,7 @@ pub(crate) fn read_controls(fields: &mut Fields<'_>) -> Result<PageControls, Pro
         subpages,
         chosen,
         subcode,
+        downloaded,
         rotation: if flags & NEVER_ROTATES == 0 { Rotation::AsBroadcast } else { Rotation::Never },
     })
 }
