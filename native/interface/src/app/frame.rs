@@ -133,7 +133,7 @@ impl App {
         }
         let cursor = self.view.browser.cursor();
         // The wheel pointer's wheel blinks: its picture is one of two (REQ-6356 item 3).
-        let lit = matches!(cursor, Cursor::Wheel(_)) && interface_core::wheel_cursor::lit(self.now());
+        let lit = matches!(cursor, Cursor::Wheel(_)) && self.view.browser.wheel_lit(self.now());
         if (cursor, lit) == self.view.pointer_shape {
             return;
         }

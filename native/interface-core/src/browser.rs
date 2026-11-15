@@ -169,6 +169,9 @@ pub struct Browser {
     /// Whether the wheel pointer's wheel was lit when last asked; none
     /// while that pointer does not show (REQ-6356).
     wheel_lit: Option<bool>,
+    /// Since when the pointer has had the wheel's shape: its flashes start
+    /// then.
+    wheel_since: Option<u64>,
     /// The ink of what the window below the strip stands on, as last
     /// drawn: white on a dark ground, which chooses the wheel pointer's
     /// variant.
@@ -277,6 +280,7 @@ impl Browser {
             wheel_step_carry: 0.0,
             wheel_step_at: None,
             wheel_lit: None,
+            wheel_since: None,
             ground_ink: crate::theme::WHITE,
             list_width: divider::LIST_WIDTH,
             divider_grip: None,

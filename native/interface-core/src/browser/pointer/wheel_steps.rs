@@ -57,17 +57,36 @@ impl Browser {
         (up || down).then_some(WheelCursor { up, down, ground })
     }
 
-    /// How long until the wheel pointer's wheel next blinks, while that
-    /// pointer shows.
-    pub(in crate::browser) fn wheel_blink_deadline(&self, now: u64) -> Option<u64> {
-        self.wheel_cursor().map(|_| until_blink(now))
+    /// How long the pointer has had the wheel's shape at `now`: its wheel's
+    /// flashes are counted from when it took it.
+    fn wheel_shown_for(&self, now: u64) -> u64 {
+        now.saturating_sub(self.wheel_since.unwrap_or(now))
     }
 
-    /// The wheel pointer's wheel changed between lit and unlit since it
-    /// was last asked: the window then sets the other picture.
+    /// Whether the wheel pointer's wheel is lit at `now` (REQ-6356 item 3).
+    #[must_use]
+    pub fn wheel_lit(&self, now: u64) -> bool {
+        crate::wheel_cursor::lit(self.wheel_shown_for(now))
+    }
+
+    /// How long until the wheel pointer's wheel next changes, while that
+    /// pointer shows.
+    pub(in crate::browser) fn wheel_blink_deadline(&self, now: u64) -> Option<u64> {
+        self.wheel_cursor().map(|_| until_blink(self.wheel_shown_for(now)))
+    }
+
+    /// The wheel pointer came, went, or its wheel changed between lit and
+    /// unlit since it was last asked: the window then sets the other
+    /// picture. The flashes start when the pointer takes the shape.
     pub(in crate::browser) fn wheel_blink_settle(&mut self, now: u64) -> bool {
-        let lit = self.wheel_cursor().map(|_| crate::wheel_cursor::lit(now));
-        let changed = lit.is_some() && lit != self.wheel_lit;
+        if self.wheel_cursor().is_none() {
+            self.wheel_since = None;
+            self.wheel_lit = None;
+            return false;
+        }
+        self.wheel_since = self.wheel_since.or(Some(now));
+        let lit = Some(self.wheel_lit(now));
+        let changed = lit != self.wheel_lit;
         self.wheel_lit = lit;
         changed
     }

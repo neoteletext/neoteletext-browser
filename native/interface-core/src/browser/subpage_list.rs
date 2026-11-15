@@ -726,8 +726,12 @@ mod tests {
             _ => None,
         };
         assert_eq!(ways(&browser), Some((false, true, crate::wheel_cursor::Ground::Dark)), "on the first sub-page, only down");
-        assert_eq!(browser.frame_interval(2_100), Some(150), "woken when the wheel next blinks");
-        assert!(browser.settle(2_100) && !browser.settle(2_200) && browser.settle(2_300), "each change of the wheel is one change");
+        // Its wheel flashes from when the pointer took the shape: unlit 150
+        // milliseconds, lit 150, three times, then lit.
+        assert!(browser.settle(2_100) && !browser.wheel_lit(2_100), "the shape is new: the flashes start, unlit");
+        assert_eq!(browser.frame_interval(2_100), Some(150), "woken when the wheel next changes");
+        assert!(!browser.settle(2_200) && browser.settle(2_250) && browser.wheel_lit(2_250), "each change of the wheel is one change");
+        assert!(browser.wheel_lit(2_100 + 900) && browser.wheel_lit(2_100 + 10_000), "then lit for ten seconds");
         chosen(&mut browser, 40, 20);
         assert_eq!(ways(&browser).map(|(up, down, _)| (up, down)), Some((true, true)), "in the middle, both");
         chosen(&mut browser, 40, 39);

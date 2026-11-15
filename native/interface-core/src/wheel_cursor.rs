@@ -15,8 +15,19 @@ use crate::theme::{BLACK, CYAN, Colour, WHITE};
 pub const SIZE: u16 = 32;
 /// The pointer's active point, the square's centre, from its left and top.
 pub const HOTSPOT: u16 = SIZE / 2;
-/// The wheel is lit this long and unlit this long: two blinks a second.
-pub const BLINK_MILLISECONDS: u64 = 250;
+/// The wheel's flash (REQ-6356 item 3, as the owner set it on 16 November
+/// 2026: "make it flash 3 times each 150ms, then leave it lit for the next
+/// 10 seconds"): it is unlit this long and lit this long, [`FLASHES`]
+/// times, from the moment the pointer takes this shape.
+pub const FLASH_MILLISECONDS: u64 = 150;
+/// How many times the wheel flashes before it stays lit.
+pub const FLASHES: u64 = 3;
+/// How long the wheel then stays lit, before it flashes again.
+pub const LIT_MILLISECONDS: u64 = 10_000;
+/// The flashes, each an unlit and a lit part.
+const FLASHING_MILLISECONDS: u64 = FLASHES * 2 * FLASH_MILLISECONDS;
+/// One round of flashes and the lit time after them.
+const ROUND_MILLISECONDS: u64 = FLASHING_MILLISECONDS + LIT_MILLISECONDS;
 /// The largest scale a picture is made at: beyond any display's today.
 pub const MAX_SCALE: u16 = 4;
 
@@ -63,16 +74,23 @@ pub struct WheelCursor {
     pub ground: Ground,
 }
 
-/// Whether the wheel is lit at `now`, in milliseconds.
+/// Whether the wheel is lit, `shown` milliseconds after the pointer took
+/// this shape: three flashes, each unlit then lit, then lit for ten
+/// seconds, and round again.
 #[must_use]
-pub fn lit(now: u64) -> bool {
-    (now / BLINK_MILLISECONDS).is_multiple_of(2)
+pub fn lit(shown: u64) -> bool {
+    let within = shown % ROUND_MILLISECONDS;
+    within >= FLASHING_MILLISECONDS || !(within / FLASH_MILLISECONDS).is_multiple_of(2)
 }
 
-/// How long from `now` until the wheel next changes.
+/// How long until the wheel next changes, `shown` milliseconds after the
+/// pointer took this shape.
 #[must_use]
-pub fn until_blink(now: u64) -> u64 {
-    BLINK_MILLISECONDS.saturating_sub(now % BLINK_MILLISECONDS).max(1)
+pub fn until_blink(shown: u64) -> u64 {
+    let within = shown % ROUND_MILLISECONDS;
+    let next =
+        if within >= FLASHING_MILLISECONDS { ROUND_MILLISECONDS } else { (within / FLASH_MILLISECONDS).saturating_add(1).saturating_mul(FLASH_MILLISECONDS) };
+    next.saturating_sub(within).max(1)
 }
 
 /// The colours of one variant.
@@ -196,11 +214,32 @@ mod tests {
     const BOTH: WheelCursor = WheelCursor { up: true, down: true, ground: Ground::Dark };
     const CYAN_PIXEL: [u8; 4] = [CYAN.red, CYAN.green, CYAN.blue, 255];
 
-    /// REQ-6356 item 3: two blinks a second, and a wake at each change.
+    /// REQ-6356 item 3: three flashes of 150 milliseconds unlit and 150
+    /// lit, then lit for ten seconds, then round again, with a wake at
+    /// each change and none between.
     #[test]
-    fn the_wheel_is_lit_and_unlit_a_quarter_second_each() {
-        assert!(lit(0) && lit(249) && !lit(250) && !lit(499) && lit(500));
-        assert_eq!((until_blink(0), until_blink(249), until_blink(250), until_blink(400)), (250, 1, 250, 100));
+    fn the_wheel_flashes_three_times_then_stays_lit_ten_seconds() {
+        let changes: Vec<(u64, bool)> = [0, 149, 150, 299, 300, 450, 600, 750, 899, 900, 5_000, 10_899].map(|shown| (shown, lit(shown))).to_vec();
+        assert_eq!(
+            changes,
+            [
+                (0, false),
+                (149, false),
+                (150, true),
+                (299, true),
+                (300, false),
+                (450, true),
+                (600, false),
+                (750, true),
+                (899, true),
+                (900, true),
+                (5_000, true),
+                (10_899, true)
+            ]
+        );
+        assert!(!lit(10_900) && lit(10_900 + 150), "and round again");
+        assert_eq!((until_blink(0), until_blink(149), until_blink(150), until_blink(750)), (150, 1, 150, 150));
+        assert_eq!((until_blink(900), until_blink(5_000), until_blink(10_899)), (10_000, 5_900, 1), "no wake while it stays lit");
     }
 
     /// REQ-6356 items 1 and 2: an arrow only for a way there are items.
