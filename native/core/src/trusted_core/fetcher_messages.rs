@@ -125,7 +125,12 @@ impl Core {
             }
             // It stays asked until its page opens again; rows waiting for it
             // are answered with what is held.
-            FromFetcher::SubPagesFailed { page, .. } => self.answer_rows_wanted(PageKey { channel, page }, true)?,
+            FromFetcher::SubPagesFailed { page, .. } => {
+                if let Some(subpages) = self.channel_subpages(channel) {
+                    subpages.failed(page);
+                }
+                self.answer_rows_wanted(PageKey { channel, page }, true)?;
+            }
             #[cfg(feature = "links")]
             FromFetcher::Links { aliases, services } => {
                 self.links.descriptor(channel, &aliases, &services);

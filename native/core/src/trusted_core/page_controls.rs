@@ -558,7 +558,12 @@ impl Core {
         let key = PageKey { channel, page };
         let live = self.session.all_tabs().any(|tab| tab.channel.id == channel && tab.channel.live);
         let wanted = self.with_catalogue(key, |catalogue| catalogue.parts_wanted(range));
-        if wanted.is_none() && !live {
+        // A list on its way is waited for, whatever the channel (the list
+        // machine's `Fetching`); only a page with no list to come is
+        // answered by its decoder.
+        let fetching =
+            self.channel_subpages(channel).is_some_and(|subpages| subpages.list_state(page) == neoteletext::subpages::list_state::ListState::Fetching);
+        if wanted.is_none() && !live && !fetching {
             self.controls.rows_of_decoder.insert(key, request);
             self.tell(channel, ToDecoder::SubPageRows { page, range });
             return Ok(());

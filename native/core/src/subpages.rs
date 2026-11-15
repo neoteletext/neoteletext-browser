@@ -18,6 +18,10 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
+pub mod list_state;
+
+use list_state::{ListEvent, ListState, list_transition};
+
 use neoteletext_core::limits::MAX_SUBPAGES;
 use neoteletext_web::subpages::{PartNumber, parts_of_rows};
 use protocol::fetcher::{MAX_LIST_PARTS, MAX_LIST_VERSION, ROWS_PER_PART};
@@ -195,13 +199,12 @@ pub struct SubPages {
     declared: BTreeMap<u16, u16>,
     /// Each page with two or more sub-pages stored, by its decoder's count.
     stored: BTreeMap<u16, u16>,
-    /// Each page whose list answered, by its count: kept when the list
+    /// Where each page's list stands (the list machine, `list_state`), and
+    /// the count it gave while it is or was held: kept when the list
     /// itself is forgotten, so the page list's mark stays.
-    catalogued: BTreeMap<u16, u16>,
+    lists: BTreeMap<u16, (ListState, u16)>,
     /// The lists held, the most recently used last.
     held: Vec<(u16, Catalogue)>,
-    /// Pages with no folder, so no list: never asked again.
-    missing: BTreeSet<u16>,
     /// The parts asked for and not answered, or that failed, by page: each
     /// asked once until its page opens again.
     asked: BTreeSet<(u16, u8)>,
@@ -240,7 +243,8 @@ impl SubPages {
     /// (DEC-6358 item 1).
     #[must_use]
     pub fn count(&self, page: u16) -> u16 {
-        let said = self.catalogued.get(&page).or_else(|| self.declared.get(&page)).or_else(|| self.stored.get(&page));
+        let listed = self.lists.get(&page).filter(|(state, _)| matches!(state, ListState::Held | ListState::Forgotten)).map(|(_, count)| count);
+        let said = listed.or_else(|| self.declared.get(&page)).or_else(|| self.stored.get(&page));
         said.copied().filter(|&count| count >= 2).unwrap_or(0)
     }
 
@@ -258,15 +262,44 @@ impl SubPages {
     /// last opened. One held is asked for again only by [`Self::again`],
     /// so a changed part is seen (the request is conditional).
     pub fn ask(&mut self, page: u16, part: u8) -> bool {
-        if self.missing.contains(&page) {
+        if self.list_state(page) == ListState::Missing {
             return false;
         }
-        self.asked.insert((page, part))
+        let asked = self.asked.insert((page, part));
+        if asked {
+            self.list_event(page, ListEvent::Asked);
+        }
+        asked
     }
 
     /// `page` opens: every part of its list may be asked for again.
     pub fn again(&mut self, page: u16) {
         self.asked.retain(|&(asked, _)| asked != page);
+        self.list_event(page, ListEvent::Reopened);
+    }
+
+    /// Where `page`'s list stands.
+    #[must_use]
+    pub fn list_state(&self, page: u16) -> ListState {
+        self.lists.get(&page).map_or(ListState::Unknown, |&(state, _)| state)
+    }
+
+    /// Gives `event` to `page`'s list machine. A list not held or
+    /// remembered gives no count.
+    fn list_event(&mut self, page: u16, event: ListEvent) {
+        let (state, count) = self.lists.get(&page).copied().unwrap_or_default();
+        let next = list_transition(state, event);
+        let count = if matches!(next, ListState::Held | ListState::Forgotten) { count } else { 0 };
+        if next == ListState::Unknown {
+            self.lists.remove(&page);
+        } else {
+            self.lists.insert(page, (next, count));
+        }
+    }
+
+    /// A part of `page`'s list could not be fetched.
+    pub fn failed(&mut self, page: u16) {
+        self.list_event(page, ListEvent::PartFailed);
     }
 
     /// Part `part` of `page`'s list does not exist. For part 0 the page has
@@ -278,9 +311,8 @@ impl SubPages {
             return None;
         }
         let before = self.count(page);
-        self.again(page);
-        self.missing.insert(page);
-        self.catalogued.remove(&page);
+        self.asked.retain(|&(asked, _)| asked != page);
+        self.list_event(page, ListEvent::Absent);
         self.held.retain(|(held, _)| *held != page);
         let after = self.count(page);
         (after != before).then_some(after)
@@ -301,7 +333,6 @@ impl SubPages {
             return Err(Refused::Misshapen);
         }
         self.asked.remove(&(page, number.number()));
-        self.missing.remove(&page);
         let before = self.count(page);
         let mut catalogue = match self.held.iter().position(|(held, _)| *held == page) {
             Some(place) => self.held.remove(place).1,
@@ -315,10 +346,12 @@ impl SubPages {
         // Each title is cleaned as a page's title is.
         let rows = part.rows.into_iter().map(|(subcode, title)| (subcode, clean(&title, MAX_PAGE_TITLE))).collect();
         catalogue.parts.insert(number.number(), rows);
-        self.catalogued.insert(page, catalogue.total);
+        self.list_event(page, ListEvent::Arrived);
+        self.lists.insert(page, (ListState::Held, catalogue.total));
         self.held.push((page, catalogue));
         while self.held.len() > 1 && self.held.iter().map(|(_, held)| held.rows_held()).sum::<usize>() > ROWS_KEPT {
-            self.held.remove(0);
+            let (forgotten, _) = self.held.remove(0);
+            self.list_event(forgotten, ListEvent::Evicted);
         }
         let after = self.count(page);
         Ok(Arrived { count: (after != before).then_some(after), again })
@@ -505,5 +538,34 @@ mod tests {
         // A new index replaces the last: a page it drops falls back, one it changes follows.
         assert_eq!(subpages.declare(&[(0x102, 7)]), [(0x102, 7), (0x103, 4)], "and one it no longer speaks of is the decoder's again");
         assert_eq!((subpages.count(0x101), subpages.count(0x102)), (12, 7), "the list's count stands without the index's");
+    }
+
+    /// DEC-6358 item 4: where a page's list stands is one state, moved by
+    /// what happens to it, and the count and the asking follow that state.
+    #[test]
+    fn a_pages_list_moves_through_its_states() {
+        use list_state::ListState as S;
+        let three = subcodes(3);
+        let mut subpages = SubPages::default();
+        assert_eq!(subpages.list_state(0x200), S::Unknown);
+        assert!(subpages.ask(0x200, 0));
+        assert_eq!(subpages.list_state(0x200), S::Fetching, "asked for");
+        subpages.failed(0x200);
+        assert_eq!(subpages.list_state(0x200), S::Failed, "it could not be fetched");
+        assert!(!subpages.ask(0x200, 0), "not asked again while its page stays open");
+        subpages.again(0x200);
+        assert_eq!(subpages.list_state(0x200), S::Unknown, "its page opens again");
+        assert!(subpages.ask(0x200, 0));
+        subpages.part(0x200, "v", part(&three, 0)).unwrap();
+        assert_eq!((subpages.list_state(0x200), subpages.count(0x200)), (S::Held, 3));
+        subpages.failed(0x200);
+        assert_eq!(subpages.list_state(0x200), S::Held, "a later part failing leaves what is held");
+        assert_eq!(subpages.missing(0x200, 0), Some(0), "the channel no longer has a list for it");
+        assert_eq!((subpages.list_state(0x200), subpages.count(0x200)), (S::Missing, 0));
+        assert!(!subpages.ask(0x200, 0), "and it is not asked for again");
+        subpages.again(0x200);
+        assert!(!subpages.ask(0x200, 0), "even when its page opens again");
+        subpages.part(0x200, "w", part(&three, 0)).unwrap();
+        assert_eq!(subpages.list_state(0x200), S::Held, "until the channel sends one");
     }
 }
