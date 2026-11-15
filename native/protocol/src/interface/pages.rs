@@ -5,6 +5,7 @@
 use interface_core::canvas::{COLUMNS, PageKey, ROWS};
 use interface_core::channel::{BANKS, Channel, PAGES, PageInfo, Status, page_index};
 use interface_core::controls::SUBPAGE_ROWS;
+use neoteletext_core::limits::MAX_SUBPAGES;
 
 use crate::subpages::SubPageRows;
 use crate::{Fields, KEY_BYTES, MAX_BANK_NAME, MAX_PAGE_TITLE, MAX_TITLE, ProtocolError, push_key, push_text};
@@ -28,6 +29,10 @@ pub(super) fn push_channel(payload: &mut Vec<u8>, channel: &Channel) -> Result<(
         let number = interface_core::channel::page_number(index).ok_or(ProtocolError::BadValue("pages"))?;
         payload.extend_from_slice(&number.to_be_bytes());
         payload.push(page.status as u8);
+        if usize::from(page.subpages) > MAX_SUBPAGES {
+            return Err(ProtocolError::BadValue("sub-pages"));
+        }
+        payload.extend_from_slice(&page.subpages.to_be_bytes());
         push_text(payload, &page.title, MAX_PAGE_TITLE)?;
     }
     Ok(())
@@ -47,9 +52,13 @@ pub(super) fn read_channel(fields: &mut Fields<'_>) -> Result<Channel, ProtocolE
     for _ in 0..count {
         let index = page_index(fields.u16()?).ok_or(ProtocolError::BadValue("page number"))?;
         let status = Status::from_byte(fields.u8()?).ok_or(ProtocolError::BadValue("page status"))?;
+        let subpages = fields.u16()?;
+        if usize::from(subpages) > MAX_SUBPAGES {
+            return Err(ProtocolError::BadValue("sub-pages"));
+        }
         let title = fields.text(MAX_PAGE_TITLE)?;
         let slot = channel.pages.get_mut(index).ok_or(ProtocolError::BadValue("page number"))?;
-        if slot.replace(PageInfo { title, status }).is_some() {
+        if slot.replace(PageInfo { title, status, subpages }).is_some() {
             return Err(ProtocolError::BadValue("page listed twice"));
         }
     }
@@ -115,7 +124,7 @@ pub(super) fn read_cell(fields: &mut Fields<'_>) -> Result<(PageKey, u32, u8, u8
 
 /// How many sub-pages a page has: its channel, number and count.
 pub(super) fn push_subpage_count(payload: &mut Vec<u8>, channel: u32, page: u16, count: u16) -> Result<(), ProtocolError> {
-    if usize::from(count) > neoteletext_core::limits::MAX_SUBPAGES {
+    if usize::from(count) > MAX_SUBPAGES {
         return Err(ProtocolError::BadValue("too many sub-pages"));
     }
     payload.extend_from_slice(&channel.to_be_bytes());

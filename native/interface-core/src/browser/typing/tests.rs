@@ -16,7 +16,7 @@ fn browser() -> Browser {
     let mut browser = Browser::new(Frame { left_inset: 0.0, window_buttons: false });
     let mut channel = Channel::empty();
     channel.channel = KEY.channel;
-    channel.pages[0] = Some(PageInfo { title: "Terminal".into(), status: Status::Loaded });
+    channel.pages[0] = Some(PageInfo { title: "Terminal".into(), status: Status::Loaded, subpages: 0 });
     browser.set_channel(channel);
     browser.draw(&mut Recorder::new(), 1440.0, 900.0, 0);
     browser.wall.zoom(KEY, 0);

@@ -158,11 +158,11 @@ pub fn pages(listed_lines: &[Listed]) -> Vec<u8> {
 /// bookmark's page by its name.
 #[must_use]
 pub fn contents(listed: &[Listed]) -> Vec<Entry> {
-    let mut entries = vec![Entry::Section(NAME.to_owned()), Entry::Page { page: FRONT_PAGE, title: "Start".to_owned() }];
+    let mut entries = vec![Entry::Section(NAME.to_owned()), Entry::Page { page: FRONT_PAGE, title: "Start".to_owned(), subpages: 0 }];
     entries.push(Entry::Section("Bookmarks".to_owned()));
     for (index, (name, _)) in bookmarks(listed).iter().take(MAX_LISTED).enumerate() {
         if let Some(page) = bookmark_page(index) {
-            entries.push(Entry::Page { page, title: shown(name, COLUMNS) });
+            entries.push(Entry::Page { page, title: shown(name, COLUMNS), subpages: 0 });
         }
     }
     entries

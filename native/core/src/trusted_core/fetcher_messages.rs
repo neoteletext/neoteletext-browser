@@ -229,7 +229,6 @@ impl Core {
             let view = self.session.active_tab().map(|tab| tab.channel.view());
             if let Some(view) = view {
                 self.send(&ToInterface::Channel(view))?;
-                self.send_subpages()?;
             }
         }
         Ok(())
@@ -641,7 +640,7 @@ mod tests {
         let channel = static_tab(&mut test, 0x100);
         test.core.fetched(channel, FromFetcher::BundleSettled).unwrap();
         asked(&mut test);
-        let listed = (0x100..0x110).map(|page| Entry::Page { page, title: format!("Page {page:03X}") }).collect();
+        let listed = (0x100..0x110).map(|page| Entry::Page { page, title: format!("Page {page:03X}"), subpages: 0 }).collect();
         test.core.fetched(channel, FromFetcher::Contents(listed)).unwrap();
         assert_eq!(asked(&mut test), [], "listed is not wanted");
         let shown = |pages: &[u16]| protocol::ToCore::Visible(pages.iter().map(|&page| PageKey { channel, page }).collect());
@@ -711,7 +710,7 @@ mod tests {
         test.sent();
         let index = |pages: &[(u16, &str)]| {
             let mut entries = vec![Entry::Section("News".into())];
-            entries.extend(pages.iter().map(|&(page, title)| Entry::Page { page, title: title.into() }));
+            entries.extend(pages.iter().map(|&(page, title)| Entry::Page { page, title: title.into(), subpages: 0 }));
             FromFetcher::Contents(entries)
         };
         test.core.fetched(channel, index(&[(0x100, "Headlines"), (0x101, "Weather")])).unwrap();

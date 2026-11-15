@@ -16,6 +16,8 @@ use protocol::subpages::SubPageRows;
 struct IndexedPage {
     title: String,
     section: String,
+    /// How many sub-pages the index says the page has (DEC-6358).
+    subpages: u16,
     generation: u16,
 }
 
@@ -32,12 +34,12 @@ impl LiveIndex {
     /// A part of a sending: its pages are added, or replace what was
     /// there, and its magazine's name, which a later record of the same
     /// sending leaves empty; nothing is removed until the sending is whole.
-    pub(crate) fn note(&mut self, magazine: u8, name: &str, pages: &[(u16, String, String)], generation: u16) {
+    pub(crate) fn note(&mut self, magazine: u8, name: &str, pages: &[(u16, String, String, u16)], generation: u16) {
         if !name.is_empty() {
             self.magazines.insert(magazine, (name.to_owned(), generation));
         }
-        for (page, title, section) in pages {
-            self.pages.insert(*page, IndexedPage { title: title.clone(), section: section.clone(), generation });
+        for (page, title, section, subpages) in pages {
+            self.pages.insert(*page, IndexedPage { title: title.clone(), section: section.clone(), subpages: *subpages, generation });
         }
     }
 
@@ -71,7 +73,7 @@ impl LiveIndex {
                     entries.push(Entry::Section(section.to_owned()));
                 }
             }
-            entries.push(Entry::Page { page, title: indexed.title.clone() });
+            entries.push(Entry::Page { page, title: indexed.title.clone(), subpages: indexed.subpages });
         }
         entries.truncate(MAX_ENTRIES);
         entries
@@ -157,8 +159,9 @@ impl SubPageLists {
 mod tests {
     use super::*;
 
-    fn page(number: u16, section: &str) -> (u16, String, String) {
-        (number, format!("Page {number:X}"), section.to_owned())
+    /// A page of an index record, said to have three sub-pages.
+    fn page(number: u16, section: &str) -> (u16, String, String, u16) {
+        (number, format!("Page {number:X}"), section.to_owned(), 3)
     }
 
     fn sections(index: &LiveIndex) -> Vec<String> {
@@ -244,7 +247,11 @@ mod tests {
         let entries = index.entries();
         assert_eq!(entries.len(), MAX_ENTRIES);
         assert_eq!(entries.first(), Some(&Entry::Section("Section 100".to_owned())));
-        assert_eq!(entries.last(), Some(&Entry::Page { page: 0x599, title: "Page 599".to_owned() }), "the first thousand, in order");
+        assert_eq!(
+            entries.last(),
+            Some(&Entry::Page { page: 0x599, title: "Page 599".to_owned(), subpages: 3 }),
+            "the first thousand, in order, each with its count"
+        );
     }
 
     // REQ-1505, REQ-1503, TODO-1531 item 6: the largest list, 8,190 sub-pages

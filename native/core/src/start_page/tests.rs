@@ -80,6 +80,6 @@ fn a_hostile_address_cannot_break_out_of_its_line() {
 #[test]
 fn the_contents_name_each_bookmark() {
     let entries = contents(&[Listed::Bookmark { name: "News".into(), address: "https://news.example/".into() }]);
-    assert!(entries.contains(&Entry::Page { page: 0x201, title: "News".into() }));
-    assert!(entries.contains(&Entry::Page { page: FRONT_PAGE, title: "Start".into() }));
+    assert!(entries.contains(&Entry::Page { page: 0x201, title: "News".into(), subpages: 0 }));
+    assert!(entries.contains(&Entry::Page { page: FRONT_PAGE, title: "Start".into(), subpages: 0 }));
 }

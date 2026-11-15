@@ -107,18 +107,6 @@ impl Core {
         Ok(())
     }
 
-    /// The active channel's pages with sub-pages, each with its count,
-    /// after the channel itself was sent: the interface keeps them beside
-    /// it, and asks for their rows as it lists them.
-    pub(crate) fn send_subpages(&mut self) -> Result<(), String> {
-        let Some(tab) = self.session.active_tab() else { return Ok(()) };
-        let channel = tab.channel.id;
-        for (page, count) in tab.channel.subpages.counts() {
-            self.send(&ToInterface::SubPageCount { channel, page, count })?;
-        }
-        Ok(())
-    }
-
     /// A line of the channel's log, at `level`, of `page` if it names one.
     pub(super) fn channel_log(&mut self, channel: u32, level: Level, page: Option<u16>, text: &str) {
         let text = clean(text, protocol::decoder::MAX_CHANNEL_LOG);

@@ -19,7 +19,7 @@ pub(super) fn channel() -> Channel {
     channel.channel = 7;
     channel.title = "Test".into();
     for index in (0..PAGES).filter(|index| index % 3 != 2) {
-        channel.pages[index] = Some(PageInfo { title: format!("Page {index}"), status: Status::Available });
+        channel.pages[index] = Some(PageInfo { title: format!("Page {index}"), status: Status::Available, subpages: 0 });
     }
     channel
 }

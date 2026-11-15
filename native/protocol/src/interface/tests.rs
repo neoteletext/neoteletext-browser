@@ -85,8 +85,8 @@ fn channel() -> Channel {
     channel.channel = 9;
     channel.title = "Example".into();
     channel.banks[0] = "News".into();
-    channel.pages[0] = Some(PageInfo { title: "Front page".into(), status: Status::Loaded });
-    channel.pages[799] = Some(PageInfo { title: "Clock".into(), status: Status::Available });
+    channel.pages[0] = Some(PageInfo { title: "Front page".into(), status: Status::Loaded, subpages: 0 });
+    channel.pages[799] = Some(PageInfo { title: "Clock".into(), status: Status::Available, subpages: 0 });
     channel
 }
 

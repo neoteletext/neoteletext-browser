@@ -135,7 +135,7 @@ fn the_remotes_keys_go_to_the_channel_as_the_keyboards() {
     let mut browser = Browser::new(Frame { left_inset: 0.0, window_buttons: false });
     let mut channel = Channel::empty();
     channel.channel = KEY.channel;
-    channel.pages[0] = Some(PageInfo { title: "Terminal".into(), status: Status::Loaded });
+    channel.pages[0] = Some(PageInfo { title: "Terminal".into(), status: Status::Loaded, subpages: 0 });
     browser.set_channel(channel);
     browser.set_remote(RemotePlace { mode: RemoteMode::Docked, x: 0, y: 0 });
     browser.draw(&mut Recorder::new(), WIDTH, HEIGHT, 0);
@@ -194,7 +194,7 @@ fn the_remotes_sub_page_control_counts_to_the_standards_maximum_and_returns_to_t
     let mut browser = Browser::new(Frame { left_inset: 0.0, window_buttons: false });
     let mut channel = Channel::empty();
     channel.channel = KEY.channel;
-    channel.pages[0] = Some(PageInfo { title: "Rotating".into(), status: Status::Loaded });
+    channel.pages[0] = Some(PageInfo { title: "Rotating".into(), status: Status::Loaded, subpages: 0 });
     browser.set_channel(channel);
     browser.set_remote(RemotePlace { mode: RemoteMode::Docked, x: 0, y: 0 });
     browser.draw(&mut Recorder::new(), WIDTH, HEIGHT, 0);

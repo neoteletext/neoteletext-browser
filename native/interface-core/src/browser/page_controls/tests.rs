@@ -19,7 +19,7 @@ fn opened(subpages: u16) -> (Browser, PageKey) {
     let mut channel = Channel::empty();
     channel.channel = 7;
     for index in 0..PAGES {
-        channel.pages[index] = Some(PageInfo { title: format!("Page {index}"), status: Status::Loaded });
+        channel.pages[index] = Some(PageInfo { title: format!("Page {index}"), status: Status::Loaded, subpages: 0 });
     }
     browser.set_channel(channel);
     browser.draw(&mut Recorder::new(), WIDTH, HEIGHT, 0);

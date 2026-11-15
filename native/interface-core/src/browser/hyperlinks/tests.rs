@@ -18,7 +18,7 @@ fn channel() -> Channel {
     let mut channel = Channel::empty();
     channel.channel = 7;
     for index in (0..PAGES).filter(|index| index % 3 != 2) {
-        channel.pages[index] = Some(PageInfo { title: format!("Page {index}"), status: Status::Loaded });
+        channel.pages[index] = Some(PageInfo { title: format!("Page {index}"), status: Status::Loaded, subpages: 0 });
     }
     channel
 }

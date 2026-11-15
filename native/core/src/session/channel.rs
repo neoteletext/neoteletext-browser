@@ -223,11 +223,13 @@ impl ChannelState {
             self.banks.fill(String::new());
         }
         let mut section = String::new();
+        let mut declared = Vec::new();
         for entry in entries {
             match entry {
                 Entry::Section(name) => section = clean(name, MAX_BANK_NAME),
-                Entry::Page { page, title } => {
+                Entry::Page { page, title, subpages } => {
                     let Some(index) = page_index(*page) else { continue };
+                    declared.push((*page, *subpages));
                     if let Some(slot) = self.titles.get_mut(index) {
                         *slot = Some(clean(title, MAX_PAGE_TITLE));
                     }
@@ -237,6 +239,17 @@ impl ChannelState {
                         bank.clone_from(&section);
                     }
                 }
+            }
+        }
+        // What the index says of each page's sub-pages is the channel's
+        // word, kept in the directory (DEC-6358 item 1).
+        self.subpages.declare(&declared);
+        // A page a live index no longer lists is no longer shown; were it
+        // still counted as arrived it could never be listed again when it
+        // next arrives (DEC-6358, fault 11).
+        if self.live {
+            for (loaded, title) in self.loaded.iter_mut().zip(&self.titles) {
+                *loaded = *loaded && title.is_some();
             }
         }
     }
@@ -273,8 +286,10 @@ impl ChannelState {
         channel.channel = self.id;
         channel.title.clone_from(&self.title);
         channel.banks.clone_from(&self.banks);
-        for ((slot, title), &loaded) in channel.pages.iter_mut().zip(&self.titles).zip(&self.loaded) {
-            *slot = title.as_ref().map(|title| PageInfo { title: title.clone(), status: if loaded { Status::Loaded } else { Status::Available } });
+        for (index, ((slot, title), &loaded)) in channel.pages.iter_mut().zip(&self.titles).zip(&self.loaded).enumerate() {
+            // Each page's count of sub-pages goes with its title (DEC-6358 item 2).
+            let subpages = interface_core::channel::page_number(index).map_or(0, |page| self.subpages.count(page));
+            *slot = title.as_ref().map(|title| PageInfo { title: title.clone(), status: if loaded { Status::Loaded } else { Status::Available }, subpages });
         }
         channel
     }

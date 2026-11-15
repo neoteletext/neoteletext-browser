@@ -28,6 +28,10 @@ impl Browser {
             self.pulses.clear();
             self.updates.clear();
             self.rings.clear();
+            // The lists' rows and the open page's controls were the other
+            // channel's (DEC-6358, fault 5).
+            self.subpages.another_channel();
+            self.page_controls.controls = crate::controls::PageControls::default();
         }
         self.channel = channel;
     }
@@ -48,7 +52,9 @@ impl Browser {
         if new && overview_open && self.pulses.len() < PULSE_LIMIT {
             self.pulses.push((index, now));
         }
-        *slot = Some(PageInfo { title, status: Status::Loaded });
+        // The page's count of sub-pages is the directory's, and stays.
+        let subpages = slot.as_ref().map_or(0, |info| info.subpages);
+        *slot = Some(PageInfo { title, status: Status::Loaded, subpages });
         self.show_pending(channel, page, now);
     }
 

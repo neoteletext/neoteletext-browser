@@ -101,6 +101,10 @@ pub struct PageInfo {
     pub title: String,
     /// Whether it has arrived.
     pub status: Status,
+    /// How many sub-pages the page has, as the trusted core's directory
+    /// says: 0 or 1 when it has none (DEC-6358 item 2). The interface keeps
+    /// no count of its own.
+    pub subpages: u16,
 }
 
 /// A channel's banks and pages, as the trusted core reports them.

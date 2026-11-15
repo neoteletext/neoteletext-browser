@@ -54,7 +54,7 @@ fn browser(painter: &mut Painter, pages: &[Sample]) -> Browser {
     let mut channel = Channel::empty();
     channel.channel = CHANNEL;
     for sample in pages {
-        channel.pages[page_index(sample.page).unwrap()] = Some(PageInfo { title: sample.title.clone(), status: Status::Loaded });
+        channel.pages[page_index(sample.page).unwrap()] = Some(PageInfo { title: sample.title.clone(), status: Status::Loaded, subpages: 0 });
         painter.set_page(PageKey { channel: CHANNEL, page: sample.page }, &sample.palette, sample.screen, &sample.indices).unwrap();
     }
     let mut browser = Browser::new(WindowFrame { left_inset: 0.0, window_buttons: true });

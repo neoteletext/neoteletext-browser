@@ -20,7 +20,7 @@ const PAGE_100: PageKey = PageKey { channel: 0, page: 0x100 };
 
 /// A live channel's listing: pages 100, 200 and 300.
 fn listing() -> Vec<Entry> {
-    [0x100, 0x200, 0x300].map(|page| Entry::Page { page, title: format!("Page {page:03X}") }).to_vec()
+    [0x100, 0x200, 0x300].map(|page| Entry::Page { page, title: format!("Page {page:03X}"), subpages: 0 }).to_vec()
 }
 
 /// A tab on a live channel listing [`listing`], page 100 open, with what

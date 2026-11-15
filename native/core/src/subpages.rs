@@ -28,11 +28,17 @@ const _: () = assert!(ROWS_PER_PART == neoteletext_web::subpages::ROWS_PER_PART,
 const _: () = assert!(MAX_LIST_PARTS == neoteletext_web::subpages::MAX_PARTS, "the engine's parts of a list");
 const _: () = assert!(MAX_LIST_VERSION == neoteletext_web::subpages::MAX_VALIDATOR, "the engine's longest version");
 
-/// The lists held a channel: a budget, not a maximum (decision 112 item 2).
-/// Each is at most 8,190 sub-codes and titles of a row, about 350
-/// kilobytes with every part held; a page whose list was forgotten has it
-/// fetched again when it next opens.
+/// The lists that fit the budget when each is as long as a list can be: a
+/// budget, not a maximum (decision 112 item 2). Each is at most 8,190
+/// sub-codes and titles of a row, about 350 kilobytes with every part held.
 pub const CATALOGUES_KEPT: usize = 16;
+/// The rows of lists held a channel, in all: what [`CATALOGUES_KEPT`] whole
+/// lists hold, so the memory is bounded as it was, and a channel of many
+/// short lists keeps them all (DEC-6358: a live channel sends a page's
+/// list once, so one forgotten cannot be asked for again, and its page
+/// would be listed from what the decoder happens to hold). Over the
+/// budget the least recently used list is forgotten, never the last.
+pub const ROWS_KEPT: usize = CATALOGUES_KEPT * MAX_SUBPAGES;
 
 /// The sub-pages either side of the one shown whose files are fetched
 /// with it, so that stepping to them is at once (decision 112 item 3;
@@ -66,6 +72,11 @@ impl Catalogue {
             let row = rows.binary_search_by_key(&subcode, |(listed, _)| *listed).ok()?;
             u16::try_from(PartNumber::new(usize::from(part))?.first_place().checked_add(row)?).ok()
         })
+    }
+
+    /// How many rows of it are held.
+    fn rows_held(&self) -> usize {
+        self.parts.values().map(Vec::len).sum()
     }
 
     /// The sub-code at `place`, from 0, when its part is held.
@@ -178,6 +189,10 @@ pub struct Arrived {
 /// lists its fetcher read.
 #[derive(Debug, Default)]
 pub struct SubPages {
+    /// Each page's count as the channel's index declares it (DEC-6358):
+    /// replaced whole by each index, and never changed by what a decoder
+    /// holds.
+    declared: BTreeMap<u16, u16>,
     /// Each page with two or more sub-pages stored, by its decoder's count.
     stored: BTreeMap<u16, u16>,
     /// Each page whose list answered, by its count: kept when the list
@@ -207,18 +222,26 @@ impl SubPages {
         (after != before).then_some(after)
     }
 
-    /// How many sub-pages `page` has, to show: its list's count when it
-    /// has one, else what its decoder holds; 0 for none.
-    #[must_use]
-    pub fn count(&self, page: u16) -> u16 {
-        self.catalogued.get(&page).or_else(|| self.stored.get(&page)).copied().filter(|&count| count >= 2).unwrap_or(0)
+    /// The channel's index declares each page's count of sub-pages:
+    /// `counts` replaces what the last index declared, a count of 0 being
+    /// a page the index says nothing of. Returns the pages whose count to
+    /// show changed, each with its new count.
+    pub fn declare(&mut self, counts: &[(u16, u16)]) -> Vec<(u16, u16)> {
+        let pages: BTreeSet<u16> = self.declared.keys().copied().chain(counts.iter().map(|&(page, _)| page)).collect();
+        let before: Vec<(u16, u16)> = pages.iter().map(|&page| (page, self.count(page))).collect();
+        let most = u16::try_from(MAX_SUBPAGES).unwrap_or(u16::MAX);
+        self.declared = counts.iter().filter(|&&(_, count)| count > 0).map(|&(page, count)| (page, count.min(most))).collect();
+        before.into_iter().filter_map(|(page, was)| Some((page, self.count(page))).filter(|&(_, now)| now != was)).collect()
     }
 
-    /// Every page with sub-pages to show, with its count.
+    /// How many sub-pages `page` has, to show: what the channel says, its
+    /// list's count first and its index's next, and only for a page the
+    /// channel says nothing of, what its decoder holds; 0 for none
+    /// (DEC-6358 item 1).
     #[must_use]
-    pub fn counts(&self) -> Vec<(u16, u16)> {
-        let pages: BTreeSet<u16> = self.stored.keys().chain(self.catalogued.keys()).copied().collect();
-        pages.into_iter().map(|page| (page, self.count(page))).filter(|&(_, count)| count > 0).collect()
+    pub fn count(&self, page: u16) -> u16 {
+        let said = self.catalogued.get(&page).or_else(|| self.declared.get(&page)).or_else(|| self.stored.get(&page));
+        said.copied().filter(|&count| count >= 2).unwrap_or(0)
     }
 
     /// The list of `page`, when any of it is held: used now, so the last to
@@ -294,7 +317,7 @@ impl SubPages {
         catalogue.parts.insert(number.number(), rows);
         self.catalogued.insert(page, catalogue.total);
         self.held.push((page, catalogue));
-        if self.held.len() > CATALOGUES_KEPT {
+        while self.held.len() > 1 && self.held.iter().map(|(_, held)| held.rows_held()).sum::<usize>() > ROWS_KEPT {
             self.held.remove(0);
         }
         let after = self.count(page);
@@ -419,26 +442,68 @@ mod tests {
         assert!(subpages.ask(0x310, 4), "asked again when its page opens");
     }
 
-    /// Decision 112 item 2: lists are a budget, the least recently used
-    /// forgotten first; a forgotten page keeps its count.
+    /// Decision 112 item 2 as DEC-6358 keeps it: lists are a budget of
+    /// rows, the least recently used forgotten first; a forgotten page
+    /// keeps its count; and a channel of many short lists keeps them all,
+    /// which the budget of sixteen lists it replaces did not.
     #[test]
     fn lists_are_a_cache() {
         let two = subcodes(2);
         let mut subpages = SubPages::default();
-        for page in 0..=u16::try_from(CATALOGUES_KEPT).unwrap() {
-            let page = 0x100 + page;
+        for page in 0x100..0x100 + 100 {
             subpages.part(page, "v", part(&two, 0)).unwrap();
-            if page == 0x101 {
-                // Used again, so not the first forgotten.
-                assert!(subpages.catalogue(0x100).is_some());
+        }
+        assert!((0x100..0x100 + 100).all(|page| subpages.catalogue(page).is_some()), "a hundred short lists are all kept");
+        // Whole parts of long lists, until the rows held pass the budget.
+        let long = subcodes(u16::try_from(MAX_SUBPAGES).unwrap());
+        let mut subpages = SubPages::default();
+        let parts_to_fill = ROWS_KEPT / ROWS_PER_PART;
+        let mut held = 0;
+        'pages: for page in 0x100_u16.. {
+            for number in 0..MAX_LIST_PARTS {
+                let rows = part(&long, number);
+                held += rows.rows.len();
+                subpages.part(page, "v", rows).unwrap();
+                if page == 0x102 && number == 0 {
+                    // Used again after the second list, so not the first forgotten.
+                    assert!(subpages.catalogue(0x100).is_some());
+                }
+                if held > ROWS_KEPT {
+                    break 'pages;
+                }
             }
         }
-        assert!(subpages.catalogue(0x100).is_some(), "used since");
+        assert!(parts_to_fill > 0 && subpages.catalogue(0x100).is_some(), "used since");
         assert!(subpages.catalogue(0x101).is_none(), "the least recently used, forgotten");
-        assert_eq!(subpages.count(0x101), 2, "its count kept for the page list");
+        assert_eq!(subpages.count(0x101), 8_190, "its count kept for the page list");
         let titled = SubPageRows { count: 1, first: 0, rows: vec![(1, "a\u{202E}b".into())] };
         subpages.part(0x400, "v", titled).unwrap();
         assert_eq!(subpages.catalogue(0x400).unwrap().rows(SubPageRange { first: 0, count: 1 }).rows[0].1, "ab", "titles cleaned");
         assert_eq!(subpages.count(0x400), 0, "one sub-page is none to list");
+    }
+
+    /// DEC-6358 item 1: the channel's word decides a page's count. Its
+    /// index declares it, a list refines it, and what a decoder holds is
+    /// used only for a page the channel says nothing of.
+    #[test]
+    fn the_channels_count_is_never_overridden_by_what_a_decoder_holds() {
+        let mut subpages = SubPages::default();
+        assert_eq!(subpages.declare(&[(0x101, 10), (0x102, 5), (0x103, 1), (0x104, 0)]), [(0x101, 10), (0x102, 5)]);
+        assert_eq!((subpages.count(0x101), subpages.count(0x103), subpages.count(0x104)), (10, 0, 0));
+        // The decoder holds one of ten: the count stays ten (fault 1).
+        assert_eq!(subpages.stored(0x101, 1), None);
+        assert_eq!(subpages.stored(0x101, 3), None);
+        assert_eq!(subpages.count(0x101), 10);
+        // A page the index says has one sub-page has none to list, whatever is held.
+        assert_eq!(subpages.stored(0x103, 4), None);
+        assert_eq!(subpages.count(0x103), 0);
+        // A page the index says nothing of is counted from the decoder.
+        assert_eq!(subpages.stored(0x104, 4), Some(4));
+        // A list refines the index's count.
+        let twelve = subcodes(12);
+        assert_eq!(subpages.part(0x101, "v", part(&twelve, 0)).unwrap().count, Some(12));
+        // A new index replaces the last: a page it drops falls back, one it changes follows.
+        assert_eq!(subpages.declare(&[(0x102, 7)]), [(0x102, 7), (0x103, 4)], "and one it no longer speaks of is the decoder's again");
+        assert_eq!((subpages.count(0x101), subpages.count(0x102)), (12, 7), "the list's count stands without the index's");
     }
 }

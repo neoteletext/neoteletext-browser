@@ -172,7 +172,7 @@ enum Action {
     Index {
         magazine: u8,
         name: String,
-        pages: Vec<(u16, String, String)>,
+        pages: Vec<(u16, String, String, u16)>,
         generation: u16,
     },
     /// Every part of an index sending arrived.
@@ -333,7 +333,7 @@ fn collect(output: Output<'_>, actions: &mut Vec<Action>) {
         Output::Event(Event::ChannelConnecting) => Action::Tell(FromFetcher::Connecting(true)),
         Output::Event(Event::ChannelLive) => Action::Tell(FromFetcher::Connecting(false)),
         Output::Event(Event::Index(record)) => {
-            let pages = record.pages().map(|page| (page.page, page.title.to_owned(), page.section.to_owned())).collect();
+            let pages = record.pages().map(|page| (page.page, page.title.to_owned(), page.section.to_owned(), page.subpages)).collect();
             Action::Index { magazine: record.magazine, name: record.name.to_owned(), pages, generation: record.generation }
         }
         Output::Event(Event::IndexComplete { generation }) => Action::IndexComplete(generation),
@@ -400,7 +400,7 @@ fn contents_entries(bytes: &[u8]) -> Vec<Entry> {
     for entry in read.flatten() {
         match entry {
             ContentsEntry::Section { title } => entries.push(Entry::Section(title.to_owned())),
-            ContentsEntry::Page { page, title, .. } => entries.push(Entry::Page { page: page.mpp(), title: title.to_owned() }),
+            ContentsEntry::Page { page, title, .. } => entries.push(Entry::Page { page: page.mpp(), title: title.to_owned(), subpages: 0 }),
             ContentsEntry::Channel { .. } => {}
         }
     }

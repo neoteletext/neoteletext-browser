@@ -123,6 +123,9 @@ pub enum Entry {
         page: u16,
         /// Its title, not yet cleaned.
         title: String,
+        /// How many sub-pages the channel's index says it has; 0 when the
+        /// index does not say, as a contents file does not (DEC-6358).
+        subpages: u16,
     },
 }
 
@@ -741,9 +744,10 @@ pub fn write_to_core(out: &mut dyn Write, message: &FromFetcher) -> Result<(), P
                         payload.push(ENTRY_SECTION);
                         push_raw_text(&mut payload, title, MAX_PAGE_TITLE);
                     }
-                    Entry::Page { page, title } => {
+                    Entry::Page { page, title, subpages } => {
                         payload.push(ENTRY_PAGE);
                         payload.extend_from_slice(&page.to_be_bytes());
+                        payload.extend_from_slice(&subpages.to_be_bytes());
                         push_raw_text(&mut payload, title, MAX_PAGE_TITLE);
                     }
                 }
@@ -843,7 +847,11 @@ pub fn read_from_fetcher(input: &mut dyn Read) -> Result<Option<FromFetcher>, Pr
                     ENTRY_SECTION => Ok(Entry::Section(raw_text(&mut fields, MAX_PAGE_TITLE, "text too long")?)),
                     ENTRY_PAGE => {
                         let page = fields.channel_page()?;
-                        Ok(Entry::Page { page, title: raw_text(&mut fields, MAX_PAGE_TITLE, "text too long")? })
+                        let subpages = fields.u16()?;
+                        if usize::from(subpages) > MAX_SUBPAGES {
+                            return Err(ProtocolError::BadValue("sub-pages"));
+                        }
+                        Ok(Entry::Page { page, title: raw_text(&mut fields, MAX_PAGE_TITLE, "text too long")?, subpages })
                     }
                     _ => Err(ProtocolError::BadValue("contents entry")),
                 })

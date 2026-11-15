@@ -117,10 +117,10 @@ fn the_contents_file_lists_pages_and_names_sections() {
     let channel = &mut session.tabs[0].channel;
     channel.set_contents(&[
         Entry::Section("News".into()),
-        Entry::Page { page: 0x100, title: "Front page".into() },
-        Entry::Page { page: 0x101, title: "Headlines".into() },
+        Entry::Page { page: 0x100, title: "Front page".into(), subpages: 0 },
+        Entry::Page { page: 0x101, title: "Headlines".into(), subpages: 0 },
         Entry::Section("Sport".into()),
-        Entry::Page { page: 0x300, title: "Sport index".into() },
+        Entry::Page { page: 0x300, title: "Sport index".into(), subpages: 0 },
     ]);
     let view = channel.view();
     assert_eq!(view.counts(), (3, 0), "listed, none arrived yet");
@@ -128,6 +128,31 @@ fn the_contents_file_lists_pages_and_names_sections() {
     // The page's own title does not replace the contents file's.
     assert_eq!(channel.arrived(0x101, "Something else").as_deref(), Some("Headlines"));
     assert_eq!(channel.view().counts(), (3, 1));
+}
+
+/// DEC-6358 items 1 and 2: a page's count of sub-pages is the index's, and
+/// goes to the interface in the page's own entry. Fault 11: a page a live
+/// index drops is listed again when it next arrives.
+#[test]
+fn the_index_declares_each_pages_sub_pages_and_a_dropped_page_can_return() {
+    let mut session = Session::new(Bookmarks::default());
+    session.open("news.invalid").unwrap();
+    let channel = &mut session.tabs[0].channel;
+    channel.live = true;
+    let index = |pages: &[(u16, u16)]| -> Vec<Entry> {
+        pages.iter().map(|&(page, subpages)| Entry::Page { page, title: format!("Set {page:03X}"), subpages }).collect()
+    };
+    channel.set_contents(&index(&[(0x100, 1), (0x101, 10), (0x102, 5)]));
+    let counts = |channel: &ChannelState| -> Vec<u16> { channel.view().pages.iter().flatten().map(|page| page.subpages).collect() };
+    assert_eq!(counts(channel), [0, 10, 5], "each page's count beside its title");
+    // What the decoder holds of a page changes nothing the channel declared.
+    assert_eq!(channel.subpages.stored(0x101, 1), None);
+    assert_eq!(counts(channel), [0, 10, 5]);
+    // The page arrives, then the index drops it, then it arrives again.
+    assert!(channel.arrived(0x102, "Set 102").is_some());
+    channel.set_contents(&index(&[(0x100, 1), (0x101, 10)]));
+    assert_eq!(counts(channel), [0, 10], "no longer listed");
+    assert_eq!(channel.arrived(0x102, "Back again").as_deref(), Some("Back again"), "listed again when it arrives");
 }
 
 #[test]

@@ -35,7 +35,7 @@ fn browser(painter: &mut Painter) -> Result<Browser, String> {
     channel.channel = CHANNEL;
     for (page, title) in arrived {
         let index = page_index(page).ok_or("a page outside 100 to 899")?;
-        channel.pages[index] = Some(PageInfo { title, status: Status::Loaded });
+        channel.pages[index] = Some(PageInfo { title, status: Status::Loaded, subpages: 0 });
         let rendered = engine.render(page).ok_or("a page that did not render")?;
         painter.set_page(PageKey { channel: CHANNEL, page }, &rendered.palette, rendered.screen, &rendered.indices).map_err(|error| format!("{error:?}"))?;
     }

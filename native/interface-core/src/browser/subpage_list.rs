@@ -12,7 +12,6 @@
 //! the titles of only the rows it last asked the trusted core for, at most
 //! [`SUBPAGE_ROWS`], asking for more as it scrolls (decision 112 item 3).
 
-use alloc::collections::BTreeMap;
 use alloc::format;
 use alloc::string::String;
 use alloc::vec::Vec;
@@ -81,10 +80,6 @@ pub(super) struct Landing {
 /// divider and the scroll.
 #[derive(Debug)]
 pub(super) struct SubPages {
-    /// Each page's count of sub-pages, two or more, by page index, for the
-    /// channel `channel`.
-    pub(super) counts: BTreeMap<usize, u16>,
-    channel: u32,
     /// The rows held, of one page.
     held: Option<Held>,
     /// The rows last asked for, by page index and first place, until they
@@ -108,45 +103,39 @@ pub(super) struct SubPages {
 
 impl Default for SubPages {
     fn default() -> Self {
-        Self {
-            counts: BTreeMap::new(),
-            channel: 0,
-            held: None,
-            asked: None,
-            share: PAGES_SHARE,
-            grip: None,
-            scroll: 0.0,
-            hovered: None,
-            revealed: None,
-            landing: None,
-        }
+        Self { held: None, asked: None, share: PAGES_SHARE, grip: None, scroll: 0.0, hovered: None, revealed: None, landing: None }
     }
 }
 
 impl SubPages {
-    /// Starts afresh for `channel` when it is another.
-    fn for_channel(&mut self, channel: u32) {
-        if channel != self.channel {
-            self.counts.clear();
-            self.held = None;
-            self.asked = None;
-            self.landing = None;
-            self.channel = channel;
-        }
+    /// Another channel is shown: nothing held, asked for or waited on for
+    /// the channel before is this one's (DEC-6358, fault 5).
+    pub(super) fn another_channel(&mut self) {
+        self.held = None;
+        self.asked = None;
+        self.landing = None;
+        self.hovered = None;
+        self.revealed = None;
+        self.scroll = 0.0;
     }
 }
 
 impl Browser {
-    /// How many sub-pages a page has, as the trusted core says; 0 or 1
-    /// when it has none (decision 111).
+    /// A page's count of sub-pages changed, as the trusted core's
+    /// directory says; 0 or 1 when it has none. The count is the page's
+    /// entry's, beside its title: the interface keeps no other (DEC-6358
+    /// item 2). A message for a channel that is not the one shown is not
+    /// this window's to keep: the channel's own list will carry the count.
     pub fn set_subpage_count(&mut self, channel: u32, page: u16, count: u16) {
-        self.subpages.for_channel(channel);
-        let Some(index) = page_index(page) else { return };
-        if count > 1 {
-            self.subpages.counts.insert(index, count);
-        } else {
-            self.subpages.counts.remove(&index);
+        if channel != self.channel.channel {
+            return;
         }
+        let Some(index) = page_index(page) else { return };
+        let Some(Some(info)) = self.channel.pages.get_mut(index) else { return };
+        if info.subpages == count {
+            return;
+        }
+        info.subpages = count;
         // The rows held may be of another numbering now: asked afresh.
         if self.subpages.held.as_ref().is_some_and(|held| held.index == index) {
             self.subpages.held = None;
@@ -156,18 +145,17 @@ impl Browser {
         }
     }
 
-    /// Rows of a page's sub-pages the list asked for, from place `first`,
-    /// with the page's count; at most [`SUBPAGE_ROWS`] are kept.
-    pub fn set_subpage_rows(&mut self, channel: u32, page: u16, count: u16, first: u16, mut rows: Vec<(u16, String)>) {
-        self.subpages.for_channel(channel);
+    /// Rows of a page's sub-pages the list asked for, from place `first`;
+    /// at most [`SUBPAGE_ROWS`] are kept. The count that comes with them
+    /// is the sender's and changes nothing here: only the directory says
+    /// how many sub-pages a page has (DEC-6358, fault 1).
+    pub fn set_subpage_rows(&mut self, channel: u32, page: u16, _count: u16, first: u16, mut rows: Vec<(u16, String)>) {
+        if channel != self.channel.channel {
+            return;
+        }
         let Some(index) = page_index(page) else { return };
         if self.subpages.asked.is_some_and(|(asked, _)| asked == index) {
             self.subpages.asked = None;
-        }
-        if count > 1 {
-            self.subpages.counts.insert(index, count);
-        } else {
-            self.subpages.counts.remove(&index);
         }
         rows.truncate(SUBPAGE_ROWS);
         self.subpages.held = Some(Held { index, first, rows });
@@ -175,7 +163,7 @@ impl Browser {
 
     /// How many sub-pages page `index` has, when it has more than one.
     pub(super) fn subpage_count(&self, index: usize) -> Option<u16> {
-        (self.subpages.channel == self.channel.channel).then(|| self.subpages.counts.get(&index).copied()).flatten()
+        self.channel.pages.get(index).and_then(Option::as_ref).map(|info| info.subpages).filter(|&count| count > 1)
     }
 
     /// Whether any page of the chosen magazine has sub-pages: the list is
@@ -630,6 +618,38 @@ mod tests {
         browser.wheel_lines(1.0, 5_000);
         assert_eq!(asked(&mut browser), None, "no sub-page is asked for");
         assert_ne!(browser.selected, page, "the next page is chosen");
+    }
+
+    /// DEC-6358, faults 1 and 5: the rows that answer a request never
+    /// change how many sub-pages a page has, a count for another channel
+    /// is not this window's, and a count sent again unchanged keeps the
+    /// rows held.
+    #[test]
+    fn only_the_directory_says_how_many_sub_pages_a_page_has() {
+        let (mut browser, mut canvas) = listed(10);
+        let index = browser.selected.unwrap();
+        assert_eq!(browser.subpage_count(index), Some(10));
+        // The decoder holds one sub-page and answers with its own count.
+        browser.set_subpage_rows(7, 0x100, 1, 0, held(0, 1));
+        assert_eq!(browser.subpage_count(index), Some(10), "the mark stays");
+        browser.set_subpage_rows(7, 0x100, 0, 0, alloc::vec::Vec::new());
+        assert_eq!(browser.subpage_count(index), Some(10));
+        browser.draw(&mut canvas, WIDTH, HEIGHT, 0);
+        assert!(browser.magazine_has_subpages(), "and the lower list stays open");
+        // Another channel's count is not this one's.
+        browser.set_subpage_count(8, 0x100, 3);
+        assert_eq!(browser.subpage_count(index), Some(10));
+        // The same count again keeps the rows; another count asks afresh.
+        browser.set_subpage_rows(7, 0x100, 10, 0, held(0, 10));
+        browser.set_subpage_count(7, 0x100, 10);
+        assert!(browser.subpages.held.is_some(), "rows kept when nothing changed");
+        browser.set_subpage_count(7, 0x100, 12);
+        assert!(browser.subpages.held.is_none() && browser.subpage_count(index) == Some(12));
+        // The count is the page's entry's, so a channel sent again carries it.
+        let mut channel = browser.channel.clone();
+        channel.pages[index].as_mut().unwrap().subpages = 4;
+        browser.set_channel(channel);
+        assert_eq!(browser.subpage_count(index), Some(4));
     }
 
     /// REQ-1758 item 3: neither key wraps round.
