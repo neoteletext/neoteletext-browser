@@ -80,13 +80,10 @@ impl Browser {
             let name_height = canvas.line_height(BANK_NAME);
             let text_top = middle - f64::midpoint(range_height, name_height) - BANK_RANGE_RISE;
             label(canvas, Point::new(text_left, text_top), &range, BANK_RANGE, colour);
-            fitted_text(
-                canvas,
-                Rect::new(text_left, text_top + range_height, rect.x1 - PADDING, text_top + range_height + name_height),
-                name,
-                BANK_NAME,
-                colour,
-            );
+            let name_line = Rect::new(text_left, text_top + range_height, rect.x1 - PADDING, text_top + range_height + name_height);
+            if fitted_text(canvas, name_line, name, BANK_NAME, colour) {
+                self.regions.cut_banks.push((bank, String::from(name)));
+            }
             right_centred(
                 canvas,
                 Rect::new(rect.x0, rect.y0, rect.x1, rect.y0 + range_height + PADDING),

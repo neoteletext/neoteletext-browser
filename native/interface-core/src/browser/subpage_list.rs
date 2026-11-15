@@ -254,7 +254,10 @@ impl Browser {
                 Some((subcode, title)) => {
                     let (subcode, title) = (*subcode, title.clone());
                     self.regions.subrows.push((row, subcode));
-                    left_fitted(canvas, Rect::new(row.x0 + TITLE_COLUMN, row.y0, row.x1 - PADDING, row.y1), PADDING, &title, ROW_TITLE, on.ink);
+                    if left_fitted(canvas, Rect::new(row.x0 + TITLE_COLUMN, row.y0, row.x1 - PADDING, row.y1), PADDING, &title, ROW_TITLE, on.ink) {
+                        let whose = format!("Sub-page {} of {count}", u32::from(place).saturating_add(1));
+                        self.regions.cut_rows.push((row, crate::browser::tips::channels_words(&whose, &title)));
+                    }
                 }
                 None => missing = missing.or(Some(place)),
             }

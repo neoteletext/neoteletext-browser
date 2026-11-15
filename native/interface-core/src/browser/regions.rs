@@ -2,6 +2,7 @@
 //! record every drawing file writes and every press reads (requirement
 //! 12.3). Its fields are the record, as each panel's `Controls` is.
 
+use alloc::string::String;
 use alloc::vec::Vec;
 
 use crate::geometry::Rect;
@@ -45,6 +46,12 @@ pub(super) struct Regions {
     pub(super) subpage_divider: Rect,
     pub(super) subpage_list: Rect,
     pub(super) subrows: Vec<(Rect, u16)>,
+    /// The rows of the two lists whose title was drawn cut short, each
+    /// with what its tip says: whose title it is, in the interface's
+    /// words, and the title whole (REQ-6353).
+    pub(super) cut_rows: Vec<(Rect, String)>,
+    /// The magazines whose name was drawn cut short, each with its name.
+    pub(super) cut_banks: Vec<(usize, String)>,
     pub(super) overview: Rect,
     pub(super) overview_toggle: Rect,
     /// The overview's close button, which hides it as the View menu does.
@@ -64,6 +71,10 @@ impl Regions {
         banks.clear();
         rows.clear();
         subrows.clear();
-        *self = Self { tabs, banks, rows, subrows, ..Self::default() };
+        let mut cut_rows = core::mem::take(&mut self.cut_rows);
+        let mut cut_banks = core::mem::take(&mut self.cut_banks);
+        cut_rows.clear();
+        cut_banks.clear();
+        *self = Self { tabs, banks, rows, subrows, cut_rows, cut_banks, ..Self::default() };
     }
 }

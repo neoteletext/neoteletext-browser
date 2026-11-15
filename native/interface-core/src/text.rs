@@ -74,16 +74,20 @@ pub fn wrapped_anywhere<'line, C: Canvas + ?Sized>(canvas: &mut C, line: &'line 
 }
 
 /// Text from `rect`'s top-left, fitted to its width with an ellipsis.
-pub fn fitted_text<C: Canvas + ?Sized>(canvas: &mut C, rect: Rect, text: &str, style: Style, colour: Colour) {
+/// Returns whether the text was cut short to fit.
+pub fn fitted_text<C: Canvas + ?Sized>(canvas: &mut C, rect: Rect, text: &str, style: Style, colour: Colour) -> bool {
     let shown = fitted(canvas, text, rect.width(), style);
     canvas.text(rect, &shown, style, colour);
+    shown != text
 }
 
 /// Text vertically centred in `rect` from its left edge plus `inset`,
-/// fitted to the rest of its width with an ellipsis.
-pub fn left_fitted<C: Canvas + ?Sized>(canvas: &mut C, rect: Rect, inset: f64, text: &str, style: Style, colour: Colour) {
+/// fitted to the rest of its width with an ellipsis. Returns whether the
+/// text was cut short to fit.
+pub fn left_fitted<C: Canvas + ?Sized>(canvas: &mut C, rect: Rect, inset: f64, text: &str, style: Style, colour: Colour) -> bool {
     let shown = fitted(canvas, text, rect.width() - inset, style);
     left_centred(canvas, rect, inset, &shown, style, colour);
+    shown != text
 }
 
 /// Text with its top-left corner at `at`.

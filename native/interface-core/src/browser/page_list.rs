@@ -122,7 +122,9 @@ impl Browser {
                 right_centred(canvas, Rect::new(row.x0, row.y0, title_end, row.y1), 0.0, &age, ROW_STATUS, on.mark(UPDATED));
                 title_end -= canvas.text_width(&age, ROW_STATUS) + PADDING;
             }
-            left_fitted(canvas, Rect::new(title_x, row.y0, title_end, row.y1), PADDING, &info.title, ROW_TITLE, on.ink);
+            if left_fitted(canvas, Rect::new(title_x, row.y0, title_end, row.y1), PADDING, &info.title, ROW_TITLE, on.ink) {
+                self.regions.cut_rows.push((row, crate::browser::tips::channels_words(&format!("Page {number}"), &info.title)));
+            }
         }
         canvas.pop_clip();
         if max_scroll > 0.0 {
