@@ -14,6 +14,7 @@ fn view() -> SettingsView {
         cookies: CookieMode::Close,
         aspect: true,
         wheel_inverted: true,
+        regis_contain: false,
         refusal: Some("Not an address on this computer or the local network".into()),
         loopback_exemption: Some("CheckNetIsolation.exe LoopbackExempt -a -p=S-1-15-2-1-2-3-4-5-6-7".into()),
     }
@@ -40,6 +41,7 @@ fn the_view_and_every_change_round_trip() {
         SettingChange::CheckUpdates(false),
         SettingChange::Aspect(true),
         SettingChange::WheelInverted(true),
+        SettingChange::RegisContain(false),
     ] {
         let mut payload = Vec::new();
         push_change(&mut payload, &change).unwrap();

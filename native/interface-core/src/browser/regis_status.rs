@@ -40,6 +40,16 @@ impl Browser {
         // Only the pages of channels still shown are kept.
         let wall = &self.wall;
         self.regis.retain(|held, _| *held == key || wall.shown().any(|(shown, _)| shown.channel == held.channel));
+        self.lay_out_pictures();
+    }
+
+    /// Tells the wall which open pages take the picture's shape: those
+    /// drawn in ReGIS, while the setting contains pictures in the page
+    /// area; none while it contains them to the teletext page (REQ-6363).
+    pub(super) fn lay_out_pictures(&mut self) {
+        let contain = self.regis_contained();
+        let pictures: alloc::vec::Vec<PageKey> = if contain { self.regis.keys().copied().collect() } else { alloc::vec::Vec::new() };
+        self.wall.set_pictures(pictures.into_iter());
     }
 
     /// The cost of the open page's picture, on the image's top row, which
@@ -70,5 +80,47 @@ mod tests {
         assert_eq!(grouped(1_000), "1,000");
         assert_eq!(grouped(100_000_000), "100,000,000");
         assert_eq!(grouped(12_345_678), "12,345,678");
+    }
+
+    /// REQ-6363: an open page drawn in ReGIS is laid out in the picture's
+    /// shape, five to three, while pictures are contained in the page
+    /// area, which is the default; contained to the teletext page it keeps
+    /// the teletext page's shape, as a page not drawn in ReGIS always does.
+    #[test]
+    fn an_open_regis_page_takes_the_pictures_shape_when_contained() {
+        use crate::browser::fixture::{HEIGHT, WIDTH, browser};
+        use crate::canvas::REGIS_HEIGHT_PER_WIDTH;
+        let (mut browser, mut canvas) = browser();
+        browser.toggle_wall(0);
+        browser.draw(&mut canvas, WIDTH, HEIGHT, 0);
+        let (key, teletext) = browser.wall().shown().next().unwrap();
+        let shape = |rect: crate::geometry::Rect| rect.height() / rect.width();
+        assert!(shape(teletext) > 1.0, "a teletext page is taller than it is wide: {teletext:?}");
+        browser.set_regis(key, 0, 1);
+        browser.draw(&mut canvas, WIDTH, HEIGHT, 0);
+        let (_, contained) = browser.wall().shown().next().unwrap();
+        assert!((shape(contained) - REGIS_HEIGHT_PER_WIDTH).abs() < 1e-9, "five to three: {contained:?}");
+        assert!(contained.width() > teletext.width(), "and so wider in the same area");
+        let mut settings = crate::browser::fixture::settings();
+        settings.regis_contain = false;
+        browser.set_settings(settings);
+        browser.draw(&mut canvas, WIDTH, HEIGHT, 0);
+        let (_, kept) = browser.wall().shown().next().unwrap();
+        assert!((shape(kept) - shape(teletext)).abs() < 1e-9, "the teletext page's shape: {kept:?}");
+    }
+
+    /// REQ-6363: a picture contained in an area is as large as fits at its
+    /// own shape and centred; in an area of its own shape, the whole area.
+    #[test]
+    fn a_picture_is_contained_at_its_own_shape() {
+        use crate::canvas::{regis_contained, regis_within};
+        use crate::geometry::Rect;
+        let wide = regis_contained(Rect::new(0.0, 0.0, 1_000.0, 300.0));
+        assert_eq!((wide.x0, wide.y0, wide.x1, wide.y1), (250.0, 0.0, 750.0, 300.0), "limited by the height, centred across");
+        let tall = regis_contained(Rect::new(0.0, 0.0, 480.0, 500.0));
+        assert_eq!((tall.x0, tall.y0, tall.x1, tall.y1), (0.0, 106.0, 480.0, 394.0), "limited by the width, centred down");
+        assert_eq!(tall, regis_within(Rect::new(0.0, 0.0, 480.0, 500.0)), "in a page of the teletext shape, the teletext band");
+        let own = Rect::new(10.0, 20.0, 810.0, 500.0);
+        assert_eq!(regis_contained(own), own, "in its own shape, the whole area");
     }
 }

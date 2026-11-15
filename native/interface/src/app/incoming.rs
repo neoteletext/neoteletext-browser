@@ -31,6 +31,7 @@ impl App {
             Incoming::Strip(strip) => self.view.browser.set_strip(strip),
             Incoming::Settings(view) => {
                 dock_menu::set_aspect(view.aspect);
+                self.view.painter.set_regis_contain(view.regis_contain);
                 self.view.browser.set_settings(view);
             }
             Incoming::PictureStatus(status) => self.view.browser.set_picture_status(status),

@@ -138,12 +138,19 @@ impl Painter {
         self.regis.retain(|key, _| keep(key));
     }
 
+    /// How a ReGIS picture is fitted from the next frame: contained in the
+    /// rectangle its page is drawn in, or in the teletext page's band of
+    /// it (REQ-6363).
+    pub const fn set_regis_contain(&mut self, contain: bool) {
+        self.regis_contain = contain;
+    }
+
     pub(crate) fn draw_page(&mut self, key: PageKey, area: Rect) {
         if let Some(regis) = self.regis.get(&key) {
             // The picture across the image's width, its own proportions
             // kept, on its own background.
             let (image, background) = (regis.image.clone(), regis.background);
-            let place = interface_core::canvas::regis_within(area);
+            let place = if self.regis_contain { interface_core::canvas::regis_contained(area) } else { interface_core::canvas::regis_within(area) };
             let (width, height) = (f64::from(REGIS_SIZE.0), f64::from(REGIS_SIZE.1));
             self.context.set_transform(self.base());
             self.context.set_paint(crate::colour(background));

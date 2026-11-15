@@ -52,7 +52,12 @@ pub(super) fn browser() -> (Browser, Recorder) {
 
 /// The trusted core's answer that the aspect correction is `on`.
 pub(super) fn set_aspect(browser: &mut Browser, on: bool) {
-    browser.set_settings(SettingsView {
+    browser.set_settings(SettingsView { aspect: on, ..settings() });
+}
+
+/// The settings as the trusted core first sends them.
+pub(super) fn settings() -> SettingsView {
+    SettingsView {
         home: String::new(),
         sound: true,
         volume: 0,
@@ -60,11 +65,12 @@ pub(super) fn set_aspect(browser: &mut Browser, on: bool) {
         local: alloc::vec::Vec::new(),
         restore_session: true,
         cookies: CookieMode::Keep,
-        aspect: on,
+        aspect: false,
         wheel_inverted: false,
+        regis_contain: true,
         refusal: None,
         loopback_exemption: None,
-    });
+    }
 }
 
 pub(super) fn press_at(browser: &mut Browser, canvas: &mut Recorder, rect: Rect) {

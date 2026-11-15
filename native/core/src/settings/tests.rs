@@ -17,6 +17,7 @@ fn settings_round_trip_through_their_file() {
         bar: true,
         aspect: true,
         wheel_inverted: true,
+        regis_contain: false,
         restore: false,
         check_updates: false,
         cookies: crate::cookies::Mode::Close,
@@ -39,6 +40,19 @@ fn the_wheel_is_normal_until_inverted_and_read_strictly() {
     assert!(Settings::read(&format!("{VERSION_LINE}\nwheel inverted\n")).0.wheel_inverted);
     let (read, dropped) = Settings::read(&format!("{VERSION_LINE}\nwheel sideways\n"));
     assert_eq!((read.wheel_inverted, dropped.len()), (false, 1));
+}
+
+/// REQ-6363 item 5: contained in the page area by default, in a file that
+/// has no line for it too; kept as `regis teletext` and read strictly.
+#[test]
+fn regis_is_contained_until_set_to_the_teletext_page_and_read_strictly() {
+    assert!(Settings::default().regis_contain);
+    assert!(Settings::default().text().contains("regis contain\n"));
+    let (read, dropped) = Settings::read(&format!("{VERSION_LINE}\nbar on\n"));
+    assert_eq!((read.regis_contain, dropped.len()), (true, 0), "a file written before it");
+    assert!(!Settings::read(&format!("{VERSION_LINE}\nregis teletext\n")).0.regis_contain);
+    let (read, dropped) = Settings::read(&format!("{VERSION_LINE}\nregis stretched\n"));
+    assert_eq!((read.regis_contain, dropped.len()), (true, 1));
 }
 
 /// REQ-737 item 2: off by default, in a file that has no line for it too;

@@ -48,6 +48,7 @@ const CHANGE_COOKIES: u8 = 10;
 const CHANGE_REMOTE: u8 = 11;
 const CHANGE_ASPECT: u8 = 12;
 const CHANGE_WHEEL_INVERTED: u8 = 13;
+const CHANGE_REGIS_CONTAIN: u8 = 14;
 // Far from the others, so changes added beside this one elsewhere do not
 // meet it (installation-and-updates.md section 3.4).
 const CHANGE_CHECK_UPDATES: u8 = 40;
@@ -113,6 +114,7 @@ pub(crate) fn push_view(payload: &mut Vec<u8>, view: &SettingsView) -> Result<()
     payload.push(push_mode(view.cookies));
     push_flag(payload, view.aspect);
     push_flag(payload, view.wheel_inverted);
+    push_flag(payload, view.regis_contain);
     match &view.refusal {
         Some(refusal) => {
             push_flag(payload, true);
@@ -141,9 +143,10 @@ pub(crate) fn read_view(fields: &mut Fields<'_>) -> Result<SettingsView, Protoco
     let cookies = read_mode(fields)?;
     let aspect = fields.flag("flag")?;
     let wheel_inverted = fields.flag("flag")?;
+    let regis_contain = fields.flag("flag")?;
     let refusal = if fields.flag("flag")? { Some(fields.text(MAX_REFUSAL)?) } else { None };
     let loopback_exemption = if fields.flag("flag")? { Some(fields.text(MAX_LOOPBACK_EXEMPTION)?) } else { None };
-    Ok(SettingsView { home, sound, volume, proxy, local, restore_session, cookies, aspect, wheel_inverted, refusal, loopback_exemption })
+    Ok(SettingsView { home, sound, volume, proxy, local, restore_session, cookies, aspect, wheel_inverted, regis_contain, refusal, loopback_exemption })
 }
 
 pub(crate) fn push_change(payload: &mut Vec<u8>, change: &SettingChange) -> Result<(), ProtocolError> {
@@ -193,6 +196,10 @@ pub(crate) fn push_change(payload: &mut Vec<u8>, change: &SettingChange) -> Resu
             payload.push(CHANGE_WHEEL_INVERTED);
             push_flag(payload, *on);
         }
+        SettingChange::RegisContain(on) => {
+            payload.push(CHANGE_REGIS_CONTAIN);
+            push_flag(payload, *on);
+        }
     }
     Ok(())
 }
@@ -234,6 +241,7 @@ pub(crate) fn read_change(fields: &mut Fields<'_>) -> Result<SettingChange, Prot
         CHANGE_CHECK_UPDATES => SettingChange::CheckUpdates(fields.flag("flag")?),
         CHANGE_ASPECT => SettingChange::Aspect(fields.flag("flag")?),
         CHANGE_WHEEL_INVERTED => SettingChange::WheelInverted(fields.flag("flag")?),
+        CHANGE_REGIS_CONTAIN => SettingChange::RegisContain(fields.flag("flag")?),
         _ => return Err(ProtocolError::BadValue("setting change")),
     })
 }

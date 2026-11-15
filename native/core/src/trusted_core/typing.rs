@@ -15,7 +15,7 @@ impl Core {
         use protocol::interaction::Intent;
         let (Intent::Mouse { at, .. } | Intent::Touch { at, .. } | Intent::Wheel { at, .. }) = &input.intent else { return Vec::new() };
         let (Some(dot), Some(on)) = (at.pixels, self.typing.on_screen(input.key.channel)) else { return Vec::new() };
-        let Some(under) = self.regis.under(input.key, on.sub, dot) else { return Vec::new() };
+        let Some(under) = self.regis.under(input.key, on.sub, dot, self.settings.regis_contain) else { return Vec::new() };
         let pick = neoteletext_input::event::Pick {
             on,
             drawing: under.drawing,

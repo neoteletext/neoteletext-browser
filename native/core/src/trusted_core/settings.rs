@@ -66,6 +66,7 @@ impl Core {
             cookies: super::cookies::mode_view(self.settings.cookies),
             aspect: self.settings.aspect,
             wheel_inverted: self.settings.wheel_inverted,
+            regis_contain: self.settings.regis_contain,
             refusal: self.refusal.as_deref().map(|refusal| clean(refusal, protocol::settings::MAX_REFUSAL)),
             loopback_exemption: self.loopback_exemption.clone(),
         };
@@ -189,6 +190,12 @@ fn checked_change(settings: &mut Settings, change: SettingChange, current: Optio
             settings.wheel_inverted = on;
             Ok(None)
         }
+        // How a ReGIS picture is fitted, the window's alone too; the core
+        // maps picks by it (REQ-6363 item 4).
+        SettingChange::RegisContain(on) => {
+            settings.regis_contain = on;
+            Ok(None)
+        }
         // And whether to check for updates (`installation-and-updates.md`
         // section 3.4).
         SettingChange::CheckUpdates(on) => {
@@ -291,8 +298,10 @@ mod tests {
         // A privacy setting, not a security one: nothing said in the strip.
         assert_eq!(change(SettingChange::RestoreSession(false)), Ok(None));
         assert_eq!(change(SettingChange::WheelInverted(true)), Ok(None));
+        assert_eq!(change(SettingChange::RegisContain(false)), Ok(None));
         assert!(!settings.restore);
         assert!(settings.wheel_inverted, "REQ-6351");
+        assert!(!settings.regis_contain, "REQ-6363");
         assert_eq!(settings.home, "https://open.example/");
         assert_eq!((settings.volume, settings.sound, settings.proxy.is_none()), (30, false, true));
         assert_eq!(settings.local.len(), stored::MAX_LOCAL - 1);

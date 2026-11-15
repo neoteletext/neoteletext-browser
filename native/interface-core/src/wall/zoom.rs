@@ -187,7 +187,7 @@ impl Wall {
     pub(super) fn zoomed_rect(&self) -> Rect {
         let area = self.area;
         let room = Rect::new(area.x0 + WALL_PADDING, area.y0 + WALL_PADDING + CAPTION_HEIGHT + CAPTION_GAP, area.x1 - WALL_PADDING, area.y1 - WALL_PADDING);
-        let aspect = self.shape.height_per_width();
+        let aspect = self.open_shape(self.zoomed);
         let width = room.width().min(room.height() / aspect).max(0.0);
         let left = f64::midpoint(room.x0, room.x1) - width / 2.0;
         Rect::new(left, room.y0, left + width, room.y0 + width * aspect)
@@ -320,7 +320,7 @@ impl Wall {
     /// runs out first, and centred, in its screen colour, the next pages
     /// sliding in; returns where it is drawn with its screen.
     fn draw_alone<C: Canvas + ?Sized>(&mut self, canvas: &mut C, area: Rect, pages: &[WallPage<'_>], current: usize, now: u64) -> Rect {
-        let aspect = self.shape.height_per_width();
+        let aspect = self.open_shape(pages.get(current).map(|page| page.key));
         let width = area.width().min(area.height() / aspect).max(0.0);
         let (left, top) = (f64::midpoint(area.x0, area.x1) - width / 2.0, f64::midpoint(area.y0, area.y1) - width * aspect / 2.0);
         let rect = Rect::new(left, top, left + width, top + width * aspect);

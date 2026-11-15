@@ -21,7 +21,7 @@ mod input;
 const PANEL_WIDTH: f64 = 600.0;
 /// Room for its heading, twelve rows, two rows of chips and the trusted
 /// core's word.
-const PANEL_HEIGHT: f64 = 648.0 + 4.0 * ROW + GAP + 3.0 * ROW_GAP;
+const PANEL_HEIGHT: f64 = 648.0 + 5.0 * ROW + GAP + 4.0 * ROW_GAP;
 /// Room added, on Windows, for the loopback exemption: a line saying why
 /// with its Copy button, and the command on two lines (TODO-1251).
 const EXEMPTION_ROOM: f64 = 3.0 * ROW + GAP;
@@ -91,6 +91,8 @@ struct Controls {
     restore_off: Rect,
     wheel_normal: Rect,
     wheel_inverted: Rect,
+    regis_contain: Rect,
+    regis_teletext: Rect,
     cookie_modes: Vec<(CookieMode, Rect)>,
     manage_cookies: Rect,
     updates_on: Rect,
@@ -180,12 +182,20 @@ impl Browser {
         self.wall.set_shape(PageShape::of_setting(view.aspect));
         self.settings.view = Some(view);
         self.settings.refresh();
+        self.lay_out_pictures();
     }
 
     /// Whether pages are drawn with the 4:3 aspect correction (REQ-737).
     #[must_use]
     pub fn aspect_corrected(&self) -> bool {
         self.wall.shape() == PageShape::Corrected
+    }
+
+    /// Whether a ReGIS picture is contained in the page area, the default
+    /// until the trusted core says, or to the teletext page (REQ-6363).
+    #[must_use]
+    pub fn regis_contained(&self) -> bool {
+        self.settings.view.as_ref().is_none_or(|view| view.regis_contain)
     }
 
     /// A mouse wheel's notches as the browser takes them: the other way

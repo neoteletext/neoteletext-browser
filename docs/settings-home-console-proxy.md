@@ -21,6 +21,7 @@ The browser keeps a few settings between runs, and the bookmarks with them. The 
 | Bookmarks | Up to 1 000 addresses | None | The star in the strip |
 | 4:3 aspect correction (REQ-737) | On or off | Off | The View menu and the menu button's menu |
 | Mouse wheel (REQ-6351) | Normal or inverted, for a wheel that moves in notches | Normal | The settings panel |
+| ReGIS pictures (REQ-6363) | Contain (an open ReGIS page laid out in the picture's shape, filling the page area) or contain to teletext (the picture in the teletext page's band) | Contain | The settings panel |
 
 Nothing else is kept: no history, no cookies (the engine keeps cookies only for the life of a fetcher, its REQ-SEC-013), no window position. *Amended 22 October 2026:* history and bookmarks are kept (decision 57), and the window and its tabs as the session (decision 59), each in a file of its own (`history-and-bookmarks.md`).
 - *Amended 22 and 23 October 2026:* persistent cookies are kept, sealed (decision 62); `settings.txt` also keeps the bookmarks bar (`bar`), restoring the session (`restore`), checking for updates (`updates`), the cookie policy and blocked channels (`cookies`, `cookie-block`), and the remote control's place (`remote`); the bookmarks are in `bookmarks.txt` (decision 57).

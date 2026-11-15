@@ -41,18 +41,27 @@ pub struct Under {
 }
 
 /// The pixel of a ReGIS picture under a dot of its page's image, or `None`
-/// for a dot above or below the picture. The picture is drawn across the
-/// whole width of the image and [`REGIS_LINES`] of its lines, from line
-/// [`REGIS_TOP_LINE`] (`interface_core::canvas::regis_within`).
+/// for a dot outside the picture (REQ-6363 item 4). Contained in the page
+/// area (`contain`), the page is laid out in the picture's shape and the
+/// picture fills its image: the image's dots span the picture's pixels
+/// and its lines the picture's rows. Contained to the teletext page, the
+/// picture is drawn across the whole width of the image and
+/// [`REGIS_LINES`] of its lines, from line [`REGIS_TOP_LINE`]
+/// (`interface_core::canvas::regis_within`), and a dot above or below
+/// that band is outside it.
 #[must_use]
-pub fn picture_pixel(dot: (u32, u32)) -> Option<(usize, usize)> {
+pub fn picture_pixel(dot: (u32, u32), contain: bool) -> Option<(usize, usize)> {
     let (x, y) = (usize::try_from(dot.0).ok()?, usize::try_from(dot.1).ok()?);
-    let line = y.checked_sub(usize::from(REGIS_TOP_LINE)).filter(|line| *line < usize::from(REGIS_LINES))?;
     if x >= usize::from(PAGE_WIDTH) || y >= usize::from(PAGE_HEIGHT) {
         return None;
     }
+    let (line, lines) = if contain {
+        (y, usize::from(PAGE_HEIGHT))
+    } else {
+        (y.checked_sub(usize::from(REGIS_TOP_LINE)).filter(|line| *line < usize::from(REGIS_LINES))?, usize::from(REGIS_LINES))
+    };
     let across = x.saturating_mul(REGIS_WIDTH).checked_div(usize::from(PAGE_WIDTH))?;
-    let down = line.saturating_mul(REGIS_HEIGHT).checked_div(usize::from(REGIS_LINES))?;
+    let down = line.saturating_mul(REGIS_HEIGHT).checked_div(lines)?;
     Some((across.min(REGIS_WIDTH.saturating_sub(1)), down.min(REGIS_HEIGHT.saturating_sub(1))))
 }
 
@@ -86,9 +95,9 @@ impl PickRecords {
     /// when the page is not drawn in ReGIS, another sub-page of it is, or
     /// the dot is outside the picture.
     #[must_use]
-    pub fn under(&self, key: PageKey, sub: u16, dot: (u32, u32)) -> Option<Under> {
+    pub fn under(&self, key: PageKey, sub: u16, dot: (u32, u32), contain: bool) -> Option<Under> {
         let held = self.pages.get(&key).filter(|held| held.sub == sub)?;
-        let (x, y) = picture_pixel(dot)?;
+        let (x, y) = picture_pixel(dot, contain)?;
         let picked = held.pick.at(x, y);
         Some(Under {
             drawing: picked.drawing,
@@ -116,12 +125,19 @@ mod tests {
     /// the lines above and below are outside it.
     #[test]
     fn a_dot_of_the_image_is_a_pixel_of_the_picture_or_outside_it() {
-        assert_eq!(picture_pixel((0, 106)), Some((0, 0)));
-        assert_eq!(picture_pixel((479, 393)), Some((798, 478)));
-        assert_eq!(picture_pixel((240, 250)), Some((400, 240)));
-        assert_eq!(picture_pixel((0, 105)), None);
-        assert_eq!(picture_pixel((0, 394)), None);
-        assert_eq!(picture_pixel((480, 200)), None);
+        assert_eq!(picture_pixel((0, 106), false), Some((0, 0)));
+        assert_eq!(picture_pixel((479, 393), false), Some((798, 478)));
+        assert_eq!(picture_pixel((240, 250), false), Some((400, 240)));
+        assert_eq!(picture_pixel((0, 105), false), None);
+        assert_eq!(picture_pixel((0, 394), false), None);
+        assert_eq!(picture_pixel((480, 200), false), None);
+        // REQ-6363 item 4: contained in the page area, the whole image is the picture.
+        assert_eq!(picture_pixel((0, 0), true), Some((0, 0)));
+        assert_eq!(picture_pixel((479, 499), true), Some((798, 479)));
+        assert_eq!(picture_pixel((240, 250), true), Some((400, 240)));
+        assert_eq!(picture_pixel((0, 105), true), Some((0, 100)), "no band: a line above the teletext band is a row of the picture");
+        assert_eq!(picture_pixel((480, 200), true), None);
+        assert_eq!(picture_pixel((0, 500), true), None);
     }
 
     /// DEC-6335 item 1: the drawing under a dot comes from the record kept
@@ -131,13 +147,18 @@ mod tests {
         let mut record = vec![0_u16; REGIS_PIXELS];
         record[240 * REGIS_WIDTH + 400] = 9;
         let mut records = PickRecords::default();
-        assert_eq!(records.under(KEY, 0, (240, 250)), None, "not a page drawn in ReGIS");
+        assert_eq!(records.under(KEY, 0, (240, 250), false), None, "not a page drawn in ReGIS");
         records.hold(KEY, 0, 7, RegisPick::of(&record, [(9, 390, 200)].into_iter()));
-        let under = records.under(KEY, 0, (240, 250)).unwrap();
+        let under = records.under(KEY, 0, (240, 250), false).unwrap();
         assert_eq!((under.drawing, under.x, under.y, under.picture_x, under.picture_y, under.commits), (9, 10, 40, 400, 240, 7));
-        assert_eq!(records.under(KEY, 0, (0, 106)).unwrap().drawing, 0);
-        assert_eq!(records.under(KEY, 2, (240, 250)), None, "another sub-page is on screen");
-        assert_eq!(records.under(KEY, 0, (240, 10)), None, "above the picture");
+        assert_eq!(records.under(KEY, 0, (0, 106), false).unwrap().drawing, 0);
+        assert_eq!(records.under(KEY, 2, (240, 250), false), None, "another sub-page is on screen");
+        assert_eq!(records.under(KEY, 0, (240, 10), false), None, "above the picture");
+        // REQ-6363 item 4: contained in the page area, the same drawing is
+        // under the dot the picture's pixel (400, 240) is drawn at, and no
+        // dot of the image is outside the picture.
+        assert_eq!(records.under(KEY, 0, (240, 250), true).map(|under| (under.drawing, under.picture_x, under.picture_y)), Some((9, 400, 240)));
+        assert_eq!(records.under(KEY, 0, (240, 10), true).map(|under| under.drawing), Some(0));
         records.forget(KEY.channel);
         assert!(!records.has(KEY));
     }

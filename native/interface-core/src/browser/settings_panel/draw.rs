@@ -55,6 +55,7 @@ impl Browser {
         y = self.draw_settings_proxy(canvas, &mut controls, row(y), field_left);
         y = draw_settings_restore(canvas, view.as_ref(), &mut controls, row(y), field_left);
         y = draw_settings_wheel(canvas, view.as_ref(), &mut controls, row(y), field_left);
+        y = draw_settings_regis(canvas, view.as_ref(), &mut controls, row(y), field_left);
         y = draw_settings_cookies(canvas, view.as_ref(), &mut controls, row(y), field_left);
         y = self.draw_settings_updates(canvas, &mut controls, row(y), field_left);
         y = self.draw_settings_local(canvas, view.as_ref(), &mut controls, row(y), field_left);
@@ -237,6 +238,19 @@ fn draw_settings_wheel<C: Canvas + ?Sized>(canvas: &mut C, view: Option<&Setting
     controls.wheel_inverted = Rect::new(controls.wheel_normal.x1 + GAP, y, controls.wheel_normal.x1 + GAP + BUTTON_WIDTH * 1.5, y + ROW);
     button(canvas, controls.wheel_normal, "Normal", !inverted);
     button(canvas, controls.wheel_inverted, "Inverted", inverted);
+    y + ROW + ROW_GAP
+}
+
+/// How a ReGIS picture is fitted: contained in the page area or to the
+/// teletext page (REQ-6363), in `line`. Returns where the next row starts.
+fn draw_settings_regis<C: Canvas + ?Sized>(canvas: &mut C, view: Option<&SettingsView>, controls: &mut Controls, line: Rect, field_left: f64) -> f64 {
+    let y = line.y0;
+    let contain = view.is_none_or(|view| view.regis_contain);
+    left_centred(canvas, line, 0.0, "ReGIS pictures", ROW_TITLE, WHITE);
+    controls.regis_contain = Rect::new(field_left, y, field_left + BUTTON_WIDTH * 1.5, y + ROW);
+    controls.regis_teletext = Rect::new(controls.regis_contain.x1 + GAP, y, controls.regis_contain.x1 + GAP + BUTTON_WIDTH * 2.6, y + ROW);
+    button(canvas, controls.regis_contain, "Contain", contain);
+    button(canvas, controls.regis_teletext, "Contain to teletext", !contain);
     y + ROW + ROW_GAP
 }
 

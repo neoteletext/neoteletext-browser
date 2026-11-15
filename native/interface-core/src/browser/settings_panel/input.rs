@@ -74,6 +74,10 @@ impl Browser {
             Some(SettingChange::WheelInverted(false))
         } else if controls.wheel_inverted.contains(point) {
             Some(SettingChange::WheelInverted(true))
+        } else if controls.regis_contain.contains(point) {
+            Some(SettingChange::RegisContain(true))
+        } else if controls.regis_teletext.contains(point) {
+            Some(SettingChange::RegisContain(false))
         } else if let Some(&(mode, _)) = controls.cookie_modes.iter().find(|(_, rect)| rect.contains(point)) {
             Some(SettingChange::Cookies(mode))
         } else if controls.manage_cookies.contains(point) {

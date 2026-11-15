@@ -17,6 +17,7 @@ fn view() -> SettingsView {
         cookies: CookieMode::Keep,
         aspect: false,
         wheel_inverted: false,
+        regis_contain: true,
         refusal: None,
         loopback_exemption: None,
     }
@@ -107,6 +108,10 @@ fn each_control_asks_for_its_change() {
     browser.set_settings(SettingsView { wheel_inverted: true, ..view() });
     assert!((browser.wheel_notches(1.0) + 1.0).abs() < f64::EPSILON, "inverted");
     browser.set_settings(view());
+    // REQ-6363: the two ways of fitting a ReGIS picture ask for the change.
+    let (contain, teletext) = (browser.settings.controls.regis_contain, browser.settings.controls.regis_teletext);
+    assert_eq!(press(&mut browser, teletext), [Output::Setting(SettingChange::RegisContain(false))]);
+    assert_eq!(press(&mut browser, contain), [Output::Setting(SettingChange::RegisContain(true))]);
     let on_close = browser.settings.controls.cookie_modes[1].1;
     assert_eq!(press(&mut browser, on_close), [Output::Setting(SettingChange::Cookies(CookieMode::Close))]);
     let manage = browser.settings.controls.manage_cookies;

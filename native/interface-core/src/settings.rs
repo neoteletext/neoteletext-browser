@@ -50,6 +50,9 @@ pub struct SettingsView {
     pub aspect: bool,
     /// A mouse wheel's notches are taken the other way (REQ-6351).
     pub wheel_inverted: bool,
+    /// A ReGIS picture is contained in the page area, its page laid out in
+    /// the picture's shape; else contained to the teletext page (REQ-6363).
+    pub regis_contain: bool,
     /// Why the last change was refused, if it was.
     pub refusal: Option<String>,
     /// On Windows, the command an administrator runs once so that channels
@@ -88,6 +91,9 @@ pub enum SettingChange {
     Aspect(bool),
     /// A mouse wheel's direction inverted, or as it comes (REQ-6351).
     WheelInverted(bool),
+    /// A ReGIS picture contained in the page area (true) or to the
+    /// teletext page (REQ-6363).
+    RegisContain(bool),
 }
 
 /// The furthest a floating remote's corner may be from the window's, in

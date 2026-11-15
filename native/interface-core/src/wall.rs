@@ -104,6 +104,9 @@ pub struct Wall {
     focus: Option<PageKey>,
     /// The pages on the wall, in order, as last drawn.
     page_keys: Vec<PageKey>,
+    /// The pages drawn in ReGIS whose pictures are contained in the page
+    /// area: open, each is laid out in the picture's shape (REQ-6363).
+    pictures: Vec<PageKey>,
     /// The page size before a click zoomed a page, restored when it closes.
     width_before_zoom: Option<f32>,
     /// While zoomed, how far the pages are from resting in place, in pages:
@@ -182,6 +185,7 @@ impl Wall {
             leave: Tween::new(0.0, HOVER_MILLISECONDS, EASE_OUT),
             focus: None,
             page_keys: Vec::new(),
+            pictures: Vec::new(),
             width_before_zoom: None,
             slide: Tween::new(0.0, SLIDE_MILLISECONDS, STANDARD),
             wheel_carry: 0.0,
@@ -245,6 +249,19 @@ impl Wall {
     #[must_use]
     pub const fn shape(&self) -> PageShape {
         self.shape
+    }
+
+    /// The pages drawn in ReGIS to lay out, when open, in the picture's
+    /// shape: none while pictures are contained to the teletext page.
+    pub fn set_pictures(&mut self, pictures: impl Iterator<Item = PageKey>) {
+        self.pictures.clear();
+        self.pictures.extend(pictures);
+    }
+
+    /// The height for each unit of width `key` is laid out at when open:
+    /// a contained ReGIS picture's own, else the shape every page has.
+    pub(crate) fn open_shape(&self, key: Option<PageKey>) -> f64 {
+        if key.is_some_and(|key| self.pictures.contains(&key)) { crate::canvas::REGIS_HEIGHT_PER_WIDTH } else { self.shape.height_per_width() }
     }
 
     /// Draws every page in `shape` from the next frame.

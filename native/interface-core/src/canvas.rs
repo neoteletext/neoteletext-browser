@@ -65,6 +65,22 @@ pub fn regis_within(image: Rect) -> Rect {
     Rect::new(image.x0, top, image.x1, top + line * f64::from(REGIS_LINES))
 }
 
+/// A ReGIS picture's height for each unit of its width: 480 rows to 800
+/// pixels.
+pub const REGIS_HEIGHT_PER_WIDTH: f64 = REGIS_HEIGHT as f64 / REGIS_WIDTH as f64;
+
+/// Where a ReGIS picture sits when it is contained in `area` (REQ-6363):
+/// as large as fits at its own shape, limited by whichever of the width
+/// and the height runs out first, and centred. In an area of the picture's
+/// own shape that is the whole area.
+#[must_use]
+pub fn regis_contained(area: Rect) -> Rect {
+    let width = area.width().min(area.height() / REGIS_HEIGHT_PER_WIDTH).max(0.0);
+    let height = width * REGIS_HEIGHT_PER_WIDTH;
+    let (left, top) = ((area.x0 + area.x1 - width) / 2.0, (area.y0 + area.y1 - height) / 2.0);
+    Rect::new(left, top, left + width, top + height)
+}
+
 /// The shape a page is drawn in, which only the drawing transform changes:
 /// the page's raster and every coordinate sent to its channel stay the same
 /// (REQ-737).

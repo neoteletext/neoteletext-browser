@@ -67,6 +67,9 @@ pub struct Settings {
     pub aspect: bool,
     /// A mouse wheel's notches are taken the other way (REQ-6351).
     pub wheel_inverted: bool,
+    /// A ReGIS picture is contained in the page area; else to the teletext
+    /// page (REQ-6363).
+    pub regis_contain: bool,
     /// The last session is restored at start (requirement 20.24).
     pub restore: bool,
     /// The browser checks for updates (`installation-and-updates.md`
@@ -91,6 +94,7 @@ impl Default for Settings {
             bar: false,
             aspect: false,
             wheel_inverted: false,
+            regis_contain: true,
             restore: true,
             check_updates: true,
             cookies: crate::cookies::Mode::Keep,
@@ -189,6 +193,13 @@ impl Settings {
             }
             .map(|inverted| self.wheel_inverted = inverted)
             .is_some(),
+            "regis" => match value {
+                "contain" => Some(true),
+                "teletext" => Some(false),
+                _ => None,
+            }
+            .map(|contain| self.regis_contain = contain)
+            .is_some(),
             "remote" => read_remote(value).map(|place| self.remote = place).is_some(),
             "restore" => switch(value).map(|on| self.restore = on).is_some(),
             "updates" => switch(value).map(|on| self.check_updates = on).is_some(),
@@ -240,6 +251,7 @@ impl Settings {
         lines.push(format!("bar {}", if self.bar { "on" } else { "off" }));
         lines.push(format!("aspect {}", if self.aspect { "on" } else { "off" }));
         lines.push(format!("wheel {}", if self.wheel_inverted { "inverted" } else { "normal" }));
+        lines.push(format!("regis {}", if self.regis_contain { "contain" } else { "teletext" }));
         lines.push(format!("restore {}", if self.restore { "on" } else { "off" }));
         lines.push(remote_line(self.remote));
         lines.push(format!("updates {}", if self.check_updates { "on" } else { "off" }));
