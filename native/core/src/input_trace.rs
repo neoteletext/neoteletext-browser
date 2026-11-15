@@ -91,6 +91,9 @@ fn describe(item: &Item<'_>) -> String {
         Event::Pick(pick) => {
             format!("PICK {} {},{} at {},{} c{}", pick.drawing, pick.x, pick.y, pick.picture_x, pick.picture_y, pick.commits)
         }
+        Event::DrawingHover { leave, drawing, commits, .. } => {
+            format!("DRAWING_HOVER {} {drawing} c{commits}", if *leave { "leave" } else { "enter" })
+        }
         Event::Extension { kind, .. } => format!("EXTENSION {kind:#04x}"),
     }
 }
