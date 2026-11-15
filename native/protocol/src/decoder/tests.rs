@@ -100,6 +100,11 @@ fn every_kind_round_trips() {
         FromDecoder::Frame { page: 0x123, palette: vec![[0, 0, 0], [255, 255, 255]], screen: 1, indices },
         FromDecoder::Regis { page: 0x123, sub: 2, picture: regis_picture(), pick: regis_pick() },
         FromDecoder::Regis { page: 0x123, sub: 0, picture: regis_picture(), pick: crate::regis::RegisPick::default() },
+        // REQ-6376: a sub-page's drawing links, some and none.
+        #[cfg(feature = "links")]
+        FromDecoder::RegisLinks { page: 0x105, sub: 0, links: vec![(11, "100".into()), (65_535, "web:https://example.invalid/a".into())] },
+        #[cfg(feature = "links")]
+        FromDecoder::RegisLinks { page: 0x105, sub: 3, links: Vec::new() },
         FromDecoder::SubPages { page: 0x302, step: SubPageStep { count: 3, shown: 2, place: Some(1), previous: Some(1), next: Some(3) } },
         FromDecoder::SubPageCount { page: 0x210, count: 8_190 },
         FromDecoder::SubPageCount { page: 0x210, count: 0 },

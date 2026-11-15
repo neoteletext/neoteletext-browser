@@ -33,8 +33,12 @@ impl Links {
         (before != after).then(|| self.pointing())
     }
 
-    fn pointing(&self) -> Option<Pointing> {
-        self.pointed.as_ref().map(|(_, destination)| Pointing { kind: destination.kind(), text: destination.describe(), complete: destination.complete() })
+    /// What the strip shows: where the link at the cell pointed at leads,
+    /// or with none, where the drawing pointed at does (REQ-6376).
+    pub(super) fn pointing(&self) -> Option<Pointing> {
+        let cell = self.pointed.as_ref().map(|(_, destination)| destination);
+        let drawing = self.pointed_drawing.as_ref().map(|(_, destination)| destination);
+        cell.or(drawing).map(|destination| Pointing { kind: destination.kind(), text: destination.describe(), complete: destination.complete() })
     }
 
     /// A click on a cell. It follows a link only when the click is on the

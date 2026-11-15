@@ -438,6 +438,12 @@ impl Browser {
         self.links.pointing.is_some()
     }
 
+    /// Whether the destination the strip is showing is outside the
+    /// channel: another channel's page or a web page.
+    pub(super) fn pointing_leaves(&self) -> bool {
+        self.links.pointing.as_ref().is_some_and(|pointing| pointing.kind.leaves())
+    }
+
     /// Draws the destination of the link under the pointer or the focus in
     /// the address field, in place of the address. Returns whether there is
     /// one.

@@ -100,7 +100,7 @@ impl Browser {
         }
         // A drawing of a ReGIS picture that a click would act on (REQ-6374).
         if self.over_regis_drawing() {
-            return Cursor::Hand;
+            return self.regis_cursor();
         }
         let over_toggle = self.regions.overview_toggle.contains(self.pointer)
             || self.regions.overview_close.contains(self.pointer)

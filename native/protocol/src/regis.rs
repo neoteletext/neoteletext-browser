@@ -360,3 +360,29 @@ pub(crate) fn push_viewer(payload: &mut Vec<u8>, viewer: RegisViewer) {
 pub(crate) fn read_viewer(fields: &mut Fields<'_>) -> Result<RegisViewer, ProtocolError> {
     Ok(RegisViewer { hovered: fields.u16()?, pressed: fields.u16()?, typing: fields.flag("a ReGIS viewer's typing flag")? })
 }
+
+/// The most drawing links a sub-page's picture has (the engine's REQ-6370,
+/// `MAX_DRAWING_LINKS`, which the decoder asserts this equals).
+pub const MAX_REGIS_LINKS: usize = 64;
+
+/// A sub-page's drawing links as the decoder read them: each a numbered
+/// drawing and the target it leads to, untrusted text the trusted core
+/// parses as it parses every link's target.
+#[cfg(feature = "links")]
+pub(crate) fn push_links(payload: &mut Vec<u8>, links: &[(u16, String)]) -> Result<(), ProtocolError> {
+    crate::push_count_u8(payload, links.len(), MAX_REGIS_LINKS, "too many drawing links")?;
+    for (drawing, target) in links {
+        if target.len() > crate::links::MAX_TARGET {
+            return Err(ProtocolError::BadValue("a drawing link's target too long"));
+        }
+        payload.extend_from_slice(&drawing.to_be_bytes());
+        crate::push_raw_text(payload, target, crate::links::MAX_TARGET);
+    }
+    Ok(())
+}
+
+#[cfg(feature = "links")]
+pub(crate) fn read_links(fields: &mut Fields<'_>) -> Result<Vec<(u16, String)>, ProtocolError> {
+    let count = fields.count_u8(MAX_REGIS_LINKS, "too many drawing links")?;
+    (0..count).map(|_| Ok((fields.u16()?, crate::raw_text(fields, crate::links::MAX_TARGET, "a drawing link's target too long")?))).collect()
+}

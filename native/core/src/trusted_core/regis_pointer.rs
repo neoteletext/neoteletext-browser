@@ -32,13 +32,24 @@ impl Core {
     }
 
     /// Works out again what lies under the pointer and says what changed:
-    /// after the pointer moved, a new picture arrived, or keys started or
-    /// stopped going to a channel.
+    /// after the pointer moved, a new picture arrived, a sub-page's drawing
+    /// links arrived, or keys started or stopped going to a channel.
     pub(super) fn regis_repoint(&mut self) -> Result<(), String> {
         let keys = self.page_taking_keys();
+        let under = self.regis_pointing.under(&self.regis);
+        // The strip shows where a linked drawing under the pointer leads
+        // (REQ-6376 item 3).
+        #[cfg(feature = "links")]
+        if let Some(pointing) = self.links.point_drawing(under) {
+            self.link(protocol::links::Message::Pointing(pointing))?;
+        }
+        #[cfg(feature = "links")]
+        let linked = under.is_some_and(|under| self.links.is_drawing_link(under));
+        #[cfg(not(feature = "links"))]
+        let linked = false;
         // What was said is recorded before it is delivered: delivering an
         // enter or a leave comes back here, and then finds nothing changed.
-        for say in self.regis_pointing.decide(&self.regis, keys) {
+        for say in self.regis_pointing.decide(&self.regis, keys, linked) {
             match say {
                 Say::Over { key, over } => self.send(&ToInterface::RegisOver { key, over })?,
                 Say::Viewer { key, sub, viewer } => self.tell(key.channel, ToDecoder::RegisViewer { page: key.page, sub, viewer }),
@@ -51,6 +62,20 @@ impl Core {
                 Say::Hover { .. } => {}
             }
         }
+        self.regis_click()
+    }
+
+    /// A click on a drawing that is a link follows it, by the rules of a
+    /// click on a text link (REQ-6376 item 4).
+    fn regis_click(&mut self) -> Result<(), String> {
+        let Some((key, drawing)) = self.regis_pointing.take_click() else { return Ok(()) };
+        #[cfg(feature = "links")]
+        if let Some((sub, _)) = self.regis.held(key) {
+            let (active, now) = (self.active_channel(), self.now());
+            let followed = self.links.click_drawing((key, sub, drawing), active, now);
+            return self.follow(followed, "a click on a drawing");
+        }
+        let _ = (key, drawing);
         Ok(())
     }
 }

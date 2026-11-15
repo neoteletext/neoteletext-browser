@@ -154,12 +154,37 @@ pub struct Drawn {
     pub pick: RegisPick,
 }
 
+/// A sub-page's drawing links, whole: its page, its sub-code, and each
+/// drawing with the target it leads to.
+#[cfg(feature = "links")]
+pub type DrawingLinks = (u16, u16, Vec<(u16, String)>);
+
+/// A sub-page's drawing links being received: the parts of one sending.
+#[cfg(feature = "links")]
+struct LinkParts {
+    key: (u16, u16),
+    /// The part that must come next, and how many there are.
+    next: u8,
+    parts: u8,
+    links: Vec<(u16, String)>,
+}
+
+// The trusted core is sent as many links as the engine's record carries.
+#[cfg(feature = "links")]
+const _: () = assert!(protocol::regis::MAX_REGIS_LINKS == neoteletext_web::records::drawing_links::MAX_DRAWING_LINKS);
+
 /// Every sub-page's ReGIS a channel has sent.
 #[derive(Default)]
 pub struct RegisPages {
     pages: BTreeMap<(u16, u16), Page>,
     /// Records read.
     records: u64,
+    /// The drawing links being received, of one sub-page at a time.
+    #[cfg(feature = "links")]
+    link_parts: Option<LinkParts>,
+    /// Sub-pages' drawing links received whole, for the trusted core.
+    #[cfg(feature = "links")]
+    links: Vec<DrawingLinks>,
 }
 
 impl RegisPages {
@@ -225,6 +250,46 @@ impl RegisPages {
             held.cursor = drawing;
             held.blink_again = true;
         }
+    }
+
+    /// Reads one `DRAWING_LINKS` record (the engine's REQ-6370). Part 0
+    /// begins a sub-page's links again and later parts add to them, in
+    /// order; when the last has come the links are kept for the trusted
+    /// core. The engine's reader has checked each record; across the parts
+    /// a drawing named twice, or a link past the most a sub-page has,
+    /// drops the whole sending, as does a part out of its place.
+    #[cfg(feature = "links")]
+    pub fn read_links(&mut self, record: &neoteletext_web::records::drawing_links::DrawingLinksRecord<'_>) {
+        let key = (record.page.mpp(), record.subcode.value());
+        if record.part == 0 {
+            self.link_parts = Some(LinkParts { key, next: 0, parts: record.parts, links: Vec::new() });
+        }
+        let Some(mut parts) = self.link_parts.take().filter(|parts| parts.key == key && parts.next == record.part && parts.parts == record.parts) else {
+            return;
+        };
+        for link in record.links() {
+            let named_twice = parts.links.iter().any(|(drawing, _)| *drawing == link.drawing);
+            // A target is printable ASCII, as the reader checked.
+            let Ok(target) = core::str::from_utf8(link.target) else { return };
+            if named_twice || parts.links.len() >= protocol::regis::MAX_REGIS_LINKS {
+                return;
+            }
+            parts.links.push((link.drawing, target.to_owned()));
+        }
+        parts.next = parts.next.saturating_add(1);
+        if parts.next == parts.parts {
+            // Only the latest of a sub-page's links is waiting to be sent.
+            self.links.retain(|(page, sub, _)| (*page, *sub) != key);
+            self.links.push((key.0, key.1, parts.links));
+        } else {
+            self.link_parts = Some(parts);
+        }
+    }
+
+    /// The drawing links received whole since they were last taken.
+    #[cfg(feature = "links")]
+    pub fn take_links(&mut self) -> Vec<DrawingLinks> {
+        core::mem::take(&mut self.links)
     }
 
     /// Whether the channel has sent ReGIS for a page.
@@ -520,5 +585,43 @@ mod tests {
         pages.set_viewer(0x100, 0, RegisViewer { hovered: 0, pressed: 0, typing: true });
         assert_eq!(cursor_at(&mut pages, typed_at + 9 * HALF), None);
         assert_eq!(cursor_at(&mut pages, typed_at + 10 * HALF), None);
+    }
+
+    /// REQ-6376: a sub-page's drawing links, in one record or several in
+    /// order, are kept whole for the trusted core; a part out of its
+    /// place, or a drawing named in two parts, drops the sending.
+    #[cfg(feature = "links")]
+    #[test]
+    fn drawing_links_are_gathered_from_their_parts() {
+        use neoteletext_web::records::drawing_links::{DrawingLink, encode};
+        use neoteletext_web::records::{ChannelRecord, Read, RecordReader};
+
+        // Sends `links` as records and reads each into `pages`, leaving
+        // out the parts `skip` names.
+        let send = |pages: &mut RegisPages, links: &[DrawingLink<'_>], skip: Option<u8>| {
+            let mut reader = RecordReader::new();
+            encode(PageAddress::from_mpp(0x105).unwrap(), SubCode::new(0), links, 3, 0, &mut |packet| {
+                if let Read::Record(ChannelRecord::DrawingLinks(record)) = reader.push(&packet)
+                    && skip != Some(record.part)
+                {
+                    pages.read_links(&record);
+                }
+            })
+            .unwrap();
+        };
+        let mut pages = RegisPages::default();
+        send(&mut pages, &[DrawingLink { drawing: 11, target: b"100" }, DrawingLink { drawing: 13, target: b"web:https://example.invalid/" }], None);
+        assert_eq!(pages.take_links(), [(0x105, 0, vec![(11, "100".to_owned()), (13, "web:https://example.invalid/".to_owned())])]);
+        assert_eq!(pages.take_links(), []);
+        // Three long links take two records: both parts, then the first lost.
+        let long = format!("web:https://example.invalid/{}", "a".repeat(3000));
+        let three: Vec<DrawingLink<'_>> = (1..=3).map(|drawing| DrawingLink { drawing, target: long.as_bytes() }).collect();
+        send(&mut pages, &three, None);
+        assert_eq!(pages.take_links().first().map(|(_, _, links)| links.len()), Some(3));
+        send(&mut pages, &three, Some(0));
+        assert_eq!(pages.take_links(), [], "the first part was lost: the rest is not a sub-page's links");
+        // No links at all are a sub-page's links: none.
+        send(&mut pages, &[], None);
+        assert_eq!(pages.take_links(), [(0x105, 0, Vec::new())]);
     }
 }

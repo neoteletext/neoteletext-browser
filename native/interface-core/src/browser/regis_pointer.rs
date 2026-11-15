@@ -85,6 +85,17 @@ impl Browser {
         self.regis_pointer.over = over.then_some(key);
     }
 
+    /// The pointer's shape over a drawing a click would act on: the hand,
+    /// or the shape for a link that leaves the channel while the strip
+    /// shows such a destination, as over a text link (REQ-6376 item 3).
+    pub(super) fn regis_cursor(&self) -> super::Cursor {
+        #[cfg(feature = "links")]
+        if self.pointing_leaves() {
+            return super::Cursor::External;
+        }
+        super::Cursor::Hand
+    }
+
     /// Whether the pointer is over a drawing of the open page's picture
     /// that a click would act on: it is then the hand.
     pub(super) fn over_regis_drawing(&self) -> bool {

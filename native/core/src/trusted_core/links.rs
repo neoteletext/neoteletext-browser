@@ -20,7 +20,7 @@ impl Core {
     }
 
     /// Runs `decide` with the link table and channel `id` as links see it.
-    fn with_channel<T>(&mut self, id: u32, decide: impl FnOnce(&mut Links, &LinkChannel<'_>) -> T) -> Option<T> {
+    pub(super) fn with_channel<T>(&mut self, id: u32, decide: impl FnOnce(&mut Links, &LinkChannel<'_>) -> T) -> Option<T> {
         let Self { session, links, .. } = self;
         let tab = session.all_tabs().find(|tab| tab.channel.id == id)?;
         let address = tab.address()?;

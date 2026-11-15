@@ -576,3 +576,72 @@ fn a_hover_names_only_a_controls_first_cell() {
     assert!(!links.is_control_at(OPEN, 2, 20), "inside it, not its first cell");
     assert!(!links.is_control_at(PageKey { channel: CHANNEL, page: 0x200 }, 1, 20), "not the open page");
 }
+
+/// The drawing links of page 100's sub-page 0, decided at `START`.
+fn links_with_drawings(found: &[(u16, &str)]) -> Links {
+    let mut links = Links::default();
+    links.opened(Some(OPEN));
+    let address = home();
+    let found: Vec<(u16, String)> = found.iter().map(|(drawing, target)| (*drawing, (*target).to_owned())).collect();
+    links.found_drawings(OPEN, 0, &found, &Channel { id: CHANNEL, address: &address }, START);
+    links
+}
+
+/// REQ-6376: a drawing of a ReGIS picture that is a link shows where it
+/// leads while the pointer is on it, and a click on it follows by the
+/// rules of a click on a text link: only the destination the strip is
+/// showing, only once it has led there half a second, only on the open
+/// page of the active channel.
+#[test]
+fn a_click_on_a_linked_drawing_follows_as_a_text_link_does() {
+    let mut links =
+        links_with_drawings(&[(11, "200"), (12, "https://weather.invalid/teletext/300"), (13, "web:https://www.example.invalid/story"), (14, "not a target")]);
+    let active = Some(CHANNEL);
+    let on = |drawing: u16| (OPEN, 0, drawing);
+    assert!(links.is_drawing_link(on(11)) && links.is_drawing_link(on(13)));
+    assert!(!links.is_drawing_link(on(14)), "a target that does not parse is no link");
+    assert!(!links.is_drawing_link((OPEN, 2, 11)), "another sub-page's picture has none of these");
+    assert_eq!(links.click_drawing(on(11), active, LATER), Err(Refusal::Unshown), "the strip shows nothing yet");
+    let shown = links.point_drawing(Some(on(11))).unwrap().unwrap();
+    assert_eq!((shown.kind, shown.text.as_str()), (LinkKind::Page, "Page 200"));
+    assert_eq!(links.point_drawing(Some(on(11))), None, "the same drawing again changes nothing");
+    assert_eq!(links.click_drawing(on(12), active, LATER), Err(Refusal::Unshown), "the strip shows another drawing's destination");
+    assert_eq!(links.click_drawing(on(11), active, LATER - 1), Err(Refusal::Changed), "within half a second of appearing");
+    assert_eq!(links.click_drawing(on(11), None, LATER), Err(Refusal::NotOpen), "not the active channel");
+    assert_eq!(links.click_drawing(on(11), active, LATER), Ok(Follow::Page(0x200)));
+    // A drawing that is no link: the strip shows nothing, and a click follows nothing.
+    assert_eq!(links.point_drawing(Some(on(9))), Some(None));
+    assert_eq!(links.click_drawing(on(9), active, LATER), Err(Refusal::NotALink));
+    // Another channel opens at once; a web page is asked about first.
+    let _ = links.point_drawing(Some(on(12)));
+    assert!(matches!(links.click_drawing(on(12), active, LATER), Ok(Follow::Channel(_))));
+    let pointing = links.point_drawing(Some(on(13))).unwrap().unwrap();
+    assert_eq!(pointing.kind, LinkKind::Web);
+    assert!(matches!(links.click_drawing(on(13), active, LATER), Ok(Follow::Ask(_))), "the same question a text link to the web asks");
+}
+
+/// A sub-page's drawing links replace those it had; a drawing that led to
+/// the same place keeps the time it began to, and one that now leads
+/// elsewhere must settle again; the pointer off every drawing shows nothing.
+#[test]
+fn a_sub_pages_drawing_links_are_replaced_whole() {
+    let mut links = links_with_drawings(&[(11, "200"), (12, "300")]);
+    let address = home();
+    let channel = Channel { id: CHANNEL, address: &address };
+    let on = |drawing: u16| (OPEN, 0, drawing);
+    links.found_drawings(OPEN, 0, &[(11, "200".to_owned()), (12, "400".to_owned())], &channel, LATER);
+    let _ = links.point_drawing(Some(on(11)));
+    assert_eq!(links.click_drawing(on(11), Some(CHANNEL), LATER), Ok(Follow::Page(0x200)), "it has led to page 200 since the start");
+    let _ = links.point_drawing(Some(on(12)));
+    assert_eq!(links.click_drawing(on(12), Some(CHANNEL), LATER), Err(Refusal::Changed), "it leads somewhere new");
+    assert_eq!(links.click_drawing(on(12), Some(CHANNEL), LATER + DWELL_MILLISECONDS), Ok(Follow::Page(0x400)));
+    links.found_drawings(OPEN, 0, &[], &channel, LATER);
+    assert!(!links.is_drawing_link(on(11)), "an empty list removes them all");
+    assert_eq!(links.point_drawing(None), Some(None));
+    // More than a sub-page may have: the first 64 are kept.
+    let many: Vec<(u16, String)> = (1..=70).map(|drawing| (drawing, "200".to_owned())).collect();
+    links.found_drawings(OPEN, 0, &many, &channel, LATER);
+    assert!(links.is_drawing_link(on(64)) && !links.is_drawing_link(on(65)));
+    links.channel_gone(CHANNEL);
+    assert!(!links.is_drawing_link(on(1)));
+}

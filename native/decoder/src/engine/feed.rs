@@ -145,6 +145,12 @@ impl Engine {
                     }
                     // A sub-page's ReGIS, for the ReGIS renderer (DEC-6335).
                     neoteletext_web::records::Read::Record(neoteletext_web::records::ChannelRecord::Regis(record)) => self.regis.read(&record),
+                    // The drawings of a ReGIS sub-page that are links (the
+                    // engine's REQ-6370), for the trusted core.
+                    #[cfg(feature = "links")]
+                    neoteletext_web::records::Read::Record(neoteletext_web::records::ChannelRecord::DrawingLinks(record)) => {
+                        self.regis.read_links(&record);
+                    }
                     // The drawing that is a ReGIS sub-page's cursor (the
                     // engine's REQ-6371), which the decoder blinks.
                     neoteletext_web::records::Read::Record(neoteletext_web::records::ChannelRecord::RegisCursor(record)) => {

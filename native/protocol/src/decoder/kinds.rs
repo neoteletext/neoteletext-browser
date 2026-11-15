@@ -62,3 +62,8 @@ pub(super) const KIND_REGIS: u8 = 153;
 // sub-page's ReGIS picture (REQ-6374), in the next number free across
 // every pipe.
 pub(super) const KIND_REGIS_VIEWER: u8 = 157;
+// Decoder to trusted core: the numbered drawings of a sub-page's ReGIS
+// picture that are links (REQ-6376), in the next number free across every
+// pipe.
+#[cfg(feature = "links")]
+pub(super) const KIND_REGIS_LINKS: u8 = 158;

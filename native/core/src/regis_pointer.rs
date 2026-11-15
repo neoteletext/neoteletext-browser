@@ -74,6 +74,9 @@ pub struct Pointing {
     viewer: Option<(PageKey, u16, RegisViewer)>,
     /// The drawing the channel was last told the pointer came onto.
     entered: Option<Entered>,
+    /// A click not yet taken: the button went down and came up on the
+    /// same drawing.
+    clicked: Option<(PageKey, u16)>,
 }
 
 impl Pointing {
@@ -93,23 +96,44 @@ impl Pointing {
             let drawing = pointer.at.and_then(|at| records.at(pointer.key, at)).map_or(0, |under| under.drawing);
             self.pressed = (drawing != 0).then_some((pointer.key, drawing));
         } else if !pointer.pressed {
-            self.pressed = None;
+            // Let go on the drawing it went down on: a click on it.
+            let under = pointer.at.and_then(|at| records.at(pointer.key, at)).map_or(0, |under| under.drawing);
+            self.clicked = self.pressed.take().filter(|pressed| was_pressed && *pressed == (pointer.key, under));
         }
+    }
+
+    /// The click made since this was last asked, if one was: a press and
+    /// a release of the main button, or a tap, on one drawing (REQ-6376).
+    pub const fn take_click(&mut self) -> Option<(PageKey, u16)> {
+        self.clicked.take()
+    }
+
+    /// The drawing under the pointer, if one is: its page, the sub-code of
+    /// the picture held for it, and its number.
+    #[must_use]
+    pub fn under(&self, records: &PickRecords) -> Option<(PageKey, u16, u16)> {
+        let pointer = self.pointer?;
+        let under = records.at(pointer.key, pointer.at?)?;
+        let (sub, _) = records.held(pointer.key)?;
+        (under.drawing != 0).then_some((pointer.key, sub, under.drawing))
     }
 
     /// Works out what lies under the pointer and what has changed since it
     /// was last said: after the pointer moved, a new picture arrived, or
     /// keys started or stopped going to a channel. `keys` is the page keys
-    /// go to, if any, with the sub-page of it on screen.
-    pub fn decide(&mut self, records: &PickRecords, keys: Option<(PageKey, Option<Stamp>)>) -> Vec<Say> {
+    /// go to, if any, with the sub-page of it on screen; `linked` says
+    /// whether the drawing under the pointer is a link, which a click
+    /// follows whether or not keys go to the channel.
+    pub fn decide(&mut self, records: &PickRecords, keys: Option<(PageKey, Option<Stamp>)>, linked: bool) -> Vec<Say> {
         let mut say = Vec::new();
         let pointer = self.pointer;
         let under = pointer.and_then(|pointer| pointer.at.and_then(|at| records.at(pointer.key, at)));
         let drawing = under.map_or(0, |under| under.drawing);
         let takes_keys = |key: PageKey| keys.is_some_and(|(taking, _)| taking == key);
-        // The hand: over a drawing of the page keys go to (REQ-6374 item 2).
+        // The hand: over a drawing of the page keys go to (REQ-6374 item
+        // 2), and over a drawing that is a link (REQ-6376 item 3).
         if let Some(pointer) = pointer {
-            let over = (pointer.key, drawing != 0 && takes_keys(pointer.key));
+            let over = (pointer.key, drawing != 0 && (takes_keys(pointer.key) || linked));
             let said = self.over.is_some_and(|said| said.1);
             if self.over != Some(over) && (over.1 || said) {
                 self.over = Some(over);
@@ -210,7 +234,7 @@ mod tests {
     /// The pointer moved or pressed, with keys going to the page: what is said.
     fn moved(pointing: &mut Pointing, records: &PickRecords, pointer: RegisPointer) -> Vec<Say> {
         pointing.pointer(pointer, records);
-        pointing.decide(records, Some((KEY, Some(ON))))
+        pointing.decide(records, Some((KEY, Some(ON))), false)
     }
 
     fn viewer(hovered: u16, pressed: u16) -> Say {
@@ -274,7 +298,7 @@ mod tests {
         // The next picture has nothing at the pointer's place.
         let mut emptied = PickRecords::default();
         emptied.hold(KEY, 0, 2, RegisPick::default());
-        let said = pointing.decide(&emptied, Some((KEY, Some(ON))));
+        let said = pointing.decide(&emptied, Some((KEY, Some(ON))), false);
         assert_eq!(said, [Say::Over { key: KEY, over: false }, viewer(0, 0), hover(true, 12, 2)]);
     }
 
@@ -286,15 +310,15 @@ mod tests {
         let records = records(1);
         let mut pointing = Pointing::default();
         let _ = moved(&mut pointing, &records, mouse(Some((150, 150)), false));
-        let said = pointing.decide(&records, None);
+        let said = pointing.decide(&records, None, false);
         assert_eq!(said, [Say::Over { key: KEY, over: false }, Say::Viewer { key: KEY, sub: 0, viewer: RegisViewer::default() }]);
         // Keys come back: the hand, the look and an enter, as if new.
-        let back = pointing.decide(&records, Some((KEY, Some(ON))));
+        let back = pointing.decide(&records, Some((KEY, Some(ON))), false);
         assert_eq!(back, [Say::Over { key: KEY, over: true }, viewer(12, 0), hover(false, 12, 1)]);
         // Another sub-page comes on screen while the old picture is held.
-        let other = pointing.decide(&records, Some((KEY, Some(Stamp { page: 0x100, sub: 2 }))));
+        let other = pointing.decide(&records, Some((KEY, Some(Stamp { page: 0x100, sub: 2 }))), false);
         assert_eq!(other, [], "the picture held is not of the sub-page on screen: the channel is told nothing");
-        let again = pointing.decide(&records, Some((KEY, Some(ON))));
+        let again = pointing.decide(&records, Some((KEY, Some(ON))), false);
         assert_eq!(again, [hover(false, 12, 1)], "an enter with the stamp of the sub-page now on screen");
     }
 
@@ -303,5 +327,30 @@ mod tests {
     fn a_page_with_no_picture_says_nothing() {
         let mut pointing = Pointing::default();
         assert_eq!(moved(&mut pointing, &PickRecords::default(), mouse(Some((150, 150)), true)), []);
+    }
+
+    /// REQ-6376: a press and a release on one drawing is a click on it,
+    /// taken once; a release on another drawing, or on none, is not; and a
+    /// drawing that is a link shows the hand though keys go to no channel.
+    #[test]
+    fn a_press_and_release_on_one_drawing_is_a_click() {
+        let records = records(1);
+        let mut pointing = Pointing::default();
+        pointing.pointer(mouse(Some((150, 150)), false), &records);
+        assert_eq!(pointing.under(&records), Some((KEY, 0, 12)));
+        assert_eq!(pointing.decide(&records, None, true), [Say::Over { key: KEY, over: true }], "a link is the hand without keys");
+        pointing.pointer(mouse(Some((150, 150)), true), &records);
+        assert_eq!(pointing.take_click(), None, "not until the release");
+        pointing.pointer(mouse(Some((160, 160)), false), &records);
+        assert_eq!(pointing.take_click(), Some((KEY, 12)));
+        assert_eq!(pointing.take_click(), None, "taken once");
+        // Pressed on 12, let go on 13; pressed on 12, let go on nothing.
+        for release in [(350, 150), (250, 150)] {
+            pointing.pointer(mouse(Some((150, 150)), true), &records);
+            pointing.pointer(mouse(Some(release), false), &records);
+            assert_eq!(pointing.take_click(), None, "{release:?}");
+        }
+        pointing.pointer(mouse(Some((250, 150)), false), &records);
+        assert_eq!(pointing.under(&records), None);
     }
 }

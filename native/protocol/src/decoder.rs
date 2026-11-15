@@ -190,6 +190,18 @@ pub enum FromDecoder {
         /// Its pick record.
         pick: crate::regis::RegisPick,
     },
+    /// The numbered drawings of a sub-page's ReGIS picture that are links,
+    /// and the target each leads to (the engine's REQ-6370): every one the
+    /// channel named, replacing those named before.
+    #[cfg(feature = "links")]
+    RegisLinks {
+        /// The page.
+        page: u16,
+        /// The sub-code.
+        sub: u16,
+        /// Each drawing and its target, as read.
+        links: Vec<(u16, String)>,
+    },
     /// A page already reported has changed: a new version arrived.
     Updated {
         /// The page number.
@@ -465,6 +477,24 @@ pub fn read_from_core(input: &mut dyn Read) -> Result<Option<ToDecoder>, Protoco
     Ok(Some(message))
 }
 
+/// A message that is its page's number alone: the number written, and the
+/// message's kind.
+fn page_alone(payload: &mut Vec<u8>, page: u16, kind: u8) -> u8 {
+    payload.extend_from_slice(&page.to_be_bytes());
+    kind
+}
+
+/// Writes a sub-page's drawing links to the trusted core (REQ-6376).
+#[cfg(feature = "links")]
+fn write_regis_links(out: &mut dyn Write, page: u16, sub: u16, links: &[(u16, String)]) -> Result<(), ProtocolError> {
+    crate::fields::check_page(page)?;
+    let mut payload = Vec::new();
+    payload.extend_from_slice(&page.to_be_bytes());
+    payload.extend_from_slice(&sub.to_be_bytes());
+    crate::regis::push_links(&mut payload, links)?;
+    write_frame(out, kinds::KIND_REGIS_LINKS, &payload)
+}
+
 /// # Errors
 /// When writing fails or the message breaks a bound.
 pub fn write_to_core(out: &mut dyn Write, message: &FromDecoder) -> Result<(), ProtocolError> {
@@ -478,11 +508,10 @@ pub fn write_to_core(out: &mut dyn Write, message: &FromDecoder) -> Result<(), P
             KIND_ARRIVED
         }
         FromDecoder::Frame { page, palette, screen, indices } => return write_frame_to_core(out, *page, palette, *screen, indices),
-        FromDecoder::Updated { page } => {
-            payload.extend_from_slice(&page.to_be_bytes());
-            KIND_UPDATED
-        }
+        FromDecoder::Updated { page } => page_alone(&mut payload, *page, KIND_UPDATED),
         FromDecoder::Regis { page, sub, picture, pick } => return frame::write_regis_to_core(out, *page, *sub, picture, pick),
+        #[cfg(feature = "links")]
+        FromDecoder::RegisLinks { page, sub, links } => return write_regis_links(out, *page, *sub, links),
         FromDecoder::Audio(audio) => {
             crate::audio::push(&mut payload, audio, crate::audio::Sender::Decoder)?;
             KIND_AUDIO
@@ -602,6 +631,11 @@ pub fn read_from_decoder(input: &mut dyn Read) -> Result<Option<FromDecoder>, Pr
             }
             let pick = crate::regis::read_pick(&mut fields)?;
             FromDecoder::Regis { page, sub, picture: crate::regis::read_picture(&mut fields)?, pick }
+        }
+        #[cfg(feature = "links")]
+        kinds::KIND_REGIS_LINKS => {
+            let (page, sub) = (fields.channel_page()?, fields.u16()?);
+            FromDecoder::RegisLinks { page, sub, links: crate::regis::read_links(&mut fields)? }
         }
         KIND_AUDIO => FromDecoder::Audio(crate::audio::read(&mut fields, crate::audio::Sender::Decoder)?),
         #[cfg(feature = "links")]

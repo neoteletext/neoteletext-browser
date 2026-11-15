@@ -349,6 +349,11 @@ fn wait(incoming: &Receiver<Received>, deadline: Option<u64>, now: u64) -> Woken
 /// the pages received again and the channel's log lines.
 fn report(engine: &mut Engine, arrived: &[(u16, String)], output: &mut Output<'_>) -> Result<(), ProtocolError> {
     send_sounds(engine, output)?;
+    // The drawing links of ReGIS sub-pages that arrived whole (REQ-6376).
+    #[cfg(feature = "links")]
+    for (page, sub, links) in engine.regis().take_links() {
+        write_to_core(output, &FromDecoder::RegisLinks { page, sub, links })?;
+    }
     for (page, title) in arrived {
         write_to_core(output, &FromDecoder::Arrived { page: *page, title: title.clone() })?;
     }

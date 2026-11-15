@@ -18,12 +18,14 @@ use protocol::links::{Alias, Area, Candidate, Fastext, LinkRun, Lit, MAX_CONTROL
 use crate::address::Address;
 
 mod destination;
+mod drawings;
 mod follow;
 mod prompt;
 mod target;
 
 use destination::Descriptor;
 pub use destination::{Channel, Destination};
+pub use drawings::Drawing;
 use prompt::Asking;
 pub use prompt::{HANDOFF_INTERVAL_MILLISECONDS, PROMPT_DELAY_MILLISECONDS};
 pub use target::{Target, parse_target, web_address};
@@ -132,6 +134,11 @@ pub struct Links {
     descriptors: BTreeMap<u32, Descriptor>,
     /// The cell the strip is showing a destination for, and that destination.
     pointed: Option<(Spot, Destination)>,
+    /// The drawing links of pages drawn in ReGIS (`drawings.rs`).
+    drawings: BTreeMap<PageKey, drawings::DrawingLinks>,
+    /// The linked drawing of a ReGIS picture the pointer is on, and where
+    /// it leads: shown by the strip when no cell's destination is.
+    pointed_drawing: Option<(Drawing, Destination)>,
     asking: Option<Asking>,
     next_prompt: u32,
     last_handoff: Option<u64>,
@@ -149,16 +156,20 @@ impl Links {
     pub fn clear_pages(&mut self) {
         self.pages.clear();
         self.pointed = None;
+        self.drawings.clear();
+        self.pointed_drawing = None;
     }
 
     /// Keeps only the links of the pages on screen.
     pub fn retain(&mut self, visible: &[PageKey]) {
         self.pages.retain(|key, _| visible.contains(key));
+        self.drawings.retain(|key, _| visible.contains(key));
     }
 
     /// Forgets a channel that has closed.
     pub fn channel_gone(&mut self, channel: u32) {
         self.pages.retain(|key, _| key.channel != channel);
+        self.drawings.retain(|key, _| key.channel != channel);
         self.descriptors.remove(&channel);
     }
 

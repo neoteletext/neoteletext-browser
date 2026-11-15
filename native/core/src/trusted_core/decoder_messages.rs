@@ -60,6 +60,14 @@ impl Core {
                 // What lies under a still pointer may have changed (REQ-6374 item 5).
                 self.regis_repoint()?;
             }
+            // The drawings of a ReGIS sub-page that are links (REQ-6376):
+            // decided as every link is, and the pointer's place looked at again.
+            #[cfg(feature = "links")]
+            FromDecoder::RegisLinks { page, sub, links } => {
+                let (key, now) = (PageKey { channel, page }, self.now());
+                self.with_channel(channel, |table, link_channel| table.found_drawings(key, sub, &links, link_channel, now));
+                self.regis_repoint()?;
+            }
             #[cfg(feature = "links")]
             FromDecoder::Links { page, with_image, candidates, numbers, controls, fastext } => {
                 let key = PageKey { channel, page };
