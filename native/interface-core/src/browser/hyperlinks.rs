@@ -162,7 +162,11 @@ impl Browser {
         let (key, rect) = self.wall.open()?;
         let links = self.links.pages.get(&key)?;
         let (column, row) = cell_in(rect, self.wall.grid_point(key, rect, point)?)?;
-        let area = if controls { links.control_at(column, row) } else { links.runs.iter().find(|run| run.contains(column, row)).map(links::LinkRun::area) };
+        // A prompt of row 24 is given no look: it is known by its key's
+        // colour, and drawn in another it is no prompt at all, so its link
+        // would go as its look came (the engine's `Grid::prompts_shown`).
+        let lit = |run: &&links::LinkRun| run.contains(column, row) && !run.is_prompt();
+        let area = if controls { links.control_at(column, row) } else { links.runs.iter().find(lit).map(links::LinkRun::area) };
         Some((key, area?))
     }
 

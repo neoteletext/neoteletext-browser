@@ -596,3 +596,23 @@ fn a_links_popover_never_covers_the_strip() {
         }
     }
 }
+
+/// A coloured key's prompt on row 24 is given no look under the pointer:
+/// it is known by its key's colour, and drawn in a look's colours the
+/// decoder no longer finds it shown (the engine's `Grid::prompts_shown`),
+/// so its link went as its look came and came back as it went. The strip
+/// still shows where it leads, and the pointer is the hand.
+#[test]
+fn a_prompt_takes_no_look_and_keeps_its_link() {
+    let (mut browser, _canvas, key, rect) = opened();
+    let prompt = LinkRun { row: 24, column: 11, length: 4, double: false, light: false, kind: LinkKind::Page };
+    let mut links = page_links(VERSION);
+    links.runs.push(prompt);
+    browser.set_links(key, links);
+    browser.take_outputs();
+    move_to(&mut browser, centre(rect, 12, 24));
+    let outputs = browser.take_outputs();
+    assert!(outputs.iter().all(|output| !matches!(output, Output::Lit(Some(_)))), "no look is asked for: {outputs:?}");
+    assert!(outputs.iter().any(|output| matches!(output, Output::Point(Some(cell)) if (cell.column, cell.row) == (12, 24))), "its destination is: {outputs:?}");
+    assert_eq!(browser.cursor(), Cursor::Hand);
+}
