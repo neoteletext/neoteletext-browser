@@ -49,7 +49,7 @@ impl Browser {
     /// points at the page's own cells and links and the wheel may be the
     /// channel's (REQ-6356 items 1, 4 and 5).
     pub(super) fn wheel_cursor(&self) -> Option<WheelCursor> {
-        if !self.wheel_steps_here() || self.wall.shown().any(|(_, page)| page.contains(self.pointer)) {
+        if !self.wheel_steps_here() || self.full_screen_over_strip() || self.wall.shown().any(|(_, page)| page.contains(self.pointer)) {
             return None;
         }
         let (up, down) = self.wheel_ways();

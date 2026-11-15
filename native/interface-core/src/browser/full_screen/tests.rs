@@ -339,3 +339,55 @@ fn the_keys_badge_is_drawn_whole_beside_the_page_at_full_screen_sizes() {
         }
     }
 }
+
+/// REQ-6362 item 1: Escape held a second and a half leaves full screen,
+/// as it must while keys go to a channel, whose key Escape otherwise is; a
+/// shorter press does not, and the notice shows again while it is held.
+#[test]
+fn escape_held_leaves_full_screen() {
+    let mut browser = in_full_screen();
+    draw(&mut browser, NOTICE_MILLISECONDS);
+    assert!(browser.full_screen_escape(true, 10_000), "the notice comes back");
+    assert!(!browser.full_screen_escape(true, 10_030), "a repeat of the held key changes nothing");
+    assert_eq!(browser.full_screen_deadline(10_100), Some(ESCAPE_HOLD_MILLISECONDS - 100), "woken when it has been held long enough");
+    let held = draw(&mut browser, 10_100);
+    assert!(held.texts.iter().any(|(_, text)| text == NOTICE || text == SHORT_NOTICE), "how to leave, said while it is held");
+    assert!(!browser.settle(10_000 + ESCAPE_HOLD_MILLISECONDS - 1) || browser.full_screen(), "not yet");
+    assert!(browser.full_screen_escape(false, 10_500), "let go early");
+    assert!(!browser.settle(10_000 + ESCAPE_HOLD_MILLISECONDS) || browser.full_screen());
+    assert!(browser.full_screen(), "a short press leaves nothing");
+    browser.full_screen_escape(true, 20_000);
+    assert!(browser.settle(20_000 + ESCAPE_HOLD_MILLISECONDS));
+    assert!(!browser.full_screen(), "held long enough, it leaves");
+    assert!(!browser.full_screen_escape(true, 30_000), "nothing to leave in the window");
+}
+
+/// REQ-6362 item 2: where the browser draws its own window buttons, the
+/// pointer at the top edge brings an exit button at once, a press on it
+/// leaves, and it goes when the pointer leaves its band; where the system
+/// draws the window's buttons there is none.
+#[test]
+fn the_exit_button_comes_at_the_top_edge_where_the_browser_draws_its_buttons() {
+    let cross = |canvas: &Recorder| canvas.texts.iter().any(|(_, text)| text == "\u{00D7}");
+    let mut browser = in_full_screen();
+    browser.frame.window_buttons = true;
+    assert!(!cross(&draw(&mut browser, 100)), "none until the pointer is at the top");
+    browser.pointer_moved(WIDTH / 2.0, 1.0, 200);
+    assert!(cross(&draw(&mut browser, 200)), "at once, before the strip's wait");
+    assert!(!browser.pointer_hidden(200 + POINTER_HIDE_MILLISECONDS), "the pointer is not hidden while it shows");
+    let button = browser.full_screen.exit;
+    assert!((middle(button).x - WIDTH / 2.0).abs() < 1.0 && button.y0 > 0.0, "at the top centre: {button:?}");
+    browser.pointer_moved(middle(button).x, EXIT_BAND + 40.0, 300);
+    assert!(!cross(&draw(&mut browser, 300)), "gone when the pointer leaves its band");
+    browser.pointer_moved(WIDTH / 2.0, 1.0, 400);
+    draw(&mut browser, 400);
+    let button = middle(browser.full_screen.exit);
+    browser.pointer_moved(button.x, button.y, 450);
+    browser.pointer_pressed(&mut Recorder::new(), false, 460);
+    assert!(!browser.full_screen(), "a press on it leaves full screen");
+    // Where the system draws the window's buttons, as macOS does, there is none.
+    let mut mac = in_full_screen();
+    mac.frame.window_buttons = false;
+    mac.pointer_moved(WIDTH / 2.0, 1.0, 200);
+    assert!(!cross(&draw(&mut mac, 200)));
+}

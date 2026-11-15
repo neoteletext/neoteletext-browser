@@ -46,6 +46,19 @@ struct InputMethod {
     caret: Option<interface_core::geometry::Rect>,
 }
 
+/// The window and the system's full screen, as last seen.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum WindowFull {
+    /// The window is not full screen.
+    No,
+    /// The window is full screen.
+    Yes,
+    /// The system put the window into full screen, by macOS's green button
+    /// or Fn-F, and the page's full screen is following it (REQ-6362 item
+    /// 3): leaving the page's leaves the system's too.
+    EnteredForPage,
+}
+
 struct Graphics {
     window: Rc<Window>,
     surface: Surface<Rc<Window>, Rc<Window>>,
@@ -115,6 +128,9 @@ struct View {
     /// the system has been seen to make it full screen since, so that its
     /// leaving is the system's ending of it.
     page_full_screen: Option<(bool, bool)>,
+    /// Whether the window was in the system's full screen when last seen,
+    /// and whether the page's full screen followed it there.
+    window_full: WindowFull,
     /// The pointer is hidden, as full screen hides a still one.
     pointer_hidden: bool,
 }
@@ -141,6 +157,7 @@ impl View {
             reported: None,
             normal: None,
             page_full_screen: None,
+            window_full: WindowFull::No,
             pointer_hidden: false,
         }
     }

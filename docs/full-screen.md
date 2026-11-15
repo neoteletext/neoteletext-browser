@@ -26,7 +26,7 @@ Only a window with an open page can enter full screen. With the wall showing, th
 | Key | Control-Command-F, the system's own | F11, the system's own |
 | Menu | View > Enter Full Screen (decision 84's menu bar), titled Exit Full Screen while the page is full screen | The menu button's menu: Full screen |
 | Pointer | A double click on the open page | The same |
-| The window's green button | Enters the system's full screen of the whole window, as it does now; it is not this mode | — |
+| The window's green button, and Fn-F | Enters this mode, when the window has a page to show (REQ-6362, 16 November 2026; before, the system's full screen of the whole window) | — |
 
 On macOS the window enters a full-screen space of its own, as every Mac application's full screen does; elsewhere it becomes borderless and covers its display. Each window has its own full screen; the others stay as they are.
 
@@ -53,6 +53,8 @@ The trusted strip is one movement away:
 Full screen ends, and the window is as it was, when:
 
 - **Escape** is pressed while keys do not go to a channel;
+- **Escape is held** for a second and a half while keys do go to a channel, whose key a press of Escape otherwise is (REQ-6362); the notice then says "Full screen: hold Escape to leave", and shows again while Escape is held;
+- **the exit button** is pressed: on Windows and Linux a button marked with a cross comes at the top centre as soon as the pointer reaches the top edge, below the strip when the strip is down, and goes when the pointer leaves its band (REQ-6362); macOS shows its own menu bar and window buttons there instead;
 - **the full-screen key** (Control-Command-F, F11) is pressed again, which a channel never receives, so it leaves even while typing;
 - **the system ends it** (macOS's full-screen exit, Mission Control, a display unplugged);
 - **anything needs the window:** a link or Fastext key that takes the tab to another channel, a redirect's notice, a certificate refused (decision 83), the tab closed or another chosen, a new tab or window, a panel of the strip opened, the developer console, or the trusted core's question in the strip.
@@ -88,7 +90,7 @@ Built on 25 October 2026, on the owner's asking to "implement the full screen fo
 2. **What needs the window is checked at every frame:** the page closed or gone from the wall, another tab or channel, the number of tabs, the remote shown or hidden, any panel, list or popover of the strip, the console, the phone keyboard's panel, the strip's question and a certificate refused. One check in one place, so a new panel cannot be missed by one path.
 3. **A press in full screen is the page's** unless the strip is down and the press is in it: what the window's layout drew last is forgotten, so nothing unseen takes a press.
 4. **The keys:** on macOS, View > Enter Full Screen in the menu bar, with Control-Command-F; elsewhere F11, taken before a channel's keys, and the menu button's "Full screen". A double click on the open page enters it; a press on a link is the link's and never counts toward one. The double click is two presses within 500 milliseconds and 4 points, Windows' default; the platforms do not tell the interface theirs.
-5. **A window already full screen**, by macOS's green button, stays so when the page's full screen ends; the window's place and size are not reported to the trusted core while the page is full screen, so the session keeps the window's.
+5. *Amended 16 November 2026 (REQ-6362):* on macOS the green button and Fn-F, which put the window into the system's full screen, enter the page's full screen when the window has a page to show, and leaving the page's full screen then leaves the system's too. **A window already full screen** before the page's full screen began stays so when it ends; the window's place and size are not reported to the trusted core while the page is full screen, so the session keeps the window's.
 6. **The notice** is in the left margin's top when the margin is wide enough, else centred above the page; the typing badge is on one line at the right margin's top or under the page, whichever holds it whole, and otherwise on lines of its own down the right margin, its host broken after a dot so that every character of it shows. A page as tall as the display leaves no row under it, so on a display of 16 by 10 at 1440 by 900 the badge is on lines of its own, with the aspect correction on or off (TODO-2083).
 7. **The strip on demand** is the tab strip, the toolbar and the bookmarks bar when it is shown.
 8. **Not settled by tests, owed by hand on each desktop:** the window's own full screen (macOS's space, borderless elsewhere), Control-Command-F and F11, the system's ending of it (seen as the window leaving full screen after it was seen in it), the View menu's item retitled Exit Full Screen and back, the pointer hidden, and the strip's half-second wait beside macOS's menu bar at the top edge (section 9 item 2). Whether macOS adds its own "Enter Full Screen" item to a menu when it is opened is to be looked at: a test application's menus held none a second after launch.

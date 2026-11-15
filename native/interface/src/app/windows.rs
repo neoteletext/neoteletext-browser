@@ -15,7 +15,7 @@ use winit::window::{Fullscreen, ResizeDirection};
 
 use crate::window::{FRAME, RESIZE_MARGIN, TORN_OFFSET, WINDOW_TITLE, attributes, geometry, on_a_display};
 
-use super::{App, Graphics, Heard, View};
+use super::{App, Graphics, Heard, View, WindowFull};
 
 impl App {
     /// The window's title and the Dock menu follow the tabs: the title is
@@ -145,11 +145,18 @@ impl App {
         let Some(graphics) = &self.view.graphics else { return };
         let window = &graphics.window;
         if wanted {
-            let already = window.fullscreen().is_some();
-            if !already {
+            let full = window.fullscreen().is_some();
+            if !full {
                 window.set_fullscreen(Some(Fullscreen::Borderless(None)));
             }
-            self.view.page_full_screen = Some((already, already));
+            // A window the system made full screen for this, by the green
+            // button or Fn-F, is left with the page's full screen; one that
+            // was full screen before stays so (REQ-6362 item 3).
+            let already = full && self.view.window_full != WindowFull::EnteredForPage;
+            if self.view.window_full == WindowFull::EnteredForPage {
+                self.view.window_full = WindowFull::Yes;
+            }
+            self.view.page_full_screen = Some((already, full));
         } else {
             if self.view.page_full_screen.is_some_and(|(already, _)| !already) {
                 window.set_fullscreen(None);
@@ -162,9 +169,23 @@ impl App {
     /// The window changed size: in the page's full screen, the system's
     /// leaving it (its key, Mission Control, a display unplugged) ends it.
     pub(super) fn full_screen_resized(&mut self) {
-        let Some((already, seen)) = self.view.page_full_screen else { return };
         let Some(graphics) = &self.view.graphics else { return };
         let full = graphics.window.fullscreen().is_some();
+        // macOS's own ways in, the green button and Fn-F, put the window
+        // into the system's full screen: the page's full screen follows,
+        // when the window has a page to show (REQ-6362 item 3).
+        let entered_by_system = cfg!(target_os = "macos") && full && self.view.window_full == WindowFull::No && self.view.page_full_screen.is_none();
+        self.view.window_full = if full { WindowFull::Yes } else { WindowFull::No };
+        if entered_by_system && !self.view.browser.full_screen() {
+            let now = self.now();
+            if self.view.browser.toggle_full_screen(now) {
+                self.view.window_full = WindowFull::EnteredForPage;
+                self.sync_full_screen();
+                self.request_redraw();
+            }
+            return;
+        }
+        let Some((already, seen)) = self.view.page_full_screen else { return };
         if full {
             self.view.page_full_screen = Some((already, true));
         } else if seen {

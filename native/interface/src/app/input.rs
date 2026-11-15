@@ -197,7 +197,9 @@ impl App {
             }
             #[cfg(feature = "interaction")]
             WindowEvent::KeyboardInput { ref event, .. } if self.view.browser.typing_target().is_some() && !self.browser_modifier() => {
-                self.channel_key(event_loop, event)
+                // Escape is the channel's too, and held it leaves full screen (REQ-6362 item 1).
+                let held = event.logical_key == Key::Named(NamedKey::Escape) && self.view.browser.full_screen_escape(event.state == ElementState::Pressed, now);
+                self.channel_key(event_loop, event) || held
             }
             // The browser's paste shortcut while keys go to a channel: the
             // clipboard's text as one PASTE (`interaction.md` section 7.3).

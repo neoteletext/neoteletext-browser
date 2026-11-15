@@ -33,6 +33,11 @@ impl Browser {
         self.links_pressed();
         // In full screen a press is the page's, unless the strip is down
         // and it is there (decision 85).
+        // The exit button leaves full screen (REQ-6362 item 2).
+        if self.full_screen() && self.full_screen_press_is_exit() {
+            self.leave_full_screen();
+            return true;
+        }
         if self.full_screen() && !self.full_screen_press_is_strip(now) {
             return self.press_body(now).unwrap_or(false);
         }

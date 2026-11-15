@@ -36,6 +36,21 @@ const POINTER_HIDE_MILLISECONDS: u64 = 2_000;
 /// speed setting's middle; the platforms do not tell the interface theirs.
 pub(in crate::browser) const DOUBLE_CLICK_MILLISECONDS: u64 = 500;
 pub(in crate::browser) const DOUBLE_CLICK_DISTANCE: f64 = 4.0;
+/// How long Escape is held to leave full screen while keys go to a
+/// channel, whose key Escape otherwise is (REQ-6362 item 1): long enough
+/// that a channel's own use of Escape does not leave by accident.
+const ESCAPE_HOLD_MILLISECONDS: u64 = 1_500;
+/// The exit button's diameter, and its distance from what is above it
+/// (REQ-6362 item 2).
+const EXIT_SIZE: f64 = 40.0;
+const EXIT_GAP: f64 = 12.0;
+/// The exit button stays while the pointer is within this of the top of
+/// the display, or of the strip when it is down.
+const EXIT_BAND: f64 = EXIT_GAP * 2.0 + EXIT_SIZE;
+/// The notice while keys go to a channel, where Escape is the channel's
+/// unless it is held.
+const TYPING_NOTICE: &str = "Full screen: hold Escape to leave";
+const SHORT_TYPING_NOTICE: &str = "Hold Escape to leave";
 /// The notice: what it says, and its box.
 const NOTICE: &str = "Full screen: Escape to leave";
 /// The same in a margin too narrow for it: on a display of 16 by 10 the
@@ -77,6 +92,13 @@ pub(super) struct FullScreenUi {
     moved: u64,
     /// The last press on the open page, for a double click.
     last_press: Option<(Point, u64)>,
+    /// Since when Escape has been held while keys go to a channel.
+    escape_held: Option<u64>,
+    /// The exit button shows: the pointer reached the top edge and has not
+    /// left the button's band (REQ-6362 item 2).
+    exit_shown: bool,
+    /// Where the exit button was last drawn.
+    exit: Rect,
     /// What the last frame showed: the notice, the pointer hidden, the
     /// strip; a change of any by time alone needs a frame.
     drawn: (bool, bool, bool),
@@ -120,7 +142,42 @@ impl Browser {
     /// last moved, while the strip is up.
     #[must_use]
     pub fn pointer_hidden(&self, now: u64) -> bool {
-        self.full_screen() && !self.full_screen_strip(now) && now.saturating_sub(self.full_screen.moved) >= POINTER_HIDE_MILLISECONDS
+        let shown = self.full_screen_strip(now) || self.full_screen.exit_shown;
+        self.full_screen() && !shown && now.saturating_sub(self.full_screen.moved) >= POINTER_HIDE_MILLISECONDS
+    }
+
+    /// Escape went down or came up while keys go to a channel in full
+    /// screen: held [`ESCAPE_HOLD_MILLISECONDS`], it leaves (REQ-6362 item
+    /// 1). The key itself is still the channel's. Returns whether what
+    /// full screen shows changed.
+    pub fn full_screen_escape(&mut self, down: bool, now: u64) -> bool {
+        if !self.full_screen() {
+            return false;
+        }
+        let before = self.full_screen.escape_held;
+        self.full_screen.escape_held = if down { before.or(Some(now)) } else { None };
+        before.is_some() != down
+    }
+
+    /// Where the exit button stands: at the top centre, below the strip
+    /// when the strip is down.
+    fn exit_place(&self, width: f64, now: u64) -> Rect {
+        let top = if self.full_screen_strip(now) { self.full_screen_strip_area(width).y1 } else { 0.0 } + EXIT_GAP;
+        let left = (width - EXIT_SIZE) / 2.0;
+        Rect::new(left, top, left + EXIT_SIZE, top + EXIT_SIZE)
+    }
+
+    /// Whether the pointer is over what full screen draws over the page:
+    /// the strip brought down by the pointer, or the exit button. The
+    /// pointer there is the strip's or the button's, not the page area's.
+    pub(super) fn full_screen_over_strip(&self) -> bool {
+        let over_strip = self.full_screen.strip && self.full_screen_strip_area(self.body.width()).contains(self.pointer);
+        self.full_screen() && (over_strip || self.full_screen_press_is_exit())
+    }
+
+    /// Whether a press in full screen at the pointer is on the exit button.
+    pub(super) fn full_screen_press_is_exit(&self) -> bool {
+        self.full_screen.exit_shown && self.full_screen.exit.contains(self.pointer)
     }
 
     /// The strip is down over the page.
@@ -174,6 +231,17 @@ impl Browser {
         let was_hidden = self.pointer_hidden(now);
         self.full_screen.moved = now;
         let strip_before = self.full_screen.strip;
+        // The exit button comes with the pointer at the top edge, where the
+        // browser draws its own window buttons, and goes when the pointer
+        // leaves its band (REQ-6362 item 2).
+        let exit_before = self.full_screen.exit_shown;
+        let band_end = self.exit_place(width, now).y1 + EXIT_GAP;
+        if self.frame.window_buttons && point.y <= TOP_EDGE && point.y >= 0.0 {
+            self.full_screen.exit_shown = true;
+        } else if point.y > band_end.max(EXIT_BAND) {
+            self.full_screen.exit_shown = false;
+        }
+        let exit_changed = exit_before != self.full_screen.exit_shown;
         if point.y <= TOP_EDGE && point.y >= 0.0 {
             self.full_screen.edge = self.full_screen.edge.or(Some(now));
         } else {
@@ -182,7 +250,7 @@ impl Browser {
                 self.full_screen.strip = false;
             }
         }
-        was_hidden || strip_before != self.full_screen.strip
+        was_hidden || exit_changed || strip_before != self.full_screen.strip
     }
 
     /// A key the browser keeps for itself shows the strip as it acts.
@@ -225,6 +293,7 @@ impl Browser {
         let edge = self.full_screen.edge.filter(|_| !self.full_screen.strip).map(|at| at.saturating_add(EDGE_WAIT_MILLISECONDS));
         let ends = [
             edge,
+            self.full_screen.escape_held.map(|at| at.saturating_add(ESCAPE_HOLD_MILLISECONDS)),
             self.full_screen.strip_until,
             Some(since.saturating_add(NOTICE_MILLISECONDS)),
             Some(self.full_screen.moved.saturating_add(POINTER_HIDE_MILLISECONDS)),
@@ -237,6 +306,10 @@ impl Browser {
     pub(super) fn full_screen_settle(&mut self, now: u64) -> bool {
         if !self.full_screen() {
             return false;
+        }
+        if self.full_screen.escape_held.is_some_and(|at| now.saturating_sub(at) >= ESCAPE_HOLD_MILLISECONDS) {
+            self.leave_full_screen();
+            return true;
         }
         if !self.full_screen.strip && self.full_screen.edge.is_some_and(|at| now.saturating_sub(at) >= EDGE_WAIT_MILLISECONDS) {
             self.full_screen.strip = true;
@@ -251,7 +324,9 @@ impl Browser {
     /// the strip.
     fn full_screen_shows(&self, now: u64) -> (bool, bool, bool) {
         let (since, _) = self.full_screen.on.unwrap_or_default();
-        (now.saturating_sub(since) < NOTICE_MILLISECONDS, self.pointer_hidden(now), self.full_screen_strip(now))
+        // The notice shows on entering, and again while Escape is held.
+        let notice = now.saturating_sub(since) < NOTICE_MILLISECONDS || self.full_screen.escape_held.is_some();
+        (notice, self.pointer_hidden(now), self.full_screen_strip(now))
     }
 
     /// Draws full screen, or leaves it when something needs the window;
@@ -297,7 +372,11 @@ impl Browser {
             return true;
         };
         if notice {
-            draw_notice(canvas, area, page);
+            #[cfg(feature = "interaction")]
+            let typing = self.typing_target().is_some();
+            #[cfg(not(feature = "interaction"))]
+            let typing = false;
+            draw_notice(canvas, area, page, typing);
         }
         #[cfg(feature = "interaction")]
         self.draw_full_screen_badge(canvas, area, page);
@@ -306,6 +385,12 @@ impl Browser {
             self.draw_bar(canvas, crate::browser::toolbar::TOOLBAR_TOP + crate::browser::toolbar::TOOLBAR_HEIGHT, width);
             self.draw_tab_strip(canvas, width);
             self.draw_tab_overflow(canvas, width, height);
+        }
+        self.full_screen.exit = Rect::ZERO;
+        if self.full_screen.exit_shown {
+            let place = self.exit_place(width, now);
+            crate::browser::widgets::button(canvas, place, "\u{00D7}", false);
+            self.full_screen.exit = place;
         }
         self.draw_tips(canvas, width, height, now);
         true
@@ -336,8 +421,9 @@ impl Browser {
 
 /// "Full screen: Escape to leave" in the margin beside the page, never
 /// over it: the side margin when it is wide enough, else above.
-fn draw_notice<C: Canvas + ?Sized>(canvas: &mut C, area: Rect, page: Rect) {
-    let fitted = [NOTICE, SHORT_NOTICE].into_iter().find_map(|words| {
+fn draw_notice<C: Canvas + ?Sized>(canvas: &mut C, area: Rect, page: Rect, typing: bool) {
+    let choices = if typing { [TYPING_NOTICE, SHORT_TYPING_NOTICE] } else { [NOTICE, SHORT_NOTICE] };
+    let fitted = choices.into_iter().find_map(|words| {
         let width = canvas.text_width(words, ROW_TITLE) + NOTICE_PADDING * 2.0;
         margin_place(area, page, width, NOTICE_HEIGHT).map(|place| (words, place))
     });
