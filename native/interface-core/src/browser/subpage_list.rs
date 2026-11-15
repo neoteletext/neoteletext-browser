@@ -355,6 +355,7 @@ impl Browser {
             }
         }
         canvas.pop_clip();
+        crate::browser::page_list::draw_scroll_bar(canvas, rows, content, self.subpages.scroll, surface);
         match missing {
             Some(place) => self.ask_subpage_rows(index, page, place, now),
             // Every row in view is held: a request still waiting, as for
@@ -869,6 +870,34 @@ mod tests {
         chosen(&mut browser, 60, subcode);
         browser.draw(&mut canvas, WIDTH, HEIGHT, 30);
         assert!(browser.subpages.scroll > scrolled, "a key brings the row it moved to into view");
+    }
+
+    /// REQ-6365: the sub-page list has a scroll bar as the page list has,
+    /// when its page has more sub-pages than fit: at the list's right
+    /// edge, moving down as the list is scrolled, and none when all fit.
+    #[test]
+    fn the_sub_page_list_has_a_scroll_bar_when_its_rows_do_not_fit() {
+        // The bar is the narrow fill at the list's right edge, within its height.
+        fn bar(browser: &crate::browser::Browser, canvas: &Recorder) -> Option<crate::geometry::Rect> {
+            let list = browser.regions.subpage_list;
+            canvas.fills.iter().map(|&(rect, _)| rect).find(|rect| {
+                rect.width() <= 4.0 && rect.x1 < list.x1 && rect.x0 > list.x1 - 12.0 && rect.y0 >= list.y0 && rect.y1 <= list.y1 && rect.height() > 4.0
+            })
+        }
+        let (mut browser, _) = listed(60);
+        let mut canvas = Recorder::new();
+        browser.draw(&mut canvas, WIDTH, HEIGHT, 0);
+        let at_top = bar(&browser, &canvas).expect("a bar when sixty rows do not fit");
+        assert!((at_top.y0 - browser.regions.subpage_list.y0).abs() < 1.0, "at the top while the list is: {at_top:?}");
+        browser.subpages.scroll = 30.0 * crate::browser::page_list::ROW_HEIGHT;
+        let mut canvas = Recorder::new();
+        browser.draw(&mut canvas, WIDTH, HEIGHT, 0);
+        let lower = bar(&browser, &canvas).expect("still a bar");
+        assert!(lower.y0 > at_top.y0, "lower as the list is scrolled: {lower:?}");
+        let (mut few, _) = listed(3);
+        let mut canvas = Recorder::new();
+        few.draw(&mut canvas, WIDTH, HEIGHT, 0);
+        assert_eq!(bar(&few, &canvas), None, "none when every row fits");
     }
 
     /// REQ-1758 item 3: neither key wraps round.

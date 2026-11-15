@@ -127,16 +127,27 @@ impl Browser {
             }
         }
         canvas.pop_clip();
-        if max_scroll > 0.0 {
-            let bar = area.height() * area.height() / content;
-            let top = area.y0 + (area.height() - bar) * self.list_scroll / max_scroll;
-            canvas.fill(Rect::new(area.x1 - SCROLL_BAR_WIDTH * 2.0, top, area.x1 - SCROLL_BAR_WIDTH, top + bar), SCROLL_BAR_WIDTH / 2.0, surface.rule);
-        }
+        draw_scroll_bar(canvas, area, content, self.list_scroll, surface);
         if split {
             self.draw_subpage_list(canvas, Rect::new(whole.x0, area.y1, whole.x1, whole.y1), colour, surface, now);
         }
         border(canvas, panel, LIST_BORDER, colour);
     }
+}
+
+/// The scroll bar of a list drawn in `area` whose rows are `content` high
+/// in all and scrolled by `scroll`: at the list's right edge, as long as
+/// the share of the rows in view, and as far down as the list is scrolled;
+/// none when every row fits. The page list and the sub-page list share it
+/// (REQ-6365).
+pub(super) fn draw_scroll_bar<C: Canvas + ?Sized>(canvas: &mut C, area: Rect, content: f64, scroll: f64, surface: Surface) {
+    let max_scroll = content - area.height();
+    if max_scroll <= 0.0 || area.height() <= 0.0 {
+        return;
+    }
+    let bar = area.height() * area.height() / content;
+    let top = area.y0 + (area.height() - bar) * (scroll / max_scroll).clamp(0.0, 1.0);
+    canvas.fill(Rect::new(area.x1 - SCROLL_BAR_WIDTH * 2.0, top, area.x1 - SCROLL_BAR_WIDTH, top + bar), SCROLL_BAR_WIDTH / 2.0, surface.rule);
 }
 
 /// The mark of a page with sub-pages, ending at `right` in `row`: two
