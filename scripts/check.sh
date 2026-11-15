@@ -73,16 +73,17 @@ check_no_panic_lists() {
 # read too, since they are what Cargo builds: every git package in them is
 # the same commit of the same repository.
 check_engine_pin() {
-    step "every neoteletext-* dependency names the engine at one commit (requirement 2.5)"
+    step "every renderer dependency names its repository at one commit (requirement 2.5)"
     local manifest line target sources="" unread="" outside="" patched="" locked
-    local -r engine_line='^neoteletext-[a-z0-9-]+ = \{ git = "([^"]+)", rev = "([0-9a-f]{40})"(, [^{}]*)? \}$'
+    # The engine's crates, and the ReGIS renderer's one crate (DEC-6335).
+    local -r engine_line='^(neoteletext-[a-z0-9-]+|regis|regis-fonts) = \{ git = "([^"]+)", rev = "([0-9a-f]{40})"(, [^{}]*)? \}$'
     local root
     root="$(pwd -P)"
     while IFS= read -r manifest; do
         patched+="$(grep -nE '^\[(patch|replace)' "$manifest" | sed "s|^|$manifest:|" || true)"
         while IFS= read -r line; do
             if [[ "$line" =~ $engine_line ]]; then
-                sources+="${BASH_REMATCH[1]} ${BASH_REMATCH[2]}"$'\n'
+                sources+="${BASH_REMATCH[2]} ${BASH_REMATCH[3]}"$'\n'
             elif [[ "$line" == *'git = '* || "$line" =~ ^\[.*dependencies\. ]]; then
                 unread+="$manifest: $line"$'\n'
             elif [[ "$line" =~ path\ =\ \"([^\"]+)\" ]]; then
@@ -100,9 +101,18 @@ $unread"
     [[ -z "$outside" ]] || fail "these name a path outside this repository, such as a working tree of the engine:
 $outside"
     sources="$(sort -u <<<"$sources" | sed '/^$/d')"
-    [[ -n "$sources" && "$sources" != *$'\n'* ]] || fail "the workspaces must name one engine repository at one commit, found: ${sources:-none}"
+    # One commit of each renderer repository: the engine's, and the ReGIS
+    # renderer's where a workspace uses it.
+    local repositories allowed="" source
+    repositories="$(sed 's/ .*//' <<<"$sources")"
+    [[ -n "$sources" && "$(sort -u <<<"$repositories")" == "$repositories" ]] || fail "the workspaces must name each renderer repository at one commit, found: ${sources:-none}"
+    while IFS= read -r source; do
+        [[ "${source% *}" == */neoteletext-renderer-teletext || "${source% *}" == */neoteletext-renderer-regis ]] || fail "the workspaces name a git source that is neither the engine nor the ReGIS renderer: $source"
+        allowed+="git+${source% *}?rev=${source#* }#${source#* }"$'\n'
+    done <<<"$sources"
+    [[ "$repositories" == *neoteletext-renderer-teletext* ]] || fail "the workspaces name no engine repository"
     while IFS= read -r locked; do
-        [[ "$locked" == "git+${sources% *}?rev=${sources#* }#${sources#* }" ]] || fail "a lockfile builds a git package from $locked, not the engine at ${sources#* }"
+        grep -qxF "$locked" <<<"$allowed" || fail "a lockfile builds a git package from $locked, not a renderer at its pinned commit"
     done < <(git ls-files -- 'native/Cargo.lock' 'native/**/Cargo.lock' | xargs sed -n 's/^source = "\(git+[^"]*\)"$/\1/p' | sort -u)
 }
 

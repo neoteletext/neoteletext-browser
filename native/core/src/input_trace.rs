@@ -88,6 +88,9 @@ fn describe(item: &Item<'_>) -> String {
         Event::Select(select, "") => format!("SELECT {:03X}/{:04X}", select.page, select.sub),
         Event::Select(select, parameters) => format!("SELECT {:03X}/{:04X}?{parameters}", select.page, select.sub),
         Event::Hover { leave, column, row, .. } => format!("HOVER {} {column},{row}", if *leave { "leave" } else { "enter" }),
+        Event::Pick(pick) => {
+            format!("PICK {} {},{} at {},{} c{}", pick.drawing, pick.x, pick.y, pick.picture_x, pick.picture_y, pick.commits)
+        }
         Event::Extension { kind, .. } => format!("EXTENSION {kind:#04x}"),
     }
 }

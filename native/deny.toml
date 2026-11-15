@@ -61,6 +61,11 @@ allow-wildcard-paths = true
 [sources]
 unknown-registry = "deny"
 unknown-git = "deny"
-# The teletext engine, pinned to one commit of its local repository (the
-# workspace's Cargo.toml).
-allow-git = ["https://github.com/neoteletext/neoteletext-renderer-teletext", "file:///Users/andrewstuart/devel/neoteletext-renderer-teletext"]
+# The teletext engine and the ReGIS renderer, each pinned to one commit of
+# its local repository (the workspace's Cargo.toml).
+allow-git = [
+    "https://github.com/neoteletext/neoteletext-renderer-teletext",
+    "file:///Users/andrewstuart/devel/neoteletext-renderer-teletext",
+    "https://github.com/neoteletext/neoteletext-renderer-regis",
+    "file:///Users/andrewstuart/devel/neoteletext-renderer-regis",
+]
