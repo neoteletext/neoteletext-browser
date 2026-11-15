@@ -9,6 +9,12 @@
 use crate::canvas::{PageKey, REGIS_HEIGHT, REGIS_WIDTH};
 use crate::geometry::{Point, Rect};
 
+/// The cursor blinks at this half period, as common terminals do.
+/// It is here, outside the typing code, because the decoder blinks the
+/// cursor drawing of a ReGIS page at the same period (REQ-6378), with or
+/// without typing compiled in.
+pub const BLINK_MILLISECONDS: u64 = 530;
+
 /// Where the pointer is on a page drawn in ReGIS, as the interface tells
 /// the trusted core.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

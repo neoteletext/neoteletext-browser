@@ -20,8 +20,7 @@ use crate::wall::cell_in;
 
 mod draw;
 
-/// The cursor blinks at this half period, as common terminals do.
-pub const BLINK_MILLISECONDS: u64 = 530;
+pub use crate::regis::BLINK_MILLISECONDS;
 /// A bar cursor's width as a share of a cell.
 const BAR_SHARE: f64 = 0.15;
 /// A block cursor's outline as a share of a cell's width.

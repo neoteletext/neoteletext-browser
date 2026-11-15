@@ -42,6 +42,15 @@ struct Page {
     fed: u64,
     /// What the viewer's pointer is doing to it, as the trusted core said.
     viewer: RegisViewer,
+    /// The numbered drawing that is its cursor (the engine's REQ-6371), or
+    /// 0 for none: blinked while keys go to the channel (REQ-6378).
+    cursor: u16,
+    /// When the cursor's blinking last began again, by the decoder's
+    /// clock; `None` while it does not blink.
+    blink_from: Option<u64>,
+    /// The cursor is to be shown for a full half period from the next
+    /// time the clock is read: it changed, or the picture did.
+    blink_again: bool,
     /// What bounds its repainting (the renderer's REQ-6368).
     budget: RepaintBudget,
     /// The time the budget was last credited to, in milliseconds of the
@@ -69,6 +78,9 @@ impl Page {
             changed: true,
             fed: 0,
             viewer,
+            cursor: 0,
+            blink_from: None,
+            blink_again: false,
             budget: RepaintBudget::new(),
             earned_ms: None,
         }
@@ -76,12 +88,48 @@ impl Page {
 }
 
 impl Page {
-    /// Gives the renderer the viewer state: the drawings hovered and
-    /// pressed (REQ-6374). The picture is owed a repaint when the renderer
-    /// says it may differ; a drawing with no look costs none.
-    fn apply_viewer(&mut self) {
-        let state = ViewerState { hovered: self.viewer.hovered, pressed: self.viewer.pressed, hidden: 0 };
+    /// The half period of the cursor's blink on the decoder's clock.
+    const BLINK_US: u64 = interface_core::regis::BLINK_MILLISECONDS * MICROSECONDS_PER_MILLISECOND;
+
+    /// Whether the cursor blinks: keys go to the channel and the sub-page
+    /// has a cursor drawing.
+    const fn blinks(&self) -> bool {
+        self.viewer.typing && self.cursor != 0
+    }
+
+    /// Gives the renderer the viewer state as it stands at `now_us`: the
+    /// drawings hovered and pressed (REQ-6374), and the cursor drawing
+    /// hidden through every second half period of its blink (REQ-6378).
+    /// The blink begins again, with the cursor shown, when keys start
+    /// going to the channel, when the cursor drawing changes and when a
+    /// commit arrives, as a key typed moves the cursor by one. The picture
+    /// is owed a repaint when the renderer says it may differ; a drawing
+    /// with no look, and a cursor that does not exist, cost none.
+    fn apply_viewer(&mut self, now_us: u64) {
+        let mut hidden = 0;
+        if self.blinks() {
+            let from = match self.blink_from {
+                Some(from) if !self.blink_again => from,
+                _ => now_us,
+            };
+            self.blink_from = Some(from);
+            let halves = now_us.saturating_sub(from).checked_div(Self::BLINK_US).unwrap_or(0);
+            if !halves.is_multiple_of(2) {
+                hidden = self.cursor;
+            }
+        } else {
+            self.blink_from = None;
+        }
+        self.blink_again = false;
+        let state = ViewerState { hovered: self.viewer.hovered, pressed: self.viewer.pressed, hidden };
         self.changed |= self.terminal.set_viewer_state(state);
+    }
+
+    /// When the cursor next shows or hides, if it blinks.
+    fn next_blink_us(&self, now_us: u64) -> Option<u64> {
+        let from = self.blink_from.filter(|_| self.blinks())?;
+        let halves = now_us.saturating_sub(from).checked_div(Self::BLINK_US).unwrap_or(0);
+        Some(from.saturating_add(halves.saturating_add(1).saturating_mul(Self::BLINK_US)))
     }
 
     /// Credits the repaint budget for the time since it was last credited.
@@ -135,9 +183,11 @@ impl RegisPages {
                     self.pages.remove(&oldest);
                 }
             }
-            let viewer = self.pages.get(&key).map(|page| page.viewer).unwrap_or_default();
+            // What the pointer was doing, and which drawing is the cursor,
+            // are not the stream's to change.
+            let (viewer, cursor) = self.pages.get(&key).map(|page| (page.viewer, page.cursor)).unwrap_or_default();
             let mut page = Page::new(record.generation, viewer);
-            page.apply_viewer();
+            page.cursor = cursor;
             self.pages.insert(key, page);
         }
         let Some(page) = self.pages.get_mut(&key) else { return };
@@ -153,6 +203,9 @@ impl RegisPages {
         // do: a pause (no local animation) or a reply to the host.
         let committed = events.iter().any(|event| matches!(event, Event::Committed(_)));
         page.changed |= committed | page.screen.take_changed();
+        // The channel moves the cursor by a commit after each key: it is
+        // shown again at once, never hidden where the viewer looks for it.
+        page.blink_again |= committed;
     }
 
     /// The trusted core said what the viewer's pointer is doing to a
@@ -161,7 +214,16 @@ impl RegisPages {
     pub fn set_viewer(&mut self, page: u16, sub: u16, viewer: RegisViewer) {
         if let Some(held) = self.pages.get_mut(&(page, sub)) {
             held.viewer = viewer;
-            held.apply_viewer();
+        }
+    }
+
+    /// The channel named the drawing that is a sub-page's cursor, or 0
+    /// for none (the engine's REQ-6371). A sub-page with no ReGIS yet has
+    /// nothing to blink; its channel names the cursor again with its ReGIS.
+    pub fn set_cursor(&mut self, page: u16, sub: u16, drawing: u16) {
+        if let Some(held) = self.pages.get_mut(&(page, sub)).filter(|held| held.cursor != drawing) {
+            held.cursor = drawing;
+            held.blink_again = true;
         }
     }
 
@@ -199,6 +261,7 @@ impl RegisPages {
     pub fn take(&mut self, page: u16, sub: Option<u16>, now_us: u64) -> Option<Drawn> {
         let key = self.shown(page, sub)?;
         let held = self.pages.get_mut(&key)?;
+        held.apply_viewer(now_us);
         if !held.changed {
             return None;
         }
@@ -218,15 +281,21 @@ impl RegisPages {
         Some(Drawn { page: key.0, sub: key.1, picture, pick })
     }
 
-    /// When the repaint a page's sub-page on screen is owed may be made,
-    /// in microseconds of the decoder's clock; `None` when none is owed.
-    /// The decoder's loop waits on the earliest of these.
+    /// When a page's sub-page on screen next needs the decoder's loop, in
+    /// microseconds of its clock: when the repaint it is owed may be made,
+    /// or when its cursor next shows or hides; `None` when neither. The
+    /// loop waits on the earliest of these.
     pub fn owed_us(&mut self, page: u16, sub: Option<u16>, now_us: u64) -> Option<u64> {
         let key = self.shown(page, sub)?;
-        let held = self.pages.get_mut(&key).filter(|held| held.changed)?;
+        let held = self.pages.get_mut(&key)?;
+        held.apply_viewer(now_us);
+        let blink = held.next_blink_us(now_us);
+        if !held.changed {
+            return blink;
+        }
         held.earn(now_us);
         let wait = held.budget.milliseconds_until_repaint().saturating_mul(MICROSECONDS_PER_MILLISECOND);
-        Some(now_us.saturating_add(wait))
+        Some(blink.map_or(now_us.saturating_add(wait), |blink| blink.min(now_us.saturating_add(wait))))
     }
 }
 
@@ -406,5 +475,50 @@ mod tests {
         // Another sub-page's viewer state is not this one's.
         pages.set_viewer(0x100, 9, RegisViewer { hovered: 1, pressed: 0, typing: true });
         assert_eq!(at(&mut pages), None);
+    }
+
+    /// REQ-6378: while keys go to the channel the cursor drawing is shown
+    /// and hidden in turn, each for the half period of the typing cursor's
+    /// blink; a commit, as a key typed sends, shows it again for a full
+    /// half period; when keys stop it is left as the channel drew it.
+    #[test]
+    fn the_cursor_drawing_blinks_while_keys_go_to_the_channel() {
+        /// The half period, on the decoder's clock.
+        const HALF: u64 = interface_core::regis::BLINK_MILLISECONDS * MICROSECONDS_PER_MILLISECOND;
+        let scene = "D(B1)W(I7)T'Hi'D(E)D(B2)W(I3)V[0,0][8,0]D(E)D(S1(X60,Y200),S2(X78,Y200),C)";
+        let mut pages = RegisPages::default();
+        pages.read(&record(0x100, 1, 0, scene.as_bytes()));
+        // The cursor's pixel in the picture taken at a time, if one was made.
+        let cursor_at = |pages: &mut RegisPages, now: u64| pages.take(0x100, Some(0), now).map(|drawn| unpack(&drawn.picture.packed)[200 * REGIS_WIDTH + 80]);
+        assert_eq!(cursor_at(&mut pages, 0), Some(3));
+        pages.set_cursor(0x100, 0, 2);
+        assert_eq!(cursor_at(&mut pages, 0), None, "keys do not go to the channel: it does not blink");
+        assert_eq!(pages.owed_us(0x100, Some(0), 0), None);
+        pages.set_viewer(0x100, 0, RegisViewer { hovered: 0, pressed: 0, typing: true });
+        assert_eq!(cursor_at(&mut pages, 1000), None, "shown for the first half period, as it already is");
+        assert_eq!(pages.owed_us(0x100, Some(0), 2000), Some(1000 + HALF), "the loop wakes when it is to hide");
+        assert_eq!(cursor_at(&mut pages, 1000 + HALF), Some(0), "hidden for the second");
+        assert_eq!(cursor_at(&mut pages, 1000 + 2 * HALF), Some(3), "and shown again");
+        assert_eq!(cursor_at(&mut pages, 1000 + 3 * HALF), Some(0));
+        // A key typed: the channel moves the cursor by a commit, and it is
+        // shown at once at its new place, for a full half period.
+        let moved = "D(S2(X87),C)";
+        pages.read(&record(0x100, 1, u32::try_from(scene.len()).unwrap(), moved.as_bytes()));
+        let typed_at = 1000 + 3 * HALF + 5000;
+        let drawn = pages.take(0x100, Some(0), typed_at).unwrap();
+        assert_eq!(unpack(&drawn.picture.packed)[200 * REGIS_WIDTH + 89], 3);
+        assert_eq!(pages.owed_us(0x100, Some(0), typed_at), Some(typed_at + HALF));
+        assert_eq!(cursor_at(&mut pages, typed_at + HALF - 1), None, "still shown just before the half period ends");
+        // Keys stop going to the channel while it is hidden: it comes back and stays.
+        assert!(cursor_at(&mut pages, typed_at + HALF).is_some());
+        pages.set_viewer(0x100, 0, RegisViewer::default());
+        let drawn = pages.take(0x100, Some(0), typed_at + HALF + 1).unwrap();
+        assert_eq!(unpack(&drawn.picture.packed)[200 * REGIS_WIDTH + 89], 3);
+        assert_eq!(pages.owed_us(0x100, Some(0), typed_at + 5 * HALF), None);
+        // A cursor drawing that does not exist blinks nothing and costs no repaint.
+        pages.set_cursor(0x100, 0, 99);
+        pages.set_viewer(0x100, 0, RegisViewer { hovered: 0, pressed: 0, typing: true });
+        assert_eq!(cursor_at(&mut pages, typed_at + 9 * HALF), None);
+        assert_eq!(cursor_at(&mut pages, typed_at + 10 * HALF), None);
     }
 }

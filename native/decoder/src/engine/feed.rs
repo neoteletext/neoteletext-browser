@@ -145,6 +145,11 @@ impl Engine {
                     }
                     // A sub-page's ReGIS, for the ReGIS renderer (DEC-6335).
                     neoteletext_web::records::Read::Record(neoteletext_web::records::ChannelRecord::Regis(record)) => self.regis.read(&record),
+                    // The drawing that is a ReGIS sub-page's cursor (the
+                    // engine's REQ-6371), which the decoder blinks.
+                    neoteletext_web::records::Read::Record(neoteletext_web::records::ChannelRecord::RegisCursor(record)) => {
+                        self.regis.set_cursor(record.page.mpp(), record.subcode.value(), record.drawing);
+                    }
                     _ => {}
                 }
             }
