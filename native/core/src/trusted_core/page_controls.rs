@@ -218,6 +218,7 @@ impl Core {
     /// The sub-page a page about to open was named with, when `key` is
     /// that page: its channel is told the sub-page at once, in the one
     /// selection (DEC-6358, fault 10).
+    #[cfg(feature = "interaction")]
     pub(super) fn pending_subpage(&self, key: PageKey) -> Option<u16> {
         self.controls.choice.filter(|&(pending, _)| self.controls.selection == SelectionState::Pending && pending == key).map(|(_, subpage)| subpage)
     }
