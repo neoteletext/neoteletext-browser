@@ -30,6 +30,7 @@ pub enum ProxyView {
 
 /// The settings as the panel shows them.
 #[derive(Clone, Debug, PartialEq, Eq)]
+#[allow(clippy::struct_excessive_bools, reason = "independent settings the trusted core keeps, each a switch of its own")]
 pub struct SettingsView {
     /// The home address.
     pub home: String,
@@ -47,6 +48,8 @@ pub struct SettingsView {
     pub cookies: CookieMode,
     /// Pages are drawn with the 4:3 aspect correction (REQ-737).
     pub aspect: bool,
+    /// A mouse wheel's notches are taken the other way (REQ-6351).
+    pub wheel_inverted: bool,
     /// Why the last change was refused, if it was.
     pub refusal: Option<String>,
     /// On Windows, the command an administrator runs once so that channels
@@ -83,6 +86,8 @@ pub enum SettingChange {
     CheckUpdates(bool),
     /// The 4:3 aspect correction on or off (REQ-737).
     Aspect(bool),
+    /// A mouse wheel's direction inverted, or as it comes (REQ-6351).
+    WheelInverted(bool),
 }
 
 /// The furthest a floating remote's corner may be from the window's, in

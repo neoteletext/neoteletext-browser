@@ -331,6 +331,7 @@ fn the_aspect_correction_stretches_the_drawn_page_and_keeps_its_screen() {
             restore_session: true,
             cookies: CookieMode::Keep,
             aspect,
+            wheel_inverted: false,
             refusal: None,
             loopback_exemption: None,
         });

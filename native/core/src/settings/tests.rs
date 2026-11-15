@@ -16,6 +16,7 @@ fn settings_round_trip_through_their_file() {
         local: vec!["192.168.1.20".parse().unwrap()],
         bar: true,
         aspect: true,
+        wheel_inverted: true,
         restore: false,
         check_updates: false,
         cookies: crate::cookies::Mode::Close,
@@ -25,6 +26,19 @@ fn settings_round_trip_through_their_file() {
     let (read, dropped) = Settings::read(&settings.text());
     assert_eq!((read, dropped), (settings, Dropped::default()));
     assert_eq!(Settings::read("").0, Settings::default());
+}
+
+/// REQ-6351 item 3: normal by default, in a file that has no line for it
+/// too; kept as `wheel inverted` and read strictly.
+#[test]
+fn the_wheel_is_normal_until_inverted_and_read_strictly() {
+    assert!(!Settings::default().wheel_inverted);
+    assert!(Settings::default().text().contains("wheel normal\n"));
+    let (read, dropped) = Settings::read(&format!("{VERSION_LINE}\nbar on\n"));
+    assert_eq!((read.wheel_inverted, dropped.len()), (false, 0), "a file written before it");
+    assert!(Settings::read(&format!("{VERSION_LINE}\nwheel inverted\n")).0.wheel_inverted);
+    let (read, dropped) = Settings::read(&format!("{VERSION_LINE}\nwheel sideways\n"));
+    assert_eq!((read.wheel_inverted, dropped.len()), (false, 1));
 }
 
 /// REQ-737 item 2: off by default, in a file that has no line for it too;

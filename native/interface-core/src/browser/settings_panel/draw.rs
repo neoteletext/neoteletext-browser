@@ -54,6 +54,7 @@ impl Browser {
         y = draw_settings_sound(canvas, view.as_ref(), &mut controls, row(y), field_left);
         y = self.draw_settings_proxy(canvas, &mut controls, row(y), field_left);
         y = draw_settings_restore(canvas, view.as_ref(), &mut controls, row(y), field_left);
+        y = draw_settings_wheel(canvas, view.as_ref(), &mut controls, row(y), field_left);
         y = draw_settings_cookies(canvas, view.as_ref(), &mut controls, row(y), field_left);
         y = self.draw_settings_updates(canvas, &mut controls, row(y), field_left);
         y = self.draw_settings_local(canvas, view.as_ref(), &mut controls, row(y), field_left);
@@ -223,6 +224,19 @@ fn draw_settings_restore<C: Canvas + ?Sized>(canvas: &mut C, view: Option<&Setti
     controls.restore_off = Rect::new(controls.restore_on.x1 + GAP, y, controls.restore_on.x1 + GAP + BUTTON_WIDTH * 1.5, y + ROW);
     button(canvas, controls.restore_on, "Restore", restore);
     button(canvas, controls.restore_off, "Home", !restore);
+    y + ROW + ROW_GAP
+}
+
+/// A mouse wheel's direction, as it comes or inverted (REQ-6351), in
+/// `line`. Returns where the next row starts.
+fn draw_settings_wheel<C: Canvas + ?Sized>(canvas: &mut C, view: Option<&SettingsView>, controls: &mut Controls, line: Rect, field_left: f64) -> f64 {
+    let y = line.y0;
+    let inverted = view.is_some_and(|view| view.wheel_inverted);
+    left_centred(canvas, line, 0.0, "Mouse wheel", ROW_TITLE, WHITE);
+    controls.wheel_normal = Rect::new(field_left, y, field_left + BUTTON_WIDTH * 1.5, y + ROW);
+    controls.wheel_inverted = Rect::new(controls.wheel_normal.x1 + GAP, y, controls.wheel_normal.x1 + GAP + BUTTON_WIDTH * 1.5, y + ROW);
+    button(canvas, controls.wheel_normal, "Normal", !inverted);
+    button(canvas, controls.wheel_inverted, "Inverted", inverted);
     y + ROW + ROW_GAP
 }
 

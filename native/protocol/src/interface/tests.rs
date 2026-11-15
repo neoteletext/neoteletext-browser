@@ -176,6 +176,7 @@ fn every_message_to_the_interface_round_trips() {
             restore_session: true,
             cookies: settings::CookieMode::Close,
             aspect: false,
+            wheel_inverted: true,
             refusal: None,
             loopback_exemption: None,
         }),

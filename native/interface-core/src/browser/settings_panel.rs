@@ -21,7 +21,7 @@ mod input;
 const PANEL_WIDTH: f64 = 600.0;
 /// Room for its heading, twelve rows, two rows of chips and the trusted
 /// core's word.
-const PANEL_HEIGHT: f64 = 648.0 + 3.0 * ROW + GAP + 2.0 * ROW_GAP;
+const PANEL_HEIGHT: f64 = 648.0 + 4.0 * ROW + GAP + 3.0 * ROW_GAP;
 /// Room added, on Windows, for the loopback exemption: a line saying why
 /// with its Copy button, and the command on two lines (TODO-1251).
 const EXEMPTION_ROOM: f64 = 3.0 * ROW + GAP;
@@ -89,6 +89,8 @@ struct Controls {
     removes: Vec<(usize, Rect)>,
     restore_on: Rect,
     restore_off: Rect,
+    wheel_normal: Rect,
+    wheel_inverted: Rect,
     cookie_modes: Vec<(CookieMode, Rect)>,
     manage_cookies: Rect,
     updates_on: Rect,
@@ -184,6 +186,15 @@ impl Browser {
     #[must_use]
     pub fn aspect_corrected(&self) -> bool {
         self.wall.shape() == PageShape::Corrected
+    }
+
+    /// A mouse wheel's notches as the browser takes them: the other way
+    /// while the viewer's setting inverts the wheel (REQ-6351). A
+    /// trackpad's pixels do not pass through here: their direction is the
+    /// operating system's setting.
+    #[must_use]
+    pub fn wheel_notches(&self, lines: f64) -> f64 {
+        if self.settings.view.as_ref().is_some_and(|view| view.wheel_inverted) { -lines } else { lines }
     }
 
     /// The View menu's aspect correction: the trusted core keeps it, as it

@@ -23,6 +23,14 @@ impl App {
     /// the browser's, to scroll. Returns whether the window needs drawing.
     fn wheel(&mut self, event_loop: &ActiveEventLoop, delta: MouseScrollDelta, now: u64) -> bool {
         let scale = self.scale();
+        // A mouse wheel's notches go the other way when the viewer's
+        // setting says so, for the browser and the channel alike; a
+        // trackpad's pixels stay the operating system's (REQ-6351).
+        #[allow(clippy::cast_possible_truncation, reason = "a wheel's notches, which came as f32")]
+        let delta = match delta {
+            MouseScrollDelta::LineDelta(x, y) => MouseScrollDelta::LineDelta(x, self.view.browser.wheel_notches(f64::from(y)) as f32),
+            pixels @ MouseScrollDelta::PixelDelta(_) => pixels,
+        };
         #[cfg(feature = "interaction")]
         {
             let lines = |pixels: f64| pixels / scale / interface_core::browser::LINE_HEIGHT;

@@ -70,6 +70,10 @@ impl Browser {
             Some(SettingChange::RestoreSession(true))
         } else if controls.restore_off.contains(point) {
             Some(SettingChange::RestoreSession(false))
+        } else if controls.wheel_normal.contains(point) {
+            Some(SettingChange::WheelInverted(false))
+        } else if controls.wheel_inverted.contains(point) {
+            Some(SettingChange::WheelInverted(true))
         } else if let Some(&(mode, _)) = controls.cookie_modes.iter().find(|(_, rect)| rect.contains(point)) {
             Some(SettingChange::Cookies(mode))
         } else if controls.manage_cookies.contains(point) {

@@ -65,6 +65,7 @@ impl Core {
             restore_session: self.settings.restore,
             cookies: super::cookies::mode_view(self.settings.cookies),
             aspect: self.settings.aspect,
+            wheel_inverted: self.settings.wheel_inverted,
             refusal: self.refusal.as_deref().map(|refusal| clean(refusal, protocol::settings::MAX_REFUSAL)),
             loopback_exemption: self.loopback_exemption.clone(),
         };
@@ -182,6 +183,12 @@ fn checked_change(settings: &mut Settings, change: SettingChange, current: Optio
             settings.aspect = on;
             Ok(None)
         }
+        // Which way the viewer's wheel goes, the window's alone too
+        // (REQ-6351).
+        SettingChange::WheelInverted(on) => {
+            settings.wheel_inverted = on;
+            Ok(None)
+        }
         // And whether to check for updates (`installation-and-updates.md`
         // section 3.4).
         SettingChange::CheckUpdates(on) => {
@@ -283,7 +290,9 @@ mod tests {
         assert_eq!(change(SettingChange::HomeIsThisPage), Ok(None));
         // A privacy setting, not a security one: nothing said in the strip.
         assert_eq!(change(SettingChange::RestoreSession(false)), Ok(None));
+        assert_eq!(change(SettingChange::WheelInverted(true)), Ok(None));
         assert!(!settings.restore);
+        assert!(settings.wheel_inverted, "REQ-6351");
         assert_eq!(settings.home, "https://open.example/");
         assert_eq!((settings.volume, settings.sound, settings.proxy.is_none()), (30, false, true));
         assert_eq!(settings.local.len(), stored::MAX_LOCAL - 1);

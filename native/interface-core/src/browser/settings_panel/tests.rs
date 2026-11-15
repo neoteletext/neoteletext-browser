@@ -16,6 +16,7 @@ fn view() -> SettingsView {
         restore_session: true,
         cookies: CookieMode::Keep,
         aspect: false,
+        wheel_inverted: false,
         refusal: None,
         loopback_exemption: None,
     }
@@ -97,6 +98,15 @@ fn each_control_asks_for_its_change() {
     let (restore, home_at_start) = (browser.settings.controls.restore_on, browser.settings.controls.restore_off);
     assert_eq!(press(&mut browser, home_at_start), [Output::Setting(SettingChange::RestoreSession(false))]);
     assert_eq!(press(&mut browser, restore), [Output::Setting(SettingChange::RestoreSession(true))]);
+    // REQ-6351: the wheel's two buttons ask for the change, and a notch is
+    // the other way only while the trusted core's view says inverted.
+    let (normal, inverted) = (browser.settings.controls.wheel_normal, browser.settings.controls.wheel_inverted);
+    assert_eq!(press(&mut browser, inverted), [Output::Setting(SettingChange::WheelInverted(true))]);
+    assert_eq!(press(&mut browser, normal), [Output::Setting(SettingChange::WheelInverted(false))]);
+    assert!((browser.wheel_notches(1.0) - 1.0).abs() < f64::EPSILON, "as it comes until the trusted core says");
+    browser.set_settings(SettingsView { wheel_inverted: true, ..view() });
+    assert!((browser.wheel_notches(1.0) + 1.0).abs() < f64::EPSILON, "inverted");
+    browser.set_settings(view());
     let on_close = browser.settings.controls.cookie_modes[1].1;
     assert_eq!(press(&mut browser, on_close), [Output::Setting(SettingChange::Cookies(CookieMode::Close))]);
     let manage = browser.settings.controls.manage_cookies;
