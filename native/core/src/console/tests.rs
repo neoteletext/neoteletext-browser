@@ -153,21 +153,28 @@ fn the_bytes_downloaded_are_the_selections_and_start_again_with_another() {
     let first = Selection { page: 0x101, sub: Some(1) };
     let second = Selection { page: 0x101, sub: Some(2) };
     assert_eq!(console.downloaded_for(4, page), 0, "nothing yet");
-    console.downloaded(4, page, 1_000);
-    console.downloaded(4, page, 500);
+    console.downloaded(4, Some(page), 1_000);
+    console.downloaded(4, Some(page), 500);
     assert_eq!(console.downloaded_for(4, page), 1_500);
     assert_eq!(console.downloaded_for(4, first), 1_500, "the first sub-page's bytes are those that brought it");
-    console.downloaded(4, first, 200);
+    console.downloaded(4, Some(first), 200);
     assert_eq!(console.downloaded_for(4, first), 1_700);
     assert_eq!(console.downloaded_for(4, second), 0, "another sub-page has brought nothing yet");
-    console.downloaded(4, second, 300);
+    console.downloaded(4, Some(second), 300);
     assert_eq!((console.downloaded_for(4, second), console.downloaded_for(4, first)), (300, 0));
-    console.downloaded(4, page, 50);
+    console.downloaded(4, Some(page), 50);
     assert_eq!(console.downloaded_for(4, page), 50, "back at the page without a sub-page is a selection of its own");
-    console.downloaded(4, Selection { page: 0x102, sub: None }, 7);
+    console.downloaded(4, Some(Selection { page: 0x102, sub: None }), 7);
     assert_eq!((console.downloaded_for(4, Selection { page: 0x102, sub: None }), console.downloaded_for(4, page)), (7, 0));
     assert_eq!(console.downloaded_for(5, page), 0, "each channel's own");
-    console.downloaded(5, page, usize::MAX);
-    console.downloaded(5, page, usize::MAX);
+    // What comes before the tab's page is known is the first page's, and
+    // what comes with none named joins the count kept.
+    console.downloaded(6, None, 40);
+    assert_eq!(console.downloaded_for(6, first), 40, "the channel's first page came before its tab said what it shows");
+    console.downloaded(6, Some(first), 2);
+    console.downloaded(6, None, 1);
+    assert_eq!((console.downloaded_for(6, first), console.downloaded_for(6, second)), (43, 0));
+    console.downloaded(5, Some(page), usize::MAX);
+    console.downloaded(5, Some(page), usize::MAX);
     assert_eq!(console.downloaded_for(5, page), u64::MAX, "it stops at the most");
 }

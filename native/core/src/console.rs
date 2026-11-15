@@ -28,8 +28,10 @@ const SEVEN_BITS: u8 = 0x7F;
 struct Log {
     tabs: [VecDeque<(u64, ConsoleEntry)>; ConsoleTab::ALL.len()],
     counts: Counts,
-    /// What the tab's selection has brought since it was made (REQ-6352).
-    downloaded: Option<(Selection, u64)>,
+    /// What the tab's selection has brought since it was made (REQ-6352):
+    /// the selection it is counted for, none while what came did so before
+    /// the tab's page was known, as a channel's first page does.
+    downloaded: Option<(Option<Selection>, u64)>,
 }
 
 /// What a tab shows of its channel: a page, and the sub-page of it chosen,
@@ -240,12 +242,19 @@ impl Console {
 
     /// Counts `bytes` of page content that came for `channel` while its tab
     /// showed `selection`: added to the selection's count, which starts
-    /// again when the selection is another (REQ-6352 item 2).
-    pub fn downloaded(&mut self, channel: u32, selection: Selection, bytes: usize) {
+    /// again when the selection is another (REQ-6352 item 2). With no
+    /// selection known (the channel's first page comes before its tab says
+    /// what it shows, and a tab behind another says nothing), the bytes
+    /// join the count kept, which the next selection named takes up.
+    pub fn downloaded(&mut self, channel: u32, selection: Option<Selection>, bytes: usize) {
         let length = u64::try_from(bytes).unwrap_or(u64::MAX);
         let log = self.channels.entry(channel).or_default();
-        let before = log.downloaded.filter(|(counted, _)| counted.goes_on_as(selection)).map_or(0, |(_, count)| count);
-        log.downloaded = Some((selection, before.saturating_add(length)));
+        log.downloaded = Some(match (log.downloaded, selection) {
+            (None, next) => (next, length),
+            (Some((counted, count)), None) => (counted, count.saturating_add(length)),
+            (Some((Some(counted), _)), Some(next)) if !counted.goes_on_as(next) => (Some(next), length),
+            (Some((_, count)), Some(next)) => (Some(next), count.saturating_add(length)),
+        });
     }
 
     /// The bytes counted for `selection` of `channel`: none when the count
@@ -253,7 +262,7 @@ impl Console {
     #[must_use]
     pub fn downloaded_for(&self, channel: u32, selection: Selection) -> u64 {
         let kept = self.channels.get(&channel).and_then(|log| log.downloaded);
-        kept.filter(|(counted, _)| counted.goes_on_as(selection)).map_or(0, |(_, count)| count)
+        kept.filter(|(counted, _)| counted.is_none_or(|counted| counted.goes_on_as(selection))).map_or(0, |(_, count)| count)
     }
 
     /// Counts an exchange the fetcher made and the bytes it brought.

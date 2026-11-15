@@ -287,9 +287,7 @@ impl Core {
                 let packets = matches!(origin, Origin::PushedPackets | Origin::FetchedPackets);
                 self.console.received(channel, pushed, packets, bytes);
                 // What the open page or sub-page has brought (REQ-6352).
-                if let Some(selection) = self.selection_shown(channel) {
-                    self.console.downloaded(channel, selection, bytes.len());
-                }
+                self.console.downloaded(channel, self.selection_shown(channel), bytes.len());
                 if packets {
                     self.console.packets(channel, at, pushed, bytes);
                 }
