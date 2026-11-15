@@ -1218,4 +1218,70 @@ mod tests {
         test.core.intent(protocol::ToCore::SubPageRows { channel, page: 0x210, range: range(1), request: 14 }).unwrap();
         assert_eq!(answers(&mut test), [(14, 1, 2)]);
     }
+
+    /// DEC-6358, fault 4, on a channel served as files: a request for rows
+    /// passed to the page's decoder, the page's list arriving before the
+    /// decoder answers, is answered from the list with the request's
+    /// number when the decoder does answer; it was dropped, and the
+    /// interface never asked again.
+    #[test]
+    fn a_decoders_late_answer_is_answered_from_the_list_that_came() {
+        use protocol::decoder::FromDecoder;
+        use protocol::subpages::SubPageRows;
+        let mut test = super::super::test_support::Test::new("late answer");
+        test.core.session.open("https://news.invalid/teletext/").unwrap();
+        let channel = test.core.active_channel().unwrap();
+        test.core.intent(protocol::ToCore::Opened(Some(PageKey { channel, page: 0x210 }))).unwrap();
+        test.sent();
+        let answers = |test: &mut super::super::test_support::Test| -> Vec<(u16, usize)> {
+            let sent = test.sent();
+            sent.into_iter()
+                .filter_map(|message| if let ToInterface::SubPageRows { request, rows, .. } = message { Some((request, rows.rows.len())) } else { None })
+                .collect()
+        };
+        // No list is held or on its way: the decoder is asked.
+        test.core.intent(protocol::ToCore::SubPageRows { channel, page: 0x210, range: SubPageRange { first: 0, count: 64 }, request: 21 }).unwrap();
+        assert_eq!(answers(&mut test), [], "the decoder has not answered");
+        // The page's list comes first.
+        test.core.fetched(channel, list_part(&[1, 2, 3], "v1", 0)).unwrap();
+        assert_eq!(answers(&mut test), [], "no request was waiting on the list");
+        // Then the decoder answers with the one sub-page it holds.
+        let held = SubPageRows { count: 1, first: 0, rows: vec![(1, "One".into())] };
+        test.core.decoded(channel, FromDecoder::SubPageRows { page: 0x210, rows: held }).unwrap();
+        assert_eq!(answers(&mut test), [(21, 3)], "answered from the list, all three rows, with the request's number");
+        // An answer the decoder gives to no request is not passed on.
+        let stray = SubPageRows { count: 1, first: 0, rows: vec![(1, "One".into())] };
+        test.core.decoded(channel, FromDecoder::SubPageRows { page: 0x210, rows: stray }).unwrap();
+        assert_eq!(answers(&mut test), []);
+    }
+
+    /// DEC-6358, fault 5: a request for rows made of a tab is not answered
+    /// once another tab is in front, and the tab's next request, when it
+    /// is in front again, is.
+    #[test]
+    fn rows_asked_of_a_tab_are_not_answered_into_another() {
+        let mut test = super::super::test_support::Test::new("tab change");
+        test.core.session.open("https://news.invalid/teletext/").unwrap();
+        let news = test.core.active_channel().unwrap();
+        test.core.fetched(news, list_part(&[1, 2, 3], "v1", 0)).unwrap();
+        test.core.session.open("https://sport.invalid/teletext/").unwrap();
+        let sport = test.core.active_channel().unwrap();
+        assert_ne!(news, sport);
+        test.sent();
+        let answers = |test: &mut super::super::test_support::Test| -> Vec<(u32, u16)> {
+            let sent = test.sent();
+            sent.into_iter()
+                .filter_map(|message| if let ToInterface::SubPageRows { channel, request, .. } = message { Some((channel, request)) } else { None })
+                .collect()
+        };
+        // Sport is in front: a request the interface made of news, just before the tab changed, is not answered.
+        test.core.intent(protocol::ToCore::SubPageRows { channel: news, page: 0x210, range: SubPageRange { first: 0, count: 64 }, request: 31 }).unwrap();
+        assert_eq!(answers(&mut test), [], "not answered from, or into, the tab in front");
+        // News in front again: its request is answered.
+        test.core.session.active = 0;
+        assert_eq!(test.core.active_channel(), Some(news));
+        test.sent();
+        test.core.intent(protocol::ToCore::SubPageRows { channel: news, page: 0x210, range: SubPageRange { first: 0, count: 64 }, request: 32 }).unwrap();
+        assert_eq!(answers(&mut test), [(news, 32)]);
+    }
 }
