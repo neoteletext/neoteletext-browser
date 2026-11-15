@@ -6,7 +6,7 @@
 
 use super::Browser;
 use super::output::Output;
-use crate::canvas::{PageKey, regis_contained, regis_within};
+use crate::canvas::{PageKey, regis_layout};
 use crate::geometry::Point;
 use crate::regis::{RegisPointer, pixel_under};
 
@@ -33,7 +33,8 @@ impl Browser {
         if !self.regis.contains_key(&key) {
             return None;
         }
-        let picture = if self.regis_contained() { regis_contained(image) } else { regis_within(image) };
+        let keyed = self.regis_keyed().contains(&key);
+        let picture = regis_layout(image, self.regis_contained(), keyed).picture;
         Some((key, pixel_under(picture, point)))
     }
 
@@ -128,7 +129,7 @@ mod tests {
         browser.set_regis(key, 0, 1);
         browser.draw(&mut canvas, WIDTH, HEIGHT, 0);
         let (_, image) = browser.wall.open().unwrap();
-        let picture = if contain { regis_contained(image) } else { regis_within(image) };
+        let picture = regis_layout(image, contain, false).picture;
         let _ = browser.take_outputs();
         (browser, key, picture)
     }

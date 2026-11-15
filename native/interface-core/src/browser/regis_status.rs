@@ -50,6 +50,19 @@ impl Browser {
         let contain = self.regis_contained();
         let pictures: alloc::vec::Vec<PageKey> = if contain { self.regis.keys().copied().collect() } else { alloc::vec::Vec::new() };
         self.wall.set_pictures(pictures.into_iter());
+        let keyed = self.regis_keyed();
+        self.wall.set_keyed(keyed.into_iter());
+    }
+
+    /// The pages drawn in ReGIS whose teletext page beneath has
+    /// coloured-key prompts: each shows that row beneath its picture
+    /// (REQ-6379).
+    #[must_use]
+    pub fn regis_keyed(&self) -> alloc::vec::Vec<PageKey> {
+        #[cfg(feature = "links")]
+        return self.regis.keys().copied().filter(|key| self.has_prompts(*key)).collect();
+        #[cfg(not(feature = "links"))]
+        alloc::vec::Vec::new()
     }
 
     /// The cost of the open page's picture, on the image's top row, which
@@ -122,5 +135,71 @@ mod tests {
         assert_eq!(tall, regis_within(Rect::new(0.0, 0.0, 480.0, 500.0)), "in a page of the teletext shape, the teletext band");
         let own = Rect::new(10.0, 20.0, 810.0, 500.0);
         assert_eq!(regis_contained(own), own, "in its own shape, the whole area");
+    }
+}
+
+#[cfg(test)]
+mod key_row_tests {
+    use crate::canvas::{REGIS_HEIGHT_PER_WIDTH, ROW_HEIGHT_PER_WIDTH, ROWS, regis_contained, regis_layout, regis_within};
+    use crate::geometry::{Point, Rect};
+    use crate::wall::cell_in;
+
+    fn close(one: f64, other: f64) -> bool {
+        (one - other).abs() < 1e-9
+    }
+
+    /// REQ-6379 item 3: contained in the page area, the row of prompts
+    /// lies directly beneath the picture, as wide as it and a teletext
+    /// row's height for that width, one twenty-fourth; the picture keeps
+    /// its shape; the two together are as large as fits, centred.
+    #[test]
+    fn the_row_of_prompts_lies_directly_beneath_a_contained_picture() {
+        for area in [Rect::new(0.0, 0.0, 800.0, 480.0 + 800.0 / 24.0), Rect::new(10.0, 20.0, 1500.0, 700.0), Rect::new(0.0, 0.0, 300.0, 900.0)] {
+            let layout = regis_layout(area, true, true);
+            let (picture, keys) = (layout.picture, layout.keys.unwrap());
+            assert!(layout.stacked);
+            assert!(close(picture.height() / picture.width(), REGIS_HEIGHT_PER_WIDTH), "{area:?}");
+            assert!(close(keys.y0, picture.y1) && close(keys.x0, picture.x0) && close(keys.x1, picture.x1), "{area:?}");
+            assert!(close(keys.height(), picture.width() * ROW_HEIGHT_PER_WIDTH) && close(keys.height(), picture.width() / 24.0), "{area:?}");
+            assert!(picture.x0 >= area.x0 - 1e-9 && keys.y1 <= area.y1 + 1e-9, "inside the area: {area:?}");
+            assert!(close(picture.width(), area.width()) || close(keys.y1 - picture.y0, area.height()), "as large as fits: {area:?}");
+        }
+    }
+
+    /// With no prompts the picture is placed exactly as before; contained
+    /// to the teletext page, the picture is in its band and the row where
+    /// the teletext page has its row 24 (REQ-6379 items 1 and 4).
+    #[test]
+    fn without_prompts_nothing_moves_and_in_the_teletext_fit_the_row_is_row_24() {
+        let area = Rect::new(5.0, 7.0, 485.0, 507.0);
+        let plain = regis_layout(area, true, false);
+        assert_eq!((plain.picture, plain.keys), (regis_contained(area), None));
+        assert_eq!(regis_layout(area, false, false).picture, regis_within(area));
+        let teletext = regis_layout(area, false, true);
+        assert_eq!(teletext.picture, regis_within(area));
+        assert!(!teletext.stacked);
+        let keys = teletext.keys.unwrap();
+        assert!(close(keys.y1, area.y1) && close(keys.height(), area.height() / f64::from(ROWS)));
+        // The teletext page's own grid finds row 24 there.
+        let within = Point::new(area.x0 + 100.0, keys.y0 + 1.0);
+        assert_eq!(teletext.grid_point(area, within), Some(within));
+        assert_eq!(cell_in(area, within).map(|(_, row)| row), Some(24));
+    }
+
+    /// REQ-6379 items 6 and 7: under a contained picture, a point in the
+    /// row of prompts is on row 24 of the teletext page beneath, at its
+    /// column; the picture stands for rows 0 to 23; a point beside them is
+    /// on no cell.
+    #[test]
+    fn a_point_in_the_row_of_prompts_is_on_row_24_of_the_page_beneath() {
+        let area = Rect::new(0.0, 0.0, 1000.0, 1000.0);
+        let layout = regis_layout(area, true, true);
+        let (picture, keys) = (layout.picture, layout.keys.unwrap());
+        let cell = |point: Point| layout.grid_point(area, point).and_then(|point| cell_in(area, point));
+        assert_eq!(cell(Point::new(keys.x0 + 1.0, keys.y0 + 0.5)), Some((0, 24)), "the row's first line");
+        assert_eq!(cell(Point::new(keys.x1 - 1.0, keys.y1 - 0.5)), Some((39, 24)), "and its last");
+        assert_eq!(cell(Point::new(picture.x0 + 1.0, picture.y1 - 0.5)), Some((0, 23)), "the picture's last line is row 23");
+        assert_eq!(cell(Point::new(picture.x0 + picture.width() / 2.0, picture.y0 + 0.5)), Some((20, 0)));
+        assert_eq!(cell(Point::new(picture.x0 + 1.0, picture.y0 - 5.0)), None, "above the picture, within the area");
     }
 }

@@ -107,6 +107,9 @@ pub struct Wall {
     /// The pages drawn in ReGIS whose pictures are contained in the page
     /// area: open, each is laid out in the picture's shape (REQ-6363).
     pictures: Vec<PageKey>,
+    /// Those of them that show the row of coloured-key prompts beneath
+    /// their picture (REQ-6379).
+    keyed: Vec<PageKey>,
     /// The page size before a click zoomed a page, restored when it closes.
     width_before_zoom: Option<f32>,
     /// While zoomed, how far the pages are from resting in place, in pages:
@@ -186,6 +189,7 @@ impl Wall {
             focus: None,
             page_keys: Vec::new(),
             pictures: Vec::new(),
+            keyed: Vec::new(),
             width_before_zoom: None,
             slide: Tween::new(0.0, SLIDE_MILLISECONDS, STANDARD),
             wheel_carry: 0.0,
@@ -258,10 +262,33 @@ impl Wall {
         self.pictures.extend(pictures);
     }
 
+    /// The pages drawn in ReGIS that show the row of coloured-key prompts
+    /// beneath their picture (REQ-6379).
+    pub fn set_keyed(&mut self, keyed: impl Iterator<Item = PageKey>) {
+        self.keyed.clear();
+        self.keyed.extend(keyed);
+    }
+
+    /// The point of a page's image at which its teletext page, drawn
+    /// across the whole image, has the cell under `point`: the point
+    /// itself, but for a ReGIS picture laid out with its row of prompts
+    /// beneath it (`RegisLayout::grid_point`).
+    #[must_use]
+    pub fn grid_point(&self, key: PageKey, image: Rect, point: Point) -> Option<Point> {
+        if !(self.pictures.contains(&key) && self.keyed.contains(&key)) {
+            return Some(point);
+        }
+        crate::canvas::regis_layout(image, true, true).grid_point(image, point)
+    }
+
     /// The height for each unit of width `key` is laid out at when open:
     /// a contained ReGIS picture's own, else the shape every page has.
     pub(crate) fn open_shape(&self, key: Option<PageKey>) -> f64 {
-        if key.is_some_and(|key| self.pictures.contains(&key)) { crate::canvas::REGIS_HEIGHT_PER_WIDTH } else { self.shape.height_per_width() }
+        match key.filter(|key| self.pictures.contains(key)) {
+            Some(key) if self.keyed.contains(&key) => crate::canvas::REGIS_KEYED_HEIGHT_PER_WIDTH,
+            Some(_) => crate::canvas::REGIS_HEIGHT_PER_WIDTH,
+            None => self.shape.height_per_width(),
+        }
     }
 
     /// Draws every page in `shape` from the next frame.
@@ -321,7 +348,7 @@ impl Wall {
         }
         // Topmost first: a zooming page is drawn over the wall.
         let drawn = self.drawn.iter().rev().find(|drawn| drawn.image.contains(point))?;
-        let (column, row) = cell_in(drawn.image, point)?;
+        let (column, row) = cell_in(drawn.image, self.grid_point(drawn.key, drawn.image, point)?)?;
         Some(CellClick { key: drawn.key, version: 0, column, row })
     }
 

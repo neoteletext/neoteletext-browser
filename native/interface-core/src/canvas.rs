@@ -81,6 +81,77 @@ pub fn regis_contained(area: Rect) -> Rect {
     Rect::new(left, top, left + width, top + height)
 }
 
+/// A teletext row's height for each unit of its page's width: 20 dots to
+/// 480.
+pub const ROW_HEIGHT_PER_WIDTH: f64 = CELL_HEIGHT as f64 / PAGE_WIDTH as f64;
+
+/// The height for each unit of width of a ReGIS picture with the row of
+/// coloured-key prompts beneath it (REQ-6379): the picture's, and a
+/// teletext row's at the same width.
+pub const REGIS_KEYED_HEIGHT_PER_WIDTH: f64 = REGIS_HEIGHT_PER_WIDTH + ROW_HEIGHT_PER_WIDTH;
+
+/// Where the parts of a page drawn in ReGIS sit in its image.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct RegisLayout {
+    /// The picture.
+    pub picture: Rect,
+    /// Row 24 of the teletext page beneath, the coloured-key prompts,
+    /// when the page shows it (REQ-6379).
+    pub keys: Option<Rect>,
+    /// The picture and the row together are the page: the picture stands
+    /// for rows 0 to 23 of the teletext page beneath, and the row is its
+    /// row 24. False when the picture is drawn in the teletext page's own
+    /// shape, where every row is where the teletext page has it.
+    pub stacked: bool,
+}
+
+/// Where a ReGIS picture, and the row of coloured-key prompts when
+/// `keyed`, sit in a page's image drawn in `image` (REQ-6363, REQ-6379).
+/// Contained in the page area, the picture is as large as fits with the
+/// row directly beneath it, at a teletext row's height for the picture's
+/// width; contained to the teletext page, the picture is in its band and
+/// the row where the teletext page has it.
+#[must_use]
+pub fn regis_layout(image: Rect, contain: bool, keyed: bool) -> RegisLayout {
+    if !contain {
+        let row = image.height() / f64::from(ROWS);
+        let keys = keyed.then(|| Rect::new(image.x0, image.y1 - row, image.x1, image.y1));
+        return RegisLayout { picture: regis_within(image), keys, stacked: false };
+    }
+    if !keyed {
+        return RegisLayout { picture: regis_contained(image), keys: None, stacked: false };
+    }
+    let width = image.width().min(image.height() / REGIS_KEYED_HEIGHT_PER_WIDTH).max(0.0);
+    let (left, top) = ((image.x0 + image.x1 - width) / 2.0, (image.y0 + image.y1 - width * REGIS_KEYED_HEIGHT_PER_WIDTH) / 2.0);
+    let middle = top + width * REGIS_HEIGHT_PER_WIDTH;
+    let picture = Rect::new(left, top, left + width, middle);
+    let keys = Rect::new(left, middle, left + width, middle + width * ROW_HEIGHT_PER_WIDTH);
+    RegisLayout { picture, keys: Some(keys), stacked: true }
+}
+
+impl RegisLayout {
+    /// The point of `image` at which the teletext page beneath, drawn
+    /// across the whole of `image`, would have the cell that is under
+    /// `point` here: what finds a link or a prompt under the pointer. Where
+    /// the picture and the row are stacked, the picture's height stands
+    /// for rows 0 to 23 and the row is row 24; a point on neither is on no
+    /// cell. Otherwise the page's rows are where the teletext page has them.
+    #[must_use]
+    pub fn grid_point(&self, image: Rect, point: Point) -> Option<Point> {
+        let Some(keys) = self.keys.filter(|_| self.stacked) else { return Some(point) };
+        let rows = f64::from(ROWS);
+        let down = if keys.contains(point) {
+            (rows - 1.0 + (point.y - keys.y0) / keys.height()) / rows
+        } else if self.picture.contains(point) {
+            (point.y - self.picture.y0) / self.picture.height() * (rows - 1.0) / rows
+        } else {
+            return None;
+        };
+        let across = (point.x - self.picture.x0) / self.picture.width();
+        Some(Point::new(image.x0 + across * image.width(), image.y0 + down * image.height()))
+    }
+}
+
 /// The shape a page is drawn in, which only the drawing transform changes:
 /// the page's raster and every coordinate sent to its channel stay the same
 /// (REQ-737).

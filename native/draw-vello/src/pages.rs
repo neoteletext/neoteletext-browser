@@ -145,12 +145,39 @@ impl Painter {
         self.regis_contain = contain;
     }
 
+    /// The pages drawn in ReGIS that show row 24 of their teletext page,
+    /// the coloured-key prompts, beneath their picture from the next frame
+    /// (REQ-6379).
+    pub fn set_regis_keyed(&mut self, keyed: Vec<PageKey>) {
+        self.regis_keyed = keyed;
+    }
+
+    /// Row 24 of a page's teletext image, drawn in `row`: the last of the
+    /// image's 25 rows, and nothing else of it.
+    fn draw_prompts(&mut self, key: PageKey, row: Rect) {
+        let Some(page) = self.pages.get(&key) else { return };
+        let (width, height) = (f64::from(PAGE_WIDTH), f64::from(PAGE_HEIGHT));
+        let lines = height / f64::from(interface_core::canvas::ROWS);
+        let (image, top) = (page.image.clone(), height - lines);
+        // The whole image is placed so that its last row lies on `row`,
+        // and only that row of it is filled.
+        let placement = self
+            .base()
+            .pre_translate(Vec2::new(row.x0, row.y0))
+            .pre_scale_non_uniform(row.width() / width, row.height() / lines)
+            .pre_translate(Vec2::new(0.0, -top));
+        self.context.set_transform(placement);
+        self.context.set_paint(image);
+        self.context.fill_rect(&kurbo::Rect::new(0.0, top, width, height));
+    }
+
     pub(crate) fn draw_page(&mut self, key: PageKey, area: Rect) {
         if let Some(regis) = self.regis.get(&key) {
             // The picture across the image's width, its own proportions
             // kept, on its own background.
             let (image, background) = (regis.image.clone(), regis.background);
-            let place = if self.regis_contain { interface_core::canvas::regis_contained(area) } else { interface_core::canvas::regis_within(area) };
+            let layout = interface_core::canvas::regis_layout(area, self.regis_contain, self.regis_keyed.contains(&key));
+            let place = layout.picture;
             let (width, height) = (f64::from(REGIS_SIZE.0), f64::from(REGIS_SIZE.1));
             self.context.set_transform(self.base());
             self.context.set_paint(crate::colour(background));
@@ -159,6 +186,9 @@ impl Painter {
             self.context.set_transform(placement);
             self.context.set_paint(image);
             self.context.fill_rect(&kurbo::Rect::new(0.0, 0.0, width, height));
+            if let Some(row) = layout.keys {
+                self.draw_prompts(key, row);
+            }
             return;
         }
         let Some(page) = self.pages.get(&key) else { return };

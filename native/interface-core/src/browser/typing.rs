@@ -204,7 +204,10 @@ impl Browser {
     /// the dot is always inside its cell, as the trusted core's reader
     /// requires (REQ-INT-127).
     fn page_point(&self, point: crate::geometry::Point) -> Option<Point> {
-        let (_, rect) = self.wall.open()?;
+        let (key, rect) = self.wall.open()?;
+        // On a ReGIS picture with its row of prompts beneath, the place the
+        // teletext page beneath has the cell under the pointer (REQ-6379).
+        let point = self.wall.grid_point(key, rect, point)?;
         cell_in(rect, point)?;
         let x = (point.x - rect.x0) / rect.width() * f64::from(PAGE_WIDTH);
         let y = (point.y - rect.y0) / rect.height() * f64::from(PAGE_HEIGHT);

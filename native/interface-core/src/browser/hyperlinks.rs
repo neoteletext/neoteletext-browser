@@ -76,6 +76,8 @@ impl Browser {
     pub fn set_links(&mut self, key: PageKey, links: PageLinks) {
         self.links.pages.insert(key, links);
         self.links.pages.retain(|key, _| key.channel == self.channel.channel);
+        // A ReGIS page's row of prompts comes and goes with its key links (REQ-6379).
+        self.lay_out_pictures();
         self.repoint();
     }
 
@@ -113,7 +115,7 @@ impl Browser {
     /// The open page's link under the pointer, and the cell.
     fn link_under_pointer(&self) -> Option<(usize, LinkCell)> {
         let (key, rect, links) = self.open_links()?;
-        let (column, row) = cell_in(rect, self.pointer)?;
+        let (column, row) = cell_in(rect, self.wall.grid_point(key, rect, self.pointer)?)?;
         let index = links.run_at(column, row)?;
         Some((index, LinkCell { key, version: links.version, column, row }))
     }
@@ -133,7 +135,7 @@ impl Browser {
     #[cfg(feature = "interaction")]
     pub(super) fn link_at(&self, point: Point) -> Option<(PageKey, usize)> {
         let (key, rect) = self.wall.open()?;
-        let (column, row) = cell_in(rect, point)?;
+        let (column, row) = cell_in(rect, self.wall.grid_point(key, rect, point)?)?;
         self.links.pages.get(&key)?.run_at(column, row).map(|index| (key, index))
     }
 
@@ -159,7 +161,7 @@ impl Browser {
     fn area_at(&self, point: Point, controls: bool) -> Option<(PageKey, Area)> {
         let (key, rect) = self.wall.open()?;
         let links = self.links.pages.get(&key)?;
-        let (column, row) = cell_in(rect, point)?;
+        let (column, row) = cell_in(rect, self.wall.grid_point(key, rect, point)?)?;
         let area = if controls { links.control_at(column, row) } else { links.runs.iter().find(|run| run.contains(column, row)).map(links::LinkRun::area) };
         Some((key, area?))
     }
@@ -436,6 +438,11 @@ impl Browser {
     /// destination stands in the address field.
     pub(super) const fn is_pointing(&self) -> bool {
         self.links.pointing.is_some()
+    }
+
+    /// Whether a page has coloured-key prompts: a link on its row 24.
+    pub(super) fn has_prompts(&self, key: PageKey) -> bool {
+        self.links.pages.get(&key).is_some_and(|links| links.runs.iter().any(links::LinkRun::is_prompt))
     }
 
     /// Whether the destination the strip is showing is outside the

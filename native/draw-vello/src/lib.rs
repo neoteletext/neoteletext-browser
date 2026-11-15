@@ -106,6 +106,9 @@ pub struct Painter {
     /// A ReGIS picture is contained in the rectangle its page is drawn
     /// in; else in the teletext page's band of it (REQ-6363).
     regis_contain: bool,
+    /// The pages drawn in ReGIS that show their row of coloured-key
+    /// prompts beneath the picture (REQ-6379).
+    regis_keyed: Vec<PageKey>,
     /// The number the next new page image takes.
     next_image: u64,
     /// The dots of each page that changed since the last frame was drawn,
@@ -162,6 +165,7 @@ impl Painter {
             pages: HashMap::new(),
             regis: HashMap::new(),
             regis_contain: true,
+            regis_keyed: Vec::new(),
             next_image: 0,
             changed: HashMap::new(),
             frame: Frame::new(DeviceBox::default()),

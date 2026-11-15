@@ -60,6 +60,8 @@ impl App {
             self.view.painter.redraw_whole();
         }
         let started = Instant::now();
+        // Which ReGIS pages show their row of prompts follows their links (REQ-6379).
+        self.view.painter.set_regis_keyed(self.view.browser.regis_keyed());
         self.view.painter.begin(width, height, graphics.window.scale_factor());
         let logical = (f64::from(width) / self.view.painter.scale, f64::from(height) / self.view.painter.scale);
         self.view.browser.draw(&mut self.view.painter, logical.0, logical.1, now);
