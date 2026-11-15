@@ -160,7 +160,10 @@ pub fn run(store_pages: usize) -> Result<(), ProtocolError> {
         output.flush()?;
         let now = engine.now_us();
         let audio = engine.next_audio_tick_ms().map(|ms| ms.saturating_mul(MICROSECONDS_PER_MILLISECOND));
-        let deadline = [flashing.next_us(now, engine.config()), audio].into_iter().flatten().min();
+        // A ReGIS picture whose repaint its budget held back is drawn when
+        // the budget allows (REQ-6380).
+        let regis = showing.iter().filter_map(|&page| engine.regis().owed_us(page, shown_subpage(&sent, page), now)).min();
+        let deadline = [flashing.next_us(now, engine.config()), audio, regis].into_iter().flatten().min();
         let received = match wait(&incoming, deadline, now) {
             Woken::Message(message) => Some(message),
             Woken::Deadline => None,
@@ -173,6 +176,7 @@ pub fn run(store_pages: usize) -> Result<(), ProtocolError> {
             // phase has changed.
             send_sounds(&mut engine, &mut output)?;
             draw(&engine, &flashing.due(now, engine.config()), now, &mut sent, &mut spare, &mut flashing, &mut output)?;
+            draw_regis(&mut engine, &showing, &sent, now, &mut output)?;
             continue;
         };
         let Some(message) = message? else { return Ok(()) };
@@ -191,7 +195,7 @@ pub fn run(store_pages: usize) -> Result<(), ProtocolError> {
                 for page in &fresh {
                     engine.regis().show_again(*page);
                 }
-                draw_regis(&mut engine, &showing, &sent, &mut output)?;
+                draw_regis(&mut engine, &showing, &sent, now, &mut output)?;
                 say_missing(&engine, &showing, now, &mut missing, &mut output)?;
                 continue;
             }
@@ -250,18 +254,24 @@ pub fn run(store_pages: usize) -> Result<(), ProtocolError> {
         shown_clock = clock;
         let pages: Vec<u16> = showing.iter().copied().filter(|page| ticked || changed.everything || changed.pages.contains(page)).collect();
         draw(&engine, &pages, now, &mut sent, &mut spare, &mut flashing, &mut output)?;
-        draw_regis(&mut engine, &showing, &sent, &mut output)?;
+        draw_regis(&mut engine, &showing, &sent, now, &mut output)?;
         say_missing(&engine, &showing, now, &mut missing, &mut output)?;
     }
 }
 
+/// The sub-page of a page on screen whose teletext page was drawn, if one
+/// was: the sub-page whose ReGIS picture is shown.
+fn shown_subpage(sent: &BTreeMap<u16, Rendered>, page: u16) -> Option<u16> {
+    sent.get(&page).map(|rendered| rendered.subpages.shown)
+}
+
 /// Sends the picture of each page on screen that the channel draws in
-/// ReGIS, when what it shows changed (DEC-6335): of the sub-page whose
-/// teletext page was drawn, or with none drawn the page's first with any.
-fn draw_regis(engine: &mut Engine, showing: &[u16], sent: &BTreeMap<u16, Rendered>, output: &mut Output<'_>) -> Result<(), ProtocolError> {
+/// ReGIS, when what it shows changed (DEC-6335) and its repaint budget
+/// allows (REQ-6380): of the sub-page whose teletext page was drawn, or
+/// with none drawn the page's first with any.
+fn draw_regis(engine: &mut Engine, showing: &[u16], sent: &BTreeMap<u16, Rendered>, now_us: u64, output: &mut Output<'_>) -> Result<(), ProtocolError> {
     for &page in showing {
-        let sub = sent.get(&page).map(|rendered| rendered.subpages.shown);
-        if let Some(drawn) = engine.regis().take(page, sub) {
+        if let Some(drawn) = engine.regis().take(page, shown_subpage(sent, page), now_us) {
             write_to_core(output, &FromDecoder::Regis { page: drawn.page, sub: drawn.sub, picture: drawn.picture, pick: drawn.pick })?;
         }
     }
