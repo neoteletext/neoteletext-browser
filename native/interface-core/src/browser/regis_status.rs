@@ -1,6 +1,7 @@
 //! What the ReGIS renderer's picture of the open page cost, drawn above
 //! the picture (DEC-6335 item 4): the count of commits applied and the
-//! work units the last repaint of its numbered drawings took. The owner
+//! work units its drawing took, on the base since its stream began and
+//! for the last repaint of its numbered drawings. The owner
 //! asked for the work units to be shown before any rule limits them.
 
 use alloc::format;

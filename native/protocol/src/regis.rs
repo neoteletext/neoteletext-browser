@@ -42,7 +42,8 @@ const _: () = assert!(16 + PICTURE_FIXED + REGIS_PACKED + 2 + MAX_PICK_ORIGINS *
 pub struct RegisPicture {
     /// The count of ReGIS v2 commits applied when it was painted.
     pub commits: u32,
-    /// The work units painting its numbered drawings cost.
+    /// The work units its drawing cost: on the base since its stream
+    /// began, and to paint its numbered drawings this time.
     pub work: u64,
     /// Red, green and blue of each of the sixteen colours.
     pub palette: [[u8; 3]; REGIS_COLOURS],

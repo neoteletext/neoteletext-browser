@@ -85,10 +85,10 @@ neoteletext-picture = { git = "file:///Users/andrewstuart/devel/neoteletext-rend
 # commit as the engine is (its DEC-6270; DEC-6335): DEC's vector graphics
 # language with the numbered drawings of ReGIS v2, drawn by the decoder for
 # the sub-pages a channel sends REGIS records for. MIT; no dependencies.
-regis = { git = "file:///Users/andrewstuart/devel/neoteletext-renderer-regis", rev = "e25752f2a1c3bb6fa4eb7d930192bbf6115d0688" }
+regis = { git = "file:///Users/andrewstuart/devel/neoteletext-renderer-regis", rev = "e7895719bca91d06760c5fe25d078b1509413581" }
 # The VT340's characters as text, which the confined decoder cannot read
 # from a file.
-regis-fonts = { git = "file:///Users/andrewstuart/devel/neoteletext-renderer-regis", rev = "e25752f2a1c3bb6fa4eb7d930192bbf6115d0688" }
+regis-fonts = { git = "file:///Users/andrewstuart/devel/neoteletext-renderer-regis", rev = "e7895719bca91d06760c5fe25d078b1509413581" }
 # Apache-2.0: the operating systems' audio output (Core Audio on macOS),
 # without unsafe code of ours (decision 37).
 cpal = "=0.18.2"

@@ -117,12 +117,15 @@ impl RegisPages {
         }
     }
 
-    /// The picture of a page's sub-page (`sub`, or with none the page's
-    /// first with any ReGIS), if what it shows changed since it was last
-    /// taken.
+    /// The picture of a page's sub-page (`sub`; or with none, or the
+    /// sub-code that names none, the page's first with any ReGIS), if what
+    /// it shows changed since it was last taken.
     pub fn take(&mut self, page: u16, sub: Option<u16>) -> Option<Drawn> {
         let key = match sub {
-            Some(sub) if self.pages.contains_key(&(page, sub)) => (page, sub),
+            // The sub-page on screen, and no other: a viewer stepping
+            // through a page's sub-pages must never be shown the picture
+            // of one that is not on screen while this one's is on its way.
+            Some(sub) if sub != neoteletext_core::limits::SUBCODE_ANY => (page, sub),
             _ => *self.pages.keys().find(|(held, _)| *held == page)?,
         };
         let held = self.pages.get_mut(&key)?;
@@ -131,7 +134,10 @@ impl RegisPages {
         }
         held.terminal.compose(&held.screen, &mut held.picture);
         let packed = pack(held.picture.canvas().pixels())?;
-        let picture = RegisPicture { commits: held.picture.commits(), work: held.picture.work(), palette: held.terminal.palette().colours(), packed };
+        // What the sub-page's drawing has cost: on the base since its
+        // stream began, and to paint its numbered drawings this time.
+        let work = held.terminal.base_work().saturating_add(held.picture.work());
+        let picture = RegisPicture { commits: held.picture.commits(), work, palette: held.terminal.palette().colours(), packed };
         let pick = RegisPick::of(held.picture.pick_record(), held.picture.origins());
         Some(Drawn { page: key.0, sub: key.1, picture, pick })
     }
@@ -161,6 +167,7 @@ mod tests {
         let drawn = pages.take(0x100, Some(0)).unwrap();
         let pixels = unpack(&drawn.picture.packed);
         assert_eq!(pixels[10 * REGIS_WIDTH + 20], 7, "the base");
+        assert!(drawn.picture.work >= 21 + 20, "the base's line and the drawing's are both counted");
         assert_eq!(pixels[50 * REGIS_WIDTH + 110], 3, "the numbered drawing");
         assert_eq!(drawn.picture.commits, 1);
         assert!(drawn.picture.work > 0);
@@ -185,6 +192,27 @@ mod tests {
         pages.read(&record(0x100, 3, 0, b"P[10,10]V[30,10]"));
         let drawn = pages.take(0x100, None).unwrap();
         assert_eq!(unpack(&drawn.picture.packed)[10 * REGIS_WIDTH + 20], 7);
+    }
+
+    /// A page with several sub-pages drawn in ReGIS shows the one on
+    /// screen and no other, even while that one's ReGIS has not come.
+    #[test]
+    fn only_the_sub_page_on_screen_is_taken() {
+        let sub = |code: u16, data: &'static [u8]| RegisRecord {
+            page: PageAddress::from_mpp(0x101).unwrap(),
+            subcode: SubCode::new(code),
+            generation: 1,
+            offset: 0,
+            data,
+        };
+        let mut pages = RegisPages::default();
+        pages.read(&sub(1, b"P[10,10]V[30,10]"));
+        assert!(pages.take(0x101, Some(2)).is_none(), "sub-page 2 is on screen and has no ReGIS yet");
+        pages.read(&sub(2, b"P[10,20]V[30,20]"));
+        let drawn = pages.take(0x101, Some(2)).unwrap();
+        assert_eq!(drawn.sub, 2);
+        assert_eq!(unpack(&drawn.picture.packed)[20 * REGIS_WIDTH + 20], 7);
+        assert_eq!(pages.take(0x101, Some(1)).unwrap().sub, 1);
     }
 
     /// The sub-pages kept are bounded: one more forgets the one fed longest ago.
