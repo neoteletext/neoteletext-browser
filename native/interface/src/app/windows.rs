@@ -238,6 +238,7 @@ impl App {
             return;
         };
         self.windows.insert(window.id(), self.window);
+        self.view.wheel_pointers = wheel_pointers(event_loop, window.scale_factor());
         self.view.graphics = Some(Graphics { window, surface, _context: context, asked: false });
         self.follow_reduced_motion();
         self.show_tabs();
@@ -260,4 +261,32 @@ impl App {
             self.send(event_loop, &ToCore::Window(report));
         }
     }
+}
+
+/// The wheel pointer's pictures, for a display of `scale` pixels to a
+/// point: every state, each with its wheel lit and unlit, drawn by the
+/// interface's own code and handed to the windowing system once (REQ-6356
+/// item 6). One the system refuses is left out, and the window then shows
+/// the system's own shape there.
+fn wheel_pointers(
+    event_loop: &ActiveEventLoop,
+    scale: f64,
+) -> std::collections::HashMap<(interface_core::wheel_cursor::WheelCursor, bool), winit::window::CustomCursor> {
+    use interface_core::wheel_cursor::{Ground, HOTSPOT, MAX_SCALE, SIZE, WheelCursor, image};
+    // A display's scale, upwards to a whole number within the pictures' bound.
+    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss, reason = "clamped to the bound first")]
+    let scale = scale.ceil().clamp(1.0, f64::from(MAX_SCALE)) as u16;
+    let (side, hotspot) = (SIZE.saturating_mul(scale), HOTSPOT.saturating_mul(scale));
+    let mut pointers = std::collections::HashMap::new();
+    for ground in [Ground::Dark, Ground::Light] {
+        for (up, down) in [(true, true), (true, false), (false, true)] {
+            for lit in [true, false] {
+                let state = WheelCursor { up, down, ground };
+                if let Ok(source) = winit::window::CustomCursor::from_rgba(image(state, lit, scale), side, side, hotspot, hotspot) {
+                    pointers.insert((state, lit), event_loop.create_custom_cursor(source));
+                }
+            }
+        }
+    }
+    pointers
 }

@@ -57,6 +57,7 @@ impl Browser {
             canvas.fill(Rect::new(0.0, body_top - MARGIN, width, height), 0.0, screen);
         }
         let surface = screen.map_or(Surface::BROWSER, Surface::on);
+        self.ground_ink = surface.ink;
         // The console docks where the overview is, minimised to its tab
         // bar or maximised to all the pages can spare (decision 120); the
         // overview hidden from the View menu gives its room to the pages.

@@ -78,8 +78,12 @@ struct View {
     cursor: (f64, f64),
     /// What the window has drawn and has still to draw.
     pace: pace::Pace,
-    /// The pointer shape last set on the window.
-    pointer_shape: Cursor,
+    /// The pointer shape last set on the window, and whether the wheel
+    /// pointer's wheel was lit in it (REQ-6356).
+    pointer_shape: (Cursor, bool),
+    /// The wheel pointer's pictures as the windowing system holds them,
+    /// by state and by whether the wheel is lit: made with the window.
+    wheel_pointers: HashMap<(interface_core::wheel_cursor::WheelCursor, bool), winit::window::CustomCursor>,
     /// The page last reported as opened.
     opened: Option<PageKey>,
     /// Another part of the browser has the keys, as the trusted core was
@@ -123,7 +127,8 @@ impl View {
             painter: Painter::new(Family::Roboto),
             cursor: (0.0, 0.0),
             pace: pace::Pace::default(),
-            pointer_shape: Cursor::Arrow,
+            pointer_shape: (Cursor::Arrow, false),
+            wheel_pointers: HashMap::new(),
             opened: None,
             #[cfg(feature = "interaction")]
             keys_elsewhere: false,

@@ -58,3 +58,4 @@ pub mod theme;
 pub mod trace;
 pub mod tween;
 pub mod wall;
+pub mod wheel_cursor;

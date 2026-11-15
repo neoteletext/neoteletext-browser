@@ -113,6 +113,14 @@ impl Wall {
         Some(key)
     }
 
+    /// Whether there is a page before the zoomed one, and one after it, to
+    /// step to.
+    #[must_use]
+    pub fn zoom_ways(&self) -> (bool, bool) {
+        let Some(current) = self.page_keys.iter().position(|&key| Some(key) == self.zoomed).filter(|_| self.zoom_in) else { return (false, false) };
+        (current > 0, current.saturating_add(1) < self.page_keys.len())
+    }
+
     /// Turns the wheel's movement into page steps while zoomed, one page for
     /// every `WHEEL_PER_PAGE` pixels; the wheel turned towards the user (a
     /// positive distance) goes to the next page. Returns the page now

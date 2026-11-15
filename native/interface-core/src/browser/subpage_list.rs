@@ -586,6 +586,24 @@ mod tests {
         browser.take_outputs();
         let page = browser.selected;
         beside_the_page(&mut browser);
+        // REQ-6356: there the pointer is the wheel's, with an arrow for
+        // each way there are sub-pages, and it asks to be woken to blink.
+        let ways = |browser: &crate::browser::Browser| match browser.cursor() {
+            Cursor::Wheel(wheel) => Some((wheel.up, wheel.down, wheel.ground)),
+            _ => None,
+        };
+        assert_eq!(ways(&browser), Some((false, true, crate::wheel_cursor::Ground::Dark)), "on the first sub-page, only down");
+        assert_eq!(browser.frame_interval(2_100), Some(150), "woken when the wheel next blinks");
+        assert!(browser.settle(2_100) && !browser.settle(2_200) && browser.settle(2_300), "each change of the wheel is one change");
+        chosen(&mut browser, 40, 20);
+        assert_eq!(ways(&browser).map(|(up, down, _)| (up, down)), Some((true, true)), "in the middle, both");
+        chosen(&mut browser, 40, 39);
+        assert_eq!(ways(&browser).map(|(up, down, _)| (up, down)), Some((true, false)), "on the last, only up");
+        chosen(&mut browser, 40, 0);
+        let list = browser.regions.list;
+        browser.pointer_moved(f64::midpoint(list.x0, list.x1), list.y1 - 2.0, 0);
+        assert_eq!(ways(&browser), None, "over a list the pointer is the list's");
+        beside_the_page(&mut browser);
         // A notch of any size is one sub-page, towards the viewer the next.
         assert!(browser.wheel_lines(0.1, 2_000));
         assert_eq!(asked(&mut browser), Some(2), "the next sub-page");

@@ -46,6 +46,7 @@ impl Browser {
             .chain(self.tips_deadline(now))
             .chain(self.tabs_deadline(now))
             .chain(self.full_screen_deadline(now))
+            .chain(self.wheel_blink_deadline(now))
             .min();
         if self.wall.animating(now) || self.remote_animating(now) {
             Some(SMOOTH_FRAME_MILLISECONDS)
@@ -78,7 +79,8 @@ impl Browser {
         let tipped = self.tips_settle(now);
         let paneled = self.tabs_settle(now);
         let full_screen = self.full_screen_settle(now);
-        self.pulses.len() != before || self.updates.len() != updates || held || tipped || paneled || full_screen
+        let blinked = self.wheel_blink_settle(now);
+        self.pulses.len() != before || self.updates.len() != updates || held || tipped || paneled || full_screen || blinked
     }
 }
 

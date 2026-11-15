@@ -132,20 +132,31 @@ impl App {
             }
         }
         let cursor = self.view.browser.cursor();
-        if cursor == self.view.pointer_shape {
+        // The wheel pointer's wheel blinks: its picture is one of two (REQ-6356 item 3).
+        let lit = matches!(cursor, Cursor::Wheel(_)) && interface_core::wheel_cursor::lit(self.now());
+        if (cursor, lit) == self.view.pointer_shape {
             return;
         }
-        self.view.pointer_shape = cursor;
-        if let Some(graphics) = &self.view.graphics {
-            graphics.window.set_cursor(match cursor {
-                Cursor::Arrow => CursorIcon::Default,
-                Cursor::Hand => CursorIcon::Pointer,
-                // A link that leaves the channel: the shape of a shortcut.
-                Cursor::External => CursorIcon::Alias,
-                Cursor::ResizeColumn => CursorIcon::ColResize,
-                Cursor::ResizeRow => CursorIcon::RowResize,
-            });
-        }
+        self.view.pointer_shape = (cursor, lit);
+        let Some(graphics) = &self.view.graphics else { return };
+        let icon = match cursor {
+            Cursor::Arrow => CursorIcon::Default,
+            Cursor::Hand => CursorIcon::Pointer,
+            // A link that leaves the channel: the shape of a shortcut.
+            Cursor::External => CursorIcon::Alias,
+            Cursor::ResizeColumn => CursorIcon::ColResize,
+            Cursor::ResizeRow => CursorIcon::RowResize,
+            Cursor::Wheel(wheel) => {
+                if let Some(picture) = self.view.wheel_pointers.get(&(wheel, lit)) {
+                    graphics.window.set_cursor(picture.clone());
+                    return;
+                }
+                // A platform that made no picture marks the place with its
+                // own up-and-down shape (REQ-6356 item 7).
+                CursorIcon::NsResize
+            }
+        };
+        graphics.window.set_cursor(icon);
     }
 
     /// Asks for the window at hand's next frame when it is due, and says

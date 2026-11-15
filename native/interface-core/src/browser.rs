@@ -162,6 +162,13 @@ pub struct Browser {
     wheel_step_carry: f64,
     /// When the wheel last stepped a sub-page by a notch.
     wheel_step_at: Option<u64>,
+    /// Whether the wheel pointer's wheel was lit when last asked; none
+    /// while that pointer does not show (REQ-6356).
+    wheel_lit: Option<bool>,
+    /// The ink of what the window below the strip stands on, as last
+    /// drawn: white on a dark ground, which chooses the wheel pointer's
+    /// variant.
+    ground_ink: crate::theme::Colour,
     /// The page list's width, as the divider was pulled.
     list_width: f64,
     /// Where the divider was gripped, from its left edge, while it is pulled.
@@ -264,6 +271,8 @@ impl Browser {
             wheel_list: pointer::WheelList::Pages,
             wheel_step_carry: 0.0,
             wheel_step_at: None,
+            wheel_lit: None,
+            ground_ink: crate::theme::WHITE,
             list_width: divider::LIST_WIDTH,
             divider_grip: None,
             previewed: None,

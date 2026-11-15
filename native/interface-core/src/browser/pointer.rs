@@ -25,6 +25,9 @@ pub enum Cursor {
     ResizeColumn,
     /// Over the divider between the pages and their sub-pages.
     ResizeRow,
+    /// Where the wheel steps pages or sub-pages: a mouse with arrows for
+    /// the ways there are items (REQ-6356).
+    Wheel(crate::wheel_cursor::WheelCursor),
 }
 
 impl Browser {
@@ -97,7 +100,12 @@ impl Browser {
             || self.console.over_window_button(self.pointer)
             || self.hovered_row.is_some()
             || self.hovered_bank.is_some();
-        if self.wall.over_page() || self.previewed.is_some() || over_toggle { Cursor::Hand } else { Cursor::Arrow }
+        if self.wall.over_page() || self.previewed.is_some() || over_toggle {
+            Cursor::Hand
+        } else {
+            // Only where the pointer would be the plain arrow (REQ-6356 item 5).
+            self.wheel_cursor().map_or(Cursor::Arrow, Cursor::Wheel)
+        }
     }
 
     /// The page row and the magazine under the pointer, highlighted and
@@ -141,7 +149,7 @@ impl Browser {
         if self.tips_scroll(lines * LINE_HEIGHT) {
             return true;
         }
-        if !self.over_overlay() && self.wall.zoomed().is_some() && self.wall.contains(self.pointer) && !self.wall.over_bar(self.pointer) {
+        if self.wheel_steps_here() {
             self.wheel_notch(lines, now);
             return true;
         }
