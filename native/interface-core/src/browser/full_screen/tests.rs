@@ -315,7 +315,10 @@ fn the_keys_badge_is_drawn_whole_beside_the_page_at_full_screen_sizes() {
             let key = browser.wall().zoomed().expect("a page open");
             let typing = TypingView { channel: key.channel, page: key.page, on: true, secure: false, refused: false, cursor: None, round_trip_us: Some(3_250) };
             browser.set_typing(typing, 0);
-            // After the notice, so that every text drawn is the badge's.
+            // After the notice, and after the label of a page that came to
+            // be held at a whole multiple of its actual size at its first
+            // drawing (REQ-6387), so that every text drawn is the badge's.
+            browser.draw(&mut Recorder::new(), width, height, 0);
             let mut canvas = Recorder::new();
             browser.draw(&mut canvas, width, height, NOTICE_MILLISECONDS);
             let area = Rect::new(0.0, 0.0, width, height);

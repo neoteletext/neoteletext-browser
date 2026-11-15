@@ -188,7 +188,7 @@ impl Wall {
         let area = self.area;
         let room = Rect::new(area.x0 + WALL_PADDING, area.y0 + WALL_PADDING + CAPTION_HEIGHT + CAPTION_GAP, area.x1 - WALL_PADDING, area.y1 - WALL_PADDING);
         let aspect = self.open_shape(self.zoomed);
-        let width = room.width().min(room.height() / aspect).max(0.0);
+        let (width, _) = self.held_width(self.zoomed, room.width().min(room.height() / aspect).max(0.0));
         let left = f64::midpoint(room.x0, room.x1) - width / 2.0;
         Rect::new(left, room.y0, left + width, room.y0 + width * aspect)
     }
@@ -217,7 +217,10 @@ impl Wall {
         self.scroll = self.scroll.max(0.0);
         let area = self.area;
         let Some((current, page)) = pages.iter().enumerate().find(|(_, page)| page.key == key) else { return 0.0 };
+        self.device_scale = canvas.device_scale();
         let rect = self.zoomed_rect();
+        let held = self.held_width(Some(key), rect.width()).1;
+        self.note_held(held, now);
         self.draw_sliding(canvas, pages, current, rect, true, now);
         // The caption line stays put on its own background; pages slide
         // beneath it.
@@ -320,8 +323,13 @@ impl Wall {
     /// runs out first, and centred, in its screen colour, the next pages
     /// sliding in; returns where it is drawn with its screen.
     fn draw_alone<C: Canvas + ?Sized>(&mut self, canvas: &mut C, area: Rect, pages: &[WallPage<'_>], current: usize, now: u64) -> Rect {
-        let aspect = self.open_shape(pages.get(current).map(|page| page.key));
-        let width = area.width().min(area.height() / aspect).max(0.0);
+        let key = pages.get(current).map(|page| page.key);
+        let aspect = self.open_shape(key);
+        self.device_scale = canvas.device_scale();
+        // Held at a whole multiple of the page's actual size while the
+        // room is no more than a little past it (REQ-6387).
+        let (width, held) = self.held_width(key, area.width().min(area.height() / aspect).max(0.0));
+        self.note_held(held, now);
         let (left, top) = (f64::midpoint(area.x0, area.x1) - width / 2.0, f64::midpoint(area.y0, area.y1) - width * aspect / 2.0);
         let rect = Rect::new(left, top, left + width, top + width * aspect);
         // Around the page, its screen colour, as the page area draws it.

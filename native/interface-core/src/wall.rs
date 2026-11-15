@@ -110,6 +110,15 @@ pub struct Wall {
     /// Those of them that show the row of coloured-key prompts beneath
     /// their picture (REQ-6379).
     keyed: Vec<PageKey>,
+    /// Every page drawn in ReGIS, whichever way its picture is fitted: its
+    /// actual size is the picture's, not the teletext page's (REQ-6387).
+    regis_pages: Vec<PageKey>,
+    /// The display's physical pixels for each unit drawn in, as the canvas
+    /// last drawn on said.
+    device_scale: f64,
+    /// The whole multiple of its actual size the open page is held at,
+    /// and when it came to be (REQ-6387).
+    held: Option<(u32, u64)>,
     /// The page size before a click zoomed a page, restored when it closes.
     width_before_zoom: Option<f32>,
     /// While zoomed, how far the pages are from resting in place, in pages:
@@ -190,6 +199,9 @@ impl Wall {
             page_keys: Vec::new(),
             pictures: Vec::new(),
             keyed: Vec::new(),
+            regis_pages: Vec::new(),
+            device_scale: 1.0,
+            held: None,
             width_before_zoom: None,
             slide: Tween::new(0.0, SLIDE_MILLISECONDS, STANDARD),
             wheel_carry: 0.0,
@@ -267,6 +279,43 @@ impl Wall {
     pub fn set_keyed(&mut self, keyed: impl Iterator<Item = PageKey>) {
         self.keyed.clear();
         self.keyed.extend(keyed);
+    }
+
+    /// Every page drawn in ReGIS, whose actual size is its picture's.
+    pub fn set_regis_pages(&mut self, pages: impl Iterator<Item = PageKey>) {
+        self.regis_pages.clear();
+        self.regis_pages.extend(pages);
+    }
+
+    /// The width a page open alone is drawn at, with its screen, when its
+    /// room allows `width`, and the whole multiple of its actual size it is
+    /// then held at, if any (REQ-6387): the image inside the screen is what
+    /// is measured, 800 pixels across for a page drawn in ReGIS and the
+    /// teletext page's dots for any other.
+    pub(crate) fn held_width(&self, key: Option<PageKey>, width: f64) -> (f64, Option<u32>) {
+        use crate::canvas::{PAGE_WIDTH, REGIS_WIDTH, SCREEN_SCALE, sticky_width};
+        // A teletext page drawn wider by the correction has no whole
+        // number of pixels across; held, its height is the whole multiple.
+        let actual = if key.is_some_and(|key| self.regis_pages.contains(&key)) { f64::from(REGIS_WIDTH) } else { f64::from(PAGE_WIDTH) * self.shape.stretch() };
+        let (image, held) = sticky_width(width / SCREEN_SCALE, actual, self.device_scale);
+        (if held.is_some() { image * SCREEN_SCALE } else { width }, held)
+    }
+
+    /// Notes the multiple the open page is drawn held at, or that it is
+    /// not held: the label is for the moment it comes to be.
+    pub(crate) fn note_held(&mut self, held: Option<u32>, now: u64) {
+        if self.held.map(|(multiple, _)| multiple) != held {
+            self.held = held.map(|multiple| (multiple, now));
+        }
+    }
+
+    /// The multiple the open page has lately come to be held at, while its
+    /// label shows, and when the label goes.
+    #[must_use]
+    pub fn held_label(&self, now: u64) -> Option<(u32, u64)> {
+        let (multiple, since) = self.held?;
+        let until = since.saturating_add(crate::canvas::STICK_LABEL_MILLISECONDS);
+        (now < until).then_some((multiple, until))
     }
 
     /// The point of a page's image at which its teletext page, drawn

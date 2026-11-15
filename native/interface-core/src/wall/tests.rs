@@ -478,3 +478,123 @@ fn the_screen_is_one_cell_of_the_page_as_drawn() {
         assert!(same(image.y0 - rect.y0, image.height() / columns) && same(rect.y1 - image.y1, image.height() / columns), "{shape:?} {image:?}");
     }
 }
+
+/// REQ-6387: a page's image is exactly a whole multiple of its actual
+/// size while its room is that multiple or up to a twentieth more, on a
+/// display of any scale, and fills its room otherwise; the band lies only
+/// above the multiple, since a page cannot be larger than its room.
+#[test]
+fn a_width_within_a_twentieth_above_a_whole_multiple_is_held_at_it() {
+    use crate::canvas::{REGIS_WIDTH, STICK_SHARE, sticky_width};
+    for actual in [f64::from(PAGE_WIDTH), f64::from(REGIS_WIDTH)] {
+        for scale in [1.0, 2.0] {
+            for multiple in [1_u32, 2, 3] {
+                let exact = f64::from(multiple) * actual / scale;
+                assert_eq!(sticky_width(exact, actual, scale), (exact, Some(multiple)), "at the multiple");
+                assert_eq!(sticky_width(exact * 1.03, actual, scale), (exact, Some(multiple)), "inside the band");
+                assert_eq!(sticky_width(exact * (1.0 + STICK_SHARE) - 1e-6, actual, scale), (exact, Some(multiple)), "at the band's end");
+                let past = exact * (1.0 + STICK_SHARE) + 0.5;
+                assert_eq!(sticky_width(past, actual, scale), (past, None), "past the band");
+                let below = exact - 0.5;
+                assert_ne!(sticky_width(below, actual, scale).1, Some(multiple), "below the multiple");
+                assert!(sticky_width(below, actual, scale).0 <= below, "never larger than its room");
+            }
+        }
+    }
+    assert_eq!(sticky_width(300.0, 480.0, 1.0), (300.0, None), "smaller than its actual size, nothing holds it");
+    assert_eq!(sticky_width(0.0, 480.0, 1.0), (0.0, None));
+    assert_eq!(sticky_width(500.0, 480.0, 0.0), (500.0, None));
+}
+
+/// The image of the one page open alone in a panel `width` across, far
+/// taller than the page needs, on a display of `scale`.
+fn image_alone(wall: &mut Wall, width: f64, scale: f64) -> Rect {
+    let mut canvas = Recorder::new();
+    canvas.scale = scale;
+    let pages = pages(1);
+    wall.draw(&mut canvas, Rect::new(0.0, 0.0, width, 4_000.0), &pages, None, 10_000);
+    last_rect(&canvas, pages[0].key)
+}
+
+/// REQ-6387: as the window grows, the page open alone grows with it but
+/// for a stretch at each whole multiple of its actual size, where it
+/// stays exactly that size, centred: 480 display pixels and 960 for a
+/// teletext page, 800 for a page drawn in ReGIS, on displays of scale 1
+/// and 2.
+#[test]
+fn the_page_alone_is_held_at_whole_multiples_as_its_room_grows() {
+    use crate::canvas::{REGIS_WIDTH, STICK_SHARE};
+    let key = pages(1)[0].key;
+    for (regis, actual) in [(false, f64::from(PAGE_WIDTH)), (true, f64::from(REGIS_WIDTH))] {
+        for scale in [1.0, 2.0] {
+            let mut wall = Wall::new();
+            if regis {
+                wall.set_regis_pages(core::iter::once(key));
+            }
+            let mut held_at = Vec::new();
+            let mut last = 0.0;
+            for width in 100..2_400_u32 {
+                let image = image_alone(&mut wall, f64::from(width), scale);
+                assert!(same(f64::midpoint(image.x0, image.x1), f64::from(width) / 2.0), "centred: {image:?}");
+                assert!(image.width() >= last - 1e-9, "never smaller in a larger room: {image:?}");
+                last = image.width();
+                let multiples = image.width() * scale / actual;
+                let whole = multiples.floor();
+                if whole >= 1.0 {
+                    assert!(same(multiples, whole) || multiples > whole * (1.0 + STICK_SHARE) - 1e-9, "no size just past a multiple: {multiples} at {width}");
+                }
+                if same(multiples, whole) && whole >= 1.0 {
+                    held_at.push((whole, width));
+                }
+            }
+            for multiple in [1.0, 2.0] {
+                let stretch = held_at.iter().filter(|(whole, _)| same(*whole, multiple)).count();
+                // The band in panel widths: a twentieth of the multiple,
+                // less a pixel at each end for where the steps fall.
+                let band = multiple * actual / scale * STICK_SHARE;
+                assert!(
+                    f64::from(u32::try_from(stretch).unwrap()) >= band - 2.0,
+                    "held at {multiple} for {stretch} of about {band} widths (regis {regis}, scale {scale})"
+                );
+            }
+        }
+    }
+}
+
+/// REQ-6387: with the width correction on, a held teletext page is a
+/// whole multiple of its dots in height, which is what the correction
+/// leaves whole.
+#[test]
+fn a_corrected_page_is_held_by_its_height() {
+    let mut wall = Wall::new();
+    wall.set_shape(PageShape::Corrected);
+    let held = f64::from(PAGE_WIDTH) * STRETCH * SCREEN_SCALE * 1.02;
+    let image = image_alone(&mut wall, held, 1.0);
+    assert!(same(image.height(), f64::from(PAGE_HEIGHT)), "{image:?}");
+}
+
+/// REQ-6387: the label is for the moment a page comes to be held: it
+/// names the multiple for a second and a half from then, is not renewed
+/// by frames at the same size, and comes again only when the page is
+/// held anew.
+#[test]
+fn the_held_label_lasts_from_the_moment_the_page_is_held() {
+    use crate::canvas::STICK_LABEL_MILLISECONDS;
+    let pages = pages(1);
+    let mut wall = Wall::new();
+    let mut canvas = Recorder::new();
+    canvas.scale = 1.0;
+    let held = Rect::new(0.0, 0.0, f64::from(PAGE_WIDTH) * SCREEN_SCALE * 1.02, 4_000.0);
+    let free = Rect::new(0.0, 0.0, f64::from(PAGE_WIDTH) * SCREEN_SCALE * 1.5, 4_000.0);
+    wall.draw(&mut canvas, free, &pages, None, 0);
+    assert_eq!(wall.held_label(0), None, "not held, no label");
+    wall.draw(&mut canvas, held, &pages, None, 100);
+    assert_eq!(wall.held_label(100), Some((1, 100 + STICK_LABEL_MILLISECONDS)));
+    wall.draw(&mut canvas, held, &pages, None, 1_000);
+    assert_eq!(wall.held_label(1_000), Some((1, 100 + STICK_LABEL_MILLISECONDS)), "a later frame does not renew it");
+    assert_eq!(wall.held_label(100 + STICK_LABEL_MILLISECONDS), None, "gone when its time is up");
+    wall.draw(&mut canvas, free, &pages, None, 5_000);
+    assert_eq!(wall.held_label(5_000), None);
+    wall.draw(&mut canvas, held, &pages, None, 6_000);
+    assert_eq!(wall.held_label(6_000), Some((1, 6_000 + STICK_LABEL_MILLISECONDS)), "held anew");
+}

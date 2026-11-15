@@ -10,12 +10,18 @@ use alloc::string::String;
 use crate::browser::Browser;
 use crate::canvas::{Canvas, PageKey, ROWS, Style};
 use crate::geometry::Rect;
-use crate::theme::GREY;
+use crate::theme::{GREY, ROW_TITLE};
 
 /// The text against a row's height.
 const TEXT_SHARE: f64 = 0.6;
 /// Room before the text, against a row's height.
 const INSET_SHARE: f64 = 0.3;
+/// The label that names the size a page has come to be held at: its
+/// height, the room round its words, its corners, and its distance from
+/// the top of the page (REQ-6387).
+const HELD_LABEL_HEIGHT: f64 = 30.0;
+const HELD_LABEL_PADDING: f64 = 10.0;
+const HELD_LABEL_RADIUS: f64 = 4.0;
 /// Digits between the separators of a long number.
 const GROUP: usize = 3;
 
@@ -52,6 +58,37 @@ impl Browser {
         self.wall.set_pictures(pictures.into_iter());
         let keyed = self.regis_keyed();
         self.wall.set_keyed(keyed.into_iter());
+        let regis: alloc::vec::Vec<PageKey> = self.regis.keys().copied().collect();
+        self.wall.set_regis_pages(regis.into_iter());
+    }
+
+    /// The words for the multiple of its actual size a page is held at.
+    fn held_words(multiple: u32) -> String {
+        match multiple {
+            1 => "Actual size".into(),
+            2 => "Twice actual size".into(),
+            more => format!("{more} times actual size"),
+        }
+    }
+
+    /// When the label that names the size the open page came to be held at
+    /// goes, while it shows: a frame is drawn then, without it.
+    pub(super) fn held_label_deadline(&self, now: u64) -> Option<u64> {
+        self.wall.held_label(now).map(|(_, until)| until.saturating_sub(now).max(1))
+    }
+
+    /// The label over the top of the open page for a moment after it comes
+    /// to be held at a whole multiple of its actual size (REQ-6387): "Actual
+    /// size", in the browser's own type.
+    pub(super) fn draw_held_label<C: Canvas + ?Sized>(&self, canvas: &mut C, now: u64) {
+        let Some((multiple, _)) = self.wall.held_label(now) else { return };
+        let Some((_, image)) = self.wall.open() else { return };
+        let words = Self::held_words(multiple);
+        let width = canvas.text_width(&words, ROW_TITLE) + HELD_LABEL_PADDING * 2.0;
+        let left = (image.x0 + image.x1 - width) / 2.0;
+        let place = Rect::new(left, image.y0 + HELD_LABEL_PADDING, left + width, image.y0 + HELD_LABEL_PADDING + HELD_LABEL_HEIGHT);
+        canvas.fill(place, HELD_LABEL_RADIUS, crate::theme::BUTTON);
+        crate::text::centred(canvas, place, &words, ROW_TITLE, crate::theme::WHITE);
     }
 
     /// The pages drawn in ReGIS whose teletext page beneath has
@@ -120,6 +157,48 @@ mod tests {
         browser.draw(&mut canvas, WIDTH, HEIGHT, 0);
         let (_, kept) = browser.wall().shown().next().unwrap();
         assert!((shape(kept) - shape(teletext)).abs() < 1e-9, "the teletext page's shape: {kept:?}");
+    }
+
+    /// REQ-6387: the label over a page that has come to be held at its
+    /// actual size says "Actual size", never a number and a cross; it is
+    /// drawn over the top of the page, and is gone a second and a half
+    /// later, for which a frame is asked.
+    #[test]
+    fn the_held_label_says_actual_size_and_goes() {
+        use crate::browser::Browser;
+        use crate::browser::fixture::{HEIGHT, WIDTH, browser};
+        use crate::canvas::STICK_LABEL_MILLISECONDS;
+        use crate::test_canvas::Recorder;
+        assert_eq!(Browser::held_words(1), "Actual size");
+        assert_eq!(Browser::held_words(2), "Twice actual size");
+        assert_eq!(Browser::held_words(3), "3 times actual size");
+        let (mut browser, _) = browser();
+        browser.toggle_wall(0);
+        // The window's width at which the open page's room is a little
+        // past a whole multiple is found, not assumed: the bars and panels around
+        // the page is not this test's business.
+        let found = (0..2_000_u32).map(|step| WIDTH + f64::from(step)).find(|width| {
+            let (mut fresh, _) = crate::browser::fixture::browser();
+            fresh.toggle_wall(0);
+            fresh.draw(&mut Recorder::new(), *width, HEIGHT * 4.0, 0);
+            fresh.wall().held_label(0).is_some()
+        });
+        let width = found.expect("some width holds the page");
+        let mut canvas = Recorder::new();
+        browser.draw(&mut canvas, width, HEIGHT * 4.0, 0);
+        let (multiple, _) = browser.wall().held_label(0).unwrap();
+        let words = Browser::held_words(multiple);
+        let (_, image) = browser.wall().open().unwrap();
+        let (place, _) = canvas.texts.iter().find(|(_, text)| *text == words).expect("the label is drawn");
+        assert!(place.y0 >= image.y0 && place.y1 <= image.y1 && place.x0 >= image.x0 && place.x1 <= image.x1, "over the page: {place:?} in {image:?}");
+        let crossed =
+            |text: &str| text.strip_suffix(['x', '\u{d7}']).is_some_and(|number| !number.is_empty() && number.chars().all(|digit| digit.is_ascii_digit()));
+        assert!(!canvas.texts.iter().any(|(_, text)| crossed(text)), "no number and cross");
+        assert_eq!(browser.held_label_deadline(0), Some(STICK_LABEL_MILLISECONDS));
+        let mut later = Recorder::new();
+        browser.draw(&mut later, width, HEIGHT * 4.0, STICK_LABEL_MILLISECONDS);
+        assert!(!later.texts.iter().any(|(_, text)| *text == words), "gone");
+        assert_eq!(browser.held_label_deadline(STICK_LABEL_MILLISECONDS), None);
     }
 
     /// REQ-6363: a picture contained in an area is as large as fits at its

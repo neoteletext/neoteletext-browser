@@ -189,6 +189,40 @@ impl PageShape {
     }
 }
 
+/// How far past a whole multiple of its actual size the room for an open
+/// page may grow while the page is still held at that multiple, as a share
+/// of the multiple (REQ-6387): enough to feel as the window is dragged,
+/// and never more than a twentieth of the page left as margin.
+pub const STICK_SHARE: f64 = 0.05;
+
+/// How long the label that names the size a page has come to be held at
+/// stays, in milliseconds (REQ-6387).
+pub const STICK_LABEL_MILLISECONDS: u64 = 1_500;
+
+/// The width an open page's image is drawn at when its room allows
+/// `width`, and the whole multiple of its actual size it is held at, if it
+/// is (REQ-6387). `actual` is the page's own width in its own pixels and
+/// `device_scale` the display's physical pixels for each unit of `width`.
+/// While the room is a whole multiple of the actual size or up to
+/// [`STICK_SHARE`] more, the page is exactly that multiple, each of its
+/// pixels a whole number of the display's; otherwise it fills its room.
+/// The band lies only above the multiple: a page cannot be larger than
+/// its room.
+#[must_use]
+pub fn sticky_width(width: f64, actual: f64, device_scale: f64) -> (f64, Option<u32>) {
+    if width <= 0.0 || actual <= 0.0 || device_scale <= 0.0 {
+        return (width, None);
+    }
+    let multiples = width * device_scale / actual;
+    let whole = libm::floor(multiples);
+    if whole < 1.0 || multiples > whole * (1.0 + STICK_SHARE) {
+        return (width, None);
+    }
+    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss, reason = "at least 1, and a display is not billions of pixels wide")]
+    let held = whole.min(f64::from(u32::MAX)) as u32;
+    (whole * actual / device_scale, Some(held))
+}
+
 /// Where a page's image sits when the page, with its screen, is drawn in
 /// `rect`: smaller by [`SCREEN_SCALE`] both ways and centred, so the screen
 /// is [`SCREEN_BORDER`] dots of the drawn page at the sides, and as wide in
