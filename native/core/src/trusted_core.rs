@@ -27,6 +27,7 @@ mod picture;
 mod processes;
 mod redirects;
 mod run;
+mod selection;
 mod settings;
 mod sound;
 mod startup;

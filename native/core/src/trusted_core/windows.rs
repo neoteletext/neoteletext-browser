@@ -17,6 +17,10 @@ pub(super) struct Shown {
     frames: frames::Frames,
     showing: Option<u32>,
     pages: Vec<u16>,
+    /// The open page's controls and the choice on its way, which are the
+    /// window's own: one window's pages no longer change another's
+    /// (DEC-6358, fault 8).
+    controls: super::page_controls::State,
 }
 
 impl Core {
@@ -63,12 +67,18 @@ impl Core {
         self.frames = next.frames;
         self.showing = next.showing;
         self.shown_pages = next.pages;
+        self.controls.restore(next.controls);
         true
     }
 
     /// Sets aside what the window at hand, `id`, shows.
     fn park_shown(&mut self, id: u32) {
-        let shown = Shown { frames: std::mem::take(&mut self.frames), showing: self.showing.take(), pages: std::mem::take(&mut self.shown_pages) };
+        let shown = Shown {
+            frames: std::mem::take(&mut self.frames),
+            showing: self.showing.take(),
+            pages: std::mem::take(&mut self.shown_pages),
+            controls: self.controls.park(),
+        };
         self.shown_elsewhere.insert(id, shown);
     }
 
@@ -287,6 +297,32 @@ mod tests {
     use super::super::test_support::Test;
     use super::*;
     use interface_core::library::WindowGeometry;
+
+    /// DEC-6358, fault 8: the open page's controls are each window's own.
+    /// A page open in one window is still that window's when another
+    /// window has been at hand and has opened its own.
+    #[test]
+    fn each_window_keeps_its_own_open_page() {
+        use interface_core::canvas::PageKey;
+        let mut test = Test::new("windows controls");
+        test.core.session.open("news.invalid").unwrap();
+        let first = test.core.session.window;
+        let news = PageKey { channel: test.core.active_channel().unwrap(), page: 0x100 };
+        test.core.page_opened(Some(news)).unwrap();
+        // A second window, made as the session makes one, then come to
+        // as the core comes to a window.
+        let second = test.core.session.new_window(false).unwrap();
+        assert!(test.core.session.switch_to(first));
+        assert!(test.core.switch_window(second));
+        test.core.session.open("sport.invalid").unwrap();
+        assert_eq!(test.core.page_open(), None, "the new window has no page open");
+        let sport = PageKey { channel: test.core.active_channel().unwrap(), page: 0x300 };
+        test.core.page_opened(Some(sport)).unwrap();
+        assert!(test.core.switch_window(first));
+        assert_eq!(test.core.page_open(), Some(news), "the first window's page, not the second's");
+        assert!(test.core.switch_window(second));
+        assert_eq!(test.core.page_open(), Some(sport));
+    }
 
     /// `multiple-windows.md`: a message for another window than the last
     /// is preceded by its window's number; intents act on the window they

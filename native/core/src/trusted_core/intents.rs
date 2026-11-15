@@ -281,6 +281,13 @@ impl Core {
         {
             self.opened = key;
             self.fill_ends();
+            // A page that opens at a sub-page named for it is selected at
+            // that sub-page, in the one selection: without this its channel
+            // was told the page with no sub-page and then the sub-page
+            // (DEC-6358, fault 10).
+            if let Some((key, subpage)) = key.and_then(|key| Some((key, self.pending_subpage(key)?))) {
+                self.typing.preselect(key, subpage);
+            }
             let sends = self.typing.opened(self.active_channel(), key, self.now_us());
             self.deliver_typing(sends)?;
         }

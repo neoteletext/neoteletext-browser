@@ -24,6 +24,7 @@ use protocol::fetcher::{ToFetcher, write_to_fetcher};
 use protocol::subpages::{SubPageRange, SubPageStep};
 
 use super::Core;
+use super::selection::{SelectionAction, SelectionEvent, SelectionState, selection_transition};
 use crate::session::Files;
 
 /// The requests for rows that wait at once: the interface makes one at a
@@ -40,9 +41,13 @@ pub(crate) struct State {
     /// The sub-pages of the pages on screen from the one drawn, as their
     /// decoders reported them.
     subpages: BTreeMap<PageKey, SubPageStep>,
-    /// A page about to open at a sub-page: a Fastext link or an address
-    /// named one.
-    pending: Option<(PageKey, u16)>,
+    /// How far the choice of a sub-page has got (the selection machine,
+    /// `selection`): pending for a page about to open, or awaited of a
+    /// live channel.
+    selection: SelectionState,
+    /// The page and sub-page the selection machine's state is of, while
+    /// it is not settled.
+    choice: Option<(PageKey, u16)>,
     /// The sub-pages of the open page asked of its fetcher since it
     /// opened: each is asked for once.
     fetched: BTreeSet<u16>,
@@ -58,9 +63,6 @@ pub(crate) struct State {
     /// The request for rows passed to each page's decoder, by its number,
     /// until the decoder answers.
     rows_of_decoder: BTreeMap<PageKey, u16>,
-    /// A sub-page of a live channel's open page selected and not yet
-    /// drawn: the strip says it is loading (REQ-1505 item 5).
-    awaiting: Option<(PageKey, u16)>,
     /// The controls the interface was last told of.
     sent: Option<PageControls>,
     /// What was asked of each channel's fetcher, for the tests, whose core
@@ -97,6 +99,32 @@ fn step_drawn(step: &SubPageStep, view: &View, forward: bool) -> Option<u16> {
     if forward { step.next } else { step.previous }
 }
 
+impl State {
+    /// Sets this window's controls aside, leaving none: what the tests
+    /// record of the fetchers is the core's, and stays.
+    pub(super) fn park(&mut self) -> Self {
+        let parked = std::mem::take(self);
+        #[cfg(test)]
+        let parked = {
+            let mut parked = parked;
+            self.told_fetchers = std::mem::take(&mut parked.told_fetchers);
+            parked
+        };
+        parked
+    }
+
+    /// Takes up `parked`, the controls of the window now at hand.
+    pub(super) fn restore(&mut self, parked: Self) {
+        #[cfg(test)]
+        let told = std::mem::take(&mut self.told_fetchers);
+        *self = parked;
+        #[cfg(test)]
+        {
+            self.told_fetchers = told;
+        }
+    }
+}
+
 /// The page `tab` shows, the sub-page its address names, and how often
 /// they are asked for again, when its channel declared that and is not
 /// live (REQ-704): none on the wall or the contents view.
@@ -125,7 +153,10 @@ impl Core {
             self.tell(old.channel, ToDecoder::View(View { page: view.page, ..View::default() }));
         }
         self.controls.open = key;
-        self.controls.awaiting = None;
+        // The page a sub-page was named for opens, or another does.
+        let pending = self.controls.choice.filter(|_| self.controls.selection == SelectionState::Pending);
+        let opened_it = pending.is_some_and(|(pending, _)| Some(pending) == key);
+        let show = self.select_event(if opened_it { SelectionEvent::OpenedIt } else { SelectionEvent::OpenedOther }) == SelectionAction::Show;
         self.controls.fetched.clear();
         self.controls.catalogue_asked = false;
         if let Some(key) = key {
@@ -138,9 +169,7 @@ impl Core {
         if let Some(channel) = key.map(|key| key.channel).or(self.active_channel()) {
             self.arm_refresh(channel);
         }
-        if let Some((pending, subpage)) = self.controls.pending.take()
-            && Some(pending) == key
-        {
+        if let Some((pending, subpage)) = pending.filter(|_| show) {
             self.address_follows(pending.page, Some(subpage))?;
             self.show_subpage(pending, View { page: pending.page, subpage: Some(subpage), ..View::default() })?;
         }
@@ -164,7 +193,33 @@ impl Core {
 
     /// A page of `channel` will open at `subpage`, when it opens.
     pub(crate) fn open_at_subpage(&mut self, key: PageKey, subpage: Option<u16>) {
-        self.controls.pending = subpage.map(|subpage| (key, subpage));
+        match subpage {
+            Some(subpage) => {
+                self.select_event(SelectionEvent::ChosenBeforeOpen);
+                self.controls.choice = Some((key, subpage));
+            }
+            None => {
+                self.select_event(SelectionEvent::ChoiceWithdrawn);
+            }
+        }
+    }
+
+    /// Gives `event` to the selection machine; returns what to do. A
+    /// settled selection is of no page.
+    fn select_event(&mut self, event: SelectionEvent) -> SelectionAction {
+        let (state, action) = selection_transition(self.controls.selection, event);
+        self.controls.selection = state;
+        if state == SelectionState::Settled {
+            self.controls.choice = None;
+        }
+        action
+    }
+
+    /// The sub-page a page about to open was named with, when `key` is
+    /// that page: its channel is told the sub-page at once, in the one
+    /// selection (DEC-6358, fault 10).
+    pub(super) fn pending_subpage(&self, key: PageKey) -> Option<u16> {
+        self.controls.choice.filter(|&(pending, _)| self.controls.selection == SelectionState::Pending && pending == key).map(|(_, subpage)| subpage)
     }
 
     /// A decoder's sub-pages of a page on screen, from the one it draws.
@@ -176,8 +231,8 @@ impl Core {
         self.session.page_drawn(key.channel);
         #[cfg(feature = "interaction")]
         self.typing.drawn(key, step.shown);
-        if self.controls.awaiting.is_some_and(|(awaited, subpage)| awaited == key && subpage == step.shown) {
-            self.controls.awaiting = None;
+        let awaited = self.awaiting().is_some_and(|(awaited, subpage)| awaited == key && subpage == step.shown);
+        if awaited && self.select_event(SelectionEvent::Drew) == SelectionAction::Say {
             self.send(&ToInterface::Strip(self.strip()))?;
         }
         self.adopt_first(key, step.shown);
@@ -208,7 +263,7 @@ impl Core {
     /// The sub-page of a live channel's open page selected and not yet
     /// drawn, if any.
     pub(super) fn awaiting(&self) -> Option<(PageKey, u16)> {
-        self.controls.awaiting
+        self.controls.choice.filter(|_| self.controls.selection == SelectionState::Awaiting)
     }
 
     /// Forgets the sub-pages of pages no longer on screen, and of channels
@@ -424,7 +479,10 @@ impl Core {
         self.select_view(key, subpage)?;
         let live = self.session.all_tabs().any(|tab| tab.channel.id == key.channel && tab.channel.live);
         let drawn = self.controls.subpages.get(&key).is_some_and(|step| step.shown == subpage);
-        self.controls.awaiting = (live && !drawn).then_some((key, subpage));
+        self.select_event(if live && !drawn { SelectionEvent::SelectedUndrawn } else { SelectionEvent::SelectedDrawn });
+        if live && !drawn {
+            self.controls.choice = Some((key, subpage));
+        }
         if live {
             return Ok(());
         }
@@ -995,11 +1053,11 @@ mod tests {
         drawn(&mut test, key, 1, 1, 0);
         test.core.intent(protocol::ToCore::PageControl(PageControl::SubPage(true))).unwrap();
         assert_eq!(test.core.typing.selection(key.channel), Some((0x210, 2)), "the next after the one adopted");
-        assert_eq!(test.core.controls.awaiting, Some((key, 2)), "loading");
+        assert_eq!(test.core.awaiting(), Some((key, 2)), "loading");
         assert_eq!(test.core.strip().notice, "Loading page 210, sub-page 0002");
         assert!(test.core.controls.told_fetchers.is_empty(), "no file");
         drawn(&mut test, key, 2, 2, 1);
-        assert_eq!(test.core.controls.awaiting, None, "it arrived");
+        assert_eq!(test.core.awaiting(), None, "it arrived");
         assert_eq!(test.core.strip().notice, "", "and the strip stops saying so");
         test.core.intent(protocol::ToCore::PageControl(PageControl::SubPage(true))).unwrap();
         assert_eq!(test.core.typing.selection(key.channel), Some((0x210, 3)));
@@ -1027,9 +1085,29 @@ mod tests {
         };
         choose(&mut test, 3);
         assert_eq!(selects_sent(&mut test.core, key.channel, &written), [(0x210, 3)]);
-        assert_eq!(test.core.controls.awaiting, Some((key, 3)), "loading");
+        assert_eq!(test.core.awaiting(), Some((key, 3)), "loading");
         choose(&mut test, 3);
         assert_eq!(selects_sent(&mut test.core, key.channel, &written), [], "the selection already");
+    }
+
+    /// DEC-6358, fault 10: a sub-page chosen on a page that is not open
+    /// opens the page at it with one selection, of that sub-page, where
+    /// the page was first selected with no sub-page and then the sub-page.
+    #[cfg(feature = "interaction")]
+    #[test]
+    fn a_sub_page_chosen_on_a_page_not_open_is_one_selection() {
+        use super::super::test_support::{selects_sent, wire};
+        let (mut test, key) = live_page("one selection", &[1, 2, 3]);
+        let written = wire(&mut test.core, key.channel);
+        drawn(&mut test, key, 1, 1, 0);
+        let _ = selects_sent(&mut test.core, key.channel, &written);
+        let other = PageKey { channel: key.channel, page: 0x211 };
+        test.core.intent(protocol::ToCore::PageControl(PageControl::SubPageOf { channel: key.channel, page: other.page, subcode: 2 })).unwrap();
+        assert_eq!(test.core.pending_subpage(other), Some(2), "named for the page before it opens");
+        test.core.intent(protocol::ToCore::Opened(Some(other))).unwrap();
+        assert_eq!(selects_sent(&mut test.core, key.channel, &written), [(0x211, 2)], "one selection, of the sub-page");
+        assert_eq!(test.core.awaiting(), Some((other, 2)), "and it is awaited");
+        assert_eq!(test.core.pending_subpage(other), None, "no longer pending");
     }
 
     // REQ-1693, REQ-1502, TODO-1531 item 2: a link naming a sub-page (an
@@ -1083,7 +1161,7 @@ mod tests {
         test.core.intent(protocol::ToCore::Opened(Some(key))).unwrap();
         drawn(&mut test, key, 1, 2, 0);
         assert_eq!(test.core.typing.selection(key.channel), Some((0x210, SUBCODE_ANY)));
-        assert_eq!(test.core.controls.awaiting, None);
+        assert_eq!(test.core.awaiting(), None);
         test.core.intent(protocol::ToCore::PageControl(PageControl::SubPage(true))).unwrap();
         assert_eq!(test.core.strip().notice, "", "a channel served as files says no loading");
     }

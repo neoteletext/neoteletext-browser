@@ -99,3 +99,19 @@ fn a_false_count_is_refused() {
     assert_eq!(items(&refused), [] as [String; 0]);
     assert_eq!(items(&typing.input_intent(&key('b'), 5 * MS)), [] as [String; 0]);
 }
+
+/// DEC-6358, fault 9: a channel whose decoder is put to sleep while its
+/// tab stays keeps the tab's selection, where a channel that goes forgets
+/// everything; its session is forgotten either way (REQ-INT-125).
+#[test]
+fn a_channel_asleep_keeps_its_tabs_selection() {
+    let mut asleep = resumable();
+    let _ = asleep.select(PAGE.channel, PAGE.page, 3, "", MS);
+    asleep.channel_asleep(PAGE.channel);
+    assert_eq!(asleep.selection(PAGE.channel), Some((PAGE.page, 3)), "the sub-page the tab showed");
+    assert_eq!(items(&asleep.input(PAGE.channel, true, false, 2 * MS)).len(), 1, "a new session: HELLO alone");
+    let mut gone = resumable();
+    let _ = gone.select(PAGE.channel, PAGE.page, 3, "", MS);
+    gone.channel_gone(PAGE.channel);
+    assert_eq!(gone.selection(PAGE.channel), None, "a channel no tab shows keeps nothing");
+}

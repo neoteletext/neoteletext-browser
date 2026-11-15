@@ -65,7 +65,7 @@ impl Core {
                 let sends = self.typing.select(id, 0, neoteletext_core::limits::SUBCODE_ANY, "", self.now_us());
                 self.deliver_typing(sends)?;
             }
-            self.put_to_sleep(id);
+            self.put_to_sleep(id, true);
             self.stop_fetcher(id);
             self.sleep.forget(id);
             self.console.forget(id);
@@ -94,7 +94,7 @@ impl Core {
                 self.rewind_source(*id);
                 started = true;
             } else if !awake && self.decoders.contains_key(id) {
-                self.put_to_sleep(*id);
+                self.put_to_sleep(*id, false);
             }
             // A web channel's pages come from its own fetcher, which runs
             // for as long as its tab is open, asleep or not, and fetches a
@@ -124,12 +124,18 @@ impl Core {
     }
 
     /// Closes a channel's decoder, and forgets what it showed: its links,
-    /// its typing and its sounds.
-    fn put_to_sleep(&mut self, id: u32) {
+    /// its typing and its sounds. A channel whose tab stays (`gone` false)
+    /// keeps its tab's selection (DEC-6358, fault 9).
+    #[cfg_attr(not(feature = "interaction"), expect(unused_variables, reason = "the selection is input's, compiled out"))]
+    fn put_to_sleep(&mut self, id: u32, gone: bool) {
         #[cfg(feature = "links")]
         self.links.channel_gone(id);
         #[cfg(feature = "interaction")]
-        self.typing.channel_gone(id);
+        if gone {
+            self.typing.channel_gone(id);
+        } else {
+            self.typing.channel_asleep(id);
+        }
         let sends = self.hearing.channel_gone(id);
         self.deliver(sends);
         if let Some(decoder) = self.decoders.remove(&id) {
@@ -275,7 +281,7 @@ impl Core {
             } else {
                 self.log(Level::Error, None, &format!("the decoder for channel {id} stopped reading and is replaced"));
             }
-            self.put_to_sleep(id);
+            self.put_to_sleep(id, false);
         }
         for fetcher in self.fetchers.values_mut() {
             if let Some(input) = fetcher.input() {

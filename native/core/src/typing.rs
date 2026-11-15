@@ -646,6 +646,29 @@ impl Typing {
         sends
     }
 
+    /// `key` is about to open at sub-page `subpage`: that is its tab's
+    /// selection, which the opening then does not replace with the page
+    /// alone. Nothing is told yet; the sub-page's showing tells it.
+    pub fn preselect(&mut self, key: PageKey, subpage: u16) {
+        let state = self.channels.entry(key.channel).or_insert_with(Channel::new);
+        state.selected = Some((key.page, subpage));
+    }
+
+    /// A channel's decoder is put to sleep while its tab stays: its
+    /// session is forgotten as when the channel goes (REQ-INT-125), but
+    /// the tab's selection is kept, and told again when the session next
+    /// starts. Forgetting it lost the tab the sub-page it showed (DEC-6358,
+    /// fault 9).
+    pub fn channel_asleep(&mut self, channel: u32) {
+        if let Some(mut state) = self.channels.remove(&channel) {
+            state.session.forget();
+            let mut kept = Channel::new();
+            kept.selected = state.selected;
+            kept.parameters = core::mem::take(&mut state.parameters);
+            self.channels.insert(channel, kept);
+        }
+    }
+
     /// A channel no tab shows any more: its session is forgotten whole, so
     /// another connection to it is a new session (REQ-INT-125).
     pub fn channel_gone(&mut self, channel: u32) {
