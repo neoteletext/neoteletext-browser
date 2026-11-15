@@ -55,6 +55,8 @@ pub enum Incoming {
         channel: u32,
         /// The page.
         page: u16,
+        /// The number of the request this answers.
+        request: u16,
         /// The page's count, the first row's place and the rows.
         rows: protocol::subpages::SubPageRows,
     },

@@ -379,7 +379,7 @@ fn naming(behind: PageKey) -> Vec<Vec<u8>> {
         ToCore::Opened(Some(behind)),
         ToCore::Visible(vec![behind]),
         ToCore::Cell { key: behind, version: 1, column: 1, row: 1 },
-        ToCore::SubPageRows { page: behind.page, range: protocol::subpages::SubPageRange { first: 0, count: 1 } },
+        ToCore::SubPageRows { channel: behind.channel, page: behind.page, range: protocol::subpages::SubPageRange { first: 0, count: 1 }, request: 0 },
     ]
     .into();
     #[cfg(feature = "links")]

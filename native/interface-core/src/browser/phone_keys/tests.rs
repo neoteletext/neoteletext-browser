@@ -101,7 +101,7 @@ fn a_phones_page_keys_move_between_pages() {
     let (key, _) = browser.wall().shown().next().unwrap();
     browser.wall_mut().zoom(key, 0);
     browser.draw(&mut canvas, WIDTH, HEIGHT, OPEN);
-    browser.set_page_controls(PageControls { page: Some(key.page), subpages: 1, fastext: [true; 5], ..PageControls::default() });
+    browser.set_page_controls(PageControls { channel: key.channel, page: Some(key.page), subpages: 1, fastext: [true; 5], ..PageControls::default() });
     browser.take_outputs();
     for (name, colour) in
         [("ColorF0Red", FastextKey::Red), ("ColorF1Green", FastextKey::Green), ("ColorF2Yellow", FastextKey::Yellow), ("ColorF3Blue", FastextKey::Cyan)]

@@ -21,7 +21,7 @@ pub fn read_core(proxy: &EventLoopProxy<Incoming>) {
             Ok(Some(ToInterface::Channel(channel))) => Incoming::Channel(channel),
             Ok(Some(ToInterface::Page { channel, page, title })) => Incoming::Arrived { channel, page, title },
             Ok(Some(ToInterface::SubPageCount { channel, page, count })) => Incoming::SubPageCount { channel, page, count },
-            Ok(Some(ToInterface::SubPageRows { channel, page, rows })) => Incoming::SubPageRows { channel, page, rows },
+            Ok(Some(ToInterface::SubPageRows { channel, page, request, rows })) => Incoming::SubPageRows { channel, page, request, rows },
             Ok(Some(ToInterface::Updated { channel, page })) => Incoming::Updated { channel, page },
             Ok(Some(ToInterface::Frame { key, version, image })) => Incoming::Page { key, version, image },
             Ok(Some(ToInterface::Regis { key, picture })) => Incoming::Regis { key, picture },

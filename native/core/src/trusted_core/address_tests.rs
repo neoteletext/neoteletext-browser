@@ -134,7 +134,7 @@ fn a_step_names_the_sub_page_in_the_same_entry() {
     test.core.intent(ToCore::PageControl(PageControl::SubPage(true))).unwrap();
     assert_eq!(shown(&test), at("200/0003"));
     assert_eq!(entries(&test), before, "no Back entry");
-    test.core.intent(ToCore::PageControl(PageControl::SubPageOf { page: 0x200, subcode: 1 })).unwrap();
+    test.core.intent(ToCore::PageControl(PageControl::SubPageOf { channel: test.core.active_channel().unwrap(), page: 0x200, subcode: 1 })).unwrap();
     assert_eq!(shown(&test), at("200/0001"), "chosen from the list");
 }
 

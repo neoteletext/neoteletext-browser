@@ -133,7 +133,7 @@ impl Core {
                 self.went(went)?;
             }
             ToCore::Reload | ToCore::PageControl(_) => self.page_intent(&intent)?,
-            ToCore::SubPageRows { page, range } => self.subpage_rows(page, range)?,
+            ToCore::SubPageRows { channel, page, range, request } => self.subpage_rows(channel, page, range, request)?,
             ToCore::Bookmark => self.star()?,
             ToCore::Home | ToCore::ChangeSetting(_) | ToCore::Console(_) | ToCore::Drawn | ToCore::InstallUpdate => self.settings_intent(intent)?,
             ToCore::History(_)

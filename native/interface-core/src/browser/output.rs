@@ -88,12 +88,16 @@ pub enum Output {
     /// `count` of them, at most [`crate::controls::SUBPAGE_ROWS`]: those
     /// it scrolled into view (decision 112 item 3).
     SubPageRows {
+        /// The channel the page is of (DEC-6358 item 3).
+        channel: u32,
         /// The page.
         page: u16,
         /// The first row's place, from 0.
         first: u16,
         /// How many.
         count: u16,
+        /// The request's number, which its answer carries back.
+        request: u16,
     },
     /// Strip input: move a tab from one place to another (decision 69).
     MoveTab {

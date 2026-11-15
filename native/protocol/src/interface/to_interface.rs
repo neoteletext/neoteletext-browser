@@ -91,7 +91,7 @@ fn push_fields(payload: &mut Vec<u8>, message: &ToInterface) -> Result<(), Proto
         ToInterface::Channel(channel) => push_channel(payload, channel)?,
         ToInterface::Page { channel, page, title } => push_page(payload, *channel, *page, title)?,
         ToInterface::SubPageCount { channel, page, count } => push_subpage_count(payload, *channel, *page, *count)?,
-        ToInterface::SubPageRows { channel, page, rows } => push_subpage_rows(payload, *channel, *page, rows)?,
+        ToInterface::SubPageRows { channel, page, request, rows } => push_subpage_rows(payload, *channel, *page, *request, rows)?,
         ToInterface::Updated { channel, page } => push_updated(payload, *channel, *page),
         ToInterface::Frame { key, version, image } => push_frame(payload, *key, *version, image),
         ToInterface::Regis { key, picture } => {
@@ -158,8 +158,8 @@ pub fn read_from_core(input: &mut dyn Read) -> Result<Option<ToInterface>, Proto
             ToInterface::SubPageCount { channel, page, count }
         }
         KIND_SUBPAGE_ROWS => {
-            let (channel, page, rows) = read_subpage_rows(&mut fields)?;
-            ToInterface::SubPageRows { channel, page, rows }
+            let (channel, page, request, rows) = read_subpage_rows(&mut fields)?;
+            ToInterface::SubPageRows { channel, page, request, rows }
         }
         KIND_UPDATED => {
             let (channel, page) = read_updated(&mut fields)?;

@@ -18,6 +18,9 @@ use alloc::vec::Vec;
 
 use crate::browser::list_focus::ListFocus;
 use crate::browser::page_list::{ROW_HEIGHT, rows_per_key};
+use crate::browser::subpage_machines::{
+    MOVE_TIMEOUT_MILLISECONDS, MoveAction, MoveEvent, MoveState, ROWS_TIMEOUT_MILLISECONDS, RowsAction, RowsEvent, RowsState, move_transition, rows_transition,
+};
 use crate::browser::window::PADDING;
 use crate::browser::{Browser, Output};
 use crate::canvas::Canvas;
@@ -65,15 +68,26 @@ impl Held {
     }
 }
 
-/// Where Page Up or Page Down moved the list (REQ-1758): a place, because a
-/// row not held has no sub-code to ask for yet.
+/// Where a key or the wheel moved the list (REQ-1758): a place, because a
+/// row not held has no sub-code to ask for yet. How far the move has got
+/// is the move machine's state (`subpage_machines`). A key held down moves
+/// on from the landing, not from the sub-page last shown.
 #[derive(Clone, Copy, Debug)]
 pub(super) struct Landing {
     index: usize,
     place: u16,
-    /// Its sub-page was asked for. A key held down moves on from the
-    /// landing, not from the sub-page last shown.
-    asked: bool,
+    /// When the list moved there.
+    since: u64,
+}
+
+/// The request for rows in flight: its number, which its answer carries
+/// back, what it asked for, and when (DEC-6358 item 3).
+#[derive(Clone, Copy, Debug)]
+struct Request {
+    number: u16,
+    index: usize,
+    first: u16,
+    since: u64,
 }
 
 /// The page list's sub-pages: each page's count, the rows held, the
@@ -82,9 +96,14 @@ pub(super) struct Landing {
 pub(super) struct SubPages {
     /// The rows held, of one page.
     held: Option<Held>,
-    /// The rows last asked for, by page index and first place, until they
-    /// are answered.
-    asked: Option<(usize, u16)>,
+    /// Whether a request for rows is in flight (the rows machine).
+    rows: RowsState,
+    /// The request in flight, while one is.
+    request: Option<Request>,
+    /// The number the next request takes.
+    next_request: u16,
+    /// How far the move to `landing` has got (the move machine).
+    moving: MoveState,
     /// The pages' share of the list, as the divider was pulled.
     share: f64,
     /// Where the divider was gripped, from its top, while it is pulled.
@@ -103,7 +122,19 @@ pub(super) struct SubPages {
 
 impl Default for SubPages {
     fn default() -> Self {
-        Self { held: None, asked: None, share: PAGES_SHARE, grip: None, scroll: 0.0, hovered: None, revealed: None, landing: None }
+        Self {
+            held: None,
+            rows: RowsState::Idle,
+            request: None,
+            next_request: 0,
+            moving: MoveState::Rest,
+            share: PAGES_SHARE,
+            grip: None,
+            scroll: 0.0,
+            hovered: None,
+            revealed: None,
+            landing: None,
+        }
     }
 }
 
@@ -112,11 +143,45 @@ impl SubPages {
     /// the channel before is this one's (DEC-6358, fault 5).
     pub(super) fn another_channel(&mut self) {
         self.held = None;
-        self.asked = None;
-        self.landing = None;
+        self.rows_event(RowsEvent::Invalidated);
+        self.move_event(MoveEvent::Left);
         self.hovered = None;
         self.revealed = None;
         self.scroll = 0.0;
+    }
+}
+
+impl SubPages {
+    /// Gives `event` to the rows machine; returns what to do. A request no
+    /// longer waited for is forgotten with the state.
+    fn rows_event(&mut self, event: RowsEvent) -> RowsAction {
+        let (state, action) = rows_transition(self.rows, event);
+        self.rows = state;
+        if state == RowsState::Idle {
+            self.request = None;
+        }
+        action
+    }
+
+    /// Gives `event` to the move machine; returns what to do. A move at
+    /// rest has no landing.
+    fn move_event(&mut self, event: MoveEvent) -> MoveAction {
+        let (state, action) = move_transition(self.moving, event);
+        self.moving = state;
+        if state == MoveState::Rest {
+            self.landing = None;
+        }
+        action
+    }
+
+    /// How long until the request in flight is made again, or the move
+    /// waiting is given up: none once either is overdue, which the next
+    /// draw deals with.
+    pub(super) fn deadline(&self, now: u64) -> Option<u64> {
+        let left = |since: u64, limit: u64| limit.checked_sub(now.saturating_sub(since)).filter(|&left| left > 0);
+        let rows = self.request.filter(|_| self.rows == RowsState::Waiting).and_then(|request| left(request.since, ROWS_TIMEOUT_MILLISECONDS));
+        let moving = self.landing.filter(|_| self.moving == MoveState::AwaitingShow).and_then(|landing| left(landing.since, MOVE_TIMEOUT_MILLISECONDS));
+        rows.into_iter().chain(moving).min()
     }
 }
 
@@ -140,25 +205,31 @@ impl Browser {
         if self.subpages.held.as_ref().is_some_and(|held| held.index == index) {
             self.subpages.held = None;
         }
-        if self.subpages.asked.is_some_and(|(asked, _)| asked == index) {
-            self.subpages.asked = None;
+        if self.subpages.request.is_some_and(|request| request.index == index) {
+            self.subpages.rows_event(RowsEvent::Invalidated);
         }
     }
 
-    /// Rows of a page's sub-pages the list asked for, from place `first`;
-    /// at most [`SUBPAGE_ROWS`] are kept. The count that comes with them
-    /// is the sender's and changes nothing here: only the directory says
-    /// how many sub-pages a page has (DEC-6358, fault 1).
-    pub fn set_subpage_rows(&mut self, channel: u32, page: u16, _count: u16, first: u16, mut rows: Vec<(u16, String)>) {
-        if channel != self.channel.channel {
-            return;
+    /// Rows of a page's sub-pages, from place `first`, in answer to the
+    /// request numbered `request`; at most [`SUBPAGE_ROWS`] are kept. They
+    /// are kept only when they answer the request in flight, for the
+    /// channel shown: rows for another channel or an abandoned request are
+    /// left (DEC-6358 item 3). They never change how many sub-pages a page
+    /// has: only the directory says that (fault 1).
+    pub fn set_subpage_rows(&mut self, channel: u32, page: u16, request: u16, first: u16, mut rows: Vec<(u16, String)>) {
+        let waited = self.subpages.request.filter(|waited| waited.number == request && channel == self.channel.channel);
+        let ours = waited.filter(|waited| page_index(page) == Some(waited.index));
+        let event = if ours.is_some() { RowsEvent::AnswerOurs } else { RowsEvent::AnswerOther };
+        if let (RowsAction::Take, Some(waited)) = (self.subpages.rows_event(event), ours) {
+            rows.truncate(SUBPAGE_ROWS);
+            self.subpages.held = Some(Held { index: waited.index, first, rows });
         }
-        let Some(index) = page_index(page) else { return };
-        if self.subpages.asked.is_some_and(|(asked, _)| asked == index) {
-            self.subpages.asked = None;
-        }
-        rows.truncate(SUBPAGE_ROWS);
-        self.subpages.held = Some(Held { index, first, rows });
+    }
+
+    /// How long until the sub-page list next needs a draw for a request or
+    /// a move that is waiting.
+    pub(super) fn subpages_deadline(&self, now: u64) -> Option<u64> {
+        self.subpages.deadline(now)
     }
 
     /// How many sub-pages page `index` has, when it has more than one.
@@ -198,10 +269,26 @@ impl Browser {
         canvas.fill(Rect::new(heading.x0, heading.y1 - HAIRLINE, heading.x1, heading.y1), 0.0, surface.rule);
         let rows = Rect::new(area.x0, heading.y1, area.x1, area.y1);
         self.regions.subpage_list = rows;
-        let Some((index, count, page)) = selected else { return };
+        let Some((index, count, page)) = selected else {
+            // No page with sub-pages is listed: nothing is waited for.
+            self.subpages.rows_event(RowsEvent::Invalidated);
+            self.subpages.move_event(MoveEvent::Left);
+            return;
+        };
         let chosen = self.chosen_place(page);
-        if self.subpages.landing.is_some_and(|landing| landing.index != index || chosen == Some(landing.place)) {
-            self.subpages.landing = None;
+        if let Some(landing) = self.subpages.landing {
+            let event = if landing.index != index {
+                Some(MoveEvent::Left)
+            } else if chosen == Some(landing.place) {
+                Some(MoveEvent::Shown)
+            } else if now.saturating_sub(landing.since) >= MOVE_TIMEOUT_MILLISECONDS {
+                Some(MoveEvent::TimedOut)
+            } else {
+                None
+            };
+            if let Some(event) = event {
+                self.subpages.move_event(event);
+            }
         }
         self.open_landing(now);
         // Stepped with the keys, the list follows the sub-page chosen, as
@@ -250,16 +337,21 @@ impl Browser {
             }
         }
         canvas.pop_clip();
-        if let Some(place) = missing {
-            self.ask_subpage_rows(index, page, place);
+        match missing {
+            Some(place) => self.ask_subpage_rows(index, page, place, now),
+            // Every row in view is held: a request still waiting, as for
+            // rows scrolled away from, is no longer waited for.
+            None => {
+                self.subpages.rows_event(RowsEvent::Invalidated);
+            }
         }
     }
 
     /// The sub-page drawn of `page`, when it is the page open and one is
     /// chosen.
-    fn chosen_place(&self, page: u16) -> Option<u16> {
+    pub(in crate::browser) fn chosen_place(&self, page: u16) -> Option<u16> {
         let controls = &self.page_controls.controls;
-        (controls.page == Some(page)).then_some(controls.chosen).flatten()
+        (controls.channel == self.channel.channel && controls.page == Some(page)).then_some(controls.chosen).flatten()
     }
 
     /// Scrolls the list, `height` high, so that `place` is in view.
@@ -300,16 +392,18 @@ impl Browser {
         let from = landed.or_else(|| self.chosen_place(page)).unwrap_or(top);
         let place = if forward { from.saturating_add(rows).min(count.saturating_sub(1)) } else { from.saturating_sub(rows) };
         self.reveal_subpage(place, height);
-        self.subpages.landing = Some(Landing { index, place, asked: false });
+        self.subpages.landing = Some(Landing { index, place, since: now });
+        self.subpages.move_event(MoveEvent::Moved);
         self.open_landing(now);
     }
 
     /// Shows the sub-page the list moved to, once its row is held.
     fn open_landing(&mut self, now: u64) {
-        let Some(landing) = self.subpages.landing.filter(|landing| !landing.asked) else { return };
+        let Some(landing) = self.subpages.landing else { return };
         let Some(subcode) = self.subpages.held.as_ref().and_then(|held| held.at(landing.index, landing.place)).map(|&(subcode, _)| subcode) else { return };
-        self.subpages.landing = Some(Landing { asked: true, ..landing });
-        self.open_subpage(landing.index, subcode, now);
+        if self.subpages.move_event(MoveEvent::RowHeld) == MoveAction::Open {
+            self.open_subpage(landing.index, subcode, now);
+        }
     }
 
     /// Opens sub-code `subcode` of page `index`, opening the page first so
@@ -319,7 +413,7 @@ impl Browser {
         if self.wall.zoomed() != Some(key) {
             self.wall.zoom(key, now);
         }
-        self.ask_control(PageControl::SubPageOf { page, subcode });
+        self.ask_control(PageControl::SubPageOf { channel: self.channel.channel, page, subcode });
     }
 
     /// The places of the rows in view in a list `height` high of `count`
@@ -333,15 +427,40 @@ impl Browser {
     }
 
     /// Asks for the rows of page `index`, numbered `page`, from a little
-    /// above `place`, the first in view not held: once, until answered.
-    fn ask_subpage_rows(&mut self, index: usize, page: u16, place: u16) {
+    /// above `place`, the first in view not held: once, until answered or
+    /// until the answer is overdue, when it is asked for again (DEC-6358,
+    /// fault 4).
+    fn ask_subpage_rows(&mut self, index: usize, page: u16, place: u16, now: u64) {
         let first = place.saturating_sub(ROWS_ABOVE);
-        if self.subpages.asked == Some((index, first)) {
+        let event = match self.subpages.request.filter(|request| request.index == index && request.first == first) {
+            Some(request) if now.saturating_sub(request.since) >= ROWS_TIMEOUT_MILLISECONDS => RowsEvent::TimedOut,
+            Some(_) => RowsEvent::NeedWaitedFor,
+            None => RowsEvent::NeedOther,
+        };
+        if self.subpages.rows_event(event) != RowsAction::Ask {
             return;
         }
-        self.subpages.asked = Some((index, first));
+        let number = self.subpages.next_request;
+        self.subpages.next_request = number.wrapping_add(1);
+        self.subpages.request = Some(Request { number, index, first, since: now });
         let count = u16::try_from(SUBPAGE_ROWS).unwrap_or(u16::MAX);
-        self.outputs.push(Output::SubPageRows { page, first, count });
+        self.outputs.push(Output::SubPageRows { channel: self.channel.channel, page, first, count, request: number });
+    }
+
+    /// The trusted core answers the request in flight with `rows` from
+    /// place `first`, for the tests.
+    #[cfg(test)]
+    pub(in crate::browser) fn rows_arrive(&mut self, page: u16, first: u16, rows: Vec<(u16, String)>) {
+        let number = if let Some(request) = self.subpages.request {
+            request.number
+        } else {
+            let index = page_index(page).unwrap_or_default();
+            self.subpages.rows = RowsState::Waiting;
+            self.subpages.request = Some(Request { number: 0, index, first, since: 0 });
+            0
+        };
+        let channel = self.channel.channel;
+        self.set_subpage_rows(channel, page, number, first, rows);
     }
 
     /// A press on the divider grips it; one on a sub-page opens its page
@@ -360,7 +479,7 @@ impl Browser {
         self.subpages.revealed = None;
         let Some(&(_, subcode)) = self.regions.subrows.iter().find(|(rect, _)| rect.contains(point)) else { return true };
         let Some(index) = self.selected else { return true };
-        self.subpages.landing = None;
+        self.subpages.move_event(MoveEvent::Left);
         self.open_subpage(index, subcode, now);
         true
     }
@@ -436,8 +555,12 @@ mod tests {
         browser.take_outputs();
         browser.draw(&mut canvas3, WIDTH, HEIGHT, 0);
         assert!(canvas3.texts.iter().any(|(_, text)| text == "Sub-pages of 100 (3)"));
-        assert_eq!(browser.take_outputs(), [Output::SubPageRows { page: 0x100, first: 0, count: 64 }], "the rows in view asked for");
-        browser.set_subpage_rows(7, 0x100, 3, 0, titles());
+        assert_eq!(
+            browser.take_outputs(),
+            [Output::SubPageRows { channel: 7, page: 0x100, first: 0, count: 64, request: 0 }],
+            "the rows in view asked for, of this channel"
+        );
+        browser.rows_arrive(0x100, 0, titles());
         browser.draw(&mut canvas3, WIDTH, HEIGHT, 0);
         assert_eq!(browser.regions.subrows.len(), 3);
         assert!(canvas3.texts.iter().any(|(_, text)| text == "The comments"));
@@ -447,7 +570,7 @@ mod tests {
         browser.pointer_moved(point.x, point.y, 0);
         assert_eq!(browser.cursor(), Cursor::Hand);
         browser.pointer_pressed(&mut canvas3, false, 0);
-        assert!(browser.take_outputs().contains(&Output::PageControl(PageControl::SubPageOf { page: 0x100, subcode: 2 })));
+        assert!(browser.take_outputs().contains(&Output::PageControl(PageControl::SubPageOf { channel: 7, page: 0x100, subcode: 2 })));
         assert!(browser.wall.zoomed().is_some(), "its page opened, there");
         let divider = middle(browser.regions.subpage_divider);
         let above = browser.regions.list.y1;
@@ -480,12 +603,12 @@ mod tests {
         assert!(drawn.texts.iter().any(|(_, text)| text == "Sub-pages of 100 (8190)"));
         assert!(drawn.texts.iter().any(|(_, text)| text == "8190/8190"), "the last row reached");
         let asked = browser.take_outputs();
-        let [Output::SubPageRows { page: 0x100, first, count: 64 }] = asked[..] else { panic!("one run asked for: {asked:?}") };
+        let [Output::SubPageRows { page: 0x100, first, count: 64, .. }] = asked[..] else { panic!("one run asked for: {asked:?}") };
         assert!(first > 8_000 && first < 8_190, "near the end: {first}");
         browser.draw(&mut drawn, WIDTH, HEIGHT, 0);
         assert_eq!(browser.take_outputs(), [], "asked once until answered");
         let rows: alloc::vec::Vec<(u16, alloc::string::String)> = (first..8_190).take(64).map(|place| (place, alloc::format!("Story {place}"))).collect();
-        browser.set_subpage_rows(7, 0x100, 8_190, first, rows);
+        browser.rows_arrive(0x100, first, rows);
         let mut answered = Recorder::new();
         browser.draw(&mut answered, WIDTH, HEIGHT, 0);
         assert!(answered.texts.iter().any(|(_, text)| text == "Story 8189"));
@@ -502,7 +625,7 @@ mod tests {
         let row = browser.regions.rows[0].0;
         press_at(&mut browser, &mut canvas, row);
         browser.draw(&mut canvas, WIDTH, HEIGHT, 0);
-        browser.set_subpage_rows(7, 0x100, count, 0, held(0, count.min(64)));
+        browser.rows_arrive(0x100, 0, held(0, count.min(64)));
         browser.draw(&mut canvas, WIDTH, HEIGHT, 0);
         let list = browser.regions.subpage_list;
         browser.pointer_moved(list.x0 + 1.0, list.y1 - 1.0, 0);
@@ -520,13 +643,13 @@ mod tests {
     /// The trusted core shows place `chosen` of the list, as it does when
     /// a sub-page opens.
     fn chosen(browser: &mut crate::browser::Browser, count: u16, chosen: u16) {
-        browser.set_page_controls(crate::controls::PageControls { page: Some(0x100), subpages: count, chosen: Some(chosen), ..Default::default() });
+        browser.set_page_controls(crate::controls::PageControls { channel: 7, page: Some(0x100), subpages: count, chosen: Some(chosen), ..Default::default() });
     }
 
     /// The sub-page a key asked to be shown.
     fn asked(browser: &mut crate::browser::Browser) -> Option<u16> {
         browser.take_outputs().iter().find_map(|output| match output {
-            Output::PageControl(PageControl::SubPageOf { page: 0x100, subcode }) => Some(*subcode),
+            Output::PageControl(PageControl::SubPageOf { channel: 7, page: 0x100, subcode }) => Some(*subcode),
             _ => None,
         })
     }
@@ -630,9 +753,9 @@ mod tests {
         let index = browser.selected.unwrap();
         assert_eq!(browser.subpage_count(index), Some(10));
         // The decoder holds one sub-page and answers with its own count.
-        browser.set_subpage_rows(7, 0x100, 1, 0, held(0, 1));
+        browser.rows_arrive(0x100, 0, held(0, 1));
         assert_eq!(browser.subpage_count(index), Some(10), "the mark stays");
-        browser.set_subpage_rows(7, 0x100, 0, 0, alloc::vec::Vec::new());
+        browser.rows_arrive(0x100, 0, alloc::vec::Vec::new());
         assert_eq!(browser.subpage_count(index), Some(10));
         browser.draw(&mut canvas, WIDTH, HEIGHT, 0);
         assert!(browser.magazine_has_subpages(), "and the lower list stays open");
@@ -640,7 +763,7 @@ mod tests {
         browser.set_subpage_count(8, 0x100, 3);
         assert_eq!(browser.subpage_count(index), Some(10));
         // The same count again keeps the rows; another count asks afresh.
-        browser.set_subpage_rows(7, 0x100, 10, 0, held(0, 10));
+        browser.rows_arrive(0x100, 0, held(0, 10));
         browser.set_subpage_count(7, 0x100, 10);
         assert!(browser.subpages.held.is_some(), "rows kept when nothing changed");
         browser.set_subpage_count(7, 0x100, 12);
@@ -650,6 +773,50 @@ mod tests {
         channel.pages[index].as_mut().unwrap().subpages = 4;
         browser.set_channel(channel);
         assert_eq!(browser.subpage_count(index), Some(4));
+    }
+
+    /// DEC-6358 item 3 and fault 4: rows are kept only in answer to the
+    /// request in flight for the channel shown; an answer that never comes
+    /// is asked for again; and another channel shown abandons the request.
+    #[test]
+    fn rows_answer_the_request_in_flight_or_are_left() {
+        let (mut browser, mut canvas) = browser();
+        browser.set_subpage_count(7, 0x100, 5);
+        browser.draw(&mut canvas, WIDTH, HEIGHT, 0);
+        let row = browser.regions.rows[0].0;
+        press_at(&mut browser, &mut canvas, row);
+        browser.take_outputs();
+        browser.draw(&mut canvas, WIDTH, HEIGHT, 0);
+        let asked = |browser: &mut crate::browser::Browser| {
+            browser.take_outputs().into_iter().find_map(|output| match output {
+                Output::SubPageRows { channel, page, request, .. } => Some((channel, page, request)),
+                _ => None,
+            })
+        };
+        let Some((7, 0x100, first_request)) = asked(&mut browser) else { panic!("the rows are asked for, of this channel") };
+        // An answer with another number, or for another channel, is left.
+        browser.set_subpage_rows(7, 0x100, first_request.wrapping_add(9), 0, held(0, 5));
+        browser.set_subpage_rows(8, 0x100, first_request, 0, held(0, 5));
+        assert!(browser.subpages.held.is_none(), "neither answers the request in flight");
+        // No answer: not asked again before the time is up, then asked again with a new number.
+        browser.draw(&mut canvas, WIDTH, HEIGHT, 500);
+        assert_eq!(asked(&mut browser), None, "asked once while it waits");
+        assert_eq!(browser.frame_interval(500), Some(500), "woken when the answer is overdue");
+        browser.draw(&mut canvas, WIDTH, HEIGHT, 1_000);
+        let Some((7, 0x100, second_request)) = asked(&mut browser) else { panic!("asked again when the answer is overdue") };
+        assert_ne!(second_request, first_request, "a new number");
+        // The first request's answer, late, is left; the second's is kept.
+        browser.set_subpage_rows(7, 0x100, first_request, 0, held(0, 1));
+        assert!(browser.subpages.held.is_none());
+        browser.set_subpage_rows(7, 0x100, second_request, 0, held(0, 5));
+        assert_eq!(browser.subpages.held.as_ref().map(|held| held.rows.len()), Some(5));
+        browser.draw(&mut canvas, WIDTH, HEIGHT, 1_100);
+        assert_eq!(asked(&mut browser), None, "nothing more to ask");
+        // Another channel shown: nothing of this one is held or waited for.
+        let mut other = browser.channel.clone();
+        other.channel = 8;
+        browser.set_channel(other);
+        assert!(browser.subpages.held.is_none() && browser.subpages.request.is_none());
     }
 
     /// REQ-1758 item 3: neither key wraps round.
@@ -741,12 +908,12 @@ mod tests {
         assert!(place >= 64, "past the part held: {place}");
         let outputs = browser.take_outputs();
         let first = outputs.iter().rev().find_map(|output| match output {
-            Output::SubPageRows { page: 0x100, first, count: 64 } => Some(*first),
+            Output::SubPageRows { page: 0x100, first, count: 64, .. } => Some(*first),
             _ => None,
         });
         let first = first.expect("the part asked for");
         assert!(first <= place && place < first + 64, "the part holds the row landed on: {first} and {place}");
-        browser.set_subpage_rows(7, 0x100, 1_000, first, held(first, 64));
+        browser.rows_arrive(0x100, first, held(first, 64));
         browser.draw(&mut canvas, WIDTH, HEIGHT, 0);
         assert_eq!(asked(&mut browser), Some(place + 1), "shown once it arrived");
     }

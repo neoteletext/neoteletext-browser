@@ -26,6 +26,10 @@ use protocol::subpages::{SubPageRange, SubPageStep};
 use super::Core;
 use crate::session::Files;
 
+/// The requests for rows that wait at once: the interface makes one at a
+/// time, so more are only ones it has given up on.
+const ROWS_WAITING: usize = 8;
+
 /// What the trusted core keeps of the open page's controls.
 #[derive(Default)]
 pub(crate) struct State {
@@ -44,9 +48,16 @@ pub(crate) struct State {
     fetched: BTreeSet<u16>,
     /// The open page's list was asked for since it opened.
     catalogue_asked: bool,
-    /// The rows the sub-page list asked for of a page whose list lacks the
-    /// parts they fall in, answered when those parts have come.
-    rows_wanted: Option<(PageKey, SubPageRange)>,
+    /// The requests for rows waiting on a page's list: for parts not yet
+    /// held, or for the list itself on a live channel, which sends it
+    /// when the page is selected. Each is answered with its own number
+    /// when the list can answer it; at most [`ROWS_WAITING`], the oldest
+    /// given up first (DEC-6358, fault 4: there was one place, and a
+    /// second request lost the first its answer).
+    rows_wanted: Vec<(PageKey, SubPageRange, u16)>,
+    /// The request for rows passed to each page's decoder, by its number,
+    /// until the decoder answers.
+    rows_of_decoder: BTreeMap<PageKey, u16>,
     /// A sub-page of a live channel's open page selected and not yet
     /// drawn: the strip says it is loading (REQ-1505 item 5).
     awaiting: Option<(PageKey, u16)>,
@@ -532,37 +543,84 @@ impl Core {
     /// scrolled asks for the parts its rows fall in); else by its decoder
     /// from what it holds. A page's list is first asked for only when it
     /// opens (requirement 4.7 as amended for decision 121).
-    pub(super) fn subpage_rows(&mut self, page: u16, range: SubPageRange) -> Result<(), String> {
-        let Some(channel) = self.active_channel() else { return Ok(()) };
+    ///
+    /// The request names its channel and carries a number (DEC-6358 item
+    /// 3): one for a channel that is not the active one is not answered,
+    /// and every answer carries the number back. On a live channel a page
+    /// whose list is not held is not answered from its decoder, whose
+    /// places are of what it happens to hold and not the list's: the
+    /// request waits for the list, which the channel sends when the page
+    /// is selected.
+    pub(super) fn subpage_rows(&mut self, channel: u32, page: u16, range: SubPageRange, request: u16) -> Result<(), String> {
+        if self.active_channel() != Some(channel) {
+            return Ok(());
+        }
         let key = PageKey { channel, page };
-        let Some(wanted) = self.with_catalogue(key, |catalogue| catalogue.parts_wanted(range)) else {
+        let live = self.session.all_tabs().any(|tab| tab.channel.id == channel && tab.channel.live);
+        let wanted = self.with_catalogue(key, |catalogue| catalogue.parts_wanted(range));
+        if wanted.is_none() && !live {
+            self.controls.rows_of_decoder.insert(key, request);
             self.tell(channel, ToDecoder::SubPageRows { page, range });
             return Ok(());
-        };
-        self.controls.rows_wanted = Some((key, range));
-        self.ask_parts(key, &wanted);
+        }
+        self.controls.rows_wanted.retain(|&(waiting, _, number)| (waiting, number) != (key, request));
+        self.controls.rows_wanted.push((key, range, request));
+        if self.controls.rows_wanted.len() > ROWS_WAITING {
+            self.controls.rows_wanted.remove(0);
+        }
+        self.ask_parts(key, &wanted.unwrap_or_default());
         self.answer_rows_wanted(key, false)
     }
 
-    /// Answers the rows waiting on `key`'s list once the parts they fall in
-    /// are held, or at once with what is held when `now`: a part that could
-    /// not be fetched is not waited for.
+    /// Answers each request waiting on `key`'s list once the parts its rows
+    /// fall in are held, or at once with what is held when `now`: a part
+    /// that could not be fetched is not waited for.
     pub(super) fn answer_rows_wanted(&mut self, key: PageKey, now: bool) -> Result<(), String> {
-        let Some((wanted, range)) = self.controls.rows_wanted.filter(|(wanted, _)| *wanted == key) else { return Ok(()) };
-        let Some((parts, rows)) = self.with_catalogue(wanted, |catalogue| (catalogue.parts_wanted(range), catalogue.rows(range))) else { return Ok(()) };
-        if !parts.is_empty() && !now {
+        let waiting: Vec<(SubPageRange, u16)> =
+            self.controls.rows_wanted.iter().filter(|(wanted, _, _)| *wanted == key).map(|&(_, range, request)| (range, request)).collect();
+        for (range, request) in waiting {
+            let Some((parts, rows)) = self.with_catalogue(key, |catalogue| (catalogue.parts_wanted(range), catalogue.rows(range))) else { return Ok(()) };
+            if !parts.is_empty() && !now {
+                continue;
+            }
+            self.controls.rows_wanted.retain(|&(waiting, _, number)| (waiting, number) != (key, request));
+            if self.active_channel() == Some(key.channel) {
+                self.send(&ToInterface::SubPageRows { channel: key.channel, page: key.page, request, rows })?;
+            }
+        }
+        Ok(())
+    }
+
+    /// A decoder answered a request for rows of `key` passed to it: sent
+    /// on with the request's number, unless the page's list has come
+    /// meanwhile, when the list answers it instead, so that no request is
+    /// left without an answer (DEC-6358, fault 4).
+    pub(super) fn rows_from_decoder(&mut self, key: PageKey, mut rows: protocol::subpages::SubPageRows) -> Result<(), String> {
+        let Some(request) = self.controls.rows_of_decoder.remove(&key) else { return Ok(()) };
+        if self.with_catalogue(key, |_| ()).is_some() {
+            let range = SubPageRange { first: rows.first, count: u16::try_from(interface_core::controls::SUBPAGE_ROWS).unwrap_or(u16::MAX) };
+            self.controls.rows_wanted.push((key, range, request));
+            return self.answer_rows_wanted(key, true);
+        }
+        if self.active_channel() != Some(key.channel) {
             return Ok(());
         }
-        self.controls.rows_wanted = None;
-        self.send(&ToInterface::SubPageRows { channel: key.channel, page: key.page, rows })
+        for (_, title) in &mut rows.rows {
+            *title = protocol::clean(title, protocol::MAX_PAGE_TITLE);
+        }
+        self.send(&ToInterface::SubPageRows { channel: key.channel, page: key.page, request, rows })
     }
 
     /// Strip input: a key of the open page's controls.
     pub(crate) fn page_control(&mut self, control: PageControl) -> Result<(), String> {
         // A sub-page chosen from the page list: shown at once on the page
         // open, or when its page opens.
-        if let PageControl::SubPageOf { page, subcode } = control {
-            let Some(channel) = self.active_channel() else { return Ok(()) };
+        if let PageControl::SubPageOf { channel, page, subcode } = control {
+            // A choice made of another channel than the one in front, as in
+            // the moment a tab changes, is not this channel's (DEC-6358 item 3).
+            if self.active_channel() != Some(channel) {
+                return Ok(());
+            }
             let target = PageKey { channel, page };
             if self.controls.open != Some(target) {
                 self.open_at_subpage(target, Some(subcode));
@@ -645,6 +703,7 @@ impl Core {
                 #[cfg(not(feature = "links"))]
                 let fastext = [false; 5];
                 PageControls {
+                    channel: key.channel,
                     page: Some(key.page),
                     fastext,
                     reveal: view.reveal,
@@ -772,7 +831,7 @@ mod tests {
         let controls = sent.iter().rev().find_map(|message| if let ToInterface::PageControls(controls) = message { Some(*controls) } else { None });
         assert_eq!(controls.and_then(|controls| controls.chosen), Some(0), "back at the first, by its place in the list");
         let range = SubPageRange { first: most - 64, count: 64 };
-        test.core.intent(protocol::ToCore::SubPageRows { page: 0x210, range }).unwrap();
+        test.core.intent(protocol::ToCore::SubPageRows { channel: test.core.active_channel().unwrap(), page: 0x210, range, request: 1 }).unwrap();
         assert_eq!(told(&mut test), [part(126)], "the part of the rows not held");
         let rows = |test: &mut super::super::test_support::Test| {
             test.sent().into_iter().find_map(|message| if let ToInterface::SubPageRows { rows, .. } = message { Some(rows) } else { None })
@@ -803,19 +862,40 @@ mod tests {
         test.core.fetched(channel, list_part(&subcodes, "v1", 0)).unwrap();
         test.core.fetched(channel, list_part(&subcodes, "v1", 4)).unwrap();
         told(&mut test);
-        test.core.intent(protocol::ToCore::SubPageRows { page: 0x210, range: SubPageRange { first: 64, count: 64 } }).unwrap();
+        test.core
+            .intent(protocol::ToCore::SubPageRows {
+                channel: test.core.active_channel().unwrap(),
+                page: 0x210,
+                range: SubPageRange { first: 64, count: 64 },
+                request: 1,
+            })
+            .unwrap();
         assert_eq!(told(&mut test), [ToFetcher::FetchSubPages { page: 0x210, part: 1 }]);
         test.core.fetched(channel, list_part(&subcodes, "v2", 1)).unwrap();
         let again: Vec<ToFetcher> = told(&mut test);
         assert_eq!(again, [0, 4].map(|part| ToFetcher::FetchSubPages { page: 0x210, part }), "the old version's parts, again");
         let rows = test.sent().into_iter().find_map(|message| if let ToInterface::SubPageRows { rows, .. } = message { Some(rows) } else { None });
         assert_eq!(rows.map(|rows| rows.rows.len()), Some(64), "the new part answers the rows");
-        test.core.intent(protocol::ToCore::SubPageRows { page: 0x210, range: SubPageRange { first: 128, count: 64 } }).unwrap();
+        test.core
+            .intent(protocol::ToCore::SubPageRows {
+                channel: test.core.active_channel().unwrap(),
+                page: 0x210,
+                range: SubPageRange { first: 128, count: 64 },
+                request: 1,
+            })
+            .unwrap();
         assert_eq!(told(&mut test), [ToFetcher::FetchSubPages { page: 0x210, part: 2 }]);
         test.core.fetched(channel, FromFetcher::SubPagesFailed { page: 0x210, part: 2 }).unwrap();
         let rows = test.sent().into_iter().find_map(|message| if let ToInterface::SubPageRows { rows, .. } = message { Some(rows) } else { None });
         assert_eq!(rows.map(|rows| (rows.first, rows.rows.len())), Some((128, 0)), "answered with what is held");
-        test.core.intent(protocol::ToCore::SubPageRows { page: 0x210, range: SubPageRange { first: 128, count: 64 } }).unwrap();
+        test.core
+            .intent(protocol::ToCore::SubPageRows {
+                channel: test.core.active_channel().unwrap(),
+                page: 0x210,
+                range: SubPageRange { first: 128, count: 64 },
+                request: 1,
+            })
+            .unwrap();
         assert!(told(&mut test).is_empty(), "not asked again while the page is open");
     }
 
@@ -931,7 +1011,9 @@ mod tests {
         drawn(&mut test, key, 1, 1, 0);
         assert_eq!(selects_sent(&mut test.core, key.channel, &written), [], "the answer is adopted with nothing sent");
         let choose = |test: &mut super::super::test_support::Test, subcode| {
-            test.core.intent(protocol::ToCore::PageControl(PageControl::SubPageOf { page: 0x210, subcode })).unwrap();
+            test.core
+                .intent(protocol::ToCore::PageControl(PageControl::SubPageOf { channel: test.core.active_channel().unwrap(), page: 0x210, subcode }))
+                .unwrap();
         };
         choose(&mut test, 3);
         assert_eq!(selects_sent(&mut test.core, key.channel, &written), [(0x210, 3)]);
@@ -970,7 +1052,9 @@ mod tests {
         let (mut test, key) = live_page("live latest", &[1, 2, 3]);
         let written = wire(&mut test.core, key.channel);
         drawn(&mut test, key, 1, 1, 0);
-        test.core.intent(protocol::ToCore::PageControl(PageControl::SubPageOf { page: 0x210, subcode: 2 })).unwrap();
+        test.core
+            .intent(protocol::ToCore::PageControl(PageControl::SubPageOf { channel: test.core.active_channel().unwrap(), page: 0x210, subcode: 2 }))
+            .unwrap();
         let _ = selects_sent(&mut test.core, key.channel, &written);
         test.core.intent(protocol::ToCore::PageControl(PageControl::Latest)).unwrap();
         assert_eq!(selects_sent(&mut test.core, key.channel, &written), [], "no SELECT of 3F7F");
@@ -1006,5 +1090,43 @@ mod tests {
         assert_eq!(test.core.strip().notice, "Connecting to the channel");
         test.core.fetched(channel, FromFetcher::Connecting(false)).unwrap();
         assert_eq!(test.core.strip().notice, "");
+    }
+
+    /// DEC-6358 item 3 and fault 4: every request for rows is answered
+    /// with its own number. A live page's rows wait for its list, which
+    /// the channel sends, and are not taken from the decoder; two requests
+    /// waiting are both answered; and a request of a channel that is not
+    /// in front is not answered from the one that is.
+    #[test]
+    fn each_request_for_rows_is_answered_with_its_number() {
+        use protocol::fetcher::FromFetcher;
+        let mut test = super::super::test_support::Test::new("rows by number");
+        test.core.session.open("https://news.invalid/teletext/").unwrap();
+        let channel = test.core.active_channel().unwrap();
+        test.core.fetched(channel, FromFetcher::Connecting(true)).unwrap();
+        test.core.fetched(channel, FromFetcher::Connecting(false)).unwrap();
+        test.core.intent(protocol::ToCore::Opened(Some(PageKey { channel, page: 0x210 }))).unwrap();
+        let range = |first| SubPageRange { first, count: 64 };
+        let answers = |test: &mut super::super::test_support::Test| -> Vec<(u16, u16, usize)> {
+            let sent = test.sent();
+            sent.into_iter()
+                .filter_map(
+                    |message| if let ToInterface::SubPageRows { request, rows, .. } = message { Some((request, rows.first, rows.rows.len())) } else { None },
+                )
+                .collect()
+        };
+        answers(&mut test);
+        // The list has not come: the requests wait, and no decoder is asked.
+        test.core.intent(protocol::ToCore::SubPageRows { channel, page: 0x210, range: range(0), request: 11 }).unwrap();
+        test.core.intent(protocol::ToCore::SubPageRows { channel, page: 0x210, range: range(2), request: 12 }).unwrap();
+        // A request of another channel is not this one's to answer.
+        test.core.intent(protocol::ToCore::SubPageRows { channel: channel + 1, page: 0x210, range: range(0), request: 13 }).unwrap();
+        assert_eq!(answers(&mut test), [], "nothing to answer with yet");
+        let subcodes = [1, 2, 3];
+        test.core.fetched(channel, list_part(&subcodes, "1", 0)).unwrap();
+        assert_eq!(answers(&mut test), [(11, 0, 3), (12, 2, 1)], "both waiting requests answered from the list, each with its number");
+        // Once the list is held a request is answered at once.
+        test.core.intent(protocol::ToCore::SubPageRows { channel, page: 0x210, range: range(1), request: 14 }).unwrap();
+        assert_eq!(answers(&mut test), [(14, 1, 2)]);
     }
 }

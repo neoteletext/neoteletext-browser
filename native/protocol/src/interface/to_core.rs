@@ -132,9 +132,11 @@ fn push_fields(payload: &mut Vec<u8>, message: &ToCore) -> Result<(), ProtocolEr
         ToCore::FromSystem(files) => push_files(payload, files)?,
         ToCore::NewTab | ToCore::Back | ToCore::Forward | ToCore::Bookmark | ToCore::Home | ToCore::Reload => {}
         ToCore::PageControl(control) => controls::push_control(payload, *control),
-        ToCore::SubPageRows { page, range } => {
+        ToCore::SubPageRows { channel, page, range, request } => {
             crate::fields::check_page(*page)?;
+            payload.extend_from_slice(&channel.to_be_bytes());
             payload.extend_from_slice(&page.to_be_bytes());
+            payload.extend_from_slice(&request.to_be_bytes());
             crate::subpages::push_range(payload, *range, interface_core::controls::SUBPAGE_ROWS)?;
         }
         ToCore::From(window) => push_window_number(payload, *window)?,
@@ -284,6 +286,15 @@ fn push_go_to(payload: &mut Vec<u8>, forward: bool, steps: u8) -> Result<(), Pro
     Ok(())
 }
 
+/// Reads a request for rows of a page's sub-pages: its channel, page and
+/// number, then the rows asked for.
+fn read_ask_subpage_rows(fields: &mut Fields<'_>) -> Result<ToCore, ProtocolError> {
+    let channel = fields.u32()?;
+    let page = fields.channel_page()?;
+    let request = fields.u16()?;
+    Ok(ToCore::SubPageRows { channel, page, range: crate::subpages::read_range(fields, interface_core::controls::SUBPAGE_ROWS)?, request })
+}
+
 /// Reads one intent from the interface, or `None` at a clean end.
 ///
 /// # Errors
@@ -332,10 +343,7 @@ pub fn read_from_interface(input: &mut dyn Read) -> Result<Option<ToCore>, Proto
         KIND_HOME => ToCore::Home,
         KIND_RELOAD => ToCore::Reload,
         KIND_PAGE_CONTROL => ToCore::PageControl(controls::read_control(&mut fields)?),
-        KIND_ASK_SUBPAGE_ROWS => {
-            let page = fields.channel_page()?;
-            ToCore::SubPageRows { page, range: crate::subpages::read_range(&mut fields, interface_core::controls::SUBPAGE_ROWS)? }
-        }
+        KIND_ASK_SUBPAGE_ROWS => read_ask_subpage_rows(&mut fields)?,
         KIND_FROM | KIND_NEW_WINDOW | KIND_TAB_TO_WINDOW | KIND_CLOSE_WINDOW => window_intent(kind, &mut fields)?,
         KIND_DRAWN | KIND_INSTALL_UPDATE => update_intent(kind),
         KIND_CHANGE_SETTING => ToCore::ChangeSetting(settings::read_change(&mut fields)?),

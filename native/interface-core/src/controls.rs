@@ -87,6 +87,9 @@ pub enum PageControl {
     /// Open `page` at the sub-page `subcode`, chosen from the page list's
     /// sub-pages: at once if it is open, else when it opens.
     SubPageOf {
+        /// The channel the page is of: a choice made of one channel is
+        /// never taken as another's (DEC-6358 item 3).
+        channel: u32,
         /// The page.
         page: u16,
         /// The sub-page's sub-code.
@@ -97,6 +100,9 @@ pub enum PageControl {
 /// The open page's controls, as the trusted core sends them.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct PageControls {
+    /// The channel the open page is of; 0 with no page open. Controls are
+    /// matched to a page by its channel and its number (DEC-6358 item 3).
+    pub channel: u32,
     /// The open page, or none.
     pub page: Option<u16>,
     /// Which of the coloured keys and Index lead somewhere now, with row 24

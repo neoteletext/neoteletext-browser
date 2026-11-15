@@ -26,7 +26,7 @@ fn opened(subpages: u16) -> (Browser, PageKey) {
     let (key, _) = browser.wall().shown().next().unwrap();
     browser.wall_mut().zoom(key, 0);
     browser.draw(&mut Recorder::new(), WIDTH, HEIGHT, OPEN);
-    browser.set_page_controls(PageControls { page: Some(key.page), subpages, fastext: [true; 5], ..PageControls::default() });
+    browser.set_page_controls(PageControls { channel: key.channel, page: Some(key.page), subpages, fastext: [true; 5], ..PageControls::default() });
     browser.draw(&mut Recorder::new(), WIDTH, HEIGHT, OPEN);
     browser.take_outputs();
     (browser, key)

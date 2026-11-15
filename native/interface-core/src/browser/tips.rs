@@ -402,7 +402,7 @@ mod tests {
         browser.draw(&mut canvas, WIDTH, HEIGHT, 0);
         let (row, index) = browser.regions.rows[0];
         crate::browser::fixture::press_at(&mut browser, &mut canvas, row);
-        browser.set_subpage_rows(7, 0x100, 2, 0, alloc::vec![(1, long.into()), (2, "Short".into())]);
+        browser.rows_arrive(0x100, 0, alloc::vec![(1, long.into()), (2, "Short".into())]);
         browser.draw(&mut canvas, WIDTH, HEIGHT, 0);
         // Whole titles: the rows have no tip, the magazine its sentence.
         let short_subrow = browser.regions.subrows[1].0;

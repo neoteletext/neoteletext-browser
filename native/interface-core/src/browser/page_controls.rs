@@ -32,7 +32,7 @@ impl Browser {
 
     /// Whether the controls are those of the page open now.
     pub(super) fn controls_open(&self) -> bool {
-        self.wall.zoomed().is_some_and(|key| self.page_controls.controls.page == Some(key.page))
+        self.wall.zoomed().is_some_and(|key| self.page_controls.controls.channel == key.channel && self.page_controls.controls.page == Some(key.page))
     }
 
     /// A key while a page is open: the engine viewer's keys for its

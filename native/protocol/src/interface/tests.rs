@@ -111,14 +111,14 @@ fn window_messages_are_held_to_their_bounds() {
 #[test]
 fn sub_page_counts_and_places_reach_the_standards_maximum() {
     use interface_core::controls::PageControls;
-    let most = PageControls { page: Some(0x302), subpages: 8_190, chosen: Some(8_189), subcode: 0x3F7E, ..PageControls::default() };
+    let most = PageControls { channel: 9, page: Some(0x302), subpages: 8_190, chosen: Some(8_189), subcode: 0x3F7E, ..PageControls::default() };
     let mut bytes = Vec::new();
     write_to_interface(&mut bytes, &ToInterface::PageControls(most)).unwrap();
     assert_eq!(read_from_core(&mut bytes.as_slice()).unwrap(), Some(ToInterface::PageControls(most)));
     assert!(write_to_interface(&mut Vec::new(), &ToInterface::PageControls(PageControls { subpages: 8_191, chosen: None, ..most })).is_err());
-    // The count follows the kind, the length, the flags, the page and the
-    // Fastext keys.
-    let count = 1 + 4 + 1 + 2 + 1;
+    // The count follows the kind, the length, the flags, the channel, the
+    // page and the Fastext keys.
+    let count = 1 + 4 + 1 + 4 + 2 + 1;
     bytes[count..count + 2].copy_from_slice(&8_191_u16.to_be_bytes());
     assert!(matches!(read_from_core(&mut bytes.as_slice()), Err(ProtocolError::BadValue("sub-pages"))));
     assert!(write_to_interface(&mut Vec::new(), &ToInterface::SubPageCount { channel: 1, page: 0x210, count: 8_191 }).is_err());
@@ -128,7 +128,7 @@ fn sub_page_counts_and_places_reach_the_standards_maximum() {
     bytes[count..count + 2].copy_from_slice(&8_191_u16.to_be_bytes());
     assert!(read_from_core(&mut bytes.as_slice()).is_err(), "a count of 8,191 read");
     let range = crate::subpages::SubPageRange { first: 0, count: 65 };
-    assert!(write_to_core(&mut Vec::new(), &ToCore::SubPageRows { page: 0x210, range }).is_err(), "more rows than a message carries");
+    assert!(write_to_core(&mut Vec::new(), &ToCore::SubPageRows { channel: 9, page: 0x210, range, request: 1 }).is_err(), "more rows than a message carries");
 }
 
 #[test]
@@ -150,6 +150,7 @@ fn every_message_to_the_interface_round_trips() {
         ToInterface::SubPageRows {
             channel: 9,
             page: 0x210,
+            request: 0xFFFF,
             rows: crate::subpages::SubPageRows { count: 8_190, first: 8_188, rows: vec![(0x3F7D, "Story 1/2".into()), (0x3F7E, "Comments".into())] },
         },
         ToInterface::Updated { channel: 9, page: 0x302 },
@@ -183,6 +184,7 @@ fn every_message_to_the_interface_round_trips() {
         ToInterface::Update(settings::UpdateView { version: "0.1.0".into(), status: "NeoTeletext is up to date".into(), offer: None, checking: true }),
         ToInterface::Cookies(cookies::CookiesView { query: "news".into(), total: 0, ..cookies::CookiesView::default() }),
         ToInterface::PageControls(interface_core::controls::PageControls {
+            channel: 9,
             page: Some(0x302),
             fastext: [true, false, true, false, true],
             reveal: true,
@@ -252,8 +254,8 @@ fn every_intent_round_trips() {
         ToCore::PageControl(interface_core::controls::PageControl::Fastext(interface_core::controls::FastextKey::Index)),
         ToCore::PageControl(interface_core::controls::PageControl::SubPage(false)),
         ToCore::PageControl(interface_core::controls::PageControl::Latest),
-        ToCore::PageControl(interface_core::controls::PageControl::SubPageOf { page: 0x210, subcode: 3 }),
-        ToCore::SubPageRows { page: 0x210, range: crate::subpages::SubPageRange { first: 8_000, count: 64 } },
+        ToCore::PageControl(interface_core::controls::PageControl::SubPageOf { channel: 9, page: 0x210, subcode: 3 }),
+        ToCore::SubPageRows { channel: 9, page: 0x210, range: crate::subpages::SubPageRange { first: 8_000, count: 64 }, request: 0xFFFF },
         ToCore::Drawn,
         ToCore::InstallUpdate,
         ToCore::ChangeSetting(settings::SettingChange::Volume(40)),

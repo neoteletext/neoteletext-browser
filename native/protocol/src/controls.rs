@@ -35,8 +35,9 @@ pub(crate) fn push_control(payload: &mut Vec<u8>, control: PageControl) {
         PageControl::SubPage(true) => payload.push(CONTROL_NEXT),
         PageControl::SubPage(false) => payload.push(CONTROL_PREVIOUS),
         PageControl::Latest => payload.push(CONTROL_LATEST),
-        PageControl::SubPageOf { page, subcode } => {
+        PageControl::SubPageOf { channel, page, subcode } => {
             payload.push(CONTROL_SUBPAGE_OF);
+            payload.extend_from_slice(&channel.to_be_bytes());
             payload.extend_from_slice(&page.to_be_bytes());
             payload.extend_from_slice(&subcode.to_be_bytes());
         }
@@ -53,6 +54,7 @@ pub(crate) fn read_control(fields: &mut Fields<'_>) -> Result<PageControl, Proto
         CONTROL_PREVIOUS => PageControl::SubPage(false),
         CONTROL_LATEST => PageControl::Latest,
         CONTROL_SUBPAGE_OF => {
+            let channel = fields.u32()?;
             let page = fields.channel_page()?;
             let subcode = fields.u16()?;
             // Any of the thirteen bits' values, none outside them (the
@@ -60,7 +62,7 @@ pub(crate) fn read_control(fields: &mut Fields<'_>) -> Result<PageControl, Proto
             if !is_sub_code(subcode) {
                 return Err(ProtocolError::BadValue("sub-code"));
             }
-            PageControl::SubPageOf { page, subcode }
+            PageControl::SubPageOf { channel, page, subcode }
         }
         _ => return Err(ProtocolError::BadValue("page control")),
     })
@@ -79,7 +81,10 @@ pub(crate) fn push_controls(payload: &mut Vec<u8>, controls: &PageControls) -> R
     payload.push(flags);
     if let Some(page) = controls.page {
         crate::fields::check_page(page)?;
+        payload.extend_from_slice(&controls.channel.to_be_bytes());
         payload.extend_from_slice(&page.to_be_bytes());
+    } else if controls.channel != 0 {
+        return Err(ProtocolError::BadValue("a channel with no page open"));
     }
     let keys = controls.fastext.iter().enumerate().fold(0_u8, |bits, (index, on)| if *on { bits | (1 << index) } else { bits });
     payload.push(keys);
@@ -97,7 +102,7 @@ pub(crate) fn read_controls(fields: &mut Fields<'_>) -> Result<PageControls, Pro
     if flags & !FLAGS != 0 {
         return Err(ProtocolError::BadValue("control flags"));
     }
-    let page = if flags & OPEN == 0 { None } else { Some(fields.channel_page()?) };
+    let (channel, page) = if flags & OPEN == 0 { (0, None) } else { (fields.u32()?, Some(fields.channel_page()?)) };
     let keys = fields.u8()?;
     if usize::from(keys) >> FastextKey::ALL.len() != 0 {
         return Err(ProtocolError::BadValue("Fastext keys"));
@@ -122,6 +127,7 @@ pub(crate) fn read_controls(fields: &mut Fields<'_>) -> Result<PageControls, Pro
     // A count of 64 bits, its high half first.
     let downloaded = (u64::from(fields.u32()?) << u32::BITS) | u64::from(fields.u32()?);
     Ok(PageControls {
+        channel,
         page,
         fastext: core::array::from_fn(|index| keys & (1 << index) != 0),
         reveal: flags & REVEAL != 0,

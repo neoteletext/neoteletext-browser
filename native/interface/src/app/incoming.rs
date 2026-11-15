@@ -49,7 +49,7 @@ impl App {
             }
             Incoming::Arrived { channel, page, title } => self.view.browser.add_page(channel, page, title, now),
             Incoming::SubPageCount { channel, page, count } => self.view.browser.set_subpage_count(channel, page, count),
-            Incoming::SubPageRows { channel, page, rows } => self.view.browser.set_subpage_rows(channel, page, rows.count, rows.first, rows.rows),
+            Incoming::SubPageRows { channel, page, request, rows } => self.view.browser.set_subpage_rows(channel, page, request, rows.first, rows.rows),
             Incoming::Updated { channel, page } => self.page_updated(channel, page, now),
             Incoming::Show(key) => {
                 self.view.browser.show(key, now);

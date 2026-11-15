@@ -173,10 +173,14 @@ mod tests {
         };
         drawn(&mut browser, &mut canvas, PageControls::default());
         assert!(!said(&canvas, "Page downloaded") && !said(&canvas, "Sub-page downloaded"), "no page is open");
-        drawn(&mut browser, &mut canvas, PageControls { page: Some(0x100), subpages: 1, downloaded: 1_234_567, ..PageControls::default() });
+        drawn(&mut browser, &mut canvas, PageControls { channel: 7, page: Some(0x100), subpages: 1, downloaded: 1_234_567, ..PageControls::default() });
         assert!(said(&canvas, "Page downloaded") && said(&canvas, "1,234,567 bytes"), "{:?}", canvas.texts);
         assert!(!said(&canvas, "Sub-page downloaded"), "one figure, the page's");
-        drawn(&mut browser, &mut canvas, PageControls { page: Some(0x100), subpages: 10, chosen: Some(2), downloaded: 890, ..PageControls::default() });
+        drawn(
+            &mut browser,
+            &mut canvas,
+            PageControls { channel: 7, page: Some(0x100), subpages: 10, chosen: Some(2), downloaded: 890, ..PageControls::default() },
+        );
         assert!(said(&canvas, "Sub-page downloaded") && said(&canvas, "890 bytes"), "{:?}", canvas.texts);
         assert!(!said(&canvas, "Page downloaded"), "one figure, the sub-page's");
     }

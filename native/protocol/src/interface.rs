@@ -72,6 +72,8 @@ pub enum ToInterface {
         channel: u32,
         /// The page number.
         page: u16,
+        /// The number of the request this answers (DEC-6358 item 3).
+        request: u16,
         /// The page's count, the first row's place and the rows, at most
         /// [`interface_core::controls::SUBPAGE_ROWS`].
         rows: crate::subpages::SubPageRows,
@@ -362,10 +364,15 @@ pub enum ToCore {
     /// channel it scrolled into view (decision 112 item 3): answered by
     /// [`ToInterface::SubPageRows`].
     SubPageRows {
+        /// The channel the page is of: a request made of one channel is
+        /// never answered from another (DEC-6358 item 3).
+        channel: u32,
         /// The page number.
         page: u16,
         /// The rows, at most [`interface_core::controls::SUBPAGE_ROWS`].
         range: crate::subpages::SubPageRange,
+        /// The request's number, which the answer carries back.
+        request: u16,
     },
     /// The intents that follow are from this window, until the next
     /// (`multiple-windows.md`).

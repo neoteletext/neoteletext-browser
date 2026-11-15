@@ -106,7 +106,15 @@ fn only_a_page_that_rotates_offers_the_return_to_the_latest() {
     let offered = |rotation: Rotation| {
         let mut browser = Browser::new(Frame { left_inset: 0.0, window_buttons: false });
         browser.set_remote(RemotePlace { mode: RemoteMode::Docked, x: 0, y: 0 });
-        browser.set_page_controls(PageControls { page: Some(0x210), subpages: 12, chosen: Some(2), subcode: 3, rotation, ..PageControls::default() });
+        browser.set_page_controls(PageControls {
+            channel: 7,
+            page: Some(0x210),
+            subpages: 12,
+            chosen: Some(2),
+            subcode: 3,
+            rotation,
+            ..PageControls::default()
+        });
         browser.draw(&mut Recorder::new(), WIDTH, HEIGHT, SLIDE_MILLISECONDS);
         browser.remote.buttons.iter().any(|(button, _)| *button == Button::Latest)
     };
@@ -201,7 +209,14 @@ fn the_remotes_sub_page_control_counts_to_the_standards_maximum_and_returns_to_t
     browser.wall.zoom(KEY, 0);
     browser.draw(&mut Recorder::new(), WIDTH, HEIGHT, 10_000);
     let last = u16::try_from(neoteletext_core::limits::MAX_SUBPAGES).unwrap();
-    let controls = PageControls { page: Some(0x100), subpages: last, chosen: Some(last - 1), rotation: Rotation::AsBroadcast, ..PageControls::default() };
+    let controls = PageControls {
+        channel: KEY.channel,
+        page: Some(0x100),
+        subpages: last,
+        chosen: Some(last - 1),
+        rotation: Rotation::AsBroadcast,
+        ..PageControls::default()
+    };
     browser.set_page_controls(controls);
     let mut canvas = Recorder::new();
     browser.draw(&mut canvas, WIDTH, HEIGHT, 10_000);

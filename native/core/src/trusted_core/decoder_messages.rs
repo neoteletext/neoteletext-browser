@@ -77,17 +77,8 @@ impl Core {
                 }
             }
             // The rows the sub-page list asked for, from what the decoder
-            // holds: shown unless the page's catalogue, which lists every
-            // sub-page, has come meanwhile.
-            FromDecoder::SubPageRows { page, mut rows } => {
-                let catalogued = self.channel_subpages(channel).is_some_and(|subpages| subpages.catalogue(page).is_some());
-                if active == Some(channel) && !catalogued {
-                    for (_, title) in &mut rows.rows {
-                        *title = clean(title, protocol::MAX_PAGE_TITLE);
-                    }
-                    self.send(&ToInterface::SubPageRows { channel, page, rows })?;
-                }
-            }
+            // holds, in answer to the request passed to it.
+            FromDecoder::SubPageRows { page, rows } => self.rows_from_decoder(PageKey { channel, page }, rows)?,
             #[cfg(feature = "interaction")]
             FromDecoder::Cursor { body } => {
                 let sends = self.typing.cursor(channel, body);

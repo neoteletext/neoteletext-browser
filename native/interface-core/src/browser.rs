@@ -64,6 +64,7 @@ mod settings_panel;
 mod shown;
 mod star;
 mod subpage_list;
+mod subpage_machines;
 mod suggestions;
 mod tab_lists;
 mod tab_strip;

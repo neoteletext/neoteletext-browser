@@ -71,7 +71,7 @@ impl Browser {
 
     fn draw_remote_keys<C: Canvas + ?Sized>(&mut self, canvas: &mut C, panel: Rect) {
         let controls = self.page_controls();
-        let open = self.wall.zoomed().is_some_and(|key| controls.page == Some(key.page));
+        let open = self.wall.zoomed().is_some_and(|key| controls.channel == key.channel && controls.page == Some(key.page));
         let (left, right) = (panel.x0 + PADDING, panel.x1 - PADDING);
         let mut y = panel.y0 + PADDING;
         let mut buttons: Vec<(Button, Rect)> = Vec::new();

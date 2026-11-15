@@ -37,7 +37,10 @@ impl Browser {
             return self.wall.zoom_ways();
         }
         let count = self.selected.and_then(|index| self.subpage_count(index)).unwrap_or(0);
-        let place = self.page_controls().chosen.unwrap_or(0);
+        // The place shown is the open page's only when the controls are
+        // this page's of this channel (DEC-6358 item 3).
+        let page = self.selected.and_then(crate::channel::page_number);
+        let place = page.and_then(|page| self.chosen_place(page)).unwrap_or(0);
         (place > 0, place.saturating_add(1) < count)
     }
 

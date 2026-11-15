@@ -47,6 +47,7 @@ impl Browser {
             .chain(self.tabs_deadline(now))
             .chain(self.full_screen_deadline(now))
             .chain(self.wheel_blink_deadline(now))
+            .chain(self.subpages_deadline(now))
             .min();
         if self.wall.animating(now) || self.remote_animating(now) {
             Some(SMOOTH_FRAME_MILLISECONDS)

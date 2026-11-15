@@ -334,7 +334,9 @@ fn the_sub_pages_stand_on_the_colour() {
     browser.selected = browser.bank_pages().first().copied();
     let page = page_number(browser.selected.unwrap()).unwrap();
     browser.set_subpage_count(7, page, 3);
-    browser.set_subpage_rows(7, page, 3, 0, alloc::vec![(1, "One".into()), (2, "Two".into()), (3, "Three".into())]);
+    // The list asks for its rows as it draws, and the answer is to that request.
+    drawn(&mut browser, Some(YELLOW));
+    browser.rows_arrive(page, 0, alloc::vec![(1, "One".into()), (2, "Two".into()), (3, "Three".into())]);
     let canvas = drawn(&mut browser, Some(YELLOW));
     assert_eq!(ink_of(&canvas, "Two"), BLACK);
     let words = format!("Sub-pages of {page:03X} (3)");
