@@ -257,6 +257,16 @@ impl Console {
         });
     }
 
+    /// The viewer chose a sub-page of `channel`'s open page: what comes
+    /// next is counted from nothing, whatever was counted before. Without
+    /// this a choice made on a page opened without a sub-page would join
+    /// the count of the sub-page the page opened at (REQ-6352 item 2).
+    pub fn downloaded_restart(&mut self, channel: u32) {
+        if let Some(log) = self.channels.get_mut(&channel) {
+            log.downloaded = None;
+        }
+    }
+
     /// The bytes counted for `selection` of `channel`: none when the count
     /// kept is another selection's.
     #[must_use]

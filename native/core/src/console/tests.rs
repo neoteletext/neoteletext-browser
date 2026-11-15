@@ -167,6 +167,11 @@ fn the_bytes_downloaded_are_the_selections_and_start_again_with_another() {
     console.downloaded(4, Some(Selection { page: 0x102, sub: None }), 7);
     assert_eq!((console.downloaded_for(4, Selection { page: 0x102, sub: None }), console.downloaded_for(4, page)), (7, 0));
     assert_eq!(console.downloaded_for(5, page), 0, "each channel's own");
+    // A sub-page chosen on a page opened without one starts from nothing.
+    console.downloaded(7, Some(page), 900);
+    console.downloaded_restart(7);
+    console.downloaded(7, Some(second), 30);
+    assert_eq!(console.downloaded_for(7, second), 30, "the choice's own bytes, not the page's first sub-page's with them");
     // What comes before the tab's page is known is the first page's, and
     // what comes with none named joins the count kept.
     console.downloaded(6, None, 40);

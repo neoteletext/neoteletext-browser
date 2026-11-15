@@ -628,6 +628,10 @@ impl Core {
             }
             self.address_follows(page, Some(subcode))?;
             let view = View { subpage: Some(subcode), ..self.controls.view_of(target) };
+            // Another sub-page chosen: its bytes are counted from nothing (REQ-6352).
+            if self.controls.view_of(target).subpage != Some(subcode) {
+                self.console.downloaded_restart(channel);
+            }
             self.show_subpage(target, view)?;
             return self.send_controls();
         }
@@ -659,6 +663,7 @@ impl Core {
                 // 3F7F names no sub-page (clause 9.6.1).
                 let Some(next) = next.filter(|&next| next != SUBCODE_ANY) else { return Ok(()) };
                 view.subpage = Some(next);
+                self.console.downloaded_restart(key.channel);
                 self.address_follows(key.page, Some(next))?;
                 self.show_subpage(key, view)?;
                 return self.send_controls();
