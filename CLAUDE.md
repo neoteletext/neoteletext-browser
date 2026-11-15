@@ -1,6 +1,6 @@
 # NeoTeletext
 
-A desktop browser for teletext channels on the web, built on the neoteletext engine (`~/devel/neoteletext-engine`) at a pinned commit. The code is in `native/`. The earlier Tauri design and its prototypes were removed on 21 October 2026 (decision 50) and are kept in git at the tag `prototypes-final`; a path under `prototypes/` in any document is a path there.
+A desktop browser for teletext channels on the web, built on the neoteletext engine (`~/devel/neoteletext-renderer-teletext`) at a pinned commit. The code is in `native/`. The earlier Tauri design and its prototypes were removed on 21 October 2026 (decision 50) and are kept in git at the tag `prototypes-final`; a path under `prototypes/` in any document is a path there.
 
 ## How we work
 

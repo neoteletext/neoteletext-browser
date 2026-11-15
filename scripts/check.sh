@@ -447,7 +447,7 @@ $hits"
 # are linked from its checkout ($NEOTELETEXT_ENGINE, as worktrees of the
 # engine link them); at another version, the engine's gate says so and
 # fails.
-engine_checkout="${NEOTELETEXT_ENGINE:-$HOME/devel/neoteletext-engine}"
+engine_checkout="${NEOTELETEXT_ENGINE:-$HOME/devel/neoteletext-renderer-teletext}"
 engine_check="native/target/engine-check"
 check_engine_gate() {
     step "the engine's own full gate at its pinned commit (requirement 2.3)"

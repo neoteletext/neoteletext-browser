@@ -75,7 +75,7 @@ Every native prototype idled at no processor use once configured to redraw only 
 
 ### 4.0 The engine is a separate project
 
-The teletext engine, `neoteletext`, is maintained in its own repository (`~/devel/neoteletext-engine`), not in NeoTeletext's. This design does not move it, copy it or change it:
+The teletext engine, `neoteletext`, is maintained in its own repository (`~/devel/neoteletext-renderer-teletext`), not in NeoTeletext's. This design does not move it, copy it or change it:
 
 - **NeoTeletext depends on the engine's crates by a pinned version**, never on a copy of their source. The interface core, the drawing back ends, the interface process and the trusted core are NeoTeletext's own code; decoding, rendering to palette indices, the page store, fetching rules and every limit (decision 26) are the engine's.
 - **Changes the engine needs are made in the engine's repository**, by its own process, and recorded in `neoteletext/docs/neoteletext-browser-open-questions.md` (`prototypes/docs/architecture.md` section 5.1). NeoTeletext never patches them locally.
