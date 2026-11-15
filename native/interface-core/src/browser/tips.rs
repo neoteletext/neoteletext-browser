@@ -281,7 +281,7 @@ impl Browser {
 
     /// The window below the strip: the banks, the overview and the console.
     fn body_tips(&self, tips: &mut Vec<(Rect, String)>) {
-        for (bank, rect) in self.regions.banks.iter().enumerate() {
+        for (bank, rect) in self.regions.banks.iter().enumerate().filter(|(_, rect)| **rect != Rect::ZERO) {
             let indices = bank_indices(bank);
             let first = page_number(indices.start);
             let last = indices.last().and_then(page_number);

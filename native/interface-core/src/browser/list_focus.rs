@@ -38,8 +38,11 @@ impl Browser {
         match (focus, key) {
             (_, Key::Escape) => self.list_focus = None,
             (ListFocus::Magazines, Key::Up | Key::Down) => {
-                let next = if key == Key::Down { self.bank.saturating_add(1).min(BANKS - 1) } else { self.bank.saturating_sub(1) };
-                if next != self.bank {
+                // The nearest magazine that way with pages: one without
+                // has no entry to land on (REQ-6350).
+                let has_pages = |bank: &usize| self.channel.bank_count(*bank) > 0;
+                let next = if key == Key::Down { (self.bank.saturating_add(1)..BANKS).find(has_pages) } else { (0..self.bank).rev().find(has_pages) };
+                if let Some(next) = next {
                     self.choose_bank(next);
                 }
             }

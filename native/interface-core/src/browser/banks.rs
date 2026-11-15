@@ -30,9 +30,16 @@ impl Browser {
         canvas.fill(Rect::new(panel.x0, heading.y1 - HAIRLINE, panel.x1, heading.y1), 0.0, surface.rule);
         #[allow(clippy::cast_precision_loss, reason = "eight banks")]
         let height = ((panel.height() - HEADING_HEIGHT - BANK_GAP) / BANKS as f64 - BANK_GAP).min(BANK_MAX_HEIGHT);
+        // Only a magazine with pages has an entry, and the entries stand
+        // one under another with no gap for the others (REQ-6350).
+        let mut top = heading.y1 + BANK_GAP;
         for (bank, &colour) in BANK_COLOURS.iter().enumerate() {
-            #[allow(clippy::cast_precision_loss, reason = "eight banks")]
-            let top = heading.y1 + BANK_GAP + bank as f64 * (height + BANK_GAP);
+            if self.channel.bank_count(bank) == 0 {
+                // The regions stay one for each magazine, in order: an
+                // empty one is under no pointer.
+                self.regions.banks.push(Rect::ZERO);
+                continue;
+            }
             let rect = Rect::new(panel.x0 + BANK_GAP, top, panel.x1 - BANK_GAP, top + height);
             let chosen = bank == self.bank;
             let hovered = self.hovered_bank == Some(bank);
@@ -68,9 +75,15 @@ impl Browser {
             let name = self.channel.banks.get(bank).map_or("", String::as_str);
             let range_height = canvas.line_height(BANK_RANGE);
             let name_height = canvas.line_height(BANK_NAME);
-            let top = middle - f64::midpoint(range_height, name_height) - BANK_RANGE_RISE;
-            label(canvas, Point::new(text_left, top), &range, BANK_RANGE, colour);
-            fitted_text(canvas, Rect::new(text_left, top + range_height, rect.x1 - PADDING, top + range_height + name_height), name, BANK_NAME, colour);
+            let text_top = middle - f64::midpoint(range_height, name_height) - BANK_RANGE_RISE;
+            label(canvas, Point::new(text_left, text_top), &range, BANK_RANGE, colour);
+            fitted_text(
+                canvas,
+                Rect::new(text_left, text_top + range_height, rect.x1 - PADDING, text_top + range_height + name_height),
+                name,
+                BANK_NAME,
+                colour,
+            );
             right_centred(
                 canvas,
                 Rect::new(rect.x0, rect.y0, rect.x1, rect.y0 + range_height + PADDING),
@@ -80,6 +93,7 @@ impl Browser {
                 on.muted,
             );
             self.regions.banks.push(rect);
+            top = rect.y1 + BANK_GAP;
         }
     }
 }
@@ -96,6 +110,34 @@ mod tests {
         let Some(Output::Visible(visible)) = outputs.first() else { panic!("{outputs:?}") };
         assert!(visible.iter().all(|key| key.channel == 7 && (0x100..0x200).contains(&key.page)));
         assert_eq!(visible[0].page, 0x100);
+    }
+
+    /// REQ-6350: a magazine without pages has no entry, the others close
+    /// up, each stays its own magazine's, and the keys pass over it.
+    #[test]
+    fn a_magazine_without_pages_is_not_shown() {
+        use crate::browser::{Key, Modifiers};
+        use crate::channel::bank_indices;
+        use crate::geometry::Rect;
+        let (mut browser, mut canvas) = browser();
+        let all = browser.regions.banks.clone();
+        for bank in [1, 3] {
+            for index in bank_indices(bank) {
+                browser.channel.pages[index] = None;
+            }
+        }
+        browser.draw(&mut canvas, WIDTH, HEIGHT, 0);
+        let shown = browser.regions.banks.clone();
+        assert_eq!(shown.len(), all.len(), "one region for each magazine still");
+        assert_eq!((shown[1], shown[3]), (Rect::ZERO, Rect::ZERO), "the magazines without pages have no entry");
+        assert_eq!([shown[0], shown[2], shown[4]], [all[0], all[1], all[2]], "the others close up from the top");
+        press_at(&mut browser, &mut canvas, shown[2]);
+        assert_eq!(browser.bank, 2, "the second entry drawn is the third magazine's");
+        browser.key(Key::Down, Modifiers::default(), 0);
+        assert_eq!(browser.bank, 4, "Down passes over the magazine without pages");
+        browser.key(Key::Up, Modifiers::default(), 0);
+        browser.key(Key::Up, Modifiers::default(), 0);
+        assert_eq!(browser.bank, 0, "and Up too");
     }
 
     #[test]
