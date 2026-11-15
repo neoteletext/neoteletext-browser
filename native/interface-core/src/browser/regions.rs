@@ -47,8 +47,7 @@ pub(super) struct Regions {
     pub(super) subpage_list: Rect,
     pub(super) subrows: Vec<(Rect, u16)>,
     /// The rows of the two lists whose title was drawn cut short, each
-    /// with what its tip says: whose title it is, in the interface's
-    /// words, and the title whole (REQ-6353).
+    /// with its title whole, which its tip shows (REQ-6353).
     pub(super) cut_rows: Vec<(Rect, String)>,
     /// The magazines whose name was drawn cut short, each with its name.
     pub(super) cut_banks: Vec<(usize, String)>,

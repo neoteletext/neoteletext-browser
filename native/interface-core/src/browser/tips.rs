@@ -8,10 +8,10 @@
 //! line, its address (decision 103). A page's link has a tip too, its
 //! popover: where it leads, complete, in the trusted core's words (REQ-1660).
 //! A channel's title cut short in the magazines, the page list or the
-//! sub-page list has a tip that shows it whole, under a first line in the
-//! interface's words that says whose words follow, and below the strip
-//! like every tip of something below it (REQ-6353, the owner's instruction
-//! of 16 November 2026, which withdraws DEC-2352's item 1 for these lists).
+//! sub-page list has a tip that shows it whole, the title and nothing
+//! more, below the strip like every tip of something below it (REQ-6353,
+//! the owner's instructions of 16 November 2026, which withdraw DEC-2352's
+//! item 1 for these lists).
 
 use alloc::format;
 use alloc::string::String;
@@ -39,14 +39,6 @@ const LINE_STEP: f64 = 20.0;
 /// Between a tip's lines, which never come from a channel: the trusted
 /// core's text has no line breaks once cleaned.
 const LINE_BREAK: char = '\n';
-
-/// The tip of a channel's text cut short in a list: `whose` it is, in the
-/// interface's words, on a line of its own, then the text whole. The line
-/// above is what tells the viewer the words below are the channel's and
-/// not the browser's (REQ-6353 item 3).
-pub(super) fn channels_words(whose: &str, text: &str) -> String {
-    format!("{whose}, the channel's title:{LINE_BREAK}{text}")
-}
 
 /// A control's tip as last drawn.
 #[derive(Clone, Debug, PartialEq)]
@@ -297,11 +289,10 @@ impl Browser {
             let first = page_number(indices.start);
             let last = indices.last().and_then(page_number);
             if let (Some(first), Some(last)) = (first, last) {
-                let shows = format!("Show pages {first:03X} to {last:03X}");
-                // A name cut short is given whole, after what a click does.
-                let name = self.regions.cut_banks.iter().find(|(cut, _)| *cut == bank).map(|(_, name)| name);
-                let magazine = bank.saturating_add(1);
-                tips.push((*rect, name.map_or(shows.clone(), |name| format!("{shows}{LINE_BREAK}{}", channels_words(&format!("Magazine {magazine}"), name)))));
+                // A name cut short is shown whole, and nothing more; a name
+                // drawn whole leaves the tip to say what a click does.
+                let name = self.regions.cut_banks.iter().find(|(cut, _)| *cut == bank).map(|(_, name)| name.clone());
+                tips.push((*rect, name.unwrap_or_else(|| format!("Show pages {first:03X} to {last:03X}"))));
             }
         }
         tips.extend(self.regions.cut_rows.iter().cloned());
@@ -394,8 +385,8 @@ mod tests {
     }
 
     /// REQ-6353: a title cut short in the magazines, the page list or the
-    /// sub-page list shows whole in its tip, under a line that says whose
-    /// words they are; a title drawn whole has no such tip.
+    /// sub-page list shows whole in its tip, the title and nothing more; a
+    /// title drawn whole has no such tip.
     #[test]
     fn a_title_cut_short_in_a_list_shows_whole_in_its_tip() {
         use crate::browser::fixture::{HEIGHT, WIDTH, browser};
@@ -418,17 +409,17 @@ mod tests {
         let bank = browser.regions.banks[0];
         assert_eq!(tip_at(&mut browser, short_subrow, 1_000), None, "a sub-page's title drawn whole has no tip");
         assert_eq!(tip_at(&mut browser, bank, 2_000).as_deref(), Some("Show pages 100 to 199"));
-        // Cut short: each tip says whose words follow, then the words.
+        // Cut short: each tip is the title, whole, and nothing more.
         let long_subrow = browser.regions.subrows[0].0;
-        assert_eq!(tip_at(&mut browser, long_subrow, 3_000), Some(format!("Sub-page 1 of 2, the channel's title:\n{long}")));
+        assert_eq!(tip_at(&mut browser, long_subrow, 3_000), Some(String::from(long)));
         if let Some(Some(page)) = browser.channel.pages.get_mut(index) {
             page.title = long.into();
         }
         browser.channel.banks[0] = long.into();
         browser.draw(&mut canvas, WIDTH, HEIGHT, 4_000);
         let row = browser.regions.rows[0].0;
-        assert_eq!(tip_at(&mut browser, row, 5_000), Some(format!("Page 100, the channel's title:\n{long}")));
-        assert_eq!(tip_at(&mut browser, bank, 6_000), Some(format!("Show pages 100 to 199\nMagazine 1, the channel's title:\n{long}")));
+        assert_eq!(tip_at(&mut browser, row, 5_000), Some(String::from(long)));
+        assert_eq!(tip_at(&mut browser, bank, 6_000), Some(String::from(long)));
     }
 
     /// The overview's close button says what it does and how the View

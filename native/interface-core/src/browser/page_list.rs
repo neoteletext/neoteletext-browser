@@ -123,7 +123,7 @@ impl Browser {
                 title_end -= canvas.text_width(&age, ROW_STATUS) + PADDING;
             }
             if left_fitted(canvas, Rect::new(title_x, row.y0, title_end, row.y1), PADDING, &info.title, ROW_TITLE, on.ink) {
-                self.regions.cut_rows.push((row, crate::browser::tips::channels_words(&format!("Page {number}"), &info.title)));
+                self.regions.cut_rows.push((row, info.title.clone()));
             }
         }
         canvas.pop_clip();
