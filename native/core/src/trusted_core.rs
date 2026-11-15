@@ -160,6 +160,8 @@ struct Core {
     invalid: BTreeMap<u32, invalid_packets::InvalidReport>,
     events: Sender<Event>,
     frames: frames::Frames,
+    /// The pick records of the pages drawn in ReGIS (DEC-6335).
+    regis: neoteletext::regis::PickRecords,
     /// The channel whose decoder was last told which pages are shown.
     showing: Option<u32>,
     /// What of each channel's sound reached the interface.
@@ -328,6 +330,7 @@ impl Core {
             console: Console::default(),
             events,
             frames: frames::Frames::default(),
+            regis: neoteletext::regis::PickRecords::default(),
             showing: None,
             hearing: Hearing::default(),
             sleep: Sleep::default(),

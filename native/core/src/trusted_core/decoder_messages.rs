@@ -50,6 +50,14 @@ impl Core {
                 }
             }
             FromDecoder::Frame { page, palette, screen, indices } => self.frame(PageKey { channel, page }, palette, screen, indices)?,
+            // A page drawn in ReGIS (DEC-6335): its pick record stays here,
+            // for PICK, and its picture goes to the interface, which shows
+            // it in the page's place.
+            FromDecoder::Regis { page, sub, picture, pick } => {
+                let key = PageKey { channel, page };
+                self.regis.hold(key, sub, picture.commits, pick);
+                self.send(&ToInterface::Regis { key, picture })?;
+            }
             #[cfg(feature = "links")]
             FromDecoder::Links { page, with_image, candidates, numbers, controls, fastext } => {
                 let key = PageKey { channel, page };

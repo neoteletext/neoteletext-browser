@@ -187,6 +187,11 @@ pub fn run(store_pages: usize) -> Result<(), ProtocolError> {
                 engine.screen_changed();
                 let fresh: Vec<u16> = showing.iter().copied().filter(|page| !sent.contains_key(page)).collect();
                 draw(&engine, &fresh, now, &mut sent, &mut spare, &mut flashing, &mut output)?;
+                // A page that came on screen is sent its ReGIS picture again.
+                for page in &fresh {
+                    engine.regis().show_again(*page);
+                }
+                draw_regis(&mut engine, &showing, &sent, &mut output)?;
                 say_missing(&engine, &showing, now, &mut missing, &mut output)?;
                 continue;
             }
@@ -245,8 +250,22 @@ pub fn run(store_pages: usize) -> Result<(), ProtocolError> {
         shown_clock = clock;
         let pages: Vec<u16> = showing.iter().copied().filter(|page| ticked || changed.everything || changed.pages.contains(page)).collect();
         draw(&engine, &pages, now, &mut sent, &mut spare, &mut flashing, &mut output)?;
+        draw_regis(&mut engine, &showing, &sent, &mut output)?;
         say_missing(&engine, &showing, now, &mut missing, &mut output)?;
     }
+}
+
+/// Sends the picture of each page on screen that the channel draws in
+/// ReGIS, when what it shows changed (DEC-6335): of the sub-page whose
+/// teletext page was drawn, or with none drawn the page's first with any.
+fn draw_regis(engine: &mut Engine, showing: &[u16], sent: &BTreeMap<u16, Rendered>, output: &mut Output<'_>) -> Result<(), ProtocolError> {
+    for &page in showing {
+        let sub = sent.get(&page).map(|rendered| rendered.subpages.shown);
+        if let Some(drawn) = engine.regis().take(page, sub) {
+            write_to_core(output, &FromDecoder::Regis { page: drawn.page, sub: drawn.sub, picture: drawn.picture, pick: drawn.pick })?;
+        }
+    }
+    Ok(())
 }
 
 /// Tells the trusted core which pages on screen have nothing to draw, when

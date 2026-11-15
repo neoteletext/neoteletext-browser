@@ -4,7 +4,7 @@
 
 use std::io::Write;
 
-use super::kinds::KIND_FRAME;
+use super::kinds::{KIND_FRAME, KIND_REGIS};
 use crate::frame::{MAX_COLOURS, PAGE_DOTS, RGB_BYTES};
 use crate::{Fields, ProtocolError, write_frame};
 
@@ -52,4 +52,27 @@ pub(super) fn read_frame(fields: &mut Fields<'_>) -> Result<(u16, Vec<[u8; 3]>, 
     }
     fields.end()?;
     Ok((page, palette, screen))
+}
+
+/// Writes the picture of a sub-page drawn in ReGIS and its pick record,
+/// [`FromDecoder::Regis`]: the page and sub-code, the pick record, then
+/// the picture.
+///
+/// # Errors
+/// When writing fails, the page is not a channel's, or the picture or its
+/// pick record breaks a bound.
+pub(super) fn write_regis_to_core(
+    out: &mut dyn Write,
+    page: u16,
+    sub: u16,
+    picture: &crate::regis::RegisPicture,
+    pick: &crate::regis::RegisPick,
+) -> Result<(), ProtocolError> {
+    crate::fields::check_page(page)?;
+    let mut payload = Vec::new();
+    payload.extend_from_slice(&page.to_be_bytes());
+    payload.extend_from_slice(&sub.to_be_bytes());
+    crate::regis::push_pick(&mut payload, pick)?;
+    crate::regis::push_picture(&mut payload, picture)?;
+    write_frame(out, KIND_REGIS, &payload)
 }

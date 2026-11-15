@@ -437,6 +437,26 @@ impl Typing {
         together(self.select(channel, NO_PAGE, SUBCODE_ANY, "", now_us))
     }
 
+    /// The stamp of the page on screen in `channel`, when one is.
+    #[must_use]
+    pub fn on_screen(&self, channel: u32) -> Option<Stamp> {
+        self.channels.get(&channel).and_then(|state| state.on_screen)
+    }
+
+    /// PICK (the engine's REQ-6337): what lay under the pointer of the
+    /// pointer event just sent for `key`, a page the ReGIS renderer draws.
+    /// It goes under the conditions the event itself went under.
+    pub fn pick(&mut self, key: PageKey, pick: event::Pick, now_us: u64) -> Vec<Send> {
+        let mut sends = Vec::new();
+        if !self.on(key.channel) || self.opened != Some(key) || self.away() {
+            return sends;
+        }
+        if let Some(state) = self.channels.get_mut(&key.channel).filter(|state| state.on_screen == Some(pick.on)) {
+            state.send(key.channel, &Item::Event(Event::Pick(pick)), now_us, &mut sends);
+        }
+        sends
+    }
+
     /// The decoder of `key`'s channel drew `key`'s sub-page `sub`: what
     /// input is stamped with from now on (REQ-1555).
     pub fn drawn(&mut self, key: PageKey, sub: u16) {

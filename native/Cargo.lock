@@ -1976,6 +1976,8 @@ dependencies = [
  "neoteletext-picture",
  "neoteletext-web",
  "protocol",
+ "regis",
+ "regis-fonts",
 ]
 
 [[package]]
@@ -3071,6 +3073,16 @@ name = "regex-syntax"
 version = "0.8.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d6f6ff9a378485b298a5286656da665ba74413d36db0979633275d2e708145d4"
+
+[[package]]
+name = "regis"
+version = "0.1.0"
+source = "git+file:///Users/andrewstuart/devel/neoteletext-renderer-regis?rev=e25752f2a1c3bb6fa4eb7d930192bbf6115d0688#e25752f2a1c3bb6fa4eb7d930192bbf6115d0688"
+
+[[package]]
+name = "regis-fonts"
+version = "0.1.0"
+source = "git+file:///Users/andrewstuart/devel/neoteletext-renderer-regis?rev=e25752f2a1c3bb6fa4eb7d930192bbf6115d0688#e25752f2a1c3bb6fa4eb7d930192bbf6115d0688"
 
 [[package]]
 name = "release-identity"

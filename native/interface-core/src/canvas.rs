@@ -41,6 +41,30 @@ pub const SCREEN_BORDER: u16 = CELL_WIDTH;
 /// How much larger a page with its screen is than its image, both ways.
 pub const SCREEN_SCALE: f64 = (PAGE_WIDTH as f64 + 2.0 * SCREEN_BORDER as f64) / PAGE_WIDTH as f64;
 
+/// A ReGIS picture's width in pixels (the VT340's screen; the ReGIS
+/// renderer's DEC-6296).
+pub const REGIS_WIDTH: u16 = 800;
+/// A ReGIS picture's height in pixels.
+pub const REGIS_HEIGHT: u16 = 480;
+/// The colours of a ReGIS picture: each pixel is one of sixteen.
+pub const REGIS_COLOURS: usize = 16;
+/// A picture drawn by the ReGIS renderer (DEC-6335) is 800 by 480 pixels,
+/// wider for its height than a page's image, so it is drawn across the
+/// image's whole width and this many of its 500 lines, which keeps the
+/// picture's own proportions (480 dots to 288 lines is 800 to 480).
+pub const REGIS_LINES: u16 = 288;
+/// The image's line a ReGIS picture's top row is drawn on: the picture is
+/// centred down the image.
+pub const REGIS_TOP_LINE: u16 = (PAGE_HEIGHT - REGIS_LINES) / 2;
+
+/// Where a ReGIS picture sits in a page's image drawn in `image`.
+#[must_use]
+pub fn regis_within(image: Rect) -> Rect {
+    let line = image.height() / f64::from(PAGE_HEIGHT);
+    let top = image.y0 + line * f64::from(REGIS_TOP_LINE);
+    Rect::new(image.x0, top, image.x1, top + line * f64::from(REGIS_LINES))
+}
+
 /// The shape a page is drawn in, which only the drawing transform changes:
 /// the page's raster and every coordinate sent to its channel stay the same
 /// (REQ-737).

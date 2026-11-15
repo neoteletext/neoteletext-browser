@@ -47,6 +47,10 @@ neoteletext-image.workspace = true
 neoteletext-picture.workspace = true
 interface-core.workspace = true
 protocol.workspace = true
+# The ReGIS renderer and its font: the sub-pages a channel sends REGIS
+# records for are drawn by it (DEC-6335).
+regis.workspace = true
+regis-fonts.workspace = true
 
 [dev-dependencies]
 # Writing the audio packets the tests read.

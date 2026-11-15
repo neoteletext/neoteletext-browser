@@ -177,9 +177,10 @@ pub struct Engine {
     #[cfg(feature = "links")]
     lines: links::Lines,
     /// The channel's records on its push connection, for its LINKS
-    /// records (REQ-1494).
-    #[cfg(feature = "links")]
+    /// records (REQ-1494) and its REGIS records (the engine's REQ-6336).
     records: neoteletext_web::records::RecordReader,
+    /// The sub-pages the channel draws in ReGIS (DEC-6335).
+    regis: crate::regis::RegisPages,
     /// The row 24 the receiver draws for each page file with `LN` lines,
     /// by page and sub-code (REQ-NAV-011, the engine's E.108).
     receiver_rows: BTreeMap<(u16, u16), ReceiverRow>,
@@ -257,8 +258,8 @@ impl Engine {
             sounds: Vec::new(),
             #[cfg(feature = "links")]
             lines: links::Lines::default(),
-            #[cfg(feature = "links")]
             records: neoteletext_web::records::RecordReader::new(),
+            regis: crate::regis::RegisPages::default(),
             receiver_rows: BTreeMap::new(),
             trackers: RefCell::new(BTreeMap::new()),
             views: BTreeMap::new(),
@@ -269,6 +270,11 @@ impl Engine {
             input: InputRecords::default(),
             cache: RefCell::new(PageCache::default()),
         }
+    }
+
+    /// The sub-pages the channel draws in ReGIS.
+    pub fn regis(&mut self) -> &mut crate::regis::RegisPages {
+        &mut self.regis
     }
 
     /// The voice operations produced since the last call, once each.

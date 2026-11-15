@@ -158,6 +158,15 @@ fn every_message_to_the_interface_round_trips() {
         ToInterface::ShowContents(9),
         ToInterface::Raise,
         ToInterface::Frame { key: KEY, version: 3, image: vec![1, 2, 3] },
+        ToInterface::Regis {
+            key: KEY,
+            picture: crate::regis::RegisPicture {
+                commits: 7,
+                work: 709_728,
+                palette: [[9; 3]; crate::regis::REGIS_COLOURS],
+                packed: vec![0x3A; crate::regis::REGIS_PACKED],
+            },
+        },
         ToInterface::Settings(settings::SettingsView {
             home: "neoteletext:home".into(),
             sound: false,

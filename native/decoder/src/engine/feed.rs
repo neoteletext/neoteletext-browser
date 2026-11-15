@@ -135,12 +135,17 @@ impl Engine {
                 // A pushed sub-page's Link Extension links come as a LINKS
                 // record after it (REQ-1494), into the store a page file's
                 // lines fill; the engine's agent counted any it refused.
-                #[cfg(feature = "links")]
-                if let neoteletext_web::records::Read::Record(neoteletext_web::records::ChannelRecord::Links(record)) = self.records.push(packet) {
-                    let key = (record.page.mpp(), record.subcode.value());
-                    frames.entry(key).or_insert_with(|| self.lines.get(key.0, key.1).cloned());
-                    linked.insert(key);
-                    self.lines.read_record(&record);
+                match self.records.push(packet) {
+                    #[cfg(feature = "links")]
+                    neoteletext_web::records::Read::Record(neoteletext_web::records::ChannelRecord::Links(record)) => {
+                        let key = (record.page.mpp(), record.subcode.value());
+                        frames.entry(key).or_insert_with(|| self.lines.get(key.0, key.1).cloned());
+                        linked.insert(key);
+                        self.lines.read_record(&record);
+                    }
+                    // A sub-page's ReGIS, for the ReGIS renderer (DEC-6335).
+                    neoteletext_web::records::Read::Record(neoteletext_web::records::ChannelRecord::Regis(record)) => self.regis.read(&record),
+                    _ => {}
                 }
             }
             #[cfg(feature = "links")]

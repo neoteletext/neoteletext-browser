@@ -47,7 +47,7 @@ use vello_cpu::color::{AlphaColor, Srgb};
 use vello_cpu::kurbo::{self, Point};
 use vello_cpu::{Pixmap, RenderContext, Resources};
 
-use crate::pages::PageImage;
+use crate::pages::{PageImage, RegisImage};
 use crate::record::Frame;
 use crate::text::StyleKey;
 
@@ -100,6 +100,9 @@ pub struct Painter {
     fonts: FontContext,
     layouts: LayoutContext<()>,
     pages: HashMap<PageKey, PageImage>,
+    /// The pictures of the pages drawn in ReGIS, each shown in its page's
+    /// place (DEC-6335).
+    regis: HashMap<PageKey, RegisImage>,
     /// The number the next new page image takes.
     next_image: u64,
     /// The dots of each page that changed since the last frame was drawn,
@@ -135,6 +138,8 @@ pub enum PageError {
     Size,
     /// An index past the end of the palette.
     Index,
+    /// Not a ReGIS picture's 800 by 480 pixels, two to a byte.
+    RegisSize,
 }
 
 impl Painter {
@@ -152,6 +157,7 @@ impl Painter {
             fonts,
             layouts: LayoutContext::new(),
             pages: HashMap::new(),
+            regis: HashMap::new(),
             next_image: 0,
             changed: HashMap::new(),
             frame: Frame::new(DeviceBox::default()),

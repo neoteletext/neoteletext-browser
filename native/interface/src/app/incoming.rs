@@ -69,6 +69,15 @@ impl App {
                 self.act(event_loop);
             }
             Incoming::Page { key, version, image } => self.page_frame(event_loop, key, version, &image, now),
+            Incoming::Regis { key, picture } => {
+                if let Err(error) = self.view.painter.set_regis(key, &picture.palette, &picture.packed) {
+                    self.exit = Some(format!("bad ReGIS picture from the trusted core: {error:?}"));
+                    event_loop.exit();
+                    return;
+                }
+                self.view.browser.set_regis(key, picture.commits, picture.work);
+                self.request_redraw();
+            }
             #[cfg(feature = "phone-keyboard")]
             Incoming::Phone(view) => {
                 self.show_phone(view);

@@ -287,6 +287,7 @@ impl Browser {
         self.draw_links(canvas);
         #[cfg(feature = "interaction")]
         self.draw_terminal(canvas, now);
+        self.draw_regis_status(canvas);
         #[cfg(feature = "interaction")]
         self.draw_input_trace(canvas);
         self.report_visible();

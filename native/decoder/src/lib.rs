@@ -34,6 +34,7 @@ pub mod netscape;
 mod page_cache;
 mod picture;
 pub mod process;
+pub mod regis;
 pub mod sample;
 mod title;
 mod voice_sink;

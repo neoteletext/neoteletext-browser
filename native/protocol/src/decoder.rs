@@ -15,7 +15,7 @@ use interface_core::controls::SUBPAGE_ROWS;
 use kinds::{
     KIND_ARRIVED, KIND_ASK_SUBPAGE_ROWS, KIND_AUDIO, KIND_AUDIO_RECEIVER, KIND_BOOKMARK_FOLDER, KIND_BOOKMARK_FOLDER_END, KIND_BOOKMARK_LINK,
     KIND_BOOKMARKS_READ, KIND_CHANNEL_LOG, KIND_CLOSE, KIND_CONFINED, KIND_DATA, KIND_END, KIND_FRAME, KIND_MISSING, KIND_OPENED, KIND_PICTURE,
-    KIND_PICTURE_CONVERTED, KIND_PICTURE_REFUSED, KIND_REGION, KIND_SHOWING, KIND_STORE_FULL, KIND_SUBPAGE_COUNT, KIND_SUBPAGE_ROWS, KIND_SUBPAGES,
+    KIND_PICTURE_CONVERTED, KIND_PICTURE_REFUSED, KIND_REGION, KIND_REGIS, KIND_SHOWING, KIND_STORE_FULL, KIND_SUBPAGE_COUNT, KIND_SUBPAGE_ROWS, KIND_SUBPAGES,
     KIND_UPDATED, KIND_VIEW, KIND_WHOLE,
 };
 #[cfg(feature = "interaction")]
@@ -165,6 +165,19 @@ pub enum FromDecoder {
         screen: u8,
         /// One palette index per dot, row by row.
         indices: Vec<u8>,
+    },
+    /// A sub-page drawn by the ReGIS renderer (DEC-6335), which is shown in
+    /// place of its teletext page: its picture, and its pick record, which
+    /// the trusted core keeps to say what lay under a pointer.
+    Regis {
+        /// The page number.
+        page: u16,
+        /// The sub-code the channel sent the ReGIS for.
+        sub: u16,
+        /// The picture.
+        picture: crate::regis::RegisPicture,
+        /// Its pick record.
+        pick: crate::regis::RegisPick,
     },
     /// A page already reported has changed: a new version arrived.
     Updated {
@@ -447,6 +460,7 @@ pub fn write_to_core(out: &mut dyn Write, message: &FromDecoder) -> Result<(), P
             payload.extend_from_slice(&page.to_be_bytes());
             KIND_UPDATED
         }
+        FromDecoder::Regis { page, sub, picture, pick } => return frame::write_regis_to_core(out, *page, *sub, picture, pick),
         FromDecoder::Audio(audio) => {
             crate::audio::push(&mut payload, audio, crate::audio::Sender::Decoder)?;
             KIND_AUDIO
@@ -558,6 +572,15 @@ pub fn read_from_decoder(input: &mut dyn Read) -> Result<Option<FromDecoder>, Pr
             return Ok(Some(FromDecoder::Frame { page, palette, screen, indices: crate::tail(payload, offset) }));
         }
         KIND_UPDATED => FromDecoder::Updated { page: fields.channel_page()? },
+        KIND_REGIS => {
+            let page = fields.channel_page()?;
+            let sub = fields.u16()?;
+            if sub > neoteletext_core::limits::LAST_SUBPAGE_CODE || sub & !neoteletext_core::limits::SUBCODE_MASK != 0 {
+                return Err(ProtocolError::BadValue("regis sub-code"));
+            }
+            let pick = crate::regis::read_pick(&mut fields)?;
+            FromDecoder::Regis { page, sub, picture: crate::regis::read_picture(&mut fields)?, pick }
+        }
         KIND_AUDIO => FromDecoder::Audio(crate::audio::read(&mut fields, crate::audio::Sender::Decoder)?),
         #[cfg(feature = "links")]
         KIND_LINKS => {

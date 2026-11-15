@@ -58,6 +58,7 @@ mod pointer;
 mod popups;
 mod redirecting;
 mod regions;
+mod regis_status;
 mod remote;
 mod settings_panel;
 mod shown;
@@ -214,6 +215,9 @@ pub struct Browser {
     /// The last input event sent, with `--input-trace` (`input_trace.rs`).
     #[cfg(feature = "interaction")]
     input_trace: Option<crate::trace::TraceLine>,
+    /// For each page drawn in ReGIS, the commits applied to its picture
+    /// and the work units its last repaint cost (`regis_status.rs`).
+    regis: BTreeMap<PageKey, (u32, u64)>,
     /// The phone keyboard (DOC-2029).
     #[cfg(feature = "phone-keyboard")]
     phone: phone::PhoneUi,
@@ -283,6 +287,7 @@ impl Browser {
             typing: typing::TerminalUi::default(),
             #[cfg(feature = "interaction")]
             input_trace: None,
+            regis: BTreeMap::new(),
             #[cfg(feature = "phone-keyboard")]
             phone: phone::PhoneUi::default(),
         }

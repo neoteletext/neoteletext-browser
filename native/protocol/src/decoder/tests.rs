@@ -20,6 +20,51 @@ fn a_long_title_is_cut_on_a_character_boundary() {
     assert_eq!(arrived, Some(FromDecoder::Arrived { page: 0x100, title: "a".repeat(MAX_PAGE_TITLE - 1) }));
 }
 
+/// A ReGIS picture with one pixel that is not colour 0.
+fn regis_picture() -> crate::regis::RegisPicture {
+    let mut packed = vec![0; crate::regis::REGIS_PACKED];
+    packed[9] = 0x3A;
+    let mut palette = [[0; 3]; crate::regis::REGIS_COLOURS];
+    palette[3] = [51, 204, 51];
+    crate::regis::RegisPicture { commits: 7, work: 709_728, palette, packed }
+}
+
+/// A pick record of one drawing under the picture's first twenty pixels.
+fn regis_pick() -> crate::regis::RegisPick {
+    let mut record = vec![0_u16; crate::regis::REGIS_PIXELS];
+    record[..20].fill(12);
+    crate::regis::RegisPick::of(&record, [(12, -5, 3)].into_iter())
+}
+
+/// DEC-6335: a decoder cannot send a ReGIS picture of the wrong size, a
+/// sub-code that names no sub-page, or a pick record that does not cover
+/// the picture; each is refused whole.
+#[test]
+fn a_regis_picture_out_of_bounds_is_refused() {
+    let good = FromDecoder::Regis { page: 0x123, sub: 0, picture: regis_picture(), pick: regis_pick() };
+    let mut bytes = Vec::new();
+    write_to_core(&mut bytes, &good).unwrap();
+    assert_eq!(read_from_decoder(&mut bytes.as_slice()).unwrap().unwrap(), good);
+    // A byte short, and a byte over.
+    let length = bytes.len();
+    for wrong in [length - 1, length + 1] {
+        let mut cut = bytes.clone();
+        cut.resize(wrong, 0);
+        let payload = u32::try_from(wrong - 5).unwrap().to_be_bytes();
+        cut[1..5].copy_from_slice(&payload);
+        assert!(read_from_decoder(&mut cut.as_slice()).is_err(), "{wrong} bytes");
+    }
+    // Sub-code 3F7F, in the two bytes after the page.
+    let mut any = bytes.clone();
+    any[7..9].copy_from_slice(&0x3F7F_u16.to_be_bytes());
+    assert!(read_from_decoder(&mut any.as_slice()).is_err());
+    let short = crate::regis::RegisPick { origins: Vec::new(), runs: vec![(1, 10)] };
+    assert!(write_to_core(&mut Vec::new(), &FromDecoder::Regis { page: 0x123, sub: 0, picture: regis_picture(), pick: short }).is_err());
+    let mut small = regis_picture();
+    small.packed.pop();
+    assert!(write_to_core(&mut Vec::new(), &FromDecoder::Regis { page: 0x123, sub: 0, picture: small, pick: regis_pick() }).is_err());
+}
+
 #[test]
 fn every_kind_round_trips() {
     for message in [
@@ -50,6 +95,8 @@ fn every_kind_round_trips() {
         FromDecoder::StoreFull,
         FromDecoder::Missing(vec![0x100, 0x899]),
         FromDecoder::Frame { page: 0x123, palette: vec![[0, 0, 0], [255, 255, 255]], screen: 1, indices },
+        FromDecoder::Regis { page: 0x123, sub: 2, picture: regis_picture(), pick: regis_pick() },
+        FromDecoder::Regis { page: 0x123, sub: 0, picture: regis_picture(), pick: crate::regis::RegisPick::default() },
         FromDecoder::SubPages { page: 0x302, step: SubPageStep { count: 3, shown: 2, place: Some(1), previous: Some(1), next: Some(3) } },
         FromDecoder::SubPageCount { page: 0x210, count: 8_190 },
         FromDecoder::SubPageCount { page: 0x210, count: 0 },

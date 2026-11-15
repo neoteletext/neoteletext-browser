@@ -55,3 +55,6 @@ pub(super) const KIND_PICTURE_REFUSED: u8 = 147;
 // Decoder to trusted core: its audio receiver's figures (the engine's
 // REQ-AUD-017), in the next number free across every pipe.
 pub(super) const KIND_AUDIO_RECEIVER: u8 = 152;
+// Decoder to trusted core: a picture drawn by the ReGIS renderer and its
+// pick record (DEC-6335), in the next number free across every pipe.
+pub(super) const KIND_REGIS: u8 = 153;

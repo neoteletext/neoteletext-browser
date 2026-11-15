@@ -28,6 +28,9 @@
 // Trusted core to interface.
 pub(crate) const KIND_STRIP: u8 = 2;
 pub(crate) const KIND_FRAME: u8 = 3;
+// Trusted core to interface: a picture drawn by the ReGIS renderer
+// (DEC-6335), in the next number free across every pipe.
+pub(crate) const KIND_REGIS_FRAME: u8 = 154;
 pub(crate) const KIND_CLOSE: u8 = 4;
 pub(crate) const KIND_TABS: u8 = 5;
 pub(crate) const KIND_CHANNEL: u8 = 6;

@@ -7,6 +7,27 @@ use protocol::{ToCore, ToInterface};
 use super::Core;
 
 impl Core {
+    /// PICK for a pointer event on a page drawn in ReGIS: the numbered
+    /// drawing under the pointer, from the pick record of the picture the
+    /// interface was last sent. Nothing for any other page or event.
+    #[cfg(feature = "interaction")]
+    fn pick_under(&mut self, input: &protocol::interaction::InputIntent) -> Vec<neoteletext::typing::Send> {
+        use protocol::interaction::Intent;
+        let (Intent::Mouse { at, .. } | Intent::Touch { at, .. } | Intent::Wheel { at, .. }) = &input.intent else { return Vec::new() };
+        let (Some(dot), Some(on)) = (at.pixels, self.typing.on_screen(input.key.channel)) else { return Vec::new() };
+        let Some(under) = self.regis.under(input.key, on.sub, dot) else { return Vec::new() };
+        let pick = neoteletext_input::event::Pick {
+            on,
+            drawing: under.drawing,
+            x: under.x,
+            y: under.y,
+            picture_x: under.picture_x,
+            picture_y: under.picture_y,
+            commits: under.commits,
+        };
+        self.typing.pick(input.key, pick, self.now_us())
+    }
+
     /// The keyboard's intents: input for the open page's channel, and the
     /// phone keyboard's panel.
     #[cfg(feature = "interaction")]
@@ -21,7 +42,12 @@ impl Core {
                 {
                     return Ok(());
                 }
-                let sends = self.typing.input_intent(&intent, self.now_us());
+                let mut sends = self.typing.input_intent(&intent, self.now_us());
+                // On a page drawn in ReGIS, a pointer event that went is
+                // followed by what lay under it (PICK, the engine's REQ-6337).
+                if sends.iter().any(|send| matches!(send, neoteletext::typing::Send::Fetcher { .. })) {
+                    sends.extend(self.pick_under(&intent));
+                }
                 // What went is answered by the page's next frame, which
                 // its interval does not hold (REQ-RCH-002).
                 if sends.iter().any(|send| matches!(send, neoteletext::typing::Send::Fetcher { .. })) {

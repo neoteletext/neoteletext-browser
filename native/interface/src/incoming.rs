@@ -74,6 +74,13 @@ pub enum Incoming {
         /// The page number.
         page: u16,
     },
+    /// The picture of a page drawn in ReGIS (DEC-6335).
+    Regis {
+        /// Which page.
+        key: PageKey,
+        /// The picture.
+        picture: protocol::regis::RegisPicture,
+    },
     /// A page image.
     Page {
         /// Which page.

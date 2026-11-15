@@ -41,6 +41,7 @@ pub mod library;
 #[cfg(feature = "links")]
 pub mod links;
 pub mod picture;
+pub mod regis;
 pub mod settings;
 pub mod sound;
 pub mod subpages;

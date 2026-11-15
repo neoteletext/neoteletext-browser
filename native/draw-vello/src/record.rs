@@ -188,7 +188,8 @@ impl Canvas for Painter {
 
     fn page(&mut self, key: PageKey, area: Rect) -> bool {
         let Some(page) = self.pages.get(&key) else { return false };
-        let image = page.number();
+        // A page drawn in ReGIS shows its picture: a new picture is a new image.
+        let image = self.regis.get(&key).map_or(page.number(), crate::pages::RegisImage::number);
         self.record(Command::Page { key, area, image }, area);
         true
     }

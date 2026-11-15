@@ -92,6 +92,14 @@ pub enum ToInterface {
         /// The image, in [`frame`](crate::frame)'s form.
         image: Vec<u8>,
     },
+    /// A sub-page drawn by the ReGIS renderer (DEC-6335): its picture,
+    /// shown in the page's place until the page's channel closes.
+    Regis {
+        /// Which page.
+        key: PageKey,
+        /// The picture.
+        picture: crate::regis::RegisPicture,
+    },
     /// The channels sounding now, muted or not, for the tabs' speakers;
     /// the sound helper says it and the trusted core passes it on
     /// (decision 55).
