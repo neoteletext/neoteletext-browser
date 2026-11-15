@@ -22,12 +22,12 @@ const ZOOM_DIM: f64 = 0.75;
 /// scroll (a mouse wheel moves by notches instead: `Wall::wheel_notch`),
 /// and keeps at most two pages of movement in hand, so a fast flick does
 /// not run on for long.
-pub(super) const WHEEL_PER_PAGE: f64 = 20.0;
+pub(crate) const WHEEL_PER_PAGE: f64 = 20.0;
 const WHEEL_CARRY_LIMIT: f64 = 2.0 * WHEEL_PER_PAGE;
 /// A step to the next page slides the pages over 220 milliseconds on the
 /// standard curve: quicker than the zoom, so wheeling through pages feels
 /// fast, and easing to a stop with the page snapped into place.
-pub(super) const SLIDE_MILLISECONDS: u64 = 220;
+pub(crate) const SLIDE_MILLISECONDS: u64 = 220;
 /// How many neighbours either side may be on screen during fast steps.
 const SLIDE_REACH: i32 = 2;
 /// The close button of a zoomed page.

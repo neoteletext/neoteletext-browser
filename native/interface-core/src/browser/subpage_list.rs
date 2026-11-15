@@ -366,6 +366,7 @@ impl Browser {
         }
         // The sub-pages then have the keys: Up and Down step through them.
         self.list_focus = Some(ListFocus::SubPages);
+        self.wheel_list = crate::browser::pointer::WheelList::SubPages;
         self.subpages.revealed = None;
         let Some(&(_, subcode)) = self.regions.subrows.iter().find(|(rect, _)| rect.contains(point)) else { return true };
         let Some(index) = self.selected else { return true };
@@ -561,6 +562,54 @@ mod tests {
         assert!(browser.regions.subrows.iter().any(|&(_, subcode)| subcode == landed + 1), "scrolled into view");
         browser.key(Key::PageUp, Modifiers::default(), 0);
         assert_eq!(asked(&mut browser), Some(1), "and back");
+    }
+
+    /// The pointer beside the zoomed page: in the page area, off the page.
+    fn beside_the_page(browser: &mut crate::browser::Browser) {
+        let area = browser.wall().area();
+        browser.pointer_moved(area.x1 - 2.0, f64::midpoint(area.y0, area.y1), 0);
+        assert!(browser.wall().contains(browser.pointer) && browser.wall().zoomed().is_some(), "beside a zoomed page");
+    }
+
+    /// REQ-6349: beside the zoomed page the wheel steps through the list
+    /// last chosen from, the sub-pages after a click on them and the pages
+    /// after a click on the page list.
+    #[test]
+    fn the_wheel_beside_the_page_steps_the_list_last_chosen_from() {
+        let (mut browser, mut canvas) = listed(40);
+        let (first_row, _) = browser.regions.subrows[0];
+        press_at(&mut browser, &mut canvas, first_row);
+        chosen(&mut browser, 40, 0);
+        browser.draw(&mut canvas, WIDTH, HEIGHT, 1_000);
+        browser.take_outputs();
+        let page = browser.selected;
+        beside_the_page(&mut browser);
+        // A notch of any size is one sub-page, towards the viewer the next.
+        assert!(browser.wheel_lines(0.1, 2_000));
+        assert_eq!(asked(&mut browser), Some(2), "the next sub-page");
+        chosen(&mut browser, 40, 1);
+        browser.draw(&mut canvas, WIDTH, HEIGHT, 2_000);
+        browser.wheel_lines(1.0, 2_010);
+        assert_eq!(asked(&mut browser), None, "a notch reported again at once is the same notch");
+        browser.wheel_lines(-3.0, 3_000);
+        assert_eq!(asked(&mut browser), Some(1), "and the one before");
+        assert_eq!(browser.selected, page, "the page stays");
+        // A trackpad steps once for every WHEEL_PER_PAGE pixels.
+        chosen(&mut browser, 40, 0);
+        browser.draw(&mut canvas, WIDTH, HEIGHT, 3_020);
+        browser.scroll_by(crate::wall::WHEEL_PER_PAGE / 2.0, 3_030);
+        assert_eq!(asked(&mut browser), None, "half a step is kept in hand");
+        browser.scroll_by(crate::wall::WHEEL_PER_PAGE / 2.0, 3_040);
+        assert_eq!(asked(&mut browser), Some(2), "and spent with the other half");
+        // A click on the page list gives the wheel back to the pages.
+        let row = browser.regions.rows[0].0;
+        press_at(&mut browser, &mut canvas, row);
+        browser.draw(&mut canvas, WIDTH, HEIGHT, 4_000);
+        browser.take_outputs();
+        beside_the_page(&mut browser);
+        browser.wheel_lines(1.0, 5_000);
+        assert_eq!(asked(&mut browser), None, "no sub-page is asked for");
+        assert_ne!(browser.selected, page, "the next page is chosen");
     }
 
     /// REQ-1758 item 3: neither key wraps round.

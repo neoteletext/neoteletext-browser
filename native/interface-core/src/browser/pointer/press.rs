@@ -3,6 +3,7 @@
 //! strip, then the body below it.
 
 use crate::browser::list_focus::ListFocus;
+use crate::browser::pointer::WheelList;
 use crate::browser::{Browser, Output, WindowAction};
 use crate::canvas::Canvas;
 use crate::channel::page_index;
@@ -156,6 +157,7 @@ impl Browser {
         let regions = &self.regions;
         if let Some(bank) = regions.banks.iter().position(|rect| rect.contains(point)) {
             self.choose_bank(bank);
+            self.wheel_list = WheelList::Pages;
             self.list_focus = (!self.wall.single()).then_some(ListFocus::Magazines);
             return Some(true);
         }
@@ -163,6 +165,7 @@ impl Browser {
         // the Page keys work on from the row clicked (REQ-1758 item 7).
         if regions.list.contains(point) {
             self.list_focus = Some(ListFocus::Pages);
+            self.wheel_list = WheelList::Pages;
             if let Some(&(_, index)) = regions.rows.iter().find(|(rect, _)| rect.contains(point)) {
                 self.select_page(index, true);
             }

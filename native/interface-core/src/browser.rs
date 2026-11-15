@@ -155,6 +155,13 @@ pub struct Browser {
     subpages: subpage_list::SubPages,
     /// The list at the left that has the keys, if one has.
     list_focus: Option<list_focus::ListFocus>,
+    /// The list the wheel steps through outside the page area: the one
+    /// last chosen from (REQ-6349).
+    wheel_list: pointer::WheelList,
+    /// A trackpad's movement outside the page area not yet spent on a step.
+    wheel_step_carry: f64,
+    /// When the wheel last stepped a sub-page by a notch.
+    wheel_step_at: Option<u64>,
     /// The page list's width, as the divider was pulled.
     list_width: f64,
     /// Where the divider was gripped, from its left edge, while it is pulled.
@@ -254,6 +261,9 @@ impl Browser {
             hovered_bank: None,
             subpages: subpage_list::SubPages::default(),
             list_focus: None,
+            wheel_list: pointer::WheelList::Pages,
+            wheel_step_carry: 0.0,
+            wheel_step_at: None,
             list_width: divider::LIST_WIDTH,
             divider_grip: None,
             previewed: None,

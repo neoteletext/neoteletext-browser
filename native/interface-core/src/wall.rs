@@ -11,8 +11,7 @@ use crate::geometry::{Point, Rect};
 use crate::size::{DEFAULT_WIDTH, Layout, MAX_WIDTH, layout_for_width};
 use crate::tween::{EASE_OUT, STANDARD, Tween};
 use crate::wall::hover::HOVER_MILLISECONDS;
-use crate::wall::zoom::SLIDE_MILLISECONDS;
-pub(crate) use crate::wall::zoom::ZOOM_MILLISECONDS;
+pub(crate) use crate::wall::zoom::{SLIDE_MILLISECONDS, WHEEL_PER_PAGE, ZOOM_MILLISECONDS};
 
 mod draw;
 mod grid;

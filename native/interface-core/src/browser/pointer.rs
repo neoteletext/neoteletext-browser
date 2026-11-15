@@ -7,6 +7,9 @@ use crate::canvas::PageKey;
 use crate::geometry::Point;
 
 mod press;
+mod wheel_steps;
+
+pub(super) use wheel_steps::WheelList;
 
 /// The shape the pointer should take.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -139,9 +142,7 @@ impl Browser {
             return true;
         }
         if !self.over_overlay() && self.wall.zoomed().is_some() && self.wall.contains(self.pointer) && !self.wall.over_bar(self.pointer) {
-            if self.wall.wheel_notch(lines, now).is_some() {
-                self.follow_zoom();
-            }
+            self.wheel_notch(lines, now);
             return true;
         }
         self.scroll_by(lines * LINE_HEIGHT, now)
@@ -262,9 +263,7 @@ impl Browser {
         }
         // Zoomed, the wheel moves from page to page.
         if self.wall.zoomed().is_some() && self.wall.contains(self.pointer) {
-            if self.wall.wheel_pages(distance, now).is_some() {
-                self.follow_zoom();
-            }
+            self.wheel_pages(distance, now);
             return true;
         }
         if self.regions.list.contains(self.pointer) {
