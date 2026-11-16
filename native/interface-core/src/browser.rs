@@ -243,6 +243,9 @@ pub struct Browser {
     /// For each page drawn in ReGIS, the commits applied to its picture
     /// and the work units its last repaint cost (`regis_status.rs`).
     regis: BTreeMap<PageKey, (u32, u64)>,
+    /// The pages whose picture is drawn in NAPLPS, not ReGIS (DEC-6407):
+    /// what is said above the picture names the language.
+    naplps: BTreeSet<PageKey>,
     /// The pointer on the open page's ReGIS picture (`regis_pointer.rs`).
     regis_pointer: regis_pointer::RegisPointing,
     /// The phone keyboard (DOC-2029).
@@ -323,6 +326,7 @@ impl Browser {
             #[cfg(feature = "interaction")]
             input_trace: None,
             regis: BTreeMap::new(),
+            naplps: BTreeSet::new(),
             regis_pointer: regis_pointer::RegisPointing::default(),
             #[cfg(feature = "phone-keyboard")]
             phone: phone::PhoneUi::default(),

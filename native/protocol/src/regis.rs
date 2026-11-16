@@ -28,8 +28,9 @@ pub const MAX_PICK_RUNS: usize = 12_000;
 /// The longest run of a pick record.
 const MAX_RUN: usize = u16::MAX as usize;
 /// A picture's fields before its pixels: the commit count, the work units,
-/// the sixteen colours, its number and its base's, and its area.
-const PICTURE_FIXED: usize = 4 + 8 + REGIS_COLOURS * 3 + 4 + 4 + AREA_BYTES;
+/// its language, the sixteen colours, its number and its base's, and its
+/// area.
+const PICTURE_FIXED: usize = 4 + 8 + 1 + REGIS_COLOURS * 3 + 4 + 4 + AREA_BYTES;
 /// An area's bytes: its corner and its size.
 const AREA_BYTES: usize = 2 + 2 + 2 + 2;
 /// An origin's bytes: the drawing and its two coordinates.
@@ -79,6 +80,17 @@ const _: () = assert!(REGIS_WIDTH <= u16::MAX as usize);
 const _: () = assert!(REGIS_HEIGHT <= u16::MAX as usize);
 const _: () = assert!(REGIS_WIDTH.is_multiple_of(2));
 
+/// The language a page's picture is drawn in: which renderer made it, for
+/// what the browser says of it.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum PictureLanguage {
+    /// ReGIS (DEC-6335).
+    #[default]
+    Regis,
+    /// NAPLPS, ANSI X3.110-1983 (the NAPLPS renderer's REQ-6408).
+    Naplps,
+}
+
 /// A picture, or the part of one that changed (REQ-6399).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RegisPicture {
@@ -87,6 +99,8 @@ pub struct RegisPicture {
     /// The work units its drawing cost: on the base since its stream
     /// began, and to paint its numbered drawings this time.
     pub work: u64,
+    /// The language it is drawn in.
+    pub language: PictureLanguage,
     /// Red, green and blue of each of the sixteen colours.
     pub palette: [[u8; 3]; REGIS_COLOURS],
     /// Which picture of its page this is: each one sent takes the next
@@ -250,6 +264,7 @@ pub(crate) fn push_picture(payload: &mut Vec<u8>, picture: &RegisPicture) -> Res
     payload.reserve_exact(PICTURE_FIXED.saturating_add(picture.packed.len()));
     payload.extend_from_slice(&picture.commits.to_be_bytes());
     payload.extend_from_slice(&picture.work.to_be_bytes());
+    payload.push(u8::from(picture.language == PictureLanguage::Naplps));
     for colour in &picture.palette {
         payload.extend_from_slice(colour);
     }
@@ -267,6 +282,7 @@ pub(crate) fn push_picture(payload: &mut Vec<u8>, picture: &RegisPicture) -> Res
 pub(crate) fn read_picture(fields: &mut Fields<'_>) -> Result<RegisPicture, ProtocolError> {
     let commits = fields.u32()?;
     let work = u64::from_be_bytes(fields.array()?);
+    let language = if fields.flag("a picture's language")? { PictureLanguage::Naplps } else { PictureLanguage::Regis };
     let mut palette = [[0_u8; 3]; REGIS_COLOURS];
     for colour in &mut palette {
         *colour = fields.array()?;
@@ -277,7 +293,7 @@ pub(crate) fn read_picture(fields: &mut Fields<'_>) -> Result<RegisPicture, Prot
         return Err(ProtocolError::BadValue("regis picture size"));
     }
     let packed = fields.take(area.pixels() / 2)?.to_vec();
-    let picture = RegisPicture { commits, work, palette, number, base, area, packed };
+    let picture = RegisPicture { commits, work, language, palette, number, base, area, packed };
     picture.check()?;
     Ok(picture)
 }

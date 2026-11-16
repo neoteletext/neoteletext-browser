@@ -30,8 +30,10 @@ mod flash;
 mod input_records;
 #[cfg(feature = "links")]
 pub mod links;
+pub mod naplps;
 pub mod netscape;
 mod page_cache;
+mod parts;
 mod picture;
 pub mod process;
 pub mod regis;

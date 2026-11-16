@@ -166,6 +166,7 @@ impl App {
             return false;
         }
         self.view.browser.set_regis(key, picture.commits, picture.work);
+        self.view.browser.set_naplps(key, picture.language == protocol::regis::PictureLanguage::Naplps);
         // The picture of the page the viewer types into or points at is
         // drawn as it arrives, with whatever else waited (REQ-6400).
         if self.awaited(key) {

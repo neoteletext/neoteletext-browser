@@ -1038,6 +1038,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "naplps"
+version = "0.1.0"
+source = "git+file:///Users/andrewstuart/devel/neoteletext-renderer-naplps?rev=d659de0c198701e1cc43e05023cd06ba1cf4df37#d659de0c198701e1cc43e05023cd06ba1cf4df37"
+
+[[package]]
+name = "naplps-fonts"
+version = "0.1.0"
+source = "git+file:///Users/andrewstuart/devel/neoteletext-renderer-naplps?rev=d659de0c198701e1cc43e05023cd06ba1cf4df37#d659de0c198701e1cc43e05023cd06ba1cf4df37"
+
+[[package]]
 name = "neoteletext"
 version = "0.1.0"
 dependencies = [
@@ -1080,6 +1090,8 @@ version = "0.1.0"
 dependencies = [
  "confine",
  "interface-core",
+ "naplps",
+ "naplps-fonts",
  "neoteletext-audio",
  "neoteletext-core",
  "neoteletext-formats",

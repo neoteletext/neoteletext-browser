@@ -13,8 +13,10 @@
 use std::collections::BTreeMap;
 
 use neoteletext_web::records::regis::RegisRecord;
-use protocol::regis::{REGIS_COLOURS, REGIS_HEIGHT, REGIS_WIDTH, RegisArea, RegisPick, RegisPicture, RegisViewer, pack_area};
+use protocol::regis::{PictureLanguage, RegisPick, RegisPicture, RegisViewer};
 use regis::{Event, Font, Picture, RepaintBudget, Screen, Terminal, ViewerState};
+
+use crate::parts::{Figures, Sent, parts_to_send};
 
 /// The most sub-pages whose ReGIS is kept. Each holds two pages of pixels,
 /// a picture and its drawings: about a megabyte and a half before any
@@ -60,101 +62,6 @@ struct Page {
     /// (REQ-6399); `None` when the next must be whole.
     sent: Option<Sent>,
 }
-
-/// What was last sent of a sub-page's picture.
-struct Sent {
-    /// Its pixels, one byte each.
-    pixels: Vec<u8>,
-    palette: [[u8; 3]; REGIS_COLOURS],
-    /// Its number, which a part names as its base.
-    number: u32,
-    pick: RegisPick,
-}
-
-/// The number of the picture after `number`: the next, never 0, which
-/// means no picture.
-const fn next_number(number: u32) -> u32 {
-    match number.wrapping_add(1) {
-        0 => 1,
-        next => next,
-    }
-}
-
-/// Rows of no change that part one changed area from the next: fewer
-/// than these between two changed rows, and the rows are one area.
-const AREA_GAP_ROWS: usize = 8;
-/// Columns of no change that part one changed area from the next within
-/// the same rows.
-const AREA_GAP_COLUMNS: usize = 16;
-/// The most areas one repaint is sent as; a picture that changed in more
-/// places is sent as the one area that holds them all.
-const MAX_AREAS: usize = 16;
-
-/// The areas in which `new` differs from `old`, both whole pictures of
-/// one byte a pixel: each a run of changed rows and, within it, a run of
-/// changed columns, its left edge and width even as pixels are packed.
-/// Changes far apart, down or across the picture, are separate areas, so
-/// that two small changes are not sent as everything between them
-/// (REQ-6399). None when the two are the same.
-fn changed_areas(old: &[u8], new: &[u8]) -> Vec<RegisArea> {
-    let narrow = |value: usize| u16::try_from(value).unwrap_or(u16::MAX);
-    // Runs of changed rows: (top, bottom), both inclusive.
-    let mut bands: Vec<(usize, usize)> = Vec::new();
-    for (row, (before, after)) in old.as_chunks::<REGIS_WIDTH>().0.iter().zip(new.as_chunks::<REGIS_WIDTH>().0).enumerate() {
-        if before == after {
-            continue;
-        }
-        match bands.last_mut().filter(|band| row.saturating_sub(band.1) <= AREA_GAP_ROWS) {
-            Some(band) => band.1 = row,
-            None => bands.push((row, row)),
-        }
-    }
-    // Within each run of rows, runs of changed columns: (top, bottom, left, right).
-    let mut areas: Vec<(usize, usize, usize, usize)> = Vec::new();
-    for (top, bottom) in bands {
-        let mut changed = [false; REGIS_WIDTH];
-        let rows = bottom.saturating_sub(top).saturating_add(1);
-        for (before, after) in old.as_chunks::<REGIS_WIDTH>().0.iter().zip(new.as_chunks::<REGIS_WIDTH>().0).skip(top).take(rows) {
-            for (flag, (was, is)) in changed.iter_mut().zip(before.iter().zip(after)) {
-                *flag |= was != is;
-            }
-        }
-        let mut run: Option<(usize, usize)> = None;
-        for column in changed.iter().enumerate().filter(|(_, flag)| **flag).map(|(column, _)| column) {
-            run = match run {
-                Some((left, right)) if column.saturating_sub(right) <= AREA_GAP_COLUMNS => Some((left, column)),
-                Some((left, right)) => {
-                    areas.push((top, bottom, left, right));
-                    Some((column, column))
-                }
-                None => Some((column, column)),
-            };
-        }
-        if let Some((left, right)) = run {
-            areas.push((top, bottom, left, right));
-        }
-    }
-    if areas.len() > MAX_AREAS {
-        let all = areas.iter().fold((usize::MAX, 0, usize::MAX, 0), |all, area| (all.0.min(area.0), all.1.max(area.1), all.2.min(area.2), all.3.max(area.3)));
-        areas = vec![all];
-    }
-    areas
-        .into_iter()
-        .map(|(top, bottom, left, right)| {
-            // Outwards to even columns: two pixels travel in a byte.
-            let left = left.saturating_sub(left % 2);
-            let right = right.saturating_add(1).next_multiple_of(2).min(REGIS_WIDTH);
-            RegisArea {
-                x: narrow(left),
-                y: narrow(top),
-                width: narrow(right.saturating_sub(left)),
-                height: narrow(bottom.saturating_sub(top).saturating_add(1)),
-            }
-        })
-        .collect()
-}
-
-const _: () = assert!(REGIS_HEIGHT > 0);
 
 impl Page {
     /// A sub-page's ReGIS begun: `viewer` is what the pointer was doing to
@@ -450,42 +357,14 @@ impl RegisPages {
         let pixels = held.picture.canvas().pixels();
         let palette = held.terminal.palette().colours();
         let pick = RegisPick::of(held.picture.pick_record(), held.picture.origins());
-        // Only what changed since the picture last sent goes (REQ-6399):
-        // a part of that picture, unless the receiver may not hold it, it
-        // was another sub-page's, or its colours changed.
-        let base = held.sent.as_mut().filter(|sent| same_sub && sent.palette == palette && sent.pixels.len() == pixels.len());
-        let (areas, base_number, pick_changed) = match &base {
-            Some(sent) => (changed_areas(&sent.pixels, pixels), sent.number, sent.pick != pick),
-            None => (vec![RegisArea::WHOLE], 0, true),
-        };
         // What the sub-page's drawing has cost: on the base since its
         // stream began, and to paint its numbered drawings this time.
         let work = held.terminal.base_work().saturating_add(held.picture.work());
-        let commits = held.picture.commits();
-        // Each area is a part of the one before it; a picture that changed
-        // nowhere is a part of no pixels, which carries its new figures.
-        let mut parts = Vec::with_capacity(areas.len().max(1));
-        let mut number = base_number;
-        for area in if areas.is_empty() { vec![RegisArea::default()] } else { areas } {
-            let packed = pack_area(pixels, area)?;
-            let before = number;
-            number = next_number(number);
-            parts.push(RegisPicture { commits, work, palette, number, base: before, area, packed });
-        }
-        match base {
-            Some(sent) => {
-                sent.pixels.copy_from_slice(pixels);
-                sent.number = number;
-                if pick_changed {
-                    sent.pick.clone_from(&pick);
-                }
-            }
-            None => held.sent = Some(Sent { pixels: pixels.to_vec(), palette, number, pick: pick.clone() }),
-        }
+        let figures = Figures { commits: held.picture.commits(), work, language: PictureLanguage::Regis };
+        let (mut parts, pick_changed) = parts_to_send(&mut held.sent, same_sub, pixels, palette, &pick, figures)?;
         self.sent_sub.insert(key.0, key.1);
-        let mut parts = parts.into_iter();
-        let picture = parts.next()?;
-        Some(Drawn { page: key.0, sub: key.1, picture, pick: pick_changed.then_some(pick), more: parts.collect() })
+        let more = parts.split_off(1);
+        Some(Drawn { page: key.0, sub: key.1, picture: parts.pop()?, pick: pick_changed.then_some(pick), more })
     }
 
     /// When a page's sub-page on screen next needs the decoder's loop, in
@@ -511,7 +390,9 @@ mod tests {
     #![allow(clippy::unwrap_used, clippy::indexing_slicing, reason = "a test reports a failure by panicking, and indexes data it built to a known size")]
 
     use neoteletext_core::types::{PageAddress, SubCode};
-    use protocol::regis::{REGIS_WIDTH, unpack};
+    use protocol::regis::{REGIS_HEIGHT, REGIS_WIDTH, RegisArea, unpack};
+
+    use crate::parts::changed_areas;
 
     use super::*;
 

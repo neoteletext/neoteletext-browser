@@ -75,8 +75,8 @@ check_no_panic_lists() {
 check_engine_pin() {
     step "every renderer dependency names its repository at one commit (requirement 2.5)"
     local manifest line target sources="" unread="" outside="" patched="" locked
-    # The engine's crates, and the ReGIS renderer's one crate (DEC-6335).
-    local -r engine_line='^(neoteletext-[a-z0-9-]+|regis|regis-fonts) = \{ git = "([^"]+)", rev = "([0-9a-f]{40})"(, [^{}]*)? \}$'
+    # The engine's crates, the ReGIS renderer's (DEC-6335) and the NAPLPS renderer's (DEC-6407).
+    local -r engine_line='^(neoteletext-[a-z0-9-]+|regis|regis-fonts|naplps|naplps-fonts) = \{ git = "([^"]+)", rev = "([0-9a-f]{40})"(, [^{}]*)? \}$'
     local root
     root="$(pwd -P)"
     while IFS= read -r manifest; do
@@ -107,7 +107,7 @@ $outside"
     repositories="$(sed 's/ .*//' <<<"$sources")"
     [[ -n "$sources" && "$(sort -u <<<"$repositories")" == "$repositories" ]] || fail "the workspaces must name each renderer repository at one commit, found: ${sources:-none}"
     while IFS= read -r source; do
-        [[ "${source% *}" == */neoteletext-renderer-teletext || "${source% *}" == */neoteletext-renderer-regis ]] || fail "the workspaces name a git source that is neither the engine nor the ReGIS renderer: $source"
+        [[ "${source% *}" == */neoteletext-renderer-teletext || "${source% *}" == */neoteletext-renderer-regis || "${source% *}" == */neoteletext-renderer-naplps ]] || fail "the workspaces name a git source that is not the engine, the ReGIS renderer or the NAPLPS renderer: $source"
         allowed+="git+${source% *}?rev=${source#* }#${source#* }"$'\n'
     done <<<"$sources"
     [[ "$repositories" == *neoteletext-renderer-teletext* ]] || fail "the workspaces name no engine repository"

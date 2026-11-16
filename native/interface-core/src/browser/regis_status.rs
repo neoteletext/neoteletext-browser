@@ -46,7 +46,21 @@ impl Browser {
         // Only the pages of channels still shown are kept.
         let wall = &self.wall;
         self.regis.retain(|held, _| *held == key || wall.shown().any(|(shown, _)| shown.channel == held.channel));
+        let regis = &self.regis;
+        self.naplps.retain(|held| regis.contains_key(held));
         self.lay_out_pictures();
+    }
+
+    /// Whether a page's picture is drawn in NAPLPS, not ReGIS (DEC-6407),
+    /// as the trusted core's picture says: the line above the picture
+    /// then counts its records and bytes, which is what a NAPLPS stream
+    /// has, where a ReGIS picture has commits and work.
+    pub fn set_naplps(&mut self, key: PageKey, naplps: bool) {
+        if naplps {
+            self.naplps.insert(key);
+        } else {
+            self.naplps.remove(&key);
+        }
     }
 
     /// Tells the wall which open pages take the picture's shape: those
@@ -109,7 +123,11 @@ impl Browser {
         let Some((commits, work)) = self.regis.get(&key) else { return };
         let height = page.height() / f64::from(ROWS);
         let row = Rect::new(page.x0, page.y0, page.x1, page.y0 + height);
-        let text = format!("ReGIS  commit {}  {} work units", grouped(u64::from(*commits)), grouped(*work));
+        let text = if self.naplps.contains(&key) {
+            format!("NAPLPS  record {}  {} bytes", grouped(u64::from(*commits)), grouped(*work))
+        } else {
+            format!("ReGIS  commit {}  {} work units", grouped(u64::from(*commits)), grouped(*work))
+        };
         #[allow(clippy::cast_possible_truncation, reason = "a row's height in logical pixels, far inside f32")]
         let style = Style { size: (height * TEXT_SHARE) as f32, monospace: true, bold: false, caps: false };
         let inset = height * INSET_SHARE;
@@ -199,6 +217,29 @@ mod tests {
         browser.draw(&mut later, width, HEIGHT * 4.0, STICK_LABEL_MILLISECONDS);
         assert!(!later.texts.iter().any(|(_, text)| *text == words), "gone");
         assert_eq!(browser.held_label_deadline(STICK_LABEL_MILLISECONDS), None);
+    }
+
+    /// DEC-6407: above a picture drawn in NAPLPS the line names NAPLPS and
+    /// counts its records and bytes; above one drawn in ReGIS, its commits
+    /// and work.
+    #[test]
+    fn the_line_above_a_picture_names_its_language() {
+        use crate::browser::fixture::{HEIGHT, WIDTH, browser};
+        let (mut browser, mut canvas) = browser();
+        browser.toggle_wall(0);
+        browser.draw(&mut canvas, WIDTH, HEIGHT, 0);
+        let (key, _) = browser.wall().shown().next().unwrap();
+        browser.set_regis(key, 3, 1_234);
+        let texts = |browser: &mut crate::browser::Browser| {
+            let mut canvas = crate::test_canvas::Recorder::new();
+            browser.draw(&mut canvas, WIDTH, HEIGHT, 0);
+            canvas.texts.into_iter().map(|(_, text)| text).collect::<alloc::vec::Vec<_>>()
+        };
+        assert!(texts(&mut browser).contains(&"ReGIS  commit 3  1,234 work units".into()));
+        browser.set_naplps(key, true);
+        assert!(texts(&mut browser).contains(&"NAPLPS  record 3  1,234 bytes".into()));
+        browser.set_naplps(key, false);
+        assert!(texts(&mut browser).contains(&"ReGIS  commit 3  1,234 work units".into()));
     }
 
     /// REQ-6363: a picture contained in an area is as large as fits at its

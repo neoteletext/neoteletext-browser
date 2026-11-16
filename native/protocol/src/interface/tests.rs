@@ -164,6 +164,7 @@ fn every_message_to_the_interface_round_trips() {
             picture: crate::regis::RegisPicture {
                 commits: 7,
                 work: 709_728,
+                language: crate::regis::PictureLanguage::Regis,
                 palette: [[9; 3]; crate::regis::REGIS_COLOURS],
                 number: 4,
                 base: 0,

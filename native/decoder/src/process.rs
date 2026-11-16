@@ -190,9 +190,9 @@ pub fn run(store_pages: usize) -> Result<(), ProtocolError> {
                 engine.screen_changed();
                 let fresh: Vec<u16> = showing.iter().copied().filter(|page| !sent.contains_key(page)).collect();
                 draw(&engine, &fresh, now, &mut sent, &mut spare, &mut flashing, &mut output)?;
-                // A page that came on screen is sent its ReGIS picture again.
+                // A page that came on screen is sent its ReGIS or NAPLPS picture again.
                 for page in &fresh {
-                    engine.regis().show_again(*page);
+                    engine.show_pictures_again(*page);
                 }
                 draw_regis(&mut engine, &showing, &sent, now, &mut output)?;
                 say_missing(&engine, &showing, now, &mut missing, &mut output)?;
@@ -286,6 +286,13 @@ fn draw_regis(engine: &mut Engine, showing: &[u16], sent: &BTreeMap<u16, Rendere
         if let Some(drawn) = engine.regis().take(page, shown_subpage(sent, page), now_us) {
             write_to_core(output, &FromDecoder::Regis { page: drawn.page, sub: drawn.sub, picture: drawn.picture, pick: drawn.pick })?;
             // The other areas of the same repaint, each a part of the one before (REQ-6399).
+            for picture in drawn.more {
+                write_to_core(output, &FromDecoder::Regis { page: drawn.page, sub: drawn.sub, picture, pick: None })?;
+            }
+        }
+        // A page drawn in NAPLPS is sent the same way (DEC-6407).
+        if let Some(drawn) = engine.naplps().take(page, shown_subpage(sent, page)) {
+            write_to_core(output, &FromDecoder::Regis { page: drawn.page, sub: drawn.sub, picture: drawn.picture, pick: drawn.pick })?;
             for picture in drawn.more {
                 write_to_core(output, &FromDecoder::Regis { page: drawn.page, sub: drawn.sub, picture, pick: None })?;
             }

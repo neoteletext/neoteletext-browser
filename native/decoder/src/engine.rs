@@ -181,6 +181,8 @@ pub struct Engine {
     records: neoteletext_web::records::RecordReader,
     /// The sub-pages the channel draws in ReGIS (DEC-6335).
     regis: crate::regis::RegisPages,
+    /// The sub-pages the channel draws in NAPLPS (DEC-6407).
+    naplps: crate::naplps::NaplpsPages,
     /// The row 24 the receiver draws for each page file with `LN` lines,
     /// by page and sub-code (REQ-NAV-011, the engine's E.108).
     receiver_rows: BTreeMap<(u16, u16), ReceiverRow>,
@@ -260,6 +262,7 @@ impl Engine {
             lines: links::Lines::default(),
             records: neoteletext_web::records::RecordReader::new(),
             regis: crate::regis::RegisPages::default(),
+            naplps: crate::naplps::NaplpsPages::default(),
             receiver_rows: BTreeMap::new(),
             trackers: RefCell::new(BTreeMap::new()),
             views: BTreeMap::new(),
@@ -275,6 +278,18 @@ impl Engine {
     /// The sub-pages the channel draws in ReGIS.
     pub fn regis(&mut self) -> &mut crate::regis::RegisPages {
         &mut self.regis
+    }
+
+    /// Marks a page's pictures, in ReGIS and in NAPLPS, as not yet sent:
+    /// the page came on screen.
+    pub fn show_pictures_again(&mut self, page: u16) {
+        self.regis.show_again(page);
+        self.naplps.show_again(page);
+    }
+
+    /// The sub-pages the channel draws in NAPLPS.
+    pub fn naplps(&mut self) -> &mut crate::naplps::NaplpsPages {
+        &mut self.naplps
     }
 
     /// The voice operations produced since the last call, once each.

@@ -26,7 +26,16 @@ fn regis_picture() -> crate::regis::RegisPicture {
     packed[9] = 0x3A;
     let mut palette = [[0; 3]; crate::regis::REGIS_COLOURS];
     palette[3] = [51, 204, 51];
-    crate::regis::RegisPicture { commits: 7, work: 709_728, palette, number: 1, base: 0, area: crate::regis::RegisArea::WHOLE, packed }
+    crate::regis::RegisPicture {
+        commits: 7,
+        work: 709_728,
+        language: crate::regis::PictureLanguage::Naplps,
+        palette,
+        number: 1,
+        base: 0,
+        area: crate::regis::RegisArea::WHOLE,
+        packed,
+    }
 }
 
 /// A part of a picture: `area` of it, laid over picture 1.
