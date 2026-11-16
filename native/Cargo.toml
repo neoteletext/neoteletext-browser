@@ -65,10 +65,11 @@ neoteletext-image = { git = "file:///Users/andrewstuart/devel/neoteletext-render
 # reference channel and the decoder's tests write sounds (`encode`, which
 # brings `ima` with it); neither is shipped, and `scripts/check.sh` proves
 # the shipped programs build without either codec (decision 121).
-# The profile's instruments, the SID chip and the Yamaha DX7 (`sid`, `dx7`),
-# are rendered in the decoder process by the engine's own integer code
-# (REQ-6415; the engine's DEC-6410).
-neoteletext-audio = { git = "file:///Users/andrewstuart/devel/neoteletext-renderer-teletext", rev = "08276d25eedb500fdf2b1509c03174df1604439d", default-features = false, features = ["idl", "opus", "sid", "dx7"] }
+# The profile's instruments, the SID chip and the Yamaha DX7, are built
+# into the decoder alone (`sid` and `dx7`, named in `decoder/Cargo.toml`):
+# the trusted core links only the engine crates DEC-2355 permits, and the
+# instruments' crate is not one of them (REQ-6415; the engine's DEC-6410).
+neoteletext-audio = { git = "file:///Users/andrewstuart/devel/neoteletext-renderer-teletext", rev = "08276d25eedb500fdf2b1509c03174df1604439d", default-features = false, features = ["idl", "opus"] }
 # The engine's qrkeyboard client (its decision E.93): the phone keyboard
 # process's pairing and encryption, and the terminal channel's phone page.
 neoteletext-qrkeyboard = { git = "file:///Users/andrewstuart/devel/neoteletext-renderer-teletext", rev = "08276d25eedb500fdf2b1509c03174df1604439d" }
