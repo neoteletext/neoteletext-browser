@@ -43,7 +43,7 @@ impl Browser {
             self.console.toggle_maximised();
         } else if self.console.close.contains(point) {
             self.toggle_console();
-        } else if !self.console.minimised() && self.recording_press(point) {
+        } else if self.recording_press(point) {
             // The recording's buttons, on every tab.
         } else if self.console.tab == Tab::Cookies {
             self.cookies_press(point);

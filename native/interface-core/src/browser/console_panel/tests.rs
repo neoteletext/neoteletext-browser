@@ -305,7 +305,7 @@ fn the_grabber_leaves_minimised_and_maximised() {
     texts(&mut browser);
     pull(&mut browser, None);
     assert!(browser.console.minimised(), "a press alone leaves it minimised");
-    // Far enough that the height is above the console's least, which holds the recording's row too.
+    // Far enough that the height is above the console's least.
     pull(&mut browser, Some(-150.0));
     assert!(!browser.console.minimised());
     assert!((browser.console.area.height() - (MINIMISED_HEIGHT + 150.0)).abs() < 1e-9, "150 above its tab bar: {:?}", browser.console.area);
@@ -341,36 +341,42 @@ fn the_mouse_selects_in_the_search() {
     crate::browser::field_mouse::tests::a_drag_selects(&mut browser, &mut canvas, search);
 }
 
-/// REQ-6406 item 2: the console's recording row says what the recording
-/// is doing and how much it has written, and its buttons ask the trusted
-/// core for what the state allows.
+/// REQ-6406 item 2: the recording's buttons are on the console's top line
+/// with its other buttons and ask the trusted core for what the state
+/// allows; the console's title says what the recording is doing and how
+/// much it has written.
 #[test]
-fn the_recording_row_shows_the_state_and_its_buttons_ask() {
+fn the_recording_buttons_are_on_the_top_line_and_ask() {
     use crate::console::{RecordingRequest, RecordingState, RecordingView};
     let mut browser = open();
+    // A tab whose title is words, not the Log's levels and search.
+    browser.console.tab = Tab::Stats;
     let name = alloc::string::String::from("2026-11-16T02-10-11Z-app.neottx.com.ntrec");
-    let mut shows = |state: RecordingState, words: &str, buttons: &[(&str, RecordingRequest)]| {
+    let mut shows = |state: RecordingState, words: &str, requests: &[RecordingRequest]| {
         browser.set_recording(RecordingView { state, bytes: 12_345, name: name.clone() });
         let drawn = texts(&mut browser);
         assert!(drawn.iter().any(|text| text == words), "{state:?}: {words:?} among {drawn:?}");
-        for (word, request) in buttons {
-            assert!(drawn.iter().any(|text| text == word), "{state:?}: a button {word:?}");
-            let place = if *request == RecordingRequest::Stop { browser.console.record_stop } else { browser.console.record_toggle };
+        let places = [browser.console.record_toggle, browser.console.record_stop];
+        assert_eq!(places.iter().filter(|place| **place != crate::geometry::Rect::ZERO).count(), requests.len(), "{state:?}: no other button");
+        for request in requests {
+            let place = if *request == RecordingRequest::Stop { places[1] } else { places[0] };
+            let close = browser.console.close;
+            assert!((place.y0, place.y1) == (close.y0, close.y1), "{state:?}: {request:?} is on the top line, as Close is");
             press(&mut browser, place);
-            assert_eq!(browser.take_outputs(), [Output::Recording(*request)], "{state:?}: {word:?}");
+            assert_eq!(browser.take_outputs(), [Output::Recording(*request)], "{state:?}: {request:?}");
         }
-        assert_eq!(drawn.iter().filter(|text| text.contains("ecord") && text.len() < 20).count(), buttons.len(), "{state:?}: no other button");
     };
+    shows(RecordingState::Off, "Console", &[RecordingRequest::Record]);
     shows(
         RecordingState::Recording,
         "Recording this tab's traffic: 12,345 bytes in 2026-11-16T02-10-11Z-app.neottx.com.ntrec",
-        &[("Pause recording", RecordingRequest::Pause), ("Stop recording", RecordingRequest::Stop)],
+        &[RecordingRequest::Pause, RecordingRequest::Stop],
     );
     shows(
         RecordingState::Paused,
         "Recording paused: 12,345 bytes in 2026-11-16T02-10-11Z-app.neottx.com.ntrec",
-        &[("Resume recording", RecordingRequest::Resume), ("Stop recording", RecordingRequest::Stop)],
+        &[RecordingRequest::Resume, RecordingRequest::Stop],
     );
-    shows(RecordingState::Stopped, "Recording stopped: 12,345 bytes in 2026-11-16T02-10-11Z-app.neottx.com.ntrec", &[("Record", RecordingRequest::Record)]);
+    shows(RecordingState::Stopped, "Recording stopped: 12,345 bytes in 2026-11-16T02-10-11Z-app.neottx.com.ntrec", &[RecordingRequest::Record]);
     shows(RecordingState::Private, "A private tab's traffic is never recorded", &[]);
 }

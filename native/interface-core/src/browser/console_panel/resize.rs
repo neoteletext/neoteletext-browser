@@ -17,7 +17,7 @@ use crate::theme::{DIM, MUTED};
 use super::{BAR_HEIGHT, ConsoleUi, GAP, LINE, Sizing};
 
 /// The shortest console the grabber leaves: its tab bar and four lines.
-pub(super) const MIN_HEIGHT: f64 = GAP + BAR_HEIGHT + GAP + super::recording::RECORDING_HEIGHT + GAP + 4.0 * LINE + GAP;
+pub(super) const MIN_HEIGHT: f64 = GAP + BAR_HEIGHT + GAP + 4.0 * LINE + GAP;
 /// The console minimised: its tab bar between its gaps.
 pub(super) const MINIMISED_HEIGHT: f64 = GAP + BAR_HEIGHT + GAP;
 /// What the console always leaves the pages above it: the page-size

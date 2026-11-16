@@ -46,9 +46,7 @@ impl Browser {
         let close =
             format!("Close the console; {} opens it again ({})", self.keys_named("the View menu", "the menu"), self.keys_named("Option+Cmd+I", "Ctrl+Shift+I"));
         tips.push((self.console.close, close));
-        if !self.console.minimised() {
-            self.recording_tips(tips);
-        }
+        self.recording_tips(tips);
         if self.console.tab == Tab::Cookies {
             self.cookies_tips(tips);
         } else if self.console.tab != Tab::Stats {
@@ -72,10 +70,7 @@ impl Browser {
             return;
         }
 
-        // The recording of the tab's traffic, between the bar and the entries (REQ-6406).
-        let recording = Rect::new(area.x0 + PADDING, bar.y1 + GAP, area.x1 - PADDING, bar.y1 + GAP + super::recording::RECORDING_HEIGHT);
-        self.draw_recording(canvas, recording);
-        let list = Rect::new(area.x0 + PADDING, recording.y1 + GAP, area.x1 - PADDING, area.y1 - GAP);
+        let list = Rect::new(area.x0 + PADDING, bar.y1 + GAP, area.x1 - PADDING, area.y1 - GAP);
         self.draw_console_entries(canvas, list);
     }
 
@@ -118,6 +113,8 @@ impl Browser {
             }
         }
         let leftmost = if entries_shown { self.console.pause.x0 } else { self.console.minimise.x0 };
+        // The recording's buttons, on every tab, beside the others (REQ-6406).
+        let leftmost = self.draw_recording_buttons(canvas, bar, leftmost - GAP);
         let title = Rect::new(x + GAP, bar.y0, leftmost - GAP, bar.y1);
         self.console.levels.clear();
         self.console.search_field = Rect::ZERO;
@@ -146,7 +143,11 @@ impl Browser {
             }
         } else {
             canvas.push_clip(title);
-            left_centred(canvas, title, 0.0, "Console", HEADING, MUTED);
+            // The console's name, or what its recording is doing.
+            match self.recording_title() {
+                Some(words) => left_centred(canvas, title, 0.0, &words, ROW_STATUS, MUTED),
+                None => left_centred(canvas, title, 0.0, "Console", HEADING, MUTED),
+            }
             canvas.pop_clip();
         }
     }
