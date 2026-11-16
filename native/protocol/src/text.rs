@@ -39,11 +39,16 @@ pub fn clean(text: &str, max_bytes: usize) -> String {
     out
 }
 
+/// `text` cut to at most `limit` bytes on a character boundary.
+fn cut_to(text: &str, limit: usize) -> &str {
+    let end = (0..=text.len().min(limit)).rev().find(|&end| text.is_char_boundary(end)).unwrap_or(0);
+    text.get(..end).unwrap_or_default()
+}
+
 /// Untrusted text sent on for the trusted core to clean: cut to at most
 /// `limit` bytes on a character boundary, with a two-byte length before it.
 pub(crate) fn push_raw_text(payload: &mut Vec<u8>, text: &str, limit: usize) {
-    let end = (0..=text.len().min(limit)).rev().find(|&end| text.is_char_boundary(end)).unwrap_or(0);
-    let cut = text.get(..end).unwrap_or_default();
+    let cut = cut_to(text, limit);
     payload.extend_from_slice(&u16::try_from(cut.len()).unwrap_or(0).to_be_bytes());
     payload.extend_from_slice(cut.as_bytes());
 }
@@ -60,12 +65,31 @@ pub(crate) fn raw_text(fields: &mut Fields<'_>, limit: usize, too_long: &'static
     if length > limit {
         return Err(ProtocolError::BadValue(too_long));
     }
-    Ok(String::from_utf8_lossy(fields.take(length)?).into_owned())
+    // Each invalid byte becomes U+FFFD, three bytes, so the repaired text
+    // can be up to three times the bytes that came; it is cut again, so
+    // that what is returned keeps to `limit` as every reader's bound says.
+    let text = String::from_utf8_lossy(fields.take(length)?);
+    Ok(cut_to(&text, limit).to_owned())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Found by the fuzz target `fetcher_messages` on 17 November 2026: a
+    /// sub-page list's version of 16 bytes, one of them not UTF-8, came out
+    /// as 18 bytes, past `MAX_LIST_VERSION`. Invalid bytes are replaced and
+    /// the text still keeps to its limit, on a character boundary.
+    #[test]
+    fn repaired_text_keeps_to_its_limit() {
+        let limit = 16;
+        let mut payload = u16::try_from(limit).unwrap_or_default().to_be_bytes().to_vec();
+        payload.extend_from_slice(&[0x82; 16]);
+        let mut fields = Fields::new(&payload);
+        let text = raw_text(&mut fields, limit, "too long").unwrap_or_default();
+        assert_eq!(text, "\u{FFFD}".repeat(5), "five whole replacement characters, fifteen bytes");
+        assert!(text.len() <= limit);
+    }
 
     /// Finding F-36: a run of combining marks is cut at
     /// `MAX_COMBINING_RUN`, so untrusted text cannot pile marks up and
