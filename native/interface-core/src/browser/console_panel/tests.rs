@@ -380,3 +380,75 @@ fn the_recording_buttons_are_on_the_top_line_and_ask() {
     shows(RecordingState::Stopped, "Recording stopped: 12,345 bytes in 2026-11-16T02-10-11Z-app.neottx.com.ntrec", &[RecordingRequest::Record]);
     shows(RecordingState::Private, "A private tab's traffic is never recorded", &[]);
 }
+
+/// The scroll bars drawn in the console: each thin fill of the browser's
+/// rule colour, the scroll bar's width across.
+fn scroll_bars(browser: &mut Browser) -> Vec<Rect> {
+    /// `page_list::draw_scroll_bar`'s width.
+    const WIDTH: f64 = 4.0;
+    let mut canvas = Recorder::new();
+    browser.draw(&mut canvas, 1440.0, 900.0, 0);
+    let area = browser.console.area;
+    canvas
+        .fills
+        .iter()
+        .filter(|(rect, colour)| {
+            *colour == crate::surface::Surface::BROWSER.rule && (rect.width() - WIDTH).abs() < 1e-9 && rect.y0 >= area.y0 && rect.y1 <= area.y1
+        })
+        .map(|(rect, _)| *rect)
+        .collect()
+}
+
+/// The owner, 16 November 2026: the developer tools have scroll bars where
+/// they scroll. An entry list with more entries than it shows has one at
+/// its right edge, as long as the share in view, at the bottom while the
+/// newest show and higher once the wheel has gone back; a list that fits
+/// has none.
+#[test]
+fn an_entry_list_has_a_scroll_bar_when_it_holds_more_than_it_shows() {
+    let mut browser = open();
+    browser.console_update(ConsoleUpdate { stats: None, channel: 1, replace: true, entries: alloc::vec![entry(ConsoleTab::Network, "one")] });
+    assert_eq!(scroll_bars(&mut browser), [], "one entry fits: no bar");
+    let many: Vec<ConsoleEntry> = (0..200).map(|number| entry(ConsoleTab::Network, &format!("push {number}"))).collect();
+    browser.console_update(ConsoleUpdate { stats: None, channel: 1, replace: true, entries: many });
+    let bars = scroll_bars(&mut browser);
+    let [newest] = bars[..] else { panic!("one bar: {bars:?}") };
+    let area = browser.console.area;
+    assert!(newest.x1 <= area.x1 && newest.x0 > area.x1 - 40.0, "at the right edge: {newest:?} in {area:?}");
+    assert!(newest.height() < area.height() / 2.0, "a share of the list's height");
+    browser.pointer_moved(f64::midpoint(area.x0, area.x1), area.y1 - 30.0, 0);
+    assert!(browser.console_scroll(-600.0), "the wheel, back through the entries");
+    let [older] = scroll_bars(&mut browser)[..] else { panic!("one bar still") };
+    assert!(older.y0 < newest.y0, "the bar rises as the view goes back: {older:?} from {newest:?}");
+    assert!(texts(&mut browser).iter().all(|text| text != "push 199"), "the newest is out of view");
+}
+
+/// The Stats tab scrolls: with more figures than it has room for, the
+/// wheel moves through them and a scroll bar shows where the view stands.
+#[test]
+fn the_stats_tab_scrolls_and_has_a_scroll_bar() {
+    let mut browser = open();
+    let stats: Vec<Stat> = (0..80).map(|number| Stat { label: format!("Figure {number}"), value: format!("{number}") }).collect();
+    browser.console_update(ConsoleUpdate { stats: Some(stats), channel: 1, replace: true, entries: Vec::new() });
+    texts(&mut browser);
+    let tab = browser.console.tabs.iter().find(|(tab, _)| *tab == Tab::Stats).unwrap().1;
+    press(&mut browser, tab);
+    let shown = texts(&mut browser);
+    assert!(shown.iter().any(|text| text == "Figure 0") && !shown.iter().any(|text| text == "Figure 79"), "the first figures: {shown:?}");
+    let [top] = scroll_bars(&mut browser)[..] else { panic!("one bar") };
+    let area = browser.console.area;
+    browser.pointer_moved(f64::midpoint(area.x0, area.x1), area.y1 - 30.0, 0);
+    assert!(browser.console_scroll(100_000.0), "the wheel, down to the end");
+    let shown = texts(&mut browser);
+    assert!(shown.iter().any(|text| text == "Figure 79") && !shown.iter().any(|text| text == "Figure 0"), "the last figures: {shown:?}");
+    let [bottom] = scroll_bars(&mut browser)[..] else { panic!("one bar") };
+    assert!(bottom.y0 > top.y0 && (bottom.y1 - (area.y1 - GAP)).abs() < 1.0, "the bar is at the foot: {bottom:?} in {area:?}");
+    browser.console_update(ConsoleUpdate {
+        stats: Some(alloc::vec![Stat { label: "Only".into(), value: "1".into() }]),
+        channel: 1,
+        replace: true,
+        entries: Vec::new(),
+    });
+    assert!(texts(&mut browser).iter().any(|text| text == "Only"), "fewer figures are shown from the first");
+    assert_eq!(scroll_bars(&mut browser), [], "and need no bar");
+}

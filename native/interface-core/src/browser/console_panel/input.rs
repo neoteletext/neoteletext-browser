@@ -102,6 +102,13 @@ impl Browser {
         }
         #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss, reason = "a few lines of wheel")]
         let lines = libm::ceil(distance.abs() / LINE) as usize;
+        if self.console.tab == Tab::Stats {
+            // The figures read from the top, so the wheel moves the first in view.
+            let last = self.console.stats.len().saturating_sub(self.console.stats_rows);
+            self.console.stats_first =
+                if distance > 0.0 { self.console.stats_first.saturating_add(lines).min(last) } else { self.console.stats_first.saturating_sub(lines) };
+            return true;
+        }
         let most = self.console.shown().map_or(0, |entries| entries.len());
         self.console.back = if distance < 0.0 { self.console.back.saturating_add(lines).min(most) } else { self.console.back.saturating_sub(lines) };
         true

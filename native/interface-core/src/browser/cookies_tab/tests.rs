@@ -101,3 +101,38 @@ fn the_mouse_selects_in_the_search() {
     let search = browser.cookies.controls.search;
     crate::browser::field_mouse::tests::the_mouse_selects(&mut browser, &mut canvas, search);
 }
+
+/// The owner, 16 November 2026: the developer tools have scroll bars where
+/// they scroll. The cookies' rows have one when the jar holds more than
+/// are in view, placed by the first row shown, with the rows' buttons
+/// clear of it; a jar that fits has none.
+#[test]
+fn the_cookies_rows_have_a_scroll_bar_when_the_jar_holds_more() {
+    /// `page_list::draw_scroll_bar`'s width.
+    const WIDTH: f64 = 4.0;
+    let bars = |browser: &mut Browser| -> alloc::vec::Vec<Rect> {
+        let mut canvas = Recorder::new();
+        browser.draw(&mut canvas, 1440.0, 900.0, 0);
+        let list = browser.cookies.controls.list;
+        canvas
+            .fills
+            .iter()
+            .filter(|(rect, colour)| {
+                *colour == crate::surface::Surface::BROWSER.rule && (rect.width() - WIDTH).abs() < 1e-9 && rect.y0 >= list.y0 && rect.y1 <= list.y1
+            })
+            .map(|(rect, _)| *rect)
+            .collect()
+    };
+    let mut browser = open();
+    assert_eq!(bars(&mut browser), [], "three rows of three: no bar");
+    browser.set_cookies(CookiesView { total: 300, first: 0, ..view() });
+    let [top] = bars(&mut browser)[..] else { panic!("one bar") };
+    let list = browser.cookies.controls.list;
+    assert!((top.y0 - list.y0).abs() < 1e-9, "at the top with the first row shown");
+    for drawn in &browser.cookies.controls.rows {
+        assert!(drawn.delete.x1 <= top.x0, "a row's delete button is clear of the bar: {:?} and {top:?}", drawn.delete);
+    }
+    browser.set_cookies(CookiesView { total: 300, first: 150, ..view() });
+    let [middle_bar] = bars(&mut browser)[..] else { panic!("one bar") };
+    assert!(middle_bar.y0 > top.y0, "lower with row 150 first");
+}

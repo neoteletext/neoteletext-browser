@@ -140,6 +140,10 @@ impl Browser {
 /// the share of the rows in view, and as far down as the list is scrolled;
 /// none when every row fits. The page list and the sub-page list share it
 /// (REQ-6365).
+/// The room a list leaves at its right edge for its scroll bar, so that
+/// nothing of a row is drawn under it.
+pub(super) const SCROLL_BAR_ROOM: f64 = SCROLL_BAR_WIDTH * 3.0;
+
 pub(super) fn draw_scroll_bar<C: Canvas + ?Sized>(canvas: &mut C, area: Rect, content: f64, scroll: f64, surface: Surface) {
     let max_scroll = content - area.height();
     if max_scroll <= 0.0 || area.height() <= 0.0 {

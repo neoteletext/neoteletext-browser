@@ -63,6 +63,11 @@ pub(super) struct ConsoleUi {
     tab: Tab,
     /// Lines scrolled back from the newest.
     back: usize,
+    /// The first of the Stats tab's figures in view: how far it is
+    /// scrolled down.
+    stats_first: usize,
+    /// The figures the Stats tab had room for when it was last drawn.
+    stats_rows: usize,
     area: Rect,
     tabs: Vec<(Tab, Rect)>,
     pause: Rect,
@@ -102,6 +107,8 @@ impl Default for ConsoleUi {
             paused: false,
             tab: Tab::default(),
             back: 0,
+            stats_first: 0,
+            stats_rows: 0,
             area: Rect::ZERO,
             tabs: Vec::new(),
             pause: Rect::ZERO,

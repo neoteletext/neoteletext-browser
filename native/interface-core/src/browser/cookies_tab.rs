@@ -254,8 +254,17 @@ impl Browser {
             y += CONTROL_HEIGHT + GAP;
         }
 
-        // The rows: each site, then its channels set in.
+        // The rows: each site, then its channels set in, with a scroll bar
+        // when the jar holds more than are in view, and room left for it.
         controls.list = Rect::new(left, y, right, area.y1);
+        crate::browser::page_list::draw_scroll_bar(
+            canvas,
+            controls.list,
+            f64::from(view.total) * ROW_HEIGHT,
+            f64::from(view.first) * ROW_HEIGHT,
+            crate::surface::Surface::BROWSER,
+        );
+        let right = right - crate::browser::page_list::SCROLL_BAR_ROOM;
         canvas.push_clip(controls.list);
         if view.rows.is_empty() {
             let empty = if view.query.is_empty() { "No cookies are kept" } else { "No site matches" };

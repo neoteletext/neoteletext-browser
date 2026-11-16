@@ -2,6 +2,8 @@
 //! search, the cookies' tab or the entries, none of them while it is
 //! minimised to its tab bar; and its tips.
 
+use crate::browser::page_list::{SCROLL_BAR_ROOM, draw_scroll_bar};
+use crate::surface::Surface;
 use alloc::collections::VecDeque;
 use alloc::format;
 use alloc::vec::Vec;
@@ -185,6 +187,11 @@ impl Browser {
         let rows = libm::floor(list.height() / LINE).max(0.0) as usize;
         let end = entries.len().saturating_sub(self.console.back);
         let start = end.saturating_sub(rows);
+        // Every entry list has a scroll bar when it holds more than it
+        // shows: how much there is, and where the view stands in it.
+        #[allow(clippy::cast_precision_loss, reason = "a panel's lines")]
+        draw_scroll_bar(canvas, list, entries.len() as f64 * LINE, start as f64 * LINE, Surface::BROWSER);
+        let list = Rect::new(list.x0, list.y0, list.x1 - SCROLL_BAR_ROOM, list.y1);
         canvas.push_clip(list);
         if entries.is_empty() {
             left_centred(canvas, Rect::new(list.x0, list.y0, list.x1, list.y0 + LINE), 0.0, "Nothing yet", ENTRY, DIM);
@@ -200,13 +207,24 @@ impl Browser {
         canvas.pop_clip();
     }
 
-    /// The Stats tab: each figure on a line, what is counted and then how much.
-    fn draw_console_stats<C: Canvas + ?Sized>(&self, canvas: &mut C, list: Rect) {
+    /// The Stats tab: each figure on a line, what is counted and then how
+    /// much, from the figure the wheel has scrolled to, with a scroll bar
+    /// when there are more than the tab has room for.
+    fn draw_console_stats<C: Canvas + ?Sized>(&mut self, canvas: &mut C, list: Rect) {
+        #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss, reason = "a panel's lines")]
+        let rows = libm::floor(list.height() / LINE).max(0.0) as usize;
+        self.console.stats_rows = rows;
+        // Fewer figures than before, or a taller console: no gap is left under the last.
+        self.console.stats_first = self.console.stats_first.min(self.console.stats.len().saturating_sub(rows));
+        let first = self.console.stats_first;
+        #[allow(clippy::cast_precision_loss, reason = "a panel's lines")]
+        draw_scroll_bar(canvas, list, self.console.stats.len() as f64 * LINE, first as f64 * LINE, Surface::BROWSER);
+        let list = Rect::new(list.x0, list.y0, list.x1 - SCROLL_BAR_ROOM, list.y1);
         canvas.push_clip(list);
         if self.console.stats.is_empty() {
             left_centred(canvas, Rect::new(list.x0, list.y0, list.x1, list.y0 + LINE), 0.0, "Nothing yet", ENTRY, DIM);
         }
-        for (row, stat) in self.console.stats.iter().enumerate() {
+        for (row, stat) in self.console.stats.iter().skip(first).take(rows).enumerate() {
             #[allow(clippy::cast_precision_loss, reason = "a panel's lines")]
             let top = list.y0 + row as f64 * LINE;
             let line = Rect::new(list.x0, top, list.x1, top + LINE);
