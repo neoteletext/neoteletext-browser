@@ -36,6 +36,7 @@ impl Core {
     /// links arrived, or keys started or stopped going to a channel.
     pub(super) fn regis_repoint(&mut self) -> Result<(), String> {
         let keys = self.page_taking_keys();
+        #[cfg(feature = "links")]
         let under = self.regis_pointing.under(&self.regis);
         // The strip shows where a linked drawing under the pointer leads
         // (REQ-6376 item 3).
@@ -67,6 +68,7 @@ impl Core {
 
     /// A click on a drawing that is a link follows it, by the rules of a
     /// click on a text link (REQ-6376 item 4).
+    #[cfg_attr(not(feature = "links"), expect(clippy::unnecessary_wraps, reason = "only following a link can fail, and this build has none"))]
     fn regis_click(&mut self) -> Result<(), String> {
         let Some((key, drawing)) = self.regis_pointing.take_click() else { return Ok(()) };
         #[cfg(feature = "links")]

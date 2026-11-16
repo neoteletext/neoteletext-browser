@@ -959,6 +959,7 @@ mod tests {
     }
 
     /// The trusted core says the channel of the fixture's pages takes input.
+    #[cfg(feature = "interaction")]
     fn takes_input(browser: &mut crate::browser::Browser) {
         use crate::browser::typing::TypingView;
         browser.set_typing(TypingView { channel: 7, page: 0x100, on: true, secure: false, refused: false, cursor: None, round_trip_us: None }, 0);
@@ -967,6 +968,7 @@ mod tests {
     /// REQ-3937 item 1 (DEC-6389): a click on the sub-page list of a page
     /// whose channel takes input chooses the sub-page and leaves the keys
     /// with the page shown; no list has them.
+    #[cfg(feature = "interaction")]
     #[test]
     fn a_sub_page_row_clicked_leaves_the_keys_with_a_channel_that_takes_them() {
         let (mut browser, mut canvas) = listed(3);
@@ -982,6 +984,7 @@ mod tests {
     /// REQ-6390 item 3: with the browser's own modifier, Right and Left
     /// show the sub-page after and before in the open page's list, on a
     /// page whose channel has the plain keys, stopping at the ends.
+    #[cfg(feature = "interaction")]
     #[test]
     fn the_browsers_modifier_with_left_and_right_steps_the_sub_pages() {
         let (mut browser, mut canvas) = listed(3);

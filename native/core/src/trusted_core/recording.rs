@@ -176,6 +176,8 @@ impl Core {
         let now = self.now();
         let Some(recording) = self.recording_of(channel) else { return };
         let wrote = match message {
+            // Input is the only thing sent as bytes, and a build without it has no such message.
+            #[cfg(feature = "interaction")]
             ToFetcher::Send { bytes, .. } => recording.entry(now, Direction::Sent, "send", Payload::Bytes(bytes)),
             ToFetcher::CookieAnswer { .. } => recording.entry(now, Direction::Sent, "cookie", Payload::Text("answer")),
             ToFetcher::ReachedAnswer { .. } => recording.entry(now, Direction::Sent, "cookie", Payload::Text("reached answer")),
@@ -185,6 +187,10 @@ impl Core {
     }
 
     /// Bytes sent on `channel`'s push connection: one entry.
+    #[cfg_attr(
+        all(not(feature = "interaction"), not(test)),
+        expect(dead_code, reason = "only input is sent as bytes on the push connection, and this build has none; the tests still write entries with it")
+    )]
     pub(super) fn record_sent_bytes(&mut self, channel: u32, bytes: &[u8]) {
         let now = self.now();
         let Some(recording) = self.recording_of(channel) else { return };

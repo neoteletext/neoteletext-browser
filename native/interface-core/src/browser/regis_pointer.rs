@@ -91,6 +91,7 @@ impl Browser {
     /// The pointer's shape over a drawing a click would act on: the hand,
     /// or the shape for a link that leaves the channel while the strip
     /// shows such a destination, as over a text link (REQ-6376 item 3).
+    #[cfg_attr(not(feature = "links"), expect(clippy::unused_self, reason = "only a link that leaves the channel reads the browser"))]
     pub(super) fn regis_cursor(&self) -> super::Cursor {
         #[cfg(feature = "links")]
         if self.pointing_leaves() {

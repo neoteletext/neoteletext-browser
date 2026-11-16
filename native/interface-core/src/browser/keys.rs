@@ -303,6 +303,7 @@ mod tests {
 
     /// A browser on the page alone whose channel takes input, as the
     /// trusted core says.
+    #[cfg(feature = "interaction")]
     fn typing_browser() -> Browser {
         use crate::browser::typing::TypingView;
         let (mut browser, mut canvas) = browser();
@@ -315,6 +316,7 @@ mod tests {
         browser
     }
 
+    #[cfg(feature = "interaction")]
     fn sent_to_the_channel(browser: &mut Browser) -> bool {
         browser.take_outputs().iter().any(|output| matches!(output, Output::Terminal { .. }))
     }
@@ -322,6 +324,7 @@ mod tests {
     /// REQ-6390 item 1: with the browser's own modifier, Up and Down
     /// choose the page before and after in the page list on a page whose
     /// channel has the plain keys, and nothing goes to the channel.
+    #[cfg(feature = "interaction")]
     #[test]
     fn the_browsers_modifier_with_up_and_down_steps_the_pages() {
         let mut browser = typing_browser();
@@ -340,6 +343,7 @@ mod tests {
     /// REQ-6390 item 2: with the browser's own modifier, Page Down and
     /// Page Up move the page list a list-height, as the plain keys do in
     /// the list.
+    #[cfg(feature = "interaction")]
     #[test]
     fn the_browsers_modifier_with_the_page_keys_moves_the_page_list() {
         let mut browser = typing_browser();
