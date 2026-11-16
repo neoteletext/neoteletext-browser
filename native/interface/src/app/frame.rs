@@ -198,7 +198,13 @@ impl App {
         let change = CHANGE_FRAME_MILLISECONDS;
         // Frames at the pace the browser asks for, rather than as fast as
         // the processor allows.
-        let next = self.view.pace.next(now, self.view.browser.frame_interval(now), change);
+        // A change that is not the page's waits one such frame for the
+        // channel's answer, and is drawn with it (REQ-6400).
+        #[cfg(feature = "interaction")]
+        let hold = if self.view.browser.typing_target().is_some() { TYPING_FRAME_MILLISECONDS } else { 0 };
+        #[cfg(not(feature = "interaction"))]
+        let hold = 0;
+        let next = self.view.pace.next(now, self.view.browser.frame_interval(now), change, hold);
         if next.draw {
             self.request_redraw();
         }

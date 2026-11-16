@@ -18,6 +18,8 @@ pub(super) struct Pace {
     drawn: u64,
     /// The trusted core changed something not yet drawn.
     dirty: bool,
+    /// When the first change not yet drawn came.
+    dirty_since: u64,
     /// A frame of the page the viewer is typing into or pointing at
     /// arrived and is not yet drawn.
     awaited: bool,
@@ -34,10 +36,13 @@ pub(super) struct Next {
 }
 
 impl Pace {
-    /// The trusted core changed something the window shows: drawn with
-    /// the next paced frame, as pages load and flash many times a second
-    /// and one frame shows all that arrived since the last.
-    pub fn changed(&mut self) {
+    /// The trusted core changed something the window shows, at `now`:
+    /// drawn with the next paced frame, as pages load and flash many times
+    /// a second and one frame shows all that arrived since the last.
+    pub fn changed(&mut self, now: u64) {
+        if !self.dirty {
+            self.dirty_since = now;
+        }
         self.dirty = true;
     }
 
@@ -63,13 +68,16 @@ impl Pace {
 
     /// Whether to draw at `now`, and when to look again: `animation` is
     /// the interval the browser's animations ask for, `change` the least
-    /// interval between frames for what the trusted core changed.
-    pub fn next(&self, now: u64, animation: Option<u64>, change: u64) -> Next {
+    /// interval between frames for what the trusted core changed, and
+    /// `hold` how long such a change waits for the awaited page's frame
+    /// to come and be drawn with it (REQ-6400): none while no channel is
+    /// typed into.
+    pub fn next(&self, now: u64, animation: Option<u64>, change: u64, hold: u64) -> Next {
         if self.awaited {
             return Next { draw: true, wake: None };
         }
         let animated = animation.map(|interval| self.drawn.saturating_add(interval));
-        let changed = self.dirty.then(|| self.presented.saturating_add(change));
+        let changed = self.dirty.then(|| self.presented.saturating_add(change).max(self.dirty_since.saturating_add(hold)));
         let due = animated.into_iter().chain(changed).min();
         Next { draw: due.is_some_and(|due| now >= due), wake: due }
     }
@@ -93,7 +101,7 @@ mod tests {
     /// The frame that would be drawn at or after `from`, looking every
     /// millisecond as the event loop would when woken.
     fn drawn_at(pace: &Pace, from: u64, animation: Option<u64>) -> Option<u64> {
-        (from..from + 1_000).find(|&now| pace.next(now, animation, CHANGE).draw)
+        (from..from + 1_000).find(|&now| pace.next(now, animation, CHANGE, 0).draw)
     }
 
     /// REQ-RCH-001: the acknowledgement's frame is drawn, and the answer,
@@ -103,7 +111,7 @@ mod tests {
     fn the_answer_after_an_acknowledgement_is_drawn_as_it_arrives() {
         let mut pace = Pace::default();
         let acknowledged = 1_000;
-        pace.changed();
+        pace.changed(0);
         assert_eq!(drawn_at(&pace, acknowledged, None), Some(acknowledged), "the acknowledgement's frame");
         pace.drawn(acknowledged, true);
         let answered = acknowledged + ANSWER_AFTER;
@@ -118,11 +126,11 @@ mod tests {
     fn a_frame_that_changed_nothing_does_not_delay_the_next() {
         let mut pace = Pace::default();
         let start = 1_000;
-        pace.changed();
+        pace.changed(0);
         pace.drawn(start, true);
-        pace.changed();
+        pace.changed(0);
         pace.drawn(start + CHANGE, false);
-        pace.changed();
+        pace.changed(0);
         assert_eq!(drawn_at(&pace, start + CHANGE + 1, None), Some(start + CHANGE + 1), "not held a frame after the one that changed nothing");
     }
 
@@ -132,10 +140,10 @@ mod tests {
     fn changes_are_paced_from_the_last_frame_presented() {
         let mut pace = Pace::default();
         let start = 1_000;
-        pace.changed();
+        pace.changed(0);
         pace.drawn(start, true);
-        pace.changed();
-        assert_eq!(pace.next(start + 1, None, CHANGE), Next { draw: false, wake: Some(start + CHANGE) });
+        pace.changed(0);
+        assert_eq!(pace.next(start + 1, None, CHANGE, 0), Next { draw: false, wake: Some(start + CHANGE) });
         assert_eq!(drawn_at(&pace, start + 1, None), Some(start + CHANGE));
     }
 
@@ -147,11 +155,35 @@ mod tests {
         const ANIMATION: u64 = 33;
         let mut pace = Pace::default();
         let start = 1_000;
-        assert_eq!(pace.next(start, None, CHANGE), Next { draw: false, wake: None }, "nothing to draw, no wake");
+        assert_eq!(pace.next(start, None, CHANGE, 0), Next { draw: false, wake: None }, "nothing to draw, no wake");
         pace.drawn(start, false);
-        assert_eq!(pace.next(start + 1, Some(ANIMATION), CHANGE), Next { draw: false, wake: Some(start + ANIMATION) });
-        pace.changed();
+        assert_eq!(pace.next(start + 1, Some(ANIMATION), CHANGE, 0), Next { draw: false, wake: Some(start + ANIMATION) });
+        pace.changed(0);
         pace.drawn(start + 2, false);
-        assert_eq!(pace.next(start + 3, None, CHANGE), Next { draw: false, wake: None }, "a change drawn is not drawn again");
+        assert_eq!(pace.next(start + 3, None, CHANGE, 0), Next { draw: false, wake: None }, "a change drawn is not drawn again");
+    }
+
+    /// REQ-6400: while a channel is typed into, a change that is not the
+    /// awaited page's waits for the page's frame and is drawn with it; with
+    /// no such frame it is drawn when its wait is over.
+    #[test]
+    fn a_change_waits_for_the_awaited_frame_while_a_channel_is_typed_into() {
+        const HOLD: u64 = 16;
+        let mut pace = Pace::default();
+        let key = 1_000;
+        // The strip's figure changes as the key goes, long after the last frame.
+        pace.changed(key);
+        assert_eq!(pace.next(key, None, CHANGE, HOLD), Next { draw: false, wake: Some(key + HOLD) }, "no frame of its own at once");
+        assert!(pace.next(key, None, CHANGE, 0).draw, "at once when no channel is typed into");
+        // The page's answer comes three milliseconds later: one frame shows both.
+        pace.awaited();
+        assert!(pace.next(key + 3, None, CHANGE, HOLD).draw);
+        pace.drawn(key + 3, true);
+        assert_eq!(pace.next(key + 4, None, CHANGE, HOLD), Next { draw: false, wake: None }, "nothing left to draw");
+        // With no answer, the change is drawn when its wait is over.
+        pace.changed(2_000);
+        pace.changed(2_010);
+        assert!(!pace.next(2_015, None, CHANGE, HOLD).draw);
+        assert!(pace.next(2_016, None, CHANGE, HOLD).draw, "counted from the first change waiting");
     }
 }

@@ -36,7 +36,8 @@ impl PageImage {
 
 /// The picture of a page drawn in ReGIS (DEC-6335): 800 by 480 pixels.
 pub(crate) struct RegisImage {
-    image: Image,
+    /// Its pixels, kept to find what a new picture changes (REQ-6399).
+    pixmap: Arc<Pixmap>,
     /// Colour 0 of its sixteen: what is drawn above and below it.
     background: Colour,
     number: u64,
@@ -53,6 +54,17 @@ impl RegisImage {
 const REGIS_SIZE: (u16, u16) = (REGIS_WIDTH, REGIS_HEIGHT);
 /// Its pixels.
 const REGIS_PIXELS: usize = REGIS_WIDTH as usize * REGIS_HEIGHT as usize;
+
+/// How near a whole number counts as one: a hundredth of a display pixel
+/// across the whole picture, well inside what rounding a layout leaves.
+const WHOLE_TOLERANCE: f64 = 0.01;
+
+/// Whether `shown`, a length in display pixels, is a whole multiple, one
+/// or more, of `actual`.
+fn whole_multiple(shown: f64, actual: f64) -> bool {
+    let multiple = (shown / actual).round();
+    multiple >= 1.0 && (shown - multiple * actual).abs() < WHOLE_TOLERANCE
+}
 
 /// Teletext is blocks: nearest-neighbour sampling keeps them sharp.
 pub(crate) fn image(pixmap: Arc<Pixmap>) -> Image {
@@ -118,17 +130,29 @@ impl Painter {
                 rgba.extend_from_slice(&[red, green, blue, OPAQUE]);
             }
         }
+        let [[red, green, blue], ..] = *palette;
+        let background = Colour { red, green, blue };
+        // Only where the new picture differs from the one held is drawn
+        // again (REQ-6399 item 3); a picture on another background, or the
+        // first, is drawn whole, with what lies around it.
+        match self.regis.get(&key).filter(|held| held.background == background) {
+            Some(held) => {
+                let pixels = crate::damage::changed_pixels(&held.pixmap, &rgba, REGIS_SIZE.0);
+                if pixels.is_empty() {
+                    return Ok(());
+                }
+                let since = self.regis_changed.get(&key).copied().unwrap_or_default();
+                self.regis_changed.insert(key, since.union(pixels));
+            }
+            None => {
+                self.changed.insert(key, DeviceBox::whole(PAGE_WIDTH, PAGE_HEIGHT));
+            }
+        }
         let metadata = PixelMetadata { may_have_transparency: false, alpha_type: ImageAlphaType::Alpha };
         let pixmap = Arc::new(Pixmap::from_parts(rgba, REGIS_SIZE.0, REGIS_SIZE.1, metadata));
-        // The picture is shown smaller than it is on most windows, so it
-        // is sampled smoothly: nearest-neighbour would drop thin lines.
-        let image = Image { image: ImageSource::Pixmap(pixmap), sampler: ImageSampler { quality: ImageQuality::Medium, ..ImageSampler::default() } };
-        let [[red, green, blue], ..] = *palette;
         let number = self.next_image;
         self.next_image = number.wrapping_add(1);
-        self.regis.insert(key, RegisImage { image, background: Colour { red, green, blue }, number });
-        // Where the page is drawn, all of it is drawn again.
-        self.changed.insert(key, DeviceBox::whole(PAGE_WIDTH, PAGE_HEIGHT));
+        self.regis.insert(key, RegisImage { pixmap, background, number });
         Ok(())
     }
 
@@ -136,6 +160,7 @@ impl Painter {
     pub fn retain_pages(&mut self, keep: impl Fn(&PageKey) -> bool) {
         self.pages.retain(|key, _| keep(key));
         self.regis.retain(|key, _| keep(key));
+        self.regis_changed.retain(|key, _| keep(key));
     }
 
     /// How a ReGIS picture is fitted from the next frame: contained in the
@@ -175,10 +200,20 @@ impl Painter {
         if let Some(regis) = self.regis.get(&key) {
             // The picture across the image's width, its own proportions
             // kept, on its own background.
-            let (image, background) = (regis.image.clone(), regis.background);
+            let (pixmap, background) = (Arc::clone(&regis.pixmap), regis.background);
             let layout = interface_core::canvas::regis_layout(area, self.regis_contain, self.regis_keyed.contains(&key));
             let place = layout.picture;
             let (width, height) = (f64::from(REGIS_SIZE.0), f64::from(REGIS_SIZE.1));
+            // At a whole multiple of its size each pixel is a block of
+            // display pixels and is drawn as one (REQ-6401); at any other
+            // size it is sampled smoothly, or thin lines would be dropped
+            // from a picture shown smaller.
+            let quality = if whole_multiple(place.width() * self.scale, width) && whole_multiple(place.height() * self.scale, height) {
+                ImageQuality::Low
+            } else {
+                ImageQuality::Medium
+            };
+            let image = Image { image: ImageSource::Pixmap(pixmap), sampler: ImageSampler { quality, ..ImageSampler::default() } };
             self.context.set_transform(self.base());
             self.context.set_paint(crate::colour(background));
             self.context.fill_rect(&crate::rect(area));

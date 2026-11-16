@@ -210,6 +210,24 @@ impl Painter {
         if key != key_now || area != area_now || old.rects(was.clip()) != new.rects(now.clip()) {
             return None;
         }
+        let clip = new.clip_pixels(now.clip());
+        // A ReGIS picture of which only some pixels changed, on a page
+        // whose teletext image did not: those pixels, where the picture
+        // lies in the page's place (REQ-6399 item 3).
+        if let (Some(pixels), None) = (self.regis_changed.get(key), self.changed.get(key)) {
+            let place = interface_core::canvas::regis_layout(*area, self.regis_contain, self.regis_keyed.contains(key)).picture;
+            let (across, down) =
+                (place.width() / f64::from(interface_core::canvas::REGIS_WIDTH), place.height() / f64::from(interface_core::canvas::REGIS_HEIGHT));
+            // Smooth sampling spreads a pixel's colour into its
+            // neighbours' place: one pixel more on every side.
+            let changed = Rect {
+                x0: place.x0 + (f64::from(pixels.x0) - SAMPLING_REACH) * across,
+                y0: place.y0 + (f64::from(pixels.y0) - SAMPLING_REACH) * down,
+                x1: place.x0 + (f64::from(pixels.x1) + SAMPLING_REACH) * across,
+                y1: place.y0 + (f64::from(pixels.y1) + SAMPLING_REACH) * down,
+            };
+            return Some(DeviceBox::covering(changed, self.scale, self.surface()).intersect(clip));
+        }
         let dots = self.changed.get(key)?;
         let (across, down) = (area.width() / f64::from(PAGE_WIDTH), area.height() / f64::from(PAGE_HEIGHT));
         let changed = Rect {
@@ -218,16 +236,25 @@ impl Painter {
             x1: area.x0 + f64::from(dots.x1) * across,
             y1: area.y0 + f64::from(dots.y1) * down,
         };
-        let clip = new.clip_pixels(now.clip());
         Some(DeviceBox::covering(changed, self.scale, self.surface()).intersect(clip))
     }
 }
 
-/// The box of dots whose colour differs between a held image and a new
-/// one's red, green, blue and alpha bytes.
+/// How far, in a picture's own pixels, smooth sampling carries a pixel's
+/// colour beyond its own place.
+const SAMPLING_REACH: f64 = 1.0;
+
+/// The box of dots whose colour differs between a held page image and a
+/// new one's red, green, blue and alpha bytes.
 pub(crate) fn changed_dots(held: &Pixmap, rgba: &[u8]) -> DeviceBox {
+    changed_pixels(held, rgba, PAGE_WIDTH)
+}
+
+/// The box of pixels whose colour differs between a held image `width`
+/// pixels across and a new one's red, green, blue and alpha bytes.
+pub(crate) fn changed_pixels(held: &Pixmap, rgba: &[u8], width: u16) -> DeviceBox {
     let mut found = DeviceBox::default();
-    let width = usize::from(PAGE_WIDTH);
+    let width = usize::from(width);
     let (dots, _) = rgba.as_chunks::<RGBA_BYTES>();
     for (index, (pixel, &[red, green, blue, _])) in held.data().iter().zip(dots).enumerate() {
         if [pixel.r, pixel.g, pixel.b] != [red, green, blue] {

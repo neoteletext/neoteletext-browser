@@ -114,6 +114,9 @@ pub struct Painter {
     /// The dots of each page that changed since the last frame was drawn,
     /// in the page's own dots.
     changed: HashMap<PageKey, DeviceBox>,
+    /// The pixels of each ReGIS picture that changed since the last frame
+    /// was drawn, in the picture's own pixels (REQ-6399).
+    regis_changed: HashMap<PageKey, DeviceBox>,
     /// The frame being drawn, and the last one drawn.
     frame: Frame,
     last: Frame,
@@ -168,6 +171,7 @@ impl Painter {
             regis_keyed: Vec::new(),
             next_image: 0,
             changed: HashMap::new(),
+            regis_changed: HashMap::new(),
             frame: Frame::new(DeviceBox::default()),
             last: Frame::default(),
             words: Vec::new(),
@@ -220,6 +224,7 @@ impl Painter {
         };
         self.whole = false;
         self.changed.clear();
+        self.regis_changed.clear();
         for &area in damage.boxes() {
             self.draw_box(&frame, area);
         }

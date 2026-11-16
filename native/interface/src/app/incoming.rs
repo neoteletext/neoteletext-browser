@@ -71,13 +71,9 @@ impl App {
             }
             Incoming::Page { key, version, image } => self.page_frame(event_loop, key, version, &image, now),
             Incoming::Regis { key, picture } => {
-                if let Err(error) = self.view.painter.set_regis(key, &picture.palette, &picture.packed) {
-                    self.exit = Some(format!("bad ReGIS picture from the trusted core: {error:?}"));
-                    event_loop.exit();
+                if !self.regis_picture(event_loop, key, &picture, now) {
                     return;
                 }
-                self.view.browser.set_regis(key, picture.commits, picture.work);
-                self.request_redraw();
             }
             Incoming::RegisOver { key, over } => {
                 self.view.browser.set_regis_over(key, over);
@@ -111,7 +107,7 @@ impl App {
         }
         // Drawn with the next paced frame: pages load and flash many times
         // a second, and one frame shows all that arrived since the last.
-        self.view.pace.changed();
+        self.view.pace.changed(now);
     }
 
     /// The window's tabs, and which is active.
@@ -152,6 +148,28 @@ impl App {
             eprintln!("neoteletext-interface: at {now} ms: page {page:03X} of channel {channel} updated");
         }
         self.view.browser.page_updated(channel, page, now);
+    }
+
+    /// The picture of a page drawn in ReGIS arrived: held by the painter,
+    /// which finds what it changed, and drawn. False when it was no
+    /// picture, which ends the interface.
+    fn regis_picture(&mut self, event_loop: &ActiveEventLoop, key: PageKey, picture: &protocol::regis::RegisPicture, now: u64) -> bool {
+        if self.trace_frames {
+            eprintln!("neoteletext-interface: at {now} ms: picture {} of page {:03X} of channel {}", picture.commits, key.page, key.channel);
+        }
+        if let Err(error) = self.view.painter.set_regis(key, &picture.palette, &picture.packed) {
+            self.exit = Some(format!("bad ReGIS picture from the trusted core: {error:?}"));
+            event_loop.exit();
+            return false;
+        }
+        self.view.browser.set_regis(key, picture.commits, picture.work);
+        // The picture of the page the viewer types into or points at is
+        // drawn as it arrives, with whatever else waited (REQ-6400).
+        if self.awaited(key) {
+            self.view.pace.awaited();
+        }
+        self.request_redraw();
+        true
     }
 
     /// A frame of a page shown.

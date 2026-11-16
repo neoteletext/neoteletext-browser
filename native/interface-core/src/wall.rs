@@ -301,6 +301,18 @@ impl Wall {
         (if held.is_some() { image * SCREEN_SCALE } else { width }, held)
     }
 
+    /// `rect`, a held page's place with its screen, moved by less than a
+    /// display pixel so that its image starts on a whole display pixel
+    /// both ways: each of the image's pixels is then a whole block of the
+    /// display's, none split across two (REQ-6401 item 3).
+    pub(crate) fn on_display_pixels(&self, rect: Rect) -> Rect {
+        let image = crate::canvas::image_within(rect);
+        let scale = self.device_scale;
+        let moved = |from: f64| libm::round(from * scale) / scale - from;
+        let (across, down) = (moved(image.x0), moved(image.y0));
+        Rect::new(rect.x0 + across, rect.y0 + down, rect.x1 + across, rect.y1 + down)
+    }
+
     /// Notes the multiple the open page is drawn held at, or that it is
     /// not held: the label is for the moment it comes to be.
     pub(crate) fn note_held(&mut self, held: Option<u32>, now: u64) {

@@ -74,7 +74,9 @@ impl Browser {
         self.regis_pointed();
     }
 
-    /// A finger came down or moved (`Some`), or lifted (`None`).
+    /// A finger came down or moved (`Some`), or lifted (`None`). Touches
+    /// reach the browser only with typing built in.
+    #[cfg(feature = "interaction")]
     pub(super) fn regis_finger(&mut self, at: Option<Point>) {
         self.regis_pointer.finger = at;
         self.regis_pointed();

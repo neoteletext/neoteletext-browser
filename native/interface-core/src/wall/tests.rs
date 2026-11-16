@@ -535,7 +535,14 @@ fn the_page_alone_is_held_at_whole_multiples_as_its_room_grows() {
             let mut last = 0.0;
             for width in 100..2_400_u32 {
                 let image = image_alone(&mut wall, f64::from(width), scale);
-                assert!(same(f64::midpoint(image.x0, image.x1), f64::from(width) / 2.0), "centred: {image:?}");
+                // Centred, to within the display pixel a held page is moved onto (REQ-6401).
+                assert!((f64::midpoint(image.x0, image.x1) - f64::from(width) / 2.0).abs() <= 1.0 / scale, "centred: {image:?}");
+                if same(image.width() * scale / actual, (image.width() * scale / actual).round()) && image.width() * scale >= actual - 1e-6 {
+                    assert!(
+                        same(image.x0 * scale, (image.x0 * scale).round()) && same(image.y0 * scale, (image.y0 * scale).round()),
+                        "a held page starts on a display pixel: {image:?}"
+                    );
+                }
                 assert!(image.width() >= last - 1e-9, "never smaller in a larger room: {image:?}");
                 last = image.width();
                 let multiples = image.width() * scale / actual;

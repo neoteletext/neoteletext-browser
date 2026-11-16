@@ -188,9 +188,10 @@ impl Wall {
         let area = self.area;
         let room = Rect::new(area.x0 + WALL_PADDING, area.y0 + WALL_PADDING + CAPTION_HEIGHT + CAPTION_GAP, area.x1 - WALL_PADDING, area.y1 - WALL_PADDING);
         let aspect = self.open_shape(self.zoomed);
-        let (width, _) = self.held_width(self.zoomed, room.width().min(room.height() / aspect).max(0.0));
+        let (width, held) = self.held_width(self.zoomed, room.width().min(room.height() / aspect).max(0.0));
         let left = f64::midpoint(room.x0, room.x1) - width / 2.0;
-        Rect::new(left, room.y0, left + width, room.y0 + width * aspect)
+        let rect = Rect::new(left, room.y0, left + width, room.y0 + width * aspect);
+        if held.is_some() { self.on_display_pixels(rect) } else { rect }
     }
 
     /// The page part of the way between its place on the wall and its
@@ -332,6 +333,7 @@ impl Wall {
         self.note_held(held, now);
         let (left, top) = (f64::midpoint(area.x0, area.x1) - width / 2.0, f64::midpoint(area.y0, area.y1) - width * aspect / 2.0);
         let rect = Rect::new(left, top, left + width, top + width * aspect);
+        let rect = if held.is_some() { self.on_display_pixels(rect) } else { rect };
         // Around the page, its screen colour, as the page area draws it.
         let screen = pages.get(current).and_then(|page| canvas.screen(page.key)).unwrap_or(BLACK);
         canvas.fill(area, 0.0, screen);

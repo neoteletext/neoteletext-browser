@@ -37,7 +37,11 @@ impl Browser {
     /// page's channel takes input, when the page shown has them and a
     /// click on a list only chooses (REQ-3937 items 1 to 3).
     pub(super) fn list_with_keys(&self) -> Option<ListFocus> {
-        self.list_focus.filter(|_| !self.channel_takes_keys())
+        // Without typing no channel takes keys, and the list clicked has them.
+        #[cfg(feature = "interaction")]
+        return self.list_focus.filter(|_| !self.channel_takes_keys());
+        #[cfg(not(feature = "interaction"))]
+        self.list_focus
     }
 
     /// A key while a list has the keys: `None` when no list has them, or

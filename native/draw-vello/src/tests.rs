@@ -411,3 +411,115 @@ fn a_page_with_an_index_outside_its_palette_is_refused() {
     assert_eq!(painter.set_page(key, &[[9, 8, 7]], 0, &indices), Ok(()));
     assert_eq!(painter.screen(key), Some(Colour { red: 9, green: 8, blue: 7 }));
 }
+
+/// A ReGIS picture's bytes: every pixel colour 0 but `lit`, pixels of
+/// colour 7 from `lit.0` for `lit.2` pixels on row `lit.1`.
+#[allow(clippy::arithmetic_side_effects, reason = "a test's own sizes and places, far inside usize")]
+fn regis_packed(lit: Option<(usize, usize, usize)>) -> Vec<u8> {
+    let (across, down) = (usize::from(interface_core::canvas::REGIS_WIDTH), usize::from(interface_core::canvas::REGIS_HEIGHT));
+    let mut pixels = vec![0_u8; across * down];
+    if let Some((x, y, count)) = lit {
+        pixels[y * across + x..][..count].fill(7);
+    }
+    pixels.as_chunks::<2>().0.iter().map(|[left, right]| (left << 4) | right).collect()
+}
+
+/// Sixteen colours: black, and white as colour 7.
+fn regis_palette() -> [[u8; 3]; interface_core::canvas::REGIS_COLOURS] {
+    let mut palette = [[0_u8; 3]; interface_core::canvas::REGIS_COLOURS];
+    palette[7] = [255, 255, 255];
+    palette
+}
+
+/// REQ-6399 item 3: a ReGIS picture in which a few pixels changed is
+/// drawn again only there, and the window is what a whole frame of the
+/// new picture gives; a picture that changed nowhere draws nothing.
+#[test]
+fn a_regis_picture_whose_pixels_changed_redraws_only_them_and_matches_a_whole_frame() {
+    let pages = pages();
+    let mut painter = Painter::new(Family::Roboto);
+    let mut browser = browser(&mut painter, &pages);
+    painter.set_regis(FRONT, &regis_palette(), &regis_packed(None)).unwrap();
+    frame(&mut painter, &mut browser, SETTLED);
+    frame(&mut painter, &mut browser, SETTLED);
+    let whole = covered(&[DeviceBox::whole(WIDTH, HEIGHT)]);
+    // A few pixels near the picture's top, which this small window shows.
+    let change = |painter: &mut Painter, _: &mut Browser| painter.set_regis(FRONT, &regis_palette(), &regis_packed(Some((300, 5, 12)))).unwrap();
+    change(&mut painter, &mut browser);
+    let (damage, words) = frame(&mut painter, &mut browser, SETTLED);
+    assert!(!damage.is_empty() && covered(&damage) < whole / 100, "only the pixels that changed: {damage:?}");
+    assert_eq!(differing(&words, &fresh(&pages, SETTLED, change)), 0);
+    change(&mut painter, &mut browser);
+    assert_eq!(frame(&mut painter, &mut browser, SETTLED).0, [], "the same picture again changes nothing");
+}
+
+/// One frame of a ReGIS picture alone in a window, drawn across `area`.
+#[allow(clippy::arithmetic_side_effects, reason = "a test's own sizes and places, far inside usize")]
+fn regis_alone(size: (u16, u16), area: Rect, lit: (usize, usize, usize)) -> Vec<u32> {
+    let mut painter = Painter::new(Family::Roboto);
+    // A picture is drawn in the place of its page, which is held too.
+    let pages = pages();
+    painter.set_page(FRONT, &pages[0].palette, pages[0].screen, &pages[0].indices).unwrap();
+    painter.set_regis(FRONT, &regis_palette(), &regis_packed(Some(lit))).unwrap();
+    painter.begin(size.0, size.1, 1.0);
+    painter.page(FRONT, area);
+    let damage = painter.render();
+    let mut words = vec![0; usize::from(size.0) * usize::from(size.1)];
+    painter.copy_to(&mut words, &damage, 0);
+    words
+}
+
+/// REQ-6401 item 1: at exactly twice its size every pixel of a ReGIS
+/// picture is a block of two by two display pixels of its own colour,
+/// with no colour between it and its neighbours; at a size between, the
+/// picture is sampled smoothly, so a lone pixel's colour is spread.
+#[allow(clippy::arithmetic_side_effects, reason = "a test's own sizes and places, far inside usize")]
+#[test]
+fn a_regis_picture_at_a_whole_multiple_is_drawn_without_smoothing() {
+    const WHITE_WORD: u32 = 0x00FF_FFFF;
+    let size = (1_700_u16, 1_000_u16);
+    let across = usize::from(size.0);
+    // One white pixel at (100, 50), the picture at twice its size from (10, 10).
+    let words = regis_alone(size, Rect::new(10.0, 10.0, 1_610.0, 970.0), (100, 50, 1));
+    let at = |x: usize, y: usize| words[y * across + x] & WHITE_WORD;
+    for (x, y) in [(210, 110), (211, 110), (210, 111), (211, 111)] {
+        assert_eq!(at(x, y), WHITE_WORD, "the pixel's block at {x}, {y}");
+    }
+    for (x, y) in [(209, 110), (212, 110), (210, 109), (210, 112), (209, 109), (212, 112)] {
+        assert_eq!(at(x, y), 0, "beside the block at {x}, {y}: the neighbour's colour alone");
+    }
+    // At one and a half times its size the pixel's colour is spread.
+    let words = regis_alone(size, Rect::new(10.0, 10.0, 1_210.0, 730.0), (100, 50, 1));
+    let greys = words.iter().filter(|&&word| !matches!(word & WHITE_WORD, 0 | WHITE_WORD)).count();
+    assert!(greys > 0, "sampled smoothly between whole multiples");
+}
+
+/// REQ-6401 item 2: a teletext page at exactly twice its size has every
+/// dot as a block of two by two display pixels: only the page's own
+/// colours appear in it, none between.
+#[allow(clippy::arithmetic_side_effects, reason = "a test's own sizes and places, far inside usize")]
+#[test]
+fn a_teletext_page_at_twice_its_size_is_whole_blocks() {
+    let pages = pages();
+    let front = &pages[0];
+    let mut painter = Painter::new(Family::Roboto);
+    painter.set_page(FRONT, &front.palette, front.screen, &front.indices).unwrap();
+    let size = (1_000_u16, 1_040_u16);
+    painter.begin(size.0, size.1, 1.0);
+    let (left, top) = (20_usize, 20_usize);
+    painter.page(FRONT, Rect::new(20.0, 20.0, 20.0 + 2.0 * f64::from(PAGE_WIDTH), 20.0 + 2.0 * f64::from(PAGE_HEIGHT)));
+    let damage = painter.render();
+    let mut words = vec![0; usize::from(size.0) * usize::from(size.1)];
+    painter.copy_to(&mut words, &damage, 0);
+    let across = usize::from(size.0);
+    for y in 0..usize::from(PAGE_HEIGHT) {
+        for x in 0..usize::from(PAGE_WIDTH) {
+            let [red, green, blue] = front.palette[usize::from(front.indices[y * usize::from(PAGE_WIDTH) + x])];
+            let word = (u32::from(red) << 16) | (u32::from(green) << 8) | u32::from(blue);
+            for (dx, dy) in [(0, 0), (1, 0), (0, 1), (1, 1)] {
+                let drawn = words[(top + 2 * y + dy) * across + left + 2 * x + dx] & 0x00FF_FFFF;
+                assert_eq!(drawn, word, "dot {x}, {y} at +{dx}, +{dy}");
+            }
+        }
+    }
+}
