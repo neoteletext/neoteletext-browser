@@ -27,28 +27,42 @@ const WINDOW_HEIGHT: f64 = 900.0;
 const MINIMUM_WIDTH: f64 = 1000.0;
 const MINIMUM_HEIGHT: f64 = 640.0;
 /// How far in from the window's edge a press resizes it, on platforms
-/// where the browser draws its own frame.
+/// where the browser draws its own frame (REQ-6396 item 4): wider than
+/// the 4 pixels of the border the requirement's reference draws, because
+/// that one also takes presses in a band beyond its window, and this
+/// window has nothing beyond its edge.
 pub(crate) const RESIZE_MARGIN: f64 = 6.0;
+/// How far along each edge from a corner a press in the margin resizes by
+/// the corner: the corner zone of the requirement's reference, 16 pixels
+/// (REQ-6396 item 4; its source is credited in `CREDITS.md`), so that a
+/// corner is as easy to hit as it is there.
+pub(crate) const RESIZE_CORNER: f64 = 16.0;
 
 /// The way a press at `x`, `y` resizes a window `width` by `height`, all
-/// in logical pixels: by the edge or the corner within [`RESIZE_MARGIN`]
-/// of the point, a corner where two edges are; none for a point further
-/// in. The pointer takes that edge's shape there, which is all that says
-/// the edge can be dragged, since the browser draws no border of its own.
+/// in logical pixels: by the edge within [`RESIZE_MARGIN`] of the point,
+/// or by a corner when the point is also within [`RESIZE_CORNER`] of the
+/// adjoining edge; none for a point further in. The pointer takes that
+/// shape there, and a line is drawn round the window, since the system
+/// draws no border of its own.
 pub(crate) fn resize_edge(x: f64, y: f64, width: f64, height: f64) -> Option<winit::window::ResizeDirection> {
     use winit::window::ResizeDirection;
     let (left, right) = (x < RESIZE_MARGIN, x > width - RESIZE_MARGIN);
     let (top, bottom) = (y < RESIZE_MARGIN, y > height - RESIZE_MARGIN);
-    Some(match (left, right, top, bottom) {
+    if !(left || right || top || bottom) {
+        return None;
+    }
+    // In the margin of one edge, the corner reaches along it.
+    let (near_left, near_right) = (x < RESIZE_CORNER, x > width - RESIZE_CORNER);
+    let (near_top, near_bottom) = (y < RESIZE_CORNER, y > height - RESIZE_CORNER);
+    Some(match (near_left, near_right, near_top, near_bottom) {
         (true, _, true, _) => ResizeDirection::NorthWest,
         (_, true, true, _) => ResizeDirection::NorthEast,
         (true, _, _, true) => ResizeDirection::SouthWest,
         (_, true, _, true) => ResizeDirection::SouthEast,
-        (true, ..) => ResizeDirection::West,
-        (_, true, ..) => ResizeDirection::East,
-        (_, _, true, _) => ResizeDirection::North,
-        (_, _, _, true) => ResizeDirection::South,
-        _ => return None,
+        _ if left => ResizeDirection::West,
+        _ if right => ResizeDirection::East,
+        _ if top => ResizeDirection::North,
+        _ => ResizeDirection::South,
     })
 }
 /// On macOS the system's window buttons sit in the tab strip

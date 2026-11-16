@@ -75,6 +75,7 @@ mod toolbar;
 mod typing;
 mod widgets;
 mod window;
+mod window_border;
 
 pub use address::names_a_file;
 pub use keys::{Key, Modifiers};
@@ -117,6 +118,8 @@ impl Default for OverviewState {
 /// user did as [`Output`]s; it holds no state the trusted core owns.
 pub struct Browser {
     frame: Frame,
+    /// Whether the host says the window is maximised.
+    window_maximised: bool,
     tabs: Vec<TabInfo>,
     active: usize,
     /// The channels playing sound, muted or not.
@@ -278,6 +281,7 @@ impl Browser {
             hovered_bank: None,
             subpages: subpage_list::SubPages::default(),
             clicked_row: None,
+            window_maximised: false,
             list_focus: None,
             wheel_list: pointer::WheelList::Pages,
             wheel_step_carry: 0.0,

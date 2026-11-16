@@ -64,7 +64,9 @@ impl App {
         self.view.painter.set_regis_keyed(self.view.browser.regis_keyed());
         self.view.painter.begin(width, height, graphics.window.scale_factor());
         let logical = (f64::from(width) / self.view.painter.scale, f64::from(height) / self.view.painter.scale);
+        self.view.browser.set_window_maximised(graphics.window.is_maximized());
         self.view.browser.draw(&mut self.view.painter, logical.0, logical.1, now);
+        self.view.browser.draw_window_border(&mut self.view.painter, logical.0, logical.1);
         // The input method's candidates sit beside the caret of the field
         // with the keys (REQ-763), told again only when it moved.
         if self.view.ime.allowed
