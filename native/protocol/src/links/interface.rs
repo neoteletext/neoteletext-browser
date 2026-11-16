@@ -7,7 +7,7 @@ use interface_core::canvas::PageKey;
 use interface_core::channel::page_index;
 
 use super::found::{flags, place, push_area, read_area, read_flags};
-use super::{LinkKind, LinkRun, MAX_CONTROLS, MAX_DESTINATION, MAX_REMAPPED, MAX_RUNS, PageLinks, Pointing, Prompt};
+use super::{LinkKind, LinkRun, MAX_CONTROLS, MAX_DESTINATION, MAX_DRAWN_RUNS, MAX_REMAPPED, PageLinks, Pointing, Prompt};
 use crate::{Fields, ProtocolError, push_count_u8, push_key, push_text};
 
 // A prompt's flags.
@@ -17,7 +17,7 @@ const SECURE: u8 = 1;
 pub(super) fn push_page_links(payload: &mut Vec<u8>, key: PageKey, links: &PageLinks) -> Result<(), ProtocolError> {
     push_key(payload, key);
     payload.extend_from_slice(&links.version.to_be_bytes());
-    push_count_u8(payload, links.runs.len(), MAX_RUNS, "too many links")?;
+    push_count_u8(payload, links.runs.len(), MAX_DRAWN_RUNS, "too many links")?;
     for run in &links.runs {
         payload.extend_from_slice(&[run.row, run.column, run.length, flags(run.double, run.light), run.kind as u8]);
     }
@@ -31,7 +31,7 @@ pub(super) fn push_page_links(payload: &mut Vec<u8>, key: PageKey, links: &PageL
 pub(super) fn read_page_links(fields: &mut Fields<'_>) -> Result<(PageKey, PageLinks), ProtocolError> {
     let key = fields.key()?;
     let version = fields.u32()?;
-    let runs = (0..fields.count_u8(MAX_RUNS, "too many links")?)
+    let runs = (0..fields.count_u8(MAX_DRAWN_RUNS, "too many links")?)
         .map(|_| {
             let (row, column, length) = place(fields)?;
             let (double, light) = read_flags(fields)?;

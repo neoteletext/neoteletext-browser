@@ -29,6 +29,13 @@ pub const MAX_TEXT_LINKS: usize = 8;
 /// page since page numbers in its text stopped being found (decision 116);
 /// beyond this the trusted core gives it none (`hyperlinks.md` section 8.2).
 pub const MAX_RUNS: usize = MAX_TEXT_LINKS;
+/// The coloured keys whose prompts on row 24 are links too: red, green,
+/// yellow and cyan (`Fastext::prompts`).
+pub const MAX_PROMPT_RUNS: usize = 4;
+/// The most links drawn on one image of a page: every `LT` line's and every
+/// prompt's. A page's own eight text links are not counted against its
+/// prompts, so a page may have both in full.
+pub const MAX_DRAWN_RUNS: usize = MAX_RUNS + MAX_PROMPT_RUNS;
 /// The most `LK` lines a page keeps.
 pub const MAX_NUMBER_LINKS: usize = 8;
 /// A target as a page file writes it: an address of the one bound with its

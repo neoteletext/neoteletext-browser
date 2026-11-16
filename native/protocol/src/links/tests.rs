@@ -157,8 +157,8 @@ fn malformed_links_are_refused() {
         assert!(matches!(read(one_run(place, flags, kind)), Err(ProtocolError::BadValue(reason)) if reason == why), "{why}");
     }
     // More runs than a page may have.
-    let mut payload = vec![0, 0, 0, 7, 0x01, 0x23, 0, 0, 0, 9, u8::try_from(MAX_RUNS + 1).unwrap()];
-    payload.extend(std::iter::repeat_n([3, 4, 3, 0, 1], MAX_RUNS + 1).flatten());
+    let mut payload = vec![0, 0, 0, 7, 0x01, 0x23, 0, 0, 0, 9, u8::try_from(MAX_DRAWN_RUNS + 1).unwrap()];
+    payload.extend(std::iter::repeat_n([3, 4, 3, 0, 1], MAX_DRAWN_RUNS + 1).flatten());
     payload.push(0);
     let mut bytes = vec![KIND_PAGE_LINKS];
     bytes.extend_from_slice(&u32::try_from(payload.len()).unwrap().to_be_bytes());

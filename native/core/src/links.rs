@@ -368,7 +368,11 @@ impl Links {
             runs.push((run, destination));
         }
         let prompts = self.prompts(key);
-        runs.truncate(MAX_RUNS.saturating_sub(prompts.len()));
+        // A page keeps all eight of its text links whatever its prompts:
+        // the prompts are links of their own, counted apart
+        // (`MAX_DRAWN_RUNS`), so a page with four prompts does not lose the
+        // second four of its text links.
+        runs.truncate(MAX_RUNS);
         runs.extend(prompts);
         runs.sort_by_key(|(run, _)| (run.row, run.column));
         let controls = decide_controls(controls, &runs);

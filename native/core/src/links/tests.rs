@@ -321,6 +321,32 @@ fn a_keys_prompt_says_where_it_leads() {
     assert!(links.image(OPEN, 2, &channel, LATER).runs.is_empty(), "a boxed page's row 24 acts on nothing");
 }
 
+/// A page with all eight of its text links and all four of its keys'
+/// prompts keeps every one. The prompts used to be counted against the
+/// text links, so a front page of eight channels with four prompts had
+/// only its first four channels linked (found on the NeoTeletext channel's
+/// front page, 16 November 2026).
+#[test]
+fn a_page_keeps_its_eight_text_links_beside_its_four_prompts() {
+    use protocol::links::{FastextTarget, MAX_PROMPT_RUNS, MAX_TEXT_LINKS};
+    let candidates: Vec<Candidate> = (0..8_u8).map(|place| declared(5 + place * 2, 1, 8, &format!("https://example.invalid/channel{place}/"))).collect();
+    let page = |page| Some(FastextTarget { page, subcode: None, service: None });
+    let keys = [page(0x200), page(0x300), page(0x400), page(0x500), None];
+    let prompts = [Some((1, 8)), Some((11, 8)), Some((21, 8)), Some((31, 8))];
+    let address = home();
+    let mut links = Links::default();
+    links.opened(Some(OPEN));
+    links.found(OPEN, candidates, Vec::new(), Vec::new(), Fastext { keys, row24: true, linked: true, prompts });
+    let runs = links.image(OPEN, 1, &Channel { id: CHANNEL, address: &address }, START).runs;
+    let rows: Vec<u8> = runs.iter().map(|run| run.row).collect();
+    assert_eq!(rows, [5, 7, 9, 11, 13, 15, 17, 19, 24, 24, 24, 24], "eight text links, then the four prompts");
+    assert_eq!(runs.len(), MAX_TEXT_LINKS + MAX_PROMPT_RUNS);
+    // The last text link leads where it says, as the first does.
+    assert!(links.point(Some(spot(1, 3, 19))).is_some(), "the pointer over the eighth link");
+    let Ok(Follow::Channel(last)) = links.click(spot(1, 3, 19), Some(CHANNEL), LATER) else { panic!("the eighth link is followed") };
+    assert_eq!(last.channel_text(), "https://example.invalid/channel7/");
+}
+
 // REQ-1660 item 4: a character that would disguise an address cannot be in
 // a link's address at all, so none reaches the popover.
 #[test]
