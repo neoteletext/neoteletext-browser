@@ -9,8 +9,6 @@ use crate::geometry::Point;
 mod press;
 mod wheel_steps;
 
-pub(super) use wheel_steps::WheelList;
-
 /// The shape the pointer should take.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Cursor {

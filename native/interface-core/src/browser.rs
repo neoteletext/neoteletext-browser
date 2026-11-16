@@ -163,9 +163,6 @@ pub struct Browser {
     clicked_row: Option<usize>,
     /// The list at the left that has the keys, if one has.
     list_focus: Option<list_focus::ListFocus>,
-    /// The list the wheel steps through outside the page area: the one
-    /// last chosen from (REQ-6349).
-    wheel_list: pointer::WheelList,
     /// A trackpad's movement outside the page area not yet spent on a step.
     wheel_step_carry: f64,
     /// When the wheel last stepped a sub-page by a notch.
@@ -286,7 +283,6 @@ impl Browser {
             clicked_row: None,
             window_maximised: false,
             list_focus: None,
-            wheel_list: pointer::WheelList::Pages,
             wheel_step_carry: 0.0,
             wheel_step_at: None,
             wheel_lit: None,

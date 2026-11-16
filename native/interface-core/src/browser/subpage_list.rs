@@ -495,7 +495,6 @@ impl Browser {
         }
         // The sub-pages then have the keys: Up and Down step through them.
         self.list_focus = Some(ListFocus::SubPages);
-        self.wheel_list = crate::browser::pointer::WheelList::SubPages;
         self.subpages.revealed = None;
         let Some(&(_, subcode)) = self.regions.subrows.iter().find(|(rect, _)| rect.contains(point)) else { return true };
         let Some(index) = self.selected else { return true };
@@ -706,11 +705,11 @@ mod tests {
         assert!(browser.wall().contains(browser.pointer) && browser.wall().zoomed().is_some(), "beside a zoomed page");
     }
 
-    /// REQ-6349: beside the zoomed page the wheel steps through the list
-    /// last chosen from, the sub-pages after a click on them and the pages
-    /// after a click on the page list.
+    /// REQ-6349: beside the zoomed page the wheel steps through the open
+    /// page's sub-pages when it has them, whichever list was last clicked,
+    /// and through the pages when it has none.
     #[test]
-    fn the_wheel_beside_the_page_steps_the_list_last_chosen_from() {
+    fn the_wheel_beside_a_page_with_sub_pages_steps_its_sub_pages() {
         let (mut browser, mut canvas) = listed(40);
         let (first_row, _) = browser.regions.subrows[0];
         press_at(&mut browser, &mut canvas, first_row);
@@ -758,15 +757,29 @@ mod tests {
         assert_eq!(asked(&mut browser), None, "half a step is kept in hand");
         browser.scroll_by(crate::wall::WHEEL_PER_PAGE / 2.0, 3_040);
         assert_eq!(asked(&mut browser), Some(2), "and spent with the other half");
-        // A click on the page list gives the wheel back to the pages.
+        // A click on the page list does not give the wheel to the pages:
+        // the page shown has sub-pages, so the wheel is still theirs (the
+        // owner, 16 November 2026).
         let row = browser.regions.rows[0].0;
         press_at(&mut browser, &mut canvas, row);
         browser.draw(&mut canvas, WIDTH, HEIGHT, 4_000);
         browser.take_outputs();
+        assert_eq!(browser.selected, page, "the row clicked is the page shown");
         beside_the_page(&mut browser);
         browser.wheel_lines(1.0, 5_000);
+        assert!(asked(&mut browser).is_some(), "a sub-page is asked for");
+        assert_eq!(browser.selected, page, "and the page stays");
+        // On a page with no sub-pages the wheel steps the pages.
+        let row = browser.regions.rows[1].0;
+        press_at(&mut browser, &mut canvas, row);
+        browser.draw(&mut canvas, WIDTH, HEIGHT, 6_000);
+        browser.take_outputs();
+        let plain = browser.selected;
+        assert!(plain != page && plain.is_some_and(|index| browser.subpage_count(index).is_none()), "a page of one sub-page");
+        beside_the_page(&mut browser);
+        browser.wheel_lines(1.0, 7_000);
         assert_eq!(asked(&mut browser), None, "no sub-page is asked for");
-        assert_ne!(browser.selected, page, "the next page is chosen");
+        assert_ne!(browser.selected, plain, "the next page is chosen");
     }
 
     /// DEC-6358, faults 1 and 5: the rows that answer a request never
