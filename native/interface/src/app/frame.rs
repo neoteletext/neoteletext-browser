@@ -133,6 +133,20 @@ impl App {
                 graphics.window.set_cursor_visible(!hidden);
             }
         }
+        // At an edge of a window the browser frames itself, the pointer
+        // shows which way a press there resizes it: nothing else does.
+        let edge = self.edge_at(self.view.cursor.0, self.view.cursor.1);
+        if edge != self.view.pointer_edge {
+            self.view.pointer_edge = edge;
+            // Off the edge again, the browser's own shape is set afresh.
+            self.view.pointer_shape = (Cursor::Arrow, false);
+            if let Some(graphics) = &self.view.graphics {
+                graphics.window.set_cursor(edge.map_or(CursorIcon::Default, CursorIcon::from));
+            }
+        }
+        if edge.is_some() {
+            return;
+        }
         let cursor = self.view.browser.cursor();
         // The wheel pointer's wheel blinks: its picture is one of two (REQ-6356 item 3).
         let lit = matches!(cursor, Cursor::Wheel(_)) && self.view.browser.wheel_lit(self.now());

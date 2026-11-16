@@ -13,7 +13,7 @@ use winit::dpi::LogicalPosition;
 use winit::event_loop::ActiveEventLoop;
 use winit::window::{Fullscreen, ResizeDirection};
 
-use crate::window::{FRAME, RESIZE_MARGIN, TORN_OFFSET, WINDOW_TITLE, attributes, geometry, on_a_display};
+use crate::window::{FRAME, TORN_OFFSET, WINDOW_TITLE, attributes, geometry, on_a_display, resize_edge};
 
 use super::{App, Graphics, Heard, View, WindowFull};
 
@@ -196,27 +196,25 @@ impl App {
         }
     }
 
-    /// On platforms where the browser draws its own frame, a press at the
-    /// window's edge resizes it. Returns whether it did.
-    pub(super) fn resize_from_edge(&self, x: f64, y: f64) -> bool {
+    /// The edge or corner of the window the pointer at `x`, `y` is on, on
+    /// platforms where the browser draws its own frame: where a press
+    /// resizes the window. None while the window is maximised or full
+    /// screen, which have no edge to drag.
+    pub(super) fn edge_at(&self, x: f64, y: f64) -> Option<ResizeDirection> {
         if !FRAME.window_buttons {
-            return false;
+            return None;
         }
-        let Some(graphics) = &self.view.graphics else { return false };
+        let graphics = self.view.graphics.as_ref()?;
+        if graphics.window.is_maximized() || graphics.window.fullscreen().is_some() {
+            return None;
+        }
         let size = graphics.window.inner_size().to_logical::<f64>(graphics.window.scale_factor());
-        let (left, right) = (x < RESIZE_MARGIN, x > size.width - RESIZE_MARGIN);
-        let (top, bottom) = (y < RESIZE_MARGIN, y > size.height - RESIZE_MARGIN);
-        let direction = match (left, right, top, bottom) {
-            (true, _, true, _) => ResizeDirection::NorthWest,
-            (_, true, true, _) => ResizeDirection::NorthEast,
-            (true, _, _, true) => ResizeDirection::SouthWest,
-            (_, true, _, true) => ResizeDirection::SouthEast,
-            (true, ..) => ResizeDirection::West,
-            (_, true, ..) => ResizeDirection::East,
-            (_, _, true, _) => ResizeDirection::North,
-            (_, _, _, true) => ResizeDirection::South,
-            _ => return false,
-        };
+        resize_edge(x, y, size.width, size.height)
+    }
+
+    /// A press at the window's edge resizes it. Returns whether it did.
+    pub(super) fn resize_from_edge(&self, x: f64, y: f64) -> bool {
+        let (Some(direction), Some(graphics)) = (self.edge_at(x, y), &self.view.graphics) else { return false };
         graphics.window.drag_resize_window(direction).is_ok()
     }
 

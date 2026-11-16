@@ -29,6 +29,28 @@ const MINIMUM_HEIGHT: f64 = 640.0;
 /// How far in from the window's edge a press resizes it, on platforms
 /// where the browser draws its own frame.
 pub(crate) const RESIZE_MARGIN: f64 = 6.0;
+
+/// The way a press at `x`, `y` resizes a window `width` by `height`, all
+/// in logical pixels: by the edge or the corner within [`RESIZE_MARGIN`]
+/// of the point, a corner where two edges are; none for a point further
+/// in. The pointer takes that edge's shape there, which is all that says
+/// the edge can be dragged, since the browser draws no border of its own.
+pub(crate) fn resize_edge(x: f64, y: f64, width: f64, height: f64) -> Option<winit::window::ResizeDirection> {
+    use winit::window::ResizeDirection;
+    let (left, right) = (x < RESIZE_MARGIN, x > width - RESIZE_MARGIN);
+    let (top, bottom) = (y < RESIZE_MARGIN, y > height - RESIZE_MARGIN);
+    Some(match (left, right, top, bottom) {
+        (true, _, true, _) => ResizeDirection::NorthWest,
+        (_, true, true, _) => ResizeDirection::NorthEast,
+        (true, _, _, true) => ResizeDirection::SouthWest,
+        (_, true, _, true) => ResizeDirection::SouthEast,
+        (true, ..) => ResizeDirection::West,
+        (_, true, ..) => ResizeDirection::East,
+        (_, _, true, _) => ResizeDirection::North,
+        (_, _, _, true) => ResizeDirection::South,
+        _ => return None,
+    })
+}
 /// On macOS the system's window buttons sit in the tab strip
 /// (`tab-strip.md` section 10); they take this much of its left end.
 #[cfg(target_os = "macos")]
