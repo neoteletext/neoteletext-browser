@@ -690,6 +690,42 @@ fn a_pcm16_sound_is_not_decoded_in_a_desktop_build() {
     assert!(!sounds.iter().any(|audio| matches!(audio, Audio::Define { .. } | Audio::Samples { .. } | Audio::Start { .. })), "{sounds:?}");
 }
 
+/// REQ-6415: a SID sound (the engine's codec 3, DEC-6410) is rendered by
+/// the engine's own chip in the decoder process and given to the sound
+/// helper as samples at 48 kHz, as an Opus sound's are.
+#[test]
+fn a_sid_sound_is_rendered_into_samples_for_the_sound_helper() {
+    use neoteletext_audio::encode::{Command, Sound as Writer, packets};
+    /// The chip's writable registers, and the samples of a 20 ms block.
+    const REGISTERS: usize = 25;
+    const BLOCK: usize = 960;
+    // Voice 1 a sawtooth with its gate set and a held envelope, at full
+    // volume: registers 0 and 1 its frequency, 4 its control, 6 its
+    // sustain, 24 the volume.
+    let mut image = [0_u8; REGISTERS];
+    image[0] = 0x45;
+    image[1] = 0x1D;
+    image[4] = 0x21;
+    image[6] = 0xF0;
+    image[24] = 0x0F;
+    let blocks: Vec<u8> = (0..3).flat_map(|_| image).collect();
+    let stored = Writer::instrument(9, 1, neoteletext_audio::Codec::Sid, 25, &blocks).unwrap();
+    let play = Command { channel: 0, sequence: 1, operation: 1, handle: 9, generation: 1, gain: 100, fade_ms: 0, flags: 0, duck: 0, page: None };
+    let mut records = vec![stored.object_record().unwrap()];
+    records.extend(stored.data_records());
+    records.push(play.record());
+    let mut engine = Engine::new();
+    engine.feed(&packets(0, 0, &records).0.iter().flat_map(|packet| packet.bytes).collect::<Vec<u8>>());
+    engine.finish();
+    let sounds = engine.take_sounds();
+    let sound = Sound { handle: 9, generation: 1 };
+    assert_eq!(sounds.first(), Some(&Audio::Define { sound, rate_hz: 48_000, samples: 3 * 960 }), "{sounds:?}");
+    let pcm: Vec<i16> = sounds.iter().flat_map(|audio| if let Audio::Samples { pcm, .. } = audio { pcm.clone() } else { Vec::new() }).collect();
+    assert_eq!(pcm.len(), 3 * BLOCK);
+    assert!(pcm.iter().any(|sample| sample.unsigned_abs() > 500), "the chip sounds");
+    assert!(sounds.iter().any(|audio| matches!(audio, Audio::Start { channel: 0, .. })), "{sounds:?}");
+}
+
 /// Decision 114: an Opus sound (the engine's codec 2, decision E.124) is
 /// decoded in the decoder process and given to the sound helper as samples
 /// at 48 kHz, stored and live alike.
