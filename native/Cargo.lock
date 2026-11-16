@@ -1882,12 +1882,12 @@ dependencies = [
 [[package]]
 name = "naplps"
 version = "0.1.0"
-source = "git+file:///Users/andrewstuart/devel/neoteletext-renderer-naplps?rev=d659de0c198701e1cc43e05023cd06ba1cf4df37#d659de0c198701e1cc43e05023cd06ba1cf4df37"
+source = "git+file:///Users/andrewstuart/devel/neoteletext-renderer-naplps?rev=1b5dcb80fa121c0621f9265e4487ddca5554ff5d#1b5dcb80fa121c0621f9265e4487ddca5554ff5d"
 
 [[package]]
 name = "naplps-fonts"
 version = "0.1.0"
-source = "git+file:///Users/andrewstuart/devel/neoteletext-renderer-naplps?rev=d659de0c198701e1cc43e05023cd06ba1cf4df37#d659de0c198701e1cc43e05023cd06ba1cf4df37"
+source = "git+file:///Users/andrewstuart/devel/neoteletext-renderer-naplps?rev=1b5dcb80fa121c0621f9265e4487ddca5554ff5d#1b5dcb80fa121c0621f9265e4487ddca5554ff5d"
 
 [[package]]
 name = "ndk"
