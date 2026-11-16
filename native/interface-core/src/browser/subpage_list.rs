@@ -945,6 +945,51 @@ mod tests {
         assert_eq!(asked(&mut browser), Some(40), "and on the last");
     }
 
+    /// The trusted core says the channel of the fixture's pages takes input.
+    fn takes_input(browser: &mut crate::browser::Browser) {
+        use crate::browser::typing::TypingView;
+        browser.set_typing(TypingView { channel: 7, page: 0x100, on: true, secure: false, refused: false, cursor: None, round_trip_us: None }, 0);
+    }
+
+    /// REQ-3937 item 1 (DEC-6389): a click on the sub-page list of a page
+    /// whose channel takes input chooses the sub-page and leaves the keys
+    /// with the page shown; no list has them.
+    #[test]
+    fn a_sub_page_row_clicked_leaves_the_keys_with_a_channel_that_takes_them() {
+        let (mut browser, mut canvas) = listed(3);
+        assert_eq!(browser.list_with_keys(), Some(super::ListFocus::SubPages), "no input: the clicked list has the keys");
+        takes_input(&mut browser);
+        let second = browser.regions.subrows[1].0;
+        press_at(&mut browser, &mut canvas, second);
+        assert_eq!(asked(&mut browser), Some(2), "the sub-page clicked is shown");
+        assert_eq!(browser.list_with_keys(), None, "and no list has the keys");
+        assert_eq!(browser.typing_target().map(|key| key.page), Some(0x100), "the page shown has them");
+    }
+
+    /// REQ-6390 item 3: with the browser's own modifier, Right and Left
+    /// show the sub-page after and before in the open page's list, on a
+    /// page whose channel has the plain keys, stopping at the ends.
+    #[test]
+    fn the_browsers_modifier_with_left_and_right_steps_the_sub_pages() {
+        let (mut browser, mut canvas) = listed(3);
+        takes_input(&mut browser);
+        let command = Modifiers { command: true, shift: true, ..Modifiers::default() };
+        chosen(&mut browser, 3, 0);
+        browser.draw(&mut canvas, WIDTH, HEIGHT, 0);
+        browser.take_outputs();
+        assert!(browser.key(Key::Right, command, 0));
+        assert_eq!(asked(&mut browser), Some(2), "the sub-page after");
+        chosen(&mut browser, 3, 1);
+        browser.draw(&mut canvas, WIDTH, HEIGHT, 0);
+        assert!(browser.key(Key::Left, command, 0));
+        assert_eq!(asked(&mut browser), Some(1), "and the one before");
+        chosen(&mut browser, 3, 0);
+        browser.draw(&mut canvas, WIDTH, HEIGHT, 0);
+        browser.key(Key::Left, command, 0);
+        assert_eq!(asked(&mut browser), Some(1), "stopping at the first");
+        assert!(!browser.take_outputs().iter().any(|output| matches!(output, Output::Terminal { .. })), "nothing goes to the channel");
+    }
+
     /// REQ-1758 item 6: the list's own rows decide, not the page's controls,
     /// which may not yet count the sub-pages the list shows.
     #[test]

@@ -357,7 +357,7 @@ mod tests {
         let (mut browser, _) = browser();
         browser.set_strip(StripState { address: "https://news.example/".into(), ..browser.strip.clone() });
         let command = Modifiers { command: true, ..Modifiers::default() };
-        assert!(!browser.key(Key::Left, command, 0), "no field: no key");
+        assert!(!browser.key(Key::Home, command, 0), "no field: no key");
         browser.key(Key::Text("l"), command, 0);
         browser.key(Key::End, Modifiers::default(), 0);
         browser.key(Key::Left, Modifiers { shift: true, ..command }, 0);

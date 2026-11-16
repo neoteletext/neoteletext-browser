@@ -3,7 +3,7 @@ use alloc::vec::Vec;
 
 use neoteletext_input::event::{Action, CONTROL, KeyCode, MouseAction, Point};
 
-use crate::browser::{Browser, Frame, Key, Modifiers, Output};
+use crate::browser::{Browser, Frame, Output};
 use crate::canvas::PageKey;
 use crate::channel::{Channel, PageInfo, Status};
 use crate::geometry::Rect;
@@ -47,30 +47,52 @@ fn pointer_at(browser: &mut Browser, column: f64, row: f64) {
 }
 
 /// REQ-INT-130, REQ-INT-132: intents only while the core says so.
-/// REQ-1758 item 7: a row clicked with the page alone gives the list the
-/// keys even on a page whose channel takes them, and Escape gives them back.
+/// REQ-3937 item 1 (DEC-6389): a row clicked chooses its page and leaves
+/// the keys with a channel that takes them: no list has them, none shows
+/// its ring, and the page needs no click before it is typed into.
 #[test]
-fn a_row_clicked_with_the_page_alone_takes_the_keys_from_the_channel() {
+fn a_row_clicked_leaves_the_keys_with_a_channel_that_takes_them() {
     let mut browser = browser();
     browser.set_typing(typing(None), 0);
     assert_eq!(browser.typing_target(), Some(KEY));
     let row = browser.regions.rows[0].0;
     crate::browser::fixture::press_at(&mut browser, &mut Recorder::new(), row);
-    assert_eq!(browser.typing_target(), None, "the list has the keys");
-    browser.key(Key::Escape, Modifiers::default(), 0);
-    assert_eq!(browser.typing_target(), Some(KEY), "and gives them back");
+    assert_eq!(browser.typing_target(), Some(KEY), "the page shown has the keys");
+    assert_eq!(browser.list_with_keys(), None, "and no list does");
+    assert!(!browser.keys_elsewhere());
+    let list = browser.regions.list;
+    crate::browser::fixture::press_at(&mut browser, &mut Recorder::new(), Rect::new(list.x0, list.y1 - 2.0, list.x1, list.y1));
+    assert_eq!(browser.typing_target(), Some(KEY), "nor after a click on the list's empty part");
 }
 
-/// REQ-1758 item 7 gives a list the keys and nothing else: with a row
-/// clicked the wheel, a move and another button over the page still go to
-/// its channel, or the wheel would turn the page.
+/// REQ-3937 items 2 and 3: on a channel that takes no input a clicked
+/// list has the keys; when the trusted core then says the channel takes
+/// input, the page has them from then, with no click.
 #[test]
-fn a_list_with_the_keys_leaves_the_mouse_with_the_page() {
+fn a_channel_that_starts_taking_input_takes_the_keys_from_a_list() {
+    use crate::browser::list_focus::ListFocus;
+    let mut browser = browser();
+    let row = browser.regions.rows[0].0;
+    crate::browser::fixture::press_at(&mut browser, &mut Recorder::new(), row);
+    assert_eq!(browser.list_with_keys(), Some(ListFocus::Pages), "no input: the list has the keys");
+    assert!(browser.keys_elsewhere());
+    browser.set_typing(TypingView { on: false, ..typing(None) }, 0);
+    assert_eq!(browser.list_with_keys(), Some(ListFocus::Pages), "and keeps them while typing is off");
+    browser.set_typing(typing(None), 0);
+    assert_eq!(browser.list_with_keys(), None);
+    assert_eq!(browser.typing_target(), Some(KEY), "the page has the keys without a click");
+    assert!(!browser.keys_elsewhere());
+}
+
+/// REQ-3937 item 4: a click on a list changes nothing for the mouse: the
+/// wheel, a move and another button over the page still go to its
+/// channel, or the wheel would turn the page.
+#[test]
+fn a_clicked_list_leaves_the_mouse_with_the_page() {
     let mut browser = browser();
     browser.set_typing(typing(None), 0);
     let row = browser.regions.rows[0].0;
     crate::browser::fixture::press_at(&mut browser, &mut Recorder::new(), row);
-    assert_eq!(browser.typing_target(), None, "the list has the keys");
     let (_, page) = browser.wall.open().expect("the page is open");
     browser.draw(&mut Recorder::new(), 1440.0, 900.0, 10_000);
     browser.take_outputs();

@@ -136,17 +136,26 @@ impl Browser {
         self.relight();
     }
 
-    /// The page keys go to now, if any: the page the mouse goes to, unless a
-    /// list at the left has the keys.
+    /// The page keys go to now, if any: the open page, from the moment it
+    /// is shown, while its channel takes input (REQ-3937 item 1). A click
+    /// on a list at the left chooses a page and leaves the keys here.
     #[must_use]
     pub fn typing_target(&self) -> Option<PageKey> {
-        self.mouse_target().filter(|_| self.list_focus.is_none())
+        self.mouse_target()
+    }
+
+    /// Whether the open page's channel takes input, by the trusted core's
+    /// word: the keys are then the page's and never a list's. It goes by
+    /// the channel, not the page, so that no list takes the keys in the
+    /// moment between a page being chosen and the core's word on it.
+    pub(super) fn channel_takes_keys(&self) -> bool {
+        let channel = self.opened().map(|key| key.channel);
+        self.typing.typing.is_some_and(|typing| typing.on && Some(typing.channel) == channel)
     }
 
     /// The page the mouse goes to while the pointer is over it: the open
-    /// page, while the trusted core says its channel takes input. A list
-    /// with the keys has the keys and no more: pointer events go by where
-    /// the pointer is (neoteletext-common's REQ-1554).
+    /// page, while the trusted core says its channel takes input. Pointer
+    /// events go by where the pointer is (neoteletext-common's REQ-1554).
     fn mouse_target(&self) -> Option<PageKey> {
         let typing = self.typing.typing.filter(|typing| typing.on)?;
         let key = PageKey { channel: typing.channel, page: typing.page };
@@ -159,7 +168,7 @@ impl Browser {
     /// does not hold the keyboard focus (neoteletext-common's REQ-1554).
     #[must_use]
     pub fn keys_elsewhere(&self) -> bool {
-        self.editing || self.strip_has_keys() || self.list_focus.is_some()
+        self.editing || self.strip_has_keys() || self.list_with_keys().is_some()
     }
 
     /// Whether a panel, popover or list of the strip is open, which then

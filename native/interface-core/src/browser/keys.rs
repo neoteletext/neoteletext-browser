@@ -163,7 +163,23 @@ impl Browser {
             }
             return true;
         }
-        let Key::Text(text) = key else { return false };
+        // The lists at the left, stepped whoever has the keys (REQ-6390):
+        // the page before or after, the page list by a list-height, and
+        // the sub-page before or after.
+        match key {
+            Key::Up | Key::Down => self.step_page(key == Key::Down, now),
+            Key::PageUp | Key::PageDown => self.page_through_list(key == Key::PageDown),
+            Key::Left | Key::Right => self.step_subpages(key == Key::Right, now),
+            _ => {
+                let Key::Text(text) = key else { return false };
+                return self.shortcut_text(text, modifiers, now);
+            }
+        }
+        true
+    }
+
+    /// A shortcut of the command key and what was typed as `text`.
+    fn shortcut_text(&mut self, text: &str, modifiers: Modifiers, now: u64) -> bool {
         // Command-1 to 8 choose those tabs, Command-9 the last (`tab-strip.md` section 5).
         if let Some(digit) = text.chars().next().and_then(|first| first.to_digit(10)).filter(|digit| (1..=9).contains(digit) && text.len() == 1) {
             let index = if digit == 9 {
@@ -283,5 +299,59 @@ mod tests {
         assert_eq!(browser.take_outputs(), [Output::Window(WindowAction::Close)]);
         browser.key(Key::Text("w"), Modifiers { command: true, ..Modifiers::default() }, 0);
         assert_eq!(browser.take_outputs(), [Output::CloseTab(browser.active)]);
+    }
+
+    /// A browser on the page alone whose channel takes input, as the
+    /// trusted core says.
+    fn typing_browser() -> Browser {
+        use crate::browser::typing::TypingView;
+        let (mut browser, mut canvas) = browser();
+        browser.toggle_wall(0);
+        browser.draw(&mut canvas, crate::browser::fixture::WIDTH, crate::browser::fixture::HEIGHT, 0);
+        let key = browser.opened().expect("a page is open");
+        browser.set_typing(TypingView { channel: key.channel, page: key.page, on: true, secure: false, refused: false, cursor: None, round_trip_us: None }, 0);
+        assert_eq!(browser.typing_target(), Some(key), "keys go to the channel");
+        browser.take_outputs();
+        browser
+    }
+
+    fn sent_to_the_channel(browser: &mut Browser) -> bool {
+        browser.take_outputs().iter().any(|output| matches!(output, Output::Terminal { .. }))
+    }
+
+    /// REQ-6390 item 1: with the browser's own modifier, Up and Down
+    /// choose the page before and after in the page list on a page whose
+    /// channel has the plain keys, and nothing goes to the channel.
+    #[test]
+    fn the_browsers_modifier_with_up_and_down_steps_the_pages() {
+        let mut browser = typing_browser();
+        let command = Modifiers { command: true, shift: true, ..Modifiers::default() };
+        let pages = browser.bank_pages();
+        assert_eq!(browser.selected, Some(pages[0]));
+        assert!(browser.key(Key::Down, command, 0));
+        assert_eq!(browser.selected, Some(pages[1]), "the page after");
+        assert_eq!(browser.opened().map(|key| key.page), crate::channel::page_number(pages[1]), "and it is the open page");
+        assert!(browser.key(Key::Up, command, 0));
+        assert!(browser.key(Key::Up, command, 0));
+        assert_eq!(browser.selected, Some(pages[0]), "the page before, stopping at the first");
+        assert!(!sent_to_the_channel(&mut browser));
+    }
+
+    /// REQ-6390 item 2: with the browser's own modifier, Page Down and
+    /// Page Up move the page list a list-height, as the plain keys do in
+    /// the list.
+    #[test]
+    fn the_browsers_modifier_with_the_page_keys_moves_the_page_list() {
+        let mut browser = typing_browser();
+        let command = Modifiers { command: true, shift: true, ..Modifiers::default() };
+        let pages = browser.bank_pages();
+        let rows = crate::browser::page_list::rows_per_key(browser.regions.list.height());
+        let landed = rows.min(pages.len() - 1);
+        assert!(landed > 1, "the list holds more than a row");
+        assert!(browser.key(Key::PageDown, command, 0));
+        assert_eq!(browser.selected, Some(pages[landed]));
+        assert!(browser.key(Key::PageUp, command, 0));
+        assert_eq!(browser.selected, Some(pages[0]));
+        assert!(!sent_to_the_channel(&mut browser));
     }
 }

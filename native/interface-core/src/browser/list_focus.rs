@@ -1,10 +1,12 @@
 //! The keys of the lists at the left: a click on the page list or the
 //! sub-page list gives that list the keys, and on the wall of pages a click
 //! on the channel's magazines does too. Up and Down then move through it,
-//! and Page Up and Page Down by a list-height at a time, even on a page
-//! whose channel takes the keys, until a click anywhere else or Escape
-//! gives them back (REQ-1758). With the page alone, a magazine clicked opens
-//! a page, which has the keys (decision 126).
+//! and Page Up and Page Down by a list-height at a time,
+//! until a click anywhere else or Escape gives them back (REQ-1758). On a
+//! page whose channel takes the keys the page shown has them at once and
+//! no list does (REQ-3937, DEC-6389); the lists are then stepped with the
+//! browser's own modifier (REQ-6390). With the page alone, a magazine
+//! clicked opens a page, which has the keys (decision 126).
 
 use crate::browser::{Browser, Key};
 use crate::canvas::Canvas;
@@ -31,10 +33,17 @@ pub(super) enum ListFocus {
 }
 
 impl Browser {
+    /// The list that has the keys: the one last clicked, unless the open
+    /// page's channel takes input, when the page shown has them and a
+    /// click on a list only chooses (REQ-3937 items 1 to 3).
+    pub(super) fn list_with_keys(&self) -> Option<ListFocus> {
+        self.list_focus.filter(|_| !self.channel_takes_keys())
+    }
+
     /// A key while a list has the keys: `None` when no list has them, or
     /// the key is not the list's.
     pub(super) fn list_key(&mut self, key: Key<'_>, now: u64) -> Option<bool> {
-        let focus = self.list_focus?;
+        let focus = self.list_with_keys()?;
         match (focus, key) {
             (_, Key::Escape) => self.list_focus = None,
             (ListFocus::Magazines, Key::Up | Key::Down) => {
@@ -62,7 +71,7 @@ impl Browser {
 
     /// A ring round `panel` when `focus` is the list that has the keys.
     pub(super) fn draw_list_focus<C: Canvas + ?Sized>(&self, canvas: &mut C, panel: Rect, focus: ListFocus, surface: Surface) {
-        if self.list_focus == Some(focus) {
+        if self.list_with_keys() == Some(focus) {
             border(canvas, panel, FOCUS_RING, surface.mark(LINK));
         }
     }
