@@ -34,8 +34,7 @@ const MINIMUM_HEIGHT: f64 = 640.0;
 pub(crate) const RESIZE_MARGIN: f64 = 6.0;
 /// How far along each edge from a corner a press in the margin resizes by
 /// the corner: the corner zone of the requirement's reference, 16 pixels
-/// (REQ-6396 item 4; its source is credited in `CREDITS.md`), so that a
-/// corner is as easy to hit as it is there.
+/// (REQ-6396 item 4), so that a corner is as easy to hit as it is there.
 pub(crate) const RESIZE_CORNER: f64 = 16.0;
 
 /// The way a press at `x`, `y` resizes a window `width` by `height`, all
