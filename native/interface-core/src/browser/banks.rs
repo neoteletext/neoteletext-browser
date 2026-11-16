@@ -21,6 +21,12 @@ const SWATCH_INSET: f64 = 8.0;
 pub(super) const BANK_BORDER: f64 = 3.0;
 const BANK_RANGE_RISE: f64 = 2.0;
 
+/// The least height of a magazine's entry: its range over its name, with
+/// the swatch's inset above and below.
+fn entry_content_height<C: Canvas + ?Sized>(canvas: &mut C) -> f64 {
+    canvas.line_height(BANK_RANGE) + canvas.line_height(BANK_NAME) + 2.0 * SWATCH_INSET
+}
+
 impl Browser {
     pub(super) fn draw_banks<C: Canvas + ?Sized>(&mut self, canvas: &mut C, panel: Rect, surface: Surface) {
         canvas.fill(panel, 0.0, surface.back);
@@ -31,8 +37,12 @@ impl Browser {
         // Room is kept under eight entries for the bytes downloaded, so
         // that they show whatever the window's height (REQ-6352).
         let downloaded_room = BANK_GAP + canvas.line_height(BANK_NAME) + canvas.line_height(BANK_RANGE);
+        // An entry is never smaller than what it holds, its range over its
+        // name with the swatch's inset above and below: in a short window
+        // the last entries are left out, and none is drawn squeezed.
+        let content_height = entry_content_height(canvas);
         #[allow(clippy::cast_precision_loss, reason = "eight banks")]
-        let height = ((panel.height() - HEADING_HEIGHT - BANK_GAP - downloaded_room) / BANKS as f64 - BANK_GAP).min(BANK_MAX_HEIGHT);
+        let height = ((panel.height() - HEADING_HEIGHT - BANK_GAP - downloaded_room) / BANKS as f64 - BANK_GAP).min(BANK_MAX_HEIGHT).max(content_height);
         // Only a magazine with pages has an entry, and the entries stand
         // one under another with no gap for the others (REQ-6350).
         let mut top = heading.y1 + BANK_GAP;
@@ -44,6 +54,12 @@ impl Browser {
                 continue;
             }
             let rect = Rect::new(panel.x0 + BANK_GAP, top, panel.x1 - BANK_GAP, top + height);
+            if rect.y1 > panel.y1 - BANK_GAP {
+                // No room for it whole: it has no entry, and is under no
+                // pointer.
+                self.regions.banks.push(Rect::ZERO);
+                continue;
+            }
             let chosen = bank == self.bank;
             let hovered = self.hovered_bank == Some(bank);
             canvas.fill(
@@ -183,6 +199,27 @@ mod tests {
         );
         assert!(said(&canvas, "Sub-page downloaded") && said(&canvas, "890 bytes"), "{:?}", canvas.texts);
         assert!(!said(&canvas, "Page downloaded"), "one figure, the sub-page's");
+    }
+
+    /// The owner, 16 November 2026: "it should not be possible for the box
+    /// to be smaller than its contents". In a window too short for every
+    /// magazine, each entry drawn is still as tall as what it holds, and
+    /// the ones with no room are left out.
+    #[test]
+    fn a_magazines_entry_is_never_smaller_than_what_it_holds() {
+        use crate::geometry::Rect;
+        /// A window too short for eight entries of their content's height.
+        const SHORT: f64 = 420.0;
+        let (mut browser, mut canvas) = browser();
+        let least = super::entry_content_height(&mut canvas);
+        browser.draw(&mut canvas, WIDTH, SHORT, 0);
+        let drawn: alloc::vec::Vec<Rect> = browser.regions.banks.iter().copied().filter(|rect| *rect != Rect::ZERO).collect();
+        assert!(!drawn.is_empty(), "the first magazines still have entries");
+        assert!(drawn.len() < browser.regions.banks.len(), "and the last have none: there is no room for them whole");
+        for rect in &drawn {
+            assert!(rect.height() >= least, "an entry of {} holds content of {least}", rect.height());
+            assert!(rect.y1 <= SHORT, "and lies within the window");
+        }
     }
 
     #[test]
