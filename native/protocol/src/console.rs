@@ -5,7 +5,9 @@
 
 use super::{Fields, ProtocolError, push_count, push_text};
 
-pub use interface_core::console::{ConsoleEntry, ConsoleTab, ConsoleUpdate, KEPT, Level, MAX_ENTRY, MAX_STATS, Stat};
+pub use interface_core::console::{
+    ConsoleEntry, ConsoleTab, ConsoleUpdate, KEPT, Level, MAX_ENTRY, MAX_RECORDING_NAME, MAX_STATS, RecordingRequest, RecordingState, RecordingView, Stat,
+};
 /// The most entries a message carries.
 pub const MAX_ENTRIES: usize = 200;
 
@@ -68,6 +70,31 @@ pub(crate) fn read_update(fields: &mut Fields<'_>) -> Result<ConsoleUpdate, Prot
         None
     };
     Ok(ConsoleUpdate { channel, replace, entries, stats })
+}
+
+/// Writes what a recording is doing (REQ-6406).
+pub(crate) fn push_recording(payload: &mut Vec<u8>, view: &RecordingView) -> Result<(), ProtocolError> {
+    let state = RecordingState::ALL.iter().position(|&state| state == view.state).and_then(|index| u8::try_from(index).ok()).unwrap_or(0);
+    payload.push(state);
+    payload.extend_from_slice(&view.bytes.to_be_bytes());
+    push_text(payload, &view.name, MAX_RECORDING_NAME)
+}
+
+/// Reads what a recording is doing.
+pub(crate) fn read_recording(fields: &mut Fields<'_>) -> Result<RecordingView, ProtocolError> {
+    let state = RecordingState::ALL.get(usize::from(fields.u8()?)).copied().ok_or(ProtocolError::BadValue("recording state"))?;
+    let bytes = u64::from_be_bytes(fields.array()?);
+    Ok(RecordingView { state, bytes, name: fields.text(MAX_RECORDING_NAME)? })
+}
+
+/// A recording request's byte.
+pub(crate) fn request_byte(request: RecordingRequest) -> u8 {
+    RecordingRequest::ALL.iter().position(|&each| each == request).and_then(|index| u8::try_from(index).ok()).unwrap_or(0)
+}
+
+/// Reads a recording request.
+pub(crate) fn read_request(fields: &mut Fields<'_>) -> Result<RecordingRequest, ProtocolError> {
+    RecordingRequest::ALL.get(usize::from(fields.u8()?)).copied().ok_or(ProtocolError::BadValue("recording request"))
 }
 
 #[cfg(test)]

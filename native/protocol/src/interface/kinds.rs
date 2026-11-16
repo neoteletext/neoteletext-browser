@@ -37,6 +37,11 @@ pub(crate) const KIND_REGIS_FRAME: u8 = 154;
 // every pipe.
 pub(crate) const KIND_REGIS_POINTER: u8 = 155;
 pub(crate) const KIND_REGIS_OVER: u8 = 156;
+// Trusted core to interface: what the recording of the open tab's traffic
+// is doing; and interface to trusted core: a request of it (REQ-6406).
+// The next numbers free across every pipe.
+pub(crate) const KIND_RECORDING_VIEW: u8 = 159;
+pub(crate) const KIND_RECORDING: u8 = 160;
 pub(crate) const KIND_CLOSE: u8 = 4;
 pub(crate) const KIND_TABS: u8 = 5;
 pub(crate) const KIND_CHANNEL: u8 = 6;

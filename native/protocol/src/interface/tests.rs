@@ -209,6 +209,11 @@ fn every_message_to_the_interface_round_trips() {
         ToInterface::Bookmarks(library::BookmarksView::default()),
         ToInterface::Star(library::StarView { open: true, ..library::StarView::default() }),
         ToInterface::Bar(library::BarView { shown: true, ..library::BarView::default() }),
+        ToInterface::Recording(console::RecordingView {
+            state: console::RecordingState::Paused,
+            bytes: 70_000_000_000,
+            name: "2026-11-16T02-10-11Z-app.neottx.com.ntrec".into(),
+        }),
         ToInterface::Console(console::ConsoleUpdate {
             stats: None,
             channel: 2,
@@ -265,6 +270,7 @@ fn every_intent_round_trips() {
         ToCore::InstallUpdate,
         ToCore::ChangeSetting(settings::SettingChange::Volume(40)),
         ToCore::Console(true),
+        ToCore::Recording(console::RecordingRequest::Stop),
         ToCore::History(library::HistoryRequest::Clear(library::ClearRange::All)),
         ToCore::Bookmarks(library::BookmarkRequest::Undo),
         ToCore::Star(library::StarRequest::Done),

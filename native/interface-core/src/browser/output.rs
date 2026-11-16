@@ -165,6 +165,8 @@ pub enum Output {
     InstallUpdate,
     /// The developer console opened or closed (requirement 19.8).
     Console(bool),
+    /// A request of the recording of the open tab's traffic (REQ-6406).
+    Recording(crate::console::RecordingRequest),
     /// Mute the tab at this index, or unmute it.
     MuteTab(usize),
     /// Mute every tab, or unmute every tab.

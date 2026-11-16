@@ -29,6 +29,12 @@ impl Core {
             ToCore::ChangeSetting(change) => self.change_setting(change),
             ToCore::Console(open) => {
                 self.console.set_open(open);
+                // The open tab's traffic is recorded while it is open (REQ-6406).
+                self.recording_console(open);
+                self.send_console()
+            }
+            ToCore::Recording(request) => {
+                self.recording_request(request);
                 self.send_console()
             }
             ToCore::Drawn | ToCore::InstallUpdate => self.update_intent(&intent),

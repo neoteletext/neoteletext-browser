@@ -46,6 +46,9 @@ impl Browser {
         let close =
             format!("Close the console; {} opens it again ({})", self.keys_named("the View menu", "the menu"), self.keys_named("Option+Cmd+I", "Ctrl+Shift+I"));
         tips.push((self.console.close, close));
+        if !self.console.minimised() {
+            self.recording_tips(tips);
+        }
         if self.console.tab == Tab::Cookies {
             self.cookies_tips(tips);
         } else if self.console.tab != Tab::Stats {
@@ -69,7 +72,10 @@ impl Browser {
             return;
         }
 
-        let list = Rect::new(area.x0 + PADDING, bar.y1 + GAP, area.x1 - PADDING, area.y1 - GAP);
+        // The recording of the tab's traffic, between the bar and the entries (REQ-6406).
+        let recording = Rect::new(area.x0 + PADDING, bar.y1 + GAP, area.x1 - PADDING, bar.y1 + GAP + super::recording::RECORDING_HEIGHT);
+        self.draw_recording(canvas, recording);
+        let list = Rect::new(area.x0 + PADDING, recording.y1 + GAP, area.x1 - PADDING, area.y1 - GAP);
         self.draw_console_entries(canvas, list);
     }
 

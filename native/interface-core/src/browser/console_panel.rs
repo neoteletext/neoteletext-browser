@@ -22,6 +22,7 @@ use crate::theme::{RED, WHITE, YELLOW};
 
 mod draw;
 mod input;
+mod recording;
 mod resize;
 
 /// The Log tab's level buttons and its search, as a web browser's console
@@ -84,6 +85,11 @@ pub(super) struct ConsoleUi {
     sizing: Sizing,
     /// Where the grabber is held, from the console's top edge, while it is pulled.
     grip: Option<f64>,
+    /// The recording of the open tab's traffic, as the trusted core last
+    /// said (REQ-6406), and its two buttons as last drawn.
+    recording: crate::console::RecordingView,
+    record_toggle: Rect,
+    record_stop: Rect,
 }
 
 impl Default for ConsoleUi {
@@ -112,6 +118,9 @@ impl Default for ConsoleUi {
             height: CONSOLE_HEIGHT,
             sizing: Sizing::Pulled,
             grip: None,
+            recording: crate::console::RecordingView::default(),
+            record_toggle: Rect::ZERO,
+            record_stop: Rect::ZERO,
         }
     }
 }
@@ -210,6 +219,12 @@ impl ConsoleUi {
 }
 
 impl Browser {
+    /// What the recording of the open tab's traffic is doing, as the
+    /// trusted core says (REQ-6406).
+    pub fn set_recording(&mut self, view: crate::console::RecordingView) {
+        self.console.recording = view;
+    }
+
     /// Entries the trusted core sent for the console.
     pub fn console_update(&mut self, update: ConsoleUpdate) {
         let console = &mut self.console;

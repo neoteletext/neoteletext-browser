@@ -25,6 +25,7 @@ mod page_controls;
 mod phone;
 mod picture;
 mod processes;
+mod recording;
 mod redirects;
 mod regis_pointer;
 mod run;
@@ -149,6 +150,10 @@ struct Core {
     /// The settings and where they are kept (requirement 19.1).
     settings: Settings,
     settings_folder: Option<PathBuf>,
+    /// The recording of the open tab's traffic, while the console is open
+    /// (REQ-6406), and what the interface was last told of it.
+    recording: recording::Slot,
+    recording_sent: Option<protocol::console::RecordingView>,
     /// Why the last change the panel asked for was refused.
     refusal: Option<String>,
     /// On Windows, the administrator's command that lets the fetchers
@@ -327,6 +332,8 @@ impl Core {
             allow_local,
             settings,
             settings_folder,
+            recording: recording::Slot::Off,
+            recording_sent: None,
             refusal: None,
             loopback_exemption: loopback::this_computers_exemption(),
             notice: None,

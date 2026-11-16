@@ -1,0 +1,323 @@
+//! The recording of the open tab's traffic (REQ-6406, DEC-6405), kept by
+//! the trusted core while the developer console is open: started and
+//! ended with the console, following the open tab, paused and stopped
+//! from the console's bar.
+
+use neoteletext::recording::{Direction, Payload, Recording};
+use protocol::ToInterface;
+use protocol::console::{Level, RecordingRequest, RecordingState, RecordingView};
+use protocol::fetcher::{FromFetcher, Origin, ToFetcher};
+
+use super::Core;
+
+/// What the trusted core holds of a recording.
+#[derive(Debug, Default)]
+pub(super) enum Slot {
+    /// None: the console is closed, or one could not be started.
+    #[default]
+    Off,
+    /// The open tab is private and is not recorded.
+    Private(u32),
+    /// One is open, of this tab.
+    On(Recording),
+    /// The last one ended: its tab, its file's name and its size.
+    Stopped { channel: u32, name: String, bytes: u64 },
+}
+
+/// The kind an entry of received bytes is written with, by how they came.
+const fn origin_kind(origin: Origin) -> &'static str {
+    match origin {
+        Origin::Fetched => "fetched",
+        Origin::FetchedPage => "fetched-page",
+        Origin::FetchedPackets => "fetched-packets",
+        Origin::PushedPackets => "pushed-packets",
+    }
+}
+
+impl Core {
+    /// The console opened or closed: a recording starts or ends with it.
+    pub(super) fn recording_console(&mut self, open: bool) {
+        if open {
+            self.start_recording();
+        } else {
+            self.end_recording("the console closed");
+            self.recording = Slot::Off;
+        }
+    }
+
+    /// Starts a recording of the open tab, ending any that is open.
+    fn start_recording(&mut self) {
+        self.end_recording("another began");
+        let Some(tab) = self.session.active_tab() else {
+            self.recording = Slot::Off;
+            return;
+        };
+        let channel = tab.channel.id;
+        if tab.private {
+            self.recording = Slot::Private(channel);
+            return;
+        }
+        let (host, address) = tab.address().map(|address| (address.host.clone(), address.text.clone())).unwrap_or_default();
+        let Some(folder) = self.settings_folder.clone() else {
+            self.recording = Slot::Off;
+            self.note(Level::Warning, None, "The tab is not recorded: the browser has no folder to keep recordings in");
+            return;
+        };
+        match Recording::start(&folder, channel, &host, &address, env!("CARGO_PKG_VERSION"), self.now(), neoteletext::calendar::utc_now()) {
+            Ok(recording) => {
+                let path = recording.path().display().to_string();
+                self.recording = Slot::On(recording);
+                self.note(Level::Info, Some(channel), &format!("Recording this tab's traffic to {path}. What is typed into the page is in the file."));
+            }
+            Err(error) => {
+                self.recording = Slot::Off;
+                self.note(Level::Warning, Some(channel), &format!("The tab is not recorded: {error}"));
+            }
+        }
+    }
+
+    /// Ends the open recording, if there is one, saying where it is.
+    fn end_recording(&mut self, why: &str) {
+        let Slot::On(mut recording) = std::mem::take(&mut self.recording) else { return };
+        let _ = recording.mark(self.now(), &format!("stopped: {why}"));
+        let (channel, name, bytes, path) = (recording.channel(), recording.name(), recording.bytes(), recording.path().display().to_string());
+        drop(recording);
+        self.recording = Slot::Stopped { channel, name, bytes };
+        self.note(Level::Info, Some(channel), &format!("The recording ended ({why}): {path}"));
+    }
+
+    /// A request from the console's bar.
+    pub(super) fn recording_request(&mut self, request: RecordingRequest) {
+        if !self.console.is_open() {
+            return;
+        }
+        let now = self.now();
+        match (request, &mut self.recording) {
+            (RecordingRequest::Pause | RecordingRequest::Resume, Slot::On(recording)) => {
+                let wrote = recording.set_paused(request == RecordingRequest::Pause, now).map(|()| true);
+                self.recording_wrote(wrote);
+            }
+            (RecordingRequest::Stop, Slot::On(_)) => self.end_recording("stopped from the console"),
+            (RecordingRequest::Record, Slot::Off | Slot::Stopped { .. }) => self.start_recording(),
+            _ => {}
+        }
+    }
+
+    /// While the console is open the recording is of the open tab: when
+    /// another tab is the open one, it ends and a new one starts.
+    pub(super) fn follow_recording(&mut self) {
+        if !self.console.is_open() {
+            return;
+        }
+        let recorded = match &self.recording {
+            Slot::Off => return,
+            Slot::Private(channel) | Slot::Stopped { channel, .. } => *channel,
+            Slot::On(recording) => recording.channel(),
+        };
+        if self.active_channel().is_some_and(|active| active != recorded) {
+            self.start_recording();
+        }
+    }
+
+    /// What a write to the file came to: an error, or the bound reached,
+    /// ends the recording and says so; the tab is not disturbed.
+    fn recording_wrote(&mut self, wrote: std::io::Result<bool>) {
+        match wrote {
+            Ok(true) => {}
+            Ok(false) => self.end_recording("it reached its largest size"),
+            Err(error) => self.end_recording(&format!("it could not be written: {error}")),
+        }
+    }
+
+    /// The open recording of `channel`, if it is being written.
+    fn recording_of(&mut self, channel: u32) -> Option<&mut Recording> {
+        match &mut self.recording {
+            Slot::On(recording) if recording.channel() == channel && !recording.paused() => Some(recording),
+            _ => None,
+        }
+    }
+
+    /// A message from `channel`'s fetcher: one entry. Bytes are written
+    /// whole; a cookie's question or setting only as its kind; the rest as
+    /// the report's text.
+    pub(super) fn record_received(&mut self, channel: u32, message: &FromFetcher) {
+        let now = self.now();
+        let Some(recording) = self.recording_of(channel) else { return };
+        let wrote = match message {
+            FromFetcher::Page { origin, bytes } => recording.entry(now, Direction::Received, origin_kind(*origin), Payload::Bytes(bytes)),
+            FromFetcher::CookieQuestion { .. } => recording.entry(now, Direction::Received, "cookie", Payload::Text("question")),
+            FromFetcher::ReachedQuestion { .. } => recording.entry(now, Direction::Received, "cookie", Payload::Text("reached question")),
+            FromFetcher::CookieSet { .. } => recording.entry(now, Direction::Received, "cookie", Payload::Text("set")),
+            FromFetcher::ClearSiteData(_) => recording.entry(now, Direction::Received, "cookie", Payload::Text("clear site data")),
+            other => recording.entry(now, Direction::Received, "report", Payload::Text(&format!("{other:?}"))),
+        };
+        self.recording_wrote(wrote);
+    }
+
+    /// A message to `channel`'s fetcher: one entry.
+    pub(super) fn record_sent(&mut self, channel: u32, message: &ToFetcher) {
+        let now = self.now();
+        let Some(recording) = self.recording_of(channel) else { return };
+        let wrote = match message {
+            ToFetcher::Send { bytes, .. } => recording.entry(now, Direction::Sent, "send", Payload::Bytes(bytes)),
+            ToFetcher::CookieAnswer { .. } => recording.entry(now, Direction::Sent, "cookie", Payload::Text("answer")),
+            ToFetcher::ReachedAnswer { .. } => recording.entry(now, Direction::Sent, "cookie", Payload::Text("reached answer")),
+            other => recording.entry(now, Direction::Sent, "request", Payload::Text(&format!("{other:?}"))),
+        };
+        self.recording_wrote(wrote);
+    }
+
+    /// Bytes sent on `channel`'s push connection: one entry.
+    pub(super) fn record_sent_bytes(&mut self, channel: u32, bytes: &[u8]) {
+        let now = self.now();
+        let Some(recording) = self.recording_of(channel) else { return };
+        let wrote = recording.entry(now, Direction::Sent, "send", Payload::Bytes(bytes));
+        self.recording_wrote(wrote);
+    }
+
+    /// The recording as the console's bar shows it.
+    pub(super) fn recording_view(&self) -> RecordingView {
+        match &self.recording {
+            Slot::Off => RecordingView::default(),
+            Slot::Private(_) => RecordingView { state: RecordingState::Private, ..RecordingView::default() },
+            Slot::On(recording) => RecordingView {
+                state: if recording.paused() { RecordingState::Paused } else { RecordingState::Recording },
+                bytes: recording.bytes(),
+                name: recording.name(),
+            },
+            Slot::Stopped { name, bytes, .. } => RecordingView { state: RecordingState::Stopped, bytes: *bytes, name: name.clone() },
+        }
+    }
+
+    /// Tells the interface what the recording is doing, when that changed
+    /// since it was last told and the console is open.
+    pub(super) fn send_recording(&mut self) -> Result<(), String> {
+        if !self.console.is_open() {
+            self.recording_sent = None;
+            return Ok(());
+        }
+        let view = self.recording_view();
+        if self.recording_sent.as_ref() != Some(&view) {
+            self.send(&ToInterface::Recording(view.clone()))?;
+            self.recording_sent = Some(view);
+        }
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used, clippy::indexing_slicing, reason = "a test reports a failure by panicking, and indexes what it made")]
+
+    use neoteletext::recording::{EXTENSION, FOLDER};
+    use protocol::ToCore;
+
+    use super::super::test_support::Test;
+    use super::*;
+
+    /// The recordings in the test's folder, by name, each with its text.
+    fn recordings(test: &Test) -> Vec<(String, String)> {
+        let Ok(entries) = std::fs::read_dir(test.folder.join(FOLDER)) else { return Vec::new() };
+        let mut found: Vec<(String, String)> = entries
+            .map(|entry| entry.unwrap().path())
+            .filter(|path| path.extension().is_some_and(|extension| extension == EXTENSION))
+            .map(|path| (path.file_name().unwrap().to_string_lossy().into_owned(), std::fs::read_to_string(&path).unwrap()))
+            .collect();
+        found.sort();
+        found
+    }
+
+    /// The entries of a recording's text: its lines after the header,
+    /// each without its time, which differs from run to run: an entry's
+    /// first word, and a mark's second.
+    fn entries(text: &str) -> Vec<String> {
+        let timeless = |line: &str| {
+            let mut words: Vec<&str> = line.split(' ').collect();
+            words.remove(usize::from(line.starts_with('#')));
+            words.join(" ")
+        };
+        text.lines().skip(4).map(timeless).collect()
+    }
+
+    /// REQ-6406 items 1 to 3: the console's opening starts a recording of
+    /// the open tab; what the fetcher gives and is given is written, each
+    /// way; pause holds it; the console's closing ends it.
+    #[test]
+    fn the_console_records_the_open_tab_until_it_closes() {
+        let mut test = Test::new("recording-console");
+        let channel = test.tab("https://example.invalid/teletext/", false);
+        test.core.record_sent_bytes(channel, &[9]);
+        assert_eq!(recordings(&test), [], "nothing is recorded with the console closed");
+        test.core.settings_intent(ToCore::Console(true)).unwrap();
+        assert_eq!(test.core.recording_view().state, RecordingState::Recording);
+        test.core.record_sent_bytes(channel, &[0x82, 0x01]);
+        test.core.record_received(channel, &FromFetcher::Page { origin: Origin::PushedPackets, bytes: vec![0xaa, 0xbb] });
+        test.core.record_received(channel, &FromFetcher::Pushing(true));
+        test.core.record_sent(channel, &ToFetcher::FetchPage { page: 0x100 });
+        test.core.record_sent_bytes(channel + 1, &[0x77]);
+        test.core.settings_intent(ToCore::Recording(RecordingRequest::Pause)).unwrap();
+        assert_eq!(test.core.recording_view().state, RecordingState::Paused);
+        test.core.record_sent_bytes(channel, &[0x55]);
+        test.core.settings_intent(ToCore::Recording(RecordingRequest::Resume)).unwrap();
+        test.core.record_sent_bytes(channel, &[0x66]);
+        test.core.settings_intent(ToCore::Console(false)).unwrap();
+        assert_eq!(test.core.recording_view().state, RecordingState::Off);
+        let found = recordings(&test);
+        assert_eq!(found.len(), 1);
+        assert!(found[0].0.ends_with("-example.invalid.ntrec"), "{}", found[0].0);
+        assert!(found[0].1.contains("# address https://example.invalid/teletext/\n"));
+        assert_eq!(
+            entries(&found[0].1),
+            [
+                "> send 8201",
+                "< pushed-packets aabb",
+                "< report Pushing(true)",
+                "> request FetchPage { page: 256 }",
+                "# paused",
+                "# resumed",
+                "> send 66",
+                "# stopped: the console closed"
+            ],
+            "each way in order, nothing of another tab, nothing while paused"
+        );
+    }
+
+    /// REQ-6406 item 3: a cookie's value is never written.
+    #[test]
+    fn a_cookie_is_recorded_only_as_its_kind() {
+        let mut test = Test::new("recording-cookie");
+        let channel = test.tab("https://example.invalid/teletext/", false);
+        test.core.settings_intent(ToCore::Console(true)).unwrap();
+        let cookie = super::super::test_support::read_cookie("session=secret-value; Path=/teletext/; Secure");
+        test.core
+            .record_received(channel, &FromFetcher::CookieSet { host: "example.invalid".into(), path: "/teletext/".into(), scope: None, secure: true, cookie });
+        test.core.record_sent(channel, &ToFetcher::CookieAnswer { id: 1, header: b"session=secret-value".to_vec() });
+        test.core.settings_intent(ToCore::Console(false)).unwrap();
+        let written = &recordings(&test)[0].1;
+        assert!(!written.contains("secret-value"), "{written}");
+        assert_eq!(entries(written)[..2], ["< cookie set", "> cookie answer"]);
+    }
+
+    /// REQ-6406 items 1 and 2: a private tab is not recorded; Stop ends a
+    /// recording and Record starts another; another tab made the open one
+    /// ends the recording and starts its own.
+    #[test]
+    fn a_private_tab_is_not_recorded_and_each_tab_has_its_own_file() {
+        let mut test = Test::new("recording-tabs");
+        test.tab("https://private.invalid/teletext/", true);
+        test.core.settings_intent(ToCore::Console(true)).unwrap();
+        assert_eq!(test.core.recording_view().state, RecordingState::Private);
+        assert_eq!(recordings(&test), []);
+        let first = test.tab("https://first.invalid/teletext/", false);
+        test.core.send_console().unwrap();
+        assert_eq!(test.core.recording_view().state, RecordingState::Recording, "the tab now open is recorded");
+        test.core.record_sent_bytes(first, &[1]);
+        test.core.settings_intent(ToCore::Recording(RecordingRequest::Stop)).unwrap();
+        let stopped = test.core.recording_view();
+        assert_eq!(stopped.state, RecordingState::Stopped);
+        assert!(stopped.name.ends_with("-first.invalid.ntrec") && stopped.bytes > 0);
+        test.core.record_sent_bytes(first, &[2]);
+        assert_eq!(recordings(&test).len(), 1);
+        assert!(recordings(&test)[0].1.ends_with("stopped: stopped from the console\n"), "nothing after it stopped");
+    }
+}

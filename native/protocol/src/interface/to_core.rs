@@ -71,6 +71,7 @@ fn kind_of(message: &ToCore) -> u8 {
         ToCore::InstallUpdate => KIND_INSTALL_UPDATE,
         ToCore::ChangeSetting(_) => KIND_CHANGE_SETTING,
         ToCore::Console(_) => KIND_CONSOLE,
+        ToCore::Recording(_) => super::kinds::KIND_RECORDING,
         #[cfg(feature = "links")]
         ToCore::Point(_) => KIND_POINT,
         #[cfg(feature = "links")]
@@ -146,6 +147,7 @@ fn push_fields(payload: &mut Vec<u8>, message: &ToCore) -> Result<(), ProtocolEr
         ToCore::CloseWindow | ToCore::Drawn | ToCore::InstallUpdate => {}
         ToCore::ChangeSetting(change) => settings::push_change(payload, change)?,
         ToCore::Console(open) => payload.push(u8::from(*open)),
+        ToCore::Recording(request) => payload.push(crate::console::request_byte(*request)),
         #[cfg(feature = "links")]
         ToCore::Point(spot) => crate::links::push_spot(payload, spot.as_ref()),
         #[cfg(feature = "links")]
@@ -350,6 +352,7 @@ pub fn read_from_interface(input: &mut dyn Read) -> Result<Option<ToCore>, Proto
         KIND_DRAWN | KIND_INSTALL_UPDATE => update_intent(kind),
         KIND_CHANGE_SETTING => ToCore::ChangeSetting(settings::read_change(&mut fields)?),
         KIND_CONSOLE => ToCore::Console(fields.flag("flag")?),
+        super::kinds::KIND_RECORDING => ToCore::Recording(crate::console::read_request(&mut fields)?),
         #[cfg(feature = "links")]
         KIND_POINT => ToCore::Point(if payload.is_empty() { None } else { Some(crate::links::read_spot(&mut fields)?) }),
         super::kinds::KIND_REGIS_POINTER => ToCore::RegisPointer(crate::regis::read_pointer(&mut fields)?),

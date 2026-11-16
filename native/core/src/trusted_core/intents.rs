@@ -135,7 +135,9 @@ impl Core {
             ToCore::Reload | ToCore::PageControl(_) => self.page_intent(&intent)?,
             ToCore::SubPageRows { channel, page, range, request } => self.subpage_rows(channel, page, range, request)?,
             ToCore::Bookmark => self.star()?,
-            ToCore::Home | ToCore::ChangeSetting(_) | ToCore::Console(_) | ToCore::Drawn | ToCore::InstallUpdate => self.settings_intent(intent)?,
+            ToCore::Home | ToCore::ChangeSetting(_) | ToCore::Console(_) | ToCore::Recording(_) | ToCore::Drawn | ToCore::InstallUpdate => {
+                self.settings_intent(intent)?;
+            }
             ToCore::History(_)
             | ToCore::Bookmarks(_)
             | ToCore::Star(_)

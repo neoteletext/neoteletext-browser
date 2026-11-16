@@ -99,6 +99,7 @@ impl Core {
                 Send::Fetcher { channel, bytes, move_of, more } => {
                     // The trace reads the message as it goes (`input_trace.rs`).
                     let line = self.input_trace.as_mut().map(|trace| trace.note(&bytes));
+                    self.record_sent_bytes(channel, &bytes);
                     let Some(input) = self.fetchers.get_mut(&channel).and_then(super::processes::Fetcher::input) else { continue };
                     let length = bytes.len();
                     // A fetcher that cannot be written to has stopped; its

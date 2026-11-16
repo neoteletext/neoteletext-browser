@@ -153,6 +153,8 @@ pub enum ToInterface {
     Update(settings::UpdateView),
     /// New entries for the developer console (requirement 19.9).
     Console(console::ConsoleUpdate),
+    /// What the recording of the open tab's traffic is doing (REQ-6406).
+    Recording(console::RecordingView),
     /// The history panel's rows (requirement 20.4).
     History(library::HistoryView),
     /// Suggestions for what is typed in the address field (requirement 20.11).
@@ -330,6 +332,8 @@ pub enum ToCore {
     InstallUpdate,
     /// The developer console opened or closed (requirement 19.8).
     Console(bool),
+    /// A request of the recording of the open tab's traffic (REQ-6406).
+    Recording(console::RecordingRequest),
     /// Strip input: yes to the strip's question of this number.
     #[cfg(feature = "links")]
     Confirm(u32),

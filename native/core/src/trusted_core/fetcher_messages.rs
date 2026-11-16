@@ -32,6 +32,7 @@ impl Core {
     }
 
     pub(super) fn fetched(&mut self, channel: u32, message: FromFetcher) -> Result<(), String> {
+        self.record_received(channel, &message);
         self.console_fetched(channel, &message);
         // The open page's controls say what it has brought (REQ-6352).
         if matches!(message, FromFetcher::Page { .. }) && self.selection_shown(channel).is_some() {

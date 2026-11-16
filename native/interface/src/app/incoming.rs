@@ -41,6 +41,7 @@ impl App {
                 self.view.browser.set_update(view);
             }
             Incoming::Console(update) => self.view.browser.console_update(update),
+            Incoming::Recording(view) => self.view.browser.set_recording(view),
             #[cfg(feature = "interaction")]
             Incoming::InputTrace(line) => self.view.browser.set_input_trace(line),
             Incoming::Library(view) => self.library(view, now),

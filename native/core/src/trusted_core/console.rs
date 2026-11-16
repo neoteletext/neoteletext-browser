@@ -29,9 +29,11 @@ impl Core {
 
     /// Sends the open tab's new console entries, while the console is open.
     pub(super) fn send_console(&mut self) -> Result<(), String> {
+        // The recording is of the open tab, and its bar follows it (REQ-6406).
+        self.follow_recording();
         for update in self.console.updates(self.active_channel()) {
             self.send(&ToInterface::Console(update))?;
         }
-        Ok(())
+        self.send_recording()
     }
 }

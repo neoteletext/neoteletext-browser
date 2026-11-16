@@ -458,6 +458,7 @@ impl Core {
     pub(super) fn tell_fetcher(&mut self, channel: u32, message: &ToFetcher) {
         #[cfg(test)]
         self.controls.told_fetchers.push((channel, message.clone()));
+        self.record_sent(channel, message);
         if let Some(input) = self.fetchers.get_mut(&channel).and_then(super::processes::Fetcher::input) {
             // A fetcher that cannot be written to has stopped; its reader
             // reports that.

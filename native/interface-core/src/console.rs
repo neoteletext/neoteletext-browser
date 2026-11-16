@@ -118,3 +118,56 @@ pub struct ConsoleUpdate {
     /// `None` when they have not changed.
     pub stats: Option<Vec<Stat>>,
 }
+
+/// What a recording of the open tab's traffic is doing (REQ-6406).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum RecordingState {
+    /// None: the console is closed, or one could not be started.
+    #[default]
+    Off,
+    /// Every message is being written.
+    Recording,
+    /// Open, and nothing is written until it is resumed.
+    Paused,
+    /// Ended, its file closed.
+    Stopped,
+    /// The tab is private, and is never recorded.
+    Private,
+}
+
+impl RecordingState {
+    /// Every state, in the order of their bytes between processes.
+    pub const ALL: [Self; 5] = [Self::Off, Self::Recording, Self::Paused, Self::Stopped, Self::Private];
+}
+
+/// The recording, as the console's bar shows it.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct RecordingView {
+    /// What it is doing.
+    pub state: RecordingState,
+    /// The bytes written to its file so far.
+    pub bytes: u64,
+    /// Its file's name, without its folder; empty when there is none.
+    pub name: String,
+}
+
+/// The most bytes of a recording's file name shown.
+pub const MAX_RECORDING_NAME: usize = 160;
+
+/// What a developer asks of the recording from the console's bar.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RecordingRequest {
+    /// Write nothing until resumed.
+    Pause,
+    /// Write again.
+    Resume,
+    /// End it and close its file.
+    Stop,
+    /// Start a new one.
+    Record,
+}
+
+impl RecordingRequest {
+    /// Every request, in the order of their bytes between processes.
+    pub const ALL: [Self; 4] = [Self::Pause, Self::Resume, Self::Stop, Self::Record];
+}

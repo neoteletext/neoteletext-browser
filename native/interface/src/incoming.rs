@@ -134,6 +134,8 @@ pub enum Incoming {
     Update(interface_core::settings::UpdateView),
     /// New entries for the developer console.
     Console(interface_core::console::ConsoleUpdate),
+    /// What the recording of the open tab's traffic is doing (REQ-6406).
+    Recording(interface_core::console::RecordingView),
     /// History, bookmarks and their panels (`history-and-bookmarks.md`).
     Library(Library),
     /// Where the window was when the session was kept.

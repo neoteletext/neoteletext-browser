@@ -148,6 +148,7 @@ impl App {
             }
             Output::InstallUpdate => ToCore::InstallUpdate,
             Output::Console(open) => ToCore::Console(open),
+            Output::Recording(request) => ToCore::Recording(request),
             Output::MuteTab(index) => ToCore::MuteTab(u8::try_from(index).ok()?),
             Output::MuteAll(muted) => ToCore::MuteAll(muted),
             Output::Window(action) => {
