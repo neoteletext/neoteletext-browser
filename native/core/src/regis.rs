@@ -47,12 +47,23 @@ pub struct PickRecords {
 }
 
 impl PickRecords {
-    /// Keeps the pick record of the picture just sent to the interface.
-    pub fn hold(&mut self, key: PageKey, sub: u16, commits: u32, pick: RegisPick) {
-        if !self.pages.contains_key(&key) && self.pages.len() >= MAX_HELD {
-            self.pages.pop_first();
+    /// Keeps the pick record of the picture just sent to the interface;
+    /// with none sent, the one held still stands for the same sub-page
+    /// (REQ-6399 item 4), at the picture's new count of commits.
+    pub fn hold(&mut self, key: PageKey, sub: u16, commits: u32, pick: Option<RegisPick>) {
+        match pick {
+            Some(pick) => {
+                if !self.pages.contains_key(&key) && self.pages.len() >= MAX_HELD {
+                    self.pages.pop_first();
+                }
+                self.pages.insert(key, Held { sub, commits, pick });
+            }
+            None => {
+                if let Some(held) = self.pages.get_mut(&key).filter(|held| held.sub == sub) {
+                    held.commits = commits;
+                }
+            }
         }
-        self.pages.insert(key, Held { sub, commits, pick });
     }
 
     /// Whether a page is drawn in ReGIS.
@@ -112,7 +123,7 @@ mod tests {
         record[240 * REGIS_WIDTH + 400] = 9;
         let mut records = PickRecords::default();
         assert_eq!(records.under(KEY, 0, (400, 240)), None, "not a page drawn in ReGIS");
-        records.hold(KEY, 0, 7, RegisPick::of(&record, [(9, 390, 200)].into_iter()));
+        records.hold(KEY, 0, 7, Some(RegisPick::of(&record, [(9, 390, 200)].into_iter())));
         let under = records.under(KEY, 0, (400, 240)).unwrap();
         assert_eq!((under.drawing, under.x, under.y, under.picture_x, under.picture_y, under.commits), (9, 10, 40, 400, 240, 7));
         assert_eq!(records.under(KEY, 0, (0, 0)).unwrap().drawing, 0);
@@ -133,7 +144,7 @@ mod tests {
             record[row * REGIS_WIDTH + 401] = 5;
         }
         let mut records = PickRecords::default();
-        records.hold(KEY, 0, 1, RegisPick::of(&record, [(5, 401, 100)].into_iter()));
+        records.hold(KEY, 0, 1, Some(RegisPick::of(&record, [(5, 401, 100)].into_iter())));
         let drawing = |column: u16| records.under(KEY, 0, (column, 150)).unwrap().drawing;
         assert_eq!((drawing(400), drawing(401), drawing(402)), (0, 5, 0));
     }

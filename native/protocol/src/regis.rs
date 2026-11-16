@@ -27,9 +27,11 @@ pub const MAX_PICK_ORIGINS: usize = 1024;
 pub const MAX_PICK_RUNS: usize = 12_000;
 /// The longest run of a pick record.
 const MAX_RUN: usize = u16::MAX as usize;
-/// A picture's fields before its pixels: the commit count, the work units
-/// and the sixteen colours.
-const PICTURE_FIXED: usize = 4 + 8 + REGIS_COLOURS * 3;
+/// A picture's fields before its pixels: the commit count, the work units,
+/// the sixteen colours, its number and its base's, and its area.
+const PICTURE_FIXED: usize = 4 + 8 + REGIS_COLOURS * 3 + 4 + 4 + AREA_BYTES;
+/// An area's bytes: its corner and its size.
+const AREA_BYTES: usize = 2 + 2 + 2 + 2;
 /// An origin's bytes: the drawing and its two coordinates.
 const ORIGIN_BYTES: usize = 2 + 4 + 4;
 /// A run's bytes: the drawing and its length.
@@ -37,7 +39,47 @@ const RUN_BYTES: usize = 2 + 2;
 // A picture, the largest pick record and the page it is of fit one message.
 const _: () = assert!(16 + PICTURE_FIXED + REGIS_PACKED + 2 + MAX_PICK_ORIGINS * ORIGIN_BYTES + 2 + MAX_PICK_RUNS * RUN_BYTES <= MAX_PAYLOAD);
 
-/// The picture itself.
+/// A rectangle of a picture, in the picture's own pixels. Pixels travel
+/// two to a byte, so its left edge and its width are even.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct RegisArea {
+    /// The left column.
+    pub x: u16,
+    /// The top row.
+    pub y: u16,
+    /// Columns.
+    pub width: u16,
+    /// Rows.
+    pub height: u16,
+}
+
+impl RegisArea {
+    /// The whole picture.
+    #[allow(clippy::cast_possible_truncation, reason = "800 and 480, checked below to fit")]
+    pub const WHOLE: Self = Self { x: 0, y: 0, width: REGIS_WIDTH as u16, height: REGIS_HEIGHT as u16 };
+
+    /// Its pixels.
+    #[must_use]
+    pub fn pixels(self) -> usize {
+        usize::from(self.width).saturating_mul(usize::from(self.height))
+    }
+
+    /// Whether it lies in the picture with an even left edge and width.
+    #[must_use]
+    pub fn fits(self) -> bool {
+        self.x.is_multiple_of(2)
+            && self.width.is_multiple_of(2)
+            && usize::from(self.x).saturating_add(usize::from(self.width)) <= REGIS_WIDTH
+            && usize::from(self.y).saturating_add(usize::from(self.height)) <= REGIS_HEIGHT
+    }
+}
+
+// The picture's sides fit an area's fields, and a row is whole bytes.
+const _: () = assert!(REGIS_WIDTH <= u16::MAX as usize);
+const _: () = assert!(REGIS_HEIGHT <= u16::MAX as usize);
+const _: () = assert!(REGIS_WIDTH.is_multiple_of(2));
+
+/// A picture, or the part of one that changed (REQ-6399).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RegisPicture {
     /// The count of ReGIS v2 commits applied when it was painted.
@@ -47,9 +89,38 @@ pub struct RegisPicture {
     pub work: u64,
     /// Red, green and blue of each of the sixteen colours.
     pub palette: [[u8; 3]; REGIS_COLOURS],
-    /// The pixels, [`REGIS_PACKED`] bytes: row by row from the top left,
-    /// two to a byte, the left one in the high half.
+    /// Which picture of its page this is: each one sent takes the next
+    /// number, never 0.
+    pub number: u32,
+    /// The number of the picture this is a part of, to be laid over it;
+    /// 0 for a whole picture, which needs none before it.
+    pub base: u32,
+    /// The rectangle of the picture the pixels are of: [`RegisArea::WHOLE`]
+    /// for a whole picture; for a part, where it changed, which may be
+    /// nowhere.
+    pub area: RegisArea,
+    /// The area's pixels: row by row from its top left, two to a byte, the
+    /// left one in the high half.
     pub packed: Vec<u8>,
+}
+
+impl RegisPicture {
+    /// Whether it is a whole picture, not a part of one.
+    #[must_use]
+    pub const fn whole(&self) -> bool {
+        self.base == 0
+    }
+
+    /// What both ends hold a picture to.
+    fn check(&self) -> Result<(), ProtocolError> {
+        if !self.area.fits() || self.packed.len() != self.area.pixels() / 2 {
+            return Err(ProtocolError::BadValue("regis picture size"));
+        }
+        if self.number == 0 || (self.whole() && self.area != RegisArea::WHOLE) {
+            return Err(ProtocolError::BadValue("regis picture number"));
+        }
+        Ok(())
+    }
 }
 
 /// Where a detectable drawing's origin lies in the picture.
@@ -89,10 +160,27 @@ pub struct Picked {
 /// is a whole picture of colours below sixteen.
 #[must_use]
 pub fn pack(pixels: &[u8]) -> Option<Vec<u8>> {
-    if pixels.len() != REGIS_PIXELS || pixels.iter().any(|pixel| usize::from(*pixel) >= REGIS_COLOURS) {
+    pack_area(pixels, RegisArea::WHOLE)
+}
+
+/// Packs the pixels of `area` of a whole picture, one byte a pixel, into
+/// two pixels a byte. `None` unless `pixels` is a whole picture, the area
+/// fits, and its colours are below sixteen.
+#[must_use]
+pub fn pack_area(pixels: &[u8], area: RegisArea) -> Option<Vec<u8>> {
+    if pixels.len() != REGIS_PIXELS || !area.fits() {
         return None;
     }
-    Some(pixels.as_chunks::<2>().0.iter().map(|[left, right]| (left << 4) | right).collect())
+    let mut packed = Vec::with_capacity(area.pixels() / 2);
+    for row in usize::from(area.y)..usize::from(area.y).saturating_add(usize::from(area.height)) {
+        let start = row.checked_mul(REGIS_WIDTH)?.checked_add(usize::from(area.x))?;
+        let line = pixels.get(start..start.checked_add(usize::from(area.width))?)?;
+        if line.iter().any(|pixel| usize::from(*pixel) >= REGIS_COLOURS) {
+            return None;
+        }
+        packed.extend(line.as_chunks::<2>().0.iter().map(|[left, right]| (left << 4) | right));
+    }
+    Some(packed)
 }
 
 /// Unpacks two pixels a byte into one byte a pixel, each below sixteen.
@@ -152,26 +240,30 @@ impl RegisPick {
     }
 }
 
-/// Writes a picture.
+/// Writes a picture or a part of one.
 ///
 /// # Errors
-/// When its pixels are not a whole picture.
+/// When its area does not fit the picture, its pixels are not its area's,
+/// or its numbers are not a whole picture's or a part's.
 pub(crate) fn push_picture(payload: &mut Vec<u8>, picture: &RegisPicture) -> Result<(), ProtocolError> {
-    if picture.packed.len() != REGIS_PACKED {
-        return Err(ProtocolError::BadValue("regis picture size"));
-    }
-    payload.reserve_exact(PICTURE_FIXED.saturating_add(REGIS_PACKED));
+    picture.check()?;
+    payload.reserve_exact(PICTURE_FIXED.saturating_add(picture.packed.len()));
     payload.extend_from_slice(&picture.commits.to_be_bytes());
     payload.extend_from_slice(&picture.work.to_be_bytes());
     for colour in &picture.palette {
         payload.extend_from_slice(colour);
     }
+    payload.extend_from_slice(&picture.number.to_be_bytes());
+    payload.extend_from_slice(&picture.base.to_be_bytes());
+    for field in [picture.area.x, picture.area.y, picture.area.width, picture.area.height] {
+        payload.extend_from_slice(&field.to_be_bytes());
+    }
     payload.extend_from_slice(&picture.packed);
     Ok(())
 }
 
-/// Reads a picture. Any byte is two pixels below sixteen, so the pixels
-/// need no check beyond their count.
+/// Reads a picture or a part of one. Any byte is two pixels below
+/// sixteen, so the pixels need no check beyond their count.
 pub(crate) fn read_picture(fields: &mut Fields<'_>) -> Result<RegisPicture, ProtocolError> {
     let commits = fields.u32()?;
     let work = u64::from_be_bytes(fields.array()?);
@@ -179,8 +271,15 @@ pub(crate) fn read_picture(fields: &mut Fields<'_>) -> Result<RegisPicture, Prot
     for colour in &mut palette {
         *colour = fields.array()?;
     }
-    let packed = fields.take(REGIS_PACKED)?.to_vec();
-    Ok(RegisPicture { commits, work, palette, packed })
+    let (number, base) = (fields.u32()?, fields.u32()?);
+    let area = RegisArea { x: fields.u16()?, y: fields.u16()?, width: fields.u16()?, height: fields.u16()? };
+    if !area.fits() {
+        return Err(ProtocolError::BadValue("regis picture size"));
+    }
+    let packed = fields.take(area.pixels() / 2)?.to_vec();
+    let picture = RegisPicture { commits, work, palette, number, base, area, packed };
+    picture.check()?;
+    Ok(picture)
 }
 
 /// Writes a pick record.

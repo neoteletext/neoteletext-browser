@@ -55,8 +55,8 @@ pub(super) fn read_frame(fields: &mut Fields<'_>) -> Result<(u16, Vec<[u8; 3]>, 
 }
 
 /// Writes the picture of a sub-page drawn in ReGIS and its pick record,
-/// [`FromDecoder::Regis`]: the page and sub-code, the pick record, then
-/// the picture.
+/// [`FromDecoder::Regis`]: the page and sub-code, the pick record when it
+/// is sent, then the picture or the part of it.
 ///
 /// # Errors
 /// When writing fails, the page is not a channel's, or the picture or its
@@ -66,13 +66,16 @@ pub(super) fn write_regis_to_core(
     page: u16,
     sub: u16,
     picture: &crate::regis::RegisPicture,
-    pick: &crate::regis::RegisPick,
+    pick: Option<&crate::regis::RegisPick>,
 ) -> Result<(), ProtocolError> {
     crate::fields::check_page(page)?;
     let mut payload = Vec::new();
     payload.extend_from_slice(&page.to_be_bytes());
     payload.extend_from_slice(&sub.to_be_bytes());
-    crate::regis::push_pick(&mut payload, pick)?;
+    payload.push(u8::from(pick.is_some()));
+    if let Some(pick) = pick {
+        crate::regis::push_pick(&mut payload, pick)?;
+    }
     crate::regis::push_picture(&mut payload, picture)?;
     write_frame(out, KIND_REGIS, &payload)
 }

@@ -158,7 +158,9 @@ impl App {
         if self.trace_frames {
             eprintln!("neoteletext-interface: at {now} ms: picture {} of page {:03X} of channel {}", picture.commits, key.page, key.channel);
         }
-        if let Err(error) = self.view.painter.set_regis(key, &picture.palette, &picture.packed) {
+        let area = picture.area;
+        let part = draw_vello::RegisPart { number: picture.number, base: picture.base, x: area.x, y: area.y, width: area.width, height: area.height };
+        if let Err(error) = self.view.painter.set_regis(key, &picture.palette, part, &picture.packed) {
             self.exit = Some(format!("bad ReGIS picture from the trusted core: {error:?}"));
             event_loop.exit();
             return false;

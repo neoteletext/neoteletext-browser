@@ -41,6 +41,35 @@ pub(crate) struct RegisImage {
     /// Colour 0 of its sixteen: what is drawn above and below it.
     background: Colour,
     number: u64,
+    /// Which picture of its page the decoder sent it as: a part is laid
+    /// over the picture it names as its base and no other.
+    sequence: u32,
+}
+
+/// Which pixels of a ReGIS picture a message carries (REQ-6399): a whole
+/// picture, or the part of one that changed.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct RegisPart {
+    /// The picture's number among those sent for its page.
+    pub number: u32,
+    /// The number of the picture this is a part of; 0 for a whole picture.
+    pub base: u32,
+    /// The left column and top row of the pixels, in the picture.
+    pub x: u16,
+    /// The top row.
+    pub y: u16,
+    /// Columns: even, as pixels are packed two to a byte.
+    pub width: u16,
+    /// Rows.
+    pub height: u16,
+}
+
+impl RegisPart {
+    /// A whole picture, numbered `number`.
+    #[must_use]
+    pub const fn whole(number: u32) -> Self {
+        Self { number, base: 0, x: 0, y: 0, width: REGIS_SIZE.0, height: REGIS_SIZE.1 }
+    }
 }
 
 impl RegisImage {
@@ -113,32 +142,65 @@ impl Painter {
         Ok(())
     }
 
-    /// Replaces the picture of a page drawn in ReGIS (DEC-6335), which is
-    /// drawn in the page's place: sixteen colours, and 800 by 480 pixels
-    /// packed two to a byte.
+    /// Takes the picture of a page drawn in ReGIS (DEC-6335), which is
+    /// drawn in the page's place, or the part of it that changed
+    /// (REQ-6399): sixteen colours, the pixels of `part` packed two to a
+    /// byte. A part is laid over the picture it names as its base; one
+    /// that names another picture than the one held is dropped, as a
+    /// page's changes are when its image is no longer held.
     ///
     /// # Errors
-    /// When the pixels are not a whole picture.
-    pub fn set_regis(&mut self, key: PageKey, palette: &[[u8; 3]; REGIS_COLOURS], packed: &[u8]) -> Result<(), PageError> {
-        if packed.len() != REGIS_PIXELS / 2 {
+    /// When the pixels are not the part's, or the part does not lie in
+    /// the picture.
+    pub fn set_regis(&mut self, key: PageKey, palette: &[[u8; 3]; REGIS_COLOURS], part: RegisPart, packed: &[u8]) -> Result<(), PageError> {
+        let (left, top, across, down) = (usize::from(part.x), usize::from(part.y), usize::from(part.width), usize::from(part.height));
+        let fits = left.saturating_add(across) <= usize::from(REGIS_SIZE.0) && top.saturating_add(down) <= usize::from(REGIS_SIZE.1);
+        let whole = part.base == 0;
+        if !fits || across % 2 != 0 || packed.len() != across.saturating_mul(down) / 2 || (whole && part != RegisPart::whole(part.number)) {
             return Err(PageError::RegisSize);
+        }
+        let colour = |index: u8| palette.get(usize::from(index)).copied().unwrap_or_default();
+        let [[red, green, blue], ..] = *palette;
+        let background = Colour { red, green, blue };
+        if !whole {
+            let Some(held) = self.regis.get_mut(&key).filter(|held| held.sequence == part.base && held.background == background) else { return Ok(()) };
+            held.sequence = part.number;
+            if packed.is_empty() {
+                return Ok(());
+            }
+            let data = Arc::make_mut(&mut held.pixmap).data_as_u8_slice_mut();
+            let row_bytes = across.saturating_mul(RGBA_BYTES);
+            for (row, line) in packed.chunks_exact(across / 2).enumerate() {
+                let start = top.saturating_add(row).saturating_mul(usize::from(REGIS_SIZE.0)).saturating_add(left).saturating_mul(RGBA_BYTES);
+                let Some(place) = data.get_mut(start..start.saturating_add(row_bytes)) else { return Err(PageError::RegisSize) };
+                for (pixel, index) in place.as_chunks_mut::<RGBA_BYTES>().0.iter_mut().zip(line.iter().flat_map(|byte| [byte >> 4, byte & 0x0F])) {
+                    let [red, green, blue] = colour(index);
+                    *pixel = [red, green, blue, OPAQUE];
+                }
+            }
+            held.number = self.next_image;
+            self.next_image = self.next_image.wrapping_add(1);
+            let pixels = DeviceBox { x0: part.x, y0: part.y, x1: part.x.saturating_add(part.width), y1: part.y.saturating_add(part.height) };
+            let since = self.regis_changed.get(&key).copied().unwrap_or_default();
+            self.regis_changed.insert(key, since.union(pixels));
+            return Ok(());
         }
         let mut rgba = Vec::with_capacity(REGIS_PIXELS * RGBA_BYTES);
         for byte in packed {
             for index in [byte >> 4, byte & 0x0F] {
-                let [red, green, blue] = palette.get(usize::from(index)).copied().unwrap_or_default();
+                let [red, green, blue] = colour(index);
                 rgba.extend_from_slice(&[red, green, blue, OPAQUE]);
             }
         }
-        let [[red, green, blue], ..] = *palette;
-        let background = Colour { red, green, blue };
-        // Only where the new picture differs from the one held is drawn
-        // again (REQ-6399 item 3); a picture on another background, or the
-        // first, is drawn whole, with what lies around it.
-        match self.regis.get(&key).filter(|held| held.background == background) {
+        // Only where a whole picture differs from the one held is drawn
+        // again; a picture on another background, or the first, is drawn
+        // whole, with what lies around it.
+        match self.regis.get_mut(&key).filter(|held| held.background == background) {
             Some(held) => {
                 let pixels = crate::damage::changed_pixels(&held.pixmap, &rgba, REGIS_SIZE.0);
                 if pixels.is_empty() {
+                    // The same picture again: only its number is new.
+                    held.sequence = part.number;
                     return Ok(());
                 }
                 let since = self.regis_changed.get(&key).copied().unwrap_or_default();
@@ -152,7 +214,7 @@ impl Painter {
         let pixmap = Arc::new(Pixmap::from_parts(rgba, REGIS_SIZE.0, REGIS_SIZE.1, metadata));
         let number = self.next_image;
         self.next_image = number.wrapping_add(1);
-        self.regis.insert(key, RegisImage { pixmap, background, number });
+        self.regis.insert(key, RegisImage { pixmap, background, number, sequence: part.number });
         Ok(())
     }
 

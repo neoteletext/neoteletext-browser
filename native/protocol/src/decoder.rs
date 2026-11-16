@@ -187,8 +187,9 @@ pub enum FromDecoder {
         sub: u16,
         /// The picture.
         picture: crate::regis::RegisPicture,
-        /// Its pick record.
-        pick: crate::regis::RegisPick,
+        /// Its pick record, when it differs from the last one sent for
+        /// the sub-page (REQ-6399 item 4); `None` when that one still holds.
+        pick: Option<crate::regis::RegisPick>,
     },
     /// The numbered drawings of a sub-page's ReGIS picture that are links,
     /// and the target each leads to (the engine's REQ-6370): every one the
@@ -509,7 +510,7 @@ pub fn write_to_core(out: &mut dyn Write, message: &FromDecoder) -> Result<(), P
         }
         FromDecoder::Frame { page, palette, screen, indices } => return write_frame_to_core(out, *page, palette, *screen, indices),
         FromDecoder::Updated { page } => page_alone(&mut payload, *page, KIND_UPDATED),
-        FromDecoder::Regis { page, sub, picture, pick } => return frame::write_regis_to_core(out, *page, *sub, picture, pick),
+        FromDecoder::Regis { page, sub, picture, pick } => return frame::write_regis_to_core(out, *page, *sub, picture, pick.as_ref()),
         #[cfg(feature = "links")]
         FromDecoder::RegisLinks { page, sub, links } => return write_regis_links(out, *page, *sub, links),
         FromDecoder::Audio(audio) => {
@@ -629,7 +630,7 @@ pub fn read_from_decoder(input: &mut dyn Read) -> Result<Option<FromDecoder>, Pr
             if sub > neoteletext_core::limits::LAST_SUBPAGE_CODE || sub & !neoteletext_core::limits::SUBCODE_MASK != 0 {
                 return Err(ProtocolError::BadValue("regis sub-code"));
             }
-            let pick = crate::regis::read_pick(&mut fields)?;
+            let pick = if fields.flag("a ReGIS pick record")? { Some(crate::regis::read_pick(&mut fields)?) } else { None };
             FromDecoder::Regis { page, sub, picture: crate::regis::read_picture(&mut fields)?, pick }
         }
         #[cfg(feature = "links")]

@@ -285,6 +285,10 @@ fn draw_regis(engine: &mut Engine, showing: &[u16], sent: &BTreeMap<u16, Rendere
     for &page in showing {
         if let Some(drawn) = engine.regis().take(page, shown_subpage(sent, page), now_us) {
             write_to_core(output, &FromDecoder::Regis { page: drawn.page, sub: drawn.sub, picture: drawn.picture, pick: drawn.pick })?;
+            // The other areas of the same repaint, each a part of the one before (REQ-6399).
+            for picture in drawn.more {
+                write_to_core(output, &FromDecoder::Regis { page: drawn.page, sub: drawn.sub, picture, pick: None })?;
+            }
         }
     }
     Ok(())

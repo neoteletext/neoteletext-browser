@@ -223,7 +223,7 @@ mod tests {
             row[300..400].fill(13);
         }
         let mut records = PickRecords::default();
-        records.hold(KEY, 0, commits, RegisPick::of(&record, [(12, 100, 100), (13, 300, 100)].into_iter()));
+        records.hold(KEY, 0, commits, Some(RegisPick::of(&record, [(12, 100, 100), (13, 300, 100)].into_iter())));
         records
     }
 
@@ -297,7 +297,7 @@ mod tests {
         let _ = moved(&mut pointing, &records(1), mouse(Some((150, 150)), false));
         // The next picture has nothing at the pointer's place.
         let mut emptied = PickRecords::default();
-        emptied.hold(KEY, 0, 2, RegisPick::default());
+        emptied.hold(KEY, 0, 2, Some(RegisPick::default()));
         let said = pointing.decide(&emptied, Some((KEY, Some(ON))), false);
         assert_eq!(said, [Say::Over { key: KEY, over: false }, viewer(0, 0), hover(true, 12, 2)]);
     }

@@ -34,6 +34,7 @@ mod tests;
 mod text;
 
 pub use damage::{Damage, DeviceBox, MAX_BOXES};
+pub use pages::RegisPart;
 
 use std::collections::HashMap;
 use std::sync::Arc;

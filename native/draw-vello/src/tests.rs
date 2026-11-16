@@ -439,12 +439,13 @@ fn a_regis_picture_whose_pixels_changed_redraws_only_them_and_matches_a_whole_fr
     let pages = pages();
     let mut painter = Painter::new(Family::Roboto);
     let mut browser = browser(&mut painter, &pages);
-    painter.set_regis(FRONT, &regis_palette(), &regis_packed(None)).unwrap();
+    painter.set_regis(FRONT, &regis_palette(), RegisPart::whole(1), &regis_packed(None)).unwrap();
     frame(&mut painter, &mut browser, SETTLED);
     frame(&mut painter, &mut browser, SETTLED);
     let whole = covered(&[DeviceBox::whole(WIDTH, HEIGHT)]);
     // A few pixels near the picture's top, which this small window shows.
-    let change = |painter: &mut Painter, _: &mut Browser| painter.set_regis(FRONT, &regis_palette(), &regis_packed(Some((300, 5, 12)))).unwrap();
+    let change =
+        |painter: &mut Painter, _: &mut Browser| painter.set_regis(FRONT, &regis_palette(), RegisPart::whole(2), &regis_packed(Some((300, 5, 12)))).unwrap();
     change(&mut painter, &mut browser);
     let (damage, words) = frame(&mut painter, &mut browser, SETTLED);
     assert!(!damage.is_empty() && covered(&damage) < whole / 100, "only the pixels that changed: {damage:?}");
@@ -460,7 +461,7 @@ fn regis_alone(size: (u16, u16), area: Rect, lit: (usize, usize, usize)) -> Vec<
     // A picture is drawn in the place of its page, which is held too.
     let pages = pages();
     painter.set_page(FRONT, &pages[0].palette, pages[0].screen, &pages[0].indices).unwrap();
-    painter.set_regis(FRONT, &regis_palette(), &regis_packed(Some(lit))).unwrap();
+    painter.set_regis(FRONT, &regis_palette(), RegisPart::whole(1), &regis_packed(Some(lit))).unwrap();
     painter.begin(size.0, size.1, 1.0);
     painter.page(FRONT, area);
     let damage = painter.render();
@@ -522,4 +523,37 @@ fn a_teletext_page_at_twice_its_size_is_whole_blocks() {
             }
         }
     }
+}
+
+/// REQ-6399 item 3: a part of a ReGIS picture is laid over the picture it
+/// names and drawn only where it lies, and the window is what a whole
+/// frame of the new picture gives; a part of another picture than the one
+/// held is dropped.
+#[test]
+#[allow(clippy::arithmetic_side_effects, reason = "a test's own sizes and places, far inside usize")]
+fn a_part_of_a_regis_picture_is_laid_over_it_and_drawn_only_there() {
+    let pages = pages();
+    let mut painter = Painter::new(Family::Roboto);
+    let mut browser = browser(&mut painter, &pages);
+    painter.set_regis(FRONT, &regis_palette(), RegisPart::whole(1), &regis_packed(None)).unwrap();
+    frame(&mut painter, &mut browser, SETTLED);
+    frame(&mut painter, &mut browser, SETTLED);
+    let whole = covered(&[DeviceBox::whole(WIDTH, HEIGHT)]);
+    // Twelve pixels of colour 7 on row 5, six bytes, as a part of picture 1.
+    let part = RegisPart { number: 2, base: 1, x: 300, y: 5, width: 12, height: 1 };
+    painter.set_regis(FRONT, &regis_palette(), part, &[0x77; 6]).unwrap();
+    let (damage, words) = frame(&mut painter, &mut browser, SETTLED);
+    assert!(!damage.is_empty() && covered(&damage) < whole / 100, "only the part: {damage:?}");
+    let lit =
+        |painter: &mut Painter, _: &mut Browser| painter.set_regis(FRONT, &regis_palette(), RegisPart::whole(1), &regis_packed(Some((300, 5, 12)))).unwrap();
+    assert_eq!(differing(&words, &fresh(&pages, SETTLED, lit)), 0, "as the whole picture would be drawn");
+    // A part of picture 7, which is not the one held, changes nothing.
+    painter.set_regis(FRONT, &regis_palette(), RegisPart { number: 9, base: 7, x: 0, y: 0, width: 12, height: 1 }, &[0x77; 6]).unwrap();
+    assert_eq!(frame(&mut painter, &mut browser, SETTLED).0, [], "dropped");
+    // The next part of the picture held is still taken.
+    painter.set_regis(FRONT, &regis_palette(), RegisPart { number: 3, base: 2, x: 300, y: 5, width: 12, height: 1 }, &[0x00; 6]).unwrap();
+    assert_ne!(frame(&mut painter, &mut browser, SETTLED).0, [], "taken");
+    // A part that does not fit, or is not its pixels, is refused.
+    assert!(painter.set_regis(FRONT, &regis_palette(), RegisPart { number: 4, base: 3, x: 796, y: 0, width: 12, height: 1 }, &[0; 6]).is_err());
+    assert!(painter.set_regis(FRONT, &regis_palette(), RegisPart { number: 4, base: 3, x: 0, y: 0, width: 12, height: 1 }, &[0; 5]).is_err());
 }

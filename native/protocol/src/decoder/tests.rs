@@ -26,7 +26,31 @@ fn regis_picture() -> crate::regis::RegisPicture {
     packed[9] = 0x3A;
     let mut palette = [[0; 3]; crate::regis::REGIS_COLOURS];
     palette[3] = [51, 204, 51];
-    crate::regis::RegisPicture { commits: 7, work: 709_728, palette, packed }
+    crate::regis::RegisPicture { commits: 7, work: 709_728, palette, number: 1, base: 0, area: crate::regis::RegisArea::WHOLE, packed }
+}
+
+/// A part of a picture: `area` of it, laid over picture 1.
+fn regis_part(area: crate::regis::RegisArea) -> crate::regis::RegisPicture {
+    crate::regis::RegisPicture { number: 2, base: 1, area, packed: vec![0x3A; area.pixels() / 2], ..regis_picture() }
+}
+
+/// REQ-6399 item 2: a part outside the picture, on an odd column, of the
+/// wrong length, or a whole picture that is not the whole area, is refused.
+#[test]
+fn a_regis_part_that_does_not_fit_is_refused() {
+    use crate::regis::RegisArea;
+    let refused =
+        |picture: crate::regis::RegisPicture| write_to_core(&mut Vec::new(), &FromDecoder::Regis { page: 0x123, sub: 0, picture, pick: None }).is_err();
+    assert!(!refused(regis_part(RegisArea { x: 798, y: 479, width: 2, height: 1 })), "the last two pixels");
+    assert!(refused(regis_part(RegisArea { x: 798, y: 479, width: 4, height: 1 })), "past the right edge");
+    assert!(refused(regis_part(RegisArea { x: 0, y: 479, width: 2, height: 2 })), "past the bottom");
+    assert!(refused(regis_part(RegisArea { x: 1, y: 0, width: 2, height: 1 })), "an odd column");
+    assert!(refused(regis_part(RegisArea { x: 0, y: 0, width: 3, height: 1 })), "an odd width");
+    let mut short = regis_part(RegisArea { x: 0, y: 0, width: 4, height: 2 });
+    short.packed.pop();
+    assert!(refused(short), "not its area's pixels");
+    assert!(refused(crate::regis::RegisPicture { base: 0, ..regis_part(RegisArea { x: 0, y: 0, width: 4, height: 2 }) }), "a whole picture of a part's area");
+    assert!(refused(crate::regis::RegisPicture { number: 0, ..regis_picture() }), "no number");
 }
 
 /// A pick record of one drawing under the picture's first twenty pixels.
@@ -41,7 +65,7 @@ fn regis_pick() -> crate::regis::RegisPick {
 /// the picture; each is refused whole.
 #[test]
 fn a_regis_picture_out_of_bounds_is_refused() {
-    let good = FromDecoder::Regis { page: 0x123, sub: 0, picture: regis_picture(), pick: regis_pick() };
+    let good = FromDecoder::Regis { page: 0x123, sub: 0, picture: regis_picture(), pick: Some(regis_pick()) };
     let mut bytes = Vec::new();
     write_to_core(&mut bytes, &good).unwrap();
     assert_eq!(read_from_decoder(&mut bytes.as_slice()).unwrap().unwrap(), good);
@@ -59,10 +83,10 @@ fn a_regis_picture_out_of_bounds_is_refused() {
     any[7..9].copy_from_slice(&0x3F7F_u16.to_be_bytes());
     assert!(read_from_decoder(&mut any.as_slice()).is_err());
     let short = crate::regis::RegisPick { origins: Vec::new(), runs: vec![(1, 10)] };
-    assert!(write_to_core(&mut Vec::new(), &FromDecoder::Regis { page: 0x123, sub: 0, picture: regis_picture(), pick: short }).is_err());
+    assert!(write_to_core(&mut Vec::new(), &FromDecoder::Regis { page: 0x123, sub: 0, picture: regis_picture(), pick: Some(short) }).is_err());
     let mut small = regis_picture();
     small.packed.pop();
-    assert!(write_to_core(&mut Vec::new(), &FromDecoder::Regis { page: 0x123, sub: 0, picture: small, pick: regis_pick() }).is_err());
+    assert!(write_to_core(&mut Vec::new(), &FromDecoder::Regis { page: 0x123, sub: 0, picture: small, pick: Some(regis_pick()) }).is_err());
 }
 
 #[test]
@@ -98,8 +122,11 @@ fn every_kind_round_trips() {
         FromDecoder::StoreFull,
         FromDecoder::Missing(vec![0x100, 0x899]),
         FromDecoder::Frame { page: 0x123, palette: vec![[0, 0, 0], [255, 255, 255]], screen: 1, indices },
-        FromDecoder::Regis { page: 0x123, sub: 2, picture: regis_picture(), pick: regis_pick() },
-        FromDecoder::Regis { page: 0x123, sub: 0, picture: regis_picture(), pick: crate::regis::RegisPick::default() },
+        FromDecoder::Regis { page: 0x123, sub: 2, picture: regis_picture(), pick: Some(regis_pick()) },
+        // REQ-6399: a part of a picture, with no pick record; and a part that changed nowhere.
+        FromDecoder::Regis { page: 0x123, sub: 2, picture: regis_part(crate::regis::RegisArea { x: 10, y: 20, width: 6, height: 2 }), pick: None },
+        FromDecoder::Regis { page: 0x123, sub: 2, picture: regis_part(crate::regis::RegisArea::default()), pick: None },
+        FromDecoder::Regis { page: 0x123, sub: 0, picture: regis_picture(), pick: Some(crate::regis::RegisPick::default()) },
         // REQ-6376: a sub-page's drawing links, some and none.
         #[cfg(feature = "links")]
         FromDecoder::RegisLinks { page: 0x105, sub: 0, links: vec![(11, "100".into()), (65_535, "web:https://example.invalid/a".into())] },
