@@ -22,6 +22,9 @@ use crate::private_file::{make_folder, private_options};
 pub const MAX_RECORDING_BYTES: u64 = 64 * 1024 * 1024;
 /// The recordings kept: when one starts, the oldest beyond these go.
 pub const KEPT_RECORDINGS: usize = 20;
+/// The most recordings begun within one second that are given a name: far
+/// more than a person can start, and a bound on the names tried.
+const SAME_SECOND_RECORDINGS: u32 = 100;
 /// The folder of recordings, in the browser's data folder.
 pub const FOLDER: &str = "recordings";
 /// A recording's file name ends in a dot and this.
@@ -118,8 +121,24 @@ impl Recording {
         make_folder(&folder)?;
         prune(&folder, KEPT_RECORDINGS.saturating_sub(1));
         let began = stamp(utc);
-        let path = folder.join(format!("{began}-{}.{EXTENSION}", file_host(host)));
-        let file = private_options().create_new(true).open(&path)?;
+        // A second recording begun within the second has the first one's
+        // stamp, so it takes the next number after it: the user may stop one
+        // and start another at once.
+        let host = file_host(host);
+        let mut made = None;
+        for copy in 1..=SAME_SECOND_RECORDINGS {
+            let name = if copy == 1 { format!("{began}-{host}.{EXTENSION}") } else { format!("{began}-{copy}-{host}.{EXTENSION}") };
+            let path = folder.join(name);
+            match private_options().create_new(true).open(&path) {
+                Ok(file) => {
+                    made = Some((file, path));
+                    break;
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
+                Err(error) => return Err(error),
+            }
+        }
+        let (file, path) = made.ok_or_else(|| std::io::Error::from(std::io::ErrorKind::AlreadyExists))?;
         let mut recording = Self { file, path, channel, began_ms: now_ms, bytes: 0, paused: false };
         recording.write(&format!("{FORMAT_LINE}\n# browser {}\n# address {}\n# started {began}\n", one_line(version), one_line(address)))?;
         Ok(recording)

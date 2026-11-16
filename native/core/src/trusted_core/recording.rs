@@ -1,7 +1,9 @@
 //! The recording of the open tab's traffic (REQ-6406, DEC-6405), kept by
-//! the trusted core while the developer console is open: started and
-//! ended with the console, following the open tab, paused and stopped
-//! from the console's bar.
+//! the trusted core while the developer console is open. Nothing is
+//! recorded until the user asks for it with the console's Record button:
+//! opening the console records nothing. A recording is of one tab; it is
+//! paused and stopped from the console's bar, and ends when the console
+//! closes or another tab is opened.
 
 use neoteletext::recording::{Direction, Payload, Recording};
 use protocol::ToInterface;
@@ -13,7 +15,8 @@ use super::Core;
 /// What the trusted core holds of a recording.
 #[derive(Debug, Default)]
 pub(super) enum Slot {
-    /// None: the console is closed, or one could not be started.
+    /// None: the console is closed, or the user has not asked for one, or
+    /// one could not be started.
     #[default]
     Off,
     /// The open tab is private and is not recorded.
@@ -35,13 +38,25 @@ const fn origin_kind(origin: Origin) -> &'static str {
 }
 
 impl Core {
-    /// The console opened or closed: a recording starts or ends with it.
+    /// The console opened or closed. Opening it records nothing: a
+    /// recording is the user's to start (the owner, 16 November 2026:
+    /// "recording must only happen when specific switched on"). Closing
+    /// it ends one.
     pub(super) fn recording_console(&mut self, open: bool) {
         if open {
-            self.start_recording();
+            self.recording = self.idle();
         } else {
             self.end_recording("the console closed");
             self.recording = Slot::Off;
+        }
+    }
+
+    /// What is held while nothing is recorded: that the open tab is
+    /// private, so the bar can say it is never recorded, or nothing.
+    fn idle(&self) -> Slot {
+        match self.session.active_tab() {
+            Some(tab) if tab.private => Slot::Private(tab.channel.id),
+            _ => Slot::Off,
         }
     }
 
@@ -103,19 +118,21 @@ impl Core {
         }
     }
 
-    /// While the console is open the recording is of the open tab: when
-    /// another tab is the open one, it ends and a new one starts.
+    /// A recording is of the tab it was started on: when another tab is
+    /// the open one, it ends, and the new tab is not recorded until the
+    /// user asks.
     pub(super) fn follow_recording(&mut self) {
         if !self.console.is_open() {
             return;
         }
         let recorded = match &self.recording {
-            Slot::Off => return,
-            Slot::Private(channel) | Slot::Stopped { channel, .. } => *channel,
-            Slot::On(recording) => recording.channel(),
+            Slot::Off => None,
+            Slot::Private(channel) | Slot::Stopped { channel, .. } => Some(*channel),
+            Slot::On(recording) => Some(recording.channel()),
         };
-        if self.active_channel().is_some_and(|active| active != recorded) {
-            self.start_recording();
+        if recorded.is_none() || recorded != self.active_channel() {
+            self.end_recording("another tab was opened");
+            self.recording = self.idle();
         }
     }
 
@@ -239,9 +256,10 @@ mod tests {
         text.lines().skip(4).map(timeless).collect()
     }
 
-    /// REQ-6406 items 1 to 3: the console's opening starts a recording of
-    /// the open tab; what the fetcher gives and is given is written, each
-    /// way; pause holds it; the console's closing ends it.
+    /// REQ-6406 items 1 to 3: opening the console records nothing; Record
+    /// starts a recording of the open tab; what the fetcher gives and is
+    /// given is written, each way; pause holds it; the console's closing
+    /// ends it.
     #[test]
     fn the_console_records_the_open_tab_until_it_closes() {
         let mut test = Test::new("recording-console");
@@ -249,6 +267,10 @@ mod tests {
         test.core.record_sent_bytes(channel, &[9]);
         assert_eq!(recordings(&test), [], "nothing is recorded with the console closed");
         test.core.settings_intent(ToCore::Console(true)).unwrap();
+        assert_eq!(test.core.recording_view().state, RecordingState::Off, "the console alone records nothing");
+        test.core.record_sent_bytes(channel, &[0x44]);
+        assert_eq!(recordings(&test), [], "nothing is recorded until the user asks");
+        test.core.settings_intent(ToCore::Recording(RecordingRequest::Record)).unwrap();
         assert_eq!(test.core.recording_view().state, RecordingState::Recording);
         test.core.record_sent_bytes(channel, &[0x82, 0x01]);
         test.core.record_received(channel, &FromFetcher::Page { origin: Origin::PushedPackets, bytes: vec![0xaa, 0xbb] });
@@ -288,6 +310,7 @@ mod tests {
         let mut test = Test::new("recording-cookie");
         let channel = test.tab("https://example.invalid/teletext/", false);
         test.core.settings_intent(ToCore::Console(true)).unwrap();
+        test.core.settings_intent(ToCore::Recording(RecordingRequest::Record)).unwrap();
         let cookie = super::super::test_support::read_cookie("session=secret-value; Path=/teletext/; Secure");
         test.core
             .record_received(channel, &FromFetcher::CookieSet { host: "example.invalid".into(), path: "/teletext/".into(), scope: None, secure: true, cookie });
@@ -298,19 +321,23 @@ mod tests {
         assert_eq!(entries(written)[..2], ["< cookie set", "> cookie answer"]);
     }
 
-    /// REQ-6406 items 1 and 2: a private tab is not recorded; Stop ends a
-    /// recording and Record starts another; another tab made the open one
-    /// ends the recording and starts its own.
+    /// REQ-6406 items 1 and 2: a private tab is never recorded, even when
+    /// asked; Stop ends a recording; and another tab made the open one ends
+    /// the recording, the new tab not being recorded until the user asks.
     #[test]
     fn a_private_tab_is_not_recorded_and_each_tab_has_its_own_file() {
         let mut test = Test::new("recording-tabs");
         test.tab("https://private.invalid/teletext/", true);
         test.core.settings_intent(ToCore::Console(true)).unwrap();
         assert_eq!(test.core.recording_view().state, RecordingState::Private);
+        test.core.settings_intent(ToCore::Recording(RecordingRequest::Record)).unwrap();
+        assert_eq!(test.core.recording_view().state, RecordingState::Private, "asking changes nothing");
         assert_eq!(recordings(&test), []);
         let first = test.tab("https://first.invalid/teletext/", false);
         test.core.send_console().unwrap();
-        assert_eq!(test.core.recording_view().state, RecordingState::Recording, "the tab now open is recorded");
+        assert_eq!(test.core.recording_view().state, RecordingState::Off, "the tab now open is not recorded unasked");
+        test.core.settings_intent(ToCore::Recording(RecordingRequest::Record)).unwrap();
+        assert_eq!(test.core.recording_view().state, RecordingState::Recording);
         test.core.record_sent_bytes(first, &[1]);
         test.core.settings_intent(ToCore::Recording(RecordingRequest::Stop)).unwrap();
         let stopped = test.core.recording_view();
@@ -319,5 +346,19 @@ mod tests {
         test.core.record_sent_bytes(first, &[2]);
         assert_eq!(recordings(&test).len(), 1);
         assert!(recordings(&test)[0].1.ends_with("stopped: stopped from the console\n"), "nothing after it stopped");
+        // A recording does not follow the user to another tab.
+        // A recording begun within the second of the last has a name of its own.
+        test.core.settings_intent(ToCore::Recording(RecordingRequest::Record)).unwrap();
+        assert_eq!(test.core.recording_view().state, RecordingState::Recording);
+        assert_eq!(recordings(&test).len(), 2);
+        let second = test.tab("https://second.invalid/teletext/", false);
+        test.core.send_console().unwrap();
+        assert_eq!(test.core.recording_view().state, RecordingState::Off, "the new tab is not recorded");
+        test.core.record_sent_bytes(second, &[3]);
+        test.core.record_sent_bytes(first, &[4]);
+        let found = recordings(&test);
+        assert!(found.iter().all(|(name, _)| name.ends_with("-first.invalid.ntrec")), "no recording was started for the new tab");
+        let second_recording = &found.iter().find(|(name, _)| name.contains("-2-first.invalid")).unwrap().1;
+        assert!(second_recording.ends_with("stopped: another tab was opened\n"), "{second_recording}");
     }
 }
