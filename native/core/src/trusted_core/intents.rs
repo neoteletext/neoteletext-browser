@@ -300,8 +300,15 @@ impl Core {
             // A look on a page no longer open is put out.
             self.light(None);
         }
-        let sends = self.hearing.open(self.active_channel(), key);
-        self.deliver(sends);
+        // Just after a tab is chosen, the interface says no page is open until
+        // the tab's own page is drawn, while the page open is still the last
+        // tab's. That is not the viewer leaving the page: told it, the tab's
+        // page sounds stopped and started again from the beginning.
+        let switching = key.is_none() && self.page_open().is_none_or(|open| Some(open.channel) != active);
+        if !switching {
+            let sends = self.hearing.open(active, key);
+            self.deliver(sends);
+        }
         self.page_opened(key)
     }
 
