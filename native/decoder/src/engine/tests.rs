@@ -690,11 +690,11 @@ fn a_pcm16_sound_is_not_decoded_in_a_desktop_build() {
     assert!(!sounds.iter().any(|audio| matches!(audio, Audio::Define { .. } | Audio::Samples { .. } | Audio::Start { .. })), "{sounds:?}");
 }
 
-/// REQ-6415: a SID sound (the engine's codec 3, DEC-6410) is rendered by
+/// REQ-6415: a synth6581 sound (the engine's codec 3, DEC-6410) is rendered by
 /// the engine's own chip in the decoder process and given to the sound
 /// helper as samples at 48 kHz, as an Opus sound's are.
 #[test]
-fn a_sid_sound_is_rendered_into_samples_for_the_sound_helper() {
+fn a_synth6581_sound_is_rendered_into_samples_for_the_sound_helper() {
     use neoteletext_audio::encode::{Command, Sound as Writer, packets};
     /// The chip's writable registers, and the samples of a 20 ms block.
     const REGISTERS: usize = 25;
@@ -709,7 +709,7 @@ fn a_sid_sound_is_rendered_into_samples_for_the_sound_helper() {
     image[6] = 0xF0;
     image[24] = 0x0F;
     let blocks: Vec<u8> = (0..3).flat_map(|_| image).collect();
-    let stored = Writer::instrument(9, 1, neoteletext_audio::Codec::Sid, 25, &blocks).unwrap();
+    let stored = Writer::instrument(9, 1, neoteletext_audio::Codec::Synth6581, 25, &blocks).unwrap();
     let play = Command { channel: 0, sequence: 1, operation: 1, handle: 9, generation: 1, gain: 100, fade_ms: 0, flags: 0, duck: 0, page: None };
     let mut records = vec![stored.object_record().unwrap()];
     records.extend(stored.data_records());
