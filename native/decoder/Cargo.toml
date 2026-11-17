@@ -31,8 +31,9 @@ page-cache = []
 confine.workspace = true
 neoteletext-input = { workspace = true, optional = true }
 # The audio profile's receiver (the engine's area AUD).
-# With the profile's instruments, which only this process renders (REQ-6415).
-neoteletext-audio = { workspace = true, features = ["sid", "dx7"] }
+# With the profile's instruments, which only this process renders (REQ-6415):
+# the SID and the DX7, and the five analogue synthesizers (DEC-6429).
+neoteletext-audio = { workspace = true, features = ["sid", "dx7", "juno", "minimoog", "prophet5", "jupiter8", "cs80"] }
 # The engine's "modern-classic" profile (its decision E.71) with the Colour
 # Map of Levels 2.5 and 3.5, which that profile leaves out: decision 6 is
 # 32 colours, and decision 60 restores them. And `extended-sets`, so that a

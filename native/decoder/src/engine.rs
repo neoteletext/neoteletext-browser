@@ -170,7 +170,11 @@ pub struct Engine {
     #[cfg(test)]
     digests: usize,
     /// The channel's sounds: the audio packets go here, not to the decoder.
-    audio: Receiver<'static, AUDIO_OBJECTS, AUDIO_RECORDS>,
+    /// On the heap: with the profile's seven instruments, four of each in
+    /// its lanes, the receiver is about 270 KB, and an engine moved by
+    /// value in an unoptimised build overflowed a test thread's 2 MB
+    /// stack.
+    audio: Box<Receiver<'static, AUDIO_OBJECTS, AUDIO_RECORDS>>,
     /// Voice operations waiting to be sent.
     sounds: Vec<Audio>,
     /// The `LT` and `LK` lines of every page file read.
@@ -256,7 +260,7 @@ impl Engine {
             logs: Vec::new(),
             #[cfg(test)]
             digests: 0,
-            audio: Receiver::new(arena),
+            audio: Box::new(Receiver::new(arena)),
             sounds: Vec::new(),
             #[cfg(feature = "links")]
             lines: links::Lines::default(),
