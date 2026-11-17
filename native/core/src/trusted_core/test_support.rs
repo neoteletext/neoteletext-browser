@@ -263,7 +263,7 @@ pub(super) fn wire(core: &mut Core, channel: u32) -> mpsc::Receiver<Vec<u8>> {
     let (child, _output) = sleeping_helper(confine::Role::Network);
     core.fetchers.insert(channel, super::processes::Fetcher::new(child, 1, Some(Outbox::new(Sink(sender)))));
     // What the session's start says is the test's to know, not to read.
-    let _ = core.typing.input(channel, true, false, 0);
+    let _ = core.typing.input(channel, true, false, false, 0);
     let mut body = [0; MAX_BODY];
     let welcome = Control::Welcome { version: neoteletext_input::VERSION, caps: neoteletext_input::caps::SELECT_CAP, resume: None };
     let length = write_body(&welcome, &mut body).unwrap();

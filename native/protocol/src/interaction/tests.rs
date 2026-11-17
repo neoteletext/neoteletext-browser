@@ -116,6 +116,7 @@ fn typing_round_trips_and_a_bad_cursor_is_refused() {
         refused: false,
         cursor: Some(CursorState { row: 5, column: 6, flags: cursor::BLOCK }),
         round_trip_us: Some(12_345),
+        wheel: true,
     };
     let mut payload = Vec::new();
     push_typing(&mut payload, &typing).unwrap();

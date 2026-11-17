@@ -87,9 +87,13 @@ pub enum Send {
 
 /// One channel's input connection.
 #[derive(Debug)]
+#[allow(clippy::struct_excessive_bools, reason = "open, secure, wheel and started are independent facts about one connection, not states of one thing")]
 struct Channel {
     open: bool,
     secure: bool,
+    /// The channel uses the mouse wheel over its pages (`push.wheel`,
+    /// DEC-6447).
+    wheel: bool,
     /// The session, kept across a lost connection when the channel set
     /// RESUME (DOC-1923).
     session: ResumableSession,
@@ -147,6 +151,7 @@ impl Channel {
         Self {
             open: false,
             secure: false,
+            wheel: false,
             session: ResumableSession::new(OFFERED),
             started: false,
             cursor: None,
@@ -309,6 +314,7 @@ impl Typing {
             refused: state.is_some_and(|state| state.open && state.session.state() == State::Refused),
             cursor: cursor.filter(|_| on),
             round_trip_us: state.and_then(|state| state.round_trip_us).filter(|_| on),
+            wheel: state.is_some_and(|state| state.wheel),
         })
     }
 
@@ -538,6 +544,7 @@ impl Typing {
                 refused: false,
                 cursor: None,
                 round_trip_us: None,
+                wheel: false,
             }));
         }
         self.tell_interface(&mut sends);
@@ -548,12 +555,13 @@ impl Typing {
     /// HELLO, and RESUME after it when the channel set RESUME and the
     /// session may be resumed (DOC-1923, REQ-RCH-013); a lost
     /// connection keeps what a resumption needs (`close`).
-    pub fn input(&mut self, channel: u32, open: bool, secure: bool, now_us: u64) -> Vec<Send> {
+    pub fn input(&mut self, channel: u32, open: bool, secure: bool, wheel: bool, now_us: u64) -> Vec<Send> {
         let mut sends = Vec::new();
         let state = self.channels.entry(channel).or_insert_with(Channel::new);
         let was_open = state.open;
         state.open = open;
         state.secure = open && secure;
+        state.wheel = open && wheel;
         // The channel takes everything held as released when the connection
         // goes (DOC-1923), resumed or not.
         state.pointer_forgotten();

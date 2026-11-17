@@ -125,6 +125,10 @@ pub struct CursorState {
 
 /// Whether keys go to a channel, and its cursor (REQ-INT-131).
 #[derive(Clone, Debug, PartialEq, Eq)]
+#[allow(
+    clippy::struct_excessive_bools,
+    reason = "on, secure, refused and wheel are independent facts about the channel's input, each its own flag on the wire, not states of one thing"
+)]
 pub struct Typing {
     /// The channel whose page is open.
     pub channel: u32,
@@ -142,6 +146,10 @@ pub struct Typing {
     /// The push connection's last round trip, WebSocket ping to pong, in
     /// microseconds (REQ-RCH-016), while keys go to the channel.
     pub round_trip_us: Option<u32>,
+    /// The channel uses the mouse wheel over its pages (`push.wheel`,
+    /// DEC-6447); otherwise, over a page with sub-pages, the wheel steps
+    /// them.
+    pub wheel: bool,
 }
 
 /// An input message for the fetcher to write: whole items of the engine's

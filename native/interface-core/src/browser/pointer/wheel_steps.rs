@@ -84,7 +84,7 @@ impl Browser {
     /// Whether the wheel steps through the open page's sub-pages: it has
     /// them, so one of them is what is shown, whichever list was last
     /// clicked. A page without sub-pages leaves the wheel to the pages.
-    fn wheel_is_subpages(&self) -> bool {
+    pub(in crate::browser) fn wheel_is_subpages(&self) -> bool {
         self.selected.is_some_and(|index| self.subpage_count(index).is_some())
     }
 

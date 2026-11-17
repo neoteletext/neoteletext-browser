@@ -57,6 +57,10 @@ pub struct CursorView {
 
 /// Whether keys go to the open page's channel, as the trusted core said.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[allow(
+    clippy::struct_excessive_bools,
+    reason = "on, secure, refused and wheel are independent facts the trusted core reports (protocol::interaction::Typing), not states of one thing"
+)]
 pub struct TypingView {
     /// The channel.
     pub channel: u32,
@@ -73,6 +77,10 @@ pub struct TypingView {
     /// The push connection's last round trip, in microseconds
     /// (REQ-RCH-016).
     pub round_trip_us: Option<u32>,
+    /// The channel uses the mouse wheel over its pages (`push.wheel`,
+    /// DEC-6447); otherwise, over a page with sub-pages, the wheel steps
+    /// them.
+    pub wheel: bool,
 }
 
 /// The browser's typing state.
@@ -458,9 +466,13 @@ impl Browser {
     /// The wheel, in lines, over the open page: the channel's while keys go
     /// to it (DOC-1938 and `interaction.md` section 7.3, decision 107);
     /// `None` when it is the browser's, to scroll: beside the page, or with
-    /// the browser's modifier held.
+    /// the browser's modifier held. On a page with sub-pages it steps them,
+    /// unless the channel says it uses the wheel (DEC-6447).
     pub fn terminal_wheel(&mut self, across: f64, down: f64) -> Option<bool> {
         if self.typing.browser_modifier {
+            return None;
+        }
+        if self.wheel_is_subpages() && !self.typing.typing.is_some_and(|typing| typing.wheel) {
             return None;
         }
         let target = self.mouse_target()?;

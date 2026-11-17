@@ -45,7 +45,7 @@ fn welcome_with(caps: u32, resume: Option<neoteletext_input::control::Resumption
 
 fn ready(caps: u32) -> Typing {
     let mut typing = Typing::default();
-    typing.input(PAGE.channel, true, false, 0);
+    typing.input(PAGE.channel, true, false, false, 0);
     typing.opened(Some(PAGE.channel), Some(PAGE), 0);
     typing.control(PAGE.channel, &welcome(caps), 0);
     typing.drawn(PAGE, 0);
@@ -57,7 +57,7 @@ fn ready(caps: u32) -> Typing {
 #[test]
 fn a_session_starts_with_hello_and_waits_for_welcome() {
     let mut typing = Typing::default();
-    let opened = typing.input(PAGE.channel, true, true, 0);
+    let opened = typing.input(PAGE.channel, true, true, false, 0);
     let offered = OFFERED | RESUME_CAP;
     assert_eq!(items(&opened), [format!("Event(Hello {{ version: {VERSION}, caps: {offered}, agent: None }})")]);
     typing.opened(Some(PAGE.channel), Some(PAGE), 0);
@@ -73,7 +73,7 @@ fn a_session_starts_with_hello_and_waits_for_welcome() {
 #[test]
 fn a_channel_that_does_not_answer_is_refused_and_the_strip_says_so() {
     let mut typing = Typing::default();
-    typing.input(PAGE.channel, true, false, 0);
+    typing.input(PAGE.channel, true, false, false, 0);
     typing.opened(Some(PAGE.channel), Some(PAGE), 0);
     assert_eq!(typing.tick(u64::from(WELCOME_TIMEOUT_MS) * MS - 1), []);
     let sends = typing.tick(u64::from(WELCOME_TIMEOUT_MS) * MS);
@@ -87,7 +87,7 @@ fn a_channel_that_does_not_answer_is_refused_and_the_strip_says_so() {
 fn a_page_takes_keys_only_while_open_for_typing() {
     let mut typing = Typing::default();
     assert!(!typing.page_takes_keys(), "nothing open");
-    typing.input(PAGE.channel, true, false, 0);
+    typing.input(PAGE.channel, true, false, false, 0);
     typing.opened(Some(PAGE.channel), Some(PAGE), 0);
     assert!(!typing.page_takes_keys(), "not yet welcomed");
     assert!(ready(SELECT_CAP).page_takes_keys());
@@ -101,7 +101,7 @@ fn a_page_takes_keys_only_while_open_for_typing() {
 fn input_goes_only_under_every_condition() {
     let mut typing = Typing::default();
     assert_eq!(items(&typing.input_intent(&key('a'), 0)), [] as [String; 0], "no socket, no page");
-    typing.input(PAGE.channel, true, false, 0);
+    typing.input(PAGE.channel, true, false, false, 0);
     typing.control(PAGE.channel, &welcome(SELECT_CAP), 0);
     assert_eq!(items(&typing.input_intent(&key('a'), 0)), [] as [String; 0], "no page open");
     typing.opened(Some(PAGE.channel), Some(PageKey { page: 0x201, ..PAGE }), 0);
@@ -117,7 +117,7 @@ fn input_goes_only_under_every_condition() {
     assert_eq!(items(&away), [release, "Event(FocusOut)".to_owned()], "the key held goes up, lost");
     assert_eq!(items(&typing.input_intent(&key('b'), 0)), [] as [String; 0], "the window has no focus");
     assert_eq!(items(&typing.focused(true, 0)), ["Event(FocusIn)"]);
-    typing.input(PAGE.channel, false, false, 0);
+    typing.input(PAGE.channel, false, false, false, 0);
     assert_eq!(items(&typing.input_intent(&key('c'), 0)), [] as [String; 0], "the socket closed");
 }
 
@@ -217,8 +217,8 @@ fn editing_the_address_takes_the_keys_from_the_page_and_says_so() {
 #[test]
 fn a_new_connection_is_a_new_session() {
     let mut typing = ready(SELECT_CAP);
-    typing.input(PAGE.channel, false, false, 1);
-    let again = typing.input(PAGE.channel, true, true, 2);
+    typing.input(PAGE.channel, false, false, false, 1);
+    let again = typing.input(PAGE.channel, true, true, false, 2);
     assert_eq!(items(&again).len(), 1);
     assert!(items(&again)[0].starts_with("Event(Hello"));
     assert_eq!(items(&typing.input_intent(&key('a'), 3)), [] as [String; 0], "waiting for WELCOME again");
@@ -373,14 +373,14 @@ fn no_input_code_logs() {
 fn the_selection_is_each_tabs_own_and_survives_a_new_session() {
     let mut typing = ready(SELECT_CAP);
     typing.adopt(PAGE.channel, PAGE.page, 1);
-    typing.input(8, true, false, 0);
+    typing.input(8, true, false, false, 0);
     typing.control(8, &welcome(SELECT_CAP), 0);
     let other = typing.select(8, 0x300, 2, "", 0);
     assert!(other.iter().all(|send| matches!(send, Send::Fetcher { channel: 8, .. })));
     assert_eq!(typing.selection(PAGE.channel), Some((PAGE.page, 1)), "the other tab's selection is its own");
     assert_eq!(typing.selection(8), Some((0x300, 2)));
-    typing.input(PAGE.channel, false, false, 0);
-    typing.input(PAGE.channel, true, false, 0);
+    typing.input(PAGE.channel, false, false, false, 0);
+    typing.input(PAGE.channel, true, false, false, 0);
     let again = items(&typing.control(PAGE.channel, &welcome(SELECT_CAP), 0));
     assert!(again.contains(&"Event(Select(Select { page: 512, sub: 1 }, \"\"))".to_owned()), "{again:?}");
 }
@@ -425,7 +425,7 @@ fn select_carries_the_parameters_of_its_selection() {
 #[test]
 fn a_sessions_start_says_the_parameters() {
     let mut typing = Typing::default();
-    typing.input(PAGE.channel, true, false, 0);
+    typing.input(PAGE.channel, true, false, false, 0);
     typing.opened(Some(PAGE.channel), Some(PAGE), 0);
     typing.select(PAGE.channel, PAGE.page, SUBCODE_ANY, "a=1", 0);
     let started = typing.control(PAGE.channel, &welcome(SELECT_CAP), 0);
@@ -459,7 +459,7 @@ fn the_same_page_opened_again_sends_no_select() {
 #[test]
 fn a_channel_that_did_not_take_select_is_sent_none() {
     let mut typing = Typing::default();
-    typing.input(PAGE.channel, true, false, 0);
+    typing.input(PAGE.channel, true, false, false, 0);
     typing.opened(Some(PAGE.channel), Some(PAGE), 0);
     let welcomed = typing.control(PAGE.channel, &welcome(CURSOR_CAP), 1);
     assert_eq!(items(&welcomed), ["Event(Resize { columns: 40, rows: 25, width: 0, height: 0 })", "Event(FocusIn)"], "no SELECT at the start");

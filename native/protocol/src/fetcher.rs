@@ -262,6 +262,9 @@ pub enum FromFetcher {
         open: bool,
         /// It is `wss`.
         secure: bool,
+        /// The channel uses the mouse wheel over its pages (`push.wheel`,
+        /// DEC-6447).
+        wheel: bool,
     },
     /// Asks for the `Cookie` header of a request the agent is about to
     /// send (`cookies.md` section 2): the trusted core keeps every cookie.
@@ -777,8 +780,8 @@ pub fn write_to_core(out: &mut dyn Write, message: &FromFetcher) -> Result<(), P
             KIND_LINKS
         }
         #[cfg(feature = "interaction")]
-        FromFetcher::Input { open, secure } => {
-            payload.push(u8::from(*open) | (u8::from(*secure) << 1));
+        FromFetcher::Input { open, secure, wheel } => {
+            payload.push(u8::from(*open) | (u8::from(*secure) << 1) | (u8::from(*wheel) << 2));
             KIND_INPUT
         }
         FromFetcher::Pushing(open) => {
@@ -877,10 +880,10 @@ pub fn read_from_fetcher(input: &mut dyn Read) -> Result<Option<FromFetcher>, Pr
         #[cfg(feature = "interaction")]
         KIND_INPUT => {
             let flags = fields.u8()?;
-            if flags > 3 {
+            if flags > 7 {
                 return Err(ProtocolError::BadValue("input flags"));
             }
-            FromFetcher::Input { open: flags & 1 != 0, secure: flags & 2 != 0 }
+            FromFetcher::Input { open: flags & 1 != 0, secure: flags & 2 != 0, wheel: flags & 4 != 0 }
         }
         KIND_PUSHING => FromFetcher::Pushing(fields.flag("pushing")?),
         KIND_EXCHANGE => {

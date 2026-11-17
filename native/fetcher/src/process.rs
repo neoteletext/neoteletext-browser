@@ -716,7 +716,7 @@ fn push_changed(agent: &Agent<'_>, output: &cookies::Output, open: bool) -> Resu
     #[cfg(feature = "interaction")]
     if let Some(descriptor) = agent.descriptor().filter(|descriptor| descriptor.input()) {
         let secure = descriptor.push().is_some_and(neoteletext_web::url::Url::is_secure);
-        send(output, &FromFetcher::Input { open, secure })?;
+        send(output, &FromFetcher::Input { open, secure, wheel: descriptor.wheel() })?;
     }
     #[cfg(not(feature = "interaction"))]
     let _ = agent;
@@ -1381,7 +1381,7 @@ mod tests {
         };
         // The handshake: the connection is open, and said secure.
         let input = until(&mut core_writes, &|message| matches!(message, FromFetcher::Input { .. }));
-        assert_eq!(input, FromFetcher::Input { open: true, secure: true }, "keys go over a secure connection");
+        assert_eq!(input, FromFetcher::Input { open: true, secure: true, wheel: false }, "keys go over a secure connection");
         let page_message = until(&mut core_writes, &|message| matches!(message, FromFetcher::Page { origin: Origin::PushedPackets, .. }));
         assert_eq!(page_message, FromFetcher::Page { origin: Origin::PushedPackets, bytes: page }, "pushed over wss");
         protocol::fetcher::write_to_fetcher(&mut core_writes, &ToFetcher::Send { bytes: KEY.to_vec(), move_of: None, more: false }).unwrap();

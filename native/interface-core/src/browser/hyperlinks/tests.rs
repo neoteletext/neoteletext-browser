@@ -328,7 +328,7 @@ fn a_control_lights_and_shows_the_hand_while_keys_go() {
     let (mut browser, mut canvas, key, rect) = opened();
     let control = Area { row: 20, column: 1, width: 9, height: 2 };
     browser.set_links(key, PageLinks { controls: vec![control], ..page_links(VERSION) });
-    let typing = TypingView { channel: key.channel, page: key.page, on: true, secure: false, refused: false, cursor: None, round_trip_us: None };
+    let typing = TypingView { channel: key.channel, page: key.page, on: true, secure: false, refused: false, cursor: None, round_trip_us: None, wheel: false };
     browser.set_typing(typing, OPEN);
     browser.take_outputs();
     move_to(&mut browser, centre(rect, 9, 21));
@@ -363,7 +363,7 @@ fn a_contact_on_a_control_gives_it_the_pressed_look() {
     let first = Area { row: 20, column: 1, width: 9, height: 1 };
     let second = Area { row: 22, column: 1, width: 9, height: 1 };
     browser.set_links(key, PageLinks { controls: vec![first, second], ..page_links(VERSION) });
-    let typing = TypingView { channel: key.channel, page: key.page, on: true, secure: false, refused: false, cursor: None, round_trip_us: None };
+    let typing = TypingView { channel: key.channel, page: key.page, on: true, secure: false, refused: false, cursor: None, round_trip_us: None, wheel: false };
     browser.set_typing(typing, OPEN);
     browser.take_outputs();
     let on_first = centre(rect, 3, 20);
@@ -394,7 +394,7 @@ fn the_channel_is_told_as_the_pointer_enters_and_leaves_controls() {
     let first = Area { row: 20, column: 1, width: 9, height: 1 };
     let second = Area { row: 20, column: 10, width: 9, height: 1 };
     browser.set_links(key, PageLinks { controls: vec![first, second], ..page_links(VERSION) });
-    let typing = TypingView { channel: key.channel, page: key.page, on: true, secure: false, refused: false, cursor: None, round_trip_us: None };
+    let typing = TypingView { channel: key.channel, page: key.page, on: true, secure: false, refused: false, cursor: None, round_trip_us: None, wheel: false };
     browser.set_typing(typing, OPEN);
     browser.take_outputs();
     let hovers = |browser: &mut Browser| -> Vec<Intent> {

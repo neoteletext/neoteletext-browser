@@ -313,7 +313,16 @@ fn the_keys_badge_is_drawn_whole_beside_the_page_at_full_screen_sizes() {
             set_aspect(&mut browser, corrected);
             browser.strip.identity = HOST.into();
             let key = browser.wall().zoomed().expect("a page open");
-            let typing = TypingView { channel: key.channel, page: key.page, on: true, secure: false, refused: false, cursor: None, round_trip_us: Some(3_250) };
+            let typing = TypingView {
+                channel: key.channel,
+                page: key.page,
+                on: true,
+                secure: false,
+                refused: false,
+                cursor: None,
+                round_trip_us: Some(3_250),
+                wheel: false,
+            };
             browser.set_typing(typing, 0);
             // After the notice, and after the label of a page that came to
             // be held at a whole multiple of its actual size at its first

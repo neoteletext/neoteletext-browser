@@ -26,7 +26,7 @@ fn browser() -> Browser {
 }
 
 fn typing(cursor: Option<CursorView>) -> TypingView {
-    TypingView { channel: KEY.channel, page: KEY.page, on: true, secure: false, refused: false, cursor, round_trip_us: None }
+    TypingView { channel: KEY.channel, page: KEY.page, on: true, secure: false, refused: false, cursor, round_trip_us: None, wheel: false }
 }
 
 fn intents(outputs: &[Output]) -> Vec<Intent> {
@@ -82,6 +82,26 @@ fn a_channel_that_starts_taking_input_takes_the_keys_from_a_list() {
     assert_eq!(browser.list_with_keys(), None);
     assert_eq!(browser.typing_target(), Some(KEY), "the page has the keys without a click");
     assert!(!browser.keys_elsewhere());
+}
+
+/// DEC-6447: over a shown page with sub-pages the wheel is the browser's,
+/// to step them, even over the page of a channel that takes input, unless
+/// the channel says it uses the wheel (`push.wheel`); then it is the
+/// channel's, as before.
+#[test]
+fn the_wheel_over_a_page_with_sub_pages_steps_them_unless_its_channel_uses_the_wheel() {
+    let mut browser = browser();
+    browser.set_typing(typing(None), 0);
+    let row = browser.regions.rows[0].0;
+    crate::browser::fixture::press_at(&mut browser, &mut Recorder::new(), row);
+    browser.set_subpage_count(KEY.channel, KEY.page, 3);
+    let (_, page) = browser.wall.open().expect("the page is open");
+    browser.draw(&mut Recorder::new(), 1440.0, 900.0, 10_000);
+    browser.take_outputs();
+    browser.pointer_moved(f64::midpoint(page.x0, page.x1), f64::midpoint(page.y0, page.y1), 10_000);
+    assert_eq!(browser.terminal_wheel(0.0, 1.0), None, "the browser's, to step the sub-pages");
+    browser.set_typing(TypingView { wheel: true, ..typing(None) }, 10_000);
+    assert_eq!(browser.terminal_wheel(0.0, 1.0), Some(false), "the channel's: it uses the wheel");
 }
 
 /// REQ-3937 item 4: a click on a list changes nothing for the mouse: the
