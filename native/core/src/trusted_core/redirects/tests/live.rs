@@ -274,7 +274,7 @@ fn the_longest_address_a_record_carries_is_followed() {
 
 /// `channel`'s session with the channel started, so that input goes.
 fn welcomed(test: &mut Test, channel: u32) {
-    test.core.typing.input(channel, true, false, false, 0);
+    test.core.typing.input(channel, true, false, 0);
     let mut body = [0_u8; neoteletext_input::control::MAX_BODY];
     let welcome = neoteletext_input::control::Control::Welcome { version: neoteletext_input::VERSION, caps: neoteletext_input::caps::SELECT_CAP, resume: None };
     let length = neoteletext_input::control::write_body(&welcome, &mut body).unwrap();

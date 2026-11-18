@@ -758,9 +758,9 @@ fn push_changed(agent: &Agent<'_>, output: &CorePipe, open: bool, state: &mut St
     // push connection (decision 47).
     send(output, &FromFetcher::Pushing(open))?;
     #[cfg(feature = "interaction")]
-    if let Some(descriptor) = agent.descriptor().filter(|descriptor| descriptor.input()) {
+    if let Some(descriptor) = agent.descriptor().filter(|descriptor| descriptor.push_takes_messages()) {
         let secure = descriptor.push().is_some_and(neoteletext_web::url::Url::is_secure);
-        send(output, &FromFetcher::Input { open, secure, wheel: descriptor.wheel() })?;
+        send(output, &FromFetcher::Input { open, secure })?;
     }
     #[cfg(not(feature = "interaction"))]
     let _ = agent;
@@ -1387,7 +1387,7 @@ mod tests {
         };
         // The handshake: the connection is open, and said secure.
         let input = until(&mut core_writes, &|message| matches!(message, FromFetcher::Input { .. }));
-        assert_eq!(input, FromFetcher::Input { open: true, secure: true, wheel: false }, "keys go over a secure connection");
+        assert_eq!(input, FromFetcher::Input { open: true, secure: true }, "keys go over a secure connection");
         // The challenge's own frame is passed on as pushed too, as every
         // record is, for the decoder; the page is the next frame's.
         let page_message =

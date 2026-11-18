@@ -263,9 +263,15 @@ pub enum FromFetcher {
         open: bool,
         /// It is `wss`.
         secure: bool,
-        /// The channel uses the mouse wheel over its pages (`push.wheel`,
-        /// DEC-6447).
-        wheel: bool,
+    },
+    /// The channel's push connection carried a `RULES_QUERY` record
+    /// (page-rules.md RULE-47): the trusted core passes a `PAGE_STATE` for
+    /// that page only in answer to one, once (RULE-52 item 6).
+    RulesQuery {
+        /// The page asked about.
+        page: u16,
+        /// The query's identifier.
+        identifier: u32,
     },
     /// The channel's push connection carried a `STATE_CHALLENGE` record
     /// (VS-204): the trusted core answers with [`ToFetcher::StateAnswer`]
@@ -764,10 +770,11 @@ pub fn write_to_core(out: &mut dyn Write, message: &FromFetcher) -> Result<(), P
             KIND_LINKS
         }
         #[cfg(feature = "interaction")]
-        FromFetcher::Input { open, secure, wheel } => {
-            payload.push(u8::from(*open) | (u8::from(*secure) << 1) | (u8::from(*wheel) << 2));
+        FromFetcher::Input { open, secure } => {
+            payload.push(u8::from(*open) | (u8::from(*secure) << 1));
             KIND_INPUT
         }
+        FromFetcher::RulesQuery { page, identifier } => crate::rules::push_query(&mut payload, *page, *identifier).map(|()| kinds::KIND_RULES_QUERY)?,
         FromFetcher::Pushing(open) => {
             payload.push(u8::from(*open));
             KIND_PUSHING
@@ -864,11 +871,12 @@ pub fn read_from_fetcher(input: &mut dyn Read) -> Result<Option<FromFetcher>, Pr
         #[cfg(feature = "interaction")]
         KIND_INPUT => {
             let flags = fields.u8()?;
-            if flags > 7 {
+            if flags > 3 {
                 return Err(ProtocolError::BadValue("input flags"));
             }
-            FromFetcher::Input { open: flags & 1 != 0, secure: flags & 2 != 0, wheel: flags & 4 != 0 }
+            FromFetcher::Input { open: flags & 1 != 0, secure: flags & 2 != 0 }
         }
+        kinds::KIND_RULES_QUERY => FromFetcher::RulesQuery { page: fields.channel_page()?, identifier: fields.u32()? },
         KIND_PUSHING => FromFetcher::Pushing(fields.flag("pushing")?),
         KIND_EXCHANGE => {
             let method = raw_text(&mut fields, MAX_METHOD, "text too long")?;

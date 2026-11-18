@@ -6,18 +6,15 @@
 use std::collections::BTreeMap;
 
 use neoteletext_core::config::Config;
-use neoteletext_core::consts::{FLASH_CYCLE_US, FLASH_UNITS};
+use neoteletext_core::consts::{PRESENTATION_TICKS_PER_SECOND, presentation_tick_at_us, presentation_tick_due_us};
 use neoteletext_core::level1::FlashRate;
 use neoteletext_core::render::FlashPhase;
-use neoteletext_core::types::Instant;
 
 use crate::Rendered;
 
 /// The flash rates of the engine's decisions E.12 and E.48, in the order
 /// of [`FlashRates`]' bits.
 const RATES: [FlashRate; 5] = [FlashRate::Level1, FlashRate::Slow, FlashRate::FastPhase1, FlashRate::FastPhase2, FlashRate::FastPhase3];
-/// The rates the twelve units time: every one but the Level 1 flash.
-const UNIT_RATES: u8 = !1;
 
 /// The set of flash rates a page's cells use: one bit for each of
 /// [`RATES`].
@@ -36,14 +33,6 @@ impl FlashRates {
 
     fn union(self, other: Self) -> Self {
         Self(self.0 | other.0)
-    }
-
-    fn level_1(self) -> bool {
-        self.0 & !UNIT_RATES != 0
-    }
-
-    fn timed_by_units(self) -> Self {
-        Self(self.0 & UNIT_RATES)
     }
 
     /// Whether any of these rates is in a different phase in `drawn` and
@@ -79,49 +68,30 @@ impl Flashing {
     }
 
     /// The flashing pages that look different at `now_us` from how they
-    /// were drawn.
+    /// were drawn: flash is a function of the presentation clock's tick
+    /// alone (animation.md ANIM-1), the tick due at `now_us`.
     #[must_use]
     pub fn due(&self, now_us: u64, config: &Config) -> Vec<u16> {
-        let phase = FlashPhase::at(Instant(now_us), config);
+        let phase = FlashPhase::at_tick(presentation_tick_at_us(now_us), config);
         self.pages.iter().filter(|&(_, &(drawn, rates))| rates.differ(drawn, phase)).map(|(&page, _)| page).collect()
     }
 
     /// When a rate some shown page uses next changes phase, if any shown
-    /// page flashes: the next change of the Level 1 flash (the engine's
-    /// decision E.12), or the start of that one of the twelve units of the
-    /// one-second cycle (its decision E.48), whichever comes first.
+    /// page flashes: the time the first later tick of the presentation
+    /// clock is due at which the Level 1 flash (the engine's decision E.12)
+    /// or one of the twelve units of the one-second cycle (its decision
+    /// E.48) shows a rate in use differently (ANIM-1). The search is
+    /// bounded by one cycle of the Level 1 flash or one second of the
+    /// units, whichever is longer, within which every rate changes.
     #[must_use]
     pub fn next_us(&self, now_us: u64, config: &Config) -> Option<u64> {
         let used = self.pages.values().fold(FlashRates::default(), |used, &(_, rates)| used.union(rates));
-        let level_1 = used.level_1().then(|| level_1_next_us(now_us, config)).flatten();
-        let units = next_unit_us(now_us, used.timed_by_units());
-        [level_1, units].into_iter().flatten().min()
+        if used.is_empty() {
+            return None;
+        }
+        let tick = presentation_tick_at_us(now_us);
+        let now = FlashPhase::at_tick(tick, config);
+        let cycle = config.flash_shown_ticks.saturating_add(config.flash_hidden_ticks).max(PRESENTATION_TICKS_PER_SECOND);
+        (1..=cycle).map_while(|ahead| tick.checked_add(ahead)).find(|&later| used.differ(now, FlashPhase::at_tick(later, config))).map(presentation_tick_due_us)
     }
-}
-
-/// When the Level 1 flash next changes, on its 960 ms shown and 320 ms
-/// hidden by default; `None` when the configuration has it steady.
-fn level_1_next_us(now_us: u64, config: &Config) -> Option<u64> {
-    let shown = config.flash_shown_us;
-    let period = shown.saturating_add(config.flash_hidden_us);
-    let within = now_us.checked_rem(period)?;
-    let next = if within < shown { shown } else { period };
-    Some(now_us.saturating_sub(within).saturating_add(next))
-}
-
-/// When a rate of `used` that the units time next changes phase.
-fn next_unit_us(now_us: u64, used: FlashRates) -> Option<u64> {
-    if used.is_empty() {
-        return None;
-    }
-    let units = u64::from(FLASH_UNITS);
-    let cycle = now_us.checked_div(FLASH_CYCLE_US).unwrap_or(0).saturating_mul(FLASH_CYCLE_US);
-    let within = now_us.saturating_sub(cycle);
-    let unit = within.saturating_mul(units).checked_div(FLASH_CYCLE_US).unwrap_or(0);
-    let phase = FlashPhase::at_unit(u8::try_from(unit).unwrap_or(0));
-    // The first later unit whose phase differs for a rate in use; every
-    // rate changes within a cycle, so one is found.
-    let ahead = (1..=units).find(|&ahead| used.differ(phase, FlashPhase::at_unit(u8::try_from(unit.saturating_add(ahead)).unwrap_or(0)))).unwrap_or(1);
-    let next = unit.saturating_add(ahead).saturating_mul(FLASH_CYCLE_US).div_ceil(units);
-    Some(cycle.saturating_add(next))
 }

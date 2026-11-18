@@ -30,7 +30,7 @@ use neoteletext_core::limits::DECIMAL_DIGIT_MAX;
 #[cfg(feature = "links")]
 use neoteletext_core::nav::PageLinks;
 use neoteletext_core::render::{FlashPhase, IndexBuffer, IndexFormat, RenderOptions, render_screen};
-use neoteletext_core::types::{Instant, PageAddress, SubCode};
+use neoteletext_core::types::{PageAddress, SubCode};
 use neoteletext_image::palette::colour_map_palette;
 use protocol::decoder::View;
 use protocol::subpages::{SubPageRange, SubPageRows, SubPageStep};
@@ -352,7 +352,7 @@ impl Engine {
         let subcode = stored.key.subcode.value();
         let reveal = self.views.get(&page).is_some_and(|view| view.reveal);
         let config = self.decoder.config();
-        let phase = FlashPhase::at(Instant(now_us), config);
+        let phase = FlashPhase::at_tick(neoteletext_core::consts::presentation_tick_at_us(now_us), config);
         let render = RenderOptions::resolved(config, reveal, phase).with_underline(false);
         let changed = self.trackers.borrow_mut().entry(page).or_default().changed_rows(&grid, render);
         indices.clear();

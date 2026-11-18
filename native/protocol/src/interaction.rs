@@ -7,7 +7,7 @@
 
 mod intent;
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;
 mod typing;
 
 use interface_core::canvas::PageKey;

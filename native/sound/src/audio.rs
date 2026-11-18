@@ -302,8 +302,17 @@ impl Mixers {
                         mixer.stream_samples(key, &pcm);
                     }
                 }
-                // Prepared with their buffers, or applied above.
-                Audio::Define { .. } | Audio::Stream { .. } | Audio::Mute(_) | Audio::Reset => {}
+                // Prepared with their buffers, or applied above; and a
+                // local sound and its metering (page-rules.md RULE-62,
+                // RULE-33).
+                Audio::Define { .. }
+                | Audio::Stream { .. }
+                | Audio::Mute(_)
+                | Audio::Reset
+                | Audio::LocalBank { .. }
+                | Audio::Local { .. }
+                | Audio::LocalMidi { .. }
+                | Audio::Watch(_) => {}
             },
         }
         // A sound starts here, on the reader's thread, while the device

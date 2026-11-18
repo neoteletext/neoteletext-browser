@@ -177,6 +177,11 @@ impl Channel {
     /// count after it, if it went. A move is tagged with its contact, and
     /// every pointer event's position is kept for its gone.
     fn send(&mut self, channel: u32, item: &Item<'_>, now_us: u64, sends: &mut Vec<Send>) -> Option<u16> {
+        // RULE-46, RULE-50: a viewer's input goes only as a report the
+        // page's rule table asks for.
+        if event::is_page_input(item) {
+            return None;
+        }
         let mut out = [0_u8; MAX_MESSAGE];
         match self.session.send(item, clock(now_us), &mut out) {
             Ok(length @ 1..) => {
@@ -555,13 +560,15 @@ impl Typing {
     /// HELLO, and RESUME after it when the channel set RESUME and the
     /// session may be resumed (DOC-1923, REQ-RCH-013); a lost
     /// connection keeps what a resumption needs (`close`).
-    pub fn input(&mut self, channel: u32, open: bool, secure: bool, wheel: bool, now_us: u64) -> Vec<Send> {
+    pub fn input(&mut self, channel: u32, open: bool, secure: bool, now_us: u64) -> Vec<Send> {
         let mut sends = Vec::new();
         let state = self.channels.entry(channel).or_insert_with(Channel::new);
         let was_open = state.open;
         state.open = open;
         state.secure = open && secure;
-        state.wheel = open && wheel;
+        if !open {
+            state.wheel = false;
+        }
         // The channel takes everything held as released when the connection
         // goes (DOC-1923), resumed or not.
         state.pointer_forgotten();

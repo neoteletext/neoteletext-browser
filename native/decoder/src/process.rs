@@ -159,17 +159,14 @@ pub fn run(store_pages: usize) -> Result<(), ProtocolError> {
         // What the last message or deadline produced goes before waiting.
         output.flush()?;
         let now = engine.now_us();
-        let audio = engine.next_audio_tick_ms().map(|ms| ms.saturating_mul(MICROSECONDS_PER_MILLISECOND));
-        // A ReGIS picture whose repaint its budget held back is drawn when
-        // the budget allows (REQ-6380).
-        let deadline = [flashing.next_us(now, engine.config()), audio, regis_owed(&mut engine, &showing, &sent, now)].into_iter().flatten().min();
+        let deadline = next_deadline(&mut engine, &flashing, &showing, &sent, now);
         let received = match wait(&incoming, deadline, now) {
             Woken::Message(message) => Some(message),
             Woken::Deadline => None,
             Woken::Ended => return Ok(()),
         };
         let now = engine.now_us();
-        engine.tick_audio(now.checked_div(MICROSECONDS_PER_MILLISECOND).unwrap_or(0));
+        tick(&mut engine, now, &mut output)?;
         let Some(message) = received else {
             // A deadline: the sounds' clock, and the flashing pages whose
             // phase has changed.
@@ -179,7 +176,7 @@ pub fn run(store_pages: usize) -> Result<(), ProtocolError> {
             continue;
         };
         let Some(message) = message? else { return Ok(()) };
-        let arrived = match message {
+        let arrived = match engine.rule_message(message) {
             ToDecoder::Data(bytes) => engine.feed(&bytes),
             ToDecoder::Whole { packets, pushed, bytes } => engine.feed_whole(packets, pushed, &bytes),
             ToDecoder::End => engine.finish(),
@@ -233,6 +230,10 @@ pub fn run(store_pages: usize) -> Result<(), ProtocolError> {
                 // Nothing arrived; what is owed is drawn below, as after data.
                 Vec::new()
             }
+            // The viewer's input for the open page's rule table, its
+            // metered values and a state query (RULE-52, RULE-33,
+            // RULE-47): each waits for the next tick.
+            ToDecoder::RuleInput { .. } | ToDecoder::Metered { .. } | ToDecoder::RulesQuery { .. } | ToDecoder::RulesPage(_) => continue,
             // The look under the pointer changed: drawn again at once.
             #[cfg(feature = "links")]
             ToDecoder::Look { page, look } => {
@@ -264,6 +265,32 @@ pub fn run(store_pages: usize) -> Result<(), ProtocolError> {
         draw_regis(&mut engine, &showing, &sent, now, &mut output)?;
         say_missing(&engine, &showing, now, &mut missing, &mut output)?;
     }
+}
+
+/// When the loop next wakes by itself: the next flash phase of a shown
+/// page that flashes, the audio receiver's next tick, a ReGIS picture whose
+/// repaint its budget held back (REQ-6380), or the open page's next tick
+/// while it has a rule table (page-rules.md RULE-58), whichever is first.
+fn next_deadline(engine: &mut Engine, flashing: &Flashing, showing: &[u16], sent: &BTreeMap<u16, Rendered>, now: u64) -> Option<u64> {
+    let audio = engine.next_audio_tick_ms().map(|ms| ms.saturating_mul(MICROSECONDS_PER_MILLISECOND));
+    [flashing.next_us(now, engine.config()), audio, regis_owed(engine, showing, sent, now), engine.rules_due_us()].into_iter().flatten().min()
+}
+
+/// What every wake does first: the sounds' clock, then the open page's
+/// rule table for each tick due. What its rules produced is written at
+/// once: a `midi` action's message is on its way to the sound helper
+/// before this wake draws anything (RULE-64).
+fn tick(engine: &mut Engine, now_us: u64, output: &mut Output<'_>) -> Result<(), ProtocolError> {
+    engine.tick_audio(now_us.checked_div(MICROSECONDS_PER_MILLISECOND).unwrap_or(0));
+    let produced = engine.run_rules(now_us);
+    if produced.is_empty() {
+        return Ok(());
+    }
+    for message in &produced {
+        write_to_core(output, message)?;
+    }
+    output.flush()?;
+    Ok(())
 }
 
 /// The sub-page of a page on screen whose teletext page was drawn, if one

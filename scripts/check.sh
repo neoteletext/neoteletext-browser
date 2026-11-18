@@ -121,7 +121,12 @@ $outside"
 # but these, each for the bounded use DEC-2355 names, and no web engine,
 # script engine or interpreter. An engine crate added to its tree fails
 # here until that decision names it.
-readonly CORE_ENGINE_CRATES="neoteletext-audio neoteletext-core neoteletext-formats neoteletext-input neoteletext-opus neoteletext-web"
+# neoteletext-rules comes with neoteletext-input, whose RULE_EVENT, PAGE_STATE
+# and RULES_FAULT name the rule table's targets, values and limits
+# (page-rules.md RULE-46 to RULE-48), and with the protocol crate, which
+# takes its limits by name. The trusted core calls neither its decoder nor
+# its evaluator (RULE-58).
+readonly CORE_ENGINE_CRATES="neoteletext-audio neoteletext-core neoteletext-formats neoteletext-input neoteletext-opus neoteletext-rules neoteletext-web"
 # Requirement 1.3 (REQ-661): no crate in any program's tree executes or
 # interprets code from outside. Each is a crate a program could run a
 # script, a WebAssembly module or a web page with; wasmi waits on

@@ -148,10 +148,14 @@ impl Hearing {
                     return None;
                 }
             }
-            Audio::Stop { .. } | Audio::Gain { .. } => {}
-            // Only the trusted core resets or mutes; the protocol refuses
-            // both from a decoder, and they are refused here too.
-            Audio::Reset | Audio::Mute(_) => return None,
+            // A local sound (page-rules.md RULE-63): its fields were
+            // bounded as the message was read; the bank image and the
+            // setup block are passed on unread, as samples are.
+            Audio::Stop { .. } | Audio::Gain { .. } | Audio::LocalBank { .. } | Audio::Local { .. } | Audio::LocalMidi { .. } => {}
+            // Only the trusted core resets, mutes or gives a watch list;
+            // the protocol refuses them from a decoder, and they are
+            // refused here too.
+            Audio::Reset | Audio::Mute(_) | Audio::Watch(_) => return None,
         }
         Some(ToSound::Audio { channel, audio })
     }

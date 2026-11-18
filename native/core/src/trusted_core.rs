@@ -27,6 +27,7 @@ mod processes;
 mod recording;
 mod redirects;
 mod regis_pointer;
+mod rules;
 mod run;
 mod selection;
 mod settings;

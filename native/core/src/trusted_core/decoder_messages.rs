@@ -24,6 +24,12 @@ impl Core {
             // Published in the channel's Log tab (the engine's REQ-AUD-017).
             FromDecoder::AudioReceiver(receiver) => self.note(Level::Info, Some(channel), &neoteletext::console::audio_receiver_line(&receiver)),
             FromDecoder::StoreFull => self.grow_decoder(channel)?,
+            // The open page's rule table (page-rules.md RULE-52).
+            message @ (FromDecoder::RulesOpen(_)
+            | FromDecoder::Report(_)
+            | FromDecoder::PageState { .. }
+            | FromDecoder::RulesFault { .. }
+            | FromDecoder::RuleCounters(_)) => self.rules_decoded(channel, message)?,
             #[cfg(feature = "interaction")]
             FromDecoder::Missing(pages) => self.wall_missing(channel, pages)?,
             #[cfg(not(feature = "interaction"))]

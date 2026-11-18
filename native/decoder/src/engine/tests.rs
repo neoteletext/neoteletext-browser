@@ -948,27 +948,31 @@ fn arrivals_compare_only_the_pages_that_completed() {
     assert_eq!(engine.take_updated(), [0x101]);
 }
 
-/// The engine's decisions E.12 and E.48 as the owner changed them: the
-/// Level 1 Flash code keeps the SAA5050's timing at every level, 960 ms
-/// shown and 320 ms hidden, and the decoder wakes at those changes alone.
+/// The engine's decisions E.12 and E.48 on the presentation clock
+/// (animation.md ANIM-1): the Level 1 Flash code is shown for 57 ticks and
+/// hidden for 19 at every level, the SAA5050's three to one, and the
+/// decoder wakes at those changes alone, at the time each tick is due.
 #[test]
 fn only_a_shown_page_that_flashes_wakes_the_decoder_and_only_when_its_phase_changes() {
+    use neoteletext_core::consts::{FLASH_HIDDEN_TICKS, FLASH_SHOWN_TICKS, presentation_tick_due_us};
     let config = Config::default();
     let mut engine = Engine::new();
     engine.feed_whole(false, false, b"PN,10000\nSC,0000\nPS,8000\nOL,1,Steady\n\nPN,10100\nSC,0000\nPS,8000\nOL,1,\x1b\x48Flashing\n\n");
     let mut flashing = Flashing::default();
-    // The start of the Level 1 flash's period of 1.28 seconds.
-    let start = 3 * 1_280_000;
+    // The start of the Level 1 flash's period of 76 ticks.
+    let period = FLASH_SHOWN_TICKS + FLASH_HIDDEN_TICKS;
+    let first = 3 * period;
+    let start = presentation_tick_due_us(first);
     flashing.drawn(0x100, &engine.render_at(0x100, start).unwrap());
     assert_eq!(flashing.next_us(start, &config), None, "a steady page never wakes it");
     flashing.drawn(0x101, &engine.render_at(0x101, start).unwrap());
-    assert_eq!(flashing.next_us(start, &config), Some(start + 960_000), "hidden after 960 ms");
+    let off = presentation_tick_due_us(first + FLASH_SHOWN_TICKS);
+    assert_eq!(flashing.next_us(start, &config), Some(off), "hidden after 57 ticks");
     assert_eq!(flashing.due(start + 800_000, &config), [] as [u16; 0], "the units' 750 ms is not this flash's");
-    assert_eq!(flashing.due(start + 959_999, &config), [] as [u16; 0]);
-    let off = start + 960_000;
+    assert_eq!(flashing.due(off - 1, &config), [] as [u16; 0]);
     assert_eq!(flashing.due(off, &config), [0x101]);
     flashing.drawn(0x101, &engine.render_at(0x101, off).unwrap());
-    assert_eq!(flashing.next_us(off, &config), Some(start + 1_280_000), "shown again after 320 ms");
+    assert_eq!(flashing.next_us(off, &config), Some(presentation_tick_due_us(first + period)), "shown again after 19 ticks");
     flashing.retain(&[0x100]);
     assert_eq!(flashing.next_us(off, &config), None, "no longer shown");
 }

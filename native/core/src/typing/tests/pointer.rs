@@ -285,7 +285,7 @@ fn a_contact_while_a_button_is_held_is_touch() {
 fn the_round_trip_is_measured_while_keys_go() {
     let measures = |sends: &[Send]| sends.iter().filter_map(|send| if let Send::Measure { on, .. } = send { Some(*on) } else { None }).collect::<Vec<_>>();
     let mut typing = Typing::default();
-    typing.input(PAGE.channel, true, false, false, 0);
+    typing.input(PAGE.channel, true, false, 0);
     typing.opened(Some(PAGE.channel), Some(PAGE), 0);
     assert_eq!(measures(&typing.control(PAGE.channel, &welcome(SELECT_CAP), 0)), [true], "keys go: on");
     let sends = typing.round_trip(PAGE.channel, 190);
@@ -300,7 +300,7 @@ fn the_round_trip_is_measured_while_keys_go() {
 #[test]
 fn a_moments_messages_leave_together() {
     let mut typing = Typing::default();
-    typing.input(PAGE.channel, true, false, false, 0);
+    typing.input(PAGE.channel, true, false, 0);
     typing.opened(Some(PAGE.channel), Some(PAGE), 0);
     let sends = typing.control(PAGE.channel, &welcome(SELECT_CAP), 0);
     let more: Vec<bool> = sends.iter().filter_map(|send| if let Send::Fetcher { more, .. } = send { Some(*more) } else { None }).collect();

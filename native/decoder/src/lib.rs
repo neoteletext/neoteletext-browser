@@ -37,6 +37,7 @@ mod parts;
 mod picture;
 pub mod process;
 pub mod regis;
+pub mod rules;
 pub mod sample;
 mod title;
 mod voice_sink;

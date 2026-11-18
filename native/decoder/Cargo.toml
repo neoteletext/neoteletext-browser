@@ -42,6 +42,9 @@ neoteletext-audio = { workspace = true, features = ["synth6581", "synth7", "synt
 # page in any language the engine supports shows (its DEC-1761).
 neoteletext-core = { workspace = true, features = ["modern-classic", "level35-32colors", "extended-sets"] }
 neoteletext-formats.workspace = true
+# The page rule table (neoteletext-common's page-rules.md): decoded and
+# evaluated here, in the confined decoder, and nowhere else (RULE-58).
+neoteletext-rules.workspace = true
 # The reader of a live channel's LINKS records (neoteletext-common's
 # REQ-1494): a pushed sub-page's Link Extension links.
 neoteletext-web.workspace = true

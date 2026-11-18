@@ -77,3 +77,7 @@ pub(super) const KIND_STATE_KEEP_OFFERED: u8 = 172;
 pub(super) const KIND_STATE_ANSWER: u8 = 173;
 pub(super) const KIND_STATE_SEND_OFFER: u8 = 174;
 pub(super) const KIND_STATE_SEND_NONE: u8 = 175;
+// A RULES_QUERY record the channel's push connection carried (page-rules.md
+// RULE-47, RULE-52 item 6), in the next number free across every pipe
+// after the decoder's rule messages.
+pub(super) const KIND_RULES_QUERY: u8 = 186;

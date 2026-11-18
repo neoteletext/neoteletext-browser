@@ -12,7 +12,7 @@ const NEXT_TOKEN: [u8; neoteletext_input::TOKEN_BYTES] = [9; neoteletext_input::
 /// HELLO, RESIZE and `FOCUS_IN`.
 fn resumable() -> Typing {
     let mut typing = Typing::default();
-    typing.input(PAGE.channel, true, true, false, 0);
+    typing.input(PAGE.channel, true, true, 0);
     typing.opened(Some(PAGE.channel), Some(PAGE), 0);
     typing.control(PAGE.channel, &welcome_with(SELECT_CAP | RESUME_CAP, Some(Resumption { token: TOKEN, taken: None })), 0);
     typing.drawn(PAGE, 0);
@@ -36,9 +36,9 @@ fn a_resumed_session_sends_again_what_the_channel_had_not_taken() {
     typing.input_intent(&key('a'), MS);
     typing.input_intent(&key('b'), 2 * MS);
     acknowledge(&mut typing, 4);
-    typing.input(PAGE.channel, false, true, false, 3 * MS);
+    typing.input(PAGE.channel, false, true, 3 * MS);
     assert_eq!(items(&typing.input_intent(&key('c'), 4 * MS)), [] as [String; 0], "nothing while the connection is down");
-    let hello = typing.input(PAGE.channel, true, true, false, 5 * MS);
+    let hello = typing.input(PAGE.channel, true, true, 5 * MS);
     let offered = OFFERED | RESUME_CAP;
     let resume = format!("Event(Resume(Resume {{ token: {TOKEN:?}, acked: 4 }}))");
     assert_eq!(items(&hello), [format!("Event(Hello {{ version: {VERSION}, caps: {offered}, agent: None }})"), resume], "HELLO, then RESUME, in one message");
@@ -55,8 +55,8 @@ fn a_resumed_session_sends_again_what_the_channel_had_not_taken() {
     );
     assert_eq!(items(&typing.input_intent(&key('a'), 7 * MS)), [KEY_A], "then input goes on");
     // The next connection resumes from the new token.
-    typing.input(PAGE.channel, false, true, false, 8 * MS);
-    let again = items(&typing.input(PAGE.channel, true, true, false, 9 * MS));
+    typing.input(PAGE.channel, false, true, 8 * MS);
+    let again = items(&typing.input(PAGE.channel, true, true, 9 * MS));
     assert!(again[1].contains(&format!("{NEXT_TOKEN:?}")), "{again:?}");
 }
 
@@ -66,8 +66,8 @@ fn a_resumed_session_sends_again_what_the_channel_had_not_taken() {
 fn a_session_not_held_begins_again() {
     let mut typing = resumable();
     typing.input_intent(&key('a'), MS);
-    typing.input(PAGE.channel, false, true, false, 2 * MS);
-    typing.input(PAGE.channel, true, true, false, 3 * MS);
+    typing.input(PAGE.channel, false, true, 2 * MS);
+    typing.input(PAGE.channel, true, true, 3 * MS);
     let fresh = typing.control(PAGE.channel, &welcome_with(SELECT_CAP | RESUME_CAP, Some(Resumption { token: NEXT_TOKEN, taken: None })), 4 * MS);
     assert_eq!(
         items(&fresh),
@@ -80,11 +80,11 @@ fn a_session_not_held_begins_again() {
 #[test]
 fn without_resume_or_after_leaving_a_reconnection_is_new() {
     let mut plain = ready(SELECT_CAP);
-    plain.input(PAGE.channel, false, false, false, MS);
-    assert_eq!(items(&plain.input(PAGE.channel, true, false, false, 2 * MS)).len(), 1, "HELLO alone");
+    plain.input(PAGE.channel, false, false, MS);
+    assert_eq!(items(&plain.input(PAGE.channel, true, false, 2 * MS)).len(), 1, "HELLO alone");
     let mut left = resumable();
     left.channel_gone(PAGE.channel);
-    assert_eq!(items(&left.input(PAGE.channel, true, false, false, MS)).len(), 1, "forgotten: HELLO alone");
+    assert_eq!(items(&left.input(PAGE.channel, true, false, MS)).len(), 1, "forgotten: HELLO alone");
 }
 
 /// REQ-INT-125: a resumption from a count the receiver never sent up to
@@ -93,8 +93,8 @@ fn without_resume_or_after_leaving_a_reconnection_is_new() {
 fn a_false_count_is_refused() {
     let mut typing = resumable();
     typing.input_intent(&key('a'), MS);
-    typing.input(PAGE.channel, false, true, false, 2 * MS);
-    typing.input(PAGE.channel, true, true, false, 3 * MS);
+    typing.input(PAGE.channel, false, true, 2 * MS);
+    typing.input(PAGE.channel, true, true, 3 * MS);
     let refused = typing.control(PAGE.channel, &welcome_with(SELECT_CAP | RESUME_CAP, Some(Resumption { token: NEXT_TOKEN, taken: Some(900) })), 4 * MS);
     assert_eq!(items(&refused), [] as [String; 0]);
     assert_eq!(items(&typing.input_intent(&key('b'), 5 * MS)), [] as [String; 0]);
@@ -109,7 +109,7 @@ fn a_channel_asleep_keeps_its_tabs_selection() {
     let _ = asleep.select(PAGE.channel, PAGE.page, 3, "", MS);
     asleep.channel_asleep(PAGE.channel);
     assert_eq!(asleep.selection(PAGE.channel), Some((PAGE.page, 3)), "the sub-page the tab showed");
-    assert_eq!(items(&asleep.input(PAGE.channel, true, false, false, 2 * MS)).len(), 1, "a new session: HELLO alone");
+    assert_eq!(items(&asleep.input(PAGE.channel, true, false, 2 * MS)).len(), 1, "a new session: HELLO alone");
     let mut gone = resumable();
     let _ = gone.select(PAGE.channel, PAGE.page, 3, "", MS);
     gone.channel_gone(PAGE.channel);

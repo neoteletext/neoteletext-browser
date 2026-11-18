@@ -53,6 +53,7 @@ pub(super) fn handle(core: &mut Core, event: Event) -> Result<bool, String> {
         #[cfg(feature = "phone-keyboard")]
         Event::PhoneEnded(generation, reason) => core.phone_ended(generation, reason)?,
         Event::Sound(FromSound::Sounding(channels)) => core.sounding(&channels)?,
+        Event::Sound(FromSound::Metered { channel, values }) => core.metered(channel, values)?,
         Event::SoundEnded(reason) => {
             let broke = reason.is_some();
             core.log(Level::Error, None, &format!("no sound: the sound helper ended{}", reason.map(|reason| format!(": {reason}")).unwrap_or_default()));

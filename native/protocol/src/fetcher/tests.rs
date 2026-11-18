@@ -83,12 +83,12 @@ fn every_kind_round_trips() {
         ToFetcher::FetchSubPages { page: 0x210, part: 0 },
         ToFetcher::FetchSubPages { page: 0x210, part: 127 },
         ToFetcher::FetchSubPage { page: 0x210, subcode: 0x3F7E },
+        // Push protocol 9 (page-rules.md RULE-46): a viewer's input goes
+        // only inside a RULE_EVENT, which is never a contact's move alone.
         #[cfg(feature = "interaction")]
-        ToFetcher::Send { bytes: b"a\xFF\x01\x80\x04\x00\x04\x02".to_vec(), move_of: None, more: true },
+        ToFetcher::Send { bytes: crate::interaction::tests::rule_event(), move_of: None, more: true },
         #[cfg(feature = "interaction")]
-        ToFetcher::Send { bytes: vec![0xFF, 0x02, 0x80, 0x04, 0x00, 0x06, 0x00, 0x0A, 0x05, 0x79, 0x64], move_of: Some(0), more: false },
-        #[cfg(feature = "interaction")]
-        ToFetcher::Send { bytes: vec![0xFF, 0x44, 0x0A, 0x80, 0x04, 0x00, 0x06, 0x01, 0x0B, 0x05, 0x85, 0x01, 0x64], move_of: Some(1), more: false },
+        ToFetcher::Send { bytes: crate::interaction::tests::rule_event(), move_of: None, more: false },
         #[cfg(feature = "interaction")]
         ToFetcher::MeasureRoundTrip(true),
         #[cfg(feature = "interaction")]
@@ -362,4 +362,17 @@ fn connecting_and_invalid_packets_are_exact() {
     assert_eq!(crafted(KIND_INVALID_PACKETS, &7_u64.to_be_bytes()).unwrap().unwrap(), FromFetcher::InvalidPackets { total: 7 });
     assert!(crafted(KIND_INVALID_PACKETS, &[0; 7]).is_err());
     assert!(crafted(KIND_INVALID_PACKETS, &[0; 9]).is_err());
+}
+
+/// RULE-46 (REQ-6534): under push protocol 9 the trusted core cannot give
+/// a fetcher a viewer's input outside a `RULE_EVENT`: bare text, a bare
+/// KEY and a bare MOUSE move are refused as they are written.
+#[cfg(feature = "interaction")]
+#[test]
+fn bare_input_is_refused_for_the_fetcher() {
+    let bare_key = b"a\xFF\x01\x80\x04\x00\x04\x02".to_vec();
+    let bare_move = vec![0xFF, 0x02, 0x80, 0x04, 0x00, 0x06, 0x00, 0x0A, 0x05, 0x79, 0x64];
+    assert!(write_to_fetcher(&mut Vec::new(), &ToFetcher::Send { bytes: bare_key, move_of: None, more: false }).is_err());
+    assert!(write_to_fetcher(&mut Vec::new(), &ToFetcher::Send { bytes: bare_move.clone(), move_of: None, more: false }).is_err());
+    assert!(write_to_fetcher(&mut Vec::new(), &ToFetcher::Send { bytes: bare_move, move_of: Some(0), more: false }).is_err());
 }

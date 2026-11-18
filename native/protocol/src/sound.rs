@@ -15,6 +15,8 @@ const KIND_AUDIO: u8 = 1;
 const KIND_SETTINGS: u8 = 2;
 const KIND_CLOSE: u8 = 3;
 const KIND_SOUNDING: u8 = 4;
+/// The metered values of a view (page-rules.md RULE-33 item 3, RULE-63).
+const KIND_METERED: u8 = 5;
 
 /// From the trusted core to the sound helper.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -42,6 +44,16 @@ pub enum ToSound {
 pub enum FromSound {
     /// The channels sounding now, muted or not.
     Sounding(Vec<u32>),
+    /// The metered values of one view's watch list (page-rules.md RULE-33
+    /// item 3): one byte for each slot of the list the trusted core last
+    /// passed for that channel, in its order. The trusted core checks the
+    /// count against that list.
+    Metered {
+        /// The view's channel.
+        channel: u32,
+        /// The values, at most [`audio::MAX_WATCH_SLOTS`].
+        values: Vec<u8>,
+    },
 }
 
 /// # Errors
@@ -103,6 +115,12 @@ pub fn write_from_sound(out: &mut dyn Write, message: &FromSound) -> Result<(), 
             push_channels(&mut payload, channels)?;
             KIND_SOUNDING
         }
+        FromSound::Metered { channel, values } => {
+            payload.extend_from_slice(&channel.to_be_bytes());
+            super::push_count_u8(&mut payload, values.len(), audio::MAX_WATCH_SLOTS, "metered values")?;
+            payload.extend_from_slice(values);
+            KIND_METERED
+        }
     };
     write_frame(out, kind, &payload)
 }
@@ -117,6 +135,11 @@ pub fn read_from_sound(input: &mut dyn Read) -> Result<Option<FromSound>, Protoc
     let mut fields = Fields::new(&payload);
     let message = match kind {
         KIND_SOUNDING => FromSound::Sounding(read_channels(&mut fields)?),
+        KIND_METERED => {
+            let channel = fields.u32()?;
+            let count = fields.count_u8(audio::MAX_WATCH_SLOTS, "metered values")?;
+            FromSound::Metered { channel, values: fields.take(count)?.to_vec() }
+        }
         other => return Err(ProtocolError::UnknownKind(other)),
     };
     fields.end()?;

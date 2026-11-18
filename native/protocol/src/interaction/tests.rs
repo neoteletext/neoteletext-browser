@@ -136,7 +136,9 @@ fn typing_round_trips_and_a_bad_cursor_is_refused() {
 /// most the input protocol's `MAX_MESSAGE`, 8,192 bytes (DEC-1715).
 #[test]
 fn a_message_for_the_fetcher_is_whole_and_bounded() {
-    assert!(check_message(b"abc\xFF\x01\x80\x04\x00\x04\x02").is_ok());
+    // RULE-46 (REQ-6534): a viewer's input goes only inside a RULE_EVENT.
+    assert!(check_message(b"abc\xFF\x01\x80\x04\x00\x04\x02").is_err(), "bare text and a bare KEY");
+    assert!(check_message(&rule_event()).is_ok());
     assert!(check_message(b"\xFF\x01").is_err(), "an item cut short");
     assert!(check_message(b"\xFF\x00").is_err(), "a reserved type");
     assert!(check_message(&[b'a'; MAX_MESSAGE + 1]).is_err());
@@ -208,4 +210,15 @@ fn a_dot_outside_its_cell_or_the_image_is_refused() {
         }
         assert!(!dot_in_cell(&at), "{at:?}");
     }
+}
+
+/// A `RULE_EVENT` carrying raw text, as the engine writes it (RULE-46).
+pub(crate) fn rule_event() -> Vec<u8> {
+    use neoteletext_input::event::{Event, Item, Stamp, write};
+    use neoteletext_input::rules::{RuleBody, RuleEvent};
+    let on = Stamp::new(0x100, 0).unwrap();
+    let event = RuleEvent { on, generation: 1, rule: 2, tick: 3, target: neoteletext_rules::table::Target::NONE, body: RuleBody::Input(b"abc") };
+    let mut out = [0_u8; MAX_MESSAGE];
+    let length = write(&Item::Event(Event::RuleEvent(event)), &mut out).unwrap();
+    out[..length].to_vec()
 }

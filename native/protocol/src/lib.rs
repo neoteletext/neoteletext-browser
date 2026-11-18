@@ -41,6 +41,7 @@ pub mod library;
 pub mod links;
 pub mod picture;
 pub mod regis;
+pub mod rules;
 pub mod settings;
 pub mod sound;
 pub mod subpages;

@@ -95,12 +95,14 @@ impl Core {
                     self.match_decoders()?;
                 }
             }
+            // A state query for a page of the channel (RULE-47).
+            FromFetcher::RulesQuery { page, identifier } => self.rules_query(channel, page, identifier)?,
             #[cfg(feature = "interaction")]
-            FromFetcher::Input { open, secure, wheel } => {
+            FromFetcher::Input { open, secure } => {
                 if open && self.typing.selection(channel).is_none() {
                     self.first_selection(channel)?;
                 }
-                let sends = self.typing.input(channel, open, secure, wheel, self.now_us());
+                let sends = self.typing.input(channel, open, secure, self.now_us());
                 self.deliver_typing(sends)?;
             }
             #[cfg(feature = "interaction")]
@@ -331,7 +333,7 @@ mod tests {
         test.core.session.open("news.invalid").unwrap();
         let channel = test.core.session.tabs[0].channel.id;
         test.core.fetched(channel, FromFetcher::InitialPage(0x302)).unwrap();
-        test.core.fetched(channel, FromFetcher::Input { open: true, secure: true, wheel: false }).unwrap();
+        test.core.fetched(channel, FromFetcher::Input { open: true, secure: true }).unwrap();
         assert_eq!(test.core.typing.selection(channel), Some((0x302, neoteletext_core::limits::SUBCODE_ANY)));
     }
 
@@ -434,7 +436,7 @@ mod tests {
 
         for (pushing, open) in [(false, false), (true, true)] {
             core.fetched(first, FromFetcher::Pushing(pushing)).unwrap();
-            core.fetched(first, FromFetcher::Input { open, secure: true, wheel: false }).unwrap();
+            core.fetched(first, FromFetcher::Input { open, secure: true }).unwrap();
         }
         let hello = input_items(&sent_to_fetcher(&mut core, first, &first_wire));
         assert!(matches!(hello.as_slice(), [hello] if hello.starts_with("Event(Hello")), "the first tab's new session: {hello:?}");

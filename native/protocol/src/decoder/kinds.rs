@@ -67,3 +67,19 @@ pub(super) const KIND_REGIS_VIEWER: u8 = 157;
 // pipe.
 #[cfg(feature = "links")]
 pub(super) const KIND_REGIS_LINKS: u8 = 158;
+// A page's rule table between the trusted core and its decoder
+// (neoteletext-common's page-rules.md RULE-63), in the next numbers free
+// across every pipe on 18 November 2026: the viewer's input and the
+// metered values to the decoder; what a table asks for, a report, a state
+// answer and a fault from it; a state query to it; its counters.
+pub(super) const KIND_RULE_INPUT: u8 = 178;
+pub(super) const KIND_METERED: u8 = 179;
+pub(super) const KIND_RULES_OPEN: u8 = 180;
+pub(super) const KIND_REPORT: u8 = 181;
+pub(super) const KIND_PAGE_STATE: u8 = 182;
+pub(super) const KIND_RULES_FAULT: u8 = 183;
+pub(super) const KIND_RULES_QUERY: u8 = 184;
+pub(super) const KIND_RULE_COUNTERS: u8 = 185;
+// Trusted core to decoder: the page of the channel that is the open page
+// of the active tab, whose table alone is evaluated (RULE-58), or none.
+pub(super) const KIND_RULES_PAGE: u8 = 187;

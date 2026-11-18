@@ -99,6 +99,24 @@ fn describe(item: &Item<'_>) -> String {
         Event::StateProof(_) => String::from("STATE_PROOF"),
         Event::StateNone(reason) => format!("STATE_NONE {}", reason.code()),
         Event::StateOffer => String::from("STATE_OFFER"),
+        // A rule's report (page-rules.md RULE-46): its rule and tick, and
+        // the input it carries, described as that input always was.
+        Event::RuleEvent(rule) => {
+            let carried = match (rule.input(), rule.body) {
+                (Some((item, pick)), _) => {
+                    let mut text = describe(&item);
+                    if let Some(pick) = pick {
+                        let _ = write!(text, " + {}", describe(&Item::Event(Event::Pick(pick))));
+                    }
+                    text
+                }
+                (None, neoteletext_input::rules::RuleBody::Value { reading, .. }) => format!("value {reading}"),
+                (None, _) => String::from("fired"),
+            };
+            format!("RULE {} t{}: {carried}", rule.rule, rule.tick)
+        }
+        Event::PageState(_) => String::from("PAGE_STATE"),
+        Event::RulesFault(fault) => format!("RULES_FAULT {} x{}", fault.fault.name(), fault.count),
         Event::Extension { kind, .. } => format!("EXTENSION {kind:#04x}"),
     }
 }

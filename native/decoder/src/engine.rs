@@ -33,6 +33,7 @@ mod feed;
 #[cfg(test)]
 mod font_tests;
 mod render;
+mod rules;
 #[cfg(test)]
 mod tests;
 
