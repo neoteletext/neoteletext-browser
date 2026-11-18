@@ -183,6 +183,14 @@ Boundary 4 of the earlier design, the font helper, is gone: no font is fetched f
 
 **Remaining risk:** low.
 
+**Renderer parity (neoteletext-common's `docs/renderer-parity.md`, section 19; REQ-6770, REQ-6771; reviewed 19 November 2026).** What this work added that reads outside input or holds memory for it, and what bounds it, by the specification's numbering:
+- *Threat 8, a picture's links mislead a viewer.* Links on NAPLPS objects (PAR-28) are the `DRAWING_LINKS` record already read for ReGIS drawings, by the same bounded reader, and are followed by the trusted core under the rules of every link: the destination shown in the strip while the pointer is on the object, the dwell time, and the question before leaving the channel (REQ-6376). The decoder only gathers the record; it decides nothing about following.
+- *Threat 9, activation where the viewer did not point.* Small-target picking (PAR-29) is decided in the trusted core from the pick record it holds, never from the interface: the interface says the pixel and how many picture pixels its screen pixel covers, the reader refuses a span of 0 and a pixel no picture has, and the trusted core looks at no more than `MAX_PICK_SPAN` (8) across and down, so an interface that lies about the span can only move the pointer to a pixel within that block of what it already could name. The keyboard's reach through picture links (PAR-30) is not built yet.
+- *Threat 11, static channel files with oversized pictures.* A fetched sub-page file's picture records (PAR-36 item 1) are read by a record reader of their own, with the same bounded readers and stores as a live channel's; a fetched file was already bounded by the fetcher's page limit, and a page the channel pushes is never replaced by an older file.
+- *Picture sources kept for back and forward (PAR-34).* The decoder keeps each picture sub-page's records, keyed on page and sub-code together, within `MAX_KEPT_PICTURE_SOURCE_BYTES` (33,554,432) a tab and the page cache's lifetime; past the budget the source drawn longest ago is dropped, and one larger than the budget is not kept. It is page content the channel sent the viewer; no local state, such as animation, is kept.
+- *Reduced motion (PAR-33).* The interface tells the trusted core the platform's preference, which tells the decoders; the interface's word is taken as it stands, since at worst it stops or starts motion only the receiver makes.
+- *Threat 7, user fonts for pictures (PAR-35)*, is not built yet: the user's font file will be read by the trusted core within its bound (`regis::limits::MAX_FONT_BYTES`, `naplps::limits::MAX_STROKE_FONT_BYTES` of 262,144) and parsed in the confined decoder.
+
 ### 5.4 Boundary 4: fonts
 
 Removed by decision 66: no font is fetched from a channel, so there is no font file to read and no font helper. Pages are drawn in the engine's own fonts, which ship with the browser.
