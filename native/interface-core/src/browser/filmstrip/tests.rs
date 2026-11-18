@@ -105,6 +105,58 @@ fn the_count_opens_the_filmstrip_at_once_and_the_panel_is_gone() {
     assert!(!browser.filmstrip_open(), "a second press shuts it");
 }
 
+/// REQ-6640 item 1 (TODO-6758): a hand that comes to rest on the count to
+/// click it rests longer than the delay, so the rest opens the filmstrip
+/// first; the click that follows keeps it open. Before, that click shut it
+/// and kept it shut while the pointer stayed on the strip, so the end-to-end
+/// run of 19 November 2026 saw only the count's tip. A second press shuts
+/// it, and a rest elsewhere on the tabs is not the count's.
+#[test]
+fn a_press_on_the_count_the_rest_opened_it_from_keeps_the_filmstrip_open() {
+    let (mut browser, mut canvas) = browser_of(30);
+    let count = browser.tab_strip.count;
+    point_at(&mut browser, count, 0);
+    assert!(browser.settle(FILMSTRIP_DELAY_MILLISECONDS) && browser.filmstrip_open(), "the rest opens it");
+    browser.draw(&mut canvas, WIDTH, HEIGHT, 400);
+    browser.pointer_moved(middle(count).x + 1.0, middle(count).y, 450);
+    browser.pointer_pressed(&mut canvas, false, 500);
+    browser.pointer_released();
+    browser.settle(2_000);
+    browser.draw(&mut canvas, WIDTH, HEIGHT, 2_000);
+    assert!(browser.filmstrip_open(), "the click the rest came before keeps it open");
+    assert_eq!(browser.tip_shown(), None, "and no tip shows over it");
+    browser.pointer_pressed(&mut canvas, false, 2_100);
+    assert!(!browser.filmstrip_open(), "a second press shuts it");
+    // Opened by a rest on a tab, the pointer then going to the count: a
+    // press there shuts it, as ever.
+    let tab = browser.regions.tabs[0].tab;
+    let field = browser.regions.field;
+    point_at(&mut browser, field, 3_000);
+    point_at(&mut browser, tab, 3_100);
+    assert!(browser.settle(3_100 + FILMSTRIP_DELAY_MILLISECONDS) && browser.filmstrip_open());
+    browser.draw(&mut canvas, WIDTH, HEIGHT, 3_700);
+    point_at(&mut browser, count, 3_800);
+    browser.pointer_pressed(&mut canvas, false, 3_900);
+    assert!(!browser.filmstrip_open(), "rested on a tab, not the count: the press shuts it");
+}
+
+/// REQ-6640 item 1: the filmstrip opens with no tab pressed, so a press on
+/// a tab while the rest is being waited out ends the wait. Before, the
+/// filmstrip opened 300 milliseconds after the pointer came to the tab,
+/// over the tab just clicked.
+#[test]
+fn a_press_on_a_tab_during_the_rest_opens_nothing() {
+    let (mut browser, mut canvas) = browser_of(3);
+    let tab = browser.regions.tabs[1].tab;
+    point_at(&mut browser, tab, 0);
+    browser.pointer_pressed(&mut canvas, false, 100);
+    browser.pointer_released();
+    browser.settle(1_000);
+    assert!(!browser.filmstrip_open(), "the press ended the rest");
+    browser.pointer_moved(middle(tab).x + 1.0, middle(tab).y, 2_000);
+    assert!(browser.settle(2_000 + FILMSTRIP_DELAY_MILLISECONDS) && browser.filmstrip_open(), "a rest after it opens it");
+}
+
 /// REQ-6640 item 3: a still is taken of the tab left, from the page the
 /// wall showed, when the viewer leaves it, and of the active tab when the
 /// filmstrip opens; each picture then draws its tab's still, and a tab

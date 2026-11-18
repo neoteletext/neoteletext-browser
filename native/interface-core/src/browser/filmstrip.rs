@@ -102,6 +102,11 @@ pub(super) struct Filmstrip {
     pub(super) strip_active: Option<usize>,
     /// The picture the pointer rests on.
     pub(super) hovered: Option<usize>,
+    /// The rest that opened the filmstrip was on the overflow count, and
+    /// the pointer has stayed on the count since. A press there is then
+    /// the press the viewer was making when the rest opened it first, and
+    /// keeps it open rather than shutting it (REQ-6640 item 1; TODO-6758).
+    rested_on_count: bool,
     /// The pictures as last drawn, and the panel they are on.
     pub(super) pictures: Vec<Picture>,
     pub(super) panel: Rect,
@@ -131,6 +136,7 @@ impl Default for Filmstrip {
             strip: Tween::new(0.0, FILMSTRIP_SLIDE_MILLISECONDS, STANDARD),
             strip_active: None,
             hovered: None,
+            rested_on_count: false,
             pictures: Vec::new(),
             panel: Rect::ZERO,
             width: 0.0,
@@ -241,6 +247,7 @@ impl Browser {
             self.queue_still(channel);
         }
         self.filmstrip.phase = Phase::Open;
+        self.filmstrip.rested_on_count = false;
         self.filmstrip.reveal.set(1.0, now);
         let place = self.filmstrip_place();
         self.filmstrip.slide = Tween::new(narrow(place), self.filmstrip_slide_duration(), STANDARD);
@@ -269,6 +276,7 @@ impl Browser {
     fn filmstrip_hide(&mut self, now: u64) {
         self.filmstrip_motion();
         self.filmstrip.phase = Phase::Shut;
+        self.filmstrip.rested_on_count = false;
         self.filmstrip.reveal.set(0.0, now);
         self.filmstrip.hovered = None;
     }
@@ -279,6 +287,7 @@ impl Browser {
         self.filmstrip.phase = Phase::Shut;
         self.filmstrip.reveal = Tween::new(0.0, FILMSTRIP_OPEN_MILLISECONDS, EASE_OUT);
         self.filmstrip.hovered = None;
+        self.filmstrip.rested_on_count = false;
         self.filmstrip.pictures.clear();
         self.filmstrip.panel = Rect::ZERO;
     }
@@ -294,6 +303,9 @@ impl Browser {
         let on_strip = Rect::new(0.0, 0.0, self.regions.strip.x1, STRIP_HEIGHT).contains(point);
         let on_filmstrip = self.filmstrip.panel.contains(point);
         let pressing = self.tab_strip_pressed();
+        if !self.tab_strip.count.contains(point) {
+            self.filmstrip.rested_on_count = false;
+        }
         self.filmstrip.phase = match self.filmstrip.phase {
             Phase::Shut if on_tabs && !pressing => Phase::Resting(now),
             Phase::Resting(_) if !on_tabs || pressing => Phase::Shut,
@@ -324,7 +336,10 @@ impl Browser {
     /// closes once it has been away; whether either happened now.
     pub(super) fn filmstrip_settle(&mut self, now: u64) -> bool {
         match self.filmstrip.phase {
-            Phase::Resting(since) if now.saturating_sub(since) >= FILMSTRIP_DELAY_MILLISECONDS => self.filmstrip_show(now),
+            Phase::Resting(since) if now.saturating_sub(since) >= FILMSTRIP_DELAY_MILLISECONDS => {
+                self.filmstrip_show(now);
+                self.filmstrip.rested_on_count = self.tab_strip.count.contains(self.pointer);
+            }
             Phase::Leaving(since) if now.saturating_sub(since) >= FILMSTRIP_CLOSE_MILLISECONDS => self.filmstrip_hide(now),
             Phase::Shut | Phase::Resting(_) | Phase::Open | Phase::Leaving(_) | Phase::Dismissed => return false,
         }
@@ -337,13 +352,21 @@ impl Browser {
     }
 
     /// A press at `point` at `now` (REQ-6640 items 1 and 7): the overflow
-    /// count opens the filmstrip at once, or closes it; on the open
+    /// count opens the filmstrip at once, or closes it, except that a press
+    /// on the count the rest has just opened it from keeps it open: a hand
+    /// that comes to rest on the count to click it rests there longer than
+    /// the delay, so the rest opens the filmstrip under it first, and the
+    /// click would otherwise shut it again and keep it shut while the
+    /// pointer stays on the strip, leaving only the count's tip (TODO-6758).
+    /// A press on a tab ends the rest, which then opens nothing. On the open
     /// filmstrip a picture's close or mute button acts on its tab, and the
     /// picture chooses its tab and closes the filmstrip. Returns whether
     /// the press was the filmstrip's.
     pub(super) fn filmstrip_press(&mut self, point: Point, now: u64) -> bool {
         if self.tab_strip.count.contains(point) {
-            if self.filmstrip.shown() {
+            if self.filmstrip.shown() && self.filmstrip.rested_on_count {
+                self.filmstrip.rested_on_count = false;
+            } else if self.filmstrip.shown() {
                 self.filmstrip_hide(now);
                 self.filmstrip.phase = Phase::Dismissed;
             } else {
@@ -352,6 +375,10 @@ impl Browser {
             return true;
         }
         if !self.filmstrip.shown() || !self.filmstrip.panel.contains(point) {
+            // REQ-6640 item 1: the filmstrip opens with no tab pressed.
+            if matches!(self.filmstrip.phase, Phase::Resting(_)) && self.tab_strip.tabs_area.contains(point) {
+                self.filmstrip.phase = Phase::Shut;
+            }
             return false;
         }
         let Some(picture) = self.filmstrip.pictures.iter().find(|picture| picture.rect.contains(point)).copied() else { return true };
