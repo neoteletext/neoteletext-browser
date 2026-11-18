@@ -1,4 +1,4 @@
-//! The wheel beside a zoomed page steps through the open page's sub-pages
+//! The wheel in the page area steps through the open page's sub-pages
 //! when it has them, and through the chosen magazine's pages when it has
 //! none (REQ-6349; the owner, 16 November 2026: "if a sub page is shown,
 //! then the mouse wheel must navigate sub pages not pages").
@@ -8,16 +8,64 @@ use crate::theme::WHITE;
 use crate::wall::{SLIDE_MILLISECONDS, WHEEL_PER_PAGE};
 use crate::wheel_cursor::{Ground, WheelCursor, until_blink};
 
+use super::Cursor;
+use super::wheel_owner::{Ways, WheelOwner, WheelPlace, WheelState, wheel_owner};
+
 /// A trackpad keeps at most two steps of movement in hand, as it does for
 /// pages (`Wall::wheel_pages`), so a fast flick does not run on.
 const CARRY_LIMIT: f64 = 2.0 * WHEEL_PER_PAGE;
 
 impl Browser {
-    /// Whether a notch of the wheel under the pointer steps a page or a
-    /// sub-page: beside a zoomed page, in the page area, with nothing over
-    /// it and off the page-size bar.
-    pub(super) fn wheel_steps_here(&self) -> bool {
-        !self.over_overlay() && self.wall.zoomed().is_some() && self.wall.contains(self.pointer) && !self.wall.over_bar(self.pointer)
+    /// Every input of the decision of whose the wheel is, as it is now
+    /// (REQ-6632, `wheel_owner.rs`).
+    pub(in crate::browser) fn wheel_state(&self) -> WheelState {
+        let point = self.pointer;
+        let elsewhere = !self.wall.contains(point)
+            || self.wall.over_bar(point)
+            || self.over_overlay()
+            || self.over_known(point)
+            || self.tips_take_wheel()
+            || self.full_screen_over_strip();
+        // The open filmstrip lies over everything below the strip, the
+        // overlays among them (REQ-6640 item 6).
+        let place = if self.over_filmstrip() {
+            WheelPlace::Filmstrip
+        } else if elsewhere {
+            WheelPlace::Elsewhere
+        } else if self.wall.zoomed().is_none() {
+            WheelPlace::Wall
+        } else if self.wall.open().is_some_and(|(_, rect)| rect.contains(point)) {
+            WheelPlace::Picture
+        } else {
+            WheelPlace::Margin
+        };
+        let (up, down) = self.wheel_ways();
+        WheelState { place, modifier: self.browser_modifier_held(), claimed: self.wheel_claimed(), ways: Ways { up, down } }
+    }
+
+    /// Whose the wheel is where the pointer is (REQ-6632).
+    pub(in crate::browser) fn wheel_owner(&self) -> WheelOwner {
+        wheel_owner(self.wheel_state())
+    }
+
+    /// Whether the browser's own modifier is held; without typing there
+    /// is none.
+    #[cfg_attr(not(feature = "interaction"), expect(clippy::unused_self, reason = "without typing there is no modifier to read"))]
+    fn browser_modifier_held(&self) -> bool {
+        #[cfg(feature = "interaction")]
+        return self.typing_modifier_held();
+        #[cfg(not(feature = "interaction"))]
+        false
+    }
+
+    /// Whether the open page's rule table claims the wheel at the pointer;
+    /// without typing no page takes the mouse.
+    #[cfg_attr(not(feature = "interaction"), expect(clippy::unused_self, reason = "without typing no page takes the mouse"))]
+    fn wheel_claimed(&self) -> bool {
+        #[cfg(feature = "interaction")]
+        return self.page_claims_wheel();
+        #[cfg(not(feature = "interaction"))]
+        false
     }
 
     /// The ways there are items to step to, before and after the one
@@ -34,17 +82,20 @@ impl Browser {
         (place > 0, place.saturating_add(1) < count)
     }
 
-    /// The wheel pointer, where the wheel steps and there is somewhere to
-    /// step to: beside the open page and never over it, where the pointer
-    /// points at the page's own cells and links and the wheel may be the
-    /// channel's (REQ-6356 items 1, 4 and 5).
+    /// The wheel pointer, read from whose the wheel is: where the wheel
+    /// steps and there is somewhere to step to, beside the open page or
+    /// over it (REQ-6632, REQ-6356 items 1 and 4).
     pub(super) fn wheel_cursor(&self) -> Option<WheelCursor> {
-        if !self.wheel_steps_here() || self.full_screen_over_strip() || self.wall.shown().any(|(_, page)| page.contains(self.pointer)) {
-            return None;
-        }
-        let (up, down) = self.wheel_ways();
+        let ways = self.wheel_owner().indicator()?;
         let ground = if self.ground_ink == WHITE { Ground::Dark } else { Ground::Light };
-        (up || down).then_some(WheelCursor { up, down, ground })
+        Some(WheelCursor { up: ways.up, down: ways.down, ground })
+    }
+
+    /// Whether the pointer has the wheel's shape: where the wheel steps and
+    /// no shape of higher precedence is chosen (`Browser::cursor`), so that
+    /// its flashes wake the window only while they are seen.
+    fn wheel_shown(&self) -> bool {
+        matches!(self.cursor(), Cursor::Wheel(_))
     }
 
     /// How long the pointer has had the wheel's shape at `now`: its wheel's
@@ -62,14 +113,14 @@ impl Browser {
     /// How long until the wheel pointer's wheel next changes, while that
     /// pointer shows.
     pub(in crate::browser) fn wheel_blink_deadline(&self, now: u64) -> Option<u64> {
-        self.wheel_cursor().map(|_| until_blink(self.wheel_shown_for(now)))
+        self.wheel_shown().then(|| until_blink(self.wheel_shown_for(now)))
     }
 
     /// The wheel pointer came, went, or its wheel changed between lit and
     /// unlit since it was last asked: the window then sets the other
     /// picture. The flashes start when the pointer takes the shape.
     pub(in crate::browser) fn wheel_blink_settle(&mut self, now: u64) -> bool {
-        if self.wheel_cursor().is_none() {
+        if !self.wheel_shown() {
             self.wheel_since = None;
             self.wheel_lit = None;
             return false;

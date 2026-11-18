@@ -118,11 +118,17 @@ impl Browser {
         false
     }
 
+    /// Whether a tip is shown that is taller than its room: the wheel
+    /// then scrolls it, wherever the pointer is.
+    pub(super) const fn tips_take_wheel(&self) -> bool {
+        self.tips.shown && self.tips.overflow > 0
+    }
+
     /// The wheel turned by `distance`, positive to go on: over a tip taller
     /// than the window, which covers the pointer, it brings the rest of the
     /// tip (REQ-1660 item 6). Returns whether it did.
     pub(super) fn tips_scroll(&mut self, distance: f64) -> bool {
-        if !self.tips.shown || self.tips.overflow == 0 {
+        if !self.tips_take_wheel() {
             return false;
         }
         // The cast drops the part of a line, and a turn moves at least one.

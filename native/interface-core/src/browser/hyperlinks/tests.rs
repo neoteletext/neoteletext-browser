@@ -70,6 +70,9 @@ fn the_pointer_on_a_link_is_reported_once_per_link_with_its_shape() {
     move_to(&mut browser, centre(rect, 11, 5));
     assert_eq!(points(&mut browser), [Some(LinkCell { key, version: VERSION, column: 11, row: 5 })]);
     assert_eq!(browser.cursor(), Cursor::Hand);
+    // The wheel steps here too, and the link's hand comes before its
+    // indicator (REQ-6632 item 3).
+    assert!(browser.wheel_owner().indicator().is_some(), "{:?}", browser.wheel_owner());
     move_to(&mut browser, centre(rect, 12, 5));
     assert_eq!(points(&mut browser), [], "the same link");
     move_to(&mut browser, centre(rect, 3, 7));
@@ -77,7 +80,8 @@ fn the_pointer_on_a_link_is_reported_once_per_link_with_its_shape() {
     assert_eq!(browser.cursor(), Cursor::External, "a link that leaves");
     move_to(&mut browser, centre(rect, 30, 12));
     assert_eq!(points(&mut browser), [None]);
-    assert_eq!(browser.cursor(), Cursor::Arrow);
+    // Off the links, the wheel there steps the pages (REQ-6632).
+    assert!(matches!(browser.cursor(), Cursor::Wheel(_)), "{:?}", browser.cursor());
 }
 
 /// REQ-737 item 3: on the corrected page a link is found where it is drawn,
@@ -314,7 +318,8 @@ fn a_link_lights_under_the_pointer_and_a_control_only_while_keys_go() {
     assert_eq!(lits(&mut browser), [Some(Lit { key, area: link, pressed: false })]);
     move_to(&mut browser, centre(rect, 4, 20));
     assert_eq!(lits(&mut browser), [None], "a control while keys do not go");
-    assert_eq!(browser.cursor(), Cursor::Arrow);
+    // No hand: the wheel's shape, as it steps the pages there (REQ-6632).
+    assert!(matches!(browser.cursor(), Cursor::Wheel(_)), "{:?}", browser.cursor());
 }
 
 /// DOC-1947: while keys go to the channel, a control shows the hand and

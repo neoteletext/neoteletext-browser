@@ -394,26 +394,21 @@ impl Browser {
         self.over_filmstrip() && self.filmstrip.hovered.is_some()
     }
 
-    /// The wheel over the open filmstrip slides its row by `distance`
-    /// points at `now`, the wheel towards the viewer to the left, within
-    /// the slide's bounds (REQ-6640 item 6); whether it was the
-    /// filmstrip's. Nothing beneath it moves.
-    pub(super) fn filmstrip_wheel(&mut self, distance: f64, now: u64) -> bool {
-        if !self.over_filmstrip() {
-            return false;
-        }
+    /// The wheel, which is the filmstrip's over it (`wheel_owner`), slides
+    /// its row by `distance` points at `now`, the wheel towards the viewer
+    /// to the left, within the slide's bounds (REQ-6640 item 6).
+    pub(super) fn filmstrip_wheel(&mut self, distance: f64, now: u64) {
         self.filmstrip_motion();
         let (least, most) = self.filmstrip.bounds;
         let target = (f64::from(self.filmstrip.slide.target()) - distance).clamp(least, most);
         self.filmstrip.slide.set(narrow(target), now);
-        true
     }
 
     /// A notch of the wheel over the open filmstrip slides it by one
-    /// picture; whether it was the filmstrip's.
-    pub(super) fn filmstrip_wheel_lines(&mut self, lines: f64, now: u64) -> bool {
+    /// picture.
+    pub(super) fn filmstrip_wheel_lines(&mut self, lines: f64, now: u64) {
         let step = self.filmstrip.step;
-        self.filmstrip_wheel(lines * step, now)
+        self.filmstrip_wheel(lines * step, now);
     }
 
     /// Where the row is slid to, eased, at `now`.

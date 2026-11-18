@@ -6,7 +6,10 @@ use crate::browser::{Browser, LINE_HEIGHT, Output};
 use crate::canvas::PageKey;
 use crate::geometry::Point;
 
+use self::wheel_owner::WheelOwner;
+
 mod press;
+pub(in crate::browser) mod wheel_owner;
 mod wheel_steps;
 
 /// The shape the pointer should take.
@@ -148,23 +151,18 @@ impl Browser {
     }
 
     /// A mouse wheel turned by `lines`, as the platform reports a wheel
-    /// that moves in notches (towards the user positive). Over a zoomed
-    /// page each notch is one page (`Wall::wheel_notch`); elsewhere it
-    /// scrolls by lines.
+    /// that moves in notches (towards the user positive). Where the wheel
+    /// steps (REQ-6632) each notch is one sub-page or page
+    /// (`wheel_notch`); elsewhere it scrolls by lines.
     pub fn wheel_lines(&mut self, lines: f64, now: u64) -> bool {
-        // Over the open filmstrip a notch slides it by a picture
-        // (REQ-6640 item 6).
-        if self.filmstrip_wheel_lines(lines, now) {
-            return true;
+        match self.wheel_owner() {
+            // Over the open filmstrip a notch slides it by a picture
+            // (REQ-6640 item 6).
+            WheelOwner::Filmstrip => self.filmstrip_wheel_lines(lines, now),
+            WheelOwner::Steps(_) => self.wheel_notch(lines, now),
+            WheelOwner::Page | WheelOwner::Scroll => return self.scroll_by(lines * LINE_HEIGHT, now),
         }
-        if self.tips_scroll(lines * LINE_HEIGHT) {
-            return true;
-        }
-        if self.wheel_steps_here() {
-            self.wheel_notch(lines, now);
-            return true;
-        }
-        self.scroll_by(lines * LINE_HEIGHT, now)
+        true
     }
 
     /// A press of the middle button: on a tab, the tab closes, and on what
@@ -261,10 +259,20 @@ impl Browser {
             || self.over_remote(point)
     }
 
-    /// Scrolls whatever is under the pointer.
+    /// Scrolls whatever is under the pointer, or steps where the wheel
+    /// steps (REQ-6632); the page's own wheel is not the browser's to use.
     pub fn scroll_by(&mut self, distance: f64, now: u64) -> bool {
-        if self.filmstrip_wheel(distance, now) {
-            return true;
+        match self.wheel_owner() {
+            WheelOwner::Filmstrip => {
+                self.filmstrip_wheel(distance, now);
+                return true;
+            }
+            WheelOwner::Steps(_) => {
+                self.wheel_pages(distance, now);
+                return true;
+            }
+            WheelOwner::Page => return false,
+            WheelOwner::Scroll => {}
         }
         if self.tips_scroll(distance) {
             return true;
@@ -277,16 +285,11 @@ impl Browser {
         }
         // What lies over the page area takes the wheel, so the pages and
         // the lists beneath never scroll through it.
-        if self.over_overlay() {
+        if self.over_overlay() || self.full_screen_over_strip() {
             return true;
         }
         if self.wall.over_bar(self.pointer) {
             self.wall.wheel_bar(distance, now);
-            return true;
-        }
-        // Zoomed, the wheel moves from page to page.
-        if self.wall.zoomed().is_some() && self.wall.contains(self.pointer) {
-            self.wheel_pages(distance, now);
             return true;
         }
         if self.regions.list.contains(self.pointer) {
@@ -335,10 +338,12 @@ mod tests {
         let field = browser.regions.field;
         browser.pointer_moved(f64::midpoint(field.x0, field.x1), f64::midpoint(field.y0, field.y1), 0);
         assert_eq!(browser.cursor(), Cursor::Arrow);
-        // On a zoomed page a click is on its cells, not a zoom.
+        // On a zoomed page a click is on its cells, not a zoom: no hand,
+        // and since no rule claims the wheel there it steps the pages, so
+        // the pointer is the wheel's (REQ-6632).
         press_at(&mut browser, &mut canvas, rect);
         browser.draw(&mut canvas, WIDTH, HEIGHT, 1_000);
-        assert_eq!(browser.cursor(), Cursor::Arrow);
+        assert!(matches!(browser.cursor(), Cursor::Wheel(_)), "{:?}", browser.cursor());
     }
 
     #[test]

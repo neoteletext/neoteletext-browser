@@ -18,6 +18,8 @@ use crate::canvas::{CELL_HEIGHT, CELL_WIDTH, PAGE_HEIGHT, PAGE_WIDTH, PageKey};
 use crate::input::{Intent, TouchPhase, mouse_button};
 use crate::wall::cell_in;
 
+use super::pointer::wheel_owner::WheelOwner;
+
 mod draw;
 
 pub use crate::regis::BLINK_MILLISECONDS;
@@ -466,16 +468,12 @@ impl Browser {
         }
     }
 
-    /// The wheel, in lines, over the open page: the channel's while keys go
-    /// to it (DOC-1938 and `interaction.md` section 7.3, decision 107);
-    /// `None` when it is the browser's, to scroll: beside the page, or with
-    /// the browser's modifier held. On a page with sub-pages it steps them,
-    /// unless the channel says it uses the wheel (DEC-6447).
+    /// The wheel, in lines, over the open page: the channel's where its
+    /// rule table claims it (DOC-1938, RULE-51 item 4), as the one
+    /// decision of whose the wheel is says (REQ-6632); `None` when it is
+    /// the browser's, to step or to scroll.
     pub fn terminal_wheel(&mut self, across: f64, down: f64) -> Option<bool> {
-        if self.typing.browser_modifier {
-            return None;
-        }
-        if self.wheel_is_subpages() && !self.typing.typing.is_some_and(|typing| typing.wheel) {
+        if self.wheel_owner() != WheelOwner::Page {
             return None;
         }
         let target = self.mouse_target()?;
@@ -487,6 +485,20 @@ impl Browser {
         }
         self.send(target, Intent::Wheel { dx, dy, at });
         Some(false)
+    }
+
+    /// Whether the browser's own modifier is held, which keeps the wheel
+    /// the browser's (REQ-4112).
+    pub(in crate::browser) const fn typing_modifier_held(&self) -> bool {
+        self.typing.browser_modifier
+    }
+
+    /// Whether the open page's rule table claims the wheel at the pointer:
+    /// the page takes the mouse, the pointer is on its picture, and the
+    /// trusted core last said the pointer is inside a `wheel` rule's
+    /// rectangle (RULE-51 item 4, DEC-6573 item 8).
+    pub(in crate::browser) fn page_claims_wheel(&self) -> bool {
+        self.mouse_target().is_some() && self.typing.typing.is_some_and(|typing| typing.wheel) && self.pointer_on_page().is_some()
     }
 
     /// While a cursor shows, the window draws again at its blink.

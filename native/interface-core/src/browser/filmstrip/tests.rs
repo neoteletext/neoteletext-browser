@@ -343,3 +343,19 @@ fn the_rested_picture_follows_the_slide_under_a_still_pointer() {
     browser.draw(&mut canvas, WIDTH, HEIGHT, now.saturating_add(1_000));
     assert_eq!(browser.filmstrip.hovered, Some(1), "the next picture has slid under the pointer");
 }
+
+/// REQ-6640 item 6 with REQ-6632: over the open filmstrip the one decision
+/// of whose the wheel is says the filmstrip's, and below it the page
+/// area's again; the pointer shows no wheel indicator there.
+#[test]
+fn the_wheels_owner_over_the_open_filmstrip_is_the_filmstrip() {
+    use crate::browser::pointer::wheel_owner::WheelOwner;
+    let (mut browser, mut canvas) = browser_of(3);
+    let now = open(&mut browser, &mut canvas, 0);
+    let first = browser.filmstrip.pictures[0].rect;
+    point_at(&mut browser, first, now);
+    assert_eq!(browser.wheel_owner(), WheelOwner::Filmstrip);
+    assert!(!matches!(browser.cursor(), crate::browser::Cursor::Wheel(_)), "no wheel indicator over it");
+    point_at(&mut browser, Rect::new(10.0, HEIGHT - 20.0, 20.0, HEIGHT - 10.0), now);
+    assert_ne!(browser.wheel_owner(), WheelOwner::Filmstrip, "below it, not the filmstrip's");
+}
