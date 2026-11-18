@@ -38,6 +38,8 @@ mod font_tests;
 mod render;
 mod rules;
 #[cfg(test)]
+mod sprite_pixel_tests;
+#[cfg(test)]
 mod tests;
 
 use feed::ReceiverRow;
