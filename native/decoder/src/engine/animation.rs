@@ -155,7 +155,7 @@ impl Engine {
                 Held::Cursor { page, sub, drawing } => self.regis.set_cursor(page, sub, drawing),
                 Held::Animate { page, sub, operations } => self.animate_record(page, sub, &operations),
                 Held::Sprites { page, sub, sprites } => self.animation.teletext.set_sprites(page, sub, &sprites),
-                Held::Objects { page, sub, generation, objects } => self.naplps.set_objects(page, sub, generation, objects),
+                Held::Objects { page, sub, generation, scope, title, objects } => self.naplps.set_objects(page, sub, generation, scope, title, objects),
                 Held::Sheet { language: Language::Regis, page, sub, generation, offset, data } => self.regis.read_sheet(page, sub, generation, offset, &data),
                 Held::Sheet { language: Language::Naplps, page, sub, generation, offset, data } => self.naplps.read_sheet(page, sub, generation, offset, &data),
             }

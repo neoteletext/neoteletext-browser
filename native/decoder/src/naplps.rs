@@ -327,6 +327,19 @@ impl Page {
         true
     }
 
+    /// Redefines one object, or adds it (DEC-6638 item 3), keeping every
+    /// other; false, changing nothing, when the terminal refuses it.
+    fn replace_object(&mut self, object: Object) -> bool {
+        if self.terminal.replace_object(on_canvas(&object)).is_err() {
+            return false;
+        }
+        match self.objects.iter_mut().find(|held| held.number == object.number) {
+            Some(held) => *held = object,
+            None => self.objects.push(object),
+        }
+        true
+    }
+
     /// The object of `number` as the channel defined it.
     fn object(&self, number: u16) -> Option<&Object> {
         self.objects.iter().find(|object| object.number == number)
@@ -491,7 +504,48 @@ pub struct NaplpsPages {
     /// Objects received for a generation of a sub-page's stream that has
     /// not begun: kept until it does, and dropped when another begins
     /// (ANIM-11).
-    waiting: BTreeMap<(u16, u16), (u16, Vec<Object>)>,
+    waiting: BTreeMap<(u16, u16), Waiting>,
+}
+
+/// What a `NAPLPS_OBJECTS` record does to its sub-page's objects (the
+/// engine's `naplps_objects::Scope`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Scope {
+    /// Its objects are all the sub-page's, and its title, or none, the
+    /// picture's (ANIM-11).
+    Whole,
+    /// Its one object redefines the sub-page's object of that number, or
+    /// is added; every other object, with its animation state, and the
+    /// title are kept (DEC-6638 item 3).
+    One,
+}
+
+/// The objects, and the title, kept for a generation of a sub-page's
+/// stream not yet begun.
+struct Waiting {
+    generation: u16,
+    objects: Vec<Object>,
+    /// The title, as the records kept say it.
+    title: Title,
+}
+
+/// What the records kept for a stream not yet begun say of its title.
+enum Title {
+    /// Only single objects have come, which leave the title as it is.
+    Kept,
+    /// A whole record gave this title, or none.
+    Given(Option<String>),
+}
+
+impl Page {
+    /// Gives the picture its title, or takes it away; a title the
+    /// renderer refuses (the engine's reader has checked it as the
+    /// renderer does) leaves none.
+    fn set_title(&mut self, title: Option<&str>) {
+        if self.terminal.set_title(title.unwrap_or_default()).is_err() {
+            let _ = self.terminal.set_title("");
+        }
+    }
 }
 
 impl NaplpsPages {
@@ -519,8 +573,11 @@ impl NaplpsPages {
             let Some(mut page) = Page::new(record.generation, sheet, self.at_once) else { return };
             // The objects sent ahead of this generation are its own; those
             // of any other are dropped (ANIM-11).
-            if let Some((_, objects)) = self.waiting.remove(&key).filter(|(generation, _)| *generation == record.generation) {
-                let _ = page.set_objects(objects);
+            if let Some(waiting) = self.waiting.remove(&key).filter(|waiting| waiting.generation == record.generation) {
+                let _ = page.set_objects(waiting.objects);
+                if let Title::Given(title) = waiting.title {
+                    page.set_title(title.as_deref());
+                }
             }
             self.pages.insert(key, page);
         }
@@ -540,24 +597,75 @@ impl NaplpsPages {
         page.changed = true;
     }
 
-    /// Gives a sub-page all its objects, in the 640 by 480 picture's
-    /// pixels, replacing any it had (ANIM-11), and with them their
-    /// animation state (ANIM-6). Objects for a generation of the stream
-    /// that is not the one shown are kept until that generation begins. A
-    /// set the renderer refuses changes nothing.
-    pub fn set_objects(&mut self, page: u16, sub: u16, generation: u16, objects: Vec<Object>) {
+    /// Takes a `NAPLPS_OBJECTS` record for a sub-page. A whole record
+    /// gives it all its objects, replacing any it had (ANIM-11), and with
+    /// them their animation state (ANIM-6), and its title, or none; a
+    /// record of one object redefines or adds that object alone, its own
+    /// animation state forgotten and every other object's, and the
+    /// title, kept (DEC-6638 item 3). Objects are in the 640 by 480
+    /// picture's pixels and carry their labels, which the renderer keeps
+    /// for the screen-reader tree. Objects for a generation of the stream
+    /// that is not the one shown are kept until that generation begins.
+    /// What the renderer refuses changes nothing.
+    pub fn set_objects(&mut self, page: u16, sub: u16, generation: u16, scope: Scope, title: Option<String>, objects: Vec<Object>) {
         let key = (page, sub);
         if let Some(held) = self.pages.get_mut(&key).filter(|held| held.generation == generation) {
-            if held.set_objects(objects) {
-                held.animation.clear();
-                held.changed = true;
+            match scope {
+                Scope::Whole => {
+                    if held.set_objects(objects) {
+                        held.animation.clear();
+                        held.set_title(title.as_deref());
+                        held.changed = true;
+                    }
+                }
+                Scope::One => {
+                    let Some(object) = objects.into_iter().next() else { return };
+                    let number = object.number;
+                    if held.replace_object(object) {
+                        held.animation.forget(Target::object(number));
+                        held.changed = true;
+                    }
+                }
             }
             return;
         }
         if !self.waiting.contains_key(&key) && self.waiting.len() >= MAX_WAITING {
             self.waiting.pop_first();
         }
-        self.waiting.insert(key, (generation, objects));
+        match scope {
+            Scope::Whole => {
+                self.waiting.insert(key, Waiting { generation, objects, title: Title::Given(title) });
+            }
+            Scope::One => {
+                let Some(object) = objects.into_iter().next() else { return };
+                let waiting = self.waiting.entry(key).or_insert(Waiting { generation, objects: Vec::new(), title: Title::Kept });
+                if waiting.generation != generation {
+                    *waiting = Waiting { generation, objects: Vec::new(), title: Title::Kept };
+                }
+                match waiting.objects.iter_mut().find(|held| held.number == object.number) {
+                    Some(held) => *held = object,
+                    None => waiting.objects.push(object),
+                }
+            }
+        }
+    }
+
+    /// The title of a NAPLPS picture of `page`, the first of its sub-pages
+    /// with one: the name a page list shows for it when the program's
+    /// index gives none (DEC-6638 item 3).
+    #[must_use]
+    pub fn title(&self, page: u16) -> Option<&str> {
+        self.pages.iter().filter(|((held, _), _)| *held == page).find_map(|(_, held)| held.terminal.title())
+    }
+
+    /// The labels of the objects of `page`'s sub-page `sub`, by number:
+    /// what the screen-reader tree is to say for each (TODO-6658).
+    #[must_use]
+    pub fn labels(&self, page: u16, sub: u16) -> Vec<(u16, &str)> {
+        self.pages
+            .get(&(page, sub))
+            .map(|held| held.objects.iter().filter(|object| !object.label.is_empty()).map(|object| (object.number, object.label.as_str())).collect())
+            .unwrap_or_default()
     }
 
     /// Reads one SHEET record of NAPLPS (ANIM-17): the bytes are kept, in
@@ -853,7 +961,7 @@ mod tests {
     fn an_object_of_the_640_by_480_picture_lies_where_that_place_is_on_the_raster() {
         let mut pages = NaplpsPages::default();
         pages.read(&record(0x100, 1, 0, b"A"));
-        pages.set_objects(0x100, 0, 1, vec![Object { shown: false, ..square(7, "") }]);
+        pages.set_objects(0x100, 0, 1, Scope::Whole, None, vec![Object { shown: false, ..square(7, "") }]);
         let drawn = pages.take(0x100, Some(0)).unwrap();
         let pixels = unpack(&drawn.picture.packed);
         // (320, 240) is the canvas's (240, 231), the raster's (240, 250);
@@ -864,7 +972,7 @@ mod tests {
         assert_eq!(pixels[249 * 480 + 240], 0, "above its top");
         assert_eq!(pixels[295 * 480 + 240], 3);
         assert_eq!(pixels[296 * 480 + 240], 0, "past its bottom");
-        pages.set_objects(0x100, 0, 1, vec![square(7, "")]);
+        pages.set_objects(0x100, 0, 1, Scope::Whole, None, vec![square(7, "")]);
         let pick = pages.take(0x100, Some(0)).unwrap().pick.unwrap();
         assert_eq!(pick.at(PictureLanguage::Naplps, 240, 250).drawing, 7, "picked at its dot of the raster");
         assert_eq!(pick.at(PictureLanguage::Naplps, 239, 250).drawing, 0);
@@ -910,6 +1018,46 @@ mod tests {
         assert!(canvas.pixels().iter().any(|&pixel| pixel != 0), "the delta draws");
         assert_eq!(display, canvas.pixels(), "the engine's Greek glyph, as the renderer draws it");
         assert_ne!(greek, drawn(b"D"), "not the primary set's D");
+    }
+
+    /// DEC-6638 item 3, TODO-6694 step 3: a whole record's labels and
+    /// title reach the renderer, and the title names the page; a record of
+    /// one object redefines that object alone, at its new definition,
+    /// forgetting its own animation state and keeping every other object,
+    /// its state, and the title; and one for a stream not yet begun waits
+    /// for it with the rest.
+    #[test]
+    fn labels_a_title_and_one_object_redefined_reach_the_renderer() {
+        use neoteletext_rules::animate::OperationKind;
+        let mut pages = NaplpsPages::default();
+        pages.read(&record(0x100, 1, 0, b"A"));
+        let other = Object { number: 8, x: 0, y: 0, ..square(8, "Stop") };
+        pages.set_objects(0x100, 0, 1, Scope::Whole, Some("Weather map".into()), vec![square(7, "Play"), other.clone()]);
+        assert_eq!(pages.title(0x100), Some("Weather map"));
+        assert_eq!(pages.labels(0x100, 0), [(7, "Play"), (8, "Stop")]);
+        let held = pages.pages.get(&(0x100, 0)).unwrap();
+        assert_eq!((held.terminal.object(7).unwrap().label.as_str(), held.terminal.title()), ("Play", Some("Weather map")), "the renderer has them");
+        // Object 8 is hidden by its animation state, then object 7 is redefined.
+        let hide = Operation { target: Target::object(8), kind: OperationKind::Hide };
+        assert!(pages.animate(0x100, Some(0), &hide, 0));
+        let hide = Operation { target: Target::object(7), kind: OperationKind::Hide };
+        assert!(pages.animate(0x100, Some(0), &hide, 0));
+        pages.set_objects(0x100, 0, 1, Scope::One, None, vec![Object { x: 100, y: 50, ..square(7, "Pause") }]);
+        let state = pages.target_state(0x100, Some(0), 7).unwrap();
+        assert_eq!((state.x, state.y, state.shown), (100, 50, true), "at its new definition, its own state forgotten");
+        assert!(!pages.target_state(0x100, Some(0), 8).unwrap().shown, "the other keeps its state");
+        assert_eq!(pages.labels(0x100, 0), [(7, "Pause"), (8, "Stop")]);
+        assert_eq!(pages.title(0x100), Some("Weather map"), "the title kept");
+        let canvas_object = pages.pages.get(&(0x100, 0)).unwrap().terminal.object(7).unwrap().clone();
+        assert_eq!((canvas_object.x, canvas_object.y), (75, 48), "on the canvas, scaled");
+        pages.set_objects(0x100, 0, 1, Scope::Whole, None, vec![other]);
+        assert_eq!(pages.title(0x100), None, "a whole record without a title takes it away");
+        // For generation 2, not yet begun: a whole set and one object more.
+        pages.set_objects(0x100, 0, 2, Scope::Whole, Some("Later".into()), vec![square(7, "")]);
+        pages.set_objects(0x100, 0, 2, Scope::One, None, vec![Object { x: 0, ..square(9, "Nine") }]);
+        pages.read(&record(0x100, 2, 0, b"B"));
+        assert_eq!((pages.title(0x100), pages.labels(0x100, 0)), (Some("Later"), vec![(9, "Nine")]));
+        assert!(pages.target_state(0x100, Some(0), 7).is_some());
     }
 
     /// As for ReGIS: one sub-page more than are kept, and the one fed

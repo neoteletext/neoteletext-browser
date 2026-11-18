@@ -676,6 +676,41 @@ fn naplps_objects_are_composed_picked_hidden_moved_and_cycled() {
     assert_eq!(REGIS_HEIGHT, 480);
 }
 
+/// DEC-6638 item 3, TODO-6694 step 3: a `NAPLPS_OBJECTS` record's labels
+/// and title, read from the channel's pushed message, reach the renderer;
+/// a record of one object, sent after, redefines that object alone and
+/// keeps the other and the title.
+#[test]
+fn a_naplps_objects_records_labels_title_and_one_object_reach_the_renderer() {
+    use neoteletext_web::records::naplps_objects::{Contents, LabelledObject, encode_contents};
+    let mut bytes = vec![DEF_MACRO, 0x20];
+    bytes.extend(rectangle(3, 0, 0, 32, 32));
+    bytes.extend([END, 0x3E, 0x40]);
+    let mut engine = Engine::new();
+    engine.feed_whole(true, true, &naplps(PAGE, 1, 0, &bytes));
+    let send = |engine: &mut Engine, contents: &Contents<'_>| {
+        let mut packets = Vec::new();
+        encode_contents((address(PAGE), SubCode::new(0), 1), contents, 0, 0, &mut |packet| packets.extend_from_slice(&packet.bytes)).unwrap();
+        engine.feed_whole(true, true, &packets);
+    };
+    let objects = [
+        LabelledObject { object: object(1, ObjectKind::Macro, (100, 100), &[0x20]), label: "Sun" },
+        LabelledObject { object: object(2, ObjectKind::Region, (320, 100), &[]), label: "Cloud" },
+    ];
+    send(&mut engine, &Contents::Whole { objects: &objects, title: Some("Weather") });
+    assert_eq!(engine.naplps().title(PAGE), Some("Weather"));
+    assert_eq!(engine.naplps().labels(PAGE, 0), [(1, "Sun"), (2, "Cloud")]);
+    send(&mut engine, &Contents::One(LabelledObject { object: object(1, ObjectKind::Macro, (200, 300), &[0x20]), label: "Moon" }));
+    assert_eq!(engine.naplps().labels(PAGE, 0), [(1, "Moon"), (2, "Cloud")], "one object redefined, the other kept");
+    assert_eq!(engine.naplps().title(PAGE), Some("Weather"), "and the title");
+    let state = engine.animation_picture(PAGE).target(Target::object(1)).unwrap();
+    assert_eq!((state.x, state.y), (200, 300), "at its new definition");
+    assert!(engine.animation_picture(PAGE).target(Target::object(2)).is_some());
+    // The page arrives: its title for the page list is the picture's,
+    // not the text of its rows (DEC-6638 item 3).
+    assert_eq!(engine.feed_whole(true, true, &tti(b"PN,10000\nSC,0000\nPS,C000\nOL,1,ROW TEXT\n")), [(PAGE, "Weather".to_owned())]);
+}
+
 /// ANIM-7, ANIM-6, ANIM-13 (REQ-6536): a teletext sub-page's SPRITES
 /// record gives its sprites; the rule table reads each one's cells and
 /// its rectangle in dots; an ANIMATE record moves and hides them, and the
