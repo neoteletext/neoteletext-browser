@@ -18,6 +18,7 @@ fn settings_round_trip_through_their_file() {
         aspect: true,
         wheel_inverted: true,
         regis_contain: false,
+        paint_gradually: false,
         restore: false,
         check_updates: false,
         channels_may_know: false,
@@ -53,6 +54,20 @@ fn regis_is_contained_until_set_to_the_teletext_page_and_read_strictly() {
     assert!(!Settings::read(&format!("{VERSION_LINE}\nregis teletext\n")).0.regis_contain);
     let (read, dropped) = Settings::read(&format!("{VERSION_LINE}\nregis stretched\n"));
     assert_eq!((read.regis_contain, dropped.len()), (true, 1));
+}
+
+/// ANIM-15, DEC-6525 item 27 (REQ-6536): drawings are painted gradually
+/// by default, in a file that has no line for it too; kept as `drawings
+/// whole` and read strictly.
+#[test]
+fn drawings_are_painted_gradually_until_set_whole_and_read_strictly() {
+    assert!(Settings::default().paint_gradually);
+    assert!(Settings::default().text().contains("drawings gradual\n"));
+    let (read, dropped) = Settings::read(&format!("{VERSION_LINE}\nbar on\n"));
+    assert_eq!((read.paint_gradually, dropped.len()), (true, 0), "a file written before it");
+    assert!(!Settings::read(&format!("{VERSION_LINE}\ndrawings whole\n")).0.paint_gradually);
+    let (read, dropped) = Settings::read(&format!("{VERSION_LINE}\ndrawings slowly\n"));
+    assert_eq!((read.paint_gradually, dropped.len()), (true, 1));
 }
 
 /// REQ-737 item 2: off by default, in a file that has no line for it too;

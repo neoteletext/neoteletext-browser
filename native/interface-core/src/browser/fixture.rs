@@ -68,6 +68,7 @@ pub(super) fn settings() -> SettingsView {
         aspect: false,
         wheel_inverted: false,
         regis_contain: true,
+        paint_gradually: true,
         refusal: None,
         loopback_exemption: None,
     }

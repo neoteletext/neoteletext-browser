@@ -160,6 +160,11 @@ pub enum ToDecoder {
     /// evaluated and only it plays a local sound; with none, as when the
     /// tab is not the active one, no table of the channel is evaluated.
     RulesPage(Option<u16>),
+    /// The viewer's setting "Paint drawings gradually" (animation.md
+    /// ANIM-15, DEC-6525 item 27): on, a ReGIS drawing with a paint rate
+    /// appears at that rate and a NAPLPS WAIT delays what follows it;
+    /// off, everything appears at once. A decoder begins with it on.
+    PaintGradually(bool),
     /// A state query the channel sent for a page (RULE-47): answered once
     /// by [`FromDecoder::PageState`] when that page is the open page.
     RulesQuery {
@@ -464,6 +469,10 @@ pub fn write_to_decoder(out: &mut dyn Write, message: &ToDecoder) -> Result<(), 
         ToDecoder::RuleInput { .. } | ToDecoder::Metered { .. } | ToDecoder::RulesQuery { .. } | ToDecoder::RulesPage(_) => {
             push_rules_to_decoder(&mut payload, message)?
         }
+        ToDecoder::PaintGradually(gradual) => {
+            payload.push(u8::from(*gradual));
+            kinds::KIND_PAINT_GRADUALLY
+        }
     };
     write_frame(out, kind, &payload)
 }
@@ -648,6 +657,7 @@ pub fn read_from_core(input: &mut dyn Read) -> Result<Option<ToDecoder>, Protoco
             ToDecoder::RegisViewer { page, sub, viewer: crate::regis::read_viewer(&mut fields)? }
         }
         kinds::KIND_RULE_INPUT | kinds::KIND_METERED | kinds::KIND_RULES_QUERY | kinds::KIND_RULES_PAGE => read_rules_to_decoder(kind, &mut fields)?,
+        kinds::KIND_PAINT_GRADUALLY => ToDecoder::PaintGradually(fields.flag("paint gradually")?),
         other => return Err(ProtocolError::UnknownKind(other)),
     };
     fields.end()?;

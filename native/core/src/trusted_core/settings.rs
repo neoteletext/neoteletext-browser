@@ -73,6 +73,7 @@ impl Core {
             aspect: self.settings.aspect,
             wheel_inverted: self.settings.wheel_inverted,
             regis_contain: self.settings.regis_contain,
+            paint_gradually: self.settings.paint_gradually,
             refusal: self.refusal.as_deref().map(|refusal| clean(refusal, protocol::settings::MAX_REFUSAL)),
             loopback_exemption: self.loopback_exemption.clone(),
         };
@@ -99,6 +100,7 @@ impl Core {
         let remote = matches!(change, SettingChange::Remote(_));
         let checking = if let SettingChange::CheckUpdates(on) = change { Some(on) } else { None };
         let home = matches!(change, SettingChange::Home(_));
+        let painting = if let SettingChange::PaintGradually(on) = change { Some(on) } else { None };
         match checked_change(&mut self.settings, change, current.as_deref()) {
             Ok(security) => {
                 self.refusal = None;
@@ -124,6 +126,14 @@ impl Core {
                 }
                 if home {
                     self.home_named();
+                }
+                // Every decoder running paints by the setting from now
+                // (ANIM-15); one started later is told as it starts.
+                if let Some(gradual) = painting {
+                    let channels: Vec<u32> = self.decoders.keys().copied().collect();
+                    for channel in channels {
+                        self.tell(channel, protocol::decoder::ToDecoder::PaintGradually(gradual));
+                    }
                 }
             }
             Err(reason) => self.refusal = Some(reason),
@@ -196,6 +206,12 @@ fn checked_change(settings: &mut Settings, change: SettingChange, current: Optio
         // maps picks by it (REQ-6363 item 4).
         SettingChange::RegisContain(on) => {
             settings.regis_contain = on;
+            Ok(None)
+        }
+        // Whether drawings appear gradually, the window's alone too: the
+        // decoders are told, no channel is (animation.md ANIM-15).
+        SettingChange::PaintGradually(on) => {
+            settings.paint_gradually = on;
             Ok(None)
         }
         // And whether to check for updates (`installation-and-updates.md`
@@ -301,9 +317,11 @@ mod tests {
         assert_eq!(change(SettingChange::RestoreSession(false)), Ok(None));
         assert_eq!(change(SettingChange::WheelInverted(true)), Ok(None));
         assert_eq!(change(SettingChange::RegisContain(false)), Ok(None));
+        assert_eq!(change(SettingChange::PaintGradually(false)), Ok(None));
         assert!(!settings.restore);
         assert!(settings.wheel_inverted, "REQ-6351");
         assert!(!settings.regis_contain, "REQ-6363");
+        assert!(!settings.paint_gradually, "ANIM-15");
         assert_eq!(settings.home, "https://open.example/");
         assert_eq!((settings.volume, settings.sound, settings.proxy.is_none()), (30, false, true));
         assert_eq!(settings.local.len(), stored::MAX_LOCAL - 1);

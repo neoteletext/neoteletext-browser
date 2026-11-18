@@ -51,6 +51,8 @@ const CHANGE_REMOTE: u8 = 11;
 const CHANGE_ASPECT: u8 = 12;
 const CHANGE_WHEEL_INVERTED: u8 = 13;
 const CHANGE_REGIS_CONTAIN: u8 = 14;
+/// "Paint drawings gradually" (animation.md ANIM-15); 15 is taken.
+const CHANGE_PAINT_GRADUALLY: u8 = 16;
 // Far from the others, so changes added beside this one elsewhere do not
 // meet it (installation-and-updates.md section 3.4).
 const CHANGE_CHECK_UPDATES: u8 = 40;
@@ -100,6 +102,7 @@ pub(crate) fn push_view(payload: &mut Vec<u8>, view: &SettingsView) -> Result<()
     push_flag(payload, view.aspect);
     push_flag(payload, view.wheel_inverted);
     push_flag(payload, view.regis_contain);
+    push_flag(payload, view.paint_gradually);
     match &view.refusal {
         Some(refusal) => {
             push_flag(payload, true);
@@ -129,6 +132,7 @@ pub(crate) fn read_view(fields: &mut Fields<'_>) -> Result<SettingsView, Protoco
     let aspect = fields.flag("flag")?;
     let wheel_inverted = fields.flag("flag")?;
     let regis_contain = fields.flag("flag")?;
+    let paint_gradually = fields.flag("flag")?;
     let refusal = if fields.flag("flag")? { Some(fields.text(MAX_REFUSAL)?) } else { None };
     let loopback_exemption = if fields.flag("flag")? { Some(fields.text(MAX_LOOPBACK_EXEMPTION)?) } else { None };
     Ok(SettingsView {
@@ -142,6 +146,7 @@ pub(crate) fn read_view(fields: &mut Fields<'_>) -> Result<SettingsView, Protoco
         aspect,
         wheel_inverted,
         regis_contain,
+        paint_gradually,
         refusal,
         loopback_exemption,
     })
@@ -201,6 +206,10 @@ pub(crate) fn push_change(payload: &mut Vec<u8>, change: &SettingChange) -> Resu
             payload.push(CHANGE_REGIS_CONTAIN);
             push_flag(payload, *on);
         }
+        SettingChange::PaintGradually(on) => {
+            payload.push(CHANGE_PAINT_GRADUALLY);
+            push_flag(payload, *on);
+        }
     }
     Ok(())
 }
@@ -243,6 +252,7 @@ pub(crate) fn read_change(fields: &mut Fields<'_>) -> Result<SettingChange, Prot
         CHANGE_ASPECT => SettingChange::Aspect(fields.flag("flag")?),
         CHANGE_WHEEL_INVERTED => SettingChange::WheelInverted(fields.flag("flag")?),
         CHANGE_REGIS_CONTAIN => SettingChange::RegisContain(fields.flag("flag")?),
+        CHANGE_PAINT_GRADUALLY => SettingChange::PaintGradually(fields.flag("flag")?),
         _ => return Err(ProtocolError::BadValue("setting change")),
     })
 }

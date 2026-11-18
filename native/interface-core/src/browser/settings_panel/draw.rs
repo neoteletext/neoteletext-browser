@@ -66,6 +66,7 @@ impl Browser {
         y = draw_settings_restore(canvas, view.as_ref(), &mut controls, row(y), field_left);
         y = draw_settings_wheel(canvas, view.as_ref(), &mut controls, row(y), field_left);
         y = draw_settings_regis(canvas, view.as_ref(), &mut controls, row(y), field_left);
+        y = draw_settings_painting(canvas, view.as_ref(), &mut controls, row(y), field_left);
         y = draw_settings_known(canvas, view.as_ref(), &mut controls, row(y), field_left);
         y = self.draw_settings_updates(canvas, &mut controls, row(y), field_left);
         y = self.draw_settings_local(canvas, view.as_ref(), &mut controls, row(y), field_left);
@@ -261,6 +262,20 @@ fn draw_settings_regis<C: Canvas + ?Sized>(canvas: &mut C, view: Option<&Setting
     controls.regis_teletext = Rect::new(controls.regis_contain.x1 + GAP, y, controls.regis_contain.x1 + GAP + BUTTON_WIDTH * 2.6, y + ROW);
     button(canvas, controls.regis_contain, "Contain", contain);
     button(canvas, controls.regis_teletext, "Contain to teletext", !contain);
+    y + ROW + ROW_GAP
+}
+
+/// Whether drawings with a paint rate appear gradually, or everything at
+/// once (animation.md ANIM-15), in `line`. Returns where the next row
+/// starts.
+fn draw_settings_painting<C: Canvas + ?Sized>(canvas: &mut C, view: Option<&SettingsView>, controls: &mut Controls, line: Rect, field_left: f64) -> f64 {
+    let y = line.y0;
+    let gradual = view.is_none_or(|view| view.paint_gradually);
+    left_centred(canvas, line, 0.0, "Paint drawings", ROW_TITLE, WHITE);
+    controls.paint_gradual = Rect::new(field_left, y, field_left + BUTTON_WIDTH * 1.5, y + ROW);
+    controls.paint_whole = Rect::new(controls.paint_gradual.x1 + GAP, y, controls.paint_gradual.x1 + GAP + BUTTON_WIDTH * 1.5, y + ROW);
+    button(canvas, controls.paint_gradual, "Gradually", gradual);
+    button(canvas, controls.paint_whole, "At once", !gradual);
     y + ROW + ROW_GAP
 }
 

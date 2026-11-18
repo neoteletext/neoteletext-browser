@@ -96,6 +96,11 @@ impl Core {
                 if let Some(page) = self.typing.rules_page(*id) {
                     let _ = decoder.tell(&ToDecoder::RulesPage(Some(page)));
                 }
+                // And how the viewer has drawings painted, when not as a
+                // decoder begins (animation.md ANIM-15).
+                if !self.settings.paint_gradually {
+                    let _ = decoder.tell(&ToDecoder::PaintGradually(false));
+                }
                 self.rules_decoder_gone(*id);
                 self.decoders.insert(*id, decoder);
                 self.rewind_source(*id);

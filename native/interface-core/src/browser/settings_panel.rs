@@ -93,6 +93,8 @@ struct Controls {
     wheel_inverted: Rect,
     regis_contain: Rect,
     regis_teletext: Rect,
+    paint_gradual: Rect,
+    paint_whole: Rect,
     know_allow: Rect,
     know_never: Rect,
     manage_known: Rect,

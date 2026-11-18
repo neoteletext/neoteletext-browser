@@ -83,3 +83,7 @@ pub(super) const KIND_RULE_COUNTERS: u8 = 185;
 // Trusted core to decoder: the page of the channel that is the open page
 // of the active tab, whose table alone is evaluated (RULE-58), or none.
 pub(super) const KIND_RULES_PAGE: u8 = 187;
+// Trusted core to decoder: the viewer's setting "Paint drawings
+// gradually" (neoteletext-common's animation.md ANIM-15), in the next
+// number free across every pipe on 18 November 2026.
+pub(super) const KIND_PAINT_GRADUALLY: u8 = 188;

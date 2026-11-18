@@ -18,6 +18,7 @@ fn view() -> SettingsView {
         aspect: false,
         wheel_inverted: false,
         regis_contain: true,
+        paint_gradually: true,
         refusal: None,
         loopback_exemption: None,
     }
@@ -112,6 +113,10 @@ fn each_control_asks_for_its_change() {
     let (contain, teletext) = (browser.settings.controls.regis_contain, browser.settings.controls.regis_teletext);
     assert_eq!(press(&mut browser, teletext), [Output::Setting(SettingChange::RegisContain(false))]);
     assert_eq!(press(&mut browser, contain), [Output::Setting(SettingChange::RegisContain(true))]);
+    // ANIM-15 (REQ-6536): drawings painted gradually, or at once.
+    let (gradual, whole) = (browser.settings.controls.paint_gradual, browser.settings.controls.paint_whole);
+    assert_eq!(press(&mut browser, whole), [Output::Setting(SettingChange::PaintGradually(false))]);
+    assert_eq!(press(&mut browser, gradual), [Output::Setting(SettingChange::PaintGradually(true))]);
     // VS-112 and open question Q16: Allow and Never ask for the change;
     // "Which…" shows the list in the panel, and its close button goes back
     // to the settings.

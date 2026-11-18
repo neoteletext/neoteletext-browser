@@ -87,6 +87,10 @@ impl Browser {
             Some(SettingChange::RegisContain(true))
         } else if controls.regis_teletext.contains(point) {
             Some(SettingChange::RegisContain(false))
+        } else if controls.paint_gradual.contains(point) {
+            Some(SettingChange::PaintGradually(true))
+        } else if controls.paint_whole.contains(point) {
+            Some(SettingChange::PaintGradually(false))
         } else if controls.know_allow.contains(point) {
             Some(SettingChange::ChannelsMayKnow(true))
         } else if controls.know_never.contains(point) {

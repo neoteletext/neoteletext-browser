@@ -200,6 +200,7 @@ fn every_message_to_the_interface_round_trips() {
             aspect: false,
             wheel_inverted: true,
             regis_contain: true,
+            paint_gradually: true,
             refusal: None,
             loopback_exemption: None,
         }),

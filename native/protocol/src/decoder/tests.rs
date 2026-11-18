@@ -109,6 +109,9 @@ fn every_kind_round_trips() {
         ToDecoder::Close,
         ToDecoder::Region(Some(NIBBLE_MASK)),
         ToDecoder::Region(None),
+        // ANIM-15 (REQ-6536): the viewer's setting, either way.
+        ToDecoder::PaintGradually(false),
+        ToDecoder::PaintGradually(true),
         ToDecoder::View(View { page: 0x302, reveal: true, hold: false, mix: true, subpage: Some(2) }),
         ToDecoder::View(View { page: 0x100, ..View::default() }),
         ToDecoder::SubPageRows { page: 0x210, range: SubPageRange { first: 8_126, count: 64 } },

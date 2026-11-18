@@ -54,6 +54,10 @@ pub struct SettingsView {
     /// A ReGIS picture is contained in the page area, its page laid out in
     /// the picture's shape; else contained to the teletext page (REQ-6363).
     pub regis_contain: bool,
+    /// Drawings with a paint rate appear gradually and a NAPLPS WAIT
+    /// delays what follows it; off, everything appears at once
+    /// (animation.md ANIM-15, DEC-6525 item 27).
+    pub paint_gradually: bool,
     /// Why the last change was refused, if it was.
     pub refusal: Option<String>,
     /// On Windows, the command an administrator runs once so that channels
@@ -95,6 +99,9 @@ pub enum SettingChange {
     /// A ReGIS picture contained in the page area (true) or to the
     /// teletext page (REQ-6363).
     RegisContain(bool),
+    /// Drawings painted gradually (true) or at once (animation.md
+    /// ANIM-15).
+    PaintGradually(bool),
 }
 
 /// The furthest a floating remote's corner may be from the window's, in

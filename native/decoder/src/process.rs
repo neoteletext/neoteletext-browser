@@ -236,6 +236,13 @@ pub fn run(store_pages: usize) -> Result<(), ProtocolError> {
                 // Nothing arrived; what is owed is drawn below, as after data.
                 Vec::new()
             }
+            // The viewer's setting "Paint drawings gradually" (ANIM-15):
+            // off, what was being painted gradually is whole at the next
+            // draw, below.
+            ToDecoder::PaintGradually(gradual) => {
+                engine.set_paint_gradually(gradual);
+                Vec::new()
+            }
             // The viewer's input for the open page's rule table, its
             // metered values and a state query (RULE-52, RULE-33,
             // RULE-47): each waits for the next tick.

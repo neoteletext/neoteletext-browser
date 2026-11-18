@@ -333,6 +333,7 @@ fn the_aspect_correction_stretches_the_drawn_page_and_keeps_its_screen() {
             aspect,
             wheel_inverted: false,
             regis_contain: true,
+            paint_gradually: true,
             refusal: None,
             loopback_exemption: None,
         });
