@@ -33,7 +33,7 @@ impl Core {
         if let Some(previous) = self.showing.take() {
             self.tell(previous, ToDecoder::Showing(Vec::new()));
         }
-        let tabs = self.session.tab_infos();
+        let tabs = self.tab_infos();
         let active = self.session.active;
         self.send(&ToInterface::Tabs { tabs, active })?;
         self.send(&ToInterface::Strip(self.strip()))?;
@@ -83,8 +83,8 @@ impl Core {
     }
 
     /// The tabs again, after a change of mute, and the mutes themselves.
-    fn send_tabs(&mut self) -> Result<(), String> {
-        let tabs = self.session.tab_infos();
+    pub(super) fn send_tabs(&mut self) -> Result<(), String> {
+        let tabs = self.tab_infos();
         let active = self.session.active;
         self.send(&ToInterface::Tabs { tabs, active })?;
         self.send_mutes();

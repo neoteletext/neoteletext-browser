@@ -28,6 +28,14 @@ pub(super) struct Decoder {
     heard: bool,
 }
 
+impl Decoder {
+    /// Its processor time since it started, from the operating system's
+    /// account as the broker reads it (REQ-6626 item 1 a).
+    pub(super) fn processor_time_us(&self) -> std::io::Result<u64> {
+        self.child.processor_time_us()
+    }
+}
+
 pub(super) struct Fetcher {
     child: Helper,
     /// As [`Decoder::generation`].

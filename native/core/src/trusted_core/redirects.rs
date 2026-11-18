@@ -169,7 +169,7 @@ impl Core {
                     return core.send_all();
                 }
                 core.match_decoders()?;
-                let (tabs, active) = (core.session.tab_infos(), core.session.active);
+                let (tabs, active) = (core.tab_infos(), core.session.active);
                 core.send(&ToInterface::Tabs { tabs, active })
             })?;
         }

@@ -8,8 +8,8 @@ use std::io;
 
 use super::{
     ChooseKind, HEADER_BYTES, KIND_CHOOSE, KIND_DONE, KIND_EXITED, KIND_FAILED, KIND_HEALTHY, KIND_KEY, KIND_KILL, KIND_LOCAL_TIME, KIND_OPEN_WEB,
-    KIND_OPENINGS, KIND_PIPE, KIND_READ, KIND_READ_PICTURE, KIND_SAVE, KIND_SOURCE, KIND_SPAWN, KIND_SPAWNED, KIND_TIME, KIND_UPDATE_STATE,
-    KIND_VIEWER_KEYS_KEY, KIND_WAIT, MAX_ARGUMENTS, MAX_REPLY, MAX_SAVE, MAX_TEXT, Program, SEALING_KEY_BYTES,
+    KIND_OPENINGS, KIND_PIPE, KIND_PROCESSOR_TIME, KIND_READ, KIND_READ_PICTURE, KIND_SAVE, KIND_SOURCE, KIND_SPAWN, KIND_SPAWNED, KIND_SPENT, KIND_TIME,
+    KIND_UPDATE_STATE, KIND_VIEWER_KEYS_KEY, KIND_WAIT, MAX_ARGUMENTS, MAX_REPLY, MAX_SAVE, MAX_TEXT, Program, SEALING_KEY_BYTES,
 };
 use crate::LocalTime;
 
@@ -86,6 +86,11 @@ pub enum Request {
     /// (`docs/picture-tools.md`): answered with its bytes, which the core
     /// passes to a decoder unread.
     ReadPicture(String),
+    /// The processor time a helper has used, as the operating system
+    /// accounts it (REQ-6626 item 1 a): the core may not read another
+    /// process's account from its sandbox, and never takes a helper's own
+    /// word for it.
+    ProcessorTime(u32),
     /// Write the converted page where the user last chose to save it, of
     /// this kind, once: the core never names the path.
     Save {
@@ -117,6 +122,8 @@ pub enum Reply {
     Failed(String),
     /// The time and the local offset.
     Time(LocalTime),
+    /// A helper's processor time since it started, in microseconds.
+    Spent(u64),
     /// The viewer key file's sealing key.
     Key(Vec<u8>),
     /// The pipe of [`Request::Openings`], which travels with the reply.
@@ -215,6 +222,10 @@ pub fn encode_request(request: &Request) -> io::Result<Vec<u8>> {
             payload.extend_from_slice(&id.to_be_bytes());
             KIND_WAIT
         }
+        Request::ProcessorTime(id) => {
+            payload.extend_from_slice(&id.to_be_bytes());
+            KIND_PROCESSOR_TIME
+        }
         Request::Read(path) => {
             push_text(&mut payload, path)?;
             KIND_READ
@@ -270,6 +281,7 @@ pub fn decode_request(kind: u8, payload: &[u8]) -> io::Result<Request> {
         }
         KIND_KILL => Request::Kill(fields.u32()?),
         KIND_WAIT => Request::Wait(fields.u32()?),
+        KIND_PROCESSOR_TIME => Request::ProcessorTime(fields.u32()?),
         KIND_READ => Request::Read(fields.text()?),
         KIND_OPEN_WEB => Request::OpenWeb(fields.text()?),
         KIND_LOCAL_TIME => Request::LocalTime,
@@ -343,6 +355,10 @@ pub fn encode_reply(reply: &Reply) -> io::Result<Vec<u8>> {
             KIND_KEY
         }
         Reply::Pipe => KIND_PIPE,
+        Reply::Spent(microseconds) => {
+            payload.extend_from_slice(&microseconds.to_be_bytes());
+            KIND_SPENT
+        }
     };
     frame(kind, &payload)
 }
@@ -375,6 +391,7 @@ pub fn decode_reply(kind: u8, payload: Vec<u8>) -> io::Result<Reply> {
         }
         KIND_KEY => Reply::Key(fields.take(SEALING_KEY_BYTES)?.to_vec()),
         KIND_PIPE => Reply::Pipe,
+        KIND_SPENT => Reply::Spent(u64::from_be_bytes(fields.take(8)?.try_into().map_err(|_| io::ErrorKind::InvalidData)?)),
         _ => return Err(io::Error::new(io::ErrorKind::InvalidData, "no such reply")),
     };
     fields.end()?;
@@ -411,6 +428,7 @@ mod tests {
             Request::Spawn { program: Program::Fetcher, local_network: true, arguments: vec!["http://a.example/".into(), "--proxy".into()] },
             Request::Kill(7),
             Request::Wait(9),
+            Request::ProcessorTime(u32::MAX),
             Request::Read("/tmp/x.t42".into()),
             Request::OpenWeb("https://a.example/".into()),
             Request::LocalTime,
@@ -435,6 +453,7 @@ mod tests {
             Reply::Time(LocalTime { utc: 1_792_656_300, offset: 39_600 }),
             Reply::Key(vec![9; SEALING_KEY_BYTES]),
             Reply::Pipe,
+            Reply::Spent(u64::MAX),
         ] {
             let bytes = encode_reply(&reply).unwrap();
             let (kind, _) = header(bytes[..HEADER_BYTES].try_into().unwrap(), MAX_REPLY).unwrap();

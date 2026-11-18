@@ -62,6 +62,29 @@ impl Process {
         self.inner.wait()
     }
 
+    /// The processor time the helper has used since it started, in
+    /// microseconds, from the operating system's own account of it
+    /// (REQ-6626 item 1 a): on Linux the first figure of
+    /// `/proc/<pid>/schedstat`, the nanoseconds it has run on a processor.
+    ///
+    /// # Errors
+    /// When the account cannot be read, or this platform's is not read yet.
+    pub fn processor_time_us(&self) -> io::Result<u64> {
+        #[cfg(target_os = "linux")]
+        {
+            const NANOSECONDS_PER_MICROSECOND: u64 = 1_000;
+            let account = std::fs::read_to_string(format!("/proc/{}/schedstat", self.inner.id()))?;
+            let nanoseconds: u64 = account
+                .split_whitespace()
+                .next()
+                .and_then(|figure| figure.parse().ok())
+                .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "an account that is not three figures"))?;
+            Ok(nanoseconds / NANOSECONDS_PER_MICROSECOND)
+        }
+        #[cfg(not(target_os = "linux"))]
+        Err(io::Error::new(io::ErrorKind::Unsupported, "a helper's processor time is read on Linux only so far"))
+    }
+
     /// The pipes as files, taken: for a helper started in this process,
     /// whose pipes the core reads and writes as it does a brokered one's.
     pub(crate) fn take_files(&mut self) -> (Option<std::fs::File>, Option<std::fs::File>) {

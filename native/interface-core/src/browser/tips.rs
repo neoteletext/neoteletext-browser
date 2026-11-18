@@ -250,7 +250,7 @@ impl Browser {
     }
 
     /// The tab strip's and the toolbar's controls.
-    fn strip_tips(&self, tips: &mut Vec<(Rect, String)>) {
+    pub(in crate::browser) fn strip_tips(&self, tips: &mut Vec<(Rect, String)>) {
         let regions = &self.regions;
         for region in &regions.tabs {
             if let Some(tab) = self.tabs.get(region.index) {
@@ -259,6 +259,12 @@ impl Browser {
                 // tab is (decision 103).
                 let address = if tab.address.is_empty() { String::new() } else { format!("{LINE_BREAK}{}", tab.address) };
                 tips.push((region.tab, format!("{}{private}{address}", tab.title)));
+                if let Some(cost) = region.cost {
+                    tips.push((
+                        cost,
+                        String::from("This page has used more than half a processor core for ten seconds: the developer console's Stats tab shows its cost"),
+                    ));
+                }
                 if let Some(speaker) = region.speaker {
                     tips.push((speaker, String::from(if tab.muted { "Unmute this tab" } else { "Mute this tab" })));
                 }

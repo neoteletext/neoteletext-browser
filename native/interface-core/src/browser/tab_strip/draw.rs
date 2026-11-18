@@ -7,8 +7,8 @@ use alloc::format;
 use alloc::vec::Vec;
 
 use super::{
-    COUNT_WIDTH, LEAST_TABS_ROOM, MARKER_WIDTH, NEW_TAB, PANEL_DIM, PANEL_EDGE, PANEL_ROW, PRIVATE_MARK, SHADOW, SHADOW_BAND, STRIP_HEIGHT, STRIP_MARGIN,
-    TAB_CLOSE, TAB_GAP, TAB_SPEAKER, TAB_TEXT_INSET, TAB_TOP, TAB_TOP_INACTIVE, TAB_WIDTH, VERSION_GAP, WINDOW_BUTTON_GAP, WINDOW_BUTTON_HEIGHT,
+    COSTLY_MARK, COUNT_WIDTH, LEAST_TABS_ROOM, MARKER_WIDTH, NEW_TAB, PANEL_DIM, PANEL_EDGE, PANEL_ROW, PRIVATE_MARK, SHADOW, SHADOW_BAND, STRIP_HEIGHT,
+    STRIP_MARGIN, TAB_CLOSE, TAB_GAP, TAB_SPEAKER, TAB_TEXT_INSET, TAB_TOP, TAB_TOP_INACTIVE, TAB_WIDTH, VERSION_GAP, WINDOW_BUTTON_GAP, WINDOW_BUTTON_HEIGHT,
     WINDOW_BUTTON_WIDTH, arrangement, rest_of,
 };
 use crate::browser::Browser;
@@ -18,7 +18,7 @@ use crate::browser::regions::{Regions, TabRegion};
 use crate::canvas::Canvas;
 use crate::geometry::{Point, Rect};
 use crate::text::{HAIRLINE, border, centred, cross, left_centred, outline};
-use crate::theme::{BLACK, BUTTON, GLYPH, GREEN, MUTED, PRIVATE, RAISED, RED, ROW_STATUS, RULE, SELECTED, TAB_COLOURS, TAB_TITLE, WHITE, YELLOW};
+use crate::theme::{BLACK, BUTTON, COSTLY, GLYPH, GREEN, MUTED, PRIVATE, RAISED, RED, ROW_STATUS, RULE, SELECTED, TAB_COLOURS, TAB_TITLE, WHITE, YELLOW};
 
 impl Browser {
     pub(in crate::browser) fn draw_tab_strip<C: Canvas + ?Sized>(&mut self, canvas: &mut C, width: f64) {
@@ -123,14 +123,22 @@ impl Browser {
         let active = index == self.active;
         let rect = Rect::new(slot.x0, slot.y0 + if active { TAB_TOP } else { TAB_TOP_INACTIVE }, slot.x1, slot.y1);
         let coloured = self.tabs.get(index).and_then(|tab| Some((tab, *TAB_COLOURS.iter().cycle().nth(usize::from(tab.colour))?)));
-        let Some((tab, (fill, ink))) = coloured else { return TabRegion { index, tab: rect, close: Rect::ZERO, speaker: None } };
+        let Some((tab, (fill, ink))) = coloured else { return TabRegion { index, tab: rect, close: Rect::ZERO, speaker: None, cost: None } };
         canvas.fill(rect, 0.0, fill);
         if active {
             border(canvas, Rect::new(rect.x0, rect.y0, rect.x1, rect.y1 + BANK_BORDER), BANK_BORDER - 1.0, WHITE);
         }
         let close = Rect::new(rect.x1 - TAB_CLOSE - TAB_GAP * 2.0, rect.y0, rect.x1 - TAB_GAP, rect.y1);
         let speaker = (tab.muted || self.sounding.contains(&tab.channel)).then(|| Rect::new(close.x0 - TAB_SPEAKER, rect.y0, close.x0, rect.y1));
-        canvas.push_clip(Rect::new(rect.x0, rect.y0, speaker.map_or(close.x0, |speaker| speaker.x0), rect.y1));
+        // The mark of a page costing the machine (REQ-6626), drawn here by
+        // the interface, outside the page's picture, so no page can draw,
+        // hide or imitate it.
+        let before_buttons = speaker.map_or(close.x0, |speaker| speaker.x0);
+        let cost = tab.costly.then(|| {
+            let middle = f64::midpoint(rect.y0, rect.y1);
+            Rect::new(before_buttons - COSTLY_MARK - TAB_GAP, middle - COSTLY_MARK / 2.0, before_buttons - TAB_GAP, middle + COSTLY_MARK / 2.0)
+        });
+        canvas.push_clip(Rect::new(rect.x0, rect.y0, cost.map_or(before_buttons, |cost| cost.x0 - TAB_GAP), rect.y1));
         // A private tab's mark, before its title (requirement 20.8).
         let inset = if tab.private {
             let middle = f64::midpoint(rect.y0, rect.y1);
@@ -142,11 +150,15 @@ impl Browser {
         };
         left_centred(canvas, rect, inset, &tab.title, TAB_TITLE, ink);
         canvas.pop_clip();
+        if let Some(cost) = cost {
+            canvas.fill(cost, 0.0, COSTLY);
+            border(canvas, cost, 1.0, ink);
+        }
         if let Some(speaker) = speaker {
             speaker_glyph(canvas, speaker, tab.muted, ink);
         }
         centred(canvas, close, "\u{00D7}", GLYPH, ink);
-        TabRegion { index, tab: rect, close, speaker }
+        TabRegion { index, tab: rect, close, speaker, cost }
     }
 
     /// The overflow panel, joined under the strip, while it is open; and a

@@ -4,7 +4,7 @@
 use interface_core::browser::TabInfo;
 use interface_core::theme::TAB_COLOURS;
 
-use super::kinds::{TAB_FLAGS, TAB_MUTED, TAB_PRIVATE};
+use super::kinds::{TAB_COSTLY, TAB_FLAGS, TAB_MUTED, TAB_PRIVATE};
 use crate::library::MAX_SHOWN_ADDRESS;
 use crate::{Fields, MAX_PAYLOAD, MAX_TAB_TITLE, MAX_TABS, ProtocolError, push_text};
 
@@ -23,7 +23,7 @@ pub(super) fn push_tabs(payload: &mut Vec<u8>, tabs: &[TabInfo], active: usize) 
     for tab in tabs {
         payload.push(tab.colour);
         payload.extend_from_slice(&tab.channel.to_be_bytes());
-        payload.push(if tab.muted { TAB_MUTED } else { 0 } | if tab.private { TAB_PRIVATE } else { 0 });
+        payload.push(if tab.muted { TAB_MUTED } else { 0 } | if tab.private { TAB_PRIVATE } else { 0 } | if tab.costly { TAB_COSTLY } else { 0 });
         push_text(payload, &tab.title, MAX_TAB_TITLE)?;
         push_text(payload, &tab.address, MAX_SHOWN_ADDRESS)?;
     }
@@ -49,7 +49,15 @@ pub(super) fn read_tabs(fields: &mut Fields<'_>) -> Result<(Vec<TabInfo>, usize)
                 return Err(ProtocolError::BadValue("tab flags"));
             }
             let title = fields.text(MAX_TAB_TITLE)?;
-            Ok(TabInfo { colour, channel, muted: flags & TAB_MUTED != 0, private: flags & TAB_PRIVATE != 0, title, address: fields.text(MAX_SHOWN_ADDRESS)? })
+            Ok(TabInfo {
+                colour,
+                channel,
+                muted: flags & TAB_MUTED != 0,
+                private: flags & TAB_PRIVATE != 0,
+                costly: flags & TAB_COSTLY != 0,
+                title,
+                address: fields.text(MAX_SHOWN_ADDRESS)?,
+            })
         })
         .collect::<Result<_, _>>()?;
     Ok((tabs, active))

@@ -493,7 +493,13 @@ fn helpers_started(requests: &[Request], addresses: &[String; 2]) -> Vec<(Progra
             | Request::Save { .. } => {
                 panic!("the core asked the broker for {request:?}")
             }
-            Request::Kill(_) | Request::Wait(_) | Request::LocalTime | Request::ViewerKeysKey | Request::Healthy | Request::UpdateState => {}
+            Request::Kill(_)
+            | Request::Wait(_)
+            | Request::ProcessorTime(_)
+            | Request::LocalTime
+            | Request::ViewerKeysKey
+            | Request::Healthy
+            | Request::UpdateState => {}
         }
     }
     started

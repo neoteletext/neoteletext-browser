@@ -96,6 +96,11 @@ const KIND_SAVE: u8 = 21;
 /// The viewer key file's sealing key (neoteletext-common's
 /// `docs/viewer-state.md` VS-108).
 const KIND_VIEWER_KEYS_KEY: u8 = 22;
+/// A helper's processor time, read by the broker from the operating
+/// system's account of it for the core's "Page cost" (REQ-6626 item 1 a),
+/// and its reply.
+const KIND_PROCESSOR_TIME: u8 = 23;
+const KIND_SPENT: u8 = 24;
 /// The most bytes the broker saves for the core: a converted page, at
 /// most `protocol::picture::MAX_PICTURE_PAGE`, which the core asserts fits.
 pub const MAX_SAVE: usize = 256 * 1024;

@@ -49,6 +49,7 @@ fn browser(painter: &mut Painter) -> Result<Browser, String> {
             channel: u32::from(colour),
             muted: false,
             private: false,
+            costly: false,
             address: "https://example.invalid/".into(),
         })
         .collect();

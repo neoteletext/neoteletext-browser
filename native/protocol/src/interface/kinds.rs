@@ -148,4 +148,6 @@ pub(crate) const ALL_FLAGS: u8 = ENCRYPTED | CAN_GO_BACK | CAN_GO_FORWARD | BOOK
 // A tab's flags.
 pub(crate) const TAB_MUTED: u8 = 1;
 pub(crate) const TAB_PRIVATE: u8 = 2;
-pub(crate) const TAB_FLAGS: u8 = TAB_MUTED | TAB_PRIVATE;
+/// The page's decoder costs more than half a core (REQ-6626).
+pub(crate) const TAB_COSTLY: u8 = 4;
+pub(crate) const TAB_FLAGS: u8 = TAB_MUTED | TAB_PRIVATE | TAB_COSTLY;

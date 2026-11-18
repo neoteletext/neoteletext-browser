@@ -16,6 +16,9 @@ pub(super) struct TabRegion {
     pub(super) close: Rect,
     /// The sound button, shown while the tab plays sound or is muted.
     pub(super) speaker: Option<Rect>,
+    /// The mark of a page that costs the machine (REQ-6626), whose tip
+    /// names the console's Stats tab.
+    pub(super) cost: Option<Rect>,
 }
 
 /// Where the parts of the window were last drawn.

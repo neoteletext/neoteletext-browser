@@ -114,6 +114,10 @@ pub const TYPING: Colour = rgb(0xff, 0xbf, 0x40);
 /// A private tab's word and mark (requirement 20.8): a colour no other part of
 /// the strip uses.
 pub const PRIVATE: Colour = rgb(0xb0, 0x6c, 0xff);
+/// The mark of a tab whose page costs the machine more than half a
+/// processor core (REQ-6626): a warning orange no other part of the strip
+/// uses.
+pub const COSTLY: Colour = rgb(0xff, 0x7a, 0x1a);
 
 /// The contrast text reaches against what it is drawn on: WCAG 2.1 success
 /// criterion 1.4.3, level AA. [`clearest_ink`] reaches it on every colour.

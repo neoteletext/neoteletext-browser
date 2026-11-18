@@ -49,6 +49,11 @@ impl Core {
     /// (decision 46).
     pub(super) fn next_wake(&self) -> Option<std::time::Instant> {
         let mut next = Some(self.next_sleep_check);
+        // While a decoder runs, its processor time is read once a second
+        // (REQ-6626).
+        if !self.decoders.is_empty() {
+            next = next.map(|at| at.min(self.next_cost_reading));
+        }
         if self.loading_wanted() {
             next = next.map(|at| at.min(self.next_load));
         }
@@ -102,6 +107,10 @@ impl Core {
         }
         self.notice_tick()?;
         self.refresh_tick(now);
+        if !self.decoders.is_empty() && now >= self.next_cost_reading {
+            self.next_cost_reading = now.checked_add(super::page_cost::SAMPLE_INTERVAL).unwrap_or(now);
+            self.read_decoder_times()?;
+        }
         if now >= self.next_sleep_check {
             self.next_sleep_check = now.checked_add(SLEEP_CHECK).unwrap_or(now);
             self.match_decoders()?;

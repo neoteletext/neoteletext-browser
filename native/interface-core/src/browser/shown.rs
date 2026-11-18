@@ -30,6 +30,10 @@ pub struct TabInfo {
     pub muted: bool,
     /// A private tab, which records no history (requirement 20.8).
     pub private: bool,
+    /// The page's decoder has used more than half a processor core over
+    /// ten seconds, as the trusted core read it from the operating system
+    /// (REQ-6626): the tab shows a mark the page cannot draw or hide.
+    pub costly: bool,
     /// The tab's address, as the trusted core wrote it and cut to
     /// [`crate::library::MAX_SHOWN_ADDRESS`], which its tip shows (decision
     /// 103).

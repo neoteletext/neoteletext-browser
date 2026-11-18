@@ -140,6 +140,11 @@ fn answer(core: &mut Core, helpers: &mut Helpers, programs: &Path, handlers: &Ha
             }
             None => Reply::Done,
         },
+        Request::ProcessorTime(id) => match helpers.alive.get(&id).map(Process::processor_time_us) {
+            Some(Ok(microseconds)) => Reply::Spent(microseconds),
+            Some(Err(error)) => Reply::Failed(error.to_string()),
+            None => Reply::Failed(String::from("no such helper")),
+        },
         Request::Wait(id) => match helpers.alive.remove(&id) {
             Some(mut helper) => match helper.wait() {
                 Ok(status) => Reply::Exited(Exit::from(status)),

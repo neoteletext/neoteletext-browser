@@ -274,6 +274,7 @@ impl Session {
                     channel: tab.channel.id,
                     muted: tab.muted,
                     private: tab.private,
+                    costly: false,
                     address: shown_address(address),
                 }
             })

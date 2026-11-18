@@ -28,6 +28,9 @@ const TAB_TEXT_INSET: f64 = 14.0;
 const TAB_CLOSE: f64 = 22.0;
 /// A private tab's mark, before its title.
 const PRIVATE_MARK: f64 = 10.0;
+/// The mark of a tab whose page costs the machine (REQ-6626), before its
+/// sound and close buttons.
+const COSTLY_MARK: f64 = 8.0;
 /// A tab's sound button, before its close button (`tab-strip.md` section 9).
 const TAB_SPEAKER: f64 = 24.0;
 const NEW_TAB: f64 = 38.0;

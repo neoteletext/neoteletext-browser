@@ -203,6 +203,8 @@ struct Core {
     next_load: std::time::Instant,
     /// When next to see which tabs may sleep (decision 47).
     next_sleep_check: std::time::Instant,
+    /// When the decoders' processor time is next read (REQ-6626).
+    next_cost_reading: std::time::Instant,
     /// Typing into a page (`interaction.md`).
     #[cfg(feature = "interaction")]
     typing: neoteletext::typing::Typing,
@@ -371,6 +373,7 @@ impl Core {
             started: std::time::Instant::now(),
             next_load: std::time::Instant::now(),
             next_sleep_check: std::time::Instant::now().checked_add(SLEEP_CHECK).unwrap_or_else(std::time::Instant::now),
+            next_cost_reading: std::time::Instant::now(),
             #[cfg(feature = "interaction")]
             typing: neoteletext::typing::Typing::default(),
             #[cfg(feature = "interaction")]

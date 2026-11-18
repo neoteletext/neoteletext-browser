@@ -65,6 +65,23 @@ impl Helper {
         }
     }
 
+    /// The processor time it has used since it started, in microseconds,
+    /// as the operating system accounts it (REQ-6626 item 1 a): asked of
+    /// the broker, which started it, never of the helper itself.
+    ///
+    /// # Errors
+    /// When it cannot be read.
+    pub fn processor_time_us(&self) -> io::Result<u64> {
+        match &self.how {
+            How::Brokered { id, broker } => match broker.ask(&Request::ProcessorTime(*id))? {
+                (Reply::Spent(microseconds), _) => Ok(microseconds),
+                (Reply::Failed(reason), _) => Err(io::Error::other(reason)),
+                _ => Err(io::Error::new(io::ErrorKind::InvalidData, "an unexpected reply")),
+            },
+            How::Local(process) => process.processor_time_us(),
+        }
+    }
+
     /// Waits for it to end.
     ///
     /// # Errors

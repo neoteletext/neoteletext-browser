@@ -47,7 +47,7 @@ fn an_address_of_8000_octets_crosses_the_pipes() {
     let long_strip = StripState { address: longest.clone(), redirecting: longest.clone(), ..strip() };
     let tip = "a".repeat(library::MAX_SHOWN_ADDRESS);
     let tabs = (0..crate::MAX_TABS)
-        .map(|_| TabInfo { title: "t".repeat(crate::MAX_TAB_TITLE), colour: 0, channel: 1, muted: false, private: false, address: tip.clone() })
+        .map(|_| TabInfo { title: "t".repeat(crate::MAX_TAB_TITLE), colour: 0, channel: 1, muted: false, private: false, costly: false, address: tip.clone() })
         .collect();
     for message in [ToInterface::Strip(long_strip), ToInterface::Tabs { tabs, active: 0 }] {
         let mut bytes = Vec::new();
@@ -149,13 +149,22 @@ fn sub_page_counts_and_places_reach_the_standards_maximum() {
 }
 
 #[test]
+#[allow(clippy::too_many_lines, reason = "one list of every message")]
 fn every_message_to_the_interface_round_trips() {
     for message in [
         ToInterface::Sounding(vec![3, 7]),
         ToInterface::Tabs {
             tabs: vec![
-                TabInfo { title: "news".into(), colour: 1, channel: 3, muted: false, private: false, address: "https://news.invalid/channel".into() },
-                TabInfo { title: "sport".into(), colour: 7, channel: 9, muted: true, private: true, address: String::new() },
+                TabInfo {
+                    title: "news".into(),
+                    colour: 1,
+                    channel: 3,
+                    muted: false,
+                    private: false,
+                    costly: false,
+                    address: "https://news.invalid/channel".into(),
+                },
+                TabInfo { title: "sport".into(), colour: 7, channel: 9, muted: true, private: true, costly: true, address: String::new() },
             ],
             active: 1,
         },
@@ -365,7 +374,7 @@ fn oversized_and_malformed_payloads_are_refused() {
     bytes = vec![KIND_TABS, 0, 0, 0, 10, 0, 1, 8, 0, 0, 0, 1, 0, 0, 0];
     assert!(matches!(read_from_core(&mut bytes.as_slice()), Err(ProtocolError::BadValue("tab colour"))));
     // Unknown tab flags, and a mute that is neither on nor off.
-    bytes = vec![KIND_TABS, 0, 0, 0, 10, 0, 1, 0, 0, 0, 0, 1, 4, 0, 0];
+    bytes = vec![KIND_TABS, 0, 0, 0, 10, 0, 1, 0, 0, 0, 0, 1, 8, 0, 0];
     assert!(matches!(read_from_core(&mut bytes.as_slice()), Err(ProtocolError::BadValue("tab flags"))));
     bytes = vec![KIND_MUTE_ALL, 0, 0, 0, 1, 2];
     assert!(matches!(read_from_interface(&mut bytes.as_slice()), Err(ProtocolError::BadValue("mute"))));

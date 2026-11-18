@@ -251,6 +251,11 @@ impl Server {
                 }
                 Reply::Done
             }
+            Request::ProcessorTime(id) => match self.alive.get(id).map(Process::processor_time_us) {
+                Some(Ok(microseconds)) => Reply::Spent(microseconds),
+                Some(Err(error)) => Reply::Failed(error.to_string()),
+                None => Reply::Failed(String::from("no such helper")),
+            },
             Request::Wait(id) => {
                 self.outputs.remove(id);
                 if let Some(mut helper) = self.alive.remove(id) {

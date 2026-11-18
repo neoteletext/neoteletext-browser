@@ -18,6 +18,7 @@ fn browser_with(count: usize, active: usize) -> Browser {
         channel: u32::try_from(index).unwrap(),
         muted: false,
         private: false,
+        costly: false,
         address: format!("https://tab{index}.invalid/"),
     });
     browser.set_tabs(tabs.collect(), active);
@@ -232,8 +233,8 @@ fn a_tab_playing_sound_shows_a_speaker_that_mutes_it() {
     // Muted, the speaker stays even once the sound ends.
     browser.set_tabs(
         alloc::vec![
-            TabInfo { title: "one".into(), colour: 0, channel: 7, muted: true, private: false, address: "https://example.invalid/".into() },
-            TabInfo { title: "two".into(), colour: 1, channel: 8, muted: false, private: false, address: "https://example.invalid/".into() }
+            TabInfo { title: "one".into(), colour: 0, channel: 7, muted: true, private: false, costly: false, address: "https://example.invalid/".into() },
+            TabInfo { title: "two".into(), colour: 1, channel: 8, muted: false, private: false, costly: false, address: "https://example.invalid/".into() }
         ],
         0,
     );
@@ -250,16 +251,16 @@ fn the_mute_all_button_mutes_every_tab_until_all_are_muted() {
     press_at(&mut browser, &mut canvas, button);
     browser.set_tabs(
         alloc::vec![
-            TabInfo { title: "one".into(), colour: 0, channel: 7, muted: true, private: false, address: "https://example.invalid/".into() },
-            TabInfo { title: "two".into(), colour: 1, channel: 8, muted: false, private: false, address: "https://example.invalid/".into() }
+            TabInfo { title: "one".into(), colour: 0, channel: 7, muted: true, private: false, costly: false, address: "https://example.invalid/".into() },
+            TabInfo { title: "two".into(), colour: 1, channel: 8, muted: false, private: false, costly: false, address: "https://example.invalid/".into() }
         ],
         0,
     );
     press_at(&mut browser, &mut canvas, button);
     browser.set_tabs(
         alloc::vec![
-            TabInfo { title: "one".into(), colour: 0, channel: 7, muted: true, private: false, address: "https://example.invalid/".into() },
-            TabInfo { title: "two".into(), colour: 1, channel: 8, muted: true, private: false, address: "https://example.invalid/".into() }
+            TabInfo { title: "one".into(), colour: 0, channel: 7, muted: true, private: false, costly: false, address: "https://example.invalid/".into() },
+            TabInfo { title: "two".into(), colour: 1, channel: 8, muted: true, private: false, costly: false, address: "https://example.invalid/".into() }
         ],
         0,
     );
@@ -338,6 +339,7 @@ fn versioned(frame: Frame, count: usize, width: f64) -> (Browser, Recorder) {
         channel: u32::try_from(index).unwrap(),
         muted: false,
         private: false,
+        costly: false,
         address: format!("https://tab{index}.invalid/"),
     });
     browser.set_tabs(tabs.collect(), count.saturating_sub(1));
@@ -434,4 +436,25 @@ fn a_drop_lands_by_the_quarters_of_a_tab() {
     assert_eq!(browser.drop_target(Point::new(1.0, 60.0)), DropTarget::Tabs(DropPlace::Replace(active)), "the toolbar");
     let field = browser.regions.field_text;
     assert_eq!(browser.drop_target(Point::new(f64::midpoint(field.x0, field.x1), f64::midpoint(field.y0, field.y1))), DropTarget::Address);
+}
+
+/// REQ-6626: a tab whose page costs the machine shows the trusted mark,
+/// whose tip names the console's Stats tab; a tab that does not, none.
+#[test]
+fn a_costly_tab_shows_its_mark() {
+    let (mut browser, mut canvas) = browser();
+    browser.set_tabs(
+        alloc::vec![
+            TabInfo { title: "one".into(), colour: 0, channel: 7, muted: false, private: false, costly: true, address: "https://example.invalid/".into() },
+            TabInfo { title: "two".into(), colour: 1, channel: 8, muted: false, private: false, costly: false, address: "https://example.invalid/".into() }
+        ],
+        0,
+    );
+    browser.draw(&mut canvas, WIDTH, HEIGHT, 0);
+    let mark = browser.regions.tabs[0].cost.expect("the costly tab's mark");
+    assert!(browser.regions.tabs[1].cost.is_none(), "no mark on the other");
+    assert!(mark.x1 <= browser.regions.tabs[0].close.x0 && mark.x0 >= browser.regions.tabs[0].tab.x0, "within its tab, before its close button");
+    let mut tips = Vec::new();
+    browser.strip_tips(&mut tips);
+    assert!(tips.iter().any(|(area, tip)| *area == mark && tip.contains("Stats tab")), "its tip names the Stats tab");
 }
