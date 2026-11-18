@@ -105,12 +105,12 @@ fn the_wheel_over_a_page_with_sub_pages_steps_them_unless_its_channel_uses_the_w
 }
 
 /// REQ-3937 item 4: a click on a list changes nothing for the mouse: the
-/// wheel, a move and another button over the page still go to its
-/// channel, or the wheel would turn the page.
+/// wheel where a rule claims it, a move and another button over the page
+/// still go to its channel, or the wheel would turn the page.
 #[test]
 fn a_clicked_list_leaves_the_mouse_with_the_page() {
     let mut browser = browser();
-    browser.set_typing(typing(None), 0);
+    browser.set_typing(TypingView { wheel: true, ..typing(None) }, 0);
     let row = browser.regions.rows[0].0;
     crate::browser::fixture::press_at(&mut browser, &mut Recorder::new(), row);
     let (_, page) = browser.wall.open().expect("the page is open");
@@ -204,7 +204,8 @@ fn every_button_and_modifier_goes_over_the_page() {
     use neoteletext_input::event::{ALT, SHIFT};
     let mut browser = browser();
     let mut canvas = Recorder::new();
-    browser.set_typing(typing(None), 0);
+    // A `wheel` rule claims the wheel here (RULE-51 item 4, REQ-6632).
+    browser.set_typing(TypingView { wheel: true, ..typing(None) }, 0);
     pointer_at(&mut browser, 10.5, 5.5);
     browser.take_outputs();
     browser.set_mouse_modifiers(SHIFT | CONTROL);
@@ -323,13 +324,14 @@ fn the_keys_going_elsewhere_leave_the_page_open() {
     assert_eq!(browser.typing_target(), None);
 }
 
-/// Decision 107 and DOC-1938: the wheel and the pointer's
-/// moves over the page are the channel's; beside the page, or with the
-/// browser's modifier, the wheel is the browser's.
+/// Decision 107 and DOC-1938: the pointer's moves over the page are the
+/// channel's, and the wheel is where a `wheel` rule claims it (RULE-51
+/// item 4, REQ-6632); beside the page, or with the browser's modifier,
+/// the wheel is the browser's.
 #[test]
 fn the_wheel_and_moves_go_over_the_page() {
     let mut browser = browser();
-    browser.set_typing(typing(None), 0);
+    browser.set_typing(TypingView { wheel: true, ..typing(None) }, 0);
     pointer_at(&mut browser, 3.0, 3.0);
     browser.take_outputs();
     assert_eq!(browser.terminal_wheel(0.0, 1.0), Some(false), "no mode needed");
@@ -558,4 +560,121 @@ fn a_wheel_notch_is_at_least_a_line() {
     assert!((notched(-0.1) + 1.0).abs() < f64::EPSILON);
     assert!((notched(2.5) - 2.5).abs() < f64::EPSILON, "a fast one keeps its acceleration");
     assert!(notched(0.0).abs() < f64::EPSILON);
+}
+
+/// The page of `KEY` chosen with `count` sub-pages, the first shown and
+/// its rows held, and the trusted core saying keys go to its channel.
+fn with_subpages(count: u16) -> Browser {
+    let mut browser = browser();
+    browser.set_typing(typing(None), 0);
+    browser.set_subpage_count(KEY.channel, KEY.page, count);
+    browser.draw(&mut Recorder::new(), 1440.0, 900.0, 10_000);
+    let row = browser.regions.rows[0].0;
+    crate::browser::fixture::press_at(&mut browser, &mut Recorder::new(), row);
+    browser.draw(&mut Recorder::new(), 1440.0, 900.0, 10_000);
+    browser.rows_arrive(KEY.page, 0, (0..count).map(|place| (place.saturating_add(1), alloc::format!("Story {place}"))).collect());
+    browser.set_page_controls(crate::controls::PageControls {
+        channel: KEY.channel,
+        page: Some(KEY.page),
+        subpages: count,
+        chosen: Some(0),
+        ..Default::default()
+    });
+    browser.draw(&mut Recorder::new(), 1440.0, 900.0, 10_000);
+    browser.take_outputs();
+    browser
+}
+
+/// The ways the wheel indicator shows, if the pointer shows it.
+fn indicator(browser: &Browser) -> Option<(bool, bool)> {
+    match browser.cursor() {
+        crate::browser::Cursor::Wheel(wheel) => Some((wheel.up, wheel.down)),
+        _ => None,
+    }
+}
+
+/// The sub-page the browser asked to be shown.
+fn asked_subpage(browser: &mut Browser) -> Option<u16> {
+    browser.take_outputs().iter().find_map(|output| match output {
+        Output::PageControl(crate::controls::PageControl::SubPageOf { channel, page, subcode }) if (*channel, *page) == (KEY.channel, KEY.page) => {
+            Some(*subcode)
+        }
+        _ => None,
+    })
+}
+
+/// REQ-6632 items 1 and 2: over the picture of a page with sub-pages whose
+/// rule table claims no wheel there, the wheel steps the sub-pages and the
+/// pointer shows the wheel indicator, as it does beside the page. On the
+/// code before, the wheel stepped there but the pointer was the arrow.
+#[test]
+fn over_the_picture_where_no_rule_claims_the_wheel_it_steps_and_shows_the_indicator() {
+    let mut browser = with_subpages(3);
+    pointer_at(&mut browser, 20.0, 12.0);
+    browser.take_outputs();
+    assert_eq!(indicator(&browser), Some((false, true)), "the first of three: only down");
+    assert_eq!(browser.terminal_wheel(0.0, 1.0), None, "not the page's");
+    assert!(browser.wheel_lines(1.0, 20_000));
+    assert_eq!(asked_subpage(&mut browser), Some(2), "the next sub-page");
+    // Beside the page, as before.
+    pointer_at(&mut browser, -2.0, 12.0);
+    assert_eq!(indicator(&browser), Some((false, true)), "the margin too");
+}
+
+/// REQ-6632 items 1, 2 and 4: inside a `wheel` rule's rectangle the wheel
+/// is the page's and the pointer is not the indicator; the shape follows
+/// the trusted core's word on the rectangles without the pointer moving.
+#[test]
+fn inside_a_wheel_rule_the_wheel_is_the_pages_and_the_indicator_goes() {
+    let mut browser = with_subpages(3);
+    pointer_at(&mut browser, 20.0, 12.0);
+    browser.take_outputs();
+    assert!(indicator(&browser).is_some(), "no rule claims it yet");
+    browser.set_typing(TypingView { wheel: true, ..typing(None) }, 20_000);
+    assert_eq!(indicator(&browser), None, "the rule's rectangle arrived: no indicator, the pointer still");
+    assert_eq!(browser.cursor(), crate::browser::Cursor::Arrow);
+    assert_eq!(browser.terminal_wheel(0.0, 1.0), Some(false), "the page's");
+    assert!(matches!(intents(&browser.take_outputs()).as_slice(), [Intent::Wheel { dx: 0, dy: 120, .. }]));
+    // With the browser's modifier held the wheel is the browser's again.
+    browser.set_browser_modifier(true);
+    assert_eq!(indicator(&browser), Some((false, true)), "the modifier keeps it the browser's");
+    assert_eq!(browser.terminal_wheel(0.0, 1.0), None);
+    browser.set_browser_modifier(false);
+    // The rule gone, with the pointer still, the indicator comes back.
+    browser.set_typing(typing(None), 21_000);
+    assert!(indicator(&browser).is_some());
+}
+
+/// REQ-6632 items 2 and 4: where there is nothing to step to the pointer
+/// is the arrow over the picture as beside it, and the indicator comes
+/// when the page comes to have sub-pages, the pointer still. Over a page
+/// of no sub-pages whose table claims no wheel the wheel steps the pages,
+/// as beside the page; on the code before it was sent to the trusted
+/// core, which dropped it.
+#[test]
+fn with_nothing_to_step_the_picture_is_as_the_margin() {
+    let mut browser = with_subpages(1);
+    pointer_at(&mut browser, 20.0, 12.0);
+    browser.take_outputs();
+    assert_eq!(browser.cursor(), crate::browser::Cursor::Arrow, "one sub-page: nothing to step to");
+    pointer_at(&mut browser, -2.0, 12.0);
+    assert_eq!(browser.cursor(), crate::browser::Cursor::Arrow, "and beside the page");
+    pointer_at(&mut browser, 20.0, 12.0);
+    browser.take_outputs();
+    browser.set_subpage_count(KEY.channel, KEY.page, 3);
+    browser.set_page_controls(crate::controls::PageControls { channel: KEY.channel, page: Some(KEY.page), subpages: 3, chosen: Some(0), ..Default::default() });
+    assert_eq!(indicator(&browser), Some((false, true)), "the page now has three, the pointer still");
+    // A page of no sub-pages, the only one of its channel.
+    let mut plain = browser_with_typing();
+    pointer_at(&mut plain, 20.0, 12.0);
+    plain.take_outputs();
+    assert_eq!(plain.terminal_wheel(0.0, 1.0), None, "the browser's, as beside the page");
+    assert!(intents(&plain.take_outputs()).is_empty(), "nothing goes to the page");
+    assert_eq!(plain.cursor(), crate::browser::Cursor::Arrow, "the only page: nothing to step to");
+}
+
+fn browser_with_typing() -> Browser {
+    let mut browser = browser();
+    browser.set_typing(typing(None), 0);
+    browser
 }

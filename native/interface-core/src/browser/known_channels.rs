@@ -152,9 +152,15 @@ impl Browser {
         self.known_editing().then_some(&mut self.known.query)
     }
 
+    /// Whether `point` is on the list of known channels, which takes the
+    /// wheel.
+    pub(super) fn over_known(&self, point: Point) -> bool {
+        self.known.open && self.known.controls.area.contains(point)
+    }
+
     /// The wheel over the list: further rows are asked for.
     pub(super) fn known_scroll(&mut self, distance: f64) -> bool {
-        if !self.known.open || !self.known.controls.area.contains(self.pointer) {
+        if !self.over_known(self.pointer) {
             return false;
         }
         let Some(view) = &self.known.view else { return true };
