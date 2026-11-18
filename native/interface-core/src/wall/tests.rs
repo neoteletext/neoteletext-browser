@@ -520,16 +520,17 @@ fn image_alone(wall: &mut Wall, width: f64, scale: f64) -> Rect {
 /// for a stretch at each whole multiple of its actual size, where it
 /// stays exactly that size, centred: 480 display pixels and 960 for a
 /// teletext page, 800 for a page drawn in ReGIS, on displays of scale 1
-/// and 2.
+/// and 2. A page drawn in NAPLPS is the teletext raster (REQ-5819), so it
+/// is held at the teletext page's multiples.
 #[test]
 fn the_page_alone_is_held_at_whole_multiples_as_its_room_grows() {
     use crate::canvas::{REGIS_WIDTH, STICK_SHARE};
     let key = pages(1)[0].key;
-    for (regis, actual) in [(false, f64::from(PAGE_WIDTH)), (true, f64::from(REGIS_WIDTH))] {
+    for (picture, actual) in [(None, f64::from(PAGE_WIDTH)), (Some(false), f64::from(REGIS_WIDTH)), (Some(true), f64::from(PAGE_WIDTH))] {
         for scale in [1.0, 2.0] {
             let mut wall = Wall::new();
-            if regis {
-                wall.set_regis_pages(core::iter::once(key));
+            if let Some(naplps) = picture {
+                wall.set_regis_pages(core::iter::once(key), core::iter::once(key).filter(|_| naplps));
             }
             let mut held_at = Vec::new();
             let mut last = 0.0;
@@ -561,7 +562,7 @@ fn the_page_alone_is_held_at_whole_multiples_as_its_room_grows() {
                 let band = multiple * actual / scale * STICK_SHARE;
                 assert!(
                     f64::from(u32::try_from(stretch).unwrap()) >= band - 2.0,
-                    "held at {multiple} for {stretch} of about {band} widths (regis {regis}, scale {scale})"
+                    "held at {multiple} for {stretch} of about {band} widths (picture {picture:?}, scale {scale})"
                 );
             }
         }
@@ -606,6 +607,23 @@ fn the_held_label_lasts_from_the_moment_the_page_is_held() {
     assert_eq!(wall.held_label(6_000), Some((1, 6_000 + STICK_LABEL_MILLISECONDS)), "held anew");
 }
 
+/// REQ-5819, DEC-6667: a page known to be drawn in NAPLPS stands in black
+/// over its whole image, the teletext raster its picture fills, not in a
+/// ReGIS picture's band.
+#[test]
+fn a_naplps_page_without_its_picture_stands_in_black_over_its_whole_image() {
+    use crate::theme::BLACK;
+    let pages = pages(1);
+    let key = pages[0].key;
+    let mut wall = on_wall();
+    wall.set_regis_pages(core::iter::once(key), core::iter::once(key));
+    let mut canvas = Recorder::new();
+    canvas.screen = None;
+    wall.draw(&mut canvas, PANEL, &pages, None, 10_000);
+    let image = wall.drawn.iter().find(|drawn| drawn.key == key).map(|drawn| drawn.image).unwrap();
+    assert!(canvas.fills.contains(&(image, BLACK)), "black over the whole image {image:?}: {:?}", canvas.fills);
+}
+
 /// The owner's request of 18 November 2026 (REQ-740, DEC-953: a page is
 /// laid out in its own shape): before a page known to be drawn as a picture
 /// has any image, what stands in for it is black, in the place and shape its
@@ -619,7 +637,7 @@ fn a_picture_page_without_its_picture_stands_in_black_in_the_pictures_place() {
     let (picture, teletext) = (pages[0].key, pages[1].key);
     for contained in [false, true] {
         let mut wall = on_wall();
-        wall.set_regis_pages(core::iter::once(picture));
+        wall.set_regis_pages(core::iter::once(picture), core::iter::empty());
         if contained {
             wall.set_pictures(core::iter::once(picture));
         }

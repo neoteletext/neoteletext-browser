@@ -10,32 +10,19 @@ use super::Engine;
 use crate::animation::frames::Taken;
 use crate::rules::host::{Parts, PictureCommand};
 
-/// How far right of the 800-pixel picture's left edge a NAPLPS picture
-/// begins (RULE-13: a NAPLPS picture is 640 by 480, shown in the middle
-/// of the 800 by 480 picture the trusted core gives the pointer in).
-const NAPLPS_LEFT: u16 = (interface_core::canvas::REGIS_WIDTH - NAPLPS_WIDTH) / 2;
-/// A NAPLPS picture's width in pixels (RULE-13).
-const NAPLPS_WIDTH: u16 = neoteletext_web::records::naplps_objects::PICTURE_WIDTH;
-const _: () = assert!(NAPLPS_WIDTH as usize == crate::naplps::WIDTH && NAPLPS_LEFT == 80);
-
-/// A pixel of the 800-wide picture as a pixel of the NAPLPS picture in
-/// its middle. A pixel of either margin is outside the picture and is
-/// given as the first column past its right edge, which no rectangle (cut
-/// to the picture, RULE-13) and no object holds: the press, release or
-/// move is still followed (RULE-8), on nothing.
-const fn naplps_x(x: u16) -> u16 {
-    match x.checked_sub(NAPLPS_LEFT) {
-        Some(inside) if inside < NAPLPS_WIDTH => inside,
-        _ => NAPLPS_WIDTH,
-    }
-}
-
-/// A rule input of a NAPLPS page, with its pointer in the NAPLPS
-/// picture's pixels.
-const fn naplps_input(input: RuleInput) -> RuleInput {
+/// A rule input of a NAPLPS page, with its pointer in the pixels of the
+/// 640 by 480 picture (RULE-13) under the dot of the teletext raster the
+/// page is drawn on (REQ-5819), which is where the trusted core gives it.
+fn naplps_input(input: RuleInput) -> RuleInput {
     match input {
-        RuleInput::Pointer { action, button, x, y, control } => RuleInput::Pointer { action, button, x: naplps_x(x), y, control },
-        RuleInput::Wheel { x, y, control } => RuleInput::Wheel { x: naplps_x(x), y, control },
+        RuleInput::Pointer { action, button, x, y, control } => {
+            let (x, y) = crate::naplps::design_point(x, y);
+            RuleInput::Pointer { action, button, x, y, control }
+        }
+        RuleInput::Wheel { x, y, control } => {
+            let (x, y) = crate::naplps::design_point(x, y);
+            RuleInput::Wheel { x, y, control }
+        }
         other => other,
     }
 }

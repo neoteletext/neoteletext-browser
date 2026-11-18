@@ -875,8 +875,9 @@ pub fn read_from_decoder(input: &mut dyn Read) -> Result<Option<FromDecoder>, Pr
             if sub > neoteletext_core::limits::LAST_SUBPAGE_CODE || sub & !neoteletext_core::limits::SUBCODE_MASK != 0 {
                 return Err(ProtocolError::BadValue("regis sub-code"));
             }
-            let pick = if fields.flag("a ReGIS pick record")? { Some(crate::regis::read_pick(&mut fields)?) } else { None };
-            FromDecoder::Regis { page, sub, picture: crate::regis::read_picture(&mut fields)?, pick }
+            let picture = crate::regis::read_picture(&mut fields)?;
+            let pick = if fields.flag("a ReGIS pick record")? { Some(crate::regis::read_pick(&mut fields, picture.language)?) } else { None };
+            FromDecoder::Regis { page, sub, picture, pick }
         }
         #[cfg(feature = "links")]
         kinds::KIND_REGIS_LINKS => {

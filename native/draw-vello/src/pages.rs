@@ -1,7 +1,7 @@
 //! Page images as the painter holds them: set from a page's palette and
 //! dots, kept while the page is shown, and drawn.
 
-use interface_core::canvas::{MAX_STILLS, PAGE_HEIGHT, PAGE_WIDTH, PageKey, REGIS_COLOURS, REGIS_HEIGHT, REGIS_WIDTH, STILL_HEIGHT, STILL_WIDTH, image_within};
+use interface_core::canvas::{MAX_STILLS, PAGE_HEIGHT, PAGE_WIDTH, PageKey, PictureLanguage, REGIS_COLOURS, STILL_HEIGHT, STILL_WIDTH, image_within};
 use interface_core::geometry::Rect;
 use interface_core::theme::Colour;
 use std::sync::Arc;
@@ -49,8 +49,11 @@ impl Still {
     }
 }
 
-/// The picture of a page drawn in ReGIS (DEC-6335): 800 by 480 pixels.
+/// The picture of a page drawn in ReGIS (DEC-6335), 800 by 480 pixels, or
+/// in NAPLPS, the teletext raster's 480 by 500 (REQ-5819).
 pub(crate) struct RegisImage {
+    /// What it is drawn in, which says its size and where it lies.
+    pub(crate) language: PictureLanguage,
     /// Its pixels, kept to find what a new picture changes (REQ-6399).
     pixmap: Arc<Pixmap>,
     /// Colour 0 of its sixteen: what is drawn above and below it.
@@ -66,10 +69,12 @@ pub(crate) struct RegisImage {
     indices: Vec<u8>,
 }
 
-/// Which pixels of a ReGIS picture a message carries (REQ-6399): a whole
-/// picture, or the part of one that changed.
+/// Which pixels of a ReGIS or NAPLPS picture a message carries (REQ-6399):
+/// a whole picture, or the part of one that changed.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct RegisPart {
+    /// What the picture is drawn in, which says its size.
+    pub language: PictureLanguage,
     /// The picture's number among those sent for its page.
     pub number: u32,
     /// The number of the picture this is a part of; 0 for a whole picture.
@@ -85,10 +90,10 @@ pub struct RegisPart {
 }
 
 impl RegisPart {
-    /// A whole picture, numbered `number`.
+    /// A whole picture drawn in `language`, numbered `number`.
     #[must_use]
-    pub const fn whole(number: u32) -> Self {
-        Self { number, base: 0, x: 0, y: 0, width: REGIS_SIZE.0, height: REGIS_SIZE.1 }
+    pub const fn whole(number: u32, language: PictureLanguage) -> Self {
+        Self { language, number, base: 0, x: 0, y: 0, width: language.width(), height: language.height() }
     }
 }
 
@@ -108,11 +113,6 @@ impl RegisImage {
         self.number
     }
 }
-
-/// A ReGIS picture's size, as `vello_cpu` takes it.
-const REGIS_SIZE: (u16, u16) = (REGIS_WIDTH, REGIS_HEIGHT);
-/// Its pixels.
-const REGIS_PIXELS: usize = REGIS_WIDTH as usize * REGIS_HEIGHT as usize;
 
 /// How near a whole number counts as one: a hundredth of a display pixel
 /// across the whole picture, well inside what rounding a layout leaves.
@@ -183,21 +183,24 @@ impl Painter {
     /// When the pixels are not the part's, or the part does not lie in
     /// the picture.
     pub fn set_regis(&mut self, key: PageKey, palette: &[[u8; 3]; REGIS_COLOURS], part: RegisPart, packed: &[u8]) -> Result<(), PageError> {
+        let language = part.language;
+        // A picture's size, as `vello_cpu` takes it.
+        let size = (language.width(), language.height());
         let (left, top, across, down) = (usize::from(part.x), usize::from(part.y), usize::from(part.width), usize::from(part.height));
-        let fits = left.saturating_add(across) <= usize::from(REGIS_SIZE.0) && top.saturating_add(down) <= usize::from(REGIS_SIZE.1);
+        let fits = left.saturating_add(across) <= usize::from(size.0) && top.saturating_add(down) <= usize::from(size.1);
         let whole = part.base == 0;
-        if !fits || across % 2 != 0 || packed.len() != across.saturating_mul(down) / 2 || (whole && part != RegisPart::whole(part.number)) {
+        if !fits || across % 2 != 0 || packed.len() != across.saturating_mul(down) / 2 || (whole && part != RegisPart::whole(part.number, language)) {
             return Err(PageError::RegisSize);
         }
         let colour = |index: u8| palette.get(usize::from(index)).copied().unwrap_or_default();
         let [[red, green, blue], ..] = *palette;
         let background = Colour { red, green, blue };
         if !whole {
-            let Some(held) = self.regis.get_mut(&key).filter(|held| held.sequence == part.base) else { return Ok(()) };
+            let Some(held) = self.regis.get_mut(&key).filter(|held| held.sequence == part.base && held.language == language) else { return Ok(()) };
             held.sequence = part.number;
             // The part's pixels into the picture's indices.
             for (row, line) in packed.chunks_exact((across / 2).max(1)).enumerate() {
-                let start = top.saturating_add(row).saturating_mul(usize::from(REGIS_SIZE.0)).saturating_add(left);
+                let start = top.saturating_add(row).saturating_mul(usize::from(size.0)).saturating_add(left);
                 let Some(place) = held.indices.get_mut(start..start.saturating_add(across)) else { return Err(PageError::RegisSize) };
                 for (pixel, index) in place.iter_mut().zip(line.iter().flat_map(|byte| [byte >> 4, byte & 0x0F])) {
                     *pixel = index;
@@ -211,7 +214,7 @@ impl Painter {
                 let data = Arc::make_mut(&mut held.pixmap).data_as_u8_slice_mut();
                 let row_bytes = across.saturating_mul(RGBA_BYTES);
                 for row in 0..down {
-                    let start = top.saturating_add(row).saturating_mul(usize::from(REGIS_SIZE.0)).saturating_add(left);
+                    let start = top.saturating_add(row).saturating_mul(usize::from(size.0)).saturating_add(left);
                     let (Some(place), Some(line)) = (
                         data.get_mut(start.saturating_mul(RGBA_BYTES)..start.saturating_mul(RGBA_BYTES).saturating_add(row_bytes)),
                         held.indices.get(start..start.saturating_add(across)),
@@ -227,9 +230,9 @@ impl Painter {
                 // New colours: every pixel is coloured again from its index,
                 // and what changed colour is drawn again.
                 let rgba = coloured(&held.indices, palette);
-                changed = changed.union(crate::damage::changed_pixels(&held.pixmap, &rgba, REGIS_SIZE.0));
+                changed = changed.union(crate::damage::changed_pixels(&held.pixmap, &rgba, size.0));
                 let metadata = PixelMetadata { may_have_transparency: false, alpha_type: ImageAlphaType::Alpha };
-                held.pixmap = Arc::new(Pixmap::from_parts(rgba, REGIS_SIZE.0, REGIS_SIZE.1, metadata));
+                held.pixmap = Arc::new(Pixmap::from_parts(rgba, size.0, size.1, metadata));
                 held.palette = *palette;
                 if held.background != background {
                     // Colour 0 is drawn around the picture too.
@@ -244,15 +247,15 @@ impl Painter {
             }
             return Ok(());
         }
-        let mut indices = Vec::with_capacity(REGIS_PIXELS);
+        let mut indices = Vec::with_capacity(language.pixels());
         indices.extend(packed.iter().flat_map(|byte| [byte >> 4, byte & 0x0F]));
         let rgba = coloured(&indices, palette);
         // Only where a whole picture differs from the one held is drawn
-        // again; a picture on another background, or the first, is drawn
-        // whole, with what lies around it.
-        match self.regis.get_mut(&key).filter(|held| held.background == background) {
+        // again; a picture on another background or in another language,
+        // or the first, is drawn whole, with what lies around it.
+        match self.regis.get_mut(&key).filter(|held| held.background == background && held.language == language) {
             Some(held) => {
-                let pixels = crate::damage::changed_pixels(&held.pixmap, &rgba, REGIS_SIZE.0);
+                let pixels = crate::damage::changed_pixels(&held.pixmap, &rgba, size.0);
                 if pixels.is_empty() {
                     // The same picture again: only its number is new.
                     held.sequence = part.number;
@@ -267,10 +270,10 @@ impl Painter {
             }
         }
         let metadata = PixelMetadata { may_have_transparency: false, alpha_type: ImageAlphaType::Alpha };
-        let pixmap = Arc::new(Pixmap::from_parts(rgba, REGIS_SIZE.0, REGIS_SIZE.1, metadata));
+        let pixmap = Arc::new(Pixmap::from_parts(rgba, size.0, size.1, metadata));
         let number = self.next_image;
         self.next_image = number.wrapping_add(1);
-        self.regis.insert(key, RegisImage { pixmap, background, number, sequence: part.number, palette: *palette, indices });
+        self.regis.insert(key, RegisImage { language, pixmap, background, number, sequence: part.number, palette: *palette, indices });
         Ok(())
     }
 
@@ -359,12 +362,13 @@ impl Painter {
 
     pub(crate) fn draw_page(&mut self, key: PageKey, area: Rect) {
         if let Some(regis) = self.regis.get(&key) {
-            // The picture across the image's width, its own proportions
-            // kept, on its own background.
-            let (pixmap, background) = (Arc::clone(&regis.pixmap), regis.background);
-            let layout = interface_core::canvas::regis_layout(area, self.regis_contain, self.regis_keyed.contains(&key));
+            // A ReGIS picture across the image's width, its own proportions
+            // kept, on its own background; a NAPLPS picture over the whole
+            // image, as the teletext raster it is (REQ-5819).
+            let (pixmap, background, language) = (Arc::clone(&regis.pixmap), regis.background, regis.language);
+            let layout = interface_core::canvas::picture_layout(language, area, self.regis_contain, self.regis_keyed.contains(&key));
             let place = layout.picture;
-            let (width, height) = (f64::from(REGIS_SIZE.0), f64::from(REGIS_SIZE.1));
+            let (width, height) = (f64::from(language.width()), f64::from(language.height()));
             // At a whole multiple of its size each pixel is a block of
             // display pixels and is drawn as one (REQ-6401); at any other
             // size it is sampled smoothly, or thin lines would be dropped

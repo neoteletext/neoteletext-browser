@@ -1,8 +1,11 @@
-//! A picture drawn by the ReGIS renderer (DEC-6335), as the decoder sends
-//! it to the trusted core and the trusted core to the interface: 800 by
-//! 480 pixels of sixteen colours, packed two pixels to a byte so that it
-//! fits one message, and with it for the trusted core alone the pick
-//! record, which says which numbered drawing lies under each pixel.
+//! A picture drawn by the ReGIS renderer (DEC-6335) or the NAPLPS renderer
+//! (DEC-6407), as the decoder sends it to the trusted core and the trusted
+//! core to the interface: sixteen colours, packed two pixels to a byte so
+//! that it fits one message, and with it for the trusted core alone the
+//! pick record, which says which numbered drawing lies under each pixel. A
+//! ReGIS picture is 800 by 480 pixels; a NAPLPS picture is the teletext
+//! raster, 480 by 500 (the NAPLPS renderer's REQ-5819, DEC-6667). Its
+//! language says which, and every size is checked against it.
 //!
 //! Everything here comes from a decoder, so every count and every index is
 //! checked on reading.
@@ -13,11 +16,13 @@ use crate::{Fields, MAX_PAYLOAD, ProtocolError, push_flag, push_key};
 pub const REGIS_WIDTH: usize = interface_core::canvas::REGIS_WIDTH as usize;
 /// A ReGIS picture's height in pixels.
 pub const REGIS_HEIGHT: usize = interface_core::canvas::REGIS_HEIGHT as usize;
-/// The pixels of a picture.
+/// The pixels of a ReGIS picture, the largest of any language.
 pub const REGIS_PIXELS: usize = REGIS_WIDTH * REGIS_HEIGHT;
+const _: () = assert!(PictureLanguage::Regis.pixels() == REGIS_PIXELS && PictureLanguage::Naplps.pixels() <= REGIS_PIXELS);
 /// The colours of a picture: each pixel is one of sixteen.
 pub const REGIS_COLOURS: usize = interface_core::canvas::REGIS_COLOURS;
-/// A picture's pixels packed two to a byte, the left one in the high half.
+/// A ReGIS picture's pixels packed two to a byte, the left one in the high
+/// half: the most a picture of any language packs to.
 pub const REGIS_PACKED: usize = REGIS_PIXELS / 2;
 /// The most detectable drawings whose origins go with a pick record. A
 /// picture with more has no pick record sent.
@@ -37,7 +42,8 @@ const AREA_BYTES: usize = 2 + 2 + 2 + 2;
 const ORIGIN_BYTES: usize = 2 + 4 + 4;
 /// A run's bytes: the drawing and its length.
 const RUN_BYTES: usize = 2 + 2;
-// A picture, the largest pick record and the page it is of fit one message.
+// The largest picture, the largest pick record and the page it is of fit
+// one message.
 const _: () = assert!(16 + PICTURE_FIXED + REGIS_PACKED + 2 + MAX_PICK_ORIGINS * ORIGIN_BYTES + 2 + MAX_PICK_RUNS * RUN_BYTES <= MAX_PAYLOAD);
 
 /// A rectangle of a picture, in the picture's own pixels. Pixels travel
@@ -55,9 +61,11 @@ pub struct RegisArea {
 }
 
 impl RegisArea {
-    /// The whole picture.
-    #[allow(clippy::cast_possible_truncation, reason = "800 and 480, checked below to fit")]
-    pub const WHOLE: Self = Self { x: 0, y: 0, width: REGIS_WIDTH as u16, height: REGIS_HEIGHT as u16 };
+    /// The whole of a picture drawn in `language`.
+    #[must_use]
+    pub const fn whole(language: PictureLanguage) -> Self {
+        Self { x: 0, y: 0, width: language.width(), height: language.height() }
+    }
 
     /// Its pixels.
     #[must_use]
@@ -65,31 +73,21 @@ impl RegisArea {
         usize::from(self.width).saturating_mul(usize::from(self.height))
     }
 
-    /// Whether it lies in the picture with an even left edge and width.
+    /// Whether it lies in a picture drawn in `language` with an even left
+    /// edge and width.
     #[must_use]
-    pub fn fits(self) -> bool {
+    pub fn fits(self, language: PictureLanguage) -> bool {
         self.x.is_multiple_of(2)
             && self.width.is_multiple_of(2)
-            && usize::from(self.x).saturating_add(usize::from(self.width)) <= REGIS_WIDTH
-            && usize::from(self.y).saturating_add(usize::from(self.height)) <= REGIS_HEIGHT
+            && u32::from(self.x).saturating_add(u32::from(self.width)) <= u32::from(language.width())
+            && u32::from(self.y).saturating_add(u32::from(self.height)) <= u32::from(language.height())
     }
 }
 
-// The picture's sides fit an area's fields, and a row is whole bytes.
-const _: () = assert!(REGIS_WIDTH <= u16::MAX as usize);
-const _: () = assert!(REGIS_HEIGHT <= u16::MAX as usize);
-const _: () = assert!(REGIS_WIDTH.is_multiple_of(2));
+// A row of a picture of either language is whole bytes.
+const _: () = assert!(PictureLanguage::Regis.width().is_multiple_of(2) && PictureLanguage::Naplps.width().is_multiple_of(2));
 
-/// The language a page's picture is drawn in: which renderer made it, for
-/// what the browser says of it.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub enum PictureLanguage {
-    /// ReGIS (DEC-6335).
-    #[default]
-    Regis,
-    /// NAPLPS, ANSI X3.110-1983 (the NAPLPS renderer's REQ-6408).
-    Naplps,
-}
+pub use interface_core::canvas::PictureLanguage;
 
 /// A picture, or the part of one that changed (REQ-6399).
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -109,7 +107,7 @@ pub struct RegisPicture {
     /// The number of the picture this is a part of, to be laid over it;
     /// 0 for a whole picture, which needs none before it.
     pub base: u32,
-    /// The rectangle of the picture the pixels are of: [`RegisArea::WHOLE`]
+    /// The rectangle of the picture the pixels are of: [`RegisArea::whole`]
     /// for a whole picture; for a part, where it changed, which may be
     /// nowhere.
     pub area: RegisArea,
@@ -127,10 +125,10 @@ impl RegisPicture {
 
     /// What both ends hold a picture to.
     fn check(&self) -> Result<(), ProtocolError> {
-        if !self.area.fits() || self.packed.len() != self.area.pixels() / 2 {
+        if !self.area.fits(self.language) || self.packed.len() != self.area.pixels() / 2 {
             return Err(ProtocolError::BadValue("regis picture size"));
         }
-        if self.number == 0 || (self.whole() && self.area != RegisArea::WHOLE) {
+        if self.number == 0 || (self.whole() && self.area != RegisArea::whole(self.language)) {
             return Err(ProtocolError::BadValue("regis picture number"));
         }
         Ok(())
@@ -171,23 +169,23 @@ pub struct Picked {
 }
 
 /// Packs one byte a pixel into two pixels a byte. `None` unless `pixels`
-/// is a whole picture of colours below sixteen.
+/// is a whole picture drawn in `language`, of colours below sixteen.
 #[must_use]
-pub fn pack(pixels: &[u8]) -> Option<Vec<u8>> {
-    pack_area(pixels, RegisArea::WHOLE)
+pub fn pack(pixels: &[u8], language: PictureLanguage) -> Option<Vec<u8>> {
+    pack_area(pixels, RegisArea::whole(language), language)
 }
 
-/// Packs the pixels of `area` of a whole picture, one byte a pixel, into
-/// two pixels a byte. `None` unless `pixels` is a whole picture, the area
-/// fits, and its colours are below sixteen.
+/// Packs the pixels of `area` of a whole picture drawn in `language`, one
+/// byte a pixel, into two pixels a byte. `None` unless `pixels` is a whole
+/// picture, the area fits, and its colours are below sixteen.
 #[must_use]
-pub fn pack_area(pixels: &[u8], area: RegisArea) -> Option<Vec<u8>> {
-    if pixels.len() != REGIS_PIXELS || !area.fits() {
+pub fn pack_area(pixels: &[u8], area: RegisArea, language: PictureLanguage) -> Option<Vec<u8>> {
+    if pixels.len() != language.pixels() || !area.fits(language) {
         return None;
     }
     let mut packed = Vec::with_capacity(area.pixels() / 2);
     for row in usize::from(area.y)..usize::from(area.y).saturating_add(usize::from(area.height)) {
-        let start = row.checked_mul(REGIS_WIDTH)?.checked_add(usize::from(area.x))?;
+        let start = row.checked_mul(usize::from(language.width()))?.checked_add(usize::from(area.x))?;
         let line = pixels.get(start..start.checked_add(usize::from(area.width))?)?;
         if line.iter().any(|pixel| usize::from(*pixel) >= REGIS_COLOURS) {
             return None;
@@ -204,14 +202,14 @@ pub fn unpack(packed: &[u8]) -> Vec<u8> {
 }
 
 impl RegisPick {
-    /// A pick record in runs, from one drawing a pixel and the origins of
-    /// its drawings. Nothing is picked anywhere if `record` is empty (no
-    /// detectable drawing wrote a pixel), is not a whole picture, or needs
-    /// more runs or origins than are sent.
+    /// A pick record in runs, from one drawing a pixel of a picture drawn
+    /// in `language` and the origins of its drawings. Nothing is picked
+    /// anywhere if `record` is empty (no detectable drawing wrote a pixel),
+    /// is not a whole picture, or needs more runs or origins than are sent.
     #[must_use]
-    pub fn of(record: &[u16], origins: impl Iterator<Item = (u16, i32, i32)>) -> Self {
+    pub fn of(record: &[u16], origins: impl Iterator<Item = (u16, i32, i32)>, language: PictureLanguage) -> Self {
         let origins: Vec<PickOrigin> = origins.take(MAX_PICK_ORIGINS.saturating_add(1)).map(|(drawing, x, y)| PickOrigin { drawing, x, y }).collect();
-        if record.len() != REGIS_PIXELS || origins.len() > MAX_PICK_ORIGINS {
+        if record.len() != language.pixels() || origins.len() > MAX_PICK_ORIGINS {
             return Self::default();
         }
         let mut runs: Vec<(u16, u16)> = Vec::new();
@@ -230,13 +228,15 @@ impl RegisPick {
         Self { origins, runs }
     }
 
-    /// What lies under the pixel at (`x`, `y`).
+    /// What lies under the pixel at (`x`, `y`) of the picture drawn in
+    /// `language` the record is of.
     #[must_use]
-    pub fn at(&self, x: usize, y: usize) -> Picked {
-        if x >= REGIS_WIDTH || y >= REGIS_HEIGHT {
+    pub fn at(&self, language: PictureLanguage, x: usize, y: usize) -> Picked {
+        let width = usize::from(language.width());
+        if x >= width || y >= usize::from(language.height()) {
             return Picked::default();
         }
-        let mut before = y.saturating_mul(REGIS_WIDTH).saturating_add(x);
+        let mut before = y.saturating_mul(width).saturating_add(x);
         for &(drawing, length) in &self.runs {
             if before < usize::from(length) {
                 let origin = self.origins.iter().find(|origin| origin.drawing == drawing);
@@ -289,7 +289,7 @@ pub(crate) fn read_picture(fields: &mut Fields<'_>) -> Result<RegisPicture, Prot
     }
     let (number, base) = (fields.u32()?, fields.u32()?);
     let area = RegisArea { x: fields.u16()?, y: fields.u16()?, width: fields.u16()?, height: fields.u16()? };
-    if !area.fits() {
+    if !area.fits(language) {
         return Err(ProtocolError::BadValue("regis picture size"));
     }
     let packed = fields.take(area.pixels() / 2)?.to_vec();
@@ -298,13 +298,13 @@ pub(crate) fn read_picture(fields: &mut Fields<'_>) -> Result<RegisPicture, Prot
     Ok(picture)
 }
 
-/// Writes a pick record.
+/// Writes a pick record of a picture drawn in `language`.
 ///
 /// # Errors
 /// When it has more origins or runs than are sent, or its runs do not
 /// cover the picture exactly.
-pub(crate) fn push_pick(payload: &mut Vec<u8>, pick: &RegisPick) -> Result<(), ProtocolError> {
-    check_pick(pick)?;
+pub(crate) fn push_pick(payload: &mut Vec<u8>, pick: &RegisPick, language: PictureLanguage) -> Result<(), ProtocolError> {
+    check_pick(pick, language)?;
     payload.extend_from_slice(&u16::try_from(pick.origins.len()).unwrap_or(0).to_be_bytes());
     for origin in &pick.origins {
         payload.extend_from_slice(&origin.drawing.to_be_bytes());
@@ -319,8 +319,8 @@ pub(crate) fn push_pick(payload: &mut Vec<u8>, pick: &RegisPick) -> Result<(), P
     Ok(())
 }
 
-/// Reads a pick record.
-pub(crate) fn read_pick(fields: &mut Fields<'_>) -> Result<RegisPick, ProtocolError> {
+/// Reads a pick record of a picture drawn in `language`.
+pub(crate) fn read_pick(fields: &mut Fields<'_>, language: PictureLanguage) -> Result<RegisPick, ProtocolError> {
     let count = fields.count_u16(MAX_PICK_ORIGINS, "too many pick origins")?;
     let mut origins = Vec::with_capacity(count);
     for _ in 0..count {
@@ -334,12 +334,12 @@ pub(crate) fn read_pick(fields: &mut Fields<'_>) -> Result<RegisPick, ProtocolEr
         runs.push((fields.u16()?, fields.u16()?));
     }
     let pick = RegisPick { origins, runs };
-    check_pick(&pick)?;
+    check_pick(&pick, language)?;
     Ok(pick)
 }
 
-/// What both ends hold a pick record to.
-fn check_pick(pick: &RegisPick) -> Result<(), ProtocolError> {
+/// What both ends hold a pick record of a picture drawn in `language` to.
+fn check_pick(pick: &RegisPick, language: PictureLanguage) -> Result<(), ProtocolError> {
     if pick.origins.len() > MAX_PICK_ORIGINS || pick.runs.len() > MAX_PICK_RUNS {
         return Err(ProtocolError::BadValue("regis pick record size"));
     }
@@ -347,7 +347,7 @@ fn check_pick(pick: &RegisPick) -> Result<(), ProtocolError> {
         return Err(ProtocolError::BadValue("regis pick origin of no drawing"));
     }
     let covered = pick.runs.iter().fold(0_usize, |sum, (_, length)| sum.saturating_add(usize::from(*length)));
-    let whole = covered == REGIS_PIXELS && pick.runs.iter().all(|(_, length)| *length != 0);
+    let whole = covered == language.pixels() && pick.runs.iter().all(|(_, length)| *length != 0);
     if !pick.runs.is_empty() && !whole {
         return Err(ProtocolError::BadValue("regis pick runs do not cover the picture"));
     }
@@ -366,12 +366,13 @@ mod tests {
         pixels[0] = 15;
         pixels[1] = 3;
         pixels[REGIS_PIXELS - 1] = 9;
-        let packed = pack(&pixels).unwrap();
+        let packed = pack(&pixels, PictureLanguage::Regis).unwrap();
         assert_eq!((packed.len(), packed[0], packed[REGIS_PACKED - 1]), (REGIS_PACKED, 0xF3, 0x09));
         assert_eq!(unpack(&packed), pixels);
         pixels[5] = 16;
-        assert_eq!(pack(&pixels), None, "a colour above fifteen");
-        assert_eq!(pack(&pixels[1..]), None, "not a whole picture");
+        assert_eq!(pack(&pixels, PictureLanguage::Regis), None, "a colour above fifteen");
+        assert_eq!(pack(&pixels[1..], PictureLanguage::Regis), None, "not a whole picture");
+        assert_eq!(pack(&pixels, PictureLanguage::Naplps), None, "not a NAPLPS picture's size");
     }
 
     #[test]
@@ -380,16 +381,16 @@ mod tests {
         for x in 100..120 {
             record[50 * REGIS_WIDTH + x] = 7;
         }
-        let pick = RegisPick::of(&record, [(7, 100, 40)].into_iter());
+        let pick = RegisPick::of(&record, [(7, 100, 40)].into_iter(), PictureLanguage::Regis);
         assert_eq!(pick.runs.len(), 8, "runs of nothing are cut at 65,535 pixels");
-        assert_eq!(pick.at(105, 50), Picked { drawing: 7, x: 5, y: 10 });
-        assert_eq!(pick.at(99, 50), Picked::default());
-        assert_eq!(pick.at(120, 50), Picked::default());
-        assert_eq!(pick.at(REGIS_WIDTH, 50), Picked::default());
+        assert_eq!(pick.at(PictureLanguage::Regis, 105, 50), Picked { drawing: 7, x: 5, y: 10 });
+        assert_eq!(pick.at(PictureLanguage::Regis, 99, 50), Picked::default());
+        assert_eq!(pick.at(PictureLanguage::Regis, 120, 50), Picked::default());
+        assert_eq!(pick.at(PictureLanguage::Regis, REGIS_WIDTH, 50), Picked::default());
         let mut bytes = Vec::new();
-        push_pick(&mut bytes, &pick).unwrap();
+        push_pick(&mut bytes, &pick, PictureLanguage::Regis).unwrap();
         let mut fields = Fields::new(&bytes);
-        assert_eq!(read_pick(&mut fields).unwrap(), pick);
+        assert_eq!(read_pick(&mut fields, PictureLanguage::Regis).unwrap(), pick);
         fields.end().unwrap();
     }
 
@@ -397,21 +398,82 @@ mod tests {
     fn a_pick_record_too_long_to_send_picks_nothing() {
         // Every other pixel a drawing: far more runs than are sent.
         let record: Vec<u16> = (0..REGIS_PIXELS).map(|pixel| u16::from(pixel % 2 == 0)).collect();
-        assert_eq!(RegisPick::of(&record, [(1, 0, 0)].into_iter()), RegisPick::default());
-        assert_eq!(RegisPick::of(&[], core::iter::empty()), RegisPick::default());
+        assert_eq!(RegisPick::of(&record, [(1, 0, 0)].into_iter(), PictureLanguage::Regis), RegisPick::default());
+        assert_eq!(RegisPick::of(&[], core::iter::empty(), PictureLanguage::Regis), RegisPick::default());
     }
 
     #[test]
     fn a_pick_record_that_does_not_cover_the_picture_is_refused() {
         for runs in [vec![(1_u16, 10_u16)], vec![(0, 0)]] {
             let pick = RegisPick { origins: vec![PickOrigin { drawing: 1, x: 0, y: 0 }], runs };
-            assert!(push_pick(&mut Vec::new(), &pick).is_err());
+            assert!(push_pick(&mut Vec::new(), &pick, PictureLanguage::Regis).is_err());
         }
         let nobody = RegisPick { origins: vec![PickOrigin { drawing: 0, x: 0, y: 0 }], runs: Vec::new() };
-        assert!(push_pick(&mut Vec::new(), &nobody).is_err());
+        assert!(push_pick(&mut Vec::new(), &nobody, PictureLanguage::Regis).is_err());
         // Read from bytes: one origin of drawing 0.
         let bytes = [0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
-        assert!(read_pick(&mut Fields::new(&bytes)).is_err());
+        assert!(read_pick(&mut Fields::new(&bytes), PictureLanguage::Regis).is_err());
+    }
+
+    /// REQ-5819: the pointer on a NAPLPS picture may be on any dot of the
+    /// teletext raster, down to line 499, which no ReGIS picture has; a
+    /// pixel beyond every picture is refused.
+    #[test]
+    fn a_pointer_may_be_on_the_rasters_last_line() {
+        let key = interface_core::canvas::PageKey { channel: 1, page: 0x100 };
+        for (at, accepted) in [((479, 499), true), ((799, 479), true), ((800, 0), false), ((0, 500), false)] {
+            let mut bytes = Vec::new();
+            push_pointer(&mut bytes, &RegisPointer { key, at: Some(at), pressed: false, finger: false });
+            assert_eq!(read_pointer(&mut Fields::new(&bytes)).is_ok(), accepted, "{at:?}");
+        }
+    }
+
+    /// REQ-5819, DEC-6667: a NAPLPS picture is the teletext raster, 480 by
+    /// 500: it packs, is written and is read at that size, and a part or a
+    /// whole of a ReGIS picture's size is refused for it, as a NAPLPS
+    /// picture's size is for a ReGIS one; its pick record covers the
+    /// raster's pixels.
+    #[test]
+    fn a_naplps_picture_is_the_teletext_raster() {
+        assert_eq!((PictureLanguage::Naplps.width(), PictureLanguage::Naplps.height()), (480, 500));
+        let mut pixels = vec![2_u8; PictureLanguage::Naplps.pixels()];
+        pixels[479] = 5;
+        let packed = pack(&pixels, PictureLanguage::Naplps).unwrap();
+        assert_eq!(packed.len(), 120_000);
+        let picture = |language, area: RegisArea, packed: Vec<u8>| RegisPicture {
+            commits: 1,
+            work: 2,
+            language,
+            palette: [[0; 3]; REGIS_COLOURS],
+            number: 1,
+            base: 0,
+            area,
+            packed,
+        };
+        let naplps = picture(PictureLanguage::Naplps, RegisArea::whole(PictureLanguage::Naplps), packed.clone());
+        let mut bytes = Vec::new();
+        push_picture(&mut bytes, &naplps).unwrap();
+        let mut fields = Fields::new(&bytes);
+        assert_eq!(read_picture(&mut fields).unwrap(), naplps);
+        fields.end().unwrap();
+        assert!(
+            push_picture(&mut Vec::new(), &picture(PictureLanguage::Naplps, RegisArea::whole(PictureLanguage::Regis), vec![0; REGIS_PACKED])).is_err(),
+            "a ReGIS size for NAPLPS"
+        );
+        assert!(
+            push_picture(&mut Vec::new(), &picture(PictureLanguage::Regis, RegisArea::whole(PictureLanguage::Naplps), packed)).is_err(),
+            "a NAPLPS size for ReGIS"
+        );
+        let tall = RegisArea { x: 0, y: 499, width: 2, height: 1 };
+        assert!(tall.fits(PictureLanguage::Naplps) && !tall.fits(PictureLanguage::Regis), "line 499 is the raster's");
+        let mut record = vec![0_u16; PictureLanguage::Naplps.pixels()];
+        record[499 * 480 + 10] = 3;
+        let pick = RegisPick::of(&record, [(3, 10, 499)].into_iter(), PictureLanguage::Naplps);
+        assert_eq!(pick.at(PictureLanguage::Naplps, 10, 499), Picked { drawing: 3, x: 0, y: 0 });
+        let mut bytes = Vec::new();
+        push_pick(&mut bytes, &pick, PictureLanguage::Naplps).unwrap();
+        assert_eq!(read_pick(&mut Fields::new(&bytes), PictureLanguage::Naplps).unwrap(), pick);
+        assert!(read_pick(&mut Fields::new(&bytes), PictureLanguage::Regis).is_err(), "it does not cover a ReGIS picture");
     }
 }
 
@@ -442,8 +504,10 @@ pub(crate) fn read_pointer(fields: &mut Fields<'_>) -> Result<RegisPointer, Prot
         None
     } else {
         let (x, y) = (fields.u16()?, fields.u16()?);
-        // The interface is not trusted to say a pixel the picture has not.
-        if usize::from(x) >= REGIS_WIDTH || usize::from(y) >= REGIS_HEIGHT {
+        // The interface is not trusted to say a pixel no picture has; the
+        // trusted core holds it to the picture of its page (REQ-5819: a
+        // NAPLPS picture is 480 by 500, a ReGIS picture 800 by 480).
+        if x >= interface_core::canvas::PICTURE_MAX_WIDTH || y >= interface_core::canvas::PICTURE_MAX_HEIGHT {
             return Err(ProtocolError::BadValue("a ReGIS pointer outside the picture"));
         }
         Some((x, y))

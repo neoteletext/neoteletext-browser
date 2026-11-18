@@ -26,7 +26,7 @@ use neoteletext_web::records::frame::{FrameMark, FrameRecord};
 use neoteletext_web::records::naplps_objects::{NaplpsObject, ObjectKind};
 use neoteletext_web::records::regis::RegisRecord;
 use neoteletext_web::records::sheet::{SheetKind, SheetRecord};
-use protocol::regis::{REGIS_HEIGHT, REGIS_WIDTH, RegisPicture, unpack};
+use protocol::regis::{PictureLanguage, REGIS_HEIGHT, REGIS_WIDTH, RegisPicture, unpack};
 use std::fmt::Write as _;
 
 const PAGE: u16 = 0x100;
@@ -99,6 +99,8 @@ fn on(number: u16, kind: OperationKind) -> Operation {
 #[derive(Default)]
 pub(crate) struct Receiver {
     pixels: Vec<u8>,
+    /// The picture's width: a ReGIS picture's 800, a NAPLPS picture's 480.
+    width: usize,
     /// The pixels of the parts taken since it was last asked.
     sent: usize,
     /// Whether a whole picture was taken since it was last asked.
@@ -111,11 +113,12 @@ impl Receiver {
         let part = unpack(&picture.packed);
         if picture.whole() {
             self.pixels = part;
+            self.width = usize::from(picture.language.width());
             self.whole = true;
         } else {
             let (left, across) = (usize::from(area.x), usize::from(area.width));
             for (row, line) in part.chunks_exact(across.max(1)).enumerate().take(usize::from(area.height)) {
-                let start = (usize::from(area.y) + row) * REGIS_WIDTH + left;
+                let start = (usize::from(area.y) + row) * self.width + left;
                 self.pixels[start..start + across].copy_from_slice(line);
             }
             self.sent += area.pixels();
@@ -144,7 +147,7 @@ impl Receiver {
     }
 
     pub(crate) fn at(&self, x: usize, y: usize) -> u8 {
-        self.pixels[y * REGIS_WIDTH + x]
+        self.pixels[y * self.width + x]
     }
 
     fn count(&self, colour: u8) -> usize {
@@ -552,9 +555,12 @@ fn a_naplps_blink_changes_the_colours_every_thirty_ticks() {
     assert_ne!(first[3], last[3]);
 }
 
-/// The columns to the left of the NAPLPS canvas, which lies in the middle
-/// of the wider picture carried.
-const LEFT: usize = (REGIS_WIDTH - 640) / 2;
+/// The dot of the teletext raster a NAPLPS picture is carried as (REQ-5819)
+/// that shows the pixel (`x`, `y`) of the 640 by 480 picture objects are
+/// placed in: its canvas of 480 by 462 lies on lines 19 to 480.
+fn raster(x: usize, y: usize) -> (usize, usize) {
+    ((x * 480 + 320) / 640, (y * 462 + 240) / 480 + 19)
+}
 
 /// A NAPLPS object as its record holds it.
 fn object(number: u16, kind: ObjectKind, (x, y): (i16, i16), frames: &[u8]) -> NaplpsObject<'_> {
@@ -610,11 +616,21 @@ fn naplps_objects_are_composed_picked_hidden_moved_and_cycled() {
     let pick = drawn.pick.clone().unwrap();
     receiver.lay(&drawn.picture);
     assert!(receiver.take_sent().1, "the first picture is whole");
-    assert_eq!(receiver.at(LEFT + 110, 110), 3, "the macro object's frame 0, at its place");
-    assert_eq!(pick.at(LEFT + 110, 110).drawing, 1, "the object can be picked");
-    assert_eq!(pick.at(LEFT + 330, 110).drawing, 2, "and the region");
-    assert_eq!(pick.at(LEFT + 10, 10).drawing, 0, "nothing else of a NAPLPS picture");
-    assert_ne!(receiver.at(LEFT + 330, 110), 5, "a shown region changes nothing");
+    let (at, picked) = (
+        |x, y| {
+            let (x, y) = raster(x, y);
+            receiver.at(x, y)
+        },
+        |x, y| {
+            let (x, y) = raster(x, y);
+            pick.at(PictureLanguage::Naplps, x, y).drawing
+        },
+    );
+    assert_eq!(at(110, 110), 3, "the macro object's frame 0, at its place");
+    assert_eq!(picked(110, 110), 1, "the object can be picked");
+    assert_eq!(picked(330, 110), 2, "and the region");
+    assert_eq!(pick.at(PictureLanguage::Naplps, 10, 10).drawing, 0, "nothing else of a NAPLPS picture");
+    assert_ne!(at(330, 110), 5, "a shown region changes nothing");
 
     let mut found = [0; MAX_POINTER_OBJECTS];
     let picture = engine.animation_picture(PAGE);
@@ -633,15 +649,19 @@ fn naplps_objects_are_composed_picked_hidden_moved_and_cycled() {
     ];
     engine.feed_whole(true, true, &animate(PAGE, &operations));
     assert!(receiver.naplps(&mut engine));
-    assert_eq!(receiver.at(LEFT + 330, 110), 5, "the hidden region is its cover");
-    assert_eq!((receiver.at(LEFT + 110, 110), receiver.at(LEFT + 410, 310)), (0, 3), "the object moved");
+    let at = |receiver: &Receiver, x, y| {
+        let (x, y) = raster(x, y);
+        receiver.at(x, y)
+    };
+    assert_eq!(at(&receiver, 330, 110), 5, "the hidden region is its cover");
+    assert_eq!((at(&receiver, 110, 110), at(&receiver, 410, 310)), (0, 3), "the object moved");
     assert!(!receiver.take_sent().1, "only what changed was sent");
     assert_eq!(engine.animation_picture(PAGE).objects_at(330, 110, &mut found), 0, "a hidden region takes no pointer");
     // The cycle starts at the tick after the one its record was applied in.
     let start = engine.naplps().next_tick(PAGE, None, 0).unwrap();
     engine.animation_step(&[PAGE], due_at(start + 4));
     assert!(receiver.naplps(&mut engine));
-    assert_eq!(receiver.at(LEFT + 410, 310), 6, "its cycle's next frame");
+    assert_eq!(at(&receiver, 410, 310), 6, "its cycle's next frame");
 
     // New objects replace them all, and forget their animation state.
     let mut packets = Vec::new();

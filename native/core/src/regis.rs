@@ -7,7 +7,7 @@
 use std::collections::BTreeMap;
 
 use interface_core::canvas::PageKey;
-use protocol::regis::RegisPick;
+use protocol::regis::{PictureLanguage, RegisPick};
 
 /// The most pages whose pick record is kept: more than a window shows of
 /// one channel at once. One more forgets the lowest page of the lowest
@@ -20,6 +20,8 @@ struct Held {
     sub: u16,
     /// The commits applied to the picture.
     commits: u32,
+    /// What the picture is drawn in, which says its size.
+    language: PictureLanguage,
     pick: RegisPick,
 }
 
@@ -47,23 +49,38 @@ pub struct PickRecords {
 }
 
 impl PickRecords {
-    /// Keeps the pick record of the picture just sent to the interface;
-    /// with none sent, the one held still stands for the same sub-page
-    /// (REQ-6399 item 4), at the picture's new count of commits.
-    pub fn hold(&mut self, key: PageKey, sub: u16, commits: u32, pick: Option<RegisPick>) {
+    /// Keeps the pick record of the picture just sent to the interface,
+    /// drawn in `language`; with none sent, the one held still stands for
+    /// the same sub-page in the same language (REQ-6399 item 4), at the
+    /// picture's new count of commits, and for another language nothing is
+    /// picked until one comes.
+    pub fn hold(&mut self, key: PageKey, sub: u16, commits: u32, language: PictureLanguage, pick: Option<RegisPick>) {
         match pick {
             Some(pick) => {
                 if !self.pages.contains_key(&key) && self.pages.len() >= MAX_HELD {
                     self.pages.pop_first();
                 }
-                self.pages.insert(key, Held { sub, commits, pick });
+                self.pages.insert(key, Held { sub, commits, language, pick });
             }
             None => {
                 if let Some(held) = self.pages.get_mut(&key).filter(|held| held.sub == sub) {
                     held.commits = commits;
+                    if held.language != language {
+                        held.language = language;
+                        held.pick = RegisPick::default();
+                    }
                 }
             }
         }
+    }
+
+    /// Whether `pixel` lies in the picture held for `key`, if one is: the
+    /// interface is not trusted to say a pixel the picture has not
+    /// (REQ-6377 item 2), and a NAPLPS picture (480 by 500, REQ-5819) and a
+    /// ReGIS picture (800 by 480) have different pixels.
+    #[must_use]
+    pub fn has_pixel(&self, key: PageKey, pixel: (u16, u16)) -> bool {
+        self.pages.get(&key).is_none_or(|held| pixel.0 < held.language.width() && pixel.1 < held.language.height())
     }
 
     /// Whether a page is drawn in ReGIS.
@@ -92,7 +109,7 @@ impl PickRecords {
     #[must_use]
     pub fn at(&self, key: PageKey, pixel: (u16, u16)) -> Option<Under> {
         let held = self.pages.get(&key)?;
-        let picked = held.pick.at(usize::from(pixel.0), usize::from(pixel.1));
+        let picked = held.pick.at(held.language, usize::from(pixel.0), usize::from(pixel.1));
         Some(Under { drawing: picked.drawing, x: picked.x, y: picked.y, picture_x: u32::from(pixel.0), picture_y: u32::from(pixel.1), commits: held.commits })
     }
 
@@ -123,7 +140,7 @@ mod tests {
         record[240 * REGIS_WIDTH + 400] = 9;
         let mut records = PickRecords::default();
         assert_eq!(records.under(KEY, 0, (400, 240)), None, "not a page drawn in ReGIS");
-        records.hold(KEY, 0, 7, Some(RegisPick::of(&record, [(9, 390, 200)].into_iter())));
+        records.hold(KEY, 0, 7, PictureLanguage::Regis, Some(RegisPick::of(&record, [(9, 390, 200)].into_iter(), PictureLanguage::Regis)));
         let under = records.under(KEY, 0, (400, 240)).unwrap();
         assert_eq!((under.drawing, under.x, under.y, under.picture_x, under.picture_y, under.commits), (9, 10, 40, 400, 240, 7));
         assert_eq!(records.under(KEY, 0, (0, 0)).unwrap().drawing, 0);
@@ -144,8 +161,29 @@ mod tests {
             record[row * REGIS_WIDTH + 401] = 5;
         }
         let mut records = PickRecords::default();
-        records.hold(KEY, 0, 1, Some(RegisPick::of(&record, [(5, 401, 100)].into_iter())));
+        records.hold(KEY, 0, 1, PictureLanguage::Regis, Some(RegisPick::of(&record, [(5, 401, 100)].into_iter(), PictureLanguage::Regis)));
         let drawing = |column: u16| records.under(KEY, 0, (column, 150)).unwrap().drawing;
         assert_eq!((drawing(400), drawing(401), drawing(402)), (0, 5, 0));
+    }
+
+    /// REQ-5819, DEC-6667: a NAPLPS page's pick record is of the teletext
+    /// raster, 480 by 500: an object on line 499 is under its dot there;
+    /// that dot is the picture's, where a ReGIS picture has no line 499; and
+    /// a picture of another language with no record of its own picks
+    /// nothing.
+    #[test]
+    fn a_naplps_pick_record_is_of_the_teletext_raster() {
+        let width = usize::from(PictureLanguage::Naplps.width());
+        let mut record = vec![0_u16; PictureLanguage::Naplps.pixels()];
+        record[499 * width + 12] = 6;
+        let mut records = PickRecords::default();
+        assert!(records.has_pixel(KEY, (12, 499)), "no picture held: the reader's bounds hold");
+        records.hold(KEY, 0, 1, PictureLanguage::Naplps, Some(RegisPick::of(&record, [(6, 12, 480)].into_iter(), PictureLanguage::Naplps)));
+        let under = records.under(KEY, 0, (12, 499)).unwrap();
+        assert_eq!((under.drawing, under.x, under.y), (6, 0, 19));
+        assert!(records.has_pixel(KEY, (479, 499)) && !records.has_pixel(KEY, (480, 0)));
+        records.hold(KEY, 0, 2, PictureLanguage::Regis, None);
+        assert!(!records.has_pixel(KEY, (12, 499)) && records.has_pixel(KEY, (799, 479)), "a ReGIS picture now");
+        assert_eq!(records.under(KEY, 0, (12, 10)).unwrap().drawing, 0, "nothing picked until its record comes");
     }
 }

@@ -6,7 +6,7 @@
 
 use super::Browser;
 use super::output::Output;
-use crate::canvas::{PageKey, regis_layout};
+use crate::canvas::{PageKey, picture_layout};
 use crate::geometry::Point;
 use crate::regis::{RegisPointer, pixel_under};
 
@@ -25,17 +25,18 @@ pub(super) struct RegisPointing {
 }
 
 impl Browser {
-    /// The open page, if it is drawn in ReGIS, and the pixel of its
-    /// picture under `point`, if any: the picture is drawn in the page's
-    /// image as the painter places it, by the fit in force (REQ-6363).
+    /// The open page, if it is drawn in ReGIS or NAPLPS, and the pixel of
+    /// its picture under `point`, if any: the picture is drawn in the
+    /// page's image as the painter places it, by the fit in force
+    /// (REQ-6363). A NAPLPS picture is the teletext raster (REQ-5819), so
+    /// its pixel is the dot of the page image, in the cell the teletext
+    /// page has there.
     fn regis_pixel(&self, point: Point) -> Option<(PageKey, Option<(u16, u16)>)> {
         let (key, image) = self.wall.open()?;
-        if !self.regis.contains_key(&key) {
-            return None;
-        }
+        let language = self.picture_language(key)?;
         let keyed = self.regis_keyed().contains(&key);
-        let picture = regis_layout(image, self.regis_contained(), keyed).picture;
-        Some((key, pixel_under(picture, point)))
+        let picture = picture_layout(language, image, self.regis_contained(), keyed).picture;
+        Some((key, pixel_under(language, picture, point)))
     }
 
     /// Tells the trusted core where the pointer is on the open page's
@@ -129,10 +130,10 @@ mod tests {
         browser.toggle_wall(0);
         browser.draw(&mut canvas, WIDTH, HEIGHT, 0);
         let (key, _) = browser.wall().shown().next().unwrap();
-        browser.set_regis(key, 0, 1);
+        browser.set_regis(key, 0, 1, crate::canvas::PictureLanguage::Regis);
         browser.draw(&mut canvas, WIDTH, HEIGHT, 0);
         let (_, image) = browser.wall.open().unwrap();
-        let picture = regis_layout(image, contain, false).picture;
+        let picture = picture_layout(crate::canvas::PictureLanguage::Regis, image, contain, false).picture;
         let _ = browser.take_outputs();
         (browser, key, picture)
     }
@@ -200,6 +201,36 @@ mod tests {
         assert_eq!(browser.cursor(), Cursor::Hand);
         browser.set_regis_over(key, false);
         assert_eq!(browser.cursor(), before);
+    }
+
+    /// REQ-5819, DEC-6667: on a page drawn in NAPLPS, in either fit, the
+    /// pointer is told as a dot of the teletext raster the picture fills,
+    /// the whole page image, so its cell is the teletext page's: no
+    /// 80-pixel offset, and the image's corners are the raster's.
+    #[test]
+    fn the_pointer_on_a_naplps_picture_is_a_dot_of_the_teletext_raster() {
+        for contain in [true, false] {
+            let (mut browser, mut canvas) = browser();
+            let mut settings = crate::browser::fixture::settings();
+            settings.regis_contain = contain;
+            browser.set_settings(settings);
+            browser.toggle_wall(0);
+            browser.draw(&mut canvas, WIDTH, HEIGHT, 0);
+            let (key, _) = browser.wall().shown().next().unwrap();
+            browser.set_regis(key, 0, 1, crate::canvas::PictureLanguage::Naplps);
+            browser.draw(&mut canvas, WIDTH, HEIGHT, 0);
+            let (_, image) = browser.wall.open().unwrap();
+            let _ = browser.take_outputs();
+            browser.pointer_moved(image.x0 + 0.25, image.y0 + 0.25, 0);
+            assert_eq!(told(&mut browser), [RegisPointer { key, at: Some((0, 0)), pressed: false, finger: false }], "contain {contain}");
+            browser.pointer_moved(image.x1 - 0.25, image.y1 - 0.25, 0);
+            assert_eq!(told(&mut browser), [RegisPointer { key, at: Some((479, 499)), pressed: false, finger: false }], "contain {contain}");
+            // The middle of cell (10, 12): column 10's dots are 120 to 131.
+            let dot = |across: f64, down: f64| Point::new(image.x0 + across * image.width() / 480.0, image.y0 + down * image.height() / 500.0);
+            let middle = dot(10.0 * 12.0 + 6.0, 12.0 * 20.0 + 10.0);
+            browser.pointer_moved(middle.x, middle.y, 0);
+            assert_eq!(told(&mut browser), [RegisPointer { key, at: Some((126, 250)), pressed: false, finger: false }], "contain {contain}");
+        }
     }
 
     /// A page that is not drawn in ReGIS tells the trusted core nothing.

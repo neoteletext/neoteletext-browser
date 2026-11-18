@@ -68,7 +68,7 @@ impl Core {
             // it in the page's place.
             FromDecoder::Regis { page, sub, picture, pick } => {
                 let key = PageKey { channel, page };
-                self.regis.hold(key, sub, picture.commits, pick);
+                self.regis.hold(key, sub, picture.commits, picture.language, pick);
                 self.send(&ToInterface::Regis { key, picture })?;
                 // What lies under a still pointer may have changed (REQ-6374 item 5).
                 self.regis_repoint()?;

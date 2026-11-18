@@ -217,10 +217,9 @@ impl Painter {
         // A ReGIS picture of which only some pixels changed, on a page
         // whose teletext image did not: those pixels, where the picture
         // lies in the page's place (REQ-6399 item 3).
-        if let (Some(parts), None) = (self.regis_changed.get(key), self.changed.get(key)) {
-            let place = interface_core::canvas::regis_layout(*area, self.regis_contain, self.regis_keyed.contains(key)).picture;
-            let (across, down) =
-                (place.width() / f64::from(interface_core::canvas::REGIS_WIDTH), place.height() / f64::from(interface_core::canvas::REGIS_HEIGHT));
+        if let (Some(parts), None, Some(language)) = (self.regis_changed.get(key), self.changed.get(key), self.regis.get(key).map(|held| held.language)) {
+            let place = interface_core::canvas::picture_layout(language, *area, self.regis_contain, self.regis_keyed.contains(key)).picture;
+            let (across, down) = (place.width() / f64::from(language.width()), place.height() / f64::from(language.height()));
             // Smooth sampling spreads a pixel's colour into its
             // neighbours' place: one pixel more on every side.
             let device = |pixels: &DeviceBox| {

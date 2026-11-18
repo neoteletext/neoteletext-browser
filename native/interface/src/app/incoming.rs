@@ -162,14 +162,21 @@ impl App {
         // RULE-66's hops: when the window's thread took the repaint.
         #[cfg(feature = "timed-test")]
         protocol::timed_test::mark("interface", "regis-taken", std::time::Instant::now(), format_args!("{},{},{},{}", area.x, area.y, area.width, area.height));
-        let part = draw_vello::RegisPart { number: picture.number, base: picture.base, x: area.x, y: area.y, width: area.width, height: area.height };
+        let part = draw_vello::RegisPart {
+            language: picture.language,
+            number: picture.number,
+            base: picture.base,
+            x: area.x,
+            y: area.y,
+            width: area.width,
+            height: area.height,
+        };
         if let Err(error) = self.view.painter.set_regis(key, &picture.palette, part, &picture.packed) {
             self.exit = Some(format!("bad ReGIS picture from the trusted core: {error:?}"));
             event_loop.exit();
             return false;
         }
-        self.view.browser.set_regis(key, picture.commits, picture.work);
-        self.view.browser.set_naplps(key, picture.language == protocol::regis::PictureLanguage::Naplps);
+        self.view.browser.set_regis(key, picture.commits, picture.work, picture.language);
         // The picture of the page the viewer types into or points at is
         // drawn as it arrives, with whatever else waited (REQ-6400).
         if self.awaited(key) {

@@ -167,10 +167,12 @@ pub(super) fn write_regis_to_core(
     let mut payload = Vec::new();
     payload.extend_from_slice(&page.to_be_bytes());
     payload.extend_from_slice(&sub.to_be_bytes());
+    // The picture comes first: its language says the size its pick record
+    // covers (REQ-5819).
+    crate::regis::push_picture(&mut payload, picture)?;
     payload.push(u8::from(pick.is_some()));
     if let Some(pick) = pick {
-        crate::regis::push_pick(&mut payload, pick)?;
+        crate::regis::push_pick(&mut payload, pick, picture.language)?;
     }
-    crate::regis::push_picture(&mut payload, picture)?;
     write_frame(out, KIND_REGIS, &payload)
 }

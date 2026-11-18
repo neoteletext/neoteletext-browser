@@ -115,7 +115,7 @@ impl Picked {
         if let Some(held) = held.as_ref().filter(|held| held.origins == origins && held.record == record) {
             return held.pick.clone();
         }
-        let pick = RegisPick::of(record, origins.iter().copied());
+        let pick = RegisPick::of(record, origins.iter().copied(), PictureLanguage::Regis);
         *held = Some(Self { record: record.to_vec(), origins, pick: pick.clone() });
         pick
     }
@@ -786,7 +786,7 @@ mod tests {
         assert_eq!(pixels[50 * REGIS_WIDTH + 110], 3, "the numbered drawing");
         assert_eq!(drawn.picture.commits, 1);
         assert!(drawn.picture.work > 0);
-        let picked = drawn.pick.unwrap().at(110, 50);
+        let picked = drawn.pick.unwrap().at(PictureLanguage::Regis, 110, 50);
         assert_eq!((picked.drawing, picked.x, picked.y), (1, 10, 0));
         assert!(pages.take(0x100, Some(0), 0).is_none(), "nothing changed since");
         pages.show_again(0x100);
@@ -1045,7 +1045,7 @@ mod tests {
             let area = picture.area;
             let part = unpack(&picture.packed);
             if picture.whole() {
-                assert_eq!(area, RegisArea::WHOLE);
+                assert_eq!(area, RegisArea::whole(PictureLanguage::Regis));
                 self.pixels = part;
             } else {
                 assert_eq!(picture.base, self.number, "a part of the picture held");
@@ -1135,18 +1135,21 @@ mod tests {
     #[test]
     fn the_changed_areas_hold_every_differing_pixel_and_lie_apart() {
         let old = vec![0_u8; REGIS_WIDTH * REGIS_HEIGHT];
-        assert_eq!(changed_areas(&old, &old), []);
+        assert_eq!(changed_areas(&old, &old, REGIS_WIDTH), []);
         let mut new = old.clone();
         new[7 * REGIS_WIDTH + 13] = 1;
         new[9 * REGIS_WIDTH + 20] = 1;
-        assert_eq!(changed_areas(&old, &new), [RegisArea { x: 12, y: 7, width: 10, height: 3 }], "rows near each other are one area");
+        assert_eq!(changed_areas(&old, &new, REGIS_WIDTH), [RegisArea { x: 12, y: 7, width: 10, height: 3 }], "rows near each other are one area");
         new[400 * REGIS_WIDTH + 799] = 2;
-        assert_eq!(changed_areas(&old, &new), [RegisArea { x: 12, y: 7, width: 10, height: 3 }, RegisArea { x: 798, y: 400, width: 2, height: 1 }]);
+        assert_eq!(
+            changed_areas(&old, &new, REGIS_WIDTH),
+            [RegisArea { x: 12, y: 7, width: 10, height: 3 }, RegisArea { x: 798, y: 400, width: 2, height: 1 }]
+        );
         // A changed pixel every twenty rows: more areas than are sent apart.
         let mut striped = old.clone();
         for row in (0..REGIS_HEIGHT).step_by(20) {
             striped[row * REGIS_WIDTH + 100] = 3;
         }
-        assert_eq!(changed_areas(&old, &striped), [RegisArea { x: 100, y: 0, width: 2, height: 461 }]);
+        assert_eq!(changed_areas(&old, &striped, REGIS_WIDTH), [RegisArea { x: 100, y: 0, width: 2, height: 461 }]);
     }
 }

@@ -77,8 +77,9 @@ pub(super) struct Still {
     pub(super) channel: u32,
     /// The page it shows.
     pub(super) page: u16,
-    /// The page is drawn as a ReGIS or NAPLPS picture: its stand-in is
-    /// black, in the picture's shape.
+    /// The page is drawn as a ReGIS picture: its stand-in is black, in the
+    /// picture's shape. A NAPLPS picture is the teletext raster (REQ-5819),
+    /// so its page stands in as a teletext page does, in the page's shape.
     pub(super) picture: bool,
     /// The canvas made it; else the stand-in shows.
     pub(super) kept: bool,
@@ -190,7 +191,7 @@ impl Browser {
             return;
         }
         let Some(key) = self.still_page() else { return };
-        let picture = self.regis.contains_key(&key);
+        let picture = self.picture_language(key) == Some(crate::canvas::PictureLanguage::Regis);
         self.filmstrip.pending.retain(|&(queued, _, _)| queued != channel);
         self.filmstrip.pending.push((channel, key, picture));
     }

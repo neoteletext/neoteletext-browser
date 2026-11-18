@@ -3,7 +3,7 @@
 //! differs, and the numbered parts that carry them. The ReGIS and the
 //! NAPLPS pictures are both sent this way.
 
-use protocol::regis::{PictureLanguage, REGIS_COLOURS, REGIS_WIDTH, RegisArea, RegisPick, RegisPicture, pack_area};
+use protocol::regis::{PictureLanguage, REGIS_COLOURS, RegisArea, RegisPick, RegisPicture, pack_area};
 
 /// What was last sent of a sub-page's picture.
 pub(crate) struct Sent {
@@ -35,16 +35,16 @@ const AREA_GAP_COLUMNS: usize = 16;
 const MAX_AREAS: usize = 16;
 
 /// The areas in which `new` differs from `old`, both whole pictures of
-/// one byte a pixel: each a run of changed rows and, within it, a run of
+/// one byte a pixel and `width` pixels across: each a run of changed rows and, within it, a run of
 /// changed columns, its left edge and width even as pixels are packed.
 /// Changes far apart, down or across the picture, are separate areas, so
 /// that two small changes are not sent as everything between them
 /// (REQ-6399). None when the two are the same.
-pub(crate) fn changed_areas(old: &[u8], new: &[u8]) -> Vec<RegisArea> {
+pub(crate) fn changed_areas(old: &[u8], new: &[u8], width: usize) -> Vec<RegisArea> {
     let narrow = |value: usize| u16::try_from(value).unwrap_or(u16::MAX);
     // Runs of changed rows: (top, bottom), both inclusive.
     let mut bands: Vec<(usize, usize)> = Vec::new();
-    for (row, (before, after)) in old.as_chunks::<REGIS_WIDTH>().0.iter().zip(new.as_chunks::<REGIS_WIDTH>().0).enumerate() {
+    for (row, (before, after)) in old.chunks_exact(width.max(1)).zip(new.chunks_exact(width.max(1))).enumerate() {
         if before == after {
             continue;
         }
@@ -56,9 +56,9 @@ pub(crate) fn changed_areas(old: &[u8], new: &[u8]) -> Vec<RegisArea> {
     // Within each run of rows, runs of changed columns: (top, bottom, left, right).
     let mut areas: Vec<(usize, usize, usize, usize)> = Vec::new();
     for (top, bottom) in bands {
-        let mut changed = [false; REGIS_WIDTH];
+        let mut changed = vec![false; width];
         let rows = bottom.saturating_sub(top).saturating_add(1);
-        for (before, after) in old.as_chunks::<REGIS_WIDTH>().0.iter().zip(new.as_chunks::<REGIS_WIDTH>().0).skip(top).take(rows) {
+        for (before, after) in old.chunks_exact(width.max(1)).zip(new.chunks_exact(width.max(1))).skip(top).take(rows) {
             for (flag, (was, is)) in changed.iter_mut().zip(before.iter().zip(after)) {
                 *flag |= was != is;
             }
@@ -87,7 +87,7 @@ pub(crate) fn changed_areas(old: &[u8], new: &[u8]) -> Vec<RegisArea> {
         .map(|(top, bottom, left, right)| {
             // Outwards to even columns: two pixels travel in a byte.
             let left = left.saturating_sub(left % 2);
-            let right = right.saturating_add(1).next_multiple_of(2).min(REGIS_WIDTH);
+            let right = right.saturating_add(1).next_multiple_of(2).min(width);
             RegisArea {
                 x: narrow(left),
                 y: narrow(top),
@@ -109,7 +109,8 @@ pub(crate) struct Figures {
     pub language: PictureLanguage,
 }
 
-/// The parts to send of a picture whose `pixels`, one byte each, `palette`
+/// The parts to send of a picture drawn in `figures.language`, whose
+/// `pixels`, one byte each, `palette`
 /// and `pick` record are given, and whether its pick record differs from
 /// the one last sent: the areas that changed since `sent`, each a part of
 /// the one before it; or the whole picture when nothing was sent or the
@@ -134,16 +135,18 @@ pub(crate) fn parts_to_send(
     // Only the rows the renderer says changed are compared and kept: the
     // rest are the picture last sent (RULE-65's millisecond for the
     // repaint; a whole comparison and copy of the picture took up to 7).
-    let span = |rows: (usize, usize)| rows.0.saturating_mul(REGIS_WIDTH)..rows.1.saturating_add(1).saturating_mul(REGIS_WIDTH).min(pixels.len());
+    let language = figures.language;
+    let width = usize::from(language.width());
+    let span = |rows: (usize, usize)| rows.0.saturating_mul(width)..rows.1.saturating_add(1).saturating_mul(width).min(pixels.len());
     let (areas, base_number, pick_changed) = match &base {
         Some(sent) => {
             let areas = match rows {
-                Changed::Unknown => changed_areas(&sent.pixels, pixels),
+                Changed::Unknown => changed_areas(&sent.pixels, pixels, width),
                 Changed::Nothing => Vec::new(),
                 Changed::Rows(first, last) => {
                     let within = span((first, last));
                     let narrow = |value: usize| u16::try_from(value).unwrap_or(u16::MAX);
-                    let mut areas = changed_areas(sent.pixels.get(within.clone()).unwrap_or(&[]), pixels.get(within).unwrap_or(&[]));
+                    let mut areas = changed_areas(sent.pixels.get(within.clone()).unwrap_or(&[]), pixels.get(within).unwrap_or(&[]), width);
                     for area in &mut areas {
                         area.y = area.y.saturating_add(narrow(first));
                     }
@@ -152,12 +155,12 @@ pub(crate) fn parts_to_send(
             };
             (areas, sent.number, sent.pick != *pick)
         }
-        None => (vec![RegisArea::WHOLE], 0, true),
+        None => (vec![RegisArea::whole(language)], 0, true),
     };
     let mut parts = Vec::with_capacity(areas.len().max(1));
     let mut number = base_number;
     for area in if areas.is_empty() { vec![RegisArea::default()] } else { areas } {
-        let Some(packed) = pack_area(pixels, area) else {
+        let Some(packed) = pack_area(pixels, area, language) else {
             // What was sent is no longer known: the next picture goes whole.
             *sent = None;
             return None;
@@ -205,13 +208,13 @@ pub(crate) enum Changed {
 #[allow(clippy::unwrap_used, clippy::indexing_slicing, reason = "a test")]
 mod tests {
     use super::*;
-    use protocol::regis::REGIS_HEIGHT;
+    use protocol::regis::{REGIS_HEIGHT, REGIS_WIDTH};
 
     /// ANIM-5: a picture whose colours alone changed, as a NAPLPS BLINK
     /// makes, is sent as a part of no pixels carrying the new colours.
     #[test]
     fn new_colours_alone_send_no_pixels() {
-        let pixels = vec![1_u8; REGIS_WIDTH * REGIS_HEIGHT];
+        let pixels = vec![1_u8; PictureLanguage::Naplps.pixels()];
         let mut palette = [[0_u8; 3]; REGIS_COLOURS];
         palette[1] = [255, 255, 255];
         let figures = Figures { commits: 0, work: 0, language: PictureLanguage::Naplps };
