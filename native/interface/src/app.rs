@@ -32,6 +32,7 @@ mod outputs;
 mod pace;
 #[cfg(feature = "phone-keyboard")]
 mod phone;
+mod present_phase;
 #[cfg(feature = "timed-test")]
 mod test_display;
 #[cfg(feature = "interaction")]
@@ -212,6 +213,12 @@ pub struct App {
     /// The timed test's display, composing at 60 hertz (RULE-66).
     #[cfg(feature = "timed-test")]
     test_display: test_display::TestDisplay,
+    /// The display's frames as the interface's own redraws show them
+    /// (RULE-98 item 1, DEC-6659 item 25).
+    present_phase: present_phase::PresentPhase,
+    /// The window moved, or opened: the monitor's refresh rate is read
+    /// again at the next frame.
+    rate_unread: bool,
 }
 
 impl App {
@@ -242,6 +249,8 @@ impl App {
             clipboard: None,
             #[cfg(feature = "timed-test")]
             test_display: test_display::TestDisplay::new(),
+            present_phase: present_phase::PresentPhase::default(),
+            rate_unread: true,
         }
     }
 
@@ -352,6 +361,10 @@ impl ApplicationHandler<Incoming> for App {
             self.full_screen_resized();
         }
         // Full screen's size is not the window's, to keep.
+        // On another monitor the period may be another (RULE-98 item 1).
+        if matches!(event, WindowEvent::Moved(_) | WindowEvent::ScaleFactorChanged { .. }) {
+            self.rate_unread = true;
+        }
         if matches!(event, WindowEvent::Moved(_) | WindowEvent::Resized(_)) && self.view.page_full_screen.is_none() {
             self.report_window(event_loop);
         }
@@ -401,6 +414,9 @@ impl ApplicationHandler<Incoming> for App {
         #[cfg(feature = "timed-test")]
         {
             let at = self.tell_test_display(event_loop);
+            next = Some(next.map_or(at, |next| next.min(at)));
+        }
+        if let Some(at) = self.tell_present_phase(event_loop) {
             next = Some(next.map_or(at, |next| next.min(at)));
         }
         event_loop.set_control_flow(next.map_or(ControlFlow::Wait, ControlFlow::WaitUntil));

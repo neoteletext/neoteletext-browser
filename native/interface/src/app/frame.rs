@@ -43,22 +43,73 @@ impl App {
     pub(super) fn request_redraw(&mut self) {
         if let Some(graphics) = &mut self.view.graphics {
             graphics.asked = true;
+            // The timed test's paced display has a frame asked for drawn
+            // at its next composition, as Wayland's frame callback paces
+            // winit's redraws (RULE-66, DEC-6659 item 25).
+            #[cfg(feature = "timed-test")]
+            if self.test_display.defer() {
+                return;
+            }
             graphics.window.request_redraw();
         }
     }
 
     /// The timed test's display (RULE-66): its phase is told the trusted
-    /// core as a platform's frame times are (RULE-98 item 1). When the
-    /// loop is to wake for it.
+    /// core as a platform's frame times are (RULE-98 item 1), unless it is
+    /// the paced display, whose phase the interface derives from its own
+    /// redraws as the shipped interface does; and a paced display's frames
+    /// owed are asked for at its compositions. When the loop is to wake
+    /// for it.
     #[cfg(feature = "timed-test")]
     pub(super) fn tell_test_display(&mut self, event_loop: &ActiveEventLoop) -> Instant {
         let now = Instant::now();
         if let Some(phase) = self.test_display.phase_due(now) {
-            protocol::timed_test::mark("interface", "phase", now, format_args!("{} {}", phase.period_us, phase.next_in_us));
-            self.send(event_loop, &ToCore::FramePhase(phase));
-            let _ = self.output.handled();
+            protocol::timed_test::mark("interface", "true-phase", now, format_args!("{} {}", phase.period_us, phase.next_in_us));
+            if !self.test_display.paced() {
+                protocol::timed_test::mark("interface", "phase", now, format_args!("{} {}", phase.period_us, phase.next_in_us));
+                self.send(event_loop, &ToCore::FramePhase(phase));
+                let _ = self.output.handled();
+            }
+        }
+        if self.test_display.composition_reached(now) {
+            let here = self.window;
+            for id in self.window_ids() {
+                self.switch_view(id);
+                if let Some(graphics) = &mut self.view.graphics
+                    && graphics.asked
+                {
+                    graphics.window.request_redraw();
+                }
+            }
+            self.switch_view(here);
         }
         self.test_display.wake(Instant::now())
+    }
+
+    /// RULE-98 item 1, DEC-6659 item 25: the phase the interface's own
+    /// redraws give, told when it is due; when the loop is to wake to tell
+    /// it again. The timed test's own display tells its phase itself, and
+    /// the derived one is only marked, to be measured against it, but for
+    /// the paced display.
+    pub(super) fn tell_present_phase(&mut self, event_loop: &ActiveEventLoop) -> Option<Instant> {
+        let now = Instant::now();
+        if let Some(phase) = self.present_phase.phase_due(now) {
+            #[cfg(feature = "timed-test")]
+            {
+                protocol::timed_test::mark("interface", "derived-phase", now, format_args!("{} {}", phase.period_us, phase.next_in_us));
+                if self.test_display.paced() {
+                    protocol::timed_test::mark("interface", "phase", now, format_args!("{} {}", phase.period_us, phase.next_in_us));
+                    self.send(event_loop, &ToCore::FramePhase(phase));
+                    let _ = self.output.handled();
+                }
+            }
+            #[cfg(not(feature = "timed-test"))]
+            {
+                self.send(event_loop, &ToCore::FramePhase(phase));
+                let _ = self.output.handled();
+            }
+        }
+        self.present_phase.wake()
     }
 
     pub(super) fn redraw(&mut self, event_loop: &ActiveEventLoop) {
@@ -77,6 +128,12 @@ impl App {
             self.view.painter.redraw_whole();
         }
         let started = Instant::now();
+        // RULE-98 item 1: the monitor's rate, read again after a move, and
+        // the moment the window system had this frame drawn.
+        if std::mem::take(&mut self.rate_unread) {
+            self.present_phase.set_rate(graphics.window.current_monitor().and_then(|monitor| monitor.refresh_rate_millihertz()));
+        }
+        self.present_phase.presented(started);
         // Which ReGIS pages show their row of prompts follows their links (REQ-6379).
         self.view.painter.set_regis_keyed(self.view.browser.regis_keyed());
         self.view.painter.begin(width, height, graphics.window.scale_factor());

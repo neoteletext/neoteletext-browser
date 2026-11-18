@@ -249,6 +249,19 @@ def main():
     print("  " + figures("key to the frame composed with the key's changed rectangle", picture))
     print("  " + figures("key to the frame composed with the meter's lowest segment", meter))
     print("  " + figures("FramePhase's error through the pipes, interface to decoder", errors))
+    # The phase the interface derives from its own redraws (DEC-6659 item
+    # 25) against the test display's true compositions.
+    derived, true = [], None
+    for at, process, what, detail in found:
+        if process != "interface" or what not in ("true-phase", "derived-phase"):
+            continue
+        period, next_in = (int(value) for value in detail.split())
+        if what == "true-phase":
+            true = (at + next_in, period)
+        elif true is not None:
+            offset = (at + next_in - true[0]) % true[1]
+            derived.append((offset if offset * 2 <= true[1] else offset - true[1]) / MICROSECONDS_PER_MILLISECOND)
+    print("  " + figures("the phase the interface derives from its redraws, against the display's true compositions", derived))
     print("  the hops:")
     for line in hops(found, keys, picture_at):
         print(line)

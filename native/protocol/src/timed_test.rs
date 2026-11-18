@@ -26,6 +26,13 @@ pub const USUAL_DEVICE_BUFFER: &str = "usual-device-buffer";
 /// "The tick left unlocked, with paint points at the ticks" (RULE-98).
 pub const UNLOCKED: &str = "unlocked";
 
+/// "The paced display": the test's display draws a frame asked for at its
+/// next composition, as Wayland's frame callback paces winit's redraws,
+/// and the interface tells the phase its own redraws give (DEC-6659 item
+/// 25), so that the phase error of the shipped interface's derivation is
+/// measured against the display's true compositions.
+pub const PACED_DISPLAY: &str = "paced-display";
+
 /// Microseconds in a second, and nanoseconds in a microsecond.
 const MICROSECONDS_PER_SECOND: u64 = 1_000_000;
 const NANOSECONDS_PER_MICROSECOND: u64 = 1_000;

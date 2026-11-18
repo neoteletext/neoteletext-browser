@@ -35,11 +35,46 @@ pub(super) struct TestDisplay {
     epoch: Instant,
     /// When the phase was last told.
     told: Option<Instant>,
+    /// The test's setting "paced display" (DEC-6659 item 25): a frame
+    /// asked for is drawn at the next composition, as Wayland's frame
+    /// callback paces winit's redraws, and the interface tells the phase
+    /// its own redraws give rather than this display's.
+    paced: bool,
+    /// On the paced display, the composition a frame asked for waits for.
+    owed: Option<Instant>,
 }
 
 impl TestDisplay {
     pub(super) fn new() -> Self {
-        Self { epoch: Instant::now(), told: None }
+        Self { epoch: Instant::now(), told: None, paced: protocol::timed_test::setting(protocol::timed_test::PACED_DISPLAY), owed: None }
+    }
+
+    /// Whether this is the paced display.
+    pub(super) const fn paced(&self) -> bool {
+        self.paced
+    }
+
+    /// A frame was asked for: whether it waits for the next composition,
+    /// as on the paced display.
+    pub(super) fn defer(&mut self) -> bool {
+        if self.paced && self.owed.is_none() {
+            let now = Instant::now();
+            // A composition this moment is the one already past.
+            self.owed = Some(self.next_composition(now.checked_add(Duration::from_micros(1)).unwrap_or(now)));
+        }
+        self.paced
+    }
+
+    /// Whether the composition a frame waits for has come, on the paced
+    /// display: the frame is then asked for, however late the loop woke.
+    pub(super) fn composition_reached(&mut self, now: Instant) -> bool {
+        match self.owed {
+            Some(at) if now >= at => {
+                self.owed = None;
+                true
+            }
+            _ => false,
+        }
     }
 
     /// The first composition at or after `now`: the one that shows a frame
@@ -62,9 +97,10 @@ impl TestDisplay {
     }
 
     /// When the loop must wake for the display: the next telling of the
-    /// phase.
+    /// phase, and the composition a frame waits for.
     pub(super) fn wake(&self, now: Instant) -> Instant {
-        self.told.and_then(|told| told.checked_add(TELL_EVERY)).unwrap_or(now)
+        let tell = self.told.and_then(|told| told.checked_add(TELL_EVERY)).unwrap_or(now);
+        self.owed.map_or(tell, |owed| owed.min(tell))
     }
 }
 
@@ -83,6 +119,7 @@ mod tests {
     #[test]
     fn the_test_display_composes_at_sixty_hertz() {
         let mut display = TestDisplay::new();
+        assert!(!display.paced(), "the paced display only by the test's setting");
         let at = display.epoch + Duration::from_micros(5_000);
         assert_eq!(display.next_composition(at), display.epoch + period());
         assert_eq!(display.next_composition(display.epoch + period()), display.epoch + period(), "a present that ends on a composition is in it");
