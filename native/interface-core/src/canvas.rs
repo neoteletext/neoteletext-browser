@@ -116,8 +116,10 @@ pub const PICTURE_MAX_HEIGHT: u16 = if REGIS_HEIGHT > PAGE_HEIGHT { REGIS_HEIGHT
 /// Where the parts of a page drawn as a picture in `language` sit in its
 /// image drawn in `image`. A NAPLPS picture is the teletext raster
 /// (REQ-5819), so it fills the image as a teletext page does, whatever the
-/// fit, and the row of coloured-key prompts, when shown, is row 24 where
-/// the teletext page has it; a ReGIS picture is laid out by
+/// fit; row 0 of its teletext page is drawn over the raster's lines 0 to
+/// 19 and the row of coloured-key prompts, when shown, over lines 480 to
+/// 499, where the teletext page has them, covering the picture's first and
+/// last lines (renderer parity PAR-31). A ReGIS picture is laid out by
 /// [`regis_layout`].
 #[must_use]
 pub fn picture_layout(language: PictureLanguage, image: Rect, contain: bool, keyed: bool) -> RegisLayout {
@@ -126,7 +128,7 @@ pub fn picture_layout(language: PictureLanguage, image: Rect, contain: bool, key
         PictureLanguage::Naplps => {
             let row = image.height() / f64::from(ROWS);
             let keys = keyed.then(|| Rect::new(image.x0, image.y1 - row, image.x1, image.y1));
-            RegisLayout { picture: image, keys, stacked: false }
+            RegisLayout { header: Rect::new(image.x0, image.y0, image.x1, image.y0 + row), picture: image, keys, stacked: false }
         }
     }
 }
@@ -159,23 +161,32 @@ pub fn regis_contained(area: Rect) -> Rect {
 /// 480.
 pub const ROW_HEIGHT_PER_WIDTH: f64 = CELL_HEIGHT as f64 / PAGE_WIDTH as f64;
 
-/// The height for each unit of width of a ReGIS picture with the row of
-/// coloured-key prompts beneath it (REQ-6379): the picture's, and a
-/// teletext row's at the same width.
-pub const REGIS_KEYED_HEIGHT_PER_WIDTH: f64 = REGIS_HEIGHT_PER_WIDTH + ROW_HEIGHT_PER_WIDTH;
+/// The height for each unit of width of a contained ReGIS picture with its
+/// teletext page's row 0 above it (renderer parity PAR-31): the picture's,
+/// and a teletext row's at the same width.
+pub const REGIS_HEADED_HEIGHT_PER_WIDTH: f64 = REGIS_HEIGHT_PER_WIDTH + ROW_HEIGHT_PER_WIDTH;
+
+/// The same with the row of coloured-key prompts beneath it as well
+/// (REQ-6379): two teletext rows' at the picture's width.
+pub const REGIS_KEYED_HEIGHT_PER_WIDTH: f64 = REGIS_HEADED_HEIGHT_PER_WIDTH + ROW_HEIGHT_PER_WIDTH;
 
 /// Where the parts of a page drawn in ReGIS sit in its image.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct RegisLayout {
+    /// Row 0 of the teletext page beneath: the receiver's status area and
+    /// the channel's header and clock, drawn above the picture at the scale
+    /// row 24 is drawn at (renderer parity PAR-31).
+    pub header: Rect,
     /// The picture.
     pub picture: Rect,
     /// Row 24 of the teletext page beneath, the coloured-key prompts,
     /// when the page shows it (REQ-6379).
     pub keys: Option<Rect>,
-    /// The picture and the row together are the page: the picture stands
-    /// for rows 0 to 23 of the teletext page beneath, and the row is its
-    /// row 24. False when the picture is drawn in the teletext page's own
-    /// shape, where every row is where the teletext page has it.
+    /// The header, the picture and the row together are the page: the
+    /// header is row 0 of the teletext page beneath, the picture stands for
+    /// its rows 1 to 23, or 1 to 24 with no row of prompts, and the row is
+    /// its row 24. False when the picture is drawn in the teletext page's
+    /// own shape, where every row is where the teletext page has it.
     pub stacked: bool,
 }
 
@@ -190,17 +201,20 @@ pub fn regis_layout(image: Rect, contain: bool, keyed: bool) -> RegisLayout {
     if !contain {
         let row = image.height() / f64::from(ROWS);
         let keys = keyed.then(|| Rect::new(image.x0, image.y1 - row, image.x1, image.y1));
-        return RegisLayout { picture: regis_within(image), keys, stacked: false };
+        let header = Rect::new(image.x0, image.y0, image.x1, image.y0 + row);
+        return RegisLayout { header, picture: regis_within(image), keys, stacked: false };
     }
-    if !keyed {
-        return RegisLayout { picture: regis_contained(image), keys: None, stacked: false };
-    }
-    let width = image.width().min(image.height() / REGIS_KEYED_HEIGHT_PER_WIDTH).max(0.0);
-    let (left, top) = ((image.x0 + image.x1 - width) / 2.0, (image.y0 + image.y1 - width * REGIS_KEYED_HEIGHT_PER_WIDTH) / 2.0);
-    let middle = top + width * REGIS_HEIGHT_PER_WIDTH;
-    let picture = Rect::new(left, top, left + width, middle);
-    let keys = Rect::new(left, middle, left + width, middle + width * ROW_HEIGHT_PER_WIDTH);
-    RegisLayout { picture, keys: Some(keys), stacked: true }
+    // Row 0, the picture and, when shown, row 24, stacked at the
+    // picture's width: as large as fits, centred (PAR-31, REQ-6379).
+    let shape = if keyed { REGIS_KEYED_HEIGHT_PER_WIDTH } else { REGIS_HEADED_HEIGHT_PER_WIDTH };
+    let width = image.width().min(image.height() / shape).max(0.0);
+    let (left, top) = ((image.x0 + image.x1 - width) / 2.0, (image.y0 + image.y1 - width * shape) / 2.0);
+    let row = width * ROW_HEIGHT_PER_WIDTH;
+    let header = Rect::new(left, top, left + width, top + row);
+    let middle = top + row + width * REGIS_HEIGHT_PER_WIDTH;
+    let picture = Rect::new(left, top + row, left + width, middle);
+    let keys = keyed.then(|| Rect::new(left, middle, left + width, middle + row));
+    RegisLayout { header, picture, keys, stacked: true }
 }
 
 impl RegisLayout {
@@ -212,12 +226,19 @@ impl RegisLayout {
     /// cell. Otherwise the page's rows are where the teletext page has them.
     #[must_use]
     pub fn grid_point(&self, image: Rect, point: Point) -> Option<Point> {
-        let Some(keys) = self.keys.filter(|_| self.stacked) else { return Some(point) };
+        if !self.stacked {
+            return Some(point);
+        }
         let rows = f64::from(ROWS);
-        let down = if keys.contains(point) {
+        // The picture stands for the rows between the header's and the
+        // prompts', or to the last row with no prompts.
+        let below = if self.keys.is_some() { 1.0 } else { 0.0 };
+        let down = if let Some(keys) = self.keys.filter(|keys| keys.contains(point)) {
             (rows - 1.0 + (point.y - keys.y0) / keys.height()) / rows
+        } else if self.header.contains(point) {
+            (point.y - self.header.y0) / self.header.height() / rows
         } else if self.picture.contains(point) {
-            (point.y - self.picture.y0) / self.picture.height() * (rows - 1.0) / rows
+            (1.0 + (point.y - self.picture.y0) / self.picture.height() * (rows - 1.0 - below)) / rows
         } else {
             return None;
         };

@@ -350,10 +350,10 @@ impl Wall {
     /// beneath it (`RegisLayout::grid_point`).
     #[must_use]
     pub fn grid_point(&self, key: PageKey, image: Rect, point: Point) -> Option<Point> {
-        if !(self.pictures.contains(&key) && self.keyed.contains(&key)) {
+        if !self.pictures.contains(&key) {
             return Some(point);
         }
-        crate::canvas::regis_layout(image, true, true).grid_point(image, point)
+        crate::canvas::regis_layout(image, true, self.keyed.contains(&key)).grid_point(image, point)
     }
 
     /// The height for each unit of width `key` is laid out at when open:
@@ -361,7 +361,7 @@ impl Wall {
     pub(crate) fn open_shape(&self, key: Option<PageKey>) -> f64 {
         match key.filter(|key| self.pictures.contains(key)) {
             Some(key) if self.keyed.contains(&key) => crate::canvas::REGIS_KEYED_HEIGHT_PER_WIDTH,
-            Some(_) => crate::canvas::REGIS_HEIGHT_PER_WIDTH,
+            Some(_) => crate::canvas::REGIS_HEADED_HEIGHT_PER_WIDTH,
             None => self.shape.height_per_width(),
         }
     }

@@ -646,7 +646,7 @@ fn a_picture_page_without_its_picture_stands_in_black_in_the_pictures_place() {
         wall.draw(&mut canvas, PANEL, &pages, None, 10_000);
         let place = |key| wall.drawn.iter().find(|drawn| drawn.key == key).map(|drawn| (drawn.rect, drawn.image)).unwrap();
         let (rect, image) = place(picture);
-        let expected = if contained { crate::canvas::regis_contained(image) } else { regis_within(image) };
+        let expected = if contained { crate::canvas::regis_layout(image, true, false).picture } else { regis_within(image) };
         assert!(same(expected.height() / expected.width(), REGIS_HEIGHT_PER_WIDTH), "the picture's own shape: {expected:?}");
         assert!(canvas.fills.contains(&(expected, BLACK)), "black in the picture's place, contained {contained}: {:?}", canvas.fills);
         assert!(!canvas.fills.contains(&(rect, WINDOW)), "no teletext-shaped frame for the picture page");

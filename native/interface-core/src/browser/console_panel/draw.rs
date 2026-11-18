@@ -206,17 +206,21 @@ impl Browser {
         #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss, reason = "a panel's lines")]
         let rows = libm::floor(list.height() / LINE).max(0.0) as usize;
         self.console.stats_rows = rows;
+        // The open page's picture's cost leads, where the page itself no
+        // longer shows it (renderer parity PAR-31, REQ-6626).
+        let picture = self.picture_cost();
+        let stats: Vec<&crate::console::Stat> = picture.iter().chain(&self.console.stats).collect();
         // Fewer figures than before, or a taller console: no gap is left under the last.
-        self.console.stats_first = self.console.stats_first.min(self.console.stats.len().saturating_sub(rows));
+        self.console.stats_first = self.console.stats_first.min(stats.len().saturating_sub(rows));
         let first = self.console.stats_first;
         #[allow(clippy::cast_precision_loss, reason = "a panel's lines")]
-        draw_scroll_bar(canvas, list, self.console.stats.len() as f64 * LINE, first as f64 * LINE, Surface::BROWSER);
+        draw_scroll_bar(canvas, list, stats.len() as f64 * LINE, first as f64 * LINE, Surface::BROWSER);
         let list = Rect::new(list.x0, list.y0, list.x1 - SCROLL_BAR_ROOM, list.y1);
         canvas.push_clip(list);
-        if self.console.stats.is_empty() {
+        if stats.is_empty() {
             left_centred(canvas, Rect::new(list.x0, list.y0, list.x1, list.y0 + LINE), 0.0, "Nothing yet", ENTRY, DIM);
         }
-        for (row, stat) in self.console.stats.iter().skip(first).take(rows).enumerate() {
+        for (row, stat) in stats.iter().skip(first).take(rows).enumerate() {
             #[allow(clippy::cast_precision_loss, reason = "a panel's lines")]
             let top = list.y0 + row as f64 * LINE;
             let line = Rect::new(list.x0, top, list.x1, top + LINE);

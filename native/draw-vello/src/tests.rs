@@ -515,8 +515,11 @@ fn a_regis_picture_at_a_whole_multiple_is_drawn_without_smoothing() {
     const WHITE_WORD: u32 = 0x00FF_FFFF;
     let size = (1_700_u16, 1_000_u16);
     let across = usize::from(size.0);
-    // One white pixel at (100, 50), the picture at twice its size from (10, 10).
-    let words = regis_alone(size, Rect::new(10.0, 10.0, 1_610.0, 970.0), (100, 50, 1));
+    // One white pixel at (100, 50), the picture at twice its size from (10,
+    // 10): the area holds row 0 above it too (renderer parity PAR-31), a
+    // teletext row's height at the picture's width.
+    let header = 1_600.0 * interface_core::canvas::ROW_HEIGHT_PER_WIDTH;
+    let words = regis_alone(size, Rect::new(10.0, 10.0 - header, 1_610.0, 970.0), (100, 50, 1));
     let at = |x: usize, y: usize| words[y * across + x] & WHITE_WORD;
     for (x, y) in [(210, 110), (211, 110), (210, 111), (211, 111)] {
         assert_eq!(at(x, y), WHITE_WORD, "the pixel's block at {x}, {y}");
@@ -534,15 +537,16 @@ fn a_regis_picture_at_a_whole_multiple_is_drawn_without_smoothing() {
 /// in a page's place at twice the raster's size it covers the whole page
 /// image, its dot (x, y) a block of two by two display pixels at (2x, 2y)
 /// from the image's corner, line 499 included, and no ReGIS band or bar
-/// is left of the teletext page beneath; a ReGIS-sized whole is refused.
+/// is left of the teletext page beneath, but its row 0 over lines 0 to 19
+/// (renderer parity PAR-31); a ReGIS-sized whole is refused.
 #[allow(clippy::arithmetic_side_effects, reason = "a test's own sizes and places, far inside usize")]
 #[test]
 fn a_naplps_picture_covers_the_whole_page_image_dot_for_dot() {
     const WHITE_WORD: u32 = 0x00FF_FFFF;
     let (width, height) = (usize::from(PAGE_WIDTH), usize::from(PAGE_HEIGHT));
     let mut pixels = vec![0_u8; width * height];
-    // Colour 7 at the raster's first dot, at dot (13, 250), and along line 499.
-    pixels[0] = 7;
+    // Colour 7 at the first dot below row 0, at dot (13, 250), and along line 499.
+    pixels[20 * width] = 7;
     pixels[250 * width + 13] = 7;
     pixels[499 * width..].fill(7);
     let packed: Vec<u8> = pixels.as_chunks::<2>().0.iter().map(|[left, right]| (left << 4) | right).collect();
@@ -560,12 +564,12 @@ fn a_naplps_picture_covers_the_whole_page_image_dot_for_dot() {
     painter.copy_to(&mut words, &damage, 0);
     let across = usize::from(size.0);
     let at = |x: usize, y: usize| words[(top + y) * across + left + x] & WHITE_WORD;
-    for (x, y) in [(0, 0), (13, 250), (0, 499), (479, 499)] {
+    for (x, y) in [(0, 20), (13, 250), (0, 499), (479, 499)] {
         for (dx, dy) in [(0, 0), (1, 0), (0, 1), (1, 1)] {
             assert_eq!(at(2 * x + dx, 2 * y + dy), WHITE_WORD, "dot {x}, {y} at +{dx}, +{dy}");
         }
     }
-    for (x, y) in [(1, 0), (12, 250), (14, 250), (13, 249), (479, 498)] {
+    for (x, y) in [(1, 20), (12, 250), (14, 250), (13, 249), (479, 498)] {
         assert_eq!(at(2 * x, 2 * y), 0, "dot {x}, {y} is colour 0, the picture's own");
     }
 }

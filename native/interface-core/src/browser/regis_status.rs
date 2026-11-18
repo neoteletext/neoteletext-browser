@@ -1,21 +1,19 @@
-//! What the ReGIS renderer's picture of the open page cost, drawn above
-//! the picture (DEC-6335 item 4): the count of commits applied and the
-//! work units its drawing took, on the base since its stream began and
-//! for the last repaint of its numbered drawings. The owner
-//! asked for the work units to be shown before any rule limits them.
+//! What the ReGIS renderer's picture of the open page cost (DEC-6335 item
+//! 4): the count of commits applied and the work units its drawing took,
+//! on the base since its stream began and for the last repaint of its
+//! numbered drawings, shown in the developer console's Stats tab
+//! (REQ-6626) since row 0 of the page is drawn above the picture
+//! (renderer parity PAR-31). The owner asked for the work units to be
+//! shown before any rule limits them.
 
 use alloc::format;
 use alloc::string::String;
 
 use crate::browser::Browser;
-use crate::canvas::{Canvas, PageKey, PictureLanguage, ROWS, Style};
+use crate::canvas::{Canvas, PageKey, PictureLanguage};
 use crate::geometry::Rect;
-use crate::theme::{GREY, ROW_TITLE};
+use crate::theme::ROW_TITLE;
 
-/// The text against a row's height.
-const TEXT_SHARE: f64 = 0.6;
-/// Room before the text, against a row's height.
-const INSET_SHARE: f64 = 0.3;
 /// The label that names the size a page has come to be held at: its
 /// height, the room round its words, its corners, and its distance from
 /// the top of the page (REQ-6387).
@@ -124,24 +122,19 @@ impl Browser {
         alloc::vec::Vec::new()
     }
 
-    /// The cost of the open page's picture, on the image's top row, which
-    /// lies above the picture.
-    pub(super) fn draw_regis_status<C: Canvas + ?Sized>(&self, canvas: &mut C) {
-        let Some((key, page)) = self.wall.open() else { return };
-        let Some((commits, work)) = self.regis.get(&key) else { return };
-        let height = page.height() / f64::from(ROWS);
-        let row = Rect::new(page.x0, page.y0, page.x1, page.y0 + height);
-        let text = if self.naplps.contains(&key) {
-            format!("NAPLPS  record {}  {} bytes", grouped(u64::from(*commits)), grouped(*work))
+    /// What the open page's picture has cost, for the developer console's
+    /// Stats tab (REQ-6626): the commits and work units of a ReGIS picture,
+    /// the records and bytes of a NAPLPS one. It was drawn over the page's
+    /// top row, which is now the page's own row 0 (renderer parity PAR-31).
+    #[must_use]
+    pub(super) fn picture_cost(&self) -> Option<crate::console::Stat> {
+        let (key, _) = self.wall.open()?;
+        let (commits, work) = self.regis.get(&key)?;
+        Some(if self.naplps.contains(&key) {
+            crate::console::Stat { label: "NAPLPS picture".into(), value: format!("record {}, {} bytes", grouped(u64::from(*commits)), grouped(*work)) }
         } else {
-            format!("ReGIS  commit {}  {} work units", grouped(u64::from(*commits)), grouped(*work))
-        };
-        #[allow(clippy::cast_possible_truncation, reason = "a row's height in logical pixels, far inside f32")]
-        let style = Style { size: (height * TEXT_SHARE) as f32, monospace: true, bold: false, caps: false };
-        let inset = height * INSET_SHARE;
-        canvas.push_clip(row);
-        canvas.text(Rect::new(row.x0 + inset, row.y0, row.x1, row.y1), &text, style, GREY);
-        canvas.pop_clip();
+            crate::console::Stat { label: "ReGIS picture".into(), value: format!("commit {}, {} work units", grouped(u64::from(*commits)), grouped(*work)) }
+        })
     }
 }
 
@@ -160,13 +153,14 @@ mod tests {
     }
 
     /// REQ-6363: an open page drawn in ReGIS is laid out in the picture's
-    /// shape, five to three, while pictures are contained in the page
+    /// shape, five to three, with its teletext page's row 0 above it
+    /// (renderer parity PAR-31), while pictures are contained in the page
     /// area, which is the default; contained to the teletext page it keeps
     /// the teletext page's shape, as a page not drawn in ReGIS always does.
     #[test]
     fn an_open_regis_page_takes_the_pictures_shape_when_contained() {
         use crate::browser::fixture::{HEIGHT, WIDTH, browser};
-        use crate::canvas::REGIS_HEIGHT_PER_WIDTH;
+        use crate::canvas::REGIS_HEADED_HEIGHT_PER_WIDTH;
         let (mut browser, mut canvas) = browser();
         browser.toggle_wall(0);
         browser.draw(&mut canvas, WIDTH, HEIGHT, 0);
@@ -176,7 +170,7 @@ mod tests {
         browser.set_regis(key, 0, 1, PictureLanguage::Regis);
         browser.draw(&mut canvas, WIDTH, HEIGHT, 0);
         let (_, contained) = browser.wall().shown().next().unwrap();
-        assert!((shape(contained) - REGIS_HEIGHT_PER_WIDTH).abs() < 1e-9, "five to three: {contained:?}");
+        assert!((shape(contained) - REGIS_HEADED_HEIGHT_PER_WIDTH).abs() < 1e-9, "five to three, and row 0: {contained:?}");
         assert!(contained.width() > teletext.width(), "and so wider in the same area");
         let mut settings = crate::browser::fixture::settings();
         settings.regis_contain = false;
@@ -228,11 +222,12 @@ mod tests {
         assert_eq!(browser.held_label_deadline(STICK_LABEL_MILLISECONDS), None);
     }
 
-    /// DEC-6407: above a picture drawn in NAPLPS the line names NAPLPS and
-    /// counts its records and bytes; above one drawn in ReGIS, its commits
-    /// and work.
+    /// DEC-6407: a picture drawn in NAPLPS has its cost named NAPLPS, with
+    /// its records and bytes; one drawn in ReGIS, its commits and work.
+    /// Renderer parity PAR-31: it is for the Stats tab, and nothing of it is
+    /// drawn over the page, whose row 0 is above the picture.
     #[test]
-    fn the_line_above_a_picture_names_its_language() {
+    fn a_pictures_cost_names_its_language_and_is_not_drawn_over_the_page() {
         use crate::browser::fixture::{HEIGHT, WIDTH, browser};
         let (mut browser, mut canvas) = browser();
         browser.toggle_wall(0);
@@ -244,11 +239,11 @@ mod tests {
             browser.draw(&mut canvas, WIDTH, HEIGHT, 0);
             canvas.texts.into_iter().map(|(_, text)| text).collect::<alloc::vec::Vec<_>>()
         };
-        assert!(texts(&mut browser).contains(&"ReGIS  commit 3  1,234 work units".into()));
+        let cost = |browser: &crate::browser::Browser| browser.picture_cost().map(|stat| (stat.label, stat.value));
+        assert_eq!(cost(&browser), Some(("ReGIS picture".into(), "commit 3, 1,234 work units".into())));
+        assert!(!texts(&mut browser).iter().any(|text| text.contains("work units")), "nothing drawn over the page");
         browser.set_regis(key, 3, 1_234, PictureLanguage::Naplps);
-        assert!(texts(&mut browser).contains(&"NAPLPS  record 3  1,234 bytes".into()));
-        browser.set_regis(key, 3, 1_234, PictureLanguage::Regis);
-        assert!(texts(&mut browser).contains(&"ReGIS  commit 3  1,234 work units".into()));
+        assert_eq!(cost(&browser), Some(("NAPLPS picture".into(), "record 3, 1,234 bytes".into())));
     }
 
     /// REQ-6363: a picture contained in an area is as large as fits at its
@@ -285,24 +280,31 @@ mod key_row_tests {
     fn the_row_of_prompts_lies_directly_beneath_a_contained_picture() {
         for area in [Rect::new(0.0, 0.0, 800.0, 480.0 + 800.0 / 24.0), Rect::new(10.0, 20.0, 1500.0, 700.0), Rect::new(0.0, 0.0, 300.0, 900.0)] {
             let layout = regis_layout(area, true, true);
-            let (picture, keys) = (layout.picture, layout.keys.unwrap());
+            let (header, picture, keys) = (layout.header, layout.picture, layout.keys.unwrap());
             assert!(layout.stacked);
             assert!(close(picture.height() / picture.width(), REGIS_HEIGHT_PER_WIDTH), "{area:?}");
+            assert!(close(header.y1, picture.y0) && close(header.height(), keys.height()) && close(header.x0, picture.x0), "row 0 directly above: {area:?}");
             assert!(close(keys.y0, picture.y1) && close(keys.x0, picture.x0) && close(keys.x1, picture.x1), "{area:?}");
             assert!(close(keys.height(), picture.width() * ROW_HEIGHT_PER_WIDTH) && close(keys.height(), picture.width() / 24.0), "{area:?}");
             assert!(picture.x0 >= area.x0 - 1e-9 && keys.y1 <= area.y1 + 1e-9, "inside the area: {area:?}");
-            assert!(close(picture.width(), area.width()) || close(keys.y1 - picture.y0, area.height()), "as large as fits: {area:?}");
+            assert!(close(picture.width(), area.width()) || close(keys.y1 - header.y0, area.height()), "as large as fits: {area:?}");
         }
     }
 
-    /// With no prompts the picture is placed exactly as before; contained
-    /// to the teletext page, the picture is in its band and the row where
-    /// the teletext page has its row 24 (REQ-6379 items 1 and 4).
+    /// With no prompts the picture is placed with row 0 alone above it
+    /// (PAR-31); contained to the teletext page, the picture is in its
+    /// band, row 0 and the row of prompts where the teletext page has its
+    /// rows 0 and 24 (REQ-6379 items 1 and 4).
     #[test]
-    fn without_prompts_nothing_moves_and_in_the_teletext_fit_the_row_is_row_24() {
+    fn without_prompts_only_row_0_is_above_and_in_the_teletext_fit_the_rows_are_rows_0_and_24() {
+        use crate::canvas::REGIS_HEADED_HEIGHT_PER_WIDTH;
         let area = Rect::new(5.0, 7.0, 485.0, 507.0);
         let plain = regis_layout(area, true, false);
-        assert_eq!((plain.picture, plain.keys), (regis_contained(area), None));
+        assert_eq!(plain.keys, None);
+        assert!(close(plain.header.y1, plain.picture.y0) && close((plain.picture.y1 - plain.header.y0) / plain.picture.width(), REGIS_HEADED_HEIGHT_PER_WIDTH));
+        assert!(close(plain.picture.width(), regis_contained(area).width()), "as wide as the picture contained alone, in this wide area");
+        let teletext_header = regis_layout(area, false, false).header;
+        assert!(close(teletext_header.y0, area.y0) && close(teletext_header.height(), area.height() / f64::from(ROWS)), "row 0 where the teletext page has it");
         assert_eq!(regis_layout(area, false, false).picture, regis_within(area));
         let teletext = regis_layout(area, false, true);
         assert_eq!(teletext.picture, regis_within(area));
@@ -315,9 +317,26 @@ mod key_row_tests {
         assert_eq!(cell_in(area, within).map(|(_, row)| row), Some(24));
     }
 
+    /// Renderer parity PAR-31: a NAPLPS picture, the teletext raster, has
+    /// row 0 over the raster's lines 0 to 19 and the row of prompts over
+    /// lines 480 to 499, where the teletext page has them, in either fit.
+    #[test]
+    fn a_naplps_pictures_row_0_and_row_24_lie_on_the_rasters_first_and_last_twenty_lines() {
+        use crate::canvas::{PictureLanguage, picture_layout};
+        let area = Rect::new(0.0, 0.0, 480.0, 500.0);
+        for contain in [true, false] {
+            let layout = picture_layout(PictureLanguage::Naplps, area, contain, true);
+            assert_eq!(layout.picture, area, "the raster fills the image");
+            assert_eq!(layout.header, Rect::new(0.0, 0.0, 480.0, 20.0), "row 0: lines 0 to 19");
+            assert_eq!(layout.keys, Some(Rect::new(0.0, 480.0, 480.0, 500.0)), "row 24: lines 480 to 499");
+            assert!(!layout.stacked);
+        }
+    }
+
     /// REQ-6379 items 6 and 7: under a contained picture, a point in the
     /// row of prompts is on row 24 of the teletext page beneath, at its
-    /// column; the picture stands for rows 0 to 23; a point beside them is
+    /// column; row 0 is above the picture (PAR-31), which stands for rows 1
+    /// to 23; a point beside them is
     /// on no cell.
     #[test]
     fn a_point_in_the_row_of_prompts_is_on_row_24_of_the_page_beneath() {
@@ -328,7 +347,10 @@ mod key_row_tests {
         assert_eq!(cell(Point::new(keys.x0 + 1.0, keys.y0 + 0.5)), Some((0, 24)), "the row's first line");
         assert_eq!(cell(Point::new(keys.x1 - 1.0, keys.y1 - 0.5)), Some((39, 24)), "and its last");
         assert_eq!(cell(Point::new(picture.x0 + 1.0, picture.y1 - 0.5)), Some((0, 23)), "the picture's last line is row 23");
-        assert_eq!(cell(Point::new(picture.x0 + picture.width() / 2.0, picture.y0 + 0.5)), Some((20, 0)));
-        assert_eq!(cell(Point::new(picture.x0 + 1.0, picture.y0 - 5.0)), None, "above the picture, within the area");
+        assert_eq!(cell(Point::new(picture.x0 + picture.width() / 2.0, picture.y0 + 0.5)), Some((20, 1)), "the picture's first line is row 1");
+        let header = layout.header;
+        assert_eq!(cell(Point::new(header.x0 + 1.0, header.y0 + 0.5)), Some((0, 0)), "row 0 above it (PAR-31)");
+        assert_eq!(cell(Point::new(header.x1 - 1.0, header.y1 - 0.5)), Some((39, 0)));
+        assert_eq!(cell(Point::new(picture.x0 + 1.0, header.y0 - 5.0)), None, "above row 0, within the area");
     }
 }

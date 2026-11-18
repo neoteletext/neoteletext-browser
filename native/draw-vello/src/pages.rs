@@ -350,15 +350,16 @@ impl Painter {
         self.regis_keyed = keyed;
     }
 
-    /// Row 24 of a page's teletext image, drawn in `row`: the last of the
-    /// image's 25 rows, and nothing else of it.
-    fn draw_prompts(&mut self, key: PageKey, row: Rect) {
+    /// Row `index` of a page's teletext image, drawn in `row`, and nothing
+    /// else of it: row 0 above a picture (renderer parity PAR-31) and row
+    /// 24, the coloured-key prompts, beneath it (REQ-6379).
+    fn draw_row(&mut self, key: PageKey, index: u16, row: Rect) {
         let Some(page) = self.pages.get(&key) else { return };
         let (width, height) = (f64::from(PAGE_WIDTH), f64::from(PAGE_HEIGHT));
         let lines = height / f64::from(interface_core::canvas::ROWS);
-        let (image, top) = (page.image.clone(), height - lines);
-        // The whole image is placed so that its last row lies on `row`,
-        // and only that row of it is filled.
+        let (image, top) = (page.image.clone(), lines * f64::from(index));
+        // The whole image is placed so that its row lies on `row`, and
+        // only that row of it is filled.
         let placement = self
             .base()
             .pre_translate(Vec2::new(row.x0, row.y0))
@@ -366,7 +367,7 @@ impl Painter {
             .pre_translate(Vec2::new(0.0, -top));
         self.context.set_transform(placement);
         self.context.set_paint(image);
-        self.context.fill_rect(&kurbo::Rect::new(0.0, top, width, height));
+        self.context.fill_rect(&kurbo::Rect::new(0.0, top, width, top + lines));
     }
 
     pub(crate) fn draw_page(&mut self, key: PageKey, area: Rect) {
@@ -395,8 +396,11 @@ impl Painter {
             self.context.set_transform(placement);
             self.context.set_paint(image);
             self.context.fill_rect(&kurbo::Rect::new(0.0, 0.0, width, height));
+            // The teletext page's row 0, its status area, header and clock,
+            // above the picture, as row 24 is beneath it (PAR-31).
+            self.draw_row(key, 0, layout.header);
             if let Some(row) = layout.keys {
-                self.draw_prompts(key, row);
+                self.draw_row(key, interface_core::canvas::ROWS.saturating_sub(1), row);
             }
             return;
         }

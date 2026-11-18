@@ -233,6 +233,12 @@ impl Painter {
             };
             return Some(parts.boxes().iter().map(device).collect());
         }
+        // A picture page's teletext image changed: its rows 0 and 24 are
+        // drawn above and beneath the picture (renderer parity PAR-31), not
+        // where the image has them, so the whole page is drawn again.
+        if self.regis.contains_key(key) {
+            return None;
+        }
         let dots = self.changed.get(key)?;
         let (across, down) = (area.width() / f64::from(PAGE_WIDTH), area.height() / f64::from(PAGE_HEIGHT));
         let changed = Rect {
