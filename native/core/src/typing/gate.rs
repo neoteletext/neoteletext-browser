@@ -189,12 +189,6 @@ impl Gate {
         self.queries.clear();
     }
 
-    /// Whether any input event was given a page's decoder since the gate
-    /// was last forgotten: what a `RULE_EVENT` can have been made of.
-    pub(super) fn gave_input(&self) -> bool {
-        !self.ring.is_empty()
-    }
-
     /// Forgets everything: the connection or the channel went.
     pub(super) fn forget(&mut self) {
         *self = Self::default();

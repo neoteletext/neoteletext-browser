@@ -671,20 +671,16 @@ impl Typing {
             state.round_trip_us = None;
             state.hello(channel, now_us, &mut sends);
         } else if !open {
-            state.session.close();
             // RULE-111 case 2: everything local of the page is dropped,
             // and a report not yet acknowledged is never sent again
-            // (RULE-46).
+            // (RULE-46). The engine's session drops every RULE_EVENT sent
+            // so far at the resumption, keeping the session and counting
+            // what is sent again as the channel counts it (the engine's
+            // DEC-6693 item 2), so a session whose page took input resumes
+            // as any other (DEC-6659 item 3, as revised).
+            state.session.discard_rule_events();
+            state.session.close();
             if was_open {
-                // The engine's session keeps every message not
-                // acknowledged for a resumption, and under push protocol
-                // 10 a viewer's input is only ever a RULE_EVENT. A session
-                // that gave a page's table any input is therefore not
-                // resumed, so that none is sent again; one that gave none
-                // sent no RULE_EVENT (RULE-50) and resumes as before.
-                if state.gate.gave_input() {
-                    state.session.forget();
-                }
                 state.gate.forget();
                 sends.push(Send::ConnectionEnded { channel });
             }

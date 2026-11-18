@@ -54,24 +54,29 @@ fn a_session_that_sent_no_input_is_resumed() {
 
 /// RULE-46, RULE-111 case 2 (REQ-6534, REQ-6615): a `RULE_EVENT` not
 /// acknowledged when its connection ends is discarded and never sent
-/// again: the session that gave a page's table input is not resumed, so
-/// the next connection begins a new one, from HELLO alone, and the page is
-/// a new selection. The decoder is told the connection ended. On the code
-/// before, the session was resumed and the unacknowledged key sent again.
+/// again, and the session is still resumed (DEC-6659 item 3, as revised
+/// for the engine's `discard_rule_events`): the next connection sends
+/// HELLO and RESUME, and the resumed WELCOME brings RESIZE and SELECT but
+/// none of the keys. The decoder is told the connection ended. On the code
+/// before, the session that gave a page input was forgotten, and the next
+/// connection began a new one from HELLO alone.
 #[test]
-fn an_unacknowledged_report_is_never_sent_again() {
+fn an_unacknowledged_report_is_never_sent_again_and_the_session_resumes() {
     let mut typing = resumable();
     typed(&mut typing, &key('a'), MS);
     typed(&mut typing, &key('b'), 2 * MS);
-    acknowledge(&mut typing, 4);
+    acknowledge(&mut typing, 1);
     let ended = typing.input(PAGE.channel, false, true, 3 * MS);
     assert!(ended.contains(&Send::ConnectionEnded { channel: PAGE.channel }), "{ended:?}");
     assert_eq!(items(&typing.input_intent(&key('c'), 4 * MS)), [] as [String; 0], "nothing while the connection is down");
     let hello = typing.input(PAGE.channel, true, true, 5 * MS);
-    assert_eq!(items(&hello).len(), 1, "HELLO alone: {hello:?}");
-    let fresh = typing.control(PAGE.channel, &welcome_with(SELECT_CAP | RESUME_CAP, Some(Resumption { token: NEXT_TOKEN, taken: None })), 6 * MS);
-    let sent = items(&fresh);
+    let sent = items(&hello);
+    assert_eq!(sent.len(), 2, "HELLO, then RESUME: {sent:?}");
+    assert!(sent[1].starts_with("Event(Resume("), "{sent:?}");
+    let resumed = typing.control(PAGE.channel, &welcome_with(SELECT_CAP | RESUME_CAP, Some(Resumption { token: NEXT_TOKEN, taken: Some(1) })), 6 * MS);
+    let sent = items(&resumed);
     assert!(!sent.iter().any(|item| item.contains("RuleEvent")), "no report is sent again: {sent:?}");
+    assert!(sent.iter().any(|item| item.starts_with("Event(Select(")), "the page is selected afresh: {sent:?}");
     assert_eq!(items(&typing.input_intent(&key('d'), 7 * MS)), [] as [String; 0], "no input until the decoder tells its table afresh");
 }
 
