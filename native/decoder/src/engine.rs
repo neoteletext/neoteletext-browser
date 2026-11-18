@@ -210,6 +210,15 @@ pub struct Engine {
     input: InputRecords,
     /// Which pushed pages may be drawn, and how old each is (REQ-1558).
     cache: RefCell<PageCache>,
+    /// The tables the channel sent and the evaluator of the open page
+    /// (page-rules.md RULE-58).
+    rules: crate::rules::host::Rules,
+    /// What plays on each audio channel, as the page's rules read it
+    /// (RULE-27, RULE-30).
+    heard: crate::voice_sink::Heard,
+    /// The open page's picture while its renderer gives no animation
+    /// state: nothing in it moves.
+    still: crate::rules::Still,
 }
 
 impl Default for Engine {
@@ -277,6 +286,9 @@ impl Engine {
             #[cfg(feature = "interaction")]
             input: InputRecords::default(),
             cache: RefCell::new(PageCache::default()),
+            rules: crate::rules::host::Rules::default(),
+            heard: crate::voice_sink::Heard::default(),
+            still: crate::rules::Still::new((0, 0)),
         }
     }
 
@@ -309,14 +321,14 @@ impl Engine {
     /// header follows (the engine's decision E.11).
     pub fn open_page(&mut self, page: Option<u16>) {
         self.decoder.set_requested(page.and_then(neoteletext_core::types::PageAddress::from_mpp));
-        self.audio.open_page(page, &mut Outbox::new(&mut self.sounds));
+        self.audio.open_page(page, &mut Outbox::new(&mut self.sounds, &mut self.heard));
     }
 
     /// The time, in milliseconds from any start: a live sound with no new
     /// block for two seconds fades out (the engine's REQ-AUD-014). Called
     /// before each piece of data and at each tick.
     pub fn tick_audio(&mut self, now_ms: u64) {
-        self.audio.tick(now_ms, &mut Outbox::new(&mut self.sounds));
+        self.audio.tick(now_ms, &mut Outbox::new(&mut self.sounds, &mut self.heard));
     }
 
     /// The channel's records for its input found since the last call, once

@@ -5,6 +5,8 @@
 //! ticks a second (RULE-4). The trusted core never decodes or evaluates a
 //! table; it gates what goes in and out (RULE-52).
 
+pub(crate) mod host;
 pub mod picture;
 
+pub use host::MAX_KEPT_TABLES;
 pub use picture::{Picture, Still};

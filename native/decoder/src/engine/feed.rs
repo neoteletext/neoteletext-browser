@@ -57,7 +57,7 @@ impl Engine {
             }
             // The audio profile's packets go to its receiver; the decoder
             // ignores packet 31 anyway (the engine's REQ-PKT-008).
-            if self.audio.push_packet(packet, &mut Outbox::new(&mut self.sounds)) {
+            if self.audio.push_packet(packet, &mut Outbox::new(&mut self.sounds, &mut self.heard)) {
                 continue;
             }
             self.clock = match meta.timestamp_us {
@@ -142,6 +142,11 @@ impl Engine {
                         frames.entry(key).or_insert_with(|| self.lines.get(key.0, key.1).cloned());
                         linked.insert(key);
                         self.lines.read_record(&record);
+                    }
+                    // A page's rule table (page-rules.md RULE-41), which
+                    // only this process decodes (RULE-58).
+                    neoteletext_web::records::Read::Record(neoteletext_web::records::ChannelRecord::Rules(record)) => {
+                        self.rules.record(record.page.mpp(), record.generation, record.body);
                     }
                     // A sub-page's ReGIS, for the ReGIS renderer (DEC-6335).
                     neoteletext_web::records::Read::Record(neoteletext_web::records::ChannelRecord::Regis(record)) => self.regis.read(&record),

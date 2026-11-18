@@ -45,6 +45,10 @@ neoteletext-formats.workspace = true
 # The page rule table (neoteletext-common's page-rules.md): decoded and
 # evaluated here, in the confined decoder, and nowhere else (RULE-58).
 neoteletext-rules.workspace = true
+# The families' trackers, which a rule's condition reads a local sound's
+# program, notes and patch fields from (RULE-30); the crate is in this
+# process already, as the receiver's instruments.
+neoteletext-audio-instruments = { workspace = true, features = ["interface"] }
 # The reader of a live channel's LINKS records (neoteletext-common's
 # REQ-1494): a pushed sub-page's Link Extension links.
 neoteletext-web.workspace = true
@@ -65,7 +69,7 @@ naplps-fonts.workspace = true
 # Writing the audio packets the tests read.
 neoteletext-audio = { workspace = true, features = ["encode"] }
 # A synth6581 patch packed as its interface says (the engine's S6581-45).
-neoteletext-audio-instruments = { workspace = true, features = ["synth6581"] }
+neoteletext-audio-instruments = { workspace = true, features = ["synth6581", "interface"] }
 # Authoring a Level 2.5 test page, and writing it as TTI.
 neoteletext-formats = { workspace = true, features = ["std"] }
 

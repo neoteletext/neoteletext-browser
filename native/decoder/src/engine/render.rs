@@ -110,7 +110,7 @@ impl Engine {
 
     /// The stored sub-page of `page` to draw: the one chosen, while the
     /// store has it, else the latest.
-    fn stored(&self, page: u16, subpage: Option<u16>) -> Option<&StoredPage> {
+    pub(super) fn stored(&self, page: u16, subpage: Option<u16>) -> Option<&StoredPage> {
         let address = PageAddress::from_mpp(page)?;
         let store = self.decoder.store();
         // With none chosen, a page the channel pushed opens at its first

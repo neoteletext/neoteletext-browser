@@ -1099,6 +1099,7 @@ dependencies = [
  "naplps",
  "naplps-fonts",
  "neoteletext-audio",
+ "neoteletext-audio-instruments",
  "neoteletext-core",
  "neoteletext-formats",
  "neoteletext-image",

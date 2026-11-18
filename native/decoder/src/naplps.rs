@@ -22,8 +22,8 @@ use crate::regis::Drawn;
 /// The colour map's address bits: sixteen entries, the picture's colours.
 const PALETTE_BITS: u32 = 4;
 /// The canvas: the unit screen, 1 by 0.75, with square pixels.
-const WIDTH: usize = 640;
-const HEIGHT: usize = REGIS_HEIGHT;
+pub(crate) const WIDTH: usize = 640;
+pub(crate) const HEIGHT: usize = REGIS_HEIGHT;
 /// The picture's columns to the left of the canvas, which lies in its middle.
 const LEFT: usize = (REGIS_WIDTH - WIDTH) / 2;
 /// The most sub-pages whose NAPLPS is kept, as for ReGIS: one more, and
