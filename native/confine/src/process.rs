@@ -65,10 +65,12 @@ impl Process {
     /// The processor time the helper has used since it started, in
     /// microseconds, from the operating system's own account of it
     /// (REQ-6626 item 1 a): on Linux the first figure of
-    /// `/proc/<pid>/schedstat`, the nanoseconds it has run on a processor.
+    /// `/proc/<pid>/schedstat`, the nanoseconds it has run on a processor;
+    /// on macOS its user and system time by `proc_pid_rusage`; on Windows
+    /// its kernel and user time by `GetProcessTimes` on the handle held.
     ///
     /// # Errors
-    /// When the account cannot be read, or this platform's is not read yet.
+    /// When the account cannot be read.
     pub fn processor_time_us(&self) -> io::Result<u64> {
         #[cfg(target_os = "linux")]
         {
@@ -81,8 +83,16 @@ impl Process {
                 .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "an account that is not three figures"))?;
             Ok(nanoseconds / NANOSECONDS_PER_MICROSECOND)
         }
-        #[cfg(not(target_os = "linux"))]
-        Err(io::Error::new(io::ErrorKind::Unsupported, "a helper's processor time is read on Linux only so far"))
+        #[cfg(target_os = "macos")]
+        {
+            crate::unix::processor_time_us(self.inner.id())
+        }
+        #[cfg(windows)]
+        {
+            self.inner.processor_time_us()
+        }
+        #[cfg(not(any(target_os = "linux", target_os = "macos", windows)))]
+        Err(io::Error::new(io::ErrorKind::Unsupported, "a helper's processor time is read on Linux, macOS and Windows"))
     }
 
     /// The pipes as files, taken: for a helper started in this process,

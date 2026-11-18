@@ -9,8 +9,8 @@ use std::os::windows::ffi::OsStrExt as _;
 use std::os::windows::process::ExitStatusExt as _;
 use std::process::ExitStatus;
 
-use windows_sys::Win32::Foundation::{CloseHandle, HANDLE, WAIT_OBJECT_0};
-use windows_sys::Win32::System::Threading::{GetExitCodeProcess, INFINITE, TerminateProcess, WaitForSingleObject};
+use windows_sys::Win32::Foundation::{CloseHandle, FILETIME, HANDLE, WAIT_OBJECT_0};
+use windows_sys::Win32::System::Threading::{GetExitCodeProcess, GetProcessTimes, INFINITE, TerminateProcess, WaitForSingleObject};
 
 use super::handles::wide;
 
@@ -30,6 +30,23 @@ impl Inner {
     /// The process, for duplicating handles into it.
     pub(crate) fn raw_process(&self) -> HANDLE {
         self.process
+    }
+
+    /// The processor time the process has used, kernel and user time
+    /// together, in microseconds (`GetProcessTimes`, whose times are in
+    /// units of 100 nanoseconds; REQ-6626 item 1 a).
+    pub fn processor_time_us(&self) -> io::Result<u64> {
+        /// `FILETIME`'s unit, 100 nanoseconds, in a microsecond.
+        const UNITS_PER_MICROSECOND: u64 = 10;
+        let zero = FILETIME { dwLowDateTime: 0, dwHighDateTime: 0 };
+        let (mut creation, mut exit, mut kernel, mut user) = (zero, zero, zero, zero);
+        // SAFETY: the process handle this value owns; each time is written
+        // to a live local.
+        if unsafe { GetProcessTimes(self.process, &raw mut creation, &raw mut exit, &raw mut kernel, &raw mut user) } == 0 {
+            return Err(io::Error::last_os_error());
+        }
+        let units = |time: FILETIME| (u64::from(time.dwHighDateTime) << u32::BITS) | u64::from(time.dwLowDateTime);
+        Ok(units(kernel).saturating_add(units(user)) / UNITS_PER_MICROSECOND)
     }
 
     pub fn kill(&mut self) -> io::Result<()> {

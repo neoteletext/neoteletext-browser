@@ -20,6 +20,8 @@ mod hang_up;
 mod limits;
 mod termination;
 mod time;
+#[cfg(target_os = "macos")]
+mod usage;
 
 pub(crate) use channel::Channel;
 #[cfg(all(test, target_os = "macos"))]
@@ -31,6 +33,8 @@ pub(crate) use hang_up::wait_for_hang_up;
 pub use limits::{DESCRIPTORS_NEEDED, raise_descriptor_limit};
 pub use termination::{TERMINATION_SIGNALS, termination_requests};
 pub(crate) use time::local_offset;
+#[cfg(target_os = "macos")]
+pub(crate) use usage::processor_time_us;
 
 /// The command that runs a helper: under its profile on macOS; as it is
 /// on Linux, where it confines itself at its start.
