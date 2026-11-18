@@ -240,6 +240,7 @@ fn a_held_pictures_records_are_read_and_shown_only_at_the_release() {
 /// four live terminals hold, are each shown again from the source kept,
 /// with no record sent again; so is a NAPLPS sub-page with its objects and
 /// its cursor; and a sub-page's drawing links go to the trusted core again.
+#[cfg(feature = "links")]
 #[test]
 fn twenty_picture_sub_pages_visited_are_shown_again_from_the_sources_kept() {
     use neoteletext_web::records::drawing_links::{DrawingLink, encode};
@@ -307,6 +308,7 @@ fn twenty_picture_sub_pages_visited_are_shown_again_from_the_sources_kept() {
 /// as packets 4/31; they are read as a live channel's are, by the same
 /// readers, so a ReGIS and a NAPLPS sub-page are drawn, with links and a
 /// cursor, though nothing was pushed.
+#[cfg(feature = "links")]
 #[test]
 fn a_static_channels_fetched_file_draws_its_picture_records() {
     use neoteletext_web::records::drawing_links::{DrawingLink, encode};
