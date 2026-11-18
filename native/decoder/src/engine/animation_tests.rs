@@ -574,7 +574,6 @@ fn naplps_objects_are_composed_picked_hidden_moved_and_cycled() {
     })
     .unwrap();
     engine.feed_whole(true, true, &packets);
-    engine.animation_step(&[PAGE], due_at(1000));
 
     let mut receiver = Receiver::default();
     let drawn = engine.naplps().take(PAGE, None).unwrap();
@@ -608,7 +607,8 @@ fn naplps_objects_are_composed_picked_hidden_moved_and_cycled() {
     assert_eq!((receiver.at(LEFT + 110, 110), receiver.at(LEFT + 410, 310)), (0, 3), "the object moved");
     assert!(!receiver.take_sent().1, "only what changed was sent");
     assert_eq!(engine.animation_picture(PAGE).objects_at(330, 110, &mut found), 0, "a hidden region takes no pointer");
-    let start = engine.naplps().next_tick(PAGE, None, 1000).unwrap();
+    // The cycle starts at the tick after the one its record was applied in.
+    let start = engine.naplps().next_tick(PAGE, None, 0).unwrap();
     engine.animation_step(&[PAGE], due_at(start + 4));
     assert!(receiver.naplps(&mut engine));
     assert_eq!(receiver.at(LEFT + 410, 310), 6, "its cycle's next frame");

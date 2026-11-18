@@ -389,7 +389,7 @@ impl Engine {
                 fastext: fastext(stored, &grid, self.receiver_rows.get(&(page, stored.key.subcode.value()))),
             }
         };
-        let rates = FlashRates::of(grid.cells.iter().flatten().filter(|cell| cell.flash).map(|cell| cell.attributes.flash_rate()));
+        let rates = FlashRates::of(&grid);
         Some(Rendered {
             palette,
             screen: grid.screen_colour,
