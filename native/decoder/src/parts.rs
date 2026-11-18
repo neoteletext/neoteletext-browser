@@ -117,33 +117,67 @@ pub(crate) struct Figures {
 /// changed nowhere is a part of no pixels, which carries its new figures
 /// and its colours: new colours alone send no pixels (ANIM-5). `sent` is brought up to date. `None` when the
 /// pixels are not a whole picture of colours below sixteen.
+#[allow(clippy::too_many_arguments, reason = "the picture, its colours, its pick record and what the renderer knows changed, each from its own source")]
 pub(crate) fn parts_to_send(
     sent: &mut Option<Sent>,
     same_sub: bool,
     pixels: &[u8],
     palette: [[u8; 3]; REGIS_COLOURS],
     pick: &RegisPick,
+    rows: Changed,
     figures: Figures,
 ) -> Option<(Vec<RegisPicture>, bool)> {
     // A part may carry new colours: the interface colours the picture
     // again from the pixels it holds, so a change of colours alone, as a
     // NAPLPS BLINK makes, sends no pixels (animation.md ANIM-5).
     let base = sent.as_mut().filter(|sent| same_sub && sent.pixels.len() == pixels.len());
+    // Only the rows the renderer says changed are compared and kept: the
+    // rest are the picture last sent (RULE-65's millisecond for the
+    // repaint; a whole comparison and copy of the picture took up to 7).
+    let span = |rows: (usize, usize)| rows.0.saturating_mul(REGIS_WIDTH)..rows.1.saturating_add(1).saturating_mul(REGIS_WIDTH).min(pixels.len());
     let (areas, base_number, pick_changed) = match &base {
-        Some(sent) => (changed_areas(&sent.pixels, pixels), sent.number, sent.pick != *pick),
+        Some(sent) => {
+            let areas = match rows {
+                Changed::Unknown => changed_areas(&sent.pixels, pixels),
+                Changed::Nothing => Vec::new(),
+                Changed::Rows(first, last) => {
+                    let within = span((first, last));
+                    let narrow = |value: usize| u16::try_from(value).unwrap_or(u16::MAX);
+                    let mut areas = changed_areas(sent.pixels.get(within.clone()).unwrap_or(&[]), pixels.get(within).unwrap_or(&[]));
+                    for area in &mut areas {
+                        area.y = area.y.saturating_add(narrow(first));
+                    }
+                    areas
+                }
+            };
+            (areas, sent.number, sent.pick != *pick)
+        }
         None => (vec![RegisArea::WHOLE], 0, true),
     };
     let mut parts = Vec::with_capacity(areas.len().max(1));
     let mut number = base_number;
     for area in if areas.is_empty() { vec![RegisArea::default()] } else { areas } {
-        let packed = pack_area(pixels, area)?;
+        let Some(packed) = pack_area(pixels, area) else {
+            // What was sent is no longer known: the next picture goes whole.
+            *sent = None;
+            return None;
+        };
         let before = number;
         number = next_number(number);
         parts.push(RegisPicture { commits: figures.commits, work: figures.work, language: figures.language, palette, number, base: before, area, packed });
     }
     match base {
         Some(sent) => {
-            sent.pixels.copy_from_slice(pixels);
+            match rows {
+                Changed::Unknown => sent.pixels.copy_from_slice(pixels),
+                Changed::Nothing => {}
+                Changed::Rows(first, last) => {
+                    let within = span((first, last));
+                    if let (Some(kept), Some(new)) = (sent.pixels.get_mut(within.clone()), pixels.get(within)) {
+                        kept.copy_from_slice(new);
+                    }
+                }
+            }
             sent.palette = palette;
             sent.number = number;
             if pick_changed {
@@ -153,6 +187,18 @@ pub(crate) fn parts_to_send(
         None => *sent = Some(Sent { pixels: pixels.to_vec(), palette, number, pick: pick.clone() }),
     }
     Some((parts, pick_changed))
+}
+
+/// What the renderer says changed in a picture since the one it composed
+/// before, which is the one last sent.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Changed {
+    /// It cannot say: the whole picture is compared.
+    Unknown,
+    /// No pixel changed.
+    Nothing,
+    /// The rows from the first to the last, both included.
+    Rows(usize, usize),
 }
 
 #[cfg(test)]
@@ -170,12 +216,40 @@ mod tests {
         palette[1] = [255, 255, 255];
         let figures = Figures { commits: 0, work: 0, language: PictureLanguage::Naplps };
         let mut sent = None;
-        let (first, _) = parts_to_send(&mut sent, false, &pixels, palette, &RegisPick::default(), figures).unwrap();
+        let (first, _) = parts_to_send(&mut sent, false, &pixels, palette, &RegisPick::default(), Changed::Unknown, figures).unwrap();
         assert!(first[0].whole());
         palette[1] = [255, 0, 0];
-        let (blinked, _) = parts_to_send(&mut sent, true, &pixels, palette, &RegisPick::default(), figures).unwrap();
+        let (blinked, _) = parts_to_send(&mut sent, true, &pixels, palette, &RegisPick::default(), Changed::Unknown, figures).unwrap();
         assert_eq!(blinked.len(), 1);
         assert!(!blinked[0].whole() && blinked[0].packed.is_empty() && blinked[0].area == RegisArea::default(), "no pixels");
         assert_eq!(blinked[0].palette, palette, "the new colours");
+    }
+
+    /// RULE-65: the rows the renderer says changed give the same parts as
+    /// comparing the whole picture, and a picture that changed nowhere
+    /// sends one part of no pixels.
+    #[test]
+    fn the_changed_rows_give_the_parts_the_whole_comparison_gives() {
+        let mut pixels = vec![1_u8; REGIS_WIDTH * REGIS_HEIGHT];
+        let palette = [[0_u8; 3]; REGIS_COLOURS];
+        let figures = Figures { commits: 0, work: 0, language: PictureLanguage::Regis };
+        let (mut whole, mut hinted) = (None, None);
+        for sent in [&mut whole, &mut hinted] {
+            parts_to_send(sent, false, &pixels, palette, &RegisPick::default(), Changed::Unknown, figures).unwrap();
+        }
+        for row in 100..=110 {
+            pixels[row * REGIS_WIDTH + 30] = 2;
+            pixels[row * REGIS_WIDTH + 700] = 3;
+        }
+        let (all, _) = parts_to_send(&mut whole, true, &pixels, palette, &RegisPick::default(), Changed::Unknown, figures).unwrap();
+        let (rows, _) = parts_to_send(&mut hinted, true, &pixels, palette, &RegisPick::default(), Changed::Rows(100, 110), figures).unwrap();
+        let areas = |parts: &[RegisPicture]| parts.iter().map(|part| (part.area, part.packed.clone())).collect::<Vec<_>>();
+        assert_eq!(areas(&rows), areas(&all));
+        assert_eq!(all.len(), 2, "two areas apart");
+        let (nothing, _) = parts_to_send(&mut hinted, true, &pixels, palette, &RegisPick::default(), Changed::Nothing, figures).unwrap();
+        assert_eq!(nothing.len(), 1);
+        assert_eq!(nothing[0].packed, [] as [u8; 0]);
+        let (again, _) = parts_to_send(&mut hinted, true, &pixels, palette, &RegisPick::default(), Changed::Unknown, figures).unwrap();
+        assert_eq!(again[0].packed, [] as [u8; 0], "what the rows kept is the picture sent");
     }
 }

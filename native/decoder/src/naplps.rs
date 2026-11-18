@@ -556,7 +556,7 @@ impl NaplpsPages {
         let (pixels, palette) = (held.pixels(), held.palette());
         let figures = Figures { commits: held.records, work: held.bytes, language: PictureLanguage::Naplps };
         let pick = held.pick();
-        let (mut parts, pick_changed) = parts_to_send(&mut held.sent, same_sub, &pixels, palette, &pick, figures)?;
+        let (mut parts, pick_changed) = parts_to_send(&mut held.sent, same_sub, &pixels, palette, &pick, crate::parts::Changed::Unknown, figures)?;
         self.sent_sub.insert(key.0, key.1);
         let more = parts.split_off(1);
         Some(Drawn { page: key.0, sub: key.1, picture: parts.pop()?, pick: pick_changed.then_some(pick), more })

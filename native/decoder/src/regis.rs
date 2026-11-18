@@ -22,7 +22,7 @@ use regis::{Event, Font, ForcedLook, Picture, RepaintBudget, Screen, Terminal, V
 
 use crate::animation::{Counters, next_cycle_tick};
 
-use crate::parts::{Figures, Sent, parts_to_send};
+use crate::parts::{Changed, Figures, Sent, parts_to_send};
 
 /// The most sub-pages whose ReGIS is kept. Each holds two pages of pixels,
 /// a picture and its drawings: about a megabyte and a half before any
@@ -71,6 +71,9 @@ struct Page {
     /// The picture last sent, which the next is sent as a part of
     /// (REQ-6399); `None` when the next must be whole.
     sent: Option<Sent>,
+    /// The pick record and origins its last pick was built from, and that
+    /// pick: built again only when they changed (RULE-65).
+    picked: Option<Picked>,
     /// The animation state of its numbered drawings (animation.md ANIM-6),
     /// with the cycles the renderer has no clock to run (ANIM-14). The
     /// renderer is given each state as it changes, and holds the same.
@@ -91,6 +94,31 @@ struct Motion {
     painting: bool,
     /// Its animation state changed since its picture was last taken.
     animated: bool,
+}
+
+/// A picture's pick record and origins, and the pick built from them.
+struct Picked {
+    record: Vec<u16>,
+    origins: Vec<(u16, i32, i32)>,
+    pick: RegisPick,
+}
+
+impl Picked {
+    /// The pick of `record` and `origins`: the one held when neither
+    /// changed, else built again and held. Comparing the record is one
+    /// comparison of memory; building the pick reads it entry by entry,
+    /// 384,000 of them, which took up to milliseconds at every repaint
+    /// (RULE-65). The whole record is compared, not only the rows whose
+    /// pixels changed: a drawing can become detectable, or stop being,
+    /// without a pixel changing.
+    fn pick(held: &mut Option<Self>, record: &[u16], origins: Vec<(u16, i32, i32)>) -> RegisPick {
+        if let Some(held) = held.as_ref().filter(|held| held.origins == origins && held.record == record) {
+            return held.pick.clone();
+        }
+        let pick = RegisPick::of(record, origins.iter().copied());
+        *held = Some(Self { record: record.to_vec(), origins, pick: pick.clone() });
+        pick
+    }
 }
 
 impl Page {
@@ -119,6 +147,7 @@ impl Page {
             budget: RepaintBudget::new(),
             earned_ms: None,
             sent: None,
+            picked: None,
             animation: Box::new(AnimationStore::new()),
             motion: Motion::default(),
             told: None,
@@ -593,12 +622,18 @@ impl RegisPages {
         held.budget.spend(held.picture.work());
         let pixels = held.picture.canvas().pixels();
         let palette = held.terminal.palette().colours();
-        let pick = RegisPick::of(held.picture.pick_record(), held.picture.origins());
+        // The rows whose pixels this compose changed since the one before,
+        // which was sent: only they are compared and kept.
+        let rows = match held.picture.changed_rows() {
+            None => Changed::Nothing,
+            Some((first, last)) => Changed::Rows(usize::try_from(first).unwrap_or(usize::MAX), usize::try_from(last).unwrap_or(usize::MAX)),
+        };
+        let pick = Picked::pick(&mut held.picked, held.picture.pick_record(), held.picture.origins().collect());
         // What the sub-page's drawing has cost: on the base since its
         // stream began, and to paint its numbered drawings this time.
         let work = held.terminal.base_work().saturating_add(held.picture.work());
         let figures = Figures { commits: held.picture.commits(), work, language: PictureLanguage::Regis };
-        let (mut parts, pick_changed) = parts_to_send(&mut held.sent, same_sub, pixels, palette, &pick, figures)?;
+        let (mut parts, pick_changed) = parts_to_send(&mut held.sent, same_sub, pixels, palette, &pick, rows, figures)?;
         self.sent_sub.insert(key.0, key.1);
         let more = parts.split_off(1);
         Some(Drawn { page: key.0, sub: key.1, picture: parts.pop()?, pick: pick_changed.then_some(pick), more })
