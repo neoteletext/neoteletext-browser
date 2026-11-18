@@ -39,6 +39,8 @@ const FAULT_TICK_OVERRUN: u8 = 2;
 const FAULT_EVENTS_DROPPED: u8 = 4;
 const FAULT_ACTIONS_SKIPPED: u8 = 5;
 const FAULT_QUERY_DROPPED: u8 = 6;
+const FAULT_ANIMATION_SLOWED: u8 = 8;
+const _: () = assert!(FAULT_ANIMATION_SLOWED == protocol::rules::MAX_FAULT);
 /// One more than the highest fault code: a place for each code's count.
 const FAULT_SLOTS: usize = protocol::rules::MAX_FAULT as usize + 1;
 
@@ -444,6 +446,16 @@ impl Rules {
     pub(crate) fn metered(&mut self, page: u16, values: &[u8]) {
         if let Some(open) = self.open.as_mut().filter(|open| open.page == page && open.told.watch.len() == values.len()) {
             open.evaluator.set_metered(values);
+        }
+    }
+
+    /// The animation of the open page's picture held `count` repaints
+    /// back for its budget since it was last asked (ANIM-16): told as
+    /// fault 8, the animation slowed, with the other faults, at most once
+    /// a second (RULE-48).
+    pub(crate) fn animation_slowed(&mut self, page: u16, count: u32) {
+        if let Some(open) = self.open.as_mut().filter(|open| open.page == page && count != 0) {
+            open.fault(FAULT_ANIMATION_SLOWED, count);
         }
     }
 

@@ -9,4 +9,4 @@ pub(crate) mod host;
 pub mod picture;
 
 pub use host::MAX_KEPT_TABLES;
-pub use picture::{Picture, Still};
+pub use picture::Picture;

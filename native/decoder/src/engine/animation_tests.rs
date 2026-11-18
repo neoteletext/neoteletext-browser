@@ -54,7 +54,7 @@ fn stream(page: u16, sub: u16, generation: u16, offset: usize, data: &[u8]) -> R
 }
 
 /// A REGIS record as the packets of a pushed message.
-fn regis(page: u16, generation: u16, offset: usize, data: &[u8]) -> Vec<u8> {
+pub(crate) fn regis(page: u16, generation: u16, offset: usize, data: &[u8]) -> Vec<u8> {
     let mut packets = Vec::new();
     neoteletext_web::records::regis::encode(stream(page, 0, generation, offset, data), 0, 0, &mut |packet| packets.extend_from_slice(&packet.bytes)).unwrap();
     packets
@@ -90,7 +90,7 @@ fn on(number: u16, kind: OperationKind) -> Operation {
 /// A receiver's copy of a picture: whole pictures replace it and parts
 /// are laid over it, as the interface does.
 #[derive(Default)]
-struct Receiver {
+pub(crate) struct Receiver {
     pixels: Vec<u8>,
     /// The pixels of the parts taken since it was last asked.
     sent: usize,
@@ -117,7 +117,12 @@ impl Receiver {
 
     /// Takes the ReGIS picture of `PAGE` if one is to be sent; whether one was.
     fn regis(&mut self, engine: &mut Engine, now_us: u64) -> bool {
-        let Some(drawn) = engine.regis().take(PAGE, None, now_us) else { return false };
+        self.regis_of(engine, PAGE, now_us)
+    }
+
+    /// Takes the ReGIS picture of `page` if one is to be sent; whether one was.
+    pub(crate) fn regis_of(&mut self, engine: &mut Engine, page: u16, now_us: u64) -> bool {
+        let Some(drawn) = engine.regis().take(page, None, now_us) else { return false };
         self.lay(&drawn.picture);
         drawn.more.iter().for_each(|part| self.lay(part));
         true
@@ -131,7 +136,7 @@ impl Receiver {
         true
     }
 
-    fn at(&self, x: usize, y: usize) -> u8 {
+    pub(crate) fn at(&self, x: usize, y: usize) -> u8 {
         self.pixels[y * REGIS_WIDTH + x]
     }
 
@@ -140,13 +145,13 @@ impl Receiver {
     }
 
     /// The pixels sent as parts, and whether a whole picture was, since the last call.
-    fn take_sent(&mut self) -> (usize, bool) {
+    pub(crate) fn take_sent(&mut self) -> (usize, bool) {
         (core::mem::take(&mut self.sent), core::mem::take(&mut self.whole))
     }
 }
 
 /// A filled square of 20 pixels in colour `colour`, as a drawing's contents.
-fn square(number: u16, colour: u8) -> String {
+pub(crate) fn square(number: u16, colour: u8) -> String {
     format!("D(B{number})W(I{colour})F(V[0,0][19,0][19,19][0,19])D(E)")
 }
 

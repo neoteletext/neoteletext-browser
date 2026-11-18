@@ -219,9 +219,6 @@ pub struct Engine {
     /// What plays on each audio channel, as the page's rules read it
     /// (RULE-27, RULE-30).
     heard: crate::voice_sink::Heard,
-    /// The open page's picture while its renderer gives no animation
-    /// state: nothing in it moves.
-    still: crate::rules::Still,
     /// The atomic frames open, the teletext sprites and the animation
     /// state the decoder composes with (animation.md ANIM-22).
     animation: animation::Animated,
@@ -294,7 +291,6 @@ impl Engine {
             cache: RefCell::new(PageCache::default()),
             rules: crate::rules::host::Rules::default(),
             heard: crate::voice_sink::Heard::default(),
-            still: crate::rules::Still::new((0, 0)),
             animation: animation::Animated::default(),
         }
     }

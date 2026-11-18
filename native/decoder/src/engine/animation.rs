@@ -30,6 +30,46 @@ pub(super) struct Animated {
     stepped: Option<u32>,
 }
 
+/// What [`Engine::picture_facts`] reads of the engine for a page's
+/// picture. It is apart from the picture itself so that the rule table's
+/// host can hold the picture, which borrows the renderers' state, and the
+/// evaluator, the receiver and the sounds, which are other fields of the
+/// engine, at once.
+pub(super) struct PictureFacts {
+    page: u16,
+    /// The sub-page on screen, if the store says which.
+    sub: Option<u16>,
+    /// The presentation tick now.
+    now: u32,
+    /// A teletext page's controls.
+    controls: neoteletext_core::controls::Controls,
+}
+
+impl PictureFacts {
+    /// True when the picture is a NAPLPS one in `naplps`, and no ReGIS
+    /// picture of the sub-page comes before it.
+    pub(super) fn is_naplps(&self, regis: &crate::regis::RegisPages, naplps: &crate::naplps::NaplpsPages) -> bool {
+        !regis.holds(self.page, self.sub) && naplps.holds(self.page, self.sub)
+    }
+
+    /// The picture, over the renderers' state.
+    pub(super) fn picture<'a>(
+        self,
+        regis: &'a mut crate::regis::RegisPages,
+        naplps: &'a mut crate::naplps::NaplpsPages,
+        animation: &'a mut Animated,
+    ) -> PagePicture<'a> {
+        let Self { page, sub, now, controls } = self;
+        if regis.holds(page, sub) {
+            return PagePicture::regis(regis, page, sub, now, &mut animation.bases);
+        }
+        if naplps.holds(page, sub) {
+            return PagePicture::naplps(naplps, page, sub, now, &mut animation.bases);
+        }
+        PagePicture::teletext(&mut animation.teletext, controls, page, sub, now, &mut animation.bases)
+    }
+}
+
 impl Engine {
     /// The sub-code of the sub-page of `page` on screen, when the store
     /// holds a teletext page for it: the one the view chose, else as the
@@ -44,23 +84,22 @@ impl Engine {
         Some(stored.key.subcode.value())
     }
 
+    /// What a page's picture is made from besides the renderers' state:
+    /// the sub-page on screen, the presentation tick now and, for a
+    /// teletext page, its controls.
+    pub(super) fn picture_facts(&self, page: u16) -> PictureFacts {
+        let view = self.views.get(&page).copied().unwrap_or_default();
+        let controls = self.stored(page, view.subpage).map_or(neoteletext_core::controls::Controls::NONE, neoteletext_core::controls::controls);
+        PictureFacts { page, sub: self.shown_subcode(page), now: tick_at(self.now_us()), controls }
+    }
+
     /// The picture of the sub-page of `page` on screen as the page's rule
     /// table sees it (RULE-12, RULE-26; ANIM-6, ANIM-13): a ReGIS
     /// picture's numbered drawings, a NAPLPS picture's objects, or a
-    /// teletext page's sprites and controls. The rule table's host calls
-    /// it for each wake that evaluates ticks.
+    /// teletext page's sprites and controls.
     pub fn animation_picture(&mut self, page: u16) -> PagePicture<'_> {
-        let sub = self.shown_subcode(page);
-        let now = tick_at(self.now_us());
-        if self.regis.holds(page, sub) {
-            return PagePicture::regis(&mut self.regis, page, sub, now, &mut self.animation.bases);
-        }
-        if self.naplps.holds(page, sub) {
-            return PagePicture::naplps(&mut self.naplps, page, sub, now, &mut self.animation.bases);
-        }
-        let view = self.views.get(&page).copied().unwrap_or_default();
-        let controls = self.stored(page, view.subpage).map_or(neoteletext_core::controls::Controls::NONE, neoteletext_core::controls::controls);
-        PagePicture::teletext(&mut self.animation.teletext, controls, page, sub, now, &mut self.animation.bases)
+        let facts = self.picture_facts(page);
+        facts.picture(&mut self.regis, &mut self.naplps, &mut self.animation)
     }
 
     /// Carries out the operations of an ANIMATE record (ANIM-6) on a

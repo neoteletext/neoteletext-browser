@@ -406,3 +406,111 @@ fn a_late_wake_evaluates_at_most_six_ticks() {
     assert_eq!(late, [1, 2, 3, 4, 5, 6]);
     assert_eq!(reports(&engine.run_rules(after(201))).len(), 1, "then one tick at a time again");
 }
+
+/// RULE-64, RULE-65, RULE-26, RULE-33, ANIM-6 (REQ-6534, REQ-6535,
+/// REQ-6536; RULE-93's table in small): on a ReGIS page with a local
+/// sound, a key going down writes the note to the sound helper first and
+/// shows the key's pressed drawing in the tick that ran the rule, and the
+/// key coming up hides it; a metered level that passes a threshold shows
+/// a meter drawing in the tick the report is taken, and hides it when the
+/// level falls. Nothing is sent to the channel: no rule has a `send`.
+#[test]
+fn a_key_shows_its_drawing_and_plays_and_a_level_lights_the_meter_in_the_same_tick() {
+    use crate::engine::animation_tests::{Receiver, regis, square};
+    use neoteletext_rules::animate::{Operation, OperationKind};
+    use neoteletext_rules::table::Target;
+    /// The pressed look of a key, and a segment of the meter (RULE-92).
+    const PRESSED: u16 = 201;
+    const SEGMENT: u16 = 301;
+    let animate = |number: u16, kind: OperationKind| Action::Animate(Operation { target: Target::object(number), kind });
+    let note_on = Action::Midi { channel: CHANNEL, status: 0x90, data1: 60, data2: 100 };
+    let note_off = Action::Midi { channel: CHANNEL, status: 0x80, data1: 60, data2: 0 };
+    let level = Value::sound(CHANNEL, SOUND_LEVEL);
+    let rules = table(&[
+        on_key('a', false, &[note_on, animate(PRESSED, OperationKind::Show)]),
+        on_key('a', true, &[note_off, animate(PRESSED, OperationKind::Hide)]),
+        becomes(level, Operator::GreaterOrEqual, 32, &[animate(SEGMENT, OperationKind::Show)]),
+        becomes(level, Operator::Less, 32, &[animate(SEGMENT, OperationKind::Hide)]),
+    ]);
+
+    let mut engine = Engine::new();
+    let scene = format!("{}{}D(S{PRESSED}(X100,Y50,V0),S{SEGMENT}(X300,Y50,V0),C)", square(PRESSED, 5), square(SEGMENT, 6));
+    engine.feed_whole(true, true, &regis(PAGE, 1, 0, scene.as_bytes()));
+    send_table(&mut engine, 1, Some(&rules));
+    engine.rule_page(Some(PAGE));
+    let told = engine.run_rules(T0);
+    assert!(matches!(told.as_slice(), [FromDecoder::RulesOpen(open)] if open.interest == INTEREST_KEYS && open.watch.len() == 1), "{told:?}");
+    play_local(&mut engine);
+    engine.take_sounds();
+    let mut receiver = Receiver::default();
+    assert!(receiver.regis_of(&mut engine, PAGE, 0) && receiver.take_sent().1, "the first picture is whole");
+    assert_eq!((receiver.at(105, 55), receiver.at(305, 55)), (0, 0), "both drawings begin hidden");
+    engine.run_rules(after(1));
+
+    // The key goes down: the note leaves first, and the picture taken
+    // after the same tick holds the pressed key, as its rectangle alone.
+    engine.rule_input(PAGE, 1, key(KeyAction::Press, 'a'));
+    let produced = engine.run_rules(after(2));
+    assert_eq!(produced.first(), Some(&FromDecoder::Audio(Audio::LocalMidi { channel: CHANNEL, status: 0x90, data1: 60, data2: 100 })), "{produced:?}");
+    assert_eq!(reports(&produced), [], "nothing is sent to the channel");
+    assert!(receiver.regis_of(&mut engine, PAGE, 0), "the tick that ran the rule has a picture to send");
+    assert_eq!(receiver.at(105, 55), 5, "the pressed key is shown");
+    let (sent, whole) = receiver.take_sent();
+    assert!(!whole && sent <= 40 * 40, "only the key's rectangle is sent: {sent} pixels");
+
+    // The level of the buffer the note began in arrives: the segment
+    // lights in the tick that takes it.
+    engine.rule_metered(PAGE, &[90]);
+    engine.run_rules(after(3));
+    assert!(receiver.regis_of(&mut engine, PAGE, 0));
+    assert_eq!((receiver.at(105, 55), receiver.at(305, 55)), (5, 6), "the key stays pressed and the segment is shown");
+
+    // The key comes up, and the level falls.
+    engine.rule_input(PAGE, 2, key(KeyAction::Release, 'a'));
+    let produced = engine.run_rules(after(4));
+    assert_eq!(produced.first(), Some(&FromDecoder::Audio(Audio::LocalMidi { channel: CHANNEL, status: 0x80, data1: 60, data2: 0 })));
+    assert!(receiver.regis_of(&mut engine, PAGE, 0));
+    assert_eq!((receiver.at(105, 55), receiver.at(305, 55)), (0, 6), "the key is hidden again; the note still sounds");
+    engine.rule_metered(PAGE, &[3]);
+    engine.run_rules(after(5));
+    assert!(receiver.regis_of(&mut engine, PAGE, 0));
+    assert_eq!(receiver.at(305, 55), 0, "the segment falls with the level");
+}
+
+/// TODO-6576 item 5, RULE-13 (REQ-6534): a NAPLPS picture is the middle
+/// 640 pixels of the 800 the trusted core gives the pointer in, so the
+/// evaluator is given the pointer 80 pixels to the left, and a pointer in
+/// either margin is on nothing.
+#[test]
+fn a_naplps_pages_pointer_is_given_in_the_pictures_own_pixels() {
+    use super::{NAPLPS_WIDTH, naplps_input};
+    use protocol::rules::PointerAction;
+    let at = |x: u16| match naplps_input(RuleInput::Pointer { action: PointerAction::Move, button: 0, x, y: 7, control: 0 }) {
+        RuleInput::Pointer { x, y: 7, .. } => x,
+        other => panic!("{other:?}"),
+    };
+    assert_eq!((at(80), at(81), at(719)), (0, 1, 639), "the picture's first and last columns");
+    assert_eq!((at(0), at(79), at(720), at(799)), (NAPLPS_WIDTH, NAPLPS_WIDTH, NAPLPS_WIDTH, NAPLPS_WIDTH), "the margins are outside it");
+    assert_eq!(naplps_input(RuleInput::Wheel { x: 100, y: 3, control: 0 }), RuleInput::Wheel { x: 20, y: 3, control: 0 });
+    assert_eq!(naplps_input(RuleInput::Focus), RuleInput::Focus);
+}
+
+/// RULE-48 fault 8, ANIM-16 (REQ-6534, REQ-6536): the repaints the
+/// animation held back for its budget are told to the trusted core as
+/// fault 8 with the table's generation, at most once a second, the count
+/// carried to the next telling; for a page that is not the open one
+/// nothing is told.
+#[test]
+fn held_back_repaints_are_told_as_the_animation_slowed() {
+    let rules = table(&[on_key('a', false, &[Action::Send(None)])]);
+    let (mut engine, _) = opened(&rules);
+    engine.rules.animation_slowed(PAGE, 3);
+    engine.rules.animation_slowed(PAGE + 1, 9);
+    let produced = engine.run_rules(after(1));
+    assert!(produced.contains(&FromDecoder::RulesFault { page: PAGE, generation: 1, fault: 8, count: 3 }), "{produced:?}");
+    engine.rules.animation_slowed(PAGE, 2);
+    let soon = engine.run_rules(after(2));
+    assert!(!soon.iter().any(|message| matches!(message, FromDecoder::RulesFault { fault: 8, .. })), "within the second: {soon:?}");
+    let later: Vec<FromDecoder> = (3..=2 + neoteletext_rules::limits::TICKS_PER_SECOND).flat_map(|tick| engine.run_rules(after(tick))).collect();
+    assert!(later.contains(&FromDecoder::RulesFault { page: PAGE, generation: 1, fault: 8, count: 2 }), "{later:?}");
+}

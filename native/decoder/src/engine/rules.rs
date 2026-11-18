@@ -7,15 +7,36 @@ use protocol::rules::RuleInput;
 
 use super::Engine;
 use crate::rules::host::Parts;
-use crate::rules::{Picture, Still};
 
-/// A teletext page's picture, in pixels (RULE-13).
-const TELETEXT_PICTURE: (u16, u16) = (interface_core::canvas::PAGE_WIDTH, interface_core::canvas::PAGE_HEIGHT);
-/// A ReGIS picture, in pixels (RULE-13).
-const REGIS_PICTURE: (u16, u16) = (interface_core::canvas::REGIS_WIDTH, interface_core::canvas::REGIS_HEIGHT);
-/// A NAPLPS picture, in pixels (RULE-13).
-const NAPLPS_PICTURE: (u16, u16) = (640, 480);
-const _: () = assert!(NAPLPS_PICTURE.0 as usize == crate::naplps::WIDTH && NAPLPS_PICTURE.1 as usize == crate::naplps::HEIGHT);
+/// How far right of the 800-pixel picture's left edge a NAPLPS picture
+/// begins (RULE-13: a NAPLPS picture is 640 by 480, shown in the middle
+/// of the 800 by 480 picture the trusted core gives the pointer in).
+const NAPLPS_LEFT: u16 = (interface_core::canvas::REGIS_WIDTH - NAPLPS_WIDTH) / 2;
+/// A NAPLPS picture's width in pixels (RULE-13).
+const NAPLPS_WIDTH: u16 = neoteletext_web::records::naplps_objects::PICTURE_WIDTH;
+const _: () = assert!(NAPLPS_WIDTH as usize == crate::naplps::WIDTH && NAPLPS_LEFT == 80);
+
+/// A pixel of the 800-wide picture as a pixel of the NAPLPS picture in
+/// its middle. A pixel of either margin is outside the picture and is
+/// given as the first column past its right edge, which no rectangle (cut
+/// to the picture, RULE-13) and no object holds: the press, release or
+/// move is still followed (RULE-8), on nothing.
+const fn naplps_x(x: u16) -> u16 {
+    match x.checked_sub(NAPLPS_LEFT) {
+        Some(inside) if inside < NAPLPS_WIDTH => inside,
+        _ => NAPLPS_WIDTH,
+    }
+}
+
+/// A rule input of a NAPLPS page, with its pointer in the NAPLPS
+/// picture's pixels.
+const fn naplps_input(input: RuleInput) -> RuleInput {
+    match input {
+        RuleInput::Pointer { action, button, x, y, control } => RuleInput::Pointer { action, button, x: naplps_x(x), y, control },
+        RuleInput::Wheel { x, y, control } => RuleInput::Wheel { x: naplps_x(x), y, control },
+        other => other,
+    }
+}
 
 impl Engine {
     /// Takes a message of the open page's rule table (RULE-63) and gives
@@ -31,22 +52,6 @@ impl Engine {
             _ => {}
         }
         message
-    }
-
-    /// The picture of `page` as its rule table sees it (RULE-12, RULE-13):
-    /// the one place the evaluator's host obtains it. Every page's picture
-    /// is still, of its renderer's size, until its animation state is
-    /// given here.
-    fn rules_picture(&mut self, page: u16) -> &mut dyn Picture {
-        let size = if self.regis.has(page) {
-            REGIS_PICTURE
-        } else if self.naplps.has(page) {
-            NAPLPS_PICTURE
-        } else {
-            TELETEXT_PICTURE
-        };
-        self.still = Still::new(size);
-        &mut self.still
     }
 
     /// The sub-code of the sub-page of `page` shown, as the evaluator
@@ -67,8 +72,11 @@ impl Engine {
         if self.rules.open_page() != Some(page) {
             return;
         }
-        self.rules_picture(page);
-        self.rules.input(page, sequence, input, &self.still);
+        let facts = self.picture_facts(page);
+        let Self { rules, regis, naplps, animation, .. } = self;
+        let input = if facts.is_naplps(regis, naplps) { naplps_input(input) } else { input };
+        let picture = facts.picture(regis, naplps, animation);
+        rules.input(page, sequence, input, &picture);
     }
 
     /// The sound helper's newest metered report for the open page's watch
@@ -107,9 +115,17 @@ impl Engine {
 
     fn run_rules_for(&mut self, page: u16, now_us: u64) -> Vec<FromDecoder> {
         let sub = self.rules_subcode(page);
-        self.rules_picture(page);
-        let Self { rules, audio, sounds, heard, still, .. } = self;
-        let mut parts = Parts { audio: &mut **audio, sounds, heard, picture: still, sub };
+        // What the animation's repaints of the last wake cost (ANIM-16):
+        // each held back for the budget is told as fault 8 (RULE-48).
+        let slowed = self.take_animation_counters(page).slowed;
+        let facts = self.picture_facts(page);
+        let Self { rules, audio, sounds, heard, regis, naplps, animation, .. } = self;
+        rules.animation_slowed(page, slowed);
+        // The picture of the sub-page on screen: a rule's actions show,
+        // hide, move, re-look and cycle its drawings, objects or sprites,
+        // and its conditions read their bounds (RULE-12, RULE-26, ANIM-6).
+        let mut picture = facts.picture(regis, naplps, animation);
+        let mut parts = Parts { audio: &mut **audio, sounds, heard, picture: &mut picture, sub };
         let mut produced = rules.run(now_us, &mut parts);
         // What a rule's `play`, `stop` or `gain` made of the channel's
         // sounds follows at once, with what the tick reported.

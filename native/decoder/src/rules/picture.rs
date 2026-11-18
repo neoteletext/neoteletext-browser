@@ -7,9 +7,8 @@
 //! `neoteletext_rules::World` for sound, reports and state, and passes the
 //! picture's part of it to a [`Picture`]: the renderer state of the
 //! sub-page shown, teletext sprites, a ReGIS picture's numbered drawings
-//! or a NAPLPS picture's objects. [`Still`] is the picture with nothing
-//! that moves, which every page is until its renderer's animation state
-//! is given.
+//! or a NAPLPS picture's objects
+//! ([`crate::animation::PagePicture`]).
 
 use neoteletext_rules::animate::Operation;
 use neoteletext_rules::evaluator::TargetState;
@@ -52,38 +51,4 @@ pub trait Picture {
     /// Advances each cycling object whose frame is due at page tick
     /// `tick` (RULE-5 step 6, ANIM-14).
     fn advance_cycles(&mut self, tick: u32);
-}
-
-/// A picture with nothing that moves: no controls' state, no objects.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Still {
-    size: (u16, u16),
-}
-
-impl Still {
-    /// A still picture of `size` pixels.
-    #[must_use]
-    pub const fn new(size: (u16, u16)) -> Self {
-        Self { size }
-    }
-}
-
-impl Picture for Still {
-    fn size(&self) -> (u16, u16) {
-        self.size
-    }
-
-    fn target(&self, _target: Target) -> Option<TargetState> {
-        None
-    }
-
-    fn objects_at(&self, _x: u16, _y: u16, _objects: &mut [u16; MAX_POINTER_OBJECTS]) -> usize {
-        0
-    }
-
-    fn animate(&mut self, _operation: Operation, _tick: u32) -> bool {
-        false
-    }
-
-    fn advance_cycles(&mut self, _tick: u32) {}
 }
