@@ -56,6 +56,8 @@ fn title(kind: ChooseKind) -> &'static str {
         ChooseKind::SaveT42 => "Save Page as T42",
         ChooseKind::SaveRegis => "Save Picture as ReGIS",
         ChooseKind::SaveNaplps => "Save Picture as NAPLPS",
+        ChooseKind::RegisFont => "Choose a ReGIS Font",
+        ChooseKind::NaplpsFont => "Choose a NAPLPS Stroke Font",
     }
 }
 
@@ -100,7 +102,7 @@ fn choose(kind: ChooseKind, parent: &str, folder: Option<&Path>) -> Result<Optio
     Ok(match kind {
         ChooseKind::Folder => dialog.pick_folder(),
         ChooseKind::SaveTti | ChooseKind::SaveT42 | ChooseKind::SaveRegis | ChooseKind::SaveNaplps => dialog.set_file_name(save_name(kind)).save_file(),
-        ChooseKind::File | ChooseKind::Bookmarks | ChooseKind::Picture => dialog.pick_file(),
+        ChooseKind::File | ChooseKind::Bookmarks | ChooseKind::Picture | ChooseKind::RegisFont | ChooseKind::NaplpsFont => dialog.pick_file(),
     })
 }
 
@@ -263,6 +265,7 @@ mod tests {
         assert_eq!(title(ChooseKind::File), "Open File");
         assert_eq!(title(ChooseKind::Bookmarks), "Import Bookmarks");
         assert_eq!(title(ChooseKind::Picture), "Convert Picture to Teletext");
+        assert_eq!((title(ChooseKind::RegisFont), title(ChooseKind::NaplpsFont)), ("Choose a ReGIS Font", "Choose a NAPLPS Stroke Font"));
         assert_eq!((save_name(ChooseKind::SaveTti), save_name(ChooseKind::SaveT42)), ("picture.tti", "picture.t42"));
         assert_eq!((save_name(ChooseKind::SaveRegis), save_name(ChooseKind::SaveNaplps)), ("picture.regis", "picture.nap"));
     }

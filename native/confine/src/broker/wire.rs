@@ -8,8 +8,8 @@ use std::io;
 
 use super::{
     ChooseKind, HEADER_BYTES, KIND_CHOOSE, KIND_DONE, KIND_EXITED, KIND_FAILED, KIND_HEALTHY, KIND_KEY, KIND_KILL, KIND_LOCAL_TIME, KIND_OPEN_WEB,
-    KIND_OPENINGS, KIND_PIPE, KIND_PROCESSOR_TIME, KIND_READ, KIND_READ_PICTURE, KIND_SAVE, KIND_SOURCE, KIND_SPAWN, KIND_SPAWNED, KIND_SPENT, KIND_TIME,
-    KIND_UPDATE_STATE, KIND_VIEWER_KEYS_KEY, KIND_WAIT, MAX_ARGUMENTS, MAX_REPLY, MAX_SAVE, MAX_TEXT, Program, SEALING_KEY_BYTES,
+    KIND_OPENINGS, KIND_PIPE, KIND_PROCESSOR_TIME, KIND_READ, KIND_READ_FONT, KIND_READ_PICTURE, KIND_SAVE, KIND_SOURCE, KIND_SPAWN, KIND_SPAWNED, KIND_SPENT,
+    KIND_TIME, KIND_UPDATE_STATE, KIND_VIEWER_KEYS_KEY, KIND_WAIT, MAX_ARGUMENTS, MAX_REPLY, MAX_SAVE, MAX_TEXT, Program, SEALING_KEY_BYTES,
 };
 use crate::LocalTime;
 
@@ -86,6 +86,10 @@ pub enum Request {
     /// (`docs/picture-tools.md`): answered with its bytes, which the core
     /// passes to a decoder unread.
     ReadPicture(String),
+    /// Read a font for pictures the user chose in the font dialog
+    /// (renderer parity PAR-35): answered with its bytes, at most its
+    /// language's bound, which the core passes to the decoders unread.
+    ReadFont(String),
     /// The processor time a helper has used, as the operating system
     /// accounts it (REQ-6626 item 1 a): the core may not read another
     /// process's account from its sandbox, and never takes a helper's own
@@ -249,6 +253,10 @@ pub fn encode_request(request: &Request) -> io::Result<Vec<u8>> {
             push_text(&mut payload, path)?;
             KIND_READ_PICTURE
         }
+        Request::ReadFont(path) => {
+            push_text(&mut payload, path)?;
+            KIND_READ_FONT
+        }
         Request::Save { kind, bytes } => {
             if !kind.is_save() || bytes.len() > MAX_SAVE {
                 return Err(io::Error::new(io::ErrorKind::InvalidInput, "not a save, or too large"));
@@ -295,6 +303,7 @@ pub fn decode_request(kind: u8, payload: &[u8]) -> io::Result<Request> {
         }
         KIND_OPENINGS => Request::Openings,
         KIND_READ_PICTURE => Request::ReadPicture(fields.text()?),
+        KIND_READ_FONT => Request::ReadFont(fields.text()?),
         KIND_SAVE => {
             let kind = ChooseKind::from_code(fields.u8()?).filter(|kind| kind.is_save());
             let kind = kind.ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "not a kind of save"))?;
@@ -439,6 +448,7 @@ mod tests {
             Request::Choose { kind: ChooseKind::Folder, parent: "x11:4a".into(), keep: false },
             Request::Choose { kind: ChooseKind::SaveT42, parent: String::new(), keep: true },
             Request::ReadPicture("/home/a/photo.jpg".into()),
+            Request::ReadFont("/home/a/mine.regisfont".into()),
             Request::Save { kind: ChooseKind::SaveTti, bytes: b"PN,10000\n".to_vec() },
             // Renderer parity PAR-36 item 2: the picture in ReGIS and NAPLPS.
             Request::Choose { kind: ChooseKind::SaveRegis, parent: String::new(), keep: true },
@@ -490,7 +500,7 @@ mod tests {
         assert!(decode_request(KIND_READ, &[0, 2, 0xFF, 0xFE]).is_err(), "not UTF-8");
         assert!(decode_request(77, &[]).is_err());
         assert!(decode_request(KIND_LOCAL_TIME, &[0]).is_err(), "long");
-        assert!(decode_request(KIND_CHOOSE, &[9, 0, 0, 0]).is_err(), "no such kind of choice");
+        assert!(decode_request(KIND_CHOOSE, &[11, 0, 0, 0]).is_err(), "no such kind of choice");
         assert!(decode_request(KIND_CHOOSE, &[1, 2, 0, 0]).is_err(), "a flag that is not one");
         let mut beyond = 1_i64.to_be_bytes().to_vec();
         beyond.extend_from_slice(&(MAX_OFFSET + 1).to_be_bytes());

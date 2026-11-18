@@ -5,7 +5,8 @@ use alloc::string::String;
 
 use super::{Field, Kind, MAX_VOLUME, PANEL_WIDTH, VOLUME_STEP};
 use crate::browser::widgets::panel_rect;
-use crate::browser::{Browser, Key, Modifiers, Output};
+use crate::browser::{Browser, Key, Modifiers, OpenKind, Output};
+use crate::canvas::PictureLanguage;
 use crate::geometry::Point;
 use crate::settings::{ProxyView, SettingChange};
 
@@ -73,7 +74,18 @@ impl Browser {
         let view = self.settings.view.clone();
         let volume = view.as_ref().map_or(MAX_VOLUME, |view| view.volume);
         let controls = &self.settings.controls;
-        let change = if controls.this_page.contains(point) {
+        // A font for pictures is chosen through the file dialog, as a
+        // picture to convert is (renderer parity PAR-35).
+        for (naplps, rect) in [false, true].into_iter().zip(controls.font_choose) {
+            if rect.contains(point) {
+                self.outputs.push(Output::OpenFile(if naplps { OpenKind::NaplpsFont } else { OpenKind::RegisFont }));
+                return true;
+            }
+        }
+        let built_in = [PictureLanguage::Regis, PictureLanguage::Naplps].into_iter().zip(controls.font_built_in).find(|(_, rect)| rect.contains(point));
+        let change = if let Some((language, _)) = built_in {
+            Some(SettingChange::BuiltInFont(language))
+        } else if controls.this_page.contains(point) {
             Some(SettingChange::HomeIsThisPage)
         } else if controls.restore_on.contains(point) {
             Some(SettingChange::RestoreSession(true))

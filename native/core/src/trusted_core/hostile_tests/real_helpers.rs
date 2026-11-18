@@ -491,6 +491,7 @@ fn helpers_started(requests: &[Request], addresses: &[String; 2]) -> Vec<(Progra
             | Request::Openings
             | Request::Choose { .. }
             | Request::ReadPicture(_)
+            | Request::ReadFont(_)
             | Request::Save { .. } => {
                 panic!("the core asked the broker for {request:?}")
             }

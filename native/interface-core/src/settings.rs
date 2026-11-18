@@ -58,6 +58,13 @@ pub struct SettingsView {
     /// delays what follows it; off, everything appears at once
     /// (animation.md ANIM-15, DEC-6525 item 27).
     pub paint_gradually: bool,
+    /// The file name of the font the viewer chose for alphabet 0 of every
+    /// ReGIS picture, or empty for the one compiled in (renderer parity
+    /// PAR-35).
+    pub regis_font: String,
+    /// The file name of the stroke font the viewer chose for every NAPLPS
+    /// picture, or empty for the one compiled in.
+    pub naplps_font: String,
     /// Why the last change was refused, if it was.
     pub refusal: Option<String>,
     /// On Windows, the command an administrator runs once so that channels
@@ -102,6 +109,10 @@ pub enum SettingChange {
     /// Drawings painted gradually (true) or at once (animation.md
     /// ANIM-15).
     PaintGradually(bool),
+    /// Pictures of this language drawn in the font compiled in again, not
+    /// one the viewer chose (renderer parity PAR-35). A font is chosen
+    /// through the file dialog, not as a change.
+    BuiltInFont(crate::canvas::PictureLanguage),
 }
 
 /// The furthest a floating remote's corner may be from the window's, in

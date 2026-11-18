@@ -19,6 +19,8 @@ fn view() -> SettingsView {
         wheel_inverted: false,
         regis_contain: true,
         paint_gradually: true,
+        regis_font: String::new(),
+        naplps_font: String::new(),
         refusal: None,
         loopback_exemption: None,
     }
@@ -234,4 +236,22 @@ fn the_panel_gives_the_loopback_exemption_when_there_is_one() {
     let texts: Vec<&str> = canvas.texts.iter().map(|(_, text)| text.as_str()).collect();
     assert!(!texts.iter().any(|text| text.contains("CheckNetIsolation") || text.contains("administrator")), "{texts:?}");
     assert_eq!(browser.settings.controls.copy_exemption, Rect::default());
+}
+
+/// Renderer parity PAR-35: each picture language's font is chosen through
+/// the file dialog and goes back to the one compiled in by a change; the
+/// panel names the file the trusted core says is in force.
+#[test]
+fn each_picture_language_has_a_font_to_choose() {
+    let mut browser = open();
+    let [regis_choose, naplps_choose] = browser.settings.controls.font_choose;
+    let [regis_built_in, naplps_built_in] = browser.settings.controls.font_built_in;
+    assert_eq!(press(&mut browser, regis_choose), [Output::OpenFile(crate::browser::OpenKind::RegisFont)]);
+    assert_eq!(press(&mut browser, naplps_choose), [Output::OpenFile(crate::browser::OpenKind::NaplpsFont)]);
+    assert_eq!(press(&mut browser, regis_built_in), [Output::Setting(SettingChange::BuiltInFont(crate::canvas::PictureLanguage::Regis))]);
+    assert_eq!(press(&mut browser, naplps_built_in), [Output::Setting(SettingChange::BuiltInFont(crate::canvas::PictureLanguage::Naplps))]);
+    browser.set_settings(SettingsView { naplps_font: "mine.strokes".into(), ..view() });
+    let mut canvas = Recorder::new();
+    browser.draw(&mut canvas, 1440.0, 900.0, 0);
+    assert!(canvas.texts.iter().any(|(_, text)| text == "mine.strokes"), "the font in force is named");
 }

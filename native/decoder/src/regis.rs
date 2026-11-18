@@ -127,11 +127,16 @@ impl Picked {
 impl Page {
     /// A sub-page's ReGIS begun: `viewer` is what the pointer was doing to
     /// the stream before it, which a new stream does not change.
-    fn new(generation: u16, viewer: RegisViewer) -> Self {
+    /// `font` is the one the viewer chose for alphabet 0 (renderer parity
+    /// PAR-35), or `None` for the one compiled in.
+    fn new(generation: u16, viewer: RegisViewer, font: Option<&Font>) -> Self {
         let mut terminal = Terminal::new();
-        // The font is this program's own data: if it did not parse, text
-        // would be drawn as blocks, as the renderer draws a missing glyph.
-        if let Ok(font) = Font::parse(regis_fonts::VT340) {
+        if let Some(font) = font {
+            terminal.set_font(font.clone());
+        // The font compiled in is this program's own data: if it did not
+        // parse, text would be drawn as blocks, as the renderer draws a
+        // missing glyph.
+        } else if let Ok(font) = Font::parse(regis_fonts::VT340) {
             terminal.set_font(font);
         }
         // Renderer parity PAR-12, PAR-13 and PAR-36 item 4: the engine's 55
@@ -436,6 +441,9 @@ pub struct RegisPages {
     /// to its renderer before its own stream. A sub-page is a page
     /// (page-rules.md RULE-112): no sheet is fed to another sub-code.
     sheets: BTreeMap<(u16, u16), Sheet>,
+    /// The font the viewer chose for alphabet 0 of every new terminal, or
+    /// none for the one compiled in (renderer parity PAR-35).
+    font: Option<Font>,
 }
 
 /// A page's ReGIS sheet as received (ANIM-17).
@@ -478,7 +486,7 @@ impl RegisPages {
             // What the pointer was doing, and which drawing is the cursor,
             // are not the stream's to change.
             let (viewer, cursor) = self.pages.get(&key).map(|page| (page.viewer, page.cursor)).unwrap_or_default();
-            let mut page = Page::new(record.generation, viewer);
+            let mut page = Page::new(record.generation, viewer, self.font.as_ref());
             page.cursor = cursor;
             page.motion.steady = self.reduced;
             // The page's sheet goes first (ANIM-17): the stream names its
@@ -709,6 +717,13 @@ impl RegisPages {
         self.shown(page, sub).and_then(|key| self.pages.get_mut(&key)).map(|held| core::mem::take(&mut held.counters)).unwrap_or_default()
     }
 
+    /// The font the viewer chose for alphabet 0, or `None` for the one
+    /// compiled in (renderer parity PAR-35): every terminal begun after
+    /// this draws its text in it.
+    pub fn set_font(&mut self, font: Option<Font>) {
+        self.font = font;
+    }
+
     /// The platform's preference for reduced motion (REQ-754, renderer
     /// parity PAR-33): on, the paint rate draws at once (ANIM-15), a frame
     /// cycle shows its first frame and does not advance (ANIM-14), and the
@@ -868,6 +883,29 @@ mod tests {
         assert!(picture.canvas().pixels().iter().any(|&pixel| pixel != 0), "the delta draws");
         assert!(greek == picture.canvas().pixels(), "the engine's Greek glyph, as the renderer draws it");
         assert!(greek != drawn(&text(0)), "not the built-in alphabet's D");
+    }
+
+    /// Renderer parity PAR-35: a font the viewer chose, which parsed, is
+    /// alphabet 0 of every terminal begun after it, so its glyphs are drawn
+    /// in place of those compiled in; going back to the font compiled in
+    /// draws those again.
+    #[test]
+    fn a_chosen_font_changes_the_glyphs_drawn() {
+        let text = b"D(B1)W(I7)P[100,100]T'A'D(E)D(S1(X100,Y100),C)";
+        let drawn = |font: Option<Font>| {
+            let mut pages = RegisPages::default();
+            pages.set_font(font);
+            pages.read(&record(0x100, 1, 0, text));
+            let _ = pages.take(0x100, Some(0), 0).unwrap();
+            pages.pages.get(&(0x100, 0)).unwrap().picture.canvas().pixels().to_vec()
+        };
+        let compiled_in = drawn(None);
+        let chosen = Font::parse(crate::fonts::BLOCK_A).unwrap();
+        let block = drawn(Some(chosen));
+        assert!(block != compiled_in, "the chosen font's A is drawn");
+        let lit = |pixels: &[u8]| pixels.iter().filter(|&&pixel| pixel != 0).count();
+        assert!(lit(&block) > lit(&compiled_in), "a solid block lights more than the VT340's A");
+        assert!(drawn(None) == compiled_in, "back to the font compiled in");
     }
 
     /// A record lost shows nothing more of its generation; the next

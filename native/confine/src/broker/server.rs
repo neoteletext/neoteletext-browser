@@ -43,6 +43,9 @@ pub struct Handlers<'a> {
     /// Reads a picture the user chose in the picture dialog, by its rules
     /// and bounds (`docs/picture-tools.md`).
     pub read_picture: &'a dyn Fn(&Path) -> Result<Vec<u8>, String>,
+    /// Reads a font for pictures the user chose in the font dialog, by its
+    /// rules and its language's bound (renderer parity PAR-35).
+    pub read_font: &'a dyn Fn(&Path) -> Result<Vec<u8>, String>,
     /// Writes a converted page where the user last chose to save one of
     /// this kind, once.
     pub save: &'a SaveHandler,
@@ -182,6 +185,11 @@ fn answer(core: &mut Core, helpers: &mut Helpers, programs: &Path, handlers: &Ha
         Request::ReadPicture(path) => match (handlers.read_picture)(Path::new(&path)) {
             Ok(bytes) if bytes.len() <= MAX_REPLY => Reply::Source(bytes),
             Ok(_) => Reply::Failed(String::from("the picture is too large")),
+            Err(reason) => Reply::Failed(reason),
+        },
+        Request::ReadFont(path) => match (handlers.read_font)(Path::new(&path)) {
+            Ok(bytes) if bytes.len() <= MAX_REPLY => Reply::Source(bytes),
+            Ok(_) => Reply::Failed(String::from("the font is too large")),
             Err(reason) => Reply::Failed(reason),
         },
         Request::Save { kind, bytes } => match (handlers.save)(kind, &bytes) {

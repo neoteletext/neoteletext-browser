@@ -67,6 +67,8 @@ impl Browser {
         y = draw_settings_wheel(canvas, view.as_ref(), &mut controls, row(y), field_left);
         y = draw_settings_regis(canvas, view.as_ref(), &mut controls, row(y), field_left);
         y = draw_settings_painting(canvas, view.as_ref(), &mut controls, row(y), field_left);
+        y = draw_settings_font(canvas, view.as_ref(), &mut controls, row(y), field_left, false);
+        y = draw_settings_font(canvas, view.as_ref(), &mut controls, row(y), field_left, true);
         y = draw_settings_known(canvas, view.as_ref(), &mut controls, row(y), field_left);
         y = self.draw_settings_updates(canvas, &mut controls, row(y), field_left);
         y = self.draw_settings_local(canvas, view.as_ref(), &mut controls, row(y), field_left);
@@ -262,6 +264,37 @@ fn draw_settings_regis<C: Canvas + ?Sized>(canvas: &mut C, view: Option<&Setting
     controls.regis_teletext = Rect::new(controls.regis_contain.x1 + GAP, y, controls.regis_contain.x1 + GAP + BUTTON_WIDTH * 2.6, y + ROW);
     button(canvas, controls.regis_contain, "Contain", contain);
     button(canvas, controls.regis_teletext, "Contain to teletext", !contain);
+    y + ROW + ROW_GAP
+}
+
+/// The font of a picture language, the file the viewer chose or the one
+/// compiled in, with a button to choose a file and one to go back
+/// (renderer parity PAR-35), in `line`; NAPLPS's when `naplps`. Returns
+/// where the next row starts.
+fn draw_settings_font<C: Canvas + ?Sized>(
+    canvas: &mut C,
+    view: Option<&SettingsView>,
+    controls: &mut Controls,
+    line: Rect,
+    field_left: f64,
+    naplps: bool,
+) -> f64 {
+    let y = line.y0;
+    let index = usize::from(naplps);
+    let chosen = view.map(|view| if naplps { view.naplps_font.as_str() } else { view.regis_font.as_str() }).unwrap_or_default();
+    left_centred(canvas, line, 0.0, if naplps { "NAPLPS font" } else { "ReGIS font" }, ROW_TITLE, WHITE);
+    let choose = Rect::new(field_left, y, field_left + BUTTON_WIDTH * 1.5, y + ROW);
+    let built_in = Rect::new(choose.x1 + GAP, y, choose.x1 + GAP + BUTTON_WIDTH * 1.5, y + ROW);
+    button(canvas, choose, "Choose\u{2026}", !chosen.is_empty());
+    button(canvas, built_in, "Built in", chosen.is_empty());
+    let name = Rect::new(built_in.x1 + GAP, y, line.x1, y + ROW);
+    canvas.push_clip(name);
+    left_centred(canvas, name, 0.0, chosen, ROW_STATUS, MUTED);
+    canvas.pop_clip();
+    if let (Some(choose_slot), Some(built_in_slot)) = (controls.font_choose.get_mut(index), controls.font_built_in.get_mut(index)) {
+        *choose_slot = choose;
+        *built_in_slot = built_in;
+    }
     y + ROW + ROW_GAP
 }
 

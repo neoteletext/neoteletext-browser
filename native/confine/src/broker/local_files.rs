@@ -53,10 +53,28 @@ pub enum ChooseKind {
     SaveRegis,
     /// Where to save the converted picture written in NAPLPS, likewise.
     SaveNaplps,
+    /// A ReGIS font file for alphabet 0 of every picture (renderer parity
+    /// PAR-35): read only by [`super::Request::ReadFont`], within
+    /// `protocol::regis::MAX_REGIS_FONT_BYTES`, for the decoders to parse.
+    RegisFont,
+    /// A NAPLPS stroke font file for every picture, likewise, within
+    /// `protocol::regis::MAX_NAPLPS_FONT_BYTES`.
+    NaplpsFont,
 }
 
 impl ChooseKind {
-    const ALL: [Self; 8] = [Self::File, Self::Folder, Self::Bookmarks, Self::Picture, Self::SaveTti, Self::SaveT42, Self::SaveRegis, Self::SaveNaplps];
+    const ALL: [Self; 10] = [
+        Self::File,
+        Self::Folder,
+        Self::Bookmarks,
+        Self::Picture,
+        Self::SaveTti,
+        Self::SaveT42,
+        Self::SaveRegis,
+        Self::SaveNaplps,
+        Self::RegisFont,
+        Self::NaplpsFont,
+    ];
 
     /// Whether the dialog chooses where to save, not what to read.
     #[must_use]
@@ -74,6 +92,8 @@ impl ChooseKind {
             Self::SaveT42 => 6,
             Self::SaveRegis => 7,
             Self::SaveNaplps => 8,
+            Self::RegisFont => 9,
+            Self::NaplpsFont => 10,
         }
     }
 
@@ -93,6 +113,8 @@ impl ChooseKind {
             Self::SaveT42 => "save-t42",
             Self::SaveRegis => "save-regis",
             Self::SaveNaplps => "save-naplps",
+            Self::RegisFont => "regis-font",
+            Self::NaplpsFont => "naplps-font",
         }
     }
 
@@ -315,7 +337,7 @@ mod tests {
         assert!(decode_declaration(KIND_DECLARE, &[1, 0, 0, 0]).is_err(), "long");
         assert!(decode_declaration(KIND_DECLARE, &[1]).is_err(), "short");
         assert!(decode_declaration(99, &[1, 0, 0]).is_err(), "no such message");
-        assert!(decode_opening(KIND_CHOSEN, &[9, 0, 0]).is_err(), "no such kind");
+        assert!(decode_opening(KIND_CHOSEN, &[11, 0, 0]).is_err(), "no such kind");
         assert!(decode_opening(KIND_OUTSIDE, &[too_many[0], too_many[1], 0, 0]).is_err(), "too many");
         assert!(read_opening(&mut [KIND_OUTSIDE, 0xFF, 0xFF, 0xFF, 0xFF].as_slice()).is_err(), "too long");
     }

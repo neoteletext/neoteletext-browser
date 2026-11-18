@@ -261,7 +261,7 @@ fn check_starts(core: &Core, requests: &[Request], described: &str) {
             Program::Interface | Program::Sound => panic!("{described} started the {}", program.name()),
             Program::Decoder => {
                 let store = match arguments.as_slice() {
-                    [flag] if flag == "--bookmarks" || flag == "--picture" => true,
+                    [flag] if flag == "--bookmarks" || flag == "--picture" || flag == "--font" => true,
                     [flag, pages] if flag == "--store-pages" => {
                         pages.parse::<usize>().is_ok_and(|pages| (FIRST_STORE_PAGES..=MAX_STORE_PAGES).contains(&pages))
                     }

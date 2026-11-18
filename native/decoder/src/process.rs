@@ -25,6 +25,9 @@ pub enum Mode {
     Bookmarks,
     /// To convert one picture to a page (`docs/picture-tools.md`).
     Picture,
+    /// To check one font for pictures the viewer chose, and end (renderer
+    /// parity PAR-35).
+    Font,
 }
 
 /// The mode the trusted core asked for: a channel's store size,
@@ -40,7 +43,8 @@ pub fn mode() -> Result<Mode, String> {
         (Some("--store-pages"), Some(Ok(pages))) if (FIRST_STORE_PAGES..=MAX_STORE_PAGES).contains(&pages) => Ok(Mode::Channel(pages)),
         (Some("--bookmarks"), None) => Ok(Mode::Bookmarks),
         (Some("--picture"), None) => Ok(Mode::Picture),
-        _ => Err(format!("usage: neoteletext-decoder [--store-pages {FIRST_STORE_PAGES} to {MAX_STORE_PAGES} | --bookmarks | --picture]")),
+        (Some("--font"), None) => Ok(Mode::Font),
+        _ => Err(format!("usage: neoteletext-decoder [--store-pages {FIRST_STORE_PAGES} to {MAX_STORE_PAGES} | --bookmarks | --picture | --font]")),
     }
 }
 
@@ -119,6 +123,32 @@ pub fn convert_picture() -> Result<(), ProtocolError> {
     Ok(())
 }
 
+/// Checks one font for pictures the trusted core sends in parts (renderer
+/// parity PAR-35) with its renderer's parser, says whether it parsed, and
+/// ends: the trusted core keeps only a font that did, to give to every
+/// channel's decoder.
+///
+/// # Errors
+/// When the pipe fails, or the trusted core sends anything else.
+pub fn check_font() -> Result<(), ProtocolError> {
+    let mut input = BufReader::new(io::stdin().lock());
+    let mut parts = crate::fonts::FontParts::default();
+    loop {
+        match read_from_core(&mut input)? {
+            Some(ToDecoder::PictureFont(part)) => {
+                if let Some((language, taken)) = parts.take(&part) {
+                    let mut output = BufWriter::new(io::stdout().lock());
+                    write_to_core(&mut output, &FromDecoder::FontChecked { language, refusal: taken.err() })?;
+                    output.flush()?;
+                    return Ok(());
+                }
+            }
+            Some(_) => return Err(ProtocolError::BadValue("a font checker takes only a font's parts")),
+            None => return Ok(()),
+        }
+    }
+}
+
 /// The receiver's figures as the protocol carries them: each saturates at
 /// the field's bound, which no receiver this process builds reaches.
 fn audio_receiver(limits: neoteletext_audio::ReceiverLimits) -> protocol::decoder::AudioReceiver {
@@ -159,6 +189,8 @@ pub fn run(store_pages: usize) -> Result<(), ProtocolError> {
     // A page's worth of room for the next render, from the last frame not kept.
     let mut spare: Vec<u8> = Vec::new();
     let mut flashing = Flashing::default();
+    // The parts of a font for pictures being received (PAR-35).
+    let mut font_parts = crate::fonts::FontParts::default();
     // The pages on screen the trusted core was last told are missing.
     let mut missing: Vec<u16> = Vec::new();
     // The trusted core's messages are read on a thread of their own, so
@@ -355,6 +387,16 @@ pub fn run(store_pages: usize) -> Result<(), ProtocolError> {
             ToDecoder::PaintGradually(gradual) => {
                 engine.set_paint_gradually(gradual);
                 Vec::new()
+            }
+            // A part of the font the viewer chose for pictures (PAR-35):
+            // whole, it is in force for every new terminal of its language,
+            // or refused with the parser's message and the font in force
+            // kept; the trusted core is told which.
+            ToDecoder::PictureFont(part) => {
+                if let Some(taken) = font_parts.take(&part) {
+                    write_to_core(&mut output, &crate::fonts::apply(&mut engine, taken))?;
+                }
+                continue;
             }
             // Every page on screen is drawn again: its flash stops or
             // starts (renderer parity PAR-33).

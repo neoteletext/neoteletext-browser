@@ -56,6 +56,11 @@ pub(super) const KIND_PICTURE_REFUSED: u8 = 147;
 // (renderer parity PAR-36 item 2), in the next number free across every
 // pipe on 19 November 2026.
 pub(super) const KIND_PICTURE_OUTPUT: u8 = 204;
+// A user's font for pictures (renderer parity PAR-35): a part of it, to a
+// decoder; and whether the decoder took it, from it. The next numbers free
+// across every pipe on 19 November 2026.
+pub(super) const KIND_PICTURE_FONT: u8 = 205;
+pub(super) const KIND_FONT_CHECKED: u8 = 206;
 // Decoder to trusted core: its audio receiver's figures (the engine's
 // REQ-AUD-017), in the next number free across every pipe.
 pub(super) const KIND_AUDIO_RECEIVER: u8 = 152;

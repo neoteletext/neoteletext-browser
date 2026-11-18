@@ -69,6 +69,8 @@ pub(super) fn settings() -> SettingsView {
         wheel_inverted: false,
         regis_contain: true,
         paint_gradually: true,
+        regis_font: String::new(),
+        naplps_font: String::new(),
         refusal: None,
         loopback_exemption: None,
     }

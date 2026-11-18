@@ -44,6 +44,8 @@ impl Core {
             OpenKind::SavePictureT42 => ChooseKind::SaveT42,
             OpenKind::SavePictureRegis => ChooseKind::SaveRegis,
             OpenKind::SavePictureNaplps => ChooseKind::SaveNaplps,
+            OpenKind::RegisFont => ChooseKind::RegisFont,
+            OpenKind::NaplpsFont => ChooseKind::NaplpsFont,
         };
         match self.broker().and_then(|broker| broker.choose(kind, parent, keep)) {
             Ok(()) => Ok(()),
@@ -56,6 +58,9 @@ impl Core {
         match opening {
             Opening::Chosen { kind: ChooseKind::Bookmarks, path } => self.import_chosen(&path)?,
             Opening::Chosen { kind: ChooseKind::Picture, path } => self.picture_chosen(&path)?,
+            Opening::Chosen { kind: kind @ (ChooseKind::RegisFont | ChooseKind::NaplpsFont), path } => {
+                self.font_chosen(super::fonts::language_of(kind == ChooseKind::NaplpsFont), &path)?;
+            }
             Opening::Chosen { kind: kind @ (ChooseKind::SaveTti | ChooseKind::SaveT42 | ChooseKind::SaveRegis | ChooseKind::SaveNaplps), path } => {
                 self.picture_save(kind, &path)?;
             }

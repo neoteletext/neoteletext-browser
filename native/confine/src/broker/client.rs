@@ -257,6 +257,20 @@ impl Broker {
         }
     }
 
+    /// A font for pictures the user chose in the font dialog, read by the
+    /// broker within its language's bound (renderer parity PAR-35).
+    ///
+    /// # Errors
+    /// Why it could not be read, in words for the log.
+    pub fn read_font(&self, path: &Path) -> Result<Vec<u8>, String> {
+        let text = path.to_str().ok_or("the path is not text")?;
+        match self.ask(&Request::ReadFont(text.to_owned())).map_err(|error| error.to_string())? {
+            (Reply::Source(bytes), _) => Ok(bytes),
+            (Reply::Failed(reason), _) => Err(reason),
+            _ => Err(String::from("an unexpected reply")),
+        }
+    }
+
     /// Has the broker write `bytes` where the user last chose to save a page
     /// of `kind`.
     ///

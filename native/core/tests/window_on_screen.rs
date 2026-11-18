@@ -146,6 +146,7 @@ fn the_interface_s_window_reaches_the_screen() {
             choose: &|_, _, _| Err(String::from("this test shows no dialog")),
             openings: &|| None,
             read_picture: &refuse_read,
+            read_font: &refuse_read,
             save: &|_, _| Err(String::from("this test saves nothing")),
             declared: Arc::new(|_| {}),
         };

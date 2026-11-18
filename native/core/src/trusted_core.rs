@@ -9,6 +9,7 @@ mod channels;
 mod console;
 mod decoder_messages;
 mod fetcher_messages;
+mod fonts;
 mod frame_phase;
 #[cfg(test)]
 mod hostile_tests;
@@ -138,6 +139,10 @@ enum Event {
     /// that generation (`docs/picture-tools.md`): TTI, T42 and the
     /// converter's summary, and the picture in ReGIS and NAPLPS, untrusted.
     PictureConverted(u64, Result<picture::Converted, String>),
+    /// A decoder checked a font for pictures, or did not, for the check of
+    /// that generation (renderer parity PAR-35): the parser's refusal,
+    /// untrusted.
+    FontChecked(u64, Result<(), String>),
     /// The updater said something, untrusted (`installation-and-updates.md`).
     Updater(update::wire::FromUpdater),
     /// The updater ended.
@@ -296,6 +301,8 @@ struct Core {
     outside_links: neoteletext::launch::OutsideLinks,
     /// The Tools menu's picture converter (`docs/picture-tools.md`).
     picture: picture::PictureState,
+    /// The fonts the viewer chose for pictures (renderer parity PAR-35).
+    fonts: fonts::PictureFonts,
 }
 
 impl Core {
@@ -428,6 +435,7 @@ impl Core {
             updates: updates::Updates::default(),
             outside_links: neoteletext::launch::OutsideLinks::default(),
             picture: picture::PictureState::default(),
+            fonts: fonts::PictureFonts::default(),
         }
     }
 }

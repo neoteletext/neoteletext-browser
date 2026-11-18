@@ -615,3 +615,116 @@ pub(crate) fn read_links(fields: &mut Fields<'_>) -> Result<Vec<(u16, String)>, 
     let count = fields.count_u8(MAX_REGIS_LINKS, "too many drawing links")?;
     (0..count).map(|_| Ok((fields.u16()?, crate::raw_text(fields, crate::links::MAX_TARGET, "a drawing link's target too long")?))).collect()
 }
+
+/// The most bytes of a ReGIS font file a viewer may choose (renderer parity
+/// PAR-35): the ReGIS renderer's `regis::limits::MAX_FONT_BYTES`, which the
+/// decoder, linking both, asserts this equals.
+pub const MAX_REGIS_FONT_BYTES: usize = 1_048_576;
+/// The most bytes of a NAPLPS stroke font file a viewer may choose: the
+/// NAPLPS renderer's `naplps::limits::MAX_STROKE_FONT_BYTES`, 256 KiB (its
+/// DEC-6787 item 6), which the decoder asserts this equals.
+pub const MAX_NAPLPS_FONT_BYTES: usize = 262_144;
+
+/// The most bytes of a font file for pictures drawn in `language`.
+#[must_use]
+pub const fn max_font_bytes(language: PictureLanguage) -> usize {
+    match language {
+        PictureLanguage::Regis => MAX_REGIS_FONT_BYTES,
+        PictureLanguage::Naplps => MAX_NAPLPS_FONT_BYTES,
+    }
+}
+
+/// One part of a font for pictures, as the trusted core gives it to a
+/// decoder (renderer parity PAR-35): a font is larger than one message may
+/// be, so it goes in parts of at most [`crate::decoder::MAX_CHUNK`] bytes.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct FontPart {
+    /// The language whose pictures it is for.
+    pub language: PictureLanguage,
+    /// The whole font's bytes, at most [`max_font_bytes`]; 0 for the font
+    /// compiled in.
+    pub total: u32,
+    /// Where this part's bytes start in the font.
+    pub offset: u32,
+    /// The bytes.
+    pub bytes: Vec<u8>,
+}
+
+/// The parts that carry `font`, a font for `language`, or the one part
+/// that goes back to the font compiled in when `font` is empty.
+#[must_use]
+pub fn font_parts(language: PictureLanguage, font: &[u8]) -> Vec<FontPart> {
+    let total = u32::try_from(font.len()).unwrap_or(u32::MAX);
+    if font.is_empty() {
+        return vec![FontPart { language, total: 0, offset: 0, bytes: Vec::new() }];
+    }
+    let mut offset = 0_u32;
+    font.chunks(crate::decoder::MAX_CHUNK)
+        .map(|chunk| {
+            let part = FontPart { language, total, offset, bytes: chunk.to_vec() };
+            offset = offset.saturating_add(u32::try_from(chunk.len()).unwrap_or(u32::MAX));
+            part
+        })
+        .collect()
+}
+
+/// Writes a font part.
+///
+/// # Errors
+/// When the font is larger than its language's bound, or the part longer
+/// than a chunk or past the font's end.
+pub(crate) fn push_font_part(payload: &mut Vec<u8>, part: &FontPart) -> Result<(), ProtocolError> {
+    check_font_part(part)?;
+    payload.push(u8::from(part.language == PictureLanguage::Naplps));
+    payload.extend_from_slice(&part.total.to_be_bytes());
+    payload.extend_from_slice(&part.offset.to_be_bytes());
+    payload.extend_from_slice(&part.bytes);
+    Ok(())
+}
+
+/// Reads what [`push_font_part`] wrote, to the payload's end.
+///
+/// # Errors
+/// When it is malformed or breaks a bound.
+pub(crate) fn read_font_part(fields: &mut Fields<'_>) -> Result<FontPart, ProtocolError> {
+    let language = if fields.flag("a font's language")? { PictureLanguage::Naplps } else { PictureLanguage::Regis };
+    let (total, offset) = (fields.u32()?, fields.u32()?);
+    let length = fields.remaining();
+    if length > crate::decoder::MAX_CHUNK {
+        return Err(ProtocolError::TooLong(length));
+    }
+    let part = FontPart { language, total, offset, bytes: fields.take(length)?.to_vec() };
+    check_font_part(&part)?;
+    Ok(part)
+}
+
+fn check_font_part(part: &FontPart) -> Result<(), ProtocolError> {
+    let total = usize::try_from(part.total).map_err(|_| ProtocolError::BadValue("a font's length"))?;
+    let end = usize::try_from(part.offset).ok().and_then(|offset| offset.checked_add(part.bytes.len()));
+    if total > max_font_bytes(part.language) {
+        return Err(ProtocolError::TooLong(total));
+    }
+    if part.bytes.len() > crate::decoder::MAX_CHUNK || end.is_none_or(|end| end > total) {
+        return Err(ProtocolError::BadValue("a font's part"));
+    }
+    Ok(())
+}
+
+/// Writes whether a decoder took a font: its language, and the parser's
+/// refusal, untrusted, if it was refused.
+pub(crate) fn push_font_checked(payload: &mut Vec<u8>, language: PictureLanguage, refusal: Option<&str>) {
+    payload.push(u8::from(language == PictureLanguage::Naplps));
+    payload.push(u8::from(refusal.is_some()));
+    crate::push_raw_text(payload, refusal.unwrap_or_default(), interface_core::picture::MAX_STATUS);
+}
+
+/// Reads what [`push_font_checked`] wrote.
+///
+/// # Errors
+/// When it is malformed or the refusal too long.
+pub(crate) fn read_font_checked(fields: &mut Fields<'_>) -> Result<(PictureLanguage, Option<String>), ProtocolError> {
+    let language = if fields.flag("a font's language")? { PictureLanguage::Naplps } else { PictureLanguage::Regis };
+    let refused = fields.flag("a font refused")?;
+    let reason = crate::raw_text(fields, interface_core::picture::MAX_STATUS, "reason too long")?;
+    Ok((language, refused.then_some(reason)))
+}

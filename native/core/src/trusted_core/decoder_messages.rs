@@ -44,6 +44,8 @@ impl Core {
             FromDecoder::Bookmark(_) | FromDecoder::BookmarksRead { .. } => {
                 self.log(Level::Warning, Some(channel), "the channel's decoder reported bookmarks, which it may not; ignored");
             }
+            // A channel's decoder took a font for pictures, or refused it (PAR-35).
+            FromDecoder::FontChecked { refusal, .. } => self.font_taken(channel, refusal.as_deref()),
             // Only a decoder started to convert a picture makes one.
             FromDecoder::PictureConverted { .. } | FromDecoder::PictureRefused(_) | FromDecoder::PictureOutput { .. } => {
                 self.log(Level::Warning, Some(channel), "the channel's decoder reported a converted picture, which it may not; ignored");

@@ -74,6 +74,8 @@ impl Core {
             wheel_inverted: self.settings.wheel_inverted,
             regis_contain: self.settings.regis_contain,
             paint_gradually: self.settings.paint_gradually,
+            regis_font: clean(&self.fonts.names().0, protocol::settings::MAX_FONT_NAME),
+            naplps_font: clean(&self.fonts.names().1, protocol::settings::MAX_FONT_NAME),
             refusal: self.refusal.as_deref().map(|refusal| clean(refusal, protocol::settings::MAX_REFUSAL)),
             loopback_exemption: self.loopback_exemption.clone(),
         };
@@ -95,6 +97,13 @@ impl Core {
     /// when not; a change of a security setting is said in the strip and
     /// logged.
     fn change_setting(&mut self, change: SettingChange) -> Result<(), String> {
+        // The font compiled in again (renderer parity PAR-35): not a
+        // setting kept in the file, as a chosen font is not.
+        if let SettingChange::BuiltInFont(language) = change {
+            self.refusal = None;
+            self.font_built_in(language);
+            return self.send_settings();
+        }
         let current = self.session.active_tab().and_then(|tab| tab.address()).map(|address| address.channel_text().to_owned());
         let may_know = if let SettingChange::ChannelsMayKnow(allowed) = change { Some(allowed) } else { None };
         let remote = matches!(change, SettingChange::Remote(_));
@@ -214,6 +223,8 @@ fn checked_change(settings: &mut Settings, change: SettingChange, current: Optio
             settings.paint_gradually = on;
             Ok(None)
         }
+        // Taken before this, by the fonts for pictures (PAR-35).
+        SettingChange::BuiltInFont(_) => Ok(None),
         // And whether to check for updates (`installation-and-updates.md`
         // section 3.4).
         SettingChange::CheckUpdates(on) => {

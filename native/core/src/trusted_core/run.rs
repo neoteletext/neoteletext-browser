@@ -74,6 +74,7 @@ pub(super) fn handle(core: &mut Core, event: Event) -> Result<bool, String> {
         }
         Event::BookmarksRead(read) => core.bookmarks_read(read)?,
         Event::PictureConverted(generation, result) => core.picture_converted(generation, result)?,
+        Event::FontChecked(generation, refusal) => core.font_checked(generation, refusal)?,
         Event::Opening(opening) => {
             core.session.now = neoteletext::calendar::utc_now();
             core.opening(opening)?;

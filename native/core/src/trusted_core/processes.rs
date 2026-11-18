@@ -283,6 +283,47 @@ pub(super) fn start_picture_converter(
     convert_picture_with(child, picture, choice, generation, events, PICTURE_DEADLINE)
 }
 
+/// Starts a decoder to check one font for pictures the viewer chose
+/// (renderer parity PAR-35), gives it the font in parts, and sends what it
+/// answers as an event; once [`FONT_DEADLINE`] has passed, kills it and
+/// says so.
+pub(super) fn start_font_checker(
+    broker: &Arc<Broker>,
+    language: PictureLanguage,
+    font: Arc<Vec<u8>>,
+    generation: u64,
+    events: Sender<Event>,
+) -> Result<(), String> {
+    let mut child = spawn(broker, Program::Decoder, &[String::from("--font")], false)?;
+    let output = child.stdout.take().ok_or("the font checker has no output")?;
+    let mut input = child.stdin.take().ok_or("the font checker has no input")?;
+    let (answer, answered) = std::sync::mpsc::channel();
+    thread::spawn(move || {
+        let exchange = move || -> Result<(), String> {
+            for part in protocol::regis::font_parts(language, &font) {
+                write_to_decoder(&mut input, &ToDecoder::PictureFont(part)).map_err(|error| error.to_string())?;
+            }
+            match read_from_decoder(&mut BufReader::new(output)).map_err(|error| error.to_string())? {
+                Some(FromDecoder::FontChecked { language: said, refusal }) if said == language => refusal.map_or(Ok(()), Err),
+                Some(_) => Err(String::from("the font checker said what it may not")),
+                None => Err(String::from("the font checker ended without an answer")),
+            }
+        };
+        let _ = answer.send(exchange());
+    });
+    thread::spawn(move || {
+        let checked = answered.recv_timeout(FONT_DEADLINE).unwrap_or_else(|_| Err(String::from("the font checker took too long")));
+        end(&mut child);
+        let _ = events.send(Event::FontChecked(generation, checked));
+    });
+    Ok(())
+}
+
+/// How long a font checker has before it is killed: parsing a font at the
+/// largest bound, 1 MiB of text, takes milliseconds; ten seconds is far
+/// above that and above a confined decoder's start.
+const FONT_DEADLINE: std::time::Duration = std::time::Duration::from_secs(10);
+
 /// How long a picture decoder has to convert before it is killed: a
 /// conversion took at most 1.5 seconds at Level 3.5 in a release build on 3
 /// November 2026 (the engine's `docs/spec/design/pictures.md`), and a 64 MB

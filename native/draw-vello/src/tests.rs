@@ -342,6 +342,8 @@ fn the_aspect_correction_stretches_the_drawn_page_and_keeps_its_screen() {
             wheel_inverted: false,
             regis_contain: true,
             paint_gradually: true,
+            regis_font: String::new(),
+            naplps_font: String::new(),
             refusal: None,
             loopback_exemption: None,
         });

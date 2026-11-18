@@ -237,6 +237,8 @@ fn open_kind_code(kind: OpenKind) -> u8 {
         OpenKind::SavePictureT42 => 6,
         OpenKind::SavePictureRegis => 7,
         OpenKind::SavePictureNaplps => 8,
+        OpenKind::RegisFont => 9,
+        OpenKind::NaplpsFont => 10,
     }
 }
 
@@ -250,6 +252,8 @@ fn read_open_kind(fields: &mut Fields<'_>) -> Result<OpenKind, ProtocolError> {
         6 => Ok(OpenKind::SavePictureT42),
         7 => Ok(OpenKind::SavePictureRegis),
         8 => Ok(OpenKind::SavePictureNaplps),
+        9 => Ok(OpenKind::RegisFont),
+        10 => Ok(OpenKind::NaplpsFont),
         _ => Err(ProtocolError::BadValue("kind of file")),
     }
 }

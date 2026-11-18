@@ -27,6 +27,7 @@ pub mod animation;
 mod changes;
 mod engine;
 mod flash;
+pub mod fonts;
 pub mod frame_lock;
 #[cfg(feature = "interaction")]
 mod input_records;

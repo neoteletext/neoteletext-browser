@@ -138,10 +138,13 @@ pub(crate) fn broker() -> Result<(), String> {
         open: Arc::new(AtomicBool::new(false)),
         picture: Arc::new(Mutex::new(None)),
         save: Arc::new(Mutex::new(None)),
+        font: Arc::new(Mutex::new(None)),
     };
     let read_source = |path: &Path| read_given(path, &access, &places());
     let (chosen_picture, chosen_save) = (Arc::clone(&chooser.picture), Arc::clone(&chooser.save));
     let read_picture = move |path: &Path| read_chosen_picture(path, &chosen_picture, &places());
+    let chosen_font = Arc::clone(&chooser.font);
+    let read_font = move |path: &Path| read_chosen_font(path, &chosen_font, &places());
     let save = move |kind: ChooseKind, bytes: &[u8]| save_chosen(kind, bytes, &chosen_save);
     let openings_reader = std::cell::Cell::new(Some(file_of(openings_reader)));
     let declared_access = Arc::clone(&access);
@@ -165,6 +168,7 @@ pub(crate) fn broker() -> Result<(), String> {
         choose: &|kind, parent, keep| chooser.start(kind, parent, keep),
         openings: &|| openings_reader.take(),
         read_picture: &read_picture,
+        read_font: &read_font,
         save: &save,
         declared: Arc::new(declared),
     };
@@ -329,6 +333,9 @@ struct Chooser {
     /// Where the user last chose to save a converted page, and as what:
     /// written once, then forgotten.
     save: Arc<Mutex<Option<(ChooseKind, PathBuf)>>>,
+    /// The font for pictures last chosen, and for which language: the one
+    /// file a font read may name (renderer parity PAR-35).
+    font: Arc<Mutex<Option<(ChooseKind, PathBuf)>>>,
 }
 
 impl Chooser {
@@ -342,7 +349,7 @@ impl Chooser {
         let mut command = Command::new(&self.program);
         command.arg(kind.argument()).arg(parent).arg(start_in.as_deref().unwrap_or(Path::new(""))).stdin(Stdio::null()).stdout(Stdio::piped());
         let (access, openings, open) = (Arc::clone(&self.access), Arc::clone(&self.openings), Arc::clone(&self.open));
-        let (picture, save) = (Arc::clone(&self.picture), Arc::clone(&self.save));
+        let (picture, save, font) = (Arc::clone(&self.picture), Arc::clone(&self.save), Arc::clone(&self.font));
         std::thread::spawn(move || {
             if let Some(path) = ask_chooser(command) {
                 if keep {
@@ -353,6 +360,8 @@ impl Chooser {
                 // is written once: neither is a grant to read as a channel.
                 match kind {
                     ChooseKind::Picture => *picture.lock().unwrap_or_else(PoisonError::into_inner) = Some(path.clone()),
+                    // A font likewise, read only as a font of its kind.
+                    ChooseKind::RegisFont | ChooseKind::NaplpsFont => *font.lock().unwrap_or_else(PoisonError::into_inner) = Some((kind, path.clone())),
                     ChooseKind::SaveTti | ChooseKind::SaveT42 | ChooseKind::SaveRegis | ChooseKind::SaveNaplps => {
                         *save.lock().unwrap_or_else(PoisonError::into_inner) = Some((kind, path.clone()));
                     }
@@ -400,6 +409,22 @@ fn save_chosen(kind: ChooseKind, bytes: &[u8], chosen: &Mutex<Option<(ChooseKind
     }
     let mut file = options.open(&path).map_err(|error| format!("{}: {error}", path.display()))?;
     file.write_all(bytes).and_then(|()| file.flush()).map_err(|error| format!("{}: {error}", path.display()))
+}
+
+/// The font for pictures the user last chose (renderer parity PAR-35), when
+/// `path` names it, read by the rules of a file channel (decision 88) within
+/// its language's bound, which is checked before the file is read whole:
+/// the decoders parse it, never the core or the broker.
+fn read_chosen_font(path: &Path, chosen: &Mutex<Option<(ChooseKind, PathBuf)>>, places: &source::Places) -> Result<Vec<u8>, String> {
+    let refusal = || String::from(source::REFUSAL);
+    let canonical = path.canonicalize().map_err(|_| refusal())?;
+    let named = chosen.lock().unwrap_or_else(PoisonError::into_inner).clone();
+    let Some((kind, named)) = named.and_then(|(kind, named)| Some((kind, named.canonicalize().ok()?))) else { return Err(refusal()) };
+    if named != canonical {
+        return Err(refusal());
+    }
+    let most = if kind == ChooseKind::NaplpsFont { protocol::regis::MAX_NAPLPS_FONT_BYTES } else { protocol::regis::MAX_REGIS_FONT_BYTES };
+    source::read_font(&canonical, places, most).map_err(str::to_owned)
 }
 
 /// What the chooser printed, bounded, read as one absolute path; nothing when

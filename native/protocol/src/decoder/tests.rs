@@ -3,7 +3,7 @@
 
 #[cfg(feature = "interaction")]
 use super::kinds::KIND_INPUT_CONTROL;
-use super::kinds::{KIND_ARRIVED, KIND_BOOKMARK_FOLDER, KIND_END, KIND_FRAME, KIND_PICTURE_OUTPUT};
+use super::kinds::{KIND_ARRIVED, KIND_BOOKMARK_FOLDER, KIND_END, KIND_FRAME, KIND_PICTURE_FONT, KIND_PICTURE_OUTPUT};
 use super::*;
 use crate::frame::PAGE_DOTS;
 use crate::{MAX_PAGE_TITLE, ProtocolError};
@@ -138,6 +138,8 @@ fn every_kind_round_trips() {
         // ANIM-15 (REQ-6536): the viewer's setting, either way.
         ToDecoder::PaintGradually(false),
         ToDecoder::PaintGradually(true),
+        ToDecoder::PictureFont(FontPart { language: interface_core::canvas::PictureLanguage::Regis, total: 0, offset: 0, bytes: Vec::new() }),
+        ToDecoder::PictureFont(FontPart { language: interface_core::canvas::PictureLanguage::Naplps, total: 9, offset: 4, bytes: b"glyph".to_vec() }),
         ToDecoder::View(View { page: 0x302, reveal: true, hold: false, mix: true, subpage: Some(2) }),
         ToDecoder::View(View { page: 0x100, ..View::default() }),
         ToDecoder::SubPageRows { page: 0x210, range: SubPageRange { first: 8_126, count: 64 } },
@@ -196,6 +198,8 @@ fn every_kind_round_trips() {
         FromDecoder::PictureRefused("the picture could not be read".into()),
         FromDecoder::PictureOutput { language: interface_core::canvas::PictureLanguage::Regis, output: Ok(b"\x1bPpS(E)\x1b\\".to_vec()) },
         FromDecoder::PictureOutput { language: interface_core::canvas::PictureLanguage::Naplps, output: Err("too large".into()) },
+        FromDecoder::FontChecked { language: interface_core::canvas::PictureLanguage::Regis, refusal: None },
+        FromDecoder::FontChecked { language: interface_core::canvas::PictureLanguage::Naplps, refusal: Some("line 3: no glyph".into()) },
     ] {
         let mut bytes = Vec::new();
         write_to_core(&mut bytes, &message).unwrap();
@@ -399,4 +403,34 @@ fn a_picture_output_is_held_to_its_bound() {
     bytes.extend_from_slice(&u32::try_from(length).unwrap().to_be_bytes());
     bytes.extend(std::iter::repeat_n(0x20, length));
     assert!(read_from_decoder(&mut bytes.as_slice()).is_err());
+}
+
+/// Renderer parity PAR-35: a font for pictures goes to a decoder in parts
+/// of at most a chunk that cover it exactly; a font over its language's
+/// bound, or a part past the font's end, is refused when written and when
+/// read.
+#[test]
+fn a_picture_font_goes_in_bounded_parts() {
+    use crate::regis::{MAX_NAPLPS_FONT_BYTES, MAX_REGIS_FONT_BYTES, font_parts};
+    use interface_core::canvas::PictureLanguage;
+    let font = vec![b'#'; MAX_REGIS_FONT_BYTES];
+    let parts = font_parts(PictureLanguage::Regis, &font);
+    assert_eq!(parts.len(), MAX_REGIS_FONT_BYTES.div_ceil(MAX_CHUNK));
+    let mut joined = Vec::new();
+    for part in &parts {
+        assert_eq!(usize::try_from(part.offset).unwrap(), joined.len());
+        let mut bytes = Vec::new();
+        write_to_decoder(&mut bytes, &ToDecoder::PictureFont(part.clone())).unwrap();
+        let Some(ToDecoder::PictureFont(read)) = read_from_core(&mut bytes.as_slice()).unwrap() else { panic!("a font part") };
+        joined.extend_from_slice(&read.bytes);
+    }
+    assert_eq!(joined, font);
+    let over = FontPart { language: PictureLanguage::Naplps, total: u32::try_from(MAX_NAPLPS_FONT_BYTES + 1).unwrap(), offset: 0, bytes: b"#".to_vec() };
+    assert!(write_to_decoder(&mut Vec::new(), &ToDecoder::PictureFont(over)).is_err(), "a NAPLPS font over 256 KiB");
+    let past = FontPart { language: PictureLanguage::Regis, total: 3, offset: 2, bytes: b"##".to_vec() };
+    assert!(write_to_decoder(&mut Vec::new(), &ToDecoder::PictureFont(past)).is_err(), "a part past the font's end");
+    let mut bytes = vec![KIND_PICTURE_FONT, 0, 0, 0, 11, 1];
+    bytes.extend_from_slice(&u32::try_from(MAX_NAPLPS_FONT_BYTES + 1).unwrap().to_be_bytes());
+    bytes.extend_from_slice(&[0, 0, 0, 0, b'#', b'#']);
+    assert!(read_from_core(&mut bytes.as_slice()).is_err(), "read: over the bound");
 }

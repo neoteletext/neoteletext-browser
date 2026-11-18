@@ -42,6 +42,11 @@ pub enum OpenKind {
     SavePictureRegis,
     /// Where to save the converted picture written in NAPLPS.
     SavePictureNaplps,
+    /// A ReGIS font for alphabet 0 of every picture (renderer parity
+    /// PAR-35).
+    RegisFont,
+    /// A NAPLPS stroke font for every picture.
+    NaplpsFont,
 }
 
 /// Where dropped files go (REQ-1700).

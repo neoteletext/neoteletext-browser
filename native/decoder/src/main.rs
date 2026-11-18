@@ -24,7 +24,7 @@
 
 use std::process::ExitCode;
 
-use decoder::process::{Mode, convert_picture, mode, read_bookmarks, run};
+use decoder::process::{Mode, check_font, convert_picture, mode, read_bookmarks, run};
 
 fn main() -> ExitCode {
     // First, before any thread: its pipes and nothing else (requirement 3.4).
@@ -42,6 +42,7 @@ fn main() -> ExitCode {
         Ok(Mode::Channel(pages)) => run(pages),
         Ok(Mode::Bookmarks) => read_bookmarks(),
         Ok(Mode::Picture) => convert_picture(),
+        Ok(Mode::Font) => check_font(),
         Err(usage) => {
             eprintln!("neoteletext-decoder: {usage}");
             return ExitCode::FAILURE;

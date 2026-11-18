@@ -253,11 +253,15 @@ struct Motion {
 impl Page {
     /// A sub-page's NAPLPS begun, the page's `sheet` fed before its
     /// stream (ANIM-17); `None` only if a canvas cannot be made.
-    fn new(generation: u16, sheet: Option<&[u8]>, at_once: bool) -> Option<Self> {
+    /// `font` is the stroke font the viewer chose (renderer parity
+    /// PAR-35), or `None` for the one compiled in.
+    fn new(generation: u16, sheet: Option<&[u8]>, at_once: bool, font: Option<&StrokeFont>) -> Option<Self> {
         let mut terminal = Terminal::new(PALETTE_BITS);
-        // The font is this program's own data: if it did not parse, text
-        // would move the cursor and draw nothing.
-        if let Ok(font) = StrokeFont::parse(naplps_fonts::NEOTELETEXT) {
+        if let Some(font) = font {
+            terminal.set_font(font.clone());
+        // The font compiled in is this program's own data: if it did not
+        // parse, text would move the cursor and draw nothing.
+        } else if let Ok(font) = StrokeFont::parse(naplps_fonts::NEOTELETEXT) {
             terminal.set_font(font);
         }
         // REQ-6668: every provided set, by its number.
@@ -629,6 +633,9 @@ pub struct NaplpsPages {
     /// not begun: kept until it does, and dropped when another begins
     /// (ANIM-11).
     waiting: BTreeMap<(u16, u16), Waiting>,
+    /// The stroke font the viewer chose for every new terminal, or none
+    /// for the one compiled in (renderer parity PAR-35).
+    font: Option<StrokeFont>,
 }
 
 /// What a `NAPLPS_OBJECTS` record does to its sub-page's objects (the
@@ -701,7 +708,7 @@ impl NaplpsPages {
             // So does the object that is its cursor (PAR-27), as for ReGIS:
             // it is not the stream's to change.
             let (viewer, cursor) = self.pages.get(&key).map(|page| (page.viewer, page.cursor.number)).unwrap_or_default();
-            let Some(mut page) = Page::new(record.generation, sheet, self.at_once || self.reduced) else { return };
+            let Some(mut page) = Page::new(record.generation, sheet, self.at_once || self.reduced, self.font.as_ref()) else { return };
             page.viewer = viewer;
             page.cursor.number = cursor;
             page.cursor.steady = self.reduced;
@@ -875,6 +882,13 @@ impl NaplpsPages {
         if self.sent_sub.get(&page) == Some(&sub) {
             self.sent_sub.remove(&page);
         }
+    }
+
+    /// The stroke font the viewer chose, or `None` for the one compiled in
+    /// (renderer parity PAR-35): every terminal begun after this draws its
+    /// text in it.
+    pub fn set_font(&mut self, font: Option<StrokeFont>) {
+        self.font = font;
     }
 
     /// The platform's preference for reduced motion (REQ-754, renderer
@@ -1060,6 +1074,25 @@ mod tests {
 
     fn record(page: u16, generation: u16, offset: u32, data: &[u8]) -> RegisRecord<'_> {
         RegisRecord { page: PageAddress::from_mpp(page).unwrap(), subcode: SubCode::new(0), generation, offset, data }
+    }
+
+    /// Renderer parity PAR-35: a stroke font the viewer chose is the font
+    /// of every terminal begun after it: one whose H is a single dot draws
+    /// far less than the H compiled in.
+    #[test]
+    fn a_chosen_stroke_font_changes_the_glyphs_drawn() {
+        let inked = |font: Option<StrokeFont>| {
+            let mut pages = NaplpsPages::default();
+            pages.set_font(font);
+            pages.read(&record(0x100, 1, 0, b"\x0e\x20\x50\x40\x3e\x48\x0fHHHH"));
+            let drawn = pages.take(0x100, Some(0)).unwrap();
+            let screen = pages.pages.get(&(0x100, 0)).unwrap().terminal.screen_colour();
+            unpack(&drawn.picture.packed).iter().filter(|&&pixel| pixel != screen).count()
+        };
+        let compiled_in = inked(None);
+        let dot = StrokeFont::parse("[primary]\n48 0 6 3,4,3,4\n").unwrap();
+        let chosen = inked(Some(dot));
+        assert!(chosen < compiled_in, "the chosen font's H, a dot, is drawn: {chosen} against {compiled_in}");
     }
 
     /// REQ-5819, DEC-6667 (REQ-6408 item 5): a sub-page's records draw a

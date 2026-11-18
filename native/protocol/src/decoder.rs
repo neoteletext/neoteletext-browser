@@ -9,6 +9,7 @@ use std::io::{Read, Write};
 use interface_core::channel::PAGES;
 
 use crate::frame::PAGE_DOTS;
+use crate::regis::FontPart;
 use crate::subpages::{SubPageRange, SubPageRows, SubPageStep};
 use crate::{Fields, MAX_PAGE_TITLE, ProtocolError, push_count, push_raw_text, raw_text, read_frame, write_frame};
 use interface_core::controls::SUBPAGE_ROWS;
@@ -188,6 +189,14 @@ pub enum ToDecoder {
     /// state change the channel or the page's rules make still applies. A
     /// decoder begins with it off.
     ReducedMotion(bool),
+    /// A part of the font the viewer chose for every picture of a language
+    /// (renderer parity PAR-35), the bytes of its file as the trusted core
+    /// read them, untrusted: the decoder puts the parts together, in order
+    /// from offset 0, and parses the whole, which then replaces the font
+    /// compiled in for every new terminal of that language, or is refused
+    /// and the font in force kept. A `total` of 0 goes back to the font
+    /// compiled in.
+    PictureFont(FontPart),
     /// A state query the channel sent for a page (RULE-47): answered once
     /// by [`FromDecoder::PageState`] when that page is the open page.
     RulesQuery {
@@ -339,6 +348,15 @@ pub enum FromDecoder {
     },
     /// Why a picture decoder made no page, not yet cleaned.
     PictureRefused(String),
+    /// Whether the decoder took the font for pictures the trusted core gave
+    /// it (renderer parity PAR-35): `None` when it parsed and is in force,
+    /// else the parser's message, untrusted, and the font in force kept.
+    FontChecked {
+        /// The language the font is for.
+        language: interface_core::canvas::PictureLanguage,
+        /// Why it was refused, not yet cleaned.
+        refusal: Option<String>,
+    },
     /// The picture a picture decoder converted, in a picture language, at
     /// most [`crate::picture::MAX_PICTURE_OUTPUT`] bytes, or why it made
     /// none, untrusted: sent after [`FromDecoder::PictureConverted`], once
@@ -537,6 +555,10 @@ pub fn write_to_decoder(out: &mut dyn Write, message: &ToDecoder) -> Result<(), 
         ToDecoder::ReducedMotion(reduced) => {
             payload.push(u8::from(*reduced));
             kinds::KIND_REDUCED_MOTION
+        }
+        ToDecoder::PictureFont(part) => {
+            crate::regis::push_font_part(&mut payload, part)?;
+            kinds::KIND_PICTURE_FONT
         }
     };
     write_frame(out, kind, &payload)
@@ -739,6 +761,7 @@ pub fn read_from_core(input: &mut dyn Read) -> Result<Option<ToDecoder>, Protoco
         | kinds::KIND_FRAME_PHASE => read_rules_to_decoder(kind, &mut fields)?,
         kinds::KIND_PAINT_GRADUALLY => ToDecoder::PaintGradually(fields.flag("paint gradually")?),
         kinds::KIND_REDUCED_MOTION => ToDecoder::ReducedMotion(fields.flag("reduced motion")?),
+        kinds::KIND_PICTURE_FONT => ToDecoder::PictureFont(crate::regis::read_font_part(&mut fields)?),
         other => return Err(ProtocolError::UnknownKind(other)),
     };
     fields.end()?;
@@ -854,6 +877,10 @@ pub fn write_to_core(out: &mut dyn Write, message: &FromDecoder) -> Result<(), P
             crate::picture::push_output(&mut payload, *language, output)?;
             KIND_PICTURE_OUTPUT
         }
+        FromDecoder::FontChecked { language, refusal } => {
+            crate::regis::push_font_checked(&mut payload, *language, refusal.as_deref());
+            kinds::KIND_FONT_CHECKED
+        }
         FromDecoder::Confined => KIND_CONFINED,
         FromDecoder::AudioReceiver(receiver) => {
             for figure in [receiver.store_bytes, receiver.objects, receiver.records_in_flight] {
@@ -966,10 +993,8 @@ pub fn read_from_decoder(input: &mut dyn Read) -> Result<Option<FromDecoder>, Pr
             FromDecoder::PictureConverted { tti, t42, summary }
         }
         KIND_PICTURE_REFUSED => FromDecoder::PictureRefused(raw_text(&mut fields, interface_core::picture::MAX_STATUS, "reason too long")?),
-        KIND_PICTURE_OUTPUT => {
-            let (language, output) = crate::picture::read_output(&mut fields)?;
-            FromDecoder::PictureOutput { language, output }
-        }
+        KIND_PICTURE_OUTPUT => crate::picture::read_output(&mut fields).map(|(language, output)| FromDecoder::PictureOutput { language, output })?,
+        kinds::KIND_FONT_CHECKED => crate::regis::read_font_checked(&mut fields).map(|(language, refusal)| FromDecoder::FontChecked { language, refusal })?,
         KIND_CONFINED => FromDecoder::Confined,
         KIND_AUDIO_RECEIVER => {
             FromDecoder::AudioReceiver(AudioReceiver { store_bytes: fields.u32()?, objects: fields.u32()?, records_in_flight: fields.u32()? })

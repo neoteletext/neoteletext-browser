@@ -191,6 +191,32 @@ pub fn read_picture(canonical: &Path, places: &Places) -> Result<Vec<u8>, &'stat
     read_file(canonical, places, most).map(|(bytes, _)| bytes).filter(|bytes| picture(bytes)).ok_or(REFUSAL)
 }
 
+/// A font for pictures the user chose (renderer parity PAR-35), read as a
+/// file channel is, nothing in a refused place and nothing through a link,
+/// and only when it is at most `most` bytes, which is checked before it is
+/// read: the decoders parse it with their renderers' bounded parsers.
+///
+/// # Errors
+/// [`FONT_TOO_LARGE`] for a file over `most`, else [`REFUSAL`].
+pub fn read_font(canonical: &Path, places: &Places, most: usize) -> Result<Vec<u8>, &'static str> {
+    let most = u64::try_from(most).unwrap_or(MAX_SOURCE_BYTES);
+    let metadata = fs::symlink_metadata(canonical).map_err(|_| REFUSAL)?;
+    if !metadata.is_file() {
+        return Err(REFUSAL);
+    }
+    if metadata.len() > most {
+        return Err(FONT_TOO_LARGE);
+    }
+    // One byte more than the bound is read, so that a file grown since its
+    // length was looked at is refused, not cut short.
+    let (bytes, _) = read_file(canonical, places, most.saturating_add(1)).ok_or(REFUSAL)?;
+    if u64::try_from(bytes.len()).unwrap_or(u64::MAX) > most { Err(FONT_TOO_LARGE) } else { Ok(bytes) }
+}
+
+/// Why a font for pictures was refused before it was read: it is larger
+/// than its renderer reads (renderer parity PAR-35).
+pub const FONT_TOO_LARGE: &str = "the font file is larger than the renderer reads";
+
 /// A file's bytes, at most `room` of them, when the file may be read, and
 /// its identity, from the descriptor they were read through.
 fn read_file(canonical: &Path, places: &Places, room: u64) -> Option<(Vec<u8>, FileIdentity)> {
@@ -327,6 +353,25 @@ mod tests {
         assert!(matches!(source.next(2), Next::End));
         assert!(matches!(source.next(2), Next::Done));
         assert!(matches!(Source::empty().next(2), Next::Done));
+    }
+
+    /// Renderer parity PAR-35: a font file at its bound is read whole; one
+    /// byte over is refused by its length before any of it is read; a
+    /// folder is no font.
+    #[test]
+    fn a_font_is_read_within_its_bound_and_refused_over_it() {
+        const BOUND: usize = 64;
+        let folder = std::env::temp_dir().join(format!("neoteletext-source-font-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&folder);
+        fs::create_dir_all(&folder).unwrap();
+        let places = Places::new(None, Vec::new());
+        let (at_bound, over) = (folder.join("at.regisfont"), folder.join("over.regisfont"));
+        fs::write(&at_bound, vec![b'#'; BOUND]).unwrap();
+        fs::write(&over, vec![b'#'; BOUND + 1]).unwrap();
+        assert_eq!(read_font(&at_bound, &places, BOUND).map(|bytes| bytes.len()), Ok(BOUND));
+        assert_eq!(read_font(&over, &places, BOUND), Err(FONT_TOO_LARGE));
+        assert_eq!(read_font(&folder, &places, BOUND), Err(REFUSAL));
+        fs::remove_dir_all(&folder).unwrap();
     }
 
     /// DEC-1762: a new decoder is given the file from its start, however

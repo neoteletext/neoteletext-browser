@@ -93,6 +93,9 @@ pub(crate) const KIND_PIPE: u8 = 19;
 const KIND_READ_PICTURE: u8 = 20;
 /// The converted page, written where the user chose to save it.
 const KIND_SAVE: u8 = 21;
+/// A font for pictures the user chose (renderer parity PAR-35), in the next
+/// number free.
+const KIND_READ_FONT: u8 = 25;
 /// The viewer key file's sealing key (neoteletext-common's
 /// `docs/viewer-state.md` VS-108).
 const KIND_VIEWER_KEYS_KEY: u8 = 22;

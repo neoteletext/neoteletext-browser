@@ -27,6 +27,9 @@ pub const MAX_REFUSAL: usize = 160;
 pub const MAX_LOOPBACK_EXEMPTION: usize = 256;
 /// The longest status line of updates the panel says.
 pub const MAX_UPDATE_STATUS: usize = 200;
+/// The longest file name of a chosen font the panel shows (renderer parity
+/// PAR-35): a file name's 255 bytes on every platform the browser runs on.
+pub const MAX_FONT_NAME: usize = 255;
 /// The longest version as text.
 pub const MAX_VERSION: usize = 17;
 
@@ -53,6 +56,9 @@ const CHANGE_WHEEL_INVERTED: u8 = 13;
 const CHANGE_REGIS_CONTAIN: u8 = 14;
 /// "Paint drawings gradually" (animation.md ANIM-15); 15 is taken.
 const CHANGE_PAINT_GRADUALLY: u8 = 16;
+// The font compiled in again for a picture language (renderer parity
+// PAR-35), the next number free among the changes.
+const CHANGE_BUILT_IN_FONT: u8 = 17;
 // Far from the others, so changes added beside this one elsewhere do not
 // meet it (installation-and-updates.md section 3.4).
 const CHANGE_CHECK_UPDATES: u8 = 40;
@@ -103,6 +109,8 @@ pub(crate) fn push_view(payload: &mut Vec<u8>, view: &SettingsView) -> Result<()
     push_flag(payload, view.wheel_inverted);
     push_flag(payload, view.regis_contain);
     push_flag(payload, view.paint_gradually);
+    push_text(payload, &view.regis_font, MAX_FONT_NAME)?;
+    push_text(payload, &view.naplps_font, MAX_FONT_NAME)?;
     match &view.refusal {
         Some(refusal) => {
             push_flag(payload, true);
@@ -133,6 +141,8 @@ pub(crate) fn read_view(fields: &mut Fields<'_>) -> Result<SettingsView, Protoco
     let wheel_inverted = fields.flag("flag")?;
     let regis_contain = fields.flag("flag")?;
     let paint_gradually = fields.flag("flag")?;
+    let regis_font = fields.text(MAX_FONT_NAME)?;
+    let naplps_font = fields.text(MAX_FONT_NAME)?;
     let refusal = if fields.flag("flag")? { Some(fields.text(MAX_REFUSAL)?) } else { None };
     let loopback_exemption = if fields.flag("flag")? { Some(fields.text(MAX_LOOPBACK_EXEMPTION)?) } else { None };
     Ok(SettingsView {
@@ -147,6 +157,8 @@ pub(crate) fn read_view(fields: &mut Fields<'_>) -> Result<SettingsView, Protoco
         wheel_inverted,
         regis_contain,
         paint_gradually,
+        regis_font,
+        naplps_font,
         refusal,
         loopback_exemption,
     })
@@ -210,6 +222,10 @@ pub(crate) fn push_change(payload: &mut Vec<u8>, change: &SettingChange) -> Resu
             payload.push(CHANGE_PAINT_GRADUALLY);
             push_flag(payload, *on);
         }
+        SettingChange::BuiltInFont(language) => {
+            payload.push(CHANGE_BUILT_IN_FONT);
+            push_flag(payload, *language == crate::regis::PictureLanguage::Naplps);
+        }
     }
     Ok(())
 }
@@ -253,6 +269,9 @@ pub(crate) fn read_change(fields: &mut Fields<'_>) -> Result<SettingChange, Prot
         CHANGE_WHEEL_INVERTED => SettingChange::WheelInverted(fields.flag("flag")?),
         CHANGE_REGIS_CONTAIN => SettingChange::RegisContain(fields.flag("flag")?),
         CHANGE_PAINT_GRADUALLY => SettingChange::PaintGradually(fields.flag("flag")?),
+        CHANGE_BUILT_IN_FONT => {
+            SettingChange::BuiltInFont(if fields.flag("flag")? { crate::regis::PictureLanguage::Naplps } else { crate::regis::PictureLanguage::Regis })
+        }
         _ => return Err(ProtocolError::BadValue("setting change")),
     })
 }

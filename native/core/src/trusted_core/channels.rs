@@ -111,6 +111,11 @@ impl Core {
                 if self.reduced_motion {
                     let _ = decoder.tell(&ToDecoder::ReducedMotion(true));
                 }
+                // And the fonts the viewer chose for pictures, when not
+                // those compiled in (renderer parity PAR-35).
+                for message in self.fonts.messages() {
+                    let _ = decoder.tell(&message);
+                }
                 self.rules_decoder_gone(*id);
                 // A new decoder has sent no frame: a rectangle is laid only
                 // over one it sent (ANIM-5).
