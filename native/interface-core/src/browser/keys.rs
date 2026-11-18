@@ -76,7 +76,7 @@ impl Browser {
             self.outputs.push(Output::Home);
             return true;
         }
-        if key == Key::Escape && (self.close_popup() || self.tabs_cancel()) {
+        if key == Key::Escape && (self.close_popup() || self.tabs_cancel() || self.filmstrip_escape(now)) {
             return true;
         }
         if let Some(changed) = self.star_key(key, modifiers) {

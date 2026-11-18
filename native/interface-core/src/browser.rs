@@ -29,6 +29,7 @@ mod denied;
 mod divider;
 mod field_mouse;
 mod file_drag;
+mod filmstrip;
 #[cfg(test)]
 mod fixture;
 mod focus;
@@ -212,8 +213,10 @@ pub struct Browser {
     remote: remote::RemoteUi,
     /// The certificate-error screen's buttons (decision 83).
     refused: certificate_refused::RefusedUi,
-    /// The tab strip's overflow and dragging (decision 69).
+    /// The tab strip's count and dragging (decision 69).
     tab_strip: tab_strip::TabsUi,
+    /// The tab filmstrip, and the strip's slide (REQ-6640).
+    filmstrip: filmstrip::Filmstrip,
     /// Full screen, the page only (decision 85).
     full_screen: full_screen::FullScreenUi,
     /// The bookmarks manager (requirement 20.17).
@@ -312,6 +315,7 @@ impl Browser {
             remote: remote::RemoteUi::default(),
             refused: certificate_refused::RefusedUi::default(),
             tab_strip: tab_strip::TabsUi::default(),
+            filmstrip: filmstrip::Filmstrip::default(),
             full_screen: full_screen::FullScreenUi::default(),
             bookmarks: bookmarks::BookmarksUi::default(),
             star: star::StarUi::default(),

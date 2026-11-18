@@ -57,7 +57,8 @@ impl Browser {
     fn press_overlays(&mut self, extend: bool, now: u64) -> Option<bool> {
         // The drop-downs and the star's popover are over everything; the
         // panels over everything below the strip.
-        if self.popups_press(self.pointer, extend) || self.tabs_press(self.pointer) || self.star_press(self.pointer) {
+        if self.popups_press(self.pointer, extend) || self.filmstrip_press(self.pointer, now) || self.tabs_press(self.pointer) || self.star_press(self.pointer)
+        {
             return Some(true);
         }
         if self.history_press(self.pointer, extend) || self.bookmarks_press(self.pointer) {

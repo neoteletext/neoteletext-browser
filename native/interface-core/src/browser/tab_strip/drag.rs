@@ -2,25 +2,16 @@
 //! let go there, or out of the window when let go off it
 //! (`multiple-windows.md`), and where a tab from another window would go.
 
-use super::{DRAG_THRESHOLD, Drag, PANEL_DELAY_MILLISECONDS, STRIP_HEIGHT, TEAR_DISTANCE, whole};
+use super::{DRAG_THRESHOLD, Drag, STRIP_HEIGHT, TEAR_DISTANCE, whole};
 use crate::browser::{Browser, Output};
 use crate::geometry::{Point, Rect};
 
 impl Browser {
-    /// A press on the strip's tabs, its count or the overflow panel;
-    /// returns whether it was there. A tab is chosen at once and may then
-    /// be dragged.
+    /// A press on the strip's tabs; returns whether it was there. A tab is
+    /// chosen at once and may then be dragged. The count is the
+    /// filmstrip's (`filmstrip_press`).
     pub(in crate::browser) fn tabs_press(&mut self, point: Point) -> bool {
-        // The count opens the panel at once, for a pad or a touch screen,
-        // and shuts it again.
-        if self.tab_strip.count.contains(point) {
-            self.tab_strip.open = !self.tab_strip.open;
-            self.tab_strip.dismissed = !self.tab_strip.open;
-            return true;
-        }
-        let Some(region) = self.regions.tabs.iter().rev().find(|region| region.tab.contains(point)).copied() else {
-            return self.tab_strip.panel.contains(point);
-        };
+        let Some(region) = self.regions.tabs.iter().rev().find(|region| region.tab.contains(point)).copied() else { return false };
         // This press is taken before the strip's, which ends editing.
         self.stop_editing();
         if region.close.contains(point) {
@@ -34,24 +25,11 @@ impl Browser {
         true
     }
 
-    /// The pointer moved at `now`: the panel's wait starts on the tabs, the
-    /// panel goes once the pointer leaves the strip and the panel, and a
-    /// pressed tab is dragged. Returns whether anything changed.
+    /// The pointer moved at `now`: the filmstrip's waits start and end
+    /// (`filmstrip_moved`), and a pressed tab is dragged. Returns whether
+    /// anything changed.
     pub(in crate::browser) fn tabs_moved(&mut self, point: Point, now: u64) -> bool {
-        let strip = Rect::new(0.0, 0.0, self.regions.strip.x1, STRIP_HEIGHT);
-        let dragging = self.tab_strip.drag.is_some_and(|drag| drag.moving);
-        let on = strip.contains(point) || self.tab_strip.panel.contains(point);
-        let was_open = self.tab_strip.open;
-        if !self.tab_strip.overflowing || (!on && !dragging) {
-            self.tab_strip.open = false;
-            self.tab_strip.dismissed = false;
-        } else if dragging {
-            // A tab dragged along the strip may be let go in the panel.
-            self.tab_strip.open = true;
-        }
-        let resting = !self.tab_strip.open && self.tab_strip.tabs_area.contains(point);
-        self.tab_strip.resting = if resting { self.tab_strip.resting.or(Some(now)) } else { None };
-        let mut changed = was_open != self.tab_strip.open;
+        let mut changed = self.filmstrip_moved(point, now);
         if let Some(mut drag) = self.tab_strip.drag {
             if !drag.moving && libm::hypot(point.x - drag.start.x, point.y - drag.start.y) > DRAG_THRESHOLD {
                 drag.moving = true;
@@ -67,31 +45,14 @@ impl Browser {
         changed
     }
 
-    /// How long until the panel opens, while the pointer rests on the tabs.
-    pub(in crate::browser) fn tabs_deadline(&self, now: u64) -> Option<u64> {
-        let since = self.tab_strip.resting.filter(|_| self.tab_strip.overflowing && !self.tab_strip.dismissed)?;
-        Some(since.saturating_add(PANEL_DELAY_MILLISECONDS).saturating_sub(now).max(1))
-    }
-
-    /// The panel opens once the pointer has rested on the tabs; whether it
-    /// did now.
-    pub(in crate::browser) fn tabs_settle(&mut self, now: u64) -> bool {
-        if self.tabs_deadline(now).is_some() && self.tab_strip.resting.is_some_and(|since| now.saturating_sub(since) >= PANEL_DELAY_MILLISECONDS) {
-            self.tab_strip.open = true;
-            self.tab_strip.resting = None;
-            return true;
-        }
-        false
-    }
-
     /// The button was released: a dragged tab goes where it was let go.
     pub(in crate::browser) fn tabs_released(&mut self) {
         let Some(drag) = self.tab_strip.drag.take() else { return };
-        // Let go off the strip and the panel, below them or outside the
-        // window: the tab leaves this window (`multiple-windows.md`).
+        // Let go off the strip, below it or outside the window: the tab
+        // leaves this window (`multiple-windows.md`).
         let point = self.pointer;
         let strip = Rect::new(0.0, 0.0, self.regions.strip.x1, STRIP_HEIGHT + TEAR_DISTANCE);
-        if drag.moving && !strip.contains(point) && !self.tab_strip.panel.contains(point) {
+        if drag.moving && !strip.contains(point) {
             self.outputs.push(Output::TabOut { index: drag.index, x: whole(point.x), y: whole(point.y) });
             return;
         }

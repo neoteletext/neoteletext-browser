@@ -1,9 +1,9 @@
 //! The tab strip (`tab-strip.md`, decisions 69 and 102): tabs of one
-//! width, the active one always shown; when they overflow, a count, and a
-//! panel joined under the strip into which the rest wrap once the pointer
-//! rests on the tabs; and a tab dragged along to a new place, which the
-//! trusted core decides; and at its right end the browser's version and
-//! release stage (decision 123).
+//! width in a row that slides, with easing, to show the active one; when
+//! they overflow, a count of those not shown, which opens the tab
+//! filmstrip (`filmstrip.rs`, REQ-6640); a tab dragged along to a new
+//! place, which the trusted core decides; and at its right end the
+//! browser's version and release stage (decision 123).
 
 use alloc::collections::BTreeSet;
 use alloc::format;
@@ -22,7 +22,7 @@ const TAB_TOP: f64 = 6.0;
 const TAB_TOP_INACTIVE: f64 = 9.0;
 /// Every tab's width, however many there are (decision 102): a tab that
 /// shrank as tabs were added moved every other under the pointer.
-const TAB_WIDTH: f64 = 230.0;
+pub(in crate::browser) const TAB_WIDTH: f64 = 230.0;
 const TAB_GAP: f64 = 4.0;
 const TAB_TEXT_INSET: f64 = 14.0;
 const TAB_CLOSE: f64 = 22.0;
@@ -44,23 +44,6 @@ const DRAG_THRESHOLD: f64 = 4.0;
 const TEAR_DISTANCE: f64 = 24.0;
 /// The count of tabs that do not fit: "+12".
 const COUNT_WIDTH: f64 = 40.0;
-/// How long the pointer rests on the tabs before the overflow panel opens
-/// (decision 102): a hand crossing the strip to the toolbar takes about a
-/// tenth of a second, and opening at once laid the panel over the toolbar
-/// in its way.
-const PANEL_DELAY_MILLISECONDS: u64 = 300;
-/// A row of the overflow panel: a tab's height and the gap below it.
-const PANEL_ROW: f64 = STRIP_HEIGHT - TAB_TOP_INACTIVE + TAB_GAP;
-/// How dark the window becomes below the open overflow panel, as behind a
-/// dialog (decision 102): less than a zoomed page's wall, since the panel
-/// opens and shuts as the pointer passes.
-const PANEL_DIM: f32 = 0.55;
-/// The panel's edge at its foot, in the selection's colour, and the
-/// shadow below it: each band of the shadow and how much it darkens,
-/// fading out.
-const PANEL_EDGE: f64 = 2.0;
-const SHADOW_BAND: f64 = 3.0;
-const SHADOW: [f32; 4] = [0.5, 0.35, 0.2, 0.1];
 /// The line that shows where a dragged tab will go.
 const MARKER_WIDTH: f64 = 3.0;
 /// The release stage shown after the browser's version (decision 123):
@@ -89,31 +72,15 @@ struct Drag {
     target: usize,
 }
 
-/// The strip's state in the browser.
+/// The strip's state in the browser; its slide is the filmstrip's state
+/// (REQ-6640 item 11).
 #[derive(Debug, Default)]
 pub(super) struct TabsUi {
-    /// The overflow panel shows.
-    open: bool,
-    /// Since when the pointer has rested on the tabs, the panel shut.
-    resting: Option<u64>,
-    /// The count was pressed to shut the panel: it stays shut until the
-    /// pointer leaves the strip.
-    dismissed: bool,
     drag: Option<Drag>,
-    /// Where the panel and the count were last drawn, and the strip's tabs
-    /// with the count, on which the pointer rests to open the panel.
-    panel: Rect,
-    count: Rect,
-    tabs_area: Rect,
-    /// The tabs the strip showed while the panel was open, and how many
-    /// tabs there were: they stay in place until it shuts, so a tab chosen
-    /// in the panel does not jump to the strip under the pointer.
-    held: Option<(Vec<usize>, usize)>,
-    /// Some tabs did not fit on the strip.
-    overflowing: bool,
-    /// Those tabs, the strip's tab width, and its left and right ends, for
-    /// the panel drawn at the end of the frame.
-    rest: (Vec<usize>, f64, f64, f64),
+    /// Where the count was last drawn, and the strip's tabs with the
+    /// count, on which the pointer rests to open the filmstrip.
+    pub(super) count: Rect,
+    pub(super) tabs_area: Rect,
 }
 
 /// A coordinate in whole pixels, held within `i32`.
@@ -124,25 +91,22 @@ fn whole(value: f64) -> i32 {
     whole
 }
 
-/// Which tabs the strip shows, in order, and which wrap into the panel: the
-/// first that fit, the active one taking the last place when it would not.
-fn arrangement(count: usize, active: usize, fit: usize) -> (Vec<usize>, Vec<usize>) {
-    if count <= fit {
-        return ((0..count).collect(), Vec::new());
-    }
-    let mut shown: Vec<usize> = (0..fit).collect();
-    if active >= fit
-        && let Some(last) = shown.last_mut()
-    {
-        *last = active;
-    }
-    let rest = rest_of(count, &shown);
-    (shown, rest)
-}
-
-/// The tabs of `count` that `shown` leaves for the panel, in order.
-fn rest_of(count: usize, shown: &[usize]) -> Vec<usize> {
-    (0..count).filter(|index| !shown.contains(index)).collect()
+/// How far the strip's row of tabs is slid to show the active tab whole
+/// (REQ-6640 item 8): the least move from `slid` that brings it into a
+/// view `view` wide, within the row of `count` tabs, each `step` with its
+/// gap.
+fn strip_slide(slid: f64, active: usize, count: usize, view: f64, step: f64) -> f64 {
+    #[allow(clippy::cast_precision_loss, reason = "a tab's place, below a hundred")]
+    let (left, row) = (active as f64 * step, count as f64 * step - TAB_GAP);
+    let right = left + TAB_WIDTH;
+    let slid = if left < slid {
+        left
+    } else if right > slid + view {
+        right - view
+    } else {
+        slid
+    };
+    slid.clamp(0.0, (row - view).max(0.0))
 }
 
 /// What lies under a drop (REQ-1700 items 1 to 3).
@@ -188,9 +152,12 @@ impl Browser {
         self.tabs = tabs;
         // The field edits the active tab's address, so a change of tab, by
         // any route, ends it; otherwise it goes on showing the other tab's.
-        if self.tabs.get(self.active).map(|tab| tab.channel) != shown {
+        let left = shown.filter(|&shown| self.tabs.get(self.active).map(|tab| tab.channel) != Some(shown));
+        if left.is_some() {
             self.stop_editing();
         }
+        // The tab left keeps a still of its page (REQ-6640 item 3).
+        self.filmstrip_tabs_changed(left);
     }
 
     /// The channels playing sound, muted or not, as the host's mixers
@@ -214,15 +181,19 @@ impl Browser {
     }
 
     /// The strip is not on the screen, as in full screen with the strip up:
-    /// nothing of it takes the pointer, and with `shut` the panel shuts.
+    /// nothing of it takes the pointer, and with `shut` the filmstrip shuts.
     pub(super) fn tab_strip_forget(&mut self, shut: bool) {
         self.tab_strip.count = Rect::ZERO;
-        self.tab_strip.panel = Rect::ZERO;
         self.tab_strip.tabs_area = Rect::ZERO;
         if shut {
-            self.tab_strip.open = false;
-            self.tab_strip.resting = None;
+            self.filmstrip_forget();
         }
+    }
+
+    /// Whether a tab is pressed or dragged: the filmstrip then does not
+    /// open.
+    pub(super) const fn tab_strip_pressed(&self) -> bool {
+        self.tab_strip.drag.is_some()
     }
 
     /// The version label's text (decision 123): the version the trusted
@@ -236,7 +207,7 @@ impl Browser {
     /// The count's tip.
     pub(super) fn tabs_tips(&self, tips: &mut Vec<(Rect, String)>) {
         if self.tab_strip.count != Rect::ZERO {
-            tips.push((self.tab_strip.count, String::from("More tabs: rest the pointer on the tabs, or click here, to see them all")));
+            tips.push((self.tab_strip.count, String::from("More tabs: rest the pointer on the tabs, or click here, to see them all as pictures")));
         }
     }
 }

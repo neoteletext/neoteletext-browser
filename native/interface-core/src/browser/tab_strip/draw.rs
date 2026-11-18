@@ -1,15 +1,13 @@
 //! The tab strip drawn: the window's own buttons where it has them, the
-//! browser's version before them, the tabs at a width that fits, the count
-//! of those that do not, the new-tab button, and the overflow panel and a
-//! dragged tab over everything.
+//! browser's version before them, the tabs in their sliding row, the count
+//! of those not shown, the new-tab button, and a dragged tab over
+//! everything.
 
 use alloc::format;
-use alloc::vec::Vec;
 
 use super::{
-    COUNT_WIDTH, LEAST_TABS_ROOM, MARKER_WIDTH, NEW_TAB, PANEL_DIM, PANEL_EDGE, PANEL_ROW, PRIVATE_MARK, SHADOW, SHADOW_BAND, STRIP_HEIGHT, STRIP_MARGIN,
-    TAB_CLOSE, TAB_GAP, TAB_SPEAKER, TAB_TEXT_INSET, TAB_TOP, TAB_TOP_INACTIVE, TAB_WIDTH, VERSION_GAP, WINDOW_BUTTON_GAP, WINDOW_BUTTON_HEIGHT,
-    WINDOW_BUTTON_WIDTH, arrangement, rest_of,
+    COUNT_WIDTH, LEAST_TABS_ROOM, MARKER_WIDTH, NEW_TAB, PRIVATE_MARK, STRIP_HEIGHT, STRIP_MARGIN, TAB_CLOSE, TAB_GAP, TAB_SPEAKER, TAB_TEXT_INSET, TAB_TOP,
+    TAB_TOP_INACTIVE, TAB_WIDTH, VERSION_GAP, WINDOW_BUTTON_GAP, WINDOW_BUTTON_HEIGHT, WINDOW_BUTTON_WIDTH, strip_slide,
 };
 use crate::browser::Browser;
 use crate::browser::banks::BANK_BORDER;
@@ -17,13 +15,13 @@ use crate::browser::glyphs::{WINDOW_GLYPH, WINDOW_GLYPH_THICKNESS, speaker_glyph
 use crate::browser::regions::{Regions, TabRegion};
 use crate::canvas::Canvas;
 use crate::geometry::{Point, Rect};
-use crate::text::{HAIRLINE, border, centred, cross, left_centred, outline};
-use crate::theme::{BLACK, BUTTON, GLYPH, GREEN, MUTED, PRIVATE, RAISED, RED, ROW_STATUS, RULE, SELECTED, TAB_COLOURS, TAB_TITLE, WHITE, YELLOW};
+use crate::text::{border, centred, cross, left_centred, outline};
+use crate::theme::{BLACK, BUTTON, GLYPH, GREEN, MUTED, PRIVATE, RED, ROW_STATUS, RULE, SELECTED, TAB_COLOURS, TAB_TITLE, WHITE, YELLOW};
+use crate::tween::{STANDARD, Tween};
 
 impl Browser {
-    pub(in crate::browser) fn draw_tab_strip<C: Canvas + ?Sized>(&mut self, canvas: &mut C, width: f64) {
-        // Raised with its open overflow panel, as a dialog is (decision 102).
-        canvas.fill(Rect::new(0.0, 0.0, width, STRIP_HEIGHT), 0.0, if self.tab_strip.open { RAISED } else { BLACK });
+    pub(in crate::browser) fn draw_tab_strip<C: Canvas + ?Sized>(&mut self, canvas: &mut C, width: f64, now: u64) {
+        canvas.fill(Rect::new(0.0, 0.0, width, STRIP_HEIGHT), 0.0, BLACK);
         let mut right = width - STRIP_MARGIN;
         if self.frame.window_buttons {
             let top = (STRIP_HEIGHT - WINDOW_BUTTON_HEIGHT) / 2.0;
@@ -39,7 +37,7 @@ impl Browser {
         }
         let left = self.frame.left_inset + STRIP_MARGIN;
         let right = self.draw_version(canvas, left, right);
-        self.draw_tabs(canvas, left, right);
+        self.draw_tabs(canvas, left, right, now);
         self.regions.strip = Rect::new(0.0, 0.0, width, STRIP_HEIGHT);
     }
 
@@ -62,59 +60,68 @@ impl Browser {
     }
 
     /// Draws the strip's tabs between `left` and `right`, the new-tab
-    /// button and the count; the panel is drawn last, over everything.
-    fn draw_tabs<C: Canvas + ?Sized>(&mut self, canvas: &mut C, left: f64, right: f64) {
+    /// button and the count of those not shown. The tabs are one row, slid
+    /// with easing to show the active one whole (REQ-6640 item 8), and cut
+    /// at the ends of the room they have.
+    fn draw_tabs<C: Canvas + ?Sized>(&mut self, canvas: &mut C, left: f64, right: f64, now: u64) {
         let room = right - left - NEW_TAB - TAB_GAP * 2.0;
+        let step = TAB_WIDTH + TAB_GAP;
+        let count = self.tabs.len();
         #[allow(clippy::cast_precision_loss, reason = "a few tabs")]
-        let count = self.tabs.len().max(1) as f64;
-        let fit = if count * (TAB_WIDTH + TAB_GAP) - TAB_GAP <= room {
-            self.tabs.len()
+        let fit = if count.max(1) as f64 * step - TAB_GAP <= room {
+            count
         } else {
             // Each tab and its gap, with the count's room kept.
             #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss, reason = "a count of tabs, at least one")]
-            let fit = libm::floor((room - COUNT_WIDTH) / (TAB_WIDTH + TAB_GAP)).max(1.0) as usize;
+            let fit = libm::floor((room - COUNT_WIDTH) / step).max(1.0) as usize;
             fit
         };
-        let tab_width = TAB_WIDTH;
-        let (shown, rest) = self.tabs_arranged(fit);
-        self.tab_strip.overflowing = !rest.is_empty();
-        self.tab_strip.held = self.tab_strip.open.then(|| (shown.clone(), self.tabs.len()));
-        let mut x = left;
-        for &index in &shown {
-            let region = self.draw_tab(canvas, index, Rect::new(x, 0.0, x + tab_width, STRIP_HEIGHT));
-            self.regions.tabs.push(region);
-            x += tab_width + TAB_GAP;
+        #[allow(clippy::cast_precision_loss, reason = "a few tabs")]
+        let view_width = fit.max(1) as f64 * step - TAB_GAP;
+        let target = strip_slide(f64::from(self.filmstrip.strip.target()), self.active, count, view_width, step);
+        #[expect(clippy::cast_possible_truncation, reason = "points across a window, far within f32")]
+        let target = target as f32;
+        // Slid when the active tab changed; placed at once otherwise.
+        if self.filmstrip.strip_active.is_some_and(|before| before != self.active) {
+            self.filmstrip.strip.set(target, now);
+        } else if (self.filmstrip.strip.target() - target).abs() > f32::EPSILON {
+            self.filmstrip.strip = Tween::new(target, self.filmstrip_slide_duration(), STANDARD);
         }
+        self.filmstrip.strip_active = Some(self.active);
+        let slid = f64::from(self.filmstrip.strip.value(now));
+        // The active tab's mark stands below the strip's foot.
+        let view = Rect::new(left, 0.0, left + view_width, STRIP_HEIGHT + BANK_BORDER);
+        canvas.push_clip(view);
+        for index in 0..count {
+            #[allow(clippy::cast_precision_loss, reason = "a few tabs")]
+            let x = left + index as f64 * step - slid;
+            if x + TAB_WIDTH <= view.x0 || x >= view.x1 {
+                continue;
+            }
+            let region = self.draw_tab(canvas, index, Rect::new(x, 0.0, x + TAB_WIDTH, STRIP_HEIGHT));
+            // What is cut off takes no press.
+            let cut = |rect: Rect| {
+                let inside = Rect::new(rect.x0.max(view.x0), rect.y0, rect.x1.min(view.x1), rect.y1);
+                if inside.x0 < inside.x1 { inside } else { Rect::ZERO }
+            };
+            self.regions.tabs.push(TabRegion { index, tab: cut(region.tab), close: cut(region.close), speaker: region.speaker.map(cut) });
+        }
+        canvas.pop_clip();
+        let mut x = view.x1 + TAB_GAP;
         self.tab_strip.count = Rect::ZERO;
-        if !rest.is_empty() {
-            let count = Rect::new(x, TAB_TOP_INACTIVE, x + COUNT_WIDTH, STRIP_HEIGHT - TAB_GAP);
-            canvas.fill(count, 0.0, if self.tab_strip.open { SELECTED } else { BUTTON });
-            outline(canvas, count, RULE);
-            centred(canvas, count, &format!("+{}", rest.len()), ROW_STATUS, WHITE);
-            self.tab_strip.count = count;
-            x = count.x1 + TAB_GAP;
+        if fit < count {
+            let count_rect = Rect::new(x, TAB_TOP_INACTIVE, x + COUNT_WIDTH, STRIP_HEIGHT - TAB_GAP);
+            canvas.fill(count_rect, 0.0, if self.filmstrip_open() { SELECTED } else { BUTTON });
+            outline(canvas, count_rect, RULE);
+            centred(canvas, count_rect, &format!("+{}", count.saturating_sub(fit)), ROW_STATUS, WHITE);
+            self.tab_strip.count = count_rect;
+            x = count_rect.x1 + TAB_GAP;
         }
         self.tab_strip.tabs_area = Rect::new(left, 0.0, x, STRIP_HEIGHT);
         self.regions.new_tab = Rect::new(x + TAB_GAP, TAB_TOP_INACTIVE, x + TAB_GAP + NEW_TAB, STRIP_HEIGHT - TAB_GAP);
         canvas.fill(self.regions.new_tab, 0.0, BUTTON);
         outline(canvas, self.regions.new_tab, RULE);
         centred(canvas, self.regions.new_tab, "+", GLYPH, WHITE);
-        self.tab_strip.rest = (rest, tab_width, left, right);
-    }
-
-    /// Which tabs the strip shows and which wrap into the panel: while the
-    /// panel is open, the tabs it opened with, so nothing moves under the
-    /// pointer, unless tabs came or went; otherwise the first that fit,
-    /// with the active one.
-    fn tabs_arranged(&self, fit: usize) -> (Vec<usize>, Vec<usize>) {
-        let count = self.tabs.len();
-        if let Some((shown, held_count)) = self.tab_strip.held.as_ref().filter(|_| self.tab_strip.open)
-            && *held_count == count
-            && shown.len() == fit.min(count)
-        {
-            return (shown.clone(), rest_of(count, shown));
-        }
-        arrangement(count, self.active, fit)
     }
 
     /// One tab in its slot: the active one standing taller, with its sound
@@ -149,39 +156,9 @@ impl Browser {
         TabRegion { index, tab: rect, close, speaker }
     }
 
-    /// The overflow panel, joined under the strip, while it is open; and a
-    /// dragged tab where the pointer has it. Drawn over the toolbar and the
-    /// page area, as the menu's list is, raised as a dialog is: the window
-    /// below dimmed, the strip and the panel one surface, a blue edge at
-    /// its foot and a shadow below (decision 102).
-    pub(in crate::browser) fn draw_tab_overflow<C: Canvas + ?Sized>(&mut self, canvas: &mut C, width: f64, height: f64) {
-        self.tab_strip.panel = Rect::ZERO;
-        let (rest, tab_width, left, right) = core::mem::take(&mut self.tab_strip.rest);
-        if self.tab_strip.open && !rest.is_empty() {
-            #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss, reason = "a count of tabs, at least one")]
-            let per_row = libm::floor((right - left + TAB_GAP) / (tab_width + TAB_GAP)).max(1.0) as usize;
-            let rows = rest.len().div_ceil(per_row);
-            #[allow(clippy::cast_precision_loss, reason = "a few rows")]
-            let panel = Rect::new(0.0, STRIP_HEIGHT - HAIRLINE, width, STRIP_HEIGHT + rows as f64 * PANEL_ROW + TAB_GAP);
-            canvas.dim(Rect::new(0.0, panel.y1, width, height), PANEL_DIM);
-            let mut band_top = panel.y1;
-            for amount in SHADOW {
-                canvas.dim(Rect::new(0.0, band_top, width, band_top + SHADOW_BAND), amount);
-                band_top += SHADOW_BAND;
-            }
-            // The strip's own surface, with no seam: the strip grown down.
-            canvas.fill(panel, 0.0, RAISED);
-            canvas.fill(Rect::new(0.0, panel.y1 - PANEL_EDGE, width, panel.y1), 0.0, SELECTED);
-            for (place, &index) in rest.iter().enumerate() {
-                #[allow(clippy::cast_precision_loss, reason = "a few tabs")]
-                let (row, column) = (place.checked_div(per_row).unwrap_or(0) as f64, place.checked_rem(per_row).unwrap_or(0) as f64);
-                let x = left + column * (tab_width + TAB_GAP);
-                let top = STRIP_HEIGHT + row * PANEL_ROW - TAB_TOP_INACTIVE + TAB_GAP;
-                let region = self.draw_tab(canvas, index, Rect::new(x, top, x + tab_width, top + STRIP_HEIGHT));
-                self.regions.tabs.push(region);
-            }
-            self.tab_strip.panel = panel;
-        }
+    /// A dragged tab where the pointer has it, and a line where it will
+    /// go, over everything.
+    pub(in crate::browser) fn draw_tab_drag<C: Canvas + ?Sized>(&mut self, canvas: &mut C) {
         // A dragged tab follows the pointer; a line shows where it will go.
         if let Some(drag) = self.tab_strip.drag.filter(|drag| drag.moving)
             && let Some(target) = self.regions.tabs.iter().find(|region| region.index == drag.target).map(|region| region.tab)

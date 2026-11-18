@@ -1,14 +1,13 @@
 use super::*;
 use crate::browser::fixture::middle;
 use alloc::format;
-use alloc::vec;
 
 use crate::browser::fixture::{HEIGHT, WIDTH, browser, press_at};
 use crate::browser::regions::TabRegion;
 use crate::browser::{Frame, Key, Modifiers, Output, WindowAction};
 use crate::settings::UpdateView;
 use crate::test_canvas::Recorder;
-use crate::theme::{BLACK, MUTED, RAISED, SELECTED};
+use crate::theme::MUTED;
 
 fn browser_with(count: usize, active: usize) -> Browser {
     let mut browser = Browser::new(Frame { left_inset: 0.0, window_buttons: false });
@@ -25,76 +24,38 @@ fn browser_with(count: usize, active: usize) -> Browser {
     browser
 }
 
-/// Decision 69: the tabs that fit, the active one always among them,
-/// the rest in order for the panel.
+/// REQ-6640 item 8: the strip's row slides the least distance that shows
+/// the active tab whole, within the row's ends. Before, the active tab
+/// took the last place and the rest went to the overflow panel.
+#[test]
+fn the_strip_slides_the_least_distance_to_show_the_active_tab() {
+    let step = TAB_WIDTH + TAB_GAP;
+    let view = 4.0 * step - TAB_GAP;
+    assert!(strip_slide(0.0, 2, 8, view, step).abs() < f64::EPSILON, "in view: no slide");
+    assert!((strip_slide(0.0, 6, 8, view, step) - 3.0 * step).abs() < 1e-9, "the active tab is the last in view");
+    assert!((strip_slide(3.0 * step, 1, 8, view, step) - step).abs() < 1e-9, "back to the left: the first in view");
+    assert!((strip_slide(1.0e6, 7, 8, view, step) - 4.0 * step).abs() < 1e-9, "never past the row's end");
+    assert!(strip_slide(0.0, 2, 3, view, step).abs() < f64::EPSILON, "all fit: none");
+}
+
+/// REQ-6640 item 8: when the active tab changes to one out of view, the
+/// strip slides to it with easing, reaching it, and the count counts those
+/// not shown.
 #[test]
 fn the_active_tab_is_always_shown() {
-    assert_eq!(arrangement(3, 0, 5), (vec![0, 1, 2], vec![]));
-    assert_eq!(arrangement(8, 1, 4), (vec![0, 1, 2, 3], vec![4, 5, 6, 7]));
-    assert_eq!(arrangement(8, 6, 4), (vec![0, 1, 2, 6], vec![3, 4, 5, 7]), "the active tab takes the last place");
-}
-
-/// Opens the overflow panel as a user does: the pointer rests on the tabs.
-fn rest_on_the_tabs(browser: &mut Browser, now: u64) {
-    browser.pointer_moved(5.0 + STRIP_MARGIN, 20.0, now);
-    assert_eq!(browser.frame_interval(now), Some(PANEL_DELAY_MILLISECONDS), "the panel waits for the pointer to rest");
-    assert!(browser.settle(now.saturating_add(PANEL_DELAY_MILLISECONDS)), "the panel opens");
-    browser.draw(&mut Recorder::new(), 1440.0, 900.0, now.saturating_add(PANEL_DELAY_MILLISECONDS));
-}
-
-/// Decisions 69 and 102: too many tabs show a count; resting on the tabs
-/// opens the panel the rest wrap into, every one reachable; a tab chosen
-/// there stays where it is while the panel is open; leaving closes it.
-#[test]
-fn overflowing_tabs_wrap_into_a_panel_under_the_strip() {
-    let mut browser = browser_with(30, 25);
-    let shown = browser.regions.tabs.len();
-    assert!(shown < 30 && browser.tab_strip.count != Rect::ZERO, "a count of the rest");
-    assert!(browser.regions.tabs.iter().any(|region| region.index == 25), "the active tab is shown");
-    rest_on_the_tabs(&mut browser, 0);
-    let mut indices: Vec<usize> = browser.regions.tabs.iter().map(|region| region.index).collect();
-    indices.sort_unstable();
-    assert_eq!(indices, (0..30).collect::<Vec<_>>(), "every tab, on the strip or in the panel");
-    let in_panel = *browser.regions.tabs.last().unwrap();
-    assert!(in_panel.tab.y0 >= STRIP_HEIGHT - TAB_TOP_INACTIVE, "below the strip");
-    browser.pointer_moved(middle(in_panel.tab).x, middle(in_panel.tab).y, 1_000);
-    browser.pointer_pressed(&mut Recorder::new(), false, 1_000);
-    assert_eq!(browser.take_outputs(), [Output::SelectTab(in_panel.index)], "a tab in the panel is chosen");
-    // The trusted core makes it active, as asked.
-    let tabs = browser.tabs.clone();
-    browser.set_tabs(tabs, in_panel.index);
-    browser.draw(&mut Recorder::new(), 1440.0, 900.0, 1_000);
-    let chosen = browser.regions.tabs.iter().find(|region| region.index == in_panel.index).map(|region| region.tab);
-    assert_eq!(chosen.map(|tab| (tab.x0, tab.x1)), Some((in_panel.tab.x0, in_panel.tab.x1)), "it stays under the pointer");
-    assert_eq!(chosen.map(|tab| tab.y1), Some(in_panel.tab.y1), "in its row of the panel");
-    browser.pointer_released();
-    browser.pointer_moved(700.0, 600.0, 1_100);
-    assert!(!browser.tab_strip.open, "leaving closes the panel");
-    browser.draw(&mut Recorder::new(), 1440.0, 900.0, 1_100);
-    assert!(browser.regions.tabs.iter().any(|region| region.index == in_panel.index && region.tab.y1 == STRIP_HEIGHT), "then the active tab is on the strip");
-}
-
-/// Decision 102: the open panel is raised as a dialog is: the strip and
-/// the panel one surface, a blue edge at the panel's foot, the window
-/// below dimmed. Shut, the strip is black and nothing is dimmed.
-#[test]
-fn the_open_panel_stands_out_from_the_window() {
     let mut browser = browser_with(30, 0);
-    let mut shut = Recorder::new();
-    browser.draw(&mut shut, 1440.0, 900.0, 0);
-    assert!(shut.dims.is_empty(), "nothing dimmed while shut");
-    assert!(shut.fills.iter().any(|&(rect, colour)| colour == BLACK && rect.y0 == 0.0 && rect.y1 == STRIP_HEIGHT), "the strip black");
-    rest_on_the_tabs(&mut browser, 0);
-    let mut open = Recorder::new();
-    browser.draw(&mut open, 1440.0, 900.0, 1_000);
-    let panel = browser.tab_strip.panel;
-    assert!(open.fills.iter().any(|&(rect, colour)| colour == RAISED && rect.y0 == 0.0 && rect.y1 == STRIP_HEIGHT), "the strip raised");
-    assert!(open.fills.iter().any(|&(rect, colour)| colour == RAISED && rect == panel), "the panel the same surface");
-    assert!(
-        open.fills.iter().any(|&(rect, colour)| colour == SELECTED && rect == Rect::new(0.0, panel.y1 - PANEL_EDGE, 1440.0, panel.y1)),
-        "a blue edge at its foot"
-    );
-    assert!(open.dims.contains(&(Rect::new(0.0, panel.y1, 1440.0, 900.0), PANEL_DIM)), "the window below dimmed: {:?}", open.dims);
+    let fitting = browser.regions.tabs.len();
+    assert!(fitting < 30 && browser.tab_strip.count != Rect::ZERO, "a count of the rest");
+    let tabs = browser.tabs.clone();
+    browser.set_tabs(tabs, 25);
+    browser.draw(&mut Recorder::new(), 1440.0, 900.0, 1_000);
+    assert!(browser.filmstrip.strip.moving(1_050), "the strip slides");
+    browser.draw(&mut Recorder::new(), 1440.0, 900.0, 5_000);
+    let active = browser.regions.tabs.iter().find(|region| region.index == 25).expect("the active tab is shown");
+    assert!((active.tab.width() - TAB_WIDTH).abs() < 1e-9, "whole: {:?}", active.tab);
+    let mut canvas = Recorder::new();
+    browser.draw(&mut canvas, 1440.0, 900.0, 5_000);
+    assert!(canvas.texts.iter().any(|(_, text)| *text == format!("+{}", 30 - fitting)), "the count of those not shown");
 }
 
 /// Decision 102: a tab has one width however many there are; tabs that
@@ -109,46 +70,6 @@ fn tabs_keep_one_width() {
     }
     assert!(browser_with(5, 0).tab_strip.count == Rect::ZERO, "five fit this window");
     assert!(browser_with(6, 0).tab_strip.count != Rect::ZERO, "a sixth overflows");
-}
-
-/// Decision 102: a pointer crossing the strip to the toolbar does not
-/// open the panel, so the address field under it can be clicked; one
-/// resting on the tabs does. Before, the panel opened at once, lay over
-/// the toolbar, and took the field's click as a tab's.
-#[test]
-fn a_pointer_crossing_the_strip_does_not_open_the_panel() {
-    let mut browser = browser_with(30, 0);
-    let field = browser.regions.field;
-    browser.pointer_moved(field.x0 + 20.0, 20.0, 0);
-    browser.pointer_moved(field.x0 + 20.0, f64::midpoint(field.y0, field.y1), 100);
-    browser.settle(1_000);
-    assert!(!browser.tab_strip.open, "crossed, not rested");
-    browser.draw(&mut Recorder::new(), 1440.0, 900.0, 1_000);
-    browser.pointer_pressed(&mut Recorder::new(), false, 1_000);
-    assert!(browser.editing, "the field takes the click");
-    assert_eq!(browser.take_outputs(), [Output::TextInput(true)], "the field's text input, no tab chosen");
-}
-
-/// The count opens the panel at once, for a pad or a touch screen, and
-/// shuts it; shut so, it stays shut until the pointer leaves the strip.
-/// Before, a second press did nothing.
-#[test]
-fn the_count_opens_and_shuts_the_panel() {
-    let mut browser = browser_with(30, 0);
-    let count = browser.tab_strip.count;
-    browser.pointer_moved(middle(count).x, middle(count).y, 0);
-    browser.pointer_pressed(&mut Recorder::new(), false, 0);
-    browser.pointer_released();
-    assert!(browser.tab_strip.open, "open at once");
-    browser.draw(&mut Recorder::new(), 1440.0, 900.0, 0);
-    browser.pointer_pressed(&mut Recorder::new(), false, 10);
-    browser.pointer_released();
-    assert!(!browser.tab_strip.open, "shut");
-    browser.settle(10_000);
-    assert!(!browser.tab_strip.open, "and stays shut while the pointer rests there");
-    browser.pointer_moved(700.0, 600.0, 10_000);
-    rest_on_the_tabs(&mut browser, 11_000);
-    assert!(browser.tab_strip.open, "back on the tabs, it opens again");
 }
 
 /// A tab dragged along the strip asks to move there; one barely moved

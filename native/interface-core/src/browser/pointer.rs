@@ -89,7 +89,7 @@ impl Browser {
         if self.over_subpage_divider() || self.over_console_grabber() {
             return Cursor::ResizeRow;
         }
-        if self.subpages.hovered.is_some() {
+        if self.subpages.hovered.is_some() || self.over_filmstrip_picture() {
             return Cursor::Hand;
         }
         #[cfg(feature = "links")]
@@ -152,6 +152,11 @@ impl Browser {
     /// page each notch is one page (`Wall::wheel_notch`); elsewhere it
     /// scrolls by lines.
     pub fn wheel_lines(&mut self, lines: f64, now: u64) -> bool {
+        // Over the open filmstrip a notch slides it by a picture
+        // (REQ-6640 item 6).
+        if self.filmstrip_wheel_lines(lines, now) {
+            return true;
+        }
         if self.tips_scroll(lines * LINE_HEIGHT) {
             return true;
         }
@@ -245,6 +250,7 @@ impl Browser {
             return true;
         }
         self.over_menu(point)
+            || self.over_filmstrip()
             || self.over_tab_list(point)
             || self.over_suggestions(point)
             || self.over_star(point)
@@ -257,6 +263,9 @@ impl Browser {
 
     /// Scrolls whatever is under the pointer.
     pub fn scroll_by(&mut self, distance: f64, now: u64) -> bool {
+        if self.filmstrip_wheel(distance, now) {
+            return true;
+        }
         if self.tips_scroll(distance) {
             return true;
         }

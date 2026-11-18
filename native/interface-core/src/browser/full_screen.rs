@@ -381,11 +381,14 @@ impl Browser {
         }
         #[cfg(feature = "interaction")]
         self.draw_full_screen_badge(canvas, area, page);
+        // A tab left in full screen keeps its still too (REQ-6640 item 3).
+        self.take_stills(canvas);
         if strip {
             self.draw_toolbar(canvas, width);
             self.draw_bar(canvas, crate::browser::toolbar::TOOLBAR_TOP + crate::browser::toolbar::TOOLBAR_HEIGHT, width);
-            self.draw_tab_strip(canvas, width);
-            self.draw_tab_overflow(canvas, width, height);
+            self.draw_tab_strip(canvas, width, now);
+            self.draw_filmstrip(canvas, width, now);
+            self.draw_tab_drag(canvas);
         }
         self.full_screen.exit = Rect::ZERO;
         if self.full_screen.exit_shown {
