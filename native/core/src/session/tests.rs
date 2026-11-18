@@ -25,6 +25,28 @@ fn a_tab_stays_muted_on_its_next_channel_and_mute_all_reaches_every_tab() {
     assert!(session.tab_infos().iter().all(|tab| !tab.muted));
 }
 
+// REQ-6641: a tab is titled by the name its channel gave, cleaned and
+// cut to a title, and by its host when the channel gave none, gave a blank
+// one, or has not said it yet; a new channel in the tab starts unnamed.
+#[test]
+fn a_tab_is_titled_by_its_channels_name_else_its_host() {
+    let mut session = Session::new(Bookmarks::default());
+    session.open("https://app.neottx.com/demosite/").unwrap();
+    assert_eq!(session.tab_infos()[0].title, "app.neottx.com", "not yet named");
+    assert!(session.tabs[0].channel.set_name("NeoTeletext demo site"));
+    assert_eq!(session.tab_infos()[0].title, "NeoTeletext demo site");
+    assert!(!session.tabs[0].channel.set_name("NeoTeletext demo site"), "the same name changes nothing");
+    session.tabs[0].channel.set_name("De\u{202E}mo\u{200B} ");
+    assert_eq!(session.tab_infos()[0].title, "Demo", "reordering and hidden characters removed, spaces trimmed");
+    session.tabs[0].channel.set_name(&"x".repeat(MAX_TAB_TITLE * 2));
+    assert_eq!(session.tab_infos()[0].title.len(), MAX_TAB_TITLE, "cut to a title");
+    session.tabs[0].channel.set_name(" \u{200B} ");
+    assert_eq!(session.tab_infos()[0].title, "app.neottx.com", "a blank name is none");
+    session.tabs[0].channel.set_name("ReGIS test");
+    session.navigate("https://app.neottx.com/regis/", true).unwrap();
+    assert_eq!(session.tab_infos()[0].title, "app.neottx.com", "another channel is unnamed until it says");
+}
+
 // REQ-714, DEC-1527: two tabs on one channel are two channels here, each
 // with its own number and so its own fetcher, connection and decoder, and
 // going to another address leaves the other tab's untouched.

@@ -11,16 +11,16 @@ use std::time::Duration;
 pub use interface_core::browser::CertificateProblem;
 
 use crate::subpages::SubPageRows;
-use crate::{Fields, MAX_ADDRESS, MAX_PAGE_TITLE, MAX_PAYLOAD, ProtocolError, push_count, push_raw_text, raw_text, read_frame, write_frame};
+use crate::{Fields, MAX_ADDRESS, MAX_PAGE_TITLE, MAX_PAYLOAD, MAX_TAB_TITLE, ProtocolError, push_count, push_raw_text, raw_text, read_frame, write_frame};
 use interface_core::channel::page_index;
 #[cfg(feature = "links")]
 use kinds::KIND_LINKS;
 use kinds::{
-    KIND_BUNDLE_SETTLED, KIND_CERTIFICATE_REFUSED, KIND_CHANNEL_LOG, KIND_CONFINED, KIND_CONNECTING, KIND_CONTENTS, KIND_DENIED, KIND_EXCHANGE,
-    KIND_FETCH_CONTENTS, KIND_FETCH_PAGE, KIND_FETCH_SUBPAGE, KIND_FETCH_SUBPAGES, KIND_INITIAL_PAGE, KIND_INVALID_PACKETS, KIND_NO_CONTENTS, KIND_NOTICE,
-    KIND_PAGE, KIND_PAGE_REDIRECT, KIND_PROGRAM_REDIRECT, KIND_PROXY_FAILED, KIND_PUSHING, KIND_REDIRECTED, KIND_REFRESH, KIND_REFUSED, KIND_REGION,
-    KIND_STATE_ANSWER, KIND_STATE_CHALLENGED, KIND_STATE_END_RECEIVED, KIND_STATE_KEEP_OFFERED, KIND_STATE_SEND_NONE, KIND_STATE_SEND_OFFER, KIND_SUBPAGES,
-    KIND_SUBPAGES_FAILED, KIND_SUBPAGES_MISSING, KIND_TIMED_OUT,
+    KIND_BUNDLE_SETTLED, KIND_CERTIFICATE_REFUSED, KIND_CHANNEL_LOG, KIND_CHANNEL_NAME, KIND_CONFINED, KIND_CONNECTING, KIND_CONTENTS, KIND_DENIED,
+    KIND_EXCHANGE, KIND_FETCH_CONTENTS, KIND_FETCH_PAGE, KIND_FETCH_SUBPAGE, KIND_FETCH_SUBPAGES, KIND_INITIAL_PAGE, KIND_INVALID_PACKETS, KIND_NO_CONTENTS,
+    KIND_NOTICE, KIND_PAGE, KIND_PAGE_REDIRECT, KIND_PROGRAM_REDIRECT, KIND_PROXY_FAILED, KIND_PUSHING, KIND_REDIRECTED, KIND_REFRESH, KIND_REFUSED,
+    KIND_REGION, KIND_STATE_ANSWER, KIND_STATE_CHALLENGED, KIND_STATE_END_RECEIVED, KIND_STATE_KEEP_OFFERED, KIND_STATE_SEND_NONE, KIND_STATE_SEND_OFFER,
+    KIND_SUBPAGES, KIND_SUBPAGES_FAILED, KIND_SUBPAGES_MISSING, KIND_TIMED_OUT,
 };
 #[cfg(feature = "interaction")]
 use kinds::{KIND_INPUT, KIND_MEASURE_ROUND_TRIP, KIND_ROUND_TRIP, KIND_SEND};
@@ -352,6 +352,11 @@ pub enum FromFetcher {
     /// The character set region a channel's descriptor gives, or none: the
     /// group of a page that names no group (the engine's REQ-WEB-002).
     Region(Option<u8>),
+    /// The `name` the channel's `channel.ttx` gives (the engine's
+    /// `Descriptor::name`), not yet cleaned, at most [`MAX_TAB_TITLE`]
+    /// bytes: the tab's title (REQ-6641). None is sent for a channel with
+    /// no `channel.ttx`, which gave no name.
+    ChannelName(String),
     /// The push WebSocket's round trip, from a ping to its pong (the
     /// engine's `Event::RoundTrip`, `RETURN-CHANNEL.md` REQ-RCH-016), while
     /// [`ToFetcher::MeasureRoundTrip`] is on. Untrusted: the strip shows
@@ -571,6 +576,10 @@ fn push_live_message(payload: &mut Vec<u8>, message: &FromFetcher) -> Result<u8,
             crate::decoder::push_region(payload, *region)?;
             KIND_REGION
         }
+        FromFetcher::ChannelName(name) => {
+            push_raw_text(payload, name, MAX_TAB_TITLE);
+            KIND_CHANNEL_NAME
+        }
         FromFetcher::Redirected(address) => {
             push_raw_text(payload, address, MAX_ADDRESS);
             KIND_REDIRECTED
@@ -614,6 +623,7 @@ fn read_live_message(kind: u8, fields: &mut Fields<'_>) -> Result<FromFetcher, P
             FromFetcher::InitialPage(page)
         }
         KIND_REGION => FromFetcher::Region(crate::decoder::read_region(fields)?),
+        KIND_CHANNEL_NAME => FromFetcher::ChannelName(raw_text(fields, MAX_TAB_TITLE, "name too long")?),
         KIND_REDIRECTED => FromFetcher::Redirected(raw_text(fields, MAX_ADDRESS, "address too long")?),
         KIND_PAGE_REDIRECT => {
             let (page, sub) = (fields.u16()?, fields.u16()?);
@@ -817,6 +827,7 @@ pub fn write_to_core(out: &mut dyn Write, message: &FromFetcher) -> Result<(), P
         | FromFetcher::Connecting(_)
         | FromFetcher::InitialPage(_)
         | FromFetcher::Region(_)
+        | FromFetcher::ChannelName(_)
         | FromFetcher::Redirected(_)
         | FromFetcher::PageRedirect { .. }
         | FromFetcher::ProgramRedirect(_)
@@ -916,6 +927,7 @@ pub fn read_from_fetcher(input: &mut dyn Read) -> Result<Option<FromFetcher>, Pr
         | KIND_CONNECTING
         | KIND_INITIAL_PAGE
         | KIND_REGION
+        | KIND_CHANNEL_NAME
         | KIND_REDIRECTED
         | KIND_PAGE_REDIRECT
         | KIND_PROGRAM_REDIRECT

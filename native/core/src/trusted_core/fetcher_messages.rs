@@ -117,6 +117,7 @@ impl Core {
             FromFetcher::InvalidPackets { total } => self.invalid_packets(channel, total),
             FromFetcher::InitialPage(page) => self.initial_page(channel, page)?,
             FromFetcher::Region(region) => self.tell(channel, ToDecoder::Region(region)),
+            FromFetcher::ChannelName(name) => self.channel_named(channel, &name)?,
             FromFetcher::Connecting(connecting) => self.connecting(channel, connecting)?,
             FromFetcher::SubPagesMissing { page, part } => {
                 let changed = self.channel_subpages(channel).and_then(|subpages| subpages.missing(page, part));
@@ -160,6 +161,16 @@ impl Core {
             return Ok(());
         };
         self.deliver_typing(sends)
+    }
+
+    /// `channel` said its name, which titles its tab (REQ-6641): its
+    /// window's tabs are told again when that changed the title.
+    fn channel_named(&mut self, channel: u32, name: &str) -> Result<(), String> {
+        let Some(tab) = self.session.all_tabs_mut().find(|tab| tab.channel.id == channel) else { return Ok(()) };
+        if !tab.channel.set_name(name) {
+            return Ok(());
+        }
+        self.in_window_of(channel, Self::send_tabs)
     }
 
     /// `channel` gave its initial page: a tab at its bare address arrives
@@ -740,6 +751,22 @@ mod tests {
         test.core.intent(protocol::ToCore::Opened(Some(PageKey { channel, page: 0x200 }))).unwrap();
         test.core.intent(protocol::ToCore::Visible(vec![PageKey { channel, page: 0x300 }])).unwrap();
         assert_eq!(test.core.controls.told_fetchers, []);
+    }
+
+    /// REQ-6641: the name a channel's fetcher says titles its tab, and the
+    /// window's tabs are told again; the same name again tells nothing.
+    #[test]
+    fn a_channels_name_titles_its_tab() {
+        let mut test = Test::new("named");
+        let channel = static_tab(&mut test, 0x100);
+        let _ = test.sent();
+        test.core.fetched(channel, FromFetcher::ChannelName("NeoTeletext demo site".into())).unwrap();
+        let titled = |sent: &[ToInterface]| {
+            sent.iter().any(|message| matches!(message, ToInterface::Tabs { tabs, .. } if tabs.iter().any(|tab| tab.title == "NeoTeletext demo site")))
+        };
+        assert!(titled(&test.sent()), "the tabs are told again with the name");
+        test.core.fetched(channel, FromFetcher::ChannelName("NeoTeletext demo site".into())).unwrap();
+        assert!(!titled(&test.sent()), "nothing changed, nothing told");
     }
 
     /// REQ-704: a declared `refresh` asks again for the page on screen at

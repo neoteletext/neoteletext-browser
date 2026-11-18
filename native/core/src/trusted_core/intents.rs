@@ -83,7 +83,7 @@ impl Core {
     }
 
     /// The tabs again, after a change of mute, and the mutes themselves.
-    fn send_tabs(&mut self) -> Result<(), String> {
+    pub(super) fn send_tabs(&mut self) -> Result<(), String> {
         let tabs = self.session.tab_infos();
         let active = self.session.active;
         self.send(&ToInterface::Tabs { tabs, active })?;

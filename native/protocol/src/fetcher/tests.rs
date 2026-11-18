@@ -14,6 +14,8 @@ fn every_kind_round_trips() {
         FromFetcher::Page { origin: Origin::FetchedPage, bytes: b"PN,10000\\n".to_vec() },
         FromFetcher::Page { origin: Origin::FetchedPackets, bytes: vec![0; 84] },
         FromFetcher::Notice("Opened".into()),
+        FromFetcher::ChannelName("NeoTeletext demo site".into()),
+        FromFetcher::ChannelName(String::new()),
         FromFetcher::Denied { status: 404, place: "302/0002".into() },
         FromFetcher::Denied { status: 503, place: String::new() },
         FromFetcher::Redirected("https://b.example/teletext/".into()),
@@ -375,4 +377,23 @@ fn bare_input_is_refused_for_the_fetcher() {
     assert!(write_to_fetcher(&mut Vec::new(), &ToFetcher::Send { bytes: bare_key, move_of: None, more: false }).is_err());
     assert!(write_to_fetcher(&mut Vec::new(), &ToFetcher::Send { bytes: bare_move.clone(), move_of: None, more: false }).is_err());
     assert!(write_to_fetcher(&mut Vec::new(), &ToFetcher::Send { bytes: bare_move, move_of: Some(0), more: false }).is_err());
+}
+
+/// REQ-6641: a channel's name is carried raw, at most `MAX_TAB_TITLE`
+/// bytes; a longer one is cut on the way out and refused on the way in.
+#[test]
+fn a_channel_name_is_bounded() {
+    let mut bytes = Vec::new();
+    write_to_core(&mut bytes, &FromFetcher::ChannelName("é".repeat(MAX_TAB_TITLE))).unwrap();
+    let Some(FromFetcher::ChannelName(name)) = read_from_fetcher(&mut bytes.as_slice()).unwrap() else { panic!("a name") };
+    assert!(name.len() <= MAX_TAB_TITLE && name.chars().all(|character| character == 'é'), "cut on a character boundary");
+    let mut payload = u16::try_from(MAX_TAB_TITLE + 1).unwrap().to_be_bytes().to_vec();
+    payload.extend(core::iter::repeat_n(b'a', MAX_TAB_TITLE + 1));
+    let mut hostile = Vec::new();
+    write_to_core(&mut hostile, &FromFetcher::ChannelName(String::new())).unwrap();
+    let header = hostile.len() - 2;
+    hostile.truncate(header - 4);
+    hostile.extend_from_slice(&u32::try_from(payload.len()).unwrap().to_be_bytes());
+    hostile.extend_from_slice(&payload);
+    assert!(read_from_fetcher(&mut hostile.as_slice()).is_err(), "a longer name is refused");
 }

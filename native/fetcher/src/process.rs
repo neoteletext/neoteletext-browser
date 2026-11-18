@@ -37,6 +37,8 @@ use crate::transport::Tcp;
 const _: () = assert!(protocol::fetcher::MAX_DENIED_PLACE == neoteletext_web::records::denied::MAX_PLACE, "the engine's longest place");
 const _: () = assert!(protocol::fetcher::MIN_REFRESH_SECONDS == neoteletext_web::descriptor::MIN_REFRESH_SECONDS, "the engine's shortest refresh");
 const _: () = assert!(protocol::fetcher::MAX_REFRESH_SECONDS == neoteletext_web::descriptor::MAX_REFRESH_SECONDS, "the engine's longest refresh");
+// A channel's name is carried whole as the tab's title (REQ-6641).
+const _: () = assert!(neoteletext_web::consts::MAX_SERVICE_NAME <= protocol::MAX_TAB_TITLE, "the engine's longest service name");
 
 /// The fetcher's standard output, or a test's pipe in its place, shared by
 /// its loop and its viewer state.
@@ -150,7 +152,13 @@ enum Action {
         origin: Origin,
         bytes: Vec<u8>,
     },
-    Ready(u16, Option<u8>),
+    /// The channel is open: its first page, its region, and the name its
+    /// `channel.ttx` gives (REQ-6641).
+    Ready(u16, Option<u8>, String),
+    /// The channel has no `channel.ttx`: the engine names it by its host
+    /// and folder, which is no name the channel gave, so none is sent
+    /// (REQ-6641 item 2).
+    Unnamed,
     Contents(Vec<u8>),
     /// A part of a page's list of sub-pages, as fetched.
     SubPages(PageAddress, PartNumber, Vec<u8>),
@@ -335,7 +343,8 @@ fn collect(output: Output<'_>, actions: &mut Vec<Action>) {
     }
     actions.push(match output {
         Output::Timer { at } => Action::Timer(at),
-        Output::Event(Event::ServiceReady { initial_page, region, .. }) => Action::Ready(initial_page.mpp(), region),
+        Output::Event(Event::ServiceReady { name, initial_page, region, .. }) => Action::Ready(initial_page.mpp(), region, name.to_owned()),
+        Output::Event(Event::ChannelDefaults) => Action::Unnamed,
         Output::Event(Event::Contents(bytes)) => Action::Contents(bytes.to_vec()),
         Output::Event(Event::ContentsMissing) => Action::Tell(FromFetcher::NoContents),
         // A page current, or a sub-page's file not there or failed, changes
@@ -599,6 +608,8 @@ fn run_with(
     });
 
     let mut actions = Vec::new();
+    // The channel has no `channel.ttx`, so its name is not its own.
+    let mut unnamed = false;
     agent.handle(clock(), Input::OpenChannel(channel), &mut |out| collect(out, &mut actions));
     loop {
         let mut busy = !actions.is_empty();
@@ -609,8 +620,9 @@ fn run_with(
                 Action::Close(connection) => pump.execute(NetOutput::Close(connection)),
                 Action::Timer(at) => next_tick = Some(next_tick.map_or(at, |current| current.min(at))),
                 Action::Bytes { origin, bytes } => pass_bytes(&output, &mut queries, origin, bytes)?,
-                Action::Ready(page, region) => {
-                    service_ready(&agent, &output, page, region)?;
+                Action::Unnamed => unnamed = true,
+                Action::Ready(page, region, name) => {
+                    service_ready(&agent, &output, page, region, (!unnamed).then_some(name))?;
                     bundle_pending = agent.descriptor().is_some_and(|descriptor| descriptor.push().is_none());
                     ask_for_channel(&mut agent, &clock, &mut actions);
                 }
@@ -756,11 +768,16 @@ fn poll_sockets(pump: &mut Pump<Tcp>, buffer: &mut [u8], agent: &mut Agent<'_>, 
     busy
 }
 
-/// Tells the trusted core what the open channel's descriptor says.
-fn service_ready(agent: &Agent<'_>, output: &CorePipe, page: u16, region: Option<u8>) -> Result<(), String> {
+/// Tells the trusted core what the open channel's descriptor says, with
+/// the name it gives when it is the channel's own.
+fn service_ready(agent: &Agent<'_>, output: &CorePipe, page: u16, region: Option<u8>, name: Option<String>) -> Result<(), String> {
     // Before any page, so that none is read in another group.
     send(output, &FromFetcher::Region(region))?;
     send(output, &FromFetcher::InitialPage(page))?;
+    // The tab's title (REQ-6641); none for a channel without its own.
+    if let Some(name) = name {
+        send(output, &FromFetcher::ChannelName(name))?;
+    }
     // The descriptor's links, for the trusted core to decide
     // (`hyperlinks.md` section 6.4).
     #[cfg(feature = "links")]
@@ -1170,7 +1187,16 @@ mod tests {
         let mut actions = Vec::new();
         let initial_page = PageAddress::from_mpp(0x100).unwrap();
         collect(Output::Event(Event::ServiceReady { name: "Test", initial_page, region: Some(6), secure: true }), &mut actions);
-        assert!(matches!(actions[..], [Action::Ready(0x100, Some(6))]));
+        assert!(matches!(&actions[..], [Action::Ready(0x100, Some(6), name)] if name == "Test"));
+    }
+
+    /// REQ-6641 item 2: a channel with no `channel.ttx` gave no name of its
+    /// own, so the engine's name for it, its host and folder, is not sent.
+    #[test]
+    fn a_channel_without_its_settings_file_is_unnamed() {
+        let mut actions = Vec::new();
+        collect(Output::Event(Event::ChannelDefaults), &mut actions);
+        assert!(matches!(actions[..], [Action::Unnamed]));
     }
 
     /// Opens the channel `http://tt.example/tt/`, which takes

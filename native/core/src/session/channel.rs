@@ -65,6 +65,10 @@ pub enum Files {
 pub struct ChannelState {
     pub id: u32,
     pub title: String,
+    /// The name its `channel.ttx` gives, cleaned and cut, none until the
+    /// fetcher says it or when the channel gave none: the tab's title
+    /// (REQ-6641).
+    pub name: Option<String>,
     /// Section names by hundred, from the contents file.
     pub banks: Vec<String>,
     /// Each page's title, by page index: from the contents file, or else
@@ -182,6 +186,7 @@ impl ChannelState {
         Self {
             id,
             title: clean(&address.host, MAX_TITLE),
+            name: None,
             banks: vec![String::new(); BANKS],
             titles: vec![None; PAGES],
             loaded: vec![false; PAGES],
@@ -205,6 +210,17 @@ impl ChannelState {
             failed: None,
             helper_broke: None,
         }
+    }
+
+    /// The channel said the name its `channel.ttx` gives: untrusted text,
+    /// cleaned and cut to a tab's title, and none when nothing is left of
+    /// it (REQ-6641 items 2 and 3). Returns whether the title changed.
+    pub fn set_name(&mut self, name: &str) -> bool {
+        let cleaned = clean(name, protocol::MAX_TAB_TITLE);
+        let name = Some(cleaned.trim()).filter(|name| !name.is_empty()).map(str::to_owned);
+        let changed = name != self.name;
+        self.name = name;
+        changed
     }
 
     /// Another page is selected: its count of input starts afresh, and it
