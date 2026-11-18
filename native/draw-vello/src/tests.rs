@@ -791,8 +791,9 @@ fn the_key_and_meter_parts_are_taken_and_drawn_in_their_own_boxes() {
             painter.set_regis(FRONT, &palette, part, &vec![ink; usize::from(width) * 227 / 2]).unwrap();
             number += 1;
         }
-        // The cost line above the picture shows what the repaint cost, as
-        // the interface tells it with every picture (DEC-6335 item 4).
+        // The interface is told what the repaint cost with every picture
+        // (DEC-6335 item 4); it goes to the Stats tab, not over the page
+        // (renderer parity PAR-31), so it costs no repaint.
         browser.set_regis(FRONT, number, 52_706 + u64::try_from(frame % 7).unwrap() * 6_436, PictureLanguage::Regis);
         let between = Instant::now();
         // As the interface draws a frame: the scene, its damage drawn, and
@@ -804,7 +805,7 @@ fn the_key_and_meter_parts_are_taken_and_drawn_in_their_own_boxes() {
         drawn.push(between.elapsed());
         let damage = damage.boxes();
         taken.push(between - started);
-        assert_eq!(damage.len(), 3, "a box for each part and one for the cost line: {damage:?}");
+        assert_eq!(damage.len(), 2, "a box for each part, and none for the cost, drawn nowhere on the page: {damage:?}");
     }
     taken.sort_unstable();
     drawn.sort_unstable();
