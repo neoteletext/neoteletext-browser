@@ -68,6 +68,7 @@ fn kind_of(message: &ToCore) -> u8 {
         ToCore::TabToWindow { .. } => KIND_TAB_TO_WINDOW,
         ToCore::CloseWindow => KIND_CLOSE_WINDOW,
         ToCore::Drawn => KIND_DRAWN,
+        ToCore::FramePhase(_) => super::kinds::KIND_FRAME_PHASE,
         ToCore::InstallUpdate => KIND_INSTALL_UPDATE,
         ToCore::ChangeSetting(_) => KIND_CHANGE_SETTING,
         ToCore::Console(_) => KIND_CONSOLE,
@@ -145,6 +146,7 @@ fn push_fields(payload: &mut Vec<u8>, message: &ToCore) -> Result<(), ProtocolEr
         ToCore::NewWindow { private } => payload.push(u8::from(*private)),
         ToCore::TabToWindow { tab, window, index } => push_tab_to_window(payload, *tab, *window, *index)?,
         ToCore::CloseWindow | ToCore::Drawn | ToCore::InstallUpdate => {}
+        ToCore::FramePhase(phase) => crate::rules::push_frame_phase(payload, *phase)?,
         ToCore::ChangeSetting(change) => settings::push_change(payload, change)?,
         ToCore::Console(open) => payload.push(u8::from(*open)),
         ToCore::Recording(request) => payload.push(crate::console::request_byte(*request)),
@@ -350,6 +352,7 @@ pub fn read_from_interface(input: &mut dyn Read) -> Result<Option<ToCore>, Proto
         KIND_ASK_SUBPAGE_ROWS => read_ask_subpage_rows(&mut fields)?,
         KIND_FROM | KIND_NEW_WINDOW | KIND_TAB_TO_WINDOW | KIND_CLOSE_WINDOW => window_intent(kind, &mut fields)?,
         KIND_DRAWN | KIND_INSTALL_UPDATE => update_intent(kind),
+        super::kinds::KIND_FRAME_PHASE => ToCore::FramePhase(crate::rules::read_frame_phase(&mut fields)?),
         KIND_CHANGE_SETTING => ToCore::ChangeSetting(settings::read_change(&mut fields)?),
         KIND_CONSOLE => ToCore::Console(fields.flag("flag")?),
         super::kinds::KIND_RECORDING => ToCore::Recording(crate::console::read_request(&mut fields)?),

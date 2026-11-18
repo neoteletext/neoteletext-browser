@@ -27,6 +27,17 @@ pub const LOCAL_OVERRUN_BUFFERS: u32 = 8;
 /// The audio channels of a view, as a count of voices.
 pub(super) const VOICES: usize = CHANNELS as usize;
 
+/// The timed test's word from the audio thread (RULE-66): a note began
+/// and its first sample that is not silence has been rendered, to be
+/// marked as its buffer is handed to the device.
+#[cfg(feature = "timed-test")]
+pub(super) static NOTE_SOUNDED: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
+/// A MIDI note-on's status, its channel in the low four bits.
+#[cfg(feature = "timed-test")]
+const NOTE_ON: u8 = 0x90;
+#[cfg(feature = "timed-test")]
+const STATUS_KIND: u8 = 0xF0;
+
 /// One MIDI channel voice message of a rule: its status and two data bytes.
 type Midi = (u8, u8, u8);
 
@@ -49,6 +60,10 @@ pub(super) struct LocalVoice {
     /// It was stopped, or replaced on its audio channel: its notes ring
     /// out, and it is no longer an open local sound (RULE-97).
     pub(super) ended: bool,
+    /// A note-on was applied and its first sample that is not silence is
+    /// still to come (RULE-66).
+    #[cfg(feature = "timed-test")]
+    awaiting_note: bool,
 }
 
 /// The sound's banks, as its instrument reads them: no allocation.
@@ -77,6 +92,8 @@ impl LocalVoice {
             dropped: 0,
             release: false,
             ended: false,
+            #[cfg(feature = "timed-test")]
+            awaiting_note: false,
         });
         let Self { instrument, banks, .. } = &mut *voice;
         instrument.start_with(&banks_of(banks), &start.setup);
@@ -107,9 +124,15 @@ impl LocalVoice {
     fn render(&mut self, block: &mut [i16]) {
         let Self { instrument, banks, queue, queue_head, queue_length, release, .. } = self;
         let banks = banks_of(banks);
+        #[cfg(feature = "timed-test")]
+        let mut note_began = false;
         while *queue_length != 0 {
             if let Some(&(status, data1, data2)) = queue.get(*queue_head) {
                 instrument.channel_message(status, data1, data2, &banks);
+                #[cfg(feature = "timed-test")]
+                {
+                    note_began |= status & STATUS_KIND == NOTE_ON && data2 != 0;
+                }
             }
             *queue_head = queue_head.saturating_add(1).checked_rem(LOCAL_MIDI_QUEUE).unwrap_or(0);
             *queue_length = queue_length.saturating_sub(1);
@@ -118,6 +141,14 @@ impl LocalVoice {
             instrument.release_all();
         }
         instrument.render(block);
+        #[cfg(feature = "timed-test")]
+        {
+            self.awaiting_note |= note_began;
+            if self.awaiting_note && block.iter().any(|sample| *sample != 0) {
+                self.awaiting_note = false;
+                NOTE_SOUNDED.store(true, core::sync::atomic::Ordering::Relaxed);
+            }
+        }
     }
 
     /// One metered value of the instrument (RULE-31, RULE-33).

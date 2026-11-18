@@ -26,6 +26,10 @@ interaction = ["protocol/interaction", "interface-core/interaction", "dep:neotel
 # every desktop and phone. Off, as a microcontroller receiver would be, a
 # tile is drawn only from what was selected since the wall last changed.
 page-cache = []
+# The timed test's marks and its settings "events held for the tick" and
+# "the tick left unlocked" (page-rules.md RULE-66), only in the build
+# `scripts/timed-test.sh` makes.
+timed-test = ["protocol/timed-test"]
 
 [dependencies]
 confine.workspace = true

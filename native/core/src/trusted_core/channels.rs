@@ -103,6 +103,9 @@ impl Core {
                 }
                 self.rules_decoder_gone(*id);
                 self.decoders.insert(*id, decoder);
+                // And the interface's frames, to paint and tick just
+                // before a composition (page-rules.md RULE-98 item 2).
+                self.tell_frame_phase(*id);
                 self.rewind_source(*id);
                 started = true;
             } else if !awake && self.decoders.contains_key(id) {

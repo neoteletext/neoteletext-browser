@@ -480,6 +480,7 @@ impl Held {
             reports: counters.reports,
             late_ticks: self.late_ticks,
             longest_tick_us: self.longest_tick_us,
+            late_frames: 0,
             variables: *self.evaluator.variables(),
         }
     }

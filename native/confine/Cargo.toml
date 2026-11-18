@@ -12,6 +12,10 @@ publish.workspace = true
 # tests only (finding F-98): turned on as a dev-dependency's feature, so
 # no shipped program holds it.
 test-support = []
+# The timed test's settings variable passed to the interface, the decoder
+# and the sound helper (page-rules.md RULE-66), only in the build
+# `scripts/timed-test.sh` makes.
+timed-test = []
 
 # Linux (decision 52): Landlock's and seccomp's system calls through the
 # crates the engine's own `neottx` sandbox uses (its decision E.33). Both

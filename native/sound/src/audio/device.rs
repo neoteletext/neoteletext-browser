@@ -178,6 +178,16 @@ where
                 let started = std::time::Instant::now();
                 let loudest = render(&mixers, data, channels, &mut scratch);
                 peak.fetch_max(loudest, Ordering::Relaxed);
+                // RULE-66: the first sample of a note that is not silence
+                // is handed to the device as this returns; and the size the
+                // device fills, which RULE-64's bound follows.
+                #[cfg(feature = "timed-test")]
+                {
+                    let frames = data.len().checked_div(channels).unwrap_or(0);
+                    if super::local::NOTE_SOUNDED.swap(false, Ordering::Relaxed) {
+                        protocol::timed_test::mark("sound", "sample", std::time::Instant::now(), format_args!("{frames}"));
+                    }
+                }
                 // RULE-97 item 3: a buffer that took longer to fill than
                 // its own time is an overrun, told without waiting.
                 let frames = u128::try_from(data.len().checked_div(channels).unwrap_or(0)).unwrap_or(u128::MAX);

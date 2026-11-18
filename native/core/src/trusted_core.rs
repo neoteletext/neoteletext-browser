@@ -9,6 +9,7 @@ mod channels;
 mod console;
 mod decoder_messages;
 mod fetcher_messages;
+mod frame_phase;
 #[cfg(test)]
 mod hostile_tests;
 mod intents;
@@ -212,6 +213,10 @@ struct Core {
     watching: BTreeMap<u32, (protocol::rules::PageSub, usize)>,
     /// What each tab's page costs the machine (REQ-6626).
     page_cost: page_cost::PageCost,
+    /// The interface's frames (page-rules.md RULE-98): the display's
+    /// refresh period, one composition and when the interface told it, on
+    /// this process's clock.
+    frame_phase: Option<frame_phase::Compositions>,
     /// The tiles of the wall being selected in turn (REQ-1559).
     #[cfg(feature = "interaction")]
     wall_fill: wall_fill::WallFill,
@@ -371,6 +376,7 @@ impl Core {
             #[cfg(feature = "interaction")]
             watching: BTreeMap::new(),
             page_cost: page_cost::PageCost::default(),
+            frame_phase: None,
             #[cfg(feature = "interaction")]
             wall_fill: wall_fill::WallFill::default(),
             #[cfg(feature = "interaction")]

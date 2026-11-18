@@ -219,9 +219,9 @@ pub struct Engine {
     /// What the rule table produced outside the loop's own calls for it,
     /// for the trusted core at the next.
     rule_out: Vec<protocol::decoder::FromDecoder>,
-    /// The interface's frames, for the presentation clock's lock
-    /// (page-rules.md RULE-98), and when they were told.
-    frame_phase: Option<(protocol::rules::FramePhase, u64)>,
+    /// The presentation clock locked to the interface's frames, and the
+    /// paint points (page-rules.md RULE-98, RULE-65).
+    lock: crate::frame_lock::FrameLock,
     /// The time a test holds the clock at.
     #[cfg(test)]
     fixed_now_us: Option<u64>,
@@ -300,7 +300,7 @@ impl Engine {
             cache: RefCell::new(PageCache::default()),
             rules: crate::rules::host::Rules::default(),
             rule_out: Vec::new(),
-            frame_phase: None,
+            lock: crate::frame_lock::FrameLock::default(),
             #[cfg(test)]
             fixed_now_us: None,
             heard: crate::voice_sink::Heard::default(),
@@ -380,15 +380,58 @@ impl Engine {
         true
     }
 
-    /// Microseconds since the engine started, on the clock it renders flash
-    /// and keeps sounds by.
+    /// Microseconds on the presentation clock, which every tick, flash and
+    /// animation step is counted on and sounds are kept by: the engine's
+    /// own clock as [`crate::frame_lock::FrameLock`] moves it toward the
+    /// interface's frames (page-rules.md RULE-98).
     #[must_use]
     pub fn now_us(&self) -> u64 {
+        self.lock.presentation_us(self.real_us())
+    }
+
+    /// Microseconds since the engine started, unmoved.
+    #[must_use]
+    pub fn real_us(&self) -> u64 {
         #[cfg(test)]
         if let Some(now) = self.fixed_now_us {
             return now;
         }
         u64::try_from(self.started.elapsed().as_micros()).unwrap_or(u64::MAX)
+    }
+
+    /// The timed test's own setting (page-rules.md RULE-66): the tick left
+    /// unlocked, with the paint points at the ticks.
+    pub fn leave_unlocked(&mut self) {
+        self.lock = crate::frame_lock::FrameLock::unlocked();
+    }
+
+    /// RULE-98 item 3: moves the presentation clock toward the interface's
+    /// frames before the loop waits for the next tick, once a tick.
+    pub fn slew_clock(&mut self) {
+        let real = self.real_us();
+        self.lock.slew(real);
+    }
+
+    /// RULE-65: whether the decoder may paint now, at a paint point or,
+    /// with no `FramePhase` in force, at once.
+    #[must_use]
+    pub fn paint_due(&self) -> bool {
+        self.lock.paint_due(self.real_us())
+    }
+
+    /// The next paint point on the presentation clock, which a repaint
+    /// owed waits for; `None` with no `FramePhase` in force.
+    #[must_use]
+    pub fn next_paint_us(&self) -> Option<u64> {
+        self.lock.next_paint_us(self.real_us())
+    }
+
+    /// The decoder painted, from `began_real_us` on the engine's own clock
+    /// to now: its paint point is spent, and a frame finished after its
+    /// composition is counted (RULE-98 item 5).
+    pub fn painted(&mut self, began_real_us: u64) {
+        let finished = self.real_us();
+        self.lock.painted(began_real_us, finished);
     }
 
     /// Holds the engine's clock at `now_us`, for a test that scripts time.

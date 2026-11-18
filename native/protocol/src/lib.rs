@@ -46,6 +46,8 @@ pub mod settings;
 pub mod sound;
 pub mod subpages;
 mod text;
+#[cfg(feature = "timed-test")]
+pub mod timed_test;
 pub mod viewer_state;
 
 pub use bounds::*;

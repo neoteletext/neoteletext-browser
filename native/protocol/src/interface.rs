@@ -327,6 +327,10 @@ pub enum ToCore {
     /// The window drew its first frame: a part of the version's health
     /// (`installation-and-updates.md` section 3.2).
     Drawn,
+    /// The display's refresh period and the time to the interface's next
+    /// composition (page-rules.md RULE-98 item 1): the trusted core passes
+    /// it to each decoder, which paints and ticks just before it.
+    FramePhase(crate::rules::FramePhase),
     /// Strip input: install the version the settings panel offers
     /// (section 3.4).
     InstallUpdate,

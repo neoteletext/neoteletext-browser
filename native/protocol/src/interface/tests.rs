@@ -289,6 +289,11 @@ fn every_intent_round_trips() {
         ToCore::PageControl(interface_core::controls::PageControl::SubPageOf { channel: 9, page: 0x210, subcode: 3 }),
         ToCore::SubPageRows { channel: 9, page: 0x210, range: crate::subpages::SubPageRange { first: 8_000, count: 64 }, request: 0xFFFF },
         ToCore::Drawn,
+        ToCore::FramePhase(crate::rules::FramePhase { period_us: crate::rules::LEAST_REFRESH_MICROSECONDS, next_in_us: 0 }),
+        ToCore::FramePhase(crate::rules::FramePhase {
+            period_us: crate::rules::MOST_REFRESH_MICROSECONDS,
+            next_in_us: crate::rules::MOST_REFRESH_MICROSECONDS - 1,
+        }),
         ToCore::InstallUpdate,
         ToCore::ChangeSetting(settings::SettingChange::Volume(40)),
         ToCore::Console(true),

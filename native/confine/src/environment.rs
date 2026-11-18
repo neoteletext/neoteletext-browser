@@ -81,6 +81,10 @@ const ENVIRONMENT_UPDATER: &[&str] = &["HOME", "NEOTELETEXT_FAULT"];
 #[cfg(not(debug_assertions))]
 const ENVIRONMENT_UPDATER: &[&str] = &["HOME"];
 
+/// The timed test's settings variable (the protocol crate's
+/// `timed_test::SETTINGS_VARIABLE`, which this crate does not depend on).
+const TIMED_TEST_SETTINGS: &str = "NEOTELETEXT_TIMED_TEST";
+
 /// The environment a process of `role` is given, taken from this
 /// process's: only what it needs, nothing else.
 #[must_use]
@@ -94,6 +98,11 @@ pub fn environment(role: Role) -> Vec<(OsString, OsString)> {
     };
     let debug: &[&str] = if role == Role::Interface { ENVIRONMENT_WINDOW_DEBUG } else { &[] };
     let mut names: Vec<&str> = ENVIRONMENT_NEEDED.iter().chain(extra).chain(debug).copied().collect();
+    // The timed test's settings (page-rules.md RULE-66), only in its own
+    // build: what the shipped browser is given is unchanged.
+    if cfg!(feature = "timed-test") && matches!(role, Role::Interface | Role::Decoder | Role::Sound) {
+        names.push(TIMED_TEST_SETTINGS);
+    }
     names.sort_unstable();
     names.dedup();
     names.into_iter().filter_map(|name| std::env::var_os(name).map(|value| (OsString::from(name), value))).collect()

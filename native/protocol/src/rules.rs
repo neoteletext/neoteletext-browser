@@ -242,33 +242,75 @@ pub const PHASE_LOCKED_MICROSECONDS: u64 = 200;
 pub const PHASE_STALE_MILLISECONDS: u64 = 1_000;
 
 /// The interface's frames (RULE-98 item 1): its display's refresh period
-/// and the time of its next composition, on the machine's monotonic clock
-/// that every process of the browser reads the same.
+/// and how long it is until its next composition.
+///
+/// RULE-98 gives the composition as a time on "the machine's monotonic
+/// clock, which every process of the browser reads the same"; the standard
+/// library reads that clock only as an opaque `Instant`, and no system
+/// call library is taken for it (DEC-6659 item 12). So the phase travels
+/// relative: each sender measures, on its own monotonic clock at the
+/// moment it writes the message, the time until the next composition, and
+/// each receiver adds it to its own clock's reading at the moment it reads
+/// the message. The time the message spends in the pipe is the error,
+/// measured by the timed test (RULE-66).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct FramePhase {
     /// The refresh period, [`LEAST_REFRESH_MICROSECONDS`] to
     /// [`MOST_REFRESH_MICROSECONDS`].
     pub period_us: u32,
-    /// The next composition, in microseconds of the monotonic clock.
-    pub next_us: u64,
+    /// Microseconds from the message's writing to the next composition,
+    /// less than `period_us`.
+    pub next_in_us: u32,
 }
 
-pub(crate) fn push_frame_phase(payload: &mut Vec<u8>, phase: FramePhase) -> Result<(), ProtocolError> {
+impl FramePhase {
+    /// The phase of compositions every `period_us` microseconds, one of
+    /// them at `composition_us`, as told at `now_us` (both on the sender's
+    /// clock): the time to the first composition not before `now_us`.
+    /// `None` for a period out of bounds.
+    #[must_use]
+    pub fn at(period_us: u32, composition_us: u64, now_us: u64) -> Option<Self> {
+        if !(LEAST_REFRESH_MICROSECONDS..=MOST_REFRESH_MICROSECONDS).contains(&period_us) {
+            return None;
+        }
+        let period = u64::from(period_us);
+        let next_in = match composition_us.checked_sub(now_us) {
+            Some(ahead) => ahead.checked_rem(period)?,
+            // A composition in the past: the next one after now.
+            None => period.checked_sub(now_us.checked_sub(composition_us)?.checked_rem(period)?)?.checked_rem(period)?,
+        };
+        Some(Self { period_us, next_in_us: u32::try_from(next_in).ok()? })
+    }
+
+    /// The time of the next composition on the receiver's clock, which
+    /// read `received_us` as it read the message.
+    #[must_use]
+    pub const fn composition_after(self, received_us: u64) -> u64 {
+        received_us.saturating_add(self.next_in_us as u64)
+    }
+}
+
+fn check_frame_phase(phase: FramePhase) -> Result<(), ProtocolError> {
     if !(LEAST_REFRESH_MICROSECONDS..=MOST_REFRESH_MICROSECONDS).contains(&phase.period_us) {
         return Err(ProtocolError::BadValue("refresh period"));
     }
+    if phase.next_in_us >= phase.period_us {
+        return Err(ProtocolError::BadValue("time to the next composition"));
+    }
+    Ok(())
+}
+
+pub(crate) fn push_frame_phase(payload: &mut Vec<u8>, phase: FramePhase) -> Result<(), ProtocolError> {
+    check_frame_phase(phase)?;
     payload.extend_from_slice(&phase.period_us.to_be_bytes());
-    payload.extend_from_slice(&phase.next_us.to_be_bytes());
+    payload.extend_from_slice(&phase.next_in_us.to_be_bytes());
     Ok(())
 }
 
 pub(crate) fn read_frame_phase(fields: &mut Fields<'_>) -> Result<FramePhase, ProtocolError> {
-    let period_us = fields.u32()?;
-    let next_us = u64::from_be_bytes(fields.array()?);
-    if !(LEAST_REFRESH_MICROSECONDS..=MOST_REFRESH_MICROSECONDS).contains(&period_us) {
-        return Err(ProtocolError::BadValue("refresh period"));
-    }
-    Ok(FramePhase { period_us, next_us })
+    let phase = FramePhase { period_us: fields.u32()?, next_in_us: fields.u32()? };
+    check_frame_phase(phase)?;
+    Ok(phase)
 }
 
 /// A page as the rule table knows it: a page number and a sub-code
@@ -406,6 +448,9 @@ pub struct RuleCounters {
     pub late_ticks: u32,
     /// The longest tick's evaluation, in microseconds.
     pub longest_tick_us: u32,
+    /// Ticks and paint points whose frame was finished after the
+    /// composition it was meant for (RULE-98 item 5).
+    pub late_frames: u32,
     /// The sixteen variables, `v0` first.
     pub variables: [i32; VARIABLES],
 }
@@ -608,7 +653,7 @@ pub(crate) fn push_query(payload: &mut Vec<u8>, page: PageSub, identifier: u32) 
 
 /// The unsigned figures of [`RuleCounters`] on the pipe, in the order
 /// [`push_counters`] writes them, before the variables.
-const COUNTER_FIGURES: usize = 14;
+const COUNTER_FIGURES: usize = 15;
 
 pub(crate) fn push_counters(payload: &mut Vec<u8>, counters: &RuleCounters) -> Result<(), ProtocolError> {
     push_page_sub(payload, counters.page)?;
@@ -627,6 +672,7 @@ pub(crate) fn push_counters(payload: &mut Vec<u8>, counters: &RuleCounters) -> R
         counters.reports,
         counters.late_ticks,
         counters.longest_tick_us,
+        counters.late_frames,
     ] {
         payload.extend_from_slice(&figure.to_be_bytes());
     }
@@ -657,6 +703,7 @@ pub(crate) fn read_counters(fields: &mut Fields<'_>) -> Result<RuleCounters, Pro
         reports,
         late_ticks,
         longest_tick_us,
+        late_frames,
     ] = figures;
     let mut variables = [0_i32; VARIABLES];
     for variable in &mut variables {
@@ -678,6 +725,7 @@ pub(crate) fn read_counters(fields: &mut Fields<'_>) -> Result<RuleCounters, Pro
         reports,
         late_ticks,
         longest_tick_us,
+        late_frames,
         variables,
     })
 }
@@ -742,15 +790,22 @@ mod tests {
         for message in [
             ToDecoder::ConnectionEnded,
             ToDecoder::CueHeard { audio_channel: 3, number: neoteletext_rules::limits::MAX_CUE },
-            ToDecoder::FramePhase(FramePhase { period_us: LEAST_REFRESH_MICROSECONDS, next_us: u64::MAX }),
-            ToDecoder::FramePhase(FramePhase { period_us: MOST_REFRESH_MICROSECONDS, next_us: 0 }),
+            ToDecoder::FramePhase(FramePhase { period_us: LEAST_REFRESH_MICROSECONDS, next_in_us: LEAST_REFRESH_MICROSECONDS - 1 }),
+            ToDecoder::FramePhase(FramePhase { period_us: MOST_REFRESH_MICROSECONDS, next_in_us: 0 }),
         ] {
             assert_eq!(to_decoder(&message).unwrap(), Some(message));
         }
         assert!(to_decoder(&ToDecoder::CueHeard { audio_channel: 4, number: 0 }).is_err());
         assert!(to_decoder(&ToDecoder::CueHeard { audio_channel: 0, number: 128 }).is_err());
-        assert!(to_decoder(&ToDecoder::FramePhase(FramePhase { period_us: LEAST_REFRESH_MICROSECONDS - 1, next_us: 0 })).is_err());
-        assert!(to_decoder(&ToDecoder::FramePhase(FramePhase { period_us: MOST_REFRESH_MICROSECONDS + 1, next_us: 0 })).is_err());
+        assert!(to_decoder(&ToDecoder::FramePhase(FramePhase { period_us: LEAST_REFRESH_MICROSECONDS - 1, next_in_us: 0 })).is_err());
+        assert!(to_decoder(&ToDecoder::FramePhase(FramePhase { period_us: MOST_REFRESH_MICROSECONDS + 1, next_in_us: 0 })).is_err());
+        assert!(to_decoder(&ToDecoder::FramePhase(FramePhase { period_us: 16_667, next_in_us: 16_667 })).is_err(), "the next composition is within one period");
+        // RULE-98: a phase told relative to the sender's clock.
+        assert_eq!(FramePhase::at(16_667, 1_000_000, 990_000), Some(FramePhase { period_us: 16_667, next_in_us: 10_000 }));
+        assert_eq!(FramePhase::at(16_667, 1_000_000, 1_020_000), Some(FramePhase { period_us: 16_667, next_in_us: 13_334 }));
+        assert_eq!(FramePhase::at(16_667, 1_000_000, 1_000_000 + 2 * 16_667), Some(FramePhase { period_us: 16_667, next_in_us: 0 }));
+        assert_eq!(FramePhase::at(1_000, 0, 0), None);
+        assert_eq!(FramePhase { period_us: 16_667, next_in_us: 500 }.composition_after(2_000), 2_500);
 
         let full = RulesOpen {
             page: PageSub::new(0x101, 1),
@@ -793,6 +848,7 @@ mod tests {
             reports: 12,
             late_ticks: 13,
             longest_tick_us: u32::MAX,
+            late_frames: 7,
             variables: [i32::MIN; VARIABLES],
         });
         assert_eq!(from_decoder(&counters).unwrap(), Some(counters));

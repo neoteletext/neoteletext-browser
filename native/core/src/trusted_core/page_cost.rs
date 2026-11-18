@@ -99,6 +99,7 @@ impl Cost {
             stat("  page", format!("{:03X}/{:04X}", now.page.page, now.page.sub)),
             stat("  ticks run", both(now.ticks, before.ticks)),
             stat("  ticks late", format!("{}, the longest {} µs", now.late_ticks, now.longest_tick_us)),
+            stat("  frames late", now.late_frames.to_string()),
             stat("  rules fired", both(now.fired, before.fired)),
             stat("  groups run", both(now.groups, before.groups)),
             stat("  commands applied", both(now.commands, before.commands)),

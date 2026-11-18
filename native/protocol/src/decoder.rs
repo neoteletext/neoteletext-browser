@@ -175,8 +175,8 @@ pub enum ToDecoder {
         number: u8,
     },
     /// The interface's frames (RULE-98 item 2): its refresh period and the
-    /// time of its next composition on the machine's monotonic clock, for
-    /// the decoder to lock its presentation clock to.
+    /// time from this message's writing to its next composition, for the
+    /// decoder to lock its presentation clock and its paint points to.
     FramePhase(crate::rules::FramePhase),
     /// The viewer's setting "Paint drawings gradually" (animation.md
     /// ANIM-15, DEC-6525 item 27): on, a ReGIS drawing with a paint rate

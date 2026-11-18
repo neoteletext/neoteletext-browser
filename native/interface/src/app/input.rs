@@ -199,6 +199,11 @@ impl App {
             }
             #[cfg(feature = "interaction")]
             WindowEvent::KeyboardInput { ref event, .. } if self.view.browser.typing_target().is_some() && !self.browser_modifier() => {
+                // RULE-66: when the interface read the key.
+                #[cfg(feature = "timed-test")]
+                if event.state == ElementState::Pressed && !event.repeat {
+                    protocol::timed_test::mark("interface", "key", std::time::Instant::now(), format_args!("{:?}", event.physical_key));
+                }
                 // Escape is the channel's too, and held it leaves full screen (REQ-6362 item 1).
                 let held = event.logical_key == Key::Named(NamedKey::Escape) && self.view.browser.full_screen_escape(event.state == ElementState::Pressed, now);
                 self.channel_key(event_loop, event) || held

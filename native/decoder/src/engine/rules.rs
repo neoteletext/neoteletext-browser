@@ -160,9 +160,12 @@ impl Engine {
         self.rule_out.extend(produced);
     }
 
-    /// The interface's frames (RULE-98 item 2), kept with when they came.
+    /// The interface's frames (RULE-98 item 2), read now on the engine's
+    /// own clock: the message's time to the next composition is from its
+    /// writing, and its time in the pipe the error (DEC-6659 item 12).
     fn frame_phase(&mut self, phase: protocol::rules::FramePhase) {
-        self.frame_phase = Some((phase, self.now_us()));
+        let real = self.real_us();
+        self.lock.told(phase, real);
     }
 
     /// When the open page's next tick is due, on [`Engine::now_us`]'s
@@ -189,6 +192,14 @@ impl Engine {
         let mut produced = core::mem::take(&mut self.rule_out);
         produced.extend(with_parts!(self, page, |rules, parts| rules.run(now_us, &mut parts)));
         produced.extend(self.after_rules());
+        // The frames finished late are the lock's, told with the table's
+        // counters (RULE-98 item 5, RULE-72).
+        let late_frames = self.lock.late_frames();
+        for message in &mut produced {
+            if let FromDecoder::RuleCounters(counters) = message {
+                counters.late_frames = late_frames;
+            }
+        }
         produced
     }
 

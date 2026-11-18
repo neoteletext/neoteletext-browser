@@ -32,6 +32,8 @@ mod outputs;
 mod pace;
 #[cfg(feature = "phone-keyboard")]
 mod phone;
+#[cfg(feature = "timed-test")]
+mod test_display;
 #[cfg(feature = "interaction")]
 mod typing;
 mod windows;
@@ -207,6 +209,9 @@ pub struct App {
     /// The system clipboard, opened when first used and then held: on
     /// Linux, what was copied is served only while it is open.
     clipboard: Option<arboard::Clipboard>,
+    /// The timed test's display, composing at 60 hertz (RULE-66).
+    #[cfg(feature = "timed-test")]
+    test_display: test_display::TestDisplay,
 }
 
 impl App {
@@ -235,6 +240,8 @@ impl App {
             resumed: false,
             heard: Heard::Nothing,
             clipboard: None,
+            #[cfg(feature = "timed-test")]
+            test_display: test_display::TestDisplay::new(),
         }
     }
 
@@ -382,6 +389,11 @@ impl ApplicationHandler<Incoming> for App {
         }
         self.switch_view(here);
         if let Some(at) = self.follow_file_drag(event_loop) {
+            next = Some(next.map_or(at, |next| next.min(at)));
+        }
+        #[cfg(feature = "timed-test")]
+        {
+            let at = self.compose_test_display(event_loop);
             next = Some(next.map_or(at, |next| next.min(at)));
         }
         event_loop.set_control_flow(next.map_or(ControlFlow::Wait, ControlFlow::WaitUntil));

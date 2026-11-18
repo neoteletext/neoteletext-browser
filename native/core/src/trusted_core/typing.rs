@@ -154,6 +154,11 @@ impl Core {
                 // instruments kept, while it is paused.
                 Send::RulesPage { channel, page } => {
                     self.tell(channel, protocol::decoder::ToDecoder::RulesPage(page));
+                    // A page opening is told the interface's frames again,
+                    // for its tick 0 (RULE-98 item 2).
+                    if page.is_some() {
+                        self.tell_frame_phase(channel);
+                    }
                     self.tell_sound(&protocol::sound::ToSound::Audio { channel, audio: protocol::audio::Audio::Pause(page.is_none()) });
                 }
                 Send::ConnectionEnded { channel } => self.tell(channel, protocol::decoder::ToDecoder::ConnectionEnded),

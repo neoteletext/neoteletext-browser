@@ -16,6 +16,9 @@ links = ["protocol/links", "interface-core/links", "dep:web-opener", "decoder/li
 interaction = ["protocol/interaction", "interface-core/interaction", "dep:unicode-normalization"]
 # The phone keyboard (`interaction.md` section 9): its process, its panel.
 phone-keyboard = ["interaction", "protocol/phone-keyboard", "interface-core/phone-keyboard"]
+# The timed test's settings variable passed to the helpers it times
+# (page-rules.md RULE-66), only in the build `scripts/timed-test.sh` makes.
+timed-test = ["confine/timed-test", "protocol/timed-test"]
 
 [dependencies]
 confine.workspace = true

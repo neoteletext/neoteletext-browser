@@ -132,6 +132,9 @@ pub(crate) const KIND_PICTURE_STATUS: u8 = 149;
 // of those other work in flight on 18 November 2026 may take next.
 pub(crate) const KIND_KNOWN_VIEW: u8 = 176;
 pub(crate) const KIND_KNOWN: u8 = 177;
+// The interface's frames (page-rules.md RULE-98 item 1), in the number
+// RULE-98 kept for it beside the decoder's 189 to 191.
+pub(crate) const KIND_FRAME_PHASE: u8 = 192;
 
 // The strip's flags.
 pub(crate) const ENCRYPTED: u8 = 1;

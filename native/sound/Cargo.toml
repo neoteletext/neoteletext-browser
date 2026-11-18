@@ -15,6 +15,12 @@ path = "src/lib.rs"
 name = "neoteletext-sound"
 path = "src/main.rs"
 
+[features]
+# The timed test's marks and its setting "the device buffer left at 480
+# frames" (page-rules.md RULE-66), only in the build
+# `scripts/timed-test.sh` makes.
+timed-test = ["protocol/timed-test", "confine/timed-test"]
+
 [dependencies]
 confine.workspace = true
 protocol.workspace = true

@@ -18,6 +18,10 @@ interaction = ["interface-core/interaction"]
 # The phone keyboard (`interaction.md` section 9), which types as the
 # interface's own keyboard does.
 phone-keyboard = ["interaction", "interface-core/phone-keyboard"]
+# The timed test's own instruments and settings (page-rules.md RULE-66):
+# only the build `scripts/timed-test.sh` makes has them; no shipped build
+# and no page can reach them.
+timed-test = []
 
 [dependencies]
 # The input protocol's limits, and viewer state's algorithm, lifetime and

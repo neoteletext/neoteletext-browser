@@ -87,6 +87,10 @@ pub fn run() -> Result<(), String> {
     // policy of when it is small.
     let (offered, rate_hz) = speaker.offered();
     let small = audio::buffer::small(offered, rate_hz);
+    // The timed test's setting "the device buffer left at 480 frames", for
+    // its figures before RULE-97 (RULE-66).
+    #[cfg(feature = "timed-test")]
+    let small = small.filter(|_| !protocol::timed_test::setting(protocol::timed_test::USUAL_DEVICE_BUFFER));
     let mut policy = audio::buffer::Policy::new(small.is_some());
     let mut open_locals = 0_usize;
     loop {

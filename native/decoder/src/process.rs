@@ -137,6 +137,9 @@ pub fn run(store_pages: usize) -> Result<(), ProtocolError> {
     write_to_core(&mut output, &FromDecoder::Confined)?;
     output.flush()?;
     let mut engine = Engine::with_store(store_pages);
+    // The timed test's settings, for its figures before DEC-6580 (RULE-66).
+    #[cfg(feature = "timed-test")]
+    let mut held = timed::Held::new(&mut engine);
     write_to_core(&mut output, &FromDecoder::AudioReceiver(audio_receiver(engine.audio_limits())))?;
     let mut showing: Vec<u16> = Vec::new();
     // The clock the pages on screen were last drawn with.
@@ -156,9 +159,18 @@ pub fn run(store_pages: usize) -> Result<(), ProtocolError> {
     // and with none of these, until a message (decision 47).
     let incoming = read_messages();
 
+    // The paint point painted at in the last wake, and when on the
+    // engine's own clock the painting began (RULE-98 item 5).
+    let mut painting: Option<u64> = None;
     loop {
         // What the last message or deadline produced goes before waiting.
         output.flush()?;
+        if let Some(began) = painting.take() {
+            engine.painted(began);
+        }
+        // RULE-98 item 3: the clock moves toward the interface's frames
+        // before the loop waits for the next tick.
+        engine.slew_clock();
         let now = engine.now_us();
         let deadline = next_deadline(&mut engine, &flashing, &showing, &sent, now);
         let received = match wait(&incoming, deadline, now) {
@@ -166,19 +178,33 @@ pub fn run(store_pages: usize) -> Result<(), ProtocolError> {
             Woken::Deadline => None,
             Woken::Ended => return Ok(()),
         };
+        #[cfg(feature = "timed-test")]
+        let received = held.hold(&engine, received);
         let received = take_rule_message(&mut engine, received, &mut output)?;
         let now = engine.now_us();
         tick(&mut engine, now, &mut output)?;
-        // The animation of the pages on screen, after the rules ran
-        // (animation.md ANIM-22, page-rules.md RULE-65).
-        let animated = animate(&mut engine, &showing, now, &mut output)?;
-        draw(&engine, &animated, now, &mut sent, &mut spare, &mut flashing, &mut output)?;
+        #[cfg(feature = "timed-test")]
+        held.release(&mut engine, now, &mut output)?;
+        // RULE-65: what changed the picture is painted at the next paint
+        // point, just before one of the interface's compositions, so that
+        // every change before it costs one repaint; with no `FramePhase`
+        // in force, at once.
+        let paint = engine.paint_due();
+        if paint {
+            painting = Some(engine.real_us());
+            // The animation of the pages on screen, after the rules ran
+            // (animation.md ANIM-22, page-rules.md RULE-65).
+            let animated = animate(&mut engine, &showing, now, &mut output)?;
+            draw(&engine, &animated, now, &mut sent, &mut spare, &mut flashing, &mut output)?;
+        }
         let Some(message) = received else {
             // A deadline: the sounds' clock, and the flashing pages whose
             // phase has changed.
             send_sounds(&mut engine, &mut output)?;
             draw(&engine, &flashing.due(now, engine.config()), now, &mut sent, &mut spare, &mut flashing, &mut output)?;
-            draw_regis(&mut engine, &showing, &sent, now, &mut output)?;
+            if paint {
+                draw_regis(&mut engine, &showing, &sent, now, &mut output)?;
+            }
             continue;
         };
         let Some(message) = message? else { return Ok(()) };
@@ -274,7 +300,9 @@ pub fn run(store_pages: usize) -> Result<(), ProtocolError> {
         report(&mut engine, &arrived, &mut output)?;
         let pages = changed_pages(&mut engine, &showing, &mut shown_clock, &mut output)?;
         draw(&engine, &pages, now, &mut sent, &mut spare, &mut flashing, &mut output)?;
-        draw_regis(&mut engine, &showing, &sent, now, &mut output)?;
+        if paint {
+            draw_regis(&mut engine, &showing, &sent, now, &mut output)?;
+        }
         say_missing(&engine, &showing, now, &mut missing, &mut output)?;
     }
 }
@@ -293,20 +321,86 @@ fn take_rule_message(engine: &mut Engine, received: Option<Received>, output: &m
     let Some(Ok(Some(message))) = received else { return Ok(received) };
     match engine.rule_message(message) {
         Ok(produced) => {
-            for message in &produced {
-                write_to_core(output, message)?;
-            }
-            output.flush()?;
+            write_rule_messages(&produced, output)?;
             Ok(None)
         }
         Err(other) => Ok(Some(Ok(Some(other)))),
     }
 }
 
+/// Writes what the rule table produced, and flushes it: a group's sound
+/// commands leave before any other work (RULE-96).
+fn write_rule_messages(produced: &[FromDecoder], output: &mut Output<'_>) -> Result<(), ProtocolError> {
+    for message in produced {
+        write_to_core(output, message)?;
+    }
+    output.flush()?;
+    // RULE-66: when the decoder wrote a local sound's MIDI message.
+    #[cfg(feature = "timed-test")]
+    for message in produced {
+        if let FromDecoder::Audio(protocol::audio::Audio::LocalMidi { status, data1, .. }) = message {
+            protocol::timed_test::mark("decoder", "local-midi", std::time::Instant::now(), format_args!("{status:02X} {data1}"));
+        }
+    }
+    Ok(())
+}
+
+/// The timed test's settings in the decoder (RULE-66), only in its own
+/// build.
+#[cfg(feature = "timed-test")]
+mod timed {
+    use super::{Engine, Output, ProtocolError, Received, ToDecoder, write_rule_messages};
+
+    /// "Events held for the tick": each input event waits for the tick
+    /// due when it arrived, and is handled only after that tick's step,
+    /// as before DEC-6580 item 1, so its sound and its picture both wait.
+    pub(super) struct Held {
+        on: bool,
+        waiting: Vec<(u64, ToDecoder)>,
+    }
+
+    impl Held {
+        /// The settings read; "the tick left unlocked" set on the engine.
+        pub(super) fn new(engine: &mut Engine) -> Self {
+            if protocol::timed_test::setting(protocol::timed_test::UNLOCKED) {
+                engine.leave_unlocked();
+            }
+            Self { on: protocol::timed_test::setting(protocol::timed_test::EVENTS_AT_THE_TICK), waiting: Vec::new() }
+        }
+
+        /// Keeps an input event for the tick, when the setting is on.
+        pub(super) fn hold(&mut self, engine: &Engine, received: Option<Received>) -> Option<Received> {
+            match received {
+                Some(Ok(Some(message @ ToDecoder::RuleInput { .. }))) if self.on => {
+                    let due = engine.rules_due_us().unwrap_or_else(|| engine.now_us());
+                    self.waiting.push((due, message));
+                    None
+                }
+                other => other,
+            }
+        }
+
+        /// Hands each kept event whose tick has run to the evaluator.
+        pub(super) fn release(&mut self, engine: &mut Engine, now_us: u64, output: &mut Output<'_>) -> Result<(), ProtocolError> {
+            while self.waiting.first().is_some_and(|(due, _)| *due <= now_us) {
+                let (_, message) = self.waiting.remove(0);
+                if let Ok(produced) = engine.rule_message(message) {
+                    write_rule_messages(&produced, output)?;
+                }
+            }
+            Ok(())
+        }
+    }
+}
+
 fn next_deadline(engine: &mut Engine, flashing: &Flashing, showing: &[u16], sent: &BTreeMap<u16, Rendered>, now: u64) -> Option<u64> {
     let audio = engine.next_audio_tick_ms().map(|ms| ms.saturating_mul(MICROSECONDS_PER_MILLISECOND));
-    let animation = engine.animation_due_us(showing, now);
-    [flashing.next_us(now, engine.config()), audio, regis_owed(engine, showing, sent, now), engine.rules_due_us(), animation].into_iter().flatten().min()
+    // A repaint owed waits for the next paint point (RULE-65).
+    let paint = engine.next_paint_us();
+    let at_paint = |due: Option<u64>| due.map(|due| paint.map_or(due, |paint| due.max(paint)));
+    let animation = at_paint(engine.animation_due_us(showing, now));
+    let regis = at_paint(regis_owed(engine, showing, sent, now));
+    [flashing.next_us(now, engine.config()), audio, regis, engine.rules_due_us(), animation].into_iter().flatten().min()
 }
 
 /// What every wake does first: the sounds' clock, then the open page's
@@ -319,11 +413,7 @@ fn tick(engine: &mut Engine, now_us: u64, output: &mut Output<'_>) -> Result<(),
     if produced.is_empty() {
         return Ok(());
     }
-    for message in &produced {
-        write_to_core(output, message)?;
-    }
-    output.flush()?;
-    Ok(())
+    write_rule_messages(&produced, output)
 }
 
 /// The pages on screen to draw again after data arrived: a shown page is
