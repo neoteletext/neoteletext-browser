@@ -438,7 +438,7 @@ impl RegisPages {
         let events = page.terminal.feed_regis(&mut page.screen, record.data);
         // A commit, or drawing outside numbered drawings, changes what the
         // sub-page shows. The other events ask for things a page does not
-        // do: a pause (no local animation) or a reply to the host.
+        // do: a v1 pause or a reply to the host.
         let committed = events.iter().any(|event| matches!(event, Event::Committed(_)));
         if committed {
             // The last writer wins (ANIM-6): what the commit wrote over is
