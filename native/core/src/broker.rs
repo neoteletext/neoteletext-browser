@@ -104,6 +104,14 @@ pub(crate) fn broker() -> Result<(), String> {
     if let Some(place) = &place {
         listen(place, &access, &openings_writer);
     }
+    // The core and the helpers inherit it too: a short slice, so that a
+    // thread a key, a sound message or a frame wakes runs at once rather
+    // than after whatever else holds its processor (RULE-64, RULE-65;
+    // DEC-6753). Without it the browser still works, only later.
+    #[cfg(target_os = "linux")]
+    if let Err(error) = confine::scheduling::ask_for_short_slices() {
+        eprintln!("neoteletext: the short scheduling slice was refused: {error}");
+    }
     // The core and the helpers inherit it: room for two pipes a helper
     // where the system starts a program with less (macOS gives 256).
     #[cfg(unix)]
