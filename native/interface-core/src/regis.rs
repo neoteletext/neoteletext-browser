@@ -9,11 +9,17 @@
 use crate::canvas::{PageKey, REGIS_HEIGHT, REGIS_WIDTH};
 use crate::geometry::{Point, Rect};
 
-/// The cursor blinks at this half period, as common terminals do.
-/// It is here, outside the typing code, because the decoder blinks the
-/// cursor drawing of a ReGIS page at the same period (REQ-6378), with or
-/// without typing compiled in.
-pub const BLINK_MILLISECONDS: u64 = 530;
+/// Half of a cursor's blink, in ticks of the presentation clock, of which
+/// there are sixty a second (neoteletext-common's `docs/animation.md`
+/// ANIM-1): 32 ticks, 533 milliseconds, about the half period common
+/// terminals blink at. It is here, outside the typing code, because the
+/// decoder blinks the cursor drawing of a ReGIS page at the same period
+/// (REQ-6378), with or without typing compiled in.
+pub const BLINK_HALF_TICKS: u32 = 32;
+/// [`BLINK_HALF_TICKS`] on the interface's clock of milliseconds.
+pub const BLINK_MILLISECONDS: u64 = neoteletext_core::consts::presentation_tick_due_us(BLINK_HALF_TICKS) / MICROSECONDS_PER_MILLISECOND;
+const MICROSECONDS_PER_MILLISECOND: u64 = 1_000;
+const _: () = assert!(BLINK_MILLISECONDS == 533);
 
 /// Where the pointer is on a page drawn in ReGIS, as the interface tells
 /// the trusted core.

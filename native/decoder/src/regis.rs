@@ -128,8 +128,9 @@ impl Page {
 }
 
 impl Page {
-    /// The half period of the cursor's blink on the decoder's clock.
-    const BLINK_US: u64 = interface_core::regis::BLINK_MILLISECONDS * MICROSECONDS_PER_MILLISECOND;
+    /// The half period of the cursor's blink on the decoder's clock: 32
+    /// ticks of the presentation clock (ANIM-1).
+    const BLINK_US: u64 = neoteletext_core::consts::presentation_tick_due_us(interface_core::regis::BLINK_HALF_TICKS);
 
     /// Whether the cursor blinks: keys go to the channel and the sub-page
     /// has a cursor drawing.
@@ -148,9 +149,11 @@ impl Page {
     fn apply_viewer(&mut self, now_us: u64) {
         let mut hidden = 0;
         if self.blinks() {
+            // The blink begins on the tick due now, so that the cursor
+            // shows and hides on ticks of the presentation clock (ANIM-1).
             let from = match self.blink_from {
                 Some(from) if !self.blink_again => from,
-                _ => now_us,
+                _ => crate::animation::due_at(crate::animation::tick_at(now_us)),
             };
             self.blink_from = Some(from);
             let halves = now_us.saturating_sub(from).checked_div(Self::BLINK_US).unwrap_or(0);
@@ -881,7 +884,7 @@ mod tests {
     #[test]
     fn the_cursor_drawing_blinks_while_keys_go_to_the_channel() {
         /// The half period, on the decoder's clock.
-        const HALF: u64 = interface_core::regis::BLINK_MILLISECONDS * MICROSECONDS_PER_MILLISECOND;
+        const HALF: u64 = Page::BLINK_US;
         let scene = "D(B1)W(I7)T'Hi'D(E)D(B2)W(I3)V[0,0][8,0]D(E)D(S1(X60,Y200),S2(X78,Y200),C)";
         let mut pages = RegisPages::default();
         pages.read(&record(0x100, 1, 0, scene.as_bytes()));
@@ -898,23 +901,29 @@ mod tests {
         assert_eq!(cursor_at(&mut pages, 0), None, "keys do not go to the channel: it does not blink");
         assert_eq!(pages.owed_us(0x100, Some(0), 0), None);
         pages.set_viewer(0x100, 0, RegisViewer { hovered: 0, pressed: 0, typing: true });
-        assert_eq!(cursor_at(&mut pages, 1000), None, "shown for the first half period, as it already is");
-        assert_eq!(pages.owed_us(0x100, Some(0), 2000), Some(1000 + HALF), "the loop wakes when it is to hide");
-        assert_eq!(cursor_at(&mut pages, 1000 + HALF), Some(0), "hidden for the second");
-        assert_eq!(cursor_at(&mut pages, 1000 + 2 * HALF), Some(3), "and shown again");
-        assert_eq!(cursor_at(&mut pages, 1000 + 3 * HALF), Some(0));
+        // Keys begin going to the channel a little after tick 3: the blink
+        // begins on that tick (ANIM-1).
+        let start = crate::animation::due_at(3);
+        assert_eq!(cursor_at(&mut pages, start + 1000), None, "shown for the first half period, as it already is");
+        assert_eq!(pages.owed_us(0x100, Some(0), start + 2000), Some(start + HALF), "the loop wakes when it is to hide, 32 ticks on");
+        assert_eq!(cursor_at(&mut pages, start + HALF), Some(0), "hidden for the second");
+        assert_eq!(cursor_at(&mut pages, start + 2 * HALF), Some(3), "and shown again");
+        assert_eq!(cursor_at(&mut pages, start + 3 * HALF), Some(0));
         // A key typed: the channel moves the cursor by a commit, and it is
-        // shown at once at its new place, for a full half period.
+        // shown at once at its new place, for a full half period from the
+        // tick the commit is drawn in.
         let moved = "D(S2(X87),C)";
         pages.read(&record(0x100, 1, u32::try_from(scene.len()).unwrap(), moved.as_bytes()));
-        let typed_at = 1000 + 3 * HALF + 5000;
+        let typed_at = start + 3 * HALF + 5000;
+        let shown_from = crate::animation::due_at(crate::animation::tick_at(typed_at));
+        assert!(shown_from <= typed_at && typed_at - shown_from < crate::animation::due_at(1));
         assert_eq!(cursor_pixel(&mut pages, typed_at, 89), Some(3));
-        assert_eq!(pages.owed_us(0x100, Some(0), typed_at), Some(typed_at + HALF));
-        assert_eq!(cursor_at(&mut pages, typed_at + HALF - 1), None, "still shown just before the half period ends");
+        assert_eq!(pages.owed_us(0x100, Some(0), typed_at), Some(shown_from + HALF));
+        assert_eq!(cursor_at(&mut pages, shown_from + HALF - 1), None, "still shown just before the half period ends");
         // Keys stop going to the channel while it is hidden: it comes back and stays.
-        assert!(cursor_at(&mut pages, typed_at + HALF).is_some());
+        assert!(cursor_at(&mut pages, shown_from + HALF).is_some());
         pages.set_viewer(0x100, 0, RegisViewer::default());
-        assert_eq!(cursor_pixel(&mut pages, typed_at + HALF + 1, 89), Some(3));
+        assert_eq!(cursor_pixel(&mut pages, shown_from + HALF + 1, 89), Some(3));
         assert_eq!(pages.owed_us(0x100, Some(0), typed_at + 5 * HALF), None);
         // A cursor drawing that does not exist blinks nothing and costs no repaint.
         pages.set_cursor(0x100, 0, 99);
