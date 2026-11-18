@@ -311,15 +311,18 @@ impl Page {
             right: cut(bounds.x.saturating_add(bounds.width)),
             bottom: cut(bounds.y.saturating_add(bounds.height)),
         });
+        // The drawing's committed attributes as the stream left them
+        // (page-rules.md RULE-26: the renderer's `committed_drawing`), under
+        // the animation state the rules gave it.
+        let committed = self.terminal.committed_drawing(number);
+        let order = state.order.or_else(|| committed.map(|committed| i8::try_from(committed.order.clamp(i32::from(i8::MIN), i32::from(i8::MAX))).unwrap_or(0)));
         Some(TargetState {
-            // The renderer says a drawing's own visibility only through
-            // its bounds: none while it is hidden or off the screen.
-            shown: state.shown.unwrap_or(bounds.is_some()),
+            shown: state.shown.or(committed.map(|committed| committed.shown)).unwrap_or(bounds.is_some()),
             cycling: state.cycle.is_some(),
             frame: state.frame,
             look: state.look,
-            layer: state.layer.unwrap_or(DEFAULT_LAYER),
-            order: state.order.unwrap_or(0),
+            layer: state.layer.or(committed.map(|committed| committed.layer)).unwrap_or(DEFAULT_LAYER),
+            order: order.unwrap_or(0),
             x,
             y,
             bounds,
