@@ -362,8 +362,8 @@ fn a_sub_page_is_a_page_of_its_own() {
     run(&mut engine, after(1));
     play_local(&mut engine);
     engine.take_sounds();
-    input(&mut engine, OPEN, 1, key(KeyAction::Press, 'a'), after(1) + 10);
-    let counted = reports(&run(&mut engine, after(2)));
+    // DEC-6635: the key's group runs as it is handled, its report with it.
+    let counted = reports(&input(&mut engine, OPEN, 1, key(KeyAction::Press, 'a'), after(1) + 10));
     assert!(matches!(counted.as_slice(), [Report { what: Reported::Value { reading: 1, .. }, .. }]), "{counted:?}");
 
     // The other sub-code is opened: the first page closes.
@@ -382,8 +382,7 @@ fn a_sub_page_is_a_page_of_its_own() {
     send_table(&mut engine, OTHER, 1, Some(&second.table));
     run(&mut engine, after(4));
     run(&mut engine, after(5));
-    input(&mut engine, OTHER, 3, key(KeyAction::Press, 'a'), after(5) + 10);
-    let counted = reports(&run(&mut engine, after(6)));
+    let counted = reports(&input(&mut engine, OTHER, 3, key(KeyAction::Press, 'a'), after(5) + 10));
     assert!(matches!(counted.as_slice(), [Report { page: OTHER, what: Reported::Value { reading: 1, .. }, .. }]), "{counted:?}");
 }
 
@@ -400,8 +399,8 @@ fn a_paused_page_keeps_its_state_and_does_nothing() {
     let (mut engine, _) = opened(&builder.table);
     let opened_now = reports(&run(&mut engine, after(1)));
     assert!(matches!(opened_now.as_slice(), [Report { rule: 1, tick: 0, .. }]), "{opened_now:?}");
-    input(&mut engine, OPEN, 1, key(KeyAction::Press, 'a'), after(1) + 10);
-    assert_eq!(reports(&run(&mut engine, after(2))).len(), 1);
+    assert_eq!(reports(&input(&mut engine, OPEN, 1, key(KeyAction::Press, 'a'), after(1) + 10)).len(), 1);
+    run(&mut engine, after(2));
     let ticks = engine.rules.counters().unwrap().ticks;
 
     let paused = set_open(&mut engine, None, after(2) + 10);
@@ -413,8 +412,8 @@ fn a_paused_page_keeps_its_state_and_does_nothing() {
 
     let resumed = set_open(&mut engine, Some(OPEN), after(200));
     assert!(matches!(told(&resumed).as_slice(), [open] if open.generation == 1 && open.interest == INTEREST_KEYS), "{resumed:?}");
-    input(&mut engine, OPEN, 3, key(KeyAction::Press, 'a'), after(200) + 10);
-    let mut seen = reports(&run(&mut engine, after(201)));
+    let mut seen = reports(&input(&mut engine, OPEN, 3, key(KeyAction::Press, 'a'), after(200) + 10));
+    seen.extend(reports(&run(&mut engine, after(201))));
     seen.extend(reports(&run(&mut engine, after(202))));
     assert!(
         matches!(seen.as_slice(), [Report { rule: 0, what: Reported::Value { reading: 2, .. }, .. }]),
@@ -492,14 +491,14 @@ fn a_heard_cue_fires_the_cue_rule() {
     run(&mut engine, after(1));
     engine.set_now_us(after(1) + 10);
     assert_eq!(engine.rule_message(ToDecoder::CueHeard { audio_channel: CHANNEL, number: 6 }).unwrap(), []);
-    engine.rule_message(ToDecoder::CueHeard { audio_channel: CHANNEL, number: 7 }).unwrap();
-    let mut seen = reports(&run(&mut engine, after(2)));
+    let mut seen = reports(&engine.rule_message(ToDecoder::CueHeard { audio_channel: CHANNEL, number: 7 }).unwrap());
+    seen.extend(reports(&run(&mut engine, after(2))));
     seen.extend(reports(&run(&mut engine, after(3))));
     assert_eq!(seen.len(), 1, "{seen:?}");
 }
 
 /// RULE-47 (REQ-6534): a state query for the open page is answered once,
-/// at the end of the next tick, at most once a second, the rest dropped
+/// as it is handled, at most once a second, the rest dropped
 /// and reported as fault 6; a query for another sub-code, or while the
 /// page is paused, gets no answer.
 #[test]
@@ -507,16 +506,14 @@ fn a_state_query_is_answered_once_a_second_for_the_open_page_only() {
     let (mut engine, _) = opened(&send_all(OPEN, false));
     run(&mut engine, after(1));
     let answers = |messages: &[FromDecoder]| messages.iter().filter(|message| matches!(message, FromDecoder::PageState { .. })).count();
-    engine.rule_message(ToDecoder::RulesQuery { page: OTHER, identifier: 1 }).unwrap();
-    assert_eq!(answers(&run(&mut engine, after(2))), 0, "another sub-code");
-    engine.rule_message(ToDecoder::RulesQuery { page: OPEN, identifier: 2 }).unwrap();
-    assert_eq!(answers(&run(&mut engine, after(3))), 1);
-    engine.rule_message(ToDecoder::RulesQuery { page: OPEN, identifier: 3 }).unwrap();
-    let dropped = run(&mut engine, after(4));
-    assert_eq!(answers(&dropped), 0, "a second within the second");
+    // DEC-6635: a query is an event, answered as it is handled.
+    let mut asked = |page, identifier| engine.rule_message(ToDecoder::RulesQuery { page, identifier }).unwrap();
+    assert_eq!(answers(&asked(OTHER, 1)), 0, "another sub-code");
+    assert_eq!(answers(&asked(OPEN, 2)), 1);
+    assert_eq!(answers(&asked(OPEN, 3)), 0, "a second within the second");
     set_open(&mut engine, None, after(5));
-    engine.rule_message(ToDecoder::RulesQuery { page: OPEN, identifier: 4 }).unwrap();
-    assert_eq!(answers(&run(&mut engine, after(200))), 0, "paused");
+    assert_eq!(answers(&engine.rule_message(ToDecoder::RulesQuery { page: OPEN, identifier: 4 }).unwrap()), 0, "paused");
+    assert_eq!(answers(&run(&mut engine, after(200))), 0);
 }
 
 /// RULE-4 (REQ-6534): a wake two hundred ticks late evaluates at most six,

@@ -36,6 +36,10 @@ use protocol::rules::Reported;
 use protocol::sound::{FromSound, ToSound, read_from_sound, read_to_sound, write_from_sound, write_to_sound};
 use sound::audio::{Mixers, TOLD_QUEUE, Told};
 
+/// The test's own setting that holds each event for the tick after it
+/// arrives, as the decoder did before DEC-6580 item 1, for the figures
+/// before (RULE-66); nothing shipped reads it.
+const EVENTS_AT_THE_TICK: &str = "NEOTELETEXT_TEST_EVENTS_AT_THE_TICK";
 /// The keys timed (RULE-66: at least 200).
 const KEYS: usize = 200;
 /// The output device: 48,000 frames a second, a buffer of 10 milliseconds.
@@ -54,10 +58,14 @@ const VOICE: u8 = 0;
 const LEVEL_RULE: u8 = 2;
 /// The level a meter's lowest segment lights at (RULE-93: −36 decibels).
 const LEVEL: i32 = 4;
-/// RULE-64: at most 34 milliseconds from the key to the first sample, and
-/// 20 or less in the median, on a device buffer of 10 milliseconds.
-const SOUND_MOST: Duration = Duration::from_millis(34);
-const SOUND_MEDIAN: Duration = Duration::from_millis(20);
+/// RULE-64: at most 17 milliseconds from the key to the first sample, and
+/// 9 or less in the median, on a device buffer of 480 frames, 10
+/// milliseconds; before DEC-6580, with the events held for the tick, 34
+/// and 20.
+const SOUND_MOST: Duration = Duration::from_millis(17);
+const SOUND_MEDIAN: Duration = Duration::from_millis(9);
+const SOUND_MOST_AT_THE_TICK: Duration = Duration::from_millis(34);
+const SOUND_MEDIAN_AT_THE_TICK: Duration = Duration::from_millis(20);
 /// RULE-65: a meter segment lights at most 45 milliseconds after the key,
 /// 30 in the median.
 const LEVEL_MOST: Duration = Duration::from_millis(45);
@@ -166,6 +174,9 @@ fn decoder(messages: &Receiver<Vec<u8>>, core: &Sender<ToCore>) {
     engine.open_page(Some(PAGE.page));
     engine.feed(&sound);
     engine.finish();
+    // RULE-66's switch for the measurement alone: events held for the tick.
+    let held_for_tick = std::env::var_os(EVENTS_AT_THE_TICK).is_some();
+    let mut held: Vec<ToDecoder> = Vec::new();
     loop {
         for audio in engine.take_sounds() {
             core.send(ToCore::Decoder(frame(&FromDecoder::Audio(audio), |out, message| write_to_core(out, message)))).unwrap();
@@ -183,15 +194,29 @@ fn decoder(messages: &Receiver<Vec<u8>>, core: &Sender<ToCore>) {
                 Err(_) => return,
             },
         };
-        // A message is taken at once, before the tick (RULE-96).
+        // A message is taken at once, before the tick (RULE-96); with the
+        // test's own switch the events are held for the next tick, as
+        // before DEC-6580 item 1 (RULE-66).
+        let tick_due = engine.rules_due_us().is_some_and(|due| due <= engine.now_us());
         if let Some(bytes) = received {
             let message = read_from_core(&mut bytes.as_slice()).unwrap().unwrap();
-            for message in engine.rule_message(message).unwrap_or_default() {
-                core.send(ToCore::Decoder(frame(&message, |out, message| write_to_core(out, message)))).unwrap();
+            if held_for_tick && matches!(message, ToDecoder::RuleInput { .. }) {
+                held.push(message);
+            } else {
+                for message in engine.rule_message(message).unwrap_or_default() {
+                    core.send(ToCore::Decoder(frame(&message, |out, message| write_to_core(out, message)))).unwrap();
+                }
             }
         }
         for message in engine.run_rules(engine.now_us()) {
             core.send(ToCore::Decoder(frame(&message, |out, message| write_to_core(out, message)))).unwrap();
+        }
+        if tick_due {
+            for message in held.drain(..) {
+                for message in engine.rule_message(message).unwrap_or_default() {
+                    core.send(ToCore::Decoder(frame(&message, |out, message| write_to_core(out, message)))).unwrap();
+                }
+            }
         }
     }
 }
@@ -374,15 +399,19 @@ fn a_key_sounds_and_lights_its_level_within_the_budgets() {
     drop(to_core);
     decoder_thread.join().unwrap();
 
+    let at_the_tick = std::env::var_os(EVENTS_AT_THE_TICK).is_some();
+    let (sound_bound, sound_median_bound) = if at_the_tick { (SOUND_MOST_AT_THE_TICK, SOUND_MEDIAN_AT_THE_TICK) } else { (SOUND_MOST, SOUND_MEDIAN) };
     let (sound_least, sound_median, sound_most, sound_greatest) = figures(&mut sounds);
     let (level_least, level_median, level_most, level_greatest) = figures(&mut levels);
     println!(
-        "rules latency over {KEYS} keys: key to the first sample handed to the device least {sound_least:?} median {sound_median:?} 19 in 20 within {sound_most:?} greatest {sound_greatest:?}; \
-         key to the level rule's report least {level_least:?} median {level_median:?} 19 in 20 within {level_most:?} greatest {level_greatest:?}"
+        "rules latency over {KEYS} keys, events {}: key to the first sample handed to the device least {sound_least:?} median {sound_median:?} 19 in 20 within {sound_most:?} greatest {sound_greatest:?}; \
+         key to the level rule's report least {level_least:?} median {level_median:?} 19 in 20 within {level_most:?} greatest {level_greatest:?}",
+        if at_the_tick { "held for the tick" } else { "handled on arrival" }
     );
-    for (what, greatest, bound) in
-        [("RULE-64's greatest from a key to its sound", sound_greatest, SOUND_MOST), ("RULE-65's greatest from a key to its level", level_greatest, LEVEL_MOST)]
-    {
+    for (what, greatest, bound) in [
+        ("RULE-64's greatest from a key to its sound", sound_greatest, sound_bound),
+        ("RULE-65's greatest from a key to its level", level_greatest, LEVEL_MOST),
+    ] {
         if greatest > bound {
             println!("rules latency: NOT MET: {what}, {bound:?}, is passed by {:?}", greatest.saturating_sub(bound));
         }
@@ -393,8 +422,8 @@ fn a_key_sounds_and_lights_its_level_within_the_budgets() {
     // adds to some keys what no part of the path added (as the timed test
     // of `latency.rs` holds its lower quartile, DEC-2348). Every greatest
     // figure is printed, and one past its bound is said.
-    assert!(sound_median <= SOUND_MEDIAN, "RULE-64: the median from a key to its sound is {sound_median:?}");
-    assert!(sound_most <= SOUND_MOST, "RULE-64: nineteen in twenty keys sound within {sound_most:?}");
+    assert!(sound_median <= sound_median_bound, "RULE-64: the median from a key to its sound is {sound_median:?}");
+    assert!(sound_most <= sound_bound, "RULE-64: nineteen in twenty keys sound within {sound_most:?}");
     assert!(level_median <= LEVEL_MEDIAN, "RULE-65: the median from a key to its level is {level_median:?}");
     // The sound helper reports after every device buffer of half a tick
     // of frames or more (DEC-6573), so RULE-65's own figure holds.

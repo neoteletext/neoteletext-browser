@@ -86,14 +86,17 @@ impl Engine {
                 Vec::new()
             }
             ToDecoder::RulesQuery { page, identifier } => {
-                self.rules.query(page, identifier, now_us);
-                Vec::new()
+                let mut produced = with_parts!(self, page, |rules, parts| rules.query(page, identifier, now_us, &mut parts));
+                produced.extend(self.after_rules());
+                produced
             }
             ToDecoder::RulesPage(page) => self.rule_page(page, now_us),
             ToDecoder::ConnectionEnded => self.connection_ended(),
             ToDecoder::CueHeard { audio_channel, number } => {
-                self.rules.cue(audio_channel, number);
-                Vec::new()
+                let at = self.rules_page();
+                let mut produced = with_parts!(self, at, |rules, parts| rules.cue(audio_channel, number, &mut parts));
+                produced.extend(self.after_rules());
+                produced
             }
             ToDecoder::FramePhase(phase) => {
                 self.frame_phase(phase);
@@ -142,7 +145,9 @@ impl Engine {
             let produced = with_parts!(self, page, |rules, parts| rules.direct_midi(page, body, &mut parts));
             self.rule_out.extend(produced);
         } else {
-            self.rules.direct(page, kind, body);
+            let mut produced = with_parts!(self, page, |rules, parts| rules.direct(page, kind, body, &mut parts));
+            produced.extend(self.after_rules());
+            self.rule_out.extend(produced);
         }
     }
 

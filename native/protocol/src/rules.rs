@@ -389,16 +389,17 @@ pub struct RuleCounters {
     pub skipped: u32,
     /// Input events dropped from a full queue.
     pub events_dropped: u32,
-    /// Runs armed.
-    pub armed: u32,
-    /// Armed runs that ran late.
-    pub armed_late: u32,
-    /// Runs not armed for a full list.
-    pub not_armed: u32,
+    /// Events handled (DEC-6635: inputs, the server's records, cues and
+    /// state queries).
+    pub events_handled: u32,
+    /// Events that waited for a later tick's budget.
+    pub events_waited: u32,
+    /// Sequence starts that came late.
+    pub starts_late: u32,
+    /// Sequence starts skipped as too far ahead.
+    pub starts_skipped: u32,
     /// Cues heard.
     pub cues: u32,
-    /// Cues dropped.
-    pub cues_dropped: u32,
     /// Reports asked for.
     pub reports: u32,
     /// Ticks whose evaluation ran late (RULE-4, fault 9).
@@ -618,11 +619,11 @@ pub(crate) fn push_counters(payload: &mut Vec<u8>, counters: &RuleCounters) -> R
         counters.commands,
         counters.skipped,
         counters.events_dropped,
-        counters.armed,
-        counters.armed_late,
-        counters.not_armed,
+        counters.events_handled,
+        counters.events_waited,
+        counters.starts_late,
+        counters.starts_skipped,
         counters.cues,
-        counters.cues_dropped,
         counters.reports,
         counters.late_ticks,
         counters.longest_tick_us,
@@ -641,8 +642,22 @@ pub(crate) fn read_counters(fields: &mut Fields<'_>) -> Result<RuleCounters, Pro
     for figure in &mut figures {
         *figure = fields.u32()?;
     }
-    let [ticks, fired, groups, commands, skipped, events_dropped, armed, armed_late, not_armed, cues, cues_dropped, reports, late_ticks, longest_tick_us] =
-        figures;
+    let [
+        ticks,
+        fired,
+        groups,
+        commands,
+        skipped,
+        events_dropped,
+        events_handled,
+        events_waited,
+        starts_late,
+        starts_skipped,
+        cues,
+        reports,
+        late_ticks,
+        longest_tick_us,
+    ] = figures;
     let mut variables = [0_i32; VARIABLES];
     for variable in &mut variables {
         *variable = fields.u32()?.cast_signed();
@@ -655,11 +670,11 @@ pub(crate) fn read_counters(fields: &mut Fields<'_>) -> Result<RuleCounters, Pro
         commands,
         skipped,
         events_dropped,
-        armed,
-        armed_late,
-        not_armed,
+        events_handled,
+        events_waited,
+        starts_late,
+        starts_skipped,
         cues,
-        cues_dropped,
         reports,
         late_ticks,
         longest_tick_us,
@@ -770,11 +785,11 @@ mod tests {
             commands: 4,
             skipped: 5,
             events_dropped: 6,
-            armed: 7,
-            armed_late: 8,
-            not_armed: 9,
-            cues: 10,
-            cues_dropped: 11,
+            events_handled: 7,
+            events_waited: 8,
+            starts_late: 9,
+            starts_skipped: 10,
+            cues: 11,
             reports: 12,
             late_ticks: 13,
             longest_tick_us: u32::MAX,

@@ -104,7 +104,9 @@ impl Cost {
             stat("  commands applied", both(now.commands, before.commands)),
             stat("  commands skipped", now.skipped.to_string()),
             stat("  events dropped", now.events_dropped.to_string()),
-            stat("  cues heard, dropped", format!("{}, {}", now.cues, now.cues_dropped)),
+            stat("  events handled, waited", format!("{}, {}", now.events_handled, now.events_waited)),
+            stat("  sequence starts late, skipped", format!("{}, {}", now.starts_late, now.starts_skipped)),
+            stat("  cues heard", now.cues.to_string()),
             stat("  reports asked for", both(now.reports, before.reports)),
             stat("  variables", now.variables.iter().map(i32::to_string).collect::<Vec<_>>().join(" ")),
         ]);

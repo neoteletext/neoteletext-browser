@@ -22,7 +22,9 @@ use neoteletext_audio::receiver::Receiver;
 use neoteletext_audio::record::{Control, Operation as ControlOperation, Record};
 use neoteletext_rules::clock::Clock;
 use neoteletext_rules::command::{self, Command, TYPE_ANIMATE, TYPE_CONTROL, TYPE_LOCAL_MIDI, TYPE_NAPLPS_OBJECTS, TYPE_SPRITES};
-use neoteletext_rules::evaluator::{Bounds, Counters, Input, InputEvent, KeyAction, KeyIdentity, PointerAction, Report, Reported, SoundState, TargetState};
+use neoteletext_rules::evaluator::{
+    Bounds, Counters, Event, Input, InputEvent, KeyAction, KeyIdentity, PointerAction, Report, Reported, SoundState, TargetState,
+};
 use neoteletext_rules::limits::{MAX_POINTER_OBJECTS, MAX_RECTS, MAX_STATE_BYTES, TICKS_PER_SECOND};
 use neoteletext_rules::state::PageState;
 use neoteletext_rules::table::{SPACE_SYNTH, Table, Target};
@@ -423,19 +425,15 @@ impl Held {
     }
 
     /// What the evaluator counted since it was last asked that is a fault:
-    /// events dropped (4), commands skipped (5), and what a full queue or
-    /// list dropped (10).
+    /// events dropped at its full queue (4), commands skipped (5), and
+    /// sequence starts too far ahead (10, as DEC-6635's revision of RULE-48
+    /// counts them with it).
     fn count_faults(&mut self) {
         let now = *self.evaluator.counters();
         let before = self.reported;
         self.fault(FAULT_EVENTS_DROPPED, now.events_dropped.saturating_sub(before.events_dropped));
         self.fault(FAULT_COMMANDS_SKIPPED, now.skipped.saturating_sub(before.skipped));
-        let full = now
-            .not_armed
-            .saturating_sub(before.not_armed)
-            .saturating_add(now.commands_dropped.saturating_sub(before.commands_dropped))
-            .saturating_add(now.cues_dropped.saturating_sub(before.cues_dropped));
-        self.fault(FAULT_QUEUE_FULL, full);
+        self.fault(FAULT_QUEUE_FULL, now.starts_skipped.saturating_sub(before.starts_skipped));
         self.reported = now;
     }
 
@@ -474,11 +472,11 @@ impl Held {
             commands: counters.commands,
             skipped: counters.skipped,
             events_dropped: counters.events_dropped,
-            armed: counters.armed,
-            armed_late: counters.armed_late,
-            not_armed: counters.not_armed,
+            events_handled: counters.events_handled,
+            events_waited: counters.events_waited,
+            starts_late: counters.starts_late,
+            starts_skipped: counters.starts_skipped,
             cues: counters.cues,
-            cues_dropped: counters.cues_dropped,
             reports: counters.reports,
             late_ticks: self.late_ticks,
             longest_tick_us: self.longest_tick_us,
@@ -764,8 +762,9 @@ impl Rules {
     }
 
     /// An input event of the viewer for the open page (RULE-52 item 1),
-    /// decided on arrival (RULE-96): its sound commands are returned at
-    /// once, for the caller to write before any other work.
+    /// handled at once (RULE-96 as DEC-6635 revises it): what it produced
+    /// is returned, a group's sound first, then its reports, for the caller
+    /// to write before any other work.
     pub(crate) fn input<const OBJECTS: usize, const RECORDS: usize>(
         &mut self,
         page: PageSub,
@@ -773,17 +772,13 @@ impl Rules {
         input: RuleInput,
         parts: &mut Parts<'_, OBJECTS, RECORDS>,
     ) -> Vec<FromDecoder> {
-        let mut urgent = Vec::new();
         let open = self.open;
-        let Self { held, out, picture, .. } = self;
-        let Some(held) = held.as_mut().filter(|held| held.page == page && !held.paused && open == Some(page) && held.start_us.is_some()) else {
-            return urgent;
+        let Some(held) = self.held.as_mut().filter(|held| held.page == page && !held.paused && open == Some(page) && held.start_us.is_some()) else {
+            return Vec::new();
         };
         let event = event(sequence, input, held, &*parts.picture);
-        let mut world = PageWorld { parts, page, generation: held.generation, hovered: held.hovered, urgent: &mut urgent, out, picture };
         // A full queue drops the event, which the evaluator counts.
-        let _ = held.evaluator.push_now(event, &mut world);
-        urgent
+        self.handle(Some(page), Event::Input(event), parts)
     }
 
     /// The newest metered report (RULE-33 item 5): taken only at the
@@ -794,24 +789,54 @@ impl Rules {
         }
     }
 
-    /// A cue the sound helper heard (RULE-109): for the open page only.
-    pub(crate) fn cue(&mut self, audio_channel: u8, number: u8) {
-        if let Some(held) = self.live() {
-            let _ = held.evaluator.push_cue(audio_channel, number);
+    /// A cue the sound helper heard (RULE-109): an event of the open page,
+    /// handled at once.
+    pub(crate) fn cue<const OBJECTS: usize, const RECORDS: usize>(
+        &mut self,
+        audio_channel: u8,
+        number: u8,
+        parts: &mut Parts<'_, OBJECTS, RECORDS>,
+    ) -> Vec<FromDecoder> {
+        self.handle(None, Event::Cue { channel: audio_channel, number }, parts)
+    }
+
+    /// Hands one event to the held page's evaluator, when it is the open
+    /// page (and `page`, when named), live and not paused: what it produced
+    /// for the trusted core, a group's sound first. `None` when it was not
+    /// handed over.
+    fn handle<const OBJECTS: usize, const RECORDS: usize>(
+        &mut self,
+        page: Option<PageSub>,
+        event: Event<'_>,
+        parts: &mut Parts<'_, OBJECTS, RECORDS>,
+    ) -> Vec<FromDecoder> {
+        let mut urgent = Vec::new();
+        let open = self.open;
+        let Self { held, out, picture, commands_dropped, .. } = self;
+        let live = held.as_mut().filter(|held| !held.paused && open == Some(held.page) && held.start_us.is_some() && page.is_none_or(|page| page == held.page));
+        match live {
+            Some(held) => {
+                let mut world = PageWorld { parts, page: held.page, generation: held.generation, hovered: held.hovered, urgent: &mut urgent, out, picture };
+                let _ = held.evaluator.handle(event, &mut world);
+                urgent.append(out);
+            }
+            None => *commands_dropped = commands_dropped.saturating_add(1),
         }
+        urgent
     }
 
     /// A command record the server sent directly (RULE-114: `VARIABLE`,
-    /// `TIMER`, `REPORT`, `RUN`, `SEQUENCE`): given to the open page's
-    /// evaluator, or dropped and counted for a page with no table or not
-    /// open (RULE-50).
-    pub(crate) fn direct(&mut self, page: PageSub, kind: u8, body: &[u8]) {
-        match self.live().filter(|held| held.page == page) {
-            Some(held) => {
-                let _ = held.evaluator.push_command(kind, body);
-            }
-            None => self.commands_dropped = self.commands_dropped.saturating_add(1),
-        }
+    /// `TIMER`, `REPORT`, `RUN`, `SEQUENCE`): an event of the open page,
+    /// handled at once, or dropped and counted for a page with no table or
+    /// not open (RULE-50).
+    pub(crate) fn direct<const OBJECTS: usize, const RECORDS: usize>(
+        &mut self,
+        page: PageSub,
+        kind: u8,
+        body: &[u8],
+        parts: &mut Parts<'_, OBJECTS, RECORDS>,
+    ) -> Vec<FromDecoder> {
+        self.handle(Some(page), Event::Command { kind, body }, parts)
     }
 
     /// A `LOCAL_MIDI` record the server sent directly (RULE-21, RULE-114):
@@ -846,34 +871,39 @@ impl Rules {
         }
     }
 
-    /// A state query (RULE-47): answered once, at the end of the next
-    /// tick, for the open page; at most one a second, the rest dropped and
+    /// A state query (RULE-47): an event of the open page, answered at
+    /// once as it is handled; at most one a second, the rest dropped and
     /// reported as fault 6. A query for a page that is not open, or is
     /// paused, is ignored.
-    pub(crate) fn query(&mut self, page: PageSub, identifier: u32, now_us: u64) {
+    pub(crate) fn query<const OBJECTS: usize, const RECORDS: usize>(
+        &mut self,
+        page: PageSub,
+        identifier: u32,
+        now_us: u64,
+        parts: &mut Parts<'_, OBJECTS, RECORDS>,
+    ) -> Vec<FromDecoder> {
         if self.open != Some(page) {
-            return;
+            return Vec::new();
         }
         if let Some(held) = self.held.as_mut().filter(|held| held.page == page) {
             if held.paused || held.start_us.is_none() {
-                return;
+                return Vec::new();
             }
             let tick = held.evaluator.page_tick();
             if held.answered.is_some_and(|answered| tick.saturating_sub(answered) < QUERY_INTERVAL_TICKS) {
                 held.fault(FAULT_QUERY_DROPPED, 1);
-                return;
+                return Vec::new();
             }
             held.answered = Some(tick);
-            held.evaluator.query(identifier);
-            return;
+            return self.handle(Some(page), Event::Query(identifier), parts);
         }
         // The page has no table: generation 0 and nothing else (RULE-47).
         let second_us = neoteletext_core::consts::presentation_tick_due_us(QUERY_INTERVAL_TICKS);
         if self.plain_answered_us.is_some_and(|answered| now_us.saturating_sub(answered) < second_us) {
-            return;
+            return Vec::new();
         }
         self.plain_answered_us = Some(now_us);
-        self.out.extend(page_state(page, &PageState { identifier, table: None }));
+        page_state(page, &PageState { identifier, table: None }).into_iter().collect()
     }
 
     /// Evaluates each tick due at `now_us` (RULE-4), at most
