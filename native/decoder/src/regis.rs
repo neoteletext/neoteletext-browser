@@ -12,9 +12,15 @@
 
 use std::collections::BTreeMap;
 
+use neoteletext_rules::animate::{AnimationStore, Applied, Operation};
+use neoteletext_rules::evaluator::{Bounds, TargetState};
+use neoteletext_rules::table::{Target, TargetKind};
 use neoteletext_web::records::regis::RegisRecord;
 use protocol::regis::{PictureLanguage, RegisPick, RegisPicture, RegisViewer};
-use regis::{Event, Font, Picture, RepaintBudget, Screen, Terminal, ViewerState};
+use regis::limits::{MAX_ANIMATED_DRAWINGS, MAX_CYCLING_OBJECTS};
+use regis::{Event, Font, ForcedLook, Picture, RepaintBudget, Screen, Terminal, ViewerState};
+
+use crate::animation::{Counters, next_cycle_tick};
 
 use crate::parts::{Figures, Sent, parts_to_send};
 
@@ -26,6 +32,10 @@ pub const MAX_REGIS_PAGES: usize = 4;
 /// Microseconds in a millisecond: the decoder's clock counts the first,
 /// the repaint budget the second.
 const MICROSECONDS_PER_MILLISECOND: u64 = 1000;
+
+/// The layer of a top-level drawing that names none (animation.md
+/// ANIM-10: the attribute `G` defaults to 1, the scene).
+const DEFAULT_LAYER: u8 = 1;
 
 /// One sub-page's ReGIS.
 struct Page {
@@ -61,6 +71,26 @@ struct Page {
     /// The picture last sent, which the next is sent as a part of
     /// (REQ-6399); `None` when the next must be whole.
     sent: Option<Sent>,
+    /// The animation state of its numbered drawings (animation.md ANIM-6),
+    /// with the cycles the renderer has no clock to run (ANIM-14). The
+    /// renderer is given each state as it changes, and holds the same.
+    animation: Box<AnimationStore<MAX_ANIMATED_DRAWINGS>>,
+    /// Whether it is painting and whether it is owed a repaint for its
+    /// animation.
+    motion: Motion,
+    /// The presentation tick the renderer was last told the time at.
+    told: Option<u32>,
+    /// What its animation has cost, not yet reported (ANIM-16).
+    counters: Counters,
+}
+
+/// What a sub-page's animation is doing.
+#[derive(Clone, Copy, Default)]
+struct Motion {
+    /// A drawing is still being painted gradually (ANIM-15).
+    painting: bool,
+    /// Its animation state changed since its picture was last taken.
+    animated: bool,
 }
 
 impl Page {
@@ -89,6 +119,10 @@ impl Page {
             budget: RepaintBudget::new(),
             earned_ms: None,
             sent: None,
+            animation: Box::new(AnimationStore::new()),
+            motion: Motion::default(),
+            told: None,
+            counters: Counters::default(),
         }
     }
 }
@@ -148,6 +182,148 @@ impl Page {
     }
 }
 
+impl Page {
+    /// Gives the renderer the animation state held for a drawing, or
+    /// takes it away when none is held, and keeps what the renderer kept:
+    /// it refuses a state for a drawing that does not exist, and the
+    /// shown part of one whose showing would cost more than a repaint may
+    /// (ANIM-9). The picture is owed a repaint when the renderer's state
+    /// differs from before.
+    fn give(&mut self, number: u16) {
+        let target = Target::object(number);
+        let before = self.terminal.animation(number);
+        match self.animation.get(target).copied() {
+            Some(state) => {
+                let given = regis::AnimationState {
+                    shown: state.shown,
+                    position: state.position,
+                    layer: state.layer,
+                    order: state.order,
+                    frame: state.frame,
+                    look: ForcedLook::from_code(state.look).unwrap_or_default(),
+                };
+                if !self.terminal.set_animation(number, given) {
+                    self.reconcile(number);
+                }
+            }
+            None => self.terminal.clear_animation(number),
+        }
+        if self.terminal.animation(number) != before {
+            self.changed = true;
+            self.motion.animated = true;
+        }
+    }
+
+    /// Makes the state held for a drawing what the renderer holds of it
+    /// (ANIM-6, one state and the last writer wins): a commit that set
+    /// the drawing's `X` or `Y` forgot the position, `V` the shown part,
+    /// `L` or `G` the layer and order, and a deletion the whole state.
+    /// The frame, the cycle and the forced look are not the stream's to
+    /// write and stay.
+    fn reconcile(&mut self, number: u16) {
+        let target = Target::object(number);
+        if self.terminal.drawing_position(number).is_none() {
+            self.animation.forget(target);
+            return;
+        }
+        let kept = self.terminal.animation(number);
+        let Some(state) = self.animation.get_mut(target) else { return };
+        state.shown = kept.and_then(|kept| kept.shown);
+        state.position = kept.and_then(|kept| kept.position);
+        state.layer = kept.and_then(|kept| kept.layer);
+        state.order = kept.and_then(|kept| kept.order);
+        if state.is_default() {
+            self.animation.forget(target);
+        }
+    }
+
+    /// After a commit: every state held is made what the renderer kept of
+    /// it (the renderer's hand-over note: "the decoder re-reads
+    /// `Terminal::animation(n)` after `Event::Committed`").
+    fn resynchronise(&mut self) {
+        let held: Vec<u16> = self.animation.entries().iter().map(|(target, _)| target.number).collect();
+        for number in held {
+            self.reconcile(number);
+        }
+    }
+
+    /// Carries out one animation operation at presentation tick `tick`
+    /// (ANIM-6); false when it did nothing, which is counted: its target
+    /// is not a numbered drawing of the scene, or one more drawing than
+    /// may would hold state, or one more than may would cycle (ANIM-14).
+    fn animate(&mut self, operation: &Operation, tick: u32) -> bool {
+        let number = operation.target.number;
+        let own = (operation.target.kind == TargetKind::Object).then(|| self.terminal.drawing_position(number)).flatten();
+        let applied = own.is_some_and(|own| self.animation.apply(operation, own, tick, MAX_CYCLING_OBJECTS) == Applied::Done);
+        if applied {
+            self.give(number);
+        } else {
+            self.counters.skipped = self.counters.skipped.saturating_add(1);
+        }
+        applied
+    }
+
+    /// Brings the sub-page to presentation tick `tick`: each cycling
+    /// drawing whose frame is due is given its frame (ANIM-14: the caller
+    /// sets the frame each tick), and the renderer is told the ticks that
+    /// passed, which its drawings with a paint rate earn work by
+    /// (ANIM-15). With `at_once`, the viewer's setting "Paint drawings
+    /// gradually" off, every drawing is whole at once.
+    fn advance(&mut self, tick: u32, at_once: bool) {
+        let mut due = Vec::new();
+        self.animation.advance(tick, &mut |target| due.push(target.number));
+        for number in due {
+            self.give(number);
+        }
+        let passed = self.told.map_or(0, |told| tick.saturating_sub(told));
+        self.told = Some(tick);
+        let was = self.motion.painting;
+        self.motion.painting = self.terminal.advance_ticks(if at_once { u32::MAX } else { passed });
+        // What the ticks bought is painted by the next repaint.
+        if was && (passed > 0 || at_once) {
+            self.changed = true;
+            self.motion.animated = true;
+        }
+    }
+
+    /// The next presentation tick after `tick` this sub-page needs the
+    /// decoder's loop at: the next while a drawing is painting, else the
+    /// tick a cycle's frame next changes at (ANIM-1).
+    fn next_tick(&self, tick: u32) -> Option<u32> {
+        if self.motion.painting {
+            return Some(tick.saturating_add(1));
+        }
+        next_cycle_tick(self.animation.entries(), tick)
+    }
+
+    /// The state of a numbered drawing for a rule table's conditions
+    /// (RULE-26, ANIM-13), or `None` when the scene has no such drawing.
+    fn target_state(&self, number: u16) -> Option<TargetState> {
+        let (x, y) = self.terminal.drawing_position(number)?;
+        let state = self.animation.get(Target::object(number)).copied().unwrap_or_default();
+        let cut = |value: u32| i32::try_from(value).unwrap_or(i32::MAX);
+        let bounds = self.terminal.bounds(number).map(|bounds| Bounds {
+            left: cut(bounds.x),
+            top: cut(bounds.y),
+            right: cut(bounds.x.saturating_add(bounds.width)),
+            bottom: cut(bounds.y.saturating_add(bounds.height)),
+        });
+        Some(TargetState {
+            // The renderer says a drawing's own visibility only through
+            // its bounds: none while it is hidden or off the screen.
+            shown: state.shown.unwrap_or(bounds.is_some()),
+            cycling: state.cycle.is_some(),
+            frame: state.frame,
+            look: state.look,
+            layer: state.layer.unwrap_or(DEFAULT_LAYER),
+            order: state.order.unwrap_or(0),
+            x,
+            y,
+            bounds,
+        })
+    }
+}
+
 /// A sub-page's picture, ready to send.
 pub struct Drawn {
     /// The page.
@@ -198,7 +374,26 @@ pub struct RegisPages {
     /// Sub-pages' drawing links received whole, for the trusted core.
     #[cfg(feature = "links")]
     links: Vec<DrawingLinks>,
+    /// Every drawing is painted whole at once: the viewer's setting
+    /// "Paint drawings gradually" is off (animation.md ANIM-15).
+    at_once: bool,
+    /// Each page's sheet (ANIM-17): the stream of hidden drawings fed to
+    /// the renderer of every sub-page of the page before its own stream.
+    sheets: BTreeMap<u16, Sheet>,
 }
+
+/// A page's ReGIS sheet as received (ANIM-17).
+#[derive(Default)]
+struct Sheet {
+    generation: u16,
+    bytes: Vec<u8>,
+    /// A record of it was lost: nothing more of this generation is kept.
+    lost: bool,
+}
+
+/// The most pages whose sheet is kept: a sheet is kept while its page is,
+/// and a page's sub-pages are kept [`MAX_REGIS_PAGES`] at most.
+const MAX_SHEETS: usize = MAX_REGIS_PAGES;
 
 impl RegisPages {
     /// Reads one REGIS record: its bytes go to its sub-page's terminal.
@@ -226,6 +421,11 @@ impl RegisPages {
             let (viewer, cursor) = self.pages.get(&key).map(|page| (page.viewer, page.cursor)).unwrap_or_default();
             let mut page = Page::new(record.generation, viewer);
             page.cursor = cursor;
+            // The page's sheet goes first (ANIM-17): the stream names its
+            // hidden drawings as sources, looks and frames.
+            if let Some(sheet) = self.sheets.get(&key.0).filter(|sheet| !sheet.bytes.is_empty()) {
+                let _ = page.terminal.feed_regis(&mut page.screen, &sheet.bytes);
+            }
             self.pages.insert(key, page);
         }
         let Some(page) = self.pages.get_mut(&key) else { return };
@@ -238,8 +438,16 @@ impl RegisPages {
         let events = page.terminal.feed_regis(&mut page.screen, record.data);
         // A commit, or drawing outside numbered drawings, changes what the
         // sub-page shows. The other events ask for things a page does not
-        // do: a pause (no local animation) or a reply to the host.
+        // do: a v1 pause or a reply to the host.
         let committed = events.iter().any(|event| matches!(event, Event::Committed(_)));
+        if committed {
+            // The last writer wins (ANIM-6): what the commit wrote over is
+            // forgotten here as the renderer forgot it.
+            page.resynchronise();
+            // A drawing given a paint rate starts painting (ANIM-15); with
+            // the viewer's setting off it is whole at once.
+            page.motion.painting = page.terminal.advance_ticks(if self.at_once { u32::MAX } else { 0 });
+        }
         page.changed |= committed | page.screen.take_changed();
         // The channel moves the cursor by a commit after each key: it is
         // shown again at once, never hidden where the viewer looks for it.
@@ -305,6 +513,13 @@ impl RegisPages {
         core::mem::take(&mut self.links)
     }
 
+    /// Whether the sub-page of `page` on screen (see [`Self::shown`]) is
+    /// drawn in ReGIS.
+    #[must_use]
+    pub fn holds(&self, page: u16, sub: Option<u16>) -> bool {
+        self.shown(page, sub).is_some_and(|key| self.pages.contains_key(&key))
+    }
+
     /// Whether the channel has sent ReGIS for a page.
     #[must_use]
     pub fn has(&self, page: u16) -> bool {
@@ -349,9 +564,17 @@ impl RegisPages {
         }
         held.earn(now_us);
         if !held.budget.may_repaint() {
+            // Over the budget the animation slows and nothing else does
+            // (ANIM-16): the state has changed already, the painting
+            // waits, and the damage of every change meanwhile is painted
+            // by one repaint when the budget allows.
+            if core::mem::take(&mut held.motion.animated) {
+                held.counters.slowed = held.counters.slowed.saturating_add(1);
+            }
             return None;
         }
         held.changed = false;
+        held.motion.animated = false;
         held.terminal.compose(&held.screen, &mut held.picture);
         held.budget.spend(held.picture.work());
         let pixels = held.picture.canvas().pixels();
@@ -365,6 +588,90 @@ impl RegisPages {
         self.sent_sub.insert(key.0, key.1);
         let more = parts.split_off(1);
         Some(Drawn { page: key.0, sub: key.1, picture: parts.pop()?, pick: pick_changed.then_some(pick), more })
+    }
+
+    /// Carries out one animation operation on the sub-page of `page` on
+    /// screen (see [`Self::shown`]) at presentation tick `tick`
+    /// (animation.md ANIM-6); false when it did nothing.
+    pub fn animate(&mut self, page: u16, sub: Option<u16>, operation: &Operation, tick: u32) -> bool {
+        self.shown(page, sub).and_then(|key| self.pages.get_mut(&key)).is_some_and(|held| held.animate(operation, tick))
+    }
+
+    /// Brings the sub-page of `page` on screen to presentation tick
+    /// `tick`: its cycles' frames and its drawings' painting (ANIM-14,
+    /// ANIM-15).
+    pub fn advance(&mut self, page: u16, sub: Option<u16>, tick: u32) {
+        let at_once = self.at_once;
+        if let Some(held) = self.shown(page, sub).and_then(|key| self.pages.get_mut(&key)) {
+            held.advance(tick, at_once);
+        }
+    }
+
+    /// The next presentation tick after `tick` the sub-page of `page` on
+    /// screen needs the loop at for its animation, if any (ANIM-1).
+    #[must_use]
+    pub fn next_tick(&self, page: u16, sub: Option<u16>, tick: u32) -> Option<u32> {
+        self.shown(page, sub).and_then(|key| self.pages.get(&key))?.next_tick(tick)
+    }
+
+    /// The state of a numbered drawing of the sub-page of `page` on
+    /// screen, as a rule table's conditions read it (RULE-26, ANIM-13).
+    #[must_use]
+    pub fn target_state(&self, page: u16, sub: Option<u16>, number: u16) -> Option<TargetState> {
+        self.shown(page, sub).and_then(|key| self.pages.get(&key))?.target_state(number)
+    }
+
+    /// What the animation of the sub-page of `page` on screen has cost
+    /// since it was last asked, for the rule table's host to report
+    /// (ANIM-16, RULE-48).
+    pub fn take_counters(&mut self, page: u16, sub: Option<u16>) -> Counters {
+        self.shown(page, sub).and_then(|key| self.pages.get_mut(&key)).map(|held| core::mem::take(&mut held.counters)).unwrap_or_default()
+    }
+
+    /// The viewer's setting "Paint drawings gradually" (ANIM-15): off,
+    /// every drawing of every sub-page is whole at once, now and at each
+    /// commit.
+    pub fn set_gradual(&mut self, gradual: bool) {
+        self.at_once = !gradual;
+        if self.at_once {
+            for held in self.pages.values_mut() {
+                held.motion.painting = held.terminal.advance_ticks(u32::MAX);
+                held.changed = true;
+            }
+        }
+    }
+
+    /// Reads one SHEET record of ReGIS (ANIM-17): the bytes are kept, in
+    /// order, as the page's sheet. A new generation starts the sheet
+    /// again, and the renderers of the page's sub-pages with it: each is
+    /// forgotten, and its channel sends its stream again after the sheet
+    /// (a renderer cannot be started again from bytes the decoder did not
+    /// keep). A record out of its place loses the generation.
+    pub fn read_sheet(&mut self, page: u16, generation: u16, offset: u32, data: &[u8]) {
+        let fresh = self.sheets.get(&page).is_none_or(|sheet| sheet.generation != generation);
+        if fresh {
+            if !self.sheets.contains_key(&page) && self.sheets.len() >= MAX_SHEETS {
+                // The sheet of a page none of whose sub-pages is kept goes
+                // first; else the lowest page's.
+                let unused = self.sheets.keys().copied().find(|held| !self.has(*held)).or_else(|| self.sheets.keys().next().copied());
+                if let Some(unused) = unused {
+                    self.sheets.remove(&unused);
+                }
+            }
+            let renewed = self.sheets.contains_key(&page);
+            self.sheets.insert(page, Sheet { generation, bytes: Vec::new(), lost: offset != 0 });
+            if renewed {
+                self.pages.retain(|(held, _), _| *held != page);
+                self.sent_sub.remove(&page);
+            }
+        }
+        let Some(sheet) = self.sheets.get_mut(&page) else { return };
+        let end = usize::try_from(offset).ok().and_then(|offset| offset.checked_add(data.len()));
+        if sheet.lost || usize::try_from(offset).ok() != Some(sheet.bytes.len()) || end.is_none_or(|end| end > neoteletext_web::consts::MAX_SHEET_BYTES) {
+            sheet.lost = true;
+            return;
+        }
+        sheet.bytes.extend_from_slice(data);
     }
 
     /// When a page's sub-page on screen next needs the decoder's loop, in

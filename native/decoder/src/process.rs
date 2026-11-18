@@ -167,6 +167,10 @@ pub fn run(store_pages: usize) -> Result<(), ProtocolError> {
         };
         let now = engine.now_us();
         tick(&mut engine, now, &mut output)?;
+        // The animation of the pages on screen, after the rules ran
+        // (animation.md ANIM-22, page-rules.md RULE-65).
+        let animated = animate(&mut engine, &showing, now, &mut output)?;
+        draw(&engine, &animated, now, &mut sent, &mut spare, &mut flashing, &mut output)?;
         let Some(message) = received else {
             // A deadline: the sounds' clock, and the flashing pages whose
             // phase has changed.
@@ -185,6 +189,8 @@ pub fn run(store_pages: usize) -> Result<(), ProtocolError> {
                 flashing.retain(&pages);
                 showing = pages;
                 engine.screen_changed();
+                // A frame ends when its page stops being shown (ANIM-2).
+                engine.animation_showing(&showing);
                 let fresh: Vec<u16> = showing.iter().copied().filter(|page| !sent.contains_key(page)).collect();
                 draw(&engine, &fresh, now, &mut sent, &mut spare, &mut flashing, &mut output)?;
                 // A page that came on screen is sent its ReGIS or NAPLPS picture again.
@@ -250,17 +256,7 @@ pub fn run(store_pages: usize) -> Result<(), ProtocolError> {
             _ => continue,
         };
         report(&mut engine, &arrived, &mut output)?;
-        // A shown page drawn again only when its reception moved, or data
-        // every page may draw from changed, or the clock every page shows
-        // moved on (the engine's decision E.121).
-        let changed = engine.take_changed();
-        if engine.take_store_full() {
-            write_to_core(&mut output, &FromDecoder::StoreFull)?;
-        }
-        let clock = engine.latest_clock();
-        let ticked = clock != shown_clock;
-        shown_clock = clock;
-        let pages: Vec<u16> = showing.iter().copied().filter(|page| ticked || changed.everything || changed.pages.contains(page)).collect();
+        let pages = changed_pages(&mut engine, &showing, &mut shown_clock, &mut output)?;
         draw(&engine, &pages, now, &mut sent, &mut spare, &mut flashing, &mut output)?;
         draw_regis(&mut engine, &showing, &sent, now, &mut output)?;
         say_missing(&engine, &showing, now, &mut missing, &mut output)?;
@@ -269,11 +265,14 @@ pub fn run(store_pages: usize) -> Result<(), ProtocolError> {
 
 /// When the loop next wakes by itself: the next flash phase of a shown
 /// page that flashes, the audio receiver's next tick, a ReGIS picture whose
-/// repaint its budget held back (REQ-6380), or the open page's next tick
-/// while it has a rule table (page-rules.md RULE-58), whichever is first.
+/// repaint its budget held back (REQ-6380), the open page's next tick
+/// while it has a rule table (page-rules.md RULE-58), or the next tick the
+/// animation of a page on screen is due at (animation.md ANIM-1),
+/// whichever is first.
 fn next_deadline(engine: &mut Engine, flashing: &Flashing, showing: &[u16], sent: &BTreeMap<u16, Rendered>, now: u64) -> Option<u64> {
     let audio = engine.next_audio_tick_ms().map(|ms| ms.saturating_mul(MICROSECONDS_PER_MILLISECOND));
-    [flashing.next_us(now, engine.config()), audio, regis_owed(engine, showing, sent, now), engine.rules_due_us()].into_iter().flatten().min()
+    let animation = engine.animation_due_us(showing, now);
+    [flashing.next_us(now, engine.config()), audio, regis_owed(engine, showing, sent, now), engine.rules_due_us(), animation].into_iter().flatten().min()
 }
 
 /// What every wake does first: the sounds' clock, then the open page's
@@ -291,6 +290,44 @@ fn tick(engine: &mut Engine, now_us: u64, output: &mut Output<'_>) -> Result<(),
     }
     output.flush()?;
     Ok(())
+}
+
+/// The pages on screen to draw again after data arrived: a shown page is
+/// drawn again only when its reception moved, or data every page may draw
+/// from changed, or the clock every page shows moved on from
+/// `shown_clock` (the engine's decision E.121), or its sprites or its
+/// animation state changed (animation.md ANIM-6). The trusted core is
+/// told when the store is full.
+fn changed_pages(
+    engine: &mut Engine,
+    showing: &[u16],
+    shown_clock: &mut Option<[u8; neoteletext_core::consts::CLOCK_BYTES]>,
+    output: &mut Output<'_>,
+) -> Result<Vec<u16>, ProtocolError> {
+    let changed = engine.take_changed();
+    if engine.take_store_full() {
+        write_to_core(output, &FromDecoder::StoreFull)?;
+    }
+    let clock = engine.latest_clock();
+    let ticked = clock != *shown_clock;
+    *shown_clock = clock;
+    let animated = engine.take_animated(showing);
+    Ok(showing.iter().copied().filter(|page| ticked || changed.everything || changed.pages.contains(page) || animated.contains(page)).collect())
+}
+
+/// Brings the animation of the pages on screen to the tick due at
+/// `now_us` (animation.md ANIM-1, ANIM-22): cycles, the paint rate, WAIT
+/// and BLINK, and the frames that end by the clock (ANIM-2), whose pages
+/// are reported as arrived. It runs after the open page's rules, so that
+/// what a rule changed is painted in the tick that ran it (page-rules.md
+/// RULE-65). The teletext pages on screen to draw again: those that
+/// arrived and those whose sprites or animation state changed.
+fn animate(engine: &mut Engine, showing: &[u16], now_us: u64, output: &mut Output<'_>) -> Result<Vec<u16>, ProtocolError> {
+    let late = engine.animation_step(showing, now_us);
+    report(engine, &late, output)?;
+    let mut pages: Vec<u16> = showing.iter().copied().filter(|page| late.iter().any(|(arrived, _)| arrived == page)).collect();
+    pages.extend(engine.take_animated(showing));
+    Ok(pages)
 }
 
 /// The sub-page of a page on screen whose teletext page was drawn, if one

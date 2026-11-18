@@ -29,6 +29,9 @@ use crate::links;
 use crate::voice_sink::Outbox;
 use crate::{Changed, FlashRates};
 
+mod animation;
+#[cfg(test)]
+mod animation_tests;
 mod feed;
 #[cfg(test)]
 mod font_tests;
@@ -219,6 +222,9 @@ pub struct Engine {
     /// The open page's picture while its renderer gives no animation
     /// state: nothing in it moves.
     still: crate::rules::Still,
+    /// The atomic frames open, the teletext sprites and the animation
+    /// state the decoder composes with (animation.md ANIM-22).
+    animation: animation::Animated,
 }
 
 impl Default for Engine {
@@ -289,6 +295,7 @@ impl Engine {
             rules: crate::rules::host::Rules::default(),
             heard: crate::voice_sink::Heard::default(),
             still: crate::rules::Still::new((0, 0)),
+            animation: animation::Animated::default(),
         }
     }
 

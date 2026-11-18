@@ -49,15 +49,10 @@ impl Engine {
         &mut self.still
     }
 
-    /// The sub-code of the sub-page of `page` shown: the one its view
-    /// chose while the store has it, else the latest, as it is drawn.
-    fn shown_subcode(&self, page: u16) -> u16 {
-        let view = self.views.get(&page).copied().unwrap_or_default();
-        let stored = match self.held.get(&page) {
-            Some(held) => Some(&**held),
-            None => self.stored(page, view.subpage),
-        };
-        stored.map_or(0, |stored| stored.key.subcode.value()).min(SUBCODE_ANY)
+    /// The sub-code of the sub-page of `page` shown, as the evaluator
+    /// takes it: 0 while the store holds no sub-page of it.
+    fn rules_subcode(&self, page: u16) -> u16 {
+        self.shown_subcode(page).unwrap_or(0).min(SUBCODE_ANY)
     }
 
     /// The page of the channel that is the open page of the active tab, or
@@ -111,7 +106,7 @@ impl Engine {
     }
 
     fn run_rules_for(&mut self, page: u16, now_us: u64) -> Vec<FromDecoder> {
-        let sub = self.shown_subcode(page);
+        let sub = self.rules_subcode(page);
         self.rules_picture(page);
         let Self { rules, audio, sounds, heard, still, .. } = self;
         let mut parts = Parts { audio: &mut **audio, sounds, heard, picture: still, sub };

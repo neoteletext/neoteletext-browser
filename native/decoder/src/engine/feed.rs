@@ -45,7 +45,7 @@ fn keep_log(logs: &mut Vec<ChannelLog>, line: &neoteletext_formats::log::LogLine
 }
 
 impl Engine {
-    fn push_all(&mut self, packets: &[(Packet, PacketMeta)]) {
+    pub(super) fn push_all(&mut self, packets: &[(Packet, PacketMeta)]) {
         for (packet, meta) in packets {
             // The channel's cursor and control records (DOC-1951)
             // ride the audio profile's data channel; only one that reads
@@ -125,7 +125,13 @@ impl Engine {
             #[cfg(feature = "links")]
             let mut linked = BTreeSet::new();
             let now = self.now_us();
-            for (packet, _) in &items {
+            // The packets of a page whose atomic frame is open are held
+            // for its end (animation.md ANIM-2), and not given to the
+            // engine's decoder with the rest below.
+            let mut kept = Vec::with_capacity(items.len());
+            for (packet, meta) in &items {
+                let held = self.hold_packet(packet, meta, header_page(packet));
+                kept.push(!held);
                 if let Some(key) = header_key(packet) {
                     self.pushed.insert(key.0);
                     self.cache.get_mut().store(key.0, key.1, now);
@@ -135,7 +141,17 @@ impl Engine {
                 // A pushed sub-page's Link Extension links come as a LINKS
                 // record after it (REQ-1494), into the store a page file's
                 // lines fill; the engine's agent counted any it refused.
-                match self.records.push(packet) {
+                let read = self.records.push(packet);
+                // A sub-page's ReGIS (DEC-6335), NAPLPS (DEC-6407) and
+                // ReGIS cursor (the engine's REQ-6371), and the records of
+                // animation.md (ANIMATE, SPRITES, NAPLPS_OBJECTS, SHEET
+                // and FRAME): held for the page's open frame, or applied
+                // now (ANIM-2).
+                if let Some(taken) = crate::animation::frames::Taken::of(&read) {
+                    self.take_animation(taken);
+                    continue;
+                }
+                match read {
                     #[cfg(feature = "links")]
                     neoteletext_web::records::Read::Record(neoteletext_web::records::ChannelRecord::Links(record)) => {
                         let key = (record.page.mpp(), record.subcode.value());
@@ -148,20 +164,11 @@ impl Engine {
                     neoteletext_web::records::Read::Record(neoteletext_web::records::ChannelRecord::Rules(record)) => {
                         self.rules.record(record.page.mpp(), record.generation, record.body);
                     }
-                    // A sub-page's ReGIS, for the ReGIS renderer (DEC-6335).
-                    neoteletext_web::records::Read::Record(neoteletext_web::records::ChannelRecord::Regis(record)) => self.regis.read(&record),
-                    // A sub-page's NAPLPS, for the NAPLPS renderer (DEC-6407).
-                    neoteletext_web::records::Read::Record(neoteletext_web::records::ChannelRecord::Naplps(record)) => self.naplps.read(&record),
                     // The drawings of a ReGIS sub-page that are links (the
                     // engine's REQ-6370), for the trusted core.
                     #[cfg(feature = "links")]
                     neoteletext_web::records::Read::Record(neoteletext_web::records::ChannelRecord::DrawingLinks(record)) => {
                         self.regis.read_links(&record);
-                    }
-                    // The drawing that is a ReGIS sub-page's cursor (the
-                    // engine's REQ-6371), which the decoder blinks.
-                    neoteletext_web::records::Read::Record(neoteletext_web::records::ChannelRecord::RegisCursor(record)) => {
-                        self.regis.set_cursor(record.page.mpp(), record.subcode.value(), record.drawing);
                     }
                     _ => {}
                 }
@@ -170,6 +177,13 @@ impl Engine {
             if packets {
                 self.settle_links(frames, &linked);
             }
+            // What the frames that ended in this message held goes first,
+            // then the message's own packets that no frame holds.
+            let mut kept = kept.into_iter();
+            items.retain(|_| kept.next().unwrap_or(true));
+            let mut released = self.take_released();
+            released.append(&mut items);
+            items = released;
         } else {
             self.drop_pushed(&mut items);
         }
@@ -225,7 +239,7 @@ impl Engine {
     /// Completes every page still being received, as the end of a stream
     /// or a timeout does (EN 300 706 clause 7.2: a page ends with the next
     /// header of its magazine, or when the receiver gives up waiting).
-    fn complete(&mut self) {
+    pub(super) fn complete(&mut self) {
         self.clock = self.clock.saturating_add(PAGE_COMPLETION_TIMEOUT_US.saturating_mul(2));
         let changes = &mut self.changes;
         self.decoder.tick(Instant(self.clock), &mut |event| changes.note(&event));
@@ -233,6 +247,10 @@ impl Engine {
 
     /// Ends the channel's data: completes every page still being received.
     pub fn finish(&mut self) -> Vec<(u16, String)> {
+        // ANIM-2: the connection's end ends every frame, and what each
+        // held is applied.
+        self.end_frames();
+        let released = self.take_released();
         let mut packets = Vec::new();
         let mut pages = PageLines {
             #[cfg(feature = "links")]
@@ -250,6 +268,7 @@ impl Engine {
             _ => {}
         });
         self.drop_pushed(&mut packets);
+        self.push_all(&released);
         self.push_all(&packets);
         self.complete();
         self.arrivals()
@@ -257,7 +276,7 @@ impl Engine {
 
     /// Display pages received completely and not yet reported, each with
     /// a title from its text.
-    fn arrivals(&mut self) -> Vec<(u16, String)> {
+    pub(super) fn arrivals(&mut self) -> Vec<(u16, String)> {
         let mut fresh = Vec::new();
         // Only pages whose reception completed can have arrived or changed:
         // the engine's events say which, so the store is not searched.

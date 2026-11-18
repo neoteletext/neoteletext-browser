@@ -16,11 +16,12 @@ use interface_core::canvas::PAGE_WIDTH;
 use interface_core::channel::{is_channel_page, page_index};
 use neoteletext_core::acq::StoredPage;
 use neoteletext_core::charset::{CharRef, CharSet, G2Set};
-use neoteletext_core::compose::compose_level;
+use neoteletext_core::compose::{compose_level, compose_sprites};
 use neoteletext_core::config::Config;
 #[cfg(feature = "links")]
 use neoteletext_core::consts::FASTEXT_COLOURS;
 use neoteletext_core::consts::{CLOCK_BYTES, G2_RIGHT_GUILLEMET, ROWS, SPACE, STATUS_COLUMNS};
+use neoteletext_core::controls::apply_animation;
 #[cfg(feature = "links")]
 use neoteletext_core::controls::{Control, Look, apply_look};
 use neoteletext_core::fsm::PageState;
@@ -257,6 +258,17 @@ impl Engine {
                 cell.glyph = Glyph::Char(CharRef::new(CharSet::G2(G2Set::Latin), G2_RIGHT_GUILLEMET));
             }
         }
+        // The sub-page's sprites over the page, each with its animation
+        // state in force, and its controls as that state shows them
+        // (animation.md ANIM-8, ANIM-6): the engine core's per-tick
+        // sequence, from the placements on. The rows that then differ
+        // from the last frame are found by the page's change tracker, as
+        // for any other change.
+        if let Some(animated) = self.animation.teletext.get(page, stored.key.subcode.value()) {
+            let page_grid = grid;
+            let drawn = compose_sprites(&mut grid, &page_grid, stored, &magazine, &lookup, config, &options, &animated.placements());
+            apply_animation(&mut grid, &neoteletext_core::controls::controls(stored), &animated.animation, &drawn.cells);
+        }
         grid
     }
 
@@ -377,7 +389,7 @@ impl Engine {
                 fastext: fastext(stored, &grid, self.receiver_rows.get(&(page, stored.key.subcode.value()))),
             }
         };
-        let rates = FlashRates::of(grid.cells.iter().flatten().filter(|cell| cell.flash).map(|cell| cell.attributes.flash_rate()));
+        let rates = FlashRates::of(&grid);
         Some(Rendered {
             palette,
             screen: grid.screen_colour,
