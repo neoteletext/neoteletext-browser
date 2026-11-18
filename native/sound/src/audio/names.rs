@@ -52,6 +52,12 @@ pub(super) struct Names {
 }
 
 impl Names {
+    /// Every key held: what a paused page's cue marks are forgotten on
+    /// (RULE-109, RULE-111 case 4).
+    pub(super) fn keys(&self) -> impl Iterator<Item = SoundKey> + '_ {
+        self.keys.values().copied()
+    }
+
     /// The key of `name`, if it is held.
     pub(super) fn get(&self, name: Name) -> Option<SoundKey> {
         self.keys.get(&name).copied()

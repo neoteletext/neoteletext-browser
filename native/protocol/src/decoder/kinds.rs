@@ -87,3 +87,11 @@ pub(super) const KIND_RULES_PAGE: u8 = 187;
 // gradually" (neoteletext-common's animation.md ANIM-15), in the next
 // number free across every pipe on 18 November 2026.
 pub(super) const KIND_PAINT_GRADUALLY: u8 = 188;
+// Trusted core to decoder, for the second form of the rule table
+// (page-rules.md RULE-63, RULE-98, RULE-111), in the next numbers free
+// across every pipe on 18 November 2026: the view's connection ended, a
+// cue was heard, and the interface's frame phase. 192 is the interface's
+// own `FramePhase` to the trusted core.
+pub(super) const KIND_CONNECTION_ENDED: u8 = 189;
+pub(super) const KIND_CUE_HEARD: u8 = 190;
+pub(super) const KIND_FRAME_PHASE: u8 = 191;

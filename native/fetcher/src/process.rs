@@ -273,7 +273,8 @@ fn rules_queries(reader: &mut neoteletext_web::records::RecordReader, bytes: &[u
     let (packets, _) = bytes.as_chunks::<{ neoteletext_core::consts::PACKET_BYTES }>();
     for packet in packets {
         if let RecordRead::Record(ChannelRecord::RulesQuery(query)) = reader.push(&neoteletext_core::packet::Packet { bytes: *packet }) {
-            let message = FromFetcher::RulesQuery { page: query.page.mpp(), identifier: query.identifier };
+            let message =
+                FromFetcher::RulesQuery { page: protocol::rules::PageSub::new(query.page.mpp(), query.subcode.value()), identifier: query.identifier };
             if write_to_core(&mut Vec::new(), &message).is_ok() {
                 asked.push(message);
             }
@@ -1106,14 +1107,14 @@ mod tests {
 
     /// The report of a rule that carries `input`, a viewer's input event as
     /// the engine's writer writes it: the only form input goes in under
-    /// push protocol 9 (page-rules.md RULE-46). The agent does not read it.
+    /// push protocol 10 (page-rules.md RULE-46). The agent does not read it.
     #[cfg(feature = "interaction")]
     fn reported(input: &[u8]) -> Vec<u8> {
         use neoteletext_input::event::{Event, Item, Stamp, write};
         use neoteletext_input::rules::{RuleBody, RuleEvent};
         let on = Stamp::new(0x200, 0).unwrap();
         let target = neoteletext_rules::table::Target::NONE;
-        let event = RuleEvent { on, generation: 1, rule: 0, tick: 1, target, body: RuleBody::Input(input) };
+        let event = RuleEvent { on, generation: 1, rule: 0, row: neoteletext_rules::limits::NO_RULE, tick: 1, target, body: RuleBody::Input(input) };
         let mut out = [0_u8; 64];
         let length = write(&Item::Event(Event::RuleEvent(event)), &mut out).unwrap();
         out[..length].to_vec()
@@ -1514,16 +1515,20 @@ mod tests {
         // Each record under its own record id, as a server numbers them.
         let packets = |page: u16, identifier: u32| {
             let mut bytes = Vec::new();
-            let record = RulesQueryRecord { page: PageAddress::from_mpp(page).unwrap(), identifier };
+            let record = RulesQueryRecord { page: PageAddress::from_mpp(page).unwrap(), subcode: SubCode::new(3), identifier };
             encode_query(record, 0, u8::try_from(identifier & 0xFF).unwrap(), &mut |packet| bytes.extend_from_slice(&packet.bytes)).unwrap();
             bytes
         };
         let mut reader = neoteletext_web::records::RecordReader::new();
         let pushed = packets(0x101, 0x0102_0304);
-        assert_eq!(rules_queries(&mut reader, &pushed), [FromFetcher::RulesQuery { page: 0x101, identifier: 0x0102_0304 }]);
+        assert_eq!(rules_queries(&mut reader, &pushed), [FromFetcher::RulesQuery { page: protocol::rules::PageSub::new(0x101, 3), identifier: 0x0102_0304 }]);
         assert_eq!(rules_queries(&mut reader, &[0x15; 84]), [], "packets that are no record");
         let reserved = packets(0x1FF, 7);
         assert_eq!(rules_queries(&mut reader, &reserved), [], "a page no channel has");
-        assert_eq!(rules_queries(&mut reader, &packets(0x200, 8)), [FromFetcher::RulesQuery { page: 0x200, identifier: 8 }], "and the next is read");
+        assert_eq!(
+            rules_queries(&mut reader, &packets(0x200, 8)),
+            [FromFetcher::RulesQuery { page: protocol::rules::PageSub::new(0x200, 3), identifier: 8 }],
+            "and the next is read"
+        );
     }
 }

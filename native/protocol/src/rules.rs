@@ -11,7 +11,8 @@
 //! report names a sequence number, and the trusted core builds the
 //! `RULE_EVENT` from its own kept copy.
 
-use neoteletext_rules::limits::{MAX_CONTROL, MAX_RECTS, MAX_RULES, MAX_STATE_BYTES};
+use neoteletext_rules::limits::VARIABLES;
+use neoteletext_rules::limits::{LAST_SUBCODE, MAX_CONTROL, MAX_RECTS, MAX_ROWS, MAX_RULES, MAX_STATE_BYTES, NO_RULE};
 use neoteletext_rules::table::VALUE_BYTES;
 
 use crate::audio::{MAX_WATCH_SLOTS, WatchSlot};
@@ -41,8 +42,15 @@ pub const MAX_WHEEL_RECTS: usize = MAX_RECTS;
 pub const MAX_PAGE_STATE: usize = MAX_STATE_BYTES;
 /// The bytes of a value a report carries (RULE-44).
 pub const REPORT_VALUE_BYTES: usize = VALUE_BYTES;
-/// The highest fault code (RULE-48).
-pub const MAX_FAULT: u8 = 8;
+/// The highest fault code (RULE-48): 10, `queue_full`.
+pub const MAX_FAULT: u8 = 10;
+/// The withdrawn fault code 2, `tick_overrun`, which is never sent and
+/// never reused (RULE-48).
+pub const WITHDRAWN_FAULT: u8 = 2;
+/// The most sound commands a tick the trusted core passes from one view's
+/// decoder to the sound helper (RULE-52 item 5), however they arose; the
+/// rest are dropped and told as fault 10.
+pub const SOUND_COMMAND_BUDGET: u32 = 512;
 /// The bits of an interest mask (RULE-52 item 1): keys, text, pointer
 /// buttons, pointer moves, the wheel and focus changes.
 pub const INTEREST_ALL: u8 = 0b11_1111;
@@ -192,6 +200,116 @@ impl WheelRect {
     }
 }
 
+/// Whether `fault` is a fault code a receiver sends (RULE-48): 1 to
+/// [`MAX_FAULT`], but never the withdrawn 2.
+#[must_use]
+pub const fn is_fault(fault: u8) -> bool {
+    fault >= 1 && fault <= MAX_FAULT && fault != WITHDRAWN_FAULT
+}
+
+/// Checks a heard cue's audio channel and number (RULE-109).
+pub(crate) fn check_cue(audio_channel: u8, number: u8) -> Result<(), ProtocolError> {
+    if usize::from(audio_channel) >= neoteletext_rules::limits::AUDIO_CHANNELS || number > neoteletext_rules::limits::MAX_CUE {
+        return Err(ProtocolError::BadValue("cue"));
+    }
+    Ok(())
+}
+
+/// The least refresh period a `FramePhase` may give, in microseconds
+/// (RULE-98 item 1): a display of 500 hertz.
+pub const LEAST_REFRESH_MICROSECONDS: u32 = 2_000;
+/// The greatest refresh period a `FramePhase` may give, in microseconds
+/// (RULE-98 item 1): a display of 10 hertz.
+pub const MOST_REFRESH_MICROSECONDS: u32 = 100_000;
+/// How far the interface's last `FramePhase` may be from the times it
+/// predicts before it sends another (RULE-98 item 1).
+pub const PHASE_REPORT_MICROSECONDS: u64 = 500;
+/// How near a whole multiple of 60 hertz a display's rate must be for the
+/// decoder to lock its ticks to it, in parts a thousand (RULE-98 item 3).
+pub const LOCK_TOLERANCE_PARTS_PER_THOUSAND: u64 = 5;
+/// How long before a composition a locked tick is due (RULE-98 items 3
+/// and 5): a millisecond each for the evaluation and repaint, the frame's
+/// way through the trusted core and its way to the interface, and one to
+/// spare.
+pub const TICK_LEAD_MICROSECONDS: u64 = 4_000;
+/// The most a locked clock's start moves in one tick (RULE-98 item 3).
+pub const PHASE_SLEW_MICROSECONDS: u64 = 100;
+/// The distance from its target under which a clock is locked and not
+/// moved (RULE-98 item 3).
+pub const PHASE_LOCKED_MICROSECONDS: u64 = 200;
+/// How long a decoder keeps a `FramePhase` before its clock runs free
+/// (RULE-98 item 4).
+pub const PHASE_STALE_MILLISECONDS: u64 = 1_000;
+
+/// The interface's frames (RULE-98 item 1): its display's refresh period
+/// and the time of its next composition, on the machine's monotonic clock
+/// that every process of the browser reads the same.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct FramePhase {
+    /// The refresh period, [`LEAST_REFRESH_MICROSECONDS`] to
+    /// [`MOST_REFRESH_MICROSECONDS`].
+    pub period_us: u32,
+    /// The next composition, in microseconds of the monotonic clock.
+    pub next_us: u64,
+}
+
+pub(crate) fn push_frame_phase(payload: &mut Vec<u8>, phase: FramePhase) -> Result<(), ProtocolError> {
+    if !(LEAST_REFRESH_MICROSECONDS..=MOST_REFRESH_MICROSECONDS).contains(&phase.period_us) {
+        return Err(ProtocolError::BadValue("refresh period"));
+    }
+    payload.extend_from_slice(&phase.period_us.to_be_bytes());
+    payload.extend_from_slice(&phase.next_us.to_be_bytes());
+    Ok(())
+}
+
+pub(crate) fn read_frame_phase(fields: &mut Fields<'_>) -> Result<FramePhase, ProtocolError> {
+    let period_us = fields.u32()?;
+    let next_us = u64::from_be_bytes(fields.array()?);
+    if !(LEAST_REFRESH_MICROSECONDS..=MOST_REFRESH_MICROSECONDS).contains(&period_us) {
+        return Err(ProtocolError::BadValue("refresh period"));
+    }
+    Ok(FramePhase { period_us, next_us })
+}
+
+/// A page as the rule table knows it: a page number and a sub-code
+/// together (page-rules.md RULE-112, DEC-6599). Nothing of the rule table
+/// is addressed by a page number alone.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct PageSub {
+    /// The page number, of a channel's pages.
+    pub page: u16,
+    /// The sub-code, 0 to `LAST_SUBCODE`: never 3F7F, which names no
+    /// sub-page (RULE-112).
+    pub sub: u16,
+}
+
+impl PageSub {
+    /// The page `page` with sub-code `sub`.
+    #[must_use]
+    pub const fn new(page: u16, sub: u16) -> Self {
+        Self { page, sub }
+    }
+}
+
+pub(crate) fn push_page_sub(payload: &mut Vec<u8>, key: PageSub) -> Result<(), ProtocolError> {
+    crate::fields::check_page(key.page)?;
+    if key.sub > LAST_SUBCODE {
+        return Err(ProtocolError::BadValue("sub-code"));
+    }
+    payload.extend_from_slice(&key.page.to_be_bytes());
+    payload.extend_from_slice(&key.sub.to_be_bytes());
+    Ok(())
+}
+
+pub(crate) fn read_page_sub(fields: &mut Fields<'_>) -> Result<PageSub, ProtocolError> {
+    let page = fields.channel_page()?;
+    let sub = fields.u16()?;
+    if sub > LAST_SUBCODE {
+        return Err(ProtocolError::BadValue("sub-code"));
+    }
+    Ok(PageSub { page, sub })
+}
+
 /// What a decoder tells of the open page's table (RULE-52 item 1, RULE-33
 /// item 1, RULE-51 item 4). It is told when a table is decoded for the
 /// open page, again when the watch list or the wheel rectangles change,
@@ -199,8 +317,8 @@ impl WheelRect {
 /// stops being the open page.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RulesOpen {
-    /// The page.
-    pub page: u16,
+    /// The page and sub-code.
+    pub page: PageSub,
     /// The table's generation, 1 to 65,535; 0 when the page has no table.
     pub generation: u16,
     /// The classes of input the table asks for: `INTEREST_` bits.
@@ -234,12 +352,15 @@ pub enum Reported {
 /// `echo` (RULE-52 item 3).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Report {
-    /// The page.
-    pub page: u16,
+    /// The page and sub-code.
+    pub page: PageSub,
     /// The table's generation, never 0.
     pub generation: u16,
-    /// The rule, 0 to 63.
+    /// The rule, 0 to 63; `NO_RULE` (255) for a run no rule made (RULE-46).
     pub rule: u8,
+    /// The place of the firing row within the rule's rows, 0 to 63;
+    /// `NO_RULE` (255) for none (RULE-46).
+    pub row: u8,
     /// The page tick at which it fired.
     pub tick: u32,
     /// The kind of the target the pointer was inside, 0 to 3.
@@ -250,25 +371,42 @@ pub struct Report {
     pub what: Reported,
 }
 
-/// The receiver's own counts for the open page (RULE-72), for the console.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+/// The receiver's own counts for the open page (RULE-72), for the console:
+/// totals since the page opened, the evaluator's and the host's.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct RuleCounters {
-    /// The page.
-    pub page: u16,
+    /// The page and sub-code.
+    pub page: PageSub,
     /// Ticks evaluated.
     pub ticks: u32,
     /// Rules fired.
     pub fired: u32,
-    /// Actions run.
-    pub actions: u32,
-    /// Actions skipped for a missing target or sound.
+    /// Groups run.
+    pub groups: u32,
+    /// Commands applied.
+    pub commands: u32,
+    /// Commands that did nothing for a missing target or sound.
     pub skipped: u32,
     /// Input events dropped from a full queue.
     pub events_dropped: u32,
+    /// Runs armed.
+    pub armed: u32,
+    /// Armed runs that ran late.
+    pub armed_late: u32,
+    /// Runs not armed for a full list.
+    pub not_armed: u32,
+    /// Cues heard.
+    pub cues: u32,
+    /// Cues dropped.
+    pub cues_dropped: u32,
     /// Reports asked for.
-    pub sends: u32,
-    /// Rule firings dropped by the cap on a tick's actions.
-    pub overruns: u32,
+    pub reports: u32,
+    /// Ticks whose evaluation ran late (RULE-4, fault 9).
+    pub late_ticks: u32,
+    /// The longest tick's evaluation, in microseconds.
+    pub longest_tick_us: u32,
+    /// The sixteen variables, `v0` first.
+    pub variables: [i32; VARIABLES],
 }
 
 pub(crate) fn push_input(payload: &mut Vec<u8>, input: &RuleInput) {
@@ -362,8 +500,7 @@ pub(crate) fn read_input(fields: &mut Fields<'_>) -> Result<RuleInput, ProtocolE
 }
 
 pub(crate) fn push_open(payload: &mut Vec<u8>, open: &RulesOpen) -> Result<(), ProtocolError> {
-    crate::fields::check_page(open.page)?;
-    payload.extend_from_slice(&open.page.to_be_bytes());
+    push_page_sub(payload, open.page)?;
     payload.extend_from_slice(&open.generation.to_be_bytes());
     payload.push(open.interest);
     crate::push_count_u8(payload, open.watch.len(), MAX_WATCH_SLOTS, "watch list")?;
@@ -381,7 +518,7 @@ pub(crate) fn push_open(payload: &mut Vec<u8>, open: &RulesOpen) -> Result<(), P
 }
 
 pub(crate) fn read_open(fields: &mut Fields<'_>) -> Result<RulesOpen, ProtocolError> {
-    let page = fields.channel_page()?;
+    let page = read_page_sub(fields)?;
     let generation = fields.u16()?;
     let interest = fields.u8()?;
     if interest & !INTEREST_ALL != 0 {
@@ -409,10 +546,10 @@ pub(crate) fn read_open(fields: &mut Fields<'_>) -> Result<RulesOpen, ProtocolEr
 }
 
 pub(crate) fn push_report(payload: &mut Vec<u8>, report: &Report) -> Result<(), ProtocolError> {
-    crate::fields::check_page(report.page)?;
-    payload.extend_from_slice(&report.page.to_be_bytes());
+    push_page_sub(payload, report.page)?;
     payload.extend_from_slice(&report.generation.to_be_bytes());
     payload.push(report.rule);
+    payload.push(report.row);
     payload.extend_from_slice(&report.tick.to_be_bytes());
     payload.push(report.target_kind);
     payload.extend_from_slice(&report.target_number.to_be_bytes());
@@ -432,13 +569,18 @@ pub(crate) fn push_report(payload: &mut Vec<u8>, report: &Report) -> Result<(), 
 }
 
 pub(crate) fn read_report(fields: &mut Fields<'_>) -> Result<Report, ProtocolError> {
-    let page = fields.channel_page()?;
+    let page = read_page_sub(fields)?;
     let generation = fields.u16()?;
     let rule = fields.u8()?;
+    let row = fields.u8()?;
     let tick = fields.u32()?;
     let target_kind = fields.u8()?;
     let target_number = fields.u16()?;
-    if generation == 0 || usize::from(rule) >= MAX_RULES || target_kind > MAX_TARGET_KIND {
+    // RULE-46: 255 for a run no rule made and for no row; a row only of a
+    // rule.
+    let ruled = usize::from(rule) < MAX_RULES || rule == NO_RULE;
+    let rowed = row == NO_RULE || (usize::from(row) < MAX_ROWS && rule != NO_RULE);
+    if generation == 0 || !ruled || !rowed || target_kind > MAX_TARGET_KIND {
         return Err(ProtocolError::BadValue("report"));
     }
     let what = match fields.u8()? {
@@ -452,36 +594,76 @@ pub(crate) fn read_report(fields: &mut Fields<'_>) -> Result<Report, ProtocolErr
     if !matches!(what, Reported::Input { .. }) && (target_kind != 0 || target_number != 0) {
         return Err(ProtocolError::BadValue("report target"));
     }
-    Ok(Report { page, generation, rule, tick, target_kind, target_number, what })
+    Ok(Report { page, generation, rule, row, tick, target_kind, target_number, what })
 }
 
-/// A state query's fields: its page and its identifier (RULE-47).
-pub(crate) fn push_query(payload: &mut Vec<u8>, page: u16, identifier: u32) -> Result<(), ProtocolError> {
-    crate::fields::check_page(page)?;
-    payload.extend_from_slice(&page.to_be_bytes());
+/// A state query's fields: its page and sub-code and its identifier
+/// (RULE-47).
+pub(crate) fn push_query(payload: &mut Vec<u8>, page: PageSub, identifier: u32) -> Result<(), ProtocolError> {
+    push_page_sub(payload, page)?;
     payload.extend_from_slice(&identifier.to_be_bytes());
     Ok(())
 }
 
+/// The unsigned figures of [`RuleCounters`] on the pipe, in the order
+/// [`push_counters`] writes them, before the variables.
+const COUNTER_FIGURES: usize = 14;
+
 pub(crate) fn push_counters(payload: &mut Vec<u8>, counters: &RuleCounters) -> Result<(), ProtocolError> {
-    crate::fields::check_page(counters.page)?;
-    payload.extend_from_slice(&counters.page.to_be_bytes());
-    for figure in [counters.ticks, counters.fired, counters.actions, counters.skipped, counters.events_dropped, counters.sends, counters.overruns] {
+    push_page_sub(payload, counters.page)?;
+    for figure in [
+        counters.ticks,
+        counters.fired,
+        counters.groups,
+        counters.commands,
+        counters.skipped,
+        counters.events_dropped,
+        counters.armed,
+        counters.armed_late,
+        counters.not_armed,
+        counters.cues,
+        counters.cues_dropped,
+        counters.reports,
+        counters.late_ticks,
+        counters.longest_tick_us,
+    ] {
         payload.extend_from_slice(&figure.to_be_bytes());
+    }
+    for variable in counters.variables {
+        payload.extend_from_slice(&variable.to_be_bytes());
     }
     Ok(())
 }
 
 pub(crate) fn read_counters(fields: &mut Fields<'_>) -> Result<RuleCounters, ProtocolError> {
+    let page = read_page_sub(fields)?;
+    let mut figures = [0_u32; COUNTER_FIGURES];
+    for figure in &mut figures {
+        *figure = fields.u32()?;
+    }
+    let [ticks, fired, groups, commands, skipped, events_dropped, armed, armed_late, not_armed, cues, cues_dropped, reports, late_ticks, longest_tick_us] =
+        figures;
+    let mut variables = [0_i32; VARIABLES];
+    for variable in &mut variables {
+        *variable = fields.u32()?.cast_signed();
+    }
     Ok(RuleCounters {
-        page: fields.channel_page()?,
-        ticks: fields.u32()?,
-        fired: fields.u32()?,
-        actions: fields.u32()?,
-        skipped: fields.u32()?,
-        events_dropped: fields.u32()?,
-        sends: fields.u32()?,
-        overruns: fields.u32()?,
+        page,
+        ticks,
+        fired,
+        groups,
+        commands,
+        skipped,
+        events_dropped,
+        armed,
+        armed_late,
+        not_armed,
+        cues,
+        cues_dropped,
+        reports,
+        late_ticks,
+        longest_tick_us,
+        variables,
     })
 }
 
@@ -528,46 +710,76 @@ mod tests {
     #[test]
     fn the_rule_messages_round_trip() {
         for input in every_input() {
-            let message = ToDecoder::RuleInput { page: 0x101, sequence: u32::MAX, input };
+            let message = ToDecoder::RuleInput { page: PageSub::new(0x101, 1), sequence: u32::MAX, input };
             assert_eq!(to_decoder(&message).unwrap(), Some(message));
         }
         for values in [vec![], vec![7], vec![255; MAX_WATCH_SLOTS]] {
-            let message = ToDecoder::Metered { page: 0x899, values };
+            let message = ToDecoder::Metered { page: PageSub::new(0x899, 1), values };
             assert_eq!(to_decoder(&message).unwrap(), Some(message));
         }
-        let query = ToDecoder::RulesQuery { page: 0x100, identifier: 0x0102_0304 };
+        let query = ToDecoder::RulesQuery { page: PageSub::new(0x100, 1), identifier: 0x0102_0304 };
         assert_eq!(to_decoder(&query).unwrap(), Some(query));
-        for page in [None, Some(0x101)] {
+        for page in [None, Some(PageSub::new(0x101, 0)), Some(PageSub::new(0x101, LAST_SUBCODE))] {
             assert_eq!(to_decoder(&ToDecoder::RulesPage(page)).unwrap(), Some(ToDecoder::RulesPage(page)));
         }
-        assert!(to_decoder(&ToDecoder::RulesPage(Some(0x0FF))).is_err(), "no page of a channel");
+        assert!(to_decoder(&ToDecoder::RulesPage(Some(PageSub::new(0x0FF, 0)))).is_err(), "no page of a channel");
+        assert!(to_decoder(&ToDecoder::RulesPage(Some(PageSub::new(0x101, 0x3F7F)))).is_err(), "3F7F names no sub-page (RULE-112)");
+        for message in [
+            ToDecoder::ConnectionEnded,
+            ToDecoder::CueHeard { audio_channel: 3, number: neoteletext_rules::limits::MAX_CUE },
+            ToDecoder::FramePhase(FramePhase { period_us: LEAST_REFRESH_MICROSECONDS, next_us: u64::MAX }),
+            ToDecoder::FramePhase(FramePhase { period_us: MOST_REFRESH_MICROSECONDS, next_us: 0 }),
+        ] {
+            assert_eq!(to_decoder(&message).unwrap(), Some(message));
+        }
+        assert!(to_decoder(&ToDecoder::CueHeard { audio_channel: 4, number: 0 }).is_err());
+        assert!(to_decoder(&ToDecoder::CueHeard { audio_channel: 0, number: 128 }).is_err());
+        assert!(to_decoder(&ToDecoder::FramePhase(FramePhase { period_us: LEAST_REFRESH_MICROSECONDS - 1, next_us: 0 })).is_err());
+        assert!(to_decoder(&ToDecoder::FramePhase(FramePhase { period_us: MOST_REFRESH_MICROSECONDS + 1, next_us: 0 })).is_err());
 
         let full = RulesOpen {
-            page: 0x101,
+            page: PageSub::new(0x101, 1),
             generation: 65_535,
             interest: INTEREST_ALL,
             watch: (0..MAX_WATCH_SLOTS).map(|slot| WatchSlot { channel: 3, kind: 2, part: u8::try_from(slot % 16).unwrap() }).collect(),
             wheel: vec![WheelRect { x: 0, y: 0, width: 800, height: 480 }; MAX_WHEEL_RECTS],
         };
-        let none = RulesOpen { page: 0x101, generation: 0, interest: 0, watch: vec![], wheel: vec![] };
+        let none = RulesOpen { page: PageSub::new(0x101, 1), generation: 0, interest: 0, watch: vec![], wheel: vec![] };
         for open in [full, none] {
             assert_eq!(from_decoder(&FromDecoder::RulesOpen(open.clone())).unwrap(), Some(FromDecoder::RulesOpen(open)));
         }
         for what in [Reported::Fired, Reported::Input { sequence: 9 }, Reported::Value { value: [5, 0, 0, 1, 0, 0, 0, 0], reading: -3 }] {
             let target = if matches!(what, Reported::Input { .. }) { (2, 101) } else { (0, 0) };
-            let report = Report { page: 0x101, generation: 1, rule: 63, tick: u32::MAX, target_kind: target.0, target_number: target.1, what };
+            let report =
+                Report { page: PageSub::new(0x101, 1), generation: 1, rule: 63, row: 63, tick: u32::MAX, target_kind: target.0, target_number: target.1, what };
             assert_eq!(from_decoder(&FromDecoder::Report(report)).unwrap(), Some(FromDecoder::Report(report)));
         }
         for body in [vec![0; 10], vec![1; MAX_PAGE_STATE]] {
-            let state = FromDecoder::PageState { page: 0x101, identifier: 77, body };
+            let state = FromDecoder::PageState { page: PageSub::new(0x101, 1), identifier: 77, body };
             assert_eq!(from_decoder(&state).unwrap(), Some(state));
         }
-        for fault in 1..=MAX_FAULT {
-            let message = FromDecoder::RulesFault { page: 0x101, generation: 3, fault, count: 12 };
+        for fault in (1..=MAX_FAULT).filter(|fault| *fault != WITHDRAWN_FAULT) {
+            let message = FromDecoder::RulesFault { page: PageSub::new(0x101, 1), generation: 3, fault, count: 12 };
             assert_eq!(from_decoder(&message).unwrap(), Some(message));
         }
-        let counters =
-            FromDecoder::RuleCounters(RuleCounters { page: 0x101, ticks: 1, fired: 2, actions: 3, skipped: 4, events_dropped: 5, sends: 6, overruns: 7 });
+        let counters = FromDecoder::RuleCounters(RuleCounters {
+            page: PageSub::new(0x101, 1),
+            ticks: 1,
+            fired: 2,
+            groups: 3,
+            commands: 4,
+            skipped: 5,
+            events_dropped: 6,
+            armed: 7,
+            armed_late: 8,
+            not_armed: 9,
+            cues: 10,
+            cues_dropped: 11,
+            reports: 12,
+            late_ticks: 13,
+            longest_tick_us: u32::MAX,
+            variables: [i32::MIN; VARIABLES],
+        });
         assert_eq!(from_decoder(&counters).unwrap(), Some(counters));
     }
 
@@ -575,15 +787,17 @@ mod tests {
     /// the writer and by the reader.
     #[test]
     fn rule_messages_out_of_bounds_are_refused() {
-        assert!(to_decoder(&ToDecoder::RuleInput { page: 0x101, sequence: 1, input: RuleInput::Drawing { leave: false, drawing: 0 } }).is_err());
+        assert!(
+            to_decoder(&ToDecoder::RuleInput { page: PageSub::new(0x101, 1), sequence: 1, input: RuleInput::Drawing { leave: false, drawing: 0 } }).is_err()
+        );
         let control = RuleInput::Pointer { action: PointerAction::Move, button: 0, x: 0, y: 0, control: 33 };
-        assert!(to_decoder(&ToDecoder::RuleInput { page: 0x101, sequence: 1, input: control }).is_err(), "a control past the engine's most");
+        assert!(to_decoder(&ToDecoder::RuleInput { page: PageSub::new(0x101, 1), sequence: 1, input: control }).is_err(), "a control past the engine's most");
         let surrogate = RuleInput::Key { action: KeyAction::Press, named: false, code: 0xD800, base: None, mods: 0 };
-        assert!(to_decoder(&ToDecoder::RuleInput { page: 0x101, sequence: 1, input: surrogate }).is_err());
-        assert!(to_decoder(&ToDecoder::Metered { page: 0x101, values: vec![0; MAX_WATCH_SLOTS + 1] }).is_err());
+        assert!(to_decoder(&ToDecoder::RuleInput { page: PageSub::new(0x101, 1), sequence: 1, input: surrogate }).is_err());
+        assert!(to_decoder(&ToDecoder::Metered { page: PageSub::new(0x101, 1), values: vec![0; MAX_WATCH_SLOTS + 1] }).is_err());
 
         let open = |change: &dyn Fn(&mut RulesOpen)| {
-            let mut open = RulesOpen { page: 0x101, generation: 1, interest: 1, watch: vec![], wheel: vec![] };
+            let mut open = RulesOpen { page: PageSub::new(0x101, 1), generation: 1, interest: 1, watch: vec![], wheel: vec![] };
             change(&mut open);
             from_decoder(&FromDecoder::RulesOpen(open)).is_err()
         };
@@ -598,18 +812,26 @@ mod tests {
         assert!(open(&|open| open.generation = 0), "no table asks for nothing");
 
         let report = |change: &dyn Fn(&mut Report)| {
-            let mut report = Report { page: 0x101, generation: 1, rule: 0, tick: 0, target_kind: 0, target_number: 0, what: Reported::Fired };
+            let mut report =
+                Report { page: PageSub::new(0x101, 1), generation: 1, rule: 0, row: NO_RULE, tick: 0, target_kind: 0, target_number: 0, what: Reported::Fired };
             change(&mut report);
             from_decoder(&FromDecoder::Report(report)).is_err()
         };
         assert!(!report(&|_| {}));
         assert!(report(&|report| report.rule = 64));
+        assert!(!report(&|report| report.rule = NO_RULE), "a run no rule made");
+        assert!(report(&|report| report.row = 64));
+        assert!(report(&|report| (report.rule, report.row) = (NO_RULE, 0)), "a row only of a rule");
         assert!(report(&|report| report.generation = 0));
         assert!(report(&|report| report.target_kind = 4));
         assert!(report(&|report| report.target_number = 1), "a firing with no event names no target");
-        assert!(from_decoder(&FromDecoder::PageState { page: 0x101, identifier: 1, body: vec![0; MAX_PAGE_STATE + 1] }).is_err());
-        assert!(from_decoder(&FromDecoder::RulesFault { page: 0x101, generation: 1, fault: 0, count: 1 }).is_err());
-        assert!(from_decoder(&FromDecoder::RulesFault { page: 0x101, generation: 1, fault: 9, count: 1 }).is_err());
+        assert!(from_decoder(&FromDecoder::PageState { page: PageSub::new(0x101, 1), identifier: 1, body: vec![0; MAX_PAGE_STATE + 1] }).is_err());
+        assert!(from_decoder(&FromDecoder::RulesFault { page: PageSub::new(0x101, 1), generation: 1, fault: 0, count: 1 }).is_err());
+        assert!(from_decoder(&FromDecoder::RulesFault { page: PageSub::new(0x101, 1), generation: 1, fault: MAX_FAULT + 1, count: 1 }).is_err());
+        assert!(
+            from_decoder(&FromDecoder::RulesFault { page: PageSub::new(0x101, 1), generation: 1, fault: WITHDRAWN_FAULT, count: 1 }).is_err(),
+            "code 2 is withdrawn"
+        );
     }
 
     /// RULE-63 (REQ-6534): each side accepts only the kinds meant for it:
@@ -618,13 +840,13 @@ mod tests {
     #[test]
     fn a_decoder_cannot_send_what_only_the_core_sends() {
         let mut bytes = Vec::new();
-        write_to_decoder(&mut bytes, &ToDecoder::RuleInput { page: 0x101, sequence: 1, input: RuleInput::Focus }).unwrap();
+        write_to_decoder(&mut bytes, &ToDecoder::RuleInput { page: PageSub::new(0x101, 1), sequence: 1, input: RuleInput::Focus }).unwrap();
         assert!(read_from_decoder(&mut bytes.as_slice()).is_err());
         let mut bytes = Vec::new();
-        write_to_decoder(&mut bytes, &ToDecoder::Metered { page: 0x101, values: vec![1] }).unwrap();
+        write_to_decoder(&mut bytes, &ToDecoder::Metered { page: PageSub::new(0x101, 1), values: vec![1] }).unwrap();
         assert!(read_from_decoder(&mut bytes.as_slice()).is_err());
         let mut bytes = Vec::new();
-        write_to_core(&mut bytes, &FromDecoder::RulesFault { page: 0x101, generation: 1, fault: 1, count: 1 }).unwrap();
+        write_to_core(&mut bytes, &FromDecoder::RulesFault { page: PageSub::new(0x101, 1), generation: 1, fault: 1, count: 1 }).unwrap();
         assert!(read_from_core(&mut bytes.as_slice()).is_err());
     }
 
@@ -641,9 +863,18 @@ mod tests {
         }
         assert!(write_from_sound(&mut Vec::new(), &FromSound::Metered { channel: 7, values: vec![0; MAX_WATCH_SLOTS + 1] }).is_err());
         let mut bytes = Vec::new();
-        write_from_sound(&mut bytes, &FromSound::LocalOverrun { channel: 9 }).unwrap();
-        assert_eq!(read_from_sound(&mut bytes.as_slice()).unwrap(), Some(FromSound::LocalOverrun { channel: 9 }));
-        let query = FromFetcher::RulesQuery { page: 0x101, identifier: u32::MAX };
+        write_from_sound(&mut bytes, &FromSound::LocalOverrun { channel: 9, count: 0 }).unwrap();
+        assert_eq!(read_from_sound(&mut bytes.as_slice()).unwrap(), Some(FromSound::LocalOverrun { channel: 9, count: 0 }));
+        let heard = FromSound::CueHeard { channel: 9, audio_channel: 2, number: 127 };
+        let mut bytes = Vec::new();
+        write_from_sound(&mut bytes, &heard).unwrap();
+        assert_eq!(read_from_sound(&mut bytes.as_slice()).unwrap(), Some(heard));
+        assert!(write_from_sound(&mut Vec::new(), &FromSound::CueHeard { channel: 9, audio_channel: 4, number: 0 }).is_err());
+        let spent = FromSound::Spent { channel: 9, microseconds: u32::MAX };
+        let mut bytes = Vec::new();
+        write_from_sound(&mut bytes, &spent).unwrap();
+        assert_eq!(read_from_sound(&mut bytes.as_slice()).unwrap(), Some(spent));
+        let query = FromFetcher::RulesQuery { page: PageSub::new(0x101, 1), identifier: u32::MAX };
         let mut bytes = Vec::new();
         fetcher_writes(&mut bytes, &query).unwrap();
         assert_eq!(read_from_fetcher(&mut bytes.as_slice()).unwrap(), Some(query));

@@ -19,6 +19,10 @@ const KIND_SOUNDING: u8 = 4;
 const KIND_METERED: u8 = 5;
 /// A view's local sounds were stopped for overrunning their time (RULE-62).
 const KIND_LOCAL_OVERRUN: u8 = 6;
+/// A cue of a view's sound was heard (page-rules.md RULE-109, RULE-63).
+const KIND_CUE_HEARD: u8 = 7;
+/// The processor time spent rendering one view's sounds (REQ-6626).
+const KIND_SPENT: u8 = 8;
 
 /// From the trusted core to the sound helper.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -63,6 +67,29 @@ pub enum FromSound {
     LocalOverrun {
         /// The view's channel.
         channel: u32,
+        /// How many times the view's local sounds were stopped since the
+        /// last report; 0 when the small device buffer was given up for
+        /// the usual one and the sounds go on (RULE-97 item 3).
+        count: u16,
+    },
+    /// A cue of a sound on one of the view's audio channels was heard:
+    /// the device buffer holding its sample was rendered (RULE-109).
+    CueHeard {
+        /// The view's channel.
+        channel: u32,
+        /// The audio channel, 0 to 3.
+        audio_channel: u8,
+        /// The cue's number, 0 to `MAX_CUE`.
+        number: u8,
+    },
+    /// The processor time the helper spent rendering one view's sounds
+    /// since it last said, measured around its render calls (REQ-6626
+    /// item 1 b).
+    Spent {
+        /// The view's channel.
+        channel: u32,
+        /// Microseconds.
+        microseconds: u32,
     },
 }
 
@@ -131,9 +158,21 @@ pub fn write_from_sound(out: &mut dyn Write, message: &FromSound) -> Result<(), 
             payload.extend_from_slice(values);
             KIND_METERED
         }
-        FromSound::LocalOverrun { channel } => {
+        FromSound::LocalOverrun { channel, count } => {
             payload.extend_from_slice(&channel.to_be_bytes());
+            payload.extend_from_slice(&count.to_be_bytes());
             KIND_LOCAL_OVERRUN
+        }
+        FromSound::CueHeard { channel, audio_channel, number } => {
+            crate::rules::check_cue(*audio_channel, *number)?;
+            payload.extend_from_slice(&channel.to_be_bytes());
+            payload.extend_from_slice(&[*audio_channel, *number]);
+            KIND_CUE_HEARD
+        }
+        FromSound::Spent { channel, microseconds } => {
+            payload.extend_from_slice(&channel.to_be_bytes());
+            payload.extend_from_slice(&microseconds.to_be_bytes());
+            KIND_SPENT
         }
     };
     write_frame(out, kind, &payload)
@@ -154,7 +193,13 @@ pub fn read_from_sound(input: &mut dyn Read) -> Result<Option<FromSound>, Protoc
             let count = fields.count_u8(audio::MAX_WATCH_SLOTS, "metered values")?;
             FromSound::Metered { channel, values: fields.take(count)?.to_vec() }
         }
-        KIND_LOCAL_OVERRUN => FromSound::LocalOverrun { channel: fields.u32()? },
+        KIND_LOCAL_OVERRUN => FromSound::LocalOverrun { channel: fields.u32()?, count: fields.u16()? },
+        KIND_CUE_HEARD => {
+            let (channel, audio_channel, number) = (fields.u32()?, fields.u8()?, fields.u8()?);
+            crate::rules::check_cue(audio_channel, number)?;
+            FromSound::CueHeard { channel, audio_channel, number }
+        }
+        KIND_SPENT => FromSound::Spent { channel: fields.u32()?, microseconds: fields.u32()? },
         other => return Err(ProtocolError::UnknownKind(other)),
     };
     fields.end()?;

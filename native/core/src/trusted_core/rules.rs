@@ -22,7 +22,7 @@ impl Core {
             // rectangles stay with the gate; its watch list goes to the
             // sound helper, for the open page alone (RULE-33 item 2).
             FromDecoder::RulesOpen(told) => {
-                let (sends, open) = self.typing.rules_open(channel, &told, now_us);
+                let (sends, open) = self.typing.rules_told(channel, &told, now_us);
                 let had = self.watching.remove(&channel);
                 if open && !told.watch.is_empty() {
                     self.watching.insert(channel, (told.page, told.watch.len()));
@@ -44,37 +44,42 @@ impl Core {
             // author reads the channel's log (RULE-48, RULE-72).
             FromDecoder::RulesFault { page, generation, fault, count } => {
                 let name = neoteletext_input::rules::FaultCode::from_code(fault).map_or("unknown", neoteletext_input::rules::FaultCode::name);
-                self.note(Level::Warning, Some(channel), &format!("page {page:03X}: rule table fault {name}, {count} time(s), generation {generation}"));
+                self.note(
+                    Level::Warning,
+                    Some(channel),
+                    &format!("page {:03X}/{:04X}: rule table fault {name}, {count} time(s), generation {generation}", page.page, page.sub),
+                );
                 let sends = self.typing.rules_fault(channel, page, generation, fault, count, now_us);
                 self.deliver_typing(sends)?;
             }
             // The receiver's own counts, for the page's author (RULE-72):
-            // noted when something was skipped, dropped or overran since
-            // they were last noted, and as the page's rules first run.
+            // kept for the developer console's Stats tab, whose "Page
+            // cost" section shows them (REQ-6626), and shown nowhere else.
             FromDecoder::RuleCounters(counters) => {
-                let troubles = (counters.skipped, counters.events_dropped, counters.overruns);
-                let before = self.rule_troubles.insert(channel, (counters.page, troubles));
-                if before != Some((counters.page, troubles)) {
-                    self.note(
-                        Level::Info,
-                        Some(channel),
-                        &format!(
-                            "page {:03X} rules: {} ticks, {} fired, {} actions, {} skipped, {} events dropped, {} sends asked, {} overruns",
-                            counters.page,
-                            counters.ticks,
-                            counters.fired,
-                            counters.actions,
-                            counters.skipped,
-                            counters.events_dropped,
-                            counters.sends,
-                            counters.overruns
-                        ),
-                    );
-                }
+                self.rule_counters.insert(channel, counters);
             }
             _ => {}
         }
         Ok(())
+    }
+
+    /// Sound commands of `channel`'s decoder the budget dropped: fault 10
+    /// for its open page (RULE-52 item 5, RULE-48).
+    pub(super) fn sound_commands_dropped(&mut self, channel: u32, dropped: u32) -> Result<(), String> {
+        const FAULT_QUEUE_FULL: u8 = 10;
+        let Some((page, generation)) = self.typing.rules_asked(channel) else { return Ok(()) };
+        let count = u16::try_from(dropped).unwrap_or(u16::MAX);
+        let sends = self.typing.rules_fault(channel, page, generation, FAULT_QUEUE_FULL, count, self.now_us());
+        self.deliver_typing(sends)
+    }
+
+    /// A cue the sound helper heard on one of `channel`'s audio channels
+    /// (RULE-109): given to that view's decoder while a page of it is open
+    /// for its table; a paused page forgets its cues (RULE-111 case 4).
+    pub(super) fn cue_heard(&mut self, channel: u32, audio_channel: u8, number: u8) {
+        if self.typing.rules_open(channel).is_some() {
+            self.tell(channel, protocol::decoder::ToDecoder::CueHeard { audio_channel, number });
+        }
     }
 
     /// The sound helper's metered report for the view of `channel`
@@ -90,7 +95,7 @@ impl Core {
     /// A state query the fetcher of `channel` received (RULE-47): the
     /// decoder is asked only for the open page, and its one answer is
     /// passed only for a query noted here (RULE-52 item 6).
-    pub(super) fn rules_query(&mut self, channel: u32, page: u16, identifier: u32) {
+    pub(super) fn rules_query(&mut self, channel: u32, page: protocol::rules::PageSub, identifier: u32) {
         if self.typing.rules_query(channel, page, identifier) {
             self.tell(channel, protocol::decoder::ToDecoder::RulesQuery { page, identifier });
         }
@@ -99,12 +104,18 @@ impl Core {
     /// The sound helper stopped the local sounds of the view of `channel`
     /// for overrunning their time (RULE-62): fault 7 for the open page's
     /// table.
-    pub(super) fn local_overrun(&mut self, channel: u32) -> Result<(), String> {
-        /// Fault 7 (RULE-48).
+    pub(super) fn local_overrun(&mut self, channel: u32, count: u16) -> Result<(), String> {
         const FAULT_LOCAL_OVERRUN: u8 = 7;
         let Some((page, generation)) = self.typing.rules_asked(channel) else { return Ok(()) };
-        self.note(protocol::console::Level::Warning, Some(channel), &format!("page {page:03X}: its local sounds were stopped for overrunning their time"));
-        let sends = self.typing.rules_fault(channel, page, generation, FAULT_LOCAL_OVERRUN, 1, self.now_us());
+        // RULE-97 item 3: count 0 is the small device buffer given up, the
+        // sounds playing on; 1 or more is RULE-62's stop.
+        let said = if count == 0 {
+            "its local sounds' small device buffer was given up for the usual one"
+        } else {
+            "its local sounds were stopped for overrunning their time"
+        };
+        self.note(protocol::console::Level::Warning, Some(channel), &format!("page {:03X}/{:04X}: {said}", page.page, page.sub));
+        let sends = self.typing.rules_fault(channel, page, generation, FAULT_LOCAL_OVERRUN, count, self.now_us());
         self.deliver_typing(sends)
     }
 
@@ -113,7 +124,7 @@ impl Core {
     /// metered for it.
     pub(super) fn rules_decoder_gone(&mut self, channel: u32) {
         self.typing.decoder_gone(channel);
-        self.rule_troubles.remove(&channel);
+        self.rule_counters.remove(&channel);
         if self.watching.remove(&channel).is_some() {
             self.tell_sound(&protocol::sound::ToSound::Audio { channel, audio: protocol::audio::Audio::Watch(Vec::new()) });
         }
@@ -131,11 +142,17 @@ impl Core {
 
     pub(super) fn metered(&mut self, _channel: u32, _values: Vec<u8>) {}
 
-    pub(super) fn rules_query(&mut self, _channel: u32, _page: u16, _identifier: u32) {}
+    pub(super) fn rules_query(&mut self, _channel: u32, _page: protocol::rules::PageSub, _identifier: u32) {}
 
-    pub(super) fn local_overrun(&mut self, _channel: u32) -> Result<(), String> {
+    pub(super) fn local_overrun(&mut self, _channel: u32, _count: u16) -> Result<(), String> {
         Ok(())
     }
+
+    pub(super) fn sound_commands_dropped(&mut self, _channel: u32, _dropped: u32) -> Result<(), String> {
+        Ok(())
+    }
+
+    pub(super) fn cue_heard(&mut self, _channel: u32, _audio_channel: u8, _number: u8) {}
 
     pub(super) fn rules_decoder_gone(&mut self, _channel: u32) {}
 }

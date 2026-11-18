@@ -55,6 +55,12 @@ struct Heard {
     /// The audio channels a local sound was started on and not stopped or
     /// replaced since (page-rules.md RULE-60).
     local: [bool; neoteletext_audio::CHANNELS as usize],
+    /// The presentation tick the sound commands were last counted in, and
+    /// how many passed in it (page-rules.md RULE-52 item 5).
+    commands_tick: u32,
+    commands: u32,
+    /// Sound commands dropped by the budget since last taken (fault 10).
+    commands_dropped: u32,
 }
 
 /// The trusted core's record of what is heard.
@@ -93,8 +99,24 @@ impl Hearing {
     /// A voice operation from the decoder of `channel`: what to pass on, if
     /// anything. An operation on a sound never defined, beyond its length,
     /// or beyond the ledger is dropped.
-    pub fn decoded(&mut self, channel: u32, audio: Audio) -> Option<ToSound> {
+    pub fn decoded(&mut self, channel: u32, audio: Audio, now_us: u64) -> Option<ToSound> {
         let heard = self.channels.entry(channel).or_default();
+        // RULE-52 item 5: at most `SOUND_COMMAND_BUDGET` sound commands a
+        // tick from one view's decoder, however they arose, the rest
+        // dropped and counted. A general protection of this core and the
+        // sound helper, not a cap on a group (page-rules.md section 12.4).
+        if matches!(audio, Audio::Start { .. } | Audio::Stop { .. } | Audio::Gain { .. } | Audio::Local { .. } | Audio::LocalMidi { .. }) {
+            let tick = neoteletext_core::consts::presentation_tick_at_us(now_us);
+            if tick != heard.commands_tick {
+                heard.commands_tick = tick;
+                heard.commands = 0;
+            }
+            if heard.commands >= protocol::rules::SOUND_COMMAND_BUDGET {
+                heard.commands_dropped = heard.commands_dropped.saturating_add(1);
+                return None;
+            }
+            heard.commands = heard.commands.saturating_add(1);
+        }
         let charge = |heard: &mut Heard, total: &mut u64, name: Held, samples: u32| -> Option<()> {
             let previous = u64::from(heard.sounds.get(&name).copied().unwrap_or(0));
             let held = heard.held.saturating_sub(previous).saturating_add(u64::from(samples));
@@ -182,9 +204,22 @@ impl Hearing {
             // Only the trusted core resets, mutes or gives a watch list;
             // the protocol refuses them from a decoder, and they are
             // refused here too.
-            Audio::Reset | Audio::Mute(_) | Audio::Watch(_) => return None,
+            Audio::Reset | Audio::Mute(_) | Audio::Watch(_) | Audio::Pause(_) => return None,
+            // A cue mark of a sound the view has (RULE-109): of a stream
+            // on its audio channel or a sound stored whole.
+            Audio::Cue { channel: voice, sound, .. } => {
+                if !heard.sounds.contains_key(&Held::Stream(*voice, *sound)) && !heard.sounds.contains_key(&Held::Stored(*sound)) {
+                    return None;
+                }
+            }
         }
         Some(ToSound::Audio { channel, audio })
+    }
+
+    /// The sound commands of `channel`'s decoder the budget dropped since
+    /// this was last asked (fault 10, RULE-52 item 5).
+    pub fn take_commands_dropped(&mut self, channel: u32) -> u32 {
+        self.channels.get_mut(&channel).map_or(0, |heard| core::mem::take(&mut heard.commands_dropped))
     }
 
     /// `channel` has no decoder any more (its tab closed or moved on, or

@@ -103,6 +103,24 @@ pub enum Told {
         /// The view's channel.
         channel: u32,
     },
+    /// A cue of one of a view's sounds was heard (RULE-109): the device
+    /// buffer holding its sample has been rendered.
+    Cue {
+        /// The view's channel.
+        channel: u32,
+        /// The audio channel.
+        voice: u8,
+        /// The cue's number.
+        number: u8,
+    },
+    /// The time spent rendering one view's sounds since it was last told
+    /// (REQ-6626 item 1 b).
+    Spent {
+        /// The view's channel.
+        channel: u32,
+        /// Microseconds.
+        microseconds: u32,
+    },
 }
 
 /// The most frames rendered at once: buffers larger than this are rendered
@@ -126,11 +144,13 @@ struct Channel {
     /// frames it has been silent.
     heard: bool,
     silent_frames: usize,
+    /// Microseconds spent rendering it since last told (REQ-6626).
+    spent_us: u64,
 }
 
 impl Channel {
     fn new(rate_hz: u32) -> Self {
-        Self { mixer: Mixer::new(rate_hz), names: Names::default(), locals: Locals::default(), heard: false, silent_frames: 0 }
+        Self { mixer: Mixer::new(rate_hz), names: Names::default(), locals: Locals::default(), heard: false, silent_frames: 0, spent_us: 0 }
     }
 
     /// Whether the view's tab shows it sounds: something plays or is about
@@ -275,12 +295,18 @@ impl Mixers {
     fn report_watched(&mut self, frames: usize) {
         self.since_report = self.since_report.saturating_add(frames);
         let due = usize::try_from(self.rate_hz.checked_div(REPORTS_PER_SECOND).unwrap_or(0)).unwrap_or(usize::MAX);
-        if self.since_report < due || self.watches.is_empty() {
+        if self.since_report < due {
             return;
         }
         self.since_report = 0;
         let Self { watches, channels, told, .. } = self;
         let Some(sender) = told else { return };
+        // What each view's sounds cost, told as often as what is watched
+        // (REQ-6626 item 1 b).
+        for (&channel, held) in channels.iter_mut().filter(|(_, held)| held.spent_us != 0) {
+            let microseconds = u32::try_from(core::mem::take(&mut held.spent_us)).unwrap_or(u32::MAX);
+            let _ = sender.try_send(Told::Spent { channel, microseconds });
+        }
         for (&channel, watch) in watches.iter() {
             let mut values = [0; MAX_WATCH_SLOTS];
             let count = match channels.get_mut(&channel) {
@@ -305,15 +331,26 @@ impl Mixers {
         let unheard_after = usize::try_from(self.rate_hz.checked_div(UNHEARD_PER_SECOND).unwrap_or(0)).unwrap_or(usize::MAX);
         let mut overran = None;
         for (&number, channel) in self.channels.iter_mut().filter(|(_, channel)| channel.mixer.active()) {
-            let Channel { mixer, locals, heard, silent_frames, .. } = channel;
-            // A view with local sounds is timed: its instruments are
-            // rendered here, in the time of the buffer they fill.
-            let started = locals.any().then(std::time::Instant::now);
+            let Channel { mixer, locals, heard, silent_frames, spent_us, .. } = channel;
+            // Every view is timed (REQ-6626); one with local sounds is held
+            // to the time of the buffer its instruments fill (RULE-62).
+            let started = std::time::Instant::now();
             mixer.render_pulling(scratch, locals);
             for (sum, &sample) in out.iter_mut().zip(scratch.iter()) {
                 *sum = sum.saturating_add(sample);
             }
-            let Some(started) = started else { continue };
+            // The cues whose samples this buffer holds were heard
+            // (RULE-109): told after the buffer, before the next.
+            if let Some(sender) = &self.told {
+                mixer.take_heard_cues(&mut |cue| {
+                    let voice = u8::try_from(cue.voice).unwrap_or(u8::MAX);
+                    let _ = sender.try_send(Told::Cue { channel: number, voice, number: cue.number });
+                });
+            }
+            *spent_us = spent_us.saturating_add(u64::try_from(started.elapsed().as_micros()).unwrap_or(u64::MAX));
+            if !locals.any() {
+                continue;
+            }
             if scratch.iter().any(|&sample| sample != 0) {
                 *heard = true;
                 *silent_frames = 0;
@@ -473,6 +510,21 @@ impl Mixers {
                 self.master(channel);
                 return Leftover::default();
             }
+            // The page the view's local sounds belong to is paused, or
+            // open again (RULE-111 case 4): its notes released and its
+            // cue marks forgotten (RULE-109).
+            Operation::Other(Audio::Pause(paused)) => {
+                if let Some(held) = self.channels.get_mut(&channel) {
+                    held.locals.pause(paused);
+                    if paused {
+                        let keys: Vec<_> = held.names.keys().collect();
+                        for key in keys {
+                            held.mixer.forget_cues(key);
+                        }
+                    }
+                }
+                return Leftover::default();
+            }
             // The view's watch list, replacing the one before (RULE-33
             // item 2): kept apart from the mixer, as a mute is.
             Operation::Other(Audio::Watch(slots)) => {
@@ -586,13 +638,21 @@ impl Channel {
                     mixer.stop(usize::from(voice), fade_ms);
                 }
                 Audio::Gain { channel: voice, gain, fade_ms } => mixer.gain(usize::from(voice), gain, fade_ms),
+                // A cue mark of the sound streaming on an audio channel
+                // (RULE-109): a mark past the mixer's bound is dropped and
+                // counted by the mixer.
+                Audio::Cue { channel: voice, sound, position, number } => {
+                    if let Some(key) = names.get(Name::Stream(voice, sound)) {
+                        let _ = mixer.stream_cue(key, position, number);
+                    }
+                }
                 Audio::StreamSamples { channel: voice, sound, pcm } => {
                     if let Some(key) = names.get(Name::Stream(voice, sound)) {
                         mixer.stream_samples(key, &pcm);
                     }
                 }
                 // Prepared with their buffers, or applied above.
-                Audio::Define { .. } | Audio::Stream { .. } | Audio::Mute(_) | Audio::Reset | Audio::Local { .. } | Audio::Watch(_) => {}
+                Audio::Define { .. } | Audio::Stream { .. } | Audio::Mute(_) | Audio::Reset | Audio::Local { .. } | Audio::Watch(_) | Audio::Pause(_) => {}
             },
         }
         leftover

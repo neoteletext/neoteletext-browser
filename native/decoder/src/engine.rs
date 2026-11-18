@@ -213,9 +213,18 @@ pub struct Engine {
     input: InputRecords,
     /// Which pushed pages may be drawn, and how old each is (REQ-1558).
     cache: RefCell<PageCache>,
-    /// The tables the channel sent and the evaluator of the open page
-    /// (page-rules.md RULE-58).
+    /// The table of the view's selected page and sub-code, and its
+    /// evaluator (page-rules.md RULE-58).
     rules: crate::rules::host::Rules,
+    /// What the rule table produced outside the loop's own calls for it,
+    /// for the trusted core at the next.
+    rule_out: Vec<protocol::decoder::FromDecoder>,
+    /// The interface's frames, for the presentation clock's lock
+    /// (page-rules.md RULE-98), and when they were told.
+    frame_phase: Option<(protocol::rules::FramePhase, u64)>,
+    /// The time a test holds the clock at.
+    #[cfg(test)]
+    fixed_now_us: Option<u64>,
     /// What plays on each audio channel, as the page's rules read it
     /// (RULE-27, RULE-30).
     heard: crate::voice_sink::Heard,
@@ -290,6 +299,10 @@ impl Engine {
             input: InputRecords::default(),
             cache: RefCell::new(PageCache::default()),
             rules: crate::rules::host::Rules::default(),
+            rule_out: Vec::new(),
+            frame_phase: None,
+            #[cfg(test)]
+            fixed_now_us: None,
             heard: crate::voice_sink::Heard::default(),
             animation: animation::Animated::default(),
         }
@@ -371,7 +384,17 @@ impl Engine {
     /// and keeps sounds by.
     #[must_use]
     pub fn now_us(&self) -> u64 {
+        #[cfg(test)]
+        if let Some(now) = self.fixed_now_us {
+            return now;
+        }
         u64::try_from(self.started.elapsed().as_micros()).unwrap_or(u64::MAX)
+    }
+
+    /// Holds the engine's clock at `now_us`, for a test that scripts time.
+    #[cfg(test)]
+    pub fn set_now_us(&mut self, now_us: u64) {
+        self.fixed_now_us = Some(now_us);
     }
 
     /// When the audio receiver next needs [`Engine::tick_audio`], in

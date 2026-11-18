@@ -24,7 +24,7 @@ fn untold() -> Typing {
 }
 
 fn asks(interest: u8) -> RulesOpen {
-    RulesOpen { page: PAGE.page, generation: 1, interest, watch: Vec::new(), wheel: Vec::new() }
+    RulesOpen { page: OPEN, generation: 1, interest, watch: Vec::new(), wheel: Vec::new() }
 }
 
 fn intent(intent: Intent) -> InputIntent {
@@ -69,7 +69,7 @@ fn sequences(sends: &[Send]) -> Vec<u32> {
 }
 
 fn report(what: Reported) -> Report {
-    Report { page: PAGE.page, generation: 1, rule: 0, tick: 5, target_kind: 0, target_number: 0, what }
+    Report { page: OPEN, generation: 1, rule: 0, row: neoteletext_rules::limits::NO_RULE, tick: 5, target_kind: 0, target_number: 0, what }
 }
 
 /// The `RULE_EVENT`s among `sends`, each as its rule, its target's number
@@ -136,7 +136,7 @@ const SECOND: u64 = 1_000_000;
 #[test]
 fn only_the_classes_a_table_asks_for_are_given() {
     let mut typing = untold();
-    typing.rules_open(PAGE.channel, &asks(INTEREST_KEYS), 0);
+    typing.rules_told(PAGE.channel, &asks(INTEREST_KEYS), 0);
     let mut given = Vec::new();
     for (index, input) in every_kind().iter().enumerate() {
         given.extend(typing.input_intent(input, u64::try_from(index).unwrap() * 20 * MS));
@@ -146,7 +146,7 @@ fn only_the_classes_a_table_asks_for_are_given() {
     assert_eq!(went(&typing.focused(false, SECOND)), (0, 0), "the focus was not asked for");
 
     let mut typing = untold();
-    typing.rules_open(PAGE.channel, &asks(INTEREST_POINTER_BUTTONS), 0);
+    typing.rules_told(PAGE.channel, &asks(INTEREST_POINTER_BUTTONS), 0);
     let mut given = Vec::new();
     for (index, input) in every_kind().iter().enumerate() {
         given.extend(typing.input_intent(input, u64::try_from(index).unwrap() * 20 * MS));
@@ -174,7 +174,7 @@ fn a_report_is_built_from_the_cores_own_copy_of_the_event() {
     let mut typing = ready(SELECT_CAP);
     let given = typing.input_intent(&key('a'), MS);
     assert!(
-        matches!(given.as_slice(), [Send::Decoder { page: 0x200, sequence, input: RuleInput::Key { action: KeyAction::Press, named: false, code: 97, .. }, .. }] if *sequence == 1),
+        matches!(given.as_slice(), [Send::Decoder { page: OPEN, sequence, input: RuleInput::Key { action: KeyAction::Press, named: false, code: 97, .. }, .. }] if *sequence == 1),
         "{given:?}"
     );
     let asked = Report { rule: 7, target_kind: 1, target_number: 3, ..report(Reported::Input { sequence: 1 }) };
@@ -200,15 +200,20 @@ fn a_hostile_decoder_cannot_send_what_it_was_not_given() {
     let input = |sequence| report(Reported::Input { sequence });
     assert_eq!(went(&typing.report(PAGE.channel, &input(sequence + 1), 2 * MS)), (0, 0), "never given");
     assert_eq!(went(&typing.report(PAGE.channel, &input(u32::MAX), 2 * MS)), (0, 0), "never given");
-    let other_page = Report { page: 0x201, ..input(sequence) };
+    let other_page = Report { page: protocol::rules::PageSub::new(0x201, 0), ..input(sequence) };
     assert_eq!(went(&typing.report(PAGE.channel, &other_page, 2 * MS)), (0, 0), "another page");
+    let other_sub = Report { page: protocol::rules::PageSub::new(PAGE.page, 1), ..input(sequence) };
+    assert_eq!(went(&typing.report(PAGE.channel, &other_sub, 2 * MS)), (0, 0), "another sub-code of the page, which is another page (RULE-112)");
     assert_eq!(went(&typing.report(8, &input(sequence), 2 * MS)), (0, 0), "another channel's decoder");
     let other_table = Report { generation: 2, ..input(sequence) };
     assert_eq!(went(&typing.report(PAGE.channel, &other_table, 2 * MS)), (0, 0), "a generation that is not the table's");
     assert_eq!(went(&typing.report(PAGE.channel, &input(sequence), 2 * MS)), (1, 0), "the one it was given");
-    assert_eq!(went(&typing.report(PAGE.channel, &input(sequence), 2 * MS)), (0, 0), "the same one twice for one rule");
+    assert_eq!(went(&typing.report(PAGE.channel, &input(sequence), 2 * MS)), (0, 0), "the same one twice for one rule and row");
     let other_rule = Report { rule: 1, ..input(sequence) };
     assert_eq!(went(&typing.report(PAGE.channel, &other_rule, 2 * MS)), (1, 0), "once for each rule that sends it");
+    let first_row = Report { rule: 1, row: 0, ..input(sequence) };
+    assert_eq!(went(&typing.report(PAGE.channel, &first_row, 2 * MS)), (1, 0), "once for each row of a rule (RULE-52 item 3)");
+    assert_eq!(went(&typing.report(PAGE.channel, &first_row, 2 * MS)), (0, 0), "and only once for that row");
     // An old one: given more than SEND_WINDOW_TICKS ago.
     let given = typing.input_intent(&key('b'), 100 * MS);
     let old = sequences(&given)[0];
@@ -216,7 +221,11 @@ fn a_hostile_decoder_cannot_send_what_it_was_not_given() {
     assert_eq!(went(&typing.report(PAGE.channel, &input(old), late)), (0, 0), "past the window");
     let given = typing.input_intent(&key('c'), 300 * MS);
     assert_eq!(went(&typing.report(PAGE.channel, &input(sequences(&given)[0]), 300 * MS + ticks(SEND_WINDOW_TICKS))), (1, 0), "within it");
-    assert_eq!(typing.rules_refused(PAGE.channel), 4, "each refusal counted: never given twice, twice for a rule, too old");
+    assert_eq!(
+        typing.rules_refused(PAGE.channel),
+        8,
+        "each refusal counted: never given twice, another page, another sub-code, another generation, twice for a rule, twice for a row, too old"
+    );
 }
 
 /// RULE-52 item 5, RULE-48 (REQ-6534): a decoder that asks for 1,000
@@ -235,7 +244,7 @@ fn reports_are_held_to_the_budgets_and_the_rest_reported_as_dropped() {
     assert!(fired >= usize::try_from(TIMED_SEND_BUDGET).unwrap());
     let faults: Vec<String> = items(&sent).into_iter().filter(|item| item.contains("RulesFault")).collect();
     assert_eq!(faults.len(), 1, "fault 3, once in the second: {faults:?}");
-    assert!(faults[0].contains("SendsDropped"), "{faults:?}");
+    assert!(faults[0].contains("ReportsDropped"), "{faults:?}");
 
     let mut typing = ready(SELECT_CAP);
     let mut sent = 0;
@@ -267,12 +276,12 @@ fn reports_go_only_for_the_open_page() {
     // Once its decoder says the page asks for nothing, nothing goes at all.
     let mut typing = ready(SELECT_CAP);
     typing.opened(Some(PAGE.channel), None, 2 * MS);
-    typing.rules_open(PAGE.channel, &RulesOpen { generation: 0, interest: 0, wheel: Vec::new(), ..send_all() }, 2 * MS);
+    typing.rules_told(PAGE.channel, &RulesOpen { generation: 0, interest: 0, wheel: Vec::new(), ..send_all() }, 2 * MS);
     assert_eq!(went(&typing.report(PAGE.channel, &report(Reported::Fired), 2 * MS)), (0, 0));
     // A decoder cannot make its page the open page by saying so.
-    let other = RulesOpen { page: 0x300, ..send_all() };
-    assert!(!typing.rules_open(PAGE.channel, &other, 3 * MS).1);
-    let from_other = Report { page: 0x300, ..report(Reported::Fired) };
+    let other = RulesOpen { page: protocol::rules::PageSub::new(0x300, 0), ..send_all() };
+    assert!(!typing.rules_told(PAGE.channel, &other, 3 * MS).1);
+    let from_other = Report { page: protocol::rules::PageSub::new(0x300, 0), ..report(Reported::Fired) };
     assert_eq!(went(&typing.report(PAGE.channel, &from_other, 3 * MS)), (0, 0));
 }
 
@@ -287,14 +296,15 @@ fn a_page_state_passes_only_in_answer_to_a_query_once() {
     let length = neoteletext_rules::state::encode(&state, &mut body).unwrap();
     let body = &body[..length];
     let states = |sends: &[Send]| items(sends).into_iter().filter(|item| item.contains("PageState")).count();
-    assert_eq!(states(&typing.page_state(PAGE.channel, PAGE.page, 77, body, MS)), 0, "no query was received");
-    assert!(!typing.rules_query(PAGE.channel, 0x201, 77), "a query for a page that is not open is not passed on");
-    assert!(typing.rules_query(PAGE.channel, PAGE.page, 77));
-    assert_eq!(states(&typing.page_state(PAGE.channel, PAGE.page, 78, body, MS)), 0, "another identifier");
-    assert_eq!(states(&typing.page_state(PAGE.channel, PAGE.page, 77, body, MS)), 1);
-    assert_eq!(states(&typing.page_state(PAGE.channel, PAGE.page, 77, body, MS)), 0, "once");
-    assert!(typing.rules_query(PAGE.channel, PAGE.page, 79));
-    assert_eq!(states(&typing.page_state(PAGE.channel, PAGE.page, 79, body, MS)), 0, "an answer that does not begin with its query's identifier");
+    assert_eq!(states(&typing.page_state(PAGE.channel, OPEN, 77, body, MS)), 0, "no query was received");
+    assert!(!typing.rules_query(PAGE.channel, protocol::rules::PageSub::new(0x201, 0), 77), "a query for a page that is not open is not passed on");
+    assert!(!typing.rules_query(PAGE.channel, protocol::rules::PageSub::new(PAGE.page, 1), 77), "nor for another sub-code of it (RULE-112)");
+    assert!(typing.rules_query(PAGE.channel, OPEN, 77));
+    assert_eq!(states(&typing.page_state(PAGE.channel, OPEN, 78, body, MS)), 0, "another identifier");
+    assert_eq!(states(&typing.page_state(PAGE.channel, OPEN, 77, body, MS)), 1);
+    assert_eq!(states(&typing.page_state(PAGE.channel, OPEN, 77, body, MS)), 0, "once");
+    assert!(typing.rules_query(PAGE.channel, OPEN, 79));
+    assert_eq!(states(&typing.page_state(PAGE.channel, OPEN, 79, body, MS)), 0, "an answer that does not begin with its query's identifier");
 }
 
 /// RULE-51 item 4 (REQ-6534): the wheel is the page's only while the
@@ -305,7 +315,7 @@ fn a_page_state_passes_only_in_answer_to_a_query_once() {
 fn the_wheel_is_the_pages_only_inside_a_wheel_rule() {
     let mut typing = untold();
     let rect = WheelRect { x: 120, y: 100, width: 60, height: 40 };
-    typing.rules_open(PAGE.channel, &RulesOpen { wheel: vec![rect], ..asks(INTEREST_WHEEL | INTEREST_MOVES) }, 0);
+    typing.rules_told(PAGE.channel, &RulesOpen { wheel: vec![rect], ..asks(INTEREST_WHEEL | INTEREST_MOVES) }, 0);
     let wheel = |column, row| intent(Intent::Wheel { dx: 0, dy: 120, at: point(column, row) });
     let wheels = |sends: &[Send]| sends.iter().filter(|send| matches!(send, Send::Decoder { input: RuleInput::Wheel { .. }, .. })).count();
     let told = |sends: &[Send]| sends.iter().find_map(|send| if let Send::Interface(state) = send { Some(state.wheel) } else { None });
@@ -320,7 +330,7 @@ fn the_wheel_is_the_pages_only_inside_a_wheel_rule() {
     assert_eq!(wheels(&typing.input_intent(&wheel(2, 2), 120 * MS)), 0, "the browser's own again");
     // With no wheel rule, nowhere.
     let mut typing = untold();
-    typing.rules_open(PAGE.channel, &asks(INTEREST_WHEEL), 0);
+    typing.rules_told(PAGE.channel, &asks(INTEREST_WHEEL), 0);
     assert_eq!(wheels(&typing.input_intent(&wheel(10, 5), MS)), 0);
 }
 
@@ -356,11 +366,12 @@ fn a_hover_names_its_control_and_a_pick_follows_its_pointer_event() {
 fn a_fault_is_passed_once_a_second_for_each_code() {
     let mut typing = ready(SELECT_CAP);
     let faults = |sends: &[Send]| items(sends).into_iter().filter(|item| item.contains("RulesFault")).collect::<Vec<_>>();
-    let first = faults(&typing.rules_fault(PAGE.channel, PAGE.page, 1, 5, 3, MS));
-    assert!(matches!(first.as_slice(), [fault] if fault.contains("ActionsSkipped") && fault.contains("count: 3")), "{first:?}");
-    assert_eq!(faults(&typing.rules_fault(PAGE.channel, PAGE.page, 1, 5, 1, 2 * MS)).len(), 0, "the same code within the second");
-    assert_eq!(faults(&typing.rules_fault(PAGE.channel, PAGE.page, 1, 2, 1, 2 * MS)).len(), 1, "another code");
-    assert_eq!(faults(&typing.rules_fault(PAGE.channel, PAGE.page, 1, 5, 1, MS + SECOND)).len(), 1, "a second on");
-    assert_eq!(faults(&typing.rules_fault(PAGE.channel, 0x201, 1, 4, 1, 3 * SECOND)).len(), 0, "a page that is not open");
-    assert_eq!(faults(&typing.rules_fault(PAGE.channel, PAGE.page, 1, 9, 1, 3 * SECOND)).len(), 0, "no such fault");
+    let first = faults(&typing.rules_fault(PAGE.channel, OPEN, 1, 5, 3, MS));
+    assert!(matches!(first.as_slice(), [fault] if fault.contains("CommandsSkipped") && fault.contains("count: 3")), "{first:?}");
+    assert_eq!(faults(&typing.rules_fault(PAGE.channel, OPEN, 1, 5, 1, 2 * MS)).len(), 0, "the same code within the second");
+    assert_eq!(faults(&typing.rules_fault(PAGE.channel, OPEN, 1, 4, 1, 2 * MS)).len(), 1, "another code");
+    assert_eq!(faults(&typing.rules_fault(PAGE.channel, OPEN, 1, 5, 1, MS + SECOND)).len(), 1, "a second on");
+    assert_eq!(faults(&typing.rules_fault(PAGE.channel, protocol::rules::PageSub::new(0x201, 0), 1, 4, 1, 3 * SECOND)).len(), 0, "a page that is not open");
+    assert_eq!(faults(&typing.rules_fault(PAGE.channel, OPEN, 1, 2, 1, 3 * SECOND)).len(), 0, "the withdrawn code 2");
+    assert_eq!(faults(&typing.rules_fault(PAGE.channel, OPEN, 1, 11, 1, 3 * SECOND)).len(), 0, "no such fault");
 }

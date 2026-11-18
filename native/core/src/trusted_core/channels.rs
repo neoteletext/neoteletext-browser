@@ -93,7 +93,7 @@ impl Core {
                 // A new decoder is told which of its pages is the open page
                 // of the active tab, whose table it evaluates (RULE-58).
                 #[cfg(feature = "interaction")]
-                if let Some(page) = self.typing.rules_page(*id) {
+                if let Some(page) = self.typing.rules_open(*id) {
                     let _ = decoder.tell(&ToDecoder::RulesPage(Some(page)));
                 }
                 // And how the viewer has drawings painted, when not as a

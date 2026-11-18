@@ -88,9 +88,25 @@ impl Engine {
     /// the sub-page on screen, the presentation tick now and, for a
     /// teletext page, its controls.
     pub(super) fn picture_facts(&self, page: u16) -> PictureFacts {
+        self.picture_facts_of(page, self.shown_subcode(page))
+    }
+
+    /// What the picture of the sub-page `sub` of `page` is made from: a
+    /// rule table's page is a page number and a sub-code together
+    /// (page-rules.md RULE-112), whichever sub-page is on screen.
+    pub(super) fn picture_facts_of(&self, page: u16, sub: Option<u16>) -> PictureFacts {
         let view = self.views.get(&page).copied().unwrap_or_default();
-        let controls = self.stored(page, view.subpage).map_or(neoteletext_core::controls::Controls::NONE, neoteletext_core::controls::controls);
-        PictureFacts { page, sub: self.shown_subcode(page), now: tick_at(self.now_us()), controls }
+        let controls = self.stored(page, sub.or(view.subpage)).map_or(neoteletext_core::controls::Controls::NONE, neoteletext_core::controls::controls);
+        PictureFacts { page, sub, now: tick_at(self.now_us()), controls }
+    }
+
+    /// Forgets what a closed page held locally (page-rules.md RULE-111):
+    /// its sprites, objects, sheet and animation state. Its channel sends
+    /// them afresh on the page's next selection.
+    pub(super) fn drop_page_animation(&mut self, page: u16, sub: u16) {
+        self.regis.forget(page, sub);
+        self.naplps.forget(page, sub);
+        self.animation.teletext.forget(page, sub);
     }
 
     /// The picture of the sub-page of `page` on screen as the page's rule
@@ -102,21 +118,20 @@ impl Engine {
         facts.picture(&mut self.regis, &mut self.naplps, &mut self.animation)
     }
 
-    /// Carries out the operations of an ANIMATE record (ANIM-6) on a
-    /// sub-page of `page`, `sub` or with none the one on screen, together,
-    /// at the presentation tick now: a cycle it starts begins at the next.
-    fn animate_record(&mut self, page: u16, sub: Option<u16>, operations: &[Operation]) {
-        let sub = sub.or_else(|| self.shown_subcode(page));
+    /// Carries out the operations of an ANIMATE record (ANIM-6) on the
+    /// sub-page `sub` of `page`, together, at the presentation tick now: a
+    /// cycle it starts begins at the next. The record names one sub-page
+    /// (page-rules.md RULE-112).
+    fn animate_record(&mut self, page: u16, sub: u16, operations: &[Operation]) {
         let tick = tick_at(self.now_us());
-        let view = self.views.get(&page).copied().unwrap_or_default();
         for operation in operations {
-            if self.regis.holds(page, sub) {
-                let _ = self.regis.animate(page, sub, operation, tick);
-            } else if self.naplps.holds(page, sub) {
-                let _ = self.naplps.animate(page, sub, operation, tick);
+            if self.regis.holds(page, Some(sub)) {
+                let _ = self.regis.animate(page, Some(sub), operation, tick);
+            } else if self.naplps.holds(page, Some(sub)) {
+                let _ = self.naplps.animate(page, Some(sub), operation, tick);
             } else {
-                let controls = self.stored(page, sub.or(view.subpage)).map_or(0, |stored| neoteletext_core::controls::controls(stored).list.as_slice().len());
-                let _ = self.animation.teletext.animate(page, sub.unwrap_or(0), operation, tick, controls);
+                let controls = self.stored(page, Some(sub)).map_or(0, |stored| neoteletext_core::controls::controls(stored).list.as_slice().len());
+                let _ = self.animation.teletext.animate(page, sub, operation, tick, controls);
             }
         }
     }
@@ -141,8 +156,8 @@ impl Engine {
                 Held::Animate { page, sub, operations } => self.animate_record(page, sub, &operations),
                 Held::Sprites { page, sub, sprites } => self.animation.teletext.set_sprites(page, sub, &sprites),
                 Held::Objects { page, sub, generation, objects } => self.naplps.set_objects(page, sub, generation, objects),
-                Held::Sheet { language: Language::Regis, page, generation, offset, data } => self.regis.read_sheet(page, generation, offset, &data),
-                Held::Sheet { language: Language::Naplps, page, generation, offset, data } => self.naplps.read_sheet(page, generation, offset, &data),
+                Held::Sheet { language: Language::Regis, page, sub, generation, offset, data } => self.regis.read_sheet(page, sub, generation, offset, &data),
+                Held::Sheet { language: Language::Naplps, page, sub, generation, offset, data } => self.naplps.read_sheet(page, sub, generation, offset, &data),
             }
         }
     }
@@ -270,6 +285,12 @@ impl Engine {
     /// operations that did nothing.
     pub fn take_animation_counters(&mut self, page: u16) -> Counters {
         let sub = self.shown_subcode(page);
+        self.take_animation_counters_of(page, sub)
+    }
+
+    /// What the animation of the sub-page `sub` of `page` cost since it
+    /// was last asked, as [`Engine::take_animation_counters`].
+    pub(super) fn take_animation_counters_of(&mut self, page: u16, sub: Option<u16>) -> Counters {
         let teletext = sub.map(|sub| self.animation.teletext.take_counters(page, sub)).unwrap_or_default();
         self.regis.take_counters(page, sub).with(self.naplps.take_counters(page, sub)).with(teletext)
     }

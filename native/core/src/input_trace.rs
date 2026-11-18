@@ -146,11 +146,19 @@ mod tests {
     }
 
     /// The report of rule 2 at page tick 7 that carries `item`, a viewer's
-    /// input, as it goes under push protocol 9 (page-rules.md RULE-46).
+    /// input, as it goes under push protocol 10 (page-rules.md RULE-46).
     fn reported(item: &Item<'_>) -> Vec<u8> {
         use neoteletext_input::rules::{RuleBody, RuleEvent};
         let carried = message(item);
-        let event = RuleEvent { on: ON, generation: 1, rule: 2, tick: 7, target: neoteletext_rules::table::Target::NONE, body: RuleBody::Input(&carried) };
+        let event = RuleEvent {
+            on: ON,
+            generation: 1,
+            rule: 2,
+            row: neoteletext_rules::limits::NO_RULE,
+            tick: 7,
+            target: neoteletext_rules::table::Target::NONE,
+            body: RuleBody::Input(&carried),
+        };
         message(&Item::Event(Event::RuleEvent(event)))
     }
 

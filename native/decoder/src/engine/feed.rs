@@ -162,7 +162,27 @@ impl Engine {
                     // A page's rule table (page-rules.md RULE-41), which
                     // only this process decodes (RULE-58).
                     neoteletext_web::records::Read::Record(neoteletext_web::records::ChannelRecord::Rules(record)) => {
-                        self.rules.record(record.page.mpp(), record.generation, record.body);
+                        // Copied out of the reader, which the host's call
+                        // may not borrow.
+                        let data = record.fragment.map(|fragment| (fragment.total, fragment.offset, fragment.data.to_vec()));
+                        let (page, subcode, generation) = (record.page, record.subcode, record.generation);
+                        let fragment =
+                            data.as_ref().map(|(total, offset, data)| neoteletext_web::records::rules::Fragment { total: *total, offset: *offset, data });
+                        self.rules_record(&neoteletext_web::records::rules::RulesRecord { page, subcode, generation, fragment });
+                    }
+                    // A command the server sent a page directly
+                    // (RULE-114), for its evaluator or its local sound.
+                    neoteletext_web::records::Read::Record(
+                        neoteletext_web::records::ChannelRecord::LocalMidi(record)
+                        | neoteletext_web::records::ChannelRecord::Variable(record)
+                        | neoteletext_web::records::ChannelRecord::Timer(record)
+                        | neoteletext_web::records::ChannelRecord::Report(record)
+                        | neoteletext_web::records::ChannelRecord::Run(record)
+                        | neoteletext_web::records::ChannelRecord::Sequence(record),
+                    ) => {
+                        let page = protocol::rules::PageSub::new(record.page.mpp(), record.subcode.value());
+                        let (kind, body) = (record.kind, record.body.to_vec());
+                        self.rule_command(kind, page, &body);
                     }
                     // The drawings of a ReGIS sub-page that are links (the
                     // engine's REQ-6370), for the trusted core.

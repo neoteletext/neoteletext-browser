@@ -106,8 +106,15 @@ impl Core {
                 self.deliver_typing(sends)?;
             }
             FromDecoder::Audio(audio) => {
-                if let Some(message) = self.hearing.decoded(channel, audio) {
+                let now_us = self.now_us();
+                if let Some(message) = self.hearing.decoded(channel, audio, now_us) {
                     self.tell_sound(&message);
+                }
+                // What the budget of sound commands dropped is told as
+                // fault 10 for the open page (RULE-52 item 5).
+                let dropped = self.hearing.take_commands_dropped(channel);
+                if dropped != 0 {
+                    self.sound_commands_dropped(channel, dropped)?;
                 }
             }
         }

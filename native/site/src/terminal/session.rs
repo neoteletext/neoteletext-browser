@@ -71,20 +71,36 @@ impl Session {
     fn rules(&mut self) -> Vec<u8> {
         /// Every table of this channel is its first.
         const GENERATION: u16 = 1;
+        // The terminal's pages are written with no sub-code line, so each is
+        // sub-code 0, and its table is for that page and sub-code
+        // (page-rules.md RULE-112).
+        const SUBCODE: u16 = 0;
         let mut bytes = Vec::new();
         if self.tables_sent.contains(&self.page) {
             return bytes;
         }
-        // A table is 76 KB: kept off the stack.
-        let mut table = Box::new(neoteletext_rules::Table::new());
-        neoteletext_rules::default_send_all(false, &mut table);
-        let mut body = vec![0_u8; neoteletext_rules::limits::MAX_TABLE_BYTES];
-        let Ok(length) = neoteletext_rules::encode(self.page, GENERATION, Some(&table), &mut body) else { return bytes };
-        let written = neoteletext_web::records::rules::encode(body.get(..length).unwrap_or(&[]), AUDIO_SERVICE, self.record_id, &mut |packet| {
-            bytes.extend_from_slice(&packet.bytes);
-        });
+        let Some(page) = neoteletext_core::types::PageAddress::from_mpp(self.page) else { return bytes };
+        // A table is 110 KB: kept off the stack.
+        let mut table = Box::new(neoteletext_rules::Table::new(self.page, SUBCODE));
+        neoteletext_rules::default_send_all(false, self.page, SUBCODE, &mut table);
+        let mut image = vec![0_u8; neoteletext_rules::limits::MAX_TABLE_BYTES];
+        let Ok(length) = neoteletext_rules::encode(&table, neoteletext_web::records::body_check, &mut image) else { return bytes };
+        let mut record_id = self.record_id;
+        let written = neoteletext_web::records::rules::encode_image(
+            page,
+            neoteletext_core::types::SubCode::new(SUBCODE),
+            GENERATION,
+            image.get(..length).unwrap_or(&[]),
+            AUDIO_SERVICE,
+            &mut |_| {
+                let id = record_id;
+                record_id = record_id.wrapping_add(1);
+                id
+            },
+            &mut |packet| bytes.extend_from_slice(&packet.bytes),
+        );
         if written.is_ok() {
-            self.record_id = self.record_id.wrapping_add(1);
+            self.record_id = record_id;
             self.tables_sent.push(self.page);
         }
         bytes

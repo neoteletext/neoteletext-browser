@@ -105,6 +105,12 @@ impl Teletext {
         held
     }
 
+    /// Forgets a sub-page's sprites and animation state (page-rules.md
+    /// RULE-111: a page closed drops its local state).
+    pub fn forget(&mut self, page: u16, sub: u16) {
+        self.pages.remove(&(page, sub));
+    }
+
     /// What is kept of a sub-page, if anything is.
     #[must_use]
     pub fn get(&self, page: u16, sub: u16) -> Option<&SubPage> {

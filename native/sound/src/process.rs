@@ -117,8 +117,12 @@ pub fn run() -> Result<(), String> {
             }
             Wake::Told(audio::Told::Overrun { channel }) => {
                 eprintln!("neoteletext-sound: channel {channel}: its local sounds overran their time and were stopped");
-                tell(&mut output, &FromSound::LocalOverrun { channel })?;
+                tell(&mut output, &FromSound::LocalOverrun { channel, count: 1 })?;
             }
+            Wake::Told(audio::Told::Cue { channel, voice, number }) => {
+                tell(&mut output, &FromSound::CueHeard { channel, audio_channel: voice, number })?;
+            }
+            Wake::Told(audio::Told::Spent { channel, microseconds }) => tell(&mut output, &FromSound::Spent { channel, microseconds })?,
         }
     }
     Ok(())

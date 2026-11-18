@@ -380,9 +380,10 @@ pub struct RegisPages {
     /// Every drawing is painted whole at once: the viewer's setting
     /// "Paint drawings gradually" is off (animation.md ANIM-15).
     at_once: bool,
-    /// Each page's sheet (ANIM-17): the stream of hidden drawings fed to
-    /// the renderer of every sub-page of the page before its own stream.
-    sheets: BTreeMap<u16, Sheet>,
+    /// Each sub-page's sheet (ANIM-17): the stream of hidden drawings fed
+    /// to its renderer before its own stream. A sub-page is a page
+    /// (page-rules.md RULE-112): no sheet is fed to another sub-code.
+    sheets: BTreeMap<(u16, u16), Sheet>,
 }
 
 /// A page's ReGIS sheet as received (ANIM-17).
@@ -394,8 +395,8 @@ struct Sheet {
     lost: bool,
 }
 
-/// The most pages whose sheet is kept: a sheet is kept while its page is,
-/// and a page's sub-pages are kept [`MAX_REGIS_PAGES`] at most.
+/// The most sub-pages whose sheet is kept: a sheet is kept while its
+/// sub-page is, and sub-pages are kept [`MAX_REGIS_PAGES`] at most.
 const MAX_SHEETS: usize = MAX_REGIS_PAGES;
 
 impl RegisPages {
@@ -426,7 +427,7 @@ impl RegisPages {
             page.cursor = cursor;
             // The page's sheet goes first (ANIM-17): the stream names its
             // hidden drawings as sources, looks and frames.
-            if let Some(sheet) = self.sheets.get(&key.0).filter(|sheet| !sheet.bytes.is_empty()) {
+            if let Some(sheet) = self.sheets.get(&key).filter(|sheet| !sheet.bytes.is_empty()) {
                 let _ = page.terminal.feed_regis(&mut page.screen, &sheet.bytes);
             }
             self.pages.insert(key, page);
@@ -645,36 +646,51 @@ impl RegisPages {
     }
 
     /// Reads one SHEET record of ReGIS (ANIM-17): the bytes are kept, in
-    /// order, as the page's sheet. A new generation starts the sheet
-    /// again, and the renderers of the page's sub-pages with it: each is
-    /// forgotten, and its channel sends its stream again after the sheet
-    /// (a renderer cannot be started again from bytes the decoder did not
-    /// keep). A record out of its place loses the generation.
-    pub fn read_sheet(&mut self, page: u16, generation: u16, offset: u32, data: &[u8]) {
-        let fresh = self.sheets.get(&page).is_none_or(|sheet| sheet.generation != generation);
+    /// order, as the sub-page's sheet (RULE-112: a sheet is one page and
+    /// sub-code's). A new generation starts the sheet again, and the
+    /// sub-page's renderer with it: it is forgotten, and its channel sends
+    /// its stream again after the sheet (a renderer cannot be started
+    /// again from bytes the decoder did not keep). A record out of its
+    /// place loses the generation.
+    pub fn read_sheet(&mut self, page: u16, sub: u16, generation: u16, offset: u32, data: &[u8]) {
+        let key = (page, sub);
+        let fresh = self.sheets.get(&key).is_none_or(|sheet| sheet.generation != generation);
         if fresh {
-            if !self.sheets.contains_key(&page) && self.sheets.len() >= MAX_SHEETS {
-                // The sheet of a page none of whose sub-pages is kept goes
-                // first; else the lowest page's.
-                let unused = self.sheets.keys().copied().find(|held| !self.has(*held)).or_else(|| self.sheets.keys().next().copied());
+            if !self.sheets.contains_key(&key) && self.sheets.len() >= MAX_SHEETS {
+                // The sheet of a sub-page that is not kept goes first; else
+                // the lowest one's.
+                let unused = self.sheets.keys().copied().find(|held| !self.pages.contains_key(held)).or_else(|| self.sheets.keys().next().copied());
                 if let Some(unused) = unused {
                     self.sheets.remove(&unused);
                 }
             }
-            let renewed = self.sheets.contains_key(&page);
-            self.sheets.insert(page, Sheet { generation, bytes: Vec::new(), lost: offset != 0 });
+            let renewed = self.sheets.contains_key(&key);
+            self.sheets.insert(key, Sheet { generation, bytes: Vec::new(), lost: offset != 0 });
             if renewed {
-                self.pages.retain(|(held, _), _| *held != page);
-                self.sent_sub.remove(&page);
+                self.pages.remove(&key);
+                if self.sent_sub.get(&page) == Some(&sub) {
+                    self.sent_sub.remove(&page);
+                }
             }
         }
-        let Some(sheet) = self.sheets.get_mut(&page) else { return };
+        let Some(sheet) = self.sheets.get_mut(&key) else { return };
         let end = usize::try_from(offset).ok().and_then(|offset| offset.checked_add(data.len()));
         if sheet.lost || usize::try_from(offset).ok() != Some(sheet.bytes.len()) || end.is_none_or(|end| end > neoteletext_web::consts::MAX_SHEET_BYTES) {
             sheet.lost = true;
             return;
         }
         sheet.bytes.extend_from_slice(data);
+    }
+
+    /// Forgets everything held of one sub-page: its renderer, its sheet and
+    /// its animation state (page-rules.md RULE-111: a page closed drops its
+    /// local state; its channel sends it afresh on the next selection).
+    pub fn forget(&mut self, page: u16, sub: u16) {
+        self.pages.remove(&(page, sub));
+        self.sheets.remove(&(page, sub));
+        if self.sent_sub.get(&page) == Some(&sub) {
+            self.sent_sub.remove(&page);
+        }
     }
 
     /// When a page's sub-page on screen next needs the decoder's loop, in

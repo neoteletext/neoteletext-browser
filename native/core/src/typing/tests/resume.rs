@@ -8,16 +8,22 @@ use neoteletext_input::control::Resumption;
 const TOKEN: [u8; neoteletext_input::TOKEN_BYTES] = [7; neoteletext_input::TOKEN_BYTES];
 const NEXT_TOKEN: [u8; neoteletext_input::TOKEN_BYTES] = [9; neoteletext_input::TOKEN_BYTES];
 
-/// A session whose channel set RESUME, its start sent: the count is 3,
-/// HELLO, RESIZE and `FOCUS_IN`.
-fn resumable() -> Typing {
+/// A session whose channel set RESUME, its start sent, its page with no
+/// table: no input was ever given, so no `RULE_EVENT` was sent (RULE-50).
+fn resumable_plain() -> Typing {
     let mut typing = Typing::default();
     typing.input(PAGE.channel, true, true, 0);
     typing.opened(Some(PAGE.channel), Some(PAGE), 0);
     typing.control(PAGE.channel, &welcome_with(SELECT_CAP | RESUME_CAP, Some(Resumption { token: TOKEN, taken: None })), 0);
     typing.drawn(PAGE, 0);
-    // The page's table sends everything: the focus it is given is reported.
-    let focus = typing.rules_open(PAGE.channel, &send_all(), 0).0;
+    typing
+}
+
+/// The same, with a table that sends everything: the focus it is given is
+/// reported, a `RULE_EVENT`.
+fn resumable() -> Typing {
+    let mut typing = resumable_plain();
+    let focus = typing.rules_told(PAGE.channel, &send_all(), 0).0;
     reported(&mut typing, &focus, 0);
     typing
 }
@@ -28,54 +34,56 @@ fn acknowledge(typing: &mut Typing, acked: u16) {
     typing.cursor(PAGE.channel, [0x02, 0x00, high, low, 255, 0, 0, 0]);
 }
 
-/// REQ-RCH-013, REQ-INT-125: after a lost connection the next asks to
-/// resume, with the token and the last acknowledgement; resumed, what the
-/// channel had not taken goes again first, in order, then RESIZE, the
-/// focus and SELECT, before anything new. On the code before, a reconnection
-/// was always a new session and the unacknowledged key was lost.
+/// REQ-RCH-013, REQ-INT-125: after a lost connection of a session that
+/// sent no input, the next asks to resume, with the token and the last
+/// acknowledgement; resumed, RESIZE and SELECT go before anything new.
 #[test]
-fn a_resumed_session_sends_again_what_the_channel_had_not_taken() {
+fn a_session_that_sent_no_input_is_resumed() {
+    let mut typing = resumable_plain();
+    typing.input(PAGE.channel, false, true, 3 * MS);
+    let hello = typing.input(PAGE.channel, true, true, 5 * MS);
+    let offered = OFFERED | RESUME_CAP;
+    let resume = format!("Event(Resume(Resume {{ token: {TOKEN:?}, acked: 0 }}))");
+    assert_eq!(items(&hello), [format!("Event(Hello {{ version: {VERSION}, caps: {offered}, agent: None }})"), resume], "HELLO, then RESUME, in one message");
+    let resumed = typing.control(PAGE.channel, &welcome_with(SELECT_CAP | RESUME_CAP, Some(Resumption { token: NEXT_TOKEN, taken: Some(2) })), 6 * MS);
+    assert_eq!(
+        items(&resumed),
+        ["Event(Resize { columns: 40, rows: 25, width: 0, height: 0 })".to_owned(), "Event(Select(Select { page: 512, sub: 16255 }, \"\"))".to_owned()]
+    );
+}
+
+/// RULE-46, RULE-111 case 2 (REQ-6534, REQ-6615): a `RULE_EVENT` not
+/// acknowledged when its connection ends is discarded and never sent
+/// again: the session that gave a page's table input is not resumed, so
+/// the next connection begins a new one, from HELLO alone, and the page is
+/// a new selection. The decoder is told the connection ended. On the code
+/// before, the session was resumed and the unacknowledged key sent again.
+#[test]
+fn an_unacknowledged_report_is_never_sent_again() {
     let mut typing = resumable();
     typed(&mut typing, &key('a'), MS);
     typed(&mut typing, &key('b'), 2 * MS);
     acknowledge(&mut typing, 4);
-    typing.input(PAGE.channel, false, true, 3 * MS);
+    let ended = typing.input(PAGE.channel, false, true, 3 * MS);
+    assert!(ended.contains(&Send::ConnectionEnded { channel: PAGE.channel }), "{ended:?}");
     assert_eq!(items(&typing.input_intent(&key('c'), 4 * MS)), [] as [String; 0], "nothing while the connection is down");
     let hello = typing.input(PAGE.channel, true, true, 5 * MS);
-    let offered = OFFERED | RESUME_CAP;
-    let resume = format!("Event(Resume(Resume {{ token: {TOKEN:?}, acked: 4 }}))");
-    assert_eq!(items(&hello), [format!("Event(Hello {{ version: {VERSION}, caps: {offered}, agent: None }})"), resume], "HELLO, then RESUME, in one message");
-    let resumed = typing.control(PAGE.channel, &welcome_with(SELECT_CAP | RESUME_CAP, Some(Resumption { token: NEXT_TOKEN, taken: Some(4) })), 6 * MS);
-    let key_b = KEY_A.replace("'a'", "'b'").replace("\"a\"", "\"b\"");
-    assert_eq!(
-        items(&resumed),
-        [
-            key_b,
-            "Event(Resize { columns: 40, rows: 25, width: 0, height: 0 })".to_owned(),
-            "Event(FocusIn)".to_owned(),
-            "Event(Select(Select { page: 512, sub: 16255 }, \"\"))".to_owned()
-        ]
-    );
-    assert_eq!(items(&typed(&mut typing, &key('a'), 7 * MS)), [KEY_A], "then input goes on");
-    // The next connection resumes from the new token.
-    typing.input(PAGE.channel, false, true, 8 * MS);
-    let again = items(&typing.input(PAGE.channel, true, true, 9 * MS));
-    assert!(again[1].contains(&format!("{NEXT_TOKEN:?}")), "{again:?}");
+    assert_eq!(items(&hello).len(), 1, "HELLO alone: {hello:?}");
+    let fresh = typing.control(PAGE.channel, &welcome_with(SELECT_CAP | RESUME_CAP, Some(Resumption { token: NEXT_TOKEN, taken: None })), 6 * MS);
+    let sent = items(&fresh);
+    assert!(!sent.iter().any(|item| item.contains("RuleEvent")), "no report is sent again: {sent:?}");
+    assert_eq!(items(&typing.input_intent(&key('d'), 7 * MS)), [] as [String; 0], "no input until the decoder tells its table afresh");
 }
 
 /// REQ-INT-125: a channel that no longer holds the session answers new:
 /// the session begins again from HELLO, nothing of the old sent again.
 #[test]
 fn a_session_not_held_begins_again() {
-    let mut typing = resumable();
-    typing.input_intent(&key('a'), MS);
+    let mut typing = resumable_plain();
     typing.input(PAGE.channel, false, true, 2 * MS);
     typing.input(PAGE.channel, true, true, 3 * MS);
     let fresh = typing.control(PAGE.channel, &welcome_with(SELECT_CAP | RESUME_CAP, Some(Resumption { token: NEXT_TOKEN, taken: None })), 4 * MS);
-    assert_eq!(
-        items(&fresh),
-        ["Event(Resize { columns: 40, rows: 25, width: 0, height: 0 })", "Event(FocusIn)", "Event(Select(Select { page: 512, sub: 16255 }, \"\"))"]
-    );
+    assert_eq!(items(&fresh), ["Event(Resize { columns: 40, rows: 25, width: 0, height: 0 })", "Event(Select(Select { page: 512, sub: 16255 }, \"\"))"]);
 }
 
 /// REQ-INT-106: a channel that did not set RESUME, and a channel the

@@ -149,7 +149,14 @@ impl Core {
                 Send::Decoder { channel, page, sequence, input, .. } => {
                     self.tell(channel, protocol::decoder::ToDecoder::RuleInput { page, sequence, input });
                 }
-                Send::RulesPage { channel, page } => self.tell(channel, protocol::decoder::ToDecoder::RulesPage(page)),
+                // The open page for its table, or the pause (RULE-111 case
+                // 4): the view's local sounds are silenced, their
+                // instruments kept, while it is paused.
+                Send::RulesPage { channel, page } => {
+                    self.tell(channel, protocol::decoder::ToDecoder::RulesPage(page));
+                    self.tell_sound(&protocol::sound::ToSound::Audio { channel, audio: protocol::audio::Audio::Pause(page.is_none()) });
+                }
+                Send::ConnectionEnded { channel } => self.tell(channel, protocol::decoder::ToDecoder::ConnectionEnded),
                 Send::Interface(state) => {
                     self.send(&ToInterface::Typing(state))?;
                     // Keys may have started or stopped going to the

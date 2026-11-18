@@ -11,7 +11,7 @@ use crate::podcast::Episode;
 use crate::terminal::pages::contents_file;
 use neoteletext_input::event::{Mouse, Point, read_message, write};
 
-/// One item as a receiver sends it under push protocol 9: the session's
+/// One item as a receiver sends it under push protocol 10: the session's
 /// own as it is, and a viewer's input as the report of a rule of the
 /// page's table that sends it (page-rules.md RULE-46).
 pub(in crate::terminal) fn encoded(item: &Item<'_>) -> Vec<u8> {
@@ -24,6 +24,7 @@ pub(in crate::terminal) fn encoded(item: &Item<'_>) -> Vec<u8> {
         on: ON,
         generation: 1,
         rule: 0,
+        row: neoteletext_rules::limits::NO_RULE,
         tick: 0,
         target: neoteletext_rules::table::Target::NONE,
         body: neoteletext_input::rules::RuleBody::Input(&out[..length]),

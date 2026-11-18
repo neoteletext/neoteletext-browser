@@ -128,6 +128,7 @@ fn audio_receiver(limits: neoteletext_audio::ReceiverLimits) -> protocol::decode
 ///
 /// # Errors
 /// When the pipe fails or a message from the trusted core is malformed.
+#[allow(clippy::too_many_lines, reason = "the one loop that takes every message of the pipe in its order, each arm a line or two")]
 pub fn run(store_pages: usize) -> Result<(), ProtocolError> {
     let mut output = BufWriter::new(io::stdout().lock());
     // Before it reads anything, so the trusted core can tell a decoder
@@ -165,6 +166,7 @@ pub fn run(store_pages: usize) -> Result<(), ProtocolError> {
             Woken::Deadline => None,
             Woken::Ended => return Ok(()),
         };
+        let received = take_rule_message(&mut engine, received, &mut output)?;
         let now = engine.now_us();
         tick(&mut engine, now, &mut output)?;
         // The animation of the pages on screen, after the rules ran
@@ -180,7 +182,7 @@ pub fn run(store_pages: usize) -> Result<(), ProtocolError> {
             continue;
         };
         let Some(message) = message? else { return Ok(()) };
-        let arrived = match engine.rule_message(message) {
+        let arrived = match message {
             ToDecoder::Data(bytes) => engine.feed(&bytes),
             ToDecoder::Whole { packets, pushed, bytes } => engine.feed_whole(packets, pushed, &bytes),
             ToDecoder::End => engine.finish(),
@@ -246,7 +248,14 @@ pub fn run(store_pages: usize) -> Result<(), ProtocolError> {
             // The viewer's input for the open page's rule table, its
             // metered values and a state query (RULE-52, RULE-33,
             // RULE-47): each waits for the next tick.
-            ToDecoder::RuleInput { .. } | ToDecoder::Metered { .. } | ToDecoder::RulesQuery { .. } | ToDecoder::RulesPage(_) => continue,
+            // Taken above, as each is read.
+            ToDecoder::RuleInput { .. }
+            | ToDecoder::Metered { .. }
+            | ToDecoder::RulesQuery { .. }
+            | ToDecoder::RulesPage(_)
+            | ToDecoder::ConnectionEnded
+            | ToDecoder::CueHeard { .. }
+            | ToDecoder::FramePhase(_) => continue,
             // The look under the pointer changed: drawn again at once.
             #[cfg(feature = "links")]
             ToDecoder::Look { page, look } => {
@@ -276,6 +285,24 @@ pub fn run(store_pages: usize) -> Result<(), ProtocolError> {
 /// while it has a rule table (page-rules.md RULE-58), or the next tick the
 /// animation of a page on screen is due at (animation.md ANIM-1),
 /// whichever is first.
+/// RULE-96: a message of the open page's rule table, an input above all,
+/// is handled the moment it is read, before a record waiting, a repaint or
+/// a tick, and what it produced (a group's sound commands first) is
+/// written and flushed at once. Any other message is given back.
+fn take_rule_message(engine: &mut Engine, received: Option<Received>, output: &mut Output<'_>) -> Result<Option<Received>, ProtocolError> {
+    let Some(Ok(Some(message))) = received else { return Ok(received) };
+    match engine.rule_message(message) {
+        Ok(produced) => {
+            for message in &produced {
+                write_to_core(output, message)?;
+            }
+            output.flush()?;
+            Ok(None)
+        }
+        Err(other) => Ok(Some(Ok(Some(other)))),
+    }
+}
+
 fn next_deadline(engine: &mut Engine, flashing: &Flashing, showing: &[u16], sent: &BTreeMap<u16, Rendered>, now: u64) -> Option<u64> {
     let audio = engine.next_audio_tick_ms().map(|ms| ms.saturating_mul(MICROSECONDS_PER_MILLISECOND));
     let animation = engine.animation_due_us(showing, now);

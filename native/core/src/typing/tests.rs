@@ -7,6 +7,9 @@ use neoteletext_input::event::{Action, CONTROL, KeyCode, MouseAction, Point, rea
 use neoteletext_input::{VERSION, WELCOME_TIMEOUT_MS};
 
 const PAGE: PageKey = PageKey { channel: 7, page: 0x200 };
+/// The page and sub-code the tests' tables are for: [`PAGE`] as it is
+/// drawn, sub-code 0 (page-rules.md RULE-112).
+const OPEN: protocol::rules::PageSub = protocol::rules::PageSub::new(PAGE.page, 0);
 /// SELECT of the page, with no sub-page named.
 const SELECT_PAGE: &str = "Event(Select(Select { page: 512, sub: 16255 }, \"\"))";
 /// The key `a` as the channel reads it: a KEY carrying its text (DOC-1935).
@@ -57,6 +60,7 @@ fn reported(typing: &mut Typing, sends: &[Send], now_us: u64) -> Vec<Send> {
                 page: *page,
                 generation: 1,
                 rule: 0,
+                row: neoteletext_rules::limits::NO_RULE,
                 tick: 0,
                 target_kind: 0,
                 target_number: 0,
@@ -78,7 +82,7 @@ fn typed(typing: &mut Typing, intent: &InputIntent, now_us: u64) -> Vec<Send> {
 /// page: what the server's default table for a channel asks (RULE-53).
 fn send_all() -> protocol::rules::RulesOpen {
     let whole = protocol::rules::WheelRect { x: 0, y: 0, width: 480, height: 500 };
-    protocol::rules::RulesOpen { page: PAGE.page, generation: 1, interest: protocol::rules::INTEREST_ALL, watch: Vec::new(), wheel: vec![whole] }
+    protocol::rules::RulesOpen { page: OPEN, generation: 1, interest: protocol::rules::INTEREST_ALL, watch: Vec::new(), wheel: vec![whole] }
 }
 
 /// Microseconds in a millisecond, for times written in milliseconds.
@@ -102,7 +106,7 @@ fn ready(caps: u32) -> Typing {
     typing.control(PAGE.channel, &welcome(caps), 0);
     typing.drawn(PAGE, 0);
     // The page's decoder says its table asks for everything.
-    typing.rules_open(PAGE.channel, &send_all(), 0);
+    typing.rules_told(PAGE.channel, &send_all(), 0);
     typing
 }
 
@@ -124,7 +128,7 @@ fn a_session_starts_with_hello_and_waits_for_welcome() {
     assert_eq!(items(&typing.input_intent(&key('a'), 6)), [] as [String; 0], "the page has no table: nothing is given (RULE-50)");
     // The page's decoder says its table asks for input: the page hears
     // that it holds the focus, and its keys are given from then on.
-    assert_eq!(items(&typing.rules_open(PAGE.channel, &send_all(), 6).0), ["Event(FocusIn)"]);
+    assert_eq!(items(&typing.rules_told(PAGE.channel, &send_all(), 6).0), ["Event(FocusIn)"]);
     assert_eq!(items(&typing.input_intent(&key('a'), 6)), [KEY_A]);
 }
 
@@ -170,7 +174,7 @@ fn input_goes_only_under_every_condition() {
     assert_eq!(items(&typing.input_intent(&key('a'), 0)), [] as [String; 0], "nothing on screen");
     typing.drawn(PAGE, 0);
     assert_eq!(items(&typing.input_intent(&key('a'), 0)), [] as [String; 0], "no table asks for it (RULE-50)");
-    typing.rules_open(PAGE.channel, &send_all(), 0);
+    typing.rules_told(PAGE.channel, &send_all(), 0);
     assert_eq!(items(&typing.input_intent(&key('a'), 0)), [KEY_A]);
     let away = typing.focused(false, 0);
     let release = KEY_A.replace("Press", "Release").replace("Some(\"a\")", "None").replace("lost: false", "lost: true");
@@ -192,7 +196,7 @@ fn losing_the_focus_never_changes_the_selection() {
     assert_eq!(typing.selection(PAGE.channel), Some((PAGE.page, SUBCODE_ANY)));
     let back = typing.opened(Some(PAGE.channel), Some(PAGE), 6);
     assert_eq!(items(&back), [] as [String; 0], "no SELECT");
-    assert_eq!(items(&typing.rules_open(PAGE.channel, &send_all(), 6).0), ["Event(FocusIn)"], "the focus, once its table asks again");
+    assert_eq!(items(&typing.rules_told(PAGE.channel, &send_all(), 6).0), ["Event(FocusIn)"], "the focus, once its table asks again");
     // Another tab in front: the same.
     assert_eq!(items(&typing.opened(Some(8), None, 7)), ["Event(FocusOut)"]);
     assert_eq!(typing.selection(PAGE.channel), Some((PAGE.page, SUBCODE_ANY)));
@@ -206,7 +210,7 @@ fn the_wall_selects_nothing_and_a_page_after_it_is_selected_again() {
     assert_eq!(items(&typing.selects_nothing(PAGE.channel, 6)), ["Event(Select(Select { page: 0, sub: 16255 }, \"\"))"]);
     let back = typing.opened(Some(PAGE.channel), Some(PAGE), 7);
     assert_eq!(items(&back), [SELECT_PAGE], "the focus is the page's to hear once its table asks again and it is on screen");
-    assert_eq!(items(&typing.rules_open(PAGE.channel, &send_all(), 7).0), [] as [String; 0]);
+    assert_eq!(items(&typing.rules_told(PAGE.channel, &send_all(), 7).0), [] as [String; 0]);
     assert_eq!(items(&typing.input_intent(&key('a'), 8)), [] as [String; 0], "nothing on screen until the page is drawn again");
 }
 
@@ -220,7 +224,7 @@ fn input_is_stamped_with_the_page_on_screen() {
     let sent = items(&typing.input_intent(&InputIntent { key: next, intent: key('a').intent }, 6));
     assert_eq!(sent, [] as [String; 0], "the old page is on screen still, and its table is no longer the open page's (RULE-58)");
     typing.drawn(next, 0x0003);
-    typing.rules_open(PAGE.channel, &protocol::rules::RulesOpen { page: next.page, ..send_all() }, 7);
+    typing.rules_told(PAGE.channel, &protocol::rules::RulesOpen { page: protocol::rules::PageSub::new(next.page, 3), ..send_all() }, 7);
     let sent = items(&typing.input_intent(&InputIntent { key: next, intent: key('a').intent }, 7));
     assert_eq!(sent, [KEY_A.replace("page: 512, sub: 0", "page: 513, sub: 3")]);
 }

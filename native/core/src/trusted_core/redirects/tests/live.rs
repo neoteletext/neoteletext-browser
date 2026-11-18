@@ -287,7 +287,13 @@ fn welcomed(test: &mut Test, channel: u32) {
 fn draw(test: &mut Test, channel: u32, page: u16) {
     let step = SubPageStep { count: 1, shown: 0, place: Some(0), previous: None, next: None };
     test.core.decoded(channel, FromDecoder::SubPages { page, step }).unwrap();
-    let asks = protocol::rules::RulesOpen { page, generation: 1, interest: protocol::rules::INTEREST_ALL, watch: Vec::new(), wheel: Vec::new() };
+    let asks = protocol::rules::RulesOpen {
+        page: protocol::rules::PageSub::new(page, 0),
+        generation: 1,
+        interest: protocol::rules::INTEREST_ALL,
+        watch: Vec::new(),
+        wheel: Vec::new(),
+    };
     test.core.decoded(channel, FromDecoder::RulesOpen(asks)).unwrap();
 }
 

@@ -128,9 +128,25 @@ pub(super) struct Locals {
     pub(super) pending_banks: [Vec<Vec<u8>>; VOICES],
     /// Buffers running whose local sounds overran their time.
     overruns: u32,
+    /// The page the local sounds belong to is paused (RULE-111 case 4,
+    /// RULE-62): nothing is rendered for them, their notes released and
+    /// their instruments kept.
+    pub(super) paused: bool,
 }
 
 impl Locals {
+    /// Pauses every local sound with its notes released, or lets them
+    /// render again (RULE-111 case 4). A note held when the page was
+    /// paused does not sound on its return.
+    pub(super) fn pause(&mut self, paused: bool) {
+        if paused && !self.paused {
+            for local in self.voices.iter_mut().flatten() {
+                local.release();
+            }
+        }
+        self.paused = paused;
+    }
+
     /// Whether any local sound is held.
     pub(super) fn any(&self) -> bool {
         self.voices.iter().any(Option::is_some)
@@ -179,7 +195,7 @@ impl Locals {
 
 impl Pull for Locals {
     fn pull(&mut self, voice: usize, key: SoundKey, block: &mut [i16]) {
-        match self.voices.get_mut(voice).and_then(Option::as_mut).filter(|local| local.key == key) {
+        match self.voices.get_mut(voice).and_then(Option::as_mut).filter(|local| local.key == key && !self.paused) {
             Some(local) => local.render(block),
             None => block.fill(0),
         }

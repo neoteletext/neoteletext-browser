@@ -47,7 +47,7 @@ pub const MAX_CHUNK: usize = 64 * 1024;
 pub const MAX_WHOLE: usize = crate::MAX_PAYLOAD - 1;
 /// The bytes of a rule input's message before the input: its page and
 /// its sequence number.
-const INPUT_HEAD_BYTES: usize = 2 + 4;
+const INPUT_HEAD_BYTES: usize = 2 + 2 + 4;
 /// A whole page's flags, before its bytes.
 const WHOLE_FLAGS_BYTES: usize = 1;
 
@@ -139,8 +139,8 @@ pub enum ToDecoder {
     /// matches, under the sequence number a report names it by. The
     /// event's bytes stay with the trusted core.
     RuleInput {
-        /// The open page.
-        page: u16,
+        /// The open page and its sub-code (RULE-112).
+        page: crate::rules::PageSub,
         /// The trusted core's number for the event.
         sequence: u32,
         /// The event.
@@ -150,16 +150,34 @@ pub enum ToDecoder {
     /// list (RULE-33 item 4): one byte for each slot, in the list's order,
     /// at most [`crate::audio::MAX_WATCH_SLOTS`].
     Metered {
-        /// The open page.
-        page: u16,
+        /// The open page and its sub-code.
+        page: crate::rules::PageSub,
         /// The values.
         values: Vec<u8>,
     },
-    /// The page of this channel that is the open page of the active tab:
-    /// the one page keys would go to (RULE-58). Only its table is
-    /// evaluated and only it plays a local sound; with none, as when the
-    /// tab is not the active one, no table of the channel is evaluated.
-    RulesPage(Option<u16>),
+    /// The page and sub-code of this channel that is the open page of the
+    /// active tab: the one page keys would go to (RULE-58, RULE-112). Only
+    /// its table is evaluated and only it plays a local sound. None is the
+    /// pause of RULE-111 case 4: the tab is not the active one, and the
+    /// page it has selected keeps its state, evaluating nothing.
+    RulesPage(Option<crate::rules::PageSub>),
+    /// The view's push connection ended (RULE-111 case 2): every local
+    /// state of the page is dropped at once, with no `close` tick, and the
+    /// picture stays as it stood.
+    ConnectionEnded,
+    /// The sound helper heard a cue of a sound on an audio channel of this
+    /// view (RULE-109): its device buffer holding the cue's sample was
+    /// rendered.
+    CueHeard {
+        /// The audio channel, 0 to 3.
+        audio_channel: u8,
+        /// The cue's number, 0 to `MAX_CUE`.
+        number: u8,
+    },
+    /// The interface's frames (RULE-98 item 2): its refresh period and the
+    /// time of its next composition on the machine's monotonic clock, for
+    /// the decoder to lock its presentation clock to.
+    FramePhase(crate::rules::FramePhase),
     /// The viewer's setting "Paint drawings gradually" (animation.md
     /// ANIM-15, DEC-6525 item 27): on, a ReGIS drawing with a paint rate
     /// appears at that rate and a NAPLPS WAIT delays what follows it;
@@ -168,8 +186,8 @@ pub enum ToDecoder {
     /// A state query the channel sent for a page (RULE-47): answered once
     /// by [`FromDecoder::PageState`] when that page is the open page.
     RulesQuery {
-        /// The page.
-        page: u16,
+        /// The page and sub-code.
+        page: crate::rules::PageSub,
         /// The query's identifier.
         identifier: u32,
     },
@@ -368,8 +386,8 @@ pub enum FromDecoder {
     /// after its stamp, at most [`crate::rules::MAX_PAGE_STATE`] bytes,
     /// which begins with the query's identifier.
     PageState {
-        /// The page.
-        page: u16,
+        /// The page and sub-code.
+        page: crate::rules::PageSub,
         /// The query's identifier.
         identifier: u32,
         /// The payload after the stamp.
@@ -377,8 +395,8 @@ pub enum FromDecoder {
     },
     /// A fault of a page's table (RULE-48).
     RulesFault {
-        /// The page.
-        page: u16,
+        /// The page and sub-code.
+        page: crate::rules::PageSub,
         /// The table's generation.
         generation: u16,
         /// The fault's code, 1 to [`crate::rules::MAX_FAULT`].
@@ -466,9 +484,13 @@ pub fn write_to_decoder(out: &mut dyn Write, message: &ToDecoder) -> Result<(), 
             crate::regis::push_viewer(&mut payload, *viewer);
             kinds::KIND_REGIS_VIEWER
         }
-        ToDecoder::RuleInput { .. } | ToDecoder::Metered { .. } | ToDecoder::RulesQuery { .. } | ToDecoder::RulesPage(_) => {
-            push_rules_to_decoder(&mut payload, message)?
-        }
+        ToDecoder::RuleInput { .. }
+        | ToDecoder::Metered { .. }
+        | ToDecoder::RulesQuery { .. }
+        | ToDecoder::RulesPage(_)
+        | ToDecoder::ConnectionEnded
+        | ToDecoder::CueHeard { .. }
+        | ToDecoder::FramePhase(_) => push_rules_to_decoder(&mut payload, message)?,
         ToDecoder::PaintGradually(gradual) => {
             payload.push(u8::from(*gradual));
             kinds::KIND_PAINT_GRADUALLY
@@ -481,8 +503,7 @@ pub fn write_to_decoder(out: &mut dyn Write, message: &ToDecoder) -> Result<(), 
 fn push_rules_to_decoder(payload: &mut Vec<u8>, message: &ToDecoder) -> Result<u8, ProtocolError> {
     Ok(match message {
         ToDecoder::RuleInput { page, sequence, input } => {
-            crate::fields::check_page(*page)?;
-            payload.extend_from_slice(&page.to_be_bytes());
+            crate::rules::push_page_sub(payload, *page)?;
             payload.extend_from_slice(&sequence.to_be_bytes());
             crate::rules::push_input(payload, input);
             // What would be refused on arrival is refused on sending.
@@ -491,8 +512,7 @@ fn push_rules_to_decoder(payload: &mut Vec<u8>, message: &ToDecoder) -> Result<u
             kinds::KIND_RULE_INPUT
         }
         ToDecoder::Metered { page, values } => {
-            crate::fields::check_page(*page)?;
-            payload.extend_from_slice(&page.to_be_bytes());
+            crate::rules::push_page_sub(payload, *page)?;
             crate::push_count_u8(payload, values.len(), crate::audio::MAX_WATCH_SLOTS, "metered values")?;
             payload.extend_from_slice(values);
             kinds::KIND_METERED
@@ -500,11 +520,17 @@ fn push_rules_to_decoder(payload: &mut Vec<u8>, message: &ToDecoder) -> Result<u
         ToDecoder::RulesQuery { page, identifier } => crate::rules::push_query(payload, *page, *identifier).map(|()| kinds::KIND_RULES_QUERY)?,
         ToDecoder::RulesPage(page) => {
             if let Some(page) = page {
-                crate::fields::check_page(*page)?;
-                payload.extend_from_slice(&page.to_be_bytes());
+                crate::rules::push_page_sub(payload, *page)?;
             }
             kinds::KIND_RULES_PAGE
         }
+        ToDecoder::ConnectionEnded => kinds::KIND_CONNECTION_ENDED,
+        ToDecoder::CueHeard { audio_channel, number } => {
+            crate::rules::check_cue(*audio_channel, *number)?;
+            payload.extend_from_slice(&[*audio_channel, *number]);
+            kinds::KIND_CUE_HEARD
+        }
+        ToDecoder::FramePhase(phase) => crate::rules::push_frame_phase(payload, *phase).map(|()| kinds::KIND_FRAME_PHASE)?,
         _ => return Err(ProtocolError::BadValue("not a rule message")),
     })
 }
@@ -513,16 +539,23 @@ fn push_rules_to_decoder(payload: &mut Vec<u8>, message: &ToDecoder) -> Result<u
 fn read_rules_to_decoder(kind: u8, fields: &mut Fields<'_>) -> Result<ToDecoder, ProtocolError> {
     Ok(match kind {
         kinds::KIND_RULE_INPUT => {
-            let (page, sequence) = (fields.channel_page()?, fields.u32()?);
+            let (page, sequence) = (crate::rules::read_page_sub(fields)?, fields.u32()?);
             ToDecoder::RuleInput { page, sequence, input: crate::rules::read_input(fields)? }
         }
         kinds::KIND_METERED => {
-            let page = fields.channel_page()?;
+            let page = crate::rules::read_page_sub(fields)?;
             let count = fields.count_u8(crate::audio::MAX_WATCH_SLOTS, "metered values")?;
             ToDecoder::Metered { page, values: fields.take(count)?.to_vec() }
         }
-        kinds::KIND_RULES_PAGE => ToDecoder::RulesPage(if fields.is_empty() { None } else { Some(fields.channel_page()?) }),
-        _ => ToDecoder::RulesQuery { page: fields.channel_page()?, identifier: fields.u32()? },
+        kinds::KIND_RULES_PAGE => ToDecoder::RulesPage(if fields.is_empty() { None } else { Some(crate::rules::read_page_sub(fields)?) }),
+        kinds::KIND_CONNECTION_ENDED => ToDecoder::ConnectionEnded,
+        kinds::KIND_CUE_HEARD => {
+            let (audio_channel, number) = (fields.u8()?, fields.u8()?);
+            crate::rules::check_cue(audio_channel, number)?;
+            ToDecoder::CueHeard { audio_channel, number }
+        }
+        kinds::KIND_FRAME_PHASE => ToDecoder::FramePhase(crate::rules::read_frame_phase(fields)?),
+        _ => ToDecoder::RulesQuery { page: crate::rules::read_page_sub(fields)?, identifier: fields.u32()? },
     })
 }
 
@@ -532,21 +565,19 @@ fn push_rules_to_core(payload: &mut Vec<u8>, message: &FromDecoder) -> Result<u8
         FromDecoder::RulesOpen(open) => crate::rules::push_open(payload, open).map(|()| kinds::KIND_RULES_OPEN)?,
         FromDecoder::Report(report) => crate::rules::push_report(payload, report).map(|()| kinds::KIND_REPORT)?,
         FromDecoder::PageState { page, identifier, body } => {
-            crate::fields::check_page(*page)?;
             if body.len() > crate::rules::MAX_PAGE_STATE {
                 return Err(ProtocolError::TooLong(body.len()));
             }
-            payload.extend_from_slice(&page.to_be_bytes());
+            crate::rules::push_page_sub(payload, *page)?;
             payload.extend_from_slice(&identifier.to_be_bytes());
             payload.extend_from_slice(body);
             kinds::KIND_PAGE_STATE
         }
         FromDecoder::RulesFault { page, generation, fault, count } => {
-            crate::fields::check_page(*page)?;
-            if !(1..=crate::rules::MAX_FAULT).contains(fault) {
+            if !crate::rules::is_fault(*fault) {
                 return Err(ProtocolError::BadValue("rules fault"));
             }
-            payload.extend_from_slice(&page.to_be_bytes());
+            crate::rules::push_page_sub(payload, *page)?;
             payload.extend_from_slice(&generation.to_be_bytes());
             payload.push(*fault);
             payload.extend_from_slice(&count.to_be_bytes());
@@ -563,7 +594,7 @@ fn read_rules_from_decoder(kind: u8, fields: &mut Fields<'_>) -> Result<FromDeco
         kinds::KIND_RULES_OPEN => FromDecoder::RulesOpen(crate::rules::read_open(fields)?),
         kinds::KIND_REPORT => FromDecoder::Report(crate::rules::read_report(fields)?),
         kinds::KIND_PAGE_STATE => {
-            let (page, identifier) = (fields.channel_page()?, fields.u32()?);
+            let (page, identifier) = (crate::rules::read_page_sub(fields)?, fields.u32()?);
             let length = fields.remaining();
             if length > crate::rules::MAX_PAGE_STATE {
                 return Err(ProtocolError::TooLong(length));
@@ -571,8 +602,8 @@ fn read_rules_from_decoder(kind: u8, fields: &mut Fields<'_>) -> Result<FromDeco
             FromDecoder::PageState { page, identifier, body: fields.take(length)?.to_vec() }
         }
         kinds::KIND_RULES_FAULT => {
-            let (page, generation, fault, count) = (fields.channel_page()?, fields.u16()?, fields.u8()?, fields.u16()?);
-            if !(1..=crate::rules::MAX_FAULT).contains(&fault) {
+            let (page, generation, fault, count) = (crate::rules::read_page_sub(fields)?, fields.u16()?, fields.u8()?, fields.u16()?);
+            if !crate::rules::is_fault(fault) {
                 return Err(ProtocolError::BadValue("rules fault"));
             }
             FromDecoder::RulesFault { page, generation, fault, count }
@@ -656,7 +687,13 @@ pub fn read_from_core(input: &mut dyn Read) -> Result<Option<ToDecoder>, Protoco
             let (page, sub) = (fields.channel_page()?, fields.u16()?);
             ToDecoder::RegisViewer { page, sub, viewer: crate::regis::read_viewer(&mut fields)? }
         }
-        kinds::KIND_RULE_INPUT | kinds::KIND_METERED | kinds::KIND_RULES_QUERY | kinds::KIND_RULES_PAGE => read_rules_to_decoder(kind, &mut fields)?,
+        kinds::KIND_RULE_INPUT
+        | kinds::KIND_METERED
+        | kinds::KIND_RULES_QUERY
+        | kinds::KIND_RULES_PAGE
+        | kinds::KIND_CONNECTION_ENDED
+        | kinds::KIND_CUE_HEARD
+        | kinds::KIND_FRAME_PHASE => read_rules_to_decoder(kind, &mut fields)?,
         kinds::KIND_PAINT_GRADUALLY => ToDecoder::PaintGradually(fields.flag("paint gradually")?),
         other => return Err(ProtocolError::UnknownKind(other)),
     };

@@ -311,9 +311,10 @@ pub struct NaplpsPages {
     /// No WAIT delays anything: the viewer's setting "Paint drawings
     /// gradually" is off (ANIM-15, ANIM-20).
     at_once: bool,
-    /// Each page's sheet (ANIM-17): its generation and bytes, and whether
-    /// a record of it was lost.
-    sheets: BTreeMap<u16, (u16, Vec<u8>, bool)>,
+    /// Each sub-page's sheet (ANIM-17): its generation and bytes, and
+    /// whether a record of it was lost. A sub-page is a page (page-rules.md
+    /// RULE-112): no sheet is fed to another sub-code.
+    sheets: BTreeMap<(u16, u16), (u16, Vec<u8>, bool)>,
     /// Objects received for a generation of a sub-page's stream that has
     /// not begun: kept until it does, and dropped when another begins
     /// (ANIM-11).
@@ -341,7 +342,7 @@ impl NaplpsPages {
                     self.pages.remove(&oldest);
                 }
             }
-            let sheet = self.sheets.get(&key.0).map(|(_, bytes, _)| bytes.as_slice());
+            let sheet = self.sheets.get(&key).map(|(_, bytes, _)| bytes.as_slice());
             let Some(mut page) = Page::new(record.generation, sheet, self.at_once) else { return };
             // The objects sent ahead of this generation are its own; those
             // of any other are dropped (ANIM-11).
@@ -386,27 +387,41 @@ impl NaplpsPages {
     }
 
     /// Reads one SHEET record of NAPLPS (ANIM-17): the bytes are kept, in
-    /// order, as the page's sheet, and fed to the renderer of each of the
-    /// page's sub-pages before its stream. A new generation starts the
-    /// sheet again and forgets the page's sub-pages, whose streams its
-    /// channel sends again after it.
-    pub fn read_sheet(&mut self, page: u16, generation: u16, offset: u32, data: &[u8]) {
-        if self.sheets.get(&page).is_none_or(|(held, _, _)| *held != generation) {
-            if !self.sheets.contains_key(&page) && self.sheets.len() >= MAX_WAITING {
+    /// order, as the sub-page's sheet (RULE-112), and fed to its renderer
+    /// before its stream. A new generation starts the sheet again and
+    /// forgets the sub-page, whose stream its channel sends again after it.
+    pub fn read_sheet(&mut self, page: u16, sub: u16, generation: u16, offset: u32, data: &[u8]) {
+        let key = (page, sub);
+        if self.sheets.get(&key).is_none_or(|(held, _, _)| *held != generation) {
+            if !self.sheets.contains_key(&key) && self.sheets.len() >= MAX_WAITING {
                 self.sheets.pop_first();
             }
-            if self.sheets.insert(page, (generation, Vec::new(), offset != 0)).is_some() {
-                self.pages.retain(|(held, _), _| *held != page);
-                self.sent_sub.remove(&page);
+            if self.sheets.insert(key, (generation, Vec::new(), offset != 0)).is_some() {
+                self.pages.remove(&key);
+                if self.sent_sub.get(&page) == Some(&sub) {
+                    self.sent_sub.remove(&page);
+                }
             }
         }
-        let Some((_, bytes, lost)) = self.sheets.get_mut(&page) else { return };
+        let Some((_, bytes, lost)) = self.sheets.get_mut(&key) else { return };
         let end = usize::try_from(offset).ok().and_then(|offset| offset.checked_add(data.len()));
         if *lost || usize::try_from(offset).ok() != Some(bytes.len()) || end.is_none_or(|end| end > neoteletext_web::consts::MAX_SHEET_BYTES) {
             *lost = true;
             return;
         }
         bytes.extend_from_slice(data);
+    }
+
+    /// Forgets everything held of one sub-page: its renderer, its sheet,
+    /// its objects waiting and its animation state (page-rules.md
+    /// RULE-111: a page closed drops its local state).
+    pub fn forget(&mut self, page: u16, sub: u16) {
+        self.pages.remove(&(page, sub));
+        self.sheets.remove(&(page, sub));
+        self.waiting.remove(&(page, sub));
+        if self.sent_sub.get(&page) == Some(&sub) {
+            self.sent_sub.remove(&page);
+        }
     }
 
     /// The viewer's setting "Paint drawings gradually" (ANIM-15, ANIM-20):

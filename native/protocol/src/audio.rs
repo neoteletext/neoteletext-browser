@@ -44,6 +44,11 @@ const OP_LOCAL: u8 = 13;
 const OP_LOCAL_MIDI: u8 = 14;
 /// The trusted core's alone: the watch list of a view (RULE-33 item 2).
 const OP_WATCH: u8 = 15;
+// A cue mark of a sound playing (page-rules.md RULE-63, RULE-109), from a
+// decoder, and the pause of a view's local sounds (RULE-111 case 4), from
+// the trusted core alone: the next operation numbers free.
+const OP_CUE: u8 = 16;
+const OP_PAUSE: u8 = 17;
 
 /// The most bytes of a bank image a local sound is given: the audio
 /// profile's (`neoteletext_audio::MOST_BANK_BYTES`, MIDI-55).
@@ -246,6 +251,24 @@ pub enum Audio {
     /// [`MAX_WATCH_SLOTS`] slots; empty for none. Only the trusted core
     /// sends it.
     Watch(Vec<WatchSlot>),
+    /// A cue point of the sound streaming on an audio channel (RULE-109,
+    /// RULE-63): the sound helper reports it heard when the device buffer
+    /// holding sample `position` of the stream has been rendered.
+    Cue {
+        /// 0 to 3.
+        channel: u8,
+        /// The sound.
+        sound: Sound,
+        /// Samples from the stream's first sample.
+        position: u64,
+        /// The cue's number, 0 to `MAX_CUE`.
+        number: u8,
+    },
+    /// The view's local sounds are silenced with every note released and
+    /// their instruments kept (true), or rendered again (false): the page
+    /// they belong to is paused (RULE-111 case 4). Only the trusted core
+    /// sends it.
+    Pause(bool),
     /// Forget every sound of the channel and stop its voices at once: its
     /// decoder ended. Only the trusted core sends it.
     Reset,
@@ -342,6 +365,13 @@ pub(crate) fn push(payload: &mut Vec<u8>, audio: &Audio, sender: Sender) -> Resu
                 payload.extend_from_slice(&[slot.channel, slot.kind, slot.part]);
             }
         }
+        Audio::Cue { channel, sound, position, number } => {
+            payload.extend_from_slice(&[OP_CUE, *channel]);
+            push_sound(payload, *sound);
+            payload.extend_from_slice(&position.to_be_bytes());
+            payload.push(*number);
+        }
+        Audio::Pause(paused) => payload.extend_from_slice(&[OP_PAUSE, u8::from(*paused)]),
         Audio::Reset => payload.push(OP_RESET),
         Audio::Mute(muted) => payload.extend_from_slice(&[OP_MUTE, u8::from(*muted)]),
     }
@@ -415,6 +445,17 @@ pub(crate) fn read(fields: &mut Fields<'_>, sender: Sender) -> Result<Audio, Pro
             }
             Audio::Watch(slots)
         }
+        OP_CUE => {
+            let channel = channel(fields)?;
+            let sound = sound(fields)?;
+            let position = u64::from_be_bytes(fields.array()?);
+            let number = fields.u8()?;
+            if number > neoteletext_rules::limits::MAX_CUE {
+                return Err(ProtocolError::BadValue("cue number"));
+            }
+            Audio::Cue { channel, sound, position, number }
+        }
+        OP_PAUSE if sender == Sender::Core => Audio::Pause(fields.flag("pause")?),
         OP_RESET if sender == Sender::Core => Audio::Reset,
         OP_MUTE if sender == Sender::Core => Audio::Mute(fields.flag("mute")?),
         _ => return Err(ProtocolError::BadValue("audio operation")),

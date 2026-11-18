@@ -54,7 +54,9 @@ pub(super) fn handle(core: &mut Core, event: Event) -> Result<bool, String> {
         Event::PhoneEnded(generation, reason) => core.phone_ended(generation, reason)?,
         Event::Sound(FromSound::Sounding(channels)) => core.sounding(&channels)?,
         Event::Sound(FromSound::Metered { channel, values }) => core.metered(channel, values),
-        Event::Sound(FromSound::LocalOverrun { channel }) => core.local_overrun(channel)?,
+        Event::Sound(FromSound::LocalOverrun { channel, count }) => core.local_overrun(channel, count)?,
+        Event::Sound(FromSound::CueHeard { channel, audio_channel, number }) => core.cue_heard(channel, audio_channel, number),
+        Event::Sound(FromSound::Spent { channel, microseconds }) => core.sound_spent(channel, microseconds),
         Event::SoundEnded(reason) => {
             let broke = reason.is_some();
             core.log(Level::Error, None, &format!("no sound: the sound helper ended{}", reason.map(|reason| format!(": {reason}")).unwrap_or_default()));

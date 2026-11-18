@@ -217,7 +217,7 @@ pub(crate) fn rule_event() -> Vec<u8> {
     use neoteletext_input::event::{Event, Item, Stamp, write};
     use neoteletext_input::rules::{RuleBody, RuleEvent};
     let on = Stamp::new(0x100, 0).unwrap();
-    let event = RuleEvent { on, generation: 1, rule: 2, tick: 3, target: neoteletext_rules::table::Target::NONE, body: RuleBody::Input(b"abc") };
+    let event = RuleEvent { on, generation: 1, rule: 2, row: 0, tick: 3, target: neoteletext_rules::table::Target::NONE, body: RuleBody::Input(b"abc") };
     let mut out = [0_u8; MAX_MESSAGE];
     let length = write(&Item::Event(Event::RuleEvent(event)), &mut out).unwrap();
     out[..length].to_vec()

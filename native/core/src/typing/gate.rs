@@ -29,8 +29,8 @@ use neoteletext_input::event::{self, Action, Event, Item, KeyCode, MouseAction, 
 use neoteletext_input::rules::{FaultCode, PageStateEvent, RuleBody, RuleEvent, RulesFault};
 use neoteletext_rules::table::{Target, TargetKind, Value};
 use protocol::rules::{
-    INPUT_RING, INTEREST_MOVES, INTEREST_POINTER_BUTTONS, KeyAction, PointerAction, Report, Reported, RuleInput, RulesOpen, SEND_BUDGET, SEND_WINDOW_TICKS,
-    TIMED_SEND_BUDGET, WheelRect,
+    INPUT_RING, INTEREST_MOVES, INTEREST_POINTER_BUTTONS, KeyAction, PageSub, PointerAction, Report, Reported, RuleInput, RulesOpen, SEND_BUDGET,
+    SEND_WINDOW_TICKS, TIMED_SEND_BUDGET, WheelRect,
 };
 
 use super::{Channel, Send, clock};
@@ -53,15 +53,15 @@ const CELL_HEIGHT: u32 = interface_core::canvas::CELL_HEIGHT as u32;
 /// What the open page's table asks for, as its decoder said.
 #[derive(Debug)]
 pub(super) struct Asked {
-    pub(super) page: u16,
+    /// The page and sub-code (RULE-112).
+    pub(super) page: PageSub,
     pub(super) generation: u16,
     /// The classes of input: `INTEREST_` bits.
     pub(super) interest: u8,
     /// Where an enabled `wheel` rule applies, in the picture's pixels.
     pub(super) wheel: Vec<WheelRect>,
-    /// The page as it was last on screen: what a report with no event is
-    /// stamped with.
-    stamp: Option<Stamp>,
+    /// The page as a stamp: what a report with no event is stamped with.
+    stamp: Stamp,
     /// The page stopped being the open page at this time: its decoder's
     /// final tick may still report, for [`SEND_WINDOW_TICKS`].
     closing_us: Option<u64>,
@@ -71,7 +71,7 @@ pub(super) struct Asked {
 #[derive(Debug)]
 struct Kept {
     sequence: u32,
-    page: u16,
+    /// The page and sub-code it was given for (RULE-112).
     stamp: Stamp,
     /// The event exactly as push protocol 8 encoded it, from its `0xFF`,
     /// or a run of raw text.
@@ -81,8 +81,11 @@ struct Kept {
     /// A MOUSE, TOUCH or WHEEL: what a PICK may follow.
     pointed: bool,
     given_us: u64,
-    /// The rules it was already reported for: bit `n` for rule `n`.
-    reported: u64,
+    /// The rules and rows it was already reported for (RULE-52 item 3),
+    /// each the rule in the high byte and the row's place in the low. At
+    /// most one a report taken from the budget, so at most
+    /// [`SEND_BUDGET`] within the window.
+    reported: Vec<u16>,
 }
 
 /// A budget of reports a second.
@@ -130,7 +133,7 @@ pub(super) struct Gate {
     /// When each fault was last passed to the channel, by code.
     fault_told_us: [Option<u64>; FAULT_SLOTS],
     /// The state queries the fetcher received, waiting for their answer.
-    queries: VecDeque<(u16, u32)>,
+    queries: VecDeque<(PageSub, u32)>,
     /// The pixel of the page's picture the pointer is on, as the trusted
     /// core derived it for the event being given.
     pub(super) pixel: Option<(u16, u16)>,
@@ -146,9 +149,10 @@ pub(super) struct Gate {
 }
 
 impl Gate {
-    /// Whether a table asks for input for `page` now.
-    fn asks(&self, page: u16) -> Option<&Asked> {
-        self.asked.as_ref().filter(|asked| asked.page == page && asked.closing_us.is_none())
+    /// Whether a table asks for input for the page and sub-code of
+    /// `stamp` now (RULE-112: another sub-code is another page).
+    fn asks(&self, stamp: Stamp) -> Option<&Asked> {
+        self.asked.as_ref().filter(|asked| asked.stamp == stamp && asked.closing_us.is_none())
     }
 
     /// Whether the pointer, where it last was, is inside a rectangle an
@@ -185,11 +189,10 @@ impl Gate {
         self.queries.clear();
     }
 
-    /// The page on screen was drawn as `stamp`.
-    pub(super) fn drawn(&mut self, stamp: Stamp) {
-        if let Some(asked) = self.asked.as_mut().filter(|asked| asked.page == stamp.page && asked.closing_us.is_none()) {
-            asked.stamp = Some(stamp);
-        }
+    /// Whether any input event was given a page's decoder since the gate
+    /// was last forgotten: what a `RULE_EVENT` can have been made of.
+    pub(super) fn gave_input(&self) -> bool {
+        !self.ring.is_empty()
     }
 
     /// Forgets everything: the connection or the channel went.
@@ -198,7 +201,7 @@ impl Gate {
     }
 
     /// A state query the fetcher received for `page` (RULE-52 item 6).
-    pub(super) fn query(&mut self, page: u16, identifier: u32) {
+    pub(super) fn query(&mut self, page: PageSub, identifier: u32) {
         if self.queries.len() >= MAX_QUERIES {
             self.queries.pop_front();
         }
@@ -323,7 +326,7 @@ impl Channel {
         }
         .or(self.on_screen);
         let Some(stamp) = stamp else { return false };
-        let Some(interest) = self.gate.asks(stamp.page).map(|asked| asked.interest) else { return false };
+        let Some(interest) = self.gate.asks(stamp).map(|asked| asked.interest) else { return false };
         // The capabilities agreed still decide what goes (DOC-1922).
         let Some(carried) = self.session.carried(item) else { return false };
         let Some(input) = self.rule_input(&carried) else { return false };
@@ -341,10 +344,10 @@ impl Channel {
         }
         #[cfg(test)]
         let kept = bytes.clone();
-        self.gate.ring.push_back(Kept { sequence, page: stamp.page, stamp, bytes, pick: Vec::new(), pointed, given_us: now_us, reported: 0 });
+        self.gate.ring.push_back(Kept { sequence, stamp, bytes, pick: Vec::new(), pointed, given_us: now_us, reported: Vec::new() });
         sends.push(Send::Decoder {
             channel,
-            page: stamp.page,
+            page: PageSub::new(stamp.page, stamp.sub),
             sequence,
             input,
             #[cfg(test)]
@@ -368,7 +371,7 @@ impl Channel {
         let Some(carried) = self.session.carried(&Item::Event(Event::Pick(pick))) else { return false };
         let mut out = [0_u8; neoteletext_input::MAX_MESSAGE];
         let Ok(length) = event::write(&carried, &mut out) else { return false };
-        match self.gate.ring.back_mut().filter(|kept| kept.pointed && kept.stamp == pick.on && kept.reported == 0) {
+        match self.gate.ring.back_mut().filter(|kept| kept.pointed && kept.stamp == pick.on && kept.reported.is_empty()) {
             Some(kept) => {
                 kept.pick = out.get(..length).unwrap_or(&[]).to_vec();
                 true
@@ -378,9 +381,9 @@ impl Channel {
     }
 
     /// The page's decoder said what its table asks for (RULE-52 item 1).
-    /// `open` says whether that page is the open page of the view now. A
-    /// table for the open page is taken; the end of a table ends what was
-    /// asked for that page.
+    /// `open` says whether that page and sub-code are the open page of the
+    /// view now. A table for the open page is taken; the end of a table
+    /// ends what was asked for that page.
     pub(super) fn rules_told(&mut self, told: &RulesOpen, open: bool) {
         if told.generation == 0 {
             if self.gate.asked.as_ref().is_some_and(|asked| asked.page == told.page) {
@@ -389,12 +392,11 @@ impl Channel {
             }
             return;
         }
+        let Some(stamp) = Stamp::new(told.page.page, told.page.sub) else { return };
         if !open {
             return;
         }
         let same = self.gate.asked.as_ref().is_some_and(|asked| asked.page == told.page && asked.generation == told.generation && asked.closing_us.is_none());
-        let stamp = self.on_screen.filter(|stamp| stamp.page == told.page);
-        let stamp = if same { self.gate.asked.as_ref().and_then(|asked| asked.stamp).or(stamp) } else { stamp };
         self.gate.asked =
             Some(Asked { page: told.page, generation: told.generation, interest: told.interest, wheel: told.wheel.clone(), stamp, closing_us: None });
         // A new table's evaluator starts afresh, and has heard nothing.
@@ -421,7 +423,10 @@ impl Channel {
     /// the request is dropped and counted.
     pub(super) fn report(&mut self, channel: u32, report: &Report, now_us: u64, sends: &mut Vec<Send>) {
         let window_us = presentation_tick_due_us(SEND_WINDOW_TICKS);
-        let Some(asked) = self.gate.asked.as_ref().filter(|asked| asked.page == report.page && asked.generation == report.generation) else { return };
+        let Some(asked) = self.gate.asked.as_ref().filter(|asked| asked.page == report.page && asked.generation == report.generation) else {
+            self.gate.refused = self.gate.refused.saturating_add(1);
+            return;
+        };
         // Where: only while the page is the open page, or just after, for
         // its final tick.
         if asked.closing_us.is_some_and(|closing| now_us.saturating_sub(closing) > window_us) {
@@ -429,7 +434,7 @@ impl Channel {
         }
         let Some(kind) = TargetKind::from_code(report.target_kind) else { return };
         let target = Target { kind, number: report.target_number };
-        let rule_bit = 1_u64.checked_shl(u32::from(report.rule)).unwrap_or(0);
+        let rule_row = u16::from_be_bytes([report.rule, report.row]);
         let mut body = Vec::new();
         let (on, what) = match report.what {
             Reported::Input { sequence } => {
@@ -437,21 +442,26 @@ impl Channel {
                     self.gate.refused = self.gate.refused.saturating_add(1);
                     return;
                 };
-                // Given for that page, within the window, and not yet
-                // reported for that rule.
-                if kept.page != report.page || now_us.saturating_sub(kept.given_us) > window_us || kept.reported & rule_bit != 0 {
+                // Given for that page and sub-code, within the window, and
+                // not yet reported for that rule and row.
+                let given_for = PageSub::new(kept.stamp.page, kept.stamp.sub);
+                if given_for != report.page
+                    || now_us.saturating_sub(kept.given_us) > window_us
+                    || kept.reported.contains(&rule_row)
+                    || kept.reported.len() >= SEND_BUDGET as usize
+                {
                     self.gate.refused = self.gate.refused.saturating_add(1);
                     return;
                 }
-                kept.reported |= rule_bit;
+                kept.reported.push(rule_row);
                 body.extend_from_slice(&kept.bytes);
                 body.extend_from_slice(&kept.pick);
                 (kept.stamp, None)
             }
-            Reported::Fired => (asked.stamp.or(self.on_screen).unwrap_or(Stamp { page: report.page, sub: 0 }), Some(RuleBody::Fired)),
+            Reported::Fired => (asked.stamp, Some(RuleBody::Fired)),
             Reported::Value { value, reading } => {
                 let Ok(value) = Value::from_bytes(&value) else { return };
-                (asked.stamp.or(self.on_screen).unwrap_or(Stamp { page: report.page, sub: 0 }), Some(RuleBody::Value { value, reading }))
+                (asked.stamp, Some(RuleBody::Value { value, reading }))
             }
         };
         // How much: every report from the one budget, and those with no
@@ -462,7 +472,15 @@ impl Channel {
             self.tell_dropped(channel, now_us, sends);
             return;
         }
-        let event = RuleEvent { on, generation: report.generation, rule: report.rule, tick: report.tick, target, body: what.unwrap_or(RuleBody::Input(&body)) };
+        let event = RuleEvent {
+            on,
+            generation: report.generation,
+            rule: report.rule,
+            row: report.row,
+            tick: report.tick,
+            target,
+            body: what.unwrap_or(RuleBody::Input(&body)),
+        };
         self.write(channel, &Item::Event(Event::RuleEvent(event)), now_us, sends);
         self.tell_dropped(channel, now_us, sends);
     }
@@ -476,10 +494,9 @@ impl Channel {
     /// to the channel at most once a second for each code (RULE-48).
     /// Whether it went.
     #[allow(clippy::too_many_arguments, reason = "a fault is its page, generation, code and count, and goes like every send")]
-    pub(super) fn fault(&mut self, channel: u32, page: u16, generation: u16, code: u8, count: u16, now_us: u64, sends: &mut Vec<Send>) -> bool {
+    pub(super) fn fault(&mut self, channel: u32, page: PageSub, generation: u16, code: u8, count: u16, now_us: u64, sends: &mut Vec<Send>) -> bool {
         let Some(fault) = FaultCode::from_code(code) else { return false };
-        let stamp = self.on_screen.filter(|stamp| stamp.page == page).or_else(|| self.gate.asked.as_ref().filter(|asked| asked.page == page)?.stamp);
-        let Some(on) = stamp else { return false };
+        let Some(on) = Stamp::new(page.page, page.sub) else { return false };
         let Some(told) = self.gate.fault_told_us.get_mut(usize::from(code)) else { return false };
         if told.is_some_and(|told| now_us.saturating_sub(told) < SECOND_US) {
             return false;
@@ -493,10 +510,10 @@ impl Channel {
     /// The answer to a state query (RULE-52 item 6): passed only for a
     /// query the fetcher received for that page, once, and only at a
     /// length the protocol allows, beginning with that query's identifier.
-    pub(super) fn page_state(&mut self, channel: u32, page: u16, identifier: u32, body: &[u8], now_us: u64, sends: &mut Vec<Send>) {
+    pub(super) fn page_state(&mut self, channel: u32, page: PageSub, identifier: u32, body: &[u8], now_us: u64, sends: &mut Vec<Send>) {
         let Some(place) = self.gate.queries.iter().position(|query| *query == (page, identifier)) else { return };
         self.gate.queries.remove(place);
-        let Some(on) = self.on_screen.filter(|stamp| stamp.page == page) else { return };
+        let Some(on) = Stamp::new(page.page, page.sub) else { return };
         if body.len() > protocol::rules::MAX_PAGE_STATE || !body.starts_with(&identifier.to_be_bytes()) {
             return;
         }

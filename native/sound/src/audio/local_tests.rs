@@ -90,9 +90,11 @@ fn a_note_queued_before_a_buffer_sounds_within_its_first_blocks() {
             late.push(name);
         }
     }
-    // synth106's default patch is silent for its first block: its voice
-    // begins at sample 128, where every other family sounds within 35.
-    assert_eq!(late, ["synth106"], "the families whose first sample is in the second block");
+    // Every family sounds within the first block: synth106 takes a struck
+    // key at its next tick since the engine's commit 69fe8abc (its first
+    // sample is now 57), where before it waited for its frame's turn and
+    // began at sample 128.
+    assert_eq!(late, [] as [&str; 0], "the families whose first sample is in the second block");
 }
 
 /// RULE-60, RULE-62 (REQ-6535): while a local sound plays the output

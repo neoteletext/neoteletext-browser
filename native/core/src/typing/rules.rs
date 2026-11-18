@@ -2,33 +2,21 @@
 //! what a decoder says of the open page's table, and the reports, state
 //! answers and faults it asks this core to pass to the page's channel.
 
-use interface_core::canvas::PageKey;
-use protocol::rules::{Report, RulesOpen};
+use protocol::rules::{PageSub, Report, RulesOpen};
 
 use super::{Send, Typing, together};
 
 impl Typing {
-    /// Whether `page` of `channel` is the open page of the active tab,
-    /// with its channel's session welcomed: the one page whose table is
-    /// evaluated and whose reports may go (RULE-52 item 4, RULE-58).
-    fn rules_page_open(&self, channel: u32, page: u16) -> bool {
-        self.on(channel) && self.opened == Some(PageKey { channel, page })
+    /// Whether `page` is the page and sub-code whose table `channel`'s
+    /// decoder evaluates, with input going to it (RULE-58, RULE-112).
+    fn rules_page_open(&self, channel: u32, page: PageSub) -> bool {
+        self.on(channel) && self.rules_open(channel) == Some(page)
     }
 
-    /// The page of `channel` that is the open page of the active tab, if
-    /// one is: what a decoder just started is told (RULE-58).
-    #[must_use]
-    pub fn rules_page(&self, channel: u32) -> Option<u16> {
-        self.opened.filter(|opened| opened.channel == channel && self.active == Some(channel)).map(|opened| opened.page)
-    }
-
-    /// The decoder of `channel` said what the table of one of its pages
-    /// asks for (RULE-52 item 1): taken only for the open page. A page
-    /// whose table is newly taken while it holds the keyboard is given the
-    /// focus, so that its `focus` rule knows (RULE-8). The watch list the
-    /// trusted core may pass to the sound helper: the list told, for the
-    /// open page, else none.
-    pub fn rules_open(&mut self, channel: u32, told: &RulesOpen, now_us: u64) -> (Vec<Send>, bool) {
+    /// The decoder of `channel` said what its table asks for (RULE-52
+    /// item 1): the gate takes it when that page and sub-code are the
+    /// open page. The sends, and whether the page is open with a table.
+    pub fn rules_told(&mut self, channel: u32, told: &RulesOpen, now_us: u64) -> (Vec<Send>, bool) {
         let mut sends = Vec::new();
         let open = self.rules_page_open(channel, told.page);
         let Some(state) = self.channels.get_mut(&channel) else { return (sends, false) };
@@ -62,7 +50,7 @@ impl Typing {
     /// A state query the fetcher of `channel` received for `page`
     /// (RULE-47): whether the decoder is to be asked, which is only for
     /// the open page.
-    pub fn rules_query(&mut self, channel: u32, page: u16, identifier: u32) -> bool {
+    pub fn rules_query(&mut self, channel: u32, page: PageSub, identifier: u32) -> bool {
         if !self.rules_page_open(channel, page) {
             return false;
         }
@@ -73,7 +61,7 @@ impl Typing {
     }
 
     /// The decoder's answer to a state query (RULE-52 item 6).
-    pub fn page_state(&mut self, channel: u32, page: u16, identifier: u32, body: &[u8], now_us: u64) -> Vec<Send> {
+    pub fn page_state(&mut self, channel: u32, page: PageSub, identifier: u32, body: &[u8], now_us: u64) -> Vec<Send> {
         let mut sends = Vec::new();
         if !self.rules_page_open(channel, page) {
             return sends;
@@ -87,7 +75,7 @@ impl Typing {
     /// A fault of a page's table (RULE-48), from its decoder or from the
     /// sound helper: passed to the channel for the open page, at most once
     /// a second for each code.
-    pub fn rules_fault(&mut self, channel: u32, page: u16, generation: u16, fault: u8, count: u16, now_us: u64) -> Vec<Send> {
+    pub fn rules_fault(&mut self, channel: u32, page: PageSub, generation: u16, fault: u8, count: u16, now_us: u64) -> Vec<Send> {
         let mut sends = Vec::new();
         if !self.rules_page_open(channel, page) {
             return sends;
@@ -101,7 +89,7 @@ impl Typing {
     /// The table the open page of `channel` is asked for, if any: its page
     /// and generation.
     #[must_use]
-    pub fn rules_asked(&self, channel: u32) -> Option<(u16, u16)> {
+    pub fn rules_asked(&self, channel: u32) -> Option<(PageSub, u16)> {
         self.channels.get(&channel)?.gate.asked.as_ref().map(|asked| (asked.page, asked.generation))
     }
 

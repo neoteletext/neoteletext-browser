@@ -12,7 +12,7 @@ use protocol::audio::{Audio, WatchSlot};
 use protocol::decoder::{FromDecoder, ToDecoder};
 use protocol::fetcher::{Entry, FromFetcher, ToFetcher};
 use protocol::interaction::{InputIntent, Intent};
-use protocol::rules::{INTEREST_KEYS, Report, Reported, RuleInput, RulesOpen};
+use protocol::rules::{INTEREST_KEYS, PageSub, Report, Reported, RuleInput, RulesOpen};
 use protocol::sound::ToSound;
 use protocol::subpages::SubPageStep;
 
@@ -21,6 +21,8 @@ use neoteletext::outbox::Outbox;
 
 const LIVE: &str = "https://live.invalid/channel/";
 const PAGE: u16 = 0x100;
+/// [`PAGE`] as drawn, sub-code 0: the page its table is for (RULE-112).
+const OPEN: PageSub = PageSub::new(PAGE, 0);
 
 /// A tab on a live channel with page 100 open and drawn, its session
 /// welcomed, and what the core writes to its decoder and its fetcher.
@@ -89,27 +91,36 @@ fn input_sent(messages: &[ToFetcher]) -> Vec<(u8, String)> {
 fn a_key_leaves_only_as_the_report_its_pages_table_asks_for() {
     let (mut test, channel, decoder, fetcher) = open_page("key");
     let told = sent_to_decoder(&mut test, channel, &decoder);
-    assert!(told.contains(&ToDecoder::RulesPage(Some(PAGE))), "the decoder is told which page is the open page: {told:?}");
+    assert!(told.contains(&ToDecoder::RulesPage(Some(OPEN))), "the decoder is told which page is the open page: {told:?}");
     sent_to_fetcher(&mut test.core, channel, &fetcher);
 
     press(&mut test, channel, 'a');
     assert_eq!(sent_to_decoder(&mut test, channel, &decoder), [], "no table: the decoder is given nothing");
     assert_eq!(input_sent(&sent_to_fetcher(&mut test.core, channel, &fetcher)), [], "and the channel is sent nothing");
 
-    let asks = RulesOpen { page: PAGE, generation: 3, interest: INTEREST_KEYS, watch: Vec::new(), wheel: Vec::new() };
+    let asks = RulesOpen { page: OPEN, generation: 3, interest: INTEREST_KEYS, watch: Vec::new(), wheel: Vec::new() };
     test.core.decoded(channel, FromDecoder::RulesOpen(asks)).unwrap();
     // The key is given under the gate's first sequence number, and its
     // report asked for at once, as a decoder's next tick does: this core's
     // clock runs, and a report is taken only within `SEND_WINDOW_TICKS`.
     press(&mut test, channel, 'b');
-    let report = Report { page: PAGE, generation: 3, rule: 4, tick: 9, target_kind: 0, target_number: 0, what: Reported::Input { sequence: 0 } };
+    let report = Report {
+        page: OPEN,
+        generation: 3,
+        rule: 4,
+        row: neoteletext_rules::limits::NO_RULE,
+        tick: 9,
+        target_kind: 0,
+        target_number: 0,
+        what: Reported::Input { sequence: 0 },
+    };
     test.core.decoded(channel, FromDecoder::Report(report)).unwrap();
     // A decoder cannot have it sent again, nor a key it was never given.
     test.core.decoded(channel, FromDecoder::Report(report)).unwrap();
     let never = Report { what: Reported::Input { sequence: 7 }, ..report };
     test.core.decoded(channel, FromDecoder::Report(never)).unwrap();
     let given = sent_to_decoder(&mut test, channel, &decoder);
-    let [ToDecoder::RuleInput { page: PAGE, sequence: 0, input: RuleInput::Key { code, named: false, .. } }] = given.as_slice() else { panic!("{given:?}") };
+    let [ToDecoder::RuleInput { page: OPEN, sequence: 0, input: RuleInput::Key { code, named: false, .. } }] = given.as_slice() else { panic!("{given:?}") };
     assert_eq!(*code, u32::from('b'));
     let sent = input_sent(&sent_to_fetcher(&mut test.core, channel, &fetcher));
     assert!(matches!(sent.as_slice(), [(4, key)] if key.contains("Character('b')")), "once, as rule 4's report: {sent:?}");
@@ -153,7 +164,7 @@ fn the_watch_list_goes_to_the_sound_helper_and_a_report_of_its_length_comes_back
     assert_eq!(sent_to_decoder(&mut test, channel, &decoder), [], "no list was passed for this view");
 
     let watch = vec![WatchSlot { channel: 0, kind: 1, part: 0 }, WatchSlot { channel: 0, kind: 3, part: 2 }];
-    let asks = RulesOpen { page: PAGE, generation: 1, interest: 0, watch: watch.clone(), wheel: Vec::new() };
+    let asks = RulesOpen { page: OPEN, generation: 1, interest: 0, watch: watch.clone(), wheel: Vec::new() };
     test.core.decoded(channel, FromDecoder::RulesOpen(asks)).unwrap();
     assert_eq!(sent_to_sound(&mut test, &sound), [ToSound::Audio { channel, audio: Audio::Watch(watch) }]);
 
@@ -162,10 +173,11 @@ fn the_watch_list_goes_to_the_sound_helper_and_a_report_of_its_length_comes_back
     test.core.metered(channel.wrapping_add(1), vec![9, 9]);
     assert_eq!(sent_to_decoder(&mut test, channel, &decoder), [], "a report that is not the list's length, or another view's");
     test.core.metered(channel, vec![200, 3]);
-    assert_eq!(sent_to_decoder(&mut test, channel, &decoder), [ToDecoder::Metered { page: PAGE, values: vec![200, 3] }]);
+    assert_eq!(sent_to_decoder(&mut test, channel, &decoder), [ToDecoder::Metered { page: OPEN, values: vec![200, 3] }]);
 
     // A decoder cannot have another page's table watched.
-    let other = RulesOpen { page: 0x200, generation: 1, interest: 0, watch: vec![WatchSlot { channel: 1, kind: 1, part: 0 }], wheel: Vec::new() };
+    let other =
+        RulesOpen { page: PageSub::new(0x200, 0), generation: 1, interest: 0, watch: vec![WatchSlot { channel: 1, kind: 1, part: 0 }], wheel: Vec::new() };
     test.core.decoded(channel, FromDecoder::RulesOpen(other)).unwrap();
     assert_eq!(
         sent_to_sound(&mut test, &sound),
@@ -184,13 +196,13 @@ fn a_state_query_is_passed_for_the_open_page_and_answered_once() {
     let (mut test, channel, decoder, fetcher) = open_page("query");
     sent_to_decoder(&mut test, channel, &decoder);
     sent_to_fetcher(&mut test.core, channel, &fetcher);
-    test.core.fetched(channel, FromFetcher::RulesQuery { page: 0x200, identifier: 4 }).unwrap();
+    test.core.fetched(channel, FromFetcher::RulesQuery { page: PageSub::new(0x200, 0), identifier: 4 }).unwrap();
     assert_eq!(sent_to_decoder(&mut test, channel, &decoder), [], "a page that is not open");
-    test.core.fetched(channel, FromFetcher::RulesQuery { page: PAGE, identifier: 5 }).unwrap();
-    assert_eq!(sent_to_decoder(&mut test, channel, &decoder), [ToDecoder::RulesQuery { page: PAGE, identifier: 5 }]);
+    test.core.fetched(channel, FromFetcher::RulesQuery { page: OPEN, identifier: 5 }).unwrap();
+    assert_eq!(sent_to_decoder(&mut test, channel, &decoder), [ToDecoder::RulesQuery { page: OPEN, identifier: 5 }]);
     let mut body = [0_u8; 32];
     let length = neoteletext_rules::state::encode(&neoteletext_rules::state::PageState { identifier: 5, table: None }, &mut body).unwrap();
-    let answer = FromDecoder::PageState { page: PAGE, identifier: 5, body: body[..length].to_vec() };
+    let answer = FromDecoder::PageState { page: OPEN, identifier: 5, body: body[..length].to_vec() };
     let states = |messages: &[ToFetcher]| {
         let mut count = 0;
         for message in messages {

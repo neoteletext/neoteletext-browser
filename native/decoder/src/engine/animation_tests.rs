@@ -68,10 +68,12 @@ fn naplps(page: u16, generation: u16, offset: usize, data: &[u8]) -> Vec<u8> {
     packets
 }
 
-/// An ANIMATE record for whichever sub-page of the page is shown.
+/// An ANIMATE record for sub-page 0 of the page, the one the tests'
+/// streams draw: a record names one sub-page (page-rules.md RULE-112).
 fn animate(page: u16, operations: &[Operation]) -> Vec<u8> {
     let mut packets = Vec::new();
-    neoteletext_web::records::animate::encode(address(page), None, operations, 0, 0, &mut |packet| packets.extend_from_slice(&packet.bytes)).unwrap();
+    neoteletext_web::records::animate::encode(address(page), SubCode::new(0), operations, 0, 0, &mut |packet| packets.extend_from_slice(&packet.bytes))
+        .unwrap();
     packets
 }
 
@@ -318,25 +320,27 @@ fn a_paint_rate_is_played_on_the_clock_and_the_setting_turns_it_off() {
     assert_eq!(inked(&mut engine, due_at(1600)), 70_000);
 }
 
-/// ANIM-17 (REQ-6536): a page's ReGIS sheet is sent once and fed to the
-/// renderer of each sub-page of the page before its own stream, which
-/// names the sheet's hidden drawings; a new stream generation keeps the
-/// sheet.
+/// ANIM-17, page-rules.md RULE-112 (REQ-6536, REQ-6615): a ReGIS sheet
+/// is one sub-page's, sent once and fed to that sub-page's renderer
+/// before its own stream, which names the sheet's hidden drawings; a new
+/// stream generation keeps the sheet; another sub-code of the same page
+/// number is another page, and is fed no sheet of this one's.
 #[test]
-fn a_regis_sheet_is_fed_before_each_sub_pages_stream() {
+fn a_regis_sheet_is_fed_before_its_own_sub_pages_stream_alone() {
     let mut engine = Engine::new();
     let sheet = format!("{}D(S9(V0),C)", square(9, 5));
     let mut packets = Vec::new();
-    let record = SheetRecord { page: address(PAGE), kind: SheetKind::Regis, generation: 1, offset: 0, data: sheet.as_bytes() };
+    let record = SheetRecord { page: address(PAGE), subcode: SubCode::new(1), kind: SheetKind::Regis, generation: 1, offset: 0, data: sheet.as_bytes() };
     neoteletext_web::records::sheet::encode(record, 0, 0, &mut |packet| packets.extend_from_slice(&packet.bytes)).unwrap();
     engine.feed_whole(true, true, &packets);
-    for (sub, generation) in [(1_u16, 1_u16), (2, 1), (1, 2)] {
+    for (sub, generation, sheeted) in [(1_u16, 1_u16, true), (2, 1, false), (1, 2, true)] {
         let mut packets = Vec::new();
         let uses = stream(PAGE, sub, generation, 0, b"D(S1(X100,Y50,R9),C)");
         neoteletext_web::records::regis::encode(uses, 0, 0, &mut |packet| packets.extend_from_slice(&packet.bytes)).unwrap();
         engine.feed_whole(true, true, &packets);
         let drawn = engine.regis().take(PAGE, Some(sub), 0).unwrap();
-        assert_eq!(unpack(&drawn.picture.packed)[55 * REGIS_WIDTH + 105], 5, "sub-page {sub}, generation {generation}: the sheet's drawing, used");
+        let pixel = unpack(&drawn.picture.packed)[55 * REGIS_WIDTH + 105];
+        assert_eq!(pixel == 5, sheeted, "sub-page {sub}, generation {generation}: the sheet's drawing used only by its own sub-page");
     }
 }
 

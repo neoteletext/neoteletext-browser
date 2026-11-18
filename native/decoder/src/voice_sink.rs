@@ -59,11 +59,6 @@ impl Heard {
         self.channels.get(usize::from(channel)).is_some_and(|heard| heard.local.is_some())
     }
 
-    /// The audio channels a local sound plays on.
-    pub(crate) fn locals(&self) -> impl Iterator<Item = u8> + '_ {
-        (0..CHANNELS).filter(|channel| self.is_local(*channel))
-    }
-
     /// A tracked value of the local sound on `channel` (RULE-28 classes 0
     /// to 4, 8 and 9; RULE-30); 0 when none plays there.
     pub(crate) fn synth(&self, channel: u8, part: u8, class: u8, index: u16) -> i32 {
@@ -146,6 +141,12 @@ impl VoiceSink for Outbox<'_> {
             *heard = ChannelSound { gain: heard.gain, ..ChannelSound::default() };
         }
         self.sounds.push(Audio::EndStream { channel, sound: sound(id) });
+    }
+
+    /// A cue point of the stream on `channel` (page-rules.md RULE-109):
+    /// the sound helper marks it, and says when it is heard.
+    fn stream_cue(&mut self, channel: u8, id: SoundId, position: u64, number: u8) {
+        self.sounds.push(Audio::Cue { channel, sound: sound(id), position, number });
     }
 
     fn start(&mut self, channel: u8, start: Start) {

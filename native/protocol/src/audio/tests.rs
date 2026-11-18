@@ -179,3 +179,24 @@ fn local_operations_out_of_bounds_are_refused() {
     assert!(refused(Audio::LocalMidi { channel: 0, status: 0x90, data1: 128, data2: 0 }));
     assert!(refused(Audio::LocalMidi { channel: 0, status: 0x90, data1: 0, data2: 128 }));
 }
+
+/// RULE-63, RULE-109, RULE-111 (REQ-6535): a cue mark round trips from a
+/// decoder at its bounds; the pause is the trusted core's alone.
+#[test]
+fn a_cue_round_trips_and_only_the_core_pauses() {
+    for (position, number) in [(0, 0), (u64::MAX, neoteletext_rules::limits::MAX_CUE)] {
+        let cue = Audio::Cue { channel: 3, sound: SOUND, position, number };
+        let mut payload = Vec::new();
+        push(&mut payload, &cue, Sender::Decoder).unwrap();
+        assert_eq!(read(&mut Fields::new(&payload), Sender::Decoder).unwrap(), cue);
+    }
+    assert!(decoder_writes(&mut Vec::new(), &FromDecoder::Audio(Audio::Cue { channel: 0, sound: SOUND, position: 0, number: 128 })).is_err());
+    assert!(decoder_writes(&mut Vec::new(), &FromDecoder::Audio(Audio::Cue { channel: 4, sound: SOUND, position: 0, number: 0 })).is_err());
+    assert!(decoder_writes(&mut Vec::new(), &FromDecoder::Audio(Audio::Pause(true))).is_err());
+    for paused in [true, false] {
+        let mut payload = Vec::new();
+        push(&mut payload, &Audio::Pause(paused), Sender::Core).unwrap();
+        assert_eq!(read(&mut Fields::new(&payload), Sender::Core).unwrap(), Audio::Pause(paused));
+        assert!(read(&mut Fields::new(&payload), Sender::Decoder).is_err());
+    }
+}

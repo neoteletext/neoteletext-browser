@@ -65,8 +65,9 @@ pub enum Held {
     Animate {
         /// The page.
         page: u16,
-        /// The sub-code, or `None` for whichever sub-page is shown.
-        sub: Option<u16>,
+        /// The sub-code: never "whichever is shown", which RULE-112
+        /// withdraws and the engine's reader refuses.
+        sub: u16,
         /// The operations, in order.
         operations: Vec<Operation>,
     },
@@ -96,7 +97,10 @@ pub enum Held {
         language: Language,
         /// The page.
         page: u16,
-        /// Which stream of the page's sheet.
+        /// The sub-code: a sheet is one sub-page's (page-rules.md
+        /// RULE-112).
+        sub: u16,
+        /// Which stream of the sub-page's sheet.
         generation: u16,
         /// Where in it the bytes begin.
         offset: u32,
@@ -178,11 +182,7 @@ impl Taken {
             ChannelRecord::Regis(record) => stream(Language::Regis, record),
             ChannelRecord::Naplps(record) => stream(Language::Naplps, record),
             ChannelRecord::RegisCursor(record) => Held::Cursor { page: record.page.mpp(), sub: record.subcode.value(), drawing: record.drawing },
-            ChannelRecord::Animate(record) => Held::Animate {
-                page: record.page.mpp(),
-                sub: record.subcode.map(neoteletext_core::types::SubCode::value),
-                operations: record.operations().collect(),
-            },
+            ChannelRecord::Animate(record) => Held::Animate { page: record.page.mpp(), sub: record.subcode.value(), operations: record.operations().collect() },
             ChannelRecord::Sprites(record) => Held::Sprites {
                 page: record.page.mpp(),
                 sub: record.subcode.value(),
@@ -200,6 +200,7 @@ impl Taken {
                     SheetKind::Naplps => Language::Naplps,
                 },
                 page: record.page.mpp(),
+                sub: record.subcode.value(),
                 generation: record.generation,
                 offset: record.offset,
                 data: record.data.to_vec(),

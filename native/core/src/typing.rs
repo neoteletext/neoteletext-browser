@@ -89,8 +89,8 @@ pub enum Send {
     Decoder {
         /// The channel.
         channel: u32,
-        /// The open page.
-        page: u16,
+        /// The open page and its sub-code.
+        page: protocol::rules::PageSub,
         /// This core's number for the event.
         sequence: u32,
         /// The event as the evaluator matches it.
@@ -106,8 +106,14 @@ pub enum Send {
     RulesPage {
         /// The channel.
         channel: u32,
-        /// The page, or none.
-        page: Option<u16>,
+        /// The page and sub-code, or none: the pause (RULE-111 case 4).
+        page: Option<protocol::rules::PageSub>,
+    },
+    /// The view's push connection ended (RULE-111 case 2): its decoder
+    /// drops every local state of the page at once.
+    ConnectionEnded {
+        /// The channel.
+        channel: u32,
     },
 }
 
@@ -306,6 +312,9 @@ pub struct Typing {
     active: Option<u32>,
     /// The page the viewer opened in the active tab.
     opened: Option<PageKey>,
+    /// The page and sub-code last told a decoder as the open page whose
+    /// table it evaluates (RULE-58, RULE-112), and its channel.
+    rules_open: Option<(u32, protocol::rules::PageSub)>,
     /// The window does not have the keyboard focus.
     unfocused: bool,
     /// The viewer is editing the address: the keys are the strip's.
@@ -537,14 +546,51 @@ impl Typing {
         let holds = self.takes_keys(key);
         if let Some(state) = self.channels.get_mut(&key.channel) {
             state.on_screen = Stamp::new(key.page, sub);
-            if let Some(stamp) = state.on_screen {
-                state.gate.drawn(stamp);
-                if holds {
-                    state.give_focus_owed(key.channel, 0, &mut sends);
-                }
-            }
+        }
+        // Another sub-code on screen is another page (RULE-112): the one
+        // left is closed and this one opened.
+        self.settle_rules_page(0, &mut sends);
+        if holds && let Some(state) = self.channels.get_mut(&key.channel) {
+            state.give_focus_owed(key.channel, 0, &mut sends);
         }
         sends
+    }
+
+    /// The page and sub-code whose table the decoder of the active tab is
+    /// to evaluate: the open page, as its sub-page is on screen.
+    fn rules_wanted(&self) -> Option<(u32, protocol::rules::PageSub)> {
+        let opened = self.opened.filter(|opened| self.active == Some(opened.channel))?;
+        let stamp = self.channels.get(&opened.channel)?.on_screen.filter(|stamp| stamp.page == opened.page)?;
+        Some((opened.channel, protocol::rules::PageSub::new(stamp.page, stamp.sub)))
+    }
+
+    /// Tells the decoders which page is open for its table (RULE-58,
+    /// RULE-111): a page left in the same view is closed by naming the one
+    /// now open; a view no longer active is told none, the pause.
+    fn settle_rules_page(&mut self, now_us: u64, sends: &mut Vec<Send>) {
+        let wanted = self.rules_wanted();
+        if wanted == self.rules_open {
+            return;
+        }
+        let before = core::mem::replace(&mut self.rules_open, wanted);
+        if let Some((channel, _)) = before {
+            if let Some(state) = self.channels.get_mut(&channel) {
+                state.gate.closing(now_us);
+            }
+            if wanted.is_none_or(|(now, _)| now != channel) {
+                sends.push(Send::RulesPage { channel, page: None });
+            }
+        }
+        if let Some((channel, page)) = wanted {
+            sends.push(Send::RulesPage { channel, page: Some(page) });
+        }
+    }
+
+    /// The page and sub-code a channel's decoder evaluates the table of,
+    /// if one is open in it now.
+    #[must_use]
+    pub fn rules_open(&self, channel: u32) -> Option<protocol::rules::PageSub> {
+        self.rules_open.filter(|(open, _)| *open == channel).map(|(_, page)| page)
     }
 
     /// Whether a page is open for typing: the active tab's open page's
@@ -581,18 +627,9 @@ impl Typing {
         }
         // The page that was open is no longer the one keys go to: its
         // table is evaluated no more, and nothing more is given for it
-        // (page-rules.md RULE-58). The page now open is its channel's.
-        if let Some(left) = before.1.filter(|left| Some(*left) != opened) {
-            if let Some(state) = self.channels.get_mut(&left.channel) {
-                state.gate.closing(now_us);
-            }
-            if opened.is_none_or(|opened| opened.channel != left.channel) {
-                sends.push(Send::RulesPage { channel: left.channel, page: None });
-            }
-        }
-        if let Some(key) = opened {
-            sends.push(Send::RulesPage { channel: key.channel, page: Some(key.page) });
-        }
+        // (page-rules.md RULE-58). The page now open is its channel's,
+        // once its sub-page is on screen.
+        self.settle_rules_page(now_us, &mut sends);
         if opened.is_none()
             && let Some(before) = before.1
         {
@@ -635,6 +672,22 @@ impl Typing {
             state.hello(channel, now_us, &mut sends);
         } else if !open {
             state.session.close();
+            // RULE-111 case 2: everything local of the page is dropped,
+            // and a report not yet acknowledged is never sent again
+            // (RULE-46).
+            if was_open {
+                // The engine's session keeps every message not
+                // acknowledged for a resumption, and under push protocol
+                // 10 a viewer's input is only ever a RULE_EVENT. A session
+                // that gave a page's table any input is therefore not
+                // resumed, so that none is sent again; one that gave none
+                // sent no RULE_EVENT (RULE-50) and resumes as before.
+                if state.gate.gave_input() {
+                    state.session.forget();
+                }
+                state.gate.forget();
+                sends.push(Send::ConnectionEnded { channel });
+            }
             state.started = false;
             state.select_told = None;
             state.focus_told = None;

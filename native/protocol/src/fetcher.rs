@@ -268,8 +268,8 @@ pub enum FromFetcher {
     /// (page-rules.md RULE-47): the trusted core passes a `PAGE_STATE` for
     /// that page only in answer to one, once (RULE-52 item 6).
     RulesQuery {
-        /// The page asked about.
-        page: u16,
+        /// The page and sub-code asked about.
+        page: crate::rules::PageSub,
         /// The query's identifier.
         identifier: u32,
     },
@@ -876,7 +876,7 @@ pub fn read_from_fetcher(input: &mut dyn Read) -> Result<Option<FromFetcher>, Pr
             }
             FromFetcher::Input { open: flags & 1 != 0, secure: flags & 2 != 0 }
         }
-        kinds::KIND_RULES_QUERY => FromFetcher::RulesQuery { page: fields.channel_page()?, identifier: fields.u32()? },
+        kinds::KIND_RULES_QUERY => FromFetcher::RulesQuery { page: crate::rules::read_page_sub(&mut fields)?, identifier: fields.u32()? },
         KIND_PUSHING => FromFetcher::Pushing(fields.flag("pushing")?),
         KIND_EXCHANGE => {
             let method = raw_text(&mut fields, MAX_METHOD, "text too long")?;

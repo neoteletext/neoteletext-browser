@@ -28,7 +28,8 @@ use neoteletext::hearing::Hearing;
 use neoteletext::typing::{Send as TypingSend, Typing};
 use neoteletext_audio::encode::{Command, Sound as Writer, packets};
 use neoteletext_input::event::{Action, KeyCode};
-use neoteletext_rules::table::{Action as RuleAction, Key, KeyKind, Node, Operator, Rule, SOUND_LEVEL, Table, Trigger, Value, any_key};
+use neoteletext_rules::command::{self, Command as RuleCommand, TYPE_LOCAL_MIDI, TYPE_REPORT};
+use neoteletext_rules::table::{Framed, Key, KeyKind, KeyMatch, Node, Operator, Rule, SOUND_LEVEL, Table, Trigger, Value};
 use protocol::decoder::{FromDecoder, ToDecoder, read_from_core, read_from_decoder, write_to_core, write_to_decoder};
 use protocol::interaction::{InputIntent, Intent};
 use protocol::rules::Reported;
@@ -44,6 +45,8 @@ const BUFFER: Duration = Duration::from_millis(10);
 /// The view and its open page.
 const CHANNEL: u32 = 1;
 const PAGE: PageKey = PageKey { channel: CHANNEL, page: 0x101 };
+/// The sub-code it is drawn with, whose table it is (RULE-112).
+const SUB: u16 = 0;
 /// The audio channel the local sound plays on.
 const VOICE: u8 = 0;
 /// The rule that plays the note, the rule that ends it, and the rule on
@@ -97,17 +100,22 @@ fn frame<M>(message: &M, write: impl Fn(&mut dyn std::io::Write, &M) -> Result<(
 /// and the level reaching [`LEVEL`] is reported, in the tick a rule would
 /// show a meter's segment.
 fn table() -> Box<Table> {
-    let mut keys = any_key();
-    keys.push(Key { kind: KeyKind::Character, code: u32::from('a') }).unwrap();
-    let mut down = Rule::new(Trigger::Key { keys, repeat: false, mods_mask: 0, mods_value: 0 });
-    down.actions.push(RuleAction::Midi { channel: VOICE, status: 0x90, data1: 60, data2: 127 }).unwrap();
-    let mut up = Rule::new(Trigger::KeyUp { keys, mods_mask: 0, mods_value: 0 });
-    up.actions.push(RuleAction::Midi { channel: VOICE, status: 0x80, data1: 60, data2: 0 }).unwrap();
+    let mut table = Box::new(Table::new(PAGE.page, SUB));
+    let mut group = |kind: u8, made: &RuleCommand| {
+        let mut body = [0_u8; neoteletext_rules::limits::MAX_COMMAND_BYTES];
+        let length = command::encode(made, PAGE.page, SUB, &mut body).unwrap();
+        table.push_group(&[Framed { kind, body: &body[..length], bindings: &[] }]).unwrap()
+    };
+    let note = |status, data2| RuleCommand::LocalMidi { channel: VOICE, status, data1: 60, data2 };
+    let on = group(TYPE_LOCAL_MIDI, &note(0x90, 127));
+    let off = group(TYPE_LOCAL_MIDI, &note(0x80, 0));
+    let report = group(TYPE_REPORT, &RuleCommand::Report { value: None });
+    let keys = KeyMatch::of(&[Key::of(KeyKind::Character, u32::from('a'))]);
+    let down = Rule::new(Trigger::Key { keys, repeat: false }, on);
+    let up = Rule::new(Trigger::KeyUp { keys }, off);
     let level = Value::sound(VOICE, SOUND_LEVEL);
-    let mut lit = Rule::new(Trigger::Becomes);
-    lit.condition.push(Node::Compare { value: level, operator: Operator::GreaterOrEqual, constant: LEVEL }).unwrap();
-    lit.actions.push(RuleAction::Send(None)).unwrap();
-    let mut table = Box::new(Table::new());
+    let mut lit = Rule::new(Trigger::Becomes, report);
+    lit.condition = neoteletext_rules::table::condition(&[Node::compare(level, Operator::GreaterOrEqual, LEVEL)]);
     for rule in [down, up, lit] {
         table.rules.push(rule).unwrap();
     }
@@ -117,10 +125,24 @@ fn table() -> Box<Table> {
 /// What the channel pushes: the page's table, and a local sound of synth7
 /// with its bank, played on [`VOICE`] for the page.
 fn pushed() -> (Vec<u8>, Vec<u8>) {
-    let mut body = vec![0_u8; neoteletext_rules::limits::MAX_TABLE_BYTES];
-    let length = neoteletext_rules::encode(PAGE.page, 1, Some(&table()), &mut body).unwrap();
+    let mut image = vec![0_u8; neoteletext_rules::limits::MAX_TABLE_BYTES];
+    let length = neoteletext_rules::encode(&table(), neoteletext_web::records::body_check, &mut image).unwrap();
     let mut rules = Vec::new();
-    neoteletext_web::records::rules::encode(&body[..length], 0, 200, &mut |packet| rules.extend_from_slice(&packet.bytes)).unwrap();
+    let page = neoteletext_core::types::PageAddress::from_mpp(PAGE.page).unwrap();
+    let mut id = 200_u8;
+    neoteletext_web::records::rules::encode_image(
+        page,
+        neoteletext_core::types::SubCode::new(SUB),
+        1,
+        &image[..length],
+        0,
+        &mut |_| {
+            id = id.wrapping_add(1);
+            id
+        },
+        &mut |packet| rules.extend_from_slice(&packet.bytes),
+    )
+    .unwrap();
     // synth7's bank is its 32-voice bulk dump, here of its plain voice.
     let voices = [neoteletext_audio_instruments::synth7::Patch::DEFAULT; neoteletext_audio_instruments::synth7::patch::BANK_VOICES];
     let bank = Writer::bank(2, 1, neoteletext_audio::Codec::Synth7, &neoteletext_audio_instruments::synth7::sysex::bank_dump(&voices)).unwrap();
@@ -161,13 +183,15 @@ fn decoder(messages: &Receiver<Vec<u8>>, core: &Sender<ToCore>) {
                 Err(_) => return,
             },
         };
-        // The tick's outputs leave before anything else of the wake.
-        for message in engine.run_rules(engine.now_us()) {
-            core.send(ToCore::Decoder(frame(&message, |out, message| write_to_core(out, message)))).unwrap();
-        }
+        // A message is taken at once, before the tick (RULE-96).
         if let Some(bytes) = received {
             let message = read_from_core(&mut bytes.as_slice()).unwrap().unwrap();
-            engine.rule_message(message);
+            for message in engine.rule_message(message).unwrap_or_default() {
+                core.send(ToCore::Decoder(frame(&message, |out, message| write_to_core(out, message)))).unwrap();
+            }
+        }
+        for message in engine.run_rules(engine.now_us()) {
+            core.send(ToCore::Decoder(frame(&message, |out, message| write_to_core(out, message)))).unwrap();
         }
     }
 }
@@ -206,7 +230,7 @@ fn core(events: &Receiver<ToCore>, to_decoder: &Sender<Vec<u8>>, mixers: &Mutex<
     let now_us = || u64::try_from(started.elapsed().as_micros()).unwrap();
     let mut typing = Typing::default();
     let mut hearing = Hearing::default();
-    let mut watched: Option<(u16, usize)> = None;
+    let mut watched: Option<(protocol::rules::PageSub, usize)> = None;
     // The session with the page's channel, welcomed; the page open and
     // drawn.
     typing.input(CHANNEL, true, true, 0);
@@ -228,7 +252,9 @@ fn core(events: &Receiver<ToCore>, to_decoder: &Sender<Vec<u8>>, mixers: &Mutex<
     };
     deliver(typing.opened(Some(CHANNEL), Some(PAGE), 0), to_decoder);
     typing.control(CHANNEL, &body[..length], 0);
-    typing.drawn(PAGE, 0);
+    // The page on screen as sub-code 0: its table is the open page's
+    // (RULE-112), and the decoder is told so.
+    deliver(typing.drawn(PAGE, SUB), to_decoder);
     for event in events {
         match event {
             ToCore::Key(intent) => deliver(typing.input_intent(&intent, now_us()), to_decoder),
@@ -236,7 +262,7 @@ fn core(events: &Receiver<ToCore>, to_decoder: &Sender<Vec<u8>>, mixers: &Mutex<
                 // Checked, written for the sound helper, read by it and
                 // applied to its mixers.
                 FromDecoder::Audio(audio) => {
-                    if let Some(message) = hearing.decoded(CHANNEL, audio) {
+                    if let Some(message) = hearing.decoded(CHANNEL, audio, now_us()) {
                         let bytes = frame(&message, |out, message| write_to_sound(out, message));
                         if let Some(ToSound::Audio { channel, audio }) = read_to_sound(&mut bytes.as_slice()).unwrap() {
                             sound::audio::apply(mixers, channel, audio);
@@ -244,7 +270,7 @@ fn core(events: &Receiver<ToCore>, to_decoder: &Sender<Vec<u8>>, mixers: &Mutex<
                     }
                 }
                 FromDecoder::RulesOpen(told) => {
-                    let (sends, open) = typing.rules_open(CHANNEL, &told, now_us());
+                    let (sends, open) = typing.rules_told(CHANNEL, &told, now_us());
                     watched = (open && !told.watch.is_empty()).then_some((told.page, told.watch.len()));
                     sound::audio::apply(mixers, CHANNEL, protocol::audio::Audio::Watch(if open { told.watch } else { Vec::new() }));
                     deliver(sends, to_decoder);
